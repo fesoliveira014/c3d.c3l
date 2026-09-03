@@ -40,7 +40,7 @@ jobs:
       - name: Install shader and Vulkan tools
         run: |
           sudo apt-get update -q
-          sudo apt-get install -y glslang-tools libvulkan1 cmake ninja-build
+          sudo apt-get install -y glslang-tools libvulkan1 libgl1-mesa-dev cmake ninja-build
 
       # SDL3 is not packaged by Ubuntu 24.04, so it is built once and cached
       # against its tag. The install goes to the default prefix, which is what

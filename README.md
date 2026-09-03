@@ -20,7 +20,7 @@ Target platform is linux-x64. C3 0.8.3 exactly.
 On Debian or Ubuntu:
 
 ```bash
-sudo apt-get install -y glslang-tools libvulkan1 cmake ninja-build build-essential
+sudo apt-get install -y glslang-tools libvulkan1 libgl1-mesa-dev cmake ninja-build build-essential
 ```
 
 ## Clone
