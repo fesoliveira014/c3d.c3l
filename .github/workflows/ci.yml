@@ -44,7 +44,10 @@ jobs:
 
       # SDL3 is not packaged by Ubuntu 24.04, so it is built once and cached
       # against its tag. The install goes to the default prefix, which is what
-      # lets the linker resolve SDL3 without link arguments.
+      # lets the linker resolve SDL3 without link arguments. The build is a
+      # console build: the runner has no X11 or Wayland development libraries
+      # and CI never opens a window, so only the link surface matters. A
+      # desktop build follows the README instead.
       - name: Cache SDL3
         id: cache-sdl3
         uses: actions/cache@v4
@@ -57,7 +60,8 @@ jobs:
         run: |
           git clone --depth 1 --branch "$SDL3_TAG" https://github.com/libsdl-org/SDL /tmp/SDL
           cmake -S /tmp/SDL -B /tmp/SDL/build -G Ninja \
-            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/tools/sdl3"
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/tools/sdl3" \
+            -DSDL_UNIX_CONSOLE_BUILD=ON
           cmake --build /tmp/SDL/build
           cmake --install /tmp/SDL/build
 
