@@ -1,0 +1,11 @@
+# OpenSpec working artifacts; Notion is the durable record (AGENTS.md section 13).
+openspec/
+
+# Agent harness: skills, local config, the AGENTS.md symlink.
+.claude/
+
+# c3c output directories, including the gpu.c3l ABI generator build.
+build/
+
+# Native dependency prefixes built by the README bootstrap.
+.deps/

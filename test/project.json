@@ -1,0 +1,35 @@
+{
+  "langrev": "1",
+  "dependency-search-paths": [
+    "../lib",
+    "../lib/gpu.c3l/lib"
+  ],
+  "dependencies": [
+    "c3d",
+    "gpu",
+    "vk",
+    "vma",
+    "spvreflect",
+    "sdl3",
+    "c3imgui",
+    "c3cg",
+    "b3"
+  ],
+  "features": [
+    "C3D_GUI",
+    "C3D_PHYSICS",
+    "C3D_FBX",
+    "C3D_RAY_TRACING",
+    "C3D_STB_IMAGE"
+  ],
+  "wincrt": "dynamic",
+  "output": "build",
+  "targets": {
+    "unit": {
+      "type": "executable",
+      "sources": [
+        "src/**"
+      ]
+    }
+  }
+}

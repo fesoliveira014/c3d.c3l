@@ -1,0 +1,15 @@
+[submodule "lib/gpu.c3l"]
+	path = lib/gpu.c3l
+	url = https://github.com/fesoliveira014/gpu.c3l
+[submodule "lib/sdl3.c3l"]
+	path = lib/sdl3.c3l
+	url = https://github.com/fesoliveira014/sdl3.c3l
+[submodule "lib/c3imgui.c3l"]
+	path = lib/c3imgui.c3l
+	url = https://github.com/fesoliveira014/c3imgui.c3l
+[submodule "lib/c3cg.c3l"]
+	path = lib/c3cg.c3l
+	url = https://github.com/fesoliveira014/c3cg.c3l
+[submodule "lib/box3d.c3l"]
+	path = lib/box3d.c3l
+	url = https://github.com/fesoliveira014/box3d.c3l

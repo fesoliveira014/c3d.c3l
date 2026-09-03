@@ -1,0 +1,90 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  C3C_VERSION: "0.8.3"
+  SDL3_TAG: "release-3.4.16"
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Cache c3c
+        uses: actions/cache@v4
+        with:
+          path: ~/tools/c3
+          key: c3c-linux-${{ env.C3C_VERSION }}
+
+      - name: Install c3c
+        run: |
+          if [ ! -x ~/tools/c3/c3c ]; then
+            mkdir -p ~/tools
+            curl -fsSL -o /tmp/c3.tar.gz \
+              "https://github.com/c3lang/c3c/releases/download/v${C3C_VERSION}/c3-linux.tar.gz"
+            tar -xzf /tmp/c3.tar.gz -C ~/tools
+          fi
+          echo "$HOME/tools/c3" >> "$GITHUB_PATH"
+
+      - name: Install shader and Vulkan tools
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y glslang-tools libvulkan1 cmake ninja-build
+
+      # SDL3 is not packaged by Ubuntu 24.04, so it is built once and cached
+      # against its tag. The install goes to the default prefix, which is what
+      # lets the linker resolve SDL3 without link arguments.
+      - name: Cache SDL3
+        id: cache-sdl3
+        uses: actions/cache@v4
+        with:
+          path: ~/tools/sdl3
+          key: sdl3-linux-${{ env.SDL3_TAG }}
+
+      - name: Build SDL3
+        if: steps.cache-sdl3.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$SDL3_TAG" https://github.com/libsdl-org/SDL /tmp/SDL
+          cmake -S /tmp/SDL -B /tmp/SDL/build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX="$HOME/tools/sdl3"
+          cmake --build /tmp/SDL/build
+          cmake --install /tmp/SDL/build
+
+      - name: Install SDL3
+        run: |
+          sudo cp -a ~/tools/sdl3/lib/. /usr/local/lib/
+          sudo cp -a ~/tools/sdl3/include/. /usr/local/include/
+          sudo ldconfig
+
+      # Keyed on the box3d submodule commit: the artifact is only stale when
+      # the pin moves.
+      - name: Resolve box3d pin
+        id: box3d
+        run: echo "sha=$(git rev-parse HEAD:lib/box3d.c3l)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache box3d
+        id: cache-box3d
+        uses: actions/cache@v4
+        with:
+          path: lib/box3d.c3l/linked-libs/linux-x64
+          key: box3d-linux-${{ steps.box3d.outputs.sha }}
+
+      - name: Build box3d
+        if: steps.cache-box3d.outputs.cache-hit != 'true'
+        run: |
+          python3 scripts/build.py --init-deps \
+            --skip-abi --skip-shaders --skip-boundaries --skip-build
+
+      - name: Build and test
+        run: python3 scripts/build.py --check --test
