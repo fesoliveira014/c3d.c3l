@@ -3,8 +3,7 @@ module c3d::test::pool;
 import c3d;
 import c3d::pool;
 
-struct Sample @local
-{
+struct Sample @local {
     int value;
 }
 
@@ -12,13 +11,11 @@ typedef SampleId @local = Id;
 
 alias SamplePool @local = Pool{Sample, SampleId};
 
-fn SamplePool make_pool(uint capacity) @local
-{
+fn SamplePool make_pool(uint capacity) @local {
     return pool::create_pool{Sample, SampleId}(mem, capacity);
 }
 
-fn void test_add_returns_live_id() @test
-{
+fn void test_add_returns_live_id() @test {
     SamplePool samples = make_pool(4);
     defer pool::destroy_pool{Sample, SampleId}(&samples);
 
@@ -27,8 +24,7 @@ fn void test_add_returns_live_id() @test
     assert(samples.get(first).value == 7);
 }
 
-fn void test_stale_id_does_not_resolve() @test
-{
+fn void test_stale_id_does_not_resolve() @test {
     SamplePool samples = make_pool(4);
     defer pool::destroy_pool{Sample, SampleId}(&samples);
 
@@ -43,8 +39,7 @@ fn void test_stale_id_does_not_resolve() @test
     }
 }
 
-fn void test_slot_reuse_bumps_generation() @test
-{
+fn void test_slot_reuse_bumps_generation() @test {
     SamplePool samples = make_pool(2);
     defer pool::destroy_pool{Sample, SampleId}(&samples);
 
@@ -58,8 +53,7 @@ fn void test_slot_reuse_bumps_generation() @test
     assert(samples.is_live(second));
 }
 
-fn void test_full_pool_faults() @test
-{
+fn void test_full_pool_faults() @test {
     SamplePool samples = make_pool(2);
     defer pool::destroy_pool{Sample, SampleId}(&samples);
 
@@ -73,8 +67,7 @@ fn void test_full_pool_faults() @test
     }
 }
 
-fn void test_zero_id_does_not_resolve() @test
-{
+fn void test_zero_id_does_not_resolve() @test {
     SamplePool samples = make_pool(4);
     defer pool::destroy_pool{Sample, SampleId}(&samples);
 
@@ -87,8 +80,7 @@ fn void test_zero_id_does_not_resolve() @test
     }
 }
 
-fn void test_remove_frees_a_slot() @test
-{
+fn void test_remove_frees_a_slot() @test {
     SamplePool samples = make_pool(3);
     defer pool::destroy_pool{Sample, SampleId}(&samples);
 

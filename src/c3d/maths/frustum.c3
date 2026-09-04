@@ -5,8 +5,7 @@ import std::math;
 <*
  Plane in Hessian normal form; a point is inside when dot(normal, point) + d is not negative.
 *>
-struct Plane
-{
+struct Plane {
     Vec3  normal;
     float d;
 }
@@ -14,13 +13,11 @@ struct Plane
 <*
  View frustum as six inward-facing planes.
 *>
-struct Frustum
-{
+struct Frustum {
     Plane[6] planes;
 }
 
-fn Plane normalized_plane(Vec4 coefficients) @private
-{
+fn Plane normalized_plane(Vec4 coefficients) @private {
     Vec3 normal = { coefficients.x, coefficients.y, coefficients.z };
     float length = normal.length();
     return { .normal = normal / length, .d = coefficients.w / length };
@@ -29,8 +26,7 @@ fn Plane normalized_plane(Vec4 coefficients) @private
 <*
  Extract the six clipping planes of a reverse-Z view-projection matrix.
 *>
-fn Frustum frustum_from_view_proj(Mat4 view_proj)
-{
+fn Frustum frustum_from_view_proj(Mat4 view_proj) {
     Vec4 row_x = { view_proj.m00, view_proj.m01, view_proj.m02, view_proj.m03 };
     Vec4 row_y = { view_proj.m10, view_proj.m11, view_proj.m12, view_proj.m13 };
     Vec4 row_z = { view_proj.m20, view_proj.m21, view_proj.m22, view_proj.m23 };
@@ -54,8 +50,7 @@ fn Frustum frustum_from_view_proj(Mat4 view_proj)
  Whether any part of the box lies inside the frustum.
  @param [&in] frustum : "Read only; a straddling box counts as inside."
 *>
-fn bool frustum_intersects_aabb(Frustum* frustum, Aabb bounds)
-{
+fn bool frustum_intersects_aabb(Frustum* frustum, Aabb bounds) {
     foreach (&plane : frustum.planes) {
         Vec3 positive = {
             plane.normal.x >= 0 ? bounds.max.x : bounds.min.x,

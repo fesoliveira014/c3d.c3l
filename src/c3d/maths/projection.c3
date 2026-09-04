@@ -7,8 +7,7 @@ import std::math;
  @require fov_y > 0 && aspect > 0 && near > 0
  @require far == 0 || far > near
 *>
-fn Mat4 perspective_reverse_z(float fov_y, float aspect, float near, float far = 0)
-{
+fn Mat4 perspective_reverse_z(float fov_y, float aspect, float near, float far = 0) {
     float focal = 1.0f / math::tan(fov_y * 0.5f);
     bool infinite = far == 0;
     return {
@@ -25,8 +24,7 @@ fn Mat4 perspective_reverse_z(float fov_y, float aspect, float near, float far =
  @require right > left && top > bottom && far > near
 *>
 fn Mat4 orthographic_reverse_z(float left, float right, float bottom, float top,
-  float near, float far)
-{
+  float near, float far) {
     return {
         .m00 = 2.0f / (right - left),
         .m03 = -(right + left) / (right - left),

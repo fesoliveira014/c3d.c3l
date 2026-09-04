@@ -11,8 +11,7 @@ typedef ShaderId      = Id;
 <*
  Generational handle into a pool. The zero value is never live.
 *>
-struct Id
-{
+struct Id {
     uint index;
     uint generation;
 }

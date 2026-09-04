@@ -14,8 +14,7 @@ const Transform TRANSFORM_IDENTITY = {
 <*
  Position, rotation and scale of a node in its parent's space.
 *>
-struct Transform
-{
+struct Transform {
     Vec3 position;
     Quat rotation;
     Vec3 scale;
@@ -24,15 +23,13 @@ struct Transform
 <*
  Compose the transform into a model matrix.
 *>
-fn Mat4 Transform.to_mat4(self)
-{
+fn Mat4 Transform.to_mat4(self) {
     Mat4 translated = matrix::IDENTITY4.translate(self.position);
     Mat4 rotated = translated.mul(self.rotation.to_matrix());
     return rotated.scale(self.scale);
 }
 
-fn Mat3 inverse_upper3(Mat4 model) @private
-{
+fn Mat3 inverse_upper3(Mat4 model) @private {
     Vec3 column_x = { model.m00, model.m10, model.m20 };
     Vec3 column_y = { model.m01, model.m11, model.m21 };
     Vec3 column_z = { model.m02, model.m12, model.m22 };
@@ -57,8 +54,7 @@ fn Mat3 inverse_upper3(Mat4 model) @private
  Inverse of an affine matrix, for view and joint matrices.
  @require model.m30 == 0 && model.m31 == 0 && model.m32 == 0
 *>
-fn Mat4 inverse_affine(Mat4 model)
-{
+fn Mat4 inverse_affine(Mat4 model) {
     Mat3 rotation = inverse_upper3(model);
     Vec3 offset = { model.m03, model.m13, model.m23 };
 
@@ -77,8 +73,7 @@ fn Mat4 inverse_affine(Mat4 model)
 <*
  Matrix that keeps normals perpendicular under non-uniform scale.
 *>
-fn Mat3 normal_matrix(Mat4 model)
-{
+fn Mat3 normal_matrix(Mat4 model) {
     Mat3 inverse = inverse_upper3(model);
     return inverse.transpose();
 }
@@ -86,16 +81,14 @@ fn Mat3 normal_matrix(Mat4 model)
 <*
  Translation column of a matrix.
 *>
-fn Vec3 translation(Mat4 model)
-{
+fn Vec3 translation(Mat4 model) {
     return { model.m03, model.m13, model.m23 };
 }
 
 <*
  Apply the matrix to a point, including its translation.
 *>
-fn Vec3 transform_point(Mat4 model, Vec3 point)
-{
+fn Vec3 transform_point(Mat4 model, Vec3 point) {
     Vec4 result = model.apply({ point.x, point.y, point.z, 1 });
     return { result.x, result.y, result.z };
 }
@@ -103,8 +96,7 @@ fn Vec3 transform_point(Mat4 model, Vec3 point)
 <*
  Apply the matrix to a direction, ignoring its translation.
 *>
-fn Vec3 transform_dir(Mat4 model, Vec3 direction)
-{
+fn Vec3 transform_dir(Mat4 model, Vec3 direction) {
     Vec4 result = model.apply({ direction.x, direction.y, direction.z, 0 });
     return { result.x, result.y, result.z };
 }
@@ -113,8 +105,7 @@ fn Vec3 transform_dir(Mat4 model, Vec3 direction)
  Rotation whose forward axis points along the given direction.
  @require forward.length() > 0 && up.length() > 0
 *>
-fn Quat look_rotation(Vec3 forward, Vec3 up)
-{
+fn Quat look_rotation(Vec3 forward, Vec3 up) {
     Vec3 axis_z = -forward.normalize();
     Vec3 axis_x = up.cross(axis_z).normalize();
     Vec3 axis_y = axis_z.cross(axis_x);

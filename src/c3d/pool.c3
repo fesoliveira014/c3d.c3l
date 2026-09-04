@@ -5,8 +5,7 @@ import c3d;
 <*
  Fixed-capacity table of values addressed by generational ids.
 *>
-struct Pool
-{
+struct Pool {
     Allocator allocator;
     Type[]    items;
     uint[]    generations;
@@ -17,8 +16,7 @@ struct Pool
 <*
  Whether the id still addresses the value it was issued for.
 *>
-fn bool Pool.is_live(&self, IdType id)
-{
+fn bool Pool.is_live(&self, IdType id) {
     return id.index < self.items.len && self.generations[id.index] == id.generation;
 }
 
@@ -26,8 +24,7 @@ fn bool Pool.is_live(&self, IdType id)
  Store a value in a free slot and return its id.
  @return? c3d::CAPACITY_EXCEEDED
 *>
-fn IdType? Pool.add(&self, Type value)
-{
+fn IdType? Pool.add(&self, Type value) {
     if (!self.free_count) return c3d::CAPACITY_EXCEEDED~;
     self.free_count--;
     uint slot = self.free[self.free_count];
@@ -40,8 +37,7 @@ fn IdType? Pool.add(&self, Type value)
  Invalidated by a later add or remove on the same pool.
  @require self.is_live(id)
 *>
-fn Type* Pool.get(&self, IdType id)
-{
+fn Type* Pool.get(&self, IdType id) {
     return &self.items[id.index];
 }
 
@@ -50,8 +46,7 @@ fn Type* Pool.get(&self, IdType id)
  Invalidated by a later add or remove on the same pool.
  @return? c3d::INVALID_ID
 *>
-fn Type*? Pool.try_get(&self, IdType id)
-{
+fn Type*? Pool.try_get(&self, IdType id) {
     if (!self.is_live(id)) return c3d::INVALID_ID~;
     return &self.items[id.index];
 }
@@ -60,8 +55,7 @@ fn Type*? Pool.try_get(&self, IdType id)
  Release the slot and make every id to it stale.
  @require self.is_live(id)
 *>
-fn void Pool.remove(&self, IdType id)
-{
+fn void Pool.remove(&self, IdType id) {
     uint slot = id.index;
     self.generations[slot]++;
     // Generation 0 belongs to a zero-initialized Id, so a wrapped counter skips it.
@@ -74,8 +68,7 @@ fn void Pool.remove(&self, IdType id)
  Create a pool with a fixed slot capacity.
  @require capacity > 0
 *>
-fn Pool create_pool(Allocator allocator, uint capacity)
-{
+fn Pool create_pool(Allocator allocator, uint capacity) {
     Pool pool = {
         .allocator   = allocator,
         .items       = alloc::new_array(allocator, Type, capacity),
@@ -94,8 +87,7 @@ fn Pool create_pool(Allocator allocator, uint capacity)
  Free the pool's storage.
  @param [&inout] pool : "Left zeroed; every id to it is dead."
 *>
-fn void destroy_pool(Pool* pool)
-{
+fn void destroy_pool(Pool* pool) {
     alloc::free(pool.allocator, pool.items.ptr);
     alloc::free(pool.allocator, pool.generations.ptr);
     alloc::free(pool.allocator, pool.free.ptr);

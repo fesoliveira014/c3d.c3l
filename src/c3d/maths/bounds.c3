@@ -5,8 +5,7 @@ import std::math;
 <*
  Axis-aligned bounding box.
 *>
-struct Aabb
-{
+struct Aabb {
     Vec3 min;
     Vec3 max;
 }
@@ -14,8 +13,7 @@ struct Aabb
 <*
  Bounding sphere.
 *>
-struct Sphere
-{
+struct Sphere {
     Vec3  center;
     float radius;
 }
@@ -23,8 +21,7 @@ struct Sphere
 <*
  Half-line with an origin and a direction.
 *>
-struct Ray
-{
+struct Ray {
     Vec3 origin;
     Vec3 direction;
 }
@@ -32,8 +29,7 @@ struct Ray
 <*
  Smallest box containing both inputs.
 *>
-fn Aabb aabb_merge(Aabb first, Aabb second)
-{
+fn Aabb aabb_merge(Aabb first, Aabb second) {
     return {
         .min = math::min(first.min, second.min),
         .max = math::max(first.max, second.max),
@@ -43,8 +39,7 @@ fn Aabb aabb_merge(Aabb first, Aabb second)
 <*
  Smallest box containing every transformed corner of the input.
 *>
-fn Aabb aabb_transform(Aabb bounds, Mat4 model)
-{
+fn Aabb aabb_transform(Aabb bounds, Mat4 model) {
     Vec3 first = transform_point(model, bounds.min);
     Aabb result = { .min = first, .max = first };
 
@@ -65,8 +60,7 @@ fn Aabb aabb_transform(Aabb bounds, Mat4 model)
  Whether the ray meets the box, and how far along it.
  @param [&out] distance : "Entry distance; untouched when there is no hit."
 *>
-fn bool ray_intersects_aabb(Ray ray, Aabb bounds, float* distance)
-{
+fn bool ray_intersects_aabb(Ray ray, Aabb bounds, float* distance) {
     float entry = 0;
     float exit = math::FLOAT_MAX;
 
