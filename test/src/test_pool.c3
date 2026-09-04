@@ -1,16 +1,16 @@
-module c3d_pool_test;
+module c3d::test::pool;
 
 import c3d;
 import c3d::pool;
 
-struct Sample
+struct Sample @local
 {
     int value;
 }
 
-typedef SampleId = Id;
+typedef SampleId @local = Id;
 
-alias SamplePool = Pool{Sample, SampleId};
+alias SamplePool @local = Pool{Sample, SampleId};
 
 fn SamplePool make_pool(uint capacity) @local
 {

@@ -36,7 +36,8 @@ fn Frustum frustum_from_view_proj(Mat4 view_proj)
     Vec4 row_z = { view_proj.m20, view_proj.m21, view_proj.m22, view_proj.m23 };
     Vec4 row_w = { view_proj.m30, view_proj.m31, view_proj.m32, view_proj.m33 };
 
-    // Depth is reverse-Z, so the row that gives near under a [0, 1] mapping gives far here.
+    // Reverse-Z renames these two rather than changing them: [0, 1] depth clips on both
+    // z and w - z either way, so the set is the same and only near and far trade places.
     return {
         .planes = {
             normalized_plane(row_w + row_x),
@@ -51,6 +52,7 @@ fn Frustum frustum_from_view_proj(Mat4 view_proj)
 
 <*
  Whether any part of the box lies inside the frustum.
+ @param [&in] frustum : "Read only; a straddling box counts as inside."
 *>
 fn bool frustum_intersects_aabb(Frustum* frustum, Aabb bounds)
 {

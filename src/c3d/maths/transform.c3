@@ -3,6 +3,15 @@ module c3d::maths;
 import std::math;
 
 <*
+ Transform that leaves every point where it is.
+*>
+const Transform TRANSFORM_IDENTITY = {
+    .position = { 0, 0, 0 },
+    .rotation = quaternion::IDENTITY,
+    .scale    = { 1, 1, 1 },
+};
+
+<*
  Position, rotation and scale of a node in its parent's space.
 *>
 struct Transform
@@ -11,15 +20,6 @@ struct Transform
     Quat rotation;
     Vec3 scale;
 }
-
-<*
- Transform that leaves every point where it is.
-*>
-const Transform TRANSFORM_IDENTITY = {
-    .position = { 0, 0, 0 },
-    .rotation = { 0, 0, 0, 1 },
-    .scale    = { 1, 1, 1 },
-};
 
 <*
  Compose the transform into a model matrix.
@@ -122,36 +122,36 @@ fn Quat look_rotation(Vec3 forward, Vec3 up)
     float trace = axis_x.x + axis_y.y + axis_z.z;
     if (trace > 0) {
         float scale = math::sqrt(trace + 1.0f) * 2.0f;
-        return {
+        return { .v = {
             (axis_y.z - axis_z.y) / scale,
             (axis_z.x - axis_x.z) / scale,
             (axis_x.y - axis_y.x) / scale,
             0.25f * scale,
-        };
+        } };
     }
     if (axis_x.x > axis_y.y && axis_x.x > axis_z.z) {
         float scale = math::sqrt(1.0f + axis_x.x - axis_y.y - axis_z.z) * 2.0f;
-        return {
+        return { .v = {
             0.25f * scale,
             (axis_y.x + axis_x.y) / scale,
             (axis_z.x + axis_x.z) / scale,
             (axis_y.z - axis_z.y) / scale,
-        };
+        } };
     }
     if (axis_y.y > axis_z.z) {
         float scale = math::sqrt(1.0f + axis_y.y - axis_x.x - axis_z.z) * 2.0f;
-        return {
+        return { .v = {
             (axis_y.x + axis_x.y) / scale,
             0.25f * scale,
             (axis_z.y + axis_y.z) / scale,
             (axis_z.x - axis_x.z) / scale,
-        };
+        } };
     }
     float scale = math::sqrt(1.0f + axis_z.z - axis_x.x - axis_y.y) * 2.0f;
-    return {
+    return { .v = {
         (axis_z.x + axis_x.z) / scale,
         (axis_z.y + axis_y.z) / scale,
         0.25f * scale,
         (axis_x.y - axis_y.x) / scale,
-    };
+    } };
 }

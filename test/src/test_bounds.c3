@@ -1,16 +1,16 @@
-module c3d_bounds_test;
+module c3d::test::bounds;
 
 import c3d::maths;
 import std::math;
 
-const float TOLERANCE = 0.0005f;
+const float TOLERANCE @local = 0.0005f;
 
-fn Aabb point_box(Vec3 point)
+fn Aabb point_box(Vec3 point) @local
 {
     return { .min = point, .max = point };
 }
 
-fn Frustum default_frustum()
+fn Frustum default_frustum() @local
 {
     Mat4 view = matrix::look_at{float}({ 0, 0, 0 }, { 0, 0, -1 }, { 0, 1, 0 });
     Mat4 projection = maths::perspective_reverse_z(

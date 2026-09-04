@@ -1,17 +1,17 @@
-module c3d_projection_test;
+module c3d::test::projection;
 
 import c3d::maths;
 import std::math;
 
-const float TOLERANCE = 0.0005f;
+const float TOLERANCE @local = 0.0005f;
 
-fn float depth_at(Mat4 projection, float distance)
+fn float depth_at(Mat4 projection, float distance) @local
 {
     Vec4 clip = projection.apply({ 0, 0, -distance, 1 });
     return clip.z / clip.w;
 }
 
-fn Mat4 finite_perspective()
+fn Mat4 finite_perspective() @local
 {
     return maths::perspective_reverse_z(
         fov_y:  math::PI / 3,

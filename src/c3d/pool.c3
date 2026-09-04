@@ -92,6 +92,7 @@ fn Pool create_pool(Allocator allocator, uint capacity)
 
 <*
  Free the pool's storage.
+ @param [&inout] pool : "Left zeroed; every id to it is dead."
 *>
 fn void destroy_pool(Pool* pool)
 {

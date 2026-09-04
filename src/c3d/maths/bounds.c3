@@ -80,16 +80,16 @@ fn bool ray_intersects_aabb(Ray ray, Aabb bounds, float* distance)
             if (origin < slab_min || origin > slab_max) return false;
             continue;
         }
-        float inverse = 1.0f / direction;
-        float first = (slab_min - origin) * inverse;
-        float second = (slab_max - origin) * inverse;
-        if (first > second) {
-            float swap = first;
-            first = second;
-            second = swap;
+        float inverse_direction = 1.0f / direction;
+        float slab_entry = (slab_min - origin) * inverse_direction;
+        float slab_exit = (slab_max - origin) * inverse_direction;
+        if (slab_entry > slab_exit) {
+            float crossed = slab_entry;
+            slab_entry = slab_exit;
+            slab_exit = crossed;
         }
-        if (first > entry) entry = first;
-        if (second < exit) exit = second;
+        if (slab_entry > entry) entry = slab_entry;
+        if (slab_exit < exit) exit = slab_exit;
         if (entry > exit) return false;
     }
 

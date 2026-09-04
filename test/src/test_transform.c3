@@ -1,21 +1,21 @@
-module c3d_transform_test;
+module c3d::test::transform;
 
 import c3d::maths;
 import std::math;
 
-const float TOLERANCE = 0.0005f;
+const float TOLERANCE @local = 0.0005f;
 
-fn bool close(float first, float second)
+fn bool close(float first, float second) @local
 {
     return math::abs(first - second) <= TOLERANCE;
 }
 
-fn bool close_vec3(Vec3 first, Vec3 second)
+fn bool close_vec3(Vec3 first, Vec3 second) @local
 {
     return close(first.x, second.x) && close(first.y, second.y) && close(first.z, second.z);
 }
 
-fn bool close_mat4(Mat4 first, Mat4 second)
+fn bool close_mat4(Mat4 first, Mat4 second) @local
 {
     for (usz index = 0; index < 16; index++) {
         if (!close(first.m[index], second.m[index])) return false;
