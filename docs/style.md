@@ -8,8 +8,9 @@ C3 0.8.3. C3 is pre-1.0; check syntax against the installed compiler and the `c3
 
 | Module | Contents |
 | --- | --- |
-| `module c3d;` | Ids, `Pool`, root faults. `src/c3d/types.c3`, `src/c3d/faults.c3`, `src/c3d/pool.c3`. |
-| `module c3d::<area>;` | One directory per architecture module: `math`, `ecs`, `asset`, `scene`, `geometry`, `camera`, `material`, `light`, `anim`, `physics`, `platform`, `render`, `shader`, `post`, `rt`, `gui`. Public declarations in `<area>.c3i` where an interface file helps; otherwise one `.c3` per topic. |
+| `module c3d;` | Ids and root faults. `src/c3d/types.c3`, `src/c3d/faults.c3`. |
+| `module c3d::pool <Type, IdType>;` | The generic pool, `src/c3d/pool.c3`. A generic module rather than a generic struct, because C3 rejects methods on a generic struct declared in a non-generic module. |
+| `module c3d::<area>;` | One directory per architecture module: `maths`, `ecs`, `asset`, `scene`, `geometry`, `camera`, `material`, `light`, `anim`, `physics`, `platform`, `render`, `shader`, `post`, `rt`, `gui`. Public declarations in `<area>.c3i` where an interface file helps; otherwise one `.c3` per topic. |
 | `module c3d::<area>::<sub>;` | Submodules named in the architecture: `asset::gltf`, `asset::fbx`, `asset::image`, `anim::ik`, `anim::retarget`, `gui::backend`, `ecs::store`. |
 | `module c3d::<area>::internal @private;` | Implementation that must not be visible outside the area. Use only when a symbol would otherwise leak into the public surface. |
 
@@ -79,7 +80,7 @@ return CAPACITY_EXCEEDED~;
 
 # 8. Handles and ids
 
-Use the typed id: `GeometryId geometry`, not `uint geometry`; `gpu::TextureHandle texture`, not `ulong texture`. Ids are generational; a stale id resolves to nothing. Conversion between a distinct id type and `Id` is an explicit cast at the pool boundary and nowhere else.
+Use the typed id: `GeometryId geometry`, not `uint geometry`; `gpu::TextureHandle texture`, not `ulong texture`. Ids are generational distinct typedefs of `Id` (never `inline`); a stale id resolves to nothing. Every pool is `Pool{Type, IdType}` and takes only its own id type; `Id` and an id type meet only inside `pool.c3`, and no cast between them appears anywhere else.
 
 # 9. Call formatting
 
