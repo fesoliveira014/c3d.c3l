@@ -78,7 +78,7 @@ Project refinements:
 - **Names are descriptive.** `Renderer renderer`, `AssetStore assets`, `GeometryId geometry_id`. Single letters only for loop counters and coordinate math in scopes under ten lines. No abbreviations that are not already in the architecture vocabulary (`rt`, `gpu`, `uv`, `sh`, `ik` are vocabulary; `r`, `mgr`, `ctx`, `tmp` are not).
 - **Contracts are the precondition mechanism.** A precondition that only a programming error can violate is a `@require` in the docstring, not a runtime branch. An operational failure (input data, capacity, I/O, device, a dead id at an API entry point) returns a named fault. Runtime `assert` appears only under `test/`. `$assert` layout pins are required on every ABI-visible struct.
 - **Happy path.** No defensive checks on internal paths. A function trusts its contract and the invariants of the structs it receives. `try_get` exists at API entry points; inside the renderer, `get` with a contract.
-- **Ids and vector aliases** live in `src/c3d/types.c3`. Faults for the root module live in `src/c3d/faults.c3`; a module with its own faults has its own `faults.c3`.
+- **Ids** live in `src/c3d/types.c3`; `std::math` supplies the vector, matrix and quaternion types, and c3d declares no aliases for them. Faults for the root module live in `src/c3d/faults.c3`; a module with its own faults has its own `faults.c3`.
 - **Ownership.** Free functions `create_x` and `destroy_x` own project resources. `X` owns, `XView` borrows, views have no destructor. GPU objects live only in `c3d::render` mirrors; the store owns CPU assets; the scene owns nodes.
 - **Interfaces** only at user extension points named in the architecture. Everything hot is enums with `switch` or component stores.
 - **Tunable constants** state their why and cost in a trailing comment: `const uint MAX_LIGHTS = 256; // 16 KiB per frame in the ring; the flat light loop's cost lever`.
@@ -181,8 +181,9 @@ c3d.c3l/
 ├── linked-libs/            empty; every dependency ships its own native artifacts
 ├── csrc/                   stb_image · ufbx
 ├── src/c3d/
-│   ├── types.c3            ids and vector aliases
+│   ├── types.c3            ids
 │   ├── faults.c3           root-module faults
+│   ├── pool.c3             the generic pool, module c3d::pool <Type, IdType>
 │   ├── math/  ecs/  asset/  scene/  geometry/  camera/  material/  light/  anim/  physics/
 │   ├── platform/           the only sdl importer
 │   ├── render/  shader/  post/  rt/                the gpu importers
