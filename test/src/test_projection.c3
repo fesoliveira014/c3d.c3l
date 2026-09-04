@@ -1,6 +1,6 @@
 module c3d_projection_test;
 
-import c3d::math;
+import c3d::maths;
 import std::math;
 
 const float TOLERANCE = 0.0005f;
@@ -13,7 +13,7 @@ fn float depth_at(Mat4 projection, float distance)
 
 fn Mat4 finite_perspective()
 {
-    return math::perspective_reverse_z(
+    return maths::perspective_reverse_z(
         fov_y:  math::PI / 3,
         aspect: 1.0f,
         near:   0.1f,
@@ -44,7 +44,7 @@ fn void test_perspective_depth_is_monotonic() @test
 
 fn void test_infinite_perspective_maps_near_to_one() @test
 {
-    Mat4 projection = math::perspective_reverse_z(
+    Mat4 projection = maths::perspective_reverse_z(
         fov_y:  math::PI / 3,
         aspect: 1.6f,
         near:   0.05f,
@@ -54,7 +54,7 @@ fn void test_infinite_perspective_maps_near_to_one() @test
 
 fn void test_infinite_perspective_approaches_zero() @test
 {
-    Mat4 projection = math::perspective_reverse_z(
+    Mat4 projection = maths::perspective_reverse_z(
         fov_y:  math::PI / 3,
         aspect: 1.6f,
         near:   0.05f,
@@ -65,7 +65,7 @@ fn void test_infinite_perspective_approaches_zero() @test
 
 fn void test_orthographic_maps_near_and_far() @test
 {
-    Mat4 projection = math::orthographic_reverse_z(
+    Mat4 projection = maths::orthographic_reverse_z(
         left:   -10.0f,
         right:  10.0f,
         bottom: -5.0f,

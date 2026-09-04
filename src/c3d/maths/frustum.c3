@@ -1,4 +1,4 @@
-module c3d::math;
+module c3d::maths;
 
 import std::math;
 

@@ -153,7 +153,7 @@ Counter-example, rejected on review:
 
 # 10. Architecture rules
 
-- Two layers. Scene-layer modules (`c3d`, `c3d::math`, `c3d::ecs`, `c3d::asset`, `c3d::scene`, `c3d::geometry`, `c3d::camera`, `c3d::material`, `c3d::light`, `c3d::anim`, `c3d::physics`) never import `gpu`. The render layer (`c3d::render`, `c3d::shader`, `c3d::post`, `c3d::rt`, `c3d::gui`) owns every GPU object.
+- Two layers. Scene-layer modules (`c3d`, `c3d::maths`, `c3d::ecs`, `c3d::asset`, `c3d::scene`, `c3d::geometry`, `c3d::camera`, `c3d::material`, `c3d::light`, `c3d::anim`, `c3d::physics`) never import `gpu`. The render layer (`c3d::render`, `c3d::shader`, `c3d::post`, `c3d::rt`, `c3d::gui`) owns every GPU object.
 - The renderer reads the scene; the scene never calls the renderer. Loaders write the asset store and the scene; they never touch the renderer.
 - All shader-visible data is std430 behind root pointers and defined once in `abi/c3d.abi`. Per-draw push data is exactly two root addresses.
 - Depth is reverse-Z; the Vulkan Y flip is one negative-height viewport; shaders use GL conventions and never flip.
@@ -184,7 +184,7 @@ c3d.c3l/
 │   ├── types.c3            ids
 │   ├── faults.c3           root-module faults
 │   ├── pool.c3             the generic pool, module c3d::pool <Type, IdType>
-│   ├── math/  ecs/  asset/  scene/  geometry/  camera/  material/  light/  anim/  physics/
+│   ├── maths/ ecs/  asset/  scene/  geometry/  camera/  material/  light/  anim/  physics/
 │   ├── platform/           the only sdl importer
 │   ├── render/  shader/  post/  rt/                the gpu importers
 │   └── gui/                the only imgui importer; gui/backend imports gpu

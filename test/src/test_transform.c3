@@ -1,6 +1,6 @@
 module c3d_transform_test;
 
-import c3d::math;
+import c3d::maths;
 import std::math;
 
 const float TOLERANCE = 0.0005f;
@@ -25,7 +25,7 @@ fn bool close_mat4(Mat4 first, Mat4 second)
 
 fn void test_identity_transform_is_identity_matrix() @test
 {
-    assert(close_mat4(math::TRANSFORM_IDENTITY.to_mat4(), matrix::IDENTITY4));
+    assert(close_mat4(maths::TRANSFORM_IDENTITY.to_mat4(), matrix::IDENTITY4));
 }
 
 fn void test_to_mat4_places_translation() @test
@@ -35,7 +35,7 @@ fn void test_to_mat4_places_translation() @test
         .rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, math::PI / 4),
         .scale    = { 2, 2, 2 },
     };
-    assert(close_vec3(math::translation(transform.to_mat4()), { 1, 2, 3 }));
+    assert(close_vec3(maths::translation(transform.to_mat4()), { 1, 2, 3 }));
 }
 
 fn void test_to_mat4_scales_before_rotating() @test
@@ -46,7 +46,7 @@ fn void test_to_mat4_scales_before_rotating() @test
         .scale    = { 2, 1, 1 },
     };
     // Scale then rotate then translate sends +X to -Z, so the doubled x lands on z.
-    Vec3 moved = math::transform_point(transform.to_mat4(), { 1, 0, 0 });
+    Vec3 moved = maths::transform_point(transform.to_mat4(), { 1, 0, 0 });
     assert(close_vec3(moved, { 1, 2, 1 }), "composition order is not translate, rotate, scale");
 }
 
@@ -73,7 +73,7 @@ fn void test_inverse_affine_matches_general_inverse() @test
     foreach (transform : cases) {
         Mat4 model = transform.to_mat4();
         Mat4 general = model.inverse()!!;
-        assert(close_mat4(math::inverse_affine(model), general));
+        assert(close_mat4(maths::inverse_affine(model), general));
     }
 }
 
@@ -87,8 +87,8 @@ fn void test_inverse_affine_round_trips_a_point() @test
     Mat4 model = transform.to_mat4();
     Vec3 point = { 1, 2, 3 };
 
-    Vec3 there = math::transform_point(model, point);
-    Vec3 back = math::transform_point(math::inverse_affine(model), there);
+    Vec3 there = maths::transform_point(model, point);
+    Vec3 back = maths::transform_point(maths::inverse_affine(model), there);
     assert(close_vec3(back, point));
 }
 
@@ -104,8 +104,8 @@ fn void test_normal_matrix_keeps_normals_perpendicular() @test
     Vec3 tangent = { 1, 0, 0 };
     Vec3 normal = { 0, 1, 0 };
 
-    Vec3 moved_tangent = math::transform_dir(model, tangent);
-    Mat3 normals = math::normal_matrix(model);
+    Vec3 moved_tangent = maths::transform_dir(model, tangent);
+    Mat3 normals = maths::normal_matrix(model);
     Vec3 moved_normal = normals.apply(normal);
 
     assert(close(moved_tangent.normalize().dot(moved_normal.normalize()), 0));
@@ -114,7 +114,7 @@ fn void test_normal_matrix_keeps_normals_perpendicular() @test
 fn void test_look_rotation_faces_the_target() @test
 {
     Vec3 forward = { 1, -2, 3 };
-    Quat rotation = math::look_rotation(forward, { 0, 1, 0 });
+    Quat rotation = maths::look_rotation(forward, { 0, 1, 0 });
     Vec3 pointed = rotation * (Vec3){ 0, 0, -1 };
     assert(close_vec3(pointed, forward.normalize()));
 }
