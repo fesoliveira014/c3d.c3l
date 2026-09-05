@@ -27,22 +27,54 @@ fn void test_quit_event_stops_the_loop() @test {
     assert(window.apply_event(&&window_event(sdl::EventType.WINDOW_RESTORED)));
 }
 
-fn void test_resize_events_set_resized() @test {
-    platform::Window window;
-    assert(window.apply_event(&&window_event(sdl::EventType.WINDOW_RESIZED)));
-    assert(window.resized);
+fn void test_resize_notifications_report_changed_pixels_once() @test {
+    platform::Window window = { .width = 100, .height = 100 };
+    sdl::Event event = window_event(sdl::EventType.WINDOW_RESIZED);
+    event.window.data1 = 200;
+    event.window.data2 = 150;
+    window.apply_event(&event);
+    assert(!window.resized && window.width == 100 && window.height == 100);
 
+    event.window.type = sdl::EventType.WINDOW_PIXEL_SIZE_CHANGED;
+    window.apply_event(&event);
+    assert(window.resized);
+    assert(window.width == 200 && window.height == 150);
+
+    window.apply_event(&event);
+    assert(window.resized, "an unhandled resize stays pending");
     window.resized = false;
-    assert(window.apply_event(&&window_event(sdl::EventType.WINDOW_PIXEL_SIZE_CHANGED)));
-    assert(window.resized);
+    window.input.begin_frame();
+    window.apply_event(&event);
+    assert(!window.resized, "unchanged pixels must not trigger another resize");
 
-    // Both arriving for one change still describes one change.
-    window.apply_event(&&window_event(sdl::EventType.WINDOW_RESIZED));
-    assert(window.resized);
+    event.window.data1 = 300;
+    window.apply_event(&event);
+    assert(window.resized && window.width == 300);
+}
 
-    window.resized = false;
-    window.apply_event(&&window_event(sdl::EventType.WINDOW_RESTORED));
-    assert(!window.resized, "an unrelated event must not report a resize");
+fn void test_foreign_window_events_do_not_change_input() @test {
+    platform::Window window = { .window_id = (sdl::WindowID)1, .pixel_density = 1 };
+    sdl::Event event = key_event(sdl::EventType.KEY_DOWN, sdl::Scancode.A);
+    event.key.window_id = (sdl::WindowID)2;
+    window.apply_event(&event);
+    assert(!window.input.keys[(usz)sdl::Scancode.A]);
+    event.key.window_id = (sdl::WindowID)1;
+    window.apply_event(&event);
+    assert(window.input.keys_pressed[(usz)sdl::Scancode.A]);
+
+    event = window_event(sdl::EventType.WINDOW_MINIMIZED);
+    event.window.window_id = (sdl::WindowID)2;
+    window.apply_event(&event);
+    assert(!window.minimized);
+
+    event.motion.type = sdl::EventType.MOUSE_MOTION;
+    event.motion.window_id = (sdl::WindowID)2;
+    event.motion.x = 40;
+    event.motion.y = 25;
+    event.motion.xrel = 4;
+    event.motion.yrel = -3;
+    window.apply_event(&event);
+    assert(window.input.mouse_position.x == 0 && window.input.mouse_delta.x == 0);
 }
 
 fn void test_minimize_and_restore_track() @test {
@@ -82,14 +114,17 @@ fn void test_key_up_releases() @test {
 }
 
 fn void test_mouse_button_and_position_track() @test {
-    platform::Window window;
+    platform::Window window = { .pixel_density = 1 };
 
     sdl::Event press;
     press.button.type = sdl::EventType.MOUSE_BUTTON_DOWN;
     press.button.button = 1;
     press.button.down = true;
+    press.button.x = 40;
+    press.button.y = 25;
     window.apply_event(&press);
     assert(window.input.mouse_buttons[1]);
+    assert(window.input.mouse_position.x == 40 && window.input.mouse_position.y == 25);
 
     sdl::Event release = press;
     release.button.type = sdl::EventType.MOUSE_BUTTON_UP;
@@ -110,7 +145,7 @@ fn void test_mouse_button_and_position_track() @test {
 }
 
 fn void test_mouse_delta_and_wheel_clear_each_frame() @test {
-    platform::Window window;
+    platform::Window window = { .pixel_density = 1 };
 
     sdl::Event motion;
     motion.motion.type = sdl::EventType.MOUSE_MOTION;
@@ -148,4 +183,26 @@ fn void test_clock_advance_computes_delta() @test {
     assert(math::abs((float)clock.total - 1.0f) <= TOLERANCE);
     assert(clock.frame == 2);
     assert(clock.counter == 2000);
+}
+
+fn void test_mouse_coordinates_use_framebuffer_pixels() @test {
+    platform::Window window = { .pixel_density = 2 };
+    sdl::Event motion;
+    motion.motion.type = sdl::EventType.MOUSE_MOTION;
+    motion.motion.x = 40;
+    motion.motion.y = 25;
+    motion.motion.xrel = 4;
+    motion.motion.yrel = -3;
+    window.apply_event(&motion);
+    assert(window.input.mouse_position.x == 80 && window.input.mouse_position.y == 50);
+    assert(window.input.mouse_delta.x == 8 && window.input.mouse_delta.y == -6);
+
+    sdl::Event press;
+    press.button.type = sdl::EventType.MOUSE_BUTTON_DOWN;
+    press.button.button = 1;
+    press.button.down = true;
+    press.button.x = 50;
+    press.button.y = 30;
+    window.apply_event(&press);
+    assert(window.input.mouse_position.x == 100 && window.input.mouse_position.y == 60);
 }

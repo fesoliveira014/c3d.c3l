@@ -9,7 +9,11 @@ import sdl;
 <*
  Create a gpu surface from the window's native handles.
  @param [&in] window : "Must outlive the surface."
- @return? c3d::UNSUPPORTED
+ @param [&inout] runtime : "Runtime owning the returned surface."
+ @return? c3d::UNSUPPORTED, gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE
+ @return? gpu::INVALID_RESOURCE_STATE, gpu::SLOT_TABLE_FULL, gpu::UNSUPPORTED_FEATURE
+ @return? gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY, gpu::DEVICE_LOST
+ @return? gpu::SURFACE_LOST, gpu::BACKEND_ERROR
 *>
 fn gpu::Surface? create_surface(Window* window, gpu::Runtime* runtime) {
     sdl::PropertiesID properties = sdl::get_window_properties(window.handle);
