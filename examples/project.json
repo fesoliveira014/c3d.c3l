@@ -30,6 +30,12 @@
       "sources": [
         "src/hello.c3"
       ]
+    },
+    "window": {
+      "type": "executable",
+      "sources": [
+        "src/window.c3"
+      ]
     }
   }
 }

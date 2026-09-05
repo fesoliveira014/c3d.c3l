@@ -169,7 +169,7 @@ Code and shipped documentation describe current behavior. No schedules, roadmap 
 
 # 15. Public signature hygiene
 
-Public `c3d` signatures never contain `gpu::`, `sdl::`, `imgui::`, `cg::`, `b3::`, or C-binding types except where the architecture names an escape hatch: `PhysicsWorld.world` (a `b3::WorldId`), `PhysicsWorld.body` (a `b3::BodyId`), custom-shader SPIR-V, and the `gpu::GpuAddress` values a custom material root receives. Scene-layer modules never import `gpu`.
+Public `c3d` signatures never contain `gpu::`, `sdl::`, `imgui::`, `cg::`, `b3::`, or C-binding types except where the architecture names an escape hatch: `PhysicsWorld.world` (a `b3::WorldId`), `PhysicsWorld.body` (a `b3::BodyId`), custom-shader SPIR-V, the `gpu::GpuAddress` values a custom material root receives, and `c3d::platform`, whose `sdl::Window*` and `sdl::Event*` are exposed on purpose so an application can drive its own SDL loop. Scene-layer modules never import `gpu`.
 
 # 16. Shaders
 
