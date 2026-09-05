@@ -112,3 +112,28 @@ fn void test_look_rotation_faces_the_target() @test {
 fn void test_mat4_is_64_bytes() @test {
     assert(Mat4::size == 64, "every GPU root struct assumes a 64-byte Mat4");
 }
+
+fn void test_to_mat4_decomposes_back() @test {
+    Transform transform = {
+        .position = { 3, -1, 4 },
+        .rotation = quaternion::from_euler{float}(0.2f, 0.9f, -0.4f),
+        .scale    = { 2, 0.5f, 1.25f },
+    };
+    Mat4 model = transform.to_mat4();
+
+    Vec3 column_x = { model.m00, model.m10, model.m20 };
+    Vec3 column_y = { model.m01, model.m11, model.m21 };
+    Vec3 column_z = { model.m02, model.m12, model.m22 };
+
+    assert(close_vec3(maths::translation(model), transform.position));
+    assert(close(column_x.length(), transform.scale.x));
+    assert(close(column_y.length(), transform.scale.y));
+    assert(close(column_z.length(), transform.scale.z));
+
+    // Dividing the scale out of the columns leaves the rotation the quaternion describes.
+    Vec3 point = { 0.3f, -0.7f, 0.55f };
+    Vec3 by_columns = column_x.normalize() * point.x
+                    + column_y.normalize() * point.y
+                    + column_z.normalize() * point.z;
+    assert(close_vec3(by_columns, transform.rotation * point));
+}
