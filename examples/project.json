@@ -22,7 +22,7 @@
     "C3D_RAY_TRACING",
     "C3D_STB_IMAGE"
   ],
-  "wincrt": "dynamic",
+  "wincrt": "static",
   "output": "build",
   "targets": {
     "hello": {

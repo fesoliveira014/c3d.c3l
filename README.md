@@ -4,7 +4,7 @@ A scene-level 3D rendering library for [C3](https://c3-lang.org/): an ECS scene,
 animation, and asset import, on top of Vulkan 1.3 through gpu.c3l. Not a game engine; a base
 for one.
 
-Target platform is linux-x64. C3 0.8.3 exactly.
+Target platforms are linux-x64 and windows-x64. C3 0.8.3 exactly.
 
 ## Prerequisites
 
@@ -64,6 +64,22 @@ sudo ldconfig
 
 `.deps/` is gitignored. Installing into the default prefix is what lets the linker find `SDL3`
 without extra link arguments; a private prefix needs a `-L` in `examples/project.json`.
+
+### Windows
+
+Install Visual Studio with the C++ desktop tools, CMake, Ninja, and Git for Windows. The native
+Box3D build uses Git Bash and locates MSVC through `vswhere`. From PowerShell, make Git's shell
+available for the current process before initializing dependencies:
+
+```powershell
+$env:PATH = 'C:\Program Files\Git\bin;' + $env:PATH
+python scripts/build.py --init-deps --test
+```
+
+Box3D produces `lib/box3d.c3l/linked-libs/windows-x64/box3d.lib`. Windows consumers use
+`"wincrt": "static"` to match that archive; the c3d manifest and bundled projects select it.
+The pinned SDL3 binding ships its Windows library, so the Linux SDL3 installation steps above
+do not apply. Keep `glslangValidator` from the Vulkan SDK on PATH.
 
 ## Build, test, run
 
