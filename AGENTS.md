@@ -11,7 +11,7 @@ Entry point for every agent session in this repository. Read it fully before rea
 
 | Library | Module | Imported only by |
 | --- | --- | --- |
-| gpu.c3l | `gpu` | `c3d::render`, `c3d::shader`, `c3d::post`, `c3d::rt`, `c3d::gui::backend` |
+| gpu.c3l | `gpu` | `c3d::render`, `c3d::shader`, `c3d::post`, `c3d::rt`, `c3d::gui::backend`; `c3d::platform` may import `gpu::surface` only |
 | sdl3.c3l | `sdl` | `c3d::platform` |
 | c3imgui.c3l | `imgui` | `c3d::gui` |
 | c3cg.c3l | `cg` | `c3d::geometry` |
@@ -153,7 +153,7 @@ Counter-example, rejected on review:
 
 # 10. Architecture rules
 
-- Two layers. Scene-layer modules (`c3d`, `c3d::maths`, `c3d::ecs`, `c3d::asset`, `c3d::scene`, `c3d::geometry`, `c3d::camera`, `c3d::material`, `c3d::light`, `c3d::anim`, `c3d::physics`) never import `gpu`. The render layer (`c3d::render`, `c3d::shader`, `c3d::post`, `c3d::rt`, `c3d::gui`) owns every GPU object.
+- Two layers. Scene-layer modules (`c3d`, `c3d::maths`, `c3d::ecs`, `c3d::asset`, `c3d::scene`, `c3d::geometry`, `c3d::camera`, `c3d::material`, `c3d::light`, `c3d::anim`, `c3d::physics`) never import `gpu`. The render layer (`c3d::render`, `c3d::shader`, `c3d::post`, `c3d::rt`, `c3d::gui`) owns every GPU object. `c3d::platform` imports `gpu::surface` alone, to hand native window handles to gpu.c3l; a bare `import gpu` there is a violation.
 - The renderer reads the scene; the scene never calls the renderer. Loaders write the asset store and the scene; they never touch the renderer.
 - All shader-visible data is std430 behind root pointers and defined once in `abi/c3d.abi`. Per-draw push data is exactly two root addresses.
 - Depth is reverse-Z; the Vulkan Y flip is one negative-height viewport; shaders use GL conventions and never flip.

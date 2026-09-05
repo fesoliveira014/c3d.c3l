@@ -42,6 +42,12 @@ IMPORT_BOUNDARIES = {
     "b3": ("physics",),
 }
 
+# Directories allowed one named submodule of a boundary module but not the module itself:
+# c3d::platform bridges an SDL window to a gpu surface and touches nothing else in gpu.
+SUBMODULE_BOUNDARIES = {
+    "gpu": {"platform": "surface"},
+}
+
 EXIT_BUILD_FAILED = 1
 EXIT_USAGE = 2
 
@@ -186,8 +192,15 @@ def step_boundaries(options: Options) -> None:
         top_directory = relative.parts[0] if len(relative.parts) > 1 else ""
         text = source.read_text(encoding="utf-8")
         for module, allowed in IMPORT_BOUNDARIES.items():
-            if re.search(rf"^\s*import\s+{module}\b", text, re.MULTILINE) and top_directory not in allowed:
-                violations.append(f"{relative}: imports {module}")
+            if top_directory in allowed:
+                continue
+            permitted = SUBMODULE_BOUNDARIES.get(module, {}).get(top_directory)
+            for match in re.finditer(rf"^\s*import\s+{module}(?:::(?P<submodule>\w+))?\b", text, re.MULTILINE):
+                submodule = match.group("submodule")
+                if submodule is not None and submodule == permitted:
+                    continue
+                imported = f"{module}::{submodule}" if submodule else module
+                violations.append(f"{relative}: imports {imported}")
     if violations:
         raise BuildError("import boundary violations:\n  " + "\n  ".join(violations))
 
