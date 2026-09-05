@@ -9,6 +9,7 @@
       "linked-libraries": []
     },
     "windows-x64": {
+      "wincrt": "static",
       "link-args": [],
       "dependencies": [ "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "b3" ],
       "linked-libraries": []
