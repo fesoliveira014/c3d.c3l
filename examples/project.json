@@ -36,6 +36,12 @@
       "sources": [
         "src/window.c3"
       ]
+    },
+    "clear": {
+      "type": "executable",
+      "sources": [
+        "src/clear.c3"
+      ]
     }
   }
 }
