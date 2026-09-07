@@ -1,6 +1,7 @@
 module c3d::test::render;
 
 import c3d::render;
+import c3d::shader;
 import gpu;
 import std::io;
 
@@ -155,4 +156,53 @@ fn void test_routine_faults_are_still_recorded_in_the_log() @test {
     render::DebugEntry[1] recent;
     assert(log.recent(recent[..]) == 1);
     assert(recent[0].public_fault == gpu::SWAPCHAIN_OUT_OF_DATE);
+}
+
+fn void test_flipped_viewport_covers_the_area_upside_down() @test {
+    gpu::Viewport viewport = render::flipped_viewport(1280, 720);
+    assert(viewport.x == 0.0f);
+    assert(viewport.y == 720.0f);
+    assert(viewport.width == 1280.0f);
+    assert(viewport.height == -720.0f);
+    assert(viewport.min_depth == 0.0f);
+    assert(viewport.max_depth == 1.0f);
+}
+
+fn render::PipelineKey gradient_key() @local {
+    return {
+        .vertex        = { .shader = shader::ShaderName.FULLSCREEN },
+        .fragment      = { .shader = shader::ShaderName.GRADIENT },
+        .color_formats = { [0] = gpu::Format.RGBA16_FLOAT },
+        .color_count   = 1,
+        .depth_format  = gpu::Format.UNDEFINED,
+        .samples       = gpu::SampleCount.ONE,
+        .polygon       = gpu::PolygonMode.FILL,
+    };
+}
+
+fn void test_pipeline_keys_with_equal_fields_match() @test {
+    render::PipelineKey first = gradient_key();
+    render::PipelineKey second = gradient_key();
+    assert(first.equals(second));
+    assert(first.hash() == second.hash());
+}
+
+fn void test_pipeline_key_differs_by_any_field() @test {
+    render::PipelineKey base = gradient_key();
+
+    render::PipelineKey other_fragment = gradient_key();
+    other_fragment.fragment = { .shader = shader::ShaderName.COMPOSITE };
+    assert(!base.equals(other_fragment));
+
+    render::PipelineKey other_format = gradient_key();
+    other_format.color_formats[0] = gpu::Format.BGRA8_UNORM;
+    assert(!base.equals(other_format));
+
+    render::PipelineKey more_targets = gradient_key();
+    more_targets.color_count = 2;
+    assert(!base.equals(more_targets));
+
+    render::PipelineKey with_depth = gradient_key();
+    with_depth.depth_format = gpu::Format.D32_FLOAT;
+    assert(!base.equals(with_depth));
 }

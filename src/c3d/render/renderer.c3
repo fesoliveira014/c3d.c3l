@@ -1,6 +1,8 @@
 module c3d::render;
 
 import c3d;
+import c3d::pool;
+import c3d::shader;
 import gpu;
 import std::math;
 import std::time;
@@ -32,6 +34,7 @@ const ZString[FRAMES_IN_FLIGHT] UPLOAD_RING_NAMES @private = {
 };
 
 const usz RETIRE_INITIAL_CAPACITY @private = 16; // a frame retiring more than this grows once and keeps the storage
+const uint FULLSCREEN_VERTEX_COUNT @private = 3; // one clipped triangle covers the area without a vertex buffer
 const uint TIMESTAMP_BEGIN @private = 0;
 const uint TIMESTAMP_END @private = 1;
 const double NANOSECONDS_PER_MILLISECOND @private = 1_000_000.0;
@@ -83,6 +86,10 @@ struct Renderer {
     gpu::SwapchainInfo      swapchain_info;
     Frame[FRAMES_IN_FLIGHT] frames;
     ulong                   frame_index;
+
+    TargetPool              targets;
+    PipelineCache           pipelines;
+    gpu::SamplerIndex       linear_clamp_sampler;
 
     DebugLog*                log;
     gpu::TimestampPoolHandle timestamps;
@@ -153,15 +160,7 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
             count:    (uint)PASS_COUNT * TIMESTAMPS_PER_PASS,
         )!;
     }
-    if (self.has_output) {
-        self.window_target.transition(&self.commands, COLOR_ATTACHMENT_STATE)!;
-        write_pass_timestamp(
-            renderer:    self,
-            frame_index: self.frame_index,
-            pass:        Pass.COMPOSITE,
-            half:        TIMESTAMP_BEGIN,
-        )!;
-    }
+    if (self.has_output) self.window_target.transition(&self.commands, COLOR_ATTACHMENT_STATE)!;
 
     self.info = info;
     self.frame_open = true;
@@ -215,13 +214,6 @@ fn void? Renderer.end_frame(&self) {
     self.has_output = false;
 
     defer catch (void)gpu::discard_commands(&self.commands);
-    write_pass_timestamp(
-        renderer:    self,
-        frame_index: frame,
-        pass:        Pass.COMPOSITE,
-        half:        TIMESTAMP_END,
-    )!;
-    slot.timed[Pass.COMPOSITE.ordinal] = true;
     self.window_target.transition(&self.commands, PRESENT_STATE)!;
     slot.upload.flush(&self.device)!;
 
@@ -238,6 +230,120 @@ fn void? Renderer.end_frame(&self) {
 
     present_window_output(self, slot.done)!;
     self.stats.frame_ms = elapsed_ms(self.frame_started);
+}
+
+<*
+ Record one registry fragment stage over the whole target.
+ @require self.frame_open
+ @return? c3d::INVALID_ID, c3d::SHADER_NOT_FOUND
+ @return? gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL
+ @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
+ @return? gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
+ @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+*>
+fn void? Renderer.draw_fullscreen(&self, RenderTargetId target, ShaderVariant fragment) {
+    TargetRecord* record = self.targets.try_get(target)!;
+    record.target.transition(&self.commands, COLOR_ATTACHMENT_STATE)!;
+
+    PipelineKey key = {
+        .vertex        = { .shader = FULLSCREEN },
+        .fragment      = fragment,
+        .color_formats = { [0] = record.target.format },
+        .color_count   = 1,
+        .depth_format  = gpu::Format.UNDEFINED,
+        .samples       = gpu::SampleCount.ONE,
+        .polygon       = gpu::PolygonMode.FILL,
+    };
+    gpu::PipelineHandle pipeline = self.pipelines.get(&self.device, key)!;
+    record_fullscreen_pass(
+        renderer:      self,
+        target:        &record.target,
+        pipeline:      pipeline,
+        fragment_root: (gpu::GpuAddress)0,
+    )!;
+}
+
+<*
+ Sample the target into the frame's window output. Records nothing without one.
+ @require self.frame_open
+ @return? c3d::INVALID_ID, c3d::SHADER_NOT_FOUND
+ @return? gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL
+ @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
+ @return? gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
+ @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+*>
+fn void? Renderer.composite(&self, RenderTargetId target) {
+    TargetRecord* record = self.targets.try_get(target)!;
+    if (!self.has_output) return;
+    record.target.transition(&self.commands, FRAGMENT_READ_STATE)!;
+
+    Frame* slot = &self.frames[self.frame_index % FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan root = slot.upload.take(&self.device, CompositeRoot::size)!;
+    *(CompositeRoot*)root.bytes.ptr = {
+        .source_texture = record.target.view.index,
+        .source_sampler = self.linear_clamp_sampler,
+    };
+
+    PipelineKey key = {
+        .vertex        = { .shader = FULLSCREEN },
+        .fragment      = { .shader = COMPOSITE },
+        .color_formats = { [0] = self.window_target.format },
+        .color_count   = 1,
+        .depth_format  = gpu::Format.UNDEFINED,
+        .samples       = gpu::SampleCount.ONE,
+        .polygon       = gpu::PolygonMode.FILL,
+    };
+    gpu::PipelineHandle pipeline = self.pipelines.get(&self.device, key)!;
+
+    write_pass_timestamp(
+        renderer:    self,
+        frame_index: self.frame_index,
+        pass:        Pass.COMPOSITE,
+        half:        TIMESTAMP_BEGIN,
+    )!;
+    record_fullscreen_pass(
+        renderer:      self,
+        target:        &self.window_target,
+        pipeline:      pipeline,
+        fragment_root: root.address,
+    )!;
+    write_pass_timestamp(
+        renderer:    self,
+        frame_index: self.frame_index,
+        pass:        Pass.COMPOSITE,
+        half:        TIMESTAMP_END,
+    )!;
+    slot.timed[Pass.COMPOSITE.ordinal] = true;
+}
+
+fn void? record_fullscreen_pass(Renderer* renderer, Target* target, gpu::PipelineHandle pipeline,
+  gpu::GpuAddress fragment_root) @private {
+    gpu::ColorTargetDesc[1] colors = {{
+        .view     = target.attachment,
+        .load_op  = gpu::LoadOp.DONT_CARE,
+        .store_op = gpu::StoreOp.STORE,
+    }};
+    gpu::RenderPassDesc pass = {
+        .colors = colors[..],
+        .width  = target.width,
+        .height = target.height,
+    };
+    gpu::ColorTargetState[1] color_targets = { gpu::color_blend_disabled() };
+    gpu::GraphicsState state = fullscreen_state(target.width, target.height, color_targets[..])!;
+
+    // Bound before the pass begins: the backend checks the bound pipeline against the pass formats at begin.
+    gpu::cmd_bind_pipeline(&renderer.commands, pipeline)!;
+    gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
+    gpu::cmd_set_graphics_state(&renderer.commands, &state)!;
+    gpu::cmd_draw(
+        commands:       &renderer.commands,
+        vertex_root:    (gpu::GpuAddress)0,
+        fragment_root:  fragment_root,
+        vertex_count:   FULLSCREEN_VERTEX_COUNT,
+        instance_count: 1,
+    )!;
+    gpu::cmd_end_render_pass(&renderer.commands)!;
+    renderer.stats.draws++;
 }
 
 fn void? acquire_window_output(Renderer* renderer) @private {
@@ -375,21 +481,35 @@ fn Renderer? create_renderer(Allocator allocator, RendererDesc desc = {}) {
         slots_created++;
     }
 
+    gpu::SamplerDesc sampler_desc = {
+        .min_filter = gpu::Filter.LINEAR,
+        .mag_filter = gpu::Filter.LINEAR,
+        .mip_filter = gpu::Filter.LINEAR,
+        .address_u  = gpu::AddressMode.CLAMP_TO_EDGE,
+        .address_v  = gpu::AddressMode.CLAMP_TO_EDGE,
+        .address_w  = gpu::AddressMode.CLAMP_TO_EDGE,
+        .debug_name = "linear_clamp",
+    };
+    gpu::SamplerIndex linear_clamp_sampler = gpu::intern_sampler(&device, &sampler_desc)!;
+
     return {
-        .allocator          = allocator,
-        .runtime            = runtime,
-        .surface            = surface,
-        .device             = device,
-        .caps               = caps,
-        .graphics           = graphics,
-        .swapchain          = swapchain,
-        .swapchain_info     = swapchain_info,
-        .frames             = frames,
-        .log                = log,
-        .timestamps         = timestamps,
-        .timestamps_enabled = timestamps_enabled,
-        .output_width       = desc.output_width,
-        .output_height      = desc.output_height,
+        .allocator            = allocator,
+        .runtime              = runtime,
+        .surface              = surface,
+        .device               = device,
+        .caps                 = caps,
+        .graphics             = graphics,
+        .swapchain            = swapchain,
+        .swapchain_info       = swapchain_info,
+        .frames               = frames,
+        .targets              = pool::create_pool{TargetRecord, RenderTargetId}(allocator, RENDER_TARGET_CAPACITY),
+        .pipelines            = create_pipeline_cache(allocator, shader::BUILTIN_REGISTRY),
+        .linear_clamp_sampler = linear_clamp_sampler,
+        .log                  = log,
+        .timestamps           = timestamps,
+        .timestamps_enabled   = timestamps_enabled,
+        .output_width         = desc.output_width,
+        .output_height        = desc.output_height,
     };
 }
 
@@ -399,9 +519,13 @@ fn Renderer? create_renderer(Allocator allocator, RendererDesc desc = {}) {
 *>
 fn void destroy_renderer(Renderer* renderer) {
     if (renderer.frame_open) (void)gpu::discard_commands(&renderer.commands);
-    foreach (&slot : renderer.frames) {
-        if (slot.done.is_valid()) (void)gpu::wait_completion(slot.done);
+    (void)wait_frames(renderer);
+
+    foreach (&record : renderer.targets.items) {
+        if (record.target.texture.is_valid()) release_target(renderer, &record.target);
     }
+    pool::destroy_pool{TargetRecord, RenderTargetId}(&renderer.targets);
+    destroy_pipeline_cache(&renderer.device, &renderer.pipelines);
 
     if (renderer.swapchain.is_valid()) {
         uint attempts = 0;
@@ -446,9 +570,7 @@ fn gpu::Adapter? select_adapter(gpu::Runtime* runtime, gpu::DeviceDesc* desc) @p
 }
 
 fn void? recover_window_output(Renderer* renderer) @private {
-    foreach (&slot : renderer.frames) {
-        if (slot.done.is_valid()) gpu::wait_completion(slot.done)!;
-    }
+    wait_frames(renderer)!;
 
     if (catch excuse = gpu::wait_swapchain_presentations(
         device:     &renderer.device,

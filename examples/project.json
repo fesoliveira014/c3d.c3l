@@ -42,6 +42,12 @@
       "sources": [
         "src/clear.c3"
       ]
+    },
+    "fullscreen": {
+      "type": "executable",
+      "sources": [
+        "src/fullscreen.c3"
+      ]
     }
   }
 }
