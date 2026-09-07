@@ -47,7 +47,7 @@ sources, and SDL3 comes from source because Ubuntu 24.04 does not package it.
 box3d:
 
 ```bash
-python3 scripts/build.py --init-deps --skip-abi --skip-shaders --skip-boundaries --skip-build
+python3 scripts/build.py --init-deps --skip-abi --skip-shaders --skip-build
 ```
 
 That leaves `libbox3d.a` in `lib/box3d.c3l/linked-libs/linux-x64/`.
@@ -84,9 +84,9 @@ do not apply. Keep `glslangValidator` from the Vulkan SDK on PATH.
 ## Build, test, run
 
 ```bash
-python3 scripts/build.py                  # regenerate ABI and shaders, check boundaries, build examples
-python3 scripts/build.py --test           # same, then run every test target
-python3 scripts/build.py --check --test   # what CI runs: generated files must be current
+python3 scripts/build.py                  # verify committed ABI and SPIR-V are current, build examples
+python3 scripts/build.py --test           # same, then run every test target; what CI runs
+python3 scripts/build.py --regen          # regenerate the ABI twins and SPIR-V, then build
 python3 scripts/build.py --example hello  # build and run one example
 python3 scripts/build.py --clean
 ```

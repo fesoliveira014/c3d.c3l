@@ -1,0 +1,8 @@
+{
+  "flags": [],
+  "entries": [
+    { "shader": "fullscreen", "source": "fullscreen.vert.glsl", "stage": "vert", "defines": [] },
+    { "shader": "gradient",   "source": "gradient.frag.glsl",   "stage": "frag", "defines": [] },
+    { "shader": "composite",  "source": "composite.frag.glsl",  "stage": "frag", "defines": [] }
+  ]
+}

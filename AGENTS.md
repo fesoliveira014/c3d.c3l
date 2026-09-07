@@ -6,7 +6,7 @@ Entry point for every agent session in this repository. Read it fully before rea
 - **Language:** C3 **0.8.3**. C3 is pre-1.0. Verify syntax against the installed compiler and the `c3-expert` skill, never against memory of another version.
 - **Shading language:** GLSL, Vulkan 1.3 semantics through gpu.c3l. Files are `<name>.<stage>.glsl`; shared includes are plain `.glsl`. SPIR-V is built offline by `scripts/build_shaders.py` and embedded with `$embed`.
 - **Module root:** `c3d`. Every module is `c3d` or a submodule of it (`c3d::render`, `c3d::asset::gltf`). The repository directory name never appears in source.
-- **Build tooling:** `scripts/build.py` is the entry point; it drives ABI codegen, shader compilation, the import-boundary check, `c3c build`, and optionally `c3c test` and `c3c run`. Python 3.10+ standard library only, under `scripts/`, only for build orchestration and code generation.
+- **Build tooling:** `scripts/build.py` is the entry point; it drives ABI codegen, shader compilation, `c3c build`, and optionally `c3c test` and `c3c run`. Python 3.10+ standard library only, under `scripts/`, only for build orchestration and code generation.
 - **Dependencies** (git submodules under `lib/`, pinned):
 
 | Library | Module | Imported only by |
@@ -57,17 +57,17 @@ One milestone is active at a time. Do not pull work from a later milestone into 
 From the repository root:
 
 ```bash
-python3 scripts/build.py                  # regenerate ABI and shaders, check boundaries, build all examples
-python3 scripts/build.py --test           # same, then run every test target
-python3 scripts/build.py --check --test   # CI: generated files must be current; build; test
+python3 scripts/build.py                  # verify committed ABI and SPIR-V are current, build all examples
+python3 scripts/build.py --test           # same, then run every test target; what CI runs
+python3 scripts/build.py --regen          # regenerate the ABI twins and SPIR-V, then build
 python3 scripts/build.py --example cube   # build and run one example
 python3 scripts/build.py --init-deps      # first checkout: submodules and native dependency builds
 python3 scripts/build.py --clean
 ```
 
-Steps run in this order and stop at the first failure: tools (c3c 0.8.3, glslang), deps (submodules present), abi (`gen_abi.py`, which builds gpu.c3l's `gen_shader_abi` tool with `c3c build --path lib/gpu.c3l/tools/gen_shader_abi` on first use), shaders (`build_shaders.py`), boundaries (the section 10 import rules), build (every target in `examples/project.json`, or `--target`), test (every target in `test/project.json`), run. `--skip-abi`, `--skip-shaders`, `--skip-build`, and `--opt O3` narrow a run; `-v` prints each command.
+Steps run in this order and stop at the first failure: tools (c3c 0.8.3, glslang), deps (submodules present), abi (`gen_abi.py`, which builds gpu.c3l's `gen_shader_abi` tool with `c3c build --path lib/gpu.c3l/tools/gen_shader_abi` on first use), shaders (`build_shaders.py`), build (every target in `examples/project.json`, or `--target`), test (every target in `test/project.json`), run. The abi and shaders steps verify the committed outputs unless `--regen` is given, which rewrites them. `--skip-abi`, `--skip-shaders`, `--skip-build`, and `--opt O3` narrow a run; `-v` prints each command.
 
-Before every commit: `scripts/build.py --test`. Broken builds are never committed. GPU examples run manually; CI runs `--check --test`. Every development run of a GPU example uses gpu.c3l full validation.
+Before every commit: `scripts/build.py --test`. Broken builds are never committed. GPU examples run manually; CI runs `--test`. Every development run of a GPU example uses gpu.c3l full validation.
 
 # 6. Style
 
@@ -159,7 +159,7 @@ Counter-example, rejected on review:
 - Depth is reverse-Z; the Vulkan Y flip is one negative-height viewport; shaders use GL conventions and never flip.
 - Pass order is fixed; barriers are explicit; the renderer tracks `TextureState` only for targets it owns.
 - Every entity is a node; everything else about a node is a component. Systems are functions the application calls; there is no scheduler.
-- `scripts/build.py` enforces these boundaries on every run (the `boundaries` step); the equivalent greps are:
+- Reviewers check these boundaries with:
 
 ```bash
 grep -rn 'import gpu' src/c3d --include='*.c3' | grep -vE 'src/c3d/(render|shader|post|rt|gui)/'
@@ -188,7 +188,7 @@ c3d.c3l/
 │   ├── platform/           the only sdl importer
 │   ├── render/  shader/  post/  rt/                the gpu importers
 │   └── gui/                the only imgui importer; gui/backend imports gpu
-├── shaders/                GLSL sources, common/, generated/, variants.json
+├── shaders/                GLSL sources, variants.json, common/, generated/, spv/
 ├── scripts/                build.py (entry point) · gen_abi.py · build_shaders.py
 ├── examples/               one executable per milestone
 └── test/                   CPU tests, one file per group
