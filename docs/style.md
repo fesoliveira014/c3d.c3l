@@ -16,6 +16,8 @@ C3 0.8.3. C3 is pre-1.0; check syntax against the installed compiler and the `c3
 
 Every module is `c3d` or a submodule of it. The repository directory name never appears in source. Dependency imports are confined per `AGENTS.md` section 1; `scripts/build.py` checks them.
 
+`import c3d;` imports every `c3d` submodule recursively, so a name declared in one area can collide inside another. Qualify the module when it does: `time::Clock` inside `c3d::render`, because `c3d::platform` declares a `Clock` of its own.
+
 # 3. Naming
 
 | Kind | Case | Examples |
@@ -27,7 +29,7 @@ Every module is `c3d` or a submodule of it. The repository directory name never 
 | Modules | lowercase, `::`-separated | `c3d::asset::gltf` |
 | Files | `snake_case.c3` | `upload_ring.c3`, `shadow_atlas.c3` |
 
-Single-letter names only for loop counters and coordinate math inside scopes under ten lines. Abbreviations are allowed only from the architecture vocabulary (`rt`, `gpu`, `uv`, `sh`, `ik`, `abi`, `hdr`); `r`, `mgr`, `ctx`, `tmp`, `buf` are rejected. Ids end in `Id`, GPU-layout structs end in `Gpu`, root structs end in `Root`, renderer mirrors end in `Res`.
+`fault` is a reserved type keyword, so it is never an identifier: bind a caught value as `excuse`, the term the C3 docs use. Single-letter names only for loop counters and coordinate math inside scopes under ten lines. Abbreviations are allowed only from the architecture vocabulary (`rt`, `gpu`, `uv`, `sh`, `ik`, `abi`, `hdr`); `r`, `mgr`, `ctx`, `tmp`, `buf` are rejected. Ids end in `Id`, GPU-layout structs end in `Gpu`, root structs end in `Root`, renderer mirrors end in `Res`.
 
 # 4. Definition order
 
@@ -117,7 +119,7 @@ fn void? ensure_geometry(Renderer* renderer, GeometryId id) {
     if (mirror.asset != id) {
         return upload_geometry(renderer, id);
     }
-    return {};
+    return;
 }
 ```
 
