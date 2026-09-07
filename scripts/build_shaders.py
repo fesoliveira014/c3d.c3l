@@ -1,84 +1,204 @@
 #!/usr/bin/env python3
-"""Compile the GLSL sources under shaders/ to SPIR-V in shaders/spv/.
+"""Compile the stages listed in shaders/variants.json to SPIR-V and emit the registry table.
 
-Stage files are named <name>.<stage>.glsl. Files under shaders/common/ are
-shared includes and are never compiled on their own.
+Each manifest entry names one stage source under shaders/, its glslang stage, and the
+defines it is compiled with. SPIR-V goes to shaders/spv/<name>.spv on every run and is not
+committed; src/c3d/shader/variants.c3, with the ShaderName enum, flag constants, and the
+embedded table, is committed.
 
-  scripts/build_shaders.py            compile every stage file
-  scripts/build_shaders.py --check    fail if the committed SPIR-V is out of date
+  scripts/build_shaders.py            compile every entry and write the registry table
+  scripts/build_shaders.py --check    compile every entry; fail if the committed table is out of date
 """
 
 from __future__ import annotations
 
 import argparse
-import filecmp
+import json
 import shutil
 import subprocess
 import sys
-import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 SHADERS = ROOT / "shaders"
-GENERATED = SHADERS / "generated"
+MANIFEST = SHADERS / "variants.json"
 SPIRV = SHADERS / "spv"
-COMMON = SHADERS / "common"
-GPU_INCLUDE = ROOT / "lib" / "gpu.c3l" / "include" / "shaders"
+GENERATED_C3 = ROOT / "src" / "c3d" / "shader" / "variants.c3"
+INCLUDE_DIRS = (
+    SHADERS / "generated",
+    SHADERS / "common",
+    ROOT / "lib" / "gpu.c3l" / "include" / "shaders",
+)
 
 TARGET_ENV = "vulkan1.3"
+INCLUDE_PREAMBLE = "#extension GL_GOOGLE_include_directive : enable"
+EMBED_PREFIX = "../../../shaders/spv/"
 STAGES = (
     "vert", "frag", "comp", "geom", "tesc", "tese",
     "rgen", "rmiss", "rchit", "rahit", "rint", "rcall",
     "task", "mesh",
 )
+MAX_FLAGS = 24
+MAX_SHADERS = 256
 
 EXIT_FAILED = 1
+
+
+class ManifestError(Exception):
+    pass
+
+
+@dataclass(frozen=True)
+class Entry:
+    shader: str
+    source: Path
+    stage: str
+    defines: tuple[str, ...]
+
+    @property
+    def spirv_name(self) -> str:
+        suffix = "".join(f"_{define.lower()}" for define in self.defines)
+        return f"{self.shader}{suffix}.spv"
+
+    @property
+    def embed_constant(self) -> str:
+        return f"{Path(self.spirv_name).stem.upper()}_SPIRV"
 
 
 def log(message: str) -> None:
     print(f"[shaders] {message}", flush=True)
 
 
-def stage_sources() -> list[Path]:
-    sources = []
-    for source in sorted(SHADERS.rglob("*.glsl")):
-        if COMMON in source.parents or GENERATED in source.parents or SPIRV in source.parents:
-            continue
-        if source.suffixes[-2:-1] and source.suffixes[-2][1:] in STAGES:
-            sources.append(source)
-    return sources
+def load_manifest() -> tuple[list[str], list[Entry]]:
+    with MANIFEST.open() as handle:
+        manifest = json.load(handle)
+    flags: list[str] = list(manifest.get("flags", []))
+    if len(flags) > MAX_FLAGS:
+        raise ManifestError(f"{len(flags)} flags declared; ShaderVariant holds {MAX_FLAGS}")
+    if len(set(flags)) != len(flags):
+        raise ManifestError("duplicate flag names")
+
+    entries: list[Entry] = []
+    seen: set[tuple[str, tuple[str, ...]]] = set()
+    for raw in manifest.get("entries", []):
+        shader = raw["shader"]
+        stage = raw["stage"]
+        if stage not in STAGES:
+            raise ManifestError(f"{shader}: unknown stage '{stage}'")
+        source = SHADERS / raw["source"]
+        if not source.exists():
+            raise ManifestError(f"{shader}: source {source.relative_to(ROOT)} does not exist")
+        unknown = [define for define in raw.get("defines", []) if define not in flags]
+        if unknown:
+            raise ManifestError(f"{shader}: defines not declared in flags: {', '.join(unknown)}")
+        defines = tuple(flag for flag in flags if flag in raw.get("defines", []))
+        key = (shader, defines)
+        if key in seen:
+            raise ManifestError(f"{shader}: duplicate entry for defines {list(defines)}")
+        seen.add(key)
+        entries.append(Entry(shader, source, stage, defines))
+
+    shaders = shader_names(entries)
+    if len(shaders) > MAX_SHADERS:
+        raise ManifestError(f"{len(shaders)} shader names; ShaderVariant holds {MAX_SHADERS}")
+    return flags, entries
 
 
-def output_for(source: Path, directory: Path) -> Path:
-    return directory / (source.name[: -len(".glsl")] + ".spv")
+def shader_names(entries: list[Entry]) -> list[str]:
+    names: list[str] = []
+    for entry in entries:
+        if entry.shader not in names:
+            names.append(entry.shader)
+    return names
 
 
-def compile_one(glslang: str, source: Path, output: Path, verbose: bool) -> None:
+def compile_one(glslang: str, entry: Entry, output: Path, verbose: bool) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     command = [
         glslang,
         "-V",
         "--target-env", TARGET_ENV,
-        "-I" + str(COMMON),
-        "-I" + str(GPU_INCLUDE),
-        "-o", str(output),
-        str(source),
+        "-S", entry.stage,
+        f"-P{INCLUDE_PREAMBLE}",
     ]
+    command += [f"-D{define}" for define in entry.defines]
+    command += [f"-I{directory}" for directory in INCLUDE_DIRS]
+    command += ["-o", str(output), str(entry.source)]
     if verbose:
         log(f"$ {' '.join(command)}")
     subprocess.run(command, check=True, stdout=subprocess.DEVNULL)
 
 
+def emit_variants_c3(flags: list[str], entries: list[Entry]) -> str:
+    lines = [
+        f"// Generated by build_shaders.py from {MANIFEST.relative_to(ROOT)} - do not edit.",
+        "module c3d::shader;",
+        "",
+        "<*",
+        " Stage families compiled into the registry.",
+        "*>",
+        "enum ShaderName : int {",
+    ]
+    lines += [f"    {name.upper()}," for name in shader_names(entries)]
+    lines.append("}")
+
+    for bit, flag in enumerate(flags):
+        lines += [
+            "",
+            "<*",
+            f" Flag bit for {flag}.",
+            "*>",
+            f"const uint SHADER_FLAG_{flag} = 1 << {bit};",
+        ]
+
+    lines.append("")
+    for entry in entries:
+        lines.append(
+            f'const char[*] {entry.embed_constant} @private = $embed("{EMBED_PREFIX}{entry.spirv_name}");'
+        )
+
+    lines += [
+        "",
+        "<*",
+        " Every compiled stage, in manifest order.",
+        "*>",
+        f"const ShaderEntry[{len(entries)}] SHADER_ENTRIES = {{",
+    ]
+    for entry in entries:
+        variant = f".shader = {entry.shader.upper()}"
+        if entry.defines:
+            mask = " | ".join(f"SHADER_FLAG_{define}" for define in entry.defines)
+            variant += f", .flags = {mask}"
+        lines.append(f"    {{ .variant = {{ {variant} }}, .spirv = {entry.embed_constant}[..] }},")
+    lines.append("};")
+    return "\n".join(lines) + "\n"
+
+
+def compile_all(glslang: str, entries: list[Entry], verbose: bool) -> None:
+    for entry in entries:
+        compile_one(glslang, entry, SPIRV / entry.spirv_name, verbose)
+
+
+def table_is_current(flags: list[str], entries: list[Entry]) -> bool:
+    expected = emit_variants_c3(flags, entries)
+    return GENERATED_C3.exists() and GENERATED_C3.read_text(encoding="utf-8") == expected
+
+
+def write_table(flags: list[str], entries: list[Entry]) -> None:
+    GENERATED_C3.parent.mkdir(parents=True, exist_ok=True)
+    GENERATED_C3.write_text(emit_variants_c3(flags, entries), encoding="utf-8")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="c3d shader compilation")
     parser.add_argument("--glslang", default="glslangValidator", help="glslang executable")
-    parser.add_argument("--check", action="store_true", help="verify the committed SPIR-V instead of writing it")
+    parser.add_argument("--check", action="store_true", help="verify the committed registry table instead of writing it")
     parser.add_argument("--verbose", action="store_true", help="print every command")
     arguments = parser.parse_args()
 
-    sources = stage_sources()
-    if not sources:
-        log("no shaders under shaders/")
+    if not MANIFEST.exists():
+        log(f"no manifest at {MANIFEST.relative_to(ROOT)}")
         return 0
 
     glslang = shutil.which(arguments.glslang)
@@ -87,26 +207,22 @@ def main() -> int:
         return EXIT_FAILED
 
     try:
+        flags, entries = load_manifest()
+        compile_all(glslang, entries, arguments.verbose)
         if arguments.check:
-            with tempfile.TemporaryDirectory() as scratch:
-                stale = []
-                for source in sources:
-                    fresh = output_for(source, Path(scratch))
-                    compile_one(glslang, source, fresh, arguments.verbose)
-                    committed = output_for(source, SPIRV)
-                    if not committed.exists() or not filecmp.cmp(fresh, committed, shallow=False):
-                        stale.append(source.relative_to(ROOT))
-                if stale:
-                    log("stale SPIR-V:\n  " + "\n  ".join(str(path) for path in stale))
-                    return EXIT_FAILED
+            if not table_is_current(flags, entries):
+                log(f"stale: {GENERATED_C3.relative_to(ROOT)} (run scripts/build.py --regen)")
+                return EXIT_FAILED
         else:
-            for source in sources:
-                compile_one(glslang, source, output_for(source, SPIRV), arguments.verbose)
+            write_table(flags, entries)
+    except ManifestError as error:
+        log(f"manifest error: {error}")
+        return EXIT_FAILED
     except subprocess.CalledProcessError as error:
         log(f"glslang failed ({error.returncode})")
         return EXIT_FAILED
 
-    log(f"{'checked' if arguments.check else 'compiled'} {len(sources)} shader(s)")
+    log(f"compiled {len(entries)} stage(s), table {'checked' if arguments.check else 'written'}")
     return 0
 
 

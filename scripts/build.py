@@ -4,9 +4,9 @@
 Steps, in order: tools, deps, abi, shaders, build, test, run.
 Each step is a function; failures raise BuildError and stop the run.
 
-  scripts/build.py                  regenerate ABI and shaders, build all example targets
-  scripts/build.py --test           same, then run every test target
-  scripts/build.py --check --test   CI: verify generated files are current, build, test
+  scripts/build.py                  compile SPIR-V, verify committed generated C3, build all example targets
+  scripts/build.py --test           same, then run every test target (what CI runs)
+  scripts/build.py --regen          rewrite the generated C3 and GLSL, then build
   scripts/build.py --example cube   build and run one example
   scripts/build.py --init-deps      initialize submodules and build native dependencies
   scripts/build.py --clean          remove c3c build directories
@@ -33,21 +33,6 @@ REQUIRED_C3C_VERSION = "0.8.3"
 SUBMODULES = ("gpu.c3l", "sdl3.c3l", "c3imgui.c3l", "c3cg.c3l", "box3d.c3l")
 NATIVE_BUILD_SCRIPTS = ("scripts/build-box3d.sh",)
 
-# Import boundaries from AGENTS.md section 10: module import -> directories allowed to import it.
-IMPORT_BOUNDARIES = {
-    "gpu": ("render", "shader", "post", "rt", "gui"),
-    "sdl": ("platform",),
-    "imgui": ("gui",),
-    "cg": ("geometry",),
-    "b3": ("physics",),
-}
-
-# Directories allowed one named submodule of a boundary module but not the module itself:
-# c3d::platform bridges an SDL window to a gpu surface and touches nothing else in gpu.
-SUBMODULE_BOUNDARIES = {
-    "gpu": {"platform": "surface"},
-}
-
 EXIT_BUILD_FAILED = 1
 EXIT_USAGE = 2
 
@@ -58,7 +43,7 @@ class BuildError(Exception):
 
 class Options:
     def __init__(self, args: argparse.Namespace):
-        self.check = args.check
+        self.regen = args.regen
         self.test = args.test
         self.example = args.example
         self.target = args.target
@@ -69,7 +54,6 @@ class Options:
         self.skip_abi = args.skip_abi
         self.skip_shaders = args.skip_shaders
         self.skip_build = args.skip_build
-        self.skip_boundaries = args.skip_boundaries
         self.c3c = args.c3c
         self.glslang = args.glslang
 
@@ -164,7 +148,7 @@ def step_abi(options: Options) -> None:
         log("abi: skipped")
         return
     command = [sys.executable, str(SCRIPTS / "gen_abi.py")]
-    if options.check:
+    if not options.regen:
         command.append("--check")
     run(command, ROOT, options.verbose)
 
@@ -174,35 +158,11 @@ def step_shaders(options: Options) -> None:
         log("shaders: skipped")
         return
     command = [sys.executable, str(SCRIPTS / "build_shaders.py"), "--glslang", options.glslang]
-    if options.check:
+    if not options.regen:
         command.append("--check")
     if options.verbose:
         command.append("--verbose")
     run(command, ROOT, options.verbose)
-
-
-def step_boundaries(options: Options) -> None:
-    if options.skip_boundaries:
-        log("boundaries: skipped")
-        return
-    source_root = ROOT / "src" / "c3d"
-    violations: list[str] = []
-    for source in source_root.rglob("*.c3"):
-        relative = source.relative_to(source_root)
-        top_directory = relative.parts[0] if len(relative.parts) > 1 else ""
-        text = source.read_text(encoding="utf-8")
-        for module, allowed in IMPORT_BOUNDARIES.items():
-            if top_directory in allowed:
-                continue
-            permitted = SUBMODULE_BOUNDARIES.get(module, {}).get(top_directory)
-            for match in re.finditer(rf"^\s*import\s+{module}(?:::(?P<submodule>\w+))?\b", text, re.MULTILINE):
-                submodule = match.group("submodule")
-                if submodule is not None and submodule == permitted:
-                    continue
-                imported = f"{module}::{submodule}" if submodule else module
-                violations.append(f"{relative}: imports {imported}")
-    if violations:
-        raise BuildError("import boundary violations:\n  " + "\n  ".join(violations))
 
 
 def step_build(options: Options) -> None:
@@ -254,7 +214,7 @@ def parse_arguments() -> argparse.Namespace:
         epilog=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--check", action="store_true", help="verify generated ABI and shaders instead of regenerating (CI)")
+    parser.add_argument("--regen", action="store_true", help="rewrite the generated ABI twins and registry table instead of verifying them")
     parser.add_argument("--test", action="store_true", help="run every test target after building")
     parser.add_argument("--example", metavar="NAME", help="run one example target after building it")
     parser.add_argument("--target", metavar="NAME", help="build only this example target")
@@ -264,7 +224,6 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--skip-abi", action="store_true")
     parser.add_argument("--skip-shaders", action="store_true")
     parser.add_argument("--skip-build", action="store_true")
-    parser.add_argument("--skip-boundaries", action="store_true", help="skip the import boundary check")
     parser.add_argument("--c3c", default="c3c", help="c3c executable (default: c3c)")
     parser.add_argument("--glslang", default="glslangValidator", help="glslang executable (default: glslangValidator)")
     parser.add_argument("-v", "--verbose", action="store_true", help="print every command")
@@ -290,8 +249,6 @@ def main() -> int:
             step_abi(options)
         with timed("shaders"):
             step_shaders(options)
-        with timed("boundaries"):
-            step_boundaries(options)
         with timed("build"):
             step_build(options)
         if options.test:

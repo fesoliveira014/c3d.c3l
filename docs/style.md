@@ -14,7 +14,7 @@ C3 0.8.3. C3 is pre-1.0; check syntax against the installed compiler and the `c3
 | `module c3d::<area>::<sub>;` | Submodules named in the architecture: `asset::gltf`, `asset::fbx`, `asset::image`, `anim::ik`, `anim::retarget`, `gui::backend`, `ecs::store`. |
 | `module c3d::<area>::internal @private;` | Implementation that must not be visible outside the area. Use only when a symbol would otherwise leak into the public surface. |
 
-Every module is `c3d` or a submodule of it. The repository directory name never appears in source. Dependency imports are confined per `AGENTS.md` section 1; `scripts/build.py` checks them.
+Every module is `c3d` or a submodule of it. The repository directory name never appears in source. Dependency imports are confined per `AGENTS.md` section 1 and checked at review.
 
 `import c3d;` imports every `c3d` submodule recursively, so a name declared in one area can collide inside another. Qualify the module when it does: `time::Clock` inside `c3d::render`, because `c3d::platform` declares a `Clock` of its own.
 

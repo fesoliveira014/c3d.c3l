@@ -1,0 +1,8 @@
+abi c3d;
+
+root CompositeRoot {
+    TextureIndex source_texture;
+    SamplerIndex source_sampler;
+    uint         _pad0;
+    uint         _pad1;
+}
