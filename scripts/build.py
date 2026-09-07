@@ -4,9 +4,9 @@
 Steps, in order: tools, deps, abi, shaders, build, test, run.
 Each step is a function; failures raise BuildError and stop the run.
 
-  scripts/build.py                  verify committed ABI and SPIR-V are current, build all example targets
+  scripts/build.py                  compile SPIR-V, verify committed generated C3, build all example targets
   scripts/build.py --test           same, then run every test target (what CI runs)
-  scripts/build.py --regen          regenerate the ABI twins and SPIR-V, then build
+  scripts/build.py --regen          rewrite the generated C3 and GLSL, then build
   scripts/build.py --example cube   build and run one example
   scripts/build.py --init-deps      initialize submodules and build native dependencies
   scripts/build.py --clean          remove c3c build directories
@@ -214,7 +214,7 @@ def parse_arguments() -> argparse.Namespace:
         epilog=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--regen", action="store_true", help="regenerate the ABI twins and SPIR-V instead of verifying them")
+    parser.add_argument("--regen", action="store_true", help="rewrite the generated ABI twins and registry table instead of verifying them")
     parser.add_argument("--test", action="store_true", help="run every test target after building")
     parser.add_argument("--example", metavar="NAME", help="run one example target after building it")
     parser.add_argument("--target", metavar="NAME", help="build only this example target")

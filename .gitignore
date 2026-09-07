@@ -9,3 +9,6 @@ build/
 
 # Native dependency prefixes built by the README bootstrap.
 .deps/
+
+# SPIR-V is compiled by scripts/build_shaders.py on every build; the C3 twin is committed.
+shaders/spv/

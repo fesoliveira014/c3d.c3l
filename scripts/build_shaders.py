@@ -2,22 +2,21 @@
 """Compile the stages listed in shaders/variants.json to SPIR-V and emit the registry table.
 
 Each manifest entry names one stage source under shaders/, its glslang stage, and the
-defines it is compiled with. Outputs are committed: shaders/spv/<name>.spv per entry and
-src/c3d/shader/variants.c3 with the ShaderName enum, flag constants, and the embedded table.
+defines it is compiled with. SPIR-V goes to shaders/spv/<name>.spv on every run and is not
+committed; src/c3d/shader/variants.c3, with the ShaderName enum, flag constants, and the
+embedded table, is committed.
 
   scripts/build_shaders.py            compile every entry and write the registry table
-  scripts/build_shaders.py --check    fail if any committed output is out of date
+  scripts/build_shaders.py --check    compile every entry; fail if the committed table is out of date
 """
 
 from __future__ import annotations
 
 import argparse
-import filecmp
 import json
 import shutil
 import subprocess
 import sys
-import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -176,24 +175,17 @@ def emit_variants_c3(flags: list[str], entries: list[Entry]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def check(glslang: str, flags: list[str], entries: list[Entry], verbose: bool) -> list[Path]:
-    stale: list[Path] = []
-    with tempfile.TemporaryDirectory() as scratch:
-        for entry in entries:
-            fresh = Path(scratch) / entry.spirv_name
-            compile_one(glslang, entry, fresh, verbose)
-            committed = SPIRV / entry.spirv_name
-            if not committed.exists() or not filecmp.cmp(fresh, committed, shallow=False):
-                stale.append(committed.relative_to(ROOT))
-    expected = emit_variants_c3(flags, entries)
-    if not GENERATED_C3.exists() or GENERATED_C3.read_text(encoding="utf-8") != expected:
-        stale.append(GENERATED_C3.relative_to(ROOT))
-    return stale
-
-
-def generate(glslang: str, flags: list[str], entries: list[Entry], verbose: bool) -> None:
+def compile_all(glslang: str, entries: list[Entry], verbose: bool) -> None:
     for entry in entries:
         compile_one(glslang, entry, SPIRV / entry.spirv_name, verbose)
+
+
+def table_is_current(flags: list[str], entries: list[Entry]) -> bool:
+    expected = emit_variants_c3(flags, entries)
+    return GENERATED_C3.exists() and GENERATED_C3.read_text(encoding="utf-8") == expected
+
+
+def write_table(flags: list[str], entries: list[Entry]) -> None:
     GENERATED_C3.parent.mkdir(parents=True, exist_ok=True)
     GENERATED_C3.write_text(emit_variants_c3(flags, entries), encoding="utf-8")
 
@@ -201,7 +193,7 @@ def generate(glslang: str, flags: list[str], entries: list[Entry], verbose: bool
 def main() -> int:
     parser = argparse.ArgumentParser(description="c3d shader compilation")
     parser.add_argument("--glslang", default="glslangValidator", help="glslang executable")
-    parser.add_argument("--check", action="store_true", help="verify the committed outputs instead of writing them")
+    parser.add_argument("--check", action="store_true", help="verify the committed registry table instead of writing it")
     parser.add_argument("--verbose", action="store_true", help="print every command")
     arguments = parser.parse_args()
 
@@ -216,13 +208,13 @@ def main() -> int:
 
     try:
         flags, entries = load_manifest()
+        compile_all(glslang, entries, arguments.verbose)
         if arguments.check:
-            stale = check(glslang, flags, entries, arguments.verbose)
-            if stale:
-                log("stale outputs:\n  " + "\n  ".join(str(path) for path in stale))
+            if not table_is_current(flags, entries):
+                log(f"stale: {GENERATED_C3.relative_to(ROOT)} (run scripts/build.py --regen)")
                 return EXIT_FAILED
         else:
-            generate(glslang, flags, entries, arguments.verbose)
+            write_table(flags, entries)
     except ManifestError as error:
         log(f"manifest error: {error}")
         return EXIT_FAILED
@@ -230,7 +222,7 @@ def main() -> int:
         log(f"glslang failed ({error.returncode})")
         return EXIT_FAILED
 
-    log(f"{'checked' if arguments.check else 'compiled'} {len(entries)} stage(s)")
+    log(f"compiled {len(entries)} stage(s), table {'checked' if arguments.check else 'written'}")
     return 0
 
 

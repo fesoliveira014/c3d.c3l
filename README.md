@@ -84,9 +84,9 @@ do not apply. Keep `glslangValidator` from the Vulkan SDK on PATH.
 ## Build, test, run
 
 ```bash
-python3 scripts/build.py                  # verify committed ABI and SPIR-V are current, build examples
+python3 scripts/build.py                  # compile SPIR-V, verify committed generated C3, build examples
 python3 scripts/build.py --test           # same, then run every test target; what CI runs
-python3 scripts/build.py --regen          # regenerate the ABI twins and SPIR-V, then build
+python3 scripts/build.py --regen          # rewrite the generated ABI twins and registry table, then build
 python3 scripts/build.py --example hello  # build and run one example
 python3 scripts/build.py --clean
 ```
