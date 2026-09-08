@@ -1,9 +1,11 @@
 module c3d::render;
 
 import c3d;
+import c3d::asset;
 import c3d::pool;
 import c3d::shader;
 import gpu;
+import std::collections::list;
 import std::math;
 import std::time;
 import std::time::clock;
@@ -87,6 +89,11 @@ struct Renderer {
     Frame[FRAMES_IN_FLIGHT] frames;
     ulong                   frame_index;
 
+    AssetStore*             assets;
+    GpuGeometry[]           geometries;
+    List{gpu::BufferCopyDesc} pending_copies;
+    bool                    pending_overwrite;
+
     TargetPool              targets;
     PipelineCache           pipelines;
     gpu::SamplerIndex       linear_clamp_sampler;
@@ -142,6 +149,7 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
     read_pass_timings(self, slot, self.frame_index)!;
     slot.timed = {};
     drain_retired(&self.device, &slot.retire);
+    sweep_geometries(self, slot);
     reset_upload_ring(self, slot)!;
     self.frame_started = clock::now();
 
@@ -208,12 +216,15 @@ fn void? Renderer.end_frame(&self) {
 
     if (!self.has_output) {
         (void)gpu::discard_commands(&self.commands);
+        self.pending_copies.clear();
+        self.pending_overwrite = false;
         self.stats.frame_ms = elapsed_ms(self.frame_started);
         return;
     }
     self.has_output = false;
 
     defer catch (void)gpu::discard_commands(&self.commands);
+    record_pending_copies(self, &self.commands)!;
     self.window_target.transition(&self.commands, PRESENT_STATE)!;
     slot.upload.flush(&self.device)!;
 
@@ -385,6 +396,7 @@ fn void? present_window_output(Renderer* renderer, gpu::CompletionPoint rendered
 
 <*
  Create the renderer, its device, and the window output the descriptor's factory supplies.
+ @param [&in] assets : "Borrowed for the renderer's lifetime; never released by it."
  @require desc.surface_fn == null || (desc.output_width > 0 && desc.output_height > 0)
  @return? c3d::UNSUPPORTED, gpu::UNSUPPORTED_BACKEND, gpu::UNSUPPORTED_FEATURE
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
@@ -392,7 +404,7 @@ fn void? present_window_output(Renderer* renderer, gpu::CompletionPoint rendered
  @return? gpu::DESCRIPTOR_HEAP_FULL, gpu::COMMAND_ALLOCATOR_CAPACITY_EXCEEDED
  @return? gpu::DEVICE_LOST, gpu::DEVICE_BUSY, gpu::SURFACE_LOST, gpu::BACKEND_ERROR
 *>
-fn Renderer? create_renderer(Allocator allocator, RendererDesc desc = {}) {
+fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDesc desc = {}) {
     // The callback's user pointer is fixed when the runtime is created and a returned-by-value
     // Renderer has no stable address, so the log lives on the heap for the renderer's lifetime.
     DebugLog* log = alloc::new(allocator, DebugLog);
@@ -492,8 +504,14 @@ fn Renderer? create_renderer(Allocator allocator, RendererDesc desc = {}) {
     };
     gpu::SamplerIndex linear_clamp_sampler = gpu::intern_sampler(&device, &sampler_desc)!;
 
+    List{gpu::BufferCopyDesc} pending_copies;
+    pending_copies.init(allocator, RETIRE_INITIAL_CAPACITY);
+
     return {
         .allocator            = allocator,
+        .assets               = assets,
+        .geometries           = alloc::new_array(allocator, GpuGeometry, assets.geometries.items.len),
+        .pending_copies       = pending_copies,
         .runtime              = runtime,
         .surface              = surface,
         .device               = device,
@@ -520,6 +538,7 @@ fn Renderer? create_renderer(Allocator allocator, RendererDesc desc = {}) {
 fn void destroy_renderer(Renderer* renderer) {
     if (renderer.frame_open) (void)gpu::discard_commands(&renderer.commands);
     (void)wait_frames(renderer);
+    free_geometries(renderer);
 
     foreach (&record : renderer.targets.items) {
         if (record.target.texture.is_valid()) release_target(renderer, &record.target);

@@ -37,23 +37,20 @@ fn Aabb aabb_merge(Aabb first, Aabb second) {
 }
 
 <*
- Smallest box containing every transformed corner of the input.
+ Smallest box containing the transformed input, from its center and extents.
+ @param model : "Affine."
 *>
 fn Aabb aabb_transform(Aabb bounds, Mat4 model) {
-    Vec3 first = transform_point(model, bounds.min);
-    Aabb result = { .min = first, .max = first };
-
-    for (uint corner = 1; corner < 8; corner++) {
-        Vec3 source = {
-            (corner & 1) != 0 ? bounds.max.x : bounds.min.x,
-            (corner & 2) != 0 ? bounds.max.y : bounds.min.y,
-            (corner & 4) != 0 ? bounds.max.z : bounds.min.z,
-        };
-        Vec3 transformed = transform_point(model, source);
-        result.min = math::min(result.min, transformed);
-        result.max = math::max(result.max, transformed);
-    }
-    return result;
+    Vec3 center = (bounds.min + bounds.max) * 0.5f;
+    Vec3 extent = (bounds.max - bounds.min) * 0.5f;
+    Vec3 column_x = { model.m00, model.m10, model.m20 };
+    Vec3 column_y = { model.m01, model.m11, model.m21 };
+    Vec3 column_z = { model.m02, model.m12, model.m22 };
+    Vec3 world_center = transform_point(model, center);
+    Vec3 world_extent = math::abs(column_x) * extent.x
+                      + math::abs(column_y) * extent.y
+                      + math::abs(column_z) * extent.z;
+    return { .min = world_center - world_extent, .max = world_center + world_extent };
 }
 
 <*

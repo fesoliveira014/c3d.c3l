@@ -1,5 +1,6 @@
 module c3d::platform;
 
+import c3d::asset;
 import c3d::render;
 import gpu::surface::wayland;
 import gpu::surface::win32;
@@ -8,19 +9,20 @@ import gpu::surface::x11;
 <*
  Create a renderer presenting to the window.
  @param [&in] window : "Must outlive the renderer."
+ @param [&in] assets : "Borrowed for the renderer's lifetime; never released by it."
  @return? c3d::UNSUPPORTED, gpu::UNSUPPORTED_BACKEND, gpu::UNSUPPORTED_FEATURE
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
  @return? gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY, gpu::SLOT_TABLE_FULL
  @return? gpu::DESCRIPTOR_HEAP_FULL, gpu::COMMAND_ALLOCATOR_CAPACITY_EXCEEDED
  @return? gpu::DEVICE_LOST, gpu::DEVICE_BUSY, gpu::SURFACE_LOST, gpu::BACKEND_ERROR
 *>
-fn render::Renderer? create_window_renderer(Allocator allocator, Window* window,
+fn render::Renderer? create_window_renderer(Allocator allocator, Window* window, AssetStore* assets,
   render::RendererDesc desc = {}) {
     desc.surface_fn    = &window_surface;
     desc.surface_user  = window;
     desc.output_width  = window.width;
     desc.output_height = window.height;
-    return render::create_renderer(allocator, desc);
+    return render::create_renderer(allocator, assets, desc);
 }
 
 <*

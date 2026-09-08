@@ -66,6 +66,18 @@
       "sources": [
         "src/scene.c3"
       ]
+    },
+    "geometry": {
+      "type": "executable",
+      "sources": [
+        "src/geometry.c3"
+      ]
+    },
+    "upload": {
+      "type": "executable",
+      "sources": [
+        "src/upload.c3"
+      ]
     }
   }
 }

@@ -1,9 +1,12 @@
 module c3d::test::render;
 
+import c3d::geometry;
+import c3d::maths;
 import c3d::render;
 import c3d::shader;
 import gpu;
 import std::io;
+import std::math;
 
 fn gpu::DebugMessage diagnostic(ZString operation, ZString backend_text) @local {
     return {
@@ -205,4 +208,92 @@ fn void test_pipeline_key_differs_by_any_field() @test {
     render::PipelineKey with_depth = gradient_key();
     with_depth.depth_format = gpu::Format.D32_FLOAT;
     assert(!base.equals(with_depth));
+}
+
+fn Geometry make_quad(Allocator allocator) @local {
+    Vec3[] positions = alloc::new_array(allocator, Vec3, 4);
+    positions[0] = { 0, 0, 0 };
+    positions[1] = { 1, 0, 0 };
+    positions[2] = { 1, 1, 0 };
+    positions[3] = { 0, 1, 0 };
+    Vec3[] normals = alloc::new_array(allocator, Vec3, 4);
+    normals[..] = (Vec3){ 0, 0, 1 };
+    Vec2[] uv0 = alloc::new_array(allocator, Vec2, 4);
+    foreach (index, position : positions) uv0[index] = { position.x, position.y };
+    uint[] indices = alloc::new_array(allocator, uint, 6);
+    indices[..] = (uint[6]){ 0, 1, 2, 0, 2, 3 }[..];
+    return {
+        .topology  = Topology.TRIANGLES,
+        .positions = positions,
+        .normals   = normals,
+        .uv0       = uv0,
+        .indices   = indices,
+    };
+}
+
+fn void test_geometry_layout_aligns_every_stream() @test {
+    @pool() {
+        Geometry quad = make_quad(tmem);
+        render::GeometryLayout layout = render::geometry_layout(&quad);
+
+        assert(layout.positions == 112 && layout.normals == 160 && layout.uv0 == 208 && layout.indices == 240);
+        assert(layout.total_bytes == 252);
+        assert(layout.tangents == 0 && layout.uv1 == 0 && layout.colors == 0 && layout.joints == 0);
+        assert(layout.flags.has_normals && layout.flags.has_uv0 && layout.flags.indices_u16);
+        assert(!layout.flags.has_tangents && !layout.flags.skinned && !layout.flags.has_morphs);
+        assert(layout.vertex_count == 4 && layout.index_count == 6 && layout.index_stride == 2);
+    };
+}
+
+fn void test_geometry_layout_widens_indices_past_ushort() @test {
+    @pool() {
+        Geometry wide = {
+            .topology  = Topology.TRIANGLES,
+            .positions = alloc::new_array(tmem, Vec3, 65536),
+            .indices   = alloc::new_array(tmem, uint, 3),
+        };
+        render::GeometryLayout layout = render::geometry_layout(&wide);
+
+        assert(!layout.flags.indices_u16 && layout.index_stride == 4);
+        assert(layout.total_bytes - layout.indices == 12);
+    };
+}
+
+fn void test_layouts_compare_whole() @test {
+    @pool() {
+        Geometry quad = make_quad(tmem);
+        render::GeometryLayout first = render::geometry_layout(&quad);
+        render::GeometryLayout second = render::geometry_layout(&quad);
+        assert(mem::equals(&first, &second, render::GeometryLayout::size));
+
+        quad.uv1 = quad.uv0;
+        render::GeometryLayout changed = render::geometry_layout(&quad);
+        assert(!mem::equals(&first, &changed, render::GeometryLayout::size));
+        assert(changed.uv1 == 240 && changed.indices == 272);
+    };
+}
+
+fn void test_write_geometry_block_fills_the_root() @test {
+    @pool() {
+        Geometry quad = make_quad(tmem);
+        render::GeometryLayout layout = render::geometry_layout(&quad);
+        char[] block = alloc::new_array(tmem, char, (sz)layout.total_bytes);
+        render::write_geometry_block(
+            block:    block,
+            geometry: &quad,
+            layout:   &layout,
+            base:     (gpu::GpuAddress)0x1000,
+        );
+
+        shader::GeometryRoot* root = (shader::GeometryRoot*)block.ptr;
+        assert((ulong)root.positions == 0x1070 && (ulong)root.normals == 0x10A0 && (ulong)root.uv0 == 0x10D0);
+        assert((ulong)root.tangents == 0 && (ulong)root.colors == 0 && (ulong)root.custom_data == 0);
+        assert(root.vertex_count == 4 && root.morph_target_count == 0 && root.custom_stride == 0);
+        assert(root.flags == (uint)layout.flags);
+
+        float* positions = (float*)&block[layout.positions];
+        assert(positions[3] == 1 && positions[4] == 0 && positions[5] == 0);
+        ushort* indices = (ushort*)&block[layout.indices];
+        assert(indices[0] == 0 && indices[1] == 1 && indices[2] == 2 && indices[5] == 3);
+    };
 }

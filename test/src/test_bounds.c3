@@ -122,3 +122,32 @@ fn void test_frustum_is_wider_than_it_is_tall() @test {
     assert(maths::frustum_intersects_aabb(&frustum, point_box({ 3, 0, -5 })));
     assert(!maths::frustum_intersects_aabb(&frustum, point_box({ 0, 3, -5 })));
 }
+
+fn void test_aabb_transform_matches_corner_transform() @test {
+    Aabb bounds = { .min = { -1, -2, -0.5f }, .max = { 2, 1, 3 } };
+    Transform transform = {
+        .position = { 4, -1, 2 },
+        .rotation = quaternion::from_euler{float}(0.4f, -0.7f, 1.1f),
+        .scale    = { 2, 0.5f, 1.5f },
+    };
+    Mat4 model = transform.to_mat4();
+
+    Vec3 first = maths::transform_point(model, bounds.min);
+    Aabb corners = { .min = first, .max = first };
+    for (uint corner = 1; corner < 8; corner++) {
+        Vec3 source = {
+            (corner & 1) != 0 ? bounds.max.x : bounds.min.x,
+            (corner & 2) != 0 ? bounds.max.y : bounds.min.y,
+            (corner & 4) != 0 ? bounds.max.z : bounds.min.z,
+        };
+        Vec3 transformed = maths::transform_point(model, source);
+        corners.min = math::min(corners.min, transformed);
+        corners.max = math::max(corners.max, transformed);
+    }
+
+    Aabb result = maths::aabb_transform(bounds, model);
+    for (usz axis = 0; axis < 3; axis++) {
+        assert(math::abs(result.min[axis] - corners.min[axis]) <= TOLERANCE);
+        assert(math::abs(result.max[axis] - corners.max[axis]) <= TOLERANCE);
+    }
+}
