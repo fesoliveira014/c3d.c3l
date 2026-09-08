@@ -6,6 +6,7 @@ import std::collections::map;
 
 const uint DEFAULT_MAX_GEOMETRIES @local = 4096; // 15 Asset Store defaults; one mirror slot each in the renderer
 const uint DEFAULT_MAX_TEXTURES @local   = 4096;
+const uint DEFAULT_MAX_MATERIALS @local  = 4096; // one heap slot each in the renderer
 const uint DEFAULT_MAX_SAMPLERS @local   = 64;
 
 <*
@@ -22,6 +23,7 @@ struct AssetHeader {
 struct AssetStoreDesc {
     uint max_geometries;
     uint max_textures;
+    uint max_materials;
     uint max_samplers;
 }
 
@@ -32,6 +34,7 @@ struct AssetStore {
     Allocator                 allocator;
     GeometryPool              geometries;
     TexturePool               textures;
+    MaterialPool              materials;
     SamplerPool               samplers;
     HashMap{String, AssetRef} keys;
 }
@@ -65,6 +68,16 @@ fn TextureId? AssetStore.find_texture(&self, String key) {
 }
 
 <*
+ Material id under a key.
+ @return? NOT_FOUND, c3d::INVALID_ARGUMENT
+*>
+fn MaterialId? AssetStore.find_material(&self, String key) {
+    AssetRef found = self.find(key)!;
+    if (found.kind != AssetKind.MATERIAL) return c3d::INVALID_ARGUMENT~;
+    return (MaterialId){ .index = found.id.index, .generation = found.id.generation };
+}
+
+<*
  Sampler id under a key.
  @return? NOT_FOUND, c3d::INVALID_ARGUMENT
 *>
@@ -81,6 +94,7 @@ fn AssetStoreDesc default_asset_store_desc() {
     return {
         .max_geometries = DEFAULT_MAX_GEOMETRIES,
         .max_textures   = DEFAULT_MAX_TEXTURES,
+        .max_materials  = DEFAULT_MAX_MATERIALS,
         .max_samplers   = DEFAULT_MAX_SAMPLERS,
     };
 }
@@ -89,6 +103,7 @@ fn AssetStoreDesc default_asset_store_desc() {
  Create a store holding the builtin textures and samplers.
  @require desc.max_geometries > 0
  @require desc.max_textures >= BUILTIN_TEXTURE_COUNT
+ @require desc.max_materials > 0
  @require desc.max_samplers >= BUILTIN_SAMPLER_COUNT
 *>
 fn AssetStore create_asset_store(Allocator allocator, AssetStoreDesc desc) {
@@ -96,6 +111,7 @@ fn AssetStore create_asset_store(Allocator allocator, AssetStoreDesc desc) {
         .allocator  = allocator,
         .geometries = pool::create_pool{GeometryAsset, GeometryId}(allocator, desc.max_geometries),
         .textures   = pool::create_pool{TextureAsset, TextureId}(allocator, desc.max_textures),
+        .materials  = pool::create_pool{MaterialAsset, MaterialId}(allocator, desc.max_materials),
         .samplers   = pool::create_pool{SamplerAsset, SamplerId}(allocator, desc.max_samplers),
     };
     store.keys.init(allocator);
@@ -118,6 +134,10 @@ fn void destroy_asset_store(AssetStore* store) {
         free_string(store.allocator, record.header.key);
         alloc::free(store.allocator, record.pixels.ptr);
     }
+    foreach (&record : store.materials.items) {
+        if (!record.header.revision) continue;
+        free_string(store.allocator, record.header.key);
+    }
     foreach (&record : store.samplers.items) {
         if (!record.header.revision) continue;
         free_string(store.allocator, record.header.key);
@@ -125,6 +145,7 @@ fn void destroy_asset_store(AssetStore* store) {
     store.keys.free();
     pool::destroy_pool{GeometryAsset, GeometryId}(&store.geometries);
     pool::destroy_pool{TextureAsset, TextureId}(&store.textures);
+    pool::destroy_pool{MaterialAsset, MaterialId}(&store.materials);
     pool::destroy_pool{SamplerAsset, SamplerId}(&store.samplers);
     *store = {};
 }

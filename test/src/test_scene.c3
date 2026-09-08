@@ -1,6 +1,7 @@
 module c3d::test::scene;
 
 import c3d;
+import c3d::camera;
 import c3d::ecs;
 import c3d::maths;
 import c3d::scene;
@@ -336,4 +337,15 @@ fn void test_destroy_scene_runs_remaining_hooks() @test {
 
     assert(record.calls == 3);
     assert(scene.nodes.len == 0);
+}
+
+fn void test_add_camera_attaches_component() @test {
+    Scene scene = make_scene(4);
+    defer scene::destroy_scene(&scene);
+    Node* node = scene.add_camera(camera::perspective_deg(60, 0.1f))!!;
+    Camera* attached = scene.get(node, Camera);
+    assert(attached != null);
+    assert(close(attached.fov_y, (float)math::PI / 3));
+    assert(attached.layers == camera::ALL_LAYERS);
+    assert(scene.count(Camera) == 1);
 }
