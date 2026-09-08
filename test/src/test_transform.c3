@@ -137,3 +137,30 @@ fn void test_to_mat4_decomposes_back() @test {
                     + column_z.normalize() * point.z;
     assert(close_vec3(by_columns, transform.rotation * point));
 }
+
+fn void test_transform_from_mat4_round_trips() @test {
+    Transform[3] cases = {
+        {
+            .position = { 0, 0, 0 },
+            .rotation = quaternion::from_axis_angle{float}(((Vec3){ 1, 1, 0 }).normalize(), 1.1f),
+            .scale    = { 1, 1, 1 },
+        },
+        {
+            .position = { 3, -1, 4 },
+            .rotation = quaternion::from_euler{float}(0.2f, 0.9f, -0.4f),
+            .scale    = { 2, 0.5f, 1.25f },
+        },
+        {
+            .position = { -7, 2, 0.5f },
+            .rotation = quaternion::IDENTITY,
+            .scale    = { 1, 1, 1 },
+        },
+    };
+    Vec3 point = { 0.3f, -0.7f, 0.55f };
+    foreach (transform : cases) {
+        Transform back = maths::transform_from_mat4(transform.to_mat4());
+        assert(close_vec3(back.position, transform.position));
+        assert(close_vec3(back.scale, transform.scale));
+        assert(close_vec3(back.rotation * point, transform.rotation * point));
+    }
+}

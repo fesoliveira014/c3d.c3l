@@ -60,6 +60,12 @@
       "sources": [
         "src/assets.c3"
       ]
+    },
+    "scene": {
+      "type": "executable",
+      "sources": [
+        "src/scene.c3"
+      ]
     }
   }
 }
