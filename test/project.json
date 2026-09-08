@@ -30,6 +30,12 @@
       "sources": [
         "src/**"
       ]
+    },
+    "ecs_cap": {
+      "type": "executable",
+      "sources": [
+        "cap/**"
+      ]
     }
   }
 }
