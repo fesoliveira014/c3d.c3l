@@ -10,6 +10,7 @@ fn AssetStore make_store() @local {
     return asset::create_asset_store(mem, {
         .max_geometries = 4,
         .max_textures   = asset::BUILTIN_TEXTURE_COUNT + 2,
+        .max_materials  = 2,
         .max_samplers   = asset::BUILTIN_SAMPLER_COUNT + 1,
     });
 }
@@ -278,4 +279,45 @@ fn void test_morph_targets_are_deep_copied() @test {
     assert(record.data.targets[0].normal_deltas.len == 0);
     assert(record.data.targets[0].name == "smile_1");
     assets.remove_geometry(geometry);
+}
+
+fn void test_material_lifecycle_and_key() @test {
+    AssetStore assets = make_store();
+    defer asset::destroy_asset_store(&assets);
+    MaterialId red = assets.add_material(material::basic({ .color = { 1, 0, 0, 1 } }), "mat/red")!!;
+    assert(assets.materials.is_live(red));
+    assert(assets.material(red).header.revision == 1);
+    MaterialId found = assets.find_material("mat/red")!!;
+    assert(found.index == red.index && found.generation == red.generation);
+
+    assets.material(red).data.basic.color = { 0, 1, 0, 1 };
+    assets.mark_material_dirty(red);
+    assert(assets.material(red).header.revision == 2);
+    assert(assets.material(red).data.basic.color.g == 1);
+
+    assets.remove_material(red);
+    assert(!assets.materials.is_live(red));
+    if (catch excuse = assets.find_material("mat/red")) {
+        assert(excuse == NOT_FOUND);
+    } else {
+        assert(false, "key survived removal");
+    }
+}
+
+fn void test_material_duplicate_key_and_capacity() @test {
+    AssetStore assets = make_store();
+    defer asset::destroy_asset_store(&assets);
+    Material white = material::basic({ .color = { 1, 1, 1, 1 } });
+    assets.add_material(white, "mat/a")!!;
+    if (catch excuse = assets.add_material(white, "mat/a")) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "duplicate key accepted");
+    }
+    assets.add_material(white)!!;
+    if (catch excuse = assets.add_material(white)) {
+        assert(excuse == c3d::CAPACITY_EXCEEDED);
+    } else {
+        assert(false, "pool overfilled");
+    }
 }

@@ -32,4 +32,52 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer GeometryRoot
     uint _pad1;
 };
 
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer FrameRoot {
+    mat4 view;
+    mat4 proj;
+    mat4 view_proj;
+    mat4 inv_view_proj;
+    mat4 prev_view_proj;
+    vec4 camera_position;
+    vec4 camera_params;
+    vec4 jitter_time;
+    uint64_t lights;
+    uint64_t shadows;
+    uint64_t environment;
+    uint64_t instances;
+    uint light_count;
+    uint shadow_count;
+    uint flags;
+    uint frame_index;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer DrawRoot {
+    mat4 model;
+    mat4 prev_model;
+    vec4 normal_0;
+    vec4 normal_1;
+    vec4 normal_2;
+    uint64_t frame;
+    uint64_t geometry;
+    uint64_t material;
+    uint64_t skin;
+    uint64_t morph;
+    uint64_t instance_data;
+    uint64_t previous_pose;
+    uint object_id;
+    uint flags;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+    uint _pad3;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer BasicMaterialGpu {
+    uint kind;
+    uint flags;
+    float alpha_cutoff;
+    uint _pad0;
+    vec4 color;
+};
+
 #endif

@@ -11,10 +11,11 @@ struct Plane {
 }
 
 <*
- View frustum as six inward-facing planes.
+ View frustum as inward-facing planes; five when the far plane is at infinity.
 *>
 struct Frustum {
     Plane[6] planes;
+    uint     plane_count;
 }
 
 fn Plane normalized_plane(Vec4 coefficients) @private {
@@ -24,9 +25,10 @@ fn Plane normalized_plane(Vec4 coefficients) @private {
 }
 
 <*
- Extract the six clipping planes of a reverse-Z view-projection matrix.
+ Extract the clipping planes of a reverse-Z view-projection matrix.
+ @param infinite_far : "Skips the far plane, whose normal is zero."
 *>
-fn Frustum frustum_from_view_proj(Mat4 view_proj) {
+fn Frustum frustum_from_view_proj(Mat4 view_proj, bool infinite_far = false) {
     Vec4 row_x = { view_proj.m00, view_proj.m01, view_proj.m02, view_proj.m03 };
     Vec4 row_y = { view_proj.m10, view_proj.m11, view_proj.m12, view_proj.m13 };
     Vec4 row_z = { view_proj.m20, view_proj.m21, view_proj.m22, view_proj.m23 };
@@ -34,16 +36,14 @@ fn Frustum frustum_from_view_proj(Mat4 view_proj) {
 
     // Reverse-Z renames these two rather than changing them: [0, 1] depth clips on both
     // z and w - z either way, so the set is the same and only near and far trade places.
-    return {
-        .planes = {
-            normalized_plane(row_w + row_x),
-            normalized_plane(row_w - row_x),
-            normalized_plane(row_w + row_y),
-            normalized_plane(row_w - row_y),
-            normalized_plane(row_w - row_z),
-            normalized_plane(row_z),
-        },
-    };
+    Frustum frustum = { .plane_count = infinite_far ? 5 : 6 };
+    frustum.planes[0] = normalized_plane(row_w + row_x);
+    frustum.planes[1] = normalized_plane(row_w - row_x);
+    frustum.planes[2] = normalized_plane(row_w + row_y);
+    frustum.planes[3] = normalized_plane(row_w - row_y);
+    frustum.planes[4] = normalized_plane(row_w - row_z);
+    if (!infinite_far) frustum.planes[5] = normalized_plane(row_z);
+    return frustum;
 }
 
 <*
@@ -51,7 +51,7 @@ fn Frustum frustum_from_view_proj(Mat4 view_proj) {
  @param [&in] frustum : "Read only; a straddling box counts as inside."
 *>
 fn bool frustum_intersects_aabb(Frustum* frustum, Aabb bounds) {
-    foreach (&plane : frustum.planes) {
+    foreach (&plane : frustum.planes[:frustum.plane_count]) {
         Vec3 positive = {
             plane.normal.x >= 0 ? bounds.max.x : bounds.min.x,
             plane.normal.y >= 0 ? bounds.max.y : bounds.min.y,

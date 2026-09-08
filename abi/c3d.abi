@@ -25,3 +25,51 @@ root GeometryRoot {
     uint       _pad0;
     uint       _pad1;
 }
+
+root FrameRoot {
+    mat4       view;
+    mat4       proj;
+    mat4       view_proj;
+    mat4       inv_view_proj;
+    mat4       prev_view_proj;
+    vec4       camera_position;
+    vec4       camera_params;
+    vec4       jitter_time;
+    GpuAddress lights;
+    GpuAddress shadows;
+    GpuAddress environment;
+    GpuAddress instances;
+    uint       light_count;
+    uint       shadow_count;
+    uint       flags;
+    uint       frame_index;
+}
+
+root DrawRoot {
+    mat4       model;
+    mat4       prev_model;
+    vec4       normal_0;
+    vec4       normal_1;
+    vec4       normal_2;
+    GpuAddress frame;
+    GpuAddress geometry;
+    GpuAddress material;
+    GpuAddress skin;
+    GpuAddress morph;
+    GpuAddress instance_data;
+    GpuAddress previous_pose;
+    uint       object_id;
+    uint       flags;
+    uint       _pad0;
+    uint       _pad1;
+    uint       _pad2;
+    uint       _pad3;
+}
+
+root BasicMaterialGpu {
+    uint  kind;
+    uint  flags;
+    float alpha_cutoff;
+    uint  _pad0;
+    vec4  color;
+}

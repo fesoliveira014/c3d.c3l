@@ -1,6 +1,7 @@
 module c3d::scene;
 
 import c3d;
+import c3d::camera;
 import c3d::ecs;
 import c3d::maths;
 import std::math;
@@ -64,6 +65,18 @@ fn Node*? Scene.add_mesh(&self, GeometryId geometry, MaterialId material, Node* 
         .cast_shadow    = true,
         .receive_shadow = true,
     });
+    return node;
+}
+
+<*
+ Add a node carrying a camera.
+ @param [in] parent : "Null means the root."
+ @param name : "Copied into the scene allocator."
+ @return? c3d::CAPACITY_EXCEEDED
+*>
+fn Node*? Scene.add_camera(&self, Camera camera, Node* parent = null, String name = "") {
+    Node* node = self.add_node(parent, name)!;
+    self.world.add(node.id, camera);
     return node;
 }
 
@@ -213,7 +226,7 @@ fn SceneDesc default_scene_desc() {
 }
 
 <*
- Create a scene with its root node and the mesh component registered.
+ Create a scene with its root node and the mesh and camera components registered.
  @require desc.max_nodes > 0
 *>
 fn Scene create_scene(Allocator allocator, SceneDesc desc) {
@@ -237,6 +250,7 @@ fn Scene create_scene(Allocator allocator, SceneDesc desc) {
         .visible_effective = true,
     };
     scene.world.register(Mesh)!!;
+    scene.world.register(Camera)!!;
     scene.world.set_remove_hook(Mesh, &free_morph_weights, scene.hook_allocator);
     return scene;
 }
