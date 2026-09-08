@@ -71,6 +71,22 @@ fn Mat4 inverse_affine(Mat4 model) {
 }
 
 <*
+ Position, rotation and scale of a matrix built from a transform.
+ @param model : "Affine, positive scale, no shear."
+*>
+fn Transform transform_from_mat4(Mat4 model) {
+    Vec3 column_x = { model.m00, model.m10, model.m20 };
+    Vec3 column_y = { model.m01, model.m11, model.m21 };
+    Vec3 column_z = { model.m02, model.m12, model.m22 };
+    Vec3 scale = { column_x.length(), column_y.length(), column_z.length() };
+    return {
+        .position = translation(model),
+        .rotation = quat_from_axes(column_x / scale.x, column_y / scale.y, column_z / scale.z),
+        .scale    = scale,
+    };
+}
+
+<*
  Matrix that keeps normals perpendicular under non-uniform scale.
 *>
 fn Mat3 normal_matrix(Mat4 model) {
@@ -109,7 +125,10 @@ fn Quat look_rotation(Vec3 forward, Vec3 up) {
     Vec3 axis_z = -forward.normalize();
     Vec3 axis_x = up.cross(axis_z).normalize();
     Vec3 axis_y = axis_z.cross(axis_x);
+    return quat_from_axes(axis_x, axis_y, axis_z);
+}
 
+fn Quat quat_from_axes(Vec3 axis_x, Vec3 axis_y, Vec3 axis_z) @private {
     float trace = axis_x.x + axis_y.y + axis_z.z;
     if (trace > 0) {
         float scale = math::sqrt(trace + 1.0f) * 2.0f;
