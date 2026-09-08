@@ -38,7 +38,7 @@ fn int main() {
     defer render::destroy_renderer(&renderer);
 
     while (window.poll()) {
-        if (window.input.keys_pressed[(usz)sdl::Scancode.ESCAPE]) break;
+        if (window.input.keys_released[(usz)sdl::Scancode.ESCAPE]) break;
 
         platform::sync_window(&window, &renderer);
         renderer.begin_frame({ .time = window.clock.total, .delta = window.clock.delta })!!;

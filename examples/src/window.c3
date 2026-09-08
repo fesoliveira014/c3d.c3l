@@ -30,7 +30,7 @@ fn int main() {
         platform::default_window_desc("c3d window", 1280, 720))!!;
     defer platform::destroy_window(&window);
 
-    io::printfn("opened %dx%d, escape or close to quit", window.width, window.height);
+    io::printfn("opened %dx%d, release escape or close to quit", window.width, window.height);
 
     bool[platform::MOUSE_BUTTON_COUNT] previous_buttons;
     while (window.poll(&report_event, &window)) {
@@ -62,7 +62,7 @@ fn int main() {
         foreach (scancode, pressed : window.input.keys_pressed) {
             if (pressed) io::printfn("key %d pressed", scancode);
         }
-        if (window.input.keys_pressed[(usz)sdl::Scancode.ESCAPE]) break;
+        if (window.input.keys_released[(usz)sdl::Scancode.ESCAPE]) break;
 
         foreach (button, down : window.input.mouse_buttons) {
             if (down == previous_buttons[button]) continue;

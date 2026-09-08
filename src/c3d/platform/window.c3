@@ -76,6 +76,7 @@ fn bool Window.apply_event(&self, sdl::Event* event) {
             // when focus arrives are state the window inherits, not presses made in it.
             bool down = (EventType)event.common.type == EventType.KEY_DOWN;
             if (down && !self.input.keys[key] && !self.focus_gained) self.input.keys_pressed[key] = true;
+            if (!down && self.input.keys[key]) self.input.keys_released[key] = true;
             self.input.keys[key] = down;
         case EventType.MOUSE_BUTTON_DOWN:
         case EventType.MOUSE_BUTTON_UP:

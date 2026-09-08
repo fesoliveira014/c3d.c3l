@@ -98,11 +98,11 @@ fn int main() {
     double last_print;
 
     renderer.prepare_scene(&scene)!!;
-    io::printn("drag to orbit, wheel to zoom, O toggles the lens, arrows move the cube, Escape quits");
+    io::printn("drag to orbit, wheel to zoom, O toggles the lens, arrows move the cube, Escape release quits");
 
     while (window.poll()) {
         Input* input = &window.input;
-        if (input.keys_pressed[(usz)sdl::Scancode.ESCAPE]) break;
+        if (input.keys_released[(usz)sdl::Scancode.ESCAPE]) break;
         if (input.keys_pressed[(usz)sdl::Scancode.O] && !input.keyboard_captured_by_gui) {
             orthographic = !orthographic;
             *scene.get(camera_node, camera::Camera) = orthographic

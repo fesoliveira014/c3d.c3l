@@ -128,6 +128,12 @@ fn void test_key_up_releases() @test {
     window.apply_event(&&key_event(sdl::EventType.KEY_UP, sdl::Scancode.A));
 
     assert(!window.input.keys[(usz)sdl::Scancode.A]);
+    assert(window.input.keys_released[(usz)sdl::Scancode.A]);
+
+    window.input.begin_frame();
+    assert(!window.input.keys_released[(usz)sdl::Scancode.A], "a release lasts one frame");
+    window.apply_event(&&key_event(sdl::EventType.KEY_UP, sdl::Scancode.A));
+    assert(!window.input.keys_released[(usz)sdl::Scancode.A], "an up for a key not held is not a release");
 }
 
 fn void test_mouse_button_and_position_track() @test {
