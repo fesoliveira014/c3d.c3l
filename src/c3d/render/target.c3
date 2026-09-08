@@ -33,6 +33,15 @@ const gpu::TextureState FRAGMENT_READ_STATE = {
 };
 
 <*
+ State a depth target is written in.
+*>
+const gpu::TextureState DEPTH_ATTACHMENT_STATE = {
+    .layout = gpu::TextureLayout.DEPTH_ATTACHMENT,
+    .stages = { .depth_output },
+    .access = { .read, .write },
+};
+
+<*
  State an image is presented from.
 *>
 const gpu::TextureState PRESENT_STATE = { .layout = gpu::TextureLayout.PRESENT };
@@ -93,8 +102,15 @@ fn void? Target.transition(&self, gpu::CommandList* commands, gpu::TextureState 
  @return? gpu::OUT_OF_DEVICE_MEMORY, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
 *>
 fn RenderTargetId? create_render_target(Renderer* renderer, RenderTargetDesc desc) {
-    Target target = allocate_target(renderer, desc.width, desc.height)!;
-    defer catch release_target(renderer, &target);
+    Target target = allocate_target(
+        device:     &renderer.device,
+        width:      desc.width,
+        height:     desc.height,
+        format:     RENDER_TARGET_FORMAT,
+        usage:      { .color_attach, .sampled, .storage },
+        debug_name: "render_target",
+    )!;
+    defer catch release_target(&renderer.device, &target);
     return renderer.targets.add({ .target = target, .revision = 1 });
 }
 
@@ -110,8 +126,15 @@ fn RenderTargetId? create_render_target(Renderer* renderer, RenderTargetDesc des
 fn void? resize_render_target(Renderer* renderer, RenderTargetId target, uint width, uint height) {
     TargetRecord* record = renderer.targets.try_get(target)!;
     wait_frames(renderer)!;
-    release_target(renderer, &record.target);
-    record.target = allocate_target(renderer, width, height)!;
+    release_target(&renderer.device, &record.target);
+    record.target = allocate_target(
+        device:     &renderer.device,
+        width:      width,
+        height:     height,
+        format:     RENDER_TARGET_FORMAT,
+        usage:      { .color_attach, .sampled, .storage },
+        debug_name: "render_target",
+    )!;
     record.revision++;
 }
 
@@ -123,42 +146,43 @@ fn void? resize_render_target(Renderer* renderer, RenderTargetId target, uint wi
 fn void? destroy_render_target(Renderer* renderer, RenderTargetId target) {
     TargetRecord* record = renderer.targets.try_get(target)!;
     wait_frames(renderer)!;
-    release_target(renderer, &record.target);
+    release_target(&renderer.device, &record.target);
     *record = {};
     renderer.targets.remove(target);
 }
 
-fn Target? allocate_target(Renderer* renderer, uint width, uint height) @private {
+fn Target? allocate_target(gpu::Device* device, uint width, uint height, gpu::Format format,
+  gpu::TextureUsage usage, ZString debug_name) @private {
     gpu::TextureDesc texture_desc = {
         .width      = width,
         .height     = height,
-        .format     = RENDER_TARGET_FORMAT,
-        .usage      = { .color_attach, .sampled, .storage },
+        .format     = format,
+        .usage      = usage,
         .access     = { .graphics },
-        .debug_name = "render_target",
+        .debug_name = debug_name,
     };
-    gpu::TextureHandle texture = gpu::create_texture(&renderer.device, &texture_desc)!;
-    defer catch (void)gpu::destroy_texture(&renderer.device, texture);
+    gpu::TextureHandle texture = gpu::create_texture(device, &texture_desc)!;
+    defer catch (void)gpu::destroy_texture(device, texture);
 
     gpu::AttachmentViewDesc attachment_desc = { .texture = texture };
-    gpu::AttachmentViewHandle attachment = gpu::create_attachment_view(&renderer.device, &attachment_desc)!;
-    defer catch (void)gpu::destroy_attachment_view(&renderer.device, attachment);
+    gpu::AttachmentViewHandle attachment = gpu::create_attachment_view(device, &attachment_desc)!;
+    defer catch (void)gpu::destroy_attachment_view(device, attachment);
 
-    gpu::TextureView view = gpu::create_texture_view(&renderer.device, texture, null)!;
+    gpu::TextureView view = gpu::create_texture_view(device, texture, null)!;
     return {
         .texture    = texture,
         .attachment = attachment,
         .view       = view,
-        .format     = RENDER_TARGET_FORMAT,
+        .format     = format,
         .width      = width,
         .height     = height,
     };
 }
 
-fn void release_target(Renderer* renderer, Target* target) @private {
-    (void)gpu::destroy_texture_view(&renderer.device, target.view);
-    (void)gpu::destroy_attachment_view(&renderer.device, target.attachment);
-    (void)gpu::destroy_texture(&renderer.device, target.texture);
+fn void release_target(gpu::Device* device, Target* target) @private {
+    (void)gpu::destroy_texture_view(device, target.view);
+    (void)gpu::destroy_attachment_view(device, target.attachment);
+    (void)gpu::destroy_texture(device, target.texture);
     *target = {};
 }
 

@@ -24,7 +24,7 @@ const gpu::StageMask CONSUMER_STAGES = { .vertex_shader, .fragment_shader, .comp
 <*
  Which streams a packed geometry carries; written to GeometryRoot.flags.
 *>
-bitstruct GeometryFlags : uint { // mirrored as GeometryRoot.flags in c3d_abi.glsl
+bitstruct GeometryFlags : uint { // mirrored as GeometryRoot.flags in c3d_abi.glsl and GEOMETRY_HAS_* in vertex_pull.glsl
     bool has_normals  : 0;
     bool has_tangents : 1;
     bool has_uv0      : 2;
@@ -81,13 +81,15 @@ struct GpuGeometry {
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::UNSUPPORTED_FEATURE, gpu::COMMAND_RECORDING_ERROR, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
 *>
-fn void? Renderer.upload(&self, GeometryId geometry) {
+fn void? Renderer.upload_geometry(&self, GeometryId geometry) {
     if (!self.assets.geometries.is_live(geometry)) return c3d::INVALID_ID~;
     if (self.frame_open) {
         ensure_geometry(self, geometry)!;
         return;
     }
-    return submit_uploads(self, geometry);
+    open_closed_frame_slot(self)!;
+    ensure_geometry(self, geometry)!;
+    return submit_pending(self);
 }
 
 <*
@@ -257,15 +259,17 @@ fn void? record_pending_copies(Renderer* renderer, gpu::CommandList* commands) @
     renderer.pending_copies.clear();
 }
 
-fn void? submit_uploads(Renderer* renderer, GeometryId geometry) @private {
+fn void? open_closed_frame_slot(Renderer* renderer) @private {
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     if (slot.done.is_valid()) gpu::wait_completion(slot.done)!;
     drain_retired(&renderer.device, &slot.retire);
-    reset_upload_ring(renderer, slot)!;
+    return reset_upload_ring(renderer, slot);
+}
 
+fn void? submit_pending(Renderer* renderer) @private {
+    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::CommandList commands = gpu::begin_commands(&slot.allocator)!;
     defer catch (void)gpu::discard_commands(&commands);
-    ensure_geometry(renderer, geometry)!;
     record_pending_copies(renderer, &commands)!;
     slot.upload.flush(&renderer.device)!;
 

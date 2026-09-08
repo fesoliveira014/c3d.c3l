@@ -1,0 +1,367 @@
+module c3d::render;
+
+import c3d;
+import c3d::asset;
+import c3d::camera;
+import c3d::geometry;
+import c3d::material;
+import c3d::maths;
+import c3d::scene;
+import c3d::shader;
+import gpu;
+import std::math;
+import std::sort;
+
+<*
+ Color format of the view targets.
+*>
+const gpu::Format HDR_FORMAT = gpu::Format.RGBA16_FLOAT;
+
+<*
+ Depth format of the view targets.
+*>
+const gpu::Format DEPTH_FORMAT = gpu::Format.D32_FLOAT;
+
+const Vec4 CLEAR_COLOR @private = { 0, 0, 0, 1 }; // opaque black
+const float DEPTH_CLEAR @private = 0; // reverse-Z far
+
+struct DrawItem @private {
+    ulong           sort_key;
+    MeshCandidate*  candidate;
+    GpuGeometry*    geometry;
+    MaterialRes*    material;
+    gpu::GpuAddress root;
+}
+
+struct DrawState @private {
+    gpu::PipelineHandle    pipeline;
+    gpu::CullMode          cull;
+    gpu::PrimitiveTopology topology;
+    bool                   depth_test;
+    bool                   depth_write;
+}
+
+<*
+ Render one frame of the scene from the camera to the window.
+ @param [&in] scene : "Pose as left by the last update_world; not advanced."
+ @param [&in] camera_node : "Carries a Camera component."
+ @require !self.frame_open
+ @return? c3d::INVALID_ARGUMENT, c3d::SHADER_NOT_FOUND
+ @return? gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL
+ @return? gpu::DEVICE_BUSY, gpu::RESOURCE_IN_USE, gpu::SURFACE_LOST
+ @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
+ @return? gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
+ @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+*>
+fn void? Renderer.render(&self, Scene* scene, Node* camera_node, FrameInfo info = {}) {
+    self.begin_frame(info)!;
+    defer catch abort_frame(self);
+    self.render_view(scene, camera_node)!;
+    if (self.has_output) composite_target(self, &self.hdr_color)!;
+    return self.end_frame();
+}
+
+<*
+ Extract, upload and record the scene from the camera into the view targets.
+ Records nothing without a window output.
+ @param [&in] scene : "Pose as left by the last update_world; not advanced."
+ @param [&in] camera_node : "Carries a Camera component."
+ @require self.frame_open
+ @return? c3d::INVALID_ARGUMENT, c3d::SHADER_NOT_FOUND
+ @return? gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL
+ @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
+ @return? gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
+ @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+*>
+fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
+    if (!self.has_output) return;
+    Camera* camera = scene.get(camera_node, Camera);
+    if (!camera) return c3d::INVALID_ARGUMENT~;
+
+    Vec2 viewport = { (float)self.hdr_color.width, (float)self.hdr_color.height };
+    CameraMatrices matrices = camera::derive_matrices(*camera, camera_node.world, viewport);
+    Frame* slot = &self.frames[self.frame_index % FRAMES_IN_FLIGHT];
+
+    @pool() {
+        ExtractCounts counts;
+        MeshCandidate[] candidates = extract_candidates(
+            allocator: tmem,
+            scene:     scene,
+            assets:    self.assets,
+            camera:    &matrices,
+            layers:    camera.layers,
+            counts:    &counts,
+        );
+        self.stats.culled += counts.culled;
+        self.stats.dangling_refs += counts.dangling;
+
+        DrawItem[] items = alloc::new_array(tmem, DrawItem, candidates.len);
+        foreach (index, &candidate : candidates) {
+            GpuGeometry* geometry = ensure_geometry(self, candidate.geometry)!;
+            MaterialRes* material = ensure_material(self, candidate.material)!;
+            items[index] = {
+                .sort_key  = draw_sort_key(
+                    fragment:  { .shader = BASIC },
+                    material:  candidate.material,
+                    geometry:  candidate.geometry,
+                    ndc_depth: candidate.ndc_depth,
+                ),
+                .candidate = candidate,
+                .geometry  = geometry,
+                .material  = material,
+            };
+        }
+        sort::quicksort(items, &by_sort_key);
+        record_pending_copies(self, &self.commands)!;
+
+        gpu::MappedGpuSpan frame_span = slot.upload.take(&self.device, FrameRoot::size, STREAM_ALIGNMENT)!;
+        write_frame_root(
+            root:        (FrameRoot*)frame_span.bytes.ptr,
+            matrices:    &matrices,
+            camera:      camera,
+            viewport:    viewport,
+            info:        self.info,
+            frame_index: self.frame_index,
+        );
+        foreach (&item : items) {
+            gpu::MappedGpuSpan draw_span = slot.upload.take(&self.device, DrawRoot::size, STREAM_ALIGNMENT)!;
+            write_draw_root(
+                root:      (DrawRoot*)draw_span.bytes.ptr,
+                world:     item.candidate.node.world,
+                frame:     frame_span.address,
+                geometry:  item.geometry.root,
+                material:  item.material.address,
+                object_id: item.candidate.node.id.index,
+            );
+            item.root = draw_span.address;
+        }
+
+        self.hdr_color.transition(&self.commands, COLOR_ATTACHMENT_STATE)!;
+        self.depth.transition(&self.commands, DEPTH_ATTACHMENT_STATE)!;
+        write_pass_timestamp(
+            renderer:    self,
+            frame_index: self.frame_index,
+            pass:        Pass.FORWARD_OPAQUE,
+            half:        TIMESTAMP_BEGIN,
+        )!;
+        record_opaque_pass(self, items)!;
+        write_pass_timestamp(
+            renderer:    self,
+            frame_index: self.frame_index,
+            pass:        Pass.FORWARD_OPAQUE,
+            half:        TIMESTAMP_END,
+        )!;
+        slot.timed[Pass.FORWARD_OPAQUE.ordinal] = true;
+    };
+}
+
+<*
+ Upload every asset the scene's meshes reference and create their pipelines, then wait.
+ @param [&in] scene : "Read only."
+ @require !self.frame_open
+ @return? c3d::SHADER_NOT_FOUND, gpu::SHADER_INVALID, gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL
+ @return? gpu::DEVICE_BUSY, gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::OUT_OF_HOST_MEMORY
+ @return? gpu::OUT_OF_DEVICE_MEMORY, gpu::UNSUPPORTED_FEATURE, gpu::COMMAND_RECORDING_ERROR
+ @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+*>
+fn void? Renderer.prepare_scene(&self, Scene* scene) {
+    open_closed_frame_slot(self)!;
+    scene.@each(Mesh; Entity entity, Mesh* mesh) {
+        if (!self.assets.geometries.is_live(mesh.geometry) || !self.assets.materials.is_live(mesh.material)) {
+            self.stats.dangling_refs++;
+        } else {
+            ensure_geometry(self, mesh.geometry)!;
+            MaterialRes* material = ensure_material(self, mesh.material)!;
+            pipeline_for(self, &self.assets.material(material.asset).data.common)!;
+        }
+    };
+    if (!self.pending_copies.len()) return;
+    return submit_pending(self);
+}
+
+<*
+ Write the per-view root.
+ @param [&out] root : "Overwritten whole."
+ @param [&in] matrices : "Derived for the viewport."
+ @param [&in] camera : "Supplies near, far and exposure."
+ @param viewport : "Pixels."
+*>
+fn void write_frame_root(FrameRoot* root, CameraMatrices* matrices, Camera* camera, Vec2 viewport,
+  FrameInfo info, ulong frame_index) {
+    *root = {
+        .view            = bitcast(matrices.view, Mat4f),
+        .proj            = bitcast(matrices.proj, Mat4f),
+        .view_proj       = bitcast(matrices.view_proj, Mat4f),
+        .inv_view_proj   = bitcast(matrices.inv_view_proj, Mat4f),
+        .camera_position = { matrices.position.x, matrices.position.y, matrices.position.z, camera.exposure },
+        .camera_params   = { camera.near, camera.far, viewport.x, viewport.y },
+        .jitter_time     = { 0, 0, (float)info.time, info.delta },
+        .frame_index     = (uint)frame_index,
+    };
+}
+
+<*
+ Write the per-draw root.
+ @param [&out] root : "Overwritten whole."
+ @param world : "Affine model matrix."
+*>
+fn void write_draw_root(DrawRoot* root, Mat4 world, gpu::GpuAddress frame, gpu::GpuAddress geometry,
+  gpu::GpuAddress material, uint object_id) {
+    Mat3 normal = maths::normal_matrix(world);
+    *root = {
+        .model     = bitcast(world, Mat4f),
+        .normal_0  = { normal.m00, normal.m10, normal.m20, 0 },
+        .normal_1  = { normal.m01, normal.m11, normal.m21, 0 },
+        .normal_2  = { normal.m02, normal.m12, normal.m22, 0 },
+        .frame     = frame,
+        .geometry  = geometry,
+        .material  = material,
+        .object_id = object_id,
+    };
+}
+
+fn int by_sort_key(DrawItem first, DrawItem second) @local {
+    if (first.sort_key < second.sort_key) return -1;
+    return first.sort_key > second.sort_key ? 1 : 0;
+}
+
+fn void? record_opaque_pass(Renderer* renderer, DrawItem[] items) @private {
+    uint width = renderer.hdr_color.width;
+    uint height = renderer.hdr_color.height;
+    gpu::ColorTargetDesc[1] colors = {{
+        .view     = renderer.hdr_color.attachment,
+        .load_op  = gpu::LoadOp.CLEAR,
+        .store_op = gpu::StoreOp.STORE,
+        .clear    = { .rgba = { CLEAR_COLOR.r, CLEAR_COLOR.g, CLEAR_COLOR.b, CLEAR_COLOR.a } },
+    }};
+    gpu::DepthTargetDesc depth = {
+        .view     = renderer.depth.attachment,
+        .load_op  = gpu::LoadOp.CLEAR,
+        .store_op = gpu::StoreOp.STORE,
+        .clear    = { .depth = DEPTH_CLEAR },
+    };
+    gpu::RenderPassDesc pass = {
+        .colors = colors[..],
+        .depth  = &depth,
+        .width  = width,
+        .height = height,
+    };
+    gpu::ColorTargetState[1] color_targets = { gpu::color_blend_disabled() };
+    gpu::GraphicsState state = gpu::render_geometry_state(width, height)!;
+    state.viewport = flipped_viewport(width, height);
+    state.color.targets = color_targets[..];
+    state.raster.front_face = gpu::FrontFace.COUNTER_CLOCKWISE;
+
+    // Bound before the pass begins: the backend checks the bound pipeline against the pass formats at begin.
+    DrawState bound;
+    bool state_set;
+    if (items.len) {
+        bound.pipeline = pipeline_for(renderer, material_common(renderer, items[0].material))!;
+        gpu::cmd_bind_pipeline(&renderer.commands, bound.pipeline)!;
+    }
+    gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
+    foreach (&item : items) {
+        MaterialCommon* common = material_common(renderer, item.material);
+        DrawState wanted = {
+            .pipeline    = pipeline_for(renderer, common)!,
+            .cull        = common.double_sided ? gpu::CullMode.NONE : gpu::CullMode.BACK,
+            .topology    = primitive_topology(item.geometry.topology),
+            .depth_test  = common.depth_test,
+            .depth_write = common.depth_write,
+        };
+        if (wanted.pipeline.index != bound.pipeline.index) {
+            gpu::cmd_bind_pipeline(&renderer.commands, wanted.pipeline)!;
+        }
+        if (!state_set || wanted.cull != bound.cull || wanted.topology != bound.topology
+            || wanted.depth_test != bound.depth_test || wanted.depth_write != bound.depth_write) {
+            state.raster.cull_mode = wanted.cull;
+            state.raster.topology = wanted.topology;
+            state.depth = {
+                .test_enable  = wanted.depth_test,
+                .write_enable = wanted.depth_write,
+                .compare      = gpu::CompareOp.GREATER,
+            };
+            gpu::cmd_set_graphics_state(&renderer.commands, &state)!;
+            state_set = true;
+        }
+        bound = wanted;
+
+        GeometryLayout* layout = &item.geometry.layout;
+        if (layout.index_count) {
+            gpu::cmd_draw_indexed(
+                commands:       &renderer.commands,
+                vertex_root:    item.root,
+                fragment_root:  item.root,
+                index_span:     item.geometry.indices,
+                index_count:    layout.index_count,
+                instance_count: 1,
+                index_type:     layout.flags.indices_u16 ? gpu::IndexType.U16 : gpu::IndexType.U32,
+            )!;
+        } else {
+            gpu::cmd_draw(
+                commands:       &renderer.commands,
+                vertex_root:    item.root,
+                fragment_root:  item.root,
+                vertex_count:   layout.vertex_count,
+                instance_count: 1,
+            )!;
+        }
+        renderer.stats.draws++;
+        if (item.geometry.topology == Topology.TRIANGLES) {
+            renderer.stats.triangles += (layout.index_count ? layout.index_count : layout.vertex_count) / 3;
+        }
+    }
+    gpu::cmd_end_render_pass(&renderer.commands)!;
+}
+
+fn MaterialCommon* material_common(Renderer* renderer, MaterialRes* material) @local {
+    return &renderer.assets.material(material.asset).data.common;
+}
+
+fn gpu::PipelineHandle? pipeline_for(Renderer* renderer, MaterialCommon* common) @private {
+    bool wireframe = common.wireframe && renderer.caps.line_polygon_mode;
+    PipelineKey key = {
+        .vertex        = { .shader = MESH },
+        .fragment      = { .shader = BASIC },
+        .color_formats = { [0] = HDR_FORMAT },
+        .color_count   = 1,
+        .depth_format  = DEPTH_FORMAT,
+        .samples       = gpu::SampleCount.ONE,
+        .polygon       = wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL,
+    };
+    return renderer.pipelines.get(&renderer.device, key);
+}
+
+fn gpu::PrimitiveTopology primitive_topology(Topology topology) @local {
+    switch (topology) {
+        case TRIANGLES: return gpu::PrimitiveTopology.TRIANGLES;
+        case LINES:     return gpu::PrimitiveTopology.LINES;
+        case POINTS:    return gpu::PrimitiveTopology.POINTS;
+    }
+}
+
+fn void? allocate_view_targets(gpu::Device* device, uint width, uint height, Target* hdr_color,
+  Target* depth) @private {
+    *hdr_color = allocate_target(
+        device:     device,
+        width:      width,
+        height:     height,
+        format:     HDR_FORMAT,
+        usage:      { .color_attach, .sampled, .storage },
+        debug_name: "hdr_color",
+    )!;
+    defer catch release_target(device, hdr_color);
+    *depth = allocate_target(
+        device:     device,
+        width:      width,
+        height:     height,
+        format:     DEPTH_FORMAT,
+        usage:      { .depth_attach, .sampled },
+        debug_name: "depth",
+    )!;
+}
+
+fn void release_view_targets(gpu::Device* device, Target* hdr_color, Target* depth) @private {
+    if (hdr_color.texture.is_valid()) release_target(device, hdr_color);
+    if (depth.texture.is_valid()) release_target(device, depth);
+}

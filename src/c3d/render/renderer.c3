@@ -93,6 +93,9 @@ struct Renderer {
     GpuGeometry[]           geometries;
     List{gpu::BufferCopyDesc} pending_copies;
     bool                    pending_overwrite;
+    MaterialRes[]           materials;
+    gpu::GpuAllocation      material_heap;
+    gpu::GpuSpan            material_heap_span;
 
     TargetPool              targets;
     PipelineCache           pipelines;
@@ -111,6 +114,8 @@ struct Renderer {
     gpu::CommandList        commands;
     gpu::AcquiredImage      acquired;
     Target                  window_target;
+    Target                  hdr_color;
+    Target                  depth;
     FrameInfo               info;
     time::Clock             frame_started;
     bool                    frame_open;
@@ -133,6 +138,21 @@ fn void Renderer.set_window_output(&self, uint width, uint height, bool dormant)
 }
 
 <*
+ Upload the asset now, or record its upload into the open frame.
+ Completes without a window when no frame is open.
+ @return? c3d::INVALID_ID
+ @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
+ @return? gpu::UNSUPPORTED_FEATURE, gpu::COMMAND_RECORDING_ERROR, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+*>
+macro void? Renderer.upload(&self, id) {
+    $switch $Typeof(id):
+        $case GeometryId: return self.upload_geometry(id);
+        $case MaterialId: return self.upload_material(id);
+        $default: $error("upload takes a GeometryId or a MaterialId");
+    $endswitch
+}
+
+<*
  Open a frame slot and acquire the window image when one is available.
  @param [&inout] self : "Reuses the slot whose completion point has been waited."
  @require !self.frame_open
@@ -150,6 +170,7 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
     slot.timed = {};
     drain_retired(&self.device, &slot.retire);
     sweep_geometries(self, slot);
+    sweep_materials(self);
     reset_upload_ring(self, slot)!;
     self.frame_started = clock::now();
 
@@ -215,9 +236,7 @@ fn void? Renderer.end_frame(&self) {
     self.frame_index++;
 
     if (!self.has_output) {
-        (void)gpu::discard_commands(&self.commands);
-        self.pending_copies.clear();
-        self.pending_overwrite = false;
+        abort_frame(self);
         self.stats.frame_ms = elapsed_ms(self.frame_started);
         return;
     }
@@ -286,41 +305,45 @@ fn void? Renderer.draw_fullscreen(&self, RenderTargetId target, ShaderVariant fr
 fn void? Renderer.composite(&self, RenderTargetId target) {
     TargetRecord* record = self.targets.try_get(target)!;
     if (!self.has_output) return;
-    record.target.transition(&self.commands, FRAGMENT_READ_STATE)!;
+    return composite_target(self, &record.target);
+}
 
-    Frame* slot = &self.frames[self.frame_index % FRAMES_IN_FLIGHT];
-    gpu::MappedGpuSpan root = slot.upload.take(&self.device, CompositeRoot::size)!;
+fn void? composite_target(Renderer* renderer, Target* target) @private {
+    target.transition(&renderer.commands, FRAGMENT_READ_STATE)!;
+
+    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, CompositeRoot::size)!;
     *(CompositeRoot*)root.bytes.ptr = {
-        .source_texture = record.target.view.index,
-        .source_sampler = self.linear_clamp_sampler,
+        .source_texture = target.view.index,
+        .source_sampler = renderer.linear_clamp_sampler,
     };
 
     PipelineKey key = {
         .vertex        = { .shader = FULLSCREEN },
         .fragment      = { .shader = COMPOSITE },
-        .color_formats = { [0] = self.window_target.format },
+        .color_formats = { [0] = renderer.window_target.format },
         .color_count   = 1,
         .depth_format  = gpu::Format.UNDEFINED,
         .samples       = gpu::SampleCount.ONE,
         .polygon       = gpu::PolygonMode.FILL,
     };
-    gpu::PipelineHandle pipeline = self.pipelines.get(&self.device, key)!;
+    gpu::PipelineHandle pipeline = renderer.pipelines.get(&renderer.device, key)!;
 
     write_pass_timestamp(
-        renderer:    self,
-        frame_index: self.frame_index,
+        renderer:    renderer,
+        frame_index: renderer.frame_index,
         pass:        Pass.COMPOSITE,
         half:        TIMESTAMP_BEGIN,
     )!;
     record_fullscreen_pass(
-        renderer:      self,
-        target:        &self.window_target,
+        renderer:      renderer,
+        target:        &renderer.window_target,
         pipeline:      pipeline,
         fragment_root: root.address,
     )!;
     write_pass_timestamp(
-        renderer:    self,
-        frame_index: self.frame_index,
+        renderer:    renderer,
+        frame_index: renderer.frame_index,
         pass:        Pass.COMPOSITE,
         half:        TIMESTAMP_END,
     )!;
@@ -504,14 +527,32 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     };
     gpu::SamplerIndex linear_clamp_sampler = gpu::intern_sampler(&device, &sampler_desc)!;
 
-    List{gpu::BufferCopyDesc} pending_copies;
-    pending_copies.init(allocator, RETIRE_INITIAL_CAPACITY);
+    gpu::GpuAllocation material_heap = allocate_material_heap(&device, assets.materials.items.len)!;
+    defer catch (void)gpu::free_allocation(&device, &material_heap);
+    gpu::GpuSpan material_heap_span = gpu::get_allocation_span(&device, material_heap)!;
 
-    return {
+    Target hdr_color;
+    Target depth;
+    if (surface.is_valid()) {
+        allocate_view_targets(
+            device:    &device,
+            width:     desc.output_width,
+            height:    desc.output_height,
+            hdr_color: &hdr_color,
+            depth:     &depth,
+        )!;
+    }
+    defer catch release_view_targets(&device, &hdr_color, &depth);
+
+    Renderer renderer = {
         .allocator            = allocator,
         .assets               = assets,
         .geometries           = alloc::new_array(allocator, GpuGeometry, assets.geometries.items.len),
-        .pending_copies       = pending_copies,
+        .materials            = alloc::new_array(allocator, MaterialRes, assets.materials.items.len),
+        .material_heap        = material_heap,
+        .material_heap_span   = material_heap_span,
+        .hdr_color            = hdr_color,
+        .depth                = depth,
         .runtime              = runtime,
         .surface              = surface,
         .device               = device,
@@ -529,6 +570,8 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .output_width         = desc.output_width,
         .output_height        = desc.output_height,
     };
+    renderer.pending_copies.init(allocator, RETIRE_INITIAL_CAPACITY);
+    return renderer;
 }
 
 <*
@@ -539,9 +582,11 @@ fn void destroy_renderer(Renderer* renderer) {
     if (renderer.frame_open) (void)gpu::discard_commands(&renderer.commands);
     (void)wait_frames(renderer);
     free_geometries(renderer);
+    free_material_heap(renderer);
+    release_view_targets(&renderer.device, &renderer.hdr_color, &renderer.depth);
 
     foreach (&record : renderer.targets.items) {
-        if (record.target.texture.is_valid()) release_target(renderer, &record.target);
+        if (record.target.texture.is_valid()) release_target(&renderer.device, &record.target);
     }
     pool::destroy_pool{TargetRecord, RenderTargetId}(&renderer.targets);
     destroy_pipeline_cache(&renderer.device, &renderer.pipelines);
@@ -608,6 +653,14 @@ fn void? recover_window_output(Renderer* renderer) @private {
         height:    renderer.output_height,
     )!;
     renderer.swapchain_info = gpu::get_swapchain_info(&renderer.device, renderer.swapchain)!;
+    release_view_targets(&renderer.device, &renderer.hdr_color, &renderer.depth);
+    allocate_view_targets(
+        device:    &renderer.device,
+        width:     renderer.output_width,
+        height:    renderer.output_height,
+        hdr_color: &renderer.hdr_color,
+        depth:     &renderer.depth,
+    )!;
     renderer.output_dirty = false;
 }
 
@@ -663,6 +716,14 @@ fn void? reset_upload_ring(Renderer* renderer, Frame* slot) @private {
         bytes:      target,
         debug_name: UPLOAD_RING_NAMES[renderer.frame_index % FRAMES_IN_FLIGHT],
     );
+}
+
+// Copies queued into a discarded frame point into a ring the next begin_frame resets.
+fn void abort_frame(Renderer* renderer) @private {
+    renderer.frame_open = false;
+    (void)gpu::discard_commands(&renderer.commands);
+    renderer.pending_copies.clear();
+    renderer.pending_overwrite = false;
 }
 
 fn float elapsed_ms(time::Clock started) @private {
