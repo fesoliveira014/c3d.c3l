@@ -82,7 +82,7 @@ return CAPACITY_EXCEEDED~;
 
 # 8. Handles and ids
 
-Use the typed id: `GeometryId geometry`, not `uint geometry`; `gpu::TextureHandle texture`, not `ulong texture`. Ids are generational distinct typedefs of `Id` (never `inline`); a stale id resolves to nothing. Every pool is `Pool{Type, IdType}` and takes only its own id type; `Id` and an id type meet only inside `pool.c3`, and no cast between them appears anywhere else.
+Use the typed id: `GeometryId geometry`, not `uint geometry`; `gpu::TextureHandle texture`, not `ulong texture`. Ids are generational distinct typedefs of `Id` (never `inline`); a stale id resolves to nothing. Every pool is `Pool{Type, IdType}` and takes only its own id type; `Id` and an id type meet only inside `pool.c3` and in the `AssetStore.find_*` adapters that unpack an `AssetRef`, and no cast between them appears anywhere else.
 
 # 9. Call formatting
 
