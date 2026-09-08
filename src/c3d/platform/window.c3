@@ -31,6 +31,7 @@ struct Window {
     float        pixel_density;
     bool         resized;
     bool         minimized;
+    bool         focus_gained;
     Input        input;
     Clock        clock;
 }
@@ -62,13 +63,21 @@ fn bool Window.apply_event(&self, sdl::Event* event) {
         case EventType.WINDOW_RESTORED:
             if (event.window.window_id != self.window_id) break;
             self.minimized = false;
+        case EventType.WINDOW_FOCUS_GAINED:
+            if (event.window.window_id != self.window_id) break;
+            self.focus_gained = true;
         case EventType.KEY_DOWN:
         case EventType.KEY_UP:
             if (event.key.window_id != self.window_id) break;
             usz key = (usz)event.key.scancode;
             if (key >= KEY_COUNT) break;
-            self.input.keys[key] = event.key.down;
-            if (event.key.down && !event.key.repeat) self.input.keys_pressed[key] = true;
+            // The event type carries the state; the binding's down and repeat bytes sit two bytes past
+            // where SDL writes them, so a repeat is a down for a key already held. Keys reported held
+            // when focus arrives are state the window inherits, not presses made in it.
+            bool down = (EventType)event.common.type == EventType.KEY_DOWN;
+            if (down && !self.input.keys[key] && !self.focus_gained) self.input.keys_pressed[key] = true;
+            if (!down && self.input.keys[key]) self.input.keys_released[key] = true;
+            self.input.keys[key] = down;
         case EventType.MOUSE_BUTTON_DOWN:
         case EventType.MOUSE_BUTTON_UP:
             if (event.button.window_id != self.window_id) break;
@@ -97,6 +106,7 @@ fn bool Window.apply_event(&self, sdl::Event* event) {
 *>
 fn void Window.begin_frame(&self) {
     self.input.begin_frame();
+    self.focus_gained = false;
     float pixel_density = sdl::get_window_pixel_density(self.handle);
     self.input.mouse_position *= pixel_density / self.pixel_density;
     self.pixel_density = pixel_density;

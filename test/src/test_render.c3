@@ -1,6 +1,9 @@
 module c3d::test::render;
 
+import c3d;
+import c3d::camera;
 import c3d::geometry;
+import c3d::material;
 import c3d::maths;
 import c3d::render;
 import c3d::shader;
@@ -296,4 +299,87 @@ fn void test_write_geometry_block_fills_the_root() @test {
         ushort* indices = (ushort*)&block[layout.indices];
         assert(indices[0] == 0 && indices[1] == 1 && indices[2] == 2 && indices[5] == 3);
     };
+}
+
+fn ulong key_of(uint fragment, uint material, uint geometry, float depth) @local {
+    return render::draw_sort_key(
+        fragment:  { .shader = (shader::ShaderName)fragment },
+        material:  { .index = material, .generation = 1 },
+        geometry:  { .index = geometry, .generation = 1 },
+        ndc_depth: depth,
+    );
+}
+
+fn void test_sort_key_orders_pipeline_material_geometry_then_depth() @test {
+    ulong base = key_of(1, 5, 7, 0.5f);
+    assert(base == key_of(1, 5, 7, 0.5f));
+    assert(key_of(2, 0, 0, 1.0f) > key_of(1, 9, 9, 0.0f));
+    assert(key_of(1, 6, 0, 1.0f) > key_of(1, 5, 9, 0.0f));
+    assert(key_of(1, 5, 8, 1.0f) > key_of(1, 5, 7, 0.0f));
+}
+
+fn void test_sort_key_depth_is_front_to_back() @test {
+    assert(key_of(1, 5, 7, 1.0f) < key_of(1, 5, 7, 0.5f));
+    assert(key_of(1, 5, 7, 0.5f) < key_of(1, 5, 7, 0.0f));
+}
+
+fn void test_material_block_packs_flags_and_color() @test {
+    char[] block = mem::new_array(char, render::MATERIAL_STRIDE);
+    defer free(block.ptr);
+    MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
+    common.alpha_mode = AlphaMode.MASK;
+    common.double_sided = true;
+    common.alpha_cutoff = 0.3f;
+    Material masked = material::basic({ .color = { 0.1f, 0.2f, 0.3f, 0.4f } }, common);
+    render::write_material_block(block, &masked);
+    shader::BasicMaterialGpu* packed = (shader::BasicMaterialGpu*)block.ptr;
+    assert(packed.kind == 0 && packed.flags == 3);
+    assert(packed.alpha_cutoff == 0.3f);
+    assert(packed.color == (Vec4){ 0.1f, 0.2f, 0.3f, 0.4f });
+
+    Material plain = material::basic({ .color = { 1, 1, 1, 1 } });
+    render::write_material_block(block, &plain);
+    assert(packed.flags == 0);
+}
+
+fn void test_frame_root_packs_camera() @test {
+    shader::FrameRoot* root = mem::new(shader::FrameRoot);
+    defer free(root);
+    Camera camera = camera::perspective_deg(60, 0.1f, 100);
+    camera.exposure = 2;
+    Transform transform = maths::TRANSFORM_IDENTITY;
+    transform.position = { 0, 0, 5 };
+    CameraMatrices matrices = camera::derive_matrices(camera, transform.to_mat4(), { 1600, 900 });
+    render::write_frame_root(
+        root:        root,
+        matrices:    &matrices,
+        camera:      &camera,
+        viewport:    { 1600, 900 },
+        info:        { .time = 12.5, .delta = 0.25f },
+        frame_index: 42,
+    );
+    assert(root.view[3] == (Vec4){ 0, 0, -5, 1 });
+    assert(root.camera_position == (Vec4){ 0, 0, 5, 2 });
+    assert(root.camera_params == (Vec4){ 0.1f, 100, 1600, 900 });
+    assert(root.jitter_time.z == 12.5f && root.jitter_time.w == 0.25f);
+    assert(root.frame_index == 42);
+    assert((ulong)root.lights == 0 && root.light_count == 0);
+}
+
+fn void test_draw_root_packs_normal_columns() @test {
+    shader::DrawRoot* root = mem::new(shader::DrawRoot);
+    defer free(root);
+    Transform transform = { .position = { 1, 2, 3 }, .rotation = quaternion::IDENTITY, .scale = { 2, 1, 1 } };
+    render::write_draw_root(
+        root:      root,
+        world:     transform.to_mat4(),
+        frame:     (gpu::GpuAddress)0x100,
+        geometry:  (gpu::GpuAddress)0x200,
+        material:  (gpu::GpuAddress)0x300,
+        object_id: 9,
+    );
+    assert(root.model[3] == (Vec4){ 1, 2, 3, 1 });
+    assert(root.normal_0.x == 0.5f && root.normal_1.y == 1 && root.normal_2.z == 1);
+    assert((ulong)root.frame == 0x100 && (ulong)root.geometry == 0x200 && (ulong)root.material == 0x300);
+    assert(root.object_id == 9 && (ulong)root.skin == 0);
 }

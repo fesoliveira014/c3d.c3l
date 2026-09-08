@@ -78,6 +78,12 @@
       "sources": [
         "src/upload.c3"
       ]
+    },
+    "cube": {
+      "type": "executable",
+      "sources": [
+        "src/cube.c3"
+      ]
     }
   }
 }

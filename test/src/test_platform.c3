@@ -99,10 +99,27 @@ fn void test_key_down_marks_pressed_for_one_frame() @test {
 
 fn void test_key_repeat_is_not_a_press() @test {
     platform::Window window;
+    window.apply_event(&&key_event(sdl::EventType.KEY_DOWN, sdl::Scancode.A));
+    window.input.begin_frame();
     window.apply_event(&&key_event(sdl::EventType.KEY_DOWN, sdl::Scancode.A, true));
 
     assert(window.input.keys[(usz)sdl::Scancode.A]);
     assert(!window.input.keys_pressed[(usz)sdl::Scancode.A], "a repeat is not a fresh press");
+}
+
+fn void test_key_held_at_focus_gain_is_not_a_press() @test {
+    platform::Window window;
+    window.apply_event(&&window_event(sdl::EventType.WINDOW_FOCUS_GAINED));
+    window.apply_event(&&key_event(sdl::EventType.KEY_DOWN, sdl::Scancode.ESCAPE));
+
+    assert(window.input.keys[(usz)sdl::Scancode.ESCAPE], "the inherited state is held");
+    assert(!window.input.keys_pressed[(usz)sdl::Scancode.ESCAPE], "a key held at focus gain is not a press");
+
+    window.input.begin_frame();
+    window.focus_gained = false;
+    window.apply_event(&&key_event(sdl::EventType.KEY_UP, sdl::Scancode.ESCAPE));
+    window.apply_event(&&key_event(sdl::EventType.KEY_DOWN, sdl::Scancode.ESCAPE));
+    assert(window.input.keys_pressed[(usz)sdl::Scancode.ESCAPE], "a press after the focus drain counts");
 }
 
 fn void test_key_up_releases() @test {
@@ -111,6 +128,12 @@ fn void test_key_up_releases() @test {
     window.apply_event(&&key_event(sdl::EventType.KEY_UP, sdl::Scancode.A));
 
     assert(!window.input.keys[(usz)sdl::Scancode.A]);
+    assert(window.input.keys_released[(usz)sdl::Scancode.A]);
+
+    window.input.begin_frame();
+    assert(!window.input.keys_released[(usz)sdl::Scancode.A], "a release lasts one frame");
+    window.apply_event(&&key_event(sdl::EventType.KEY_UP, sdl::Scancode.A));
+    assert(!window.input.keys_released[(usz)sdl::Scancode.A], "an up for a key not held is not a release");
 }
 
 fn void test_mouse_button_and_position_track() @test {

@@ -27,10 +27,12 @@ const uint TIMESTAMPS_PER_PASS = 2;
 
 <*
  Counters and timings for the frame that most recently completed.
+ GPU pass timings stay zero unless the renderer was created with gpu_timings.
 *>
 struct Stats {
     uint  draws;
     uint  triangles;
+    uint  culled;
     uint  lights;
     uint  shadow_layers;
     uint  uploads;

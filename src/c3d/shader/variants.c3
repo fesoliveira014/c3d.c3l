@@ -8,17 +8,23 @@ enum ShaderName : int {
     FULLSCREEN,
     GRADIENT,
     COMPOSITE,
+    MESH,
+    BASIC,
 }
 
 const char[*] FULLSCREEN_SPIRV @private = $embed("../../../shaders/spv/fullscreen.spv");
 const char[*] GRADIENT_SPIRV @private = $embed("../../../shaders/spv/gradient.spv");
 const char[*] COMPOSITE_SPIRV @private = $embed("../../../shaders/spv/composite.spv");
+const char[*] MESH_SPIRV @private = $embed("../../../shaders/spv/mesh.spv");
+const char[*] BASIC_SPIRV @private = $embed("../../../shaders/spv/basic.spv");
 
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[3] SHADER_ENTRIES = {
+const ShaderEntry[5] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
+    { .variant = { .shader = MESH }, .spirv = MESH_SPIRV[..] },
+    { .variant = { .shader = BASIC }, .spirv = BASIC_SPIRV[..] },
 };
