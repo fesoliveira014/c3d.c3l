@@ -4,10 +4,30 @@
 
 #extension GL_EXT_buffer_reference : require
 #extension GL_EXT_buffer_reference2 : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer CompositeRoot {
     uint source_texture;
     uint source_sampler;
+    uint _pad0;
+    uint _pad1;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer GeometryRoot {
+    uint64_t positions;
+    uint64_t normals;
+    uint64_t tangents;
+    uint64_t uv0;
+    uint64_t uv1;
+    uint64_t colors;
+    uint64_t joints;
+    uint64_t weights;
+    uint64_t morph_deltas;
+    uint64_t custom_data;
+    uint custom_stride;
+    uint vertex_count;
+    uint morph_target_count;
+    uint flags;
     uint _pad0;
     uint _pad1;
 };

@@ -1,6 +1,7 @@
 module fullscreen_example;
 
 import c3d;
+import c3d::asset;
 import c3d::platform;
 import c3d::render;
 import c3d::shader;
@@ -12,9 +13,13 @@ fn int main() {
         platform::default_window_desc("c3d fullscreen", 1280, 720))!!;
     defer platform::destroy_window(&window);
 
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+
     render::Renderer renderer = platform::create_window_renderer(
         allocator: mem,
         window:    &window,
+        assets:    &assets,
         desc:      { .validation = true, .application_name = "c3d_fullscreen" },
     )!!;
     defer render::destroy_renderer(&renderer);

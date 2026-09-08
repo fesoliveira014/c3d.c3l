@@ -6,3 +6,22 @@ root CompositeRoot {
     uint         _pad0;
     uint         _pad1;
 }
+
+root GeometryRoot {
+    GpuAddress positions;
+    GpuAddress normals;
+    GpuAddress tangents;
+    GpuAddress uv0;
+    GpuAddress uv1;
+    GpuAddress colors;
+    GpuAddress joints;
+    GpuAddress weights;
+    GpuAddress morph_deltas;
+    GpuAddress custom_data;
+    uint       custom_stride;
+    uint       vertex_count;
+    uint       morph_target_count;
+    uint       flags;
+    uint       _pad0;
+    uint       _pad1;
+}
