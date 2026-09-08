@@ -48,6 +48,12 @@
       "sources": [
         "src/fullscreen.c3"
       ]
+    },
+    "ecs": {
+      "type": "executable",
+      "sources": [
+        "src/ecs.c3"
+      ]
     }
   }
 }
