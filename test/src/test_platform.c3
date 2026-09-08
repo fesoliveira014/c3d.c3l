@@ -99,6 +99,8 @@ fn void test_key_down_marks_pressed_for_one_frame() @test {
 
 fn void test_key_repeat_is_not_a_press() @test {
     platform::Window window;
+    window.apply_event(&&key_event(sdl::EventType.KEY_DOWN, sdl::Scancode.A));
+    window.input.begin_frame();
     window.apply_event(&&key_event(sdl::EventType.KEY_DOWN, sdl::Scancode.A, true));
 
     assert(window.input.keys[(usz)sdl::Scancode.A]);

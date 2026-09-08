@@ -67,8 +67,11 @@ fn bool Window.apply_event(&self, sdl::Event* event) {
             if (event.key.window_id != self.window_id) break;
             usz key = (usz)event.key.scancode;
             if (key >= KEY_COUNT) break;
-            self.input.keys[key] = event.key.down;
-            if (event.key.down && !event.key.repeat) self.input.keys_pressed[key] = true;
+            // The event type carries the state; the binding's down and repeat bytes sit two bytes past
+            // where SDL writes them, so a repeat is a down for a key already held.
+            bool down = (EventType)event.common.type == EventType.KEY_DOWN;
+            if (down && !self.input.keys[key]) self.input.keys_pressed[key] = true;
+            self.input.keys[key] = down;
         case EventType.MOUSE_BUTTON_DOWN:
         case EventType.MOUSE_BUTTON_UP:
             if (event.button.window_id != self.window_id) break;
