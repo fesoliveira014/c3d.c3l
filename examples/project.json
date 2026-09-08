@@ -54,6 +54,12 @@
       "sources": [
         "src/ecs.c3"
       ]
+    },
+    "assets": {
+      "type": "executable",
+      "sources": [
+        "src/assets.c3"
+      ]
     }
   }
 }
