@@ -46,6 +46,7 @@ const double NANOSECONDS_PER_MILLISECOND @private = 1_000_000.0;
 *>
 struct RendererDesc {
     bool             validation;
+    bool             gpu_timings;
     SurfaceFn        surface_fn;
     void*            surface_user;
     uint             output_width;
@@ -458,7 +459,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     gpu::Queue graphics = gpu::get_queue(&device, gpu::QueueKind.GRAPHICS)!;
     gpu::DeviceCaps caps = gpu::get_device_caps(&device)!;
 
-    bool timestamps_enabled = caps.timestamps.queues.graphics;
+    bool timestamps_enabled = desc.gpu_timings && caps.timestamps.queues.graphics;
     gpu::TimestampPoolHandle timestamps;
     if (timestamps_enabled) {
         gpu::TimestampPoolDesc timestamp_desc = {
