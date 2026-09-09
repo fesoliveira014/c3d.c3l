@@ -10,15 +10,17 @@ import std::math;
 <*
  Bytes one material block occupies in the heap.
 *>
-const usz MATERIAL_STRIDE = BasicMaterialGpu::size;
+const usz MATERIAL_STRIDE = (((usz)(BasicMaterialGpu::size > StandardMaterialGpu::size
+  ? BasicMaterialGpu::size : StandardMaterialGpu::size) + STREAM_ALIGNMENT - 1)
+  / STREAM_ALIGNMENT) * STREAM_ALIGNMENT;
 $assert MATERIAL_STRIDE % STREAM_ALIGNMENT == 0;
 
 <*
- Material options packed into BasicMaterialGpu.flags.
+ Common material options packed into shader flags.
 *>
 bitstruct MaterialFlags : uint {
-    bool alpha_mask   : 0;
-    bool double_sided : 1;
+    bool alpha_mask   : 0; // mirrored as MATERIAL_ALPHA_MASK in basic.frag.glsl and standard.frag.glsl
+    bool double_sided : 1; // mirrored as MATERIAL_DOUBLE_SIDED in standard.frag.glsl
 }
 
 <*
@@ -57,37 +59,62 @@ fn void? Renderer.upload_material(&self, MaterialId material) {
 <*
  Write the packed block of a material.
  @param block : "Aligned to STREAM_ALIGNMENT; overwritten with packed fields."
- @param [&in] material : "Validated Basic material and map coordinates."
+ @param [&in] material : "Valid active material arm and Basic map coordinates."
  @require block.len >= MATERIAL_STRIDE, (uptr)block.ptr % STREAM_ALIGNMENT == 0
 *>
 fn void write_material_block(char[] block, Material* material, TextureBinding binding) {
-    Vec4 row0;
-    Vec4 row1;
-    texture_uv_rows(material.basic.map.transform, &row0, &row1);
-
-    BasicMaterialGpu* packed = (BasicMaterialGpu*)block.ptr;
     MaterialFlags flags = {
-        .alpha_mask   = material.common.alpha_mode == AlphaMode.MASK,
+        .alpha_mask = material.common.alpha_mode == AlphaMode.MASK,
         .double_sided = material.common.double_sided,
     };
-    *packed = {
-        .kind         = (uint)material.kind.ordinal,
-        .flags        = (uint)flags,
-        .alpha_cutoff = material.common.alpha_cutoff,
-        .color        = material.basic.color,
-        .map_texture  = binding.texture_index,
-        .map_sampler  = binding.sampler_index,
-        .map_uv_set   = material.basic.map.uv_set,
-        .map_present  = binding.present ? 1u : 0u,
-        .map_uv_row0  = row0,
-        .map_uv_row1  = row1,
-    };
+
+    switch (material.kind) {
+        case STANDARD:
+            StandardParams* params = &material.standard;
+            StandardMaterialGpu* packed = (StandardMaterialGpu*)block.ptr;
+            *packed = {
+                .kind = (uint)material.kind.ordinal,
+                .flags = (uint)flags,
+                .alpha_cutoff = material.common.alpha_cutoff,
+                .metallic = params.metallic,
+                .base_color = params.base_color,
+                .emissive_strength = { params.emissive.r, params.emissive.g, params.emissive.b, params.emissive_strength },
+                .roughness = params.roughness,
+            };
+            return;
+
+        case BASIC:
+            Vec4 row0;
+            Vec4 row1;
+            texture_uv_rows(material.basic.map.transform, &row0, &row1);
+
+            BasicMaterialGpu* packed = (BasicMaterialGpu*)block.ptr;
+            *packed = {
+                .kind         = (uint)material.kind.ordinal,
+                .flags        = (uint)flags,
+                .alpha_cutoff = material.common.alpha_cutoff,
+                .color        = material.basic.color,
+                .map_texture  = binding.texture_index,
+                .map_sampler  = binding.sampler_index,
+                .map_uv_set   = material.basic.map.uv_set,
+                .map_present  = binding.present ? 1u : 0u,
+                .map_uv_row0  = row0,
+                .map_uv_row1  = row1,
+            };
+    }
 }
 
 fn MaterialRes*? ensure_material(Renderer* renderer, MaterialId material) @private {
     MaterialAsset* record = renderer.assets.material(material);
     MaterialRes* mirror = &renderer.materials[material.index];
-    TextureBinding binding = resolve_texture_slot(renderer, record.data.basic.map)!;
+    TextureBinding binding;
+    switch (record.data.kind) {
+        case BASIC:
+            binding = resolve_texture_slot(renderer, record.data.basic.map)!;
+        case STANDARD:
+            if (record.data.common.alpha_mode == AlphaMode.BLEND) return c3d::UNSUPPORTED~;
+    }
+
     bool same_asset = mirror.asset.index == material.index && mirror.asset.generation == material.generation;
     if (same_asset && mirror.revision == record.header.revision
         && texture_binding_matches(mirror.map_binding, binding)) return mirror;

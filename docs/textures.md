@@ -1,5 +1,7 @@
 # Textures and images
 
+Basic supports texture maps; [Standard materials](materials.md) currently use scalar factors.
+
 A texture asset owns either mip-zero pixels or supplied mip/layer data. A material
 slot selects a 2D texture, sampler, UV set and UV transform. The renderer owns
 uploaded images and either builds mips or uploads the supplied levels unchanged.

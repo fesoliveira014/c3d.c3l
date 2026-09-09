@@ -13,6 +13,7 @@ enum ShaderName : int {
     IMGUI_VERTEX,
     IMGUI_FRAGMENT,
     CUBE_PREVIEW,
+    STANDARD,
 }
 
 const char[*] FULLSCREEN_SPIRV @private = $embed("../../../shaders/spv/fullscreen.spv");
@@ -23,11 +24,12 @@ const char[*] BASIC_SPIRV @private = $embed("../../../shaders/spv/basic.spv");
 const char[*] IMGUI_VERTEX_SPIRV @private = $embed("../../../shaders/spv/imgui_vertex.spv");
 const char[*] IMGUI_FRAGMENT_SPIRV @private = $embed("../../../shaders/spv/imgui_fragment.spv");
 const char[*] CUBE_PREVIEW_SPIRV @private = $embed("../../../shaders/spv/cube_preview.spv");
+const char[*] STANDARD_SPIRV @private = $embed("../../../shaders/spv/standard.spv");
 
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[8] SHADER_ENTRIES = {
+const ShaderEntry[9] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -36,4 +38,5 @@ const ShaderEntry[8] SHADER_ENTRIES = {
     { .variant = { .shader = IMGUI_VERTEX }, .spirv = IMGUI_VERTEX_SPIRV[..] },
     { .variant = { .shader = IMGUI_FRAGMENT }, .spirv = IMGUI_FRAGMENT_SPIRV[..] },
     { .variant = { .shader = CUBE_PREVIEW }, .spirv = CUBE_PREVIEW_SPIRV[..] },
+    { .variant = { .shader = STANDARD }, .spirv = STANDARD_SPIRV[..] },
 };

@@ -42,6 +42,11 @@ const uint TIMESTAMP_END @private = 1;
 const double NANOSECONDS_PER_MILLISECOND @private = 1_000_000.0;
 
 <*
+ Per-view light budget when renderer creation omits one.
+*>
+const uint DEFAULT_MAX_LIGHTS = 256; // 16 KiB per view; bounds the flat fragment light loop
+
+<*
  How a renderer is created. A null surface factory selects headless.
 *>
 struct RendererDesc {
@@ -54,6 +59,7 @@ struct RendererDesc {
     gpu::PresentMode present_mode;
     ZString          application_name;
     usz              upload_ring_bytes;
+    uint             max_lights;
 }
 
 <*
@@ -91,6 +97,7 @@ struct Renderer {
     ulong                   frame_index;
 
     AssetStore*             assets;
+    uint                    max_lights;
     GpuGeometry[]           geometries;
     List{gpu::BufferCopyDesc} pending_copies;
     bool                    pending_overwrite;
@@ -638,6 +645,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     Renderer renderer = {
         .allocator            = allocator,
         .assets               = assets,
+        .max_lights           = desc.max_lights ? desc.max_lights : DEFAULT_MAX_LIGHTS,
         .geometries           = alloc::new_array(allocator, GpuGeometry, assets.geometries.items.len),
         .materials            = alloc::new_array(allocator, MaterialRes, assets.materials.items.len),
         .textures             = alloc::new_array(allocator, TextureRes, assets.textures.items.len),

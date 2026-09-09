@@ -68,8 +68,9 @@ struct FrameRoot {
     uint       shadow_count;
     uint       flags;
     uint       frame_index;
+    Vec4f      ambient;
 }
-$assert FrameRoot::size == 416;
+$assert FrameRoot::size == 432;
 $assert $reflect(FrameRoot.view).offset == 0;
 $assert $reflect(FrameRoot.proj).offset == 64;
 $assert $reflect(FrameRoot.view_proj).offset == 128;
@@ -86,6 +87,7 @@ $assert $reflect(FrameRoot.light_count).offset == 400;
 $assert $reflect(FrameRoot.shadow_count).offset == 404;
 $assert $reflect(FrameRoot.flags).offset == 408;
 $assert $reflect(FrameRoot.frame_index).offset == 412;
+$assert $reflect(FrameRoot.ambient).offset == 416;
 
 struct DrawRoot {
     Mat4f      model;
@@ -102,7 +104,7 @@ struct DrawRoot {
     GpuAddress previous_pose;
     uint       object_id;
     uint       flags;
-    uint       _pad0;
+    uint       layers;
     uint       _pad1;
     uint       _pad2;
     uint       _pad3;
@@ -122,7 +124,7 @@ $assert $reflect(DrawRoot.instance_data).offset == 216;
 $assert $reflect(DrawRoot.previous_pose).offset == 224;
 $assert $reflect(DrawRoot.object_id).offset == 232;
 $assert $reflect(DrawRoot.flags).offset == 236;
-$assert $reflect(DrawRoot._pad0).offset == 240;
+$assert $reflect(DrawRoot.layers).offset == 240;
 $assert $reflect(DrawRoot._pad1).offset == 244;
 $assert $reflect(DrawRoot._pad2).offset == 248;
 $assert $reflect(DrawRoot._pad3).offset == 252;
@@ -204,3 +206,45 @@ $assert $reflect(CubePreviewRoot.explicit_lod).offset == 16;
 $assert $reflect(CubePreviewRoot._pad0).offset == 20;
 $assert $reflect(CubePreviewRoot._pad1).offset == 24;
 $assert $reflect(CubePreviewRoot._pad2).offset == 28;
+
+struct LightGpu {
+    Vec4f position_range;
+    Vec4f direction_cos_outer;
+    Vec4f color_intensity;
+    uint  kind;
+    uint  layers;
+    float cos_inner;
+    uint  _pad0;
+}
+$assert LightGpu::size == 64;
+$assert $reflect(LightGpu.position_range).offset == 0;
+$assert $reflect(LightGpu.direction_cos_outer).offset == 16;
+$assert $reflect(LightGpu.color_intensity).offset == 32;
+$assert $reflect(LightGpu.kind).offset == 48;
+$assert $reflect(LightGpu.layers).offset == 52;
+$assert $reflect(LightGpu.cos_inner).offset == 56;
+$assert $reflect(LightGpu._pad0).offset == 60;
+
+struct StandardMaterialGpu {
+    uint  kind;
+    uint  flags;
+    float alpha_cutoff;
+    float metallic;
+    Vec4f base_color;
+    Vec4f emissive_strength;
+    float roughness;
+    uint  _pad0;
+    uint  _pad1;
+    uint  _pad2;
+}
+$assert StandardMaterialGpu::size == 64;
+$assert $reflect(StandardMaterialGpu.kind).offset == 0;
+$assert $reflect(StandardMaterialGpu.flags).offset == 4;
+$assert $reflect(StandardMaterialGpu.alpha_cutoff).offset == 8;
+$assert $reflect(StandardMaterialGpu.metallic).offset == 12;
+$assert $reflect(StandardMaterialGpu.base_color).offset == 16;
+$assert $reflect(StandardMaterialGpu.emissive_strength).offset == 32;
+$assert $reflect(StandardMaterialGpu.roughness).offset == 48;
+$assert $reflect(StandardMaterialGpu._pad0).offset == 52;
+$assert $reflect(StandardMaterialGpu._pad1).offset == 56;
+$assert $reflect(StandardMaterialGpu._pad2).offset == 60;
