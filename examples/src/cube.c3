@@ -6,6 +6,8 @@ import c3d;
 import c3d::asset;
 import c3d::camera;
 import c3d::geometry;
+import c3d::gui;
+import imgui;
 import c3d::material;
 import c3d::maths;
 import c3d::platform;
@@ -22,6 +24,14 @@ const float SPIN_RADIANS_PER_SECOND @local = 0.8f;
 const float MOVE_UNITS_PER_SECOND @local = 2.0f;
 const double STATS_PERIOD_SECONDS @local = 1.0;
 const usz MOUSE_BUTTON_LEFT @local = 1; // SDL button index
+const Vec2 CONTROLS_PANEL_POSITION @local = { 16, 16 };
+const Vec2 CONTROLS_PANEL_SIZE @local = { 360, 70 };
+const Vec2 SCENE_PANEL_POSITION @local = { 16, 102 };
+const Vec2 SCENE_PANEL_SIZE @local = { 360, 300 };
+const Vec2 MATERIAL_PANEL_POSITION @local = { 16, 418 };
+const Vec2 MATERIAL_PANEL_SIZE @local = { 360, 130 };
+const Vec2 STATS_PANEL_POSITION @local = { 900, 16 };
+const Vec2 STATS_PANEL_SIZE @local = { 360, 620 };
 
 struct Orbit @local {
     Vec3  target;
@@ -60,7 +70,108 @@ fn void move_cube(Node* cube, Input* input, float delta) @local {
     if (input.keys[(usz)sdl::Scancode.DOWN]) cube.local.position.y -= step;
 }
 
-fn int main() {
+fn void forward_gui_event(sdl::Event* event, void* user) @local {
+    GuiRenderer* gui_renderer = (GuiRenderer*)user;
+    gui_renderer.process_event(event);
+}
+
+fn void? draw_gui_frame(render::Renderer* renderer, Scene* scene, Node* camera_node,
+  GuiRenderer* gui_renderer, FrameInfo info) @local {
+    renderer.begin_frame(info)!;
+    defer catch render::abort_frame(renderer);
+    if (renderer.has_output) {
+        renderer.render_view(scene, camera_node)!;
+        renderer.composite_view()!;
+        OverlayContext overlay = renderer.begin_overlay()!;
+        gui_renderer.record(&overlay)!;
+        renderer.end_overlay(&overlay)!;
+    }
+    return renderer.end_frame();
+}
+
+fn void? run_gui(platform::Window* window, render::Renderer* renderer, Scene* scene,
+  Node* cube, Node* camera_node, Orbit* orbit) @local {
+    GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
+    defer (void)gui::destroy_gui_renderer(&gui_renderer);
+    GuiPanelState panels = { .selected = cube.id };
+    bool spin;
+    bool orthographic;
+    bool escape_captured;
+    while (window.poll(&forward_gui_event, &gui_renderer)) {
+        bool keyboard_was_captured = window.input.keyboard_captured_by_gui;
+        gui_renderer.new_frame();
+        defer {
+            if (gui_renderer.frame_open) gui_renderer.finish_frame();
+        }
+        Input* input = &window.input;
+        // Text editing can drop capture on Escape down before its release arrives.
+        if (input.keys_pressed[(usz)sdl::Scancode.ESCAPE] || input.keys_released[(usz)sdl::Scancode.ESCAPE]) {
+            escape_captured |= keyboard_was_captured || input.keyboard_captured_by_gui;
+        }
+        if (input.keys_released[(usz)sdl::Scancode.ESCAPE]) {
+            bool quit = !escape_captured;
+            escape_captured = false;
+            if (quit) break;
+        }
+        if (input.keys_pressed[(usz)sdl::Scancode.O] && !input.keyboard_captured_by_gui) {
+            orthographic = !orthographic;
+            *scene.get(camera_node, camera::Camera) = orthographic
+                ? camera::orthographic(6, 0.1f, 100)
+                : camera::perspective_deg(60, 0.1f);
+        }
+        imgui::set_next_window_pos(CONTROLS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
+        imgui::set_next_window_size(CONTROLS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
+        bool controls_visible = imgui::begin("Controls", null, {});
+        if (controls_visible) imgui::checkbox("Spin", &spin);
+        imgui::end();
+        move_cube(cube, input, window.clock.delta);
+        if (spin) {
+            Quat increment = quaternion::from_axis_angle{float}({ 0, 1, 0 },
+                window.clock.delta * SPIN_RADIANS_PER_SECOND);
+            cube.local.rotation = cube.local.rotation.mul(increment).normalize();
+        }
+        apply_orbit(orbit, input, camera_node);
+        imgui::set_next_window_pos(SCENE_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
+        imgui::set_next_window_size(SCENE_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
+        gui::scene_panel(scene, &panels);
+        if (scene.world.is_alive(panels.selected)) {
+            Node* selected = scene.node(panels.selected);
+            if (Mesh* mesh = scene.get(selected, Mesh)) {
+                imgui::set_next_window_pos(MATERIAL_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
+                imgui::set_next_window_size(MATERIAL_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
+                gui::material_panel(renderer.assets, mesh.material)!;
+            }
+        }
+        imgui::set_next_window_pos(STATS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
+        imgui::set_next_window_size(STATS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
+        gui::stats_panel(renderer)!;
+        scene.update_world();
+        gui_renderer.finish_frame();
+        platform::sync_window(window, renderer);
+        draw_gui_frame(
+            renderer: renderer,
+            scene: scene,
+            camera_node: camera_node,
+            gui_renderer: &gui_renderer,
+            info: { .time = window.clock.total, .delta = window.clock.delta },
+        )!;
+    }
+}
+
+fn int main(String[] args) {
+    bool gui_enabled = true;
+    bool gpu_timings;
+    foreach (argument : args[1..]) {
+        if (argument == "--no-gui") {
+            gui_enabled = false;
+        } else if (argument == "--gpu-timings") {
+            gpu_timings = true;
+        } else {
+            io::printfn("Unknown argument: %s", argument);
+            return 1;
+        }
+    }
+
     platform::Window window = platform::create_window(
         platform::default_window_desc("c3d cube", 1280, 720))!!;
     defer platform::destroy_window(&window);
@@ -72,7 +183,7 @@ fn int main() {
         allocator: mem,
         window:    &window,
         assets:    &assets,
-        desc:      { .validation = true, .application_name = "c3d_cube" },
+        desc:      { .gpu_timings = gpu_timings, .validation = true, .application_name = "c3d_cube" },
     )!!;
     defer render::destroy_renderer(&renderer);
 
@@ -98,6 +209,21 @@ fn int main() {
     double last_print;
 
     renderer.prepare_scene(&scene)!!;
+    if (gui_enabled) {
+        if (catch excuse = run_gui(
+            window: &window,
+            renderer: &renderer,
+            scene: &scene,
+            cube: cube,
+            camera_node: camera_node,
+            orbit: &orbit,
+        )) {
+            io::printfn("GUI failed: %s", excuse);
+            return 1;
+        }
+        return 0;
+    }
+
     io::printn("drag to orbit, wheel to zoom, O toggles the lens, arrows move the cube, Escape release quits");
 
     while (window.poll()) {
@@ -110,8 +236,6 @@ fn int main() {
                 : camera::perspective_deg(60, 0.1f);
         }
         move_cube(cube, input, window.clock.delta);
-        cube.local.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 },
-            (float)window.clock.total * SPIN_RADIANS_PER_SECOND);
         apply_orbit(&orbit, input, camera_node);
         scene.update_world();
 

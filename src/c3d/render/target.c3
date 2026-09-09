@@ -186,7 +186,14 @@ fn void release_target(gpu::Device* device, Target* target) @private {
     *target = {};
 }
 
-fn void? wait_frames(Renderer* renderer) @private {
+<*
+ Wait for every renderer-owned frame submission.
+ @param [&inout] renderer : "Completion points remain owned by the renderer."
+ @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::DEVICE_BUSY
+ @return? gpu::WAIT_TIMEOUT, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+ @require !renderer.frame_open
+*>
+fn void? wait_frames(Renderer* renderer) {
     foreach (&slot : renderer.frames) {
         if (slot.done.is_valid()) gpu::wait_completion(slot.done)!;
     }

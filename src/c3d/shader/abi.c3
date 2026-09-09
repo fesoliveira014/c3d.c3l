@@ -140,3 +140,35 @@ $assert $reflect(BasicMaterialGpu.flags).offset == 4;
 $assert $reflect(BasicMaterialGpu.alpha_cutoff).offset == 8;
 $assert $reflect(BasicMaterialGpu._pad0).offset == 12;
 $assert $reflect(BasicMaterialGpu.color).offset == 16;
+
+struct GuiVertexGpu {
+    float position_x;
+    float position_y;
+    float uv_x;
+    float uv_y;
+    uint  rgba;
+}
+$assert GuiVertexGpu::size == 20;
+$assert $reflect(GuiVertexGpu.position_x).offset == 0;
+$assert $reflect(GuiVertexGpu.position_y).offset == 4;
+$assert $reflect(GuiVertexGpu.uv_x).offset == 8;
+$assert $reflect(GuiVertexGpu.uv_y).offset == 12;
+$assert $reflect(GuiVertexGpu.rgba).offset == 16;
+
+struct GuiVertexRoot {
+    GpuAddress vertices;
+    Vec2f      scale;
+    Vec2f      translate;
+}
+$assert GuiVertexRoot::size == 24;
+$assert $reflect(GuiVertexRoot.vertices).offset == 0;
+$assert $reflect(GuiVertexRoot.scale).offset == 8;
+$assert $reflect(GuiVertexRoot.translate).offset == 16;
+
+struct GuiFragmentRoot {
+    TextureIndex source_texture;
+    SamplerIndex source_sampler;
+}
+$assert GuiFragmentRoot::size == 8;
+$assert $reflect(GuiFragmentRoot.source_texture).offset == 0;
+$assert $reflect(GuiFragmentRoot.source_sampler).offset == 4;
