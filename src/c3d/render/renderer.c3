@@ -94,6 +94,12 @@ struct Renderer {
     GpuGeometry[]           geometries;
     List{gpu::BufferCopyDesc} pending_copies;
     bool                    pending_overwrite;
+    bool                    uploads_recorded;
+    List{GeometryId}         pending_geometry_uploads;
+    TextureRes[]            textures;
+    SamplerRes[]            samplers;
+    List{PendingTextureUpload} pending_texture_uploads;
+    RetireList              pending_upload_retire;
     MaterialRes[]           materials;
     gpu::GpuAllocation      material_heap;
     gpu::GpuSpan            material_heap_span;
@@ -114,6 +120,12 @@ struct Renderer {
 
     gpu::CommandList        commands;
     gpu::AcquiredImage      acquired;
+    gpu::CompletionPoint    output_submission;
+    gpu::TextureState       frame_hdr_state;
+    gpu::TextureState       frame_depth_state;
+    gpu::TextureState[RENDER_TARGET_CAPACITY] frame_target_states;
+    bool                    frame_submitted;
+    uint                    recording_slot;
     Target                  window_target;
     Target                  hdr_color;
     Target                  depth;
@@ -147,28 +159,37 @@ fn void Renderer.set_window_output(
 <*
  Upload the asset now, or record its upload into the open frame.
  Completes without a window when no frame is open.
+ @param [&inout] self : "Owns upload staging and device resources."
  @return? c3d::INVALID_ID
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::UNSUPPORTED_FEATURE, gpu::COMMAND_RECORDING_ERROR, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+ @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
+ @return? gpu::INVALID_RESOURCE_STATE, gpu::DEVICE_BUSY, gpu::RESOURCE_IN_USE
+ @return? gpu::SLOT_TABLE_FULL, gpu::DESCRIPTOR_HEAP_FULL, gpu::WAIT_TIMEOUT
 *>
 macro void? Renderer.upload(&self, id) {
     $switch $Typeof(id):
         $case GeometryId: return self.upload_geometry(id);
         $case MaterialId: return self.upload_material(id);
-        $default: $error("upload takes a GeometryId or a MaterialId");
+        $case TextureId: return self.upload_texture(id);
+        $case SamplerId: return self.upload_sampler(id);
+        $default: $error("upload takes a GeometryId, MaterialId, TextureId or SamplerId");
     $endswitch
 }
 
 <*
  Open a frame slot and acquire the window image when one is available.
  @param [&inout] self : "Reuses the slot whose completion point has been waited."
- @require !self.frame_open
  @return? gpu::DEVICE_BUSY, gpu::INVALID_HANDLE, gpu::INVALID_ARGUMENT
  @return? gpu::INVALID_RESOURCE_STATE, gpu::COMMAND_RECORDING_ERROR, gpu::RESOURCE_IN_USE
  @return? gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY, gpu::UNSUPPORTED_FEATURE
  @return? gpu::SURFACE_LOST, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+ @return? gpu::WAIT_TIMEOUT
+ @require !self.frame_open
 *>
 fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
+    finish_pending_output(self)!;
+
     Frame* slot = &self.frames[self.frame_index % FRAMES_IN_FLIGHT];
     if (slot.done.is_valid()) gpu::wait_completion(slot.done)!;
 
@@ -176,7 +197,9 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
     read_pass_timings(self, slot, self.frame_index)!;
     slot.timed = {};
     drain_retired(&self.device, &slot.retire);
-    sweep_geometries(self, slot);
+    sweep_geometries(self);
+    sweep_textures(self);
+    sweep_samplers(self);
     sweep_materials(self);
     reset_upload_ring(self, slot)!;
     self.frame_started = clock::now();
@@ -186,6 +209,14 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
         if (self.output_dirty) recover_window_output(self)!;
         acquire_window_output(self)!;
     }
+
+    self.frame_hdr_state = self.hdr_color.state;
+    self.frame_depth_state = self.depth.state;
+    foreach (index, target : self.targets.items) self.frame_target_states[index] = target.target.state;
+    self.frame_submitted = false;
+    self.recording_slot = (uint)(self.frame_index % FRAMES_IN_FLIGHT);
+    self.commands = {};
+    defer catch abort_frame(self);
 
     self.commands = gpu::begin_commands(&slot.allocator)!;
     if (self.timestamps_enabled) {
@@ -231,12 +262,18 @@ fn void? Renderer.clear(&self, Vec4 color) {
 <*
  Submit the frame and present its window output. Submits nothing without one.
  @param [&inout] self : "Closes the frame and advances to the next slot."
- @require self.frame_open, !self.overlay_open
  @return? gpu::COMMAND_RECORDING_ERROR, gpu::INVALID_HANDLE, gpu::INVALID_ARGUMENT
  @return? gpu::INVALID_RESOURCE_STATE, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::DEVICE_LOST, gpu::SURFACE_LOST, gpu::BACKEND_ERROR
+ @return? gpu::DEVICE_BUSY, gpu::RESOURCE_IN_USE, gpu::UNSUPPORTED_FEATURE
+ @require self.frame_open, !self.overlay_open
 *>
 fn void? Renderer.end_frame(&self) {
+    bool submitted;
+    defer catch {
+        if (!submitted) abort_frame(self);
+    }
+
     ulong frame = self.frame_index;
     Frame* slot = &self.frames[frame % FRAMES_IN_FLIGHT];
     self.frame_open = false;
@@ -263,6 +300,10 @@ fn void? Renderer.end_frame(&self) {
         .readiness_before = { .color_output },
     };
     slot.done = gpu::submit(self.graphics, &submit)!;
+    self.output_submission = slot.done;
+    self.frame_submitted = true;
+    commit_uploads(self, slot);
+    submitted = true;
     self.stats.cpu_record_ms = elapsed_ms(self.frame_started);
 
     present_window_output(self, slot.done)!;
@@ -406,6 +447,7 @@ fn void? acquire_window_output(Renderer* renderer) @private {
     }
 
     renderer.acquired = acquired;
+    renderer.output_submission = {};
     renderer.window_target = {
         .texture    = acquired.texture,
         .attachment = acquired.attachment_view,
@@ -421,22 +463,59 @@ fn void? acquire_window_output(Renderer* renderer) @private {
 fn void? present_window_output(Renderer* renderer, gpu::CompletionPoint rendered) @private {
     while (catch excuse = gpu::present(&renderer.device, &renderer.acquired, rendered)) {
         if (excuse == gpu::SWAPCHAIN_OUT_OF_DATE) {
+            renderer.acquired = {};
+            renderer.output_submission = {};
             renderer.output_dirty = true;
             return;
         }
         if (excuse != gpu::WAIT_TIMEOUT) return excuse~;
     }
+    renderer.output_submission = {};
+}
+
+fn void? finish_pending_output(Renderer* renderer) @private {
+    if (!renderer.acquired.texture.is_valid()) return;
+
+    if (!renderer.output_submission.is_valid()) {
+        open_closed_frame_slot(renderer)!;
+        Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+        gpu::CommandList commands = gpu::begin_commands(&slot.allocator)!;
+        defer catch (void)gpu::discard_commands(&commands);
+
+        // Acquired images must consume readiness and be presented before reuse or release.
+        gpu::TextureBarrier to_present = gpu::texture_transition(
+            texture: renderer.acquired.texture,
+            before: renderer.acquired.prior_state,
+            after: PRESENT_STATE,
+        )!;
+        gpu::cmd_texture_barrier(&commands, &to_present)!;
+        gpu::ExecutableCommandList[1] executable = { gpu::end_commands(&commands)! };
+        defer catch (void)gpu::discard_executable_commands(&executable[0]);
+
+        gpu::SubmitDesc submit = {
+            .command_lists = executable[..],
+            .readiness = renderer.acquired.readiness,
+            .readiness_before = { .color_output },
+        };
+        slot.done = gpu::submit(renderer.graphics, &submit)!;
+        renderer.output_submission = slot.done;
+        commit_uploads(renderer, slot);
+    }
+
+    present_window_output(renderer, renderer.output_submission)!;
 }
 
 <*
  Create the renderer, its device, and the window output the descriptor's factory supplies.
  @param [&in] assets : "Borrowed for the renderer's lifetime; never released by it."
- @require desc.surface_fn == null || (desc.output_width > 0 && desc.output_height > 0)
  @return? c3d::UNSUPPORTED, gpu::UNSUPPORTED_BACKEND, gpu::UNSUPPORTED_FEATURE
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
  @return? gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY, gpu::SLOT_TABLE_FULL
  @return? gpu::DESCRIPTOR_HEAP_FULL, gpu::COMMAND_ALLOCATOR_CAPACITY_EXCEEDED
  @return? gpu::DEVICE_LOST, gpu::DEVICE_BUSY, gpu::SURFACE_LOST, gpu::BACKEND_ERROR
+ @return? c3d::INVALID_ARGUMENT, c3d::ASSET_DATA_UNAVAILABLE, gpu::RESOURCE_IN_USE
+ @return? gpu::WAIT_TIMEOUT, gpu::COMMAND_RECORDING_ERROR
+ @require desc.surface_fn == null || (desc.output_width > 0 && desc.output_height > 0)
 *>
 fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDesc desc = {}) {
     // The callback's user pointer is fixed when the runtime is created and a returned-by-value
@@ -507,6 +586,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         for (usz slot = 0; slot < slots_created; slot++) {
             (void)gpu::destroy_command_allocator(&frames[slot].allocator);
             free_upload_ring(&device, &frames[slot].upload);
+            drain_retired(&device, &frames[slot].retire);
             frames[slot].retire.free();
         }
     }
@@ -518,13 +598,13 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         frames[slot].allocator = gpu::create_command_allocator(&device, graphics, &allocator_desc)!;
         frames[slot].retire.init(allocator, RETIRE_INITIAL_CAPACITY);
         frames[slot].upload.overflow.init(allocator, RETIRE_INITIAL_CAPACITY);
+        slots_created++;
         allocate_upload_ring(
             device:     &device,
             ring:       &frames[slot].upload,
             bytes:      ring_bytes,
             debug_name: UPLOAD_RING_NAMES[slot],
         )!;
-        slots_created++;
     }
 
     gpu::SamplerDesc sampler_desc = {
@@ -560,6 +640,8 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .assets               = assets,
         .geometries           = alloc::new_array(allocator, GpuGeometry, assets.geometries.items.len),
         .materials            = alloc::new_array(allocator, MaterialRes, assets.materials.items.len),
+        .textures             = alloc::new_array(allocator, TextureRes, assets.textures.items.len),
+        .samplers             = alloc::new_array(allocator, SamplerRes, assets.samplers.items.len),
         .material_heap        = material_heap,
         .material_heap_span   = material_heap_span,
         .hdr_color            = hdr_color,
@@ -582,6 +664,22 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .output_height        = desc.output_height,
     };
     renderer.pending_copies.init(allocator, RETIRE_INITIAL_CAPACITY);
+    renderer.pending_geometry_uploads.init(allocator, RETIRE_INITIAL_CAPACITY);
+    renderer.pending_texture_uploads.init(allocator, RETIRE_INITIAL_CAPACITY);
+    renderer.pending_upload_retire.init(allocator, RETIRE_INITIAL_CAPACITY);
+    defer catch {
+        (void)wait_frames(&renderer);
+        free_pending_uploads(&renderer);
+        free_textures(&renderer);
+        free_geometries(&renderer);
+        alloc::free(allocator, renderer.materials.ptr);
+        destroy_pipeline_cache(&renderer.device, &renderer.pipelines);
+        pool::destroy_pool{TargetRecord, RenderTargetId}(&renderer.targets);
+        // Preparation updates completion points and may replace copied ring storage.
+        frames = renderer.frames;
+    }
+
+    prepare_builtin_textures(&renderer)!;
     return renderer;
 }
 
@@ -590,8 +688,11 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
  @param [&inout] renderer : "Left zeroed; destroy the window backing its surface afterwards."
 *>
 fn void destroy_renderer(Renderer* renderer) {
-    if (renderer.frame_open) (void)gpu::discard_commands(&renderer.commands);
+    if (renderer.frame_open) abort_frame(renderer);
+    (void)finish_pending_output(renderer);
     (void)wait_frames(renderer);
+    free_pending_uploads(renderer);
+    free_textures(renderer);
     free_geometries(renderer);
     free_material_heap(renderer);
     release_view_targets(&renderer.device, &renderer.hdr_color, &renderer.depth);
@@ -735,7 +836,7 @@ fn void? reset_upload_ring(Renderer* renderer, Frame* slot) @private {
 }
 
 <*
- Discard failed frame recording and forget its staged copies.
+ Discard recording; release any acquired output before reuse.
  @param [&inout] renderer : "All outstanding overlay borrows become invalid."
 *>
 fn void abort_frame(Renderer* renderer) {
@@ -744,8 +845,14 @@ fn void abort_frame(Renderer* renderer) {
 
     (void)gpu::discard_commands(&renderer.commands);
 
-    renderer.pending_copies.clear();
-    renderer.pending_overwrite = false;
+    if (!renderer.frame_submitted) {
+        renderer.frames[renderer.recording_slot].timed = {};
+        renderer.hdr_color.state = renderer.frame_hdr_state;
+        renderer.depth.state = renderer.frame_depth_state;
+        foreach (index, &target : renderer.targets.items) target.target.state = renderer.frame_target_states[index];
+    }
+    renderer.has_output = false;
+    discard_uploads(renderer);
 }
 
 fn float elapsed_ms(time::Clock started) @private {

@@ -50,7 +50,7 @@ fn void AssetStore.mark_sampler_dirty(&self, SamplerId sampler) {
 
 <*
  Free the record and make its id stale.
- @require self.samplers.is_live(sampler)
+ @require self.samplers.is_live(sampler), sampler.index >= BUILTIN_SAMPLER_COUNT
 *>
 fn void AssetStore.remove_sampler(&self, SamplerId sampler) {
     SamplerAsset* record = self.samplers.get(sampler);

@@ -32,6 +32,8 @@ INCLUDE_DIRS = (
 )
 
 TARGET_ENV = "vulkan1.3"
+# Keep discard available without requesting shaderDemoteToHelperInvocation.
+TARGET_SPIRV = "spirv1.5"
 INCLUDE_PREAMBLE = "#extension GL_GOOGLE_include_directive : enable"
 EMBED_PREFIX = "../../../shaders/spv/"
 STAGES = (
@@ -119,6 +121,7 @@ def compile_one(glslang: str, entry: Entry, output: Path, verbose: bool) -> None
         glslang,
         "-V",
         "--target-env", TARGET_ENV,
+        "--target-env", TARGET_SPIRV,
         "-S", entry.stage,
         f"-P{INCLUDE_PREAMBLE}",
     ]

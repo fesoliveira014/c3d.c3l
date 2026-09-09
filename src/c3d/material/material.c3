@@ -41,10 +41,11 @@ struct MaterialCommon {
 }
 
 <*
- Unlit color.
+ Unlit color multiplied by an optional texture map.
 *>
 struct BasicParams {
     Vec4 color;
+    TextureSlot map;
 }
 
 <*

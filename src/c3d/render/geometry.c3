@@ -77,9 +77,12 @@ struct GpuGeometry {
 <*
  Upload the geometry now, or record its upload into the open frame.
  Completes without a window when no frame is open.
+ @param [&inout] self : "Owns queued geometry copies and their submission."
  @return? c3d::INVALID_ID
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::UNSUPPORTED_FEATURE, gpu::COMMAND_RECORDING_ERROR, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+ @return? gpu::INVALID_RESOURCE_STATE, gpu::DEVICE_BUSY, gpu::RESOURCE_IN_USE
+ @return? gpu::SLOT_TABLE_FULL, gpu::DESCRIPTOR_HEAP_FULL, gpu::WAIT_TIMEOUT
 *>
 fn void? Renderer.upload_geometry(&self, GeometryId geometry) {
     if (!self.assets.geometries.is_live(geometry)) return c3d::INVALID_ID~;
@@ -88,6 +91,7 @@ fn void? Renderer.upload_geometry(&self, GeometryId geometry) {
         return;
     }
     open_closed_frame_slot(self)!;
+    defer catch discard_uploads(self);
     ensure_geometry(self, geometry)!;
     return submit_pending(self);
 }
@@ -207,9 +211,6 @@ fn GpuGeometry*? ensure_geometry(Renderer* renderer, GeometryId geometry) @priva
     if (reuse) {
         renderer.pending_overwrite = true;
     } else {
-        if (mirror.allocation.is_valid()) {
-            slot.retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = mirror.allocation });
-        }
         gpu::AllocationDesc block_desc = {
             .size         = layout.total_bytes,
             .alignment    = STREAM_ALIGNMENT,
@@ -217,13 +218,25 @@ fn GpuGeometry*? ensure_geometry(Renderer* renderer, GeometryId geometry) @priva
             .access       = { .graphics },
             .debug_name   = "geometry",
         };
-        mirror.allocation = gpu::allocate_memory(&renderer.device, &block_desc)!;
-        gpu::GpuSpan block = gpu::get_allocation_span(&renderer.device, mirror.allocation)!;
-        mirror.root = gpu::get_span_address(&renderer.device, block)!;
-        mirror.positions = block.checked_subspan(layout.positions, PACKED_VEC3_BYTES * layout.vertex_count)!;
-        mirror.indices = layout.index_count
+        gpu::GpuAllocation allocation = gpu::allocate_memory(&renderer.device, &block_desc)!;
+        defer catch (void)gpu::free_allocation(&renderer.device, &allocation);
+        gpu::GpuSpan block = gpu::get_allocation_span(&renderer.device, allocation)!;
+        gpu::GpuAddress address = gpu::get_span_address(&renderer.device, block)!;
+        gpu::GpuSpan positions = block.checked_subspan(layout.positions, PACKED_VEC3_BYTES * layout.vertex_count)!;
+        gpu::GpuSpan indices = layout.index_count
             ? block.checked_subspan(layout.indices, (usz)layout.index_stride * layout.index_count)!
             : (gpu::GpuSpan){};
+
+        if (mirror.allocation.is_valid()) {
+            renderer.pending_upload_retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = mirror.allocation });
+        }
+        mirror.allocation = allocation;
+        mirror.root = address;
+        mirror.positions = positions;
+        mirror.indices = indices;
+        mirror.asset = geometry;
+        mirror.layout = layout;
+        mirror.revision = 0;
     }
 
     gpu::MappedGpuSpan staging = slot.upload.take(&renderer.device, layout.total_bytes, STREAM_ALIGNMENT)!;
@@ -236,6 +249,7 @@ fn GpuGeometry*? ensure_geometry(Renderer* renderer, GeometryId geometry) @priva
     gpu::GpuSpan destination = gpu::get_allocation_span(&renderer.device, mirror.allocation)!;
     renderer.pending_copies.push({ .src = staging.span, .dst = destination.checked_subspan(0, layout.total_bytes)! });
 
+    renderer.pending_geometry_uploads.push(geometry);
     mirror.asset = geometry;
     mirror.revision = record.header.revision;
     mirror.layout = layout;
@@ -247,6 +261,8 @@ fn GpuGeometry*? ensure_geometry(Renderer* renderer, GeometryId geometry) @priva
 }
 
 fn void? record_pending_copies(Renderer* renderer, gpu::CommandList* commands) @private {
+    if (renderer.pending_copies.len() || renderer.pending_texture_uploads.len()) renderer.uploads_recorded = true;
+    record_texture_uploads(renderer, commands)!;
     if (!renderer.pending_copies.len()) return;
     if (renderer.pending_overwrite) {
         gpu::Barrier before_overwrite = { .before = CONSUMER_STAGES, .after = { .transfer } };
@@ -267,6 +283,7 @@ fn void? open_closed_frame_slot(Renderer* renderer) @private {
 }
 
 fn void? submit_pending(Renderer* renderer) @private {
+    defer catch discard_uploads(renderer);
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::CommandList commands = gpu::begin_commands(&slot.allocator)!;
     defer catch (void)gpu::discard_commands(&commands);
@@ -277,13 +294,14 @@ fn void? submit_pending(Renderer* renderer) @private {
     defer catch (void)gpu::discard_executable_commands(&executable[0]);
     gpu::SubmitDesc submit = { .command_lists = executable[..] };
     slot.done = gpu::submit(renderer.graphics, &submit)!;
+    commit_uploads(renderer, slot);
     return gpu::wait_completion(slot.done);
 }
 
-fn void sweep_geometries(Renderer* renderer, Frame* slot) @private {
+fn void sweep_geometries(Renderer* renderer) @private {
     foreach (&mirror : renderer.geometries) {
         if (!mirror.allocation.is_valid() || renderer.assets.geometries.is_live(mirror.asset)) continue;
-        slot.retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = mirror.allocation });
+        renderer.pending_upload_retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = mirror.allocation });
         *mirror = {};
     }
 }

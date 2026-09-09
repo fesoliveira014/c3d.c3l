@@ -43,15 +43,18 @@ struct DrawState @private {
 
 <*
  Render one frame of the scene from the camera to the window.
+ @param [&inout] self : "Owns recording, submission and window presentation."
  @param [&in] scene : "Pose as left by the last update_world; not advanced."
  @param [&in] camera_node : "Carries a Camera component."
- @require !self.frame_open
  @return? c3d::INVALID_ARGUMENT, c3d::SHADER_NOT_FOUND
  @return? gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL
  @return? gpu::DEVICE_BUSY, gpu::RESOURCE_IN_USE, gpu::SURFACE_LOST
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
  @return? gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+ @return? c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE, gpu::DESCRIPTOR_HEAP_FULL
+ @return? gpu::WAIT_TIMEOUT
+ @require !self.frame_open
 *>
 fn void? Renderer.render(
     &self,
@@ -71,14 +74,17 @@ fn void? Renderer.render(
 <*
  Extract, upload and record the scene from the camera into the view targets.
  Records nothing without a window output.
+ @param [&inout] self : "Records into the current frame before composition."
  @param [&in] scene : "Pose as left by the last update_world; not advanced."
  @param [&in] camera_node : "Carries a Camera component."
- @require self.frame_open, !self.overlay_open
  @return? c3d::INVALID_ARGUMENT, c3d::SHADER_NOT_FOUND
  @return? gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
  @return? gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+ @return? c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE, gpu::DEVICE_BUSY
+ @return? gpu::RESOURCE_IN_USE, gpu::DESCRIPTOR_HEAP_FULL, gpu::WAIT_TIMEOUT
+ @require self.frame_open, !self.overlay_open
 *>
 fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
     if (!self.has_output) return;
@@ -180,15 +186,20 @@ fn void? Renderer.composite_view(&self) {
 
 <*
  Upload every asset the scene's meshes reference and create their pipelines, then wait.
+ @param [&inout] self : "Completes preparation outside an open frame."
  @param [&in] scene : "Read only."
- @require !self.frame_open
  @return? c3d::SHADER_NOT_FOUND, gpu::SHADER_INVALID, gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL
  @return? gpu::DEVICE_BUSY, gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::OUT_OF_HOST_MEMORY
  @return? gpu::OUT_OF_DEVICE_MEMORY, gpu::UNSUPPORTED_FEATURE, gpu::COMMAND_RECORDING_ERROR
  @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+ @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
+ @return? gpu::INVALID_RESOURCE_STATE, gpu::RESOURCE_IN_USE, gpu::DESCRIPTOR_HEAP_FULL
+ @return? gpu::WAIT_TIMEOUT
+ @require !self.frame_open
 *>
 fn void? Renderer.prepare_scene(&self, Scene* scene) {
     open_closed_frame_slot(self)!;
+    defer catch discard_uploads(self);
     scene.@each(Mesh; Entity entity, Mesh* mesh) {
         if (!self.assets.geometries.is_live(mesh.geometry) || !self.assets.materials.is_live(mesh.material)) {
             self.stats.dangling_refs++;
@@ -198,7 +209,7 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
             pipeline_for(self, &self.assets.material(material.asset).data.common)!;
         }
     };
-    if (!self.pending_copies.len()) return;
+    if (!self.pending_copies.len() && !self.pending_texture_uploads.len() && !self.pending_upload_retire.len()) return;
     return submit_pending(self);
 }
 

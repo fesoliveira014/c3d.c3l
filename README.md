@@ -15,7 +15,7 @@ Target platforms are linux-x64 and windows-x64. C3 0.8.3 exactly.
 | glslang | any | `glslangValidator` on PATH, from `glslang-tools` or a Vulkan SDK |
 | Vulkan loader | any | `libvulkan.so.1`, from `libvulkan1` |
 | SDL3 | 3.4.16 or newer | not packaged by Ubuntu 24.04; build it, see below |
-| CMake and a C compiler | any | for SDL3 and box3d |
+| CMake and a C compiler | any | native dependencies; the image decoder also compiles during ordinary builds |
 | Bash, curl, tar and sha256sum (or shasum) | any | fetch and verify ImGui release archives |
 
 On Debian or Ubuntu:
@@ -54,6 +54,7 @@ python3 scripts/build.py --init-deps --skip-abi --skip-shaders --skip-build
 
 That installs the ImGui archives under `lib/c3imgui.c3l/linked-libs/` and leaves `libbox3d.a`
 in `lib/box3d.c3l/linked-libs/linux-x64/`. Ordinary builds do not download archives.
+They compile the vendored `csrc/stb_image.c` with c3c's selected C compiler.
 
 The released Linux ImGui archive references `__isoc23_sscanf`, unavailable on the verified
 Ubuntu 22.04/glibc 2.35 host. On that host, build the matching native package from source
@@ -110,11 +111,25 @@ python3 scripts/build.py --example cube_gui
 ./examples/build/cube_gui --gpu-timings
 ```
 
+`textured` adds PNG/JPEG maps, mip filtering, UV transforms and alpha masking in a
+standalone scene with validation enabled. The default image is embedded:
+
+```bash
+python3 scripts/build.py --example textured
+./examples/build/textured path/to/albedo.jpg
+```
+
+Press N/L/A for nearest/trilinear/anisotropic filtering, S for repeat scale,
+R for rotation, O for offset, U for UV0/UV1 and Backspace to reset. Drag to orbit,
+scroll to zoom, and release Escape to quit. See [Textures and images](docs/textures.md)
+for loading, material slots, HDR data, pixel edits and CPU source release.
+
 ## Using c3d from your own project
 
 Add c3d and its dependencies to your `project.json`, and list the feature flags you want. A C3
-library manifest cannot declare features, so **every consumer enables them itself** — omit one and
-the declarations behind it do not exist:
+library manifest cannot declare features, so every consumer enables them itself. Declarations
+guarded by a feature disappear when it is omitted; the image API and its C translation unit
+are currently included regardless of the `C3D_STB_IMAGE` indicator:
 
 ```json
 {
@@ -130,7 +145,7 @@ the declarations behind it do not exist:
 | `C3D_PHYSICS` | physics, and box3d |
 | `C3D_FBX` | the FBX importer |
 | `C3D_RAY_TRACING` | ray tracing |
-| `C3D_STB_IMAGE` | image decoding, and stb_image |
+| `C3D_STB_IMAGE` | image support indicator; does not exclude the API or native decoder when absent |
 
 ## Contributing
 

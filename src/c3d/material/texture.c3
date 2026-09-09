@@ -37,7 +37,12 @@ struct TextureDesc {
 <*
  Two-dimensional single-layer description with generated mips.
 *>
-fn TextureDesc texture_2d_desc(uint width, uint height, PixelFormat format, ZString debug_name = "") {
+fn TextureDesc texture_2d_desc(
+    uint width,
+    uint height,
+    PixelFormat format,
+    ZString debug_name = "",
+) {
     return {
         .width         = width,
         .height        = height,

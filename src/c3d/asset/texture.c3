@@ -80,7 +80,7 @@ fn void AssetStore.release_texture_cpu(&self, TextureId texture) {
 
 <*
  Free the record and make its id stale.
- @require self.textures.is_live(texture)
+ @require self.textures.is_live(texture), texture.index >= BUILTIN_TEXTURE_COUNT
 *>
 fn void AssetStore.remove_texture(&self, TextureId texture) {
     TextureAsset* record = self.textures.get(texture);

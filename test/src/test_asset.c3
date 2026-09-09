@@ -229,7 +229,7 @@ fn void test_builtins_are_live_at_fixed_ids() @test {
     assert(checker.desc.width == 8 && checker.desc.height == 8);
     assert(checker.desc.format == RGBA8_SRGB);
     assert(checker.pixels.len == 8 * 8 * 4);
-    assert(!checker.desc.generate_mips);
+    assert(checker.desc.generate_mips);
     assert(assets.sampler(asset::SAMPLER_SHADOW).desc.compare == GREATER_EQUAL);
     assert(assets.sampler(asset::SAMPLER_SHADOW).desc.compare_enable);
     assert(assets.sampler(asset::SAMPLER_ANISOTROPIC).desc.anisotropy_enable);

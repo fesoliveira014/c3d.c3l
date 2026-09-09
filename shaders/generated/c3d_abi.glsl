@@ -78,6 +78,12 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer BasicMateri
     float alpha_cutoff;
     uint _pad0;
     vec4 color;
+    uint map_texture;
+    uint map_sampler;
+    uint map_uv_set;
+    uint map_present;
+    vec4 map_uv_row0;
+    vec4 map_uv_row1;
 };
 
 struct GuiVertexGpu {
