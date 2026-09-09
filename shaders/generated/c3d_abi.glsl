@@ -49,6 +49,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer FrameRoot {
     uint shadow_count;
     uint flags;
     uint frame_index;
+    vec4 ambient;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer DrawRoot {
@@ -66,7 +67,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer DrawRoot {
     uint64_t previous_pose;
     uint object_id;
     uint flags;
-    uint _pad0;
+    uint layers;
     uint _pad1;
     uint _pad2;
     uint _pad3;
@@ -111,6 +112,29 @@ layout(buffer_reference, std430, buffer_reference_align = 4) buffer CubePreviewR
     float lod;
     uint face;
     uint explicit_lod;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+};
+
+struct LightGpu {
+    vec4 position_range;
+    vec4 direction_cos_outer;
+    vec4 color_intensity;
+    uint kind;
+    uint layers;
+    float cos_inner;
+    uint _pad0;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer StandardMaterialGpu {
+    uint kind;
+    uint flags;
+    float alpha_cutoff;
+    float metallic;
+    vec4 base_color;
+    vec4 emissive_strength;
+    float roughness;
     uint _pad0;
     uint _pad1;
     uint _pad2;

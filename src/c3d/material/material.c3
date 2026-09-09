@@ -12,11 +12,20 @@ const MaterialCommon MATERIAL_COMMON_DEFAULT = {
     .depth_test   = true,
 };
 
+<* Default metallic-roughness factors. *>
+const StandardParams STANDARD_PARAMS_DEFAULT = {
+    .base_color = { 1, 1, 1, 1 },
+    .metallic = 1,
+    .roughness = 1,
+    .emissive_strength = 1,
+};
+
 <*
  Shading family of a material.
 *>
 enum MaterialKind {
     BASIC,
+    STANDARD,
 }
 
 <*
@@ -48,13 +57,25 @@ struct BasicParams {
     TextureSlot map;
 }
 
+<* Scalar metallic-roughness surface parameters. *>
+struct StandardParams {
+    Vec4 base_color;
+    float metallic;
+    float roughness;
+    Vec3 emissive;
+    float emissive_strength;
+}
+
 <*
  Material description; the kind selects which parameters are read.
 *>
 struct Material {
     MaterialKind   kind;
     MaterialCommon common;
-    BasicParams    basic;
+    union {
+        BasicParams basic;
+        StandardParams standard;
+    }
 }
 
 <*
@@ -62,4 +83,25 @@ struct Material {
 *>
 fn Material basic(BasicParams params, MaterialCommon common = MATERIAL_COMMON_DEFAULT) {
     return { .kind = MaterialKind.BASIC, .common = common, .basic = params };
+}
+
+<*
+ Metallic-roughness material without texture maps.
+ @require params.base_color.r >= 0, params.base_color.r <= 1
+ @require params.base_color.g >= 0, params.base_color.g <= 1
+ @require params.base_color.b >= 0, params.base_color.b <= 1
+ @require params.base_color.a >= 0, params.base_color.a <= 1
+ @require params.emissive.r >= 0, params.emissive.g >= 0, params.emissive.b >= 0
+ @require math::is_finite(params.emissive.r), math::is_finite(params.emissive.g), math::is_finite(params.emissive.b)
+ @require math::is_finite(params.emissive_strength)
+ @require params.metallic >= 0, params.metallic <= 1
+ @require params.roughness >= 0, params.roughness <= 1
+ @require params.emissive_strength >= 0
+ @pure
+*>
+fn Material standard(
+    StandardParams params = STANDARD_PARAMS_DEFAULT,
+    MaterialCommon common = MATERIAL_COMMON_DEFAULT,
+) {
+    return { .kind = STANDARD, .common = common, .standard = params };
 }

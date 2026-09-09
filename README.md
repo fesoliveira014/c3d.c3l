@@ -111,6 +111,19 @@ python3 scripts/build.py --example cube_gui
 ./examples/build/cube_gui --gpu-timings
 ```
 
+`pbr` provides a static metallic/roughness sphere grid with directional, point
+and spot lights. Its GUI edits selected materials and lights, ambient, receiver
+layers and camera projection:
+
+```bash
+python3 scripts/build.py --example pbr
+./examples/build/pbr --gpu-timings
+```
+
+Drag outside the GUI to orbit, scroll to zoom, and release Escape to quit.
+See [Materials and direct lighting](docs/materials.md) for factors, layer masks,
+light capacity and current rendering limits.
+
 `textured` adds PNG/JPEG maps, mip filtering, UV transforms and alpha masking in a
 standalone scene with validation enabled. The default image is embedded:
 

@@ -2,6 +2,7 @@ module c3d::scene;
 
 import c3d;
 import c3d::camera;
+import c3d::light;
 import c3d::ecs;
 import c3d::maths;
 import std::math;
@@ -24,6 +25,8 @@ struct Scene {
     World      world;
     Node[]     nodes;
     Node*      root;
+    Vec3       ambient_color;
+    float      ambient_intensity;
     Node*[]    remove_queue;
     uint       remove_count;
 }
@@ -77,6 +80,24 @@ fn Node*? Scene.add_mesh(&self, GeometryId geometry, MaterialId material, Node* 
 fn Node*? Scene.add_camera(&self, Camera camera, Node* parent = null, String name = "") {
     Node* node = self.add_node(parent, name)!;
     self.world.add(node.id, camera);
+    return node;
+}
+
+<*
+ Add a node carrying a punctual light.
+ @param [&inout] self : "Owns the new node and component."
+ @param [in] parent : "Null means the root."
+ @param name : "Copied into the scene allocator."
+ @return? c3d::CAPACITY_EXCEEDED
+*>
+fn Node*? Scene.add_light(
+    &self,
+    Light light,
+    Node* parent = null,
+    String name = "",
+) {
+    Node* node = self.add_node(parent, name)!;
+    self.world.add(node.id, light);
     return node;
 }
 
@@ -226,7 +247,7 @@ fn SceneDesc default_scene_desc() {
 }
 
 <*
- Create a scene with its root node and the mesh and camera components registered.
+ Create a scene with mesh, camera and light components registered.
  @require desc.max_nodes > 0
 *>
 fn Scene create_scene(Allocator allocator, SceneDesc desc) {
@@ -251,6 +272,8 @@ fn Scene create_scene(Allocator allocator, SceneDesc desc) {
     };
     scene.world.register(Mesh)!!;
     scene.world.register(Camera)!!;
+    scene.world.register(Light)!!;
+    scene.ambient_color = { 1, 1, 1 };
     scene.world.set_remove_hook(Mesh, &free_morph_weights, scene.hook_allocator);
     return scene;
 }

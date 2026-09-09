@@ -91,6 +91,12 @@
         "src/cube_gui.c3"
       ]
     },
+    "pbr": {
+      "type": "executable",
+      "sources": [
+        "src/pbr.c3"
+      ]
+    },
     "textured": {
       "type": "executable",
       "sources": [

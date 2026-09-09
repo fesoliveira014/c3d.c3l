@@ -34,6 +34,7 @@ struct Stats {
     uint  triangles;
     uint  culled;
     uint  lights;
+    uint  lights_dropped;
     uint  shadow_layers;
     uint  uploads;
     uint  upload_bytes;

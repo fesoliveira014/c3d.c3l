@@ -20,6 +20,8 @@ fn void? stats_panel(Renderer* renderer) {
     imgui::text("Draws: %u", renderer.stats.draws);
     imgui::text("Triangles: %u", renderer.stats.triangles);
     imgui::text("Culled: %u", renderer.stats.culled);
+    imgui::text("Lights: %u", renderer.stats.lights);
+    imgui::text("Lights dropped: %u", renderer.stats.lights_dropped);
 
     imgui::text("Uploads: %u", renderer.stats.uploads);
     imgui::text("Asset upload bytes: %u", renderer.stats.upload_bytes);

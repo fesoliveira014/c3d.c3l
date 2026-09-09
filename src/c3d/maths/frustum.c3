@@ -61,3 +61,15 @@ fn bool frustum_intersects_aabb(Frustum* frustum, Aabb bounds) {
     }
     return true;
 }
+
+<*
+ Whether the sphere intersects every clipping half-space.
+ @param [&in] frustum : "Normalized inward-facing planes."
+ @require bounds.radius >= 0
+*>
+fn bool frustum_intersects_sphere(Frustum* frustum, Sphere bounds) {
+    foreach (&plane : frustum.planes[:frustum.plane_count]) {
+        if (plane.normal.dot(bounds.center) + plane.d < -bounds.radius) return false;
+    }
+    return true;
+}

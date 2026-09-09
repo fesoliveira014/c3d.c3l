@@ -114,7 +114,7 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
             MaterialRes* material = ensure_material(self, candidate.material)!;
             items[index] = {
                 .sort_key  = draw_sort_key(
-                    fragment:  { .shader = BASIC },
+                    fragment:  material_fragment(self.assets.material(candidate.material).data.kind),
                     material:  candidate.material,
                     geometry:  candidate.geometry,
                     ndc_depth: candidate.ndc_depth,
@@ -127,6 +127,29 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
         sort::quicksort(items, &by_sort_key);
         record_pending_copies(self, &self.commands)!;
 
+        LightCounts light_counts;
+        LightGpu[] lights = extract_lights(
+            allocator: tmem,
+            scene: scene,
+            frustum: &matrices.frustum,
+            view_layers: camera.layers,
+            capacity: self.max_lights,
+            counts: &light_counts,
+        );
+        gpu::GpuAddress light_address;
+        if (lights.len) {
+            gpu::MappedGpuSpan light_span = slot.upload.take(
+                device: &self.device,
+                size: lights.len * LightGpu::size,
+                alignment: STREAM_ALIGNMENT,
+            )!;
+            mem::copy(light_span.bytes.ptr, lights.ptr, lights.len * LightGpu::size);
+            light_address = light_span.address;
+        }
+        self.stats.lights += light_counts.packed;
+        self.stats.lights_dropped += light_counts.dropped;
+
+        Vec3 ambient = scene.ambient_color * scene.ambient_intensity;
         gpu::MappedGpuSpan frame_span = slot.upload.take(&self.device, FrameRoot::size, STREAM_ALIGNMENT)!;
         write_frame_root(
             root:        (FrameRoot*)frame_span.bytes.ptr,
@@ -135,6 +158,9 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
             viewport:    viewport,
             info:        self.info,
             frame_index: self.frame_index,
+            lights:      light_address,
+            light_count: light_counts.packed,
+            ambient:     { ambient.r, ambient.g, ambient.b, 0 },
         );
         foreach (&item : items) {
             gpu::MappedGpuSpan draw_span = slot.upload.take(&self.device, DrawRoot::size, STREAM_ALIGNMENT)!;
@@ -145,6 +171,7 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
                 geometry:  item.geometry.root,
                 material:  item.material.address,
                 object_id: item.candidate.node.id.index,
+                layers:    item.candidate.node.layers,
             );
             item.root = draw_span.address;
         }
@@ -206,7 +233,7 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
         } else {
             ensure_geometry(self, mesh.geometry)!;
             MaterialRes* material = ensure_material(self, mesh.material)!;
-            pipeline_for(self, &self.assets.material(material.asset).data.common)!;
+            pipeline_for(self, &self.assets.material(material.asset).data)!;
         }
     };
     if (!self.pending_copies.len() && !self.pending_texture_uploads.len() && !self.pending_upload_retire.len()) return;
@@ -227,6 +254,9 @@ fn void write_frame_root(
     Vec2 viewport,
     FrameInfo info,
     ulong frame_index,
+    gpu::GpuAddress lights = (gpu::GpuAddress)0,
+    uint light_count = 0,
+    Vec4 ambient = {},
 ) {
     *root = {
         .view            = bitcast(matrices.view, Mat4f),
@@ -237,6 +267,9 @@ fn void write_frame_root(
         .camera_params   = { camera.near, camera.far, viewport.x, viewport.y },
         .jitter_time     = { 0, 0, (float)info.time, info.delta },
         .frame_index     = (uint)frame_index,
+        .lights          = lights,
+        .light_count     = light_count,
+        .ambient         = ambient,
     };
 }
 
@@ -252,6 +285,7 @@ fn void write_draw_root(
     gpu::GpuAddress geometry,
     gpu::GpuAddress material,
     uint object_id,
+    uint layers = scene::DEFAULT_LAYERS,
 ) {
     Mat3 normal = maths::normal_matrix(world);
     *root = {
@@ -263,6 +297,7 @@ fn void write_draw_root(
         .geometry  = geometry,
         .material  = material,
         .object_id = object_id,
+        .layers    = layers,
     };
 }
 
@@ -302,14 +337,15 @@ fn void? record_opaque_pass(Renderer* renderer, DrawItem[] items) @private {
     DrawState bound;
     bool state_set;
     if (items.len) {
-        bound.pipeline = pipeline_for(renderer, material_common(renderer, items[0].material))!;
+        bound.pipeline = pipeline_for(renderer, material_data(renderer, items[0].material))!;
         gpu::cmd_bind_pipeline(&renderer.commands, bound.pipeline)!;
     }
     gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
     foreach (&item : items) {
-        MaterialCommon* common = material_common(renderer, item.material);
+        Material* material = material_data(renderer, item.material);
+        MaterialCommon* common = &material.common;
         DrawState wanted = {
-            .pipeline    = pipeline_for(renderer, common)!,
+            .pipeline    = pipeline_for(renderer, material)!,
             .cull        = common.double_sided ? gpu::CullMode.NONE : gpu::CullMode.BACK,
             .topology    = primitive_topology(item.geometry.topology),
             .depth_test  = common.depth_test,
@@ -360,15 +396,22 @@ fn void? record_opaque_pass(Renderer* renderer, DrawItem[] items) @private {
     gpu::cmd_end_render_pass(&renderer.commands)!;
 }
 
-fn MaterialCommon* material_common(Renderer* renderer, MaterialRes* material) @local {
-    return &renderer.assets.material(material.asset).data.common;
+fn Material* material_data(Renderer* renderer, MaterialRes* material) @local {
+    return &renderer.assets.material(material.asset).data;
 }
 
-fn gpu::PipelineHandle? pipeline_for(Renderer* renderer, MaterialCommon* common) @private {
-    bool wireframe = common.wireframe && renderer.caps.line_polygon_mode;
+fn ShaderVariant material_fragment(MaterialKind kind) @local {
+    switch (kind) {
+        case BASIC: return { .shader = BASIC };
+        case STANDARD: return { .shader = STANDARD };
+    }
+}
+
+fn gpu::PipelineHandle? pipeline_for(Renderer* renderer, Material* material) @private {
+    bool wireframe = material.common.wireframe && renderer.caps.line_polygon_mode;
     PipelineKey key = {
         .vertex        = { .shader = MESH },
-        .fragment      = { .shader = BASIC },
+        .fragment      = material_fragment(material.kind),
         .color_formats = { [0] = HDR_FORMAT },
         .color_count   = 1,
         .depth_format  = DEPTH_FORMAT,
