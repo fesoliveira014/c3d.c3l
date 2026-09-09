@@ -235,7 +235,7 @@ Every milestone task, or a tightly coupled group of tasks from one milestone, ru
 2. **Propose.** Two documents. `proposal.md`: the design and its contracts: signatures, structs, invariants, faults, and where each lives. `tasks.md`: ordered tasks with implementation guidance: file placements, declarations, commands to run, and for every API the change touches what it expects, what it returns, which faults it can produce and what each means, and any precondition or ordering it imposes. Guidance, not prescription: the human may take a different shape or decomposition where they see a better one, and the close-out records where they did. Exception: tests are specified in full; test design and coverage are the agent's job, within the section 9 limits.
 3. **Apply.** The human implements `tasks.md`. The agent advises (API lookups, math checks, fault diagnosis) and edits files only on explicit delegation of a named chunk. Tests are delegated to the agent by default.
 4. **Review.** The agent diffs the work against `proposal.md` and `tasks.md` with `docs/style.md` and the section 3 skills loaded. Findings are `file:line:fix`, focused on divergences and discoveries; style was settled at proposal time. The review also checks the milestone's exit criteria and sections 6 to 9 of this file.
-5. **Sync.** `proposal.md`, `tasks.md`, and a close-out (what changed, where reality diverged from the proposal, and why) are mirrored to Notion under Development, Changes, as one child page named after the change id.
+5. **Sync.** `proposal.md`, `tasks.md`, and a close-out (what changed, where reality diverged from the proposal, and why) are mirrored to Notion under Development, Changes, as one child page named after the change id. Then propagate: every divergence and every carried-forward item in the close-out is written as an "As built" note, citing the change id, on the architecture section it contradicts or extends and on the handoff of each downstream milestone it affects. Pages are corrected in place, not rewritten; a later brainstorm must be able to trust the architecture section it is told to read.
 6. **Archive.** `openspec archive`; the Notion page title gains `[Archived]`.
 
 Steps 1 and 2 are one working session, 3 is the human's time, 4 to 6 are minutes. Trivial work collapses to 3 to 5; a milestone task never skips 1 and 2. The proposal and tasks pair is a decision record corrected by reality, not a spec the code must be synchronized to; divergences update the record.
@@ -282,7 +282,10 @@ Paste into `openspec/config.yaml` under `context` after `openspec init`:
   KISS) and is written with c3-expert, c3-style, c3-bindings, and
   shader-dev when installed, loaded.
 - Sync = mirror proposal.md, tasks.md, and the close-out (divergences
-  and why) to Notion under Development, Changes. Archive = openspec
-  archive plus retitle the Notion page with [Archived]. openspec/ is
-  gitignored; never commit or push its contents.
+  and why) to Notion under Development, Changes, then propagate every
+  divergence and carried-forward item as an "As built" note, citing the
+  change id, onto the architecture section it contradicts or extends and
+  onto the handoff of each downstream milestone it affects. Archive =
+  openspec archive plus retitle the Notion page with [Archived].
+  openspec/ is gitignored; never commit or push its contents.
 ```
