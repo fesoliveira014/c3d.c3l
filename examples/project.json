@@ -84,6 +84,12 @@
       "sources": [
         "src/cube.c3"
       ]
+    },
+    "cube_gui": {
+      "type": "executable",
+      "sources": [
+        "src/cube_gui.c3"
+      ]
     }
   }
 }

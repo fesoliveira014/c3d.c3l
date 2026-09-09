@@ -1,17 +1,17 @@
 # GUI overlay
 
 `c3d::gui` provides an application-owned Dear ImGui overlay with scene, Basic material and
-statistics panels. The renderer also works without constructing an adapter. The cube example
-uses an overlay by default:
+statistics panels. `cube_gui.c3` adds the overlay to the same scene as the first-mesh
+`cube.c3` example. Run either example independently:
 
 ```bash
 python3 scripts/build.py --example cube
-./examples/build/cube --no-gui
-./examples/build/cube --gpu-timings
+python3 scripts/build.py --example cube_gui
+./examples/build/cube_gui --gpu-timings
 ```
 
-Spin starts off. Enabling it rotates from the current pose; pausing preserves that pose for
-editing. Select a node in the scene tree to edit its local position, rotation in degrees,
+In `cube_gui`, Spin starts off. Enabling it rotates from the current pose; pausing preserves
+that pose for editing. Select a node in the scene tree to edit its local position, rotation in degrees,
 nonzero scale, visibility and layer mask. The material panel edits the selected mesh's RGB
 color; it advances the asset revision only after a change.
 
@@ -55,7 +55,7 @@ The frame sequence is:
 
 Always call `finish_frame()` after `new_frame()`, including dormant/minimized windows and
 an early exit. GPU recording consumes finalized draw data; it does not close the GUI frame.
-The cube example's private `draw_gui_frame` helper demonstrates error cleanup through
+The `cube_gui.c3` example's private `draw_gui_frame` helper demonstrates error cleanup through
 `render::abort_frame`.
 
 `begin_overlay()` opens a color LOAD pass over the composed window. Its `OverlayContext`
@@ -87,7 +87,7 @@ Asset upload bytes are not GPU resident memory. Ring usage reports the previous 
 allocation count separately; a dormant frame can also be the previous slot.
 
 GPU timings are disabled by default and enabled at renderer creation with
-`RendererDesc.gpu_timings`, or by the cube's `--gpu-timings` flag. Values come from completed
-frame slots and may lag CPU counters. The existing WSL2 dzn measurement found about 0.9 ms
-of overhead per timed pass, so compare ordinary rendering with timing disabled. The memory
+`RendererDesc.gpu_timings`, or by the `cube_gui` example's `--gpu-timings` flag. Values come
+from completed frame slots and may lag CPU counters. The existing WSL2 dzn measurement found
+about 0.9 ms of overhead per timed pass, so compare ordinary rendering with timing disabled. The memory
 panel displays the device's advisory per-heap usage, budget, allocation and block sizes.

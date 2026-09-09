@@ -101,13 +101,13 @@ python3 scripts/build.py --clean
 
 `-v` prints every command. GPU examples are run by hand; CI has no GPU.
 
-The [GUI overlay](docs/gui.md) in the cube example provides transform/material editing,
-statistics and a Spin toggle that starts off:
+`cube` is the first-mesh example. `cube_gui` adds the [GUI overlay](docs/gui.md) to the
+same scene, with transform/material editing, statistics and a Spin toggle that starts off:
 
 ```bash
 python3 scripts/build.py --example cube
-./examples/build/cube --no-gui
-./examples/build/cube --gpu-timings
+python3 scripts/build.py --example cube_gui
+./examples/build/cube_gui --gpu-timings
 ```
 
 ## Using c3d from your own project
