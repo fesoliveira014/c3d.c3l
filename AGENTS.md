@@ -71,7 +71,7 @@ Before every commit: `scripts/build.py --test`. Broken builds are never committe
 
 # 6. Style
 
-The baseline is `docs/style.md`: naming, K&R braces, four-space indentation, two-space wrapped declarations, named arguments at four or more call arguments with a trailing comma, `.field = value` in every struct initializer, definition order (typedefs, aliases, constants, enums and bitstructs, structs, struct methods, free functions), optionals and named faults for every operational failure, `defer` for cleanup, one `faultdef` file per domain with one fault per line, never `c3fmt`, no development terminology in code.
+The baseline is `docs/style.md`: naming, K&R braces, four-space indentation, one parameter per line in function/method signatures with more than three parameters (four-space indentation and trailing comma), two-space continuation for other declarations, blank lines between logical blocks, named arguments at four or more call arguments with a trailing comma, `.field = value` in every struct initializer, definition order (typedefs, aliases, constants, enums and bitstructs, structs, struct methods, free functions), optionals and named faults for every operational failure, `defer` for cleanup, one `faultdef` file per domain with one fault per line, never `c3fmt`, no development terminology in code.
 
 Project refinements:
 

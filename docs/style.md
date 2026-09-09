@@ -104,7 +104,8 @@ Calls with three or fewer arguments may stay positional.
 
 # 10. Declarations and initializers
 
-- Wrapped declarations continue with two spaces of indentation past the declaration start.
+- Function and method signatures with more than three parameters, including an explicit receiver, put one parameter per line, indented four spaces. Keep `(` on the declaration line, use a trailing comma after the last parameter, and put `)` on its own line with the opening brace and any attributes.
+- Other wrapped declarations continue with two spaces of indentation past the declaration start.
 - Every supplied field in a struct initializer uses `.field = value`. Positional initialization is allowed only for vectors and for arrays of scalars.
 - `defer` follows the acquisition it releases, on the next line.
 - Prefer `switch` over `if` chains on an enum; every `switch` on an enum is exhaustive without `default`.
@@ -122,6 +123,8 @@ fn void? ensure_geometry(Renderer* renderer, GeometryId id) {
     return;
 }
 ```
+
+Separate logical blocks within a function with blank lines: setup, resource acquisition, data preparation, recording, and return or cleanup. Keep related statements together and keep an acquisition adjacent to its cleanup `defer`; do not insert a blank line after every statement.
 
 # 12. Docstrings
 

@@ -129,6 +129,8 @@ def step_tools(options: Options) -> None:
 def step_deps(options: Options) -> None:
     if options.init_deps:
         run(["git", "submodule", "update", "--init", "--recursive"], ROOT, options.verbose)
+        fetch = LIB / "c3imgui.c3l" / "fetch_linked_libs.sh"
+        run(["bash", str(fetch), "v0.1.1"], ROOT, options.verbose)
         for name in SUBMODULES:
             for script_name in NATIVE_BUILD_SCRIPTS:
                 script = LIB / name / script_name
@@ -139,6 +141,14 @@ def step_deps(options: Options) -> None:
     if missing:
         raise BuildError(
             f"missing dependencies under lib/: {', '.join(missing)} "
+            "(run scripts/build.py --init-deps)"
+        )
+
+    native_name = "windows-x64/dcimgui.lib" if sys.platform == "win32" else "linux-x64/libdcimgui.a"
+    native_archive = LIB / "c3imgui.c3l" / "linked-libs" / native_name
+    if not native_archive.exists():
+        raise BuildError(
+            f"missing c3imgui native archive: {native_archive} "
             "(run scripts/build.py --init-deps)"
         )
 

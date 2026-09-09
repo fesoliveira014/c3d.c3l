@@ -16,6 +16,7 @@ Target platforms are linux-x64 and windows-x64. C3 0.8.3 exactly.
 | Vulkan loader | any | `libvulkan.so.1`, from `libvulkan1` |
 | SDL3 | 3.4.16 or newer | not packaged by Ubuntu 24.04; build it, see below |
 | CMake and a C compiler | any | for SDL3 and box3d |
+| Bash, curl, tar and sha256sum (or shasum) | any | fetch and verify ImGui release archives |
 
 On Debian or Ubuntu:
 
@@ -41,16 +42,23 @@ git submodule update --init --recursive
 
 ## Native dependencies
 
-vma.c3l, c3imgui.c3l and spvreflect.c3l ship prebuilt artifacts. box3d is built from its vendored
-sources, and SDL3 comes from source because Ubuntu 24.04 does not package it.
+vma.c3l and spvreflect.c3l carry prebuilt artifacts. c3imgui.c3l v0.1.1 downloads its
+Linux/Windows archives from release assets and verifies their checksums. box3d is built from
+its vendored sources, and SDL3 comes from source because Ubuntu 24.04 does not package it.
 
-box3d:
+Initialize native dependencies:
 
 ```bash
 python3 scripts/build.py --init-deps --skip-abi --skip-shaders --skip-build
 ```
 
-That leaves `libbox3d.a` in `lib/box3d.c3l/linked-libs/linux-x64/`.
+That installs the ImGui archives under `lib/c3imgui.c3l/linked-libs/` and leaves `libbox3d.a`
+in `lib/box3d.c3l/linked-libs/linux-x64/`. Ordinary builds do not download archives.
+
+The released Linux ImGui archive references `__isoc23_sscanf`, unavailable on the verified
+Ubuntu 22.04/glibc 2.35 host. On that host, build the matching native package from source
+after initialization as described in [GUI native builds](docs/gui_native_build.md). Re-running
+`--init-deps` downloads the release archive again.
 
 SDL3, pinned at `release-3.4.16`:
 
@@ -92,6 +100,15 @@ python3 scripts/build.py --clean
 ```
 
 `-v` prints every command. GPU examples are run by hand; CI has no GPU.
+
+`cube` is the first-mesh example. `cube_gui` adds the [GUI overlay](docs/gui.md) to the
+same scene, with transform/material editing, statistics and a Spin toggle that starts off:
+
+```bash
+python3 scripts/build.py --example cube
+python3 scripts/build.py --example cube_gui
+./examples/build/cube_gui --gpu-timings
+```
 
 ## Using c3d from your own project
 

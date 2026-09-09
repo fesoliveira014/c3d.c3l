@@ -120,6 +120,7 @@ struct Renderer {
     FrameInfo               info;
     time::Clock             frame_started;
     bool                    frame_open;
+    bool                    overlay_open;
     bool                    has_output;
 }
 
@@ -127,7 +128,12 @@ struct Renderer {
  Record the window output's pixel size and dormancy for the next frame.
  @param [&inout] self : "Recovery is deferred to begin_frame."
 *>
-fn void Renderer.set_window_output(&self, uint width, uint height, bool dormant) {
+fn void Renderer.set_window_output(
+    &self,
+    uint width,
+    uint height,
+    bool dormant,
+) {
     if (width != self.output_width
         || height != self.output_height
         || dormant != self.output_dormant) {
@@ -225,7 +231,7 @@ fn void? Renderer.clear(&self, Vec4 color) {
 <*
  Submit the frame and present its window output. Submits nothing without one.
  @param [&inout] self : "Closes the frame and advances to the next slot."
- @require self.frame_open
+ @require self.frame_open, !self.overlay_open
  @return? gpu::COMMAND_RECORDING_ERROR, gpu::INVALID_HANDLE, gpu::INVALID_ARGUMENT
  @return? gpu::INVALID_RESOURCE_STATE, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::DEVICE_LOST, gpu::SURFACE_LOST, gpu::BACKEND_ERROR
@@ -351,8 +357,12 @@ fn void? composite_target(Renderer* renderer, Target* target) @private {
     slot.timed[Pass.COMPOSITE.ordinal] = true;
 }
 
-fn void? record_fullscreen_pass(Renderer* renderer, Target* target, gpu::PipelineHandle pipeline,
-  gpu::GpuAddress fragment_root) @private {
+fn void? record_fullscreen_pass(
+    Renderer* renderer,
+    Target* target,
+    gpu::PipelineHandle pipeline,
+    gpu::GpuAddress fragment_root,
+) @private {
     gpu::ColorTargetDesc[1] colors = {{
         .view     = target.attachment,
         .load_op  = gpu::LoadOp.DONT_CARE,
@@ -687,7 +697,12 @@ fn void? read_pass_timings(Renderer* renderer, Frame* slot, ulong frame_index) @
     }
 }
 
-fn void? write_pass_timestamp(Renderer* renderer, ulong frame_index, Pass pass, uint half) @private {
+fn void? write_pass_timestamp(
+    Renderer* renderer,
+    ulong frame_index,
+    Pass pass,
+    uint half,
+) @private {
     if (!renderer.timestamps_enabled) return;
     gpu::cmd_write_timestamp(
         commands: &renderer.commands,
@@ -719,10 +734,16 @@ fn void? reset_upload_ring(Renderer* renderer, Frame* slot) @private {
     );
 }
 
-// Copies queued into a discarded frame point into a ring the next begin_frame resets.
-fn void abort_frame(Renderer* renderer) @private {
+<*
+ Discard failed frame recording and forget its staged copies.
+ @param [&inout] renderer : "All outstanding overlay borrows become invalid."
+*>
+fn void abort_frame(Renderer* renderer) {
     renderer.frame_open = false;
+    renderer.overlay_open = false;
+
     (void)gpu::discard_commands(&renderer.commands);
+
     renderer.pending_copies.clear();
     renderer.pending_overwrite = false;
 }

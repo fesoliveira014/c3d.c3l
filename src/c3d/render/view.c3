@@ -53,11 +53,18 @@ struct DrawState @private {
  @return? gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
 *>
-fn void? Renderer.render(&self, Scene* scene, Node* camera_node, FrameInfo info = {}) {
+fn void? Renderer.render(
+    &self,
+    Scene* scene,
+    Node* camera_node,
+    FrameInfo info = {},
+) {
     self.begin_frame(info)!;
     defer catch abort_frame(self);
+
     self.render_view(scene, camera_node)!;
-    if (self.has_output) composite_target(self, &self.hdr_color)!;
+    self.composite_view()!;
+
     return self.end_frame();
 }
 
@@ -66,7 +73,7 @@ fn void? Renderer.render(&self, Scene* scene, Node* camera_node, FrameInfo info 
  Records nothing without a window output.
  @param [&in] scene : "Pose as left by the last update_world; not advanced."
  @param [&in] camera_node : "Carries a Camera component."
- @require self.frame_open
+ @require self.frame_open, !self.overlay_open
  @return? c3d::INVALID_ARGUMENT, c3d::SHADER_NOT_FOUND
  @return? gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
@@ -156,6 +163,22 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
 }
 
 <*
+ Composite the default view into the window output.
+ @param [&inout] self : "Open frame with its scene view already recorded."
+ @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
+ @return? gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
+ @return? gpu::DEVICE_BUSY, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+ @return? gpu::UNSUPPORTED_FEATURE, c3d::SHADER_NOT_FOUND, gpu::SHADER_INVALID
+ @return? gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL
+ @require self.frame_open, !self.overlay_open
+*>
+fn void? Renderer.composite_view(&self) {
+    if (!self.has_output) return;
+
+    return composite_target(self, &self.hdr_color);
+}
+
+<*
  Upload every asset the scene's meshes reference and create their pipelines, then wait.
  @param [&in] scene : "Read only."
  @require !self.frame_open
@@ -186,8 +209,14 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
  @param [&in] camera : "Supplies near, far and exposure."
  @param viewport : "Pixels."
 *>
-fn void write_frame_root(FrameRoot* root, CameraMatrices* matrices, Camera* camera, Vec2 viewport,
-  FrameInfo info, ulong frame_index) {
+fn void write_frame_root(
+    FrameRoot* root,
+    CameraMatrices* matrices,
+    Camera* camera,
+    Vec2 viewport,
+    FrameInfo info,
+    ulong frame_index,
+) {
     *root = {
         .view            = bitcast(matrices.view, Mat4f),
         .proj            = bitcast(matrices.proj, Mat4f),
@@ -205,8 +234,14 @@ fn void write_frame_root(FrameRoot* root, CameraMatrices* matrices, Camera* came
  @param [&out] root : "Overwritten whole."
  @param world : "Affine model matrix."
 *>
-fn void write_draw_root(DrawRoot* root, Mat4 world, gpu::GpuAddress frame, gpu::GpuAddress geometry,
-  gpu::GpuAddress material, uint object_id) {
+fn void write_draw_root(
+    DrawRoot* root,
+    Mat4 world,
+    gpu::GpuAddress frame,
+    gpu::GpuAddress geometry,
+    gpu::GpuAddress material,
+    uint object_id,
+) {
     Mat3 normal = maths::normal_matrix(world);
     *root = {
         .model     = bitcast(world, Mat4f),
@@ -340,8 +375,13 @@ fn gpu::PrimitiveTopology primitive_topology(Topology topology) @local {
     }
 }
 
-fn void? allocate_view_targets(gpu::Device* device, uint width, uint height, Target* hdr_color,
-  Target* depth) @private {
+fn void? allocate_view_targets(
+    gpu::Device* device,
+    uint width,
+    uint height,
+    Target* hdr_color,
+    Target* depth,
+) @private {
     *hdr_color = allocate_target(
         device:     device,
         width:      width,

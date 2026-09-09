@@ -73,3 +73,22 @@ root BasicMaterialGpu {
     uint  _pad0;
     vec4  color;
 }
+
+struct GuiVertexGpu {
+    float position_x;
+    float position_y;
+    float uv_x;
+    float uv_y;
+    uint rgba;
+}
+
+root GuiVertexRoot {
+    GpuAddress vertices;
+    vec2 scale;
+    vec2 translate;
+}
+
+root GuiFragmentRoot {
+    TextureIndex source_texture;
+    SamplerIndex source_sampler;
+}

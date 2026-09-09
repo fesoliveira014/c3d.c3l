@@ -80,4 +80,23 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer BasicMateri
     vec4 color;
 };
 
+struct GuiVertexGpu {
+    float position_x;
+    float position_y;
+    float uv_x;
+    float uv_y;
+    uint rgba;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer GuiVertexRoot {
+    uint64_t vertices;
+    vec2 scale;
+    vec2 translate;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer GuiFragmentRoot {
+    uint source_texture;
+    uint source_sampler;
+};
+
 #endif
