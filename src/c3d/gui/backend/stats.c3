@@ -11,8 +11,10 @@ import imgui;
 *>
 fn void? memory_panel(Renderer* renderer) {
     gpu::MemoryStats stats = gpu::get_memory_stats(&renderer.device)!;
+
     imgui::text("Textures: %llu", stats.texture_count);
     imgui::text("Allocations: %llu", stats.live_allocation_count);
+
     foreach (index, heap : stats.heaps[:stats.heap_count]) {
         imgui::text("Heap %u", (uint)index);
         imgui::text("Usage / budget: %llu / %llu bytes", heap.usage, heap.budget);

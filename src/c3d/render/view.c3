@@ -53,11 +53,18 @@ struct DrawState @private {
  @return? gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
 *>
-fn void? Renderer.render(&self, Scene* scene, Node* camera_node, FrameInfo info = {}) {
+fn void? Renderer.render(
+    &self,
+    Scene* scene,
+    Node* camera_node,
+    FrameInfo info = {},
+) {
     self.begin_frame(info)!;
     defer catch abort_frame(self);
+
     self.render_view(scene, camera_node)!;
     self.composite_view()!;
+
     return self.end_frame();
 }
 
@@ -167,6 +174,7 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
 *>
 fn void? Renderer.composite_view(&self) {
     if (!self.has_output) return;
+
     return composite_target(self, &self.hdr_color);
 }
 
@@ -201,8 +209,14 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
  @param [&in] camera : "Supplies near, far and exposure."
  @param viewport : "Pixels."
 *>
-fn void write_frame_root(FrameRoot* root, CameraMatrices* matrices, Camera* camera, Vec2 viewport,
-  FrameInfo info, ulong frame_index) {
+fn void write_frame_root(
+    FrameRoot* root,
+    CameraMatrices* matrices,
+    Camera* camera,
+    Vec2 viewport,
+    FrameInfo info,
+    ulong frame_index,
+) {
     *root = {
         .view            = bitcast(matrices.view, Mat4f),
         .proj            = bitcast(matrices.proj, Mat4f),
@@ -220,8 +234,14 @@ fn void write_frame_root(FrameRoot* root, CameraMatrices* matrices, Camera* came
  @param [&out] root : "Overwritten whole."
  @param world : "Affine model matrix."
 *>
-fn void write_draw_root(DrawRoot* root, Mat4 world, gpu::GpuAddress frame, gpu::GpuAddress geometry,
-  gpu::GpuAddress material, uint object_id) {
+fn void write_draw_root(
+    DrawRoot* root,
+    Mat4 world,
+    gpu::GpuAddress frame,
+    gpu::GpuAddress geometry,
+    gpu::GpuAddress material,
+    uint object_id,
+) {
     Mat3 normal = maths::normal_matrix(world);
     *root = {
         .model     = bitcast(world, Mat4f),
@@ -355,8 +375,13 @@ fn gpu::PrimitiveTopology primitive_topology(Topology topology) @local {
     }
 }
 
-fn void? allocate_view_targets(gpu::Device* device, uint width, uint height, Target* hdr_color,
-  Target* depth) @private {
+fn void? allocate_view_targets(
+    gpu::Device* device,
+    uint width,
+    uint height,
+    Target* hdr_color,
+    Target* depth,
+) @private {
     *hdr_color = allocate_target(
         device:     device,
         width:      width,

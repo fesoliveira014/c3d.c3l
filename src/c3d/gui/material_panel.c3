@@ -11,9 +11,11 @@ import imgui;
 *>
 fn void? material_panel(AssetStore* assets, MaterialId material) {
     MaterialAsset* record = assets.materials.try_get(material)!;
+
     bool visible = imgui::begin("Material", null, {});
     defer imgui::end();
     if (!visible) return;
+
     if (imgui::color_edit3("Color", (float*)&record.data.basic.color, {})) {
         assets.mark_material_dirty(material);
     }

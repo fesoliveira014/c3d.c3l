@@ -12,17 +12,26 @@ import std::math;
  @require framebuffer_scale.x > 0, framebuffer_scale.y > 0
  @pure
 *>
-fn gpu::ScissorRect gui_scissor(Vec4 clip, Vec2 display_position, Vec2 framebuffer_scale,
-  uint width, uint height) {
+fn gpu::ScissorRect gui_scissor(
+    Vec4 clip,
+    Vec2 display_position,
+    Vec2 framebuffer_scale,
+    uint width,
+    uint height,
+) {
     Vec2 minimum = (clip.xy - display_position) * framebuffer_scale;
     Vec2 maximum = (clip.zw - display_position) * framebuffer_scale;
+
     minimum.x = math::clamp(minimum.x, 0.0f, (float)width);
     minimum.y = math::clamp(minimum.y, 0.0f, (float)height);
     maximum.x = math::clamp(maximum.x, 0.0f, (float)width);
     maximum.y = math::clamp(maximum.y, 0.0f, (float)height);
+
     if (maximum.x <= minimum.x || maximum.y <= minimum.y) return {};
+
     int left = (int)math::floor(minimum.x);
     int top = (int)math::floor(minimum.y);
+
     return {
         .x = left,
         .y = top,
@@ -40,9 +49,15 @@ fn gpu::ScissorRect gui_scissor(Vec4 clip, Vec2 display_position, Vec2 framebuff
  @param display_size : "Logical display extent."
  @require display_size.x > 0, display_size.y > 0
 *>
-fn void write_gui_vertex_root(GuiVertexRoot* root, gpu::GpuAddress vertices, usz vertex_offset,
-  Vec2 display_position, Vec2 display_size) {
+fn void write_gui_vertex_root(
+    GuiVertexRoot* root,
+    gpu::GpuAddress vertices,
+    usz vertex_offset,
+    Vec2 display_position,
+    Vec2 display_size,
+) {
     Vec2 scale = { 2.0f / display_size.x, -2.0f / display_size.y };
+
     *root = {
         .vertices = (gpu::GpuAddress)((ulong)vertices + vertex_offset * GuiVertexGpu::size),
         .scale = scale,

@@ -123,7 +123,12 @@ fn RenderTargetId? create_render_target(Renderer* renderer, RenderTargetDesc des
  @return? gpu::SLOT_TABLE_FULL, gpu::DESCRIPTOR_HEAP_FULL, gpu::OUT_OF_HOST_MEMORY
  @return? gpu::OUT_OF_DEVICE_MEMORY, gpu::DEVICE_BUSY, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
 *>
-fn void? resize_render_target(Renderer* renderer, RenderTargetId target, uint width, uint height) {
+fn void? resize_render_target(
+    Renderer* renderer,
+    RenderTargetId target,
+    uint width,
+    uint height,
+) {
     TargetRecord* record = renderer.targets.try_get(target)!;
     wait_frames(renderer)!;
     release_target(&renderer.device, &record.target);
@@ -151,8 +156,14 @@ fn void? destroy_render_target(Renderer* renderer, RenderTargetId target) {
     renderer.targets.remove(target);
 }
 
-fn Target? allocate_target(gpu::Device* device, uint width, uint height, gpu::Format format,
-  gpu::TextureUsage usage, ZString debug_name) @private {
+fn Target? allocate_target(
+    gpu::Device* device,
+    uint width,
+    uint height,
+    gpu::Format format,
+    gpu::TextureUsage usage,
+    ZString debug_name,
+) @private {
     gpu::TextureDesc texture_desc = {
         .width      = width,
         .height     = height,

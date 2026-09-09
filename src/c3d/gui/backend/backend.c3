@@ -41,15 +41,22 @@ $assert $reflect(imgui::DrawVert.col).offset == $reflect(GuiVertexGpu.rgba).offs
  @require !renderer.frame_open, renderer.swapchain.is_valid()
  @require width > 0, height > 0
 *>
-fn GuiBackend? create_gui_backend(Allocator allocator, Renderer* renderer, char[] rgba_pixels,
-  uint width, uint height) {
+fn GuiBackend? create_gui_backend(
+    Allocator allocator,
+    Renderer* renderer,
+    char[] rgba_pixels,
+    uint width,
+    uint height,
+) {
     usz index_stride = imgui::draw_idx_size();
     gpu::IndexType index_type;
+
     switch (index_stride) {
         case ushort::size: index_type = gpu::IndexType.U16;
         case uint::size: index_type = gpu::IndexType.U32;
         default: return gui::UNSUPPORTED_INDEX_WIDTH~;
     }
+
     GuiBackend backend = {
         .allocator = allocator,
         .renderer = renderer,
@@ -58,6 +65,7 @@ fn GuiBackend? create_gui_backend(Allocator allocator, Renderer* renderer, char[
         .index_type = index_type,
     };
     defer catch render::destroy_pipeline_cache(&renderer.device, &backend.pipelines);
+
     gpu::TextureDesc texture_desc = {
         .width = width,
         .height = height,
@@ -71,11 +79,13 @@ fn GuiBackend? create_gui_backend(Allocator allocator, Renderer* renderer, char[
         .kind = RetiredKind.TEXTURE,
         .texture = backend.font_texture,
     });
+
     backend.font_view = gpu::create_texture_view(&renderer.device, backend.font_texture, null)!;
     defer catch renderer.frames[renderer.frame_index % render::FRAMES_IN_FLIGHT].retire.push({
         .kind = RetiredKind.TEXTURE_VIEW,
         .texture_view = backend.font_view,
     });
+
     gpu::SamplerDesc sampler_desc = {
         .min_filter = gpu::Filter.LINEAR,
         .mag_filter = gpu::Filter.LINEAR,
@@ -86,12 +96,15 @@ fn GuiBackend? create_gui_backend(Allocator allocator, Renderer* renderer, char[
         .debug_name = "imgui_sampler",
     };
     backend.sampler = gpu::intern_sampler(&renderer.device, &sampler_desc)!;
+
     resolve_pipeline(&backend, renderer.swapchain_info.format)!;
     renderer.upload_rgba8_texture(backend.font_texture, rgba_pixels)!;
+
     imgui::font_atlas::set_tex_id(imgui::io_get_fonts(), (ulong)(uint)backend.font_view.index);
     imgui::BackendFlags flags = imgui::io_get_backend_flags();
     flags.renderer_has_vtx_offset = true;
     imgui::io_set_backend_flags(flags);
+
     return backend;
 }
 
@@ -104,9 +117,11 @@ fn GuiBackend? create_gui_backend(Allocator allocator, Renderer* renderer, char[
 *>
 fn void? destroy_gui_backend(GuiBackend* backend) {
     render::wait_frames(backend.renderer)!;
+
     render::destroy_pipeline_cache(&backend.renderer.device, &backend.pipelines);
     (void)gpu::destroy_texture_view(&backend.renderer.device, backend.font_view);
     (void)gpu::destroy_texture(&backend.renderer.device, backend.font_texture);
+
     *backend = {};
 }
 
@@ -127,34 +142,42 @@ fn void? record_gui(GuiBackend* backend, imgui::DrawData draw_data, OverlayConte
     usz vertex_count = (usz)imgui::draw_data_total_vtx_count(draw_data);
     usz index_count = (usz)imgui::draw_data_total_idx_count(draw_data);
     int list_count = imgui::draw_data_cmd_list_count(draw_data);
+
     gpu::MappedGpuSpan vertices;
     gpu::MappedGpuSpan indices;
     if (vertex_count) vertices = overlay.alloc(vertex_count * GuiVertexGpu::size)!;
     if (index_count) indices = overlay.alloc(index_count * backend.index_stride)!;
+
     usz vertex_base;
     usz index_base;
     for (int index = 0; index < list_count; index++) {
         imgui::DrawList list = imgui::draw_data_cmd_list(draw_data, index);
         usz list_vertices = (usz)imgui::draw_list_vtx_count(list);
         usz list_indices = (usz)imgui::draw_list_idx_count(list);
+
         if (list_vertices) {
             mem::copy(&vertices.bytes[vertex_base * GuiVertexGpu::size],
                 imgui::draw_list_vtx_ptr(list), (sz)(list_vertices * GuiVertexGpu::size));
         }
+
         if (list_indices) {
             mem::copy(&indices.bytes[index_base * backend.index_stride],
                 imgui::draw_list_idx_ptr(list), (sz)(list_indices * backend.index_stride));
         }
+
         vertex_base += list_vertices;
         index_base += list_indices;
     }
+
     Vec2 display_position;
     Vec2 display_size;
     Vec2 framebuffer_scale;
     imgui::draw_data_display_pos(draw_data, &display_position.x, &display_position.y);
     imgui::draw_data_display_size(draw_data, &display_size.x, &display_size.y);
     imgui::draw_data_framebuffer_scale(draw_data, &framebuffer_scale.x, &framebuffer_scale.y);
+
     gpu::PipelineHandle pipeline = resolve_pipeline(backend, overlay.color_format)!;
+
     gpu::ColorTargetState[1] colors = { gpu::color_blend_disabled() };
     colors[0].blend = {
         .enable = true,
@@ -165,27 +188,34 @@ fn void? record_gui(GuiBackend* backend, imgui::DrawData draw_data, OverlayConte
         .dst_alpha = gpu::BlendFactor.ONE_MINUS_SRC_ALPHA,
         .alpha_op = gpu::BlendOp.ADD,
     };
+
     gpu::GraphicsState state = render::fullscreen_state(overlay.width, overlay.height, colors[..])!;
     state.raster = { .topology = gpu::PrimitiveTopology.TRIANGLES, .cull_mode = gpu::CullMode.NONE };
     state.depth = {};
     state.stencil = {};
     restore_state(overlay.commands, pipeline, &state)!;
+
     vertex_base = 0;
     index_base = 0;
     for (int index = 0; index < list_count; index++) {
         imgui::DrawList list = imgui::draw_data_cmd_list(draw_data, index);
         int command_count = imgui::draw_list_cmd_count(list);
         imgui::DrawCmd* draw_commands = imgui::draw_list_cmd_ptr(list);
+
         for (int command_index = 0; command_index < command_count; command_index++) {
             imgui::DrawCmd* command = &draw_commands[command_index];
+
             if (command.user_callback) {
                 if ((sz)command.user_callback != RESET_RENDER_STATE_CALLBACK) {
                     command.user_callback(list, command);
                 }
+
                 restore_state(overlay.commands, pipeline, &state)!;
                 continue;
             }
+
             if (!command.elem_count) continue;
+
             gpu::ScissorRect scissor = gui_scissor(
                 clip: command.clip_rect,
                 display_position: display_position,
@@ -194,6 +224,7 @@ fn void? record_gui(GuiBackend* backend, imgui::DrawData draw_data, OverlayConte
                 height: overlay.height,
             );
             if (!scissor.width || !scissor.height) continue;
+
             gpu::MappedGpuSpan vertex_root = overlay.alloc(GuiVertexRoot::size)!;
             write_gui_vertex_root(
                 root: (GuiVertexRoot*)vertex_root.bytes.ptr,
@@ -202,14 +233,17 @@ fn void? record_gui(GuiBackend* backend, imgui::DrawData draw_data, OverlayConte
                 display_position: display_position,
                 display_size: display_size,
             );
+
             gpu::MappedGpuSpan fragment_root = overlay.alloc(GuiFragmentRoot::size)!;
             *(GuiFragmentRoot*)fragment_root.bytes.ptr = {
                 .source_texture = (gpu::TextureIndex)(uint)imgui::texture_ref::get_tex_id(&command.tex_ref),
                 .source_sampler = backend.sampler,
             };
+
             usz byte_offset = (index_base + command.idx_offset) * backend.index_stride;
             usz byte_count = (usz)command.elem_count * backend.index_stride;
             gpu::GpuSpan index_span = indices.span.checked_subspan(byte_offset, byte_count)!;
+
             gpu::cmd_set_scissor(overlay.commands, &scissor)!;
             gpu::cmd_draw_indexed(
                 commands: overlay.commands,
@@ -220,9 +254,11 @@ fn void? record_gui(GuiBackend* backend, imgui::DrawData draw_data, OverlayConte
                 instance_count: 1,
                 index_type: backend.index_type,
             )!;
+
             backend.renderer.stats.draws++;
             backend.renderer.stats.triangles += command.elem_count / 3;
         }
+
         vertex_base += (usz)imgui::draw_list_vtx_count(list);
         index_base += (usz)imgui::draw_list_idx_count(list);
     }
@@ -238,6 +274,7 @@ fn gpu::PipelineHandle? resolve_pipeline(GuiBackend* backend, gpu::Format format
         .samples = gpu::SampleCount.ONE,
         .polygon = gpu::PolygonMode.FILL,
     };
+
     return backend.pipelines.get(&backend.renderer.device, key);
 }
 

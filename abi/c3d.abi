@@ -81,11 +81,13 @@ struct GuiVertexGpu {
     float uv_y;
     uint rgba;
 }
+
 root GuiVertexRoot {
     GpuAddress vertices;
     vec2 scale;
     vec2 translate;
 }
+
 root GuiFragmentRoot {
     TextureIndex source_texture;
     SamplerIndex source_sampler;

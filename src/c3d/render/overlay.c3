@@ -23,18 +23,22 @@ struct OverlayContext {
 *>
 fn OverlayContext? Renderer.begin_overlay(&self) {
     self.window_target.transition(&self.commands, COLOR_ATTACHMENT_STATE)!;
+
     gpu::ColorTargetDesc[1] colors = {{
         .view = self.window_target.attachment,
         .load_op = gpu::LoadOp.LOAD,
         .store_op = gpu::StoreOp.STORE,
     }};
+
     gpu::RenderPassDesc pass = {
         .colors = colors[..],
         .width = self.window_target.width,
         .height = self.window_target.height,
     };
+
     gpu::cmd_begin_render_pass(&self.commands, &pass)!;
     self.overlay_open = true;
+
     return {
         .renderer = self,
         .commands = &self.commands,
@@ -57,6 +61,7 @@ fn OverlayContext? Renderer.begin_overlay(&self) {
 fn void? Renderer.end_overlay(&self, OverlayContext* overlay) {
     gpu::cmd_end_render_pass(&self.commands)!;
     self.overlay_open = false;
+
     *overlay = {};
 }
 

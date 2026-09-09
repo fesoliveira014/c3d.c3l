@@ -17,6 +17,7 @@ fn void test_gui_clip_applies_origin_density_and_pixel_coverage() @test {
     );
     assert(clipped.x == 0 && clipped.y == 0);
     assert(clipped.width == 142 && clipped.height == 69);
+
     gpu::ScissorRect interior = backend::gui_scissor(
         clip:              { 110.25f, 60.5f, 130.75f, 80.25f },
         display_position:  { 100, 50 },
@@ -35,6 +36,7 @@ fn void test_gui_clip_preserves_empty_intersections() @test {
         { 110, 160, 130, 170 },
         { 110.2f, 60, 110.2f, 80 },
     };
+
     foreach (clip : clips) {
         gpu::ScissorRect clipped = backend::gui_scissor(
             clip:              clip,
@@ -43,6 +45,7 @@ fn void test_gui_clip_preserves_empty_intersections() @test {
             width:             400,
             height:            150,
         );
+
         assert(clipped.width == 0 && clipped.height == 0);
     }
 }
@@ -56,9 +59,12 @@ fn void test_gui_root_preserves_vertex_stride_and_display_corners() @test {
         display_position: { 100, 50 },
         display_size:     { 200, 100 },
     );
+
     assert((ulong)root.vertices == 0x103c);
+
     Vec2 top_left = (Vec2){ 100, 50 } * root.scale + root.translate;
     Vec2 bottom_right = (Vec2){ 300, 150 } * root.scale + root.translate;
+
     assert(math::abs(top_left.x + 1) < TOLERANCE);
     assert(math::abs(top_left.y - 1) < TOLERANCE);
     assert(math::abs(bottom_right.x - 1) < TOLERANCE);
