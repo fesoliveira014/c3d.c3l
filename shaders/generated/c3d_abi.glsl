@@ -105,4 +105,15 @@ layout(buffer_reference, std430, buffer_reference_align = 4) buffer GuiFragmentR
     uint source_sampler;
 };
 
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer CubePreviewRoot {
+    uint source_texture;
+    uint source_sampler;
+    float lod;
+    uint face;
+    uint explicit_lod;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+};
+
 #endif

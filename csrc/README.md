@@ -60,3 +60,58 @@ convert -size 2x1 xc:'gray(50%)' -colorspace Gray -quality 100 test/fixtures/gra
 
 These are committed test inputs; neither Python fixture generation nor
 ImageMagick runs during builds or tests.
+
+# Cube and compressed fixtures
+
+`examples/assets/cube/` contains 256×256 RGBA faces named `positive_x.png`,
+`negative_x.png`, `positive_y.png`, `negative_y.png`, `positive_z.png` and
+`negative_z.png`. Their base colors are red, green, blue, yellow, magenta and
+cyan in that order. Each face has an opaque white 8×8 marker where both
+coordinates are in `[16, 24)` and an opaque black marker in `[232, 240)`.
+They use the same zero-filter PNG writer above. The example's supplied 4×4 base
+faces use those six colors; each supplied 2×2 tail uses the next face's color,
+wrapping from cyan to red.
+
+`test/fixtures/cube/face0.png` through `face5.png` are 2×2 RGBA images. Each
+face's four pixels are `(face*40, 20, 255-face*40, 255)`, where face is zero-based
+in +X, −X, +Y, −Y, +Z, −Z order. `rect.png` is 2×1 opaque red and `large.png`
+is 3×3 opaque red, for square/equal-dimension rejection. All use the PNG chunk
+writer above with a zero filter byte at each row start.
+
+The six matching Radiance files use:
+
+```python
+header = b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 2 +X 2\n"
+for face in range(6):
+    payload = bytes([32 * (face + 1), 64, 32, 130]) * 4
+    (fixtures / f"face{face}.hdr").write_bytes(header + payload)
+```
+
+Here `fixtures` is `Path("test/fixtures/cube")`; decoded red is
+`(face + 1) * 0.5`. The mixed PNG/JPEG test uses a 2×2 gray image generated once
+with ImageMagick 6:
+
+```bash
+convert -size 2x2 xc:'gray(50%)' -colorspace Gray -quality 100 test/fixtures/cube/gray.jpg
+```
+
+`examples/assets/bc1_mips.bin` is an exact 2744-byte BC1_RGBA_SRGB chain for
+64×64 through 1×1. Every block in one level selects its repeated RGB565 endpoint:
+
+```python
+from pathlib import Path
+import struct
+
+sizes = [2048, 512, 128, 32, 8, 8, 8]
+colors = [0xf800, 0x07e0, 0x001f, 0xffe0, 0xf81f, 0x07ff, 0xffff]
+payload = b"".join(
+    struct.pack("<HHI", color, color, 0) * (size // 8)
+    for size, color in zip(sizes, colors)
+)
+Path("examples/assets/bc1_mips.bin").write_bytes(payload)
+```
+
+Levels are red, green, blue, yellow, magenta, cyan and white at offsets
+0, 2048, 2560, 2688, 2720, 2728 and 2736. The 2×2 and 1×1 tails still contain
+one full eight-byte block. These commands describe one-time fixture authoring;
+no compressor, transcoder or image encoder runs during the build.

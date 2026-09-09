@@ -18,6 +18,8 @@ struct TextureRes {
     uint width;
     uint height;
     uint mip_count;
+    uint layers;
+    bool is_cube;
     gpu::Format format;
 }
 
@@ -45,25 +47,6 @@ fn void? Renderer.upload_texture(&self, TextureId texture) {
     submit_pending(self)!;
 }
 
-fn gpu::Format? texture_format(PixelFormat format) @private {
-    switch (format) {
-        case RGBA8_UNORM: return gpu::Format.RGBA8_UNORM;
-        case RGBA8_SRGB: return gpu::Format.RGBA8_SRGB;
-        case RGBA16_FLOAT: return gpu::Format.RGBA16_FLOAT;
-        case RGBA32_FLOAT: return gpu::Format.RGBA32_FLOAT;
-        case BC1_RGBA_UNORM:
-        case BC1_RGBA_SRGB:
-        case BC3_UNORM:
-        case BC3_SRGB:
-        case BC4_UNORM:
-        case BC5_UNORM:
-        case BC6H_UFLOAT:
-        case BC7_UNORM:
-        case BC7_SRGB:
-            return c3d::UNSUPPORTED~;
-    }
-}
-
 fn TextureRes*? ensure_texture(Renderer* renderer, TextureId texture) @private {
     TextureAsset* record = renderer.assets.texture(texture);
     TextureRes* mirror = &renderer.textures[texture.index];
@@ -76,14 +59,21 @@ fn TextureRes*? ensure_texture(Renderer* renderer, TextureId texture) @private {
     }
 
     @pool() {
-        TextureMipChain chain = create_texture_mips(tmem, record.desc, record.pixels)!;
+        TextureMipChain chain;
+        switch (record.source_kind) {
+            case MIP_ZERO:
+                chain = create_texture_mips(tmem, record.desc, record.pixels)!;
+            case SUPPLIED_MIPS:
+                chain = create_supplied_texture_mips(tmem, record.desc, record.supplied_mips)!;
+        }
         defer destroy_texture_mips(&chain);
-        gpu::Format format = texture_format(record.desc.format)!;
+        gpu::Format format = texture_format(record.desc.format);
         gpu::TextureDesc description = {
             .width = record.desc.width,
             .height = record.desc.height,
             .mip_levels = chain.mip_count,
-            .array_layers = 1,
+            .array_layers = chain.layer_count,
+            .cube_compatible = record.desc.is_cube,
             .format = format,
             .usage = { .sampled, .transfer_dst },
             .access = { .graphics },
@@ -91,13 +81,15 @@ fn TextureRes*? ensure_texture(Renderer* renderer, TextureId texture) @private {
         };
         bool reuse = same_asset && mirror.texture.is_valid()
             && mirror.width == description.width && mirror.height == description.height
-            && mirror.mip_count == chain.mip_count && mirror.format == format;
+            && mirror.mip_count == chain.mip_count && mirror.format == format
+            && mirror.layers == chain.layer_count && mirror.is_cube == record.desc.is_cube;
         if (!reuse) {
             gpu::TextureHandle image = gpu::create_texture(&renderer.device, &description)!;
             defer catch {
                 if (image.is_valid()) (void)gpu::destroy_texture(&renderer.device, image);
             }
-            gpu::TextureView view = gpu::create_texture_view(&renderer.device, image, null)!;
+            gpu::TextureViewDesc view_desc = { .cube = record.desc.is_cube };
+            gpu::TextureView view = gpu::create_texture_view(&renderer.device, image, &view_desc)!;
 
             retire_texture(renderer, mirror);
             *mirror = {
@@ -108,6 +100,8 @@ fn TextureRes*? ensure_texture(Renderer* renderer, TextureId texture) @private {
                 .width = description.width,
                 .height = description.height,
                 .mip_count = chain.mip_count,
+                .layers = chain.layer_count,
+                .is_cube = record.desc.is_cube,
                 .format = format,
             };
             image = {};
@@ -126,9 +120,10 @@ fn TextureRes*? ensure_texture(Renderer* renderer, TextureId texture) @private {
         for (uint mip = 0; mip < chain.mip_count; mip++) {
             usz bytes = gpu::texture_mip_bytes(&description, mip)!;
             pending.copies[mip] = {
-                .src = staging.span.checked_subspan(chain.offsets[mip], bytes)!,
+                .src = staging.span.checked_subspan(chain.offsets[mip], bytes * chain.layer_count)!,
                 .texture = mirror.texture,
                 .mip = mip,
+                .layer_count = chain.layer_count,
             };
         }
         renderer.pending_texture_uploads.push(pending);

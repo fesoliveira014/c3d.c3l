@@ -20,11 +20,12 @@ const double SRGB_SCALE @local = 1.055;
 const double SRGB_EXPONENT @local = 2.4;
 
 <*
- One owned tightly packed chain of uncompressed 2D mips.
+ One owned mip-major chain of tightly packed texture layers.
 *>
 struct TextureMipChain {
     Allocator allocator;
     uint mip_count;
+    uint layer_count;
     usz[TEXTURE_MIP_CAPACITY] offsets;
     char[] pixels;
 }
@@ -42,13 +43,18 @@ fn uint texture_mip_count(uint width, uint height) {
 }
 
 <*
- Prepare owned uncompressed mip pixels from complete mip zero.
- @param pixels : "Borrowed tightly packed mip-zero RGBA texels."
+ Prepare uncompressed 2D or cube mips from complete base layers.
+ @param pixels : "Borrowed mip-zero RGBA texels in layer order."
  @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
 *>
 fn TextureMipChain? create_texture_mips(Allocator allocator, material::TextureDesc desc, char[] pixels) {
     if (!desc.width || !desc.height || desc.mip_levels != 1) return c3d::INVALID_ARGUMENT~;
-    if (desc.depth || desc.layers != 1 || desc.is_cube) return c3d::UNSUPPORTED~;
+    if (desc.depth) return c3d::UNSUPPORTED~;
+    if (desc.is_cube) {
+        if (desc.layers != material::CUBE_FACE_COUNT || desc.width != desc.height) return c3d::INVALID_ARGUMENT~;
+    } else if (desc.layers != 1) {
+        return c3d::UNSUPPORTED~;
+    }
 
     switch (desc.format) {
         case RGBA8_UNORM:
@@ -114,19 +120,20 @@ macro TextureMipChain? create_typed_texture_mips(
 ) @local {
     const usz TEXEL_BYTES = RGBA_CHANNELS * $Scalar::size;
     ulong texels = (ulong)desc.width * desc.height;
-    if (texels > (ulong)sz::max / TEXEL_BYTES) return c3d::INVALID_ARGUMENT~;
+    if (texels > (ulong)sz::max / TEXEL_BYTES / desc.layers) return c3d::INVALID_ARGUMENT~;
     if (!pixels.len) return c3d::ASSET_DATA_UNAVAILABLE~;
-    if (pixels.len != (usz)texels * TEXEL_BYTES) return c3d::INVALID_ARGUMENT~;
+    if (pixels.len != (usz)texels * TEXEL_BYTES * desc.layers) return c3d::INVALID_ARGUMENT~;
 
     TextureMipChain chain = {
         .allocator = allocator,
         .mip_count = desc.generate_mips ? texture_mip_count(desc.width, desc.height) : 1,
+        .layer_count = desc.layers,
     };
     usz total_bytes;
     for (uint mip = 0; mip < chain.mip_count; mip++) {
         usz width = math::max(1u, desc.width >> mip);
         usz height = math::max(1u, desc.height >> mip);
-        usz level_bytes = width * height * TEXEL_BYTES;
+        usz level_bytes = width * height * TEXEL_BYTES * desc.layers;
         if (level_bytes > (usz)sz::max - total_bytes) return c3d::INVALID_ARGUMENT~;
         chain.offsets[mip] = total_bytes;
         total_bytes += level_bytes;
@@ -139,42 +146,48 @@ macro TextureMipChain? create_typed_texture_mips(
         uint height = math::max(1u, desc.height >> (mip - 1));
         uint next_width = math::max(1u, width >> 1);
         uint next_height = math::max(1u, height >> 1);
-        $Scalar* source = ($Scalar*)(chain.pixels.ptr + chain.offsets[mip - 1]);
-        $Scalar* destination = ($Scalar*)(chain.pixels.ptr + chain.offsets[mip]);
 
-        for (uint destination_y = 0; destination_y < next_height; destination_y++) {
-            double top = (double)destination_y * height / next_height;
-            double bottom = (double)(destination_y + 1) * height / next_height;
-            for (uint destination_x = 0; destination_x < next_width; destination_x++) {
-                double left = (double)destination_x * width / next_width;
-                double right = (double)(destination_x + 1) * width / next_width;
-                double area = (right - left) * (bottom - top);
-                double[RGBA_CHANNELS] sum;
-                for (uint source_y = (uint)top; source_y < (uint)math::ceil(bottom); source_y++) {
-                    double vertical = math::min(bottom, (double)source_y + 1) - math::max(top, (double)source_y);
-                    for (uint source_x = (uint)left; source_x < (uint)math::ceil(right); source_x++) {
-                        double horizontal = math::min(right, (double)source_x + 1) - math::max(left, (double)source_x);
-                        usz source_base = ((usz)source_y * width + source_x) * RGBA_CHANNELS;
-                        for (uint channel = 0; channel < RGBA_CHANNELS; channel++) {
-                            double value = (double)source[source_base + channel];
-                            $if $srgb:
-                                if (channel < RGB_CHANNELS) value = decode_srgb(value / UNORM_MAX) * UNORM_MAX;
-                            $endif
-                            sum[channel] += value * horizontal * vertical;
+        for (uint layer = 0; layer < desc.layers; layer++) {
+            usz source_offset = chain.offsets[mip - 1] + (usz)layer * width * height * TEXEL_BYTES;
+            usz destination_offset = chain.offsets[mip] + (usz)layer * next_width * next_height * TEXEL_BYTES;
+            $Scalar* source = ($Scalar*)(chain.pixels.ptr + source_offset);
+            $Scalar* destination = ($Scalar*)(chain.pixels.ptr + destination_offset);
+
+            for (uint destination_y = 0; destination_y < next_height; destination_y++) {
+                double top = (double)destination_y * height / next_height;
+                double bottom = (double)(destination_y + 1) * height / next_height;
+                for (uint destination_x = 0; destination_x < next_width; destination_x++) {
+                    double left = (double)destination_x * width / next_width;
+                    double right = (double)(destination_x + 1) * width / next_width;
+                    double area = (right - left) * (bottom - top);
+                    double[RGBA_CHANNELS] sum;
+                    for (uint source_y = (uint)top; source_y < (uint)math::ceil(bottom); source_y++) {
+                        double vertical = math::min(bottom, (double)source_y + 1) - math::max(top, (double)source_y);
+                        for (uint source_x = (uint)left; source_x < (uint)math::ceil(right); source_x++) {
+                            double horizontal = math::min(right, (double)source_x + 1)
+                              - math::max(left, (double)source_x);
+                            usz source_base = ((usz)source_y * width + source_x) * RGBA_CHANNELS;
+                            for (uint channel = 0; channel < RGBA_CHANNELS; channel++) {
+                                double value = (double)source[source_base + channel];
+                                $if $srgb:
+                                    if (channel < RGB_CHANNELS) value = decode_srgb(value / UNORM_MAX) * UNORM_MAX;
+                                $endif
+                                sum[channel] += value * horizontal * vertical;
+                            }
                         }
                     }
-                }
 
-                usz destination_base = ((usz)destination_y * next_width + destination_x) * RGBA_CHANNELS;
-                for (uint channel = 0; channel < RGBA_CHANNELS; channel++) {
-                    double value = sum[channel] / area;
-                    $if $srgb:
-                        if (channel < RGB_CHANNELS) value = encode_srgb(value / UNORM_MAX) * UNORM_MAX;
-                    $endif
-                    $if $Scalar == char:
-                        value = math::clamp(math::round(value), 0.0, UNORM_MAX);
-                    $endif
-                    destination[destination_base + channel] = ($Scalar)value;
+                    usz destination_base = ((usz)destination_y * next_width + destination_x) * RGBA_CHANNELS;
+                    for (uint channel = 0; channel < RGBA_CHANNELS; channel++) {
+                        double value = sum[channel] / area;
+                        $if $srgb:
+                            if (channel < RGB_CHANNELS) value = encode_srgb(value / UNORM_MAX) * UNORM_MAX;
+                        $endif
+                        $if $Scalar == char:
+                            value = math::clamp(math::round(value), 0.0, UNORM_MAX);
+                        $endif
+                        destination[destination_base + channel] = ($Scalar)value;
+                    }
                 }
             }
         }

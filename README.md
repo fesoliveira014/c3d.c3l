@@ -124,6 +124,21 @@ R for rotation, O for offset, U for UV0/UV1 and Backspace to reset. Drag to orbi
 scroll to zoom, and release Escape to quit. See [Textures and images](docs/textures.md)
 for loading, material slots, HDR data, pixel edits and CPU source release.
 
+`texture_cube` previews a native six-face cube with generated or supplied mips;
+`texture_bc` displays a supplied BC1 chain with a different color at each level:
+
+```bash
+python3 scripts/build.py --example texture_cube
+python3 scripts/build.py --example texture_bc
+```
+
+The cube preview selects faces with 1–6, switches generated/supplied sources with
+C, and controls LOD with L and +/−. The BC example uses N/L/A filtering, mouse
+orbit and wheel zoom. Both enable full validation. See
+[cube loading](docs/textures.md#load-six-cube-faces) and
+[supplied mip data](docs/textures.md#supply-mip-levels) for source ownership and
+the remaining unsupported texture forms.
+
 ## Using c3d from your own project
 
 Add c3d and its dependencies to your `project.json`, and list the feature flags you want. A C3

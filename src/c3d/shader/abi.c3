@@ -184,3 +184,23 @@ struct GuiFragmentRoot {
 $assert GuiFragmentRoot::size == 8;
 $assert $reflect(GuiFragmentRoot.source_texture).offset == 0;
 $assert $reflect(GuiFragmentRoot.source_sampler).offset == 4;
+
+struct CubePreviewRoot {
+    TextureIndex source_texture;
+    SamplerIndex source_sampler;
+    float        lod;
+    uint         face;
+    uint         explicit_lod;
+    uint         _pad0;
+    uint         _pad1;
+    uint         _pad2;
+}
+$assert CubePreviewRoot::size == 32;
+$assert $reflect(CubePreviewRoot.source_texture).offset == 0;
+$assert $reflect(CubePreviewRoot.source_sampler).offset == 4;
+$assert $reflect(CubePreviewRoot.lod).offset == 8;
+$assert $reflect(CubePreviewRoot.face).offset == 12;
+$assert $reflect(CubePreviewRoot.explicit_lod).offset == 16;
+$assert $reflect(CubePreviewRoot._pad0).offset == 20;
+$assert $reflect(CubePreviewRoot._pad1).offset == 24;
+$assert $reflect(CubePreviewRoot._pad2).offset == 28;
