@@ -98,3 +98,14 @@ root GuiFragmentRoot {
     TextureIndex source_texture;
     SamplerIndex source_sampler;
 }
+
+root CubePreviewRoot {
+    TextureIndex source_texture;
+    SamplerIndex source_sampler;
+    float lod;
+    uint face;
+    uint explicit_lod;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+}

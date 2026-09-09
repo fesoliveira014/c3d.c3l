@@ -2,6 +2,7 @@ module c3d::test::texture;
 
 import c3d;
 import c3d::material;
+import c3d::asset;
 import c3d::render;
 import std::math;
 import c3d::shader;
@@ -143,7 +144,7 @@ fn void test_texture_descriptor_faults_precede_missing_pixels() @test {
     };
     foreach (index, desc : descriptors) {
         if (catch excuse = render::create_texture_mips(mem, desc, (char[]){})) {
-            assert(excuse == (index < 4 ? c3d::INVALID_ARGUMENT : c3d::UNSUPPORTED));
+            assert(excuse == (index < 4 || index == 6 ? c3d::INVALID_ARGUMENT : c3d::UNSUPPORTED));
         } else {
             assert(false, "Unsupported descriptor was accepted");
         }
@@ -185,4 +186,28 @@ fn void test_material_map_packs_uv_selection_and_identity() @test {
     assert(packed.map_uv_row0 == (Vec4){ 1, 0, 0, 0 });
     assert(packed.map_uv_row1 == (Vec4){ 0, 1, 0, 0 });
     assert(packed.color == material.basic.color);
+}
+
+fn void test_supplied_rgba_size_wrap_is_invalid_argument() @test {
+    char[1] storage;
+    TextureMipData[1] levels = {{ .bytes = storage[:0] }};
+    material::TextureDesc desc = material::texture_2d_desc(1u << 31, 1u << 31, RGBA8_UNORM);
+    desc.generate_mips = false;
+    if (catch excuse = render::create_supplied_texture_mips(mem, desc, levels[..])) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "Wrapped RGBA footprint was accepted");
+    }
+}
+
+fn void test_supplied_bc7_size_wrap_is_invalid_argument() @test {
+    char[1] storage;
+    TextureMipData[1] levels = {{ .bytes = storage[:0] }};
+    material::TextureDesc desc = material::texture_2d_desc(uint::max, uint::max, BC7_UNORM);
+    desc.generate_mips = false;
+    if (catch excuse = render::create_supplied_texture_mips(mem, desc, levels[..])) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "Wrapped BC7 footprint was accepted");
+    }
 }

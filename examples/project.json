@@ -96,6 +96,18 @@
       "sources": [
         "src/textured.c3"
       ]
+    },
+    "texture_cube": {
+      "type": "executable",
+      "sources": [
+        "src/texture_cube.c3"
+      ]
+    },
+    "texture_bc": {
+      "type": "executable",
+      "sources": [
+        "src/texture_bc.c3"
+      ]
     }
   }
 }

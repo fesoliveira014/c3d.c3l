@@ -169,3 +169,43 @@ fn TextureId? load_hdr(AssetStore* assets, String path, String key = "") {
 
     return texture;
 }
+
+<*
+ Load six square faces into one cube texture asset.
+ @param [&inout] assets : "Owns the combined face pixels on success."
+ @param paths : "Nonempty +X, -X, +Y, -Y, +Z, -Z paths."
+ @param srgb : "Interpret byte faces as sRGB; HDR remains linear."
+ @return? c3d::ASSET_IO_ERROR, c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @require paths[0].len > 0, paths[1].len > 0, paths[2].len > 0
+ @require paths[3].len > 0, paths[4].len > 0, paths[5].len > 0
+*>
+fn TextureId? load_cube(
+    AssetStore* assets,
+    String[material::CUBE_FACE_COUNT] paths,
+    bool srgb,
+    String key = "",
+) {
+    Image first = load_image(assets.allocator, paths[0])!;
+    defer destroy_image(&first);
+
+    if (first.width != first.height) return c3d::ASSET_FORMAT_ERROR~;
+    if (first.pixels.len > (usz)sz::max / material::CUBE_FACE_COUNT) return c3d::INVALID_ARGUMENT~;
+
+    char[] pixels = alloc::new_array(assets.allocator, char, (sz)(first.pixels.len * material::CUBE_FACE_COUNT));
+    defer catch alloc::free(assets.allocator, pixels.ptr);
+
+    mem::copy(pixels.ptr, first.pixels.ptr, first.pixels.len);
+    for (uint face = 1; face < material::CUBE_FACE_COUNT; face++) {
+        Image decoded = load_image(assets.allocator, paths[face])!;
+        defer destroy_image(&decoded);
+
+        if (decoded.width != first.width || decoded.height != first.height || decoded.format != first.format) {
+            return c3d::ASSET_FORMAT_ERROR~;
+        }
+        mem::copy(pixels.ptr + face * first.pixels.len, decoded.pixels.ptr, first.pixels.len);
+    }
+
+    PixelFormat format = first.format == RGBA32_FLOAT ? RGBA32_FLOAT : (srgb ? RGBA8_SRGB : RGBA8_UNORM);
+    material::TextureDesc desc = material::texture_cube_desc(first.width, format, "cube_texture");
+    return assets.add_texture_owned(desc, pixels, key);
+}

@@ -39,6 +39,7 @@ fn TextureBinding? resolve_texture_slot(Renderer* renderer, TextureSlot slot) @p
     if (slot.uv_set > 1) return c3d::INVALID_ARGUMENT~;
 
     bool present = renderer.assets.textures.is_live(slot.texture.asset);
+    if (present && renderer.assets.texture(slot.texture.asset).desc.is_cube) return c3d::UNSUPPORTED~;
     TextureId texture = present ? slot.texture.asset : c3d::asset::TEXTURE_WHITE;
     SamplerId sampler = renderer.assets.samplers.is_live(slot.sampler)
         ? slot.sampler : c3d::asset::SAMPLER_LINEAR_REPEAT;

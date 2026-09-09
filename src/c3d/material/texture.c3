@@ -1,5 +1,18 @@
 module c3d::material;
 
+<* Faces in one native color cube. *>
+const uint CUBE_FACE_COUNT = 6;
+
+<* Native cube face order for image paths and layers. *>
+enum CubeFace {
+    POSITIVE_X,
+    NEGATIVE_X,
+    POSITIVE_Y,
+    NEGATIVE_Y,
+    POSITIVE_Z,
+    NEGATIVE_Z,
+}
+
 <*
  CPU pixel layout of a texture asset; mapped to a device format by the renderer.
 *>
@@ -52,4 +65,20 @@ fn TextureDesc texture_2d_desc(
         .mip_levels    = 1,
         .debug_name    = debug_name,
     };
+}
+
+<*
+ Six square faces with generated mips by default.
+*>
+fn TextureDesc texture_cube_desc(uint size, PixelFormat format, ZString debug_name = "") {
+    TextureDesc desc = texture_2d_desc(
+        width: size,
+        height: size,
+        format: format,
+        debug_name: debug_name,
+    );
+    desc.layers = CUBE_FACE_COUNT;
+    desc.is_cube = true;
+
+    return desc;
 }

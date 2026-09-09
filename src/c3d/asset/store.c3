@@ -132,7 +132,7 @@ fn void destroy_asset_store(AssetStore* store) {
     foreach (&record : store.textures.items) {
         if (!record.header.revision) continue;
         free_string(store.allocator, record.header.key);
-        alloc::free(store.allocator, record.pixels.ptr);
+        free_texture_source(store.allocator, record);
     }
     foreach (&record : store.materials.items) {
         if (!record.header.revision) continue;
