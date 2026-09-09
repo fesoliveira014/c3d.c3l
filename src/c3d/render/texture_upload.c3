@@ -15,6 +15,7 @@ import gpu;
 *>
 fn void? Renderer.upload_rgba8_texture(&self, gpu::TextureHandle texture, char[] pixels) {
     open_closed_frame_slot(self)!;
+    defer catch discard_uploads(self);
     Frame* slot = &self.frames[self.frame_index % FRAMES_IN_FLIGHT];
 
     gpu::MappedGpuSpan staging = slot.upload.take(&self.device, pixels.len, UPLOAD_RING_ALIGNMENT)!;
@@ -53,6 +54,7 @@ fn void? Renderer.upload_rgba8_texture(&self, gpu::TextureHandle texture, char[]
 
     gpu::SubmitDesc submit = { .command_lists = executable[..] };
     slot.done = gpu::submit(self.graphics, &submit)!;
+    commit_uploads(self, slot);
 
     return gpu::wait_completion(slot.done);
 }

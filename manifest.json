@@ -1,6 +1,7 @@
 {
   "provides": "c3d",
   "sources": [ "src/**" ],
+  "c-sources": [ "csrc/stb_image.c" ],
   "linklib-dir": "linked-libs",
   "targets": {
     "linux-x64": {

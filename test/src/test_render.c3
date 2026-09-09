@@ -331,14 +331,14 @@ fn void test_material_block_packs_flags_and_color() @test {
     common.double_sided = true;
     common.alpha_cutoff = 0.3f;
     Material masked = material::basic({ .color = { 0.1f, 0.2f, 0.3f, 0.4f } }, common);
-    render::write_material_block(block, &masked);
+    render::write_material_block(block, &masked, {});
     shader::BasicMaterialGpu* packed = (shader::BasicMaterialGpu*)block.ptr;
     assert(packed.kind == 0 && packed.flags == 3);
     assert(packed.alpha_cutoff == 0.3f);
     assert(packed.color == (Vec4){ 0.1f, 0.2f, 0.3f, 0.4f });
 
     Material plain = material::basic({ .color = { 1, 1, 1, 1 } });
-    render::write_material_block(block, &plain);
+    render::write_material_block(block, &plain, {});
     assert(packed.flags == 0);
 }
 

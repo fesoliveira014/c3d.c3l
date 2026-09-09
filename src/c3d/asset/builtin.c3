@@ -104,6 +104,6 @@ fn TextureDesc builtin_texture_desc(uint size, PixelFormat format, ZString debug
         format:     format,
         debug_name: debug_name,
     );
-    desc.generate_mips = false;
+    desc.generate_mips = size > 1;
     return desc;
 }

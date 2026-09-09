@@ -90,6 +90,12 @@
       "sources": [
         "src/cube_gui.c3"
       ]
+    },
+    "textured": {
+      "type": "executable",
+      "sources": [
+        "src/textured.c3"
+      ]
     }
   }
 }

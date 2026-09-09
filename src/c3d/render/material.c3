@@ -5,6 +5,7 @@ import c3d::asset;
 import c3d::material;
 import c3d::shader;
 import gpu;
+import std::math;
 
 <*
  Bytes one material block occupies in the heap.
@@ -27,14 +28,19 @@ struct MaterialRes {
     MaterialId      asset;
     uint            revision;
     gpu::GpuAddress address;
+    TextureBinding map_binding;
 }
 
 <*
  Upload the material now, or record its upload into the open frame.
  Completes without a window when no frame is open.
+ @param [&inout] self : "Owns map preparation and material heap copies."
  @return? c3d::INVALID_ID
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::UNSUPPORTED_FEATURE, gpu::COMMAND_RECORDING_ERROR, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+ @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
+ @return? gpu::INVALID_RESOURCE_STATE, gpu::DEVICE_BUSY, gpu::RESOURCE_IN_USE
+ @return? gpu::SLOT_TABLE_FULL, gpu::DESCRIPTOR_HEAP_FULL, gpu::WAIT_TIMEOUT
 *>
 fn void? Renderer.upload_material(&self, MaterialId material) {
     if (!self.assets.materials.is_live(material)) return c3d::INVALID_ID~;
@@ -43,16 +49,22 @@ fn void? Renderer.upload_material(&self, MaterialId material) {
         return;
     }
     open_closed_frame_slot(self)!;
+    defer catch discard_uploads(self);
     ensure_material(self, material)!;
     return submit_pending(self);
 }
 
 <*
  Write the packed block of a material.
- @param block : "At least MATERIAL_STRIDE long."
- @param [&in] material : "Read only."
+ @param block : "Aligned to STREAM_ALIGNMENT; overwritten with packed fields."
+ @param [&in] material : "Validated Basic material and map coordinates."
+ @require block.len >= MATERIAL_STRIDE, (uptr)block.ptr % STREAM_ALIGNMENT == 0
 *>
-fn void write_material_block(char[] block, Material* material) {
+fn void write_material_block(char[] block, Material* material, TextureBinding binding) {
+    Vec4 row0;
+    Vec4 row1;
+    texture_uv_rows(material.basic.map.transform, &row0, &row1);
+
     BasicMaterialGpu* packed = (BasicMaterialGpu*)block.ptr;
     MaterialFlags flags = {
         .alpha_mask   = material.common.alpha_mode == AlphaMode.MASK,
@@ -63,18 +75,26 @@ fn void write_material_block(char[] block, Material* material) {
         .flags        = (uint)flags,
         .alpha_cutoff = material.common.alpha_cutoff,
         .color        = material.basic.color,
+        .map_texture  = binding.texture_index,
+        .map_sampler  = binding.sampler_index,
+        .map_uv_set   = material.basic.map.uv_set,
+        .map_present  = binding.present ? 1u : 0u,
+        .map_uv_row0  = row0,
+        .map_uv_row1  = row1,
     };
 }
 
 fn MaterialRes*? ensure_material(Renderer* renderer, MaterialId material) @private {
     MaterialAsset* record = renderer.assets.material(material);
     MaterialRes* mirror = &renderer.materials[material.index];
+    TextureBinding binding = resolve_texture_slot(renderer, record.data.basic.map)!;
     bool same_asset = mirror.asset.index == material.index && mirror.asset.generation == material.generation;
-    if (same_asset && mirror.revision == record.header.revision) return mirror;
+    if (same_asset && mirror.revision == record.header.revision
+        && texture_binding_matches(mirror.map_binding, binding)) return mirror;
 
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan staging = slot.upload.take(&renderer.device, MATERIAL_STRIDE, STREAM_ALIGNMENT)!;
-    write_material_block(staging.bytes, &record.data);
+    write_material_block(staging.bytes, &record.data, binding);
     usz offset = (usz)material.index * MATERIAL_STRIDE;
     gpu::GpuSpan destination = renderer.material_heap_span.checked_subspan(offset, MATERIAL_STRIDE)!;
     renderer.pending_copies.push({ .src = staging.span, .dst = destination });
@@ -83,6 +103,7 @@ fn MaterialRes*? ensure_material(Renderer* renderer, MaterialId material) @priva
 
     mirror.asset = material;
     mirror.revision = record.header.revision;
+    mirror.map_binding = binding;
     mirror.address = gpu::get_span_address(&renderer.device, destination)!;
     renderer.stats.uploads++;
     renderer.stats.upload_bytes += (uint)MATERIAL_STRIDE;

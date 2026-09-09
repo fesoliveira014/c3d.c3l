@@ -128,18 +128,30 @@ $assert $reflect(DrawRoot._pad2).offset == 248;
 $assert $reflect(DrawRoot._pad3).offset == 252;
 
 struct BasicMaterialGpu {
-    uint  kind;
-    uint  flags;
-    float alpha_cutoff;
-    uint  _pad0;
-    Vec4f color;
+    uint         kind;
+    uint         flags;
+    float        alpha_cutoff;
+    uint         _pad0;
+    Vec4f        color;
+    TextureIndex map_texture;
+    SamplerIndex map_sampler;
+    uint         map_uv_set;
+    uint         map_present;
+    Vec4f        map_uv_row0;
+    Vec4f        map_uv_row1;
 }
-$assert BasicMaterialGpu::size == 32;
+$assert BasicMaterialGpu::size == 80;
 $assert $reflect(BasicMaterialGpu.kind).offset == 0;
 $assert $reflect(BasicMaterialGpu.flags).offset == 4;
 $assert $reflect(BasicMaterialGpu.alpha_cutoff).offset == 8;
 $assert $reflect(BasicMaterialGpu._pad0).offset == 12;
 $assert $reflect(BasicMaterialGpu.color).offset == 16;
+$assert $reflect(BasicMaterialGpu.map_texture).offset == 32;
+$assert $reflect(BasicMaterialGpu.map_sampler).offset == 36;
+$assert $reflect(BasicMaterialGpu.map_uv_set).offset == 40;
+$assert $reflect(BasicMaterialGpu.map_present).offset == 44;
+$assert $reflect(BasicMaterialGpu.map_uv_row0).offset == 48;
+$assert $reflect(BasicMaterialGpu.map_uv_row1).offset == 64;
 
 struct GuiVertexGpu {
     float position_x;

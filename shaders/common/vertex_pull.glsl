@@ -6,6 +6,7 @@
 // mirrored from GeometryFlags in render/geometry.c3
 #define GEOMETRY_HAS_NORMALS 1u
 #define GEOMETRY_HAS_UV0 4u
+#define GEOMETRY_HAS_UV1 8u
 
 GPU_DECLARE_READONLY_ARRAY_REF(FloatStream, float);
 

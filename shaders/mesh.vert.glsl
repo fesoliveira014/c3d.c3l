@@ -34,7 +34,7 @@ void main() {
     v_normal = normalize(normal_matrix * normal);
     v_tangent = vec4(0.0);
     v_uv0 = uv0;
-    v_uv1 = vec2(0.0);
+    v_uv1 = (geometry.flags & GEOMETRY_HAS_UV1) != 0u ? pull_vec2(geometry.uv1, index) : vec2(0.0);
     v_color = vec4(1.0);
     v_clip_pos = frame.view_proj * world;
     gl_Position = v_clip_pos;
