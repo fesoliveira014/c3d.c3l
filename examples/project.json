@@ -91,6 +91,12 @@
         "src/cube_gui.c3"
       ]
     },
+    "shadows": {
+      "type": "executable",
+      "sources": [
+        "src/shadows.c3"
+      ]
+    },
     "pbr": {
       "type": "executable",
       "sources": [

@@ -218,3 +218,24 @@ fn void free_material_heap(Renderer* renderer) @private {
     if (renderer.material_heap.is_valid()) (void)gpu::free_allocation(&renderer.device, &renderer.material_heap);
     alloc::free(renderer.allocator, renderer.materials.ptr);
 }
+
+<*
+ Pack a masked caster's base alpha and texture coordinates.
+ @param [&out] root : "Overwritten completely."
+ @param [&in] material : "Valid Basic or Standard masked material."
+ @param binding : "Resolved active-family base map."
+ @require material.common.alpha_mode == AlphaMode.MASK
+*>
+fn void write_shadow_material_block(BasicMaterialGpu* root, Material* material, TextureBinding binding) {
+    bool basic = material.kind == MaterialKind.BASIC;
+    TextureSlot slot = basic ? material.basic.map : material.standard.base_color_map;
+    MaterialFlags flags = { .alpha_mask = true, .double_sided = material.common.double_sided };
+    *root = {
+        .kind = (uint)material.kind.ordinal,
+        .flags = (uint)flags,
+        .alpha_cutoff = material.common.alpha_cutoff,
+        .map_flags = texture_map_flags(slot, binding, shader::MATERIAL_MAP_BASE_COLOR),
+        .color = basic ? material.basic.color : material.standard.base_color,
+        .map = pack_texture_map(slot, binding),
+    };
+}

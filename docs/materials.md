@@ -267,8 +267,10 @@ GPU timings are optional; full validation is enabled for every run.
 ## Current rendering limits
 
 Texture ownership and sampling are described in [Textures and
-images](textures.md). There are no shadows, environment lighting or ambient
-specular reflections. Shading writes scene-linear HDR into the renderer target;
+images](textures.md). [Directional shadows](shadows.md) attenuate Standard direct
+lighting; Basic and Standard surfaces can cast opaque or masked shadows. There is
+no environment lighting or ambient specular reflection. Shading writes scene-linear
+HDR into the renderer target;
 the existing composite adds no tonemapper or exposure control, so bright values
 can clip on presentation. Compare lighting with consistent presentation
 settings.

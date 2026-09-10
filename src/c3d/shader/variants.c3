@@ -14,7 +14,13 @@ enum ShaderName : int {
     IMGUI_FRAGMENT,
     CUBE_PREVIEW,
     STANDARD,
+    DEPTH_ONLY,
 }
+
+<*
+ Flag bit for DEPTH_ONLY.
+*>
+const uint SHADER_FLAG_DEPTH_ONLY = 1 << 0;
 
 const char[*] FULLSCREEN_SPIRV @private = $embed("../../../shaders/spv/fullscreen.spv");
 const char[*] GRADIENT_SPIRV @private = $embed("../../../shaders/spv/gradient.spv");
@@ -25,11 +31,13 @@ const char[*] IMGUI_VERTEX_SPIRV @private = $embed("../../../shaders/spv/imgui_v
 const char[*] IMGUI_FRAGMENT_SPIRV @private = $embed("../../../shaders/spv/imgui_fragment.spv");
 const char[*] CUBE_PREVIEW_SPIRV @private = $embed("../../../shaders/spv/cube_preview.spv");
 const char[*] STANDARD_SPIRV @private = $embed("../../../shaders/spv/standard.spv");
+const char[*] MESH_DEPTH_ONLY_SPIRV @private = $embed("../../../shaders/spv/mesh_depth_only.spv");
+const char[*] DEPTH_ONLY_SPIRV @private = $embed("../../../shaders/spv/depth_only.spv");
 
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[9] SHADER_ENTRIES = {
+const ShaderEntry[11] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -39,4 +47,6 @@ const ShaderEntry[9] SHADER_ENTRIES = {
     { .variant = { .shader = IMGUI_FRAGMENT }, .spirv = IMGUI_FRAGMENT_SPIRV[..] },
     { .variant = { .shader = CUBE_PREVIEW }, .spirv = CUBE_PREVIEW_SPIRV[..] },
     { .variant = { .shader = STANDARD }, .spirv = STANDARD_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_DEPTH_ONLY }, .spirv = MESH_DEPTH_ONLY_SPIRV[..] },
+    { .variant = { .shader = DEPTH_ONLY }, .spirv = DEPTH_ONLY_SPIRV[..] },
 };

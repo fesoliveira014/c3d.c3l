@@ -364,6 +364,7 @@ fn void test_frame_root_packs_camera() @test {
     assert(root.jitter_time.z == 12.5f && root.jitter_time.w == 0.25f);
     assert(root.frame_index == 42);
     assert((ulong)root.lights == 0 && root.light_count == 0);
+    assert((ulong)root.shadows == 0 && root.shadow_count == 0);
 }
 
 fn void test_draw_root_packs_normal_columns() @test {
@@ -382,4 +383,5 @@ fn void test_draw_root_packs_normal_columns() @test {
     assert(root.normal_0.x == 0.5f && root.normal_1.y == 1 && root.normal_2.z == 1);
     assert((ulong)root.frame == 0x100 && (ulong)root.geometry == 0x200 && (ulong)root.material == 0x300);
     assert(root.object_id == 9 && (ulong)root.skin == 0);
+    assert(root.flags == 0);
 }

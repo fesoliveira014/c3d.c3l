@@ -4,6 +4,7 @@ import c3d;
 import c3d::asset;
 import c3d::camera;
 import c3d::geometry;
+import c3d::light;
 import c3d::material;
 import c3d::maths;
 import c3d::scene;
@@ -140,14 +141,32 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
         record_pending_copies(self, &self.commands)!;
 
         LightCounts light_counts;
-        LightGpu[] lights = extract_lights(
+        LightExtraction extraction = extract_lights(
             allocator: tmem,
             scene: scene,
             frustum: &matrices.frustum,
             view_layers: camera.layers,
             capacity: self.max_lights,
             counts: &light_counts,
-        );
+        )!;
+        ShadowGpu[] shadows = record_directional_shadows(
+            renderer: self,
+            scene: scene,
+            camera: camera,
+            matrices: &matrices,
+            extraction: &extraction,
+        )!;
+        gpu::GpuAddress shadow_address;
+        if (shadows.len) {
+            gpu::MappedGpuSpan shadow_span = slot.upload.take(
+                device: &self.device,
+                size: shadows.len * ShadowGpu::size,
+                alignment: STREAM_ALIGNMENT,
+            )!;
+            mem::copy(shadow_span.bytes.ptr, shadows.ptr, shadows.len * ShadowGpu::size);
+            shadow_address = shadow_span.address;
+        }
+        LightGpu[] lights = extraction.lights;
         gpu::GpuAddress light_address;
         if (lights.len) {
             gpu::MappedGpuSpan light_span = slot.upload.take(
@@ -173,6 +192,8 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
             lights:      light_address,
             light_count: light_counts.packed,
             ambient:     { ambient.r, ambient.g, ambient.b, 0 },
+            shadows:     shadow_address,
+            shadow_count: (uint)shadows.len,
         );
         foreach (&item : items) {
             gpu::MappedGpuSpan draw_span = slot.upload.take(&self.device, DrawRoot::size, STREAM_ALIGNMENT)!;
@@ -184,12 +205,21 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
                 material:  item.material.address,
                 object_id: item.candidate.node.id.index,
                 layers:    item.candidate.node.layers,
+                flags:     item.candidate.receive_shadow ? shader::DRAW_RECEIVE_SHADOW : 0,
             );
             item.root = draw_span.address;
         }
 
         self.hdr_color.transition(&self.commands, COLOR_ATTACHMENT_STATE)!;
         self.depth.transition(&self.commands, DEPTH_ATTACHMENT_STATE)!;
+        if (self.timestamps_enabled && slot.timed[Pass.FORWARD_OPAQUE.ordinal]) {
+            gpu::cmd_reset_timestamps(
+                commands: &self.commands,
+                pool: self.timestamps,
+                first: pass_timestamp_slot(self.frame_index, Pass.FORWARD_OPAQUE.ordinal),
+                count: TIMESTAMPS_PER_PASS,
+            )!;
+        }
         write_pass_timestamp(
             renderer:    self,
             frame_index: self.frame_index,
@@ -239,6 +269,24 @@ fn void? Renderer.composite_view(&self) {
 fn void? Renderer.prepare_scene(&self, Scene* scene) {
     open_closed_frame_slot(self)!;
     defer catch discard_uploads(self);
+    bool shadows_enabled;
+    @pool() {
+        LightCounts counts;
+        ShadowRequest[] requests = collect_shadow_requests(
+            allocator: tmem,
+            scene: scene,
+            packed: {},
+            frustum: null,
+            view_layers: uint::max,
+            capacity: scene.count(Light),
+            counts: &counts,
+        )!;
+        shadows_enabled = assign_shadow_layers(requests, self.max_shadow_layers).layer_count > 0;
+    };
+    if (shadows_enabled) {
+        ensure_shadow_atlas(self)!;
+        shadow_pipeline_for(self, false)!;
+    }
     scene.@each(Mesh; Entity entity, Mesh* mesh) {
         if (!self.assets.geometries.is_live(mesh.geometry) || !self.assets.materials.is_live(mesh.material)) {
             self.stats.dangling_refs++;
@@ -251,7 +299,11 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
                 bindings: &material.bindings,
                 line_polygon_mode: self.caps.line_polygon_mode,
             )!;
-            pipeline_for(self, &self.assets.material(material.asset).data)!;
+            Material* data = &self.assets.material(material.asset).data;
+            pipeline_for(self, data)!;
+            if (shadows_enabled && mesh.cast_shadow && scene.node(entity).visible_effective) {
+                shadow_pipeline_for(self, data.common.wireframe && self.caps.line_polygon_mode)!;
+            }
         }
     };
     if (!self.pending_copies.len() && !self.pending_texture_uploads.len() && !self.pending_upload_retire.len()) return;
@@ -275,6 +327,8 @@ fn void write_frame_root(
     gpu::GpuAddress lights = (gpu::GpuAddress)0,
     uint light_count = 0,
     Vec4 ambient = {},
+    gpu::GpuAddress shadows = (gpu::GpuAddress)0,
+    uint shadow_count = 0,
 ) {
     *root = {
         .view            = bitcast(matrices.view, Mat4f),
@@ -288,6 +342,8 @@ fn void write_frame_root(
         .lights          = lights,
         .light_count     = light_count,
         .ambient         = ambient,
+        .shadows         = shadows,
+        .shadow_count    = shadow_count,
     };
 }
 
@@ -304,6 +360,7 @@ fn void write_draw_root(
     gpu::GpuAddress material,
     uint object_id,
     uint layers = scene::DEFAULT_LAYERS,
+    uint flags = 0,
 ) {
     Mat3 normal = maths::normal_matrix(world);
     *root = {
@@ -316,6 +373,7 @@ fn void write_draw_root(
         .material  = material,
         .object_id = object_id,
         .layers    = layers,
+        .flags     = flags,
     };
 }
 
@@ -356,8 +414,19 @@ fn void? record_opaque_pass(Renderer* renderer, DrawItem[] items) @private {
     bool state_set;
     if (items.len) {
         bound.pipeline = pipeline_for(renderer, material_data(renderer, items[0].material))!;
-        gpu::cmd_bind_pipeline(&renderer.commands, bound.pipeline)!;
+    } else {
+        PipelineKey key = {
+            .vertex = { .shader = MESH },
+            .fragment = { .shader = BASIC },
+            .color_formats = { [0] = HDR_FORMAT },
+            .color_count = 1,
+            .depth_format = DEPTH_FORMAT,
+            .samples = gpu::SampleCount.ONE,
+            .polygon = gpu::PolygonMode.FILL,
+        };
+        bound.pipeline = renderer.pipelines.get(&renderer.device, key)!;
     }
+    gpu::cmd_bind_pipeline(&renderer.commands, bound.pipeline)!;
     gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
     foreach (&item : items) {
         Material* material = material_data(renderer, item.material);
@@ -456,7 +525,7 @@ fn gpu::PipelineHandle? pipeline_for(Renderer* renderer, Material* material) @pr
     return renderer.pipelines.get(&renderer.device, key);
 }
 
-fn gpu::PrimitiveTopology primitive_topology(Topology topology) @local {
+fn gpu::PrimitiveTopology primitive_topology(Topology topology) @private {
     switch (topology) {
         case TRIANGLES: return gpu::PrimitiveTopology.TRIANGLES;
         case LINES:     return gpu::PrimitiveTopology.LINES;

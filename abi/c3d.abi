@@ -67,6 +67,9 @@ root DrawRoot {
     uint       _pad3;
 }
 
+const uint DRAW_RECEIVE_SHADOW = 1;
+const uint DRAW_ALPHA_MASK = 2;
+
 const uint MATERIAL_MAP_BASE_COLOR = 1;
 const uint MATERIAL_MAP_METALLIC_ROUGHNESS = 2;
 const uint MATERIAL_MAP_NORMAL = 4;
@@ -127,7 +130,23 @@ struct LightGpu {
     uint kind;
     uint layers;
     float cos_inner;
+    uint shadow_first;
+    uint shadow_count;
     uint _pad0;
+    uint _pad1;
+    uint _pad2;
+}
+
+struct ShadowGpu {
+    mat4 view_proj;
+    TextureIndex texture_index;
+    SamplerIndex sampler_index;
+    float normal_bias;
+    float split_depth;
+    float texel_size;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
 }
 
 root StandardMaterialGpu {

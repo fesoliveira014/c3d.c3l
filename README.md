@@ -127,6 +127,19 @@ Drag outside the GUI to orbit, scroll to zoom, and release Escape to quit.
 See [Materials and direct lighting](docs/materials.md) for factors, layer masks,
 light capacity and current rendering limits.
 
+`shadows` demonstrates directional cascades with solid, masked and off-camera
+casters. Its small GUI adjusts coverage, bias and whole-light atlas priority:
+
+```bash
+python3 scripts/build.py --example shadows
+./examples/build/shadows --gpu-timings
+```
+
+Directional constructors enable shadows by default. The default four-layer atlas
+allocates 64 MiB of depth texels on first accepted use. See
+[Directional shadows](docs/shadows.md) for casting/receiving, layer masks, capacity
+and per-layer timings.
+
 `textured` adds PNG/JPEG maps, mip filtering, UV transforms and alpha masking in a
 standalone scene with validation enabled. The default image is embedded:
 

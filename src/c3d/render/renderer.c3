@@ -44,7 +44,13 @@ const double NANOSECONDS_PER_MILLISECOND @private = 1_000_000.0;
 <*
  Per-view light budget when renderer creation omits one.
 *>
-const uint DEFAULT_MAX_LIGHTS = 256; // 16 KiB per view; bounds the flat fragment light loop
+const uint DEFAULT_MAX_LIGHTS = 256; // 20 KiB per view; bounds the flat fragment light loop
+
+<* Default shadow-map width in texels. *>
+const uint DEFAULT_SHADOW_RESOLUTION = 2048; // four D32 layers occupy 64 MiB
+
+<* Default fixed atlas layer budget. *>
+const uint DEFAULT_MAX_SHADOW_LAYERS = 4; // admits one full directional request
 
 <*
  How a renderer is created. A null surface factory selects headless.
@@ -60,6 +66,8 @@ struct RendererDesc {
     ZString          application_name;
     usz              upload_ring_bytes;
     uint             max_lights;
+    uint             shadow_resolution;
+    uint             max_shadow_layers;
 }
 
 <*
@@ -79,6 +87,8 @@ struct Frame {
     UploadRing            upload;
     RetireList            retire;
     bool[PASS_COUNT]      timed;
+    ShadowTiming[]        shadow_timings;
+    uint                  shadow_timing_count;
 }
 
 <*
@@ -98,6 +108,9 @@ struct Renderer {
 
     AssetStore*             assets;
     uint                    max_lights;
+    uint                    shadow_resolution;
+    uint                    max_shadow_layers;
+    ShadowAtlas             shadow_atlas;
     GpuGeometry[]           geometries;
     List{gpu::BufferCopyDesc} pending_copies;
     bool                    pending_overwrite;
@@ -119,6 +132,7 @@ struct Renderer {
     gpu::TimestampPoolHandle timestamps;
     bool                     timestamps_enabled;
     Stats                    stats;
+    ShadowTiming[]           shadow_timing_results;
 
     uint                    output_width;
     uint                    output_height;
@@ -130,6 +144,7 @@ struct Renderer {
     gpu::CompletionPoint    output_submission;
     gpu::TextureState       frame_hdr_state;
     gpu::TextureState       frame_depth_state;
+    gpu::TextureState       frame_shadow_state;
     gpu::TextureState[RENDER_TARGET_CAPACITY] frame_target_states;
     bool                    frame_submitted;
     uint                    recording_slot;
@@ -203,6 +218,7 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
     self.stats = {};
     read_pass_timings(self, slot, self.frame_index)!;
     slot.timed = {};
+    slot.shadow_timing_count = 0;
     drain_retired(&self.device, &slot.retire);
     sweep_geometries(self);
     sweep_textures(self);
@@ -219,6 +235,7 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
 
     self.frame_hdr_state = self.hdr_color.state;
     self.frame_depth_state = self.depth.state;
+    self.frame_shadow_state = self.shadow_atlas.state;
     foreach (index, target : self.targets.items) self.frame_target_states[index] = target.target.state;
     self.frame_submitted = false;
     self.recording_slot = (uint)(self.frame_index % FRAMES_IN_FLIGHT);
@@ -523,6 +540,7 @@ fn void? finish_pending_output(Renderer* renderer) @private {
  @return? c3d::INVALID_ARGUMENT, c3d::ASSET_DATA_UNAVAILABLE, gpu::RESOURCE_IN_USE
  @return? gpu::WAIT_TIMEOUT, gpu::COMMAND_RECORDING_ERROR
  @require desc.surface_fn == null || (desc.output_width > 0 && desc.output_height > 0)
+ @require desc.shadow_resolution == 0 || desc.shadow_resolution > 2 * SHADOW_GUARD_TEXELS
 *>
 fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDesc desc = {}) {
     // The callback's user pointer is fixed when the runtime is created and a returned-by-value
@@ -555,11 +573,13 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     gpu::Queue graphics = gpu::get_queue(&device, gpu::QueueKind.GRAPHICS)!;
     gpu::DeviceCaps caps = gpu::get_device_caps(&device)!;
 
+    uint max_shadow_layers = desc.max_shadow_layers ? desc.max_shadow_layers : DEFAULT_MAX_SHADOW_LAYERS;
+    usz query_count = (usz)FRAMES_IN_FLIGHT * (PASS_COUNT + (usz)max_shadow_layers) * TIMESTAMPS_PER_PASS;
     bool timestamps_enabled = desc.gpu_timings && caps.timestamps.queues.graphics;
     gpu::TimestampPoolHandle timestamps;
     if (timestamps_enabled) {
         gpu::TimestampPoolDesc timestamp_desc = {
-            .capacity   = FRAMES_IN_FLIGHT * (uint)PASS_COUNT * TIMESTAMPS_PER_PASS,
+            .capacity   = (uint)query_count,
             .debug_name = "frame_timestamps",
         };
         timestamps = gpu::create_timestamp_pool(&device, &timestamp_desc)!;
@@ -595,6 +615,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
             free_upload_ring(&device, &frames[slot].upload);
             drain_retired(&device, &frames[slot].retire);
             frames[slot].retire.free();
+            if (frames[slot].shadow_timings.len) alloc::free(allocator, frames[slot].shadow_timings.ptr);
         }
     }
     for (usz slot = 0; slot < FRAMES_IN_FLIGHT; slot++) {
@@ -606,6 +627,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         frames[slot].retire.init(allocator, RETIRE_INITIAL_CAPACITY);
         frames[slot].upload.overflow.init(allocator, RETIRE_INITIAL_CAPACITY);
         slots_created++;
+        if (timestamps_enabled) frames[slot].shadow_timings = alloc::new_array(allocator, ShadowTiming, max_shadow_layers);
         allocate_upload_ring(
             device:     &device,
             ring:       &frames[slot].upload,
@@ -642,10 +664,19 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     }
     defer catch release_view_targets(&device, &hdr_color, &depth);
 
+    ShadowTiming[] shadow_timing_results;
+    if (timestamps_enabled) shadow_timing_results = alloc::new_array(allocator, ShadowTiming, max_shadow_layers);
+    defer catch {
+        if (shadow_timing_results.len) alloc::free(allocator, shadow_timing_results.ptr);
+    }
+
     Renderer renderer = {
         .allocator            = allocator,
         .assets               = assets,
         .max_lights           = desc.max_lights ? desc.max_lights : DEFAULT_MAX_LIGHTS,
+        .shadow_resolution    = desc.shadow_resolution ? desc.shadow_resolution : DEFAULT_SHADOW_RESOLUTION,
+        .max_shadow_layers    = max_shadow_layers,
+        .shadow_timing_results = shadow_timing_results,
         .geometries           = alloc::new_array(allocator, GpuGeometry, assets.geometries.items.len),
         .materials            = alloc::new_array(allocator, MaterialRes, assets.materials.items.len),
         .textures             = alloc::new_array(allocator, TextureRes, assets.textures.items.len),
@@ -703,6 +734,8 @@ fn void destroy_renderer(Renderer* renderer) {
     free_textures(renderer);
     free_geometries(renderer);
     free_material_heap(renderer);
+    destroy_shadow_atlas(&renderer.device, &renderer.shadow_atlas);
+    if (renderer.shadow_timing_results.len) alloc::free(renderer.allocator, renderer.shadow_timing_results.ptr);
     release_view_targets(&renderer.device, &renderer.hdr_color, &renderer.depth);
 
     foreach (&record : renderer.targets.items) {
@@ -727,6 +760,7 @@ fn void destroy_renderer(Renderer* renderer) {
     foreach (&slot : renderer.frames) {
         drain_retired(&renderer.device, &slot.retire);
         slot.retire.free();
+        if (slot.shadow_timings.len) alloc::free(renderer.allocator, slot.shadow_timings.ptr);
         free_upload_ring(&renderer.device, &slot.upload);
         (void)gpu::destroy_command_allocator(&slot.allocator);
     }
@@ -804,6 +838,59 @@ fn void? read_pass_timings(Renderer* renderer, Frame* slot, ulong frame_index) @
         )!;
         renderer.stats.gpu_pass_ms[pass_ordinal] = (float)(nanoseconds / NANOSECONDS_PER_MILLISECOND);
     }
+    for (uint layer = 0; layer < slot.shadow_timing_count; layer++) {
+        ulong[TIMESTAMPS_PER_PASS] raw;
+        gpu::read_timestamps(
+            device: &renderer.device,
+            pool: renderer.timestamps,
+            first: shadow_timestamp_slot(renderer, layer),
+            count: TIMESTAMPS_PER_PASS,
+            out: raw[..],
+        )!;
+        double nanoseconds = gpu::timestamp_delta_ns(
+            caps: &renderer.caps.timestamps,
+            queue: gpu::QueueKind.GRAPHICS,
+            begin: raw[0],
+            end: raw[1],
+        )!;
+        renderer.shadow_timing_results[layer] = slot.shadow_timings[layer];
+        renderer.shadow_timing_results[layer].gpu_ms = (float)(nanoseconds / NANOSECONDS_PER_MILLISECOND);
+    }
+    renderer.stats.shadow_timings = renderer.shadow_timing_results[:slot.shadow_timing_count];
+}
+
+fn uint shadow_timestamp_slot(Renderer* renderer, uint layer) @private {
+    return (uint)((usz)FRAMES_IN_FLIGHT * PASS_COUNT * TIMESTAMPS_PER_PASS
+      + ((usz)(renderer.frame_index % FRAMES_IN_FLIGHT) * renderer.max_shadow_layers + layer) * TIMESTAMPS_PER_PASS);
+}
+
+fn void? reset_shadow_timings(Renderer* renderer) @private {
+    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    slot.shadow_timing_count = 0;
+    slot.timed[Pass.SHADOW_ATLAS.ordinal] = false;
+    if (!renderer.timestamps_enabled) return;
+    gpu::cmd_reset_timestamps(
+        commands: &renderer.commands,
+        pool: renderer.timestamps,
+        first: shadow_timestamp_slot(renderer, 0),
+        count: renderer.max_shadow_layers * TIMESTAMPS_PER_PASS,
+    )!;
+    gpu::cmd_reset_timestamps(
+        commands: &renderer.commands,
+        pool: renderer.timestamps,
+        first: pass_timestamp_slot(renderer.frame_index, Pass.SHADOW_ATLAS.ordinal),
+        count: TIMESTAMPS_PER_PASS,
+    )!;
+}
+
+fn void? write_shadow_timestamp(Renderer* renderer, uint layer, uint half) @private {
+    if (!renderer.timestamps_enabled) return;
+    gpu::cmd_write_timestamp(
+        commands: &renderer.commands,
+        pool: renderer.timestamps,
+        index: shadow_timestamp_slot(renderer, layer) + half,
+        stage: { .all },
+    )!;
 }
 
 fn void? write_pass_timestamp(
@@ -855,6 +942,8 @@ fn void abort_frame(Renderer* renderer) {
 
     if (!renderer.frame_submitted) {
         renderer.frames[renderer.recording_slot].timed = {};
+        renderer.frames[renderer.recording_slot].shadow_timing_count = 0;
+        renderer.shadow_atlas.state = renderer.frame_shadow_state;
         renderer.hdr_color.state = renderer.frame_hdr_state;
         renderer.depth.state = renderer.frame_depth_state;
         foreach (index, &target : renderer.targets.items) target.target.state = renderer.frame_target_states[index];

@@ -57,16 +57,18 @@ fn void test_light_inclusion_precedes_budget_and_preserves_receiver_mask() @test
     Frustum frustum = box_frustum();
     LightCounts counts;
     @pool() {
-        LightGpu[] packed = render::extract_lights(
+        LightExtraction extraction = render::extract_lights(
             allocator: tmem,
             scene: &scene,
             frustum: &frustum,
             view_layers: 1,
             capacity: 1,
             counts: &counts,
-        );
+        )!!;
+        LightGpu[] packed = extraction.lights;
         assert(packed.len == 1 && packed[0].color_intensity.w == 5);
         assert(packed[0].layers == 3);
+        assert(extraction.shadows.len == 0);
         assert(counts.packed == 1 && counts.culled == 1 && counts.dropped == 0);
     };
 }
@@ -92,16 +94,18 @@ fn void test_unbounded_and_directional_lights_survive_spatial_culling() @test {
     Frustum frustum = box_frustum();
     LightCounts counts;
     @pool() {
-        LightGpu[] packed = render::extract_lights(
+        LightExtraction extraction = render::extract_lights(
             allocator: tmem,
             scene: &scene,
             frustum: &frustum,
             view_layers: 1,
             capacity: 4,
             counts: &counts,
-        );
+        )!!;
+        LightGpu[] packed = extraction.lights;
         assert(packed.len == 3 && counts.culled == 1 && counts.dropped == 0);
         assert(packed[0].kind == (uint)LightKind.DIRECTIONAL.ordinal);
+        assert(extraction.shadows.len == 1 && extraction.shadows[0].light_index == 0);
         assert(packed[1].kind == (uint)LightKind.POINT.ordinal);
         assert(packed[2].kind == (uint)LightKind.SPOT.ordinal);
     };
@@ -118,29 +122,33 @@ fn void test_light_budget_follows_current_component_order() @test {
     Frustum frustum = box_frustum();
     LightCounts counts;
     @pool() {
-        LightGpu[] packed = render::extract_lights(
+        LightExtraction extraction = render::extract_lights(
             allocator: tmem,
             scene: &scene,
             frustum: &frustum,
             view_layers: 1,
             capacity: 2,
             counts: &counts,
-        );
+        )!!;
+        LightGpu[] packed = extraction.lights;
         assert(packed.len == 2 && counts.dropped == 1);
+        assert(extraction.shadows.len == 0);
         assert(packed[0].color_intensity.w == 1 && packed[1].color_intensity.w == 2);
     };
 
     scene.remove(first);
     @pool() {
-        LightGpu[] packed = render::extract_lights(
+        LightExtraction extraction = render::extract_lights(
             allocator: tmem,
             scene: &scene,
             frustum: &frustum,
             view_layers: 1,
             capacity: 1,
             counts: &counts,
-        );
+        )!!;
+        LightGpu[] packed = extraction.lights;
         assert(packed.len == 1 && counts.packed == 1 && counts.dropped == 1);
+        assert(extraction.shadows.len == 0);
         assert(packed[0].color_intensity.w == 3);
     };
 }
@@ -165,15 +173,17 @@ fn void test_spot_world_pose_does_not_scale_range_or_intensity() @test {
     Frustum frustum = box_frustum();
     LightCounts counts;
     @pool() {
-        LightGpu[] packed = render::extract_lights(
+        LightExtraction extraction = render::extract_lights(
             allocator: tmem,
             scene: &scene,
             frustum: &frustum,
             view_layers: 1,
             capacity: 1,
             counts: &counts,
-        );
+        )!!;
+        LightGpu[] packed = extraction.lights;
         assert(packed.len == 1);
+        assert(extraction.shadows.len == 0);
         assert((packed[0].position_range.xyz - (Vec3){ 2, 2, 3 }).length() < 0.0001f);
         assert((packed[0].direction_cos_outer.xyz - (Vec3){ -1, 0, 0 }).length() < 0.0001f);
         assert(packed[0].position_range.w == 9 && packed[0].color_intensity.w == 7);
@@ -243,9 +253,12 @@ fn void test_roots_preserve_light_and_receiver_data() @test {
         lights: (gpu::GpuAddress)4096,
         light_count: 2,
         ambient: { 0.1f, 0.2f, 0.3f, 0 },
+        shadows: (gpu::GpuAddress)8192,
+        shadow_count: 3,
     );
     assert(frame.lights == (gpu::GpuAddress)4096 && frame.light_count == 2);
     assert(frame.ambient == (Vec4){ 0.1f, 0.2f, 0.3f, 0 });
+    assert(frame.shadows == (gpu::GpuAddress)8192 && frame.shadow_count == 3);
 
     DrawRoot draw;
     render::write_draw_root(
@@ -256,8 +269,10 @@ fn void test_roots_preserve_light_and_receiver_data() @test {
         material: (gpu::GpuAddress)0,
         object_id: 7,
         layers: 0x80000002,
+        flags: shader::DRAW_RECEIVE_SHADOW,
     );
     assert(draw.layers == 0x80000002 && draw.object_id == 7);
+    assert(draw.flags == shader::DRAW_RECEIVE_SHADOW);
 }
 
 fn void test_light_receiver_mask_is_not_restricted_to_camera_bits() @test {
@@ -271,15 +286,98 @@ fn void test_light_receiver_mask_is_not_restricted_to_camera_bits() @test {
     Frustum frustum = box_frustum();
     LightCounts counts;
     @pool() {
-        LightGpu[] packed = render::extract_lights(
+        LightExtraction extraction = render::extract_lights(
             allocator: tmem,
             scene: &scene,
             frustum: &frustum,
             view_layers: 1,
             capacity: 1,
             counts: &counts,
-        );
+        )!!;
+        LightGpu[] packed = extraction.lights;
         assert(packed.len == 1 && packed[0].layers == 2);
+        assert(extraction.shadows.len == 1 && extraction.shadows[0].light_index == 0);
         assert(counts.dropped == 0);
+    };
+}
+
+fn void test_unsupported_shadow_lights_fault_only_after_view_selection() @test {
+    Scene scene = scene::create_scene(mem, { .max_nodes = 3 });
+    defer scene::destroy_scene(&scene);
+
+    scene.add_light(light::directional({ 1, 1, 1 }, 1, false))!!;
+    Node* point = scene.add_light(light::point({ 1, 1, 1 }, 1))!!;
+    Node* spot = scene.add_light(light::spot(
+        color: { 1, 1, 1 },
+        intensity: 1,
+        inner: 0.2f,
+        outer: 0.5f,
+    ))!!;
+    scene.get(point, Light).shadow.enabled = true;
+    scene.get(spot, Light).shadow.enabled = true;
+
+    Frustum frustum = box_frustum();
+    LightCounts counts;
+
+    @pool() {
+        for (uint selected = 0; selected < 2; selected++) {
+            point.visible = selected == 0;
+            spot.visible = selected == 1;
+            scene.update_world();
+
+            if (catch excuse = render::extract_lights(
+                allocator: tmem,
+                scene: &scene,
+                frustum: &frustum,
+                view_layers: 1,
+                capacity: 3,
+                counts: &counts,
+            )) {
+                assert(excuse == c3d::UNSUPPORTED);
+            } else {
+                assert(false, "Selected unsupported shadow light was accepted");
+            }
+        }
+
+        point.visible = true;
+        spot.visible = true;
+        scene.update_world();
+        LightExtraction budgeted = render::extract_lights(
+            allocator: tmem,
+            scene: &scene,
+            frustum: &frustum,
+            view_layers: 1,
+            capacity: 1,
+            counts: &counts,
+        )!!;
+        assert(budgeted.lights.len == 1 && counts.dropped == 2 && budgeted.shadows.len == 0);
+
+        point.visible = false;
+        spot.visible = false;
+        scene.update_world();
+        LightExtraction hidden = render::extract_lights(
+            allocator: tmem,
+            scene: &scene,
+            frustum: &frustum,
+            view_layers: 1,
+            capacity: 3,
+            counts: &counts,
+        )!!;
+        assert(hidden.lights.len == 1 && counts.dropped == 0 && hidden.shadows.len == 0);
+
+        point.visible = true;
+        spot.visible = true;
+        scene.get(point, Light).shadow.enabled = false;
+        scene.get(spot, Light).shadow.enabled = false;
+        scene.update_world();
+        LightExtraction disabled = render::extract_lights(
+            allocator: tmem,
+            scene: &scene,
+            frustum: &frustum,
+            view_layers: 1,
+            capacity: 3,
+            counts: &counts,
+        )!!;
+        assert(disabled.lights.len == 3 && disabled.shadows.len == 0);
     };
 }

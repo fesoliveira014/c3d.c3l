@@ -36,6 +36,8 @@ struct Stats {
     uint  lights;
     uint  lights_dropped;
     uint  shadow_layers;
+    uint  shadow_requests_dropped;
+    ShadowTiming[] shadow_timings;
     uint  uploads;
     uint  upload_bytes;
     uint  dangling_refs;

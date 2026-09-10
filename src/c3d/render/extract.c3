@@ -26,6 +26,7 @@ struct MeshCandidate {
     MaterialId material;
     Aabb       world_bounds;
     float      ndc_depth;
+    bool       receive_shadow;
 }
 
 <*
@@ -90,6 +91,7 @@ fn void include_mesh(MeshCandidate[] candidates, Node* node, Mesh* mesh, AssetSt
         .material     = mesh.material,
         .world_bounds = world,
         .ndc_depth    = center_depth(camera, world),
+        .receive_shadow = mesh.receive_shadow,
     };
     counts.visible++;
 }
@@ -99,4 +101,42 @@ fn float center_depth(CameraMatrices* camera, Aabb world) @local {
     Vec4 clip = camera.view_proj.apply({ center.x, center.y, center.z, 1.0f });
     // A center on or behind the camera plane sorts as nearest; its box still straddles the near plane.
     return clip.w > 0 ? math::clamp(clip.z / clip.w, 0.0f, 1.0f) : 1.0f;
+}
+
+<*
+ Collect live visible casters independently of layer masks.
+ @param allocator : "Owns the returned candidate array."
+ @param [&in] scene : "Current transforms; structurally unchanged during extraction."
+ @param [&in] assets : "Supplies live ids and retained geometry bounds."
+ @param [&inout] counts : "Reset, then populated for broad caster inclusion."
+*>
+fn MeshCandidate[] extract_shadow_candidates(
+    Allocator allocator,
+    Scene* scene,
+    AssetStore* assets,
+    ExtractCounts* counts,
+) {
+    *counts = {};
+    MeshCandidate[] candidates = alloc::new_array(allocator, MeshCandidate, scene.count(Mesh));
+
+    scene.@each(Mesh; Entity entity, Mesh* mesh) {
+        Node* node = scene.node(entity);
+        if (node.visible_effective && mesh.cast_shadow) {
+            if (!assets.geometries.is_live(mesh.geometry) || !assets.materials.is_live(mesh.material)) {
+                counts.dangling++;
+            } else {
+                Aabb bounds = mesh.has_bounds_override
+                  ? mesh.local_bounds : assets.geometry(mesh.geometry).data.bounds;
+                candidates[counts.visible++] = {
+                    .node = node,
+                    .geometry = mesh.geometry,
+                    .material = mesh.material,
+                    .world_bounds = maths::aabb_transform(bounds, node.world),
+                    .receive_shadow = mesh.receive_shadow,
+                };
+            }
+        }
+    };
+
+    return candidates[:counts.visible];
 }
