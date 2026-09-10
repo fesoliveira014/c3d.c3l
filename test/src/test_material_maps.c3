@@ -43,6 +43,11 @@ fn void assert_uv_rows(
     assert(math::abs(actual_row1.w - expected_row1.w) < 0.0001f);
 }
 
+fn void assert_map_transform(TextureMapGpu map, Vec2 expected_offset, Vec4 expected_linear) @local {
+    assert((map.uv_offset - expected_offset).length() < 0.0001f);
+    assert((map.uv_linear - expected_linear).length() < 0.0001f);
+}
+
 fn void test_standard_packing_keeps_all_map_bindings() @test {
     char[render::MATERIAL_STRIDE] storage @align(16);
     char[] bytes = storage[..];
@@ -102,21 +107,17 @@ fn void test_standard_packing_keeps_all_map_bindings() @test {
     assert(packed.emissive_strength == (Vec4){ 0.4f, 0.8f, 1.2f, 2.5f });
     assert(packed.normal_scale == params.normal_scale);
     assert(packed.occlusion_strength == params.occlusion_strength);
-    assert(packed.base_color_texture == (gpu::TextureIndex)11);
-    assert(packed.base_color_sampler == (gpu::SamplerIndex)21);
-    assert(packed.base_color_uv_set == 0 && packed.base_color_present == 1);
-    assert(packed.metallic_roughness_texture == (gpu::TextureIndex)12);
-    assert(packed.metallic_roughness_sampler == (gpu::SamplerIndex)22);
-    assert(packed.metallic_roughness_uv_set == 1 && packed.metallic_roughness_present == 0);
-    assert(packed.normal_texture == (gpu::TextureIndex)13);
-    assert(packed.normal_sampler == (gpu::SamplerIndex)23);
-    assert(packed.normal_uv_set == 1 && packed.normal_present == 1);
-    assert(packed.occlusion_texture == (gpu::TextureIndex)14);
-    assert(packed.occlusion_sampler == (gpu::SamplerIndex)24);
-    assert(packed.occlusion_uv_set == 0 && packed.occlusion_present == 0);
-    assert(packed.emissive_texture == (gpu::TextureIndex)15);
-    assert(packed.emissive_sampler == (gpu::SamplerIndex)25);
-    assert(packed.emissive_uv_set == 1 && packed.emissive_present == 1);
+    assert(packed.map_flags == 0x2d5);
+    assert(packed.base_color_map.texture_index == (gpu::TextureIndex)11);
+    assert(packed.base_color_map.sampler_index == (gpu::SamplerIndex)21);
+    assert(packed.metallic_roughness_map.texture_index == (gpu::TextureIndex)12);
+    assert(packed.metallic_roughness_map.sampler_index == (gpu::SamplerIndex)22);
+    assert(packed.normal_map.texture_index == (gpu::TextureIndex)13);
+    assert(packed.normal_map.sampler_index == (gpu::SamplerIndex)23);
+    assert(packed.occlusion_map.texture_index == (gpu::TextureIndex)14);
+    assert(packed.occlusion_map.sampler_index == (gpu::SamplerIndex)24);
+    assert(packed.emissive_map.texture_index == (gpu::TextureIndex)15);
+    assert(packed.emissive_map.sampler_index == (gpu::SamplerIndex)25);
 }
 
 fn void test_standard_packing_keeps_each_map_transform() @test {
@@ -159,35 +160,30 @@ fn void test_standard_packing_keeps_each_map_transform() @test {
     render::write_material_block(bytes, &material, {});
 
     StandardMaterialGpu* packed = (StandardMaterialGpu*)bytes.ptr;
-    assert_uv_rows(
-        actual_row0: packed.base_color_uv_row0,
-        actual_row1: packed.base_color_uv_row1,
-        expected_row0: { 2, 0, 0.25f, 0 },
-        expected_row1: { 0, 3, -0.5f, 0 },
+    assert_map_transform(
+        map: packed.base_color_map,
+        expected_offset: { 0.25f, -0.5f },
+        expected_linear: { 2, 0, 0, 3 },
     );
-    assert_uv_rows(
-        actual_row0: packed.metallic_roughness_uv_row0,
-        actual_row1: packed.metallic_roughness_uv_row1,
-        expected_row0: { 0, -1.25f, -1.5f, 0 },
-        expected_row1: { 0.5f, 0, 2.25f, 0 },
+    assert_map_transform(
+        map: packed.metallic_roughness_map,
+        expected_offset: { -1.5f, 2.25f },
+        expected_linear: { 0, -1.25f, 0.5f, 0 },
     );
-    assert_uv_rows(
-        actual_row0: packed.normal_uv_row0,
-        actual_row1: packed.normal_uv_row1,
-        expected_row0: { -1.5f, 0, 3.75f, 0 },
-        expected_row1: { 0, -0.75f, -4.5f, 0 },
+    assert_map_transform(
+        map: packed.normal_map,
+        expected_offset: { 3.75f, -4.5f },
+        expected_linear: { -1.5f, 0, 0, -0.75f },
     );
-    assert_uv_rows(
-        actual_row0: packed.occlusion_uv_row0,
-        actual_row1: packed.occlusion_uv_row1,
-        expected_row0: { 0, 0.375f, -5, 0 },
-        expected_row1: { -2.25f, 0, 6, 0 },
+    assert_map_transform(
+        map: packed.occlusion_map,
+        expected_offset: { -5, 6 },
+        expected_linear: { 0, 0.375f, -2.25f, 0 },
     );
-    assert_uv_rows(
-        actual_row0: packed.emissive_uv_row0,
-        actual_row1: packed.emissive_uv_row1,
-        expected_row0: { 0, -1.75f, 7.5f, 0 },
-        expected_row1: { 0.625f, 0, -8.25f, 0 },
+    assert_map_transform(
+        map: packed.emissive_map,
+        expected_offset: { 7.5f, -8.25f },
+        expected_linear: { 0, -1.75f, 0.625f, 0 },
     );
 }
 
@@ -206,11 +202,7 @@ fn void test_standard_packing_clears_absent_map_flags() @test {
     StandardMaterialGpu* packed = (StandardMaterialGpu*)bytes.ptr;
     assert(packed.base_color == params.base_color);
     assert(packed.emissive_strength == (Vec4){ 0.3f, 0.5f, 0.7f, 1.75f });
-    assert(packed.base_color_present == 0);
-    assert(packed.metallic_roughness_present == 0);
-    assert(packed.normal_present == 0);
-    assert(packed.occlusion_present == 0);
-    assert(packed.emissive_present == 0);
+    assert(packed.map_flags == 0);
 }
 
 fn void test_basic_packing_uses_base_color_binding_after_standard() @test {

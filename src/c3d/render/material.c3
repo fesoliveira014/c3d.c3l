@@ -89,29 +89,31 @@ fn void write_material_block(char[] block, Material* material, MaterialBindings 
             };
         case STANDARD:
             StandardParams* params = &material.standard;
-            Vec4 base_color_row0;
-            Vec4 base_color_row1;
-            texture_uv_rows(params.base_color_map.transform, &base_color_row0, &base_color_row1);
-
-            Vec4 metallic_roughness_row0;
-            Vec4 metallic_roughness_row1;
-            texture_uv_rows(
-                transform: params.metallic_roughness_map.transform,
-                row0: &metallic_roughness_row0,
-                row1: &metallic_roughness_row1,
+            uint map_flags = texture_map_flags(
+                slot: params.base_color_map,
+                binding: bindings.base_color,
+                map_bit: shader::MATERIAL_MAP_BASE_COLOR,
             );
-
-            Vec4 normal_row0;
-            Vec4 normal_row1;
-            texture_uv_rows(params.normal_map.transform, &normal_row0, &normal_row1);
-
-            Vec4 occlusion_row0;
-            Vec4 occlusion_row1;
-            texture_uv_rows(params.occlusion_map.transform, &occlusion_row0, &occlusion_row1);
-
-            Vec4 emissive_row0;
-            Vec4 emissive_row1;
-            texture_uv_rows(params.emissive_map.transform, &emissive_row0, &emissive_row1);
+            map_flags |= texture_map_flags(
+                slot: params.metallic_roughness_map,
+                binding: bindings.metallic_roughness,
+                map_bit: shader::MATERIAL_MAP_METALLIC_ROUGHNESS,
+            );
+            map_flags |= texture_map_flags(
+                slot: params.normal_map,
+                binding: bindings.normal,
+                map_bit: shader::MATERIAL_MAP_NORMAL,
+            );
+            map_flags |= texture_map_flags(
+                slot: params.occlusion_map,
+                binding: bindings.occlusion,
+                map_bit: shader::MATERIAL_MAP_OCCLUSION,
+            );
+            map_flags |= texture_map_flags(
+                slot: params.emissive_map,
+                binding: bindings.emissive,
+                map_bit: shader::MATERIAL_MAP_EMISSIVE,
+            );
 
             StandardMaterialGpu* packed = (StandardMaterialGpu*)block.ptr;
             *packed = {
@@ -124,38 +126,33 @@ fn void write_material_block(char[] block, Material* material, MaterialBindings 
                 .roughness = params.roughness,
                 .normal_scale = params.normal_scale,
                 .occlusion_strength = params.occlusion_strength,
-                .base_color_texture = bindings.base_color.texture_index,
-                .base_color_sampler = bindings.base_color.sampler_index,
-                .base_color_uv_set = params.base_color_map.uv_set,
-                .base_color_present = bindings.base_color.present ? 1u : 0u,
-                .base_color_uv_row0 = base_color_row0,
-                .base_color_uv_row1 = base_color_row1,
-                .metallic_roughness_texture = bindings.metallic_roughness.texture_index,
-                .metallic_roughness_sampler = bindings.metallic_roughness.sampler_index,
-                .metallic_roughness_uv_set = params.metallic_roughness_map.uv_set,
-                .metallic_roughness_present = bindings.metallic_roughness.present ? 1u : 0u,
-                .metallic_roughness_uv_row0 = metallic_roughness_row0,
-                .metallic_roughness_uv_row1 = metallic_roughness_row1,
-                .normal_texture = bindings.normal.texture_index,
-                .normal_sampler = bindings.normal.sampler_index,
-                .normal_uv_set = params.normal_map.uv_set,
-                .normal_present = bindings.normal.present ? 1u : 0u,
-                .normal_uv_row0 = normal_row0,
-                .normal_uv_row1 = normal_row1,
-                .occlusion_texture = bindings.occlusion.texture_index,
-                .occlusion_sampler = bindings.occlusion.sampler_index,
-                .occlusion_uv_set = params.occlusion_map.uv_set,
-                .occlusion_present = bindings.occlusion.present ? 1u : 0u,
-                .occlusion_uv_row0 = occlusion_row0,
-                .occlusion_uv_row1 = occlusion_row1,
-                .emissive_texture = bindings.emissive.texture_index,
-                .emissive_sampler = bindings.emissive.sampler_index,
-                .emissive_uv_set = params.emissive_map.uv_set,
-                .emissive_present = bindings.emissive.present ? 1u : 0u,
-                .emissive_uv_row0 = emissive_row0,
-                .emissive_uv_row1 = emissive_row1,
+                .map_flags = map_flags,
+                .base_color_map = pack_texture_map(params.base_color_map, bindings.base_color),
+                .metallic_roughness_map = pack_texture_map(params.metallic_roughness_map, bindings.metallic_roughness),
+                .normal_map = pack_texture_map(params.normal_map, bindings.normal),
+                .occlusion_map = pack_texture_map(params.occlusion_map, bindings.occlusion),
+                .emissive_map = pack_texture_map(params.emissive_map, bindings.emissive),
             };
     }
+}
+
+fn TextureMapGpu pack_texture_map(TextureSlot slot, TextureBinding binding) @private {
+    Vec4 row0;
+    Vec4 row1;
+    texture_uv_rows(slot.transform, &row0, &row1);
+
+    return {
+        .texture_index = binding.texture_index,
+        .sampler_index = binding.sampler_index,
+        .uv_offset = { row0.z, row1.z },
+        .uv_linear = { row0.x, row0.y, row1.x, row1.y },
+    };
+}
+
+fn uint texture_map_flags(TextureSlot slot, TextureBinding binding, uint map_bit) @private {
+    uint flags = binding.present ? map_bit : 0;
+    if (slot.uv_set == 1) flags |= map_bit << shader::MATERIAL_MAP_UV1_SHIFT;
+    return flags;
 }
 
 fn MaterialBindings? resolve_material_bindings(Renderer* renderer, Material* material) @private {

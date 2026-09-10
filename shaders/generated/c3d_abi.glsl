@@ -6,6 +6,13 @@
 #extension GL_EXT_buffer_reference2 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
+const uint MATERIAL_MAP_BASE_COLOR = 1u;
+const uint MATERIAL_MAP_METALLIC_ROUGHNESS = 2u;
+const uint MATERIAL_MAP_NORMAL = 4u;
+const uint MATERIAL_MAP_OCCLUSION = 8u;
+const uint MATERIAL_MAP_EMISSIVE = 16u;
+const uint MATERIAL_MAP_UV1_SHIFT = 5u;
+
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer CompositeRoot {
     uint source_texture;
     uint source_sampler;
@@ -127,6 +134,13 @@ struct LightGpu {
     uint _pad0;
 };
 
+struct TextureMapGpu {
+    uint texture_index;
+    uint sampler_index;
+    vec2 uv_offset;
+    vec4 uv_linear;
+};
+
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer StandardMaterialGpu {
     uint kind;
     uint flags;
@@ -137,37 +151,12 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer StandardMat
     float roughness;
     float normal_scale;
     float occlusion_strength;
-    uint _pad0;
-    uint base_color_texture;
-    uint base_color_sampler;
-    uint base_color_uv_set;
-    uint base_color_present;
-    vec4 base_color_uv_row0;
-    vec4 base_color_uv_row1;
-    uint metallic_roughness_texture;
-    uint metallic_roughness_sampler;
-    uint metallic_roughness_uv_set;
-    uint metallic_roughness_present;
-    vec4 metallic_roughness_uv_row0;
-    vec4 metallic_roughness_uv_row1;
-    uint normal_texture;
-    uint normal_sampler;
-    uint normal_uv_set;
-    uint normal_present;
-    vec4 normal_uv_row0;
-    vec4 normal_uv_row1;
-    uint occlusion_texture;
-    uint occlusion_sampler;
-    uint occlusion_uv_set;
-    uint occlusion_present;
-    vec4 occlusion_uv_row0;
-    vec4 occlusion_uv_row1;
-    uint emissive_texture;
-    uint emissive_sampler;
-    uint emissive_uv_set;
-    uint emissive_present;
-    vec4 emissive_uv_row0;
-    vec4 emissive_uv_row1;
+    uint map_flags;
+    TextureMapGpu base_color_map;
+    TextureMapGpu metallic_roughness_map;
+    TextureMapGpu normal_map;
+    TextureMapGpu occlusion_map;
+    TextureMapGpu emissive_map;
 };
 
 #endif

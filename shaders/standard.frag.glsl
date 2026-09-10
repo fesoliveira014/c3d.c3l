@@ -22,9 +22,14 @@ layout(push_constant) uniform Push {
     uint64_t fragment_root_gpu;
 } pc;
 
-vec2 map_uv(uint uv_set, vec4 row0, vec4 row1) {
-    vec3 uv = vec3(uv_set == 0u ? v_uv0 : v_uv1, 1.0);
-    return vec2(dot(row0.xyz, uv), dot(row1.xyz, uv));
+vec2 map_uv(TextureMapGpu map, uint flags, uint map_bit) {
+    bool uv1 = (flags & (map_bit << MATERIAL_MAP_UV1_SHIFT)) != 0u;
+    vec2 uv = uv1 ? v_uv1 : v_uv0;
+    return vec2(dot(map.uv_linear.xy, uv), dot(map.uv_linear.zw, uv)) + map.uv_offset;
+}
+
+vec4 sample_map(TextureMapGpu map, uint flags, uint map_bit) {
+    return sample_texture_2d_implicit(map.texture_index, map.sampler_index, map_uv(map, flags, map_bit));
 }
 
 void main() {
@@ -37,47 +42,31 @@ void main() {
     float occlusion = 1.0;
     vec3 emissive = material.emissive_strength.rgb * material.emissive_strength.w;
 
-    if (material.base_color_present != 0u) {
-        base_color *= sample_texture_2d_implicit(
-            material.base_color_texture,
-            material.base_color_sampler,
-            map_uv(material.base_color_uv_set, material.base_color_uv_row0, material.base_color_uv_row1)
-        );
+    if ((material.map_flags & MATERIAL_MAP_BASE_COLOR) != 0u) {
+        base_color *= sample_map(material.base_color_map, material.map_flags, MATERIAL_MAP_BASE_COLOR);
     }
-    if (material.metallic_roughness_present != 0u) {
-        vec4 factors = sample_texture_2d_implicit(
-            material.metallic_roughness_texture,
-            material.metallic_roughness_sampler,
-            map_uv(
-                material.metallic_roughness_uv_set,
-                material.metallic_roughness_uv_row0,
-                material.metallic_roughness_uv_row1
-            )
+    if ((material.map_flags & MATERIAL_MAP_METALLIC_ROUGHNESS) != 0u) {
+        vec4 factors = sample_map(
+            material.metallic_roughness_map,
+            material.map_flags,
+            MATERIAL_MAP_METALLIC_ROUGHNESS
         );
         metallic = clamp(metallic * factors.b, 0.0, 1.0);
         roughness = clamp(roughness * factors.g, 0.0, 1.0);
     }
-    if (material.occlusion_present != 0u) {
-        float sampled = sample_texture_2d_implicit(
-            material.occlusion_texture,
-            material.occlusion_sampler,
-            map_uv(material.occlusion_uv_set, material.occlusion_uv_row0, material.occlusion_uv_row1)
-        ).r;
+    if ((material.map_flags & MATERIAL_MAP_OCCLUSION) != 0u) {
+        float sampled = sample_map(material.occlusion_map, material.map_flags, MATERIAL_MAP_OCCLUSION).r;
         occlusion = mix(1.0, clamp(sampled, 0.0, 1.0), material.occlusion_strength);
     }
-    if (material.emissive_present != 0u) {
-        emissive *= sample_texture_2d_implicit(
-            material.emissive_texture,
-            material.emissive_sampler,
-            map_uv(material.emissive_uv_set, material.emissive_uv_row0, material.emissive_uv_row1)
-        ).rgb;
+    if ((material.map_flags & MATERIAL_MAP_EMISSIVE) != 0u) {
+        emissive *= sample_map(material.emissive_map, material.map_flags, MATERIAL_MAP_EMISSIVE).rgb;
     }
 
     vec3 normal = normalize(v_normal);
-    if (material.normal_present != 0u && material.normal_scale != 0.0) {
-        vec2 uv = map_uv(material.normal_uv_set, material.normal_uv_row0, material.normal_uv_row1);
+    if ((material.map_flags & MATERIAL_MAP_NORMAL) != 0u && material.normal_scale != 0.0) {
+        vec2 uv = map_uv(material.normal_map, material.map_flags, MATERIAL_MAP_NORMAL);
         vec3 mapped = decode_normal(
-            sample_texture_2d_implicit(material.normal_texture, material.normal_sampler, uv).rgb,
+            sample_texture_2d_implicit(material.normal_map.texture_index, material.normal_map.sampler_index, uv).rgb,
             material.normal_scale
         );
         GeometryRoot geometry = GeometryRoot(draw.geometry);

@@ -95,15 +95,25 @@ wireframe on a device without line polygon mode still uses filled triangles.
 
 ## Material storage
 
-Renderer material slots are 304 bytes (`render::MATERIAL_STRIDE`). The generated
-`StandardMaterialGpu` occupies 304 bytes; its five map records begin at offsets
-64, 112, 160, 208 and 256. `BasicMaterialGpu` remains 80 bytes. Custom renderer-side
-packing code supplies `render::MaterialBindings` to `write_material_block`, with
-`base_color`, `metallic_roughness`, `normal`, `occlusion` and `emissive` fields.
-Each is a `TextureBinding` carrying texture/sampler indices and an explicit
-`present` flag. Basic uses only `base_color`; inactive fields stay empty. Bindless
-index zero is not a presence test. Ordinary consumers edit asset material slots
-and let the renderer resolve these bindings.
+Renderer material slots are 224 bytes (`render::MATERIAL_STRIDE`). The generated
+`StandardMaterialGpu` has a 64-byte header followed by five nested 32-byte
+`TextureMapGpu` members at offsets 64, 96, 128, 160 and 192. Each map record
+contains `texture_index`, `sampler_index`, `uv_offset` and `uv_linear`; presence
+and UV-set selection live in the header's `map_flags`. Bits 0–4 are presence bits
+for base color, metallic-roughness, normal, occlusion and emissive in that order;
+bits 5–9 select UV1 for those same slots. The matching schema constants are
+`c3d::shader::MATERIAL_MAP_BASE_COLOR`, `MATERIAL_MAP_METALLIC_ROUGHNESS`,
+`MATERIAL_MAP_NORMAL`, `MATERIAL_MAP_OCCLUSION`, `MATERIAL_MAP_EMISSIVE` and
+`MATERIAL_MAP_UV1_SHIFT`.
+
+`BasicMaterialGpu` remains 80 bytes, and the default 4096-slot material heap is
+917,504 bytes. Custom renderer-side packing code supplies
+`render::MaterialBindings` to `write_material_block`, with `base_color`,
+`metallic_roughness`, `normal`, `occlusion` and `emissive` fields. Each is a
+`TextureBinding` carrying texture/sampler indices and an explicit `present` flag.
+Basic uses only `base_color`; inactive fields stay empty. Bindless index zero is
+not a presence test. Ordinary consumers edit asset material slots and let the
+renderer resolve these bindings.
 
 ## Shared edits
 
