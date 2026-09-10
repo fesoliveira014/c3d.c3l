@@ -192,6 +192,32 @@ fn void test_transform_moves_bounds_and_rotates_normals() @test {
     assert(close_vec3(box.tangents[0].xyz, { -1, 0, 0 }));
 }
 
+fn void test_baked_reflection_updates_tangent_handedness_without_winding() @test {
+    Geometry quad = make_quad(mem);
+    defer free_geometry(&quad);
+    quad.compute_normals(mem, smooth: true);
+    quad.compute_tangents(mem);
+
+    Mat4 reflection = matrix::IDENTITY4;
+    reflection.m00 = -2;
+    reflection.m11 = 3;
+    quad.transform(reflection);
+
+    foreach (tangent : quad.tangents) {
+        assert(close_vec3(tangent.xyz, { -1, 0, 0 }));
+        assert(tangent.w == -1);
+    }
+    assert(triangle_normal(&quad, 0).dot(quad.normals[0]) < 0);
+    quad.flip_winding();
+    assert(triangle_normal(&quad, 0).dot(quad.normals[0]) > 0);
+
+    quad.transform(reflection);
+    foreach (tangent : quad.tangents) {
+        assert(close_vec3(tangent.xyz, { 1, 0, 0 }));
+        assert(tangent.w == 1);
+    }
+}
+
 fn void test_flip_winding_reverses_triangles() @test {
     Geometry quad = make_quad(mem);
     defer free_geometry(&quad);

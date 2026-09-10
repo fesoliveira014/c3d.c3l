@@ -112,8 +112,11 @@ python3 scripts/build.py --example cube_gui
 ```
 
 `pbr` provides a static metallic/roughness sphere grid with directional, point
-and spot lights. Its GUI edits selected materials and lights, ambient, receiver
-layers and camera projection:
+and spot lights, plus base-color, metallic/roughness, normal, occlusion and
+emissive maps. Its GUI edits each selected map's UVs and sampler, switches between
+supplied and derived tangent frames using two sphere assets, and offers mapped
+and scalar-only presets. Material factors, lights, ambient, receiver layers and
+camera projection remain editable:
 
 ```bash
 python3 scripts/build.py --example pbr

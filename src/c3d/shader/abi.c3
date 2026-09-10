@@ -3,6 +3,13 @@ module c3d::shader;
 
 import gpu;
 
+const uint MATERIAL_MAP_BASE_COLOR = 1;
+const uint MATERIAL_MAP_METALLIC_ROUGHNESS = 2;
+const uint MATERIAL_MAP_NORMAL = 4;
+const uint MATERIAL_MAP_OCCLUSION = 8;
+const uint MATERIAL_MAP_EMISSIVE = 16;
+const uint MATERIAL_MAP_UV1_SHIFT = 5;
+
 struct CompositeRoot {
     TextureIndex source_texture;
     SamplerIndex source_sampler;
@@ -129,31 +136,33 @@ $assert $reflect(DrawRoot._pad1).offset == 244;
 $assert $reflect(DrawRoot._pad2).offset == 248;
 $assert $reflect(DrawRoot._pad3).offset == 252;
 
-struct BasicMaterialGpu {
-    uint         kind;
-    uint         flags;
-    float        alpha_cutoff;
-    uint         _pad0;
-    Vec4f        color;
-    TextureIndex map_texture;
-    SamplerIndex map_sampler;
-    uint         map_uv_set;
-    uint         map_present;
-    Vec4f        map_uv_row0;
-    Vec4f        map_uv_row1;
+struct TextureMapGpu {
+    TextureIndex texture_index;
+    SamplerIndex sampler_index;
+    Vec2f        uv_offset;
+    Vec4f        uv_linear;
 }
-$assert BasicMaterialGpu::size == 80;
+$assert TextureMapGpu::size == 32;
+$assert $reflect(TextureMapGpu.texture_index).offset == 0;
+$assert $reflect(TextureMapGpu.sampler_index).offset == 4;
+$assert $reflect(TextureMapGpu.uv_offset).offset == 8;
+$assert $reflect(TextureMapGpu.uv_linear).offset == 16;
+
+struct BasicMaterialGpu {
+    uint          kind;
+    uint          flags;
+    float         alpha_cutoff;
+    uint          map_flags;
+    Vec4f         color;
+    TextureMapGpu map;
+}
+$assert BasicMaterialGpu::size == 64;
 $assert $reflect(BasicMaterialGpu.kind).offset == 0;
 $assert $reflect(BasicMaterialGpu.flags).offset == 4;
 $assert $reflect(BasicMaterialGpu.alpha_cutoff).offset == 8;
-$assert $reflect(BasicMaterialGpu._pad0).offset == 12;
+$assert $reflect(BasicMaterialGpu.map_flags).offset == 12;
 $assert $reflect(BasicMaterialGpu.color).offset == 16;
-$assert $reflect(BasicMaterialGpu.map_texture).offset == 32;
-$assert $reflect(BasicMaterialGpu.map_sampler).offset == 36;
-$assert $reflect(BasicMaterialGpu.map_uv_set).offset == 40;
-$assert $reflect(BasicMaterialGpu.map_present).offset == 44;
-$assert $reflect(BasicMaterialGpu.map_uv_row0).offset == 48;
-$assert $reflect(BasicMaterialGpu.map_uv_row1).offset == 64;
+$assert $reflect(BasicMaterialGpu.map).offset == 32;
 
 struct GuiVertexGpu {
     float position_x;
@@ -226,18 +235,23 @@ $assert $reflect(LightGpu.cos_inner).offset == 56;
 $assert $reflect(LightGpu._pad0).offset == 60;
 
 struct StandardMaterialGpu {
-    uint  kind;
-    uint  flags;
-    float alpha_cutoff;
-    float metallic;
-    Vec4f base_color;
-    Vec4f emissive_strength;
-    float roughness;
-    uint  _pad0;
-    uint  _pad1;
-    uint  _pad2;
+    uint          kind;
+    uint          flags;
+    float         alpha_cutoff;
+    float         metallic;
+    Vec4f         base_color;
+    Vec4f         emissive_strength;
+    float         roughness;
+    float         normal_scale;
+    float         occlusion_strength;
+    uint          map_flags;
+    TextureMapGpu base_color_map;
+    TextureMapGpu metallic_roughness_map;
+    TextureMapGpu normal_map;
+    TextureMapGpu occlusion_map;
+    TextureMapGpu emissive_map;
 }
-$assert StandardMaterialGpu::size == 64;
+$assert StandardMaterialGpu::size == 224;
 $assert $reflect(StandardMaterialGpu.kind).offset == 0;
 $assert $reflect(StandardMaterialGpu.flags).offset == 4;
 $assert $reflect(StandardMaterialGpu.alpha_cutoff).offset == 8;
@@ -245,6 +259,11 @@ $assert $reflect(StandardMaterialGpu.metallic).offset == 12;
 $assert $reflect(StandardMaterialGpu.base_color).offset == 16;
 $assert $reflect(StandardMaterialGpu.emissive_strength).offset == 32;
 $assert $reflect(StandardMaterialGpu.roughness).offset == 48;
-$assert $reflect(StandardMaterialGpu._pad0).offset == 52;
-$assert $reflect(StandardMaterialGpu._pad1).offset == 56;
-$assert $reflect(StandardMaterialGpu._pad2).offset == 60;
+$assert $reflect(StandardMaterialGpu.normal_scale).offset == 52;
+$assert $reflect(StandardMaterialGpu.occlusion_strength).offset == 56;
+$assert $reflect(StandardMaterialGpu.map_flags).offset == 60;
+$assert $reflect(StandardMaterialGpu.base_color_map).offset == 64;
+$assert $reflect(StandardMaterialGpu.metallic_roughness_map).offset == 96;
+$assert $reflect(StandardMaterialGpu.normal_map).offset == 128;
+$assert $reflect(StandardMaterialGpu.occlusion_map).offset == 160;
+$assert $reflect(StandardMaterialGpu.emissive_map).offset == 192;

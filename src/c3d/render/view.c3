@@ -31,11 +31,13 @@ struct DrawItem @private {
     GpuGeometry*    geometry;
     MaterialRes*    material;
     gpu::GpuAddress root;
+    gpu::FrontFace  front_face;
 }
 
 struct DrawState @private {
     gpu::PipelineHandle    pipeline;
     gpu::CullMode          cull;
+    gpu::FrontFace         front_face;
     gpu::PrimitiveTopology topology;
     bool                   depth_test;
     bool                   depth_write;
@@ -94,6 +96,7 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
     Vec2 viewport = { (float)self.hdr_color.width, (float)self.hdr_color.height };
     CameraMatrices matrices = camera::derive_matrices(*camera, camera_node.world, viewport);
     Frame* slot = &self.frames[self.frame_index % FRAMES_IN_FLIGHT];
+    bool view_reflected = matrices.view.determinant() < 0;
 
     @pool() {
         ExtractCounts counts;
@@ -112,6 +115,13 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
         foreach (index, &candidate : candidates) {
             GpuGeometry* geometry = ensure_geometry(self, candidate.geometry)!;
             MaterialRes* material = ensure_material(self, candidate.material)!;
+            validate_normal_geometry(
+                geometry: geometry,
+                material: &self.assets.material(candidate.material).data,
+                bindings: &material.bindings,
+                line_polygon_mode: self.caps.line_polygon_mode,
+            )!;
+            bool model_reflected = candidate.node.world.determinant() < 0;
             items[index] = {
                 .sort_key  = draw_sort_key(
                     fragment:  material_fragment(self.assets.material(candidate.material).data.kind),
@@ -122,6 +132,8 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
                 .candidate = candidate,
                 .geometry  = geometry,
                 .material  = material,
+                .front_face = model_reflected != view_reflected
+                  ? gpu::FrontFace.CLOCKWISE : gpu::FrontFace.COUNTER_CLOCKWISE,
             };
         }
         sort::quicksort(items, &by_sort_key);
@@ -231,8 +243,14 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
         if (!self.assets.geometries.is_live(mesh.geometry) || !self.assets.materials.is_live(mesh.material)) {
             self.stats.dangling_refs++;
         } else {
-            ensure_geometry(self, mesh.geometry)!;
+            GpuGeometry* geometry = ensure_geometry(self, mesh.geometry)!;
             MaterialRes* material = ensure_material(self, mesh.material)!;
+            validate_normal_geometry(
+                geometry: geometry,
+                material: &self.assets.material(mesh.material).data,
+                bindings: &material.bindings,
+                line_polygon_mode: self.caps.line_polygon_mode,
+            )!;
             pipeline_for(self, &self.assets.material(material.asset).data)!;
         }
     };
@@ -347,6 +365,7 @@ fn void? record_opaque_pass(Renderer* renderer, DrawItem[] items) @private {
         DrawState wanted = {
             .pipeline    = pipeline_for(renderer, material)!,
             .cull        = common.double_sided ? gpu::CullMode.NONE : gpu::CullMode.BACK,
+            .front_face  = item.front_face,
             .topology    = primitive_topology(item.geometry.topology),
             .depth_test  = common.depth_test,
             .depth_write = common.depth_write,
@@ -354,9 +373,11 @@ fn void? record_opaque_pass(Renderer* renderer, DrawItem[] items) @private {
         if (wanted.pipeline.index != bound.pipeline.index) {
             gpu::cmd_bind_pipeline(&renderer.commands, wanted.pipeline)!;
         }
-        if (!state_set || wanted.cull != bound.cull || wanted.topology != bound.topology
-            || wanted.depth_test != bound.depth_test || wanted.depth_write != bound.depth_write) {
+        if (!state_set || wanted.cull != bound.cull || wanted.front_face != bound.front_face
+            || wanted.topology != bound.topology || wanted.depth_test != bound.depth_test
+            || wanted.depth_write != bound.depth_write) {
             state.raster.cull_mode = wanted.cull;
+            state.raster.front_face = wanted.front_face;
             state.raster.topology = wanted.topology;
             state.depth = {
                 .test_enable  = wanted.depth_test,
@@ -394,6 +415,20 @@ fn void? record_opaque_pass(Renderer* renderer, DrawItem[] items) @private {
         }
     }
     gpu::cmd_end_render_pass(&renderer.commands)!;
+}
+
+fn void? validate_normal_geometry(
+    GpuGeometry* geometry,
+    Material* material,
+    MaterialBindings* bindings,
+    bool line_polygon_mode,
+) @private {
+    if (material.kind != MaterialKind.STANDARD || !bindings.normal.present
+        || material.standard.normal_scale == 0 || geometry.layout.flags.has_tangents) return;
+
+    if (geometry.topology != Topology.TRIANGLES || (material.common.wireframe && line_polygon_mode)) {
+        return c3d::UNSUPPORTED~;
+    }
 }
 
 fn Material* material_data(Renderer* renderer, MaterialRes* material) @local {

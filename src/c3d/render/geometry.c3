@@ -26,7 +26,7 @@ const gpu::StageMask CONSUMER_STAGES = { .vertex_shader, .fragment_shader, .comp
 *>
 bitstruct GeometryFlags : uint { // mirrored as GeometryRoot.flags in c3d_abi.glsl and GEOMETRY_HAS_* in vertex_pull.glsl
     bool has_normals  : 0;
-    bool has_tangents : 1;
+    bool has_tangents : 1; // mirrored as GEOMETRY_HAS_TANGENTS in vertex_pull.glsl
     bool has_uv0      : 2;
     bool has_uv1      : 3;
     bool has_colors   : 4;

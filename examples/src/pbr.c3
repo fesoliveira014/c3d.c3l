@@ -2,8 +2,10 @@ module pbr_example;
 
 import std::io;
 import std::math;
+import std::io::path;
 import c3d;
 import c3d::asset;
+import c3d::asset::image;
 import c3d::camera;
 import c3d::geometry;
 import c3d::gui;
@@ -26,13 +28,23 @@ const float GRID_SPACING @local = 1.1f; // separates the radius-0.4 spheres
 const float CONE_GAP_DEGREES @local = 0.1f; // keeps inner and outer half-angles distinct
 const usz MOUSE_BUTTON_LEFT @local = 1; // SDL button index
 const Vec2 CONTROLS_PANEL_POSITION @local = { 16, 16 };
-const Vec2 CONTROLS_PANEL_SIZE @local = { 320, 275 };
-const Vec2 SCENE_PANEL_POSITION @local = { 16, 307 };
-const Vec2 SCENE_PANEL_SIZE @local = { 320, 285 };
+const Vec2 CONTROLS_PANEL_SIZE @local = { 320, 345 };
+const Vec2 SCENE_PANEL_POSITION @local = { 16, 377 };
+const Vec2 SCENE_PANEL_SIZE @local = { 320, 215 };
 const Vec2 MATERIAL_PANEL_POSITION @local = { 16, 608 };
 const Vec2 MATERIAL_PANEL_SIZE @local = { 320, 250 };
-const Vec2 STATS_PANEL_POSITION @local = { 1104, 16 };
-const Vec2 STATS_PANEL_SIZE @local = { 320, 800 };
+const Vec2 MAPS_PANEL_POSITION @local = { 1104, 16 };
+const Vec2 MAPS_PANEL_SIZE @local = { 320, 580 };
+const float GRID_EMISSION @local = 0.15f; // lights the middle row without hiding its direct lighting
+const Vec2 STATS_PANEL_POSITION @local = { 1104, 608 };
+const Vec2 STATS_PANEL_SIZE @local = { 320, 250 };
+
+struct MapTextures @local {
+    TextureId base_color;
+    TextureId material_data;
+    TextureId normal;
+    TextureId emissive;
+}
 
 struct Orbit @local {
     Vec3  target;
@@ -94,23 +106,32 @@ fn void? draw_gui_frame(
     return renderer.end_frame();
 }
 
-fn StandardParams grid_params(uint index) @local {
+fn StandardParams grid_params(uint index, MapTextures textures, bool mapped = true) @local {
     StandardParams params = material::STANDARD_PARAMS_DEFAULT;
     params.base_color = { 0.7f, 0.25f, 0.1f, 1 };
     params.metallic = (float)(index % GRID_SIDE) / (float)(GRID_SIDE - 1);
     params.roughness = 0.05f + (float)(index / GRID_SIDE) * 0.95f / (float)(GRID_SIDE - 1);
+    if (mapped) {
+        params.base_color_map = material::texture_slot(textures.base_color);
+        params.metallic_roughness_map = material::texture_slot(textures.material_data);
+        params.normal_map = material::texture_slot(textures.normal);
+        params.occlusion_map = material::texture_slot(textures.material_data, uv_set: 1);
+        params.emissive_map = material::texture_slot(textures.emissive);
+        if (index / GRID_SIDE == GRID_SIDE / 2) params.emissive = { GRID_EMISSION, GRID_EMISSION, GRID_EMISSION };
+    }
     return params;
 }
 
-fn void reset_grid(AssetStore* assets, MaterialId[] materials) @local {
+fn void reset_grid(
+    AssetStore* assets,
+    MaterialId[] materials,
+    MapTextures textures,
+    bool mapped,
+) @local {
     foreach (index, material_id : materials) {
         MaterialAsset* record = assets.material(material_id);
-        StandardParams params = grid_params((uint)index);
-        StandardParams previous = record.data.standard;
-        if (previous.base_color == params.base_color && previous.metallic == params.metallic
-            && previous.roughness == params.roughness && previous.emissive == params.emissive
-            && previous.emissive_strength == params.emissive_strength) continue;
-        record.data.standard = params;
+        record.data.standard = grid_params((uint)index, textures, mapped);
+        record.data.common = material::MATERIAL_COMMON_DEFAULT;
         assets.mark_material_dirty(material_id);
     }
 }
@@ -134,6 +155,102 @@ fn bool edit_scalar(
     if (!(edited >= minimum && edited <= maximum) || edited == *value) return false;
     *value = edited;
     return true;
+}
+
+fn bool edit_map(
+    ZString label,
+    TextureSlot* slot,
+    TextureId texture,
+) @local {
+    if (!imgui::collapsing_header(label, {})) return false;
+    imgui::push_id(label);
+    defer imgui::pop_id();
+
+    bool changed;
+    bool enabled = slot.texture.asset.index != 0;
+    if (imgui::checkbox("Enabled", &enabled)) {
+        slot.texture = { .kind = ASSET, .asset = enabled ? texture : (TextureId){} };
+        changed = true;
+    }
+    bool uv1 = slot.uv_set == 1;
+    if (imgui::checkbox("Use UV1 (twice UV0)", &uv1)) {
+        slot.uv_set = uv1 ? 1 : 0;
+        changed = true;
+    }
+    changed |= edit_scalar(
+        label: "Scale U",
+        value: &slot.transform.scale.x,
+        minimum: -float::max,
+        maximum: float::max,
+    );
+    changed |= edit_scalar(
+        label: "Scale V",
+        value: &slot.transform.scale.y,
+        minimum: -float::max,
+        maximum: float::max,
+    );
+    float rotation_degrees = math::rad_to_deg(slot.transform.rotation);
+    if (edit_scalar(
+        label: "Rotation (deg)",
+        value: &rotation_degrees,
+        minimum: -360,
+        maximum: 360,
+    )) {
+        slot.transform.rotation = math::deg_to_rad(rotation_degrees);
+        changed = true;
+    }
+    changed |= edit_scalar(
+        label: "Offset U",
+        value: &slot.transform.offset.x,
+        minimum: -float::max,
+        maximum: float::max,
+    );
+    changed |= edit_scalar(
+        label: "Offset V",
+        value: &slot.transform.offset.y,
+        minimum: -float::max,
+        maximum: float::max,
+    );
+
+    SamplerId sampler = slot.sampler;
+    if (imgui::radio_button("Nearest", sampler.index == asset::SAMPLER_NEAREST.index)) {
+        sampler = asset::SAMPLER_NEAREST;
+    }
+    bool repeat = sampler.index == 0 || sampler.index == asset::SAMPLER_LINEAR_REPEAT.index;
+    if (imgui::radio_button("Trilinear repeat", repeat)) {
+        sampler = asset::SAMPLER_LINEAR_REPEAT;
+    }
+    if (imgui::radio_button("Trilinear clamp", sampler.index == asset::SAMPLER_LINEAR_CLAMP.index)) {
+        sampler = asset::SAMPLER_LINEAR_CLAMP;
+    }
+    if (imgui::radio_button("Anisotropic", sampler.index == asset::SAMPLER_ANISOTROPIC.index)) {
+        sampler = asset::SAMPLER_ANISOTROPIC;
+    }
+    if (sampler.index != slot.sampler.index || sampler.generation != slot.sampler.generation) {
+        slot.sampler = sampler;
+        changed = true;
+    }
+    return changed;
+}
+
+fn void map_controls(AssetStore* assets, MaterialId material_id, MapTextures textures) @local {
+    bool visible = imgui::begin("Sphere maps", null, {});
+    defer imgui::end();
+    if (!visible) return;
+
+    MaterialAsset* record = assets.material(material_id);
+    StandardParams* params = &record.data.standard;
+    bool changed = edit_map("Base color (sRGB)", &params.base_color_map, textures.base_color);
+    changed |= edit_map("Metallic B / roughness G", &params.metallic_roughness_map, textures.material_data);
+    changed |= edit_map("Normal (linear XYZ)", &params.normal_map, textures.normal);
+    changed |= edit_map("Occlusion R", &params.occlusion_map, textures.material_data);
+    changed |= edit_map("Emissive (sRGB)", &params.emissive_map, textures.emissive);
+    bool masked = record.data.common.alpha_mode == MASK;
+    if (imgui::checkbox("Alpha mask", &masked)) {
+        record.data.common.alpha_mode = masked ? MASK : OPAQUE;
+        changed = true;
+    }
+    if (changed) assets.mark_material_dirty(material_id);
 }
 
 fn void edit_light_color(ZString label, Vec3* color) @local {
@@ -214,6 +331,9 @@ fn void? run_gui(
     Node* camera_node,
     Node* selected,
     MaterialId[] materials,
+    Node*[] spheres,
+    GeometryId[] geometries,
+    MapTextures textures,
     Orbit* orbit,
 ) @local {
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
@@ -221,6 +341,7 @@ fn void? run_gui(
 
     GuiPanelState panels = { .selected = selected.id };
     bool orthographic;
+    bool supplied_tangents;
     bool escape_captured;
     camera::Camera* camera = scene.get(camera_node, camera::Camera);
 
@@ -250,7 +371,27 @@ fn void? run_gui(
             imgui::text_unformatted("Rows, bottom up: roughness .05 to 1");
             imgui::text_unformatted("Drag to orbit; wheel to zoom.");
             imgui::text_unformatted("Release Escape to close.");
-            if (imgui::button("Reset grid factors")) reset_grid(renderer.assets, materials);
+            if (imgui::button("Reset mapped preset")) {
+                reset_grid(
+                    assets: renderer.assets,
+                    materials: materials,
+                    textures: textures,
+                    mapped: true,
+                );
+            }
+            if (imgui::button("Scalar-only preset")) {
+                reset_grid(
+                    assets: renderer.assets,
+                    materials: materials,
+                    textures: textures,
+                    mapped: false,
+                );
+            }
+            if (imgui::checkbox("Geometry has supplied tangents", &supplied_tangents)) {
+                foreach (sphere : spheres) {
+                    scene.get(sphere, Mesh).geometry = geometries[supplied_tangents ? 1 : 0];
+                }
+            }
             if (imgui::checkbox("Orthographic", &orthographic)) {
                 uint layers = camera.layers;
                 *camera = orthographic ? camera::orthographic(9, 0.1f, 100) : camera::perspective_deg(60, 0.1f);
@@ -285,6 +426,9 @@ fn void? run_gui(
                 imgui::set_next_window_pos(MATERIAL_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
                 imgui::set_next_window_size(MATERIAL_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
                 gui::material_panel(renderer.assets, mesh.material)!;
+                imgui::set_next_window_pos(MAPS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
+                imgui::set_next_window_size(MAPS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
+                map_controls(renderer.assets, mesh.material, textures);
             }
             if (Light* light = scene.get(node, Light)) {
                 imgui::set_next_window_pos(MATERIAL_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
@@ -361,16 +505,37 @@ fn int main(String[] args) {
     spotlight.local.position = { 3, 3, 5 };
     spotlight.local.rotation = maths::look_rotation((-spotlight.local.position).normalize(), { 0, 1, 0 });
 
+    MapTextures textures;
+    @pool() {
+        Path source = path::tnew($$FILEPATH)!!;
+        Path directory = source.parent()!!.tappend("../assets/pbr")!!;
+        textures.base_color = image::load_texture(&assets, (String)directory.tappend("base_color.png")!!, true)!!;
+        textures.material_data = image::load_texture(
+            assets: &assets,
+            path: (String)directory.tappend("material_data.png")!!,
+            srgb: false,
+        )!!;
+        textures.normal = image::load_texture(&assets, (String)directory.tappend("normal.png")!!, false)!!;
+        textures.emissive = image::load_texture(&assets, (String)directory.tappend("emissive.png")!!, true)!!;
+    };
+
     MaterialId[GRID_SIDE * GRID_SIDE] materials;
+    Node*[GRID_SIDE * GRID_SIDE] spheres;
+    GeometryId[2] geometries;
     @pool() {
         Geometry sphere = geometry::sphere(tmem, 0.4f);
-        GeometryId geometry_id = assets.add_geometry(&sphere, "pbr/sphere")!!;
+        sphere.uv1 = alloc::new_array(tmem, Vec2, sphere.uv0.len);
+        foreach (index, uv : sphere.uv0) sphere.uv1[index] = uv * 2;
+        sphere.tangents = {};
+        geometries[0] = assets.add_geometry(&sphere, "pbr/sphere_derivatives")!!;
+        sphere.compute_tangents(tmem);
+        geometries[1] = assets.add_geometry(&sphere, "pbr/sphere_tangents")!!;
         for (uint index = 0; index < materials.len; index++) {
             uint column = index % GRID_SIDE;
             uint row = index / GRID_SIDE;
-            materials[index] = assets.add_material(material::standard(grid_params(index)))!!;
+            materials[index] = assets.add_material(material::standard(grid_params(index, textures)))!!;
             Node* node = scene.add_mesh(
-                geometry: geometry_id,
+                geometry: geometries[0],
                 material: materials[index],
                 name: string::tformat("sphere %d,%d", column, row),
             )!!;
@@ -380,6 +545,7 @@ fn int main(String[] args) {
                 0,
             };
             node.layers = column % 2 == 0 ? 1 : 2;
+            spheres[index] = node;
         }
     };
     Node* camera_node = scene.add_camera(camera::perspective_deg(60, 0.1f), name: "camera")!!;
@@ -387,6 +553,7 @@ fn int main(String[] args) {
     Orbit orbit = { .distance = 12 };
     apply_orbit(&orbit, &window.input, camera_node);
     scene.update_world();
+    foreach (geometry_id : geometries) renderer.upload(geometry_id)!!;
     renderer.prepare_scene(&scene)!!;
 
     if (catch excuse = run_gui(
@@ -394,8 +561,11 @@ fn int main(String[] args) {
         renderer: &renderer,
         scene: &scene,
         camera_node: camera_node,
-        selected: sun,
+        selected: spheres[materials.len / 2],
         materials: materials[..],
+        spheres: spheres[..],
+        geometries: geometries[..],
+        textures: textures,
         orbit: &orbit,
     )) {
         io::printfn("GUI failed: %s", excuse);

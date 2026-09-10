@@ -30,7 +30,7 @@ struct MaterialRes {
     MaterialId      asset;
     uint            revision;
     gpu::GpuAddress address;
-    TextureBinding map_binding;
+    MaterialBindings bindings;
 }
 
 <*
@@ -58,19 +58,59 @@ fn void? Renderer.upload_material(&self, MaterialId material) {
 
 <*
  Write the packed block of a material.
- @param block : "Aligned to STREAM_ALIGNMENT; overwritten with packed fields."
- @param [&in] material : "Valid active material arm and Basic map coordinates."
+ @param block : "Aligned to STREAM_ALIGNMENT; active fields overwritten."
+ @param [&in] material : "Valid active material arm and texture coordinates."
  @require block.len >= MATERIAL_STRIDE, (uptr)block.ptr % STREAM_ALIGNMENT == 0
 *>
-fn void write_material_block(char[] block, Material* material, TextureBinding binding) {
+fn void write_material_block(char[] block, Material* material, MaterialBindings bindings) {
     MaterialFlags flags = {
         .alpha_mask = material.common.alpha_mode == AlphaMode.MASK,
         .double_sided = material.common.double_sided,
     };
 
     switch (material.kind) {
+        case BASIC:
+            BasicMaterialGpu* packed = (BasicMaterialGpu*)block.ptr;
+            *packed = {
+                .kind = (uint)material.kind.ordinal,
+                .flags = (uint)flags,
+                .alpha_cutoff = material.common.alpha_cutoff,
+                .map_flags = texture_map_flags(
+                    slot: material.basic.map,
+                    binding: bindings.base_color,
+                    map_bit: shader::MATERIAL_MAP_BASE_COLOR,
+                ),
+                .color = material.basic.color,
+                .map = pack_texture_map(material.basic.map, bindings.base_color),
+            };
         case STANDARD:
             StandardParams* params = &material.standard;
+            uint map_flags = texture_map_flags(
+                slot: params.base_color_map,
+                binding: bindings.base_color,
+                map_bit: shader::MATERIAL_MAP_BASE_COLOR,
+            );
+            map_flags |= texture_map_flags(
+                slot: params.metallic_roughness_map,
+                binding: bindings.metallic_roughness,
+                map_bit: shader::MATERIAL_MAP_METALLIC_ROUGHNESS,
+            );
+            map_flags |= texture_map_flags(
+                slot: params.normal_map,
+                binding: bindings.normal,
+                map_bit: shader::MATERIAL_MAP_NORMAL,
+            );
+            map_flags |= texture_map_flags(
+                slot: params.occlusion_map,
+                binding: bindings.occlusion,
+                map_bit: shader::MATERIAL_MAP_OCCLUSION,
+            );
+            map_flags |= texture_map_flags(
+                slot: params.emissive_map,
+                binding: bindings.emissive,
+                map_bit: shader::MATERIAL_MAP_EMISSIVE,
+            );
+
             StandardMaterialGpu* packed = (StandardMaterialGpu*)block.ptr;
             *packed = {
                 .kind = (uint)material.kind.ordinal,
@@ -80,26 +120,51 @@ fn void write_material_block(char[] block, Material* material, TextureBinding bi
                 .base_color = params.base_color,
                 .emissive_strength = { params.emissive.r, params.emissive.g, params.emissive.b, params.emissive_strength },
                 .roughness = params.roughness,
+                .normal_scale = params.normal_scale,
+                .occlusion_strength = params.occlusion_strength,
+                .map_flags = map_flags,
+                .base_color_map = pack_texture_map(params.base_color_map, bindings.base_color),
+                .metallic_roughness_map = pack_texture_map(params.metallic_roughness_map, bindings.metallic_roughness),
+                .normal_map = pack_texture_map(params.normal_map, bindings.normal),
+                .occlusion_map = pack_texture_map(params.occlusion_map, bindings.occlusion),
+                .emissive_map = pack_texture_map(params.emissive_map, bindings.emissive),
             };
-            return;
+    }
+}
 
+fn TextureMapGpu pack_texture_map(TextureSlot slot, TextureBinding binding) @private {
+    Vec4 row0;
+    Vec4 row1;
+    texture_uv_rows(slot.transform, &row0, &row1);
+
+    return {
+        .texture_index = binding.texture_index,
+        .sampler_index = binding.sampler_index,
+        .uv_offset = { row0.z, row1.z },
+        .uv_linear = { row0.x, row0.y, row1.x, row1.y },
+    };
+}
+
+fn uint texture_map_flags(TextureSlot slot, TextureBinding binding, uint map_bit) @private {
+    uint flags = binding.present ? map_bit : 0;
+    if (slot.uv_set == 1) flags |= map_bit << shader::MATERIAL_MAP_UV1_SHIFT;
+    return flags;
+}
+
+fn MaterialBindings? resolve_material_bindings(Renderer* renderer, Material* material) @private {
+    switch (material.kind) {
         case BASIC:
-            Vec4 row0;
-            Vec4 row1;
-            texture_uv_rows(material.basic.map.transform, &row0, &row1);
+            return { .base_color = resolve_texture_slot(renderer, material.basic.map)! };
+        case STANDARD:
+            if (material.common.alpha_mode == AlphaMode.BLEND) return c3d::UNSUPPORTED~;
 
-            BasicMaterialGpu* packed = (BasicMaterialGpu*)block.ptr;
-            *packed = {
-                .kind         = (uint)material.kind.ordinal,
-                .flags        = (uint)flags,
-                .alpha_cutoff = material.common.alpha_cutoff,
-                .color        = material.basic.color,
-                .map_texture  = binding.texture_index,
-                .map_sampler  = binding.sampler_index,
-                .map_uv_set   = material.basic.map.uv_set,
-                .map_present  = binding.present ? 1u : 0u,
-                .map_uv_row0  = row0,
-                .map_uv_row1  = row1,
+            StandardParams* params = &material.standard;
+            return {
+                .base_color = resolve_texture_slot(renderer, params.base_color_map)!,
+                .metallic_roughness = resolve_texture_slot(renderer, params.metallic_roughness_map)!,
+                .normal = resolve_texture_slot(renderer, params.normal_map)!,
+                .occlusion = resolve_texture_slot(renderer, params.occlusion_map)!,
+                .emissive = resolve_texture_slot(renderer, params.emissive_map)!,
             };
     }
 }
@@ -107,21 +172,15 @@ fn void write_material_block(char[] block, Material* material, TextureBinding bi
 fn MaterialRes*? ensure_material(Renderer* renderer, MaterialId material) @private {
     MaterialAsset* record = renderer.assets.material(material);
     MaterialRes* mirror = &renderer.materials[material.index];
-    TextureBinding binding;
-    switch (record.data.kind) {
-        case BASIC:
-            binding = resolve_texture_slot(renderer, record.data.basic.map)!;
-        case STANDARD:
-            if (record.data.common.alpha_mode == AlphaMode.BLEND) return c3d::UNSUPPORTED~;
-    }
+    MaterialBindings bindings = resolve_material_bindings(renderer, &record.data)!;
 
     bool same_asset = mirror.asset.index == material.index && mirror.asset.generation == material.generation;
     if (same_asset && mirror.revision == record.header.revision
-        && texture_binding_matches(mirror.map_binding, binding)) return mirror;
+        && material_bindings_match(mirror.bindings, bindings)) return mirror;
 
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan staging = slot.upload.take(&renderer.device, MATERIAL_STRIDE, STREAM_ALIGNMENT)!;
-    write_material_block(staging.bytes, &record.data, binding);
+    write_material_block(staging.bytes, &record.data, bindings);
     usz offset = (usz)material.index * MATERIAL_STRIDE;
     gpu::GpuSpan destination = renderer.material_heap_span.checked_subspan(offset, MATERIAL_STRIDE)!;
     renderer.pending_copies.push({ .src = staging.span, .dst = destination });
@@ -130,7 +189,7 @@ fn MaterialRes*? ensure_material(Renderer* renderer, MaterialId material) @priva
 
     mirror.asset = material;
     mirror.revision = record.header.revision;
-    mirror.map_binding = binding;
+    mirror.bindings = bindings;
     mirror.address = gpu::get_span_address(&renderer.device, destination)!;
     renderer.stats.uploads++;
     renderer.stats.upload_bytes += (uint)MATERIAL_STRIDE;

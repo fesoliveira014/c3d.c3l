@@ -6,6 +6,13 @@
 #extension GL_EXT_buffer_reference2 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
+const uint MATERIAL_MAP_BASE_COLOR = 1u;
+const uint MATERIAL_MAP_METALLIC_ROUGHNESS = 2u;
+const uint MATERIAL_MAP_NORMAL = 4u;
+const uint MATERIAL_MAP_OCCLUSION = 8u;
+const uint MATERIAL_MAP_EMISSIVE = 16u;
+const uint MATERIAL_MAP_UV1_SHIFT = 5u;
+
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer CompositeRoot {
     uint source_texture;
     uint source_sampler;
@@ -73,18 +80,20 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer DrawRoot {
     uint _pad3;
 };
 
+struct TextureMapGpu {
+    uint texture_index;
+    uint sampler_index;
+    vec2 uv_offset;
+    vec4 uv_linear;
+};
+
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer BasicMaterialGpu {
     uint kind;
     uint flags;
     float alpha_cutoff;
-    uint _pad0;
+    uint map_flags;
     vec4 color;
-    uint map_texture;
-    uint map_sampler;
-    uint map_uv_set;
-    uint map_present;
-    vec4 map_uv_row0;
-    vec4 map_uv_row1;
+    TextureMapGpu map;
 };
 
 struct GuiVertexGpu {
@@ -135,9 +144,14 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer StandardMat
     vec4 base_color;
     vec4 emissive_strength;
     float roughness;
-    uint _pad0;
-    uint _pad1;
-    uint _pad2;
+    float normal_scale;
+    float occlusion_strength;
+    uint map_flags;
+    TextureMapGpu base_color_map;
+    TextureMapGpu metallic_roughness_map;
+    TextureMapGpu normal_map;
+    TextureMapGpu occlusion_map;
+    TextureMapGpu emissive_map;
 };
 
 #endif

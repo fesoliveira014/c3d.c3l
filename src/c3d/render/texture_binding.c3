@@ -17,6 +17,15 @@ struct TextureBinding {
     bool present;
 }
 
+<* Resolved texture slots for the active material family. *>
+struct MaterialBindings {
+    TextureBinding base_color;
+    TextureBinding metallic_roughness;
+    TextureBinding normal;
+    TextureBinding occlusion;
+    TextureBinding emissive;
+}
+
 <*
  Compare resolved bindings including backing-resource revisions.
  @pure
@@ -69,4 +78,16 @@ fn void texture_uv_rows(UvTransform transform, Vec4* row0, Vec4* row1) {
     float sine = math::sin(transform.rotation);
     *row0 = { cosine * transform.scale.x, -sine * transform.scale.y, transform.offset.x, 0 };
     *row1 = { sine * transform.scale.x, cosine * transform.scale.y, transform.offset.y, 0 };
+}
+
+<*
+ Compare every resolved material dependency.
+ @pure
+*>
+fn bool material_bindings_match(MaterialBindings first, MaterialBindings second) {
+    return texture_binding_matches(first.base_color, second.base_color)
+        && texture_binding_matches(first.metallic_roughness, second.metallic_roughness)
+        && texture_binding_matches(first.normal, second.normal)
+        && texture_binding_matches(first.occlusion, second.occlusion)
+        && texture_binding_matches(first.emissive, second.emissive);
 }

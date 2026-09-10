@@ -115,3 +115,47 @@ Levels are red, green, blue, yellow, magenta, cyan and white at offsets
 0, 2048, 2560, 2688, 2720, 2728 and 2736. The 2×2 and 1×1 tails still contain
 one full eight-byte block. These commands describe one-time fixture authoring;
 no compressor, transcoder or image encoder runs during the build.
+
+# Standard material fixtures
+
+`examples/assets/pbr/` contains four project-authored 64×64 RGBA PNGs.
+`base_color.png` is an sRGB checker with opaque and partially transparent squares;
+`material_data.png` stores linear occlusion in R, roughness in G and metallic in B.
+`normal.png` encodes a periodic tangent-space XYZ normal in linear RGB, and
+`emissive.png` is an sRGB orange cross. They are generated once with Python's
+standard library using the recipe below; no encoder runs during builds.
+
+```python
+import math, struct, zlib
+from pathlib import Path
+
+def png(path, pixels, width=64, height=64):
+    def chunk(kind, data):
+        return struct.pack('>I', len(data)) + kind + data + struct.pack('>I', zlib.crc32(kind + data) & 0xffffffff)
+    rows = b''.join(b'\x00' + pixels[y * width * 4:(y + 1) * width * 4] for y in range(height))
+    path.write_bytes(b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 6, 0, 0, 0))
+                    + chunk(b'IDAT', zlib.compress(rows, 9)) + chunk(b'IEND', b''))
+
+def byte(value):
+    return max(0, min(255, round(value * 255)))
+
+output = Path('examples/assets/pbr')
+output.mkdir(parents=True, exist_ok=True)
+images = {name: bytearray() for name in ['base_color', 'material_data', 'normal', 'emissive']}
+for y in range(64):
+    for x in range(64):
+        u, v = (x + 0.5) / 64, (y + 0.5) / 64
+        checker = ((x // 8) + (y // 8)) % 2
+        images['base_color'].extend((240, 210, 160, 255) if checker else (70, 120, 200, 80))
+        ao = 0.2 if x < 32 else 1.0
+        roughness = 0.3 if y < 32 else 1.0
+        images['material_data'].extend((byte(ao), byte(roughness), 255, 255))
+        slope_x = 0.5 * math.cos(4 * math.pi * u) * math.sin(4 * math.pi * v)
+        slope_y = 0.5 * math.sin(4 * math.pi * u) * math.cos(4 * math.pi * v)
+        length = math.sqrt(slope_x * slope_x + slope_y * slope_y + 1)
+        images['normal'].extend((byte((-slope_x / length + 1) / 2), byte((-slope_y / length + 1) / 2),
+                                 byte((1 / length + 1) / 2), 255))
+        images['emissive'].extend((255, 80, 20, 255) if 28 <= x < 36 or 28 <= y < 36 else (0, 0, 0, 255))
+for name, pixels in images.items():
+    png(output / (name + '.png'), pixels)
+```
