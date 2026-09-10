@@ -205,7 +205,7 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
                 material:  item.material.address,
                 object_id: item.candidate.node.id.index,
                 layers:    item.candidate.node.layers,
-                flags:     scene.get(item.candidate.node, Mesh).receive_shadow ? shader::DRAW_RECEIVE_SHADOW : 0,
+                flags:     item.candidate.receive_shadow ? shader::DRAW_RECEIVE_SHADOW : 0,
             );
             item.root = draw_span.address;
         }
@@ -271,26 +271,22 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
     defer catch discard_uploads(self);
     bool shadows_enabled;
     @pool() {
-        ShadowRequest[] requests = alloc::new_array(tmem, ShadowRequest, scene.count(Light));
-        uint count;
-        scene.@each(Light; Entity entity, Light* light) {
-            if (scene.node(entity).visible_effective && light.layers != 0 && light.intensity > 0 && light.shadow.enabled) {
-                light.shadow.validate();
-                if (light.kind != DIRECTIONAL) return c3d::UNSUPPORTED~;
-                requests[count++] = { .light = entity, .priority = light.shadow.priority, .layer_count = light.shadow.cascades };
-            }
-        };
-        shadows_enabled = assign_shadow_layers(requests[:count], self.max_shadow_layers).layer_count > 0;
-    };
-    if (shadows_enabled && !self.shadow_atlas.texture.is_valid()) {
-        self.shadow_atlas = create_shadow_atlas(
-            allocator: self.allocator,
-            device: &self.device,
-            resolution: self.shadow_resolution,
-            layer_count: self.max_shadow_layers,
+        LightCounts counts;
+        ShadowRequest[] requests = collect_shadow_requests(
+            allocator: tmem,
+            scene: scene,
+            packed: {},
+            frustum: null,
+            view_layers: uint::max,
+            capacity: scene.count(Light),
+            counts: &counts,
         )!;
+        shadows_enabled = assign_shadow_layers(requests, self.max_shadow_layers).layer_count > 0;
+    };
+    if (shadows_enabled) {
+        ensure_shadow_atlas(self)!;
+        shadow_pipeline_for(self, false)!;
     }
-    if (shadows_enabled) shadow_pipeline_for(self, false)!;
     scene.@each(Mesh; Entity entity, Mesh* mesh) {
         if (!self.assets.geometries.is_live(mesh.geometry) || !self.assets.materials.is_live(mesh.material)) {
             self.stats.dangling_refs++;
@@ -306,7 +302,6 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
             Material* data = &self.assets.material(material.asset).data;
             pipeline_for(self, data)!;
             if (shadows_enabled && mesh.cast_shadow && scene.node(entity).visible_effective) {
-                if (data.common.alpha_mode == AlphaMode.BLEND) return c3d::UNSUPPORTED~;
                 shadow_pipeline_for(self, data.common.wireframe && self.caps.line_polygon_mode)!;
             }
         }
@@ -420,8 +415,16 @@ fn void? record_opaque_pass(Renderer* renderer, DrawItem[] items) @private {
     if (items.len) {
         bound.pipeline = pipeline_for(renderer, material_data(renderer, items[0].material))!;
     } else {
-        Material clear_material = material::basic({});
-        bound.pipeline = pipeline_for(renderer, &clear_material)!;
+        PipelineKey key = {
+            .vertex = { .shader = MESH },
+            .fragment = { .shader = BASIC },
+            .color_formats = { [0] = HDR_FORMAT },
+            .color_count = 1,
+            .depth_format = DEPTH_FORMAT,
+            .samples = gpu::SampleCount.ONE,
+            .polygon = gpu::PolygonMode.FILL,
+        };
+        bound.pipeline = renderer.pipelines.get(&renderer.device, key)!;
     }
     gpu::cmd_bind_pipeline(&renderer.commands, bound.pipeline)!;
     gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;

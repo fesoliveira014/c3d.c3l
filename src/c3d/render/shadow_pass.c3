@@ -23,6 +23,13 @@ struct ShadowDraw @private {
     gpu::CullMode cull;
 }
 
+struct ShadowDrawState @private {
+    gpu::PipelineHandle pipeline;
+    gpu::CullMode cull;
+    gpu::FrontFace front_face;
+    gpu::PrimitiveTopology topology;
+}
+
 fn gpu::PipelineHandle? shadow_pipeline_for(Renderer* renderer, bool wireframe) @private {
     PipelineKey key = {
         .vertex = { .shader = MESH, .flags = shader::SHADER_FLAG_DEPTH_ONLY },
@@ -39,7 +46,9 @@ fn ShadowDraw[]? prepare_shadow_draws(Renderer* renderer, MeshCandidate[] candid
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     foreach (index, &candidate : candidates) {
         Material* material = &renderer.assets.material(candidate.material).data;
-        if (material.common.alpha_mode == AlphaMode.BLEND) return c3d::UNSUPPORTED~;
+        if (material.kind == MaterialKind.STANDARD && material.common.alpha_mode == AlphaMode.BLEND) {
+            return c3d::UNSUPPORTED~;
+        }
         ShadowDraw* draw = &draws[index];
         *draw = {
             .candidate = candidate,
@@ -74,7 +83,7 @@ fn void? record_shadow_layer(
     uint resolution = renderer.shadow_atlas.resolution;
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan frame = slot.upload.take(&renderer.device, FrameRoot::size, STREAM_ALIGNMENT)!;
-    Camera camera;
+    Camera camera; // Depth-only stages consume only the fitted matrices.
     write_frame_root(
         root: (FrameRoot*)frame.bytes.ptr,
         matrices: &cascade.camera,
@@ -96,15 +105,33 @@ fn void? record_shadow_layer(
     state.raster.depth_bias_enable = bias != 0;
     state.raster.depth_bias_slope = -bias;
     bool view_reflected = cascade.camera.view.determinant() < 0;
-    gpu::cmd_bind_pipeline(&renderer.commands, shadow_pipeline_for(renderer, draws.len ? draws[0].wireframe : false)!)!;
+    ShadowDrawState bound = {
+        .pipeline = shadow_pipeline_for(renderer, draws.len ? draws[0].wireframe : false)!,
+    };
+    bool state_set;
+    gpu::cmd_bind_pipeline(&renderer.commands, bound.pipeline)!;
     gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
     foreach (draw : draws) {
-        gpu::cmd_bind_pipeline(&renderer.commands, shadow_pipeline_for(renderer, draw.wireframe)!)!;
-        state.raster.cull_mode = draw.cull;
-        state.raster.front_face = draw.reflected != view_reflected
-          ? gpu::FrontFace.CLOCKWISE : gpu::FrontFace.COUNTER_CLOCKWISE;
-        state.raster.topology = primitive_topology(draw.geometry.topology);
-        gpu::cmd_set_graphics_state(&renderer.commands, &state)!;
+        ShadowDrawState wanted = {
+            .pipeline = shadow_pipeline_for(renderer, draw.wireframe)!,
+            .cull = draw.cull,
+            .front_face = draw.reflected != view_reflected
+              ? gpu::FrontFace.CLOCKWISE : gpu::FrontFace.COUNTER_CLOCKWISE,
+            .topology = primitive_topology(draw.geometry.topology),
+        };
+        if (wanted.pipeline.index != bound.pipeline.index) {
+            gpu::cmd_bind_pipeline(&renderer.commands, wanted.pipeline)!;
+        }
+        if (!state_set || wanted.cull != bound.cull || wanted.front_face != bound.front_face
+            || wanted.topology != bound.topology) {
+            state.raster.cull_mode = wanted.cull;
+            state.raster.front_face = wanted.front_face;
+            state.raster.topology = wanted.topology;
+            gpu::cmd_set_graphics_state(&renderer.commands, &state)!;
+            state_set = true;
+        }
+        bound = wanted;
+
         gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, DrawRoot::size, STREAM_ALIGNMENT)!;
         write_draw_root(
             root: (DrawRoot*)root.bytes.ptr,
@@ -160,14 +187,7 @@ fn ShadowGpu[]? record_directional_shadows(
     ShadowAllocation allocation = assign_shadow_layers(extraction.shadows[:covered], renderer.max_shadow_layers);
     renderer.stats.shadow_requests_dropped += allocation.dropped;
     if (!allocation.layer_count) return (ShadowGpu[]){};
-    if (!renderer.shadow_atlas.texture.is_valid()) {
-        renderer.shadow_atlas = create_shadow_atlas(
-            allocator: renderer.allocator,
-            device: &renderer.device,
-            resolution: renderer.shadow_resolution,
-            layer_count: renderer.max_shadow_layers,
-        )!;
-    }
+    ensure_shadow_atlas(renderer)!;
     ExtractCounts counts;
     MeshCandidate[] candidates = extract_shadow_candidates(
         allocator: tmem,

@@ -32,9 +32,8 @@ struct Light {
  @pure
 *>
 fn Light directional(Vec3 color, float intensity, bool shadow = true) {
-    ShadowSettings settings = SHADOW_SETTINGS_DEFAULT;
-    settings.enabled = shadow;
-    return { .kind = DIRECTIONAL, .color = color, .intensity = intensity, .layers = uint::max, .shadow = settings };
+    return { .kind = DIRECTIONAL, .color = color, .intensity = intensity,
+        .layers = uint::max, .shadow = @shadow_settings(shadow) };
 }
 
 <*
@@ -48,9 +47,8 @@ fn Light directional(Vec3 color, float intensity, bool shadow = true) {
  @pure
 *>
 fn Light point(Vec3 color, float intensity, float range = 0) {
-    ShadowSettings settings = SHADOW_SETTINGS_DEFAULT;
-    settings.enabled = false;
-    return { .kind = POINT, .color = color, .intensity = intensity, .range = range, .layers = uint::max, .shadow = settings };
+    return { .kind = POINT, .color = color, .intensity = intensity, .range = range,
+        .layers = uint::max, .shadow = @shadow_settings(false) };
 }
 
 <*
@@ -73,8 +71,6 @@ fn Light spot(
     float outer,
     float range = 0,
 ) {
-    ShadowSettings settings = SHADOW_SETTINGS_DEFAULT;
-    settings.enabled = false;
     return {
         .kind = SPOT,
         .color = color,
@@ -83,6 +79,12 @@ fn Light spot(
         .inner_cone = inner,
         .outer_cone = outer,
         .layers = uint::max,
-        .shadow = settings,
+        .shadow = @shadow_settings(false),
     };
+}
+
+macro ShadowSettings @shadow_settings(bool enabled) @local {
+    ShadowSettings settings = SHADOW_SETTINGS_DEFAULT;
+    settings.enabled = enabled;
+    return settings;
 }

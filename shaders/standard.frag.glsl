@@ -90,12 +90,13 @@ void main() {
         standard_view_direction(frame, v_world_pos)
     );
     vec3 color = frame.ambient.rgb * base_color.rgb * (1.0 - metallic) * occlusion + emissive;
+    float view_depth = -(frame.view * vec4(v_world_pos, 1.0)).z;
     for (uint index = 0u; index < frame.light_count; index++) {
         LightGpu light = LightArray(frame.lights).values[index];
         if ((draw.layers & light.layers) == 0u) continue;
         float visibility = 1.0;
         if ((draw.flags & DRAW_RECEIVE_SHADOW) != 0u && light.shadow_count != 0u) {
-            visibility = shadow_visibility(frame, light, v_world_pos, offset_normal);
+            visibility = shadow_visibility(frame, light, v_world_pos, offset_normal, view_depth);
         }
         color += visibility * evaluate_standard_light(light, v_world_pos, surface);
     }

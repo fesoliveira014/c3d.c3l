@@ -33,10 +33,31 @@ fn LightExtraction? extract_lights(
     uint capacity,
     LightCounts* counts,
 ) {
-    *counts = {};
     LightGpu[] packed = alloc::new_array(allocator, LightGpu, math::min(scene.count(Light), capacity));
     defer catch alloc::free(allocator, packed.ptr);
-    ShadowRequest[] requests = alloc::new_array(allocator, ShadowRequest, packed.len);
+    ShadowRequest[] requests = collect_shadow_requests(
+        allocator: allocator,
+        scene: scene,
+        packed: packed,
+        frustum: frustum,
+        view_layers: view_layers,
+        capacity: (uint)packed.len,
+        counts: counts,
+    )!;
+    return { .lights = packed[:counts.packed], .shadows = requests };
+}
+
+fn ShadowRequest[]? collect_shadow_requests(
+    Allocator allocator,
+    Scene* scene,
+    LightGpu[] packed,
+    Frustum* frustum,
+    uint view_layers,
+    uint capacity,
+    LightCounts* counts,
+) @private {
+    *counts = {};
+    ShadowRequest[] requests = alloc::new_array(allocator, ShadowRequest, capacity);
     defer catch alloc::free(allocator, requests.ptr);
     uint request_count;
 
@@ -50,6 +71,7 @@ fn LightExtraction? extract_lights(
                 node: node,
                 light: light,
                 frustum: frustum,
+                capacity: capacity,
                 counts: counts,
             );
 
@@ -66,7 +88,7 @@ fn LightExtraction? extract_lights(
         }
     };
 
-    return { .lights = packed[:counts.packed], .shadows = requests[:request_count] };
+    return requests[:request_count];
 }
 
 fn void include_light(
@@ -74,26 +96,30 @@ fn void include_light(
     Node* node,
     Light* light,
     Frustum* frustum,
+    uint capacity,
     LightCounts* counts,
 ) @local {
     Vec3 position = node.world_position();
-    if (light.kind != DIRECTIONAL && light.range > 0
+    if (frustum && light.kind != DIRECTIONAL && light.range > 0
         && !maths::frustum_intersects_sphere(frustum, { .center = position, .radius = light.range })) {
         counts.culled++;
         return;
     }
 
-    if (counts.packed == packed.len) {
+    if (counts.packed == capacity) {
         counts.dropped++;
         return;
     }
+
+    uint index = counts.packed++;
+    if (!packed.len) return;
 
     Vec3 direction;
     if (light.kind != POINT) {
         direction = maths::transform_dir(node.world, { 0, 0, -1 }).normalize();
     }
 
-    packed[counts.packed++] = {
+    packed[index] = {
         .position_range = { position.x, position.y, position.z, light.range },
         .direction_cos_outer = { direction.x, direction.y, direction.z,
             light.kind == SPOT ? math::cos(light.outer_cone) : 0 },

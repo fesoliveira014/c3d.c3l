@@ -26,6 +26,7 @@ struct MeshCandidate {
     MaterialId material;
     Aabb       world_bounds;
     float      ndc_depth;
+    bool       receive_shadow;
 }
 
 <*
@@ -90,6 +91,7 @@ fn void include_mesh(MeshCandidate[] candidates, Node* node, Mesh* mesh, AssetSt
         .material     = mesh.material,
         .world_bounds = world,
         .ndc_depth    = center_depth(camera, world),
+        .receive_shadow = mesh.receive_shadow,
     };
     counts.visible++;
 }
@@ -130,6 +132,7 @@ fn MeshCandidate[] extract_shadow_candidates(
                     .geometry = mesh.geometry,
                     .material = mesh.material,
                     .world_bounds = maths::aabb_transform(bounds, node.world),
+                    .receive_shadow = mesh.receive_shadow,
                 };
             }
         }

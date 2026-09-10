@@ -68,6 +68,7 @@ fn CameraMatrices matrices_of(Fixture* fixture) @local {
 fn void test_extract_includes_only_visible_in_layer_in_frustum_live_meshes() @test {
     Fixture fixture = make_fixture();
     defer destroy_fixture(&fixture);
+    fixture.scene.get(fixture.visible, Mesh).receive_shadow = false;
     CameraMatrices matrices = matrices_of(&fixture);
     @pool() {
         render::ExtractCounts counts;
@@ -81,6 +82,7 @@ fn void test_extract_includes_only_visible_in_layer_in_frustum_live_meshes() @te
         );
         assert(candidates.len == 1);
         assert(candidates[0].node == fixture.visible);
+        assert(!candidates[0].receive_shadow);
         assert(counts.visible == 1 && counts.culled == 1 && counts.dangling == 1);
     };
 }
@@ -101,6 +103,7 @@ fn void test_extract_layer_mask_selects_nodes() @test {
         );
         assert(candidates.len == 1);
         assert(candidates[0].node == fixture.off_layer);
+        assert(candidates[0].receive_shadow);
         assert(counts.culled == 0 && counts.dangling == 0);
     };
 }

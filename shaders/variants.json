@@ -1,16 +1,16 @@
 {
   "flags": ["DEPTH_ONLY"],
   "entries": [
-    {"shader": "fullscreen", "source": "fullscreen.vert.glsl", "stage": "vert", "defines": []},
-    {"shader": "gradient", "source": "gradient.frag.glsl", "stage": "frag", "defines": []},
-    {"shader": "composite", "source": "composite.frag.glsl", "stage": "frag", "defines": []},
-    {"shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": []},
-    {"shader": "basic", "source": "basic.frag.glsl", "stage": "frag", "defines": []},
-    {"shader": "imgui_vertex", "source": "imgui.vert.glsl", "stage": "vert", "defines": []},
-    {"shader": "imgui_fragment", "source": "imgui.frag.glsl", "stage": "frag", "defines": []},
-    {"shader": "cube_preview", "source": "cube_preview.frag.glsl", "stage": "frag", "defines": []},
-    {"shader": "standard", "source": "standard.frag.glsl", "stage": "frag", "defines": []},
-    {"shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["DEPTH_ONLY"]},
-    {"shader": "depth_only", "source": "depth_only.frag.glsl", "stage": "frag", "defines": []}
+    { "shader": "fullscreen", "source": "fullscreen.vert.glsl", "stage": "vert", "defines": [] },
+    { "shader": "gradient",   "source": "gradient.frag.glsl",   "stage": "frag", "defines": [] },
+    { "shader": "composite",  "source": "composite.frag.glsl",  "stage": "frag", "defines": [] },
+    { "shader": "mesh",       "source": "mesh.vert.glsl",       "stage": "vert", "defines": [] },
+    { "shader": "basic",      "source": "basic.frag.glsl",      "stage": "frag", "defines": [] },
+    { "shader": "imgui_vertex", "source": "imgui.vert.glsl", "stage": "vert", "defines": [] },
+    { "shader": "imgui_fragment", "source": "imgui.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "cube_preview", "source": "cube_preview.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "standard", "source": "standard.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "mesh",       "source": "mesh.vert.glsl",       "stage": "vert", "defines": ["DEPTH_ONLY"] },
+    { "shader": "depth_only", "source": "depth_only.frag.glsl", "stage": "frag", "defines": [] }
   ]
 }

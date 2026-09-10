@@ -540,8 +540,7 @@ fn void? finish_pending_output(Renderer* renderer) @private {
  @return? c3d::INVALID_ARGUMENT, c3d::ASSET_DATA_UNAVAILABLE, gpu::RESOURCE_IN_USE
  @return? gpu::WAIT_TIMEOUT, gpu::COMMAND_RECORDING_ERROR
  @require desc.surface_fn == null || (desc.output_width > 0 && desc.output_height > 0)
- @require desc.shadow_resolution == 0 || desc.shadow_resolution > 4
- @require desc.max_shadow_layers <= uint::max / (FRAMES_IN_FLIGHT * TIMESTAMPS_PER_PASS) - PASS_COUNT
+ @require desc.shadow_resolution == 0 || desc.shadow_resolution > 2 * SHADOW_GUARD_TEXELS
 *>
 fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDesc desc = {}) {
     // The callback's user pointer is fixed when the runtime is created and a returned-by-value

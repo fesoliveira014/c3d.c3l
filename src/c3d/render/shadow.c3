@@ -12,7 +12,7 @@ import std::math;
 import std::sort;
 
 const float LIGHT_BASIS_PARALLEL_THRESHOLD @local = 0.99f; // avoids an unstable cross product near the reference axis
-const uint SHADOW_GUARD_TEXELS @local = 2; // covers linear 3x3 comparisons and nearest-grid snapping
+const uint SHADOW_GUARD_TEXELS @private = 2; // covers linear 3x3 comparisons and nearest-grid snapping
 const uint SLICE_FACE_CORNERS @local = 4;
 const float SHADOW_DEPTH_ROUNDING_MARGIN @local = 8 * math::FLOAT_EPSILON; // keeps fitted boundary planes inside after projection rounding
 

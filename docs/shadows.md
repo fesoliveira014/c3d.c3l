@@ -117,7 +117,8 @@ Opaque casters do not sample material textures. Basic and Standard MASK casters
 use their base alpha factor, base map, selected UV0/UV1, UV transform, sampler and
 alpha cutoff. Alpha cutouts therefore follow the same material semantics as the
 visible surface. Double-sided and reflected-model face handling are preserved.
-BLEND casters are currently unsupported.
+Basic BLEND materials cast opaque shadows, matching their current opaque forward
+rendering. Standard BLEND remains unsupported.
 
 A shadow-only draw resolves the geometry and, for MASK, its base map. It does not
 require Standard normal, metallic/roughness, occlusion or emissive sources.

@@ -3,7 +3,7 @@ module c3d::light;
 import std::math;
 
 <* Maximum cascades in one directional shadow request. *>
-const uint MAX_SHADOW_CASCADES = 4; // four split depths occupy 16 bytes per light on the CPU
+const uint MAX_SHADOW_CASCADES = 4; // each cascade consumes one atlas layer and one depth pass
 
 <* Default directional shadow coverage and bias. *>
 const ShadowSettings SHADOW_SETTINGS_DEFAULT = {
@@ -29,7 +29,6 @@ struct ShadowSettings {
 
 <*
  Check the programming contract for enabled shadow settings.
- @param [&in] self : "Current light settings."
  @require !self.enabled || (self.cascades >= 1 && self.cascades <= MAX_SHADOW_CASCADES)
  @require !self.enabled || (self.bias >= 0 && math::is_finite(self.bias))
  @require !self.enabled || (self.normal_bias >= 0 && math::is_finite(self.normal_bias))
