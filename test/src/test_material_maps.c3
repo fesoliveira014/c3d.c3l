@@ -27,22 +27,6 @@ fn TextureSlot map_slot(
     );
 }
 
-fn void assert_uv_rows(
-    Vec4 actual_row0,
-    Vec4 actual_row1,
-    Vec4 expected_row0,
-    Vec4 expected_row1,
-) @local {
-    assert(math::abs(actual_row0.x - expected_row0.x) < 0.0001f);
-    assert(math::abs(actual_row0.y - expected_row0.y) < 0.0001f);
-    assert(math::abs(actual_row0.z - expected_row0.z) < 0.0001f);
-    assert(math::abs(actual_row0.w - expected_row0.w) < 0.0001f);
-    assert(math::abs(actual_row1.x - expected_row1.x) < 0.0001f);
-    assert(math::abs(actual_row1.y - expected_row1.y) < 0.0001f);
-    assert(math::abs(actual_row1.z - expected_row1.z) < 0.0001f);
-    assert(math::abs(actual_row1.w - expected_row1.w) < 0.0001f);
-}
-
 fn void assert_map_transform(TextureMapGpu map, Vec2 expected_offset, Vec4 expected_linear) @local {
     assert((map.uv_offset - expected_offset).length() < 0.0001f);
     assert((map.uv_linear - expected_linear).length() < 0.0001f);
@@ -240,13 +224,16 @@ fn void test_basic_packing_uses_base_color_binding_after_standard() @test {
 
     BasicMaterialGpu* packed = (BasicMaterialGpu*)bytes.ptr;
     assert(packed.color == params.color);
-    assert(packed.map_texture == (gpu::TextureIndex)37);
-    assert(packed.map_sampler == (gpu::SamplerIndex)47);
-    assert(packed.map_uv_set == 1 && packed.map_present == 1);
-    assert_uv_rows(
-        actual_row0: packed.map_uv_row0,
-        actual_row1: packed.map_uv_row1,
-        expected_row0: { 0, -1.25f, 1.5f, 0 },
-        expected_row1: { 0.5f, 0, -2.5f, 0 },
+    assert(packed.map.texture_index == (gpu::TextureIndex)37);
+    assert(packed.map.sampler_index == (gpu::SamplerIndex)47);
+    assert(packed.map_flags == 0x21);
+    assert_map_transform(
+        map: packed.map,
+        expected_offset: { 1.5f, -2.5f },
+        expected_linear: { 0, -1.25f, 0.5f, 0 },
     );
+
+    material = material::basic({ .color = { 1, 1, 1, 1 } });
+    render::write_material_block(bytes, &material, {});
+    assert(packed.map_flags == 0);
 }

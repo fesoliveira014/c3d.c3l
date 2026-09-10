@@ -106,8 +106,10 @@ bits 5–9 select UV1 for those same slots. The matching schema constants are
 `MATERIAL_MAP_NORMAL`, `MATERIAL_MAP_OCCLUSION`, `MATERIAL_MAP_EMISSIVE` and
 `MATERIAL_MAP_UV1_SHIFT`.
 
-`BasicMaterialGpu` remains 80 bytes, and the default 4096-slot material heap is
-917,504 bytes. Custom renderer-side packing code supplies
+`BasicMaterialGpu` occupies 64 bytes: `map_flags` is at offset 12 and its
+`TextureMapGpu map` is at offset 32. It uses the same base-color presence and
+UV1 bits as Standard. The default 4096-slot material heap is 917,504 bytes.
+Custom renderer-side packing code supplies
 `render::MaterialBindings` to `write_material_block`, with `base_color`,
 `metallic_roughness`, `normal`, `occlusion` and `emissive` fields. Each is a
 `TextureBinding` carrying texture/sampler indices and an explicit `present` flag.

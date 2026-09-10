@@ -67,18 +67,27 @@ root DrawRoot {
     uint       _pad3;
 }
 
+const uint MATERIAL_MAP_BASE_COLOR = 1;
+const uint MATERIAL_MAP_METALLIC_ROUGHNESS = 2;
+const uint MATERIAL_MAP_NORMAL = 4;
+const uint MATERIAL_MAP_OCCLUSION = 8;
+const uint MATERIAL_MAP_EMISSIVE = 16;
+const uint MATERIAL_MAP_UV1_SHIFT = 5;
+
+struct TextureMapGpu {
+    TextureIndex texture_index;
+    SamplerIndex sampler_index;
+    vec2 uv_offset;
+    vec4 uv_linear;
+}
+
 root BasicMaterialGpu {
-    uint  kind;
-    uint  flags;
+    uint kind;
+    uint flags;
     float alpha_cutoff;
-    uint  _pad0;
-    vec4  color;
-    TextureIndex map_texture;
-    SamplerIndex map_sampler;
-    uint map_uv_set;
-    uint map_present;
-    vec4 map_uv_row0;
-    vec4 map_uv_row1;
+    uint map_flags;
+    vec4 color;
+    TextureMapGpu map;
 }
 
 struct GuiVertexGpu {
@@ -119,20 +128,6 @@ struct LightGpu {
     uint layers;
     float cos_inner;
     uint _pad0;
-}
-
-const uint MATERIAL_MAP_BASE_COLOR = 1;
-const uint MATERIAL_MAP_METALLIC_ROUGHNESS = 2;
-const uint MATERIAL_MAP_NORMAL = 4;
-const uint MATERIAL_MAP_OCCLUSION = 8;
-const uint MATERIAL_MAP_EMISSIVE = 16;
-const uint MATERIAL_MAP_UV1_SHIFT = 5;
-
-struct TextureMapGpu {
-    TextureIndex texture_index;
-    SamplerIndex sampler_index;
-    vec2 uv_offset;
-    vec4 uv_linear;
 }
 
 root StandardMaterialGpu {

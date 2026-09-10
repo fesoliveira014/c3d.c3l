@@ -226,7 +226,7 @@ fn void test_material_packing_switches_active_union_arm() @test {
     render::write_material_block(bytes, &material, {});
     BasicMaterialGpu* basic = (BasicMaterialGpu*)bytes.ptr;
     assert(basic.kind == (uint)MaterialKind.BASIC.ordinal && basic.flags == 0);
-    assert(basic.color.g == 1 && basic.map_present == 0);
+    assert(basic.color.g == 1 && basic.map_flags == 0);
 }
 
 fn void test_roots_preserve_light_and_receiver_data() @test {

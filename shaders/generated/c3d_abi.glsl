@@ -80,18 +80,20 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer DrawRoot {
     uint _pad3;
 };
 
+struct TextureMapGpu {
+    uint texture_index;
+    uint sampler_index;
+    vec2 uv_offset;
+    vec4 uv_linear;
+};
+
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer BasicMaterialGpu {
     uint kind;
     uint flags;
     float alpha_cutoff;
-    uint _pad0;
+    uint map_flags;
     vec4 color;
-    uint map_texture;
-    uint map_sampler;
-    uint map_uv_set;
-    uint map_present;
-    vec4 map_uv_row0;
-    vec4 map_uv_row1;
+    TextureMapGpu map;
 };
 
 struct GuiVertexGpu {
@@ -132,13 +134,6 @@ struct LightGpu {
     uint layers;
     float cos_inner;
     uint _pad0;
-};
-
-struct TextureMapGpu {
-    uint texture_index;
-    uint sampler_index;
-    vec2 uv_offset;
-    vec4 uv_linear;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer StandardMaterialGpu {

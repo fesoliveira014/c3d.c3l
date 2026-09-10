@@ -70,22 +70,18 @@ fn void write_material_block(char[] block, Material* material, MaterialBindings 
 
     switch (material.kind) {
         case BASIC:
-            Vec4 row0;
-            Vec4 row1;
-            texture_uv_rows(material.basic.map.transform, &row0, &row1);
-            TextureBinding binding = bindings.base_color;
             BasicMaterialGpu* packed = (BasicMaterialGpu*)block.ptr;
             *packed = {
                 .kind = (uint)material.kind.ordinal,
                 .flags = (uint)flags,
                 .alpha_cutoff = material.common.alpha_cutoff,
+                .map_flags = texture_map_flags(
+                    slot: material.basic.map,
+                    binding: bindings.base_color,
+                    map_bit: shader::MATERIAL_MAP_BASE_COLOR,
+                ),
                 .color = material.basic.color,
-                .map_texture = binding.texture_index,
-                .map_sampler = binding.sampler_index,
-                .map_uv_set = material.basic.map.uv_set,
-                .map_present = binding.present ? 1u : 0u,
-                .map_uv_row0 = row0,
-                .map_uv_row1 = row1,
+                .map = pack_texture_map(material.basic.map, bindings.base_color),
             };
         case STANDARD:
             StandardParams* params = &material.standard;

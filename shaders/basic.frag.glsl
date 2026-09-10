@@ -20,11 +20,12 @@ void main() {
     DrawRoot draw = DrawRoot(pc.fragment_root_gpu);
     BasicMaterialGpu material = BasicMaterialGpu(draw.material);
     vec4 color = material.color;
-    if (material.map_present != 0u) {
-        vec2 selected_uv = material.map_uv_set == 0u ? v_uv0 : v_uv1;
-        vec3 uv = vec3(selected_uv, 1.0);
-        vec2 transformed = vec2(dot(material.map_uv_row0.xyz, uv), dot(material.map_uv_row1.xyz, uv));
-        color *= sample_texture_2d_implicit(material.map_texture, material.map_sampler, transformed);
+    if ((material.map_flags & MATERIAL_MAP_BASE_COLOR) != 0u) {
+        TextureMapGpu map = material.map;
+        bool uv1 = (material.map_flags & (MATERIAL_MAP_BASE_COLOR << MATERIAL_MAP_UV1_SHIFT)) != 0u;
+        vec2 uv = uv1 ? v_uv1 : v_uv0;
+        vec2 transformed = vec2(dot(map.uv_linear.xy, uv), dot(map.uv_linear.zw, uv)) + map.uv_offset;
+        color *= sample_texture_2d_implicit(map.texture_index, map.sampler_index, transformed);
     }
 
     if ((material.flags & MATERIAL_ALPHA_MASK) != 0u && color.a < material.alpha_cutoff) discard;

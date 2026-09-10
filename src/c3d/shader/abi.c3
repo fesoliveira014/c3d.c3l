@@ -136,31 +136,33 @@ $assert $reflect(DrawRoot._pad1).offset == 244;
 $assert $reflect(DrawRoot._pad2).offset == 248;
 $assert $reflect(DrawRoot._pad3).offset == 252;
 
-struct BasicMaterialGpu {
-    uint         kind;
-    uint         flags;
-    float        alpha_cutoff;
-    uint         _pad0;
-    Vec4f        color;
-    TextureIndex map_texture;
-    SamplerIndex map_sampler;
-    uint         map_uv_set;
-    uint         map_present;
-    Vec4f        map_uv_row0;
-    Vec4f        map_uv_row1;
+struct TextureMapGpu {
+    TextureIndex texture_index;
+    SamplerIndex sampler_index;
+    Vec2f        uv_offset;
+    Vec4f        uv_linear;
 }
-$assert BasicMaterialGpu::size == 80;
+$assert TextureMapGpu::size == 32;
+$assert $reflect(TextureMapGpu.texture_index).offset == 0;
+$assert $reflect(TextureMapGpu.sampler_index).offset == 4;
+$assert $reflect(TextureMapGpu.uv_offset).offset == 8;
+$assert $reflect(TextureMapGpu.uv_linear).offset == 16;
+
+struct BasicMaterialGpu {
+    uint          kind;
+    uint          flags;
+    float         alpha_cutoff;
+    uint          map_flags;
+    Vec4f         color;
+    TextureMapGpu map;
+}
+$assert BasicMaterialGpu::size == 64;
 $assert $reflect(BasicMaterialGpu.kind).offset == 0;
 $assert $reflect(BasicMaterialGpu.flags).offset == 4;
 $assert $reflect(BasicMaterialGpu.alpha_cutoff).offset == 8;
-$assert $reflect(BasicMaterialGpu._pad0).offset == 12;
+$assert $reflect(BasicMaterialGpu.map_flags).offset == 12;
 $assert $reflect(BasicMaterialGpu.color).offset == 16;
-$assert $reflect(BasicMaterialGpu.map_texture).offset == 32;
-$assert $reflect(BasicMaterialGpu.map_sampler).offset == 36;
-$assert $reflect(BasicMaterialGpu.map_uv_set).offset == 40;
-$assert $reflect(BasicMaterialGpu.map_present).offset == 44;
-$assert $reflect(BasicMaterialGpu.map_uv_row0).offset == 48;
-$assert $reflect(BasicMaterialGpu.map_uv_row1).offset == 64;
+$assert $reflect(BasicMaterialGpu.map).offset == 32;
 
 struct GuiVertexGpu {
     float position_x;
@@ -231,18 +233,6 @@ $assert $reflect(LightGpu.kind).offset == 48;
 $assert $reflect(LightGpu.layers).offset == 52;
 $assert $reflect(LightGpu.cos_inner).offset == 56;
 $assert $reflect(LightGpu._pad0).offset == 60;
-
-struct TextureMapGpu {
-    TextureIndex texture_index;
-    SamplerIndex sampler_index;
-    Vec2f        uv_offset;
-    Vec4f        uv_linear;
-}
-$assert TextureMapGpu::size == 32;
-$assert $reflect(TextureMapGpu.texture_index).offset == 0;
-$assert $reflect(TextureMapGpu.sampler_index).offset == 4;
-$assert $reflect(TextureMapGpu.uv_offset).offset == 8;
-$assert $reflect(TextureMapGpu.uv_linear).offset == 16;
 
 struct StandardMaterialGpu {
     uint          kind;

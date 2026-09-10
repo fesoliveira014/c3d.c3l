@@ -181,10 +181,10 @@ fn void test_material_map_packs_uv_selection_and_identity() @test {
     render::write_material_block(bytes, &material, { .base_color = binding });
 
     c3d::shader::BasicMaterialGpu* packed = (c3d::shader::BasicMaterialGpu*)bytes.ptr;
-    assert(packed.map_texture == (gpu::TextureIndex)7 && packed.map_sampler == (gpu::SamplerIndex)3);
-    assert(packed.map_uv_set == 1 && packed.map_present == 1);
-    assert(packed.map_uv_row0 == (Vec4){ 1, 0, 0, 0 });
-    assert(packed.map_uv_row1 == (Vec4){ 0, 1, 0, 0 });
+    assert(packed.map.texture_index == (gpu::TextureIndex)7 && packed.map.sampler_index == (gpu::SamplerIndex)3);
+    assert(packed.map_flags == 0x21);
+    assert(packed.map.uv_offset == (Vec2){ 0, 0 });
+    assert(packed.map.uv_linear == (Vec4){ 1, 0, 0, 1 });
     assert(packed.color == material.basic.color);
 }
 
