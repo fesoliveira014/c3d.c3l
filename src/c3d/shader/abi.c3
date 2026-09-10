@@ -3,6 +3,8 @@ module c3d::shader;
 
 import gpu;
 
+const uint DRAW_RECEIVE_SHADOW = 1;
+const uint DRAW_ALPHA_MASK = 2;
 const uint MATERIAL_MAP_BASE_COLOR = 1;
 const uint MATERIAL_MAP_METALLIC_ROUGHNESS = 2;
 const uint MATERIAL_MAP_NORMAL = 4;
@@ -223,16 +225,46 @@ struct LightGpu {
     uint  kind;
     uint  layers;
     float cos_inner;
+    uint  shadow_first;
+    uint  shadow_count;
     uint  _pad0;
+    uint  _pad1;
+    uint  _pad2;
 }
-$assert LightGpu::size == 64;
+$assert LightGpu::size == 80;
 $assert $reflect(LightGpu.position_range).offset == 0;
 $assert $reflect(LightGpu.direction_cos_outer).offset == 16;
 $assert $reflect(LightGpu.color_intensity).offset == 32;
 $assert $reflect(LightGpu.kind).offset == 48;
 $assert $reflect(LightGpu.layers).offset == 52;
 $assert $reflect(LightGpu.cos_inner).offset == 56;
-$assert $reflect(LightGpu._pad0).offset == 60;
+$assert $reflect(LightGpu.shadow_first).offset == 60;
+$assert $reflect(LightGpu.shadow_count).offset == 64;
+$assert $reflect(LightGpu._pad0).offset == 68;
+$assert $reflect(LightGpu._pad1).offset == 72;
+$assert $reflect(LightGpu._pad2).offset == 76;
+
+struct ShadowGpu {
+    Mat4f        view_proj;
+    TextureIndex texture_index;
+    SamplerIndex sampler_index;
+    float        normal_bias;
+    float        split_depth;
+    float        texel_size;
+    uint         _pad0;
+    uint         _pad1;
+    uint         _pad2;
+}
+$assert ShadowGpu::size == 96;
+$assert $reflect(ShadowGpu.view_proj).offset == 0;
+$assert $reflect(ShadowGpu.texture_index).offset == 64;
+$assert $reflect(ShadowGpu.sampler_index).offset == 68;
+$assert $reflect(ShadowGpu.normal_bias).offset == 72;
+$assert $reflect(ShadowGpu.split_depth).offset == 76;
+$assert $reflect(ShadowGpu.texel_size).offset == 80;
+$assert $reflect(ShadowGpu._pad0).offset == 84;
+$assert $reflect(ShadowGpu._pad1).offset == 88;
+$assert $reflect(ShadowGpu._pad2).offset == 92;
 
 struct StandardMaterialGpu {
     uint          kind;

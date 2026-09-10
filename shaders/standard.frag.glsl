@@ -6,6 +6,8 @@
 #include "normal_mapping.glsl"
 #include "brdf.glsl"
 #include "lights.glsl"
+#include "material_maps.glsl"
+#include "shadows.glsl"
 
 const uint MATERIAL_ALPHA_MASK = 1u; // mirrored as MaterialFlags.alpha_mask
 const uint MATERIAL_DOUBLE_SIDED = 2u; // mirrored as MaterialFlags.double_sided
@@ -22,16 +24,6 @@ layout(push_constant) uniform Push {
     uint64_t fragment_root_gpu;
 } pc;
 
-vec2 map_uv(TextureMapGpu map, uint flags, uint map_bit) {
-    bool uv1 = (flags & (map_bit << MATERIAL_MAP_UV1_SHIFT)) != 0u;
-    vec2 uv = uv1 ? v_uv1 : v_uv0;
-    return vec2(dot(map.uv_linear.xy, uv), dot(map.uv_linear.zw, uv)) + map.uv_offset;
-}
-
-vec4 sample_map(TextureMapGpu map, uint flags, uint map_bit) {
-    return sample_texture_2d_implicit(map.texture_index, map.sampler_index, map_uv(map, flags, map_bit));
-}
-
 void main() {
     DrawRoot draw = DrawRoot(pc.fragment_root_gpu);
     FrameRoot frame = FrameRoot(draw.frame);
@@ -43,28 +35,30 @@ void main() {
     vec3 emissive = material.emissive_strength.rgb * material.emissive_strength.w;
 
     if ((material.map_flags & MATERIAL_MAP_BASE_COLOR) != 0u) {
-        base_color *= sample_map(material.base_color_map, material.map_flags, MATERIAL_MAP_BASE_COLOR);
+        base_color *= sample_map(material.base_color_map, material.map_flags, MATERIAL_MAP_BASE_COLOR, v_uv0, v_uv1);
     }
     if ((material.map_flags & MATERIAL_MAP_METALLIC_ROUGHNESS) != 0u) {
         vec4 factors = sample_map(
             material.metallic_roughness_map,
             material.map_flags,
-            MATERIAL_MAP_METALLIC_ROUGHNESS
+            MATERIAL_MAP_METALLIC_ROUGHNESS, v_uv0, v_uv1
         );
         metallic = clamp(metallic * factors.b, 0.0, 1.0);
         roughness = clamp(roughness * factors.g, 0.0, 1.0);
     }
     if ((material.map_flags & MATERIAL_MAP_OCCLUSION) != 0u) {
-        float sampled = sample_map(material.occlusion_map, material.map_flags, MATERIAL_MAP_OCCLUSION).r;
+        float sampled = sample_map(material.occlusion_map, material.map_flags, MATERIAL_MAP_OCCLUSION, v_uv0, v_uv1).r;
         occlusion = mix(1.0, clamp(sampled, 0.0, 1.0), material.occlusion_strength);
     }
     if ((material.map_flags & MATERIAL_MAP_EMISSIVE) != 0u) {
-        emissive *= sample_map(material.emissive_map, material.map_flags, MATERIAL_MAP_EMISSIVE).rgb;
+        emissive *= sample_map(material.emissive_map, material.map_flags, MATERIAL_MAP_EMISSIVE, v_uv0, v_uv1).rgb;
     }
 
+    vec3 offset_normal = normalize(v_normal);
+    if ((material.flags & MATERIAL_DOUBLE_SIDED) != 0u && !gl_FrontFacing) offset_normal = -offset_normal;
     vec3 normal = normalize(v_normal);
     if ((material.map_flags & MATERIAL_MAP_NORMAL) != 0u && material.normal_scale != 0.0) {
-        vec2 uv = map_uv(material.normal_map, material.map_flags, MATERIAL_MAP_NORMAL);
+        vec2 uv = map_uv(material.normal_map, material.map_flags, MATERIAL_MAP_NORMAL, v_uv0, v_uv1);
         vec3 mapped = decode_normal(
             sample_texture_2d_implicit(material.normal_map.texture_index, material.normal_map.sampler_index, uv).rgb,
             material.normal_scale
@@ -99,7 +93,11 @@ void main() {
     for (uint index = 0u; index < frame.light_count; index++) {
         LightGpu light = LightArray(frame.lights).values[index];
         if ((draw.layers & light.layers) == 0u) continue;
-        color += evaluate_standard_light(light, v_world_pos, surface);
+        float visibility = 1.0;
+        if ((draw.flags & DRAW_RECEIVE_SHADOW) != 0u && light.shadow_count != 0u) {
+            visibility = shadow_visibility(frame, light, v_world_pos, offset_normal);
+        }
+        color += visibility * evaluate_standard_light(light, v_world_pos, surface);
     }
     out_color = vec4(color, base_color.a);
 }

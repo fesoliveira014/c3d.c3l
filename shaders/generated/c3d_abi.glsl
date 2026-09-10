@@ -6,6 +6,8 @@
 #extension GL_EXT_buffer_reference2 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
+const uint DRAW_RECEIVE_SHADOW = 1u;
+const uint DRAW_ALPHA_MASK = 2u;
 const uint MATERIAL_MAP_BASE_COLOR = 1u;
 const uint MATERIAL_MAP_METALLIC_ROUGHNESS = 2u;
 const uint MATERIAL_MAP_NORMAL = 4u;
@@ -133,7 +135,23 @@ struct LightGpu {
     uint kind;
     uint layers;
     float cos_inner;
+    uint shadow_first;
+    uint shadow_count;
     uint _pad0;
+    uint _pad1;
+    uint _pad2;
+};
+
+struct ShadowGpu {
+    mat4 view_proj;
+    uint texture_index;
+    uint sampler_index;
+    float normal_bias;
+    float split_depth;
+    float texel_size;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer StandardMaterialGpu {
