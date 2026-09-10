@@ -2,7 +2,7 @@
 
 `Basic` renders an unlit color with an optional texture map. `Standard` adds
 metallic-roughness shading from directional, point and spot lights, scene ambient,
-and emissive factors. Both use the asset store's shared material ids.
+and five independent texture slots. Both use the asset store's shared material ids.
 
 ## Standard factors
 
@@ -15,17 +15,95 @@ MaterialId material_id = assets.add_material(material::standard(params))!;
 ```
 
 `STANDARD_PARAMS_DEFAULT` uses white base RGBA, metallic 1, roughness 1, black
-emissive RGB and emissive strength 1. A zero-initialized `StandardParams` keeps
-literal zeros; use the named default when you want those defaults.
+emissive RGB, emissive strength 1, normal scale 1 and occlusion strength 1.
+All five maps start absent with identity UV transforms. A zero-initialized
+`StandardParams` keeps literal zeros, including zero UV scale; use the named
+default when you want those defaults.
 
 Base RGBA, metallic and roughness are in [0, 1]. Emissive RGB and strength are
-finite and nonnegative; values above 1 preserve HDR emission. The renderer floors
+finite and nonnegative; values above 1 preserve HDR emission. Normal scale is
+finite and may be negative; occlusion strength is in [0, 1]. The renderer floors
 perceptual roughness at 0.045 for shading while preserving the authored value.
 
 `MaterialCommon` controls alpha and sidedness. Standard supports `OPAQUE` and
-`MASK`, using base alpha and `alpha_cutoff` for the mask. Double-sided Standard
-flips its shading normal on back faces. Resolving Standard `BLEND` returns
-`c3d::UNSUPPORTED`.
+`MASK`, using base factor alpha times sampled alpha and `alpha_cutoff` for the
+mask. Double-sided Standard flips its shading normal on back faces. Resolving
+Standard `BLEND` returns `c3d::UNSUPPORTED`.
+
+## Standard maps
+
+Each slot is a `TextureSlot` with its own texture, sampler, UV0/UV1 selection,
+and scale/rotation/offset. The slots can share one `TextureId` while using
+different coordinates and samplers. Color-space selection belongs to the texture
+asset; the renderer does not infer it from the slot.
+
+| Slot | Channels | Load color space | Effect |
+| --- | --- | --- | --- |
+| `base_color_map` | RGBA | sRGB RGB, linear alpha | Multiplies base RGBA |
+| `metallic_roughness_map` | G roughness, B metallic | Linear | Multiplies the two scalar factors; R and A are ignored |
+| `normal_map` | RGB tangent-space XYZ | Linear | Decodes `RGB * 2 - 1`, scales XY, then normalizes |
+| `occlusion_map` | R | Linear | Multiplies ambient diffuse by `mix(1, R, occlusion_strength)` |
+| `emissive_map` | RGB | sRGB | Multiplies emissive RGB and strength |
+
+```c3
+params.base_color_map = material::texture_slot(base_color_texture);
+params.metallic_roughness_map = material::texture_slot(material_data_texture);
+params.occlusion_map = material::texture_slot(material_data_texture, uv_set: 1);
+params.normal_map = material::texture_slot(normal_texture);
+params.emissive_map = material::texture_slot(emissive_texture);
+```
+
+Zero or stale texture ids make that slot absent. Absent color, metallic/roughness,
+occlusion and emissive maps retain their scalar behavior; an absent normal map
+retains the geometry normal. Occlusion never changes direct lighting or emission,
+and strength zero removes its effect. A black emissive factor keeps emission
+black even with a populated map. Normal scale zero disables normal perturbation.
+Live cube and render-target references return `c3d::UNSUPPORTED`; comparison
+samplers and UV sets above 1 return `c3d::INVALID_ARGUMENT`.
+
+## Tangent frames
+
+A supplied tangent stream is authoritative. Tangent XYZ follows the model's
+linear transform, is orthogonalized against the inverse-transpose world normal,
+and tangent W supplies bitangent handedness. W must be +1 or -1 and consistent
+within each triangle. Reflected model transforms reverse that handedness.
+Reflected model and camera transforms also preserve front-face classification;
+double-sided shading flips the final normal on back faces.
+
+Without a tangent stream, filled triangles derive a frame from world-position
+and transformed normal-map UV derivatives. Mirrored or rotated lookup coordinates
+therefore change this derived frame. A supplied frame keeps its authored basis:
+changing the lookup UV set or transform does not rotate or rebuild it. A zero or
+degenerate supplied tangent keeps the geometry normal without trying derivatives;
+degenerate position or UV derivatives likewise keep the geometry normal. A decoded
+zero-length map normal uses neutral tangent-space `(0, 0, 1)`.
+
+`Geometry.compute_tangents(allocator)` explicitly creates tangents from UV0; it
+does not use a material's UV1 selection or lookup transform. The renderer never
+runs it implicitly. Neither `compute_tangents` nor the derivative frame promises
+MikkTSpace compatibility. `Geometry.transform` updates tangent handedness when
+baking a reflection, while retaining its existing winding contract: call
+`flip_winding` explicitly when the reflected geometry needs its winding
+reversed. Normal textures must contain XYZ in RGB: RG-only normal maps with
+reconstructed Z are not supported.
+
+An active normal map without supplied tangents requires filled triangle
+rasterization. Lines, points and effective wireframe triangles return
+`c3d::UNSUPPORTED` during preparation or rendering. Supplied tangents, a missing
+normal map, or normal scale zero preserve those geometry paths. A requested
+wireframe on a device without line polygon mode still uses filled triangles.
+
+## Material storage
+
+Renderer material slots are 304 bytes (`render::MATERIAL_STRIDE`). The generated
+`StandardMaterialGpu` occupies 304 bytes; its five map records begin at offsets
+64, 112, 160, 208 and 256. `BasicMaterialGpu` remains 80 bytes. Custom renderer-side
+packing code supplies `render::MaterialBindings` to `write_material_block`, with
+`base_color`, `metallic_roughness`, `normal`, `occlusion` and `emissive` fields.
+Each is a `TextureBinding` carrying texture/sampler indices and an explicit
+`present` flag. Basic uses only `base_color`; inactive fields stay empty. Bindless
+index zero is not a presence test. Ordinary consumers edit asset material slots
+and let the renderer resolve these bindings.
 
 ## Shared edits
 
@@ -38,7 +116,17 @@ assets.mark_material_dirty(material_id);
 Every mesh using the id sees the edit. Finish edits before scene preparation or
 view recording; advance the revision once after changing values. An unchanged
 GUI frame leaves the revision alone. The GUI material panel selects the active
-material family before reading its parameters.
+material family before reading its parameters. Texture pixel, backing and sampler
+revisions are tracked independently for every slot: editing and marking a texture
+or sampler dirty does not require a material dirty call. Changing a slot itself
+does require one. Removed or stale texture generations use the absent-map behavior;
+they never silently bind a new asset reusing the index.
+
+Prepare or upload resources before releasing CPU sources. A current mirror stays
+usable after explicit texture or geometry source release; a renderer that needs
+the missing source reports `c3d::ASSET_DATA_UNAVAILABLE`. Keep edits and releases
+outside the interval from preparation through submission. See
+[source ownership](textures.md#upload-edit-and-release-cpu-sources).
 
 Changing families requires assigning a complete `Material`, then marking it dirty:
 
@@ -114,7 +202,8 @@ meshes carrying layer 2. Ambient and emissive do not use direct-light masks.
 
 Scenes start with white `ambient_color` and zero `ambient_intensity`. Both must
 remain finite and nonnegative. Ambient supplies a simple diffuse contribution:
-`ambient_color * ambient_intensity * base_color.rgb * (1 - metallic)`.
+`ambient_color * ambient_intensity * base_color.rgb * (1 - metallic)`,
+using mapped base/metallic values and the occlusion multiplier when present.
 It adds no ambient specular reflection. Emissive RGB times strength remains
 visible without any direct lights or ambient illumination.
 
@@ -138,12 +227,25 @@ python3 scripts/build.py --example pbr
 ./examples/build/pbr --gpu-timings
 ```
 
-The static grid shares one sphere geometry and uses 49 distinct materials.
-Columns increase metallic from 0 to 1; rows increase roughness from 0.05 to 1,
-bottom to top. Alternating columns use receiver layers 1 and 2. Select a sphere
-in Scene to edit its factors, or select a light to edit color, intensity, range,
-cone angles and receiver layers. Scene supplies node visibility, layers and
-transform controls. Reset grid factors restores only the sphere factors.
+The static grid uses 49 distinct materials. Columns increase metallic from 0 to
+1; rows increase roughness from 0.05 to 1, bottom to top. Alternating columns use
+receiver layers 1 and 2. Both prepared sphere assets have UV1 equal to twice UV0;
+“Geometry has supplied tangents” switches the entire grid between an absent
+tangent stream and explicitly generated UV0 tangents.
+
+All maps initially use trilinear repeat, identity transforms and strength 1.
+Occlusion uses UV1; other maps use UV0. Metallic/roughness and occlusion share one
+linear image. The middle row has emissive RGB `(0.15, 0.15, 0.15)`; the other rows
+start black. Opaque alpha leaves the base-color checker solid until “Alpha mask”
+is enabled for a selected sphere.
+
+Select a sphere in Scene to edit factors and the five collapsible Sphere maps
+sections, or select a light to edit color, intensity, range, cone angles and
+receiver layers. Each map exposes enable, UV set, scale, rotation in degrees,
+offset and sampler presets. Scene supplies visibility, layers and transforms.
+“Scalar-only preset” restores the original grid factors, empty maps and opaque
+common state; “Reset mapped preset” restores the mapped materials described
+above. Both leave geometry selection, lights and camera settings unchanged.
 
 Controls supplies ambient, camera layer visibility and orthographic projection.
 Drag outside GUI windows to orbit, scroll to zoom, and release Escape outside
@@ -152,10 +254,9 @@ GPU timings are optional; full validation is enabled for every run.
 
 ## Current rendering limits
 
-Standard currently uses scalar factors and geometry normals. It has no texture
-maps or normal mapping. Basic's texture path is described in
-[Textures and images](textures.md). There are no shadows, environment lighting,
-or ambient specular reflections. Shading writes scene-linear HDR into the
-renderer target; the existing composite adds no tonemapper or exposure control,
-so bright values can clip on presentation. Compare lighting with consistent
-presentation settings.
+Texture ownership and sampling are described in [Textures and
+images](textures.md). There are no shadows, environment lighting or ambient
+specular reflections. Shading writes scene-linear HDR into the renderer target;
+the existing composite adds no tonemapper or exposure control, so bright values
+can clip on presentation. Compare lighting with consistent presentation
+settings.

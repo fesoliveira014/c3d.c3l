@@ -167,7 +167,7 @@ fn void test_texture_uv_transform_order() @test {
 }
 
 fn void test_material_map_packs_uv_selection_and_identity() @test {
-    char[] bytes = mem::new_array(char, c3d::shader::BasicMaterialGpu::size);
+    char[] bytes = mem::new_array(char, render::MATERIAL_STRIDE);
     defer free(bytes.ptr);
     Material material = material::basic({
         .color = { 0.5f, 0.25f, 1, 0.75f },
@@ -178,7 +178,7 @@ fn void test_material_map_packs_uv_selection_and_identity() @test {
         .sampler_index = (gpu::SamplerIndex)3,
         .present = true,
     };
-    render::write_material_block(bytes, &material, binding);
+    render::write_material_block(bytes, &material, { .base_color = binding });
 
     c3d::shader::BasicMaterialGpu* packed = (c3d::shader::BasicMaterialGpu*)bytes.ptr;
     assert(packed.map_texture == (gpu::TextureIndex)7 && packed.map_sampler == (gpu::SamplerIndex)3);

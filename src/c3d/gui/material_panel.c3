@@ -16,6 +16,9 @@ fn void? material_panel(AssetStore* assets, MaterialId material) {
     defer imgui::end();
     if (!visible) return;
 
+    imgui::push_item_width(imgui::get_content_region_avail().x * 0.5f);
+    defer imgui::pop_item_width();
+
     bool changed;
     switch (record.data.kind) {
         case BASIC:
@@ -31,6 +34,18 @@ fn void? material_panel(AssetStore* assets, MaterialId material) {
             changed |= edit_material_factor(
                 label: "Roughness",
                 value: &record.data.standard.roughness,
+                minimum: 0,
+                maximum: 1,
+            );
+            changed |= edit_material_factor(
+                label: "Normal scale",
+                value: &record.data.standard.normal_scale,
+                minimum: -float::max,
+                maximum: float::max,
+            );
+            changed |= edit_material_factor(
+                label: "Occlusion strength",
+                value: &record.data.standard.occlusion_strength,
                 minimum: 0,
                 maximum: 1,
             );

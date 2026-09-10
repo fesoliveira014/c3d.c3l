@@ -170,11 +170,13 @@ fn void Geometry.unindex(&self, Allocator allocator) {
 *>
 fn void Geometry.transform(&self, Mat4 model) {
     Mat3 normal_transform = maths::normal_matrix(model);
+    float orientation = model.determinant() < 0 ? -1.0f : 1.0f;
+
     foreach (&position : self.positions) *position = maths::transform_point(model, *position);
     foreach (&normal : self.normals) *normal = normal_transform.apply(*normal).normalize();
     foreach (&tangent : self.tangents) {
         Vec3 direction = maths::transform_dir(model, tangent.xyz).normalize();
-        *tangent = { direction.x, direction.y, direction.z, tangent.w };
+        *tangent = { direction.x, direction.y, direction.z, tangent.w * orientation };
     }
     self.finalize();
 }

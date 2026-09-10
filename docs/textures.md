@@ -1,6 +1,7 @@
 # Textures and images
 
-Basic supports texture maps; [Standard materials](materials.md) currently use scalar factors.
+Basic supports one color map; [Standard materials](materials.md#standard-maps)
+support base color, metallic/roughness, normal, occlusion and emissive maps.
 
 A texture asset owns either mip-zero pixels or supplied mip/layer data. A material
 slot selects a 2D texture, sampler, UV set and UV transform. The renderer owns
@@ -33,6 +34,30 @@ rows or changes global decoder settings.
 Basic shading multiplies its color by the sampled map. A material with no map
 keeps its color-only behavior. `texture_slot(texture)` selects UV0, the builtin
 trilinear repeat sampler, and an identity transform.
+
+## Standard color and data maps
+
+Load base-color and emissive images with `srgb: true`; load metallic/roughness,
+normal and occlusion images with `srgb: false`. Base RGBA multiplies the base
+factor, G/B multiply roughness/metallic, RGB encodes tangent-space XYZ normals,
+R controls ambient occlusion, and emissive RGB multiplies emission. Alpha remains
+linear even in sRGB formats. A packed R/G/B image can serve occlusion and
+metallic/roughness through two independent slots sharing one texture asset.
+
+Each slot starts absent with identity coordinates in `STANDARD_PARAMS_DEFAULT`;
+normal scale and occlusion strength both start at 1. Use the named default before
+assigning maps. Normal scale is finite and signed; occlusion strength is [0, 1].
+Missing or stale ids preserve scalar factors and the geometry normal. Normal maps
+require all XYZ channels; there is no RG-only Z reconstruction or MikkTSpace
+guarantee. See [tangent frames](materials.md#tangent-frames) for supplied-tangent
+authority, derivative fallback and unsupported nontriangle/wireframe cases.
+
+The mapped `pbr` example loads four committed fixtures relative to its source file,
+so it does not depend on the launch directory. Both geometry variants and all
+referenced textures are prepared before interaction. Its private map editor can
+change each slot without modifying shared UV streams; scalar and mapped presets
+make the difference visible. See [the example controls](materials.md#interactive-example)
+and [fixture provenance](../csrc/README.md#standard-material-fixtures).
 
 ## Decode memory and retain ownership
 
@@ -99,9 +124,9 @@ the same texture with different filtering. Builtin texture and sampler ids are r
 for the store lifetime; removal applies to custom assets. Their CPU pixels may still be
 released after preparation.
 
-A zero or stale map reference uses the color-only fallback; a zero or stale sampler
-reference selects builtin trilinear repeat. A live cube reference in `Basic.map`
-reports `c3d::UNSUPPORTED`; cube views use a different sampled-image heap.
+A zero or stale map reference uses that slot's scalar or unperturbed-normal
+fallback; a zero or stale sampler reference selects builtin trilinear repeat.
+A live cube reference in any Basic or Standard material slot reports `c3d::UNSUPPORTED`; cube views use a different sampled-image heap.
 Render-target references, non-cube arrays and volumes remain unsupported.
 
 ## Load six cube faces
@@ -216,13 +241,16 @@ assets.mark_material_dirty(material_id);
 UV set zero selects `Geometry.uv0`, and one selects `Geometry.uv1`; supply the
 chosen stream on the geometry. Transforms scale first, rotate about the UV
 origin in radians, then translate. They do not modify shared geometry. Mark the
-material dirty after changing its slot or color. Use `texture_slot` for identity defaults:
+material dirty after changing its slot or color. Each Standard slot applies its
+own coordinates independently. A normal-map lookup transform changes a derivative
+frame but does not rotate an explicitly supplied tangent basis. Use `texture_slot`
+for identity defaults:
 a manually zero-initialized transform has zero scale, not identity.
 
 For a cutout, start with `material::MATERIAL_COMMON_DEFAULT`, set
 `common.alpha_mode = MASK` and pass `common` as the second argument to
-`material::basic`. The fragment's sampled alpha multiplied by the material's
-color alpha is compared with `common.alpha_cutoff`, which defaults to 0.5.
+`material::basic` or `material::standard`. The fragment's sampled alpha multiplied
+by the material's color alpha is compared with `common.alpha_cutoff`, which defaults to 0.5.
 Discarded fragments leave the geometry behind visible. This path supports
 opaque and masked materials; alpha blending is not implemented.
 
@@ -262,8 +290,11 @@ renderer.upload(texture)!;
 
 This example assumes a nonempty RGBA8 texture whose CPU pixels were retained.
 The renderer regenerates mips on upload. The material revision need not change
-for an edit to the referenced texture. Replacing dimensions or format requires
-complete matching CPU bytes before marking the texture dirty.
+for an edit to any referenced texture. This applies independently to all five
+Standard slots, including shared images. Sampler revision changes and replacement
+image backing also refresh the resolved bindings without a material edit. If a
+texture is removed and its index reused, an old generation stays absent. Replacing
+dimensions or format requires complete matching CPU bytes before marking the texture dirty.
 
 For supplied data, edit only the retained bytes, then mark the texture dirty:
 

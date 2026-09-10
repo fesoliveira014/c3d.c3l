@@ -18,6 +18,13 @@ const StandardParams STANDARD_PARAMS_DEFAULT = {
     .metallic = 1,
     .roughness = 1,
     .emissive_strength = 1,
+    .normal_scale = 1,
+    .occlusion_strength = 1,
+    .base_color_map = { .transform = UV_TRANSFORM_IDENTITY },
+    .metallic_roughness_map = { .transform = UV_TRANSFORM_IDENTITY },
+    .normal_map = { .transform = UV_TRANSFORM_IDENTITY },
+    .occlusion_map = { .transform = UV_TRANSFORM_IDENTITY },
+    .emissive_map = { .transform = UV_TRANSFORM_IDENTITY },
 };
 
 <*
@@ -57,13 +64,20 @@ struct BasicParams {
     TextureSlot map;
 }
 
-<* Scalar metallic-roughness surface parameters. *>
+<* Metallic-roughness factors and independently mapped textures. *>
 struct StandardParams {
     Vec4 base_color;
     float metallic;
     float roughness;
     Vec3 emissive;
     float emissive_strength;
+    float normal_scale;
+    float occlusion_strength;
+    TextureSlot base_color_map;
+    TextureSlot metallic_roughness_map;
+    TextureSlot normal_map;
+    TextureSlot occlusion_map;
+    TextureSlot emissive_map;
 }
 
 <*
@@ -86,7 +100,7 @@ fn Material basic(BasicParams params, MaterialCommon common = MATERIAL_COMMON_DE
 }
 
 <*
- Metallic-roughness material without texture maps.
+ Metallic-roughness material with optional texture maps.
  @require params.base_color.r >= 0, params.base_color.r <= 1
  @require params.base_color.g >= 0, params.base_color.g <= 1
  @require params.base_color.b >= 0, params.base_color.b <= 1
@@ -97,6 +111,8 @@ fn Material basic(BasicParams params, MaterialCommon common = MATERIAL_COMMON_DE
  @require params.metallic >= 0, params.metallic <= 1
  @require params.roughness >= 0, params.roughness <= 1
  @require params.emissive_strength >= 0
+ @require math::is_finite(params.normal_scale)
+ @require params.occlusion_strength >= 0, params.occlusion_strength <= 1
  @pure
 *>
 fn Material standard(
