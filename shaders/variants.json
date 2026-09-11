@@ -10,6 +10,12 @@
     { "shader": "imgui_fragment", "source": "imgui.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "cube_preview", "source": "cube_preview.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "standard", "source": "standard.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "environment_source", "source": "environment_source.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "environment_prefilter", "source": "environment_prefilter.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "irradiance_project", "source": "irradiance_project.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "irradiance_reduce", "source": "irradiance_reduce.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "brdf_lut", "source": "brdf_lut.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "sky", "source": "sky.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "mesh",       "source": "mesh.vert.glsl",       "stage": "vert", "defines": ["DEPTH_ONLY"] },
     { "shader": "depth_only", "source": "depth_only.frag.glsl", "stage": "frag", "defines": [] }
   ]

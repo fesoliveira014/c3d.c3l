@@ -21,6 +21,20 @@ const uint MATERIAL_MAP_NORMAL = 4u;
 const uint MATERIAL_MAP_OCCLUSION = 8u;
 const uint MATERIAL_MAP_EMISSIVE = 16u;
 const uint MATERIAL_MAP_UV1_SHIFT = 5u;
+const uint ENVIRONMENT_FACE_POSITIVE_X = 0u;
+const uint ENVIRONMENT_FACE_NEGATIVE_X = 1u;
+const uint ENVIRONMENT_FACE_POSITIVE_Y = 2u;
+const uint ENVIRONMENT_FACE_NEGATIVE_Y = 3u;
+const uint ENVIRONMENT_FACE_POSITIVE_Z = 4u;
+const uint ENVIRONMENT_FACE_NEGATIVE_Z = 5u;
+const uint ENVIRONMENT_FACE_COUNT = 6u;
+const uint ENVIRONMENT_SPECULAR_MIPS = 6u;
+const uint ENVIRONMENT_PREFILTER_SAMPLES = 1024u;
+const uint ENVIRONMENT_BRDF_SAMPLES = 1024u;
+const uint ENVIRONMENT_SH_GROUPS = 64u;
+const uint ENVIRONMENT_SH_GROUP_SIZE = 64u;
+const uint ENVIRONMENT_SOURCE_EQUIRECTANGULAR = 0u;
+const uint ENVIRONMENT_SOURCE_SOLID = 1u;
 
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer CompositeRoot {
     uint source_texture;
@@ -177,6 +191,86 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer StandardMat
     TextureMapGpu normal_map;
     TextureMapGpu occlusion_map;
     TextureMapGpu emissive_map;
+};
+
+struct EnvironmentRotationGpu {
+    vec4 row0;
+    vec4 row1;
+    vec4 row2;
+};
+
+struct IrradianceGpu {
+    vec4 coefficients[9];
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer EnvironmentGpu {
+    uint specular_cube;
+    uint sampler_index;
+    uint brdf_lut;
+    float intensity;
+    uint64_t sh;
+    uint mip_count;
+    uint _pad0;
+    EnvironmentRotationGpu rotation;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer SkyRoot {
+    uint64_t frame;
+    uint source_cube;
+    uint sampler_index;
+    float intensity;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+    EnvironmentRotationGpu rotation;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer EnvironmentSourceRoot {
+    uint source_texture;
+    uint sampler_index;
+    uint output_texture;
+    uint face;
+    uint size;
+    uint source_kind;
+    uint _pad0;
+    uint _pad1;
+    vec4 solid_color;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer EnvironmentPrefilterRoot {
+    uint source_cube;
+    uint sampler_index;
+    uint output_texture;
+    uint face;
+    uint size;
+    float roughness;
+    uint _pad0;
+    uint _pad1;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer IrradianceProjectRoot {
+    uint source_cube;
+    uint sampler_index;
+    uint source_size;
+    uint partial_count;
+    uint64_t partials;
+    uint64_t _pad0;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer IrradianceReduceRoot {
+    uint64_t partials;
+    uint64_t output_coefficients;
+    uint partial_count;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer BrdfLutRoot {
+    uint output_texture;
+    uint size;
+    uint _pad0;
+    uint _pad1;
 };
 
 #endif

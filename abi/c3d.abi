@@ -174,3 +174,98 @@ root StandardMaterialGpu {
     TextureMapGpu occlusion_map;
     TextureMapGpu emissive_map;
 }
+
+const uint ENVIRONMENT_FACE_POSITIVE_X = 0;
+const uint ENVIRONMENT_FACE_NEGATIVE_X = 1;
+const uint ENVIRONMENT_FACE_POSITIVE_Y = 2;
+const uint ENVIRONMENT_FACE_NEGATIVE_Y = 3;
+const uint ENVIRONMENT_FACE_POSITIVE_Z = 4;
+const uint ENVIRONMENT_FACE_NEGATIVE_Z = 5;
+const uint ENVIRONMENT_FACE_COUNT = 6;
+const uint ENVIRONMENT_SPECULAR_MIPS = 6;
+const uint ENVIRONMENT_PREFILTER_SAMPLES = 1024;
+const uint ENVIRONMENT_BRDF_SAMPLES = 1024;
+const uint ENVIRONMENT_SH_GROUPS = 64;
+const uint ENVIRONMENT_SH_GROUP_SIZE = 64;
+const uint ENVIRONMENT_SOURCE_EQUIRECTANGULAR = 0;
+const uint ENVIRONMENT_SOURCE_SOLID = 1;
+
+struct EnvironmentRotationGpu {
+    vec4 row0;
+    vec4 row1;
+    vec4 row2;
+}
+
+struct IrradianceGpu {
+    vec4[9] coefficients;
+}
+
+root EnvironmentGpu {
+    TextureIndex specular_cube;
+    SamplerIndex sampler_index;
+    TextureIndex brdf_lut;
+    float intensity;
+    GpuAddress sh;
+    uint mip_count;
+    uint _pad0;
+    EnvironmentRotationGpu rotation;
+}
+
+root SkyRoot {
+    GpuAddress frame;
+    TextureIndex source_cube;
+    SamplerIndex sampler_index;
+    float intensity;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+    EnvironmentRotationGpu rotation;
+}
+
+root EnvironmentSourceRoot {
+    TextureIndex source_texture;
+    SamplerIndex sampler_index;
+    TextureIndex output_texture;
+    uint face;
+    uint size;
+    uint source_kind;
+    uint _pad0;
+    uint _pad1;
+    vec4 solid_color;
+}
+
+root EnvironmentPrefilterRoot {
+    TextureIndex source_cube;
+    SamplerIndex sampler_index;
+    TextureIndex output_texture;
+    uint face;
+    uint size;
+    float roughness;
+    uint _pad0;
+    uint _pad1;
+}
+
+root IrradianceProjectRoot {
+    TextureIndex source_cube;
+    SamplerIndex sampler_index;
+    uint source_size;
+    uint partial_count;
+    GpuAddress partials;
+    u64 _pad0;
+}
+
+root IrradianceReduceRoot {
+    GpuAddress partials;
+    GpuAddress output_coefficients;
+    uint partial_count;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+}
+
+root BrdfLutRoot {
+    TextureIndex output_texture;
+    uint size;
+    uint _pad0;
+    uint _pad1;
+}

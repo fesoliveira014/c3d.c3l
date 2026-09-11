@@ -18,6 +18,20 @@ const uint MATERIAL_MAP_NORMAL = 4;
 const uint MATERIAL_MAP_OCCLUSION = 8;
 const uint MATERIAL_MAP_EMISSIVE = 16;
 const uint MATERIAL_MAP_UV1_SHIFT = 5;
+const uint ENVIRONMENT_FACE_POSITIVE_X = 0;
+const uint ENVIRONMENT_FACE_NEGATIVE_X = 1;
+const uint ENVIRONMENT_FACE_POSITIVE_Y = 2;
+const uint ENVIRONMENT_FACE_NEGATIVE_Y = 3;
+const uint ENVIRONMENT_FACE_POSITIVE_Z = 4;
+const uint ENVIRONMENT_FACE_NEGATIVE_Z = 5;
+const uint ENVIRONMENT_FACE_COUNT = 6;
+const uint ENVIRONMENT_SPECULAR_MIPS = 6;
+const uint ENVIRONMENT_PREFILTER_SAMPLES = 1024;
+const uint ENVIRONMENT_BRDF_SAMPLES = 1024;
+const uint ENVIRONMENT_SH_GROUPS = 64;
+const uint ENVIRONMENT_SH_GROUP_SIZE = 64;
+const uint ENVIRONMENT_SOURCE_EQUIRECTANGULAR = 0;
+const uint ENVIRONMENT_SOURCE_SOLID = 1;
 
 struct CompositeRoot {
     TextureIndex source_texture;
@@ -306,3 +320,145 @@ $assert $reflect(StandardMaterialGpu.metallic_roughness_map).offset == 96;
 $assert $reflect(StandardMaterialGpu.normal_map).offset == 128;
 $assert $reflect(StandardMaterialGpu.occlusion_map).offset == 160;
 $assert $reflect(StandardMaterialGpu.emissive_map).offset == 192;
+
+struct EnvironmentRotationGpu {
+    Vec4f row0;
+    Vec4f row1;
+    Vec4f row2;
+}
+$assert EnvironmentRotationGpu::size == 48;
+$assert $reflect(EnvironmentRotationGpu.row0).offset == 0;
+$assert $reflect(EnvironmentRotationGpu.row1).offset == 16;
+$assert $reflect(EnvironmentRotationGpu.row2).offset == 32;
+
+struct IrradianceGpu {
+    Vec4f[9] coefficients;
+}
+$assert IrradianceGpu::size == 144;
+$assert $reflect(IrradianceGpu.coefficients).offset == 0;
+
+struct EnvironmentGpu {
+    TextureIndex           specular_cube;
+    SamplerIndex           sampler_index;
+    TextureIndex           brdf_lut;
+    float                  intensity;
+    GpuAddress             sh;
+    uint                   mip_count;
+    uint                   _pad0;
+    EnvironmentRotationGpu rotation;
+}
+$assert EnvironmentGpu::size == 80;
+$assert $reflect(EnvironmentGpu.specular_cube).offset == 0;
+$assert $reflect(EnvironmentGpu.sampler_index).offset == 4;
+$assert $reflect(EnvironmentGpu.brdf_lut).offset == 8;
+$assert $reflect(EnvironmentGpu.intensity).offset == 12;
+$assert $reflect(EnvironmentGpu.sh).offset == 16;
+$assert $reflect(EnvironmentGpu.mip_count).offset == 24;
+$assert $reflect(EnvironmentGpu._pad0).offset == 28;
+$assert $reflect(EnvironmentGpu.rotation).offset == 32;
+
+struct SkyRoot {
+    GpuAddress             frame;
+    TextureIndex           source_cube;
+    SamplerIndex           sampler_index;
+    float                  intensity;
+    uint                   _pad0;
+    uint                   _pad1;
+    uint                   _pad2;
+    EnvironmentRotationGpu rotation;
+}
+$assert SkyRoot::size == 80;
+$assert $reflect(SkyRoot.frame).offset == 0;
+$assert $reflect(SkyRoot.source_cube).offset == 8;
+$assert $reflect(SkyRoot.sampler_index).offset == 12;
+$assert $reflect(SkyRoot.intensity).offset == 16;
+$assert $reflect(SkyRoot._pad0).offset == 20;
+$assert $reflect(SkyRoot._pad1).offset == 24;
+$assert $reflect(SkyRoot._pad2).offset == 28;
+$assert $reflect(SkyRoot.rotation).offset == 32;
+
+struct EnvironmentSourceRoot {
+    TextureIndex source_texture;
+    SamplerIndex sampler_index;
+    TextureIndex output_texture;
+    uint         face;
+    uint         size;
+    uint         source_kind;
+    uint         _pad0;
+    uint         _pad1;
+    Vec4f        solid_color;
+}
+$assert EnvironmentSourceRoot::size == 48;
+$assert $reflect(EnvironmentSourceRoot.source_texture).offset == 0;
+$assert $reflect(EnvironmentSourceRoot.sampler_index).offset == 4;
+$assert $reflect(EnvironmentSourceRoot.output_texture).offset == 8;
+$assert $reflect(EnvironmentSourceRoot.face).offset == 12;
+$assert $reflect(EnvironmentSourceRoot.size).offset == 16;
+$assert $reflect(EnvironmentSourceRoot.source_kind).offset == 20;
+$assert $reflect(EnvironmentSourceRoot._pad0).offset == 24;
+$assert $reflect(EnvironmentSourceRoot._pad1).offset == 28;
+$assert $reflect(EnvironmentSourceRoot.solid_color).offset == 32;
+
+struct EnvironmentPrefilterRoot {
+    TextureIndex source_cube;
+    SamplerIndex sampler_index;
+    TextureIndex output_texture;
+    uint         face;
+    uint         size;
+    float        roughness;
+    uint         _pad0;
+    uint         _pad1;
+}
+$assert EnvironmentPrefilterRoot::size == 32;
+$assert $reflect(EnvironmentPrefilterRoot.source_cube).offset == 0;
+$assert $reflect(EnvironmentPrefilterRoot.sampler_index).offset == 4;
+$assert $reflect(EnvironmentPrefilterRoot.output_texture).offset == 8;
+$assert $reflect(EnvironmentPrefilterRoot.face).offset == 12;
+$assert $reflect(EnvironmentPrefilterRoot.size).offset == 16;
+$assert $reflect(EnvironmentPrefilterRoot.roughness).offset == 20;
+$assert $reflect(EnvironmentPrefilterRoot._pad0).offset == 24;
+$assert $reflect(EnvironmentPrefilterRoot._pad1).offset == 28;
+
+struct IrradianceProjectRoot {
+    TextureIndex source_cube;
+    SamplerIndex sampler_index;
+    uint         source_size;
+    uint         partial_count;
+    GpuAddress   partials;
+    ulong        _pad0;
+}
+$assert IrradianceProjectRoot::size == 32;
+$assert $reflect(IrradianceProjectRoot.source_cube).offset == 0;
+$assert $reflect(IrradianceProjectRoot.sampler_index).offset == 4;
+$assert $reflect(IrradianceProjectRoot.source_size).offset == 8;
+$assert $reflect(IrradianceProjectRoot.partial_count).offset == 12;
+$assert $reflect(IrradianceProjectRoot.partials).offset == 16;
+$assert $reflect(IrradianceProjectRoot._pad0).offset == 24;
+
+struct IrradianceReduceRoot {
+    GpuAddress partials;
+    GpuAddress output_coefficients;
+    uint       partial_count;
+    uint       _pad0;
+    uint       _pad1;
+    uint       _pad2;
+}
+$assert IrradianceReduceRoot::size == 32;
+$assert $reflect(IrradianceReduceRoot.partials).offset == 0;
+$assert $reflect(IrradianceReduceRoot.output_coefficients).offset == 8;
+$assert $reflect(IrradianceReduceRoot.partial_count).offset == 16;
+$assert $reflect(IrradianceReduceRoot._pad0).offset == 20;
+$assert $reflect(IrradianceReduceRoot._pad1).offset == 24;
+$assert $reflect(IrradianceReduceRoot._pad2).offset == 28;
+
+struct BrdfLutRoot {
+    TextureIndex output_texture;
+    uint         size;
+    uint         _pad0;
+    uint         _pad1;
+}
+$assert BrdfLutRoot::size == 16;
+$assert $reflect(BrdfLutRoot.output_texture).offset == 0;
+$assert $reflect(BrdfLutRoot.size).offset == 4;
+$assert $reflect(BrdfLutRoot._pad0).offset == 8;
+$assert $reflect(BrdfLutRoot._pad1).offset == 12;

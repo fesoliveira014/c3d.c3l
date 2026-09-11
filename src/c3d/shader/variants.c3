@@ -14,6 +14,12 @@ enum ShaderName : int {
     IMGUI_FRAGMENT,
     CUBE_PREVIEW,
     STANDARD,
+    ENVIRONMENT_SOURCE,
+    ENVIRONMENT_PREFILTER,
+    IRRADIANCE_PROJECT,
+    IRRADIANCE_REDUCE,
+    BRDF_LUT,
+    SKY,
     DEPTH_ONLY,
 }
 
@@ -31,13 +37,19 @@ const char[*] IMGUI_VERTEX_SPIRV @private = $embed("../../../shaders/spv/imgui_v
 const char[*] IMGUI_FRAGMENT_SPIRV @private = $embed("../../../shaders/spv/imgui_fragment.spv");
 const char[*] CUBE_PREVIEW_SPIRV @private = $embed("../../../shaders/spv/cube_preview.spv");
 const char[*] STANDARD_SPIRV @private = $embed("../../../shaders/spv/standard.spv");
+const char[*] ENVIRONMENT_SOURCE_SPIRV @private = $embed("../../../shaders/spv/environment_source.spv");
+const char[*] ENVIRONMENT_PREFILTER_SPIRV @private = $embed("../../../shaders/spv/environment_prefilter.spv");
+const char[*] IRRADIANCE_PROJECT_SPIRV @private = $embed("../../../shaders/spv/irradiance_project.spv");
+const char[*] IRRADIANCE_REDUCE_SPIRV @private = $embed("../../../shaders/spv/irradiance_reduce.spv");
+const char[*] BRDF_LUT_SPIRV @private = $embed("../../../shaders/spv/brdf_lut.spv");
+const char[*] SKY_SPIRV @private = $embed("../../../shaders/spv/sky.spv");
 const char[*] MESH_DEPTH_ONLY_SPIRV @private = $embed("../../../shaders/spv/mesh_depth_only.spv");
 const char[*] DEPTH_ONLY_SPIRV @private = $embed("../../../shaders/spv/depth_only.spv");
 
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[11] SHADER_ENTRIES = {
+const ShaderEntry[17] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -47,6 +59,12 @@ const ShaderEntry[11] SHADER_ENTRIES = {
     { .variant = { .shader = IMGUI_FRAGMENT }, .spirv = IMGUI_FRAGMENT_SPIRV[..] },
     { .variant = { .shader = CUBE_PREVIEW }, .spirv = CUBE_PREVIEW_SPIRV[..] },
     { .variant = { .shader = STANDARD }, .spirv = STANDARD_SPIRV[..] },
+    { .variant = { .shader = ENVIRONMENT_SOURCE }, .spirv = ENVIRONMENT_SOURCE_SPIRV[..] },
+    { .variant = { .shader = ENVIRONMENT_PREFILTER }, .spirv = ENVIRONMENT_PREFILTER_SPIRV[..] },
+    { .variant = { .shader = IRRADIANCE_PROJECT }, .spirv = IRRADIANCE_PROJECT_SPIRV[..] },
+    { .variant = { .shader = IRRADIANCE_REDUCE }, .spirv = IRRADIANCE_REDUCE_SPIRV[..] },
+    { .variant = { .shader = BRDF_LUT }, .spirv = BRDF_LUT_SPIRV[..] },
+    { .variant = { .shader = SKY }, .spirv = SKY_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_DEPTH_ONLY }, .spirv = MESH_DEPTH_ONLY_SPIRV[..] },
     { .variant = { .shader = DEPTH_ONLY }, .spirv = DEPTH_ONLY_SPIRV[..] },
 };
