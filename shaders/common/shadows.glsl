@@ -39,7 +39,6 @@ uint point_shadow_face(vec3 direction) {
 float shadow_visibility(FrameRoot frame, LightGpu light, vec3 world_position, vec3 normal, float view_depth) {
     if (light.shadow_count == 0u) return 1.0;
 
-    ShadowGpu first = ShadowArray(frame.shadows).values[light.shadow_first];
     if (light.kind == LIGHT_DIRECTIONAL) {
         for (uint cascade = 0u; cascade < light.shadow_count; cascade++) {
             ShadowGpu shadow = ShadowArray(frame.shadows).values[light.shadow_first + cascade];
@@ -49,6 +48,7 @@ float shadow_visibility(FrameRoot frame, LightGpu light, vec3 world_position, ve
         return 1.0;
     }
 
+    ShadowGpu first = ShadowArray(frame.shadows).values[light.shadow_first];
     vec3 receiver_direction = world_position - light.position_range.xyz;
     if (length(receiver_direction) > first.max_distance) return 1.0;
 

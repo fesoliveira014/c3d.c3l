@@ -11,7 +11,7 @@ import std::core::array;
 import std::math;
 import std::sort;
 
-const float LIGHT_BASIS_PARALLEL_THRESHOLD @local = 0.99f; // avoids an unstable cross product near the reference axis
+const float LIGHT_BASIS_PARALLEL_THRESHOLD @private = 0.99f; // avoids an unstable cross product near the reference axis
 const uint SHADOW_GUARD_TEXELS @private = 2; // covers linear 3x3 comparisons and nearest-grid snapping
 const uint SLICE_FACE_CORNERS @local = 4;
 const float SHADOW_DEPTH_ROUNDING_MARGIN @local = 8 * math::FLOAT_EPSILON; // keeps fitted boundary planes inside after projection rounding
@@ -49,6 +49,11 @@ struct CascadeSplits {
 struct ShadowCascade {
     CameraMatrices camera;
     float split_depth;
+}
+
+struct LightBasis @private {
+    Vec3 right;
+    Vec3 up;
 }
 
 <* Completed depth-pass timing with its original light identity. *>
@@ -152,12 +157,10 @@ fn ShadowCascade fit_directional_cascade(
     foreach (offset : offsets) radius = math::max(radius, (offset - center).length());
     center += maths::translation(camera_world);
 
-    Vec3 reference = math::abs(light_direction.y) > LIGHT_BASIS_PARALLEL_THRESHOLD ? (Vec3){ 1, 0, 0 } : (Vec3){ 0, 1, 0 };
-    Vec3 right = light_direction.cross(reference).normalize();
-    Vec3 up = right.cross(light_direction);
+    LightBasis basis = light_basis(light_direction);
     Mat4 light_view = {
-        .m00 = right.x, .m01 = right.y, .m02 = right.z,
-        .m10 = up.x, .m11 = up.y, .m12 = up.z,
+        .m00 = basis.right.x, .m01 = basis.right.y, .m02 = basis.right.z,
+        .m10 = basis.up.x, .m11 = basis.up.y, .m12 = basis.up.z,
         .m20 = -light_direction.x, .m21 = -light_direction.y, .m22 = -light_direction.z,
         .m33 = 1,
     };
@@ -211,6 +214,13 @@ fn ShadowCascade fit_directional_cascade(
         },
         .split_depth = far_depth,
     };
+}
+
+fn LightBasis light_basis(Vec3 direction) @private {
+    Vec3 reference = math::abs(direction.y) > LIGHT_BASIS_PARALLEL_THRESHOLD
+      ? (Vec3){ 1, 0, 0 } : (Vec3){ 0, 1, 0 };
+    Vec3 right = direction.cross(reference).normalize();
+    return { .right = right, .up = right.cross(direction) };
 }
 
 fn int by_shadow_priority(ShadowRequest first, ShadowRequest second) @local {

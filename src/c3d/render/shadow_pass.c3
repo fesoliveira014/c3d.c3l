@@ -207,7 +207,7 @@ fn ShadowGpu[]? record_shadows(
         packed.shadow_first = request.first_layer;
         packed.shadow_count = request.layer_count;
         CascadeSplits splits;
-        float shadow_range;
+        float shadow_range = 0;
         if (light.kind == LightKind.DIRECTIONAL) {
             splits = directional_cascade_splits(*camera, light.shadow);
         } else {
@@ -252,8 +252,6 @@ fn ShadowGpu[]? record_shadows(
                 .split_depth = split_depth,
                 .texel_size = 1.0f / (float)renderer.shadow_resolution,
                 .max_distance = shadow_range,
-                ._pad1 = 0,
-                ._pad2 = 0,
             };
         }
     }

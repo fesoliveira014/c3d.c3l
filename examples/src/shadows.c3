@@ -33,8 +33,6 @@ const float SHADOW_DISTANCE_MAX @local = 200; // covers the fixture without an u
 const float SHADOW_BIAS_MAX @local = 4; // retains a useful slope-factor range before separation dominates
 const float SHADOW_NORMAL_BIAS_MAX @local = 0.25f; // exposes offset tradeoffs at this scene scale
 const float EXAMPLE_NORMAL_BIAS @local = 0.16f; // clears the ground bands at the cost of contact separation
-const float PUNCTUAL_NEAR_CAP @local = 0.05f; // matches the renderer's precision cap for display
-const float PUNCTUAL_NEAR_FRACTION @local = 0.01f; // matches the renderer's range-scaled near plane for display
 const float SPOT_CONE_GAP_DEGREES @local = 0.5f; // preserves a visible inner-to-outer ordering while editing
 const float SPOT_CONE_MAX_DEGREES @local = 89.5f; // stays strictly below the shadow projection limit
 const Vec2 CONTROLS_PANEL_POSITION @local = { 16, 16 }; // leaves the center of the default view unobscured
@@ -66,6 +64,15 @@ struct ShadowNodes @local {
     Node* spot;
     Node* point;
     Node* point_receivers;
+}
+
+struct PointShadowFixture @local {
+    String name;
+    GeometryId geometry;
+    MaterialId material;
+    maths::Transform transform;
+    bool cast_shadow;
+    bool receive_shadow;
 }
 
 fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
@@ -208,7 +215,10 @@ fn void punctual_shadow_controls(
     }
 
     float shadow_range = controls.unbounded ? light.shadow.max_distance : light.range;
-    float near = math::min(PUNCTUAL_NEAR_CAP, shadow_range * PUNCTUAL_NEAR_FRACTION);
+    float near = math::min(
+        render::PUNCTUAL_SHADOW_NEAR_CAP,
+        shadow_range * render::PUNCTUAL_SHADOW_NEAR_FRACTION,
+    );
     imgui::text("Automatic shadow near: %.4f world units", (double)near);
 
     if (light.kind == SPOT) {
@@ -344,13 +354,13 @@ fn void? run_gui(
     bool orthographic;
     bool escape_captured;
     ShadowPreset preset = SUN;
-    PunctualControls spot_controls = { .finite_range = 22 };
-    PunctualControls point_controls = { .finite_range = 12 };
     camera::Camera* camera = scene.get(camera_node, camera::Camera);
     Light* primary_light = scene.get(nodes.primary_sun, Light);
     Light* secondary_light = scene.get(nodes.secondary_sun, Light);
     Light* spot_light = scene.get(nodes.spot, Light);
     Light* point_light = scene.get(nodes.point, Light);
+    PunctualControls spot_controls = { .finite_range = spot_light.range };
+    PunctualControls point_controls = { .finite_range = point_light.range };
     Mesh* solid_mesh = scene.get(solid_box, Mesh);
     Mesh* masked_mesh = scene.get(masked_plane, Mesh);
     Mesh* ground_mesh = scene.get(ground, Mesh);
@@ -618,92 +628,135 @@ fn int main(String[] args) {
 
     Node* point_receivers = scene.add_node(name: "point_receiver_panels")!!;
     point_receivers.visible = false;
-    Node* receiver_positive_x = scene.add_mesh(
-        geometry: point_receiver_geometry,
-        material: point_receiver_material,
-        parent: point_receivers,
-        name: "point_receiver_positive_x",
-    )!!;
-    scene.get(receiver_positive_x, Mesh).cast_shadow = false;
-    receiver_positive_x.local.position = { 6, 4, 0 };
-    receiver_positive_x.local.rotation = quaternion::from_axis_angle{float}({ 0, 0, 1 }, math::PI / 2);
-    Node* receiver_negative_x = scene.add_mesh(
-        geometry: point_receiver_geometry,
-        material: point_receiver_material,
-        parent: point_receivers,
-        name: "point_receiver_negative_x",
-    )!!;
-    scene.get(receiver_negative_x, Mesh).cast_shadow = false;
-    receiver_negative_x.local.position = { -6, 4, 0 };
-    receiver_negative_x.local.rotation = quaternion::from_axis_angle{float}({ 0, 0, 1 }, -math::PI / 2);
-    Node* receiver_positive_y = scene.add_mesh(
-        geometry: point_receiver_geometry,
-        material: point_receiver_material,
-        parent: point_receivers,
-        name: "point_receiver_positive_y",
-    )!!;
-    scene.get(receiver_positive_y, Mesh).cast_shadow = false;
-    receiver_positive_y.local.position = { 0, 10, 0 };
-    receiver_positive_y.local.rotation = quaternion::from_axis_angle{float}({ 1, 0, 0 }, math::PI);
-    Node* receiver_positive_z = scene.add_mesh(
-        geometry: point_receiver_geometry,
-        material: point_receiver_material,
-        parent: point_receivers,
-        name: "point_receiver_positive_z",
-    )!!;
-    scene.get(receiver_positive_z, Mesh).cast_shadow = false;
-    receiver_positive_z.local.position = { 0, 4, 6 };
-    receiver_positive_z.local.rotation = quaternion::from_axis_angle{float}({ 1, 0, 0 }, -math::PI / 2);
-    Node* receiver_negative_z = scene.add_mesh(
-        geometry: point_receiver_geometry,
-        material: point_receiver_material,
-        parent: point_receivers,
-        name: "point_receiver_negative_z",
-    )!!;
-    scene.get(receiver_negative_z, Mesh).cast_shadow = false;
-    receiver_negative_z.local.position = { 0, 4, -6 };
-    receiver_negative_z.local.rotation = quaternion::from_axis_angle{float}({ 1, 0, 0 }, math::PI / 2);
-
-    Node* blocker_positive_x = scene.add_mesh(
-        geometry: box_geometry,
-        material: standard_box_material,
-        parent: point_receivers,
-        name: "point_blocker_positive_x",
-    )!!;
-    blocker_positive_x.local.position = { 3.5f, 4, 0 };
-    blocker_positive_x.local.scale = { 0.45f, 0.45f, 0.45f };
-    Node* blocker_negative_x = scene.add_mesh(
-        geometry: box_geometry,
-        material: standard_box_material,
-        parent: point_receivers,
-        name: "point_blocker_negative_x",
-    )!!;
-    blocker_negative_x.local.position = { -3.5f, 4, 0 };
-    blocker_negative_x.local.scale = { 0.45f, 0.45f, 0.45f };
-    Node* blocker_positive_y = scene.add_mesh(
-        geometry: box_geometry,
-        material: standard_box_material,
-        parent: point_receivers,
-        name: "point_blocker_positive_y",
-    )!!;
-    blocker_positive_y.local.position = { 0, 7.5f, 0 };
-    blocker_positive_y.local.scale = { 0.45f, 0.45f, 0.45f };
-    Node* blocker_positive_z = scene.add_mesh(
-        geometry: box_geometry,
-        material: standard_box_material,
-        parent: point_receivers,
-        name: "point_blocker_positive_z",
-    )!!;
-    blocker_positive_z.local.position = { 0, 4, 3.5f };
-    blocker_positive_z.local.scale = { 0.45f, 0.45f, 0.45f };
-    Node* blocker_negative_z = scene.add_mesh(
-        geometry: box_geometry,
-        material: standard_box_material,
-        parent: point_receivers,
-        name: "point_blocker_negative_z",
-    )!!;
-    blocker_negative_z.local.position = { 0, 4, -3.5f };
-    blocker_negative_z.local.scale = { 0.45f, 0.45f, 0.45f };
+    PointShadowFixture[10] point_fixtures = {
+        {
+            .name = "point_receiver_positive_x",
+            .geometry = point_receiver_geometry,
+            .material = point_receiver_material,
+            .transform = {
+                .position = { 6, 4, 0 },
+                .rotation = quaternion::from_axis_angle{float}({ 0, 0, 1 }, math::PI / 2),
+                .scale = { 1, 1, 1 },
+            },
+            .receive_shadow = true,
+        },
+        {
+            .name = "point_receiver_negative_x",
+            .geometry = point_receiver_geometry,
+            .material = point_receiver_material,
+            .transform = {
+                .position = { -6, 4, 0 },
+                .rotation = quaternion::from_axis_angle{float}({ 0, 0, 1 }, -math::PI / 2),
+                .scale = { 1, 1, 1 },
+            },
+            .receive_shadow = true,
+        },
+        {
+            .name = "point_receiver_positive_y",
+            .geometry = point_receiver_geometry,
+            .material = point_receiver_material,
+            .transform = {
+                .position = { 0, 10, 0 },
+                .rotation = quaternion::from_axis_angle{float}({ 1, 0, 0 }, math::PI),
+                .scale = { 1, 1, 1 },
+            },
+            .receive_shadow = true,
+        },
+        {
+            .name = "point_receiver_positive_z",
+            .geometry = point_receiver_geometry,
+            .material = point_receiver_material,
+            .transform = {
+                .position = { 0, 4, 6 },
+                .rotation = quaternion::from_axis_angle{float}({ 1, 0, 0 }, -math::PI / 2),
+                .scale = { 1, 1, 1 },
+            },
+            .receive_shadow = true,
+        },
+        {
+            .name = "point_receiver_negative_z",
+            .geometry = point_receiver_geometry,
+            .material = point_receiver_material,
+            .transform = {
+                .position = { 0, 4, -6 },
+                .rotation = quaternion::from_axis_angle{float}({ 1, 0, 0 }, math::PI / 2),
+                .scale = { 1, 1, 1 },
+            },
+            .receive_shadow = true,
+        },
+        {
+            .name = "point_blocker_positive_x",
+            .geometry = box_geometry,
+            .material = standard_box_material,
+            .transform = {
+                .position = { 3.5f, 4, 0 },
+                .rotation = quaternion::IDENTITY,
+                .scale = { 0.45f, 0.45f, 0.45f },
+            },
+            .cast_shadow = true,
+            .receive_shadow = true,
+        },
+        {
+            .name = "point_blocker_negative_x",
+            .geometry = box_geometry,
+            .material = standard_box_material,
+            .transform = {
+                .position = { -3.5f, 4, 0 },
+                .rotation = quaternion::IDENTITY,
+                .scale = { 0.45f, 0.45f, 0.45f },
+            },
+            .cast_shadow = true,
+            .receive_shadow = true,
+        },
+        {
+            .name = "point_blocker_positive_y",
+            .geometry = box_geometry,
+            .material = standard_box_material,
+            .transform = {
+                .position = { 0, 7.5f, 0 },
+                .rotation = quaternion::IDENTITY,
+                .scale = { 0.45f, 0.45f, 0.45f },
+            },
+            .cast_shadow = true,
+            .receive_shadow = true,
+        },
+        {
+            .name = "point_blocker_positive_z",
+            .geometry = box_geometry,
+            .material = standard_box_material,
+            .transform = {
+                .position = { 0, 4, 3.5f },
+                .rotation = quaternion::IDENTITY,
+                .scale = { 0.45f, 0.45f, 0.45f },
+            },
+            .cast_shadow = true,
+            .receive_shadow = true,
+        },
+        {
+            .name = "point_blocker_negative_z",
+            .geometry = box_geometry,
+            .material = standard_box_material,
+            .transform = {
+                .position = { 0, 4, -3.5f },
+                .rotation = quaternion::IDENTITY,
+                .scale = { 0.45f, 0.45f, 0.45f },
+            },
+            .cast_shadow = true,
+            .receive_shadow = true,
+        },
+    };
+    foreach (fixture : point_fixtures) {
+        Node* node = scene.add_mesh(
+            geometry: fixture.geometry,
+            material: fixture.material,
+            parent: point_receivers,
+            name: fixture.name,
+        )!!;
+        node.local = fixture.transform;
+        Mesh* mesh = scene.get(node, Mesh);
+        mesh.cast_shadow = fixture.cast_shadow;
+        mesh.receive_shadow = fixture.receive_shadow;
+    }
 
     Node* camera_node = scene.add_camera(camera::perspective_deg(55, 0.1f, 100), name: "camera")!!;
     camera_node.layers = 1;

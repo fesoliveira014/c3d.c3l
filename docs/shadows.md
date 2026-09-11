@@ -78,11 +78,13 @@ without shadows retain the constructor's inclusive 90-degree limit.
 
 Use `light::SHADOW_SETTINGS_DEFAULT` when constructing settings independently.
 A zero-initialized settings record is disabled and does not contain those defaults.
-Call `Light.validate_shadow()` after authored edits when the application needs to
-check these programming contracts explicitly. Enabled directional settings require
-a finite positive `max_distance`, finite nonnegative biases, cascades in 1..4 and
-split weight in 0..1. Enabled punctual settings require a finite nonnegative range,
-a positive finite fallback when range is zero, and the spot cone rule above.
+Call `Light.validate_shadow()` after authored edits to check these programming
+contracts in checked builds. Contract checks may be absent from optimized unchecked
+builds, so applications must not rely on them as runtime validation. Enabled
+directional settings require a finite positive `max_distance`, finite nonnegative
+biases, cascades in 1..4 and split weight in 0..1. Enabled punctual settings require
+a finite nonnegative range, a positive finite fallback when range is zero, and the
+spot cone rule above.
 
 `RendererDesc.shadow_resolution` and `max_shadow_layers` set the atlas dimensions
 at renderer creation. Zero selects 2048 and 4, respectively. A nonzero resolution

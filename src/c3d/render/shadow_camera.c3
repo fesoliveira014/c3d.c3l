@@ -4,9 +4,28 @@ import c3d::camera;
 import c3d::shader;
 import std::math;
 
-const float PUNCTUAL_SHADOW_NEAR_CAP @private = 0.05f; // limits near clipping while retaining far-depth precision
-const float PUNCTUAL_SHADOW_NEAR_FRACTION @private = 0.01f; // scales near clipping while retaining far-depth precision
-const float SHADOW_CAMERA_PARALLEL_THRESHOLD @private = 0.99f;
+<* Maximum punctual shadow near plane in world units. *>
+const float PUNCTUAL_SHADOW_NEAR_CAP = 0.05f; // clips close casters to retain far-depth precision
+
+<* Fraction of punctual shadow range used for its near plane. *>
+const float PUNCTUAL_SHADOW_NEAR_FRACTION = 0.01f; // keeps short ranges from clipping their full coverage
+
+const Vec3[shader::SHADOW_POINT_FACE_COUNT] POINT_SHADOW_DIRECTIONS @private = {
+    [shader::SHADOW_FACE_POSITIVE_X] = { 1, 0, 0 },
+    [shader::SHADOW_FACE_NEGATIVE_X] = { -1, 0, 0 },
+    [shader::SHADOW_FACE_POSITIVE_Y] = { 0, 1, 0 },
+    [shader::SHADOW_FACE_NEGATIVE_Y] = { 0, -1, 0 },
+    [shader::SHADOW_FACE_POSITIVE_Z] = { 0, 0, 1 },
+    [shader::SHADOW_FACE_NEGATIVE_Z] = { 0, 0, -1 },
+};
+const Vec3[shader::SHADOW_POINT_FACE_COUNT] POINT_SHADOW_UP_VECTORS @private = {
+    [shader::SHADOW_FACE_POSITIVE_X] = { 0, -1, 0 },
+    [shader::SHADOW_FACE_NEGATIVE_X] = { 0, -1, 0 },
+    [shader::SHADOW_FACE_POSITIVE_Y] = { 0, 0, 1 },
+    [shader::SHADOW_FACE_NEGATIVE_Y] = { 0, 0, -1 },
+    [shader::SHADOW_FACE_POSITIVE_Z] = { 0, -1, 0 },
+    [shader::SHADOW_FACE_NEGATIVE_Z] = { 0, -1, 0 },
+};
 
 <*
  Derive a finite perspective shadow camera for a spot.
@@ -25,14 +44,12 @@ fn CameraMatrices spot_shadow_camera(
     float outer_cone,
     float shadow_range,
 ) {
-    Vec3 reference = math::abs(direction.y) > SHADOW_CAMERA_PARALLEL_THRESHOLD
-      ? (Vec3){ 1, 0, 0 } : (Vec3){ 0, 1, 0 };
-    Vec3 right = direction.cross(reference).normalize();
-    Vec3 up = right.cross(direction);
+    LightBasis basis = light_basis(direction);
     return perspective_shadow_camera(
         position: position,
         forward: direction,
-        up: up,
+        right: basis.right,
+        up: basis.up,
         fov_y: 2 * outer_cone,
         shadow_range: shadow_range,
     );
@@ -48,24 +65,13 @@ fn CameraMatrices spot_shadow_camera(
  @require shadow_range > 0 && math::is_finite(shadow_range)
 *>
 fn CameraMatrices point_shadow_camera(Vec3 position, uint face, float shadow_range) {
-    Vec3[shader::SHADOW_POINT_FACE_COUNT] directions;
-    directions[shader::SHADOW_FACE_POSITIVE_X] = { 1, 0, 0 };
-    directions[shader::SHADOW_FACE_NEGATIVE_X] = { -1, 0, 0 };
-    directions[shader::SHADOW_FACE_POSITIVE_Y] = { 0, 1, 0 };
-    directions[shader::SHADOW_FACE_NEGATIVE_Y] = { 0, -1, 0 };
-    directions[shader::SHADOW_FACE_POSITIVE_Z] = { 0, 0, 1 };
-    directions[shader::SHADOW_FACE_NEGATIVE_Z] = { 0, 0, -1 };
-    Vec3[shader::SHADOW_POINT_FACE_COUNT] up_vectors;
-    up_vectors[shader::SHADOW_FACE_POSITIVE_X] = { 0, -1, 0 };
-    up_vectors[shader::SHADOW_FACE_NEGATIVE_X] = { 0, -1, 0 };
-    up_vectors[shader::SHADOW_FACE_POSITIVE_Y] = { 0, 0, 1 };
-    up_vectors[shader::SHADOW_FACE_NEGATIVE_Y] = { 0, 0, -1 };
-    up_vectors[shader::SHADOW_FACE_POSITIVE_Z] = { 0, -1, 0 };
-    up_vectors[shader::SHADOW_FACE_NEGATIVE_Z] = { 0, -1, 0 };
+    Vec3 forward = POINT_SHADOW_DIRECTIONS[face];
+    Vec3 up = POINT_SHADOW_UP_VECTORS[face];
     return perspective_shadow_camera(
         position: position,
-        forward: directions[face],
-        up: up_vectors[face],
+        forward: forward,
+        right: forward.cross(up),
+        up: up,
         fov_y: (float)math::PI / 2,
         shadow_range: shadow_range,
     );
@@ -74,11 +80,11 @@ fn CameraMatrices point_shadow_camera(Vec3 position, uint face, float shadow_ran
 fn CameraMatrices perspective_shadow_camera(
     Vec3 position,
     Vec3 forward,
+    Vec3 right,
     Vec3 up,
     float fov_y,
     float shadow_range,
 ) @private {
-    Vec3 right = forward.cross(up);
     Mat4 world = {
         .m00 = right.x, .m01 = up.x, .m02 = -forward.x, .m03 = position.x,
         .m10 = right.y, .m11 = up.y, .m12 = -forward.y, .m13 = position.y,
