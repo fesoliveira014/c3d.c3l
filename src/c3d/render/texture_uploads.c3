@@ -36,7 +36,7 @@ fn void? record_texture_uploads(Renderer* renderer, gpu::CommandList* commands) 
         gpu::TextureBarrier to_sampled = gpu::texture_transition(
             texture: pending.copies[0].texture,
             before: to_upload.after,
-            after: gpu::sampled_at({ .fragment_shader }),
+            after: gpu::sampled_at({ .fragment_shader, .compute }),
         )!;
         gpu::cmd_texture_barrier(commands, &to_sampled)!;
         pending.recorded = true;
@@ -44,10 +44,11 @@ fn void? record_texture_uploads(Renderer* renderer, gpu::CommandList* commands) 
 }
 
 fn void commit_uploads(Renderer* renderer, Frame* slot) @private {
+    commit_environment_preparations(renderer, slot);
     foreach (&pending : renderer.pending_texture_uploads) {
         TextureRes* mirror = &renderer.textures[pending.asset.index];
         mirror.revision = pending.revision;
-        mirror.state = gpu::sampled_at({ .fragment_shader });
+        mirror.state = gpu::sampled_at({ .fragment_shader, .compute });
     }
     renderer.pending_texture_uploads.clear();
     renderer.pending_geometry_uploads.clear();
@@ -58,6 +59,7 @@ fn void commit_uploads(Renderer* renderer, Frame* slot) @private {
 }
 
 fn void discard_uploads(Renderer* renderer) @private {
+    discard_environment_preparations(renderer);
     if (!renderer.uploads_recorded && !renderer.pending_copies.len()
         && !renderer.pending_texture_uploads.len() && !renderer.pending_geometry_uploads.len()) return;
 
