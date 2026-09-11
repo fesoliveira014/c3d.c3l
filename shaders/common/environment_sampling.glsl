@@ -14,7 +14,12 @@ vec2 environment_hammersley(uint index, uint count) {
     return vec2(float(index) / float(count), environment_radical_inverse(index));
 }
 
-vec3 environment_sample_ggx(uint index, uint count, float roughness, vec3 normal) {
+vec3 environment_sample_ggx(
+    uint index,
+    uint count,
+    float roughness,
+    vec3 normal
+) {
     vec2 sample_point = environment_hammersley(index, count);
     float alpha = roughness * roughness;
     float alpha_squared = alpha * alpha;
