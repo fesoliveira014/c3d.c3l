@@ -149,7 +149,7 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
             capacity: self.max_lights,
             counts: &light_counts,
         );
-        ShadowGpu[] shadows = record_directional_shadows(
+        ShadowGpu[] shadows = record_shadows(
             renderer: self,
             scene: scene,
             camera: camera,

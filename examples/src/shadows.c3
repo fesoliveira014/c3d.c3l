@@ -177,7 +177,7 @@ fn void shadow_stats(render::Renderer* renderer) @local {
             "Light %u:%u, cascade %u: %.3f ms",
             timing.light.index,
             timing.light.generation,
-            timing.cascade + 1,
+            timing.layer_index + 1,
             (double)timing.gpu_ms,
         );
     }

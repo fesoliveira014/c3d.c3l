@@ -54,7 +54,8 @@ struct ShadowCascade {
 <* Completed depth-pass timing with its original light identity. *>
 struct ShadowTiming {
     Entity light;
-    uint cascade;
+    LightKind kind;
+    uint layer_index;
     float gpu_ms;
 }
 

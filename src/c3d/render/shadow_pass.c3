@@ -75,7 +75,7 @@ fn ShadowDraw[]? prepare_shadow_draws(Renderer* renderer, MeshCandidate[] candid
 
 fn void? record_shadow_layer(
     Renderer* renderer,
-    ShadowCascade* cascade,
+    CameraMatrices* matrices,
     ShadowDraw[] draws,
     uint layer,
     float bias,
@@ -86,7 +86,7 @@ fn void? record_shadow_layer(
     Camera camera; // Depth-only stages consume only the fitted matrices.
     write_frame_root(
         root: (FrameRoot*)frame.bytes.ptr,
-        matrices: &cascade.camera,
+        matrices: matrices,
         camera: &camera,
         viewport: { (float)resolution, (float)resolution },
         info: renderer.info,
@@ -104,7 +104,7 @@ fn void? record_shadow_layer(
     state.depth = { .test_enable = true, .write_enable = true, .compare = gpu::CompareOp.GREATER };
     state.raster.depth_bias_enable = bias != 0;
     state.raster.depth_bias_slope = -bias;
-    bool view_reflected = cascade.camera.view.determinant() < 0;
+    bool view_reflected = matrices.view.determinant() < 0;
     ShadowDrawState bound = {
         .pipeline = shadow_pipeline_for(renderer, draws.len ? draws[0].wireframe : false)!,
     };
@@ -171,7 +171,7 @@ fn void? record_shadow_layer(
     renderer.stats.shadow_layers++;
 }
 
-fn ShadowGpu[]? record_directional_shadows(
+fn ShadowGpu[]? record_shadows(
     Renderer* renderer,
     Scene* scene,
     Camera* camera,
@@ -182,7 +182,9 @@ fn ShadowGpu[]? record_directional_shadows(
     uint covered;
     foreach (request : extraction.shadows) {
         Light* light = scene.get(scene.node(request.light), Light);
-        if (directional_cascade_splits(*camera, light.shadow).count) extraction.shadows[covered++] = request;
+        if (light.kind != LightKind.DIRECTIONAL || directional_cascade_splits(*camera, light.shadow).count) {
+            extraction.shadows[covered++] = request;
+        }
     }
     ShadowAllocation allocation = assign_shadow_layers(extraction.shadows[:covered], renderer.max_shadow_layers);
     renderer.stats.shadow_requests_dropped += allocation.dropped;
@@ -196,38 +198,62 @@ fn ShadowGpu[]? record_directional_shadows(
         counts: &counts,
     );
     renderer.stats.dangling_refs += counts.dangling;
-    ShadowCascade[] cascades = alloc::new_array(tmem, ShadowCascade, allocation.layer_count);
+    CameraMatrices[] shadow_matrices = alloc::new_array(tmem, CameraMatrices, allocation.layer_count);
     bool[] participating = alloc::new_array(tmem, bool, candidates.len);
     ShadowGpu[] shadows = alloc::new_array(tmem, ShadowGpu, allocation.layer_count);
     foreach (request : allocation.requests) {
         Light* light = scene.get(scene.node(request.light), Light);
-        CascadeSplits splits = directional_cascade_splits(*camera, light.shadow);
         LightGpu* packed = &extraction.lights[request.light_index];
         packed.shadow_first = request.first_layer;
         packed.shadow_count = request.layer_count;
+        CascadeSplits splits;
+        float shadow_range;
+        if (light.kind == LightKind.DIRECTIONAL) {
+            splits = directional_cascade_splits(*camera, light.shadow);
+        } else {
+            shadow_range = light.range > 0 ? light.range : light.shadow.max_distance;
+        }
         for (uint index = 0; index < request.layer_count; index++) {
             uint layer = request.first_layer + index;
-            cascades[layer] = fit_directional_cascade(
-                view: matrices,
-                near_depth: index ? splits.far_depths[index - 1] : splits.near_depth,
-                far_depth: splits.far_depths[index],
-                light_direction: packed.direction_cos_outer.xyz,
-                casters: candidates,
-                resolution: renderer.shadow_resolution,
-                normal_bias: light.shadow.normal_bias,
-            );
+            float split_depth;
+            switch (light.kind) {
+                case DIRECTIONAL:
+                    ShadowCascade cascade = fit_directional_cascade(
+                        view: matrices,
+                        near_depth: index ? splits.far_depths[index - 1] : splits.near_depth,
+                        far_depth: splits.far_depths[index],
+                        light_direction: packed.direction_cos_outer.xyz,
+                        casters: candidates,
+                        resolution: renderer.shadow_resolution,
+                        normal_bias: light.shadow.normal_bias,
+                    );
+                    shadow_matrices[layer] = cascade.camera;
+                    split_depth = cascade.split_depth;
+                case SPOT:
+                    shadow_matrices[layer] = spot_shadow_camera(
+                        position: packed.position_range.xyz,
+                        direction: packed.direction_cos_outer.xyz,
+                        outer_cone: light.outer_cone,
+                        shadow_range: shadow_range,
+                    );
+                case POINT:
+                    shadow_matrices[layer] = point_shadow_camera(packed.position_range.xyz, index, shadow_range);
+            }
             foreach (candidate_index, candidate : candidates) {
-                if (maths::frustum_intersects_aabb(&cascades[layer].camera.frustum, candidate.world_bounds)) {
+                if (maths::frustum_intersects_aabb(&shadow_matrices[layer].frustum, candidate.world_bounds)) {
                     participating[candidate_index] = true;
                 }
             }
             shadows[layer] = {
-                .view_proj = bitcast(cascades[layer].camera.view_proj, Mat4f),
+                .view_proj = bitcast(shadow_matrices[layer].view_proj, Mat4f),
                 .texture_index = renderer.shadow_atlas.layers[layer].view.index,
                 .sampler_index = renderer.shadow_atlas.sampler,
                 .normal_bias = light.shadow.normal_bias,
-                .split_depth = cascades[layer].split_depth,
+                .split_depth = split_depth,
                 .texel_size = 1.0f / (float)renderer.shadow_resolution,
+                .max_distance = shadow_range,
+                ._pad1 = 0,
+                ._pad2 = 0,
             };
         }
     }
@@ -252,20 +278,26 @@ fn ShadowGpu[]? record_directional_shadows(
             uint layer = request.first_layer + index;
             uint count;
             foreach (draw : draws) {
-                if (maths::frustum_intersects_aabb(&cascades[layer].camera.frustum, draw.candidate.world_bounds)) {
+                if (maths::frustum_intersects_aabb(&shadow_matrices[layer].frustum, draw.candidate.world_bounds)) {
                     layer_draws[count++] = draw;
                 }
             }
             write_shadow_timestamp(renderer, layer, TIMESTAMP_BEGIN)!;
             record_shadow_layer(
                 renderer: renderer,
-                cascade: &cascades[layer],
+                matrices: &shadow_matrices[layer],
                 draws: layer_draws[:count],
                 layer: layer,
                 bias: light.shadow.bias,
             )!;
             write_shadow_timestamp(renderer, layer, TIMESTAMP_END)!;
-            if (renderer.timestamps_enabled) slot.shadow_timings[layer] = { .light = request.light, .cascade = index };
+            if (renderer.timestamps_enabled) {
+                slot.shadow_timings[layer] = {
+                    .light = request.light,
+                    .kind = light.kind,
+                    .layer_index = index,
+                };
+            }
         }
     }
     write_pass_timestamp(

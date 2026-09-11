@@ -31,6 +31,7 @@ fn void test_shadow_budget_keeps_requests_whole_and_admits_later_fit() @test {
     assert(allocation.requests[1].light.index == 4 && allocation.requests[1].layer_count == 1);
     assert(allocation.requests[1].first_layer == 3 && allocation.requests[1].light_index == 3);
 }
+
 fn void test_spot_shadow_projection_matches_cone_and_reverse_depth() @test {
     CameraMatrices matrices = render::spot_shadow_camera(
         position: { 3, 4, 5 },
