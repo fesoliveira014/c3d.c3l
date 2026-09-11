@@ -32,16 +32,39 @@ const float SHADOW_DISTANCE_MAX @local = 200; // covers the fixture without an u
 const float SHADOW_BIAS_MAX @local = 4; // retains a useful slope-factor range before separation dominates
 const float SHADOW_NORMAL_BIAS_MAX @local = 0.25f; // exposes offset tradeoffs at this scene scale
 const float EXAMPLE_NORMAL_BIAS @local = 0.16f; // clears the ground bands at the cost of contact separation
+const float PUNCTUAL_NEAR_CAP @local = 0.05f; // matches the renderer's precision cap for display
+const float PUNCTUAL_NEAR_FRACTION @local = 0.01f; // matches the renderer's range-scaled near plane for display
+const float SPOT_CONE_GAP_DEGREES @local = 0.5f; // preserves a visible inner-to-outer ordering while editing
+const float SPOT_CONE_MAX_DEGREES @local = 89.5f; // stays strictly below the shadow projection limit
 const Vec2 CONTROLS_PANEL_POSITION @local = { 16, 16 }; // leaves the center of the default view unobscured
-const Vec2 CONTROLS_PANEL_SIZE @local = { 400, 590 }; // contains both suns and mesh controls at 900px high
+const Vec2 CONTROLS_PANEL_SIZE @local = { 420, 680 }; // contains each preset's controls at 900px high
 const Vec2 STATS_PANEL_POSITION @local = { 1010, 16 }; // aligns the panel against the default window edge
-const Vec2 STATS_PANEL_SIZE @local = { 414, 420 }; // holds four delayed layer timings without clipping
+const Vec2 STATS_PANEL_SIZE @local = { 414, 460 }; // holds six delayed layer timings without clipping
+
+enum ShadowPreset @local {
+    SUN,
+    SPOT,
+    POINT,
+}
 
 struct Orbit @local {
     Vec3 target;
     float distance;
     float yaw;
     float pitch;
+}
+
+struct PunctualControls @local {
+    bool unbounded;
+    float finite_range;
+}
+
+struct ShadowNodes @local {
+    Node* primary_sun;
+    Node* secondary_sun;
+    Node* spot;
+    Node* point;
+    Node* point_receivers;
 }
 
 fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
@@ -90,13 +113,9 @@ fn bool edit_float(
     return true;
 }
 
-fn void shadow_controls(ZString title, Light* sunlight, bool orthographic) @local {
-    imgui::separator_text(title);
-    imgui::push_id(title);
-    defer imgui::pop_id();
-
-    imgui::checkbox("Enabled", &sunlight.shadow.enabled);
-    int priority = sunlight.shadow.priority;
+fn void common_shadow_controls(Light* light) @local {
+    imgui::checkbox("Enabled", &light.shadow.enabled);
+    int priority = light.shadow.priority;
     if (imgui::drag_int_ex(
         label: "Priority",
         v: &priority,
@@ -105,7 +124,27 @@ fn void shadow_controls(ZString title, Light* sunlight, bool orthographic) @loca
         v_max: SHADOW_PRIORITY_MAX,
         format: "%d",
         flags: imgui::SLIDER_FLAGS_ALWAYS_CLAMP,
-    )) sunlight.shadow.priority = priority;
+    )) light.shadow.priority = priority;
+    edit_float(
+        label: "Depth bias",
+        value: &light.shadow.bias,
+        minimum: 0,
+        maximum: SHADOW_BIAS_MAX,
+    );
+    edit_float(
+        label: "Normal bias",
+        value: &light.shadow.normal_bias,
+        minimum: 0,
+        maximum: SHADOW_NORMAL_BIAS_MAX,
+    );
+}
+
+fn void sun_shadow_controls(ZString title, Light* sunlight, bool orthographic) @local {
+    imgui::separator_text(title);
+    imgui::push_id(title);
+    defer imgui::pop_id();
+
+    common_shadow_controls(sunlight);
 
     int cascades = (int)sunlight.shadow.cascades;
     if (imgui::drag_int_ex(
@@ -134,18 +173,67 @@ fn void shadow_controls(ZString title, Light* sunlight, bool orthographic) @loca
         minimum: SHADOW_DISTANCE_MIN,
         maximum: SHADOW_DISTANCE_MAX,
     );
-    edit_float(
-        label: "Depth bias",
-        value: &sunlight.shadow.bias,
-        minimum: 0,
-        maximum: SHADOW_BIAS_MAX,
-    );
-    edit_float(
-        label: "Normal bias",
-        value: &sunlight.shadow.normal_bias,
-        minimum: 0,
-        maximum: SHADOW_NORMAL_BIAS_MAX,
-    );
+}
+
+fn void punctual_shadow_controls(
+    ZString title,
+    Light* light,
+    PunctualControls* controls,
+) @local {
+    imgui::separator_text(title);
+    imgui::push_id(title);
+    defer imgui::pop_id();
+
+    common_shadow_controls(light);
+    bool unbounded = controls.unbounded;
+    if (imgui::checkbox("Unbounded illumination", &unbounded)) {
+        controls.unbounded = unbounded;
+        light.range = unbounded ? 0 : controls.finite_range;
+    }
+    if (controls.unbounded) {
+        edit_float(
+            label: "Shadow fallback distance",
+            value: &light.shadow.max_distance,
+            minimum: SHADOW_DISTANCE_MIN,
+            maximum: SHADOW_DISTANCE_MAX,
+        );
+    } else if (edit_float(
+        label: "Finite range",
+        value: &light.range,
+        minimum: SHADOW_DISTANCE_MIN,
+        maximum: SHADOW_DISTANCE_MAX,
+    )) {
+        controls.finite_range = light.range;
+    }
+
+    float shadow_range = controls.unbounded ? light.shadow.max_distance : light.range;
+    float near = math::min(PUNCTUAL_NEAR_CAP, shadow_range * PUNCTUAL_NEAR_FRACTION);
+    imgui::text("Automatic shadow near: %.4f world units", (double)near);
+
+    if (light.kind == SPOT) {
+        float outer_degrees = math::rad_to_deg(light.outer_cone);
+        float inner_degrees = math::rad_to_deg(light.inner_cone);
+        if (edit_float(
+            label: "Outer half (deg)",
+            value: &outer_degrees,
+            minimum: inner_degrees + SPOT_CONE_GAP_DEGREES,
+            maximum: SPOT_CONE_MAX_DEGREES,
+        )) light.outer_cone = math::deg_to_rad(outer_degrees);
+        if (edit_float(
+            label: "Inner half (deg)",
+            value: &inner_degrees,
+            minimum: 0,
+            maximum: outer_degrees - SPOT_CONE_GAP_DEGREES,
+        )) light.inner_cone = math::deg_to_rad(inner_degrees);
+    }
+}
+
+fn void select_preset(ShadowPreset preset, ShadowNodes* nodes) @local {
+    nodes.primary_sun.visible = preset == SUN;
+    nodes.secondary_sun.visible = preset == SUN;
+    nodes.spot.visible = preset == SPOT;
+    nodes.point.visible = preset == POINT;
+    nodes.point_receivers.visible = preset == POINT;
 }
 
 fn void shadow_stats(render::Renderer* renderer) @local {
@@ -173,13 +261,41 @@ fn void shadow_stats(render::Renderer* renderer) @local {
         return;
     }
     foreach (timing : stats.shadow_timings) {
-        imgui::text(
-            "Light %u:%u, cascade %u: %.3f ms",
-            timing.light.index,
-            timing.light.generation,
-            timing.layer_index + 1,
-            (double)timing.gpu_ms,
-        );
+        switch (timing.kind) {
+            case DIRECTIONAL:
+                imgui::text(
+                    "Light %u:%u, cascade %u: %.3f ms",
+                    timing.light.index,
+                    timing.light.generation,
+                    timing.layer_index + 1,
+                    (double)timing.gpu_ms,
+                );
+            case SPOT:
+                imgui::text(
+                    "Light %u:%u, spot: %.3f ms",
+                    timing.light.index,
+                    timing.light.generation,
+                    (double)timing.gpu_ms,
+                );
+            case POINT:
+                ZString face;
+                switch (timing.layer_index) {
+                    case 0: face = "+X";
+                    case 1: face = "-X";
+                    case 2: face = "+Y";
+                    case 3: face = "-Y";
+                    case 4: face = "+Z";
+                    case 5: face = "-Z";
+                    default: face = "?";
+                }
+                imgui::text(
+                    "Light %u:%u, face %s: %.3f ms",
+                    timing.light.index,
+                    timing.light.generation,
+                    face,
+                    (double)timing.gpu_ms,
+                );
+        }
     }
 }
 
@@ -214,8 +330,7 @@ fn void? run_gui(
     render::Renderer* renderer,
     Scene* scene,
     Node* camera_node,
-    Node* primary_sun,
-    Node* secondary_sun,
+    ShadowNodes* nodes,
     Node* solid_box,
     Node* masked_plane,
     Node* off_camera_box,
@@ -227,9 +342,14 @@ fn void? run_gui(
 
     bool orthographic;
     bool escape_captured;
+    ShadowPreset preset = SUN;
+    PunctualControls spot_controls = { .finite_range = 22 };
+    PunctualControls point_controls = { .finite_range = 12 };
     camera::Camera* camera = scene.get(camera_node, camera::Camera);
-    Light* primary_light = scene.get(primary_sun, Light);
-    Light* secondary_light = scene.get(secondary_sun, Light);
+    Light* primary_light = scene.get(nodes.primary_sun, Light);
+    Light* secondary_light = scene.get(nodes.secondary_sun, Light);
+    Light* spot_light = scene.get(nodes.spot, Light);
+    Light* point_light = scene.get(nodes.point, Light);
     Mesh* solid_mesh = scene.get(solid_box, Mesh);
     Mesh* masked_mesh = scene.get(masked_plane, Mesh);
     Mesh* ground_mesh = scene.get(ground, Mesh);
@@ -254,10 +374,27 @@ fn void? run_gui(
 
         imgui::set_next_window_pos(CONTROLS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(CONTROLS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
-        bool controls_visible = imgui::begin("Directional shadows", null, {});
+        bool controls_visible = imgui::begin("Shadows", null, {});
         if (controls_visible) {
             imgui::text_unformatted("Drag outside this panel to orbit; wheel to zoom.");
             imgui::text_unformatted("Release Escape outside text controls to close.");
+
+            imgui::separator_text("Preset");
+            if (imgui::radio_button("Sun", preset == SUN)) {
+                preset = SUN;
+                select_preset(preset, nodes);
+            }
+            imgui::same_line();
+            if (imgui::radio_button("Spot", preset == SPOT)) {
+                preset = SPOT;
+                select_preset(preset, nodes);
+            }
+            imgui::same_line();
+            if (imgui::radio_button("Point", preset == POINT)) {
+                preset = POINT;
+                select_preset(preset, nodes);
+            }
+
             if (imgui::checkbox("Orthographic camera", &orthographic)) {
                 uint layers = camera.layers;
                 *camera = orthographic ? camera::orthographic(20, 0.1f, 100) : camera::perspective_deg(55, 0.1f, 100);
@@ -270,16 +407,27 @@ fn void? run_gui(
                 maximum: 40,
             );
 
-            shadow_controls("Primary sun", primary_light, orthographic);
-            shadow_controls("Second sun", secondary_light, orthographic);
+            switch (preset) {
+                case SUN:
+                    sun_shadow_controls("Primary sun", primary_light, orthographic);
+                    sun_shadow_controls("Second sun", secondary_light, orthographic);
+                case SPOT:
+                    punctual_shadow_controls("Spot light", spot_light, &spot_controls);
+                case POINT:
+                    punctual_shadow_controls("Point light", point_light, &point_controls);
+                    imgui::text_unformatted("Orbit to inspect the ground and five face panels.");
+            }
 
             imgui::separator_text("Mesh switches");
             imgui::checkbox("Solid box casts", &solid_mesh.cast_shadow);
             imgui::checkbox("Masked plane casts", &masked_mesh.cast_shadow);
             imgui::checkbox("Ground receives", &ground_mesh.receive_shadow);
-            imgui::checkbox("Off-camera blocker casts", &off_camera_mesh.cast_shadow);
-            imgui::checkbox("Off-camera blocker visible", &off_camera_box.visible);
-            imgui::text_unformatted("The off-camera blocker is on layer 2; both suns and the camera use layer 1.");
+            if (preset == SUN) {
+                imgui::checkbox("Off-camera blocker casts", &off_camera_mesh.cast_shadow);
+                imgui::checkbox("Off-camera blocker visible", &off_camera_box.visible);
+                imgui::text_unformatted("Blocker uses layer 2.");
+                imgui::text_unformatted("Camera and sun receiver masks: 1.");
+            }
         }
         imgui::end();
 
@@ -338,7 +486,7 @@ fn int main(String[] args) {
     }
 
     platform::Window window = platform::create_window(
-        platform::default_window_desc("c3d directional shadows", 1440, 900))!!;
+        platform::default_window_desc("c3d shadows", 1440, 900))!!;
     defer platform::destroy_window(&window);
 
     AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
@@ -347,7 +495,12 @@ fn int main(String[] args) {
         allocator: mem,
         window: &window,
         assets: &assets,
-        desc: { .gpu_timings = gpu_timings, .validation = true, .application_name = "c3d_directional_shadows" },
+        desc: {
+            .gpu_timings = gpu_timings,
+            .validation = true,
+            .application_name = "c3d_shadows",
+            .max_shadow_layers = 6,
+        },
     )!!;
     defer render::destroy_renderer(&renderer);
 
@@ -355,6 +508,7 @@ fn int main(String[] args) {
     GeometryId ground_geometry;
     GeometryId box_geometry;
     GeometryId plane_geometry;
+    GeometryId point_receiver_geometry;
     @pool() {
         Geometry ground_data = geometry::plane(tmem, 28, 28);
         ground_geometry = assets.add_geometry(&ground_data, "geometry/shadows/ground")!!;
@@ -367,6 +521,11 @@ fn int main(String[] args) {
         box_geometry = assets.add_geometry(&box_data, "geometry/shadows/box")!!;
         Geometry plane_data = geometry::plane(tmem, 3, 3);
         plane_geometry = assets.add_geometry(&plane_data, "geometry/shadows/masked_plane")!!;
+        Geometry point_receiver_data = geometry::plane(tmem, 5, 5);
+        point_receiver_geometry = assets.add_geometry(
+            &point_receiver_data,
+            "geometry/shadows/point_receiver_panel",
+        )!!;
     };
 
     MaterialId ground_material = assets.add_material(material::standard({
@@ -379,6 +538,11 @@ fn int main(String[] args) {
         .metallic = 0.08f,
         .roughness = 0.35f,
     }), "material/shadows/standard_box")!!;
+    MaterialId point_receiver_material = assets.add_material(material::standard({
+        .base_color = { 0.56f, 0.61f, 0.67f, 1 },
+        .metallic = 0,
+        .roughness = 0.9f,
+    }), "material/shadows/point_receiver_panel")!!;
     MaterialId basic_box_material = assets.add_material(material::basic({
         .color = { 0.95f, 0.22f, 0.12f, 1 },
     }), "material/shadows/basic_box")!!;
@@ -399,9 +563,9 @@ fn int main(String[] args) {
 
     Node* ground = scene.add_mesh(ground_geometry, ground_material, name: "ground_receiver")!!;
     Node* standard_box = scene.add_mesh(box_geometry, standard_box_material, name: "standard_box")!!;
-    standard_box.local.position = { -3, 1, 1 };
+    standard_box.local.position = { -2.5f, 1, 1 };
     Node* solid_box = scene.add_mesh(box_geometry, basic_box_material, name: "basic_box")!!;
-    solid_box.local.position = { 3, 1, -1 };
+    solid_box.local.position = { 1.5f, 1, 0 };
     Node* masked_plane = scene.add_mesh(plane_geometry, mask_material, name: "masked_plane")!!;
     masked_plane.local.position = { -0.5f, 1.5f, -2 };
     masked_plane.local.rotation = quaternion::from_axis_angle{float}({ 1, 0, 0 }, math::PI / 2);
@@ -424,11 +588,127 @@ fn int main(String[] args) {
     secondary_sun.layers = 1;
     secondary_sun.local.rotation = maths::look_rotation((Vec3){ 0.4f, -1, 0.2f }.normalize(), { 0, 1, 0 });
 
+    Light spot = light::spot(
+        color: { 1, 0.82f, 0.62f },
+        intensity: 360,
+        inner: math::deg_to_rad(24.0f),
+        outer: math::deg_to_rad(38.0f),
+        range: 22,
+    );
+    spot.layers = 1;
+    spot.shadow.enabled = true;
+    spot.shadow.priority = 10;
+    spot.shadow.normal_bias = EXAMPLE_NORMAL_BIAS;
+    Node* spot_node = scene.add_light(spot, name: "spot_shadow_light")!!;
+    spot_node.layers = 1;
+    spot_node.visible = false;
+    spot_node.local.position = { 0, 9, 7 };
+    spot_node.local.rotation = maths::look_rotation((Vec3){ 0, -9, -7 }.normalize(), { 0, 1, 0 });
+
+    Light point = light::point({ 0.72f, 0.84f, 1 }, 65, 12);
+    point.layers = 1;
+    point.shadow.enabled = true;
+    point.shadow.priority = 10;
+    point.shadow.normal_bias = 0.06f;
+    Node* point_node = scene.add_light(point, name: "point_shadow_light")!!;
+    point_node.layers = 1;
+    point_node.visible = false;
+    point_node.local.position = { 0, 4, 0 };
+
+    Node* point_receivers = scene.add_node(name: "point_receiver_panels")!!;
+    point_receivers.visible = false;
+    Node* receiver_positive_x = scene.add_mesh(
+        geometry: point_receiver_geometry,
+        material: point_receiver_material,
+        parent: point_receivers,
+        name: "point_receiver_positive_x",
+    )!!;
+    scene.get(receiver_positive_x, Mesh).cast_shadow = false;
+    receiver_positive_x.local.position = { 6, 4, 0 };
+    receiver_positive_x.local.rotation = quaternion::from_axis_angle{float}({ 0, 0, 1 }, math::PI / 2);
+    Node* receiver_negative_x = scene.add_mesh(
+        geometry: point_receiver_geometry,
+        material: point_receiver_material,
+        parent: point_receivers,
+        name: "point_receiver_negative_x",
+    )!!;
+    scene.get(receiver_negative_x, Mesh).cast_shadow = false;
+    receiver_negative_x.local.position = { -6, 4, 0 };
+    receiver_negative_x.local.rotation = quaternion::from_axis_angle{float}({ 0, 0, 1 }, -math::PI / 2);
+    Node* receiver_positive_y = scene.add_mesh(
+        geometry: point_receiver_geometry,
+        material: point_receiver_material,
+        parent: point_receivers,
+        name: "point_receiver_positive_y",
+    )!!;
+    scene.get(receiver_positive_y, Mesh).cast_shadow = false;
+    receiver_positive_y.local.position = { 0, 10, 0 };
+    receiver_positive_y.local.rotation = quaternion::from_axis_angle{float}({ 1, 0, 0 }, math::PI);
+    Node* receiver_positive_z = scene.add_mesh(
+        geometry: point_receiver_geometry,
+        material: point_receiver_material,
+        parent: point_receivers,
+        name: "point_receiver_positive_z",
+    )!!;
+    scene.get(receiver_positive_z, Mesh).cast_shadow = false;
+    receiver_positive_z.local.position = { 0, 4, 6 };
+    receiver_positive_z.local.rotation = quaternion::from_axis_angle{float}({ 1, 0, 0 }, -math::PI / 2);
+    Node* receiver_negative_z = scene.add_mesh(
+        geometry: point_receiver_geometry,
+        material: point_receiver_material,
+        parent: point_receivers,
+        name: "point_receiver_negative_z",
+    )!!;
+    scene.get(receiver_negative_z, Mesh).cast_shadow = false;
+    receiver_negative_z.local.position = { 0, 4, -6 };
+    receiver_negative_z.local.rotation = quaternion::from_axis_angle{float}({ 1, 0, 0 }, math::PI / 2);
+
+    Node* blocker_positive_x = scene.add_mesh(
+        geometry: box_geometry,
+        material: standard_box_material,
+        parent: point_receivers,
+        name: "point_blocker_positive_x",
+    )!!;
+    blocker_positive_x.local.position = { 3.5f, 4, 0 };
+    blocker_positive_x.local.scale = { 0.45f, 0.45f, 0.45f };
+    Node* blocker_negative_x = scene.add_mesh(
+        geometry: box_geometry,
+        material: standard_box_material,
+        parent: point_receivers,
+        name: "point_blocker_negative_x",
+    )!!;
+    blocker_negative_x.local.position = { -3.5f, 4, 0 };
+    blocker_negative_x.local.scale = { 0.45f, 0.45f, 0.45f };
+    Node* blocker_positive_y = scene.add_mesh(
+        geometry: box_geometry,
+        material: standard_box_material,
+        parent: point_receivers,
+        name: "point_blocker_positive_y",
+    )!!;
+    blocker_positive_y.local.position = { 0, 7.5f, 0 };
+    blocker_positive_y.local.scale = { 0.45f, 0.45f, 0.45f };
+    Node* blocker_positive_z = scene.add_mesh(
+        geometry: box_geometry,
+        material: standard_box_material,
+        parent: point_receivers,
+        name: "point_blocker_positive_z",
+    )!!;
+    blocker_positive_z.local.position = { 0, 4, 3.5f };
+    blocker_positive_z.local.scale = { 0.45f, 0.45f, 0.45f };
+    Node* blocker_negative_z = scene.add_mesh(
+        geometry: box_geometry,
+        material: standard_box_material,
+        parent: point_receivers,
+        name: "point_blocker_negative_z",
+    )!!;
+    blocker_negative_z.local.position = { 0, 4, -3.5f };
+    blocker_negative_z.local.scale = { 0.45f, 0.45f, 0.45f };
+
     Node* camera_node = scene.add_camera(camera::perspective_deg(55, 0.1f, 100), name: "camera")!!;
     camera_node.layers = 1;
     Orbit orbit = {
-        .target = { 0, 0.8f, 0 },
-        .distance = 18,
+        .target = { 0, 2.5f, 0 },
+        .distance = 20,
         .yaw = 0.75f,
         .pitch = 0.35f,
     };
@@ -436,13 +716,20 @@ fn int main(String[] args) {
     scene.update_world();
     renderer.prepare_scene(&scene)!!;
 
+    ShadowNodes shadow_nodes = {
+        .primary_sun = primary_sun,
+        .secondary_sun = secondary_sun,
+        .spot = spot_node,
+        .point = point_node,
+        .point_receivers = point_receivers,
+    };
+
     if (catch excuse = run_gui(
         window: &window,
         renderer: &renderer,
         scene: &scene,
         camera_node: camera_node,
-        primary_sun: primary_sun,
-        secondary_sun: secondary_sun,
+        nodes: &shadow_nodes,
         solid_box: solid_box,
         masked_plane: masked_plane,
         off_camera_box: off_camera_box,

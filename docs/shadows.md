@@ -1,6 +1,8 @@
-# Directional shadows
+# Shadows
 
 Directional lights created with `light::directional` cast shadows by default.
+Point and spot lights start with shadows disabled; set `light.shadow.enabled = true`
+after construction to enable them. All three kinds use the same layered atlas.
 Standard materials receive them through their direct lighting. Basic materials
 remain unlit and can cast shadows onto Standard surfaces.
 
@@ -23,26 +25,63 @@ change shadow settings; light edits need no asset dirty call. Update world
 transforms before rendering after changing node transforms.
 
 Pass `false` as the third argument to `light::directional` to start without
-shadows, or set the component's `shadow.enabled` to false. Point and spot lights
-start without shadows. Explicitly enabling their shadow settings currently
-produces `c3d::UNSUPPORTED` when the light is selected for rendering.
+shadows, or set the component's `shadow.enabled` to false.
+
+## Add punctual shadows
+
+Point shadows consume six contiguous atlas layers, one for each cube face. Spot
+shadows consume one:
+
+```c3
+Light bulb = light::point({ 1, 0.85f, 0.7f }, 40, 12);
+bulb.shadow.enabled = true;
+Node* bulb_node = scene.add_light(bulb)!;
+bulb_node.local.position = { 0, 4, 0 };
+
+Light cone = light::spot(
+    color: { 1, 1, 1 },
+    intensity: 80,
+    inner: math::deg_to_rad(20.0f),
+    outer: math::deg_to_rad(35.0f),
+    range: 20,
+);
+cone.shadow.enabled = true;
+Node* cone_node = scene.add_light(cone)!;
+cone_node.local.position = { 0, 8, 5 };
+cone_node.local.rotation = maths::look_rotation({ 0, -0.8f, -0.6f }, { 0, 1, 0 });
+scene.update_world();
+```
+
+For a finite punctual light, `Light.range` is both its illumination range and
+shadow endpoint; `ShadowSettings.max_distance` is unused. A zero range means
+unbounded illumination, and `max_distance` becomes the required finite positive
+shadow fallback distance. Both use world units. The renderer chooses the shadow
+near plane automatically as the smaller of 0.05 world units and one percent of
+the effective shadow range. This keeps short ranges such as 0.01 valid.
+
+A shadow-enabled spot requires a positive outer half-angle strictly below 90
+degrees. Its inner half-angle must remain smaller than its outer angle. Spots
+without shadows retain the constructor's inclusive 90-degree limit.
 
 ## Settings and capacity
 
 | Setting | Default | Effect |
 | --- | --- | --- |
-| `enabled` | true for the directional constructor | Requests shadow layers |
+| `enabled` | true for directional; false for point/spot | Requests shadow layers |
 | `priority` | 0 | Higher values win when requests compete |
 | `cascades` | 4 | One to four shadow maps over the camera's depth range |
 | `cascade_lambda` | 0.8 | Perspective split distribution: 0 uniform, 1 logarithmic |
-| `max_distance` | 100 | Finite shadow endpoint in the camera's near/far units |
+| `max_distance` | 100 | Directional depth endpoint or unbounded punctual fallback |
 | `bias` | 0.0005 | Nonnegative slope-scaled depth-bias magnitude |
 | `normal_bias` | 0.02 | Nonnegative receiver displacement in world units |
 
 Use `light::SHADOW_SETTINGS_DEFAULT` when constructing settings independently.
 A zero-initialized settings record is disabled and does not contain those defaults.
-Enabled settings require finite positive distance, finite nonnegative biases,
-cascades in 1..4 and split weight in 0..1. These are programming contracts.
+Call `Light.validate_shadow()` after authored edits when the application needs to
+check these programming contracts explicitly. Enabled directional settings require
+a finite positive `max_distance`, finite nonnegative biases, cascades in 1..4 and
+split weight in 0..1. Enabled punctual settings require a finite nonnegative range,
+a positive finite fallback when range is zero, and the spot cone rule above.
 
 `RendererDesc.shadow_resolution` and `max_shadow_layers` set the atlas dimensions
 at renderer creation. Zero selects 2048 and 4, respectively. A nonzero resolution
@@ -53,16 +92,18 @@ request is accepted and retained until renderer destruction. Disabling shadows
 after use keeps that allocation available for reuse. Window resizing does not
 resize the atlas.
 
-A light receives all its requested cascades or none. Requests are ordered by
+A light receives all its requested shadow layers or none. Requests are ordered by
 descending priority, then ascending entity index and generation. A request that
 does not fit is counted as one drop; the renderer continues trying later requests.
 That light still illuminates its receivers without shadow attenuation. Shadow
 priority operates on the lights already selected by the ordinary light budget.
 
 For example, a four-layer atlas can hold one four-cascade sun or two two-cascade
-suns. Set `max_shadow_layers` explicitly when more layers are required. Reducing
-the number of cascades can make another whole request fit without reallocating
-the atlas.
+suns, but cannot hold a point request. A point-shadow renderer needs at least six
+layers. Six 2048-square D32 layers contain **96 MiB of depth texels** before driver
+overhead. Insufficient capacity drops the whole point request and leaves that light
+illuminating without shadows. Reducing a sun's cascades can make another complete
+request fit without reallocating the atlas.
 
 ## Casting, receiving and layers
 
@@ -111,6 +152,19 @@ Normal offset moves the receiver along its unperturbed, face-corrected surface
 normal. Tune both values for the scene scale, slopes and shadow resolution. No
 single setting guarantees artifact-free contact at every scale.
 
+## Punctual projection and filtering
+
+Spot shadows project along the light node's world negative-Z direction. Point
+shadows ignore node rotation and select faces by the dominant receiver direction,
+with ties preferring X, then Y, then Z. Their local layer order is `+X`, `-X`,
+`+Y`, `-Y`, `+Z`, `-Z`. Both kinds use the same 3x3 comparison filter as sun
+shadows. Point filter taps clamp at the selected face edge; filtering does not
+cross cube-face boundaries.
+
+The renderer applies a radial far cutoff before sampling punctual shadows. A
+receiver beyond the effective shadow range stays directly lit even when its
+projection would fit inside a spot frustum or a point cube corner.
+
 ## Material and source behavior
 
 Opaque casters do not sample material textures. Basic and Standard MASK casters
@@ -125,6 +179,11 @@ require Standard normal, metallic/roughness, occlusion or emissive sources.
 `prepare_scene` retains its broader all-mesh/all-material preparation contract;
 applications preparing only selected assets can use the existing explicit upload
 operations instead.
+
+`extract_lights` is infallible. It validates enabled shadow settings as programming
+contracts and no longer returns `UNSUPPORTED` for selected point or spot lights.
+Renderer entry points and `prepare_scene` remain optional because GPU, material,
+asset-source and command-recording failures still propagate.
 
 Texture/sampler revisions refresh shadow bindings without an unrelated material
 edit. Material edits still require `mark_material_dirty`. A current uploaded
@@ -144,10 +203,13 @@ python3 scripts/build.py --example shadows
 ./examples/build/shadows --gpu-timings
 ```
 
-The example provides ground, solid and masked casters, an off-camera caster and
-two directional lights competing for a fixed atlas. Its GUI edits shadow settings,
-casting/receiving, camera projection and priorities. Drag outside the GUI to orbit,
-scroll to zoom, and release Escape outside keyboard capture to close.
+The example provides separate Sun, Spot and Point presets over ground, solid and
+masked casters. Sun retains two directional lights competing by priority and the
+off-camera receiver-mask demonstration. Point adds five receive-only panels and
+small blockers around the light while the ground supplies the sixth direction. Its renderer explicitly
+uses six 2048-square layers. The GUI restricts controls to the active light kind.
+Drag outside the GUI to orbit, scroll to zoom, and release Escape outside keyboard
+capture to close.
 
 The example uses a 0.16-world-unit normal offset for its 28-unit ground plane.
 The settings table above describes the library defaults. Its depth-bias control
@@ -157,7 +219,11 @@ spans 0..4 so the slope-factor tradeoff is visible at this scene scale.
 counts complete requests rejected by capacity. Draw/triangle counts include the
 depth passes. When GPU timestamps are enabled and supported, `shadow_timings`
 exposes a delayed result for each layer, including its original light entity,
-cascade index and milliseconds. The aggregate shadow pass remains in `gpu_pass_ms`.
+`kind`, zero-based local `layer_index` and milliseconds. Directional indices are
+cascades, spot index zero identifies its sole projection, and point indices follow
+the six-face order above. Identity is captured when work is recorded, so delayed
+results remain correct after preset changes. The aggregate shadow pass remains in
+`gpu_pass_ms`.
 
 Timing results are read when the owning frame slot completes. If a frame records
 multiple views, shadow timings describe its last recorded view; frame counters
