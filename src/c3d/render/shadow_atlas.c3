@@ -8,7 +8,7 @@ struct ShadowLayer {
     gpu::TextureView view;
 }
 
-<* Owned directional depth layers and their shared image state. *>
+<* Owned shadow depth layers and their shared image state. *>
 struct ShadowAtlas {
     Allocator allocator;
     gpu::TextureHandle texture;
