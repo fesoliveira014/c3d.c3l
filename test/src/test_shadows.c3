@@ -32,6 +32,220 @@ fn void test_shadow_budget_keeps_requests_whole_and_admits_later_fit() @test {
     assert(allocation.requests[1].first_layer == 3 && allocation.requests[1].light_index == 3);
 }
 
+fn void test_spot_shadow_projection_matches_cone_and_reverse_depth() @test {
+    CameraMatrices matrices = render::spot_shadow_camera(
+        position: { 3, 4, 5 },
+        direction: { 0, 0, -1 },
+        outer_cone: (float)math::PI / 4,
+        shadow_range: 10,
+    );
+    assert(matrices.position == (Vec3){ 3, 4, 5 });
+    assert(matrices.projection == Projection.PERSPECTIVE && matrices.frustum.plane_count == 6);
+
+    Vec4 center = matrices.view_proj.apply({ 3, 4, 3, 1 });
+    Vec4 edge = matrices.view_proj.apply({ 5, 4, 3, 1 });
+    Vec4 near_clip = matrices.view_proj.apply({ 3, 4, 4.95f, 1 });
+    Vec4 far_clip = matrices.view_proj.apply({ 3, 4, -5, 1 });
+    assert(math::abs(center.x / center.w) < 0.0001f && math::abs(center.y / center.w) < 0.0001f);
+    assert(math::abs(edge.x / edge.w - 1) < 0.0001f);
+    assert(math::abs(near_clip.z / near_clip.w - 1) < 0.0001f);
+    assert(math::abs(far_clip.z / far_clip.w) < 0.0001f);
+    Vec4 restored = matrices.inv_view_proj.apply(center);
+    assert((restored.xyz / restored.w - (Vec3){ 3, 4, 3 }).length() < 0.0001f);
+    assert(!maths::frustum_intersects_aabb(&matrices.frustum, {
+        .min = { 2.9f, 3.9f, 5.9f }, .max = { 3.1f, 4.1f, 6.1f },
+    }));
+    assert(!maths::frustum_intersects_aabb(&matrices.frustum, {
+        .min = { 6, 3.9f, 2.9f }, .max = { 6.1f, 4.1f, 3.1f },
+    }));
+
+    CameraMatrices vertical = render::spot_shadow_camera(
+        position: { 3, 4, 5 },
+        direction: { 0, 1, 0 },
+        outer_cone: 0.3f,
+        shadow_range: 10,
+    );
+    Vec4 vertical_center = vertical.view_proj.apply({ 3, 6, 5, 1 });
+    assert(vertical_center.w > 0 && math::is_finite(vertical_center.z));
+    assert(math::abs(vertical_center.x / vertical_center.w) < 0.0001f);
+    assert(math::abs(vertical_center.y / vertical_center.w) < 0.0001f);
+}
+
+fn void test_punctual_shadow_near_plane_scales_for_short_ranges() @test {
+    float[3] ranges = { 0.01f, 1, 100 };
+    float[3] expected_near = { 0.0001f, 0.01f, 0.05f };
+    foreach (index, range : ranges) {
+        CameraMatrices[2] cameras = {
+            render::spot_shadow_camera(
+                position: { 0, 0, 0 },
+                direction: { 0, 0, -1 },
+                outer_cone: 0.4f,
+                shadow_range: range,
+            ),
+            render::point_shadow_camera({ 0, 0, 0 }, shader::SHADOW_FACE_NEGATIVE_Z, range),
+        };
+        foreach (camera : cameras) {
+            Vec4 near_clip = camera.view_proj.apply({ 0, 0, -expected_near[index], 1 });
+            Vec4 far_clip = camera.view_proj.apply({ 0, 0, -range, 1 });
+            Vec4 middle = camera.view_proj.apply({ 0, 0, -range / 2, 1 });
+            assert(math::abs(near_clip.z / near_clip.w - 1) < 0.0001f);
+            assert(math::abs(far_clip.z / far_clip.w) < 0.0001f);
+            assert(middle.z / middle.w > 0 && middle.z / middle.w < 1);
+            assert(camera.frustum.plane_count == 6);
+        }
+    }
+}
+
+fn void test_point_shadow_faces_match_world_axes_and_image_orientation() @test {
+    Vec3 position = { 3, -2, 5 };
+    Vec3[6] forward = { { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 } };
+    Vec3[6] up = { { 0, -1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 }, { 0, -1, 0 }, { 0, -1, 0 } };
+    Vec3[6] right = { { 0, 0, -1 }, { 0, 0, 1 }, { 1, 0, 0 }, { 1, 0, 0 }, { 1, 0, 0 }, { -1, 0, 0 } };
+    foreach (face, direction : forward) {
+        CameraMatrices camera = render::point_shadow_camera(position, (uint)face, 10);
+        Vec3 center = position + direction * 2;
+        Vec4 center_clip = camera.view_proj.apply({ center.x, center.y, center.z, 1 });
+        Vec3 top = center + up[face];
+        Vec4 top_clip = camera.view_proj.apply({ top.x, top.y, top.z, 1 });
+        Vec3 rightward = center + right[face];
+        Vec4 right_clip = camera.view_proj.apply({ rightward.x, rightward.y, rightward.z, 1 });
+        assert(center_clip.w > 0 && math::abs(center_clip.x / center_clip.w) < 0.0001f);
+        assert(math::abs(center_clip.y / center_clip.w) < 0.0001f);
+        assert(math::abs(top_clip.y / top_clip.w - 0.5f) < 0.0001f);
+        assert(math::abs(right_clip.x / right_clip.w - 0.5f) < 0.0001f);
+        Vec4 restored = camera.inv_view_proj.apply(right_clip);
+        assert((restored.xyz / restored.w - rightward).length() < 0.0001f);
+        Vec3 beyond = position + direction * 11;
+        assert(!maths::frustum_intersects_aabb(&camera.frustum, {
+            .min = beyond - 0.1f, .max = beyond + 0.1f,
+        }));
+    }
+}
+
+fn void test_point_shadow_frusta_meet_at_all_edges_and_corners() @test {
+    for (int x = -1; x <= 1; x++) {
+        for (int y = -1; y <= 1; y++) {
+            for (int z = -1; z <= 1; z++) {
+                uint components = (uint)(x != 0) + (uint)(y != 0) + (uint)(z != 0);
+                if (components < 2) continue;
+                Vec4 receiver = { (float)x * 2, (float)y * 2, (float)z * 2, 1 };
+                uint containing;
+                for (uint face = 0; face < 6; face++) {
+                    CameraMatrices camera = render::point_shadow_camera({ 0, 0, 0 }, face, 10);
+                    Vec4 clip = camera.view_proj.apply(receiver);
+                    if (clip.w <= 0) continue;
+                    Vec3 ndc = clip.xyz / clip.w;
+                    if (math::abs(ndc.x) <= 1.0001f && math::abs(ndc.y) <= 1.0001f
+                        && ndc.z > 0 && ndc.z < 1) containing++;
+                }
+                assert(containing == components);
+            }
+        }
+    }
+}
+
+fn void test_punctual_shadow_frusta_keep_camera_excluded_casters() @test {
+    CameraMatrices view = camera::derive_matrices(
+        camera::perspective_deg(60, 0.1f, 30), matrix::IDENTITY4, { 800, 600 });
+    Aabb caster = { .min = { -0.2f, -0.2f, 11.8f }, .max = { 0.2f, 0.2f, 12.2f } };
+    assert(!maths::frustum_intersects_aabb(&view.frustum, caster));
+    CameraMatrices spot = render::spot_shadow_camera(
+        position: { 0, 0, 10 },
+        direction: { 0, 0, 1 },
+        outer_cone: 0.5f,
+        shadow_range: 10,
+    );
+    CameraMatrices point = render::point_shadow_camera({ 0, 0, 10 }, shader::SHADOW_FACE_POSITIVE_Z, 10);
+    assert(maths::frustum_intersects_aabb(&spot.frustum, caster));
+    assert(maths::frustum_intersects_aabb(&point.frustum, caster));
+}
+
+fn void test_shadow_requests_preserve_selected_light_identity_and_kind_cost() @test {
+    Scene scene = scene::create_scene(mem, { .max_nodes = 3 });
+    defer scene::destroy_scene(&scene);
+    Node* sun = scene.add_light(light::directional({ 1, 1, 1 }, 1))!!;
+    Light point = light::point({ 1, 1, 1 }, 1, 5);
+    point.shadow.enabled = true;
+    point.shadow.priority = 7;
+    point.shadow.cascades = 0;
+    point.shadow.cascade_lambda = -1;
+    point.shadow.max_distance = -1;
+    point.layers = 2;
+    Node* bulb = scene.add_light(point)!!;
+    Light spot = light::spot(
+        color: { 1, 1, 1 },
+        intensity: 1,
+        inner: 0.2f,
+        outer: 0.5f,
+    );
+    spot.shadow.enabled = true;
+    spot.shadow.max_distance = 3;
+    spot.shadow.cascades = 0;
+    spot.shadow.cascade_lambda = -1;
+    Node* cone = scene.add_light(spot)!!;
+    scene.update_world();
+    CameraMatrices camera = camera::derive_matrices(
+        camera::perspective_deg(60, 0.1f, 30), matrix::IDENTITY4, { 800, 600 });
+    LightCounts counts;
+    @pool() {
+        LightExtraction extraction = render::extract_lights(
+            allocator: tmem,
+            scene: &scene,
+            frustum: &camera.frustum,
+            view_layers: 1,
+            capacity: 3,
+            counts: &counts,
+        );
+        assert(extraction.lights.len == 3 && extraction.shadows.len == 3);
+        assert(extraction.shadows[0].light.index == sun.id.index && extraction.shadows[0].layer_count == 4);
+        assert(extraction.shadows[1].light.index == bulb.id.index && extraction.shadows[1].layer_count == 6);
+        assert(extraction.shadows[1].light.generation == bulb.id.generation);
+        assert(extraction.shadows[1].light_index == 1 && extraction.shadows[1].priority == 7);
+        assert(extraction.lights[1].layers == 2 && extraction.lights[1].position_range.w == 5);
+        assert(extraction.shadows[2].light.index == cone.id.index && extraction.shadows[2].layer_count == 1);
+        assert(extraction.shadows[2].light_index == 2 && extraction.lights[2].position_range.w == 0);
+
+        LightExtraction budgeted = render::extract_lights(
+            allocator: tmem,
+            scene: &scene,
+            frustum: &camera.frustum,
+            view_layers: 1,
+            capacity: 1,
+            counts: &counts,
+        );
+        assert(budgeted.lights.len == 1 && budgeted.shadows.len == 1 && counts.dropped == 2);
+        bulb.visible = false;
+        scene.get(cone, Light).shadow.enabled = false;
+        scene.update_world();
+        LightExtraction filtered = render::extract_lights(
+            allocator: tmem,
+            scene: &scene,
+            frustum: &camera.frustum,
+            view_layers: 1,
+            capacity: 3,
+            counts: &counts,
+        );
+        assert(filtered.lights.len == 2 && filtered.shadows.len == 1);
+        assert(filtered.shadows[0].light.index == sun.id.index);
+    };
+}
+
+fn void test_point_request_is_whole_under_mixed_light_budgets() @test {
+    ShadowRequest[3] requests = {
+        { .light = { .index = 1, .generation = 1 }, .light_index = 0, .priority = 3, .layer_count = 4 },
+        { .light = { .index = 2, .generation = 1 }, .light_index = 1, .priority = 2, .layer_count = 6 },
+        { .light = { .index = 3, .generation = 1 }, .light_index = 2, .priority = 1, .layer_count = 1 },
+    };
+    ShadowRequest[3] limited_requests = requests;
+    ShadowAllocation limited = render::assign_shadow_layers(limited_requests[..], 6);
+    assert(limited.layer_count == 5 && limited.dropped == 1 && limited.requests.len == 2);
+    assert(limited.requests[1].light.index == 3 && limited.requests[1].first_layer == 4);
+    ShadowAllocation complete = render::assign_shadow_layers(requests[..], 11);
+    assert(complete.layer_count == 11 && complete.dropped == 0 && complete.requests.len == 3);
+    assert(complete.requests[1].first_layer == 4 && complete.requests[1].layer_count == 6);
+    assert(complete.requests[2].first_layer == 10);
+}
+
 fn void test_shadow_priority_ties_use_complete_entity_identity() @test {
     ShadowRequest[3] requests = {
         { .light = { .index = 2, .generation = 1 }, .light_index = 0, .priority = -3, .layer_count = 1 },

@@ -6,6 +6,13 @@
 #extension GL_EXT_buffer_reference2 : require
 #extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
 
+const uint SHADOW_FACE_POSITIVE_X = 0u;
+const uint SHADOW_FACE_NEGATIVE_X = 1u;
+const uint SHADOW_FACE_POSITIVE_Y = 2u;
+const uint SHADOW_FACE_NEGATIVE_Y = 3u;
+const uint SHADOW_FACE_POSITIVE_Z = 4u;
+const uint SHADOW_FACE_NEGATIVE_Z = 5u;
+const uint SHADOW_POINT_FACE_COUNT = 6u;
 const uint DRAW_RECEIVE_SHADOW = 1u;
 const uint DRAW_ALPHA_MASK = 2u;
 const uint MATERIAL_MAP_BASE_COLOR = 1u;
@@ -149,7 +156,7 @@ struct ShadowGpu {
     float normal_bias;
     float split_depth;
     float texel_size;
-    uint _pad0;
+    float max_distance;
     uint _pad1;
     uint _pad2;
 };

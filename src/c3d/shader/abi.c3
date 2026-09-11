@@ -3,6 +3,13 @@ module c3d::shader;
 
 import gpu;
 
+const uint SHADOW_FACE_POSITIVE_X = 0;
+const uint SHADOW_FACE_NEGATIVE_X = 1;
+const uint SHADOW_FACE_POSITIVE_Y = 2;
+const uint SHADOW_FACE_NEGATIVE_Y = 3;
+const uint SHADOW_FACE_POSITIVE_Z = 4;
+const uint SHADOW_FACE_NEGATIVE_Z = 5;
+const uint SHADOW_POINT_FACE_COUNT = 6;
 const uint DRAW_RECEIVE_SHADOW = 1;
 const uint DRAW_ALPHA_MASK = 2;
 const uint MATERIAL_MAP_BASE_COLOR = 1;
@@ -251,7 +258,7 @@ struct ShadowGpu {
     float        normal_bias;
     float        split_depth;
     float        texel_size;
-    uint         _pad0;
+    float        max_distance;
     uint         _pad1;
     uint         _pad2;
 }
@@ -262,7 +269,7 @@ $assert $reflect(ShadowGpu.sampler_index).offset == 68;
 $assert $reflect(ShadowGpu.normal_bias).offset == 72;
 $assert $reflect(ShadowGpu.split_depth).offset == 76;
 $assert $reflect(ShadowGpu.texel_size).offset == 80;
-$assert $reflect(ShadowGpu._pad0).offset == 84;
+$assert $reflect(ShadowGpu.max_distance).offset == 84;
 $assert $reflect(ShadowGpu._pad1).offset == 88;
 $assert $reflect(ShadowGpu._pad2).offset == 92;
 

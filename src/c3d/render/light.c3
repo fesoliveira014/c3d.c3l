@@ -1,6 +1,5 @@
 module c3d::render;
 
-import c3d;
 import c3d::ecs;
 import c3d::light;
 import c3d::maths;
@@ -22,10 +21,9 @@ struct LightCounts {
  @param [&in] frustum : "Current view clipping planes."
  @param view_layers : "Camera visibility mask."
  @param [&inout] counts : "Overwritten with this view's counts."
- @return? c3d::UNSUPPORTED
  @require capacity > 0
 *>
-fn LightExtraction? extract_lights(
+fn LightExtraction extract_lights(
     Allocator allocator,
     Scene* scene,
     Frustum* frustum,
@@ -34,7 +32,6 @@ fn LightExtraction? extract_lights(
     LightCounts* counts,
 ) {
     LightGpu[] packed = alloc::new_array(allocator, LightGpu, math::min(scene.count(Light), capacity));
-    defer catch alloc::free(allocator, packed.ptr);
     ShadowRequest[] requests = collect_shadow_requests(
         allocator: allocator,
         scene: scene,
@@ -43,11 +40,11 @@ fn LightExtraction? extract_lights(
         view_layers: view_layers,
         capacity: (uint)packed.len,
         counts: counts,
-    )!;
+    );
     return { .lights = packed[:counts.packed], .shadows = requests };
 }
 
-fn ShadowRequest[]? collect_shadow_requests(
+fn ShadowRequest[] collect_shadow_requests(
     Allocator allocator,
     Scene* scene,
     LightGpu[] packed,
@@ -58,7 +55,6 @@ fn ShadowRequest[]? collect_shadow_requests(
 ) @private {
     *counts = {};
     ShadowRequest[] requests = alloc::new_array(allocator, ShadowRequest, capacity);
-    defer catch alloc::free(allocator, requests.ptr);
     uint request_count;
 
     scene.@each(Light; Entity entity, Light* light) {
@@ -76,13 +72,18 @@ fn ShadowRequest[]? collect_shadow_requests(
             );
 
             if (counts.packed != packed_index && light.shadow.enabled) {
-                light.shadow.validate();
-                if (light.kind != DIRECTIONAL) return c3d::UNSUPPORTED~;
+                light.validate_shadow();
+                uint layer_count;
+                switch (light.kind) {
+                    case DIRECTIONAL: layer_count = light.shadow.cascades;
+                    case SPOT: layer_count = 1;
+                    case POINT: layer_count = shader::SHADOW_POINT_FACE_COUNT;
+                }
                 requests[request_count++] = {
                     .light = entity,
                     .light_index = packed_index,
                     .priority = light.shadow.priority,
-                    .layer_count = light.shadow.cascades,
+                    .layer_count = layer_count,
                 };
             }
         }
