@@ -64,7 +64,7 @@ fn void test_light_inclusion_precedes_budget_and_preserves_receiver_mask() @test
             view_layers: 1,
             capacity: 1,
             counts: &counts,
-        )!!;
+        );
         LightGpu[] packed = extraction.lights;
         assert(packed.len == 1 && packed[0].color_intensity.w == 5);
         assert(packed[0].layers == 3);
@@ -101,7 +101,7 @@ fn void test_unbounded_and_directional_lights_survive_spatial_culling() @test {
             view_layers: 1,
             capacity: 4,
             counts: &counts,
-        )!!;
+        );
         LightGpu[] packed = extraction.lights;
         assert(packed.len == 3 && counts.culled == 1 && counts.dropped == 0);
         assert(packed[0].kind == (uint)LightKind.DIRECTIONAL.ordinal);
@@ -129,7 +129,7 @@ fn void test_light_budget_follows_current_component_order() @test {
             view_layers: 1,
             capacity: 2,
             counts: &counts,
-        )!!;
+        );
         LightGpu[] packed = extraction.lights;
         assert(packed.len == 2 && counts.dropped == 1);
         assert(extraction.shadows.len == 0);
@@ -145,7 +145,7 @@ fn void test_light_budget_follows_current_component_order() @test {
             view_layers: 1,
             capacity: 1,
             counts: &counts,
-        )!!;
+        );
         LightGpu[] packed = extraction.lights;
         assert(packed.len == 1 && counts.packed == 1 && counts.dropped == 1);
         assert(extraction.shadows.len == 0);
@@ -180,7 +180,7 @@ fn void test_spot_world_pose_does_not_scale_range_or_intensity() @test {
             view_layers: 1,
             capacity: 1,
             counts: &counts,
-        )!!;
+        );
         LightGpu[] packed = extraction.lights;
         assert(packed.len == 1);
         assert(extraction.shadows.len == 0);
@@ -293,91 +293,10 @@ fn void test_light_receiver_mask_is_not_restricted_to_camera_bits() @test {
             view_layers: 1,
             capacity: 1,
             counts: &counts,
-        )!!;
+        );
         LightGpu[] packed = extraction.lights;
         assert(packed.len == 1 && packed[0].layers == 2);
         assert(extraction.shadows.len == 1 && extraction.shadows[0].light_index == 0);
         assert(counts.dropped == 0);
-    };
-}
-
-fn void test_unsupported_shadow_lights_fault_only_after_view_selection() @test {
-    Scene scene = scene::create_scene(mem, { .max_nodes = 3 });
-    defer scene::destroy_scene(&scene);
-
-    scene.add_light(light::directional({ 1, 1, 1 }, 1, false))!!;
-    Node* point = scene.add_light(light::point({ 1, 1, 1 }, 1))!!;
-    Node* spot = scene.add_light(light::spot(
-        color: { 1, 1, 1 },
-        intensity: 1,
-        inner: 0.2f,
-        outer: 0.5f,
-    ))!!;
-    scene.get(point, Light).shadow.enabled = true;
-    scene.get(spot, Light).shadow.enabled = true;
-
-    Frustum frustum = box_frustum();
-    LightCounts counts;
-
-    @pool() {
-        for (uint selected = 0; selected < 2; selected++) {
-            point.visible = selected == 0;
-            spot.visible = selected == 1;
-            scene.update_world();
-
-            if (catch excuse = render::extract_lights(
-                allocator: tmem,
-                scene: &scene,
-                frustum: &frustum,
-                view_layers: 1,
-                capacity: 3,
-                counts: &counts,
-            )) {
-                assert(excuse == c3d::UNSUPPORTED);
-            } else {
-                assert(false, "Selected unsupported shadow light was accepted");
-            }
-        }
-
-        point.visible = true;
-        spot.visible = true;
-        scene.update_world();
-        LightExtraction budgeted = render::extract_lights(
-            allocator: tmem,
-            scene: &scene,
-            frustum: &frustum,
-            view_layers: 1,
-            capacity: 1,
-            counts: &counts,
-        )!!;
-        assert(budgeted.lights.len == 1 && counts.dropped == 2 && budgeted.shadows.len == 0);
-
-        point.visible = false;
-        spot.visible = false;
-        scene.update_world();
-        LightExtraction hidden = render::extract_lights(
-            allocator: tmem,
-            scene: &scene,
-            frustum: &frustum,
-            view_layers: 1,
-            capacity: 3,
-            counts: &counts,
-        )!!;
-        assert(hidden.lights.len == 1 && counts.dropped == 0 && hidden.shadows.len == 0);
-
-        point.visible = true;
-        spot.visible = true;
-        scene.get(point, Light).shadow.enabled = false;
-        scene.get(spot, Light).shadow.enabled = false;
-        scene.update_world();
-        LightExtraction disabled = render::extract_lights(
-            allocator: tmem,
-            scene: &scene,
-            frustum: &frustum,
-            view_layers: 1,
-            capacity: 3,
-            counts: &counts,
-        )!!;
-        assert(disabled.lights.len == 3 && disabled.shadows.len == 0);
     };
 }

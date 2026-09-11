@@ -148,7 +148,7 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
             view_layers: camera.layers,
             capacity: self.max_lights,
             counts: &light_counts,
-        )!;
+        );
         ShadowGpu[] shadows = record_directional_shadows(
             renderer: self,
             scene: scene,
@@ -280,7 +280,7 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
             view_layers: uint::max,
             capacity: scene.count(Light),
             counts: &counts,
-        )!;
+        );
         shadows_enabled = assign_shadow_layers(requests, self.max_shadow_layers).layer_count > 0;
     };
     if (shadows_enabled) {

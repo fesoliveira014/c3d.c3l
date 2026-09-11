@@ -1,5 +1,13 @@
 abi c3d;
 
+const uint SHADOW_FACE_POSITIVE_X = 0;
+const uint SHADOW_FACE_NEGATIVE_X = 1;
+const uint SHADOW_FACE_POSITIVE_Y = 2;
+const uint SHADOW_FACE_NEGATIVE_Y = 3;
+const uint SHADOW_FACE_POSITIVE_Z = 4;
+const uint SHADOW_FACE_NEGATIVE_Z = 5;
+const uint SHADOW_POINT_FACE_COUNT = 6;
+
 root CompositeRoot {
     TextureIndex source_texture;
     SamplerIndex source_sampler;
@@ -144,7 +152,7 @@ struct ShadowGpu {
     float normal_bias;
     float split_depth;
     float texel_size;
-    uint _pad0;
+    float max_distance;
     uint _pad1;
     uint _pad2;
 }
