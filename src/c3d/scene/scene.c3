@@ -20,15 +20,20 @@ struct SceneDesc {
  Owner of every node and of the world their components live in.
 *>
 struct Scene {
-    Allocator  allocator;
-    Allocator* hook_allocator;
-    World      world;
-    Node[]     nodes;
-    Node*      root;
-    Vec3       ambient_color;
-    float      ambient_intensity;
-    Node*[]    remove_queue;
-    uint       remove_count;
+    Allocator     allocator;
+    Allocator*    hook_allocator;
+    World         world;
+    Node[]        nodes;
+    Node*         root;
+    Vec3          ambient_color;
+    float         ambient_intensity;
+    EnvironmentId environment;
+    float          environment_intensity;
+    Quat           environment_rotation;
+    bool           ambient_add;
+    Background     background;
+    Node*[]        remove_queue;
+    uint           remove_count;
 }
 
 <*
@@ -253,11 +258,16 @@ fn SceneDesc default_scene_desc() {
 fn Scene create_scene(Allocator allocator, SceneDesc desc) {
     uint capacity = desc.max_nodes + 1;
     Scene scene = {
-        .allocator      = allocator,
-        .hook_allocator = alloc::new(allocator, Allocator),
-        .world          = ecs::create_world(allocator, capacity),
-        .nodes          = alloc::new_array(allocator, Node, capacity),
-        .remove_queue   = alloc::new_array(allocator, Node*, desc.max_nodes),
+        .allocator             = allocator,
+        .hook_allocator        = alloc::new(allocator, Allocator),
+        .world                 = ecs::create_world(allocator, capacity),
+        .nodes                 = alloc::new_array(allocator, Node, capacity),
+        .environment           = {},
+        .environment_intensity = 1,
+        .environment_rotation  = quaternion::IDENTITY,
+        .ambient_add            = false,
+        .background             = BACKGROUND_DEFAULT,
+        .remove_queue           = alloc::new_array(allocator, Node*, desc.max_nodes),
     };
     *scene.hook_allocator = allocator;
     Entity root_entity = scene.world.create_entity()!!;
