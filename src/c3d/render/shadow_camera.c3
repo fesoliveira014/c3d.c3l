@@ -29,7 +29,13 @@ fn CameraMatrices spot_shadow_camera(
       ? (Vec3){ 1, 0, 0 } : (Vec3){ 0, 1, 0 };
     Vec3 right = direction.cross(reference).normalize();
     Vec3 up = right.cross(direction);
-    return perspective_shadow_camera(position, direction, up, 2 * outer_cone, shadow_range);
+    return perspective_shadow_camera(
+        position: position,
+        forward: direction,
+        up: up,
+        fov_y: 2 * outer_cone,
+        shadow_range: shadow_range,
+    );
 }
 
 <*
@@ -42,14 +48,14 @@ fn CameraMatrices spot_shadow_camera(
  @require shadow_range > 0 && math::is_finite(shadow_range)
 *>
 fn CameraMatrices point_shadow_camera(Vec3 position, uint face, float shadow_range) {
-    Vec3[6] directions;
+    Vec3[shader::SHADOW_POINT_FACE_COUNT] directions;
     directions[shader::SHADOW_FACE_POSITIVE_X] = { 1, 0, 0 };
     directions[shader::SHADOW_FACE_NEGATIVE_X] = { -1, 0, 0 };
     directions[shader::SHADOW_FACE_POSITIVE_Y] = { 0, 1, 0 };
     directions[shader::SHADOW_FACE_NEGATIVE_Y] = { 0, -1, 0 };
     directions[shader::SHADOW_FACE_POSITIVE_Z] = { 0, 0, 1 };
     directions[shader::SHADOW_FACE_NEGATIVE_Z] = { 0, 0, -1 };
-    Vec3[6] up_vectors;
+    Vec3[shader::SHADOW_POINT_FACE_COUNT] up_vectors;
     up_vectors[shader::SHADOW_FACE_POSITIVE_X] = { 0, -1, 0 };
     up_vectors[shader::SHADOW_FACE_NEGATIVE_X] = { 0, -1, 0 };
     up_vectors[shader::SHADOW_FACE_POSITIVE_Y] = { 0, 0, 1 };

@@ -14,6 +14,7 @@ import c3d::maths;
 import c3d::platform;
 import c3d::render;
 import c3d::scene;
+import c3d::shader;
 import sdl;
 
 const float ORBIT_RADIANS_PER_PIXEL @local = 0.005f; // balances precise orbit control against pointer travel
@@ -280,12 +281,12 @@ fn void shadow_stats(render::Renderer* renderer) @local {
             case POINT:
                 ZString face;
                 switch (timing.layer_index) {
-                    case 0: face = "+X";
-                    case 1: face = "-X";
-                    case 2: face = "+Y";
-                    case 3: face = "-Y";
-                    case 4: face = "+Z";
-                    case 5: face = "-Z";
+                    case shader::SHADOW_FACE_POSITIVE_X: face = "+X";
+                    case shader::SHADOW_FACE_NEGATIVE_X: face = "-X";
+                    case shader::SHADOW_FACE_POSITIVE_Y: face = "+Y";
+                    case shader::SHADOW_FACE_NEGATIVE_Y: face = "-Y";
+                    case shader::SHADOW_FACE_POSITIVE_Z: face = "+Z";
+                    case shader::SHADOW_FACE_NEGATIVE_Z: face = "-Z";
                     default: face = "?";
                 }
                 imgui::text(

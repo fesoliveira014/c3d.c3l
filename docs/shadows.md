@@ -8,7 +8,8 @@ remain unlit and can cast shadows onto Standard surfaces.
 
 ## Add a sun
 
-Given a live `Scene scene`, import `c3d::light`, `c3d::scene` and `c3d::maths`:
+Given a live `Scene scene`, import `std::math`, `c3d::light`, `c3d::scene` and
+`c3d::maths`:
 
 ```c3
 Light sunlight = light::directional({ 1, 1, 1 }, 1);
