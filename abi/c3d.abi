@@ -85,6 +85,11 @@ const uint MATERIAL_MAP_OCCLUSION = 8;
 const uint MATERIAL_MAP_EMISSIVE = 16;
 const uint MATERIAL_MAP_UV1_SHIFT = 5;
 
+const uint MATERIAL_ALPHA_MASK = 1;
+const uint MATERIAL_DOUBLE_SIDED = 2;
+const uint MATERIAL_ALPHA_BLEND = 4;
+const uint TOON_MAP_GRADIENT = 1024;
+
 struct TextureMapGpu {
     TextureIndex texture_index;
     SamplerIndex sampler_index;
@@ -173,6 +178,20 @@ root StandardMaterialGpu {
     TextureMapGpu normal_map;
     TextureMapGpu occlusion_map;
     TextureMapGpu emissive_map;
+}
+
+root ToonMaterialGpu {
+    uint kind;
+    uint flags;
+    float alpha_cutoff;
+    uint map_flags;
+    vec4 color;
+    vec4 rim_color_strength;
+    float rim_power;
+    uint steps;
+    TextureIndex gradient_texture;
+    SamplerIndex gradient_sampler;
+    TextureMapGpu map;
 }
 
 const uint ENVIRONMENT_FACE_POSITIVE_X = 0;

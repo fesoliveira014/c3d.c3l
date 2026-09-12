@@ -37,6 +37,8 @@ fn void? stats_panel(Renderer* renderer) {
     if (renderer.timestamps_enabled) {
         imgui::text("Completed GPU opaque: %.3f ms",
             (double)renderer.stats.gpu_pass_ms[Pass.FORWARD_OPAQUE.ordinal]);
+        imgui::text("Completed GPU transparent: %.3f ms",
+            (double)renderer.stats.gpu_pass_ms[Pass.FORWARD_TRANSPARENT.ordinal]);
         imgui::text("Completed GPU composite: %.3f ms",
             (double)renderer.stats.gpu_pass_ms[Pass.COMPOSITE.ordinal]);
     } else {

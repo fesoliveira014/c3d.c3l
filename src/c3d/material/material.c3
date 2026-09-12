@@ -12,6 +12,12 @@ const MaterialCommon MATERIAL_COMMON_DEFAULT = {
     .depth_test   = true,
 };
 
+<* Default unlit color and base-map transform. *>
+const BasicParams BASIC_PARAMS_DEFAULT = {
+    .color = { 1, 1, 1, 1 },
+    .map = { .transform = UV_TRANSFORM_IDENTITY },
+};
+
 <* Default metallic-roughness factors. *>
 const StandardParams STANDARD_PARAMS_DEFAULT = {
     .base_color = { 1, 1, 1, 1 },
@@ -33,6 +39,7 @@ const StandardParams STANDARD_PARAMS_DEFAULT = {
 enum MaterialKind {
     BASIC,
     STANDARD,
+    TOON,
 }
 
 <*
@@ -89,13 +96,15 @@ struct Material {
     union {
         BasicParams basic;
         StandardParams standard;
+        ToonParams toon;
     }
 }
 
 <*
  Unlit material.
+ @pure
 *>
-fn Material basic(BasicParams params, MaterialCommon common = MATERIAL_COMMON_DEFAULT) {
+fn Material basic(BasicParams params = BASIC_PARAMS_DEFAULT, MaterialCommon common = MATERIAL_COMMON_DEFAULT) {
     return { .kind = MaterialKind.BASIC, .common = common, .basic = params };
 }
 

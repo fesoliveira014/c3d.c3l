@@ -3,6 +3,7 @@ module c3d::render;
 import c3d;
 import c3d::asset;
 import c3d::camera;
+import c3d::material;
 import c3d::maths;
 import c3d::scene;
 import c3d::shader;
@@ -26,6 +27,7 @@ struct MeshCandidate {
     MaterialId material;
     Aabb       world_bounds;
     float      ndc_depth;
+    float      view_depth;
     bool       receive_shadow;
 }
 
@@ -91,9 +93,31 @@ fn void include_mesh(MeshCandidate[] candidates, Node* node, Mesh* mesh, AssetSt
         .material     = mesh.material,
         .world_bounds = world,
         .ndc_depth    = center_depth(camera, world),
+        .view_depth   = center_view_depth(camera, world),
         .receive_shadow = mesh.receive_shadow,
     };
     counts.visible++;
+}
+
+fn float center_view_depth(CameraMatrices* camera, Aabb world) @local {
+    Vec3 center = (world.min + world.max) * 0.5f;
+    return -camera.view.apply({ center.x, center.y, center.z, 1.0f }).z;
+}
+
+<*
+ Order transparent bounds centers from far to near, then entity identity.
+ @param first : "Live candidate with finite view depth."
+ @param second : "Live candidate with finite view depth."
+ @return "Negative when first orders earlier."
+ @pure
+*>
+fn int compare_transparent_candidates(MeshCandidate first, MeshCandidate second) {
+    if (first.view_depth > second.view_depth) return -1;
+    if (first.view_depth < second.view_depth) return 1;
+    if (first.node.id.index < second.node.id.index) return -1;
+    if (first.node.id.index > second.node.id.index) return 1;
+    if (first.node.id.generation < second.node.id.generation) return -1;
+    return first.node.id.generation > second.node.id.generation ? 1 : 0;
 }
 
 fn float center_depth(CameraMatrices* camera, Aabb world) @local {
@@ -125,15 +149,18 @@ fn MeshCandidate[] extract_shadow_candidates(
             if (!assets.geometries.is_live(mesh.geometry) || !assets.materials.is_live(mesh.material)) {
                 counts.dangling++;
             } else {
-                Aabb bounds = mesh.has_bounds_override
-                  ? mesh.local_bounds : assets.geometry(mesh.geometry).data.bounds;
-                candidates[counts.visible++] = {
-                    .node = node,
-                    .geometry = mesh.geometry,
-                    .material = mesh.material,
-                    .world_bounds = maths::aabb_transform(bounds, node.world),
-                    .receive_shadow = mesh.receive_shadow,
-                };
+                Material* material = &assets.material(mesh.material).data;
+                if (material.common.alpha_mode != AlphaMode.BLEND) {
+                    Aabb bounds = mesh.has_bounds_override
+                      ? mesh.local_bounds : assets.geometry(mesh.geometry).data.bounds;
+                    candidates[counts.visible++] = {
+                        .node = node,
+                        .geometry = mesh.geometry,
+                        .material = mesh.material,
+                        .world_bounds = maths::aabb_transform(bounds, node.world),
+                        .receive_shadow = mesh.receive_shadow,
+                    };
+                }
             }
         }
     };

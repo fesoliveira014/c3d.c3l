@@ -14,6 +14,7 @@ enum ShaderName : int {
     IMGUI_FRAGMENT,
     CUBE_PREVIEW,
     STANDARD,
+    TOON,
     ENVIRONMENT_SOURCE,
     ENVIRONMENT_PREFILTER,
     IRRADIANCE_PROJECT,
@@ -37,6 +38,7 @@ const char[*] IMGUI_VERTEX_SPIRV @private = $embed("../../../shaders/spv/imgui_v
 const char[*] IMGUI_FRAGMENT_SPIRV @private = $embed("../../../shaders/spv/imgui_fragment.spv");
 const char[*] CUBE_PREVIEW_SPIRV @private = $embed("../../../shaders/spv/cube_preview.spv");
 const char[*] STANDARD_SPIRV @private = $embed("../../../shaders/spv/standard.spv");
+const char[*] TOON_SPIRV @private = $embed("../../../shaders/spv/toon.spv");
 const char[*] ENVIRONMENT_SOURCE_SPIRV @private = $embed("../../../shaders/spv/environment_source.spv");
 const char[*] ENVIRONMENT_PREFILTER_SPIRV @private = $embed("../../../shaders/spv/environment_prefilter.spv");
 const char[*] IRRADIANCE_PROJECT_SPIRV @private = $embed("../../../shaders/spv/irradiance_project.spv");
@@ -49,7 +51,7 @@ const char[*] DEPTH_ONLY_SPIRV @private = $embed("../../../shaders/spv/depth_onl
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[17] SHADER_ENTRIES = {
+const ShaderEntry[18] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -59,6 +61,7 @@ const ShaderEntry[17] SHADER_ENTRIES = {
     { .variant = { .shader = IMGUI_FRAGMENT }, .spirv = IMGUI_FRAGMENT_SPIRV[..] },
     { .variant = { .shader = CUBE_PREVIEW }, .spirv = CUBE_PREVIEW_SPIRV[..] },
     { .variant = { .shader = STANDARD }, .spirv = STANDARD_SPIRV[..] },
+    { .variant = { .shader = TOON }, .spirv = TOON_SPIRV[..] },
     { .variant = { .shader = ENVIRONMENT_SOURCE }, .spirv = ENVIRONMENT_SOURCE_SPIRV[..] },
     { .variant = { .shader = ENVIRONMENT_PREFILTER }, .spirv = ENVIRONMENT_PREFILTER_SPIRV[..] },
     { .variant = { .shader = IRRADIANCE_PROJECT }, .spirv = IRRADIANCE_PROJECT_SPIRV[..] },

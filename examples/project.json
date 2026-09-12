@@ -126,6 +126,12 @@
       "sources": [
         "src/texture_bc.c3"
       ]
+    },
+    "materials": {
+      "type": "executable",
+      "sources": [
+        "src/materials.c3"
+      ]
     }
   }
 }

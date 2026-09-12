@@ -7,11 +7,9 @@
 #include "brdf.glsl"
 #include "ibl.glsl"
 #include "lights.glsl"
+#include "material_alpha.glsl"
 #include "material_maps.glsl"
 #include "shadows.glsl"
-
-const uint MATERIAL_ALPHA_MASK = 1u; // mirrored as MaterialFlags.alpha_mask
-const uint MATERIAL_DOUBLE_SIDED = 2u; // mirrored as MaterialFlags.double_sided
 
 layout(location = 0) in vec3 v_world_pos;
 layout(location = 1) in vec3 v_normal;
@@ -105,5 +103,5 @@ void main() {
         }
         color += visibility * evaluate_standard_light(light, v_world_pos, surface);
     }
-    out_color = vec4(color, base_color.a);
+    out_color = material_output(color, base_color.a, material.flags);
 }
