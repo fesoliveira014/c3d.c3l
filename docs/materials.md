@@ -6,6 +6,12 @@ image-based lighting, and five independent texture slots. `Toon` adds quantized
 direct diffuse lighting, smooth indirect fill and an optional surface rim. All
 three families use the asset store's shared material ids.
 
+## Basic defaults
+
+`material::basic()` creates an unlit white material with no base map.
+`BASIC_PARAMS_DEFAULT` supplies white RGBA and an identity base-map transform;
+start from it when changing selected Basic factors or switching a material's kind.
+
 ## Standard factors
 
 ```c3

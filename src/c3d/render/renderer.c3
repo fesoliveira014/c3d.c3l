@@ -122,6 +122,7 @@ struct Renderer {
     List{GeometryId}         pending_geometry_uploads;
     TextureRes[]            textures;
     EnvironmentState        environment_state;
+    gpu::SamplerIndex       toon_gradient_sampler;
     SamplerRes[]            samplers;
     List{PendingTextureUpload} pending_texture_uploads;
     RetireList              pending_upload_retire;

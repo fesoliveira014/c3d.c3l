@@ -77,25 +77,27 @@ fn TextureBinding? resolve_gradient_map(Renderer* renderer, TextureId texture) @
     }
 
     TextureRes* texture_mirror = ensure_texture(renderer, texture)!;
-    gpu::SamplerDesc sampler = {
-        .min_filter = gpu::Filter.NEAREST,
-        .mag_filter = gpu::Filter.NEAREST,
-        .mip_filter = gpu::Filter.NEAREST,
-        .address_u = gpu::AddressMode.CLAMP_TO_EDGE,
-        .address_v = gpu::AddressMode.CLAMP_TO_EDGE,
-        .address_w = gpu::AddressMode.CLAMP_TO_EDGE,
-        .min_lod = 0,
-        .max_lod = 0,
-        .anisotropy_enable = false,
-        .compare_enable = false,
-        .debug_name = "toon_gradient",
-    };
-    gpu::SamplerIndex sampler_index = gpu::intern_sampler(&renderer.device, &sampler)!;
+    if (!renderer.toon_gradient_sampler.is_valid()) {
+        gpu::SamplerDesc sampler = {
+            .min_filter = gpu::Filter.NEAREST,
+            .mag_filter = gpu::Filter.NEAREST,
+            .mip_filter = gpu::Filter.NEAREST,
+            .address_u = gpu::AddressMode.CLAMP_TO_EDGE,
+            .address_v = gpu::AddressMode.CLAMP_TO_EDGE,
+            .address_w = gpu::AddressMode.CLAMP_TO_EDGE,
+            .min_lod = 0,
+            .max_lod = 0,
+            .anisotropy_enable = false,
+            .compare_enable = false,
+            .debug_name = "toon_gradient",
+        };
+        renderer.toon_gradient_sampler = gpu::intern_sampler(&renderer.device, &sampler)!;
+    }
     return {
         .texture = texture,
         .texture_binding_revision = texture_mirror.binding_revision,
         .texture_index = texture_mirror.view.index,
-        .sampler_index = sampler_index,
+        .sampler_index = renderer.toon_gradient_sampler,
         .present = true,
     };
 }

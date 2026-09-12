@@ -10,13 +10,12 @@ import std::math;
 <*
  Bytes one material block occupies in the heap.
 *>
-const usz MATERIAL_STRIDE = (((usz)(BasicMaterialGpu::size > StandardMaterialGpu::size
-  ? (BasicMaterialGpu::size > ToonMaterialGpu::size ? BasicMaterialGpu::size : ToonMaterialGpu::size)
-  : (StandardMaterialGpu::size > ToonMaterialGpu::size ? StandardMaterialGpu::size : ToonMaterialGpu::size))
-  + STREAM_ALIGNMENT - 1)
+const usz MATERIAL_STRIDE = (((usz)StandardMaterialGpu::size + STREAM_ALIGNMENT - 1)
   / STREAM_ALIGNMENT) * STREAM_ALIGNMENT;
 $assert MATERIAL_STRIDE % STREAM_ALIGNMENT == 0;
-$assert MATERIAL_STRIDE == 224;
+$assert MATERIAL_STRIDE >= BasicMaterialGpu::size;
+$assert MATERIAL_STRIDE >= StandardMaterialGpu::size;
+$assert MATERIAL_STRIDE >= ToonMaterialGpu::size;
 
 <*
  Common material options packed into shader flags.

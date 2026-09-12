@@ -36,9 +36,7 @@ float spot_attenuation(float cosine, float cos_inner, float cos_outer) {
 }
 
 LightSample sample_light(LightGpu light, vec3 position) {
-    LightSample light_sample;
-    light_sample.direction = vec3(0.0);
-    light_sample.radiance = vec3(0.0);
+    LightSample light_sample = LightSample(vec3(0.0), vec3(0.0));
     float attenuation = 1.0;
     if (light.kind == LIGHT_DIRECTIONAL) {
         light_sample.direction = -light.direction_cos_outer.xyz;

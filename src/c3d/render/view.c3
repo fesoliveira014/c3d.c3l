@@ -492,7 +492,12 @@ fn void? record_opaque_pass(Renderer* renderer, DrawItem[] items, Vec4 clear_col
     // Bound before the pass begins: the backend checks the bound pipeline against the pass formats at begin.
     gpu::cmd_bind_pipeline(&renderer.commands, pipeline)!;
     gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
-    record_draws(renderer, items, false)!;
+    record_draws(
+        renderer: renderer,
+        items: items,
+        transparent: false,
+        pipeline: pipeline,
+    )!;
     gpu::cmd_end_render_pass(&renderer.commands)!;
 }
 
@@ -522,11 +527,21 @@ fn void? record_transparent_pass(Renderer* renderer, DrawItem[] items) @private 
     renderer.hdr_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
     renderer.depth.transition(&renderer.commands, DEPTH_ATTACHMENT_STATE)!;
     gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
-    record_draws(renderer, items, true)!;
+    record_draws(
+        renderer: renderer,
+        items: items,
+        transparent: true,
+        pipeline: pipeline,
+    )!;
     gpu::cmd_end_render_pass(&renderer.commands)!;
 }
 
-fn void? record_draws(Renderer* renderer, DrawItem[] items, bool transparent) @private {
+fn void? record_draws(
+    Renderer* renderer,
+    DrawItem[] items,
+    bool transparent,
+    gpu::PipelineHandle pipeline,
+) @private {
     uint width = renderer.hdr_color.width;
     uint height = renderer.hdr_color.height;
     gpu::ColorTargetState[1] color_targets = {
@@ -538,7 +553,7 @@ fn void? record_draws(Renderer* renderer, DrawItem[] items, bool transparent) @p
     state.raster.front_face = gpu::FrontFace.COUNTER_CLOCKWISE;
 
     DrawState bound;
-    if (items.len) bound.pipeline = pipeline_for(renderer, material_data(renderer, items[0].material))!;
+    bound.pipeline = pipeline;
     bool state_set;
     foreach (&item : items) {
         Material* material = material_data(renderer, item.material);

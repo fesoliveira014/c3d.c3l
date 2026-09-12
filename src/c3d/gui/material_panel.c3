@@ -117,18 +117,21 @@ fn bool edit_material_common(MaterialCommon* common) @local {
 }
 
 fn bool edit_material_steps(uint* steps) @local {
-    int edited = *steps > (uint)int::max ? int::max : (int)*steps;
-    if (!imgui::drag_int_ex(
+    uint edited = *steps;
+    uint minimum = 2;
+    uint maximum = uint::max;
+    if (!imgui::drag_scalar_ex(
         label: "Steps",
-        v: &edited,
+        data_type: imgui::DATA_TYPE_U32,
+        p_data: &edited,
         v_speed: 0.1f,
-        v_min: 2,
-        v_max: int::max,
-        format: "%d",
+        p_min: &minimum,
+        p_max: &maximum,
+        format: "%u",
         flags: imgui::SLIDER_FLAGS_ALWAYS_CLAMP,
     )) return false;
-    if (edited < 2 || (uint)edited == *steps) return false;
-    *steps = (uint)edited;
+    if (edited == *steps) return false;
+    *steps = edited;
     return true;
 }
 

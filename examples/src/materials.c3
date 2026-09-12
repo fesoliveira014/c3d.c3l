@@ -36,10 +36,6 @@ const Vec2 MATERIAL_PANEL_POSITION @local = { 1034, 332 }; // Places factor edit
 const Vec2 MATERIAL_PANEL_SIZE @local = { 390, 550 }; // Fits common and Toon factors without covering fixtures.
 const Vec2 STATS_PANEL_POSITION @local = { 1034, 16 }; // Aligns diagnostics with the right window edge.
 const Vec2 STATS_PANEL_SIZE @local = { 320, 300 }; // Holds the complete timing summary.
-const BasicParams EXAMPLE_BASIC_PARAMS_DEFAULT @local = {
-    .color = { 1, 1, 1, 1 },
-    .map = { .transform = material::UV_TRANSFORM_IDENTITY },
-};
 
 enum MaterialPreset @local {
     MASKED_FOLIAGE,
@@ -205,7 +201,7 @@ fn void select_material_kind(
     MaterialCommon common = record.data.common;
     switch (kind) {
         case BASIC:
-            BasicParams params = EXAMPLE_BASIC_PARAMS_DEFAULT;
+            BasicParams params = material::BASIC_PARAMS_DEFAULT;
             params.color = color;
             record.data = material::basic(params, common);
         case STANDARD:
@@ -493,17 +489,11 @@ fn void? run_gui(
     ExampleTextures textures,
     ExampleNodes nodes,
     Orbit* orbit,
+    Controls* controls,
 ) @local {
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
 
-    Controls controls = { .environment_fill = true };
-    select_preset(
-        preset: MASKED_FOLIAGE,
-        materials: materials,
-        nodes: nodes,
-        controls: &controls,
-    );
     bool escape_captured;
 
     while (window.poll(&forward_gui_event, &gui_renderer)) {
@@ -533,7 +523,7 @@ fn void? run_gui(
             directional_node: directional_node,
             point_node: point_node,
             environment: environment,
-            controls: &controls,
+            controls: controls,
         );
 
         imgui::set_next_window_pos(MATERIAL_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
@@ -627,7 +617,9 @@ fn ExampleMaterials create_materials(
     MaterialCommon blend_common = material::MATERIAL_COMMON_DEFAULT;
     blend_common.alpha_mode = BLEND;
     blend_common.double_sided = true;
-    blend_common.depth_write = true;
+
+    ToonParams steps = material::TOON_PARAMS_DEFAULT;
+    steps.color = { 1, 0.55f, 0.12f, 1 };
 
     ToonParams ramp = material::TOON_PARAMS_DEFAULT;
     ramp.color = { 0.25f, 0.9f, 0.42f, 1 };
@@ -655,13 +647,10 @@ fn ExampleMaterials create_materials(
             { .color = { 0.08f, 0.35f, 1, 0.48f } },
             blend_common,
         ), "material/materials/blend_blue")!!,
-        .toon_steps = assets.add_material(material::toon({
-            .color = { 1, 0.55f, 0.12f, 1 },
-            .map = { .transform = material::UV_TRANSFORM_IDENTITY },
-            .steps = 4,
-            .rim_color = { 1, 1, 1 },
-            .rim_power = 2,
-        }), "material/materials/toon_steps")!!,
+        .toon_steps = assets.add_material(
+            material::toon(steps),
+            "material/materials/toon_steps",
+        )!!,
         .toon_ramp = assets.add_material(
             material::toon(ramp),
             "material/materials/toon_ramp",
@@ -713,9 +702,9 @@ fn ExampleNodes create_fixtures(
     nodes.leaf_first.local.scale = { 2.5f, 1, 3 };
     nodes.leaf_second = scene.add_mesh(plane, materials.masked, name: "masked_leaf_second")!!;
     nodes.leaf_second.local.position = { 0.8f, 1.5f, -0.4f };
-    nodes.leaf_second.local.rotation = quaternion::from_axis_angle{float}(
-        { 1, 0, 0 }, math::PI / 2).mul(
-        quaternion::from_axis_angle{float}({ 0, 1, 0 }, math::PI / 2));
+    Quat leaf_tilt = quaternion::from_axis_angle{float}({ 1, 0, 0 }, math::PI / 2);
+    Quat leaf_turn = quaternion::from_axis_angle{float}({ 0, 1, 0 }, math::PI / 2);
+    nodes.leaf_second.local.rotation = leaf_tilt.mul(leaf_turn);
     nodes.leaf_second.local.scale = { 2.5f, 1, 3 };
 
     nodes.blend_reference = scene.add_mesh(box, reference_material, name: "opaque_blend_reference")!!;
@@ -818,12 +807,12 @@ fn int main(String[] args) {
     Orbit orbit = { .target = { 0, 0.8f, 0 }, .distance = 8, .yaw = 0.08f, .pitch = 0.12f };
     apply_orbit(&orbit, &window.input, camera_node);
 
-    Controls initial_controls;
+    Controls controls = { .environment_fill = true };
     select_preset(
         preset: MASKED_FOLIAGE,
         materials: materials,
         nodes: nodes,
-        controls: &initial_controls,
+        controls: &controls,
     );
     scene.update_world();
     renderer.prepare_scene(&scene)!!;
@@ -840,6 +829,7 @@ fn int main(String[] args) {
         textures: textures,
         nodes: nodes,
         orbit: &orbit,
+        controls: &controls,
     )) {
         io::printfn("Materials example failed: %s", excuse);
         return 1;
