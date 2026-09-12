@@ -20,8 +20,12 @@ void main() {
     if (root.source_kind == ENVIRONMENT_SOURCE_EQUIRECTANGULAR) {
         vec2 uv = (vec2(texel) + 0.5) / float(root.size);
         vec3 direction = environment_cube_direction(root.face, uv);
+        // Longitude is undefined at a cube pole, so pin its azimuth to zero.
+        float longitude = direction.x == 0.0 && direction.z == 0.0
+            ? 0.5
+            : atan(direction.z, direction.x) / (2.0 * BRDF_PI) + 0.5;
         vec2 source_uv = vec2(
-            atan(direction.z, direction.x) / (2.0 * BRDF_PI) + 0.5,
+            longitude,
             acos(clamp(direction.y, -1.0, 1.0)) / BRDF_PI
         );
         radiance = sample_texture_2d(root.source_texture, root.sampler_index, source_uv);
