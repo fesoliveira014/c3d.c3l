@@ -18,11 +18,11 @@ import c3d::scene;
 import imgui;
 import sdl;
 
-const float ORBIT_RADIANS_PER_PIXEL @local = 0.005f;
+const float ORBIT_RADIANS_PER_PIXEL @local = 0.005f; // Keeps drag rotation controllable across the sphere grid.
 const float ORBIT_PITCH_LIMIT @local = 1.5f; // just short of the poles, where the up vector degenerates
-const float ORBIT_ZOOM_STEP @local = 0.9f;
-const float ORBIT_DISTANCE_MIN @local = 1.0f;
-const float ORBIT_DISTANCE_MAX @local = 50.0f;
+const float ORBIT_ZOOM_STEP @local = 0.9f; // Ten percent per wheel step gives proportional zoom.
+const float ORBIT_DISTANCE_MIN @local = 1.0f; // Keeps the orbit camera outside a sphere at the target.
+const float ORBIT_DISTANCE_MAX @local = 50.0f; // Keeps the grid within the camera far plane.
 const uint GRID_SIDE @local = 7; // 49 draws expose both complete material axes without instancing
 const float GRID_SPACING @local = 1.1f; // separates the radius-0.4 spheres
 const usz MOUSE_BUTTON_LEFT @local = 1; // SDL button index
@@ -30,12 +30,12 @@ const Vec2 CONTROLS_PANEL_POSITION @local = { 16, 16 };
 const Vec2 CONTROLS_PANEL_SIZE @local = { 390, 820 };
 const Vec2 STATS_PANEL_POSITION @local = { 1104, 16 };
 const Vec2 STATS_PANEL_SIZE @local = { 320, 290 };
-const float EDITOR_WIDTH @local = 170;
+const float EDITOR_WIDTH @local = 170; // Fits numeric values alongside the control labels.
 const float INITIAL_LIGHTING_INTENSITY @local = 1;
 const float INITIAL_BACKGROUND_INTENSITY @local = 0.25f;
 const float INITIAL_AMBIENT_INTENSITY @local = 0.08f;
-const int ENVIRONMENT_SIZE_MAX @local = 2048;
-const int ENVIRONMENT_SPECULAR_SIZE_MIN @local = 32;
+const int ENVIRONMENT_SIZE_MAX @local = 2048; // Bounds the example processing time and cube memory.
+const int ENVIRONMENT_SPECULAR_SIZE_MIN @local = 32; // Six roughness mips need 32 texels at mip zero.
 
 enum EnvironmentChoice @local {
     NONE,

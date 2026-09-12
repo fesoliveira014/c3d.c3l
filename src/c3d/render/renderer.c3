@@ -118,18 +118,7 @@ struct Renderer {
     bool                    uploads_recorded;
     List{GeometryId}         pending_geometry_uploads;
     TextureRes[]            textures;
-    EnvironmentRes[]        environments;
-    PendingEnvironment[]    pending_environments;
-    EnvironmentPipelines    environment_pipelines;
-    RetireList              environment_temporaries;
-    gpu::SamplerIndex       environment_source_sampler;
-    gpu::SamplerIndex       environment_sampler;
-    bool                    environment_samplers_ready;
-    gpu::TextureHandle      environment_brdf_texture;
-    gpu::TextureView        environment_brdf_view;
-    bool                    environment_brdf_ready;
-    bool                    environment_brdf_pending;
-    bool                    environment_brdf_recorded;
+    EnvironmentState        environment_state;
     SamplerRes[]            samplers;
     List{PendingTextureUpload} pending_texture_uploads;
     RetireList              pending_upload_retire;
@@ -704,8 +693,10 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .geometries           = alloc::new_array(allocator, GpuGeometry, assets.geometries.items.len),
         .materials            = alloc::new_array(allocator, MaterialRes, assets.materials.items.len),
         .textures             = alloc::new_array(allocator, TextureRes, assets.textures.items.len),
-        .environments         = alloc::new_array(allocator, EnvironmentRes, assets.environments.items.len),
-        .pending_environments = alloc::new_array(allocator, PendingEnvironment, assets.environments.items.len),
+        .environment_state    = {
+            .mirrors = alloc::new_array(allocator, EnvironmentRes, assets.environments.items.len),
+            .pending = alloc::new_array(allocator, PendingEnvironment, assets.environments.items.len),
+        },
         .samplers             = alloc::new_array(allocator, SamplerRes, assets.samplers.items.len),
         .material_heap        = material_heap,
         .material_heap_span   = material_heap_span,
@@ -728,7 +719,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .output_width         = desc.output_width,
         .output_height        = desc.output_height,
     };
-    renderer.environment_temporaries.init(allocator, RETIRE_INITIAL_CAPACITY);
+    renderer.environment_state.temporaries.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_copies.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_geometry_uploads.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_texture_uploads.init(allocator, RETIRE_INITIAL_CAPACITY);

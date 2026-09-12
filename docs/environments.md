@@ -129,6 +129,8 @@ quadruples that image's storage and processing work.
 `renderer.upload(id)` facade accepts EnvironmentId too. Outside a frame,
 preparation submits the required work and waits without acquiring or presenting
 a window image. Inside an output frame it queues work before subsequent consumers.
+An upload failure leaves the open frame and earlier queued preparation intact;
+the caller can continue the frame or abort it.
 
 `renderer.prepare_scene(&scene)` prepares selected lighting/background assets,
 referenced mesh assets and their required pipelines. A background-only environment

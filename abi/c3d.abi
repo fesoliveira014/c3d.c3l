@@ -206,8 +206,8 @@ root EnvironmentGpu {
     TextureIndex brdf_lut;
     float intensity;
     GpuAddress sh;
-    uint mip_count;
     uint _pad0;
+    uint _pad1;
     EnvironmentRotationGpu rotation;
 }
 

@@ -58,8 +58,7 @@ struct DrawState @private {
  @return? c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE, gpu::DESCRIPTOR_HEAP_FULL
  @return? c3d::INVALID_ID, gpu::COMMAND_ALLOCATOR_CAPACITY_EXCEEDED, gpu::WAIT_TIMEOUT
  @require !self.frame_open
- @require !self.assets.environments.is_live(scene.environment) || (scene.environment_intensity >= 0 && math::is_finite(scene.environment_intensity) && scene.environment_rotation.is_normalized())
- @require scene.background.kind != BackgroundKind.ENVIRONMENT || !self.assets.environments.is_live(scene.background.environment) || (scene.background.intensity >= 0 && math::is_finite(scene.background.intensity) && scene.background.rotation.is_normalized())
+ @require environment_view_valid(self.assets, scene)
 *>
 fn void? Renderer.render(
     &self,
@@ -91,8 +90,7 @@ fn void? Renderer.render(
  @return? gpu::RESOURCE_IN_USE, gpu::DESCRIPTOR_HEAP_FULL, gpu::WAIT_TIMEOUT
  @return? c3d::INVALID_ID, gpu::COMMAND_ALLOCATOR_CAPACITY_EXCEEDED
  @require self.frame_open, !self.overlay_open
- @require !self.assets.environments.is_live(scene.environment) || (scene.environment_intensity >= 0 && math::is_finite(scene.environment_intensity) && scene.environment_rotation.is_normalized())
- @require scene.background.kind != BackgroundKind.ENVIRONMENT || !self.assets.environments.is_live(scene.background.environment) || (scene.background.intensity >= 0 && math::is_finite(scene.background.intensity) && scene.background.rotation.is_normalized())
+ @require environment_view_valid(self.assets, scene)
 *>
 fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
     if (!self.has_output) return;
@@ -597,4 +595,15 @@ fn void? allocate_view_targets(
 fn void release_view_targets(gpu::Device* device, Target* hdr_color, Target* depth) @private {
     if (hdr_color.texture.is_valid()) release_target(device, hdr_color);
     if (depth.texture.is_valid()) release_target(device, depth);
+}
+
+fn bool environment_view_valid(AssetStore* assets, Scene* scene) @private {
+    bool lighting_valid = !assets.environments.is_live(scene.environment)
+      || (scene.environment_intensity >= 0 && math::is_finite(scene.environment_intensity)
+        && scene.environment_rotation.is_normalized());
+    bool background_valid = scene.background.kind != BackgroundKind.ENVIRONMENT
+      || !assets.environments.is_live(scene.background.environment)
+      || (scene.background.intensity >= 0 && math::is_finite(scene.background.intensity)
+        && scene.background.rotation.is_normalized());
+    return lighting_valid && background_valid;
 }

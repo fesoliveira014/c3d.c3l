@@ -1,7 +1,7 @@
 #version 460
 #include "generated/shader_abi.glsl"
 #include "c3d_abi.glsl"
-#include "brdf.glsl"
+#include "constants.glsl"
 #include "irradiance.glsl"
 
 layout(local_size_x = ENVIRONMENT_SH_GROUP_SIZE) in;
@@ -13,9 +13,9 @@ layout(push_constant) uniform Push {
 shared vec3 coefficient_sums[9][ENVIRONMENT_SH_GROUP_SIZE];
 
 float environment_cosine_factor(uint coefficient) {
-    if (coefficient == 0u) return BRDF_PI;
-    if (coefficient <= 3u) return 2.0 * BRDF_PI / 3.0;
-    return BRDF_PI / 4.0;
+    if (coefficient == 0u) return PI;
+    if (coefficient <= 3u) return 2.0 * PI / 3.0;
+    return PI / 4.0;
 }
 
 void main() {

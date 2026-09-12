@@ -23,7 +23,7 @@ vec3 environment_sample_ggx(
     vec2 sample_point = environment_hammersley(index, count);
     float alpha = roughness * roughness;
     float alpha_squared = alpha * alpha;
-    float phi = 2.0 * BRDF_PI * sample_point.x;
+    float phi = 2.0 * PI * sample_point.x;
     float cosine = sqrt((1.0 - sample_point.y)
         / (1.0 + (alpha_squared - 1.0) * sample_point.y));
     float sine = sqrt(max(1.0 - cosine * cosine, 0.0));

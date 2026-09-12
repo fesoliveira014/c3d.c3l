@@ -1,7 +1,7 @@
 #ifndef C3D_BRDF_GLSL
 #define C3D_BRDF_GLSL
 
-const float BRDF_PI = 3.141592653589793;
+#include "constants.glsl"
 const float MIN_PERCEPTUAL_ROUGHNESS = 0.045; // keeps the finite-light specular lobe representable
 
 struct StandardSurface {
@@ -24,7 +24,7 @@ StandardSurface prepare_standard_surface(
     float alpha = perceptual * perceptual;
 
     StandardSurface surface;
-    surface.diffuse_color = (1.0 - metallic) * base_color / BRDF_PI;
+    surface.diffuse_color = (1.0 - metallic) * base_color / PI;
     surface.reflectance = mix(vec3(0.04), base_color, metallic);
     surface.alpha_squared = alpha * alpha;
     surface.normal = normal;
@@ -42,7 +42,7 @@ vec3 fresnel_schlick(vec3 reflectance, float view_half) {
 float distribution_ggx(float normal_half, float alpha_squared) {
     float cosine_squared = normal_half * normal_half;
     float denominator = (1.0 - cosine_squared) + alpha_squared * cosine_squared;
-    return alpha_squared / (BRDF_PI * denominator * denominator);
+    return alpha_squared / (PI * denominator * denominator);
 }
 
 float visibility_smith(float normal_view, float normal_light, float alpha_squared) {

@@ -343,8 +343,8 @@ struct EnvironmentGpu {
     TextureIndex           brdf_lut;
     float                  intensity;
     GpuAddress             sh;
-    uint                   mip_count;
     uint                   _pad0;
+    uint                   _pad1;
     EnvironmentRotationGpu rotation;
 }
 $assert EnvironmentGpu::size == 80;
@@ -353,8 +353,8 @@ $assert $reflect(EnvironmentGpu.sampler_index).offset == 4;
 $assert $reflect(EnvironmentGpu.brdf_lut).offset == 8;
 $assert $reflect(EnvironmentGpu.intensity).offset == 12;
 $assert $reflect(EnvironmentGpu.sh).offset == 16;
-$assert $reflect(EnvironmentGpu.mip_count).offset == 24;
-$assert $reflect(EnvironmentGpu._pad0).offset == 28;
+$assert $reflect(EnvironmentGpu._pad0).offset == 24;
+$assert $reflect(EnvironmentGpu._pad1).offset == 28;
 $assert $reflect(EnvironmentGpu.rotation).offset == 32;
 
 struct SkyRoot {

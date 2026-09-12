@@ -29,7 +29,7 @@ vec3 evaluate_environment(
         * surface.diffuse_color * (1.0 - fresnel) * occlusion;
 
     float perceptual_roughness = max(roughness, MIN_PERCEPTUAL_ROUGHNESS);
-    float lod = perceptual_roughness * float(environment.mip_count - 1u);
+    float lod = perceptual_roughness * float(ENVIRONMENT_SPECULAR_MIPS - 1u);
     vec3 prefiltered = sample_texture_cube_lod(
         environment.specular_cube,
         environment.sampler_index,

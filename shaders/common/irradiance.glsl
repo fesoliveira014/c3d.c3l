@@ -19,6 +19,7 @@ float environment_sh_basis(uint coefficient, vec3 direction) {
         case 6u: return 0.3153915653 * (3.0 * direction.z * direction.z - 1.0);
         case 7u: return 1.0925484306 * direction.x * direction.z;
         case 8u: return 0.5462742153 * (direction.x * direction.x - direction.y * direction.y);
+        default: return 0.0;
     }
 }
 

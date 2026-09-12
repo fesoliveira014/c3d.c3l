@@ -209,8 +209,8 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer Environment
     uint brdf_lut;
     float intensity;
     uint64_t sh;
-    uint mip_count;
     uint _pad0;
+    uint _pad1;
     EnvironmentRotationGpu rotation;
 };
 

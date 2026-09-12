@@ -2,7 +2,7 @@
 #include "generated/shader_abi.glsl"
 #include "c3d_abi.glsl"
 #include "descriptor_heap.glsl"
-#include "brdf.glsl"
+#include "constants.glsl"
 #include "cube_direction.glsl"
 
 layout(local_size_x = 8, local_size_y = 8) in;
@@ -23,10 +23,10 @@ void main() {
         // Longitude is undefined at a cube pole, so pin its azimuth to zero.
         float longitude = direction.x == 0.0 && direction.z == 0.0
             ? 0.5
-            : atan(direction.z, direction.x) / (2.0 * BRDF_PI) + 0.5;
+            : atan(direction.z, direction.x) / (2.0 * PI) + 0.5;
         vec2 source_uv = vec2(
             longitude,
-            acos(clamp(direction.y, -1.0, 1.0)) / BRDF_PI
+            acos(clamp(direction.y, -1.0, 1.0)) / PI
         );
         radiance = sample_texture_2d(root.source_texture, root.sampler_index, source_uv);
     }

@@ -15,6 +15,14 @@ $assert shader::ENVIRONMENT_FACE_POSITIVE_Z == (uint)material::CubeFace.POSITIVE
 $assert shader::ENVIRONMENT_FACE_NEGATIVE_Z == (uint)material::CubeFace.NEGATIVE_Z.ordinal;
 $assert shader::ENVIRONMENT_FACE_COUNT == material::CUBE_FACE_COUNT;
 
+<* Preparation and submission state of the shared BRDF lookup. *>
+enum EnvironmentLutState {
+    NONE,
+    PENDING,
+    RECORDED,
+    READY,
+}
+
 <* Submitted source and lighting resources for one environment. *>
 struct EnvironmentRes {
     EnvironmentId asset;
@@ -54,8 +62,23 @@ struct EnvironmentPipelines {
     gpu::PipelineHandle brdf;
 }
 
+<* Renderer-owned environment resources and their pending preparation. *>
+struct EnvironmentState {
+    EnvironmentRes[] mirrors;
+    PendingEnvironment[] pending;
+    EnvironmentPipelines pipelines;
+    RetireList temporaries;
+    gpu::SamplerIndex source_sampler;
+    gpu::SamplerIndex sampler;
+    bool samplers_ready;
+    gpu::TextureHandle brdf_texture;
+    gpu::TextureView brdf_view;
+    EnvironmentLutState brdf_state;
+}
+
 <*
  Prepare an environment now or before this frame's sampling.
+ Environment descriptions and source data stay stable until frame closure.
  @param [&inout] self : "Owns processing and its completion lifetime."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED
  @return? c3d::ASSET_DATA_UNAVAILABLE, c3d::SHADER_NOT_FOUND
@@ -70,7 +93,6 @@ struct EnvironmentPipelines {
 fn void? Renderer.upload_environment(&self, EnvironmentId environment) {
     if (!self.assets.environments.is_live(environment)) return c3d::INVALID_ID~;
     if (self.frame_open) {
-        defer catch abort_frame(self);
         ensure_environment(self, environment, true)!;
         return;
     }
@@ -105,8 +127,8 @@ fn EnvironmentRes*? ensure_environment(Renderer* renderer, EnvironmentId environ
             if (texture.is_cube) description.settings.conversion_size = 0;
     }
 
-    PendingEnvironment* pending = &renderer.pending_environments[environment.index];
-    EnvironmentRes* committed = &renderer.environments[environment.index];
+    PendingEnvironment* pending = &renderer.environment_state.pending[environment.index];
+    EnvironmentRes* committed = &renderer.environment_state.mirrors[environment.index];
     EnvironmentRes* current = pending.active ? &pending.result : committed;
     bool same_source = current.asset.index == environment.index
       && current.asset.generation == environment.generation && current.source_ready
@@ -210,7 +232,7 @@ fn void? create_environment_cube(Renderer* renderer, EnvironmentRes* result, boo
 }
 
 fn void? ensure_environment_samplers(Renderer* renderer) @local {
-    if (renderer.environment_samplers_ready) return;
+    if (renderer.environment_state.samplers_ready) return;
     gpu::SamplerDesc description = {
         .min_filter = gpu::Filter.LINEAR,
         .mag_filter = gpu::Filter.LINEAR,
@@ -221,12 +243,12 @@ fn void? ensure_environment_samplers(Renderer* renderer) @local {
         .max_lod = 0,
         .debug_name = "environment_equirectangular",
     };
-    renderer.environment_source_sampler = gpu::intern_sampler(&renderer.device, &description)!;
+    renderer.environment_state.source_sampler = gpu::intern_sampler(&renderer.device, &description)!;
     description.address_u = gpu::AddressMode.CLAMP_TO_EDGE;
     description.max_lod = (float)(shader::ENVIRONMENT_SPECULAR_MIPS - 1);
     description.debug_name = "environment_filtered";
-    renderer.environment_sampler = gpu::intern_sampler(&renderer.device, &description)!;
-    renderer.environment_samplers_ready = true;
+    renderer.environment_state.sampler = gpu::intern_sampler(&renderer.device, &description)!;
+    renderer.environment_state.samplers_ready = true;
 }
 
 fn void release_environment_source(gpu::Device* device, EnvironmentRes* result) @private {
@@ -256,49 +278,48 @@ fn void retire_environment_lighting(RetireList* retire, EnvironmentRes* result) 
 }
 
 fn bool has_environment_preparations(Renderer* renderer) @private {
-    if (renderer.environment_brdf_pending) return true;
-    foreach (pending : renderer.pending_environments) if (pending.active) return true;
+    if (renderer.environment_state.brdf_state == EnvironmentLutState.PENDING
+        || renderer.environment_state.brdf_state == EnvironmentLutState.RECORDED) return true;
+    foreach (pending : renderer.environment_state.pending) if (pending.active) return true;
     return false;
 }
 
 fn void commit_environment_preparations(Renderer* renderer, Frame* slot) @private {
-    foreach (index, &pending : renderer.pending_environments) {
+    foreach (index, &pending : renderer.environment_state.pending) {
         if (!pending.active) continue;
-        EnvironmentRes* committed = &renderer.environments[index];
+        EnvironmentRes* committed = &renderer.environment_state.mirrors[index];
         if (committed.source_cube != pending.result.source_cube) retire_environment_source(&slot.retire, committed);
         if (committed.specular_cube != pending.result.specular_cube) retire_environment_lighting(&slot.retire, committed);
         *committed = pending.result;
         *pending = {};
     }
-    if (renderer.environment_brdf_pending) {
-        renderer.environment_brdf_ready = true;
-        renderer.environment_brdf_pending = false;
-        renderer.environment_brdf_recorded = false;
+    if (renderer.environment_state.brdf_state == EnvironmentLutState.RECORDED) {
+        renderer.environment_state.brdf_state = EnvironmentLutState.READY;
     }
-    foreach (retired : renderer.environment_temporaries) slot.environment_temporaries.push(retired);
-    renderer.environment_temporaries.clear();
+    foreach (retired : renderer.environment_state.temporaries) slot.environment_temporaries.push(retired);
+    renderer.environment_state.temporaries.clear();
 }
 
 fn void discard_environment_preparations(Renderer* renderer) @private {
-    drain_retired(&renderer.device, &renderer.environment_temporaries);
-    foreach (&pending : renderer.pending_environments) {
+    drain_retired(&renderer.device, &renderer.environment_state.temporaries);
+    foreach (&pending : renderer.environment_state.pending) {
         if (!pending.active) continue;
         if (pending.new_source) release_environment_source(&renderer.device, &pending.result);
         if (pending.new_lighting) release_environment_lighting(&renderer.device, &pending.result);
         *pending = {};
     }
-    if (renderer.environment_brdf_pending) {
-        (void)gpu::destroy_texture_view(&renderer.device, renderer.environment_brdf_view);
-        (void)gpu::destroy_texture(&renderer.device, renderer.environment_brdf_texture);
-        renderer.environment_brdf_view = {};
-        renderer.environment_brdf_texture = {};
-        renderer.environment_brdf_pending = false;
-        renderer.environment_brdf_recorded = false;
+    if (renderer.environment_state.brdf_state == EnvironmentLutState.PENDING
+        || renderer.environment_state.brdf_state == EnvironmentLutState.RECORDED) {
+        (void)gpu::destroy_texture_view(&renderer.device, renderer.environment_state.brdf_view);
+        (void)gpu::destroy_texture(&renderer.device, renderer.environment_state.brdf_texture);
+        renderer.environment_state.brdf_view = {};
+        renderer.environment_state.brdf_texture = {};
+        renderer.environment_state.brdf_state = EnvironmentLutState.NONE;
     }
 }
 
 fn void sweep_environments(Renderer* renderer) @private {
-    foreach (&mirror : renderer.environments) {
+    foreach (&mirror : renderer.environment_state.mirrors) {
         if (!mirror.asset.generation || renderer.assets.environments.is_live(mirror.asset)) continue;
         retire_environment_source(&renderer.pending_upload_retire, mirror);
         retire_environment_lighting(&renderer.pending_upload_retire, mirror);
@@ -308,21 +329,21 @@ fn void sweep_environments(Renderer* renderer) @private {
 
 fn void free_environments(Renderer* renderer) @private {
     discard_environment_preparations(renderer);
-    foreach (&mirror : renderer.environments) {
+    foreach (&mirror : renderer.environment_state.mirrors) {
         release_environment_source(&renderer.device, mirror);
         release_environment_lighting(&renderer.device, mirror);
     }
-    if (renderer.environment_brdf_ready) {
-        (void)gpu::destroy_texture_view(&renderer.device, renderer.environment_brdf_view);
-        (void)gpu::destroy_texture(&renderer.device, renderer.environment_brdf_texture);
+    if (renderer.environment_state.brdf_state == EnvironmentLutState.READY) {
+        (void)gpu::destroy_texture_view(&renderer.device, renderer.environment_state.brdf_view);
+        (void)gpu::destroy_texture(&renderer.device, renderer.environment_state.brdf_texture);
     }
     gpu::PipelineHandle[5] pipelines = {
-        renderer.environment_pipelines.source, renderer.environment_pipelines.prefilter,
-        renderer.environment_pipelines.project, renderer.environment_pipelines.reduce,
-        renderer.environment_pipelines.brdf,
+        renderer.environment_state.pipelines.source, renderer.environment_state.pipelines.prefilter,
+        renderer.environment_state.pipelines.project, renderer.environment_state.pipelines.reduce,
+        renderer.environment_state.pipelines.brdf,
     };
     foreach (pipeline : pipelines) if (pipeline.is_valid()) (void)gpu::destroy_pipeline(&renderer.device, pipeline);
-    renderer.environment_temporaries.free();
-    alloc::free(renderer.allocator, renderer.pending_environments.ptr);
-    alloc::free(renderer.allocator, renderer.environments.ptr);
+    renderer.environment_state.temporaries.free();
+    alloc::free(renderer.allocator, renderer.environment_state.pending.ptr);
+    alloc::free(renderer.allocator, renderer.environment_state.mirrors.ptr);
 }

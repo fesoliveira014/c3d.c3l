@@ -1,0 +1,6 @@
+#ifndef C3D_CONSTANTS_GLSL
+#define C3D_CONSTANTS_GLSL
+
+const float PI = 3.141592653589793;
+
+#endif

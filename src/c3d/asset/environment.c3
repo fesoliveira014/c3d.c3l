@@ -9,7 +9,7 @@ import std::math;
 <* Pool of environment records addressed by EnvironmentId. *>
 alias EnvironmentPool = Pool{EnvironmentAsset, EnvironmentId};
 
-const uint MIN_ENVIRONMENT_SPECULAR_SIZE @local = 32;
+const uint MIN_ENVIRONMENT_SPECULAR_SIZE @local = 32; // Six roughness mips need 32 texels at mip zero.
 
 <* Environment record borrowing its source texture. *>
 struct EnvironmentAsset {

@@ -29,7 +29,10 @@ struct EnvironmentDesc {
     EnvironmentSettings settings;
 }
 
-<* Describe an environment borrowing a texture asset. *>
+<*
+ Describe an environment borrowing a texture asset.
+ @pure
+*>
 fn EnvironmentDesc texture_environment(
     TextureId source,
     EnvironmentSettings settings = ENVIRONMENT_SETTINGS_DEFAULT,
@@ -41,7 +44,10 @@ fn EnvironmentDesc texture_environment(
     };
 }
 
-<* Describe a uniform scene-linear environment. *>
+<*
+ Describe a uniform scene-linear environment.
+ @pure
+*>
 fn EnvironmentDesc solid_environment(
     Vec3 color,
     EnvironmentSettings settings = ENVIRONMENT_SETTINGS_DEFAULT,

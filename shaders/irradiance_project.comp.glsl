@@ -32,28 +32,24 @@ void main() {
     vec3 sums[9];
     for (uint coefficient = 0u; coefficient < 9u; coefficient++) sums[coefficient] = vec3(0.0);
 
-    uint64_t face_texels = uint64_t(root.source_size) * uint64_t(root.source_size);
-    uint64_t total_texels = uint64_t(ENVIRONMENT_FACE_COUNT) * face_texels;
-    uint64_t invocation_count = uint64_t(root.partial_count)
-        * uint64_t(ENVIRONMENT_SH_GROUP_SIZE);
-    for (uint64_t linear = uint64_t(gl_GlobalInvocationID.x);
-        linear < total_texels;
-        linear += invocation_count) {
-        uint face = uint(linear / face_texels);
-        uint face_linear = uint(linear % face_texels);
-        uvec2 texel = uvec2(face_linear % root.source_size, face_linear / root.source_size);
-        vec2 uv = (vec2(texel) + 0.5) / float(root.source_size);
-        vec3 direction = environment_cube_direction(face, uv);
-        vec3 radiance = sample_texture_cube_lod(
-            root.source_cube,
-            root.sampler_index,
-            direction,
-            0.0
-        ).rgb;
-        float solid_angle = environment_texel_solid_angle(texel, root.source_size);
-        for (uint coefficient = 0u; coefficient < 9u; coefficient++) {
-            sums[coefficient] += radiance
-                * (environment_sh_basis(coefficient, direction) * solid_angle);
+    for (uint face = 0u; face < ENVIRONMENT_FACE_COUNT; face++) {
+        for (uint row = gl_WorkGroupID.x; row < root.source_size; row += root.partial_count) {
+            for (uint column = lane; column < root.source_size; column += ENVIRONMENT_SH_GROUP_SIZE) {
+                uvec2 texel = uvec2(column, row);
+                vec2 uv = (vec2(texel) + 0.5) / float(root.source_size);
+                vec3 direction = environment_cube_direction(face, uv);
+                vec3 radiance = sample_texture_cube_lod(
+                    root.source_cube,
+                    root.sampler_index,
+                    direction,
+                    0.0
+                ).rgb;
+                float solid_angle = environment_texel_solid_angle(texel, root.source_size);
+                for (uint coefficient = 0u; coefficient < 9u; coefficient++) {
+                    sums[coefficient] += radiance
+                        * (environment_sh_basis(coefficient, direction) * solid_angle);
+                }
+            }
         }
     }
 

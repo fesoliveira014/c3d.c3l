@@ -14,25 +14,21 @@ struct ViewEnvironments @private {
 
 fn ViewEnvironments? resolve_view_environments(Renderer* renderer, Scene* scene_data) @private {
     ViewEnvironments selected = { .clear_color = scene_data.background.color };
-    selected.lighting = resolve_environment_role(renderer, scene_data.environment, true)!;
+    if (renderer.assets.environments.is_live(scene_data.environment)) {
+        selected.lighting = ensure_environment(renderer, scene_data.environment, true)!;
+    } else if (scene_data.environment.generation) {
+        renderer.stats.dangling_refs++;
+    }
     if (scene_data.background.kind == BackgroundKind.ENVIRONMENT) {
-        selected.sky = resolve_environment_role(renderer, scene_data.background.environment, false)!;
-        if (selected.sky) sky_pipeline(renderer)!;
+        EnvironmentId environment = scene_data.background.environment;
+        if (renderer.assets.environments.is_live(environment)) {
+            selected.sky = ensure_environment(renderer, environment, false)!;
+            sky_pipeline(renderer)!;
+        } else if (environment.generation) {
+            renderer.stats.dangling_refs++;
+        }
     }
     return selected;
-}
-
-fn EnvironmentRes*? resolve_environment_role(
-    Renderer* renderer,
-    EnvironmentId environment,
-    bool lighting,
-) @private {
-    if (!environment.generation) return null;
-    if (!renderer.assets.environments.is_live(environment)) {
-        renderer.stats.dangling_refs++;
-        return null;
-    }
-    return ensure_environment(renderer, environment, lighting);
 }
 
 fn gpu::GpuAddress? pack_lighting_environment(
@@ -45,11 +41,10 @@ fn gpu::GpuAddress? pack_lighting_environment(
     gpu::MappedGpuSpan span = slot.upload.take(&renderer.device, EnvironmentGpu::size, STREAM_ALIGNMENT)!;
     *(EnvironmentGpu*)span.bytes.ptr = {
         .specular_cube = environment.specular_view.index,
-        .sampler_index = renderer.environment_sampler,
-        .brdf_lut      = renderer.environment_brdf_view.index,
+        .sampler_index = renderer.environment_state.sampler,
+        .brdf_lut      = renderer.environment_state.brdf_view.index,
         .intensity     = intensity,
         .sh            = environment.irradiance_address,
-        .mip_count     = shader::ENVIRONMENT_SPECULAR_MIPS,
         .rotation      = pack_environment_rotation(rotation),
     };
     return span.address;
@@ -67,7 +62,7 @@ fn gpu::GpuAddress? pack_sky(
     *(SkyRoot*)span.bytes.ptr = {
         .frame         = frame,
         .source_cube   = environment.source_view.index,
-        .sampler_index = renderer.environment_sampler,
+        .sampler_index = renderer.environment_state.sampler,
         .intensity     = intensity,
         .rotation      = pack_environment_rotation(rotation),
     };
