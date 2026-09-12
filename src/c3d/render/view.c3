@@ -284,7 +284,7 @@ fn void? Renderer.composite_view(&self) {
 }
 
 <*
- Upload every asset the scene's meshes reference and create their pipelines, then wait.
+ Prepare the scene's referenced assets and pipelines, then wait.
  Environment descriptions and source data remain stable for the call.
  @param [&inout] self : "Completes preparation outside an open frame."
  @param [&in] scene : "Read only."
@@ -296,8 +296,6 @@ fn void? Renderer.composite_view(&self) {
  @return? gpu::INVALID_RESOURCE_STATE, gpu::RESOURCE_IN_USE, gpu::DESCRIPTOR_HEAP_FULL
  @return? c3d::INVALID_ID, gpu::COMMAND_ALLOCATOR_CAPACITY_EXCEEDED, gpu::WAIT_TIMEOUT
  @require !self.frame_open
- @require !self.assets.environments.is_live(scene.environment) || (scene.environment_intensity >= 0 && math::is_finite(scene.environment_intensity) && scene.environment_rotation.is_normalized())
- @require scene.background.kind != BackgroundKind.ENVIRONMENT || !self.assets.environments.is_live(scene.background.environment) || (scene.background.intensity >= 0 && math::is_finite(scene.background.intensity) && scene.background.rotation.is_normalized())
 *>
 fn void? Renderer.prepare_scene(&self, Scene* scene) {
     open_closed_frame_slot(self)!;
