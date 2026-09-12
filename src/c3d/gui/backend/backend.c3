@@ -244,7 +244,7 @@ fn void? record_gui(GuiBackend* backend, imgui::DrawData draw_data, OverlayConte
             usz byte_count = (usz)command.elem_count * backend.index_stride;
             gpu::GpuSpan index_span = indices.span.checked_subspan(byte_offset, byte_count)!;
 
-            gpu::cmd_set_scissor(overlay.commands, &scissor)!;
+            gpu::cmd_set_scissor(overlay.commands, &scissor);
             gpu::cmd_draw_indexed(
                 commands: overlay.commands,
                 vertex_root: vertex_root.address,

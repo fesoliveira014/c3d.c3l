@@ -65,9 +65,9 @@ python3 scripts/build.py --init-deps      # first checkout: submodules and nativ
 python3 scripts/build.py --clean
 ```
 
-Steps run in this order and stop at the first failure: tools (c3c 0.8.3, glslang), deps (submodules present), abi (`gen_abi.py`, which builds gpu.c3l's `gen_shader_abi` tool with `c3c build --path lib/gpu.c3l/tools/gen_shader_abi` on first use), shaders (`build_shaders.py`), build (every target in `examples/project.json`, or `--target`), test (every target in `test/project.json`), run. SPIR-V is compiled into `shaders/spv/` (not committed) on every run; the generated C3 and GLSL twins are committed and verified unless `--regen` is given, which rewrites them. `--skip-abi`, `--skip-shaders`, `--skip-build`, and `--opt O3` narrow a run; `-v` prints each command.
+Steps run in this order and stop at the first failure: tools (c3c 0.8.3, glslang), deps (submodules present), abi (`gen_abi.py`, which builds gpu.c3l's `gpu_shaders` tool with `c3c build --path lib/gpu.c3l/tools/gpu_shaders` on first use), shaders (`build_shaders.py`), build (every target in `examples/project.json`, or `--target`), test (every target in `test/project.json`), run. SPIR-V is compiled into `shaders/spv/` (not committed) on every run; the generated C3 and GLSL twins are committed and verified unless `--regen` is given, which rewrites them. `--skip-abi`, `--skip-shaders`, `--skip-build`, and `--opt O3` narrow a run; `-v` prints each command.
 
-Before every commit: `scripts/build.py --test`. Broken builds are never committed. GPU examples run manually; CI runs `--test`. Every development run of a GPU example uses gpu.c3l full validation.
+Before every commit: `scripts/build.py --test`. Broken builds are never committed. GPU examples run manually; CI runs `--test`. Every development run of a GPU example enables Vulkan validation through gpu.c3l.
 
 # 6. Style
 

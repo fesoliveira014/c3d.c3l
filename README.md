@@ -42,7 +42,8 @@ git submodule update --init --recursive
 
 ## Native dependencies
 
-vma.c3l and spvreflect.c3l carry prebuilt artifacts. c3imgui.c3l v0.1.1 downloads its
+VMA native archives are fetched for its pinned release; spvreflect.c3l carries prebuilt
+artifacts. c3imgui.c3l v0.1.1 downloads its
 Linux/Windows archives from release assets and verifies their checksums. box3d is built from
 its vendored sources, and SDL3 comes from source because Ubuntu 24.04 does not package it.
 
