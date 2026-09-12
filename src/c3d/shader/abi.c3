@@ -18,6 +18,10 @@ const uint MATERIAL_MAP_NORMAL = 4;
 const uint MATERIAL_MAP_OCCLUSION = 8;
 const uint MATERIAL_MAP_EMISSIVE = 16;
 const uint MATERIAL_MAP_UV1_SHIFT = 5;
+const uint MATERIAL_ALPHA_MASK = 1;
+const uint MATERIAL_DOUBLE_SIDED = 2;
+const uint MATERIAL_ALPHA_BLEND = 4;
+const uint TOON_MAP_GRADIENT = 1024;
 const uint ENVIRONMENT_FACE_POSITIVE_X = 0;
 const uint ENVIRONMENT_FACE_NEGATIVE_X = 1;
 const uint ENVIRONMENT_FACE_POSITIVE_Y = 2;
@@ -320,6 +324,32 @@ $assert $reflect(StandardMaterialGpu.metallic_roughness_map).offset == 96;
 $assert $reflect(StandardMaterialGpu.normal_map).offset == 128;
 $assert $reflect(StandardMaterialGpu.occlusion_map).offset == 160;
 $assert $reflect(StandardMaterialGpu.emissive_map).offset == 192;
+
+struct ToonMaterialGpu {
+    uint          kind;
+    uint          flags;
+    float         alpha_cutoff;
+    uint          map_flags;
+    Vec4f         color;
+    Vec4f         rim_color_strength;
+    float         rim_power;
+    uint          steps;
+    TextureIndex  gradient_texture;
+    SamplerIndex  gradient_sampler;
+    TextureMapGpu map;
+}
+$assert ToonMaterialGpu::size == 96;
+$assert $reflect(ToonMaterialGpu.kind).offset == 0;
+$assert $reflect(ToonMaterialGpu.flags).offset == 4;
+$assert $reflect(ToonMaterialGpu.alpha_cutoff).offset == 8;
+$assert $reflect(ToonMaterialGpu.map_flags).offset == 12;
+$assert $reflect(ToonMaterialGpu.color).offset == 16;
+$assert $reflect(ToonMaterialGpu.rim_color_strength).offset == 32;
+$assert $reflect(ToonMaterialGpu.rim_power).offset == 48;
+$assert $reflect(ToonMaterialGpu.steps).offset == 52;
+$assert $reflect(ToonMaterialGpu.gradient_texture).offset == 56;
+$assert $reflect(ToonMaterialGpu.gradient_sampler).offset == 60;
+$assert $reflect(ToonMaterialGpu.map).offset == 64;
 
 struct EnvironmentRotationGpu {
     Vec4f row0;

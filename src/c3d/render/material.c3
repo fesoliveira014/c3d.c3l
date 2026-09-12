@@ -11,17 +11,24 @@ import std::math;
  Bytes one material block occupies in the heap.
 *>
 const usz MATERIAL_STRIDE = (((usz)(BasicMaterialGpu::size > StandardMaterialGpu::size
-  ? BasicMaterialGpu::size : StandardMaterialGpu::size) + STREAM_ALIGNMENT - 1)
+  ? (BasicMaterialGpu::size > ToonMaterialGpu::size ? BasicMaterialGpu::size : ToonMaterialGpu::size)
+  : (StandardMaterialGpu::size > ToonMaterialGpu::size ? StandardMaterialGpu::size : ToonMaterialGpu::size))
+  + STREAM_ALIGNMENT - 1)
   / STREAM_ALIGNMENT) * STREAM_ALIGNMENT;
 $assert MATERIAL_STRIDE % STREAM_ALIGNMENT == 0;
+$assert MATERIAL_STRIDE == 224;
 
 <*
  Common material options packed into shader flags.
 *>
 bitstruct MaterialFlags : uint {
-    bool alpha_mask   : 0; // mirrored as MATERIAL_ALPHA_MASK in basic.frag.glsl and standard.frag.glsl
-    bool double_sided : 1; // mirrored as MATERIAL_DOUBLE_SIDED in standard.frag.glsl
+    bool alpha_mask   : 0;
+    bool double_sided : 1;
+    bool alpha_blend  : 2;
 }
+$assert shader::MATERIAL_ALPHA_MASK == 1 << 0;
+$assert shader::MATERIAL_DOUBLE_SIDED == 1 << 1;
+$assert shader::MATERIAL_ALPHA_BLEND == 1 << 2;
 
 <*
  Renderer-owned heap slot of one material record.
@@ -36,6 +43,7 @@ struct MaterialRes {
 <*
  Upload the material now, or record its upload into the open frame.
  Completes without a window when no frame is open.
+ Material and referenced sources stay stable until the open frame closes.
  @param [&inout] self : "Owns map preparation and material heap copies."
  @return? c3d::INVALID_ID
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
@@ -66,6 +74,7 @@ fn void write_material_block(char[] block, Material* material, MaterialBindings 
     MaterialFlags flags = {
         .alpha_mask = material.common.alpha_mode == AlphaMode.MASK,
         .double_sided = material.common.double_sided,
+        .alpha_blend = material.common.alpha_mode == AlphaMode.BLEND,
     };
 
     switch (material.kind) {
@@ -129,6 +138,34 @@ fn void write_material_block(char[] block, Material* material, MaterialBindings 
                 .occlusion_map = pack_texture_map(params.occlusion_map, bindings.occlusion),
                 .emissive_map = pack_texture_map(params.emissive_map, bindings.emissive),
             };
+        case TOON:
+            ToonParams* params = &material.toon;
+            uint map_flags = texture_map_flags(
+                slot: params.map,
+                binding: bindings.base_color,
+                map_bit: shader::MATERIAL_MAP_BASE_COLOR,
+            );
+            if (bindings.gradient.present) map_flags |= shader::TOON_MAP_GRADIENT;
+
+            ToonMaterialGpu* packed = (ToonMaterialGpu*)block.ptr;
+            *packed = {
+                .kind = (uint)material.kind.ordinal,
+                .flags = (uint)flags,
+                .alpha_cutoff = material.common.alpha_cutoff,
+                .map_flags = map_flags,
+                .color = params.color,
+                .rim_color_strength = {
+                    params.rim_color.r,
+                    params.rim_color.g,
+                    params.rim_color.b,
+                    params.rim_strength,
+                },
+                .rim_power = params.rim_power,
+                .steps = params.steps,
+                .gradient_texture = bindings.gradient.texture_index,
+                .gradient_sampler = bindings.gradient.sampler_index,
+                .map = pack_texture_map(params.map, bindings.base_color),
+            };
     }
 }
 
@@ -156,8 +193,6 @@ fn MaterialBindings? resolve_material_bindings(Renderer* renderer, Material* mat
         case BASIC:
             return { .base_color = resolve_texture_slot(renderer, material.basic.map)! };
         case STANDARD:
-            if (material.common.alpha_mode == AlphaMode.BLEND) return c3d::UNSUPPORTED~;
-
             StandardParams* params = &material.standard;
             return {
                 .base_color = resolve_texture_slot(renderer, params.base_color_map)!,
@@ -165,6 +200,11 @@ fn MaterialBindings? resolve_material_bindings(Renderer* renderer, Material* mat
                 .normal = resolve_texture_slot(renderer, params.normal_map)!,
                 .occlusion = resolve_texture_slot(renderer, params.occlusion_map)!,
                 .emissive = resolve_texture_slot(renderer, params.emissive_map)!,
+            };
+        case TOON:
+            return {
+                .base_color = resolve_texture_slot(renderer, material.toon.map)!,
+                .gradient = resolve_gradient_map(renderer, material.toon.gradient_map)!,
             };
     }
 }
@@ -222,20 +262,31 @@ fn void free_material_heap(Renderer* renderer) @private {
 <*
  Pack a masked caster's base alpha and texture coordinates.
  @param [&out] root : "Overwritten completely."
- @param [&in] material : "Valid Basic or Standard masked material."
+ @param [&in] material : "Valid Basic, Standard or Toon masked material."
  @param binding : "Resolved active-family base map."
  @require material.common.alpha_mode == AlphaMode.MASK
 *>
 fn void write_shadow_material_block(BasicMaterialGpu* root, Material* material, TextureBinding binding) {
-    bool basic = material.kind == MaterialKind.BASIC;
-    TextureSlot slot = basic ? material.basic.map : material.standard.base_color_map;
+    TextureSlot slot;
+    Vec4 color;
+    switch (material.kind) {
+        case BASIC:
+            slot = material.basic.map;
+            color = material.basic.color;
+        case STANDARD:
+            slot = material.standard.base_color_map;
+            color = material.standard.base_color;
+        case TOON:
+            slot = material.toon.map;
+            color = material.toon.color;
+    }
     MaterialFlags flags = { .alpha_mask = true, .double_sided = material.common.double_sided };
     *root = {
         .kind = (uint)material.kind.ordinal,
         .flags = (uint)flags,
         .alpha_cutoff = material.common.alpha_cutoff,
         .map_flags = texture_map_flags(slot, binding, shader::MATERIAL_MAP_BASE_COLOR),
-        .color = basic ? material.basic.color : material.standard.base_color,
+        .color = color,
         .map = pack_texture_map(slot, binding),
     };
 }

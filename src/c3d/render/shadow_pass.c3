@@ -46,9 +46,6 @@ fn ShadowDraw[]? prepare_shadow_draws(Renderer* renderer, MeshCandidate[] candid
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     foreach (index, &candidate : candidates) {
         Material* material = &renderer.assets.material(candidate.material).data;
-        if (material.kind == MaterialKind.STANDARD && material.common.alpha_mode == AlphaMode.BLEND) {
-            return c3d::UNSUPPORTED~;
-        }
         ShadowDraw* draw = &draws[index];
         *draw = {
             .candidate = candidate,
@@ -64,6 +61,7 @@ fn ShadowDraw[]? prepare_shadow_draws(Renderer* renderer, MeshCandidate[] candid
         switch (material.kind) {
             case BASIC: base_map = material.basic.map;
             case STANDARD: base_map = material.standard.base_color_map;
+            case TOON: base_map = material.toon.map;
         }
         TextureBinding binding = resolve_texture_slot(renderer, base_map)!;
         gpu::MappedGpuSpan alpha = slot.upload.take(&renderer.device, BasicMaterialGpu::size, STREAM_ALIGNMENT)!;

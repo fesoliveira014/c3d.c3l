@@ -56,6 +56,8 @@ fn void? material_panel(AssetStore* assets, MaterialId material) {
                 minimum: 0,
                 maximum: float::max,
             );
+        case TOON:
+            changed = edit_material_color("Color", (float*)&record.data.toon.color, 4);
     }
     if (changed) assets.mark_material_dirty(material);
 }

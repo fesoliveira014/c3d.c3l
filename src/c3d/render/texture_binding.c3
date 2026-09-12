@@ -24,6 +24,7 @@ struct MaterialBindings {
     TextureBinding normal;
     TextureBinding occlusion;
     TextureBinding emissive;
+    TextureBinding gradient;
 }
 
 <*
@@ -67,6 +68,38 @@ fn TextureBinding? resolve_texture_slot(Renderer* renderer, TextureSlot slot) @p
     };
 }
 
+fn TextureBinding? resolve_gradient_map(Renderer* renderer, TextureId texture) @private {
+    if (!renderer.assets.textures.is_live(texture)) return {};
+
+    TextureAsset* record = renderer.assets.texture(texture);
+    if (record.desc.is_cube || record.desc.depth != 0 || record.desc.layers != 1) {
+        return c3d::UNSUPPORTED~;
+    }
+
+    TextureRes* texture_mirror = ensure_texture(renderer, texture)!;
+    gpu::SamplerDesc sampler = {
+        .min_filter = gpu::Filter.NEAREST,
+        .mag_filter = gpu::Filter.NEAREST,
+        .mip_filter = gpu::Filter.NEAREST,
+        .address_u = gpu::AddressMode.CLAMP_TO_EDGE,
+        .address_v = gpu::AddressMode.CLAMP_TO_EDGE,
+        .address_w = gpu::AddressMode.CLAMP_TO_EDGE,
+        .min_lod = 0,
+        .max_lod = 0,
+        .anisotropy_enable = false,
+        .compare_enable = false,
+        .debug_name = "toon_gradient",
+    };
+    gpu::SamplerIndex sampler_index = gpu::intern_sampler(&renderer.device, &sampler)!;
+    return {
+        .texture = texture,
+        .texture_binding_revision = texture_mirror.binding_revision,
+        .texture_index = texture_mirror.view.index,
+        .sampler_index = sampler_index,
+        .present = true,
+    };
+}
+
 <*
  Pack a texture transform into two affine rows.
  @param [&out] row0 : "First row, padding zeroed."
@@ -89,5 +122,6 @@ fn bool material_bindings_match(MaterialBindings first, MaterialBindings second)
         && texture_binding_matches(first.metallic_roughness, second.metallic_roughness)
         && texture_binding_matches(first.normal, second.normal)
         && texture_binding_matches(first.occlusion, second.occlusion)
-        && texture_binding_matches(first.emissive, second.emissive);
+        && texture_binding_matches(first.emissive, second.emissive)
+        && texture_binding_matches(first.gradient, second.gradient);
 }

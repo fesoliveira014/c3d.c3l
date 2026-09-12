@@ -2,10 +2,8 @@
 #include "generated/shader_abi.glsl"
 #include "c3d_abi.glsl"
 #include "descriptor_heap.glsl"
+#include "material_alpha.glsl"
 #include "material_maps.glsl"
-
-// mirrored from MaterialFlags.alpha_mask in render/material.c3
-const uint MATERIAL_ALPHA_MASK = 1u;
 
 layout(location = 3) in vec2 v_uv0;
 layout(location = 4) in vec2 v_uv1;
@@ -26,5 +24,5 @@ void main() {
     }
 
     if ((material.flags & MATERIAL_ALPHA_MASK) != 0u && color.a < material.alpha_cutoff) discard;
-    out_color = color;
+    out_color = material_output(color.rgb, color.a, material.flags);
 }

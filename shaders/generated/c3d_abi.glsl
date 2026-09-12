@@ -21,6 +21,10 @@ const uint MATERIAL_MAP_NORMAL = 4u;
 const uint MATERIAL_MAP_OCCLUSION = 8u;
 const uint MATERIAL_MAP_EMISSIVE = 16u;
 const uint MATERIAL_MAP_UV1_SHIFT = 5u;
+const uint MATERIAL_ALPHA_MASK = 1u;
+const uint MATERIAL_DOUBLE_SIDED = 2u;
+const uint MATERIAL_ALPHA_BLEND = 4u;
+const uint TOON_MAP_GRADIENT = 1024u;
 const uint ENVIRONMENT_FACE_POSITIVE_X = 0u;
 const uint ENVIRONMENT_FACE_NEGATIVE_X = 1u;
 const uint ENVIRONMENT_FACE_POSITIVE_Y = 2u;
@@ -191,6 +195,20 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer StandardMat
     TextureMapGpu normal_map;
     TextureMapGpu occlusion_map;
     TextureMapGpu emissive_map;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer ToonMaterialGpu {
+    uint kind;
+    uint flags;
+    float alpha_cutoff;
+    uint map_flags;
+    vec4 color;
+    vec4 rim_color_strength;
+    float rim_power;
+    uint steps;
+    uint gradient_texture;
+    uint gradient_sampler;
+    TextureMapGpu map;
 };
 
 struct EnvironmentRotationGpu {

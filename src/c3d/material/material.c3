@@ -33,6 +33,7 @@ const StandardParams STANDARD_PARAMS_DEFAULT = {
 enum MaterialKind {
     BASIC,
     STANDARD,
+    TOON,
 }
 
 <*
@@ -89,6 +90,7 @@ struct Material {
     union {
         BasicParams basic;
         StandardParams standard;
+        ToonParams toon;
     }
 }
 
