@@ -95,6 +95,9 @@ jobs:
           python3 scripts/build.py --init-deps \
             --skip-abi --skip-shaders --skip-build
 
+      - name: Fetch VMA native archives
+        run: python3 lib/gpu.c3l/scripts/fetch_vma_libs.py
+
       - name: Fetch ImGui native archives
         run: bash lib/c3imgui.c3l/fetch_linked_libs.sh v0.1.1
 

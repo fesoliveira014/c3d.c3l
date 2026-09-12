@@ -6,7 +6,9 @@ import c3d::pool;
 import c3d::shader;
 import gpu;
 import std::collections::list;
+import std::io;
 import std::math;
+import std::os;
 import std::time;
 import std::time::clock;
 
@@ -23,6 +25,7 @@ const uint FRAMES_IN_FLIGHT = 2;
 const uint COMMAND_BUFFERS_PER_FRAME @private = 4; // one list per frame, with room for the ordered views of later work
 const ulong ACQUIRE_TIMEOUT_NS @private = 1_000_000_000; // the vsync wait; a stalled compositor costs one frame, not a hang
 const ulong RETIRE_TIMEOUT_NS @private = 1_000_000; // one bounded presentation wait per frame, so recovery never blocks the loop
+const int CLEANUP_FAILURE_EXIT_CODE @private = 1; // Reports failed completion without running unsafe teardown finalizers.
 const uint TEARDOWN_RETIRE_ATTEMPTS @private = 64; // teardown cannot pump events, so its presentation wait is bounded
 
 const ZString[FRAMES_IN_FLIGHT] FRAME_ALLOCATOR_NAMES @private = {
@@ -540,7 +543,7 @@ fn void? finish_pending_output(Renderer* renderer) @private {
 }
 
 <*
- Create the renderer, its device, and the window output the descriptor's factory supplies.
+ Create the renderer; unexpected rollback completion failure exits without defers.
  @param [&in] assets : "Borrowed for the renderer's lifetime; never released by it."
  @return? c3d::UNSUPPORTED, gpu::UNSUPPORTED_BACKEND, gpu::UNSUPPORTED_FEATURE
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
@@ -558,9 +561,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     DebugLog* log = alloc::new(allocator, DebugLog);
     defer catch alloc::free(allocator, log);
 
-    gpu::RuntimeDesc runtime_desc = desc.validation
-        ? gpu::full_validation_runtime_desc()
-        : (gpu::RuntimeDesc){};
+    gpu::RuntimeDesc runtime_desc = { .enable_vulkan_validation = desc.validation };
     runtime_desc.application_name = desc.application_name;
     runtime_desc.debug_callback = &record_debug_message;
     runtime_desc.debug_user_data = log;
@@ -725,7 +726,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     renderer.pending_texture_uploads.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_upload_retire.init(allocator, RETIRE_INITIAL_CAPACITY);
     defer catch {
-        (void)wait_frames(&renderer);
+        if (catch excuse = wait_frames(&renderer)) handle_cleanup_fault(excuse);
         foreach (&slot : renderer.frames) drain_retired(&renderer.device, &slot.environment_temporaries);
         foreach (&slot : renderer.frames) drain_retired(&renderer.device, &slot.retire);
         free_environments(&renderer);
@@ -744,13 +745,15 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
 }
 
 <*
- Release the renderer after draining every submission and presentation.
+ Release the renderer; unexpected completion failure exits without running defers.
  @param [&inout] renderer : "Left zeroed; destroy the window backing its surface afterwards."
 *>
 fn void destroy_renderer(Renderer* renderer) {
     if (renderer.frame_open) abort_frame(renderer);
-    (void)finish_pending_output(renderer);
-    (void)wait_frames(renderer);
+    if (catch excuse = finish_pending_output(renderer)) {
+        if (excuse != gpu::SURFACE_LOST || renderer.acquired.texture.is_valid()) handle_cleanup_fault(excuse);
+    }
+    if (catch excuse = wait_frames(renderer)) handle_cleanup_fault(excuse);
     foreach (&slot : renderer.frames) drain_retired(&renderer.device, &slot.environment_temporaries);
     foreach (&slot : renderer.frames) drain_retired(&renderer.device, &slot.retire);
     free_environments(renderer);
@@ -776,7 +779,9 @@ fn void destroy_renderer(Renderer* renderer) {
             timeout_ns: RETIRE_TIMEOUT_NS,
         )) {
             attempts++;
-            if (excuse != gpu::WAIT_TIMEOUT || attempts >= TEARDOWN_RETIRE_ATTEMPTS) break;
+            if (excuse == gpu::WAIT_TIMEOUT && attempts < TEARDOWN_RETIRE_ATTEMPTS) continue;
+            handle_cleanup_fault(excuse);
+            break;
         }
         (void)gpu::destroy_swapchain(&renderer.device, renderer.swapchain);
     }
@@ -979,4 +984,10 @@ fn void abort_frame(Renderer* renderer) {
 
 fn float elapsed_ms(time::Clock started) @private {
     return (float)((double)(clock::now() - started) / NANOSECONDS_PER_MILLISECOND);
+}
+
+fn void handle_cleanup_fault(fault excuse) @private {
+    if (excuse == gpu::DEVICE_LOST) return;
+    io::eprintfn("Renderer cleanup completion failed: %s", excuse);
+    os::fastexit(CLEANUP_FAILURE_EXIT_CODE);
 }

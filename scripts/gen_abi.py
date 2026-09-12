@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate the shared C3 and GLSL ABI from the schemas under abi/.
 
-The generator itself is gpu.c3l's tools/gen_shader_abi, built on first use.
+The generator itself is gpu.c3l's tools/gpu_shaders, built on first use.
 
   scripts/gen_abi.py            regenerate the C3 and GLSL twins
   scripts/gen_abi.py --check    fail if the committed twins are out of date
@@ -17,7 +17,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 ABI = ROOT / "abi"
-GENERATOR_DIR = ROOT / "lib" / "gpu.c3l" / "tools" / "gen_shader_abi"
+GENERATOR_DIR = ROOT / "lib" / "gpu.c3l" / "tools" / "gpu_shaders"
 
 MODULE = "c3d::shader"
 C3_OUT = ROOT / "src" / "c3d" / "shader" / "abi.c3"
@@ -32,15 +32,15 @@ def log(message: str) -> None:
 
 def generator_binary() -> Path:
     build = GENERATOR_DIR / "build"
-    windows = build / "gen_shader_abi.exe"
-    return windows if windows.exists() else build / "gen_shader_abi"
+    windows = build / "gpu_shaders.exe"
+    return windows if windows.exists() else build / "gpu_shaders"
 
 
 def build_generator(c3c: str, verbose: bool) -> Path:
     binary = generator_binary()
     if binary.exists():
         return binary
-    command = [c3c, "build", "gen_shader_abi", "--path", str(GENERATOR_DIR)]
+    command = [c3c, "build", "gpu_shaders", "--path", str(GENERATOR_DIR)]
     if verbose:
         log(f"$ {' '.join(command)}")
     subprocess.run(command, check=True, stdout=None if verbose else subprocess.DEVNULL)

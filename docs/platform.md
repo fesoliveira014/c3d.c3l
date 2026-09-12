@@ -10,4 +10,4 @@ Custom SDL loops call `sdl::pump_events()`, then `Window.begin_frame()` for each
 
 Pixel-size events update dimensions and set `resized` only when dimensions change. The flag stays set until its consumer handles the resize and clears it. A repeated notification for the acknowledged dimensions does not set it again. Logical-size events alone do not describe a framebuffer resize.
 
-Destroy GPU surfaces and their dependents before `destroy_window()`. The `window` example uses SDL software presentation so its window becomes visible on Wayland; software presentation is confined to that example, and is not part of the GPU surface bridge.
+Destroy GPU surfaces and their dependents before `destroy_window()`. Renderer destruction waits for GPU and presentation completion. An unexpected cleanup wait failure exits the process without running defers; confirmed device loss permits teardown. Failed renderer construction uses the same cleanup policy. The `window` example uses SDL software presentation so its window becomes visible on Wayland; software presentation is confined to that example, and is not part of the GPU surface bridge.

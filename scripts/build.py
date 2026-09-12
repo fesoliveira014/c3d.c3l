@@ -129,6 +129,7 @@ def step_tools(options: Options) -> None:
 def step_deps(options: Options) -> None:
     if options.init_deps:
         run(["git", "submodule", "update", "--init", "--recursive"], ROOT, options.verbose)
+        run([sys.executable, str(LIB / "gpu.c3l" / "scripts" / "fetch_vma_libs.py")], ROOT, options.verbose)
         fetch = LIB / "c3imgui.c3l" / "fetch_linked_libs.sh"
         run(["bash", str(fetch), "v0.1.1"], ROOT, options.verbose)
         for name in SUBMODULES:
