@@ -80,20 +80,16 @@ fn void? material_panel(AssetStore* assets, MaterialId material) {
 
 fn bool edit_material_common(MaterialCommon* common) @local {
     bool changed;
+    AlphaMode selected_alpha_mode = common.alpha_mode;
 
     imgui::separator_text("Surface");
-    if (imgui::radio_button("Opaque", common.alpha_mode == OPAQUE)) {
-        common.alpha_mode = OPAQUE;
-        changed = true;
-    }
+    if (imgui::radio_button("Opaque", selected_alpha_mode == OPAQUE)) selected_alpha_mode = OPAQUE;
     imgui::same_line();
-    if (imgui::radio_button("Mask", common.alpha_mode == MASK)) {
-        common.alpha_mode = MASK;
-        changed = true;
-    }
+    if (imgui::radio_button("Mask", selected_alpha_mode == MASK)) selected_alpha_mode = MASK;
     imgui::same_line();
-    if (imgui::radio_button("Blend", common.alpha_mode == BLEND)) {
-        common.alpha_mode = BLEND;
+    if (imgui::radio_button("Blend", selected_alpha_mode == BLEND)) selected_alpha_mode = BLEND;
+    if (selected_alpha_mode != common.alpha_mode) {
+        common.alpha_mode = selected_alpha_mode;
         changed = true;
     }
 

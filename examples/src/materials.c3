@@ -242,7 +242,7 @@ fn void set_gradient_texture(
     TextureId texture,
 ) @local {
     MaterialAsset* record = assets.material(material_id);
-    if (record.data.kind != TOON || same_texture_id(record.data.toon.gradient_map, texture)) return;
+    if (same_texture_id(record.data.toon.gradient_map, texture)) return;
     record.data.toon.gradient_map = texture;
     assets.mark_material_dirty(material_id);
 }
@@ -326,19 +326,19 @@ fn void preset_controls(
             }
         case TOON_LIGHTING:
             if (imgui::radio_button(
-                "Uniform steps",
+                "Uniform steps##surface",
                 same_material_id(controls.selected_material, materials.toon_steps),
             )) {
                 controls.selected_material = materials.toon_steps;
             }
             if (imgui::radio_button(
-                "Plateau ramp",
+                "Plateau ramp##surface",
                 same_material_id(controls.selected_material, materials.toon_ramp),
             )) {
                 controls.selected_material = materials.toon_ramp;
             }
             if (imgui::radio_button(
-                "Rim surface",
+                "Rim surface##surface",
                 same_material_id(controls.selected_material, materials.toon_rim),
             )) {
                 controls.selected_material = materials.toon_rim;
@@ -386,11 +386,11 @@ fn void texture_controls(
     if (record.data.kind == TOON) {
         TextureId gradient = record.data.toon.gradient_map;
         imgui::separator_text("Intensity ramp");
-        if (imgui::radio_button("Uniform steps", gradient.index == 0)) {
+        if (imgui::radio_button("Uniform steps##ramp", gradient.index == 0)) {
             set_gradient_texture(assets, material_id, {});
         }
         imgui::same_line();
-        if (imgui::radio_button("Plateaus", same_texture_id(gradient, textures.ramp))) {
+        if (imgui::radio_button("Plateaus##ramp", same_texture_id(gradient, textures.ramp))) {
             set_gradient_texture(assets, material_id, textures.ramp);
         }
         imgui::text_unformatted("Ramp uses red-channel intensity.");
