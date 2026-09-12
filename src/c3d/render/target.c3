@@ -27,7 +27,7 @@ const gpu::TextureState COLOR_ATTACHMENT_STATE = {
  State a target is read from by fragment shaders.
 *>
 const gpu::TextureState FRAGMENT_READ_STATE = {
-    .layout = gpu::TextureLayout.STORAGE,
+    .layout = gpu::TextureLayout.SAMPLED,
     .stages = { .fragment_shader },
     .access = { .read },
 };

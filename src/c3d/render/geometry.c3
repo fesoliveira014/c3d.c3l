@@ -263,21 +263,24 @@ fn GpuGeometry*? ensure_geometry(Renderer* renderer, GeometryId geometry) @priva
 fn void? record_pending_copies(Renderer* renderer, gpu::CommandList* commands) @private {
     if (renderer.pending_copies.len() || renderer.pending_texture_uploads.len()) renderer.uploads_recorded = true;
     record_texture_uploads(renderer, commands)!;
-    if (!renderer.pending_copies.len()) return;
-    if (renderer.pending_overwrite) {
-        gpu::Barrier before_overwrite = { .before = CONSUMER_STAGES, .after = { .transfer } };
-        gpu::cmd_barrier(commands, &before_overwrite)!;
-        renderer.pending_overwrite = false;
+    if (renderer.pending_copies.len()) {
+        if (renderer.pending_overwrite) {
+            gpu::Barrier before_overwrite = { .before = CONSUMER_STAGES, .after = { .transfer } };
+            gpu::cmd_barrier(commands, &before_overwrite)!;
+            renderer.pending_overwrite = false;
+        }
+        foreach (&copy : renderer.pending_copies) gpu::cmd_copy_buffer(commands, copy)!;
+        gpu::Barrier to_consumers = { .before = { .transfer }, .after = CONSUMER_STAGES };
+        gpu::cmd_barrier(commands, &to_consumers)!;
+        renderer.pending_copies.clear();
     }
-    foreach (&copy : renderer.pending_copies) gpu::cmd_copy_buffer(commands, copy)!;
-    gpu::Barrier to_consumers = { .before = { .transfer }, .after = CONSUMER_STAGES };
-    gpu::cmd_barrier(commands, &to_consumers)!;
-    renderer.pending_copies.clear();
+    record_environment_preparations(renderer, commands)!;
 }
 
 fn void? open_closed_frame_slot(Renderer* renderer) @private {
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     if (slot.done.is_valid()) gpu::wait_completion(slot.done)!;
+    drain_retired(&renderer.device, &slot.environment_temporaries);
     drain_retired(&renderer.device, &slot.retire);
     return reset_upload_ring(renderer, slot);
 }
@@ -295,7 +298,10 @@ fn void? submit_pending(Renderer* renderer) @private {
     gpu::SubmitDesc submit = { .command_lists = executable[..] };
     slot.done = gpu::submit(renderer.graphics, &submit)!;
     commit_uploads(renderer, slot);
-    return gpu::wait_completion(slot.done);
+    gpu::wait_completion(slot.done)!;
+    // This graphics submission also covers every earlier slot's temporary views.
+    foreach (&completed : renderer.frames) drain_retired(&renderer.device, &completed.environment_temporaries);
+    foreach (&completed : renderer.frames) drain_retired(&renderer.device, &completed.retire);
 }
 
 fn void sweep_geometries(Renderer* renderer) @private {

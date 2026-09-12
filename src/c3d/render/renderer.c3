@@ -86,6 +86,7 @@ struct Frame {
     gpu::CompletionPoint  done;
     UploadRing            upload;
     RetireList            retire;
+    RetireList            environment_temporaries;
     bool[PASS_COUNT]      timed;
     ShadowTiming[]        shadow_timings;
     uint                  shadow_timing_count;
@@ -117,6 +118,7 @@ struct Renderer {
     bool                    uploads_recorded;
     List{GeometryId}         pending_geometry_uploads;
     TextureRes[]            textures;
+    EnvironmentState        environment_state;
     SamplerRes[]            samplers;
     List{PendingTextureUpload} pending_texture_uploads;
     RetireList              pending_upload_retire;
@@ -180,7 +182,7 @@ fn void Renderer.set_window_output(
 
 <*
  Upload the asset now, or record its upload into the open frame.
- Completes without a window when no frame is open.
+ Completes without a window when closed; open-frame environment inputs stay stable until closure.
  @param [&inout] self : "Owns upload staging and device resources."
  @return? c3d::INVALID_ID
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
@@ -188,6 +190,8 @@ fn void Renderer.set_window_output(
  @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
  @return? gpu::INVALID_RESOURCE_STATE, gpu::DEVICE_BUSY, gpu::RESOURCE_IN_USE
  @return? gpu::SLOT_TABLE_FULL, gpu::DESCRIPTOR_HEAP_FULL, gpu::WAIT_TIMEOUT
+ @return? c3d::SHADER_NOT_FOUND, gpu::SHADER_INVALID, gpu::PIPELINE_CREATE_FAILED
+ @return? gpu::COMMAND_ALLOCATOR_CAPACITY_EXCEEDED
 *>
 macro void? Renderer.upload(&self, id) {
     $switch $Typeof(id):
@@ -195,12 +199,14 @@ macro void? Renderer.upload(&self, id) {
         $case MaterialId: return self.upload_material(id);
         $case TextureId: return self.upload_texture(id);
         $case SamplerId: return self.upload_sampler(id);
-        $default: $error("upload takes a GeometryId, MaterialId, TextureId or SamplerId");
+        $case EnvironmentId: return self.upload_environment(id);
+        $default: $error("upload takes a GeometryId, MaterialId, TextureId, SamplerId or EnvironmentId");
     $endswitch
 }
 
 <*
  Open a frame slot and acquire the window image when one is available.
+ Environment descriptions and source data remain stable until frame closure.
  @param [&inout] self : "Reuses the slot whose completion point has been waited."
  @return? gpu::DEVICE_BUSY, gpu::INVALID_HANDLE, gpu::INVALID_ARGUMENT
  @return? gpu::INVALID_RESOURCE_STATE, gpu::COMMAND_RECORDING_ERROR, gpu::RESOURCE_IN_USE
@@ -219,8 +225,10 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
     read_pass_timings(self, slot, self.frame_index)!;
     slot.timed = {};
     slot.shadow_timing_count = 0;
+    drain_retired(&self.device, &slot.environment_temporaries);
     drain_retired(&self.device, &slot.retire);
     sweep_geometries(self);
+    sweep_environments(self);
     sweep_textures(self);
     sweep_samplers(self);
     sweep_materials(self);
@@ -290,6 +298,8 @@ fn void? Renderer.clear(&self, Vec4 color) {
  @return? gpu::INVALID_RESOURCE_STATE, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::DEVICE_LOST, gpu::SURFACE_LOST, gpu::BACKEND_ERROR
  @return? gpu::DEVICE_BUSY, gpu::RESOURCE_IN_USE, gpu::UNSUPPORTED_FEATURE
+ @return? c3d::SHADER_NOT_FOUND, gpu::SHADER_INVALID, gpu::PIPELINE_CREATE_FAILED
+ @return? gpu::SLOT_TABLE_FULL, gpu::DESCRIPTOR_HEAP_FULL, gpu::COMMAND_ALLOCATOR_CAPACITY_EXCEEDED
  @require self.frame_open, !self.overlay_open
 *>
 fn void? Renderer.end_frame(&self) {
@@ -613,6 +623,8 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         for (usz slot = 0; slot < slots_created; slot++) {
             (void)gpu::destroy_command_allocator(&frames[slot].allocator);
             free_upload_ring(&device, &frames[slot].upload);
+            drain_retired(&device, &frames[slot].environment_temporaries);
+            frames[slot].environment_temporaries.free();
             drain_retired(&device, &frames[slot].retire);
             frames[slot].retire.free();
             if (frames[slot].shadow_timings.len) alloc::free(allocator, frames[slot].shadow_timings.ptr);
@@ -625,6 +637,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         };
         frames[slot].allocator = gpu::create_command_allocator(&device, graphics, &allocator_desc)!;
         frames[slot].retire.init(allocator, RETIRE_INITIAL_CAPACITY);
+        frames[slot].environment_temporaries.init(allocator, RETIRE_INITIAL_CAPACITY);
         frames[slot].upload.overflow.init(allocator, RETIRE_INITIAL_CAPACITY);
         slots_created++;
         if (timestamps_enabled) frames[slot].shadow_timings = alloc::new_array(allocator, ShadowTiming, max_shadow_layers);
@@ -680,6 +693,10 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .geometries           = alloc::new_array(allocator, GpuGeometry, assets.geometries.items.len),
         .materials            = alloc::new_array(allocator, MaterialRes, assets.materials.items.len),
         .textures             = alloc::new_array(allocator, TextureRes, assets.textures.items.len),
+        .environment_state    = {
+            .mirrors = alloc::new_array(allocator, EnvironmentRes, assets.environments.items.len),
+            .pending = alloc::new_array(allocator, PendingEnvironment, assets.environments.items.len),
+        },
         .samplers             = alloc::new_array(allocator, SamplerRes, assets.samplers.items.len),
         .material_heap        = material_heap,
         .material_heap_span   = material_heap_span,
@@ -702,12 +719,16 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .output_width         = desc.output_width,
         .output_height        = desc.output_height,
     };
+    renderer.environment_state.temporaries.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_copies.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_geometry_uploads.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_texture_uploads.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_upload_retire.init(allocator, RETIRE_INITIAL_CAPACITY);
     defer catch {
         (void)wait_frames(&renderer);
+        foreach (&slot : renderer.frames) drain_retired(&renderer.device, &slot.environment_temporaries);
+        foreach (&slot : renderer.frames) drain_retired(&renderer.device, &slot.retire);
+        free_environments(&renderer);
         free_pending_uploads(&renderer);
         free_textures(&renderer);
         free_geometries(&renderer);
@@ -730,6 +751,9 @@ fn void destroy_renderer(Renderer* renderer) {
     if (renderer.frame_open) abort_frame(renderer);
     (void)finish_pending_output(renderer);
     (void)wait_frames(renderer);
+    foreach (&slot : renderer.frames) drain_retired(&renderer.device, &slot.environment_temporaries);
+    foreach (&slot : renderer.frames) drain_retired(&renderer.device, &slot.retire);
+    free_environments(renderer);
     free_pending_uploads(renderer);
     free_textures(renderer);
     free_geometries(renderer);
@@ -760,6 +784,7 @@ fn void destroy_renderer(Renderer* renderer) {
     foreach (&slot : renderer.frames) {
         drain_retired(&renderer.device, &slot.retire);
         slot.retire.free();
+        slot.environment_temporaries.free();
         if (slot.shadow_timings.len) alloc::free(renderer.allocator, slot.shadow_timings.ptr);
         free_upload_ring(&renderer.device, &slot.upload);
         (void)gpu::destroy_command_allocator(&slot.allocator);

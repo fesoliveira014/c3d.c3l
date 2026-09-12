@@ -38,6 +38,7 @@ struct Stats {
     uint  shadow_layers;
     uint  shadow_requests_dropped;
     ShadowTiming[] shadow_timings;
+    uint  environment_prepares;
     uint  uploads;
     uint  upload_bytes;
     uint  dangling_refs;

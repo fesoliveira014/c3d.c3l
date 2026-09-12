@@ -1,8 +1,8 @@
-# Materials and direct lighting
+# Materials and lighting
 
 `Basic` renders an unlit color with an optional texture map. `Standard` adds
 metallic-roughness shading from directional, point and spot lights, scene ambient,
-and five independent texture slots. Both use the asset store's shared material ids.
+image-based lighting, and five independent texture slots. Both use the asset store's shared material ids.
 
 ## Standard factors
 
@@ -42,7 +42,7 @@ asset; the renderer does not infer it from the slot.
 | `base_color_map` | RGBA | sRGB RGB, linear alpha | Multiplies base RGBA |
 | `metallic_roughness_map` | G roughness, B metallic | Linear | Multiplies the two scalar factors; R and A are ignored |
 | `normal_map` | RGB tangent-space XYZ | Linear | Decodes `RGB * 2 - 1`, scales XY, then normalizes |
-| `occlusion_map` | R | Linear | Multiplies ambient diffuse by `mix(1, R, occlusion_strength)` |
+| `occlusion_map` | R | Linear | Multiplies constant/environment diffuse by `mix(1, R, occlusion_strength)` |
 | `emissive_map` | RGB | sRGB | Multiplies emissive RGB and strength |
 
 ```c3
@@ -216,8 +216,12 @@ Scenes start with white `ambient_color` and zero `ambient_intensity`. Both must
 remain finite and nonnegative. Ambient supplies a simple diffuse contribution:
 `ambient_color * ambient_intensity * base_color.rgb * (1 - metallic)`,
 using mapped base/metallic values and the occlusion multiplier when present.
-It adds no ambient specular reflection. Emissive RGB times strength remains
-visible without any direct lights or ambient illumination.
+The constant term adds no specular reflection. A selected lighting environment
+replaces it unless `scene.ambient_add` is true. Environments supply SH diffuse
+lighting and filtered specular reflections; the occlusion map affects only the
+diffuse contribution. See [Environments](environments.md) for source selection,
+preparation and independent backgrounds. Emissive RGB times strength remains
+visible without direct or ambient illumination.
 
 `RendererDesc.max_lights` sets per-view capacity. Zero chooses the default 256;
 `Renderer.max_lights` holds the resolved capacity. The renderer first excludes
@@ -268,9 +272,9 @@ GPU timings are optional; full validation is enabled for every run.
 
 Texture ownership and sampling are described in [Textures and
 images](textures.md). [Sun, spot and point shadows](shadows.md) attenuate Standard
-direct lighting; Basic and Standard surfaces can cast opaque or masked shadows. There is
-no environment lighting or ambient specular reflection. Shading writes scene-linear
-HDR into the renderer target;
+direct lighting; Basic and Standard surfaces can cast opaque or masked shadows.
+Standard supports [environment lighting and independent skies](environments.md);
+Basic remains unlit. Shading writes scene-linear HDR into the renderer target;
 the existing composite adds no tonemapper or exposure control, so bright values
 can clip on presentation. Compare lighting with consistent presentation
 settings.
