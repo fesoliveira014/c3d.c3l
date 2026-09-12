@@ -23,7 +23,6 @@ const gpu::Format HDR_FORMAT = gpu::Format.RGBA16_FLOAT;
 *>
 const gpu::Format DEPTH_FORMAT = gpu::Format.D32_FLOAT;
 
-const Vec4 CLEAR_COLOR @private = { 0, 0, 0, 1 }; // opaque black
 const float DEPTH_CLEAR @private = 0; // reverse-Z far
 
 struct DrawItem @private {
@@ -46,6 +45,7 @@ struct DrawState @private {
 
 <*
  Render one frame of the scene from the camera to the window.
+ Environment descriptions and source data remain stable for the call.
  @param [&inout] self : "Owns recording, submission and window presentation."
  @param [&in] scene : "Pose as left by the last update_world; not advanced."
  @param [&in] camera_node : "Carries a Camera component."
@@ -56,8 +56,10 @@ struct DrawState @private {
  @return? gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
  @return? c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE, gpu::DESCRIPTOR_HEAP_FULL
- @return? gpu::WAIT_TIMEOUT
+ @return? c3d::INVALID_ID, gpu::COMMAND_ALLOCATOR_CAPACITY_EXCEEDED, gpu::WAIT_TIMEOUT
  @require !self.frame_open
+ @require !self.assets.environments.is_live(scene.environment) || (scene.environment_intensity >= 0 && math::is_finite(scene.environment_intensity) && scene.environment_rotation.is_normalized())
+ @require scene.background.kind != BackgroundKind.ENVIRONMENT || !self.assets.environments.is_live(scene.background.environment) || (scene.background.intensity >= 0 && math::is_finite(scene.background.intensity) && scene.background.rotation.is_normalized())
 *>
 fn void? Renderer.render(
     &self,
@@ -76,7 +78,7 @@ fn void? Renderer.render(
 
 <*
  Extract, upload and record the scene from the camera into the view targets.
- Records nothing without a window output.
+ Records nothing without output; environment inputs stay stable until end_frame.
  @param [&inout] self : "Records into the current frame before composition."
  @param [&in] scene : "Pose as left by the last update_world; not advanced."
  @param [&in] camera_node : "Carries a Camera component."
@@ -87,7 +89,10 @@ fn void? Renderer.render(
  @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
  @return? c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE, gpu::DEVICE_BUSY
  @return? gpu::RESOURCE_IN_USE, gpu::DESCRIPTOR_HEAP_FULL, gpu::WAIT_TIMEOUT
+ @return? c3d::INVALID_ID, gpu::COMMAND_ALLOCATOR_CAPACITY_EXCEEDED
  @require self.frame_open, !self.overlay_open
+ @require !self.assets.environments.is_live(scene.environment) || (scene.environment_intensity >= 0 && math::is_finite(scene.environment_intensity) && scene.environment_rotation.is_normalized())
+ @require scene.background.kind != BackgroundKind.ENVIRONMENT || !self.assets.environments.is_live(scene.background.environment) || (scene.background.intensity >= 0 && math::is_finite(scene.background.intensity) && scene.background.rotation.is_normalized())
 *>
 fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
     if (!self.has_output) return;
@@ -138,6 +143,7 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
             };
         }
         sort::quicksort(items, &by_sort_key);
+        ViewEnvironments environments = resolve_view_environments(self, scene)!;
         record_pending_copies(self, &self.commands)!;
 
         LightCounts light_counts;
@@ -180,7 +186,17 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
         self.stats.lights += light_counts.packed;
         self.stats.lights_dropped += light_counts.dropped;
 
-        Vec3 ambient = scene.ambient_color * scene.ambient_intensity;
+        gpu::GpuAddress environment_address;
+        if (environments.lighting) {
+            environment_address = pack_lighting_environment(
+                renderer: self,
+                environment: environments.lighting,
+                intensity: scene.environment_intensity,
+                rotation: scene.environment_rotation,
+            )!;
+        }
+        Vec3 ambient = environments.lighting && !scene.ambient_add
+          ? (Vec3){} : scene.ambient_color * scene.ambient_intensity;
         gpu::MappedGpuSpan frame_span = slot.upload.take(&self.device, FrameRoot::size, STREAM_ALIGNMENT)!;
         write_frame_root(
             root:        (FrameRoot*)frame_span.bytes.ptr,
@@ -194,6 +210,7 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
             ambient:     { ambient.r, ambient.g, ambient.b, 0 },
             shadows:     shadow_address,
             shadow_count: (uint)shadows.len,
+            environment: environment_address,
         );
         foreach (&item : items) {
             gpu::MappedGpuSpan draw_span = slot.upload.take(&self.device, DrawRoot::size, STREAM_ALIGNMENT)!;
@@ -226,7 +243,7 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
             pass:        Pass.FORWARD_OPAQUE,
             half:        TIMESTAMP_BEGIN,
         )!;
-        record_opaque_pass(self, items)!;
+        record_opaque_pass(self, items, environments.clear_color)!;
         write_pass_timestamp(
             renderer:    self,
             frame_index: self.frame_index,
@@ -234,6 +251,19 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
             half:        TIMESTAMP_END,
         )!;
         slot.timed[Pass.FORWARD_OPAQUE.ordinal] = true;
+
+        if (environments.sky) {
+            gpu::GpuAddress sky_root = pack_sky(
+                renderer: self,
+                environment: environments.sky,
+                frame: frame_span.address,
+                intensity: scene.background.intensity,
+                rotation: scene.background.rotation,
+            )!;
+            record_sky(self, sky_root)!;
+        } else {
+            reset_sky_timing(self)!;
+        }
     };
 }
 
@@ -255,6 +285,7 @@ fn void? Renderer.composite_view(&self) {
 
 <*
  Upload every asset the scene's meshes reference and create their pipelines, then wait.
+ Environment descriptions and source data remain stable for the call.
  @param [&inout] self : "Completes preparation outside an open frame."
  @param [&in] scene : "Read only."
  @return? c3d::SHADER_NOT_FOUND, gpu::SHADER_INVALID, gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL
@@ -263,12 +294,15 @@ fn void? Renderer.composite_view(&self) {
  @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
  @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
  @return? gpu::INVALID_RESOURCE_STATE, gpu::RESOURCE_IN_USE, gpu::DESCRIPTOR_HEAP_FULL
- @return? gpu::WAIT_TIMEOUT
+ @return? c3d::INVALID_ID, gpu::COMMAND_ALLOCATOR_CAPACITY_EXCEEDED, gpu::WAIT_TIMEOUT
  @require !self.frame_open
+ @require !self.assets.environments.is_live(scene.environment) || (scene.environment_intensity >= 0 && math::is_finite(scene.environment_intensity) && scene.environment_rotation.is_normalized())
+ @require scene.background.kind != BackgroundKind.ENVIRONMENT || !self.assets.environments.is_live(scene.background.environment) || (scene.background.intensity >= 0 && math::is_finite(scene.background.intensity) && scene.background.rotation.is_normalized())
 *>
 fn void? Renderer.prepare_scene(&self, Scene* scene) {
     open_closed_frame_slot(self)!;
     defer catch discard_uploads(self);
+    (void)resolve_view_environments(self, scene)!;
     bool shadows_enabled;
     @pool() {
         LightCounts counts;
@@ -306,7 +340,8 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
             }
         }
     };
-    if (!self.pending_copies.len() && !self.pending_texture_uploads.len() && !self.pending_upload_retire.len()) return;
+    if (!has_environment_preparations(self) && !self.pending_copies.len()
+        && !self.pending_texture_uploads.len() && !self.pending_upload_retire.len()) return;
     return submit_pending(self);
 }
 
@@ -329,6 +364,7 @@ fn void write_frame_root(
     Vec4 ambient = {},
     gpu::GpuAddress shadows = (gpu::GpuAddress)0,
     uint shadow_count = 0,
+    gpu::GpuAddress environment = (gpu::GpuAddress)0,
 ) {
     *root = {
         .view            = bitcast(matrices.view, Mat4f),
@@ -344,6 +380,7 @@ fn void write_frame_root(
         .ambient         = ambient,
         .shadows         = shadows,
         .shadow_count    = shadow_count,
+        .environment     = environment,
     };
 }
 
@@ -382,14 +419,14 @@ fn int by_sort_key(DrawItem first, DrawItem second) @local {
     return first.sort_key > second.sort_key ? 1 : 0;
 }
 
-fn void? record_opaque_pass(Renderer* renderer, DrawItem[] items) @private {
+fn void? record_opaque_pass(Renderer* renderer, DrawItem[] items, Vec4 clear_color) @private {
     uint width = renderer.hdr_color.width;
     uint height = renderer.hdr_color.height;
     gpu::ColorTargetDesc[1] colors = {{
         .view     = renderer.hdr_color.attachment,
         .load_op  = gpu::LoadOp.CLEAR,
         .store_op = gpu::StoreOp.STORE,
-        .clear    = { .rgba = { CLEAR_COLOR.r, CLEAR_COLOR.g, CLEAR_COLOR.b, CLEAR_COLOR.a } },
+        .clear    = { .rgba = { clear_color.r, clear_color.g, clear_color.b, clear_color.a } },
     }};
     gpu::DepthTargetDesc depth = {
         .view     = renderer.depth.attachment,

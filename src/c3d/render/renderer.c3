@@ -193,7 +193,7 @@ fn void Renderer.set_window_output(
 
 <*
  Upload the asset now, or record its upload into the open frame.
- Completes without a window when no frame is open.
+ Completes without a window when closed; open-frame environment inputs stay stable until closure.
  @param [&inout] self : "Owns upload staging and device resources."
  @return? c3d::INVALID_ID
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
@@ -217,6 +217,7 @@ macro void? Renderer.upload(&self, id) {
 
 <*
  Open a frame slot and acquire the window image when one is available.
+ Environment descriptions and source data remain stable until frame closure.
  @param [&inout] self : "Reuses the slot whose completion point has been waited."
  @return? gpu::DEVICE_BUSY, gpu::INVALID_HANDLE, gpu::INVALID_ARGUMENT
  @return? gpu::INVALID_RESOURCE_STATE, gpu::COMMAND_RECORDING_ERROR, gpu::RESOURCE_IN_USE

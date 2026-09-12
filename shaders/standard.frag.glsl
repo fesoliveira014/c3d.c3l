@@ -5,6 +5,7 @@
 #include "vertex_pull.glsl"
 #include "normal_mapping.glsl"
 #include "brdf.glsl"
+#include "ibl.glsl"
 #include "lights.glsl"
 #include "material_maps.glsl"
 #include "shadows.glsl"
@@ -90,6 +91,10 @@ void main() {
         standard_view_direction(frame, v_world_pos)
     );
     vec3 color = frame.ambient.rgb * base_color.rgb * (1.0 - metallic) * occlusion + emissive;
+    if (frame.environment != 0ul) {
+        EnvironmentGpu environment = EnvironmentGpu(frame.environment);
+        color += evaluate_environment(environment, surface, roughness, occlusion);
+    }
     float view_depth = -(frame.view * vec4(v_world_pos, 1.0)).z;
     for (uint index = 0u; index < frame.light_count; index++) {
         LightGpu light = LightArray(frame.lights).values[index];
