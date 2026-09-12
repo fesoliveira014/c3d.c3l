@@ -2,7 +2,9 @@
 
 `Basic` renders an unlit color with an optional texture map. `Standard` adds
 metallic-roughness shading from directional, point and spot lights, scene ambient,
-image-based lighting, and five independent texture slots. Both use the asset store's shared material ids.
+image-based lighting, and five independent texture slots. `Toon` adds quantized
+direct diffuse lighting, smooth indirect fill and an optional surface rim. All
+three families use the asset store's shared material ids.
 
 ## Standard factors
 
@@ -25,10 +27,68 @@ finite and nonnegative; values above 1 preserve HDR emission. Normal scale is
 finite and may be negative; occlusion strength is in [0, 1]. The renderer floors
 perceptual roughness at 0.045 for shading while preserving the authored value.
 
-`MaterialCommon` controls alpha and sidedness. Standard supports `OPAQUE` and
-`MASK`, using base factor alpha times sampled alpha and `alpha_cutoff` for the
-mask. Double-sided Standard flips its shading normal on back faces. Resolving
-Standard `BLEND` returns `c3d::UNSUPPORTED`.
+## Alpha, depth and raster state
+
+`MaterialCommon` controls alpha mode, cutoff, sidedness, depth testing, authored
+depth writes and wireframe drawing for every family. Base factor alpha and sampled
+base-texture alpha are straight-alpha inputs. `OPAQUE` ignores the resulting
+coverage and writes output alpha 1. `MASK` discards values below `alpha_cutoff`
+and writes output alpha 1 for surviving fragments. `BLEND` clamps coverage to
+[0, 1], multiplies the complete shaded RGB by it once, and writes premultiplied
+RGBA for source-over composition.
+
+Blended objects draw back to front after opaque/masked objects and the sky. The
+order uses each object's world-bounds center in the current camera view, with a
+stable entity-id tie break. It does not sort triangles or fragments, so
+intersecting transparent geometry and large objects whose centers do not match
+their visible depth can compose incorrectly. Record each view with its own camera;
+ordering is recalculated per view.
+
+`BLEND` honors `depth_test` but always disables effective depth writes. The
+authored `depth_write` value remains stored, so switching back to `OPAQUE` or
+`MASK` restores it. Double-sided Standard and Toon flip their shading normal on
+back faces. Wireframe still falls back to filled triangles when the device lacks
+line polygon mode.
+
+Blended meshes never cast atlas shadows. Opaque and masked Basic, Standard and
+Toon meshes can cast, with masked coverage coming only from their base factor,
+base texture and cutoff. Standard and Toon blended meshes can still receive
+direct shadows when their mesh enables `receive_shadow`; Basic remains unlit.
+
+## Toon factors
+
+```c3
+ToonParams toon = material::TOON_PARAMS_DEFAULT;
+toon.color = { 0.25f, 0.8f, 1, 1 };
+toon.steps = 4;
+toon.rim_color = { 1, 1, 1 };
+toon.rim_strength = 0.4f;
+toon.rim_power = 2;
+MaterialId toon_id = assets.add_material(material::toon(toon))!;
+```
+
+`TOON_PARAMS_DEFAULT` uses white RGBA, four uniform direct-light steps, no base
+or gradient map, white rim color, rim strength 0 and rim power 2. Color channels
+are in [0, 1], steps is at least 2, rim color and strength are finite and
+nonnegative, and rim power is finite and positive. A zero rim strength leaves the
+surface unchanged.
+
+Toon quantizes the clamped normal-light cosine separately for each directional,
+point or spot light. Light color, intensity, range/cone attenuation and shadow
+visibility remain smooth, and the quantized contributions are then added. Scene
+ambient and environment SH diffuse fill also remain smooth. Toon has no specular
+environment reflection or normal-map slot.
+
+`gradient_map` optionally replaces uniform steps with a 2D, single-layer
+intensity ramp. The renderer samples red only at `(NdotL, 0.5)`, explicitly from
+mip zero, using a fixed nearest/clamp sampler; green, blue and alpha are ignored.
+Load ramp data as linear, not sRGB. A zero, missing or stale id falls back to
+uniform steps. A live cube, array or 3D source returns `c3d::UNSUPPORTED`.
+
+The rim adds `rim_color * rim_strength * (1 - NdotV)^rim_power` after diffuse and
+indirect lighting. It is independent of base texture color, lights and shadows,
+and final blend alpha scales it with the rest of the shaded result. It is a
+surface-lighting term, not a geometric or post-process outline.
 
 ## Standard maps
 
@@ -108,14 +168,16 @@ bits 5–9 select UV1 for those same slots. The matching schema constants are
 
 `BasicMaterialGpu` occupies 64 bytes: `map_flags` is at offset 12 and its
 `TextureMapGpu map` is at offset 32. It uses the same base-color presence and
-UV1 bits as Standard. The default 4096-slot material heap is 917,504 bytes.
-Custom renderer-side packing code supplies
-`render::MaterialBindings` to `write_material_block`, with `base_color`,
-`metallic_roughness`, `normal`, `occlusion` and `emissive` fields. Each is a
-`TextureBinding` carrying texture/sampler indices and an explicit `present` flag.
-Basic uses only `base_color`; inactive fields stay empty. Bindless index zero is
-not a presence test. Ordinary consumers edit asset material slots and let the
-renderer resolve these bindings.
+UV1 bits as Standard. `ToonMaterialGpu` occupies 96 bytes, including its color,
+rim factors, step count, gradient texture/sampler indices and one nested base-map
+record. The default 4096-slot material heap is 917,504 bytes. Custom renderer-side
+packing code supplies `render::MaterialBindings` to `write_material_block`, with
+`base_color`, `metallic_roughness`, `normal`, `occlusion`, `emissive` and
+`gradient` fields. Each is a `TextureBinding` carrying texture/sampler indices and
+an explicit `present` flag.
+Basic uses only `base_color`; Toon uses `base_color` and `gradient`; inactive
+fields stay empty. Bindless index zero is not a presence test. Ordinary consumers
+edit asset material slots and let the renderer resolve these bindings.
 
 ## Shared edits
 
@@ -147,8 +209,8 @@ record.data = material::basic({ .color = { 1, 0.5f, 0.2f, 1 } });
 assets.mark_material_dirty(material_id);
 ```
 
-Use the matching `.data.basic` or `.data.standard` arm. Do not change `kind`
-without initializing that arm.
+Use the matching `.data.basic`, `.data.standard` or `.data.toon` arm. Do not
+change `kind` without initializing that arm from its named defaults.
 
 ## Lights
 
@@ -239,6 +301,28 @@ shows the previous frame's counts.
 ## Interactive example
 
 ```bash
+python3 scripts/build.py --example materials
+./examples/build/materials --gpu-timings
+```
+
+`materials` combines three interactive presets. Masked foliage casts cutout
+shadows onto an opaque receiver. Two separated blended objects show source-over
+composition against an opaque reference and HDR sky. Three Toon spheres compare
+uniform steps, a nonuniform grayscale ramp and an enabled rim under separately
+colored directional and point lights.
+
+The controls switch presets, editable surfaces, material families, base textures
+and Toon ramps. Family changes initialize the selected parameter arm from named
+defaults and preserve only the common state and base color. Material controls
+edit alpha mode/cutoff, Basic RGBA, Toon steps/rim and the shared sidedness,
+depth and wireframe state. Direct-light intensity, ambient fill, environment fill
+and background intensity remain independent. Drag outside GUI windows to orbit,
+scroll to zoom, and release Escape outside GUI keyboard capture to close. GPU
+timings are optional; full validation is enabled for every run.
+
+The broader Standard material example remains available:
+
+```bash
 python3 scripts/build.py --example pbr
 ./examples/build/pbr --gpu-timings
 ```
@@ -272,9 +356,10 @@ GPU timings are optional; full validation is enabled for every run.
 
 Texture ownership and sampling are described in [Textures and
 images](textures.md). [Sun, spot and point shadows](shadows.md) attenuate Standard
-direct lighting; Basic and Standard surfaces can cast opaque or masked shadows.
-Standard supports [environment lighting and independent skies](environments.md);
-Basic remains unlit. Shading writes scene-linear HDR into the renderer target;
-the existing composite adds no tonemapper or exposure control, so bright values
-can clip on presentation. Compare lighting with consistent presentation
-settings.
+and Toon direct lighting. Standard supports [environment lighting and independent
+skies](environments.md); Toon uses only its diffuse SH contribution, and Basic
+remains unlit. Toon does not provide PBR reflections, outlines or transmission.
+Physical material lobes and scene-color transmission are outside the current
+material families. Shading writes scene-linear HDR into the renderer target; the
+existing composite adds no tonemapper or exposure control, so bright values can
+clip on presentation. Compare lighting with consistent presentation settings.

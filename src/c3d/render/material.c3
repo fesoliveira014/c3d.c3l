@@ -42,9 +42,8 @@ struct MaterialRes {
 
 <*
  Upload the material now, or record its upload into the open frame.
- Completes without a window when no frame is open.
  Material and referenced sources stay stable until the open frame closes.
- @param [&inout] self : "Owns map preparation and material heap copies."
+ @param [&inout] self : "Completes closed-frame uploads without a window."
  @return? c3d::INVALID_ID
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::UNSUPPORTED_FEATURE, gpu::COMMAND_RECORDING_ERROR, gpu::DEVICE_LOST, gpu::BACKEND_ERROR

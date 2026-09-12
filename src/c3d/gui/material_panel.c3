@@ -4,6 +4,8 @@ import c3d;
 import c3d::asset;
 import imgui;
 
+const float MIN_EDITABLE_RIM_POWER @local = 0.01f; // Matches the drag step within the positive contract.
+
 <*
  Edit material factors and advance the revision on changes.
  @param [&inout] assets : "Live store; called during the current GUI frame."
@@ -19,10 +21,10 @@ fn void? material_panel(AssetStore* assets, MaterialId material) {
     imgui::push_item_width(imgui::get_content_region_avail().x * 0.5f);
     defer imgui::pop_item_width();
 
-    bool changed;
+    bool changed = edit_material_common(&record.data.common);
     switch (record.data.kind) {
         case BASIC:
-            changed = imgui::color_edit3("Color", (float*)&record.data.basic.color, {});
+            changed |= edit_material_color("Color", (float*)&record.data.basic.color, 4);
         case STANDARD:
             changed |= edit_material_color("Base color", (float*)&record.data.standard.base_color, 4);
             changed |= edit_material_factor(
@@ -57,9 +59,81 @@ fn void? material_panel(AssetStore* assets, MaterialId material) {
                 maximum: float::max,
             );
         case TOON:
-            changed = edit_material_color("Color", (float*)&record.data.toon.color, 4);
+            changed |= edit_material_color("Color", (float*)&record.data.toon.color, 4);
+            changed |= edit_material_steps(&record.data.toon.steps);
+            changed |= edit_material_color("Rim color", (float*)&record.data.toon.rim_color, 3);
+            changed |= edit_material_factor(
+                label: "Rim strength",
+                value: &record.data.toon.rim_strength,
+                minimum: 0,
+                maximum: float::max,
+            );
+            changed |= edit_material_factor(
+                label: "Rim power",
+                value: &record.data.toon.rim_power,
+                minimum: MIN_EDITABLE_RIM_POWER,
+                maximum: float::max,
+            );
     }
     if (changed) assets.mark_material_dirty(material);
+}
+
+fn bool edit_material_common(MaterialCommon* common) @local {
+    bool changed;
+
+    imgui::separator_text("Surface");
+    if (imgui::radio_button("Opaque", common.alpha_mode == OPAQUE)) {
+        common.alpha_mode = OPAQUE;
+        changed = true;
+    }
+    imgui::same_line();
+    if (imgui::radio_button("Mask", common.alpha_mode == MASK)) {
+        common.alpha_mode = MASK;
+        changed = true;
+    }
+    imgui::same_line();
+    if (imgui::radio_button("Blend", common.alpha_mode == BLEND)) {
+        common.alpha_mode = BLEND;
+        changed = true;
+    }
+
+    changed |= edit_material_factor(
+        label: "Alpha cutoff",
+        value: &common.alpha_cutoff,
+        minimum: 0,
+        maximum: 1,
+    );
+    changed |= imgui::checkbox("Double sided", &common.double_sided);
+    changed |= imgui::checkbox("Depth test", &common.depth_test);
+
+    if (common.alpha_mode == BLEND) {
+        bool effective_depth_write;
+        imgui::begin_disabled(true);
+        imgui::checkbox("Depth write", &effective_depth_write);
+        imgui::end_disabled();
+        imgui::text_disabled("Blended draws always leave depth writes off.");
+    } else {
+        changed |= imgui::checkbox("Depth write", &common.depth_write);
+    }
+    changed |= imgui::checkbox("Wireframe", &common.wireframe);
+    imgui::separator_text("Factors");
+    return changed;
+}
+
+fn bool edit_material_steps(uint* steps) @local {
+    int edited = *steps > (uint)int::max ? int::max : (int)*steps;
+    if (!imgui::drag_int_ex(
+        label: "Steps",
+        v: &edited,
+        v_speed: 0.1f,
+        v_min: 2,
+        v_max: int::max,
+        format: "%d",
+        flags: imgui::SLIDER_FLAGS_ALWAYS_CLAMP,
+    )) return false;
+    if (edited < 2 || (uint)edited == *steps) return false;
+    *steps = (uint)edited;
+    return true;
 }
 
 fn bool edit_material_factor(
