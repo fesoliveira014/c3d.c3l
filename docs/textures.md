@@ -105,8 +105,10 @@ TextureId environment_pixels = image::load_hdr(&assets, "studio.hdr")!;
 `load_hdr` accepts Radiance HDR and stores `RGBA32_FLOAT`, retaining values above
 one. Its pixel slice contains tightly packed four-channel floats. It rejects
 PNG/JPEG rather than implicitly converting their range. Conversely,
-`load_texture` rejects HDR. Decoding HDR does not add an environment renderer or
-a display tonemapping pipeline.
+`load_texture` rejects HDR. Register the resulting TextureId through
+`light::texture_environment` and `assets.add_environment` for
+[image-based lighting or an independent sky](environments.md). Texture loading
+does not perform display tonemapping.
 
 Two-dimensional uploads support `RGBA8_UNORM`, `RGBA8_SRGB`, `RGBA16_FLOAT` and
 `RGBA32_FLOAT`. `texture_2d_desc` requests a complete mip chain by default. Mips
@@ -169,8 +171,10 @@ where `s = 2u - 1`, `t = 2v - 1`, and image coordinates increase right/down:
 `texture_cube_desc(size, format)` describes six square layers and generated mips.
 Its mip-zero bytes contain complete faces in that order. The renderer creates one
 cube-compatible image and one native sampled cube view. The cube preview samples
-that view by direction; Basic materials remain 2D. This API does not add a scene
-skybox, image-based lighting, or environment prefiltering.
+that view by direction; Basic materials remain 2D. Register the cube as an
+[environment source](environments.md) to use it for scene lighting or a sky.
+Environment processing borrows the native cube and bypasses equirectangular
+conversion.
 
 ## Supply mip levels
 

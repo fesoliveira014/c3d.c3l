@@ -124,8 +124,22 @@ python3 scripts/build.py --example pbr
 ```
 
 Drag outside the GUI to orbit, scroll to zoom, and release Escape to quit.
-See [Materials and direct lighting](docs/materials.md) for factors, layer masks,
+See [Materials and lighting](docs/materials.md) for factors, layer masks,
 light capacity and current rendering limits.
+
+`ibl` lights a metallic/roughness sphere grid with two bundled HDR environments.
+Its controls independently select lighting and background, adjust rotation and
+intensity, demonstrate diffuse-only occlusion, and apply per-environment processing
+resolutions. Both sources are prepared before the first frame:
+
+```bash
+python3 scripts/build.py --example ibl
+./examples/build/ibl --gpu-timings
+```
+
+See [Environments and image-based lighting](docs/environments.md) for defaults,
+source ownership, preparation and current display limits. The
+[bundled HDRs](examples/assets/ibl/README.md) are CC0 and require no runtime download.
 
 `shadows` demonstrates sun cascades, spot projection and all six point faces with
 solid, masked and off-camera casters. Its small GUI adjusts kind-specific coverage,

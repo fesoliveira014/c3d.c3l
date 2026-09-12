@@ -103,6 +103,12 @@
         "src/pbr.c3"
       ]
     },
+    "ibl": {
+      "type": "executable",
+      "sources": [
+        "src/ibl.c3"
+      ]
+    },
     "textured": {
       "type": "executable",
       "sources": [
