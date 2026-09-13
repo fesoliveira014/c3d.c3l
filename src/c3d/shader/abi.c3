@@ -36,6 +36,14 @@ const uint ENVIRONMENT_SH_GROUPS = 64;
 const uint ENVIRONMENT_SH_GROUP_SIZE = 64;
 const uint ENVIRONMENT_SOURCE_EQUIRECTANGULAR = 0;
 const uint ENVIRONMENT_SOURCE_SOLID = 1;
+const uint PHYSICAL_MAP_CLEARCOAT = 1;
+const uint PHYSICAL_MAP_CLEARCOAT_ROUGHNESS = 2;
+const uint PHYSICAL_MAP_CLEARCOAT_NORMAL = 4;
+const uint PHYSICAL_MAP_SHEEN_COLOR = 8;
+const uint PHYSICAL_MAP_SHEEN_ROUGHNESS = 16;
+const uint SHEEN_LUT_SIZE = 256;
+const uint SHEEN_LUT_SAMPLES = 4096;
+const uint SHEEN_PREFILTER_SAMPLES = 4096;
 
 struct CompositeRoot {
     TextureIndex source_texture;
@@ -124,24 +132,24 @@ $assert $reflect(FrameRoot.frame_index).offset == 412;
 $assert $reflect(FrameRoot.ambient).offset == 416;
 
 struct DrawRoot {
-    Mat4f      model;
-    Mat4f      prev_model;
-    Vec4f      normal_0;
-    Vec4f      normal_1;
-    Vec4f      normal_2;
-    GpuAddress frame;
-    GpuAddress geometry;
-    GpuAddress material;
-    GpuAddress skin;
-    GpuAddress morph;
-    GpuAddress instance_data;
-    GpuAddress previous_pose;
-    uint       object_id;
-    uint       flags;
-    uint       layers;
-    uint       _pad1;
-    uint       _pad2;
-    uint       _pad3;
+    Mat4f        model;
+    Mat4f        prev_model;
+    Vec4f        normal_0;
+    Vec4f        normal_1;
+    Vec4f        normal_2;
+    GpuAddress   frame;
+    GpuAddress   geometry;
+    GpuAddress   material;
+    GpuAddress   skin;
+    GpuAddress   morph;
+    GpuAddress   instance_data;
+    GpuAddress   previous_pose;
+    uint         object_id;
+    uint         flags;
+    uint         layers;
+    TextureIndex sheen_lut;
+    SamplerIndex sheen_sampler;
+    uint         _pad3;
 }
 $assert DrawRoot::size == 256;
 $assert $reflect(DrawRoot.model).offset == 0;
@@ -159,8 +167,8 @@ $assert $reflect(DrawRoot.previous_pose).offset == 224;
 $assert $reflect(DrawRoot.object_id).offset == 232;
 $assert $reflect(DrawRoot.flags).offset == 236;
 $assert $reflect(DrawRoot.layers).offset == 240;
-$assert $reflect(DrawRoot._pad1).offset == 244;
-$assert $reflect(DrawRoot._pad2).offset == 248;
+$assert $reflect(DrawRoot.sheen_lut).offset == 244;
+$assert $reflect(DrawRoot.sheen_sampler).offset == 248;
 $assert $reflect(DrawRoot._pad3).offset == 252;
 
 struct TextureMapGpu {
@@ -373,7 +381,7 @@ struct EnvironmentGpu {
     TextureIndex           brdf_lut;
     float                  intensity;
     GpuAddress             sh;
-    uint                   _pad0;
+    TextureIndex           sheen_cube;
     uint                   _pad1;
     EnvironmentRotationGpu rotation;
 }
@@ -383,7 +391,7 @@ $assert $reflect(EnvironmentGpu.sampler_index).offset == 4;
 $assert $reflect(EnvironmentGpu.brdf_lut).offset == 8;
 $assert $reflect(EnvironmentGpu.intensity).offset == 12;
 $assert $reflect(EnvironmentGpu.sh).offset == 16;
-$assert $reflect(EnvironmentGpu._pad0).offset == 24;
+$assert $reflect(EnvironmentGpu.sheen_cube).offset == 24;
 $assert $reflect(EnvironmentGpu._pad1).offset == 28;
 $assert $reflect(EnvironmentGpu.rotation).offset == 32;
 
@@ -492,3 +500,35 @@ $assert $reflect(BrdfLutRoot.output_texture).offset == 0;
 $assert $reflect(BrdfLutRoot.size).offset == 4;
 $assert $reflect(BrdfLutRoot._pad0).offset == 8;
 $assert $reflect(BrdfLutRoot._pad1).offset == 12;
+
+struct StandardMaterialRoot {
+    StandardMaterialGpu material;
+}
+$assert StandardMaterialRoot::size == 224;
+$assert $reflect(StandardMaterialRoot.material).offset == 0;
+
+struct PhysicalMaterialGpu {
+    StandardMaterialGpu standard;
+    Vec4f               sheen_color_roughness;
+    float               clearcoat;
+    float               clearcoat_roughness;
+    float               clearcoat_normal_scale;
+    uint                map_flags;
+    TextureMapGpu       clearcoat_map;
+    TextureMapGpu       clearcoat_roughness_map;
+    TextureMapGpu       clearcoat_normal_map;
+    TextureMapGpu       sheen_color_map;
+    TextureMapGpu       sheen_roughness_map;
+}
+$assert PhysicalMaterialGpu::size == 416;
+$assert $reflect(PhysicalMaterialGpu.standard).offset == 0;
+$assert $reflect(PhysicalMaterialGpu.sheen_color_roughness).offset == 224;
+$assert $reflect(PhysicalMaterialGpu.clearcoat).offset == 240;
+$assert $reflect(PhysicalMaterialGpu.clearcoat_roughness).offset == 244;
+$assert $reflect(PhysicalMaterialGpu.clearcoat_normal_scale).offset == 248;
+$assert $reflect(PhysicalMaterialGpu.map_flags).offset == 252;
+$assert $reflect(PhysicalMaterialGpu.clearcoat_map).offset == 256;
+$assert $reflect(PhysicalMaterialGpu.clearcoat_roughness_map).offset == 288;
+$assert $reflect(PhysicalMaterialGpu.clearcoat_normal_map).offset == 320;
+$assert $reflect(PhysicalMaterialGpu.sheen_color_map).offset == 352;
+$assert $reflect(PhysicalMaterialGpu.sheen_roughness_map).offset == 384;

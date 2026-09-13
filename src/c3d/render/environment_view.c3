@@ -12,17 +12,27 @@ struct ViewEnvironments @private {
     Vec4             clear_color;
 }
 
-fn ViewEnvironments? resolve_view_environments(Renderer* renderer, Scene* scene_data) @private {
+fn ViewEnvironments? resolve_view_environments(Renderer* renderer, Scene* scene_data, bool sheen) @private {
     ViewEnvironments selected = { .clear_color = scene_data.background.color };
     if (renderer.assets.environments.is_live(scene_data.environment)) {
-        selected.lighting = ensure_environment(renderer, scene_data.environment, true)!;
+        selected.lighting = ensure_environment(
+            renderer: renderer,
+            environment: scene_data.environment,
+            lighting: true,
+            sheen: sheen,
+        )!;
     } else if (scene_data.environment.generation) {
         renderer.stats.dangling_refs++;
     }
     if (scene_data.background.kind == BackgroundKind.ENVIRONMENT) {
         EnvironmentId environment = scene_data.background.environment;
         if (renderer.assets.environments.is_live(environment)) {
-            selected.sky = ensure_environment(renderer, environment, false)!;
+            selected.sky = ensure_environment(
+                renderer: renderer,
+                environment: environment,
+                lighting: false,
+                sheen: false,
+            )!;
             sky_pipeline(renderer)!;
         } else if (environment.generation) {
             renderer.stats.dangling_refs++;
@@ -36,6 +46,7 @@ fn gpu::GpuAddress? pack_lighting_environment(
     EnvironmentRes* environment,
     float intensity,
     Quat rotation,
+    bool sheen,
 ) @private {
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan span = slot.upload.take(&renderer.device, EnvironmentGpu::size, STREAM_ALIGNMENT)!;
@@ -45,6 +56,7 @@ fn gpu::GpuAddress? pack_lighting_environment(
         .brdf_lut      = renderer.environment_state.brdf_view.index,
         .intensity     = intensity,
         .sh            = environment.irradiance_address,
+        .sheen_cube    = sheen ? environment.sheen_view.index : (gpu::TextureIndex)0,
         .rotation      = pack_environment_rotation(rotation),
     };
     return span.address;

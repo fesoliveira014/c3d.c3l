@@ -26,14 +26,15 @@ const float ORBIT_DISTANCE_MAX @local = 32; // Keeps the fixture readable inside
 const usz MOUSE_BUTTON_LEFT @local = 1;
 const uint ALPHA_TEXTURE_SIZE @local = 16; // Preserves a recognizable leaf silhouette at example scale.
 const uint RAMP_TEXTURE_WIDTH @local = 8; // A 32-byte fixture keeps unequal band widths visible.
+const uint PHYSICAL_TEXTURE_SIZE @local = 4; // Keeps all mapped layer patterns inspectable without asset files.
 const uint RGBA8_BYTES @local = 4;
 const float LIGHT_INTENSITY_MAX @local = 100; // Covers both direct-light controls without unwieldy dragging.
 const float INDIRECT_INTENSITY_MAX @local = 2; // Keeps untone-mapped output readable while editing.
 const float EDITOR_WIDTH @local = 170; // Leaves long labels readable in the controls panel.
 const Vec2 CONTROLS_PANEL_POSITION @local = { 16, 16 }; // Keeps controls beside the central fixtures.
-const Vec2 CONTROLS_PANEL_SIZE @local = { 420, 820 }; // Fits every preset control at the default height.
+const Vec2 CONTROLS_PANEL_SIZE @local = { 420, 820 }; // Keeps preset controls scrollable within the default height.
 const Vec2 MATERIAL_PANEL_POSITION @local = { 1034, 332 }; // Places factor editing below frame statistics.
-const Vec2 MATERIAL_PANEL_SIZE @local = { 390, 550 }; // Fits common and Toon factors without covering fixtures.
+const Vec2 MATERIAL_PANEL_SIZE @local = { 390, 550 }; // Keeps the complete factor editor within the window.
 const Vec2 STATS_PANEL_POSITION @local = { 1034, 16 }; // Aligns diagnostics with the right window edge.
 const Vec2 STATS_PANEL_SIZE @local = { 320, 300 }; // Holds the complete timing summary.
 
@@ -41,6 +42,12 @@ enum MaterialPreset @local {
     MASKED_FOLIAGE,
     ALPHA_BLEND,
     TOON_LIGHTING,
+    PHYSICAL_LAYERS,
+}
+
+enum EnvironmentChoice @local {
+    STUDIO,
+    SKY,
 }
 
 struct Orbit @local {
@@ -53,6 +60,17 @@ struct Orbit @local {
 struct ExampleTextures @local {
     TextureId alpha;
     TextureId ramp;
+    TextureId base_normal;
+    TextureId clearcoat;
+    TextureId clearcoat_roughness;
+    TextureId clearcoat_normal;
+    TextureId sheen_color;
+    TextureId sheen_roughness;
+}
+
+struct ExampleEnvironments @local {
+    EnvironmentId studio;
+    EnvironmentId sky;
 }
 
 struct ExampleMaterials @local {
@@ -62,6 +80,11 @@ struct ExampleMaterials @local {
     MaterialId toon_steps;
     MaterialId toon_ramp;
     MaterialId toon_rim;
+    MaterialId standard_reference;
+    MaterialId physical_zero;
+    MaterialId coated_paint;
+    MaterialId fabric;
+    MaterialId combined;
 }
 
 struct ExampleNodes @local {
@@ -74,12 +97,20 @@ struct ExampleNodes @local {
     Node* toon_steps;
     Node* toon_ramp;
     Node* toon_rim;
+    Node* standard_reference;
+    Node* physical_zero;
+    Node* coated_paint;
+    Node* fabric;
+    Node* combined;
 }
 
 struct Controls @local {
     MaterialPreset preset;
     MaterialId selected_material;
+    EnvironmentChoice environment;
     bool environment_fill;
+    bool directional_light;
+    bool point_light;
 }
 
 fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
@@ -173,11 +204,36 @@ fn bool same_material_id(MaterialId first, MaterialId second) @local {
     return first.index == second.index && first.generation == second.generation;
 }
 
+fn EnvironmentId environment_id(
+    EnvironmentChoice choice,
+    ExampleEnvironments environments,
+) @local {
+    switch (choice) {
+        case STUDIO: return environments.studio;
+        case SKY: return environments.sky;
+    }
+}
+
+fn TextureSlot example_texture_slot(
+    TextureId texture,
+    SamplerId sampler,
+    uint uv_set,
+    UvTransform transform,
+) @local {
+    return material::texture_slot(
+        texture: texture,
+        sampler: sampler,
+        uv_set: uv_set,
+        transform: transform,
+    );
+}
+
 fn Vec4 material_color(Material* material) @local {
     switch (material.kind) {
         case BASIC: return material.basic.color;
         case STANDARD: return material.standard.base_color;
         case TOON: return material.toon.color;
+        case PHYSICAL: return material.physical.standard.base_color;
     }
 }
 
@@ -186,6 +242,7 @@ fn TextureSlot* material_base_slot(Material* material) @local {
         case BASIC: return &material.basic.map;
         case STANDARD: return &material.standard.base_color_map;
         case TOON: return &material.toon.map;
+        case PHYSICAL: return &material.physical.standard.base_color_map;
     }
 }
 
@@ -208,6 +265,10 @@ fn void select_material_kind(
             StandardParams params = material::STANDARD_PARAMS_DEFAULT;
             params.base_color = color;
             record.data = material::standard(params, common);
+        case PHYSICAL:
+            PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
+            params.standard.base_color = color;
+            record.data = material::physical(params, common);
         case TOON:
             ToonParams params = material::TOON_PARAMS_DEFAULT;
             params.color = color;
@@ -252,6 +313,7 @@ fn void select_preset(
     bool masked = preset == MASKED_FOLIAGE;
     bool blended = preset == ALPHA_BLEND;
     bool toon = preset == TOON_LIGHTING;
+    bool physical = preset == PHYSICAL_LAYERS;
 
     nodes.mask_ground.visible = masked;
     nodes.leaf_first.visible = masked;
@@ -262,12 +324,18 @@ fn void select_preset(
     nodes.toon_steps.visible = toon;
     nodes.toon_ramp.visible = toon;
     nodes.toon_rim.visible = toon;
+    nodes.standard_reference.visible = physical;
+    nodes.physical_zero.visible = physical;
+    nodes.coated_paint.visible = physical;
+    nodes.fabric.visible = physical;
+    nodes.combined.visible = physical;
 
     controls.preset = preset;
     switch (preset) {
         case MASKED_FOLIAGE: controls.selected_material = materials.masked;
         case ALPHA_BLEND: controls.selected_material = materials.blend_red;
         case TOON_LIGHTING: controls.selected_material = materials.toon_steps;
+        case PHYSICAL_LAYERS: controls.selected_material = materials.coated_paint;
     }
 }
 
@@ -296,6 +364,14 @@ fn void preset_controls(
     if (imgui::radio_button("Toon lighting", controls.preset == TOON_LIGHTING)) {
         select_preset(
             preset: TOON_LIGHTING,
+            materials: materials,
+            nodes: nodes,
+            controls: controls,
+        );
+    }
+    if (imgui::radio_button("Physical layers", controls.preset == PHYSICAL_LAYERS)) {
+        select_preset(
+            preset: PHYSICAL_LAYERS,
             materials: materials,
             nodes: nodes,
             controls: controls,
@@ -339,6 +415,39 @@ fn void preset_controls(
             )) {
                 controls.selected_material = materials.toon_rim;
             }
+        case PHYSICAL_LAYERS:
+            imgui::text_unformatted("Top: Standard / zero / coat");
+            imgui::text_unformatted("Bottom: fabric / combined maps");
+            if (imgui::radio_button(
+                "Standard reference##surface",
+                same_material_id(controls.selected_material, materials.standard_reference),
+            )) {
+                controls.selected_material = materials.standard_reference;
+            }
+            if (imgui::radio_button(
+                "Zero layers##surface",
+                same_material_id(controls.selected_material, materials.physical_zero),
+            )) {
+                controls.selected_material = materials.physical_zero;
+            }
+            if (imgui::radio_button(
+                "Coated paint##surface",
+                same_material_id(controls.selected_material, materials.coated_paint),
+            )) {
+                controls.selected_material = materials.coated_paint;
+            }
+            if (imgui::radio_button(
+                "Fabric##surface",
+                same_material_id(controls.selected_material, materials.fabric),
+            )) {
+                controls.selected_material = materials.fabric;
+            }
+            if (imgui::radio_button(
+                "Combined maps##surface",
+                same_material_id(controls.selected_material, materials.combined),
+            )) {
+                controls.selected_material = materials.combined;
+            }
     }
 }
 
@@ -351,6 +460,10 @@ fn void family_controls(AssetStore* assets, MaterialId material_id) @local {
     imgui::same_line();
     if (imgui::radio_button("Standard", kind == STANDARD)) {
         select_material_kind(assets, material_id, STANDARD);
+    }
+    imgui::same_line();
+    if (imgui::radio_button("Physical", kind == PHYSICAL)) {
+        select_material_kind(assets, material_id, PHYSICAL);
     }
     imgui::same_line();
     if (imgui::radio_button("Toon", kind == TOON)) {
@@ -393,17 +506,113 @@ fn void texture_controls(
     }
 }
 
+fn bool edit_map_toggle(
+    ZString label,
+    TextureSlot* slot,
+    TextureSlot enabled_slot,
+) @local {
+    bool enabled = slot.texture.asset.index != 0;
+    if (!imgui::checkbox(label, &enabled)) return false;
+
+    *slot = enabled
+        ? enabled_slot
+        : (TextureSlot){ .transform = material::UV_TRANSFORM_IDENTITY };
+    return true;
+}
+
+fn void physical_texture_controls(
+    AssetStore* assets,
+    MaterialId material_id,
+    ExampleTextures textures,
+) @local {
+    MaterialAsset* record = assets.material(material_id);
+    if (record.data.kind != PHYSICAL) return;
+
+    PhysicalParams* params = &record.data.physical;
+    bool changed;
+    imgui::separator_text("Physical maps");
+    changed |= edit_map_toggle(
+        "Base normal RGB##physical_base_normal",
+        &params.standard.normal_map,
+        example_texture_slot(
+            texture: textures.base_normal,
+            sampler: asset::SAMPLER_LINEAR_REPEAT,
+            uv_set: 0,
+            transform: { .scale = { 2, 2 } },
+        ),
+    );
+    changed |= edit_map_toggle(
+        "Clearcoat strength R##physical_clearcoat",
+        &params.clearcoat_map,
+        example_texture_slot(
+            texture: textures.clearcoat,
+            sampler: asset::SAMPLER_NEAREST,
+            uv_set: 0,
+            transform: { .scale = { 3, 3 } },
+        ),
+    );
+    changed |= edit_map_toggle(
+        "Clearcoat roughness G##physical_clearcoat_roughness",
+        &params.clearcoat_roughness_map,
+        example_texture_slot(
+            texture: textures.clearcoat_roughness,
+            sampler: asset::SAMPLER_LINEAR_REPEAT,
+            uv_set: 1,
+            transform: { .scale = { 1, 2 } },
+        ),
+    );
+    changed |= edit_map_toggle(
+        "Clearcoat normal RGB##physical_clearcoat_normal",
+        &params.clearcoat_normal_map,
+        example_texture_slot(
+            texture: textures.clearcoat_normal,
+            sampler: asset::SAMPLER_LINEAR_REPEAT,
+            uv_set: 0,
+            transform: {
+                .scale = { 2, 1 },
+                .rotation = 0.35f,
+            },
+        ),
+    );
+    changed |= edit_map_toggle(
+        "Sheen color RGB (sRGB)##physical_sheen_color",
+        &params.sheen_color_map,
+        example_texture_slot(
+            texture: textures.sheen_color,
+            sampler: asset::SAMPLER_NEAREST,
+            uv_set: 0,
+            transform: { .scale = { 1, 3 } },
+        ),
+    );
+    changed |= edit_map_toggle(
+        "Sheen roughness A##physical_sheen_roughness",
+        &params.sheen_roughness_map,
+        example_texture_slot(
+            texture: textures.sheen_roughness,
+            sampler: asset::SAMPLER_LINEAR_REPEAT,
+            uv_set: 1,
+            transform: { .scale = { 2, 1 } },
+        ),
+    );
+    imgui::text_unformatted("Base and coat normals use different fixtures.");
+
+    if (changed) assets.mark_material_dirty(material_id);
+}
+
 fn void lighting_controls(
     Scene* scene,
     Node* directional_node,
     Node* point_node,
-    EnvironmentId environment,
+    ExampleEnvironments environments,
     Controls* controls,
 ) @local {
     Light* directional = scene.get(directional_node, Light);
     Light* point = scene.get(point_node, Light);
 
     imgui::separator_text("Direct lights");
+    if (imgui::checkbox("Warm directional enabled", &controls.directional_light)) {
+        directional_node.visible = controls.directional_light;
+    }
     edit_light_color("Warm directional", &directional.color);
     edit_factor(
         label: "Directional intensity",
@@ -411,6 +620,9 @@ fn void lighting_controls(
         minimum: 0,
         maximum: LIGHT_INTENSITY_MAX,
     );
+    if (imgui::checkbox("Cool point enabled", &controls.point_light)) {
+        point_node.visible = controls.point_light;
+    }
     edit_light_color("Cool point", &point.color);
     edit_factor(
         label: "Point intensity",
@@ -427,8 +639,21 @@ fn void lighting_controls(
         maximum: INDIRECT_INTENSITY_MAX,
     );
     if (imgui::checkbox("Environment fill", &controls.environment_fill)) {
-        scene.environment = controls.environment_fill ? environment : (EnvironmentId){};
+        scene.environment = controls.environment_fill
+            ? environment_id(controls.environment, environments)
+            : (EnvironmentId){};
     }
+    imgui::separator_text("HDR source");
+    if (imgui::radio_button("Studio##materials_environment", controls.environment == STUDIO)) {
+        controls.environment = STUDIO;
+    }
+    imgui::same_line();
+    if (imgui::radio_button("Sky##materials_environment", controls.environment == SKY)) {
+        controls.environment = SKY;
+    }
+    EnvironmentId selected_environment = environment_id(controls.environment, environments);
+    scene.environment = controls.environment_fill ? selected_environment : (EnvironmentId){};
+    scene.background.environment = selected_environment;
     edit_factor(
         label: "Environment intensity",
         value: &scene.environment_intensity,
@@ -451,7 +676,7 @@ fn void controls_panel(
     ExampleNodes nodes,
     Node* directional_node,
     Node* point_node,
-    EnvironmentId environment,
+    ExampleEnvironments environments,
     Controls* controls,
 ) @local {
     imgui::set_next_window_pos(CONTROLS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
@@ -468,11 +693,12 @@ fn void controls_panel(
     preset_controls(materials, nodes, controls);
     family_controls(assets, controls.selected_material);
     texture_controls(assets, controls.selected_material, textures);
+    physical_texture_controls(assets, controls.selected_material, textures);
     lighting_controls(
         scene: scene,
         directional_node: directional_node,
         point_node: point_node,
-        environment: environment,
+        environments: environments,
         controls: controls,
     );
 }
@@ -484,7 +710,7 @@ fn void? run_gui(
     Node* camera_node,
     Node* directional_node,
     Node* point_node,
-    EnvironmentId environment,
+    ExampleEnvironments environments,
     ExampleMaterials materials,
     ExampleTextures textures,
     ExampleNodes nodes,
@@ -522,7 +748,7 @@ fn void? run_gui(
             nodes: nodes,
             directional_node: directional_node,
             point_node: point_node,
-            environment: environment,
+            environments: environments,
             controls: controls,
         );
 
@@ -605,6 +831,120 @@ fn TextureId? add_ramp_texture(AssetStore* assets) @local {
     );
 }
 
+fn ExampleTextures? create_example_textures(AssetStore* assets) @local {
+    char[PHYSICAL_TEXTURE_SIZE * PHYSICAL_TEXTURE_SIZE * RGBA8_BYTES] base_normal_pixels;
+    char[PHYSICAL_TEXTURE_SIZE * PHYSICAL_TEXTURE_SIZE * RGBA8_BYTES] clearcoat_pixels;
+    char[PHYSICAL_TEXTURE_SIZE * PHYSICAL_TEXTURE_SIZE * RGBA8_BYTES] clearcoat_roughness_pixels;
+    char[PHYSICAL_TEXTURE_SIZE * PHYSICAL_TEXTURE_SIZE * RGBA8_BYTES] clearcoat_normal_pixels;
+    char[PHYSICAL_TEXTURE_SIZE * PHYSICAL_TEXTURE_SIZE * RGBA8_BYTES] sheen_color_pixels;
+    char[PHYSICAL_TEXTURE_SIZE * PHYSICAL_TEXTURE_SIZE * RGBA8_BYTES] sheen_roughness_pixels;
+
+    for (uint y = 0; y < PHYSICAL_TEXTURE_SIZE; y++) {
+        for (uint x = 0; x < PHYSICAL_TEXTURE_SIZE; x++) {
+            bool alternating = (x + y) % 2 == 0;
+            bool left_half = x < PHYSICAL_TEXTURE_SIZE / 2;
+            bool top_half = y < PHYSICAL_TEXTURE_SIZE / 2;
+            usz offset = (usz)(y * PHYSICAL_TEXTURE_SIZE + x) * RGBA8_BYTES;
+
+            base_normal_pixels[offset] = alternating ? 184 : 72;
+            base_normal_pixels[offset + 1] = alternating ? 112 : 142;
+            base_normal_pixels[offset + 2] = alternating ? 231 : 230;
+            base_normal_pixels[offset + 3] = 255;
+
+            clearcoat_pixels[offset] = alternating ? 255 : 80;
+            clearcoat_pixels[offset + 1] = 11;
+            clearcoat_pixels[offset + 2] = 221;
+            clearcoat_pixels[offset + 3] = 37;
+
+            clearcoat_roughness_pixels[offset] = 13;
+            clearcoat_roughness_pixels[offset + 1] = left_half ? 50 : 220;
+            clearcoat_roughness_pixels[offset + 2] = 201;
+            clearcoat_roughness_pixels[offset + 3] = 71;
+
+            clearcoat_normal_pixels[offset] = left_half ? 105 : 151;
+            clearcoat_normal_pixels[offset + 1] = left_half ? 188 : 65;
+            clearcoat_normal_pixels[offset + 2] = left_half ? 230 : 226;
+            clearcoat_normal_pixels[offset + 3] = 255;
+
+            sheen_color_pixels[offset] = alternating ? 235 : 70;
+            sheen_color_pixels[offset + 1] = alternating ? 94 : 125;
+            sheen_color_pixels[offset + 2] = alternating ? 115 : 235;
+            sheen_color_pixels[offset + 3] = 19;
+
+            sheen_roughness_pixels[offset] = 243;
+            sheen_roughness_pixels[offset + 1] = 17;
+            sheen_roughness_pixels[offset + 2] = 197;
+            sheen_roughness_pixels[offset + 3] = top_half ? 45 : 220;
+        }
+    }
+
+    ExampleTextures textures = {
+        .alpha = add_alpha_texture(assets)!,
+        .ramp = add_ramp_texture(assets)!,
+        .base_normal = assets.add_texture(
+            desc: material::texture_2d_desc(
+                width: PHYSICAL_TEXTURE_SIZE,
+                height: PHYSICAL_TEXTURE_SIZE,
+                format: RGBA8_UNORM,
+                debug_name: "materials_base_normal",
+            ),
+            pixels: base_normal_pixels[..],
+            key: "texture/materials/base_normal",
+        )!,
+        .clearcoat = assets.add_texture(
+            desc: material::texture_2d_desc(
+                width: PHYSICAL_TEXTURE_SIZE,
+                height: PHYSICAL_TEXTURE_SIZE,
+                format: RGBA8_UNORM,
+                debug_name: "materials_clearcoat_strength",
+            ),
+            pixels: clearcoat_pixels[..],
+            key: "texture/materials/clearcoat_strength",
+        )!,
+        .clearcoat_roughness = assets.add_texture(
+            desc: material::texture_2d_desc(
+                width: PHYSICAL_TEXTURE_SIZE,
+                height: PHYSICAL_TEXTURE_SIZE,
+                format: RGBA8_UNORM,
+                debug_name: "materials_clearcoat_roughness",
+            ),
+            pixels: clearcoat_roughness_pixels[..],
+            key: "texture/materials/clearcoat_roughness",
+        )!,
+        .clearcoat_normal = assets.add_texture(
+            desc: material::texture_2d_desc(
+                width: PHYSICAL_TEXTURE_SIZE,
+                height: PHYSICAL_TEXTURE_SIZE,
+                format: RGBA8_UNORM,
+                debug_name: "materials_clearcoat_normal",
+            ),
+            pixels: clearcoat_normal_pixels[..],
+            key: "texture/materials/clearcoat_normal",
+        )!,
+        .sheen_color = assets.add_texture(
+            desc: material::texture_2d_desc(
+                width: PHYSICAL_TEXTURE_SIZE,
+                height: PHYSICAL_TEXTURE_SIZE,
+                format: RGBA8_SRGB,
+                debug_name: "materials_sheen_color",
+            ),
+            pixels: sheen_color_pixels[..],
+            key: "texture/materials/sheen_color",
+        )!,
+        .sheen_roughness = assets.add_texture(
+            desc: material::texture_2d_desc(
+                width: PHYSICAL_TEXTURE_SIZE,
+                height: PHYSICAL_TEXTURE_SIZE,
+                format: RGBA8_UNORM,
+                debug_name: "materials_sheen_roughness",
+            ),
+            pixels: sheen_roughness_pixels[..],
+            key: "texture/materials/sheen_roughness",
+        )!,
+    };
+    return textures;
+}
+
 fn ExampleMaterials create_materials(
     AssetStore* assets,
     ExampleTextures textures,
@@ -630,6 +970,76 @@ fn ExampleMaterials create_materials(
     rim.rim_color = { 0.75f, 0.9f, 1 };
     rim.rim_strength = 0.7f;
     rim.rim_power = 2;
+
+    StandardParams standard_reference = material::STANDARD_PARAMS_DEFAULT;
+    standard_reference.base_color = { 0.52f, 0.16f, 0.06f, 1 };
+    standard_reference.metallic = 0.2f;
+    standard_reference.roughness = 0.38f;
+
+    PhysicalParams physical_zero = material::PHYSICAL_PARAMS_DEFAULT;
+    physical_zero.standard = standard_reference;
+
+    PhysicalParams coated_paint = material::PHYSICAL_PARAMS_DEFAULT;
+    coated_paint.standard.base_color = { 0.5f, 0.035f, 0.02f, 1 };
+    coated_paint.standard.metallic = 0.25f;
+    coated_paint.standard.roughness = 0.3f;
+    coated_paint.clearcoat = 1;
+    coated_paint.clearcoat_roughness = 0.12f;
+
+    PhysicalParams fabric = material::PHYSICAL_PARAMS_DEFAULT;
+    fabric.standard.base_color = { 0.08f, 0.18f, 0.5f, 1 };
+    fabric.standard.metallic = 0;
+    fabric.standard.roughness = 0.82f;
+    fabric.sheen_color = { 0.65f, 0.3f, 0.12f };
+    fabric.sheen_roughness = 0.7f;
+
+    PhysicalParams combined = material::PHYSICAL_PARAMS_DEFAULT;
+    combined.standard.base_color = { 0.1f, 0.42f, 0.24f, 1 };
+    combined.standard.metallic = 0.08f;
+    combined.standard.roughness = 0.46f;
+    combined.standard.normal_map = example_texture_slot(
+        texture: textures.base_normal,
+        sampler: asset::SAMPLER_LINEAR_REPEAT,
+        uv_set: 0,
+        transform: { .scale = { 2, 2 } },
+    );
+    combined.clearcoat = 0.78f;
+    combined.clearcoat_roughness = 0.32f;
+    combined.clearcoat_map = example_texture_slot(
+        texture: textures.clearcoat,
+        sampler: asset::SAMPLER_NEAREST,
+        uv_set: 0,
+        transform: { .scale = { 3, 3 } },
+    );
+    combined.clearcoat_roughness_map = example_texture_slot(
+        texture: textures.clearcoat_roughness,
+        sampler: asset::SAMPLER_LINEAR_REPEAT,
+        uv_set: 1,
+        transform: { .scale = { 1, 2 } },
+    );
+    combined.clearcoat_normal_map = example_texture_slot(
+        texture: textures.clearcoat_normal,
+        sampler: asset::SAMPLER_LINEAR_REPEAT,
+        uv_set: 0,
+        transform: {
+            .scale = { 2, 1 },
+            .rotation = 0.35f,
+        },
+    );
+    combined.sheen_color = { 0.22f, 0.58f, 0.32f };
+    combined.sheen_roughness = 0.58f;
+    combined.sheen_color_map = example_texture_slot(
+        texture: textures.sheen_color,
+        sampler: asset::SAMPLER_NEAREST,
+        uv_set: 0,
+        transform: { .scale = { 1, 3 } },
+    );
+    combined.sheen_roughness_map = example_texture_slot(
+        texture: textures.sheen_roughness,
+        sampler: asset::SAMPLER_LINEAR_REPEAT,
+        uv_set: 1,
+        transform: { .scale = { 2, 1 } },
+    );
 
     return {
         .masked = assets.add_material(material::basic(
@@ -659,6 +1069,26 @@ fn ExampleMaterials create_materials(
             material::toon(rim),
             "material/materials/toon_rim",
         )!!,
+        .standard_reference = assets.add_material(
+            material::standard(standard_reference),
+            "material/materials/standard_reference",
+        )!!,
+        .physical_zero = assets.add_material(
+            material::physical(physical_zero),
+            "material/materials/physical_zero",
+        )!!,
+        .coated_paint = assets.add_material(
+            material::physical(coated_paint),
+            "material/materials/coated_paint",
+        )!!,
+        .fabric = assets.add_material(
+            material::physical(fabric),
+            "material/materials/fabric",
+        )!!,
+        .combined = assets.add_material(
+            material::physical(combined),
+            "material/materials/combined",
+        )!!,
     };
 }
 
@@ -681,6 +1111,9 @@ fn ExampleNodes create_fixtures(
         );
         box = assets.add_geometry(&box_data, "geometry/materials/box")!!;
         Geometry sphere_data = geometry::sphere(tmem, 0.8f);
+        sphere_data.uv1 = alloc::new_array(tmem, Vec2, sphere_data.uv0.len);
+        foreach (index, uv : sphere_data.uv0) sphere_data.uv1[index] = uv * 2;
+        sphere_data.compute_tangents(tmem);
         sphere = assets.add_geometry(&sphere_data, "geometry/materials/sphere")!!;
     };
 
@@ -725,6 +1158,29 @@ fn ExampleNodes create_fixtures(
     nodes.toon_ramp.local.position = { 0, 0.9f, 0 };
     nodes.toon_rim = scene.add_mesh(sphere, materials.toon_rim, name: "toon_rim_surface")!!;
     nodes.toon_rim.local.position = { 1.9f, 0.9f, 0 };
+
+    nodes.standard_reference = scene.add_mesh(
+        sphere,
+        materials.standard_reference,
+        name: "standard_reference",
+    )!!;
+    nodes.standard_reference.local.position = { -1.6f, 1.8f, 0 };
+    nodes.physical_zero = scene.add_mesh(
+        sphere,
+        materials.physical_zero,
+        name: "physical_zero_layers",
+    )!!;
+    nodes.physical_zero.local.position = { 0, 1.8f, 0 };
+    nodes.coated_paint = scene.add_mesh(
+        sphere,
+        materials.coated_paint,
+        name: "coated_paint",
+    )!!;
+    nodes.coated_paint.local.position = { 1.6f, 1.8f, 0 };
+    nodes.fabric = scene.add_mesh(sphere, materials.fabric, name: "fabric")!!;
+    nodes.fabric.local.position = { -0.8f, 0, 0 };
+    nodes.combined = scene.add_mesh(sphere, materials.combined, name: "combined_layers")!!;
+    nodes.combined.local.position = { 0.8f, 0, 0 };
     return nodes;
 }
 
@@ -757,25 +1213,35 @@ fn int main(String[] args) {
     )!!;
     defer render::destroy_renderer(&renderer);
 
-    ExampleTextures textures = {
-        .alpha = add_alpha_texture(&assets)!!,
-        .ramp = add_ramp_texture(&assets)!!,
-    };
-    TextureId environment_source;
+    ExampleTextures textures = create_example_textures(&assets)!!;
+    TextureId studio_source;
+    TextureId sky_source;
     @pool() {
         Path source = path::tnew($$FILEPATH)!!;
         Path environment_directory = source.parent()!!.tappend("../assets/ibl")!!;
-        environment_source = image::load_hdr(
+        studio_source = image::load_hdr(
             &assets,
             (String)environment_directory.tappend("studio_small_09_1k.hdr")!!,
-            "materials/environment_source",
+            "materials/environment_source/studio",
+        )!!;
+        sky_source = image::load_hdr(
+            &assets,
+            (String)environment_directory.tappend("kloppenheim_06_puresky_1k.hdr")!!,
+            "materials/environment_source/sky",
         )!!;
     };
-    EnvironmentId environment = assets.add_environment(
-        light::texture_environment(environment_source),
-        "materials/environment",
-    )!!;
-    renderer.upload_environment(environment)!!;
+    ExampleEnvironments environments = {
+        .studio = assets.add_environment(
+            light::texture_environment(studio_source),
+            "materials/environment/studio",
+        )!!,
+        .sky = assets.add_environment(
+            light::texture_environment(sky_source),
+            "materials/environment/sky",
+        )!!,
+    };
+    renderer.upload_environment(environments.studio)!!;
+    renderer.upload_environment(environments.sky)!!;
 
     ExampleMaterials materials = create_materials(&assets, textures);
     Scene scene = scene::create_scene(mem, scene::default_scene_desc());
@@ -783,11 +1249,11 @@ fn int main(String[] args) {
     scene.ambient_color = { 1, 1, 1 };
     scene.ambient_intensity = 0.12f;
     scene.ambient_add = true;
-    scene.environment = environment;
+    scene.environment = environments.studio;
     scene.environment_intensity = 0.25f;
     scene.background = scene::BACKGROUND_DEFAULT;
     scene.background.kind = BackgroundKind.ENVIRONMENT;
-    scene.background.environment = environment;
+    scene.background.environment = environments.studio;
     scene.background.intensity = 0.3f;
 
     ExampleNodes nodes = create_fixtures(&scene, &assets, materials);
@@ -807,7 +1273,12 @@ fn int main(String[] args) {
     Orbit orbit = { .target = { 0, 0.8f, 0 }, .distance = 8, .yaw = 0.08f, .pitch = 0.12f };
     apply_orbit(&orbit, &window.input, camera_node);
 
-    Controls controls = { .environment_fill = true };
+    Controls controls = {
+        .environment = STUDIO,
+        .environment_fill = true,
+        .directional_light = true,
+        .point_light = true,
+    };
     select_preset(
         preset: MASKED_FOLIAGE,
         materials: materials,
@@ -824,7 +1295,7 @@ fn int main(String[] args) {
         camera_node: camera_node,
         directional_node: directional_node,
         point_node: point_node,
-        environment: environment,
+        environments: environments,
         materials: materials,
         textures: textures,
         nodes: nodes,

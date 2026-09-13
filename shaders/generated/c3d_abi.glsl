@@ -39,6 +39,14 @@ const uint ENVIRONMENT_SH_GROUPS = 64u;
 const uint ENVIRONMENT_SH_GROUP_SIZE = 64u;
 const uint ENVIRONMENT_SOURCE_EQUIRECTANGULAR = 0u;
 const uint ENVIRONMENT_SOURCE_SOLID = 1u;
+const uint PHYSICAL_MAP_CLEARCOAT = 1u;
+const uint PHYSICAL_MAP_CLEARCOAT_ROUGHNESS = 2u;
+const uint PHYSICAL_MAP_CLEARCOAT_NORMAL = 4u;
+const uint PHYSICAL_MAP_SHEEN_COLOR = 8u;
+const uint PHYSICAL_MAP_SHEEN_ROUGHNESS = 16u;
+const uint SHEEN_LUT_SIZE = 256u;
+const uint SHEEN_LUT_SAMPLES = 4096u;
+const uint SHEEN_PREFILTER_SAMPLES = 4096u;
 
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer CompositeRoot {
     uint source_texture;
@@ -102,8 +110,8 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer DrawRoot {
     uint object_id;
     uint flags;
     uint layers;
-    uint _pad1;
-    uint _pad2;
+    uint sheen_lut;
+    uint sheen_sampler;
     uint _pad3;
 };
 
@@ -179,7 +187,7 @@ struct ShadowGpu {
     uint _pad2;
 };
 
-layout(buffer_reference, std430, buffer_reference_align = 16) buffer StandardMaterialGpu {
+struct StandardMaterialGpu {
     uint kind;
     uint flags;
     float alpha_cutoff;
@@ -227,7 +235,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer Environment
     uint brdf_lut;
     float intensity;
     uint64_t sh;
-    uint _pad0;
+    uint sheen_cube;
     uint _pad1;
     EnvironmentRotationGpu rotation;
 };
@@ -289,6 +297,24 @@ layout(buffer_reference, std430, buffer_reference_align = 4) buffer BrdfLutRoot 
     uint size;
     uint _pad0;
     uint _pad1;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer StandardMaterialRoot {
+    StandardMaterialGpu material;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer PhysicalMaterialGpu {
+    StandardMaterialGpu standard;
+    vec4 sheen_color_roughness;
+    float clearcoat;
+    float clearcoat_roughness;
+    float clearcoat_normal_scale;
+    uint map_flags;
+    TextureMapGpu clearcoat_map;
+    TextureMapGpu clearcoat_roughness_map;
+    TextureMapGpu clearcoat_normal_map;
+    TextureMapGpu sheen_color_map;
+    TextureMapGpu sheen_roughness_map;
 };
 
 #endif

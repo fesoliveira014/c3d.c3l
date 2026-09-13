@@ -31,7 +31,7 @@ fn void? ensure_environment_pipeline(
     Renderer* renderer,
     gpu::PipelineHandle* pipeline,
     ShaderName shader,
-) @local {
+) @private {
     if (pipeline.is_valid()) return;
     gpu::ComputePipelineDesc description = {
         .shader = { .spirv = renderer.pipelines.registry.get({ .shader = shader })! },
@@ -52,6 +52,13 @@ fn void? record_environment_preparations(Renderer* renderer, gpu::CommandList* c
             record_environment_lighting(renderer, commands, pending)!;
             pending.lighting_recorded = true;
         }
+        if (pending.new_sheen && !pending.sheen_recorded) {
+            record_environment_sheen(renderer, commands, pending)!;
+            pending.sheen_recorded = true;
+        }
+    }
+    if (renderer.environment_state.sheen_lut_state == EnvironmentLutState.PENDING) {
+        record_sheen_lut(renderer, commands)!;
     }
     if (renderer.environment_state.brdf_state != EnvironmentLutState.PENDING) return;
     ensure_environment_pipeline(renderer, &renderer.environment_state.pipelines.brdf, BRDF_LUT)!;
@@ -85,7 +92,7 @@ fn gpu::TextureView? create_environment_write_view(
     gpu::TextureHandle texture,
     uint face,
     uint mip,
-) @local {
+) @private {
     gpu::TextureViewDesc description = {
         .base_mip = mip,
         .mip_count = 1,
@@ -224,7 +231,7 @@ fn void? record_environment_lighting(
     gpu::cmd_barrier(commands, &irradiance_ready)!;
 }
 
-fn Frame* recording_frame(Renderer* renderer, gpu::CommandList* commands) @local {
+fn Frame* recording_frame(Renderer* renderer, gpu::CommandList* commands) @private {
     uint index = commands == &renderer.commands ? renderer.recording_slot
       : (uint)(renderer.frame_index % FRAMES_IN_FLIGHT);
     return &renderer.frames[index];

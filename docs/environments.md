@@ -1,9 +1,10 @@
 # Environments and image-based lighting
 
 Standard materials combine diffuse irradiance and roughness-filtered reflections
-from an environment with their direct lights and emission. The background can
-display that environment, another environment, or a solid color. Basic materials
-remain unlit.
+from an environment with their direct lights and emission. Physical materials add
+clearcoat reflections from the same GGX-filtered source and sheen reflections from
+a dedicated Charlie-filtered source. The background can display that environment,
+another environment, or a solid color. Basic materials remain unlit.
 
 ## Load and select an environment
 
@@ -85,10 +86,16 @@ available. With one selected, SH irradiance replaces constant ambient unless
 suppresses constant ambient when `ambient_add` is false.
 
 The material occlusion map affects diffuse environment lighting and constant
-ambient only. It does not attenuate environment reflections, direct lights or
-emissive output. Shadow visibility affects direct lights only. IBL uses the final
-normal after normal mapping, with the same material factors and view direction as
-the Standard BRDF.
+ambient only. It does not attenuate Standard, clearcoat or sheen reflections,
+direct lights or emissive output. Shadow visibility affects direct lights only.
+Standard IBL uses the base normal after normal mapping. Physical clearcoat uses
+its independent coat normal for both direct and environment reflection; without a
+coat normal map it uses the geometry normal rather than the mapped base normal.
+
+Sheen leaves emission unchanged. Clearcoat attenuates the underlying reflected
+lighting, constant ambient and emission with its view-dependent fixed-F0 layer
+weight. See [Physical clearcoat and sheen](materials.md#physical-clearcoat-and-sheen)
+for the complete material composition.
 
 ## Processing quality
 
@@ -116,30 +123,47 @@ dimensions, rounded down. GPU device limits and allocation failures still apply.
 Sampling budgets and the six roughness levels are internal implementation choices.
 
 Generated cubes use RGBA16_FLOAT and its precision/range. At the defaults, the
-converted source occupies 12 MiB and the filtered cube occupies just under 4 MiB
-of texels per equirectangular environment. These figures exclude the original
-source texture and its mips, CPU pixels, temporary allocations, allocator overhead
-and the renderer-shared 256-square BRDF LUT. A native cube needs no converted
-copy; a solid source uses one texel per face. Doubling an edge dimension roughly
-quadruples that image's storage and processing work.
+converted source occupies 12 MiB and the GGX-filtered cube occupies just under
+4 MiB of texels per equirectangular environment. An environment used by an active
+sheen material adds a separate Charlie-filtered cube of the same size. These
+figures exclude the original source texture and its mips, CPU pixels, temporary
+allocations, allocator overhead, the renderer-shared 256-square BRDF LUT and the
+512 KiB renderer-shared sheen LUT. A native cube needs no converted copy; a solid
+source uses one texel per face. Doubling an edge dimension roughly quadruples each
+generated cube's storage and processing work.
 
 ## Preparation and edits
 
-`renderer.upload_environment(id)` prepares the complete environment. The generic
-`renderer.upload(id)` facade accepts EnvironmentId too. Outside a frame,
-preparation submits the required work and waits without acquiring or presenting
-a window image. Inside an output frame it queues work before subsequent consumers.
-An upload failure leaves the open frame and earlier queued preparation intact;
-the caller can continue the frame or abort it.
+`renderer.upload_environment(id)` prepares the base environment source, GGX
+reflection cube and SH irradiance. It intentionally has no material context and
+does not prepare Charlie sheen resources. The generic `renderer.upload(id)` facade
+accepts EnvironmentId with the same behavior. Outside a frame, preparation submits
+the required work and waits without acquiring or presenting a window image. Inside
+an output frame it queues work before subsequent consumers. An upload failure
+leaves the open frame and earlier queued preparation intact; the caller can
+continue the frame or abort it.
 
 `renderer.prepare_scene(&scene)` prepares selected lighting/background assets,
-referenced mesh assets and their required pipelines. A background-only environment
-prepares its source and sky pipeline without allocating unused specular, SH or LUT
-resources. Selecting it for lighting later adds the missing resources.
+all referenced mesh assets and their required pipelines, including hidden mesh
+nodes. If any referenced material has active sheen, it also prepares the shared
+sheen LUT and the selected lighting environment's Charlie cube. A background-only
+environment prepares its source and sky pipeline without allocating unused GGX,
+SH or sheen resources. Selecting it for lighting later adds the missing resources.
 
-Rendering also supports lazy first use; allocation, pipeline creation and
-processing can then stall the frame. Explicit preparation is the loading-screen
-path. SH coefficients remain in GPU memory throughout normal rendering.
+Rendering also supports lazy first use from visible candidates. A Standard, Toon,
+zero-sheen Physical or clearcoat-only scene requests no sheen resources. Active
+sheen without a lighting environment creates the shared LUT but no Charlie cube.
+Active sheen with a selected environment creates both as needed. This one-time
+allocation and filtering can stall the first frame, so `prepare_scene` is the
+loading-screen path for complete material-dependent preparation. Prepared LUTs
+and cubes are retained and shared on later frames.
+
+Sheen demand does not depend on environment intensity. Changing intensity,
+rotation, sheen color or sheen roughness reuses prepared filtering. Changing the
+environment source or `specular_size` invalidates its Charlie cube as well as the
+base filtered results; the Charlie cube is rebuilt only when active sheen next
+needs that environment. Disabling sheen retains a still-current Charlie cube for
+later reuse.
 
 Edit a borrowed environment record and mark its description dirty:
 
@@ -149,11 +173,12 @@ assets.mark_environment_dirty(studio);
 renderer.upload_environment(studio)!;
 ```
 
-Specular-size changes reuse the source cube. Equirectangular conversion-size
-changes rebuild the converted source and its lighting. Source texture identity,
-content revision or backing changes also invalidate derived results; call
-`assets.mark_texture_dirty(source)` after a pixel edit. Redundant dirty marks and
-changes to inactive settings do not regenerate equivalent processing.
+Specular-size changes reuse the source cube and rebuild the needed GGX and Charlie
+filters. Equirectangular conversion-size changes rebuild the converted source and
+its lighting. Source texture identity, content revision or backing changes also
+invalidate derived results; call `assets.mark_texture_dirty(source)` after a pixel
+edit. Redundant dirty marks and changes to inactive settings do not regenerate
+equivalent processing.
 
 Keep environment descriptions, processing settings and source pixels stable from
 `begin_frame` through `end_frame` or `abort_frame`. Cheap scene lighting/background
@@ -213,6 +238,12 @@ an optional link checkbox. AO strength, constant ambient and rotation controls
 show their separate effects. Processing sizes are edited per environment and
 take effect with **Apply processing sizes**. The preparation counter stays zero
 when frames reuse prepared resources.
+
+The [materials example](materials.md#interactive-example) uses the same two HDRs
+with Physical surfaces. Its initial Studio selection is fully prewarmed through
+`prepare_scene`; Sky is base-prepared through `upload_environment`. Switching to
+Sky under a base-only preset and then enabling the Physical view demonstrates the
+one-time material-dependent sheen preparation path.
 
 Drag outside the GUI to orbit, scroll to zoom, and release Escape outside GUI
 keyboard capture to close. Full validation is enabled; GPU timing is optional.

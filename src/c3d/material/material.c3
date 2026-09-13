@@ -40,6 +40,7 @@ enum MaterialKind {
     BASIC,
     STANDARD,
     TOON,
+    PHYSICAL,
 }
 
 <*
@@ -97,6 +98,7 @@ struct Material {
         BasicParams basic;
         StandardParams standard;
         ToonParams toon;
+        PhysicalParams physical;
     }
 }
 

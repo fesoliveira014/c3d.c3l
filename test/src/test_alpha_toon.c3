@@ -77,10 +77,11 @@ fn void test_toon_repack_clears_absent_bindings_and_blend_flag() @test {
 }
 
 fn void test_alpha_flags_follow_every_active_material_family() @test {
-    Material[3] materials = {
+    Material[4] materials = {
         material::basic({ .color = { 1, 1, 1, 0.25f } }),
         material::standard(),
         material::toon(),
+        material::physical(),
     };
     char[render::MATERIAL_STRIDE] storage @align(16);
     foreach (&material : materials) {

@@ -15,7 +15,7 @@ $assert shader::ENVIRONMENT_FACE_POSITIVE_Z == (uint)material::CubeFace.POSITIVE
 $assert shader::ENVIRONMENT_FACE_NEGATIVE_Z == (uint)material::CubeFace.NEGATIVE_Z.ordinal;
 $assert shader::ENVIRONMENT_FACE_COUNT == material::CUBE_FACE_COUNT;
 
-<* Preparation and submission state of the shared BRDF lookup. *>
+<* Preparation and submission state of one shared environment lookup. *>
 enum EnvironmentLutState {
     NONE,
     PENDING,
@@ -34,10 +34,13 @@ struct EnvironmentRes {
     bool source_owned;
     bool source_ready;
     bool lighting_ready;
+    bool sheen_ready;
     gpu::TextureHandle source_cube;
     gpu::TextureView source_view;
     gpu::TextureHandle specular_cube;
     gpu::TextureView specular_view;
+    gpu::TextureHandle sheen_cube;
+    gpu::TextureView sheen_view;
     gpu::GpuAllocation irradiance;
     gpu::GpuAddress irradiance_address;
 }
@@ -48,8 +51,10 @@ struct PendingEnvironment {
     bool active;
     bool new_source;
     bool new_lighting;
+    bool new_sheen;
     bool source_recorded;
     bool lighting_recorded;
+    bool sheen_recorded;
     gpu::TextureIndex input_texture;
 }
 
@@ -60,6 +65,8 @@ struct EnvironmentPipelines {
     gpu::PipelineHandle project;
     gpu::PipelineHandle reduce;
     gpu::PipelineHandle brdf;
+    gpu::PipelineHandle sheen_prefilter;
+    gpu::PipelineHandle sheen_lut;
 }
 
 <* Renderer-owned environment resources and their pending preparation. *>
@@ -74,6 +81,10 @@ struct EnvironmentState {
     gpu::TextureHandle brdf_texture;
     gpu::TextureView brdf_view;
     EnvironmentLutState brdf_state;
+    gpu::TextureHandle sheen_lut_texture;
+    gpu::TextureView sheen_lut_view;
+    gpu::SamplerIndex sheen_sampler;
+    EnvironmentLutState sheen_lut_state;
 }
 
 <*
@@ -93,18 +104,33 @@ struct EnvironmentState {
 fn void? Renderer.upload_environment(&self, EnvironmentId environment) {
     if (!self.assets.environments.is_live(environment)) return c3d::INVALID_ID~;
     if (self.frame_open) {
-        ensure_environment(self, environment, true)!;
+        ensure_environment(
+            renderer: self,
+            environment: environment,
+            lighting: true,
+            sheen: false,
+        )!;
         return;
     }
     open_closed_frame_slot(self)!;
     defer catch discard_uploads(self);
-    ensure_environment(self, environment, true)!;
+    ensure_environment(
+        renderer: self,
+        environment: environment,
+        lighting: true,
+        sheen: false,
+    )!;
     if (!has_environment_preparations(self) && !self.pending_texture_uploads.len()
         && !self.pending_copies.len() && !self.pending_upload_retire.len()) return;
     return submit_pending(self);
 }
 
-fn EnvironmentRes*? ensure_environment(Renderer* renderer, EnvironmentId environment, bool lighting) @private {
+fn EnvironmentRes*? ensure_environment(
+    Renderer* renderer,
+    EnvironmentId environment,
+    bool lighting,
+    bool sheen,
+) @private {
     EnvironmentAsset* record = renderer.assets.environment(environment);
     renderer.assets.validate_environment(record.desc)!;
     EnvironmentDesc description = record.desc;
@@ -142,7 +168,9 @@ fn EnvironmentRes*? ensure_environment(Renderer* renderer, EnvironmentId environ
       && current.source_size == source_size && current.source_owned == source_owned;
     bool same_lighting = same_source && current.lighting_ready
       && current.description.settings.specular_size == description.settings.specular_size;
-    if (same_source && (!lighting || same_lighting)) {
+    bool same_sheen = same_source && current.sheen_ready
+      && current.description.settings.specular_size == description.settings.specular_size;
+    if (same_source && (!lighting || same_lighting) && (!sheen || same_sheen)) {
         current.revision = record.header.revision;
         return current;
     }
@@ -150,9 +178,11 @@ fn EnvironmentRes*? ensure_environment(Renderer* renderer, EnvironmentId environ
     EnvironmentRes result = *current;
     bool new_source;
     bool new_lighting;
+    bool new_sheen;
     defer catch {
         if (new_source) release_environment_source(&renderer.device, &result);
         if (new_lighting) release_environment_lighting(&renderer.device, &result);
+        if (new_sheen) release_environment_sheen(&renderer.device, &result);
     }
     if (!same_source) {
         result = {
@@ -196,12 +226,25 @@ fn EnvironmentRes*? ensure_environment(Renderer* renderer, EnvironmentId environ
     } else if (!same_lighting) {
         result.lighting_ready = false;
     }
+    if (sheen && !same_sheen) {
+        result.sheen_cube = {};
+        result.sheen_view = {};
+        create_environment_sheen(renderer, &result)!;
+        new_sheen = true;
+        ensure_sheen_lut(renderer)!;
+        result.sheen_ready = true;
+    } else if (!same_sheen) {
+        result.sheen_cube = {};
+        result.sheen_view = {};
+        result.sheen_ready = false;
+    }
     ensure_environment_samplers(renderer)!;
     if (!pending.active) renderer.stats.environment_prepares++;
     pending.active = true;
     pending.result = result;
     pending.new_source |= new_source;
     pending.new_lighting |= new_lighting;
+    pending.new_sheen |= new_sheen;
     if (texture) pending.input_texture = texture.view.index;
     return &pending.result;
 }
@@ -278,6 +321,8 @@ fn void retire_environment_lighting(RetireList* retire, EnvironmentRes* result) 
 }
 
 fn bool has_environment_preparations(Renderer* renderer) @private {
+    if (renderer.environment_state.sheen_lut_state == EnvironmentLutState.PENDING
+        || renderer.environment_state.sheen_lut_state == EnvironmentLutState.RECORDED) return true;
     if (renderer.environment_state.brdf_state == EnvironmentLutState.PENDING
         || renderer.environment_state.brdf_state == EnvironmentLutState.RECORDED) return true;
     foreach (pending : renderer.environment_state.pending) if (pending.active) return true;
@@ -290,11 +335,15 @@ fn void commit_environment_preparations(Renderer* renderer, Frame* slot) @privat
         EnvironmentRes* committed = &renderer.environment_state.mirrors[index];
         if (committed.source_cube != pending.result.source_cube) retire_environment_source(&slot.retire, committed);
         if (committed.specular_cube != pending.result.specular_cube) retire_environment_lighting(&slot.retire, committed);
+        if (committed.sheen_cube != pending.result.sheen_cube) retire_environment_sheen(&slot.retire, committed);
         *committed = pending.result;
         *pending = {};
     }
     if (renderer.environment_state.brdf_state == EnvironmentLutState.RECORDED) {
         renderer.environment_state.brdf_state = EnvironmentLutState.READY;
+    }
+    if (renderer.environment_state.sheen_lut_state == EnvironmentLutState.RECORDED) {
+        renderer.environment_state.sheen_lut_state = EnvironmentLutState.READY;
     }
     foreach (retired : renderer.environment_state.temporaries) slot.environment_temporaries.push(retired);
     renderer.environment_state.temporaries.clear();
@@ -306,7 +355,12 @@ fn void discard_environment_preparations(Renderer* renderer) @private {
         if (!pending.active) continue;
         if (pending.new_source) release_environment_source(&renderer.device, &pending.result);
         if (pending.new_lighting) release_environment_lighting(&renderer.device, &pending.result);
+        if (pending.new_sheen) release_environment_sheen(&renderer.device, &pending.result);
         *pending = {};
+    }
+    if (renderer.environment_state.sheen_lut_state == EnvironmentLutState.PENDING
+        || renderer.environment_state.sheen_lut_state == EnvironmentLutState.RECORDED) {
+        release_sheen_lut(renderer);
     }
     if (renderer.environment_state.brdf_state == EnvironmentLutState.PENDING
         || renderer.environment_state.brdf_state == EnvironmentLutState.RECORDED) {
@@ -323,6 +377,7 @@ fn void sweep_environments(Renderer* renderer) @private {
         if (!mirror.asset.generation || renderer.assets.environments.is_live(mirror.asset)) continue;
         retire_environment_source(&renderer.pending_upload_retire, mirror);
         retire_environment_lighting(&renderer.pending_upload_retire, mirror);
+        retire_environment_sheen(&renderer.pending_upload_retire, mirror);
         *mirror = {};
     }
 }
@@ -332,15 +387,18 @@ fn void free_environments(Renderer* renderer) @private {
     foreach (&mirror : renderer.environment_state.mirrors) {
         release_environment_source(&renderer.device, mirror);
         release_environment_lighting(&renderer.device, mirror);
+        release_environment_sheen(&renderer.device, mirror);
     }
     if (renderer.environment_state.brdf_state == EnvironmentLutState.READY) {
         (void)gpu::destroy_texture_view(&renderer.device, renderer.environment_state.brdf_view);
         (void)gpu::destroy_texture(&renderer.device, renderer.environment_state.brdf_texture);
     }
-    gpu::PipelineHandle[5] pipelines = {
+    if (renderer.environment_state.sheen_lut_state == EnvironmentLutState.READY) release_sheen_lut(renderer);
+    gpu::PipelineHandle[7] pipelines = {
         renderer.environment_state.pipelines.source, renderer.environment_state.pipelines.prefilter,
         renderer.environment_state.pipelines.project, renderer.environment_state.pipelines.reduce,
-        renderer.environment_state.pipelines.brdf,
+        renderer.environment_state.pipelines.brdf, renderer.environment_state.pipelines.sheen_prefilter,
+        renderer.environment_state.pipelines.sheen_lut,
     };
     foreach (pipeline : pipelines) if (pipeline.is_valid()) (void)gpu::destroy_pipeline(&renderer.device, pipeline);
     renderer.environment_state.temporaries.free();
