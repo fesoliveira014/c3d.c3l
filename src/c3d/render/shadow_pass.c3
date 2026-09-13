@@ -61,6 +61,7 @@ fn ShadowDraw[]? prepare_shadow_draws(Renderer* renderer, MeshCandidate[] candid
         switch (material.kind) {
             case BASIC: base_map = material.basic.map;
             case STANDARD: base_map = material.standard.base_color_map;
+            case PHYSICAL: base_map = material.physical.standard.base_color_map;
             case TOON: base_map = material.toon.map;
         }
         TextureBinding binding = resolve_texture_slot(renderer, base_map)!;

@@ -5,10 +5,10 @@ import c3d::shader;
 import gpu;
 
 const uint ENVIRONMENT_LUT_SIZE @private = 256; // Two integrated BRDF terms in a shared 512 KiB image.
-const uint ENVIRONMENT_IMAGE_GROUP_SIZE @local = 8; // Mirrors local_size_x/y in environment image stages.
+const uint ENVIRONMENT_IMAGE_GROUP_SIZE @private = 8; // Mirrors local_size_x/y in environment image stages.
 
 fn void? ensure_environment_lut(Renderer* renderer) @private {
-    if (renderer.environment_state.brdf_state != EnvironmentLutState.NONE) return;
+    if (renderer.environment_state.brdf_lut.state != EnvironmentLutState.NONE) return;
     gpu::TextureDesc description = {
         .width = ENVIRONMENT_LUT_SIZE,
         .height = ENVIRONMENT_LUT_SIZE,
@@ -22,16 +22,16 @@ fn void? ensure_environment_lut(Renderer* renderer) @private {
     gpu::TextureHandle texture = gpu::create_texture(&renderer.device, &description)!;
     defer catch (void)gpu::destroy_texture(&renderer.device, texture);
     gpu::TextureView view = gpu::create_texture_view(&renderer.device, texture, null)!;
-    renderer.environment_state.brdf_texture = texture;
-    renderer.environment_state.brdf_view = view;
-    renderer.environment_state.brdf_state = EnvironmentLutState.PENDING;
+    renderer.environment_state.brdf_lut.texture = texture;
+    renderer.environment_state.brdf_lut.view = view;
+    renderer.environment_state.brdf_lut.state = EnvironmentLutState.PENDING;
 }
 
 fn void? ensure_environment_pipeline(
     Renderer* renderer,
     gpu::PipelineHandle* pipeline,
     ShaderName shader,
-) @local {
+) @private {
     if (pipeline.is_valid()) return;
     gpu::ComputePipelineDesc description = {
         .shader = { .spirv = renderer.pipelines.registry.get({ .shader = shader })! },
@@ -41,7 +41,6 @@ fn void? ensure_environment_pipeline(
 }
 
 fn void? record_environment_preparations(Renderer* renderer, gpu::CommandList* commands) @private {
-    Frame* slot = recording_frame(renderer, commands);
     foreach (&pending : renderer.environment_state.pending) {
         if (!pending.active) continue;
         if (pending.new_source && !pending.source_recorded) {
@@ -52,32 +51,56 @@ fn void? record_environment_preparations(Renderer* renderer, gpu::CommandList* c
             record_environment_lighting(renderer, commands, pending)!;
             pending.lighting_recorded = true;
         }
+        if (pending.new_sheen && !pending.sheen_recorded) {
+            record_environment_sheen(renderer, commands, pending)!;
+            pending.sheen_recorded = true;
+        }
     }
-    if (renderer.environment_state.brdf_state != EnvironmentLutState.PENDING) return;
+    if (renderer.environment_state.sheen_lut.state == EnvironmentLutState.PENDING) {
+        record_sheen_lut(renderer, commands)!;
+    }
+    if (renderer.environment_state.brdf_lut.state != EnvironmentLutState.PENDING) return;
     ensure_environment_pipeline(renderer, &renderer.environment_state.pipelines.brdf, BRDF_LUT)!;
+    record_environment_lut(
+        renderer: renderer,
+        commands: commands,
+        pipeline: renderer.environment_state.pipelines.brdf,
+        lut: &renderer.environment_state.brdf_lut,
+        size: ENVIRONMENT_LUT_SIZE,
+    )!;
+}
+
+fn void? record_environment_lut(
+    Renderer* renderer,
+    gpu::CommandList* commands,
+    gpu::PipelineHandle pipeline,
+    EnvironmentLut* lut,
+    uint size,
+) @private {
+    Frame* slot = recording_frame(renderer, commands);
     gpu::TextureBarrier write = gpu::texture_transition(
-        texture: renderer.environment_state.brdf_texture,
+        texture: lut.texture,
         before: {},
         after: gpu::storage_at({ .compute }, { .write }),
     )!;
     gpu::cmd_texture_barrier(commands, &write)!;
     gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, BrdfLutRoot::size)!;
     *(BrdfLutRoot*)root.bytes.ptr = {
-        .output_texture = renderer.environment_state.brdf_view.index,
-        .size = ENVIRONMENT_LUT_SIZE,
+        .output_texture = lut.view.index,
+        .size = size,
     };
-    gpu::cmd_bind_pipeline(commands, renderer.environment_state.pipelines.brdf)!;
+    gpu::cmd_bind_pipeline(commands, pipeline)!;
     gpu::cmd_dispatch(commands, root.address, {
-        ENVIRONMENT_LUT_SIZE / ENVIRONMENT_IMAGE_GROUP_SIZE,
-        ENVIRONMENT_LUT_SIZE / ENVIRONMENT_IMAGE_GROUP_SIZE, 1,
+        size / ENVIRONMENT_IMAGE_GROUP_SIZE,
+        size / ENVIRONMENT_IMAGE_GROUP_SIZE, 1,
     })!;
     gpu::TextureBarrier ready = gpu::texture_transition(
-        texture: renderer.environment_state.brdf_texture,
+        texture: lut.texture,
         before: write.after,
         after: gpu::sampled_at({ .fragment_shader }),
     )!;
     gpu::cmd_texture_barrier(commands, &ready)!;
-    renderer.environment_state.brdf_state = EnvironmentLutState.RECORDED;
+    lut.state = EnvironmentLutState.RECORDED;
 }
 
 fn gpu::TextureView? create_environment_write_view(
@@ -85,7 +108,7 @@ fn gpu::TextureView? create_environment_write_view(
     gpu::TextureHandle texture,
     uint face,
     uint mip,
-) @local {
+) @private {
     gpu::TextureViewDesc description = {
         .base_mip = mip,
         .mip_count = 1,
@@ -152,41 +175,14 @@ fn void? record_environment_lighting(
     ensure_environment_pipeline(renderer, &renderer.environment_state.pipelines.reduce, IRRADIANCE_REDUCE)!;
     EnvironmentRes* result = &pending.result;
     Frame* slot = recording_frame(renderer, commands);
-    gpu::TextureBarrier write = gpu::texture_transition(
-        texture: result.specular_cube,
-        before: {},
-        after: gpu::storage_at({ .compute }, { .write }),
+    record_cube_prefilter(
+        renderer: renderer,
+        commands: commands,
+        pipeline: renderer.environment_state.pipelines.prefilter,
+        source_view: result.source_view,
+        output: result.specular_cube,
+        base_size: result.description.settings.specular_size,
     )!;
-    gpu::cmd_texture_barrier(commands, &write)!;
-    gpu::cmd_bind_pipeline(commands, renderer.environment_state.pipelines.prefilter)!;
-    for (uint mip = 0; mip < shader::ENVIRONMENT_SPECULAR_MIPS; mip++) {
-        uint size = result.description.settings.specular_size >> mip;
-        for (uint face = 0; face < shader::ENVIRONMENT_FACE_COUNT; face++) {
-            gpu::TextureView view = create_environment_write_view(
-                renderer: renderer,
-                texture: result.specular_cube,
-                face: face,
-                mip: mip,
-            )!;
-            gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, EnvironmentPrefilterRoot::size)!;
-            *(EnvironmentPrefilterRoot*)root.bytes.ptr = {
-                .source_cube = result.source_view.index,
-                .sampler_index = renderer.environment_state.sampler,
-                .output_texture = view.index,
-                .face = face,
-                .size = size,
-                .roughness = (float)mip / (float)(shader::ENVIRONMENT_SPECULAR_MIPS - 1),
-            };
-            uint groups = (size + ENVIRONMENT_IMAGE_GROUP_SIZE - 1) / ENVIRONMENT_IMAGE_GROUP_SIZE;
-            gpu::cmd_dispatch(commands, root.address, { groups, groups, 1 })!;
-        }
-    }
-    gpu::TextureBarrier ready = gpu::texture_transition(
-        texture: result.specular_cube,
-        before: write.after,
-        after: gpu::sampled_at({ .fragment_shader }),
-    )!;
-    gpu::cmd_texture_barrier(commands, &ready)!;
 
     gpu::AllocationDesc scratch_desc = {
         .size = IrradianceGpu::size * shader::ENVIRONMENT_SH_GROUPS,
@@ -224,7 +220,53 @@ fn void? record_environment_lighting(
     gpu::cmd_barrier(commands, &irradiance_ready)!;
 }
 
-fn Frame* recording_frame(Renderer* renderer, gpu::CommandList* commands) @local {
+fn void? record_cube_prefilter(
+    Renderer* renderer,
+    gpu::CommandList* commands,
+    gpu::PipelineHandle pipeline,
+    gpu::TextureView source_view,
+    gpu::TextureHandle output,
+    uint base_size,
+) @private {
+    Frame* slot = recording_frame(renderer, commands);
+    gpu::TextureBarrier write = gpu::texture_transition(
+        texture: output,
+        before: {},
+        after: gpu::storage_at({ .compute }, { .write }),
+    )!;
+    gpu::cmd_texture_barrier(commands, &write)!;
+    gpu::cmd_bind_pipeline(commands, pipeline)!;
+    for (uint mip = 0; mip < shader::ENVIRONMENT_SPECULAR_MIPS; mip++) {
+        uint size = base_size >> mip;
+        for (uint face = 0; face < shader::ENVIRONMENT_FACE_COUNT; face++) {
+            gpu::TextureView view = create_environment_write_view(
+                renderer: renderer,
+                texture: output,
+                face: face,
+                mip: mip,
+            )!;
+            gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, EnvironmentPrefilterRoot::size)!;
+            *(EnvironmentPrefilterRoot*)root.bytes.ptr = {
+                .source_cube = source_view.index,
+                .sampler_index = renderer.environment_state.sampler,
+                .output_texture = view.index,
+                .face = face,
+                .size = size,
+                .roughness = (float)mip / (float)(shader::ENVIRONMENT_SPECULAR_MIPS - 1),
+            };
+            uint groups = (size + ENVIRONMENT_IMAGE_GROUP_SIZE - 1) / ENVIRONMENT_IMAGE_GROUP_SIZE;
+            gpu::cmd_dispatch(commands, root.address, { groups, groups, 1 })!;
+        }
+    }
+    gpu::TextureBarrier ready = gpu::texture_transition(
+        texture: output,
+        before: write.after,
+        after: gpu::sampled_at({ .fragment_shader }),
+    )!;
+    gpu::cmd_texture_barrier(commands, &ready)!;
+}
+
+fn Frame* recording_frame(Renderer* renderer, gpu::CommandList* commands) @private {
     uint index = commands == &renderer.commands ? renderer.recording_slot
       : (uint)(renderer.frame_index % FRAMES_IN_FLIGHT);
     return &renderer.frames[index];

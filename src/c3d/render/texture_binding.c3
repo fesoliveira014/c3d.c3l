@@ -25,6 +25,11 @@ struct MaterialBindings {
     TextureBinding occlusion;
     TextureBinding emissive;
     TextureBinding gradient;
+    TextureBinding clearcoat;
+    TextureBinding clearcoat_roughness;
+    TextureBinding clearcoat_normal;
+    TextureBinding sheen_color;
+    TextureBinding sheen_roughness;
 }
 
 <*
@@ -125,5 +130,10 @@ fn bool material_bindings_match(MaterialBindings first, MaterialBindings second)
         && texture_binding_matches(first.normal, second.normal)
         && texture_binding_matches(first.occlusion, second.occlusion)
         && texture_binding_matches(first.emissive, second.emissive)
-        && texture_binding_matches(first.gradient, second.gradient);
+        && texture_binding_matches(first.gradient, second.gradient)
+        && texture_binding_matches(first.clearcoat, second.clearcoat)
+        && texture_binding_matches(first.clearcoat_roughness, second.clearcoat_roughness)
+        && texture_binding_matches(first.clearcoat_normal, second.clearcoat_normal)
+        && texture_binding_matches(first.sheen_color, second.sheen_color)
+        && texture_binding_matches(first.sheen_roughness, second.sheen_roughness);
 }

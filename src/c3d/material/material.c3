@@ -40,6 +40,7 @@ enum MaterialKind {
     BASIC,
     STANDARD,
     TOON,
+    PHYSICAL,
 }
 
 <*
@@ -97,6 +98,7 @@ struct Material {
         BasicParams basic;
         StandardParams standard;
         ToonParams toon;
+        PhysicalParams physical;
     }
 }
 
@@ -110,18 +112,7 @@ fn Material basic(BasicParams params = BASIC_PARAMS_DEFAULT, MaterialCommon comm
 
 <*
  Metallic-roughness material with optional texture maps.
- @require params.base_color.r >= 0, params.base_color.r <= 1
- @require params.base_color.g >= 0, params.base_color.g <= 1
- @require params.base_color.b >= 0, params.base_color.b <= 1
- @require params.base_color.a >= 0, params.base_color.a <= 1
- @require params.emissive.r >= 0, params.emissive.g >= 0, params.emissive.b >= 0
- @require math::is_finite(params.emissive.r), math::is_finite(params.emissive.g), math::is_finite(params.emissive.b)
- @require math::is_finite(params.emissive_strength)
- @require params.metallic >= 0, params.metallic <= 1
- @require params.roughness >= 0, params.roughness <= 1
- @require params.emissive_strength >= 0
- @require math::is_finite(params.normal_scale)
- @require params.occlusion_strength >= 0, params.occlusion_strength <= 1
+ @require @standard_params_in_range(params), @standard_params_finite(params)
  @pure
 *>
 fn Material standard(
@@ -129,4 +120,26 @@ fn Material standard(
     MaterialCommon common = MATERIAL_COMMON_DEFAULT,
 ) {
     return { .kind = STANDARD, .common = common, .standard = params };
+}
+
+macro bool @in_unit_interval(float #value) @private {
+    return #value >= 0 && #value <= 1;
+}
+
+macro bool @rgb_in_unit_interval(#color) @private {
+    return @in_unit_interval(#color.r) && @in_unit_interval(#color.g) && @in_unit_interval(#color.b);
+}
+
+macro bool @standard_params_in_range(StandardParams #params) @private {
+    return @rgb_in_unit_interval(#params.base_color) && @in_unit_interval(#params.base_color.a)
+        && @in_unit_interval(#params.metallic) && @in_unit_interval(#params.roughness)
+        && @in_unit_interval(#params.occlusion_strength)
+        && #params.emissive.r >= 0 && #params.emissive.g >= 0 && #params.emissive.b >= 0
+        && #params.emissive_strength >= 0;
+}
+
+macro bool @standard_params_finite(StandardParams #params) @private {
+    return math::is_finite(#params.emissive.r) && math::is_finite(#params.emissive.g)
+        && math::is_finite(#params.emissive.b) && math::is_finite(#params.emissive_strength)
+        && math::is_finite(#params.normal_scale);
 }

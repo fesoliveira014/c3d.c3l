@@ -118,10 +118,12 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
         DrawItem[] items = alloc::new_array(tmem, DrawItem, candidates.len);
         usz opaque_count;
         usz transparent_count;
+        bool sheen;
         foreach (&candidate : candidates) {
             GpuGeometry* geometry = ensure_geometry(self, candidate.geometry)!;
             MaterialRes* material = ensure_material(self, candidate.material)!;
             Material* material_description = &self.assets.material(candidate.material).data;
+            sheen |= material_uses_sheen(material_description);
             validate_normal_geometry(
                 geometry: geometry,
                 material: material_description,
@@ -154,7 +156,7 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
         DrawItem[] transparent_items = items[opaque_count:transparent_count];
         sort::quicksort(opaque_items, &by_sort_key);
         sort::quicksort(transparent_items, &by_transparent_depth);
-        ViewEnvironments environments = resolve_view_environments(self, scene)!;
+        ViewEnvironments environments = resolve_view_environments(self, scene, sheen)!;
         record_pending_copies(self, &self.commands)!;
 
         LightCounts light_counts;
@@ -204,6 +206,7 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
                 environment: environments.lighting,
                 intensity: scene.environment_intensity,
                 rotation: scene.environment_rotation,
+                sheen: sheen,
             )!;
         }
         Vec3 ambient = environments.lighting && !scene.ambient_add
@@ -226,14 +229,16 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
         foreach (&item : items) {
             gpu::MappedGpuSpan draw_span = slot.upload.take(&self.device, DrawRoot::size, STREAM_ALIGNMENT)!;
             write_draw_root(
-                root:      (DrawRoot*)draw_span.bytes.ptr,
-                world:     item.candidate.node.world,
-                frame:     frame_span.address,
-                geometry:  item.geometry.root,
-                material:  item.material.address,
-                object_id: item.candidate.node.id.index,
-                layers:    item.candidate.node.layers,
-                flags:     item.candidate.receive_shadow ? shader::DRAW_RECEIVE_SHADOW : 0,
+                root:          (DrawRoot*)draw_span.bytes.ptr,
+                world:         item.candidate.node.world,
+                frame:         frame_span.address,
+                geometry:      item.geometry.root,
+                material:      item.material.address,
+                object_id:     item.candidate.node.id.index,
+                layers:        item.candidate.node.layers,
+                flags:         item.candidate.receive_shadow ? shader::DRAW_RECEIVE_SHADOW : 0,
+                sheen_lut:     sheen ? self.environment_state.sheen_lut.view.index : (gpu::TextureIndex)0,
+                sheen_sampler: sheen ? self.environment_state.sheen_sampler : (gpu::SamplerIndex)0,
             );
             item.root = draw_span.address;
         }
@@ -329,7 +334,7 @@ fn void? Renderer.composite_view(&self) {
 fn void? Renderer.prepare_scene(&self, Scene* scene) {
     open_closed_frame_slot(self)!;
     defer catch discard_uploads(self);
-    (void)resolve_view_environments(self, scene)!;
+    bool sheen;
     bool shadows_enabled;
     @pool() {
         LightCounts counts;
@@ -361,6 +366,7 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
                 line_polygon_mode: self.caps.line_polygon_mode,
             )!;
             Material* data = &self.assets.material(material.asset).data;
+            sheen |= material_uses_sheen(data);
             pipeline_for(self, data)!;
             if (shadows_enabled && mesh.cast_shadow && scene.node(entity).visible_effective
                 && data.common.alpha_mode != AlphaMode.BLEND) {
@@ -368,6 +374,7 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
             }
         }
     };
+    (void)resolve_view_environments(self, scene, sheen)!;
     if (!has_environment_preparations(self) && !self.pending_copies.len()
         && !self.pending_texture_uploads.len() && !self.pending_upload_retire.len()) return;
     return submit_pending(self);
@@ -426,6 +433,8 @@ fn void write_draw_root(
     uint object_id,
     uint layers = scene::DEFAULT_LAYERS,
     uint flags = 0,
+    gpu::TextureIndex sheen_lut = (gpu::TextureIndex)0,
+    gpu::SamplerIndex sheen_sampler = (gpu::SamplerIndex)0,
 ) {
     Mat3 normal = maths::normal_matrix(world);
     *root = {
@@ -437,6 +446,8 @@ fn void write_draw_root(
         .geometry  = geometry,
         .material  = material,
         .object_id = object_id,
+        .sheen_lut = sheen_lut,
+        .sheen_sampler = sheen_sampler,
         .layers    = layers,
         .flags     = flags,
     };
@@ -632,8 +643,21 @@ fn void? validate_normal_geometry(
     MaterialBindings* bindings,
     bool line_polygon_mode,
 ) @private {
-    if (material.kind != MaterialKind.STANDARD || !bindings.normal.present
-        || material.standard.normal_scale == 0 || geometry.layout.flags.has_tangents) return;
+    if (geometry.layout.flags.has_tangents) return;
+
+    StandardParams* standard;
+    bool coat_derivatives;
+    switch (material.kind) {
+        case BASIC:
+        case TOON: return;
+        case STANDARD: standard = &material.standard;
+        case PHYSICAL:
+            standard = &material.physical.standard;
+            coat_derivatives = material.physical.clearcoat > 0
+                && material.physical.clearcoat_normal_scale != 0 && bindings.clearcoat_normal.present;
+    }
+    bool base_derivatives = bindings.normal.present && standard.normal_scale != 0;
+    if (!base_derivatives && !coat_derivatives) return;
 
     if (geometry.topology != Topology.TRIANGLES || (material.common.wireframe && line_polygon_mode)) {
         return c3d::UNSUPPORTED~;
@@ -649,6 +673,7 @@ fn ShaderVariant material_fragment(MaterialKind kind) @local {
         case BASIC: return { .shader = BASIC };
         case STANDARD: return { .shader = STANDARD };
         case TOON: return { .shader = TOON };
+        case PHYSICAL: return { .shader = PHYSICAL };
     }
 }
 

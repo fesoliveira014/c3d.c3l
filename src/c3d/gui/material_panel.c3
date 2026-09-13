@@ -26,37 +26,40 @@ fn void? material_panel(AssetStore* assets, MaterialId material) {
         case BASIC:
             changed |= edit_material_color("Color", (float*)&record.data.basic.color, 4);
         case STANDARD:
-            changed |= edit_material_color("Base color", (float*)&record.data.standard.base_color, 4);
+            changed |= edit_standard_params(&record.data.standard);
+        case PHYSICAL:
+            changed |= edit_standard_params(&record.data.physical.standard);
+            imgui::separator_text("Clearcoat");
             changed |= edit_material_factor(
-                label: "Metallic",
-                value: &record.data.standard.metallic,
+                label: "Coat strength",
+                value: &record.data.physical.clearcoat,
                 minimum: 0,
                 maximum: 1,
             );
             changed |= edit_material_factor(
-                label: "Roughness",
-                value: &record.data.standard.roughness,
+                label: "Coat roughness",
+                value: &record.data.physical.clearcoat_roughness,
                 minimum: 0,
                 maximum: 1,
             );
             changed |= edit_material_factor(
-                label: "Normal scale",
-                value: &record.data.standard.normal_scale,
+                label: "Coat normal scale",
+                value: &record.data.physical.clearcoat_normal_scale,
                 minimum: -float::max,
                 maximum: float::max,
             );
+            imgui::separator_text("Sheen");
+            changed |= edit_material_color(
+                label: "Sheen color",
+                value: (float*)&record.data.physical.sheen_color,
+                channels: 3,
+                hdr_rgb: false,
+            );
             changed |= edit_material_factor(
-                label: "Occlusion strength",
-                value: &record.data.standard.occlusion_strength,
+                label: "Sheen roughness",
+                value: &record.data.physical.sheen_roughness,
                 minimum: 0,
                 maximum: 1,
-            );
-            changed |= edit_material_color("Emissive", (float*)&record.data.standard.emissive, 3);
-            changed |= edit_material_factor(
-                label: "Emissive strength",
-                value: &record.data.standard.emissive_strength,
-                minimum: 0,
-                maximum: float::max,
             );
         case TOON:
             changed |= edit_material_color("Color", (float*)&record.data.toon.color, 4);
@@ -76,6 +79,43 @@ fn void? material_panel(AssetStore* assets, MaterialId material) {
             );
     }
     if (changed) assets.mark_material_dirty(material);
+}
+
+fn bool edit_standard_params(StandardParams* params) @local {
+    bool changed;
+    changed |= edit_material_color("Base color", (float*)&params.base_color, 4);
+    changed |= edit_material_factor(
+        label: "Metallic",
+        value: &params.metallic,
+        minimum: 0,
+        maximum: 1,
+    );
+    changed |= edit_material_factor(
+        label: "Roughness",
+        value: &params.roughness,
+        minimum: 0,
+        maximum: 1,
+    );
+    changed |= edit_material_factor(
+        label: "Normal scale",
+        value: &params.normal_scale,
+        minimum: -float::max,
+        maximum: float::max,
+    );
+    changed |= edit_material_factor(
+        label: "Occlusion strength",
+        value: &params.occlusion_strength,
+        minimum: 0,
+        maximum: 1,
+    );
+    changed |= edit_material_color("Emissive", (float*)&params.emissive, 3);
+    changed |= edit_material_factor(
+        label: "Emissive strength",
+        value: &params.emissive_strength,
+        minimum: 0,
+        maximum: float::max,
+    );
+    return changed;
 }
 
 fn bool edit_material_common(MaterialCommon* common) @local {
@@ -156,15 +196,20 @@ fn bool edit_material_factor(
     return true;
 }
 
-fn bool edit_material_color(ZString label, float* value, usz channels) @local {
+fn bool edit_material_color(
+    ZString label,
+    float* value,
+    usz channels,
+    bool hdr_rgb = true,
+) @local {
     float[4] edited;
     for (usz index = 0; index < channels; index++) edited[index] = value[index];
     bool changed = channels == 4
         ? imgui::color_edit4(label, &edited[0], {})
-        : imgui::color_edit3(label, &edited[0], { .hdr = true, .float_ = true });
+        : imgui::color_edit3(label, &edited[0], { .hdr = hdr_rgb, .float_ = true });
     if (!changed) return false;
 
-    float maximum = channels == 4 ? 1 : float::max;
+    float maximum = channels == 4 || !hdr_rgb ? 1 : float::max;
     changed = false;
     for (usz index = 0; index < channels; index++) {
         if (!(edited[index] >= 0 && edited[index] <= maximum)) return false;

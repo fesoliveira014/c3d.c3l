@@ -128,19 +128,18 @@ Drag outside the GUI to orbit, scroll to zoom, and release Escape to quit.
 See [Materials and lighting](docs/materials.md) for factors, layer masks,
 light capacity and current rendering limits.
 
-`materials` combines masked foliage, ordinary premultiplied alpha blending and
-Toon lighting in one interactive window. Its controls switch presets, active
-families, base textures and Toon ramps while exposing common alpha/depth/raster
-state, Toon bands and rim factors, two colored lights, ambient fill and HDR
-environment fill:
+`materials` combines masked foliage, ordinary premultiplied alpha blending, Toon
+lighting and Physical clearcoat/sheen in one interactive window. Its controls
+switch presets, active families, base and layer maps, two colored lights, ambient
+fill and either bundled HDR environment:
 
 ```bash
 python3 scripts/build.py --example materials
 ./examples/build/materials --gpu-timings
 ```
 
-The example generates its small alpha and nonuniform ramp textures in memory and
-reuses the bundled CC0 studio HDR, so it requires no runtime download.
+The example generates its alpha, nonuniform ramp and Physical map fixtures in
+memory. It reuses both bundled CC0 HDRs, so it requires no runtime download.
 
 `ibl` lights a metallic/roughness sphere grid with two bundled HDR environments.
 Its controls independently select lighting and background, adjust rotation and

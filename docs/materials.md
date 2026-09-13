@@ -2,9 +2,10 @@
 
 `Basic` renders an unlit color with an optional texture map. `Standard` adds
 metallic-roughness shading from directional, point and spot lights, scene ambient,
-image-based lighting, and five independent texture slots. `Toon` adds quantized
-direct diffuse lighting, smooth indirect fill and an optional surface rim. All
-three families use the asset store's shared material ids.
+image-based lighting, and five independent texture slots. `Physical` embeds that
+Standard surface and adds clearcoat and sheen layers. `Toon` adds quantized direct
+diffuse lighting, smooth indirect fill and an optional surface rim. All four
+families use the asset store's shared material ids.
 
 ## Basic defaults
 
@@ -52,14 +53,15 @@ ordering is recalculated per view.
 
 `BLEND` honors `depth_test` but always disables effective depth writes. The
 authored `depth_write` value remains stored, so switching back to `OPAQUE` or
-`MASK` restores it. Double-sided Standard and Toon flip their shading normal on
-back faces. Wireframe still falls back to filled triangles when the device lacks
-line polygon mode.
+`MASK` restores it. Double-sided Standard, Physical and Toon flip their shading
+normal on back faces. Wireframe still falls back to filled triangles when the
+device lacks line polygon mode.
 
-Blended meshes never cast atlas shadows. Opaque and masked Basic, Standard and
-Toon meshes can cast, with masked coverage coming only from their base factor,
-base texture and cutoff. Standard and Toon blended meshes can still receive
-direct shadows when their mesh enables `receive_shadow`; Basic remains unlit.
+Blended meshes never cast atlas shadows. Opaque and masked Basic, Standard,
+Physical and Toon meshes can cast, with masked coverage coming only from their
+base factor, base texture and cutoff. Standard, Physical and Toon blended meshes
+can still receive direct shadows when their mesh enables `receive_shadow`; Basic
+remains unlit.
 
 ## Toon factors
 
@@ -159,11 +161,71 @@ rasterization. Lines, points and effective wireframe triangles return
 normal map, or normal scale zero preserve those geometry paths. A requested
 wireframe on a device without line polygon mode still uses filled triangles.
 
+## Physical clearcoat and sheen
+
+`material::physical()` embeds a complete Standard surface, then layers clearcoat
+and sheen over it:
+
+```c3
+PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
+params.standard.base_color = { 0.12f, 0.3f, 0.7f, 1 };
+params.standard.metallic = 0.1f;
+params.standard.roughness = 0.45f;
+params.clearcoat = 0.8f;
+params.clearcoat_roughness = 0.2f;
+params.sheen_color = { 0.3f, 0.08f, 0.12f };
+params.sheen_roughness = 0.65f;
+MaterialId material_id = assets.add_material(material::physical(params))!;
+```
+
+`PHYSICAL_PARAMS_DEFAULT` embeds `STANDARD_PARAMS_DEFAULT`. Clearcoat and sheen
+color start at zero, both layer roughness factors start at zero, clearcoat normal
+scale starts at 1, and all five layer maps start absent with identity transforms.
+With both layers disabled, Physical reproduces its embedded Standard surface.
+
+Clearcoat, clearcoat roughness, sheen RGB and sheen roughness are finite values in
+[0, 1]. Clearcoat normal scale is finite and may be negative. Shading applies the
+same 0.045 perceptual-roughness floor used by Standard while preserving authored
+zero values.
+
+Each layer slot keeps its own sampler, UV set and transform:
+
+| Slot | Channels | Load color space | Effect |
+| --- | --- | --- | --- |
+| `clearcoat_map` | R | Linear | Multiplies clearcoat strength |
+| `clearcoat_roughness_map` | G | Linear | Multiplies clearcoat roughness |
+| `clearcoat_normal_map` | RGB tangent-space XYZ | Linear | Supplies an independently scaled coat normal |
+| `sheen_color_map` | RGB | sRGB | Multiplies sheen color after sRGB decoding |
+| `sheen_roughness_map` | A | Linear alpha | Multiplies sheen roughness |
+
+The sheen color and roughness slots may share one sRGB texture because its alpha
+channel remains linear. Missing or stale layer textures retain factor-only
+behavior. Clearcoat maps are ignored when clearcoat is zero, and sheen maps are
+ignored when every sheen-color component is zero.
+
+The Standard `normal_map` orients the base and sheen response. The clearcoat
+normal map creates a separate tangent-space normal and falls back to the geometry
+normal when absent; it never inherits the mapped base normal. Both paths follow
+the tangent-frame rules above.
+
+Direct clearcoat uses a fixed dielectric F0 of 0.04 and attenuates the underlying
+Standard and sheen response with its view Fresnel. Sheen uses a Charlie lobe with
+directional-albedo attenuation. Environment lighting uses the usual GGX-filtered
+cube for Standard and clearcoat plus a separately Charlie-filtered cube for
+sheen. Constant ambient has no added reflected layer lobes. Material occlusion
+continues to affect only the underlying diffuse ambient and environment terms.
+
+Sheen does not attenuate emission. Clearcoat attenuates emission and the underlying
+ambient by the same view-dependent layer weight used for reflected lighting. The
+renderer sums all active lobes before applying the common alpha mode once, so
+Physical `BLEND` remains premultiplied source-over and `MASK` coverage still comes
+only from the embedded Standard base alpha.
+
 ## Material storage
 
-Renderer material slots are 224 bytes (`render::MATERIAL_STRIDE`). The generated
-`StandardMaterialGpu` has a 64-byte header followed by five nested 32-byte
-`TextureMapGpu` members at offsets 64, 96, 128, 160 and 192. Each map record
+Renderer material slots are 416 bytes (`render::MATERIAL_STRIDE`). The generated
+`StandardMaterialGpu` remains 224 bytes, with a 64-byte header followed by five
+nested 32-byte `TextureMapGpu` members at offsets 64, 96, 128, 160 and 192. Each map record
 contains `texture_index`, `sampler_index`, `uv_offset` and `uv_linear`; presence
 and UV-set selection live in the header's `map_flags`. Bits 0–4 are presence bits
 for base color, metallic-roughness, normal, occlusion and emissive in that order;
@@ -176,13 +238,12 @@ bits 5–9 select UV1 for those same slots. The matching schema constants are
 `TextureMapGpu map` is at offset 32. It uses the same base-color presence and
 UV1 bits as Standard. `ToonMaterialGpu` occupies 96 bytes, including its color,
 rim factors, step count, gradient texture/sampler indices and one nested base-map
-record. The default 4096-slot material heap is 917,504 bytes. Custom renderer-side
-packing code supplies `render::MaterialBindings` to `write_material_block`, with
-`base_color`, `metallic_roughness`, `normal`, `occlusion`, `emissive` and
-`gradient` fields. Each is a `TextureBinding` carrying texture/sampler indices and
-an explicit `present` flag.
-Basic uses only `base_color`; Toon uses `base_color` and `gradient`; inactive
-fields stay empty. Bindless index zero is not a presence test. Ordinary consumers
+record. `PhysicalMaterialGpu` occupies the full 416-byte slot: its Standard value
+is followed by layer factors and five 32-byte layer-map records. The default
+4096-slot material heap is 1,703,936 bytes. Custom renderer-side packing supplies
+one `TextureBinding` per Standard, Toon and Physical slot. Basic uses only its base
+color binding; Toon uses base color and gradient; disabled layer bindings stay
+empty. Bindless index zero is not a presence test. Ordinary consumers
 edit asset material slots and let the renderer resolve these bindings.
 
 ## Shared edits
@@ -215,8 +276,8 @@ record.data = material::basic({ .color = { 1, 0.5f, 0.2f, 1 } });
 assets.mark_material_dirty(material_id);
 ```
 
-Use the matching `.data.basic`, `.data.standard` or `.data.toon` arm. Do not
-change `kind` without initializing that arm from its named defaults.
+Use the matching `.data.basic`, `.data.standard`, `.data.physical` or `.data.toon`
+arm. Do not change `kind` without initializing that arm from its named defaults.
 
 ## Lights
 
@@ -311,20 +372,30 @@ python3 scripts/build.py --example materials
 ./examples/build/materials --gpu-timings
 ```
 
-`materials` combines three interactive presets. Masked foliage casts cutout
+`materials` combines four interactive presets. Masked foliage casts cutout
 shadows onto an opaque receiver. Two separated blended objects show source-over
 composition against an opaque reference and HDR sky. Three Toon spheres compare
-uniform steps, a nonuniform grayscale ramp and an enabled rim under separately
-colored directional and point lights.
+uniform steps, a nonuniform grayscale ramp and an enabled rim. The Physical view
+places an ordinary Standard sphere beside an equivalent zero-layer Physical
+sphere, factor-only coated paint and fabric, and a combined mapped surface.
 
 The controls switch presets, editable surfaces, material families, base textures
-and Toon ramps. Family changes initialize the selected parameter arm from named
-defaults and preserve only the common state and base color. Material controls
-edit alpha mode/cutoff, Basic RGBA, Toon steps/rim and the shared sidedness,
-depth and wireframe state. Direct-light intensity, ambient fill, environment fill
-and background intensity remain independent. Drag outside GUI windows to orbit,
-scroll to zoom, and release Escape outside GUI keyboard capture to close. GPU
-timings are optional; full validation is enabled for every run.
+and Toon ramps. The Physical controls independently toggle the base normal and
+all five layer maps; the tiny generated fixtures use the documented channels,
+different UV sets/transforms and distinct base/coat normals. Family changes
+initialize the selected parameter arm from named defaults and preserve only the
+common state and base color. Material controls edit all family factors and shared
+alpha/depth/raster state. The warm directional and cool point lights have separate
+enable and intensity controls. Ambient fill, environment fill and background
+intensity remain independent, and either bundled HDR can supply lighting and sky.
+
+Studio is prewarmed by the initial `prepare_scene` call, including hidden mesh
+materials. Sky is first prepared through `upload_environment`, which intentionally
+does not generate sheen resources. Select Sky while viewing a base-only preset,
+then select Physical layers to exercise the possible one-time sheen preparation
+cost. Repeated use reuses the prepared resources. Drag outside GUI windows to
+orbit, scroll to zoom, and release Escape outside GUI keyboard capture to close.
+GPU timings are optional; full validation is enabled for every run.
 
 The broader Standard material example remains available:
 
@@ -361,11 +432,12 @@ GPU timings are optional; full validation is enabled for every run.
 ## Current rendering limits
 
 Texture ownership and sampling are described in [Textures and
-images](textures.md). [Sun, spot and point shadows](shadows.md) attenuate Standard
-and Toon direct lighting. Standard supports [environment lighting and independent
-skies](environments.md); Toon uses only its diffuse SH contribution, and Basic
-remains unlit. Toon does not provide PBR reflections, outlines or transmission.
-Physical material lobes and scene-color transmission are outside the current
+images](textures.md). [Sun, spot and point shadows](shadows.md) attenuate Standard,
+Physical and Toon direct lighting. Standard and Physical support [environment
+lighting and independent skies](environments.md); Toon uses only its diffuse SH
+contribution, and Basic remains unlit. Toon does not provide PBR reflections,
+outlines or transmission. Physical does not yet add specular/IOR controls,
+anisotropy or transmission; scene-color transmission remains outside the current
 material families. Shading writes scene-linear HDR into the renderer target; the
 existing composite adds no tonemapper or exposure control, so bright values can
 clip on presentation. Compare lighting with consistent presentation settings.

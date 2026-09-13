@@ -70,8 +70,8 @@ root DrawRoot {
     uint       object_id;
     uint       flags;
     uint       layers;
-    uint       _pad1;
-    uint       _pad2;
+    TextureIndex sheen_lut;
+    SamplerIndex sheen_sampler;
     uint       _pad3;
 }
 
@@ -162,7 +162,7 @@ struct ShadowGpu {
     uint _pad2;
 }
 
-root StandardMaterialGpu {
+struct StandardMaterialGpu {
     uint kind;
     uint flags;
     float alpha_cutoff;
@@ -225,7 +225,7 @@ root EnvironmentGpu {
     TextureIndex brdf_lut;
     float intensity;
     GpuAddress sh;
-    uint _pad0;
+    TextureIndex sheen_cube;
     uint _pad1;
     EnvironmentRotationGpu rotation;
 }
@@ -287,4 +287,31 @@ root BrdfLutRoot {
     uint size;
     uint _pad0;
     uint _pad1;
+}
+
+const uint PHYSICAL_MAP_CLEARCOAT = 1;
+const uint PHYSICAL_MAP_CLEARCOAT_ROUGHNESS = 2;
+const uint PHYSICAL_MAP_CLEARCOAT_NORMAL = 4;
+const uint PHYSICAL_MAP_SHEEN_COLOR = 8;
+const uint PHYSICAL_MAP_SHEEN_ROUGHNESS = 16;
+const uint SHEEN_LUT_SIZE = 256;
+const uint SHEEN_LUT_SAMPLES = 4096;
+const uint SHEEN_PREFILTER_SAMPLES = 4096;
+
+root StandardMaterialRoot {
+    StandardMaterialGpu material;
+}
+
+root PhysicalMaterialGpu {
+    StandardMaterialGpu standard;
+    vec4 sheen_color_roughness;
+    float clearcoat;
+    float clearcoat_roughness;
+    float clearcoat_normal_scale;
+    uint map_flags;
+    TextureMapGpu clearcoat_map;
+    TextureMapGpu clearcoat_roughness_map;
+    TextureMapGpu clearcoat_normal_map;
+    TextureMapGpu sheen_color_map;
+    TextureMapGpu sheen_roughness_map;
 }
