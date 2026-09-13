@@ -30,24 +30,11 @@ struct PhysicalParams {
 
 <*
  Layer clearcoat and sheen over a Standard surface.
- @require params.standard.base_color.r >= 0, params.standard.base_color.r <= 1
- @require params.standard.base_color.g >= 0, params.standard.base_color.g <= 1
- @require params.standard.base_color.b >= 0, params.standard.base_color.b <= 1
- @require params.standard.base_color.a >= 0, params.standard.base_color.a <= 1
- @require params.standard.metallic >= 0, params.standard.metallic <= 1
- @require params.standard.roughness >= 0, params.standard.roughness <= 1
- @require params.standard.emissive.r >= 0, params.standard.emissive.g >= 0, params.standard.emissive.b >= 0
- @require math::is_finite(params.standard.emissive.r), math::is_finite(params.standard.emissive.g)
- @require math::is_finite(params.standard.emissive.b), math::is_finite(params.standard.emissive_strength)
- @require params.standard.emissive_strength >= 0, math::is_finite(params.standard.normal_scale)
- @require params.standard.occlusion_strength >= 0, params.standard.occlusion_strength <= 1
- @require params.clearcoat >= 0, params.clearcoat <= 1
- @require params.clearcoat_roughness >= 0, params.clearcoat_roughness <= 1
+ @require @standard_params_in_range(params.standard), @standard_params_finite(params.standard)
+ @require @in_unit_interval(params.clearcoat), @in_unit_interval(params.clearcoat_roughness)
  @require math::is_finite(params.clearcoat_normal_scale)
- @require params.sheen_color.r >= 0, params.sheen_color.r <= 1
- @require params.sheen_color.g >= 0, params.sheen_color.g <= 1
- @require params.sheen_color.b >= 0, params.sheen_color.b <= 1
- @require params.sheen_roughness >= 0, params.sheen_roughness <= 1
+ @require @rgb_in_unit_interval(params.sheen_color)
+ @require @in_unit_interval(params.sheen_roughness)
  @pure
 *>
 fn Material physical(
