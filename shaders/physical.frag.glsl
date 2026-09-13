@@ -133,6 +133,42 @@ void main() {
         vec3(1.0)
     ) * specular_weight;
 
+    float anisotropy = material.anisotropy;
+    vec2 anisotropy_direction = vec2(cos(material.anisotropy_rotation), sin(material.anisotropy_rotation));
+    vec4 anisotropy_tangent = vec4(0.0);
+    if (anisotropy > 0.0) {
+        vec2 anisotropy_uv = v_uv0;
+        if ((material.extension_map_flags & PHYSICAL_EXTENSION_MAP_ANISOTROPY) != 0u) {
+            anisotropy_uv = map_uv(
+                material.anisotropy_map,
+                material.extension_map_flags,
+                PHYSICAL_EXTENSION_MAP_ANISOTROPY,
+                v_uv0,
+                v_uv1
+            );
+            vec3 sampled = sample_texture_2d_implicit(
+                material.anisotropy_map.texture_index,
+                material.anisotropy_map.sampler_index,
+                anisotropy_uv
+            ).rgb;
+            mat2 rotation = mat2(
+                anisotropy_direction.x, anisotropy_direction.y,
+                -anisotropy_direction.y, anisotropy_direction.x
+            );
+            anisotropy_direction = rotation * (sampled.rg * 2.0 - 1.0);
+            anisotropy = clamp(anisotropy * sampled.b, 0.0, 1.0);
+        }
+        anisotropy_tangent = (geometry.flags & GEOMETRY_HAS_TANGENTS) != 0u
+            ? v_tangent
+            : derivative_tangent(
+                normalize(v_normal),
+                dFdx(v_world_pos),
+                dFdy(v_world_pos),
+                dFdx(anisotropy_uv),
+                dFdy(anisotropy_uv)
+            );
+    }
+
     // Derivatives and implicit-LOD samples must retain helper lanes across cutouts.
     if ((material.standard.flags & MATERIAL_ALPHA_MASK) != 0u
         && material_sample.base_color.a < material.standard.alpha_cutoff) discard;
@@ -147,6 +183,24 @@ void main() {
         dielectric_reflectance,
         vec3(specular_weight)
     );
+    if (anisotropy > 0.0) {
+        vec3 frame_tangent;
+        vec3 frame_bitangent;
+        if (surface_tangent_frame(normalize(v_normal), anisotropy_tangent, frame_tangent, frame_bitangent)) {
+            vec3 direction = frame_tangent * anisotropy_direction.x + frame_bitangent * anisotropy_direction.y;
+            direction -= surface.standard.normal * dot(surface.standard.normal, direction);
+            float length_squared = dot(direction, direction);
+            if (length_squared > 0.0) {
+                direction *= inversesqrt(length_squared);
+                apply_anisotropy(
+                    surface.standard,
+                    direction,
+                    cross(surface.standard.normal, direction),
+                    anisotropy
+                );
+            }
+        }
+    }
     surface.coat_normal = coat_normal;
     surface.sheen_color = sheen_color;
     surface.sheen_roughness = sheen_roughness;

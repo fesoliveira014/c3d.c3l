@@ -13,22 +13,33 @@ vec3 environment_rotate(EnvironmentRotationGpu rotation, vec3 direction) {
     );
 }
 
+vec3 anisotropic_reflection_normal(StandardSurface surface, float perceptual_roughness) {
+    if (surface.anisotropy == 0.0) return surface.normal;
+
+    vec3 anisotropic_tangent = cross(surface.anisotropic_bitangent, surface.view_direction);
+    vec3 anisotropic_normal = cross(anisotropic_tangent, surface.anisotropic_bitangent);
+    float bend = 1.0 - surface.anisotropy * (1.0 - perceptual_roughness);
+    bend *= bend;
+    bend *= bend;
+    return normalize(mix(anisotropic_normal, surface.normal, bend));
+}
+
 vec3 evaluate_environment(
     EnvironmentGpu environment,
     StandardSurface surface,
     float roughness,
     float occlusion
 ) {
+    float perceptual_roughness = max(roughness, MIN_PERCEPTUAL_ROUGHNESS);
     vec3 normal = environment_rotate(environment.rotation, surface.normal);
     vec3 reflection = environment_rotate(
         environment.rotation,
-        reflect(-surface.view_direction, surface.normal)
+        reflect(-surface.view_direction, anisotropic_reflection_normal(surface, perceptual_roughness))
     );
     vec3 fresnel = fresnel_schlick(surface.reflectance, surface.grazing_reflectance, surface.normal_view);
     vec3 diffuse = environment_irradiance(environment.sh, normal)
         * surface.diffuse_color * (1.0 - fresnel) * occlusion;
 
-    float perceptual_roughness = max(roughness, MIN_PERCEPTUAL_ROUGHNESS);
     float lod = perceptual_roughness * float(ENVIRONMENT_SPECULAR_MIPS - 1u);
     vec3 prefiltered = sample_texture_cube_lod(
         environment.specular_cube,

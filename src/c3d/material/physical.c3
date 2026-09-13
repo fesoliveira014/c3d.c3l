@@ -2,7 +2,7 @@ module c3d::material;
 
 import std::math;
 
-<* Standard-equivalent surface with clearcoat and sheen off. *>
+<* Standard-equivalent surface with clearcoat, sheen and anisotropy off. *>
 const PhysicalParams PHYSICAL_PARAMS_DEFAULT = {
     .standard = STANDARD_PARAMS_DEFAULT,
     .clearcoat_normal_scale = 1,
@@ -16,9 +16,10 @@ const PhysicalParams PHYSICAL_PARAMS_DEFAULT = {
     .sheen_roughness_map = { .transform = UV_TRANSFORM_IDENTITY },
     .specular_map = { .transform = UV_TRANSFORM_IDENTITY },
     .specular_color_map = { .transform = UV_TRANSFORM_IDENTITY },
+    .anisotropy_map = { .transform = UV_TRANSFORM_IDENTITY },
 };
 
-<* Standard surface with optional clearcoat, sheen and specular controls. *>
+<* Standard surface with optional clearcoat, sheen, specular and anisotropy. *>
 struct PhysicalParams {
     StandardParams standard;
     float clearcoat;
@@ -29,6 +30,8 @@ struct PhysicalParams {
     float ior;
     float specular;
     Vec3 specular_color;
+    float anisotropy;
+    float anisotropy_rotation;
     TextureSlot clearcoat_map;
     TextureSlot clearcoat_roughness_map;
     TextureSlot clearcoat_normal_map;
@@ -36,16 +39,17 @@ struct PhysicalParams {
     TextureSlot sheen_roughness_map;
     TextureSlot specular_map;
     TextureSlot specular_color_map;
+    TextureSlot anisotropy_map;
 }
 
 <*
- Layer clearcoat, sheen and specular controls over a Standard surface.
+ Layer clearcoat, sheen, specular and anisotropy over a Standard surface.
  @require @standard_params_in_range(params.standard), @standard_params_finite(params.standard)
  @require @in_unit_interval(params.clearcoat), @in_unit_interval(params.clearcoat_roughness)
  @require math::is_finite(params.clearcoat_normal_scale)
  @require @rgb_in_unit_interval(params.sheen_color)
  @require @in_unit_interval(params.sheen_roughness)
- @require @physical_specular_in_range(params)
+ @require @physical_specular_in_range(params), @physical_anisotropy_in_range(params)
  @pure
 *>
 fn Material physical(

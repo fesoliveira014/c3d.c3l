@@ -646,18 +646,19 @@ fn void? validate_normal_geometry(
     if (geometry.layout.flags.has_tangents) return;
 
     StandardParams* standard;
-    bool coat_derivatives;
+    bool layer_derivatives;
     switch (material.kind) {
         case BASIC:
         case TOON: return;
         case STANDARD: standard = &material.standard;
         case PHYSICAL:
             standard = &material.physical.standard;
-            coat_derivatives = material.physical.clearcoat > 0
+            bool coat_normal_derivatives = material.physical.clearcoat > 0
                 && material.physical.clearcoat_normal_scale != 0 && bindings.clearcoat_normal.present;
+            layer_derivatives = coat_normal_derivatives || material.physical.anisotropy > 0;
     }
     bool base_derivatives = bindings.normal.present && standard.normal_scale != 0;
-    if (!base_derivatives && !coat_derivatives) return;
+    if (!base_derivatives && !layer_derivatives) return;
 
     if (geometry.topology != Topology.TRIANGLES || (material.common.wireframe && line_polygon_mode)) {
         return c3d::UNSUPPORTED~;

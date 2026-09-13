@@ -3,6 +3,7 @@ module c3d::gui;
 import c3d;
 import c3d::asset;
 import imgui;
+import std::math;
 
 const float MIN_EDITABLE_RIM_POWER @local = 0.01f; // Matches the drag step within the positive contract.
 
@@ -79,6 +80,19 @@ fn void? material_panel(AssetStore* assets, MaterialId material) {
                 value: (float*)&record.data.physical.specular_color,
                 channels: 3,
                 hdr_rgb: true,
+            );
+            imgui::separator_text("Anisotropy");
+            changed |= edit_material_factor(
+                label: "Anisotropy strength",
+                value: &record.data.physical.anisotropy,
+                minimum: 0,
+                maximum: 1,
+            );
+            changed |= edit_material_factor(
+                label: "Anisotropy rotation",
+                value: &record.data.physical.anisotropy_rotation,
+                minimum: -(float)math::PI,
+                maximum: (float)math::PI,
             );
         case TOON:
             changed |= edit_material_color("Color", (float*)&record.data.toon.color, 4);

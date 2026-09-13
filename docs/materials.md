@@ -253,9 +253,38 @@ Both slots keep their own sampler, UV set and transform, and both are ignored
 when `specular` is zero. A zero specular weight removes the dielectric specular
 lobe under direct and environment lighting and leaves the diffuse lobe unweighted.
 
+## Physical anisotropy
+
+Anisotropy stretches the metallic-roughness specular lobe along a tangent-space
+direction:
+
+```c3
+PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
+params.standard.metallic = 1;
+params.standard.roughness = 0.35f;
+params.anisotropy = 0.8f;
+params.anisotropy_rotation = (float)math::PI / 4;
+```
+
+`anisotropy` lies in [0, 1] (default 0) and `anisotropy_rotation` is a finite angle
+in radians measured from the tangent toward the bitangent. The optional
+`anisotropy_map` stores a direction in RG (`rg * 2 - 1`, rotated by the factor
+angle) and multiplies the strength by B; it is linear data and keeps its own
+sampler, UV set and transform. The map is ignored when `anisotropy` is zero, and
+zero strength reproduces the isotropic lobe exactly.
+
+The direction lives in the same frame the normal map uses: supplied tangents are
+authoritative, and filled triangles without tangents derive a frame from
+world-position and anisotropy-map UV derivatives (UV0 when unmapped). A degenerate
+frame renders isotropic. Active anisotropy without supplied tangents on lines,
+points or effective wireframe triangles returns `c3d::UNSUPPORTED`, like an active
+normal map. Direct lighting uses the anisotropic GGX distribution and visibility;
+environment reflections bend the reflection normal toward the stretch direction
+as a documented approximation. Clearcoat and sheen stay isotropic.
+
 ## Material storage
 
-Renderer material slots are 512 bytes (`render::MATERIAL_STRIDE`). The generated
+Renderer material slots are 544 bytes (`render::MATERIAL_STRIDE`). The generated
 `StandardMaterialGpu` remains 224 bytes, with a 64-byte header followed by five
 nested 32-byte `TextureMapGpu` members at offsets 64, 96, 128, 160 and 192. Each map record
 contains `texture_index`, `sampler_index`, `uv_offset` and `uv_linear`; presence
@@ -270,13 +299,14 @@ bits 5–9 select UV1 for those same slots. The matching schema constants are
 `TextureMapGpu map` is at offset 32. It uses the same base-color presence and
 UV1 bits as Standard. `ToonMaterialGpu` occupies 96 bytes, including its color,
 rim factors, step count, gradient texture/sampler indices and one nested base-map
-record. `PhysicalMaterialGpu` occupies the full 512-byte slot: its Standard value
-is followed by layer factors, five 32-byte layer-map records, the specular
-factors and two specular map records. Layer presence lives in `map_flags` with
-`PHYSICAL_MAP_*` bits; the specular maps use a second word,
-`extension_map_flags`, with `PHYSICAL_EXTENSION_MAP_SPECULAR` and
-`PHYSICAL_EXTENSION_MAP_SPECULAR_COLOR` and the same `MATERIAL_MAP_UV1_SHIFT`.
-The default 4096-slot material heap is 2,097,152 bytes. Custom renderer-side packing supplies
+record. `PhysicalMaterialGpu` occupies the full 544-byte slot: its Standard value
+is followed by layer factors, five 32-byte layer-map records, the specular and
+anisotropy factors and three more map records. Layer presence lives in
+`map_flags` with `PHYSICAL_MAP_*` bits; the extension maps use a second word,
+`extension_map_flags`, with `PHYSICAL_EXTENSION_MAP_SPECULAR`,
+`PHYSICAL_EXTENSION_MAP_SPECULAR_COLOR` and `PHYSICAL_EXTENSION_MAP_ANISOTROPY`
+and the same `MATERIAL_MAP_UV1_SHIFT`. The default 4096-slot material heap is
+2,228,224 bytes. Custom renderer-side packing supplies
 one `TextureBinding` per Standard, Toon and Physical slot. Basic uses only its base
 color binding; Toon uses base color and gradient; disabled layer bindings stay
 empty. Bindless index zero is not a presence test. Ordinary consumers
@@ -408,20 +438,22 @@ python3 scripts/build.py --example materials
 ./examples/build/materials --gpu-timings
 ```
 
-`materials` combines five interactive presets. Masked foliage casts cutout
+`materials` combines six interactive presets. Masked foliage casts cutout
 shadows onto an opaque receiver. Two separated blended objects show source-over
 composition against an opaque reference and HDR sky. Three Toon spheres compare
 uniform steps, a nonuniform grayscale ramp and an enabled rim. The Physical view
 places an ordinary Standard sphere beside an equivalent zero-layer Physical
 sphere, factor-only coated paint and fabric, and a combined mapped surface.
 The Physical specular view compares an IOR row of 1.0, 1.5 and 2.4 with a
-specular-weight row of 0, 0.5 and a tinted unit weight.
+specular-weight row of 0, 0.5 and a tinted unit weight. The Physical anisotropy
+view compares an isotropic brushed metal with three stretch rotations and a
+mapped direction.
 
 The controls switch presets, editable surfaces, material families, base textures
 and Toon ramps. The Physical controls independently toggle the base normal, all
-five layer maps and the specular weight and color maps; the tiny generated
-fixtures use the documented channels, different UV sets/transforms and distinct
-base/coat normals. Family changes
+five layer maps, the specular weight and color maps and the anisotropy map; the
+tiny generated fixtures use the documented channels, different UV sets/transforms
+and distinct base/coat normals. Family changes
 initialize the selected parameter arm from named defaults and preserve only the
 common state and base color. Material controls edit all family factors and shared
 alpha/depth/raster state. The warm directional and cool point lights have separate
@@ -476,7 +508,7 @@ Physical and Toon direct lighting. Standard and Physical support [environment
 lighting and independent skies](environments.md); Toon uses only its diffuse SH
 contribution, and Basic remains unlit. Toon does not provide PBR reflections,
 outlines or transmission. Physical does not yet add
-anisotropy or transmission; scene-color transmission remains outside the current
-material families. Shading writes scene-linear HDR into the renderer target; the
+transmission; scene-color transmission remains outside the current material
+families. Shading writes scene-linear HDR into the renderer target; the
 existing composite adds no tonemapper or exposure control, so bright values can
 clip on presentation. Compare lighting with consistent presentation settings.
