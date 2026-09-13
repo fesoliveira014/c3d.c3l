@@ -141,7 +141,8 @@ jobs:
             echo Y | ~/tools/c3/c3c.exe fetch-sdk windows
             cp -r ~/AppData/Local/c3/msvc_sdk ~/tools/c3/msvc_sdk
           fi
-          echo "$HOME/tools/c3" >> "$GITHUB_PATH"
+          # build.py resolves tools from native Python, which needs Windows-form PATH entries.
+          cygpath -w "$HOME/tools/c3" >> "$GITHUB_PATH"
 
       - name: Install Vulkan SDK
         run: |
@@ -151,7 +152,7 @@ jobs:
             /tmp/vulkan-sdk.exe --root "$(cygpath -w "$HOME/tools/VulkanSDK")" \
               --accept-licenses --default-answer --confirm-command install
           fi
-          echo "$HOME/tools/VulkanSDK/Bin" >> "$GITHUB_PATH"
+          cygpath -w "$HOME/tools/VulkanSDK/Bin" >> "$GITHUB_PATH"
 
       # Every c3d executable imports vulkan-1.dll at process start, the test binary included.
       - name: Install Vulkan runtime
