@@ -130,6 +130,16 @@ macro bool @rgb_in_unit_interval(#color) @private {
     return @in_unit_interval(#color.r) && @in_unit_interval(#color.g) && @in_unit_interval(#color.b);
 }
 
+macro bool @rgb_nonnegative_finite(#color) @private {
+    return #color.r >= 0 && #color.g >= 0 && #color.b >= 0
+        && math::is_finite(#color.r) && math::is_finite(#color.g) && math::is_finite(#color.b);
+}
+
+macro bool @physical_specular_in_range(PhysicalParams #params) @private {
+    return #params.ior >= 1 && math::is_finite(#params.ior)
+        && @in_unit_interval(#params.specular) && @rgb_nonnegative_finite(#params.specular_color);
+}
+
 macro bool @standard_params_in_range(StandardParams #params) @private {
     return @rgb_in_unit_interval(#params.base_color) && @in_unit_interval(#params.base_color.a)
         && @in_unit_interval(#params.metallic) && @in_unit_interval(#params.roughness)

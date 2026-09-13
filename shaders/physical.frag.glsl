@@ -106,17 +106,46 @@ void main() {
         }
     }
 
+    float specular_weight = material.specular_color_weight.w;
+    vec3 specular_color = material.specular_color_weight.rgb;
+    if (specular_weight > 0.0) {
+        if ((material.extension_map_flags & PHYSICAL_EXTENSION_MAP_SPECULAR) != 0u) {
+            specular_weight = clamp(specular_weight * sample_map(
+                material.specular_map,
+                material.extension_map_flags,
+                PHYSICAL_EXTENSION_MAP_SPECULAR,
+                v_uv0,
+                v_uv1
+            ).a, 0.0, 1.0);
+        }
+        if ((material.extension_map_flags & PHYSICAL_EXTENSION_MAP_SPECULAR_COLOR) != 0u) {
+            specular_color *= sample_map(
+                material.specular_color_map,
+                material.extension_map_flags,
+                PHYSICAL_EXTENSION_MAP_SPECULAR_COLOR,
+                v_uv0,
+                v_uv1
+            ).rgb;
+        }
+    }
+    vec3 dielectric_reflectance = min(
+        dielectric_normal_reflectance(material.ior) * specular_color,
+        vec3(1.0)
+    ) * specular_weight;
+
     // Derivatives and implicit-LOD samples must retain helper lanes across cutouts.
     if ((material.standard.flags & MATERIAL_ALPHA_MASK) != 0u
         && material_sample.base_color.a < material.standard.alpha_cutoff) discard;
 
     PhysicalSurface surface;
-    surface.standard = prepare_standard_surface(
+    surface.standard = prepare_surface(
         material_sample.base_color.rgb,
         material_sample.metallic,
         material_sample.roughness,
         material_sample.normal,
-        material_sample.view_direction
+        material_sample.view_direction,
+        dielectric_reflectance,
+        vec3(specular_weight)
     );
     surface.coat_normal = coat_normal;
     surface.sheen_color = sheen_color;

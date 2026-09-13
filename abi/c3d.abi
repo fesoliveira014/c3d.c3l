@@ -294,6 +294,8 @@ const uint PHYSICAL_MAP_CLEARCOAT_ROUGHNESS = 2;
 const uint PHYSICAL_MAP_CLEARCOAT_NORMAL = 4;
 const uint PHYSICAL_MAP_SHEEN_COLOR = 8;
 const uint PHYSICAL_MAP_SHEEN_ROUGHNESS = 16;
+const uint PHYSICAL_EXTENSION_MAP_SPECULAR = 1;
+const uint PHYSICAL_EXTENSION_MAP_SPECULAR_COLOR = 2;
 const uint SHEEN_LUT_SIZE = 256;
 const uint SHEEN_LUT_SAMPLES = 4096;
 const uint SHEEN_PREFILTER_SAMPLES = 4096;
@@ -314,4 +316,11 @@ root PhysicalMaterialGpu {
     TextureMapGpu clearcoat_normal_map;
     TextureMapGpu sheen_color_map;
     TextureMapGpu sheen_roughness_map;
+    vec4 specular_color_weight;
+    float ior;
+    uint extension_map_flags;
+    uint _pad0;
+    uint _pad1;
+    TextureMapGpu specular_map;
+    TextureMapGpu specular_color_map;
 }

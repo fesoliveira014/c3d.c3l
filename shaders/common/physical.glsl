@@ -19,6 +19,11 @@ struct PhysicalSurface {
     float coat_roughness;
 };
 
+float dielectric_normal_reflectance(float ior) {
+    float ratio = (ior - 1.0) / (ior + 1.0);
+    return ratio * ratio;
+}
+
 float physical_sheen_attenuation(PhysicalSurface surface) {
     return 1.0 - surface.sheen_strength * surface.sheen_view_albedo;
 }

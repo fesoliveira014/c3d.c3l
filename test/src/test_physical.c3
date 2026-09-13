@@ -111,7 +111,8 @@ fn void test_physical_repack_clears_layer_state_after_family_reuse() @test {
     MaterialBindings bindings = {
         .clearcoat = binding(1, 2), .clearcoat_roughness = binding(3, 4),
         .clearcoat_normal = binding(5, 6), .sheen_color = binding(7, 8),
-        .sheen_roughness = binding(9, 10),
+        .sheen_roughness = binding(9, 10), .specular = binding(13, 14),
+        .specular_color = binding(15, 16),
     };
     char[render::MATERIAL_STRIDE] storage @align(16);
     storage[..] = 0x7f;
@@ -128,11 +129,15 @@ fn void test_physical_repack_clears_layer_state_after_family_reuse() @test {
     assert(packed.clearcoat_normal_map.texture_index == (gpu::TextureIndex)0);
     assert(packed.sheen_color_map.texture_index == (gpu::TextureIndex)0);
     assert(packed.sheen_roughness_map.texture_index == (gpu::TextureIndex)0);
+    assert(packed.specular_color_weight == (Vec4){ 1, 1, 1, 1 });
+    assert(packed.extension_map_flags == 0);
+    assert(packed.specular_map.texture_index == (gpu::TextureIndex)0);
+    assert(packed.specular_color_map.texture_index == (gpu::TextureIndex)0);
 }
 
 fn void test_each_physical_binding_participates_in_reuse() @test {
     MaterialBindings first;
-    for (uint slot = 0; slot < 5; slot++) {
+    for (uint slot = 0; slot < 7; slot++) {
         for (uint change = 0; change < 9; change++) {
             MaterialBindings second = first;
             TextureBinding* selected;
@@ -142,6 +147,8 @@ fn void test_each_physical_binding_participates_in_reuse() @test {
                 case 2: selected = &second.clearcoat_normal;
                 case 3: selected = &second.sheen_color;
                 case 4: selected = &second.sheen_roughness;
+                case 5: selected = &second.specular;
+                case 6: selected = &second.specular_color;
                 default: unreachable();
             }
             switch (change) {
@@ -227,4 +234,54 @@ fn void test_physical_blends_do_not_enter_shadow_candidates() @test {
             assert(assets.material(candidate.material).data.common.alpha_mode != AlphaMode.BLEND);
         }
     };
+}
+
+fn void test_physical_defaults_pack_unit_specular_and_ior() @test {
+    Material material = material::physical();
+    char[render::MATERIAL_STRIDE] storage @align(16);
+    render::write_material_block(storage[..], &material, {});
+    PhysicalMaterialGpu* packed = (PhysicalMaterialGpu*)&storage;
+    assert(packed.specular_color_weight == (Vec4){ 1, 1, 1, 1 });
+    assert(packed.ior == 1.5f && packed.extension_map_flags == 0);
+    assert(packed.specular_map.texture_index == (gpu::TextureIndex)0);
+    assert(packed.specular_color_map.texture_index == (gpu::TextureIndex)0);
+}
+
+fn void test_physical_specular_maps_have_independent_flags_and_transforms() @test {
+    PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
+    params.ior = 2.4f;
+    params.specular = 0.5f;
+    params.specular_color = { 0.2f, 0.3f, 0.4f };
+    params.specular_map.uv_set = 1;
+    params.specular_map.transform = { .offset = { 1, 2 }, .scale = { 2, 3 } };
+    params.specular_color_map.transform = { .offset = { 3, 4 }, .scale = { 4, 5 } };
+    Material material = material::physical(params);
+    MaterialBindings bindings = { .specular = binding(1, 2), .specular_color = binding(3, 4) };
+    char[render::MATERIAL_STRIDE] storage @align(16);
+    render::write_material_block(storage[..], &material, bindings);
+    PhysicalMaterialGpu* packed = (PhysicalMaterialGpu*)&storage;
+    assert(packed.specular_color_weight == (Vec4){ 0.2f, 0.3f, 0.4f, 0.5f });
+    assert(packed.ior == 2.4f && packed.map_flags == 0);
+    uint present = shader::PHYSICAL_EXTENSION_MAP_SPECULAR | shader::PHYSICAL_EXTENSION_MAP_SPECULAR_COLOR;
+    uint alternate_uv = shader::PHYSICAL_EXTENSION_MAP_SPECULAR;
+    assert(packed.extension_map_flags == (present | (alternate_uv << shader::MATERIAL_MAP_UV1_SHIFT)));
+    assert(packed.specular_map.texture_index == (gpu::TextureIndex)1);
+    assert(packed.specular_map.sampler_index == (gpu::SamplerIndex)2);
+    assert(packed.specular_map.uv_offset == (Vec2){ 1, 2 });
+    assert(packed.specular_map.uv_linear == (Vec4){ 2, 0, 0, 3 });
+    assert(packed.specular_color_map.texture_index == (gpu::TextureIndex)3);
+    assert(packed.specular_color_map.uv_offset == (Vec2){ 3, 4 });
+    assert(packed.specular_color_map.uv_linear == (Vec4){ 4, 0, 0, 5 });
+}
+
+fn void test_disabled_physical_lobes_ignore_present_bindings() @test {
+    PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
+    params.specular = 0;
+    Material material = material::physical(params);
+    MaterialBindings bindings = { .specular = binding(1, 2), .specular_color = binding(3, 4) };
+    char[render::MATERIAL_STRIDE] storage @align(16);
+    render::write_material_block(storage[..], &material, bindings);
+    PhysicalMaterialGpu* packed = (PhysicalMaterialGpu*)&storage;
+    assert(packed.extension_map_flags == 0);
+    assert(packed.specular_color_weight.w == 0);
 }

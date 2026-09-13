@@ -131,6 +131,19 @@ fn void write_material_block(char[] block, Material* material, MaterialBindings 
                     map_bit: shader::PHYSICAL_MAP_SHEEN_ROUGHNESS,
                 );
             }
+            uint extension_map_flags;
+            if (params.specular > 0) {
+                extension_map_flags = texture_map_flags(
+                    slot: params.specular_map,
+                    binding: bindings.specular,
+                    map_bit: shader::PHYSICAL_EXTENSION_MAP_SPECULAR,
+                );
+                extension_map_flags |= texture_map_flags(
+                    slot: params.specular_color_map,
+                    binding: bindings.specular_color,
+                    map_bit: shader::PHYSICAL_EXTENSION_MAP_SPECULAR_COLOR,
+                );
+            }
             *(PhysicalMaterialGpu*)block.ptr = {
                 .standard = pack_standard_material(
                     kind: material.kind,
@@ -164,6 +177,19 @@ fn void write_material_block(char[] block, Material* material, MaterialBindings 
                 .sheen_roughness_map = pack_texture_map(
                     slot: params.sheen_roughness_map,
                     binding: bindings.sheen_roughness,
+                ),
+                .specular_color_weight = {
+                    params.specular_color.r, params.specular_color.g, params.specular_color.b, params.specular,
+                },
+                .ior = params.ior,
+                .extension_map_flags = extension_map_flags,
+                .specular_map = pack_texture_map(
+                    slot: params.specular_map,
+                    binding: bindings.specular,
+                ),
+                .specular_color_map = pack_texture_map(
+                    slot: params.specular_color_map,
+                    binding: bindings.specular_color,
                 ),
             };
         case TOON:
@@ -289,6 +315,10 @@ fn MaterialBindings? resolve_material_bindings(Renderer* renderer, Material* mat
             if (material_uses_sheen(material)) {
                 bindings.sheen_color = resolve_texture_slot(renderer, params.sheen_color_map)!;
                 bindings.sheen_roughness = resolve_texture_slot(renderer, params.sheen_roughness_map)!;
+            }
+            if (params.specular > 0) {
+                bindings.specular = resolve_texture_slot(renderer, params.specular_map)!;
+                bindings.specular_color = resolve_texture_slot(renderer, params.specular_color_map)!;
             }
             return bindings;
         case TOON:

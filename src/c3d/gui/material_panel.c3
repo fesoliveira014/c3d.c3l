@@ -61,6 +61,25 @@ fn void? material_panel(AssetStore* assets, MaterialId material) {
                 minimum: 0,
                 maximum: 1,
             );
+            imgui::separator_text("Specular");
+            changed |= edit_material_factor(
+                label: "Index of refraction",
+                value: &record.data.physical.ior,
+                minimum: 1,
+                maximum: float::max,
+            );
+            changed |= edit_material_factor(
+                label: "Specular weight",
+                value: &record.data.physical.specular,
+                minimum: 0,
+                maximum: 1,
+            );
+            changed |= edit_material_color(
+                label: "Specular color",
+                value: (float*)&record.data.physical.specular_color,
+                channels: 3,
+                hdr_rgb: true,
+            );
         case TOON:
             changed |= edit_material_color("Color", (float*)&record.data.toon.color, 4);
             changed |= edit_material_steps(&record.data.toon.steps);
