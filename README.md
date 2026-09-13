@@ -43,7 +43,7 @@ git submodule update --init --recursive
 ## Native dependencies
 
 VMA native archives are fetched for its pinned release; spvreflect.c3l carries prebuilt
-artifacts. c3imgui.c3l v0.1.1 downloads its
+artifacts. c3imgui.c3l v0.1.2 downloads its
 Linux/Windows archives from release assets and verifies their checksums. box3d is built from
 its vendored sources, and SDL3 comes from source because Ubuntu 24.04 does not package it.
 
@@ -77,19 +77,42 @@ without extra link arguments; a private prefix needs a `-L` in `examples/project
 
 ### Windows
 
-Install Visual Studio with the C++ desktop tools, CMake, Ninja, and Git for Windows. The native
-Box3D build uses Git Bash and locates MSVC through `vswhere`. From PowerShell, make Git's shell
-available for the current process before initializing dependencies:
+Prerequisites: Visual Studio 2022 with the C++ desktop workload, CMake, Ninja, Git for Windows,
+the Vulkan SDK (`glslangValidator` and the loader), Python 3.10 or newer, and c3c 0.8.3 on PATH.
+c3c compiles `csrc/stb_image.c` itself; no separate C compiler setting is needed.
+
+Clone under a short path with symlinks enabled. `lib/c3d.c3l` is a symlink the projects resolve
+through, and Git only creates it as a real link when Developer Mode is on or the shell is elevated:
+
+```powershell
+git clone -c core.symlinks=true --recurse-submodules https://github.com/fesoliveira014/c3d.c3l C:\repos\c3d.c3l
+cd C:\repos\c3d.c3l
+```
+
+The Box3D build runs under Git Bash and locates MSVC through `vswhere`, so put Git's `bin`
+directory on PATH for the session before initializing dependencies:
 
 ```powershell
 $env:PATH = 'C:\Program Files\Git\bin;' + $env:PATH
-python scripts/build.py --init-deps --test
+python scripts\build.py --init-deps --skip-abi --skip-shaders --skip-build
+python scripts\build.py --test
+c3c run cube --path examples
 ```
 
-Box3D produces `lib/box3d.c3l/linked-libs/windows-x64/box3d.lib`. Windows consumers use
-`"wincrt": "static"` to match that archive; the c3d manifest and bundled projects select it.
-The pinned SDL3 binding ships its Windows library, so the Linux SDL3 installation steps above
-do not apply. Keep `glslangValidator` from the Vulkan SDK on PATH.
+`--init-deps` fetches the VMA and ImGui archives with checksums and builds
+`lib/box3d.c3l/linked-libs/windows-x64/box3d.lib` with MSVC. Every Windows archive is built
+against the static CRT, and the c3d manifest and bundled projects declare `"wincrt": "static"`
+to match; a consumer on the dynamic CRT fails at link with
+`lld-link: error: /failifmismatch: mismatch detected for 'RuntimeLibrary'`.
+
+No `SDL3.dll` is deployed: the static SDL3 inside the ImGui package is what the linker resolves.
+The Vulkan loader `vulkan-1.dll`, installed by GPU drivers and the SDK, is required at process
+start by every example and by the test binary. Third-party Vulkan layers with broken manifests
+print `loader_get_json` errors at startup; they are harmless.
+
+Half-precision conversions do not link on Windows with c3c 0.8.3, so the library converts
+`RGBA16_FLOAT` texels in software; see the
+[issue record](https://app.notion.com/p/3dacb7903a588141bbb2f208b0f8cccd). No user action is needed.
 
 ## Build, test, run
 

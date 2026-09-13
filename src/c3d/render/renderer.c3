@@ -606,7 +606,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         gpu::SwapchainDesc swapchain_desc = {
             .width            = desc.output_width,
             .height           = desc.output_height,
-            .preferred_format = gpu::Format.BGRA8_UNORM,
+            .preferred_format = gpu::Format.BGRA8_SRGB,
             .present_mode     = desc.present_mode,
             .srgb             = true,
             .debug_name       = "window_output",

@@ -11,6 +11,7 @@ permissions:
 env:
   C3C_VERSION: "0.8.3"
   SDL3_TAG: "release-3.4.16"
+  VULKAN_SDK_VERSION: "1.4.357.0"
 
 jobs:
   linux:
@@ -99,7 +100,92 @@ jobs:
         run: python3 lib/gpu.c3l/scripts/fetch_vma_libs.py
 
       - name: Fetch ImGui native archives
-        run: bash lib/c3imgui.c3l/fetch_linked_libs.sh v0.1.1
+        run: bash lib/c3imgui.c3l/fetch_linked_libs.sh v0.1.2
 
       - name: Build and test
         run: python3 scripts/build.py --test
+
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Keep canonical line endings
+        run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Cache toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/tools/c3
+            ~/tools/VulkanSDK
+            ~/tools/VulkanRT
+          key: win-tools-${{ env.C3C_VERSION }}-${{ env.VULKAN_SDK_VERSION }}
+
+      - name: Install c3c
+        run: |
+          if [ ! -f ~/tools/c3/c3c.exe ]; then
+            mkdir -p ~/tools
+            curl -fsSL -o /tmp/c3.zip \
+              "https://github.com/c3lang/c3c/releases/download/v${C3C_VERSION}/c3-windows.zip"
+            unzip -q /tmp/c3.zip -d ~/tools
+          fi
+          # fetch-sdk stores the MSVC link libraries under AppData; c3c looks beside its own binary.
+          if [ ! -d ~/tools/c3/msvc_sdk ]; then
+            echo Y | ~/tools/c3/c3c.exe fetch-sdk windows
+            cp -r ~/AppData/Local/c3/msvc_sdk ~/tools/c3/msvc_sdk
+          fi
+          echo "$HOME/tools/c3" >> "$GITHUB_PATH"
+
+      - name: Install Vulkan SDK
+        run: |
+          if [ ! -d ~/tools/VulkanSDK/Include ]; then
+            curl -fsSL -o /tmp/vulkan-sdk.exe \
+              "https://sdk.lunarg.com/sdk/download/${VULKAN_SDK_VERSION}/windows/vulkan_sdk.exe"
+            /tmp/vulkan-sdk.exe --root "$(cygpath -w "$HOME/tools/VulkanSDK")" \
+              --accept-licenses --default-answer --confirm-command install
+          fi
+          echo "$HOME/tools/VulkanSDK/Bin" >> "$GITHUB_PATH"
+
+      # Every c3d executable imports vulkan-1.dll at process start, the test binary included.
+      - name: Install Vulkan runtime
+        run: |
+          if [ ! -f ~/tools/VulkanRT/x64/vulkan-1.dll ]; then
+            curl -fsSL -o /tmp/vulkanrt.zip \
+              "https://sdk.lunarg.com/sdk/download/${VULKAN_SDK_VERSION}/windows/VulkanRT-X64-${VULKAN_SDK_VERSION}-Components.zip"
+            mkdir -p ~/tools/VulkanRT/x64
+            unzip -q -j /tmp/vulkanrt.zip -d ~/tools/VulkanRT/x64 "*/x64/vulkan-1.dll" \
+              || unzip -q /tmp/vulkanrt.zip -d ~/tools/VulkanRT
+            find ~/tools/VulkanRT -iname vulkan-1.dll
+          fi
+          cygpath -w "$(dirname "$(find ~/tools/VulkanRT -iname vulkan-1.dll | head -1)")" >> "$GITHUB_PATH"
+
+      - name: Resolve box3d pin
+        id: box3d
+        run: echo "sha=$(git rev-parse HEAD:lib/box3d.c3l)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache box3d
+        id: cache-box3d
+        uses: actions/cache@v4
+        with:
+          path: lib/box3d.c3l/linked-libs/windows-x64
+          key: box3d-windows-${{ steps.box3d.outputs.sha }}
+
+      - name: Build box3d
+        if: steps.cache-box3d.outputs.cache-hit != 'true'
+        run: python scripts/build.py --init-deps --skip-abi --skip-shaders --skip-build
+
+      - name: Fetch VMA native archives
+        run: python lib/gpu.c3l/scripts/fetch_vma_libs.py
+
+      - name: Fetch ImGui native archives
+        run: bash lib/c3imgui.c3l/fetch_linked_libs.sh v0.1.2
+
+      - name: Build and test
+        run: python scripts/build.py --test

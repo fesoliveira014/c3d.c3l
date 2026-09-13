@@ -61,8 +61,8 @@ fn void test_float_mips_keep_values_above_one() @test {
 }
 
 fn void test_half_float_mips_keep_native_storage() @test {
-    float16[8] pixels = { -2, 4, 6, 1, -4, 8, 12, 1 };
-    char[] bytes = ((char*)&pixels[0])[:pixels.len * float16::size];
+    ushort[8] pixels = { 0xC000, 0x4400, 0x4600, 0x3C00, 0xC400, 0x4800, 0x4A00, 0x3C00 };
+    char[] bytes = ((char*)&pixels[0])[:pixels.len * ushort::size];
     TextureMipChain chain = render::create_texture_mips(
         allocator: mem,
         desc: material::texture_2d_desc(2, 1, RGBA16_FLOAT),
@@ -70,8 +70,23 @@ fn void test_half_float_mips_keep_native_storage() @test {
     )!!;
     defer render::destroy_texture_mips(&chain);
 
-    float16[] tail = ((float16*)(chain.pixels.ptr + chain.offsets[1]))[:4];
-    float16[4] expected = { -3, 6, 9, 1 };
+    ushort[] tail = ((ushort*)(chain.pixels.ptr + chain.offsets[1]))[:4];
+    ushort[4] expected = { 0xC200, 0x4600, 0x4880, 0x3C00 };
+    assert(tail == expected[..]);
+}
+
+fn void test_half_float_mips_round_to_nearest_even() @test {
+    ushort[8] pixels = { 0x3C00, 0x3C01, 0x0001, 0xC000, 0x3C01, 0x3C02, 0x0003, 0x4000 };
+    char[] bytes = ((char*)&pixels[0])[:pixels.len * ushort::size];
+    TextureMipChain chain = render::create_texture_mips(
+        allocator: mem,
+        desc: material::texture_2d_desc(2, 1, RGBA16_FLOAT),
+        pixels: bytes,
+    )!!;
+    defer render::destroy_texture_mips(&chain);
+
+    ushort[] tail = ((ushort*)(chain.pixels.ptr + chain.offsets[1]))[:4];
+    ushort[4] expected = { 0x3C00, 0x3C02, 0x0002, 0x0000 };
     assert(tail == expected[..]);
 }
 
