@@ -1,0 +1,8 @@
+* text=auto eol=lf
+*.a binary
+*.lib binary
+*.dll binary
+*.spv binary
+*.png binary
+*.jpg binary
+*.hdr binary

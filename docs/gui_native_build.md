@@ -1,6 +1,6 @@
 # Building the GUI native archive
 
-The c3imgui.c3l v0.1.1 release supplies prebuilt native archives. Its Linux archive references
+The c3imgui.c3l v0.1.2 release supplies prebuilt native archives. Its Linux archive references
 `__isoc23_sscanf`; linking it on Ubuntu 22.04 with glibc 2.35 fails because that symbol is
 absent. Building the matching native source on that host provides a compatible archive.
 
@@ -11,7 +11,7 @@ installed in its own environment; c3d's build scripts remain standard-library-on
 From the c3d root:
 
 ```bash
-git clone --branch v0.1.1 --recurse-submodules \
+git clone --branch v0.1.2 --recurse-submodules \
     https://github.com/fesoliveira014/c3imgui-build.git .deps/c3imgui-build
 bash .deps/c3imgui-build/scripts/bootstrap.sh
 bash .deps/c3imgui-build/scripts/generate.sh

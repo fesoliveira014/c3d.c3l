@@ -30,6 +30,7 @@ EXAMPLES = ROOT / "examples"
 TEST = ROOT / "test"
 
 REQUIRED_C3C_VERSION = "0.8.3"
+C3IMGUI_RELEASE_TAG = "v0.1.2"
 SUBMODULES = ("gpu.c3l", "sdl3.c3l", "c3imgui.c3l", "c3cg.c3l", "box3d.c3l")
 NATIVE_BUILD_SCRIPTS = ("scripts/build-box3d.sh",)
 
@@ -68,6 +69,16 @@ def run(command: list[str], cwd: Path, verbose: bool) -> None:
     result = subprocess.run(command, cwd=cwd)
     if result.returncode != 0:
         raise BuildError(f"command failed ({result.returncode}): {' '.join(command)}")
+
+
+# CreateProcess searches System32 before PATH for a bare name, so "bash" is WSL's bash.exe on any
+# Windows host with WSL; an absolute path from PATH order bypasses that lookup.
+def shell(name: str) -> str:
+    path = shutil.which(name)
+    if path is None:
+        hint = " (install Git for Windows and put its bin directory on PATH)" if sys.platform == "win32" else ""
+        raise BuildError(f"'{name}' not found on PATH{hint}")
+    return path
 
 
 def capture(command: list[str], cwd: Path) -> str:
@@ -131,12 +142,12 @@ def step_deps(options: Options) -> None:
         run(["git", "submodule", "update", "--init", "--recursive"], ROOT, options.verbose)
         run([sys.executable, str(LIB / "gpu.c3l" / "scripts" / "fetch_vma_libs.py")], ROOT, options.verbose)
         fetch = LIB / "c3imgui.c3l" / "fetch_linked_libs.sh"
-        run(["bash", str(fetch), "v0.1.1"], ROOT, options.verbose)
+        run([shell("bash"), str(fetch), C3IMGUI_RELEASE_TAG], ROOT, options.verbose)
         for name in SUBMODULES:
             for script_name in NATIVE_BUILD_SCRIPTS:
                 script = LIB / name / script_name
                 if script.exists():
-                    run(["sh", str(script)], script.parent, options.verbose)
+                    run([shell("sh"), str(script)], script.parent, options.verbose)
 
     missing = [name for name in SUBMODULES if not (LIB / name / "manifest.json").exists()]
     if missing:

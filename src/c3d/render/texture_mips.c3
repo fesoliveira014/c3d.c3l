@@ -18,6 +18,24 @@ const double SRGB_LINEAR_SCALE @local = 12.92;
 const double SRGB_OFFSET @local = 0.055;
 const double SRGB_SCALE @local = 1.055;
 const double SRGB_EXPONENT @local = 2.4;
+const ushort HALF_SIGN_MASK @local = 0x8000;
+const uint HALF_MANTISSA_BITS @local = 10;
+const ushort HALF_MANTISSA_MASK @local = 0x3ff;
+const uint HALF_EXPONENT_MASK @local = 0x1f;
+const ushort HALF_INFINITY @local = 0x7c00;
+const ushort HALF_QUIET_NAN @local = 0x7e00;
+const float HALF_SUBNORMAL_UNIT @local = 1.0f / 16777216.0f; // 2^-24, the lowest half mantissa bit
+const uint HALF_TO_FLOAT_BIAS @local = 112; // float bias 127 minus half bias 15
+const uint FLOAT_SIGN_MASK @local = 0x80000000;
+const uint FLOAT_EXPONENT_MASK @local = 0x7f800000;
+const uint FLOAT_MANTISSA_MASK @local = 0x007fffff;
+const uint FLOAT_HIDDEN_BIT @local = 0x00800000;
+const uint FLOAT_HALF_OVERFLOW @local = 0x477ff000; // 65520, the first float that rounds to half infinity
+const uint FLOAT_HALF_MIN_NORMAL @local = 0x38800000; // 2^-14, the smallest normal half
+const uint FLOAT_HALF_UNDERFLOW @local = 0x33000000; // 2^-25, half of the smallest subnormal half
+const uint HALF_SUBNORMAL_SHIFT_BASE @local = 113; // biased float exponent of 2^-14
+const uint HALF_ROUND_BIAS @local = 0xfff; // round-to-nearest bias for the 13 dropped mantissa bits
+const uint FLOAT_HALF_EXPONENT_OFFSET @local = 0x38000000; // (127 - 15) << 23
 
 <*
  One owned mip-major chain of tightly packed texture layers.
@@ -168,7 +186,11 @@ macro TextureMipChain? create_typed_texture_mips(
                               - math::max(left, (double)source_x);
                             usz source_base = ((usz)source_y * width + source_x) * RGBA_CHANNELS;
                             for (uint channel = 0; channel < RGBA_CHANNELS; channel++) {
-                                double value = (double)source[source_base + channel];
+                                $if $Scalar == float16:
+                                    double value = (double)half_to_float(bitcast(source[source_base + channel], ushort));
+                                $else
+                                    double value = (double)source[source_base + channel];
+                                $endif
                                 $if $srgb:
                                     if (channel < RGB_CHANNELS) value = decode_srgb(value / UNORM_MAX) * UNORM_MAX;
                                 $endif
@@ -186,7 +208,11 @@ macro TextureMipChain? create_typed_texture_mips(
                         $if $Scalar == char:
                             value = math::clamp(math::round(value), 0.0, UNORM_MAX);
                         $endif
-                        destination[destination_base + channel] = ($Scalar)value;
+                        $if $Scalar == float16:
+                            destination[destination_base + channel] = bitcast(float_to_half((float)value), float16);
+                        $else
+                            destination[destination_base + channel] = ($Scalar)value;
+                        $endif
                     }
                 }
             }
@@ -206,4 +232,37 @@ fn double encode_srgb(double linear) @local {
     return linear <= SRGB_LINEAR_THRESHOLD
       ? linear * SRGB_LINEAR_SCALE
       : SRGB_SCALE * math::pow(linear, 1.0 / SRGB_EXPONENT) - SRGB_OFFSET;
+}
+
+// c3c 0.8.3 ships no half-precision compiler-rt builtins on windows-x64, so no float16 cast may reach the linker.
+fn float half_to_float(ushort bits) @local {
+    uint sign = (uint)(bits & HALF_SIGN_MASK) << 16;
+    uint exponent = (bits >> HALF_MANTISSA_BITS) & HALF_EXPONENT_MASK;
+    uint mantissa = bits & HALF_MANTISSA_MASK;
+    if (exponent == 0) {
+        float magnitude = (float)mantissa * HALF_SUBNORMAL_UNIT;
+        return bitcast(sign | bitcast(magnitude, uint), float);
+    }
+    if (exponent == HALF_EXPONENT_MASK) return bitcast(sign | FLOAT_EXPONENT_MASK | (mantissa << 13), float);
+    return bitcast(sign | ((exponent + HALF_TO_FLOAT_BIAS) << 23) | (mantissa << 13), float);
+}
+
+fn ushort float_to_half(float value) @local {
+    uint bits = bitcast(value, uint);
+    uint sign = (bits >> 16) & HALF_SIGN_MASK;
+    uint magnitude = bits & ~FLOAT_SIGN_MASK;
+    if (magnitude > FLOAT_EXPONENT_MASK) return (ushort)(sign | HALF_QUIET_NAN);
+    if (magnitude >= FLOAT_HALF_OVERFLOW) return (ushort)(sign | HALF_INFINITY);
+    if (magnitude < FLOAT_HALF_UNDERFLOW) return (ushort)sign;
+    if (magnitude < FLOAT_HALF_MIN_NORMAL) {
+        uint shift = HALF_SUBNORMAL_SHIFT_BASE - (magnitude >> 23);
+        uint mantissa = (magnitude & FLOAT_MANTISSA_MASK) | FLOAT_HIDDEN_BIT;
+        uint half_mantissa = mantissa >> (shift + 13);
+        uint remainder = mantissa & ((1u << (shift + 13)) - 1);
+        uint halfway = 1u << (shift + 12);
+        if (remainder > halfway || (remainder == halfway && (half_mantissa & 1))) half_mantissa++;
+        return (ushort)(sign | half_mantissa);
+    }
+    uint rounded = magnitude + HALF_ROUND_BIAS + ((magnitude >> 13) & 1);
+    return (ushort)(sign | ((rounded - FLOAT_HALF_EXPONENT_OFFSET) >> 13));
 }
