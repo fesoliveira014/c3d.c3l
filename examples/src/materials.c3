@@ -43,6 +43,19 @@ const ZString[ANISOTROPY_SPHERES] ANISOTROPY_SURFACE_LABELS @local = {
     "Isotropic##surface", "Rotation 0##surface", "Rotation pi/4##surface",
     "Rotation pi/2##surface", "Mapped direction##surface",
 };
+const usz TRANSMISSION_SURFACES @local = 4; // Thin, thick tinted, blended and one behind another.
+const usz TRANSMISSION_PROPS @local = 4; // Checker backdrop and three opaque spheres seen through glass.
+const String[TRANSMISSION_SURFACES] TRANSMISSION_MATERIAL_KEYS @local = {
+    "material/materials/transmission_thin", "material/materials/transmission_thick",
+    "material/materials/transmission_blend", "material/materials/transmission_behind",
+};
+const String[TRANSMISSION_SURFACES] TRANSMISSION_NODE_NAMES @local = {
+    "transmission_thin", "transmission_thick", "transmission_blend", "transmission_behind",
+};
+const ZString[TRANSMISSION_SURFACES] TRANSMISSION_SURFACE_LABELS @local = {
+    "Thin glass##surface", "Thick tinted glass##surface", "Blended glass##surface",
+    "Glass behind glass##surface",
+};
 const String[SPECULAR_SPHERES] SPECULAR_MATERIAL_KEYS @local = {
     "material/materials/specular_ior_1_0", "material/materials/specular_ior_1_5",
     "material/materials/specular_ior_2_4", "material/materials/specular_weight_0",
@@ -73,6 +86,7 @@ enum MaterialPreset @local {
     PHYSICAL_LAYERS,
     PHYSICAL_SPECULAR,
     PHYSICAL_ANISOTROPY,
+    PHYSICAL_TRANSMISSION,
 }
 
 enum EnvironmentChoice @local {
@@ -90,6 +104,8 @@ enum PhysicalMap @local {
     SPECULAR,
     SPECULAR_COLOR,
     ANISOTROPY,
+    TRANSMISSION,
+    THICKNESS,
 }
 
 struct PhysicalMapFixture @local {
@@ -116,6 +132,8 @@ struct ExampleTextures @local {
     TextureId specular;
     TextureId specular_color;
     TextureId anisotropy;
+    TextureId transmission;
+    TextureId thickness;
 }
 
 struct ExampleEnvironments @local {
@@ -137,6 +155,7 @@ struct ExampleMaterials @local {
     MaterialId combined;
     MaterialId[SPECULAR_SPHERES] specular;
     MaterialId[ANISOTROPY_SPHERES] anisotropy;
+    MaterialId[TRANSMISSION_SURFACES] transmission;
 }
 
 struct ExampleNodes @local {
@@ -156,6 +175,8 @@ struct ExampleNodes @local {
     Node* combined;
     Node*[SPECULAR_SPHERES] specular;
     Node*[ANISOTROPY_SPHERES] anisotropy;
+    Node*[TRANSMISSION_SURFACES] transmission;
+    Node*[TRANSMISSION_PROPS] transmission_props;
 }
 
 struct Controls @local {
@@ -353,6 +374,24 @@ fn PhysicalMapFixture[PhysicalMap::len] physical_map_fixtures(ExampleTextures te
                 uv_set: 0,
             ),
         },
+        [PhysicalMap.TRANSMISSION.ordinal] = {
+            .label = "Transmission R##physical_transmission",
+            .slot = material::texture_slot(
+                texture: textures.transmission,
+                sampler: asset::SAMPLER_NEAREST,
+                uv_set: 0,
+                transform: { .scale = { 2, 2 } },
+            ),
+        },
+        [PhysicalMap.THICKNESS.ordinal] = {
+            .label = "Thickness G##physical_thickness",
+            .slot = material::texture_slot(
+                texture: textures.thickness,
+                sampler: asset::SAMPLER_LINEAR_REPEAT,
+                uv_set: 1,
+                transform: { .scale = { 1, 2 } },
+            ),
+        },
     };
 }
 
@@ -444,6 +483,7 @@ fn void select_preset(
     bool physical = preset == PHYSICAL_LAYERS;
     bool specular = preset == PHYSICAL_SPECULAR;
     bool anisotropy = preset == PHYSICAL_ANISOTROPY;
+    bool transmission = preset == PHYSICAL_TRANSMISSION;
 
     nodes.mask_ground.visible = masked;
     nodes.leaf_first.visible = masked;
@@ -461,6 +501,8 @@ fn void select_preset(
     nodes.combined.visible = physical;
     foreach (node : nodes.specular) node.visible = specular;
     foreach (node : nodes.anisotropy) node.visible = anisotropy;
+    foreach (node : nodes.transmission) node.visible = transmission;
+    foreach (node : nodes.transmission_props) node.visible = transmission;
 
     controls.preset = preset;
     switch (preset) {
@@ -470,6 +512,7 @@ fn void select_preset(
         case PHYSICAL_LAYERS: controls.selected_material = materials.coated_paint;
         case PHYSICAL_SPECULAR: controls.selected_material = materials.specular[1];
         case PHYSICAL_ANISOTROPY: controls.selected_material = materials.anisotropy[1];
+        case PHYSICAL_TRANSMISSION: controls.selected_material = materials.transmission[1];
     }
 }
 
@@ -522,6 +565,14 @@ fn void preset_controls(
     if (imgui::radio_button("Physical anisotropy", controls.preset == PHYSICAL_ANISOTROPY)) {
         select_preset(
             preset: PHYSICAL_ANISOTROPY,
+            materials: materials,
+            nodes: nodes,
+            controls: controls,
+        );
+    }
+    if (imgui::radio_button("Physical transmission", controls.preset == PHYSICAL_TRANSMISSION)) {
+        select_preset(
+            preset: PHYSICAL_TRANSMISSION,
             materials: materials,
             nodes: nodes,
             controls: controls,
@@ -614,6 +665,16 @@ fn void preset_controls(
             foreach (index, material_id : materials.anisotropy) {
                 if (imgui::radio_button(
                     ANISOTROPY_SURFACE_LABELS[index],
+                    same_material_id(controls.selected_material, material_id),
+                )) {
+                    controls.selected_material = material_id;
+                }
+            }
+        case PHYSICAL_TRANSMISSION:
+            imgui::text_unformatted("Glass sees only the opaque scene behind it");
+            foreach (index, material_id : materials.transmission) {
+                if (imgui::radio_button(
+                    TRANSMISSION_SURFACE_LABELS[index],
                     same_material_id(controls.selected_material, material_id),
                 )) {
                     controls.selected_material = material_id;
@@ -713,6 +774,8 @@ fn void physical_texture_controls(
         [PhysicalMap.SPECULAR.ordinal] = &params.specular_map,
         [PhysicalMap.SPECULAR_COLOR.ordinal] = &params.specular_color_map,
         [PhysicalMap.ANISOTROPY.ordinal] = &params.anisotropy_map,
+        [PhysicalMap.TRANSMISSION.ordinal] = &params.transmission_map,
+        [PhysicalMap.THICKNESS.ordinal] = &params.thickness_map,
     };
     foreach (index, fixture : fixtures) {
         changed |= edit_map_toggle(fixture.label, slots[index], fixture.slot);
@@ -960,6 +1023,8 @@ fn ExampleTextures? create_example_textures(AssetStore* assets) @local {
     char[PHYSICAL_TEXTURE_SIZE * PHYSICAL_TEXTURE_SIZE * RGBA8_BYTES] specular_pixels;
     char[PHYSICAL_TEXTURE_SIZE * PHYSICAL_TEXTURE_SIZE * RGBA8_BYTES] specular_color_pixels;
     char[PHYSICAL_TEXTURE_SIZE * PHYSICAL_TEXTURE_SIZE * RGBA8_BYTES] anisotropy_pixels;
+    char[PHYSICAL_TEXTURE_SIZE * PHYSICAL_TEXTURE_SIZE * RGBA8_BYTES] transmission_pixels;
+    char[PHYSICAL_TEXTURE_SIZE * PHYSICAL_TEXTURE_SIZE * RGBA8_BYTES] thickness_pixels;
 
     for (uint y = 0; y < PHYSICAL_TEXTURE_SIZE; y++) {
         for (uint x = 0; x < PHYSICAL_TEXTURE_SIZE; x++) {
@@ -1022,6 +1087,18 @@ fn ExampleTextures? create_example_textures(AssetStore* assets) @local {
             anisotropy_pixels[offset + 1] = (char)(127.5f + 127.5f * math::sin(direction_angle));
             anisotropy_pixels[offset + 2] = 255;
             anisotropy_pixels[offset + 3] = 255;
+
+            // Column stripes in R; other channels are unrelated.
+            transmission_pixels[offset] = x % 2 == 0 ? 255 : 64;
+            transmission_pixels[offset + 1] = 90;
+            transmission_pixels[offset + 2] = 160;
+            transmission_pixels[offset + 3] = 255;
+
+            // Vertical thickness gradient in G; other channels are unrelated.
+            thickness_pixels[offset] = 200;
+            thickness_pixels[offset + 1] = (char)(30 + (225 * y) / (PHYSICAL_TEXTURE_SIZE - 1));
+            thickness_pixels[offset + 2] = 40;
+            thickness_pixels[offset + 3] = 255;
         }
     }
 
@@ -1117,6 +1194,26 @@ fn ExampleTextures? create_example_textures(AssetStore* assets) @local {
             ),
             pixels: anisotropy_pixels[..],
             key: "texture/materials/anisotropy",
+        )!,
+        .transmission = assets.add_texture(
+            desc: material::texture_2d_desc(
+                width: PHYSICAL_TEXTURE_SIZE,
+                height: PHYSICAL_TEXTURE_SIZE,
+                format: RGBA8_UNORM,
+                debug_name: "materials_transmission",
+            ),
+            pixels: transmission_pixels[..],
+            key: "texture/materials/transmission",
+        )!,
+        .thickness = assets.add_texture(
+            desc: material::texture_2d_desc(
+                width: PHYSICAL_TEXTURE_SIZE,
+                height: PHYSICAL_TEXTURE_SIZE,
+                format: RGBA8_UNORM,
+                debug_name: "materials_thickness",
+            ),
+            pixels: thickness_pixels[..],
+            key: "texture/materials/thickness",
         )!,
     };
     return textures;
@@ -1247,7 +1344,32 @@ fn ExampleMaterials create_materials(
             ANISOTROPY_MATERIAL_KEYS[index],
         )!!;
     }
+    foreach (usz index, &material_id : materials.transmission) {
+        *material_id = assets.add_material(transmission_material(index), TRANSMISSION_MATERIAL_KEYS[index])!!;
+    }
     return materials;
+}
+
+fn Material transmission_material(usz index) @local {
+    PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
+    params.standard.metallic = 0;
+    params.standard.roughness = 0.05f;
+    params.transmission = 1;
+    MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
+    switch (index) {
+        case 1:
+            params.thickness = 1;
+            params.attenuation_distance = 1;
+            params.attenuation_color = { 0.9f, 0.5f, 0.3f };
+        case 2:
+            params.standard.base_color = { 0.8f, 0.9f, 1, 0.6f };
+            common.alpha_mode = BLEND;
+            common.double_sided = true;
+        case 3:
+            params.standard.base_color = { 0.6f, 1, 0.7f, 1 };
+            params.thickness = 0.5f;
+    }
+    return material::physical(params, common);
 }
 
 fn PhysicalParams anisotropy_params(usz index, TextureSlot direction_map) @local {
@@ -1388,6 +1510,43 @@ fn ExampleNodes create_fixtures(
         node.local.position = { column * 1.6f, index < 3 ? 1.8f : 0, 0 };
         nodes.anisotropy[index] = node;
     }
+
+    MaterialId backdrop_material = assets.add_material(material::basic({
+        .color = { 1, 1, 1, 1 },
+        .map = material::texture_slot(
+            texture: asset::TEXTURE_CHECKER,
+            sampler: asset::SAMPLER_NEAREST,
+            uv_set: 0,
+            transform: { .scale = { 6, 4 } },
+        ),
+    }), "material/materials/transmission_backdrop")!!;
+    Node* backdrop = scene.add_mesh(plane, backdrop_material, name: "transmission_backdrop")!!;
+    backdrop.local.position = { 0, 1, -2.5f };
+    backdrop.local.rotation = quaternion::from_axis_angle{float}({ 1, 0, 0 }, math::PI / 2);
+    backdrop.local.scale = { 7, 1, 4.5f };
+    nodes.transmission_props[0] = backdrop;
+    Vec4[3] prop_colors = { { 0.85f, 0.15f, 0.1f, 1 }, { 0.1f, 0.6f, 0.2f, 1 }, { 0.15f, 0.3f, 0.9f, 1 } };
+    foreach (index, color : prop_colors) {
+        MaterialId prop_material = assets.add_material(material::standard({
+            .base_color = color,
+            .metallic = 0,
+            .roughness = 0.5f,
+        }))!!;
+        Node* prop = scene.add_mesh(sphere, prop_material, name: "transmission_prop")!!;
+        prop.local.position = { ((float)index - 1) * 1.6f, 0.9f, -1.2f };
+        prop.local.scale = { 0.6f, 0.6f, 0.6f };
+        nodes.transmission_props[index + 1] = prop;
+    }
+    nodes.transmission[0] = scene.add_mesh(sphere, materials.transmission[0], name: TRANSMISSION_NODE_NAMES[0])!!;
+    nodes.transmission[0].local.position = { -1.6f, 0.9f, 1 };
+    nodes.transmission[1] = scene.add_mesh(sphere, materials.transmission[1], name: TRANSMISSION_NODE_NAMES[1])!!;
+    nodes.transmission[1].local.position = { 0, 0.9f, 1 };
+    nodes.transmission[2] = scene.add_mesh(box, materials.transmission[2], name: TRANSMISSION_NODE_NAMES[2])!!;
+    nodes.transmission[2].local.position = { 1.6f, 0.9f, 1 };
+    nodes.transmission[2].local.scale = { 1.2f, 1.8f, 0.3f };
+    nodes.transmission[3] = scene.add_mesh(box, materials.transmission[3], name: TRANSMISSION_NODE_NAMES[3])!!;
+    nodes.transmission[3].local.position = { -1.6f, 0.9f, -0.2f };
+    nodes.transmission[3].local.scale = { 0.5f, 0.5f, 0.5f };
     return nodes;
 }
 

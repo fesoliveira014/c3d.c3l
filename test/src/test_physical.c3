@@ -107,6 +107,7 @@ fn void test_physical_repack_clears_layer_state_after_family_reuse() @test {
     params.clearcoat = 1;
     params.sheen_color = { 1, 1, 1 };
     params.anisotropy = 1;
+    params.transmission = 1;
     Material material = material::physical(params);
     material.common.alpha_mode = AlphaMode.BLEND;
     MaterialBindings bindings = {
@@ -114,6 +115,7 @@ fn void test_physical_repack_clears_layer_state_after_family_reuse() @test {
         .clearcoat_normal = binding(5, 6), .sheen_color = binding(7, 8),
         .sheen_roughness = binding(9, 10), .specular = binding(13, 14),
         .specular_color = binding(15, 16), .anisotropy = binding(17, 18),
+        .transmission = binding(19, 20), .thickness = binding(21, 22),
     };
     char[render::MATERIAL_STRIDE] storage @align(16);
     storage[..] = 0x7f;
@@ -136,11 +138,15 @@ fn void test_physical_repack_clears_layer_state_after_family_reuse() @test {
     assert(packed.specular_color_map.texture_index == (gpu::TextureIndex)0);
     assert(packed.anisotropy == 0 && packed.anisotropy_rotation == 0);
     assert(packed.anisotropy_map.texture_index == (gpu::TextureIndex)0);
+    assert(packed.attenuation_color_distance == (Vec4){ 1, 1, 1, 0 });
+    assert(packed.transmission == 0 && packed.thickness == 0);
+    assert(packed.transmission_map.texture_index == (gpu::TextureIndex)0);
+    assert(packed.thickness_map.texture_index == (gpu::TextureIndex)0);
 }
 
 fn void test_each_physical_binding_participates_in_reuse() @test {
     MaterialBindings first;
-    for (uint slot = 0; slot < 8; slot++) {
+    for (uint slot = 0; slot < 10; slot++) {
         for (uint change = 0; change < 9; change++) {
             MaterialBindings second = first;
             TextureBinding* selected;
@@ -153,6 +159,8 @@ fn void test_each_physical_binding_participates_in_reuse() @test {
                 case 5: selected = &second.specular;
                 case 6: selected = &second.specular_color;
                 case 7: selected = &second.anisotropy;
+                case 8: selected = &second.transmission;
+                case 9: selected = &second.thickness;
                 default: unreachable();
             }
             switch (change) {
@@ -284,12 +292,41 @@ fn void test_disabled_physical_lobes_ignore_present_bindings() @test {
     Material material = material::physical(params);
     MaterialBindings bindings = {
         .specular = binding(1, 2), .specular_color = binding(3, 4), .anisotropy = binding(5, 6),
+        .transmission = binding(7, 8), .thickness = binding(9, 10),
     };
     char[render::MATERIAL_STRIDE] storage @align(16);
     render::write_material_block(storage[..], &material, bindings);
     PhysicalMaterialGpu* packed = (PhysicalMaterialGpu*)&storage;
     assert(packed.extension_map_flags == 0);
-    assert(packed.specular_color_weight.w == 0 && packed.anisotropy == 0);
+    assert(packed.specular_color_weight.w == 0 && packed.anisotropy == 0 && packed.transmission == 0);
+}
+
+fn void test_physical_transmission_packs_volume_factors_and_maps() @test {
+    PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
+    params.transmission = 0.9f;
+    params.thickness = 0.4f;
+    params.attenuation_distance = 2.5f;
+    params.attenuation_color = { 1, 0.5f, 0.25f };
+    params.thickness_map.uv_set = 1;
+    params.transmission_map.transform = { .offset = { 7, 8 }, .scale = { 8, 9 } };
+    params.thickness_map.transform = { .offset = { 9, 10 }, .scale = { 10, 11 } };
+    Material material = material::physical(params);
+    MaterialBindings bindings = { .transmission = binding(7, 8), .thickness = binding(9, 10) };
+    char[render::MATERIAL_STRIDE] storage @align(16);
+    render::write_material_block(storage[..], &material, bindings);
+    PhysicalMaterialGpu* packed = (PhysicalMaterialGpu*)&storage;
+    assert(packed.attenuation_color_distance == (Vec4){ 1, 0.5f, 0.25f, 2.5f });
+    assert(packed.transmission == 0.9f && packed.thickness == 0.4f);
+    uint present = shader::PHYSICAL_EXTENSION_MAP_TRANSMISSION | shader::PHYSICAL_EXTENSION_MAP_THICKNESS;
+    uint alternate_uv = shader::PHYSICAL_EXTENSION_MAP_THICKNESS;
+    assert(packed.extension_map_flags == (present | (alternate_uv << shader::MATERIAL_MAP_UV1_SHIFT)));
+    assert(packed.transmission_map.texture_index == (gpu::TextureIndex)7);
+    assert(packed.transmission_map.uv_offset == (Vec2){ 7, 8 });
+    assert(packed.transmission_map.uv_linear == (Vec4){ 8, 0, 0, 9 });
+    assert(packed.thickness_map.texture_index == (gpu::TextureIndex)9);
+    assert(packed.thickness_map.sampler_index == (gpu::SamplerIndex)10);
+    assert(packed.thickness_map.uv_offset == (Vec2){ 9, 10 });
+    assert(packed.thickness_map.uv_linear == (Vec4){ 10, 0, 0, 11 });
 }
 
 fn void test_physical_anisotropy_packs_rotation_and_map_flag() @test {

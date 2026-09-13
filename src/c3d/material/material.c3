@@ -144,6 +144,13 @@ macro bool @physical_anisotropy_in_range(PhysicalParams #params) @private {
     return @in_unit_interval(#params.anisotropy) && math::is_finite(#params.anisotropy_rotation);
 }
 
+macro bool @physical_volume_in_range(PhysicalParams #params) @private {
+    return @in_unit_interval(#params.transmission)
+        && #params.thickness >= 0 && math::is_finite(#params.thickness)
+        && #params.attenuation_distance >= 0 && math::is_finite(#params.attenuation_distance)
+        && @rgb_in_unit_interval(#params.attenuation_color);
+}
+
 macro bool @standard_params_in_range(StandardParams #params) @private {
     return @rgb_in_unit_interval(#params.base_color) && @in_unit_interval(#params.base_color.a)
         && @in_unit_interval(#params.metallic) && @in_unit_interval(#params.roughness)

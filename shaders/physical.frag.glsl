@@ -169,6 +169,29 @@ void main() {
             );
     }
 
+    float transmission = material.transmission;
+    float thickness = material.thickness;
+    if (transmission > 0.0) {
+        if ((material.extension_map_flags & PHYSICAL_EXTENSION_MAP_TRANSMISSION) != 0u) {
+            transmission = clamp(transmission * sample_map(
+                material.transmission_map,
+                material.extension_map_flags,
+                PHYSICAL_EXTENSION_MAP_TRANSMISSION,
+                v_uv0,
+                v_uv1
+            ).r, 0.0, 1.0);
+        }
+        if ((material.extension_map_flags & PHYSICAL_EXTENSION_MAP_THICKNESS) != 0u) {
+            thickness = max(thickness * sample_map(
+                material.thickness_map,
+                material.extension_map_flags,
+                PHYSICAL_EXTENSION_MAP_THICKNESS,
+                v_uv0,
+                v_uv1
+            ).g, 0.0);
+        }
+    }
+
     // Derivatives and implicit-LOD samples must retain helper lanes across cutouts.
     if ((material.standard.flags & MATERIAL_ALPHA_MASK) != 0u
         && material_sample.base_color.a < material.standard.alpha_cutoff) discard;
@@ -219,15 +242,39 @@ void main() {
         material_sample.view_direction
     );
     surface.coat_roughness = clearcoat_roughness;
+    surface.transmission = transmission;
+    surface.ior = material.ior;
+    surface.transmission_color = material_sample.base_color.rgb * (1.0 - material_sample.metallic);
+    surface.attenuation_color = material.attenuation_color_distance.rgb;
+    surface.attenuation_distance = material.attenuation_color_distance.w;
+    surface.transmission_ray = vec3(0.0);
+    vec3 transmitted = vec3(0.0);
+    if (transmission > 0.0) {
+        vec3 refracted = refract(-material_sample.view_direction, material_sample.normal, 1.0 / material.ior);
+        surface.transmission_ray = transmission_ray(refracted, thickness, draw.model);
+        vec3 radiance = volume_attenuation(
+            transmitted_radiance(frame, v_world_pos, surface.transmission_ray, refracted, material_sample.roughness),
+            length(surface.transmission_ray),
+            surface.attenuation_color,
+            surface.attenuation_distance
+        );
+        vec3 fresnel = fresnel_schlick(
+            surface.standard.reflectance,
+            surface.standard.grazing_reflectance,
+            surface.standard.normal_view
+        );
+        transmitted = (1.0 - fresnel) * radiance * surface.transmission_color;
+    }
 
     vec3 base_ambient = frame.ambient.rgb * material_sample.base_color.rgb
         * (1.0 - material_sample.metallic) * material_sample.occlusion;
+    vec3 base_fill = (1.0 - transmission) * base_ambient + transmission * transmitted;
     vec3 color;
     if (surface.coat_weight == 0.0 && surface.sheen_strength == 0.0) {
-        color = base_ambient + material_sample.emissive;
+        color = base_fill + material_sample.emissive;
     } else {
         color = (1.0 - surface.coat_weight)
-            * (base_ambient * physical_sheen_attenuation(surface)
+            * (base_fill * physical_sheen_attenuation(surface)
                 + material_sample.emissive);
     }
     if (frame.environment != 0ul) {

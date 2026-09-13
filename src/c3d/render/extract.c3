@@ -19,6 +19,15 @@ const uint SORT_KEY_MATERIAL_SHIFT @private = 32;
 const uint SORT_KEY_GEOMETRY_SHIFT @private = 16;
 
 <*
+ Per-view list a material's draws belong to.
+*>
+enum DrawList {
+    OPAQUE,
+    TRANSMISSION,
+    TRANSPARENT,
+}
+
+<*
  Mesh that passed inclusion for one view, with its bounds in world space.
 *>
 struct MeshCandidate {
@@ -60,6 +69,18 @@ fn MeshCandidate[] extract_candidates(Allocator allocator, Scene* scene, AssetSt
         }
     };
     return candidates[:counts.visible];
+}
+
+<*
+ Select the draw list: transmission first, then blend, else opaque.
+ @param [&in] material : "Valid active arm."
+ @pure
+*>
+fn DrawList draw_list(Material* material) {
+    if (material.kind == MaterialKind.PHYSICAL && material.physical.transmission > 0) {
+        return DrawList.TRANSMISSION;
+    }
+    return material.common.alpha_mode == AlphaMode.BLEND ? DrawList.TRANSPARENT : DrawList.OPAQUE;
 }
 
 <*

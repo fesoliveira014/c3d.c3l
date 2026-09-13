@@ -154,3 +154,29 @@ fn void test_extract_depth_is_nearer_for_closer_mesh() @test {
         assert(origin_depth > 0 && closer_depth < 1);
     };
 }
+
+fn void test_draw_list_prefers_transmission_over_blend() @test {
+    PhysicalParams transmissive = material::PHYSICAL_PARAMS_DEFAULT;
+    transmissive.transmission = 0.5f;
+    Material[7] materials = {
+        material::basic(),
+        material::standard(),
+        material::physical(),
+        material::physical(transmissive),
+        material::physical(transmissive),
+        material::physical(transmissive),
+        material::toon(),
+    };
+    materials[1].common.alpha_mode = AlphaMode.BLEND;
+    materials[4].common.alpha_mode = AlphaMode.MASK;
+    materials[5].common.alpha_mode = AlphaMode.BLEND;
+    materials[6].common.alpha_mode = AlphaMode.BLEND;
+    DrawList[7] expected = {
+        DrawList.OPAQUE, DrawList.TRANSPARENT, DrawList.OPAQUE,
+        DrawList.TRANSMISSION, DrawList.TRANSMISSION, DrawList.TRANSMISSION,
+        DrawList.TRANSPARENT,
+    };
+    foreach (index, &material : materials) {
+        assert(render::draw_list(material) == expected[index]);
+    }
+}

@@ -41,6 +41,7 @@ struct DrawState @private {
     gpu::PrimitiveTopology topology;
     bool                   depth_test;
     bool                   depth_write;
+    bool                   blend;
 }
 
 <*
@@ -116,8 +117,20 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
         self.stats.dangling_refs += counts.dangling;
 
         DrawItem[] items = alloc::new_array(tmem, DrawItem, candidates.len);
-        usz opaque_count;
+        usz transmission_count;
         usz transparent_count;
+        foreach (&candidate : candidates) {
+            switch (draw_list(&self.assets.material(candidate.material).data)) {
+                case OPAQUE: break;
+                case TRANSMISSION: transmission_count++;
+                case TRANSPARENT: transparent_count++;
+            }
+        }
+        usz transmission_start = candidates.len - transmission_count - transparent_count;
+        usz transparent_start = candidates.len - transparent_count;
+        usz opaque_count;
+        usz transmission_filled;
+        usz transparent_filled;
         bool sheen;
         foreach (&candidate : candidates) {
             GpuGeometry* geometry = ensure_geometry(self, candidate.geometry)!;
@@ -131,11 +144,10 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
                 line_polygon_mode: self.caps.line_polygon_mode,
             )!;
             usz index;
-            if (material_description.common.alpha_mode == AlphaMode.BLEND) {
-                transparent_count++;
-                index = candidates.len - transparent_count;
-            } else {
-                index = opaque_count++;
+            switch (draw_list(material_description)) {
+                case OPAQUE: index = opaque_count++;
+                case TRANSMISSION: index = transmission_start + transmission_filled++;
+                case TRANSPARENT: index = transparent_start + transparent_filled++;
             }
             bool model_reflected = candidate.node.world.determinant() < 0;
             items[index] = {
@@ -153,9 +165,12 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
             };
         }
         DrawItem[] opaque_items = items[:opaque_count];
-        DrawItem[] transparent_items = items[opaque_count:transparent_count];
+        DrawItem[] transmission_items = items[transmission_start:transmission_count];
+        DrawItem[] transparent_items = items[transparent_start:transparent_count];
         sort::quicksort(opaque_items, &by_sort_key);
+        sort::quicksort(transmission_items, &by_transparent_depth);
         sort::quicksort(transparent_items, &by_transparent_depth);
+        if (transmission_items.len) ensure_scene_color(self)!;
         ViewEnvironments environments = resolve_view_environments(self, scene, sheen)!;
         record_pending_copies(self, &self.commands)!;
 
@@ -225,6 +240,8 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
             shadows:     shadow_address,
             shadow_count: (uint)shadows.len,
             environment: environment_address,
+            scene_color: transmission_items.len ? self.scene_color.view.index : (gpu::TextureIndex)0,
+            scene_sampler: transmission_items.len ? self.linear_clamp_sampler : (gpu::SamplerIndex)0,
         );
         foreach (&item : items) {
             gpu::MappedGpuSpan draw_span = slot.upload.take(&self.device, DrawRoot::size, STREAM_ALIGNMENT)!;
@@ -281,6 +298,25 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
             reset_sky_timing(self)!;
         }
 
+        reset_transmission_timing(self)!;
+        if (transmission_items.len) {
+            write_pass_timestamp(
+                renderer: self,
+                frame_index: self.frame_index,
+                pass: Pass.TRANSMISSION,
+                half: TIMESTAMP_BEGIN,
+            )!;
+            record_scene_color_snapshot(self)!;
+            record_loaded_pass(self, transmission_items)!;
+            write_pass_timestamp(
+                renderer: self,
+                frame_index: self.frame_index,
+                pass: Pass.TRANSMISSION,
+                half: TIMESTAMP_END,
+            )!;
+            slot.timed[Pass.TRANSMISSION.ordinal] = true;
+        }
+
         reset_transparent_timing(self)!;
         if (transparent_items.len) {
             write_pass_timestamp(
@@ -289,7 +325,7 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
                 pass: Pass.FORWARD_TRANSPARENT,
                 half: TIMESTAMP_BEGIN,
             )!;
-            record_transparent_pass(self, transparent_items)!;
+            record_loaded_pass(self, transparent_items)!;
             write_pass_timestamp(
                 renderer: self,
                 frame_index: self.frame_index,
@@ -335,6 +371,7 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
     open_closed_frame_slot(self)!;
     defer catch discard_uploads(self);
     bool sheen;
+    bool transmission;
     bool shadows_enabled;
     @pool() {
         LightCounts counts;
@@ -367,6 +404,7 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
             )!;
             Material* data = &self.assets.material(material.asset).data;
             sheen |= material_uses_sheen(data);
+            transmission |= draw_list(data) == DrawList.TRANSMISSION;
             pipeline_for(self, data)!;
             if (shadows_enabled && mesh.cast_shadow && scene.node(entity).visible_effective
                 && data.common.alpha_mode != AlphaMode.BLEND) {
@@ -374,6 +412,7 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
             }
         }
     };
+    if (transmission) self.pipelines.get(&self.device, snapshot_pipeline_key())!;
     (void)resolve_view_environments(self, scene, sheen)!;
     if (!has_environment_preparations(self) && !self.pending_copies.len()
         && !self.pending_texture_uploads.len() && !self.pending_upload_retire.len()) return;
@@ -400,6 +439,8 @@ fn void write_frame_root(
     gpu::GpuAddress shadows = (gpu::GpuAddress)0,
     uint shadow_count = 0,
     gpu::GpuAddress environment = (gpu::GpuAddress)0,
+    gpu::TextureIndex scene_color = (gpu::TextureIndex)0,
+    gpu::SamplerIndex scene_sampler = (gpu::SamplerIndex)0,
 ) {
     *root = {
         .view            = bitcast(matrices.view, Mat4f),
@@ -416,6 +457,8 @@ fn void write_frame_root(
         .shadows         = shadows,
         .shadow_count    = shadow_count,
         .environment     = environment,
+        .scene_color     = scene_color,
+        .scene_sampler   = scene_sampler,
     };
 }
 
@@ -503,16 +546,45 @@ fn void? record_opaque_pass(Renderer* renderer, DrawItem[] items, Vec4 clear_col
     // Bound before the pass begins: the backend checks the bound pipeline against the pass formats at begin.
     gpu::cmd_bind_pipeline(&renderer.commands, pipeline)!;
     gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
-    record_draws(
-        renderer: renderer,
-        items: items,
-        transparent: false,
-        pipeline: pipeline,
-    )!;
+    record_draws(renderer, items, pipeline)!;
     gpu::cmd_end_render_pass(&renderer.commands)!;
 }
 
-fn void? record_transparent_pass(Renderer* renderer, DrawItem[] items) @private {
+fn void? record_scene_color_snapshot(Renderer* renderer) @private {
+    renderer.hdr_color.transition(&renderer.commands, FRAGMENT_READ_STATE)!;
+    renderer.scene_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
+
+    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, CompositeRoot::size)!;
+    *(CompositeRoot*)root.bytes.ptr = {
+        .source_texture = renderer.hdr_color.view.index,
+        .source_sampler = renderer.linear_clamp_sampler,
+    };
+    gpu::PipelineHandle pipeline = renderer.pipelines.get(&renderer.device, snapshot_pipeline_key())!;
+    record_fullscreen_pass(
+        renderer:      renderer,
+        target:        &renderer.scene_color,
+        pipeline:      pipeline,
+        fragment_root: root.address,
+    )!;
+
+    renderer.scene_color.transition(&renderer.commands, FRAGMENT_READ_STATE)!;
+    renderer.hdr_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
+}
+
+fn PipelineKey snapshot_pipeline_key() @local {
+    return {
+        .vertex        = { .shader = FULLSCREEN },
+        .fragment      = { .shader = COMPOSITE },
+        .color_formats = { [0] = HDR_FORMAT },
+        .color_count   = 1,
+        .depth_format  = gpu::Format.UNDEFINED,
+        .samples       = gpu::SampleCount.ONE,
+        .polygon       = gpu::PolygonMode.FILL,
+    };
+}
+
+fn void? record_loaded_pass(Renderer* renderer, DrawItem[] items) @private {
     uint width = renderer.hdr_color.width;
     uint height = renderer.hdr_color.height;
     gpu::ColorTargetDesc[1] colors = {{
@@ -538,26 +610,14 @@ fn void? record_transparent_pass(Renderer* renderer, DrawItem[] items) @private 
     renderer.hdr_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
     renderer.depth.transition(&renderer.commands, DEPTH_ATTACHMENT_STATE)!;
     gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
-    record_draws(
-        renderer: renderer,
-        items: items,
-        transparent: true,
-        pipeline: pipeline,
-    )!;
+    record_draws(renderer, items, pipeline)!;
     gpu::cmd_end_render_pass(&renderer.commands)!;
 }
 
-fn void? record_draws(
-    Renderer* renderer,
-    DrawItem[] items,
-    bool transparent,
-    gpu::PipelineHandle pipeline,
-) @private {
+fn void? record_draws(Renderer* renderer, DrawItem[] items, gpu::PipelineHandle pipeline) @private {
     uint width = renderer.hdr_color.width;
     uint height = renderer.hdr_color.height;
-    gpu::ColorTargetState[1] color_targets = {
-        transparent ? gpu::premultiplied_alpha_blend() : gpu::color_blend_disabled(),
-    };
+    gpu::ColorTargetState[1] color_targets = { gpu::color_blend_disabled() };
     gpu::GraphicsState state = gpu::render_geometry_state(width, height)!;
     state.viewport = flipped_viewport(width, height);
     state.color.targets = color_targets[..];
@@ -569,20 +629,23 @@ fn void? record_draws(
     foreach (&item : items) {
         Material* material = material_data(renderer, item.material);
         MaterialCommon* common = &material.common;
+        bool blend = common.alpha_mode == AlphaMode.BLEND;
         DrawState wanted = {
             .pipeline = pipeline_for(renderer, material)!,
             .cull = common.double_sided ? gpu::CullMode.NONE : gpu::CullMode.BACK,
             .front_face = item.front_face,
             .topology = primitive_topology(item.geometry.topology),
             .depth_test = common.depth_test,
-            .depth_write = transparent ? false : common.depth_write,
+            .depth_write = blend ? false : common.depth_write,
+            .blend = blend,
         };
         if (wanted.pipeline.index != bound.pipeline.index) {
             gpu::cmd_bind_pipeline(&renderer.commands, wanted.pipeline)!;
         }
         if (!state_set || wanted.cull != bound.cull || wanted.front_face != bound.front_face
             || wanted.topology != bound.topology || wanted.depth_test != bound.depth_test
-            || wanted.depth_write != bound.depth_write) {
+            || wanted.depth_write != bound.depth_write || wanted.blend != bound.blend) {
+            color_targets[0] = wanted.blend ? gpu::premultiplied_alpha_blend() : gpu::color_blend_disabled();
             state.raster.cull_mode = wanted.cull;
             state.raster.front_face = wanted.front_face;
             state.raster.topology = wanted.topology;
@@ -621,6 +684,20 @@ fn void? record_draws(
             renderer.stats.triangles += (layout.index_count ? layout.index_count : layout.vertex_count) / 3;
         }
     }
+}
+
+fn void? reset_transmission_timing(Renderer* renderer) @private {
+    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    if (!slot.timed[Pass.TRANSMISSION.ordinal]) return;
+    if (renderer.timestamps_enabled) {
+        gpu::cmd_reset_timestamps(
+            commands: &renderer.commands,
+            pool: renderer.timestamps,
+            first: pass_timestamp_slot(renderer.frame_index, Pass.TRANSMISSION.ordinal),
+            count: TIMESTAMPS_PER_PASS,
+        )!;
+    }
+    slot.timed[Pass.TRANSMISSION.ordinal] = false;
 }
 
 fn void? reset_transparent_timing(Renderer* renderer) @private {
@@ -724,6 +801,22 @@ fn void? allocate_view_targets(
         usage:      { .depth_attach, .sampled },
         debug_name: "depth",
     )!;
+}
+
+fn void? ensure_scene_color(Renderer* renderer) @private {
+    if (renderer.scene_color.texture.is_valid()) return;
+    renderer.scene_color = allocate_target(
+        device:     &renderer.device,
+        width:      renderer.hdr_color.width,
+        height:     renderer.hdr_color.height,
+        format:     HDR_FORMAT,
+        usage:      { .color_attach, .sampled },
+        debug_name: "scene_color",
+    )!;
+}
+
+fn void release_scene_color(Renderer* renderer) @private {
+    if (renderer.scene_color.texture.is_valid()) release_target(&renderer.device, &renderer.scene_color);
 }
 
 fn void release_view_targets(gpu::Device* device, Target* hdr_color, Target* depth) @private {

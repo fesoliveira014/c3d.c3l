@@ -151,6 +151,18 @@ fn void write_material_block(char[] block, Material* material, MaterialBindings 
                     map_bit: shader::PHYSICAL_EXTENSION_MAP_ANISOTROPY,
                 );
             }
+            if (draw_list(material) == DrawList.TRANSMISSION) {
+                extension_map_flags |= texture_map_flags(
+                    slot: params.transmission_map,
+                    binding: bindings.transmission,
+                    map_bit: shader::PHYSICAL_EXTENSION_MAP_TRANSMISSION,
+                );
+                extension_map_flags |= texture_map_flags(
+                    slot: params.thickness_map,
+                    binding: bindings.thickness,
+                    map_bit: shader::PHYSICAL_EXTENSION_MAP_THICKNESS,
+                );
+            }
             *(PhysicalMaterialGpu*)block.ptr = {
                 .standard = pack_standard_material(
                     kind: material.kind,
@@ -203,6 +215,22 @@ fn void write_material_block(char[] block, Material* material, MaterialBindings 
                 .anisotropy_map = pack_texture_map(
                     slot: params.anisotropy_map,
                     binding: bindings.anisotropy,
+                ),
+                .attenuation_color_distance = {
+                    params.attenuation_color.r,
+                    params.attenuation_color.g,
+                    params.attenuation_color.b,
+                    params.attenuation_distance,
+                },
+                .transmission = params.transmission,
+                .thickness = params.thickness,
+                .transmission_map = pack_texture_map(
+                    slot: params.transmission_map,
+                    binding: bindings.transmission,
+                ),
+                .thickness_map = pack_texture_map(
+                    slot: params.thickness_map,
+                    binding: bindings.thickness,
                 ),
             };
         case TOON:
@@ -335,6 +363,10 @@ fn MaterialBindings? resolve_material_bindings(Renderer* renderer, Material* mat
             }
             if (params.anisotropy > 0) {
                 bindings.anisotropy = resolve_texture_slot(renderer, params.anisotropy_map)!;
+            }
+            if (draw_list(material) == DrawList.TRANSMISSION) {
+                bindings.transmission = resolve_texture_slot(renderer, params.transmission_map)!;
+                bindings.thickness = resolve_texture_slot(renderer, params.thickness_map)!;
             }
             return bindings;
         case TOON:

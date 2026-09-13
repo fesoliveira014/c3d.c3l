@@ -94,6 +94,31 @@ fn void? material_panel(AssetStore* assets, MaterialId material) {
                 minimum: -(float)math::PI,
                 maximum: (float)math::PI,
             );
+            imgui::separator_text("Transmission");
+            changed |= edit_material_factor(
+                label: "Transmission",
+                value: &record.data.physical.transmission,
+                minimum: 0,
+                maximum: 1,
+            );
+            changed |= edit_material_factor(
+                label: "Thickness",
+                value: &record.data.physical.thickness,
+                minimum: 0,
+                maximum: float::max,
+            );
+            changed |= edit_material_factor(
+                label: "Attenuation distance",
+                value: &record.data.physical.attenuation_distance,
+                minimum: 0,
+                maximum: float::max,
+            );
+            changed |= edit_material_color(
+                label: "Attenuation color",
+                value: (float*)&record.data.physical.attenuation_color,
+                channels: 3,
+                hdr_rgb: false,
+            );
         case TOON:
             changed |= edit_material_color("Color", (float*)&record.data.toon.color, 4);
             changed |= edit_material_steps(&record.data.toon.steps);
