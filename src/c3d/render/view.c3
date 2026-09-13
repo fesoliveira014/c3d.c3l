@@ -229,15 +229,15 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
         foreach (&item : items) {
             gpu::MappedGpuSpan draw_span = slot.upload.take(&self.device, DrawRoot::size, STREAM_ALIGNMENT)!;
             write_draw_root(
-                root:      (DrawRoot*)draw_span.bytes.ptr,
-                world:     item.candidate.node.world,
-                frame:     frame_span.address,
-                geometry:  item.geometry.root,
-                material:  item.material.address,
-                object_id: item.candidate.node.id.index,
-                layers:    item.candidate.node.layers,
-                flags:     item.candidate.receive_shadow ? shader::DRAW_RECEIVE_SHADOW : 0,
-                sheen_lut: sheen ? self.environment_state.sheen_lut_view.index : (gpu::TextureIndex)0,
+                root:          (DrawRoot*)draw_span.bytes.ptr,
+                world:         item.candidate.node.world,
+                frame:         frame_span.address,
+                geometry:      item.geometry.root,
+                material:      item.material.address,
+                object_id:     item.candidate.node.id.index,
+                layers:        item.candidate.node.layers,
+                flags:         item.candidate.receive_shadow ? shader::DRAW_RECEIVE_SHADOW : 0,
+                sheen_lut:     sheen ? self.environment_state.sheen_lut.view.index : (gpu::TextureIndex)0,
                 sheen_sampler: sheen ? self.environment_state.sheen_sampler : (gpu::SamplerIndex)0,
             );
             item.root = draw_span.address;

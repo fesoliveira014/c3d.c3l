@@ -12,6 +12,7 @@ struct PhysicalSurface {
     StandardSurface standard;
     vec3 coat_normal;
     vec3 sheen_color;
+    float sheen_strength;
     float sheen_roughness;
     float sheen_view_albedo;
     float coat_weight;
@@ -19,11 +20,7 @@ struct PhysicalSurface {
 };
 
 float physical_sheen_attenuation(PhysicalSurface surface) {
-    float sheen_strength = max(
-        surface.sheen_color.r,
-        max(surface.sheen_color.g, surface.sheen_color.b)
-    );
-    return 1.0 - sheen_strength * surface.sheen_view_albedo;
+    return 1.0 - surface.sheen_strength * surface.sheen_view_albedo;
 }
 
 float clearcoat_view_weight(float clearcoat, vec3 normal, vec3 view_direction) {
@@ -65,10 +62,6 @@ vec3 evaluate_sheen_brdf(
     float normal_light = clamp(dot(surface.standard.normal, light_direction), 0.0, 1.0);
     if (surface.standard.normal_view == 0.0 || normal_light == 0.0) return vec3(0.0);
 
-    float sheen_strength = max(
-        surface.sheen_color.r,
-        max(surface.sheen_color.g, surface.sheen_color.b)
-    );
     float light_albedo = sheen_albedo(
         sheen_lut,
         sheen_sampler,
@@ -77,7 +70,7 @@ vec3 evaluate_sheen_brdf(
     );
     underlying_attenuation = min(
         underlying_attenuation,
-        1.0 - sheen_strength * light_albedo
+        1.0 - surface.sheen_strength * light_albedo
     );
 
     vec3 half_direction = normalize(surface.standard.view_direction + light_direction);
@@ -98,11 +91,7 @@ vec3 evaluate_physical_light(
     uint sheen_lut,
     uint sheen_sampler
 ) {
-    float sheen_strength = max(
-        surface.sheen_color.r,
-        max(surface.sheen_color.g, surface.sheen_color.b)
-    );
-    if (surface.coat_weight == 0.0 && sheen_strength == 0.0) {
+    if (surface.coat_weight == 0.0 && surface.sheen_strength == 0.0) {
         return evaluate_standard_light(light, position, surface.standard);
     }
 
@@ -110,7 +99,7 @@ vec3 evaluate_physical_light(
     vec3 standard = evaluate_standard_brdf(surface.standard, light_sample.direction);
     float sheen_attenuation = 1.0;
     vec3 sheen = vec3(0.0);
-    if (sheen_strength != 0.0) {
+    if (surface.sheen_strength != 0.0) {
         sheen = evaluate_sheen_brdf(
             surface,
             light_sample.direction,
@@ -133,11 +122,7 @@ vec3 evaluate_physical_environment(
     float base_roughness,
     float occlusion
 ) {
-    float sheen_strength = max(
-        surface.sheen_color.r,
-        max(surface.sheen_color.g, surface.sheen_color.b)
-    );
-    if (surface.coat_weight == 0.0 && sheen_strength == 0.0) {
+    if (surface.coat_weight == 0.0 && surface.sheen_strength == 0.0) {
         return evaluate_environment(environment, surface.standard, base_roughness, occlusion);
     }
 
@@ -148,7 +133,7 @@ vec3 evaluate_physical_environment(
         occlusion
     ) * physical_sheen_attenuation(surface);
     vec3 sheen = vec3(0.0);
-    if (sheen_strength != 0.0) {
+    if (surface.sheen_strength != 0.0) {
         vec3 reflection = environment_rotate(
             environment.rotation,
             reflect(-surface.standard.view_direction, surface.standard.normal)

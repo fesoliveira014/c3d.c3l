@@ -53,7 +53,7 @@ fn gpu::GpuAddress? pack_lighting_environment(
     *(EnvironmentGpu*)span.bytes.ptr = {
         .specular_cube = environment.specular_view.index,
         .sampler_index = renderer.environment_state.sampler,
-        .brdf_lut      = renderer.environment_state.brdf_view.index,
+        .brdf_lut      = renderer.environment_state.brdf_lut.view.index,
         .intensity     = intensity,
         .sh            = environment.irradiance_address,
         .sheen_cube    = sheen ? environment.sheen_view.index : (gpu::TextureIndex)0,

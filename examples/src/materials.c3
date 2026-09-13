@@ -50,6 +50,20 @@ enum EnvironmentChoice @local {
     SKY,
 }
 
+enum PhysicalMap @local {
+    BASE_NORMAL,
+    CLEARCOAT,
+    CLEARCOAT_ROUGHNESS,
+    CLEARCOAT_NORMAL,
+    SHEEN_COLOR,
+    SHEEN_ROUGHNESS,
+}
+
+struct PhysicalMapFixture @local {
+    ZString label;
+    TextureSlot slot;
+}
+
 struct Orbit @local {
     Vec3 target;
     float distance;
@@ -214,18 +228,66 @@ fn EnvironmentId environment_id(
     }
 }
 
-fn TextureSlot example_texture_slot(
-    TextureId texture,
-    SamplerId sampler,
-    uint uv_set,
-    UvTransform transform,
-) @local {
-    return material::texture_slot(
-        texture: texture,
-        sampler: sampler,
-        uv_set: uv_set,
-        transform: transform,
-    );
+fn PhysicalMapFixture[PhysicalMap::len] physical_map_fixtures(ExampleTextures textures) @local {
+    return {
+        [PhysicalMap.BASE_NORMAL.ordinal] = {
+            .label = "Base normal RGB##physical_base_normal",
+            .slot = material::texture_slot(
+                texture: textures.base_normal,
+                sampler: asset::SAMPLER_LINEAR_REPEAT,
+                uv_set: 0,
+                transform: { .scale = { 2, 2 } },
+            ),
+        },
+        [PhysicalMap.CLEARCOAT.ordinal] = {
+            .label = "Clearcoat strength R##physical_clearcoat",
+            .slot = material::texture_slot(
+                texture: textures.clearcoat,
+                sampler: asset::SAMPLER_NEAREST,
+                uv_set: 0,
+                transform: { .scale = { 3, 3 } },
+            ),
+        },
+        [PhysicalMap.CLEARCOAT_ROUGHNESS.ordinal] = {
+            .label = "Clearcoat roughness G##physical_clearcoat_roughness",
+            .slot = material::texture_slot(
+                texture: textures.clearcoat_roughness,
+                sampler: asset::SAMPLER_LINEAR_REPEAT,
+                uv_set: 1,
+                transform: { .scale = { 1, 2 } },
+            ),
+        },
+        [PhysicalMap.CLEARCOAT_NORMAL.ordinal] = {
+            .label = "Clearcoat normal RGB##physical_clearcoat_normal",
+            .slot = material::texture_slot(
+                texture: textures.clearcoat_normal,
+                sampler: asset::SAMPLER_LINEAR_REPEAT,
+                uv_set: 0,
+                transform: {
+                    .scale = { 2, 1 },
+                    .rotation = 0.35f,
+                },
+            ),
+        },
+        [PhysicalMap.SHEEN_COLOR.ordinal] = {
+            .label = "Sheen color RGB (sRGB)##physical_sheen_color",
+            .slot = material::texture_slot(
+                texture: textures.sheen_color,
+                sampler: asset::SAMPLER_NEAREST,
+                uv_set: 0,
+                transform: { .scale = { 1, 3 } },
+            ),
+        },
+        [PhysicalMap.SHEEN_ROUGHNESS.ordinal] = {
+            .label = "Sheen roughness A##physical_sheen_roughness",
+            .slot = material::texture_slot(
+                texture: textures.sheen_roughness,
+                sampler: asset::SAMPLER_LINEAR_REPEAT,
+                uv_set: 1,
+                transform: { .scale = { 2, 1 } },
+            ),
+        },
+    };
 }
 
 fn Vec4 material_color(Material* material) @local {
@@ -531,69 +593,18 @@ fn void physical_texture_controls(
     PhysicalParams* params = &record.data.physical;
     bool changed;
     imgui::separator_text("Physical maps");
-    changed |= edit_map_toggle(
-        "Base normal RGB##physical_base_normal",
-        &params.standard.normal_map,
-        example_texture_slot(
-            texture: textures.base_normal,
-            sampler: asset::SAMPLER_LINEAR_REPEAT,
-            uv_set: 0,
-            transform: { .scale = { 2, 2 } },
-        ),
-    );
-    changed |= edit_map_toggle(
-        "Clearcoat strength R##physical_clearcoat",
-        &params.clearcoat_map,
-        example_texture_slot(
-            texture: textures.clearcoat,
-            sampler: asset::SAMPLER_NEAREST,
-            uv_set: 0,
-            transform: { .scale = { 3, 3 } },
-        ),
-    );
-    changed |= edit_map_toggle(
-        "Clearcoat roughness G##physical_clearcoat_roughness",
-        &params.clearcoat_roughness_map,
-        example_texture_slot(
-            texture: textures.clearcoat_roughness,
-            sampler: asset::SAMPLER_LINEAR_REPEAT,
-            uv_set: 1,
-            transform: { .scale = { 1, 2 } },
-        ),
-    );
-    changed |= edit_map_toggle(
-        "Clearcoat normal RGB##physical_clearcoat_normal",
-        &params.clearcoat_normal_map,
-        example_texture_slot(
-            texture: textures.clearcoat_normal,
-            sampler: asset::SAMPLER_LINEAR_REPEAT,
-            uv_set: 0,
-            transform: {
-                .scale = { 2, 1 },
-                .rotation = 0.35f,
-            },
-        ),
-    );
-    changed |= edit_map_toggle(
-        "Sheen color RGB (sRGB)##physical_sheen_color",
-        &params.sheen_color_map,
-        example_texture_slot(
-            texture: textures.sheen_color,
-            sampler: asset::SAMPLER_NEAREST,
-            uv_set: 0,
-            transform: { .scale = { 1, 3 } },
-        ),
-    );
-    changed |= edit_map_toggle(
-        "Sheen roughness A##physical_sheen_roughness",
-        &params.sheen_roughness_map,
-        example_texture_slot(
-            texture: textures.sheen_roughness,
-            sampler: asset::SAMPLER_LINEAR_REPEAT,
-            uv_set: 1,
-            transform: { .scale = { 2, 1 } },
-        ),
-    );
+    PhysicalMapFixture[PhysicalMap::len] fixtures = physical_map_fixtures(textures);
+    TextureSlot*[PhysicalMap::len] slots = {
+        [PhysicalMap.BASE_NORMAL.ordinal] = &params.standard.normal_map,
+        [PhysicalMap.CLEARCOAT.ordinal] = &params.clearcoat_map,
+        [PhysicalMap.CLEARCOAT_ROUGHNESS.ordinal] = &params.clearcoat_roughness_map,
+        [PhysicalMap.CLEARCOAT_NORMAL.ordinal] = &params.clearcoat_normal_map,
+        [PhysicalMap.SHEEN_COLOR.ordinal] = &params.sheen_color_map,
+        [PhysicalMap.SHEEN_ROUGHNESS.ordinal] = &params.sheen_roughness_map,
+    };
+    foreach (index, fixture : fixtures) {
+        changed |= edit_map_toggle(fixture.label, slots[index], fixture.slot);
+    }
     imgui::text_unformatted("Base and coat normals use different fixtures.");
 
     if (changed) assets.mark_material_dirty(material_id);
@@ -638,11 +649,7 @@ fn void lighting_controls(
         minimum: 0,
         maximum: INDIRECT_INTENSITY_MAX,
     );
-    if (imgui::checkbox("Environment fill", &controls.environment_fill)) {
-        scene.environment = controls.environment_fill
-            ? environment_id(controls.environment, environments)
-            : (EnvironmentId){};
-    }
+    imgui::checkbox("Environment fill", &controls.environment_fill);
     imgui::separator_text("HDR source");
     if (imgui::radio_button("Studio##materials_environment", controls.environment == STUDIO)) {
         controls.environment = STUDIO;
@@ -846,31 +853,37 @@ fn ExampleTextures? create_example_textures(AssetStore* assets) @local {
             bool top_half = y < PHYSICAL_TEXTURE_SIZE / 2;
             usz offset = (usz)(y * PHYSICAL_TEXTURE_SIZE + x) * RGBA8_BYTES;
 
+            // Checker of opposing tangent-space tilts.
             base_normal_pixels[offset] = alternating ? 184 : 72;
             base_normal_pixels[offset + 1] = alternating ? 112 : 142;
             base_normal_pixels[offset + 2] = alternating ? 231 : 230;
             base_normal_pixels[offset + 3] = 255;
 
+            // R checker; unrelated channels expose accidental channel selection.
             clearcoat_pixels[offset] = alternating ? 255 : 80;
             clearcoat_pixels[offset + 1] = 11;
             clearcoat_pixels[offset + 2] = 221;
             clearcoat_pixels[offset + 3] = 37;
 
+            // Left/right roughness split in G; other channels are unrelated.
             clearcoat_roughness_pixels[offset] = 13;
             clearcoat_roughness_pixels[offset + 1] = left_half ? 50 : 220;
             clearcoat_roughness_pixels[offset + 2] = 201;
             clearcoat_roughness_pixels[offset + 3] = 71;
 
+            // Left/right tangent-space tilts distinct from the base normals.
             clearcoat_normal_pixels[offset] = left_half ? 105 : 151;
             clearcoat_normal_pixels[offset + 1] = left_half ? 188 : 65;
             clearcoat_normal_pixels[offset + 2] = left_half ? 230 : 226;
             clearcoat_normal_pixels[offset + 3] = 255;
 
+            // Warm/cool sRGB checker; alpha deliberately carries no color information.
             sheen_color_pixels[offset] = alternating ? 235 : 70;
             sheen_color_pixels[offset + 1] = alternating ? 94 : 125;
             sheen_color_pixels[offset + 2] = alternating ? 115 : 235;
             sheen_color_pixels[offset + 3] = 19;
 
+            // Top/bottom roughness split in alpha; RGB is deliberately unrelated.
             sheen_roughness_pixels[offset] = 243;
             sheen_roughness_pixels[offset + 1] = 17;
             sheen_roughness_pixels[offset + 2] = 197;
@@ -993,53 +1006,21 @@ fn ExampleMaterials create_materials(
     fabric.sheen_color = { 0.65f, 0.3f, 0.12f };
     fabric.sheen_roughness = 0.7f;
 
+    PhysicalMapFixture[PhysicalMap::len] fixtures = physical_map_fixtures(textures);
     PhysicalParams combined = material::PHYSICAL_PARAMS_DEFAULT;
     combined.standard.base_color = { 0.1f, 0.42f, 0.24f, 1 };
     combined.standard.metallic = 0.08f;
     combined.standard.roughness = 0.46f;
-    combined.standard.normal_map = example_texture_slot(
-        texture: textures.base_normal,
-        sampler: asset::SAMPLER_LINEAR_REPEAT,
-        uv_set: 0,
-        transform: { .scale = { 2, 2 } },
-    );
+    combined.standard.normal_map = fixtures[PhysicalMap.BASE_NORMAL.ordinal].slot;
     combined.clearcoat = 0.78f;
     combined.clearcoat_roughness = 0.32f;
-    combined.clearcoat_map = example_texture_slot(
-        texture: textures.clearcoat,
-        sampler: asset::SAMPLER_NEAREST,
-        uv_set: 0,
-        transform: { .scale = { 3, 3 } },
-    );
-    combined.clearcoat_roughness_map = example_texture_slot(
-        texture: textures.clearcoat_roughness,
-        sampler: asset::SAMPLER_LINEAR_REPEAT,
-        uv_set: 1,
-        transform: { .scale = { 1, 2 } },
-    );
-    combined.clearcoat_normal_map = example_texture_slot(
-        texture: textures.clearcoat_normal,
-        sampler: asset::SAMPLER_LINEAR_REPEAT,
-        uv_set: 0,
-        transform: {
-            .scale = { 2, 1 },
-            .rotation = 0.35f,
-        },
-    );
+    combined.clearcoat_map = fixtures[PhysicalMap.CLEARCOAT.ordinal].slot;
+    combined.clearcoat_roughness_map = fixtures[PhysicalMap.CLEARCOAT_ROUGHNESS.ordinal].slot;
+    combined.clearcoat_normal_map = fixtures[PhysicalMap.CLEARCOAT_NORMAL.ordinal].slot;
     combined.sheen_color = { 0.22f, 0.58f, 0.32f };
     combined.sheen_roughness = 0.58f;
-    combined.sheen_color_map = example_texture_slot(
-        texture: textures.sheen_color,
-        sampler: asset::SAMPLER_NEAREST,
-        uv_set: 0,
-        transform: { .scale = { 1, 3 } },
-    );
-    combined.sheen_roughness_map = example_texture_slot(
-        texture: textures.sheen_roughness,
-        sampler: asset::SAMPLER_LINEAR_REPEAT,
-        uv_set: 1,
-        transform: { .scale = { 2, 1 } },
-    );
+    combined.sheen_color_map = fixtures[PhysicalMap.SHEEN_COLOR.ordinal].slot;
+    combined.sheen_roughness_map = fixtures[PhysicalMap.SHEEN_ROUGHNESS.ordinal].slot;
 
     return {
         .masked = assets.add_material(material::basic(

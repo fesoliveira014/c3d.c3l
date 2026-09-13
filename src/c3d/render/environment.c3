@@ -23,6 +23,13 @@ enum EnvironmentLutState {
     READY,
 }
 
+<* Owned texture and submission state of an environment lookup. *>
+struct EnvironmentLut {
+    gpu::TextureHandle texture;
+    gpu::TextureView view;
+    EnvironmentLutState state;
+}
+
 <* Submitted source and lighting resources for one environment. *>
 struct EnvironmentRes {
     EnvironmentId asset;
@@ -78,13 +85,9 @@ struct EnvironmentState {
     gpu::SamplerIndex source_sampler;
     gpu::SamplerIndex sampler;
     bool samplers_ready;
-    gpu::TextureHandle brdf_texture;
-    gpu::TextureView brdf_view;
-    EnvironmentLutState brdf_state;
-    gpu::TextureHandle sheen_lut_texture;
-    gpu::TextureView sheen_lut_view;
+    EnvironmentLut brdf_lut;
+    EnvironmentLut sheen_lut;
     gpu::SamplerIndex sheen_sampler;
-    EnvironmentLutState sheen_lut_state;
 }
 
 <*
@@ -320,11 +323,19 @@ fn void retire_environment_lighting(RetireList* retire, EnvironmentRes* result) 
     if (result.irradiance.is_valid()) retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = result.irradiance });
 }
 
+fn bool lut_unsubmitted(EnvironmentLut lut) @private {
+    return lut.state == EnvironmentLutState.PENDING || lut.state == EnvironmentLutState.RECORDED;
+}
+
+fn void release_lut(gpu::Device* device, EnvironmentLut* lut) @private {
+    (void)gpu::destroy_texture_view(device, lut.view);
+    (void)gpu::destroy_texture(device, lut.texture);
+    *lut = {};
+}
+
 fn bool has_environment_preparations(Renderer* renderer) @private {
-    if (renderer.environment_state.sheen_lut_state == EnvironmentLutState.PENDING
-        || renderer.environment_state.sheen_lut_state == EnvironmentLutState.RECORDED) return true;
-    if (renderer.environment_state.brdf_state == EnvironmentLutState.PENDING
-        || renderer.environment_state.brdf_state == EnvironmentLutState.RECORDED) return true;
+    if (lut_unsubmitted(renderer.environment_state.sheen_lut)) return true;
+    if (lut_unsubmitted(renderer.environment_state.brdf_lut)) return true;
     foreach (pending : renderer.environment_state.pending) if (pending.active) return true;
     return false;
 }
@@ -339,11 +350,11 @@ fn void commit_environment_preparations(Renderer* renderer, Frame* slot) @privat
         *committed = pending.result;
         *pending = {};
     }
-    if (renderer.environment_state.brdf_state == EnvironmentLutState.RECORDED) {
-        renderer.environment_state.brdf_state = EnvironmentLutState.READY;
+    if (renderer.environment_state.brdf_lut.state == EnvironmentLutState.RECORDED) {
+        renderer.environment_state.brdf_lut.state = EnvironmentLutState.READY;
     }
-    if (renderer.environment_state.sheen_lut_state == EnvironmentLutState.RECORDED) {
-        renderer.environment_state.sheen_lut_state = EnvironmentLutState.READY;
+    if (renderer.environment_state.sheen_lut.state == EnvironmentLutState.RECORDED) {
+        renderer.environment_state.sheen_lut.state = EnvironmentLutState.READY;
     }
     foreach (retired : renderer.environment_state.temporaries) slot.environment_temporaries.push(retired);
     renderer.environment_state.temporaries.clear();
@@ -358,17 +369,11 @@ fn void discard_environment_preparations(Renderer* renderer) @private {
         if (pending.new_sheen) release_environment_sheen(&renderer.device, &pending.result);
         *pending = {};
     }
-    if (renderer.environment_state.sheen_lut_state == EnvironmentLutState.PENDING
-        || renderer.environment_state.sheen_lut_state == EnvironmentLutState.RECORDED) {
-        release_sheen_lut(renderer);
+    if (lut_unsubmitted(renderer.environment_state.sheen_lut)) {
+        release_lut(&renderer.device, &renderer.environment_state.sheen_lut);
     }
-    if (renderer.environment_state.brdf_state == EnvironmentLutState.PENDING
-        || renderer.environment_state.brdf_state == EnvironmentLutState.RECORDED) {
-        (void)gpu::destroy_texture_view(&renderer.device, renderer.environment_state.brdf_view);
-        (void)gpu::destroy_texture(&renderer.device, renderer.environment_state.brdf_texture);
-        renderer.environment_state.brdf_view = {};
-        renderer.environment_state.brdf_texture = {};
-        renderer.environment_state.brdf_state = EnvironmentLutState.NONE;
+    if (lut_unsubmitted(renderer.environment_state.brdf_lut)) {
+        release_lut(&renderer.device, &renderer.environment_state.brdf_lut);
     }
 }
 
@@ -389,11 +394,12 @@ fn void free_environments(Renderer* renderer) @private {
         release_environment_lighting(&renderer.device, mirror);
         release_environment_sheen(&renderer.device, mirror);
     }
-    if (renderer.environment_state.brdf_state == EnvironmentLutState.READY) {
-        (void)gpu::destroy_texture_view(&renderer.device, renderer.environment_state.brdf_view);
-        (void)gpu::destroy_texture(&renderer.device, renderer.environment_state.brdf_texture);
+    if (renderer.environment_state.brdf_lut.state == EnvironmentLutState.READY) {
+        release_lut(&renderer.device, &renderer.environment_state.brdf_lut);
     }
-    if (renderer.environment_state.sheen_lut_state == EnvironmentLutState.READY) release_sheen_lut(renderer);
+    if (renderer.environment_state.sheen_lut.state == EnvironmentLutState.READY) {
+        release_lut(&renderer.device, &renderer.environment_state.sheen_lut);
+    }
     gpu::PipelineHandle[7] pipelines = {
         renderer.environment_state.pipelines.source, renderer.environment_state.pipelines.prefilter,
         renderer.environment_state.pipelines.project, renderer.environment_state.pipelines.reduce,

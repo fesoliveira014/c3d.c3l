@@ -85,8 +85,7 @@ void main() {
 
     vec3 sheen_color = material.sheen_color_roughness.rgb;
     float sheen_roughness = material.sheen_color_roughness.a;
-    float authored_sheen_strength = max(sheen_color.r, max(sheen_color.g, sheen_color.b));
-    if (authored_sheen_strength > 0.0) {
+    if (any(greaterThan(sheen_color, vec3(0.0)))) {
         if ((material.map_flags & PHYSICAL_MAP_SHEEN_COLOR) != 0u) {
             sheen_color = clamp(sheen_color * sample_map(
                 material.sheen_color_map,
@@ -122,8 +121,8 @@ void main() {
     surface.coat_normal = coat_normal;
     surface.sheen_color = sheen_color;
     surface.sheen_roughness = sheen_roughness;
-    float sheen_strength = max(sheen_color.r, max(sheen_color.g, sheen_color.b));
-    surface.sheen_view_albedo = sheen_strength == 0.0
+    surface.sheen_strength = max(sheen_color.r, max(sheen_color.g, sheen_color.b));
+    surface.sheen_view_albedo = surface.sheen_strength == 0.0
         ? 0.0
         : sheen_albedo(
             draw.sheen_lut,
@@ -141,7 +140,7 @@ void main() {
     vec3 base_ambient = frame.ambient.rgb * material_sample.base_color.rgb
         * (1.0 - material_sample.metallic) * material_sample.occlusion;
     vec3 color;
-    if (surface.coat_weight == 0.0 && sheen_strength == 0.0) {
+    if (surface.coat_weight == 0.0 && surface.sheen_strength == 0.0) {
         color = base_ambient + material_sample.emissive;
     } else {
         color = (1.0 - surface.coat_weight)

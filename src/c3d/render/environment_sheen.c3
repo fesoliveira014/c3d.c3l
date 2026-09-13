@@ -3,10 +3,8 @@ module c3d::render;
 import c3d::shader;
 import gpu;
 
-const uint SHEEN_IMAGE_GROUP_SIZE @local = 8; // Mirrors both sheen compute image workgroups.
-
 fn void? ensure_sheen_lut(Renderer* renderer) @private {
-    if (renderer.environment_state.sheen_lut_state != EnvironmentLutState.NONE) return;
+    if (renderer.environment_state.sheen_lut.state != EnvironmentLutState.NONE) return;
 
     gpu::TextureDesc description = {
         .width = shader::SHEEN_LUT_SIZE,
@@ -34,18 +32,10 @@ fn void? ensure_sheen_lut(Renderer* renderer) @private {
         .debug_name = "sheen_albedo",
     };
     gpu::SamplerIndex sampler_index = gpu::intern_sampler(&renderer.device, &sampler)!;
-    renderer.environment_state.sheen_lut_texture = texture;
-    renderer.environment_state.sheen_lut_view = view;
+    renderer.environment_state.sheen_lut.texture = texture;
+    renderer.environment_state.sheen_lut.view = view;
     renderer.environment_state.sheen_sampler = sampler_index;
-    renderer.environment_state.sheen_lut_state = EnvironmentLutState.PENDING;
-}
-
-fn void release_sheen_lut(Renderer* renderer) @private {
-    (void)gpu::destroy_texture_view(&renderer.device, renderer.environment_state.sheen_lut_view);
-    (void)gpu::destroy_texture(&renderer.device, renderer.environment_state.sheen_lut_texture);
-    renderer.environment_state.sheen_lut_texture = {};
-    renderer.environment_state.sheen_lut_view = {};
-    renderer.environment_state.sheen_lut_state = EnvironmentLutState.NONE;
+    renderer.environment_state.sheen_lut.state = EnvironmentLutState.PENDING;
 }
 
 fn void? create_environment_sheen(Renderer* renderer, EnvironmentRes* result) @private {
@@ -81,30 +71,13 @@ fn void retire_environment_sheen(RetireList* retire, EnvironmentRes* result) @pr
 
 fn void? record_sheen_lut(Renderer* renderer, gpu::CommandList* commands) @private {
     ensure_environment_pipeline(renderer, &renderer.environment_state.pipelines.sheen_lut, SHEEN_LUT)!;
-    Frame* slot = recording_frame(renderer, commands);
-    gpu::TextureBarrier write = gpu::texture_transition(
-        texture: renderer.environment_state.sheen_lut_texture,
-        before: {},
-        after: gpu::storage_at({ .compute }, { .write }),
+    record_environment_lut(
+        renderer: renderer,
+        commands: commands,
+        pipeline: renderer.environment_state.pipelines.sheen_lut,
+        lut: &renderer.environment_state.sheen_lut,
+        size: shader::SHEEN_LUT_SIZE,
     )!;
-    gpu::cmd_texture_barrier(commands, &write)!;
-    gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, BrdfLutRoot::size)!;
-    *(BrdfLutRoot*)root.bytes.ptr = {
-        .output_texture = renderer.environment_state.sheen_lut_view.index,
-        .size = shader::SHEEN_LUT_SIZE,
-    };
-    gpu::cmd_bind_pipeline(commands, renderer.environment_state.pipelines.sheen_lut)!;
-    gpu::cmd_dispatch(commands, root.address, {
-        shader::SHEEN_LUT_SIZE / SHEEN_IMAGE_GROUP_SIZE,
-        shader::SHEEN_LUT_SIZE / SHEEN_IMAGE_GROUP_SIZE, 1,
-    })!;
-    gpu::TextureBarrier ready = gpu::texture_transition(
-        texture: renderer.environment_state.sheen_lut_texture,
-        before: write.after,
-        after: gpu::sampled_at({ .fragment_shader }),
-    )!;
-    gpu::cmd_texture_barrier(commands, &ready)!;
-    renderer.environment_state.sheen_lut_state = EnvironmentLutState.RECORDED;
 }
 
 fn void? record_environment_sheen(
@@ -114,40 +87,12 @@ fn void? record_environment_sheen(
 ) @private {
     ensure_environment_pipeline(renderer, &renderer.environment_state.pipelines.sheen_prefilter, SHEEN_PREFILTER)!;
     EnvironmentRes* result = &pending.result;
-    Frame* slot = recording_frame(renderer, commands);
-    gpu::TextureBarrier write = gpu::texture_transition(
-        texture: result.sheen_cube,
-        before: {},
-        after: gpu::storage_at({ .compute }, { .write }),
+    record_cube_prefilter(
+        renderer: renderer,
+        commands: commands,
+        pipeline: renderer.environment_state.pipelines.sheen_prefilter,
+        source_view: result.source_view,
+        output: result.sheen_cube,
+        base_size: result.description.settings.specular_size,
     )!;
-    gpu::cmd_texture_barrier(commands, &write)!;
-    gpu::cmd_bind_pipeline(commands, renderer.environment_state.pipelines.sheen_prefilter)!;
-    for (uint mip = 0; mip < shader::ENVIRONMENT_SPECULAR_MIPS; mip++) {
-        uint size = result.description.settings.specular_size >> mip;
-        for (uint face = 0; face < shader::ENVIRONMENT_FACE_COUNT; face++) {
-            gpu::TextureView view = create_environment_write_view(
-                renderer: renderer,
-                texture: result.sheen_cube,
-                face: face,
-                mip: mip,
-            )!;
-            gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, EnvironmentPrefilterRoot::size)!;
-            *(EnvironmentPrefilterRoot*)root.bytes.ptr = {
-                .source_cube = result.source_view.index,
-                .sampler_index = renderer.environment_state.sampler,
-                .output_texture = view.index,
-                .face = face,
-                .size = size,
-                .roughness = (float)mip / (float)(shader::ENVIRONMENT_SPECULAR_MIPS - 1),
-            };
-            uint groups = (size + SHEEN_IMAGE_GROUP_SIZE - 1) / SHEEN_IMAGE_GROUP_SIZE;
-            gpu::cmd_dispatch(commands, root.address, { groups, groups, 1 })!;
-        }
-    }
-    gpu::TextureBarrier ready = gpu::texture_transition(
-        texture: result.sheen_cube,
-        before: write.after,
-        after: gpu::sampled_at({ .fragment_shader }),
-    )!;
-    gpu::cmd_texture_barrier(commands, &ready)!;
 }
