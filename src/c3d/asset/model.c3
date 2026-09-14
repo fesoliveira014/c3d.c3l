@@ -7,6 +7,13 @@ import c3d::maths;
 import c3d::pool;
 
 <*
+ Every switch on.
+*>
+const LoadOptions LOAD_OPTIONS_DEFAULT = {
+    .animations = true, .lights = true, .cameras = true, .generate_tangents = true,
+};
+
+<*
  Node of a reusable model, addressed by model-local index.
 *>
 struct NodeTemplate {
@@ -70,6 +77,16 @@ struct ModelTemplate {
 struct ModelAsset {
     AssetHeader   header;
     ModelTemplate data;
+}
+
+<*
+ Importer switches shared by every model loader.
+*>
+struct LoadOptions {
+    bool animations;
+    bool lights;
+    bool cameras;
+    bool generate_tangents;
 }
 
 <*

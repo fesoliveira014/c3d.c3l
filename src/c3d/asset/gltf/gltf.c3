@@ -2,8 +2,6 @@ module c3d::asset::gltf;
 
 import c3d;
 import c3d::asset;
-import c3d::model;
-import c3d::scene;
 import gltf;
 import std::io::path;
 
@@ -23,39 +21,6 @@ const String[] SUPPORTED_EXTENSIONS @private = {
     "KHR_lights_punctual",
     "KHR_mesh_quantization",
 };
-
-<*
- Importer switches; scale applies to the instance root of load only.
-*>
-struct LoadOptions {
-    bool  animations;
-    bool  lights;
-    bool  cameras;
-    bool  generate_tangents;
-    float scale;
-}
-
-<*
- Every switch on, scale one.
-*>
-const LoadOptions LOAD_OPTIONS_DEFAULT = {
-    .animations = true, .lights = true, .cameras = true, .generate_tangents = true, .scale = 1,
-};
-
-<*
- Ids and nodes produced by one composed load; arrays belong to the caller's allocator.
-*>
-struct LoadResult {
-    ModelId        model;
-    scene::Node*   root;
-    GeometryId[]   geometries;
-    MaterialId[]   materials;
-    TextureId[]    textures;
-    ClipId[]       clips;
-    SkeletonId[]   skeletons;
-    scene::Node*[] cameras;
-    scene::Node*[] lights;
-}
 
 struct Importer @private {
     AssetStore*   assets;
@@ -84,7 +49,7 @@ struct Importer @private {
  @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
  @require path.len > 0
 *>
-fn ModelId? load_model(AssetStore* assets, String path, LoadOptions options = LOAD_OPTIONS_DEFAULT) {
+fn ModelId? load_model(AssetStore* assets, String path, LoadOptions options = asset::LOAD_OPTIONS_DEFAULT) {
     if (assets.keys.has_key(path)) return c3d::INVALID_ARGUMENT~;
     Importer importer = { .assets = assets, .key = path, .options = options };
     defer free_tables(&importer);
@@ -113,7 +78,7 @@ fn ModelId? load_model_memory(
     char[] bytes,
     String base_dir,
     String key,
-    LoadOptions options = LOAD_OPTIONS_DEFAULT,
+    LoadOptions options = asset::LOAD_OPTIONS_DEFAULT,
 ) {
     if (assets.keys.has_key(key)) return c3d::INVALID_ARGUMENT~;
     Importer importer = { .assets = assets, .key = key, .base_dir = base_dir, .options = options };
@@ -126,53 +91,6 @@ fn ModelId? load_model_memory(
         import_model(&importer)!;
     };
     return importer.model;
-}
-
-<*
- Load a file and instantiate it once under the parent.
- @param allocator : "Owns the result arrays."
- @param [&inout] assets : "Receives every converted asset; unchanged on a fault."
- @param [&inout] scene : "Owns the instance."
- @param [in] parent : "Null means the scene root."
- @return? c3d::ASSET_IO_ERROR, c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED
- @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT, c3d::INVALID_ID
- @require path.len > 0
-*>
-fn LoadResult? load(
-    Allocator allocator,
-    AssetStore* assets,
-    scene::Scene* scene,
-    String path,
-    scene::Node* parent = null,
-    LoadOptions options = LOAD_OPTIONS_DEFAULT,
-) {
-    if (assets.keys.has_key(path)) return c3d::INVALID_ARGUMENT~;
-    Importer importer = { .assets = assets, .key = path, .options = options };
-    defer free_tables(&importer);
-    defer catch discard(&importer);
-    importer.data = parse_document(path)!;
-    defer gltf::free(importer.data);
-    prepare_document(importer.data, path)!;
-    @pool() {
-        importer.base_dir = path.path_tdirname() ?? "";
-        import_model(&importer)!;
-    };
-
-    scene::Node* root = model::instantiate(assets, scene, importer.model, parent)!;
-    root.local.scale = { options.scale, options.scale, options.scale };
-    ModelInstance* instance = scene.get(root, ModelInstance);
-    ModelTemplate* template = &assets.model(importer.model).data;
-    return {
-        .model      = importer.model,
-        .root       = root,
-        .geometries = live_ids(allocator, importer.geometries),
-        .materials  = material_ids(allocator, &importer),
-        .textures   = texture_ids(allocator, &importer),
-        .clips      = live_ids(allocator, importer.clips),
-        .skeletons  = live_ids(allocator, importer.skeletons),
-        .cameras    = component_nodes(allocator, instance, template.cameras),
-        .lights     = component_nodes(allocator, instance, template.lights),
-    };
 }
 
 fn gltf::Data*? parse_document(String path) @private {
@@ -271,45 +189,4 @@ fn bool supported_extension(String name) @private {
 fn String join_path(String directory, String name) @private {
     if (!directory.len) return name;
     return string::tformat("%s/%s", directory, name);
-}
-
-fn MaterialId[] material_ids(Allocator allocator, Importer* importer) @private {
-    usz count = importer.default_material.generation ? 1 : 0;
-    foreach (id : importer.materials) if (id.generation) count++;
-    if (!count) return {};
-    MaterialId[] ids = alloc::new_array(allocator, MaterialId, (sz)count);
-    usz slot;
-    foreach (id : importer.materials) if (id.generation) ids[slot++] = id;
-    if (importer.default_material.generation) ids[slot] = importer.default_material;
-    return ids;
-}
-
-fn TextureId[] texture_ids(Allocator allocator, Importer* importer) @private {
-    usz count;
-    foreach (id : importer.srgb_textures) if (id.generation) count++;
-    foreach (id : importer.linear_textures) if (id.generation) count++;
-    if (!count) return {};
-    TextureId[] ids = alloc::new_array(allocator, TextureId, (sz)count);
-    usz slot;
-    foreach (id : importer.srgb_textures) if (id.generation) ids[slot++] = id;
-    foreach (id : importer.linear_textures) if (id.generation) ids[slot++] = id;
-    return ids;
-}
-
-macro live_ids(Allocator allocator, ids) @private {
-    var $Id = $Typeof(ids[0]);
-    usz count;
-    foreach (id : ids) if (id.generation) count++;
-    if (!count) return ($Id[]){};
-    $Id[] live = alloc::new_array(allocator, $Id, (sz)count);
-    usz slot;
-    foreach (id : ids) if (id.generation) live[slot++] = id;
-    return live;
-}
-
-macro component_nodes(Allocator allocator, ModelInstance* instance, components) @private {
-    if (!components.len) return (scene::Node*[]){};
-    scene::Node*[] nodes = alloc::new_array(allocator, scene::Node*, components.len);
-    foreach (index, &component : components) nodes[index] = instance.nodes[component.node];
-    return nodes;
 }

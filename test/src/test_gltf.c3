@@ -221,7 +221,7 @@ fn void test_animations_option_skips_clips() @test {
     defer asset::destroy_asset_store(&assets);
     String path = fixture_path("skin.gltf");
     ModelId model = gltf::load_model(&assets, path, {
-        .animations = false, .lights = true, .cameras = true, .generate_tangents = true, .scale = 1,
+        .animations = false, .lights = true, .cameras = true, .generate_tangents = true,
     })!!;
     assert(assets.model(model).data.clips.len == 0 && assets.model(model).data.skins.len == 1);
     if (catch excuse = assets.find_clip(string::tformat("%s#anim/0", path))) {

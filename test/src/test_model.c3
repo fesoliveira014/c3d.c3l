@@ -88,27 +88,6 @@ fn void test_instantiate_dead_model_is_invalid_id() @test {
     }
 }
 
-fn void test_load_composes_import_and_instance() @test {
-    AssetStore assets = create_store();
-    defer asset::destroy_asset_store(&assets);
-    Scene scene = scene::create_scene(mem, { .max_nodes = 16 });
-    defer scene::destroy_scene(&scene);
-    @pool() {
-        LoadResult result = gltf::load(
-            allocator: tmem,
-            assets: &assets,
-            scene: &scene,
-            path: fixture_path("hierarchy.gltf"),
-            options: { .lights = true, .cameras = true, .generate_tangents = true, .scale = 2 },
-        )!!;
-        assert(result.root.local.scale == (Vec3){ 2, 2, 2 });
-        assert(assets.models.is_live(result.model));
-        assert(result.geometries.len == 2 && result.materials.len == 2 && result.textures.len == 0);
-        assert(result.cameras.len == 1 && scene.get(result.cameras[0], Camera) != null);
-        assert(result.lights.len == 1 && scene.get(result.lights[0], Light) != null);
-        assert(result.clips.len == 0 && result.skeletons.len == 0);
-    };
-}
 fn void test_instantiate_binds_skin_joints_and_copies_clips() @test {
     AssetStore assets = asset::create_asset_store(mem, {
         .max_geometries = 8,
