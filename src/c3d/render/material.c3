@@ -144,6 +144,13 @@ fn void write_material_block(char[] block, Material* material, MaterialBindings 
                     map_bit: shader::PHYSICAL_EXTENSION_MAP_SPECULAR_COLOR,
                 );
             }
+            if (params.anisotropy > 0) {
+                extension_map_flags |= texture_map_flags(
+                    slot: params.anisotropy_map,
+                    binding: bindings.anisotropy,
+                    map_bit: shader::PHYSICAL_EXTENSION_MAP_ANISOTROPY,
+                );
+            }
             *(PhysicalMaterialGpu*)block.ptr = {
                 .standard = pack_standard_material(
                     kind: material.kind,
@@ -183,6 +190,8 @@ fn void write_material_block(char[] block, Material* material, MaterialBindings 
                 },
                 .ior = params.ior,
                 .extension_map_flags = extension_map_flags,
+                .anisotropy = params.anisotropy,
+                .anisotropy_rotation = params.anisotropy_rotation,
                 .specular_map = pack_texture_map(
                     slot: params.specular_map,
                     binding: bindings.specular,
@@ -190,6 +199,10 @@ fn void write_material_block(char[] block, Material* material, MaterialBindings 
                 .specular_color_map = pack_texture_map(
                     slot: params.specular_color_map,
                     binding: bindings.specular_color,
+                ),
+                .anisotropy_map = pack_texture_map(
+                    slot: params.anisotropy_map,
+                    binding: bindings.anisotropy,
                 ),
             };
         case TOON:
@@ -319,6 +332,9 @@ fn MaterialBindings? resolve_material_bindings(Renderer* renderer, Material* mat
             if (params.specular > 0) {
                 bindings.specular = resolve_texture_slot(renderer, params.specular_map)!;
                 bindings.specular_color = resolve_texture_slot(renderer, params.specular_color_map)!;
+            }
+            if (params.anisotropy > 0) {
+                bindings.anisotropy = resolve_texture_slot(renderer, params.anisotropy_map)!;
             }
             return bindings;
         case TOON:

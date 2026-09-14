@@ -29,6 +29,20 @@ const uint RAMP_TEXTURE_WIDTH @local = 8; // A 32-byte fixture keeps unequal ban
 const uint PHYSICAL_TEXTURE_SIZE @local = 4; // Keeps all mapped layer patterns inspectable without asset files.
 const uint RGBA8_BYTES @local = 4;
 const usz SPECULAR_SPHERES @local = 6; // Three IOR values over three specular weights.
+const usz ANISOTROPY_SPHERES @local = 5; // Isotropic reference, three rotations and one mapped direction.
+const String[ANISOTROPY_SPHERES] ANISOTROPY_MATERIAL_KEYS @local = {
+    "material/materials/anisotropy_none", "material/materials/anisotropy_rotation_0",
+    "material/materials/anisotropy_rotation_quarter", "material/materials/anisotropy_rotation_half",
+    "material/materials/anisotropy_mapped",
+};
+const String[ANISOTROPY_SPHERES] ANISOTROPY_NODE_NAMES @local = {
+    "anisotropy_none", "anisotropy_rotation_0", "anisotropy_rotation_quarter",
+    "anisotropy_rotation_half", "anisotropy_mapped",
+};
+const ZString[ANISOTROPY_SPHERES] ANISOTROPY_SURFACE_LABELS @local = {
+    "Isotropic##surface", "Rotation 0##surface", "Rotation pi/4##surface",
+    "Rotation pi/2##surface", "Mapped direction##surface",
+};
 const String[SPECULAR_SPHERES] SPECULAR_MATERIAL_KEYS @local = {
     "material/materials/specular_ior_1_0", "material/materials/specular_ior_1_5",
     "material/materials/specular_ior_2_4", "material/materials/specular_weight_0",
@@ -58,6 +72,7 @@ enum MaterialPreset @local {
     TOON_LIGHTING,
     PHYSICAL_LAYERS,
     PHYSICAL_SPECULAR,
+    PHYSICAL_ANISOTROPY,
 }
 
 enum EnvironmentChoice @local {
@@ -74,6 +89,7 @@ enum PhysicalMap @local {
     SHEEN_ROUGHNESS,
     SPECULAR,
     SPECULAR_COLOR,
+    ANISOTROPY,
 }
 
 struct PhysicalMapFixture @local {
@@ -99,6 +115,7 @@ struct ExampleTextures @local {
     TextureId sheen_roughness;
     TextureId specular;
     TextureId specular_color;
+    TextureId anisotropy;
 }
 
 struct ExampleEnvironments @local {
@@ -119,6 +136,7 @@ struct ExampleMaterials @local {
     MaterialId fabric;
     MaterialId combined;
     MaterialId[SPECULAR_SPHERES] specular;
+    MaterialId[ANISOTROPY_SPHERES] anisotropy;
 }
 
 struct ExampleNodes @local {
@@ -137,6 +155,7 @@ struct ExampleNodes @local {
     Node* fabric;
     Node* combined;
     Node*[SPECULAR_SPHERES] specular;
+    Node*[ANISOTROPY_SPHERES] anisotropy;
 }
 
 struct Controls @local {
@@ -326,6 +345,14 @@ fn PhysicalMapFixture[PhysicalMap::len] physical_map_fixtures(ExampleTextures te
                 transform: { .scale = { 3, 3 } },
             ),
         },
+        [PhysicalMap.ANISOTROPY.ordinal] = {
+            .label = "Anisotropy RG direction, B strength##physical_anisotropy",
+            .slot = material::texture_slot(
+                texture: textures.anisotropy,
+                sampler: asset::SAMPLER_NEAREST,
+                uv_set: 0,
+            ),
+        },
     };
 }
 
@@ -416,6 +443,7 @@ fn void select_preset(
     bool toon = preset == TOON_LIGHTING;
     bool physical = preset == PHYSICAL_LAYERS;
     bool specular = preset == PHYSICAL_SPECULAR;
+    bool anisotropy = preset == PHYSICAL_ANISOTROPY;
 
     nodes.mask_ground.visible = masked;
     nodes.leaf_first.visible = masked;
@@ -432,6 +460,7 @@ fn void select_preset(
     nodes.fabric.visible = physical;
     nodes.combined.visible = physical;
     foreach (node : nodes.specular) node.visible = specular;
+    foreach (node : nodes.anisotropy) node.visible = anisotropy;
 
     controls.preset = preset;
     switch (preset) {
@@ -440,6 +469,7 @@ fn void select_preset(
         case TOON_LIGHTING: controls.selected_material = materials.toon_steps;
         case PHYSICAL_LAYERS: controls.selected_material = materials.coated_paint;
         case PHYSICAL_SPECULAR: controls.selected_material = materials.specular[1];
+        case PHYSICAL_ANISOTROPY: controls.selected_material = materials.anisotropy[1];
     }
 }
 
@@ -484,6 +514,14 @@ fn void preset_controls(
     if (imgui::radio_button("Physical specular", controls.preset == PHYSICAL_SPECULAR)) {
         select_preset(
             preset: PHYSICAL_SPECULAR,
+            materials: materials,
+            nodes: nodes,
+            controls: controls,
+        );
+    }
+    if (imgui::radio_button("Physical anisotropy", controls.preset == PHYSICAL_ANISOTROPY)) {
+        select_preset(
+            preset: PHYSICAL_ANISOTROPY,
             materials: materials,
             nodes: nodes,
             controls: controls,
@@ -566,6 +604,16 @@ fn void preset_controls(
             foreach (index, material_id : materials.specular) {
                 if (imgui::radio_button(
                     SPECULAR_SURFACE_LABELS[index],
+                    same_material_id(controls.selected_material, material_id),
+                )) {
+                    controls.selected_material = material_id;
+                }
+            }
+        case PHYSICAL_ANISOTROPY:
+            imgui::text_unformatted("Brushed metal: isotropic, three rotations, mapped");
+            foreach (index, material_id : materials.anisotropy) {
+                if (imgui::radio_button(
+                    ANISOTROPY_SURFACE_LABELS[index],
                     same_material_id(controls.selected_material, material_id),
                 )) {
                     controls.selected_material = material_id;
@@ -664,6 +712,7 @@ fn void physical_texture_controls(
         [PhysicalMap.SHEEN_ROUGHNESS.ordinal] = &params.sheen_roughness_map,
         [PhysicalMap.SPECULAR.ordinal] = &params.specular_map,
         [PhysicalMap.SPECULAR_COLOR.ordinal] = &params.specular_color_map,
+        [PhysicalMap.ANISOTROPY.ordinal] = &params.anisotropy_map,
     };
     foreach (index, fixture : fixtures) {
         changed |= edit_map_toggle(fixture.label, slots[index], fixture.slot);
@@ -910,6 +959,7 @@ fn ExampleTextures? create_example_textures(AssetStore* assets) @local {
     char[PHYSICAL_TEXTURE_SIZE * PHYSICAL_TEXTURE_SIZE * RGBA8_BYTES] sheen_roughness_pixels;
     char[PHYSICAL_TEXTURE_SIZE * PHYSICAL_TEXTURE_SIZE * RGBA8_BYTES] specular_pixels;
     char[PHYSICAL_TEXTURE_SIZE * PHYSICAL_TEXTURE_SIZE * RGBA8_BYTES] specular_color_pixels;
+    char[PHYSICAL_TEXTURE_SIZE * PHYSICAL_TEXTURE_SIZE * RGBA8_BYTES] anisotropy_pixels;
 
     for (uint y = 0; y < PHYSICAL_TEXTURE_SIZE; y++) {
         for (uint x = 0; x < PHYSICAL_TEXTURE_SIZE; x++) {
@@ -965,6 +1015,13 @@ fn ExampleTextures? create_example_textures(AssetStore* assets) @local {
             specular_color_pixels[offset + 1] = alternating ? 200 : 220;
             specular_color_pixels[offset + 2] = alternating ? 60 : 255;
             specular_color_pixels[offset + 3] = 133;
+
+            // Direction rotates by a quarter turn per column; B keeps full strength.
+            float direction_angle = (float)x * (float)math::PI / 4;
+            anisotropy_pixels[offset] = (char)(127.5f + 127.5f * math::cos(direction_angle));
+            anisotropy_pixels[offset + 1] = (char)(127.5f + 127.5f * math::sin(direction_angle));
+            anisotropy_pixels[offset + 2] = 255;
+            anisotropy_pixels[offset + 3] = 255;
         }
     }
 
@@ -1050,6 +1107,16 @@ fn ExampleTextures? create_example_textures(AssetStore* assets) @local {
             ),
             pixels: specular_color_pixels[..],
             key: "texture/materials/specular_color",
+        )!,
+        .anisotropy = assets.add_texture(
+            desc: material::texture_2d_desc(
+                width: PHYSICAL_TEXTURE_SIZE,
+                height: PHYSICAL_TEXTURE_SIZE,
+                format: RGBA8_UNORM,
+                debug_name: "materials_anisotropy",
+            ),
+            pixels: anisotropy_pixels[..],
+            key: "texture/materials/anisotropy",
         )!,
     };
     return textures;
@@ -1174,7 +1241,33 @@ fn ExampleMaterials create_materials(
             SPECULAR_MATERIAL_KEYS[index],
         )!!;
     }
+    foreach (usz index, &material_id : materials.anisotropy) {
+        *material_id = assets.add_material(
+            material::physical(anisotropy_params(index, fixtures[PhysicalMap.ANISOTROPY.ordinal].slot)),
+            ANISOTROPY_MATERIAL_KEYS[index],
+        )!!;
+    }
     return materials;
+}
+
+fn PhysicalParams anisotropy_params(usz index, TextureSlot direction_map) @local {
+    PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
+    params.standard.base_color = { 0.9f, 0.75f, 0.45f, 1 };
+    params.standard.metallic = 1;
+    params.standard.roughness = 0.35f;
+    switch (index) {
+        case 1: params.anisotropy = 0.8f;
+        case 2:
+            params.anisotropy = 0.8f;
+            params.anisotropy_rotation = (float)math::PI / 4;
+        case 3:
+            params.anisotropy = 0.8f;
+            params.anisotropy_rotation = (float)math::PI / 2;
+        case 4:
+            params.anisotropy = 0.8f;
+            params.anisotropy_map = direction_map;
+    }
+    return params;
 }
 
 fn PhysicalParams specular_params(usz index) @local {
@@ -1288,6 +1381,12 @@ fn ExampleNodes create_fixtures(
         float row = index < 3 ? 1.8f : 0;
         node.local.position = { column * 1.6f, row, 0 };
         nodes.specular[index] = node;
+    }
+    foreach (index, material_id : materials.anisotropy) {
+        Node* node = scene.add_mesh(sphere, material_id, name: ANISOTROPY_NODE_NAMES[index])!!;
+        float column = index < 3 ? (float)index - 1 : (float)index - 3.5f;
+        node.local.position = { column * 1.6f, index < 3 ? 1.8f : 0, 0 };
+        nodes.anisotropy[index] = node;
     }
     return nodes;
 }

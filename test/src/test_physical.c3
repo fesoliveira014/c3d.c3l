@@ -106,13 +106,14 @@ fn void test_physical_repack_clears_layer_state_after_family_reuse() @test {
     PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
     params.clearcoat = 1;
     params.sheen_color = { 1, 1, 1 };
+    params.anisotropy = 1;
     Material material = material::physical(params);
     material.common.alpha_mode = AlphaMode.BLEND;
     MaterialBindings bindings = {
         .clearcoat = binding(1, 2), .clearcoat_roughness = binding(3, 4),
         .clearcoat_normal = binding(5, 6), .sheen_color = binding(7, 8),
         .sheen_roughness = binding(9, 10), .specular = binding(13, 14),
-        .specular_color = binding(15, 16),
+        .specular_color = binding(15, 16), .anisotropy = binding(17, 18),
     };
     char[render::MATERIAL_STRIDE] storage @align(16);
     storage[..] = 0x7f;
@@ -133,11 +134,13 @@ fn void test_physical_repack_clears_layer_state_after_family_reuse() @test {
     assert(packed.extension_map_flags == 0);
     assert(packed.specular_map.texture_index == (gpu::TextureIndex)0);
     assert(packed.specular_color_map.texture_index == (gpu::TextureIndex)0);
+    assert(packed.anisotropy == 0 && packed.anisotropy_rotation == 0);
+    assert(packed.anisotropy_map.texture_index == (gpu::TextureIndex)0);
 }
 
 fn void test_each_physical_binding_participates_in_reuse() @test {
     MaterialBindings first;
-    for (uint slot = 0; slot < 7; slot++) {
+    for (uint slot = 0; slot < 8; slot++) {
         for (uint change = 0; change < 9; change++) {
             MaterialBindings second = first;
             TextureBinding* selected;
@@ -149,6 +152,7 @@ fn void test_each_physical_binding_participates_in_reuse() @test {
                 case 4: selected = &second.sheen_roughness;
                 case 5: selected = &second.specular;
                 case 6: selected = &second.specular_color;
+                case 7: selected = &second.anisotropy;
                 default: unreachable();
             }
             switch (change) {
@@ -278,10 +282,31 @@ fn void test_disabled_physical_lobes_ignore_present_bindings() @test {
     PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
     params.specular = 0;
     Material material = material::physical(params);
-    MaterialBindings bindings = { .specular = binding(1, 2), .specular_color = binding(3, 4) };
+    MaterialBindings bindings = {
+        .specular = binding(1, 2), .specular_color = binding(3, 4), .anisotropy = binding(5, 6),
+    };
     char[render::MATERIAL_STRIDE] storage @align(16);
     render::write_material_block(storage[..], &material, bindings);
     PhysicalMaterialGpu* packed = (PhysicalMaterialGpu*)&storage;
     assert(packed.extension_map_flags == 0);
-    assert(packed.specular_color_weight.w == 0);
+    assert(packed.specular_color_weight.w == 0 && packed.anisotropy == 0);
+}
+
+fn void test_physical_anisotropy_packs_rotation_and_map_flag() @test {
+    PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
+    params.anisotropy = 0.75f;
+    params.anisotropy_rotation = 1.25f;
+    params.anisotropy_map.uv_set = 1;
+    params.anisotropy_map.transform = { .offset = { 5, 6 }, .scale = { 6, 7 } };
+    Material material = material::physical(params);
+    char[render::MATERIAL_STRIDE] storage @align(16);
+    render::write_material_block(storage[..], &material, { .anisotropy = binding(5, 6) });
+    PhysicalMaterialGpu* packed = (PhysicalMaterialGpu*)&storage;
+    assert(packed.anisotropy == 0.75f && packed.anisotropy_rotation == 1.25f);
+    assert(packed.extension_map_flags == (shader::PHYSICAL_EXTENSION_MAP_ANISOTROPY
+        | (shader::PHYSICAL_EXTENSION_MAP_ANISOTROPY << shader::MATERIAL_MAP_UV1_SHIFT)));
+    assert(packed.anisotropy_map.texture_index == (gpu::TextureIndex)5);
+    assert(packed.anisotropy_map.sampler_index == (gpu::SamplerIndex)6);
+    assert(packed.anisotropy_map.uv_offset == (Vec2){ 5, 6 });
+    assert(packed.anisotropy_map.uv_linear == (Vec4){ 6, 0, 0, 7 });
 }

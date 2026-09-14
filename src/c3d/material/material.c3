@@ -140,6 +140,10 @@ macro bool @physical_specular_in_range(PhysicalParams #params) @private {
         && @in_unit_interval(#params.specular) && @rgb_nonnegative_finite(#params.specular_color);
 }
 
+macro bool @physical_anisotropy_in_range(PhysicalParams #params) @private {
+    return @in_unit_interval(#params.anisotropy) && math::is_finite(#params.anisotropy_rotation);
+}
+
 macro bool @standard_params_in_range(StandardParams #params) @private {
     return @rgb_in_unit_interval(#params.base_color) && @in_unit_interval(#params.base_color.a)
         && @in_unit_interval(#params.metallic) && @in_unit_interval(#params.roughness)

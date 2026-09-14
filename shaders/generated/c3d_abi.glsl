@@ -46,6 +46,7 @@ const uint PHYSICAL_MAP_SHEEN_COLOR = 8u;
 const uint PHYSICAL_MAP_SHEEN_ROUGHNESS = 16u;
 const uint PHYSICAL_EXTENSION_MAP_SPECULAR = 1u;
 const uint PHYSICAL_EXTENSION_MAP_SPECULAR_COLOR = 2u;
+const uint PHYSICAL_EXTENSION_MAP_ANISOTROPY = 4u;
 const uint SHEEN_LUT_SIZE = 256u;
 const uint SHEEN_LUT_SAMPLES = 4096u;
 const uint SHEEN_PREFILTER_SAMPLES = 4096u;
@@ -320,10 +321,11 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer PhysicalMat
     vec4 specular_color_weight;
     float ior;
     uint extension_map_flags;
-    uint _pad0;
-    uint _pad1;
+    float anisotropy;
+    float anisotropy_rotation;
     TextureMapGpu specular_map;
     TextureMapGpu specular_color_map;
+    TextureMapGpu anisotropy_map;
 };
 
 #endif

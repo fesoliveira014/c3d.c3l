@@ -14,6 +14,11 @@ struct StandardSurface {
     vec3 normal;
     vec3 view_direction;
     float normal_view;
+    vec3 anisotropic_tangent;
+    vec3 anisotropic_bitangent;
+    float anisotropy;
+    float alpha_tangent;
+    float alpha_bitangent;
 };
 
 StandardSurface prepare_surface(
@@ -36,7 +41,26 @@ StandardSurface prepare_surface(
     surface.normal = normal;
     surface.view_direction = view_direction;
     surface.normal_view = clamp(dot(normal, view_direction), 0.0, 1.0);
+    surface.anisotropic_tangent = vec3(0.0);
+    surface.anisotropic_bitangent = vec3(0.0);
+    surface.anisotropy = 0.0;
+    surface.alpha_tangent = alpha;
+    surface.alpha_bitangent = alpha;
     return surface;
+}
+
+void apply_anisotropy(
+    inout StandardSurface surface,
+    vec3 tangent_direction,
+    vec3 bitangent,
+    float strength
+) {
+    float alpha = surface.alpha_bitangent;
+    surface.anisotropic_tangent = tangent_direction;
+    surface.anisotropic_bitangent = bitangent;
+    surface.anisotropy = strength;
+    surface.alpha_tangent = mix(alpha, 1.0, strength * strength);
+    surface.alpha_bitangent = alpha;
 }
 
 StandardSurface prepare_standard_surface(
@@ -69,6 +93,37 @@ float distribution_ggx(float normal_half, float alpha_squared) {
     return alpha_squared / (PI * denominator * denominator);
 }
 
+float distribution_ggx_anisotropic(
+    float normal_half,
+    float tangent_half,
+    float bitangent_half,
+    float alpha_tangent,
+    float alpha_bitangent
+) {
+    float alpha_product = alpha_tangent * alpha_bitangent;
+    vec3 scaled = vec3(alpha_bitangent * tangent_half, alpha_tangent * bitangent_half, alpha_product * normal_half);
+    float weight = alpha_product / dot(scaled, scaled);
+    return alpha_product * weight * weight / PI;
+}
+
+float visibility_smith_anisotropic(
+    StandardSurface surface,
+    vec3 light_direction,
+    float normal_light
+) {
+    vec3 view_scaled = vec3(
+        surface.alpha_tangent * dot(surface.anisotropic_tangent, surface.view_direction),
+        surface.alpha_bitangent * dot(surface.anisotropic_bitangent, surface.view_direction),
+        surface.normal_view
+    );
+    vec3 light_scaled = vec3(
+        surface.alpha_tangent * dot(surface.anisotropic_tangent, light_direction),
+        surface.alpha_bitangent * dot(surface.anisotropic_bitangent, light_direction),
+        normal_light
+    );
+    return 0.5 / (normal_light * length(view_scaled) + surface.normal_view * length(light_scaled));
+}
+
 float visibility_smith(float normal_view, float normal_light, float alpha_squared) {
     float view_term = normal_light * sqrt(alpha_squared + (1.0 - alpha_squared) * normal_view * normal_view);
     float light_term = normal_view * sqrt(alpha_squared + (1.0 - alpha_squared) * normal_light * normal_light);
@@ -84,8 +139,22 @@ vec3 evaluate_standard_brdf(StandardSurface surface, vec3 light_direction) {
     float view_half = clamp(dot(surface.view_direction, half_direction), 0.0, 1.0);
     vec3 fresnel = fresnel_schlick(surface.reflectance, surface.grazing_reflectance, view_half);
     vec3 diffuse = (1.0 - fresnel) * surface.diffuse_color;
-    vec3 specular = fresnel * distribution_ggx(normal_half, surface.alpha_squared)
-        * visibility_smith(surface.normal_view, normal_light, surface.alpha_squared);
+    float distribution;
+    float visibility;
+    if (surface.anisotropy > 0.0) {
+        distribution = distribution_ggx_anisotropic(
+            normal_half,
+            dot(surface.anisotropic_tangent, half_direction),
+            dot(surface.anisotropic_bitangent, half_direction),
+            surface.alpha_tangent,
+            surface.alpha_bitangent
+        );
+        visibility = visibility_smith_anisotropic(surface, light_direction, normal_light);
+    } else {
+        distribution = distribution_ggx(normal_half, surface.alpha_squared);
+        visibility = visibility_smith(surface.normal_view, normal_light, surface.alpha_squared);
+    }
+    vec3 specular = fresnel * distribution * visibility;
     return (diffuse + specular) * normal_light;
 }
 
