@@ -16,6 +16,17 @@ struct ImportCounts @private {
     usz lights;
 }
 
+macro @each_root(Importer* importer; @body(root)) @private {
+    gltf::Data* data = importer.data;
+    if (data.scene) {
+        foreach (root : data.scene.nodes) @body(root);
+    } else {
+        foreach (&node : data.nodes) {
+            if (!node.parent) @body(node);
+        }
+    }
+}
+
 fn void? build_template(Importer* importer) @private {
     ImportCounts counts;
     @each_root(importer; root) {
@@ -35,17 +46,6 @@ fn void? build_template(Importer* importer) @private {
         emit_subtree(importer, root, TEMPLATE_ROOT_PARENT, &cursor)!;
     };
     return;
-}
-
-macro @each_root(Importer* importer; @body(root)) @private {
-    gltf::Data* data = importer.data;
-    if (data.scene) {
-        foreach (root : data.scene.nodes) @body(root);
-    } else {
-        foreach (&node : data.nodes) {
-            if (!node.parent) @body(node);
-        }
-    }
 }
 
 fn void count_subtree(Importer* importer, gltf::Node* node, ImportCounts* counts) @private {

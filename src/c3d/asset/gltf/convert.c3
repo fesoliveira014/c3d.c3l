@@ -153,7 +153,7 @@ fn material::Material? convert_material(Importer* importer, gltf::Material* sour
         BasicParams params = material::BASIC_PARAMS_DEFAULT;
         params.color = source.pbr_metallic_roughness.base_color_factor;
         params.map = texture_slot_for(importer, &source.pbr_metallic_roughness.base_color_texture, true)!;
-        if (!unit_rgba(params.color)) return c3d::ASSET_FORMAT_ERROR~;
+        if (!rgba_in_unit_interval(params.color)) return c3d::ASSET_FORMAT_ERROR~;
         return material::basic(params, common);
     }
 
@@ -191,14 +191,14 @@ fn material::Material? convert_material(Importer* importer, gltf::Material* sour
     params.transmission_map = texture_slot_for(importer, &source.transmission.transmission_texture, false)!;
     params.thickness_map = texture_slot_for(importer, &source.volume.thickness_texture, false)!;
 
-    bool in_range = unit(params.clearcoat) && unit(params.clearcoat_roughness)
+    bool in_range = in_unit_interval(params.clearcoat) && in_unit_interval(params.clearcoat_roughness)
         && math::is_finite(params.clearcoat_normal_scale)
-        && unit_rgb(params.sheen_color) && unit(params.sheen_roughness)
+        && rgb_in_unit_interval(params.sheen_color) && in_unit_interval(params.sheen_roughness)
         && params.ior >= 1 && math::is_finite(params.ior)
-        && unit(params.specular) && nonnegative_finite_rgb(params.specular_color)
-        && unit(params.anisotropy) && math::is_finite(params.anisotropy_rotation)
-        && unit(params.transmission) && nonnegative_finite(params.thickness)
-        && nonnegative_finite(params.attenuation_distance) && unit_rgb(params.attenuation_color);
+        && in_unit_interval(params.specular) && nonnegative_finite_rgb(params.specular_color)
+        && in_unit_interval(params.anisotropy) && math::is_finite(params.anisotropy_rotation)
+        && in_unit_interval(params.transmission) && nonnegative_finite(params.thickness)
+        && nonnegative_finite(params.attenuation_distance) && rgb_in_unit_interval(params.attenuation_color);
     if (!in_range) return c3d::ASSET_FORMAT_ERROR~;
     return material::physical(params, common);
 }
@@ -219,8 +219,9 @@ fn StandardParams? standard_params(Importer* importer, gltf::Material* source) @
     params.occlusion_map = texture_slot_for(importer, &source.occlusion_texture, false)!;
     params.emissive_map = texture_slot_for(importer, &source.emissive_texture, true)!;
 
-    bool in_range = unit_rgba(params.base_color) && unit(params.metallic) && unit(params.roughness)
-        && unit(params.occlusion_strength) && nonnegative_finite_rgb(params.emissive)
+    bool in_range = rgba_in_unit_interval(params.base_color)
+        && in_unit_interval(params.metallic) && in_unit_interval(params.roughness)
+        && in_unit_interval(params.occlusion_strength) && nonnegative_finite_rgb(params.emissive)
         && nonnegative_finite(params.emissive_strength) && math::is_finite(params.normal_scale);
     if (!in_range) return c3d::ASSET_FORMAT_ERROR~;
     return params;
@@ -298,16 +299,17 @@ fn light::Light? convert_light(gltf::Light* source) @private {
     }
 }
 
-fn bool unit(float value) @private {
+fn bool in_unit_interval(float value) @private {
     return value >= 0 && value <= 1;
 }
 
-fn bool unit_rgb(Vec3 color) @private {
-    return unit(color.x) && unit(color.y) && unit(color.z);
+fn bool rgb_in_unit_interval(Vec3 color) @private {
+    return in_unit_interval(color.x) && in_unit_interval(color.y) && in_unit_interval(color.z);
 }
 
-fn bool unit_rgba(Vec4 color) @private {
-    return unit(color.x) && unit(color.y) && unit(color.z) && unit(color.w);
+fn bool rgba_in_unit_interval(Vec4 color) @private {
+    return in_unit_interval(color.x) && in_unit_interval(color.y)
+        && in_unit_interval(color.z) && in_unit_interval(color.w);
 }
 
 fn bool nonnegative_finite(float value) @private {

@@ -12,6 +12,9 @@ const usz VEC2_COMPONENTS @private = 2;
 const usz VEC3_COMPONENTS @private = 3;
 const usz VEC4_COMPONENTS @private = 4;
 
+alias PrimitiveCountFn @private = fn usz (usz entries);
+alias CornerFn @private = fn usz (usz primitive, usz corner, usz entries);
+
 fn void? convert_geometries(Importer* importer) @private {
     foreach (usz mesh_index, &mesh : importer.data.meshes) {
         foreach (usz primitive_index, &primitive : mesh.primitives) {
@@ -84,7 +87,8 @@ fn bool compressed(gltf::Accessor* accessor) @private {
 
 fn bool has_normal_map(Importer* importer, gltf::Primitive* primitive) @private {
     if (!primitive.material) return false;
-    material::Material* material = &importer.assets.material(importer.materials[gltf::material_index(importer.data, primitive.material)]).data;
+    MaterialId material_id = importer.materials[gltf::material_index(importer.data, primitive.material)];
+    material::Material* material = &importer.assets.material(material_id).data;
     switch (material.kind) {
         case STANDARD:
             return material.standard.normal_map.texture.asset.generation != 0;
@@ -172,9 +176,6 @@ fn void? convert_topology(
     return;
 }
 
-alias PrimitiveCountFn @private = fn usz (usz entries);
-alias CornerFn @private = fn usz (usz primitive, usz corner, usz entries);
-
 fn void rewrite_indices(
     Allocator allocator,
     Geometry* geometry,
@@ -238,9 +239,13 @@ fn void? read_morph_targets(
         foreach (&attribute : target.attributes) {
             switch (attribute.type) {
                 case POSITION:
-                    if (attribute.index == 0) morph.position_deltas = read_vec3(importer, attribute.data, vertex_count)!;
+                    if (attribute.index == 0) {
+                        morph.position_deltas = read_vec3(importer, attribute.data, vertex_count)!;
+                    }
                 case NORMAL:
-                    if (attribute.index == 0) morph.normal_deltas = read_vec3(importer, attribute.data, vertex_count)!;
+                    if (attribute.index == 0) {
+                        morph.normal_deltas = read_vec3(importer, attribute.data, vertex_count)!;
+                    }
                 case INVALID:
                 case TANGENT:
                 case TEXCOORD:

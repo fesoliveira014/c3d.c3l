@@ -2,7 +2,6 @@ module c3d::asset::gltf;
 
 import c3d;
 import c3d::asset;
-import c3d::maths;
 import c3d::model;
 import c3d::scene;
 import gltf;
@@ -46,15 +45,15 @@ const LoadOptions LOAD_OPTIONS_DEFAULT = {
  Ids and nodes produced by one composed load; arrays belong to the caller's allocator.
 *>
 struct LoadResult {
-    ModelId      model;
-    scene::Node*        root;
-    GeometryId[] geometries;
-    MaterialId[] materials;
-    TextureId[]  textures;
-    ClipId[]     clips;
-    SkeletonId[] skeletons;
-    scene::Node*[]      cameras;
-    scene::Node*[]      lights;
+    ModelId        model;
+    scene::Node*   root;
+    GeometryId[]   geometries;
+    MaterialId[]   materials;
+    TextureId[]    textures;
+    ClipId[]       clips;
+    SkeletonId[]   skeletons;
+    scene::Node*[] cameras;
+    scene::Node*[] lights;
 }
 
 struct Importer @private {
@@ -89,7 +88,7 @@ fn ModelId? load_model(AssetStore* assets, String path, LoadOptions options = LO
     defer catch discard(&importer);
     importer.data = parse_document(path)!;
     defer gltf::free(importer.data);
-    resolve_buffers(importer.data, path)!;
+    prepare_document(importer.data, path)!;
     @pool() {
         importer.base_dir = path.path_tdirname() ?? "";
         import_model(&importer)!;
@@ -120,7 +119,7 @@ fn ModelId? load_model_memory(
     importer.data = parse_bytes(bytes)!;
     defer gltf::free(importer.data);
     @pool() {
-        resolve_buffers(importer.data, join_path(base_dir, MEMORY_PLACEHOLDER_NAME))!;
+        prepare_document(importer.data, join_path(base_dir, MEMORY_PLACEHOLDER_NAME))!;
         import_model(&importer)!;
     };
     return importer.model;
@@ -150,7 +149,7 @@ fn LoadResult? load(
     defer catch discard(&importer);
     importer.data = parse_document(path)!;
     defer gltf::free(importer.data);
-    resolve_buffers(importer.data, path)!;
+    prepare_document(importer.data, path)!;
     @pool() {
         importer.base_dir = path.path_tdirname() ?? "";
         import_model(&importer)!;
@@ -183,7 +182,7 @@ fn gltf::Data*? parse_bytes(char[] bytes) @private {
     return data;
 }
 
-fn void? resolve_buffers(gltf::Data* data, String path) @private {
+fn void? prepare_document(gltf::Data* data, String path) @private {
     if (catch excuse = gltf::load_buffers(data, path)) return load_fault(excuse)~;
     if (catch excuse = gltf::validate(data)) return load_fault(excuse)~;
     return;
