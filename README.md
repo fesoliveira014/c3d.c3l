@@ -152,7 +152,7 @@ See [Materials and lighting](docs/materials.md) for factors, layer masks,
 light capacity and current rendering limits.
 
 `materials` combines masked foliage, ordinary premultiplied alpha blending, Toon
-lighting and Physical clearcoat/sheen in one interactive window. Its controls
+lighting and Physical clearcoat/sheen/specular in one interactive window. Its controls
 switch presets, active families, base and layer maps, two colored lights, ambient
 fill and either bundled HDR environment:
 

@@ -28,6 +28,20 @@ const uint ALPHA_TEXTURE_SIZE @local = 16; // Preserves a recognizable leaf silh
 const uint RAMP_TEXTURE_WIDTH @local = 8; // A 32-byte fixture keeps unequal band widths visible.
 const uint PHYSICAL_TEXTURE_SIZE @local = 4; // Keeps all mapped layer patterns inspectable without asset files.
 const uint RGBA8_BYTES @local = 4;
+const usz SPECULAR_SPHERES @local = 6; // Three IOR values over three specular weights.
+const String[SPECULAR_SPHERES] SPECULAR_MATERIAL_KEYS @local = {
+    "material/materials/specular_ior_1_0", "material/materials/specular_ior_1_5",
+    "material/materials/specular_ior_2_4", "material/materials/specular_weight_0",
+    "material/materials/specular_weight_0_5", "material/materials/specular_tinted",
+};
+const String[SPECULAR_SPHERES] SPECULAR_NODE_NAMES @local = {
+    "specular_ior_1_0", "specular_ior_1_5", "specular_ior_2_4",
+    "specular_weight_0", "specular_weight_0_5", "specular_tinted",
+};
+const ZString[SPECULAR_SPHERES] SPECULAR_SURFACE_LABELS @local = {
+    "Ior 1.0##surface", "Ior 1.5##surface", "Ior 2.4##surface",
+    "Specular 0##surface", "Specular 0.5##surface", "Tinted specular##surface",
+};
 const float LIGHT_INTENSITY_MAX @local = 100; // Covers both direct-light controls without unwieldy dragging.
 const float INDIRECT_INTENSITY_MAX @local = 2; // Keeps untone-mapped output readable while editing.
 const float EDITOR_WIDTH @local = 170; // Leaves long labels readable in the controls panel.
@@ -43,6 +57,7 @@ enum MaterialPreset @local {
     ALPHA_BLEND,
     TOON_LIGHTING,
     PHYSICAL_LAYERS,
+    PHYSICAL_SPECULAR,
 }
 
 enum EnvironmentChoice @local {
@@ -57,6 +72,8 @@ enum PhysicalMap @local {
     CLEARCOAT_NORMAL,
     SHEEN_COLOR,
     SHEEN_ROUGHNESS,
+    SPECULAR,
+    SPECULAR_COLOR,
 }
 
 struct PhysicalMapFixture @local {
@@ -80,6 +97,8 @@ struct ExampleTextures @local {
     TextureId clearcoat_normal;
     TextureId sheen_color;
     TextureId sheen_roughness;
+    TextureId specular;
+    TextureId specular_color;
 }
 
 struct ExampleEnvironments @local {
@@ -99,6 +118,7 @@ struct ExampleMaterials @local {
     MaterialId coated_paint;
     MaterialId fabric;
     MaterialId combined;
+    MaterialId[SPECULAR_SPHERES] specular;
 }
 
 struct ExampleNodes @local {
@@ -116,6 +136,7 @@ struct ExampleNodes @local {
     Node* coated_paint;
     Node* fabric;
     Node* combined;
+    Node*[SPECULAR_SPHERES] specular;
 }
 
 struct Controls @local {
@@ -287,6 +308,24 @@ fn PhysicalMapFixture[PhysicalMap::len] physical_map_fixtures(ExampleTextures te
                 transform: { .scale = { 2, 1 } },
             ),
         },
+        [PhysicalMap.SPECULAR.ordinal] = {
+            .label = "Specular weight A##physical_specular",
+            .slot = material::texture_slot(
+                texture: textures.specular,
+                sampler: asset::SAMPLER_LINEAR_REPEAT,
+                uv_set: 1,
+                transform: { .scale = { 2, 2 } },
+            ),
+        },
+        [PhysicalMap.SPECULAR_COLOR.ordinal] = {
+            .label = "Specular color RGB (sRGB)##physical_specular_color",
+            .slot = material::texture_slot(
+                texture: textures.specular_color,
+                sampler: asset::SAMPLER_NEAREST,
+                uv_set: 0,
+                transform: { .scale = { 3, 3 } },
+            ),
+        },
     };
 }
 
@@ -376,6 +415,7 @@ fn void select_preset(
     bool blended = preset == ALPHA_BLEND;
     bool toon = preset == TOON_LIGHTING;
     bool physical = preset == PHYSICAL_LAYERS;
+    bool specular = preset == PHYSICAL_SPECULAR;
 
     nodes.mask_ground.visible = masked;
     nodes.leaf_first.visible = masked;
@@ -391,6 +431,7 @@ fn void select_preset(
     nodes.coated_paint.visible = physical;
     nodes.fabric.visible = physical;
     nodes.combined.visible = physical;
+    foreach (node : nodes.specular) node.visible = specular;
 
     controls.preset = preset;
     switch (preset) {
@@ -398,6 +439,7 @@ fn void select_preset(
         case ALPHA_BLEND: controls.selected_material = materials.blend_red;
         case TOON_LIGHTING: controls.selected_material = materials.toon_steps;
         case PHYSICAL_LAYERS: controls.selected_material = materials.coated_paint;
+        case PHYSICAL_SPECULAR: controls.selected_material = materials.specular[1];
     }
 }
 
@@ -434,6 +476,14 @@ fn void preset_controls(
     if (imgui::radio_button("Physical layers", controls.preset == PHYSICAL_LAYERS)) {
         select_preset(
             preset: PHYSICAL_LAYERS,
+            materials: materials,
+            nodes: nodes,
+            controls: controls,
+        );
+    }
+    if (imgui::radio_button("Physical specular", controls.preset == PHYSICAL_SPECULAR)) {
+        select_preset(
+            preset: PHYSICAL_SPECULAR,
             materials: materials,
             nodes: nodes,
             controls: controls,
@@ -509,6 +559,17 @@ fn void preset_controls(
                 same_material_id(controls.selected_material, materials.combined),
             )) {
                 controls.selected_material = materials.combined;
+            }
+        case PHYSICAL_SPECULAR:
+            imgui::text_unformatted("Top: ior 1.0 / 1.5 / 2.4");
+            imgui::text_unformatted("Bottom: specular 0 / 0.5 / tinted 1");
+            foreach (index, material_id : materials.specular) {
+                if (imgui::radio_button(
+                    SPECULAR_SURFACE_LABELS[index],
+                    same_material_id(controls.selected_material, material_id),
+                )) {
+                    controls.selected_material = material_id;
+                }
             }
     }
 }
@@ -601,6 +662,8 @@ fn void physical_texture_controls(
         [PhysicalMap.CLEARCOAT_NORMAL.ordinal] = &params.clearcoat_normal_map,
         [PhysicalMap.SHEEN_COLOR.ordinal] = &params.sheen_color_map,
         [PhysicalMap.SHEEN_ROUGHNESS.ordinal] = &params.sheen_roughness_map,
+        [PhysicalMap.SPECULAR.ordinal] = &params.specular_map,
+        [PhysicalMap.SPECULAR_COLOR.ordinal] = &params.specular_color_map,
     };
     foreach (index, fixture : fixtures) {
         changed |= edit_map_toggle(fixture.label, slots[index], fixture.slot);
@@ -845,6 +908,8 @@ fn ExampleTextures? create_example_textures(AssetStore* assets) @local {
     char[PHYSICAL_TEXTURE_SIZE * PHYSICAL_TEXTURE_SIZE * RGBA8_BYTES] clearcoat_normal_pixels;
     char[PHYSICAL_TEXTURE_SIZE * PHYSICAL_TEXTURE_SIZE * RGBA8_BYTES] sheen_color_pixels;
     char[PHYSICAL_TEXTURE_SIZE * PHYSICAL_TEXTURE_SIZE * RGBA8_BYTES] sheen_roughness_pixels;
+    char[PHYSICAL_TEXTURE_SIZE * PHYSICAL_TEXTURE_SIZE * RGBA8_BYTES] specular_pixels;
+    char[PHYSICAL_TEXTURE_SIZE * PHYSICAL_TEXTURE_SIZE * RGBA8_BYTES] specular_color_pixels;
 
     for (uint y = 0; y < PHYSICAL_TEXTURE_SIZE; y++) {
         for (uint x = 0; x < PHYSICAL_TEXTURE_SIZE; x++) {
@@ -888,6 +953,18 @@ fn ExampleTextures? create_example_textures(AssetStore* assets) @local {
             sheen_roughness_pixels[offset + 1] = 17;
             sheen_roughness_pixels[offset + 2] = 197;
             sheen_roughness_pixels[offset + 3] = top_half ? 45 : 220;
+
+            // Horizontal weight gradient in alpha; RGB is deliberately unrelated.
+            specular_pixels[offset] = 61;
+            specular_pixels[offset + 1] = 173;
+            specular_pixels[offset + 2] = 29;
+            specular_pixels[offset + 3] = (char)(40 + (215 * x) / (PHYSICAL_TEXTURE_SIZE - 1));
+
+            // Gold/cyan sRGB checker; alpha deliberately carries no weight information.
+            specular_color_pixels[offset] = alternating ? 255 : 40;
+            specular_color_pixels[offset + 1] = alternating ? 200 : 220;
+            specular_color_pixels[offset + 2] = alternating ? 60 : 255;
+            specular_color_pixels[offset + 3] = 133;
         }
     }
 
@@ -953,6 +1030,26 @@ fn ExampleTextures? create_example_textures(AssetStore* assets) @local {
             ),
             pixels: sheen_roughness_pixels[..],
             key: "texture/materials/sheen_roughness",
+        )!,
+        .specular = assets.add_texture(
+            desc: material::texture_2d_desc(
+                width: PHYSICAL_TEXTURE_SIZE,
+                height: PHYSICAL_TEXTURE_SIZE,
+                format: RGBA8_UNORM,
+                debug_name: "materials_specular_weight",
+            ),
+            pixels: specular_pixels[..],
+            key: "texture/materials/specular_weight",
+        )!,
+        .specular_color = assets.add_texture(
+            desc: material::texture_2d_desc(
+                width: PHYSICAL_TEXTURE_SIZE,
+                height: PHYSICAL_TEXTURE_SIZE,
+                format: RGBA8_SRGB,
+                debug_name: "materials_specular_color",
+            ),
+            pixels: specular_color_pixels[..],
+            key: "texture/materials/specular_color",
         )!,
     };
     return textures;
@@ -1022,7 +1119,7 @@ fn ExampleMaterials create_materials(
     combined.sheen_color_map = fixtures[PhysicalMap.SHEEN_COLOR.ordinal].slot;
     combined.sheen_roughness_map = fixtures[PhysicalMap.SHEEN_ROUGHNESS.ordinal].slot;
 
-    return {
+    ExampleMaterials materials = {
         .masked = assets.add_material(material::basic(
             params: {
                 .color = { 1, 1, 1, 1 },
@@ -1071,6 +1168,29 @@ fn ExampleMaterials create_materials(
             "material/materials/combined",
         )!!,
     };
+    foreach (usz index, &material_id : materials.specular) {
+        *material_id = assets.add_material(
+            material::physical(specular_params(index)),
+            SPECULAR_MATERIAL_KEYS[index],
+        )!!;
+    }
+    return materials;
+}
+
+fn PhysicalParams specular_params(usz index) @local {
+    PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
+    params.standard.base_color = { 0.55f, 0.1f, 0.08f, 1 };
+    params.standard.metallic = 0;
+    params.standard.roughness = 0.2f;
+    switch (index) {
+        case 0: params.ior = 1;
+        case 1: params.ior = 1.5f;
+        case 2: params.ior = 2.4f;
+        case 3: params.specular = 0;
+        case 4: params.specular = 0.5f;
+        case 5: params.specular_color = { 1, 0.6f, 0.2f };
+    }
+    return params;
 }
 
 fn ExampleNodes create_fixtures(
@@ -1162,6 +1282,13 @@ fn ExampleNodes create_fixtures(
     nodes.fabric.local.position = { -0.8f, 0, 0 };
     nodes.combined = scene.add_mesh(sphere, materials.combined, name: "combined_layers")!!;
     nodes.combined.local.position = { 0.8f, 0, 0 };
+    foreach (index, material_id : materials.specular) {
+        Node* node = scene.add_mesh(sphere, material_id, name: SPECULAR_NODE_NAMES[index])!!;
+        float column = (float)(index % 3) - 1;
+        float row = index < 3 ? 1.8f : 0;
+        node.local.position = { column * 1.6f, row, 0 };
+        nodes.specular[index] = node;
+    }
     return nodes;
 }
 

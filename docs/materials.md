@@ -180,8 +180,9 @@ MaterialId material_id = assets.add_material(material::physical(params))!;
 
 `PHYSICAL_PARAMS_DEFAULT` embeds `STANDARD_PARAMS_DEFAULT`. Clearcoat and sheen
 color start at zero, both layer roughness factors start at zero, clearcoat normal
-scale starts at 1, and all five layer maps start absent with identity transforms.
-With both layers disabled, Physical reproduces its embedded Standard surface.
+scale starts at 1, and every optional map starts absent with an identity
+transform. With both layers disabled, Physical reproduces its embedded Standard
+surface.
 
 Clearcoat, clearcoat roughness, sheen RGB and sheen roughness are finite values in
 [0, 1]. Clearcoat normal scale is finite and may be negative. Shading applies the
@@ -221,9 +222,40 @@ renderer sums all active lobes before applying the common alpha mode once, so
 Physical `BLEND` remains premultiplied source-over and `MASK` coverage still comes
 only from the embedded Standard base alpha.
 
+## Physical specular and IOR
+
+Physical exposes the dielectric reflectance of its embedded Standard surface:
+
+```c3
+PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
+params.standard.base_color = { 0.55f, 0.1f, 0.08f, 1 };
+params.standard.metallic = 0;
+params.ior = 2.4f;
+params.specular = 0.8f;
+params.specular_color = { 1, 0.6f, 0.2f };
+```
+
+`ior` is finite and at least 1 (default 1.5). `specular` lies in [0, 1] (default
+1). `specular_color` components are finite and non-negative (default white).
+Normal-incidence reflectance is `((ior - 1) / (ior + 1))^2 * specular_color`,
+clamped per channel to 1, then multiplied by `specular`; the grazing reflectance
+is `specular`. Metallic surfaces still use their base color as reflectance. The
+defaults reproduce the Standard reflectance of 0.04, so a Physical material with
+every lobe disabled shades like its embedded Standard surface. Clearcoat keeps its
+own fixed reflectance.
+
+| Slot | Channels | Load color space | Effect |
+| --- | --- | --- | --- |
+| `specular_map` | A | Linear alpha | Multiplies `specular` |
+| `specular_color_map` | RGB | sRGB | Multiplies `specular_color` after sRGB decoding |
+
+Both slots keep their own sampler, UV set and transform, and both are ignored
+when `specular` is zero. A zero specular weight removes the dielectric specular
+lobe under direct and environment lighting and leaves the diffuse lobe unweighted.
+
 ## Material storage
 
-Renderer material slots are 416 bytes (`render::MATERIAL_STRIDE`). The generated
+Renderer material slots are 512 bytes (`render::MATERIAL_STRIDE`). The generated
 `StandardMaterialGpu` remains 224 bytes, with a 64-byte header followed by five
 nested 32-byte `TextureMapGpu` members at offsets 64, 96, 128, 160 and 192. Each map record
 contains `texture_index`, `sampler_index`, `uv_offset` and `uv_linear`; presence
@@ -238,9 +270,13 @@ bits 5–9 select UV1 for those same slots. The matching schema constants are
 `TextureMapGpu map` is at offset 32. It uses the same base-color presence and
 UV1 bits as Standard. `ToonMaterialGpu` occupies 96 bytes, including its color,
 rim factors, step count, gradient texture/sampler indices and one nested base-map
-record. `PhysicalMaterialGpu` occupies the full 416-byte slot: its Standard value
-is followed by layer factors and five 32-byte layer-map records. The default
-4096-slot material heap is 1,703,936 bytes. Custom renderer-side packing supplies
+record. `PhysicalMaterialGpu` occupies the full 512-byte slot: its Standard value
+is followed by layer factors, five 32-byte layer-map records, the specular
+factors and two specular map records. Layer presence lives in `map_flags` with
+`PHYSICAL_MAP_*` bits; the specular maps use a second word,
+`extension_map_flags`, with `PHYSICAL_EXTENSION_MAP_SPECULAR` and
+`PHYSICAL_EXTENSION_MAP_SPECULAR_COLOR` and the same `MATERIAL_MAP_UV1_SHIFT`.
+The default 4096-slot material heap is 2,097,152 bytes. Custom renderer-side packing supplies
 one `TextureBinding` per Standard, Toon and Physical slot. Basic uses only its base
 color binding; Toon uses base color and gradient; disabled layer bindings stay
 empty. Bindless index zero is not a presence test. Ordinary consumers
@@ -372,17 +408,20 @@ python3 scripts/build.py --example materials
 ./examples/build/materials --gpu-timings
 ```
 
-`materials` combines four interactive presets. Masked foliage casts cutout
+`materials` combines five interactive presets. Masked foliage casts cutout
 shadows onto an opaque receiver. Two separated blended objects show source-over
 composition against an opaque reference and HDR sky. Three Toon spheres compare
 uniform steps, a nonuniform grayscale ramp and an enabled rim. The Physical view
 places an ordinary Standard sphere beside an equivalent zero-layer Physical
 sphere, factor-only coated paint and fabric, and a combined mapped surface.
+The Physical specular view compares an IOR row of 1.0, 1.5 and 2.4 with a
+specular-weight row of 0, 0.5 and a tinted unit weight.
 
 The controls switch presets, editable surfaces, material families, base textures
-and Toon ramps. The Physical controls independently toggle the base normal and
-all five layer maps; the tiny generated fixtures use the documented channels,
-different UV sets/transforms and distinct base/coat normals. Family changes
+and Toon ramps. The Physical controls independently toggle the base normal, all
+five layer maps and the specular weight and color maps; the tiny generated
+fixtures use the documented channels, different UV sets/transforms and distinct
+base/coat normals. Family changes
 initialize the selected parameter arm from named defaults and preserve only the
 common state and base color. Material controls edit all family factors and shared
 alpha/depth/raster state. The warm directional and cool point lights have separate
@@ -436,7 +475,7 @@ images](textures.md). [Sun, spot and point shadows](shadows.md) attenuate Standa
 Physical and Toon direct lighting. Standard and Physical support [environment
 lighting and independent skies](environments.md); Toon uses only its diffuse SH
 contribution, and Basic remains unlit. Toon does not provide PBR reflections,
-outlines or transmission. Physical does not yet add specular/IOR controls,
+outlines or transmission. Physical does not yet add
 anisotropy or transmission; scene-color transmission remains outside the current
 material families. Shading writes scene-linear HDR into the renderer target; the
 existing composite adds no tonemapper or exposure control, so bright values can

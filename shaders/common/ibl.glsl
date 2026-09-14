@@ -24,7 +24,7 @@ vec3 evaluate_environment(
         environment.rotation,
         reflect(-surface.view_direction, surface.normal)
     );
-    vec3 fresnel = fresnel_schlick(surface.reflectance, surface.normal_view);
+    vec3 fresnel = fresnel_schlick(surface.reflectance, surface.grazing_reflectance, surface.normal_view);
     vec3 diffuse = environment_irradiance(environment.sh, normal)
         * surface.diffuse_color * (1.0 - fresnel) * occlusion;
 
@@ -41,7 +41,8 @@ vec3 evaluate_environment(
         environment.sampler_index,
         vec2(surface.normal_view, perceptual_roughness)
     ).rg;
-    vec3 specular = prefiltered * (surface.reflectance * response.x + response.y);
+    vec3 specular = prefiltered
+        * (surface.reflectance * response.x + surface.grazing_reflectance * response.y);
     return (diffuse + specular) * environment.intensity;
 }
 
