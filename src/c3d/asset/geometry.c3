@@ -122,7 +122,12 @@ fn Geometry copy_geometry(Allocator allocator, Geometry* source) @local {
     };
 }
 
-fn void free_geometry(Allocator allocator, Geometry* geometry) @private {
+<*
+ Free every array and target name allocated with the allocator.
+ Keeps topology, custom stride and bounds.
+ @param [&inout] geometry : "Arrays left empty."
+*>
+fn void free_geometry(Allocator allocator, Geometry* geometry) {
     foreach (&target : geometry.targets) {
         alloc::free(allocator, target.position_deltas.ptr);
         alloc::free(allocator, target.normal_deltas.ptr);

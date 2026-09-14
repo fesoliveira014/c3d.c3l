@@ -21,9 +21,9 @@ renderer.prepare_scene(&scene)!;
 `load_model` parses the file, converts every sampler, image, material and
 primitive into store assets, and stores a `ModelTemplate` under the path as
 its key. `load_model_memory` does the same from bytes, with a caller-supplied
-key and a base directory for external URIs. `load` composes an import with one
-instantiation and returns a `LoadResult` listing the ids and nodes it produced;
-its arrays belong to the allocator the caller passes.
+key and a base directory for external URIs. Loading never touches a scene:
+placing a model is always `model::instantiate`, and the caller sets the root
+transform.
 
 Instantiation creates one synthetic root under the parent and one live node per
 template node, parents before children, so `ModelInstance.nodes[i]` is the live
@@ -37,7 +37,7 @@ template afterwards leaves existing instances intact.
 ## Keys
 
 Every asset an import creates is keyed under the model key, which is the file
-path for `load_model` and `load` and the caller's key for `load_model_memory`:
+path for `load_model` and the caller's key for `load_model_memory`:
 
 | Asset | Key |
 | --- | --- |
@@ -60,7 +60,7 @@ references are not decoded.
 ## Options
 
 `LoadOptions` selects what the importer keeps. `LOAD_OPTIONS_DEFAULT` enables
-everything with a scale of one.
+everything. Both live in `c3d::asset` and are shared by every model loader.
 
 | Field | Effect |
 | --- | --- |
@@ -68,7 +68,6 @@ everything with a scale of one.
 | `lights` | Import `KHR_lights_punctual` lights as `ModelLight` entries. |
 | `cameras` | Import cameras as `ModelCamera` entries. |
 | `generate_tangents` | Compute tangents for triangle primitives that have a normal map and UV0 but no `TANGENT` stream. |
-| `scale` | Uniform scale applied to the instance root by `load` only; templates store the authored transforms. |
 
 ## Node index contract
 

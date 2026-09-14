@@ -44,7 +44,7 @@ fn GeometryId? convert_primitive(
 
     Allocator allocator = importer.assets.allocator;
     Geometry geometry;
-    defer catch free_geometry_arrays(allocator, &geometry);
+    defer catch asset::free_geometry(allocator, &geometry);
 
     foreach (&attribute : primitive.attributes) {
         switch (attribute.type) {
@@ -284,25 +284,6 @@ fn void? read_morph_targets(
         }
     }
     return;
-}
-
-fn void free_geometry_arrays(Allocator allocator, Geometry* geometry) @private {
-    foreach (&target : geometry.targets) {
-        alloc::free(allocator, target.position_deltas.ptr);
-        alloc::free(allocator, target.normal_deltas.ptr);
-        alloc::free(allocator, target.name.ptr);
-    }
-    alloc::free(allocator, geometry.targets.ptr);
-    alloc::free(allocator, geometry.positions.ptr);
-    alloc::free(allocator, geometry.normals.ptr);
-    alloc::free(allocator, geometry.tangents.ptr);
-    alloc::free(allocator, geometry.uv0.ptr);
-    alloc::free(allocator, geometry.uv1.ptr);
-    alloc::free(allocator, geometry.colors.ptr);
-    alloc::free(allocator, geometry.joints.ptr);
-    alloc::free(allocator, geometry.weights.ptr);
-    alloc::free(allocator, geometry.indices.ptr);
-    *geometry = {};
 }
 
 fn String copy_name(Allocator allocator, ZString name) @private {
