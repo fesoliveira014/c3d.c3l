@@ -68,12 +68,29 @@ fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
 }
 
 fn Aabb template_bounds(AssetStore* assets, ModelTemplate* template) @local {
+    Mat4[] node_matrices = alloc::new_array(tmem, Mat4, template.nodes.len);
+    foreach (index, &node : template.nodes) {
+        Mat4 local = node.local.to_mat4();
+        node_matrices[index] = node.parent < 0 ? local : node_matrices[node.parent].mul(local);
+    }
     Aabb bounds = { .min = { 0, 0, 0 }, .max = { 0, 0, 0 } };
     foreach (index, &mesh : template.meshes) {
-        Aabb mesh_bounds = assets.geometry(mesh.geometry).data.bounds;
+        Aabb mesh_bounds = maths::aabb_transform(assets.geometry(mesh.geometry).data.bounds, node_matrices[mesh.node]);
         bounds = index == 0 ? mesh_bounds : maths::aabb_merge(bounds, mesh_bounds);
     }
     return bounds;
+}
+
+fn usz skeleton_count(ModelTemplate* template) @local {
+    usz count;
+    foreach (usz index, &skin : template.skins) {
+        bool seen;
+        for (usz earlier = 0; earlier < index && !seen; earlier++) {
+            seen = template.skins[earlier].skeleton.index == skin.skeleton.index;
+        }
+        if (!seen) count++;
+    }
+    return count;
 }
 
 fn String example_path(String relative) @local {
@@ -145,8 +162,9 @@ fn int main(String[] args) {
     Node* right = model::instantiate(&assets, &scene, model, name: "right")!!;
     left.local.position = { -spacing * 0.5f, 0, 0 };
     right.local.position = { spacing * 0.5f, 0, 0 };
-    io::printfn("%s: %d nodes, %d meshes, %d cameras, %d lights",
-        model_path, template.nodes.len, template.meshes.len, template.cameras.len, template.lights.len);
+    io::printfn("%s: %d nodes, %d meshes, %d cameras, %d lights, %d skeletons, %d skins, %d clips",
+        model_path, template.nodes.len, template.meshes.len, template.cameras.len, template.lights.len,
+        skeleton_count(template), template.skins.len, template.clips.len);
 
     Light sun = light::directional({ 1, 0.95f, 0.85f }, LIGHT_INTENSITY);
     Node* sun_node = scene.add_light(sun, name: "sun")!!;

@@ -56,6 +56,11 @@ fn Node*? instantiate(
             .morph_weights  = copy_slice(allocator, mesh.default_morph_weights),
         });
     }
+    foreach (&skin : template.skins) {
+        Node*[] joints = alloc::new_array(allocator, Node*, skin.joint_nodes.len);
+        foreach (index, joint : skin.joint_nodes) joints[index] = nodes[joint];
+        scene.add(nodes[skin.mesh_node], (SkinBinding){ .skeleton = skin.skeleton, .joints = joints });
+    }
     foreach (&camera : template.cameras) scene.add(nodes[camera.node], camera.value);
     foreach (&light : template.lights) scene.add(nodes[light.node], light.value);
 

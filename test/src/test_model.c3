@@ -109,3 +109,38 @@ fn void test_load_composes_import_and_instance() @test {
         assert(result.clips.len == 0 && result.skeletons.len == 0);
     };
 }
+fn void test_instantiate_binds_skin_joints_and_copies_clips() @test {
+    AssetStore assets = asset::create_asset_store(mem, {
+        .max_geometries = 8,
+        .max_textures = 8,
+        .max_materials = 8,
+        .max_samplers = 8,
+        .max_models = 2,
+        .max_skeletons = 2,
+        .max_clips = 2,
+    });
+    defer asset::destroy_asset_store(&assets);
+    Scene scene = scene::create_scene(mem, { .max_nodes = 16 });
+    defer scene::destroy_scene(&scene);
+    ModelId model = gltf::load_model(&assets, fixture_path("skin.gltf"))!!;
+    Node* first = model::instantiate(&assets, &scene, model)!!;
+    Node* second = model::instantiate(&assets, &scene, model)!!;
+
+    ModelInstance* instance = scene.get(first, ModelInstance);
+    assert(instance.clips.len == 1 && instance.base_morph_weights.len == 1);
+    assert(instance.base_morph_weights[0].len == 1 && instance.base_morph_weights[0][0] == 0.5f);
+    SkinBinding* binding = scene.get(instance.nodes[1], SkinBinding);
+    assert(binding != null && binding.joints.len == 2);
+    assert(binding.joints[0] == instance.nodes[2] && binding.joints[1] == instance.nodes[3]);
+    Mesh* mesh = scene.get(instance.nodes[1], Mesh);
+    assert(mesh.morph_weights.len == 1 && mesh.morph_weights.ptr != instance.base_morph_weights[0].ptr);
+
+    ModelInstance* other = scene.get(second, ModelInstance);
+    SkinBinding* other_binding = scene.get(other.nodes[1], SkinBinding);
+    assert(other_binding.joints[0] != binding.joints[0]);
+    assert(other.clips[0].index == instance.clips[0].index);
+
+    ClipId clip = instance.clips[0];
+    scene.remove(first);
+    assert(scene.count(SkinBinding) == 1 && assets.clips.is_live(clip));
+}

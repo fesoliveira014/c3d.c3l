@@ -4,8 +4,8 @@ The `gltf_viewer` example bundles these unmodified binary glTF files from the
 Khronos [glTF-Sample-Assets](https://github.com/KhronosGroup/glTF-Sample-Assets)
 repository. They are loaded locally; running the example requires no download.
 
-The assets are licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
-Attribution follows each model's `metadata.json` in the source repository.
+Licenses follow each model's `metadata.json` in the source repository:
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) unless noted.
 
 ## BoxTextured.glb
 
@@ -14,3 +14,20 @@ Attribution follows each model's `metadata.json` in the source repository.
 - Author: Cesium
 - Bytes: 5956
 - SHA-256: `b510eca2e2ef33f62f9ed57d6e7ce2d10ebb2bdebc4a8e59d347719ba81abdf4`
+
+## RiggedSimple.glb
+
+- Source: `Models/RiggedSimple/glTF-Binary/RiggedSimple.glb`
+- Source commit: `723ffc6706725b618b8c14ceb82e3e6904b08a76`
+- Author: Cesium
+- Bytes: 15104
+- SHA-256: `3a79dabb67bb0cd598a18d08b954d9d357c27c30672f82ef5d3f4e7fe6ca3401`
+
+## AnimatedMorphCube.glb
+
+- Source: `Models/AnimatedMorphCube/glTF-Binary/AnimatedMorphCube.glb`
+- Source commit: `81e8b567643b5166e6ff40024e4ff71ad4b18676`
+- Author: Microsoft
+- License: [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)
+- Bytes: 6752
+- SHA-256: `214ee56160a50dbf22543a1d66dbf860986e87f0efac3d89feac1359d0e6aeab`

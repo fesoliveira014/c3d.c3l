@@ -97,3 +97,47 @@ write("unsupported.gltf", {
     "extensionsUsed": ["KHR_draco_mesh_compression"],
     "scene": 0, "scenes": [{"nodes": [0]}], "nodes": [{"name": "empty"}],
 })
+# skin.gltf: two-joint skin on a morphing triangle with a rotation clip and a weights clip.
+positions = floats([0, 0, 0, 1, 0, 0, 0, 1, 0])
+joints = bytes([0, 1, 0, 0] * 3)
+weights = floats([0.25, 0.75, 0, 0] * 3)
+deltas = floats([0, 0, 1] * 3)
+bind = floats([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1] + [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, -1, 0, 1])
+times_rotation = floats([0, 1])
+rotations = floats([0, 0, 0, 1, 0, 0.7071068, 0, 0.7071068])
+times_weights = floats([0, 1, 2])
+weight_values = floats([0, 1, 0.5])
+skin_buffer = positions + joints + weights + deltas + bind + times_rotation + rotations + times_weights + weight_values
+offsets = [0, 36, 48, 96, 132, 260, 268, 300, 312]
+lengths = [36, 12, 48, 36, 128, 8, 32, 12, 12]
+write("skin.gltf", {
+    "asset": {"version": "2.0"},
+    "scene": 0, "scenes": [{"nodes": [0, 1]}],
+    "nodes": [
+        {"name": "mesh", "mesh": 0, "skin": 0},
+        {"name": "joint_root", "children": [2]},
+        {"name": "joint_tip", "translation": [0, 1, 0]}],
+    "meshes": [{"weights": [0.5], "primitives": [{
+        "attributes": {"POSITION": 0, "JOINTS_0": 1, "WEIGHTS_0": 2},
+        "targets": [{"POSITION": 3}]}]}],
+    "skins": [{"joints": [1, 2], "inverseBindMatrices": 4}],
+    "animations": [{"name": "wave",
+        "samplers": [
+            {"input": 5, "output": 6, "interpolation": "LINEAR"},
+            {"input": 7, "output": 8, "interpolation": "STEP"}],
+        "channels": [
+            {"sampler": 0, "target": {"node": 2, "path": "rotation"}},
+            {"sampler": 1, "target": {"node": 0, "path": "weights"}}]}],
+    "buffers": [{"byteLength": len(skin_buffer), "uri": data_uri(skin_buffer)}],
+    "bufferViews": [{"buffer": 0, "byteOffset": o, "byteLength": n} for o, n in zip(offsets, lengths)],
+    "accessors": [
+        {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0, 0, 0], "max": [1, 1, 0]},
+        {"bufferView": 1, "componentType": 5121, "count": 3, "type": "VEC4"},
+        {"bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC4"},
+        {"bufferView": 3, "componentType": 5126, "count": 3, "type": "VEC3"},
+        {"bufferView": 4, "componentType": 5126, "count": 2, "type": "MAT4"},
+        {"bufferView": 5, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0], "max": [1]},
+        {"bufferView": 6, "componentType": 5126, "count": 2, "type": "VEC4"},
+        {"bufferView": 7, "componentType": 5126, "count": 3, "type": "SCALAR", "min": [0], "max": [2]},
+        {"bufferView": 8, "componentType": 5126, "count": 3, "type": "SCALAR"}],
+})

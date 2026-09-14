@@ -1,0 +1,229 @@
+{
+ "asset": {
+  "version": "2.0"
+ },
+ "scene": 0,
+ "scenes": [
+  {
+   "nodes": [
+    0,
+    1
+   ]
+  }
+ ],
+ "nodes": [
+  {
+   "name": "mesh",
+   "mesh": 0,
+   "skin": 0
+  },
+  {
+   "name": "joint_root",
+   "children": [
+    2
+   ]
+  },
+  {
+   "name": "joint_tip",
+   "translation": [
+    0,
+    1,
+    0
+   ]
+  }
+ ],
+ "meshes": [
+  {
+   "weights": [
+    0.5
+   ],
+   "primitives": [
+    {
+     "attributes": {
+      "POSITION": 0,
+      "JOINTS_0": 1,
+      "WEIGHTS_0": 2
+     },
+     "targets": [
+      {
+       "POSITION": 3
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "skins": [
+  {
+   "joints": [
+    1,
+    2
+   ],
+   "inverseBindMatrices": 4
+  }
+ ],
+ "animations": [
+  {
+   "name": "wave",
+   "samplers": [
+    {
+     "input": 5,
+     "output": 6,
+     "interpolation": "LINEAR"
+    },
+    {
+     "input": 7,
+     "output": 8,
+     "interpolation": "STEP"
+    }
+   ],
+   "channels": [
+    {
+     "sampler": 0,
+     "target": {
+      "node": 2,
+      "path": "rotation"
+     }
+    },
+    {
+     "sampler": 1,
+     "target": {
+      "node": 0,
+      "path": "weights"
+     }
+    }
+   ]
+  }
+ ],
+ "buffers": [
+  {
+   "byteLength": 324,
+   "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAEAAAABAAAAAQAAAACAPgAAQD8AAAAAAAAAAAAAgD4AAEA/AAAAAAAAAAAAAIA+AABAPwAAAAAAAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AAAAAAAAAAAAAIA/AACAPwAAAAAAAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAAAAAACAPwAAgD8AAAAAAAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAAAAAAIA/AAAAAAAAAAAAAIC/AAAAAAAAgD8AAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAA9AQ1PwAAAAD0BDU/AAAAAAAAgD8AAABAAAAAAAAAgD8AAAA/"
+  }
+ ],
+ "bufferViews": [
+  {
+   "buffer": 0,
+   "byteOffset": 0,
+   "byteLength": 36
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 36,
+   "byteLength": 12
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 48,
+   "byteLength": 48
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 96,
+   "byteLength": 36
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 132,
+   "byteLength": 128
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 260,
+   "byteLength": 8
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 268,
+   "byteLength": 32
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 300,
+   "byteLength": 12
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 312,
+   "byteLength": 12
+  }
+ ],
+ "accessors": [
+  {
+   "bufferView": 0,
+   "componentType": 5126,
+   "count": 3,
+   "type": "VEC3",
+   "min": [
+    0,
+    0,
+    0
+   ],
+   "max": [
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "bufferView": 1,
+   "componentType": 5121,
+   "count": 3,
+   "type": "VEC4"
+  },
+  {
+   "bufferView": 2,
+   "componentType": 5126,
+   "count": 3,
+   "type": "VEC4"
+  },
+  {
+   "bufferView": 3,
+   "componentType": 5126,
+   "count": 3,
+   "type": "VEC3"
+  },
+  {
+   "bufferView": 4,
+   "componentType": 5126,
+   "count": 2,
+   "type": "MAT4"
+  },
+  {
+   "bufferView": 5,
+   "componentType": 5126,
+   "count": 2,
+   "type": "SCALAR",
+   "min": [
+    0
+   ],
+   "max": [
+    1
+   ]
+  },
+  {
+   "bufferView": 6,
+   "componentType": 5126,
+   "count": 2,
+   "type": "VEC4"
+  },
+  {
+   "bufferView": 7,
+   "componentType": 5126,
+   "count": 3,
+   "type": "SCALAR",
+   "min": [
+    0
+   ],
+   "max": [
+    2
+   ]
+  },
+  {
+   "bufferView": 8,
+   "componentType": 5126,
+   "count": 3,
+   "type": "SCALAR"
+  }
+ ]
+}

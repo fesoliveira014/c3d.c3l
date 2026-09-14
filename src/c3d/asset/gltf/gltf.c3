@@ -28,6 +28,7 @@ const String[] SUPPORTED_EXTENSIONS @private = {
  Importer switches; scale applies to the instance root of load only.
 *>
 struct LoadOptions {
+    bool  animations;
     bool  lights;
     bool  cameras;
     bool  generate_tangents;
@@ -38,7 +39,7 @@ struct LoadOptions {
  Every switch on, scale one.
 *>
 const LoadOptions LOAD_OPTIONS_DEFAULT = {
-    .lights = true, .cameras = true, .generate_tangents = true, .scale = 1,
+    .animations = true, .lights = true, .cameras = true, .generate_tangents = true, .scale = 1,
 };
 
 <*
@@ -68,6 +69,8 @@ struct Importer @private {
     MaterialId[]  materials;
     MaterialId    default_material;
     GeometryId[]  geometries;
+    SkeletonId[]  skeletons;
+    ClipId[]      clips;
     usz[]         mesh_offsets;
     usz[]         node_remap;
     ModelTemplate template;
@@ -165,6 +168,8 @@ fn LoadResult? load(
         .geometries = live_ids(allocator, importer.geometries),
         .materials  = material_ids(allocator, &importer),
         .textures   = texture_ids(allocator, &importer),
+        .clips      = live_ids(allocator, importer.clips),
+        .skeletons  = live_ids(allocator, importer.skeletons),
         .cameras    = component_nodes(allocator, instance, template.cameras),
         .lights     = component_nodes(allocator, instance, template.lights),
     };
@@ -207,6 +212,8 @@ fn void? import_model(Importer* importer) @private {
     importer.linear_textures = alloc::new_array(allocator, TextureId, data.images.len);
     importer.materials = alloc::new_array(allocator, MaterialId, data.materials.len);
     importer.geometries = alloc::new_array(allocator, GeometryId, (sz)primitive_count);
+    importer.skeletons = alloc::new_array(allocator, SkeletonId, data.skins.len);
+    importer.clips = alloc::new_array(allocator, ClipId, data.animations.len);
     importer.node_remap = alloc::new_array(allocator, usz, data.nodes.len);
     importer.node_remap[..] = usz::max;
 
@@ -214,6 +221,8 @@ fn void? import_model(Importer* importer) @private {
     convert_materials(importer)!;
     convert_geometries(importer)!;
     build_template(importer)!;
+    convert_skins(importer)!;
+    if (importer.options.animations) convert_animations(importer)!;
     importer.model = importer.assets.add_model_owned(&importer.template, importer.key)!;
     importer.template = {};
     return;
@@ -226,6 +235,8 @@ fn void discard(Importer* importer) @private {
     } else {
         asset::free_model_template(assets.allocator, &importer.template);
     }
+    foreach (id : importer.clips) if (id.generation) assets.remove_clip(id);
+    foreach (id : importer.skeletons) if (id.generation) assets.remove_skeleton(id);
     foreach (id : importer.geometries) if (id.generation) assets.remove_geometry(id);
     if (importer.default_material.generation) assets.remove_material(importer.default_material);
     foreach (id : importer.materials) if (id.generation) assets.remove_material(id);
@@ -242,6 +253,8 @@ fn void free_tables(Importer* importer) @private {
     alloc::free(allocator, importer.linear_textures.ptr);
     alloc::free(allocator, importer.materials.ptr);
     alloc::free(allocator, importer.geometries.ptr);
+    alloc::free(allocator, importer.skeletons.ptr);
+    alloc::free(allocator, importer.clips.ptr);
     alloc::free(allocator, importer.node_remap.ptr);
 }
 
