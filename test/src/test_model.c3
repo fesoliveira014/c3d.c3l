@@ -129,6 +129,7 @@ fn void test_instantiate_binds_skin_joints_and_copies_clips() @test {
     ModelInstance* instance = scene.get(first, ModelInstance);
     assert(instance.clips.len == 1 && instance.base_morph_weights.len == 1);
     assert(instance.base_morph_weights[0].len == 1 && instance.base_morph_weights[0][0] == 0.5f);
+    assert(instance.mesh_nodes.len == 1 && instance.mesh_nodes[0] == 1);
     SkinBinding* binding = scene.get(instance.nodes[1], SkinBinding);
     assert(binding != null && binding.joints.len == 2);
     assert(binding.joints[0] == instance.nodes[2] && binding.joints[1] == instance.nodes[3]);

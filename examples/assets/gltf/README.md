@@ -1,6 +1,6 @@
 # glTF sample models
 
-The `gltf_viewer` example bundles these unmodified binary glTF files from the
+The `gltf_viewer` and `animation` examples bundle these unmodified binary glTF files from the
 Khronos [glTF-Sample-Assets](https://github.com/KhronosGroup/glTF-Sample-Assets)
 repository. They are loaded locally; running the example requires no download.
 
@@ -31,3 +31,19 @@ Licenses follow each model's `metadata.json` in the source repository:
 - License: [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)
 - Bytes: 6752
 - SHA-256: `214ee56160a50dbf22543a1d66dbf860986e87f0efac3d89feac1359d0e6aeab`
+
+## Fox.glb
+
+- Source: `Models/Fox/glTF-Binary/Fox.glb`
+- Source commit: `90d7ede14c7e280af263824604b427a1ca02cb66`
+- Authors: PixelMannen (model, CC0 1.0), tomkranis (rigging and animation), AsoboStudio and scurest (glTF conversion)
+- Bytes: 162852
+- SHA-256: `d97044e701822bac5a62696459b27d7b375aada5de8574ed4362edbba94771f7`
+
+## BoxAnimated.glb
+
+- Source: `Models/BoxAnimated/glTF-Binary/BoxAnimated.glb`
+- Source commit: `90d7ede14c7e280af263824604b427a1ca02cb66`
+- Author: Cesium
+- Bytes: 11944
+- SHA-256: `ad0d18d9a21df0d7c2bd3890e60ce69d60d39a55d9b82bacea7e77ac9e583839`

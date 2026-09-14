@@ -5,7 +5,8 @@ instantiated any number of times without reparsing. `c3d::asset::gltf` reads
 glTF 2.0 and GLB files through cgltf; `c3d::model::instantiate` turns a stored
 template into live scene nodes. The renderer sees ordinary meshes, cameras and
 lights afterwards and needs no model-specific path. Skeletons and animation
-clips are stored as data for a later animation system; nothing plays them yet.
+clips are shared assets; `c3d::anim` plays clips onto instances
+([Animation](animation.md)).
 
 ## Load once, instantiate twice
 
@@ -143,9 +144,10 @@ triples. `duration` is the largest key time. The template lists its clip ids
 and every instance copies them. A channel on a node outside the imported node
 set is `ASSET_FORMAT_ERROR`; `options.animations = false` skips clips.
 
-The renderer ignores `SkinBinding` and clips until the animation system
-samples tracks, evaluates joint matrices and selects skinned and morphed
-shader variants. Meshes with joints render in their bind pose meanwhile.
+`c3d::anim` samples clips onto instance nodes and morph weights. The renderer
+ignores `SkinBinding` and morph weights until the deformation change evaluates
+joint matrices and selects skinned and morphed shader variants; meshes with
+joints render in their bind pose meanwhile.
 
 ## Supported and unsupported extensions
 
