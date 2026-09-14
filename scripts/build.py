@@ -31,7 +31,7 @@ TEST = ROOT / "test"
 
 REQUIRED_C3C_VERSION = "0.8.3"
 C3IMGUI_RELEASE_TAG = "v0.1.2"
-SUBMODULES = ("gpu.c3l", "sdl3.c3l", "c3imgui.c3l", "c3cg.c3l", "box3d.c3l")
+SUBMODULES = ("gpu.c3l", "sdl3.c3l", "c3imgui.c3l", "c3cg.c3l", "box3d.c3l", "cgltf.c3l")
 NATIVE_BUILD_SCRIPTS = ("scripts/build-box3d.sh",)
 
 EXIT_BUILD_FAILED = 1

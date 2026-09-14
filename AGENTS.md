@@ -16,6 +16,7 @@ Entry point for every agent session in this repository. Read it fully before rea
 | c3imgui.c3l | `imgui` | `c3d::gui` |
 | c3cg.c3l | `cg` | `c3d::geometry` |
 | box3d.c3l | `b3` | `c3d::physics` |
+| cgltf.c3l | `gltf` | `c3d::asset::gltf` |
 | stb_image (C source) | `c3d::asset::image` bindings | `c3d::asset::image` |
 | ufbx (C source) | `c3d::asset::fbx` bindings | `c3d::asset::fbx` |
 
@@ -153,7 +154,7 @@ Counter-example, rejected on review:
 
 # 10. Architecture rules
 
-- Two layers. Scene-layer modules (`c3d`, `c3d::maths`, `c3d::ecs`, `c3d::asset`, `c3d::scene`, `c3d::geometry`, `c3d::camera`, `c3d::material`, `c3d::light`, `c3d::anim`, `c3d::physics`) never import `gpu`. The render layer (`c3d::render`, `c3d::shader`, `c3d::post`, `c3d::rt`, `c3d::gui`) owns every GPU object. `c3d::platform` imports `gpu::surface` alone, to hand native window handles to gpu.c3l; a bare `import gpu` there is a violation.
+- Two layers. Scene-layer modules (`c3d`, `c3d::maths`, `c3d::ecs`, `c3d::asset`, `c3d::scene`, `c3d::geometry`, `c3d::camera`, `c3d::material`, `c3d::light`, `c3d::anim`, `c3d::model`, `c3d::physics`) never import `gpu`. The render layer (`c3d::render`, `c3d::shader`, `c3d::post`, `c3d::rt`, `c3d::gui`) owns every GPU object. `c3d::platform` imports `gpu::surface` alone, to hand native window handles to gpu.c3l; a bare `import gpu` there is a violation.
 - The renderer reads the scene; the scene never calls the renderer. Loaders write the asset store and the scene; they never touch the renderer.
 - All shader-visible data is std430 behind root pointers and defined once in `abi/c3d.abi`. Per-draw push data is exactly two root addresses.
 - Depth is reverse-Z; the Vulkan Y flip is one negative-height viewport; shaders use GL conventions and never flip.
@@ -167,6 +168,7 @@ grep -rn 'import sdl' src/c3d --include='*.c3' | grep -v 'src/c3d/platform/'
 grep -rn 'import imgui' src/c3d --include='*.c3' | grep -v 'src/c3d/gui/'
 grep -rn 'import cg' src/c3d --include='*.c3' | grep -v 'src/c3d/geometry/'
 grep -rn 'import b3' src/c3d --include='*.c3' | grep -v 'src/c3d/physics/'
+grep -rn 'import gltf' src/c3d --include='*.c3' | grep -v 'src/c3d/asset/gltf/'
 ```
 
 # 11. Directory map
@@ -176,7 +178,7 @@ c3d.c3l/
 ├── manifest.json
 ├── abi/c3d.abi             shared C3 and GLSL layouts
 ├── docs/style.md           mandatory style baseline
-├── lib/                    gpu.c3l · sdl3.c3l · c3imgui.c3l · c3cg.c3l · box3d.c3l (submodules)
+├── lib/                    gpu.c3l · sdl3.c3l · c3imgui.c3l · c3cg.c3l · box3d.c3l · cgltf.c3l (submodules)
 │                           plus c3d.c3l, a symlink to the root, so consumers resolve c3d here
 ├── linked-libs/            empty; every dependency ships its own native artifacts
 ├── csrc/                   stb_image · ufbx
@@ -184,7 +186,7 @@ c3d.c3l/
 │   ├── types.c3            ids
 │   ├── faults.c3           root-module faults
 │   ├── pool.c3             the generic pool, module c3d::pool <Type, IdType>
-│   ├── maths/ ecs/  asset/  scene/  geometry/  camera/  material/  light/  anim/  physics/
+│   ├── maths/ ecs/  asset/  scene/  geometry/  camera/  material/  light/  anim/  model/  physics/
 │   ├── platform/           the only sdl importer
 │   ├── render/  shader/  post/  rt/                the gpu importers
 │   └── gui/                the only imgui importer; gui/backend imports gpu

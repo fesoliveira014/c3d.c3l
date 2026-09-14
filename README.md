@@ -192,6 +192,19 @@ enabled explicitly. The example's six-layer atlas allocates 96 MiB of depth texe
 on first accepted use. See [Shadows](docs/shadows.md) for sun, spot and point
 casting/receiving, layer masks, capacity and per-layer timings.
 
+`gltf_viewer` loads a glTF or GLB file once and instantiates it twice under a
+studio environment with one directional light. The bundled
+[BoxTextured](examples/assets/gltf/README.md) sample is the default; a path
+argument selects another model:
+
+```bash
+python3 scripts/build.py --example gltf_viewer
+./examples/build/gltf_viewer path/to/model.glb --gpu-timings
+```
+
+See [Models and glTF import](docs/models.md) for keys, options, the material
+mapping and the supported extension subset.
+
 `textured` adds PNG/JPEG maps, mip filtering, UV transforms and alpha masking in a
 standalone scene with validation enabled. The default image is embedded:
 
