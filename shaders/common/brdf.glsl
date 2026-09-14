@@ -130,15 +130,22 @@ float visibility_smith(float normal_view, float normal_light, float alpha_square
     return 0.5 / (view_term + light_term);
 }
 
-vec3 evaluate_standard_brdf(StandardSurface surface, vec3 light_direction) {
+void evaluate_standard_lobes(
+    StandardSurface surface,
+    vec3 light_direction,
+    out vec3 diffuse,
+    out vec3 specular
+) {
+    diffuse = vec3(0.0);
+    specular = vec3(0.0);
     float normal_light = clamp(dot(surface.normal, light_direction), 0.0, 1.0);
-    if (surface.normal_view == 0.0 || normal_light == 0.0) return vec3(0.0);
+    if (surface.normal_view == 0.0 || normal_light == 0.0) return;
 
     vec3 half_direction = normalize(surface.view_direction + light_direction);
     float normal_half = clamp(dot(surface.normal, half_direction), 0.0, 1.0);
     float view_half = clamp(dot(surface.view_direction, half_direction), 0.0, 1.0);
     vec3 fresnel = fresnel_schlick(surface.reflectance, surface.grazing_reflectance, view_half);
-    vec3 diffuse = (1.0 - fresnel) * surface.diffuse_color;
+    diffuse = (1.0 - fresnel) * surface.diffuse_color * normal_light;
     float distribution;
     float visibility;
     if (surface.anisotropy > 0.0) {
@@ -154,8 +161,14 @@ vec3 evaluate_standard_brdf(StandardSurface surface, vec3 light_direction) {
         distribution = distribution_ggx(normal_half, surface.alpha_squared);
         visibility = visibility_smith(surface.normal_view, normal_light, surface.alpha_squared);
     }
-    vec3 specular = fresnel * distribution * visibility;
-    return (diffuse + specular) * normal_light;
+    specular = fresnel * distribution * visibility * normal_light;
+}
+
+vec3 evaluate_standard_brdf(StandardSurface surface, vec3 light_direction) {
+    vec3 diffuse;
+    vec3 specular;
+    evaluate_standard_lobes(surface, light_direction, diffuse, specular);
+    return diffuse + specular;
 }
 
 #endif

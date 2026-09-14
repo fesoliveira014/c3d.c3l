@@ -33,6 +33,8 @@ struct MaterialBindings {
     TextureBinding specular;
     TextureBinding specular_color;
     TextureBinding anisotropy;
+    TextureBinding transmission;
+    TextureBinding thickness;
 }
 
 <*
@@ -141,5 +143,7 @@ fn bool material_bindings_match(MaterialBindings first, MaterialBindings second)
         && texture_binding_matches(first.sheen_roughness, second.sheen_roughness)
         && texture_binding_matches(first.specular, second.specular)
         && texture_binding_matches(first.specular_color, second.specular_color)
-        && texture_binding_matches(first.anisotropy, second.anisotropy);
+        && texture_binding_matches(first.anisotropy, second.anisotropy)
+        && texture_binding_matches(first.transmission, second.transmission)
+        && texture_binding_matches(first.thickness, second.thickness);
 }

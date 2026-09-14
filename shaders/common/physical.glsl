@@ -5,6 +5,7 @@
 #include "ibl.glsl"
 #include "lights.glsl"
 #include "sheen.glsl"
+#include "transmission.glsl"
 
 const float CLEARCOAT_REFLECTANCE = 0.04;
 
@@ -17,6 +18,12 @@ struct PhysicalSurface {
     float sheen_view_albedo;
     float coat_weight;
     float coat_roughness;
+    float transmission;
+    float ior;
+    vec3 transmission_color;
+    vec3 attenuation_color;
+    float attenuation_distance;
+    vec3 transmission_ray;
 };
 
 float dielectric_normal_reflectance(float ior) {
@@ -89,6 +96,22 @@ vec3 evaluate_sheen_brdf(
     return surface.sheen_color * response;
 }
 
+vec3 direct_transmission(LightGpu light, vec3 position, PhysicalSurface surface) {
+    LightSample exit_sample = sample_light(light, position + surface.transmission_ray);
+    vec3 lobe = punctual_transmission(
+        surface.standard,
+        surface.transmission_color,
+        exit_sample.direction,
+        surface.ior
+    );
+    return volume_attenuation(
+        lobe * exit_sample.radiance,
+        length(surface.transmission_ray),
+        surface.attenuation_color,
+        surface.attenuation_distance
+    );
+}
+
 vec3 evaluate_physical_light(
     LightGpu light,
     vec3 position,
@@ -96,12 +119,18 @@ vec3 evaluate_physical_light(
     uint sheen_lut,
     uint sheen_sampler
 ) {
-    if (surface.coat_weight == 0.0 && surface.sheen_strength == 0.0) {
+    if (surface.coat_weight == 0.0 && surface.sheen_strength == 0.0 && surface.transmission == 0.0) {
         return evaluate_standard_light(light, position, surface.standard);
     }
 
     LightSample light_sample = sample_light(light, position);
-    vec3 standard = evaluate_standard_brdf(surface.standard, light_sample.direction);
+    vec3 diffuse;
+    vec3 specular;
+    evaluate_standard_lobes(surface.standard, light_sample.direction, diffuse, specular);
+    vec3 base = ((1.0 - surface.transmission) * diffuse + specular) * light_sample.radiance;
+    if (surface.transmission != 0.0) {
+        base += surface.transmission * direct_transmission(light, position, surface);
+    }
     float sheen_attenuation = 1.0;
     vec3 sheen = vec3(0.0);
     if (surface.sheen_strength != 0.0) {
@@ -111,14 +140,13 @@ vec3 evaluate_physical_light(
             sheen_lut,
             sheen_sampler,
             sheen_attenuation
-        );
+        ) * light_sample.radiance;
     }
     vec3 coat = surface.coat_weight == 0.0
         ? vec3(0.0)
-        : evaluate_clearcoat_brdf(surface, light_sample.direction);
-    vec3 response = (1.0 - surface.coat_weight) * (standard * sheen_attenuation + sheen)
+        : evaluate_clearcoat_brdf(surface, light_sample.direction) * light_sample.radiance;
+    return (1.0 - surface.coat_weight) * (base * sheen_attenuation + sheen)
         + surface.coat_weight * coat;
-    return response * light_sample.radiance;
 }
 
 vec3 evaluate_physical_environment(
@@ -127,16 +155,20 @@ vec3 evaluate_physical_environment(
     float base_roughness,
     float occlusion
 ) {
-    if (surface.coat_weight == 0.0 && surface.sheen_strength == 0.0) {
-        return evaluate_environment(environment, surface.standard, base_roughness, occlusion);
-    }
-
-    vec3 standard = evaluate_environment(
+    vec3 diffuse;
+    vec3 specular;
+    evaluate_environment_lobes(
         environment,
         surface.standard,
         base_roughness,
-        occlusion
-    ) * physical_sheen_attenuation(surface);
+        occlusion,
+        diffuse,
+        specular
+    );
+    vec3 standard = (1.0 - surface.transmission) * diffuse + specular;
+    if (surface.coat_weight == 0.0 && surface.sheen_strength == 0.0) return standard;
+
+    standard *= physical_sheen_attenuation(surface);
     vec3 sheen = vec3(0.0);
     if (surface.sheen_strength != 0.0) {
         vec3 reflection = environment_rotate(

@@ -52,6 +52,10 @@ root FrameRoot {
     uint       flags;
     uint       frame_index;
     vec4       ambient;
+    TextureIndex scene_color;
+    SamplerIndex scene_sampler;
+    uint       _pad0;
+    uint       _pad1;
 }
 
 root DrawRoot {
@@ -297,6 +301,8 @@ const uint PHYSICAL_MAP_SHEEN_ROUGHNESS = 16;
 const uint PHYSICAL_EXTENSION_MAP_SPECULAR = 1;
 const uint PHYSICAL_EXTENSION_MAP_SPECULAR_COLOR = 2;
 const uint PHYSICAL_EXTENSION_MAP_ANISOTROPY = 4;
+const uint PHYSICAL_EXTENSION_MAP_TRANSMISSION = 8;
+const uint PHYSICAL_EXTENSION_MAP_THICKNESS = 16;
 const uint SHEEN_LUT_SIZE = 256;
 const uint SHEEN_LUT_SAMPLES = 4096;
 const uint SHEEN_PREFILTER_SAMPLES = 4096;
@@ -325,4 +331,11 @@ root PhysicalMaterialGpu {
     TextureMapGpu specular_map;
     TextureMapGpu specular_color_map;
     TextureMapGpu anisotropy_map;
+    vec4 attenuation_color_distance;
+    float transmission;
+    float thickness;
+    uint _pad0;
+    uint _pad1;
+    TextureMapGpu transmission_map;
+    TextureMapGpu thickness_map;
 }

@@ -24,11 +24,13 @@ vec3 anisotropic_reflection_normal(StandardSurface surface, float perceptual_rou
     return normalize(mix(anisotropic_normal, surface.normal, bend));
 }
 
-vec3 evaluate_environment(
+void evaluate_environment_lobes(
     EnvironmentGpu environment,
     StandardSurface surface,
     float roughness,
-    float occlusion
+    float occlusion,
+    out vec3 diffuse,
+    out vec3 specular
 ) {
     float perceptual_roughness = max(roughness, MIN_PERCEPTUAL_ROUGHNESS);
     vec3 normal = environment_rotate(environment.rotation, surface.normal);
@@ -37,8 +39,8 @@ vec3 evaluate_environment(
         reflect(-surface.view_direction, anisotropic_reflection_normal(surface, perceptual_roughness))
     );
     vec3 fresnel = fresnel_schlick(surface.reflectance, surface.grazing_reflectance, surface.normal_view);
-    vec3 diffuse = environment_irradiance(environment.sh, normal)
-        * surface.diffuse_color * (1.0 - fresnel) * occlusion;
+    diffuse = environment_irradiance(environment.sh, normal)
+        * surface.diffuse_color * (1.0 - fresnel) * occlusion * environment.intensity;
 
     float lod = perceptual_roughness * float(ENVIRONMENT_SPECULAR_MIPS - 1u);
     vec3 prefiltered = sample_texture_cube_lod(
@@ -52,9 +54,21 @@ vec3 evaluate_environment(
         environment.sampler_index,
         vec2(surface.normal_view, perceptual_roughness)
     ).rg;
-    vec3 specular = prefiltered
-        * (surface.reflectance * response.x + surface.grazing_reflectance * response.y);
-    return (diffuse + specular) * environment.intensity;
+    specular = prefiltered
+        * (surface.reflectance * response.x + surface.grazing_reflectance * response.y)
+        * environment.intensity;
+}
+
+vec3 evaluate_environment(
+    EnvironmentGpu environment,
+    StandardSurface surface,
+    float roughness,
+    float occlusion
+) {
+    vec3 diffuse;
+    vec3 specular;
+    evaluate_environment_lobes(environment, surface, roughness, occlusion, diffuse, specular);
+    return diffuse + specular;
 }
 
 #endif

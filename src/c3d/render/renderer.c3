@@ -149,6 +149,7 @@ struct Renderer {
     gpu::AcquiredImage      acquired;
     gpu::CompletionPoint    output_submission;
     gpu::TextureState       frame_hdr_state;
+    gpu::TextureState       frame_scene_color_state;
     gpu::TextureState       frame_depth_state;
     gpu::TextureState       frame_shadow_state;
     gpu::TextureState[RENDER_TARGET_CAPACITY] frame_target_states;
@@ -156,6 +157,7 @@ struct Renderer {
     uint                    recording_slot;
     Target                  window_target;
     Target                  hdr_color;
+    Target                  scene_color;
     Target                  depth;
     FrameInfo               info;
     time::Clock             frame_started;
@@ -246,6 +248,7 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
     }
 
     self.frame_hdr_state = self.hdr_color.state;
+    self.frame_scene_color_state = self.scene_color.state;
     self.frame_depth_state = self.depth.state;
     self.frame_shadow_state = self.shadow_atlas.state;
     foreach (index, target : self.targets.items) self.frame_target_states[index] = target.target.state;
@@ -764,6 +767,7 @@ fn void destroy_renderer(Renderer* renderer) {
     free_material_heap(renderer);
     destroy_shadow_atlas(&renderer.device, &renderer.shadow_atlas);
     if (renderer.shadow_timing_results.len) alloc::free(renderer.allocator, renderer.shadow_timing_results.ptr);
+    release_scene_color(renderer);
     release_view_targets(&renderer.device, &renderer.hdr_color, &renderer.depth);
 
     foreach (&record : renderer.targets.items) {
@@ -838,6 +842,7 @@ fn void? recover_window_output(Renderer* renderer) @private {
         height:    renderer.output_height,
     )!;
     renderer.swapchain_info = gpu::get_swapchain_info(&renderer.device, renderer.swapchain)!;
+    release_scene_color(renderer);
     release_view_targets(&renderer.device, &renderer.hdr_color, &renderer.depth);
     allocate_view_targets(
         device:    &renderer.device,
@@ -976,6 +981,7 @@ fn void abort_frame(Renderer* renderer) {
         renderer.frames[renderer.recording_slot].shadow_timing_count = 0;
         renderer.shadow_atlas.state = renderer.frame_shadow_state;
         renderer.hdr_color.state = renderer.frame_hdr_state;
+        renderer.scene_color.state = renderer.frame_scene_color_state;
         renderer.depth.state = renderer.frame_depth_state;
         foreach (index, &target : renderer.targets.items) target.target.state = renderer.frame_target_states[index];
     }

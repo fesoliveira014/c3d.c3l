@@ -97,6 +97,11 @@ lighting, constant ambient and emission with its view-dependent fixed-F0 layer
 weight. See [Physical clearcoat and sheen](materials.md#physical-clearcoat-and-sheen)
 for the complete material composition.
 
+Physical transmission samples the selected lighting environment's specular cube
+along the refracted direction, at the base roughness level, whenever the
+refracted exit point falls outside the screen; without a lighting environment
+that fallback is black. See [Physical transmission](materials.md#physical-transmission).
+
 ## Processing quality
 
 Start from the named settings default and override either face-edge dimension:

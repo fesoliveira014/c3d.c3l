@@ -47,6 +47,8 @@ const uint PHYSICAL_MAP_SHEEN_ROUGHNESS = 16u;
 const uint PHYSICAL_EXTENSION_MAP_SPECULAR = 1u;
 const uint PHYSICAL_EXTENSION_MAP_SPECULAR_COLOR = 2u;
 const uint PHYSICAL_EXTENSION_MAP_ANISOTROPY = 4u;
+const uint PHYSICAL_EXTENSION_MAP_TRANSMISSION = 8u;
+const uint PHYSICAL_EXTENSION_MAP_THICKNESS = 16u;
 const uint SHEEN_LUT_SIZE = 256u;
 const uint SHEEN_LUT_SAMPLES = 4096u;
 const uint SHEEN_PREFILTER_SAMPLES = 4096u;
@@ -95,6 +97,10 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer FrameRoot {
     uint flags;
     uint frame_index;
     vec4 ambient;
+    uint scene_color;
+    uint scene_sampler;
+    uint _pad0;
+    uint _pad1;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer DrawRoot {
@@ -326,6 +332,13 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer PhysicalMat
     TextureMapGpu specular_map;
     TextureMapGpu specular_color_map;
     TextureMapGpu anisotropy_map;
+    vec4 attenuation_color_distance;
+    float transmission;
+    float thickness;
+    uint _pad0;
+    uint _pad1;
+    TextureMapGpu transmission_map;
+    TextureMapGpu thickness_map;
 };
 
 #endif

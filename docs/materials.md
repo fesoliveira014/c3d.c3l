@@ -282,9 +282,55 @@ normal map. Direct lighting uses the anisotropic GGX distribution and visibility
 environment reflections bend the reflection normal toward the stretch direction
 as a documented approximation. Clearcoat and sheen stay isotropic.
 
+## Physical transmission
+
+Transmission shows the opaque scene through a Physical surface:
+
+```c3
+PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
+params.standard.metallic = 0;
+params.standard.roughness = 0.05f;
+params.ior = 1.5f;
+params.transmission = 1;
+params.thickness = 1;
+params.attenuation_distance = 1;
+params.attenuation_color = { 0.9f, 0.5f, 0.3f };
+```
+
+`transmission` lies in [0, 1] (default 0). `thickness` is a finite non-negative
+object-space distance scaled by the model matrix columns; zero means a thin
+surface. `attenuation_distance` is finite and non-negative, where zero disables
+volume attenuation; `attenuation_color` components lie in [0, 1]. With
+`attenuation_distance` above zero, radiance crossing the volume is multiplied by
+`attenuation_color ^ (distance / attenuation_distance)`.
+
+| Slot | Channels | Load color space | Effect |
+| --- | --- | --- | --- |
+| `transmission_map` | R | Linear | Multiplies `transmission` |
+| `thickness_map` | G | Linear | Multiplies `thickness` |
+
+Both slots are ignored when `transmission` is zero. A transmissive material's
+draws form a separate list rendered after opaque geometry and the sky and before
+ordinary blends, sorted back to front by bounds center. Any alpha mode is allowed:
+OPAQUE and MASK glass keeps its depth write setting and casts opaque shadows;
+BLEND glass follows the ordinary blend rules and never casts.
+
+Before that list the renderer copies the finished opaque color into a
+renderer-owned `scene_color` image, allocated on first use at the view size. Each
+transmissive fragment refracts the view direction by `1 / ior`, walks the
+thickness through the volume, projects the exit point and samples `scene_color`
+at mip zero, so rough transmission is not blurred. An exit point outside the
+screen falls back to the environment's specular cube along the refracted
+direction, or to black without an environment. The transmitted radiance replaces
+the dielectric diffuse response by the transmission factor, is scaled by base
+color and the non-metallic fraction, and is weighted by the surface's own
+Fresnel; direct lights add a mirrored-light transmission lobe. Transmissive
+surfaces never see each other or ordinary blends: glass behind glass shows the
+opaque scene through both.
+
 ## Material storage
 
-Renderer material slots are 544 bytes (`render::MATERIAL_STRIDE`). The generated
+Renderer material slots are 640 bytes (`render::MATERIAL_STRIDE`). The generated
 `StandardMaterialGpu` remains 224 bytes, with a 64-byte header followed by five
 nested 32-byte `TextureMapGpu` members at offsets 64, 96, 128, 160 and 192. Each map record
 contains `texture_index`, `sampler_index`, `uv_offset` and `uv_linear`; presence
@@ -299,14 +345,15 @@ bits 5–9 select UV1 for those same slots. The matching schema constants are
 `TextureMapGpu map` is at offset 32. It uses the same base-color presence and
 UV1 bits as Standard. `ToonMaterialGpu` occupies 96 bytes, including its color,
 rim factors, step count, gradient texture/sampler indices and one nested base-map
-record. `PhysicalMaterialGpu` occupies the full 544-byte slot: its Standard value
-is followed by layer factors, five 32-byte layer-map records, the specular and
-anisotropy factors and three more map records. Layer presence lives in
+record. `PhysicalMaterialGpu` occupies the full 640-byte slot: its Standard value
+is followed by layer factors, five 32-byte layer-map records, the specular,
+anisotropy and volume factors and five more map records. Layer presence lives in
 `map_flags` with `PHYSICAL_MAP_*` bits; the extension maps use a second word,
 `extension_map_flags`, with `PHYSICAL_EXTENSION_MAP_SPECULAR`,
-`PHYSICAL_EXTENSION_MAP_SPECULAR_COLOR` and `PHYSICAL_EXTENSION_MAP_ANISOTROPY`
-and the same `MATERIAL_MAP_UV1_SHIFT`. The default 4096-slot material heap is
-2,228,224 bytes. Custom renderer-side packing supplies
+`PHYSICAL_EXTENSION_MAP_SPECULAR_COLOR`, `PHYSICAL_EXTENSION_MAP_ANISOTROPY`,
+`PHYSICAL_EXTENSION_MAP_TRANSMISSION` and `PHYSICAL_EXTENSION_MAP_THICKNESS` and
+the same `MATERIAL_MAP_UV1_SHIFT`. The default 4096-slot material heap is
+2,621,440 bytes. Custom renderer-side packing supplies
 one `TextureBinding` per Standard, Toon and Physical slot. Basic uses only its base
 color binding; Toon uses base color and gradient; disabled layer bindings stay
 empty. Bindless index zero is not a presence test. Ordinary consumers
@@ -438,7 +485,7 @@ python3 scripts/build.py --example materials
 ./examples/build/materials --gpu-timings
 ```
 
-`materials` combines six interactive presets. Masked foliage casts cutout
+`materials` combines seven interactive presets. Masked foliage casts cutout
 shadows onto an opaque receiver. Two separated blended objects show source-over
 composition against an opaque reference and HDR sky. Three Toon spheres compare
 uniform steps, a nonuniform grayscale ramp and an enabled rim. The Physical view
@@ -447,11 +494,13 @@ sphere, factor-only coated paint and fabric, and a combined mapped surface.
 The Physical specular view compares an IOR row of 1.0, 1.5 and 2.4 with a
 specular-weight row of 0, 0.5 and a tinted unit weight. The Physical anisotropy
 view compares an isotropic brushed metal with three stretch rotations and a
-mapped direction.
+mapped direction. The Physical transmission view places thin, thick tinted and
+blended glass in front of a checker backdrop and three opaque spheres, with one
+glass cube behind the thin sphere to show that glass never sees other glass.
 
 The controls switch presets, editable surfaces, material families, base textures
 and Toon ramps. The Physical controls independently toggle the base normal, all
-five layer maps, the specular weight and color maps and the anisotropy map; the
+five layer maps, the specular, anisotropy, transmission and thickness maps; the
 tiny generated fixtures use the documented channels, different UV sets/transforms
 and distinct base/coat normals. Family changes
 initialize the selected parameter arm from named defaults and preserve only the
@@ -507,8 +556,8 @@ images](textures.md). [Sun, spot and point shadows](shadows.md) attenuate Standa
 Physical and Toon direct lighting. Standard and Physical support [environment
 lighting and independent skies](environments.md); Toon uses only its diffuse SH
 contribution, and Basic remains unlit. Toon does not provide PBR reflections,
-outlines or transmission. Physical does not yet add
-transmission; scene-color transmission remains outside the current material
-families. Shading writes scene-linear HDR into the renderer target; the
+outlines or transmission. Physical transmission samples
+the opaque scene at mip zero and never sees other transmissive or blended
+surfaces. Shading writes scene-linear HDR into the renderer target; the
 existing composite adds no tonemapper or exposure control, so bright values can
 clip on presentation. Compare lighting with consistent presentation settings.

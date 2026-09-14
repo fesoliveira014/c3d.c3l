@@ -152,9 +152,9 @@ See [Materials and lighting](docs/materials.md) for factors, layer masks,
 light capacity and current rendering limits.
 
 `materials` combines masked foliage, ordinary premultiplied alpha blending, Toon
-lighting and Physical clearcoat/sheen/specular/anisotropy in one interactive
-window. Its controls switch presets, active families, base and layer maps, two
-colored lights, ambient fill and either bundled HDR environment:
+lighting and Physical clearcoat/sheen/specular/anisotropy/transmission in one
+interactive window. Its controls switch presets, active families, base and layer
+maps, two colored lights, ambient fill and either bundled HDR environment:
 
 ```bash
 python3 scripts/build.py --example materials
