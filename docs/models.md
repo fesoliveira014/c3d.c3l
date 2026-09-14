@@ -144,10 +144,9 @@ triples. `duration` is the largest key time. The template lists its clip ids
 and every instance copies them. A channel on a node outside the imported node
 set is `ASSET_FORMAT_ERROR`; `options.animations = false` skips clips.
 
-`c3d::anim` samples clips onto instance nodes and morph weights. The renderer
-ignores `SkinBinding` and morph weights until the deformation change evaluates
-joint matrices and selects skinned and morphed shader variants; meshes with
-joints render in their bind pose meanwhile.
+`c3d::anim` samples clips onto instance nodes and morph weights; the renderer
+builds joint palettes from `SkinBinding` and selects the skinned and morphed
+vertex variants ([Animation](animation.md)).
 
 ## Supported and unsupported extensions
 

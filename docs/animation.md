@@ -88,11 +88,23 @@ segment duration.
 
 ## What deforms
 
-The animation update writes node transforms and morph weights. Meshes attached
-to animated nodes move with them, as `BoxAnimated` shows in the `animation`
-example. Skinned meshes still render in their bind pose and morphed meshes in
-their base pose: joint palettes, morph selection and the deformation shader
-variants are the next animation change.
+The animation update writes node transforms and morph weights; the renderer
+turns them into deformed draws:
+
+- A mesh node with `SkinBinding` draws with a joint palette
+  `inverse_affine(mesh.world) * joint.world * inverse_bind[i]`, computed once
+  per renderer frame per binding and shared by the camera view and every
+  shadow layer of that frame. Joint indices pack as four bytes per vertex, or
+  four 16-bit values when a skin addresses more than 256 joints.
+- A mesh with morph targets and a non-empty `Mesh.morph_weights` draws with
+  its eight largest non-zero weights by magnitude; the rest are dropped for
+  that frame while the CPU weights stay complete. Deltas apply before skinning.
+- Skinned meshes are culled and included as shadow casters through a bound
+  that covers every joint at the radius of the bind-pose bounds; a
+  `Mesh.local_bounds` override replaces it.
+
+Compute skinning, previous deformed poses for temporal effects and skinned
+instanced meshes are not part of this.
 
 ## Example
 
@@ -102,7 +114,8 @@ python3 scripts/build.py --example animation
 ```
 
 `animation` loads the argument path, or the bundled Fox, instantiates it twice
-and plays a different clip on each instance. Keys `1` to `9` cross-fade the
+and plays a different clip on each instance; `AnimatedMorphCube.glb` shows
+morph targets. Keys `1` to `9` cross-fade the
 left instance to that clip, `Q` toggles the left action between full and
 quarter weight, `SPACE` pauses and resumes every action; drag orbits, the wheel
 zooms, Escape quits.

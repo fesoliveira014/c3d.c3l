@@ -2,6 +2,9 @@
 #include "generated/shader_abi.glsl"
 #include "c3d_abi.glsl"
 #include "vertex_pull.glsl"
+#if defined(SKINNED) || defined(SKINNED_U16) || defined(MORPH)
+#include "deform.glsl"
+#endif
 #ifndef DEPTH_ONLY
 #include "normal_mapping.glsl"
 #endif
@@ -30,8 +33,27 @@ void main() {
     vec3 normal = (geometry.flags & GEOMETRY_HAS_NORMALS) != 0u
         ? pull_vec3(geometry.normals, index)
         : vec3(0.0, 0.0, 1.0);
+    vec4 tangent = (geometry.flags & GEOMETRY_HAS_TANGENTS) != 0u
+        ? pull_vec4(geometry.tangents, index)
+        : vec4(0.0);
 #endif
     vec2 uv0 = (geometry.flags & GEOMETRY_HAS_UV0) != 0u ? pull_vec2(geometry.uv0, index) : vec2(0.0);
+
+#ifdef MORPH
+    MorphWeightsGpu morph = MorphWeightsGpu(draw.morph);
+    position += morph_delta(geometry, morph, index, MORPH_STREAM_POSITION);
+#ifndef DEPTH_ONLY
+    normal += morph_delta(geometry, morph, index, MORPH_STREAM_NORMAL);
+#endif
+#endif
+#if defined(SKINNED) || defined(SKINNED_U16)
+    mat4 skin = skin_matrix(geometry, draw.skin, index);
+    position = (skin * vec4(position, 1.0)).xyz;
+#ifndef DEPTH_ONLY
+    normal = mat3(skin) * normal;
+    tangent.xyz = mat3(skin) * tangent.xyz;
+#endif
+#endif
 
     vec4 world = draw.model * vec4(position, 1.0);
 #ifndef DEPTH_ONLY
@@ -39,7 +61,7 @@ void main() {
     v_world_pos = world.xyz;
     v_normal = normalize(normal_matrix * normal);
     v_tangent = (geometry.flags & GEOMETRY_HAS_TANGENTS) != 0u
-        ? world_tangent(draw.model, pull_vec4(geometry.tangents, index))
+        ? world_tangent(draw.model, tangent)
         : vec4(0.0);
 #endif
     v_uv0 = uv0;

@@ -79,6 +79,17 @@ root DrawRoot {
     uint       _pad3;
 }
 
+const uint MAX_ACTIVE_MORPH_TARGETS = 8;
+
+root MorphWeightsGpu {
+    uint[8]  indices;
+    float[8] weights;
+    uint     count;
+    uint     _pad0;
+    uint     _pad1;
+    uint     _pad2;
+}
+
 const uint DRAW_RECEIVE_SHADOW = 1;
 const uint DRAW_ALPHA_MASK = 2;
 

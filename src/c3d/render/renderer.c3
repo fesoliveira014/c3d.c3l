@@ -109,6 +109,7 @@ struct Renderer {
     gpu::SwapchainInfo      swapchain_info;
     Frame[FRAMES_IN_FLIGHT] frames;
     ulong                   frame_index;
+    DeformationCache        deformation;
 
     AssetStore*             assets;
     uint                    max_lights;
@@ -239,6 +240,7 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
     sweep_samplers(self);
     sweep_materials(self);
     reset_upload_ring(self, slot)!;
+    reset_deformation_cache(&self.deformation);
     self.frame_started = clock::now();
 
     self.has_output = false;
@@ -717,6 +719,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .frames               = frames,
         .targets              = pool::create_pool{TargetRecord, RenderTargetId}(allocator, RENDER_TARGET_CAPACITY),
         .pipelines            = create_pipeline_cache(allocator, shader::BUILTIN_REGISTRY),
+        .deformation          = create_deformation_cache(allocator),
         .linear_clamp_sampler = linear_clamp_sampler,
         .log                  = log,
         .timestamps           = timestamps,
@@ -739,6 +742,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         free_geometries(&renderer);
         alloc::free(allocator, renderer.materials.ptr);
         destroy_pipeline_cache(&renderer.device, &renderer.pipelines);
+        destroy_deformation_cache(&renderer.deformation);
         pool::destroy_pool{TargetRecord, RenderTargetId}(&renderer.targets);
         // Preparation updates completion points and may replace copied ring storage.
         frames = renderer.frames;
@@ -775,6 +779,7 @@ fn void destroy_renderer(Renderer* renderer) {
     }
     pool::destroy_pool{TargetRecord, RenderTargetId}(&renderer.targets);
     destroy_pipeline_cache(&renderer.device, &renderer.pipelines);
+    destroy_deformation_cache(&renderer.deformation);
 
     if (renderer.swapchain.is_valid()) {
         uint attempts = 0;

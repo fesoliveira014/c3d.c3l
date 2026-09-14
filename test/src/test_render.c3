@@ -301,8 +301,9 @@ fn void test_write_geometry_block_fills_the_root() @test {
     };
 }
 
-fn ulong key_of(uint fragment, uint material, uint geometry, float depth) @local {
+fn ulong key_of(uint fragment, uint material, uint geometry, float depth, uint vertex_flags = 0) @local {
     return render::draw_sort_key(
+        vertex:    { .shader = MESH, .flags = vertex_flags },
         fragment:  { .shader = (shader::ShaderName)fragment },
         material:  { .index = material, .generation = 1 },
         geometry:  { .index = geometry, .generation = 1 },
@@ -316,6 +317,7 @@ fn void test_sort_key_orders_pipeline_material_geometry_then_depth() @test {
     assert(key_of(2, 0, 0, 1.0f) > key_of(1, 9, 9, 0.0f));
     assert(key_of(1, 6, 0, 1.0f) > key_of(1, 5, 9, 0.0f));
     assert(key_of(1, 5, 8, 1.0f) > key_of(1, 5, 7, 0.0f));
+    assert(key_of(1, 0, 0, 1.0f, shader::SHADER_FLAG_SKINNED) > key_of(1, 9, 9, 0.0f));
 }
 
 fn void test_sort_key_depth_is_front_to_back() @test {
@@ -384,4 +386,69 @@ fn void test_draw_root_packs_normal_columns() @test {
     assert((ulong)root.frame == 0x100 && (ulong)root.geometry == 0x200 && (ulong)root.material == 0x300);
     assert(root.object_id == 9 && (ulong)root.skin == 0);
     assert(root.flags == 0);
+}
+
+fn Geometry skinned_triangle(Allocator allocator, ushort[<4>] highest) @local {
+    Geometry triangle = {
+        .topology  = Topology.TRIANGLES,
+        .positions = alloc::new_array(allocator, Vec3, 3),
+        .joints    = alloc::new_array(allocator, ushort[<4>], 3),
+        .weights   = alloc::new_array(allocator, Vec4, 3),
+    };
+    triangle.joints[0] = { 0, 1, 2, 3 };
+    triangle.joints[1] = highest;
+    triangle.joints[2] = { 5, 6, 7, 8 };
+    return triangle;
+}
+
+fn void test_joints_pack_as_u16_when_any_index_exceeds_255() @test {
+    @pool() {
+        Geometry narrow = skinned_triangle(tmem, { 255, 1, 0, 0 });
+        render::GeometryLayout narrow_layout = render::geometry_layout(&narrow);
+        assert(narrow_layout.flags.skinned && !narrow_layout.flags.joints_u16);
+        assert(narrow_layout.weights - narrow_layout.joints == 16);
+
+        Geometry wide = skinned_triangle(tmem, { 300, 1, 0, 65535 });
+        render::GeometryLayout layout = render::geometry_layout(&wide);
+        assert(layout.flags.joints_u16 && layout.weights - layout.joints == 32);
+        char[] block = alloc::new_array(tmem, char, (sz)layout.total_bytes);
+        render::write_geometry_block(block: block, geometry: &wide, layout: &layout, base: (gpu::GpuAddress)0x1000);
+        uint* packed = (uint*)&block[layout.joints];
+        assert(packed[0] == 1u << 16 && packed[1] == (2u | 3u << 16));
+        assert(packed[2] == (300u | 1u << 16) && packed[3] == 65535u << 16);
+        assert(((shader::GeometryRoot*)block.ptr).flags == (uint)layout.flags);
+    };
+}
+
+fn void test_mesh_vertex_variant_follows_geometry_flags() @test {
+    render::GeometryFlags skinned = { .skinned = true };
+    render::GeometryFlags wide = { .skinned = true, .joints_u16 = true };
+    render::GeometryFlags morphs = { .has_morphs = true };
+    assert(render::mesh_vertex_variant(skinned, false).flags == shader::SHADER_FLAG_SKINNED);
+    assert(render::mesh_vertex_variant(wide, false).flags == shader::SHADER_FLAG_SKINNED_U16);
+    assert(render::mesh_vertex_variant(morphs, true).flags == shader::SHADER_FLAG_MORPH);
+    assert(render::mesh_vertex_variant(morphs, false).flags == 0);
+    shader::ShaderVariant depth = render::mesh_vertex_variant(skinned, true, shader::SHADER_FLAG_DEPTH_ONLY);
+    assert(depth.shader == shader::ShaderName.MESH);
+    assert(depth.flags == (shader::SHADER_FLAG_DEPTH_ONLY | shader::SHADER_FLAG_SKINNED));
+}
+
+fn void test_morph_selection_keeps_largest_eight_by_magnitude() @test {
+    float[12] weights = { 0.1f, 0, 0.5f, -0.9f, 0.05f, 0.3f, 0.2f, 0, 0.7f, 0.15f, 0.25f, 0.6f };
+    shader::MorphWeightsGpu block = render::select_morph_targets(weights[..]);
+    assert(block.count == 8);
+    float kept_minimum = 1;
+    foreach (slot, index : block.indices[:block.count]) {
+        assert(block.weights[slot] == weights[index]);
+        kept_minimum = math::min(kept_minimum, math::abs(block.weights[slot]));
+    }
+    assert(block.indices[0] == 3 && block.weights[0] == -0.9f);
+    assert(kept_minimum == 0.15f);
+    foreach (index, weight : weights) {
+        bool kept;
+        foreach (kept_index : block.indices[:block.count]) kept |= kept_index == index;
+        if (!kept) assert(math::abs(weight) <= kept_minimum);
+    }
+    float[3] none = { 0, 0, 0 };
+    assert(render::select_morph_targets(none[..]).count == 0);
 }

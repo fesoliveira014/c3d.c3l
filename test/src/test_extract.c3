@@ -180,3 +180,68 @@ fn void test_draw_list_prefers_transmission_over_blend() @test {
         assert(render::draw_list(material) == expected[index]);
     }
 }
+
+fn void test_skinned_candidate_bounds_follow_joints() @test {
+    AssetStore assets = asset::create_asset_store(mem, {
+        .max_geometries = 4,
+        .max_textures   = asset::BUILTIN_TEXTURE_COUNT,
+        .max_materials  = 2,
+        .max_samplers   = asset::BUILTIN_SAMPLER_COUNT,
+        .max_skeletons  = 2,
+    });
+    defer asset::destroy_asset_store(&assets);
+    GeometryId box;
+    @pool() {
+        Geometry cube = geometry::box(tmem, 1, 1, 1);
+        box = assets.add_geometry(&cube, "box")!!;
+    };
+    MaterialId red = assets.add_material(material::basic({ .color = { 1, 0, 0, 1 } }), "red")!!;
+    Skeleton skeleton = {
+        .joint_names  = alloc::new_array(mem, String, 1),
+        .parents      = alloc::new_array(mem, int, 1),
+        .rest_pose    = alloc::new_array(mem, Transform, 1),
+        .inverse_bind = alloc::new_array(mem, Mat4, 1),
+    };
+    skeleton.parents[0] = -1;
+    skeleton.rest_pose[0] = maths::TRANSFORM_IDENTITY;
+    skeleton.inverse_bind[0] = matrix::IDENTITY4;
+    SkeletonId skeleton_id = assets.add_skeleton_owned(&skeleton, "skeleton")!!;
+
+    Scene scene = scene::create_scene(mem, { .max_nodes = 16 });
+    defer scene::destroy_scene(&scene);
+    Node* camera_node = scene.add_camera(camera::perspective_deg(60, 0.1f))!!;
+    camera_node.local.position = { 0, 20, 5 };
+    Node* joint = scene.add_node(name: "joint")!!;
+    joint.local.position = { 0, 20, 0 };
+    Node* skinned = scene.add_mesh(box, red, name: "skinned")!!;
+    Node*[] joints = alloc::new_array(scene.allocator, Node*, 1);
+    joints[0] = joint;
+    scene.add(skinned, (SkinBinding){ .skeleton = skeleton_id, .joints = joints });
+    Node* rigid = scene.add_mesh(box, red, name: "rigid")!!;
+    Node* dead = scene.add_mesh(box, red, name: "dead")!!;
+    Node*[] dead_joints = alloc::new_array(scene.allocator, Node*, 1);
+    dead_joints[0] = joint;
+    scene.add(dead, (SkinBinding){ .skeleton = { .index = 1, .generation = 9 }, .joints = dead_joints });
+    scene.update_world();
+
+    Camera* camera = scene.get(camera_node, Camera);
+    CameraMatrices matrices = camera::derive_matrices(*camera, camera_node.world, VIEWPORT);
+    @pool() {
+        render::ExtractCounts counts;
+        render::MeshCandidate[] candidates = render::extract_candidates(
+            allocator: tmem,
+            scene:     &scene,
+            assets:    &assets,
+            camera:    &matrices,
+            layers:    scene::DEFAULT_LAYERS,
+            counts:    &counts,
+        );
+        assert(candidates.len == 1 && candidates[0].node == skinned && candidates[0].skin != null);
+        Aabb bounds = candidates[0].world_bounds;
+        assert(bounds.min.y < 20 && bounds.max.y > 20 && bounds.min.y > 19 && bounds.max.y < 21);
+        assert(counts.culled == 1 && counts.dangling == 1);
+
+        render::MeshCandidate[] casters = render::extract_shadow_candidates(tmem, &scene, &assets, &counts);
+        assert(casters.len == 2 && counts.dangling == 1);
+    };
+}

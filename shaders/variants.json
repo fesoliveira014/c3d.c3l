@@ -1,11 +1,11 @@
 {
-  "flags": ["DEPTH_ONLY"],
+  "flags": ["DEPTH_ONLY", "SKINNED", "SKINNED_U16", "MORPH"],
   "entries": [
     { "shader": "fullscreen", "source": "fullscreen.vert.glsl", "stage": "vert", "defines": [] },
-    { "shader": "gradient",   "source": "gradient.frag.glsl",   "stage": "frag", "defines": [] },
-    { "shader": "composite",  "source": "composite.frag.glsl",  "stage": "frag", "defines": [] },
-    { "shader": "mesh",       "source": "mesh.vert.glsl",       "stage": "vert", "defines": [] },
-    { "shader": "basic",      "source": "basic.frag.glsl",      "stage": "frag", "defines": [] },
+    { "shader": "gradient", "source": "gradient.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "composite", "source": "composite.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": [] },
+    { "shader": "basic", "source": "basic.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "imgui_vertex", "source": "imgui.vert.glsl", "stage": "vert", "defines": [] },
     { "shader": "imgui_fragment", "source": "imgui.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "cube_preview", "source": "cube_preview.frag.glsl", "stage": "frag", "defines": [] },
@@ -20,7 +20,17 @@
     { "shader": "brdf_lut", "source": "brdf_lut.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "sheen_lut", "source": "sheen_lut.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "sky", "source": "sky.frag.glsl", "stage": "frag", "defines": [] },
-    { "shader": "mesh",       "source": "mesh.vert.glsl",       "stage": "vert", "defines": ["DEPTH_ONLY"] },
-    { "shader": "depth_only", "source": "depth_only.frag.glsl", "stage": "frag", "defines": [] }
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["DEPTH_ONLY"] },
+    { "shader": "depth_only", "source": "depth_only.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["SKINNED"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["SKINNED_U16"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["MORPH"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["SKINNED", "MORPH"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["SKINNED_U16", "MORPH"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["DEPTH_ONLY", "SKINNED"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["DEPTH_ONLY", "SKINNED_U16"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["DEPTH_ONLY", "MORPH"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["DEPTH_ONLY", "SKINNED", "MORPH"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["DEPTH_ONLY", "SKINNED_U16", "MORPH"] }
   ]
 }

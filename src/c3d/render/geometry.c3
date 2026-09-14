@@ -33,6 +33,7 @@ bitstruct GeometryFlags : uint { // mirrored as GeometryRoot.flags in c3d_abi.gl
     bool skinned      : 5;
     bool has_morphs   : 6;
     bool indices_u16  : 7;
+    bool joints_u16   : 8;
 }
 
 <*
@@ -103,6 +104,7 @@ fn void? Renderer.upload_geometry(&self, GeometryId geometry) {
 fn GeometryLayout geometry_layout(Geometry* geometry) {
     uint vertex_count = (uint)geometry.positions.len;
     bool short_indices = vertex_count <= ushort::max;
+    bool wide_joints = joints_exceed_byte(geometry.joints);
     GeometryLayout layout = {
         .vertex_count  = vertex_count,
         .index_count   = (uint)geometry.indices.len,
@@ -118,6 +120,7 @@ fn GeometryLayout geometry_layout(Geometry* geometry) {
             .skinned      = geometry.joints.len > 0,
             .has_morphs   = geometry.targets.len > 0,
             .indices_u16  = short_indices,
+            .joints_u16   = wide_joints,
         },
     };
     usz cursor = align_up(GeometryRoot::size, STREAM_ALIGNMENT);
@@ -128,7 +131,7 @@ fn GeometryLayout geometry_layout(Geometry* geometry) {
     if (layout.flags.has_uv1) layout.uv1 = place(&cursor, Vec2::size * vertex_count);
     if (layout.flags.has_colors) layout.colors = place(&cursor, Vec4::size * vertex_count);
     if (layout.flags.skinned) {
-        layout.joints = place(&cursor, uint::size * vertex_count);
+        layout.joints = place(&cursor, (wide_joints ? 2 : 1) * uint::size * vertex_count);
         layout.weights = place(&cursor, Vec4::size * vertex_count);
     }
     if (layout.flags.has_morphs) {
@@ -173,7 +176,13 @@ fn void write_geometry_block(char[] block, Geometry* geometry, GeometryLayout* l
     copy_stream(block, layout.colors, geometry.colors);
     copy_stream(block, layout.weights, geometry.weights);
     copy_stream(block, layout.custom_data, geometry.custom_data);
-    if (layout.flags.skinned) {
+    if (layout.flags.joints_u16) {
+        uint* packed = (uint*)&block[layout.joints];
+        foreach (index, joints : geometry.joints) {
+            packed[2 * index] = (uint)joints.x | (uint)joints.y << 16;
+            packed[2 * index + 1] = (uint)joints.z | (uint)joints.w << 16;
+        }
+    } else if (layout.flags.skinned) {
         uint* packed = (uint*)&block[layout.joints];
         foreach (index, joints : geometry.joints) {
             packed[index] = (uint)joints.x | (uint)joints.y << 8 | (uint)joints.z << 16 | (uint)joints.w << 24;
@@ -332,4 +341,11 @@ fn gpu::GpuAddress address_of(gpu::GpuAddress base, usz offset) @local {
 
 macro copy_stream(char[] block, usz offset, slice) @local {
     if (slice.len) mem::copy(&block[offset], slice.ptr, slice.len * $Typeof(slice[0])::size);
+}
+
+fn bool joints_exceed_byte(ushort[<4>][] joints) @local {
+    foreach (vertex : joints) {
+        if (vertex.x > char::max || vertex.y > char::max || vertex.z > char::max || vertex.w > char::max) return true;
+    }
+    return false;
 }
