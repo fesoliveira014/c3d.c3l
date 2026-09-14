@@ -145,7 +145,8 @@ set is `ASSET_FORMAT_ERROR`; `options.animations = false` skips clips.
 
 `c3d::anim` samples clips onto instance nodes and morph weights; the renderer
 builds joint palettes from `SkinBinding` and selects the skinned and morphed
-vertex variants ([Animation](animation.md)).
+vertex variants ([Animation](animation.md)). glTF geometries carry no
+`channels` table, so each morph weight drives the target at its index.
 
 ## Supported and unsupported extensions
 

@@ -32,15 +32,16 @@ enum DrawList {
  Mesh that passed inclusion for one view, with its bounds in world space.
 *>
 struct MeshCandidate {
-    Node*        node;
-    GeometryId   geometry;
-    MaterialId   material;
-    SkinBinding* skin;
-    float[]      morph_weights;
-    Aabb         world_bounds;
-    float        ndc_depth;
-    float        view_depth;
-    bool         receive_shadow;
+    Node*          node;
+    GeometryId     geometry;
+    MaterialId     material;
+    SkinBinding*   skin;
+    float[]        morph_weights;
+    MorphChannel[] morph_channels;
+    Aabb           world_bounds;
+    float          ndc_depth;
+    float          view_depth;
+    bool           receive_shadow;
 }
 
 <*
@@ -125,6 +126,7 @@ fn void include_mesh(MeshCandidate[] candidates, Scene* scene, Node* node, Mesh*
         .material       = mesh.material,
         .skin           = skin,
         .morph_weights  = morph_weights_of(assets, mesh),
+        .morph_channels = assets.geometry(mesh.geometry).data.channels,
         .world_bounds   = world,
         .ndc_depth      = center_depth(camera, world),
         .view_depth     = center_view_depth(camera, world),
@@ -146,7 +148,7 @@ fn Aabb candidate_bounds(AssetStore* assets, Node* node, Mesh* mesh, SkinBinding
 }
 
 fn float[] morph_weights_of(AssetStore* assets, Mesh* mesh) @local {
-    return assets.geometry(mesh.geometry).data.targets.len ? mesh.morph_weights : (float[]){};
+    return assets.geometry(mesh.geometry).target_count ? mesh.morph_weights : (float[]){};
 }
 
 <*
@@ -227,6 +229,7 @@ fn MeshCandidate[] extract_shadow_candidates(
                         .material       = mesh.material,
                         .skin           = skin,
                         .morph_weights  = morph_weights_of(assets, mesh),
+                        .morph_channels = assets.geometry(mesh.geometry).data.channels,
                         .world_bounds   = candidate_bounds(assets, node, mesh, skin),
                         .receive_shadow = mesh.receive_shadow,
                     };

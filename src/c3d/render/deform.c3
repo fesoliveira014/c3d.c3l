@@ -34,26 +34,42 @@ fn ShaderVariant mesh_vertex_variant(GeometryFlags flags, bool morphed, uint bas
 
 <*
  The largest active targets by weight magnitude, with their original indices.
+ @param channels : "Empty maps one weight to each target."
+ @param weights : "One per channel, or per target when channels is empty."
  @pure
+ @require channels.len == 0 || channels.len == weights.len
 *>
-fn MorphWeightsGpu select_morph_targets(float[] weights) {
+fn MorphWeightsGpu select_morph_targets(MorphChannel[] channels, float[] weights) {
     MorphWeightsGpu block;
-    foreach (uint index, weight : weights) {
-        if (weight == 0) continue;
-        float magnitude = math::abs(weight);
-        uint slot = block.count;
-        while (slot > 0 && math::abs(block.weights[slot - 1]) < magnitude) slot--;
-        if (slot >= shader::MAX_ACTIVE_MORPH_TARGETS) continue;
-        uint last = math::min(block.count, shader::MAX_ACTIVE_MORPH_TARGETS - 1);
-        for (uint move = last; move > slot; move--) {
-            block.indices[move] = block.indices[move - 1];
-            block.weights[move] = block.weights[move - 1];
-        }
-        block.indices[slot] = index;
-        block.weights[slot] = weight;
-        if (block.count < shader::MAX_ACTIVE_MORPH_TARGETS) block.count++;
+    if (!channels.len) {
+        foreach (uint index, weight : weights) insert_morph_target(&block, index, weight);
+        return block;
+    }
+    foreach (usz index, &channel : channels) {
+        ChannelBlend blend = channel.blend(weights[index]);
+        insert_morph_target(&block, blend.targets[0], blend.weights[0]);
+        insert_morph_target(&block, blend.targets[1], blend.weights[1]);
     }
     return block;
+}
+
+<*
+ @pure
+*>
+fn void insert_morph_target(MorphWeightsGpu* block, uint index, float weight) @local {
+    if (weight == 0) return;
+    float magnitude = math::abs(weight);
+    uint slot = block.count;
+    while (slot > 0 && math::abs(block.weights[slot - 1]) < magnitude) slot--;
+    if (slot >= shader::MAX_ACTIVE_MORPH_TARGETS) return;
+    uint last = math::min(block.count, shader::MAX_ACTIVE_MORPH_TARGETS - 1);
+    for (uint move = last; move > slot; move--) {
+        block.indices[move] = block.indices[move - 1];
+        block.weights[move] = block.weights[move - 1];
+    }
+    block.indices[slot] = index;
+    block.weights[slot] = weight;
+    if (block.count < shader::MAX_ACTIVE_MORPH_TARGETS) block.count++;
 }
 
 fn DeformationCache create_deformation_cache(Allocator allocator) @private {
@@ -95,17 +111,17 @@ fn gpu::GpuAddress? ensure_palette(Renderer* renderer, Node* mesh_node, SkinBind
 }
 
 <*
- Morph block of the mesh for this frame, uploaded on first use.
- @param [&in] mesh_node : "Owner of the weights."
- @param weights : "Live weights of the mesh, one per target."
+ Morph block of the candidate's mesh for this frame, uploaded on first use.
+ @param [&in] candidate : "Channels and live weights as extracted."
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::UNSUPPORTED_FEATURE, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
 *>
-fn gpu::GpuAddress? ensure_morph_block(Renderer* renderer, Node* mesh_node, float[] weights) @private {
+fn gpu::GpuAddress? ensure_morph_block(Renderer* renderer, MeshCandidate* candidate) @private {
+    Node* mesh_node = candidate.node;
     if (try existing = renderer.deformation.morph_blocks.get(mesh_node.id.index)) return existing;
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan span = slot.upload.take(&renderer.device, MorphWeightsGpu::size, STREAM_ALIGNMENT)!;
-    *(MorphWeightsGpu*)span.bytes.ptr = select_morph_targets(weights);
+    *(MorphWeightsGpu*)span.bytes.ptr = select_morph_targets(candidate.morph_channels, candidate.morph_weights);
     renderer.deformation.morph_blocks.set(mesh_node.id.index, span.address);
     return span.address;
 }

@@ -59,7 +59,7 @@ fn ShadowDraw[]? prepare_shadow_draws(Renderer* renderer, MeshCandidate[] candid
             .vertex = vertex,
             .skin = candidate.skin ? ensure_palette(renderer, candidate.node, candidate.skin)! : (gpu::GpuAddress)0,
             .morph = vertex.flags & shader::SHADER_FLAG_MORPH
-              ? ensure_morph_block(renderer, candidate.node, candidate.morph_weights)! : (gpu::GpuAddress)0,
+              ? ensure_morph_block(renderer, candidate)! : (gpu::GpuAddress)0,
             .masked = material.common.alpha_mode == AlphaMode.MASK,
             .wireframe = material.common.wireframe && renderer.caps.line_polygon_mode,
             .reflected = candidate.node.world.determinant() < 0,

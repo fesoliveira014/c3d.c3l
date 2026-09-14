@@ -11,6 +11,14 @@ fn bool close(float first, float second) @local {
     return math::abs(first - second) <= TOLERANCE;
 }
 
+fn float blend_weight(ChannelBlend blend, uint target) @local {
+    float total;
+    for (usz slot = 0; slot < 2; slot++) {
+        if (blend.weights[slot] != 0 && blend.targets[slot] == target) total += blend.weights[slot];
+    }
+    return total;
+}
+
 fn bool close_vec3(Vec3 first, Vec3 second) @local {
     return close(first.x, second.x) && close(first.y, second.y) && close(first.z, second.z);
 }
@@ -295,4 +303,43 @@ fn void test_half_edge_round_trip() @test {
     };
     assert(smooth_vertices == 24 && flat_vertices == 36);
     assert(close_vec3(first_position, box.positions[0]));
+}
+
+fn void test_channel_blend_follows_in_between_keys() @test {
+    float[1] single_keys = { 1 };
+    MorphChannel single = { .name = "single", .first_target = 3, .full_weights = single_keys[..] };
+    assert(blend_weight(single.blend(0), 3) == 0);
+    assert(close(blend_weight(single.blend(0.25f), 3), 0.25f));
+    assert(close(blend_weight(single.blend(1.5f), 3), 1.5f));
+    assert(close(blend_weight(single.blend(-0.5f), 3), -0.5f));
+
+    float[2] in_between_keys = { 0.5f, 1 };
+    MorphChannel in_between = { .name = "in_between", .first_target = 0, .full_weights = in_between_keys[..] };
+    ChannelBlend quarter = in_between.blend(0.25f);
+    assert(close(blend_weight(quarter, 0), 0.5f) && blend_weight(quarter, 1) == 0);
+    ChannelBlend at_key = in_between.blend(0.5f);
+    assert(close(blend_weight(at_key, 0), 1) && close(blend_weight(at_key, 1), 0));
+    ChannelBlend between = in_between.blend(0.75f);
+    assert(close(blend_weight(between, 0), 0.5f) && close(blend_weight(between, 1), 0.5f));
+    ChannelBlend beyond = in_between.blend(1.5f);
+    assert(close(blend_weight(beyond, 0), -1) && close(blend_weight(beyond, 1), 2));
+    ChannelBlend below = in_between.blend(-0.5f);
+    assert(close(blend_weight(below, 0), -1) && blend_weight(below, 1) == 0);
+    ChannelBlend rest = in_between.blend(0);
+    assert(blend_weight(rest, 0) == 0 && blend_weight(rest, 1) == 0);
+
+    float[3] negative_keys = { -0.499f, -0.249f, 1 };
+    MorphChannel negative = { .name = "negative", .first_target = 2, .full_weights = negative_keys[..] };
+    ChannelBlend positive = negative.blend(2);
+    assert(blend_weight(positive, 2) == 0 && blend_weight(positive, 3) == 0 && close(blend_weight(positive, 4), 2));
+    ChannelBlend midway = negative.blend(-0.374f);
+    assert(close(blend_weight(midway, 2), 0.5f) && close(blend_weight(midway, 3), 0.5f));
+    assert(blend_weight(midway, 4) == 0);
+    ChannelBlend past = negative.blend(-1);
+    assert(close(blend_weight(past, 2), 3.004f) && close(blend_weight(past, 3), -2.004f));
+
+    float[1] negative_only_keys = { -1 };
+    MorphChannel negative_only = { .name = "negative_only", .first_target = 0, .full_weights = negative_only_keys[..] };
+    assert(close(blend_weight(negative_only.blend(-0.5f), 0), 0.5f));
+    assert(close(blend_weight(negative_only.blend(0.5f), 0), -0.5f));
 }

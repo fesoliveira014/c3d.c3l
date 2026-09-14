@@ -176,6 +176,35 @@ fn void test_release_keeps_the_record() @test {
     assert(record.header.revision == 3);
 }
 
+fn void test_geometry_channels_are_copied_and_survive_release() @test {
+    AssetStore assets = make_store();
+    defer asset::destroy_asset_store(&assets);
+    GeometryId geometry;
+    @pool() {
+        Geometry quad = make_quad(tmem);
+        quad.targets = alloc::new_array(tmem, MorphTarget, 2);
+        foreach (&target : quad.targets) {
+            target.position_deltas = alloc::new_array(tmem, Vec3, 4);
+            target.normal_deltas = alloc::new_array(tmem, Vec3, 4);
+        }
+        float[] full_weights = alloc::new_array(tmem, float, 2);
+        full_weights[0] = 0.5f;
+        full_weights[1] = 1;
+        quad.channels = alloc::new_array(tmem, MorphChannel, 1);
+        quad.channels[0] = { .name = "smile", .first_target = 0, .full_weights = full_weights };
+        geometry = assets.add_geometry(&quad, "morph_quad")!!;
+    };
+
+    GeometryAsset* record = assets.geometry(geometry);
+    assert(record.data.channels.len == 1 && record.data.channels[0].name == "smile");
+    assert(record.data.channels[0].full_weights.len == 2 && record.data.channels[0].full_weights[0] == 0.5f);
+
+    assets.release_geometry_cpu(geometry);
+    assert(record.data.targets.len == 0 && record.data.positions.len == 0 && record.target_count == 2);
+    assert(record.data.channels.len == 1 && record.data.channels[0].name == "smile");
+    assert(record.data.channels[0].first_target == 0 && record.data.channels[0].full_weights[1] == 1);
+}
+
 fn void test_release_texture_keeps_desc() @test {
     AssetStore assets = make_store();
     defer asset::destroy_asset_store(&assets);

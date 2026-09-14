@@ -97,8 +97,19 @@ turns them into deformed draws:
   shadow layer of that frame. Joint indices pack as four bytes per vertex, or
   four 16-bit values when a skin addresses more than 256 joints.
 - A mesh with morph targets and a non-empty `Mesh.morph_weights` draws with
-  its eight largest non-zero weights by magnitude; the rest are dropped for
-  that frame while the CPU weights stay complete. Deltas apply before skinning.
+  its eight largest non-zero target weights by magnitude; the rest are dropped
+  for that frame while the CPU weights stay complete. Deltas apply before
+  skinning.
+- `Geometry.channels` groups consecutive targets under one named weight. When
+  the table is empty (glTF and procedural geometry), each weight drives the
+  target at the same index. Otherwise `Mesh.morph_weights`, default weights and
+  `MORPH_WEIGHTS` tracks hold one weight per channel, and a channel's
+  `full_weights` list the weight at which each of its targets applies fully.
+  A channel weight between two adjacent keys (with an implicit key at zero that
+  has no target) gives those two targets `1 - t` and `t`; past the first or
+  last key it extrapolates. This is the FBX in-between shape rule. Selection of
+  the eight largest targets happens after this mapping. CPU release of a
+  geometry keeps its channels, so a released morphed mesh still maps weights.
 - Skinned meshes are culled and included as shadow casters through a bound
   that covers every joint at the radius of the bind-pose bounds; a
   `Mesh.local_bounds` override replaces it.

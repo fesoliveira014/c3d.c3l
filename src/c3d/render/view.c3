@@ -169,7 +169,7 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
                 .vertex    = vertex,
                 .skin      = candidate.skin ? ensure_palette(self, candidate.node, candidate.skin)! : (gpu::GpuAddress)0,
                 .morph     = vertex.flags & shader::SHADER_FLAG_MORPH
-                  ? ensure_morph_block(self, candidate.node, candidate.morph_weights)! : (gpu::GpuAddress)0,
+                  ? ensure_morph_block(self, candidate)! : (gpu::GpuAddress)0,
                 .front_face = model_reflected != view_reflected
                   ? gpu::FrontFace.CLOCKWISE : gpu::FrontFace.COUNTER_CLOCKWISE,
             };
