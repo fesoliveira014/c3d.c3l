@@ -59,14 +59,17 @@ fn GeometryId? convert_primitive(
                 if (attribute.index == 1) geometry.uv1 = read_vec2(importer, attribute.data, vertex_count)!;
             case COLOR:
                 if (attribute.index == 0) geometry.colors = read_colors(importer, attribute.data, vertex_count)!;
-            case INVALID:
             case JOINTS:
+                if (attribute.index == 0) geometry.joints = read_joints(importer, attribute.data, vertex_count)!;
             case WEIGHTS:
+                if (attribute.index == 0) geometry.weights = read_vec4(importer, attribute.data, vertex_count)!;
+            case INVALID:
             case CUSTOM:
             case MAX_ENUM:
                 break;
         }
     }
+    if ((geometry.joints.len > 0) != (geometry.weights.len > 0)) return c3d::ASSET_FORMAT_ERROR~;
     if (primitive.indices) geometry.indices = read_indices(importer, primitive.indices)!;
     convert_topology(allocator, &geometry, primitive.type, vertex_count)!;
     read_morph_targets(importer, &geometry, mesh, primitive, vertex_count)!;
@@ -136,6 +139,19 @@ fn Vec4[]? read_colors(Importer* importer, gltf::Accessor* accessor, usz count) 
     Vec4[] colors = alloc::new_array(allocator, Vec4, (sz)count);
     foreach (index, color : rgb) colors[index] = { color.x, color.y, color.z, 1 };
     return colors;
+}
+
+fn ushort[<4>][]? read_joints(Importer* importer, gltf::Accessor* accessor, usz count) @private {
+    if (accessor.count != count || accessor.component_count() != VEC4_COMPONENTS) return c3d::ASSET_FORMAT_ERROR~;
+    Allocator allocator = importer.assets.allocator;
+    ushort[<4>][] joints = alloc::new_array(allocator, ushort[<4>], (sz)count);
+    defer catch alloc::free(allocator, joints.ptr);
+    uint[VEC4_COMPONENTS] element;
+    for (usz index = 0; index < count; index++) {
+        if (!accessor.read_uint(index, element[..])) return c3d::ASSET_FORMAT_ERROR~;
+        joints[index] = { (ushort)element[0], (ushort)element[1], (ushort)element[2], (ushort)element[3] };
+    }
+    return joints;
 }
 
 fn uint[]? read_indices(Importer* importer, gltf::Accessor* accessor) @private {

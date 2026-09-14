@@ -2,6 +2,7 @@ module c3d::test::gltf;
 
 import c3d;
 import c3d::asset;
+import c3d::anim;
 import c3d::asset::gltf;
 import c3d::camera;
 import c3d::geometry;
@@ -154,4 +155,78 @@ fn void test_duplicate_model_key_faults_before_insertion() @test {
         assert(false, "expected a fault");
     }
     assert(assets.keys.len() == keys_before);
+}
+fn void test_skin_converts_skeleton_streams_and_clip() @test {
+    AssetStore assets = asset::create_asset_store(mem, {
+        .max_geometries = 8,
+        .max_textures = 8,
+        .max_materials = 8,
+        .max_samplers = 8,
+        .max_models = 2,
+        .max_skeletons = 2,
+        .max_clips = 2,
+    });
+    defer asset::destroy_asset_store(&assets);
+    String path = fixture_path("skin.gltf");
+    ModelId model = gltf::load_model(&assets, path)!!;
+    ModelTemplate* template = &assets.model(model).data;
+    assert(template.nodes.len == 4);
+    assert(template.nodes[2].name == "joint_root" && template.nodes[3].name == "joint_tip");
+
+    Geometry* geometry = &assets.geometry(template.meshes[0].geometry).data;
+    assert(geometry.joints.len == 3 && geometry.weights.len == 3);
+    assert(geometry.joints[1] == (ushort[<4>]){ 0, 1, 0, 0 });
+    assert(geometry.weights[1] == (Vec4){ 0.25f, 0.75f, 0, 0 });
+    assert(geometry.targets.len == 1 && geometry.targets[0].position_deltas[2] == (Vec3){ 0, 0, 1 });
+    assert(template.meshes[0].default_morph_weights.len == 1 && template.meshes[0].default_morph_weights[0] == 0.5f);
+
+    assert(template.skins.len == 1 && template.skins[0].mesh_node == 1);
+    uint[2] joint_nodes = { 2, 3 };
+    assert(template.skins[0].joint_nodes == joint_nodes[..]);
+    SkeletonId skeleton_id = assets.find_skeleton(string::tformat("%s#skeleton/0", path))!!;
+    assert(skeleton_id.index == template.skins[0].skeleton.index);
+    Skeleton* skeleton = &assets.skeleton(skeleton_id).data;
+    assert(skeleton.joint_names.len == 2 && skeleton.joint_names[1] == "joint_tip");
+    int[2] parents = { -1, 0 };
+    assert(skeleton.parents == parents[..]);
+    assert(skeleton.rest_pose[1].position == (Vec3){ 0, 1, 0 });
+    assert(maths::translation(skeleton.inverse_bind[1]) == (Vec3){ 0, -1, 0 });
+
+    assert(template.clips.len == 1);
+    ClipId clip_id = assets.find_clip(string::tformat("%s#anim/0", path))!!;
+    assert(clip_id.index == template.clips[0].index);
+    AnimationClip* clip = &assets.clip(clip_id).data;
+    assert(clip.name == "wave" && clip.duration == 2 && clip.tracks.len == 2);
+    uint[2] targets = { 3, 1 };
+    assert(clip.targets == targets[..]);
+    Track rotation = clip.tracks[0];
+    assert(rotation.target == 0 && rotation.path == TargetPath.ROTATION && rotation.interpolation == Interpolation.LINEAR);
+    assert(rotation.times.len == 2 && rotation.values.len == 8 && rotation.values[5] == 0.7071068f);
+    Track weights = clip.tracks[1];
+    assert(weights.target == 1 && weights.path == TargetPath.MORPH_WEIGHTS && weights.interpolation == Interpolation.STEP);
+    float[3] expected_weights = { 0, 1, 0.5f };
+    assert(weights.times.len == 3 && weights.values == expected_weights[..]);
+}
+
+fn void test_animations_option_skips_clips() @test {
+    AssetStore assets = asset::create_asset_store(mem, {
+        .max_geometries = 8,
+        .max_textures = 8,
+        .max_materials = 8,
+        .max_samplers = 8,
+        .max_models = 2,
+        .max_skeletons = 2,
+        .max_clips = 2,
+    });
+    defer asset::destroy_asset_store(&assets);
+    String path = fixture_path("skin.gltf");
+    ModelId model = gltf::load_model(&assets, path, {
+        .animations = false, .lights = true, .cameras = true, .generate_tangents = true, .scale = 1,
+    })!!;
+    assert(assets.model(model).data.clips.len == 0 && assets.model(model).data.skins.len == 1);
+    if (catch excuse = assets.find_clip(string::tformat("%s#anim/0", path))) {
+        assert(excuse == NOT_FOUND);
+    } else {
+        assert(false, "expected a fault");
+    }
 }

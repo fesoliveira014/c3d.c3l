@@ -15,6 +15,14 @@ struct ModelInstance {
     ClipId[]    clips;
 }
 
+<*
+ Skeleton and live joint nodes of a skinned mesh node.
+*>
+struct SkinBinding {
+    SkeletonId skeleton;
+    Node*[]    joints;
+}
+
 fn void free_model_instance(Entity entity, void* component, void* user) @private {
     ModelInstance* instance = (ModelInstance*)component;
     Allocator allocator = *(Allocator*)user;
@@ -23,4 +31,9 @@ fn void free_model_instance(Entity entity, void* component, void* user) @private
     alloc::free(allocator, instance.nodes.ptr);
     alloc::free(allocator, instance.base_pose.ptr);
     alloc::free(allocator, instance.clips.ptr);
+}
+
+fn void free_skin_binding(Entity entity, void* component, void* user) @private {
+    SkinBinding* binding = (SkinBinding*)component;
+    alloc::free(*(Allocator*)user, binding.joints.ptr);
 }

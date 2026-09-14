@@ -4,7 +4,8 @@ A model is loaded once into shared assets plus a reusable template, then
 instantiated any number of times without reparsing. `c3d::asset::gltf` reads
 glTF 2.0 and GLB files through cgltf; `c3d::model::instantiate` turns a stored
 template into live scene nodes. The renderer sees ordinary meshes, cameras and
-lights afterwards and needs no model-specific path.
+lights afterwards and needs no model-specific path. Skeletons and animation
+clips are stored as data for a later animation system; nothing plays them yet.
 
 ## Load once, instantiate twice
 
@@ -46,6 +47,8 @@ path for `load_model` and `load` and the caller's key for `load_model_memory`:
 | Material `i` | `<key>#material/<i>` |
 | Default material for primitives without one | `<key>#material/default` |
 | Primitive `j` of mesh `i` | `<key>#mesh/<i>/<j>` |
+| Skin `i` | `<key>#skeleton/<i>` |
+| Animation `i` | `<key>#anim/<i>` |
 
 A key already present in the store makes the load fail with `INVALID_ARGUMENT`
 before anything is parsed. An image referenced as base color, emissive, sheen
@@ -60,6 +63,7 @@ everything with a scale of one.
 
 | Field | Effect |
 | --- | --- |
+| `animations` | Import animations as clip assets listed by the template; skins are imported either way. |
 | `lights` | Import `KHR_lights_punctual` lights as `ModelLight` entries. |
 | `cameras` | Import cameras as `ModelCamera` entries. |
 | `generate_tangents` | Compute tangents for triangle primitives that have a normal map and UV0 but no `TANGENT` stream. |
@@ -107,14 +111,41 @@ the constructor domains before the material is built; a value outside them is
 ## Geometry
 
 Each primitive becomes one `Geometry` asset. `POSITION`, `NORMAL`, `TANGENT`,
-`TEXCOORD_0`, `TEXCOORD_1` and `COLOR_0` are read; normalized integer streams
-are expanded to floats and three-component colors gain an alpha of one. Point,
-line and triangle lists pass through; strips, fans and loops are rewritten into
+`TEXCOORD_0`, `TEXCOORD_1`, `COLOR_0`, `JOINTS_0` and `WEIGHTS_0` are read;
+normalized integer streams are expanded to floats, three-component colors gain
+an alpha of one, and a primitive with joints but no weights or the reverse is
+`ASSET_FORMAT_ERROR`. Point, line and triangle lists pass through; strips, fans and loops are rewritten into
 indexed lists. Triangle primitives without normals receive smooth normals.
 Morph targets keep position and normal deltas and their names; a target with
 only one delta kind gains a zero array for the other. Sparse accessors are
 expanded. A primitive whose `POSITION` accessor is missing or empty is
 `ASSET_FORMAT_ERROR`.
+
+## Skeletons and clips
+
+Each skin becomes a `Skeleton` asset: joint names, parents as indices into the
+joint array (`-1` when the parent is not a joint), the rest pose from the
+joints' local transforms and the inverse-bind matrices from the accessor, or
+identity when the skin has none. Every primitive child of a skinned mesh node
+gets a `ModelSkin` entry naming the skeleton and the template indices of the
+joints in skeleton order. Instantiation turns each entry into a `SkinBinding`
+component on the live mesh node, with the joints mapped to live nodes. A joint
+outside the imported node set is `ASSET_FORMAT_ERROR`.
+
+Each animation becomes an `AnimationClip` asset over model-local node indices.
+`targets` lists the distinct template nodes the channels address in first
+appearance order and each `Track.target` indexes that list. Translation,
+rotation and scale channels become one track on the authored node; a weights
+channel becomes one track per primitive child of the node, with the mesh's
+morph count as the value stride. Interpolation maps to `STEP`, `LINEAR` or
+`CUBIC_SPLINE`; cubic keys keep their in-tangent, value and out-tangent
+triples. `duration` is the largest key time. The template lists its clip ids
+and every instance copies them. A channel on a node outside the imported node
+set is `ASSET_FORMAT_ERROR`; `options.animations = false` skips clips.
+
+The renderer ignores `SkinBinding` and clips until the animation system
+samples tracks, evaluates joint matrices and selects skinned and morphed
+shader variants. Meshes with joints render in their bind pose meanwhile.
 
 ## Supported and unsupported extensions
 
@@ -136,7 +167,7 @@ variants and GPU instancing import as if absent.
 | Fault | Meaning |
 | --- | --- |
 | `ASSET_IO_ERROR` | The file, an external buffer or an external image could not be read. |
-| `ASSET_FORMAT_ERROR` | The document failed to parse or validate, an image failed to decode, an accessor could not be read, or a numeric value lies outside the constructor domains. |
+| `ASSET_FORMAT_ERROR` | The document failed to parse or validate, an image failed to decode, an accessor could not be read, a joint or animation target lies outside the imported nodes, or a numeric value lies outside the constructor domains. |
 | `UNSUPPORTED` | A required extension or a compressed primitive the importer does not implement. |
 | `CAPACITY_EXCEEDED` | A store pool is full. |
 | `INVALID_ARGUMENT` | The model key is already present. |
@@ -163,6 +194,8 @@ python3 scripts/build.py --example gltf_viewer
 `gltf_viewer` loads the argument path, or the bundled
 [BoxTextured](../examples/assets/gltf/README.md) sample, instantiates it twice
 side by side under a studio environment and one directional light, and spins
-the right instance. Drag to orbit, scroll to zoom, release Escape to quit.
+the right instance. It prints the template's node, mesh, camera, light,
+skeleton, skin and clip counts on load; the bundled `RiggedSimple.glb` and
+`AnimatedMorphCube.glb` exercise the skin and morph paths. Drag to orbit, scroll to zoom, release Escape to quit.
 Imported cameras and lights are instantiated, but the example renders through
 its own orbit camera.

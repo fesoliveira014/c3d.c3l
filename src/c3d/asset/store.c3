@@ -10,6 +10,8 @@ const uint DEFAULT_MAX_MATERIALS @local    = 4096; // one heap slot each in the 
 const uint DEFAULT_MAX_SAMPLERS @local     = 64;
 const uint DEFAULT_MAX_ENVIRONMENTS @local = 16; // one CPU record and renderer mirror slot each; scene-wide assets
 const uint DEFAULT_MAX_MODELS @local       = 256; // one template record each; arrays are sized by the loader
+const uint DEFAULT_MAX_SKELETONS @local    = 256; // one record each; joint arrays are sized by the loader
+const uint DEFAULT_MAX_CLIPS @local        = 1024; // one record each; key arrays are sized by the loader
 
 <*
  Key and content revision shared by every asset record.
@@ -29,6 +31,8 @@ struct AssetStoreDesc {
     uint max_samplers;
     uint max_environments;
     uint max_models;
+    uint max_skeletons;
+    uint max_clips;
 }
 
 <*
@@ -42,6 +46,8 @@ struct AssetStore {
     SamplerPool               samplers;
     EnvironmentPool           environments;
     ModelPool                 models;
+    SkeletonPool              skeletons;
+    ClipPool                  clips;
     HashMap{String, AssetRef} keys;
 }
 
@@ -104,6 +110,8 @@ fn AssetStoreDesc default_asset_store_desc() {
         .max_samplers     = DEFAULT_MAX_SAMPLERS,
         .max_environments = DEFAULT_MAX_ENVIRONMENTS,
         .max_models       = DEFAULT_MAX_MODELS,
+        .max_skeletons    = DEFAULT_MAX_SKELETONS,
+        .max_clips        = DEFAULT_MAX_CLIPS,
     };
 }
 
@@ -117,6 +125,8 @@ fn AssetStoreDesc default_asset_store_desc() {
 fn AssetStore create_asset_store(Allocator allocator, AssetStoreDesc desc) {
     if (!desc.max_environments) desc.max_environments = DEFAULT_MAX_ENVIRONMENTS;
     if (!desc.max_models) desc.max_models = DEFAULT_MAX_MODELS;
+    if (!desc.max_skeletons) desc.max_skeletons = DEFAULT_MAX_SKELETONS;
+    if (!desc.max_clips) desc.max_clips = DEFAULT_MAX_CLIPS;
     AssetStore store = {
         .allocator    = allocator,
         .geometries   = pool::create_pool{GeometryAsset, GeometryId}(allocator, desc.max_geometries),
@@ -125,6 +135,8 @@ fn AssetStore create_asset_store(Allocator allocator, AssetStoreDesc desc) {
         .samplers     = pool::create_pool{SamplerAsset, SamplerId}(allocator, desc.max_samplers),
         .environments = pool::create_pool{EnvironmentAsset, EnvironmentId}(allocator, desc.max_environments),
         .models       = pool::create_pool{ModelAsset, ModelId}(allocator, desc.max_models),
+        .skeletons    = pool::create_pool{SkeletonAsset, SkeletonId}(allocator, desc.max_skeletons),
+        .clips        = pool::create_pool{ClipAsset, ClipId}(allocator, desc.max_clips),
     };
     store.keys.init(allocator);
     add_builtins(&store);
@@ -163,6 +175,16 @@ fn void destroy_asset_store(AssetStore* store) {
         free_string(store.allocator, record.header.key);
         free_model_template(store.allocator, &record.data);
     }
+    foreach (&record : store.skeletons.items) {
+        if (!record.header.revision) continue;
+        free_string(store.allocator, record.header.key);
+        free_skeleton(store.allocator, &record.data);
+    }
+    foreach (&record : store.clips.items) {
+        if (!record.header.revision) continue;
+        free_string(store.allocator, record.header.key);
+        free_clip(store.allocator, &record.data);
+    }
     store.keys.free();
     pool::destroy_pool{GeometryAsset, GeometryId}(&store.geometries);
     pool::destroy_pool{TextureAsset, TextureId}(&store.textures);
@@ -170,6 +192,8 @@ fn void destroy_asset_store(AssetStore* store) {
     pool::destroy_pool{SamplerAsset, SamplerId}(&store.samplers);
     pool::destroy_pool{EnvironmentAsset, EnvironmentId}(&store.environments);
     pool::destroy_pool{ModelAsset, ModelId}(&store.models);
+    pool::destroy_pool{SkeletonAsset, SkeletonId}(&store.skeletons);
+    pool::destroy_pool{ClipAsset, ClipId}(&store.clips);
     *store = {};
 }
 
