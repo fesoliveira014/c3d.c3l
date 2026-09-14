@@ -328,6 +328,14 @@ Fresnel; direct lights add a mirrored-light transmission lobe. Transmissive
 surfaces never see each other or ordinary blends: glass behind glass shows the
 opaque scene through both.
 
+## Importing materials
+
+glTF materials arrive through `c3d::asset::gltf`, which selects Basic for
+unlit, Standard for metallic-roughness and Physical when any layer extension
+is present, and validates every factor against the constructor domains before
+building the material. The mapping table lives in
+[Models and glTF import](models.md).
+
 ## Material storage
 
 Renderer material slots are 640 bytes (`render::MATERIAL_STRIDE`). The generated

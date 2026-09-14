@@ -102,6 +102,24 @@ jobs:
       - name: Fetch ImGui native archives
         run: bash lib/c3imgui.c3l/fetch_linked_libs.sh v0.1.2
 
+      # Every dependency is imported by exactly one c3d module; a hit here is a layering violation.
+      - name: Check module boundaries
+        run: |
+          violations=$(
+            grep -rn 'import gpu' src/c3d --include='*.c3' | grep -vE 'src/c3d/(render|shader|post|rt|gui)/' \
+              | grep -vE 'src/c3d/platform/.*import gpu::surface'
+            grep -rn 'import sdl' src/c3d --include='*.c3' | grep -v 'src/c3d/platform/'
+            grep -rn 'import imgui' src/c3d --include='*.c3' | grep -v 'src/c3d/gui/'
+            grep -rn 'import cg' src/c3d --include='*.c3' | grep -v 'src/c3d/geometry/'
+            grep -rn 'import b3' src/c3d --include='*.c3' | grep -v 'src/c3d/physics/'
+            grep -rn 'import gltf' src/c3d --include='*.c3' | grep -v 'src/c3d/asset/gltf/'
+            true
+          )
+          if [ -n "$violations" ]; then
+            echo "$violations"
+            exit 1
+          fi
+
       - name: Build and test
         run: python3 scripts/build.py --test
 

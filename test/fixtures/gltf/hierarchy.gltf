@@ -1,0 +1,209 @@
+{
+ "asset": {
+  "version": "2.0"
+ },
+ "extensionsUsed": [
+  "KHR_materials_unlit",
+  "KHR_materials_clearcoat",
+  "KHR_lights_punctual"
+ ],
+ "extensions": {
+  "KHR_lights_punctual": {
+   "lights": [
+    {
+     "type": "point",
+     "color": [
+      1.0,
+      0.5,
+      0.25
+     ],
+     "intensity": 5.0,
+     "range": 10.0
+    }
+   ]
+  }
+ },
+ "scene": 0,
+ "scenes": [
+  {
+   "nodes": [
+    1,
+    4
+   ]
+  }
+ ],
+ "nodes": [
+  {
+   "name": "child_b",
+   "matrix": [
+    2,
+    0,
+    0,
+    0,
+    0,
+    2,
+    0,
+    0,
+    0,
+    0,
+    2,
+    0,
+    0,
+    1,
+    0,
+    1
+   ],
+   "children": [
+    2
+   ]
+  },
+  {
+   "name": "root_a",
+   "translation": [
+    1,
+    0,
+    0
+   ],
+   "children": [
+    0,
+    3
+   ]
+  },
+  {
+   "name": "cam",
+   "camera": 0
+  },
+  {
+   "name": "mesh_c",
+   "mesh": 0,
+   "children": [
+    5
+   ]
+  },
+  {
+   "name": "lamp",
+   "extensions": {
+    "KHR_lights_punctual": {
+     "light": 0
+    }
+   }
+  },
+  {
+   "name": "tag",
+   "translation": [
+    0,
+    0,
+    5
+   ]
+  }
+ ],
+ "meshes": [
+  {
+   "primitives": [
+    {
+     "attributes": {
+      "POSITION": 0
+     },
+     "material": 0
+    },
+    {
+     "attributes": {
+      "POSITION": 1
+     },
+     "material": 1
+    }
+   ]
+  }
+ ],
+ "materials": [
+  {
+   "name": "unlit",
+   "pbrMetallicRoughness": {
+    "baseColorFactor": [
+     1.0,
+     0.0,
+     0.0,
+     1.0
+    ]
+   },
+   "extensions": {
+    "KHR_materials_unlit": {}
+   }
+  },
+  {
+   "name": "coated",
+   "pbrMetallicRoughness": {
+    "metallicFactor": 0.1
+   },
+   "extensions": {
+    "KHR_materials_clearcoat": {
+     "clearcoatFactor": 0.75,
+     "clearcoatRoughnessFactor": 0.2
+    }
+   }
+  }
+ ],
+ "cameras": [
+  {
+   "type": "perspective",
+   "perspective": {
+    "yfov": 1.0,
+    "znear": 0.1,
+    "zfar": 100.0,
+    "aspectRatio": 1.5
+   }
+  }
+ ],
+ "buffers": [
+  {
+   "byteLength": 72,
+   "uri": "data:application/octet-stream;base64,AAAAAAAAAAAAAAAAAACAPwAAAAAAAAAAAAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AACAPwAAAAAAAIA/AAAAAAAAgD8AAIA/"
+  }
+ ],
+ "bufferViews": [
+  {
+   "buffer": 0,
+   "byteOffset": 0,
+   "byteLength": 36
+  },
+  {
+   "buffer": 0,
+   "byteOffset": 36,
+   "byteLength": 36
+  }
+ ],
+ "accessors": [
+  {
+   "bufferView": 0,
+   "componentType": 5126,
+   "count": 3,
+   "type": "VEC3",
+   "min": [
+    0,
+    0,
+    0
+   ],
+   "max": [
+    1,
+    1,
+    0
+   ]
+  },
+  {
+   "bufferView": 1,
+   "componentType": 5126,
+   "count": 3,
+   "type": "VEC3",
+   "min": [
+    0,
+    0,
+    1
+   ],
+   "max": [
+    1,
+    1,
+    1
+   ]
+  }
+ ]
+}

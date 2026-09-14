@@ -9,6 +9,7 @@ const uint DEFAULT_MAX_TEXTURES @local     = 4096;
 const uint DEFAULT_MAX_MATERIALS @local    = 4096; // one heap slot each in the renderer
 const uint DEFAULT_MAX_SAMPLERS @local     = 64;
 const uint DEFAULT_MAX_ENVIRONMENTS @local = 16; // one CPU record and renderer mirror slot each; scene-wide assets
+const uint DEFAULT_MAX_MODELS @local       = 256; // one template record each; arrays are sized by the loader
 
 <*
  Key and content revision shared by every asset record.
@@ -27,6 +28,7 @@ struct AssetStoreDesc {
     uint max_materials;
     uint max_samplers;
     uint max_environments;
+    uint max_models;
 }
 
 <*
@@ -39,6 +41,7 @@ struct AssetStore {
     MaterialPool              materials;
     SamplerPool               samplers;
     EnvironmentPool           environments;
+    ModelPool                 models;
     HashMap{String, AssetRef} keys;
 }
 
@@ -100,6 +103,7 @@ fn AssetStoreDesc default_asset_store_desc() {
         .max_materials    = DEFAULT_MAX_MATERIALS,
         .max_samplers     = DEFAULT_MAX_SAMPLERS,
         .max_environments = DEFAULT_MAX_ENVIRONMENTS,
+        .max_models       = DEFAULT_MAX_MODELS,
     };
 }
 
@@ -112,6 +116,7 @@ fn AssetStoreDesc default_asset_store_desc() {
 *>
 fn AssetStore create_asset_store(Allocator allocator, AssetStoreDesc desc) {
     if (!desc.max_environments) desc.max_environments = DEFAULT_MAX_ENVIRONMENTS;
+    if (!desc.max_models) desc.max_models = DEFAULT_MAX_MODELS;
     AssetStore store = {
         .allocator    = allocator,
         .geometries   = pool::create_pool{GeometryAsset, GeometryId}(allocator, desc.max_geometries),
@@ -119,6 +124,7 @@ fn AssetStore create_asset_store(Allocator allocator, AssetStoreDesc desc) {
         .materials    = pool::create_pool{MaterialAsset, MaterialId}(allocator, desc.max_materials),
         .samplers     = pool::create_pool{SamplerAsset, SamplerId}(allocator, desc.max_samplers),
         .environments = pool::create_pool{EnvironmentAsset, EnvironmentId}(allocator, desc.max_environments),
+        .models       = pool::create_pool{ModelAsset, ModelId}(allocator, desc.max_models),
     };
     store.keys.init(allocator);
     add_builtins(&store);
@@ -152,12 +158,18 @@ fn void destroy_asset_store(AssetStore* store) {
         if (!record.header.revision) continue;
         free_string(store.allocator, record.header.key);
     }
+    foreach (&record : store.models.items) {
+        if (!record.header.revision) continue;
+        free_string(store.allocator, record.header.key);
+        free_model_template(store.allocator, &record.data);
+    }
     store.keys.free();
     pool::destroy_pool{GeometryAsset, GeometryId}(&store.geometries);
     pool::destroy_pool{TextureAsset, TextureId}(&store.textures);
     pool::destroy_pool{MaterialAsset, MaterialId}(&store.materials);
     pool::destroy_pool{SamplerAsset, SamplerId}(&store.samplers);
     pool::destroy_pool{EnvironmentAsset, EnvironmentId}(&store.environments);
+    pool::destroy_pool{ModelAsset, ModelId}(&store.models);
     *store = {};
 }
 
