@@ -1,8 +1,8 @@
-# Models and glTF import
+# Models, glTF and FBX import
 
 A model is loaded once into shared assets plus a reusable template, then
 instantiated any number of times without reparsing. `c3d::asset::gltf` reads
-glTF 2.0 and GLB files through cgltf; `c3d::model::instantiate` turns a stored
+glTF 2.0 and GLB files through cgltf and `c3d::asset::fbx` reads FBX files through ufbx; `c3d::model::instantiate` turns a stored
 template into live scene nodes. The renderer sees ordinary meshes, cameras and
 lights afterwards and needs no model-specific path. Skeletons and animation
 clips are shared assets; `c3d::anim` plays clips onto instances
@@ -184,6 +184,85 @@ and leaves no instance behind.
 Templates hold only ids, names and transforms. Releasing a geometry's CPU
 arrays with `release_geometry_cpu` after the renderer uploaded it does not
 affect instantiation, which copies nothing from the geometry.
+
+## FBX import
+
+```c3
+ModelId hero = fbx::load_model(&assets, "characters/hero.fbx")!;
+Node* first = model::instantiate(&assets, &scene, hero)!;
+```
+
+`fbx::load_model(assets, path, options)` converts an FBX file into the same
+store assets and `ModelTemplate` as glTF, and takes the same `LoadOptions`.
+ufbx loads the file with right-handed Y-up axes, meters and
+`MODIFY_GEOMETRY` space conversion: vertices, node translations and baked
+translation keys arrive in meters, authored node scales are kept, and a
+centimeter Mixamo file ends at scale one. Cameras and lights are converted to
+look along -Z.
+
+| Asset | Key |
+| --- | --- |
+| Model template | `<path>` |
+| Material part `j` of mesh `m` | `<path>#mesh/<m>/<j>` |
+| Material `i` | `<path>#material/<i>` |
+| Default material for parts without one | `<path>#material/default` |
+| Texture `t` decoded as sRGB color or linear data | `<path>#image/<t>/srgb`, `<path>#image/<t>/linear` |
+| Packed roughness `r` and metalness `m` | `<path>#image/<r>+<m>/metallic_roughness` |
+| Base color `b` with opacity `o` | `<path>#image/<b>+<o>/srgb` |
+| Sampler for mixed wrap modes | `<path>#sampler/repeat_clamp`, `<path>#sampler/clamp_repeat` |
+| Skin deformer `s` | `<path>#skeleton/<s>` |
+| Animation stack `k` | `<path>#anim/<k>` |
+
+Indices are ufbx typed ids; an absent source in a packed key is `-`.
+
+**Nodes.** Template nodes are the file's nodes depth first below the root. A
+node with a mesh gains one child per non-empty material part, named
+`<node name>/part/<j>`, before its authored children; the child's local
+transform is the node's geometry transform, which FBX applies to the mesh and
+not to the node's children.
+
+**Geometry.** Faces are triangulated and corners with identical attributes
+merged. Streams: positions, normals (generated when absent), UV sets 0 and 1,
+the first color set, authored tangents when both tangents and bitangents
+exist, joints and weights. UV v is flipped, because FBX places the UV origin
+at the bottom left and c3d decodes images top row first; the authored tangent
+handedness follows the flip. Tangents are otherwise generated as for glTF.
+
+**Materials.** Every material becomes `STANDARD` from ufbx's PBR maps, which
+ufbx also derives for Lambert and Phong materials. A property connected to a
+texture takes its value from the texture; the base and emission factors still
+multiply. Opacity below one or an opacity texture selects blending. Base
+color, emissive, normal and occlusion textures map directly. Separate
+roughness and metalness textures are packed into one metallic-roughness map
+(roughness in green, metalness in blue), and an opacity texture is multiplied
+into a copy of the base color's alpha; sources of different sizes are resampled
+to the larger. Texture bytes come from embedded content, then the relative
+path next to the file, then the absolute path.
+
+**Skins.** Each skin deformer becomes a skeleton in cluster order, with the
+bone's local transform as rest pose and ufbx's geometry-to-bone matrix as
+inverse bind. Vertices keep their four largest weights, renormalized. When a
+skinned mesh has vertices without weights, the skeleton gains one last joint
+bound to the mesh part itself with an identity inverse bind, so those vertices
+follow the mesh rigidly.
+
+**Blend shapes.** Every blend channel becomes a `MorphChannel` and each of its
+keyframe shapes a `MorphTarget`, so in-between shapes deform as authored
+([Animation](animation.md)). Default morph weights are the channels' weights.
+
+**Animation.** Each animation stack is baked at the file frame rate from time
+zero into one clip: linear translation, rotation and scale tracks per animated
+node, and one morph-weight track per part child of a mesh with animated
+channels, holding every channel's weight per key.
+
+Unsupported: texture UV transforms (`UNSUPPORTED`), UV set selection by name
+(textures use UV set 0), a mesh with more than one skin deformer
+(`UNSUPPORTED`), dual-quaternion skinning (imported as linear), area and
+volume lights (skipped), NURBS, constraints and geometry caches. A texture
+that has neither embedded content nor a readable file fails with
+`ASSET_IO_ERROR`; any other ufbx load failure, a non-finite material value or
+invalid in-between weights fail with `ASSET_FORMAT_ERROR`. Rollback on a fault
+matches glTF.
 
 ## Example
 
