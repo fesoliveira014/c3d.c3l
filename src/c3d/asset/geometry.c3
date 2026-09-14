@@ -75,11 +75,11 @@ fn void AssetStore.mark_geometry_dirty(&self, GeometryId geometry) {
 }
 
 <*
- Free the arrays; keep counts, bounds, id, and revision.
+ Free the arrays; keep counts, bounds, channels, id, and revision.
  @require self.geometries.is_live(geometry)
 *>
 fn void AssetStore.release_geometry_cpu(&self, GeometryId geometry) {
-    free_geometry(self.allocator, &self.geometries.get(geometry).data);
+    free_geometry_streams(self.allocator, &self.geometries.get(geometry).data);
 }
 
 <*
@@ -104,6 +104,14 @@ fn Geometry copy_geometry(Allocator allocator, Geometry* source) @local {
             .name            = copy_string(allocator, target.name),
         };
     }
+    MorphChannel[] channels = alloc::new_array(allocator, MorphChannel, source.channels.len);
+    foreach (index, &channel : source.channels) {
+        channels[index] = {
+            .name         = copy_string(allocator, channel.name),
+            .first_target = channel.first_target,
+            .full_weights = copy_slice(allocator, channel.full_weights),
+        };
+    }
     return {
         .topology      = source.topology,
         .positions     = copy_slice(allocator, source.positions),
@@ -116,6 +124,7 @@ fn Geometry copy_geometry(Allocator allocator, Geometry* source) @local {
         .weights       = copy_slice(allocator, source.weights),
         .indices       = copy_slice(allocator, source.indices),
         .targets       = targets,
+        .channels      = channels,
         .custom_data   = copy_slice(allocator, source.custom_data),
         .custom_stride = source.custom_stride,
         .bounds        = source.bounds,
@@ -123,11 +132,21 @@ fn Geometry copy_geometry(Allocator allocator, Geometry* source) @local {
 }
 
 <*
- Free every array and target name allocated with the allocator.
+ Free every array, target name and channel allocated with the allocator.
  Keeps topology, custom stride and bounds.
  @param [&inout] geometry : "Arrays left empty."
 *>
 fn void free_geometry(Allocator allocator, Geometry* geometry) {
+    free_geometry_streams(allocator, geometry);
+    foreach (&channel : geometry.channels) {
+        alloc::free(allocator, channel.name.ptr);
+        alloc::free(allocator, channel.full_weights.ptr);
+    }
+    alloc::free(allocator, geometry.channels.ptr);
+    geometry.channels = {};
+}
+
+fn void free_geometry_streams(Allocator allocator, Geometry* geometry) @local {
     foreach (&target : geometry.targets) {
         alloc::free(allocator, target.position_deltas.ptr);
         alloc::free(allocator, target.normal_deltas.ptr);
@@ -146,6 +165,7 @@ fn void free_geometry(Allocator allocator, Geometry* geometry) {
     alloc::free(allocator, geometry.custom_data.ptr);
     *geometry = {
         .topology      = geometry.topology,
+        .channels      = geometry.channels,
         .custom_stride = geometry.custom_stride,
         .bounds        = geometry.bounds,
     };

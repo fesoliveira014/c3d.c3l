@@ -3,6 +3,8 @@ module c3d::geometry;
 import c3d::maths;
 import std::math;
 
+const sz ZERO_KEY @local = -1; // the implicit channel key at weight zero, which has no target
+
 <*
  Primitive assembly of the index or vertex stream.
 *>
@@ -22,23 +24,41 @@ struct MorphTarget {
 }
 
 <*
+ Named weight driving consecutive morph targets.
+*>
+struct MorphChannel {
+    String  name;
+    uint    first_target;
+    float[] full_weights;
+}
+
+<*
+ Up to two targets a channel weight activates; unused slots weigh zero.
+*>
+struct ChannelBlend {
+    uint[2]  targets;
+    float[2] weights;
+}
+
+<*
  Attribute arrays and indices of one mesh; carries no material.
 *>
 struct Geometry {
-    Topology      topology;
-    Vec3[]        positions;
-    Vec3[]        normals;
-    Vec4[]        tangents;
-    Vec2[]        uv0;
-    Vec2[]        uv1;
-    Vec4[]        colors;
-    ushort[<4>][] joints;
-    Vec4[]        weights;
-    uint[]        indices;
-    MorphTarget[] targets;
-    char[]        custom_data;
-    uint          custom_stride;
-    Aabb          bounds;
+    Topology       topology;
+    Vec3[]         positions;
+    Vec3[]         normals;
+    Vec4[]         tangents;
+    Vec2[]         uv0;
+    Vec2[]         uv1;
+    Vec4[]         colors;
+    ushort[<4>][]  joints;
+    Vec4[]         weights;
+    uint[]         indices;
+    MorphTarget[]  targets;
+    MorphChannel[] channels;
+    char[]         custom_data;
+    uint           custom_stride;
+    Aabb           bounds;
 }
 
 <*
@@ -194,6 +214,52 @@ fn void Geometry.flip_winding(&self) {
         }
         swap_vertices(self, slot + 1, slot + 2);
     }
+}
+
+<*
+ Targets and weights the channel weight selects.
+ @pure
+ @require self.full_weights.len > 0
+*>
+fn ChannelBlend MorphChannel.blend(&self, float weight) {
+    float[] keys = self.full_weights;
+    sz last_negative = ZERO_KEY;
+    foreach (sz index, key : keys) {
+        if (key < 0) last_negative = index;
+    }
+
+    sz previous = ZERO_KEY;
+    sz next = ZERO_KEY;
+    if (weight > 0) {
+        if (last_negative != ZERO_KEY) previous = last_negative;
+        for (sz index = last_negative + 1; index < keys.len; index++) {
+            previous = next;
+            next = index;
+            if (keys[index] > weight) break;
+        }
+    } else {
+        if (last_negative + 1 < keys.len) previous = last_negative + 1;
+        for (sz index = last_negative; index >= 0; index--) {
+            previous = next;
+            next = index;
+            if (keys[index] < weight) break;
+        }
+    }
+
+    float previous_weight = previous == ZERO_KEY ? 0 : keys[previous];
+    float next_weight = next == ZERO_KEY ? 0 : keys[next];
+    ChannelBlend blend;
+    if (next_weight == previous_weight) return blend;
+    float along = (weight - previous_weight) / (next_weight - previous_weight);
+    if (previous != ZERO_KEY) {
+        blend.targets[0] = self.first_target + (uint)previous;
+        blend.weights[0] = 1 - along;
+    }
+    if (next != ZERO_KEY) {
+        blend.targets[1] = self.first_target + (uint)next;
+        blend.weights[1] = along;
+    }
+    return blend;
 }
 
 <*

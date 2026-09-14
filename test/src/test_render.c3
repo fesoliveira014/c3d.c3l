@@ -435,7 +435,7 @@ fn void test_mesh_vertex_variant_follows_geometry_flags() @test {
 
 fn void test_morph_selection_keeps_largest_eight_by_magnitude() @test {
     float[12] weights = { 0.1f, 0, 0.5f, -0.9f, 0.05f, 0.3f, 0.2f, 0, 0.7f, 0.15f, 0.25f, 0.6f };
-    shader::MorphWeightsGpu block = render::select_morph_targets(weights[..]);
+    shader::MorphWeightsGpu block = render::select_morph_targets((MorphChannel[]){}, weights[..]);
     assert(block.count == 8);
     float kept_minimum = 1;
     foreach (slot, index : block.indices[:block.count]) {
@@ -450,5 +450,31 @@ fn void test_morph_selection_keeps_largest_eight_by_magnitude() @test {
         if (!kept) assert(math::abs(weight) <= kept_minimum);
     }
     float[3] none = { 0, 0, 0 };
-    assert(render::select_morph_targets(none[..]).count == 0);
+    assert(render::select_morph_targets((MorphChannel[]){}, none[..]).count == 0);
+}
+
+fn float selected_weight(shader::MorphWeightsGpu block, uint target) @local {
+    foreach (slot, index : block.indices[:block.count]) {
+        if (index == target) return block.weights[slot];
+    }
+    return 0;
+}
+
+fn void test_morph_selection_maps_channels_to_targets() @test {
+    float[1] blink_keys = { 1 };
+    float[2] smile_keys = { 0.5f, 1 };
+    MorphChannel[2] channels = {
+        { .name = "blink", .first_target = 0, .full_weights = blink_keys[..] },
+        { .name = "smile", .first_target = 1, .full_weights = smile_keys[..] },
+    };
+    float[2] weights = { 0.3f, 0.75f };
+    shader::MorphWeightsGpu block = render::select_morph_targets(channels[..], weights[..]);
+    assert(block.count == 3);
+    assert(math::abs(selected_weight(block, 0) - 0.3f) < 0.0005f);
+    assert(math::abs(selected_weight(block, 1) - 0.5f) < 0.0005f);
+    assert(math::abs(selected_weight(block, 2) - 0.5f) < 0.0005f);
+
+    float[2] at_key = { 0, 0.5f };
+    shader::MorphWeightsGpu keyed = render::select_morph_targets(channels[..], at_key[..]);
+    assert(keyed.count == 1 && keyed.indices[0] == 1 && math::abs(keyed.weights[0] - 1) < 0.0005f);
 }
