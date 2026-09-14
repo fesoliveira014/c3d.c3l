@@ -13,6 +13,7 @@ const uint SHADOW_FACE_NEGATIVE_Y = 3u;
 const uint SHADOW_FACE_POSITIVE_Z = 4u;
 const uint SHADOW_FACE_NEGATIVE_Z = 5u;
 const uint SHADOW_POINT_FACE_COUNT = 6u;
+const uint MAX_ACTIVE_MORPH_TARGETS = 8u;
 const uint DRAW_RECEIVE_SHADOW = 1u;
 const uint DRAW_ALPHA_MASK = 2u;
 const uint MATERIAL_MAP_BASE_COLOR = 1u;
@@ -122,6 +123,15 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer DrawRoot {
     uint sheen_lut;
     uint sheen_sampler;
     uint _pad3;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer MorphWeightsGpu {
+    uint indices[8];
+    float weights[8];
+    uint count;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
 };
 
 struct TextureMapGpu {

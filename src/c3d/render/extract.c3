@@ -17,6 +17,7 @@ const uint SORT_KEY_SLOT_BITS = 16; // slots past 65535 alias in the key; orderi
 const uint SORT_KEY_PIPELINE_SHIFT @private = 48;
 const uint SORT_KEY_MATERIAL_SHIFT @private = 32;
 const uint SORT_KEY_GEOMETRY_SHIFT @private = 16;
+const uint SHADER_FLAG_SHIFT @private = 8; // ShaderVariant.flags start at bit 8; the shader ordinal fills the byte below
 
 <*
  Per-view list a material's draws belong to.
@@ -31,13 +32,15 @@ enum DrawList {
  Mesh that passed inclusion for one view, with its bounds in world space.
 *>
 struct MeshCandidate {
-    Node*      node;
-    GeometryId geometry;
-    MaterialId material;
-    Aabb       world_bounds;
-    float      ndc_depth;
-    float      view_depth;
-    bool       receive_shadow;
+    Node*        node;
+    GeometryId   geometry;
+    MaterialId   material;
+    SkinBinding* skin;
+    float[]      morph_weights;
+    Aabb         world_bounds;
+    float        ndc_depth;
+    float        view_depth;
+    bool         receive_shadow;
 }
 
 <*
@@ -65,7 +68,7 @@ fn MeshCandidate[] extract_candidates(Allocator allocator, Scene* scene, AssetSt
     scene.@each(Mesh; Entity entity, Mesh* mesh) {
         Node* node = scene.node(entity);
         if (node.visible_effective && (layers & node.layers) != 0) {
-            include_mesh(candidates, node, mesh, assets, camera, counts);
+            include_mesh(candidates, scene, node, mesh, assets, camera, counts);
         }
     };
     return candidates[:counts.visible];
@@ -85,39 +88,84 @@ fn DrawList draw_list(Material* material) {
 
 <*
  Ordering key: pipeline, material, geometry, then front to back.
+ @param vertex : "Its flags distinguish deformed pipelines."
  @param ndc_depth : "Reverse-Z depth of the bounds center, clamped to [0, 1]."
 *>
-fn ulong draw_sort_key(ShaderVariant fragment, MaterialId material, GeometryId geometry, float ndc_depth) {
+fn ulong draw_sort_key(
+    ShaderVariant vertex,
+    ShaderVariant fragment,
+    MaterialId material,
+    GeometryId geometry,
+    float ndc_depth,
+) {
     ulong slot_mask = (1UL << SORT_KEY_SLOT_BITS) - 1;
     ulong depth = (ulong)(ushort)((1.0f - ndc_depth) * (float)ushort::max);
-    return ((ulong)(uint)fragment & slot_mask) << SORT_KEY_PIPELINE_SHIFT
+    ulong pipeline = (ulong)fragment.shader.ordinal | (ulong)vertex.flags << SHADER_FLAG_SHIFT;
+    return (pipeline & slot_mask) << SORT_KEY_PIPELINE_SHIFT
         | ((ulong)material.index & slot_mask) << SORT_KEY_MATERIAL_SHIFT
         | ((ulong)geometry.index & slot_mask) << SORT_KEY_GEOMETRY_SHIFT
         | depth;
 }
 
-fn void include_mesh(MeshCandidate[] candidates, Node* node, Mesh* mesh, AssetStore* assets,
+fn void include_mesh(MeshCandidate[] candidates, Scene* scene, Node* node, Mesh* mesh, AssetStore* assets,
   CameraMatrices* camera, ExtractCounts* counts) @local {
-    if (!assets.geometries.is_live(mesh.geometry) || !assets.materials.is_live(mesh.material)) {
+    SkinBinding* skin = scene.get(node, SkinBinding);
+    if (!mesh_is_live(assets, mesh, skin)) {
         counts.dangling++;
         return;
     }
-    Aabb local = mesh.has_bounds_override ? mesh.local_bounds : assets.geometry(mesh.geometry).data.bounds;
-    Aabb world = maths::aabb_transform(local, node.world);
+    Aabb world = candidate_bounds(assets, node, mesh, skin);
     if (!maths::frustum_intersects_aabb(&camera.frustum, world)) {
         counts.culled++;
         return;
     }
     candidates[counts.visible] = {
-        .node         = node,
-        .geometry     = mesh.geometry,
-        .material     = mesh.material,
-        .world_bounds = world,
-        .ndc_depth    = center_depth(camera, world),
-        .view_depth   = center_view_depth(camera, world),
+        .node           = node,
+        .geometry       = mesh.geometry,
+        .material       = mesh.material,
+        .skin           = skin,
+        .morph_weights  = morph_weights_of(assets, mesh),
+        .world_bounds   = world,
+        .ndc_depth      = center_depth(camera, world),
+        .view_depth     = center_view_depth(camera, world),
         .receive_shadow = mesh.receive_shadow,
     };
     counts.visible++;
+}
+
+fn bool mesh_is_live(AssetStore* assets, Mesh* mesh, SkinBinding* skin) @local {
+    return assets.geometries.is_live(mesh.geometry) && assets.materials.is_live(mesh.material)
+        && (!skin || assets.skeletons.is_live(skin.skeleton));
+}
+
+fn Aabb candidate_bounds(AssetStore* assets, Node* node, Mesh* mesh, SkinBinding* skin) @local {
+    if (mesh.has_bounds_override) return maths::aabb_transform(mesh.local_bounds, node.world);
+    Aabb local = assets.geometry(mesh.geometry).data.bounds;
+    if (skin) return skinned_world_bounds(local, node.world, skin);
+    return maths::aabb_transform(local, node.world);
+}
+
+fn float[] morph_weights_of(AssetStore* assets, Mesh* mesh) @local {
+    return assets.geometry(mesh.geometry).data.targets.len ? mesh.morph_weights : (float[]){};
+}
+
+<*
+ World bound covering every joint of the binding at the mesh's bind-bound radius.
+ @param local : "Bind-pose bounds of the geometry."
+ @param world : "World matrix of the mesh node."
+ @param [&in] binding : "Joints with current world matrices."
+*>
+fn Aabb skinned_world_bounds(Aabb local, Mat4 world, SkinBinding* binding) {
+    Aabb bind = maths::aabb_transform(local, world);
+    float radius = ((bind.max - bind.min) * 0.5f).length();
+    Vec3 extent = { radius, radius, radius };
+    Aabb bounds;
+    foreach (index, joint : binding.joints) {
+        Vec3 center = joint.world_position();
+        Aabb around = { .min = center - extent, .max = center + extent };
+        bounds = index == 0 ? around : maths::aabb_merge(bounds, around);
+    }
+    return bounds;
 }
 
 fn float center_view_depth(CameraMatrices* camera, Aabb world) @local {
@@ -167,18 +215,19 @@ fn MeshCandidate[] extract_shadow_candidates(
     scene.@each(Mesh; Entity entity, Mesh* mesh) {
         Node* node = scene.node(entity);
         if (node.visible_effective && mesh.cast_shadow) {
-            if (!assets.geometries.is_live(mesh.geometry) || !assets.materials.is_live(mesh.material)) {
+            SkinBinding* skin = scene.get(node, SkinBinding);
+            if (!mesh_is_live(assets, mesh, skin)) {
                 counts.dangling++;
             } else {
                 Material* material = &assets.material(mesh.material).data;
                 if (material.common.alpha_mode != AlphaMode.BLEND) {
-                    Aabb bounds = mesh.has_bounds_override
-                      ? mesh.local_bounds : assets.geometry(mesh.geometry).data.bounds;
                     candidates[counts.visible++] = {
-                        .node = node,
-                        .geometry = mesh.geometry,
-                        .material = mesh.material,
-                        .world_bounds = maths::aabb_transform(bounds, node.world),
+                        .node           = node,
+                        .geometry       = mesh.geometry,
+                        .material       = mesh.material,
+                        .skin           = skin,
+                        .morph_weights  = morph_weights_of(assets, mesh),
+                        .world_bounds   = candidate_bounds(assets, node, mesh, skin),
                         .receive_shadow = mesh.receive_shadow,
                     };
                 }

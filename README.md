@@ -208,7 +208,8 @@ mapping and the supported extension subset.
 `animation` instantiates a model twice and plays a different clip on each
 instance through `c3d::anim`, with cross-fades, a quarter-weight action and
 pausing on keys. The bundled [Fox](examples/assets/gltf/README.md) is the
-default; `BoxAnimated.glb` shows node animation:
+default; `BoxAnimated.glb` shows node animation and `AnimatedMorphCube.glb`
+morph targets:
 
 ```bash
 python3 scripts/build.py --example animation

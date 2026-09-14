@@ -30,6 +30,9 @@ struct DrawItem @private {
     MeshCandidate*  candidate;
     GpuGeometry*    geometry;
     MaterialRes*    material;
+    ShaderVariant   vertex;
+    gpu::GpuAddress skin;
+    gpu::GpuAddress morph;
     gpu::GpuAddress root;
     gpu::FrontFace  front_face;
 }
@@ -150,8 +153,11 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
                 case TRANSPARENT: index = transparent_start + transparent_filled++;
             }
             bool model_reflected = candidate.node.world.determinant() < 0;
+            bool morphed = candidate.morph_weights.len > 0;
+            ShaderVariant vertex = mesh_vertex_variant(geometry.layout.flags, morphed);
             items[index] = {
                 .sort_key  = draw_sort_key(
+                    vertex:    vertex,
                     fragment:  material_fragment(material_description.kind),
                     material:  candidate.material,
                     geometry:  candidate.geometry,
@@ -160,6 +166,10 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
                 .candidate = candidate,
                 .geometry  = geometry,
                 .material  = material,
+                .vertex    = vertex,
+                .skin      = candidate.skin ? ensure_palette(self, candidate.node, candidate.skin)! : (gpu::GpuAddress)0,
+                .morph     = vertex.flags & shader::SHADER_FLAG_MORPH
+                  ? ensure_morph_block(self, candidate.node, candidate.morph_weights)! : (gpu::GpuAddress)0,
                 .front_face = model_reflected != view_reflected
                   ? gpu::FrontFace.CLOCKWISE : gpu::FrontFace.COUNTER_CLOCKWISE,
             };
@@ -256,6 +266,8 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
                 flags:         item.candidate.receive_shadow ? shader::DRAW_RECEIVE_SHADOW : 0,
                 sheen_lut:     sheen ? self.environment_state.sheen_lut.view.index : (gpu::TextureIndex)0,
                 sheen_sampler: sheen ? self.environment_state.sheen_sampler : (gpu::SamplerIndex)0,
+                skin:          item.skin,
+                morph:         item.morph,
             );
             item.root = draw_span.address;
         }
@@ -388,7 +400,7 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
     };
     if (shadows_enabled) {
         ensure_shadow_atlas(self)!;
-        shadow_pipeline_for(self, false)!;
+        shadow_pipeline_for(self, false, mesh_vertex_variant({}, false, shader::SHADER_FLAG_DEPTH_ONLY))!;
     }
     scene.@each(Mesh; Entity entity, Mesh* mesh) {
         if (!self.assets.geometries.is_live(mesh.geometry) || !self.assets.materials.is_live(mesh.material)) {
@@ -405,10 +417,15 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
             Material* data = &self.assets.material(material.asset).data;
             sheen |= material_uses_sheen(data);
             transmission |= draw_list(data) == DrawList.TRANSMISSION;
-            pipeline_for(self, data)!;
+            bool morphed = mesh.morph_weights.len > 0;
+            pipeline_for(self, data, mesh_vertex_variant(geometry.layout.flags, morphed))!;
             if (shadows_enabled && mesh.cast_shadow && scene.node(entity).visible_effective
                 && data.common.alpha_mode != AlphaMode.BLEND) {
-                shadow_pipeline_for(self, data.common.wireframe && self.caps.line_polygon_mode)!;
+                shadow_pipeline_for(
+                    renderer:  self,
+                    wireframe: data.common.wireframe && self.caps.line_polygon_mode,
+                    vertex:    mesh_vertex_variant(geometry.layout.flags, morphed, shader::SHADER_FLAG_DEPTH_ONLY),
+                )!;
             }
         }
     };
@@ -466,6 +483,8 @@ fn void write_frame_root(
  Write the per-draw root.
  @param [&out] root : "Overwritten whole."
  @param world : "Affine model matrix."
+ @param skin : "Joint palette address; zero when unskinned."
+ @param morph : "Morph block address; zero when unmorphed."
 *>
 fn void write_draw_root(
     DrawRoot* root,
@@ -478,6 +497,8 @@ fn void write_draw_root(
     uint flags = 0,
     gpu::TextureIndex sheen_lut = (gpu::TextureIndex)0,
     gpu::SamplerIndex sheen_sampler = (gpu::SamplerIndex)0,
+    gpu::GpuAddress skin = (gpu::GpuAddress)0,
+    gpu::GpuAddress morph = (gpu::GpuAddress)0,
 ) {
     Mat3 normal = maths::normal_matrix(world);
     *root = {
@@ -488,6 +509,8 @@ fn void write_draw_root(
         .frame     = frame,
         .geometry  = geometry,
         .material  = material,
+        .skin      = skin,
+        .morph     = morph,
         .object_id = object_id,
         .sheen_lut = sheen_lut,
         .sheen_sampler = sheen_sampler,
@@ -529,7 +552,7 @@ fn void? record_opaque_pass(Renderer* renderer, DrawItem[] items, Vec4 clear_col
 
     gpu::PipelineHandle pipeline;
     if (items.len) {
-        pipeline = pipeline_for(renderer, material_data(renderer, items[0].material))!;
+        pipeline = pipeline_for(renderer, material_data(renderer, items[0].material), items[0].vertex)!;
     } else {
         PipelineKey key = {
             .vertex = { .shader = MESH },
@@ -603,7 +626,7 @@ fn void? record_loaded_pass(Renderer* renderer, DrawItem[] items) @private {
         .width = width,
         .height = height,
     };
-    gpu::PipelineHandle pipeline = pipeline_for(renderer, material_data(renderer, items[0].material))!;
+    gpu::PipelineHandle pipeline = pipeline_for(renderer, material_data(renderer, items[0].material), items[0].vertex)!;
 
     // Bound before the pass begins: the backend checks the bound pipeline against the pass formats at begin.
     gpu::cmd_bind_pipeline(&renderer.commands, pipeline)!;
@@ -631,7 +654,7 @@ fn void? record_draws(Renderer* renderer, DrawItem[] items, gpu::PipelineHandle 
         MaterialCommon* common = &material.common;
         bool blend = common.alpha_mode == AlphaMode.BLEND;
         DrawState wanted = {
-            .pipeline = pipeline_for(renderer, material)!,
+            .pipeline = pipeline_for(renderer, material, item.vertex)!,
             .cull = common.double_sided ? gpu::CullMode.NONE : gpu::CullMode.BACK,
             .front_face = item.front_face,
             .topology = primitive_topology(item.geometry.topology),
@@ -755,10 +778,10 @@ fn ShaderVariant material_fragment(MaterialKind kind) @local {
     }
 }
 
-fn gpu::PipelineHandle? pipeline_for(Renderer* renderer, Material* material) @private {
+fn gpu::PipelineHandle? pipeline_for(Renderer* renderer, Material* material, ShaderVariant vertex) @private {
     bool wireframe = material.common.wireframe && renderer.caps.line_polygon_mode;
     PipelineKey key = {
-        .vertex        = { .shader = MESH },
+        .vertex        = vertex,
         .fragment      = material_fragment(material.kind),
         .color_formats = { [0] = HDR_FORMAT },
         .color_count   = 1,

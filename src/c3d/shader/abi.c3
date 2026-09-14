@@ -10,6 +10,7 @@ const uint SHADOW_FACE_NEGATIVE_Y = 3;
 const uint SHADOW_FACE_POSITIVE_Z = 4;
 const uint SHADOW_FACE_NEGATIVE_Z = 5;
 const uint SHADOW_POINT_FACE_COUNT = 6;
+const uint MAX_ACTIVE_MORPH_TARGETS = 8;
 const uint DRAW_RECEIVE_SHADOW = 1;
 const uint DRAW_ALPHA_MASK = 2;
 const uint MATERIAL_MAP_BASE_COLOR = 1;
@@ -183,6 +184,22 @@ $assert $reflect(DrawRoot.layers).offset == 240;
 $assert $reflect(DrawRoot.sheen_lut).offset == 244;
 $assert $reflect(DrawRoot.sheen_sampler).offset == 248;
 $assert $reflect(DrawRoot._pad3).offset == 252;
+
+struct MorphWeightsGpu {
+    uint[8]  indices;
+    float[8] weights;
+    uint     count;
+    uint     _pad0;
+    uint     _pad1;
+    uint     _pad2;
+}
+$assert MorphWeightsGpu::size == 80;
+$assert $reflect(MorphWeightsGpu.indices).offset == 0;
+$assert $reflect(MorphWeightsGpu.weights).offset == 32;
+$assert $reflect(MorphWeightsGpu.count).offset == 64;
+$assert $reflect(MorphWeightsGpu._pad0).offset == 68;
+$assert $reflect(MorphWeightsGpu._pad1).offset == 72;
+$assert $reflect(MorphWeightsGpu._pad2).offset == 76;
 
 struct TextureMapGpu {
     TextureIndex texture_index;

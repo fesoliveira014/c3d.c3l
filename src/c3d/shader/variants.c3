@@ -32,6 +32,21 @@ enum ShaderName : int {
 *>
 const uint SHADER_FLAG_DEPTH_ONLY = 1 << 0;
 
+<*
+ Flag bit for SKINNED.
+*>
+const uint SHADER_FLAG_SKINNED = 1 << 1;
+
+<*
+ Flag bit for SKINNED_U16.
+*>
+const uint SHADER_FLAG_SKINNED_U16 = 1 << 2;
+
+<*
+ Flag bit for MORPH.
+*>
+const uint SHADER_FLAG_MORPH = 1 << 3;
+
 const char[*] FULLSCREEN_SPIRV @private = $embed("../../../shaders/spv/fullscreen.spv");
 const char[*] GRADIENT_SPIRV @private = $embed("../../../shaders/spv/gradient.spv");
 const char[*] COMPOSITE_SPIRV @private = $embed("../../../shaders/spv/composite.spv");
@@ -53,11 +68,21 @@ const char[*] SHEEN_LUT_SPIRV @private = $embed("../../../shaders/spv/sheen_lut.
 const char[*] SKY_SPIRV @private = $embed("../../../shaders/spv/sky.spv");
 const char[*] MESH_DEPTH_ONLY_SPIRV @private = $embed("../../../shaders/spv/mesh_depth_only.spv");
 const char[*] DEPTH_ONLY_SPIRV @private = $embed("../../../shaders/spv/depth_only.spv");
+const char[*] MESH_SKINNED_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned.spv");
+const char[*] MESH_SKINNED_U16_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_u16.spv");
+const char[*] MESH_MORPH_SPIRV @private = $embed("../../../shaders/spv/mesh_morph.spv");
+const char[*] MESH_SKINNED_MORPH_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_morph.spv");
+const char[*] MESH_SKINNED_U16_MORPH_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_u16_morph.spv");
+const char[*] MESH_DEPTH_ONLY_SKINNED_SPIRV @private = $embed("../../../shaders/spv/mesh_depth_only_skinned.spv");
+const char[*] MESH_DEPTH_ONLY_SKINNED_U16_SPIRV @private = $embed("../../../shaders/spv/mesh_depth_only_skinned_u16.spv");
+const char[*] MESH_DEPTH_ONLY_MORPH_SPIRV @private = $embed("../../../shaders/spv/mesh_depth_only_morph.spv");
+const char[*] MESH_DEPTH_ONLY_SKINNED_MORPH_SPIRV @private = $embed("../../../shaders/spv/mesh_depth_only_skinned_morph.spv");
+const char[*] MESH_DEPTH_ONLY_SKINNED_U16_MORPH_SPIRV @private = $embed("../../../shaders/spv/mesh_depth_only_skinned_u16_morph.spv");
 
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[21] SHADER_ENTRIES = {
+const ShaderEntry[31] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -79,4 +104,14 @@ const ShaderEntry[21] SHADER_ENTRIES = {
     { .variant = { .shader = SKY }, .spirv = SKY_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_DEPTH_ONLY }, .spirv = MESH_DEPTH_ONLY_SPIRV[..] },
     { .variant = { .shader = DEPTH_ONLY }, .spirv = DEPTH_ONLY_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED }, .spirv = MESH_SKINNED_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED_U16 }, .spirv = MESH_SKINNED_U16_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_MORPH }, .spirv = MESH_MORPH_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED | SHADER_FLAG_MORPH }, .spirv = MESH_SKINNED_MORPH_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED_U16 | SHADER_FLAG_MORPH }, .spirv = MESH_SKINNED_U16_MORPH_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_DEPTH_ONLY | SHADER_FLAG_SKINNED }, .spirv = MESH_DEPTH_ONLY_SKINNED_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_DEPTH_ONLY | SHADER_FLAG_SKINNED_U16 }, .spirv = MESH_DEPTH_ONLY_SKINNED_U16_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_DEPTH_ONLY | SHADER_FLAG_MORPH }, .spirv = MESH_DEPTH_ONLY_MORPH_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_DEPTH_ONLY | SHADER_FLAG_SKINNED | SHADER_FLAG_MORPH }, .spirv = MESH_DEPTH_ONLY_SKINNED_MORPH_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_DEPTH_ONLY | SHADER_FLAG_SKINNED_U16 | SHADER_FLAG_MORPH }, .spirv = MESH_DEPTH_ONLY_SKINNED_U16_MORPH_SPIRV[..] },
 };

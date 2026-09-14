@@ -16,6 +16,9 @@ import std::math;
 struct ShadowDraw @private {
     MeshCandidate* candidate;
     GpuGeometry* geometry;
+    ShaderVariant vertex;
+    gpu::GpuAddress skin;
+    gpu::GpuAddress morph;
     gpu::GpuAddress alpha;
     bool masked;
     bool wireframe;
@@ -30,9 +33,9 @@ struct ShadowDrawState @private {
     gpu::PrimitiveTopology topology;
 }
 
-fn gpu::PipelineHandle? shadow_pipeline_for(Renderer* renderer, bool wireframe) @private {
+fn gpu::PipelineHandle? shadow_pipeline_for(Renderer* renderer, bool wireframe, ShaderVariant vertex) @private {
     PipelineKey key = {
-        .vertex = { .shader = MESH, .flags = shader::SHADER_FLAG_DEPTH_ONLY },
+        .vertex = vertex,
         .fragment = { .shader = DEPTH_ONLY },
         .depth_format = DEPTH_FORMAT,
         .samples = gpu::SampleCount.ONE,
@@ -47,15 +50,22 @@ fn ShadowDraw[]? prepare_shadow_draws(Renderer* renderer, MeshCandidate[] candid
     foreach (index, &candidate : candidates) {
         Material* material = &renderer.assets.material(candidate.material).data;
         ShadowDraw* draw = &draws[index];
+        GpuGeometry* geometry = ensure_geometry(renderer, candidate.geometry)!;
+        bool morphed = candidate.morph_weights.len > 0;
+        ShaderVariant vertex = mesh_vertex_variant(geometry.layout.flags, morphed, shader::SHADER_FLAG_DEPTH_ONLY);
         *draw = {
             .candidate = candidate,
-            .geometry = ensure_geometry(renderer, candidate.geometry)!,
+            .geometry = geometry,
+            .vertex = vertex,
+            .skin = candidate.skin ? ensure_palette(renderer, candidate.node, candidate.skin)! : (gpu::GpuAddress)0,
+            .morph = vertex.flags & shader::SHADER_FLAG_MORPH
+              ? ensure_morph_block(renderer, candidate.node, candidate.morph_weights)! : (gpu::GpuAddress)0,
             .masked = material.common.alpha_mode == AlphaMode.MASK,
             .wireframe = material.common.wireframe && renderer.caps.line_polygon_mode,
             .reflected = candidate.node.world.determinant() < 0,
             .cull = material.common.double_sided ? gpu::CullMode.NONE : gpu::CullMode.BACK,
         };
-        shadow_pipeline_for(renderer, draw.wireframe)!;
+        shadow_pipeline_for(renderer, draw.wireframe, vertex)!;
         if (!draw.masked) continue;
         TextureSlot base_map;
         switch (material.kind) {
@@ -105,14 +115,18 @@ fn void? record_shadow_layer(
     state.raster.depth_bias_slope = -bias;
     bool view_reflected = matrices.view.determinant() < 0;
     ShadowDrawState bound = {
-        .pipeline = shadow_pipeline_for(renderer, draws.len ? draws[0].wireframe : false)!,
+        .pipeline = shadow_pipeline_for(
+            renderer:  renderer,
+            wireframe: draws.len ? draws[0].wireframe : false,
+            vertex:    draws.len ? draws[0].vertex : mesh_vertex_variant({}, false, shader::SHADER_FLAG_DEPTH_ONLY),
+        )!,
     };
     bool state_set;
     gpu::cmd_bind_pipeline(&renderer.commands, bound.pipeline)!;
     gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
     foreach (draw : draws) {
         ShadowDrawState wanted = {
-            .pipeline = shadow_pipeline_for(renderer, draw.wireframe)!,
+            .pipeline = shadow_pipeline_for(renderer, draw.wireframe, draw.vertex)!,
             .cull = draw.cull,
             .front_face = draw.reflected != view_reflected
               ? gpu::FrontFace.CLOCKWISE : gpu::FrontFace.COUNTER_CLOCKWISE,
@@ -140,6 +154,8 @@ fn void? record_shadow_layer(
             material: draw.alpha,
             object_id: draw.candidate.node.id.index,
             flags: draw.masked ? shader::DRAW_ALPHA_MASK : 0,
+            skin: draw.skin,
+            morph: draw.morph,
         );
         GeometryLayout* layout = &draw.geometry.layout;
         if (layout.index_count) {
