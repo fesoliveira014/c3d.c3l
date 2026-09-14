@@ -160,8 +160,10 @@ fn uint target_slot(AnimationClip* clip, usz* target_count, uint template_index)
     for (usz slot = 0; slot < *target_count; slot++) {
         if (clip.targets[slot] == template_index) return (uint)slot;
     }
-    clip.targets[*target_count] = template_index;
-    return (uint)(*target_count)++;
+    uint slot = (uint)*target_count;
+    clip.targets[slot] = template_index;
+    *target_count += 1;
+    return slot;
 }
 
 fn float[]? read_output(Importer* importer, gltf::Accessor* accessor) @private {
