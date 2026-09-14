@@ -53,3 +53,20 @@ struct Skeleton {
     Transform[] rest_pose;
     Mat4[]      inverse_bind;
 }
+
+<*
+ Number of values one key of the track holds.
+ @pure
+*>
+fn uint Track.stride(&self) {
+    switch (self.path) {
+        case TRANSLATION:
+        case SCALE:
+            return 3;
+        case ROTATION:
+            return 4;
+        case MORPH_WEIGHTS:
+            uint per_key = (uint)(self.values.len / self.times.len);
+            return self.interpolation == Interpolation.CUBIC_SPLINE ? per_key / 3 : per_key;
+    }
+}

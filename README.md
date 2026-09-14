@@ -205,6 +205,19 @@ python3 scripts/build.py --example gltf_viewer
 See [Models and glTF import](docs/models.md) for keys, options, the material
 mapping and the supported extension subset.
 
+`animation` instantiates a model twice and plays a different clip on each
+instance through `c3d::anim`, with cross-fades, a quarter-weight action and
+pausing on keys. The bundled [Fox](examples/assets/gltf/README.md) is the
+default; `BoxAnimated.glb` shows node animation:
+
+```bash
+python3 scripts/build.py --example animation
+./examples/build/animation examples/assets/gltf/BoxAnimated.glb
+```
+
+See [Animation](docs/animation.md) for the update sequence, blending and the
+borrowed-pointer rules.
+
 `textured` adds PNG/JPEG maps, mip filtering, UV transforms and alpha masking in a
 standalone scene with validation enabled. The default image is embedded:
 

@@ -139,6 +139,12 @@
       "sources": [
         "src/gltf_viewer.c3"
       ]
+    },
+    "animation": {
+      "type": "executable",
+      "sources": [
+        "src/animation.c3"
+      ]
     }
   }
 }

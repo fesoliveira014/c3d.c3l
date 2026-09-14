@@ -27,11 +27,13 @@ fn Node*? instantiate(
     Allocator allocator = scene.allocator;
     Node*[] nodes = alloc::new_array(allocator, Node*, template.nodes.len);
     Transform[] base_pose = alloc::new_array(allocator, Transform, template.nodes.len);
+    uint[] mesh_nodes = alloc::new_array(allocator, uint, template.meshes.len);
     float[][] base_morph_weights = alloc::new_array(allocator, float[], template.meshes.len);
     scene.add(root, (ModelInstance){
         .source             = model,
         .nodes              = nodes,
         .base_pose          = base_pose,
+        .mesh_nodes         = mesh_nodes,
         .base_morph_weights = base_morph_weights,
         .clips              = copy_slice(allocator, template.clips),
     });
@@ -47,6 +49,7 @@ fn Node*? instantiate(
     }
 
     foreach (index, &mesh : template.meshes) {
+        mesh_nodes[index] = mesh.node;
         base_morph_weights[index] = copy_slice(allocator, mesh.default_morph_weights);
         scene.add(nodes[mesh.node], (Mesh){
             .geometry       = mesh.geometry,

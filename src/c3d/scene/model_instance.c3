@@ -11,6 +11,7 @@ struct ModelInstance {
     ModelId     source;
     Node*[]     nodes;
     Transform[] base_pose;
+    uint[]      mesh_nodes;
     float[][]   base_morph_weights;
     ClipId[]    clips;
 }
@@ -30,6 +31,7 @@ fn void free_model_instance(Entity entity, void* component, void* user) @private
     alloc::free(allocator, instance.base_morph_weights.ptr);
     alloc::free(allocator, instance.nodes.ptr);
     alloc::free(allocator, instance.base_pose.ptr);
+    alloc::free(allocator, instance.mesh_nodes.ptr);
     alloc::free(allocator, instance.clips.ptr);
 }
 
