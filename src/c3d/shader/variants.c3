@@ -30,6 +30,11 @@ enum ShaderName : int {
     DISPLAY,
     BLOOM_DOWNSAMPLE,
     BLOOM_UPSAMPLE,
+    TILE_MAX,
+    TILE_NEIGHBOR,
+    DOF_COC,
+    DOF_GATHER,
+    DOF_COMPOSITE,
 }
 
 <*
@@ -88,11 +93,16 @@ const char[*] FXAA_SPIRV @private = $embed("../../../shaders/spv/fxaa.spv");
 const char[*] DISPLAY_SPIRV @private = $embed("../../../shaders/spv/display.spv");
 const char[*] BLOOM_DOWNSAMPLE_SPIRV @private = $embed("../../../shaders/spv/bloom_downsample.spv");
 const char[*] BLOOM_UPSAMPLE_SPIRV @private = $embed("../../../shaders/spv/bloom_upsample.spv");
+const char[*] TILE_MAX_SPIRV @private = $embed("../../../shaders/spv/tile_max.spv");
+const char[*] TILE_NEIGHBOR_SPIRV @private = $embed("../../../shaders/spv/tile_neighbor.spv");
+const char[*] DOF_COC_SPIRV @private = $embed("../../../shaders/spv/dof_coc.spv");
+const char[*] DOF_GATHER_SPIRV @private = $embed("../../../shaders/spv/dof_gather.spv");
+const char[*] DOF_COMPOSITE_SPIRV @private = $embed("../../../shaders/spv/dof_composite.spv");
 
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[36] SHADER_ENTRIES = {
+const ShaderEntry[41] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -129,4 +139,9 @@ const ShaderEntry[36] SHADER_ENTRIES = {
     { .variant = { .shader = DISPLAY }, .spirv = DISPLAY_SPIRV[..] },
     { .variant = { .shader = BLOOM_DOWNSAMPLE }, .spirv = BLOOM_DOWNSAMPLE_SPIRV[..] },
     { .variant = { .shader = BLOOM_UPSAMPLE }, .spirv = BLOOM_UPSAMPLE_SPIRV[..] },
+    { .variant = { .shader = TILE_MAX }, .spirv = TILE_MAX_SPIRV[..] },
+    { .variant = { .shader = TILE_NEIGHBOR }, .spirv = TILE_NEIGHBOR_SPIRV[..] },
+    { .variant = { .shader = DOF_COC }, .spirv = DOF_COC_SPIRV[..] },
+    { .variant = { .shader = DOF_GATHER }, .spirv = DOF_GATHER_SPIRV[..] },
+    { .variant = { .shader = DOF_COMPOSITE }, .spirv = DOF_COMPOSITE_SPIRV[..] },
 };

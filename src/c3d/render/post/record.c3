@@ -13,6 +13,11 @@ struct PostPipelines {
     gpu::PipelineHandle fxaa;
     gpu::PipelineHandle bloom_downsample;
     gpu::PipelineHandle bloom_upsample;
+    gpu::PipelineHandle tile_max;
+    gpu::PipelineHandle tile_neighbor;
+    gpu::PipelineHandle dof_coc;
+    gpu::PipelineHandle dof_gather;
+    gpu::PipelineHandle dof_composite;
 }
 
 struct LutBinding @private {
@@ -73,6 +78,7 @@ fn void? record_display(Renderer* renderer, ViewRecord* record, float camera_exp
 *>
 fn void? prepare_display(Renderer* renderer, ViewRecord* record) {
     if (record.desc.post.bloom) ensure_bloom_pipelines(renderer)!;
+    if (record.desc.post.depth_of_field) ensure_dof_pipelines(renderer)!;
     if (record.desc.post.fxaa) return ensure_post_pipelines(renderer);
     if (!renderer.swapchain.is_valid()) return;
     renderer.pipelines.get(&renderer.device, display_pipeline_key(renderer.window_target.format))!;
@@ -84,10 +90,15 @@ fn void? prepare_display(Renderer* renderer, ViewRecord* record) {
  @param [&inout] pipelines : "Cleared."
 *>
 fn void destroy_post_pipelines(gpu::Device* device, PostPipelines* pipelines) {
-    if (pipelines.grade.is_valid()) (void)gpu::destroy_pipeline(device, pipelines.grade);
-    if (pipelines.fxaa.is_valid()) (void)gpu::destroy_pipeline(device, pipelines.fxaa);
-    if (pipelines.bloom_downsample.is_valid()) (void)gpu::destroy_pipeline(device, pipelines.bloom_downsample);
-    if (pipelines.bloom_upsample.is_valid()) (void)gpu::destroy_pipeline(device, pipelines.bloom_upsample);
+    gpu::PipelineHandle*[7] handles = {
+        &pipelines.grade, &pipelines.fxaa, &pipelines.bloom_downsample, &pipelines.bloom_upsample,
+        &pipelines.tile_max, &pipelines.tile_neighbor, &pipelines.dof_coc,
+    };
+    foreach (handle : handles) {
+        if (handle.is_valid()) (void)gpu::destroy_pipeline(device, *handle);
+    }
+    if (pipelines.dof_gather.is_valid()) (void)gpu::destroy_pipeline(device, pipelines.dof_gather);
+    if (pipelines.dof_composite.is_valid()) (void)gpu::destroy_pipeline(device, pipelines.dof_composite);
     *pipelines = {};
 }
 
@@ -206,8 +217,12 @@ fn void? record_fxaa(Renderer* renderer, ViewRecord* record) @private {
 }
 
 fn void? dispatch_over(Renderer* renderer, gpu::GpuAddress root, Target* target) @private {
-    uint groups_x = (target.width + shader::POST_GROUP_SIZE - 1) / shader::POST_GROUP_SIZE;
-    uint groups_y = (target.height + shader::POST_GROUP_SIZE - 1) / shader::POST_GROUP_SIZE;
+    return dispatch_extent(renderer, root, target.width, target.height);
+}
+
+fn void? dispatch_extent(Renderer* renderer, gpu::GpuAddress root, uint width, uint height) @private {
+    uint groups_x = (width + shader::POST_GROUP_SIZE - 1) / shader::POST_GROUP_SIZE;
+    uint groups_y = (height + shader::POST_GROUP_SIZE - 1) / shader::POST_GROUP_SIZE;
     return gpu::cmd_dispatch(&renderer.commands, root, { groups_x, groups_y, 1 });
 }
 

@@ -17,6 +17,8 @@ const Vec3 D65_LMS @private = { 0.949237f, 1.03542f, 1.08728f };
 *>
 const uint BLOOM_MAX_LEVELS = 8; // eight halvings reach 5 px from 1280; more levels only widen the glow
 
+const float SENSOR_HEIGHT @private = 0.024f; // 35 mm frame; focal_length and aperture read as camera settings
+
 <*
  Display tone mapping operator.
 *>
@@ -58,6 +60,16 @@ struct BloomParams {
 }
 
 <*
+ Thin-lens focus: distances in meters, aperture an f-number, max_coc a half-resolution pixel radius.
+*>
+struct DofParams {
+    float focus_distance;
+    float focal_length;
+    float aperture;
+    float max_coc;
+}
+
+<*
  Display processing of one view; a zeroed value is not neutral.
 *>
 struct PostStack {
@@ -65,6 +77,8 @@ struct PostStack {
     bool        fxaa;
     bool        bloom;
     BloomParams bloom_params;
+    bool        depth_of_field;
+    DofParams   dof_params;
 }
 
 <*
@@ -81,6 +95,7 @@ fn PostStack default_post_stack() {
         },
         .fxaa = true,
         .bloom_params = { .threshold = 1, .knee = 0.5f, .intensity = 0.05f, .levels = 5 },
+        .dof_params   = { .focus_distance = 5, .focal_length = 0.05f, .aperture = 2.8f, .max_coc = 16 },
     };
 }
 
@@ -91,7 +106,39 @@ fn PostStack default_post_stack() {
 *>
 fn bool post_stack_valid(PostStack* stack) {
     if (stack.bloom && (stack.bloom_params.levels == 0 || stack.bloom_params.levels > BLOOM_MAX_LEVELS)) return false;
+    if (stack.depth_of_field && !dof_params_valid(&stack.dof_params)) return false;
     return true;
+}
+
+<*
+ Tiles of POST_TILE_SIZE pixels covering an extent.
+ @pure
+*>
+fn uint tile_count(uint extent) {
+    return (extent + shader::POST_TILE_SIZE - 1) / shader::POST_TILE_SIZE;
+}
+
+<*
+ Half-resolution pixels of circle-of-confusion radius per unit of (depth - focus) / depth.
+ @param [&in] params : "Focal length below the focus distance."
+ @param half_height : "Pixels of the half-resolution layers."
+ @pure
+*>
+fn float dof_aperture_scale(DofParams* params, uint half_height) {
+    float lens = params.focal_length * params.focal_length
+      / (params.aperture * (params.focus_distance - params.focal_length));
+    return 0.5f * lens * (float)half_height / SENSOR_HEIGHT;
+}
+
+<*
+ Signed circle-of-confusion radius; negative in front of the focus distance.
+ @param [&in] params : "Supplies focus_distance and max_coc."
+ @param view_depth : "Forward distance in meters, positive."
+ @pure
+*>
+fn float dof_coc(DofParams* params, float aperture_scale, float view_depth) {
+    float coc = aperture_scale * (view_depth - params.focus_distance) / view_depth;
+    return math::clamp(coc, -params.max_coc, params.max_coc);
 }
 
 <*
@@ -173,6 +220,14 @@ fn void write_grade_gpu(
         .bloom_sampler   = bloom_texture ? bloom_sampler : (gpu::SamplerIndex)0,
         .bloom_intensity = bloom_texture ? bloom_intensity : 0,
     };
+}
+
+<*
+ @pure
+*>
+fn bool dof_params_valid(DofParams* params) @private {
+    return params.focal_length > 0 && params.aperture > 0 && params.max_coc > 0
+      && params.focus_distance > params.focal_length;
 }
 
 <*

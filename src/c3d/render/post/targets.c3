@@ -3,6 +3,7 @@ module c3d::render::post;
 import c3d::render @public;
 import gpu;
 
+const gpu::Format TILE_FORMAT @private = gpu::Format.RG16_FLOAT;
 const ZString[BLOOM_MAX_LEVELS] BLOOM_LEVEL_NAMES @private = {
     "bloom_0", "bloom_1", "bloom_2", "bloom_3", "bloom_4", "bloom_5", "bloom_6", "bloom_7",
 };
@@ -45,7 +46,10 @@ fn void? ensure_post_targets(Renderer* renderer, ViewRecord* record) {
 *>
 fn void? ensure_effect_targets(Renderer* renderer, ViewRecord* record) {
     if (!renderer.hdr_color.texture.is_valid()) return;
-    if (record.desc.post.bloom && !record.bloom_levels) ensure_bloom_chain(renderer, record)!;
+    PostStack* stack = &record.desc.post;
+    if (stack.bloom && !record.bloom_levels) ensure_bloom_chain(renderer, record)!;
+    if (stack.depth_of_field && !record.dof_near.texture.is_valid()) ensure_dof_layers(renderer, record)!;
+    if (uses_tiles(stack) && !record.tile_max.texture.is_valid()) ensure_tiles(renderer, record)!;
 }
 
 <*
@@ -54,11 +58,22 @@ fn void? ensure_effect_targets(Renderer* renderer, ViewRecord* record) {
  @param [&inout] record : "Retired images are cleared."
 *>
 fn void retire_effect_targets(Renderer* renderer, ViewRecord* record) {
-    bool bloom_stale = record.bloom_levels != record.desc.post.bloom_params.levels;
-    if (record.bloom_levels && (!record.desc.post.bloom || bloom_stale)) {
-        RetireList* retire = last_submitted_retire(renderer);
+    PostStack* stack = &record.desc.post;
+    RetireList* retire = last_submitted_retire(renderer);
+    bool bloom_stale = record.bloom_levels != stack.bloom_params.levels;
+    if (record.bloom_levels && (!stack.bloom || bloom_stale)) {
         for (uint level = 0; level < record.bloom_levels; level++) retire_post_target(retire, &record.bloom[level]);
         record.bloom_levels = 0;
+    }
+    if (!stack.depth_of_field && record.dof_near.texture.is_valid()) {
+        retire_post_target(retire, &record.dof_near);
+        retire_post_target(retire, &record.dof_far);
+        retire_post_target(retire, &record.dof_near_blur);
+        retire_post_target(retire, &record.dof_far_blur);
+    }
+    if (!uses_tiles(stack) && record.tile_max.texture.is_valid()) {
+        retire_post_target(retire, &record.tile_max);
+        retire_post_target(retire, &record.tile_neighbor);
     }
 }
 
@@ -70,6 +85,61 @@ fn void retire_effect_targets(Renderer* renderer, ViewRecord* record) {
 fn void release_effect_targets(gpu::Device* device, ViewRecord* record) {
     for (uint level = 0; level < record.bloom_levels; level++) release_post_target(device, &record.bloom[level]);
     record.bloom_levels = 0;
+    release_dof_layers(device, record);
+    release_tiles(device, record);
+}
+
+fn bool uses_tiles(PostStack* stack) @private {
+    return stack.depth_of_field;
+}
+
+fn void? ensure_dof_layers(Renderer* renderer, ViewRecord* record) @private {
+    uint width = bloom_level_extent(renderer.hdr_color.width, 0);
+    uint height = bloom_level_extent(renderer.hdr_color.height, 0);
+    Target*[4] layers = { &record.dof_near, &record.dof_far, &record.dof_near_blur, &record.dof_far_blur };
+    ZString[4] names = { "dof_near", "dof_far", "dof_near_blur", "dof_far_blur" };
+    defer catch release_dof_layers(&renderer.device, record);
+    foreach (index, layer : layers) {
+        *layer = allocate_post_target(
+            device:     &renderer.device,
+            width:      width,
+            height:     height,
+            format:     render::HDR_FORMAT,
+            debug_name: names[index],
+        )!;
+    }
+}
+
+fn void? ensure_tiles(Renderer* renderer, ViewRecord* record) @private {
+    uint width = tile_count(renderer.hdr_color.width);
+    uint height = tile_count(renderer.hdr_color.height);
+    defer catch release_tiles(&renderer.device, record);
+    record.tile_max = allocate_post_target(
+        device:     &renderer.device,
+        width:      width,
+        height:     height,
+        format:     TILE_FORMAT,
+        debug_name: "tile_max",
+    )!;
+    record.tile_neighbor = allocate_post_target(
+        device:     &renderer.device,
+        width:      width,
+        height:     height,
+        format:     TILE_FORMAT,
+        debug_name: "tile_neighbor",
+    )!;
+}
+
+fn void release_dof_layers(gpu::Device* device, ViewRecord* record) @private {
+    Target*[4] layers = { &record.dof_near, &record.dof_far, &record.dof_near_blur, &record.dof_far_blur };
+    foreach (layer : layers) {
+        if (layer.texture.is_valid()) release_post_target(device, layer);
+    }
+}
+
+fn void release_tiles(gpu::Device* device, ViewRecord* record) @private {
+    if (record.tile_max.texture.is_valid()) release_post_target(device, &record.tile_max);
+    if (record.tile_neighbor.texture.is_valid()) release_post_target(device, &record.tile_neighbor);
 }
 
 fn void? ensure_bloom_chain(Renderer* renderer, ViewRecord* record) @private {

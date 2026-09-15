@@ -17,6 +17,14 @@ const float TRIPLE_DRAG_SPEED @local = 0.005f;
 const float BLOOM_THRESHOLD_MAX @local = 8;
 const float BLOOM_KNEE_MAX @local = 1;
 const float BLOOM_INTENSITY_MAX @local = 1;
+const float FOCUS_DISTANCE_MIN @local = 0.1f;
+const float FOCUS_DISTANCE_MAX @local = 50;
+const float FOCAL_LENGTH_MIN @local = 0.005f;
+const float FOCAL_LENGTH_MAX @local = 0.3f;
+const float APERTURE_MIN @local = 0.7f;
+const float APERTURE_MAX @local = 22;
+const float MAX_COC_MIN @local = 1;
+const float MAX_COC_MAX @local = 32;
 const ZString[Tonemap::len] TONEMAP_LABELS @local = { "None", "ACES", "AgX", "Reinhard" };
 
 <*
@@ -62,6 +70,14 @@ fn bool post_panel(ViewDesc* desc, TextureId lut) {
         changed |= edit_grade_factor("Knee", &bloom.knee, 0, BLOOM_KNEE_MAX);
         changed |= edit_grade_factor("Intensity", &bloom.intensity, 0, BLOOM_INTENSITY_MAX);
         changed |= edit_level_count("Levels", &bloom.levels, 1, post::BLOOM_MAX_LEVELS);
+    }
+    if (imgui::collapsing_header("Depth of field", {})) {
+        DofParams* dof = &desc.post.dof_params;
+        changed |= imgui::checkbox("Enable depth of field", &desc.post.depth_of_field);
+        changed |= edit_grade_factor("Focus distance", &dof.focus_distance, FOCUS_DISTANCE_MIN, FOCUS_DISTANCE_MAX);
+        changed |= edit_grade_factor("Focal length", &dof.focal_length, FOCAL_LENGTH_MIN, FOCAL_LENGTH_MAX);
+        changed |= edit_grade_factor("Aperture", &dof.aperture, APERTURE_MIN, APERTURE_MAX);
+        changed |= edit_grade_factor("Max CoC", &dof.max_coc, MAX_COC_MIN, MAX_COC_MAX);
     }
 
     return changed;

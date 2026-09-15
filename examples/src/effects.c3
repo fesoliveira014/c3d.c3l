@@ -34,6 +34,8 @@ const float FOCUS_SPHERE_RADIUS @local = 0.35f;
 const float FOCUS_ROW_STEP @local = 1.5f;
 const uint FOCUS_ROW_COUNT @local = 5;
 const float FOCUS_ROW_X @local = -0.9f;
+const float FOCUS_DISTANCE @local = 6; // the cube, with marbles on both sides of focus
+const float APERTURE @local = 1.4f; // wide open, so a 50 mm lens blurs the near marbles at 1280x720
 const float GROUND_SIZE @local = 30;
 const float GROUND_Y @local = -1.2f;
 const float SUN_INTENSITY @local = 6; // lit texels exceed one, so tone mapping has work to do
@@ -125,6 +127,9 @@ fn void? run_gui(
     Orbit orbit = { .distance = 6 };
     ViewDesc view_desc = render::default_view_desc();
     view_desc.post.bloom = true;
+    view_desc.post.depth_of_field = true;
+    view_desc.post.dof_params.focus_distance = FOCUS_DISTANCE;
+    view_desc.post.dof_params.aperture = APERTURE;
     render::configure_view(renderer, renderer.default_view, view_desc)!;
     Quat roll = quaternion::from_axis_angle{float}({ 0, 0, 1 }, math::deg_to_rad(CUBE_ROLL_DEGREES));
     float spin_angle;

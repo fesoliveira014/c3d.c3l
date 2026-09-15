@@ -36,6 +36,11 @@
     { "shader": "fxaa", "source": "fxaa.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "display", "source": "display.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "bloom_downsample", "source": "bloom_downsample.comp.glsl", "stage": "comp", "defines": [] },
-    { "shader": "bloom_upsample", "source": "bloom_upsample.comp.glsl", "stage": "comp", "defines": [] }
+    { "shader": "bloom_upsample", "source": "bloom_upsample.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "tile_max", "source": "tile_max.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "tile_neighbor", "source": "tile_neighbor.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "dof_coc", "source": "dof_coc.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "dof_gather", "source": "dof_gather.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "dof_composite", "source": "dof_composite.comp.glsl", "stage": "comp", "defines": [] }
   ]
 }
