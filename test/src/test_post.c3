@@ -85,6 +85,9 @@ fn void test_default_post_stack_disables_every_effect() @test {
     assert(!stack.bloom);
     assert(stack.bloom_params.threshold == 1 && stack.bloom_params.knee == 0.5f);
     assert(stack.bloom_params.intensity == 0.05f && stack.bloom_params.levels == 5);
+    assert(!stack.depth_of_field);
+    assert(stack.dof_params.focus_distance == 5 && stack.dof_params.focal_length == 0.05f);
+    assert(stack.dof_params.aperture == 2.8f && stack.dof_params.max_coc == 16);
 }
 
 fn void test_post_stack_valid_rejects_out_of_range_enabled_effects() @test {
@@ -99,6 +102,37 @@ fn void test_post_stack_valid_rejects_out_of_range_enabled_effects() @test {
     assert(!post::post_stack_valid(&stack));
     stack.bloom_params.levels = post::BLOOM_MAX_LEVELS;
     assert(post::post_stack_valid(&stack));
+
+    stack.dof_params.aperture = 0;
+    assert(post::post_stack_valid(&stack));
+    stack.depth_of_field = true;
+    assert(!post::post_stack_valid(&stack));
+    stack.dof_params.aperture = 2.8f;
+    stack.dof_params.focus_distance = stack.dof_params.focal_length;
+    assert(!post::post_stack_valid(&stack));
+}
+
+fn void test_tile_count_rounds_up() @test {
+    assert(post::tile_count(16) == 1);
+    assert(post::tile_count(17) == 2);
+    assert(post::tile_count(1280) == 80);
+}
+
+fn void test_dof_coc_is_zero_at_focus_and_signed_around_it() @test {
+    DofParams params = post::default_post_stack().dof_params;
+    float scale = post::dof_aperture_scale(&params, 360);
+    assert(scale > 0);
+    assert(post::dof_coc(&params, scale, params.focus_distance) == 0);
+    assert(post::dof_coc(&params, scale, 2) < 0);
+    assert(post::dof_coc(&params, scale, 50) > 0);
+
+    float far_coc = post::dof_coc(&params, scale, 1e9f);
+    assert(math::abs(far_coc - scale) < 1e-3f && far_coc <= params.max_coc);
+    params.aperture = 0.7f;
+    params.focal_length = 0.2f;
+    float wide = post::dof_aperture_scale(&params, 360);
+    assert(post::dof_coc(&params, wide, 0.3f) == -params.max_coc);
+    assert(post::dof_coc(&params, wide, 1e9f) == params.max_coc);
 }
 
 fn void test_bloom_level_extent_halves_and_floors_at_one() @test {

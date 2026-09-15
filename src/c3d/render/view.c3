@@ -104,6 +104,12 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
 
     Vec2 viewport = { (float)self.hdr_color.width, (float)self.hdr_color.height };
     CameraMatrices matrices = camera::derive_matrices(*camera, camera_node.world, viewport);
+    self.view_projection = {
+        .m22          = matrices.proj.m22,
+        .m23          = matrices.proj.m23,
+        .orthographic = camera.projection == Projection.ORTHOGRAPHIC,
+    };
+    ViewRecord* view_record = self.views.get(self.default_view);
     Frame* slot = &self.frames[self.frame_index % FRAMES_IN_FLIGHT];
     bool view_reflected = matrices.view.determinant() < 0;
 
@@ -347,6 +353,8 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
             )!;
             slot.timed[Pass.FORWARD_TRANSPARENT.ordinal] = true;
         }
+
+        if (view_record.desc.post.depth_of_field) post::record_dof(self, view_record)!;
     };
 }
 

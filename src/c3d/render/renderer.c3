@@ -138,6 +138,7 @@ struct Renderer {
     float                   view_exposure;
     Target*                 scene_input;
     bool                    post_chain_open;
+    ProjectionTerms         view_projection;
     PipelineCache           pipelines;
     gpu::SamplerIndex       linear_clamp_sampler;
 

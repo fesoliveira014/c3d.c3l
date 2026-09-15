@@ -55,6 +55,13 @@ const uint TONEMAP_ACES = 1;
 const uint TONEMAP_AGX = 2;
 const uint TONEMAP_REINHARD = 3;
 const uint POST_GROUP_SIZE = 8;
+const uint POST_TILE_SIZE = 16;
+const uint TILE_MODE_ALPHA = 0;
+const uint TILE_MODE_VELOCITY = 1;
+const uint DOF_PASS_COC = 0;
+const uint DOF_PASS_GATHER_NEAR = 1;
+const uint DOF_PASS_GATHER_FAR = 2;
+const uint DOF_PASS_COMPOSITE = 3;
 
 struct CompositeRoot {
     TextureIndex source_texture;
@@ -713,3 +720,67 @@ $assert $reflect(BloomRoot.threshold).offset == 24;
 $assert $reflect(BloomRoot.knee).offset == 28;
 $assert $reflect(BloomRoot.input_texel).offset == 32;
 $assert $reflect(BloomRoot._pad0).offset == 40;
+
+struct TileRoot {
+    TextureIndex input_texture;
+    TextureIndex output_texture;
+    uint         width;
+    uint         height;
+    uint         mode;
+    uint         _pad0;
+    uint         _pad1;
+    uint         _pad2;
+}
+$assert TileRoot::size == 32;
+$assert $reflect(TileRoot.input_texture).offset == 0;
+$assert $reflect(TileRoot.output_texture).offset == 4;
+$assert $reflect(TileRoot.width).offset == 8;
+$assert $reflect(TileRoot.height).offset == 12;
+$assert $reflect(TileRoot.mode).offset == 16;
+$assert $reflect(TileRoot._pad0).offset == 20;
+$assert $reflect(TileRoot._pad1).offset == 24;
+$assert $reflect(TileRoot._pad2).offset == 28;
+
+struct DofRoot {
+    TextureIndex color_texture;
+    TextureIndex depth_texture;
+    SamplerIndex sampler_index;
+    TextureIndex near_texture;
+    TextureIndex far_texture;
+    TextureIndex tile_texture;
+    TextureIndex output_texture;
+    uint         width;
+    uint         height;
+    uint         pass;
+    uint         in_place;
+    uint         orthographic;
+    float        max_coc;
+    float        aperture_scale;
+    float        focus_distance;
+    float        proj_22;
+    float        proj_23;
+    uint         _pad0;
+    Vec2f        half_texel;
+    Vec2f        full_texel;
+}
+$assert DofRoot::size == 88;
+$assert $reflect(DofRoot.color_texture).offset == 0;
+$assert $reflect(DofRoot.depth_texture).offset == 4;
+$assert $reflect(DofRoot.sampler_index).offset == 8;
+$assert $reflect(DofRoot.near_texture).offset == 12;
+$assert $reflect(DofRoot.far_texture).offset == 16;
+$assert $reflect(DofRoot.tile_texture).offset == 20;
+$assert $reflect(DofRoot.output_texture).offset == 24;
+$assert $reflect(DofRoot.width).offset == 28;
+$assert $reflect(DofRoot.height).offset == 32;
+$assert $reflect(DofRoot.pass).offset == 36;
+$assert $reflect(DofRoot.in_place).offset == 40;
+$assert $reflect(DofRoot.orthographic).offset == 44;
+$assert $reflect(DofRoot.max_coc).offset == 48;
+$assert $reflect(DofRoot.aperture_scale).offset == 52;
+$assert $reflect(DofRoot.focus_distance).offset == 56;
+$assert $reflect(DofRoot.proj_22).offset == 60;
+$assert $reflect(DofRoot.proj_23).offset == 64;
+$assert $reflect(DofRoot._pad0).offset == 68;
+$assert $reflect(DofRoot.half_texel).offset == 72;
+$assert $reflect(DofRoot.full_texel).offset == 80;

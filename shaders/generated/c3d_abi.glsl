@@ -58,6 +58,13 @@ const uint TONEMAP_ACES = 1u;
 const uint TONEMAP_AGX = 2u;
 const uint TONEMAP_REINHARD = 3u;
 const uint POST_GROUP_SIZE = 8u;
+const uint POST_TILE_SIZE = 16u;
+const uint TILE_MODE_ALPHA = 0u;
+const uint TILE_MODE_VELOCITY = 1u;
+const uint DOF_PASS_COC = 0u;
+const uint DOF_PASS_GATHER_NEAR = 1u;
+const uint DOF_PASS_GATHER_FAR = 2u;
+const uint DOF_PASS_COMPOSITE = 3u;
 
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer CompositeRoot {
     uint source_texture;
@@ -417,6 +424,40 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer BloomRoot {
     float knee;
     vec2 input_texel;
     vec2 _pad0;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer TileRoot {
+    uint input_texture;
+    uint output_texture;
+    uint width;
+    uint height;
+    uint mode;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer DofRoot {
+    uint color_texture;
+    uint depth_texture;
+    uint sampler_index;
+    uint near_texture;
+    uint far_texture;
+    uint tile_texture;
+    uint output_texture;
+    uint width;
+    uint height;
+    uint pass;
+    uint in_place;
+    uint orthographic;
+    float max_coc;
+    float aperture_scale;
+    float focus_distance;
+    float proj_22;
+    float proj_23;
+    uint _pad0;
+    vec2 half_texel;
+    vec2 full_texel;
 };
 
 #endif

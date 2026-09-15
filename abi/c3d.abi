@@ -419,3 +419,45 @@ root BloomRoot {
     vec2 input_texel;
     vec2 _pad0;
 }
+
+const uint POST_TILE_SIZE = 16;
+const uint TILE_MODE_ALPHA = 0;
+const uint TILE_MODE_VELOCITY = 1;
+const uint DOF_PASS_COC = 0;
+const uint DOF_PASS_GATHER_NEAR = 1;
+const uint DOF_PASS_GATHER_FAR = 2;
+const uint DOF_PASS_COMPOSITE = 3;
+
+root TileRoot {
+    TextureIndex input_texture;
+    TextureIndex output_texture;
+    uint width;
+    uint height;
+    uint mode;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+}
+
+root DofRoot {
+    TextureIndex color_texture;
+    TextureIndex depth_texture;
+    SamplerIndex sampler_index;
+    TextureIndex near_texture;
+    TextureIndex far_texture;
+    TextureIndex tile_texture;
+    TextureIndex output_texture;
+    uint width;
+    uint height;
+    uint pass;
+    uint in_place;
+    uint orthographic;
+    float max_coc;
+    float aperture_scale;
+    float focus_distance;
+    float proj_22;
+    float proj_23;
+    uint _pad0;
+    vec2 half_texel;
+    vec2 full_texel;
+}

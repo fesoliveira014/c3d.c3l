@@ -70,6 +70,28 @@ never rewritten. `2 * levels - 1` dispatches are counted and timed under `POST_C
 bloom or changing `levels` retires the chain through the frame lifecycle; resize recreates it.
 `configure_view` faults `INVALID_ARGUMENT` when bloom is on with `levels` outside `[1, 8]`.
 
+## Depth of field
+
+`PostStack.depth_of_field` with `DofParams { focus_distance; focal_length; aperture; max_coc; }`
+(meters, meters, f-number, half-resolution pixel radius) blurs the scene image around the focus
+distance before bloom and grading. The circle of confusion is the thin-lens formula on a 35 mm
+frame: `dof_aperture_scale` turns the lens settings into a pixel radius per unit of
+`(depth - focus) / depth`, and `dof_coc` clamps the signed result to `max_coc`; negative is in
+front of the focus distance, positive behind it, and a texel without geometry (reverse-Z depth 0)
+sits at infinity. Depth is linearized from the view's projection terms (`ProjectionTerms`),
+perspective or orthographic.
+
+The pass records inside `render_view` after the forward passes: `dof_coc.comp` splits each 2x2
+block into premultiplied half-resolution near and far layers with their coverage in alpha;
+`tile_max.comp` and `tile_neighbor.comp` dilate the near coverage over 16-pixel tiles;
+`dof_gather.comp` blurs each layer with a 48-tap disc (the far layer weights taps by their own
+circle, the near layer uses the dilated radius so it spreads over sharp background);
+`dof_composite.comp` blends far then near over the sharp image and writes `hdr_color` in place.
+Six dispatches are counted and timed under `POST_CHAIN`. Enabling allocates four half-resolution
+RGBA16_FLOAT layers plus the two RG16_FLOAT tile images; disabling retires them.
+`configure_view` faults `INVALID_ARGUMENT` when depth of field is on with a non-positive focal
+length, aperture or `max_coc`, or a focus distance not beyond the focal length.
+
 ## GUI
 
 `gui::post_panel(&view_desc, lut)` edits every setting and returns whether something changed; the
@@ -79,5 +101,5 @@ dispatches and the completed post-chain timing.
 ## Limits
 
 Only the default window view exists. `LINEAR_HDR` output, off-screen targets and per-view timing
-arrive with persistent views. Depth of field, motion blur and temporal anti-aliasing are later
-effects; auto-exposure is not implemented.
+arrive with persistent views. Motion blur and temporal anti-aliasing are later effects;
+auto-exposure is not implemented.

@@ -31,7 +31,16 @@ struct ViewDesc {
 <*
  Working images one view owns, in view_targets order.
 *>
-const uint VIEW_TARGET_COUNT = 2 + post::BLOOM_MAX_LEVELS;
+const uint VIEW_TARGET_COUNT = 2 + post::BLOOM_MAX_LEVELS + 6;
+
+<*
+ Reverse-Z projection terms that recover forward distance from stored depth.
+*>
+struct ProjectionTerms {
+    float m22;
+    float m23;
+    bool  orthographic;
+}
 
 <*
  Renderer-owned view: its configuration and working images.
@@ -42,6 +51,12 @@ struct ViewRecord {
     Target                               post_b;
     Target[post::BLOOM_MAX_LEVELS]       bloom;
     uint                                 bloom_levels;
+    Target                               dof_near;
+    Target                               dof_far;
+    Target                               dof_near_blur;
+    Target                               dof_far_blur;
+    Target                               tile_max;
+    Target                               tile_neighbor;
     gpu::TextureState[VIEW_TARGET_COUNT] frame_states;
 }
 
@@ -70,6 +85,13 @@ fn Target*[VIEW_TARGET_COUNT] view_targets(ViewRecord* record) {
     targets[0] = &record.post_a;
     targets[1] = &record.post_b;
     foreach (level, &target : record.bloom) targets[2 + level] = target;
+    uint next = 2 + post::BLOOM_MAX_LEVELS;
+    targets[next] = &record.dof_near;
+    targets[next + 1] = &record.dof_far;
+    targets[next + 2] = &record.dof_near_blur;
+    targets[next + 3] = &record.dof_far_blur;
+    targets[next + 4] = &record.tile_max;
+    targets[next + 5] = &record.tile_neighbor;
     return targets;
 }
 
