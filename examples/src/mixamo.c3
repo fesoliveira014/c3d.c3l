@@ -1,11 +1,13 @@
 module mixamo_example;
 
 import std::io;
+import std::collections::list;
 import std::io::file;
 import std::io::path;
 import std::math;
 import c3d;
 import c3d::anim;
+import c3d::anim::retarget;
 import c3d::asset;
 import c3d::asset::fbx;
 import c3d::asset::image;
@@ -38,6 +40,8 @@ const float STATS_PERIOD_SECONDS @local = 2;
 const uint MODEL_CAPACITY @local = 4;
 const usz MOUSE_BUTTON_LEFT @local = 1; // SDL button index
 const String DEFAULT_MODEL @local = "../assets/mixamo/character.fbx";
+const String[] DEFAULT_ANIMATIONS @local = { "../assets/mixamo/walk.fbx", "../assets/mixamo/run.fbx" };
+const usz MAX_ANIMATION_FILES @local = 8;
 const String ENVIRONMENT_FILE @local = "../assets/ibl/studio_small_09_1k.hdr";
 
 struct Orbit @local {
@@ -98,13 +102,48 @@ fn usz skeleton_count(ModelTemplate* template) @local {
     return count;
 }
 
-fn void handle_keys(Input* input, AssetStore* assets, Scene* scene, Node* left, Node* right, ClipId[] clips) @local {
+struct Playback @local {
+    ClipId[] stripped;
+    ClipId[] kept;
+    bool     keep_root_motion;
+    usz      left_clip;
+    usz      right_clip;
+}
+
+fn ClipId[] Playback.clips(&self) @local {
+    return self.keep_root_motion ? self.kept : self.stripped;
+}
+
+fn void cross_fade_to(Animator* animator, AssetStore* assets, ClipId clip) @local {
+    animator.play(assets, clip, CROSS_FADE_SECONDS)!!;
+    sz last = animator.actions.len() - 1;
+    if (last > 0) animator.cross_fade(&animator.actions[last - 1], &animator.actions[last], CROSS_FADE_SECONDS);
+}
+
+fn void handle_keys(
+    Input* input,
+    AssetStore* assets,
+    Scene* scene,
+    Node* left,
+    Node* right,
+    Playback* playback,
+) @local {
     Animator* left_animator = scene.get(left, Animator);
+    ClipId[] clips = playback.clips();
     for (usz digit = 0; digit < clips.len && digit < CLIP_KEY_COUNT; digit++) {
         if (!input.keys_pressed[(usz)sdl::Scancode.CODE_1 + digit]) continue;
-        left_animator.play(assets, clips[digit], CROSS_FADE_SECONDS)!!;
-        sz last = left_animator.actions.len() - 1;
-        left_animator.cross_fade(&left_animator.actions[last - 1], &left_animator.actions[last], CROSS_FADE_SECONDS);
+        playback.left_clip = digit;
+        cross_fade_to(left_animator, assets, clips[digit]);
+    }
+    if (input.keys_pressed[(usz)sdl::Scancode.R] && playback.kept.len) {
+        playback.keep_root_motion = !playback.keep_root_motion;
+        ClipId[] variant = playback.clips();
+        cross_fade_to(left_animator, assets, variant[playback.left_clip]);
+        Animator* right_animator = scene.get(right, Animator);
+        float speed = right_animator.actions.len() ? right_animator.actions[right_animator.actions.len() - 1].speed : 1;
+        cross_fade_to(right_animator, assets, variant[playback.right_clip]);
+        right_animator.actions[right_animator.actions.len() - 1].speed = speed;
+        io::printfn("root motion %s", playback.keep_root_motion ? "kept" : "stripped");
     }
     if (input.keys_pressed[(usz)sdl::Scancode.Q] && left_animator.actions.len()) {
         Action* action = &left_animator.actions[left_animator.actions.len() - 1];
@@ -116,6 +155,30 @@ fn void handle_keys(Input* input, AssetStore* assets, Scene* scene, Node* left, 
     }
 }
 
+fn Playback load_animations(AssetStore* assets, ModelId model, String[] paths) @local {
+    List{ClipId} stripped;
+    List{ClipId} kept;
+    stripped.init(mem);
+    kept.init(mem);
+    foreach (path : paths) {
+        RetargetOptions options = retarget::RETARGET_OPTIONS_DEFAULT;
+        options.root_motion = RootMotion.STRIP_XZ;
+        ClipId[]? in_place = fbx::load_animations(mem, assets, path, model, options);
+        if (catch excuse = in_place) {
+            io::printfn("Loading %s failed: %s", path, excuse);
+            continue;
+        }
+        options.root_motion = RootMotion.KEEP;
+        ClipId[] moving = fbx::load_animations(mem, assets, path, model, options)!!;
+        io::printfn("%s: %d clips", path, in_place.len);
+        foreach (clip : in_place) stripped.push(clip);
+        foreach (clip : moving) kept.push(clip);
+        alloc::free(mem, in_place.ptr);
+        alloc::free(mem, moving.ptr);
+    }
+    return { .stripped = stripped.array_view(), .kept = kept.array_view() };
+}
+
 fn String example_path(String relative) @local {
     Path source = path::tnew($$FILEPATH)!!;
     return (String)source.parent()!!.tappend(relative)!!;
@@ -124,11 +187,15 @@ fn String example_path(String relative) @local {
 fn int main(String[] args) {
     bool gpu_timings;
     String model_path;
+    String[MAX_ANIMATION_FILES] animation_paths;
+    usz animation_count;
     foreach (argument : args[1..]) {
         if (argument == "--gpu-timings") {
             gpu_timings = true;
         } else if (!model_path.len && !argument.starts_with("--")) {
             model_path = argument;
+        } else if (animation_count < MAX_ANIMATION_FILES && !argument.starts_with("--")) {
+            animation_paths[animation_count++] = argument;
         } else {
             io::printfn("Unknown argument: %s", argument);
             return 1;
@@ -139,8 +206,12 @@ fn int main(String[] args) {
         model_path = example_path(DEFAULT_MODEL);
         if (!file::is_file(model_path)) {
             io::printn("Download a Mixamo character as FBX Binary with skin to examples/assets/mixamo/character.fbx,");
-            io::printn("or pass the path of an FBX file.");
+            io::printn("or pass the path of an FBX file followed by animation files.");
             return 1;
+        }
+        foreach (relative : DEFAULT_ANIMATIONS) {
+            String candidate = example_path(relative);
+            if (file::is_file(candidate)) animation_paths[animation_count++] = candidate;
         }
     }
 
@@ -197,7 +268,8 @@ fn int main(String[] args) {
         model_path, template.nodes.len, template.meshes.len, template.cameras.len, template.lights.len,
         skeleton_count(template), template.skins.len, template.clips.len);
 
-    ClipId[] clips = scene.get(left, ModelInstance).clips;
+    Playback playback = load_animations(&assets, model, animation_paths[:animation_count]);
+    ClipId[] clips = playback.stripped.len ? playback.stripped : scene.get(left, ModelInstance).clips;
     anim::add_animator(&scene, left);
     anim::add_animator(&scene, right);
     if (clips.len) {
@@ -225,13 +297,21 @@ fn int main(String[] args) {
     scene.update_world();
     renderer.prepare_scene(&scene)!!;
 
-    io::printn("1-9 cross-fade clip, Q quarter weight, SPACE pause, drag to orbit, wheel to zoom, Escape quits");
+    io::printn("1-9 cross-fade clip, R toggle root motion, Q quarter weight, SPACE pause");
+    io::printn("drag to orbit, wheel to zoom, Escape quits");
     double last_print;
     while (window.poll()) {
         Input* input = &window.input;
         if (input.keys_released[(usz)sdl::Scancode.ESCAPE]) break;
 
-        handle_keys(input, &assets, &scene, left, right, clips);
+        handle_keys(
+            input:    input,
+            assets:   &assets,
+            scene:    &scene,
+            left:     left,
+            right:    right,
+            playback: &playback,
+        );
         anim::update(&assets, &scene, (float)window.clock.delta);
         apply_orbit(&orbit, input, camera_node);
         scene.update_world();

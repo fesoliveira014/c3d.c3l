@@ -219,15 +219,18 @@ python3 scripts/build.py --example animation
 See [Animation](docs/animation.md) for the update sequence, blending and the
 borrowed-pointer rules.
 
-`mixamo` loads an FBX character through ufbx, instantiates it twice and plays its
-first clip on both, the second at half speed, with the same keys as `animation`.
-Without a path it reads `examples/assets/mixamo/character.fbx`, which is not
-committed; [the README there](examples/assets/mixamo/README.md) gives the Mixamo
-download settings:
+`mixamo` loads an FBX character through ufbx, instantiates it twice and plays
+Mixamo animation files retargeted onto it by name: keys `1`-`9` cross-fade the
+left instance between clips, the right instance loops the first at half speed,
+`R` toggles between the in-place and the kept-root-motion variant. Without
+arguments it reads `character.fbx`, `walk.fbx` and `run.fbx` from
+`examples/assets/mixamo/`, which are not committed;
+[the README there](examples/assets/mixamo/README.md) gives the Mixamo download
+settings:
 
 ```bash
 python3 scripts/build.py --target mixamo
-./examples/build/mixamo path/to/character.fbx
+./examples/build/mixamo path/to/character.fbx path/to/walk.fbx path/to/run.fbx
 ```
 
 See [Models, glTF and FBX import](docs/models.md) for the FBX conversion.

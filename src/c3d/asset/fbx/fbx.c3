@@ -1,6 +1,7 @@
 module c3d::asset::fbx;
 
 import c3d;
+import c3d::anim::retarget;
 import c3d::asset;
 import std::io::path;
 import ufbx;
@@ -38,6 +39,7 @@ struct Importer @private {
     uint[]           node_remap;
     ModelTemplate    template;
     ModelId          model;
+    bool             nodes_only;
 }
 
 <*
@@ -59,6 +61,61 @@ fn ModelId? load_model(AssetStore* assets, String path, LoadOptions options = as
         import_model(&importer)!;
     };
     return importer.model;
+}
+
+<*
+ Load every animation stack of the file as clips rebound onto the target model.
+ @param allocator : "Owns the returned array."
+ @param [&inout] assets : "Receives the clips; unchanged on a fault."
+ @return? c3d::ASSET_IO_ERROR, c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID
+ @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
+ @require path.len > 0
+*>
+fn ClipId[]? load_animations(
+    alloc::Allocator allocator,
+    AssetStore* assets,
+    String path,
+    ModelId target,
+    RetargetOptions options = retarget::RETARGET_OPTIONS_DEFAULT,
+) {
+    ModelAsset* record = assets.models.try_get(target)!;
+    Importer importer = {
+        .assets     = assets,
+        .key        = path,
+        .options    = { .animations = true },
+        .nodes_only = true,
+    };
+    defer free_tables(&importer);
+    importer.scene = parse_scene(path)!;
+    defer ufbx::free_scene(importer.scene);
+
+    ClipId[] clips = alloc::new_array(allocator, ClipId, importer.scene.anim_stacks.len);
+    defer catch alloc::free(allocator, clips.ptr);
+    defer catch remove_clips(assets, clips);
+    @pool() {
+        String mode = mode_label(options.root_motion);
+        foreach (index, stack : importer.scene.anim_stacks) {
+            String key = string::tformat("%s#anim/%d#%s#%s", path, index, record.header.key, mode);
+            if (assets.keys.has_key(key)) return c3d::INVALID_ARGUMENT~;
+        }
+        importer.node_remap = alloc::new_array(assets.allocator, uint, importer.scene.nodes.len);
+        importer.node_remap[..] = NOT_IMPORTED;
+        build_template(&importer)!;
+        foreach (index, stack : importer.scene.anim_stacks) {
+            AnimationClip baked = convert_stack(&importer, stack, tmem)!;
+            AnimationClip clip = retarget::retarget_by_name(
+                allocator:    assets.allocator,
+                source:       &baked,
+                source_nodes: importer.template.nodes,
+                target:       &record.data,
+                options:      options,
+            )!;
+            defer catch asset::free_clip(assets.allocator, &clip);
+            String key = string::tformat("%s#anim/%d#%s#%s", path, index, record.header.key, mode);
+            clips[index] = assets.add_clip_owned(&clip, key)!;
+        }
+    };
+    return clips;
 }
 
 fn ufbx::Scene*? parse_scene(String path) @private {
@@ -143,6 +200,18 @@ fn void free_tables(Importer* importer) @private {
     alloc::free(allocator, importer.skeletons.ptr);
     alloc::free(allocator, importer.clips.ptr);
     alloc::free(allocator, importer.node_remap.ptr);
+}
+
+fn void remove_clips(AssetStore* assets, ClipId[] clips) @private {
+    foreach (id : clips) if (id.generation) assets.remove_clip(id);
+}
+
+fn String mode_label(RootMotion mode) @private {
+    switch (mode) {
+        case KEEP: return "keep";
+        case STRIP_XZ: return "strip_xz";
+        case EXTRACT: return "extract";
+    }
 }
 
 fn fault load_fault(fault excuse) @private {
