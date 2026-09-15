@@ -32,6 +32,7 @@ const uint TIMESTAMPS_PER_PASS = 2;
 *>
 struct Stats {
     uint  draws;
+    uint  post_dispatches;
     uint  triangles;
     uint  culled;
     uint  lights;

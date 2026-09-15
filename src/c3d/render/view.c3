@@ -100,6 +100,7 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
     if (!self.has_output) return;
     Camera* camera = scene.get(camera_node, Camera);
     if (!camera) return c3d::INVALID_ARGUMENT~;
+    self.view_exposure = camera.exposure;
 
     Vec2 viewport = { (float)self.hdr_color.width, (float)self.hdr_color.height };
     CameraMatrices matrices = camera::derive_matrices(*camera, camera_node.world, viewport);
@@ -350,19 +351,21 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
 }
 
 <*
- Composite the default view into the window output.
+ Display-process the default view into the window output.
  @param [&inout] self : "Open frame with its scene view already recorded."
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
  @return? gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::DEVICE_BUSY, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
  @return? gpu::UNSUPPORTED_FEATURE, c3d::SHADER_NOT_FOUND, gpu::SHADER_INVALID
  @return? gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL
+ @return? c3d::INVALID_ID, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
+ @return? gpu::RESOURCE_IN_USE, gpu::DESCRIPTOR_HEAP_FULL
  @require self.frame_open, !self.overlay_open
 *>
 fn void? Renderer.composite_view(&self) {
     if (!self.has_output) return;
 
-    return composite_target(self, &self.hdr_color);
+    return post::record_display(self, self.views.get(self.default_view), self.view_exposure);
 }
 
 <*
@@ -430,6 +433,7 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
         }
     };
     if (transmission) self.pipelines.get(&self.device, snapshot_pipeline_key())!;
+    post::prepare_display(self, self.views.get(self.default_view))!;
     (void)resolve_view_environments(self, scene, sheen)!;
     if (!has_environment_preparations(self) && !self.pending_copies.len()
         && !self.pending_texture_uploads.len() && !self.pending_upload_retire.len()) return;

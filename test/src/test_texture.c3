@@ -4,6 +4,7 @@ import c3d;
 import c3d::material;
 import c3d::asset;
 import c3d::render;
+import c3d::render::post;
 import std::math;
 import c3d::shader;
 import gpu;
@@ -153,7 +154,7 @@ fn void test_texture_descriptor_faults_precede_missing_pixels() @test {
         { .width = 1, .height = 0, .layers = 1, .mip_levels = 1 },
         { .width = 1, .height = 1, .layers = 1, .mip_levels = 2 },
         { .width = uint::max, .height = uint::max, .layers = 1, .mip_levels = 1 },
-        { .width = 1, .height = 1, .depth = 1, .layers = 1, .mip_levels = 1 },
+        { .width = 1, .height = 1, .depth = 1, .layers = 1, .mip_levels = 1, .generate_mips = true },
         { .width = 1, .height = 1, .layers = 2, .mip_levels = 1 },
         { .width = 1, .height = 1, .layers = 1, .mip_levels = 1, .is_cube = true },
     };
@@ -224,5 +225,43 @@ fn void test_supplied_bc7_size_wrap_is_invalid_argument() @test {
         assert(excuse == c3d::INVALID_ARGUMENT);
     } else {
         assert(false, "Wrapped BC7 footprint was accepted");
+    }
+}
+
+fn void test_texture_mips_accept_a_single_mip_rgba8_volume() @test {
+    char[] pixels = post::identity_lut(mem, 4);
+    defer free(pixels.ptr);
+    TextureMipChain chain = render::create_texture_mips(mem, post::identity_lut_desc(4), pixels)!!;
+    defer render::destroy_texture_mips(&chain);
+
+    assert(chain.mip_count == 1 && chain.layer_count == 1);
+    assert(chain.pixels.len == 256);
+    assert(chain.pixels[((3 * 4 + 2) * 4 + 1) * 4] == 85);
+}
+
+fn void test_texture_mips_reject_volumes_with_mips_or_other_formats() @test {
+    char[] pixels = post::identity_lut(mem, 2);
+    defer free(pixels.ptr);
+
+    material::TextureDesc mipped = post::identity_lut_desc(2);
+    mipped.generate_mips = true;
+    if (catch excuse = render::create_texture_mips(mem, mipped, pixels)) {
+        assert(excuse == c3d::UNSUPPORTED);
+    } else {
+        assert(false);
+    }
+
+    material::TextureDesc half = material::texture_3d_desc(2, 2, 2, RGBA16_FLOAT);
+    if (catch excuse = render::create_texture_mips(mem, half, pixels)) {
+        assert(excuse == c3d::UNSUPPORTED);
+    } else {
+        assert(false);
+    }
+
+    TextureMipData[1] levels = {{ .mip = 0, .layer = 0, .bytes = pixels }};
+    if (catch excuse = render::create_supplied_texture_mips(mem, post::identity_lut_desc(2), levels[..])) {
+        assert(excuse == c3d::UNSUPPORTED);
+    } else {
+        assert(false);
     }
 }

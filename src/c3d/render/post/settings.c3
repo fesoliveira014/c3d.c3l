@@ -1,0 +1,152 @@
+module c3d::render::post;
+
+import c3d;
+import c3d::shader;
+import gpu;
+import std::math;
+
+const float WHITE_BALANCE_RANGE @private = 100.0f / 65.0f; // unit inputs span the same chromaticity shift as a [-100, 100] control
+const float D65_X @private = 0.31271f;
+const float WARM_SHIFT @private = 0.1f;
+const float COOL_SHIFT @private = 0.05f;
+const float TINT_SHIFT @private = 0.05f;
+const Vec3 D65_LMS @private = { 0.949237f, 1.03542f, 1.08728f };
+
+<*
+ Display tone mapping operator.
+*>
+enum Tonemap {
+    NONE,
+    ACES,
+    AGX,
+    REINHARD,
+}
+
+$assert Tonemap.NONE.ordinal == shader::TONEMAP_NONE;
+$assert Tonemap.ACES.ordinal == shader::TONEMAP_ACES;
+$assert Tonemap.AGX.ordinal == shader::TONEMAP_AGX;
+$assert Tonemap.REINHARD.ordinal == shader::TONEMAP_REINHARD;
+
+<*
+ Display grading applied to scene-linear color before output encoding.
+*>
+struct GradeParams {
+    Tonemap   tonemap;
+    float     contrast;
+    float     saturation;
+    float     temperature;
+    float     tint;
+    Vec3      lift;
+    Vec3      gamma;
+    Vec3      gain;
+    TextureId lut;
+}
+
+<*
+ Display processing of one view; a zeroed value is not neutral.
+*>
+struct PostStack {
+    GradeParams grade;
+    bool        fxaa;
+}
+
+<*
+ Neutral grading with ACES and FXAA enabled.
+*>
+fn PostStack default_post_stack() {
+    return {
+        .grade = {
+            .tonemap    = Tonemap.ACES,
+            .contrast   = 1,
+            .saturation = 1,
+            .gamma      = { 1, 1, 1 },
+            .gain       = { 1, 1, 1 },
+        },
+        .fxaa = true,
+    };
+}
+
+<*
+ LMS channel multipliers of the white balance; neutral inputs give one.
+ @param temperature : "Blue to amber in [-1, 1]."
+ @param tint : "Green to magenta in [-1, 1]."
+ @pure
+*>
+fn Vec3 white_balance_coefficients(float temperature, float tint) {
+    float warmth = temperature * WHITE_BALANCE_RANGE;
+    float shift = tint * WHITE_BALANCE_RANGE;
+    float x = D65_X - warmth * (warmth < 0 ? WARM_SHIFT : COOL_SHIFT);
+    float y = standard_illuminant_y(x) + shift * TINT_SHIFT;
+    return D65_LMS / cie_xy_to_lms(x, y);
+}
+
+<*
+ Texel-center scale of a LUT lookup coordinate.
+ @require size > 1
+ @pure
+*>
+fn float lut_scale(uint size) {
+    return (float)(size - 1) / (float)size;
+}
+
+<*
+ Texel-center offset of a LUT lookup coordinate.
+ @require size > 1
+ @pure
+*>
+fn float lut_offset(uint size) {
+    return 0.5f / (float)size;
+}
+
+<*
+ Pack grading and the camera exposure into the shader layout.
+ @param [&out] gpu_grade : "Overwritten whole."
+ @param [&in] params : "CPU grading."
+ @param lut_texture : "Zero without a LUT."
+ @param lut_size : "Edge texel count of the LUT; ignored without one."
+*>
+fn void write_grade_gpu(
+    GradeGpu* gpu_grade,
+    GradeParams* params,
+    float camera_exposure,
+    gpu::TextureIndex lut_texture = (gpu::TextureIndex)0,
+    gpu::SamplerIndex lut_sampler = (gpu::SamplerIndex)0,
+    uint lut_size = 0,
+) {
+    Vec3 balance = white_balance_coefficients(params.temperature, params.tint);
+    bool lut = lut_texture != (gpu::TextureIndex)0;
+    *gpu_grade = {
+        .exposure    = camera_exposure,
+        .contrast    = params.contrast,
+        .saturation  = params.saturation,
+        .tonemap     = (uint)params.tonemap.ordinal,
+        .balance     = { balance.x, balance.y, balance.z, 0 },
+        .lift        = { params.lift.x, params.lift.y, params.lift.z, 0 },
+        .gamma       = { params.gamma.x, params.gamma.y, params.gamma.z, 0 },
+        .gain        = { params.gain.x, params.gain.y, params.gain.z, 0 },
+        .lut_texture = lut ? lut_texture : (gpu::TextureIndex)0,
+        .lut_sampler = lut ? lut_sampler : (gpu::SamplerIndex)0,
+        .lut_scale   = lut ? lut_scale(lut_size) : 0,
+        .lut_offset  = lut ? lut_offset(lut_size) : 0,
+    };
+}
+
+<*
+ @pure
+*>
+fn float standard_illuminant_y(float x) @private {
+    return 2.87f * x - 3 * x * x - 0.27509507f;
+}
+
+<*
+ @pure
+*>
+fn Vec3 cie_xy_to_lms(float x, float y) @private {
+    float big_x = x / y;
+    float big_z = (1 - x - y) / y;
+    return {
+        0.7328f * big_x + 0.4296f - 0.1624f * big_z,
+        -0.7036f * big_x + 1.6975f + 0.0061f * big_z,
+        0.0030f * big_x + 0.0136f + 0.9834f * big_z,
+    };
+}

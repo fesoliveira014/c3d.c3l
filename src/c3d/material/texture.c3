@@ -82,3 +82,24 @@ fn TextureDesc texture_cube_desc(uint size, PixelFormat format, ZString debug_na
 
     return desc;
 }
+
+<*
+ Single-mip three-dimensional description.
+*>
+fn TextureDesc texture_3d_desc(
+    uint width,
+    uint height,
+    uint depth,
+    PixelFormat format,
+    ZString debug_name = "",
+) {
+    return {
+        .width      = width,
+        .height     = height,
+        .depth      = depth,
+        .layers     = 1,
+        .format     = format,
+        .mip_levels = 1,
+        .debug_name = debug_name,
+    };
+}

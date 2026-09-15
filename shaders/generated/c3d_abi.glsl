@@ -53,6 +53,11 @@ const uint PHYSICAL_EXTENSION_MAP_THICKNESS = 16u;
 const uint SHEEN_LUT_SIZE = 256u;
 const uint SHEEN_LUT_SAMPLES = 4096u;
 const uint SHEEN_PREFILTER_SAMPLES = 4096u;
+const uint TONEMAP_NONE = 0u;
+const uint TONEMAP_ACES = 1u;
+const uint TONEMAP_AGX = 2u;
+const uint TONEMAP_REINHARD = 3u;
+const uint POST_GROUP_SIZE = 8u;
 
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer CompositeRoot {
     uint source_texture;
@@ -349,6 +354,52 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer PhysicalMat
     uint _pad1;
     TextureMapGpu transmission_map;
     TextureMapGpu thickness_map;
+};
+
+struct GradeGpu {
+    float exposure;
+    float contrast;
+    float saturation;
+    uint tonemap;
+    vec4 balance;
+    vec4 lift;
+    vec4 gamma;
+    vec4 gain;
+    uint lut_texture;
+    uint lut_sampler;
+    float lut_scale;
+    float lut_offset;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer GradeRoot {
+    uint input_texture;
+    uint sampler_index;
+    uint output_texture;
+    uint width;
+    uint height;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+    GradeGpu grade;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer FxaaRoot {
+    uint input_texture;
+    uint sampler_index;
+    uint output_texture;
+    uint width;
+    uint height;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer DisplayRoot {
+    uint source_texture;
+    uint source_sampler;
+    uint _pad0;
+    uint _pad1;
+    GradeGpu grade;
 };
 
 #endif
