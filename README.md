@@ -89,11 +89,10 @@ git clone -c core.symlinks=true --recurse-submodules https://github.com/fesolive
 cd C:\repos\c3d.c3l
 ```
 
-The Box3D build runs under Git Bash and locates MSVC through `vswhere`, so put Git's `bin`
-directory on PATH for the session before initializing dependencies:
+Dependency initialization locates Git Bash beside the Git installation on PATH and loads
+its Unix tools. The Box3D build locates MSVC through `vswhere`:
 
 ```powershell
-$env:PATH = 'C:\Program Files\Git\bin;' + $env:PATH
 python scripts\build.py --init-deps --skip-abi --skip-shaders --skip-build
 python scripts\build.py --test
 c3c run cube --path examples

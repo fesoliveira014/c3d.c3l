@@ -71,14 +71,22 @@ def run(command: list[str], cwd: Path, verbose: bool) -> None:
         raise BuildError(f"command failed ({result.returncode}): {' '.join(command)}")
 
 
-# CreateProcess searches System32 before PATH for a bare name, so "bash" is WSL's bash.exe on any
-# Windows host with WSL; an absolute path from PATH order bypasses that lookup.
-def shell(name: str) -> str:
+# Windows PATH can resolve bash to WSL even through shutil.which.
+def shell(name: str) -> list[str]:
+    if sys.platform == "win32":
+        git = shutil.which("git")
+        if git is not None:
+            for directory in Path(git).resolve().parents[:3]:
+                executable = directory / "bin" / f"{name}.exe"
+                if executable.is_file():
+                    # Git's login profile supplies its Unix tools on a native Windows PATH.
+                    return [str(executable), "-l"]
+        raise BuildError(f"Git for Windows '{name}' not found (install Git for Windows and put git.exe on PATH)")
+
     path = shutil.which(name)
     if path is None:
-        hint = " (install Git for Windows and put its bin directory on PATH)" if sys.platform == "win32" else ""
-        raise BuildError(f"'{name}' not found on PATH{hint}")
-    return path
+        raise BuildError(f"'{name}' not found on PATH")
+    return [path]
 
 
 def capture(command: list[str], cwd: Path) -> str:
@@ -142,12 +150,12 @@ def step_deps(options: Options) -> None:
         run(["git", "submodule", "update", "--init", "--recursive"], ROOT, options.verbose)
         run([sys.executable, str(LIB / "gpu.c3l" / "scripts" / "fetch_vma_libs.py")], ROOT, options.verbose)
         fetch = LIB / "c3imgui.c3l" / "fetch_linked_libs.sh"
-        run([shell("bash"), str(fetch), C3IMGUI_RELEASE_TAG], ROOT, options.verbose)
+        run([*shell("bash"), fetch.name, C3IMGUI_RELEASE_TAG], fetch.parent, options.verbose)
         for name in SUBMODULES:
             for script_name in NATIVE_BUILD_SCRIPTS:
                 script = LIB / name / script_name
                 if script.exists():
-                    run([shell("sh"), str(script)], script.parent, options.verbose)
+                    run([*shell("sh"), script.name], script.parent, options.verbose)
 
     missing = [name for name in SUBMODULES if not (LIB / name / "manifest.json").exists()]
     if missing:
