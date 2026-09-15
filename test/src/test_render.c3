@@ -376,6 +376,7 @@ fn void test_draw_root_packs_normal_columns() @test {
     render::write_draw_root(
         root:      root,
         world:     transform.to_mat4(),
+        prev_world: matrix::IDENTITY4,
         frame:     (gpu::GpuAddress)0x100,
         geometry:  (gpu::GpuAddress)0x200,
         material:  (gpu::GpuAddress)0x300,
@@ -383,6 +384,7 @@ fn void test_draw_root_packs_normal_columns() @test {
     );
     assert(root.model[3] == (Vec4){ 1, 2, 3, 1 });
     assert(root.normal_0.x == 0.5f && root.normal_1.y == 1 && root.normal_2.z == 1);
+    assert(root.prev_model[3] == (Vec4){ 0, 0, 0, 1 });
     assert((ulong)root.frame == 0x100 && (ulong)root.geometry == 0x200 && (ulong)root.material == 0x300);
     assert(root.object_id == 9 && (ulong)root.skin == 0);
     assert(root.flags == 0);

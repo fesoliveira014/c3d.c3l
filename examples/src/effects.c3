@@ -130,6 +130,7 @@ fn void? run_gui(
     view_desc.post.depth_of_field = true;
     view_desc.post.dof_params.focus_distance = FOCUS_DISTANCE;
     view_desc.post.dof_params.aperture = APERTURE;
+    view_desc.post.motion_blur = true;
     render::configure_view(renderer, renderer.default_view, view_desc)!;
     Quat roll = quaternion::from_axis_angle{float}({ 0, 0, 1 }, math::deg_to_rad(CUBE_ROLL_DEGREES));
     float spin_angle;

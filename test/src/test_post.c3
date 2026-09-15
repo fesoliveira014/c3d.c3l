@@ -88,6 +88,9 @@ fn void test_default_post_stack_disables_every_effect() @test {
     assert(!stack.depth_of_field);
     assert(stack.dof_params.focus_distance == 5 && stack.dof_params.focal_length == 0.05f);
     assert(stack.dof_params.aperture == 2.8f && stack.dof_params.max_coc == 16);
+    assert(!stack.motion_blur);
+    assert(stack.motion_blur_params.shutter == 0.5f && stack.motion_blur_params.samples == 12);
+    assert(stack.motion_blur_params.max_velocity == 32);
 }
 
 fn void test_post_stack_valid_rejects_out_of_range_enabled_effects() @test {
@@ -110,6 +113,14 @@ fn void test_post_stack_valid_rejects_out_of_range_enabled_effects() @test {
     stack.dof_params.aperture = 2.8f;
     stack.dof_params.focus_distance = stack.dof_params.focal_length;
     assert(!post::post_stack_valid(&stack));
+
+    stack.depth_of_field = false;
+    stack.motion_blur_params.samples = post::MOTION_BLUR_MAX_SAMPLES + 1;
+    assert(post::post_stack_valid(&stack));
+    stack.motion_blur = true;
+    assert(!post::post_stack_valid(&stack));
+    stack.motion_blur_params.samples = post::MOTION_BLUR_MAX_SAMPLES;
+    assert(post::post_stack_valid(&stack));
 }
 
 fn void test_tile_count_rounds_up() @test {

@@ -35,6 +35,7 @@ struct DrawItem @private {
     gpu::GpuAddress morph;
     gpu::GpuAddress root;
     gpu::FrontFace  front_face;
+    bool            moved;
 }
 
 struct DrawState @private {
@@ -110,6 +111,7 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
         .orthographic = camera.projection == Projection.ORTHOGRAPHIC,
     };
     ViewRecord* view_record = self.views.get(self.default_view);
+    bool motion_blur = view_record.desc.post.motion_blur;
     Frame* slot = &self.frames[self.frame_index % FRAMES_IN_FLIGHT];
     bool view_reflected = matrices.view.determinant() < 0;
 
@@ -259,12 +261,20 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
             environment: environment_address,
             scene_color: transmission_items.len ? self.scene_color.view.index : (gpu::TextureIndex)0,
             scene_sampler: transmission_items.len ? self.linear_clamp_sampler : (gpu::SamplerIndex)0,
+            prev_view_proj: motion_blur && view_record.history.valid ? &view_record.history.view_proj : null,
         );
         foreach (&item : items) {
+            Node* node = item.candidate.node;
+            Mat4 prev_world = node.world;
+            if (motion_blur && view_record.history.has_previous(node)) {
+                prev_world = view_record.history.previous_model(node);
+            }
+            item.moved = !(prev_world == node.world);
             gpu::MappedGpuSpan draw_span = slot.upload.take(&self.device, DrawRoot::size, STREAM_ALIGNMENT)!;
             write_draw_root(
                 root:          (DrawRoot*)draw_span.bytes.ptr,
-                world:         item.candidate.node.world,
+                world:         node.world,
+                prev_world:    prev_world,
                 frame:         frame_span.address,
                 geometry:      item.geometry.root,
                 material:      item.material.address,
@@ -354,7 +364,18 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
             slot.timed[Pass.FORWARD_TRANSPARENT.ordinal] = true;
         }
 
+        if (motion_blur) {
+            post::record_motion_blur(
+                renderer: self,
+                record:   view_record,
+                items:    opaque_items,
+                matrices: &matrices,
+            )!;
+        }
         if (view_record.desc.post.depth_of_field) post::record_dof(self, view_record)!;
+        if (motion_blur) {
+            view_record.history.commit(self.allocator, scene, candidates, matrices.view_proj);
+        }
     };
 }
 
@@ -454,6 +475,7 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
  @param [&in] matrices : "Derived for the viewport."
  @param [&in] camera : "Supplies near, far and exposure."
  @param viewport : "Pixels."
+ @param [in] prev_view_proj : "Null repeats the current view-projection."
 *>
 fn void write_frame_root(
     FrameRoot* root,
@@ -470,12 +492,14 @@ fn void write_frame_root(
     gpu::GpuAddress environment = (gpu::GpuAddress)0,
     gpu::TextureIndex scene_color = (gpu::TextureIndex)0,
     gpu::SamplerIndex scene_sampler = (gpu::SamplerIndex)0,
+    Mat4* prev_view_proj = null,
 ) {
     *root = {
         .view            = bitcast(matrices.view, Mat4f),
         .proj            = bitcast(matrices.proj, Mat4f),
         .view_proj       = bitcast(matrices.view_proj, Mat4f),
         .inv_view_proj   = bitcast(matrices.inv_view_proj, Mat4f),
+        .prev_view_proj  = bitcast(prev_view_proj ? *prev_view_proj : matrices.view_proj, Mat4f),
         .camera_position = { matrices.position.x, matrices.position.y, matrices.position.z, camera.exposure },
         .camera_params   = { camera.near, camera.far, viewport.x, viewport.y },
         .jitter_time     = { 0, 0, (float)info.time, info.delta },
@@ -495,12 +519,14 @@ fn void write_frame_root(
  Write the per-draw root.
  @param [&out] root : "Overwritten whole."
  @param world : "Affine model matrix."
+ @param prev_world : "Model matrix at the view's previous rendering."
  @param skin : "Joint palette address; zero when unskinned."
  @param morph : "Morph block address; zero when unmorphed."
 *>
 fn void write_draw_root(
     DrawRoot* root,
     Mat4 world,
+    Mat4 prev_world,
     gpu::GpuAddress frame,
     gpu::GpuAddress geometry,
     gpu::GpuAddress material,
@@ -514,20 +540,21 @@ fn void write_draw_root(
 ) {
     Mat3 normal = maths::normal_matrix(world);
     *root = {
-        .model     = bitcast(world, Mat4f),
-        .normal_0  = { normal.m00, normal.m10, normal.m20, 0 },
-        .normal_1  = { normal.m01, normal.m11, normal.m21, 0 },
-        .normal_2  = { normal.m02, normal.m12, normal.m22, 0 },
-        .frame     = frame,
-        .geometry  = geometry,
-        .material  = material,
-        .skin      = skin,
-        .morph     = morph,
-        .object_id = object_id,
-        .sheen_lut = sheen_lut,
+        .model         = bitcast(world, Mat4f),
+        .prev_model    = bitcast(prev_world, Mat4f),
+        .normal_0      = { normal.m00, normal.m10, normal.m20, 0 },
+        .normal_1      = { normal.m01, normal.m11, normal.m21, 0 },
+        .normal_2      = { normal.m02, normal.m12, normal.m22, 0 },
+        .frame         = frame,
+        .geometry      = geometry,
+        .material      = material,
+        .skin          = skin,
+        .morph         = morph,
+        .object_id     = object_id,
+        .sheen_lut     = sheen_lut,
         .sheen_sampler = sheen_sampler,
-        .layers    = layers,
-        .flags     = flags,
+        .layers        = layers,
+        .flags         = flags,
     };
 }
 

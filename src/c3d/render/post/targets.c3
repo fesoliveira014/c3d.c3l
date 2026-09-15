@@ -4,6 +4,7 @@ import c3d::render @public;
 import gpu;
 
 const gpu::Format TILE_FORMAT @private = gpu::Format.RG16_FLOAT;
+const gpu::Format VELOCITY_FORMAT @private = gpu::Format.RG16_FLOAT;
 const ZString[BLOOM_MAX_LEVELS] BLOOM_LEVEL_NAMES @private = {
     "bloom_0", "bloom_1", "bloom_2", "bloom_3", "bloom_4", "bloom_5", "bloom_6", "bloom_7",
 };
@@ -50,6 +51,7 @@ fn void? ensure_effect_targets(Renderer* renderer, ViewRecord* record) {
     if (stack.bloom && !record.bloom_levels) ensure_bloom_chain(renderer, record)!;
     if (stack.depth_of_field && !record.dof_near.texture.is_valid()) ensure_dof_layers(renderer, record)!;
     if (uses_tiles(stack) && !record.tile_max.texture.is_valid()) ensure_tiles(renderer, record)!;
+    if (stack.motion_blur && !record.velocity.texture.is_valid()) ensure_motion_blur_images(renderer, record)!;
 }
 
 <*
@@ -75,6 +77,11 @@ fn void retire_effect_targets(Renderer* renderer, ViewRecord* record) {
         retire_post_target(retire, &record.tile_max);
         retire_post_target(retire, &record.tile_neighbor);
     }
+    if (!stack.motion_blur && record.velocity.texture.is_valid()) {
+        retire.push({ .kind = RetiredKind.ATTACHMENT_VIEW, .attachment_view = record.velocity.attachment });
+        retire_post_target(retire, &record.velocity);
+        retire_post_target(retire, &record.motion_blur_out);
+    }
 }
 
 <*
@@ -87,10 +94,35 @@ fn void release_effect_targets(gpu::Device* device, ViewRecord* record) {
     record.bloom_levels = 0;
     release_dof_layers(device, record);
     release_tiles(device, record);
+    release_motion_blur_images(device, record);
 }
 
 fn bool uses_tiles(PostStack* stack) @private {
-    return stack.depth_of_field;
+    return stack.depth_of_field || stack.motion_blur;
+}
+
+fn void? ensure_motion_blur_images(Renderer* renderer, ViewRecord* record) @private {
+    defer catch release_motion_blur_images(&renderer.device, record);
+    record.velocity = render::allocate_target(
+        device:     &renderer.device,
+        width:      renderer.hdr_color.width,
+        height:     renderer.hdr_color.height,
+        format:     VELOCITY_FORMAT,
+        usage:      { .color_attach, .sampled, .storage },
+        debug_name: "velocity",
+    )!;
+    record.motion_blur_out = allocate_post_target(
+        device:     &renderer.device,
+        width:      renderer.hdr_color.width,
+        height:     renderer.hdr_color.height,
+        format:     render::HDR_FORMAT,
+        debug_name: "motion_blur_out",
+    )!;
+}
+
+fn void release_motion_blur_images(gpu::Device* device, ViewRecord* record) @private {
+    if (record.velocity.texture.is_valid()) render::release_target(device, &record.velocity);
+    if (record.motion_blur_out.texture.is_valid()) release_post_target(device, &record.motion_blur_out);
 }
 
 fn void? ensure_dof_layers(Renderer* renderer, ViewRecord* record) @private {

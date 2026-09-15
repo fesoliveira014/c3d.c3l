@@ -35,6 +35,9 @@ enum ShaderName : int {
     DOF_COC,
     DOF_GATHER,
     DOF_COMPOSITE,
+    VELOCITY_CAMERA,
+    VELOCITY,
+    MOTION_BLUR,
 }
 
 <*
@@ -56,6 +59,11 @@ const uint SHADER_FLAG_SKINNED_U16 = 1 << 2;
  Flag bit for MORPH.
 *>
 const uint SHADER_FLAG_MORPH = 1 << 3;
+
+<*
+ Flag bit for VELOCITY.
+*>
+const uint SHADER_FLAG_VELOCITY = 1 << 4;
 
 const char[*] FULLSCREEN_SPIRV @private = $embed("../../../shaders/spv/fullscreen.spv");
 const char[*] GRADIENT_SPIRV @private = $embed("../../../shaders/spv/gradient.spv");
@@ -98,11 +106,20 @@ const char[*] TILE_NEIGHBOR_SPIRV @private = $embed("../../../shaders/spv/tile_n
 const char[*] DOF_COC_SPIRV @private = $embed("../../../shaders/spv/dof_coc.spv");
 const char[*] DOF_GATHER_SPIRV @private = $embed("../../../shaders/spv/dof_gather.spv");
 const char[*] DOF_COMPOSITE_SPIRV @private = $embed("../../../shaders/spv/dof_composite.spv");
+const char[*] VELOCITY_CAMERA_SPIRV @private = $embed("../../../shaders/spv/velocity_camera.spv");
+const char[*] VELOCITY_SPIRV @private = $embed("../../../shaders/spv/velocity.spv");
+const char[*] MOTION_BLUR_SPIRV @private = $embed("../../../shaders/spv/motion_blur.spv");
+const char[*] MESH_VELOCITY_SPIRV @private = $embed("../../../shaders/spv/mesh_velocity.spv");
+const char[*] MESH_SKINNED_VELOCITY_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_velocity.spv");
+const char[*] MESH_SKINNED_U16_VELOCITY_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_u16_velocity.spv");
+const char[*] MESH_MORPH_VELOCITY_SPIRV @private = $embed("../../../shaders/spv/mesh_morph_velocity.spv");
+const char[*] MESH_SKINNED_MORPH_VELOCITY_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_morph_velocity.spv");
+const char[*] MESH_SKINNED_U16_MORPH_VELOCITY_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_u16_morph_velocity.spv");
 
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[41] SHADER_ENTRIES = {
+const ShaderEntry[50] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -144,4 +161,13 @@ const ShaderEntry[41] SHADER_ENTRIES = {
     { .variant = { .shader = DOF_COC }, .spirv = DOF_COC_SPIRV[..] },
     { .variant = { .shader = DOF_GATHER }, .spirv = DOF_GATHER_SPIRV[..] },
     { .variant = { .shader = DOF_COMPOSITE }, .spirv = DOF_COMPOSITE_SPIRV[..] },
+    { .variant = { .shader = VELOCITY_CAMERA }, .spirv = VELOCITY_CAMERA_SPIRV[..] },
+    { .variant = { .shader = VELOCITY }, .spirv = VELOCITY_SPIRV[..] },
+    { .variant = { .shader = MOTION_BLUR }, .spirv = MOTION_BLUR_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_VELOCITY }, .spirv = MESH_VELOCITY_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED | SHADER_FLAG_VELOCITY }, .spirv = MESH_SKINNED_VELOCITY_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED_U16 | SHADER_FLAG_VELOCITY }, .spirv = MESH_SKINNED_U16_VELOCITY_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_MORPH | SHADER_FLAG_VELOCITY }, .spirv = MESH_MORPH_VELOCITY_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED | SHADER_FLAG_MORPH | SHADER_FLAG_VELOCITY }, .spirv = MESH_SKINNED_MORPH_VELOCITY_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED_U16 | SHADER_FLAG_MORPH | SHADER_FLAG_VELOCITY }, .spirv = MESH_SKINNED_U16_MORPH_VELOCITY_SPIRV[..] },
 };

@@ -460,4 +460,30 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer DofRoot {
     vec2 full_texel;
 };
 
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer VelocityRoot {
+    uint depth_texture;
+    uint sampler_index;
+    uint _pad0;
+    uint _pad1;
+    mat4 inv_view_proj;
+    mat4 prev_view_proj;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer MotionBlurRoot {
+    uint color_texture;
+    uint depth_texture;
+    uint velocity_texture;
+    uint tile_texture;
+    uint output_texture;
+    uint sampler_index;
+    uint width;
+    uint height;
+    uint samples;
+    float shutter;
+    float max_velocity;
+    uint _pad0;
+    vec2 texel;
+    vec2 _pad1;
+};
+
 #endif

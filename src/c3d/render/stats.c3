@@ -12,6 +12,7 @@ enum Pass : int {
     SKY,
     TRANSMISSION,
     FORWARD_TRANSPARENT,
+    VELOCITY,
     POST_CHAIN,
     COMPOSITE,
 }

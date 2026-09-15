@@ -25,6 +25,9 @@ const float APERTURE_MIN @local = 0.7f;
 const float APERTURE_MAX @local = 22;
 const float MAX_COC_MIN @local = 1;
 const float MAX_COC_MAX @local = 32;
+const float SHUTTER_MAX @local = 1;
+const float MAX_VELOCITY_MIN @local = 1;
+const float MAX_VELOCITY_MAX @local = 128;
 const ZString[Tonemap::len] TONEMAP_LABELS @local = { "None", "ACES", "AgX", "Reinhard" };
 
 <*
@@ -78,6 +81,13 @@ fn bool post_panel(ViewDesc* desc, TextureId lut) {
         changed |= edit_grade_factor("Focal length", &dof.focal_length, FOCAL_LENGTH_MIN, FOCAL_LENGTH_MAX);
         changed |= edit_grade_factor("Aperture", &dof.aperture, APERTURE_MIN, APERTURE_MAX);
         changed |= edit_grade_factor("Max CoC", &dof.max_coc, MAX_COC_MIN, MAX_COC_MAX);
+    }
+    if (imgui::collapsing_header("Motion blur", {})) {
+        MotionBlurParams* blur = &desc.post.motion_blur_params;
+        changed |= imgui::checkbox("Enable motion blur", &desc.post.motion_blur);
+        changed |= edit_grade_factor("Shutter", &blur.shutter, 0, SHUTTER_MAX);
+        changed |= edit_level_count("Samples", &blur.samples, 1, post::MOTION_BLUR_MAX_SAMPLES);
+        changed |= edit_grade_factor("Max velocity", &blur.max_velocity, MAX_VELOCITY_MIN, MAX_VELOCITY_MAX);
     }
 
     return changed;
