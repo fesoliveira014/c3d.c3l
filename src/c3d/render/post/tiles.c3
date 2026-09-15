@@ -8,7 +8,7 @@ import gpu;
 <*
  Reduce a storage image to the largest value of every 16x16 block, then dilate by one tile.
  @param [&inout] renderer : "Open frame with the tile pipelines available."
- @param [&inout] input : "Storage read state on entry or transitioned here."
+ @param [&inout] input : "Transitioned to storage read."
  @param [&inout] record : "tile_max and tile_neighbor receive the reductions."
  @param mode : "TILE_MODE_ALPHA or TILE_MODE_VELOCITY."
  @param tiles_x : "Tiles to reduce horizontally; the rest of the images is untouched."
