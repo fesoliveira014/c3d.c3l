@@ -182,6 +182,16 @@ python3 scripts/build.py --example effects
 ./examples/build/effects --gpu-timings
 ```
 
+`views` renders the same kind of scene twice per frame through [views and render
+targets](docs/views.md): a producer camera writes a capture target that a monitor slab samples
+through its material, while the window camera shows the whole scene. Its panel resizes the
+capture, switches it between display LDR and linear HDR output, and scales the window view:
+
+```bash
+python3 scripts/build.py --example views
+./examples/build/views --gpu-timings
+```
+
 `ibl` lights a metallic/roughness sphere grid with two bundled HDR environments.
 Its controls independently select lighting and background, adjust rotation and
 intensity, demonstrate diffuse-only occlusion, and apply per-environment processing

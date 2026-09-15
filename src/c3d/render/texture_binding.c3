@@ -9,6 +9,7 @@ import std::math;
 <* Resolved identities and indices for one material texture slot. *>
 struct TextureBinding {
     TextureId texture;
+    RenderTargetId target;
     SamplerId sampler;
     uint texture_binding_revision;
     uint sampler_revision;
@@ -44,6 +45,8 @@ struct MaterialBindings {
 fn bool texture_binding_matches(TextureBinding first, TextureBinding second) {
     return first.texture.index == second.texture.index
         && first.texture.generation == second.texture.generation
+        && first.target.index == second.target.index
+        && first.target.generation == second.target.generation
         && first.sampler.index == second.sampler.index
         && first.sampler.generation == second.sampler.generation
         && first.texture_binding_revision == second.texture_binding_revision
@@ -55,18 +58,30 @@ fn bool texture_binding_matches(TextureBinding first, TextureBinding second) {
 
 
 fn TextureBinding? resolve_texture_slot(Renderer* renderer, TextureSlot slot) @private {
-    if (slot.texture.kind == TextureRefKind.RENDER_TARGET) return c3d::UNSUPPORTED~;
     if (slot.uv_set > 1) return c3d::INVALID_ARGUMENT~;
-
-    bool present = renderer.assets.textures.is_live(slot.texture.asset);
-    if (present && renderer.assets.texture(slot.texture.asset).desc.is_cube) return c3d::UNSUPPORTED~;
-    TextureId texture = present ? slot.texture.asset : c3d::asset::TEXTURE_WHITE;
     SamplerId sampler = renderer.assets.samplers.is_live(slot.sampler)
         ? slot.sampler : c3d::asset::SAMPLER_LINEAR_REPEAT;
     if (renderer.assets.sampler(sampler).desc.compare_enable) return c3d::INVALID_ARGUMENT~;
-
-    TextureRes* texture_mirror = resolve_texture(renderer, texture)!;
     SamplerRes* sampler_mirror = resolve_sampler(renderer, sampler)!;
+
+    if (slot.texture.kind == TextureRefKind.RENDER_TARGET && renderer.targets.is_live(slot.texture.target)) {
+        TargetRecord* target = renderer.targets.get(slot.texture.target);
+        renderer.sampled_target_bits |= 1u << slot.texture.target.index;
+        return {
+            .target = slot.texture.target,
+            .sampler = sampler,
+            .texture_binding_revision = target.revision,
+            .sampler_revision = sampler_mirror.revision,
+            .texture_index = target.target.view.index,
+            .sampler_index = sampler_mirror.index,
+            .present = true,
+        };
+    }
+
+    bool present = slot.texture.kind == TextureRefKind.ASSET && renderer.assets.textures.is_live(slot.texture.asset);
+    if (present && renderer.assets.texture(slot.texture.asset).desc.is_cube) return c3d::UNSUPPORTED~;
+    TextureId texture = present ? slot.texture.asset : c3d::asset::TEXTURE_WHITE;
+    TextureRes* texture_mirror = resolve_texture(renderer, texture)!;
     return {
         .texture = texture,
         .sampler = sampler,

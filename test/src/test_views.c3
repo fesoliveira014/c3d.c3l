@@ -3,6 +3,7 @@ module c3d::test::views;
 import c3d;
 import c3d::render;
 import c3d::render::post;
+import gpu;
 
 fn void test_working_extent_uses_the_whole_output_for_a_zero_viewport() @test {
     uint[<2>] extent = render::working_extent({}, 1280, 720, 1);
@@ -59,4 +60,23 @@ fn void test_texture_view_desc_defaults() @test {
     ViewDesc window = render::default_view_desc();
     assert(window.output == ViewOutput.WINDOW && window.color == OutputMode.DISPLAY_LDR);
     assert(window.render_scale == 1);
+}
+
+fn void test_texture_binding_matches_tracks_the_target() @test {
+    render::TextureBinding first = {
+        .target = { .index = 2, .generation = 1 },
+        .texture_binding_revision = 3,
+        .texture_index = (gpu::TextureIndex)9,
+        .present = true,
+    };
+    render::TextureBinding same = first;
+    assert(render::texture_binding_matches(first, same));
+
+    render::TextureBinding regenerated = first;
+    regenerated.target.generation = 2;
+    assert(!render::texture_binding_matches(first, regenerated));
+
+    render::TextureBinding resized = first;
+    resized.texture_binding_revision = 4;
+    assert(!render::texture_binding_matches(first, resized));
 }

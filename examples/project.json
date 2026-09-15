@@ -164,6 +164,12 @@
       "sources": [
         "src/effects.c3"
       ]
+    },
+    "views": {
+      "type": "executable",
+      "sources": [
+        "src/views.c3"
+      ]
     }
   }
 }
