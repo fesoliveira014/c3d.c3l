@@ -17,6 +17,11 @@ const Vec3 D65_LMS @private = { 0.949237f, 1.03542f, 1.08728f };
 *>
 const uint BLOOM_MAX_LEVELS = 8; // eight halvings reach 5 px from 1280; more levels only widen the glow
 
+<*
+ Motion-blur taps a pixel may take.
+*>
+const uint MOTION_BLUR_MAX_SAMPLES = 32; // two color, depth and velocity reads per tap bound the filter cost
+
 const float SENSOR_HEIGHT @private = 0.024f; // 35 mm frame; focal_length and aperture read as camera settings
 
 <*
@@ -70,15 +75,26 @@ struct DofParams {
 }
 
 <*
+ Blur along screen motion: shutter as a fraction of the rendered interval, max_velocity in pixels.
+*>
+struct MotionBlurParams {
+    float shutter;
+    uint  samples;
+    float max_velocity;
+}
+
+<*
  Display processing of one view; a zeroed value is not neutral.
 *>
 struct PostStack {
-    GradeParams grade;
-    bool        fxaa;
-    bool        bloom;
-    BloomParams bloom_params;
-    bool        depth_of_field;
-    DofParams   dof_params;
+    GradeParams      grade;
+    bool             fxaa;
+    bool             bloom;
+    BloomParams      bloom_params;
+    bool             depth_of_field;
+    DofParams        dof_params;
+    bool             motion_blur;
+    MotionBlurParams motion_blur_params;
 }
 
 <*
@@ -96,6 +112,7 @@ fn PostStack default_post_stack() {
         .fxaa = true,
         .bloom_params = { .threshold = 1, .knee = 0.5f, .intensity = 0.05f, .levels = 5 },
         .dof_params   = { .focus_distance = 5, .focal_length = 0.05f, .aperture = 2.8f, .max_coc = 16 },
+        .motion_blur_params = { .shutter = 0.5f, .samples = 12, .max_velocity = 32 },
     };
 }
 
@@ -107,6 +124,7 @@ fn PostStack default_post_stack() {
 fn bool post_stack_valid(PostStack* stack) {
     if (stack.bloom && (stack.bloom_params.levels == 0 || stack.bloom_params.levels > BLOOM_MAX_LEVELS)) return false;
     if (stack.depth_of_field && !dof_params_valid(&stack.dof_params)) return false;
+    if (stack.motion_blur && !motion_blur_params_valid(&stack.motion_blur_params)) return false;
     return true;
 }
 
@@ -228,6 +246,14 @@ fn void write_grade_gpu(
 fn bool dof_params_valid(DofParams* params) @private {
     return params.focal_length > 0 && params.aperture > 0 && params.max_coc > 0
       && params.focus_distance > params.focal_length;
+}
+
+<*
+ @pure
+*>
+fn bool motion_blur_params_valid(MotionBlurParams* params) @private {
+    return params.samples > 0 && params.samples <= MOTION_BLUR_MAX_SAMPLES && params.max_velocity > 0
+      && params.shutter >= 0;
 }
 
 <*

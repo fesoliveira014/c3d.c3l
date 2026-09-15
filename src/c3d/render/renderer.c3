@@ -794,6 +794,7 @@ fn void destroy_renderer(Renderer* renderer) {
     foreach (&record : renderer.views.items) {
         post::release_post_targets(&renderer.device, record);
         post::release_effect_targets(&renderer.device, record);
+        free_view_history(renderer.allocator, &record.history);
     }
     pool::destroy_pool{ViewRecord, ViewId}(&renderer.views);
     post::destroy_post_pipelines(&renderer.device, &renderer.post_pipelines);
@@ -885,6 +886,7 @@ fn void? recover_window_output(Renderer* renderer) @private {
         post::release_effect_targets(&renderer.device, record);
         if (record.desc.post.fxaa) post::ensure_post_targets(renderer, record)!;
         post::ensure_effect_targets(renderer, record)!;
+        record.history.valid = false;
     }
     renderer.output_dirty = false;
 }

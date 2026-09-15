@@ -461,3 +461,29 @@ root DofRoot {
     vec2 half_texel;
     vec2 full_texel;
 }
+
+root VelocityRoot {
+    TextureIndex depth_texture;
+    SamplerIndex sampler_index;
+    uint _pad0;
+    uint _pad1;
+    mat4 inv_view_proj;
+    mat4 prev_view_proj;
+}
+
+root MotionBlurRoot {
+    TextureIndex color_texture;
+    TextureIndex depth_texture;
+    TextureIndex velocity_texture;
+    TextureIndex tile_texture;
+    TextureIndex output_texture;
+    SamplerIndex sampler_index;
+    uint width;
+    uint height;
+    uint samples;
+    float shutter;
+    float max_velocity;
+    uint _pad0;
+    vec2 texel;
+    vec2 _pad1;
+}

@@ -18,6 +18,7 @@ struct PostPipelines {
     gpu::PipelineHandle dof_coc;
     gpu::PipelineHandle dof_gather;
     gpu::PipelineHandle dof_composite;
+    gpu::PipelineHandle motion_blur;
 }
 
 struct LutBinding @private {
@@ -79,6 +80,7 @@ fn void? record_display(Renderer* renderer, ViewRecord* record, float camera_exp
 fn void? prepare_display(Renderer* renderer, ViewRecord* record) {
     if (record.desc.post.bloom) ensure_bloom_pipelines(renderer)!;
     if (record.desc.post.depth_of_field) ensure_dof_pipelines(renderer)!;
+    if (record.desc.post.motion_blur) ensure_motion_blur_pipelines(renderer)!;
     if (record.desc.post.fxaa) return ensure_post_pipelines(renderer);
     if (!renderer.swapchain.is_valid()) return;
     renderer.pipelines.get(&renderer.device, display_pipeline_key(renderer.window_target.format))!;
@@ -90,15 +92,14 @@ fn void? prepare_display(Renderer* renderer, ViewRecord* record) {
  @param [&inout] pipelines : "Cleared."
 *>
 fn void destroy_post_pipelines(gpu::Device* device, PostPipelines* pipelines) {
-    gpu::PipelineHandle*[7] handles = {
+    gpu::PipelineHandle*[10] handles = {
         &pipelines.grade, &pipelines.fxaa, &pipelines.bloom_downsample, &pipelines.bloom_upsample,
-        &pipelines.tile_max, &pipelines.tile_neighbor, &pipelines.dof_coc,
+        &pipelines.tile_max, &pipelines.tile_neighbor, &pipelines.dof_coc, &pipelines.dof_gather,
+        &pipelines.dof_composite, &pipelines.motion_blur,
     };
     foreach (handle : handles) {
         if (handle.is_valid()) (void)gpu::destroy_pipeline(device, *handle);
     }
-    if (pipelines.dof_gather.is_valid()) (void)gpu::destroy_pipeline(device, pipelines.dof_gather);
-    if (pipelines.dof_composite.is_valid()) (void)gpu::destroy_pipeline(device, pipelines.dof_composite);
     *pipelines = {};
 }
 

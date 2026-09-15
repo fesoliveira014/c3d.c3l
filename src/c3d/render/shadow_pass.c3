@@ -149,6 +149,7 @@ fn void? record_shadow_layer(
         write_draw_root(
             root: (DrawRoot*)root.bytes.ptr,
             world: draw.candidate.node.world,
+            prev_world: draw.candidate.node.world,
             frame: frame.address,
             geometry: draw.geometry.root,
             material: draw.alpha,

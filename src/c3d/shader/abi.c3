@@ -784,3 +784,51 @@ $assert $reflect(DofRoot.proj_23).offset == 64;
 $assert $reflect(DofRoot._pad0).offset == 68;
 $assert $reflect(DofRoot.half_texel).offset == 72;
 $assert $reflect(DofRoot.full_texel).offset == 80;
+
+struct VelocityRoot {
+    TextureIndex depth_texture;
+    SamplerIndex sampler_index;
+    uint         _pad0;
+    uint         _pad1;
+    Mat4f        inv_view_proj;
+    Mat4f        prev_view_proj;
+}
+$assert VelocityRoot::size == 144;
+$assert $reflect(VelocityRoot.depth_texture).offset == 0;
+$assert $reflect(VelocityRoot.sampler_index).offset == 4;
+$assert $reflect(VelocityRoot._pad0).offset == 8;
+$assert $reflect(VelocityRoot._pad1).offset == 12;
+$assert $reflect(VelocityRoot.inv_view_proj).offset == 16;
+$assert $reflect(VelocityRoot.prev_view_proj).offset == 80;
+
+struct MotionBlurRoot {
+    TextureIndex color_texture;
+    TextureIndex depth_texture;
+    TextureIndex velocity_texture;
+    TextureIndex tile_texture;
+    TextureIndex output_texture;
+    SamplerIndex sampler_index;
+    uint         width;
+    uint         height;
+    uint         samples;
+    float        shutter;
+    float        max_velocity;
+    uint         _pad0;
+    Vec2f        texel;
+    Vec2f        _pad1;
+}
+$assert MotionBlurRoot::size == 64;
+$assert $reflect(MotionBlurRoot.color_texture).offset == 0;
+$assert $reflect(MotionBlurRoot.depth_texture).offset == 4;
+$assert $reflect(MotionBlurRoot.velocity_texture).offset == 8;
+$assert $reflect(MotionBlurRoot.tile_texture).offset == 12;
+$assert $reflect(MotionBlurRoot.output_texture).offset == 16;
+$assert $reflect(MotionBlurRoot.sampler_index).offset == 20;
+$assert $reflect(MotionBlurRoot.width).offset == 24;
+$assert $reflect(MotionBlurRoot.height).offset == 28;
+$assert $reflect(MotionBlurRoot.samples).offset == 32;
+$assert $reflect(MotionBlurRoot.shutter).offset == 36;
+$assert $reflect(MotionBlurRoot.max_velocity).offset == 40;
+$assert $reflect(MotionBlurRoot._pad0).offset == 44;
+$assert $reflect(MotionBlurRoot.texel).offset == 48;
+$assert $reflect(MotionBlurRoot._pad1).offset == 56;

@@ -5,7 +5,9 @@ import c3d::asset;
 import c3d::material;
 import c3d::pool;
 import c3d::render::post;
+import c3d::scene;
 import gpu;
+import std::math;
 
 <*
  Pooled views a renderer holds at once.
@@ -31,7 +33,7 @@ struct ViewDesc {
 <*
  Working images one view owns, in view_targets order.
 *>
-const uint VIEW_TARGET_COUNT = 2 + post::BLOOM_MAX_LEVELS + 6;
+const uint VIEW_TARGET_COUNT = 2 + post::BLOOM_MAX_LEVELS + 8;
 
 <*
  Reverse-Z projection terms that recover forward distance from stored depth.
@@ -40,6 +42,72 @@ struct ProjectionTerms {
     float m22;
     float m23;
     bool  orthographic;
+}
+
+<*
+ Pose the view last rendered: its camera and every node it drew, tagged by entity.
+*>
+struct ViewHistory {
+    bool     valid;
+    Mat4     view_proj;
+    Mat4[]   models;
+    Entity[] owners;
+}
+
+<*
+ Whether the node was drawn by the last rendering of this view.
+ @param [&in] node : "Live node."
+*>
+fn bool ViewHistory.has_previous(&self, Node* node) {
+    if (!self.valid || node.id.index >= self.owners.len) return false;
+    Entity owner = self.owners[node.id.index];
+    return owner.index == node.id.index && owner.generation == node.id.generation;
+}
+
+<*
+ World matrix the node had when this view last rendered it.
+ @param [&in] node : "Live node."
+ @require self.has_previous(node)
+*>
+fn Mat4 ViewHistory.previous_model(&self, Node* node) {
+    return self.models[node.id.index];
+}
+
+<*
+ Remember the drawn candidates' world matrices and the camera for the next rendering.
+ @param [&in] scene : "Sizes the tables to its node capacity."
+ @param candidates : "Every mesh this rendering drew."
+*>
+fn void ViewHistory.commit(
+    &self,
+    Allocator allocator,
+    Scene* scene,
+    MeshCandidate[] candidates,
+    Mat4 view_proj,
+) {
+    if (self.models.len != scene.nodes.len) {
+        free_view_history(allocator, self);
+        self.models = alloc::new_array(allocator, Mat4, scene.nodes.len);
+        self.owners = alloc::new_array(allocator, Entity, scene.nodes.len);
+    }
+    foreach (&candidate : candidates) {
+        self.models[candidate.node.id.index] = candidate.node.world;
+        self.owners[candidate.node.id.index] = candidate.node.id;
+    }
+    self.view_proj = view_proj;
+    self.valid = true;
+}
+
+<*
+ Free the history tables.
+ @param [&inout] history : "Left zeroed."
+*>
+fn void free_view_history(Allocator allocator, ViewHistory* history) {
+    if (history.models.len) {
+        alloc::free(allocator, history.models.ptr);
+        alloc::free(allocator, history.owners.ptr);
+    }
+    *history = {};
 }
 
 <*
@@ -57,6 +125,9 @@ struct ViewRecord {
     Target                               dof_far_blur;
     Target                               tile_max;
     Target                               tile_neighbor;
+    Target                               velocity;
+    Target                               motion_blur_out;
+    ViewHistory                          history;
     gpu::TextureState[VIEW_TARGET_COUNT] frame_states;
 }
 
@@ -92,6 +163,8 @@ fn Target*[VIEW_TARGET_COUNT] view_targets(ViewRecord* record) {
     targets[next + 3] = &record.dof_far_blur;
     targets[next + 4] = &record.tile_max;
     targets[next + 5] = &record.tile_neighbor;
+    targets[next + 6] = &record.velocity;
+    targets[next + 7] = &record.motion_blur_out;
     return targets;
 }
 
@@ -134,8 +207,20 @@ fn void? configure_view(Renderer* renderer, ViewId view, ViewDesc desc) {
         post::retire_post_targets(renderer, record);
     }
     record.desc = desc;
+    record.history.valid = false;
     post::retire_effect_targets(renderer, record);
     post::ensure_effect_targets(renderer, record)!;
+}
+
+<*
+ Forget the view's previous pose so the next rendering carries no motion; a camera cut.
+ @param [&inout] renderer : "No open frame."
+ @return? c3d::INVALID_ID
+ @require !renderer.frame_open
+*>
+fn void? reset_view_history(Renderer* renderer, ViewId view) {
+    ViewRecord* record = renderer.views.try_get(view)!;
+    record.history.valid = false;
 }
 
 fn bool lut_desc_valid(material::TextureDesc* desc) @private {

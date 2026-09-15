@@ -92,14 +92,40 @@ RGBA16_FLOAT layers plus the two RG16_FLOAT tile images; disabling retires them.
 `configure_view` faults `INVALID_ARGUMENT` when depth of field is on with a non-positive focal
 length, aperture or `max_coc`, or a focus distance not beyond the focal length.
 
+## Motion blur
+
+`PostStack.motion_blur` with `MotionBlurParams { shutter; samples; max_velocity; }` (fraction of the
+rendered interval, taps per pixel up to `MOTION_BLUR_MAX_SAMPLES`, pixels) blurs the scene image
+along screen motion before depth of field. Velocity is `current_uv - previous_uv` in framebuffer
+UV (top-left origin) in an RG16_FLOAT `velocity` image: `velocity_camera.frag` first reprojects
+every pixel through the view's previous view-projection from stored depth (no geometry reprojects
+as a direction), then a geometry pass with the `VELOCITY` vertex variant redraws only the opaque
+items whose model matrix changed, with depth test EQUAL and no depth write. Skinned and morphed
+surfaces contribute their node's rigid motion only; a previous deformed pose is not kept. Both
+passes are timed under `VELOCITY`. `tile_max.comp` and `tile_neighbor.comp` reduce the velocity to
+16-pixel tile maxima, and `motion_blur.comp` (McGuire 2012) samples `samples` taps along the
+tile's dominant motion scaled by `shutter` and clamped to `max_velocity`, weighted by cone,
+cylinder and depth order, into `motion_blur_out`, which the later stages read instead of
+`hdr_color`. Three dispatches are counted under `POST_CHAIN`.
+
+The previous pose is renderer-owned per view (`ViewHistory`): the camera's view-projection and
+the world matrix of every mesh the view drew, tagged by entity so a reused slot never matches.
+It is committed at the end of `render_view` when motion blur is on and reset by `configure_view`,
+by a resize and by `render::reset_view_history(&renderer, view)` (a camera cut); the first
+rendering after a reset carries no motion. An aborted frame keeps its commit, so at most one frame
+of invented motion follows a failed submission. Enabling allocates the velocity image, the blur
+output and the shared tile images; disabling retires them. `configure_view` faults
+`INVALID_ARGUMENT` when motion blur is on with `samples` outside `[1, 32]`, a non-positive
+`max_velocity` or a negative `shutter`.
+
 ## GUI
 
 `gui::post_panel(&view_desc, lut)` edits every setting and returns whether something changed; the
 example calls `configure_view` before its next frame when it did. `gui::stats_panel` reports post
-dispatches and the completed post-chain timing.
+dispatches and the completed velocity and post-chain timings.
 
 ## Limits
 
 Only the default window view exists. `LINEAR_HDR` output, off-screen targets and per-view timing
-arrive with persistent views. Motion blur and temporal anti-aliasing are later effects;
-auto-exposure is not implemented.
+arrive with persistent views. Temporal anti-aliasing is a later effect; auto-exposure is not
+implemented.

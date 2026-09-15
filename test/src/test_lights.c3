@@ -264,6 +264,7 @@ fn void test_roots_preserve_light_and_receiver_data() @test {
     render::write_draw_root(
         root: &draw,
         world: matrix::IDENTITY4,
+        prev_world: matrix::IDENTITY4,
         frame: (gpu::GpuAddress)0,
         geometry: (gpu::GpuAddress)0,
         material: (gpu::GpuAddress)0,
