@@ -17,6 +17,6 @@ void main() {
 
     vec2 uv = (vec2(texel) + 0.5) / vec2(root.width, root.height);
     vec3 scene = sample_texture_2d(root.input_texture, root.sampler_index, uv).rgb;
-    vec3 graded = grade_color(scene, root.grade);
+    vec3 graded = grade_color(scene, uv, root.grade);
     store_storage_texture(root.output_texture, ivec2(texel), vec4(graded, display_luma(graded)));
 }

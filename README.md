@@ -174,6 +174,15 @@ python3 scripts/build.py --example post
 ./examples/build/post --gpu-timings
 ```
 
+`effects` adds the [post-processing effects](docs/post.md) to the same kind of scene: an
+emissive lamp under bloom, a row of marbles for focus pulling, a fast-spinning cube and a camera
+sweep. Effects start enabled; the post panel's sections toggle and tune each one:
+
+```bash
+python3 scripts/build.py --example effects
+./examples/build/effects --gpu-timings
+```
+
 `ibl` lights a metallic/roughness sphere grid with two bundled HDR environments.
 Its controls independently select lighting and background, adjust rotation and
 intensity, demonstrate diffuse-only occlusion, and apply per-environment processing

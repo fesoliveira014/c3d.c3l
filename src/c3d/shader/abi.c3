@@ -611,8 +611,12 @@ struct GradeGpu {
     SamplerIndex lut_sampler;
     float        lut_scale;
     float        lut_offset;
+    TextureIndex bloom_texture;
+    SamplerIndex bloom_sampler;
+    float        bloom_intensity;
+    uint         _pad_bloom;
 }
-$assert GradeGpu::size == 96;
+$assert GradeGpu::size == 112;
 $assert $reflect(GradeGpu.exposure).offset == 0;
 $assert $reflect(GradeGpu.contrast).offset == 4;
 $assert $reflect(GradeGpu.saturation).offset == 8;
@@ -625,6 +629,10 @@ $assert $reflect(GradeGpu.lut_texture).offset == 80;
 $assert $reflect(GradeGpu.lut_sampler).offset == 84;
 $assert $reflect(GradeGpu.lut_scale).offset == 88;
 $assert $reflect(GradeGpu.lut_offset).offset == 92;
+$assert $reflect(GradeGpu.bloom_texture).offset == 96;
+$assert $reflect(GradeGpu.bloom_sampler).offset == 100;
+$assert $reflect(GradeGpu.bloom_intensity).offset == 104;
+$assert $reflect(GradeGpu._pad_bloom).offset == 108;
 
 struct GradeRoot {
     TextureIndex input_texture;
@@ -637,7 +645,7 @@ struct GradeRoot {
     uint         _pad2;
     GradeGpu     grade;
 }
-$assert GradeRoot::size == 128;
+$assert GradeRoot::size == 144;
 $assert $reflect(GradeRoot.input_texture).offset == 0;
 $assert $reflect(GradeRoot.sampler_index).offset == 4;
 $assert $reflect(GradeRoot.output_texture).offset == 8;
@@ -675,9 +683,33 @@ struct DisplayRoot {
     uint         _pad1;
     GradeGpu     grade;
 }
-$assert DisplayRoot::size == 112;
+$assert DisplayRoot::size == 128;
 $assert $reflect(DisplayRoot.source_texture).offset == 0;
 $assert $reflect(DisplayRoot.source_sampler).offset == 4;
 $assert $reflect(DisplayRoot._pad0).offset == 8;
 $assert $reflect(DisplayRoot._pad1).offset == 12;
 $assert $reflect(DisplayRoot.grade).offset == 16;
+
+struct BloomRoot {
+    TextureIndex input_texture;
+    SamplerIndex sampler_index;
+    TextureIndex output_texture;
+    uint         width;
+    uint         height;
+    uint         prefilter;
+    float        threshold;
+    float        knee;
+    Vec2f        input_texel;
+    Vec2f        _pad0;
+}
+$assert BloomRoot::size == 48;
+$assert $reflect(BloomRoot.input_texture).offset == 0;
+$assert $reflect(BloomRoot.sampler_index).offset == 4;
+$assert $reflect(BloomRoot.output_texture).offset == 8;
+$assert $reflect(BloomRoot.width).offset == 12;
+$assert $reflect(BloomRoot.height).offset == 16;
+$assert $reflect(BloomRoot.prefilter).offset == 20;
+$assert $reflect(BloomRoot.threshold).offset == 24;
+$assert $reflect(BloomRoot.knee).offset == 28;
+$assert $reflect(BloomRoot.input_texel).offset == 32;
+$assert $reflect(BloomRoot._pad0).offset == 40;

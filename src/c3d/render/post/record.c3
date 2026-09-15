@@ -6,11 +6,13 @@ import c3d::shader;
 import gpu;
 
 <*
- Compute pipelines of the grade and FXAA stages, created on first use.
+ Compute pipelines of the display and effect stages, created on first use.
 *>
 struct PostPipelines {
     gpu::PipelineHandle grade;
     gpu::PipelineHandle fxaa;
+    gpu::PipelineHandle bloom_downsample;
+    gpu::PipelineHandle bloom_upsample;
 }
 
 struct LutBinding @private {
@@ -32,39 +34,30 @@ struct LutBinding @private {
 fn void? record_display(Renderer* renderer, ViewRecord* record, float camera_exposure) {
     GradeParams* grade = &record.desc.post.grade;
     LutBinding lut = resolve_lut(renderer, grade.lut)!;
+    BloomBinding bloom = record.desc.post.bloom ? record_bloom(renderer, record)! : (BloomBinding){};
     if (!record.desc.post.fxaa) {
-        reset_post_timing(renderer)!;
+        close_post_chain(renderer)!;
         return record_fused_display(
             renderer:        renderer,
             grade:           grade,
             lut:             lut,
+            bloom:           bloom,
             camera_exposure: camera_exposure,
         );
     }
 
     ensure_post_pipelines(renderer)!;
-    Frame* slot = &renderer.frames[renderer.frame_index % render::FRAMES_IN_FLIGHT];
-    render::write_pass_timestamp(
-        renderer:    renderer,
-        frame_index: renderer.frame_index,
-        pass:        Pass.POST_CHAIN,
-        half:        render::TIMESTAMP_BEGIN,
-    )!;
+    open_post_chain(renderer)!;
     record_grade(
         renderer:        renderer,
         record:          record,
         grade:           grade,
         lut:             lut,
+        bloom:           bloom,
         camera_exposure: camera_exposure,
     )!;
     record_fxaa(renderer, record)!;
-    render::write_pass_timestamp(
-        renderer:    renderer,
-        frame_index: renderer.frame_index,
-        pass:        Pass.POST_CHAIN,
-        half:        render::TIMESTAMP_END,
-    )!;
-    slot.timed[Pass.POST_CHAIN.ordinal] = true;
+    close_post_chain(renderer)!;
     renderer.stats.post_dispatches += 2;
 
     return render::composite_target(renderer, &record.post_b);
@@ -79,6 +72,7 @@ fn void? record_display(Renderer* renderer, ViewRecord* record, float camera_exp
  @return? gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
 *>
 fn void? prepare_display(Renderer* renderer, ViewRecord* record) {
+    if (record.desc.post.bloom) ensure_bloom_pipelines(renderer)!;
     if (record.desc.post.fxaa) return ensure_post_pipelines(renderer);
     if (!renderer.swapchain.is_valid()) return;
     renderer.pipelines.get(&renderer.device, display_pipeline_key(renderer.window_target.format))!;
@@ -92,6 +86,8 @@ fn void? prepare_display(Renderer* renderer, ViewRecord* record) {
 fn void destroy_post_pipelines(gpu::Device* device, PostPipelines* pipelines) {
     if (pipelines.grade.is_valid()) (void)gpu::destroy_pipeline(device, pipelines.grade);
     if (pipelines.fxaa.is_valid()) (void)gpu::destroy_pipeline(device, pipelines.fxaa);
+    if (pipelines.bloom_downsample.is_valid()) (void)gpu::destroy_pipeline(device, pipelines.bloom_downsample);
+    if (pipelines.bloom_upsample.is_valid()) (void)gpu::destroy_pipeline(device, pipelines.bloom_upsample);
     *pipelines = {};
 }
 
@@ -108,15 +104,16 @@ fn void? record_fused_display(
     Renderer* renderer,
     GradeParams* grade,
     LutBinding lut,
+    BloomBinding bloom,
     float camera_exposure,
 ) @private {
-    renderer.hdr_color.transition(&renderer.commands, render::FRAGMENT_READ_STATE)!;
+    renderer.scene_input.transition(&renderer.commands, render::FRAGMENT_READ_STATE)!;
 
     Frame* slot = &renderer.frames[renderer.frame_index % render::FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, DisplayRoot::size)!;
     DisplayRoot* display = (DisplayRoot*)root.bytes.ptr;
     *display = {
-        .source_texture = renderer.hdr_color.view.index,
+        .source_texture = renderer.scene_input.view.index,
         .source_sampler = renderer.linear_clamp_sampler,
     };
     write_grade_gpu(
@@ -126,6 +123,9 @@ fn void? record_fused_display(
         lut_texture:     lut.texture,
         lut_sampler:     renderer.linear_clamp_sampler,
         lut_size:        lut.size,
+        bloom_texture:   bloom.texture,
+        bloom_sampler:   renderer.linear_clamp_sampler,
+        bloom_intensity: bloom.intensity,
     );
     gpu::PipelineHandle pipeline = renderer.pipelines.get(
         &renderer.device, display_pipeline_key(renderer.window_target.format),
@@ -157,16 +157,17 @@ fn void? record_grade(
     ViewRecord* record,
     GradeParams* grade,
     LutBinding lut,
+    BloomBinding bloom,
     float camera_exposure,
 ) @private {
-    renderer.hdr_color.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
+    renderer.scene_input.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
     record.post_a.transition(&renderer.commands, gpu::storage_at({ .compute }, { .write }))!;
 
     Frame* slot = &renderer.frames[renderer.frame_index % render::FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, GradeRoot::size)!;
     GradeRoot* grade_root = (GradeRoot*)root.bytes.ptr;
     *grade_root = {
-        .input_texture  = renderer.hdr_color.view.index,
+        .input_texture  = renderer.scene_input.view.index,
         .sampler_index  = renderer.linear_clamp_sampler,
         .output_texture = record.post_a.view.index,
         .width          = record.post_a.width,
@@ -179,6 +180,9 @@ fn void? record_grade(
         lut_texture:     lut.texture,
         lut_sampler:     renderer.linear_clamp_sampler,
         lut_size:        lut.size,
+        bloom_texture:   bloom.texture,
+        bloom_sampler:   renderer.linear_clamp_sampler,
+        bloom_intensity: bloom.intensity,
     );
     gpu::cmd_bind_pipeline(&renderer.commands, renderer.post_pipelines.grade)!;
     dispatch_over(renderer, root.address, &record.post_a)!;
@@ -237,6 +241,32 @@ fn void? ensure_compute_pipeline(
         .debug_name = debug_name,
     };
     *pipeline = gpu::create_compute_pipeline(&renderer.device, &description)!;
+}
+
+fn void? open_post_chain(Renderer* renderer) @private {
+    if (renderer.post_chain_open) return;
+
+    render::write_pass_timestamp(
+        renderer:    renderer,
+        frame_index: renderer.frame_index,
+        pass:        Pass.POST_CHAIN,
+        half:        render::TIMESTAMP_BEGIN,
+    )!;
+    renderer.post_chain_open = true;
+}
+
+fn void? close_post_chain(Renderer* renderer) @private {
+    if (!renderer.post_chain_open) return reset_post_timing(renderer);
+
+    Frame* slot = &renderer.frames[renderer.frame_index % render::FRAMES_IN_FLIGHT];
+    render::write_pass_timestamp(
+        renderer:    renderer,
+        frame_index: renderer.frame_index,
+        pass:        Pass.POST_CHAIN,
+        half:        render::TIMESTAMP_END,
+    )!;
+    slot.timed[Pass.POST_CHAIN.ordinal] = true;
+    renderer.post_chain_open = false;
 }
 
 fn void? reset_post_timing(Renderer* renderer) @private {

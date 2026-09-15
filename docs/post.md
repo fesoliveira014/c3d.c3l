@@ -56,6 +56,20 @@ writes alpha one. Enabling FXAA allocates `post_a` and `post_b` (RGBA16_FLOAT, s
 at the `hdr_color` size; disabling retires them through the frame lifecycle. Resize recreates them
 with the view targets.
 
+## Bloom
+
+`PostStack.bloom` with `BloomParams { threshold; knee; intensity; levels; }` adds a glow of the
+scene's bright regions before grading. Enabling it allocates `levels` RGBA16_FLOAT images (sampled
+and storage) starting at half the working resolution and halving per level (`bloom_level_extent`),
+at most `BLOOM_MAX_LEVELS` (8). The chain records before the grade stage: a 13-tap downsample from
+the scene input into level 0 with the soft threshold (Unity knee curve on the brightest channel)
+and Karis averaging, 13-tap downsamples through the remaining levels, then 9-tap tent upsamples
+that add each coarser level into the finer one in place. Both display routes sample level 0 inside
+`grade_color` and add `intensity` times the sample after exposure, so the scene image itself is
+never rewritten. `2 * levels - 1` dispatches are counted and timed under `POST_CHAIN`. Disabling
+bloom or changing `levels` retires the chain through the frame lifecycle; resize recreates it.
+`configure_view` faults `INVALID_ARGUMENT` when bloom is on with `levels` outside `[1, 8]`.
+
 ## GUI
 
 `gui::post_panel(&view_desc, lut)` edits every setting and returns whether something changed; the
@@ -65,5 +79,5 @@ dispatches and the completed post-chain timing.
 ## Limits
 
 Only the default window view exists. `LINEAR_HDR` output, off-screen targets and per-view timing
-arrive with persistent views. Bloom, depth of field, motion blur and temporal anti-aliasing are
-later effects; auto-exposure is not implemented.
+arrive with persistent views. Depth of field, motion blur and temporal anti-aliasing are later
+effects; auto-exposure is not implemented.

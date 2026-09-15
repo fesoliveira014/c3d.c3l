@@ -158,6 +158,12 @@
       "sources": [
         "src/mixamo.c3"
       ]
+    },
+    "effects": {
+      "type": "executable",
+      "sources": [
+        "src/effects.c3"
+      ]
     }
   }
 }

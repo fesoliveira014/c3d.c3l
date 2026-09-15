@@ -15,5 +15,5 @@ layout(push_constant) uniform Push {
 void main() {
     DisplayRoot root = DisplayRoot(pc.fragment_root_gpu);
     vec3 scene = sample_texture_2d(root.source_texture, root.source_sampler, v_uv).rgb;
-    out_color = vec4(grade_color(scene, root.grade), 1.0);
+    out_color = vec4(grade_color(scene, v_uv, root.grade), 1.0);
 }

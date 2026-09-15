@@ -100,8 +100,11 @@ vec3 tonemap(vec3 color, uint operator_index) {
 }
 
 // Scene-linear in, display-linear [0, 1] out; the attachment encodes.
-vec3 grade_color(vec3 color, GradeGpu grade) {
+vec3 grade_color(vec3 color, vec2 uv, GradeGpu grade) {
     color *= grade.exposure;
+    if (grade.bloom_texture != 0u) {
+        color += grade.bloom_intensity * sample_texture_2d(grade.bloom_texture, grade.bloom_sampler, uv).rgb;
+    }
     color = LMS_TO_LINEAR * (grade.balance.xyz * (LINEAR_TO_LMS * color));
     color = (color - MID_GRAY) * grade.contrast + MID_GRAY;
     float luma = dot(color, REC709_LUMA);

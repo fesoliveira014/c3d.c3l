@@ -13,6 +13,11 @@ const float TINT_SHIFT @private = 0.05f;
 const Vec3 D65_LMS @private = { 0.949237f, 1.03542f, 1.08728f };
 
 <*
+ Bloom levels a view may allocate.
+*>
+const uint BLOOM_MAX_LEVELS = 8; // eight halvings reach 5 px from 1280; more levels only widen the glow
+
+<*
  Display tone mapping operator.
 *>
 enum Tonemap {
@@ -43,15 +48,27 @@ struct GradeParams {
 }
 
 <*
+ Bright-pass glow added to scene-linear color before grading.
+*>
+struct BloomParams {
+    float threshold;
+    float knee;
+    float intensity;
+    uint  levels;
+}
+
+<*
  Display processing of one view; a zeroed value is not neutral.
 *>
 struct PostStack {
     GradeParams grade;
     bool        fxaa;
+    bool        bloom;
+    BloomParams bloom_params;
 }
 
 <*
- Neutral grading with ACES and FXAA enabled.
+ Neutral grading with ACES and FXAA enabled and every effect off.
 *>
 fn PostStack default_post_stack() {
     return {
@@ -63,7 +80,27 @@ fn PostStack default_post_stack() {
             .gain       = { 1, 1, 1 },
         },
         .fxaa = true,
+        .bloom_params = { .threshold = 1, .knee = 0.5f, .intensity = 0.05f, .levels = 5 },
     };
+}
+
+<*
+ Whether every enabled effect's parameters are in range.
+ @param [&in] stack : "Read only."
+ @pure
+*>
+fn bool post_stack_valid(PostStack* stack) {
+    if (stack.bloom && (stack.bloom_params.levels == 0 || stack.bloom_params.levels > BLOOM_MAX_LEVELS)) return false;
+    return true;
+}
+
+<*
+ Extent of one bloom level, halving from the working resolution.
+ @pure
+*>
+fn uint bloom_level_extent(uint extent, uint level) {
+    uint halved = extent >> (level + 1);
+    return halved ? halved : 1;
 }
 
 <*
@@ -104,6 +141,7 @@ fn float lut_offset(uint size) {
  @param [&in] params : "CPU grading."
  @param lut_texture : "Zero without a LUT."
  @param lut_size : "Edge texel count of the LUT; ignored without one."
+ @param bloom_texture : "Zero without bloom."
 *>
 fn void write_grade_gpu(
     GradeGpu* gpu_grade,
@@ -112,6 +150,9 @@ fn void write_grade_gpu(
     gpu::TextureIndex lut_texture = (gpu::TextureIndex)0,
     gpu::SamplerIndex lut_sampler = (gpu::SamplerIndex)0,
     uint lut_size = 0,
+    gpu::TextureIndex bloom_texture = (gpu::TextureIndex)0,
+    gpu::SamplerIndex bloom_sampler = (gpu::SamplerIndex)0,
+    float bloom_intensity = 0,
 ) {
     Vec3 balance = white_balance_coefficients(params.temperature, params.tint);
     bool lut = lut_texture != (gpu::TextureIndex)0;
@@ -128,6 +169,9 @@ fn void write_grade_gpu(
         .lut_sampler = lut ? lut_sampler : (gpu::SamplerIndex)0,
         .lut_scale   = lut ? lut_scale(lut_size) : 0,
         .lut_offset  = lut ? lut_offset(lut_size) : 0,
+        .bloom_texture   = bloom_texture,
+        .bloom_sampler   = bloom_texture ? bloom_sampler : (gpu::SamplerIndex)0,
+        .bloom_intensity = bloom_texture ? bloom_intensity : 0,
     };
 }
 
