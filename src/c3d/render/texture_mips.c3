@@ -67,7 +67,7 @@ fn uint texture_mip_count(uint width, uint height) {
 *>
 fn TextureMipChain? create_texture_mips(Allocator allocator, material::TextureDesc desc, char[] pixels) {
     if (!desc.width || !desc.height || desc.mip_levels != 1) return c3d::INVALID_ARGUMENT~;
-    if (desc.depth) return c3d::UNSUPPORTED~;
+    if (desc.depth) return create_volume_texture_mips(allocator, desc, pixels);
     if (desc.is_cube) {
         if (desc.layers != material::CUBE_FACE_COUNT || desc.width != desc.height) return c3d::INVALID_ARGUMENT~;
     } else if (desc.layers != 1) {
@@ -118,6 +118,39 @@ fn TextureMipChain? create_texture_mips(Allocator allocator, material::TextureDe
         case BC7_SRGB:
             return c3d::UNSUPPORTED~;
     }
+}
+
+fn TextureMipChain? create_volume_texture_mips(
+    Allocator allocator,
+    material::TextureDesc desc,
+    char[] pixels,
+) @local {
+    if (desc.generate_mips || desc.layers != 1 || desc.is_cube) return c3d::UNSUPPORTED~;
+    switch (desc.format) {
+        case RGBA8_UNORM:
+        case RGBA8_SRGB:
+            break;
+        case RGBA16_FLOAT:
+        case RGBA32_FLOAT:
+        case BC1_RGBA_UNORM:
+        case BC1_RGBA_SRGB:
+        case BC3_UNORM:
+        case BC3_SRGB:
+        case BC4_UNORM:
+        case BC5_UNORM:
+        case BC6H_UFLOAT:
+        case BC7_UNORM:
+        case BC7_SRGB:
+            return c3d::UNSUPPORTED~;
+    }
+    ulong texels = (ulong)desc.width * desc.height * desc.depth;
+    if (texels > (ulong)sz::max / RGBA_CHANNELS) return c3d::INVALID_ARGUMENT~;
+    if (!pixels.len) return c3d::ASSET_DATA_UNAVAILABLE~;
+    if (pixels.len != (usz)texels * RGBA_CHANNELS) return c3d::INVALID_ARGUMENT~;
+
+    char[] copy = alloc::new_array(allocator, char, (sz)pixels.len);
+    mem::copy(copy.ptr, pixels.ptr, pixels.len);
+    return { .allocator = allocator, .mip_count = 1, .layer_count = 1, .pixels = copy };
 }
 
 <*

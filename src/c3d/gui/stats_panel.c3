@@ -18,6 +18,7 @@ fn void? stats_panel(Renderer* renderer) {
     imgui::text("CPU record: %.3f ms", (double)renderer.stats.cpu_record_ms);
 
     imgui::text("Draws: %u", renderer.stats.draws);
+    imgui::text("Post dispatches: %u", renderer.stats.post_dispatches);
     imgui::text("Triangles: %u", renderer.stats.triangles);
     imgui::text("Culled: %u", renderer.stats.culled);
     imgui::text("Lights: %u", renderer.stats.lights);
@@ -41,6 +42,8 @@ fn void? stats_panel(Renderer* renderer) {
             (double)renderer.stats.gpu_pass_ms[Pass.TRANSMISSION.ordinal]);
         imgui::text("Completed GPU transparent: %.3f ms",
             (double)renderer.stats.gpu_pass_ms[Pass.FORWARD_TRANSPARENT.ordinal]);
+        imgui::text("Completed GPU post chain: %.3f ms",
+            (double)renderer.stats.gpu_pass_ms[Pass.POST_CHAIN.ordinal]);
         imgui::text("Completed GPU composite: %.3f ms",
             (double)renderer.stats.gpu_pass_ms[Pass.COMPOSITE.ordinal]);
     } else {

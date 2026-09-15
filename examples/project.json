@@ -93,6 +93,12 @@
         "src/cube_gui.c3"
       ]
     },
+    "post": {
+      "type": "executable",
+      "sources": [
+        "src/post.c3"
+      ]
+    },
     "shadows": {
       "type": "executable",
       "sources": [

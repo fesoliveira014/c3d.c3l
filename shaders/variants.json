@@ -31,6 +31,9 @@
     { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["DEPTH_ONLY", "SKINNED_U16"] },
     { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["DEPTH_ONLY", "MORPH"] },
     { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["DEPTH_ONLY", "SKINNED", "MORPH"] },
-    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["DEPTH_ONLY", "SKINNED_U16", "MORPH"] }
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["DEPTH_ONLY", "SKINNED_U16", "MORPH"] },
+    { "shader": "grade", "source": "grade.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "fxaa", "source": "fxaa.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "display", "source": "display.frag.glsl", "stage": "frag", "defines": [] }
   ]
 }

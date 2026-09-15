@@ -17,6 +17,7 @@ struct TextureRes {
     gpu::TextureState state;
     uint width;
     uint height;
+    uint depth;
     uint mip_count;
     uint layers;
     bool is_cube;
@@ -71,6 +72,7 @@ fn TextureRes*? ensure_texture(Renderer* renderer, TextureId texture) @private {
         gpu::TextureDesc description = {
             .width = record.desc.width,
             .height = record.desc.height,
+            .depth = record.desc.depth,
             .mip_levels = chain.mip_count,
             .array_layers = chain.layer_count,
             .cube_compatible = record.desc.is_cube,
@@ -81,6 +83,7 @@ fn TextureRes*? ensure_texture(Renderer* renderer, TextureId texture) @private {
         };
         bool reuse = same_asset && mirror.texture.is_valid()
             && mirror.width == description.width && mirror.height == description.height
+            && mirror.depth == description.depth
             && mirror.mip_count == chain.mip_count && mirror.format == format
             && mirror.layers == chain.layer_count && mirror.is_cube == record.desc.is_cube;
         if (!reuse) {
@@ -99,6 +102,7 @@ fn TextureRes*? ensure_texture(Renderer* renderer, TextureId texture) @private {
                 .view = view,
                 .width = description.width,
                 .height = description.height,
+                .depth = description.depth,
                 .mip_count = chain.mip_count,
                 .layers = chain.layer_count,
                 .is_cube = record.desc.is_cube,

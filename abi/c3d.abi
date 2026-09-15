@@ -350,3 +350,55 @@ root PhysicalMaterialGpu {
     TextureMapGpu transmission_map;
     TextureMapGpu thickness_map;
 }
+
+const uint TONEMAP_NONE = 0;
+const uint TONEMAP_ACES = 1;
+const uint TONEMAP_AGX = 2;
+const uint TONEMAP_REINHARD = 3;
+const uint POST_GROUP_SIZE = 8;
+
+struct GradeGpu {
+    float exposure;
+    float contrast;
+    float saturation;
+    uint tonemap;
+    vec4 balance;
+    vec4 lift;
+    vec4 gamma;
+    vec4 gain;
+    TextureIndex lut_texture;
+    SamplerIndex lut_sampler;
+    float lut_scale;
+    float lut_offset;
+}
+
+root GradeRoot {
+    TextureIndex input_texture;
+    SamplerIndex sampler_index;
+    TextureIndex output_texture;
+    uint width;
+    uint height;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+    GradeGpu grade;
+}
+
+root FxaaRoot {
+    TextureIndex input_texture;
+    SamplerIndex sampler_index;
+    TextureIndex output_texture;
+    uint width;
+    uint height;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+}
+
+root DisplayRoot {
+    TextureIndex source_texture;
+    SamplerIndex source_sampler;
+    uint _pad0;
+    uint _pad1;
+    GradeGpu grade;
+}

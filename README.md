@@ -164,6 +164,16 @@ python3 scripts/build.py --example materials
 The example generates its alpha, nonuniform ramp and Physical map fixtures in
 memory. It reuses both bundled CC0 HDRs, so it requires no runtime download.
 
+`post` shows [display processing](docs/post.md) on a rolled textured cube, a
+chrome sphere and an emissive sphere under a bright sun. Its panel switches the
+tone mapping operator, FXAA and an identity LUT, and edits contrast, saturation,
+white balance and lift-gamma-gain; the controls panel drives camera exposure:
+
+```bash
+python3 scripts/build.py --example post
+./examples/build/post --gpu-timings
+```
+
 `ibl` lights a metallic/roughness sphere grid with two bundled HDR environments.
 Its controls independently select lighting and background, adjust rotation and
 intensity, demonstrate diffuse-only occlusion, and apply per-environment processing

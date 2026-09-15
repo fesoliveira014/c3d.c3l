@@ -50,6 +50,11 @@ const uint PHYSICAL_EXTENSION_MAP_THICKNESS = 16;
 const uint SHEEN_LUT_SIZE = 256;
 const uint SHEEN_LUT_SAMPLES = 4096;
 const uint SHEEN_PREFILTER_SAMPLES = 4096;
+const uint TONEMAP_NONE = 0;
+const uint TONEMAP_ACES = 1;
+const uint TONEMAP_AGX = 2;
+const uint TONEMAP_REINHARD = 3;
+const uint POST_GROUP_SIZE = 8;
 
 struct CompositeRoot {
     TextureIndex source_texture;
@@ -592,3 +597,87 @@ $assert $reflect(PhysicalMaterialGpu._pad0).offset == 568;
 $assert $reflect(PhysicalMaterialGpu._pad1).offset == 572;
 $assert $reflect(PhysicalMaterialGpu.transmission_map).offset == 576;
 $assert $reflect(PhysicalMaterialGpu.thickness_map).offset == 608;
+
+struct GradeGpu {
+    float        exposure;
+    float        contrast;
+    float        saturation;
+    uint         tonemap;
+    Vec4f        balance;
+    Vec4f        lift;
+    Vec4f        gamma;
+    Vec4f        gain;
+    TextureIndex lut_texture;
+    SamplerIndex lut_sampler;
+    float        lut_scale;
+    float        lut_offset;
+}
+$assert GradeGpu::size == 96;
+$assert $reflect(GradeGpu.exposure).offset == 0;
+$assert $reflect(GradeGpu.contrast).offset == 4;
+$assert $reflect(GradeGpu.saturation).offset == 8;
+$assert $reflect(GradeGpu.tonemap).offset == 12;
+$assert $reflect(GradeGpu.balance).offset == 16;
+$assert $reflect(GradeGpu.lift).offset == 32;
+$assert $reflect(GradeGpu.gamma).offset == 48;
+$assert $reflect(GradeGpu.gain).offset == 64;
+$assert $reflect(GradeGpu.lut_texture).offset == 80;
+$assert $reflect(GradeGpu.lut_sampler).offset == 84;
+$assert $reflect(GradeGpu.lut_scale).offset == 88;
+$assert $reflect(GradeGpu.lut_offset).offset == 92;
+
+struct GradeRoot {
+    TextureIndex input_texture;
+    SamplerIndex sampler_index;
+    TextureIndex output_texture;
+    uint         width;
+    uint         height;
+    uint         _pad0;
+    uint         _pad1;
+    uint         _pad2;
+    GradeGpu     grade;
+}
+$assert GradeRoot::size == 128;
+$assert $reflect(GradeRoot.input_texture).offset == 0;
+$assert $reflect(GradeRoot.sampler_index).offset == 4;
+$assert $reflect(GradeRoot.output_texture).offset == 8;
+$assert $reflect(GradeRoot.width).offset == 12;
+$assert $reflect(GradeRoot.height).offset == 16;
+$assert $reflect(GradeRoot._pad0).offset == 20;
+$assert $reflect(GradeRoot._pad1).offset == 24;
+$assert $reflect(GradeRoot._pad2).offset == 28;
+$assert $reflect(GradeRoot.grade).offset == 32;
+
+struct FxaaRoot {
+    TextureIndex input_texture;
+    SamplerIndex sampler_index;
+    TextureIndex output_texture;
+    uint         width;
+    uint         height;
+    uint         _pad0;
+    uint         _pad1;
+    uint         _pad2;
+}
+$assert FxaaRoot::size == 32;
+$assert $reflect(FxaaRoot.input_texture).offset == 0;
+$assert $reflect(FxaaRoot.sampler_index).offset == 4;
+$assert $reflect(FxaaRoot.output_texture).offset == 8;
+$assert $reflect(FxaaRoot.width).offset == 12;
+$assert $reflect(FxaaRoot.height).offset == 16;
+$assert $reflect(FxaaRoot._pad0).offset == 20;
+$assert $reflect(FxaaRoot._pad1).offset == 24;
+$assert $reflect(FxaaRoot._pad2).offset == 28;
+
+struct DisplayRoot {
+    TextureIndex source_texture;
+    SamplerIndex source_sampler;
+    uint         _pad0;
+    uint         _pad1;
+    GradeGpu     grade;
+}
+$assert DisplayRoot::size == 112;
+$assert $reflect(DisplayRoot.source_texture).offset == 0;
+$assert $reflect(DisplayRoot.source_sampler).offset == 4;
+$assert $reflect(DisplayRoot._pad0).offset == 8;
+$assert $reflect(DisplayRoot._pad1).offset == 12;
+$assert $reflect(DisplayRoot.grade).offset == 16;

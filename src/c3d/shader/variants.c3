@@ -25,6 +25,9 @@ enum ShaderName : int {
     SHEEN_LUT,
     SKY,
     DEPTH_ONLY,
+    GRADE,
+    FXAA,
+    DISPLAY,
 }
 
 <*
@@ -78,11 +81,14 @@ const char[*] MESH_DEPTH_ONLY_SKINNED_U16_SPIRV @private = $embed("../../../shad
 const char[*] MESH_DEPTH_ONLY_MORPH_SPIRV @private = $embed("../../../shaders/spv/mesh_depth_only_morph.spv");
 const char[*] MESH_DEPTH_ONLY_SKINNED_MORPH_SPIRV @private = $embed("../../../shaders/spv/mesh_depth_only_skinned_morph.spv");
 const char[*] MESH_DEPTH_ONLY_SKINNED_U16_MORPH_SPIRV @private = $embed("../../../shaders/spv/mesh_depth_only_skinned_u16_morph.spv");
+const char[*] GRADE_SPIRV @private = $embed("../../../shaders/spv/grade.spv");
+const char[*] FXAA_SPIRV @private = $embed("../../../shaders/spv/fxaa.spv");
+const char[*] DISPLAY_SPIRV @private = $embed("../../../shaders/spv/display.spv");
 
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[31] SHADER_ENTRIES = {
+const ShaderEntry[34] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -114,4 +120,7 @@ const ShaderEntry[31] SHADER_ENTRIES = {
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_DEPTH_ONLY | SHADER_FLAG_MORPH }, .spirv = MESH_DEPTH_ONLY_MORPH_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_DEPTH_ONLY | SHADER_FLAG_SKINNED | SHADER_FLAG_MORPH }, .spirv = MESH_DEPTH_ONLY_SKINNED_MORPH_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_DEPTH_ONLY | SHADER_FLAG_SKINNED_U16 | SHADER_FLAG_MORPH }, .spirv = MESH_DEPTH_ONLY_SKINNED_U16_MORPH_SPIRV[..] },
+    { .variant = { .shader = GRADE }, .spirv = GRADE_SPIRV[..] },
+    { .variant = { .shader = FXAA }, .spirv = FXAA_SPIRV[..] },
+    { .variant = { .shader = DISPLAY }, .spirv = DISPLAY_SPIRV[..] },
 };
