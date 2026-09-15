@@ -73,6 +73,7 @@ fn void? record_display(Renderer* renderer, ViewRecord* record, float camera_exp
 <*
  Create the pipelines the view's display route needs.
  @param [&inout] renderer : "No open frame required; pipelines persist."
+ @param [&in] record : "Selects the route by its FXAA setting."
  @return? c3d::SHADER_NOT_FOUND, gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE
  @return? gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL, gpu::INVALID_ARGUMENT
  @return? gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
@@ -85,6 +86,7 @@ fn void? prepare_display(Renderer* renderer, ViewRecord* record) {
 
 <*
  Destroy the compute pipelines.
+ @param [&inout] device : "Owner of the pipelines."
  @param [&inout] pipelines : "Cleared."
 *>
 fn void destroy_post_pipelines(gpu::Device* device, PostPipelines* pipelines) {

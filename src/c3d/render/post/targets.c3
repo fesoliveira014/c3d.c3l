@@ -44,6 +44,7 @@ fn void retire_post_targets(Renderer* renderer, ViewRecord* record) {
 
 <*
  Destroy the view's images now.
+ @param [&inout] device : "Owner of the images."
  @param [&inout] record : "post_a and post_b are cleared."
 *>
 fn void release_post_targets(gpu::Device* device, ViewRecord* record) {
