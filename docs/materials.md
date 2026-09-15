@@ -315,8 +315,8 @@ ordinary blends, sorted back to front by bounds center. Any alpha mode is allowe
 OPAQUE and MASK glass keeps its depth write setting and casts opaque shadows;
 BLEND glass follows the ordinary blend rules and never casts.
 
-Before that list the renderer copies the finished opaque color into a
-renderer-owned `scene_color` image, allocated on first use at the view size. Each
+Before that list the renderer copies the finished opaque color into the
+view's own `scene_color` image, allocated on first use at the view size. Each
 transmissive fragment refracts the view direction by `1 / ior`, walks the
 thickness through the volume, projects the exit point and samples `scene_color`
 at mip zero, so rough transmission is not blurred. An exit point outside the

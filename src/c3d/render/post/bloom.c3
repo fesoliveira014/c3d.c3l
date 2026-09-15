@@ -25,12 +25,12 @@ struct BloomBinding {
 *>
 fn BloomBinding? record_bloom(Renderer* renderer, ViewRecord* record) {
     acquire_bloom_pipelines(renderer)!;
-    open_post_chain(renderer)!;
+    open_post_chain(renderer, record)!;
     BloomParams* params = &record.desc.post.bloom_params;
     uint levels = record.bloom_levels;
 
     gpu::cmd_bind_pipeline(&renderer.commands, renderer.post_pipelines.bloom_downsample)!;
-    Target* input = renderer.scene_input;
+    Target* input = record.scene_input;
     for (uint level = 0; level < levels; level++) {
         Target* output = &record.bloom[level];
         input.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;

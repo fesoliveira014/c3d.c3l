@@ -229,7 +229,7 @@ fn void? draw_gui_frame(
     defer catch render::abort_frame(renderer);
 
     if (renderer.has_output) {
-        renderer.render_view(scene, camera_node)!;
+        renderer.render_view(scene, camera_node, renderer.default_view)!;
         renderer.composite_view()!;
 
         OverlayContext overlay = renderer.begin_overlay()!;

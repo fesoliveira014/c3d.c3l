@@ -49,7 +49,7 @@ fn void? record_motion_blur(
     )!;
     slot.timed[Pass.VELOCITY.ordinal] = true;
 
-    open_post_chain(renderer)!;
+    open_post_chain(renderer, record)!;
     record_tiles(
         renderer: renderer,
         input:    &record.velocity,
@@ -59,16 +59,16 @@ fn void? record_motion_blur(
         tiles_y:  tile_count(height),
     )!;
 
-    Target* input = renderer.scene_input;
+    Target* input = record.scene_input;
     input.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
-    renderer.depth.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
+    record.depth.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
     record.velocity.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
     record.motion_blur_out.transition(&renderer.commands, gpu::storage_at({ .compute }, { .write }))!;
     MotionBlurParams* params = &record.desc.post.motion_blur_params;
     gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, MotionBlurRoot::size)!;
     *(MotionBlurRoot*)root.bytes.ptr = {
         .color_texture    = input.view.index,
-        .depth_texture    = renderer.depth.view.index,
+        .depth_texture    = record.depth.view.index,
         .velocity_texture = record.velocity.view.index,
         .tile_texture     = record.tile_neighbor.view.index,
         .output_texture   = record.motion_blur_out.view.index,
@@ -83,7 +83,7 @@ fn void? record_motion_blur(
     gpu::cmd_bind_pipeline(&renderer.commands, renderer.post_pipelines.motion_blur)!;
     dispatch_over(renderer, root.address, &record.motion_blur_out)!;
     renderer.stats.post_dispatches += 1;
-    renderer.scene_input = &record.motion_blur_out;
+    record.scene_input = &record.motion_blur_out;
 }
 
 fn void? acquire_motion_blur_pipelines(Renderer* renderer) @private {
@@ -97,14 +97,14 @@ fn void? acquire_motion_blur_pipelines(Renderer* renderer) @private {
 }
 
 fn void? record_camera_velocity(Renderer* renderer, ViewRecord* record, CameraMatrices* matrices) @private {
-    renderer.depth.transition(&renderer.commands, render::FRAGMENT_READ_STATE)!;
+    record.depth.transition(&renderer.commands, render::FRAGMENT_READ_STATE)!;
     record.velocity.transition(&renderer.commands, render::COLOR_ATTACHMENT_STATE)!;
 
     Frame* slot = &renderer.frames[renderer.frame_index % render::FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, VelocityRoot::size)!;
     Mat4 prev_view_proj = record.history.valid ? record.history.view_proj : matrices.view_proj;
     *(VelocityRoot*)root.bytes.ptr = {
-        .depth_texture  = renderer.depth.view.index,
+        .depth_texture  = record.depth.view.index,
         .sampler_index  = renderer.linear_clamp_sampler,
         .inv_view_proj  = bitcast(matrices.inv_view_proj, Mat4f),
         .prev_view_proj = bitcast(prev_view_proj, Mat4f),
@@ -136,7 +136,7 @@ fn void? record_geometry_velocity(Renderer* renderer, ViewRecord* record, DrawIt
         .store_op = gpu::StoreOp.STORE,
     }};
     gpu::DepthTargetDesc depth = {
-        .view     = renderer.depth.attachment,
+        .view     = record.depth.attachment,
         .load_op  = gpu::LoadOp.LOAD,
         .store_op = gpu::StoreOp.STORE,
     };
@@ -157,7 +157,7 @@ fn void? record_geometry_velocity(Renderer* renderer, ViewRecord* record, DrawIt
     // Bound before the pass begins: the backend checks the bound pipeline against the pass formats at begin.
     gpu::PipelineHandle bound = velocity_pipeline_for(renderer, first)!;
     gpu::cmd_bind_pipeline(&renderer.commands, bound)!;
-    renderer.depth.transition(&renderer.commands, render::DEPTH_ATTACHMENT_STATE)!;
+    record.depth.transition(&renderer.commands, render::DEPTH_ATTACHMENT_STATE)!;
     gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
     bool state_set;
     foreach (&item : items) {

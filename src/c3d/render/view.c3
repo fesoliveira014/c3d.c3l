@@ -74,44 +74,49 @@ fn void? Renderer.render(
     self.begin_frame(info)!;
     defer catch abort_frame(self);
 
-    self.render_view(scene, camera_node)!;
+    self.render_view(scene, camera_node, self.default_view)!;
     self.composite_view()!;
 
     return self.end_frame();
 }
 
 <*
- Extract, upload and record the scene from the camera into the view targets.
+ Extract, upload and record the scene from the camera into the view.
  Records nothing without output; authoring inputs stay stable until end_frame.
  @param [&inout] self : "Records into the current frame before composition."
  @param [&in] scene : "Pose as left by the last update_world; not advanced."
  @param [&in] camera_node : "Carries a Camera component."
- @return? c3d::INVALID_ARGUMENT, c3d::SHADER_NOT_FOUND
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::SHADER_NOT_FOUND
  @return? gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
  @return? gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
  @return? c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE, gpu::DEVICE_BUSY
  @return? gpu::RESOURCE_IN_USE, gpu::DESCRIPTOR_HEAP_FULL, gpu::WAIT_TIMEOUT
- @return? c3d::INVALID_ID, gpu::COMMAND_ALLOCATOR_CAPACITY_EXCEEDED
+ @return? gpu::COMMAND_ALLOCATOR_CAPACITY_EXCEEDED
  @require self.frame_open, !self.overlay_open
  @require environment_view_valid(self.assets, scene)
 *>
-fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
+fn void? Renderer.render_view(
+    &self,
+    Scene* scene,
+    Node* camera_node,
+    ViewId view,
+) {
+    ViewRecord* record = self.views.try_get(view)!;
     if (!self.has_output) return;
     Camera* camera = scene.get(camera_node, Camera);
     if (!camera) return c3d::INVALID_ARGUMENT~;
-    self.view_exposure = camera.exposure;
+    record.exposure = camera.exposure;
 
-    Vec2 viewport = { (float)self.hdr_color.width, (float)self.hdr_color.height };
+    Vec2 viewport = { (float)record.hdr_color.width, (float)record.hdr_color.height };
     CameraMatrices matrices = camera::derive_matrices(*camera, camera_node.world, viewport);
-    self.view_projection = {
+    record.projection_terms = {
         .m22          = matrices.proj.m22,
         .m23          = matrices.proj.m23,
         .orthographic = camera.projection == Projection.ORTHOGRAPHIC,
     };
-    ViewRecord* view_record = self.views.get(self.default_view);
-    bool motion_blur = view_record.desc.post.motion_blur;
+    bool motion_blur = record.desc.post.motion_blur;
     Frame* slot = &self.frames[self.frame_index % FRAMES_IN_FLIGHT];
     bool view_reflected = matrices.view.determinant() < 0;
 
@@ -189,7 +194,7 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
         sort::quicksort(opaque_items, &by_sort_key);
         sort::quicksort(transmission_items, &by_transparent_depth);
         sort::quicksort(transparent_items, &by_transparent_depth);
-        if (transmission_items.len) acquire_scene_color(self)!;
+        if (transmission_items.len) acquire_scene_color(self, record)!;
         ViewEnvironments environments = resolve_view_environments(self, scene, sheen)!;
         record_pending_copies(self, &self.commands)!;
 
@@ -259,15 +264,15 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
             shadows:     shadow_address,
             shadow_count: (uint)shadows.len,
             environment: environment_address,
-            scene_color: transmission_items.len ? self.scene_color.view.index : (gpu::TextureIndex)0,
+            scene_color: transmission_items.len ? record.scene_color.view.index : (gpu::TextureIndex)0,
             scene_sampler: transmission_items.len ? self.linear_clamp_sampler : (gpu::SamplerIndex)0,
-            prev_view_proj: motion_blur && view_record.history.valid ? &view_record.history.view_proj : null,
+            prev_view_proj: motion_blur && record.history.valid ? &record.history.view_proj : null,
         );
         foreach (&item : items) {
             Node* node = item.candidate.node;
             Mat4 prev_world = node.world;
-            if (motion_blur && view_record.history.has_previous(node)) {
-                prev_world = view_record.history.previous_model(node);
+            if (motion_blur && record.history.has_previous(node)) {
+                prev_world = record.history.previous_model(node);
             }
             item.moved = !(prev_world == node.world);
             gpu::MappedGpuSpan draw_span = slot.upload.take(&self.device, DrawRoot::size, STREAM_ALIGNMENT)!;
@@ -289,8 +294,8 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
             item.root = draw_span.address;
         }
 
-        self.hdr_color.transition(&self.commands, COLOR_ATTACHMENT_STATE)!;
-        self.depth.transition(&self.commands, DEPTH_ATTACHMENT_STATE)!;
+        record.hdr_color.transition(&self.commands, COLOR_ATTACHMENT_STATE)!;
+        record.depth.transition(&self.commands, DEPTH_ATTACHMENT_STATE)!;
         if (self.timestamps_enabled && slot.timed[Pass.FORWARD_OPAQUE.ordinal]) {
             gpu::cmd_reset_timestamps(
                 commands: &self.commands,
@@ -305,7 +310,12 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
             pass:        Pass.FORWARD_OPAQUE,
             half:        TIMESTAMP_BEGIN,
         )!;
-        record_opaque_pass(self, opaque_items, environments.clear_color)!;
+        record_opaque_pass(
+            renderer:    self,
+            record:      record,
+            items:       opaque_items,
+            clear_color: environments.clear_color,
+        )!;
         write_pass_timestamp(
             renderer:    self,
             frame_index: self.frame_index,
@@ -322,7 +332,7 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
                 intensity: scene.background.intensity,
                 rotation: scene.background.rotation,
             )!;
-            record_sky(self, sky_root)!;
+            record_sky(self, record, sky_root)!;
         } else {
             reset_sky_timing(self)!;
         }
@@ -335,8 +345,8 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
                 pass: Pass.TRANSMISSION,
                 half: TIMESTAMP_BEGIN,
             )!;
-            record_scene_color_snapshot(self)!;
-            record_loaded_pass(self, transmission_items)!;
+            record_scene_color_snapshot(self, record)!;
+            record_loaded_pass(self, record, transmission_items)!;
             write_pass_timestamp(
                 renderer: self,
                 frame_index: self.frame_index,
@@ -354,7 +364,7 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
                 pass: Pass.FORWARD_TRANSPARENT,
                 half: TIMESTAMP_BEGIN,
             )!;
-            record_loaded_pass(self, transparent_items)!;
+            record_loaded_pass(self, record, transparent_items)!;
             write_pass_timestamp(
                 renderer: self,
                 frame_index: self.frame_index,
@@ -367,14 +377,14 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
         if (motion_blur) {
             post::record_motion_blur(
                 renderer: self,
-                record:   view_record,
+                record:   record,
                 items:    opaque_items,
                 matrices: &matrices,
             )!;
         }
-        if (view_record.desc.post.depth_of_field) post::record_dof(self, view_record)!;
+        if (record.desc.post.depth_of_field) post::record_dof(self, record)!;
         if (motion_blur) {
-            view_record.history.commit(self.allocator, scene, candidates, matrices.view_proj);
+            record.history.commit(self.allocator, scene, candidates, matrices.view_proj);
         }
     };
 }
@@ -394,7 +404,7 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
 fn void? Renderer.composite_view(&self) {
     if (!self.has_output) return;
 
-    return post::record_display(self, self.views.get(self.default_view), self.view_exposure);
+    return post::record_display(self, self.views.get(self.default_view));
 }
 
 <*
@@ -567,17 +577,22 @@ fn int by_transparent_depth(DrawItem first, DrawItem second) @local {
     return compare_transparent_candidates(*first.candidate, *second.candidate);
 }
 
-fn void? record_opaque_pass(Renderer* renderer, DrawItem[] items, Vec4 clear_color) @private {
-    uint width = renderer.hdr_color.width;
-    uint height = renderer.hdr_color.height;
+fn void? record_opaque_pass(
+    Renderer* renderer,
+    ViewRecord* record,
+    DrawItem[] items,
+    Vec4 clear_color,
+) @private {
+    uint width = record.hdr_color.width;
+    uint height = record.hdr_color.height;
     gpu::ColorTargetDesc[1] colors = {{
-        .view     = renderer.hdr_color.attachment,
+        .view     = record.hdr_color.attachment,
         .load_op  = gpu::LoadOp.CLEAR,
         .store_op = gpu::StoreOp.STORE,
         .clear    = { .rgba = { clear_color.r, clear_color.g, clear_color.b, clear_color.a } },
     }};
     gpu::DepthTargetDesc depth = {
-        .view     = renderer.depth.attachment,
+        .view     = record.depth.attachment,
         .load_op  = gpu::LoadOp.CLEAR,
         .store_op = gpu::StoreOp.STORE,
         .clear    = { .depth = DEPTH_CLEAR },
@@ -608,30 +623,35 @@ fn void? record_opaque_pass(Renderer* renderer, DrawItem[] items, Vec4 clear_col
     // Bound before the pass begins: the backend checks the bound pipeline against the pass formats at begin.
     gpu::cmd_bind_pipeline(&renderer.commands, pipeline)!;
     gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
-    record_draws(renderer, items, pipeline)!;
+    record_draws(
+        renderer: renderer,
+        record:   record,
+        items:    items,
+        pipeline: pipeline,
+    )!;
     gpu::cmd_end_render_pass(&renderer.commands)!;
 }
 
-fn void? record_scene_color_snapshot(Renderer* renderer) @private {
-    renderer.hdr_color.transition(&renderer.commands, FRAGMENT_READ_STATE)!;
-    renderer.scene_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
+fn void? record_scene_color_snapshot(Renderer* renderer, ViewRecord* record) @private {
+    record.hdr_color.transition(&renderer.commands, FRAGMENT_READ_STATE)!;
+    record.scene_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
 
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, CompositeRoot::size)!;
     *(CompositeRoot*)root.bytes.ptr = {
-        .source_texture = renderer.hdr_color.view.index,
+        .source_texture = record.hdr_color.view.index,
         .source_sampler = renderer.linear_clamp_sampler,
     };
     gpu::PipelineHandle pipeline = renderer.pipelines.get(&renderer.device, snapshot_pipeline_key())!;
     record_fullscreen_pass(
         renderer:      renderer,
-        target:        &renderer.scene_color,
+        target:        &record.scene_color,
         pipeline:      pipeline,
         fragment_root: root.address,
     )!;
 
-    renderer.scene_color.transition(&renderer.commands, FRAGMENT_READ_STATE)!;
-    renderer.hdr_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
+    record.scene_color.transition(&renderer.commands, FRAGMENT_READ_STATE)!;
+    record.hdr_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
 }
 
 fn PipelineKey snapshot_pipeline_key() @local {
@@ -646,16 +666,16 @@ fn PipelineKey snapshot_pipeline_key() @local {
     };
 }
 
-fn void? record_loaded_pass(Renderer* renderer, DrawItem[] items) @private {
-    uint width = renderer.hdr_color.width;
-    uint height = renderer.hdr_color.height;
+fn void? record_loaded_pass(Renderer* renderer, ViewRecord* record, DrawItem[] items) @private {
+    uint width = record.hdr_color.width;
+    uint height = record.hdr_color.height;
     gpu::ColorTargetDesc[1] colors = {{
-        .view = renderer.hdr_color.attachment,
+        .view = record.hdr_color.attachment,
         .load_op = gpu::LoadOp.LOAD,
         .store_op = gpu::StoreOp.STORE,
     }};
     gpu::DepthTargetDesc depth = {
-        .view = renderer.depth.attachment,
+        .view = record.depth.attachment,
         .load_op = gpu::LoadOp.LOAD,
         .store_op = gpu::StoreOp.STORE,
     };
@@ -669,16 +689,26 @@ fn void? record_loaded_pass(Renderer* renderer, DrawItem[] items) @private {
 
     // Bound before the pass begins: the backend checks the bound pipeline against the pass formats at begin.
     gpu::cmd_bind_pipeline(&renderer.commands, pipeline)!;
-    renderer.hdr_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
-    renderer.depth.transition(&renderer.commands, DEPTH_ATTACHMENT_STATE)!;
+    record.hdr_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
+    record.depth.transition(&renderer.commands, DEPTH_ATTACHMENT_STATE)!;
     gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
-    record_draws(renderer, items, pipeline)!;
+    record_draws(
+        renderer: renderer,
+        record:   record,
+        items:    items,
+        pipeline: pipeline,
+    )!;
     gpu::cmd_end_render_pass(&renderer.commands)!;
 }
 
-fn void? record_draws(Renderer* renderer, DrawItem[] items, gpu::PipelineHandle pipeline) @private {
-    uint width = renderer.hdr_color.width;
-    uint height = renderer.hdr_color.height;
+fn void? record_draws(
+    Renderer* renderer,
+    ViewRecord* record,
+    DrawItem[] items,
+    gpu::PipelineHandle pipeline,
+) @private {
+    uint width = record.hdr_color.width;
+    uint height = record.hdr_color.height;
     gpu::ColorTargetState[1] color_targets = { gpu::color_blend_disabled() };
     gpu::GraphicsState state = gpu::render_geometry_state(width, height)!;
     state.viewport = flipped_viewport(width, height);
@@ -839,24 +869,23 @@ fn gpu::PrimitiveTopology primitive_topology(Topology topology) @private {
     }
 }
 
-fn void? allocate_view_targets(
-    gpu::Device* device,
+fn void? acquire_view_targets(
+    Renderer* renderer,
+    ViewRecord* record,
     uint width,
     uint height,
-    Target* hdr_color,
-    Target* depth,
 ) @private {
-    *hdr_color = allocate_target(
-        device:     device,
+    record.hdr_color = allocate_target(
+        device:     &renderer.device,
         width:      width,
         height:     height,
         format:     HDR_FORMAT,
         usage:      { .color_attach, .sampled, .storage },
         debug_name: "hdr_color",
     )!;
-    defer catch release_target(device, hdr_color);
-    *depth = allocate_target(
-        device:     device,
+    defer catch release_view_targets(&renderer.device, record);
+    record.depth = allocate_target(
+        device:     &renderer.device,
         width:      width,
         height:     height,
         format:     DEPTH_FORMAT,
@@ -865,25 +894,25 @@ fn void? allocate_view_targets(
     )!;
 }
 
-fn void? acquire_scene_color(Renderer* renderer) @private {
-    if (renderer.scene_color.texture.is_valid()) return;
-    renderer.scene_color = allocate_target(
+fn void release_view_targets(gpu::Device* device, ViewRecord* record) @private {
+    if (record.hdr_color.texture.is_valid()) release_target(device, &record.hdr_color);
+    if (record.depth.texture.is_valid()) release_target(device, &record.depth);
+}
+
+fn void? acquire_scene_color(Renderer* renderer, ViewRecord* record) @private {
+    if (record.scene_color.texture.is_valid()) return;
+    record.scene_color = allocate_target(
         device:     &renderer.device,
-        width:      renderer.hdr_color.width,
-        height:     renderer.hdr_color.height,
+        width:      record.hdr_color.width,
+        height:     record.hdr_color.height,
         format:     HDR_FORMAT,
         usage:      { .color_attach, .sampled },
         debug_name: "scene_color",
     )!;
 }
 
-fn void release_scene_color(Renderer* renderer) @private {
-    if (renderer.scene_color.texture.is_valid()) release_target(&renderer.device, &renderer.scene_color);
-}
-
-fn void release_view_targets(gpu::Device* device, Target* hdr_color, Target* depth) @private {
-    if (hdr_color.texture.is_valid()) release_target(device, hdr_color);
-    if (depth.texture.is_valid()) release_target(device, depth);
+fn void release_scene_color(gpu::Device* device, ViewRecord* record) @private {
+    if (record.scene_color.texture.is_valid()) release_target(device, &record.scene_color);
 }
 
 fn bool environment_view_valid(AssetStore* assets, Scene* scene) @private {

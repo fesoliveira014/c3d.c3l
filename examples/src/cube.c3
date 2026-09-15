@@ -132,7 +132,7 @@ fn int main() {
             last_print = window.clock.total;
             io::printfn("draws %d, triangles %d, culled %d, frame %.2f ms at %dx%d",
                 renderer.stats.draws, renderer.stats.triangles, renderer.stats.culled, renderer.stats.frame_ms,
-                renderer.hdr_color.width, renderer.hdr_color.height);
+                renderer.output_width, renderer.output_height);
         }
     }
 

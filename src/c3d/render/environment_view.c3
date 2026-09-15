@@ -103,9 +103,9 @@ fn gpu::PipelineHandle? sky_pipeline(Renderer* renderer) @private {
     return renderer.pipelines.get(&renderer.device, key);
 }
 
-fn void? record_sky(Renderer* renderer, gpu::GpuAddress root) @private {
-    renderer.hdr_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
-    renderer.depth.transition(&renderer.commands, DEPTH_ATTACHMENT_STATE)!;
+fn void? record_sky(Renderer* renderer, ViewRecord* record, gpu::GpuAddress root) @private {
+    record.hdr_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
+    record.depth.transition(&renderer.commands, DEPTH_ATTACHMENT_STATE)!;
     reset_sky_timing(renderer)!;
 
     write_pass_timestamp(
@@ -116,25 +116,25 @@ fn void? record_sky(Renderer* renderer, gpu::GpuAddress root) @private {
     )!;
 
     gpu::ColorTargetDesc[1] colors = {{
-        .view     = renderer.hdr_color.attachment,
+        .view     = record.hdr_color.attachment,
         .load_op  = gpu::LoadOp.LOAD,
         .store_op = gpu::StoreOp.STORE,
     }};
     gpu::DepthTargetDesc depth = {
-        .view     = renderer.depth.attachment,
+        .view     = record.depth.attachment,
         .load_op  = gpu::LoadOp.LOAD,
         .store_op = gpu::StoreOp.STORE,
     };
     gpu::RenderPassDesc pass = {
         .colors = colors[..],
         .depth  = &depth,
-        .width  = renderer.hdr_color.width,
-        .height = renderer.hdr_color.height,
+        .width  = record.hdr_color.width,
+        .height = record.hdr_color.height,
     };
     gpu::ColorTargetState[1] color_targets = { gpu::color_blend_disabled() };
     gpu::GraphicsState state = fullscreen_state(
-        renderer.hdr_color.width,
-        renderer.hdr_color.height,
+        record.hdr_color.width,
+        record.hdr_color.height,
         color_targets[..],
     )!;
     state.depth = {

@@ -17,14 +17,14 @@ import gpu;
 *>
 fn void? record_dof(Renderer* renderer, ViewRecord* record) {
     acquire_dof_pipelines(renderer)!;
-    open_post_chain(renderer)!;
-    Target* input = renderer.scene_input;
-    bool in_place = input == &renderer.hdr_color;
+    open_post_chain(renderer, record)!;
+    Target* input = record.scene_input;
+    bool in_place = input == &record.hdr_color;
     uint half_width = record.dof_near.width;
     uint half_height = record.dof_near.height;
 
     input.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
-    renderer.depth.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
+    record.depth.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
     record.dof_near.transition(&renderer.commands, gpu::storage_at({ .compute }, { .write }))!;
     record.dof_far.transition(&renderer.commands, gpu::storage_at({ .compute }, { .write }))!;
     gpu::cmd_bind_pipeline(&renderer.commands, renderer.post_pipelines.dof_coc)!;
@@ -50,12 +50,12 @@ fn void? record_dof(Renderer* renderer, ViewRecord* record) {
     record.dof_near_blur.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
     record.dof_far_blur.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
     gpu::TextureAccess access = in_place ? (gpu::TextureAccess){ .read, .write } : (gpu::TextureAccess){ .write };
-    renderer.hdr_color.transition(&renderer.commands, gpu::storage_at({ .compute }, access))!;
+    record.hdr_color.transition(&renderer.commands, gpu::storage_at({ .compute }, access))!;
     gpu::cmd_bind_pipeline(&renderer.commands, renderer.post_pipelines.dof_composite)!;
     record_dof_dispatch(renderer, record, shader::DOF_PASS_COMPOSITE, in_place)!;
 
     renderer.stats.post_dispatches += 4;
-    renderer.scene_input = &renderer.hdr_color;
+    record.scene_input = &record.hdr_color;
 }
 
 fn void? acquire_dof_pipelines(Renderer* renderer) @private {
@@ -92,7 +92,7 @@ fn void? record_dof_dispatch(
         case shader::DOF_PASS_COC: output = &record.dof_near;
         case shader::DOF_PASS_GATHER_NEAR: output = &record.dof_near_blur;
         case shader::DOF_PASS_GATHER_FAR: output = &record.dof_far_blur;
-        default: output = &renderer.hdr_color;
+        default: output = &record.hdr_color;
     }
     Target* near = full ? &record.dof_near_blur : &record.dof_near;
     Target* far = full ? &record.dof_far_blur : &record.dof_far;
@@ -100,8 +100,8 @@ fn void? record_dof_dispatch(
     Frame* slot = &renderer.frames[renderer.frame_index % render::FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, DofRoot::size)!;
     *(DofRoot*)root.bytes.ptr = {
-        .color_texture  = renderer.scene_input.view.index,
-        .depth_texture  = renderer.depth.view.index,
+        .color_texture  = record.scene_input.view.index,
+        .depth_texture  = record.depth.view.index,
         .sampler_index  = renderer.linear_clamp_sampler,
         .near_texture   = near.view.index,
         .far_texture    = far.view.index,
@@ -111,14 +111,14 @@ fn void? record_dof_dispatch(
         .height         = output.height,
         .pass           = pass,
         .in_place       = in_place ? 1 : 0,
-        .orthographic   = renderer.view_projection.orthographic ? 1 : 0,
+        .orthographic   = record.projection_terms.orthographic ? 1 : 0,
         .max_coc        = params.max_coc,
         .aperture_scale = dof_aperture_scale(params, record.dof_near.height),
         .focus_distance = params.focus_distance,
-        .proj_22        = renderer.view_projection.m22,
-        .proj_23        = renderer.view_projection.m23,
+        .proj_22        = record.projection_terms.m22,
+        .proj_23        = record.projection_terms.m23,
         .half_texel     = { 1.0f / (float)record.dof_near.width, 1.0f / (float)record.dof_near.height },
-        .full_texel     = { 1.0f / (float)renderer.hdr_color.width, 1.0f / (float)renderer.hdr_color.height },
+        .full_texel     = { 1.0f / (float)record.hdr_color.width, 1.0f / (float)record.hdr_color.height },
     };
     return dispatch_extent(renderer, root.address, output.width, output.height);
 }
