@@ -79,3 +79,50 @@ fn void test_grade_gpu_packs_settings_and_camera_exposure() @test {
     assert(packed.lut_texture == (gpu::TextureIndex)0 && packed.lut_sampler == (gpu::SamplerIndex)0);
     assert(packed.lut_scale == 0 && packed.lut_offset == 0);
 }
+
+fn void test_default_post_stack_disables_every_effect() @test {
+    PostStack stack = post::default_post_stack();
+    assert(!stack.bloom);
+    assert(stack.bloom_params.threshold == 1 && stack.bloom_params.knee == 0.5f);
+    assert(stack.bloom_params.intensity == 0.05f && stack.bloom_params.levels == 5);
+}
+
+fn void test_post_stack_valid_rejects_out_of_range_enabled_effects() @test {
+    PostStack stack = post::default_post_stack();
+    assert(post::post_stack_valid(&stack));
+
+    stack.bloom_params.levels = 0;
+    assert(post::post_stack_valid(&stack));
+    stack.bloom = true;
+    assert(!post::post_stack_valid(&stack));
+    stack.bloom_params.levels = post::BLOOM_MAX_LEVELS + 1;
+    assert(!post::post_stack_valid(&stack));
+    stack.bloom_params.levels = post::BLOOM_MAX_LEVELS;
+    assert(post::post_stack_valid(&stack));
+}
+
+fn void test_bloom_level_extent_halves_and_floors_at_one() @test {
+    assert(post::bloom_level_extent(1280, 0) == 640);
+    assert(post::bloom_level_extent(1280, 4) == 40);
+    assert(post::bloom_level_extent(1, 0) == 1);
+    assert(post::bloom_level_extent(3, 7) == 1);
+}
+
+fn void test_grade_gpu_packs_bloom_binding() @test {
+    GradeParams params = post::default_post_stack().grade;
+    GradeGpu packed;
+    post::write_grade_gpu(
+        gpu_grade:       &packed,
+        params:          &params,
+        camera_exposure: 1.0f,
+        bloom_texture:   (gpu::TextureIndex)7,
+        bloom_sampler:   (gpu::SamplerIndex)3,
+        bloom_intensity: 0.25f,
+    );
+    assert(packed.bloom_texture == (gpu::TextureIndex)7 && packed.bloom_sampler == (gpu::SamplerIndex)3);
+    assert(packed.bloom_intensity == 0.25f);
+
+    post::write_grade_gpu(&packed, &params, 1.0f);
+    assert(packed.bloom_texture == (gpu::TextureIndex)0 && packed.bloom_sampler == (gpu::SamplerIndex)0);
+    assert(packed.bloom_intensity == 0);
+}

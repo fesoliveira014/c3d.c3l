@@ -29,14 +29,48 @@ struct ViewDesc {
 }
 
 <*
+ Working images one view owns, in view_targets order.
+*>
+const uint VIEW_TARGET_COUNT = 2 + post::BLOOM_MAX_LEVELS;
+
+<*
  Renderer-owned view: its configuration and working images.
 *>
 struct ViewRecord {
-    ViewDesc         desc;
-    Target           post_a;
-    Target           post_b;
-    gpu::TextureState frame_post_a_state;
-    gpu::TextureState frame_post_b_state;
+    ViewDesc                             desc;
+    Target                               post_a;
+    Target                               post_b;
+    Target[post::BLOOM_MAX_LEVELS]       bloom;
+    uint                                 bloom_levels;
+    gpu::TextureState[VIEW_TARGET_COUNT] frame_states;
+}
+
+<*
+ Remember every working image's state at the start of a frame.
+*>
+fn void ViewRecord.snapshot_states(&self) {
+    Target*[VIEW_TARGET_COUNT] targets = view_targets(self);
+    foreach (index, target : targets) self.frame_states[index] = target.state;
+}
+
+<*
+ Put every working image back to its start-of-frame state.
+*>
+fn void ViewRecord.restore_states(&self) {
+    Target*[VIEW_TARGET_COUNT] targets = view_targets(self);
+    foreach (index, target : targets) target.state = self.frame_states[index];
+}
+
+<*
+ Every working image of the view, allocated or not, in a fixed order.
+ @param [&in] record : "Outlives the returned pointers."
+*>
+fn Target*[VIEW_TARGET_COUNT] view_targets(ViewRecord* record) {
+    Target*[VIEW_TARGET_COUNT] targets;
+    targets[0] = &record.post_a;
+    targets[1] = &record.post_b;
+    foreach (level, &target : record.bloom) targets[2 + level] = target;
+    return targets;
 }
 
 <*
@@ -65,6 +99,7 @@ fn ViewDesc default_view_desc() {
 fn void? configure_view(Renderer* renderer, ViewId view, ViewDesc desc) {
     ViewRecord* record = renderer.views.try_get(view)!;
     if (desc.color == OutputMode.LINEAR_HDR) return c3d::INVALID_ARGUMENT~;
+    if (!post::post_stack_valid(&desc.post)) return c3d::INVALID_ARGUMENT~;
     if (desc.post.grade.lut.generation) {
         TextureAsset* lut = renderer.assets.textures.try_get(desc.post.grade.lut)!;
         if (!lut_desc_valid(&lut.desc)) return c3d::INVALID_ARGUMENT~;
@@ -77,6 +112,8 @@ fn void? configure_view(Renderer* renderer, ViewId view, ViewDesc desc) {
         post::retire_post_targets(renderer, record);
     }
     record.desc = desc;
+    post::retire_effect_targets(renderer, record);
+    post::ensure_effect_targets(renderer, record)!;
 }
 
 fn bool lut_desc_valid(material::TextureDesc* desc) @private {

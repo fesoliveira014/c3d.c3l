@@ -370,6 +370,10 @@ struct GradeGpu {
     SamplerIndex lut_sampler;
     float lut_scale;
     float lut_offset;
+    TextureIndex bloom_texture;
+    SamplerIndex bloom_sampler;
+    float bloom_intensity;
+    uint _pad_bloom;
 }
 
 root GradeRoot {
@@ -401,4 +405,17 @@ root DisplayRoot {
     uint _pad0;
     uint _pad1;
     GradeGpu grade;
+}
+
+root BloomRoot {
+    TextureIndex input_texture;
+    SamplerIndex sampler_index;
+    TextureIndex output_texture;
+    uint width;
+    uint height;
+    uint prefilter;
+    float threshold;
+    float knee;
+    vec2 input_texel;
+    vec2 _pad0;
 }

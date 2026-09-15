@@ -136,6 +136,8 @@ struct Renderer {
     ViewId                  default_view;
     post::PostPipelines     post_pipelines;
     float                   view_exposure;
+    Target*                 scene_input;
+    bool                    post_chain_open;
     PipelineCache           pipelines;
     gpu::SamplerIndex       linear_clamp_sampler;
 
@@ -258,10 +260,9 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
     self.frame_depth_state = self.depth.state;
     self.frame_shadow_state = self.shadow_atlas.state;
     foreach (index, target : self.targets.items) self.frame_target_states[index] = target.target.state;
-    foreach (&record : self.views.items) {
-        record.frame_post_a_state = record.post_a.state;
-        record.frame_post_b_state = record.post_b.state;
-    }
+    foreach (&record : self.views.items) record.snapshot_states();
+    self.scene_input = &self.hdr_color;
+    self.post_chain_open = false;
     self.frame_submitted = false;
     self.recording_slot = (uint)(self.frame_index % FRAMES_IN_FLIGHT);
     self.commands = {};
@@ -753,7 +754,10 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         destroy_pipeline_cache(&renderer.device, &renderer.pipelines);
         destroy_deformation_cache(&renderer.deformation);
         pool::destroy_pool{TargetRecord, RenderTargetId}(&renderer.targets);
-        foreach (&record : renderer.views.items) post::release_post_targets(&renderer.device, record);
+        foreach (&record : renderer.views.items) {
+            post::release_post_targets(&renderer.device, record);
+            post::release_effect_targets(&renderer.device, record);
+        }
         pool::destroy_pool{ViewRecord, ViewId}(&renderer.views);
         // Preparation updates completion points and may replace copied ring storage.
         frames = renderer.frames;
@@ -786,7 +790,10 @@ fn void destroy_renderer(Renderer* renderer) {
     if (renderer.shadow_timing_results.len) alloc::free(renderer.allocator, renderer.shadow_timing_results.ptr);
     release_scene_color(renderer);
     release_view_targets(&renderer.device, &renderer.hdr_color, &renderer.depth);
-    foreach (&record : renderer.views.items) post::release_post_targets(&renderer.device, record);
+    foreach (&record : renderer.views.items) {
+        post::release_post_targets(&renderer.device, record);
+        post::release_effect_targets(&renderer.device, record);
+    }
     pool::destroy_pool{ViewRecord, ViewId}(&renderer.views);
     post::destroy_post_pipelines(&renderer.device, &renderer.post_pipelines);
 
@@ -873,9 +880,10 @@ fn void? recover_window_output(Renderer* renderer) @private {
         depth:     &renderer.depth,
     )!;
     foreach (&record : renderer.views.items) {
-        if (!record.post_a.texture.is_valid()) continue;
         post::release_post_targets(&renderer.device, record);
-        post::ensure_post_targets(renderer, record)!;
+        post::release_effect_targets(&renderer.device, record);
+        if (record.desc.post.fxaa) post::ensure_post_targets(renderer, record)!;
+        post::ensure_effect_targets(renderer, record)!;
     }
     renderer.output_dirty = false;
 }
@@ -1010,10 +1018,7 @@ fn void abort_frame(Renderer* renderer) {
         renderer.scene_color.state = renderer.frame_scene_color_state;
         renderer.depth.state = renderer.frame_depth_state;
         foreach (index, &target : renderer.targets.items) target.target.state = renderer.frame_target_states[index];
-        foreach (&record : renderer.views.items) {
-            record.post_a.state = record.frame_post_a_state;
-            record.post_b.state = record.frame_post_b_state;
-        }
+        foreach (&record : renderer.views.items) record.restore_states();
     }
     renderer.has_output = false;
     discard_uploads(renderer);

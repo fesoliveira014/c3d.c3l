@@ -369,6 +369,10 @@ struct GradeGpu {
     uint lut_sampler;
     float lut_scale;
     float lut_offset;
+    uint bloom_texture;
+    uint bloom_sampler;
+    float bloom_intensity;
+    uint _pad_bloom;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer GradeRoot {
@@ -400,6 +404,19 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer DisplayRoot
     uint _pad0;
     uint _pad1;
     GradeGpu grade;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer BloomRoot {
+    uint input_texture;
+    uint sampler_index;
+    uint output_texture;
+    uint width;
+    uint height;
+    uint prefilter;
+    float threshold;
+    float knee;
+    vec2 input_texel;
+    vec2 _pad0;
 };
 
 #endif

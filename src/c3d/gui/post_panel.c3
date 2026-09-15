@@ -14,6 +14,9 @@ const float GAMMA_MIN @local = 0.2f;
 const float GAMMA_MAX @local = 3;
 const float GAIN_MAX @local = 3;
 const float TRIPLE_DRAG_SPEED @local = 0.005f;
+const float BLOOM_THRESHOLD_MAX @local = 8;
+const float BLOOM_KNEE_MAX @local = 1;
+const float BLOOM_INTENSITY_MAX @local = 1;
 const ZString[Tonemap::len] TONEMAP_LABELS @local = { "None", "ACES", "AgX", "Reinhard" };
 
 <*
@@ -52,6 +55,34 @@ fn bool post_panel(ViewDesc* desc, TextureId lut) {
     changed |= edit_grade_triple("Gamma", &grade.gamma, GAMMA_MIN, GAMMA_MAX);
     changed |= edit_grade_triple("Gain", &grade.gain, 0, GAIN_MAX);
 
+    if (imgui::collapsing_header("Bloom", {})) {
+        BloomParams* bloom = &desc.post.bloom_params;
+        changed |= imgui::checkbox("Enable bloom", &desc.post.bloom);
+        changed |= edit_grade_factor("Threshold", &bloom.threshold, 0, BLOOM_THRESHOLD_MAX);
+        changed |= edit_grade_factor("Knee", &bloom.knee, 0, BLOOM_KNEE_MAX);
+        changed |= edit_grade_factor("Intensity", &bloom.intensity, 0, BLOOM_INTENSITY_MAX);
+        changed |= edit_level_count("Levels", &bloom.levels, 1, post::BLOOM_MAX_LEVELS);
+    }
+
+    return changed;
+}
+
+fn bool edit_level_count(
+    ZString label,
+    uint* value,
+    uint minimum,
+    uint maximum,
+) @local {
+    int count = (int)*value;
+    bool changed = imgui::slider_int_ex(
+        label:  label,
+        v:      &count,
+        v_min:  (int)minimum,
+        v_max:  (int)maximum,
+        format: "%d",
+        flags:  imgui::SLIDER_FLAGS_ALWAYS_CLAMP,
+    );
+    *value = (uint)count;
     return changed;
 }
 
