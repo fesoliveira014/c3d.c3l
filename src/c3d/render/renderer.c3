@@ -162,6 +162,8 @@ struct Renderer {
     bool                    frame_open;
     bool                    overlay_open;
     bool                    has_output;
+    bool                    frame_recorded;
+    bool                    output_suppressed;
 }
 
 <*
@@ -241,9 +243,10 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
     self.frame_started = clock::now();
 
     self.has_output = false;
+    self.frame_recorded = false;
     if (self.swapchain.is_valid()) {
         if (self.output_dirty) recover_window_output(self)!;
-        acquire_window_output(self)!;
+        if (!self.output_suppressed) acquire_window_output(self)!;
     }
 
     self.frame_shadow_state = self.shadow_atlas.state;
@@ -300,7 +303,8 @@ fn void? Renderer.clear(&self, Vec4 color) {
 }
 
 <*
- Submit the frame and present its window output. Submits nothing without one.
+ Submit the recorded views and uploads; present when a window image was acquired.
+ An empty frame is discarded.
  @param [&inout] self : "Closes the frame and advances to the next slot."
  @return? gpu::COMMAND_RECORDING_ERROR, gpu::INVALID_HANDLE, gpu::INVALID_ARGUMENT
  @return? gpu::INVALID_RESOURCE_STATE, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
@@ -321,34 +325,36 @@ fn void? Renderer.end_frame(&self) {
     self.frame_open = false;
     self.frame_index++;
 
-    if (!self.has_output) {
+    bool uploads_pending = self.pending_copies.len() > 0 || self.pending_texture_uploads.len() > 0;
+    if (!self.frame_recorded && !uploads_pending) {
         abort_frame(self);
         self.stats.frame_ms = elapsed_ms(self.frame_started);
         return;
     }
+    bool present = self.has_output;
     self.has_output = false;
 
     defer catch (void)gpu::discard_commands(&self.commands);
     record_pending_copies(self, &self.commands)!;
-    self.window_target.transition(&self.commands, PRESENT_STATE)!;
+    if (present) self.window_target.transition(&self.commands, PRESENT_STATE)!;
     slot.upload.flush(&self.device)!;
 
     gpu::ExecutableCommandList[1] executable = { gpu::end_commands(&self.commands)! };
     defer catch (void)gpu::discard_executable_commands(&executable[0]);
 
-    gpu::SubmitDesc submit = {
-        .command_lists    = executable[..],
-        .readiness        = self.acquired.readiness,
-        .readiness_before = { .color_output },
-    };
+    gpu::SubmitDesc submit = { .command_lists = executable[..] };
+    if (present) {
+        submit.readiness = self.acquired.readiness;
+        submit.readiness_before = { .color_output };
+    }
     slot.done = gpu::submit(self.graphics, &submit)!;
-    self.output_submission = slot.done;
+    if (present) self.output_submission = slot.done;
     self.frame_submitted = true;
     commit_uploads(self, slot);
     submitted = true;
     self.stats.cpu_record_ms = elapsed_ms(self.frame_started);
 
-    present_window_output(self, slot.done)!;
+    if (present) present_window_output(self, slot.done)!;
     self.stats.frame_ms = elapsed_ms(self.frame_started);
 }
 
