@@ -2,6 +2,7 @@ module c3d::test::fbx;
 
 import c3d;
 import c3d::anim;
+import c3d::anim::retarget;
 import c3d::asset;
 import c3d::asset::fbx;
 import c3d::geometry;
@@ -217,6 +218,75 @@ fn void test_duplicate_model_key_faults_before_insertion() @test {
     fbx::load_model(&assets, path)!!;
     sz keys_before = assets.keys.len();
     if (catch excuse = fbx::load_model(&assets, path)) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "expected a fault");
+    }
+    assert(assets.keys.len() == keys_before);
+}
+
+fn void test_load_animations_rebinds_a_file_onto_a_model() @test {
+    AssetStore assets = asset::create_asset_store(mem, {
+        .max_geometries = 8,
+        .max_textures   = asset::BUILTIN_TEXTURE_COUNT + 8,
+        .max_materials  = 8,
+        .max_samplers   = asset::BUILTIN_SAMPLER_COUNT + 2,
+        .max_models     = 2,
+        .max_skeletons  = 2,
+        .max_clips      = 4,
+    });
+    defer asset::destroy_asset_store(&assets);
+    String path = fixture_path("maya_kenney_character_7700_binary.fbx");
+    ModelId model = fbx::load_model(&assets, path)!!;
+    ModelTemplate* template = &assets.model(model).data;
+
+    ClipId[] clips = fbx::load_animations(mem, &assets, path, model)!!;
+    defer alloc::free(mem, clips.ptr);
+    assert(clips.len == 1);
+    ClipId keyed = assets.find_clip(string::tformat("%s#anim/0#%s#keep", path, path))!!;
+    assert(keyed.index == clips[0].index);
+    AnimationClip* clip = &assets.clip(clips[0]).data;
+    assert(clip.tracks.len == 119);
+    foreach (target : clip.targets) assert(target < template.nodes.len);
+    bool root_translation;
+    foreach (&track : clip.tracks) {
+        if (track.path != TargetPath.TRANSLATION) continue;
+        assert(template.nodes[clip.targets[track.target]].name == "Root");
+        root_translation = true;
+    }
+    assert(root_translation);
+
+    RetargetOptions options = retarget::RETARGET_OPTIONS_DEFAULT;
+    options.copy_translations = true;
+    options.root_motion = RootMotion.STRIP_XZ;
+    ClipId[] full = fbx::load_animations(mem, &assets, path, model, options)!!;
+    defer alloc::free(mem, full.ptr);
+    assert(full.len == 1 && assets.clip(full[0]).data.tracks.len == 177);
+
+    Scene scene = scene::create_scene(mem, { .max_nodes = 128 });
+    defer scene::destroy_scene(&scene);
+    Node* root = model::instantiate(&assets, &scene, model)!!;
+    Animator* animator = anim::add_animator(&scene, root);
+    animator.play(&assets, clips[0])!!;
+}
+
+fn void test_load_animations_rolls_back_on_key_collision() @test {
+    AssetStore assets = asset::create_asset_store(mem, {
+        .max_geometries = 8,
+        .max_textures   = asset::BUILTIN_TEXTURE_COUNT + 8,
+        .max_materials  = 8,
+        .max_samplers   = asset::BUILTIN_SAMPLER_COUNT + 2,
+        .max_models     = 2,
+        .max_skeletons  = 2,
+        .max_clips      = 4,
+    });
+    defer asset::destroy_asset_store(&assets);
+    String path = fixture_path("maya_kenney_character_7700_binary.fbx");
+    ModelId model = fbx::load_model(&assets, path)!!;
+    ClipId[] clips = fbx::load_animations(mem, &assets, path, model)!!;
+    defer alloc::free(mem, clips.ptr);
+    sz keys_before = assets.keys.len();
+    if (catch excuse = fbx::load_animations(mem, &assets, path, model)) {
         assert(excuse == c3d::INVALID_ARGUMENT);
     } else {
         assert(false, "expected a fault");

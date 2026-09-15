@@ -17,7 +17,7 @@ fn void? convert_animations(Importer* importer) @private {
     ufbx::Scene* scene = importer.scene;
     alloc::Allocator allocator = importer.assets.allocator;
     foreach (stack_index, stack : scene.anim_stacks) {
-        AnimationClip clip = convert_stack(importer, stack)!;
+        AnimationClip clip = convert_stack(importer, stack, allocator)!;
         defer catch asset::free_clip(allocator, &clip);
         String key = string::tformat("%s#anim/%d", importer.key, stack_index);
         importer.clips[stack_index] = importer.assets.add_clip_owned(&clip, key)!;
@@ -28,9 +28,8 @@ fn void? convert_animations(Importer* importer) @private {
     return;
 }
 
-fn AnimationClip? convert_stack(Importer* importer, ufbx::AnimStack* stack) @private {
+fn AnimationClip? convert_stack(Importer* importer, ufbx::AnimStack* stack, alloc::Allocator allocator) @private {
     ufbx::Scene* scene = importer.scene;
-    alloc::Allocator allocator = importer.assets.allocator;
     ufbx::BakeOpts options = { .trim_start_time = true, .resample_rate = scene.settings.frames_per_second };
     ufbx::BakedAnim*? baking = ufbx::bake_anim(scene, stack.anim, &options);
     if (catch excuse = baking) return load_fault(excuse)~;
@@ -43,7 +42,7 @@ fn AnimationClip? convert_stack(Importer* importer, ufbx::AnimStack* stack) @pri
         track_count += node_track_count(node);
     }
     foreach (mesh : scene.meshes) {
-        if (!has_animated_channel(baked, mesh)) continue;
+        if (importer.nodes_only || !has_animated_channel(baked, mesh)) continue;
         track_count += imported_instances(importer, mesh) * live_part_count(mesh);
     }
 
@@ -79,7 +78,7 @@ fn AnimationClip? convert_stack(Importer* importer, ufbx::AnimStack* stack) @pri
         }
     }
     foreach (mesh : scene.meshes) {
-        if (!has_animated_channel(baked, mesh)) continue;
+        if (importer.nodes_only || !has_animated_channel(baked, mesh)) continue;
         foreach (instance : mesh.instances) {
             uint node_index = importer.node_remap[instance.typed_id];
             if (node_index == NOT_IMPORTED) continue;

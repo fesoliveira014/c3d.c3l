@@ -117,6 +117,50 @@ turns them into deformed draws:
 Compute skinning, previous deformed poses for temporal effects and skinned
 instanced meshes are not part of this.
 
+## Retargeting
+
+`c3d::anim::retarget` rebinds a clip authored against one set of node names
+onto another model's template:
+
+```c3
+AnimationClip walk = retarget::retarget_by_name(
+    allocator:    assets.allocator,
+    source:       &baked,
+    source_nodes: source_template.nodes,
+    target:       &assets.model(hero).data,
+    options:      { .root_motion = RootMotion.STRIP_XZ, .root_node = retarget::NO_ROOT_NODE },
+)!;
+```
+
+Every animated source node is matched to a destination template node by its
+canonical name: the text after the last `:` (so `mixamorig:Hips` and `Hips`
+agree), compared case-insensitively. `RetargetOptions.name_map` pairs exact
+source and destination names and takes precedence. A source node with tracks
+and no match fails with `ASSET_FORMAT_ERROR` unless `allow_partial` skips it; a
+destination name shared by two nodes is ambiguous and also fails.
+
+Rotation, scale and morph-weight tracks are copied for every matched node.
+Translation tracks are copied only for source roots (nodes without a parent,
+`Hips` on a Mixamo rig) so bone lengths come from the destination's rest pose;
+`copy_translations` keeps them all. Interpolation, key times and the clip
+duration are preserved.
+
+`RootMotion` acts on the root translation tracks: `KEEP` copies them,
+`STRIP_XZ` pins every key's horizontal position to the first key's (an
+in-place clip), and `EXTRACT` strips them and adds one linear translation track
+on `options.root_node`, a destination template node, holding that node's rest
+position plus the horizontal displacement since the first key. `EXTRACT`
+without a root node is `INVALID_ARGUMENT`; a Mixamo template has no node above
+`Hips`, so it offers `KEEP` and `STRIP_XZ` only.
+
+`fbx::load_animations(allocator, assets, path, model, options)` parses an FBX
+animation file privately, bakes every stack, retargets it onto the model and
+stores the clips under `<path>#anim/<k>#<model key>#<keep|strip_xz|extract>`,
+returning their ids in the caller's allocator; the file's own nodes never
+enter the store, and a fault removes every clip the call inserted
+([Models, glTF and FBX import](models.md)). Rest-pose differences between rigs
+are not corrected.
+
 ## Example
 
 ```bash

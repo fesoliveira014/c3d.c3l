@@ -24,7 +24,7 @@ fn void? build_template(Importer* importer) @private {
     ImportCounts counts;
     foreach (child : root.children) count_subtree(importer, child, &counts);
 
-    alloc::Allocator allocator = importer.assets.allocator;
+    alloc::Allocator allocator = importer.nodes_only ? tmem : importer.assets.allocator;
     importer.template = {
         .nodes   = alloc::new_array(allocator, NodeTemplate, (sz)counts.nodes),
         .meshes  = alloc::new_array(allocator, ModelMesh, (sz)counts.meshes),
@@ -46,7 +46,7 @@ fn void? build_template(Importer* importer) @private {
 
 fn void count_subtree(Importer* importer, ufbx::Node* node, ImportCounts* counts) @private {
     counts.nodes++;
-    if (node.mesh) {
+    if (node.mesh && !importer.nodes_only) {
         usz parts = live_part_count(node.mesh);
         counts.nodes += parts;
         counts.meshes += parts;
@@ -67,13 +67,13 @@ fn void? emit_subtree(
     importer.node_remap[node.typed_id] = index;
     template.nodes[index] = {
         .parent  = parent,
-        .name    = copy_name(importer.assets.allocator, node.name),
+        .name    = copy_name(importer.nodes_only ? tmem : importer.assets.allocator, node.name),
         .local   = transform_of(node.local_transform),
         .layers  = scene::DEFAULT_LAYERS,
         .visible = node.visible,
     };
 
-    if (node.mesh) {
+    if (node.mesh && !importer.nodes_only) {
         emit_parts(
             importer: importer,
             node:     node,

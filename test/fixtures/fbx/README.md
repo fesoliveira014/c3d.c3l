@@ -11,3 +11,4 @@ MIT License or as public domain (Unlicense); see `lib/ufbx.c3l/vendor/ufbx/LICEN
 | `maya_blend_inbetween_7500_binary.fbx` | Blend channels with in-between shapes and their weight animation |
 | `blender_293_embedded_textures_7400_binary.fbx` | Embedded textures, packed metallic-roughness and base-opacity maps |
 | `blender_279_internal_textures_7400_binary.fbx` | External textures that cannot be read (the `textures/` directory is not copied) |
+| `maya_kenney_character_7700_binary.fbx` | Skinned character loaded again as an animation file onto itself: retargeting by name |

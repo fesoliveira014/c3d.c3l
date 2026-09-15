@@ -255,6 +255,16 @@ zero into one clip: linear translation, rotation and scale tracks per animated
 node, and one morph-weight track per part child of a mesh with animated
 channels, holding every channel's weight per key.
 
+**Animation files.** `fbx::load_animations(allocator, assets, path, model,
+options)` loads a file that carries animation for another model, such as a
+Mixamo animation downloaded without skin: the file is parsed and baked without
+inserting anything of its own, each stack is rebound onto the model's template
+nodes by name through `c3d::anim::retarget` ([Animation](animation.md)), and
+the clips are stored under `<path>#anim/<k>#<model key>#<keep|strip_xz|extract>`
+so one file can serve several characters and root-motion modes. The returned
+ids live in the caller's allocator. A dead model id is `INVALID_ID`; an
+unmatched animated node is `ASSET_FORMAT_ERROR` unless `allow_partial`.
+
 Unsupported: texture UV transforms (`UNSUPPORTED`), UV set selection by name
 (textures use UV set 0), a mesh with more than one skin deformer
 (`UNSUPPORTED`), dual-quaternion skinning (imported as linear), area and
