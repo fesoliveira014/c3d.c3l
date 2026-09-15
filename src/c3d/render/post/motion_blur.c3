@@ -28,7 +28,7 @@ fn void? record_motion_blur(
     DrawItem[] items,
     CameraMatrices* matrices,
 ) {
-    ensure_motion_blur_pipelines(renderer)!;
+    acquire_motion_blur_pipelines(renderer)!;
     Frame* slot = &renderer.frames[renderer.frame_index % render::FRAMES_IN_FLIGHT];
     uint width = record.velocity.width;
     uint height = record.velocity.height;
@@ -86,8 +86,8 @@ fn void? record_motion_blur(
     renderer.scene_input = &record.motion_blur_out;
 }
 
-fn void? ensure_motion_blur_pipelines(Renderer* renderer) @private {
-    ensure_compute_pipeline(
+fn void? acquire_motion_blur_pipelines(Renderer* renderer) @private {
+    acquire_compute_pipeline(
         renderer:   renderer,
         pipeline:   &renderer.post_pipelines.motion_blur,
         shader:     ShaderName.MOTION_BLUR,

@@ -202,14 +202,14 @@ fn void? configure_view(Renderer* renderer, ViewId view, ViewDesc desc) {
     }
 
     if (desc.post.fxaa) {
-        post::ensure_post_targets(renderer, record)!;
+        post::acquire_post_targets(renderer, record)!;
     } else {
         post::retire_post_targets(renderer, record);
     }
     record.desc = desc;
     record.history.valid = false;
     post::retire_effect_targets(renderer, record);
-    post::ensure_effect_targets(renderer, record)!;
+    post::acquire_effect_targets(renderer, record)!;
 }
 
 <*

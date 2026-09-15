@@ -7,7 +7,7 @@ import gpu;
 const uint ENVIRONMENT_LUT_SIZE @private = 256; // Two integrated BRDF terms in a shared 512 KiB image.
 const uint ENVIRONMENT_IMAGE_GROUP_SIZE @private = 8; // Mirrors local_size_x/y in environment image stages.
 
-fn void? ensure_environment_lut(Renderer* renderer) @private {
+fn void? acquire_environment_lut(Renderer* renderer) @private {
     if (renderer.environment_state.brdf_lut.state != EnvironmentLutState.NONE) return;
     gpu::TextureDesc description = {
         .width = ENVIRONMENT_LUT_SIZE,
@@ -27,7 +27,7 @@ fn void? ensure_environment_lut(Renderer* renderer) @private {
     renderer.environment_state.brdf_lut.state = EnvironmentLutState.PENDING;
 }
 
-fn void? ensure_environment_pipeline(
+fn void? acquire_environment_pipeline(
     Renderer* renderer,
     gpu::PipelineHandle* pipeline,
     ShaderName shader,
@@ -60,7 +60,7 @@ fn void? record_environment_preparations(Renderer* renderer, gpu::CommandList* c
         record_sheen_lut(renderer, commands)!;
     }
     if (renderer.environment_state.brdf_lut.state != EnvironmentLutState.PENDING) return;
-    ensure_environment_pipeline(renderer, &renderer.environment_state.pipelines.brdf, BRDF_LUT)!;
+    acquire_environment_pipeline(renderer, &renderer.environment_state.pipelines.brdf, BRDF_LUT)!;
     record_environment_lut(
         renderer: renderer,
         commands: commands,
@@ -125,7 +125,7 @@ fn void? record_environment_source(
     gpu::CommandList* commands,
     PendingEnvironment* pending,
 ) @local {
-    ensure_environment_pipeline(renderer, &renderer.environment_state.pipelines.source, ENVIRONMENT_SOURCE)!;
+    acquire_environment_pipeline(renderer, &renderer.environment_state.pipelines.source, ENVIRONMENT_SOURCE)!;
     EnvironmentRes* result = &pending.result;
     Frame* slot = recording_frame(renderer, commands);
     gpu::TextureBarrier write = gpu::texture_transition(
@@ -170,9 +170,9 @@ fn void? record_environment_lighting(
     gpu::CommandList* commands,
     PendingEnvironment* pending,
 ) @local {
-    ensure_environment_pipeline(renderer, &renderer.environment_state.pipelines.prefilter, ENVIRONMENT_PREFILTER)!;
-    ensure_environment_pipeline(renderer, &renderer.environment_state.pipelines.project, IRRADIANCE_PROJECT)!;
-    ensure_environment_pipeline(renderer, &renderer.environment_state.pipelines.reduce, IRRADIANCE_REDUCE)!;
+    acquire_environment_pipeline(renderer, &renderer.environment_state.pipelines.prefilter, ENVIRONMENT_PREFILTER)!;
+    acquire_environment_pipeline(renderer, &renderer.environment_state.pipelines.project, IRRADIANCE_PROJECT)!;
+    acquire_environment_pipeline(renderer, &renderer.environment_state.pipelines.reduce, IRRADIANCE_REDUCE)!;
     EnvironmentRes* result = &pending.result;
     Frame* slot = recording_frame(renderer, commands);
     record_cube_prefilter(

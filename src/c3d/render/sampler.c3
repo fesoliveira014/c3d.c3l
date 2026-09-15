@@ -23,10 +23,10 @@ struct SamplerRes {
 fn void? Renderer.upload_sampler(&self, SamplerId sampler) {
     if (!self.assets.samplers.is_live(sampler)) return c3d::INVALID_ID~;
 
-    ensure_sampler(self, sampler)!;
+    resolve_sampler(self, sampler)!;
 }
 
-fn SamplerRes*? ensure_sampler(Renderer* renderer, SamplerId sampler) @private {
+fn SamplerRes*? resolve_sampler(Renderer* renderer, SamplerId sampler) @private {
     SamplerAsset* record = renderer.assets.sampler(sampler);
     SamplerRes* mirror = &renderer.samplers[sampler.index];
     bool same_asset = mirror.asset.index == sampler.index && mirror.asset.generation == sampler.generation;

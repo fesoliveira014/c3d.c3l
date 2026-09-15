@@ -3,7 +3,7 @@ module c3d::render;
 import c3d::shader;
 import gpu;
 
-fn void? ensure_sheen_lut(Renderer* renderer) @private {
+fn void? acquire_sheen_lut(Renderer* renderer) @private {
     if (renderer.environment_state.sheen_lut.state != EnvironmentLutState.NONE) return;
 
     gpu::TextureDesc description = {
@@ -70,7 +70,7 @@ fn void retire_environment_sheen(RetireList* retire, EnvironmentRes* result) @pr
 }
 
 fn void? record_sheen_lut(Renderer* renderer, gpu::CommandList* commands) @private {
-    ensure_environment_pipeline(renderer, &renderer.environment_state.pipelines.sheen_lut, SHEEN_LUT)!;
+    acquire_environment_pipeline(renderer, &renderer.environment_state.pipelines.sheen_lut, SHEEN_LUT)!;
     record_environment_lut(
         renderer: renderer,
         commands: commands,
@@ -85,7 +85,7 @@ fn void? record_environment_sheen(
     gpu::CommandList* commands,
     PendingEnvironment* pending,
 ) @private {
-    ensure_environment_pipeline(renderer, &renderer.environment_state.pipelines.sheen_prefilter, SHEEN_PREFILTER)!;
+    acquire_environment_pipeline(renderer, &renderer.environment_state.pipelines.sheen_prefilter, SHEEN_PREFILTER)!;
     EnvironmentRes* result = &pending.result;
     record_cube_prefilter(
         renderer: renderer,

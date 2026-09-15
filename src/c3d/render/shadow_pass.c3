@@ -50,16 +50,16 @@ fn ShadowDraw[]? prepare_shadow_draws(Renderer* renderer, MeshCandidate[] candid
     foreach (index, &candidate : candidates) {
         Material* material = &renderer.assets.material(candidate.material).data;
         ShadowDraw* draw = &draws[index];
-        GpuGeometry* geometry = ensure_geometry(renderer, candidate.geometry)!;
+        GpuGeometry* geometry = resolve_geometry(renderer, candidate.geometry)!;
         bool morphed = candidate.morph_weights.len > 0;
         ShaderVariant vertex = mesh_vertex_variant(geometry.layout.flags, morphed, shader::SHADER_FLAG_DEPTH_ONLY);
         *draw = {
             .candidate = candidate,
             .geometry = geometry,
             .vertex = vertex,
-            .skin = candidate.skin ? ensure_palette(renderer, candidate.node, candidate.skin)! : (gpu::GpuAddress)0,
+            .skin = candidate.skin ? resolve_palette(renderer, candidate.node, candidate.skin)! : (gpu::GpuAddress)0,
             .morph = vertex.flags & shader::SHADER_FLAG_MORPH
-              ? ensure_morph_block(renderer, candidate)! : (gpu::GpuAddress)0,
+              ? resolve_morph_block(renderer, candidate)! : (gpu::GpuAddress)0,
             .masked = material.common.alpha_mode == AlphaMode.MASK,
             .wireframe = material.common.wireframe && renderer.caps.line_polygon_mode,
             .reflected = candidate.node.world.determinant() < 0,
@@ -205,7 +205,7 @@ fn ShadowGpu[]? record_shadows(
     ShadowAllocation allocation = assign_shadow_layers(extraction.shadows[:covered], renderer.max_shadow_layers);
     renderer.stats.shadow_requests_dropped += allocation.dropped;
     if (!allocation.layer_count) return (ShadowGpu[]){};
-    ensure_shadow_atlas(renderer)!;
+    acquire_shadow_atlas(renderer)!;
     ExtractCounts counts;
     MeshCandidate[] candidates = extract_shadow_candidates(
         allocator: tmem,

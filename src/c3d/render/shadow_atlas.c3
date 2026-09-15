@@ -24,7 +24,7 @@ fn void? transition_shadow_atlas(ShadowAtlas* atlas, gpu::CommandList* commands,
     atlas.state = next;
 }
 
-fn void? ensure_shadow_atlas(Renderer* renderer) @private {
+fn void? acquire_shadow_atlas(Renderer* renderer) @private {
     if (renderer.shadow_atlas.texture.is_valid()) return;
     renderer.shadow_atlas = create_shadow_atlas(
         allocator: renderer.allocator,

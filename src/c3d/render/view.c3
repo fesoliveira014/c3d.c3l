@@ -145,8 +145,8 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
         usz transparent_filled;
         bool sheen;
         foreach (&candidate : candidates) {
-            GpuGeometry* geometry = ensure_geometry(self, candidate.geometry)!;
-            MaterialRes* material = ensure_material(self, candidate.material)!;
+            GpuGeometry* geometry = resolve_geometry(self, candidate.geometry)!;
+            MaterialRes* material = resolve_material(self, candidate.material)!;
             Material* material_description = &self.assets.material(candidate.material).data;
             sheen |= material_uses_sheen(material_description);
             validate_normal_geometry(
@@ -176,9 +176,9 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
                 .geometry  = geometry,
                 .material  = material,
                 .vertex    = vertex,
-                .skin      = candidate.skin ? ensure_palette(self, candidate.node, candidate.skin)! : (gpu::GpuAddress)0,
+                .skin      = candidate.skin ? resolve_palette(self, candidate.node, candidate.skin)! : (gpu::GpuAddress)0,
                 .morph     = vertex.flags & shader::SHADER_FLAG_MORPH
-                  ? ensure_morph_block(self, candidate)! : (gpu::GpuAddress)0,
+                  ? resolve_morph_block(self, candidate)! : (gpu::GpuAddress)0,
                 .front_face = model_reflected != view_reflected
                   ? gpu::FrontFace.CLOCKWISE : gpu::FrontFace.COUNTER_CLOCKWISE,
             };
@@ -189,7 +189,7 @@ fn void? Renderer.render_view(&self, Scene* scene, Node* camera_node) {
         sort::quicksort(opaque_items, &by_sort_key);
         sort::quicksort(transmission_items, &by_transparent_depth);
         sort::quicksort(transparent_items, &by_transparent_depth);
-        if (transmission_items.len) ensure_scene_color(self)!;
+        if (transmission_items.len) acquire_scene_color(self)!;
         ViewEnvironments environments = resolve_view_environments(self, scene, sheen)!;
         record_pending_copies(self, &self.commands)!;
 
@@ -431,15 +431,15 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
         shadows_enabled = assign_shadow_layers(requests, self.max_shadow_layers).layer_count > 0;
     };
     if (shadows_enabled) {
-        ensure_shadow_atlas(self)!;
+        acquire_shadow_atlas(self)!;
         shadow_pipeline_for(self, false, mesh_vertex_variant({}, false, shader::SHADER_FLAG_DEPTH_ONLY))!;
     }
     scene.@each(Mesh; Entity entity, Mesh* mesh) {
         if (!self.assets.geometries.is_live(mesh.geometry) || !self.assets.materials.is_live(mesh.material)) {
             self.stats.dangling_refs++;
         } else {
-            GpuGeometry* geometry = ensure_geometry(self, mesh.geometry)!;
-            MaterialRes* material = ensure_material(self, mesh.material)!;
+            GpuGeometry* geometry = resolve_geometry(self, mesh.geometry)!;
+            MaterialRes* material = resolve_material(self, mesh.material)!;
             validate_normal_geometry(
                 geometry: geometry,
                 material: &self.assets.material(mesh.material).data,
@@ -865,7 +865,7 @@ fn void? allocate_view_targets(
     )!;
 }
 
-fn void? ensure_scene_color(Renderer* renderer) @private {
+fn void? acquire_scene_color(Renderer* renderer) @private {
     if (renderer.scene_color.texture.is_valid()) return;
     renderer.scene_color = allocate_target(
         device:     &renderer.device,

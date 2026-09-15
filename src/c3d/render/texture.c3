@@ -38,17 +38,17 @@ fn void? Renderer.upload_texture(&self, TextureId texture) {
     if (!self.assets.textures.is_live(texture)) return c3d::INVALID_ID~;
 
     if (self.frame_open) {
-        ensure_texture(self, texture)!;
+        resolve_texture(self, texture)!;
         return;
     }
 
     open_closed_frame_slot(self)!;
     defer catch discard_uploads(self);
-    ensure_texture(self, texture)!;
+    resolve_texture(self, texture)!;
     submit_pending(self)!;
 }
 
-fn TextureRes*? ensure_texture(Renderer* renderer, TextureId texture) @private {
+fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture) @private {
     TextureAsset* record = renderer.assets.texture(texture);
     TextureRes* mirror = &renderer.textures[texture.index];
     bool same_asset = mirror.asset.index == texture.index && mirror.asset.generation == texture.generation;
@@ -171,10 +171,10 @@ fn void? prepare_builtin_textures(Renderer* renderer) @private {
     defer catch discard_uploads(renderer);
 
     for (uint index = 0; index < asset::BUILTIN_SAMPLER_COUNT; index++) {
-        ensure_sampler(renderer, { .index = index, .generation = 1 })!;
+        resolve_sampler(renderer, { .index = index, .generation = 1 })!;
     }
     for (uint index = 0; index < asset::BUILTIN_TEXTURE_COUNT; index++) {
-        ensure_texture(renderer, { .index = index, .generation = 1 })!;
+        resolve_texture(renderer, { .index = index, .generation = 1 })!;
     }
     submit_pending(renderer)!;
 }

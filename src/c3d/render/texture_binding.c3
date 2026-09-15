@@ -65,8 +65,8 @@ fn TextureBinding? resolve_texture_slot(Renderer* renderer, TextureSlot slot) @p
         ? slot.sampler : c3d::asset::SAMPLER_LINEAR_REPEAT;
     if (renderer.assets.sampler(sampler).desc.compare_enable) return c3d::INVALID_ARGUMENT~;
 
-    TextureRes* texture_mirror = ensure_texture(renderer, texture)!;
-    SamplerRes* sampler_mirror = ensure_sampler(renderer, sampler)!;
+    TextureRes* texture_mirror = resolve_texture(renderer, texture)!;
+    SamplerRes* sampler_mirror = resolve_sampler(renderer, sampler)!;
     return {
         .texture = texture,
         .sampler = sampler,
@@ -86,7 +86,7 @@ fn TextureBinding? resolve_gradient_map(Renderer* renderer, TextureId texture) @
         return c3d::UNSUPPORTED~;
     }
 
-    TextureRes* texture_mirror = ensure_texture(renderer, texture)!;
+    TextureRes* texture_mirror = resolve_texture(renderer, texture)!;
     if (!renderer.toon_gradient_sampler.is_valid()) {
         gpu::SamplerDesc sampler = {
             .min_filter = gpu::Filter.NEAREST,

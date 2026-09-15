@@ -52,7 +52,7 @@ fn void? record_display(Renderer* renderer, ViewRecord* record, float camera_exp
         );
     }
 
-    ensure_post_pipelines(renderer)!;
+    acquire_post_pipelines(renderer)!;
     open_post_chain(renderer)!;
     record_grade(
         renderer:        renderer,
@@ -78,10 +78,10 @@ fn void? record_display(Renderer* renderer, ViewRecord* record, float camera_exp
  @return? gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
 *>
 fn void? prepare_display(Renderer* renderer, ViewRecord* record) {
-    if (record.desc.post.bloom) ensure_bloom_pipelines(renderer)!;
-    if (record.desc.post.depth_of_field) ensure_dof_pipelines(renderer)!;
-    if (record.desc.post.motion_blur) ensure_motion_blur_pipelines(renderer)!;
-    if (record.desc.post.fxaa) return ensure_post_pipelines(renderer);
+    if (record.desc.post.bloom) acquire_bloom_pipelines(renderer)!;
+    if (record.desc.post.depth_of_field) acquire_dof_pipelines(renderer)!;
+    if (record.desc.post.motion_blur) acquire_motion_blur_pipelines(renderer)!;
+    if (record.desc.post.fxaa) return acquire_post_pipelines(renderer);
     if (!renderer.swapchain.is_valid()) return;
     renderer.pipelines.get(&renderer.device, display_pipeline_key(renderer.window_target.format))!;
 }
@@ -107,7 +107,7 @@ fn LutBinding? resolve_lut(Renderer* renderer, TextureId lut) @private {
     if (!lut.generation) return {};
     if (!renderer.assets.textures.is_live(lut)) return c3d::INVALID_ID~;
 
-    TextureRes* mirror = render::ensure_texture(renderer, lut)!;
+    TextureRes* mirror = render::resolve_texture(renderer, lut)!;
     render::record_pending_copies(renderer, &renderer.commands)!;
     return { .texture = mirror.view.index, .size = mirror.width };
 }
@@ -239,12 +239,12 @@ fn PipelineKey display_pipeline_key(gpu::Format output_format) @private {
     };
 }
 
-fn void? ensure_post_pipelines(Renderer* renderer) @private {
-    ensure_compute_pipeline(renderer, &renderer.post_pipelines.grade, ShaderName.GRADE, "post_grade")!;
-    ensure_compute_pipeline(renderer, &renderer.post_pipelines.fxaa, ShaderName.FXAA, "post_fxaa")!;
+fn void? acquire_post_pipelines(Renderer* renderer) @private {
+    acquire_compute_pipeline(renderer, &renderer.post_pipelines.grade, ShaderName.GRADE, "post_grade")!;
+    acquire_compute_pipeline(renderer, &renderer.post_pipelines.fxaa, ShaderName.FXAA, "post_fxaa")!;
 }
 
-fn void? ensure_compute_pipeline(
+fn void? acquire_compute_pipeline(
     Renderer* renderer,
     gpu::PipelineHandle* pipeline,
     ShaderName shader,
