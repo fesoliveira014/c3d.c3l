@@ -14,7 +14,8 @@
     "c3imgui",
     "c3cg",
     "b3",
-    "cgltf"
+    "cgltf",
+    "ufbx"
   ],
   "features": [
     "C3D_GUI",

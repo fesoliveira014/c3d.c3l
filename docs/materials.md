@@ -334,7 +334,7 @@ glTF materials arrive through `c3d::asset::gltf`, which selects Basic for
 unlit, Standard for metallic-roughness and Physical when any layer extension
 is present, and validates every factor against the constructor domains before
 building the material. The mapping table lives in
-[Models and glTF import](models.md).
+[Models, glTF and FBX import](models.md).
 
 ## Material storage
 

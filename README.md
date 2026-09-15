@@ -202,7 +202,7 @@ python3 scripts/build.py --example gltf_viewer
 ./examples/build/gltf_viewer path/to/model.glb --gpu-timings
 ```
 
-See [Models and glTF import](docs/models.md) for keys, options, the material
+See [Models, glTF and FBX import](docs/models.md) for keys, options, the material
 mapping and the supported extension subset.
 
 `animation` instantiates a model twice and plays a different clip on each
@@ -218,6 +218,19 @@ python3 scripts/build.py --example animation
 
 See [Animation](docs/animation.md) for the update sequence, blending and the
 borrowed-pointer rules.
+
+`mixamo` loads an FBX character through ufbx, instantiates it twice and plays its
+first clip on both, the second at half speed, with the same keys as `animation`.
+Without a path it reads `examples/assets/mixamo/character.fbx`, which is not
+committed; [the README there](examples/assets/mixamo/README.md) gives the Mixamo
+download settings:
+
+```bash
+python3 scripts/build.py --target mixamo
+./examples/build/mixamo path/to/character.fbx
+```
+
+See [Models, glTF and FBX import](docs/models.md) for the FBX conversion.
 
 `textured` adds PNG/JPEG maps, mip filtering, UV transforms and alpha masking in a
 standalone scene with validation enabled. The default image is embedded:

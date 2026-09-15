@@ -16,3 +16,6 @@
 [submodule "lib/cgltf.c3l"]
 	path = lib/cgltf.c3l
 	url = https://github.com/fesoliveira014/cgltf.c3l
+[submodule "lib/ufbx.c3l"]
+	path = lib/ufbx.c3l
+	url = https://github.com/fesoliveira014/ufbx.c3l

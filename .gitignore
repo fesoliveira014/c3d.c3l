@@ -12,3 +12,6 @@ build/
 
 # SPIR-V is compiled by scripts/build_shaders.py on every build; the C3 twin is committed.
 shaders/spv/
+
+# Mixamo downloads stay local; Adobe's terms govern them.
+examples/assets/mixamo/*.fbx
