@@ -17,7 +17,7 @@ const ZString[BLOOM_MAX_LEVELS] BLOOM_LEVEL_NAMES @private = {
  @return? gpu::DESCRIPTOR_HEAP_FULL, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
 *>
-fn void? ensure_post_targets(Renderer* renderer, ViewRecord* record) {
+fn void? acquire_post_targets(Renderer* renderer, ViewRecord* record) {
     if (record.post_a.texture.is_valid() || !renderer.hdr_color.texture.is_valid()) return;
 
     record.post_a = allocate_post_target(
@@ -45,13 +45,13 @@ fn void? ensure_post_targets(Renderer* renderer, ViewRecord* record) {
  @return? gpu::DESCRIPTOR_HEAP_FULL, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
 *>
-fn void? ensure_effect_targets(Renderer* renderer, ViewRecord* record) {
+fn void? acquire_effect_targets(Renderer* renderer, ViewRecord* record) {
     if (!renderer.hdr_color.texture.is_valid()) return;
     PostStack* stack = &record.desc.post;
-    if (stack.bloom && !record.bloom_levels) ensure_bloom_chain(renderer, record)!;
-    if (stack.depth_of_field && !record.dof_near.texture.is_valid()) ensure_dof_layers(renderer, record)!;
-    if (uses_tiles(stack) && !record.tile_max.texture.is_valid()) ensure_tiles(renderer, record)!;
-    if (stack.motion_blur && !record.velocity.texture.is_valid()) ensure_motion_blur_images(renderer, record)!;
+    if (stack.bloom && !record.bloom_levels) acquire_bloom_chain(renderer, record)!;
+    if (stack.depth_of_field && !record.dof_near.texture.is_valid()) acquire_dof_layers(renderer, record)!;
+    if (uses_tiles(stack) && !record.tile_max.texture.is_valid()) acquire_tiles(renderer, record)!;
+    if (stack.motion_blur && !record.velocity.texture.is_valid()) acquire_motion_blur_images(renderer, record)!;
 }
 
 <*
@@ -101,7 +101,7 @@ fn bool uses_tiles(PostStack* stack) @private {
     return stack.depth_of_field || stack.motion_blur;
 }
 
-fn void? ensure_motion_blur_images(Renderer* renderer, ViewRecord* record) @private {
+fn void? acquire_motion_blur_images(Renderer* renderer, ViewRecord* record) @private {
     defer catch release_motion_blur_images(&renderer.device, record);
     record.velocity = render::allocate_target(
         device:     &renderer.device,
@@ -125,7 +125,7 @@ fn void release_motion_blur_images(gpu::Device* device, ViewRecord* record) @pri
     if (record.motion_blur_out.texture.is_valid()) release_post_target(device, &record.motion_blur_out);
 }
 
-fn void? ensure_dof_layers(Renderer* renderer, ViewRecord* record) @private {
+fn void? acquire_dof_layers(Renderer* renderer, ViewRecord* record) @private {
     uint width = bloom_level_extent(renderer.hdr_color.width, 0);
     uint height = bloom_level_extent(renderer.hdr_color.height, 0);
     Target*[4] layers = { &record.dof_near, &record.dof_far, &record.dof_near_blur, &record.dof_far_blur };
@@ -142,7 +142,7 @@ fn void? ensure_dof_layers(Renderer* renderer, ViewRecord* record) @private {
     }
 }
 
-fn void? ensure_tiles(Renderer* renderer, ViewRecord* record) @private {
+fn void? acquire_tiles(Renderer* renderer, ViewRecord* record) @private {
     uint width = tile_count(renderer.hdr_color.width);
     uint height = tile_count(renderer.hdr_color.height);
     defer catch release_tiles(&renderer.device, record);
@@ -174,7 +174,7 @@ fn void release_tiles(gpu::Device* device, ViewRecord* record) @private {
     if (record.tile_neighbor.texture.is_valid()) release_post_target(device, &record.tile_neighbor);
 }
 
-fn void? ensure_bloom_chain(Renderer* renderer, ViewRecord* record) @private {
+fn void? acquire_bloom_chain(Renderer* renderer, ViewRecord* record) @private {
     uint levels = record.desc.post.bloom_params.levels;
     defer catch release_effect_targets(&renderer.device, record);
     for (uint level = 0; level < levels; level++) {

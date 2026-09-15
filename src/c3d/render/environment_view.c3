@@ -15,7 +15,7 @@ struct ViewEnvironments @private {
 fn ViewEnvironments? resolve_view_environments(Renderer* renderer, Scene* scene_data, bool sheen) @private {
     ViewEnvironments selected = { .clear_color = scene_data.background.color };
     if (renderer.assets.environments.is_live(scene_data.environment)) {
-        selected.lighting = ensure_environment(
+        selected.lighting = resolve_environment(
             renderer: renderer,
             environment: scene_data.environment,
             lighting: true,
@@ -27,7 +27,7 @@ fn ViewEnvironments? resolve_view_environments(Renderer* renderer, Scene* scene_
     if (scene_data.background.kind == BackgroundKind.ENVIRONMENT) {
         EnvironmentId environment = scene_data.background.environment;
         if (renderer.assets.environments.is_live(environment)) {
-            selected.sky = ensure_environment(
+            selected.sky = resolve_environment(
                 renderer: renderer,
                 environment: environment,
                 lighting: false,

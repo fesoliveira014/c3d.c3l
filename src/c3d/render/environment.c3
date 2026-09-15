@@ -107,7 +107,7 @@ struct EnvironmentState {
 fn void? Renderer.upload_environment(&self, EnvironmentId environment) {
     if (!self.assets.environments.is_live(environment)) return c3d::INVALID_ID~;
     if (self.frame_open) {
-        ensure_environment(
+        resolve_environment(
             renderer: self,
             environment: environment,
             lighting: true,
@@ -117,7 +117,7 @@ fn void? Renderer.upload_environment(&self, EnvironmentId environment) {
     }
     open_closed_frame_slot(self)!;
     defer catch discard_uploads(self);
-    ensure_environment(
+    resolve_environment(
         renderer: self,
         environment: environment,
         lighting: true,
@@ -128,7 +128,7 @@ fn void? Renderer.upload_environment(&self, EnvironmentId environment) {
     return submit_pending(self);
 }
 
-fn EnvironmentRes*? ensure_environment(
+fn EnvironmentRes*? resolve_environment(
     Renderer* renderer,
     EnvironmentId environment,
     bool lighting,
@@ -147,7 +147,7 @@ fn EnvironmentRes*? ensure_environment(
             description.source = {};
             description.settings.conversion_size = 0;
         case TEXTURE:
-            texture = ensure_texture(renderer, description.source)!;
+            texture = resolve_texture(renderer, description.source)!;
             source_revision = renderer.assets.texture(description.source).header.revision;
             source_binding_revision = texture.binding_revision;
             source_owned = !texture.is_cube;
@@ -224,7 +224,7 @@ fn EnvironmentRes*? ensure_environment(
         result.irradiance_address = gpu::get_span_address(
             &renderer.device, gpu::get_allocation_span(&renderer.device, result.irradiance)!,
         )!;
-        ensure_environment_lut(renderer)!;
+        acquire_environment_lut(renderer)!;
         result.lighting_ready = true;
     } else if (!same_lighting) {
         result.lighting_ready = false;
@@ -234,14 +234,14 @@ fn EnvironmentRes*? ensure_environment(
         result.sheen_view = {};
         create_environment_sheen(renderer, &result)!;
         new_sheen = true;
-        ensure_sheen_lut(renderer)!;
+        acquire_sheen_lut(renderer)!;
         result.sheen_ready = true;
     } else if (!same_sheen) {
         result.sheen_cube = {};
         result.sheen_view = {};
         result.sheen_ready = false;
     }
-    ensure_environment_samplers(renderer)!;
+    acquire_environment_samplers(renderer)!;
     if (!pending.active) renderer.stats.environment_prepares++;
     pending.active = true;
     pending.result = result;
@@ -277,7 +277,7 @@ fn void? create_environment_cube(Renderer* renderer, EnvironmentRes* result, boo
     }
 }
 
-fn void? ensure_environment_samplers(Renderer* renderer) @local {
+fn void? acquire_environment_samplers(Renderer* renderer) @local {
     if (renderer.environment_state.samplers_ready) return;
     gpu::SamplerDesc description = {
         .min_filter = gpu::Filter.LINEAR,

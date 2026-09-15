@@ -16,7 +16,7 @@ import gpu;
  @require record.dof_near.texture.is_valid(), record.tile_max.texture.is_valid()
 *>
 fn void? record_dof(Renderer* renderer, ViewRecord* record) {
-    ensure_dof_pipelines(renderer)!;
+    acquire_dof_pipelines(renderer)!;
     open_post_chain(renderer)!;
     Target* input = renderer.scene_input;
     bool in_place = input == &renderer.hdr_color;
@@ -58,20 +58,20 @@ fn void? record_dof(Renderer* renderer, ViewRecord* record) {
     renderer.scene_input = &renderer.hdr_color;
 }
 
-fn void? ensure_dof_pipelines(Renderer* renderer) @private {
-    ensure_compute_pipeline(
+fn void? acquire_dof_pipelines(Renderer* renderer) @private {
+    acquire_compute_pipeline(
         renderer:   renderer,
         pipeline:   &renderer.post_pipelines.dof_coc,
         shader:     ShaderName.DOF_COC,
         debug_name: "post_dof_coc",
     )!;
-    ensure_compute_pipeline(
+    acquire_compute_pipeline(
         renderer:   renderer,
         pipeline:   &renderer.post_pipelines.dof_gather,
         shader:     ShaderName.DOF_GATHER,
         debug_name: "post_dof_gather",
     )!;
-    ensure_compute_pipeline(
+    acquire_compute_pipeline(
         renderer:   renderer,
         pipeline:   &renderer.post_pipelines.dof_composite,
         shader:     ShaderName.DOF_COMPOSITE,

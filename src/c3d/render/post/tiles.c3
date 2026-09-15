@@ -25,13 +25,13 @@ fn void? record_tiles(
     uint tiles_x,
     uint tiles_y,
 ) {
-    ensure_compute_pipeline(
+    acquire_compute_pipeline(
         renderer:   renderer,
         pipeline:   &renderer.post_pipelines.tile_max,
         shader:     ShaderName.TILE_MAX,
         debug_name: "post_tile_max",
     )!;
-    ensure_compute_pipeline(
+    acquire_compute_pipeline(
         renderer:   renderer,
         pipeline:   &renderer.post_pipelines.tile_neighbor,
         shader:     ShaderName.TILE_NEIGHBOR,

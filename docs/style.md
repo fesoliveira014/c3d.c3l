@@ -23,7 +23,7 @@ Every module is `c3d` or a submodule of it. The repository directory name never 
 | Kind | Case | Examples |
 | --- | --- | --- |
 | Variables, fields, parameters | `snake_case`, descriptive | `renderer`, `asset_store`, `geometry_id`, `upload_ring` |
-| Functions, methods, macros | `snake_case` | `create_scene`, `ensure_geometry`, `@each` |
+| Functions, methods, macros | `snake_case` | `create_scene`, `resolve_geometry`, `@each` |
 | Structs, enums, typedefs, aliases | `PascalCase` | `AssetStore`, `TextureRes`, `GeometryId` |
 | Constants and enum values | `SCREAMING_SNAKE_CASE` | `FRAMES_IN_FLIGHT`, `MATERIAL_STRIDE`, `DYNAMIC` |
 | Modules | lowercase, `::`-separated | `c3d::asset::gltf` |
@@ -57,6 +57,11 @@ defer scene::destroy_scene(&scene);
 Methods are for operations on an existing receiver that are not lifecycle operations: `scene.add_mesh`, `renderer.render`, `window.poll`, `assets.mark_dirty`. Container operations on a receiver (`add_*`, `remove_*`, `get`) are methods; they do not create or destroy the receiver.
 
 `X` owns; `XView` borrows and has no destructor. GPU objects live only in `c3d::render` mirrors; the asset store owns CPU assets; the scene owns nodes.
+
+Inside the renderer, two verbs name idempotent first-use work; neither validates anything:
+
+- `resolve_x` returns the current GPU record for an asset id, uploading on first sight or when the asset revision moved: `resolve_geometry`, `resolve_texture`, `resolve_palette`.
+- `acquire_x` creates a renderer- or view-owned resource once and returns silently when it already exists; its counterpart is `retire_x`, `release_x` or `destroy_x`: `acquire_post_targets` / `retire_post_targets`, `acquire_shadow_atlas` / `destroy_shadow_atlas`.
 
 # 6. Allocation and memory
 
@@ -115,7 +120,7 @@ Calls with three or fewer arguments may stay positional.
 K&R, four spaces, no tabs:
 
 ```c3
-fn void? ensure_geometry(Renderer* renderer, GeometryId id) {
+fn void? resolve_geometry(Renderer* renderer, GeometryId id) {
     GpuGeometry* mirror = &renderer.geometries[id.index];
     if (mirror.asset != id) {
         return upload_geometry(renderer, id);

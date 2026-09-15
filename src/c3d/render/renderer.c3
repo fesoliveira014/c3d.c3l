@@ -765,7 +765,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     }
 
     renderer.default_view = renderer.views.add({ .desc = default_view_desc() })!;
-    post::ensure_post_targets(&renderer, renderer.views.get(renderer.default_view))!;
+    post::acquire_post_targets(&renderer, renderer.views.get(renderer.default_view))!;
     prepare_builtin_textures(&renderer)!;
     return renderer;
 }
@@ -884,8 +884,8 @@ fn void? recover_window_output(Renderer* renderer) @private {
     foreach (&record : renderer.views.items) {
         post::release_post_targets(&renderer.device, record);
         post::release_effect_targets(&renderer.device, record);
-        if (record.desc.post.fxaa) post::ensure_post_targets(renderer, record)!;
-        post::ensure_effect_targets(renderer, record)!;
+        if (record.desc.post.fxaa) post::acquire_post_targets(renderer, record)!;
+        post::acquire_effect_targets(renderer, record)!;
         record.history.valid = false;
     }
     renderer.output_dirty = false;

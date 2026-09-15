@@ -24,7 +24,7 @@ struct BloomBinding {
  @require record.bloom_levels > 0
 *>
 fn BloomBinding? record_bloom(Renderer* renderer, ViewRecord* record) {
-    ensure_bloom_pipelines(renderer)!;
+    acquire_bloom_pipelines(renderer)!;
     open_post_chain(renderer)!;
     BloomParams* params = &record.desc.post.bloom_params;
     uint levels = record.bloom_levels;
@@ -65,14 +65,14 @@ fn BloomBinding? record_bloom(Renderer* renderer, ViewRecord* record) {
     return { .texture = record.bloom[0].view.index, .intensity = params.intensity };
 }
 
-fn void? ensure_bloom_pipelines(Renderer* renderer) @private {
-    ensure_compute_pipeline(
+fn void? acquire_bloom_pipelines(Renderer* renderer) @private {
+    acquire_compute_pipeline(
         renderer:   renderer,
         pipeline:   &renderer.post_pipelines.bloom_downsample,
         shader:     ShaderName.BLOOM_DOWNSAMPLE,
         debug_name: "post_bloom_downsample",
     )!;
-    ensure_compute_pipeline(
+    acquire_compute_pipeline(
         renderer:   renderer,
         pipeline:   &renderer.post_pipelines.bloom_upsample,
         shader:     ShaderName.BLOOM_UPSAMPLE,

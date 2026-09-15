@@ -88,12 +88,12 @@ struct GpuGeometry {
 fn void? Renderer.upload_geometry(&self, GeometryId geometry) {
     if (!self.assets.geometries.is_live(geometry)) return c3d::INVALID_ID~;
     if (self.frame_open) {
-        ensure_geometry(self, geometry)!;
+        resolve_geometry(self, geometry)!;
         return;
     }
     open_closed_frame_slot(self)!;
     defer catch discard_uploads(self);
-    ensure_geometry(self, geometry)!;
+    resolve_geometry(self, geometry)!;
     return submit_pending(self);
 }
 
@@ -208,7 +208,7 @@ fn void write_geometry_block(char[] block, Geometry* geometry, GeometryLayout* l
     }
 }
 
-fn GpuGeometry*? ensure_geometry(Renderer* renderer, GeometryId geometry) @private {
+fn GpuGeometry*? resolve_geometry(Renderer* renderer, GeometryId geometry) @private {
     GeometryAsset* record = renderer.assets.geometry(geometry);
     GpuGeometry* mirror = &renderer.geometries[geometry.index];
     bool same_asset = mirror.asset.index == geometry.index && mirror.asset.generation == geometry.generation;

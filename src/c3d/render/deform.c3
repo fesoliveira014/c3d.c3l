@@ -96,7 +96,7 @@ fn void reset_deformation_cache(DeformationCache* cache) @private {
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::UNSUPPORTED_FEATURE, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
 *>
-fn gpu::GpuAddress? ensure_palette(Renderer* renderer, Node* mesh_node, SkinBinding* binding) @private {
+fn gpu::GpuAddress? resolve_palette(Renderer* renderer, Node* mesh_node, SkinBinding* binding) @private {
     if (try existing = renderer.deformation.palettes.get(mesh_node.id.index)) return existing;
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan span = slot.upload.take(&renderer.device, binding.joints.len * Mat4f::size, STREAM_ALIGNMENT)!;
@@ -116,7 +116,7 @@ fn gpu::GpuAddress? ensure_palette(Renderer* renderer, Node* mesh_node, SkinBind
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::UNSUPPORTED_FEATURE, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
 *>
-fn gpu::GpuAddress? ensure_morph_block(Renderer* renderer, MeshCandidate* candidate) @private {
+fn gpu::GpuAddress? resolve_morph_block(Renderer* renderer, MeshCandidate* candidate) @private {
     Node* mesh_node = candidate.node;
     if (try existing = renderer.deformation.morph_blocks.get(mesh_node.id.index)) return existing;
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];

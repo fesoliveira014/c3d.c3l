@@ -55,12 +55,12 @@ struct MaterialRes {
 fn void? Renderer.upload_material(&self, MaterialId material) {
     if (!self.assets.materials.is_live(material)) return c3d::INVALID_ID~;
     if (self.frame_open) {
-        ensure_material(self, material)!;
+        resolve_material(self, material)!;
         return;
     }
     open_closed_frame_slot(self)!;
     defer catch discard_uploads(self);
-    ensure_material(self, material)!;
+    resolve_material(self, material)!;
     return submit_pending(self);
 }
 
@@ -393,11 +393,11 @@ fn bool material_uses_sheen(Material* material) @private {
             || material.physical.sheen_color.b > 0);
 }
 
-fn MaterialRes*? ensure_material(Renderer* renderer, MaterialId material) @private {
+fn MaterialRes*? resolve_material(Renderer* renderer, MaterialId material) @private {
     MaterialAsset* record = renderer.assets.material(material);
     MaterialRes* mirror = &renderer.materials[material.index];
     MaterialBindings bindings = resolve_material_bindings(renderer, &record.data)!;
-    if (material_uses_sheen(&record.data)) ensure_sheen_lut(renderer)!;
+    if (material_uses_sheen(&record.data)) acquire_sheen_lut(renderer)!;
 
     bool same_asset = mirror.asset.index == material.index && mirror.asset.generation == material.generation;
     if (same_asset && mirror.revision == record.header.revision
