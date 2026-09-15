@@ -33,7 +33,7 @@ struct ViewDesc {
 <*
  Working images one view owns, in view_targets order.
 *>
-const uint VIEW_TARGET_COUNT = 2 + post::BLOOM_MAX_LEVELS + 8;
+const uint VIEW_TARGET_COUNT = 5 + post::BLOOM_MAX_LEVELS + 8;
 
 <*
  Reverse-Z projection terms that recover forward distance from stored depth.
@@ -111,10 +111,13 @@ fn void free_view_history(Allocator allocator, ViewHistory* history) {
 }
 
 <*
- Renderer-owned view: its configuration and working images.
+ Renderer-owned view: its configuration, working images and recording state.
 *>
 struct ViewRecord {
     ViewDesc                             desc;
+    Target                               hdr_color;
+    Target                               depth;
+    Target                               scene_color;
     Target                               post_a;
     Target                               post_b;
     Target[post::BLOOM_MAX_LEVELS]       bloom;
@@ -127,6 +130,10 @@ struct ViewRecord {
     Target                               tile_neighbor;
     Target                               velocity;
     Target                               motion_blur_out;
+    Target*                              scene_input;
+    bool                                 post_chain_open;
+    ProjectionTerms                      projection_terms;
+    float                                exposure;
     ViewHistory                          history;
     gpu::TextureState[VIEW_TARGET_COUNT] frame_states;
 }
@@ -153,10 +160,13 @@ fn void ViewRecord.restore_states(&self) {
 *>
 fn Target*[VIEW_TARGET_COUNT] view_targets(ViewRecord* record) {
     Target*[VIEW_TARGET_COUNT] targets;
-    targets[0] = &record.post_a;
-    targets[1] = &record.post_b;
-    foreach (level, &target : record.bloom) targets[2 + level] = target;
-    uint next = 2 + post::BLOOM_MAX_LEVELS;
+    targets[0] = &record.hdr_color;
+    targets[1] = &record.depth;
+    targets[2] = &record.scene_color;
+    targets[3] = &record.post_a;
+    targets[4] = &record.post_b;
+    foreach (level, &target : record.bloom) targets[5 + level] = target;
+    uint next = 5 + post::BLOOM_MAX_LEVELS;
     targets[next] = &record.dof_near;
     targets[next + 1] = &record.dof_far;
     targets[next + 2] = &record.dof_near_blur;

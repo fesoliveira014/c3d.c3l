@@ -49,8 +49,9 @@ The frame sequence is:
 2. Apply controls and automatic motion, then draw GUI panels.
 3. Call `scene.update_world()` so edits reach the current output.
 4. Call `gui.finish_frame()` to finalize native draw data.
-5. Begin the renderer frame. When `renderer.has_output`, record `render_view()`,
-   `composite_view()`, `begin_overlay()`, `gui.record(&overlay)` and `end_overlay(&overlay)`.
+5. Begin the renderer frame. When `renderer.has_output`, record
+   `render_view(scene, camera, renderer.default_view)`, `composite_view()`, `begin_overlay()`,
+   `gui.record(&overlay)` and `end_overlay(&overlay)`.
 6. End the renderer frame.
 
 Always call `finish_frame()` after `new_frame()`, including dormant/minimized windows and

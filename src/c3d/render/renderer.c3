@@ -135,10 +135,6 @@ struct Renderer {
     ViewPool                views;
     ViewId                  default_view;
     post::PostPipelines     post_pipelines;
-    float                   view_exposure;
-    Target*                 scene_input;
-    bool                    post_chain_open;
-    ProjectionTerms         view_projection;
     PipelineCache           pipelines;
     gpu::SamplerIndex       linear_clamp_sampler;
 
@@ -156,17 +152,11 @@ struct Renderer {
     gpu::CommandList        commands;
     gpu::AcquiredImage      acquired;
     gpu::CompletionPoint    output_submission;
-    gpu::TextureState       frame_hdr_state;
-    gpu::TextureState       frame_scene_color_state;
-    gpu::TextureState       frame_depth_state;
     gpu::TextureState       frame_shadow_state;
     gpu::TextureState[RENDER_TARGET_CAPACITY] frame_target_states;
     bool                    frame_submitted;
     uint                    recording_slot;
     Target                  window_target;
-    Target                  hdr_color;
-    Target                  scene_color;
-    Target                  depth;
     FrameInfo               info;
     time::Clock             frame_started;
     bool                    frame_open;
@@ -256,14 +246,13 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
         acquire_window_output(self)!;
     }
 
-    self.frame_hdr_state = self.hdr_color.state;
-    self.frame_scene_color_state = self.scene_color.state;
-    self.frame_depth_state = self.depth.state;
     self.frame_shadow_state = self.shadow_atlas.state;
     foreach (index, target : self.targets.items) self.frame_target_states[index] = target.target.state;
-    foreach (&record : self.views.items) record.snapshot_states();
-    self.scene_input = &self.hdr_color;
-    self.post_chain_open = false;
+    foreach (&record : self.views.items) {
+        record.snapshot_states();
+        record.scene_input = &record.hdr_color;
+        record.post_chain_open = false;
+    }
     self.frame_submitted = false;
     self.recording_slot = (uint)(self.frame_index % FRAMES_IN_FLIGHT);
     self.commands = {};
@@ -681,19 +670,6 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     defer catch (void)gpu::free_allocation(&device, &material_heap);
     gpu::GpuSpan material_heap_span = gpu::get_allocation_span(&device, material_heap)!;
 
-    Target hdr_color;
-    Target depth;
-    if (surface.is_valid()) {
-        allocate_view_targets(
-            device:    &device,
-            width:     desc.output_width,
-            height:    desc.output_height,
-            hdr_color: &hdr_color,
-            depth:     &depth,
-        )!;
-    }
-    defer catch release_view_targets(&device, &hdr_color, &depth);
-
     ShadowTiming[] shadow_timing_results;
     if (timestamps_enabled) shadow_timing_results = alloc::new_array(allocator, ShadowTiming, max_shadow_layers);
     defer catch {
@@ -717,8 +693,6 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .samplers             = alloc::new_array(allocator, SamplerRes, assets.samplers.items.len),
         .material_heap        = material_heap,
         .material_heap_span   = material_heap_span,
-        .hdr_color            = hdr_color,
-        .depth                = depth,
         .runtime              = runtime,
         .surface              = surface,
         .device               = device,
@@ -756,6 +730,8 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         destroy_deformation_cache(&renderer.deformation);
         pool::destroy_pool{TargetRecord, RenderTargetId}(&renderer.targets);
         foreach (&record : renderer.views.items) {
+            release_scene_color(&renderer.device, record);
+            release_view_targets(&renderer.device, record);
             post::release_post_targets(&renderer.device, record);
             post::release_effect_targets(&renderer.device, record);
         }
@@ -765,7 +741,16 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     }
 
     renderer.default_view = renderer.views.add({ .desc = default_view_desc() })!;
-    post::acquire_post_targets(&renderer, renderer.views.get(renderer.default_view))!;
+    ViewRecord* default_record = renderer.views.get(renderer.default_view);
+    if (surface.is_valid()) {
+        acquire_view_targets(
+            renderer: &renderer,
+            record:   default_record,
+            width:    desc.output_width,
+            height:   desc.output_height,
+        )!;
+    }
+    post::acquire_post_targets(&renderer, default_record)!;
     prepare_builtin_textures(&renderer)!;
     return renderer;
 }
@@ -789,9 +774,9 @@ fn void destroy_renderer(Renderer* renderer) {
     free_material_heap(renderer);
     destroy_shadow_atlas(&renderer.device, &renderer.shadow_atlas);
     if (renderer.shadow_timing_results.len) alloc::free(renderer.allocator, renderer.shadow_timing_results.ptr);
-    release_scene_color(renderer);
-    release_view_targets(&renderer.device, &renderer.hdr_color, &renderer.depth);
     foreach (&record : renderer.views.items) {
+        release_scene_color(&renderer.device, record);
+        release_view_targets(&renderer.device, record);
         post::release_post_targets(&renderer.device, record);
         post::release_effect_targets(&renderer.device, record);
         free_view_history(renderer.allocator, &record.history);
@@ -872,14 +857,14 @@ fn void? recover_window_output(Renderer* renderer) @private {
         height:    renderer.output_height,
     )!;
     renderer.swapchain_info = gpu::get_swapchain_info(&renderer.device, renderer.swapchain)!;
-    release_scene_color(renderer);
-    release_view_targets(&renderer.device, &renderer.hdr_color, &renderer.depth);
-    allocate_view_targets(
-        device:    &renderer.device,
-        width:     renderer.output_width,
-        height:    renderer.output_height,
-        hdr_color: &renderer.hdr_color,
-        depth:     &renderer.depth,
+    ViewRecord* default_record = renderer.views.get(renderer.default_view);
+    release_scene_color(&renderer.device, default_record);
+    release_view_targets(&renderer.device, default_record);
+    acquire_view_targets(
+        renderer: renderer,
+        record:   default_record,
+        width:    renderer.output_width,
+        height:   renderer.output_height,
     )!;
     foreach (&record : renderer.views.items) {
         post::release_post_targets(&renderer.device, record);
@@ -1017,9 +1002,6 @@ fn void abort_frame(Renderer* renderer) {
         renderer.frames[renderer.recording_slot].timed = {};
         renderer.frames[renderer.recording_slot].shadow_timing_count = 0;
         renderer.shadow_atlas.state = renderer.frame_shadow_state;
-        renderer.hdr_color.state = renderer.frame_hdr_state;
-        renderer.scene_color.state = renderer.frame_scene_color_state;
-        renderer.depth.state = renderer.frame_depth_state;
         foreach (index, &target : renderer.targets.items) target.target.state = renderer.frame_target_states[index];
         foreach (&record : renderer.views.items) record.restore_states();
     }

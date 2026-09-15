@@ -18,20 +18,20 @@ const ZString[BLOOM_MAX_LEVELS] BLOOM_LEVEL_NAMES @private = {
  @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
 *>
 fn void? acquire_post_targets(Renderer* renderer, ViewRecord* record) {
-    if (record.post_a.texture.is_valid() || !renderer.hdr_color.texture.is_valid()) return;
+    if (record.post_a.texture.is_valid() || !record.hdr_color.texture.is_valid()) return;
 
     record.post_a = allocate_post_target(
         device:     &renderer.device,
-        width:      renderer.hdr_color.width,
-        height:     renderer.hdr_color.height,
+        width:      record.hdr_color.width,
+        height:     record.hdr_color.height,
         format:     render::HDR_FORMAT,
         debug_name: "post_a",
     )!;
     defer catch release_post_target(&renderer.device, &record.post_a);
     record.post_b = allocate_post_target(
         device:     &renderer.device,
-        width:      renderer.hdr_color.width,
-        height:     renderer.hdr_color.height,
+        width:      record.hdr_color.width,
+        height:     record.hdr_color.height,
         format:     render::HDR_FORMAT,
         debug_name: "post_b",
     )!;
@@ -46,7 +46,7 @@ fn void? acquire_post_targets(Renderer* renderer, ViewRecord* record) {
  @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
 *>
 fn void? acquire_effect_targets(Renderer* renderer, ViewRecord* record) {
-    if (!renderer.hdr_color.texture.is_valid()) return;
+    if (!record.hdr_color.texture.is_valid()) return;
     PostStack* stack = &record.desc.post;
     if (stack.bloom && !record.bloom_levels) acquire_bloom_chain(renderer, record)!;
     if (stack.depth_of_field && !record.dof_near.texture.is_valid()) acquire_dof_layers(renderer, record)!;
@@ -105,16 +105,16 @@ fn void? acquire_motion_blur_images(Renderer* renderer, ViewRecord* record) @pri
     defer catch release_motion_blur_images(&renderer.device, record);
     record.velocity = render::allocate_target(
         device:     &renderer.device,
-        width:      renderer.hdr_color.width,
-        height:     renderer.hdr_color.height,
+        width:      record.hdr_color.width,
+        height:     record.hdr_color.height,
         format:     VELOCITY_FORMAT,
         usage:      { .color_attach, .sampled, .storage },
         debug_name: "velocity",
     )!;
     record.motion_blur_out = allocate_post_target(
         device:     &renderer.device,
-        width:      renderer.hdr_color.width,
-        height:     renderer.hdr_color.height,
+        width:      record.hdr_color.width,
+        height:     record.hdr_color.height,
         format:     render::HDR_FORMAT,
         debug_name: "motion_blur_out",
     )!;
@@ -126,8 +126,8 @@ fn void release_motion_blur_images(gpu::Device* device, ViewRecord* record) @pri
 }
 
 fn void? acquire_dof_layers(Renderer* renderer, ViewRecord* record) @private {
-    uint width = bloom_level_extent(renderer.hdr_color.width, 0);
-    uint height = bloom_level_extent(renderer.hdr_color.height, 0);
+    uint width = bloom_level_extent(record.hdr_color.width, 0);
+    uint height = bloom_level_extent(record.hdr_color.height, 0);
     Target*[4] layers = { &record.dof_near, &record.dof_far, &record.dof_near_blur, &record.dof_far_blur };
     ZString[4] names = { "dof_near", "dof_far", "dof_near_blur", "dof_far_blur" };
     defer catch release_dof_layers(&renderer.device, record);
@@ -143,8 +143,8 @@ fn void? acquire_dof_layers(Renderer* renderer, ViewRecord* record) @private {
 }
 
 fn void? acquire_tiles(Renderer* renderer, ViewRecord* record) @private {
-    uint width = tile_count(renderer.hdr_color.width);
-    uint height = tile_count(renderer.hdr_color.height);
+    uint width = tile_count(record.hdr_color.width);
+    uint height = tile_count(record.hdr_color.height);
     defer catch release_tiles(&renderer.device, record);
     record.tile_max = allocate_post_target(
         device:     &renderer.device,
@@ -180,8 +180,8 @@ fn void? acquire_bloom_chain(Renderer* renderer, ViewRecord* record) @private {
     for (uint level = 0; level < levels; level++) {
         record.bloom[level] = allocate_post_target(
             device:     &renderer.device,
-            width:      bloom_level_extent(renderer.hdr_color.width, level),
-            height:     bloom_level_extent(renderer.hdr_color.height, level),
+            width:      bloom_level_extent(record.hdr_color.width, level),
+            height:     bloom_level_extent(record.hdr_color.height, level),
             format:     render::HDR_FORMAT,
             debug_name: BLOOM_LEVEL_NAMES[level],
         )!;
