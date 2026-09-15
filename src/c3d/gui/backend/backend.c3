@@ -189,7 +189,12 @@ fn void? record_gui(GuiBackend* backend, imgui::DrawData draw_data, OverlayConte
         .alpha_op = gpu::BlendOp.ADD,
     };
 
-    gpu::GraphicsState state = render::fullscreen_state(overlay.width, overlay.height, colors[..])!;
+    gpu::GraphicsState state = render::fullscreen_state(
+        width:         overlay.width,
+        height:        overlay.height,
+        rect:          {},
+        color_targets: colors[..],
+    )!;
     state.raster = { .topology = gpu::PrimitiveTopology.TRIANGLES, .cull_mode = gpu::CullMode.NONE };
     state.depth = {};
     state.stencil = {};

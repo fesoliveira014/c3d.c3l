@@ -27,16 +27,23 @@ struct LutBinding @private {
 }
 
 <*
- Record the view's display processing into the frame's window output.
+ Record the view's display processing into the output rectangle.
  @param [&inout] renderer : "Open frame with its scene view recorded."
  @param [&inout] record : "Its working images change state."
+ @param [&inout] output : "Attachment the view writes; transitions to color attachment."
+ @param rect : "Output pixels; a zero extent covers the output."
  @return? c3d::INVALID_ID, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE, c3d::SHADER_NOT_FOUND
  @return? gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE, gpu::DESCRIPTOR_HEAP_FULL
  @return? gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::DEVICE_BUSY, gpu::RESOURCE_IN_USE, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
 *>
-fn void? record_display(Renderer* renderer, ViewRecord* record) {
+fn void? record_display(
+    Renderer* renderer,
+    ViewRecord* record,
+    Target* output,
+    PixelRect rect,
+) {
     GradeParams* grade = &record.desc.post.grade;
     LutBinding lut = resolve_lut(renderer, grade.lut)!;
     BloomBinding bloom = record.desc.post.bloom ? record_bloom(renderer, record)! : (BloomBinding){};
@@ -45,6 +52,8 @@ fn void? record_display(Renderer* renderer, ViewRecord* record) {
         return record_fused_display(
             renderer: renderer,
             record:   record,
+            output:   output,
+            rect:     rect,
             grade:    grade,
             lut:      lut,
             bloom:    bloom,
@@ -64,7 +73,12 @@ fn void? record_display(Renderer* renderer, ViewRecord* record) {
     close_post_chain(renderer, record)!;
     renderer.stats.post_dispatches += 2;
 
-    return render::composite_target(renderer, &record.post_b);
+    return render::composite_target(
+        renderer: renderer,
+        source:   &record.post_b,
+        output:   output,
+        rect:     rect,
+    );
 }
 
 <*
@@ -80,8 +94,8 @@ fn void? prepare_display(Renderer* renderer, ViewRecord* record) {
     if (record.desc.post.depth_of_field) acquire_dof_pipelines(renderer)!;
     if (record.desc.post.motion_blur) acquire_motion_blur_pipelines(renderer)!;
     if (record.desc.post.fxaa) return acquire_post_pipelines(renderer);
-    if (!renderer.swapchain.is_valid()) return;
-    renderer.pipelines.get(&renderer.device, display_pipeline_key(renderer.window_target.format))!;
+    if (!record.hdr_color.texture.is_valid()) return;
+    renderer.pipelines.get(&renderer.device, display_pipeline_key(render::view_output_format(renderer, &record.desc)))!;
 }
 
 <*
@@ -113,11 +127,14 @@ fn LutBinding? resolve_lut(Renderer* renderer, TextureId lut) @private {
 fn void? record_fused_display(
     Renderer* renderer,
     ViewRecord* record,
+    Target* output,
+    PixelRect rect,
     GradeParams* grade,
     LutBinding lut,
     BloomBinding bloom,
 ) @private {
     record.scene_input.transition(&renderer.commands, render::FRAGMENT_READ_STATE)!;
+    output.transition(&renderer.commands, render::COLOR_ATTACHMENT_STATE)!;
 
     Frame* slot = &renderer.frames[renderer.frame_index % render::FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, DisplayRoot::size)!;
@@ -137,9 +154,7 @@ fn void? record_fused_display(
         bloom_sampler:   renderer.linear_clamp_sampler,
         bloom_intensity: bloom.intensity,
     );
-    gpu::PipelineHandle pipeline = renderer.pipelines.get(
-        &renderer.device, display_pipeline_key(renderer.window_target.format),
-    )!;
+    gpu::PipelineHandle pipeline = renderer.pipelines.get(&renderer.device, display_pipeline_key(output.format))!;
 
     render::write_pass_timestamp(
         renderer:    renderer,
@@ -149,9 +164,11 @@ fn void? record_fused_display(
     )!;
     render::record_fullscreen_pass(
         renderer:      renderer,
-        target:        &renderer.window_target,
+        target:        output,
         pipeline:      pipeline,
         fragment_root: root.address,
+        rect:          rect,
+        load:          render::output_load_op(output, rect),
     )!;
     render::write_pass_timestamp(
         renderer:    renderer,

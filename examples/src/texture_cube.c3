@@ -100,7 +100,12 @@ fn void? draw_cube_frame(
             .explicit_lod = explicit_lod ? 1u : 0u,
         };
         gpu::ColorTargetState[1] colors = { gpu::color_blend_disabled() };
-        gpu::GraphicsState state = render::fullscreen_state(overlay.width, overlay.height, colors[..])!;
+        gpu::GraphicsState state = render::fullscreen_state(
+            width:         overlay.width,
+            height:        overlay.height,
+            rect:          {},
+            color_targets: colors[..],
+        )!;
         gpu::cmd_set_graphics_state(overlay.commands, &state)!;
         gpu::cmd_draw(
             commands: overlay.commands,
