@@ -38,6 +38,11 @@ struct DrawItem @private {
     bool            moved;
 }
 
+struct MeshPreparation @private {
+    bool sheen;
+    bool transmission;
+}
+
 struct DrawState @private {
     gpu::PipelineHandle    pipeline;
     gpu::CullMode          cull;
@@ -81,7 +86,7 @@ fn void? Renderer.render(
 
 <*
  Extract, upload and record the scene from the camera into the view.
- Records nothing without output; authoring inputs stay stable until end_frame.
+ A window view records nothing without an acquired image; authoring inputs stay stable until end_frame.
  @param [&inout] self : "Records into the current frame before composition."
  @param [&in] scene : "Pose as left by the last update_world; not advanced."
  @param [&in] camera_node : "Carries a Camera component."
@@ -388,6 +393,46 @@ fn void? Renderer.render_view(
 
         record_view_output(self, record)!;
     };
+    self.frame_recorded = true;
+}
+
+<*
+ Render the scene from the camera into the target once, with default post settings and no history.
+ The window shows nothing new for this call.
+ @param [&inout] self : "Creates and destroys a view around one frame."
+ @param [&in] scene : "Pose as left by the last update_world; not advanced."
+ @param [&in] camera_node : "Carries a Camera component."
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::SHADER_NOT_FOUND
+ @return? gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL
+ @return? gpu::DEVICE_BUSY, gpu::RESOURCE_IN_USE, gpu::SURFACE_LOST
+ @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
+ @return? gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
+ @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+ @return? c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE, gpu::DESCRIPTOR_HEAP_FULL
+ @return? gpu::COMMAND_ALLOCATOR_CAPACITY_EXCEEDED, gpu::WAIT_TIMEOUT
+ @require !self.frame_open
+ @require environment_view_valid(self.assets, scene)
+*>
+fn void? Renderer.render_to(
+    &self,
+    Scene* scene,
+    Node* camera_node,
+    RenderTargetId target,
+    OutputMode color = OutputMode.LINEAR_HDR,
+    FrameInfo info = {},
+) {
+    ViewId view = create_view(self, texture_view_desc(target, color))!;
+    defer catch (void)destroy_view(self, view);
+
+    self.output_suppressed = true;
+    defer self.output_suppressed = false;
+    self.begin_frame(info)!;
+    defer catch abort_frame(self);
+    self.render_view(scene, camera_node, view)!;
+    self.end_frame()!;
+
+    wait_frames(self)!;
+    return destroy_view(self, view);
 }
 
 <*
@@ -428,38 +473,96 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
         shadow_pipeline_for(self, false, mesh_vertex_variant({}, false, shader::SHADER_FLAG_DEPTH_ONLY))!;
     }
     scene.@each(Mesh; Entity entity, Mesh* mesh) {
-        if (!self.assets.geometries.is_live(mesh.geometry) || !self.assets.materials.is_live(mesh.material)) {
-            self.stats.dangling_refs++;
-        } else {
-            GpuGeometry* geometry = resolve_geometry(self, mesh.geometry)!;
-            MaterialRes* material = resolve_material(self, mesh.material)!;
-            validate_normal_geometry(
-                geometry: geometry,
-                material: &self.assets.material(mesh.material).data,
-                bindings: &material.bindings,
-                line_polygon_mode: self.caps.line_polygon_mode,
-            )!;
-            Material* data = &self.assets.material(material.asset).data;
-            sheen |= material_uses_sheen(data);
-            transmission |= draw_list(data) == DrawList.TRANSMISSION;
-            bool morphed = mesh.morph_weights.len > 0;
-            pipeline_for(self, data, mesh_vertex_variant(geometry.layout.flags, morphed))!;
-            if (shadows_enabled && mesh.cast_shadow && scene.node(entity).visible_effective
-                && data.common.alpha_mode != AlphaMode.BLEND) {
-                shadow_pipeline_for(
-                    renderer:  self,
-                    wireframe: data.common.wireframe && self.caps.line_polygon_mode,
-                    vertex:    mesh_vertex_variant(geometry.layout.flags, morphed, shader::SHADER_FLAG_DEPTH_ONLY),
-                )!;
-            }
-        }
+        bool casts = shadows_enabled && mesh.cast_shadow && scene.node(entity).visible_effective;
+        MeshPreparation prepared = prepare_mesh(
+            renderer:    self,
+            geometry_id: mesh.geometry,
+            material_id: mesh.material,
+            morphed:     mesh.morph_weights.len > 0,
+            shadows:     casts,
+        )!;
+        sheen |= prepared.sheen;
+        transmission |= prepared.transmission;
     };
     if (transmission) self.pipelines.get(&self.device, snapshot_pipeline_key())!;
-    post::prepare_display(self, self.views.get(self.default_view))!;
+    prepare_views(self)!;
     (void)resolve_view_environments(self, scene, sheen)!;
     if (!has_environment_preparations(self) && !self.pending_copies.len()
         && !self.pending_texture_uploads.len() && !self.pending_upload_retire.len()) return;
     return submit_pending(self);
+}
+
+<*
+ Prepare every asset and pipeline the model's instances need, then wait.
+ Material and source descriptions remain stable for the call.
+ @param [&inout] self : "Completes preparation outside an open frame."
+ @return? c3d::INVALID_ID, c3d::SHADER_NOT_FOUND, gpu::SHADER_INVALID, gpu::PIPELINE_CREATE_FAILED
+ @return? gpu::SLOT_TABLE_FULL, gpu::DEVICE_BUSY, gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE
+ @return? gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY, gpu::UNSUPPORTED_FEATURE
+ @return? gpu::COMMAND_RECORDING_ERROR, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+ @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
+ @return? gpu::INVALID_RESOURCE_STATE, gpu::RESOURCE_IN_USE, gpu::DESCRIPTOR_HEAP_FULL
+ @return? gpu::COMMAND_ALLOCATOR_CAPACITY_EXCEEDED, gpu::WAIT_TIMEOUT
+ @require !self.frame_open
+*>
+fn void? Renderer.prepare_model(&self, ModelId model) {
+    ModelAsset* record = self.assets.models.try_get(model)!;
+    open_closed_frame_slot(self)!;
+    defer catch discard_uploads(self);
+    bool transmission;
+    foreach (&mesh : record.data.meshes) {
+        MeshPreparation prepared = prepare_mesh(
+            renderer:    self,
+            geometry_id: mesh.geometry,
+            material_id: mesh.material,
+            morphed:     mesh.default_morph_weights.len > 0,
+            shadows:     true,
+        )!;
+        transmission |= prepared.transmission;
+    }
+    if (transmission) self.pipelines.get(&self.device, snapshot_pipeline_key())!;
+    prepare_views(self)!;
+    if (!self.pending_copies.len() && !self.pending_texture_uploads.len() && !self.pending_upload_retire.len()) {
+        return;
+    }
+    return submit_pending(self);
+}
+
+fn MeshPreparation? prepare_mesh(
+    Renderer* renderer,
+    GeometryId geometry_id,
+    MaterialId material_id,
+    bool morphed,
+    bool shadows,
+) @private {
+    if (!renderer.assets.geometries.is_live(geometry_id) || !renderer.assets.materials.is_live(material_id)) {
+        renderer.stats.dangling_refs++;
+        return {};
+    }
+    GpuGeometry* geometry = resolve_geometry(renderer, geometry_id)!;
+    MaterialRes* material = resolve_material(renderer, material_id)!;
+    Material* data = &renderer.assets.material(material_id).data;
+    validate_normal_geometry(
+        geometry:          geometry,
+        material:          data,
+        bindings:          &material.bindings,
+        line_polygon_mode: renderer.caps.line_polygon_mode,
+    )!;
+    pipeline_for(renderer, data, mesh_vertex_variant(geometry.layout.flags, morphed))!;
+    if (shadows && data.common.alpha_mode != AlphaMode.BLEND) {
+        shadow_pipeline_for(
+            renderer:  renderer,
+            wireframe: data.common.wireframe && renderer.caps.line_polygon_mode,
+            vertex:    mesh_vertex_variant(geometry.layout.flags, morphed, shader::SHADER_FLAG_DEPTH_ONLY),
+        )!;
+    }
+    return { .sheen = material_uses_sheen(data), .transmission = draw_list(data) == DrawList.TRANSMISSION };
+}
+
+fn void? prepare_views(Renderer* renderer) @private {
+    foreach (&record : renderer.views.items) {
+        if (record.live) post::prepare_display(renderer, record)!;
+    }
 }
 
 <*
