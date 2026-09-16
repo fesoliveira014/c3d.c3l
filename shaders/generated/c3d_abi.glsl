@@ -181,6 +181,20 @@ layout(buffer_reference, std430, buffer_reference_align = 4) buffer GuiFragmentR
     uint source_sampler;
 };
 
+struct DebugVertexGpu {
+    float x;
+    float y;
+    float z;
+    uint rgba;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer DebugLinesRoot {
+    uint64_t vertices;
+    float alpha;
+    uint _pad0;
+    mat4 view_proj;
+};
+
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer CubePreviewRoot {
     uint source_texture;
     uint source_sampler;

@@ -12,6 +12,7 @@ enum Pass : int {
     SKY,
     TRANSMISSION,
     FORWARD_TRANSPARENT,
+    DEBUG_LINES,
     VELOCITY,
     POST_CHAIN,
     COMPOSITE,
@@ -38,6 +39,7 @@ struct Stats {
     uint  culled;
     uint  lights;
     uint  lights_dropped;
+    uint  debug_lines;
     uint  shadow_layers;
     uint  shadow_requests_dropped;
     ShadowTiming[] shadow_timings;

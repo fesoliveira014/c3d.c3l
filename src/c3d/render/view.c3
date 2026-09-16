@@ -3,6 +3,7 @@ module c3d::render;
 import c3d;
 import c3d::asset;
 import c3d::camera;
+import c3d::debug;
 import c3d::geometry;
 import c3d::light;
 import c3d::material;
@@ -90,6 +91,7 @@ fn void? Renderer.render(
  @param [&inout] self : "Records into the current frame before composition."
  @param [&in] scene : "Pose as left by the last update_world; not advanced."
  @param [&in] camera_node : "Carries a Camera component."
+ @param [&in] debug : "Lines drawn after transparency; not cleared."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::SHADER_NOT_FOUND
  @return? gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
@@ -106,6 +108,7 @@ fn void? Renderer.render_view(
     Scene* scene,
     Node* camera_node,
     ViewId view,
+    DebugDraw* debug = null,
 ) {
     ViewRecord* record = self.views.try_get(view)!;
     if (record.desc.output == ViewOutput.WINDOW && !self.has_output) return;
@@ -377,6 +380,11 @@ fn void? Renderer.render_view(
                 half: TIMESTAMP_END,
             )!;
             slot.timed[Pass.FORWARD_TRANSPARENT.ordinal] = true;
+        }
+
+        reset_debug_lines_timing(self)!;
+        if (debug && debug.vertices.len()) {
+            record_debug_lines(self, record, matrices.view_proj, debug)!;
         }
 
         if (motion_blur) {
