@@ -176,6 +176,12 @@
       "sources": [
         "src/views.c3"
       ]
+    },
+    "pick": {
+      "type": "executable",
+      "sources": [
+        "src/pick.c3"
+      ]
     }
   }
 }

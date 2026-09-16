@@ -192,6 +192,17 @@ python3 scripts/build.py --example views
 ./examples/build/views --gpu-timings
 ```
 
+`pick` selects [scene objects from the cursor](docs/picking.md): a query through the viewport
+centre runs before the first frame, and every left click picks against the current transforms with
+a panel switching between bounds and triangle precision and between the material's side policy,
+both sides and the front side. Hits write the panel selection and are highlighted in the scene and
+in the off-screen view:
+
+```bash
+python3 scripts/build.py --example pick
+./examples/build/pick --gpu-timings
+```
+
 `ibl` lights a metallic/roughness sphere grid with two bundled HDR environments.
 Its controls independently select lighting and background, adjust rotation and
 intensity, demonstrate diffuse-only occlusion, and apply per-environment processing
