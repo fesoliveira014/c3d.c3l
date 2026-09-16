@@ -83,6 +83,7 @@ fn bool Window.apply_event(&self, sdl::Event* event) {
             if (event.button.window_id != self.window_id) break;
             usz button = (usz)event.button.button;
             if (button >= MOUSE_BUTTON_COUNT) break;
+            if (event.button.down && !self.input.mouse_buttons[button]) self.input.mouse_pressed[button] = true;
             self.input.mouse_buttons[button] = event.button.down;
             self.input.mouse_position = (Vec2){ event.button.x, event.button.y } * self.pixel_density;
         case EventType.MOUSE_MOTION:

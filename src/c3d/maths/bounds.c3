@@ -2,6 +2,8 @@ module c3d::maths;
 
 import std::math;
 
+const float TRIANGLE_PARALLEL_EPSILON @local = 1e-8f; // determinant below this is a ray in the triangle's plane
+
 <*
  Axis-aligned bounding box.
 *>
@@ -85,5 +87,39 @@ fn bool ray_intersects_aabb(Ray ray, Aabb bounds, float* distance) {
     }
 
     *distance = entry;
+    return true;
+}
+
+<*
+ Whether the ray meets the triangle, and where along it.
+ @param [&out] distance : "Ray parameter in units of the direction; untouched when there is no hit."
+ @param [&out] barycentric : "Weights of a, b, c; untouched when there is no hit."
+*>
+fn bool ray_intersects_triangle(
+    Ray ray,
+    Vec3 a,
+    Vec3 b,
+    Vec3 c,
+    float* distance,
+    Vec3* barycentric,
+) {
+    Vec3 edge_ab = b - a;
+    Vec3 edge_ac = c - a;
+    Vec3 perpendicular = ray.direction.cross(edge_ac);
+    float determinant = edge_ab.dot(perpendicular);
+    if (math::abs(determinant) < TRIANGLE_PARALLEL_EPSILON) return false;
+
+    float inverse_determinant = 1.0f / determinant;
+    Vec3 to_origin = ray.origin - a;
+    float weight_b = to_origin.dot(perpendicular) * inverse_determinant;
+    if (weight_b < 0 || weight_b > 1) return false;
+    Vec3 crossed = to_origin.cross(edge_ab);
+    float weight_c = ray.direction.dot(crossed) * inverse_determinant;
+    if (weight_c < 0 || weight_b + weight_c > 1) return false;
+    float parameter = edge_ac.dot(crossed) * inverse_determinant;
+    if (parameter < 0) return false;
+
+    *distance = parameter;
+    *barycentric = { 1.0f - weight_b - weight_c, weight_b, weight_c };
     return true;
 }

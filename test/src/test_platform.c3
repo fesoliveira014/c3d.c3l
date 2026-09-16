@@ -167,6 +167,24 @@ fn void test_mouse_button_and_position_track() @test {
     assert(window.input.mouse_delta.x == 4 && window.input.mouse_delta.y == -3);
 }
 
+fn void test_mouse_press_and_release_in_one_poll_still_count_as_a_press() @test {
+    platform::Window window = { .pixel_density = 1 };
+
+    sdl::Event press;
+    press.button.type = sdl::EventType.MOUSE_BUTTON_DOWN;
+    press.button.button = 1;
+    press.button.down = true;
+    window.apply_event(&press);
+    sdl::Event release = press;
+    release.button.type = sdl::EventType.MOUSE_BUTTON_UP;
+    release.button.down = false;
+    window.apply_event(&release);
+    assert(window.input.mouse_pressed[1] && !window.input.mouse_buttons[1]);
+
+    window.input.begin_frame();
+    assert(!window.input.mouse_pressed[1]);
+}
+
 fn void test_mouse_delta_and_wheel_clear_each_frame() @test {
     platform::Window window = { .pixel_density = 1 };
 

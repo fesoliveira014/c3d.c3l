@@ -7,6 +7,7 @@ import c3d::material;
 import c3d::maths;
 import c3d::scene;
 import c3d::shader;
+import c3d::spatial;
 import std::math;
 
 <*
@@ -111,11 +112,16 @@ fn ulong draw_sort_key(
 fn void include_mesh(MeshCandidate[] candidates, Scene* scene, Node* node, Mesh* mesh, AssetStore* assets,
   CameraMatrices* camera, ExtractCounts* counts) @local {
     SkinBinding* skin = scene.get(node, SkinBinding);
-    if (!mesh_is_live(assets, mesh, skin)) {
+    if (!spatial::mesh_is_live(assets, mesh, skin)) {
         counts.dangling++;
         return;
     }
-    Aabb world = candidate_bounds(assets, node, mesh, skin);
+    Aabb world = spatial::mesh_world_bounds(
+        assets: assets,
+        node:   node,
+        mesh:   mesh,
+        skin:   skin,
+    );
     if (!maths::frustum_intersects_aabb(&camera.frustum, world)) {
         counts.culled++;
         return;
@@ -135,39 +141,8 @@ fn void include_mesh(MeshCandidate[] candidates, Scene* scene, Node* node, Mesh*
     counts.visible++;
 }
 
-fn bool mesh_is_live(AssetStore* assets, Mesh* mesh, SkinBinding* skin) @local {
-    return assets.geometries.is_live(mesh.geometry) && assets.materials.is_live(mesh.material)
-        && (!skin || assets.skeletons.is_live(skin.skeleton));
-}
-
-fn Aabb candidate_bounds(AssetStore* assets, Node* node, Mesh* mesh, SkinBinding* skin) @local {
-    if (mesh.has_bounds_override) return maths::aabb_transform(mesh.local_bounds, node.world);
-    Aabb local = assets.geometry(mesh.geometry).data.bounds;
-    if (skin) return skinned_world_bounds(local, node.world, skin);
-    return maths::aabb_transform(local, node.world);
-}
-
 fn float[] morph_weights_of(AssetStore* assets, Mesh* mesh) @local {
     return assets.geometry(mesh.geometry).target_count ? mesh.morph_weights : (float[]){};
-}
-
-<*
- World bound covering every joint of the binding at the mesh's bind-bound radius.
- @param local : "Bind-pose bounds of the geometry."
- @param world : "World matrix of the mesh node."
- @param [&in] binding : "Joints with current world matrices."
-*>
-fn Aabb skinned_world_bounds(Aabb local, Mat4 world, SkinBinding* binding) {
-    Aabb bind = maths::aabb_transform(local, world);
-    float radius = ((bind.max - bind.min) * 0.5f).length();
-    Vec3 extent = { radius, radius, radius };
-    Aabb bounds;
-    foreach (index, joint : binding.joints) {
-        Vec3 center = joint.world_position();
-        Aabb around = { .min = center - extent, .max = center + extent };
-        bounds = index == 0 ? around : maths::aabb_merge(bounds, around);
-    }
-    return bounds;
 }
 
 fn float center_view_depth(CameraMatrices* camera, Aabb world) @local {
@@ -218,7 +193,7 @@ fn MeshCandidate[] extract_shadow_candidates(
         Node* node = scene.node(entity);
         if (node.visible_effective && mesh.cast_shadow) {
             SkinBinding* skin = scene.get(node, SkinBinding);
-            if (!mesh_is_live(assets, mesh, skin)) {
+            if (!spatial::mesh_is_live(assets, mesh, skin)) {
                 counts.dangling++;
             } else {
                 Material* material = &assets.material(mesh.material).data;
@@ -230,7 +205,12 @@ fn MeshCandidate[] extract_shadow_candidates(
                         .skin           = skin,
                         .morph_weights  = morph_weights_of(assets, mesh),
                         .morph_channels = assets.geometry(mesh.geometry).data.channels,
-                        .world_bounds   = candidate_bounds(assets, node, mesh, skin),
+                        .world_bounds   = spatial::mesh_world_bounds(
+                            assets: assets,
+                            node:   node,
+                            mesh:   mesh,
+                            skin:   skin,
+                        ),
                         .receive_shadow = mesh.receive_shadow,
                     };
                 }
