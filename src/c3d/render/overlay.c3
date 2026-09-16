@@ -14,14 +14,17 @@ struct OverlayContext {
 }
 
 <*
- Open a color overlay over the composed window.
+ Open a color overlay over the composed window, recording requested previews first.
  @param [&inout] self : "Composition finished; no attachment pass is open."
+ @return? c3d::SHADER_NOT_FOUND, gpu::SHADER_INVALID, gpu::PIPELINE_CREATE_FAILED
+ @return? gpu::UNSUPPORTED_FEATURE, gpu::SLOT_TABLE_FULL
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
  @return? gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::DEVICE_BUSY, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
  @require self.frame_open, self.has_output, !self.overlay_open
 *>
 fn OverlayContext? Renderer.begin_overlay(&self) {
+    record_previews(self)!;
     self.window_target.transition(&self.commands, COLOR_ATTACHMENT_STATE)!;
 
     gpu::ColorTargetDesc[1] colors = {{

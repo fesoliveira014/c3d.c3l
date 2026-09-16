@@ -14,6 +14,7 @@ typedef Entity = Id;
 alias RemoveFn = fn void (Entity entity, void* component, void* user);
 
 alias ErasedRemove @local  = fn void (void* store, Entity entity);
+alias ErasedGet @local     = fn void* (void* store, Entity entity);
 alias ErasedDestroy @local = fn void (void* store);
 
 <*
@@ -37,6 +38,7 @@ struct World {
     EntityPool                         entities;
     void*[MAX_COMPONENT_TYPES]         stores;
     ErasedRemove[MAX_COMPONENT_TYPES]  removers;
+    ErasedGet[MAX_COMPONENT_TYPES]     getters;
     ErasedDestroy[MAX_COMPONENT_TYPES] destroyers;
 }
 
@@ -45,6 +47,24 @@ struct World {
 *>
 fn bool World.is_alive(&self, Entity entity) {
     return self.entities.is_live(entity);
+}
+
+<*
+ Component bits of the entity, one per registered type slot.
+ @require self.is_alive(entity)
+*>
+fn ulong World.mask(&self, Entity entity) {
+    return self.entities.items[entity.index];
+}
+
+<*
+ Short-lived address of the component in a type slot.
+ Invalidated by a remove on the same store.
+ @require self.is_alive(entity), slot < MAX_COMPONENT_TYPES
+ @require (self.mask(entity) & (1ul << slot)) != 0
+*>
+fn void* World.component(&self, Entity entity, uint slot) {
+    return self.getters[slot](self.stores[slot], entity);
 }
 
 <*
@@ -79,6 +99,7 @@ macro void? World.register(&self, $Type) {
     if (self.stores[index]) return;
     self.stores[index] = store::create_store{$Type}(self.allocator, self.capacity);
     self.removers[index] = &store::erased_remove{$Type};
+    self.getters[index] = &store::erased_get{$Type};
     self.destroyers[index] = &store::erased_destroy{$Type};
     return;
 }

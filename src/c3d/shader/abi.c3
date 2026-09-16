@@ -23,6 +23,12 @@ const uint MATERIAL_ALPHA_MASK = 1;
 const uint MATERIAL_DOUBLE_SIDED = 2;
 const uint MATERIAL_ALPHA_BLEND = 4;
 const uint TOON_MAP_GRADIENT = 1024;
+const uint PREVIEW_MODE_COLOR = 0;
+const uint PREVIEW_MODE_DEPTH_VIEW = 1;
+const uint PREVIEW_MODE_DEPTH_RAW = 2;
+const uint PREVIEW_MODE_VELOCITY = 3;
+const uint PREVIEW_MODE_CUBE_FACE = 4;
+const uint PREVIEW_MODE_CLEAR = 5;
 const uint ENVIRONMENT_FACE_POSITIVE_X = 0;
 const uint ENVIRONMENT_FACE_NEGATIVE_X = 1;
 const uint ENVIRONMENT_FACE_POSITIVE_Y = 2;
@@ -296,6 +302,34 @@ $assert $reflect(DebugLinesRoot.vertices).offset == 0;
 $assert $reflect(DebugLinesRoot.alpha).offset == 8;
 $assert $reflect(DebugLinesRoot._pad0).offset == 12;
 $assert $reflect(DebugLinesRoot.view_proj).offset == 16;
+
+struct PreviewRoot {
+    TextureIndex input_texture;
+    SamplerIndex input_sampler;
+    TextureIndex output_texture;
+    uint         width;
+    uint         height;
+    uint         mode;
+    uint         face;
+    float        exposure;
+    float        range;
+    float        proj_22;
+    float        proj_23;
+    uint         orthographic;
+}
+$assert PreviewRoot::size == 48;
+$assert $reflect(PreviewRoot.input_texture).offset == 0;
+$assert $reflect(PreviewRoot.input_sampler).offset == 4;
+$assert $reflect(PreviewRoot.output_texture).offset == 8;
+$assert $reflect(PreviewRoot.width).offset == 12;
+$assert $reflect(PreviewRoot.height).offset == 16;
+$assert $reflect(PreviewRoot.mode).offset == 20;
+$assert $reflect(PreviewRoot.face).offset == 24;
+$assert $reflect(PreviewRoot.exposure).offset == 28;
+$assert $reflect(PreviewRoot.range).offset == 32;
+$assert $reflect(PreviewRoot.proj_22).offset == 36;
+$assert $reflect(PreviewRoot.proj_23).offset == 40;
+$assert $reflect(PreviewRoot.orthographic).offset == 44;
 
 struct CubePreviewRoot {
     TextureIndex source_texture;

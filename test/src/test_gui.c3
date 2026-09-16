@@ -1,6 +1,10 @@
 module c3d::test::gui;
 
+import c3d;
+import c3d::gui;
 import c3d::gui::backend;
+import c3d::gui::inspect;
+import c3d::maths;
 import c3d::shader;
 import gpu;
 import std::math;
@@ -69,4 +73,28 @@ fn void test_gui_root_preserves_vertex_stride_and_display_corners() @test {
     assert(math::abs(top_left.y - 1) < TOLERANCE);
     assert(math::abs(bottom_right.x - 1) < TOLERANCE);
     assert(math::abs(bottom_right.y + 1) < TOLERANCE);
+}
+
+enum ProbeMode @local {
+    FIRST,
+    SECOND,
+}
+
+struct InspectProbe @local {
+    float     speed;
+    int       count;
+    uint      flags;
+    bool      on;
+    Vec3      direction;
+    Quat      rotation;
+    ProbeMode mode;
+    Id        asset;
+    float[]   weights;
+    Aabb      bounds;
+    void*     owner;
+}
+
+fn void test_gui_generic_inspector_accepts_every_supported_kind() @test {
+    InspectFn probe = &gui::inspect::inspect{InspectProbe};
+    assert(probe != null);
 }

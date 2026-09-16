@@ -116,6 +116,7 @@ fn GuiRenderer? create_gui_renderer(Allocator allocator, Renderer* renderer, pla
         height: (uint)height,
     )!;
 
+    expose_builtin_components();
     return {
         .allocator = allocator,
         .renderer = renderer,

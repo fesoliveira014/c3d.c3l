@@ -68,6 +68,15 @@ fn void erased_remove(void* raw, Entity entity) {
 }
 
 <*
+ Type-erased get for the world's inspection table.
+ @param [&inout] raw : "A ComponentStore of this type."
+ @require ((ComponentStore*)raw).sparse[entity.index] != 0
+*>
+fn void* erased_get(void* raw, Entity entity) {
+    return ((ComponentStore*)raw).get(entity);
+}
+
+<*
  Type-erased destroy for the world's destruction tables.
  @param [&inout] raw : "A ComponentStore of this type."
 *>

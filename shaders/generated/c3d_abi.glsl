@@ -26,6 +26,12 @@ const uint MATERIAL_ALPHA_MASK = 1u;
 const uint MATERIAL_DOUBLE_SIDED = 2u;
 const uint MATERIAL_ALPHA_BLEND = 4u;
 const uint TOON_MAP_GRADIENT = 1024u;
+const uint PREVIEW_MODE_COLOR = 0u;
+const uint PREVIEW_MODE_DEPTH_VIEW = 1u;
+const uint PREVIEW_MODE_DEPTH_RAW = 2u;
+const uint PREVIEW_MODE_VELOCITY = 3u;
+const uint PREVIEW_MODE_CUBE_FACE = 4u;
+const uint PREVIEW_MODE_CLEAR = 5u;
 const uint ENVIRONMENT_FACE_POSITIVE_X = 0u;
 const uint ENVIRONMENT_FACE_NEGATIVE_X = 1u;
 const uint ENVIRONMENT_FACE_POSITIVE_Y = 2u;
@@ -193,6 +199,21 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer DebugLinesR
     float alpha;
     uint _pad0;
     mat4 view_proj;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer PreviewRoot {
+    uint input_texture;
+    uint input_sampler;
+    uint output_texture;
+    uint width;
+    uint height;
+    uint mode;
+    uint face;
+    float exposure;
+    float range;
+    float proj_22;
+    float proj_23;
+    uint orthographic;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer CubePreviewRoot {
