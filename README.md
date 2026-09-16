@@ -192,6 +192,17 @@ python3 scripts/build.py --example views
 ./examples/build/views --gpu-timings
 ```
 
+`picking` selects meshes with the mouse through [CPU picking](docs/picking.md): two transformed
+boxes are picked before the first frame, a glTF model is instantiated twice and either instance
+is selected by click, and a click on the monitor slab picks again through the capture camera it
+shows. Its panel switches between bounds and triangle precision and between face policies, and
+reports the hit's distance, triangle and barycentric weights:
+
+```bash
+python3 scripts/build.py --example picking
+./examples/build/picking [model.glb] --gpu-timings
+```
+
 `ibl` lights a metallic/roughness sphere grid with two bundled HDR environments.
 Its controls independently select lighting and background, adjust rotation and
 intensity, demonstrate diffuse-only occlusion, and apply per-environment processing

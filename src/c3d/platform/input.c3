@@ -29,6 +29,7 @@ struct Input {
     bool[KEY_COUNT]          keys_pressed;
     bool[KEY_COUNT]          keys_released;
     bool[MOUSE_BUTTON_COUNT] mouse_buttons;
+    bool[MOUSE_BUTTON_COUNT] mouse_pressed;
     Vec2                     mouse_position;
     Vec2                     mouse_delta;
     float                    wheel;
@@ -43,6 +44,7 @@ struct Input {
 fn void Input.begin_frame(&self) {
     self.keys_pressed = {};
     self.keys_released = {};
+    self.mouse_pressed = {};
     self.mouse_delta = { 0, 0 };
     self.wheel = 0;
 }
