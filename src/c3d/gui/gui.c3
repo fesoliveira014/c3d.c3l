@@ -4,7 +4,7 @@ import c3d::gui::backend;
 import c3d::platform;
 import c3d::render;
 import imgui;
-import imgui::backend::sdl;
+import std::math;
 
 <*
  Owned GUI context and backend borrowing a renderer and window.
@@ -19,16 +19,7 @@ struct GuiRenderer {
     bool draw_ready;
 }
 
-<*
- Forward a borrowed SDL event to this GUI context.
- @param [&inout] self : "Live adapter before its next GUI frame."
- @param [&in] event : "Unmodified SDL3 event, borrowed for this call."
- @require self.context != null, !self.frame_open
-*>
-fn void GuiRenderer.process_event(&self, void* event) {
-    imgui::set_current_context(self.context);
-    (void)imgui::backend::sdl::process_event((imgui::backend::sdl::EventRef)event);
-}
+const float DELTA_TIME_MIN @local = 1.0f / 100000; // ImGui rejects a zero frame delta; the first frame has one
 
 <*
  Begin GUI input and update independent capture flags.
@@ -37,11 +28,18 @@ fn void GuiRenderer.process_event(&self, void* event) {
 *>
 fn void GuiRenderer.new_frame(&self) {
     imgui::set_current_context(self.context);
-    imgui::backend::sdl::new_frame();
+    platform::Window* window = self.window;
+    float density = window.pixel_density;
+    imgui::io_set_display_size((float)window.width / density, (float)window.height / density);
+    imgui::io_set_display_framebuffer_scale(density, density);
+    imgui::io_set_delta_time(math::max(window.clock.delta, DELTA_TIME_MIN));
+    imgui::Io io = imgui::get_io();
+    foreach (&event : window.events()) feed_event(io, event, density);
     imgui::new_frame();
 
-    self.window.input.mouse_captured_by_gui = imgui::io_get_want_capture_mouse();
-    self.window.input.keyboard_captured_by_gui = imgui::io_get_want_capture_keyboard();
+    window.input.mouse_captured_by_gui = imgui::io_get_want_capture_mouse();
+    window.input.keyboard_captured_by_gui = imgui::io_get_want_capture_keyboard();
+    window.set_text_input(imgui::io_get_want_text_input());
 
     self.frame_open = true;
     self.draw_ready = false;
@@ -78,7 +76,7 @@ fn void? GuiRenderer.record(&self, OverlayContext* overlay) {
  @param [&inout] renderer : "Stable borrow; configured window output, no open frame."
  @param [&inout] window : "Stable borrow; outlives the adapter and renderer."
  @return? c3d::gui::backend::create_gui_backend!
- @return? CONTEXT_CREATE_FAILED, PLATFORM_INIT_FAILED, FONT_BUILD_FAILED
+ @return? CONTEXT_CREATE_FAILED, FONT_BUILD_FAILED
  @require !renderer.frame_open, renderer.swapchain.is_valid()
 *>
 fn GuiRenderer? create_gui_renderer(Allocator allocator, Renderer* renderer, platform::Window* window) {
@@ -88,9 +86,7 @@ fn GuiRenderer? create_gui_renderer(Allocator allocator, Renderer* renderer, pla
 
     imgui::set_current_context(context);
     imgui::io_set_ini_filename(null);
-
-    if (!imgui::backend::sdl::init_for_other((imgui::backend::sdl::WindowHandle)window.handle)) return PLATFORM_INIT_FAILED~;
-    defer catch imgui::backend::sdl::shutdown();
+    imgui::platform_io_set_clipboard_handlers(&clipboard_get, &clipboard_set, null);
 
     imgui::FontAtlas fonts = imgui::io_get_fonts();
     if (!imgui::fonts_build(fonts)) return FONT_BUILD_FAILED~;
@@ -136,8 +132,52 @@ fn void? destroy_gui_renderer(GuiRenderer* gui) {
     imgui::set_current_context(gui.context);
     c3d::gui::backend::destroy_gui_backend(&gui.backend)!;
 
-    imgui::backend::sdl::shutdown();
+    gui.window.set_text_input(false);
     imgui::destroy_context(gui.context);
 
     *gui = {};
+}
+
+fn void feed_event(imgui::Io io, platform::Event* event, float density) @local {
+    switch (event.kind) {
+        case KEY_DOWN:
+        case KEY_UP:
+            bool down = event.kind == EventKind.KEY_DOWN;
+            imgui::io::add_key_event(io, imgui::KEY_IM_GUI_MOD_CTRL, event.modifiers.ctrl);
+            imgui::io::add_key_event(io, imgui::KEY_IM_GUI_MOD_SHIFT, event.modifiers.shift);
+            imgui::io::add_key_event(io, imgui::KEY_IM_GUI_MOD_ALT, event.modifiers.alt);
+            imgui::io::add_key_event(io, imgui::KEY_IM_GUI_MOD_SUPER, event.modifiers.gui);
+            imgui::Key key = imgui_key_of(event.scancode);
+            if (key != imgui::KEY_NONE) imgui::io::add_key_event(io, key, down);
+        case TEXT_INPUT:
+            @pool() {
+                imgui::io::add_input_characters_utf8(io, event.text.zstr_tcopy());
+            };
+        case MOUSE_MOTION:
+            imgui::io::add_mouse_pos_event(io, event.position.x / density, event.position.y / density);
+        case MOUSE_BUTTON_DOWN:
+        case MOUSE_BUTTON_UP:
+            imgui::io::add_mouse_pos_event(io, event.position.x / density, event.position.y / density);
+            int button;
+            if (imgui_button_of(event.button, &button)) {
+                imgui::io::add_mouse_button_event(io, button, event.kind == EventKind.MOUSE_BUTTON_DOWN);
+            }
+        case MOUSE_WHEEL:
+            imgui::io::add_mouse_wheel_event(io, event.scroll.x, event.scroll.y);
+        case FOCUS_GAINED:
+            imgui::io::add_focus_event(io, true);
+        case FOCUS_LOST:
+            imgui::io::add_focus_event(io, false);
+        case RESIZED:
+        case QUIT:
+            break;
+    }
+}
+
+fn ZString clipboard_get(imgui::Context context) @local {
+    return platform::clipboard_text();
+}
+
+fn void clipboard_set(imgui::Context context, ZString text) @local {
+    (void)platform::set_clipboard_text(text.str_view());
 }

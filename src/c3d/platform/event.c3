@@ -5,7 +5,7 @@ import std::math;
 <*
  Events one window keeps per frame.
 *>
-const uint EVENT_CAPACITY = 256; // 17 KiB per window; more than a frame of typing and motion; a full list drops and counts
+const uint EVENT_CAPACITY = 256; // 17 KiB per window, more than a frame of typing and motion; overflow drops and counts
 
 <*
  UTF-8 bytes of text input one window keeps per frame.
