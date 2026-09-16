@@ -34,8 +34,22 @@ fn void scene_panel(Scene* scene, GuiPanelState* state) {
 
         if (scene.world.is_alive(state.selected)) {
             edit_transform(scene.node(state.selected), state);
+            inspect_components(scene, state.selected);
         }
     };
+}
+
+fn void inspect_components(Scene* scene, Entity entity) @local {
+    ulong mask = scene.world.mask(entity);
+    for (uint slot = 0; slot < ecs::MAX_COMPONENT_TYPES; slot++) {
+        Inspector inspector = inspector_of(slot);
+        if ((mask & (1ul << slot)) == 0 || !inspector.inspect) continue;
+        imgui::push_id_int((int)slot);
+        defer imgui::pop_id();
+        if (imgui::collapsing_header(inspector.name, {})) {
+            (void)inspector.inspect(scene.world.component(entity, slot));
+        }
+    }
 }
 
 fn bool same_entity(Entity first, Entity second) @local {

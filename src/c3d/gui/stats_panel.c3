@@ -2,7 +2,10 @@ module c3d::gui;
 
 import c3d::gui::backend;
 import c3d::render;
+import gpu;
 import imgui;
+
+const usz DIAGNOSTICS_ROWS @local = 16; // one screen of recent messages; the ring keeps 64
 
 <*
  Display previous-frame counters and completed GPU timings.
@@ -55,5 +58,37 @@ fn void? stats_panel(Renderer* renderer) {
         imgui::text_unformatted("GPU timings disabled");
     }
 
-    return c3d::gui::backend::memory_panel(renderer);
+    c3d::gui::backend::memory_panel(renderer)!;
+    diagnostics_section(renderer);
+}
+
+fn ZString category_name(gpu::DebugMessageCategory category) @local {
+    if (category.validation) return "validation";
+    if (category.public_contract) return "contract";
+    if (category.performance) return "performance";
+    if (category.resource_lifetime) return "lifetime";
+    if (category.backend) return "backend";
+    return "general";
+}
+
+fn void diagnostics_section(Renderer* renderer) @local {
+    if (!imgui::collapsing_header("Diagnostics", {})) return;
+
+    imgui::text("Validation: %s", renderer.validation ? "on" : "off");
+    imgui::text("GPU timings: %s", renderer.timestamps_enabled ? "on" : "off");
+
+    DebugEntry[DIAGNOSTICS_ROWS] entries;
+    usz count = renderer.log.recent(entries[..]);
+    if (!count) imgui::text_unformatted("No messages");
+    @pool() {
+        foreach (entry : entries[:count]) {
+            imgui::text("%s %s %s#%u %s",
+                @enum_name(gpu::DebugMessageSeverity, entry.severity),
+                category_name(entry.category),
+                @enum_name(gpu::DebugResourceKind, entry.resource_kind),
+                entry.resource_index,
+                (ZString)&entry.operation);
+            if (entry.has_fault) imgui::text("  %s", entry.public_fault.description.zstr_tcopy());
+        }
+    };
 }

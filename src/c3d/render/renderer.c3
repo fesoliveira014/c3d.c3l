@@ -145,6 +145,10 @@ struct Renderer {
     ShadowTiming[]           shadow_timing_results;
     ShadowFrustum[]          shadow_frusta;
     uint                     shadow_frustum_count;
+    PreviewSlot[PREVIEW_CAPACITY] previews;
+    gpu::TextureState[PREVIEW_CAPACITY] frame_preview_states;
+    gpu::PipelineHandle      preview_pipeline;
+    bool                     validation;
 
     uint                    output_width;
     uint                    output_height;
@@ -255,6 +259,7 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
 
     self.frame_shadow_state = self.shadow_atlas.state;
     foreach (index, target : self.targets.items) self.frame_target_states[index] = target.target.state;
+    foreach (index, &preview : self.previews) self.frame_preview_states[index] = preview.image.state;
     foreach (&record : self.views.items) {
         record.snapshot_states();
         record.scene_input = &record.hdr_color;
@@ -717,6 +722,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .max_shadow_layers    = max_shadow_layers,
         .shadow_timing_results = shadow_timing_results,
         .shadow_frusta        = alloc::new_array(allocator, ShadowFrustum, max_shadow_layers),
+        .validation           = desc.validation,
         .geometries           = alloc::new_array(allocator, GpuGeometry, assets.geometries.items.len),
         .materials            = alloc::new_array(allocator, MaterialRes, assets.materials.items.len),
         .textures             = alloc::new_array(allocator, TextureRes, assets.textures.items.len),
@@ -795,6 +801,7 @@ fn void destroy_renderer(Renderer* renderer) {
     destroy_shadow_atlas(&renderer.device, &renderer.shadow_atlas);
     if (renderer.shadow_timing_results.len) alloc::free(renderer.allocator, renderer.shadow_timing_results.ptr);
     alloc::free(renderer.allocator, renderer.shadow_frusta.ptr);
+    release_previews(renderer);
     foreach (&record : renderer.views.items) release_view_images(renderer, record);
     pool::destroy_pool{ViewRecord, ViewId}(&renderer.views);
     post::destroy_post_pipelines(&renderer.device, &renderer.post_pipelines);
@@ -1005,6 +1012,7 @@ fn void abort_frame(Renderer* renderer) {
         renderer.frames[renderer.recording_slot].shadow_timing_count = 0;
         renderer.shadow_atlas.state = renderer.frame_shadow_state;
         foreach (index, &target : renderer.targets.items) target.target.state = renderer.frame_target_states[index];
+        foreach (index, &preview : renderer.previews) preview.image.state = renderer.frame_preview_states[index];
         foreach (&record : renderer.views.items) record.restore_states();
     }
     renderer.has_output = false;

@@ -285,3 +285,16 @@ fn void test_destroy_world_runs_remaining_hooks() @test {
     assert(record.calls == 3);
     assert(world.entities.items.len == 0);
 }
+
+fn void test_ecs_component_by_slot_matches_typed_get() @test {
+    World world = ecs::create_world(mem, 8);
+    defer ecs::destroy_world(&world);
+    world.register(Health)!!;
+    Entity entity = world.create_entity()!!;
+
+    Health* typed = world.add(entity, (Health){});
+    uint slot = store::slot{Health} - 1;
+
+    assert(world.component(entity, slot) == typed);
+    assert(world.mask(entity) == 1ul << slot);
+}

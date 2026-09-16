@@ -154,6 +154,28 @@ root DebugLinesRoot {
     mat4 view_proj;
 }
 
+const uint PREVIEW_MODE_COLOR = 0;
+const uint PREVIEW_MODE_DEPTH_VIEW = 1;
+const uint PREVIEW_MODE_DEPTH_RAW = 2;
+const uint PREVIEW_MODE_VELOCITY = 3;
+const uint PREVIEW_MODE_CUBE_FACE = 4;
+const uint PREVIEW_MODE_CLEAR = 5;
+
+root PreviewRoot {
+    TextureIndex input_texture;
+    SamplerIndex input_sampler;
+    TextureIndex output_texture;
+    uint width;
+    uint height;
+    uint mode;
+    uint face;
+    float exposure;
+    float range;
+    float proj_22;
+    float proj_23;
+    uint orthographic;
+}
+
 root CubePreviewRoot {
     TextureIndex source_texture;
     SamplerIndex source_sampler;

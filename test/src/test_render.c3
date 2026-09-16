@@ -480,3 +480,80 @@ fn void test_morph_selection_maps_channels_to_targets() @test {
     shader::MorphWeightsGpu keyed = render::select_morph_targets(channels[..], at_key[..]);
     assert(keyed.count == 1 && keyed.indices[0] == 1 && math::abs(keyed.weights[0] - 1) < 0.0005f);
 }
+
+fn void test_render_preview_request_rejects_oversized_and_out_of_range() @test {
+    PreviewParams valid = { .width = 128, .height = 128, .exposure = 1, .range = 1 };
+
+    assert(@ok(render::validate_preview_request(
+        source:          { .kind = VIEW_COLOR },
+        params:          valid,
+        layer_count:     0,
+        bloom_levels:    0,
+        texture_is_cube: false,
+        texture_depth:   0,
+    )));
+
+    if (catch excuse = render::validate_preview_request(
+        source:          { .kind = VIEW_COLOR },
+        params:          { .width = 0, .height = 128 },
+        layer_count:     0,
+        bloom_levels:    0,
+        texture_is_cube: false,
+        texture_depth:   0,
+    )) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "zero extent must fault");
+    }
+
+    if (catch excuse = render::validate_preview_request(
+        source:          { .kind = VIEW_COLOR },
+        params:          { .width = render::PREVIEW_MAX_SIZE + 1, .height = 128 },
+        layer_count:     0,
+        bloom_levels:    0,
+        texture_is_cube: false,
+        texture_depth:   0,
+    )) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "oversized extent must fault");
+    }
+
+    if (catch excuse = render::validate_preview_request(
+        source:          { .kind = SHADOW_LAYER, .layer = 4 },
+        params:          valid,
+        layer_count:     4,
+        bloom_levels:    0,
+        texture_is_cube: false,
+        texture_depth:   0,
+    )) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "a layer beyond the atlas must fault");
+    }
+
+    if (catch excuse = render::validate_preview_request(
+        source:          { .kind = TEXTURE },
+        params:          valid,
+        layer_count:     0,
+        bloom_levels:    0,
+        texture_is_cube: true,
+        texture_depth:   0,
+    )) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "a cube texture must fault");
+    }
+}
+
+fn void test_render_preview_cube_face_directions() @test {
+    Vec2 center = { 0.5f, 0.5f };
+    Vec3[6] axes = { { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 } };
+    foreach (index, axis : axes) {
+        Vec3 direction = render::preview_face_direction(CubeFace::from_ordinal(index), center);
+        assert((direction - axis).length() <= 0.0001f);
+    }
+
+    Vec3 corner = render::preview_face_direction(CubeFace.POSITIVE_X, { 0, 0 });
+    assert(corner.x == 1 && corner.y == 1 && corner.z == 1, "top-left of +X looks up and toward +Z");
+}

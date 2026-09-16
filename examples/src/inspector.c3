@@ -49,7 +49,11 @@ const Vec2 SCENE_PANEL_SIZE @local = { 360, 420 };
 const Vec2 MATERIAL_PANEL_POSITION @local = { 16, 658 };
 const Vec2 MATERIAL_PANEL_SIZE @local = { 360, 220 };
 const Vec2 STATS_PANEL_POSITION @local = { 1060, 16 };
-const Vec2 STATS_PANEL_SIZE @local = { 360, 640 };
+const Vec2 STATS_PANEL_SIZE @local = { 360, 420 };
+const Vec2 TARGETS_PANEL_POSITION @local = { 1060, 452 };
+const Vec2 TARGETS_PANEL_SIZE @local = { 360, 430 };
+const Vec2 POST_PANEL_POSITION @local = { 392, 16 };
+const Vec2 POST_PANEL_SIZE @local = { 300, 260 };
 
 struct Orbit @local {
     Vec3  target;
@@ -146,6 +150,7 @@ fn void? run_gui(
     Node* spinning,
     Node* camera_node,
     Orbit* orbit,
+    EnvironmentId environment,
 ) @local {
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
@@ -154,6 +159,10 @@ fn void? run_gui(
     defer debug::destroy_debug_draw(&debug);
 
     GuiPanelState panels = { .selected = spinning.id };
+    TargetsPanelState targets = gui::default_targets_panel_state();
+    ViewDesc view_desc = render::default_view_desc();
+    view_desc.post.bloom = true;
+    render::configure_view(renderer, renderer.default_view, view_desc)!;
     DebugToggles toggles = { .bounds = true, .lights = true, .axes = true, .animate = true };
     bool escape_captured;
 
@@ -213,6 +222,16 @@ fn void? run_gui(
         imgui::set_next_window_pos(STATS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(STATS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
         gui::stats_panel(renderer)!;
+
+        imgui::set_next_window_pos(TARGETS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
+        imgui::set_next_window_size(TARGETS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
+        gui::targets_panel(renderer, renderer.default_view, &targets, environment)!;
+
+        imgui::set_next_window_pos(POST_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
+        imgui::set_next_window_size(POST_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
+        if (gui::post_panel(&view_desc, {})) {
+            render::configure_view(renderer, renderer.default_view, view_desc)!;
+        }
 
         scene.update_world();
         fill_debug_lines(
@@ -352,6 +371,7 @@ fn int main(String[] args) {
         spinning:    left,
         camera_node: camera_node,
         orbit:       &orbit,
+        environment: environment,
     )) {
         io::printfn("GUI failed: %s", excuse);
         return 1;
