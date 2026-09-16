@@ -143,6 +143,8 @@ struct Renderer {
     bool                     timestamps_enabled;
     Stats                    stats;
     ShadowTiming[]           shadow_timing_results;
+    ShadowFrustum[]          shadow_frusta;
+    uint                     shadow_frustum_count;
 
     uint                    output_width;
     uint                    output_height;
@@ -714,6 +716,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .shadow_resolution    = desc.shadow_resolution ? desc.shadow_resolution : DEFAULT_SHADOW_RESOLUTION,
         .max_shadow_layers    = max_shadow_layers,
         .shadow_timing_results = shadow_timing_results,
+        .shadow_frusta        = alloc::new_array(allocator, ShadowFrustum, max_shadow_layers),
         .geometries           = alloc::new_array(allocator, GpuGeometry, assets.geometries.items.len),
         .materials            = alloc::new_array(allocator, MaterialRes, assets.materials.items.len),
         .textures             = alloc::new_array(allocator, TextureRes, assets.textures.items.len),
@@ -791,6 +794,7 @@ fn void destroy_renderer(Renderer* renderer) {
     free_material_heap(renderer);
     destroy_shadow_atlas(&renderer.device, &renderer.shadow_atlas);
     if (renderer.shadow_timing_results.len) alloc::free(renderer.allocator, renderer.shadow_timing_results.ptr);
+    alloc::free(renderer.allocator, renderer.shadow_frusta.ptr);
     foreach (&record : renderer.views.items) release_view_images(renderer, record);
     pool::destroy_pool{ViewRecord, ViewId}(&renderer.views);
     post::destroy_post_pipelines(&renderer.device, &renderer.post_pipelines);

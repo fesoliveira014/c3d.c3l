@@ -8,6 +8,8 @@
     { "shader": "basic", "source": "basic.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "imgui_vertex", "source": "imgui.vert.glsl", "stage": "vert", "defines": [] },
     { "shader": "imgui_fragment", "source": "imgui.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "lines_vertex", "source": "lines.vert.glsl", "stage": "vert", "defines": [] },
+    { "shader": "lines_fragment", "source": "lines.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "cube_preview", "source": "cube_preview.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "standard", "source": "standard.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "physical", "source": "physical.frag.glsl", "stage": "frag", "defines": [] },

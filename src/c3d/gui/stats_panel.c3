@@ -23,6 +23,7 @@ fn void? stats_panel(Renderer* renderer) {
     imgui::text("Culled: %u", renderer.stats.culled);
     imgui::text("Lights: %u", renderer.stats.lights);
     imgui::text("Lights dropped: %u", renderer.stats.lights_dropped);
+    imgui::text("Debug lines: %u", renderer.stats.debug_lines);
 
     imgui::text("Uploads: %u", renderer.stats.uploads);
     imgui::text("Asset upload bytes: %u", renderer.stats.upload_bytes);
@@ -42,6 +43,8 @@ fn void? stats_panel(Renderer* renderer) {
             (double)renderer.stats.gpu_pass_ms[Pass.TRANSMISSION.ordinal]);
         imgui::text("Completed GPU transparent: %.3f ms",
             (double)renderer.stats.gpu_pass_ms[Pass.FORWARD_TRANSPARENT.ordinal]);
+        imgui::text("Completed GPU debug lines: %.3f ms",
+            (double)renderer.stats.gpu_pass_ms[Pass.DEBUG_LINES.ordinal]);
         imgui::text("Completed GPU velocity: %.3f ms",
             (double)renderer.stats.gpu_pass_ms[Pass.VELOCITY.ordinal]);
         imgui::text("Completed GPU post chain: %.3f ms",

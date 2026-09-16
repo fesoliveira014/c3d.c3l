@@ -273,6 +273,30 @@ $assert GuiFragmentRoot::size == 8;
 $assert $reflect(GuiFragmentRoot.source_texture).offset == 0;
 $assert $reflect(GuiFragmentRoot.source_sampler).offset == 4;
 
+struct DebugVertexGpu {
+    float x;
+    float y;
+    float z;
+    uint  rgba;
+}
+$assert DebugVertexGpu::size == 16;
+$assert $reflect(DebugVertexGpu.x).offset == 0;
+$assert $reflect(DebugVertexGpu.y).offset == 4;
+$assert $reflect(DebugVertexGpu.z).offset == 8;
+$assert $reflect(DebugVertexGpu.rgba).offset == 12;
+
+struct DebugLinesRoot {
+    GpuAddress vertices;
+    float      alpha;
+    uint       _pad0;
+    Mat4f      view_proj;
+}
+$assert DebugLinesRoot::size == 80;
+$assert $reflect(DebugLinesRoot.vertices).offset == 0;
+$assert $reflect(DebugLinesRoot.alpha).offset == 8;
+$assert $reflect(DebugLinesRoot._pad0).offset == 12;
+$assert $reflect(DebugLinesRoot.view_proj).offset == 16;
+
 struct CubePreviewRoot {
     TextureIndex source_texture;
     SamplerIndex source_sampler;

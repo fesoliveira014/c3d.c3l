@@ -87,6 +87,12 @@
         "src/cube.c3"
       ]
     },
+    "inspector": {
+      "type": "executable",
+      "sources": [
+        "src/inspector.c3"
+      ]
+    },
     "cube_gui": {
       "type": "executable",
       "sources": [

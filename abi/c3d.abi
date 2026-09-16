@@ -140,6 +140,20 @@ root GuiFragmentRoot {
     SamplerIndex source_sampler;
 }
 
+struct DebugVertexGpu {
+    float x;
+    float y;
+    float z;
+    uint rgba;
+}
+
+root DebugLinesRoot {
+    GpuAddress vertices;
+    float alpha;
+    uint _pad0;
+    mat4 view_proj;
+}
+
 root CubePreviewRoot {
     TextureIndex source_texture;
     SamplerIndex source_sampler;

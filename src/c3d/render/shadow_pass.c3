@@ -195,6 +195,7 @@ fn ShadowGpu[]? record_shadows(
     LightExtraction* extraction,
 ) @private {
     reset_shadow_timings(renderer)!;
+    renderer.shadow_frustum_count = 0;
     uint covered;
     foreach (request : extraction.shadows) {
         Light* light = scene.get(scene.node(request.light), Light);
@@ -260,6 +261,11 @@ fn ShadowGpu[]? record_shadows(
                     participating[candidate_index] = true;
                 }
             }
+            renderer.shadow_frusta[layer] = {
+                .inv_view_proj = shadow_matrices[layer].inv_view_proj,
+                .kind          = light.kind,
+            };
+            renderer.shadow_frustum_count = math::max(renderer.shadow_frustum_count, layer + 1);
             shadows[layer] = {
                 .view_proj = bitcast(shadow_matrices[layer].view_proj, Mat4f),
                 .texture_index = renderer.shadow_atlas.layers[layer].view.index,
