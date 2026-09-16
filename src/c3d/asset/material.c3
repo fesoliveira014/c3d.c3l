@@ -89,8 +89,7 @@ fn void? AssetStore.set_custom_params(&self, MaterialId material, char[] bytes) 
  @require self.materials.is_live(material)
 *>
 macro void? AssetStore.@set_custom_params(&self, MaterialId material, #value) {
-    var $Type = $Typeof(#value);
-    return self.set_custom_params(material, ((char*)&#value)[:$Type::size]);
+    return self.set_custom_params(material, material::@as_bytes(#value));
 }
 
 <*

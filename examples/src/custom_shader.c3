@@ -55,10 +55,6 @@ struct Orbit @local {
     float pitch;
 }
 
-macro @as_bytes(#value) @local {
-    return ((char*)&#value)[:$Typeof(#value)::size];
-}
-
 fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
     if (input.button_down(platform::MouseButton.LEFT)) {
         orbit.yaw -= input.mouse_delta.x * ORBIT_RADIANS_PER_PIXEL;
@@ -203,8 +199,8 @@ fn int main() {
         .color = { 0.9f, 0.9f, 0.9f, 1 },
         .map = material::texture_slot(asset::TEXTURE_CHECKER),
     }))!!;
-    MaterialId tint_material = assets.add_material(material::custom(tint_shader, @as_bytes(tint), tint_slots))!!;
-    MaterialId pulse_material = assets.add_material(material::custom(pulse_shader, @as_bytes(pulse)))!!;
+    MaterialId tint_material = assets.add_material(material::custom(tint_shader, material::@as_bytes(tint), tint_slots))!!;
+    MaterialId pulse_material = assets.add_material(material::custom(pulse_shader, material::@as_bytes(pulse)))!!;
 
     Scene scene = scene::create_scene(mem, scene::default_scene_desc());
     defer scene::destroy_scene(&scene);

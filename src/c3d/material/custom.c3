@@ -31,6 +31,14 @@ struct CustomParams {
 }
 
 <*
+ Bytes of a value, for a custom payload built from a matching C3 struct.
+ @param #value : "Addressable; the slice borrows it."
+*>
+macro char[] @as_bytes(#value) {
+    return ((char*)&#value)[:$Typeof(#value)::size];
+}
+
+<*
  Material shaded by user SPIR-V.
  @param param_block : "Copied by the store when the material is added."
  @pure
