@@ -20,7 +20,6 @@ import c3d::model;
 import c3d::platform;
 import c3d::render;
 import c3d::scene;
-import sdl;
 
 const float ORBIT_RADIANS_PER_PIXEL @local = 0.005f;
 const float ORBIT_PITCH_LIMIT @local = 1.5f; // avoids the poles, where the up vector degenerates
@@ -38,7 +37,6 @@ const float ENVIRONMENT_INTENSITY @local = 0.6f;
 const float BACKGROUND_INTENSITY @local = 0.3f;
 const float STATS_PERIOD_SECONDS @local = 2;
 const uint MODEL_CAPACITY @local = 4;
-const usz MOUSE_BUTTON_LEFT @local = 1; // SDL button index
 const String DEFAULT_MODEL @local = "../assets/mixamo/character.fbx";
 const String[] DEFAULT_ANIMATIONS @local = { "../assets/mixamo/walk.fbx", "../assets/mixamo/run.fbx" };
 const usz MAX_ANIMATION_FILES @local = 8;
@@ -54,7 +52,7 @@ struct Orbit @local {
 }
 
 fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
-    if (input.mouse_buttons[MOUSE_BUTTON_LEFT]) {
+    if (input.button_down(platform::MouseButton.LEFT)) {
         orbit.yaw -= input.mouse_delta.x * ORBIT_RADIANS_PER_PIXEL;
         orbit.pitch = math::clamp(
             orbit.pitch + input.mouse_delta.y * ORBIT_RADIANS_PER_PIXEL,
@@ -131,11 +129,11 @@ fn void handle_keys(
     Animator* left_animator = scene.get(left, Animator);
     ClipId[] clips = playback.clips();
     for (usz digit = 0; digit < clips.len && digit < CLIP_KEY_COUNT; digit++) {
-        if (!input.keys_pressed[(usz)sdl::Scancode.CODE_1 + digit]) continue;
+        if (!input.key_pressed((platform::Scancode)((usz)platform::Scancode.CODE_1 + digit))) continue;
         playback.left_clip = digit;
         cross_fade_to(left_animator, assets, clips[digit]);
     }
-    if (input.keys_pressed[(usz)sdl::Scancode.R] && playback.kept.len) {
+    if (input.key_pressed(platform::Scancode.R) && playback.kept.len) {
         playback.keep_root_motion = !playback.keep_root_motion;
         ClipId[] variant = playback.clips();
         cross_fade_to(left_animator, assets, variant[playback.left_clip]);
@@ -145,11 +143,11 @@ fn void handle_keys(
         right_animator.actions[right_animator.actions.len() - 1].speed = speed;
         io::printfn("root motion %s", playback.keep_root_motion ? "kept" : "stripped");
     }
-    if (input.keys_pressed[(usz)sdl::Scancode.Q] && left_animator.actions.len()) {
+    if (input.key_pressed(platform::Scancode.Q) && left_animator.actions.len()) {
         Action* action = &left_animator.actions[left_animator.actions.len() - 1];
         action.weight = action.weight == 1 ? QUARTER_WEIGHT : 1;
     }
-    if (input.keys_pressed[(usz)sdl::Scancode.SPACE]) {
+    if (input.key_pressed(platform::Scancode.SPACE)) {
         foreach (&action : left_animator.actions) action.playing = !action.playing;
         foreach (&action : scene.get(right, Animator).actions) action.playing = !action.playing;
     }
@@ -302,7 +300,7 @@ fn int main(String[] args) {
     double last_print;
     while (window.poll()) {
         Input* input = &window.input;
-        if (input.keys_released[(usz)sdl::Scancode.ESCAPE]) break;
+        if (input.key_released(platform::Scancode.ESCAPE)) break;
 
         handle_keys(
             input:    input,

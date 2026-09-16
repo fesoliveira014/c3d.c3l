@@ -39,7 +39,6 @@ const float BACKGROUND_INTENSITY @local = 0.3f;
 const float SELECTED_AXES_SIZE @local = 0.5f;
 const uint SUN_CASCADES @local = 3;
 const uint MODEL_CAPACITY @local = 4;
-const usz MOUSE_BUTTON_LEFT @local = 1; // SDL button index
 const String MODEL_FILE @local = "../assets/gltf/Fox.glb";
 const String ENVIRONMENT_FILE @local = "../assets/ibl/studio_small_09_1k.hdr";
 const Vec2 CONTROLS_PANEL_POSITION @local = { 16, 16 };
@@ -74,7 +73,7 @@ struct DebugToggles @local {
 
 fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
     if (!input.mouse_captured_by_gui) {
-        if (input.mouse_buttons[MOUSE_BUTTON_LEFT]) {
+        if (input.button_down(platform::MouseButton.LEFT)) {
             orbit.yaw -= input.mouse_delta.x * ORBIT_RADIANS_PER_PIXEL;
             orbit.pitch = math::clamp(orbit.pitch + input.mouse_delta.y * ORBIT_RADIANS_PER_PIXEL,
                 -ORBIT_PITCH_LIMIT, ORBIT_PITCH_LIMIT);
@@ -175,10 +174,10 @@ fn void? run_gui(
 
         Input* input = &window.input;
         // Text editing can drop capture on Escape down before its release arrives.
-        if (input.keys_pressed[(usz)sdl::Scancode.ESCAPE] || input.keys_released[(usz)sdl::Scancode.ESCAPE]) {
+        if (input.key_pressed(platform::Scancode.ESCAPE) || input.key_released(platform::Scancode.ESCAPE)) {
             escape_captured |= keyboard_was_captured || input.keyboard_captured_by_gui;
         }
-        if (input.keys_released[(usz)sdl::Scancode.ESCAPE]) {
+        if (input.key_released(platform::Scancode.ESCAPE)) {
             bool quit = !escape_captured;
             escape_captured = false;
             if (quit) break;

@@ -11,7 +11,6 @@ import c3d::platform;
 import c3d::render;
 import c3d::shader;
 import gpu;
-import sdl;
 
 const uint FULLSCREEN_VERTEX_COUNT @local = 3;
 const uint SUPPLIED_FACE_SIZE @local = 4;
@@ -23,9 +22,9 @@ const String[material::CUBE_FACE_COUNT] FACE_FILES @local = {
     "positive_x.png", "negative_x.png", "positive_y.png", "negative_y.png", "positive_z.png", "negative_z.png",
 };
 const String[material::CUBE_FACE_COUNT] FACE_NAMES @local = { "+X", "-X", "+Y", "-Y", "+Z", "-Z" };
-const sdl::Scancode[material::CUBE_FACE_COUNT] FACE_KEYS @local = {
-    sdl::Scancode.CODE_1, sdl::Scancode.CODE_2, sdl::Scancode.CODE_3,
-    sdl::Scancode.CODE_4, sdl::Scancode.CODE_5, sdl::Scancode.CODE_6,
+const platform::Scancode[material::CUBE_FACE_COUNT] FACE_KEYS @local = {
+    platform::Scancode.CODE_1, platform::Scancode.CODE_2, platform::Scancode.CODE_3,
+    platform::Scancode.CODE_4, platform::Scancode.CODE_5, platform::Scancode.CODE_6,
 };
 const char[material::CUBE_FACE_COUNT * RGBA_CHANNELS] FACE_COLORS @local = {
     255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255,
@@ -165,27 +164,27 @@ fn void? run(String[] args) @local {
     io::printn("Plus/minus select explicit LOD; Escape release quits. Resize below 256 pixels to minify file faces.");
     while (window.poll()) {
         Input* input = &window.input;
-        if (input.keys_released[(usz)sdl::Scancode.ESCAPE]) break;
+        if (input.key_released(platform::Scancode.ESCAPE)) break;
 
         bool changed = window.resized;
         foreach (index, key : FACE_KEYS) {
-            if (input.keys_pressed[(usz)key]) {
+            if (input.key_pressed(key)) {
                 face = (CubeFace)index;
                 changed = true;
             }
         }
-        if (input.keys_pressed[(usz)sdl::Scancode.C]) {
+        if (input.key_pressed(platform::Scancode.C)) {
             use_supplied = !use_supplied;
             changed = true;
         }
-        if (input.keys_pressed[(usz)sdl::Scancode.L]) {
+        if (input.key_pressed(platform::Scancode.L)) {
             explicit_lod = !explicit_lod;
             changed = true;
         }
-        bool increase = input.keys_pressed[(usz)sdl::Scancode.EQUALS]
-            || input.keys_pressed[(usz)sdl::Scancode.KP_PLUS];
-        bool decrease = input.keys_pressed[(usz)sdl::Scancode.MINUS]
-            || input.keys_pressed[(usz)sdl::Scancode.KP_MINUS];
+        bool increase = input.key_pressed(platform::Scancode.EQUALS)
+            || input.key_pressed(platform::Scancode.KP_PLUS);
+        bool decrease = input.key_pressed(platform::Scancode.MINUS)
+            || input.key_pressed(platform::Scancode.KP_MINUS);
         if (increase || decrease) {
             lod += increase ? 1.0f : -1.0f;
             explicit_lod = true;

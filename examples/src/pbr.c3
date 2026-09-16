@@ -26,7 +26,6 @@ const float ORBIT_DISTANCE_MAX @local = 50.0f;
 const uint GRID_SIDE @local = 7; // 49 draws compare both scalar axes without instancing
 const float GRID_SPACING @local = 1.1f; // separates the radius-0.4 spheres
 const float CONE_GAP_DEGREES @local = 0.1f; // keeps inner and outer half-angles distinct
-const usz MOUSE_BUTTON_LEFT @local = 1; // SDL button index
 const Vec2 CONTROLS_PANEL_POSITION @local = { 16, 16 };
 const Vec2 CONTROLS_PANEL_SIZE @local = { 320, 345 };
 const Vec2 SCENE_PANEL_POSITION @local = { 16, 377 };
@@ -55,7 +54,7 @@ struct Orbit @local {
 
 fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
     if (!input.mouse_captured_by_gui) {
-        if (input.mouse_buttons[MOUSE_BUTTON_LEFT]) {
+        if (input.button_down(platform::MouseButton.LEFT)) {
             orbit.yaw -= input.mouse_delta.x * ORBIT_RADIANS_PER_PIXEL;
             orbit.pitch = math::clamp(
                 x: orbit.pitch + input.mouse_delta.y * ORBIT_RADIANS_PER_PIXEL,
@@ -353,10 +352,10 @@ fn void? run_gui(
 
         Input* input = &window.input;
         // Text editing can drop capture on Escape down before its release arrives.
-        if (input.keys_pressed[(usz)sdl::Scancode.ESCAPE] || input.keys_released[(usz)sdl::Scancode.ESCAPE]) {
+        if (input.key_pressed(platform::Scancode.ESCAPE) || input.key_released(platform::Scancode.ESCAPE)) {
             escape_captured |= keyboard_was_captured || input.keyboard_captured_by_gui;
         }
-        if (input.keys_released[(usz)sdl::Scancode.ESCAPE]) {
+        if (input.key_released(platform::Scancode.ESCAPE)) {
             bool quit = !escape_captured;
             escape_captured = false;
             if (quit) break;

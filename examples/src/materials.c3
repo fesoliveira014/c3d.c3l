@@ -23,7 +23,6 @@ const float ORBIT_PITCH_LIMIT @local = 1.5f; // Avoids the look-rotation up-axis
 const float ORBIT_ZOOM_STEP @local = 0.9f; // Keeps each wheel step visually useful.
 const float ORBIT_DISTANCE_MIN @local = 3; // Keeps the camera outside the largest fixture.
 const float ORBIT_DISTANCE_MAX @local = 32; // Keeps the fixture readable inside the far plane.
-const usz MOUSE_BUTTON_LEFT @local = 1;
 const uint ALPHA_TEXTURE_SIZE @local = 16; // Preserves a recognizable leaf silhouette at example scale.
 const uint RAMP_TEXTURE_WIDTH @local = 8; // A 32-byte fixture keeps unequal band widths visible.
 const uint PHYSICAL_TEXTURE_SIZE @local = 4; // Keeps all mapped layer patterns inspectable without asset files.
@@ -190,7 +189,7 @@ struct Controls @local {
 
 fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
     if (!input.mouse_captured_by_gui) {
-        if (input.mouse_buttons[MOUSE_BUTTON_LEFT]) {
+        if (input.button_down(platform::MouseButton.LEFT)) {
             orbit.yaw -= input.mouse_delta.x * ORBIT_RADIANS_PER_PIXEL;
             orbit.pitch = math::clamp(
                 x: orbit.pitch + input.mouse_delta.y * ORBIT_RADIANS_PER_PIXEL,
@@ -911,11 +910,11 @@ fn void? run_gui(
         }
 
         Input* input = &window.input;
-        if (input.keys_pressed[(usz)sdl::Scancode.ESCAPE]
-            || input.keys_released[(usz)sdl::Scancode.ESCAPE]) {
+        if (input.key_pressed(platform::Scancode.ESCAPE)
+            || input.key_released(platform::Scancode.ESCAPE)) {
             escape_captured |= keyboard_was_captured || input.keyboard_captured_by_gui;
         }
-        if (input.keys_released[(usz)sdl::Scancode.ESCAPE]) {
+        if (input.key_released(platform::Scancode.ESCAPE)) {
             bool quit = !escape_captured;
             escape_captured = false;
             if (quit) break;
