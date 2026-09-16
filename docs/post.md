@@ -1,7 +1,8 @@
 # Display processing
 
-`c3d::render::post` turns the scene-linear `hdr_color` of the default view into display-ready
-linear color for the window. The `BGRA8_SRGB` swapchain encodes; no shader encodes for output.
+`c3d::render::post` turns the scene-linear `hdr_color` of a `DISPLAY_LDR` view into display-ready
+linear color for the view's output. The `BGRA8_SRGB` swapchain or an sRGB target encodes; no shader
+encodes for output. `LINEAR_HDR` views skip this module.
 
 ```bash
 python3 scripts/build.py --example post
@@ -10,14 +11,14 @@ python3 scripts/build.py --example post
 
 ## Settings
 
-`ViewDesc { OutputMode color; PostStack post; }` is the CPU configuration of a view.
-`render::default_view_desc()` selects `DISPLAY_LDR` with `post::default_post_stack()`: ACES,
+`ViewDesc.post` is the CPU post configuration of a view (see `docs/views.md` for the output
+fields). `render::default_view_desc()` selects `DISPLAY_LDR` with `post::default_post_stack()`: ACES,
 contrast 1, saturation 1, temperature 0, tint 0, lift 0, gamma 1, gain 1, no LUT, FXAA on. A
 zeroed `PostStack` is not neutral.
 
 Apply a configuration between frames with `render::configure_view(&renderer, renderer.default_view,
 desc)`. The call copies the description into the view record, uploads a selected LUT, and allocates
-or retires the two working images FXAA needs. `LINEAR_HDR` faults `INVALID_ARGUMENT` on the window
+or retires the two working images FXAA needs. `LINEAR_HDR` faults `INVALID_ARGUMENT` on a window
 view; a dead view or LUT faults `INVALID_ID`; a LUT that is not a single-mip RGBA8 3D texture faults
 `INVALID_ARGUMENT`.
 
@@ -26,12 +27,14 @@ renderer packs the scene view's camera exposure into the display root each frame
 
 ## Routes
 
+Both routes run at the end of `render_view` and write the view's output rectangle.
+
 - FXAA off: `hdr_color` is sampled by `display.frag`, which grades, tone maps and applies the LUT
   in the final fullscreen pass. No working image exists; `Stats.post_dispatches` is zero and the
   `POST_CHAIN` timing is empty.
 - FXAA on: `grade.comp` writes the graded LDR image and its perceptual luma (alpha) into `post_a`;
   `fxaa.comp` reads `post_a` and writes `post_b`; the identity composite copies `post_b` to the
-  window. Two dispatches are counted and timed under `POST_CHAIN`.
+  output. Two dispatches are counted and timed under `POST_CHAIN`.
 
 Grade order: exposure, white balance (LMS von Kries from temperature and tint in `[-1, 1]`),
 contrast about linear mid-gray 0.18, saturation on Rec.709 luma, lift-gamma-gain
@@ -126,6 +129,5 @@ dispatches and the completed velocity and post-chain timings.
 
 ## Limits
 
-Only the default window view exists. `LINEAR_HDR` output, off-screen targets and per-view timing
-arrive with persistent views. Temporal anti-aliasing is a later effect; auto-exposure is not
-implemented.
+Pass timings describe the last recorded view of the frame; counters accumulate across views.
+Temporal anti-aliasing is a later effect; auto-exposure is not implemented.

@@ -75,7 +75,6 @@ fn void? Renderer.render(
     defer catch abort_frame(self);
 
     self.render_view(scene, camera_node, self.default_view)!;
-    self.composite_view()!;
 
     return self.end_frame();
 }
@@ -104,7 +103,7 @@ fn void? Renderer.render_view(
     ViewId view,
 ) {
     ViewRecord* record = self.views.try_get(view)!;
-    if (!self.has_output) return;
+    if (record.desc.output == ViewOutput.WINDOW && !self.has_output) return;
     Camera* camera = scene.get(camera_node, Camera);
     if (!camera) return c3d::INVALID_ARGUMENT~;
     record.exposure = camera.exposure;
@@ -386,25 +385,9 @@ fn void? Renderer.render_view(
         if (motion_blur) {
             record.history.commit(self.allocator, scene, candidates, matrices.view_proj);
         }
+
+        record_view_output(self, record)!;
     };
-}
-
-<*
- Display-process the default view into the window output.
- @param [&inout] self : "Open frame with its scene view already recorded."
- @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
- @return? gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
- @return? gpu::DEVICE_BUSY, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
- @return? gpu::UNSUPPORTED_FEATURE, c3d::SHADER_NOT_FOUND, gpu::SHADER_INVALID
- @return? gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL
- @return? c3d::INVALID_ID, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
- @return? gpu::RESOURCE_IN_USE, gpu::DESCRIPTOR_HEAP_FULL
- @require self.frame_open, !self.overlay_open
-*>
-fn void? Renderer.composite_view(&self) {
-    if (!self.has_output) return;
-
-    return post::record_display(self, self.views.get(self.default_view));
 }
 
 <*
@@ -648,10 +631,51 @@ fn void? record_scene_color_snapshot(Renderer* renderer, ViewRecord* record) @pr
         target:        &record.scene_color,
         pipeline:      pipeline,
         fragment_root: root.address,
+        rect:          {},
+        load:          gpu::LoadOp.DONT_CARE,
     )!;
 
     record.scene_color.transition(&renderer.commands, FRAGMENT_READ_STATE)!;
     record.hdr_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
+}
+
+fn void? record_view_output(Renderer* renderer, ViewRecord* record) @private {
+    Target* output;
+    switch (record.desc.output) {
+        case WINDOW: output = &renderer.window_target;
+        case TEXTURE: output = &renderer.targets.get(record.desc.target).target;
+    }
+    // A window can shrink under an explicit viewport before the application reconfigures the view.
+    PixelRect rect = clip_rect(record.desc.viewport, output.width, output.height);
+    if (record.desc.viewport.width && (rect.width == 0 || rect.height == 0)) return;
+
+    switch (record.desc.color) {
+        case DISPLAY_LDR:
+            return post::record_display(
+                renderer: renderer,
+                record:   record,
+                output:   output,
+                rect:     rect,
+            );
+        case LINEAR_HDR:
+            return composite_target(
+                renderer: renderer,
+                source:   record.scene_input,
+                output:   output,
+                rect:     rect,
+            );
+    }
+}
+
+fn PixelRect clip_rect(PixelRect rect, uint width, uint height) @local {
+    if (rect.width == 0 || rect.height == 0) return rect;
+    if (rect.x >= width || rect.y >= height) return {};
+    return {
+        .x      = rect.x,
+        .y      = rect.y,
+        .width  = math::min(rect.width, width - rect.x),
+        .height = math::min(rect.height, height - rect.y),
+    };
 }
 
 fn PipelineKey snapshot_pipeline_key() @local {

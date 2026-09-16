@@ -380,6 +380,8 @@ fn void? Renderer.draw_fullscreen(&self, RenderTargetId target, ShaderVariant fr
         target:        &record.target,
         pipeline:      pipeline,
         fragment_root: (gpu::GpuAddress)0,
+        rect:          {},
+        load:          gpu::LoadOp.DONT_CARE,
     )!;
 }
 
@@ -395,23 +397,34 @@ fn void? Renderer.draw_fullscreen(&self, RenderTargetId target, ShaderVariant fr
 fn void? Renderer.composite(&self, RenderTargetId target) {
     TargetRecord* record = self.targets.try_get(target)!;
     if (!self.has_output) return;
-    return composite_target(self, &record.target);
+    return composite_target(
+        renderer: self,
+        source:   &record.target,
+        output:   &self.window_target,
+        rect:     {},
+    );
 }
 
-fn void? composite_target(Renderer* renderer, Target* target) @private {
-    target.transition(&renderer.commands, FRAGMENT_READ_STATE)!;
+fn void? composite_target(
+    Renderer* renderer,
+    Target* source,
+    Target* output,
+    PixelRect rect,
+) @private {
+    source.transition(&renderer.commands, FRAGMENT_READ_STATE)!;
+    output.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
 
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, CompositeRoot::size)!;
     *(CompositeRoot*)root.bytes.ptr = {
-        .source_texture = target.view.index,
+        .source_texture = source.view.index,
         .source_sampler = renderer.linear_clamp_sampler,
     };
 
     PipelineKey key = {
         .vertex        = { .shader = FULLSCREEN },
         .fragment      = { .shader = COMPOSITE },
-        .color_formats = { [0] = renderer.window_target.format },
+        .color_formats = { [0] = output.format },
         .color_count   = 1,
         .depth_format  = gpu::Format.UNDEFINED,
         .samples       = gpu::SampleCount.ONE,
@@ -427,9 +440,11 @@ fn void? composite_target(Renderer* renderer, Target* target) @private {
     )!;
     record_fullscreen_pass(
         renderer:      renderer,
-        target:        &renderer.window_target,
+        target:        output,
         pipeline:      pipeline,
         fragment_root: root.address,
+        rect:          rect,
+        load:          output_load_op(output, rect),
     )!;
     write_pass_timestamp(
         renderer:    renderer,
@@ -445,10 +460,12 @@ fn void? record_fullscreen_pass(
     Target* target,
     gpu::PipelineHandle pipeline,
     gpu::GpuAddress fragment_root,
+    PixelRect rect,
+    gpu::LoadOp load,
 ) @private {
     gpu::ColorTargetDesc[1] colors = {{
         .view     = target.attachment,
-        .load_op  = gpu::LoadOp.DONT_CARE,
+        .load_op  = load,
         .store_op = gpu::StoreOp.STORE,
     }};
     gpu::RenderPassDesc pass = {
@@ -457,7 +474,7 @@ fn void? record_fullscreen_pass(
         .height = target.height,
     };
     gpu::ColorTargetState[1] color_targets = { gpu::color_blend_disabled() };
-    gpu::GraphicsState state = fullscreen_state(target.width, target.height, color_targets[..])!;
+    gpu::GraphicsState state = fullscreen_state(target.width, target.height, rect, color_targets[..])!;
 
     // Bound before the pass begins: the backend checks the bound pipeline against the pass formats at begin.
     gpu::cmd_bind_pipeline(&renderer.commands, pipeline)!;
@@ -472,6 +489,12 @@ fn void? record_fullscreen_pass(
     )!;
     gpu::cmd_end_render_pass(&renderer.commands)!;
     renderer.stats.draws++;
+}
+
+fn gpu::LoadOp output_load_op(Target* output, PixelRect rect) @private {
+    bool whole = rect.width == 0
+        || (rect.x == 0 && rect.y == 0 && rect.width == output.width && rect.height == output.height);
+    return whole ? gpu::LoadOp.DONT_CARE : gpu::LoadOp.LOAD;
 }
 
 fn void? acquire_window_output(Renderer* renderer) @private {
@@ -729,28 +752,14 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         destroy_pipeline_cache(&renderer.device, &renderer.pipelines);
         destroy_deformation_cache(&renderer.deformation);
         pool::destroy_pool{TargetRecord, RenderTargetId}(&renderer.targets);
-        foreach (&record : renderer.views.items) {
-            release_scene_color(&renderer.device, record);
-            release_view_targets(&renderer.device, record);
-            post::release_post_targets(&renderer.device, record);
-            post::release_effect_targets(&renderer.device, record);
-        }
+        foreach (&record : renderer.views.items) release_view_images(&renderer, record);
         pool::destroy_pool{ViewRecord, ViewId}(&renderer.views);
         // Preparation updates completion points and may replace copied ring storage.
         frames = renderer.frames;
     }
 
-    renderer.default_view = renderer.views.add({ .desc = default_view_desc() })!;
-    ViewRecord* default_record = renderer.views.get(renderer.default_view);
-    if (surface.is_valid()) {
-        acquire_view_targets(
-            renderer: &renderer,
-            record:   default_record,
-            width:    desc.output_width,
-            height:   desc.output_height,
-        )!;
-    }
-    post::acquire_post_targets(&renderer, default_record)!;
+    renderer.default_view = renderer.views.add({ .live = true, .desc = default_view_desc() })!;
+    acquire_view_images(&renderer, renderer.views.get(renderer.default_view))!;
     prepare_builtin_textures(&renderer)!;
     return renderer;
 }
@@ -774,13 +783,7 @@ fn void destroy_renderer(Renderer* renderer) {
     free_material_heap(renderer);
     destroy_shadow_atlas(&renderer.device, &renderer.shadow_atlas);
     if (renderer.shadow_timing_results.len) alloc::free(renderer.allocator, renderer.shadow_timing_results.ptr);
-    foreach (&record : renderer.views.items) {
-        release_scene_color(&renderer.device, record);
-        release_view_targets(&renderer.device, record);
-        post::release_post_targets(&renderer.device, record);
-        post::release_effect_targets(&renderer.device, record);
-        free_view_history(renderer.allocator, &record.history);
-    }
+    foreach (&record : renderer.views.items) release_view_images(renderer, record);
     pool::destroy_pool{ViewRecord, ViewId}(&renderer.views);
     post::destroy_post_pipelines(&renderer.device, &renderer.post_pipelines);
 
@@ -857,21 +860,8 @@ fn void? recover_window_output(Renderer* renderer) @private {
         height:    renderer.output_height,
     )!;
     renderer.swapchain_info = gpu::get_swapchain_info(&renderer.device, renderer.swapchain)!;
-    ViewRecord* default_record = renderer.views.get(renderer.default_view);
-    release_scene_color(&renderer.device, default_record);
-    release_view_targets(&renderer.device, default_record);
-    acquire_view_targets(
-        renderer: renderer,
-        record:   default_record,
-        width:    renderer.output_width,
-        height:   renderer.output_height,
-    )!;
     foreach (&record : renderer.views.items) {
-        post::release_post_targets(&renderer.device, record);
-        post::release_effect_targets(&renderer.device, record);
-        if (record.desc.post.fxaa) post::acquire_post_targets(renderer, record)!;
-        post::acquire_effect_targets(renderer, record)!;
-        record.history.valid = false;
+        if (record.live && record.desc.output == ViewOutput.WINDOW) resize_view(renderer, record)!;
     }
     renderer.output_dirty = false;
 }

@@ -115,6 +115,8 @@ fn void? record_camera_velocity(Renderer* renderer, ViewRecord* record, CameraMa
         target:        &record.velocity,
         pipeline:      pipeline,
         fragment_root: root.address,
+        rect:          {},
+        load:          gpu::LoadOp.DONT_CARE,
     );
 }
 
@@ -147,7 +149,12 @@ fn void? record_geometry_velocity(Renderer* renderer, ViewRecord* record, DrawIt
         .height = height,
     };
     gpu::ColorTargetState[1] color_targets = { gpu::color_blend_disabled() };
-    gpu::GraphicsState state = render::fullscreen_state(width, height, color_targets[..])!;
+    gpu::GraphicsState state = render::fullscreen_state(
+        width:         width,
+        height:        height,
+        rect:          {},
+        color_targets: color_targets[..],
+    )!;
     state.depth = {
         .test_enable  = true,
         .write_enable = false,

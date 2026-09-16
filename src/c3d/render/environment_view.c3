@@ -133,9 +133,10 @@ fn void? record_sky(Renderer* renderer, ViewRecord* record, gpu::GpuAddress root
     };
     gpu::ColorTargetState[1] color_targets = { gpu::color_blend_disabled() };
     gpu::GraphicsState state = fullscreen_state(
-        record.hdr_color.width,
-        record.hdr_color.height,
-        color_targets[..],
+        width:         record.hdr_color.width,
+        height:        record.hdr_color.height,
+        rect:          {},
+        color_targets: color_targets[..],
     )!;
     state.depth = {
         .test_enable  = true,

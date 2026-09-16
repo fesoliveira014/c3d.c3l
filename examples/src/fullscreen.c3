@@ -25,7 +25,7 @@ fn int main() {
     defer render::destroy_renderer(&renderer);
 
     RenderTargetId hdr = render::create_render_target(&renderer,
-      { .width = window.width, .height = window.height })!!;
+      render::render_target_desc(window.width, window.height))!!;
     defer (void)render::destroy_render_target(&renderer, hdr);
 
     while (window.poll()) {
