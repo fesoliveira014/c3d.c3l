@@ -20,7 +20,6 @@ import c3d::platform;
 import c3d::render;
 import c3d::scene;
 import imgui;
-import sdl;
 
 const float ORBIT_RADIANS_PER_PIXEL @local = 0.005f;
 const float ORBIT_PITCH_LIMIT @local = 1.5f; // avoids the poles, where the up vector degenerates
@@ -98,11 +97,6 @@ fn String example_path(String relative) @local {
     return (String)source.parent()!!.tappend(relative)!!;
 }
 
-fn void forward_gui_event(sdl::Event* event, void* user) @local {
-    GuiRenderer* gui_renderer = (GuiRenderer*)user;
-    gui_renderer.process_event(event);
-}
-
 fn void fill_debug_lines(
     DebugDraw* debug,
     DebugToggles* toggles,
@@ -165,7 +159,7 @@ fn void? run_gui(
     DebugToggles toggles = { .bounds = true, .lights = true, .axes = true, .animate = true };
     bool escape_captured;
 
-    while (window.poll(&forward_gui_event, &gui_renderer)) {
+    while (window.poll()) {
         bool keyboard_was_captured = window.input.keyboard_captured_by_gui;
         gui_renderer.new_frame();
         defer {

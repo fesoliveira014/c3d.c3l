@@ -11,11 +11,6 @@ $assert (usz)Scancode.COUNT == KEY_COUNT;
 $assert (usz)sdl::Scancode.COUNT == KEY_COUNT;
 
 <*
- Borrowed event callback invoked before input changes.
-*>
-alias EventFn = fn void (sdl::Event* event, void* user);
-
-<*
  How a window is opened.
 *>
 struct WindowDesc {
@@ -38,11 +33,31 @@ struct Window {
     bool         resized;
     bool         minimized;
     bool         focus_gained;
+    bool         text_input_active;
     Input        input;
     Clock        clock;
+    Event[EVENT_CAPACITY]     event_buffer;
+    uint                      event_count;
+    char[EVENT_TEXT_CAPACITY] event_text;
+    uint                      event_text_used;
+    uint                      events_dropped;
 }
 
 int video_users @private;
+char* clipboard_retained @private;
+
+<*
+ Events of the current frame in arrival order; cleared by begin_frame.
+*>
+fn Event[] Window.events(&self) => self.event_buffer[:self.event_count];
+
+<*
+ Forget the frame's events and text; begin_frame calls it.
+*>
+fn void Window.clear_events(&self) {
+    self.event_count = 0;
+    self.event_text_used = 0;
+}
 
 <*
  Fold one event into the window's input and flags.
@@ -53,6 +68,7 @@ int video_users @private;
 fn bool Window.apply_event(&self, sdl::Event* event) {
     switch ((EventType)event.common.type) {
         case EventType.QUIT:
+            push_event(self, { .kind = EventKind.QUIT });
             return false;
         case EventType.WINDOW_PIXEL_SIZE_CHANGED:
             if (event.window.window_id != self.window_id) break;
@@ -62,6 +78,7 @@ fn bool Window.apply_event(&self, sdl::Event* event) {
                 self.width = width;
                 self.height = height;
                 self.resized = true;
+                push_event(self, { .kind = EventKind.RESIZED });
             }
         case EventType.WINDOW_MINIMIZED:
             if (event.window.window_id != self.window_id) break;
@@ -72,6 +89,10 @@ fn bool Window.apply_event(&self, sdl::Event* event) {
         case EventType.WINDOW_FOCUS_GAINED:
             if (event.window.window_id != self.window_id) break;
             self.focus_gained = true;
+            push_event(self, { .kind = EventKind.FOCUS_GAINED });
+        case EventType.WINDOW_FOCUS_LOST:
+            if (event.window.window_id != self.window_id) break;
+            push_event(self, { .kind = EventKind.FOCUS_LOST });
         case EventType.KEY_DOWN:
         case EventType.KEY_UP:
             if (event.key.window_id != self.window_id) break;
@@ -80,10 +101,22 @@ fn bool Window.apply_event(&self, sdl::Event* event) {
             // The event type carries the state and a down for a held key is the repeat. Keys reported
             // held when focus arrives are state the window inherits, not presses made in it.
             bool down = (EventType)event.common.type == EventType.KEY_DOWN;
+            bool repeat = down && self.input.keys[key];
             if (down && !self.input.keys[key] && !self.focus_gained) self.input.keys_pressed[key] = true;
             if (!down && self.input.keys[key]) self.input.keys_released[key] = true;
             self.input.keys[key] = down;
             self.input.modifiers = keymod_of(event.key.mod);
+            push_event(self, {
+                .kind      = down ? EventKind.KEY_DOWN : EventKind.KEY_UP,
+                .scancode  = (Scancode)key,
+                .modifiers = self.input.modifiers,
+                .repeat    = repeat,
+            });
+        case EventType.TEXT_INPUT:
+            if (event.text.window_id != self.window_id) break;
+            String text;
+            if (!copy_text(self, (ZString)event.text.text, &text)) break;
+            push_event(self, { .kind = EventKind.TEXT_INPUT, .text = text });
         case EventType.MOUSE_BUTTON_DOWN:
         case EventType.MOUSE_BUTTON_UP:
             if (event.button.window_id != self.window_id) break;
@@ -92,13 +125,31 @@ fn bool Window.apply_event(&self, sdl::Event* event) {
             if (event.button.down && !self.input.mouse_buttons[button]) self.input.mouse_pressed[button] = true;
             self.input.mouse_buttons[button] = event.button.down;
             self.input.mouse_position = (Vec2){ event.button.x, event.button.y } * self.pixel_density;
+            push_event(self, {
+                .kind     = event.button.down ? EventKind.MOUSE_BUTTON_DOWN : EventKind.MOUSE_BUTTON_UP,
+                .button   = (MouseButton)button,
+                .position = self.input.mouse_position,
+            });
         case EventType.MOUSE_MOTION:
             if (event.motion.window_id != self.window_id) break;
+            Vec2 delta = (Vec2){ event.motion.xrel, event.motion.yrel } * self.pixel_density;
             self.input.mouse_position = (Vec2){ event.motion.x, event.motion.y } * self.pixel_density;
-            self.input.mouse_delta += (Vec2){ event.motion.xrel, event.motion.yrel } * self.pixel_density;
+            self.input.mouse_delta += delta;
+            push_event(self, {
+                .kind     = EventKind.MOUSE_MOTION,
+                .position = self.input.mouse_position,
+                .delta    = delta,
+            });
         case EventType.MOUSE_WHEEL:
             if (event.wheel.window_id != self.window_id) break;
             self.input.wheel += event.wheel.y;
+            Vec2 scroll = { event.wheel.x, event.wheel.y };
+            if (event.wheel.direction == sdl::MouseWheelDirection.FLIPPED) scroll = -scroll;
+            push_event(self, {
+                .kind     = EventKind.MOUSE_WHEEL,
+                .position = self.input.mouse_position,
+                .scroll   = scroll,
+            });
         default:
             break;
     }
@@ -113,6 +164,7 @@ fn bool Window.apply_event(&self, sdl::Event* event) {
 *>
 fn void Window.begin_frame(&self) {
     self.input.begin_frame();
+    self.clear_events();
     self.focus_gained = false;
     float pixel_density = sdl::get_window_pixel_density(self.handle);
     self.input.mouse_position *= pixel_density / self.pixel_density;
@@ -123,33 +175,60 @@ fn void Window.begin_frame(&self) {
 <*
  Poll one window for the next frame.
  @param [&inout] self : "The only window receiving events through this drain."
- @param event_fn : "Optional callback borrowing each event before input changes."
- @param [inout] user : "Optional borrowed callback data."
  @return "False when the application should quit."
 *>
-fn bool Window.poll(&self, EventFn event_fn = null, void* user = null) {
+fn bool Window.poll(&self) {
     Window*[1] windows = { self };
-    return poll_windows(windows[..], event_fn, user);
+    return poll_windows(windows[..]);
+}
+
+<*
+ Start or stop OS text input for this window.
+*>
+fn void Window.set_text_input(&self, bool enabled) {
+    if (enabled == self.text_input_active) return;
+    if (enabled) {
+        sdl::start_text_input(self.handle);
+    } else {
+        sdl::stop_text_input(self.handle);
+    }
+    self.text_input_active = enabled;
 }
 
 <*
  Poll windows through one shared event drain.
  @param windows : "Borrowed live windows, each supplied once."
- @param event_fn : "Optional callback borrowing each event before input changes."
- @param [inout] user : "Optional borrowed callback data."
  @return "False when the application should quit."
 *>
-fn bool poll_windows(Window*[] windows, EventFn event_fn = null, void* user = null) {
+fn bool poll_windows(Window*[] windows) {
     sdl::pump_events();
     foreach (window : windows) window.begin_frame();
     bool running = true;
     sdl::Event event;
     while (sdl::poll_event(&event)) {
-        if (event_fn) event_fn(&event, user);
         if ((EventType)event.common.type == EventType.QUIT) running = false;
         foreach (window : windows) window.apply_event(&event);
     }
     return running;
+}
+
+<*
+ Clipboard text, borrowed until the next call or the last destroy_window; empty when none.
+*>
+fn ZString clipboard_text() {
+    if (clipboard_retained) sdl::stdinc::free(clipboard_retained);
+    clipboard_retained = sdl::get_clipboard_text();
+    return (ZString)clipboard_retained;
+}
+
+<*
+ Replace the clipboard text.
+ @return? CLIPBOARD_FAILED
+*>
+fn void? set_clipboard_text(String text) {
+    @pool() {
+        if (!sdl::set_clipboard_text((char*)text.zstr_tcopy())) return CLIPBOARD_FAILED~;
+    };
 }
 
 <*
@@ -206,10 +285,37 @@ fn Window? create_window(WindowDesc desc) {
  @param [&inout] window : "Left zeroed; destroy dependent GPU surfaces first."
 *>
 fn void destroy_window(Window* window) {
+    window.set_text_input(false);
     sdl::destroy_window(window.handle);
     video_users--;
-    if (!video_users) sdl::quit_sub_system({ .video = true });
+    if (!video_users) {
+        if (clipboard_retained) sdl::stdinc::free(clipboard_retained);
+        clipboard_retained = null;
+        sdl::quit_sub_system({ .video = true });
+    }
     *window = {};
+}
+
+fn void push_event(Window* window, Event event) @local {
+    if (window.event_count == EVENT_CAPACITY) {
+        window.events_dropped++;
+        return;
+    }
+    window.event_buffer[window.event_count] = event;
+    window.event_count++;
+}
+
+fn bool copy_text(Window* window, ZString text, String* out) @local {
+    usz length = (usz)text.len();
+    if (window.event_text_used + length > EVENT_TEXT_CAPACITY) {
+        window.events_dropped++;
+        return false;
+    }
+    char[] slot = window.event_text[window.event_text_used:length];
+    slot[..] = text[:length];
+    window.event_text_used += (uint)length;
+    *out = (String)slot;
+    return true;
 }
 
 fn Keymod keymod_of(sdl::Keymod mod) @local {
