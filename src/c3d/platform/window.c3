@@ -4,6 +4,10 @@ import c3d;
 import sdl;
 import std::math;
 
+// SDL writes Keymod as sixteen bits; a wider binding shifts these two fields.
+$assert $reflect(sdl::KeyboardEvent.down).offset == 36;
+$assert $reflect(sdl::KeyboardEvent.repeat).offset == 37;
+
 <*
  Borrowed event callback invoked before input changes.
 *>
@@ -71,9 +75,8 @@ fn bool Window.apply_event(&self, sdl::Event* event) {
             if (event.key.window_id != self.window_id) break;
             usz key = (usz)event.key.scancode;
             if (key >= KEY_COUNT) break;
-            // The event type carries the state; the binding's down and repeat bytes sit two bytes past
-            // where SDL writes them, so a repeat is a down for a key already held. Keys reported held
-            // when focus arrives are state the window inherits, not presses made in it.
+            // The event type carries the state and a down for a held key is the repeat. Keys reported
+            // held when focus arrives are state the window inherits, not presses made in it.
             bool down = (EventType)event.common.type == EventType.KEY_DOWN;
             if (down && !self.input.keys[key] && !self.focus_gained) self.input.keys_pressed[key] = true;
             if (!down && self.input.keys[key]) self.input.keys_released[key] = true;
