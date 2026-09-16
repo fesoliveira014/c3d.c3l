@@ -19,6 +19,7 @@ const usz KEY_COLOR_TARGETS = 4; // hdr_color, velocity, and two spare; keeps th
 bitstruct CustomStages : uint {
     bool vertex   : 0;
     bool fragment : 1;
+    bool compute  : 2;
 }
 
 <*
@@ -44,6 +45,7 @@ $assert PipelineKey::size == 56;
 struct CustomStageSource {
     char[] vertex;
     char[] fragment;
+    char[] compute;
 }
 
 <*
@@ -83,12 +85,13 @@ fn bool PipelineKey.equals(&self, PipelineKey other) {
  Pipeline for the key, created on first use from the registry or the custom stages.
  A key the backend rejected is not retried until its shader is replaced or removed.
  @param [&inout] device : "Owns the created pipeline."
- @param [in] custom : "Stages for key.custom; ignored when both bits are clear."
+ @param [in] custom : "Stages for key.custom; ignored when every bit is clear."
  @return? c3d::SHADER_NOT_FOUND, PIPELINE_REJECTED, gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE
  @return? gpu::INVALID_ARGUMENT, gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL
  @return? gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY, gpu::DEVICE_LOST
  @require !key.custom.vertex || custom.vertex.len > 0
  @require !key.custom.fragment || custom.fragment.len > 0
+ @require !key.custom.compute || custom.compute.len > 0
 *>
 fn gpu::PipelineHandle? PipelineCache.get(
     &self,
@@ -113,7 +116,15 @@ fn gpu::PipelineHandle? PipelineCache.get(
  @param allocator : "Owns the returned array."
 *>
 fn PipelineKey[] PipelineCache.keys_of(&self, Allocator allocator, ShaderId shader, uint revision) {
-    return keys_matching(self, allocator, shader, revision, false);
+    return keys_matching(self, allocator, shader, false, revision, false);
+}
+
+<*
+ Keys of every pipeline built from the compute shader at the revision.
+ @param allocator : "Owns the returned array."
+*>
+fn PipelineKey[] PipelineCache.compute_keys_of(&self, Allocator allocator, ComputeShaderId shader, uint revision) {
+    return keys_matching(self, allocator, compute_pipeline_key(shader, 0).shader, true, revision, false);
 }
 
 <*
@@ -156,7 +167,45 @@ fn gpu::PipelineHandle[]? PipelineCache.replace_shader(
         replacement.shader_revision = new_revision;
         self.pipelines.set(replacement, fresh[index]);
     }
-    forget_rejections(self, shader);
+    forget_rejections(self, shader, false);
+    return superseded;
+}
+
+<*
+ Rebuild the compute shader's pipeline under the new revision; publish on success.
+ @param allocator : "Owns the returned handles."
+ @param [&inout] device : "Owns the created pipeline."
+ @param spirv : "New revision's compute stage."
+ @return "Superseded handles, to retire after their submitted use."
+ @return? gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::INVALID_ARGUMENT
+ @return? gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL, gpu::OUT_OF_HOST_MEMORY
+ @return? gpu::OUT_OF_DEVICE_MEMORY, gpu::DEVICE_LOST
+*>
+fn gpu::PipelineHandle[]? PipelineCache.replace_compute_shader(
+    &self,
+    Allocator allocator,
+    gpu::Device* device,
+    ComputeShaderId shader,
+    uint old_revision,
+    uint new_revision,
+    char[] spirv,
+) {
+    PipelineKey old_key = compute_pipeline_key(shader, old_revision);
+    gpu::PipelineHandle[] superseded;
+    if (try previous = self.pipelines.get(old_key)) {
+        CustomStageSource source = { .compute = spirv };
+        gpu::PipelineHandle fresh = create_pipeline(
+            registry: &self.registry,
+            device:   device,
+            key:      compute_pipeline_key(shader, new_revision),
+            custom:   &source,
+        )!;
+        superseded = alloc::new_array(allocator, gpu::PipelineHandle, 1);
+        superseded[0] = previous;
+        self.pipelines.remove(old_key);
+        self.pipelines.set(compute_pipeline_key(shader, new_revision), fresh);
+    }
+    forget_rejections(self, old_key.shader, true);
     return superseded;
 }
 
@@ -166,14 +215,28 @@ fn gpu::PipelineHandle[]? PipelineCache.replace_shader(
  @return "Removed handles, to retire after their submitted use."
 *>
 fn gpu::PipelineHandle[] PipelineCache.remove_shader(&self, Allocator allocator, ShaderId shader) {
-    PipelineKey[] keys = keys_matching(self, tmem, shader, 0, true);
-    gpu::PipelineHandle[] removed = alloc::new_array(allocator, gpu::PipelineHandle, keys.len);
-    foreach (index, key : keys) {
-        removed[index] = self.pipelines.get(key)!!;
-        self.pipelines.remove(key);
-    }
-    forget_rejections(self, shader);
-    return removed;
+    return remove_matching(self, allocator, shader, false);
+}
+
+<*
+ Remove every pipeline of the compute shader at any revision.
+ @param allocator : "Owns the returned handles."
+ @return "Removed handles, to retire after their submitted use."
+*>
+fn gpu::PipelineHandle[] PipelineCache.remove_compute_shader(&self, Allocator allocator, ComputeShaderId shader) {
+    return remove_matching(self, allocator, compute_pipeline_key(shader, 0).shader, true);
+}
+
+<*
+ Key of the compute shader's pipeline at the revision.
+ @pure
+*>
+fn PipelineKey compute_pipeline_key(ComputeShaderId shader, uint revision) {
+    return {
+        .shader          = { .index = shader.index, .generation = shader.generation },
+        .shader_revision = revision,
+        .custom          = { .compute = true },
+    };
 }
 
 <*
@@ -212,11 +275,32 @@ fn void destroy_pipeline_cache(gpu::Device* device, PipelineCache* cache) {
     *cache = {};
 }
 
-fn void forget_rejections(PipelineCache* cache, ShaderId shader) @private {
+fn gpu::PipelineHandle[] remove_matching(
+    PipelineCache* cache,
+    Allocator allocator,
+    ShaderId shader,
+    bool compute,
+) @private {
+    PipelineKey[] keys = keys_matching(cache, tmem, shader, compute, 0, true);
+    gpu::PipelineHandle[] removed = alloc::new_array(allocator, gpu::PipelineHandle, keys.len);
+    foreach (index, key : keys) {
+        removed[index] = cache.pipelines.get(key)!!;
+        cache.pipelines.remove(key);
+    }
+    forget_rejections(cache, shader, compute);
+    return removed;
+}
+
+fn bool key_names(PipelineKey key, ShaderId shader, bool compute) @private {
+    return key.shader.index == shader.index && key.shader.generation == shader.generation
+        && key.custom.compute == compute;
+}
+
+fn void forget_rejections(PipelineCache* cache, ShaderId shader, bool compute) @private {
     List{PipelineKey} keys;
     keys.tinit();
     cache.rejected.@each(; PipelineKey key, bool rejected) {
-        if (key.shader.index == shader.index && key.shader.generation == shader.generation) keys.push(key);
+        if (key_names(key, shader, compute)) keys.push(key);
     };
     foreach (key : keys) cache.rejected.remove(key);
 }
@@ -227,6 +311,13 @@ fn gpu::PipelineHandle? create_pipeline(
     PipelineKey key,
     CustomStageSource* custom,
 ) @private {
+    if (key.custom.compute) {
+        gpu::ComputePipelineDesc compute_desc = {
+            .shader     = { .spirv = custom.compute, .debug_name = "custom_compute" },
+            .debug_name = "custom_compute",
+        };
+        return gpu::create_compute_pipeline(device, &compute_desc);
+    }
     gpu::GraphicsPipelineDesc desc = {
         .vertex_shader   = {
             .spirv = key.custom.vertex ? custom.vertex : registry.get(key.vertex)!,
@@ -249,16 +340,14 @@ fn PipelineKey[] keys_matching(
     PipelineCache* cache,
     Allocator allocator,
     ShaderId shader,
+    bool compute,
     uint revision,
     bool any_revision,
 ) @private {
     List{PipelineKey} keys;
     keys.init(allocator);
     cache.pipelines.@each(; PipelineKey key, gpu::PipelineHandle pipeline) {
-        if (key.shader.index == shader.index && key.shader.generation == shader.generation
-            && (any_revision || key.shader_revision == revision)) {
-            keys.push(key);
-        }
+        if (key_names(key, shader, compute) && (any_revision || key.shader_revision == revision)) keys.push(key);
     };
     return keys.to_array(allocator);
 }

@@ -152,6 +152,70 @@ if (catch excuse = renderer.upload(shader)) { /* SHADER_INVALID or PIPELINE_CREA
 
 A configuration that fails on first use (a forward pipeline, or a shadow caster's depth form) skips those draws until the shader is replaced; other configurations of the same shader keep drawing.
 
+## Compute dispatch
+
+An application runs its own compute stages inside a frame: a `ComputeShaderAsset` in the store, renderer-owned buffers the stage reads and writes, and `Renderer.dispatch` recorded after the frame's uploads and before its first view.
+
+```c3
+ComputeShaderDesc compute_desc = { .compute = compute_spirv };
+ComputeShaderId simulate = assets.add_compute_shader(&compute_desc, "particles")!;
+
+BufferId particles = renderer.create_buffer({
+    .size       = PARTICLE_COUNT * Particle::size,
+    .usage      = BufferUsage.GPU_PRIVATE,
+    .debug_name = "particles",
+})!;
+BufferId emitter = renderer.create_buffer({ .size = EmitterBlock::size, .usage = BufferUsage.UPLOAD, .debug_name = "emitter" })!;
+```
+
+A compute shader is its own asset kind: one SPIR-V stage, copied into the store, replaced with `replace_compute_shader` (the revision advances), removed with `remove_compute_shader`. `compile_glsl` takes `ShaderStage.COMPUTE`. The stage declares the compute push block, one `uint64_t root_gpu`, and reads everything else through buffer references:
+
+```glsl
+#version 460
+#include "generated/shader_abi.glsl"
+#include "c3d_abi.glsl"
+layout(local_size_x = 64) in;
+layout(push_constant) uniform Push { uint64_t root_gpu; } pc;
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer Particles { Particle values[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer ParticleRoot { uint64_t particles; uint count; float delta; };
+
+void main() {
+    ParticleRoot root = ParticleRoot(pc.root_gpu);
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= root.count) return;
+    Particles(root.particles).values[index].position_life.xyz += root.delta;
+}
+```
+
+Buffers are renderer-owned device memory addressed by `BufferId`; `buffer_address` returns the device address an application packs into its root or into a custom material payload, so a custom vertex stage draws from a buffer a compute stage wrote. `GPU_PRIVATE` buffers are written by shaders only. `UPLOAD` buffers also take `write_buffer(id, bytes)` inside an open frame: the bytes are staged in the frame's upload ring and copied before the frame's first dispatch. `destroy_buffer` retires the allocation after its last submitted frame completes; `destroy_renderer` releases whatever is still live.
+
+```c3
+renderer.begin_frame(info)!;
+renderer.write_buffer(emitter, material::@as_bytes(emitter_block))!;
+ParticleRoot root = {
+    .particles = (ulong)renderer.buffer_address(particles),
+    .count     = PARTICLE_COUNT,
+    .delta     = info.delta,
+};
+BufferId[1] writes = { particles };
+renderer.dispatch({
+    .shader = simulate,
+    .root   = material::@as_bytes(root),
+    .groups = { (PARTICLE_COUNT + 63) / 64, 1, 1 },
+    .writes = writes[..],
+})!;
+renderer.render_view(&scene, camera_node, renderer.default_view)!;
+renderer.end_frame()!;
+```
+
+`root` is the application's std430 root; its bytes are copied into the upload ring and their address is the push block. `writes` names the buffers the dispatch writes: the renderer records one barrier before the dispatch, from every consumer stage to compute, and one after, from compute to the vertex, fragment and compute stages, so a later dispatch or draw in the same frame reads the results. A dispatch with no writes records no barrier. Reads need no declaration. Dispatches record in call order, after the frame's pending asset uploads; `dispatch` and `write_buffer` fault `INVALID_ARGUMENT` once a view has been recorded, and `write_buffer` also faults after the frame's first dispatch. A dead shader or buffer id faults `INVALID_ID`. Textures, indirect dispatch and readback are outside this contract.
+
+Compute pipelines share the pipeline cache and the reload behavior of custom materials: `replace_compute_shader` followed by the next dispatch, or by `renderer.upload(compute_shader)`, rebuilds the pipeline under the new revision and publishes it on success; a backend rejection (a push block that is not `RootPush`, a missing `main`) keeps the previous revision dispatching, lands in the debug log and `Stats.shader_rejections`, and `upload` returns the fault. A first revision that is rejected skips its dispatches until the shader is replaced.
+
+`Stats.dispatches` counts the frame's custom dispatches; `Pass.CUSTOM_COMPUTE` times them together, between the uploads and the shadow atlas.
+
 ## Example
 
 `examples/custom_shader` keeps `tint.frag.glsl`, `pulse.vert.glsl` and `pulse.frag.glsl` under `examples/shaders/custom/`, compiles them in process at startup, and every half second compares the files' modification times with the ones it last saw; a change, or R, recompiles and replaces the shader, printing the compiler log or the rejection fault. P pauses the pulse through `@custom_params`. Editing `pulse.frag.glsl` so its push block does not match (add a member to `Push`) demonstrates the rejection: the console shows the `SHADER_INVALID` diagnostic, the stats panel counts a rejection, and the box keeps drawing with the previous shader until the file is fixed.
+
+`examples/custom_compute` advances a particle buffer with `particles.comp.glsl` every frame and draws it as camera-facing quads through a custom material whose vertex stage pulls each particle by `gl_VertexIndex / 4` from the same buffer; an `UPLOAD` buffer carries the moving emitter. All three GLSL files are polled and reloaded like the custom shader example, Space reseeds the particles, and the stats panel shows `Dispatches: 1` and the completed custom compute time. Breaking the compute push block demonstrates the rejection: the console shows `SHADER_INVALID`, and the particles keep moving under the previous revision until the file is fixed.

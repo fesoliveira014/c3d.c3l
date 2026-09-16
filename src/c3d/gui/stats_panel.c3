@@ -22,6 +22,7 @@ fn void? stats_panel(Renderer* renderer) {
 
     imgui::text("Draws: %u", renderer.stats.draws);
     imgui::text("Post dispatches: %u", renderer.stats.post_dispatches);
+    imgui::text("Dispatches: %u", renderer.stats.dispatches);
     imgui::text("Triangles: %u", renderer.stats.triangles);
     imgui::text("Culled: %u", renderer.stats.culled);
     imgui::text("Lights: %u", renderer.stats.lights);
@@ -41,6 +42,8 @@ fn void? stats_panel(Renderer* renderer) {
     }
 
     if (renderer.timestamps_enabled) {
+        imgui::text("Completed GPU custom compute: %.3f ms",
+            (double)renderer.stats.gpu_pass_ms[Pass.CUSTOM_COMPUTE.ordinal]);
         imgui::text("Completed GPU opaque: %.3f ms",
             (double)renderer.stats.gpu_pass_ms[Pass.FORWARD_OPAQUE.ordinal]);
         imgui::text("Completed GPU transmission: %.3f ms",

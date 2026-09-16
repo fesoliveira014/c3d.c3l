@@ -7,13 +7,15 @@ typedef MaterialId     = Id;
 typedef EnvironmentId  = Id;
 typedef SkinId         = Id;
 typedef ShaderId       = Id;
+typedef ComputeShaderId = Id;
 typedef ModelId        = Id;
 typedef ClipId         = Id;
 typedef SkeletonId     = Id;
 typedef ViewId         = Id;
 typedef RenderTargetId = Id;
+typedef BufferId       = Id;
 
-// ViewId and RenderTargetId are renderer-owned and cannot be found in the store, so they have no kind.
+// ViewId, RenderTargetId and BufferId are renderer-owned and cannot be found in the store, so they have no kind.
 <*
  Asset kinds the store resolves by id.
 *>
@@ -26,6 +28,7 @@ enum AssetKind {
     CLIP,
     SKELETON,
     SHADER,
+    COMPUTE_SHADER,
     ENVIRONMENT,
 }
 

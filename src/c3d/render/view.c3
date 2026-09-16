@@ -111,6 +111,7 @@ fn void? Renderer.render_view(
     DebugDraw* debug = null,
 ) {
     ViewRecord* record = self.views.try_get(view)!;
+    close_custom_compute(self)!;
     if (record.desc.output == ViewOutput.WINDOW && !self.has_output) return;
     Camera* camera = scene.get(camera_node, Camera);
     if (!camera) return c3d::INVALID_ARGUMENT~;

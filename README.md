@@ -213,6 +213,16 @@ python3 scripts/build.py --example custom_shader
 ./examples/build/custom_shader --gpu-timings
 ```
 
+`custom_compute` runs a particle simulation on the GPU through [compute dispatch](docs/custom_shaders.md#compute-dispatch):
+a compute stage advances a renderer-owned buffer every frame and a custom material draws it from the
+same buffer, with the emitter fed through an upload buffer. All three GLSL files reload on change or
+R, Space reseeds, and a broken compute push block is rejected while the previous revision keeps running:
+
+```bash
+python3 scripts/build.py --example custom_compute
+./examples/build/custom_compute --gpu-timings
+```
+
 `ibl` lights a metallic/roughness sphere grid with two bundled HDR environments.
 Its controls independently select lighting and background, adjust rotation and
 intensity, demonstrate diffuse-only occlusion, and apply per-environment processing

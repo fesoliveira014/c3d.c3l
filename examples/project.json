@@ -190,6 +190,12 @@
       "sources": [
         "src/custom_shader.c3"
       ]
+    },
+    "custom_compute": {
+      "type": "executable",
+      "sources": [
+        "src/custom_compute.c3"
+      ]
     }
   }
 }
