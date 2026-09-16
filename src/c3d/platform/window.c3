@@ -184,6 +184,7 @@ fn bool Window.poll(&self) {
 
 <*
  Start or stop OS text input for this window.
+ @require self.handle != null
 *>
 fn void Window.set_text_input(&self, bool enabled) {
     if (enabled == self.text_input_active) return;

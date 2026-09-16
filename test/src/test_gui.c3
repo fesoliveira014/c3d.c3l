@@ -5,8 +5,10 @@ import c3d::gui;
 import c3d::gui::backend;
 import c3d::gui::inspect;
 import c3d::maths;
+import c3d::platform;
 import c3d::shader;
 import gpu;
+import imgui;
 import std::math;
 
 const float TOLERANCE @local = 0.00001f;
@@ -88,7 +90,7 @@ struct InspectProbe @local {
     Vec3      direction;
     Quat      rotation;
     ProbeMode mode;
-    Id        asset;
+    c3d::Id   asset;
     float[]   weights;
     Aabb      bounds;
     void*     owner;
@@ -97,4 +99,37 @@ struct InspectProbe @local {
 fn void test_gui_generic_inspector_accepts_every_supported_kind() @test {
     InspectFn probe = &gui::inspect::inspect{InspectProbe};
     assert(probe != null);
+}
+
+fn void test_imgui_key_table_maps_named_scancodes() @test {
+    assert(gui::imgui_key_of(platform::Scancode.A) == imgui::KEY_A);
+    assert(gui::imgui_key_of(platform::Scancode.Z) == imgui::KEY_Z);
+    assert(gui::imgui_key_of(platform::Scancode.CODE_1) == imgui::KEY_1);
+    assert(gui::imgui_key_of(platform::Scancode.CODE_0) == imgui::KEY_0);
+    assert(gui::imgui_key_of(platform::Scancode.F1) == imgui::KEY_F1);
+    assert(gui::imgui_key_of(platform::Scancode.F12) == imgui::KEY_F12);
+    assert(gui::imgui_key_of(platform::Scancode.RETURN) == imgui::KEY_ENTER);
+    assert(gui::imgui_key_of(platform::Scancode.ESCAPE) == imgui::KEY_ESCAPE);
+    assert(gui::imgui_key_of(platform::Scancode.SPACE) == imgui::KEY_SPACE);
+    assert(gui::imgui_key_of(platform::Scancode.BACKSPACE) == imgui::KEY_BACKSPACE);
+    assert(gui::imgui_key_of(platform::Scancode.TAB) == imgui::KEY_TAB);
+    assert(gui::imgui_key_of(platform::Scancode.LEFT) == imgui::KEY_LEFT_ARROW);
+    assert(gui::imgui_key_of(platform::Scancode.RIGHT) == imgui::KEY_RIGHT_ARROW);
+    assert(gui::imgui_key_of(platform::Scancode.UP) == imgui::KEY_UP_ARROW);
+    assert(gui::imgui_key_of(platform::Scancode.DOWN) == imgui::KEY_DOWN_ARROW);
+    assert(gui::imgui_key_of(platform::Scancode.KP_ENTER) == imgui::KEY_KEYPAD_ENTER);
+    assert(gui::imgui_key_of(platform::Scancode.LCTRL) == imgui::KEY_LEFT_CTRL);
+    assert(gui::imgui_key_of(platform::Scancode.RGUI) == imgui::KEY_RIGHT_SUPER);
+    assert(gui::imgui_key_of(platform::Scancode.UNKNOWN) == imgui::KEY_NONE);
+    assert(gui::imgui_key_of((platform::Scancode)1) == imgui::KEY_NONE);
+}
+
+fn void test_imgui_button_indices_follow_imgui_order() @test {
+    int index;
+    assert(gui::imgui_button_of(platform::MouseButton.LEFT, &index) && index == 0);
+    assert(gui::imgui_button_of(platform::MouseButton.RIGHT, &index) && index == 1);
+    assert(gui::imgui_button_of(platform::MouseButton.MIDDLE, &index) && index == 2);
+    assert(gui::imgui_button_of(platform::MouseButton.X1, &index) && index == 3);
+    assert(gui::imgui_button_of(platform::MouseButton.X2, &index) && index == 4);
+    assert(!gui::imgui_button_of((platform::MouseButton)7, &index) && index == 4);
 }

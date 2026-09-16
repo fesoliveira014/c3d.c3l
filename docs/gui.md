@@ -33,9 +33,11 @@ preserves ownership for the caller to retry. Finish any open GUI frame before de
 
 ## Input and frame order
 
-Forward the raw SDL event from the platform poll callback to `GuiRenderer.process_event`.
-The event pointer is borrowed only for that call. Pass the native event unchanged: the native
-ImGui SDL backend reads its own C layout. The platform helper does not import or own GUI.
+The adapter owns its ImGui platform side. `new_frame()` reads the window's translated event
+list (`window.events()`), size, pixel density and clock, and feeds ImGui keys, modifiers, text,
+mouse and focus from them; nothing is forwarded by the application. It starts and stops OS text
+input through `Window.set_text_input` as widgets ask for it, and ImGui copy and paste go through
+the platform clipboard wrappers. The platform helper does not import or own GUI.
 
 Call `new_frame()` after polling. It sets `window.input.mouse_captured_by_gui` and
 `keyboard_captured_by_gui` independently. Apply these gates before application controls:
@@ -45,7 +47,7 @@ a text edit does not also quit. Native window close remains effective.
 
 The frame sequence is:
 
-1. Poll and forward events; begin the GUI frame.
+1. Poll; begin the GUI frame.
 2. Apply controls and automatic motion, then draw GUI panels.
 3. Call `scene.update_world()` so edits reach the current output.
 4. Call `gui.finish_frame()` to finalize native draw data.

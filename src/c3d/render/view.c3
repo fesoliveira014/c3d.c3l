@@ -91,7 +91,7 @@ fn void? Renderer.render(
  @param [&inout] self : "Records into the current frame before composition."
  @param [&in] scene : "Pose as left by the last update_world; not advanced."
  @param [&in] camera_node : "Carries a Camera component."
- @param [&in] debug : "Lines drawn after transparency; not cleared."
+ @param [in] debug : "Null draws nothing; lines drawn after transparency; not cleared."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::SHADER_NOT_FOUND
  @return? gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
