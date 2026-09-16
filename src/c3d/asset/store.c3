@@ -12,6 +12,7 @@ const uint DEFAULT_MAX_ENVIRONMENTS @local = 16; // one CPU record and renderer 
 const uint DEFAULT_MAX_MODELS @local       = 256; // one template record each; arrays are sized by the loader
 const uint DEFAULT_MAX_SKELETONS @local    = 256; // one record each; joint arrays are sized by the loader
 const uint DEFAULT_MAX_CLIPS @local        = 1024; // one record each; key arrays are sized by the loader
+const uint DEFAULT_MAX_SHADERS @local      = 64; // one ShaderRes each in the renderer; a scene has a handful of user shaders
 
 <*
  Key and content revision shared by every asset record.
@@ -33,6 +34,7 @@ struct AssetStoreDesc {
     uint max_models;
     uint max_skeletons;
     uint max_clips;
+    uint max_shaders;
 }
 
 <*
@@ -48,6 +50,7 @@ struct AssetStore {
     ModelPool                 models;
     SkeletonPool              skeletons;
     ClipPool                  clips;
+    ShaderPool                shaders;
     HashMap{String, AssetRef} keys;
 }
 
@@ -112,6 +115,7 @@ fn AssetStoreDesc default_asset_store_desc() {
         .max_models       = DEFAULT_MAX_MODELS,
         .max_skeletons    = DEFAULT_MAX_SKELETONS,
         .max_clips        = DEFAULT_MAX_CLIPS,
+        .max_shaders      = DEFAULT_MAX_SHADERS,
     };
 }
 
@@ -127,6 +131,7 @@ fn AssetStore create_asset_store(Allocator allocator, AssetStoreDesc desc) {
     if (!desc.max_models) desc.max_models = DEFAULT_MAX_MODELS;
     if (!desc.max_skeletons) desc.max_skeletons = DEFAULT_MAX_SKELETONS;
     if (!desc.max_clips) desc.max_clips = DEFAULT_MAX_CLIPS;
+    if (!desc.max_shaders) desc.max_shaders = DEFAULT_MAX_SHADERS;
     AssetStore store = {
         .allocator    = allocator,
         .geometries   = pool::create_pool{GeometryAsset, GeometryId}(allocator, desc.max_geometries),
@@ -137,6 +142,7 @@ fn AssetStore create_asset_store(Allocator allocator, AssetStoreDesc desc) {
         .models       = pool::create_pool{ModelAsset, ModelId}(allocator, desc.max_models),
         .skeletons    = pool::create_pool{SkeletonAsset, SkeletonId}(allocator, desc.max_skeletons),
         .clips        = pool::create_pool{ClipAsset, ClipId}(allocator, desc.max_clips),
+        .shaders      = pool::create_pool{ShaderAsset, ShaderId}(allocator, desc.max_shaders),
     };
     store.keys.init(allocator);
     add_builtins(&store);
@@ -161,6 +167,7 @@ fn void destroy_asset_store(AssetStore* store) {
     foreach (&record : store.materials.items) {
         if (!record.header.revision) continue;
         free_string(store.allocator, record.header.key);
+        free_custom_params(store.allocator, &record.data);
     }
     foreach (&record : store.samplers.items) {
         if (!record.header.revision) continue;
@@ -185,6 +192,11 @@ fn void destroy_asset_store(AssetStore* store) {
         free_string(store.allocator, record.header.key);
         free_clip(store.allocator, &record.data);
     }
+    foreach (&record : store.shaders.items) {
+        if (!record.header.revision) continue;
+        free_string(store.allocator, record.header.key);
+        free_shader_desc(store.allocator, &record.desc);
+    }
     store.keys.free();
     pool::destroy_pool{GeometryAsset, GeometryId}(&store.geometries);
     pool::destroy_pool{TextureAsset, TextureId}(&store.textures);
@@ -194,6 +206,7 @@ fn void destroy_asset_store(AssetStore* store) {
     pool::destroy_pool{ModelAsset, ModelId}(&store.models);
     pool::destroy_pool{SkeletonAsset, SkeletonId}(&store.skeletons);
     pool::destroy_pool{ClipAsset, ClipId}(&store.clips);
+    pool::destroy_pool{ShaderAsset, ShaderId}(&store.shaders);
     *store = {};
 }
 

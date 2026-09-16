@@ -19,6 +19,7 @@ Entry point for every agent session in this repository. Read it fully before rea
 | cgltf.c3l | `gltf` | `c3d::asset::gltf` |
 | stb_image (C source) | `c3d::asset::image` bindings | `c3d::asset::image` |
 | ufbx.c3l | `ufbx` | `c3d::asset::fbx` |
+| shaderc.c3l | `shaderc` | `c3d::shader::compile` (`src/c3d/shader/compile.c3`), compiled only under the `C3D_SHADER_COMPILER` feature |
 
 Boundaries are enforced by grep in CI. No dependency is added without updating this table.
 
@@ -38,7 +39,7 @@ Load before reading or writing a line of code. A review or change made without t
 
 - `c3-expert`: any C3 reading, writing, or reasoning; `project.json`, `manifest.json`, build configuration; any `c3c` diagnostic. Threshold: more than about five lines of C3 read or written without it this session means stop and load it.
 - `c3-style`: any `.c3` or `.c3i` file written or reviewed.
-- `c3-bindings`: anything that crosses into gpu.c3l, sdl3.c3l, c3imgui.c3l, c3cg.c3l, box3d.c3l, cgltf.c3l, ufbx.c3l, or the `extern fn` declarations for stb_image.
+- `c3-bindings`: anything that crosses into gpu.c3l, sdl3.c3l, c3imgui.c3l, c3cg.c3l, box3d.c3l, cgltf.c3l, ufbx.c3l, shaderc.c3l, or the `extern fn` declarations for stb_image.
 - `shader-dev`, when installed: GLSL technique (BRDF, shadows, post effects). Dispatch shape, barriers, and the binding contract stay with the style guide and gpu.c3l's `docs/shader_abi.md` and `docs/cookbook.md`.
 
 The skills live in `.claude/skills/`, which is gitignored. A session that cannot list them is not a working session.
@@ -66,7 +67,7 @@ python3 scripts/build.py --init-deps      # first checkout: submodules and nativ
 python3 scripts/build.py --clean
 ```
 
-Steps run in this order and stop at the first failure: tools (c3c 0.8.3, glslang), deps (submodules present), abi (`gen_abi.py`, which builds gpu.c3l's `gpu_shaders` tool with `c3c build --path lib/gpu.c3l/tools/gpu_shaders` on first use), shaders (`build_shaders.py`), build (every target in `examples/project.json`, or `--target`), test (every target in `test/project.json`), run. SPIR-V is compiled into `shaders/spv/` (not committed) on every run; the generated C3 and GLSL twins are committed and verified unless `--regen` is given, which rewrites them. `--skip-abi`, `--skip-shaders`, `--skip-build`, and `--opt O3` narrow a run; `-v` prints each command.
+Steps run in this order and stop at the first failure: tools (c3c 0.8.3, glslang), deps (submodules present), abi (`gen_abi.py`, which builds gpu.c3l's `gpu_shaders` tool with `c3c build --path lib/gpu.c3l/tools/gpu_shaders` on first use), shaders (`build_shaders.py`), build (every target in `examples/project.json`, or `--target`), test (every target in `test/project.json`), run. `build_shaders.py` also embeds the GLSL include set as `src/c3d/shader/includes.c3` for the in-process compiler; on Windows the build copies `shaderc_shared.dll` next to the example and test executables, on Linux the executables carry an rpath to `lib/shaderc.c3l/linux`. SPIR-V is compiled into `shaders/spv/` (not committed) on every run; the generated C3 and GLSL twins are committed and verified unless `--regen` is given, which rewrites them. `--skip-abi`, `--skip-shaders`, `--skip-build`, and `--opt O3` narrow a run; `-v` prints each command.
 
 Before every commit: `scripts/build.py --test`. Broken builds are never committed. GPU examples run manually; CI runs `--test`. Every development run of a GPU example enables Vulkan validation through gpu.c3l.
 
@@ -170,6 +171,7 @@ grep -rn 'import cg' src/c3d --include='*.c3' | grep -v 'src/c3d/geometry/'
 grep -rn 'import b3' src/c3d --include='*.c3' | grep -v 'src/c3d/physics/'
 grep -rn 'import gltf' src/c3d --include='*.c3' | grep -v 'src/c3d/asset/gltf/'
 grep -rn 'import ufbx' src/c3d --include='*.c3' | grep -v 'src/c3d/asset/fbx/'
+grep -rn 'import shaderc' src/c3d --include='*.c3' | grep -v 'src/c3d/shader/'
 ```
 
 # 11. Directory map
@@ -179,7 +181,7 @@ c3d.c3l/
 ├── manifest.json
 ├── abi/c3d.abi             shared C3 and GLSL layouts
 ├── docs/style.md           mandatory style baseline
-├── lib/                    gpu.c3l · sdl3.c3l · c3imgui.c3l · c3cg.c3l · box3d.c3l · cgltf.c3l · ufbx.c3l (submodules)
+├── lib/                    gpu.c3l · sdl3.c3l · c3imgui.c3l · c3cg.c3l · box3d.c3l · cgltf.c3l · ufbx.c3l · shaderc.c3l (submodules)
 │                           plus c3d.c3l, a symlink to the root, so consumers resolve c3d here
 ├── linked-libs/            empty; every dependency ships its own native artifacts
 ├── csrc/                   stb_image

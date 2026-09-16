@@ -47,6 +47,7 @@ struct Stats {
     uint  uploads;
     uint  upload_bytes;
     uint  dangling_refs;
+    uint  shader_rejections;
     float frame_ms;
     float cpu_record_ms;
     float[PASS_COUNT] gpu_pass_ms;

@@ -36,6 +36,7 @@ struct MaterialBindings {
     TextureBinding anisotropy;
     TextureBinding transmission;
     TextureBinding thickness;
+    TextureBinding[material::MAX_CUSTOM_TEXTURE_SLOTS] custom;
 }
 
 <*
@@ -145,6 +146,9 @@ fn void texture_uv_rows(UvTransform transform, Vec4* row0, Vec4* row1) {
  @pure
 *>
 fn bool material_bindings_match(MaterialBindings first, MaterialBindings second) {
+    foreach (index, binding : first.custom) {
+        if (!texture_binding_matches(binding, second.custom[index])) return false;
+    }
     return texture_binding_matches(first.base_color, second.base_color)
         && texture_binding_matches(first.metallic_roughness, second.metallic_roughness)
         && texture_binding_matches(first.normal, second.normal)

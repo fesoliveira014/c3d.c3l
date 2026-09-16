@@ -19,3 +19,6 @@
 [submodule "lib/ufbx.c3l"]
 	path = lib/ufbx.c3l
 	url = https://github.com/fesoliveira014/ufbx.c3l
+[submodule "lib/shaderc.c3l"]
+	path = lib/shaderc.c3l
+	url = https://github.com/fesoliveira014/shaderc.c3l

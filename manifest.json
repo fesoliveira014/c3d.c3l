@@ -5,7 +5,7 @@
   "linklib-dir": "linked-libs",
   "targets": {
     "linux-x64": {
-      "link-args": [],
+      "link-args": [ "-Wl,-rpath,\\$ORIGIN/../../lib/shaderc.c3l/linux" ],
       "dependencies": [ "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "b3", "cgltf", "ufbx" ],
       "linked-libraries": []
     },

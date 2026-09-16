@@ -387,6 +387,20 @@ root PhysicalMaterialGpu {
     TextureMapGpu thickness_map;
 }
 
+const uint CUSTOM_TEXTURE_SLOTS = 8;
+const uint CUSTOM_MAP_UV1_SHIFT = 8;
+const uint MATERIAL_KIND_CUSTOM = 4;
+
+root CustomMaterialGpu {
+    uint kind;
+    uint flags;
+    float alpha_cutoff;
+    uint map_flags;
+    TextureMapGpu[8] slots;
+    GpuAddress parameters;
+    u64 _pad0;
+}
+
 const uint TONEMAP_NONE = 0;
 const uint TONEMAP_ACES = 1;
 const uint TONEMAP_AGX = 2;

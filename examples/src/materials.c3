@@ -393,6 +393,7 @@ fn Vec4 material_color(Material* material) @local {
         case STANDARD: return material.standard.base_color;
         case TOON: return material.toon.color;
         case PHYSICAL: return material.physical.standard.base_color;
+        case CUSTOM: return { 1, 1, 1, 1 };
     }
 }
 
@@ -402,6 +403,7 @@ fn TextureSlot* material_base_slot(Material* material) @local {
         case STANDARD: return &material.standard.base_color_map;
         case TOON: return &material.toon.map;
         case PHYSICAL: return &material.physical.standard.base_color_map;
+        case CUSTOM: return &material.custom.slots[0];
     }
 }
 
@@ -432,6 +434,7 @@ fn void select_material_kind(
             ToonParams params = material::TOON_PARAMS_DEFAULT;
             params.color = color;
             record.data = material::toon(params, common);
+        case CUSTOM: return;
     }
     assets.mark_material_dirty(material_id);
 }

@@ -350,3 +350,168 @@ fn void test_material_duplicate_key_and_capacity() @test {
         assert(false, "pool overfilled");
     }
 }
+
+fn ShaderDesc make_shader_desc(char[] fragment, char[] shaded = {}, char[] depth = {}) @local {
+    return { .fragment = fragment, .vertex = { .shaded = shaded, .depth = depth }, .param_block_size = 32 };
+}
+
+fn void test_add_shader_copies_stages() @test {
+    AssetStore store = make_store();
+    defer asset::destroy_asset_store(&store);
+    char[4] fragment = { 1, 2, 3, 4 };
+    char[4] shaded = { 5, 6, 7, 8 };
+    char[4] depth = { 9, 10, 11, 12 };
+    ShaderDesc desc = make_shader_desc(fragment[..], shaded[..], depth[..]);
+    ShaderId id = store.add_shader(&desc, "pulse")!!;
+    fragment[0] = 0;
+    shaded[0] = 0;
+    depth[0] = 0;
+
+    ShaderAsset* record = store.shader(id);
+    assert(record.header.revision == 1);
+    assert(record.desc.fragment[0] == 1 && record.desc.vertex.shaded[0] == 5 && record.desc.vertex.depth[0] == 9);
+    assert(record.desc.param_block_size == 32);
+    assert(record.desc.fragment.ptr != &fragment[0]);
+    assert(store.find_shader("pulse")!!.index == id.index);
+}
+
+fn void test_add_shader_rejects_half_vertex_pair() @test {
+    AssetStore store = make_store();
+    defer asset::destroy_asset_store(&store);
+    char[4] bytes = { 1, 2, 3, 4 };
+
+    ShaderDesc shaded_only = make_shader_desc(bytes[..], shaded: bytes[..]);
+    if (catch excuse = store.add_shader(&shaded_only)) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "a shaded vertex form without its depth form was accepted");
+    }
+
+    ShaderDesc depth_only = make_shader_desc(bytes[..], depth: bytes[..]);
+    if (catch excuse = store.add_shader(&depth_only)) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "a depth vertex form without its shaded form was accepted");
+    }
+
+    ShaderDesc no_fragment = make_shader_desc({});
+    if (catch excuse = store.add_shader(&no_fragment)) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "an empty fragment stage was accepted");
+    }
+    ShaderDesc valid = make_shader_desc(bytes[..]);
+    assert(store.add_shader(&valid)!!.index == 0);
+}
+
+fn void test_replace_shader_bumps_revision_and_copies() @test {
+    AssetStore store = make_store();
+    defer asset::destroy_asset_store(&store);
+    char[4] first = { 1, 2, 3, 4 };
+    ShaderDesc desc = make_shader_desc(first[..]);
+    ShaderId id = store.add_shader(&desc)!!;
+
+    char[8] second = { 8, 7, 6, 5, 4, 3, 2, 1 };
+    ShaderDesc replacement = make_shader_desc(second[..]);
+    replacement.param_block_size = 16;
+    store.replace_shader(id, &replacement)!!;
+    second[0] = 0;
+
+    ShaderAsset* record = store.shader(id);
+    assert(record.header.revision == 2);
+    assert(record.desc.fragment.len == 8 && record.desc.fragment[0] == 8);
+    assert(record.desc.param_block_size == 16);
+    assert(record.desc.vertex.shaded.len == 0 && record.desc.vertex.depth.len == 0);
+
+    ShaderDesc invalid = make_shader_desc(second[..], shaded: second[..]);
+    if (catch excuse = store.replace_shader(id, &invalid)) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "an invalid replacement was accepted");
+    }
+    assert(record.header.revision == 2 && record.desc.fragment.len == 8);
+}
+
+fn void test_remove_shader_makes_id_stale() @test {
+    AssetStore store = make_store();
+    defer asset::destroy_asset_store(&store);
+    char[4] bytes = { 1, 2, 3, 4 };
+    ShaderDesc desc = make_shader_desc(bytes[..]);
+    ShaderId id = store.add_shader(&desc, "tint")!!;
+    store.remove_shader(id);
+    assert(!store.shaders.is_live(id));
+    if (catch excuse = store.find_shader("tint")) {
+        assert(excuse == NOT_FOUND);
+    } else {
+        assert(false, "the key of a removed shader still resolves");
+    }
+}
+
+struct TestParams @local {
+    float[<4>] color;
+    float[<4>] motion;
+}
+
+fn void test_add_custom_material_copies_param_block() @test {
+    AssetStore store = make_store();
+    defer asset::destroy_asset_store(&store);
+    TestParams params = { .color = { 1, 2, 3, 4 }, .motion = { 5, 6, 7, 8 } };
+    char[] bytes = ((char*)&params)[:TestParams::size];
+    MaterialId id = store.add_material(material::custom({ .index = 1, .generation = 1 }, bytes))!!;
+    params.color.x = 0;
+
+    Material* stored = &store.material(id).data;
+    assert(stored.kind == MaterialKind.CUSTOM);
+    assert(stored.custom.param_block.len == TestParams::size);
+    assert(stored.custom.param_block.ptr != bytes.ptr);
+    assert(((TestParams*)stored.custom.param_block.ptr).color.x == 1);
+    assert(stored.custom.slots[0].transform.scale == (Vec2){ 1, 1 });
+}
+
+fn void test_set_custom_params_resizes_and_bumps_revision() @test {
+    AssetStore store = make_store();
+    defer asset::destroy_asset_store(&store);
+    MaterialId id = store.add_material(material::custom({ .index = 1, .generation = 1 }))!!;
+    assert(store.material(id).data.custom.param_block.len == 0);
+
+    char[8] bytes = { 1, 2, 3, 4, 5, 6, 7, 8 };
+    store.set_custom_params(id, bytes[..])!!;
+    Material* stored = &store.material(id).data;
+    assert(store.material(id).header.revision == 2);
+    assert(stored.custom.param_block.len == 8 && stored.custom.param_block[7] == 8);
+
+    char[4] shorter = { 9, 9, 9, 9 };
+    store.set_custom_params(id, shorter[..])!!;
+    assert(store.material(id).header.revision == 3);
+    assert(stored.custom.param_block.len == 4 && stored.custom.param_block[3] == 9);
+
+    store.set_custom_params(id, {})!!;
+    assert(stored.custom.param_block.len == 0);
+}
+
+fn void test_set_custom_params_rejects_other_kinds() @test {
+    AssetStore store = make_store();
+    defer asset::destroy_asset_store(&store);
+    MaterialId id = store.add_material(material::basic())!!;
+    char[4] bytes = { 1, 2, 3, 4 };
+    if (catch excuse = store.set_custom_params(id, bytes[..])) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "a basic material accepted a custom payload");
+    }
+    assert(store.material(id).header.revision == 1);
+}
+
+fn void test_typed_custom_params_round_trip() @test {
+    AssetStore store = make_store();
+    defer asset::destroy_asset_store(&store);
+    MaterialId id = store.add_material(material::custom({ .index = 1, .generation = 1 }))!!;
+    TestParams params = { .color = { 1, 2, 3, 4 }, .motion = { 5, 6, 7, 8 } };
+    store.@set_custom_params(id, params)!!;
+
+    TestParams* live = store.@custom_params(id, TestParams);
+    assert(live.motion == (float[<4>]){ 5, 6, 7, 8 });
+    live.color.y = 42;
+    assert(((TestParams*)store.material(id).data.custom.param_block.ptr).color.y == 42);
+    assert(store.material(id).header.revision == 2);
+}

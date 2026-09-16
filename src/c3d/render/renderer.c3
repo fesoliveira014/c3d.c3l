@@ -128,6 +128,7 @@ struct Renderer {
     List{PendingTextureUpload} pending_texture_uploads;
     RetireList              pending_upload_retire;
     MaterialRes[]           materials;
+    ShaderRes[]             shaders;
     gpu::GpuAllocation      material_heap;
     gpu::GpuSpan            material_heap_span;
 
@@ -213,7 +214,8 @@ macro void? Renderer.upload(&self, id) {
         $case TextureId: return self.upload_texture(id);
         $case SamplerId: return self.upload_sampler(id);
         $case EnvironmentId: return self.upload_environment(id);
-        $default: $error("upload takes a GeometryId, MaterialId, TextureId, SamplerId or EnvironmentId");
+        $case ShaderId: return self.upload_shader(id);
+        $default: $error("upload takes a GeometryId, MaterialId, TextureId, SamplerId, EnvironmentId or ShaderId");
     $endswitch
 }
 
@@ -245,6 +247,7 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
     sweep_textures(self);
     sweep_samplers(self);
     sweep_materials(self);
+    sweep_shaders(self);
     reset_upload_ring(self, slot)!;
     reset_deformation_cache(&self.deformation);
     self.frame_started = clock::now();
@@ -725,6 +728,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .validation           = desc.validation,
         .geometries           = alloc::new_array(allocator, GpuGeometry, assets.geometries.items.len),
         .materials            = alloc::new_array(allocator, MaterialRes, assets.materials.items.len),
+        .shaders              = alloc::new_array(allocator, ShaderRes, assets.shaders.items.len),
         .textures             = alloc::new_array(allocator, TextureRes, assets.textures.items.len),
         .environment_state    = {
             .mirrors = alloc::new_array(allocator, EnvironmentRes, assets.environments.items.len),
@@ -766,6 +770,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         free_textures(&renderer);
         free_geometries(&renderer);
         alloc::free(allocator, renderer.materials.ptr);
+        free_shaders(&renderer);
         destroy_pipeline_cache(&renderer.device, &renderer.pipelines);
         destroy_deformation_cache(&renderer.deformation);
         pool::destroy_pool{TargetRecord, RenderTargetId}(&renderer.targets);
@@ -798,6 +803,7 @@ fn void destroy_renderer(Renderer* renderer) {
     free_textures(renderer);
     free_geometries(renderer);
     free_material_heap(renderer);
+    free_shaders(renderer);
     destroy_shadow_atlas(&renderer.device, &renderer.shadow_atlas);
     if (renderer.shadow_timing_results.len) alloc::free(renderer.allocator, renderer.shadow_timing_results.ptr);
     alloc::free(renderer.allocator, renderer.shadow_frusta.ptr);
