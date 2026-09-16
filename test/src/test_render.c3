@@ -585,6 +585,7 @@ fn void test_pipeline_key_hash_and_equality_include_shader() @test {
 fn void test_pipeline_cache_keys_of_selects_id_and_revision() @test {
     render::PipelineCache cache = render::create_pipeline_cache(mem, shader::BUILTIN_REGISTRY);
     defer cache.pipelines.free();
+    defer cache.rejected.free();
     ShaderId first = { .index = 3, .generation = 1 };
     ShaderId second = { .index = 4, .generation = 1 };
     cache.pipelines.set(custom_key(3, 1), {});
@@ -650,12 +651,23 @@ fn void test_custom_material_block_packs_slots_and_payload_address() @test {
     assert((ulong)packed.parameters == 0x1000);
 }
 
+fn ulong custom_key_of(ShaderId shader, uint slot, float depth) @local {
+    return render::draw_sort_key(
+        vertex:    { .shader = MESH },
+        fragment:  {},
+        material:  { .index = slot, .generation = 1 },
+        geometry:  { .index = slot, .generation = 1 },
+        ndc_depth: depth,
+        custom:    shader,
+    );
+}
+
 fn void test_draw_sort_key_groups_custom_by_shader() @test {
     ShaderId shader_a = { .index = 5, .generation = 1 };
     ShaderId shader_b = { .index = 6, .generation = 1 };
-    ulong a_first = render::draw_sort_key({ .shader = MESH }, {}, { .index = 9, .generation = 1 }, { .index = 9, .generation = 1 }, 0, shader_a);
-    ulong a_second = render::draw_sort_key({ .shader = MESH }, {}, { .index = 1, .generation = 1 }, { .index = 1, .generation = 1 }, 1, shader_a);
-    ulong b = render::draw_sort_key({ .shader = MESH }, {}, { .index = 0, .generation = 1 }, { .index = 0, .generation = 1 }, 1, shader_b);
+    ulong a_first = custom_key_of(shader_a, 9, 0);
+    ulong a_second = custom_key_of(shader_a, 1, 1);
+    ulong b = custom_key_of(shader_b, 0, 1);
     assert(a_first >> 48 == a_second >> 48);
     assert(b > a_first);
     assert(key_of(5, 9, 9, 0) == a_first);

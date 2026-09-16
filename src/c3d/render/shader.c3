@@ -56,18 +56,13 @@ fn ShaderRes*? resolve_shader(Renderer* renderer, ShaderId shader) @private {
 }
 
 fn bool pipeline_rejected(Renderer* renderer, ShaderId shader, fault excuse) @private {
+    if (excuse == PIPELINE_REJECTED) return true;
     if (excuse != gpu::SHADER_INVALID && excuse != gpu::PIPELINE_CREATE_FAILED) return false;
     ShaderRes* mirror = &renderer.shaders[shader.index];
     mirror.asset = shader;
     mirror.rejected_revision = renderer.assets.shader(shader).header.revision;
     renderer.stats.shader_rejections++;
     return true;
-}
-
-fn bool shader_unusable(Renderer* renderer, ShaderId shader) @private {
-    ShaderRes* mirror = &renderer.shaders[shader.index];
-    // A rejected replacement keeps the previous revision's pipelines; only a rejected first revision has none.
-    return mirror.rejected_revision != 0 && mirror.rejected_revision == mirror.revision;
 }
 
 fn void? replace_shader_pipelines(Renderer* renderer, ShaderId shader) @private {
@@ -79,6 +74,7 @@ fn void? replace_shader_pipelines(Renderer* renderer, ShaderId shader) @private 
     RetireList* retire = renderer.frame_open
         ? &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT].retire
         : &renderer.pending_upload_retire;
+    if (!same_asset && mirror.asset.generation) retire_shader_pipelines(renderer, mirror.asset, retire);
     @pool() {
         gpu::PipelineHandle[] superseded = renderer.pipelines.replace_shader(
             allocator:    tmem,
@@ -97,14 +93,18 @@ fn void? replace_shader_pipelines(Renderer* renderer, ShaderId shader) @private 
     return;
 }
 
+fn void retire_shader_pipelines(Renderer* renderer, ShaderId shader, RetireList* retire) @private {
+    @pool() {
+        foreach (handle : renderer.pipelines.remove_shader(tmem, shader)) {
+            retire.push({ .kind = RetiredKind.PIPELINE, .pipeline = handle });
+        }
+    };
+}
+
 fn void sweep_shaders(Renderer* renderer) @private {
     foreach (&mirror : renderer.shaders) {
         if (!mirror.asset.generation || renderer.assets.shaders.is_live(mirror.asset)) continue;
-        @pool() {
-            foreach (handle : renderer.pipelines.remove_shader(tmem, mirror.asset)) {
-                renderer.pending_upload_retire.push({ .kind = RetiredKind.PIPELINE, .pipeline = handle });
-            }
-        };
+        retire_shader_pipelines(renderer, mirror.asset, &renderer.pending_upload_retire);
         *mirror = {};
     }
 }

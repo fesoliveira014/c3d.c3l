@@ -12,6 +12,7 @@ enum ShaderStage {
 }
 
 const String MISSING_INCLUDE_MESSAGE @private = "include is not part of the embedded shader include set";
+const String EMPTY_SOURCE_NAME @private = "";
 
 <*
  Compile GLSL to SPIR-V with the embedded include set.
@@ -83,7 +84,11 @@ fn shaderc::IncludeResult* resolve_include(
         };
         return result;
     }
-    *result = { .content = MISSING_INCLUDE_MESSAGE.ptr, .content_length = MISSING_INCLUDE_MESSAGE.len };
+    *result = {
+        .source_name    = EMPTY_SOURCE_NAME.ptr,
+        .content        = MISSING_INCLUDE_MESSAGE.ptr,
+        .content_length = MISSING_INCLUDE_MESSAGE.len,
+    };
     return result;
 }
 

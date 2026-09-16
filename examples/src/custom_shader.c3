@@ -249,8 +249,22 @@ fn int main() {
         bool forced = input.key_pressed(platform::Scancode.R);
         if (window.clock.total >= next_poll || forced) {
             next_poll = window.clock.total + POLL_INTERVAL_SECONDS;
-            if (forced || files_changed(&tint_files)) reload_shader(&assets, &renderer, &tint_files, tint_shader);
-            if (forced || files_changed(&pulse_files)) reload_shader(&assets, &renderer, &pulse_files, pulse_shader);
+            if (forced || files_changed(&tint_files)) {
+                reload_shader(
+                    assets:   &assets,
+                    renderer: &renderer,
+                    files:    &tint_files,
+                    shader:   tint_shader,
+                );
+            }
+            if (forced || files_changed(&pulse_files)) {
+                reload_shader(
+                    assets:   &assets,
+                    renderer: &renderer,
+                    files:    &pulse_files,
+                    shader:   pulse_shader,
+                );
+            }
         }
         if (input.key_pressed(platform::Scancode.P)) {
             paused = !paused;

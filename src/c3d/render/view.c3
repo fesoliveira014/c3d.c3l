@@ -166,8 +166,6 @@ fn void? Renderer.render_view(
                 continue;
             }
             MaterialRes* material = resolved;
-            if (material_description.kind == MaterialKind.CUSTOM
-                && shader_unusable(self, material_description.custom.shader)) continue;
             sheen |= material_uses_sheen(material_description);
             validate_normal_geometry(
                 geometry: geometry,
@@ -568,7 +566,6 @@ fn MeshPreparation? prepare_mesh(
         return {};
     }
     MaterialRes* material = resolved;
-    if (data.kind == MaterialKind.CUSTOM && shader_unusable(renderer, data.custom.shader)) return {};
     validate_normal_geometry(
         geometry:          geometry,
         material:          data,

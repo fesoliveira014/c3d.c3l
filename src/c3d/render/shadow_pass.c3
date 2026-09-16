@@ -75,7 +75,6 @@ fn ShadowDraw[]? prepare_shadow_draws(Renderer* renderer, MeshCandidate[] candid
                 renderer.stats.dangling_refs++;
                 continue;
             }
-            if (shader_unusable(renderer, material.custom.shader)) continue;
             custom_header = resolved.address;
         }
         ShadowDraw* draw = &draws[count];
@@ -95,7 +94,12 @@ fn ShadowDraw[]? prepare_shadow_draws(Renderer* renderer, MeshCandidate[] candid
             .reflected = candidate.node.world.determinant() < 0,
             .cull = material.common.double_sided ? gpu::CullMode.NONE : gpu::CullMode.BACK,
         };
-        if (catch excuse = shadow_pipeline_for(renderer, draw.wireframe, vertex, material)) {
+        if (catch excuse = shadow_pipeline_for(
+            renderer:  renderer,
+            wireframe: draw.wireframe,
+            vertex:    vertex,
+            material:  material,
+        )) {
             if (material.kind != MaterialKind.CUSTOM || !pipeline_rejected(renderer, material.custom.shader, excuse)) {
                 return excuse~;
             }
@@ -165,7 +169,12 @@ fn void? record_shadow_layer(
     gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
     foreach (draw : draws) {
         ShadowDrawState wanted = {
-            .pipeline = shadow_pipeline_for(renderer, draw.wireframe, draw.vertex, draw.material)!,
+            .pipeline = shadow_pipeline_for(
+                renderer:  renderer,
+                wireframe: draw.wireframe,
+                vertex:    draw.vertex,
+                material:  draw.material,
+            )!,
             .cull = draw.cull,
             .front_face = draw.reflected != view_reflected
               ? gpu::FrontFace.CLOCKWISE : gpu::FrontFace.COUNTER_CLOCKWISE,

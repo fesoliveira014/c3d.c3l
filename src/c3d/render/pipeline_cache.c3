@@ -51,6 +51,7 @@ struct CustomStageSource {
 *>
 struct PipelineCache {
     HashMap{PipelineKey, gpu::PipelineHandle} pipelines;
+    HashMap{PipelineKey, bool}                rejected;
     ShaderRegistry                            registry;
 }
 
@@ -80,18 +81,29 @@ fn bool PipelineKey.equals(&self, PipelineKey other) {
 
 <*
  Pipeline for the key, created on first use from the registry or the custom stages.
+ A key the backend rejected is not retried until its shader is replaced or removed.
  @param [&inout] device : "Owns the created pipeline."
  @param [in] custom : "Stages for key.custom; ignored when both bits are clear."
- @return? c3d::SHADER_NOT_FOUND, gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE
+ @return? c3d::SHADER_NOT_FOUND, PIPELINE_REJECTED, gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE
  @return? gpu::INVALID_ARGUMENT, gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL
  @return? gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY, gpu::DEVICE_LOST
  @require !key.custom.vertex || custom.vertex.len > 0
  @require !key.custom.fragment || custom.fragment.len > 0
 *>
-fn gpu::PipelineHandle? PipelineCache.get(&self, gpu::Device* device, PipelineKey key, CustomStageSource* custom = null) {
+fn gpu::PipelineHandle? PipelineCache.get(
+    &self,
+    gpu::Device* device,
+    PipelineKey key,
+    CustomStageSource* custom = null,
+) {
     if (try existing = self.pipelines.get(key)) return existing;
+    if (self.rejected.has_key(key)) return PIPELINE_REJECTED~;
 
-    gpu::PipelineHandle pipeline = create_pipeline(&self.registry, device, key, custom)!;
+    gpu::PipelineHandle? pipeline = create_pipeline(&self.registry, device, key, custom);
+    if (catch excuse = pipeline) {
+        if (excuse == gpu::SHADER_INVALID || excuse == gpu::PIPELINE_CREATE_FAILED) self.rejected.set(key, true);
+        return excuse~;
+    }
     self.pipelines.set(key, pipeline);
     return pipeline;
 }
@@ -144,6 +156,7 @@ fn gpu::PipelineHandle[]? PipelineCache.replace_shader(
         replacement.shader_revision = new_revision;
         self.pipelines.set(replacement, fresh[index]);
     }
+    forget_rejections(self, shader);
     return superseded;
 }
 
@@ -159,6 +172,7 @@ fn gpu::PipelineHandle[] PipelineCache.remove_shader(&self, Allocator allocator,
         removed[index] = self.pipelines.get(key)!!;
         self.pipelines.remove(key);
     }
+    forget_rejections(self, shader);
     return removed;
 }
 
@@ -181,6 +195,7 @@ fn CustomStageSource custom_stage_source(asset::ShaderDesc* stages, PipelineKey 
 fn PipelineCache create_pipeline_cache(Allocator allocator, ShaderRegistry registry) {
     PipelineCache cache = { .registry = registry };
     cache.pipelines.init(allocator);
+    cache.rejected.init(allocator);
     return cache;
 }
 
@@ -193,7 +208,17 @@ fn void destroy_pipeline_cache(gpu::Device* device, PipelineCache* cache) {
         (void)gpu::destroy_pipeline(device, pipeline);
     };
     cache.pipelines.free();
+    cache.rejected.free();
     *cache = {};
+}
+
+fn void forget_rejections(PipelineCache* cache, ShaderId shader) @private {
+    List{PipelineKey} keys;
+    keys.tinit();
+    cache.rejected.@each(; PipelineKey key, bool rejected) {
+        if (key.shader.index == shader.index && key.shader.generation == shader.generation) keys.push(key);
+    };
+    foreach (key : keys) cache.rejected.remove(key);
 }
 
 fn gpu::PipelineHandle? create_pipeline(
