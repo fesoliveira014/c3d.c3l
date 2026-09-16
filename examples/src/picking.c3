@@ -47,7 +47,6 @@ const uint MONITOR_FRONT_FACE @local = 4; // geometry::box face order: +X, -X, +
 const uint TRIANGLES_PER_BOX_FACE @local = 2;
 const float SUN_INTENSITY @local = 3;
 const float AMBIENT_INTENSITY @local = 0.15f;
-const usz MOUSE_BUTTON_LEFT @local = 1; // SDL button index
 const Vec2 PICKING_PANEL_POSITION @local = { 16, 16 };
 const Vec2 PICKING_PANEL_SIZE @local = { 380, 300 };
 const Vec2 SCENE_PANEL_POSITION @local = { 16, 332 };
@@ -76,7 +75,7 @@ struct Selection @local {
 
 fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
     if (!input.mouse_captured_by_gui) {
-        if (input.mouse_buttons[MOUSE_BUTTON_LEFT]) {
+        if (input.button_down(platform::MouseButton.LEFT)) {
             orbit.yaw -= input.mouse_delta.x * ORBIT_RADIANS_PER_PIXEL;
             orbit.pitch = math::clamp(orbit.pitch + input.mouse_delta.y * ORBIT_RADIANS_PER_PIXEL,
                 -ORBIT_PITCH_LIMIT, ORBIT_PITCH_LIMIT);
@@ -335,10 +334,10 @@ fn void? run(
 
         Input* input = &window.input;
         // Text editing can drop capture on Escape down before its release arrives.
-        if (input.keys_pressed[(usz)sdl::Scancode.ESCAPE] || input.keys_released[(usz)sdl::Scancode.ESCAPE]) {
+        if (input.key_pressed(platform::Scancode.ESCAPE) || input.key_released(platform::Scancode.ESCAPE)) {
             escape_captured |= keyboard_was_captured || input.keyboard_captured_by_gui;
         }
-        if (input.keys_released[(usz)sdl::Scancode.ESCAPE]) {
+        if (input.key_released(platform::Scancode.ESCAPE)) {
             bool quit = !escape_captured;
             escape_captured = false;
             if (quit) break;
@@ -351,7 +350,7 @@ fn void? run(
         imgui::set_next_window_size(SCENE_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
         gui::scene_panel(scene, &panels);
 
-        if (input.mouse_pressed[MOUSE_BUTTON_LEFT] && !input.mouse_captured_by_gui) {
+        if (input.button_pressed(platform::MouseButton.LEFT) && !input.mouse_captured_by_gui) {
             @pool() {
                 selection = select_at(
                     assets:        assets,

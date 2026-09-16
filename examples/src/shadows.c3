@@ -22,7 +22,6 @@ const float ORBIT_PITCH_LIMIT @local = 1.5f; // avoids the look-rotation up-axis
 const float ORBIT_ZOOM_STEP @local = 0.9f; // keeps each wheel step visually useful
 const float ORBIT_DISTANCE_MIN @local = 4; // leaves room for the near shadow fixtures
 const float ORBIT_DISTANCE_MAX @local = 48; // keeps the ground readable at the widest view
-const usz MOUSE_BUTTON_LEFT @local = 1;
 const uint CHECKER_SIZE @local = 8; // 256 bytes keep the generated fixture small
 const uint CHECKER_CELL @local = 2; // four cells preserve visible cutouts at distance
 const uint RGBA8_BYTES @local = 4;
@@ -77,7 +76,7 @@ struct PointShadowFixture @local {
 
 fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
     if (!input.mouse_captured_by_gui) {
-        if (input.mouse_buttons[MOUSE_BUTTON_LEFT]) {
+        if (input.button_down(platform::MouseButton.LEFT)) {
             orbit.yaw -= input.mouse_delta.x * ORBIT_RADIANS_PER_PIXEL;
             orbit.pitch = math::clamp(
                 x: orbit.pitch + input.mouse_delta.y * ORBIT_RADIANS_PER_PIXEL,
@@ -373,10 +372,10 @@ fn void? run_gui(
         }
 
         Input* input = &window.input;
-        if (input.keys_pressed[(usz)sdl::Scancode.ESCAPE] || input.keys_released[(usz)sdl::Scancode.ESCAPE]) {
+        if (input.key_pressed(platform::Scancode.ESCAPE) || input.key_released(platform::Scancode.ESCAPE)) {
             escape_captured |= keyboard_was_captured || input.keyboard_captured_by_gui;
         }
-        if (input.keys_released[(usz)sdl::Scancode.ESCAPE]) {
+        if (input.key_released(platform::Scancode.ESCAPE)) {
             bool quit = !escape_captured;
             escape_captured = false;
             if (quit) break;

@@ -17,7 +17,6 @@ import c3d::model;
 import c3d::platform;
 import c3d::render;
 import c3d::scene;
-import sdl;
 
 const float ORBIT_RADIANS_PER_PIXEL @local = 0.005f;
 const float ORBIT_PITCH_LIMIT @local = 1.5f; // avoids the poles, where the up vector degenerates
@@ -36,7 +35,6 @@ const float ENVIRONMENT_INTENSITY @local = 0.6f;
 const float BACKGROUND_INTENSITY @local = 0.3f;
 const float STATS_PERIOD_SECONDS @local = 2;
 const uint MODEL_CAPACITY @local = 4;
-const usz MOUSE_BUTTON_LEFT @local = 1; // SDL button index
 const String DEFAULT_MODEL @local = "../assets/gltf/Fox.glb";
 const String ENVIRONMENT_FILE @local = "../assets/ibl/studio_small_09_1k.hdr";
 
@@ -50,7 +48,7 @@ struct Orbit @local {
 }
 
 fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
-    if (input.mouse_buttons[MOUSE_BUTTON_LEFT]) {
+    if (input.button_down(platform::MouseButton.LEFT)) {
         orbit.yaw -= input.mouse_delta.x * ORBIT_RADIANS_PER_PIXEL;
         orbit.pitch = math::clamp(
             orbit.pitch + input.mouse_delta.y * ORBIT_RADIANS_PER_PIXEL,
@@ -101,16 +99,16 @@ fn usz skeleton_count(ModelTemplate* template) @local {
 fn void handle_keys(Input* input, AssetStore* assets, Scene* scene, Node* left, Node* right, ClipId[] clips) @local {
     Animator* left_animator = scene.get(left, Animator);
     for (usz digit = 0; digit < clips.len && digit < CLIP_KEY_COUNT; digit++) {
-        if (!input.keys_pressed[(usz)sdl::Scancode.CODE_1 + digit]) continue;
+        if (!input.key_pressed((platform::Scancode)((usz)platform::Scancode.CODE_1 + digit))) continue;
         left_animator.play(assets, clips[digit], CROSS_FADE_SECONDS)!!;
         sz last = left_animator.actions.len() - 1;
         left_animator.cross_fade(&left_animator.actions[last - 1], &left_animator.actions[last], CROSS_FADE_SECONDS);
     }
-    if (input.keys_pressed[(usz)sdl::Scancode.Q] && left_animator.actions.len()) {
+    if (input.key_pressed(platform::Scancode.Q) && left_animator.actions.len()) {
         Action* action = &left_animator.actions[left_animator.actions.len() - 1];
         action.weight = action.weight == 1 ? QUARTER_WEIGHT : 1;
     }
-    if (input.keys_pressed[(usz)sdl::Scancode.SPACE]) {
+    if (input.key_pressed(platform::Scancode.SPACE)) {
         foreach (&action : left_animator.actions) action.playing = !action.playing;
         foreach (&action : scene.get(right, Animator).actions) action.playing = !action.playing;
     }
@@ -221,7 +219,7 @@ fn int main(String[] args) {
     double last_print;
     while (window.poll()) {
         Input* input = &window.input;
-        if (input.keys_released[(usz)sdl::Scancode.ESCAPE]) break;
+        if (input.key_released(platform::Scancode.ESCAPE)) break;
 
         handle_keys(input, &assets, &scene, left, right, clips);
         anim::update(&assets, &scene, (float)window.clock.delta);

@@ -185,6 +185,52 @@ fn void test_mouse_press_and_release_in_one_poll_still_count_as_a_press() @test 
     assert(!window.input.mouse_pressed[1]);
 }
 
+fn void test_scancode_values_match_sdl() @test {
+    assert((uint)platform::Scancode.A == 4 && (uint)platform::Scancode.A == (uint)sdl::Scancode.A);
+    assert((uint)platform::Scancode.ESCAPE == 41 && (uint)platform::Scancode.ESCAPE == (uint)sdl::Scancode.ESCAPE);
+    assert((uint)platform::Scancode.SPACE == 44 && (uint)platform::Scancode.SPACE == (uint)sdl::Scancode.SPACE);
+    assert((uint)platform::Scancode.RETURN == 40 && (uint)platform::Scancode.RETURN == (uint)sdl::Scancode.RETURN);
+    assert((uint)platform::Scancode.F12 == 69 && (uint)platform::Scancode.F12 == (uint)sdl::Scancode.F12);
+    assert((uint)platform::Scancode.KP_ENTER == 88);
+    assert((uint)platform::Scancode.KP_ENTER == (uint)sdl::Scancode.KP_ENTER);
+    assert((uint)platform::Scancode.LCTRL == 224 && (uint)platform::Scancode.LCTRL == (uint)sdl::Scancode.LCTRL);
+    assert((uint)platform::Scancode.RGUI == 231 && (uint)platform::Scancode.RGUI == (uint)sdl::Scancode.RGUI);
+    assert((usz)platform::Scancode.COUNT == platform::KEY_COUNT);
+}
+
+fn void test_key_event_fills_modifiers() @test {
+    platform::Window window = { .pixel_density = 1 };
+    sdl::Event press = key_event(sdl::EventType.KEY_DOWN, sdl::Scancode.A);
+    press.key.mod = (sdl::Keymod)((uint)sdl::Keymod.KMOD_LSHIFT | (uint)sdl::Keymod.KMOD_LCTRL);
+    window.apply_event(&press);
+    assert(window.input.modifiers.shift && window.input.modifiers.ctrl);
+    assert(!window.input.modifiers.alt && !window.input.modifiers.gui);
+
+    sdl::Event release = key_event(sdl::EventType.KEY_UP, sdl::Scancode.A);
+    window.apply_event(&release);
+    assert(!window.input.modifiers.shift && !window.input.modifiers.ctrl);
+}
+
+fn void test_accessors_follow_the_arrays() @test {
+    platform::Window window = { .pixel_density = 1 };
+    window.apply_event(&&key_event(sdl::EventType.KEY_DOWN, sdl::Scancode.ESCAPE));
+    assert(window.input.key_down(platform::Scancode.ESCAPE) && window.input.key_pressed(platform::Scancode.ESCAPE));
+    assert(!window.input.key_released(platform::Scancode.ESCAPE));
+
+    window.input.begin_frame();
+    window.apply_event(&&key_event(sdl::EventType.KEY_UP, sdl::Scancode.ESCAPE));
+    assert(window.input.key_released(platform::Scancode.ESCAPE) && !window.input.key_down(platform::Scancode.ESCAPE));
+
+    sdl::Event press;
+    press.button.type = sdl::EventType.MOUSE_BUTTON_DOWN;
+    press.button.button = 1;
+    press.button.down = true;
+    window.apply_event(&press);
+    assert(window.input.button_down(platform::MouseButton.LEFT));
+    assert(window.input.button_pressed(platform::MouseButton.LEFT));
+    assert(!window.input.button_down(platform::MouseButton.RIGHT));
+}
+
 fn void test_mouse_delta_and_wheel_clear_each_frame() @test {
     platform::Window window = { .pixel_density = 1 };
 

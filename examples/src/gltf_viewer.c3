@@ -16,7 +16,6 @@ import c3d::model;
 import c3d::platform;
 import c3d::render;
 import c3d::scene;
-import sdl;
 
 const float ORBIT_RADIANS_PER_PIXEL @local = 0.005f;
 const float ORBIT_PITCH_LIMIT @local = 1.5f; // avoids the poles, where the up vector degenerates
@@ -31,7 +30,6 @@ const float ENVIRONMENT_INTENSITY @local = 0.6f;
 const float BACKGROUND_INTENSITY @local = 0.3f;
 const float STATS_PERIOD_SECONDS @local = 2;
 const uint MODEL_CAPACITY @local = 4;
-const usz MOUSE_BUTTON_LEFT @local = 1; // SDL button index
 const String DEFAULT_MODEL @local = "../assets/gltf/BoxTextured.glb";
 const String ENVIRONMENT_FILE @local = "../assets/ibl/studio_small_09_1k.hdr";
 
@@ -45,7 +43,7 @@ struct Orbit @local {
 }
 
 fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
-    if (input.mouse_buttons[MOUSE_BUTTON_LEFT]) {
+    if (input.button_down(platform::MouseButton.LEFT)) {
         orbit.yaw -= input.mouse_delta.x * ORBIT_RADIANS_PER_PIXEL;
         orbit.pitch = math::clamp(
             orbit.pitch + input.mouse_delta.y * ORBIT_RADIANS_PER_PIXEL,
@@ -187,7 +185,7 @@ fn int main(String[] args) {
     double last_print;
     while (window.poll()) {
         Input* input = &window.input;
-        if (input.keys_released[(usz)sdl::Scancode.ESCAPE]) break;
+        if (input.key_released(platform::Scancode.ESCAPE)) break;
 
         right.local.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 },
             (float)window.clock.total * SPIN_RADIANS_PER_SECOND);

@@ -12,14 +12,12 @@ import c3d::maths;
 import c3d::platform;
 import c3d::render;
 import c3d::scene;
-import sdl;
 
 const float ORBIT_RADIANS_PER_PIXEL @local = 0.005f;
 const float ORBIT_PITCH_LIMIT @local = 1.5f; // avoids the poles, where the up vector degenerates
 const float ORBIT_ZOOM_STEP @local = 0.9f;
 const float ORBIT_DISTANCE_MIN @local = 2;
 const float ORBIT_DISTANCE_MAX @local = 40;
-const usz MOUSE_BUTTON_LEFT @local = 1; // SDL button index
 const float CHECKER_REPEATS @local = 24;
 const float UV_REPEAT_SCALE @local = 4;
 const float UV_ROTATION_STEP @local = math::PI / 4;
@@ -33,7 +31,7 @@ struct Orbit @local {
 }
 
 fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
-    if (input.mouse_buttons[MOUSE_BUTTON_LEFT]) {
+    if (input.button_down(platform::MouseButton.LEFT)) {
         orbit.yaw -= input.mouse_delta.x * ORBIT_RADIANS_PER_PIXEL;
         orbit.pitch = math::clamp(
             orbit.pitch + input.mouse_delta.y * ORBIT_RADIANS_PER_PIXEL,
@@ -56,14 +54,14 @@ fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
 }
 
 fn void change_maps(AssetStore* assets, MaterialId[] materials, Input* input) @local {
-    bool nearest = input.keys_pressed[(usz)sdl::Scancode.N];
-    bool trilinear = input.keys_pressed[(usz)sdl::Scancode.L];
-    bool anisotropic = input.keys_pressed[(usz)sdl::Scancode.A];
-    bool scale = input.keys_pressed[(usz)sdl::Scancode.S];
-    bool rotate = input.keys_pressed[(usz)sdl::Scancode.R];
-    bool offset = input.keys_pressed[(usz)sdl::Scancode.O];
-    bool uv_set = input.keys_pressed[(usz)sdl::Scancode.U];
-    bool reset = input.keys_pressed[(usz)sdl::Scancode.BACKSPACE];
+    bool nearest = input.key_pressed(platform::Scancode.N);
+    bool trilinear = input.key_pressed(platform::Scancode.L);
+    bool anisotropic = input.key_pressed(platform::Scancode.A);
+    bool scale = input.key_pressed(platform::Scancode.S);
+    bool rotate = input.key_pressed(platform::Scancode.R);
+    bool offset = input.key_pressed(platform::Scancode.O);
+    bool uv_set = input.key_pressed(platform::Scancode.U);
+    bool reset = input.key_pressed(platform::Scancode.BACKSPACE);
     if (!(nearest || trilinear || anisotropic || scale || rotate || offset || uv_set || reset)) return;
 
     foreach (material_id : materials) {
@@ -222,7 +220,7 @@ fn int main(String[] args) {
 
     while (window.poll()) {
         Input* input = &window.input;
-        if (input.keys_released[(usz)sdl::Scancode.ESCAPE]) break;
+        if (input.key_released(platform::Scancode.ESCAPE)) break;
 
         change_maps(&assets, mapped_materials[..], input);
         apply_orbit(&orbit, input, camera_node);

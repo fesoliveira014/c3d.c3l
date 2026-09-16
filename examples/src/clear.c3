@@ -3,7 +3,6 @@ module clear_example;
 import c3d::asset;
 import c3d::platform;
 import c3d::render;
-import sdl;
 import std::io;
 import std::math;
 
@@ -38,7 +37,7 @@ fn int main() {
     defer render::destroy_renderer(&renderer);
 
     while (window.poll()) {
-        if (window.input.keys_released[(usz)sdl::Scancode.ESCAPE]) break;
+        if (window.input.key_released(platform::Scancode.ESCAPE)) break;
 
         platform::sync_window(&window, &renderer);
         renderer.begin_frame({ .time = window.clock.total, .delta = window.clock.delta })!!;

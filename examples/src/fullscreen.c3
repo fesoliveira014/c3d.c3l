@@ -5,7 +5,6 @@ import c3d::asset;
 import c3d::platform;
 import c3d::render;
 import c3d::shader;
-import sdl;
 import std::io;
 
 fn int main() {
@@ -29,7 +28,7 @@ fn int main() {
     defer (void)render::destroy_render_target(&renderer, hdr);
 
     while (window.poll()) {
-        if (window.input.keys_released[(usz)sdl::Scancode.ESCAPE]) break;
+        if (window.input.key_released(platform::Scancode.ESCAPE)) break;
         if (window.resized && window.width && window.height) {
             render::resize_render_target(&renderer, hdr, window.width, window.height)!!;
         }

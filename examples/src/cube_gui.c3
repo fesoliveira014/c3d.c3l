@@ -22,7 +22,6 @@ const float ORBIT_DISTANCE_MIN @local = 1.0f;
 const float ORBIT_DISTANCE_MAX @local = 50.0f;
 const float SPIN_RADIANS_PER_SECOND @local = 0.8f;
 const float MOVE_UNITS_PER_SECOND @local = 2.0f;
-const usz MOUSE_BUTTON_LEFT @local = 1; // SDL button index
 const Vec2 CONTROLS_PANEL_POSITION @local = { 16, 16 };
 const Vec2 CONTROLS_PANEL_SIZE @local = { 360, 70 };
 const Vec2 SCENE_PANEL_POSITION @local = { 16, 102 };
@@ -41,7 +40,7 @@ struct Orbit @local {
 
 fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
     if (!input.mouse_captured_by_gui) {
-        if (input.mouse_buttons[MOUSE_BUTTON_LEFT]) {
+        if (input.button_down(platform::MouseButton.LEFT)) {
             orbit.yaw -= input.mouse_delta.x * ORBIT_RADIANS_PER_PIXEL;
             orbit.pitch = math::clamp(orbit.pitch + input.mouse_delta.y * ORBIT_RADIANS_PER_PIXEL,
                 -ORBIT_PITCH_LIMIT, ORBIT_PITCH_LIMIT);
@@ -66,10 +65,10 @@ fn void move_cube(Node* cube, Input* input, float delta) @local {
     if (input.keyboard_captured_by_gui) return;
 
     float step = MOVE_UNITS_PER_SECOND * delta;
-    if (input.keys[(usz)sdl::Scancode.LEFT]) cube.local.position.x -= step;
-    if (input.keys[(usz)sdl::Scancode.RIGHT]) cube.local.position.x += step;
-    if (input.keys[(usz)sdl::Scancode.UP]) cube.local.position.y += step;
-    if (input.keys[(usz)sdl::Scancode.DOWN]) cube.local.position.y -= step;
+    if (input.key_down(platform::Scancode.LEFT)) cube.local.position.x -= step;
+    if (input.key_down(platform::Scancode.RIGHT)) cube.local.position.x += step;
+    if (input.key_down(platform::Scancode.UP)) cube.local.position.y += step;
+    if (input.key_down(platform::Scancode.DOWN)) cube.local.position.y -= step;
 }
 
 fn void forward_gui_event(sdl::Event* event, void* user) @local {
@@ -123,17 +122,17 @@ fn void? run_gui(
 
         Input* input = &window.input;
         // Text editing can drop capture on Escape down before its release arrives.
-        if (input.keys_pressed[(usz)sdl::Scancode.ESCAPE] || input.keys_released[(usz)sdl::Scancode.ESCAPE]) {
+        if (input.key_pressed(platform::Scancode.ESCAPE) || input.key_released(platform::Scancode.ESCAPE)) {
             escape_captured |= keyboard_was_captured || input.keyboard_captured_by_gui;
         }
 
-        if (input.keys_released[(usz)sdl::Scancode.ESCAPE]) {
+        if (input.key_released(platform::Scancode.ESCAPE)) {
             bool quit = !escape_captured;
             escape_captured = false;
             if (quit) break;
         }
 
-        if (input.keys_pressed[(usz)sdl::Scancode.O] && !input.keyboard_captured_by_gui) {
+        if (input.key_pressed(platform::Scancode.O) && !input.keyboard_captured_by_gui) {
             orthographic = !orthographic;
             *scene.get(camera_node, camera::Camera) = orthographic
                 ? camera::orthographic(6, 0.1f, 100)

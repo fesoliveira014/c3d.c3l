@@ -7,6 +7,8 @@ import std::math;
 // SDL writes Keymod as sixteen bits; a wider binding shifts these two fields.
 $assert $reflect(sdl::KeyboardEvent.down).offset == 36;
 $assert $reflect(sdl::KeyboardEvent.repeat).offset == 37;
+$assert (usz)Scancode.COUNT == KEY_COUNT;
+$assert (usz)sdl::Scancode.COUNT == KEY_COUNT;
 
 <*
  Borrowed event callback invoked before input changes.
@@ -81,6 +83,7 @@ fn bool Window.apply_event(&self, sdl::Event* event) {
             if (down && !self.input.keys[key] && !self.focus_gained) self.input.keys_pressed[key] = true;
             if (!down && self.input.keys[key]) self.input.keys_released[key] = true;
             self.input.keys[key] = down;
+            self.input.modifiers = keymod_of(event.key.mod);
         case EventType.MOUSE_BUTTON_DOWN:
         case EventType.MOUSE_BUTTON_UP:
             if (event.button.window_id != self.window_id) break;
@@ -207,4 +210,16 @@ fn void destroy_window(Window* window) {
     video_users--;
     if (!video_users) sdl::quit_sub_system({ .video = true });
     *window = {};
+}
+
+fn Keymod keymod_of(sdl::Keymod mod) @local {
+    uint bits = (uint)mod;
+    return {
+        .shift = (bits & (uint)sdl::Keymod.KMOD_SHIFT) != 0,
+        .ctrl  = (bits & (uint)sdl::Keymod.KMOD_CTRL) != 0,
+        .alt   = (bits & (uint)sdl::Keymod.KMOD_ALT) != 0,
+        .gui   = (bits & (uint)sdl::Keymod.KMOD_GUI) != 0,
+        .caps  = (bits & (uint)sdl::Keymod.KMOD_CAPS) != 0,
+        .num   = (bits & (uint)sdl::Keymod.KMOD_NUM) != 0,
+    };
 }

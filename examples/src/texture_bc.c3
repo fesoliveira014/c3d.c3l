@@ -11,7 +11,6 @@ import c3d::maths;
 import c3d::platform;
 import c3d::render;
 import c3d::scene;
-import sdl;
 
 const uint TEXTURE_SIZE @local = 64;
 const uint MIP_COUNT @local = 7;
@@ -24,7 +23,6 @@ const float ORBIT_PITCH_MAX @local = 1.5f; // avoids the degenerate up vector at
 const float ORBIT_ZOOM_STEP @local = 0.9f;
 const float ORBIT_DISTANCE_MIN @local = 2;
 const float ORBIT_DISTANCE_MAX @local = 100;
-const usz MOUSE_BUTTON_LEFT @local = 1; // SDL button index
 
 struct Orbit @local {
     Vec3 target;
@@ -34,7 +32,7 @@ struct Orbit @local {
 }
 
 fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
-    if (input.mouse_buttons[MOUSE_BUTTON_LEFT]) {
+    if (input.button_down(platform::MouseButton.LEFT)) {
         orbit.yaw -= input.mouse_delta.x * ORBIT_RADIANS_PER_PIXEL;
         orbit.pitch = math::clamp(
             orbit.pitch + input.mouse_delta.y * ORBIT_RADIANS_PER_PIXEL,
@@ -58,13 +56,13 @@ fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
 
 fn void select_sampler(AssetStore* assets, MaterialId material_id, Input* input) @local {
     SamplerId sampler;
-    if (input.keys_pressed[(usz)sdl::Scancode.N]) {
+    if (input.key_pressed(platform::Scancode.N)) {
         sampler = asset::SAMPLER_NEAREST;
         io::printn("nearest sampling");
-    } else if (input.keys_pressed[(usz)sdl::Scancode.L]) {
+    } else if (input.key_pressed(platform::Scancode.L)) {
         sampler = asset::SAMPLER_LINEAR_REPEAT;
         io::printn("trilinear sampling");
-    } else if (input.keys_pressed[(usz)sdl::Scancode.A]) {
+    } else if (input.key_pressed(platform::Scancode.A)) {
         sampler = asset::SAMPLER_ANISOTROPIC;
         io::printn("anisotropic sampling");
     } else {
@@ -136,7 +134,7 @@ fn void? run() @local {
 
     while (window.poll()) {
         Input* input = &window.input;
-        if (input.keys_released[(usz)sdl::Scancode.ESCAPE]) break;
+        if (input.key_released(platform::Scancode.ESCAPE)) break;
 
         select_sampler(&assets, material_id, input);
         apply_orbit(&orbit, input, camera_node);
