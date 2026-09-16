@@ -19,7 +19,6 @@ import c3d::render;
 import c3d::scene;
 import c3d::spatial;
 import imgui;
-import sdl;
 
 const float ORBIT_RADIANS_PER_PIXEL @local = 0.005f;
 const float ORBIT_PITCH_LIMIT @local = 1.5f; // just short of the poles, where the up vector degenerates
@@ -112,11 +111,6 @@ fn Aabb template_bounds(AssetStore* assets, ModelTemplate* template) @local {
 fn String example_path(String relative) @local {
     Path source = path::tnew($$FILEPATH)!!;
     return (String)source.parent()!!.tappend(relative)!!;
-}
-
-fn void forward_gui_event(sdl::Event* event, void* user) @local {
-    GuiRenderer* gui_renderer = (GuiRenderer*)user;
-    gui_renderer.process_event(event);
 }
 
 fn void print_hits(String label, PickHit[] hits) @local {
@@ -325,7 +319,7 @@ fn void? run(
     Selection selection;
     bool escape_captured;
 
-    while (window.poll(&forward_gui_event, &gui_renderer)) {
+    while (window.poll()) {
         bool keyboard_was_captured = window.input.keyboard_captured_by_gui;
         gui_renderer.new_frame();
         defer {

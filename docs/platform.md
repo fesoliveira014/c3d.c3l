@@ -2,9 +2,13 @@
 
 Use `Window.poll()` for a single window. For multiple windows, collect their addresses in a `Window*[]` and call `platform::poll_windows` once per frame.
 
-The group borrows its windows and drains SDL's global queue once. Each event reaches the optional callback once before any window applies it. Window-specific events affect only the matching native window ID. Global quit stops the loop. Calling `poll()` separately on multiple windows would drain the shared queue before later windows receive their events.
+The group borrows its windows and drains SDL's global queue once. Window-specific events affect only the matching native window ID. Global quit stops the loop. Calling `poll()` separately on multiple windows would drain the shared queue before later windows receive their events.
 
-Custom SDL loops call `sdl::pump_events()`, then `Window.begin_frame()` for each window, then feed events through `Window.apply_event()`. Forward events to GUI callbacks before applying them. Callback event pointers and user data are borrowed; an event pointer must not escape the callback.
+Each window keeps the frame's translated events: `window.events()` is the list in arrival order (`KEY_DOWN`, `KEY_UP` with scancode, modifiers and repeat; `TEXT_INPUT` with UTF-8 text; `MOUSE_MOTION`, `MOUSE_BUTTON_DOWN`, `MOUSE_BUTTON_UP`, `MOUSE_WHEEL` in framebuffer pixels, wheel flipped back to normal direction; `FOCUS_GAINED`, `FOCUS_LOST`, `RESIZED`, `QUIT`). The list holds `EVENT_CAPACITY` events and the text arena `EVENT_TEXT_CAPACITY` bytes per frame; anything beyond is dropped and counted in `events_dropped`. `Event.text` borrows the arena until the next `poll` or `clear_events`. `Input` remains the state view for controls; the list is for ordered consumers such as text fields and the GUI adapter.
+
+Text events arrive only while `Window.set_text_input(true)` is active; the GUI adapter toggles it as widgets need it. `platform::clipboard_text()` returns the clipboard as a string borrowed until the next call; `platform::set_clipboard_text` replaces it and faults `CLIPBOARD_FAILED` when SDL refuses.
+
+Custom SDL loops call `sdl::pump_events()`, then `Window.begin_frame()` for each window, then feed native events through `Window.apply_event()`, which translates them into the list. No event callback exists; the `window` example shows the loop.
 
 Keys are named by `platform::Scancode`, SDL's scancode names and numbers with the gaps kept; mouse buttons by `platform::MouseButton` (`LEFT`, `MIDDLE`, `RIGHT`, `X1`, `X2`, SDL's numbering). Read them through `Input.key_down`, `key_pressed`, `key_released`, `button_down` and `button_pressed`; the arrays behind them stay public and are indexed by the same values. `Input.modifiers` is the `Keymod` of the last key event (`shift`, `ctrl`, `alt`, `gui`, `caps`, `num`). An application needs no `import sdl` for any of this.
 

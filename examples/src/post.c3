@@ -16,7 +16,6 @@ import c3d::render;
 import c3d::render::post;
 import c3d::scene;
 import imgui;
-import sdl;
 
 const float ORBIT_RADIANS_PER_PIXEL @local = 0.005f;
 const float ORBIT_PITCH_LIMIT @local = 1.5f; // just short of the poles, where the up vector degenerates
@@ -71,11 +70,6 @@ fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
     camera_node.local.rotation = maths::look_rotation(-offset, { 0, 1, 0 });
 }
 
-fn void forward_gui_event(sdl::Event* event, void* user) @local {
-    GuiRenderer* gui_renderer = (GuiRenderer*)user;
-    gui_renderer.process_event(event);
-}
-
 fn void? draw_gui_frame(
     render::Renderer* renderer,
     Scene* scene,
@@ -117,7 +111,7 @@ fn void? run_gui(
     bool orthographic;
     bool escape_captured;
 
-    while (window.poll(&forward_gui_event, &gui_renderer)) {
+    while (window.poll()) {
         bool keyboard_was_captured = window.input.keyboard_captured_by_gui;
         gui_renderer.new_frame();
         defer {

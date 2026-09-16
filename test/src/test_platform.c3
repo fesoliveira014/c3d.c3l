@@ -231,6 +231,118 @@ fn void test_accessors_follow_the_arrays() @test {
     assert(!window.input.button_down(platform::MouseButton.RIGHT));
 }
 
+fn sdl::Event motion_event(float x, float y, float xrel, float yrel) @local {
+    sdl::Event event;
+    event.motion.type = sdl::EventType.MOUSE_MOTION;
+    event.motion.x = x;
+    event.motion.y = y;
+    event.motion.xrel = xrel;
+    event.motion.yrel = yrel;
+    return event;
+}
+
+fn sdl::Event text_event(ZString text) @local {
+    sdl::Event event;
+    event.text.type = sdl::EventType.TEXT_INPUT;
+    event.text.text = (char*)text;
+    return event;
+}
+
+fn void test_key_events_are_listed_with_repeat() @test {
+    platform::Window window = { .pixel_density = 1 };
+    window.apply_event(&&key_event(sdl::EventType.KEY_DOWN, sdl::Scancode.A));
+    window.apply_event(&&key_event(sdl::EventType.KEY_DOWN, sdl::Scancode.A));
+    window.apply_event(&&key_event(sdl::EventType.KEY_UP, sdl::Scancode.A));
+    platform::Event[] events = window.events();
+    assert(events.len == 3);
+    assert(events[0].kind == EventKind.KEY_DOWN && !events[0].repeat);
+    assert(events[1].kind == EventKind.KEY_DOWN && events[1].repeat);
+    assert(events[2].kind == EventKind.KEY_UP && !events[2].repeat);
+    assert(events[0].scancode == platform::Scancode.A);
+}
+
+fn void test_text_event_copies_bytes_into_the_frame_arena() @test {
+    platform::Window window = { .pixel_density = 1 };
+    window.apply_event(&&text_event("héllo"));
+    platform::Event[] events = window.events();
+    assert(events.len == 1 && events[0].kind == EventKind.TEXT_INPUT);
+    assert(events[0].text == "héllo");
+    assert(events[0].text.ptr == &window.event_text[0]);
+
+    window.clear_events();
+    assert(window.events().len == 0);
+}
+
+fn void test_mouse_events_translate_to_framebuffer_pixels() @test {
+    platform::Window window = { .pixel_density = 2 };
+    window.apply_event(&&motion_event(10, 5, 2, -1));
+    sdl::Event press;
+    press.button.type = sdl::EventType.MOUSE_BUTTON_DOWN;
+    press.button.button = 3;
+    press.button.down = true;
+    press.button.x = 10;
+    press.button.y = 5;
+    window.apply_event(&press);
+    sdl::Event wheel;
+    wheel.wheel.type = sdl::EventType.MOUSE_WHEEL;
+    wheel.wheel.y = 1;
+    window.apply_event(&wheel);
+    wheel.wheel.direction = sdl::MouseWheelDirection.FLIPPED;
+    window.apply_event(&wheel);
+
+    platform::Event[] events = window.events();
+    assert(events.len == 4);
+    assert(events[0].kind == EventKind.MOUSE_MOTION);
+    assert(events[0].position.x == 20 && events[0].position.y == 10);
+    assert(events[0].delta.x == 4 && events[0].delta.y == -2);
+    assert(events[1].kind == EventKind.MOUSE_BUTTON_DOWN && events[1].button == platform::MouseButton.RIGHT);
+    assert(events[2].kind == EventKind.MOUSE_WHEEL && events[2].scroll.y == 1);
+    assert(events[3].scroll.y == -1);
+    assert(window.input.wheel == 2);
+}
+
+fn void test_event_list_overflow_counts_drops() @test {
+    platform::Window window = { .pixel_density = 1 };
+    for (uint index = 0; index <= platform::EVENT_CAPACITY; index++) {
+        window.apply_event(&&motion_event(1, 1, 0, 0));
+    }
+    assert(window.events().len == platform::EVENT_CAPACITY);
+    assert(window.events_dropped == 1);
+
+    window.clear_events();
+    assert(window.events().len == 0 && window.events_dropped == 1);
+}
+
+fn void test_text_arena_overflow_drops_the_event() @test {
+    platform::Window window = { .pixel_density = 1 };
+    char[platform::EVENT_TEXT_CAPACITY + 2] long_text;
+    long_text[..] = 'a';
+    long_text[long_text.len - 1] = 0;
+    window.apply_event(&&text_event((ZString)&long_text[0]));
+    assert(window.events().len == 0 && window.events_dropped == 1);
+
+    window.apply_event(&&text_event("ok"));
+    platform::Event[] events = window.events();
+    assert(events.len == 1 && events[0].text == "ok");
+}
+
+fn void test_focus_resize_and_quit_are_listed() @test {
+    platform::Window window = { .pixel_density = 1, .width = 640, .height = 480 };
+    window.apply_event(&&window_event(sdl::EventType.WINDOW_FOCUS_GAINED));
+    window.apply_event(&&window_event(sdl::EventType.WINDOW_FOCUS_LOST));
+    sdl::Event resize = window_event(sdl::EventType.WINDOW_PIXEL_SIZE_CHANGED);
+    resize.window.data1 = 800;
+    resize.window.data2 = 600;
+    window.apply_event(&resize);
+    window.apply_event(&resize);
+    window.apply_event(&&window_event(sdl::EventType.QUIT));
+
+    platform::Event[] events = window.events();
+    assert(events.len == 4);
+    assert(events[0].kind == EventKind.FOCUS_GAINED && events[1].kind == EventKind.FOCUS_LOST);
+    assert(events[2].kind == EventKind.RESIZED && events[3].kind == EventKind.QUIT);
+}
+
 fn void test_mouse_delta_and_wheel_clear_each_frame() @test {
     platform::Window window = { .pixel_density = 1 };
 

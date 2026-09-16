@@ -6,22 +6,25 @@ import std::io;
 
 const uint POLL_INTERVAL_MS @local = 16; // Avoids a busy loop while keeping input responsive.
 
-fn void report_event(sdl::Event* event, void* user) @local {
-    platform::Window* window = (platform::Window*)user;
-    switch ((sdl::EventType)event.common.type) {
-        case sdl::EventType.KEY_DOWN:
-        case sdl::EventType.KEY_UP:
-            io::printfn("frame %d: key event %s scancode %d window %d",
-                window.clock.frame,
-                (sdl::EventType)event.common.type == sdl::EventType.KEY_DOWN ? "down" : "up",
-                (int)event.key.scancode,
-                event.key.window_id);
-        case sdl::EventType.WINDOW_FOCUS_GAINED:
-            io::printfn("frame %d: focus gained", window.clock.frame);
-        case sdl::EventType.WINDOW_FOCUS_LOST:
-            io::printfn("frame %d: focus lost", window.clock.frame);
-        default:
-            break;
+fn void report_events(platform::Window* window) @local {
+    foreach (&event : window.events()) {
+        switch (event.kind) {
+            case KEY_DOWN:
+            case KEY_UP:
+                io::printfn("frame %d: key event %s scancode %d%s",
+                    window.clock.frame,
+                    event.kind == EventKind.KEY_DOWN ? "down" : "up",
+                    (uint)event.scancode,
+                    event.repeat ? " repeat" : "");
+            case TEXT_INPUT:
+                io::printfn("frame %d: text %s", window.clock.frame, event.text);
+            case FOCUS_GAINED:
+                io::printfn("frame %d: focus gained", window.clock.frame);
+            case FOCUS_LOST:
+                io::printfn("frame %d: focus lost", window.clock.frame);
+            default:
+                break;
+        }
     }
 }
 
@@ -33,7 +36,9 @@ fn int main() {
     io::printfn("opened %dx%d, release escape or close to quit", window.width, window.height);
 
     bool[platform::MOUSE_BUTTON_COUNT] previous_buttons;
-    while (window.poll(&report_event, &window)) {
+    window.set_text_input(true);
+    while (window.poll()) {
+        report_events(&window);
 
         if (!window.minimized) {
             sdl::Surface* surface = sdl::get_window_surface(window.handle);
@@ -62,7 +67,7 @@ fn int main() {
         foreach (scancode, pressed : window.input.keys_pressed) {
             if (pressed) io::printfn("key %d pressed", scancode);
         }
-        if (window.input.keys_released[(usz)sdl::Scancode.ESCAPE]) break;
+        if (window.input.key_released(platform::Scancode.ESCAPE)) break;
 
         foreach (button, down : window.input.mouse_buttons) {
             if (down == previous_buttons[button]) continue;

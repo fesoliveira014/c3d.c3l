@@ -15,7 +15,6 @@ import c3d::platform;
 import c3d::render;
 import c3d::scene;
 import c3d::shader;
-import sdl;
 
 const float ORBIT_RADIANS_PER_PIXEL @local = 0.005f; // balances precise orbit control against pointer travel
 const float ORBIT_PITCH_LIMIT @local = 1.5f; // avoids the look-rotation up-axis degeneracy
@@ -309,11 +308,6 @@ fn void shadow_stats(render::Renderer* renderer) @local {
     }
 }
 
-fn void forward_gui_event(sdl::Event* event, void* user) @local {
-    GuiRenderer* gui_renderer = (GuiRenderer*)user;
-    gui_renderer.process_event(event);
-}
-
 fn void? draw_gui_frame(
     render::Renderer* renderer,
     Scene* scene,
@@ -364,7 +358,7 @@ fn void? run_gui(
     Mesh* ground_mesh = scene.get(ground, Mesh);
     Mesh* off_camera_mesh = scene.get(off_camera_box, Mesh);
 
-    while (window.poll(&forward_gui_event, &gui_renderer)) {
+    while (window.poll()) {
         bool keyboard_was_captured = window.input.keyboard_captured_by_gui;
         gui_renderer.new_frame();
         defer {
