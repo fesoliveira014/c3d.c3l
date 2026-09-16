@@ -201,6 +201,7 @@ fn void? Renderer.render_view(
         if (transmission_items.len) acquire_scene_color(self, record)!;
         ViewEnvironments environments = resolve_view_environments(self, scene, sheen)!;
         record_pending_copies(self, &self.commands)!;
+        prepare_sampled_targets(self, record)!;
 
         LightCounts light_counts;
         LightExtraction extraction = extract_lights(
@@ -768,6 +769,16 @@ fn void? record_view_output(Renderer* renderer, ViewRecord* record) @private {
                 rect:     rect,
             );
     }
+}
+
+fn void? prepare_sampled_targets(Renderer* renderer, ViewRecord* record) @private {
+    foreach (index, &target : renderer.targets.items) {
+        if (!(renderer.sampled_target_bits & (1u << index)) || !target.target.texture.is_valid()) continue;
+        // A producer never samples its own output; the barrier would only pair with the output stage's.
+        if (record.desc.output == ViewOutput.TEXTURE && record.desc.target.index == index) continue;
+        target.target.transition(&renderer.commands, FRAGMENT_READ_STATE)!;
+    }
+    renderer.sampled_target_bits = 0;
 }
 
 fn PixelRect clip_rect(PixelRect rect, uint width, uint height) @local {

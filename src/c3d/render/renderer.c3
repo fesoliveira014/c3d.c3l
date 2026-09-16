@@ -164,6 +164,7 @@ struct Renderer {
     bool                    has_output;
     bool                    frame_recorded;
     bool                    output_suppressed;
+    uint                    sampled_target_bits;
 }
 
 <*
@@ -244,6 +245,7 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
 
     self.has_output = false;
     self.frame_recorded = false;
+    self.sampled_target_bits = 0;
     if (self.swapchain.is_valid()) {
         if (self.output_dirty) recover_window_output(self)!;
         if (!self.output_suppressed) acquire_window_output(self)!;
