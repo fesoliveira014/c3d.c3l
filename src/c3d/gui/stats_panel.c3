@@ -31,6 +31,7 @@ fn void? stats_panel(Renderer* renderer) {
     imgui::text("Uploads: %u", renderer.stats.uploads);
     imgui::text("Asset upload bytes: %u", renderer.stats.upload_bytes);
     imgui::text("Dangling references: %u", renderer.stats.dangling_refs);
+    imgui::text("Shader rejections: %u", renderer.stats.shader_rejections);
 
     if (renderer.frame_index) {
         render::Frame* previous = &renderer.frames[(renderer.frame_index - 1) % render::FRAMES_IN_FLIGHT];

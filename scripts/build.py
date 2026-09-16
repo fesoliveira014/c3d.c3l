@@ -31,7 +31,7 @@ TEST = ROOT / "test"
 
 REQUIRED_C3C_VERSION = "0.8.3"
 C3IMGUI_RELEASE_TAG = "v0.1.3"
-SUBMODULES = ("gpu.c3l", "sdl3.c3l", "c3imgui.c3l", "c3cg.c3l", "box3d.c3l", "cgltf.c3l", "ufbx.c3l")
+SUBMODULES = ("gpu.c3l", "sdl3.c3l", "c3imgui.c3l", "c3cg.c3l", "box3d.c3l", "cgltf.c3l", "ufbx.c3l", "shaderc.c3l")
 NATIVE_BUILD_SCRIPTS = ("scripts/build-box3d.sh",)
 
 EXIT_BUILD_FAILED = 1
@@ -207,12 +207,25 @@ def step_build(options: Options) -> None:
         if options.opt:
             command.append(f"-{options.opt}")
         run(command, ROOT, options.verbose)
+    copy_shaderc_runtime(EXAMPLES / "build")
+
+
+def copy_shaderc_runtime(output: Path) -> None:
+    """Place the shaderc shared library next to Windows executables; Linux resolves it through rpath."""
+    if sys.platform != "win32":
+        return
+    library = LIB / "shaderc.c3l" / "windows" / "shaderc_shared.dll"
+    destination = output / library.name
+    output.mkdir(parents=True, exist_ok=True)
+    if not destination.exists() or destination.stat().st_mtime < library.stat().st_mtime:
+        shutil.copy2(library, destination)
 
 
 def step_test(options: Options) -> None:
     if not options.test:
         return
     targets = project_targets(TEST)
+    copy_shaderc_runtime(TEST / "build")
     if not targets:
         run([options.c3c, "test", "--path", str(TEST)], ROOT, options.verbose)
         return

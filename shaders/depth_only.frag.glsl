@@ -3,6 +3,7 @@
 #include "c3d_abi.glsl"
 #include "descriptor_heap.glsl"
 #include "material_maps.glsl"
+#include "custom_material.glsl"
 
 layout(location = 3) in vec2 v_uv0;
 layout(location = 4) in vec2 v_uv1;
@@ -16,6 +17,12 @@ void main() {
     DrawRoot draw = DrawRoot(pc.fragment_root_gpu);
     if ((draw.flags & DRAW_ALPHA_MASK) == 0u) return;
     BasicMaterialGpu material = BasicMaterialGpu(draw.material);
+    if (material.kind == MATERIAL_KIND_CUSTOM) {
+        CustomMaterialGpu custom = CustomMaterialGpu(draw.material);
+        float coverage = custom_slot_present(custom, 0u) ? sample_custom_map(custom, 0u, v_uv0, v_uv1).a : 1.0;
+        if (coverage < custom.alpha_cutoff) discard;
+        return;
+    }
     float alpha = material.color.a;
     if ((material.map_flags & MATERIAL_MAP_BASE_COLOR) != 0u) {
         alpha *= sample_map(material.map, material.map_flags, MATERIAL_MAP_BASE_COLOR, v_uv0, v_uv1).a;

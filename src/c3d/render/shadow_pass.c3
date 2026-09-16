@@ -16,6 +16,7 @@ import std::math;
 struct ShadowDraw @private {
     MeshCandidate* candidate;
     GpuGeometry* geometry;
+    Material* material;
     ShaderVariant vertex;
     gpu::GpuAddress skin;
     gpu::GpuAddress morph;
@@ -33,7 +34,12 @@ struct ShadowDrawState @private {
     gpu::PrimitiveTopology topology;
 }
 
-fn gpu::PipelineHandle? shadow_pipeline_for(Renderer* renderer, bool wireframe, ShaderVariant vertex) @private {
+fn gpu::PipelineHandle? shadow_pipeline_for(
+    Renderer* renderer,
+    bool wireframe,
+    ShaderVariant vertex,
+    Material* material = null,
+) @private {
     PipelineKey key = {
         .vertex = vertex,
         .fragment = { .shader = DEPTH_ONLY },
@@ -41,15 +47,38 @@ fn gpu::PipelineHandle? shadow_pipeline_for(Renderer* renderer, bool wireframe, 
         .samples = gpu::SampleCount.ONE,
         .polygon = wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL,
     };
+    if (material && material.kind == MaterialKind.CUSTOM) {
+        asset::ShaderDesc* stages = &renderer.assets.shader(material.custom.shader).desc;
+        if (stages.vertex.depth.len) {
+            key.vertex = { .shader = MESH, .flags = shader::SHADER_FLAG_DEPTH_ONLY };
+            key.shader = material.custom.shader;
+            key.shader_revision = renderer.shaders[material.custom.shader.index].revision;
+            key.custom = { .vertex = true };
+            CustomStageSource source = custom_stage_source(stages, key);
+            return renderer.pipelines.get(&renderer.device, key, &source);
+        }
+    }
     return renderer.pipelines.get(&renderer.device, key);
 }
 
 fn ShadowDraw[]? prepare_shadow_draws(Renderer* renderer, MeshCandidate[] candidates) @private {
     ShadowDraw[] draws = alloc::new_array(tmem, ShadowDraw, candidates.len);
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
-    foreach (index, &candidate : candidates) {
+    usz count;
+    foreach (&candidate : candidates) {
         Material* material = &renderer.assets.material(candidate.material).data;
-        ShadowDraw* draw = &draws[index];
+        gpu::GpuAddress custom_header;
+        if (material.kind == MaterialKind.CUSTOM) {
+            MaterialRes*? resolved = resolve_material(renderer, candidate.material);
+            if (catch excuse = resolved) {
+                if (!custom_material_unavailable(material, excuse)) return excuse~;
+                renderer.stats.dangling_refs++;
+                continue;
+            }
+            if (shader_unusable(renderer, material.custom.shader)) continue;
+            custom_header = resolved.address;
+        }
+        ShadowDraw* draw = &draws[count];
         GpuGeometry* geometry = resolve_geometry(renderer, candidate.geometry)!;
         bool morphed = candidate.morph_weights.len > 0;
         ShaderVariant vertex = mesh_vertex_variant(geometry.layout.flags, morphed, shader::SHADER_FLAG_DEPTH_ONLY);
@@ -60,26 +89,35 @@ fn ShadowDraw[]? prepare_shadow_draws(Renderer* renderer, MeshCandidate[] candid
             .skin = candidate.skin ? resolve_palette(renderer, candidate.node, candidate.skin)! : (gpu::GpuAddress)0,
             .morph = vertex.flags & shader::SHADER_FLAG_MORPH
               ? resolve_morph_block(renderer, candidate)! : (gpu::GpuAddress)0,
+            .alpha = custom_header,
             .masked = material.common.alpha_mode == AlphaMode.MASK,
             .wireframe = material.common.wireframe && renderer.caps.line_polygon_mode,
             .reflected = candidate.node.world.determinant() < 0,
             .cull = material.common.double_sided ? gpu::CullMode.NONE : gpu::CullMode.BACK,
         };
-        shadow_pipeline_for(renderer, draw.wireframe, vertex)!;
-        if (!draw.masked) continue;
+        if (catch excuse = shadow_pipeline_for(renderer, draw.wireframe, vertex, material)) {
+            if (material.kind != MaterialKind.CUSTOM || !pipeline_rejected(renderer, material.custom.shader, excuse)) {
+                return excuse~;
+            }
+            continue;
+        }
+        draw.material = material;
+        count++;
+        if (!draw.masked || material.kind == MaterialKind.CUSTOM) continue;
         TextureSlot base_map;
         switch (material.kind) {
             case BASIC: base_map = material.basic.map;
             case STANDARD: base_map = material.standard.base_color_map;
             case PHYSICAL: base_map = material.physical.standard.base_color_map;
             case TOON: base_map = material.toon.map;
+            case CUSTOM: unreachable();
         }
         TextureBinding binding = resolve_texture_slot(renderer, base_map)!;
         gpu::MappedGpuSpan alpha = slot.upload.take(&renderer.device, BasicMaterialGpu::size, STREAM_ALIGNMENT)!;
         write_shadow_material_block((BasicMaterialGpu*)alpha.bytes.ptr, material, binding);
         draw.alpha = alpha.address;
     }
-    return draws;
+    return draws[:count];
 }
 
 fn void? record_shadow_layer(
@@ -119,6 +157,7 @@ fn void? record_shadow_layer(
             renderer:  renderer,
             wireframe: draws.len ? draws[0].wireframe : false,
             vertex:    draws.len ? draws[0].vertex : mesh_vertex_variant({}, false, shader::SHADER_FLAG_DEPTH_ONLY),
+            material:  draws.len ? draws[0].material : null,
         )!,
     };
     bool state_set;
@@ -126,7 +165,7 @@ fn void? record_shadow_layer(
     gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
     foreach (draw : draws) {
         ShadowDrawState wanted = {
-            .pipeline = shadow_pipeline_for(renderer, draw.wireframe, draw.vertex)!,
+            .pipeline = shadow_pipeline_for(renderer, draw.wireframe, draw.vertex, draw.material)!,
             .cull = draw.cull,
             .front_face = draw.reflected != view_reflected
               ? gpu::FrontFace.CLOCKWISE : gpu::FrontFace.COUNTER_CLOCKWISE,

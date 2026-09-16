@@ -203,6 +203,16 @@ python3 scripts/build.py --example picking
 ./examples/build/picking [model.glb] --gpu-timings
 ```
 
+`custom_shader` draws a tinted sphere and a pulsing box through [custom shaders](docs/custom_shaders.md):
+their GLSL lives in `examples/shaders/custom/`, is compiled in process, and is reloaded when a file
+changes or on R. The box's vertex deformation is shared by its shadow, P pauses the pulse, and a
+broken edit is rejected by the backend while the previous shader keeps drawing:
+
+```bash
+python3 scripts/build.py --example custom_shader
+./examples/build/custom_shader --gpu-timings
+```
+
 `ibl` lights a metallic/roughness sphere grid with two bundled HDR environments.
 Its controls independently select lighting and background, adjust rotation and
 intensity, demonstrate diffuse-only occlusion, and apply per-environment processing
@@ -312,8 +322,8 @@ are currently included regardless of the `C3D_STB_IMAGE` indicator:
 ```json
 {
   "dependency-search-paths": [ "path/to/c3d.c3l/lib" ],
-  "dependencies": [ "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "b3" ],
-  "features": [ "C3D_GUI", "C3D_PHYSICS", "C3D_FBX", "C3D_RAY_TRACING", "C3D_STB_IMAGE" ]
+  "dependencies": [ "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "b3", "shaderc" ],
+  "features": [ "C3D_GUI", "C3D_PHYSICS", "C3D_FBX", "C3D_RAY_TRACING", "C3D_STB_IMAGE", "C3D_SHADER_COMPILER" ]
 }
 ```
 
@@ -324,6 +334,7 @@ are currently included regardless of the `C3D_STB_IMAGE` indicator:
 | `C3D_FBX` | the FBX importer |
 | `C3D_RAY_TRACING` | ray tracing |
 | `C3D_STB_IMAGE` | image support indicator; does not exclude the API or native decoder when absent |
+| `C3D_SHADER_COMPILER` | in-process GLSL compilation (`shader::compile`), and shaderc; custom shaders from SPIR-V bytes work without it |
 
 ## Contributing
 

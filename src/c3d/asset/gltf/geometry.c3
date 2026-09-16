@@ -98,6 +98,8 @@ fn bool has_normal_map(Importer* importer, gltf::Primitive* primitive) @private 
         case PHYSICAL:
             return material.physical.standard.normal_map.texture.asset.generation != 0
                 || material.physical.clearcoat_normal_map.texture.asset.generation != 0;
+        case CUSTOM:
+            return false;
         case BASIC:
         case TOON:
             return false;

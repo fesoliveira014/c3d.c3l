@@ -135,8 +135,28 @@ fn void? material_panel(AssetStore* assets, MaterialId material) {
                 minimum: MIN_EDITABLE_RIM_POWER,
                 maximum: float::max,
             );
+        case CUSTOM:
+            show_custom_params(assets, &record.data.custom);
     }
     if (changed) assets.mark_material_dirty(material);
+}
+
+fn void show_custom_params(AssetStore* assets, CustomParams* params) @local {
+    imgui::separator_text("Shader");
+    if (assets.shaders.is_live(params.shader)) {
+        ShaderAsset* shader = assets.shader(params.shader);
+        String key = shader.header.key.len ? shader.header.key : "unnamed";
+        imgui::text("%s (#%u revision %u)", key, params.shader.index, shader.header.revision);
+    } else {
+        imgui::text("dead shader #%u", params.shader.index);
+    }
+    uint present;
+    foreach (slot : params.slots) {
+        bool asset_slot = slot.texture.kind == TextureRefKind.ASSET && assets.textures.is_live(slot.texture.asset);
+        if (asset_slot || slot.texture.kind == TextureRefKind.RENDER_TARGET) present++;
+    }
+    imgui::text("Texture slots: %u of %u", present, material::MAX_CUSTOM_TEXTURE_SLOTS);
+    imgui::text("Payload: %u bytes", (uint)params.param_block.len);
 }
 
 fn bool edit_standard_params(StandardParams* params) @local {

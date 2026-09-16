@@ -158,8 +158,16 @@ fn void? Renderer.render_view(
         bool sheen;
         foreach (&candidate : candidates) {
             GpuGeometry* geometry = resolve_geometry(self, candidate.geometry)!;
-            MaterialRes* material = resolve_material(self, candidate.material)!;
             Material* material_description = &self.assets.material(candidate.material).data;
+            MaterialRes*? resolved = resolve_material(self, candidate.material);
+            if (catch excuse = resolved) {
+                if (!custom_material_unavailable(material_description, excuse)) return excuse~;
+                self.stats.dangling_refs++;
+                continue;
+            }
+            MaterialRes* material = resolved;
+            if (material_description.kind == MaterialKind.CUSTOM
+                && shader_unusable(self, material_description.custom.shader)) continue;
             sheen |= material_uses_sheen(material_description);
             validate_normal_geometry(
                 geometry: geometry,
@@ -179,10 +187,12 @@ fn void? Renderer.render_view(
             items[index] = {
                 .sort_key  = draw_sort_key(
                     vertex:    vertex,
-                    fragment:  material_fragment(material_description.kind),
+                    fragment:  material_fragment(material_description),
                     material:  candidate.material,
                     geometry:  candidate.geometry,
                     ndc_depth: candidate.ndc_depth,
+                    custom:    material_description.kind == MaterialKind.CUSTOM
+                      ? material_description.custom.shader : (ShaderId){},
                 ),
                 .candidate = candidate,
                 .geometry  = geometry,
@@ -196,8 +206,8 @@ fn void? Renderer.render_view(
             };
         }
         DrawItem[] opaque_items = items[:opaque_count];
-        DrawItem[] transmission_items = items[transmission_start:transmission_count];
-        DrawItem[] transparent_items = items[transparent_start:transparent_count];
+        DrawItem[] transmission_items = items[transmission_start:transmission_filled];
+        DrawItem[] transparent_items = items[transparent_start:transparent_filled];
         sort::quicksort(opaque_items, &by_sort_key);
         sort::quicksort(transmission_items, &by_transparent_depth);
         sort::quicksort(transparent_items, &by_transparent_depth);
@@ -276,7 +286,8 @@ fn void? Renderer.render_view(
             scene_sampler: transmission_items.len ? self.linear_clamp_sampler : (gpu::SamplerIndex)0,
             prev_view_proj: motion_blur && record.history.valid ? &record.history.view_proj : null,
         );
-        foreach (&item : items) {
+        DrawItem[][3] draw_groups = { opaque_items, transmission_items, transparent_items };
+        foreach (group : draw_groups) foreach (&item : group) {
             Node* node = item.candidate.node;
             Mat4 prev_world = node.world;
             if (motion_blur && record.history.has_previous(node)) {
@@ -549,21 +560,35 @@ fn MeshPreparation? prepare_mesh(
         return {};
     }
     GpuGeometry* geometry = resolve_geometry(renderer, geometry_id)!;
-    MaterialRes* material = resolve_material(renderer, material_id)!;
     Material* data = &renderer.assets.material(material_id).data;
+    MaterialRes*? resolved = resolve_material(renderer, material_id);
+    if (catch excuse = resolved) {
+        if (!custom_material_unavailable(data, excuse)) return excuse~;
+        renderer.stats.dangling_refs++;
+        return {};
+    }
+    MaterialRes* material = resolved;
+    if (data.kind == MaterialKind.CUSTOM && shader_unusable(renderer, data.custom.shader)) return {};
     validate_normal_geometry(
         geometry:          geometry,
         material:          data,
         bindings:          &material.bindings,
         line_polygon_mode: renderer.caps.line_polygon_mode,
     )!;
-    pipeline_for(renderer, data, mesh_vertex_variant(geometry.layout.flags, morphed))!;
+    if (catch excuse = pipeline_for(renderer, data, mesh_vertex_variant(geometry.layout.flags, morphed))) {
+        if (!custom_pipeline_rejected(renderer, data, excuse)) return excuse~;
+        return {};
+    }
     if (shadows && data.common.alpha_mode != AlphaMode.BLEND) {
-        shadow_pipeline_for(
+        if (catch excuse = shadow_pipeline_for(
             renderer:  renderer,
             wireframe: data.common.wireframe && renderer.caps.line_polygon_mode,
             vertex:    mesh_vertex_variant(geometry.layout.flags, morphed, shader::SHADER_FLAG_DEPTH_ONLY),
-        )!;
+            material:  data,
+        )) {
+            if (!custom_pipeline_rejected(renderer, data, excuse)) return excuse~;
+            return {};
+        }
     }
     return { .sheen = material_uses_sheen(data), .transmission = draw_list(data) == DrawList.TRANSMISSION };
 }
@@ -699,21 +724,7 @@ fn void? record_opaque_pass(
         .height = height,
     };
 
-    gpu::PipelineHandle pipeline;
-    if (items.len) {
-        pipeline = pipeline_for(renderer, material_data(renderer, items[0].material), items[0].vertex)!;
-    } else {
-        PipelineKey key = {
-            .vertex = { .shader = MESH },
-            .fragment = { .shader = BASIC },
-            .color_formats = { [0] = HDR_FORMAT },
-            .color_count = 1,
-            .depth_format = DEPTH_FORMAT,
-            .samples = gpu::SampleCount.ONE,
-            .polygon = gpu::PolygonMode.FILL,
-        };
-        pipeline = renderer.pipelines.get(&renderer.device, key)!;
-    }
+    gpu::PipelineHandle pipeline = first_pipeline(renderer, items)!;
 
     // Bound before the pass begins: the backend checks the bound pipeline against the pass formats at begin.
     gpu::cmd_bind_pipeline(&renderer.commands, pipeline)!;
@@ -831,7 +842,7 @@ fn void? record_loaded_pass(Renderer* renderer, ViewRecord* record, DrawItem[] i
         .width = width,
         .height = height,
     };
-    gpu::PipelineHandle pipeline = pipeline_for(renderer, material_data(renderer, items[0].material), items[0].vertex)!;
+    gpu::PipelineHandle pipeline = first_pipeline(renderer, items)!;
 
     // Bound before the pass begins: the backend checks the bound pipeline against the pass formats at begin.
     gpu::cmd_bind_pipeline(&renderer.commands, pipeline)!;
@@ -868,8 +879,13 @@ fn void? record_draws(
         Material* material = material_data(renderer, item.material);
         MaterialCommon* common = &material.common;
         bool blend = common.alpha_mode == AlphaMode.BLEND;
+        gpu::PipelineHandle? item_pipeline = pipeline_for(renderer, material, item.vertex);
+        if (catch excuse = item_pipeline) {
+            if (!custom_pipeline_rejected(renderer, material, excuse)) return excuse~;
+            continue;
+        }
         DrawState wanted = {
-            .pipeline = pipeline_for(renderer, material, item.vertex)!,
+            .pipeline = item_pipeline,
             .cull = common.double_sided ? gpu::CullMode.NONE : gpu::CullMode.BACK,
             .front_face = item.front_face,
             .topology = primitive_topology(item.geometry.topology),
@@ -964,7 +980,8 @@ fn void? validate_normal_geometry(
     bool layer_derivatives;
     switch (material.kind) {
         case BASIC:
-        case TOON: return;
+        case TOON:
+        case CUSTOM: return;
         case STANDARD: standard = &material.standard;
         case PHYSICAL:
             standard = &material.physical.standard;
@@ -984,12 +1001,13 @@ fn Material* material_data(Renderer* renderer, MaterialRes* material) @local {
     return &renderer.assets.material(material.asset).data;
 }
 
-fn ShaderVariant material_fragment(MaterialKind kind) @local {
-    switch (kind) {
+fn ShaderVariant material_fragment(Material* material) @local {
+    switch (material.kind) {
         case BASIC: return { .shader = BASIC };
         case STANDARD: return { .shader = STANDARD };
         case TOON: return { .shader = TOON };
         case PHYSICAL: return { .shader = PHYSICAL };
+        case CUSTOM: return {};
     }
 }
 
@@ -997,14 +1015,54 @@ fn gpu::PipelineHandle? pipeline_for(Renderer* renderer, Material* material, Sha
     bool wireframe = material.common.wireframe && renderer.caps.line_polygon_mode;
     PipelineKey key = {
         .vertex        = vertex,
-        .fragment      = material_fragment(material.kind),
+        .fragment      = material_fragment(material),
         .color_formats = { [0] = HDR_FORMAT },
         .color_count   = 1,
         .depth_format  = DEPTH_FORMAT,
         .samples       = gpu::SampleCount.ONE,
         .polygon       = wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL,
     };
+    if (material.kind != MaterialKind.CUSTOM) return renderer.pipelines.get(&renderer.device, key);
+
+    ShaderId shader = material.custom.shader;
+    asset::ShaderDesc* stages = &renderer.assets.shader(shader).desc;
+    key.shader = shader;
+    key.shader_revision = renderer.shaders[shader.index].revision;
+    key.custom = { .vertex = stages.vertex.shaded.len > 0, .fragment = true };
+    if (key.custom.vertex) key.vertex = { .shader = MESH };
+    CustomStageSource source = custom_stage_source(stages, key);
+    return renderer.pipelines.get(&renderer.device, key, &source);
+}
+
+fn gpu::PipelineHandle? first_pipeline(Renderer* renderer, DrawItem[] items) @private {
+    foreach (&item : items) {
+        Material* material = material_data(renderer, item.material);
+        gpu::PipelineHandle? pipeline = pipeline_for(renderer, material, item.vertex);
+        if (catch excuse = pipeline) {
+            if (!custom_pipeline_rejected(renderer, material, excuse)) return excuse~;
+            continue;
+        }
+        return pipeline;
+    }
+    PipelineKey key = {
+        .vertex = { .shader = MESH },
+        .fragment = { .shader = BASIC },
+        .color_formats = { [0] = HDR_FORMAT },
+        .color_count = 1,
+        .depth_format = DEPTH_FORMAT,
+        .samples = gpu::SampleCount.ONE,
+        .polygon = gpu::PolygonMode.FILL,
+    };
     return renderer.pipelines.get(&renderer.device, key);
+}
+
+fn bool custom_pipeline_rejected(Renderer* renderer, Material* material, fault excuse) @private {
+    return material.kind == MaterialKind.CUSTOM && pipeline_rejected(renderer, material.custom.shader, excuse);
+}
+
+fn bool custom_material_unavailable(Material* material, fault excuse) @private {
+    return material.kind == MaterialKind.CUSTOM
+        && (excuse == c3d::INVALID_ID || excuse == c3d::INVALID_ARGUMENT);
 }
 
 fn gpu::PrimitiveTopology primitive_topology(Topology topology) @private {

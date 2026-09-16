@@ -557,3 +557,106 @@ fn void test_render_preview_cube_face_directions() @test {
     Vec3 corner = render::preview_face_direction(CubeFace.POSITIVE_X, { 0, 0 });
     assert(corner.x == 1 && corner.y == 1 && corner.z == 1, "top-left of +X looks up and toward +Z");
 }
+
+fn render::PipelineKey custom_key(uint shader_index, uint revision) @local {
+    render::PipelineKey key = gradient_key();
+    key.shader = { .index = shader_index, .generation = 1 };
+    key.shader_revision = revision;
+    key.custom = { .fragment = true };
+    return key;
+}
+
+fn void test_pipeline_key_hash_and_equality_include_shader() @test {
+    render::PipelineKey first = custom_key(3, 1);
+    render::PipelineKey same = custom_key(3, 1);
+    assert(first.equals(same));
+    assert(first.hash() == same.hash());
+
+    render::PipelineKey other_revision = custom_key(3, 2);
+    assert(!first.equals(other_revision));
+    render::PipelineKey other_shader = custom_key(4, 1);
+    assert(!first.equals(other_shader));
+    render::PipelineKey other_stages = custom_key(3, 1);
+    other_stages.custom = { .vertex = true, .fragment = true };
+    assert(!first.equals(other_stages));
+    assert(!first.equals(gradient_key()));
+}
+
+fn void test_pipeline_cache_keys_of_selects_id_and_revision() @test {
+    render::PipelineCache cache = render::create_pipeline_cache(mem, shader::BUILTIN_REGISTRY);
+    defer cache.pipelines.free();
+    ShaderId first = { .index = 3, .generation = 1 };
+    ShaderId second = { .index = 4, .generation = 1 };
+    cache.pipelines.set(custom_key(3, 1), {});
+    render::PipelineKey depth_form = custom_key(3, 1);
+    depth_form.vertex = { .shader = MESH, .flags = shader::SHADER_FLAG_DEPTH_ONLY };
+    cache.pipelines.set(depth_form, {});
+    cache.pipelines.set(custom_key(3, 2), {});
+    cache.pipelines.set(custom_key(4, 1), {});
+    cache.pipelines.set(gradient_key(), {});
+
+    @pool() {
+        assert(cache.keys_of(tmem, first, 1).len == 2);
+        assert(cache.keys_of(tmem, first, 2).len == 1);
+        assert(cache.keys_of(tmem, second, 1).len == 1);
+        assert(cache.keys_of(tmem, second, 2).len == 0);
+        assert(cache.remove_shader(tmem, first).len == 3);
+        assert(cache.keys_of(tmem, first, 1).len == 0);
+        assert(cache.keys_of(tmem, second, 1).len == 1);
+        assert(cache.pipelines.has_key(gradient_key()));
+    };
+}
+
+fn void test_custom_stage_source_selects_depth_form_for_depth_only_keys() @test {
+    char[4] fragment = { 1, 1, 1, 1 };
+    char[4] shaded = { 2, 2, 2, 2 };
+    char[4] depth = { 3, 3, 3, 3 };
+    asset::ShaderDesc stages = { .fragment = fragment[..], .vertex = { .shaded = shaded[..], .depth = depth[..] } };
+    render::PipelineKey key = custom_key(3, 1);
+    key.custom = { .vertex = true, .fragment = true };
+    key.vertex = { .shader = MESH };
+    render::CustomStageSource shaded_source = render::custom_stage_source(&stages, key);
+    assert(shaded_source.vertex.ptr == &shaded[0] && shaded_source.fragment.ptr == &fragment[0]);
+
+    key.vertex = { .shader = MESH, .flags = shader::SHADER_FLAG_DEPTH_ONLY };
+    render::CustomStageSource depth_source = render::custom_stage_source(&stages, key);
+    assert(depth_source.vertex.ptr == &depth[0]);
+}
+
+fn void test_custom_material_block_packs_slots_and_payload_address() @test {
+    char[] block = mem::new_array(char, render::MATERIAL_STRIDE);
+    defer free(block.ptr);
+    TextureSlot[material::MAX_CUSTOM_TEXTURE_SLOTS] slots = material::CUSTOM_SLOTS_DEFAULT;
+    slots[3].uv_set = 1;
+    slots[3].transform.offset = { 0.25f, 0.5f };
+    Material custom = material::custom({ .index = 1, .generation = 1 }, {}, slots);
+    render::MaterialBindings bindings;
+    bindings.custom[0] = { .present = true, .texture_index = (gpu::TextureIndex)5, .sampler_index = (gpu::SamplerIndex)2 };
+    bindings.custom[3] = { .present = true, .texture_index = (gpu::TextureIndex)7, .sampler_index = (gpu::SamplerIndex)1 };
+    render::write_material_block(
+        block:      block,
+        material:   &custom,
+        bindings:   bindings,
+        parameters: (gpu::GpuAddress)0x1000,
+    );
+
+    shader::CustomMaterialGpu* packed = (shader::CustomMaterialGpu*)block.ptr;
+    assert(packed.kind == (uint)MaterialKind.CUSTOM.ordinal);
+    assert(packed.map_flags == (1 | 8 | 8 << shader::CUSTOM_MAP_UV1_SHIFT));
+    assert((uint)packed.slots[0].texture_index == 5 && (uint)packed.slots[0].sampler_index == 2);
+    assert((uint)packed.slots[3].texture_index == 7);
+    assert(packed.slots[3].uv_offset == (Vec2f){ 0.25f, 0.5f });
+    assert(packed.slots[1].uv_linear == (Vec4f){ 1, 0, 0, 1 });
+    assert((ulong)packed.parameters == 0x1000);
+}
+
+fn void test_draw_sort_key_groups_custom_by_shader() @test {
+    ShaderId shader_a = { .index = 5, .generation = 1 };
+    ShaderId shader_b = { .index = 6, .generation = 1 };
+    ulong a_first = render::draw_sort_key({ .shader = MESH }, {}, { .index = 9, .generation = 1 }, { .index = 9, .generation = 1 }, 0, shader_a);
+    ulong a_second = render::draw_sort_key({ .shader = MESH }, {}, { .index = 1, .generation = 1 }, { .index = 1, .generation = 1 }, 1, shader_a);
+    ulong b = render::draw_sort_key({ .shader = MESH }, {}, { .index = 0, .generation = 1 }, { .index = 0, .generation = 1 }, 1, shader_b);
+    assert(a_first >> 48 == a_second >> 48);
+    assert(b > a_first);
+    assert(key_of(5, 9, 9, 0) == a_first);
+}

@@ -15,14 +15,16 @@
     "c3cg",
     "b3",
     "cgltf",
-    "ufbx"
+    "ufbx",
+    "shaderc"
   ],
   "features": [
     "C3D_GUI",
     "C3D_PHYSICS",
     "C3D_FBX",
     "C3D_RAY_TRACING",
-    "C3D_STB_IMAGE"
+    "C3D_STB_IMAGE",
+    "C3D_SHADER_COMPILER"
   ],
   "wincrt": "static",
   "output": "build",
@@ -181,6 +183,12 @@
       "type": "executable",
       "sources": [
         "src/picking.c3"
+      ]
+    },
+    "custom_shader": {
+      "type": "executable",
+      "sources": [
+        "src/custom_shader.c3"
       ]
     }
   }

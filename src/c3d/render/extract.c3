@@ -91,7 +91,9 @@ fn DrawList draw_list(Material* material) {
 <*
  Ordering key: pipeline, material, geometry, then front to back.
  @param vertex : "Its flags distinguish deformed pipelines."
+ @param fragment : "Zero for a custom material, whose shader id takes its place."
  @param ndc_depth : "Reverse-Z depth of the bounds center, clamped to [0, 1]."
+ @param custom : "Store shader of a custom material; zero otherwise."
 *>
 fn ulong draw_sort_key(
     ShaderVariant vertex,
@@ -99,10 +101,12 @@ fn ulong draw_sort_key(
     MaterialId material,
     GeometryId geometry,
     float ndc_depth,
+    ShaderId custom = {},
 ) {
     ulong slot_mask = (1UL << SORT_KEY_SLOT_BITS) - 1;
     ulong depth = (ulong)(ushort)((1.0f - ndc_depth) * (float)ushort::max);
-    ulong pipeline = (ulong)fragment.shader.ordinal | (ulong)vertex.flags << SHADER_FLAG_SHIFT;
+    ulong stage = custom.generation ? (ulong)custom.index : (ulong)fragment.shader.ordinal;
+    ulong pipeline = stage | (ulong)vertex.flags << SHADER_FLAG_SHIFT;
     return (pipeline & slot_mask) << SORT_KEY_PIPELINE_SHIFT
         | ((ulong)material.index & slot_mask) << SORT_KEY_MATERIAL_SHIFT
         | ((ulong)geometry.index & slot_mask) << SORT_KEY_GEOMETRY_SHIFT

@@ -17,6 +17,9 @@ $assert MATERIAL_STRIDE >= BasicMaterialGpu::size;
 $assert MATERIAL_STRIDE >= StandardMaterialGpu::size;
 $assert MATERIAL_STRIDE >= ToonMaterialGpu::size;
 $assert MATERIAL_STRIDE >= PhysicalMaterialGpu::size;
+$assert MATERIAL_STRIDE >= CustomMaterialGpu::size;
+$assert material::MAX_CUSTOM_TEXTURE_SLOTS == shader::CUSTOM_TEXTURE_SLOTS;
+$assert (uint)MaterialKind.CUSTOM.ordinal == shader::MATERIAL_KIND_CUSTOM;
 
 <*
  Common material options packed into shader flags.
@@ -34,10 +37,15 @@ $assert shader::MATERIAL_ALPHA_BLEND == 1 << 2;
  Renderer-owned heap slot of one material record.
 *>
 struct MaterialRes {
-    MaterialId      asset;
-    uint            revision;
-    gpu::GpuAddress address;
-    MaterialBindings bindings;
+    MaterialId         asset;
+    uint               revision;
+    gpu::GpuAddress    address;
+    MaterialBindings   bindings;
+    ShaderId           shader;
+    uint               shader_revision;
+    gpu::GpuAllocation payload;
+    gpu::GpuAddress    payload_address;
+    usz                payload_size;
 }
 
 <*
@@ -68,9 +76,15 @@ fn void? Renderer.upload_material(&self, MaterialId material) {
  Write the packed block of a material.
  @param block : "Aligned to STREAM_ALIGNMENT; active fields overwritten."
  @param [&in] material : "Valid active material arm and texture coordinates."
+ @param parameters : "Custom payload address; zero for built-in kinds."
  @require block.len >= MATERIAL_STRIDE, (uptr)block.ptr % STREAM_ALIGNMENT == 0
 *>
-fn void write_material_block(char[] block, Material* material, MaterialBindings bindings) {
+fn void write_material_block(
+    char[] block,
+    Material* material,
+    MaterialBindings bindings,
+    gpu::GpuAddress parameters = (gpu::GpuAddress)0,
+) {
     MaterialFlags flags = {
         .alpha_mask = material.common.alpha_mode == AlphaMode.MASK,
         .double_sided = material.common.double_sided,
@@ -261,6 +275,18 @@ fn void write_material_block(char[] block, Material* material, MaterialBindings 
                 .gradient_sampler = bindings.gradient.sampler_index,
                 .map = pack_texture_map(params.map, bindings.base_color),
             };
+        case CUSTOM:
+            CustomMaterialGpu* packed = (CustomMaterialGpu*)block.ptr;
+            *packed = {
+                .kind = (uint)material.kind.ordinal,
+                .flags = (uint)flags,
+                .alpha_cutoff = material.common.alpha_cutoff,
+                .map_flags = custom_map_flags(&material.custom.slots, &bindings.custom),
+                .parameters = parameters,
+            };
+            foreach (index, slot : material.custom.slots) {
+                packed.slots[index] = pack_texture_map(slot, bindings.custom[index]);
+            }
     }
 }
 
@@ -339,6 +365,19 @@ fn uint texture_map_flags(TextureSlot slot, TextureBinding binding, uint map_bit
     return flags;
 }
 
+fn uint custom_map_flags(
+    TextureSlot[material::MAX_CUSTOM_TEXTURE_SLOTS]* slots,
+    TextureBinding[material::MAX_CUSTOM_TEXTURE_SLOTS]* bindings,
+) @private {
+    uint flags;
+    foreach (index, slot : *slots) {
+        uint slot_bit = 1u << index;
+        if ((*bindings)[index].present) flags |= slot_bit;
+        if (slot.uv_set == 1) flags |= slot_bit << shader::CUSTOM_MAP_UV1_SHIFT;
+    }
+    return flags;
+}
+
 fn MaterialBindings? resolve_material_bindings(Renderer* renderer, Material* material) @private {
     switch (material.kind) {
         case BASIC:
@@ -374,6 +413,12 @@ fn MaterialBindings? resolve_material_bindings(Renderer* renderer, Material* mat
                 .base_color = resolve_texture_slot(renderer, material.toon.map)!,
                 .gradient = resolve_gradient_map(renderer, material.toon.gradient_map)!,
             };
+        case CUSTOM:
+            MaterialBindings bindings;
+            foreach (index, slot : material.custom.slots) {
+                bindings.custom[index] = resolve_texture_slot(renderer, slot)!;
+            }
+            return bindings;
     }
 }
 
@@ -400,12 +445,33 @@ fn MaterialRes*? resolve_material(Renderer* renderer, MaterialId material) @priv
     if (material_uses_sheen(&record.data)) acquire_sheen_lut(renderer)!;
 
     bool same_asset = mirror.asset.index == material.index && mirror.asset.generation == material.generation;
-    if (same_asset && mirror.revision == record.header.revision
+    bool custom = record.data.kind == MaterialKind.CUSTOM;
+    ShaderId shader;
+    uint shader_revision;
+    if (custom) {
+        shader = record.data.custom.shader;
+        if (!renderer.assets.shaders.is_live(shader)) return c3d::INVALID_ID~;
+        ShaderRes* shader_mirror = resolve_shader(renderer, shader)!;
+        if (record.data.custom.param_block.len != renderer.assets.shader(shader).desc.param_block_size) {
+            return c3d::INVALID_ARGUMENT~;
+        }
+        shader_revision = shader_mirror.revision;
+    }
+    bool same_shader = mirror.shader.index == shader.index && mirror.shader.generation == shader.generation
+        && mirror.shader_revision == shader_revision;
+    if (same_asset && same_shader && mirror.revision == record.header.revision
         && material_bindings_match(mirror.bindings, bindings)) return mirror;
 
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::GpuAddress parameters;
+    if (custom) parameters = resolve_custom_payload(renderer, mirror, record.data.custom.param_block)!;
     gpu::MappedGpuSpan staging = slot.upload.take(&renderer.device, MATERIAL_STRIDE, STREAM_ALIGNMENT)!;
-    write_material_block(staging.bytes, &record.data, bindings);
+    write_material_block(
+        block:      staging.bytes,
+        material:   &record.data,
+        bindings:   bindings,
+        parameters: parameters,
+    );
     usz offset = (usz)material.index * MATERIAL_STRIDE;
     gpu::GpuSpan destination = renderer.material_heap_span.checked_subspan(offset, MATERIAL_STRIDE)!;
     renderer.pending_copies.push({ .src = staging.span, .dst = destination });
@@ -415,15 +481,60 @@ fn MaterialRes*? resolve_material(Renderer* renderer, MaterialId material) @priv
     mirror.asset = material;
     mirror.revision = record.header.revision;
     mirror.bindings = bindings;
+    mirror.shader = shader;
+    mirror.shader_revision = shader_revision;
     mirror.address = gpu::get_span_address(&renderer.device, destination)!;
     renderer.stats.uploads++;
     renderer.stats.upload_bytes += (uint)MATERIAL_STRIDE;
     return mirror;
 }
 
+fn gpu::GpuAddress? resolve_custom_payload(Renderer* renderer, MaterialRes* mirror, char[] bytes) @private {
+    if (!bytes.len) {
+        retire_custom_payload(renderer, mirror);
+        return (gpu::GpuAddress)0;
+    }
+    if (mirror.payload_size != bytes.len) {
+        retire_custom_payload(renderer, mirror);
+        gpu::AllocationDesc desc = {
+            .size         = bytes.len,
+            .alignment    = STREAM_ALIGNMENT,
+            .memory_class = gpu::MemoryClass.GPU_PRIVATE,
+            .access       = { .graphics },
+            .debug_name   = "custom_material_payload",
+        };
+        mirror.payload = gpu::allocate_memory(&renderer.device, &desc)!;
+        mirror.payload_size = bytes.len;
+        mirror.payload_address = gpu::get_span_address(
+            &renderer.device,
+            gpu::get_allocation_span(&renderer.device, mirror.payload)!,
+        )!;
+    } else {
+        renderer.pending_overwrite = true;
+    }
+
+    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan staging = slot.upload.take(&renderer.device, bytes.len, STREAM_ALIGNMENT)!;
+    staging.bytes[:bytes.len] = bytes[..];
+    gpu::GpuSpan destination = gpu::get_allocation_span(&renderer.device, mirror.payload)!;
+    renderer.pending_copies.push({ .src = staging.span, .dst = destination.checked_subspan(0, bytes.len)! });
+    renderer.stats.upload_bytes += (uint)bytes.len;
+    return mirror.payload_address;
+}
+
+fn void retire_custom_payload(Renderer* renderer, MaterialRes* mirror) @private {
+    if (mirror.payload.is_valid()) {
+        renderer.pending_upload_retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = mirror.payload });
+    }
+    mirror.payload = {};
+    mirror.payload_size = 0;
+    mirror.payload_address = (gpu::GpuAddress)0;
+}
+
 fn void sweep_materials(Renderer* renderer) @private {
     foreach (&mirror : renderer.materials) {
         if (!mirror.asset.generation || renderer.assets.materials.is_live(mirror.asset)) continue;
+        retire_custom_payload(renderer, mirror);
         *mirror = {};
     }
 }
@@ -441,6 +552,9 @@ fn gpu::GpuAllocation? allocate_material_heap(gpu::Device* device, usz slot_coun
 
 fn void free_material_heap(Renderer* renderer) @private {
     if (renderer.material_heap.is_valid()) (void)gpu::free_allocation(&renderer.device, &renderer.material_heap);
+    foreach (&mirror : renderer.materials) {
+        if (mirror.payload.is_valid()) (void)gpu::free_allocation(&renderer.device, &mirror.payload);
+    }
     alloc::free(renderer.allocator, renderer.materials.ptr);
 }
 
@@ -449,7 +563,7 @@ fn void free_material_heap(Renderer* renderer) @private {
  @param [&out] root : "Overwritten completely."
  @param [&in] material : "Valid Basic, Standard, Physical or Toon masked material."
  @param binding : "Resolved active-family base map."
- @require material.common.alpha_mode == AlphaMode.MASK
+ @require material.common.alpha_mode == AlphaMode.MASK, material.kind != MaterialKind.CUSTOM
 *>
 fn void write_shadow_material_block(BasicMaterialGpu* root, Material* material, TextureBinding binding) {
     TextureSlot slot;
@@ -467,6 +581,7 @@ fn void write_shadow_material_block(BasicMaterialGpu* root, Material* material, 
         case TOON:
             slot = material.toon.map;
             color = material.toon.color;
+        case CUSTOM: unreachable();
     }
     MaterialFlags flags = { .alpha_mask = true, .double_sided = material.common.double_sided };
     *root = {

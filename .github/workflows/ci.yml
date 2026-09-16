@@ -114,6 +114,7 @@ jobs:
             grep -rn 'import b3' src/c3d --include='*.c3' | grep -v 'src/c3d/physics/'
             grep -rn 'import gltf' src/c3d --include='*.c3' | grep -v 'src/c3d/asset/gltf/'
             grep -rn 'import ufbx' src/c3d --include='*.c3' | grep -v 'src/c3d/asset/fbx/'
+            grep -rn 'import shaderc' src/c3d --include='*.c3' | grep -v 'src/c3d/shader/'
             true
           )
           if [ -n "$violations" ]; then

@@ -56,6 +56,9 @@ const uint PHYSICAL_EXTENSION_MAP_THICKNESS = 16;
 const uint SHEEN_LUT_SIZE = 256;
 const uint SHEEN_LUT_SAMPLES = 4096;
 const uint SHEEN_PREFILTER_SAMPLES = 4096;
+const uint CUSTOM_TEXTURE_SLOTS = 8;
+const uint CUSTOM_MAP_UV1_SHIFT = 8;
+const uint MATERIAL_KIND_CUSTOM = 4;
 const uint TONEMAP_NONE = 0;
 const uint TONEMAP_ACES = 1;
 const uint TONEMAP_AGX = 2;
@@ -662,6 +665,24 @@ $assert $reflect(PhysicalMaterialGpu._pad0).offset == 568;
 $assert $reflect(PhysicalMaterialGpu._pad1).offset == 572;
 $assert $reflect(PhysicalMaterialGpu.transmission_map).offset == 576;
 $assert $reflect(PhysicalMaterialGpu.thickness_map).offset == 608;
+
+struct CustomMaterialGpu {
+    uint             kind;
+    uint             flags;
+    float            alpha_cutoff;
+    uint             map_flags;
+    TextureMapGpu[8] slots;
+    GpuAddress       parameters;
+    ulong            _pad0;
+}
+$assert CustomMaterialGpu::size == 288;
+$assert $reflect(CustomMaterialGpu.kind).offset == 0;
+$assert $reflect(CustomMaterialGpu.flags).offset == 4;
+$assert $reflect(CustomMaterialGpu.alpha_cutoff).offset == 8;
+$assert $reflect(CustomMaterialGpu.map_flags).offset == 12;
+$assert $reflect(CustomMaterialGpu.slots).offset == 16;
+$assert $reflect(CustomMaterialGpu.parameters).offset == 272;
+$assert $reflect(CustomMaterialGpu._pad0).offset == 280;
 
 struct GradeGpu {
     float        exposure;

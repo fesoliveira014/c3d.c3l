@@ -59,6 +59,9 @@ const uint PHYSICAL_EXTENSION_MAP_THICKNESS = 16u;
 const uint SHEEN_LUT_SIZE = 256u;
 const uint SHEEN_LUT_SAMPLES = 4096u;
 const uint SHEEN_PREFILTER_SAMPLES = 4096u;
+const uint CUSTOM_TEXTURE_SLOTS = 8u;
+const uint CUSTOM_MAP_UV1_SHIFT = 8u;
+const uint MATERIAL_KIND_CUSTOM = 4u;
 const uint TONEMAP_NONE = 0u;
 const uint TONEMAP_ACES = 1u;
 const uint TONEMAP_AGX = 2u;
@@ -396,6 +399,16 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer PhysicalMat
     uint _pad1;
     TextureMapGpu transmission_map;
     TextureMapGpu thickness_map;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer CustomMaterialGpu {
+    uint kind;
+    uint flags;
+    float alpha_cutoff;
+    uint map_flags;
+    TextureMapGpu slots[8];
+    uint64_t parameters;
+    uint64_t _pad0;
 };
 
 struct GradeGpu {
