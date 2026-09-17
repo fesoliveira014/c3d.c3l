@@ -196,6 +196,12 @@
       "sources": [
         "src/custom_compute.c3"
       ]
+    },
+    "compute_textures": {
+      "type": "executable",
+      "sources": [
+        "src/compute_textures.c3"
+      ]
     }
   }
 }

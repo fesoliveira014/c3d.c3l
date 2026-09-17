@@ -27,7 +27,7 @@ renderer packs the scene view's camera exposure into the display root each frame
 
 ## Routes
 
-Both routes run at the end of `render_view` and write the view's output rectangle.
+Both routes run inside `finish_view` and write the view's output rectangle.
 
 - FXAA off: `hdr_color` is sampled by `display.frag`, which grades, tone maps and applies the LUT
   in the final fullscreen pass. No working image exists; `Stats.post_dispatches` is zero and the
@@ -84,7 +84,8 @@ front of the focus distance, positive behind it, and a texel without geometry (r
 sits at infinity. Depth is linearized from the view's projection terms (`ProjectionTerms`),
 perspective or orthographic.
 
-The pass records inside `render_view` after the forward passes: `dof_coc.comp` splits each 2x2
+The pass records inside `finish_view`, after any dispatch the application placed between
+`render_view` and `finish_view`: `dof_coc.comp` splits each 2x2
 block into premultiplied half-resolution near and far layers with their coverage in alpha;
 `tile_max.comp` and `tile_neighbor.comp` dilate the near coverage over 16-pixel tiles;
 `dof_gather.comp` blurs each layer with a 48-tap disc (the far layer weights taps by their own

@@ -58,6 +58,8 @@ fn void? stats_panel(Renderer* renderer) {
             (double)renderer.stats.gpu_pass_ms[Pass.POST_CHAIN.ordinal]);
         imgui::text("Completed GPU composite: %.3f ms",
             (double)renderer.stats.gpu_pass_ms[Pass.COMPOSITE.ordinal]);
+        imgui::text("Completed GPU custom compute (post): %.3f ms",
+            (double)renderer.stats.gpu_pass_ms[Pass.CUSTOM_COMPUTE_POST.ordinal]);
     } else {
         imgui::text_unformatted("GPU timings disabled");
     }

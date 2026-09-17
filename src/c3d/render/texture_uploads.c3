@@ -9,6 +9,7 @@ import gpu;
 struct PendingTextureUpload {
     TextureId asset;
     uint revision;
+    gpu::TextureHandle texture;
     gpu::TextureState before;
     uint mip_count;
     gpu::BufferTextureCopyDesc[TEXTURE_MIP_CAPACITY] copies;
@@ -20,7 +21,7 @@ fn void? record_texture_uploads(Renderer* renderer, gpu::CommandList* commands) 
         if (pending.recorded) continue;
 
         gpu::TextureBarrier to_upload = gpu::texture_transition(
-            texture: pending.copies[0].texture,
+            texture: pending.texture,
             before: pending.before,
             after: {
                 .layout = gpu::TextureLayout.TRANSFER_DESTINATION,
@@ -34,7 +35,7 @@ fn void? record_texture_uploads(Renderer* renderer, gpu::CommandList* commands) 
         }
 
         gpu::TextureBarrier to_sampled = gpu::texture_transition(
-            texture: pending.copies[0].texture,
+            texture: pending.texture,
             before: to_upload.after,
             after: gpu::sampled_at({ .fragment_shader, .compute }),
         )!;

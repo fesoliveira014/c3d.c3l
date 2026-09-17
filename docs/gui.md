@@ -52,9 +52,9 @@ The frame sequence is:
 3. Call `scene.update_world()` so edits reach the current output.
 4. Call `gui.finish_frame()` to finalize native draw data.
 5. Begin the renderer frame. When `renderer.has_output`, record
-   `render_view(scene, camera, renderer.default_view)`, then `begin_overlay()`,
-   `gui.record(&overlay)` and `end_overlay(&overlay)`. The view writes the window inside
-   `render_view`; the overlay draws over it.
+   `render_view(scene, camera, renderer.default_view)` and `finish_view(renderer.default_view)`,
+   then `begin_overlay()`, `gui.record(&overlay)` and `end_overlay(&overlay)`. The view writes the
+   window inside `finish_view`; the overlay draws over it.
 6. End the renderer frame.
 
 Always call `finish_frame()` after `new_frame()`, including dormant/minimized windows and

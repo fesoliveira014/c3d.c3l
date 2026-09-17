@@ -10,6 +10,7 @@ const uint SHADOW_FACE_NEGATIVE_Y = 3;
 const uint SHADOW_FACE_POSITIVE_Z = 4;
 const uint SHADOW_FACE_NEGATIVE_Z = 5;
 const uint SHADOW_POINT_FACE_COUNT = 6;
+const uint MAX_DISPATCH_TEXTURES = 8;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8;
 const uint DRAW_RECEIVE_SHADOW = 1;
 const uint DRAW_ALPHA_MASK = 2;
@@ -91,6 +92,20 @@ struct DispatchRoot {
 $assert DispatchRoot::size == 16;
 $assert $reflect(DispatchRoot.textures).offset == 0;
 $assert $reflect(DispatchRoot.parameters).offset == 8;
+
+struct DispatchTextureGpu {
+    TextureIndex texture_index;
+    SamplerIndex sampler_index;
+}
+$assert DispatchTextureGpu::size == 8;
+$assert $reflect(DispatchTextureGpu.texture_index).offset == 0;
+$assert $reflect(DispatchTextureGpu.sampler_index).offset == 4;
+
+struct DispatchTexturesGpu {
+    DispatchTextureGpu[8] slots;
+}
+$assert DispatchTexturesGpu::size == 64;
+$assert $reflect(DispatchTexturesGpu.slots).offset == 0;
 
 struct GeometryRoot {
     GpuAddress positions;

@@ -171,6 +171,7 @@ struct Renderer {
     bool                    frame_open;
     bool                    overlay_open;
     bool                    compute_open;
+    Pass                    compute_pass;
     bool                    has_output;
     bool                    frame_recorded;
     bool                    output_suppressed;
@@ -330,6 +331,7 @@ fn void? Renderer.clear(&self, Vec4 color) {
  @return? gpu::DEVICE_BUSY, gpu::RESOURCE_IN_USE, gpu::UNSUPPORTED_FEATURE
  @return? c3d::SHADER_NOT_FOUND, gpu::SHADER_INVALID, gpu::PIPELINE_CREATE_FAILED
  @return? gpu::SLOT_TABLE_FULL, gpu::DESCRIPTOR_HEAP_FULL, gpu::COMMAND_ALLOCATOR_CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ARGUMENT
  @require self.frame_open, !self.overlay_open
 *>
 fn void? Renderer.end_frame(&self) {
@@ -353,7 +355,10 @@ fn void? Renderer.end_frame(&self) {
     self.has_output = false;
 
     defer catch (void)gpu::discard_commands(&self.commands);
-    close_custom_compute(self)!;
+    foreach (&record : self.views.items) {
+        if (record.live && record.rendered) return c3d::INVALID_ARGUMENT~;
+    }
+    close_custom_compute(self, frame)!;
     record_pending_copies(self, &self.commands)!;
     if (present) self.window_target.transition(&self.commands, PRESENT_STATE)!;
     slot.upload.flush(&self.device)!;
@@ -1035,6 +1040,7 @@ fn void abort_frame(Renderer* renderer) {
         foreach (index, &preview : renderer.previews) preview.image.state = renderer.frame_preview_states[index];
         foreach (&record : renderer.views.items) record.restore_states();
     }
+    foreach (&record : renderer.views.items) record.rendered = false;
     renderer.has_output = false;
     discard_uploads(renderer);
 }

@@ -160,6 +160,7 @@ struct ViewRecord {
     Target                               motion_blur_out;
     Target*                              scene_input;
     bool                                 post_chain_open;
+    bool                                 rendered;
     ProjectionTerms                      projection_terms;
     float                                exposure;
     ViewHistory                          history;
@@ -234,6 +235,15 @@ fn ViewDesc texture_view_desc(RenderTargetId target, OutputMode color = OutputMo
         .color        = color,
         .post         = post::default_post_stack(),
     };
+}
+
+<*
+ Pixel size of the view's working images; zero while the view has none.
+ @return? c3d::INVALID_ID
+*>
+fn uint[<2>]? Renderer.view_extent(&self, ViewId view) {
+    ViewRecord* record = self.views.try_get(view)!;
+    return { record.hdr_color.width, record.hdr_color.height };
 }
 
 <*

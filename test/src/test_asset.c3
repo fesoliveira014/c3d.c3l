@@ -351,6 +351,59 @@ fn void test_material_duplicate_key_and_capacity() @test {
     }
 }
 
+fn void test_add_texture_empty_forces_storage_and_defaults() @test {
+    AssetStore assets = make_store();
+    defer asset::destroy_asset_store(&assets);
+    TextureId noise = assets.add_texture_empty({ .width = 64, .height = 64, .format = PixelFormat.RGBA8_UNORM }, "noise")!!;
+    TextureAsset* record = assets.texture(noise);
+    assert(record.source_kind == TextureSourceKind.EMPTY);
+    assert(record.desc.storage && record.desc.mip_levels == 1 && record.desc.layers == 1);
+    assert(record.pixels.len == 0 && record.supplied_mips.len == 0);
+    assert(assets.find_texture("noise")!!.index == noise.index);
+
+    TextureId mipped = assets.add_texture_empty({ .width = 64, .height = 64, .format = PixelFormat.RGBA16_FLOAT, .mip_levels = 3 })!!;
+    assert(assets.texture(mipped).desc.mip_levels == 3);
+    assets.remove_texture(mipped);
+    assert(!assets.textures.is_live(mipped));
+}
+
+fn void test_add_texture_empty_rejects_generated_mips_and_zero_extent() @test {
+    AssetStore assets = make_store();
+    defer asset::destroy_asset_store(&assets);
+    if (catch excuse = assets.add_texture_empty({ .width = 64, .height = 64, .format = PixelFormat.RGBA8_UNORM, .generate_mips = true })) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "an empty texture with generated mips was accepted");
+    }
+    if (catch excuse = assets.add_texture_empty({ .width = 0, .height = 64, .format = PixelFormat.RGBA8_UNORM })) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "an empty texture with zero width was accepted");
+    }
+}
+
+fn void test_storage_rejects_compressed_and_srgb_formats() @test {
+    AssetStore assets = make_store();
+    defer asset::destroy_asset_store(&assets);
+    char[16] pixels;
+    PixelFormat[2] rejected = { PixelFormat.BC7_UNORM, PixelFormat.RGBA8_SRGB };
+    foreach (format : rejected) {
+        TextureDesc desc = { .width = 4, .height = 4, .layers = 1, .mip_levels = 1, .format = format, .storage = true };
+        if (catch excuse = assets.add_texture(desc, pixels[..])) {
+            assert(excuse == c3d::INVALID_ARGUMENT);
+        } else {
+            assert(false, "a storage texture with a compressed or sRGB format was accepted");
+        }
+        if (catch excuse = assets.add_texture_empty(desc)) {
+            assert(excuse == c3d::INVALID_ARGUMENT);
+        } else {
+            assert(false, "an empty texture with a compressed or sRGB format was accepted");
+        }
+    }
+    TextureDesc accepted = { .width = 4, .height = 4, .layers = 1, .mip_levels = 1, .format = PixelFormat.RGBA8_UNORM, .storage = true };
+    assets.add_texture(accepted, pixels[..])!!;
+}
+
 fn ShaderDesc make_shader_desc(char[] fragment, char[] shaded = {}, char[] depth = {}) @local {
     return { .fragment = fragment, .vertex = { .shaded = shaded, .depth = depth }, .param_block_size = 32 };
 }

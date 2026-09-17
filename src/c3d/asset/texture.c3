@@ -13,6 +13,7 @@ alias TexturePool = Pool{TextureAsset, TextureId};
 enum TextureSourceKind {
     MIP_ZERO,
     SUPPLIED_MIPS,
+    EMPTY,
 }
 
 <* One complete mip of one layer; input bytes are borrowed. *>
@@ -49,6 +50,7 @@ fn TextureId? AssetStore.add_texture(
     String key = "",
 ) {
     check_key(self, key)!;
+    check_storage_format(desc)!;
     TextureId id = self.textures.add({})!;
     *self.textures.get(id) = {
         .header = { .key = copy_string(self.allocator, key), .revision = 1 },
@@ -74,6 +76,7 @@ fn TextureId? AssetStore.add_texture_owned(
     String key = "",
 ) {
     check_key(self, key)!;
+    check_storage_format(desc)!;
     TextureId id = self.textures.add({})!;
     *self.textures.get(id) = {
         .header = { .key = copy_string(self.allocator, key), .revision = 1 },
@@ -99,6 +102,7 @@ fn TextureId? AssetStore.add_texture_mips(
     String key = "",
 ) {
     check_key(self, key)!;
+    check_storage_format(desc)!;
     if (!desc.mip_levels || !desc.layers || desc.generate_mips) return c3d::INVALID_ARGUMENT~;
     if ((ulong)desc.mip_levels * desc.layers != levels.len) return c3d::INVALID_ARGUMENT~;
     if (levels.len > (usz)sz::max / TextureMipData::size) return c3d::INVALID_ARGUMENT~;
@@ -133,6 +137,28 @@ fn TextureId? AssetStore.add_texture_mips(
     register_key(self, key, typed_ref(AssetKind.TEXTURE, texture));
 
     return texture;
+}
+
+<*
+ Add a storage texture with no pixels; contents are undefined until a dispatch writes them.
+ @param desc : "Storage is implied; zero mip_levels or layers mean one."
+ @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
+*>
+fn TextureId? AssetStore.add_texture_empty(&self, TextureDesc desc, String key = "") {
+    check_key(self, key)!;
+    if (!desc.width || !desc.height || desc.generate_mips) return c3d::INVALID_ARGUMENT~;
+    desc.storage = true;
+    if (!desc.mip_levels) desc.mip_levels = 1;
+    if (!desc.layers) desc.layers = 1;
+    check_storage_format(desc)!;
+    TextureId id = self.textures.add({})!;
+    *self.textures.get(id) = {
+        .header = { .key = copy_string(self.allocator, key), .revision = 1 },
+        .desc = desc,
+        .source_kind = EMPTY,
+    };
+    register_key(self, key, typed_ref(AssetKind.TEXTURE, id));
+    return id;
 }
 
 <*
@@ -181,8 +207,28 @@ fn void free_texture_source(Allocator allocator, TextureAsset* record) @private 
     switch (record.source_kind) {
         case MIP_ZERO: alloc::free(allocator, record.pixels.ptr);
         case SUPPLIED_MIPS: alloc::free(allocator, record.supplied_mips.ptr);
+        case EMPTY: break;
     }
 
     record.pixels = {};
     record.supplied_mips = {};
+}
+
+fn void? check_storage_format(TextureDesc desc) @private {
+    if (!desc.storage) return;
+    switch (desc.format) {
+        case RGBA8_UNORM:
+        case RGBA16_FLOAT:
+        case RGBA32_FLOAT: return;
+        case RGBA8_SRGB:
+        case BC1_RGBA_UNORM:
+        case BC1_RGBA_SRGB:
+        case BC3_UNORM:
+        case BC3_SRGB:
+        case BC4_UNORM:
+        case BC5_UNORM:
+        case BC6H_UFLOAT:
+        case BC7_UNORM:
+        case BC7_SRGB: return c3d::INVALID_ARGUMENT~;
+    }
 }

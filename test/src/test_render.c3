@@ -651,14 +651,56 @@ fn void test_dispatch_root_size_rounds_to_stream_alignment() @test {
     assert(render::dispatch_root_size(render::STREAM_ALIGNMENT + 1) == 2 * render::STREAM_ALIGNMENT);
 }
 
-fn void test_dispatch_after_render_view_faults() @test {
+fn void test_dispatch_rejects_more_textures_than_the_binding_block() @test {
     render::Renderer renderer;
     renderer.frame_open = true;
-    renderer.frame_recorded = true;
-    if (catch excuse = renderer.dispatch({ .groups = { 1, 1, 1 } })) {
+    render::DispatchTexture[render::MAX_DISPATCH_TEXTURES + 1] textures;
+    if (catch excuse = renderer.dispatch({ .groups = { 1, 1, 1 }, .textures = textures[..] })) {
         assert(excuse == c3d::INVALID_ARGUMENT);
     } else {
-        assert(false, "a dispatch after the first view was recorded");
+        assert(false, "a dispatch with nine textures was accepted");
+    }
+}
+
+fn void test_dispatch_texture_constructors_set_kind_access_and_ids() @test {
+    TextureId texture = { .index = 2, .generation = 1 };
+    RenderTargetId target = { .index = 3, .generation = 1 };
+    ViewId view = { .index = 4, .generation = 1 };
+    SamplerId sampler = { .index = 1, .generation = 1 };
+
+    render::DispatchTexture read = render::read_texture(texture, sampler);
+    assert(read.kind == render::DispatchTextureKind.ASSET && read.access == render::DispatchAccess.READ);
+    assert(read.texture.index == 2 && read.sampler.index == 1);
+    render::DispatchTexture write = render::write_texture(texture, 2, 5);
+    assert(write.access == render::DispatchAccess.WRITE && write.mip == 2 && write.layer == 5);
+    assert(!write.sampler.generation);
+    render::DispatchTexture in_place = render::write_view_color(view, render::DispatchAccess.READ_WRITE);
+    assert(in_place.kind == render::DispatchTextureKind.VIEW_COLOR && in_place.view.index == 4);
+    assert(in_place.access == render::DispatchAccess.READ_WRITE);
+    assert(render::read_target(target).kind == render::DispatchTextureKind.RENDER_TARGET);
+    assert(render::write_target(target).access == render::DispatchAccess.WRITE);
+    assert(render::read_view_depth(view).kind == render::DispatchTextureKind.VIEW_DEPTH);
+    assert(render::read_view_color(view).access == render::DispatchAccess.READ);
+}
+
+fn void test_storage_view_slot_orders_layers_then_mips() @test {
+    assert(render::storage_view_slot(1, 0, 0) == 0);
+    assert(render::storage_view_slot(4, 0, 3) == 3);
+    assert(render::storage_view_slot(4, 1, 0) == 4);
+    assert(render::storage_view_slot(4, 5, 2) == 22);
+}
+
+fn void test_finish_view_requires_a_rendered_view() @test {
+    render::Renderer renderer;
+    renderer.frame_open = true;
+    renderer.has_output = true;
+    renderer.views = pool::create_pool{render::ViewRecord, ViewId}(mem, 1);
+    defer pool::destroy_pool{render::ViewRecord, ViewId}(&renderer.views);
+    ViewId view = renderer.views.add({ .live = true })!!;
+    if (catch excuse = renderer.finish_view(view)) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "finish_view accepted a view that was not rendered");
     }
 }
 

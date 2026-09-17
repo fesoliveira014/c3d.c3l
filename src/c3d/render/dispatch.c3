@@ -2,17 +2,58 @@ module c3d::render;
 
 import c3d;
 import c3d::asset;
+import c3d::material;
 import c3d::shader;
 import gpu;
 
 <*
- One compute dispatch: its shader, root bytes, workgroup counts and written buffers.
+ Textures one dispatch may declare.
+*>
+const uint MAX_DISPATCH_TEXTURES = 8; // mirrored as MAX_DISPATCH_TEXTURES in c3d.abi; one 64-byte block per dispatch
+$assert MAX_DISPATCH_TEXTURES == shader::MAX_DISPATCH_TEXTURES;
+
+<*
+ Which image a dispatch texture declaration names.
+*>
+enum DispatchTextureKind {
+    ASSET,
+    RENDER_TARGET,
+    VIEW_COLOR,
+    VIEW_DEPTH,
+}
+
+<*
+ How a dispatch uses a declared texture: sampled, stored, or loaded and stored.
+*>
+enum DispatchAccess {
+    READ,
+    WRITE,
+    READ_WRITE,
+}
+
+<*
+ One texture a dispatch reads or writes; the id matching kind is live, the others unused.
+*>
+struct DispatchTexture {
+    DispatchTextureKind kind;
+    DispatchAccess      access;
+    TextureId           texture;
+    RenderTargetId      target;
+    ViewId              view;
+    SamplerId           sampler;
+    uint                mip;
+    uint                layer;
+}
+
+<*
+ One compute dispatch: its shader, root bytes, workgroup counts, written buffers and textures.
 *>
 struct DispatchDesc {
-    ComputeShaderId shader;
-    char[]          root;
-    uint[<3>]       groups;
-    BufferId[]      writes;
+    ComputeShaderId   shader;
+    char[]            root;
+    uint[<3>]         groups;
+    BufferId[]        writes;
+    DispatchTexture[] textures;
 }
 
 <*
@@ -24,6 +65,81 @@ struct ComputeShaderRes {
     uint            rejected_revision;
 }
 
+struct ResolvedDispatchTexture @private {
+    Target*           target;
+    TextureRes*       mirror;
+    gpu::TextureState use;
+}
+
+<*
+ Sampled read of a store texture; a zero sampler selects linear clamp.
+ @pure
+*>
+fn DispatchTexture read_texture(TextureId texture, SamplerId sampler = {}) {
+    return { .kind = DispatchTextureKind.ASSET, .access = DispatchAccess.READ, .texture = texture, .sampler = sampler };
+}
+
+<*
+ Storage write of one mip of one layer of a storage store texture.
+ @pure
+*>
+fn DispatchTexture write_texture(
+    TextureId texture,
+    uint mip = 0,
+    uint layer = 0,
+    DispatchAccess access = DispatchAccess.WRITE,
+) {
+    return { .kind = DispatchTextureKind.ASSET, .access = access, .texture = texture, .mip = mip, .layer = layer };
+}
+
+<*
+ Sampled read of a render target; a zero sampler selects linear clamp.
+ @pure
+*>
+fn DispatchTexture read_target(RenderTargetId target, SamplerId sampler = {}) {
+    return { .kind = DispatchTextureKind.RENDER_TARGET, .access = DispatchAccess.READ, .target = target, .sampler = sampler };
+}
+
+<*
+ Storage write of a render target.
+ @pure
+*>
+fn DispatchTexture write_target(RenderTargetId target, DispatchAccess access = DispatchAccess.WRITE) {
+    return { .kind = DispatchTextureKind.RENDER_TARGET, .access = access, .target = target };
+}
+
+<*
+ Sampled read of a view's current scene image; a zero sampler selects linear clamp.
+ @pure
+*>
+fn DispatchTexture read_view_color(ViewId view, SamplerId sampler = {}) {
+    return { .kind = DispatchTextureKind.VIEW_COLOR, .access = DispatchAccess.READ, .view = view, .sampler = sampler };
+}
+
+<*
+ Storage write of a view's current scene image.
+ @pure
+*>
+fn DispatchTexture write_view_color(ViewId view, DispatchAccess access = DispatchAccess.WRITE) {
+    return { .kind = DispatchTextureKind.VIEW_COLOR, .access = access, .view = view };
+}
+
+<*
+ Sampled read of a view's depth image; a zero sampler selects linear clamp.
+ @pure
+*>
+fn DispatchTexture read_view_depth(ViewId view, SamplerId sampler = {}) {
+    return { .kind = DispatchTextureKind.VIEW_DEPTH, .access = DispatchAccess.READ, .view = view, .sampler = sampler };
+}
+
+<*
+ Index of the storage view of one mip of one layer.
+ @pure
+*>
+fn usz storage_view_slot(uint mip_count, uint layer, uint mip) {
+    return (usz)layer * mip_count + mip;
+}
+
 <*
  Ring bytes the application's root of the length occupies; zero stays zero.
  @pure
@@ -33,23 +149,23 @@ fn usz dispatch_root_size(usz root_len) {
 }
 
 <*
- Record a compute dispatch into the open frame, before its first view.
+ Record a compute dispatch into the open frame at its call position.
  A rejected stage is skipped and counted; the previous revision keeps dispatching.
  @param [&inout] self : "Records pending uploads first."
  @require self.frame_open, !self.overlay_open
- @return? c3d::INVALID_ARGUMENT, c3d::INVALID_ID, c3d::SHADER_NOT_FOUND
- @return? gpu::UNSUPPORTED_FEATURE, gpu::SLOT_TABLE_FULL, gpu::DESCRIPTOR_HEAP_FULL
+ @return? c3d::INVALID_ARGUMENT, c3d::INVALID_ID, c3d::UNSUPPORTED, c3d::SHADER_NOT_FOUND
+ @return? c3d::ASSET_DATA_UNAVAILABLE, gpu::UNSUPPORTED_FEATURE, gpu::SLOT_TABLE_FULL, gpu::DESCRIPTOR_HEAP_FULL
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
  @return? gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
- @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
- @return? gpu::DEVICE_BUSY, gpu::RESOURCE_IN_USE
+ @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR, gpu::DEVICE_BUSY, gpu::RESOURCE_IN_USE
 *>
 fn void? Renderer.dispatch(&self, DispatchDesc desc) {
-    if (self.frame_recorded) return c3d::INVALID_ARGUMENT~;
+    if (desc.textures.len > MAX_DISPATCH_TEXTURES) return c3d::INVALID_ARGUMENT~;
     if (!self.assets.compute_shaders.is_live(desc.shader)) return c3d::INVALID_ID~;
     foreach (buffer : desc.writes) {
         if (!self.buffers.is_live(buffer)) return c3d::INVALID_ID~;
     }
+    check_dispatch_textures(self, desc.textures)!;
 
     ComputeShaderRes* mirror = resolve_compute_shader(self, desc.shader)!;
     if (!mirror.revision) return;
@@ -64,16 +180,14 @@ fn void? Renderer.dispatch(&self, DispatchDesc desc) {
         return excuse~;
     }
 
-    record_pending_copies(self, &self.commands)!;
-    if (!self.compute_open) {
-        write_pass_timestamp(
-            renderer:    self,
-            frame_index: self.frame_index,
-            pass:        Pass.CUSTOM_COMPUTE,
-            half:        TIMESTAMP_BEGIN,
-        )!;
-        self.compute_open = true;
+    DispatchTexturesGpu bindings;
+    ResolvedDispatchTexture[MAX_DISPATCH_TEXTURES] resolved;
+    foreach (index, &declared : desc.textures) {
+        resolved[index] = resolve_dispatch_texture(self, declared, &bindings.slots[index])!;
     }
+    record_pending_copies(self, &self.commands)!;
+    open_custom_compute(self)!;
+    foreach (&entry : resolved[:desc.textures.len]) transition_dispatch_texture(self, entry, entry.use)!;
 
     Frame* slot = &self.frames[self.frame_index % FRAMES_IN_FLIGHT];
     gpu::GpuAddress parameters;
@@ -86,8 +200,14 @@ fn void? Renderer.dispatch(&self, DispatchDesc desc) {
         staging.bytes[:desc.root.len] = desc.root[..];
         parameters = staging.address;
     }
+    gpu::GpuAddress textures;
+    if (desc.textures.len) {
+        gpu::MappedGpuSpan block = slot.upload.take(&self.device, DispatchTexturesGpu::size, STREAM_ALIGNMENT)!;
+        *(DispatchTexturesGpu*)block.bytes.ptr = bindings;
+        textures = block.address;
+    }
     gpu::MappedGpuSpan root = slot.upload.take(&self.device, DispatchRoot::size, STREAM_ALIGNMENT)!;
-    *(DispatchRoot*)root.bytes.ptr = { .parameters = parameters };
+    *(DispatchRoot*)root.bytes.ptr = { .textures = textures, .parameters = parameters };
 
     if (desc.writes.len) {
         gpu::Barrier readers_done = { .before = CONSUMER_STAGES, .after = { .compute } };
@@ -98,6 +218,11 @@ fn void? Renderer.dispatch(&self, DispatchDesc desc) {
     if (desc.writes.len) {
         gpu::Barrier writes_visible = { .before = { .compute }, .after = CONSUMER_STAGES };
         gpu::cmd_barrier(&self.commands, &writes_visible)!;
+    }
+    foreach (&entry : resolved[:desc.textures.len]) {
+        if (entry.mirror && entry.use.layout == gpu::TextureLayout.STORAGE) {
+            transition_dispatch_texture(self, entry, gpu::sampled_at({ .fragment_shader, .compute }))!;
+        }
     }
     self.stats.dispatches++;
 }
@@ -123,16 +248,120 @@ fn void? Renderer.upload_compute_shader(&self, ComputeShaderId shader) {
     return submit_pending(self);
 }
 
-fn void? close_custom_compute(Renderer* renderer) @private {
+fn void? open_custom_compute(Renderer* renderer) @private {
+    if (renderer.compute_open) return;
+    Pass pass = renderer.frame_recorded ? Pass.CUSTOM_COMPUTE_POST : Pass.CUSTOM_COMPUTE;
+    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    // A slot closed earlier this frame cannot be timed twice without a query reset.
+    if (slot.timed[pass.ordinal]) return;
+    write_pass_timestamp(
+        renderer:    renderer,
+        frame_index: renderer.frame_index,
+        pass:        pass,
+        half:        TIMESTAMP_BEGIN,
+    )!;
+    renderer.compute_open = true;
+    renderer.compute_pass = pass;
+}
+
+fn void? close_custom_compute(Renderer* renderer, ulong frame_index) @private {
     if (!renderer.compute_open) return;
     renderer.compute_open = false;
     write_pass_timestamp(
         renderer:    renderer,
-        frame_index: renderer.frame_index,
-        pass:        Pass.CUSTOM_COMPUTE,
+        frame_index: frame_index,
+        pass:        renderer.compute_pass,
         half:        TIMESTAMP_END,
     )!;
-    renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT].timed[Pass.CUSTOM_COMPUTE.ordinal] = true;
+    renderer.frames[frame_index % FRAMES_IN_FLIGHT].timed[renderer.compute_pass.ordinal] = true;
+}
+
+fn void? check_dispatch_textures(Renderer* renderer, DispatchTexture[] textures) @private {
+    foreach (&declared : textures) {
+        switch (declared.kind) {
+            case ASSET:
+                if (!renderer.assets.textures.is_live(declared.texture)) return c3d::INVALID_ID~;
+                TextureAsset* record = renderer.assets.texture(declared.texture);
+                if (declared.access != DispatchAccess.READ && !record.desc.storage) return c3d::INVALID_ARGUMENT~;
+            case RENDER_TARGET:
+                TargetRecord* record = renderer.targets.try_get(declared.target)!;
+                if (declared.access != DispatchAccess.READ && record.format == PixelFormat.RGBA8_SRGB) {
+                    return c3d::UNSUPPORTED~;
+                }
+            case VIEW_COLOR:
+                renderer.views.try_get(declared.view)!;
+            case VIEW_DEPTH:
+                renderer.views.try_get(declared.view)!;
+                if (declared.access != DispatchAccess.READ) return c3d::INVALID_ARGUMENT~;
+        }
+        if (declared.access == DispatchAccess.READ && declared.sampler.generation
+            && !renderer.assets.samplers.is_live(declared.sampler)) {
+            return c3d::INVALID_ID~;
+        }
+    }
+    return;
+}
+
+fn ResolvedDispatchTexture? resolve_dispatch_texture(
+    Renderer* renderer,
+    DispatchTexture* declared,
+    DispatchTextureGpu* slot,
+) @private {
+    ResolvedDispatchTexture entry;
+    switch (declared.kind) {
+        case ASSET:
+            entry.mirror = resolve_texture(renderer, declared.texture)!;
+            if (declared.access != DispatchAccess.READ) {
+                if (declared.mip >= entry.mirror.mip_count || declared.layer >= entry.mirror.layers) {
+                    return c3d::INVALID_ARGUMENT~;
+                }
+                usz view_slot = storage_view_slot(entry.mirror.mip_count, declared.layer, declared.mip);
+                slot.texture_index = entry.mirror.storage_views[view_slot].index;
+            } else {
+                slot.texture_index = entry.mirror.view.index;
+            }
+        case RENDER_TARGET:
+            entry.target = &renderer.targets.get(declared.target).target;
+            slot.texture_index = entry.target.view.index;
+        case VIEW_COLOR:
+            entry.target = renderer.views.get(declared.view).scene_input;
+            if (!entry.target.texture.is_valid()) return c3d::INVALID_ARGUMENT~;
+            slot.texture_index = entry.target.view.index;
+        case VIEW_DEPTH:
+            entry.target = &renderer.views.get(declared.view).depth;
+            if (!entry.target.texture.is_valid()) return c3d::INVALID_ARGUMENT~;
+            slot.texture_index = entry.target.view.index;
+    }
+    switch (declared.access) {
+        case READ:
+            entry.use = gpu::sampled_at({ .compute });
+            slot.sampler_index = declared.sampler.generation
+                ? resolve_sampler(renderer, declared.sampler)!.index
+                : renderer.linear_clamp_sampler;
+        case WRITE:
+            entry.use = gpu::storage_at({ .compute }, { .write });
+        case READ_WRITE:
+            entry.use = gpu::storage_at({ .compute }, { .read, .write });
+    }
+    return entry;
+}
+
+fn void? transition_dispatch_texture(
+    Renderer* renderer,
+    ResolvedDispatchTexture* entry,
+    gpu::TextureState next,
+) @private {
+    if (entry.target) return entry.target.transition(&renderer.commands, next);
+
+    // A store texture uploaded this frame is left sampled by its recorded copies, not by its committed state.
+    gpu::TextureState before = entry.mirror.state;
+    foreach (&pending : renderer.pending_texture_uploads) {
+        if (pending.texture == entry.mirror.texture) before = gpu::sampled_at({ .fragment_shader, .compute });
+    }
+    if (mem::equals(&before, &next, gpu::TextureState::size)) return;
+    gpu::TextureBarrier barrier = gpu::texture_transition(entry.mirror.texture, before, next)!;
+    gpu::cmd_texture_barrier(&renderer.commands, &barrier)!;
+    entry.mirror.state = next;
 }
 
 fn void? rebuild_compute_pipeline(Renderer* renderer, ComputeShaderId shader) @private {

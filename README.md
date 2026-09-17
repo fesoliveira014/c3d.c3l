@@ -223,6 +223,16 @@ python3 scripts/build.py --example custom_compute
 ./examples/build/custom_compute --gpu-timings
 ```
 
+`compute_textures` writes a noise texture on the GPU every frame and fogs the view in place: an empty
+storage texture is filled by a compute stage and bound as a material map, and a second dispatch
+between `render_view` and `finish_view` samples the view's depth and blends fog into its scene image.
+F toggles the fog, N freezes the noise, both GLSL files reload on change or R:
+
+```bash
+python3 scripts/build.py --example compute_textures
+./examples/build/compute_textures --gpu-timings
+```
+
 `ibl` lights a metallic/roughness sphere grid with two bundled HDR environments.
 Its controls independently select lighting and background, adjust rotation and
 intensity, demonstrate diffuse-only occlusion, and apply per-environment processing

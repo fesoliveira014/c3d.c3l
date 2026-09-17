@@ -154,7 +154,7 @@ A configuration that fails on first use (a forward pipeline, or a shadow caster'
 
 ## Compute dispatch
 
-An application runs its own compute stages inside a frame: a `ComputeShaderAsset` in the store, renderer-owned buffers the stage reads and writes, and `Renderer.dispatch` recorded after the frame's uploads and before its first view.
+An application runs its own compute stages inside a frame: a `ComputeShaderAsset` in the store, renderer-owned buffers and declared textures the stage reads and writes, and `Renderer.dispatch` recorded at its call position in the frame.
 
 ```c3
 ComputeShaderDesc compute_desc = { .compute = compute_spirv };
@@ -205,17 +205,48 @@ renderer.dispatch({
     .writes = writes[..],
 })!;
 renderer.render_view(&scene, camera_node, renderer.default_view)!;
+renderer.finish_view(renderer.default_view)!;
 renderer.end_frame()!;
 ```
 
-`root` is the application's std430 root; its bytes are copied into the upload ring and their address becomes `DispatchRoot.parameters` (zero for an empty root). `writes` names the buffers the dispatch writes: the renderer records one barrier before the dispatch, from every consumer stage to compute, and one after, from compute to the vertex, fragment and compute stages, so a later dispatch or draw in the same frame reads the results. A dispatch with no writes records no barrier. Reads need no declaration. Dispatches record in call order, after the frame's pending asset uploads; `dispatch` and `write_buffer` fault `INVALID_ARGUMENT` once a view has been recorded, and `write_buffer` also faults after the frame's first dispatch. A dead shader or buffer id faults `INVALID_ID`. Textures, indirect dispatch and readback are outside this contract.
+`root` is the application's std430 root; its bytes are copied into the upload ring and their address becomes `DispatchRoot.parameters` (zero for an empty root). `writes` names the buffers the dispatch writes: the renderer records one barrier before the dispatch, from every consumer stage to compute, and one after, from compute to the vertex, fragment and compute stages, so a later dispatch or draw in the same frame reads the results. A dispatch with no writes records no buffer barrier. Buffer reads need no declaration. Dispatches record in call order anywhere between `begin_frame` and `end_frame`, outside an overlay, after the frame's pending asset uploads; `write_buffer` faults `INVALID_ARGUMENT` after the frame's first dispatch, so every staged write lands before every dispatch. A dead shader or buffer id faults `INVALID_ID`. Indirect dispatch and readback are outside this contract.
+
+### Textures
+
+A dispatch declares every texture it samples or stores in `DispatchDesc.textures`, at most `MAX_DISPATCH_TEXTURES` (8) entries; entry `i` becomes slot `i` of the generated `DispatchTexturesGpu` block behind `DispatchRoot.textures`, `{ uint texture_index; uint sampler_index; }` per slot. The constructors name the source and the access:
+
+| Constructor | Source | Access |
+| --- | --- | --- |
+| `read_texture(texture, sampler = {})` | store texture | sampled |
+| `write_texture(texture, mip = 0, layer = 0, access = WRITE)` | storage store texture | store, or load and store with `READ_WRITE` |
+| `read_target(target, sampler = {})`, `write_target(target, access = WRITE)` | render target | sampled, or storage (not for `RGBA8_SRGB` targets: `UNSUPPORTED`) |
+| `read_view_color(view, sampler = {})`, `write_view_color(view, access = WRITE)` | the view's current scene image | sampled or storage |
+| `read_view_depth(view, sampler = {})` | the view's depth image | sampled only |
+
+A zero sampler id selects the renderer's linear clamp sampler. Before the dispatch the renderer moves each declared image into its declared state, so a target rendered by an earlier view, a texture uploaded this frame, or an image written by an earlier dispatch is readable without further declaration; after the dispatch a store texture returns to the sampled state materials expect, while targets and view images keep their tracked state for the next pass that uses them.
+
+```glsl
+DispatchRoot root = DispatchRoot(pc.root_gpu);
+DispatchTexturesGpu textures = DispatchTexturesGpu(root.textures);
+float depth = sample_texture_2d(textures.slots[0].texture_index, textures.slots[0].sampler_index, uv).r;
+vec4 color = load_storage_texture(textures.slots[1].texture_index, ivec2(coord));
+store_storage_texture(textures.slots[1].texture_index, ivec2(coord), mix(color, fog, amount));
+```
+
+A store texture is writable when its `TextureDesc.storage` is set; block-compressed and sRGB formats reject the flag with `INVALID_ARGUMENT`. `add_texture_empty(desc, key)` creates a storage texture with no pixels, contents undefined until a dispatch writes them; it may be bound by a material before that. A dispatch writes one mip of one layer per declaration; levels it does not write keep their previous contents, and `Renderer.upload(texture)` writes the CPU pixels back over the GPU contents.
+
+### Views
+
+`render_view` records a view's scene passes; `finish_view(view)` records its depth of field, display chain and output. A dispatch between the two reads the view's depth and reads or writes its scene image in place, and the post chain sees the result; a dispatch after `finish_view` sees the finished image. `end_frame` faults `INVALID_ARGUMENT` when a rendered view was not finished; `Renderer.render` calls both. `view_extent(view)` gives the working size a dispatch over the view covers. A `write_view_color` before the view's `render_view` is overwritten by the view's clear.
 
 Compute pipelines share the pipeline cache and the reload behavior of custom materials: `replace_compute_shader` followed by the next dispatch, or by `renderer.upload(compute_shader)`, rebuilds the pipeline under the new revision and publishes it on success; a backend rejection (a push block that is not `RootPush`, a missing `main`) keeps the previous revision dispatching, lands in the debug log and `Stats.shader_rejections`, and `upload` returns the fault. A first revision that is rejected skips its dispatches until the shader is replaced.
 
-`Stats.dispatches` counts the frame's custom dispatches; `Pass.CUSTOM_COMPUTE` times them together, between the uploads and the shadow atlas.
+`Stats.dispatches` counts the frame's custom dispatches; `Pass.CUSTOM_COMPUTE` times those before the frame's first `render_view` and `Pass.CUSTOM_COMPUTE_POST` those after.
 
 ## Example
 
 `examples/custom_shader` keeps `tint.frag.glsl`, `pulse.vert.glsl` and `pulse.frag.glsl` under `examples/shaders/custom/`, compiles them in process at startup, and every half second compares the files' modification times with the ones it last saw; a change, or R, recompiles and replaces the shader, printing the compiler log or the rejection fault. P pauses the pulse through `@custom_params`. Editing `pulse.frag.glsl` so its push block does not match (add a member to `Push`) demonstrates the rejection: the console shows the `SHADER_INVALID` diagnostic, the stats panel counts a rejection, and the box keeps drawing with the previous shader until the file is fixed.
 
 `examples/custom_compute` advances a particle buffer with `particles.comp.glsl` every frame and draws it as camera-facing quads through a custom material whose vertex stage pulls each particle by `gl_VertexIndex / 4` from the same buffer; an `UPLOAD` buffer carries the moving emitter. All three GLSL files are polled and reloaded like the custom shader example, Space reseeds the particles, and the stats panel shows `Dispatches: 1` and the completed custom compute time. Breaking the compute push block demonstrates the rejection: the console shows `SHADER_INVALID`, and the particles keep moving under the previous revision until the file is fixed.
+
+`examples/compute_textures` writes an animated value-noise pattern into an empty storage texture every frame with `noise.comp.glsl` and binds it as the boxes' base map, then, between `render_view` and `finish_view`, runs `fog.comp.glsl` over the view: it samples the depth image and loads and stores the scene image in place. F toggles the fog, N freezes the noise, R reloads; both files are polled.

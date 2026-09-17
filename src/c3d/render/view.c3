@@ -81,12 +81,13 @@ fn void? Renderer.render(
     defer catch abort_frame(self);
 
     self.render_view(scene, camera_node, self.default_view)!;
+    self.finish_view(self.default_view)!;
 
     return self.end_frame();
 }
 
 <*
- Extract, upload and record the scene from the camera into the view.
+ Extract, upload and record the scene passes from the camera into the view; finish_view writes its output.
  A window view records nothing without an acquired image; authoring inputs stay stable until end_frame.
  @param [&inout] self : "Records into the current frame before composition."
  @param [&in] scene : "Pose as left by the last update_world; not advanced."
@@ -111,7 +112,7 @@ fn void? Renderer.render_view(
     DebugDraw* debug = null,
 ) {
     ViewRecord* record = self.views.try_get(view)!;
-    close_custom_compute(self)!;
+    close_custom_compute(self, self.frame_index)!;
     if (record.desc.output == ViewOutput.WINDOW && !self.has_output) return;
     Camera* camera = scene.get(camera_node, Camera);
     if (!camera) return c3d::INVALID_ARGUMENT~;
@@ -405,14 +406,32 @@ fn void? Renderer.render_view(
                 matrices: &matrices,
             )!;
         }
-        if (record.desc.post.depth_of_field) post::record_dof(self, record)!;
         if (motion_blur) {
             record.history.commit(self.allocator, scene, candidates, matrices.view_proj);
         }
-
-        record_view_output(self, record)!;
     };
     self.frame_recorded = true;
+    record.rendered = true;
+}
+
+<*
+ Record the view's depth of field and its output after its scene passes.
+ A window view records nothing without an acquired image.
+ @param [&inout] self : "Records into the current frame after render_view of the same view."
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
+ @return? c3d::SHADER_NOT_FOUND, gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::PIPELINE_CREATE_FAILED
+ @return? gpu::SLOT_TABLE_FULL, gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
+ @return? gpu::DESCRIPTOR_HEAP_FULL, gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY
+ @return? gpu::OUT_OF_DEVICE_MEMORY, gpu::DEVICE_BUSY, gpu::RESOURCE_IN_USE, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+ @require self.frame_open, !self.overlay_open
+*>
+fn void? Renderer.finish_view(&self, ViewId view) {
+    ViewRecord* record = self.views.try_get(view)!;
+    if (record.desc.output == ViewOutput.WINDOW && !self.has_output) return;
+    if (!record.rendered) return c3d::INVALID_ARGUMENT~;
+    record.rendered = false;
+    if (record.desc.post.depth_of_field) post::record_dof(self, record)!;
+    return record_view_output(self, record);
 }
 
 <*

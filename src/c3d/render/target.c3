@@ -177,12 +177,16 @@ fn Target? allocate_render_target(
     uint height,
     gpu::Format format,
 ) @private {
+    // Storage writes decode nothing, so an sRGB target stays sampled and attached only.
+    gpu::TextureUsage usage = format == gpu::Format.RGBA8_SRGB
+        ? (gpu::TextureUsage){ .color_attach, .sampled }
+        : (gpu::TextureUsage){ .color_attach, .sampled, .storage };
     return allocate_target(
         device:     &renderer.device,
         width:      width,
         height:     height,
         format:     format,
-        usage:      { .color_attach, .sampled },
+        usage:      usage,
         debug_name: "render_target",
     );
 }
