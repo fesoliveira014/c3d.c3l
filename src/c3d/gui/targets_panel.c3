@@ -28,6 +28,7 @@ struct TargetsPanelState {
     float                       depth_range;
     float                       velocity_range;
     uint                        preview_size;
+    uint                        cluster_slice;
     bool[TARGETS_PANEL_ENTRIES] open;
 }
 
@@ -55,10 +56,11 @@ fn TargetsPanelState default_targets_panel_state() {
  @param [&inout] renderer : "Receives preview requests for the next overlay; no frame open."
  @param [&inout] state : "Open entries and scales retained between frames."
  @param environment : "Faces of this environment are listed when it is uploaded."
- @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT
- @return? gpu::INVALID_ARGUMENT, gpu::UNSUPPORTED_FEATURE, gpu::SLOT_TABLE_FULL
- @return? gpu::DESCRIPTOR_HEAP_FULL, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
- @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
+ @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
+ @return? gpu::UNSUPPORTED_FEATURE, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
+ @return? gpu::DEVICE_BUSY, gpu::RESOURCE_IN_USE, gpu::SLOT_TABLE_FULL, gpu::DESCRIPTOR_HEAP_FULL
+ @return? gpu::COMMAND_RECORDING_ERROR, gpu::WAIT_TIMEOUT, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
  @require !renderer.frame_open
 *>
 fn void? targets_panel(
@@ -70,6 +72,37 @@ fn void? targets_panel(
     bool visible = imgui::begin("Targets", null, {});
     defer imgui::end();
     if (!visible) return;
+
+    if (renderer.views.is_live(view)) {
+        ViewRecord* record = renderer.views.get(view);
+        ViewDesc desc = record.desc;
+        imgui::separator_text("Shading");
+        if (imgui::radio_button("Forward", desc.shading == FORWARD)) desc.shading = FORWARD;
+        imgui::same_line();
+        imgui::begin_disabled(true);
+        imgui::radio_button("Deferred (unsupported)", false);
+        imgui::end_disabled();
+        if (imgui::radio_button("Flat", desc.lights == FLAT)) desc.lights = FLAT;
+        imgui::same_line();
+        if (imgui::radio_button("Clustered", desc.lights == CLUSTERED)) desc.lights = CLUSTERED;
+        if (desc.shading != record.desc.shading || desc.lights != record.desc.lights) {
+            render::configure_view(renderer, view, desc)!;
+        }
+
+        if (record.desc.lights == CLUSTERED) {
+            imgui::input_scalar("Cluster slice", imgui::DATA_TYPE_U32, &state.cluster_slice);
+            state.cluster_slice = math::min(state.cluster_slice, record.desc.clusters.depth_slices - 1);
+            ClusterDepth depth = record.cluster_depth;
+            if (depth.near < depth.far && depth.slices == record.desc.clusters.depth_slices
+                && state.cluster_slice < depth.slices) {
+                Vec2 bounds = render::cluster_slice_bounds(depth, state.cluster_slice);
+                imgui::text("Slice depth: %.3f to %.3f", (double)bounds.x, (double)bounds.y);
+            } else {
+                imgui::text_unformatted("Slice depth: unavailable");
+            }
+        }
+        imgui::separator();
+    }
 
     imgui::drag_float("Exposure", &state.exposure);
     imgui::drag_float("Depth range", &state.depth_range);
@@ -96,6 +129,7 @@ fn void? targets_panel(
 
             uint width = state.preview_size;
             uint height = (uint)math::max(1ul, (ulong)width * entry.height / entry.width);
+            if (entry.source.kind == VIEW_CLUSTERS) entry.source.level = state.cluster_slice;
             renderer.request_preview(slot, entry.source, {
                 .width    = width,
                 .height   = math::min(height, render::PREVIEW_MAX_SIZE),
@@ -134,6 +168,14 @@ fn PanelEntry[] collect_entries(Renderer* renderer, ViewId view, EnvironmentId e
         push_view_image(&entries, "dof_near", { .kind = VIEW_DOF_NEAR, .view = view }, &record.dof_near);
         push_view_image(&entries, "dof_far", { .kind = VIEW_DOF_FAR, .view = view }, &record.dof_far);
         push_view_image(&entries, "motion_blur_out", { .kind = VIEW_MOTION_BLUR, .view = view }, &record.motion_blur_out);
+        if (record.desc.lights == CLUSTERED) {
+            entries.push({
+                .label  = "clusters",
+                .source = { .kind = VIEW_CLUSTERS, .view = view },
+                .width  = record.desc.clusters.tiles_x,
+                .height = record.desc.clusters.tiles_y,
+            });
+        }
     }
 
     foreach (index, &record : renderer.targets.items) {

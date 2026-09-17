@@ -92,6 +92,42 @@ allocation count separately; a dormant frame can also be the previous slot.
 
 GPU timings are disabled by default and enabled at renderer creation with
 `RendererDesc.gpu_timings`, or by the `cube_gui` example's `--gpu-timings` flag. Values come
-from completed frame slots and may lag CPU counters. The existing WSL2 dzn measurement found
-about 0.9 ms of overhead per timed pass, so compare ordinary rendering with timing disabled. The memory
-panel displays the device's advisory per-heap usage, budget, allocation and block sizes.
+from completed frame slots and may lag CPU counters. Timestamp overhead can be significant
+on WSL2 dzn; also compare ordinary rendering with timing disabled rather than subtracting
+a fixed overhead. The memory panel displays the device's advisory per-heap usage, budget,
+allocation and block sizes.
+
+## Cluster diagnostics
+
+Call `gui::targets_panel` before `begin_frame`: its Forward and Flat/Clustered controls
+apply changes through `configure_view`. Deferred is visibly disabled because the API
+rejects it with `UNSUPPORTED`. Configuration can propagate invalid-argument, unsupported,
+allocation, recording and wait faults; do not treat the panel as an infallible display.
+The [view contract](views.md#light-selection) describes the editable cluster settings.
+
+For a clustered view, `Cluster slice` starts at zero and is clamped to the current slice
+count. Expand `clusters` to see that depth slice's tile occupancy. Color is based on
+stored finite-light count divided by per-cell capacity: blue is empty, intermediate
+values add green, red is full, and **magenta marks overflow**. Globals are excluded.
+This is a selected-slice heatmap, not the occupancy at visible surfaces or a readback
+of the depth image. Overflow uses complete flat lighting, so magenta does not mean
+lights were dropped.
+
+Slice-depth labels use the active last-rendered camera mapping. Changing lighting mode,
+depth-slice count or clustering far distance invalidates those labels; they read
+`unavailable` until a successful render publishes matching depth data. An unchanged
+configuration retains its labels. Inactive or unavailable cluster data clears the
+preview instead of showing stale grid contents. A `VIEW_CLUSTERS` request requires a
+live clustered view and an in-range slice (`PreviewSource.level`); a dead view faults
+`INVALID_ID`, and a flat view or invalid slice faults `INVALID_ARGUMENT`.
+
+The statistics panel labels cluster view, cell count and overflowing-cell count as
+**Completed**. They arrive after frame-slot completion, can lag current controls and
+CPU counters, and work with GPU timestamps disabled. With multiple views they follow
+the [last-recorded-view policy](views.md#frames), not an aggregate. Timestamp-enabled
+runs also show completed `LIGHT_CULL` and opaque GPU times. Cull time includes private
+light upload/reset, assignment and counter copy; opaque time alone is not total cost.
+Opening a preview adds work, so close it for the main timing comparison.
+
+The [many-lights example](many_lights.md) combines these panels with fixed workload
+presets, range/capacity controls, camera reset and separate wall-interval reporting.

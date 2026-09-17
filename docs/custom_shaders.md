@@ -86,6 +86,27 @@ void main() {
 
 A masked custom material (`alpha_mode == MASK`) discards in its own fragment stage; the shadow atlas reads the same header and uses slot 0's alpha against `alpha_cutoff` as the caster coverage. A custom caster's `DrawRoot.material` is always its `CustomMaterialGpu`, so a custom depth vertex form can read the payload.
 
+### Light selection
+
+`FrameRoot.lights` and `light_count` still describe the complete selected light array in
+both flat and clustered views. Existing custom loops, including the tint/pulse examples,
+remain valid and flat; selecting a clustered view does not automatically accelerate them.
+
+To opt in, `lights.glsl` provides `LightList select_lights(FrameRoot frame,
+vec3 world_position, float view_depth)`, `flat_lights(frame)` and
+`selected_light_index(frame, list, index)`. Compute camera-space depth as
+`-(frame.view * vec4(world_position, 1.0)).z`, iterate `list.count`, and fetch
+`LightArray(frame.lights).values[selected_light_index(frame, list, index)]`.
+Retain the existing receiver-layer test, shadow evaluation and material lighting.
+The returned indices preserve the original array's shadow mappings.
+
+The selector includes globals once and falls back to the complete list outside coverage
+or on cell overflow; do not append globals yourself. Use `flat_lights(frame)` when one
+loop evaluates lighting away from the supplied position, as Physical transmission does
+for its exit point. The same helpers are available to custom vertex consumers, using the
+position/depth appropriate to that stage. See [view light selection](views.md#light-selection)
+for grid coverage and ownership.
+
 ## Vertex contract
 
 A custom vertex stage includes `mesh_vertex.glsl`, which declares the push block, the seven outputs and three helpers, and applies its own displacement between pulling and writing:

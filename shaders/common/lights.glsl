@@ -2,6 +2,7 @@
 #define C3D_LIGHTS_GLSL
 
 #include "buffer_reference.glsl"
+#include "clusters.glsl"
 
 GPU_DECLARE_READONLY_ARRAY_REF(LightArray, LightGpu);
 
@@ -15,6 +16,57 @@ struct LightSample {
     vec3 direction;
     vec3 radiance;
 };
+
+struct LightList {
+    uint count;
+    uint cluster_count;
+    uint first;
+    bool clustered;
+};
+
+bool global_light(LightGpu light) {
+    return light.kind == LIGHT_DIRECTIONAL || light.position_range.w == 0.0;
+}
+
+LightList flat_lights(FrameRoot frame) {
+    return LightList(frame.light_count, 0u, 0u, false);
+}
+
+LightList select_lights(FrameRoot frame, vec3 world_position, float view_depth) {
+    if ((frame.flags & FRAME_LIGHTS_CLUSTERED) == 0u || frame.clusters == 0ul) return flat_lights(frame);
+
+    ClusterGpu clusters = ClusterGpu(frame.clusters);
+    if (clusters.depth.x >= clusters.depth.y
+        || view_depth < clusters.depth.x || view_depth >= clusters.depth.y) return flat_lights(frame);
+
+    vec4 projected = clusters.view_proj * vec4(world_position, 1.0);
+    if (projected.w <= 0.0) return flat_lights(frame);
+
+    vec2 uv = projected.xy / projected.w * vec2(0.5, -0.5) + 0.5;
+    if (any(lessThan(uv, vec2(0.0))) || any(greaterThanEqual(uv, vec2(1.0)))) return flat_lights(frame);
+
+    float slice = floor((clusters.orthographic != 0u ? view_depth : log(view_depth))
+        * clusters.depth.z + clusters.depth.w);
+    if (slice < 0.0 || slice >= float(clusters.depth_slices)) return flat_lights(frame);
+
+    uvec2 tile = uvec2(uv * vec2(clusters.tiles_x, clusters.tiles_y));
+    if (tile.x >= clusters.tiles_x || tile.y >= clusters.tiles_y) return flat_lights(frame);
+
+    uint cell = cluster_index(clusters, uvec3(tile, uint(slice)));
+    ClusterRange range = ClusterRanges(clusters.ranges).values[cell];
+    if (range.overflow != 0u) return flat_lights(frame);
+
+    return LightList(range.count + clusters.global_count, range.count,
+        cell * clusters.lights_per_cluster, true);
+}
+
+uint selected_light_index(FrameRoot frame, LightList list, uint index) {
+    if (!list.clustered) return index;
+
+    ClusterGpu clusters = ClusterGpu(frame.clusters);
+    if (index < list.cluster_count) return ClusterIndices(clusters.indices).values[list.first + index];
+    return ClusterIndices(clusters.globals).values[index - list.cluster_count];
+}
 
 vec3 standard_view_direction(FrameRoot frame, vec3 position) {
     if (frame.proj[3][3] != 0.0) return normalize(frame.inv_view_proj[2].xyz);

@@ -11,6 +11,7 @@ struct ShaderInclude {
 
 const char[*] C3D_GENERATED_C3D_ABI_TEXT @private = $embed("../../../shaders/generated/c3d_abi.glsl");
 const char[*] C3D_COMMON_BRDF_TEXT @private = $embed("../../../shaders/common/brdf.glsl");
+const char[*] C3D_COMMON_CLUSTERS_TEXT @private = $embed("../../../shaders/common/clusters.glsl");
 const char[*] C3D_COMMON_CONSTANTS_TEXT @private = $embed("../../../shaders/common/constants.glsl");
 const char[*] C3D_COMMON_CUBE_DIRECTION_TEXT @private = $embed("../../../shaders/common/cube_direction.glsl");
 const char[*] C3D_COMMON_CUSTOM_MATERIAL_TEXT @private = $embed("../../../shaders/common/custom_material.glsl");
@@ -42,9 +43,10 @@ const char[*] GPU_RAY_TRACING_TEXT @private = $embed("../../../lib/gpu.c3l/inclu
 <*
  Every include a custom stage may resolve, in table order.
 *>
-const ShaderInclude[29] SHADER_INCLUDES = {
+const ShaderInclude[30] SHADER_INCLUDES = {
     { .name = "c3d_abi.glsl", .text = (String)C3D_GENERATED_C3D_ABI_TEXT[..] },
     { .name = "brdf.glsl", .text = (String)C3D_COMMON_BRDF_TEXT[..] },
+    { .name = "clusters.glsl", .text = (String)C3D_COMMON_CLUSTERS_TEXT[..] },
     { .name = "constants.glsl", .text = (String)C3D_COMMON_CONSTANTS_TEXT[..] },
     { .name = "cube_direction.glsl", .text = (String)C3D_COMMON_CUBE_DIRECTION_TEXT[..] },
     { .name = "custom_material.glsl", .text = (String)C3D_COMMON_CUSTOM_MATERIAL_TEXT[..] },

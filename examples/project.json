@@ -197,6 +197,12 @@
         "src/custom_compute.c3"
       ]
     },
+    "many_lights": {
+      "type": "executable",
+      "sources": [
+        "src/many_lights.c3"
+      ]
+    },
     "compute_textures": {
       "type": "executable",
       "sources": [

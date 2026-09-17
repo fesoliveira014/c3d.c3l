@@ -44,6 +44,9 @@ defer (void)render::destroy_view(&renderer, capture_view);
 | `render_scale` | Working resolution relative to the viewport, in `(0, MAX_RENDER_SCALE]` |
 | `color` | `DISPLAY_LDR` runs the display route; `LINEAR_HDR` keeps scene-linear color |
 | `post` | The view's `PostStack` (see [display processing](post.md)) |
+| `shading` | `FORWARD`; `DEFERRED` faults `UNSUPPORTED` |
+| `lights` | `FLAT` or `CLUSTERED` candidate light selection |
+| `clusters` | Editable `ClusterDesc`; ignored by `FLAT` |
 
 `default_view_desc()` is a full-window `DISPLAY_LDR` view with neutral grading;
 `texture_view_desc(target, color = LINEAR_HDR)` covers a target. `create_view` and `configure_view`
@@ -58,6 +61,58 @@ per dimension. Reconfiguring with a different extent or output waits for outstan
 reallocates them; every configuration resets the view's history. Window resize resizes every
 window view; target resize resizes every view on that target. A headless renderer's window views
 hold no images and record nothing.
+
+## Light selection
+
+Both view constructors choose `FORWARD` / `FLAT` and initialize `clusters` with
+`default_cluster_desc()`: 16 horizontal tiles, 9 vertical tiles, 24 depth slices,
+64 finite lights per cell and a clustering far distance of 100 camera-view depth units. To enable it:
+
+```c3
+ViewDesc desc = render::default_view_desc();
+desc.lights = LightSelection.CLUSTERED;
+render::configure_view(&renderer, renderer.default_view, desc)!;
+```
+
+Create and configure views only between frames. The cluster fields are mutable:
+`tiles_x`, `tiles_y`, `depth_slices`, `lights_per_cluster` and `far_distance`.
+`CLUSTERED` requires nonzero dimensions/capacity, a positive finite far distance and
+representable storage sizes (`INVALID_ARGUMENT`); a valid grid beyond the device's
+compute dispatch limits faults `UNSUPPORTED`. `DEFERRED` always faults `UNSUPPORTED`.
+`FLAT` neither validates nor allocates from `clusters`, even if its fields are zero or
+invalid. A zero-initialized descriptor does not acquire cluster defaults merely by
+setting `lights = CLUSTERED`: start from a constructor or assign `default_cluster_desc()`.
+GPU allocation, recording and wait faults propagate from the existing view operations.
+
+Each drawable clustered view owns one private GPU buffer containing its complete
+selected light array, cell ranges, fixed-capacity index segments and overflow counter.
+It uses no application `BufferId` slot and is not part of the texture-only `view_targets`.
+Grid/capacity changes replace this storage; changing only far distance does not.
+Switching to flat retires the old allocation after submitted users complete; resizing,
+destroying a view and renderer teardown likewise preserve in-flight ownership.
+
+Selection uses the view's unjittered camera projection and each shaded position, not
+the opaque depth buffer. Perspective depth slices are logarithmic; orthographic slices
+are linear. Coverage ends at the lesser of the clustering far distance and the camera's
+finite far plane. Perspective camera far zero means infinity; orthographic far zero
+does not. An empty depth interval disables clustering for that rendering.
+
+Finite point and spot lights are conservatively admitted by their range spheres.
+Directional lights and range-zero point/spot lights are globals, evaluated once beside
+the cell's finite list. Indices refer to the original selected light array, preserving
+receiver layers and shadow mappings. The existing selection budget and dropped-light
+policy are unchanged. A cell exceeding capacity, a position outside the grid/depth
+interval, or inactive coverage uses the **complete flat list**, not a truncated list
+or a clamped edge cell; globals are not appended again on fallback.
+
+Standard, Toon and non-transmitting Physical materials use this selector, including
+ordinary alpha-blended surfaces. Physical materials with nonzero prepared transmission
+use the flat list for their entire direct-light loop, preserving exit-point lighting.
+Existing custom shaders remain flat unless they opt into the
+[shared light selector](custom_shaders.md#light-selection).
+
+See [many lights](many_lights.md) for a controlled comparison and
+[GUI diagnostics](gui.md#cluster-diagnostics) for slice occupancy and completed counters.
 
 ## Frames
 
@@ -92,6 +147,13 @@ one.
 
 Pass timings (`Stats.gpu_pass_ms`, shadow timings) describe the last recorded view of the frame;
 draw, dispatch and light counters accumulate across views.
+
+`Stats.cluster_view`, `cluster_count` and `cluster_overflows` are delayed results read
+only after the reused frame slot has completed, independently of GPU timestamp enablement.
+They describe that slot's last recorded drawable view, not a sum across views: a later
+flat view clears its cluster result, while a dormant/non-recorded view does not replace
+it. `cluster_count` is the grid's total cells; `cluster_overflows` counts overflowing
+cells, not dropped lights. The readback adds no synchronous wait inside `render_view`.
 
 ## Sampling a target
 

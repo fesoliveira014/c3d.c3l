@@ -11,6 +11,8 @@ const uint SHADOW_FACE_POSITIVE_Z = 4;
 const uint SHADOW_FACE_NEGATIVE_Z = 5;
 const uint SHADOW_POINT_FACE_COUNT = 6;
 const uint MAX_DISPATCH_TEXTURES = 8;
+const uint FRAME_LIGHTS_CLUSTERED = 1;
+const uint CLUSTER_GROUP_SIZE = 64;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8;
 const uint DRAW_RECEIVE_SHADOW = 1;
 const uint DRAW_ALPHA_MASK = 2;
@@ -30,6 +32,7 @@ const uint PREVIEW_MODE_DEPTH_RAW = 2;
 const uint PREVIEW_MODE_VELOCITY = 3;
 const uint PREVIEW_MODE_CUBE_FACE = 4;
 const uint PREVIEW_MODE_CLEAR = 5;
+const uint PREVIEW_MODE_CLUSTERS = 6;
 const uint ENVIRONMENT_FACE_POSITIVE_X = 0;
 const uint ENVIRONMENT_FACE_NEGATIVE_X = 1;
 const uint ENVIRONMENT_FACE_POSITIVE_Y = 2;
@@ -143,6 +146,58 @@ $assert $reflect(GeometryRoot.flags).offset == 92;
 $assert $reflect(GeometryRoot._pad0).offset == 96;
 $assert $reflect(GeometryRoot._pad1).offset == 100;
 
+struct ClusterRange {
+    uint count;
+    uint overflow;
+}
+$assert ClusterRange::size == 8;
+$assert $reflect(ClusterRange.count).offset == 0;
+$assert $reflect(ClusterRange.overflow).offset == 4;
+
+struct ClusterCounterGpu {
+    uint overflows;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+}
+$assert ClusterCounterGpu::size == 16;
+$assert $reflect(ClusterCounterGpu.overflows).offset == 0;
+$assert $reflect(ClusterCounterGpu._pad0).offset == 4;
+$assert $reflect(ClusterCounterGpu._pad1).offset == 8;
+$assert $reflect(ClusterCounterGpu._pad2).offset == 12;
+
+struct ClusterGpu {
+    GpuAddress ranges;
+    GpuAddress indices;
+    GpuAddress globals;
+    GpuAddress counter;
+    Vec4f      depth;
+    uint       tiles_x;
+    uint       tiles_y;
+    uint       depth_slices;
+    uint       lights_per_cluster;
+    uint       global_count;
+    uint       orthographic;
+    uint       _pad0;
+    uint       _pad1;
+    Mat4f      view_proj;
+}
+$assert ClusterGpu::size == 144;
+$assert $reflect(ClusterGpu.ranges).offset == 0;
+$assert $reflect(ClusterGpu.indices).offset == 8;
+$assert $reflect(ClusterGpu.globals).offset == 16;
+$assert $reflect(ClusterGpu.counter).offset == 24;
+$assert $reflect(ClusterGpu.depth).offset == 32;
+$assert $reflect(ClusterGpu.tiles_x).offset == 48;
+$assert $reflect(ClusterGpu.tiles_y).offset == 52;
+$assert $reflect(ClusterGpu.depth_slices).offset == 56;
+$assert $reflect(ClusterGpu.lights_per_cluster).offset == 60;
+$assert $reflect(ClusterGpu.global_count).offset == 64;
+$assert $reflect(ClusterGpu.orthographic).offset == 68;
+$assert $reflect(ClusterGpu._pad0).offset == 72;
+$assert $reflect(ClusterGpu._pad1).offset == 76;
+$assert $reflect(ClusterGpu.view_proj).offset == 80;
+
 struct FrameRoot {
     Mat4f        view;
     Mat4f        proj;
@@ -163,8 +218,7 @@ struct FrameRoot {
     Vec4f        ambient;
     TextureIndex scene_color;
     SamplerIndex scene_sampler;
-    uint         _pad0;
-    uint         _pad1;
+    GpuAddress   clusters;
 }
 $assert FrameRoot::size == 448;
 $assert $reflect(FrameRoot.view).offset == 0;
@@ -186,8 +240,7 @@ $assert $reflect(FrameRoot.frame_index).offset == 412;
 $assert $reflect(FrameRoot.ambient).offset == 416;
 $assert $reflect(FrameRoot.scene_color).offset == 432;
 $assert $reflect(FrameRoot.scene_sampler).offset == 436;
-$assert $reflect(FrameRoot._pad0).offset == 440;
-$assert $reflect(FrameRoot._pad1).offset == 444;
+$assert $reflect(FrameRoot.clusters).offset == 440;
 
 struct DrawRoot {
     Mat4f        model;
@@ -342,8 +395,11 @@ struct PreviewRoot {
     float        proj_22;
     float        proj_23;
     uint         orthographic;
+    GpuAddress   clusters;
+    uint         cluster_slice;
+    uint         _pad0;
 }
-$assert PreviewRoot::size == 48;
+$assert PreviewRoot::size == 64;
 $assert $reflect(PreviewRoot.input_texture).offset == 0;
 $assert $reflect(PreviewRoot.input_sampler).offset == 4;
 $assert $reflect(PreviewRoot.output_texture).offset == 8;
@@ -356,6 +412,9 @@ $assert $reflect(PreviewRoot.range).offset == 32;
 $assert $reflect(PreviewRoot.proj_22).offset == 36;
 $assert $reflect(PreviewRoot.proj_23).offset == 40;
 $assert $reflect(PreviewRoot.orthographic).offset == 44;
+$assert $reflect(PreviewRoot.clusters).offset == 48;
+$assert $reflect(PreviewRoot.cluster_slice).offset == 56;
+$assert $reflect(PreviewRoot._pad0).offset == 60;
 
 struct CubePreviewRoot {
     TextureIndex source_texture;

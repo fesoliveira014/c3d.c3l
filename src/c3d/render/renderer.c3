@@ -93,6 +93,7 @@ struct Frame {
     bool[PASS_COUNT]      timed;
     ShadowTiming[]        shadow_timings;
     uint                  shadow_timing_count;
+    ClusterReadback       cluster_readback;
 }
 
 <*
@@ -151,6 +152,7 @@ struct Renderer {
     PreviewSlot[PREVIEW_CAPACITY] previews;
     gpu::TextureState[PREVIEW_CAPACITY] frame_preview_states;
     gpu::PipelineHandle      preview_pipeline;
+    gpu::PipelineHandle      cluster_pipeline;
     bool                     validation;
 
     uint                    output_width;
@@ -232,7 +234,8 @@ macro void? Renderer.upload(&self, id) {
  @return? gpu::INVALID_RESOURCE_STATE, gpu::COMMAND_RECORDING_ERROR, gpu::RESOURCE_IN_USE
  @return? gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY, gpu::UNSUPPORTED_FEATURE
  @return? gpu::SURFACE_LOST, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
- @return? gpu::WAIT_TIMEOUT
+ @return? gpu::WAIT_TIMEOUT, gpu::SLOT_TABLE_FULL
+ @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED
  @require !self.frame_open
 *>
 fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
@@ -243,6 +246,7 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
 
     self.stats = {};
     read_pass_timings(self, slot, self.frame_index)!;
+    read_cluster_stats(self, slot)!;
     slot.timed = {};
     slot.shadow_timing_count = 0;
     drain_retired(&self.device, &slot.environment_temporaries);
@@ -271,6 +275,7 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
     foreach (index, &preview : self.previews) self.frame_preview_states[index] = preview.image.state;
     foreach (&record : self.views.items) {
         record.snapshot_states();
+        record.cluster_root = (gpu::GpuAddress)0;
         record.scene_input = &record.hdr_color;
         record.post_chain_open = false;
     }
@@ -779,6 +784,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         if (catch excuse = wait_frames(&renderer)) handle_cleanup_fault(excuse);
         foreach (&slot : renderer.frames) drain_retired(&renderer.device, &slot.environment_temporaries);
         foreach (&slot : renderer.frames) drain_retired(&renderer.device, &slot.retire);
+        release_cluster_resources(&renderer);
         free_environments(&renderer);
         free_pending_uploads(&renderer);
         free_textures(&renderer);
@@ -826,6 +832,7 @@ fn void destroy_renderer(Renderer* renderer) {
     if (renderer.shadow_timing_results.len) alloc::free(renderer.allocator, renderer.shadow_timing_results.ptr);
     alloc::free(renderer.allocator, renderer.shadow_frusta.ptr);
     release_previews(renderer);
+    release_cluster_resources(renderer);
     foreach (&record : renderer.views.items) release_view_images(renderer, record);
     pool::destroy_pool{ViewRecord, ViewId}(&renderer.views);
     post::destroy_post_pipelines(&renderer.device, &renderer.post_pipelines);
@@ -1035,12 +1042,16 @@ fn void abort_frame(Renderer* renderer) {
     if (!renderer.frame_submitted) {
         renderer.frames[renderer.recording_slot].timed = {};
         renderer.frames[renderer.recording_slot].shadow_timing_count = 0;
+        renderer.frames[renderer.recording_slot].cluster_readback.pending = false;
         renderer.shadow_atlas.state = renderer.frame_shadow_state;
         foreach (index, &target : renderer.targets.items) target.target.state = renderer.frame_target_states[index];
         foreach (index, &preview : renderer.previews) preview.image.state = renderer.frame_preview_states[index];
         foreach (&record : renderer.views.items) record.restore_states();
     }
-    foreach (&record : renderer.views.items) record.rendered = false;
+    foreach (&record : renderer.views.items) {
+        record.rendered = false;
+        record.cluster_root = (gpu::GpuAddress)0;
+    }
     renderer.has_output = false;
     discard_uploads(renderer);
 }

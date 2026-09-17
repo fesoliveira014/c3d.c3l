@@ -55,6 +55,9 @@ struct ViewDesc {
     float          render_scale;
     OutputMode     color;
     PostStack      post;
+    ShadingPath    shading;
+    LightSelection lights;
+    ClusterDesc    clusters;
 }
 
 <*
@@ -165,6 +168,9 @@ struct ViewRecord {
     float                                exposure;
     ViewHistory                          history;
     gpu::TextureState[VIEW_TARGET_COUNT] frame_states;
+    ClusterBuffers                       clusters;
+    gpu::GpuAddress                      cluster_root;
+    ClusterDepth                         cluster_depth;
 }
 
 <*
@@ -221,6 +227,9 @@ fn ViewDesc default_view_desc() {
         .render_scale = 1,
         .color        = OutputMode.DISPLAY_LDR,
         .post         = post::default_post_stack(),
+        .shading      = ShadingPath.FORWARD,
+        .lights       = LightSelection.FLAT,
+        .clusters     = default_cluster_desc(),
     };
 }
 
@@ -234,6 +243,9 @@ fn ViewDesc texture_view_desc(RenderTargetId target, OutputMode color = OutputMo
         .render_scale = 1,
         .color        = color,
         .post         = post::default_post_stack(),
+        .shading      = ShadingPath.FORWARD,
+        .lights       = LightSelection.FLAT,
+        .clusters     = default_cluster_desc(),
     };
 }
 
@@ -331,6 +343,8 @@ fn void? configure_view(Renderer* renderer, ViewId view, ViewDesc desc) {
         && record.desc.target.generation == desc.target.generation;
     if (!same_output || current_extent != wanted_extent) {
         wait_frames(renderer)!;
+        record.cluster_root = (gpu::GpuAddress)0;
+        record.cluster_depth = {};
         record.desc = desc;
         return resize_view(renderer, record);
     }
@@ -339,6 +353,36 @@ fn void? configure_view(Renderer* renderer, ViewId view, ViewDesc desc) {
         post::acquire_post_targets(renderer, record)!;
     } else {
         post::retire_post_targets(renderer, record);
+    }
+    ClusterBuffers replacement;
+    bool replace_clusters = desc.lights == LightSelection.CLUSTERED && record.hdr_color.texture.is_valid()
+      && (!record.clusters.allocation.is_valid()
+        || record.desc.clusters.tiles_x != desc.clusters.tiles_x
+        || record.desc.clusters.tiles_y != desc.clusters.tiles_y
+        || record.desc.clusters.depth_slices != desc.clusters.depth_slices
+        || record.desc.clusters.lights_per_cluster != desc.clusters.lights_per_cluster);
+    if (replace_clusters) {
+        ClusterLayout layout = cluster_layout(
+            desc: desc.clusters,
+            max_lights: renderer.max_lights,
+            max_groups: {
+                renderer.caps.max_compute_work_group_count.x,
+                renderer.caps.max_compute_work_group_count.y,
+                renderer.caps.max_compute_work_group_count.z,
+            },
+        )!;
+        replacement = create_cluster_buffers(renderer, layout)!;
+    }
+    if (replace_clusters || desc.lights == LightSelection.FLAT) {
+        retire_cluster_buffers(renderer, &record.clusters);
+        record.clusters = replacement;
+        record.cluster_root = (gpu::GpuAddress)0;
+    }
+    if (record.desc.lights != desc.lights
+        || record.desc.clusters.depth_slices != desc.clusters.depth_slices
+        || record.desc.clusters.far_distance != desc.clusters.far_distance) {
+        record.cluster_root = (gpu::GpuAddress)0;
+        record.cluster_depth = {};
     }
     record.desc = desc;
     record.history.valid = false;
@@ -375,6 +419,18 @@ fn void? reset_view_history(Renderer* renderer, ViewId view) {
 }
 
 fn void? validate_view_desc(Renderer* renderer, ViewDesc* desc) @private {
+    if (desc.shading == ShadingPath.DEFERRED) return c3d::UNSUPPORTED~;
+    if (desc.lights == LightSelection.CLUSTERED) {
+        cluster_layout(
+            desc: desc.clusters,
+            max_lights: renderer.max_lights,
+            max_groups: {
+                renderer.caps.max_compute_work_group_count.x,
+                renderer.caps.max_compute_work_group_count.y,
+                renderer.caps.max_compute_work_group_count.z,
+            },
+        )!;
+    }
     switch (desc.output) {
         case WINDOW:
             if (desc.color == OutputMode.LINEAR_HDR) return c3d::INVALID_ARGUMENT~;
@@ -426,9 +482,24 @@ fn void? acquire_view_images(Renderer* renderer, ViewRecord* record) @private {
     acquire_view_targets(renderer, record, extent.x, extent.y)!;
     if (record.desc.post.fxaa) post::acquire_post_targets(renderer, record)!;
     post::acquire_effect_targets(renderer, record)!;
+    if (record.desc.lights == LightSelection.CLUSTERED) {
+        ClusterLayout layout = cluster_layout(
+            desc: record.desc.clusters,
+            max_lights: renderer.max_lights,
+            max_groups: {
+                renderer.caps.max_compute_work_group_count.x,
+                renderer.caps.max_compute_work_group_count.y,
+                renderer.caps.max_compute_work_group_count.z,
+            },
+        )!;
+        record.clusters = create_cluster_buffers(renderer, layout)!;
+    }
 }
 
 fn void release_view_images(Renderer* renderer, ViewRecord* record) @private {
+    destroy_cluster_buffers(&renderer.device, &record.clusters);
+    record.cluster_root = (gpu::GpuAddress)0;
+    record.cluster_depth = {};
     release_scene_color(&renderer.device, record);
     release_view_targets(&renderer.device, record);
     post::release_post_targets(&renderer.device, record);

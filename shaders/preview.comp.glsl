@@ -2,6 +2,7 @@
 #include "generated/shader_abi.glsl"
 #include "c3d_abi.glsl"
 #include "descriptor_heap.glsl"
+#include "clusters.glsl"
 
 layout(local_size_x = POST_GROUP_SIZE, local_size_y = POST_GROUP_SIZE, local_size_z = 1) in;
 
@@ -60,6 +61,17 @@ void main() {
             vec3 direction = preview_face_direction(root.face, uv);
             vec3 radiance = sample_texture_cube(root.input_texture, root.input_sampler, direction).rgb;
             result = 1.0 - exp(-max(radiance, vec3(0.0)) * root.exposure);
+            break;
+        case PREVIEW_MODE_CLUSTERS:
+            ClusterGpu clusters = ClusterGpu(root.clusters);
+            uvec2 tile = min(uvec2(uv * vec2(clusters.tiles_x, clusters.tiles_y)),
+                uvec2(clusters.tiles_x - 1u, clusters.tiles_y - 1u));
+            ClusterRange range = ClusterRanges(clusters.ranges).values[
+                cluster_index(clusters, uvec3(tile, root.cluster_slice))];
+            float occupancy = float(range.count) / float(clusters.lights_per_cluster);
+            result = range.overflow != 0u
+                ? vec3(1.0, 0.0, 1.0)
+                : vec3(occupancy, 4.0 * occupancy * (1.0 - occupancy), 1.0 - occupancy);
             break;
         default:
             break;

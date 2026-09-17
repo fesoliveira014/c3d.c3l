@@ -85,6 +85,9 @@ fn usz grown_capacity(usz capacity, usz demand) {
     return target;
 }
 
+<*
+ @pure
+*>
 fn usz align_up(usz value, usz alignment) @private {
     return (value + alignment - 1) / alignment * alignment;
 }

@@ -63,8 +63,9 @@ void main() {
         );
     }
     float view_depth = -(frame.view * vec4(v_world_pos, 1.0)).z;
-    for (uint index = 0u; index < frame.light_count; index++) {
-        LightGpu light = LightArray(frame.lights).values[index];
+    LightList lights = select_lights(frame, v_world_pos, view_depth);
+    for (uint index = 0u; index < lights.count; index++) {
+        LightGpu light = LightArray(frame.lights).values[selected_light_index(frame, lights, index)];
         if ((draw.layers & light.layers) == 0u) continue;
         float visibility = 1.0;
         if ((draw.flags & DRAW_RECEIVE_SHADOW) != 0u && light.shadow_count != 0u) {
