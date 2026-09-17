@@ -133,8 +133,10 @@ fn void? draw_gui_frame(
     defer catch render::abort_frame(renderer);
 
     renderer.render_view(scene, producer_node, capture_view)!;
+    renderer.finish_view(capture_view)!;
     if (renderer.has_output) {
         renderer.render_view(scene, camera_node, renderer.default_view)!;
+        renderer.finish_view(renderer.default_view)!;
 
         OverlayContext overlay = renderer.begin_overlay()!;
         gui_renderer.record(&overlay)!;

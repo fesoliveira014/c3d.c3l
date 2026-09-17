@@ -64,8 +64,10 @@ hold no images and record nothing.
 ```c3
 renderer.begin_frame(info)!;
 renderer.render_view(&scene, producer_camera, capture_view)!;
+renderer.finish_view(capture_view)!;
 if (renderer.has_output) {
     renderer.render_view(&scene, main_camera, renderer.default_view)!;
+    renderer.finish_view(renderer.default_view)!;
     OverlayContext overlay = renderer.begin_overlay()!;
     gui.record(&overlay)!;
     renderer.end_overlay(&overlay)!;
@@ -73,9 +75,12 @@ if (renderer.has_output) {
 renderer.end_frame()!;
 ```
 
-`render_view` extracts, uploads, records the scene passes and effects, then writes the view's
-output: `DISPLAY_LDR` grades, tone maps and optionally anti-aliases into the output rectangle;
-`LINEAR_HDR` copies the scene-linear image into the target. A window view records nothing while
+`render_view` extracts, uploads and records the scene passes, debug lines, velocity and motion
+blur; `finish_view` records depth of field and writes the view's output: `DISPLAY_LDR` grades, tone
+maps and optionally anti-aliases into the output rectangle; `LINEAR_HDR` copies the scene-linear
+image into the target. Between the two calls a compute dispatch may read the view's depth and read
+or write its scene image (see [custom shaders](custom_shaders.md#views)); `end_frame` faults
+`INVALID_ARGUMENT` when a rendered view was not finished. A window view records nothing while
 the window is dormant (`has_output` false); a texture view always records. `end_frame` submits
 when any view recorded or an upload is pending, presents only when a window image was acquired,
 and discards an empty frame. Neither call advances animation or flushes scene removals.

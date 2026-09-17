@@ -44,6 +44,7 @@ struct TextureDesc {
     bool        generate_mips;
     uint        mip_levels;
     bool        is_cube;
+    bool        storage;
     ZString     debug_name;
 }
 

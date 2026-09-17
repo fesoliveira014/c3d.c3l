@@ -13,6 +13,7 @@ const uint SHADOW_FACE_NEGATIVE_Y = 3u;
 const uint SHADOW_FACE_POSITIVE_Z = 4u;
 const uint SHADOW_FACE_NEGATIVE_Z = 5u;
 const uint SHADOW_POINT_FACE_COUNT = 6u;
+const uint MAX_DISPATCH_TEXTURES = 8u;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8u;
 const uint DRAW_RECEIVE_SHADOW = 1u;
 const uint DRAW_ALPHA_MASK = 2u;
@@ -85,6 +86,15 @@ layout(buffer_reference, std430, buffer_reference_align = 4) buffer CompositeRoo
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer DispatchRoot {
     uint64_t textures;
     uint64_t parameters;
+};
+
+struct DispatchTextureGpu {
+    uint texture_index;
+    uint sampler_index;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer DispatchTexturesGpu {
+    DispatchTextureGpu slots[8];
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer GeometryRoot {

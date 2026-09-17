@@ -17,6 +17,7 @@ enum Pass : int {
     VELOCITY,
     POST_CHAIN,
     COMPOSITE,
+    CUSTOM_COMPUTE_POST,
 }
 
 <*

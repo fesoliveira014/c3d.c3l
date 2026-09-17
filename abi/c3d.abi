@@ -20,6 +20,17 @@ root DispatchRoot {
     GpuAddress parameters;
 }
 
+const uint MAX_DISPATCH_TEXTURES = 8;
+
+struct DispatchTextureGpu {
+    TextureIndex texture_index;
+    SamplerIndex sampler_index;
+}
+
+root DispatchTexturesGpu {
+    DispatchTextureGpu[8] slots;
+}
+
 root GeometryRoot {
     GpuAddress positions;
     GpuAddress normals;
