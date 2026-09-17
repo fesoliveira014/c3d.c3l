@@ -80,7 +80,7 @@ fn DispatchTexture read_texture(TextureId texture, SamplerId sampler = {}) {
 }
 
 <*
- Storage write of one mip of one layer of a storage store texture.
+ Storage write of one mip of one layer of a storage-capable store texture.
  @pure
 *>
 fn DispatchTexture write_texture(
@@ -334,7 +334,10 @@ fn ResolvedDispatchTexture? resolve_dispatch_texture(
     }
     switch (declared.access) {
         case READ:
-            entry.use = gpu::sampled_at({ .compute });
+            // A store texture already sits in the state materials sample from; only images with tracked state move.
+            entry.use = entry.mirror
+                ? gpu::sampled_at({ .fragment_shader, .compute })
+                : gpu::sampled_at({ .compute });
             slot.sampler_index = declared.sampler.generation
                 ? resolve_sampler(renderer, declared.sampler)!.index
                 : renderer.linear_clamp_sampler;
