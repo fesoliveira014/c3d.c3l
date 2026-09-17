@@ -2,6 +2,7 @@ module c3d::render;
 
 import c3d;
 import c3d::asset;
+import c3d::shader;
 import gpu;
 
 <*
@@ -24,7 +25,7 @@ struct ComputeShaderRes {
 }
 
 <*
- Ring bytes a root of the length occupies; zero stays zero.
+ Ring bytes the application's root of the length occupies; zero stays zero.
  @pure
 *>
 fn usz dispatch_root_size(usz root_len) {
@@ -74,24 +75,26 @@ fn void? Renderer.dispatch(&self, DispatchDesc desc) {
         self.compute_open = true;
     }
 
-    gpu::GpuAddress root_address;
+    Frame* slot = &self.frames[self.frame_index % FRAMES_IN_FLIGHT];
+    gpu::GpuAddress parameters;
     if (desc.root.len) {
-        Frame* slot = &self.frames[self.frame_index % FRAMES_IN_FLIGHT];
         gpu::MappedGpuSpan staging = slot.upload.take(
             &self.device,
             dispatch_root_size(desc.root.len),
             STREAM_ALIGNMENT,
         )!;
         staging.bytes[:desc.root.len] = desc.root[..];
-        root_address = staging.address;
+        parameters = staging.address;
     }
+    gpu::MappedGpuSpan root = slot.upload.take(&self.device, DispatchRoot::size, STREAM_ALIGNMENT)!;
+    *(DispatchRoot*)root.bytes.ptr = { .parameters = parameters };
 
     if (desc.writes.len) {
         gpu::Barrier readers_done = { .before = CONSUMER_STAGES, .after = { .compute } };
         gpu::cmd_barrier(&self.commands, &readers_done)!;
     }
     gpu::cmd_bind_pipeline(&self.commands, pipeline)!;
-    gpu::cmd_dispatch(&self.commands, root_address, { desc.groups.x, desc.groups.y, desc.groups.z })!;
+    gpu::cmd_dispatch(&self.commands, root.address, { desc.groups.x, desc.groups.y, desc.groups.z })!;
     if (desc.writes.len) {
         gpu::Barrier writes_visible = { .before = { .compute }, .after = CONSUMER_STAGES };
         gpu::cmd_barrier(&self.commands, &writes_visible)!;

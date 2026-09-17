@@ -85,7 +85,7 @@ layout(push_constant) uniform Push { uint64_t root_gpu; } pc;
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer Particles { vec4 position_life[]; };
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer ParticleRoot { uint64_t particles; uint count; float delta; };
 void main() {
-    ParticleRoot root = ParticleRoot(pc.root_gpu);
+    ParticleRoot root = ParticleRoot(DispatchRoot(pc.root_gpu).parameters);
     uint index = gl_GlobalInvocationID.x;
     if (index >= root.count) return;
     Particles(root.particles).position_life[index].y += root.delta;

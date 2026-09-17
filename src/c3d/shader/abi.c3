@@ -84,6 +84,14 @@ $assert $reflect(CompositeRoot.source_sampler).offset == 4;
 $assert $reflect(CompositeRoot._pad0).offset == 8;
 $assert $reflect(CompositeRoot._pad1).offset == 12;
 
+struct DispatchRoot {
+    GpuAddress textures;
+    GpuAddress parameters;
+}
+$assert DispatchRoot::size == 16;
+$assert $reflect(DispatchRoot.textures).offset == 0;
+$assert $reflect(DispatchRoot.parameters).offset == 8;
+
 struct GeometryRoot {
     GpuAddress positions;
     GpuAddress normals;

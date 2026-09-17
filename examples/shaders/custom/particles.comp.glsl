@@ -57,7 +57,7 @@ Particle respawn(Emitter emitter, uint seed, float life_scale) {
 }
 
 void main() {
-    ParticleRoot root = ParticleRoot(pc.root_gpu);
+    ParticleRoot root = ParticleRoot(DispatchRoot(pc.root_gpu).parameters);
     uint index = gl_GlobalInvocationID.x;
     if (index >= root.count) return;
 

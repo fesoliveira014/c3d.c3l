@@ -168,7 +168,7 @@ BufferId particles = renderer.create_buffer({
 BufferId emitter = renderer.create_buffer({ .size = EmitterBlock::size, .usage = BufferUsage.UPLOAD, .debug_name = "emitter" })!;
 ```
 
-A compute shader is its own asset kind: one SPIR-V stage, copied into the store, replaced with `replace_compute_shader` (the revision advances), removed with `remove_compute_shader`. `compile_glsl` takes `ShaderStage.COMPUTE`. The stage declares the compute push block, one `uint64_t root_gpu`, and reads everything else through buffer references:
+A compute shader is its own asset kind: one SPIR-V stage, copied into the store, replaced with `replace_compute_shader` (the revision advances), removed with `remove_compute_shader`. `compile_glsl` takes `ShaderStage.COMPUTE`. The stage declares the compute push block, one `uint64_t root_gpu`, which addresses a generated `DispatchRoot { uint64_t textures; uint64_t parameters; }`: `parameters` is the application's root, `textures` the renderer's binding block for declared textures (zero when none are declared). Everything else is reached through buffer references:
 
 ```glsl
 #version 460
@@ -180,7 +180,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer Particles {
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer ParticleRoot { uint64_t particles; uint count; float delta; };
 
 void main() {
-    ParticleRoot root = ParticleRoot(pc.root_gpu);
+    ParticleRoot root = ParticleRoot(DispatchRoot(pc.root_gpu).parameters);
     uint index = gl_GlobalInvocationID.x;
     if (index >= root.count) return;
     Particles(root.particles).values[index].position_life.xyz += root.delta;
@@ -208,7 +208,7 @@ renderer.render_view(&scene, camera_node, renderer.default_view)!;
 renderer.end_frame()!;
 ```
 
-`root` is the application's std430 root; its bytes are copied into the upload ring and their address is the push block. `writes` names the buffers the dispatch writes: the renderer records one barrier before the dispatch, from every consumer stage to compute, and one after, from compute to the vertex, fragment and compute stages, so a later dispatch or draw in the same frame reads the results. A dispatch with no writes records no barrier. Reads need no declaration. Dispatches record in call order, after the frame's pending asset uploads; `dispatch` and `write_buffer` fault `INVALID_ARGUMENT` once a view has been recorded, and `write_buffer` also faults after the frame's first dispatch. A dead shader or buffer id faults `INVALID_ID`. Textures, indirect dispatch and readback are outside this contract.
+`root` is the application's std430 root; its bytes are copied into the upload ring and their address becomes `DispatchRoot.parameters` (zero for an empty root). `writes` names the buffers the dispatch writes: the renderer records one barrier before the dispatch, from every consumer stage to compute, and one after, from compute to the vertex, fragment and compute stages, so a later dispatch or draw in the same frame reads the results. A dispatch with no writes records no barrier. Reads need no declaration. Dispatches record in call order, after the frame's pending asset uploads; `dispatch` and `write_buffer` fault `INVALID_ARGUMENT` once a view has been recorded, and `write_buffer` also faults after the frame's first dispatch. A dead shader or buffer id faults `INVALID_ID`. Textures, indirect dispatch and readback are outside this contract.
 
 Compute pipelines share the pipeline cache and the reload behavior of custom materials: `replace_compute_shader` followed by the next dispatch, or by `renderer.upload(compute_shader)`, rebuilds the pipeline under the new revision and publishes it on success; a backend rejection (a push block that is not `RootPush`, a missing `main`) keeps the previous revision dispatching, lands in the debug log and `Stats.shader_rejections`, and `upload` returns the fault. A first revision that is rejected skips its dispatches until the shader is replaced.
 
