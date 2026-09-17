@@ -5,6 +5,7 @@ import c3d::camera;
 import c3d::geometry;
 import c3d::material;
 import c3d::maths;
+import c3d::pool;
 import c3d::render;
 import c3d::shader;
 import gpu;
@@ -606,6 +607,69 @@ fn void test_pipeline_cache_keys_of_selects_id_and_revision() @test {
         assert(cache.keys_of(tmem, second, 1).len == 1);
         assert(cache.pipelines.has_key(gradient_key()));
     };
+}
+
+fn void test_compute_pipeline_key_differs_by_id_revision_and_from_graphics() @test {
+    ComputeShaderId shader = { .index = 3, .generation = 1 };
+    render::PipelineKey first = render::compute_pipeline_key(shader, 1);
+    render::PipelineKey same = render::compute_pipeline_key(shader, 1);
+    assert(first.equals(same) && first.hash() == same.hash());
+    assert(first.custom.compute && !first.custom.vertex && !first.custom.fragment);
+
+    assert(!first.equals(render::compute_pipeline_key(shader, 2)));
+    assert(!first.equals(render::compute_pipeline_key({ .index = 4, .generation = 1 }, 1)));
+    assert(!first.equals(render::compute_pipeline_key({ .index = 3, .generation = 2 }, 1)));
+    assert(!first.equals(custom_key(3, 1)));
+}
+
+fn void test_pipeline_cache_separates_compute_and_graphics_keys_of_one_slot() @test {
+    render::PipelineCache cache = render::create_pipeline_cache(mem, shader::BUILTIN_REGISTRY);
+    defer cache.pipelines.free();
+    defer cache.rejected.free();
+    ShaderId graphics = { .index = 3, .generation = 1 };
+    ComputeShaderId compute = { .index = 3, .generation = 1 };
+    cache.pipelines.set(custom_key(3, 1), {});
+    cache.pipelines.set(custom_key(3, 2), {});
+    cache.pipelines.set(render::compute_pipeline_key(compute, 1), {});
+    cache.pipelines.set(render::compute_pipeline_key(compute, 2), {});
+
+    @pool() {
+        assert(cache.keys_of(tmem, graphics, 1).len == 1);
+        assert(cache.compute_keys_of(tmem, compute, 1).len == 1);
+        assert(cache.compute_keys_of(tmem, compute, 3).len == 0);
+        assert(cache.remove_compute_shader(tmem, compute).len == 2);
+        assert(cache.keys_of(tmem, graphics, 1).len == 1 && cache.keys_of(tmem, graphics, 2).len == 1);
+        assert(cache.remove_shader(tmem, graphics).len == 2);
+        assert(cache.pipelines.len() == 0);
+    };
+}
+
+fn void test_dispatch_root_size_rounds_to_stream_alignment() @test {
+    assert(render::dispatch_root_size(0) == 0);
+    assert(render::dispatch_root_size(1) == render::STREAM_ALIGNMENT);
+    assert(render::dispatch_root_size(render::STREAM_ALIGNMENT) == render::STREAM_ALIGNMENT);
+    assert(render::dispatch_root_size(render::STREAM_ALIGNMENT + 1) == 2 * render::STREAM_ALIGNMENT);
+}
+
+fn void test_dispatch_after_render_view_faults() @test {
+    render::Renderer renderer;
+    renderer.frame_open = true;
+    renderer.frame_recorded = true;
+    if (catch excuse = renderer.dispatch({ .groups = { 1, 1, 1 } })) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "a dispatch after the first view was recorded");
+    }
+}
+
+fn void test_buffer_pool_reuses_a_slot_with_a_new_generation() @test {
+    render::BufferPool buffers = pool::create_pool{render::BufferRecord, BufferId}(mem, 2);
+    defer pool::destroy_pool{render::BufferRecord, BufferId}(&buffers);
+    BufferId first = buffers.add({ .size = 16 })!!;
+    buffers.remove(first);
+    BufferId second = buffers.add({ .size = 32 })!!;
+    assert(second.index == first.index && second.generation != first.generation);
+    assert(!buffers.is_live(first) && buffers.get(second).size == 32);
 }
 
 fn void test_custom_stage_source_selects_depth_form_for_depth_only_keys() @test {

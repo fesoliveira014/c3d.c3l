@@ -5,6 +5,7 @@ module c3d::render;
 *>
 enum Pass : int {
     UPLOADS,
+    CUSTOM_COMPUTE,
     SHADOW_ATLAS,
     ACCELERATION_BUILD,
     DEPTH_PREPASS,
@@ -35,6 +36,7 @@ const uint TIMESTAMPS_PER_PASS = 2;
 struct Stats {
     uint  draws;
     uint  post_dispatches;
+    uint  dispatches;
     uint  triangles;
     uint  culled;
     uint  lights;

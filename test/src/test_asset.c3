@@ -447,6 +447,75 @@ fn void test_remove_shader_makes_id_stale() @test {
     }
 }
 
+fn void test_add_compute_shader_copies_stage() @test {
+    AssetStore store = make_store();
+    defer asset::destroy_asset_store(&store);
+    char[4] compute = { 1, 2, 3, 4 };
+    ComputeShaderDesc desc = { .compute = compute[..] };
+    ComputeShaderId id = store.add_compute_shader(&desc, "particles")!!;
+    compute[0] = 0;
+
+    ComputeShaderAsset* record = store.compute_shader(id);
+    assert(record.header.revision == 1);
+    assert(record.desc.compute[0] == 1 && record.desc.compute.ptr != &compute[0]);
+    assert(store.find_compute_shader("particles")!!.index == id.index);
+    if (catch excuse = store.find_shader("particles")) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "a compute shader key resolved as a graphics shader");
+    }
+}
+
+fn void test_add_compute_shader_rejects_empty_stage() @test {
+    AssetStore store = make_store();
+    defer asset::destroy_asset_store(&store);
+    ComputeShaderDesc empty;
+    if (catch excuse = store.add_compute_shader(&empty)) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "an empty compute stage was accepted");
+    }
+}
+
+fn void test_replace_compute_shader_bumps_revision_and_copies() @test {
+    AssetStore store = make_store();
+    defer asset::destroy_asset_store(&store);
+    char[4] first = { 1, 1, 1, 1 };
+    char[8] second = { 2, 2, 2, 2, 2, 2, 2, 2 };
+    ComputeShaderDesc desc = { .compute = first[..] };
+    ComputeShaderId id = store.add_compute_shader(&desc)!!;
+
+    ComputeShaderDesc replacement = { .compute = second[..] };
+    store.replace_compute_shader(id, &replacement)!!;
+    second[0] = 0;
+    ComputeShaderAsset* record = store.compute_shader(id);
+    assert(record.header.revision == 2);
+    assert(record.desc.compute.len == 8 && record.desc.compute[0] == 2);
+
+    ComputeShaderDesc empty;
+    if (catch excuse = store.replace_compute_shader(id, &empty)) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "an empty replacement was accepted");
+    }
+    assert(record.header.revision == 2 && record.desc.compute.len == 8);
+}
+
+fn void test_remove_compute_shader_makes_id_stale() @test {
+    AssetStore store = make_store();
+    defer asset::destroy_asset_store(&store);
+    char[4] compute = { 1, 2, 3, 4 };
+    ComputeShaderDesc desc = { .compute = compute[..] };
+    ComputeShaderId id = store.add_compute_shader(&desc, "particles")!!;
+    store.remove_compute_shader(id);
+    assert(!store.compute_shaders.is_live(id));
+    if (catch excuse = store.find_compute_shader("particles")) {
+        assert(excuse == NOT_FOUND);
+    } else {
+        assert(false, "the key of a removed compute shader still resolves");
+    }
+}
+
 struct TestParams @local {
     float[<4>] color;
     float[<4>] motion;

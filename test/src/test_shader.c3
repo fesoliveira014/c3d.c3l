@@ -77,6 +77,28 @@ fn void test_compile_glsl_resolves_embedded_includes() @test {
     foreach (index, expected : SPIRV_MAGIC) assert(spirv[index] == expected);
 }
 
+const String PARTICLE_COMPUTE = `#version 460
+#include "generated/shader_abi.glsl"
+#include "c3d_abi.glsl"
+layout(local_size_x = 64) in;
+layout(push_constant) uniform Push { uint64_t root_gpu; } pc;
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer Particles { vec4 position_life[]; };
+layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer ParticleRoot { uint64_t particles; uint count; float delta; };
+void main() {
+    ParticleRoot root = ParticleRoot(DispatchRoot(pc.root_gpu).parameters);
+    uint index = gl_GlobalInvocationID.x;
+    if (index >= root.count) return;
+    Particles(root.particles).position_life[index].y += root.delta;
+}
+`;
+
+fn void test_compile_glsl_compiles_a_compute_stage() @test {
+    char[] spirv = compile::compile_glsl(mem, PARTICLE_COMPUTE, ShaderStage.COMPUTE)!!;
+    defer free(spirv.ptr);
+    assert(spirv.len >= SPIRV_MAGIC.len && spirv.len % 4 == 0);
+    foreach (index, expected : SPIRV_MAGIC) assert(spirv[index] == expected);
+}
+
 fn void test_compile_glsl_reports_failure() @test {
     String log;
     if (catch excuse = compile::compile_glsl(mem, LIT_FRAGMENT, ShaderStage.FRAGMENT, log: &log)) {

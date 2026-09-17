@@ -9,6 +9,7 @@ import shaderc;
 enum ShaderStage {
     VERTEX,
     FRAGMENT,
+    COMPUTE,
 }
 
 const String MISSING_INCLUDE_MESSAGE @private = "include is not part of the embedded shader include set";
@@ -47,7 +48,7 @@ fn char[]? compile_glsl(
         result = compiler.compile_into_spv(
             source.ptr,
             source.len,
-            stage == ShaderStage.VERTEX ? shaderc::ShaderKind.VERTEX_SHADER : shaderc::ShaderKind.FRAGMENT_SHADER,
+            shader_kind(stage),
             (char*)name,
             "main",
             options,
@@ -63,6 +64,14 @@ fn char[]? compile_glsl(
     char[] spirv = alloc::new_array(allocator, char, (sz)length);
     mem::copy(spirv.ptr, result.get_bytes(), (sz)length);
     return spirv;
+}
+
+fn shaderc::ShaderKind shader_kind(ShaderStage stage) @private {
+    switch (stage) {
+        case VERTEX: return shaderc::ShaderKind.VERTEX_SHADER;
+        case FRAGMENT: return shaderc::ShaderKind.FRAGMENT_SHADER;
+        case COMPUTE: return shaderc::ShaderKind.COMPUTE_SHADER;
+    }
 }
 
 fn shaderc::IncludeResult* resolve_include(

@@ -129,6 +129,8 @@ struct Renderer {
     RetireList              pending_upload_retire;
     MaterialRes[]           materials;
     ShaderRes[]             shaders;
+    ComputeShaderRes[]      compute_shaders;
+    BufferPool              buffers;
     gpu::GpuAllocation      material_heap;
     gpu::GpuSpan            material_heap_span;
 
@@ -168,6 +170,7 @@ struct Renderer {
     time::Clock             frame_started;
     bool                    frame_open;
     bool                    overlay_open;
+    bool                    compute_open;
     bool                    has_output;
     bool                    frame_recorded;
     bool                    output_suppressed;
@@ -215,7 +218,8 @@ macro void? Renderer.upload(&self, id) {
         $case SamplerId: return self.upload_sampler(id);
         $case EnvironmentId: return self.upload_environment(id);
         $case ShaderId: return self.upload_shader(id);
-        $default: $error("upload takes a GeometryId, MaterialId, TextureId, SamplerId, EnvironmentId or ShaderId");
+        $case ComputeShaderId: return self.upload_compute_shader(id);
+        $default: $error("upload takes a GeometryId, MaterialId, TextureId, SamplerId, EnvironmentId, ShaderId or ComputeShaderId");
     $endswitch
 }
 
@@ -248,6 +252,7 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
     sweep_samplers(self);
     sweep_materials(self);
     sweep_shaders(self);
+    sweep_compute_shaders(self);
     reset_upload_ring(self, slot)!;
     reset_deformation_cache(&self.deformation);
     self.frame_started = clock::now();
@@ -269,6 +274,7 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
         record.post_chain_open = false;
     }
     self.frame_submitted = false;
+    self.compute_open = false;
     self.recording_slot = (uint)(self.frame_index % FRAMES_IN_FLIGHT);
     self.commands = {};
     defer catch abort_frame(self);
@@ -347,6 +353,7 @@ fn void? Renderer.end_frame(&self) {
     self.has_output = false;
 
     defer catch (void)gpu::discard_commands(&self.commands);
+    close_custom_compute(self)!;
     record_pending_copies(self, &self.commands)!;
     if (present) self.window_target.transition(&self.commands, PRESENT_STATE)!;
     slot.upload.flush(&self.device)!;
@@ -729,6 +736,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .geometries           = alloc::new_array(allocator, GpuGeometry, assets.geometries.items.len),
         .materials            = alloc::new_array(allocator, MaterialRes, assets.materials.items.len),
         .shaders              = alloc::new_array(allocator, ShaderRes, assets.shaders.items.len),
+        .compute_shaders      = alloc::new_array(allocator, ComputeShaderRes, assets.compute_shaders.items.len),
         .textures             = alloc::new_array(allocator, TextureRes, assets.textures.items.len),
         .environment_state    = {
             .mirrors = alloc::new_array(allocator, EnvironmentRes, assets.environments.items.len),
@@ -746,6 +754,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .swapchain_info       = swapchain_info,
         .frames               = frames,
         .targets              = pool::create_pool{TargetRecord, RenderTargetId}(allocator, RENDER_TARGET_CAPACITY),
+        .buffers              = pool::create_pool{BufferRecord, BufferId}(allocator, BUFFER_CAPACITY),
         .views                = pool::create_pool{ViewRecord, ViewId}(allocator, VIEW_CAPACITY),
         .pipelines            = create_pipeline_cache(allocator, shader::BUILTIN_REGISTRY),
         .deformation          = create_deformation_cache(allocator),
@@ -771,6 +780,8 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         free_geometries(&renderer);
         alloc::free(allocator, renderer.materials.ptr);
         free_shaders(&renderer);
+        free_compute_shaders(&renderer);
+        free_buffers(&renderer);
         destroy_pipeline_cache(&renderer.device, &renderer.pipelines);
         destroy_deformation_cache(&renderer.deformation);
         pool::destroy_pool{TargetRecord, RenderTargetId}(&renderer.targets);
@@ -804,6 +815,8 @@ fn void destroy_renderer(Renderer* renderer) {
     free_geometries(renderer);
     free_material_heap(renderer);
     free_shaders(renderer);
+    free_compute_shaders(renderer);
+    free_buffers(renderer);
     destroy_shadow_atlas(&renderer.device, &renderer.shadow_atlas);
     if (renderer.shadow_timing_results.len) alloc::free(renderer.allocator, renderer.shadow_timing_results.ptr);
     alloc::free(renderer.allocator, renderer.shadow_frusta.ptr);
@@ -1010,6 +1023,7 @@ fn void? reset_upload_ring(Renderer* renderer, Frame* slot) @private {
 fn void abort_frame(Renderer* renderer) {
     renderer.frame_open = false;
     renderer.overlay_open = false;
+    renderer.compute_open = false;
 
     (void)gpu::discard_commands(&renderer.commands);
 

@@ -82,6 +82,11 @@ layout(buffer_reference, std430, buffer_reference_align = 4) buffer CompositeRoo
     uint _pad1;
 };
 
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer DispatchRoot {
+    uint64_t textures;
+    uint64_t parameters;
+};
+
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer GeometryRoot {
     uint64_t positions;
     uint64_t normals;
