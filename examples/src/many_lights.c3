@@ -15,6 +15,8 @@ import gpu;
 import imgui;
 import std::io;
 import std::math;
+import std::time;
+import std::time::clock;
 
 const uint MAX_POINT_LIGHTS @local = 4096; // 320 KiB of packed lights per view; caps this workload
 const uint SCENE_NODE_CAPACITY @local = MAX_POINT_LIGHTS + 128; // fixed hall meshes and camera fit beside every light
@@ -55,6 +57,35 @@ struct Orbit @local {
 struct HallView @local {
     Node*[MAX_POINT_LIGHTS] lights;
     Node* camera_node;
+}
+
+struct BenchmarkOptions @local {
+    bool enabled;
+    bool gpu_timings;
+    bool validation;
+    LightSelection selection;
+    uint lights;
+    uint frames;
+    uint warmup;
+    uint capacity;
+    float range;
+    uint width;
+    uint height;
+}
+
+struct BenchmarkSample @local {
+    double wall_ms;
+    double update_ms;
+    double begin_ms;
+    double render_ms;
+    double finish_ms;
+    double end_ms;
+    float cpu_record_ms;
+    float[render::PASS_COUNT] gpu_ms;
+    uint draws;
+    uint lights;
+    uint dropped;
+    uint overflows;
 }
 
 fn HallView? populate_hall(AssetStore* assets, Scene* scene) @local {
@@ -298,18 +329,147 @@ fn void? run_example(bool gpu_timings) @local {
     return gui::destroy_gui_renderer(&gui_renderer);
 }
 
-<* Run the interactive many-light comparison. *>
-fn int main(String[] args) {
-    bool gpu_timings;
-    foreach (argument : args[1..]) {
-        if (argument == "--gpu-timings") {
-            gpu_timings = true;
-        } else {
-            io::eprintfn("Unknown argument: %s", argument);
-            return 1;
+fn BenchmarkOptions? parse_options(String[] args) @local {
+    BenchmarkOptions options = {
+        .selection = LightSelection.CLUSTERED,
+        .lights = 256, .frames = 300, .warmup = 60, .capacity = 64,
+        .range = 6, .width = 1440, .height = 900,
+    };
+    for (usz index = 1; index < args.len; index++) {
+        String argument = args[index];
+        switch (argument) {
+            case "--benchmark": options.enabled = true;
+            case "--gpu-timings": options.gpu_timings = true;
+            case "--validation": options.validation = true;
+            default:
+                if (++index == args.len) return c3d::INVALID_ARGUMENT~;
+                String value = args[index];
+                switch (argument) {
+                    case "--mode":
+                        if (value == "flat") {
+                            options.selection = LightSelection.FLAT;
+                        } else if (value == "clustered") {
+                            options.selection = LightSelection.CLUSTERED;
+                        } else {
+                            return c3d::INVALID_ARGUMENT~;
+                        }
+                    case "--lights": options.lights = value.to_uint()!;
+                    case "--frames": options.frames = value.to_uint()!;
+                    case "--warmup": options.warmup = value.to_uint()!;
+                    case "--capacity": options.capacity = value.to_uint()!;
+                    case "--range": options.range = value.to_float()!;
+                    case "--width": options.width = value.to_uint()!;
+                    case "--height": options.height = value.to_uint()!;
+                    default: return c3d::INVALID_ARGUMENT~;
+                }
         }
     }
-    if (catch excuse = run_example(gpu_timings)) {
+    if (!options.lights || options.lights > MAX_POINT_LIGHTS
+        || !options.frames || options.frames > 100000 || options.warmup > 100000
+        || !options.capacity || options.capacity > 256
+        || !math::is_finite(options.range) || options.range < RANGE_MIN || options.range > RANGE_MAX
+        || !options.width || options.width > 8192 || !options.height || options.height > 8192) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+    return options;
+}
+
+fn double milliseconds(time::Clock started) @local {
+    return (double)(clock::now() - started) / 1_000_000.0;
+}
+
+fn void? run_benchmark(BenchmarkOptions options) @local {
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+    Renderer renderer = render::create_renderer(mem, &assets, {
+        .validation = options.validation,
+        .gpu_timings = options.gpu_timings,
+        .application_name = "c3d_many_lights_benchmark",
+        .max_lights = MAX_POINT_LIGHTS,
+    })!;
+    defer render::destroy_renderer(&renderer);
+    Scene scene = scene::create_scene(mem, { .max_nodes = SCENE_NODE_CAPACITY });
+    defer scene::destroy_scene(&scene);
+    HallView hall = populate_hall(&assets, &scene)!;
+    apply_workload(&scene, &hall, { .light_count = options.lights, .light_range = options.range });
+    reset_camera(&scene, hall.camera_node);
+    scene.update_world();
+    RenderTargetId target = render::create_render_target(&renderer,
+        render::render_target_desc(options.width, options.height, PixelFormat.RGBA8_UNORM))!;
+    ViewDesc desc = render::texture_view_desc(target, OutputMode.DISPLAY_LDR);
+    desc.lights = options.selection;
+    desc.clusters.lights_per_cluster = options.capacity;
+    ViewId view = render::create_view(&renderer, desc)!;
+    renderer.prepare_scene(&scene)!;
+    BenchmarkSample[] samples = alloc::new_array(mem, BenchmarkSample, options.frames);
+    defer alloc::free(mem, samples.ptr);
+    io::eprintfn("mode=%s lights=%d range=%.1f capacity=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s presentation=none",
+        options.selection == LightSelection.FLAT ? "flat" : "clustered", options.lights, options.range,
+        options.capacity, options.width, options.height, options.warmup, options.frames,
+        options.validation, options.gpu_timings, renderer.timestamps_enabled);
+
+    // Readback arrives when the same frame slot is reused; drain frames only collect the final rows.
+    for (uint frame = 0; frame < options.warmup + options.frames + render::FRAMES_IN_FLIGHT; frame++) {
+        BenchmarkSample sample;
+        time::Clock started = clock::now();
+        time::Clock phase = started;
+        scene.update_world();
+        sample.update_ms = milliseconds(phase);
+        phase = clock::now();
+        renderer.begin_frame({ .time = (double)frame / 60, .delta = 1.0f / 60 })!;
+        defer catch render::abort_frame(&renderer);
+        sample.begin_ms = milliseconds(phase);
+        if (frame >= options.warmup + render::FRAMES_IN_FLIGHT) {
+            uint completed = frame - options.warmup - render::FRAMES_IN_FLIGHT;
+            samples[completed].gpu_ms = renderer.stats.gpu_pass_ms;
+            samples[completed].overflows = renderer.stats.cluster_overflows;
+        }
+        phase = clock::now();
+        renderer.render_view(&scene, hall.camera_node, view)!;
+        sample.render_ms = milliseconds(phase);
+        phase = clock::now();
+        renderer.finish_view(view)!;
+        sample.finish_ms = milliseconds(phase);
+        phase = clock::now();
+        renderer.end_frame()!;
+        sample.end_ms = milliseconds(phase);
+        sample.wall_ms = milliseconds(started);
+        sample.cpu_record_ms = renderer.stats.cpu_record_ms;
+        sample.draws = renderer.stats.draws;
+        sample.lights = renderer.stats.lights;
+        sample.dropped = renderer.stats.lights_dropped;
+        if (frame >= options.warmup && frame < options.warmup + options.frames) {
+            samples[frame - options.warmup] = sample;
+        }
+    }
+    foreach (&slot : renderer.frames) {
+        if (slot.done.is_valid()) gpu::wait_completion(slot.done)!;
+    }
+    io::printn("frame,wall_ms,update_ms,begin_ms,render_ms,finish_ms,end_ms,cpu_record_ms,draws,lights,dropped,overflows,gpu_cull_ms,gpu_opaque_ms,gpu_post_ms,gpu_composite_ms");
+    foreach (index, sample : samples) {
+        float unavailable = -1;
+        io::printfn("%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f",
+            index, sample.wall_ms, sample.update_ms, sample.begin_ms, sample.render_ms,
+            sample.finish_ms, sample.end_ms, sample.cpu_record_ms, sample.draws, sample.lights,
+            sample.dropped, sample.overflows,
+            renderer.timestamps_enabled ? sample.gpu_ms[Pass.LIGHT_CULL.ordinal] : unavailable,
+            renderer.timestamps_enabled ? sample.gpu_ms[Pass.FORWARD_OPAQUE.ordinal] : unavailable,
+            renderer.timestamps_enabled ? sample.gpu_ms[Pass.POST_CHAIN.ordinal] : unavailable,
+            renderer.timestamps_enabled ? sample.gpu_ms[Pass.COMPOSITE.ordinal] : unavailable);
+    }
+}
+
+<* Run the many-light comparison or a fixed headless benchmark. *>
+fn int main(String[] args) {
+    BenchmarkOptions? parsed = parse_options(args);
+    if (catch excuse = parsed) {
+        io::eprintfn("Invalid options: %s", excuse);
+        io::eprintn("Use --benchmark --mode flat|clustered --lights N --frames N --warmup N --capacity N --range N --width N --height N [--gpu-timings] [--validation].");
+        return 1;
+    }
+    BenchmarkOptions options = parsed;
+    fault excuse = options.enabled ? @catch(run_benchmark(options)) : @catch(run_example(options.gpu_timings));
+    if (excuse) {
         io::eprintfn("Many-light example failed: %s", excuse);
         return 1;
     }
