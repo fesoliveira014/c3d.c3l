@@ -545,6 +545,45 @@ fn void test_render_preview_request_rejects_oversized_and_out_of_range() @test {
     } else {
         assert(false, "a cube texture must fault");
     }
+
+    uint[2] slices = { 0, 3 };
+    foreach (slice : slices) {
+        assert(@ok(render::validate_preview_request(
+            source:          { .kind = VIEW_CLUSTERS, .level = slice },
+            params:          valid,
+            layer_count:     0,
+            bloom_levels:    0,
+            texture_is_cube: false,
+            texture_depth:   0,
+            cluster_slices:  4,
+        )));
+    }
+    if (catch excuse = render::validate_preview_request(
+        source:          { .kind = VIEW_CLUSTERS, .level = 4 },
+        params:          valid,
+        layer_count:     0,
+        bloom_levels:    0,
+        texture_is_cube: false,
+        texture_depth:   0,
+        cluster_slices:  4,
+    )) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "A slice beyond the cluster grid must fault");
+    }
+    if (catch excuse = render::validate_preview_request(
+        source:          { .kind = VIEW_CLUSTERS },
+        params:          valid,
+        layer_count:     0,
+        bloom_levels:    0,
+        texture_is_cube: false,
+        texture_depth:   0,
+        cluster_slices:  0,
+    )) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "An unavailable cluster grid must fault");
+    }
 }
 
 fn void test_render_preview_cube_face_directions() @test {

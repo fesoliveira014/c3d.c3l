@@ -22,6 +22,7 @@ enum PreviewKind {
     SHADOW_LAYER,
     ENVIRONMENT_FACE,
     TEXTURE,
+    VIEW_CLUSTERS,
 }
 
 <*
@@ -79,11 +80,17 @@ const gpu::Format PREVIEW_FORMAT @local = gpu::Format.RGBA8_UNORM;
  @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
  @require !self.frame_open, slot < PREVIEW_CAPACITY
 *>
-fn void? Renderer.request_preview(&self, uint slot, PreviewSource source, PreviewParams params) {
+fn void? Renderer.request_preview(
+    &self,
+    uint slot,
+    PreviewSource source,
+    PreviewParams params,
+) {
     uint layer_count = (uint)self.shadow_atlas.layers.len;
     uint bloom_levels;
     bool texture_is_cube;
     uint texture_depth;
+    uint cluster_slices;
     switch (source.kind) {
         case VIEW_COLOR:
         case VIEW_DEPTH:
@@ -94,6 +101,9 @@ fn void? Renderer.request_preview(&self, uint slot, PreviewSource source, Previe
         case VIEW_DOF_FAR:
         case VIEW_MOTION_BLUR:
             bloom_levels = self.views.try_get(source.view)!.bloom_levels;
+        case VIEW_CLUSTERS:
+            ViewRecord* record = self.views.try_get(source.view)!;
+            if (record.desc.lights == CLUSTERED) cluster_slices = record.desc.clusters.depth_slices;
         case RENDER_TARGET:
             self.targets.try_get(source.target)!;
         case SHADOW_LAYER:
@@ -113,6 +123,7 @@ fn void? Renderer.request_preview(&self, uint slot, PreviewSource source, Previe
         bloom_levels:    bloom_levels,
         texture_is_cube: texture_is_cube,
         texture_depth:   texture_depth,
+        cluster_slices:  cluster_slices,
     )!;
 
     PreviewSlot* preview = &self.previews[slot];
@@ -134,6 +145,7 @@ fn gpu::TextureIndex Renderer.preview_texture(&self, uint slot) {
  Reject a preview request whose extent or indices fall outside their source.
  @param texture_is_cube : "Only read for TEXTURE."
  @param texture_depth : "Only read for TEXTURE; nonzero for a volume."
+ @param cluster_slices : "Configured slices; zero for an unavailable clustered source."
  @return? c3d::INVALID_ARGUMENT
  @pure
 *>
@@ -144,12 +156,15 @@ fn void? validate_preview_request(
     uint bloom_levels,
     bool texture_is_cube,
     uint texture_depth,
+    uint cluster_slices = 0,
 ) {
     if (!params.width || !params.height) return c3d::INVALID_ARGUMENT~;
     if (params.width > PREVIEW_MAX_SIZE || params.height > PREVIEW_MAX_SIZE) return c3d::INVALID_ARGUMENT~;
     switch (source.kind) {
         case VIEW_BLOOM:
             if (source.level >= bloom_levels) return c3d::INVALID_ARGUMENT~;
+        case VIEW_CLUSTERS:
+            if (source.level >= cluster_slices) return c3d::INVALID_ARGUMENT~;
         case SHADOW_LAYER:
             if (source.layer >= layer_count) return c3d::INVALID_ARGUMENT~;
         case TEXTURE:
@@ -236,6 +251,16 @@ fn void? resolve_preview_source(Renderer* renderer, PreviewSlot* preview, Previe
             } else if (source.kind == PreviewKind.VIEW_VELOCITY) {
                 root.mode = shader::PREVIEW_MODE_VELOCITY;
             }
+        case VIEW_CLUSTERS:
+            if (!renderer.views.is_live(source.view)) return;
+            ViewRecord* record = renderer.views.get(source.view);
+            if (record.desc.lights != CLUSTERED || record.cluster_root == (gpu::GpuAddress)0) return;
+            if (record.cluster_depth.near >= record.cluster_depth.far) return;
+            if (record.cluster_depth.slices != record.desc.clusters.depth_slices) return;
+            if (source.level >= record.cluster_depth.slices) return;
+            root.clusters = record.cluster_root;
+            root.cluster_slice = source.level;
+            root.mode = shader::PREVIEW_MODE_CLUSTERS;
         case RENDER_TARGET:
             if (!renderer.targets.is_live(source.target)) return;
             Target* target = &renderer.targets.get(source.target).target;

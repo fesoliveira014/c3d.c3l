@@ -50,6 +50,38 @@ root GeometryRoot {
     uint       _pad1;
 }
 
+const uint FRAME_LIGHTS_CLUSTERED = 1;
+const uint CLUSTER_GROUP_SIZE = 64;
+
+struct ClusterRange {
+    uint count;
+    uint overflow;
+}
+
+root ClusterCounterGpu {
+    uint overflows;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+}
+
+root ClusterGpu {
+    GpuAddress ranges;
+    GpuAddress indices;
+    GpuAddress globals;
+    GpuAddress counter;
+    vec4 depth;
+    uint tiles_x;
+    uint tiles_y;
+    uint depth_slices;
+    uint lights_per_cluster;
+    uint global_count;
+    uint orthographic;
+    uint _pad0;
+    uint _pad1;
+    mat4 view_proj;
+}
+
 root FrameRoot {
     mat4       view;
     mat4       proj;
@@ -70,8 +102,7 @@ root FrameRoot {
     vec4       ambient;
     TextureIndex scene_color;
     SamplerIndex scene_sampler;
-    uint       _pad0;
-    uint       _pad1;
+    GpuAddress clusters;
 }
 
 root DrawRoot {
@@ -176,6 +207,7 @@ const uint PREVIEW_MODE_DEPTH_RAW = 2;
 const uint PREVIEW_MODE_VELOCITY = 3;
 const uint PREVIEW_MODE_CUBE_FACE = 4;
 const uint PREVIEW_MODE_CLEAR = 5;
+const uint PREVIEW_MODE_CLUSTERS = 6;
 
 root PreviewRoot {
     TextureIndex input_texture;
@@ -190,6 +222,9 @@ root PreviewRoot {
     float proj_22;
     float proj_23;
     uint orthographic;
+    GpuAddress clusters;
+    uint cluster_slice;
+    uint _pad0;
 }
 
 root CubePreviewRoot {

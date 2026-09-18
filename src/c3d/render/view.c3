@@ -244,7 +244,18 @@ fn void? Renderer.render_view(
         }
         LightGpu[] lights = extraction.lights;
         gpu::GpuAddress light_address;
-        if (lights.len) {
+        reset_cluster_recording(self)!;
+        ClusterFrame cluster_frame;
+        if (record.desc.lights == LightSelection.CLUSTERED) {
+            cluster_frame = prepare_cluster_frame(
+                renderer: self,
+                record: record,
+                camera: camera,
+                matrices: &matrices,
+                lights: lights,
+            )!;
+            light_address = cluster_frame.lights;
+        } else if (lights.len) {
             gpu::MappedGpuSpan light_span = slot.upload.take(
                 device: &self.device,
                 size: lights.len * LightGpu::size,
@@ -285,7 +296,18 @@ fn void? Renderer.render_view(
             scene_color: transmission_items.len ? record.scene_color.view.index : (gpu::TextureIndex)0,
             scene_sampler: transmission_items.len ? self.linear_clamp_sampler : (gpu::SamplerIndex)0,
             prev_view_proj: motion_blur && record.history.valid ? &record.history.view_proj : null,
+            clusters: cluster_frame.clusters,
         );
+        if (record.desc.lights == LightSelection.CLUSTERED) {
+            record_clusters(
+                renderer: self,
+                record: record,
+                view: view,
+                frame: frame_span,
+            )!;
+            record.cluster_root = cluster_frame.clusters;
+            record.cluster_depth = cluster_frame.depth;
+        }
         DrawItem[][3] draw_groups = { opaque_items, transmission_items, transparent_items };
         foreach (group : draw_groups) foreach (&item : group) {
             Node* node = item.candidate.node;
@@ -612,7 +634,11 @@ fn MeshPreparation? prepare_mesh(
 
 fn void? prepare_views(Renderer* renderer) @private {
     foreach (&record : renderer.views.items) {
-        if (record.live) post::prepare_display(renderer, record)!;
+        if (!record.live) continue;
+        post::prepare_display(renderer, record)!;
+        if (record.desc.lights == LightSelection.CLUSTERED) {
+            acquire_environment_pipeline(renderer, &renderer.cluster_pipeline, LIGHT_CULL)!;
+        }
     }
 }
 
@@ -623,6 +649,7 @@ fn void? prepare_views(Renderer* renderer) @private {
  @param [&in] camera : "Supplies near, far and exposure."
  @param viewport : "Pixels."
  @param [in] prev_view_proj : "Null repeats the current view-projection."
+ @param clusters : "Matching frame-ring cluster root borrowed through frame completion."
 *>
 fn void write_frame_root(
     FrameRoot* root,
@@ -640,6 +667,7 @@ fn void write_frame_root(
     gpu::TextureIndex scene_color = (gpu::TextureIndex)0,
     gpu::SamplerIndex scene_sampler = (gpu::SamplerIndex)0,
     Mat4* prev_view_proj = null,
+    gpu::GpuAddress clusters = (gpu::GpuAddress)0,
 ) {
     *root = {
         .view            = bitcast(matrices.view, Mat4f),
@@ -659,6 +687,8 @@ fn void write_frame_root(
         .environment     = environment,
         .scene_color     = scene_color,
         .scene_sampler   = scene_sampler,
+        .clusters        = clusters,
+        .flags           = clusters != (gpu::GpuAddress)0 ? shader::FRAME_LIGHTS_CLUSTERED : 0,
     };
 }
 

@@ -14,6 +14,8 @@ const uint SHADOW_FACE_POSITIVE_Z = 4u;
 const uint SHADOW_FACE_NEGATIVE_Z = 5u;
 const uint SHADOW_POINT_FACE_COUNT = 6u;
 const uint MAX_DISPATCH_TEXTURES = 8u;
+const uint FRAME_LIGHTS_CLUSTERED = 1u;
+const uint CLUSTER_GROUP_SIZE = 64u;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8u;
 const uint DRAW_RECEIVE_SHADOW = 1u;
 const uint DRAW_ALPHA_MASK = 2u;
@@ -33,6 +35,7 @@ const uint PREVIEW_MODE_DEPTH_RAW = 2u;
 const uint PREVIEW_MODE_VELOCITY = 3u;
 const uint PREVIEW_MODE_CUBE_FACE = 4u;
 const uint PREVIEW_MODE_CLEAR = 5u;
+const uint PREVIEW_MODE_CLUSTERS = 6u;
 const uint ENVIRONMENT_FACE_POSITIVE_X = 0u;
 const uint ENVIRONMENT_FACE_NEGATIVE_X = 1u;
 const uint ENVIRONMENT_FACE_POSITIVE_Y = 2u;
@@ -116,6 +119,35 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer GeometryRoot
     uint _pad1;
 };
 
+struct ClusterRange {
+    uint count;
+    uint overflow;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer ClusterCounterGpu {
+    uint overflows;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer ClusterGpu {
+    uint64_t ranges;
+    uint64_t indices;
+    uint64_t globals;
+    uint64_t counter;
+    vec4 depth;
+    uint tiles_x;
+    uint tiles_y;
+    uint depth_slices;
+    uint lights_per_cluster;
+    uint global_count;
+    uint orthographic;
+    uint _pad0;
+    uint _pad1;
+    mat4 view_proj;
+};
+
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer FrameRoot {
     mat4 view;
     mat4 proj;
@@ -136,8 +168,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer FrameRoot {
     vec4 ambient;
     uint scene_color;
     uint scene_sampler;
-    uint _pad0;
-    uint _pad1;
+    uint64_t clusters;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer DrawRoot {
@@ -219,7 +250,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer DebugLinesR
     mat4 view_proj;
 };
 
-layout(buffer_reference, std430, buffer_reference_align = 4) buffer PreviewRoot {
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer PreviewRoot {
     uint input_texture;
     uint input_sampler;
     uint output_texture;
@@ -232,6 +263,9 @@ layout(buffer_reference, std430, buffer_reference_align = 4) buffer PreviewRoot 
     float proj_22;
     float proj_23;
     uint orthographic;
+    uint64_t clusters;
+    uint cluster_slice;
+    uint _pad0;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer CubePreviewRoot {

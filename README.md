@@ -150,6 +150,19 @@ Drag outside the GUI to orbit, scroll to zoom, and release Escape to quit.
 See [Materials and lighting](docs/materials.md) for factors, layer masks,
 light capacity and current rendering limits.
 
+`many_lights` compares flat and clustered Forward+ on a fixed procedural hall with
+64, 256, 1024 or 4096 point lights. The targets panel switches selection modes and
+shows a selected cluster-depth slice; workload controls adjust range and per-cell
+capacity, including deliberate overflow with complete flat fallback:
+
+```bash
+python3 scripts/build.py --example many_lights
+./examples/build/many_lights --gpu-timings
+```
+
+See [Many lights](docs/many_lights.md) for controls, buffer ownership, material
+exceptions and separate wall/CPU/GPU comparison measurements.
+
 `materials` combines masked foliage, ordinary premultiplied alpha blending, Toon
 lighting and Physical clearcoat/sheen/specular/anisotropy/transmission in one
 interactive window. Its controls switch presets, active families, base and layer

@@ -34,6 +34,11 @@ fn void? stats_panel(Renderer* renderer) {
     imgui::text("Dangling references: %u", renderer.stats.dangling_refs);
     imgui::text("Shader rejections: %u", renderer.stats.shader_rejections);
 
+    imgui::text("Completed cluster view: %u:%u",
+        renderer.stats.cluster_view.index, renderer.stats.cluster_view.generation);
+    imgui::text("Completed cluster count: %u", renderer.stats.cluster_count);
+    imgui::text("Completed cluster overflows: %u", renderer.stats.cluster_overflows);
+
     if (renderer.frame_index) {
         render::Frame* previous = &renderer.frames[(renderer.frame_index - 1) % render::FRAMES_IN_FLIGHT];
         imgui::text("Previous slot used: %llu bytes", (ulong)previous.upload.head);
@@ -44,6 +49,8 @@ fn void? stats_panel(Renderer* renderer) {
     if (renderer.timestamps_enabled) {
         imgui::text("Completed GPU custom compute: %.3f ms",
             (double)renderer.stats.gpu_pass_ms[Pass.CUSTOM_COMPUTE.ordinal]);
+        imgui::text("Completed GPU light cull: %.3f ms",
+            (double)renderer.stats.gpu_pass_ms[Pass.LIGHT_CULL.ordinal]);
         imgui::text("Completed GPU opaque: %.3f ms",
             (double)renderer.stats.gpu_pass_ms[Pass.FORWARD_OPAQUE.ordinal]);
         imgui::text("Completed GPU transmission: %.3f ms",

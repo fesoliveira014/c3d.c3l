@@ -1,5 +1,7 @@
 module c3d::render;
 
+import c3d;
+
 <*
  Recorded work the renderer times separately.
 *>
@@ -7,6 +9,7 @@ enum Pass : int {
     UPLOADS,
     CUSTOM_COMPUTE,
     SHADOW_ATLAS,
+    LIGHT_CULL,
     ACCELERATION_BUILD,
     DEPTH_PREPASS,
     FORWARD_OPAQUE,
@@ -42,6 +45,9 @@ struct Stats {
     uint  culled;
     uint  lights;
     uint  lights_dropped;
+    ViewId cluster_view;
+    uint  cluster_count;
+    uint  cluster_overflows;
     uint  debug_lines;
     uint  shadow_layers;
     uint  shadow_requests_dropped;
