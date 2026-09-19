@@ -40,6 +40,18 @@
       "sources": [
         "cap/**"
       ]
+    },
+    "profile_application": {
+      "type": "executable",
+      "dependencies": ["c3d_profile"],
+      "features": ["C3D_PROFILE_CPU"],
+      "sources": ["profile/**"]
+    },
+    "profile_internal": {
+      "type": "executable",
+      "dependencies": ["c3d_profile"],
+      "features": ["C3D_PROFILE_CPU", "C3D_PROFILE_INTERNAL"],
+      "sources": ["profile/**"]
     }
   }
 }
