@@ -541,7 +541,14 @@ fn void test_export_is_exact_deterministic_and_owned() @test {
     $else
         String expected = "{\"schema\":\"c3d.profile\",\"version\":1,\"features\":{\"cpu\":true,\"internal\":false},\"frames\":[{\"frame_id\":9007199254740993,\"cpu_state\":\"READY\",\"truncated\":false,\"dropped_cpu_scopes\":0,\"cpu\":[{\"label\":\"parent\",\"origin\":\"APPLICATION\",\"parent_index\":0,\"has_parent\":false,\"start_ns\":0,\"duration_ns\":100,\"self_ns\":40,\"self_complete\":true},{\"label\":\"child\",\"origin\":\"LIBRARY\",\"parent_index\":0,\"has_parent\":true,\"start_ns\":10,\"duration_ns\":60,\"self_ns\":60,\"self_complete\":true}]}]}";
     $endif
-    assert(encoded == expected);
+    $if $feat(C3D_PROFILE_GPU):
+        assert(encoded.contains("\"features\":{\"cpu\":true,\"internal\":"));
+        assert(encoded.contains("\"gpu\":true"));
+        assert(encoded.contains("\"gpu_state\":\"UNAVAILABLE\""));
+        assert(encoded.contains("\"gpu\":[]"));
+    $else
+        assert(encoded == expected);
+    $endif
     binding = profile::begin_capture_at(&recorder, LARGE_FRAME_ID + 1, 1_000);
     ScopeToken escaped = start_scope(
         recorder: &recorder,

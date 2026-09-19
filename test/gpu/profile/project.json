@@ -1,0 +1,38 @@
+{
+  "langrev": "1",
+  "dependencies": [
+    "c3d",
+    "gpu",
+    "vk",
+    "vma",
+    "spvreflect",
+    "sdl3",
+    "c3imgui",
+    "c3cg",
+    "b3",
+    "cgltf",
+    "ufbx",
+    "shaderc",
+    "c3d_profile"
+  ],
+  "features": [
+    "C3D_SHADER_COMPILER",
+    "C3D_PROFILE_CPU",
+    "C3D_PROFILE_GPU",
+    "C3D_PROFILE_INTERNAL"
+  ],
+  "wincrt": "static",
+  "dependency-search-paths": [
+    "../../../lib",
+    "../../../lib/gpu.c3l/lib"
+  ],
+  "output": "../../../build/profile_gpu",
+  "targets": {
+    "acceptance": {
+      "type": "test",
+      "sources": [
+        "test_profile.c3"
+      ]
+    }
+  }
+}

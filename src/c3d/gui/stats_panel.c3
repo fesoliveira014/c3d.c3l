@@ -46,30 +46,28 @@ fn void? stats_panel(Renderer* renderer) {
         imgui::text("Overflow allocations: %llu", (ulong)previous.upload.overflow.len());
     }
 
-    if (renderer.timestamps_enabled) {
-        imgui::text("Completed GPU custom compute: %.3f ms",
-            (double)renderer.stats.gpu_pass_ms[Pass.CUSTOM_COMPUTE.ordinal]);
-        imgui::text("Completed GPU light cull: %.3f ms",
-            (double)renderer.stats.gpu_pass_ms[Pass.LIGHT_CULL.ordinal]);
-        imgui::text("Completed GPU opaque: %.3f ms",
-            (double)renderer.stats.gpu_pass_ms[Pass.FORWARD_OPAQUE.ordinal]);
-        imgui::text("Completed GPU transmission: %.3f ms",
-            (double)renderer.stats.gpu_pass_ms[Pass.TRANSMISSION.ordinal]);
-        imgui::text("Completed GPU transparent: %.3f ms",
-            (double)renderer.stats.gpu_pass_ms[Pass.FORWARD_TRANSPARENT.ordinal]);
-        imgui::text("Completed GPU debug lines: %.3f ms",
-            (double)renderer.stats.gpu_pass_ms[Pass.DEBUG_LINES.ordinal]);
-        imgui::text("Completed GPU velocity: %.3f ms",
-            (double)renderer.stats.gpu_pass_ms[Pass.VELOCITY.ordinal]);
-        imgui::text("Completed GPU post chain: %.3f ms",
-            (double)renderer.stats.gpu_pass_ms[Pass.POST_CHAIN.ordinal]);
-        imgui::text("Completed GPU composite: %.3f ms",
-            (double)renderer.stats.gpu_pass_ms[Pass.COMPOSITE.ordinal]);
-        imgui::text("Completed GPU custom compute (post): %.3f ms",
-            (double)renderer.stats.gpu_pass_ms[Pass.CUSTOM_COMPUTE_POST.ordinal]);
-    } else {
-        imgui::text_unformatted("GPU timings disabled");
-    }
+    $if $feat(C3D_PROFILE_GPU):
+        Stats* stats = &renderer.stats;
+        switch (stats.gpu_timing_state) {
+            case UNAVAILABLE: imgui::text_unformatted("GPU timings: N/A");
+            case PENDING: imgui::text_unformatted("GPU timings: pending");
+            case READY:
+            case TRUNCATED:
+                imgui::text("Completed GPU frame: %llu", stats.gpu_frame_index);
+                if (stats.gpu_timing_state == GpuTimingState.TRUNCATED) {
+                    imgui::text("Partial GPU timings: %u omitted scopes", stats.gpu_scopes_dropped);
+                }
+                $foreach $index, $name : Pass::names:
+                    if (stats.gpu_pass_valid[$index]) {
+                        imgui::text("%s: %.3f ms", (ZString)$name, (double)stats.gpu_pass_ms[$index]);
+                    } else {
+                        imgui::text("%s: N/A", (ZString)$name);
+                    }
+                $endforeach
+        }
+    $else
+        imgui::text_unformatted("GPU timings: N/A (profiling excluded)");
+    $endif
 
     c3d::gui::backend::memory_panel(renderer)!;
     diagnostics_section(renderer);

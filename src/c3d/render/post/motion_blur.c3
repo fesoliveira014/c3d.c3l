@@ -33,21 +33,10 @@ fn void? record_motion_blur(
     uint width = record.velocity.width;
     uint height = record.velocity.height;
 
-    render::write_pass_timestamp(
-        renderer:    renderer,
-        frame_index: renderer.frame_index,
-        pass:        Pass.VELOCITY,
-        half:        render::TIMESTAMP_BEGIN,
-    )!;
+    render::begin_profile_pass(renderer, Pass.VELOCITY)!;
     record_camera_velocity(renderer, record, matrices)!;
     record_geometry_velocity(renderer, record, items)!;
-    render::write_pass_timestamp(
-        renderer:    renderer,
-        frame_index: renderer.frame_index,
-        pass:        Pass.VELOCITY,
-        half:        render::TIMESTAMP_END,
-    )!;
-    slot.timed[Pass.VELOCITY.ordinal] = true;
+    render::end_profile_pass(renderer, Pass.VELOCITY)!;
 
     open_post_chain(renderer, record)!;
     record_tiles(

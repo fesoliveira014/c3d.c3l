@@ -18,6 +18,38 @@
       "sources": [ "test/**" ],
       "features": [ "C3D_PROFILE_CPU", "C3D_PROFILE_INTERNAL" ]
     },
+    "profile_gpu": {
+      "type": "test",
+      "sources": [ "test/**" ],
+      "features": [ "C3D_PROFILE_GPU" ],
+      "dependency-search-paths": [ "lib", "../../lib", "../../lib/gpu.c3l/lib" ],
+      "dependencies": [ "c3d_profile", "gpu", "vk", "vma", "spvreflect" ],
+      "wincrt": "static"
+    },
+    "profile_gpu_internal": {
+      "type": "test",
+      "sources": [ "test/**" ],
+      "features": [ "C3D_PROFILE_GPU", "C3D_PROFILE_INTERNAL" ],
+      "dependency-search-paths": [ "lib", "../../lib", "../../lib/gpu.c3l/lib" ],
+      "dependencies": [ "c3d_profile", "gpu", "vk", "vma", "spvreflect" ],
+      "wincrt": "static"
+    },
+    "profile_cpu_gpu": {
+      "type": "test",
+      "sources": [ "test/**" ],
+      "features": [ "C3D_PROFILE_CPU", "C3D_PROFILE_GPU" ],
+      "dependency-search-paths": [ "lib", "../../lib", "../../lib/gpu.c3l/lib" ],
+      "dependencies": [ "c3d_profile", "gpu", "vk", "vma", "spvreflect" ],
+      "wincrt": "static"
+    },
+    "profile_full": {
+      "type": "test",
+      "sources": [ "test/**" ],
+      "features": [ "C3D_PROFILE_CPU", "C3D_PROFILE_GPU", "C3D_PROFILE_INTERNAL" ],
+      "dependency-search-paths": [ "lib", "../../lib", "../../lib/gpu.c3l/lib" ],
+      "dependencies": [ "c3d_profile", "gpu", "vk", "vma", "spvreflect" ],
+      "wincrt": "static"
+    },
     "capture": {
       "type": "executable",
       "sources": [ "examples/capture.c3" ],

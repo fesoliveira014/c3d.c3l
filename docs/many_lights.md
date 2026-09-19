@@ -16,6 +16,7 @@ Linux / WSL:
 ```bash
 python3 scripts/build.py --target many_lights --opt O3
 ./examples/build/many_lights
+c3c build many_lights --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL -O3
 ./examples/build/many_lights --gpu-timings
 ```
 
@@ -24,6 +25,7 @@ Native Windows PowerShell:
 ```powershell
 python scripts/build.py --target many_lights --opt O3
 .\examples\build\many_lights.exe
+c3c build many_lights --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL -O3
 .\examples\build\many_lights.exe --gpu-timings
 ```
 
@@ -94,7 +96,7 @@ The timing displays measure different intervals:
 The renderer's CPU clock starts after frame-slot completion/readback processing, so neither
 CPU timing row includes that initial wait. Wall interval can expose pacing those rows omit.
 
-GPU times require `--gpu-timings`. Completed cluster view/count/overflow counters do not:
+GPU times require `--gpu-timings` and a [profiling-enabled build](profiling.md#capture-gpu-work). Completed cluster view/count/overflow counters do not:
 they are read after a frame slot's normal completion wait, with no synchronous readback
 inside `render_view`. With multiple views, they describe the slot's last recorded drawable
 view rather than an aggregate; a later flat view clears the cluster result. See

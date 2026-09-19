@@ -186,7 +186,8 @@ fn void? Renderer.dispatch(&self, DispatchDesc desc) {
         resolved[index] = resolve_dispatch_texture(self, declared, &bindings.slots[index])!;
     }
     record_pending_copies(self, &self.commands)!;
-    open_custom_compute(self)!;
+    defer catch abort_frame(self);
+    ProfileScopeToken dispatch_scope = begin_profile_dispatch(self, desc.shader, mirror.revision)!;
     foreach (&entry : resolved[:desc.textures.len]) transition_dispatch_texture(self, entry, entry.use)!;
 
     Frame* slot = &self.frames[self.frame_index % FRAMES_IN_FLIGHT];
@@ -224,6 +225,7 @@ fn void? Renderer.dispatch(&self, DispatchDesc desc) {
             transition_dispatch_texture(self, entry, gpu::sampled_at({ .fragment_shader, .compute }))!;
         }
     }
+    end_profile_scope(self, dispatch_scope)!;
     self.stats.dispatches++;
 }
 
@@ -246,34 +248,6 @@ fn void? Renderer.upload_compute_shader(&self, ComputeShaderId shader) {
     defer catch discard_uploads(self);
     rebuild_compute_pipeline(self, shader)!;
     return submit_pending(self);
-}
-
-fn void? open_custom_compute(Renderer* renderer) @private {
-    if (renderer.compute_open) return;
-    Pass pass = renderer.frame_recorded ? Pass.CUSTOM_COMPUTE_POST : Pass.CUSTOM_COMPUTE;
-    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
-    // A slot closed earlier this frame cannot be timed twice without a query reset.
-    if (slot.timed[pass.ordinal]) return;
-    write_pass_timestamp(
-        renderer:    renderer,
-        frame_index: renderer.frame_index,
-        pass:        pass,
-        half:        TIMESTAMP_BEGIN,
-    )!;
-    renderer.compute_open = true;
-    renderer.compute_pass = pass;
-}
-
-fn void? close_custom_compute(Renderer* renderer, ulong frame_index) @private {
-    if (!renderer.compute_open) return;
-    renderer.compute_open = false;
-    write_pass_timestamp(
-        renderer:    renderer,
-        frame_index: frame_index,
-        pass:        renderer.compute_pass,
-        half:        TIMESTAMP_END,
-    )!;
-    renderer.frames[frame_index % FRAMES_IN_FLIGHT].timed[renderer.compute_pass.ordinal] = true;
 }
 
 fn void? check_dispatch_textures(Renderer* renderer, DispatchTexture[] textures) @private {

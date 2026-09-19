@@ -256,56 +256,69 @@ fn void shadow_stats(render::Renderer* renderer) @local {
     imgui::text("Recorded layers: %u", stats.shadow_layers);
     imgui::text("Dropped requests: %u", stats.shadow_requests_dropped);
     imgui::text("Fixed atlas: %u layers at %u texels", renderer.max_shadow_layers, renderer.shadow_resolution);
-    if (!renderer.timestamps_enabled) {
-        imgui::text_unformatted("Run with --gpu-timings for delayed layer times.");
-        return;
-    }
-
-    imgui::text(
-        "Shadow pass: %.3f ms",
-        (double)stats.gpu_pass_ms[Pass.SHADOW_ATLAS.ordinal],
-    );
-    if (!stats.shadow_timings.len) {
-        imgui::text_unformatted("No completed layer timings yet.");
-        return;
-    }
-    foreach (timing : stats.shadow_timings) {
-        switch (timing.kind) {
-            case DIRECTIONAL:
-                imgui::text(
-                    "Light %u:%u, cascade %u: %.3f ms",
-                    timing.light.index,
-                    timing.light.generation,
-                    timing.layer_index + 1,
-                    (double)timing.gpu_ms,
-                );
-            case SPOT:
-                imgui::text(
-                    "Light %u:%u, spot: %.3f ms",
-                    timing.light.index,
-                    timing.light.generation,
-                    (double)timing.gpu_ms,
-                );
-            case POINT:
-                ZString face;
-                switch (timing.layer_index) {
-                    case shader::SHADOW_FACE_POSITIVE_X: face = "+X";
-                    case shader::SHADOW_FACE_NEGATIVE_X: face = "-X";
-                    case shader::SHADOW_FACE_POSITIVE_Y: face = "+Y";
-                    case shader::SHADOW_FACE_NEGATIVE_Y: face = "-Y";
-                    case shader::SHADOW_FACE_POSITIVE_Z: face = "+Z";
-                    case shader::SHADOW_FACE_NEGATIVE_Z: face = "-Z";
-                    default: face = "?";
-                }
-                imgui::text(
-                    "Light %u:%u, face %s: %.3f ms",
-                    timing.light.index,
-                    timing.light.generation,
-                    face,
-                    (double)timing.gpu_ms,
-                );
+    $if $feat(C3D_PROFILE_GPU):
+        if (stats.gpu_timing_state == GpuTimingState.UNAVAILABLE) {
+            imgui::text_unformatted("GPU timings: N/A");
+            return;
         }
-    }
+        if (stats.gpu_timing_state == GpuTimingState.PENDING) {
+            imgui::text_unformatted("GPU timings: pending");
+            return;
+        }
+        imgui::text("Completed GPU frame: %llu", stats.gpu_frame_index);
+        if (stats.gpu_timing_state == GpuTimingState.TRUNCATED) {
+            imgui::text("Partial GPU timings: %u omitted scopes", stats.gpu_scopes_dropped);
+        }
+        if (stats.gpu_pass_valid[Pass.SHADOW_ATLAS.ordinal]) {
+            imgui::text("Shadow pass: %.3f ms", (double)stats.gpu_pass_ms[Pass.SHADOW_ATLAS.ordinal]);
+        } else {
+            imgui::text_unformatted("Shadow pass: N/A");
+        }
+        if (!stats.shadow_timings.len) {
+            imgui::text_unformatted("No completed layer timings yet.");
+            return;
+        }
+        foreach (timing : stats.shadow_timings) {
+            imgui::text("View %u:%u", timing.view.index, timing.view.generation);
+            switch (timing.kind) {
+                case DIRECTIONAL:
+                    imgui::text(
+                        "Light %u:%u, cascade %u: %.3f ms",
+                        timing.light.index,
+                        timing.light.generation,
+                        timing.layer_index + 1,
+                        (double)timing.gpu_ms,
+                    );
+                case SPOT:
+                    imgui::text(
+                        "Light %u:%u, spot: %.3f ms",
+                        timing.light.index,
+                        timing.light.generation,
+                        (double)timing.gpu_ms,
+                    );
+                case POINT:
+                    ZString face;
+                    switch (timing.layer_index) {
+                        case shader::SHADOW_FACE_POSITIVE_X: face = "+X";
+                        case shader::SHADOW_FACE_NEGATIVE_X: face = "-X";
+                        case shader::SHADOW_FACE_POSITIVE_Y: face = "+Y";
+                        case shader::SHADOW_FACE_NEGATIVE_Y: face = "-Y";
+                        case shader::SHADOW_FACE_POSITIVE_Z: face = "+Z";
+                        case shader::SHADOW_FACE_NEGATIVE_Z: face = "-Z";
+                        default: face = "?";
+                    }
+                    imgui::text(
+                        "Light %u:%u, face %s: %.3f ms",
+                        timing.light.index,
+                        timing.light.generation,
+                        face,
+                        (double)timing.gpu_ms,
+                    );
+            }
+        }
+    $else
+        imgui::text_unformatted("Select GPU+INTERNAL profiling and the add-on, then --gpu-timings.");
+    $endif
 }
 
 fn void? draw_gui_frame(

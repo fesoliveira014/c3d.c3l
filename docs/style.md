@@ -13,12 +13,15 @@ C3 0.8.3. C3 is pre-1.0; check syntax against the installed compiler and the `c3
 | `module c3d::<area>;` | One directory per architecture module: `maths`, `ecs`, `asset`, `scene`, `geometry`, `camera`, `material`, `light`, `anim`, `model`, `spatial`, `physics`, `platform`, `render`, `shader`, `rt`, `gui`. Public declarations in `<area>.c3i` where an interface file helps; otherwise one `.c3` per topic. |
 | `module c3d::<area>::<sub>;` | Submodules named in the architecture: `asset::gltf`, `asset::fbx`, `asset::image`, `anim::ik`, `anim::retarget`, `render::post`, `gui::backend`, `ecs::store`, `shader::compile` (gated by `@feat(C3D_SHADER_COMPILER)`). A submodule that records with the renderer's private helpers opens them with `import c3d::render @public;`. |
 | `module c3d::<area>::internal @private;` | Implementation that must not be visible outside the area. Use only when a symbol would otherwise leak into the public surface. |
-| `module c3d::profile;` | CPU capture in the separate `addons/c3d_profile.c3l` package. Imports only the standard library; faults belong to the add-on. |
+| `module c3d::profile;` | Neutral CPU/GPU capture values, history and export in `addons/c3d_profile.c3l`. Imports only the standard library; faults belong to the add-on. |
+| `module c3d::render::profile_gpu @private;` | GPU query ownership inside the same add-on, gated by `C3D_PROFILE_GPU`. Imports only stdlib, gpu.c3l and neutral profile values; no core Renderer/Scene/id types. |
 | `module c3d::instrumentation @private;` | Core's optional scope bridge; only its CPU+INTERNAL section imports the profiler add-on. |
 
 Every module is `c3d` or a submodule of it. The repository directory name never appears in source. Dependency imports are confined per `AGENTS.md` section 1 and checked at review.
 
 An add-on's manifest owns its sources and dependencies. Core never compiles add-on sources through its source glob. A presentation adapter may depend on the APIs it displays; the collector and core never import that presentation adapter.
+
+Core's `render/profile.c3` supplies the optional GPU bridge and copies core identities into neutral values. GPU resources remain in the render namespace even when their implementation ships in the add-on. CPU-only consumers select no backend dependencies; GPU-enabled consumers select them explicitly.
 
 `import c3d;` imports every `c3d` submodule recursively, so a name declared in one area can collide inside another. Qualify the module when it does: `time::Clock` inside `c3d::render`, because `c3d::platform` declares a `Clock` of its own.
 

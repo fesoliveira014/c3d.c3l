@@ -125,13 +125,23 @@ python3 scripts/build.py --clean
 
 `-v` prints every command. GPU examples are run by hand; CI has no GPU.
 
+The ordinary builds below leave profiling out. Before using an example's
+`--gpu-timings` option, compile that target with the add-on selected (replace
+`shadows` with the desired target):
+
+```bash
+c3c build shadows --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL
+```
+
+See [profiling](docs/profiling.md) for capture configuration and the headless
+`profile_gpu` example.
+
 `cube` is the first-mesh example. `cube_gui` adds the [GUI overlay](docs/gui.md) to the
 same scene, with transform/material editing, statistics and a Spin toggle that starts off:
 
 ```bash
 python3 scripts/build.py --example cube
 python3 scripts/build.py --example cube_gui
-./examples/build/cube_gui --gpu-timings
 ```
 
 `pbr` provides a static metallic/roughness sphere grid with directional, point
@@ -143,7 +153,6 @@ camera projection remain editable:
 
 ```bash
 python3 scripts/build.py --example pbr
-./examples/build/pbr --gpu-timings
 ```
 
 Drag outside the GUI to orbit, scroll to zoom, and release Escape to quit.
@@ -157,7 +166,6 @@ capacity, including deliberate overflow with complete flat fallback:
 
 ```bash
 python3 scripts/build.py --example many_lights
-./examples/build/many_lights --gpu-timings
 ```
 
 See [Many lights](docs/many_lights.md) for controls, buffer ownership, material
@@ -170,7 +178,6 @@ maps, two colored lights, ambient fill and either bundled HDR environment:
 
 ```bash
 python3 scripts/build.py --example materials
-./examples/build/materials --gpu-timings
 ```
 
 The example generates its alpha, nonuniform ramp and Physical map fixtures in
@@ -183,7 +190,6 @@ white balance and lift-gamma-gain; the controls panel drives camera exposure:
 
 ```bash
 python3 scripts/build.py --example post
-./examples/build/post --gpu-timings
 ```
 
 `effects` adds the [post-processing effects](docs/post.md) to the same kind of scene: an
@@ -192,7 +198,6 @@ sweep. Effects start enabled; the post panel's sections toggle and tune each one
 
 ```bash
 python3 scripts/build.py --example effects
-./examples/build/effects --gpu-timings
 ```
 
 `views` renders the same kind of scene twice per frame through [views and render
@@ -202,7 +207,6 @@ capture, switches it between display LDR and linear HDR output, and scales the w
 
 ```bash
 python3 scripts/build.py --example views
-./examples/build/views --gpu-timings
 ```
 
 `picking` selects meshes with the mouse through [CPU picking](docs/picking.md): two transformed
@@ -213,7 +217,7 @@ reports the hit's distance, triangle and barycentric weights:
 
 ```bash
 python3 scripts/build.py --example picking
-./examples/build/picking [model.glb] --gpu-timings
+./examples/build/picking [model.glb]
 ```
 
 `custom_shader` draws a tinted sphere and a pulsing box through [custom shaders](docs/custom_shaders.md):
@@ -223,7 +227,6 @@ broken edit is rejected by the backend while the previous shader keeps drawing:
 
 ```bash
 python3 scripts/build.py --example custom_shader
-./examples/build/custom_shader --gpu-timings
 ```
 
 `custom_compute` runs a particle simulation on the GPU through [compute dispatch](docs/custom_shaders.md#compute-dispatch):
@@ -233,7 +236,6 @@ R, Space reseeds, and a broken compute push block is rejected while the previous
 
 ```bash
 python3 scripts/build.py --example custom_compute
-./examples/build/custom_compute --gpu-timings
 ```
 
 `compute_textures` writes a noise texture on the GPU every frame and fogs the view in place: an empty
@@ -243,7 +245,6 @@ F toggles the fog, N freezes the noise, both GLSL files reload on change or R:
 
 ```bash
 python3 scripts/build.py --example compute_textures
-./examples/build/compute_textures --gpu-timings
 ```
 
 `ibl` lights a metallic/roughness sphere grid with two bundled HDR environments.
@@ -253,7 +254,6 @@ resolutions. Both sources are prepared before the first frame:
 
 ```bash
 python3 scripts/build.py --example ibl
-./examples/build/ibl --gpu-timings
 ```
 
 See [Environments and image-based lighting](docs/environments.md) for defaults,
@@ -266,7 +266,6 @@ bias and whole-light atlas priority:
 
 ```bash
 python3 scripts/build.py --example shadows
-./examples/build/shadows --gpu-timings
 ```
 
 Directional constructors enable shadows by default; point and spot shadows are
@@ -281,7 +280,7 @@ argument selects another model:
 
 ```bash
 python3 scripts/build.py --example gltf_viewer
-./examples/build/gltf_viewer path/to/model.glb --gpu-timings
+./examples/build/gltf_viewer path/to/model.glb
 ```
 
 See [Models, glTF and FBX import](docs/models.md) for keys, options, the material
@@ -347,10 +346,11 @@ the remaining unsupported texture forms.
 
 ## Using c3d from your own project
 
-The optional `c3d_profile` add-on supplies CPU captures and JSON export through
-`c3d::profile`. It is a separate bundle with no rendering or native dependencies;
-core does not require it. See [CPU profiling](docs/profiling.md) for standalone
-use and optional internal scene scopes. Run its CPU-only example with
+The optional `c3d_profile` add-on bundles CPU and GPU capture with JSON export.
+CPU-only use needs no renderer or native dependencies; GPU profiling selects its
+backend module explicitly. Core does not require the package in ordinary builds.
+See [profiling](docs/profiling.md) for capture lifetimes, feature selection and
+frame-wide GPU pass summaries. Run its CPU-only example with
 `c3c run capture --path addons/c3d_profile.c3l`.
 
 Add c3d and its dependencies to your `project.json`, and list the feature flags you want. A C3

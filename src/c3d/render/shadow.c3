@@ -62,6 +62,7 @@ struct ShadowTiming {
     LightKind kind;
     uint layer_index;
     float gpu_ms;
+    ViewId view;
 }
 
 <*

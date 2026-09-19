@@ -1,4 +1,4 @@
-module c3d::test::profile_integration;
+module c3d::test::profile_integration @feat(C3D_PROFILE_CPU);
 
 import c3d::profile;
 import c3d::scene;

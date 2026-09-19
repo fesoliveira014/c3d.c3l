@@ -52,6 +52,36 @@
       "dependencies": ["c3d_profile"],
       "features": ["C3D_PROFILE_CPU", "C3D_PROFILE_INTERNAL"],
       "sources": ["profile/**"]
+    },
+    "profile_off": {
+      "type": "executable",
+      "dependencies": ["c3d_profile"],
+      "features": [],
+      "sources": ["profile/**"]
+    },
+    "profile_gpu": {
+      "type": "executable",
+      "dependencies": ["c3d_profile"],
+      "features": ["C3D_PROFILE_GPU"],
+      "sources": ["profile/**"]
+    },
+    "profile_gpu_internal": {
+      "type": "executable",
+      "dependencies": ["c3d_profile"],
+      "features": ["C3D_PROFILE_GPU", "C3D_PROFILE_INTERNAL"],
+      "sources": ["profile/**"]
+    },
+    "profile_cpu_gpu": {
+      "type": "executable",
+      "dependencies": ["c3d_profile"],
+      "features": ["C3D_PROFILE_CPU", "C3D_PROFILE_GPU"],
+      "sources": ["profile/**"]
+    },
+    "profile_full": {
+      "type": "executable",
+      "dependencies": ["c3d_profile"],
+      "features": ["C3D_PROFILE_CPU", "C3D_PROFILE_GPU", "C3D_PROFILE_INTERNAL"],
+      "sources": ["profile/**"]
     }
   }
 }

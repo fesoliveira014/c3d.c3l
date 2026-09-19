@@ -115,8 +115,9 @@ jobs:
             grep -rn 'import gltf' src/c3d --include='*.c3' | grep -v 'src/c3d/asset/gltf/'
             grep -rn 'import ufbx' src/c3d --include='*.c3' | grep -v 'src/c3d/asset/fbx/'
             grep -rn 'import shaderc' src/c3d --include='*.c3' | grep -v 'src/c3d/shader/'
-            grep -rn 'import c3d::profile' src/c3d --include='*.c3' | grep -v '^src/c3d/instrumentation.c3:'
-            grep -rn '^import ' addons/c3d_profile.c3l/src --include='*.c3' | grep -v ':import std::'
+            grep -rnE 'import c3d::(profile|render::profile_gpu)' src/c3d --include='*.c3' | grep -vE '^src/c3d/(instrumentation|render/profile).c3:'
+            grep -rn '^import ' addons/c3d_profile.c3l/src --include='*.c3' | grep -v '/src/gpu/' | grep -v ':import std::'
+            grep -rn '^import ' addons/c3d_profile.c3l/src/gpu --include='*.c3' | grep -vE ':import (std::|gpu[ ;:]|c3d::profile[ ;])'
             true
           )
           if [ -n "$violations" ]; then

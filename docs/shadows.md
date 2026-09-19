@@ -203,6 +203,7 @@ terms retain their existing behavior.
 
 ```bash
 python3 scripts/build.py --example shadows
+c3c build shadows --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL
 ./examples/build/shadows --gpu-timings
 ```
 
@@ -221,15 +222,16 @@ spans 0..4 so the slope-factor tradeoff is visible at this scene scale.
 `Stats.shadow_layers` counts recorded layer passes and `shadow_requests_dropped`
 counts complete requests rejected by capacity. Draw/triangle counts include the
 depth passes. When GPU timestamps are enabled and supported, `shadow_timings`
-exposes a delayed result for each layer, including its original light entity,
+exposes a delayed result for each layer, including its original view id and light entity,
 `kind`, zero-based local `layer_index` and milliseconds. Directional indices are
 cascades, spot index zero identifies its sole projection, and point indices follow
 the six-face order above. Identity is captured when work is recorded, so delayed
 results remain correct after preset changes. The aggregate shadow pass remains in
 `gpu_pass_ms`.
 
-Timing results are read when the owning frame slot completes. If a frame records
-multiple views, shadow timings describe its last recorded view; frame counters
-still accumulate across views. A last view without shadows produces an empty
-timing slice. The renderer owns that slice and invalidates it on the next
-`begin_frame` or destruction. Without timestamp support the slice is empty.
+Timing results are read when the owning frame slot completes. Results retain all
+measured layers across views for `Stats.gpu_frame_index`; a later view without
+shadows does not erase an earlier view's layers. The renderer owns the slice and
+replaces it when a newer completed summary publishes. Destruction also invalidates
+it. Without timestamp support the slice is empty; truncated timing is partial.
+See [profiling](profiling.md) for the build flags required by `--gpu-timings`.

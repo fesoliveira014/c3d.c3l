@@ -10,6 +10,7 @@ import c3d::material;
 import c3d::maths;
 import c3d::scene;
 import c3d::shader;
+import c3d::render::post @public;
 import gpu;
 import std::math;
 import std::sort;
@@ -112,8 +113,9 @@ fn void? Renderer.render_view(
     DebugDraw* debug = null,
 ) {
     ViewRecord* record = self.views.try_get(view)!;
-    close_custom_compute(self, self.frame_index)!;
     if (record.desc.output == ViewOutput.WINDOW && !self.has_output) return;
+    defer catch abort_frame(self);
+    begin_profile_view(self, view, "view.render")!;
     Camera* camera = scene.get(camera_node, Camera);
     if (!camera) return c3d::INVALID_ARGUMENT~;
     record.exposure = camera.exposure;
@@ -337,33 +339,14 @@ fn void? Renderer.render_view(
 
         record.hdr_color.transition(&self.commands, COLOR_ATTACHMENT_STATE)!;
         record.depth.transition(&self.commands, DEPTH_ATTACHMENT_STATE)!;
-        if (self.timestamps_enabled && slot.timed[Pass.FORWARD_OPAQUE.ordinal]) {
-            gpu::cmd_reset_timestamps(
-                commands: &self.commands,
-                pool: self.timestamps,
-                first: pass_timestamp_slot(self.frame_index, Pass.FORWARD_OPAQUE.ordinal),
-                count: TIMESTAMPS_PER_PASS,
-            )!;
-        }
-        write_pass_timestamp(
-            renderer:    self,
-            frame_index: self.frame_index,
-            pass:        Pass.FORWARD_OPAQUE,
-            half:        TIMESTAMP_BEGIN,
-        )!;
+        begin_profile_pass(self, Pass.FORWARD_OPAQUE)!;
         record_opaque_pass(
             renderer:    self,
             record:      record,
             items:       opaque_items,
             clear_color: environments.clear_color,
         )!;
-        write_pass_timestamp(
-            renderer:    self,
-            frame_index: self.frame_index,
-            pass:        Pass.FORWARD_OPAQUE,
-            half:        TIMESTAMP_END,
-        )!;
-        slot.timed[Pass.FORWARD_OPAQUE.ordinal] = true;
+        end_profile_pass(self, Pass.FORWARD_OPAQUE)!;
 
         if (environments.sky) {
             gpu::GpuAddress sky_root = pack_sky(
@@ -374,48 +357,21 @@ fn void? Renderer.render_view(
                 rotation: scene.background.rotation,
             )!;
             record_sky(self, record, sky_root)!;
-        } else {
-            reset_sky_timing(self)!;
         }
 
-        reset_transmission_timing(self)!;
         if (transmission_items.len) {
-            write_pass_timestamp(
-                renderer: self,
-                frame_index: self.frame_index,
-                pass: Pass.TRANSMISSION,
-                half: TIMESTAMP_BEGIN,
-            )!;
+            begin_profile_pass(self, Pass.TRANSMISSION)!;
             record_scene_color_snapshot(self, record)!;
             record_loaded_pass(self, record, transmission_items)!;
-            write_pass_timestamp(
-                renderer: self,
-                frame_index: self.frame_index,
-                pass: Pass.TRANSMISSION,
-                half: TIMESTAMP_END,
-            )!;
-            slot.timed[Pass.TRANSMISSION.ordinal] = true;
+            end_profile_pass(self, Pass.TRANSMISSION)!;
         }
 
-        reset_transparent_timing(self)!;
         if (transparent_items.len) {
-            write_pass_timestamp(
-                renderer: self,
-                frame_index: self.frame_index,
-                pass: Pass.FORWARD_TRANSPARENT,
-                half: TIMESTAMP_BEGIN,
-            )!;
+            begin_profile_pass(self, Pass.FORWARD_TRANSPARENT)!;
             record_loaded_pass(self, record, transparent_items)!;
-            write_pass_timestamp(
-                renderer: self,
-                frame_index: self.frame_index,
-                pass: Pass.FORWARD_TRANSPARENT,
-                half: TIMESTAMP_END,
-            )!;
-            slot.timed[Pass.FORWARD_TRANSPARENT.ordinal] = true;
+            end_profile_pass(self, Pass.FORWARD_TRANSPARENT)!;
         }
 
-        reset_debug_lines_timing(self)!;
         if (debug && debug.vertices.len()) {
             record_debug_lines(self, record, matrices.view_proj, debug)!;
         }
@@ -432,6 +388,8 @@ fn void? Renderer.render_view(
             record.history.commit(self.allocator, scene, candidates, matrices.view_proj);
         }
     };
+    post::close_post_chain(self, record)!;
+    end_profile_view(self)!;
     self.frame_recorded = true;
     record.rendered = true;
 }
@@ -451,9 +409,13 @@ fn void? Renderer.finish_view(&self, ViewId view) {
     ViewRecord* record = self.views.try_get(view)!;
     if (record.desc.output == ViewOutput.WINDOW && !self.has_output) return;
     if (!record.rendered) return c3d::INVALID_ARGUMENT~;
+    defer catch abort_frame(self);
+    begin_profile_view(self, view, "view.finish")!;
     record.rendered = false;
     if (record.desc.post.depth_of_field) post::record_dof(self, record)!;
-    return record_view_output(self, record);
+    record_view_output(self, record)!;
+    post::close_post_chain(self, record)!;
+    end_profile_view(self)!;
 }
 
 <*
@@ -828,6 +790,7 @@ fn void? record_view_output(Renderer* renderer, ViewRecord* record) @private {
                 rect:     rect,
             );
         case LINEAR_HDR:
+            post::close_post_chain(renderer, record)!;
             return composite_target(
                 renderer: renderer,
                 source:   record.scene_input,
@@ -987,33 +950,6 @@ fn void? record_draws(
     }
 }
 
-fn void? reset_transmission_timing(Renderer* renderer) @private {
-    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
-    if (!slot.timed[Pass.TRANSMISSION.ordinal]) return;
-    if (renderer.timestamps_enabled) {
-        gpu::cmd_reset_timestamps(
-            commands: &renderer.commands,
-            pool: renderer.timestamps,
-            first: pass_timestamp_slot(renderer.frame_index, Pass.TRANSMISSION.ordinal),
-            count: TIMESTAMPS_PER_PASS,
-        )!;
-    }
-    slot.timed[Pass.TRANSMISSION.ordinal] = false;
-}
-
-fn void? reset_transparent_timing(Renderer* renderer) @private {
-    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
-    if (!slot.timed[Pass.FORWARD_TRANSPARENT.ordinal]) return;
-    if (renderer.timestamps_enabled) {
-        gpu::cmd_reset_timestamps(
-            commands: &renderer.commands,
-            pool: renderer.timestamps,
-            first: pass_timestamp_slot(renderer.frame_index, Pass.FORWARD_TRANSPARENT.ordinal),
-            count: TIMESTAMPS_PER_PASS,
-        )!;
-    }
-    slot.timed[Pass.FORWARD_TRANSPARENT.ordinal] = false;
-}
 
 fn void? validate_normal_geometry(
     GpuGeometry* geometry,

@@ -208,6 +208,20 @@
       "sources": [
         "src/compute_textures.c3"
       ]
+    },
+    "profile_gpu": {
+      "type": "executable",
+      "dependencies": [
+        "c3d_profile"
+      ],
+      "features": [
+        "C3D_PROFILE_CPU",
+        "C3D_PROFILE_GPU",
+        "C3D_PROFILE_INTERNAL"
+      ],
+      "sources": [
+        "src/profile_gpu.c3"
+      ]
     }
   }
 }

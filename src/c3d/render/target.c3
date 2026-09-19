@@ -258,7 +258,8 @@ fn void release_target(gpu::Device* device, Target* target) @private {
  @require !renderer.frame_open
 *>
 fn void? wait_frames(Renderer* renderer) {
-    foreach (&slot : renderer.frames) {
+    foreach (index, &slot : renderer.frames) {
         if (slot.done.is_valid()) gpu::wait_completion(slot.done)!;
+        collect_gpu_profile(renderer, (uint)index)!;
     }
 }

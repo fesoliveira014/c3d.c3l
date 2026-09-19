@@ -7,6 +7,7 @@ statistics panels. `cube_gui.c3` adds the overlay to the same scene as the first
 ```bash
 python3 scripts/build.py --example cube
 python3 scripts/build.py --example cube_gui
+c3c build cube_gui --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL
 ./examples/build/cube_gui --gpu-timings
 ```
 
@@ -92,8 +93,11 @@ allocation count separately; a dormant frame can also be the previous slot.
 
 GPU timings are disabled by default and enabled at renderer creation with
 `RendererDesc.gpu_timings`, or by the `cube_gui` example's `--gpu-timings` flag. Values come
-from completed frame slots and may lag CPU counters. Timestamp overhead can be significant
-on WSL2 dzn; also compare ordinary rendering with timing disabled rather than subtracting
+from completed frame slots and may lag CPU counters. Build with the
+[GPU profiling features](profiling.md#capture-gpu-work) before requesting them.
+The panel shows the completed GPU frame, N/A for absent measurements and partial
+status for truncated summaries; pass buckets sum all recorded views. Timestamp overhead
+can be significant on WSL2 dzn; also compare ordinary rendering with timing disabled rather than subtracting
 a fixed overhead. The memory panel displays the device's advisory per-heap usage, budget,
 allocation and block sizes.
 
