@@ -29,6 +29,10 @@
   "wincrt": "static",
   "output": "build",
   "targets": {
+    "cpu_bench": {
+      "type": "executable",
+      "sources": [ "src/cpu_bench.c3" ]
+    },
     "hello": {
       "type": "executable",
       "sources": [
