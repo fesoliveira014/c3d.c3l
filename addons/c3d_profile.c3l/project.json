@@ -1,0 +1,27 @@
+{
+  "langrev": "1",
+  "dependency-search-paths": [ "lib" ],
+  "dependencies": [ "c3d_profile" ],
+  "output": "build",
+  "targets": {
+    "profile_off": {
+      "type": "test",
+      "sources": [ "test/**" ]
+    },
+    "profile_cpu": {
+      "type": "test",
+      "sources": [ "test/**" ],
+      "features": [ "C3D_PROFILE_CPU" ]
+    },
+    "profile_internal": {
+      "type": "test",
+      "sources": [ "test/**" ],
+      "features": [ "C3D_PROFILE_CPU", "C3D_PROFILE_INTERNAL" ]
+    },
+    "capture": {
+      "type": "executable",
+      "sources": [ "examples/capture.c3" ],
+      "features": [ "C3D_PROFILE_CPU" ]
+    }
+  }
+}

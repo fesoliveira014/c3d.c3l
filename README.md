@@ -347,6 +347,12 @@ the remaining unsupported texture forms.
 
 ## Using c3d from your own project
 
+The optional `c3d_profile` add-on supplies CPU captures and JSON export through
+`c3d::profile`. It is a separate bundle with no rendering or native dependencies;
+core does not require it. See [CPU profiling](docs/profiling.md) for standalone
+use and optional internal scene scopes. Run its CPU-only example with
+`c3c run capture --path addons/c3d_profile.c3l`.
+
 Add c3d and its dependencies to your `project.json`, and list the feature flags you want. A C3
 library manifest cannot declare features, so every consumer enables them itself. Declarations
 guarded by a feature disappear when it is omitted; the image API and its C translation unit

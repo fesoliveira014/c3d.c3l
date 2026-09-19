@@ -28,6 +28,8 @@ SCRIPTS = ROOT / "scripts"
 LIB = ROOT / "lib"
 EXAMPLES = ROOT / "examples"
 TEST = ROOT / "test"
+PROFILE = ROOT / "addons" / "c3d_profile.c3l"
+PROFILE_TEST_TARGETS = ("profile_off", "profile_cpu", "profile_internal")
 
 REQUIRED_C3C_VERSION = "0.8.3"
 C3IMGUI_RELEASE_TAG = "v0.1.3"
@@ -208,6 +210,11 @@ def step_build(options: Options) -> None:
             command.append(f"-{options.opt}")
         run(command, ROOT, options.verbose)
     copy_shaderc_runtime(EXAMPLES / "build")
+    if not options.target:
+        command = [options.c3c, "build", "capture", "--path", str(PROFILE)]
+        if options.opt:
+            command.append(f"-{options.opt}")
+        run(command, ROOT, options.verbose)
 
 
 def copy_shaderc_runtime(output: Path) -> None:
@@ -231,6 +238,8 @@ def step_test(options: Options) -> None:
         return
     for target in targets:
         run([options.c3c, "test", target, "--path", str(TEST)], ROOT, options.verbose)
+    for target in PROFILE_TEST_TARGETS:
+        run([options.c3c, "test", target, "--path", str(PROFILE)], ROOT, options.verbose)
 
 
 def step_run(options: Options) -> None:
@@ -243,7 +252,7 @@ def step_run(options: Options) -> None:
 
 
 def step_clean(options: Options) -> None:
-    for project_dir in (EXAMPLES, TEST):
+    for project_dir in (EXAMPLES, TEST, PROFILE):
         if (project_dir / "project.json").exists():
             run([options.c3c, "clean", "--path", str(project_dir)], ROOT, options.verbose)
 

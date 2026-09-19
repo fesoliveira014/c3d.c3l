@@ -5,6 +5,7 @@ import c3d::anim;
 import c3d::camera;
 import c3d::light;
 import c3d::ecs;
+import c3d::instrumentation @public;
 import c3d::maths;
 import std::math;
 
@@ -170,7 +171,9 @@ fn Node* Scene.node(&self, Entity entity) {
  Recompute every world matrix and effective visibility from the root.
 *>
 fn void Scene.update_world(&self) {
-    update_subtree(self.root, matrix::IDENTITY4, true);
+    instrumentation::@scope("scene.update_world") {
+        update_subtree(self.root, matrix::IDENTITY4, true);
+    };
 }
 
 <*
