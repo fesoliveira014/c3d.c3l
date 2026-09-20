@@ -7,7 +7,7 @@ Entry point for every agent session in this repository. Read it fully before rea
 - **Shading language:** GLSL, Vulkan 1.3 semantics through gpu.c3l. Files are `<name>.<stage>.glsl`; shared includes are plain `.glsl`. SPIR-V is built offline by `scripts/build_shaders.py` and embedded with `$embed`.
 - **Module root:** `c3d`. Every module is `c3d` or a submodule of it (`c3d::render`, `c3d::asset::gltf`). The repository directory name never appears in source.
 - **Build tooling:** `scripts/build.py` is the entry point; it drives ABI codegen, shader compilation, `c3c build`, and optionally `c3c test` and `c3c run`. Python 3.10+ standard library only, under `scripts/`, only for build orchestration and code generation.
-- **Dependencies** (git submodules under `lib/`, pinned):
+- **Dependencies** (git submodules under `lib/`, pinned, plus project add-ons linked there):
 
 | Library | Module | Imported only by |
 | --- | --- | --- |
@@ -20,10 +20,12 @@ Entry point for every agent session in this repository. Read it fully before rea
 | stb_image (C source) | `c3d::asset::image` bindings | `c3d::asset::image` |
 | ufbx.c3l | `ufbx` | `c3d::asset::fbx` |
 | shaderc.c3l | `shaderc` | `c3d::shader::compile` (`src/c3d/shader/compile.c3`), compiled only under the `C3D_SHADER_COMPILER` feature |
+| c3d_profile.c3l | `c3d::profile`, private `c3d::render::profile_gpu` | Applications select it explicitly; core imports it only through the gated CPU and GPU bridges |
+| c3d_profile_gui.c3l | profiler additions to `c3d::gui` | Applications select it explicitly; it imports only the standard library, `c3d::profile` and `imgui` |
 
 Boundaries are enforced by grep in CI. No dependency is added without updating this table.
 
-The `addons/c3d_profile.c3l` package bundles CPU/GPU capture, history and export. Its neutral `c3d::profile` module imports only the standard library. Its private `c3d::render::profile_gpu` module, under `src/gpu/` and gated by `C3D_PROFILE_GPU`, imports only the standard library, gpu.c3l and neutral profile values; it never imports core types. Core's approved profiler bridges are `c3d::instrumentation` for CPU+INTERNAL and `render/profile.c3` for GPU. Core has no unconditional profiler dependency; instrumented consumers select the one add-on explicitly. Presentation belongs in a separate adapter consuming capture data and ImGui, never imported by core or the collector. Standalone CPU add-on builds need no native/shader setup; GPU data tests explicitly select backend dependencies but create no device.
+The `addons/c3d_profile.c3l` package bundles CPU/GPU capture, history and export. Its neutral `c3d::profile` module imports only the standard library. Its private `c3d::render::profile_gpu` module, under `src/gpu/` and gated by `C3D_PROFILE_GPU`, imports only the standard library, gpu.c3l and neutral profile values; it never imports core types. Core's approved profiler bridges are `c3d::instrumentation` for CPU+INTERNAL and `render/profile.c3` for GPU. Core has no unconditional profiler dependency; instrumented consumers select the collector add-on explicitly. The `addons/c3d_profile_gui.c3l` presentation adapter extends `c3d::gui` under `C3D_PROFILE_GUI`; it consumes neutral capture data and ImGui and is never imported by core or the collector. Standalone CPU collector builds need no native/shader setup. GUI consumers select ImGui and Vulkan bindings explicitly, while GPU data tests additionally select backend dependencies; neither data-test project creates a device.
 
 # 2. Where truth lives
 
@@ -69,11 +71,11 @@ python3 scripts/build.py --init-deps      # first checkout: submodules and nativ
 python3 scripts/build.py --clean
 ```
 
-Steps run in this order and stop at the first failure: tools (c3c 0.8.3, glslang), deps (submodules present), abi (`gen_abi.py`, which builds gpu.c3l's `gpu_shaders` tool with `c3c build --path lib/gpu.c3l/tools/gpu_shaders` on first use), shaders (`build_shaders.py`), build (every target in `examples/project.json`, or `--target`), test (every target in `test/project.json`), run. `build_shaders.py` also embeds the GLSL include set as `src/c3d/shader/includes.c3` for the in-process compiler; on Windows the build copies `shaderc_shared.dll` next to the example and test executables, on Linux the executables carry an rpath to `lib/shaderc.c3l/linux`. SPIR-V is compiled into `shaders/spv/` (not committed) on every run; the generated C3 and GLSL twins are committed and verified unless `--regen` is given, which rewrites them. `--skip-abi`, `--skip-shaders`, `--skip-build`, and `--opt O3` narrow a run; `-v` prints each command.
+Steps run in this order and stop at the first failure: tools (c3c 0.8.3, glslang), deps (submodules present), abi (`gen_abi.py`, which builds gpu.c3l's `gpu_shaders` tool with `c3c build --path lib/gpu.c3l/tools/gpu_shaders` on first use), shaders (`build_shaders.py`), build (every target in `examples/project.json`, or `--target`), test (every target in `test/project.json`), run. `build_shaders.py` also embeds the GLSL include set as `src/c3d/shader/includes.c3` for the in-process compiler; on Windows the build copies `shaderc_shared.dll` and `SDL3.dll` next to example and test executables, while Linux shaderc executables carry an rpath to `lib/shaderc.c3l/linux`. SPIR-V is compiled into `shaders/spv/` (not committed) on every run; the generated C3 and GLSL twins are committed and verified unless `--regen` is given, which rewrites them. `--skip-abi`, `--skip-shaders`, `--skip-build`, and `--opt O3` narrow a run; `-v` prints each command.
 
 Before every commit: `scripts/build.py --test`. Broken builds are never committed. GPU examples run manually; CI runs `--test`. Every development run of a GPU example enables Vulkan validation through gpu.c3l.
 
-The default build also builds the profiler add-on's `capture` example and the root `profile_gpu` example. `--test` runs the add-on's off, CPU, internal CPU, GPU, internal GPU, CPU+GPU and full CPU+GPU+INTERNAL targets plus the root integration targets. These tests never create a GPU device. Direct `c3c test profile_cpu --path addons/c3d_profile.c3l` exercises only the standalone package. Real Vulkan acceptance lives in the separately invoked `test/gpu/profile` project and never runs in CI.
+The default build also builds the collector's `capture` example, the root `profile_gpu` example and all four `profile_gui` feature targets. `--test` runs the collector's off, CPU, internal CPU, GPU, internal GPU, CPU+GPU and full CPU+GPU+INTERNAL targets, the presentation add-on's off, CPU, GPU and combined data targets, and the root integration targets. These tests never create a GPU device. Direct `c3c test profile_cpu --path addons/c3d_profile.c3l` exercises only the standalone collector package. Real Vulkan acceptance lives in the separately invoked `test/gpu/profile` project and the manually run profiler GUI examples; neither runs in CI.
 
 # 6. Style
 
@@ -179,6 +181,9 @@ grep -rn 'import shaderc' src/c3d --include='*.c3' | grep -v 'src/c3d/shader/'
 grep -rnE 'import c3d::(profile|render::profile_gpu)' src/c3d --include='*.c3' | grep -vE '^src/c3d/(instrumentation|render/profile).c3:'
 grep -rn '^import ' addons/c3d_profile.c3l/src --include='*.c3' | grep -v '/src/gpu/' | grep -v ':import std::'
 grep -rn '^import ' addons/c3d_profile.c3l/src/gpu --include='*.c3' | grep -vE ':import (std::|gpu[ ;:]|c3d::profile[ ;])'
+grep -rn '^import ' addons/c3d_profile_gui.c3l/src --include='*.c3' | grep -vE ':import (std::|c3d::profile[ ;]|imgui[ ;])'
+grep -n '"c3d_profile_gui"' manifest.json addons/c3d_profile.c3l/manifest.json
+grep -rnE 'ProfilerPanel|create_profiler_panel|destroy_profiler_panel|profiler_panel' src/c3d addons/c3d_profile.c3l/src --include='*.c3'
 ```
 
 # 11. Directory map
@@ -187,11 +192,12 @@ grep -rn '^import ' addons/c3d_profile.c3l/src/gpu --include='*.c3' | grep -vE '
 c3d.c3l/
 ├── manifest.json
 ├── addons/c3d_profile.c3l/ CPU/GPU capture package, standalone data tests and CPU example
+├── addons/c3d_profile_gui.c3l/ ImGui presentation package and standalone data tests
 ├── abi/c3d.abi             shared C3 and GLSL layouts
 ├── docs/style.md           mandatory style baseline
 ├── lib/                    gpu.c3l · sdl3.c3l · c3imgui.c3l · c3cg.c3l · box3d.c3l · cgltf.c3l · ufbx.c3l · shaderc.c3l (submodules)
 │                           plus c3d.c3l, a symlink to the root, so consumers resolve c3d here
-│                           and c3d_profile.c3l, a symlink to the profiler add-on
+│                           plus c3d_profile.c3l and c3d_profile_gui.c3l symlinks to the add-ons
 ├── linked-libs/            empty; every dependency ships its own native artifacts
 ├── csrc/                   stb_image
 ├── src/c3d/

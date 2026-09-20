@@ -29,9 +29,13 @@ LIB = ROOT / "lib"
 EXAMPLES = ROOT / "examples"
 TEST = ROOT / "test"
 PROFILE = ROOT / "addons" / "c3d_profile.c3l"
+PROFILE_GUI = ROOT / "addons" / "c3d_profile_gui.c3l"
 PROFILE_TEST_TARGETS = (
     "profile_off", "profile_cpu", "profile_internal", "profile_gpu",
     "profile_gpu_internal", "profile_cpu_gpu", "profile_full",
+)
+PROFILE_GUI_TEST_TARGETS = (
+    "panel_off", "panel_cpu", "panel_gpu", "panel_combined",
 )
 
 REQUIRED_C3C_VERSION = "0.8.3"
@@ -212,9 +216,9 @@ def step_build(options: Options) -> None:
         if options.opt:
             command.append(f"-{options.opt}")
         run(command, ROOT, options.verbose)
-    copy_shaderc_runtime(EXAMPLES / "build")
+    copy_windows_runtimes(EXAMPLES / "build")
     if not options.target or options.target == "profile_gpu":
-        copy_shaderc_runtime(ROOT / "build" / "profile_gpu")
+        copy_windows_runtimes(ROOT / "build" / "profile_gpu")
     if not options.target:
         command = [options.c3c, "build", "capture", "--path", str(PROFILE)]
         if options.opt:
@@ -222,22 +226,26 @@ def step_build(options: Options) -> None:
         run(command, ROOT, options.verbose)
 
 
-def copy_shaderc_runtime(output: Path) -> None:
-    """Place the shaderc shared library next to Windows executables; Linux resolves it through rpath."""
+def copy_windows_runtimes(output: Path) -> None:
+    """Place imported Windows runtimes next to executables."""
     if sys.platform != "win32":
         return
-    library = LIB / "shaderc.c3l" / "windows" / "shaderc_shared.dll"
-    destination = output / library.name
     output.mkdir(parents=True, exist_ok=True)
-    if not destination.exists() or destination.stat().st_mtime < library.stat().st_mtime:
-        shutil.copy2(library, destination)
+    libraries = (
+        LIB / "shaderc.c3l" / "windows" / "shaderc_shared.dll",
+        LIB / "sdl3.c3l" / "linked-libs" / "windows-x64" / "SDL3.dll",
+    )
+    for library in libraries:
+        destination = output / library.name
+        if not destination.exists() or destination.stat().st_mtime < library.stat().st_mtime:
+            shutil.copy2(library, destination)
 
 
 def step_test(options: Options) -> None:
     if not options.test:
         return
     targets = project_targets(TEST)
-    copy_shaderc_runtime(TEST / "build")
+    copy_windows_runtimes(TEST / "build")
     if not targets:
         run([options.c3c, "test", "--path", str(TEST)], ROOT, options.verbose)
         return
@@ -245,6 +253,8 @@ def step_test(options: Options) -> None:
         run([options.c3c, "test", target, "--path", str(TEST)], ROOT, options.verbose)
     for target in PROFILE_TEST_TARGETS:
         run([options.c3c, "test", target, "--path", str(PROFILE)], ROOT, options.verbose)
+    for target in PROFILE_GUI_TEST_TARGETS:
+        run([options.c3c, "test", target, "--path", str(PROFILE_GUI)], ROOT, options.verbose)
 
 
 def step_run(options: Options) -> None:
@@ -257,7 +267,7 @@ def step_run(options: Options) -> None:
 
 
 def step_clean(options: Options) -> None:
-    for project_dir in (EXAMPLES, TEST, PROFILE):
+    for project_dir in (EXAMPLES, TEST, PROFILE, PROFILE_GUI):
         if (project_dir / "project.json").exists():
             run([options.c3c, "clean", "--path", str(project_dir)], ROOT, options.verbose)
 

@@ -101,6 +101,66 @@
         "src/cube_gui.c3"
       ]
     },
+    "profile_gui_cpu": {
+      "type": "executable",
+      "dependencies": [
+        "c3d_profile_gui",
+        "c3d_profile"
+      ],
+      "features": [
+        "C3D_PROFILE_GUI",
+        "C3D_PROFILE_CPU"
+      ],
+      "sources": [
+        "src/profile_gui.c3"
+      ]
+    },
+    "profile_gui_internal": {
+      "type": "executable",
+      "dependencies": [
+        "c3d_profile_gui",
+        "c3d_profile"
+      ],
+      "features": [
+        "C3D_PROFILE_GUI",
+        "C3D_PROFILE_CPU",
+        "C3D_PROFILE_INTERNAL"
+      ],
+      "sources": [
+        "src/profile_gui.c3"
+      ]
+    },
+    "profile_gui_gpu": {
+      "type": "executable",
+      "dependencies": [
+        "c3d_profile_gui",
+        "c3d_profile"
+      ],
+      "features": [
+        "C3D_PROFILE_GUI",
+        "C3D_PROFILE_GPU",
+        "C3D_PROFILE_INTERNAL"
+      ],
+      "sources": [
+        "src/profile_gui.c3"
+      ]
+    },
+    "profile_gui": {
+      "type": "executable",
+      "dependencies": [
+        "c3d_profile_gui",
+        "c3d_profile"
+      ],
+      "features": [
+        "C3D_PROFILE_GUI",
+        "C3D_PROFILE_CPU",
+        "C3D_PROFILE_GPU",
+        "C3D_PROFILE_INTERNAL"
+      ],
+      "sources": [
+        "src/profile_gui.c3"
+      ]
+    },
     "post": {
       "type": "executable",
       "sources": [
