@@ -146,7 +146,7 @@ fn void? capture_workload(profile::Recorder* recorder) @private {
 fn int main() {
     profile::Recorder recorder = profile::create_recorder(mem, {
         .frame_capacity = FRAME_COUNT + 1,
-        .cpu_scopes_per_frame = 16,
+        .cpu_scopes_per_frame = 64,
         .max_depth = 8,
         .gpu_scopes_per_frame = 128,
         .label_bytes_per_frame = 8192,

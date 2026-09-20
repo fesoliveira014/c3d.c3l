@@ -52,7 +52,7 @@ manifest does not require it. These are consumer-selected features:
 | --- | --- |
 | None | Bodies run without evaluating profiling arguments. Collector storage, TLS, clocks and GPU queries are absent; the small skipped GPU token remains available. |
 | `C3D_PROFILE_CPU` | Application scopes and CPU capture/export. |
-| `C3D_PROFILE_CPU`, `C3D_PROFILE_INTERNAL` | Application scopes plus library scopes. `Scene.update_world` is instrumented. |
+| `C3D_PROFILE_CPU`, `C3D_PROFILE_INTERNAL` | Application scopes plus the library scopes listed under Library scopes. |
 | `C3D_PROFILE_GPU` | Explicit application GPU scopes and completed capture history. |
 | `C3D_PROFILE_GPU`, `C3D_PROFILE_INTERNAL` | Automatic frame/view/pass/shadow-layer/custom-dispatch intervals and Stats. |
 | CPU + GPU + INTERNAL | Both domains in one application capture; independent clocks. |
@@ -63,6 +63,53 @@ itself builds without the package when GPU profiling and internal CPU profiling
 are off. `C3D_PROFILE_INTERNAL` requires CPU or GPU profiling.
 `C3D_PROFILE_GUI` also requires CPU or GPU profiling and adds no declarations
 when it is absent. Per-draw graphics scopes are not provided.
+
+### Library scopes
+
+With CPU and INTERNAL profiling, c3d records these LIBRARY scopes beneath the
+application scope that encloses the call. Labels are fixed; a child label is
+nested under the entry point that contains it. No loop records one scope per
+item, so the sample count per frame depends on code structure, not on scene
+size.
+
+| Entry point | Label | Region |
+| --- | --- | --- |
+| `Scene.update_world` | `scene.update_world` | world matrices and effective visibility |
+| `anim::update` | `anim.update` | every animator advance and blend |
+| `Renderer.begin_frame` | `renderer.begin_frame` | the whole call |
+| | `renderer.present` | presentation of a pending window output |
+| | `renderer.wait_slot` | completion wait for the reused frame slot |
+| | `renderer.readback` | completed GPU profile and cluster statistics |
+| | `renderer.retire` | retired resource drain and mirror sweeps |
+| | `renderer.acquire_output` | window output recovery and acquisition |
+| `Renderer.render_view` | `renderer.render_view` | the whole call |
+| | `view.extract` | mesh candidate extraction and culling |
+| | `view.resolve` | geometry, material, skin and morph resolution into draw items |
+| | `view.sort` | draw list sorting |
+| | `view.uploads` | scene color, environment resolution, pending copies, sampled targets |
+| | `view.lights` | light extraction, shadow recording, light and cluster upload |
+| | `view.roots` | frame root and draw root writes |
+| | `view.record` | scene pass, sky, transmission, transparent, debug and motion-blur recording |
+| `Renderer.finish_view` | `renderer.finish_view` | depth of field, view output, post chain closure |
+| `Renderer.end_frame` | `renderer.end_frame` | the whole call |
+| | `renderer.submit` | pending copies, upload flush, command list end and submission |
+| | `renderer.present` | window presentation |
+| `Renderer.prepare_scene` | `renderer.prepare_scene` | the whole call |
+| `Renderer.prepare_model` | `renderer.prepare_model` | the whole call |
+| `Renderer.upload_texture` | `renderer.upload_texture` | the whole call |
+
+`renderer.present` appears under both frame boundaries; summaries count both.
+`Renderer.render` adds no scope of its own. First-use resource work inside a
+warm `render_view`, such as an asset revision bump, is attributed to
+`view.resolve`; cold preparation is attributed to the `prepare_*`,
+`upload_texture` and `view.uploads` scopes.
+
+Budget guidance for `RecorderDesc`: one animated scene with one view records at
+most 19 library samples per frame (`anim.update` 1, `begin_frame` 6,
+`render_view` 8, `finish_view` 1, `end_frame` 3) plus one per `prepare_*` or
+`upload_texture` call, at depth 2 beneath the enclosing application scope.
+Each additional view adds 9. Size `cpu_scopes_per_frame` for the application
+scopes plus that count, and `max_depth` for the application nesting plus 2.
 
 ## Capture application work
 
@@ -211,7 +258,7 @@ python3 scripts/build.py --example profile_gui
 ```
 
 The CPU mode captures application scopes. The internal CPU mode also shows
-`scene.update_world`. The GPU mode records application GPU work and automatic
+the library scopes nested beneath them. The GPU mode records application GPU work and automatic
 renderer identities without inventing CPU durations. The combined mode shows
 both domains on independent axes. Closing the panel only removes presentation
 work; capture and frame submission continue. Correctness tests do not establish

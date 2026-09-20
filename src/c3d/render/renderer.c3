@@ -2,6 +2,7 @@ module c3d::render;
 
 import c3d;
 import c3d::asset;
+import c3d::instrumentation @public;
 import c3d::pool;
 import c3d::shader;
 import gpu;
@@ -235,55 +236,67 @@ macro void? Renderer.upload(&self, id) {
  @require !self.frame_open
 *>
 fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
-    finish_pending_output(self)!;
+    instrumentation::@scope("renderer.begin_frame") {
+        instrumentation::@scope("renderer.present") {
+            finish_pending_output(self)!;
+        };
 
-    Frame* slot = &self.frames[self.frame_index % FRAMES_IN_FLIGHT];
-    if (slot.done.is_valid()) gpu::wait_completion(slot.done)!;
+        Frame* slot = &self.frames[self.frame_index % FRAMES_IN_FLIGHT];
+        instrumentation::@scope("renderer.wait_slot") {
+            if (slot.done.is_valid()) gpu::wait_completion(slot.done)!;
+        };
 
-    reset_frame_stats(&self.stats);
-    collect_gpu_profile(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
-    read_cluster_stats(self, slot)!;
-    drain_retired(&self.device, &slot.environment_temporaries);
-    drain_retired(&self.device, &slot.retire);
-    sweep_geometries(self);
-    sweep_environments(self);
-    sweep_textures(self);
-    sweep_samplers(self);
-    sweep_materials(self);
-    sweep_shaders(self);
-    sweep_compute_shaders(self);
-    reset_upload_ring(self, slot)!;
-    reset_deformation_cache(&self.deformation);
-    self.frame_started = clock::now();
+        reset_frame_stats(&self.stats);
+        instrumentation::@scope("renderer.readback") {
+            collect_gpu_profile(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
+            read_cluster_stats(self, slot)!;
+        };
+        instrumentation::@scope("renderer.retire") {
+            drain_retired(&self.device, &slot.environment_temporaries);
+            drain_retired(&self.device, &slot.retire);
+            sweep_geometries(self);
+            sweep_environments(self);
+            sweep_textures(self);
+            sweep_samplers(self);
+            sweep_materials(self);
+            sweep_shaders(self);
+            sweep_compute_shaders(self);
+        };
+        reset_upload_ring(self, slot)!;
+        reset_deformation_cache(&self.deformation);
+        self.frame_started = clock::now();
 
-    self.has_output = false;
-    self.frame_recorded = false;
-    self.sampled_target_bits = 0;
-    if (self.swapchain.is_valid()) {
-        if (self.output_dirty) recover_window_output(self)!;
-        if (!self.output_suppressed) acquire_window_output(self)!;
-    }
+        self.has_output = false;
+        self.frame_recorded = false;
+        self.sampled_target_bits = 0;
+        if (self.swapchain.is_valid()) {
+            instrumentation::@scope("renderer.acquire_output") {
+                if (self.output_dirty) recover_window_output(self)!;
+                if (!self.output_suppressed) acquire_window_output(self)!;
+            };
+        }
 
-    self.frame_shadow_state = self.shadow_atlas.state;
-    foreach (index, target : self.targets.items) self.frame_target_states[index] = target.target.state;
-    foreach (index, &preview : self.previews) self.frame_preview_states[index] = preview.image.state;
-    foreach (&record : self.views.items) {
-        record.snapshot_states();
-        record.cluster_root = (gpu::GpuAddress)0;
-        record.scene_input = &record.hdr_color;
-        record.post_chain_open = false;
-    }
-    self.frame_submitted = false;
-    self.recording_slot = (uint)(self.frame_index % FRAMES_IN_FLIGHT);
-    self.commands = {};
-    defer catch abort_frame(self);
+        self.frame_shadow_state = self.shadow_atlas.state;
+        foreach (index, target : self.targets.items) self.frame_target_states[index] = target.target.state;
+        foreach (index, &preview : self.previews) self.frame_preview_states[index] = preview.image.state;
+        foreach (&record : self.views.items) {
+            record.snapshot_states();
+            record.cluster_root = (gpu::GpuAddress)0;
+            record.scene_input = &record.hdr_color;
+            record.post_chain_open = false;
+        }
+        self.frame_submitted = false;
+        self.recording_slot = (uint)(self.frame_index % FRAMES_IN_FLIGHT);
+        self.commands = {};
+        defer catch abort_frame(self);
 
-    self.commands = gpu::begin_commands(&slot.allocator)!;
-    begin_gpu_profile(self)!;
-    if (self.has_output) self.window_target.transition(&self.commands, COLOR_ATTACHMENT_STATE)!;
+        self.commands = gpu::begin_commands(&slot.allocator)!;
+        begin_gpu_profile(self)!;
+        if (self.has_output) self.window_target.transition(&self.commands, COLOR_ATTACHMENT_STATE)!;
 
-    self.info = info;
-    self.frame_open = true;
+        self.info = info;
+        self.frame_open = true;
+    };
 }
 
 <*
@@ -332,47 +345,55 @@ fn void? Renderer.end_frame(&self) {
         if (!submitted) abort_frame(self);
     }
 
-    ulong frame = self.frame_index;
-    Frame* slot = &self.frames[frame % FRAMES_IN_FLIGHT];
-    self.frame_open = false;
-    self.frame_index++;
+    instrumentation::@scope("renderer.end_frame") {
+        ulong frame = self.frame_index;
+        Frame* slot = &self.frames[frame % FRAMES_IN_FLIGHT];
+        self.frame_open = false;
+        self.frame_index++;
 
-    bool uploads_pending = self.pending_copies.len() > 0 || self.pending_texture_uploads.len() > 0;
-    if (!self.frame_recorded && !uploads_pending) {
-        abort_frame(self);
+        bool uploads_pending = self.pending_copies.len() > 0 || self.pending_texture_uploads.len() > 0;
+        if (!self.frame_recorded && !uploads_pending) {
+            abort_frame(self);
+            self.stats.frame_ms = elapsed_ms(self.frame_started);
+            return;
+        }
+        bool present = self.has_output;
+        self.has_output = false;
+
+        instrumentation::@scope("renderer.submit") {
+            defer catch (void)gpu::discard_commands(&self.commands);
+            foreach (&record : self.views.items) {
+                if (record.live && record.rendered) return c3d::INVALID_ARGUMENT~;
+            }
+            record_pending_copies(self, &self.commands)!;
+            if (present) self.window_target.transition(&self.commands, PRESENT_STATE)!;
+            slot.upload.flush(&self.device)!;
+
+            end_gpu_profile(self)!;
+            gpu::ExecutableCommandList[1] executable = { gpu::end_commands(&self.commands)! };
+            defer catch (void)gpu::discard_executable_commands(&executable[0]);
+
+            gpu::SubmitDesc submit = { .command_lists = executable[..] };
+            if (present) {
+                submit.readiness = self.acquired.readiness;
+                submit.readiness_before = { .color_output };
+            }
+            slot.done = gpu::submit(self.graphics, &submit)!;
+            submit_gpu_profile(self);
+            if (present) self.output_submission = slot.done;
+            self.frame_submitted = true;
+            commit_uploads(self, slot);
+            submitted = true;
+        };
+        self.stats.cpu_record_ms = elapsed_ms(self.frame_started);
+
+        if (present) {
+            instrumentation::@scope("renderer.present") {
+                present_window_output(self, slot.done)!;
+            };
+        }
         self.stats.frame_ms = elapsed_ms(self.frame_started);
-        return;
-    }
-    bool present = self.has_output;
-    self.has_output = false;
-
-    defer catch (void)gpu::discard_commands(&self.commands);
-    foreach (&record : self.views.items) {
-        if (record.live && record.rendered) return c3d::INVALID_ARGUMENT~;
-    }
-    record_pending_copies(self, &self.commands)!;
-    if (present) self.window_target.transition(&self.commands, PRESENT_STATE)!;
-    slot.upload.flush(&self.device)!;
-
-    end_gpu_profile(self)!;
-    gpu::ExecutableCommandList[1] executable = { gpu::end_commands(&self.commands)! };
-    defer catch (void)gpu::discard_executable_commands(&executable[0]);
-
-    gpu::SubmitDesc submit = { .command_lists = executable[..] };
-    if (present) {
-        submit.readiness = self.acquired.readiness;
-        submit.readiness_before = { .color_output };
-    }
-    slot.done = gpu::submit(self.graphics, &submit)!;
-    submit_gpu_profile(self);
-    if (present) self.output_submission = slot.done;
-    self.frame_submitted = true;
-    commit_uploads(self, slot);
-    submitted = true;
-    self.stats.cpu_record_ms = elapsed_ms(self.frame_started);
-
-    if (present) present_window_output(self, slot.done)!;
-    self.stats.frame_ms = elapsed_ms(self.frame_started);
+    };
 }
 
 <*
