@@ -181,15 +181,3 @@ and no output checksum. The flat and clustered modes already exercise distinct r
 and compute shader paths with per-pass timestamps, and no CPU readback API exists
 for a checksum, so the counters above are the correctness proxy. A scene-level
 benchmark with a fetched glTF asset is planned separately.
-
-## Measured allocation experiment
-
-The [candidate-allocation patch](benchmarks/no-zero-extraction.patch) replaces two
-zeroed allocations with uninitialized allocations. It is a separate experiment;
-the benchmark target uses the unchanged library until the patch is applied.
-On a Xeon 8370C virtual machine with C3 0.8.3 `-O3`, five paired process repeats
-at 4,096 meshes reduced median visible extraction from 199.20 to 187.81 µs and
-hidden extraction from 11.91 to 4.14 µs. Every emitted candidate is assigned
-before it is returned. All 383 CPU unit tests passed with the temporary change.
-These are operation timings, not whole-frame speedups; larger visible workloads
-showed more timing noise. Reproduce on the target machine before adopting it.
