@@ -9,6 +9,7 @@ import c3d::asset::gltf;
 import c3d::asset::image;
 import c3d::camera;
 import c3d::geometry;
+import c3d::gui;
 import c3d::light;
 import c3d::material;
 import c3d::maths;
@@ -18,6 +19,7 @@ import c3d::render;
 import c3d::scene;
 import bench_loop;
 import gpu;
+import imgui;
 
 const float ORBIT_RADIANS_PER_PIXEL @local = 0.005f;
 const float ORBIT_PITCH_LIMIT @local = 1.5f; // avoids the poles, where the up vector degenerates
@@ -31,6 +33,13 @@ const float LIGHT_INTENSITY @local = 2.5f;
 const float ENVIRONMENT_INTENSITY @local = 0.6f;
 const float BACKGROUND_INTENSITY @local = 0.3f;
 const float STATS_PERIOD_SECONDS @local = 2;
+const float FREE_LOOK_RADIANS_PER_PIXEL @local = 0.003f;
+const float FREE_PITCH_LIMIT @local = 1.5f; // avoids the poles, where the up vector degenerates
+const float FREE_SPEED_SCALE @local = 0.5f; // model radii per second; crosses a model in about two seconds
+const float FREE_FAST_MULTIPLIER @local = 4;
+const float FREE_SPEED_WHEEL_STEP @local = 1.25f;
+const Vec2 CAMERA_PANEL_POSITION @local = { 16, 16 };
+const Vec2 CAMERA_PANEL_SIZE @local = { 300, 150 };
 const uint MODEL_CAPACITY @local = 4;
 const String DEFAULT_MODEL @local = "../assets/gltf/BoxTextured.glb";
 const String ENVIRONMENT_FILE @local = "../assets/ibl/studio_small_09_1k.hdr";
@@ -86,6 +95,85 @@ fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
     };
     camera_node.local.position = orbit.target + offset * orbit.distance;
     camera_node.local.rotation = maths::look_rotation(-offset, { 0, 1, 0 });
+}
+
+struct FreeCamera @local {
+    Vec3  position;
+    float yaw;
+    float pitch;
+    float speed;
+}
+
+fn Vec3 free_forward(FreeCamera* camera) @local {
+    return {
+        math::cos(camera.pitch) * math::sin(camera.yaw),
+        math::sin(camera.pitch),
+        math::cos(camera.pitch) * math::cos(camera.yaw),
+    };
+}
+
+fn FreeCamera free_camera_from(Node* camera_node, float speed) @local {
+    Vec3 forward = camera_node.local.rotation.rotate_vec3({ 0, 0, -1 });
+    return {
+        .position = camera_node.local.position,
+        .yaw = math::atan2(forward.x, forward.z),
+        .pitch = math::asin(math::clamp(forward.y, -1.0f, 1.0f)),
+        .speed = speed,
+    };
+}
+
+fn void apply_free_camera(
+    FreeCamera* camera,
+    Input* input,
+    Node* camera_node,
+    float delta_seconds,
+) @local {
+    if (!input.mouse_captured_by_gui) {
+        if (input.button_down(platform::MouseButton.RIGHT)) {
+            camera.yaw -= input.mouse_delta.x * FREE_LOOK_RADIANS_PER_PIXEL;
+            camera.pitch = math::clamp(
+                camera.pitch - input.mouse_delta.y * FREE_LOOK_RADIANS_PER_PIXEL,
+                -FREE_PITCH_LIMIT,
+                FREE_PITCH_LIMIT,
+            );
+        }
+        if (input.wheel != 0) camera.speed *= math::pow(FREE_SPEED_WHEEL_STEP, input.wheel);
+    }
+    Vec3 forward = free_forward(camera);
+    Vec3 up = { 0, 1, 0 };
+    Vec3 right = forward.cross(up).normalize();
+    if (!input.keyboard_captured_by_gui) {
+        Vec3 direction;
+        if (input.key_down(platform::Scancode.W)) direction += forward;
+        if (input.key_down(platform::Scancode.S)) direction -= forward;
+        if (input.key_down(platform::Scancode.D)) direction += right;
+        if (input.key_down(platform::Scancode.A)) direction -= right;
+        if (input.key_down(platform::Scancode.E)) direction += up;
+        if (input.key_down(platform::Scancode.Q)) direction -= up;
+        float speed = camera.speed * (input.key_down(platform::Scancode.LSHIFT) ? FREE_FAST_MULTIPLIER : 1);
+        camera.position += direction * (speed * delta_seconds);
+    }
+    camera_node.local.position = camera.position;
+    camera_node.local.rotation = maths::look_rotation(forward, up);
+}
+
+fn void? draw_viewer_frame(
+    render::Renderer* renderer,
+    Scene* scene,
+    Node* camera_node,
+    GuiRenderer* gui_renderer,
+    FrameInfo info,
+) @local {
+    renderer.begin_frame(info)!;
+    defer catch render::abort_frame(renderer);
+    if (renderer.has_output) {
+        renderer.render_view(scene, camera_node, renderer.default_view)!;
+        renderer.finish_view(renderer.default_view)!;
+        OverlayContext overlay = renderer.begin_overlay()!;
+        gui_renderer.record(&overlay)!;
+        renderer.end_overlay(&overlay)!;
+    }
+    return renderer.end_frame();
 }
 
 fn Aabb template_bounds(AssetStore* assets, ModelTemplate* template) @local {
@@ -415,19 +503,55 @@ fn int run_example(String model_path, bool gpu_timings) @local {
     scene.update_world();
     renderer.prepare_scene(&scene)!!;
 
-    io::printn("drag to orbit, wheel to zoom, Escape release quits");
+    GuiRenderer gui_renderer = gui::create_gui_renderer(mem, &renderer, &window)!!;
+    defer (void)gui::destroy_gui_renderer(&gui_renderer);
+    FreeCamera free_camera = free_camera_from(camera_node, radius * FREE_SPEED_SCALE);
+    bool free_mode;
+
+    io::printn("drag to orbit, wheel to zoom; F or the Camera panel toggles the free camera: right drag looks, WASDQE move, Shift is fast, wheel scales speed; Escape release quits");
     double last_print;
     while (window.poll()) {
         Input* input = &window.input;
-        if (input.key_released(platform::Scancode.ESCAPE)) break;
+        gui_renderer.new_frame();
+        defer {
+            if (gui_renderer.frame_open) gui_renderer.finish_frame();
+        }
+        if (input.key_released(platform::Scancode.ESCAPE) && !input.keyboard_captured_by_gui) break;
+
+        bool was_free = free_mode;
+        if (input.key_pressed(platform::Scancode.F) && !input.keyboard_captured_by_gui) free_mode = !free_mode;
+        imgui::set_next_window_pos(CAMERA_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
+        imgui::set_next_window_size(CAMERA_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
+        if (imgui::begin("Camera", null, {})) {
+            imgui::checkbox("Free camera (F)", &free_mode);
+            if (free_mode) {
+                imgui::text("Right drag looks, WASDQE move, Shift fast");
+                imgui::text("Speed: %.2f units/s (wheel)", free_camera.speed);
+            } else {
+                imgui::text("Left drag orbits, wheel zooms");
+            }
+        }
+        imgui::end();
+        if (free_mode && !was_free) free_camera = free_camera_from(camera_node, free_camera.speed);
+        gui_renderer.finish_frame();
 
         right.local.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 },
             (float)window.clock.total * SPIN_RADIANS_PER_SECOND);
-        apply_orbit(&orbit, input, camera_node);
+        if (free_mode) {
+            apply_free_camera(&free_camera, input, camera_node, (float)window.clock.delta);
+        } else if (!input.mouse_captured_by_gui) {
+            apply_orbit(&orbit, input, camera_node);
+        }
         scene.update_world();
 
         platform::sync_window(&window, &renderer);
-        renderer.render(&scene, camera_node, { .time = window.clock.total, .delta = window.clock.delta })!!;
+        draw_viewer_frame(
+            renderer: &renderer,
+            scene: &scene,
+            camera_node: camera_node,
+            gui_renderer: &gui_renderer,
+            info: { .time = window.clock.total, .delta = window.clock.delta },
+        )!!;
 
         if (window.clock.total - last_print >= STATS_PERIOD_SECONDS) {
             last_print = window.clock.total;
