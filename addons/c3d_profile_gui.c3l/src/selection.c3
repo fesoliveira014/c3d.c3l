@@ -2,16 +2,25 @@ module c3d::gui @feat(C3D_PROFILE_GUI & (C3D_PROFILE_CPU | C3D_PROFILE_GPU));
 
 import c3d::profile;
 
+fn bool settled(profile::FrameCaptureView frame) @private {
+    if (frame.cpu_state == profile::CaptureState.PENDING) return false;
+    $if $feat(C3D_PROFILE_GPU):
+        if (frame.gpu_state == profile::CaptureState.PENDING) return false;
+    $endif
+    return true;
+}
+
+// A settled capture cannot change until its slot is reused, which removes its id.
 fn void refresh_panel(ProfilerPanel* panel) @private {
     panel.frame_count = panel.recorder.frame_ids(panel.frame_ids);
     if (!panel.following) return;
     for (usz remaining = panel.frame_count; remaining > 0; remaining--) {
         profile::FrameCaptureView frame = panel.recorder.frame(panel.frame_ids[remaining - 1])!!;
-        if (frame.cpu_state == profile::CaptureState.PENDING) continue;
-        $if $feat(C3D_PROFILE_GPU):
-            if (frame.gpu_state == profile::CaptureState.PENDING) continue;
-        $endif
-        copy_snapshot(panel, frame);
+        if (!settled(frame)) continue;
+        bool unchanged = panel.has_snapshot
+            && panel.snapshot.frame_id == frame.frame_id
+            && settled(panel.snapshot);
+        if (!unchanged) copy_snapshot(panel, frame);
         return;
     }
     panel.has_snapshot = false;

@@ -18,6 +18,7 @@ struct ScopeAggregate @private {
 struct PanelStorageLayout @private {
     usz size;
     usz frame_ids;
+    usz history;
     usz cpu;
     usz gpu @if($feat(C3D_PROFILE_GPU));
     usz labels;
@@ -32,6 +33,7 @@ struct ProfilerPanel {
     profile::Recorder* recorder;
     char[] storage;
     ulong[] frame_ids;
+    profile::FrameCaptureView[] history;
     usz frame_count;
     profile::CpuSample[] cpu;
     profile::GpuSample[] gpu @if($feat(C3D_PROFILE_GPU));
@@ -92,6 +94,12 @@ fn PanelStorageLayout? panel_storage_layout(profile::RecorderDesc desc) @private
         stride: ulong::size,
         alignment: ulong::alignment,
     )!;
+    layout.history = panel_reserve_span(
+        size: &layout.size,
+        count: desc.frame_capacity,
+        stride: profile::FrameCaptureView::size,
+        alignment: profile::FrameCaptureView::alignment,
+    )!;
     $if $feat(C3D_PROFILE_CPU):
         layout.scope_capacity = desc.cpu_scopes_per_frame;
         layout.cpu = panel_reserve_span(
@@ -143,6 +151,7 @@ fn usz? panel_storage_size(profile::RecorderDesc desc) @private {
 *>
 fn ProfilerPanel? create_profiler_panel(Allocator allocator, profile::Recorder* recorder) {
     $assert ulong::alignment <= mem::DEFAULT_MEM_ALIGNMENT;
+    $assert profile::FrameCaptureView::alignment <= mem::DEFAULT_MEM_ALIGNMENT;
     $assert profile::CpuSample::alignment <= mem::DEFAULT_MEM_ALIGNMENT;
     $assert uint::alignment <= mem::DEFAULT_MEM_ALIGNMENT;
     $assert ScopeAggregate::alignment <= mem::DEFAULT_MEM_ALIGNMENT;
@@ -156,6 +165,7 @@ fn ProfilerPanel? create_profiler_panel(Allocator allocator, profile::Recorder* 
         .recorder = recorder,
         .storage = storage,
         .frame_ids = ((ulong*)(storage.ptr + layout.frame_ids))[:recorder.desc.frame_capacity],
+        .history = ((profile::FrameCaptureView*)(storage.ptr + layout.history))[:recorder.desc.frame_capacity],
         .labels = storage[layout.labels : recorder.desc.label_bytes_per_frame],
         .depths = ((uint*)(storage.ptr + layout.depths))[:layout.scope_capacity],
         .aggregates = ((ScopeAggregate*)(storage.ptr + layout.aggregates))[:layout.scope_capacity],

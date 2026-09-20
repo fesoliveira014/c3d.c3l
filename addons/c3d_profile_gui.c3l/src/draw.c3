@@ -7,6 +7,8 @@ import std::math;
 const float PANEL_WIDTH @private = 1040; // Accommodates exact frame identities and both timing columns.
 const float PANEL_HEIGHT @private = 780; // Leaves room for history and a selected scope axis.
 const float HISTORY_ROWS @private = 7; // Bounds history height while preserving detail space.
+const float HISTORY_ROW_LINES @private = 3; // State, omitted count and span per history cell.
+const float SPAN_BAR_HEIGHT_FRACTION @private = 0.25f; // Thin bar under the span text.
 const float HISTORY_HEIGHT_FRACTION @private = 0.6f; // Reserves detail space in smaller viewports.
 const float NS_PER_MS @private = 1_000_000;
 const uint CPU_BAR_COLOR @private = 0xffb07b43;
@@ -122,27 +124,29 @@ fn void draw_span(
     imgui::text("%.6f ms measured scope span", duration_ns / NS_PER_MS);
     if (pending) imgui::text_unformatted("Partial completed prefix");
     float fraction = maximum_ns > 0 ? (float)(duration_ns / maximum_ns) : 0;
-    imgui::progress_bar(fraction, {.x = -1, .y = imgui::get_text_line_height() * 0.25f}, "");
+    imgui::progress_bar(fraction, {.x = -1, .y = imgui::get_text_line_height() * SPAN_BAR_HEIGHT_FRACTION}, "");
 }
 
 fn void draw_history(ProfilerPanel* panel) @private {
     bool newest = imgui::button("Newest history entry");
     double cpu_maximum @if($feat(C3D_PROFILE_CPU));
     double gpu_maximum @if($feat(C3D_PROFILE_GPU));
-    foreach (frame_id : panel.frame_ids[:panel.frame_count]) {
-        profile::FrameCaptureView frame = panel.recorder.frame(frame_id)!!;
+    profile::FrameCaptureView[] history = panel.history[:panel.frame_count];
+    foreach (index, frame_id : panel.frame_ids[:panel.frame_count]) {
+        history[index] = panel.recorder.frame(frame_id)!!;
+        profile::FrameCaptureView frame = history[index];
         $if $feat(C3D_PROFILE_CPU):
             cpu_maximum = math::max(cpu_maximum, cpu_interval_span(frame.cpu).duration_ns);
         $endif
         $if $feat(C3D_PROFILE_GPU):
-            foreach (index, sample : frame.gpu) {
-                if (!first_gpu_group(frame.gpu, index)) continue;
+            foreach (sample_index, sample : frame.gpu) {
+                if (!first_gpu_group(frame.gpu, sample_index)) continue;
                 gpu_maximum = math::max(gpu_maximum,
                   gpu_interval_span(frame.gpu, sample.source, sample.renderer_frame).duration_ns);
             }
         $endif
     }
-    float history_height = math::min(imgui::get_text_line_height_with_spacing() * HISTORY_ROWS * 3,
+    float history_height = math::min(imgui::get_text_line_height_with_spacing() * HISTORY_ROWS * HISTORY_ROW_LINES,
       math::max(imgui::get_content_region_avail().y * HISTORY_HEIGHT_FRACTION, 1.0f));
     if (!imgui::begin_table_ex(
         str_id: "history",
@@ -172,7 +176,7 @@ fn void draw_history(ProfilerPanel* panel) @private {
         imgui::text("%llu", frame_id);
         if (imgui::is_item_clicked()) select_frame(panel, frame_id)!!;
         if (newest && (usz)index + 1 == panel.frame_count) imgui::set_scroll_here_y(1);
-        profile::FrameCaptureView frame = panel.recorder.frame(frame_id)!!;
+        profile::FrameCaptureView frame = history[index];
         (void)imgui::table_next_column();
         draw_cpu_status(frame);
         $if $feat(C3D_PROFILE_CPU):
@@ -395,7 +399,7 @@ fn void draw_cpu_summary(ProfilerPanel* panel) @private @feat(C3D_PROFILE_CPU) {
  @param [&inout] panel : "Panel on its recorder's owning thread."
  @require imgui::get_current_context() != null
 *>
-fn void profiler_panel(ProfilerPanel* panel) @link($feat(LINUX), "stdc++") {
+fn void profiler_panel(ProfilerPanel* panel) {
     refresh_panel(panel);
     imgui::Viewport* viewport = imgui::get_main_viewport();
     if (viewport.work_size.x <= 0 || viewport.work_size.y <= 0) return;

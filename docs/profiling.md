@@ -40,7 +40,7 @@ compiled backend imports `vk`. For example:
 ```
 
 Linux consumers link the C++ runtime used by the pinned ImGui archive; the
-public draw entry point supplies that link requirement. Windows consumers use
+add-on manifest supplies that link requirement. Windows consumers use
 the pinned packages' static CRT. A full windowed c3d application also ships
 the SDL3 runtime beside its executable. GPU panel consumers additionally select
 `gpu`, `vma` and `spvreflect` and enable `C3D_PROFILE_GPU`.

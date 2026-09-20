@@ -4,12 +4,12 @@ import c3d::profile;
 import imgui;
 import std::math;
 
+// Publication appends one contiguous batch per source and renderer frame.
 fn bool first_gpu_group(profile::GpuSample[] samples, sz index) @private {
+    if (index == 0) return true;
     profile::GpuSample sample = samples[index];
-    foreach (previous : samples[:index]) {
-        if (previous.source == sample.source && previous.renderer_frame == sample.renderer_frame) return false;
-    }
-    return true;
+    profile::GpuSample previous = samples[index - 1];
+    return previous.source != sample.source || previous.renderer_frame != sample.renderer_frame;
 }
 
 fn void draw_gpu_status(profile::FrameCaptureView frame) @private {
