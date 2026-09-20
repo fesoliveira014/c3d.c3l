@@ -3,6 +3,7 @@ module c3d::anim;
 import c3d;
 import c3d::asset;
 import c3d::ecs;
+import c3d::instrumentation @public;
 import c3d::maths;
 import c3d::scene;
 import std::collections::list;
@@ -122,11 +123,13 @@ fn Animator* add_animator(Scene* scene, Node* instance_root) {
  @param dt : "Seconds."
 *>
 fn void update(AssetStore* assets, Scene* scene, float dt) {
-    scene.@each(Animator; Entity entity, Animator* animator) {
-        ModelInstance* instance = scene.get(scene.node(entity), ModelInstance);
-        advance(animator, assets, dt);
-        @pool() {
-            blend_instance(animator, assets, instance);
+    instrumentation::@scope("anim.update") {
+        scene.@each(Animator; Entity entity, Animator* animator) {
+            ModelInstance* instance = scene.get(scene.node(entity), ModelInstance);
+            advance(animator, assets, dt);
+            @pool() {
+                blend_instance(animator, assets, instance);
+            };
         };
     };
 }

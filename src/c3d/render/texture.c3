@@ -2,6 +2,7 @@ module c3d::render;
 
 import c3d;
 import c3d::asset;
+import c3d::instrumentation @public;
 import c3d::material;
 import gpu;
 
@@ -38,15 +39,17 @@ struct TextureRes {
 fn void? Renderer.upload_texture(&self, TextureId texture) {
     if (!self.assets.textures.is_live(texture)) return c3d::INVALID_ID~;
 
-    if (self.frame_open) {
-        resolve_texture(self, texture)!;
-        return;
-    }
+    instrumentation::@scope("renderer.upload_texture") {
+        if (self.frame_open) {
+            resolve_texture(self, texture)!;
+            return;
+        }
 
-    open_closed_frame_slot(self)!;
-    defer catch discard_uploads(self);
-    resolve_texture(self, texture)!;
-    submit_pending(self)!;
+        open_closed_frame_slot(self)!;
+        defer catch discard_uploads(self);
+        resolve_texture(self, texture)!;
+        submit_pending(self)!;
+    };
 }
 
 fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture) @private {
