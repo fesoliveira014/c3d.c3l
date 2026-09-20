@@ -93,12 +93,7 @@ fn void? record_debug_lines(
         .height = height,
     };
 
-    write_pass_timestamp(
-        renderer:    renderer,
-        frame_index: renderer.frame_index,
-        pass:        Pass.DEBUG_LINES,
-        half:        TIMESTAMP_BEGIN,
-    )!;
+    begin_profile_pass(renderer, Pass.DEBUG_LINES)!;
     gpu::cmd_bind_pipeline(&renderer.commands, pipeline)!;
     record.hdr_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
     record.depth.transition(&renderer.commands, DEPTH_ATTACHMENT_STATE)!;
@@ -135,28 +130,8 @@ fn void? record_debug_lines(
     )!;
 
     gpu::cmd_end_render_pass(&renderer.commands)!;
-    write_pass_timestamp(
-        renderer:    renderer,
-        frame_index: renderer.frame_index,
-        pass:        Pass.DEBUG_LINES,
-        half:        TIMESTAMP_END,
-    )!;
-    slot.timed[Pass.DEBUG_LINES.ordinal] = true;
+    end_profile_pass(renderer, Pass.DEBUG_LINES)!;
 
     renderer.stats.draws += 2;
     renderer.stats.debug_lines += (uint)vertices.len / 2;
-}
-
-fn void? reset_debug_lines_timing(Renderer* renderer) @private {
-    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
-    if (!slot.timed[Pass.DEBUG_LINES.ordinal]) return;
-    if (renderer.timestamps_enabled) {
-        gpu::cmd_reset_timestamps(
-            commands: &renderer.commands,
-            pool:     renderer.timestamps,
-            first:    pass_timestamp_slot(renderer.frame_index, Pass.DEBUG_LINES.ordinal),
-            count:    TIMESTAMPS_PER_PASS,
-        )!;
-    }
-    slot.timed[Pass.DEBUG_LINES.ordinal] = false;
 }

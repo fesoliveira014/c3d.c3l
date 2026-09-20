@@ -11,7 +11,7 @@ Entry point for every agent session in this repository. Read it fully before rea
 
 | Library | Module | Imported only by |
 | --- | --- | --- |
-| gpu.c3l | `gpu` | `c3d::render`, `c3d::shader`, `c3d::render::post`, `c3d::rt`, `c3d::gui::backend`; `c3d::platform` may import `gpu::surface` only |
+| gpu.c3l | `gpu` | `c3d::render` and its submodules, including the gated add-on `c3d::render::profile_gpu`, `c3d::shader`, `c3d::rt`, `c3d::gui::backend`; `c3d::platform` may import `gpu::surface` only |
 | sdl3.c3l | `sdl` | `c3d::platform` |
 | c3imgui.c3l | `imgui` | `c3d::gui` |
 | c3cg.c3l | `cg` | `c3d::geometry` |
@@ -23,7 +23,7 @@ Entry point for every agent session in this repository. Read it fully before rea
 
 Boundaries are enforced by grep in CI. No dependency is added without updating this table.
 
-The `addons/c3d_profile.c3l` package owns CPU capture, history and export and imports only the standard library. It is an in-repository package, not a submodule. Core's only profiler importer is `c3d::instrumentation`, with `C3D_PROFILE_CPU` and `C3D_PROFILE_INTERNAL` enabled. Core has no unconditional profiler dependency; instrumented consumers select the add-on explicitly. Presentation belongs in a separate adapter consuming capture data and ImGui, never imported by core or the collector. Standalone add-on builds use its own `project.json` and need no root native/shader setup.
+The `addons/c3d_profile.c3l` package bundles CPU/GPU capture, history and export. Its neutral `c3d::profile` module imports only the standard library. Its private `c3d::render::profile_gpu` module, under `src/gpu/` and gated by `C3D_PROFILE_GPU`, imports only the standard library, gpu.c3l and neutral profile values; it never imports core types. Core's approved profiler bridges are `c3d::instrumentation` for CPU+INTERNAL and `render/profile.c3` for GPU. Core has no unconditional profiler dependency; instrumented consumers select the one add-on explicitly. Presentation belongs in a separate adapter consuming capture data and ImGui, never imported by core or the collector. Standalone CPU add-on builds need no native/shader setup; GPU data tests explicitly select backend dependencies but create no device.
 
 # 2. Where truth lives
 
@@ -73,7 +73,7 @@ Steps run in this order and stop at the first failure: tools (c3c 0.8.3, glslang
 
 Before every commit: `scripts/build.py --test`. Broken builds are never committed. GPU examples run manually; CI runs `--test`. Every development run of a GPU example enables Vulkan validation through gpu.c3l.
 
-The default build also builds the profiler add-on's `capture` example; `--test` runs its `profile_off`, `profile_cpu` and `profile_internal` targets plus the root scene integration targets. Direct `c3c test profile_cpu --path addons/c3d_profile.c3l` exercises only the standalone package.
+The default build also builds the profiler add-on's `capture` example and the root `profile_gpu` example. `--test` runs the add-on's off, CPU, internal CPU, GPU, internal GPU, CPU+GPU and full CPU+GPU+INTERNAL targets plus the root integration targets. These tests never create a GPU device. Direct `c3c test profile_cpu --path addons/c3d_profile.c3l` exercises only the standalone package. Real Vulkan acceptance lives in the separately invoked `test/gpu/profile` project and never runs in CI.
 
 # 6. Style
 
@@ -176,8 +176,9 @@ grep -rn 'import b3' src/c3d --include='*.c3' | grep -v 'src/c3d/physics/'
 grep -rn 'import gltf' src/c3d --include='*.c3' | grep -v 'src/c3d/asset/gltf/'
 grep -rn 'import ufbx' src/c3d --include='*.c3' | grep -v 'src/c3d/asset/fbx/'
 grep -rn 'import shaderc' src/c3d --include='*.c3' | grep -v 'src/c3d/shader/'
-grep -rn 'import c3d::profile' src/c3d --include='*.c3' | grep -v '^src/c3d/instrumentation.c3:'
-grep -rn '^import ' addons/c3d_profile.c3l/src --include='*.c3' | grep -v ':import std::'
+grep -rnE 'import c3d::(profile|render::profile_gpu)' src/c3d --include='*.c3' | grep -vE '^src/c3d/(instrumentation|render/profile).c3:'
+grep -rn '^import ' addons/c3d_profile.c3l/src --include='*.c3' | grep -v '/src/gpu/' | grep -v ':import std::'
+grep -rn '^import ' addons/c3d_profile.c3l/src/gpu --include='*.c3' | grep -vE ':import (std::|gpu[ ;:]|c3d::profile[ ;])'
 ```
 
 # 11. Directory map
@@ -185,7 +186,7 @@ grep -rn '^import ' addons/c3d_profile.c3l/src --include='*.c3' | grep -v ':impo
 ```
 c3d.c3l/
 ├── manifest.json
-├── addons/c3d_profile.c3l/ CPU capture package, standalone tests and example
+├── addons/c3d_profile.c3l/ CPU/GPU capture package, standalone data tests and CPU example
 ├── abi/c3d.abi             shared C3 and GLSL layouts
 ├── docs/style.md           mandatory style baseline
 ├── lib/                    gpu.c3l · sdl3.c3l · c3imgui.c3l · c3cg.c3l · box3d.c3l · cgltf.c3l · ufbx.c3l · shaderc.c3l (submodules)

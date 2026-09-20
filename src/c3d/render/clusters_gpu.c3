@@ -67,12 +67,7 @@ fn ClusterFrame? prepare_cluster_frame(
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     ClusterFrame result = { .depth = cluster_depth(camera, record.desc.clusters) };
     bool active = result.depth.near < result.depth.far;
-    write_pass_timestamp(
-        renderer: renderer,
-        frame_index: renderer.frame_index,
-        pass: Pass.LIGHT_CULL,
-        half: TIMESTAMP_BEGIN,
-    )!;
+    begin_profile_pass(renderer, Pass.LIGHT_CULL)!;
 
     gpu::StageMask previous = CONSUMER_STAGES;
     previous.transfer = true;
@@ -167,27 +162,12 @@ fn void? record_clusters(
         readback.cluster_count = record.clusters.layout.cluster_count;
         readback.pending = true;
     }
-    write_pass_timestamp(
-        renderer: renderer,
-        frame_index: renderer.frame_index,
-        pass: Pass.LIGHT_CULL,
-        half: TIMESTAMP_END,
-    )!;
-    slot.timed[Pass.LIGHT_CULL.ordinal] = true;
+    end_profile_pass(renderer, Pass.LIGHT_CULL)!;
 }
 
 fn void? reset_cluster_recording(Renderer* renderer) @private {
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     slot.cluster_readback.pending = false;
-    if (renderer.timestamps_enabled && slot.timed[Pass.LIGHT_CULL.ordinal]) {
-        gpu::cmd_reset_timestamps(
-            commands: &renderer.commands,
-            pool: renderer.timestamps,
-            first: pass_timestamp_slot(renderer.frame_index, Pass.LIGHT_CULL.ordinal),
-            count: TIMESTAMPS_PER_PASS,
-        )!;
-    }
-    slot.timed[Pass.LIGHT_CULL.ordinal] = false;
 }
 
 fn void? read_cluster_stats(Renderer* renderer, Frame* slot) @private {

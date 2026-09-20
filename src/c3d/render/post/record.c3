@@ -156,12 +156,7 @@ fn void? record_fused_display(
     );
     gpu::PipelineHandle pipeline = renderer.pipelines.get(&renderer.device, display_pipeline_key(output.format))!;
 
-    render::write_pass_timestamp(
-        renderer:    renderer,
-        frame_index: renderer.frame_index,
-        pass:        Pass.COMPOSITE,
-        half:        render::TIMESTAMP_BEGIN,
-    )!;
+    render::begin_profile_pass(renderer, Pass.COMPOSITE)!;
     render::record_fullscreen_pass(
         renderer:      renderer,
         target:        output,
@@ -170,13 +165,7 @@ fn void? record_fused_display(
         rect:          rect,
         load:          render::output_load_op(output, rect),
     )!;
-    render::write_pass_timestamp(
-        renderer:    renderer,
-        frame_index: renderer.frame_index,
-        pass:        Pass.COMPOSITE,
-        half:        render::TIMESTAMP_END,
-    )!;
-    slot.timed[Pass.COMPOSITE.ordinal] = true;
+    render::end_profile_pass(renderer, Pass.COMPOSITE)!;
 }
 
 fn void? record_grade(
@@ -276,40 +265,13 @@ fn void? acquire_compute_pipeline(
 fn void? open_post_chain(Renderer* renderer, ViewRecord* record) @private {
     if (record.post_chain_open) return;
 
-    render::write_pass_timestamp(
-        renderer:    renderer,
-        frame_index: renderer.frame_index,
-        pass:        Pass.POST_CHAIN,
-        half:        render::TIMESTAMP_BEGIN,
-    )!;
+    render::begin_profile_pass(renderer, Pass.POST_CHAIN)!;
     record.post_chain_open = true;
 }
 
 fn void? close_post_chain(Renderer* renderer, ViewRecord* record) @private {
-    if (!record.post_chain_open) return reset_post_timing(renderer);
+    if (!record.post_chain_open) return;
 
-    Frame* slot = &renderer.frames[renderer.frame_index % render::FRAMES_IN_FLIGHT];
-    render::write_pass_timestamp(
-        renderer:    renderer,
-        frame_index: renderer.frame_index,
-        pass:        Pass.POST_CHAIN,
-        half:        render::TIMESTAMP_END,
-    )!;
-    slot.timed[Pass.POST_CHAIN.ordinal] = true;
+    render::end_profile_pass(renderer, Pass.POST_CHAIN)!;
     record.post_chain_open = false;
-}
-
-fn void? reset_post_timing(Renderer* renderer) @private {
-    Frame* slot = &renderer.frames[renderer.frame_index % render::FRAMES_IN_FLIGHT];
-    if (!slot.timed[Pass.POST_CHAIN.ordinal]) return;
-
-    if (renderer.timestamps_enabled) {
-        gpu::cmd_reset_timestamps(
-            commands: &renderer.commands,
-            pool:     renderer.timestamps,
-            first:    render::pass_timestamp_slot(renderer.frame_index, Pass.POST_CHAIN.ordinal),
-            count:    render::TIMESTAMPS_PER_PASS,
-        )!;
-    }
-    slot.timed[Pass.POST_CHAIN.ordinal] = false;
 }

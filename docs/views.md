@@ -7,6 +7,7 @@ in application order and submits them together.
 
 ```bash
 python3 scripts/build.py --example views
+c3c build views --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL
 ./examples/build/views --gpu-timings
 ```
 
@@ -145,8 +146,11 @@ color = LINEAR_HDR, info = {})` renders one frame into a target through a view i
 destroys, without touching the window; it waits for completion and is a bake path, not a per-frame
 one.
 
-Pass timings (`Stats.gpu_pass_ms`, shadow timings) describe the last recorded view of the frame;
-draw, dispatch and light counters accumulate across views.
+Pass timings (`Stats.gpu_pass_ms`) sum all measured view/pass instances in the completed
+`Stats.gpu_frame_index`. Shadow timings retain all measured layers with their original view
+ids. These delayed GPU results may lag the draw, dispatch and light counters; absent pass
+measurements display N/A and truncated summaries are partial. See [profiling](profiling.md)
+for the required build features and capture configuration.
 
 `Stats.cluster_view`, `cluster_count` and `cluster_overflows` are delayed results read
 only after the reused frame slot has completed, independently of GPU timestamp enablement.

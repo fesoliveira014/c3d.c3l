@@ -1,9 +1,9 @@
-# CPU profiling
+# Profiling
 
 `c3d_profile` is a separate, source-only C3 library in `addons/c3d_profile.c3l`.
-It provides the `c3d::profile` module and requires only C3 0.8.3 and its standard
-library. It can capture an application without loading c3d, creating a GPU
-device, or linking SDL, ImGui or the renderer's native dependencies.
+It provides CPU and GPU capture in one bundle. CPU-only use of `c3d::profile`
+requires just C3 0.8.3 and its standard library: no core, device, SDL or ImGui.
+The feature-gated GPU module uses gpu.c3l and integrates with renderer timing.
 
 ## Select the package and features
 
@@ -28,15 +28,18 @@ manifest does not require it. These are consumer-selected features:
 
 | Features | Behavior |
 | --- | --- |
-| None | Profiling macros execute their bodies without evaluating profiling arguments. Collector types, storage, TLS and clocks are absent. |
+| None | Bodies run without evaluating profiling arguments. Collector storage, TLS, clocks and GPU queries are absent; the small skipped GPU token remains available. |
 | `C3D_PROFILE_CPU` | Application scopes and CPU capture/export. |
 | `C3D_PROFILE_CPU`, `C3D_PROFILE_INTERNAL` | Application scopes plus library scopes. `Scene.update_world` is instrumented. |
+| `C3D_PROFILE_GPU` | Explicit application GPU scopes and completed capture history. |
+| `C3D_PROFILE_GPU`, `C3D_PROFILE_INTERNAL` | Automatic frame/view/pass/shadow-layer/custom-dispatch intervals and Stats. |
+| CPU + GPU + INTERNAL | Both domains in one application capture; independent clocks. |
 
 Application source that imports `c3d::profile` keeps the package selected even
 when CPU capture is compiled out; the package supplies its no-op macros. Core
-itself builds with the package entirely absent when internal CPU profiling is
-off. `C3D_PROFILE_INTERNAL` requires CPU or GPU profiling; this package currently
-implements CPU capture. GPU collection and a profiler panel are not provided.
+itself builds without the package when GPU profiling and internal CPU profiling
+are off. `C3D_PROFILE_INTERNAL` requires CPU or GPU profiling. Per-draw graphics
+scopes and a full profiler panel are not provided.
 
 ## Capture application work
 
@@ -72,16 +75,16 @@ from a general-purpose allocator.
 
 The recorder owns its storage, must stay at a stable address while capturing,
 and must not be copied. Call `profile::destroy_recorder` with no active capture
-or scopes. The application owns the recorder's lifetime; c3d does not create
+or scopes, attached renderers or pending GPU captures. The application owns the recorder's lifetime; c3d does not create
 another recorder or advance the application's frame ids.
 
 ## Read captures and interpret bounds
 
 `Recorder.frame(frame_id)` returns a borrowed `FrameCaptureView`. It returns
 `profile::NOT_FOUND` for a missing, disabled, still-open or evicted frame. The
-borrow remains valid until its history slot is reused. Consume the view
-synchronously or export it before reuse; destroying the recorder also ends
-all borrows.
+borrow remains valid until its history slot is reused or GPU publication mutates
+that capture. Reacquire views after renderer completion collection. Consume or
+export them synchronously; recorder destruction ends every borrow.
 
 Samples retain begin order, parent index, application/library origin, label,
 start offset, inclusive duration and self time. Times are integer nanoseconds
@@ -131,11 +134,13 @@ Budgets are constructor choices and storage never grows during recording.
 
 ## Package composition
 
-Core's private instrumentation bridge calls the collector only when internal
-CPU profiling is selected. The collector does not import core, the renderer or
-GUI. A profiler panel belongs in a separate presentation package that consumes
-captures and ImGui; the application calls it while its GUI context is active.
-Neither the collector nor core needs to discover or invoke that panel.
+The neutral `c3d::profile` module imports only the standard library. The same
+bundle contains `c3d::render::profile_gpu`, selected only for GPU profiling; it
+imports gpu.c3l and neutral capture values, with no core Renderer/Scene types.
+Core bridges supply copied identities and completion hooks. This keeps the
+package dependency direction one-way. A presentation adapter can consume
+captures and ImGui in the application's active GUI context; neither collector
+nor core needs to discover or invoke it.
 
 ## Verify the standalone package
 
@@ -151,3 +156,131 @@ c3c run capture --path addons/c3d_profile.c3l
 The full `python3 scripts/build.py --test` also runs these tests and the scene
 integration targets. The default repository build builds the standalone
 example; a targeted renderer example build stays scoped to that target.
+
+## Capture GPU work
+
+GPU-enabled applications add `c3d_profile` to their existing core dependencies
+and select `C3D_PROFILE_GPU`; add `C3D_PROFILE_INTERNAL` for automatic pass timing.
+A consumer of just the bundle's GPU module selects `c3d_profile`, `gpu`, `vk`,
+`vma` and `spvreflect`, searching both the installation's library directory and
+`gpu.c3l/lib`. The package manifest imposes no GPU dependency on CPU consumers.
+Native Windows GPU consumers use the backend's static CRT configuration.
+
+To enable pass timing in an existing example, build it explicitly:
+
+```bash
+c3c build shadows --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL
+./examples/build/shadows --gpu-timings
+```
+
+Use the equivalent `.exe` path on Windows. Ordinary example targets do not
+compile profiling. Requesting `RendererDesc.gpu_timings` in an excluded build
+returns `c3d::UNSUPPORTED`; unsupported graphics timestamp hardware still renders
+and reports unavailable timings.
+
+Create a recorder with `gpu_scopes_per_frame`, `frame_capacity` and
+`label_bytes_per_frame`, then set `RendererDesc.profiler` to its stable address
+and `gpu_timings = true`. GPU-only descriptors omit CPU budget fields. Combined
+CPU/GPU builds require CPU budgets and accept GPU capacity zero for CPU-only
+use; attaching that recorder as a GPU sink returns `profile::INVALID_ARGUMENT`.
+The recorder must outlive its renderers and their pending submissions.
+
+Within `profile::@capture`, call `begin_frame`, record work, and call `end_frame`.
+Use `render::@gpu_begin(&renderer, label)!` and `render::@gpu_end(&renderer, token)!`
+for application intervals. Pair them in LIFO order within one open recording,
+outside an active overlay borrow. Keep `defer catch render::abort_frame(&renderer)`
+after `begin_frame`; if a recording fault is caught locally, abort that recording
+before continuing. A fault after successful submission does not discard its
+pending measurements.
+
+Labels are copied. The wrappers skip label evaluation when timing is disabled,
+unsupported, full, or lacks an admitted application capture. INTERNAL scopes
+can still supply Stats with a null capture sink. In all-off builds both wrapper
+calls retain optional `!`/`!!` syntax and discard their arguments.
+
+The renderer binds its configured recorder's capture at `begin_frame`. Nested
+CPU captures on another recorder cannot redirect it, and a capture opened later
+does not adopt part of an existing renderer recording. History slots remain
+pinned until their GPU results publish or the recording is canceled. A pin can
+last `FRAMES_IN_FLIGHT` renderer frames, so `frame_capacity` must exceed that
+count (currently 2) or steady-state captures drop. If all slots are pinned,
+`Recorder.dropped_frames` increases and the capture body runs unrecorded. The
+collector never waits for a GPU slot or resumes midway through that dropped
+capture.
+
+A capture may expose completed GPU samples while other submissions remain
+`PENDING`. After the last pin releases, GPU state is `ABORTED` if a recording was
+canceled, otherwise `TRUNCATED` on capacity loss, otherwise `UNAVAILABLE` when a
+source could not measure or none completed, otherwise `READY`. Separate flags
+and counters preserve partial results and lower-priority outcomes. Disabling
+capture affects the next application capture; pending results still publish.
+
+`RendererDesc.gpu_scope_capacity` and `gpu_label_bytes_per_slot` bound pending
+storage independently of history. Zero selects 2048 scopes and 65536 label bytes
+per native slot. Both timestamp ends are reserved at begin. The first query or
+label exhaustion stops admission until the next recording; accepted scopes
+still close, and omitted scopes are counted. History copies a parent-complete
+prefix and keeps GPU truncation separate from CPU truncation.
+
+On x64, the default adapter requests 983,296 host bytes for its two slots, plus
+a 192-byte owning value and backend pool overhead. Its pool holds 8192 timestamp
+entries. Disabled or unsupported instances allocate no recording arrays. This
+excludes retained capture history and the renderer's copied shadow summary.
+
+Each GPU sample has a source id, renderer frame, parent, origin, label and copied
+view/pass/light/shader identity where relevant. GPU nanoseconds are floating
+point, relative to the first accepted begin in that `(source, renderer_frame)`.
+They are broad command intervals, not exclusive shader execution times. They
+are neither calibrated to CPU time nor aligned between renderers. Do not sum
+nested parents and children as a total.
+
+## GPU summaries and export
+
+`Stats.gpu_pass_ms` sums every measured instance of each pass in the completed
+`gpu_frame_index`: two views taking 2 ms and 3 ms contribute 5 ms. Frame, view,
+application and shadow-layer parents/children do not inflate those buckets.
+Custom dispatches each have their own interval and keep the active successful
+shader revision, including fallback after a rejected replacement. `POST_CHAIN`
+is split into contiguous render/finish segments under its single pass bucket.
+
+`gpu_pass_valid` distinguishes an absent measurement from a measured zero.
+`gpu_timing_state` distinguishes unavailable, pending, ready and truncated data;
+`gpu_scopes_dropped` counts omitted intervals. The latest completed summary
+survives CPU/work-counter reset while newer results are pending. GPU results
+may therefore describe an older frame than the current CPU counters.
+`shadow_timings` retains every measured layer instance with its original ViewId.
+The fixed-layout `pass_timestamp_slot` helper remains compatibility arithmetic;
+it does not locate the dynamic profiler's queries.
+
+GPU-enabled JSON extends schema version 1 with GPU feature availability, state,
+counts and completed samples. GPU-only captures have unavailable, empty CPU
+lanes. CPU-only output remains unchanged. Export owns its text, so subsequent
+GPU publication does not mutate an earlier export.
+
+The worked headless example records two views and custom dispatches and drains
+its renderer before exporting, while its recorder is still alive:
+
+```bash
+python3 scripts/build.py --example profile_gpu
+c3c test acceptance --path test/gpu/profile
+```
+
+The second command runs manual Vulkan acceptance and is outside CI. Both use
+validation. The existing renderer can discard recordings containing only
+non-view work (for example, a warm compute-only frame); profiling reports such
+recordings as aborted and never makes timestamp writes count as rendering work.
+Use explicit `render_view`/`finish_view` calls for the example workload.
+
+GPU-enabled add-on data tests require backend libraries, but create no device:
+
+```bash
+c3c test profile_gpu --path addons/c3d_profile.c3l
+c3c test profile_gpu_internal --path addons/c3d_profile.c3l
+c3c test profile_cpu_gpu --path addons/c3d_profile.c3l
+c3c test profile_full --path addons/c3d_profile.c3l
+```
+
+`profile_full` selects CPU + GPU + INTERNAL; it does not enable a profiler GUI.
+The repository build compiles the GPU example and runs these deterministic tests
+on Linux and Windows. Hardware acceptance and performance measurements remain
+separate; successful correctness tests do not establish instrumentation overhead.

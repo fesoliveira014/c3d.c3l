@@ -37,7 +37,13 @@ fn void test_scope_without_capture_skips_label_and_runs_body() @test {
     assert(labels == 0 && bodies == 1);
 }
 
-fn void test_profiling_arguments_are_discarded_when_all_features_are_off() @test @feat(!C3D_PROFILE_CPU) {
+fn void test_gpu_scope_token_is_available_without_capture_features() @test {
+    profile::GpuScopeToken token = {};
+    assert(!token.recorded);
+}
+
+fn void test_profiling_arguments_are_discarded_when_all_features_are_off()
+    @test @feat(!C3D_PROFILE_CPU & !C3D_PROFILE_GPU) {
     uint bodies;
     profile::@capture(undefined_recorder, undefined_frame_id) {
         profile::@scope(undefined_label) { bodies++; };

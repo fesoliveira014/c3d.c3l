@@ -29,7 +29,10 @@ LIB = ROOT / "lib"
 EXAMPLES = ROOT / "examples"
 TEST = ROOT / "test"
 PROFILE = ROOT / "addons" / "c3d_profile.c3l"
-PROFILE_TEST_TARGETS = ("profile_off", "profile_cpu", "profile_internal")
+PROFILE_TEST_TARGETS = (
+    "profile_off", "profile_cpu", "profile_internal", "profile_gpu",
+    "profile_gpu_internal", "profile_cpu_gpu", "profile_full",
+)
 
 REQUIRED_C3C_VERSION = "0.8.3"
 C3IMGUI_RELEASE_TAG = "v0.1.3"
@@ -210,6 +213,8 @@ def step_build(options: Options) -> None:
             command.append(f"-{options.opt}")
         run(command, ROOT, options.verbose)
     copy_shaderc_runtime(EXAMPLES / "build")
+    if not options.target or options.target == "profile_gpu":
+        copy_shaderc_runtime(ROOT / "build" / "profile_gpu")
     if not options.target:
         command = [options.c3c, "build", "capture", "--path", str(PROFILE)]
         if options.opt:

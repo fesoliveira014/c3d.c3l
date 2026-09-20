@@ -40,8 +40,6 @@ const ZString[FRAMES_IN_FLIGHT] UPLOAD_RING_NAMES @private = {
 
 const usz RETIRE_INITIAL_CAPACITY @private = 16; // a frame retiring more than this grows once and keeps the storage
 const uint FULLSCREEN_VERTEX_COUNT @private = 3; // one clipped triangle covers the area without a vertex buffer
-const uint TIMESTAMP_BEGIN @private = 0;
-const uint TIMESTAMP_END @private = 1;
 const double NANOSECONDS_PER_MILLISECOND @private = 1_000_000.0;
 
 <*
@@ -61,6 +59,9 @@ const uint DEFAULT_MAX_SHADOW_LAYERS = 4; // admits one full directional request
 struct RendererDesc {
     bool             validation;
     bool             gpu_timings;
+    ProfileRecorder*  profiler @if($feat(C3D_PROFILE_GPU));
+    uint             gpu_scope_capacity @if($feat(C3D_PROFILE_GPU));
+    uint             gpu_label_bytes_per_slot @if($feat(C3D_PROFILE_GPU));
     SurfaceFn        surface_fn;
     void*            surface_user;
     uint             output_width;
@@ -90,9 +91,6 @@ struct Frame {
     UploadRing            upload;
     RetireList            retire;
     RetireList            environment_temporaries;
-    bool[PASS_COUNT]      timed;
-    ShadowTiming[]        shadow_timings;
-    uint                  shadow_timing_count;
     ClusterReadback       cluster_readback;
 }
 
@@ -143,7 +141,7 @@ struct Renderer {
     gpu::SamplerIndex       linear_clamp_sampler;
 
     DebugLog*                log;
-    gpu::TimestampPoolHandle timestamps;
+    RendererGpuProfile       gpu_profile @if($feat(C3D_PROFILE_GPU));
     bool                     timestamps_enabled;
     Stats                    stats;
     ShadowTiming[]           shadow_timing_results;
@@ -172,8 +170,6 @@ struct Renderer {
     time::Clock             frame_started;
     bool                    frame_open;
     bool                    overlay_open;
-    bool                    compute_open;
-    Pass                    compute_pass;
     bool                    has_output;
     bool                    frame_recorded;
     bool                    output_suppressed;
@@ -244,11 +240,9 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
     Frame* slot = &self.frames[self.frame_index % FRAMES_IN_FLIGHT];
     if (slot.done.is_valid()) gpu::wait_completion(slot.done)!;
 
-    self.stats = {};
-    read_pass_timings(self, slot, self.frame_index)!;
+    reset_frame_stats(&self.stats);
+    collect_gpu_profile(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
     read_cluster_stats(self, slot)!;
-    slot.timed = {};
-    slot.shadow_timing_count = 0;
     drain_retired(&self.device, &slot.environment_temporaries);
     drain_retired(&self.device, &slot.retire);
     sweep_geometries(self);
@@ -280,20 +274,12 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
         record.post_chain_open = false;
     }
     self.frame_submitted = false;
-    self.compute_open = false;
     self.recording_slot = (uint)(self.frame_index % FRAMES_IN_FLIGHT);
     self.commands = {};
     defer catch abort_frame(self);
 
     self.commands = gpu::begin_commands(&slot.allocator)!;
-    if (self.timestamps_enabled) {
-        gpu::cmd_reset_timestamps(
-            commands: &self.commands,
-            pool:     self.timestamps,
-            first:    pass_timestamp_slot(self.frame_index, 0),
-            count:    (uint)PASS_COUNT * TIMESTAMPS_PER_PASS,
-        )!;
-    }
+    begin_gpu_profile(self)!;
     if (self.has_output) self.window_target.transition(&self.commands, COLOR_ATTACHMENT_STATE)!;
 
     self.info = info;
@@ -338,6 +324,7 @@ fn void? Renderer.clear(&self, Vec4 color) {
  @return? gpu::SLOT_TABLE_FULL, gpu::DESCRIPTOR_HEAP_FULL, gpu::COMMAND_ALLOCATOR_CAPACITY_EXCEEDED
  @return? c3d::INVALID_ARGUMENT
  @require self.frame_open, !self.overlay_open
+ @require gpu_profile_balanced(self)
 *>
 fn void? Renderer.end_frame(&self) {
     bool submitted;
@@ -363,11 +350,11 @@ fn void? Renderer.end_frame(&self) {
     foreach (&record : self.views.items) {
         if (record.live && record.rendered) return c3d::INVALID_ARGUMENT~;
     }
-    close_custom_compute(self, frame)!;
     record_pending_copies(self, &self.commands)!;
     if (present) self.window_target.transition(&self.commands, PRESENT_STATE)!;
     slot.upload.flush(&self.device)!;
 
+    end_gpu_profile(self)!;
     gpu::ExecutableCommandList[1] executable = { gpu::end_commands(&self.commands)! };
     defer catch (void)gpu::discard_executable_commands(&executable[0]);
 
@@ -377,6 +364,7 @@ fn void? Renderer.end_frame(&self) {
         submit.readiness_before = { .color_output };
     }
     slot.done = gpu::submit(self.graphics, &submit)!;
+    submit_gpu_profile(self);
     if (present) self.output_submission = slot.done;
     self.frame_submitted = true;
     commit_uploads(self, slot);
@@ -430,6 +418,7 @@ fn void? Renderer.draw_fullscreen(&self, RenderTargetId target, ShaderVariant fr
  @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
 *>
 fn void? Renderer.composite(&self, RenderTargetId target) {
+    defer catch abort_frame(self);
     TargetRecord* record = self.targets.try_get(target)!;
     if (!self.has_output) return;
     return composite_target(
@@ -467,12 +456,7 @@ fn void? composite_target(
     };
     gpu::PipelineHandle pipeline = renderer.pipelines.get(&renderer.device, key)!;
 
-    write_pass_timestamp(
-        renderer:    renderer,
-        frame_index: renderer.frame_index,
-        pass:        Pass.COMPOSITE,
-        half:        TIMESTAMP_BEGIN,
-    )!;
+    begin_profile_pass(renderer, Pass.COMPOSITE)!;
     record_fullscreen_pass(
         renderer:      renderer,
         target:        output,
@@ -481,13 +465,7 @@ fn void? composite_target(
         rect:          rect,
         load:          output_load_op(output, rect),
     )!;
-    write_pass_timestamp(
-        renderer:    renderer,
-        frame_index: renderer.frame_index,
-        pass:        Pass.COMPOSITE,
-        half:        TIMESTAMP_END,
-    )!;
-    slot.timed[Pass.COMPOSITE.ordinal] = true;
+    end_profile_pass(renderer, Pass.COMPOSITE)!;
 }
 
 fn void? record_fullscreen_pass(
@@ -615,10 +593,14 @@ fn void? finish_pending_output(Renderer* renderer) @private {
  @return? gpu::DEVICE_LOST, gpu::DEVICE_BUSY, gpu::SURFACE_LOST, gpu::BACKEND_ERROR
  @return? c3d::INVALID_ARGUMENT, c3d::ASSET_DATA_UNAVAILABLE, gpu::RESOURCE_IN_USE
  @return? gpu::WAIT_TIMEOUT, gpu::COMMAND_RECORDING_ERROR
+ @return? create_renderer_gpu_profile!
  @require desc.surface_fn == null || (desc.output_width > 0 && desc.output_height > 0)
  @require desc.shadow_resolution == 0 || desc.shadow_resolution > 2 * SHADOW_GUARD_TEXELS
 *>
 fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDesc desc = {}) {
+    $if !$feat(C3D_PROFILE_GPU):
+        if (desc.gpu_timings) return c3d::UNSUPPORTED~;
+    $endif
     // The callback's user pointer is fixed when the runtime is created and a returned-by-value
     // Renderer has no stable address, so the log lives on the heap for the renderer's lifetime.
     DebugLog* log = alloc::new(allocator, DebugLog);
@@ -648,19 +630,12 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     gpu::DeviceCaps caps = gpu::get_device_caps(&device)!;
 
     uint max_shadow_layers = desc.max_shadow_layers ? desc.max_shadow_layers : DEFAULT_MAX_SHADOW_LAYERS;
-    usz query_count = (usz)FRAMES_IN_FLIGHT * (PASS_COUNT + (usz)max_shadow_layers) * TIMESTAMPS_PER_PASS;
-    bool timestamps_enabled = desc.gpu_timings && caps.timestamps.queues.graphics;
-    gpu::TimestampPoolHandle timestamps;
-    if (timestamps_enabled) {
-        gpu::TimestampPoolDesc timestamp_desc = {
-            .capacity   = (uint)query_count,
-            .debug_name = "frame_timestamps",
-        };
-        timestamps = gpu::create_timestamp_pool(&device, &timestamp_desc)!;
-    }
-    defer catch {
-        if (timestamps.is_valid()) (void)gpu::destroy_timestamp_pool(&device, timestamps);
-    }
+    bool timestamps_enabled;
+    $if $feat(C3D_PROFILE_GPU):
+        RendererGpuProfile gpu_profile = create_renderer_gpu_profile(allocator, &device, desc)!;
+        timestamps_enabled = gpu_profile.adapter.enabled && gpu_profile.adapter.supported;
+        defer catch destroy_renderer_gpu_profile(&device, &gpu_profile);
+    $endif
 
     gpu::SwapchainHandle swapchain;
     gpu::SwapchainInfo swapchain_info;
@@ -691,7 +666,6 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
             frames[slot].environment_temporaries.free();
             drain_retired(&device, &frames[slot].retire);
             frames[slot].retire.free();
-            if (frames[slot].shadow_timings.len) alloc::free(allocator, frames[slot].shadow_timings.ptr);
         }
     }
     for (usz slot = 0; slot < FRAMES_IN_FLIGHT; slot++) {
@@ -704,7 +678,6 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         frames[slot].environment_temporaries.init(allocator, RETIRE_INITIAL_CAPACITY);
         frames[slot].upload.overflow.init(allocator, RETIRE_INITIAL_CAPACITY);
         slots_created++;
-        if (timestamps_enabled) frames[slot].shadow_timings = alloc::new_array(allocator, ShadowTiming, max_shadow_layers);
         allocate_upload_ring(
             device:     &device,
             ring:       &frames[slot].upload,
@@ -729,7 +702,11 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     gpu::GpuSpan material_heap_span = gpu::get_allocation_span(&device, material_heap)!;
 
     ShadowTiming[] shadow_timing_results;
-    if (timestamps_enabled) shadow_timing_results = alloc::new_array(allocator, ShadowTiming, max_shadow_layers);
+    $if $feat(C3D_PROFILE_GPU):
+        if (timestamps_enabled) {
+            shadow_timing_results = alloc::new_array(allocator, ShadowTiming, gpu_profile.adapter.desc.scopes_per_slot);
+        }
+    $endif
     defer catch {
         if (shadow_timing_results.len) alloc::free(allocator, shadow_timing_results.ptr);
     }
@@ -770,11 +747,14 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .deformation          = create_deformation_cache(allocator),
         .linear_clamp_sampler = linear_clamp_sampler,
         .log                  = log,
-        .timestamps           = timestamps,
         .timestamps_enabled   = timestamps_enabled,
         .output_width         = desc.output_width,
         .output_height        = desc.output_height,
     };
+    $if $feat(C3D_PROFILE_GPU):
+        renderer.gpu_profile = gpu_profile;
+        renderer.stats.gpu_timing_state = timestamps_enabled ? GpuTimingState.PENDING : GpuTimingState.UNAVAILABLE;
+    $endif
     renderer.environment_state.temporaries.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_copies.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_geometry_uploads.init(allocator, RETIRE_INITIAL_CAPACITY);
@@ -863,13 +843,12 @@ fn void destroy_renderer(Renderer* renderer) {
         drain_retired(&renderer.device, &slot.retire);
         slot.retire.free();
         slot.environment_temporaries.free();
-        if (slot.shadow_timings.len) alloc::free(renderer.allocator, slot.shadow_timings.ptr);
         free_upload_ring(&renderer.device, &slot.upload);
         (void)gpu::destroy_command_allocator(&slot.allocator);
     }
-    if (renderer.timestamps.is_valid()) {
-        (void)gpu::destroy_timestamp_pool(&renderer.device, renderer.timestamps);
-    }
+    $if $feat(C3D_PROFILE_GPU):
+        destroy_renderer_gpu_profile(&renderer.device, &renderer.gpu_profile);
+    $endif
     (void)gpu::destroy_device(&renderer.device);
     if (renderer.surface.is_valid()) (void)gpu::destroy_surface(&renderer.surface);
     (void)gpu::destroy_runtime(&renderer.runtime);
@@ -916,96 +895,6 @@ fn void? recover_window_output(Renderer* renderer) @private {
     renderer.output_dirty = false;
 }
 
-fn void? read_pass_timings(Renderer* renderer, Frame* slot, ulong frame_index) @private {
-    if (!renderer.timestamps_enabled) return;
-    foreach (pass_ordinal, timed : slot.timed) {
-        if (!timed) continue;
-        ulong[TIMESTAMPS_PER_PASS] raw;
-        gpu::read_timestamps(
-            device: &renderer.device,
-            pool:   renderer.timestamps,
-            first:  pass_timestamp_slot(frame_index, (usz)pass_ordinal),
-            count:  TIMESTAMPS_PER_PASS,
-            out:    raw[..],
-        )!;
-        double nanoseconds = gpu::timestamp_delta_ns(
-            caps:  &renderer.caps.timestamps,
-            queue: gpu::QueueKind.GRAPHICS,
-            begin: raw[0],
-            end:   raw[1],
-        )!;
-        renderer.stats.gpu_pass_ms[pass_ordinal] = (float)(nanoseconds / NANOSECONDS_PER_MILLISECOND);
-    }
-    for (uint layer = 0; layer < slot.shadow_timing_count; layer++) {
-        ulong[TIMESTAMPS_PER_PASS] raw;
-        gpu::read_timestamps(
-            device: &renderer.device,
-            pool: renderer.timestamps,
-            first: shadow_timestamp_slot(renderer, layer),
-            count: TIMESTAMPS_PER_PASS,
-            out: raw[..],
-        )!;
-        double nanoseconds = gpu::timestamp_delta_ns(
-            caps: &renderer.caps.timestamps,
-            queue: gpu::QueueKind.GRAPHICS,
-            begin: raw[0],
-            end: raw[1],
-        )!;
-        renderer.shadow_timing_results[layer] = slot.shadow_timings[layer];
-        renderer.shadow_timing_results[layer].gpu_ms = (float)(nanoseconds / NANOSECONDS_PER_MILLISECOND);
-    }
-    renderer.stats.shadow_timings = renderer.shadow_timing_results[:slot.shadow_timing_count];
-}
-
-fn uint shadow_timestamp_slot(Renderer* renderer, uint layer) @private {
-    return (uint)((usz)FRAMES_IN_FLIGHT * PASS_COUNT * TIMESTAMPS_PER_PASS
-      + ((usz)(renderer.frame_index % FRAMES_IN_FLIGHT) * renderer.max_shadow_layers + layer) * TIMESTAMPS_PER_PASS);
-}
-
-fn void? reset_shadow_timings(Renderer* renderer) @private {
-    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
-    slot.shadow_timing_count = 0;
-    slot.timed[Pass.SHADOW_ATLAS.ordinal] = false;
-    if (!renderer.timestamps_enabled) return;
-    gpu::cmd_reset_timestamps(
-        commands: &renderer.commands,
-        pool: renderer.timestamps,
-        first: shadow_timestamp_slot(renderer, 0),
-        count: renderer.max_shadow_layers * TIMESTAMPS_PER_PASS,
-    )!;
-    gpu::cmd_reset_timestamps(
-        commands: &renderer.commands,
-        pool: renderer.timestamps,
-        first: pass_timestamp_slot(renderer.frame_index, Pass.SHADOW_ATLAS.ordinal),
-        count: TIMESTAMPS_PER_PASS,
-    )!;
-}
-
-fn void? write_shadow_timestamp(Renderer* renderer, uint layer, uint half) @private {
-    if (!renderer.timestamps_enabled) return;
-    gpu::cmd_write_timestamp(
-        commands: &renderer.commands,
-        pool: renderer.timestamps,
-        index: shadow_timestamp_slot(renderer, layer) + half,
-        stage: { .all },
-    )!;
-}
-
-fn void? write_pass_timestamp(
-    Renderer* renderer,
-    ulong frame_index,
-    Pass pass,
-    uint half,
-) @private {
-    if (!renderer.timestamps_enabled) return;
-    gpu::cmd_write_timestamp(
-        commands: &renderer.commands,
-        pool:     renderer.timestamps,
-        index:    pass_timestamp_slot(frame_index, (usz)pass.ordinal) + half,
-        stage:    { .all },
-    )!;
-}
-
 fn void? reset_upload_ring(Renderer* renderer, Frame* slot) @private {
     foreach (allocation : slot.upload.overflow) {
         slot.retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = allocation });
@@ -1035,13 +924,11 @@ fn void? reset_upload_ring(Renderer* renderer, Frame* slot) @private {
 fn void abort_frame(Renderer* renderer) {
     renderer.frame_open = false;
     renderer.overlay_open = false;
-    renderer.compute_open = false;
+    cancel_gpu_profile(renderer);
 
     (void)gpu::discard_commands(&renderer.commands);
 
     if (!renderer.frame_submitted) {
-        renderer.frames[renderer.recording_slot].timed = {};
-        renderer.frames[renderer.recording_slot].shadow_timing_count = 0;
         renderer.frames[renderer.recording_slot].cluster_readback.pending = false;
         renderer.shadow_atlas.state = renderer.frame_shadow_state;
         foreach (index, &target : renderer.targets.items) target.target.state = renderer.frame_target_states[index];

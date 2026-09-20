@@ -289,6 +289,7 @@ fn void? record_pending_copies(Renderer* renderer, gpu::CommandList* commands) @
 fn void? open_closed_frame_slot(Renderer* renderer) @private {
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     if (slot.done.is_valid()) gpu::wait_completion(slot.done)!;
+    collect_gpu_profile(renderer, (uint)(renderer.frame_index % FRAMES_IN_FLIGHT))!;
     drain_retired(&renderer.device, &slot.environment_temporaries);
     drain_retired(&renderer.device, &slot.retire);
     return reset_upload_ring(renderer, slot);

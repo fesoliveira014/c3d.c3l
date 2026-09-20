@@ -242,7 +242,6 @@ fn ShadowGpu[]? record_shadows(
     CameraMatrices* matrices,
     LightExtraction* extraction,
 ) @private {
-    reset_shadow_timings(renderer)!;
     renderer.shadow_frustum_count = 0;
     uint covered;
     foreach (request : extraction.shadows) {
@@ -333,13 +332,7 @@ fn ShadowGpu[]? record_shadows(
     ShadowDraw[] layer_draws = alloc::new_array(tmem, ShadowDraw, draws.len);
     record_pending_copies(renderer, &renderer.commands)!;
     transition_shadow_atlas(&renderer.shadow_atlas, &renderer.commands, DEPTH_ATTACHMENT_STATE)!;
-    write_pass_timestamp(
-        renderer: renderer,
-        frame_index: renderer.frame_index,
-        pass: Pass.SHADOW_ATLAS,
-        half: TIMESTAMP_BEGIN,
-    )!;
-    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    begin_profile_pass(renderer, Pass.SHADOW_ATLAS)!;
     foreach (request : allocation.requests) {
         Light* light = scene.get(scene.node(request.light), Light);
         for (uint index = 0; index < request.layer_count; index++) {
@@ -350,7 +343,12 @@ fn ShadowGpu[]? record_shadows(
                     layer_draws[count++] = draw;
                 }
             }
-            write_shadow_timestamp(renderer, layer, TIMESTAMP_BEGIN)!;
+            ProfileScopeToken layer_scope = begin_profile_shadow(
+                renderer: renderer,
+                light: request.light,
+                kind: light.kind,
+                layer_index: index,
+            )!;
             record_shadow_layer(
                 renderer: renderer,
                 matrices: &shadow_matrices[layer],
@@ -358,24 +356,10 @@ fn ShadowGpu[]? record_shadows(
                 layer: layer,
                 bias: light.shadow.bias,
             )!;
-            write_shadow_timestamp(renderer, layer, TIMESTAMP_END)!;
-            if (renderer.timestamps_enabled) {
-                slot.shadow_timings[layer] = {
-                    .light = request.light,
-                    .kind = light.kind,
-                    .layer_index = index,
-                };
-            }
+            end_profile_scope(renderer, layer_scope)!;
         }
     }
-    write_pass_timestamp(
-        renderer: renderer,
-        frame_index: renderer.frame_index,
-        pass: Pass.SHADOW_ATLAS,
-        half: TIMESTAMP_END,
-    )!;
-    slot.timed[Pass.SHADOW_ATLAS.ordinal] = true;
-    if (renderer.timestamps_enabled) slot.shadow_timing_count = allocation.layer_count;
+    end_profile_pass(renderer, Pass.SHADOW_ATLAS)!;
     transition_shadow_atlas(
         atlas: &renderer.shadow_atlas,
         commands: &renderer.commands,

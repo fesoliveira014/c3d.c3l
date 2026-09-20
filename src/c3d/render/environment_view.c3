@@ -106,14 +106,8 @@ fn gpu::PipelineHandle? sky_pipeline(Renderer* renderer) @private {
 fn void? record_sky(Renderer* renderer, ViewRecord* record, gpu::GpuAddress root) @private {
     record.hdr_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
     record.depth.transition(&renderer.commands, DEPTH_ATTACHMENT_STATE)!;
-    reset_sky_timing(renderer)!;
 
-    write_pass_timestamp(
-        renderer:    renderer,
-        frame_index: renderer.frame_index,
-        pass:        Pass.SKY,
-        half:        TIMESTAMP_BEGIN,
-    )!;
+    begin_profile_pass(renderer, Pass.SKY)!;
 
     gpu::ColorTargetDesc[1] colors = {{
         .view     = record.hdr_color.attachment,
@@ -156,26 +150,6 @@ fn void? record_sky(Renderer* renderer, ViewRecord* record, gpu::GpuAddress root
     )!;
     gpu::cmd_end_render_pass(&renderer.commands)!;
 
-    write_pass_timestamp(
-        renderer:    renderer,
-        frame_index: renderer.frame_index,
-        pass:        Pass.SKY,
-        half:        TIMESTAMP_END,
-    )!;
-    renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT].timed[Pass.SKY.ordinal] = true;
+    end_profile_pass(renderer, Pass.SKY)!;
     renderer.stats.draws++;
-}
-
-fn void? reset_sky_timing(Renderer* renderer) @private {
-    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
-    if (!slot.timed[Pass.SKY.ordinal]) return;
-    if (renderer.timestamps_enabled) {
-        gpu::cmd_reset_timestamps(
-            commands: &renderer.commands,
-            pool:     renderer.timestamps,
-            first:    pass_timestamp_slot(renderer.frame_index, Pass.SKY.ordinal),
-            count:    TIMESTAMPS_PER_PASS,
-        )!;
-    }
-    slot.timed[Pass.SKY.ordinal] = false;
 }

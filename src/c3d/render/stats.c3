@@ -24,7 +24,7 @@ enum Pass : int {
 }
 
 <*
- Passes the renderer reserves timing slots for.
+ Number of pass categories in timing summaries.
 *>
 const usz PASS_COUNT = Pass::len;
 
@@ -33,9 +33,16 @@ const usz PASS_COUNT = Pass::len;
 *>
 const uint TIMESTAMPS_PER_PASS = 2;
 
+<* Availability of the latest completed GPU summary. *>
+enum GpuTimingState {
+    UNAVAILABLE,
+    PENDING,
+    READY,
+    TRUNCATED,
+}
+
 <*
- Counters and timings for the frame that most recently completed.
- GPU pass timings stay zero unless the renderer was created with gpu_timings.
+ Current CPU counters and asynchronously completed, frame-tagged GPU timings.
 *>
 struct Stats {
     uint  draws;
@@ -60,14 +67,31 @@ struct Stats {
     float frame_ms;
     float cpu_record_ms;
     float[PASS_COUNT] gpu_pass_ms;
+    ulong gpu_frame_index @if($feat(C3D_PROFILE_GPU));
+    GpuTimingState gpu_timing_state @if($feat(C3D_PROFILE_GPU));
+    bool[PASS_COUNT] gpu_pass_valid @if($feat(C3D_PROFILE_GPU));
+    uint gpu_scopes_dropped @if($feat(C3D_PROFILE_GPU));
 }
 
 <*
- First timestamp slot a frame slot reserves for one pass.
+ Fixed-layout timestamp offset kept for compatibility; capture uses independent query pairs.
  @require pass_ordinal < PASS_COUNT
  @pure
 *>
 fn uint pass_timestamp_slot(ulong frame_index, usz pass_ordinal) {
     return (uint)(frame_index % FRAMES_IN_FLIGHT) * (uint)PASS_COUNT * TIMESTAMPS_PER_PASS
       + (uint)pass_ordinal * TIMESTAMPS_PER_PASS;
+}
+
+fn void reset_frame_stats(Stats* stats) @private {
+    Stats previous = *stats;
+    *stats = {};
+    stats.gpu_pass_ms = previous.gpu_pass_ms;
+    stats.shadow_timings = previous.shadow_timings;
+    $if $feat(C3D_PROFILE_GPU):
+        stats.gpu_frame_index = previous.gpu_frame_index;
+        stats.gpu_timing_state = previous.gpu_timing_state;
+        stats.gpu_pass_valid = previous.gpu_pass_valid;
+        stats.gpu_scopes_dropped = previous.gpu_scopes_dropped;
+    $endif
 }
