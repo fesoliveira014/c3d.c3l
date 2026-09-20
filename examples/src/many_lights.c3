@@ -11,10 +11,13 @@ import c3d::maths;
 import c3d::platform;
 import c3d::render;
 import c3d::scene;
+import bench_loop;
 import gpu;
 import imgui;
 import std::io;
 import std::math;
+import std::time;
+import std::time::clock;
 
 const uint MAX_POINT_LIGHTS @local = 4096; // 320 KiB of packed lights per view; caps this workload
 const uint SCENE_NODE_CAPACITY @local = MAX_POINT_LIGHTS + 128; // fixed hall meshes and camera fit beside every light
@@ -55,6 +58,35 @@ struct Orbit @local {
 struct HallView @local {
     Node*[MAX_POINT_LIGHTS] lights;
     Node* camera_node;
+}
+
+struct BenchmarkOptions @local {
+    bool enabled;
+    bool gpu_timings;
+    bool validation;
+    bool capture;
+    bool window;
+    bool panel;
+    bool print_features;
+    LightSelection selection;
+    uint lights;
+    uint frames;
+    uint warmup;
+    uint capacity;
+    float range;
+    uint width;
+    uint height;
+}
+
+struct BenchmarkRun @private {
+    Renderer* renderer;
+    Scene* scene;
+    Node* camera_node;
+    ViewId view;
+    platform::Window* window;
+    BenchmarkRecorder* recorder @if($feat(C3D_PROFILE_CPU) || $feat(C3D_PROFILE_GPU));
+    GuiRenderer* gui_renderer @if($feat(C3D_PROFILE_GUI));
+    gui::ProfilerPanel* panel @if($feat(C3D_PROFILE_GUI));
 }
 
 fn HallView? populate_hall(AssetStore* assets, Scene* scene) @local {
@@ -298,25 +330,289 @@ fn void? run_example(bool gpu_timings) @local {
     return gui::destroy_gui_renderer(&gui_renderer);
 }
 
-<* Run the interactive many-light comparison. *>
-fn int main(String[] args) {
-    bool gpu_timings;
-    foreach (argument : args[1..]) {
-        if (argument == "--gpu-timings") {
-            $if $feat(C3D_PROFILE_GPU):
-                gpu_timings = true;
-            $else
-                io::eprintfn("--gpu-timings needs GPU profiling: c3c build <target> --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL");
-                return 1;
-            $endif
-        } else {
-            io::eprintfn("Unknown argument: %s", argument);
-            return 1;
+fn BenchmarkOptions? parse_options(String[] args) @local {
+    BenchmarkOptions options = {
+        .selection = LightSelection.CLUSTERED,
+        .lights = 256, .frames = 300, .warmup = 60, .capacity = 64,
+        .range = 6, .width = 1440, .height = 900,
+    };
+    for (usz index = 1; index < args.len; index++) {
+        String argument = args[index];
+        switch (argument) {
+            case "--benchmark": options.enabled = true;
+            case "--gpu-timings":
+                $if $feat(C3D_PROFILE_GPU):
+                    options.gpu_timings = true;
+                $else
+                    io::eprintfn("--gpu-timings needs GPU profiling: c3c build many_lights --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL");
+                    return c3d::UNSUPPORTED~;
+                $endif
+            case "--validation": options.validation = true;
+            case "--window": options.window = true;
+            case "--print-features": options.print_features = true;
+            case "--capture":
+                $if $feat(C3D_PROFILE_CPU) || $feat(C3D_PROFILE_GPU):
+                    options.capture = true;
+                $else
+                    io::eprintfn("--capture needs CPU or GPU profiling: c3c build many_lights --path examples --lib c3d_profile -D C3D_PROFILE_CPU -D C3D_PROFILE_INTERNAL");
+                    return c3d::UNSUPPORTED~;
+                $endif
+            case "--panel":
+                $if $feat(C3D_PROFILE_GUI):
+                    options.panel = true;
+                $else
+                    io::eprintfn("--panel needs the profiler GUI: c3c build many_lights --path examples --lib c3d_profile_gui --lib c3d_profile -D C3D_PROFILE_GUI -D C3D_PROFILE_CPU -D C3D_PROFILE_INTERNAL");
+                    return c3d::UNSUPPORTED~;
+                $endif
+            default:
+                if (++index == args.len) return c3d::INVALID_ARGUMENT~;
+                String value = args[index];
+                switch (argument) {
+                    case "--mode":
+                        if (value == "flat") {
+                            options.selection = LightSelection.FLAT;
+                        } else if (value == "clustered") {
+                            options.selection = LightSelection.CLUSTERED;
+                        } else {
+                            return c3d::INVALID_ARGUMENT~;
+                        }
+                    case "--lights": options.lights = value.to_uint()!;
+                    case "--frames": options.frames = value.to_uint()!;
+                    case "--warmup": options.warmup = value.to_uint()!;
+                    case "--capacity": options.capacity = value.to_uint()!;
+                    case "--range": options.range = value.to_float()!;
+                    case "--width": options.width = value.to_uint()!;
+                    case "--height": options.height = value.to_uint()!;
+                    default: return c3d::INVALID_ARGUMENT~;
+                }
         }
     }
-    if (catch excuse = run_example(gpu_timings)) {
+    if (!options.lights || options.lights > MAX_POINT_LIGHTS
+        || !options.frames || options.frames > 100000 || options.warmup > 100000
+        || !options.capacity || options.capacity > 256
+        || !math::is_finite(options.range) || options.range < RANGE_MIN || options.range > RANGE_MAX
+        || !options.width || options.width > 8192 || !options.height || options.height > 8192
+        || (options.panel && (!options.window || !options.capture))) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+    return options;
+}
+
+fn void? run_benchmark(BenchmarkOptions options) @local {
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+    Scene scene = scene::create_scene(mem, { .max_nodes = SCENE_NODE_CAPACITY });
+    defer scene::destroy_scene(&scene);
+    HallView hall = populate_hall(&assets, &scene)!;
+    apply_workload(&scene, &hall, { .light_count = options.lights, .light_range = options.range });
+    reset_camera(&scene, hall.camera_node);
+    scene.update_world();
+    FrameSample[] samples = alloc::new_array(mem, FrameSample, options.frames);
+    defer alloc::free(mem, samples.ptr);
+    BenchmarkRun run = { .scene = &scene, .camera_node = hall.camera_node };
+    RendererDesc renderer_desc = {
+        .validation = options.validation,
+        .gpu_timings = options.gpu_timings,
+        .present_mode = gpu::PresentMode.IMMEDIATE,
+        .application_name = "c3d_many_lights_benchmark",
+        .max_lights = MAX_POINT_LIGHTS,
+    };
+    $if $feat(C3D_PROFILE_CPU) || $feat(C3D_PROFILE_GPU):
+        BenchmarkRecorder recorder;
+        if (options.capture) {
+            recorder = create_benchmark_recorder()!;
+            run.recorder = &recorder;
+            $if $feat(C3D_PROFILE_GPU):
+                renderer_desc.profiler = &recorder;
+            $endif
+        }
+        defer if (options.capture) destroy_benchmark_recorder(&recorder);
+    $endif
+    usz collected;
+    if (options.window) {
+        platform::Window window = platform::create_window(
+            platform::default_window_desc("c3d many lights benchmark", options.width, options.height))!;
+        defer platform::destroy_window(&window);
+        Renderer renderer = platform::create_window_renderer(mem, &window, &assets, renderer_desc)!;
+        defer render::destroy_renderer(&renderer);
+        render::configure_view(&renderer, renderer.default_view, benchmark_view_desc(render::default_view_desc(), options))!;
+        run.renderer = &renderer;
+        run.window = &window;
+        run.view = renderer.default_view;
+        $if $feat(C3D_PROFILE_GUI):
+            GuiRenderer gui_renderer;
+            gui::ProfilerPanel panel;
+            if (options.panel) {
+                gui_renderer = gui::create_gui_renderer(mem, &renderer, &window)!;
+                run.gui_renderer = &gui_renderer;
+            }
+            defer if (options.panel) (void)gui::destroy_gui_renderer(&gui_renderer);
+            if (options.panel) {
+                panel = gui::create_profiler_panel(mem, run.recorder)!;
+                run.panel = &panel;
+            }
+            defer if (options.panel) gui::destroy_profiler_panel(&panel);
+        $endif
+        collected = run_frames(&run, options, samples)!;
+        bench_loop::write_samples(samples[:collected], renderer.timestamps_enabled);
+    } else {
+        Renderer renderer = render::create_renderer(mem, &assets, renderer_desc)!;
+        defer render::destroy_renderer(&renderer);
+        RenderTargetId target = render::create_render_target(&renderer,
+            render::render_target_desc(options.width, options.height, PixelFormat.RGBA8_UNORM))!;
+        ViewDesc view_desc = benchmark_view_desc(render::texture_view_desc(target, OutputMode.DISPLAY_LDR), options);
+        run.renderer = &renderer;
+        run.view = render::create_view(&renderer, view_desc)!;
+        collected = run_frames(&run, options, samples)!;
+        bench_loop::write_samples(samples[:collected], renderer.timestamps_enabled);
+    }
+}
+
+fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkOptions options) @local {
+    base.lights = options.selection;
+    base.clusters.lights_per_cluster = options.capacity;
+    return base;
+}
+
+fn usz? run_frames(BenchmarkRun* run, BenchmarkOptions options, FrameSample[] samples) @local {
+    Renderer* renderer = run.renderer;
+    renderer.prepare_scene(run.scene)!;
+    io::eprintfn("mode=%s lights=%d range=%.1f capacity=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s",
+        options.selection == LightSelection.FLAT ? "flat" : "clustered", options.lights, options.range,
+        options.capacity, options.width, options.height, options.warmup, options.frames,
+        options.validation, options.gpu_timings, renderer.timestamps_enabled, options.capture,
+        options.window ? "window" : "none", options.panel);
+
+    usz collected;
+    for (uint frame = 0; frame < options.warmup + options.frames + render::FRAMES_IN_FLIGHT; frame++) {
+        if (run.window && !run.window.poll()) break;
+        FrameSample sample;
+        $if $feat(C3D_PROFILE_CPU) || $feat(C3D_PROFILE_GPU):
+            if (run.recorder) {
+                record_captured_frame(run, frame, &sample)!;
+            } else {
+                record_frame(run, frame, &sample)!;
+            }
+        $else
+            record_frame(run, frame, &sample)!;
+        $endif
+        if (frame >= options.warmup + render::FRAMES_IN_FLIGHT) {
+            uint completed = frame - options.warmup - render::FRAMES_IN_FLIGHT;
+            samples[completed].gpu_ms = renderer.stats.gpu_pass_ms;
+            samples[completed].overflows = renderer.stats.cluster_overflows;
+        }
+        if (frame >= options.warmup && frame < options.warmup + options.frames) {
+            samples[frame - options.warmup] = sample;
+            collected = (usz)(frame - options.warmup + 1);
+        }
+    }
+    foreach (&slot : renderer.frames) {
+        if (slot.done.is_valid()) gpu::wait_completion(slot.done)!;
+    }
+    return collected;
+}
+
+fn void? record_frame(BenchmarkRun* run, uint frame, FrameSample* sample) @private {
+    Renderer* renderer = run.renderer;
+    time::Clock started = clock::now();
+    time::Clock phase = started;
+    run.scene.update_world();
+    sample.update_ms = bench_loop::milliseconds(phase);
+    phase = clock::now();
+    renderer.begin_frame({ .time = (double)frame / 60, .delta = 1.0f / 60 })!;
+    defer catch render::abort_frame(renderer);
+    sample.begin_ms = bench_loop::milliseconds(phase);
+    phase = clock::now();
+    renderer.render_view(run.scene, run.camera_node, run.view)!;
+    sample.render_ms = bench_loop::milliseconds(phase);
+    phase = clock::now();
+    renderer.finish_view(run.view)!;
+    sample.finish_ms = bench_loop::milliseconds(phase);
+    $if $feat(C3D_PROFILE_GUI):
+        if (run.panel && renderer.has_output) {
+            phase = clock::now();
+            run.gui_renderer.new_frame();
+            gui::profiler_panel(run.panel);
+            run.gui_renderer.finish_frame();
+            OverlayContext overlay = renderer.begin_overlay()!;
+            run.gui_renderer.record(&overlay)!;
+            renderer.end_overlay(&overlay)!;
+            sample.gui_ms = bench_loop::milliseconds(phase);
+        }
+    $endif
+    phase = clock::now();
+    renderer.end_frame()!;
+    sample.end_ms = bench_loop::milliseconds(phase);
+    sample.wall_ms = bench_loop::milliseconds(started);
+    sample.cpu_record_ms = renderer.stats.cpu_record_ms;
+    sample.draws = renderer.stats.draws;
+    sample.lights = renderer.stats.lights;
+    sample.dropped = renderer.stats.lights_dropped;
+}
+
+<* Run the many-light comparison or a fixed headless benchmark. *>
+fn int main(String[] args) {
+    BenchmarkOptions? parsed = parse_options(args);
+    if (catch excuse = parsed) {
+        if (excuse != c3d::UNSUPPORTED) {
+            io::eprintfn("Invalid options: %s", excuse);
+            io::eprintn("Use --benchmark --mode flat|clustered --lights N --frames N --warmup N --capacity N --range N --width N --height N [--gpu-timings] [--validation] [--capture] [--window] [--panel] [--print-features].");
+        }
+        return 1;
+    }
+    BenchmarkOptions options = parsed;
+    if (options.print_features) {
+        io::printfn("cpu=%d gpu=%d internal=%d gui=%d",
+            $feat(C3D_PROFILE_CPU) ? 1 : 0, $feat(C3D_PROFILE_GPU) ? 1 : 0,
+            $feat(C3D_PROFILE_INTERNAL) ? 1 : 0, $feat(C3D_PROFILE_GUI) ? 1 : 0);
+        return 0;
+    }
+    fault excuse = options.enabled ? @catch(run_benchmark(options)) : @catch(run_example(options.gpu_timings));
+    if (excuse) {
         io::eprintfn("Many-light example failed: %s", excuse);
         return 1;
     }
     return 0;
+}
+
+module many_lights_example @feat(C3D_PROFILE_CPU | C3D_PROFILE_GPU);
+
+import c3d;
+import c3d::profile;
+import c3d::render;
+import bench_loop;
+
+alias BenchmarkRecorder @private = profile::Recorder;
+
+const uint CAPTURE_FRAME_CAPACITY @local = render::FRAMES_IN_FLIGHT + 2; // history slots beyond the frames in flight so no capture is dropped
+const uint CAPTURE_CPU_SCOPES @local = 64; // one application scope plus the renderer's library scopes for one view
+const uint CAPTURE_MAX_DEPTH @local = 8;
+const uint CAPTURE_GPU_SCOPES @local = 256; // frame, view, passes, clusters and shadow layers of one view
+const uint CAPTURE_LABEL_BYTES @local = 8192; // 8 KiB of copied labels per retained frame
+
+fn BenchmarkRecorder? create_benchmark_recorder() @private {
+    profile::RecorderDesc desc = {
+        .frame_capacity = CAPTURE_FRAME_CAPACITY,
+        .label_bytes_per_frame = CAPTURE_LABEL_BYTES,
+    };
+    $if $feat(C3D_PROFILE_CPU):
+        desc.cpu_scopes_per_frame = CAPTURE_CPU_SCOPES;
+        desc.max_depth = CAPTURE_MAX_DEPTH;
+    $endif
+    $if $feat(C3D_PROFILE_GPU):
+        desc.gpu_scopes_per_frame = CAPTURE_GPU_SCOPES;
+    $endif
+    return profile::create_recorder(mem, desc);
+}
+
+fn void destroy_benchmark_recorder(BenchmarkRecorder* recorder) @private {
+    profile::destroy_recorder(recorder);
+}
+
+fn void? record_captured_frame(BenchmarkRun* run, uint frame, FrameSample* sample) @private {
+    profile::@capture(run.recorder, frame) {
+        profile::@scope("application.frame") {
+            record_frame(run, frame, sample)!;
+        };
+    };
 }

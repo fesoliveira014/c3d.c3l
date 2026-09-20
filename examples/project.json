@@ -29,6 +29,10 @@
   "wincrt": "static",
   "output": "build",
   "targets": {
+    "cpu_bench": {
+      "type": "executable",
+      "sources": [ "src/cpu_bench.c3" ]
+    },
     "hello": {
       "type": "executable",
       "sources": [
@@ -260,7 +264,8 @@
     "many_lights": {
       "type": "executable",
       "sources": [
-        "src/many_lights.c3"
+        "src/many_lights.c3",
+        "src/bench/loop.c3"
       ]
     },
     "compute_textures": {
