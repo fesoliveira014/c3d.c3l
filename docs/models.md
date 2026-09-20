@@ -287,5 +287,9 @@ side by side under a studio environment and one directional light, and spins
 the right instance. It prints the template's node, mesh, camera, light,
 skeleton, skin and clip counts on load; the bundled `RiggedSimple.glb` and
 `AnimatedMorphCube.glb` exercise the skin and morph paths. Drag to orbit, scroll to zoom, release Escape to quit.
+The Camera panel, or `F`, switches to a free camera that starts from the orbit pose:
+right-drag looks, `W A S D` move along the view, `Q`/`E` move down and up, Shift is
+four times faster, and the wheel scales the speed. `--benchmark` runs the headless
+scene benchmark instead; see [Benchmarking](benchmarking.md#scene-benchmark).
 Imported cameras and lights are instantiated, but the example renders through
 its own orbit camera.
