@@ -264,7 +264,8 @@
     "many_lights": {
       "type": "executable",
       "sources": [
-        "src/many_lights.c3"
+        "src/many_lights.c3",
+        "src/bench/loop.c3"
       ]
     },
     "compute_textures": {

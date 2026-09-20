@@ -263,7 +263,9 @@ renderer identities without inventing CPU durations. The combined mode shows
 both domains on independent axes. Closing the panel only removes presentation
 work; capture and frame submission continue. Correctness tests do not establish
 instrumentation overhead. An overhead claim requires a fixed workload, repeated
-measurements and comparison with capture and presentation independently disabled.
+measurements and comparison with capture and presentation independently disabled;
+[Benchmarking](benchmarking.md#profiling-configurations-and-overhead) describes that
+protocol on the `many_lights` workload.
 
 ## Verify the standalone package
 

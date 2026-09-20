@@ -88,6 +88,21 @@ correctness smoke with `--validation`, then collect ordinary timing without it.
 The interactive example continues to enable validation. Add `--gpu-timings` for a
 separate diagnostic run; timestamp instrumentation can change performance.
 
+Further options select profiler work inside the same loop. Each one that needs a
+compiled feature is rejected at parse time with the build recipe when the binary
+lacks it, so an excluded mode never silently reports zero timings.
+
+| Option | Needs | Effect |
+| --- | --- | --- |
+| `--capture` | `C3D_PROFILE_CPU` or `C3D_PROFILE_GPU` | Opens a `profile::@capture` with one `application.frame` scope around every frame, so library scopes and GPU capture run. Nothing is exported. |
+| `--window` | nothing | Presents to a window with immediate present mode instead of an offscreen target, using the renderer's default view. Events are polled and ignored; closing the window ends the run with the rows collected so far. |
+| `--panel` | `--window`, `--capture`, `C3D_PROFILE_GUI` | Draws the profiler panel every frame through the overlay and reports its cost as `gui_ms`. |
+| `--print-features` | nothing | Prints `cpu=<0|1> gpu=<0|1> internal=<0|1> gui=<0|1>` and exits. |
+
+The windowed run is a different workload from the headless one: the default view
+carries the interactive example's settings and window-system pacing applies. Compare
+windowed rows only with other windowed rows.
+
 | CSV field | Interval or result |
 | --- | --- |
 | `wall_ms` | Scene update through submission, including frame-slot waiting |
@@ -95,7 +110,8 @@ separate diagnostic run; timestamp instrumentation can change performance.
 | `begin_ms` | `begin_frame`, including prior-slot completion, readbacks and cache sweeps |
 | `render_ms` | `render_view`, including CPU extraction and command recording |
 | `finish_ms` | `finish_view` |
-| `end_ms` | `end_frame` submission |
+| `end_ms` | `end_frame` submission, including presentation in windowed runs |
+| `gui_ms` | Profiler panel draw and overlay recording; zero without `--panel` |
 | `cpu_record_ms` | Existing renderer statistic; excludes the beginning wait/readback/sweep work |
 | `gpu_*_ms` | Completed per-pass timestamps; `-1` when unavailable, zero for an omitted pass |
 | `draws`, `lights`, `dropped` | Current-frame renderer counters |
@@ -121,6 +137,50 @@ On a machine without a physical GPU, software Vulkan can verify the path, but it
 cannot establish hardware GPU speedups or a useful light-count crossover. Record
 any driver-specific workarounds. Headless results also omit window-system pacing;
 measure the interactive example separately when that is the question.
+
+## Profiling configurations and overhead
+
+`benchmark.py render --features NAME` selects the profiling features compiled into
+the workload binary. With `--build` the runner builds `many_lights` with the matching
+`--define` and `--lib` flags through `scripts/build.py`, copies the binary to
+`examples/build/bench/many_lights-NAME` so configurations coexist, and checks the
+binary's `--print-features` line against the request before any job runs. Without
+`--build`, a non-off configuration needs `--binary`. `environment.json` records
+`features`, `defines`, `libraries` and `features_reported`.
+
+| Configuration | Defines | Libraries |
+| --- | --- | --- |
+| `off` | none | none |
+| `cpu` | `C3D_PROFILE_CPU` | `c3d_profile` |
+| `internal` | `C3D_PROFILE_CPU C3D_PROFILE_INTERNAL` | `c3d_profile` |
+| `gpu` | `C3D_PROFILE_GPU C3D_PROFILE_INTERNAL` | `c3d_profile` |
+| `gui` | `C3D_PROFILE_GUI C3D_PROFILE_CPU C3D_PROFILE_INTERNAL` | `c3d_profile_gui c3d_profile` |
+| `full` | `C3D_PROFILE_GUI C3D_PROFILE_CPU C3D_PROFILE_GPU C3D_PROFILE_INTERNAL` | `c3d_profile_gui c3d_profile` |
+
+`--capture`, `--window` and `--panel` pass through to every job; `--panel` implies
+`--window`. `--dry-run` prints the resolved build command and every job command as
+JSON lines and runs nothing.
+
+Overhead protocol, on an idle machine with the same `--lights`, `--mode`, extent,
+`--frames` and `--warmup` throughout, three repeats per configuration:
+
+1. Headless capture cost: `off`; `cpu --capture`; `internal --capture`;
+   `gpu --capture --gpu-timings`; `full --capture --gpu-timings`. Compare medians
+   of `wall_ms` and the phase columns against `off`. Run `gpu` and `full` once more
+   without `--gpu-timings` to separate query cost from capture cost.
+2. Presentation cost: `gui --capture --window` and `gui --capture --panel`. Compare
+   `wall_ms` and read `gui_ms` directly. Do not compare these with headless rows.
+3. Correctness: `draws`, `lights`, `dropped` and `overflows` must match across every
+   configuration of the same workload; a `--validation` run of the `full`
+   configuration must finish clean.
+
+Report each configuration's `environment.json` beside its `summary.csv`.
+
+Deviations from the milestone sketch: there is no dedicated shader-workload target
+and no output checksum. The flat and clustered modes already exercise distinct raster
+and compute shader paths with per-pass timestamps, and no CPU readback API exists
+for a checksum, so the counters above are the correctness proxy. A scene-level
+benchmark with a fetched glTF asset is planned separately.
 
 ## Measured allocation experiment
 

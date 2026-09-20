@@ -32,7 +32,9 @@ c3c build many_lights --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3
 These are separate platform runs, not interchangeable performance evidence. For a fixed
 headless workload, add `--benchmark`; see [Benchmarking](benchmarking.md) for options,
 automatic sweeps, CSV fields and measurement limits. Benchmark mode disables validation
-by default and accepts `--validation` for a separate correctness run.
+by default and accepts `--validation` for a separate correctness run, `--capture` to run
+a profiler capture around every frame, `--window` for a presented run, `--panel` to draw
+the profiler panel, and `--print-features` to report the compiled profiling features.
 
 ## Controls and diagnostics
 

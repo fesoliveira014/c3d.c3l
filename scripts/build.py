@@ -10,6 +10,8 @@ Each step is a function; failures raise BuildError and stop the run.
   scripts/build.py --example cube   build and run one example
   scripts/build.py --init-deps      initialize submodules and build native dependencies
   scripts/build.py --clean          remove c3c build directories
+  scripts/build.py --target many_lights --define C3D_PROFILE_CPU --lib c3d_profile
+                                    build one target with extra c3c feature defines and libraries
 """
 
 from __future__ import annotations
@@ -58,6 +60,8 @@ class Options:
         self.example = args.example
         self.target = args.target
         self.opt = args.opt
+        self.defines = args.define
+        self.libs = args.lib
         self.verbose = args.verbose
         self.init_deps = args.init_deps
         self.clean = args.clean
@@ -211,10 +215,16 @@ def step_build(options: Options) -> None:
     targets = [options.target] if options.target else project_targets(EXAMPLES)
     if not targets:
         raise BuildError(f"no targets found in {EXAMPLES / 'project.json'}")
+    if (options.defines or options.libs) and not options.target:
+        raise BuildError("--define and --lib need --target")
     for target in targets:
         command = [options.c3c, "build", target, "--path", str(EXAMPLES)]
         if options.opt:
             command.append(f"-{options.opt}")
+        for define in options.defines:
+            command += ["-D", define]
+        for lib in options.libs:
+            command += ["--lib", lib]
         run(command, ROOT, options.verbose)
     copy_windows_runtimes(EXAMPLES / "build")
     if not options.target or options.target == "profile_gpu":
@@ -286,6 +296,8 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--example", metavar="NAME", help="run one example target after building it")
     parser.add_argument("--target", metavar="NAME", help="build only this example target")
     parser.add_argument("--opt", metavar="LEVEL", help="c3c optimization flag without the dash, for example O3")
+    parser.add_argument("--define", metavar="NAME", action="append", default=[], help="c3c feature define for the --target build; repeatable")
+    parser.add_argument("--lib", metavar="NAME", action="append", default=[], help="extra c3c library for the --target build; repeatable")
     parser.add_argument("--init-deps", action="store_true", help="initialize submodules and run native dependency builds")
     parser.add_argument("--clean", action="store_true", help="remove c3c build directories and exit")
     parser.add_argument("--skip-abi", action="store_true")
