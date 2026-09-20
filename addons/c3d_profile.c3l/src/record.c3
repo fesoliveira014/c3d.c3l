@@ -1,4 +1,5 @@
 module c3d::profile @feat(C3D_PROFILE_CPU | C3D_PROFILE_GPU);
+import std::sort;
 
 <*
  Select recording for the next capture.
@@ -35,6 +36,23 @@ fn FrameCaptureView? Recorder.frame(&self, ulong frame_id) {
         return frame;
     }
     return NOT_FOUND~;
+}
+
+<*
+ Copy retained closed frame ids in ascending order.
+ @param [&in] self : "Recorder on its owning thread."
+ @param [out] frame_ids : "Storage for every retained frame id."
+ @return "Number of frame ids written."
+ @require frame_ids.len >= self.desc.frame_capacity
+*>
+fn usz Recorder.frame_ids(&self, ulong[] frame_ids) {
+    usz frame_count;
+    foreach (&slot : self.slots) {
+        if (!slot.occupied) continue;
+        frame_ids[frame_count++] = slot.frame_id;
+    }
+    sort::insertionsort(frame_ids[:frame_count]);
+    return frame_count;
 }
 
 fn CaptureSlot* current_slot(Recorder* recorder) @private => &recorder.slots[recorder.active_slot];

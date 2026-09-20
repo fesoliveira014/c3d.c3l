@@ -1,0 +1,3 @@
+module c3d::gui @feat(C3D_PROFILE_GUI & (C3D_PROFILE_CPU | C3D_PROFILE_GPU));
+
+faultdef PROFILE_STORAGE_OVERFLOW;

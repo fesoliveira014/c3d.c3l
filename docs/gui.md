@@ -16,6 +16,33 @@ that pose for editing. Select a node in the scene tree to edit its local positio
 nonzero scale, visibility and layer mask. The material panel edits the selected mesh's RGB
 color; it advances the asset revision only after a change.
 
+## Profiler panel
+
+The optional `c3d_profile_gui` add-on extends `c3d::gui` with an owned
+`ProfilerPanel`. Select `C3D_PROFILE_GUI` with at least one of
+`C3D_PROFILE_CPU` or `C3D_PROFILE_GPU`, and select both `c3d_profile_gui` and
+`c3d_profile`. Run the worked scene in any compiled mode:
+
+```bash
+python3 scripts/build.py --example profile_gui_cpu
+python3 scripts/build.py --example profile_gui_internal
+python3 scripts/build.py --example profile_gui_gpu
+python3 scripts/build.py --example profile_gui
+```
+
+The example keeps capture and rendering active while the Profiler window is
+hidden. Its panel supplies Pause and Resume, retained-frame selection and
+explicit reselection of a frozen source frame. It uses the same GUI frame and
+renderer overlay order as `cube_gui`; `gui::profiler_panel(&panel)` runs after
+`new_frame()` and before `finish_frame()`.
+
+Create the recorder before its renderer and keep both at stable addresses.
+Create the panel after the GUI renderer. Destroy the panel before the GUI,
+destroy the GUI before the renderer, and destroy the recorder only after the
+renderer has drained and detached. One thread owns the recorder, its producers
+and panel. The complete capture states, measured-span axes and frozen-snapshot
+behavior are described in [Profiling](profiling.md#inspect-captures-with-imgui).
+
 ## Creation and ownership
 
 Create the window, asset store and renderer first, then call

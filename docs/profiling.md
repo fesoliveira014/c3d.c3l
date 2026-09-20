@@ -4,6 +4,8 @@
 It provides CPU and GPU capture in one bundle. CPU-only use of `c3d::profile`
 requires just C3 0.8.3 and its standard library: no core, device, SDL or ImGui.
 The feature-gated GPU module uses gpu.c3l and integrates with renderer timing.
+`c3d_profile_gui`, in `addons/c3d_profile_gui.c3l`, is a separate optional
+ImGui presentation package for those captures.
 
 ## Select the package and features
 
@@ -23,6 +25,26 @@ application's own library directory and search that directory. The bundle's
 manifest selects its `src/**` files and declares no other packages or native
 libraries. Its tests and example are outside that source selection.
 
+To display the profiler panel, also install `addons/c3d_profile_gui.c3l` and
+select both add-ons. A CPU panel consumer selects the pinned ImGui package and
+its Vulkan binding even though the panel creates no device: the ImGui package's
+compiled backend imports `vk`. For example:
+
+```json
+{
+  "dependency-search-paths": ["path/to/c3d.c3l/lib", "path/to/c3d.c3l/lib/gpu.c3l/lib"],
+  "dependencies": ["c3d_profile_gui", "c3d_profile", "c3imgui", "vk"],
+  "features": ["C3D_PROFILE_GUI", "C3D_PROFILE_CPU"],
+  "wincrt": "static"
+}
+```
+
+Linux consumers link the C++ runtime used by the pinned ImGui archive; the
+add-on manifest supplies that link requirement. Windows consumers use
+the pinned packages' static CRT. A full windowed c3d application also ships
+the SDL3 runtime beside its executable. GPU panel consumers additionally select
+`gpu`, `vma` and `spvreflect` and enable `C3D_PROFILE_GPU`.
+
 A c3d application adds `c3d_profile` to its existing dependencies. Core's
 manifest does not require it. These are consumer-selected features:
 
@@ -38,8 +60,9 @@ manifest does not require it. These are consumer-selected features:
 Application source that imports `c3d::profile` keeps the package selected even
 when CPU capture is compiled out; the package supplies its no-op macros. Core
 itself builds without the package when GPU profiling and internal CPU profiling
-are off. `C3D_PROFILE_INTERNAL` requires CPU or GPU profiling. Per-draw graphics
-scopes and a full profiler panel are not provided.
+are off. `C3D_PROFILE_INTERNAL` requires CPU or GPU profiling.
+`C3D_PROFILE_GUI` also requires CPU or GPU profiling and adds no declarations
+when it is absent. Per-draw graphics scopes are not provided.
 
 ## Capture application work
 
@@ -138,9 +161,62 @@ The neutral `c3d::profile` module imports only the standard library. The same
 bundle contains `c3d::render::profile_gpu`, selected only for GPU profiling; it
 imports gpu.c3l and neutral capture values, with no core Renderer/Scene types.
 Core bridges supply copied identities and completion hooks. This keeps the
-package dependency direction one-way. A presentation adapter can consume
-captures and ImGui in the application's active GUI context; neither collector
-nor core needs to discover or invoke it.
+package dependency direction one-way. The separate `c3d_profile_gui` adapter
+extends `c3d::gui` and imports only neutral capture values, ImGui and the standard
+library. Neither collector nor core discovers or invokes it.
+
+## Inspect captures with ImGui
+
+Create one `gui::ProfilerPanel` for one stable recorder on their owning thread.
+The panel borrows the recorder and allocates one fixed block from the supplied
+allocator; its capacity comes from the recorder's budgets. Panel refresh and
+drawing perform no general-purpose c3d allocation and do not pin capture slots
+or own native resources. Call `gui::profiler_panel` only inside an active ImGui
+frame. Data selection helpers do not require a GUI frame.
+
+Create the recorder before any renderer attached to it. After creating the GUI
+renderer, create the panel. At shutdown, destroy the panel, finish and destroy
+the GUI, destroy the renderer so it drains and detaches its GPU source, and then
+destroy the recorder. The recorder, its producers and panel remain on one thread.
+
+In Live mode, the panel follows the greatest retained frame id whose compiled
+domains are settled. A newer pending frame remains visible in history without
+replacing the detail snapshot. Pause freezes the owned snapshot immediately.
+Selecting any retained row, including a pending capture with a completed prefix,
+also freezes it while history continues to advance. The frozen copy does not
+change when GPU publication completes or recorder slots are reused. `Reselect
+source frame` refreshes it from the same id; if that id was evicted, the panel
+keeps the frozen copy and reports the eviction. Resume follows the latest settled
+capture again.
+
+CPU and GPU axes fit the measured scope span from the earliest recorded begin to
+the latest recorded end. They are not application wall-frame totals. CPU and GPU
+clocks are independent, and each GPU source/renderer-frame group has its own
+axis. A measured zero remains zero; absent data is N/A. Nested inclusive values
+overlap and must not be summed as total time. CPU summaries retain call counts,
+self-time completeness and upper bounds after truncation.
+
+GPU details preserve exact source and renderer-frame ids plus captured view,
+pass, light, layer and shader revision identity. The panel does not infer context
+from duration containment. Export remains `profile::capture_json`; the panel
+does not perform file I/O.
+
+The four worked windowed modes are:
+
+```bash
+python3 scripts/build.py --example profile_gui_cpu
+python3 scripts/build.py --example profile_gui_internal
+python3 scripts/build.py --example profile_gui_gpu
+python3 scripts/build.py --example profile_gui
+```
+
+The CPU mode captures application scopes. The internal CPU mode also shows
+`scene.update_world`. The GPU mode records application GPU work and automatic
+renderer identities without inventing CPU durations. The combined mode shows
+both domains on independent axes. Closing the panel only removes presentation
+work; capture and frame submission continue. Correctness tests do not establish
+instrumentation overhead. An overhead claim requires a fixed workload, repeated
+measurements and comparison with capture and presentation independently disabled.
 
 ## Verify the standalone package
 
@@ -153,9 +229,11 @@ c3c test profile_internal --path addons/c3d_profile.c3l
 c3c run capture --path addons/c3d_profile.c3l
 ```
 
-The full `python3 scripts/build.py --test` also runs these tests and the scene
-integration targets. The default repository build builds the standalone
-example; a targeted renderer example build stays scoped to that target.
+The full `python3 scripts/build.py --test` also runs these tests, the profiler
+panel data targets and the scene integration targets. The default repository
+build builds the standalone example and all four windowed profiler targets; a
+targeted renderer example build stays scoped to that target. Automated panel
+tests create neither a device nor a window.
 
 ## Capture GPU work
 

@@ -118,6 +118,10 @@ jobs:
             grep -rnE 'import c3d::(profile|render::profile_gpu)' src/c3d --include='*.c3' | grep -vE '^src/c3d/(instrumentation|render/profile).c3:'
             grep -rn '^import ' addons/c3d_profile.c3l/src --include='*.c3' | grep -v '/src/gpu/' | grep -v ':import std::'
             grep -rn '^import ' addons/c3d_profile.c3l/src/gpu --include='*.c3' | grep -vE ':import (std::|gpu[ ;:]|c3d::profile[ ;])'
+            grep -rn '^import ' addons/c3d_profile_gui.c3l/src --include='*.c3' | grep -vE ':import (std::|c3d::profile[ ;]|imgui[ ;])'
+            grep -n '"c3d_profile_gui"' manifest.json addons/c3d_profile.c3l/manifest.json
+            grep -rnE 'ProfilerPanel|create_profiler_panel|destroy_profiler_panel|profiler_panel' \
+              src/c3d addons/c3d_profile.c3l/src --include='*.c3'
             true
           )
           if [ -n "$violations" ]; then

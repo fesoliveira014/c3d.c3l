@@ -1,0 +1,33 @@
+{
+  "langrev": "1",
+  "dependency-search-paths": [ "../../lib", "../../lib/gpu.c3l/lib" ],
+  "dependencies": [ "c3d_profile_gui" ],
+  "output": "build",
+  "targets": {
+    "panel_off": {
+      "type": "test",
+      "sources": [ "test/**" ]
+    },
+    "panel_cpu": {
+      "type": "test",
+      "sources": [ "test/**" ],
+      "features": [ "C3D_PROFILE_GUI", "C3D_PROFILE_CPU" ],
+      "dependencies": [ "c3d_profile_gui", "c3d_profile", "c3imgui", "vk" ],
+      "wincrt": "static"
+    },
+    "panel_gpu": {
+      "type": "test",
+      "sources": [ "test/**" ],
+      "features": [ "C3D_PROFILE_GUI", "C3D_PROFILE_GPU" ],
+      "dependencies": [ "c3d_profile_gui", "c3d_profile", "c3imgui", "vk", "gpu", "vma", "spvreflect" ],
+      "wincrt": "static"
+    },
+    "panel_combined": {
+      "type": "test",
+      "sources": [ "test/**" ],
+      "features": [ "C3D_PROFILE_GUI", "C3D_PROFILE_CPU", "C3D_PROFILE_GPU" ],
+      "dependencies": [ "c3d_profile_gui", "c3d_profile", "c3imgui", "vk", "gpu", "vma", "spvreflect" ],
+      "wincrt": "static"
+    }
+  }
+}

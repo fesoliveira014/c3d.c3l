@@ -1,0 +1,14 @@
+{
+  "provides": "c3d_profile_gui",
+  "sources": [ "src/**" ],
+  "targets": {
+    "linux-x64": {
+      "dependencies": [],
+      "linked-libraries": [ "stdc++" ]
+    },
+    "windows-x64": {
+      "dependencies": [],
+      "linked-libraries": []
+    }
+  }
+}
