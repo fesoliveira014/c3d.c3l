@@ -426,19 +426,19 @@ fn bool has_pending(GpuProfiler* profiler) {
     return false;
 }
 
+fn void release_gpu_profiler(GpuProfiler* profiler) {
+    if (profiler.recorder) profile::detach_gpu_source(profiler.recorder, profiler.source);
+    release_storage(profiler);
+}
+
 <* @require !profiler.recording && !has_pending(profiler) *>
 fn void? destroy_gpu_profiler(gpu::Device* device, GpuProfiler* profiler) {
     if (profiler.pool.is_valid()) {
         if (catch excuse = gpu::destroy_timestamp_pool(device, profiler.pool)) {
-            if (excuse != gpu::DEVICE_LOST) return excuse~;
-
-            if (profiler.recorder) profile::detach_gpu_source(profiler.recorder, profiler.source);
-            release_storage(profiler);
-
+            release_gpu_profiler(profiler);
             return excuse~;
         }
     }
 
-    if (profiler.recorder) profile::detach_gpu_source(profiler.recorder, profiler.source);
-    release_storage(profiler);
+    release_gpu_profiler(profiler);
 }

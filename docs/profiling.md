@@ -201,10 +201,12 @@ calls retain optional `!`/`!!` syntax and discard their arguments.
 The renderer binds its configured recorder's capture at `begin_frame`. Nested
 CPU captures on another recorder cannot redirect it, and a capture opened later
 does not adopt part of an existing renderer recording. History slots remain
-pinned until their GPU results publish or the recording is canceled. If all
-slots are pinned, `Recorder.dropped_frames` increases and the capture body runs
-unrecorded. The collector never waits for a GPU slot or resumes midway through
-that dropped capture.
+pinned until their GPU results publish or the recording is canceled. A pin can
+last `FRAMES_IN_FLIGHT` renderer frames, so `frame_capacity` must exceed that
+count (currently 2) or steady-state captures drop. If all slots are pinned,
+`Recorder.dropped_frames` increases and the capture body runs unrecorded. The
+collector never waits for a GPU slot or resumes midway through that dropped
+capture.
 
 A capture may expose completed GPU samples while other submissions remain
 `PENDING`. After the last pin releases, GPU state is `ABORTED` if a recording was

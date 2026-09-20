@@ -74,7 +74,7 @@ struct Stats {
 }
 
 <*
- Legacy fixed-layout offset; dynamic captures use independent query pairs.
+ Fixed-layout timestamp offset kept for compatibility; capture uses independent query pairs.
  @require pass_ordinal < PASS_COUNT
  @pure
 *>

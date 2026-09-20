@@ -8,12 +8,6 @@ import gpu;
 alias ProfileRecorder @private = profile::Recorder;
 alias ProfileScopeToken @private = profile::GpuScopeToken;
 
-const String[PASS_COUNT] PROFILE_PASS_LABELS @private = {
-    "uploads", "custom_compute", "shadow_atlas", "light_cull", "acceleration_build",
-    "depth_prepass", "forward_opaque", "sky", "transmission", "forward_transparent",
-    "debug_lines", "velocity", "post_chain", "composite", "custom_compute_post",
-};
-
 struct RendererGpuProfile @private {
     profile_gpu::GpuProfiler adapter;
     ProfileScopeToken frame;
@@ -210,7 +204,7 @@ fn void? begin_profile_pass(Renderer* renderer, Pass pass) @private {
         info.pass_ordinal = (uint)pass.ordinal;
         renderer.gpu_profile.passes[pass.ordinal] = begin_internal_gpu_scope(
             renderer: renderer,
-            label: PROFILE_PASS_LABELS[pass.ordinal],
+            label: Pass::names[pass.ordinal],
             info: info,
         )!;
     $endif

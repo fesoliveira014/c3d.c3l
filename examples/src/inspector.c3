@@ -254,7 +254,12 @@ fn int main(String[] args) {
     bool gpu_timings;
     foreach (argument : args[1..]) {
         if (argument == "--gpu-timings") {
-            gpu_timings = true;
+            $if $feat(C3D_PROFILE_GPU):
+                gpu_timings = true;
+            $else
+                io::eprintfn("--gpu-timings needs GPU profiling: c3c build <target> --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL");
+                return 1;
+            $endif
         } else {
             io::printfn("Unknown argument: %s", argument);
             return 1;
