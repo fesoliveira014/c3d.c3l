@@ -138,12 +138,46 @@ cannot establish hardware GPU speedups or a useful light-count crossover. Record
 any driver-specific workarounds. Headless results also omit window-system pacing;
 measure the interactive example separately when that is the question.
 
+## Scene benchmark
+
+```bash
+python3 scripts/fetch_benchmark_assets.py
+python3 scripts/build.py --target gltf_viewer --opt O3
+python3 scripts/benchmark.py scene --output results/scene --repeats 3
+./examples/build/gltf_viewer --benchmark --lights 64 --mode clustered --shadows on
+```
+
+The scene suite renders Crytek Sponza from `KhronosGroup/glTF-Sample-Assets`,
+pinned to one commit by the fetch script and stored under
+`examples/assets/benchmark/sponza/`, which is gitignored: the model files are
+under the Cryengine Limited License Agreement and are not redistributed here.
+The fetch skips files that already exist with the right size; `--force`
+downloads everything again. `benchmark.py scene` refuses to run without the
+model and prints the fetch command.
+
+`gltf_viewer --benchmark` reuses the viewer's loading and environment: one
+instance at the origin, the studio HDR as environment and background, a sun
+that casts shadows unless `--shadows off`, and `--lights N` point lights on a
+deterministic grid inside the model bounds at 0.35 of the vertical extent, with
+`--range R` as a fraction of the largest horizontal extent (default 0.08). The
+camera sits inside the atrium at 0.3 of the height, 0.35 of the long axis behind
+the center, looking along the long axis. `--mode`, `--capacity` and every common
+option (`--frames`, `--warmup`, `--width`, `--height`, `--gpu-timings`,
+`--validation`, `--capture`, `--window`, `--panel`, `--print-features`) behave as
+in `many_lights --benchmark`, and the CSV columns are the same. Shadow casting
+dominates the draw count: about 470 draws with the sun shadowed against about 85
+without.
+
+Any glTF file can replace Sponza through the positional path or
+`benchmark.py scene --model`; the light and camera placement derive from the
+model bounds.
+
 ## Profiling configurations and overhead
 
-`benchmark.py render --features NAME` selects the profiling features compiled into
+`benchmark.py render --features NAME` (and `scene`) selects the profiling features compiled into
 the workload binary. With `--build` the runner builds `many_lights` with the matching
 `--define` and `--lib` flags through `scripts/build.py`, copies the binary to
-`examples/build/bench/many_lights-NAME` so configurations coexist, and checks the
+`examples/build/bench/<target>-NAME` so configurations coexist, and checks the
 binary's `--print-features` line against the request before any job runs. Without
 `--build`, a non-off configuration needs `--binary`. `environment.json` records
 `features`, `defines`, `libraries` and `features_reported`.
@@ -161,8 +195,9 @@ binary's `--print-features` line against the request before any job runs. Withou
 `--window`. `--dry-run` prints the resolved build command and every job command as
 JSON lines and runs nothing.
 
-Overhead protocol, on an idle machine with the same `--lights`, `--mode`, extent,
-`--frames` and `--warmup` throughout, three repeats per configuration:
+Overhead protocol, per suite (`render` and `scene`), on an idle machine with the same
+`--lights`, `--mode`, extent, `--frames` and `--warmup` throughout, three repeats per
+configuration:
 
 1. Headless capture cost: `off`; `cpu --capture`; `internal --capture`;
    `gpu --capture --gpu-timings`; `full --capture --gpu-timings`. Compare medians
@@ -174,7 +209,12 @@ Overhead protocol, on an idle machine with the same `--lights`, `--mode`, extent
    configuration of the same workload; a `--validation` run of the `full`
    configuration must finish clean.
 
-Report each configuration's `environment.json` beside its `summary.csv`.
+Report each configuration's `environment.json` beside its `summary.csv`. Measured
+results are recorded on the M41 milestone page in Notion, not in this repository;
+they age with hardware and drivers.
+
+On Windows, run the same commands with `python`; `vulkaninfo` is `vulkaninfoSDK.exe`
+in the Vulkan SDK, and `environment.json` records whichever is on `PATH`.
 
 Deviations from the milestone sketch: there is no dedicated shader-workload target
 and no output checksum. The flat and clustered modes already exercise distinct raster

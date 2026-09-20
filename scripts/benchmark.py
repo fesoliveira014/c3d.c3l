@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Run CPU or headless rendering sweeps; retain raw samples and environment metadata.
+"""Run CPU, headless rendering or scene sweeps; retain raw samples and environment metadata.
 
   scripts/benchmark.py cpu --output results/cpu --repeats 3
+  scripts/benchmark.py scene --output results/scene --build --features off
   scripts/benchmark.py render --output results/render --build --features internal --capture
   scripts/benchmark.py render --output results/x --dry-run --features full --panel
 
@@ -33,7 +34,9 @@ EXECUTABLE_SUFFIX = ".exe" if os.name == "nt" else ""
 
 CPU_CASES = ["world", "hidden_world", "meshes", "culled_meshes", "hidden_meshes",
              "shadows", "lights", "hidden_lights", "sort"]
-TARGETS = {"cpu": "cpu_bench", "render": "many_lights"}
+TARGETS = {"cpu": "cpu_bench", "render": "many_lights", "scene": "gltf_viewer"}
+SCENE_MODEL = ROOT / "examples/assets/benchmark/sponza/glTF/Sponza.gltf"
+FETCH_HINT = "fetch it with: python3 scripts/fetch_benchmark_assets.py"
 FEATURES = {
     "off": [],
     "cpu": ["C3D_PROFILE_CPU"],
@@ -66,19 +69,23 @@ def parse_arguments():
     cpu.add_argument("--iterations", type=int, default=100)
     cpu.add_argument("--samples", type=int, default=30)
 
-    render = parser.add_argument_group("render suite")
-    render.add_argument("--lights", type=int, nargs="+", default=[64, 256, 1024, 4096])
+    render = parser.add_argument_group("render and scene suites")
+    render.add_argument("--lights", type=int, nargs="+", help="render default 64 256 1024 4096; scene default 16 64 256")
     render.add_argument("--modes", nargs="+", choices=["flat", "clustered"], default=["flat", "clustered"])
     render.add_argument("--frames", type=int, default=300)
     render.add_argument("--warmup", type=int, default=60)
     render.add_argument("--width", type=int, default=1440)
     render.add_argument("--height", type=int, default=900)
     render.add_argument("--capacity", type=int, default=64)
-    render.add_argument("--range", type=float, default=6)
+    render.add_argument("--range", type=float, help="light range: render default 6 units; scene default 0.08 of the extent")
     render.add_argument("--gpu-timings", action="store_true", help="enable renderer timestamps")
     render.add_argument("--validation", action="store_true", help="enable Vulkan validation")
 
-    profiling = parser.add_argument_group("render suite profiling")
+    scene = parser.add_argument_group("scene suite")
+    scene.add_argument("--model", type=Path, default=SCENE_MODEL, help="glTF file rendered by the scene suite")
+    scene.add_argument("--shadows", choices=["on", "off"], default="on", help="shadowed sun in the scene suite")
+
+    profiling = parser.add_argument_group("render and scene suite profiling")
     profiling.add_argument("--features", choices=sorted(FEATURES), default="off",
                            help="profiling configuration compiled into the binary")
     profiling.add_argument("--capture", action="store_true", help="open a profiler capture around every frame")
@@ -88,6 +95,10 @@ def parse_arguments():
     args = parser.parse_args()
     if args.panel:
         args.window = True
+    if args.lights is None:
+        args.lights = [16, 64, 256] if args.suite == "scene" else [64, 256, 1024, 4096]
+    if args.range is None:
+        args.range = 0.08 if args.suite == "scene" else 6
     validate_arguments(parser, args)
     return args
 
@@ -98,7 +109,9 @@ def validate_arguments(parser, args):
     if args.build and args.binary:
         parser.error("--build and --binary are mutually exclusive")
     if args.suite == "cpu" and (args.features != "off" or args.capture or args.window or args.panel):
-        parser.error("--features, --capture, --window and --panel apply to the render suite")
+        parser.error("--features, --capture, --window and --panel apply to the render and scene suites")
+    if args.suite == "scene" and not args.model.is_file():
+        parser.error(f"scene model does not exist: {args.model}; {FETCH_HINT}")
     if args.capture and args.features == "off":
         parser.error("--capture needs a profiling configuration; pass --features cpu, internal, gpu, gui or full")
     if args.panel and args.features not in ("gui", "full"):
@@ -116,12 +129,12 @@ class Plan:
 
     def __init__(self, args):
         self.target = TARGETS[args.suite]
-        self.defines = FEATURES[args.features] if args.suite == "render" else []
+        self.defines = FEATURES[args.features] if args.suite != "cpu" else []
         self.libraries = libraries_for(self.defines)
         self.built = EXAMPLES_BUILD / (self.target + EXECUTABLE_SUFFIX)
         if args.binary:
             self.binary = args.binary.resolve()
-        elif args.suite == "render" and args.build:
+        elif args.suite != "cpu" and args.build:
             self.binary = BENCH_BUILD / f"{self.target}-{args.features}{EXECUTABLE_SUFFIX}"
         else:
             self.binary = self.built
@@ -189,7 +202,7 @@ def environment_metadata(args, plan, features_reported):
         "cpu": capture(["lscpu"]) if sys.platform == "linux" else platform.processor(),
         "compiler": capture(["c3c", "--version"]),
         "build": "-O3" if args.build else "Existing binary; build flags must be recorded by caller",
-        "features": args.features if args.suite == "render" else None,
+        "features": args.features if args.suite != "cpu" else None,
         "defines": plan.defines,
         "libraries": plan.libraries,
         "features_reported": features_reported,
@@ -197,7 +210,7 @@ def environment_metadata(args, plan, features_reported):
         "options": {key: str(value) if isinstance(value, Path) else value for key, value in vars(args).items()},
         "driver_environment": {key: os.environ.get(key) for key in DRIVER_ENVIRONMENT},
     }
-    if args.suite == "render":
+    if args.suite != "cpu":
         metadata["vulkan"] = capture(["vulkaninfo", "--summary"])
     return metadata
 
@@ -207,20 +220,29 @@ def cpu_jobs(args):
             for nodes in args.nodes for case in args.cases]
 
 
+def common_switches(args):
+    return [flag for flag, enabled in [("--gpu-timings", args.gpu_timings),
+                                        ("--validation", args.validation),
+                                        ("--capture", args.capture),
+                                        ("--window", args.window),
+                                        ("--panel", args.panel)] if enabled]
+
+
+def workload_arguments(args, mode, lights):
+    return ["--benchmark", "--mode", mode, "--lights", str(lights), "--frames", str(args.frames),
+            "--warmup", str(args.warmup), "--width", str(args.width), "--height", str(args.height),
+            "--capacity", str(args.capacity), "--range", str(args.range), *common_switches(args)]
+
+
 def render_jobs(args):
-    switches = [flag for flag, enabled in [("--gpu-timings", args.gpu_timings),
-                                            ("--validation", args.validation),
-                                            ("--capture", args.capture),
-                                            ("--window", args.window),
-                                            ("--panel", args.panel)] if enabled]
-    jobs = []
-    for lights in args.lights:
-        for mode in args.modes:
-            arguments = ["--benchmark", "--mode", mode, "--lights", str(lights), "--frames", str(args.frames),
-                         "--warmup", str(args.warmup), "--width", str(args.width), "--height", str(args.height),
-                         "--capacity", str(args.capacity), "--range", str(args.range), *switches]
-            jobs.append((f"{mode}-{lights}", arguments))
-    return jobs
+    return [(f"{mode}-{lights}", workload_arguments(args, mode, lights))
+            for lights in args.lights for mode in args.modes]
+
+
+def scene_jobs(args):
+    return [(f"{mode}-{lights}-shadows-{args.shadows}",
+             [str(args.model.resolve()), "--shadows", args.shadows, *workload_arguments(args, mode, lights)])
+            for lights in args.lights for mode in args.modes]
 
 
 def run_job(output, name, command, timeout):
@@ -260,7 +282,7 @@ def write_summary(output, summary):
 def main():
     args = parse_arguments()
     plan = Plan(args)
-    jobs = cpu_jobs(args) if args.suite == "cpu" else render_jobs(args)
+    jobs = {"cpu": cpu_jobs, "render": render_jobs, "scene": scene_jobs}[args.suite](args)
 
     if args.dry_run:
         print(json.dumps(plan.describe()))
@@ -273,7 +295,7 @@ def main():
     if not plan.binary.is_file():
         raise SystemExit(f"binary does not exist: {plan.binary}")
     features_reported = None
-    if args.suite == "render":
+    if args.suite != "cpu":
         features_reported = reported_features(plan.binary)
         if features_reported != plan.expected_features():
             raise SystemExit(f"binary reports {features_reported}, requested {plan.expected_features()}")

@@ -7,7 +7,8 @@ for one.
 Target platforms are linux-x64 and windows-x64. C3 0.8.3 exactly.
 
 See [Benchmarking](docs/benchmarking.md) for CPU extraction profiles, headless many-light
-sweeps and reproducible CSV measurements.
+sweeps and reproducible CSV measurements. The Sponza scene suite needs
+`python3 scripts/fetch_benchmark_assets.py` once.
 
 ## Prerequisites
 

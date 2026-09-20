@@ -216,7 +216,8 @@
     "gltf_viewer": {
       "type": "executable",
       "sources": [
-        "src/gltf_viewer.c3"
+        "src/gltf_viewer.c3",
+        "src/bench/loop.c3"
       ]
     },
     "animation": {
