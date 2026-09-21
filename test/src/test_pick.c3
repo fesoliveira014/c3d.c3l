@@ -277,7 +277,15 @@ fn void test_skinned_mesh_uses_joint_bounds_not_triangles() @test {
     SkeletonId skeleton_id = fixture.assets.add_skeleton_owned(&skeleton, "skeleton")!!;
     Node* joint = fixture.scene.add_node(name: "joint")!!;
     joint.local.position = { 0, 20, 0 };
-    Node* skinned = add_box_at(&fixture, 0, "skinned");
+    GeometryId skinned_box;
+    @pool() {
+        Geometry box = geometry::box(tmem, 1, 1, 1);
+        box.joints = alloc::new_array(tmem, ushort[<4>], box.positions.len);
+        box.weights = alloc::new_array(tmem, Vec4, box.positions.len);
+        foreach (&weight : box.weights) *weight = { 1, 0, 0, 0 };
+        skinned_box = fixture.assets.add_geometry(&box, "skinned_box")!!;
+    };
+    Node* skinned = fixture.scene.add_mesh(skinned_box, fixture.one_sided, name: "skinned")!!;
     Node*[] joints = alloc::new_array(fixture.scene.allocator, Node*, 1);
     joints[0] = joint;
     fixture.scene.add(skinned, (SkinBinding){ .skeleton = skeleton_id, .joints = joints });

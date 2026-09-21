@@ -3,6 +3,7 @@ module c3d::asset;
 import c3d;
 import c3d::geometry;
 import c3d::pool;
+import std::math;
 
 <*
  Geometry record; counts survive a source release.
@@ -10,6 +11,7 @@ import c3d::pool;
 struct GeometryAsset {
     AssetHeader header;
     Geometry    data;
+    SkinBounds  skin_bounds;
     uint        vertex_count;
     uint        index_count;
     uint        target_count;
@@ -27,10 +29,12 @@ alias GeometryPool = Pool{GeometryAsset, GeometryId};
 *>
 fn GeometryId? AssetStore.add_geometry(&self, Geometry* geometry, String key = "") {
     check_key(self, key)!;
+    check_influences(geometry)!;
     GeometryId id = self.geometries.add({})!;
     *self.geometries.get(id) = {
         .header       = { .key = copy_string(self.allocator, key), .revision = 1 },
         .data         = copy_geometry(self.allocator, geometry),
+        .skin_bounds  = geometry::build_skin_bounds(self.allocator, geometry),
         .vertex_count = (uint)geometry.positions.len,
         .index_count  = (uint)geometry.indices.len,
         .target_count = (uint)geometry.targets.len,
@@ -46,10 +50,12 @@ fn GeometryId? AssetStore.add_geometry(&self, Geometry* geometry, String key = "
 *>
 fn GeometryId? AssetStore.add_geometry_owned(&self, Geometry* geometry, String key = "") {
     check_key(self, key)!;
+    check_influences(geometry)!;
     GeometryId id = self.geometries.add({})!;
     *self.geometries.get(id) = {
         .header       = { .key = copy_string(self.allocator, key), .revision = 1 },
         .data         = *geometry,
+        .skin_bounds  = geometry::build_skin_bounds(self.allocator, geometry),
         .vertex_count = (uint)geometry.positions.len,
         .index_count  = (uint)geometry.indices.len,
         .target_count = (uint)geometry.targets.len,
@@ -67,11 +73,15 @@ fn GeometryAsset* AssetStore.geometry(&self, GeometryId geometry) {
 }
 
 <*
- Advance the content revision after an edit.
+ Advance the content revision after an edit; rebuilds the retained skin bounds while the streams are present.
  @require self.geometries.is_live(geometry)
 *>
 fn void AssetStore.mark_geometry_dirty(&self, GeometryId geometry) {
-    self.geometries.get(geometry).header.revision++;
+    GeometryAsset* record = self.geometries.get(geometry);
+    record.header.revision++;
+    if (!record.data.positions.len) return;
+    geometry::free_skin_bounds(self.allocator, &record.skin_bounds);
+    record.skin_bounds = geometry::build_skin_bounds(self.allocator, &record.data);
 }
 
 <*
@@ -91,8 +101,22 @@ fn void AssetStore.remove_geometry(&self, GeometryId geometry) {
     forget_key(self, record.header.key);
     free_string(self.allocator, record.header.key);
     free_geometry(self.allocator, &record.data);
+    geometry::free_skin_bounds(self.allocator, &record.skin_bounds);
     *record = {};
     self.geometries.remove(geometry);
+}
+
+fn void? check_influences(Geometry* geometry) @local {
+    if (!geometry.joints.len && !geometry.weights.len) return;
+    if (geometry.joints.len != geometry.positions.len || geometry.weights.len != geometry.positions.len) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+    foreach (weight : geometry.weights) {
+        for (usz slot = 0; slot < 4; slot++) {
+            if (!math::is_finite(weight[slot]) || weight[slot] < 0) return c3d::INVALID_ARGUMENT~;
+        }
+    }
+    return;
 }
 
 fn Geometry copy_geometry(Allocator allocator, Geometry* source) @local {

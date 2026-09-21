@@ -657,3 +657,25 @@ fn void test_small_upload_ring_frees_overflow_when_the_slot_is_reused() @test {
     foreach (&slot : renderer.frames) assert(slot.upload.mapped.bytes.len > TINY_RING_BYTES);
     check_validation(renderer);
 }
+
+fn void test_skinned_geometry_without_binding_draws_unskinned() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    fill_frame(&fixture, fixture.storage_texture, RED)!!;
+    Scene unbound = scene::create_scene(fixture.allocator, scene::default_scene_desc());
+    defer scene::destroy_scene(&unbound);
+    unbound.add_mesh(fixture.deformed_box, fixture.material)!!;
+    Node* camera = unbound.add_camera(camera::perspective_deg(60, 0.1f))!!;
+    camera.local.position = CAMERA_POSITION;
+    unbound.update_world();
+
+    renderer.begin_frame()!!;
+    renderer.render_view(&unbound, camera, fixture.view)!!;
+    renderer.finish_view(fixture.view)!!;
+    renderer.end_frame()!!;
+    sample_frame(&fixture, render::read_target(fixture.hdr_target))!!;
+    check_channels(read_pixel(&fixture), RED);
+    check_validation(renderer);
+}

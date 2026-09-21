@@ -42,6 +42,9 @@ What the four cases establish:
   when the slot is reused and grows the ring without losing its old
   allocation.
 
+- A skinned geometry drawn by a node without a skin binding renders with the
+  unskinned vertex stage and shows its material.
+
 What they cannot establish: window clear-only and GUI-only frames need a
 window (run the `clear` and `cube_gui` examples with validation), and a
 presentation failure after submission needs a hardware observation.

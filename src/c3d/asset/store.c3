@@ -164,6 +164,7 @@ fn void destroy_asset_store(AssetStore* store) {
         if (!record.header.revision) continue;
         free_string(store.allocator, record.header.key);
         free_geometry(store.allocator, &record.data);
+        geometry::free_skin_bounds(store.allocator, &record.skin_bounds);
     }
     foreach (&record : store.textures.items) {
         if (!record.header.revision) continue;

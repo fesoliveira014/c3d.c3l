@@ -63,6 +63,21 @@ fn gpu::PipelineHandle? shadow_pipeline_for(
     return renderer.pipelines.get(&renderer.device, key);
 }
 
+<*
+ Depth-only vertex stage for the geometry's deformation streams.
+ @param morphed : "The mesh carries morph weights."
+ @param skinned : "The mesh node carries a live skin binding."
+ @pure
+*>
+fn ShaderVariant depth_only_vertex_variant(GeometryFlags flags, bool morphed = false, bool skinned = true) {
+    return mesh_vertex_variant(
+        flags:      flags,
+        morphed:    morphed,
+        skinned:    skinned,
+        base_flags: shader::SHADER_FLAG_DEPTH_ONLY,
+    );
+}
+
 fn ShadowDraw[]? prepare_shadow_draws(Renderer* renderer, MeshCandidate[] candidates) @private {
     ShadowDraw[] draws = alloc::new_array(tmem, ShadowDraw, candidates.len);
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
@@ -82,7 +97,7 @@ fn ShadowDraw[]? prepare_shadow_draws(Renderer* renderer, MeshCandidate[] candid
         ShadowDraw* draw = &draws[count];
         GpuGeometry* geometry = resolve_geometry(renderer, candidate.geometry)!;
         bool morphed = candidate.morph_weights.len > 0;
-        ShaderVariant vertex = mesh_vertex_variant(geometry.layout.flags, morphed, shader::SHADER_FLAG_DEPTH_ONLY);
+        ShaderVariant vertex = depth_only_vertex_variant(geometry.layout.flags, morphed, candidate.skin != null);
         *draw = {
             .candidate = candidate,
             .geometry = geometry,
@@ -161,11 +176,7 @@ fn void? record_shadow_layer(
     state.raster.depth_bias_slope = -bias;
     bool view_reflected = matrices.view.determinant() < 0;
     ShadowDrawState bound = {
-        .pipeline = draws.len ? draws[0].pipeline : shadow_pipeline_for(
-            renderer:  renderer,
-            wireframe: false,
-            vertex:    mesh_vertex_variant({}, false, shader::SHADER_FLAG_DEPTH_ONLY),
-        )!,
+        .pipeline = draws.len ? draws[0].pipeline : shadow_pipeline_for(renderer, false, depth_only_vertex_variant({}))!,
     };
     bool state_set;
     gpu::cmd_bind_pipeline(&renderer.commands, bound.pipeline)!;
