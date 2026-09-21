@@ -359,8 +359,10 @@ frame-wide GPU pass summaries. Run its CPU-only example with
 
 Add c3d and its dependencies to your `project.json`, and list the feature flags you want. A C3
 library manifest cannot declare features, so every consumer enables them itself. Declarations
-guarded by a feature disappear when it is omitted; the image API and its C translation unit
-are currently included regardless of the `C3D_STB_IMAGE` indicator:
+guarded by a feature disappear when it is omitted; the native libraries a feature's module links
+stay declared dependencies of the package whether or not the feature is selected, and the image
+API and its C translation unit are included regardless of the `C3D_STB_IMAGE` indicator. The
+`*_ENABLED` constants in `c3d` exist exactly when their feature was selected:
 
 ```json
 {
@@ -372,11 +374,11 @@ are currently included regardless of the `C3D_STB_IMAGE` indicator:
 
 | Feature | Enables |
 | --- | --- |
-| `C3D_GUI` | the developer GUI, and imgui |
-| `C3D_PHYSICS` | physics, and box3d |
-| `C3D_FBX` | the FBX importer |
-| `C3D_RAY_TRACING` | ray tracing |
-| `C3D_STB_IMAGE` | image support indicator; does not exclude the API or native decoder when absent |
+| `C3D_GUI` | the developer GUI declarations (imgui stays a declared dependency) |
+| `C3D_PHYSICS` | the physics declarations (box3d stays a declared dependency) |
+| `C3D_FBX` | the FBX importer declarations (ufbx stays a declared dependency) |
+| `C3D_RAY_TRACING` | the ray tracing declarations |
+| `C3D_STB_IMAGE` | indicator only; the image API and native decoder compile when absent |
 | `C3D_SHADER_COMPILER` | in-process GLSL compilation (`shader::compile`), and shaderc; custom shaders from SPIR-V bytes work without it |
 
 ## Contributing

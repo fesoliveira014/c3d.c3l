@@ -6,26 +6,26 @@ module c3d;
 const String VERSION = "0.0.0";
 
 <*
- True when the developer GUI is compiled in.
+ Present when the consumer selected the C3D_GUI feature; the GUI declarations follow the same guard.
 *>
 const bool GUI_ENABLED @feat(C3D_GUI) = true;
 
 <*
- True when physics is compiled in and box3d is linked.
+ Present when the consumer selected the C3D_PHYSICS feature; the physics declarations follow the same guard.
 *>
 const bool PHYSICS_ENABLED @feat(C3D_PHYSICS) = true;
 
 <*
- True when the FBX importer is compiled in.
+ Present when the consumer selected the C3D_FBX feature; the FBX importer follows the same guard.
 *>
 const bool FBX_ENABLED @feat(C3D_FBX) = true;
 
 <*
- True when ray tracing is compiled in.
+ Present when the consumer selected the C3D_RAY_TRACING feature; the ray tracing declarations follow the same guard.
 *>
 const bool RAY_TRACING_ENABLED @feat(C3D_RAY_TRACING) = true;
 
 <*
- True when image decoding is compiled in and stb_image is linked.
+ Present when the consumer selected the C3D_STB_IMAGE feature; the image API and its decoder compile regardless.
 *>
 const bool STB_IMAGE_ENABLED @feat(C3D_STB_IMAGE) = true;

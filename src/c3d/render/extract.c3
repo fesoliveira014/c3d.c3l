@@ -66,7 +66,8 @@ struct ExtractCounts {
 fn MeshCandidate[] extract_candidates(Allocator allocator, Scene* scene, AssetStore* assets,
   CameraMatrices* camera, uint layers, ExtractCounts* counts) {
     *counts = {};
-    MeshCandidate[] candidates = alloc::new_array(allocator, MeshCandidate, scene.count(Mesh));
+    // Every emitted candidate is written whole before the slice is returned, so the array needs no zeroing.
+    MeshCandidate[] candidates = alloc::alloc_array(allocator, MeshCandidate, scene.count(Mesh));
     scene.@each(Mesh; Entity entity, Mesh* mesh) {
         Node* node = scene.node(entity);
         if (node.visible_effective && (layers & node.layers) != 0) {
@@ -191,7 +192,7 @@ fn MeshCandidate[] extract_shadow_candidates(
     ExtractCounts* counts,
 ) {
     *counts = {};
-    MeshCandidate[] candidates = alloc::new_array(allocator, MeshCandidate, scene.count(Mesh));
+    MeshCandidate[] candidates = alloc::alloc_array(allocator, MeshCandidate, scene.count(Mesh));
 
     scene.@each(Mesh; Entity entity, Mesh* mesh) {
         Node* node = scene.node(entity);
