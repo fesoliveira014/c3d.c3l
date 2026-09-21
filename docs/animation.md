@@ -110,9 +110,17 @@ turns them into deformed draws:
   last key it extrapolates. This is the FBX in-between shape rule. Selection of
   the eight largest targets happens after this mapping. CPU release of a
   geometry keeps its channels, so a released morphed mesh still maps weights.
-- Skinned meshes are culled and included as shadow casters through a bound
-  that covers every joint at the radius of the bind-pose bounds; a
-  `Mesh.local_bounds` override replaces it.
+- Skinned meshes are culled, included as shadow casters and picked through a
+  conservative bound: at insertion the store retains, per joint, the bound of
+  the vertices that joint influences and of their morph deltas per target
+  (`GeometryAsset.skin_bounds`, one allocation, kept through
+  `release_geometry_cpu`, rebuilt by `mark_geometry_dirty` while the streams
+  are present). Each frame every influencing joint's bound, widened by the
+  mesh's selected morph targets, is transformed by `joint.world *
+  inverse_bind[joint]` and merged; a `Mesh.local_bounds` override replaces it.
+  A binding that addresses none of the geometry's joints falls back to the
+  rest bound, and a skinned geometry drawn without a live binding draws
+  unskinned.
 
 Compute skinning, previous deformed poses for temporal effects and skinned
 instanced meshes are not part of this.

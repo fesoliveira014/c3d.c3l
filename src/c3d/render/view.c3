@@ -190,7 +190,7 @@ fn void? Renderer.render_view(
                         line_polygon_mode: self.caps.line_polygon_mode,
                     )!;
                     bool morphed = candidate.morph_weights.len > 0;
-                    ShaderVariant vertex = mesh_vertex_variant(geometry.layout.flags, morphed);
+                    ShaderVariant vertex = mesh_vertex_variant(geometry.layout.flags, morphed, candidate.skin != null);
                     gpu::PipelineHandle? pipeline = pipeline_for(self, material_description, vertex);
                     if (catch excuse = pipeline) {
                         if (!custom_pipeline_rejected(self, material_description, excuse)) return excuse~;
@@ -533,7 +533,7 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
         };
         if (shadows_enabled) {
             acquire_shadow_atlas(self)!;
-            shadow_pipeline_for(self, false, mesh_vertex_variant({}, false, shader::SHADER_FLAG_DEPTH_ONLY))!;
+            shadow_pipeline_for(self, false, depth_only_vertex_variant({}))!;
         }
         scene.@each(Mesh; Entity entity, Mesh* mesh) {
             bool casts = shadows_enabled && mesh.cast_shadow && scene.node(entity).visible_effective;
@@ -622,7 +622,7 @@ fn MeshPreparation? prepare_mesh(
         bindings:          &material.bindings,
         line_polygon_mode: renderer.caps.line_polygon_mode,
     )!;
-    if (catch excuse = pipeline_for(renderer, data, mesh_vertex_variant(geometry.layout.flags, morphed))) {
+    if (catch excuse = pipeline_for(renderer, data, mesh_vertex_variant(geometry.layout.flags, morphed, true))) {
         if (!custom_pipeline_rejected(renderer, data, excuse)) return excuse~;
         return {};
     }
@@ -630,7 +630,7 @@ fn MeshPreparation? prepare_mesh(
         if (catch excuse = shadow_pipeline_for(
             renderer:  renderer,
             wireframe: data.common.wireframe && renderer.caps.line_polygon_mode,
-            vertex:    mesh_vertex_variant(geometry.layout.flags, morphed, shader::SHADER_FLAG_DEPTH_ONLY),
+            vertex:    depth_only_vertex_variant(geometry.layout.flags, morphed),
             material:  data,
         )) {
             if (!custom_pipeline_rejected(renderer, data, excuse)) return excuse~;

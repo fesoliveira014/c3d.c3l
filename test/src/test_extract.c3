@@ -235,6 +235,9 @@ fn void test_skinned_candidate_bounds_follow_joints() @test {
     GeometryId box;
     @pool() {
         Geometry cube = geometry::box(tmem, 1, 1, 1);
+        cube.joints = alloc::new_array(tmem, ushort[<4>], cube.positions.len);
+        cube.weights = alloc::new_array(tmem, Vec4, cube.positions.len);
+        foreach (&weight : cube.weights) *weight = { 1, 0, 0, 0 };
         box = assets.add_geometry(&cube, "box")!!;
     };
     MaterialId red = assets.add_material(material::basic({ .color = { 1, 0, 0, 1 } }), "red")!!;

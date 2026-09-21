@@ -17,15 +17,23 @@ struct DeformationCache {
     HashMap{ulong, gpu::GpuAddress} morph_blocks;
 }
 
+$assert geometry::MAX_ACTIVE_MORPH_TARGETS == shader::MAX_ACTIVE_MORPH_TARGETS;
+
 <*
  Vertex stage for the geometry's deformation streams.
  @param morphed : "The mesh carries morph weights."
+ @param skinned : "The mesh node carries a live skin binding."
  @param base_flags : "Variant flags of the pass, such as depth only."
  @pure
 *>
-fn ShaderVariant mesh_vertex_variant(GeometryFlags flags, bool morphed, uint base_flags = 0) {
+fn ShaderVariant mesh_vertex_variant(
+    GeometryFlags flags,
+    bool morphed,
+    bool skinned,
+    uint base_flags = 0,
+) {
     uint variant_flags = base_flags;
-    if (flags.skinned) {
+    if (flags.skinned && skinned) {
         variant_flags |= flags.joints_u16 ? shader::SHADER_FLAG_SKINNED_U16 : shader::SHADER_FLAG_SKINNED;
     }
     if (flags.has_morphs && morphed) variant_flags |= shader::SHADER_FLAG_MORPH;
@@ -33,43 +41,14 @@ fn ShaderVariant mesh_vertex_variant(GeometryFlags flags, bool morphed, uint bas
 }
 
 <*
- The largest active targets by weight magnitude, with their original indices.
- @param channels : "Empty maps one weight to each target."
- @param weights : "One per channel, or per target when channels is empty."
+ Pack a morph selection into the block the vertex stage reads.
  @pure
- @require channels.len == 0 || channels.len == weights.len
 *>
-fn MorphWeightsGpu select_morph_targets(MorphChannel[] channels, float[] weights) {
-    MorphWeightsGpu block;
-    if (!channels.len) {
-        foreach (uint index, weight : weights) insert_morph_target(&block, index, weight);
-        return block;
-    }
-    foreach (usz index, &channel : channels) {
-        ChannelBlend blend = channel.blend(weights[index]);
-        insert_morph_target(&block, blend.targets[0], blend.weights[0]);
-        insert_morph_target(&block, blend.targets[1], blend.weights[1]);
-    }
+fn MorphWeightsGpu pack_morph_selection(MorphSelection selection) {
+    MorphWeightsGpu block = { .count = selection.count };
+    block.indices[..] = selection.targets[..];
+    block.weights[..] = selection.weights[..];
     return block;
-}
-
-<*
- @pure
-*>
-fn void insert_morph_target(MorphWeightsGpu* block, uint index, float weight) @local {
-    if (weight == 0) return;
-    float magnitude = math::abs(weight);
-    uint slot = block.count;
-    while (slot > 0 && math::abs(block.weights[slot - 1]) < magnitude) slot--;
-    if (slot >= shader::MAX_ACTIVE_MORPH_TARGETS) return;
-    uint last = math::min(block.count, shader::MAX_ACTIVE_MORPH_TARGETS - 1);
-    for (uint move = last; move > slot; move--) {
-        block.indices[move] = block.indices[move - 1];
-        block.weights[move] = block.weights[move - 1];
-    }
-    block.indices[slot] = index;
-    block.weights[slot] = weight;
-    if (block.count < shader::MAX_ACTIVE_MORPH_TARGETS) block.count++;
 }
 
 fn DeformationCache create_deformation_cache(Allocator allocator) @private {
@@ -121,7 +100,9 @@ fn gpu::GpuAddress? resolve_morph_block(Renderer* renderer, MeshCandidate* candi
     if (try existing = renderer.deformation.morph_blocks.get((ulong)(uptr)mesh_node)) return existing;
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan span = slot.upload.take(&renderer.device, MorphWeightsGpu::size, STREAM_ALIGNMENT)!;
-    *(MorphWeightsGpu*)span.bytes.ptr = select_morph_targets(candidate.morph_channels, candidate.morph_weights);
+    *(MorphWeightsGpu*)span.bytes.ptr = pack_morph_selection(
+        geometry::select_morph_targets(candidate.morph_channels, candidate.morph_weights),
+    );
     renderer.deformation.morph_blocks.set((ulong)(uptr)mesh_node, span.address);
     return span.address;
 }

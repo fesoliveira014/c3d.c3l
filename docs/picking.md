@@ -38,7 +38,7 @@ Hits are ordered by ascending distance, then by node index. Node pointers are bo
 
 ## Precision
 
-`BOUNDS` reports the ray's entry into each mesh's world bound: `Mesh.local_bounds` when `has_bounds_override` is set, else the geometry's bounds, transformed by the node's world matrix, or the joint-derived bound for a skinned mesh. Bounds survive `release_geometry_cpu`, so bounds picking keeps working after the streams are gone.
+`BOUNDS` reports the ray's entry into each mesh's world bound: `Mesh.local_bounds` when `has_bounds_override` is set, else the geometry's bounds, transformed by the node's world matrix, or the per-joint retained bound of a skinned mesh under its current pose and morph weights. Bounds survive `release_geometry_cpu`, so bounds picking keeps working after the streams are gone.
 
 `TRIANGLES` tests triangles only for static retained geometry: positions still present, `TRIANGLES` topology, no morph targets, no skin binding and no bounds override. Such a mesh is hit only where a triangle is, at the nearest one. Every other mesh reports its bounds hit with `triangle_hit == false`; rest-pose triangles are never presented as an animated surface. Released geometry needs an explicit reload before a triangle query sees it again.
 

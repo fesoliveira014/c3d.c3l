@@ -2,6 +2,7 @@ module c3d::spatial;
 
 import c3d;
 import c3d::asset;
+import c3d::geometry;
 import c3d::maths;
 import c3d::scene;
 import std::math;
@@ -31,26 +32,44 @@ fn Aabb mesh_world_bounds(
     SkinBinding* skin,
 ) {
     if (mesh.has_bounds_override) return maths::aabb_transform(mesh.local_bounds, node.world);
-    Aabb local = assets.geometry(mesh.geometry).data.bounds;
-    if (skin) return skinned_world_bounds(local, node.world, skin);
-    return maths::aabb_transform(local, node.world);
+    GeometryAsset* record = assets.geometry(mesh.geometry);
+    Aabb rest = maths::aabb_transform(record.data.bounds, node.world);
+    if (!skin || !record.skin_bounds.joints.len) return rest;
+    MorphSelection selection = geometry::select_morph_targets(record.data.channels, mesh.morph_weights);
+    return skinned_world_bounds(
+        bounds:       &record.skin_bounds,
+        binding:      skin,
+        inverse_bind: assets.skeleton(skin.skeleton).data.inverse_bind,
+        selection:    &selection,
+        rest:         rest,
+    );
 }
 
 <*
- World bound covering every joint of the binding at the mesh's bind-bound radius.
- @param local : "Bind-pose bounds of the geometry."
- @param world : "World matrix of the mesh node."
+ World bound of the skinned vertices: each joint's retained bound under its current pose, merged.
+ @param [&in] bounds : "Retained per-joint bounds of the geometry."
  @param [&in] binding : "Joints with current world matrices."
+ @param inverse_bind : "One matrix per skeleton joint."
+ @param [&in] selection : "Active morph targets of the mesh."
+ @param rest : "Returned when no bound joint is addressed by the binding."
 *>
-fn Aabb skinned_world_bounds(Aabb local, Mat4 world, SkinBinding* binding) {
-    Aabb bind = maths::aabb_transform(local, world);
-    float radius = ((bind.max - bind.min) * 0.5f).length();
-    Vec3 extent = { radius, radius, radius };
-    Aabb bounds;
-    foreach (index, joint : binding.joints) {
-        Vec3 center = joint.world_position();
-        Aabb around = { .min = center - extent, .max = center + extent };
-        bounds = index == 0 ? around : maths::aabb_merge(bounds, around);
+fn Aabb skinned_world_bounds(
+    SkinBounds* bounds,
+    SkinBinding* binding,
+    Mat4[] inverse_bind,
+    MorphSelection* selection,
+    Aabb rest,
+) {
+    usz joint_count = math::min((usz)bounds.joints.len, math::min((usz)binding.joints.len, (usz)inverse_bind.len));
+    Aabb result;
+    bool first = true;
+    for (uint joint = 0; joint < joint_count; joint++) {
+        if (!bounds.used[joint]) continue;
+        Aabb local = geometry::joint_morph_bounds(bounds, joint, selection);
+        Mat4 transform = binding.joints[joint].world.mul(inverse_bind[joint]);
+        Aabb world = maths::aabb_transform(local, transform);
+        result = first ? world : maths::aabb_merge(result, world);
+        first = false;
     }
-    return bounds;
+    return first ? rest : result;
 }
