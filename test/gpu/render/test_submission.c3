@@ -66,6 +66,10 @@ struct Fixture @private {
     TextureId storage_texture;
     MaterialId material;
     GeometryId box;
+    GeometryId colored_box;
+    GeometryId faded_box;
+    MaterialId plain;
+    MaterialId masked;
     SkeletonId skeleton;
     GeometryId deformed_box;
     ComputeShaderId fill_shader;
@@ -106,6 +110,13 @@ fn void? create_fixture(Allocator allocator, Fixture* fixture, usz upload_ring_b
             .map = material::texture_slot(fixture.storage_texture),
         }))!;
         fixture.scene.add_mesh(fixture.box, fixture.material)!;
+        fixture.plain = fixture.assets.add_material(material::basic({ .color = { 1, 1, 1, 1 } }))!;
+        MaterialCommon cutout = material::MATERIAL_COMMON_DEFAULT;
+        cutout.alpha_mode = AlphaMode.MASK;
+        cutout.alpha_cutoff = 0.5f;
+        fixture.masked = fixture.assets.add_material(material::basic({ .color = { 1, 1, 1, 1 } }, cutout))!;
+        fixture.colored_box = add_colored_box(fixture, GREEN)!;
+        fixture.faded_box = add_colored_box(fixture, { 1, 1, 1, 0 })!;
 
         Geometry deformed = geometry::box(
             allocator: tmem,
@@ -227,6 +238,35 @@ fn void? enable_motion_blur(Fixture* fixture, ViewId view) @private {
     ViewDesc desc = render::texture_view_desc(fixture.hdr_target);
     desc.post.motion_blur = true;
     return render::configure_view(&fixture.renderer, view, desc);
+}
+
+fn GeometryId? add_colored_box(Fixture* fixture, Vec4 color) @private {
+    Geometry box = geometry::box(
+        allocator: tmem,
+        width: 1,
+        height: 1,
+        depth: 1,
+    );
+    box.colors = alloc::new_array(tmem, Vec4, box.positions.len);
+    foreach (&vertex_color : box.colors) *vertex_color = color;
+    return fixture.assets.add_geometry(&box);
+}
+
+fn DeformedScene? create_single_box_scene(Fixture* fixture, GeometryId geometry, MaterialId material, bool sunlit) @private {
+    DeformedScene result;
+    result.scene = scene::create_scene(fixture.allocator, scene::default_scene_desc());
+    defer catch scene::destroy_scene(&result.scene);
+    result.mesh = result.scene.add_mesh(geometry, material)!;
+    result.camera = result.scene.add_camera(camera::perspective_deg(60, 0.1f))!;
+    result.camera.local.position = CAMERA_POSITION;
+    if (sunlit) {
+        Light sunlight = light::directional({ 1, 1, 1 }, 2);
+        sunlight.shadow.cascades = 1;
+        sunlight.shadow.max_distance = 10;
+        result.scene.add_light(sunlight)!;
+    }
+    result.scene.update_world();
+    return result;
 }
 
 fn ComputeShaderId? add_compute_shader(Fixture* fixture, String source) @private {
@@ -677,5 +717,34 @@ fn void test_skinned_geometry_without_binding_draws_unskinned() @test {
     renderer.end_frame()!!;
     sample_frame(&fixture, render::read_target(fixture.hdr_target))!!;
     check_channels(read_pixel(&fixture), RED);
+    check_validation(renderer);
+}
+
+fn void test_vertex_colors_tint_the_built_in_shading_and_cut_masked_alpha() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    DeformedScene tinted = create_single_box_scene(&fixture, fixture.colored_box, fixture.plain, false)!!;
+    defer scene::destroy_scene(&tinted.scene);
+    DeformedScene faded = create_single_box_scene(&fixture, fixture.faded_box, fixture.masked, true)!!;
+    defer scene::destroy_scene(&faded.scene);
+
+    renderer.begin_frame()!!;
+    renderer.render_view(&tinted.scene, tinted.camera, fixture.view)!!;
+    sample(&fixture, render::read_view_color(fixture.view))!!;
+    record_readback(&fixture)!!;
+    renderer.finish_view(fixture.view)!!;
+    renderer.end_frame()!!;
+    check_channels(read_pixel(&fixture), GREEN);
+
+    renderer.begin_frame()!!;
+    renderer.render_view(&faded.scene, faded.camera, fixture.view)!!;
+    sample(&fixture, render::read_view_color(fixture.view))!!;
+    record_readback(&fixture)!!;
+    renderer.finish_view(fixture.view)!!;
+    renderer.end_frame()!!;
+    check_channels(read_pixel(&fixture), { 0, 0, 0, 1 });
+    assert(renderer.stats.shadow_layers == 1);
     check_validation(renderer);
 }

@@ -45,6 +45,10 @@ What the four cases establish:
 - A skinned geometry drawn by a node without a skin binding renders with the
   unskinned vertex stage and shows its material.
 
+- Vertex colors tint the built-in shading, and a masked material discards
+  fragments whose vertex alpha falls under the cutoff in the visible and the
+  shadow pass.
+
 What they cannot establish: window clear-only and GUI-only frames need a
 window (run the `clear` and `cube_gui` examples with validation), and a
 presentation failure after submission needs a hardware observation.

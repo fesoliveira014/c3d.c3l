@@ -262,10 +262,12 @@ fn camera::Camera? convert_camera(gltf::Camera* source) @private {
             return camera;
         case ORTHOGRAPHIC:
             gltf::CameraOrthographic* lens = &source.orthographic;
-            bool in_range = lens.ymag > 0 && math::is_finite(lens.ymag)
+            bool in_range = lens.ymag > 0 && math::is_finite(lens.ymag) && lens.xmag > 0 && math::is_finite(lens.xmag)
                 && math::is_finite(lens.znear) && lens.zfar > lens.znear && math::is_finite(lens.zfar);
             if (!in_range) return c3d::ASSET_FORMAT_ERROR~;
-            return camera::orthographic(2 * lens.ymag, lens.znear, lens.zfar);
+            camera::Camera converted = camera::orthographic(2 * lens.ymag, lens.znear, lens.zfar);
+            converted.aspect = lens.xmag / lens.ymag;
+            return converted;
         case INVALID:
         case MAX_ENUM:
             return c3d::ASSET_FORMAT_ERROR~;

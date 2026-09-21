@@ -185,10 +185,18 @@ fn SamplerId? sampler_for(Importer* importer, ufbx::Texture* texture) @private {
     return importer.mixed_samplers[slot];
 }
 
-fn TextureId find_derived(Importer* importer, uint first, uint second, bool metallic_roughness) @private {
+fn TextureId find_derived(
+    Importer* importer,
+    uint first,
+    uint second,
+    bool metallic_roughness,
+    bool invert_roughness = false,
+) @private {
     foreach (&derived : importer.derived_textures[:importer.derived_count]) {
-        bool same = derived.first == first && derived.second == second;
-        if (same && derived.metallic_roughness == metallic_roughness) return derived.texture;
+        bool same = derived.first == first && derived.second == second
+            && derived.metallic_roughness == metallic_roughness
+            && derived.invert_roughness == invert_roughness;
+        if (same) return derived.texture;
     }
     return {};
 }
@@ -206,6 +214,7 @@ fn TextureId? metallic_roughness_texture(
         first:              roughness_id,
         second:             metalness_id,
         metallic_roughness: true,
+        invert_roughness:   glossiness,
     );
     if (existing.generation) return existing;
 
@@ -257,16 +266,18 @@ fn TextureId? metallic_roughness_texture(
         debug_name: "fbx_metallic_roughness",
     );
     String key = string::tformat(
-        "%s#image/%s+%s/metallic_roughness",
+        "%s#image/%s+%s/metallic_roughness/%s",
         importer.key,
         texture_label(roughness_id),
         texture_label(metalness_id),
+        glossiness ? "inverted" : "direct",
     );
     TextureId id = importer.assets.add_texture_owned(desc, pixels, key)!;
     importer.derived_textures[importer.derived_count++] = {
         .first              = roughness_id,
         .second             = metalness_id,
         .metallic_roughness = true,
+        .invert_roughness   = glossiness,
         .texture            = id,
     };
     return id;

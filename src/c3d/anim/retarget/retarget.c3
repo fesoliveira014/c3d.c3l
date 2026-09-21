@@ -123,7 +123,7 @@ fn AnimationClip? retarget_by_name(
                     rest_position: target.nodes[options.root_node].local.position,
                 );
             }
-            strip_xz(copy.values);
+            strip_xz(copy);
         }
         clip.targets = clip.targets[:target_count];
     };
@@ -201,12 +201,22 @@ fn Track copy_track(Allocator allocator, Track* source, uint target) @private {
     return copy;
 }
 
-fn void strip_xz(float[] values) @private {
-    float first_x = values[0];
-    float first_z = values[2];
-    for (usz key = VEC3_COMPONENTS; key < values.len; key += VEC3_COMPONENTS) {
-        values[key] = first_x;
-        values[key + 2] = first_z;
+fn void strip_xz(Track* track) @private {
+    bool cubic = track.interpolation == anim::Interpolation.CUBIC_SPLINE;
+    float[] first = translation_key(track, 0, anim::CUBIC_SLOT_VALUE);
+    float first_x = first[0];
+    float first_z = first[2];
+    foreach (usz key, time : track.times) {
+        float[] value = translation_key(track, key, anim::CUBIC_SLOT_VALUE);
+        value[0] = first_x;
+        value[2] = first_z;
+        if (!cubic) continue;
+        float[] incoming = translation_key(track, key, anim::CUBIC_SLOT_IN_TANGENT);
+        float[] outgoing = translation_key(track, key, anim::CUBIC_SLOT_OUT_TANGENT);
+        incoming[0] = 0;
+        incoming[2] = 0;
+        outgoing[0] = 0;
+        outgoing[2] = 0;
     }
 }
 
@@ -217,13 +227,26 @@ fn Track root_track_of(
     Vec3 rest_position,
 ) @private {
     Track track = copy_track(allocator, hips, target);
-    track.interpolation = anim::Interpolation.LINEAR;
-    float first_x = hips.values[0];
-    float first_z = hips.values[2];
-    for (usz key = 0; key < track.values.len; key += VEC3_COMPONENTS) {
-        track.values[key] = rest_position.x + hips.values[key] - first_x;
-        track.values[key + 1] = rest_position.y;
-        track.values[key + 2] = rest_position.z + hips.values[key + 2] - first_z;
+    bool cubic = track.interpolation == anim::Interpolation.CUBIC_SPLINE;
+    float[] first = translation_key(hips, 0, anim::CUBIC_SLOT_VALUE);
+    float first_x = first[0];
+    float first_z = first[2];
+    foreach (usz key, time : track.times) {
+        float[] source = translation_key(hips, key, anim::CUBIC_SLOT_VALUE);
+        float[] value = translation_key(&track, key, anim::CUBIC_SLOT_VALUE);
+        value[0] = rest_position.x + source[0] - first_x;
+        value[1] = rest_position.y;
+        value[2] = rest_position.z + source[2] - first_z;
+        if (!cubic) continue;
+        translation_key(&track, key, anim::CUBIC_SLOT_IN_TANGENT)[1] = 0;
+        translation_key(&track, key, anim::CUBIC_SLOT_OUT_TANGENT)[1] = 0;
     }
     return track;
+}
+
+fn float[] translation_key(Track* track, usz key, uint slot) @private {
+    usz offset = track.interpolation == anim::Interpolation.CUBIC_SPLINE
+      ? (key * anim::CUBIC_SLOTS_PER_KEY + slot) * VEC3_COMPONENTS
+      : key * VEC3_COMPONENTS;
+    return track.values[offset:VEC3_COMPONENTS];
 }

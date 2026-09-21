@@ -169,7 +169,7 @@ fn void test_embedded_textures_pack_roughness_metalness_and_opacity() @test {
     assert(material.standard.roughness == 1 && material.standard.metallic == 1);
     assert(material.standard.emissive == (Vec3){ 1, 1, 1 });
 
-    TextureId packed_id = assets.find_texture(string::tformat("%s#image/3+4/metallic_roughness", path))!!;
+    TextureId packed_id = assets.find_texture(string::tformat("%s#image/3+4/metallic_roughness/direct", path))!!;
     assert(material.standard.metallic_roughness_map.texture.asset.index == packed_id.index);
     TextureAsset* packed = assets.texture(packed_id);
     assert(packed.desc.width == 128 && packed.desc.height == 128 && packed.desc.format == RGBA8_UNORM);

@@ -628,10 +628,11 @@ fn MeshPreparation? prepare_mesh(
     }
     if (shadows && data.common.alpha_mode != AlphaMode.BLEND) {
         if (catch excuse = shadow_pipeline_for(
-            renderer:  renderer,
-            wireframe: data.common.wireframe && renderer.caps.line_polygon_mode,
-            vertex:    depth_only_vertex_variant(geometry.layout.flags, morphed),
-            material:  data,
+            renderer:     renderer,
+            wireframe:    data.common.wireframe && renderer.caps.line_polygon_mode,
+            vertex:       depth_only_vertex_variant(geometry.layout.flags, morphed),
+            material:     data,
+            vertex_color: data.common.alpha_mode == AlphaMode.MASK && geometry.layout.flags.has_colors,
         )) {
             if (!custom_pipeline_rejected(renderer, data, excuse)) return excuse~;
             return {};

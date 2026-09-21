@@ -1,5 +1,9 @@
 # Materials and lighting
 
+A geometry with per-vertex colors multiplies them into the base color of every built-in kind after the
+factor and map, before alpha masking and lighting; a masked material also applies the vertex alpha
+in the shadow pass. Custom shaders read `v_color` themselves.
+
 `Basic` renders an unlit color with an optional texture map. `Standard` adds
 metallic-roughness shading from directional, point and spot lights, scene ambient,
 image-based lighting, and five independent texture slots. `Physical` embeds that

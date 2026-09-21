@@ -14,6 +14,7 @@ layout(location = 0) in vec3 v_world_pos;
 layout(location = 1) in vec3 v_normal;
 layout(location = 3) in vec2 v_uv0;
 layout(location = 4) in vec2 v_uv1;
+layout(location = 5) in vec4 v_color;
 layout(location = 0) out vec4 out_color;
 
 layout(push_constant) uniform Push {
@@ -29,6 +30,7 @@ void main() {
     if ((material.map_flags & MATERIAL_MAP_BASE_COLOR) != 0u) {
         base_color *= sample_map(material.map, material.map_flags, MATERIAL_MAP_BASE_COLOR, v_uv0, v_uv1);
     }
+    base_color *= v_color;
 
     vec3 normal = normalize(v_normal);
     if ((material.flags & MATERIAL_DOUBLE_SIDED) != 0u && !gl_FrontFacing) normal = -normal;

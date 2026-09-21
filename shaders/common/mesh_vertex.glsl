@@ -31,6 +31,7 @@ struct MeshVertexInput {
     vec4 tangent;
     vec2 uv0;
     vec2 uv1;
+    vec4 color;
 };
 
 MeshVertexInput pull_mesh_vertex(GeometryRoot geometry, uint index) {
@@ -44,6 +45,7 @@ MeshVertexInput pull_mesh_vertex(GeometryRoot geometry, uint index) {
         : vec4(0.0);
     vertex.uv0 = (geometry.flags & GEOMETRY_HAS_UV0) != 0u ? pull_vec2(geometry.uv0, index) : vec2(0.0);
     vertex.uv1 = (geometry.flags & GEOMETRY_HAS_UV1) != 0u ? pull_vec2(geometry.uv1, index) : vec2(0.0);
+    vertex.color = (geometry.flags & GEOMETRY_HAS_COLORS) != 0u ? pull_vec4(geometry.colors, index) : vec4(1.0);
     return vertex;
 }
 
@@ -76,7 +78,7 @@ void write_mesh_outputs(MeshVertexInput vertex, DrawRoot draw, FrameRoot frame, 
 #endif
     v_uv0 = vertex.uv0;
     v_uv1 = vertex.uv1;
-    v_color = vec4(1.0);
+    v_color = vertex.color;
     v_clip_pos = frame.view_proj * world;
     gl_Position = v_clip_pos;
 }
