@@ -137,14 +137,15 @@ maps and optionally anti-aliases into the output rectangle; `LINEAR_HDR` copies 
 image into the target. Between the two calls a compute dispatch may read the view's depth and read
 or write its scene image (see [custom shaders](custom_shaders.md#views)); `end_frame` faults
 `INVALID_ARGUMENT` when a rendered view was not finished. A window view records nothing while
-the window is dormant (`has_output` false); a texture view always records. `end_frame` submits
-when any view recorded or an upload is pending, presents only when a window image was acquired,
-and discards an empty frame. Neither call advances animation or flushes scene removals.
+the window is dormant (`has_output` false); a texture view always records. `end_frame` records
+pending uploads and environment preparations, then submits when the frame recorded a clear, draw,
+dispatch, upload or preparation, presents only when a window image was acquired, and discards a
+frame that recorded none. Neither call advances animation or flushes scene removals.
 
 `Renderer.render(scene, camera)` is the default-view convenience. `render_to(scene, camera, target,
-color = LINEAR_HDR, info = {})` renders one frame into a target through a view it creates and
-destroys, without touching the window; it waits for completion and is a bake path, not a per-frame
-one.
+color = LINEAR_HDR, info = {})` renders and finishes one frame into a target through a view it
+creates and destroys, without touching the window; it waits for completion and is a bake path, not
+a per-frame one.
 
 Pass timings (`Stats.gpu_pass_ms`) sum all measured view/pass instances in the completed
 `Stats.gpu_frame_index`. Shadow timings retain all measured layers with their original view

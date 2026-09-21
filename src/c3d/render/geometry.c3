@@ -270,7 +270,10 @@ fn GpuGeometry*? resolve_geometry(Renderer* renderer, GeometryId geometry) @priv
 }
 
 fn void? record_pending_copies(Renderer* renderer, gpu::CommandList* commands) @private {
-    if (renderer.pending_copies.len() || renderer.pending_texture_uploads.len()) renderer.uploads_recorded = true;
+    if (renderer.pending_copies.len() || renderer.pending_texture_uploads.len()) {
+        renderer.uploads_recorded = true;
+        renderer.work_recorded = true;
+    }
     record_texture_uploads(renderer, commands)!;
     if (renderer.pending_copies.len()) {
         if (renderer.pending_overwrite) {
@@ -283,6 +286,7 @@ fn void? record_pending_copies(Renderer* renderer, gpu::CommandList* commands) @
         gpu::cmd_barrier(commands, &to_consumers)!;
         renderer.pending_copies.clear();
     }
+    if (has_environment_preparations(renderer)) renderer.work_recorded = true;
     record_environment_preparations(renderer, commands)!;
 }
 

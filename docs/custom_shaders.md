@@ -244,7 +244,7 @@ A dispatch declares every texture it samples or stores in `DispatchDesc.textures
 | `read_view_color(view, sampler = {})`, `write_view_color(view, access = WRITE)` | the view's current scene image | sampled or storage |
 | `read_view_depth(view, sampler = {})` | the view's depth image | sampled only |
 
-A zero sampler id selects the renderer's linear clamp sampler. Before the dispatch the renderer moves each declared image into its declared state, so a target rendered by an earlier view, a texture uploaded this frame, or an image written by an earlier dispatch is readable without further declaration; after the dispatch a store texture returns to the sampled state materials expect, while targets and view images keep their tracked state for the next pass that uses them.
+A zero sampler id selects the renderer's linear clamp sampler. Before the dispatch the renderer moves each declared image into its declared state, so a target rendered by an earlier view, a texture uploaded this frame, or an image written by an earlier dispatch is readable without further declaration; after the dispatch a store texture returns to the sampled state materials expect, while targets and view images keep their tracked state for the next pass that uses them. The renderer remembers each store texture's state when a recording first touches it and restores it when that recording is discarded without submission; two dispatches leaving a texture in the same storage state still record a barrier between them, only sampled reads share a state without one.
 
 ```glsl
 DispatchRoot root = DispatchRoot(pc.root_gpu);

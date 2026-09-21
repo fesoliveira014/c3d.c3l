@@ -9,6 +9,7 @@ import c3d::pool;
 import c3d::render;
 import c3d::shader;
 import gpu;
+import std::collections::list;
 import std::io;
 import std::math;
 
@@ -741,6 +742,49 @@ fn void test_finish_view_requires_a_rendered_view() @test {
     } else {
         assert(false, "finish_view accepted a view that was not rendered");
     }
+}
+
+fn void test_texture_state_restore_matches_asset_and_image() @test {
+    gpu::TextureState sampled = gpu::sampled_at({ .fragment_shader, .compute });
+    gpu::TextureState storage = gpu::storage_at({ .compute }, { .write });
+    gpu::TextureHandle first_image = { .index = 1, .generation = 1 };
+    gpu::TextureHandle replaced_image = { .index = 2, .generation = 1 };
+    render::TextureRes[3] textures = {
+        { .asset = { .index = 0, .generation = 1 }, .texture = first_image, .state = storage },
+        { .asset = { .index = 1, .generation = 2 }, .texture = first_image, .state = storage },
+        { .asset = { .index = 2, .generation = 1 }, .texture = replaced_image, .state = storage },
+    };
+    List{render::TextureStateUndo} undo;
+    undo.init(mem, 4);
+    defer undo.free();
+    undo.push({ .asset = { .index = 0, .generation = 1 }, .texture = first_image, .state = sampled });
+    undo.push({ .asset = { .index = 1, .generation = 1 }, .texture = first_image, .state = sampled });
+    undo.push({ .asset = { .index = 2, .generation = 1 }, .texture = first_image, .state = sampled });
+
+    render::restore_texture_states(&undo, textures[..]);
+
+    assert(textures[0].state.layout == gpu::TextureLayout.SAMPLED);
+    assert(textures[1].state.layout == gpu::TextureLayout.STORAGE);
+    assert(textures[2].state.layout == gpu::TextureLayout.STORAGE);
+    assert(undo.len() == 0);
+}
+
+fn void test_texture_state_remember_keeps_the_first_state() @test {
+    render::TextureRes mirror = {
+        .asset = { .index = 3, .generation = 1 },
+        .texture = { .index = 5, .generation = 1 },
+        .state = gpu::sampled_at({ .fragment_shader, .compute }),
+    };
+    List{render::TextureStateUndo} undo;
+    undo.init(mem, 4);
+    defer undo.free();
+
+    render::remember_texture_state(&undo, &mirror);
+    mirror.state = gpu::storage_at({ .compute }, { .write });
+    render::remember_texture_state(&undo, &mirror);
+
+    assert(undo.len() == 1);
+    assert(undo[0].state.layout == gpu::TextureLayout.SAMPLED);
 }
 
 fn void test_buffer_pool_reuses_a_slot_with_a_new_generation() @test {

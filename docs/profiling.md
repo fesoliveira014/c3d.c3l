@@ -92,13 +92,16 @@ size.
 | | `view.record` | scene pass, sky, transmission, transparent, debug and motion-blur recording |
 | `Renderer.finish_view` | `renderer.finish_view` | depth of field, view output, post chain closure |
 | `Renderer.end_frame` | `renderer.end_frame` | the whole call |
-| | `renderer.submit` | pending copies, upload flush, command list end and submission |
+| | `renderer.submit` | upload flush, command list end and submission |
 | | `renderer.present` | window presentation |
 | `Renderer.prepare_scene` | `renderer.prepare_scene` | the whole call |
 | `Renderer.prepare_model` | `renderer.prepare_model` | the whole call |
 | `Renderer.upload_texture` | `renderer.upload_texture` | the whole call |
 
 `renderer.present` appears under both frame boundaries; summaries count both.
+`end_frame` records pending copies and environment preparations before it
+decides whether to submit; that work is attributed to `renderer.end_frame`
+itself, not to `renderer.submit`.
 `Renderer.render` adds no scope of its own. First-use resource work inside a
 warm `render_view`, such as an asset revision bump, is attributed to
 `view.resolve`; cold preparation is attributed to the `prepare_*`,
