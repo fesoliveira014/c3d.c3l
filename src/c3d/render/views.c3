@@ -75,37 +75,44 @@ struct ProjectionTerms {
 }
 
 <*
- Pose the view last rendered: its camera and every node it drew, tagged by entity.
+ Pose the view last rendered: its camera and every node it drew, tagged by entity and scene.
 *>
 struct ViewHistory {
     bool     valid;
+    bool     pending;
+    ulong    scene;
+    ulong    serial;
     Mat4     view_proj;
     Mat4[]   models;
     Entity[] owners;
+    ulong[]  seen;
 }
 
 <*
- Whether the node was drawn by the last rendering of this view.
+ Whether the node was drawn by the last published rendering of this view.
+ @param [&in] scene : "Scene the node belongs to."
  @param [&in] node : "Live node."
 *>
-fn bool ViewHistory.has_previous(&self, Node* node) {
-    if (!self.valid || node.id.index >= self.owners.len) return false;
+fn bool ViewHistory.has_previous(&self, Scene* scene, Node* node) {
+    if (!self.valid || scene.identity != self.scene || node.id.index >= self.owners.len) return false;
     Entity owner = self.owners[node.id.index];
-    return owner.index == node.id.index && owner.generation == node.id.generation;
+    return owner.index == node.id.index && owner.generation == node.id.generation
+        && self.seen[node.id.index] == self.serial;
 }
 
 <*
  World matrix the node had when this view last rendered it.
+ @param [&in] scene : "Scene the node belongs to."
  @param [&in] node : "Live node."
- @require self.has_previous(node)
+ @require self.has_previous(scene, node)
 *>
-fn Mat4 ViewHistory.previous_model(&self, Node* node) {
+fn Mat4 ViewHistory.previous_model(&self, Scene* scene, Node* node) {
     return self.models[node.id.index];
 }
 
 <*
- Remember the drawn candidates' world matrices and the camera for the next rendering.
- @param [&in] scene : "Sizes the tables to its node capacity."
+ Remember the drawn candidates and the camera, pending publication by the frame's submit.
+ @param [&in] scene : "Sizes the tables to its node capacity and identifies the history."
  @param candidates : "Every mesh this rendering drew."
 *>
 fn void ViewHistory.commit(
@@ -119,13 +126,36 @@ fn void ViewHistory.commit(
         free_view_history(allocator, self);
         self.models = alloc::new_array(allocator, Mat4, scene.nodes.len);
         self.owners = alloc::new_array(allocator, Entity, scene.nodes.len);
+        self.seen = alloc::new_array(allocator, ulong, scene.nodes.len);
     }
+    self.scene = scene.identity;
+    self.serial++;
     foreach (&candidate : candidates) {
-        self.models[candidate.node.id.index] = candidate.node.world;
-        self.owners[candidate.node.id.index] = candidate.node.id;
+        usz index = candidate.node.id.index;
+        self.models[index] = candidate.node.world;
+        self.owners[index] = candidate.node.id;
+        self.seen[index] = self.serial;
     }
     self.view_proj = view_proj;
+    self.pending = true;
+}
+
+<*
+ Publish the pending rendering as the previous pose.
+*>
+fn void ViewHistory.publish(&self) {
+    if (!self.pending) return;
     self.valid = true;
+    self.pending = false;
+}
+
+<*
+ Drop the pending rendering; the next rendering carries no motion.
+*>
+fn void ViewHistory.discard(&self) {
+    if (!self.pending) return;
+    self.valid = false;
+    self.pending = false;
 }
 
 <*
@@ -136,6 +166,7 @@ fn void free_view_history(Allocator allocator, ViewHistory* history) {
     if (history.models.len) {
         alloc::free(allocator, history.models.ptr);
         alloc::free(allocator, history.owners.ptr);
+        alloc::free(allocator, history.seen.ptr);
     }
     *history = {};
 }
@@ -386,6 +417,7 @@ fn void? configure_view(Renderer* renderer, ViewId view, ViewDesc desc) {
     }
     record.desc = desc;
     record.history.valid = false;
+    record.history.pending = false;
     post::retire_effect_targets(renderer, record);
     post::acquire_effect_targets(renderer, record)!;
 }
@@ -416,6 +448,7 @@ fn void? destroy_view(Renderer* renderer, ViewId view) {
 fn void? reset_view_history(Renderer* renderer, ViewId view) {
     ViewRecord* record = renderer.views.try_get(view)!;
     record.history.valid = false;
+    record.history.pending = false;
 }
 
 fn void? validate_view_desc(Renderer* renderer, ViewDesc* desc) @private {
@@ -510,6 +543,7 @@ fn void release_view_images(Renderer* renderer, ViewRecord* record) @private {
 fn void? resize_view(Renderer* renderer, ViewRecord* record) @private {
     release_view_images(renderer, record);
     record.history.valid = false;
+    record.history.pending = false;
     return acquire_view_images(renderer, record);
 }
 

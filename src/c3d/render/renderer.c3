@@ -386,6 +386,7 @@ fn void? Renderer.end_frame(&self) {
             if (present) self.output_submission = slot.done;
             self.frame_submitted = true;
             commit_uploads(self, slot);
+            foreach (&record : self.views.items) record.history.publish();
             submitted = true;
         };
         self.stats.cpu_record_ms = elapsed_ms(self.frame_started);
@@ -959,7 +960,10 @@ fn void abort_frame(Renderer* renderer) {
         renderer.shadow_atlas.state = renderer.frame_shadow_state;
         foreach (index, &target : renderer.targets.items) target.target.state = renderer.frame_target_states[index];
         foreach (index, &preview : renderer.previews) preview.image.state = renderer.frame_preview_states[index];
-        foreach (&record : renderer.views.items) record.restore_states();
+        foreach (&record : renderer.views.items) {
+            record.restore_states();
+            record.history.discard();
+        }
     }
     foreach (&record : renderer.views.items) {
         record.rendered = false;

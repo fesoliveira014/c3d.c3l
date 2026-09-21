@@ -113,11 +113,15 @@ cylinder and depth order, into `motion_blur_out`, which the later stages read in
 `hdr_color`. Three dispatches are counted under `POST_CHAIN`.
 
 The previous pose is renderer-owned per view (`ViewHistory`): the camera's view-projection and
-the world matrix of every mesh the view drew, tagged by entity so a reused slot never matches.
-It is committed at the end of `render_view` when motion blur is on and reset by `configure_view`,
-by a resize and by `render::reset_view_history(&renderer, view)` (a camera cut); the first
-rendering after a reset carries no motion. An aborted frame keeps its commit, so at most one frame
-of invented motion follows a failed submission. Enabling allocates the velocity image, the blur
+the world matrix of every mesh the view drew, tagged by entity so a reused slot never matches,
+stamped with the rendering so a mesh absent from the last rendering has no previous model when it
+returns, and keyed by the scene's identity so a view that switches scenes starts without motion and
+a replaced scene needs no reset. It is committed at the end of `render_view` when motion blur is
+on and published when the frame submits; an unsubmitted abort drops it and the next rendering
+carries no motion. `configure_view`, a resize and `render::reset_view_history(&renderer, view)`
+(a camera cut) reset it; the first rendering after a reset carries no motion. Under an
+orthographic projection a depth-zero pixel has zero camera velocity, since a direction has no finite
+reprojection there. Enabling allocates the velocity image, the blur
 output and the shared tile images; disabling retires them. `configure_view` faults
 `INVALID_ARGUMENT` when motion blur is on with `samples` outside `[1, 32]`, a non-positive
 `max_velocity` or a negative `shutter`.

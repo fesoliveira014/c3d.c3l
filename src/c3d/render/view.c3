@@ -335,8 +335,8 @@ fn void? Renderer.render_view(
                 foreach (group : draw_groups) foreach (&item : group) {
                     Node* node = item.candidate.node;
                     Mat4 prev_world = node.world;
-                    if (motion_blur && record.history.has_previous(node)) {
-                        prev_world = record.history.previous_model(node);
+                    if (motion_blur && record.history.has_previous(scene, node)) {
+                        prev_world = record.history.previous_model(scene, node);
                     }
                     item.moved = !(prev_world == node.world);
                     gpu::MappedGpuSpan draw_span = slot.upload.take(&self.device, DrawRoot::size, STREAM_ALIGNMENT)!;

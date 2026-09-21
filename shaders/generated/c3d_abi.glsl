@@ -560,8 +560,8 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer DofRoot {
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer VelocityRoot {
     uint depth_texture;
     uint sampler_index;
+    uint orthographic;
     uint _pad0;
-    uint _pad1;
     mat4 inv_view_proj;
     mat4 prev_view_proj;
 };

@@ -59,8 +59,9 @@ stack fault `INVALID_ARGUMENT`; a full pool faults `CAPACITY_EXCEEDED` (`VIEW_CA
 The view owns its working images (`hdr_color`, `depth`, the scene-color snapshot, post and effect
 images) at the working extent `working_extent(viewport, output, render_scale)`, at least one pixel
 per dimension. Reconfiguring with a different extent or output waits for outstanding frames and
-reallocates them; every configuration resets the view's history. Window resize resizes every
-window view; target resize resizes every view on that target. A headless renderer's window views
+reallocates them; every configuration resets the view's history, which is otherwise keyed by scene
+identity and needs no reset when a scene is replaced (`reset_view_history` remains the camera cut).
+Window resize resizes every window view; target resize resizes every view on that target. A headless renderer's window views
 hold no images and record nothing.
 
 ## Light selection

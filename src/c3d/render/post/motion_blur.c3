@@ -95,6 +95,7 @@ fn void? record_camera_velocity(Renderer* renderer, ViewRecord* record, CameraMa
     *(VelocityRoot*)root.bytes.ptr = {
         .depth_texture  = record.depth.view.index,
         .sampler_index  = renderer.linear_clamp_sampler,
+        .orthographic   = record.projection_terms.orthographic ? 1 : 0,
         .inv_view_proj  = bitcast(matrices.inv_view_proj, Mat4f),
         .prev_view_proj = bitcast(prev_view_proj, Mat4f),
     };

@@ -11,6 +11,8 @@ import std::math;
 
 const uint DEFAULT_MAX_NODES @local = 16384; // 2.5 MiB of Node plus the entity pool; the only per-node fixed cost
 
+ulong scene_identity_counter @local;
+
 <*
  Node capacity of a scene, excluding the root; fixed at creation.
 *>
@@ -36,6 +38,7 @@ struct Scene {
     Background     background;
     Node*[]        remove_queue;
     uint           remove_count;
+    ulong          identity;
 }
 
 <*
@@ -270,6 +273,7 @@ fn Scene create_scene(Allocator allocator, SceneDesc desc) {
         .environment_rotation   = quaternion::IDENTITY,
         .background             = BACKGROUND_DEFAULT,
         .remove_queue           = alloc::new_array(allocator, Node*, desc.max_nodes),
+        .identity               = ++scene_identity_counter,
     };
     *scene.hook_allocator = allocator;
     Entity root_entity = scene.world.create_entity()!!;
