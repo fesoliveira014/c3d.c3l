@@ -76,7 +76,7 @@ fn void? record_motion_blur(
 }
 
 fn void? acquire_motion_blur_pipelines(Renderer* renderer) @private {
-    acquire_compute_pipeline(
+    render::acquire_compute_pipeline(
         renderer:   renderer,
         pipeline:   &renderer.post_pipelines.motion_blur,
         shader:     ShaderName.MOTION_BLUR,

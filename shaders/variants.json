@@ -39,6 +39,7 @@
     { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["DEPTH_ONLY", "SKINNED_U16", "MORPH"] },
     { "shader": "grade", "source": "grade.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "fxaa", "source": "fxaa.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "fxaa_fragment", "source": "fxaa.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "display", "source": "display.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "bloom_downsample", "source": "bloom_downsample.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "bloom_upsample", "source": "bloom_upsample.comp.glsl", "stage": "comp", "defines": [] },

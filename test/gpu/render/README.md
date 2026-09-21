@@ -49,6 +49,11 @@ What the four cases establish:
   fragments whose vertex alpha falls under the cutoff in the visible and the
   shadow pass.
 
+- A translucent draw blends inside the single forward attachment pass; FXAA
+  writes the output directly when the working image matches the output
+  rectangle and falls back to the compute route otherwise; bloom at zero
+  intensity records no dispatch.
+
 What they cannot establish: window clear-only and GUI-only frames need a
 window (run the `clear` and `cube_gui` examples with validation), and a
 presentation failure after submission needs a hardware observation.

@@ -82,6 +82,28 @@ fn bool PipelineKey.equals(&self, PipelineKey other) {
 }
 
 <*
+ Create a registry compute pipeline into the caller's slot once; a valid slot is kept.
+ @param [&inout] pipeline : "Caller-owned slot; written only after successful creation."
+ @return? c3d::SHADER_NOT_FOUND, gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::PIPELINE_CREATE_FAILED
+ @return? gpu::SLOT_TABLE_FULL, gpu::INVALID_ARGUMENT, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
+ @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+*>
+fn void? acquire_compute_pipeline(
+    Renderer* renderer,
+    gpu::PipelineHandle* pipeline,
+    ShaderName shader,
+    ZString debug_name,
+) @private {
+    if (pipeline.is_valid()) return;
+
+    gpu::ComputePipelineDesc description = {
+        .shader     = { .spirv = renderer.pipelines.registry.get({ .shader = shader })! },
+        .debug_name = debug_name,
+    };
+    *pipeline = gpu::create_compute_pipeline(&renderer.device, &description)!;
+}
+
+<*
  Pipeline for the key, created on first use from the registry or the custom stages.
  A key the backend rejected is not retried until its shader is replaced or removed.
  @param [&inout] device : "Owns the created pipeline."

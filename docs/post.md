@@ -32,9 +32,11 @@ Both routes run inside `finish_view` and write the view's output rectangle.
 - FXAA off: `hdr_color` is sampled by `display.frag`, which grades, tone maps and applies the LUT
   in the final fullscreen pass. No working image exists; `Stats.post_dispatches` is zero and the
   `POST_CHAIN` timing is empty.
-- FXAA on: `grade.comp` writes the graded LDR image and its perceptual luma (alpha) into `post_a`;
-  `fxaa.comp` reads `post_a` and writes `post_b`; the identity composite copies `post_b` to the
-  output. Two dispatches are counted and timed under `POST_CHAIN`.
+- FXAA on: `grade.comp` writes the graded LDR image and its perceptual luma (alpha) into `post_a`.
+  When the working image equals the output rectangle in pixels, `fxaa.frag` filters `post_a`
+  straight into the output attachment (one dispatch counted, the fragment pass timed under
+  `COMPOSITE`); otherwise `fxaa.comp` writes `post_b`, allocated on first use, and the identity
+  composite copies it to the output (two dispatches counted under `POST_CHAIN`).
 
 Grade order: exposure, white balance (LMS von Kries from temperature and tint in `[-1, 1]`),
 contrast about linear mid-gray 0.18, saturation on Rec.709 luma, lift-gamma-gain
@@ -55,9 +57,9 @@ not provided.
 
 FXAA 3.11 quality, preset 12, edge threshold 0.166, minimum 0.0833, subpixel quality 0.75. Luma is
 the alpha the grade pass writes (`sqrt` of Rec.709 luma of the display-linear color); the filter
-writes alpha one. Enabling FXAA allocates `post_a` and `post_b` (RGBA16_FLOAT, sampled and storage)
-at the `hdr_color` size; disabling retires them through the frame lifecycle. Resize recreates them
-with the view targets.
+writes alpha one. Enabling FXAA allocates `post_a` (RGBA16_FLOAT, sampled and storage) at the
+`hdr_color` size; `post_b` follows only when the compute fallback runs. Disabling retires them
+through the frame lifecycle. Resize recreates them with the view targets.
 
 ## Bloom
 
@@ -136,3 +138,8 @@ dispatches and the completed velocity and post-chain timings.
 
 Pass timings describe the last recorded view of the frame; counters accumulate across views.
 Temporal anti-aliasing is a later effect; auto-exposure is not implemented.
+
+Bloom records only when its intensity is positive or a bloom preview waits for the view; a bloom preview
+requested after its view finished stays pending until a frame records the chain. Opaque, sky and
+ordinary transparent draws share one attachment pass; transmission ends it for the scene-color
+snapshot and continues in loaded passes.

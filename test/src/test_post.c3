@@ -171,3 +171,34 @@ fn void test_grade_gpu_packs_bloom_binding() @test {
     assert(packed.bloom_texture == (gpu::TextureIndex)0 && packed.bloom_sampler == (gpu::SamplerIndex)0);
     assert(packed.bloom_intensity == 0);
 }
+
+fn void test_fxaa_fragment_route_needs_equal_extents() @test {
+    assert(post::fxaa_fragment_eligible(
+        working_width:  1920,
+        working_height: 1080,
+        rect:           {},
+        output_width:   1920,
+        output_height:  1080,
+    ));
+    assert(post::fxaa_fragment_eligible(
+        working_width:  640,
+        working_height: 360,
+        rect:           { .x = 100, .y = 50, .width = 640, .height = 360 },
+        output_width:   1920,
+        output_height:  1080,
+    ));
+    assert(!post::fxaa_fragment_eligible(
+        working_width:  960,
+        working_height: 540,
+        rect:           {},
+        output_width:   1920,
+        output_height:  1080,
+    ));
+    assert(!post::fxaa_fragment_eligible(
+        working_width:  641,
+        working_height: 360,
+        rect:           { .width = 640, .height = 360 },
+        output_width:   1920,
+        output_height:  1080,
+    ));
+}

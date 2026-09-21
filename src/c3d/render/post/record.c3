@@ -46,7 +46,9 @@ fn void? record_display(
 ) {
     GradeParams* grade = &record.desc.post.grade;
     LutBinding lut = resolve_lut(renderer, grade.lut)!;
-    BloomBinding bloom = record.desc.post.bloom ? record_bloom(renderer, record)! : (BloomBinding){};
+    bool bloom_needed = record.desc.post.bloom
+        && (record.desc.post.bloom_params.intensity > 0 || render::bloom_preview_requested(renderer, record));
+    BloomBinding bloom = bloom_needed ? record_bloom(renderer, record)! : (BloomBinding){};
     if (!record.desc.post.fxaa) {
         close_post_chain(renderer, record)!;
         return record_fused_display(
@@ -69,9 +71,27 @@ fn void? record_display(
         lut:      lut,
         bloom:    bloom,
     )!;
+    renderer.stats.post_dispatches += 1;
+    if (fxaa_fragment_eligible(
+        working_width:  record.post_a.width,
+        working_height: record.post_a.height,
+        rect:           rect,
+        output_width:   output.width,
+        output_height:  output.height,
+    )) {
+        close_post_chain(renderer, record)!;
+        return record_fxaa_fragment(
+            renderer: renderer,
+            record:   record,
+            output:   output,
+            rect:     rect,
+        );
+    }
+
+    acquire_fxaa_fallback_target(renderer, record)!;
     record_fxaa(renderer, record)!;
     close_post_chain(renderer, record)!;
-    renderer.stats.post_dispatches += 2;
+    renderer.stats.post_dispatches += 1;
 
     return render::composite_target(
         renderer: renderer,
@@ -79,6 +99,66 @@ fn void? record_display(
         output:   output,
         rect:     rect,
     );
+}
+
+<*
+ Whether FXAA can write the output rectangle directly: the working image and the rectangle match in pixels.
+ @param rect : "Output rectangle; zero extent means the whole output."
+ @pure
+*>
+fn bool fxaa_fragment_eligible(
+    uint working_width,
+    uint working_height,
+    PixelRect rect,
+    uint output_width,
+    uint output_height,
+) {
+    uint rect_width = rect.width ? rect.width : output_width;
+    uint rect_height = rect.height ? rect.height : output_height;
+    return working_width == rect_width && working_height == rect_height;
+}
+
+fn void? record_fxaa_fragment(
+    Renderer* renderer,
+    ViewRecord* record,
+    Target* output,
+    PixelRect rect,
+) @private {
+    record.post_a.transition(&renderer.commands, render::FRAGMENT_READ_STATE)!;
+    output.transition(&renderer.commands, render::COLOR_ATTACHMENT_STATE)!;
+
+    Frame* slot = &renderer.frames[renderer.frame_index % render::FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, FxaaRoot::size)!;
+    *(FxaaRoot*)root.bytes.ptr = {
+        .input_texture = record.post_a.view.index,
+        .sampler_index = renderer.linear_clamp_sampler,
+        .width         = record.post_a.width,
+        .height        = record.post_a.height,
+    };
+    gpu::PipelineHandle pipeline = renderer.pipelines.get(&renderer.device, fxaa_fragment_pipeline_key(output.format))!;
+
+    render::begin_profile_pass(renderer, Pass.COMPOSITE)!;
+    render::record_fullscreen_pass(
+        renderer:      renderer,
+        target:        output,
+        pipeline:      pipeline,
+        fragment_root: root.address,
+        rect:          rect,
+        load:          render::output_load_op(output, rect),
+    )!;
+    render::end_profile_pass(renderer, Pass.COMPOSITE)!;
+}
+
+fn PipelineKey fxaa_fragment_pipeline_key(gpu::Format output_format) @private {
+    return {
+        .vertex        = { .shader = FULLSCREEN },
+        .fragment      = { .shader = FXAA_FRAGMENT },
+        .color_formats = { [0] = output_format },
+        .color_count   = 1,
+        .depth_format  = gpu::Format.UNDEFINED,
+        .samples       = gpu::SampleCount.ONE,
+        .polygon       = gpu::PolygonMode.FILL,
+    };
 }
 
 <*
@@ -93,9 +173,14 @@ fn void? prepare_display(Renderer* renderer, ViewRecord* record) {
     if (record.desc.post.bloom) acquire_bloom_pipelines(renderer)!;
     if (record.desc.post.depth_of_field) acquire_dof_pipelines(renderer)!;
     if (record.desc.post.motion_blur) acquire_motion_blur_pipelines(renderer)!;
-    if (record.desc.post.fxaa) return acquire_post_pipelines(renderer);
     if (!record.hdr_color.texture.is_valid()) return;
-    renderer.pipelines.get(&renderer.device, display_pipeline_key(render::view_output_format(renderer, &record.desc)))!;
+    gpu::Format output_format = render::view_output_format(renderer, &record.desc);
+    if (record.desc.post.fxaa) {
+        acquire_post_pipelines(renderer)!;
+        renderer.pipelines.get(&renderer.device, fxaa_fragment_pipeline_key(output_format))!;
+        return;
+    }
+    renderer.pipelines.get(&renderer.device, display_pipeline_key(output_format))!;
 }
 
 <*
@@ -243,23 +328,8 @@ fn PipelineKey display_pipeline_key(gpu::Format output_format) @private {
 }
 
 fn void? acquire_post_pipelines(Renderer* renderer) @private {
-    acquire_compute_pipeline(renderer, &renderer.post_pipelines.grade, ShaderName.GRADE, "post_grade")!;
-    acquire_compute_pipeline(renderer, &renderer.post_pipelines.fxaa, ShaderName.FXAA, "post_fxaa")!;
-}
-
-fn void? acquire_compute_pipeline(
-    Renderer* renderer,
-    gpu::PipelineHandle* pipeline,
-    ShaderName shader,
-    ZString debug_name,
-) @private {
-    if (pipeline.is_valid()) return;
-
-    gpu::ComputePipelineDesc description = {
-        .shader     = { .spirv = renderer.pipelines.registry.get({ .shader = shader })! },
-        .debug_name = debug_name,
-    };
-    *pipeline = gpu::create_compute_pipeline(&renderer.device, &description)!;
+    render::acquire_compute_pipeline(renderer, &renderer.post_pipelines.grade, ShaderName.GRADE, "post_grade")!;
+    render::acquire_compute_pipeline(renderer, &renderer.post_pipelines.fxaa, ShaderName.FXAA, "post_fxaa")!;
 }
 
 fn void? open_post_chain(Renderer* renderer, ViewRecord* record) @private {

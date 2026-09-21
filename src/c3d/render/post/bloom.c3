@@ -61,18 +61,19 @@ fn BloomBinding? record_bloom(Renderer* renderer, ViewRecord* record) {
     }
 
     record.bloom[0].transition(&renderer.commands, gpu::sampled_at({ .compute, .fragment_shader }))!;
+    record.bloom_recorded = true;
     renderer.stats.post_dispatches += 2 * levels - 1;
     return { .texture = record.bloom[0].view.index, .intensity = params.intensity };
 }
 
 fn void? acquire_bloom_pipelines(Renderer* renderer) @private {
-    acquire_compute_pipeline(
+    render::acquire_compute_pipeline(
         renderer:   renderer,
         pipeline:   &renderer.post_pipelines.bloom_downsample,
         shader:     ShaderName.BLOOM_DOWNSAMPLE,
         debug_name: "post_bloom_downsample",
     )!;
-    acquire_compute_pipeline(
+    render::acquire_compute_pipeline(
         renderer:   renderer,
         pipeline:   &renderer.post_pipelines.bloom_upsample,
         shader:     ShaderName.BLOOM_UPSAMPLE,

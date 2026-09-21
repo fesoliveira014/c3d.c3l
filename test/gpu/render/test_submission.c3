@@ -70,6 +70,7 @@ struct Fixture @private {
     GeometryId faded_box;
     MaterialId plain;
     MaterialId masked;
+    MaterialId translucent;
     SkeletonId skeleton;
     GeometryId deformed_box;
     ComputeShaderId fill_shader;
@@ -79,6 +80,7 @@ struct Fixture @private {
     RenderTargetId ldr_target;
     ViewId view;
     ViewId second_view;
+    ViewId display_view;
     gpu::MappedGpuSpan readback;
     bool renderer_alive;
 }
@@ -115,6 +117,9 @@ fn void? create_fixture(Allocator allocator, Fixture* fixture, usz upload_ring_b
         cutout.alpha_mode = AlphaMode.MASK;
         cutout.alpha_cutoff = 0.5f;
         fixture.masked = fixture.assets.add_material(material::basic({ .color = { 1, 1, 1, 1 } }, cutout))!;
+        MaterialCommon blended = material::MATERIAL_COMMON_DEFAULT;
+        blended.alpha_mode = AlphaMode.BLEND;
+        fixture.translucent = fixture.assets.add_material(material::basic({ .color = { 1, 1, 1, 0.5f } }, blended))!;
         fixture.colored_box = add_colored_box(fixture, GREEN)!;
         fixture.faded_box = add_colored_box(fixture, { 1, 1, 1, 0 })!;
 
@@ -176,6 +181,10 @@ fn void? create_fixture(Allocator allocator, Fixture* fixture, usz upload_ring_b
     )!;
     fixture.view = render::create_view(&fixture.renderer, render::texture_view_desc(fixture.hdr_target))!;
     fixture.second_view = render::create_view(&fixture.renderer, render::texture_view_desc(fixture.hdr_target))!;
+    fixture.display_view = render::create_view(
+        &fixture.renderer,
+        render::texture_view_desc(fixture.ldr_target, OutputMode.DISPLAY_LDR),
+    )!;
     fixture.output = fixture.renderer.create_buffer({ .size = SampleOutput::size, .debug_name = "acceptance_output" })!;
     gpu::AllocationDesc readback_desc = {
         .size = SampleOutput::size,
@@ -403,6 +412,25 @@ fn void check_solid_red(uint pixel) @private {
     float red = (float)(pixel & 0xff) / 255;
     assert(red >= BLURRED_CENTER_MINIMUM);
     assert((pixel & PIXEL_ALPHA_MASK) == PIXEL_ALPHA_MASK);
+}
+
+fn void check_rgb(uint pixel, Vec4 expected) @private {
+    for (uint channel = 0; channel < 3; channel++) {
+        int actual = (int)((pixel >> (8 * channel)) & 0xff);
+        int wanted = (int)(expected[channel] * 255 + 0.5f);
+        assert(math::abs(actual - wanted) <= CHANNEL_TOLERANCE);
+    }
+}
+
+fn void? render_display_and_sample(Fixture* fixture, DeformedScene* scene) @private {
+    Renderer* renderer = &fixture.renderer;
+    renderer.begin_frame()!;
+    defer catch render::abort_frame(renderer);
+    renderer.render_view(&scene.scene, scene.camera, fixture.display_view)!;
+    renderer.finish_view(fixture.display_view)!;
+    sample(fixture, render::read_target(fixture.ldr_target))!;
+    record_readback(fixture)!;
+    return renderer.end_frame();
 }
 
 fn void check_opaque_color(uint pixel) @private {
@@ -746,5 +774,72 @@ fn void test_vertex_colors_tint_the_built_in_shading_and_cut_masked_alpha() @tes
     renderer.end_frame()!!;
     check_channels(read_pixel(&fixture), { 0, 0, 0, 1 });
     assert(renderer.stats.shadow_layers == 1);
+    check_validation(renderer);
+}
+
+fn void test_translucent_draws_share_the_forward_pass() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    DeformedScene glass = create_single_box_scene(&fixture, fixture.box, fixture.translucent, false)!!;
+    defer scene::destroy_scene(&glass.scene);
+
+    renderer.begin_frame()!!;
+    renderer.render_view(&glass.scene, glass.camera, fixture.view)!!;
+    sample(&fixture, render::read_view_color(fixture.view))!!;
+    record_readback(&fixture)!!;
+    renderer.finish_view(fixture.view)!!;
+    renderer.end_frame()!!;
+    check_rgb(read_pixel(&fixture), { 0.5f, 0.5f, 0.5f, 0 });
+    check_validation(renderer);
+}
+
+fn void test_fxaa_writes_the_output_directly_at_equal_extents() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    DeformedScene tinted = create_single_box_scene(&fixture, fixture.colored_box, fixture.plain, false)!!;
+    defer scene::destroy_scene(&tinted.scene);
+
+    render_display_and_sample(&fixture, &tinted)!!;
+    uint pixel = read_pixel(&fixture);
+    uint red = pixel & 0xff;
+    uint green = (pixel >> 8) & 0xff;
+    uint blue = (pixel >> 16) & 0xff;
+    assert(green > red && green > blue && (pixel & PIXEL_ALPHA_MASK) == PIXEL_ALPHA_MASK);
+    assert(renderer.stats.post_dispatches == 1);
+
+    ViewDesc scaled = render::texture_view_desc(fixture.ldr_target, OutputMode.DISPLAY_LDR);
+    scaled.render_scale = 0.5f;
+    render::configure_view(renderer, fixture.display_view, scaled)!!;
+    render_display_and_sample(&fixture, &tinted)!!;
+    read_pixel(&fixture);
+    assert(renderer.stats.post_dispatches == 2);
+    check_validation(renderer);
+}
+
+fn void test_zero_intensity_bloom_records_no_dispatches() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    DeformedScene tinted = create_single_box_scene(&fixture, fixture.colored_box, fixture.plain, false)!!;
+    defer scene::destroy_scene(&tinted.scene);
+
+    ViewDesc glowing = render::texture_view_desc(fixture.ldr_target, OutputMode.DISPLAY_LDR);
+    glowing.post.bloom = true;
+    glowing.post.bloom_params.intensity = 0;
+    render::configure_view(renderer, fixture.display_view, glowing)!!;
+    render_display_and_sample(&fixture, &tinted)!!;
+    read_pixel(&fixture);
+    assert(renderer.stats.post_dispatches == 1);
+
+    glowing.post.bloom_params.intensity = 0.05f;
+    render::configure_view(renderer, fixture.display_view, glowing)!!;
+    render_display_and_sample(&fixture, &tinted)!!;
+    read_pixel(&fixture);
+    assert(renderer.stats.post_dispatches > 1);
     check_validation(renderer);
 }
