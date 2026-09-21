@@ -186,11 +186,17 @@ fn void blend_instance(Animator* animator, AssetStore* assets, ModelInstance* in
     float[] morph_weights = alloc::new_array(tmem, float, instance.base_morph_weights.len);
     foreach (index, base : instance.base_morph_weights) morph_sums[index] = alloc::new_array(tmem, float, base.len);
 
+    uint max_stride;
+    foreach (&action : animator.actions) {
+        if (action.weight <= 0) continue;
+        foreach (&track : assets.clip(action.clip).data.tracks) max_stride = math::max(max_stride, track.stride());
+    }
+    float[] scratch = alloc::new_array(tmem, float, max_stride);
     foreach (&action : animator.actions) {
         if (action.weight <= 0) continue;
         AnimationClip* clip = &assets.clip(action.clip).data;
         foreach (track_index, &track : clip.tracks) {
-            float[] sample = alloc::new_array(tmem, float, track.stride());
+            float[] sample = scratch[:track.stride()];
             sample_track(track, action.time, &action.cursors[track_index], sample);
             uint node = clip.targets[track.target];
             switch (track.path) {

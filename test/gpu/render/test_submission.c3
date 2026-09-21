@@ -35,6 +35,9 @@ const float CAMERA_TURN_DEGREES @private = 2;
 const float CAMERA_SLIDE @private = 0.1f;
 const float ORTHOGRAPHIC_HEIGHT @private = 2;
 const uint SHARED_BOX_COUNT @private = 5;
+const uint SHARED_GRID_WIDTH @private = 8;
+const uint OVERFLOW_BOX_COUNT @private = 64; // about 20 KiB of draw roots per frame against a 4 KiB ring
+const usz TINY_RING_BYTES @private = 4096;
 const float BLURRED_CENTER_MINIMUM @private = 0.8f; // a few pixels of true motion keep the box center nearly solid; a background velocity clamped at max_velocity smears it dark
 
 struct FillRoot @private {
@@ -82,7 +85,7 @@ struct DeformedScene @private {
     Node* camera;
 }
 
-fn void? create_fixture(Allocator allocator, Fixture* fixture) @private {
+fn void? create_fixture(Allocator allocator, Fixture* fixture, usz upload_ring_bytes = 0) @private {
     fixture.allocator = allocator;
     fixture.assets = asset::create_asset_store(allocator, asset::default_asset_store_desc());
     defer catch asset::destroy_asset_store(&fixture.assets);
@@ -146,6 +149,7 @@ fn void? create_fixture(Allocator allocator, Fixture* fixture) @private {
             .validation = true,
             .shadow_resolution = 64,
             .max_shadow_layers = 1,
+            .upload_ring_bytes = upload_ring_bytes,
             .application_name = "render_acceptance",
         },
     )!;
@@ -206,11 +210,15 @@ fn DeformedScene? create_shared_material_scene(Fixture* fixture, uint count) @pr
     defer catch scene::destroy_scene(&result.scene);
     for (uint index = 0; index < count; index++) {
         Node* box = result.scene.add_mesh(fixture.box, fixture.material)!;
-        box.local.position = { (float)index - (float)count / 2, 0, 0 };
+        box.local.position = {
+            (float)(index % SHARED_GRID_WIDTH) - (float)SHARED_GRID_WIDTH / 2 + 0.5f,
+            (float)(index / SHARED_GRID_WIDTH) - (float)SHARED_GRID_WIDTH / 2 + 0.5f,
+            0,
+        };
         if (index == 0) result.mesh = box;
     }
     result.camera = result.scene.add_camera(camera::perspective_deg(60, 0.1f))!;
-    result.camera.local.position = { 0, 0, 8 };
+    result.camera.local.position = { 0, 0, 14 };
     result.scene.update_world();
     return result;
 }
@@ -590,5 +598,62 @@ fn void test_shadowed_deformed_scene_draws_with_prepared_pipelines() @test {
     assert(renderer.stats.pipeline_lookups == 2);
     renderer.finish_view(fixture.view)!!;
     renderer.end_frame()!!;
+    check_validation(renderer);
+}
+
+fn void test_supplied_mips_upload_exact_bytes() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    char[16] mip0;
+    for (usz pixel = 0; pixel < 4; pixel++) {
+        mip0[pixel * 4] = 255;
+        mip0[pixel * 4 + 1] = 128;
+        mip0[pixel * 4 + 2] = 64;
+        mip0[pixel * 4 + 3] = 255;
+    }
+    char[4] mip1 = { 64, 128, 255, 255 };
+    TextureMipData[2] levels = {
+        { .mip = 0, .layer = 0, .bytes = mip0[..] },
+        { .mip = 1, .layer = 0, .bytes = mip1[..] },
+    };
+    material::TextureDesc desc = {
+        .width      = 2,
+        .height     = 2,
+        .layers     = 1,
+        .format     = PixelFormat.RGBA8_UNORM,
+        .mip_levels = 2,
+        .debug_name = "acceptance_supplied",
+    };
+    TextureId supplied = fixture.assets.add_texture_mips(desc, levels[..])!!;
+
+    renderer.upload_texture(supplied)!!;
+    sample_frame(&fixture, render::read_texture(supplied))!!;
+    check_channels(read_pixel(&fixture), WARM);
+    check_validation(renderer);
+}
+
+fn void test_small_upload_ring_frees_overflow_when_the_slot_is_reused() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture, TINY_RING_BYTES)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    fill_frame(&fixture, fixture.storage_texture, RED)!!;
+    DeformedScene crowd = create_shared_material_scene(&fixture, OVERFLOW_BOX_COUNT)!!;
+    defer scene::destroy_scene(&crowd.scene);
+
+    for (uint frame = 0; frame < 4; frame++) {
+        renderer.begin_frame()!!;
+        Frame* slot = &renderer.frames[renderer.recording_slot];
+        assert(slot.upload.overflow.len() == 0);
+        render_view_and_finish(&fixture)!!;
+        renderer.render_view(&crowd.scene, crowd.camera, fixture.second_view)!!;
+        renderer.finish_view(fixture.second_view)!!;
+        if (frame == 0) assert(slot.upload.overflow.len() > 0);
+        renderer.end_frame()!!;
+    }
+    render::wait_frames(renderer)!!;
+    foreach (&slot : renderer.frames) assert(slot.upload.mapped.bytes.len > TINY_RING_BYTES);
     check_validation(renderer);
 }

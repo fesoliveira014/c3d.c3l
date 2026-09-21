@@ -64,21 +64,27 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture) @private 
     }
 
     @pool() {
-        bool empty = record.source_kind == TextureSourceKind.EMPTY;
         TextureMipChain chain;
+        TextureMipLayout layout;
         switch (record.source_kind) {
             case MIP_ZERO:
                 chain = create_texture_mips(tmem, record.desc, record.pixels)!;
+                layout = {
+                    .total_bytes = chain.pixels.len,
+                    .mip_count = chain.mip_count,
+                    .layer_count = chain.layer_count,
+                    .offsets = chain.offsets,
+                };
             case SUPPLIED_MIPS:
-                chain = create_supplied_texture_mips(tmem, record.desc, record.supplied_mips)!;
+                layout = supplied_texture_mip_layout(record.desc, record.supplied_mips)!;
             case EMPTY:
-                break;
+                layout = { .mip_count = record.desc.mip_levels, .layer_count = record.desc.layers };
         }
         defer {
-            if (!empty) destroy_texture_mips(&chain);
+            if (record.source_kind == TextureSourceKind.MIP_ZERO) destroy_texture_mips(&chain);
         }
-        uint mip_count = empty ? record.desc.mip_levels : chain.mip_count;
-        uint layer_count = empty ? record.desc.layers : chain.layer_count;
+        uint mip_count = layout.mip_count;
+        uint layer_count = layout.layer_count;
         gpu::Format format = texture_format(record.desc.format);
         gpu::TextureDesc description = {
             .width = record.desc.width,
@@ -140,21 +146,25 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture) @private 
             .texture = mirror.texture,
             .before = mirror.state,
         };
-        if (!empty) {
+        if (layout.total_bytes) {
             Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
-            gpu::MappedGpuSpan staging = slot.upload.take(&renderer.device, chain.pixels.len, UPLOAD_RING_ALIGNMENT)!;
-            mem::copy(staging.bytes.ptr, chain.pixels.ptr, chain.pixels.len);
-            pending.mip_count = chain.mip_count;
-            for (uint mip = 0; mip < chain.mip_count; mip++) {
+            gpu::MappedGpuSpan staging = slot.upload.take(&renderer.device, layout.total_bytes, UPLOAD_RING_ALIGNMENT)!;
+            switch (record.source_kind) {
+                case MIP_ZERO: mem::copy(staging.bytes.ptr, chain.pixels.ptr, chain.pixels.len);
+                case SUPPLIED_MIPS: copy_supplied_texture_mips(staging.bytes, record.supplied_mips);
+                case EMPTY: unreachable();
+            }
+            pending.mip_count = layout.mip_count;
+            for (uint mip = 0; mip < layout.mip_count; mip++) {
                 usz bytes = gpu::texture_mip_bytes(&description, mip)!;
                 pending.copies[mip] = {
-                    .src = staging.span.checked_subspan(chain.offsets[mip], bytes * chain.layer_count)!,
+                    .src = staging.span.checked_subspan(layout.offsets[mip], bytes * layout.layer_count)!,
                     .texture = mirror.texture,
                     .mip = mip,
-                    .layer_count = chain.layer_count,
+                    .layer_count = layout.layer_count,
                 };
             }
-            renderer.stats.upload_bytes += (uint)chain.pixels.len;
+            renderer.stats.upload_bytes += (uint)layout.total_bytes;
         }
         renderer.pending_texture_uploads.push(pending);
         renderer.stats.uploads++;

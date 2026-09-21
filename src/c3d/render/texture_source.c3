@@ -8,6 +8,16 @@ import gpu;
 const usz BC_BLOCK_EXTENT @local = 4;
 
 <*
+ Byte layout of a packed mip chain: one offset per mip, layers consecutive within a mip.
+*>
+struct TextureMipLayout {
+    usz total_bytes;
+    uint mip_count;
+    uint layer_count;
+    usz[TEXTURE_MIP_CAPACITY] offsets;
+}
+
+<*
  Pack complete supplied mip layers without filtering or conversion.
  @param levels : "Complete slices ordered mip-major, then layer."
  @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
@@ -18,6 +28,25 @@ fn TextureMipChain? create_supplied_texture_mips(
     material::TextureDesc desc,
     TextureMipData[] levels,
 ) {
+    TextureMipLayout layout = supplied_texture_mip_layout(desc, levels)!;
+    TextureMipChain chain = {
+        .allocator = allocator,
+        .mip_count = layout.mip_count,
+        .layer_count = layout.layer_count,
+        .offsets = layout.offsets,
+        .pixels = alloc::new_array(allocator, char, (sz)layout.total_bytes),
+    };
+    copy_supplied_texture_mips(chain.pixels, levels);
+    return chain;
+}
+
+<*
+ Validate supplied mip layers and compute where each mip lands in one packed staging span.
+ @param levels : "Complete slices ordered mip-major, then layer."
+ @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
+ @return? gpu::INVALID_ARGUMENT
+*>
+fn TextureMipLayout? supplied_texture_mip_layout(material::TextureDesc desc, TextureMipData[] levels) {
     if (!desc.width || !desc.height || !desc.mip_levels || desc.generate_mips) return c3d::INVALID_ARGUMENT~;
     if (desc.mip_levels > texture_mip_count(desc.width, desc.height)) return c3d::INVALID_ARGUMENT~;
     if (desc.depth) return c3d::UNSUPPORTED~;
@@ -51,33 +80,36 @@ fn TextureMipChain? create_supplied_texture_mips(
     // The backend footprint helper multiplies without overflow checks.
     if (row_units > (usz)sz::max / block_rows / unit_bytes / desc.layers) return c3d::INVALID_ARGUMENT~;
 
-    TextureMipChain chain = {
-        .allocator = allocator,
+    TextureMipLayout layout = {
         .mip_count = desc.mip_levels,
         .layer_count = desc.layers,
     };
-    usz total_bytes;
     for (uint mip = 0; mip < desc.mip_levels; mip++) {
         usz layer_bytes = gpu::texture_mip_bytes(&description, mip)!;
-        if (layer_bytes > ((usz)sz::max - total_bytes) / desc.layers) return c3d::INVALID_ARGUMENT~;
-        chain.offsets[mip] = total_bytes;
+        if (layer_bytes > ((usz)sz::max - layout.total_bytes) / desc.layers) return c3d::INVALID_ARGUMENT~;
+        layout.offsets[mip] = layout.total_bytes;
         for (uint layer = 0; layer < desc.layers; layer++) {
             TextureMipData level = levels[(usz)mip * desc.layers + layer];
             if (level.mip != mip || level.layer != layer || level.bytes.len != layer_bytes) {
                 return c3d::INVALID_ARGUMENT~;
             }
         }
-        total_bytes += layer_bytes * desc.layers;
+        layout.total_bytes += layer_bytes * desc.layers;
     }
+    return layout;
+}
 
-    chain.pixels = alloc::new_array(allocator, char, (sz)total_bytes);
+<*
+ Copy validated supplied layers into a packed span in layout order.
+ @param destination : "At least the layout's total bytes."
+ @param levels : "The slices the layout was computed from."
+*>
+fn void copy_supplied_texture_mips(char[] destination, TextureMipData[] levels) {
     usz offset;
     foreach (level : levels) {
-        mem::copy(chain.pixels.ptr + offset, level.bytes.ptr, level.bytes.len);
+        mem::copy(destination.ptr + offset, level.bytes.ptr, level.bytes.len);
         offset += level.bytes.len;
     }
-
-    return chain;
 }
 
 fn bool texture_is_compressed(PixelFormat format) @private {
