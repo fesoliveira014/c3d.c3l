@@ -415,6 +415,7 @@ fn void? Renderer.render_view(
         post::close_post_chain(self, record)!;
         end_profile_view(self)!;
         self.frame_recorded = true;
+        self.work_recorded = true;
         record.rendered = true;
     };
 }
@@ -478,6 +479,7 @@ fn void? Renderer.render_to(
     self.begin_frame(info)!;
     defer catch abort_frame(self);
     self.render_view(scene, camera_node, view)!;
+    self.finish_view(view)!;
     self.end_frame()!;
 
     wait_frames(self)!;

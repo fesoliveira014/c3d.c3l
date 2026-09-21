@@ -133,6 +133,7 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture) @private 
             image = {};
         }
 
+        remember_texture_state(&renderer.texture_state_undo, mirror);
         PendingTextureUpload pending = {
             .asset = texture,
             .revision = record.header.revision,

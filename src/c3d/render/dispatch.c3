@@ -227,6 +227,7 @@ fn void? Renderer.dispatch(&self, DispatchDesc desc) {
     }
     end_profile_scope(self, dispatch_scope)!;
     self.stats.dispatches++;
+    self.work_recorded = true;
 }
 
 <*
@@ -330,12 +331,12 @@ fn void? transition_dispatch_texture(
 ) @private {
     if (entry.target) return entry.target.transition(&renderer.commands, next);
 
-    // A store texture uploaded this frame is left sampled by its recorded copies, not by its committed state.
+    remember_texture_state(&renderer.texture_state_undo, entry.mirror);
     gpu::TextureState before = entry.mirror.state;
-    foreach (&pending : renderer.pending_texture_uploads) {
-        if (pending.texture == entry.mirror.texture) before = gpu::sampled_at({ .fragment_shader, .compute });
-    }
-    if (mem::equals(&before, &next, gpu::TextureState::size)) return;
+    // An equal storage state still orders a write against the previous use; only reads may share a state.
+    bool read_after_read = mem::equals(&before, &next, gpu::TextureState::size)
+        && !before.access.write && !next.access.write;
+    if (read_after_read) return;
     gpu::TextureBarrier barrier = gpu::texture_transition(entry.mirror.texture, before, next)!;
     gpu::cmd_texture_barrier(&renderer.commands, &barrier)!;
     entry.mirror.state = next;

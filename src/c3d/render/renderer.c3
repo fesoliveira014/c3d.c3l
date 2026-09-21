@@ -126,6 +126,7 @@ struct Renderer {
     gpu::SamplerIndex       toon_gradient_sampler;
     SamplerRes[]            samplers;
     List{PendingTextureUpload} pending_texture_uploads;
+    List{TextureStateUndo}  texture_state_undo;
     RetireList              pending_upload_retire;
     MaterialRes[]           materials;
     ShaderRes[]             shaders;
@@ -173,6 +174,7 @@ struct Renderer {
     bool                    overlay_open;
     bool                    has_output;
     bool                    frame_recorded;
+    bool                    work_recorded;
     bool                    output_suppressed;
     uint                    sampled_target_bits;
 }
@@ -268,6 +270,7 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
 
         self.has_output = false;
         self.frame_recorded = false;
+        self.work_recorded = false;
         self.sampled_target_bits = 0;
         if (self.swapchain.is_valid()) {
             instrumentation::@scope("renderer.acquire_output") {
@@ -323,11 +326,12 @@ fn void? Renderer.clear(&self, Vec4 color) {
     };
     gpu::cmd_begin_render_pass(&self.commands, &pass)!;
     gpu::cmd_end_render_pass(&self.commands)!;
+    self.work_recorded = true;
 }
 
 <*
  Submit the recorded views and uploads; present when a window image was acquired.
- An empty frame is discarded.
+ A frame that recorded no work is discarded.
  @param [&inout] self : "Closes the frame and advances to the next slot."
  @return? gpu::COMMAND_RECORDING_ERROR, gpu::INVALID_HANDLE, gpu::INVALID_ARGUMENT
  @return? gpu::INVALID_RESOURCE_STATE, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
@@ -351,8 +355,11 @@ fn void? Renderer.end_frame(&self) {
         self.frame_open = false;
         self.frame_index++;
 
-        bool uploads_pending = self.pending_copies.len() > 0 || self.pending_texture_uploads.len() > 0;
-        if (!self.frame_recorded && !uploads_pending) {
+        foreach (&record : self.views.items) {
+            if (record.live && record.rendered) return c3d::INVALID_ARGUMENT~;
+        }
+        record_pending_copies(self, &self.commands)!;
+        if (!self.work_recorded) {
             abort_frame(self);
             self.stats.frame_ms = elapsed_ms(self.frame_started);
             return;
@@ -362,10 +369,6 @@ fn void? Renderer.end_frame(&self) {
 
         instrumentation::@scope("renderer.submit") {
             defer catch (void)gpu::discard_commands(&self.commands);
-            foreach (&record : self.views.items) {
-                if (record.live && record.rendered) return c3d::INVALID_ARGUMENT~;
-            }
-            record_pending_copies(self, &self.commands)!;
             if (present) self.window_target.transition(&self.commands, PRESENT_STATE)!;
             slot.upload.flush(&self.device)!;
 
@@ -523,6 +526,7 @@ fn void? record_fullscreen_pass(
     )!;
     gpu::cmd_end_render_pass(&renderer.commands)!;
     renderer.stats.draws++;
+    renderer.work_recorded = true;
 }
 
 fn gpu::LoadOp output_load_op(Target* output, PixelRect rect) @private {
@@ -780,6 +784,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     renderer.pending_copies.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_geometry_uploads.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_texture_uploads.init(allocator, RETIRE_INITIAL_CAPACITY);
+    renderer.texture_state_undo.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_upload_retire.init(allocator, RETIRE_INITIAL_CAPACITY);
     defer catch {
         if (catch excuse = wait_frames(&renderer)) handle_cleanup_fault(excuse);
@@ -961,6 +966,8 @@ fn void abort_frame(Renderer* renderer) {
         record.cluster_root = (gpu::GpuAddress)0;
     }
     renderer.has_output = false;
+    renderer.frame_recorded = false;
+    renderer.work_recorded = false;
     discard_uploads(renderer);
 }
 

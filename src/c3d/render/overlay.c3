@@ -41,6 +41,7 @@ fn OverlayContext? Renderer.begin_overlay(&self) {
 
     gpu::cmd_begin_render_pass(&self.commands, &pass)!;
     self.overlay_open = true;
+    self.work_recorded = true;
 
     return {
         .renderer = self,
