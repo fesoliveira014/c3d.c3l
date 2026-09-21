@@ -10,11 +10,11 @@ import std::collections::map;
 import std::math;
 
 <*
- Palette and morph block addresses written this frame, by mesh entity index.
+ Palette and morph block addresses written this frame, keyed by the stable mesh node.
 *>
 struct DeformationCache {
-    HashMap{uint, gpu::GpuAddress} palettes;
-    HashMap{uint, gpu::GpuAddress} morph_blocks;
+    HashMap{ulong, gpu::GpuAddress} palettes;
+    HashMap{ulong, gpu::GpuAddress} morph_blocks;
 }
 
 <*
@@ -97,7 +97,7 @@ fn void reset_deformation_cache(DeformationCache* cache) @private {
  @return? gpu::UNSUPPORTED_FEATURE, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
 *>
 fn gpu::GpuAddress? resolve_palette(Renderer* renderer, Node* mesh_node, SkinBinding* binding) @private {
-    if (try existing = renderer.deformation.palettes.get(mesh_node.id.index)) return existing;
+    if (try existing = renderer.deformation.palettes.get((ulong)(uptr)mesh_node)) return existing;
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan span = slot.upload.take(&renderer.device, binding.joints.len * Mat4f::size, STREAM_ALIGNMENT)!;
     Mat4f* palette = (Mat4f*)span.bytes.ptr;
@@ -106,7 +106,7 @@ fn gpu::GpuAddress? resolve_palette(Renderer* renderer, Node* mesh_node, SkinBin
     foreach (index, joint : binding.joints) {
         palette[index] = bitcast(inverse_mesh.mul(joint.world).mul(inverse_bind[index]), Mat4f);
     }
-    renderer.deformation.palettes.set(mesh_node.id.index, span.address);
+    renderer.deformation.palettes.set((ulong)(uptr)mesh_node, span.address);
     return span.address;
 }
 
@@ -118,10 +118,10 @@ fn gpu::GpuAddress? resolve_palette(Renderer* renderer, Node* mesh_node, SkinBin
 *>
 fn gpu::GpuAddress? resolve_morph_block(Renderer* renderer, MeshCandidate* candidate) @private {
     Node* mesh_node = candidate.node;
-    if (try existing = renderer.deformation.morph_blocks.get(mesh_node.id.index)) return existing;
+    if (try existing = renderer.deformation.morph_blocks.get((ulong)(uptr)mesh_node)) return existing;
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan span = slot.upload.take(&renderer.device, MorphWeightsGpu::size, STREAM_ALIGNMENT)!;
     *(MorphWeightsGpu*)span.bytes.ptr = select_morph_targets(candidate.morph_channels, candidate.morph_weights);
-    renderer.deformation.morph_blocks.set(mesh_node.id.index, span.address);
+    renderer.deformation.morph_blocks.set((ulong)(uptr)mesh_node, span.address);
     return span.address;
 }

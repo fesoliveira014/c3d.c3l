@@ -28,6 +28,11 @@ What the four cases establish:
   in one frame, or written in a frame that is aborted before submission keeps
   a valid layout; the next frame's reads return the last submitted color.
 
+- Two live scenes whose meshes share entity ids get distinct palette and
+  morph blocks in one frame; a view's previous pose is published only by a
+  submitted frame and dropped by an aborted one; an orthographic camera with
+  motion blur leaves the background at the clear color under camera motion.
+
 What they cannot establish: window clear-only and GUI-only frames need a
 window (run the `clear` and `cube_gui` examples with validation), and a
 presentation failure after submission needs a hardware observation.

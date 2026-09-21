@@ -566,8 +566,8 @@ root DofRoot {
 root VelocityRoot {
     TextureIndex depth_texture;
     SamplerIndex sampler_index;
+    uint orthographic;
     uint _pad0;
-    uint _pad1;
     mat4 inv_view_proj;
     mat4 prev_view_proj;
 }

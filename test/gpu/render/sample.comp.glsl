@@ -11,7 +11,7 @@ layout(push_constant) uniform Push {
 
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer SampleRoot {
     uint64_t output_address;
-    uint64_t padding;
+    vec2 uv;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer SampleOutput {
@@ -22,6 +22,6 @@ void main() {
     DispatchRoot dispatch = DispatchRoot(pc.root_gpu);
     SampleRoot root = SampleRoot(dispatch.parameters);
     DispatchTextureGpu texture = DispatchTexturesGpu(dispatch.textures).slots[0];
-    vec4 color = sample_texture_2d(texture.texture_index, texture.sampler_index, vec2(0.5));
+    vec4 color = sample_texture_2d(texture.texture_index, texture.sampler_index, root.uv);
     SampleOutput(root.output_address).pixel = packUnorm4x8(clamp(color, 0.0, 1.0));
 }

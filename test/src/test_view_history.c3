@@ -22,19 +22,20 @@ fn void test_view_history_reports_previous_model_only_for_matching_owner() @test
 
     ViewHistory history;
     defer render::free_view_history(mem, &history);
-    assert(!history.has_previous(first));
+    assert(!history.has_previous(&scene, first));
     MeshCandidate[2] candidates = candidates_of(first, second);
     history.commit(mem, &scene, candidates[..], camera);
+    history.publish();
     assert(history.valid && history.view_proj == camera);
-    assert(history.has_previous(first) && history.previous_model(first) == first.world);
-    assert(history.has_previous(second));
+    assert(history.has_previous(&scene, first) && history.previous_model(&scene, first) == first.world);
+    assert(history.has_previous(&scene, second));
 
     Entity old_id = first.id;
     scene.remove(first);
     Node* reused = scene.add_node(name: "reused")!!;
     assert(reused.id.index == old_id.index && reused.id.generation != old_id.generation);
-    assert(!history.has_previous(reused));
-    assert(history.has_previous(second));
+    assert(!history.has_previous(&scene, reused));
+    assert(history.has_previous(&scene, second));
 }
 
 fn void test_view_history_reset_forgets_everything() @test {
@@ -48,9 +49,82 @@ fn void test_view_history_reset_forgets_everything() @test {
     defer render::free_view_history(mem, &history);
     MeshCandidate[2] candidates = candidates_of(first, second);
     history.commit(mem, &scene, candidates[..], matrix::IDENTITY4);
+    history.publish();
     history.valid = false;
-    assert(!history.has_previous(first) && !history.has_previous(second));
+    assert(!history.has_previous(&scene, first) && !history.has_previous(&scene, second));
 
     history.commit(mem, &scene, candidates[..], matrix::IDENTITY4);
-    assert(history.has_previous(first));
+    history.publish();
+    assert(history.has_previous(&scene, first));
+}
+
+fn void test_view_history_membership_follows_the_last_published_rendering() @test {
+    Scene scene = scene::create_scene(mem, { .max_nodes = NODE_CAPACITY });
+    defer scene::destroy_scene(&scene);
+    Node* first = scene.add_node(name: "first")!!;
+    Node* second = scene.add_node(name: "second")!!;
+    scene.update_world();
+    ViewHistory history;
+    defer render::free_view_history(mem, &history);
+
+    MeshCandidate[2] both = candidates_of(first, second);
+    history.commit(mem, &scene, both[..], matrix::IDENTITY4);
+    history.publish();
+    assert(history.has_previous(&scene, first) && history.has_previous(&scene, second));
+
+    MeshCandidate[1] only_first = { { .node = first } };
+    history.commit(mem, &scene, only_first[..], matrix::IDENTITY4);
+    history.publish();
+    assert(history.has_previous(&scene, first));
+    assert(!history.has_previous(&scene, second));
+
+    second.local.position = { 4, 0, 0 };
+    scene.update_world();
+    history.commit(mem, &scene, both[..], matrix::IDENTITY4);
+    history.publish();
+    assert(history.has_previous(&scene, second) && history.previous_model(&scene, second) == second.world);
+}
+
+fn void test_view_history_ignores_a_scene_with_matching_ids() @test {
+    Scene first_scene = scene::create_scene(mem, { .max_nodes = NODE_CAPACITY });
+    defer scene::destroy_scene(&first_scene);
+    Scene second_scene = scene::create_scene(mem, { .max_nodes = NODE_CAPACITY });
+    defer scene::destroy_scene(&second_scene);
+    assert(first_scene.identity != 0 && second_scene.identity != 0);
+    assert(first_scene.identity != second_scene.identity);
+    Node* first = first_scene.add_node(name: "mesh")!!;
+    Node* second = second_scene.add_node(name: "mesh")!!;
+    assert(first.id.index == second.id.index && first.id.generation == second.id.generation);
+    first_scene.update_world();
+    second_scene.update_world();
+    ViewHistory history;
+    defer render::free_view_history(mem, &history);
+
+    MeshCandidate[1] candidates = { { .node = first } };
+    history.commit(mem, &first_scene, candidates[..], matrix::IDENTITY4);
+    history.publish();
+    assert(history.has_previous(&first_scene, first));
+    assert(!history.has_previous(&second_scene, second));
+}
+
+fn void test_view_history_pending_rendering_is_not_previous_until_published() @test {
+    Scene scene = scene::create_scene(mem, { .max_nodes = NODE_CAPACITY });
+    defer scene::destroy_scene(&scene);
+    Node* first = scene.add_node(name: "first")!!;
+    scene.update_world();
+    ViewHistory history;
+    defer render::free_view_history(mem, &history);
+    MeshCandidate[1] candidates = { { .node = first } };
+
+    history.commit(mem, &scene, candidates[..], matrix::IDENTITY4);
+    assert(history.pending && !history.valid && !history.has_previous(&scene, first));
+    history.publish();
+    assert(history.valid && !history.pending && history.has_previous(&scene, first));
+
+    history.commit(mem, &scene, candidates[..], matrix::IDENTITY4);
+    history.discard();
+    assert(!history.valid && !history.pending && !history.has_previous(&scene, first));
+
+    history.publish();
+    assert(!history.valid);
 }

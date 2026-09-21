@@ -11,10 +11,15 @@ layout(push_constant) uniform Push {
     uint64_t fragment_root_gpu;
 } pc;
 
-// Camera motion of every pixel from stored depth; no geometry (depth 0) reprojects as a direction.
+// Camera motion of every pixel from stored depth; no geometry (depth 0) reprojects as a direction,
+// which has no finite image under an orthographic projection, so that background stays still.
 void main() {
     VelocityRoot root = VelocityRoot(pc.fragment_root_gpu);
     float depth = sample_texture_2d(root.depth_texture, root.sampler_index, v_uv).r;
+    if (depth == 0.0 && root.orthographic != 0u) {
+        out_velocity = vec2(0.0);
+        return;
+    }
     vec2 ndc = (v_uv * 2.0 - 1.0) * vec2(1.0, -1.0);
     vec4 world = root.inv_view_proj * vec4(ndc, depth, 1.0);
     vec4 previous = depth > 0.0

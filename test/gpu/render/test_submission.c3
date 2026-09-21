@@ -1,10 +1,12 @@
 module c3d::render::acceptance;
 
 import c3d;
+import c3d::anim;
 import c3d::asset;
 import c3d::camera;
 import c3d::geometry;
 import c3d::material;
+import c3d::maths;
 import c3d::render @public;
 import c3d::scene;
 import c3d::shader;
@@ -26,6 +28,12 @@ const Vec4 GREEN @private = { 0, 1, 0, 1 };
 const Vec4 BLUE @private = { 0, 0, 1, 1 };
 const Vec4 WARM @private = { 1, 0.5f, 0.25f, 1 };
 const Vec4 COOL @private = { 0.25f, 0.5f, 1, 1 };
+const Vec2 CENTER_UV @private = { 0.5f, 0.5f };
+const Vec3 CAMERA_POSITION @private = { 0, 0, 3 };
+const float CAMERA_TURN_DEGREES @private = 2;
+const float CAMERA_SLIDE @private = 0.1f;
+const float ORTHOGRAPHIC_HEIGHT @private = 2;
+const float BLURRED_CENTER_MINIMUM @private = 0.8f; // a few pixels of true motion keep the box center nearly solid; a background velocity clamped at max_velocity smears it dark
 
 struct FillRoot @private {
     Vec4 color;
@@ -36,7 +44,7 @@ $assert FillRoot::size == 32;
 
 struct SampleRoot @private {
     gpu::GpuAddress output_address;
-    ulong padding;
+    Vec2 uv;
 }
 $assert SampleRoot::size == 16;
 
@@ -51,14 +59,24 @@ struct Fixture @private {
     Renderer renderer;
     Node* camera_node;
     TextureId storage_texture;
+    MaterialId material;
+    SkeletonId skeleton;
+    GeometryId deformed_box;
     ComputeShaderId fill_shader;
     ComputeShaderId sample_shader;
     BufferId output;
     RenderTargetId hdr_target;
     RenderTargetId ldr_target;
     ViewId view;
+    ViewId second_view;
     gpu::MappedGpuSpan readback;
     bool renderer_alive;
+}
+
+struct DeformedScene @private {
+    Scene scene;
+    Node* mesh;
+    Node* camera;
 }
 
 fn void? create_fixture(Allocator allocator, Fixture* fixture) @private {
@@ -77,15 +95,43 @@ fn void? create_fixture(Allocator allocator, Fixture* fixture) @private {
             depth: 1,
         );
         GeometryId geometry_id = fixture.assets.add_geometry(&box)!;
-        MaterialId material_id = fixture.assets.add_material(material::basic({
+        fixture.material = fixture.assets.add_material(material::basic({
             .color = { 1, 1, 1, 1 },
             .map = material::texture_slot(fixture.storage_texture),
         }))!;
-        fixture.scene.add_mesh(geometry_id, material_id)!;
+        fixture.scene.add_mesh(geometry_id, fixture.material)!;
+
+        Geometry deformed = geometry::box(
+            allocator: tmem,
+            width: 1,
+            height: 1,
+            depth: 1,
+        );
+        deformed.joints = alloc::new_array(tmem, ushort[<4>], deformed.positions.len);
+        deformed.weights = alloc::new_array(tmem, Vec4, deformed.positions.len);
+        foreach (&weight : deformed.weights) *weight = { 1, 0, 0, 0 };
+        deformed.targets = alloc::new_array(tmem, MorphTarget, 1);
+        deformed.targets[0] = {
+            .position_deltas = alloc::new_array(tmem, Vec3, deformed.positions.len),
+            .normal_deltas   = alloc::new_array(tmem, Vec3, deformed.positions.len),
+        };
+        foreach (&delta : deformed.targets[0].position_deltas) *delta = { 0, 0.5f, 0 };
+        fixture.deformed_box = fixture.assets.add_geometry(&deformed)!;
     };
     fixture.camera_node = fixture.scene.add_camera(camera::perspective_deg(60, 0.1f))!;
-    fixture.camera_node.local.position = { 0, 0, 3 };
+    fixture.camera_node.local.position = CAMERA_POSITION;
     fixture.scene.update_world();
+
+    Skeleton skeleton = {
+        .joint_names  = alloc::new_array(allocator, String, 1),
+        .parents      = alloc::new_array(allocator, int, 1),
+        .rest_pose    = alloc::new_array(allocator, Transform, 1),
+        .inverse_bind = alloc::new_array(allocator, Mat4, 1),
+    };
+    skeleton.parents[0] = -1;
+    skeleton.rest_pose[0] = maths::TRANSFORM_IDENTITY;
+    skeleton.inverse_bind[0] = matrix::IDENTITY4;
+    fixture.skeleton = fixture.assets.add_skeleton_owned(&skeleton)!;
 
     fixture.fill_shader = add_compute_shader(fixture, (String)FILL_SOURCE[..])!;
     fixture.sample_shader = add_compute_shader(fixture, (String)SAMPLE_SOURCE[..])!;
@@ -111,6 +157,7 @@ fn void? create_fixture(Allocator allocator, Fixture* fixture) @private {
         desc: render::render_target_desc(TARGET_SIZE, TARGET_SIZE, PixelFormat.RGBA8_UNORM),
     )!;
     fixture.view = render::create_view(&fixture.renderer, render::texture_view_desc(fixture.hdr_target))!;
+    fixture.second_view = render::create_view(&fixture.renderer, render::texture_view_desc(fixture.hdr_target))!;
     fixture.output = fixture.renderer.create_buffer({ .size = SampleOutput::size, .debug_name = "acceptance_output" })!;
     gpu::AllocationDesc readback_desc = {
         .size = SampleOutput::size,
@@ -129,6 +176,31 @@ fn material::TextureDesc storage_texture_desc(ZString debug_name) @private {
         .format     = PixelFormat.RGBA8_UNORM,
         .debug_name = debug_name,
     };
+}
+
+fn DeformedScene? create_deformed_scene(Fixture* fixture, Vec3 joint_position, float morph_weight) @private {
+    DeformedScene result;
+    result.scene = scene::create_scene(fixture.allocator, scene::default_scene_desc());
+    defer catch scene::destroy_scene(&result.scene);
+    Node* joint = result.scene.add_node(name: "joint")!;
+    joint.local.position = joint_position;
+    result.mesh = result.scene.add_mesh(fixture.deformed_box, fixture.material)!;
+    Mesh* mesh = result.scene.get(result.mesh, Mesh);
+    mesh.morph_weights = alloc::new_array(result.scene.allocator, float, 1);
+    mesh.morph_weights[0] = morph_weight;
+    Node*[] joints = alloc::new_array(result.scene.allocator, Node*, 1);
+    joints[0] = joint;
+    result.scene.add(result.mesh, (SkinBinding){ .skeleton = fixture.skeleton, .joints = joints });
+    result.camera = result.scene.add_camera(camera::perspective_deg(60, 0.1f))!;
+    result.camera.local.position = CAMERA_POSITION;
+    result.scene.update_world();
+    return result;
+}
+
+fn void? enable_motion_blur(Fixture* fixture, ViewId view) @private {
+    ViewDesc desc = render::texture_view_desc(fixture.hdr_target);
+    desc.post.motion_blur = true;
+    return render::configure_view(&fixture.renderer, view, desc);
 }
 
 fn ComputeShaderId? add_compute_shader(Fixture* fixture, String source) @private {
@@ -177,8 +249,8 @@ fn void? fill(Fixture* fixture, TextureId texture, Vec4 color) @private {
     });
 }
 
-fn void? sample(Fixture* fixture, DispatchTexture source) @private {
-    SampleRoot root = { .output_address = fixture.renderer.buffer_address(fixture.output) };
+fn void? sample(Fixture* fixture, DispatchTexture source, Vec2 uv = CENTER_UV) @private {
+    SampleRoot root = { .output_address = fixture.renderer.buffer_address(fixture.output), .uv = uv };
     BufferId[1] writes = { fixture.output };
     DispatchTexture[1] textures = { source };
     return fixture.renderer.dispatch({
@@ -208,12 +280,42 @@ fn void? render_view_and_finish(Fixture* fixture) @private {
     return fixture.renderer.finish_view(fixture.view);
 }
 
-fn void? sample_frame(Fixture* fixture, DispatchTexture source) @private {
+fn void? fill_frame(Fixture* fixture, TextureId texture, Vec4 color) @private {
     fixture.renderer.begin_frame()!;
     defer catch render::abort_frame(&fixture.renderer);
-    sample(fixture, source)!;
+    fill(fixture, texture, color)!;
+    return fixture.renderer.end_frame();
+}
+
+fn void? sample_frame(Fixture* fixture, DispatchTexture source, Vec2 uv = CENTER_UV) @private {
+    fixture.renderer.begin_frame()!;
+    defer catch render::abort_frame(&fixture.renderer);
+    sample(fixture, source, uv)!;
     record_readback(fixture)!;
     return fixture.renderer.end_frame();
+}
+
+fn uint? run_camera_motion(Fixture* fixture, Camera camera) @private {
+    Renderer* renderer = &fixture.renderer;
+    *fixture.scene.get(fixture.camera_node, Camera) = camera;
+    fixture.camera_node.local = maths::TRANSFORM_IDENTITY;
+    fixture.camera_node.local.position = CAMERA_POSITION;
+    fixture.scene.update_world();
+    renderer.begin_frame()!;
+    defer catch render::abort_frame(renderer);
+    render_view_and_finish(fixture)!;
+    renderer.end_frame()!;
+
+    fixture.camera_node.local.position.x += CAMERA_SLIDE;
+    fixture.camera_node.local.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, math::deg_to_rad(CAMERA_TURN_DEGREES));
+    fixture.scene.update_world();
+    renderer.begin_frame()!;
+    renderer.render_view(&fixture.scene, fixture.camera_node, fixture.view)!;
+    sample(fixture, render::read_view_color(fixture.view))!;
+    record_readback(fixture)!;
+    renderer.finish_view(fixture.view)!;
+    renderer.end_frame()!;
+    return read_pixel(fixture);
 }
 
 fn uint read_pixel(Fixture* fixture) @private {
@@ -228,6 +330,13 @@ fn void check_channels(uint pixel, Vec4 expected) @private {
         int wanted = (int)(expected[channel] * 255 + 0.5f);
         assert(math::abs(actual - wanted) <= CHANNEL_TOLERANCE);
     }
+}
+
+fn void check_solid_red(uint pixel) @private {
+    io::eprintfn("blurred box center: %08x", pixel);
+    float red = (float)(pixel & 0xff) / 255;
+    assert(red >= BLURRED_CENTER_MINIMUM);
+    assert((pixel & PIXEL_ALPHA_MASK) == PIXEL_ALPHA_MASK);
 }
 
 fn void check_opaque_color(uint pixel) @private {
@@ -335,5 +444,87 @@ fn void test_storage_texture_upload_write_sample_and_abort_keep_layouts_valid() 
     record_readback(&fixture)!!;
     renderer.end_frame()!!;
     check_channels(read_pixel(&fixture), COOL);
+    check_validation(renderer);
+}
+
+fn void test_two_scenes_with_matching_ids_get_distinct_deformation_blocks() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    fill_frame(&fixture, fixture.storage_texture, RED)!!;
+    DeformedScene first = create_deformed_scene(&fixture, { 0, 0, 0 }, 0.25f)!!;
+    defer scene::destroy_scene(&first.scene);
+    DeformedScene second = create_deformed_scene(&fixture, { 1, 0, 0 }, 0.75f)!!;
+    defer scene::destroy_scene(&second.scene);
+    assert(first.mesh.id.index == second.mesh.id.index);
+
+    renderer.begin_frame()!!;
+    renderer.render_view(&first.scene, first.camera, fixture.view)!!;
+    renderer.render_view(&second.scene, second.camera, fixture.second_view)!!;
+    assert(renderer.deformation.palettes.len() == 2);
+    assert(renderer.deformation.morph_blocks.len() == 2);
+    gpu::GpuAddress first_palette = renderer.deformation.palettes.get((ulong)(uptr)first.mesh)!!;
+    gpu::GpuAddress second_palette = renderer.deformation.palettes.get((ulong)(uptr)second.mesh)!!;
+    assert((ulong)first_palette != (ulong)second_palette);
+    renderer.finish_view(fixture.view)!!;
+    renderer.finish_view(fixture.second_view)!!;
+    renderer.end_frame()!!;
+    check_validation(renderer);
+}
+
+fn void test_view_history_publishes_on_submit_and_drops_on_abort() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    fill_frame(&fixture, fixture.storage_texture, RED)!!;
+    enable_motion_blur(&fixture, fixture.view)!!;
+    enable_motion_blur(&fixture, fixture.second_view)!!;
+    DeformedScene moving = create_deformed_scene(&fixture, { 0, 0, 0 }, 0.5f)!!;
+    defer scene::destroy_scene(&moving.scene);
+    ViewRecord* first = renderer.views.get(fixture.view);
+    ViewRecord* second = renderer.views.get(fixture.second_view);
+
+    renderer.begin_frame()!!;
+    renderer.render_view(&moving.scene, moving.camera, fixture.view)!!;
+    renderer.finish_view(fixture.view)!!;
+    assert(first.history.pending && !first.history.valid);
+    renderer.end_frame()!!;
+    assert(first.history.valid && first.history.has_previous(&moving.scene, moving.mesh));
+
+    renderer.begin_frame()!!;
+    renderer.render_view(&moving.scene, moving.camera, fixture.view)!!;
+    render::abort_frame(renderer);
+    assert(!first.history.valid && !first.history.pending);
+
+    renderer.begin_frame()!!;
+    renderer.render_view(&moving.scene, moving.camera, fixture.second_view)!!;
+    renderer.finish_view(fixture.second_view)!!;
+    renderer.end_frame()!!;
+    assert(second.history.valid && !first.history.valid);
+
+    renderer.begin_frame()!!;
+    renderer.render_view(&moving.scene, moving.camera, fixture.view)!!;
+    renderer.finish_view(fixture.view)!!;
+    renderer.end_frame()!!;
+    assert(first.history.valid);
+    check_validation(renderer);
+}
+
+fn void test_orthographic_background_velocity_keeps_the_box_solid() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    fill_frame(&fixture, fixture.storage_texture, RED)!!;
+    enable_motion_blur(&fixture, fixture.view)!!;
+
+    uint orthographic = run_camera_motion(&fixture, camera::orthographic(ORTHOGRAPHIC_HEIGHT, 0.1f, 100))!!;
+    check_solid_red(orthographic);
+
+    render::reset_view_history(renderer, fixture.view)!!;
+    uint perspective = run_camera_motion(&fixture, camera::perspective_deg(60, 0.1f))!!;
+    check_solid_red(perspective);
     check_validation(renderer);
 }
