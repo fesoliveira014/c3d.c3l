@@ -58,6 +58,7 @@ const float BENCHMARK_NEAR_SCALE @local = 0.005f; // near plane as a fraction of
 struct BenchmarkOptions @local {
     BenchmarkFlags flags;
     LightSelection selection;
+    ShadingPath shading;
     uint lights;
     uint capacity;
     float range;
@@ -231,6 +232,14 @@ fn BenchmarkOptions? parse_options(String[] args) @local {
                 } else {
                     return c3d::INVALID_ARGUMENT~;
                 }
+            case "--shading":
+                if (value == "forward") {
+                    options.shading = ShadingPath.FORWARD;
+                } else if (value == "deferred") {
+                    options.shading = ShadingPath.DEFERRED;
+                } else {
+                    return c3d::INVALID_ARGUMENT~;
+                }
             case "--shadows":
                 if (value == "on") {
                     options.shadows = true;
@@ -321,6 +330,7 @@ fn Node*? populate_benchmark_scene(
 }
 
 fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkOptions options) @local {
+    base.shading = options.shading;
     base.lights = options.selection;
     base.clusters.lights_per_cluster = options.capacity;
     return base;
@@ -328,8 +338,9 @@ fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkOptions options) @local 
 
 fn void print_banner(BenchmarkOptions options, bool timestamps_active) @local {
     BenchmarkFlags flags = options.flags;
-    io::eprintfn("mode=%s lights=%d shadows=%s range=%.3f capacity=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s",
-        options.selection == LightSelection.FLAT ? "flat" : "clustered", options.lights, options.shadows,
+    io::eprintfn("mode=%s shading=%s lights=%d shadows=%s range=%.3f capacity=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s",
+        options.selection == LightSelection.FLAT ? "flat" : "clustered",
+        options.shading == ShadingPath.DEFERRED ? "deferred" : "forward", options.lights, options.shadows,
         options.range, options.capacity, flags.width, flags.height, flags.warmup, flags.frames,
         flags.validation, flags.gpu_timings, timestamps_active, flags.capture,
         flags.window ? "window" : "none", flags.panel);

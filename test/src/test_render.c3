@@ -542,6 +542,28 @@ fn void test_render_preview_request_rejects_oversized_and_out_of_range() @test {
         assert(false, "a layer beyond the atlas must fault");
     }
 
+    assert(@ok(render::validate_preview_request(
+        source:          { .kind = VIEW_GBUFFER, .level = render::GBUFFER_CHANNEL_COUNT - 1 },
+        params:          valid,
+        layer_count:     0,
+        bloom_levels:    0,
+        texture_is_cube: false,
+        texture_depth:   0,
+    )));
+
+    if (catch excuse = render::validate_preview_request(
+        source:          { .kind = VIEW_GBUFFER, .level = render::GBUFFER_CHANNEL_COUNT },
+        params:          valid,
+        layer_count:     0,
+        bloom_levels:    0,
+        texture_is_cube: false,
+        texture_depth:   0,
+    )) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "a channel beyond the G-buffer must fault");
+    }
+
     if (catch excuse = render::validate_preview_request(
         source:          { .kind = TEXTURE },
         params:          valid,

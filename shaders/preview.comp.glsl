@@ -3,6 +3,7 @@
 #include "c3d_abi.glsl"
 #include "descriptor_heap.glsl"
 #include "clusters.glsl"
+#include "gbuffer.glsl"
 
 layout(local_size_x = POST_GROUP_SIZE, local_size_y = POST_GROUP_SIZE, local_size_z = 1) in;
 
@@ -61,6 +62,19 @@ void main() {
             vec3 direction = preview_face_direction(root.face, uv);
             vec3 radiance = sample_texture_cube(root.input_texture, root.input_sampler, direction).rgb;
             result = 1.0 - exp(-max(radiance, vec3(0.0)) * root.exposure);
+            break;
+        case PREVIEW_MODE_RAW:
+            result = sample_texture_2d(root.input_texture, root.input_sampler, uv).rgb;
+            break;
+        case PREVIEW_MODE_OCTAHEDRAL_NORMAL:
+            vec2 encoded = sample_texture_2d(root.input_texture, root.input_sampler, uv).rg;
+            result = decode_octahedral(encoded) * 0.5 + 0.5;
+            break;
+        case PREVIEW_MODE_BITS:
+            ivec2 source_size = textureSize(gpu_utexture_heap[nonuniformEXT(GPU_HEAP_SLOT(root.input_texture))], 0);
+            uint bits = gpu_fetch_uint(root.input_texture, ivec2(uv * vec2(source_size)), 0);
+            result = vec3(float(bits & 1u), float((bits >> 1u) & 1u), float((bits >> 2u) & 1u));
+            if ((bits >> 3u) != 0u) result += 0.25;
             break;
         case PREVIEW_MODE_CLUSTERS:
             ClusterGpu clusters = ClusterGpu(root.clusters);

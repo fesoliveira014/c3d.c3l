@@ -11,7 +11,7 @@ import std::hash::fnv32a;
 <*
  Color attachment slots a pipeline key describes.
 *>
-const usz KEY_COLOR_TARGETS = 4; // hdr_color, velocity, and two spare; keeps the key at 56 bytes
+const usz KEY_COLOR_TARGETS = 5; // the five G-buffer channels; keeps the key at 60 bytes
 
 <*
  Which stages of a key come from a store shader instead of the registry.
@@ -37,7 +37,7 @@ struct PipelineKey {
     uint                           shader_revision;
     CustomStages                   custom;
 }
-$assert PipelineKey::size == 56;
+$assert PipelineKey::size == 60;
 
 <*
  SPIR-V of the custom stages a key selects; borrowed for the create call.

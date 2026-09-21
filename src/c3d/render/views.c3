@@ -63,7 +63,7 @@ struct ViewDesc {
 <*
  Working images one view owns, in view_targets order.
 *>
-const uint VIEW_TARGET_COUNT = 5 + post::BLOOM_MAX_LEVELS + 8;
+const uint VIEW_TARGET_COUNT = 5 + post::BLOOM_MAX_LEVELS + 8 + GBUFFER_CHANNEL_COUNT;
 
 <*
  Reverse-Z projection terms that recover forward distance from stored depth.
@@ -193,6 +193,7 @@ struct ViewRecord {
     Target                               tile_neighbor;
     Target                               velocity;
     Target                               motion_blur_out;
+    Target[GBUFFER_CHANNEL_COUNT]        gbuffer;
     Target*                              scene_input;
     bool                                 post_chain_open;
     bool                                 rendered;
@@ -242,6 +243,7 @@ fn Target*[VIEW_TARGET_COUNT] view_targets(ViewRecord* record) {
     targets[next + 5] = &record.tile_neighbor;
     targets[next + 6] = &record.velocity;
     targets[next + 7] = &record.motion_blur_out;
+    foreach (channel, &target : record.gbuffer) targets[next + 8 + (uint)channel] = target;
     return targets;
 }
 
@@ -279,6 +281,16 @@ fn ViewDesc texture_view_desc(RenderTargetId target, OutputMode color = OutputMo
         .lights       = LightSelection.FLAT,
         .clusters     = default_cluster_desc(),
     };
+}
+
+<*
+ Whether any live view renders deferred.
+*>
+fn bool Renderer.has_deferred_view(&self) {
+    foreach (&record : self.views.items) {
+        if (record.live && record.desc.shading == ShadingPath.DEFERRED) return true;
+    }
+    return false;
 }
 
 <*
@@ -386,6 +398,11 @@ fn void? configure_view(Renderer* renderer, ViewId view, ViewDesc desc) {
     } else {
         post::retire_post_targets(renderer, record);
     }
+    if (desc.shading == ShadingPath.DEFERRED) {
+        acquire_gbuffer(renderer, record)!;
+    } else {
+        retire_gbuffer(renderer, record);
+    }
     ClusterBuffers replacement;
     bool replace_clusters = desc.lights == LightSelection.CLUSTERED && record.hdr_color.texture.is_valid()
       && (!record.clusters.allocation.is_valid()
@@ -453,7 +470,6 @@ fn void? reset_view_history(Renderer* renderer, ViewId view) {
 }
 
 fn void? validate_view_desc(Renderer* renderer, ViewDesc* desc) @private {
-    if (desc.shading == ShadingPath.DEFERRED) return c3d::UNSUPPORTED~;
     if (desc.lights == LightSelection.CLUSTERED) {
         cluster_layout(
             desc: desc.clusters,
@@ -516,6 +532,7 @@ fn void? acquire_view_images(Renderer* renderer, ViewRecord* record) @private {
     acquire_view_targets(renderer, record, extent.x, extent.y)!;
     if (record.desc.post.fxaa) post::acquire_post_targets(renderer, record)!;
     post::acquire_effect_targets(renderer, record)!;
+    if (record.desc.shading == ShadingPath.DEFERRED) acquire_gbuffer(renderer, record)!;
     if (record.desc.lights == LightSelection.CLUSTERED) {
         ClusterLayout layout = cluster_layout(
             desc: record.desc.clusters,
@@ -535,6 +552,7 @@ fn void release_view_images(Renderer* renderer, ViewRecord* record) @private {
     record.cluster_root = (gpu::GpuAddress)0;
     record.cluster_depth = {};
     release_scene_color(&renderer.device, record);
+    release_gbuffer(&renderer.device, record);
     release_view_targets(&renderer.device, record);
     post::release_post_targets(&renderer.device, record);
     post::release_effect_targets(&renderer.device, record);

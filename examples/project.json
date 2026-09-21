@@ -244,6 +244,12 @@
         "src/views.c3"
       ]
     },
+    "deferred": {
+      "type": "executable",
+      "sources": [
+        "src/deferred.c3"
+      ]
+    },
     "picking": {
       "type": "executable",
       "sources": [

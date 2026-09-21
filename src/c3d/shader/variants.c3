@@ -43,6 +43,9 @@ enum ShaderName : int {
     VELOCITY_CAMERA,
     VELOCITY,
     MOTION_BLUR,
+    STANDARD_GBUFFER,
+    PHYSICAL_GBUFFER,
+    LIGHTING_RESOLVE,
 }
 
 <*
@@ -131,11 +134,14 @@ const char[*] MESH_SKINNED_U16_VELOCITY_SPIRV @private = $embed("../../../shader
 const char[*] MESH_MORPH_VELOCITY_SPIRV @private = $embed("../../../shaders/spv/mesh_morph_velocity.spv");
 const char[*] MESH_SKINNED_MORPH_VELOCITY_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_morph_velocity.spv");
 const char[*] MESH_SKINNED_U16_MORPH_VELOCITY_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_u16_morph_velocity.spv");
+const char[*] STANDARD_GBUFFER_SPIRV @private = $embed("../../../shaders/spv/standard_gbuffer.spv");
+const char[*] PHYSICAL_GBUFFER_SPIRV @private = $embed("../../../shaders/spv/physical_gbuffer.spv");
+const char[*] LIGHTING_RESOLVE_SPIRV @private = $embed("../../../shaders/spv/lighting_resolve.spv");
 
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[56] SHADER_ENTRIES = {
+const ShaderEntry[59] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -192,4 +198,7 @@ const ShaderEntry[56] SHADER_ENTRIES = {
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_MORPH | SHADER_FLAG_VELOCITY }, .spirv = MESH_MORPH_VELOCITY_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED | SHADER_FLAG_MORPH | SHADER_FLAG_VELOCITY }, .spirv = MESH_SKINNED_MORPH_VELOCITY_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED_U16 | SHADER_FLAG_MORPH | SHADER_FLAG_VELOCITY }, .spirv = MESH_SKINNED_U16_MORPH_VELOCITY_SPIRV[..] },
+    { .variant = { .shader = STANDARD_GBUFFER }, .spirv = STANDARD_GBUFFER_SPIRV[..] },
+    { .variant = { .shader = PHYSICAL_GBUFFER }, .spirv = PHYSICAL_GBUFFER_SPIRV[..] },
+    { .variant = { .shader = LIGHTING_RESOLVE }, .spirv = LIGHTING_RESOLVE_SPIRV[..] },
 };

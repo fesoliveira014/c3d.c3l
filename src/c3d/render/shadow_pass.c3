@@ -176,13 +176,33 @@ fn void? record_shadow_layer(
     state.depth = { .test_enable = true, .write_enable = true, .compare = gpu::CompareOp.GREATER };
     state.raster.depth_bias_enable = bias != 0;
     state.raster.depth_bias_slope = -bias;
-    bool view_reflected = matrices.view.determinant() < 0;
-    ShadowDrawState bound = {
-        .pipeline = draws.len ? draws[0].pipeline : shadow_pipeline_for(renderer, false, depth_only_vertex_variant({}))!,
-    };
-    bool state_set;
-    gpu::cmd_bind_pipeline(&renderer.commands, bound.pipeline)!;
+    gpu::PipelineHandle first = draws.len
+      ? draws[0].pipeline : shadow_pipeline_for(renderer, false, depth_only_vertex_variant({}))!;
+    gpu::cmd_bind_pipeline(&renderer.commands, first)!;
     gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
+    record_depth_draws(
+        renderer:       renderer,
+        draws:          draws,
+        frame:          frame.address,
+        view_reflected: matrices.view.determinant() < 0,
+        state:          &state,
+        first:          first,
+    )!;
+    gpu::cmd_end_render_pass(&renderer.commands)!;
+    renderer.stats.shadow_layers++;
+}
+
+fn void? record_depth_draws(
+    Renderer* renderer,
+    ShadowDraw[] draws,
+    gpu::GpuAddress frame,
+    bool view_reflected,
+    gpu::GraphicsState* state,
+    gpu::PipelineHandle first,
+) @private {
+    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    ShadowDrawState bound = { .pipeline = first };
+    bool state_set;
     foreach (draw : draws) {
         ShadowDrawState wanted = {
             .pipeline = draw.pipeline,
@@ -199,7 +219,7 @@ fn void? record_shadow_layer(
             state.raster.cull_mode = wanted.cull;
             state.raster.front_face = wanted.front_face;
             state.raster.topology = wanted.topology;
-            gpu::cmd_set_graphics_state(&renderer.commands, &state)!;
+            gpu::cmd_set_graphics_state(&renderer.commands, state)!;
             state_set = true;
         }
         bound = wanted;
@@ -210,7 +230,7 @@ fn void? record_shadow_layer(
                 root: (DrawRoot*)root.bytes.ptr,
                 world: draw.candidate.node.world,
                 prev_world: draw.candidate.node.world,
-                frame: frame.address,
+                frame: frame,
                 geometry: draw.geometry.root,
                 material: draw.alpha,
                 object_id: draw.candidate.node.id.index,
@@ -222,7 +242,7 @@ fn void? record_shadow_layer(
             write_depth_draw_root(
                 root: (DrawRoot*)root.bytes.ptr,
                 world: draw.candidate.node.world,
-                frame: frame.address,
+                frame: frame,
                 geometry: draw.geometry.root,
                 material: draw.alpha,
                 object_id: draw.candidate.node.id.index,
@@ -256,8 +276,6 @@ fn void? record_shadow_layer(
             renderer.stats.triangles += (layout.index_count ? layout.index_count : layout.vertex_count) / 3;
         }
     }
-    gpu::cmd_end_render_pass(&renderer.commands)!;
-    renderer.stats.shadow_layers++;
 }
 
 fn ShadowGpu[]? record_shadows(

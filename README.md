@@ -204,6 +204,10 @@ sweep. Effects start enabled; the post panel's sections toggle and tune each one
 python3 scripts/build.py --example effects
 ```
 
+`deferred` renders one scene forward on the left and deferred on the right, switches either
+half at runtime and shows the G-buffer channels through the targets panel; see the
+[shading path](docs/views.md#shading-path) section.
+
 `views` renders the same kind of scene twice per frame through [views and render
 targets](docs/views.md): a producer camera writes a capture target that a monitor slab samples
 through its material, while the window camera shows the whole scene. Its panel resizes the
