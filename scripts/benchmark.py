@@ -72,6 +72,7 @@ def parse_arguments():
     render = parser.add_argument_group("render and scene suites")
     render.add_argument("--lights", type=int, nargs="+", help="render default 64 256 1024 4096; scene default 16 64 256")
     render.add_argument("--modes", nargs="+", choices=["flat", "clustered"], default=["flat", "clustered"])
+    render.add_argument("--shadings", nargs="+", choices=["forward", "deferred"], default=["forward"])
     render.add_argument("--frames", type=int, default=300)
     render.add_argument("--warmup", type=int, default=60)
     render.add_argument("--width", type=int, default=1440)
@@ -228,21 +229,21 @@ def common_switches(args):
                                         ("--panel", args.panel)] if enabled]
 
 
-def workload_arguments(args, mode, lights):
-    return ["--benchmark", "--mode", mode, "--lights", str(lights), "--frames", str(args.frames),
+def workload_arguments(args, mode, lights, shading):
+    return ["--benchmark", "--mode", mode, "--shading", shading, "--lights", str(lights), "--frames", str(args.frames),
             "--warmup", str(args.warmup), "--width", str(args.width), "--height", str(args.height),
             "--capacity", str(args.capacity), "--range", str(args.range), *common_switches(args)]
 
 
 def render_jobs(args):
-    return [(f"{mode}-{lights}", workload_arguments(args, mode, lights))
-            for lights in args.lights for mode in args.modes]
+    return [(f"{shading}-{mode}-{lights}", workload_arguments(args, mode, lights, shading))
+            for lights in args.lights for mode in args.modes for shading in args.shadings]
 
 
 def scene_jobs(args):
-    return [(f"{mode}-{lights}-shadows-{args.shadows}",
-             [str(args.model.resolve()), "--shadows", args.shadows, *workload_arguments(args, mode, lights)])
-            for lights in args.lights for mode in args.modes]
+    return [(f"{shading}-{mode}-{lights}-shadows-{args.shadows}",
+             [str(args.model.resolve()), "--shadows", args.shadows, *workload_arguments(args, mode, lights, shading)])
+            for lights in args.lights for mode in args.modes for shading in args.shadings]
 
 
 def run_job(output, name, command, timeout):

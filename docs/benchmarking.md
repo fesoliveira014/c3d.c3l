@@ -126,8 +126,9 @@ steady-state submission throughput with frames in flight, not isolated GPU laten
 The pass timestamps are partial intervals and should not be presented as total
 frame time.
 
-Keep extent, camera, range, capacity and material fixed when comparing flat and
-clustered modes. Report overflow counts: overflow falls back to the complete flat
+`--shading forward|deferred` selects the view's shading path (`benchmark.py --shadings`);
+job names carry the path first. Keep extent, camera, range, capacity and material fixed when
+comparing flat and clustered modes or the two shading paths. Report overflow counts: overflow falls back to the complete flat
 light list rather than dropping contributions. A useful correctness stress is:
 
 ```bash
