@@ -18,6 +18,7 @@ struct ShadowDraw @private {
     GpuGeometry* geometry;
     Material* material;
     ShaderVariant vertex;
+    gpu::PipelineHandle pipeline;
     gpu::GpuAddress skin;
     gpu::GpuAddress morph;
     gpu::GpuAddress alpha;
@@ -40,6 +41,7 @@ fn gpu::PipelineHandle? shadow_pipeline_for(
     ShaderVariant vertex,
     Material* material = null,
 ) @private {
+    renderer.stats.pipeline_lookups++;
     PipelineKey key = {
         .vertex = vertex,
         .fragment = { .shader = DEPTH_ONLY },
@@ -94,18 +96,20 @@ fn ShadowDraw[]? prepare_shadow_draws(Renderer* renderer, MeshCandidate[] candid
             .reflected = candidate.node.world.determinant() < 0,
             .cull = material.common.double_sided ? gpu::CullMode.NONE : gpu::CullMode.BACK,
         };
-        if (catch excuse = shadow_pipeline_for(
+        gpu::PipelineHandle? pipeline = shadow_pipeline_for(
             renderer:  renderer,
             wireframe: draw.wireframe,
             vertex:    vertex,
             material:  material,
-        )) {
+        );
+        if (catch excuse = pipeline) {
             if (material.kind != MaterialKind.CUSTOM || !pipeline_rejected(renderer, material.custom.shader, excuse)) {
                 return excuse~;
             }
             continue;
         }
         draw.material = material;
+        draw.pipeline = pipeline;
         count++;
         if (!draw.masked || material.kind == MaterialKind.CUSTOM) continue;
         TextureSlot base_map;
@@ -157,11 +161,10 @@ fn void? record_shadow_layer(
     state.raster.depth_bias_slope = -bias;
     bool view_reflected = matrices.view.determinant() < 0;
     ShadowDrawState bound = {
-        .pipeline = shadow_pipeline_for(
+        .pipeline = draws.len ? draws[0].pipeline : shadow_pipeline_for(
             renderer:  renderer,
-            wireframe: draws.len ? draws[0].wireframe : false,
-            vertex:    draws.len ? draws[0].vertex : mesh_vertex_variant({}, false, shader::SHADER_FLAG_DEPTH_ONLY),
-            material:  draws.len ? draws[0].material : null,
+            wireframe: false,
+            vertex:    mesh_vertex_variant({}, false, shader::SHADER_FLAG_DEPTH_ONLY),
         )!,
     };
     bool state_set;
@@ -169,12 +172,7 @@ fn void? record_shadow_layer(
     gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
     foreach (draw : draws) {
         ShadowDrawState wanted = {
-            .pipeline = shadow_pipeline_for(
-                renderer:  renderer,
-                wireframe: draw.wireframe,
-                vertex:    draw.vertex,
-                material:  draw.material,
-            )!,
+            .pipeline = draw.pipeline,
             .cull = draw.cull,
             .front_face = draw.reflected != view_reflected
               ? gpu::FrontFace.CLOCKWISE : gpu::FrontFace.COUNTER_CLOCKWISE,
@@ -194,18 +192,32 @@ fn void? record_shadow_layer(
         bound = wanted;
 
         gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, DrawRoot::size, STREAM_ALIGNMENT)!;
-        write_draw_root(
-            root: (DrawRoot*)root.bytes.ptr,
-            world: draw.candidate.node.world,
-            prev_world: draw.candidate.node.world,
-            frame: frame.address,
-            geometry: draw.geometry.root,
-            material: draw.alpha,
-            object_id: draw.candidate.node.id.index,
-            flags: draw.masked ? shader::DRAW_ALPHA_MASK : 0,
-            skin: draw.skin,
-            morph: draw.morph,
-        );
+        if (draw.material.kind == MaterialKind.CUSTOM) {
+            write_draw_root(
+                root: (DrawRoot*)root.bytes.ptr,
+                world: draw.candidate.node.world,
+                prev_world: draw.candidate.node.world,
+                frame: frame.address,
+                geometry: draw.geometry.root,
+                material: draw.alpha,
+                object_id: draw.candidate.node.id.index,
+                flags: draw.masked ? shader::DRAW_ALPHA_MASK : 0,
+                skin: draw.skin,
+                morph: draw.morph,
+            );
+        } else {
+            write_depth_draw_root(
+                root: (DrawRoot*)root.bytes.ptr,
+                world: draw.candidate.node.world,
+                frame: frame.address,
+                geometry: draw.geometry.root,
+                material: draw.alpha,
+                object_id: draw.candidate.node.id.index,
+                flags: draw.masked ? shader::DRAW_ALPHA_MASK : 0,
+                skin: draw.skin,
+                morph: draw.morph,
+            );
+        }
         GeometryLayout* layout = &draw.geometry.layout;
         if (layout.index_count) {
             gpu::cmd_draw_indexed(

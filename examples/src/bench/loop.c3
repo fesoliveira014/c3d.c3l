@@ -48,6 +48,8 @@ struct FrameSample {
     uint lights;
     uint dropped;
     uint overflows;
+    uint material_resolutions;
+    uint pipeline_lookups;
 }
 
 <*
@@ -196,13 +198,13 @@ fn usz? run_frames(BenchmarkRun* run, BenchmarkFlags flags, FrameSample[] sample
  @param timestamps_enabled : "False prints -1 in every GPU column."
 *>
 fn void write_samples(FrameSample[] samples, bool timestamps_enabled) {
-    io::printn("frame,wall_ms,update_ms,begin_ms,render_ms,finish_ms,end_ms,gui_ms,cpu_record_ms,draws,lights,dropped,overflows,gpu_cull_ms,gpu_opaque_ms,gpu_post_ms,gpu_composite_ms");
+    io::printn("frame,wall_ms,update_ms,begin_ms,render_ms,finish_ms,end_ms,gui_ms,cpu_record_ms,draws,lights,dropped,overflows,material_resolutions,pipeline_lookups,gpu_cull_ms,gpu_opaque_ms,gpu_post_ms,gpu_composite_ms");
     foreach (index, sample : samples) {
         float unavailable = -1;
-        io::printfn("%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f",
+        io::printfn("%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f",
             index, sample.wall_ms, sample.update_ms, sample.begin_ms, sample.render_ms,
             sample.finish_ms, sample.end_ms, sample.gui_ms, sample.cpu_record_ms, sample.draws, sample.lights,
-            sample.dropped, sample.overflows,
+            sample.dropped, sample.overflows, sample.material_resolutions, sample.pipeline_lookups,
             timestamps_enabled ? sample.gpu_ms[Pass.LIGHT_CULL.ordinal] : unavailable,
             timestamps_enabled ? sample.gpu_ms[Pass.FORWARD_OPAQUE.ordinal] : unavailable,
             timestamps_enabled ? sample.gpu_ms[Pass.POST_CHAIN.ordinal] : unavailable,
@@ -246,6 +248,8 @@ fn void? record_frame(BenchmarkRun* run, uint frame, FrameSample* sample) @priva
     sample.draws = renderer.stats.draws;
     sample.lights = renderer.stats.lights;
     sample.dropped = renderer.stats.lights_dropped;
+    sample.material_resolutions = renderer.stats.material_resolutions;
+    sample.pipeline_lookups = renderer.stats.pipeline_lookups;
 }
 
 module bench_loop @feat(C3D_PROFILE_CPU | C3D_PROFILE_GPU);

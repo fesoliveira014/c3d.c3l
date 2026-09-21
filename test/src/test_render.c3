@@ -787,6 +787,49 @@ fn void test_texture_state_remember_keeps_the_first_state() @test {
     assert(undo[0].state.layout == gpu::TextureLayout.SAMPLED);
 }
 
+fn void test_upload_ring_fast_path_derives_bytes_and_address() @test {
+    const usz RING_BYTES = 1024;
+    char[] storage = alloc::new_array(mem, char, RING_BYTES);
+    defer alloc::free(mem, storage.ptr);
+    render::UploadRing ring = {
+        .mapped = { .span = { .size = RING_BYTES }, .bytes = storage, .address = (gpu::GpuAddress)0x1000 },
+    };
+    gpu::Device device;
+
+    gpu::MappedGpuSpan first = ring.take(&device, 100, 16)!!;
+    gpu::MappedGpuSpan second = ring.take(&device, 100, 256)!!;
+    assert(first.span.offset == 0 && first.bytes.ptr == storage.ptr && (ulong)first.address == 0x1000);
+    assert(second.span.offset == 256 && second.bytes.ptr == storage.ptr + 256 && (ulong)second.address == 0x1100);
+    assert(second.bytes.len == 100 && second.span.size == 100);
+
+    gpu::MappedGpuSpan last = ring.take(&device, RING_BYTES - 368, 16)!!;
+    assert(last.span.offset == 368 && (ulong)last.address == 0x1000 + 368);
+    assert(ring.head == RING_BYTES);
+}
+
+fn void test_depth_draw_root_writes_only_depth_fields() @test {
+    shader::DrawRoot* root = mem::new(shader::DrawRoot);
+    defer free(root);
+    Mat4 world = matrix::IDENTITY4.translate({ 1, 2, 3 });
+    render::write_depth_draw_root(
+        root:      root,
+        world:     world,
+        frame:     (gpu::GpuAddress)0x100,
+        geometry:  (gpu::GpuAddress)0x200,
+        material:  (gpu::GpuAddress)0x300,
+        object_id: 7,
+        flags:     shader::DRAW_ALPHA_MASK,
+        skin:      (gpu::GpuAddress)0x400,
+        morph:     (gpu::GpuAddress)0x500,
+    );
+    assert(root.model[3] == (Vec4){ 1, 2, 3, 1 });
+    assert((ulong)root.frame == 0x100 && (ulong)root.geometry == 0x200 && (ulong)root.material == 0x300);
+    assert((ulong)root.skin == 0x400 && (ulong)root.morph == 0x500);
+    assert(root.object_id == 7 && root.flags == shader::DRAW_ALPHA_MASK);
+    assert(root.normal_0 == (Vec4){} && root.normal_1 == (Vec4){} && root.normal_2 == (Vec4){});
+    assert(root.prev_model[3] == (Vec4){} && root.layers == 0 && (uint)root.sheen_lut == 0);
+}
+
 fn void test_buffer_pool_reuses_a_slot_with_a_new_generation() @test {
     render::BufferPool buffers = pool::create_pool{render::BufferRecord, BufferId}(mem, 2);
     defer pool::destroy_pool{render::BufferRecord, BufferId}(&buffers);
