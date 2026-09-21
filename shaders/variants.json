@@ -1,5 +1,5 @@
 {
-  "flags": ["DEPTH_ONLY", "SKINNED", "SKINNED_U16", "MORPH", "VELOCITY"],
+  "flags": ["DEPTH_ONLY", "SKINNED", "SKINNED_U16", "MORPH", "VELOCITY", "VERTEX_COLOR"],
   "entries": [
     { "shader": "fullscreen", "source": "fullscreen.vert.glsl", "stage": "vert", "defines": [] },
     { "shader": "gradient", "source": "gradient.frag.glsl", "stage": "frag", "defines": [] },
@@ -26,6 +26,7 @@
     { "shader": "sky", "source": "sky.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["DEPTH_ONLY"] },
     { "shader": "depth_only", "source": "depth_only.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "depth_only", "source": "depth_only.frag.glsl", "stage": "frag", "defines": ["VERTEX_COLOR"] },
     { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["SKINNED"] },
     { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["SKINNED_U16"] },
     { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["MORPH"] },

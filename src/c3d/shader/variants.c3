@@ -69,6 +69,11 @@ const uint SHADER_FLAG_MORPH = 1 << 3;
 *>
 const uint SHADER_FLAG_VELOCITY = 1 << 4;
 
+<*
+ Flag bit for VERTEX_COLOR.
+*>
+const uint SHADER_FLAG_VERTEX_COLOR = 1 << 5;
+
 const char[*] FULLSCREEN_SPIRV @private = $embed("../../../shaders/spv/fullscreen.spv");
 const char[*] GRADIENT_SPIRV @private = $embed("../../../shaders/spv/gradient.spv");
 const char[*] COMPOSITE_SPIRV @private = $embed("../../../shaders/spv/composite.spv");
@@ -94,6 +99,7 @@ const char[*] SHEEN_LUT_SPIRV @private = $embed("../../../shaders/spv/sheen_lut.
 const char[*] SKY_SPIRV @private = $embed("../../../shaders/spv/sky.spv");
 const char[*] MESH_DEPTH_ONLY_SPIRV @private = $embed("../../../shaders/spv/mesh_depth_only.spv");
 const char[*] DEPTH_ONLY_SPIRV @private = $embed("../../../shaders/spv/depth_only.spv");
+const char[*] DEPTH_ONLY_VERTEX_COLOR_SPIRV @private = $embed("../../../shaders/spv/depth_only_vertex_color.spv");
 const char[*] MESH_SKINNED_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned.spv");
 const char[*] MESH_SKINNED_U16_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_u16.spv");
 const char[*] MESH_MORPH_SPIRV @private = $embed("../../../shaders/spv/mesh_morph.spv");
@@ -127,7 +133,7 @@ const char[*] MESH_SKINNED_U16_MORPH_VELOCITY_SPIRV @private = $embed("../../../
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[54] SHADER_ENTRIES = {
+const ShaderEntry[55] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -153,6 +159,7 @@ const ShaderEntry[54] SHADER_ENTRIES = {
     { .variant = { .shader = SKY }, .spirv = SKY_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_DEPTH_ONLY }, .spirv = MESH_DEPTH_ONLY_SPIRV[..] },
     { .variant = { .shader = DEPTH_ONLY }, .spirv = DEPTH_ONLY_SPIRV[..] },
+    { .variant = { .shader = DEPTH_ONLY, .flags = SHADER_FLAG_VERTEX_COLOR }, .spirv = DEPTH_ONLY_VERTEX_COLOR_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED }, .spirv = MESH_SKINNED_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED_U16 }, .spirv = MESH_SKINNED_U16_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_MORPH }, .spirv = MESH_MORPH_SPIRV[..] },

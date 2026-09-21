@@ -74,7 +74,7 @@ fn void? emit_subtree(
     template.nodes[index] = {
         .parent  = parent,
         .name    = copy_name(allocator, node.name),
-        .local   = node_transform(node),
+        .local   = node_transform(node)!,
         .layers  = scene::DEFAULT_LAYERS,
         .visible = true,
     };
@@ -83,6 +83,7 @@ fn void? emit_subtree(
         usz mesh_index = gltf::mesh_index(data, node.mesh);
         float[] weights = node.weights.len ? node.weights : node.mesh.weights;
         foreach (usz primitive_index, &primitive : node.mesh.primitives) {
+            if (weights.len && weights.len != primitive.targets.len) return c3d::ASSET_FORMAT_ERROR~;
             uint child = (uint)cursor.nodes++;
             template.nodes[child] = {
                 .parent  = (int)index,
@@ -101,7 +102,7 @@ fn void? emit_subtree(
                 .node                  = child,
                 .geometry              = importer.geometries[importer.mesh_offsets[mesh_index] + primitive_index],
                 .material              = material,
-                .default_morph_weights = copy_weights(allocator, weights),
+                .default_morph_weights = default_weights(allocator, weights, primitive.targets.len),
             };
         }
     }
@@ -116,18 +117,22 @@ fn void? emit_subtree(
     return;
 }
 
-fn Transform node_transform(gltf::Node* node) @private {
-    if (node.has_matrix) return maths::transform_from_mat4(bitcast(node.matrix, Mat4));
-    return {
-        .position = node.translation,
-        .rotation = { .v = node.rotation },
-        .scale    = node.scale,
-    };
+fn Transform? node_transform(gltf::Node* node) @private {
+    if (!node.has_matrix) {
+        return {
+            .position = node.translation,
+            .rotation = { .v = node.rotation },
+            .scale    = node.scale,
+        };
+    }
+    Transform? decomposed = maths::transform_from_affine(bitcast(node.matrix, Mat4));
+    if (catch decomposed) return c3d::ASSET_FORMAT_ERROR~;
+    return decomposed;
 }
 
-fn float[] copy_weights(Allocator allocator, float[] weights) @private {
-    if (!weights.len) return {};
-    float[] copy = alloc::new_array(allocator, float, (sz)weights.len);
-    copy[..] = weights[..];
-    return copy;
+fn float[] default_weights(Allocator allocator, float[] weights, usz target_count) @private {
+    if (!target_count) return {};
+    float[] defaults = alloc::new_array(allocator, float, (sz)target_count);
+    if (weights.len) defaults[..] = weights[..];
+    return defaults;
 }

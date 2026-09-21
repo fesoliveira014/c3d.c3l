@@ -40,11 +40,12 @@ fn gpu::PipelineHandle? shadow_pipeline_for(
     bool wireframe,
     ShaderVariant vertex,
     Material* material = null,
+    bool vertex_color = false,
 ) @private {
     renderer.stats.pipeline_lookups++;
     PipelineKey key = {
         .vertex = vertex,
-        .fragment = { .shader = DEPTH_ONLY },
+        .fragment = { .shader = DEPTH_ONLY, .flags = vertex_color ? shader::SHADER_FLAG_VERTEX_COLOR : 0 },
         .depth_format = DEPTH_FORMAT,
         .samples = gpu::SampleCount.ONE,
         .polygon = wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL,
@@ -112,10 +113,11 @@ fn ShadowDraw[]? prepare_shadow_draws(Renderer* renderer, MeshCandidate[] candid
             .cull = material.common.double_sided ? gpu::CullMode.NONE : gpu::CullMode.BACK,
         };
         gpu::PipelineHandle? pipeline = shadow_pipeline_for(
-            renderer:  renderer,
-            wireframe: draw.wireframe,
-            vertex:    vertex,
-            material:  material,
+            renderer:     renderer,
+            wireframe:    draw.wireframe,
+            vertex:       vertex,
+            material:     material,
+            vertex_color: draw.masked && geometry.layout.flags.has_colors,
         );
         if (catch excuse = pipeline) {
             if (material.kind != MaterialKind.CUSTOM || !pipeline_rejected(renderer, material.custom.shader, excuse)) {

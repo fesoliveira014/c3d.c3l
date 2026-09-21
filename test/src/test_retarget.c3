@@ -236,3 +236,74 @@ fn void test_retarget_ambiguous_destination_name_faults() @test {
         assert(false, "expected a fault");
     }
 }
+
+fn Track make_cubic_track(uint target, float[] times, float[] slots) @local {
+    Track track = make_track(target, TargetPath.TRANSLATION, times, slots);
+    track.interpolation = Interpolation.CUBIC_SPLINE;
+    return track;
+}
+
+fn Vec3 sample_translation(Track* track, float time) @local {
+    float[3] out;
+    uint cursor;
+    anim::sample_track(track, time, &cursor, out[..]);
+    return { out[0], out[1], out[2] };
+}
+
+fn void test_retarget_step_hips_keep_step_and_pin_to_the_first_key() @test {
+    Rig rig = make_rig();
+    defer destroy_rig(&rig);
+    rig.clip.tracks[0].interpolation = Interpolation.STEP;
+    RetargetOptions options = retarget::RETARGET_OPTIONS_DEFAULT;
+    options.root_motion = RootMotion.EXTRACT;
+    options.root_node = 0;
+    AnimationClip result = retarget::retarget_by_name(mem, &rig.clip, rig.source_nodes, &rig.target, options)!!;
+    defer asset::free_clip(mem, &result);
+    Track* hips = track_of(&result, 1, TargetPath.TRANSLATION);
+    Track* root = track_of(&result, 0, TargetPath.TRANSLATION);
+    assert(hips.interpolation == Interpolation.STEP && root.interpolation == Interpolation.STEP);
+    Vec3 mid = sample_translation(hips, 0.75f);
+    assert(close(mid.x, 0) && close(mid.z, 0) && close(mid.y, 0.85f));
+    Vec3 root_mid = sample_translation(root, 0.75f);
+    assert(close(root_mid.x, 0.5f) && close(root_mid.z, 0.2f) && close(root_mid.y, 0));
+}
+
+fn void test_retarget_cubic_hips_keep_values_and_zero_stripped_tangents() @test {
+    Rig rig = make_rig();
+    defer destroy_rig(&rig);
+    float[2] times = { 0, 2 };
+    float[18] slots = {
+        0, 0, 0,  0, 0.8f, 0,  1, 0.5f, 1,
+        1, 0, 1,  2, 0.8f, 2,  0, 0, 0,
+    };
+    asset::free_clip(mem, &rig.clip);
+    rig.clip = {
+        .name     = "run".copy(mem),
+        .duration = 2,
+        .tracks   = alloc::new_array(mem, Track, 1),
+        .targets  = alloc::new_array(mem, uint, 1),
+    };
+    rig.clip.targets[0] = 0;
+    rig.clip.tracks[0] = make_cubic_track(0, times[..], slots[..]);
+    RetargetOptions options = retarget::RETARGET_OPTIONS_DEFAULT;
+    options.root_motion = RootMotion.EXTRACT;
+    options.root_node = 0;
+    AnimationClip result = retarget::retarget_by_name(mem, &rig.clip, rig.source_nodes, &rig.target, options)!!;
+    defer asset::free_clip(mem, &result);
+
+    Track* hips = track_of(&result, 1, TargetPath.TRANSLATION);
+    Track* root = track_of(&result, 0, TargetPath.TRANSLATION);
+    assert(hips.interpolation == Interpolation.CUBIC_SPLINE && root.interpolation == Interpolation.CUBIC_SPLINE);
+    assert(hips.values.len == 18 && root.values.len == 18);
+    foreach (time : (float[3]){ 0.5f, 1, 1.5f }) {
+        Vec3 pinned = sample_translation(hips, time);
+        assert(close(pinned.x, 0) && close(pinned.z, 0));
+        Vec3 moved = sample_translation(root, time);
+        assert(close(moved.y, 0));
+    }
+    Vec3 end = sample_translation(root, 2);
+    assert(close(end.x, 2) && close(end.z, 2));
+    Vec3 hips_mid = sample_translation(hips, 1);
+    Vec3 original_mid = sample_translation(&rig.clip.tracks[0], 1);
+    assert(close(hips_mid.y, original_mid.y));
+}

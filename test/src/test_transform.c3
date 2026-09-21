@@ -164,3 +164,39 @@ fn void test_transform_from_mat4_round_trips() @test {
         assert(close_vec3(back.rotation * point, transform.rotation * point));
     }
 }
+
+fn void test_transform_from_affine_recomposes_reflections_and_zero_scale() @test {
+    Quat turned = quaternion::from_euler{float}(0.3f, -0.6f, 0.9f);
+    Transform[6] cases = {
+        { .position = { 1, 2, 3 }, .rotation = quaternion::IDENTITY, .scale = { -2, 1, 1 } },
+        { .position = { 0, 0, 0 }, .rotation = quaternion::IDENTITY, .scale = { 1, -3, 1 } },
+        { .position = { 0, 0, 0 }, .rotation = quaternion::IDENTITY, .scale = { 1, 1, -0.5f } },
+        { .position = { 4, 0, 0 }, .rotation = quaternion::IDENTITY, .scale = { -1, -1, 1 } },
+        { .position = { 0, 5, 0 }, .rotation = turned, .scale = { -1.5f, 2, 0.75f } },
+        { .position = { 0, 0, 6 }, .rotation = turned, .scale = { 0, 1, 2 } },
+    };
+    foreach (transform : cases) {
+        Mat4 model = transform.to_mat4();
+        Transform back = maths::transform_from_affine(model)!!;
+        assert(close_mat4(back.to_mat4(), model));
+    }
+    Transform reflected = maths::transform_from_affine(cases[0].to_mat4())!!;
+    assert(reflected.scale.x < 0 && reflected.scale.y > 0 && reflected.scale.z > 0);
+}
+
+fn void test_transform_from_affine_rejects_shear_and_non_finite() @test {
+    Mat4 sheared = matrix::IDENTITY4;
+    sheared.m01 = 0.5f;
+    if (catch excuse = maths::transform_from_affine(sheared)) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "a sheared matrix decomposed as a transform");
+    }
+    Mat4 broken = matrix::IDENTITY4;
+    broken.m03 = float::inf;
+    if (catch excuse = maths::transform_from_affine(broken)) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "a non-finite matrix decomposed as a transform");
+    }
+}

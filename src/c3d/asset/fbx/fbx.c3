@@ -16,6 +16,7 @@ struct DerivedTexture @private {
     uint      first;
     uint      second;
     bool      metallic_roughness;
+    bool      invert_roughness;
     TextureId texture;
 }
 

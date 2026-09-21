@@ -1,6 +1,9 @@
 module c3d::maths;
 
+import c3d;
 import std::math;
+
+const float AFFINE_AXIS_TOLERANCE @private = 0.0001f; // cosine between decomposed axes above this is shear, not TRS
 
 <*
  Transform that leaves every point where it is.
@@ -87,6 +90,51 @@ fn Transform transform_from_mat4(Mat4 model) {
 }
 
 <*
+ Position, rotation and signed scale of an affine matrix; a reflection lands in the x scale.
+ @param model : "Affine; zero columns allowed, shear and non-finite values are not."
+ @return? c3d::INVALID_ARGUMENT
+*>
+fn Transform? transform_from_affine(Mat4 model) {
+    if (model.m30 != 0 || model.m31 != 0 || model.m32 != 0 || model.m33 != 1) return c3d::INVALID_ARGUMENT~;
+    Vec3[3] axes = {
+        { model.m00, model.m10, model.m20 },
+        { model.m01, model.m11, model.m21 },
+        { model.m02, model.m12, model.m22 },
+    };
+    Vec3 position = translation(model);
+    foreach (axis : axes) {
+        if (!math::is_finite(axis.x) || !math::is_finite(axis.y) || !math::is_finite(axis.z)) {
+            return c3d::INVALID_ARGUMENT~;
+        }
+    }
+    if (!math::is_finite(position.x) || !math::is_finite(position.y) || !math::is_finite(position.z)) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+    Vec3 scale = { axes[0].length(), axes[1].length(), axes[2].length() };
+    uint present;
+    foreach (index, length : scale) {
+        if (length > 0) {
+            axes[index] = axes[index] / length;
+            present |= 1u << index;
+        }
+    }
+    complete_axes(&axes, present);
+    if (math::abs(axes[0].dot(axes[1])) > AFFINE_AXIS_TOLERANCE || math::abs(axes[1].dot(axes[2])) > AFFINE_AXIS_TOLERANCE
+        || math::abs(axes[0].dot(axes[2])) > AFFINE_AXIS_TOLERANCE) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+    if (axes[0].dot(axes[1].cross(axes[2])) < 0) {
+        scale.x = -scale.x;
+        axes[0] = -axes[0];
+    }
+    return {
+        .position = position,
+        .rotation = quat_from_axes(axes[0], axes[1], axes[2]),
+        .scale    = scale,
+    };
+}
+
+<*
  Matrix that keeps normals perpendicular under non-uniform scale.
 *>
 fn Mat3 normal_matrix(Mat4 model) {
@@ -126,6 +174,31 @@ fn Quat look_rotation(Vec3 forward, Vec3 up) {
     Vec3 axis_x = up.cross(axis_z).normalize();
     Vec3 axis_y = axis_z.cross(axis_x);
     return quat_from_axes(axis_x, axis_y, axis_z);
+}
+
+fn void complete_axes(Vec3[3]* axes, uint present) @private {
+    switch (present) {
+        case 0b111: return;
+        case 0b011: axes.[2] = axes.[0].cross(axes.[1]);
+        case 0b101: axes.[1] = axes.[2].cross(axes.[0]);
+        case 0b110: axes.[0] = axes.[1].cross(axes.[2]);
+        case 0b001:
+            axes.[1] = perpendicular(axes.[0]);
+            axes.[2] = axes.[0].cross(axes.[1]);
+        case 0b010:
+            axes.[2] = perpendicular(axes.[1]);
+            axes.[0] = axes.[1].cross(axes.[2]);
+        case 0b100:
+            axes.[0] = perpendicular(axes.[2]);
+            axes.[1] = axes.[2].cross(axes.[0]);
+        default:
+            *axes = { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } };
+    }
+}
+
+fn Vec3 perpendicular(Vec3 axis) @private {
+    Vec3 helper = math::abs(axis.x) < 0.9f ? (Vec3){ 1, 0, 0 } : (Vec3){ 0, 1, 0 };
+    return axis.cross(helper).normalize();
 }
 
 fn Quat quat_from_axes(Vec3 axis_x, Vec3 axis_y, Vec3 axis_z) @private {

@@ -8,7 +8,9 @@ import c3d::camera;
 import c3d::geometry;
 import c3d::light;
 import c3d::material;
+import c3d::model;
 import c3d::maths;
+import c3d::scene;
 import std::io::path;
 import std::math;
 
@@ -229,4 +231,71 @@ fn void test_animations_option_skips_clips() @test {
     } else {
         assert(false, "expected a fault");
     }
+}
+
+fn AssetStore create_animated_store() @local {
+    return asset::create_asset_store(mem, {
+        .max_geometries = 8,
+        .max_textures = 8,
+        .max_materials = 8,
+        .max_samplers = 8,
+        .max_models = 2,
+        .max_skeletons = 2,
+        .max_clips = 2,
+    });
+}
+
+fn void test_omitted_morph_weights_default_to_zero_per_target_and_animate() @test {
+    AssetStore assets = create_animated_store();
+    defer asset::destroy_asset_store(&assets);
+    String path = fixture_path("import_fixes.gltf");
+    ModelId model = gltf::load_model(&assets, path)!!;
+    ModelTemplate* template = &assets.model(model).data;
+    float[] defaults = template.meshes[0].default_morph_weights;
+    assert(defaults.len == 2 && defaults[0] == 0 && defaults[1] == 0);
+
+    Scene scene = scene::create_scene(mem, { .max_nodes = 16 });
+    defer scene::destroy_scene(&scene);
+    Node* root = model::instantiate(&assets, &scene, model)!!;
+    Animator* animator = anim::add_animator(&scene, root);
+    animator.play(&assets, template.clips[0])!!;
+    anim::update(&assets, &scene, 0.5f);
+    Mesh* mesh = scene.get(scene.get(root, ModelInstance).nodes[template.meshes[0].node], Mesh);
+    assert(mesh.morph_weights.len == 2);
+    assert(math::abs(mesh.morph_weights[0] - 0.5f) < 0.01f && math::abs(mesh.morph_weights[1] - 0.25f) < 0.01f);
+}
+
+fn void test_reflected_matrix_node_keeps_its_reflection() @test {
+    AssetStore assets = create_animated_store();
+    defer asset::destroy_asset_store(&assets);
+    String path = fixture_path("import_fixes.gltf");
+    ModelTemplate* template = &assets.model(gltf::load_model(&assets, path)!!).data;
+    Transform local = template.nodes[2].local;
+    assert(template.nodes[2].name == "reflected");
+    assert(local.position == (Vec3){ 1, 2, 3 } && local.scale.x == -2 && local.scale.y == 1 && local.scale.z == 1);
+    Mat4 recomposed = local.to_mat4();
+    assert(math::abs(recomposed.m00 + 2) < 0.0005f && math::abs(recomposed.m11 - 1) < 0.0005f);
+    assert(math::abs(recomposed.m10) < 0.0005f && math::abs(recomposed.m01) < 0.0005f);
+}
+
+fn void test_orthographic_camera_keeps_both_magnitudes() @test {
+    AssetStore assets = create_animated_store();
+    defer asset::destroy_asset_store(&assets);
+    String path = fixture_path("import_fixes.gltf");
+    ModelTemplate* template = &assets.model(gltf::load_model(&assets, path)!!).data;
+    assert(template.cameras.len == 1);
+    Camera camera = template.cameras[0].value;
+    assert(camera.projection == Projection.ORTHOGRAPHIC && camera.ortho_height == 3);
+    assert(camera.aspect == 2 && camera.near == 0.1f && camera.far == 50);
+}
+
+fn void test_vertex_colors_import_as_rgba_and_rgb() @test {
+    AssetStore assets = create_animated_store();
+    defer asset::destroy_asset_store(&assets);
+    String path = fixture_path("import_fixes.gltf");
+    ModelTemplate* template = &assets.model(gltf::load_model(&assets, path)!!).data;
+    Geometry* rgba = &assets.geometry(template.meshes[1].geometry).data;
+    Geometry* rgb = &assets.geometry(template.meshes[2].geometry).data;
+    assert(rgba.colors.len == 3 && rgba.colors[1] == (Vec4){ 0, 1, 0, 0.5f });
+    assert(rgb.colors.len == 3 && rgb.colors[2] == (Vec4){ 1, 0, 0, 1 });
 }

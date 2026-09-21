@@ -127,6 +127,10 @@ instanced meshes are not part of this.
 
 ## Retargeting
 
+Root-motion handling keeps the source interpolation. `STRIP_XZ` pins the hip x and z to the first
+key and zeroes the x and z tangents of a cubic track; `EXTRACT` copies the hip track onto the root
+with rest y, the first key's x and z as origin, zero y tangents and the source x and z tangents.
+
 `c3d::anim::retarget` rebinds a clip authored against one set of node names
 onto another model's template:
 

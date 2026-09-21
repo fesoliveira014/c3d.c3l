@@ -116,6 +116,13 @@ normalized integer streams are expanded to floats, three-component colors gain
 an alpha of one, and a primitive with joints but no weights or the reverse is
 `ASSET_FORMAT_ERROR`. Point, line and triangle lists pass through; strips, fans and loops are rewritten into
 indexed lists. Triangle primitives without normals receive smooth normals.
+A primitive with morph targets but no node or mesh weights starts every target at zero, so a
+weights clip on the node plays; a supplied weights count that differs from the target count is an
+`ASSET_FORMAT_ERROR`. A `matrix` node decomposes with its sign: a reflection lands in the x scale,
+zero-scale columns complete an orthonormal frame, and shear or non-finite values are an
+`ASSET_FORMAT_ERROR`. An orthographic camera keeps both magnitudes: `ortho_height = 2 * ymag` and
+`aspect = xmag / ymag`. `COLOR_0` imports as RGBA (RGB gains alpha one) and tints the built-in
+shading.
 Morph targets keep position and normal deltas and their names; a target with
 only one delta kind gains a zero array for the other. Sparse accessors are
 expanded. A primitive whose `POSITION` accessor is missing or empty is

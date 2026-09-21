@@ -12,7 +12,18 @@ def data_uri(payload: bytes) -> str:
 def floats(values): return struct.pack(f"<{len(values)}f", *values)
 def ushorts(values): return struct.pack(f"<{len(values)}H", *values)
 
-def write(name, document): (HERE / name).write_text(json.dumps(document, indent=1) + "\n")
+def dumps(value, depth=0):
+    pad = " " * depth
+    if isinstance(value, dict):
+        items = [f'{pad} {json.dumps(key)}: {dumps(item, depth + 1)}' for key, item in value.items()]
+        return "{\n" + ",\n".join(items) + f"\n{pad}}}"
+    if isinstance(value, list):
+        if all(not isinstance(item, (dict, list)) for item in value):
+            return "[" + ", ".join(json.dumps(item) for item in value) + "]"
+        return "[\n" + ",\n".join(f"{pad} {dumps(item, depth + 1)}" for item in value) + f"\n{pad}]"
+    return json.dumps(value)
+
+def write(name, document): (HERE / name).write_text(dumps(document) + "\n")
 
 # quad.gltf: one textured Standard quad, translated node, KHR_texture_transform.
 positions = floats([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0])
@@ -140,4 +151,45 @@ write("skin.gltf", {
         {"bufferView": 6, "componentType": 5126, "count": 2, "type": "VEC4"},
         {"bufferView": 7, "componentType": 5126, "count": 3, "type": "SCALAR", "min": [0], "max": [2]},
         {"bufferView": 8, "componentType": 5126, "count": 3, "type": "SCALAR"}],
+})
+
+# import_fixes.gltf: morph targets without authored weights plus a weights clip, a reflecting matrix node,
+# an orthographic camera with unequal magnitudes, and vertex colors as RGBA and RGB.
+tri = floats([0, 0, 0, 1, 0, 0, 0, 1, 0])
+delta_a = floats([0, 0, 1] * 3)
+delta_b = floats([0, 1, 0] * 3)
+colors_rgba = floats([0, 1, 0, 0.5] * 3)
+colors_rgb = floats([1, 0, 0] * 3)
+weight_times = floats([0, 1])
+weight_keys = floats([0, 0, 1, 0.5])
+fixes_buffer = tri + delta_a + delta_b + colors_rgba + colors_rgb + weight_times + weight_keys
+fixes_offsets = [0, 36, 72, 108, 156, 192, 200]
+fixes_lengths = [36, 36, 36, 48, 36, 8, 16]
+write("import_fixes.gltf", {
+    "asset": {"version": "2.0"},
+    "scene": 0, "scenes": [{"nodes": [0, 1, 2, 3, 4]}],
+    "nodes": [
+        {"name": "morphed", "mesh": 0},
+        {"name": "reflected", "matrix": [-2, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 1, 2, 3, 1]},
+        {"name": "ortho", "camera": 0},
+        {"name": "rgba", "mesh": 1},
+        {"name": "rgb", "mesh": 2}],
+    "meshes": [
+        {"primitives": [{"attributes": {"POSITION": 0}, "targets": [{"POSITION": 1}, {"POSITION": 2}]}]},
+        {"primitives": [{"attributes": {"POSITION": 0, "COLOR_0": 3}}]},
+        {"primitives": [{"attributes": {"POSITION": 0, "COLOR_0": 4}}]}],
+    "cameras": [{"type": "orthographic", "orthographic": {"xmag": 3.0, "ymag": 1.5, "znear": 0.1, "zfar": 50.0}}],
+    "animations": [{"name": "blend",
+        "samplers": [{"input": 5, "output": 6, "interpolation": "LINEAR"}],
+        "channels": [{"sampler": 0, "target": {"node": 0, "path": "weights"}}]}],
+    "buffers": [{"byteLength": len(fixes_buffer), "uri": data_uri(fixes_buffer)}],
+    "bufferViews": [{"buffer": 0, "byteOffset": o, "byteLength": n} for o, n in zip(fixes_offsets, fixes_lengths)],
+    "accessors": [
+        {"bufferView": 0, "componentType": 5126, "count": 3, "type": "VEC3", "min": [0, 0, 0], "max": [1, 1, 0]},
+        {"bufferView": 1, "componentType": 5126, "count": 3, "type": "VEC3"},
+        {"bufferView": 2, "componentType": 5126, "count": 3, "type": "VEC3"},
+        {"bufferView": 3, "componentType": 5126, "count": 3, "type": "VEC4"},
+        {"bufferView": 4, "componentType": 5126, "count": 3, "type": "VEC3"},
+        {"bufferView": 5, "componentType": 5126, "count": 2, "type": "SCALAR", "min": [0], "max": [1]},
+        {"bufferView": 6, "componentType": 5126, "count": 4, "type": "SCALAR"}],
 })

@@ -7,6 +7,9 @@
 
 layout(location = 3) in vec2 v_uv0;
 layout(location = 4) in vec2 v_uv1;
+#ifdef VERTEX_COLOR
+layout(location = 5) in vec4 v_color;
+#endif
 
 layout(push_constant) uniform Push {
     uint64_t vertex_root_gpu;
@@ -27,5 +30,8 @@ void main() {
     if ((material.map_flags & MATERIAL_MAP_BASE_COLOR) != 0u) {
         alpha *= sample_map(material.map, material.map_flags, MATERIAL_MAP_BASE_COLOR, v_uv0, v_uv1).a;
     }
+#ifdef VERTEX_COLOR
+    alpha *= v_color.a;
+#endif
     if (alpha < material.alpha_cutoff) discard;
 }

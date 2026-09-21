@@ -5,10 +5,22 @@ import std::math;
 
 const float SLERP_DOT_THRESHOLD = 0.99875f; // cos(0.05 rad): keys further apart than 0.1 rad slerp, nearer ones nlerp
 
-const uint CUBIC_SLOT_IN_TANGENT @local = 0;
-const uint CUBIC_SLOT_VALUE @local = 1;
-const uint CUBIC_SLOT_OUT_TANGENT @local = 2;
-const uint CUBIC_SLOTS_PER_KEY @local = 3;
+<*
+ Slot of a cubic key's incoming tangent within its three-slot group.
+*>
+const uint CUBIC_SLOT_IN_TANGENT = 0;
+<*
+ Slot of a cubic key's value within its three-slot group.
+*>
+const uint CUBIC_SLOT_VALUE = 1;
+<*
+ Slot of a cubic key's outgoing tangent within its three-slot group.
+*>
+const uint CUBIC_SLOT_OUT_TANGENT = 2;
+<*
+ Slots one cubic key occupies: incoming tangent, value, outgoing tangent.
+*>
+const uint CUBIC_SLOTS_PER_KEY = 3;
 
 <*
  Keyed values of the track at the time, clamped to the key range.

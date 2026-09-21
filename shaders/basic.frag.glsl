@@ -7,6 +7,7 @@
 
 layout(location = 3) in vec2 v_uv0;
 layout(location = 4) in vec2 v_uv1;
+layout(location = 5) in vec4 v_color;
 
 layout(location = 0) out vec4 out_color;
 
@@ -22,6 +23,7 @@ void main() {
     if ((material.map_flags & MATERIAL_MAP_BASE_COLOR) != 0u) {
         color *= sample_map(material.map, material.map_flags, MATERIAL_MAP_BASE_COLOR, v_uv0, v_uv1);
     }
+    color *= v_color;
 
     if ((material.flags & MATERIAL_ALPHA_MASK) != 0u && color.a < material.alpha_cutoff) discard;
     out_color = material_output(color.rgb, color.a, material.flags);
