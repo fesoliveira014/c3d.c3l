@@ -37,6 +37,11 @@ What the four cases establish:
   pipeline per draw item; a shadowed skinned and morphed box records its
   shadow layer with the pipeline prepared once.
 
+- Supplied mips land in the texture byte for byte through one staging copy;
+  a renderer with a tiny upload ring frees each frame's overflow allocations
+  when the slot is reused and grows the ring without losing its old
+  allocation.
+
 What they cannot establish: window clear-only and GUI-only frames need a
 window (run the `clear` and `cube_gui` examples with validation), and a
 presentation failure after submission needs a hardware observation.

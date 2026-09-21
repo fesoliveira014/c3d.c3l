@@ -925,8 +925,9 @@ fn void? recover_window_output(Renderer* renderer) @private {
 }
 
 fn void? reset_upload_ring(Renderer* renderer, Frame* slot) @private {
-    foreach (allocation : slot.upload.overflow) {
-        slot.retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = allocation });
+    // The caller waited for this slot, so its overflow allocations are complete and need no retire cycle.
+    foreach (&allocation : slot.upload.overflow) {
+        (void)gpu::free_allocation(&renderer.device, allocation);
     }
     slot.upload.overflow.clear();
 
@@ -936,14 +937,15 @@ fn void? reset_upload_ring(Renderer* renderer, Frame* slot) @private {
     slot.upload.head = 0;
     if (target == capacity) return;
 
-    slot.retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = slot.upload.allocation });
-    slot.upload.allocation = gpu::GPU_ALLOCATION_INVALID;
-    return allocate_upload_ring(
+    UploadRing grown = { .overflow = slot.upload.overflow };
+    allocate_upload_ring(
         device:     &renderer.device,
-        ring:       &slot.upload,
+        ring:       &grown,
         bytes:      target,
         debug_name: UPLOAD_RING_NAMES[renderer.frame_index % FRAMES_IN_FLIGHT],
-    );
+    )!;
+    (void)gpu::free_allocation(&renderer.device, &slot.upload.allocation);
+    slot.upload = grown;
 }
 
 <*
