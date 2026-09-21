@@ -79,9 +79,7 @@ fn void? targets_panel(
         imgui::separator_text("Shading");
         if (imgui::radio_button("Forward", desc.shading == FORWARD)) desc.shading = FORWARD;
         imgui::same_line();
-        imgui::begin_disabled(true);
-        imgui::radio_button("Deferred (unsupported)", false);
-        imgui::end_disabled();
+        if (imgui::radio_button("Deferred", desc.shading == DEFERRED)) desc.shading = DEFERRED;
         if (imgui::radio_button("Flat", desc.lights == FLAT)) desc.lights = FLAT;
         imgui::same_line();
         if (imgui::radio_button("Clustered", desc.lights == CLUSTERED)) desc.lights = CLUSTERED;
@@ -168,6 +166,10 @@ fn PanelEntry[] collect_entries(Renderer* renderer, ViewId view, EnvironmentId e
         push_view_image(&entries, "dof_near", { .kind = VIEW_DOF_NEAR, .view = view }, &record.dof_near);
         push_view_image(&entries, "dof_far", { .kind = VIEW_DOF_FAR, .view = view }, &record.dof_far);
         push_view_image(&entries, "motion_blur_out", { .kind = VIEW_MOTION_BLUR, .view = view }, &record.motion_blur_out);
+        foreach (channel, &target : record.gbuffer) {
+            PreviewSource source = { .kind = VIEW_GBUFFER, .view = view, .level = (uint)channel };
+            push_view_image(&entries, render::GBUFFER_NAMES[channel], source, target);
+        }
         if (record.desc.lights == CLUSTERED) {
             entries.push({
                 .label  = "clusters",

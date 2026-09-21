@@ -56,6 +56,9 @@
     { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["VELOCITY", "SKINNED_U16"] },
     { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["VELOCITY", "MORPH"] },
     { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["VELOCITY", "SKINNED", "MORPH"] },
-    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["VELOCITY", "SKINNED_U16", "MORPH"] }
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["VELOCITY", "SKINNED_U16", "MORPH"] },
+    { "shader": "standard_gbuffer", "source": "standard_gbuffer.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "physical_gbuffer", "source": "physical_gbuffer.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "lighting_resolve", "source": "lighting_resolve.frag.glsl", "stage": "frag", "defines": [] }
   ]
 }

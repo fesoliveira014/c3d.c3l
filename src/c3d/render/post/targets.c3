@@ -73,7 +73,7 @@ fn void? acquire_effect_targets(Renderer* renderer, ViewRecord* record) {
 *>
 fn void retire_effect_targets(Renderer* renderer, ViewRecord* record) {
     PostStack* stack = &record.desc.post;
-    RetireList* retire = last_submitted_retire(renderer);
+    RetireList* retire = render::last_submitted_retire(renderer);
     bool bloom_stale = record.bloom_levels != stack.bloom_params.levels;
     if (record.bloom_levels && (!stack.bloom || bloom_stale)) {
         for (uint level = 0; level < record.bloom_levels; level++) retire_post_target(retire, &record.bloom[level]);
@@ -201,10 +201,6 @@ fn void? acquire_bloom_chain(Renderer* renderer, ViewRecord* record) @private {
     }
 }
 
-fn RetireList* last_submitted_retire(Renderer* renderer) @private {
-    return &renderer.frames[(renderer.frame_index + render::FRAMES_IN_FLIGHT - 1) % render::FRAMES_IN_FLIGHT].retire;
-}
-
 <*
  Hand the view's images to the last submitted frame's retirement.
  @param [&inout] renderer : "No open frame."
@@ -213,7 +209,7 @@ fn RetireList* last_submitted_retire(Renderer* renderer) @private {
 fn void retire_post_targets(Renderer* renderer, ViewRecord* record) {
     if (!record.post_a.texture.is_valid()) return;
 
-    RetireList* retire = last_submitted_retire(renderer);
+    RetireList* retire = render::last_submitted_retire(renderer);
     retire_post_target(retire, &record.post_a);
     if (record.post_b.texture.is_valid()) retire_post_target(retire, &record.post_b);
 }

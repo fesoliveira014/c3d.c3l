@@ -45,7 +45,7 @@ defer (void)render::destroy_view(&renderer, capture_view);
 | `render_scale` | Working resolution relative to the viewport, in `(0, MAX_RENDER_SCALE]` |
 | `color` | `DISPLAY_LDR` runs the display route; `LINEAR_HDR` keeps scene-linear color |
 | `post` | The view's `PostStack` (see [display processing](post.md)) |
-| `shading` | `FORWARD`; `DEFERRED` faults `UNSUPPORTED` |
+| `shading` | `FORWARD` or `DEFERRED` (see [Shading path](#shading-path)) |
 | `lights` | `FLAT` or `CLUSTERED` candidate light selection |
 | `clusters` | Editable `ClusterDesc`; ignored by `FLAT` |
 
@@ -80,7 +80,7 @@ Create and configure views only between frames. The cluster fields are mutable:
 `tiles_x`, `tiles_y`, `depth_slices`, `lights_per_cluster` and `far_distance`.
 `CLUSTERED` requires nonzero dimensions/capacity, a positive finite far distance and
 representable storage sizes (`INVALID_ARGUMENT`); a valid grid beyond the device's
-compute dispatch limits faults `UNSUPPORTED`. `DEFERRED` always faults `UNSUPPORTED`.
+compute dispatch limits faults `UNSUPPORTED`.
 `FLAT` neither validates nor allocates from `clusters`, even if its fields are zero or
 invalid. A zero-initialized descriptor does not acquire cluster defaults merely by
 setting `lights = CLUSTERED`: start from a constructor or assign `default_cluster_desc()`.
@@ -195,3 +195,52 @@ scene. The panel resizes the capture target (256, 512, 1024), switches the captu
 `DISPLAY_LDR` on an sRGB target and `LINEAR_HDR` on a float target (recreating the target and view
 and rebinding the material), toggles FXAA and bloom on the capture view, and scales the window
 view's working resolution.
+
+## Shading path
+
+`shading = DEFERRED` renders the view's encodable opaque materials through a G-buffer and one
+fullscreen lighting resolve; every other material keeps its forward pass on the same view. The
+forward view sequence is unchanged, and a `FORWARD` view allocates no G-buffer image.
+
+```bash
+python3 scripts/build.py --example deferred
+```
+
+`examples/deferred` renders one scene twice, the left half forward and the right half deferred,
+switches either half at runtime and lists the G-buffer channels of the deferred view in the targets
+panel.
+
+Routing is a pure function of the material record, `render::gbuffer_encodable`, evaluated with
+`render::view_draw_list` where the draw lists are split. A draw writes the G-buffer when the material
+is `STANDARD`, or `PHYSICAL` with zero clearcoat, sheen, anisotropy and transmission factors,
+`ior == 1.5`, white `specular_color` and no `specular_color_map`, and its alpha mode is `OPAQUE` or
+`MASK`. `BASIC`, `TOON`, `CUSTOM`, every other `PHYSICAL` value, `BLEND` and transmissive draws stay
+forward. The specular weight and its map are encoded. No material field selects the path and a
+`FORWARD` view ignores the rule.
+
+The deferred view owns five images at its working extent, allocated by `create_view` or
+`configure_view` and retired when the view returns to `FORWARD`:
+
+| Channel | Format | Contents |
+| --- | --- | --- |
+| `gbuffer_base_color_metallic` | `RGBA8_UNORM` | base color, metallic |
+| `gbuffer_normal_roughness` | `RGBA16_FLOAT` | octahedral normal, roughness, occlusion |
+| `gbuffer_emissive_specular` | `RGBA16_FLOAT` | emissive, specular weight |
+| `gbuffer_layers` | `R32_UINT` | receiver layer mask |
+| `gbuffer_flags` | `R32_UINT` | receive-shadow bit |
+
+Pass order on a deferred view: uploads, shadow atlas, light culling, `DEPTH_PREPASS` over both opaque
+lists, `GBUFFER` (depth `EQUAL`, no write), `LIGHTING` (a fullscreen fragment pass that clears
+`hdr_color`, discards where no geometry was drawn and lights every G-buffer pixel from `FrameRoot`),
+`FORWARD_OPAQUE` (depth `EQUAL`, no write), sky, transmission, transparency, velocity and the post
+chain. `Stats.gpu_pass_ms` carries the three new passes. Dielectric F0 in the resolve is
+`0.04 · specular` for IOR 1.5, which is why other IORs and tinted specular colors route forward.
+
+Light selection follows `lights` on both paths: the resolve calls the same clustered or flat
+selection as the forward shaders, so `DEFERRED` with `CLUSTERED` needs no extra configuration.
+Motion blur, depth of field, bloom, grading and FXAA read `hdr_color`, depth and velocity only and
+run unchanged.
+
+Known difference: the resolve offsets shadow lookups along the stored shading normal, while the
+forward shaders use the geometric normal; normal-mapped receivers can differ by a small bias. No
+MSAA on deferred views; no screen-space effect consumes the G-buffer.

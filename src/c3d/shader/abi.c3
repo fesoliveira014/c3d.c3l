@@ -16,6 +16,7 @@ const uint CLUSTER_GROUP_SIZE = 64;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8;
 const uint DRAW_RECEIVE_SHADOW = 1;
 const uint DRAW_ALPHA_MASK = 2;
+const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1;
 const uint MATERIAL_MAP_BASE_COLOR = 1;
 const uint MATERIAL_MAP_METALLIC_ROUGHNESS = 2;
 const uint MATERIAL_MAP_NORMAL = 4;
@@ -33,6 +34,9 @@ const uint PREVIEW_MODE_VELOCITY = 3;
 const uint PREVIEW_MODE_CUBE_FACE = 4;
 const uint PREVIEW_MODE_CLEAR = 5;
 const uint PREVIEW_MODE_CLUSTERS = 6;
+const uint PREVIEW_MODE_RAW = 7;
+const uint PREVIEW_MODE_OCTAHEDRAL_NORMAL = 8;
+const uint PREVIEW_MODE_BITS = 9;
 const uint ENVIRONMENT_FACE_POSITIVE_X = 0;
 const uint ENVIRONMENT_FACE_NEGATIVE_X = 1;
 const uint ENVIRONMENT_FACE_POSITIVE_Y = 2;
@@ -297,6 +301,28 @@ $assert $reflect(MorphWeightsGpu.count).offset == 64;
 $assert $reflect(MorphWeightsGpu._pad0).offset == 68;
 $assert $reflect(MorphWeightsGpu._pad1).offset == 72;
 $assert $reflect(MorphWeightsGpu._pad2).offset == 76;
+
+struct LightingResolveRoot {
+    GpuAddress   frame;
+    TextureIndex base_color_metallic;
+    TextureIndex normal_roughness;
+    TextureIndex emissive_specular;
+    TextureIndex layers;
+    TextureIndex flags;
+    TextureIndex depth;
+    SamplerIndex sampler_index;
+    uint         _pad0;
+}
+$assert LightingResolveRoot::size == 40;
+$assert $reflect(LightingResolveRoot.frame).offset == 0;
+$assert $reflect(LightingResolveRoot.base_color_metallic).offset == 8;
+$assert $reflect(LightingResolveRoot.normal_roughness).offset == 12;
+$assert $reflect(LightingResolveRoot.emissive_specular).offset == 16;
+$assert $reflect(LightingResolveRoot.layers).offset == 20;
+$assert $reflect(LightingResolveRoot.flags).offset == 24;
+$assert $reflect(LightingResolveRoot.depth).offset == 28;
+$assert $reflect(LightingResolveRoot.sampler_index).offset == 32;
+$assert $reflect(LightingResolveRoot._pad0).offset == 36;
 
 struct TextureMapGpu {
     TextureIndex texture_index;

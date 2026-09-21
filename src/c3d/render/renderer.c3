@@ -503,11 +503,13 @@ fn void? record_fullscreen_pass(
     gpu::GpuAddress fragment_root,
     PixelRect rect,
     gpu::LoadOp load,
+    Vec4 clear_color = {},
 ) @private {
     gpu::ColorTargetDesc[1] colors = {{
         .view     = target.attachment,
         .load_op  = load,
         .store_op = gpu::StoreOp.STORE,
+        .clear    = { .rgba = { clear_color.r, clear_color.g, clear_color.b, clear_color.a } },
     }};
     gpu::RenderPassDesc pass = {
         .colors = colors[..],

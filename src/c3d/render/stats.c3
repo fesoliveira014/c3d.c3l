@@ -12,6 +12,8 @@ enum Pass : int {
     LIGHT_CULL,
     ACCELERATION_BUILD,
     DEPTH_PREPASS,
+    GBUFFER,
+    LIGHTING,
     FORWARD_OPAQUE,
     SKY,
     TRANSMISSION,

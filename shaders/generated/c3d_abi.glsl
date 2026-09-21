@@ -19,6 +19,7 @@ const uint CLUSTER_GROUP_SIZE = 64u;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8u;
 const uint DRAW_RECEIVE_SHADOW = 1u;
 const uint DRAW_ALPHA_MASK = 2u;
+const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1u;
 const uint MATERIAL_MAP_BASE_COLOR = 1u;
 const uint MATERIAL_MAP_METALLIC_ROUGHNESS = 2u;
 const uint MATERIAL_MAP_NORMAL = 4u;
@@ -36,6 +37,9 @@ const uint PREVIEW_MODE_VELOCITY = 3u;
 const uint PREVIEW_MODE_CUBE_FACE = 4u;
 const uint PREVIEW_MODE_CLEAR = 5u;
 const uint PREVIEW_MODE_CLUSTERS = 6u;
+const uint PREVIEW_MODE_RAW = 7u;
+const uint PREVIEW_MODE_OCTAHEDRAL_NORMAL = 8u;
+const uint PREVIEW_MODE_BITS = 9u;
 const uint ENVIRONMENT_FACE_POSITIVE_X = 0u;
 const uint ENVIRONMENT_FACE_NEGATIVE_X = 1u;
 const uint ENVIRONMENT_FACE_POSITIVE_Y = 2u;
@@ -199,6 +203,18 @@ layout(buffer_reference, std430, buffer_reference_align = 4) buffer MorphWeights
     uint _pad0;
     uint _pad1;
     uint _pad2;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer LightingResolveRoot {
+    uint64_t frame;
+    uint base_color_metallic;
+    uint normal_roughness;
+    uint emissive_specular;
+    uint layers;
+    uint flags;
+    uint depth;
+    uint sampler_index;
+    uint _pad0;
 };
 
 struct TextureMapGpu {

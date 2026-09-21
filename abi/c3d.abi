@@ -140,6 +140,20 @@ root MorphWeightsGpu {
 const uint DRAW_RECEIVE_SHADOW = 1;
 const uint DRAW_ALPHA_MASK = 2;
 
+const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1;
+
+root LightingResolveRoot {
+    GpuAddress   frame;
+    TextureIndex base_color_metallic;
+    TextureIndex normal_roughness;
+    TextureIndex emissive_specular;
+    TextureIndex layers;
+    TextureIndex flags;
+    TextureIndex depth;
+    SamplerIndex sampler_index;
+    uint         _pad0;
+}
+
 const uint MATERIAL_MAP_BASE_COLOR = 1;
 const uint MATERIAL_MAP_METALLIC_ROUGHNESS = 2;
 const uint MATERIAL_MAP_NORMAL = 4;
@@ -208,6 +222,9 @@ const uint PREVIEW_MODE_VELOCITY = 3;
 const uint PREVIEW_MODE_CUBE_FACE = 4;
 const uint PREVIEW_MODE_CLEAR = 5;
 const uint PREVIEW_MODE_CLUSTERS = 6;
+const uint PREVIEW_MODE_RAW = 7;
+const uint PREVIEW_MODE_OCTAHEDRAL_NORMAL = 8;
+const uint PREVIEW_MODE_BITS = 9;
 
 root PreviewRoot {
     TextureIndex input_texture;

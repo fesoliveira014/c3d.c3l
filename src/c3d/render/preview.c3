@@ -23,6 +23,7 @@ enum PreviewKind {
     ENVIRONMENT_FACE,
     TEXTURE,
     VIEW_CLUSTERS,
+    VIEW_GBUFFER,
 }
 
 <*
@@ -100,6 +101,7 @@ fn void? Renderer.request_preview(
         case VIEW_DOF_NEAR:
         case VIEW_DOF_FAR:
         case VIEW_MOTION_BLUR:
+        case VIEW_GBUFFER:
             bloom_levels = self.views.try_get(source.view)!.bloom_levels;
         case VIEW_CLUSTERS:
             ViewRecord* record = self.views.try_get(source.view)!;
@@ -165,6 +167,8 @@ fn void? validate_preview_request(
             if (source.level >= bloom_levels) return c3d::INVALID_ARGUMENT~;
         case VIEW_CLUSTERS:
             if (source.level >= cluster_slices) return c3d::INVALID_ARGUMENT~;
+        case VIEW_GBUFFER:
+            if (source.level >= GBUFFER_CHANNEL_COUNT) return c3d::INVALID_ARGUMENT~;
         case SHADOW_LAYER:
             if (source.layer >= layer_count) return c3d::INVALID_ARGUMENT~;
         case TEXTURE:
@@ -252,6 +256,7 @@ fn void? resolve_preview_source(Renderer* renderer, PreviewSlot* preview, Previe
         case VIEW_DOF_NEAR:
         case VIEW_DOF_FAR:
         case VIEW_MOTION_BLUR:
+        case VIEW_GBUFFER:
             ViewRecord* record = renderer.views.get(source.view);
             if (!record.live) return;
             Target* target = view_preview_target(record, source);
@@ -266,6 +271,8 @@ fn void? resolve_preview_source(Renderer* renderer, PreviewSlot* preview, Previe
                 root.orthographic = record.projection_terms.orthographic ? 1 : 0;
             } else if (source.kind == PreviewKind.VIEW_VELOCITY) {
                 root.mode = shader::PREVIEW_MODE_VELOCITY;
+            } else if (source.kind == PreviewKind.VIEW_GBUFFER) {
+                root.mode = gbuffer_preview_mode(GBufferChannel::from_ordinal(source.level));
             }
         case VIEW_CLUSTERS:
             if (!renderer.views.is_live(source.view)) return;
@@ -319,7 +326,18 @@ fn Target* view_preview_target(ViewRecord* record, PreviewSource source) @privat
         case VIEW_DOF_NEAR:    return &record.dof_near;
         case VIEW_DOF_FAR:     return &record.dof_far;
         case VIEW_MOTION_BLUR: return &record.motion_blur_out;
+        case VIEW_GBUFFER:     return &record.gbuffer[source.level];
         default:               unreachable("not a view image");
+    }
+}
+
+fn uint gbuffer_preview_mode(GBufferChannel channel) @local {
+    switch (channel) {
+        case BASE_COLOR_METALLIC: return shader::PREVIEW_MODE_RAW;
+        case NORMAL_ROUGHNESS:    return shader::PREVIEW_MODE_OCTAHEDRAL_NORMAL;
+        case EMISSIVE_SPECULAR:   return shader::PREVIEW_MODE_COLOR;
+        case LAYERS:
+        case FLAGS:               return shader::PREVIEW_MODE_BITS;
     }
 }
 

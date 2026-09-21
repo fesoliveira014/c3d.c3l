@@ -24,6 +24,7 @@ const uint SHADER_FLAG_SHIFT @private = 8; // ShaderVariant.flags start at bit 8
  Per-view list a material's draws belong to.
 *>
 enum DrawList {
+    GBUFFER,
     OPAQUE,
     TRANSMISSION,
     TRANSPARENT,
@@ -87,6 +88,43 @@ fn DrawList draw_list(Material* material) {
         return DrawList.TRANSMISSION;
     }
     return material.common.alpha_mode == AlphaMode.BLEND ? DrawList.TRANSPARENT : DrawList.OPAQUE;
+}
+
+<*
+ Whether the G-buffer encodes the material without loss.
+ @param [&in] material : "Valid active arm."
+ @pure
+*>
+fn bool gbuffer_encodable(Material* material) {
+    if (material.common.alpha_mode == AlphaMode.BLEND) return false;
+    switch (material.kind) {
+        case BASIC:
+        case TOON:
+        case CUSTOM:
+            return false;
+        case STANDARD:
+            return true;
+        case PHYSICAL:
+            PhysicalParams* physical = &material.physical;
+            return physical.clearcoat == 0 && physical.sheen_color == (Vec3){}
+                && physical.anisotropy == 0 && physical.transmission == 0
+                && physical.ior == 1.5f && physical.specular_color == (Vec3){ 1, 1, 1 }
+                && physical.specular_color_map.texture.kind == TextureRefKind.ASSET
+                && physical.specular_color_map.texture.asset.generation == 0;
+    }
+}
+
+<*
+ Select the draw list on a view of the shading path; a forward view never selects GBUFFER.
+ @param [&in] material : "Valid active arm."
+ @pure
+*>
+fn DrawList view_draw_list(Material* material, ShadingPath shading) {
+    DrawList list = draw_list(material);
+    if (shading == ShadingPath.DEFERRED && list == DrawList.OPAQUE && gbuffer_encodable(material)) {
+        return DrawList.GBUFFER;
+    }
+    return list;
 }
 
 <*
