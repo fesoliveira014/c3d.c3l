@@ -33,6 +33,10 @@ What the four cases establish:
   submitted frame and dropped by an aborted one; an orthographic camera with
   motion blur leaves the background at the clear color under camera motion.
 
+- Five boxes sharing one material resolve it once per view and look up one
+  pipeline per draw item; a shadowed skinned and morphed box records its
+  shadow layer with the pipeline prepared once.
+
 What they cannot establish: window clear-only and GUI-only frames need a
 window (run the `clear` and `cube_gui` examples with validation), and a
 presentation failure after submission needs a hardware observation.

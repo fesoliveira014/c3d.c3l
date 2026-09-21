@@ -116,6 +116,8 @@ windowed rows only with other windowed rows.
 | `gpu_*_ms` | Completed per-pass timestamps; `-1` when unavailable, zero for an omitted pass |
 | `draws`, `lights`, `dropped` | Current-frame renderer counters |
 | `overflows` | Completed cluster overflow count attributed to its submitted frame |
+| `material_resolutions` | Fresh material dependency resolutions in the frame; one per material per view traversal |
+| `pipeline_lookups` | Draw pipeline cache lookups in the frame; one per prepared draw item and shadow draw |
 
 GPU results are read when the frame slot is reused and attached to the originating
 row. Two additional frames drain the final measured slots. Sample storage is

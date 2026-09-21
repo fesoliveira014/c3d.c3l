@@ -46,7 +46,11 @@ fn gpu::MappedGpuSpan? UploadRing.take(&self, gpu::Device* device, usz size, usz
     if (offset + size <= self.mapped.bytes.len) {
         gpu::GpuSpan span = self.mapped.span.checked_subspan(offset, size)!;
         self.head = offset + size;
-        return gpu::mapped_gpu_span(device, span);
+        return {
+            .span    = span,
+            .bytes   = self.mapped.bytes[offset:size],
+            .address = (gpu::GpuAddress)((ulong)self.mapped.address + offset),
+        };
     }
 
     gpu::AllocationDesc overflow_desc = {

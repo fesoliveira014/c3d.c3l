@@ -34,6 +34,7 @@ struct DrawItem @private {
     GpuGeometry*    geometry;
     MaterialRes*    material;
     ShaderVariant   vertex;
+    gpu::PipelineHandle pipeline;
     gpu::GpuAddress skin;
     gpu::GpuAddress morph;
     gpu::GpuAddress root;
@@ -116,6 +117,8 @@ fn void? Renderer.render_view(
     ViewRecord* record = self.views.try_get(view)!;
     if (record.desc.output == ViewOutput.WINDOW && !self.has_output) return;
     defer catch abort_frame(self);
+    begin_material_scope(self);
+    defer end_material_scope(self);
     instrumentation::@scope("renderer.render_view") {
         begin_profile_view(self, view, "view.render")!;
         Camera* camera = scene.get(camera_node, Camera);
@@ -186,6 +189,13 @@ fn void? Renderer.render_view(
                         bindings: &material.bindings,
                         line_polygon_mode: self.caps.line_polygon_mode,
                     )!;
+                    bool morphed = candidate.morph_weights.len > 0;
+                    ShaderVariant vertex = mesh_vertex_variant(geometry.layout.flags, morphed);
+                    gpu::PipelineHandle? pipeline = pipeline_for(self, material_description, vertex);
+                    if (catch excuse = pipeline) {
+                        if (!custom_pipeline_rejected(self, material_description, excuse)) return excuse~;
+                        continue;
+                    }
                     usz index;
                     switch (draw_list(material_description)) {
                         case OPAQUE: index = opaque_count++;
@@ -193,8 +203,6 @@ fn void? Renderer.render_view(
                         case TRANSPARENT: index = transparent_start + transparent_filled++;
                     }
                     bool model_reflected = candidate.node.world.determinant() < 0;
-                    bool morphed = candidate.morph_weights.len > 0;
-                    ShaderVariant vertex = mesh_vertex_variant(geometry.layout.flags, morphed);
                     items[index] = {
                         .sort_key  = draw_sort_key(
                             vertex:    vertex,
@@ -209,6 +217,7 @@ fn void? Renderer.render_view(
                         .geometry  = geometry,
                         .material  = material,
                         .vertex    = vertex,
+                        .pipeline  = pipeline,
                         .skin      = candidate.skin ? resolve_palette(self, candidate.node, candidate.skin)! : (gpu::GpuAddress)0,
                         .morph     = vertex.flags & shader::SHADER_FLAG_MORPH
                           ? resolve_morph_block(self, candidate)! : (gpu::GpuAddress)0,
@@ -502,6 +511,8 @@ fn void? Renderer.render_to(
 *>
 fn void? Renderer.prepare_scene(&self, Scene* scene) {
     instrumentation::@scope("renderer.prepare_scene") {
+        begin_material_scope(self);
+        defer end_material_scope(self);
         open_closed_frame_slot(self)!;
         defer catch discard_uploads(self);
         bool sheen;
@@ -561,6 +572,8 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
 fn void? Renderer.prepare_model(&self, ModelId model) {
     ModelAsset* record = self.assets.models.try_get(model)!;
     instrumentation::@scope("renderer.prepare_model") {
+        begin_material_scope(self);
+        defer end_material_scope(self);
         open_closed_frame_slot(self)!;
         defer catch discard_uploads(self);
         bool transmission;
@@ -727,6 +740,36 @@ fn void write_draw_root(
         .sheen_sampler = sheen_sampler,
         .layers        = layers,
         .flags         = flags,
+    };
+}
+
+<*
+ Write the per-draw root fields the depth-only stages read.
+ @param [&out] root : "Overwritten whole; normal columns and previous pose stay zero."
+ @param world : "Affine model matrix."
+ @param skin : "Joint palette address; zero when unskinned."
+ @param morph : "Morph block address; zero when unmorphed."
+*>
+fn void write_depth_draw_root(
+    DrawRoot* root,
+    Mat4 world,
+    gpu::GpuAddress frame,
+    gpu::GpuAddress geometry,
+    gpu::GpuAddress material,
+    uint object_id,
+    uint flags = 0,
+    gpu::GpuAddress skin = (gpu::GpuAddress)0,
+    gpu::GpuAddress morph = (gpu::GpuAddress)0,
+) {
+    *root = {
+        .model     = bitcast(world, Mat4f),
+        .frame     = frame,
+        .geometry  = geometry,
+        .material  = material,
+        .skin      = skin,
+        .morph     = morph,
+        .object_id = object_id,
+        .flags     = flags,
     };
 }
 
@@ -922,13 +965,8 @@ fn void? record_draws(
         Material* material = material_data(renderer, item.material);
         MaterialCommon* common = &material.common;
         bool blend = common.alpha_mode == AlphaMode.BLEND;
-        gpu::PipelineHandle? item_pipeline = pipeline_for(renderer, material, item.vertex);
-        if (catch excuse = item_pipeline) {
-            if (!custom_pipeline_rejected(renderer, material, excuse)) return excuse~;
-            continue;
-        }
         DrawState wanted = {
-            .pipeline = item_pipeline,
+            .pipeline = item.pipeline,
             .cull = common.double_sided ? gpu::CullMode.NONE : gpu::CullMode.BACK,
             .front_face = item.front_face,
             .topology = primitive_topology(item.geometry.topology),
@@ -1028,6 +1066,7 @@ fn ShaderVariant material_fragment(Material* material) @local {
 }
 
 fn gpu::PipelineHandle? pipeline_for(Renderer* renderer, Material* material, ShaderVariant vertex) @private {
+    renderer.stats.pipeline_lookups++;
     bool wireframe = material.common.wireframe && renderer.caps.line_polygon_mode;
     PipelineKey key = {
         .vertex        = vertex,
@@ -1051,15 +1090,8 @@ fn gpu::PipelineHandle? pipeline_for(Renderer* renderer, Material* material, Sha
 }
 
 fn gpu::PipelineHandle? first_pipeline(Renderer* renderer, DrawItem[] items) @private {
-    foreach (&item : items) {
-        Material* material = material_data(renderer, item.material);
-        gpu::PipelineHandle? pipeline = pipeline_for(renderer, material, item.vertex);
-        if (catch excuse = pipeline) {
-            if (!custom_pipeline_rejected(renderer, material, excuse)) return excuse~;
-            continue;
-        }
-        return pipeline;
-    }
+    if (items.len) return items[0].pipeline;
+    renderer.stats.pipeline_lookups++;
     PipelineKey key = {
         .vertex = { .shader = MESH },
         .fragment = { .shader = BASIC },

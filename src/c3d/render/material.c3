@@ -43,6 +43,8 @@ struct MaterialRes {
     MaterialBindings   bindings;
     ShaderId           shader;
     uint               shader_revision;
+    ulong              resolved_epoch;
+    uint               sampled_target_bits;
     gpu::GpuAllocation payload;
     gpu::GpuAddress    payload_address;
     usz                payload_size;
@@ -438,7 +440,34 @@ fn bool material_uses_sheen(Material* material) @private {
             || material.physical.sheen_color.b > 0);
 }
 
+fn void begin_material_scope(Renderer* renderer) @private {
+    renderer.material_epoch++;
+    renderer.material_scope_active = true;
+}
+
+fn void end_material_scope(Renderer* renderer) @private {
+    renderer.material_scope_active = false;
+}
+
 fn MaterialRes*? resolve_material(Renderer* renderer, MaterialId material) @private {
+    MaterialRes* mirror = &renderer.materials[material.index];
+    bool same_asset = mirror.asset.index == material.index && mirror.asset.generation == material.generation;
+    if (renderer.material_scope_active && same_asset && mirror.resolved_epoch == renderer.material_epoch) {
+        renderer.sampled_target_bits |= mirror.sampled_target_bits;
+        return mirror;
+    }
+
+    uint outer_target_bits = renderer.sampled_target_bits;
+    renderer.sampled_target_bits = 0;
+    defer renderer.sampled_target_bits |= outer_target_bits;
+    resolve_material_dependencies(renderer, material)!;
+    mirror.sampled_target_bits = renderer.sampled_target_bits;
+    mirror.resolved_epoch = renderer.material_scope_active ? renderer.material_epoch : 0;
+    renderer.stats.material_resolutions++;
+    return mirror;
+}
+
+fn MaterialRes*? resolve_material_dependencies(Renderer* renderer, MaterialId material) @private {
     MaterialAsset* record = renderer.assets.material(material);
     MaterialRes* mirror = &renderer.materials[material.index];
     MaterialBindings bindings = resolve_material_bindings(renderer, &record.data)!;

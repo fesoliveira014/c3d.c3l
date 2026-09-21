@@ -177,6 +177,8 @@ struct Renderer {
     bool                    work_recorded;
     bool                    output_suppressed;
     uint                    sampled_target_bits;
+    ulong                   material_epoch;
+    bool                    material_scope_active;
 }
 
 <*

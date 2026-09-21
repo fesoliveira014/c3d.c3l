@@ -5,6 +5,7 @@ import c3d::anim;
 import c3d::asset;
 import c3d::camera;
 import c3d::geometry;
+import c3d::light;
 import c3d::material;
 import c3d::maths;
 import c3d::render @public;
@@ -33,6 +34,7 @@ const Vec3 CAMERA_POSITION @private = { 0, 0, 3 };
 const float CAMERA_TURN_DEGREES @private = 2;
 const float CAMERA_SLIDE @private = 0.1f;
 const float ORTHOGRAPHIC_HEIGHT @private = 2;
+const uint SHARED_BOX_COUNT @private = 5;
 const float BLURRED_CENTER_MINIMUM @private = 0.8f; // a few pixels of true motion keep the box center nearly solid; a background velocity clamped at max_velocity smears it dark
 
 struct FillRoot @private {
@@ -60,6 +62,7 @@ struct Fixture @private {
     Node* camera_node;
     TextureId storage_texture;
     MaterialId material;
+    GeometryId box;
     SkeletonId skeleton;
     GeometryId deformed_box;
     ComputeShaderId fill_shader;
@@ -94,12 +97,12 @@ fn void? create_fixture(Allocator allocator, Fixture* fixture) @private {
             height: 1,
             depth: 1,
         );
-        GeometryId geometry_id = fixture.assets.add_geometry(&box)!;
+        fixture.box = fixture.assets.add_geometry(&box)!;
         fixture.material = fixture.assets.add_material(material::basic({
             .color = { 1, 1, 1, 1 },
             .map = material::texture_slot(fixture.storage_texture),
         }))!;
-        fixture.scene.add_mesh(geometry_id, fixture.material)!;
+        fixture.scene.add_mesh(fixture.box, fixture.material)!;
 
         Geometry deformed = geometry::box(
             allocator: tmem,
@@ -193,6 +196,21 @@ fn DeformedScene? create_deformed_scene(Fixture* fixture, Vec3 joint_position, f
     result.scene.add(result.mesh, (SkinBinding){ .skeleton = fixture.skeleton, .joints = joints });
     result.camera = result.scene.add_camera(camera::perspective_deg(60, 0.1f))!;
     result.camera.local.position = CAMERA_POSITION;
+    result.scene.update_world();
+    return result;
+}
+
+fn DeformedScene? create_shared_material_scene(Fixture* fixture, uint count) @private {
+    DeformedScene result;
+    result.scene = scene::create_scene(fixture.allocator, scene::default_scene_desc());
+    defer catch scene::destroy_scene(&result.scene);
+    for (uint index = 0; index < count; index++) {
+        Node* box = result.scene.add_mesh(fixture.box, fixture.material)!;
+        box.local.position = { (float)index - (float)count / 2, 0, 0 };
+        if (index == 0) result.mesh = box;
+    }
+    result.camera = result.scene.add_camera(camera::perspective_deg(60, 0.1f))!;
+    result.camera.local.position = { 0, 0, 8 };
     result.scene.update_world();
     return result;
 }
@@ -526,5 +544,51 @@ fn void test_orthographic_background_velocity_keeps_the_box_solid() @test {
     render::reset_view_history(renderer, fixture.view)!!;
     uint perspective = run_camera_motion(&fixture, camera::perspective_deg(60, 0.1f))!!;
     check_solid_red(perspective);
+    check_validation(renderer);
+}
+
+fn void test_shared_material_resolves_once_per_view_and_pipelines_once_per_item() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    fill_frame(&fixture, fixture.storage_texture, RED)!!;
+    DeformedScene shared = create_shared_material_scene(&fixture, SHARED_BOX_COUNT)!!;
+    defer scene::destroy_scene(&shared.scene);
+
+    for (uint frame = 0; frame < 2; frame++) {
+        renderer.begin_frame()!!;
+        renderer.render_view(&shared.scene, shared.camera, fixture.view)!!;
+        renderer.render_view(&shared.scene, shared.camera, fixture.second_view)!!;
+        assert(renderer.stats.material_resolutions == 2);
+        assert(renderer.stats.pipeline_lookups == 2 * SHARED_BOX_COUNT);
+        renderer.finish_view(fixture.view)!!;
+        renderer.finish_view(fixture.second_view)!!;
+        renderer.end_frame()!!;
+        fixture.assets.mark_material_dirty(fixture.material);
+    }
+    check_validation(renderer);
+}
+
+fn void test_shadowed_deformed_scene_draws_with_prepared_pipelines() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    fill_frame(&fixture, fixture.storage_texture, RED)!!;
+    DeformedScene moving = create_deformed_scene(&fixture, { 0, 0, 0 }, 0.5f)!!;
+    defer scene::destroy_scene(&moving.scene);
+    Light sunlight = light::directional({ 1, 1, 1 }, 2);
+    sunlight.shadow.cascades = 1;
+    sunlight.shadow.max_distance = 10;
+    moving.scene.add_light(sunlight)!!;
+    moving.scene.update_world();
+
+    renderer.begin_frame()!!;
+    renderer.render_view(&moving.scene, moving.camera, fixture.view)!!;
+    assert(renderer.stats.shadow_layers == 1);
+    assert(renderer.stats.pipeline_lookups == 2);
+    renderer.finish_view(fixture.view)!!;
+    renderer.end_frame()!!;
     check_validation(renderer);
 }
