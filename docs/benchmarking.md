@@ -113,7 +113,7 @@ windowed rows only with other windowed rows.
 | `end_ms` | `end_frame` submission, including presentation in windowed runs |
 | `gui_ms` | Profiler panel draw and overlay recording; zero without `--panel` |
 | `cpu_record_ms` | Existing renderer statistic; excludes the beginning wait/readback/sweep work |
-| `gpu_*_ms` | Completed per-pass timestamps; `-1` when unavailable, zero for an omitted pass |
+| `gpu_*_ms` | Completed per-pass timestamps for shadow atlas, light culling, depth prepass, G-buffer, lighting resolve, forward opaque, post chain and composite; `-1` when unavailable, zero for an omitted pass |
 | `draws`, `lights`, `dropped` | Current-frame renderer counters |
 | `overflows` | Completed cluster overflow count attributed to its submitted frame |
 | `material_resolutions` | Fresh material dependency resolutions in the frame; one per material per view traversal |
