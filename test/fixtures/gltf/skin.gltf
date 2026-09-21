@@ -5,10 +5,7 @@
  "scene": 0,
  "scenes": [
   {
-   "nodes": [
-    0,
-    1
-   ]
+   "nodes": [0, 1]
   }
  ],
  "nodes": [
@@ -19,24 +16,16 @@
   },
   {
    "name": "joint_root",
-   "children": [
-    2
-   ]
+   "children": [2]
   },
   {
    "name": "joint_tip",
-   "translation": [
-    0,
-    1,
-    0
-   ]
+   "translation": [0, 1, 0]
   }
  ],
  "meshes": [
   {
-   "weights": [
-    0.5
-   ],
+   "weights": [0.5],
    "primitives": [
     {
      "attributes": {
@@ -55,10 +44,7 @@
  ],
  "skins": [
   {
-   "joints": [
-    1,
-    2
-   ],
+   "joints": [1, 2],
    "inverseBindMatrices": 4
   }
  ],
@@ -154,16 +140,8 @@
    "componentType": 5126,
    "count": 3,
    "type": "VEC3",
-   "min": [
-    0,
-    0,
-    0
-   ],
-   "max": [
-    1,
-    1,
-    0
-   ]
+   "min": [0, 0, 0],
+   "max": [1, 1, 0]
   },
   {
    "bufferView": 1,
@@ -194,12 +172,8 @@
    "componentType": 5126,
    "count": 2,
    "type": "SCALAR",
-   "min": [
-    0
-   ],
-   "max": [
-    1
-   ]
+   "min": [0],
+   "max": [1]
   },
   {
    "bufferView": 6,
@@ -212,12 +186,8 @@
    "componentType": 5126,
    "count": 3,
    "type": "SCALAR",
-   "min": [
-    0
-   ],
-   "max": [
-    2
-   ]
+   "min": [0],
+   "max": [2]
   },
   {
    "bufferView": 8,

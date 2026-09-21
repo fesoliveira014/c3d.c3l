@@ -2,26 +2,18 @@
  "asset": {
   "version": "2.0"
  },
- "extensionsUsed": [
-  "KHR_texture_transform"
- ],
+ "extensionsUsed": ["KHR_texture_transform"],
  "scene": 0,
  "scenes": [
   {
-   "nodes": [
-    0
-   ]
+   "nodes": [0]
   }
  ],
  "nodes": [
   {
    "name": "quad",
    "mesh": 0,
-   "translation": [
-    1,
-    2,
-    3
-   ]
+   "translation": [1, 2, 3]
   }
  ],
  "meshes": [
@@ -43,12 +35,7 @@
   {
    "name": "painted",
    "pbrMetallicRoughness": {
-    "baseColorFactor": [
-     0.5,
-     0.25,
-     0.125,
-     1.0
-    ],
+    "baseColorFactor": [0.5, 0.25, 0.125, 1.0],
     "metallicFactor": 0.0,
     "roughnessFactor": 0.5,
     "baseColorTexture": {
@@ -56,15 +43,9 @@
      "texCoord": 0,
      "extensions": {
       "KHR_texture_transform": {
-       "offset": [
-        0.5,
-        0.0
-       ],
+       "offset": [0.5, 0.0],
        "rotation": 0.25,
-       "scale": [
-        2.0,
-        2.0
-       ]
+       "scale": [2.0, 2.0]
       }
      }
     }
@@ -124,16 +105,8 @@
    "componentType": 5126,
    "count": 4,
    "type": "VEC3",
-   "min": [
-    -1,
-    -1,
-    0
-   ],
-   "max": [
-    1,
-    1,
-    0
-   ]
+   "min": [-1, -1, 0],
+   "max": [1, 1, 0]
   },
   {
    "bufferView": 1,

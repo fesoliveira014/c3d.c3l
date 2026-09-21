@@ -12,7 +12,18 @@ def data_uri(payload: bytes) -> str:
 def floats(values): return struct.pack(f"<{len(values)}f", *values)
 def ushorts(values): return struct.pack(f"<{len(values)}H", *values)
 
-def write(name, document): (HERE / name).write_text(json.dumps(document, indent=1) + "\n")
+def dumps(value, depth=0):
+    pad = " " * depth
+    if isinstance(value, dict):
+        items = [f'{pad} {json.dumps(key)}: {dumps(item, depth + 1)}' for key, item in value.items()]
+        return "{\n" + ",\n".join(items) + f"\n{pad}}}"
+    if isinstance(value, list):
+        if all(not isinstance(item, (dict, list)) for item in value):
+            return "[" + ", ".join(json.dumps(item) for item in value) + "]"
+        return "[\n" + ",\n".join(f"{pad} {dumps(item, depth + 1)}" for item in value) + f"\n{pad}]"
+    return json.dumps(value)
+
+def write(name, document): (HERE / name).write_text(dumps(document) + "\n")
 
 # quad.gltf: one textured Standard quad, translated node, KHR_texture_transform.
 positions = floats([-1, -1, 0, 1, -1, 0, 1, 1, 0, -1, 1, 0])

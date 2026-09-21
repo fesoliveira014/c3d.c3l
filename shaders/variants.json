@@ -1,394 +1,60 @@
 {
-  "flags": [
-    "DEPTH_ONLY",
-    "SKINNED",
-    "SKINNED_U16",
-    "MORPH",
-    "VELOCITY",
-    "VERTEX_COLOR"
-  ],
+  "flags": ["DEPTH_ONLY", "SKINNED", "SKINNED_U16", "MORPH", "VELOCITY", "VERTEX_COLOR"],
   "entries": [
-    {
-      "shader": "fullscreen",
-      "source": "fullscreen.vert.glsl",
-      "stage": "vert",
-      "defines": []
-    },
-    {
-      "shader": "gradient",
-      "source": "gradient.frag.glsl",
-      "stage": "frag",
-      "defines": []
-    },
-    {
-      "shader": "composite",
-      "source": "composite.frag.glsl",
-      "stage": "frag",
-      "defines": []
-    },
-    {
-      "shader": "mesh",
-      "source": "mesh.vert.glsl",
-      "stage": "vert",
-      "defines": []
-    },
-    {
-      "shader": "basic",
-      "source": "basic.frag.glsl",
-      "stage": "frag",
-      "defines": []
-    },
-    {
-      "shader": "imgui_vertex",
-      "source": "imgui.vert.glsl",
-      "stage": "vert",
-      "defines": []
-    },
-    {
-      "shader": "imgui_fragment",
-      "source": "imgui.frag.glsl",
-      "stage": "frag",
-      "defines": []
-    },
-    {
-      "shader": "lines_vertex",
-      "source": "lines.vert.glsl",
-      "stage": "vert",
-      "defines": []
-    },
-    {
-      "shader": "lines_fragment",
-      "source": "lines.frag.glsl",
-      "stage": "frag",
-      "defines": []
-    },
-    {
-      "shader": "preview",
-      "source": "preview.comp.glsl",
-      "stage": "comp",
-      "defines": []
-    },
-    {
-      "shader": "light_cull",
-      "source": "light_cull.comp.glsl",
-      "stage": "comp",
-      "defines": []
-    },
-    {
-      "shader": "cube_preview",
-      "source": "cube_preview.frag.glsl",
-      "stage": "frag",
-      "defines": []
-    },
-    {
-      "shader": "standard",
-      "source": "standard.frag.glsl",
-      "stage": "frag",
-      "defines": []
-    },
-    {
-      "shader": "physical",
-      "source": "physical.frag.glsl",
-      "stage": "frag",
-      "defines": []
-    },
-    {
-      "shader": "toon",
-      "source": "toon.frag.glsl",
-      "stage": "frag",
-      "defines": []
-    },
-    {
-      "shader": "environment_source",
-      "source": "environment_source.comp.glsl",
-      "stage": "comp",
-      "defines": []
-    },
-    {
-      "shader": "environment_prefilter",
-      "source": "environment_prefilter.comp.glsl",
-      "stage": "comp",
-      "defines": []
-    },
-    {
-      "shader": "sheen_prefilter",
-      "source": "sheen_prefilter.comp.glsl",
-      "stage": "comp",
-      "defines": []
-    },
-    {
-      "shader": "irradiance_project",
-      "source": "irradiance_project.comp.glsl",
-      "stage": "comp",
-      "defines": []
-    },
-    {
-      "shader": "irradiance_reduce",
-      "source": "irradiance_reduce.comp.glsl",
-      "stage": "comp",
-      "defines": []
-    },
-    {
-      "shader": "brdf_lut",
-      "source": "brdf_lut.comp.glsl",
-      "stage": "comp",
-      "defines": []
-    },
-    {
-      "shader": "sheen_lut",
-      "source": "sheen_lut.comp.glsl",
-      "stage": "comp",
-      "defines": []
-    },
-    {
-      "shader": "sky",
-      "source": "sky.frag.glsl",
-      "stage": "frag",
-      "defines": []
-    },
-    {
-      "shader": "mesh",
-      "source": "mesh.vert.glsl",
-      "stage": "vert",
-      "defines": [
-        "DEPTH_ONLY"
-      ]
-    },
-    {
-      "shader": "depth_only",
-      "source": "depth_only.frag.glsl",
-      "stage": "frag",
-      "defines": []
-    },
-    {
-      "shader": "depth_only",
-      "source": "depth_only.frag.glsl",
-      "stage": "frag",
-      "defines": [
-        "VERTEX_COLOR"
-      ]
-    },
-    {
-      "shader": "mesh",
-      "source": "mesh.vert.glsl",
-      "stage": "vert",
-      "defines": [
-        "SKINNED"
-      ]
-    },
-    {
-      "shader": "mesh",
-      "source": "mesh.vert.glsl",
-      "stage": "vert",
-      "defines": [
-        "SKINNED_U16"
-      ]
-    },
-    {
-      "shader": "mesh",
-      "source": "mesh.vert.glsl",
-      "stage": "vert",
-      "defines": [
-        "MORPH"
-      ]
-    },
-    {
-      "shader": "mesh",
-      "source": "mesh.vert.glsl",
-      "stage": "vert",
-      "defines": [
-        "SKINNED",
-        "MORPH"
-      ]
-    },
-    {
-      "shader": "mesh",
-      "source": "mesh.vert.glsl",
-      "stage": "vert",
-      "defines": [
-        "SKINNED_U16",
-        "MORPH"
-      ]
-    },
-    {
-      "shader": "mesh",
-      "source": "mesh.vert.glsl",
-      "stage": "vert",
-      "defines": [
-        "DEPTH_ONLY",
-        "SKINNED"
-      ]
-    },
-    {
-      "shader": "mesh",
-      "source": "mesh.vert.glsl",
-      "stage": "vert",
-      "defines": [
-        "DEPTH_ONLY",
-        "SKINNED_U16"
-      ]
-    },
-    {
-      "shader": "mesh",
-      "source": "mesh.vert.glsl",
-      "stage": "vert",
-      "defines": [
-        "DEPTH_ONLY",
-        "MORPH"
-      ]
-    },
-    {
-      "shader": "mesh",
-      "source": "mesh.vert.glsl",
-      "stage": "vert",
-      "defines": [
-        "DEPTH_ONLY",
-        "SKINNED",
-        "MORPH"
-      ]
-    },
-    {
-      "shader": "mesh",
-      "source": "mesh.vert.glsl",
-      "stage": "vert",
-      "defines": [
-        "DEPTH_ONLY",
-        "SKINNED_U16",
-        "MORPH"
-      ]
-    },
-    {
-      "shader": "grade",
-      "source": "grade.comp.glsl",
-      "stage": "comp",
-      "defines": []
-    },
-    {
-      "shader": "fxaa",
-      "source": "fxaa.comp.glsl",
-      "stage": "comp",
-      "defines": []
-    },
-    {
-      "shader": "display",
-      "source": "display.frag.glsl",
-      "stage": "frag",
-      "defines": []
-    },
-    {
-      "shader": "bloom_downsample",
-      "source": "bloom_downsample.comp.glsl",
-      "stage": "comp",
-      "defines": []
-    },
-    {
-      "shader": "bloom_upsample",
-      "source": "bloom_upsample.comp.glsl",
-      "stage": "comp",
-      "defines": []
-    },
-    {
-      "shader": "tile_max",
-      "source": "tile_max.comp.glsl",
-      "stage": "comp",
-      "defines": []
-    },
-    {
-      "shader": "tile_neighbor",
-      "source": "tile_neighbor.comp.glsl",
-      "stage": "comp",
-      "defines": []
-    },
-    {
-      "shader": "dof_coc",
-      "source": "dof_coc.comp.glsl",
-      "stage": "comp",
-      "defines": []
-    },
-    {
-      "shader": "dof_gather",
-      "source": "dof_gather.comp.glsl",
-      "stage": "comp",
-      "defines": []
-    },
-    {
-      "shader": "dof_composite",
-      "source": "dof_composite.comp.glsl",
-      "stage": "comp",
-      "defines": []
-    },
-    {
-      "shader": "velocity_camera",
-      "source": "velocity_camera.frag.glsl",
-      "stage": "frag",
-      "defines": []
-    },
-    {
-      "shader": "velocity",
-      "source": "velocity.frag.glsl",
-      "stage": "frag",
-      "defines": []
-    },
-    {
-      "shader": "motion_blur",
-      "source": "motion_blur.comp.glsl",
-      "stage": "comp",
-      "defines": []
-    },
-    {
-      "shader": "mesh",
-      "source": "mesh.vert.glsl",
-      "stage": "vert",
-      "defines": [
-        "VELOCITY"
-      ]
-    },
-    {
-      "shader": "mesh",
-      "source": "mesh.vert.glsl",
-      "stage": "vert",
-      "defines": [
-        "VELOCITY",
-        "SKINNED"
-      ]
-    },
-    {
-      "shader": "mesh",
-      "source": "mesh.vert.glsl",
-      "stage": "vert",
-      "defines": [
-        "VELOCITY",
-        "SKINNED_U16"
-      ]
-    },
-    {
-      "shader": "mesh",
-      "source": "mesh.vert.glsl",
-      "stage": "vert",
-      "defines": [
-        "VELOCITY",
-        "MORPH"
-      ]
-    },
-    {
-      "shader": "mesh",
-      "source": "mesh.vert.glsl",
-      "stage": "vert",
-      "defines": [
-        "VELOCITY",
-        "SKINNED",
-        "MORPH"
-      ]
-    },
-    {
-      "shader": "mesh",
-      "source": "mesh.vert.glsl",
-      "stage": "vert",
-      "defines": [
-        "VELOCITY",
-        "SKINNED_U16",
-        "MORPH"
-      ]
-    }
+    { "shader": "fullscreen", "source": "fullscreen.vert.glsl", "stage": "vert", "defines": [] },
+    { "shader": "gradient", "source": "gradient.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "composite", "source": "composite.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": [] },
+    { "shader": "basic", "source": "basic.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "imgui_vertex", "source": "imgui.vert.glsl", "stage": "vert", "defines": [] },
+    { "shader": "imgui_fragment", "source": "imgui.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "lines_vertex", "source": "lines.vert.glsl", "stage": "vert", "defines": [] },
+    { "shader": "lines_fragment", "source": "lines.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "preview", "source": "preview.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "light_cull", "source": "light_cull.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "cube_preview", "source": "cube_preview.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "standard", "source": "standard.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "physical", "source": "physical.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "toon", "source": "toon.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "environment_source", "source": "environment_source.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "environment_prefilter", "source": "environment_prefilter.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "sheen_prefilter", "source": "sheen_prefilter.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "irradiance_project", "source": "irradiance_project.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "irradiance_reduce", "source": "irradiance_reduce.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "brdf_lut", "source": "brdf_lut.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "sheen_lut", "source": "sheen_lut.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "sky", "source": "sky.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["DEPTH_ONLY"] },
+    { "shader": "depth_only", "source": "depth_only.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "depth_only", "source": "depth_only.frag.glsl", "stage": "frag", "defines": ["VERTEX_COLOR"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["SKINNED"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["SKINNED_U16"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["MORPH"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["SKINNED", "MORPH"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["SKINNED_U16", "MORPH"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["DEPTH_ONLY", "SKINNED"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["DEPTH_ONLY", "SKINNED_U16"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["DEPTH_ONLY", "MORPH"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["DEPTH_ONLY", "SKINNED", "MORPH"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["DEPTH_ONLY", "SKINNED_U16", "MORPH"] },
+    { "shader": "grade", "source": "grade.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "fxaa", "source": "fxaa.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "display", "source": "display.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "bloom_downsample", "source": "bloom_downsample.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "bloom_upsample", "source": "bloom_upsample.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "tile_max", "source": "tile_max.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "tile_neighbor", "source": "tile_neighbor.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "dof_coc", "source": "dof_coc.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "dof_gather", "source": "dof_gather.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "dof_composite", "source": "dof_composite.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "velocity_camera", "source": "velocity_camera.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "velocity", "source": "velocity.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "motion_blur", "source": "motion_blur.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["VELOCITY"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["VELOCITY", "SKINNED"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["VELOCITY", "SKINNED_U16"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["VELOCITY", "MORPH"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["VELOCITY", "SKINNED", "MORPH"] },
+    { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["VELOCITY", "SKINNED_U16", "MORPH"] }
   ]
 }
