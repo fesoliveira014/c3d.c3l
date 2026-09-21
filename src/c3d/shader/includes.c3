@@ -18,6 +18,7 @@ const char[*] C3D_COMMON_CUSTOM_MATERIAL_TEXT @private = $embed("../../../shader
 const char[*] C3D_COMMON_DEFORM_TEXT @private = $embed("../../../shaders/common/deform.glsl");
 const char[*] C3D_COMMON_DOF_TEXT @private = $embed("../../../shaders/common/dof.glsl");
 const char[*] C3D_COMMON_ENVIRONMENT_SAMPLING_TEXT @private = $embed("../../../shaders/common/environment_sampling.glsl");
+const char[*] C3D_COMMON_FXAA_TEXT @private = $embed("../../../shaders/common/fxaa.glsl");
 const char[*] C3D_COMMON_GRADE_TEXT @private = $embed("../../../shaders/common/grade.glsl");
 const char[*] C3D_COMMON_IBL_TEXT @private = $embed("../../../shaders/common/ibl.glsl");
 const char[*] C3D_COMMON_IRRADIANCE_TEXT @private = $embed("../../../shaders/common/irradiance.glsl");
@@ -43,7 +44,7 @@ const char[*] GPU_RAY_TRACING_TEXT @private = $embed("../../../lib/gpu.c3l/inclu
 <*
  Every include a custom stage may resolve, in table order.
 *>
-const ShaderInclude[30] SHADER_INCLUDES = {
+const ShaderInclude[31] SHADER_INCLUDES = {
     { .name = "c3d_abi.glsl", .text = (String)C3D_GENERATED_C3D_ABI_TEXT[..] },
     { .name = "brdf.glsl", .text = (String)C3D_COMMON_BRDF_TEXT[..] },
     { .name = "clusters.glsl", .text = (String)C3D_COMMON_CLUSTERS_TEXT[..] },
@@ -53,6 +54,7 @@ const ShaderInclude[30] SHADER_INCLUDES = {
     { .name = "deform.glsl", .text = (String)C3D_COMMON_DEFORM_TEXT[..] },
     { .name = "dof.glsl", .text = (String)C3D_COMMON_DOF_TEXT[..] },
     { .name = "environment_sampling.glsl", .text = (String)C3D_COMMON_ENVIRONMENT_SAMPLING_TEXT[..] },
+    { .name = "fxaa.glsl", .text = (String)C3D_COMMON_FXAA_TEXT[..] },
     { .name = "grade.glsl", .text = (String)C3D_COMMON_GRADE_TEXT[..] },
     { .name = "ibl.glsl", .text = (String)C3D_COMMON_IBL_TEXT[..] },
     { .name = "irradiance.glsl", .text = (String)C3D_COMMON_IRRADIANCE_TEXT[..] },

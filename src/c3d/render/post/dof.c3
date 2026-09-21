@@ -59,19 +59,19 @@ fn void? record_dof(Renderer* renderer, ViewRecord* record) {
 }
 
 fn void? acquire_dof_pipelines(Renderer* renderer) @private {
-    acquire_compute_pipeline(
+    render::acquire_compute_pipeline(
         renderer:   renderer,
         pipeline:   &renderer.post_pipelines.dof_coc,
         shader:     ShaderName.DOF_COC,
         debug_name: "post_dof_coc",
     )!;
-    acquire_compute_pipeline(
+    render::acquire_compute_pipeline(
         renderer:   renderer,
         pipeline:   &renderer.post_pipelines.dof_gather,
         shader:     ShaderName.DOF_GATHER,
         debug_name: "post_dof_gather",
     )!;
-    acquire_compute_pipeline(
+    render::acquire_compute_pipeline(
         renderer:   renderer,
         pipeline:   &renderer.post_pipelines.dof_composite,
         shader:     ShaderName.DOF_COMPOSITE,

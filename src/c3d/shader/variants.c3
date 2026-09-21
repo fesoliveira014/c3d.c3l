@@ -31,6 +31,7 @@ enum ShaderName : int {
     DEPTH_ONLY,
     GRADE,
     FXAA,
+    FXAA_FRAGMENT,
     DISPLAY,
     BLOOM_DOWNSAMPLE,
     BLOOM_UPSAMPLE,
@@ -112,6 +113,7 @@ const char[*] MESH_DEPTH_ONLY_SKINNED_MORPH_SPIRV @private = $embed("../../../sh
 const char[*] MESH_DEPTH_ONLY_SKINNED_U16_MORPH_SPIRV @private = $embed("../../../shaders/spv/mesh_depth_only_skinned_u16_morph.spv");
 const char[*] GRADE_SPIRV @private = $embed("../../../shaders/spv/grade.spv");
 const char[*] FXAA_SPIRV @private = $embed("../../../shaders/spv/fxaa.spv");
+const char[*] FXAA_FRAGMENT_SPIRV @private = $embed("../../../shaders/spv/fxaa_fragment.spv");
 const char[*] DISPLAY_SPIRV @private = $embed("../../../shaders/spv/display.spv");
 const char[*] BLOOM_DOWNSAMPLE_SPIRV @private = $embed("../../../shaders/spv/bloom_downsample.spv");
 const char[*] BLOOM_UPSAMPLE_SPIRV @private = $embed("../../../shaders/spv/bloom_upsample.spv");
@@ -133,7 +135,7 @@ const char[*] MESH_SKINNED_U16_MORPH_VELOCITY_SPIRV @private = $embed("../../../
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[55] SHADER_ENTRIES = {
+const ShaderEntry[56] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -172,6 +174,7 @@ const ShaderEntry[55] SHADER_ENTRIES = {
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_DEPTH_ONLY | SHADER_FLAG_SKINNED_U16 | SHADER_FLAG_MORPH }, .spirv = MESH_DEPTH_ONLY_SKINNED_U16_MORPH_SPIRV[..] },
     { .variant = { .shader = GRADE }, .spirv = GRADE_SPIRV[..] },
     { .variant = { .shader = FXAA }, .spirv = FXAA_SPIRV[..] },
+    { .variant = { .shader = FXAA_FRAGMENT }, .spirv = FXAA_FRAGMENT_SPIRV[..] },
     { .variant = { .shader = DISPLAY }, .spirv = DISPLAY_SPIRV[..] },
     { .variant = { .shader = BLOOM_DOWNSAMPLE }, .spirv = BLOOM_DOWNSAMPLE_SPIRV[..] },
     { .variant = { .shader = BLOOM_UPSAMPLE }, .spirv = BLOOM_UPSAMPLE_SPIRV[..] },

@@ -289,6 +289,7 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
             record.cluster_root = (gpu::GpuAddress)0;
             record.scene_input = &record.hdr_color;
             record.post_chain_open = false;
+            record.bloom_recorded = false;
         }
         self.frame_submitted = false;
         self.recording_slot = (uint)(self.frame_index % FRAMES_IN_FLIGHT);

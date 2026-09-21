@@ -103,28 +103,7 @@ fn gpu::PipelineHandle? sky_pipeline(Renderer* renderer) @private {
     return renderer.pipelines.get(&renderer.device, key);
 }
 
-fn void? record_sky(Renderer* renderer, ViewRecord* record, gpu::GpuAddress root) @private {
-    record.hdr_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
-    record.depth.transition(&renderer.commands, DEPTH_ATTACHMENT_STATE)!;
-
-    begin_profile_pass(renderer, Pass.SKY)!;
-
-    gpu::ColorTargetDesc[1] colors = {{
-        .view     = record.hdr_color.attachment,
-        .load_op  = gpu::LoadOp.LOAD,
-        .store_op = gpu::StoreOp.STORE,
-    }};
-    gpu::DepthTargetDesc depth = {
-        .view     = record.depth.attachment,
-        .load_op  = gpu::LoadOp.LOAD,
-        .store_op = gpu::StoreOp.STORE,
-    };
-    gpu::RenderPassDesc pass = {
-        .colors = colors[..],
-        .depth  = &depth,
-        .width  = record.hdr_color.width,
-        .height = record.hdr_color.height,
-    };
+fn gpu::PipelineHandle? record_sky_draw(Renderer* renderer, ViewRecord* record, gpu::GpuAddress root) @private {
     gpu::ColorTargetState[1] color_targets = { gpu::color_blend_disabled() };
     gpu::GraphicsState state = fullscreen_state(
         width:         record.hdr_color.width,
@@ -138,8 +117,8 @@ fn void? record_sky(Renderer* renderer, ViewRecord* record, gpu::GpuAddress root
         .compare      = gpu::CompareOp.GREATER_EQUAL,
     };
 
-    gpu::cmd_bind_pipeline(&renderer.commands, sky_pipeline(renderer)!)!;
-    gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
+    gpu::PipelineHandle pipeline = sky_pipeline(renderer)!;
+    gpu::cmd_bind_pipeline(&renderer.commands, pipeline)!;
     gpu::cmd_set_graphics_state(&renderer.commands, &state)!;
     gpu::cmd_draw(
         commands:       &renderer.commands,
@@ -148,8 +127,6 @@ fn void? record_sky(Renderer* renderer, ViewRecord* record, gpu::GpuAddress root
         vertex_count:   FULLSCREEN_VERTEX_COUNT,
         instance_count: 1,
     )!;
-    gpu::cmd_end_render_pass(&renderer.commands)!;
-
-    end_profile_pass(renderer, Pass.SKY)!;
     renderer.stats.draws++;
+    return pipeline;
 }

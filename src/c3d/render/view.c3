@@ -371,37 +371,36 @@ fn void? Renderer.render_view(
             instrumentation::@scope("view.record") {
                 record.hdr_color.transition(&self.commands, COLOR_ATTACHMENT_STATE)!;
                 record.depth.transition(&self.commands, DEPTH_ATTACHMENT_STATE)!;
-                begin_profile_pass(self, Pass.FORWARD_OPAQUE)!;
-                record_opaque_pass(
-                    renderer:    self,
-                    record:      record,
-                    items:       opaque_items,
-                    clear_color: environments.clear_color,
-                )!;
-                end_profile_pass(self, Pass.FORWARD_OPAQUE)!;
-
+                gpu::GpuAddress sky_root;
                 if (environments.sky) {
-                    gpu::GpuAddress sky_root = pack_sky(
+                    sky_root = pack_sky(
                         renderer: self,
                         environment: environments.sky,
                         frame: frame_span.address,
                         intensity: scene.background.intensity,
                         rotation: scene.background.rotation,
                     )!;
-                    record_sky(self, record, sky_root)!;
                 }
+                record_forward_pass(
+                    renderer:    self,
+                    record:      record,
+                    opaque:      opaque_items,
+                    transparent: transmission_items.len ? (DrawItem[]){} : transparent_items,
+                    sky_root:    sky_root,
+                    sky:         environments.sky != null,
+                    clear_color: environments.clear_color,
+                )!;
 
                 if (transmission_items.len) {
                     begin_profile_pass(self, Pass.TRANSMISSION)!;
                     record_scene_color_snapshot(self, record)!;
                     record_loaded_pass(self, record, transmission_items)!;
                     end_profile_pass(self, Pass.TRANSMISSION)!;
-                }
-
-                if (transparent_items.len) {
-                    begin_profile_pass(self, Pass.FORWARD_TRANSPARENT)!;
-                    record_loaded_pass(self, record, transparent_items)!;
-                    end_profile_pass(self, Pass.FORWARD_TRANSPARENT)!;
+                    if (transparent_items.len) {
+                        begin_profile_pass(self, Pass.FORWARD_TRANSPARENT)!;
+                        record_loaded_pass(self, record, transparent_items)!;
+                        end_profile_pass(self, Pass.FORWARD_TRANSPARENT)!;
+                    }
                 }
 
                 if (debug && debug.vertices.len()) {
@@ -783,10 +782,13 @@ fn int by_transparent_depth(DrawItem first, DrawItem second) @local {
     return compare_transparent_candidates(*first.candidate, *second.candidate);
 }
 
-fn void? record_opaque_pass(
+fn void? record_forward_pass(
     Renderer* renderer,
     ViewRecord* record,
-    DrawItem[] items,
+    DrawItem[] opaque,
+    DrawItem[] transparent,
+    gpu::GpuAddress sky_root,
+    bool sky,
     Vec4 clear_color,
 ) @private {
     uint width = record.hdr_color.width;
@@ -810,17 +812,33 @@ fn void? record_opaque_pass(
         .height = height,
     };
 
-    gpu::PipelineHandle pipeline = first_pipeline(renderer, items)!;
-
+    gpu::PipelineHandle bound = first_pipeline(renderer, opaque)!;
+    begin_profile_pass(renderer, Pass.FORWARD_OPAQUE)!;
     // Bound before the pass begins: the backend checks the bound pipeline against the pass formats at begin.
-    gpu::cmd_bind_pipeline(&renderer.commands, pipeline)!;
+    gpu::cmd_bind_pipeline(&renderer.commands, bound)!;
     gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
     record_draws(
         renderer: renderer,
         record:   record,
-        items:    items,
-        pipeline: pipeline,
+        items:    opaque,
+        pipeline: bound,
     )!;
+    end_profile_pass(renderer, Pass.FORWARD_OPAQUE)!;
+    if (sky) {
+        begin_profile_pass(renderer, Pass.SKY)!;
+        bound = record_sky_draw(renderer, record, sky_root)!;
+        end_profile_pass(renderer, Pass.SKY)!;
+    }
+    if (transparent.len) {
+        begin_profile_pass(renderer, Pass.FORWARD_TRANSPARENT)!;
+        record_draws(
+            renderer: renderer,
+            record:   record,
+            items:    transparent,
+            pipeline: bound,
+        )!;
+        end_profile_pass(renderer, Pass.FORWARD_TRANSPARENT)!;
+    }
     gpu::cmd_end_render_pass(&renderer.commands)!;
 }
 

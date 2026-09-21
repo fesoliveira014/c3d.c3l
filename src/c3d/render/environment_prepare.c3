@@ -32,12 +32,7 @@ fn void? acquire_environment_pipeline(
     gpu::PipelineHandle* pipeline,
     ShaderName shader,
 ) @private {
-    if (pipeline.is_valid()) return;
-    gpu::ComputePipelineDesc description = {
-        .shader = { .spirv = renderer.pipelines.registry.get({ .shader = shader })! },
-        .debug_name = "environment_processing",
-    };
-    *pipeline = gpu::create_compute_pipeline(&renderer.device, &description)!;
+    return acquire_compute_pipeline(renderer, pipeline, shader, "environment_processing");
 }
 
 fn void? record_environment_preparations(Renderer* renderer, gpu::CommandList* commands) @private {

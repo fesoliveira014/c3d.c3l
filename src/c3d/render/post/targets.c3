@@ -10,9 +10,9 @@ const ZString[BLOOM_MAX_LEVELS] BLOOM_LEVEL_NAMES @private = {
 };
 
 <*
- Allocate the view's grade and FXAA images when absent and a window output exists.
- @param [&inout] renderer : "Sizes the images from hdr_color."
- @param [&inout] record : "Receives post_a and post_b."
+ Allocate the view's grade image when absent and a window output exists.
+ @param [&inout] renderer : "Sizes the image from hdr_color."
+ @param [&inout] record : "Receives post_a."
  @return? gpu::INVALID_ARGUMENT, gpu::UNSUPPORTED_FEATURE, gpu::SLOT_TABLE_FULL
  @return? gpu::DESCRIPTOR_HEAP_FULL, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
@@ -27,7 +27,19 @@ fn void? acquire_post_targets(Renderer* renderer, ViewRecord* record) {
         format:     render::HDR_FORMAT,
         debug_name: "post_a",
     )!;
-    defer catch release_post_target(&renderer.device, &record.post_a);
+}
+
+<*
+ Allocate the FXAA compute output when the fragment route cannot write the output directly.
+ @param [&inout] renderer : "Sizes the image from hdr_color."
+ @param [&inout] record : "Receives post_b once."
+ @return? gpu::INVALID_ARGUMENT, gpu::UNSUPPORTED_FEATURE, gpu::SLOT_TABLE_FULL
+ @return? gpu::DESCRIPTOR_HEAP_FULL, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
+ @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+*>
+fn void? acquire_fxaa_fallback_target(Renderer* renderer, ViewRecord* record) {
+    if (record.post_b.texture.is_valid()) return;
+
     record.post_b = allocate_post_target(
         device:     &renderer.device,
         width:      record.hdr_color.width,
@@ -203,7 +215,7 @@ fn void retire_post_targets(Renderer* renderer, ViewRecord* record) {
 
     RetireList* retire = last_submitted_retire(renderer);
     retire_post_target(retire, &record.post_a);
-    retire_post_target(retire, &record.post_b);
+    if (record.post_b.texture.is_valid()) retire_post_target(retire, &record.post_b);
 }
 
 <*
@@ -215,7 +227,7 @@ fn void release_post_targets(gpu::Device* device, ViewRecord* record) {
     if (!record.post_a.texture.is_valid()) return;
 
     release_post_target(device, &record.post_a);
-    release_post_target(device, &record.post_b);
+    if (record.post_b.texture.is_valid()) release_post_target(device, &record.post_b);
 }
 
 fn Target? allocate_post_target(

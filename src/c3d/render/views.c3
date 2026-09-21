@@ -184,6 +184,7 @@ struct ViewRecord {
     Target                               post_b;
     Target[post::BLOOM_MAX_LEVELS]       bloom;
     uint                                 bloom_levels;
+    bool                                 bloom_recorded;
     Target                               dof_near;
     Target                               dof_far;
     Target                               dof_near_blur;

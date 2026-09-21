@@ -192,9 +192,25 @@ fn Vec3 preview_face_direction(CubeFace face, Vec2 uv) {
     }
 }
 
+<*
+ Whether a preview of the view's bloom chain is waiting for this frame.
+ @param [&in] record : "Live view record of the renderer."
+*>
+fn bool bloom_preview_requested(Renderer* renderer, ViewRecord* record) {
+    usz view_index = (usz)(record - renderer.views.items.ptr);
+    foreach (&preview : renderer.previews) {
+        if (preview.requested && preview.source.kind == PreviewKind.VIEW_BLOOM
+            && preview.source.view.index == view_index) return true;
+    }
+    return false;
+}
+
 fn void? record_previews(Renderer* renderer) @private {
     foreach (&preview : renderer.previews) {
         if (!preview.requested) continue;
+        // A bloom request that arrived after its view finished waits for a frame that records the chain.
+        if (preview.source.kind == PreviewKind.VIEW_BLOOM
+            && !renderer.views.get(preview.source.view).bloom_recorded) continue;
         preview.requested = false;
 
         PreviewRoot root = {
@@ -349,17 +365,3 @@ fn void release_previews(Renderer* renderer) @private {
     renderer.preview_pipeline = {};
 }
 
-fn void? acquire_compute_pipeline(
-    Renderer* renderer,
-    gpu::PipelineHandle* pipeline,
-    ShaderName shader,
-    ZString debug_name,
-) @private {
-    if (pipeline.is_valid()) return;
-
-    gpu::ComputePipelineDesc description = {
-        .shader     = { .spirv = renderer.pipelines.registry.get({ .shader = shader })! },
-        .debug_name = debug_name,
-    };
-    *pipeline = gpu::create_compute_pipeline(&renderer.device, &description)!;
-}
