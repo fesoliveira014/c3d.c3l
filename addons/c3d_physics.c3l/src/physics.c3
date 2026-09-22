@@ -23,7 +23,7 @@ const uint  DEFAULT_MAX_STEPS = 4; // a longer backlog is dropped, not simulated
 const float DEFAULT_HIT_SPEED_THRESHOLD = 1;
 <* Entries per event list. *>
 const uint  DEFAULT_EVENT_CAPACITY = 4096; // five lists of 4096 entries, about 800 KiB per world; the contact burst lever
-<* Cooked snapshots per collider kind. *>
+<* Collision snapshots per collider kind. *>
 const uint  DEFAULT_COOKED_CAPACITY = 256; // one slot per distinct geometry revision; the level variety lever
 <* Water density, kilograms per cubic meter. *>
 const float DEFAULT_DENSITY = 1000;
@@ -149,9 +149,9 @@ struct RigidBody {
 }
 
 <*
- Source identity of a cooked snapshot.
+ Geometry revision a collision snapshot was cooked from.
 *>
-struct CookedKey {
+struct PhysicsSourceKey {
     GeometryId geometry;
     uint       revision;
 }
@@ -159,25 +159,25 @@ struct CookedKey {
 <*
  Convex hull cooked from a geometry revision, with its wireframe.
 *>
-struct CookedHull {
-    CookedKey     key;
-    b3::HullData* hull;
-    Vec3[]        wire;
+struct PhysicsHull {
+    PhysicsSourceKey key;
+    b3::HullData*    hull;
+    Vec3[]           wire;
 }
 
 <*
  Triangle mesh cooked from a geometry revision, with its wireframe.
 *>
-struct CookedMesh {
-    CookedKey     key;
-    b3::MeshData* mesh;
-    Vec3[]        wire;
+struct PhysicsMesh {
+    PhysicsSourceKey key;
+    b3::MeshData*    mesh;
+    Vec3[]           wire;
 }
 
 <*
  Height field cooked from application heights, with its wireframe.
 *>
-struct CookedHeightField {
+struct PhysicsHeightField {
     b3::HeightFieldData* field;
     Vec3[]               wire;
 }
@@ -232,32 +232,32 @@ struct PhysicsDebugOptions {
  Owner of one box3d world, its cooked collision data and the frame event lists.
 *>
 struct PhysicsWorld {
-    Allocator           allocator;
-    Allocator*          hook_allocator;
-    b3::WorldId         world;
-    AssetStore*         assets;
-    Scene*              scene;
-    PhysicsDesc         desc;
-    float               accumulator;
-    float               alpha;
-    uint                steps_last_update;
-    uint                dropped_events;
-    CookedHull[]        hulls;
-    uint                hull_count;
-    CookedMesh[]        meshes;
-    uint                mesh_count;
-    CookedHeightField[] height_fields;
-    uint                height_field_count;
-    ContactEvent[]      contact_begin_storage;
-    uint                contact_begin_count;
-    ContactEvent[]      contact_end_storage;
-    uint                contact_end_count;
-    HitEvent[]          hit_storage;
-    uint                hit_count;
-    SensorEvent[]       sensor_begin_storage;
-    uint                sensor_begin_count;
-    SensorEvent[]       sensor_end_storage;
-    uint                sensor_end_count;
+    Allocator            allocator;
+    Allocator*           hook_allocator;
+    b3::WorldId          world;
+    AssetStore*          assets;
+    Scene*               scene;
+    PhysicsDesc          desc;
+    float                accumulator;
+    float                alpha;
+    uint                 steps_last_update;
+    uint                 dropped_events;
+    PhysicsHull[]        hulls;
+    uint                 hull_count;
+    PhysicsMesh[]        meshes;
+    uint                 mesh_count;
+    PhysicsHeightField[] height_fields;
+    uint                 height_field_count;
+    ContactEvent[]       contact_begin_storage;
+    uint                 contact_begin_count;
+    ContactEvent[]       contact_end_storage;
+    uint                 contact_end_count;
+    HitEvent[]           hit_storage;
+    uint                 hit_count;
+    SensorEvent[]        sensor_begin_storage;
+    uint                 sensor_begin_count;
+    SensorEvent[]        sensor_end_storage;
+    uint                 sensor_end_count;
 }
 
 <*
@@ -512,9 +512,9 @@ fn PhysicsWorld? create_physics_world(
         .assets                = assets,
         .scene                 = scene,
         .desc                  = desc,
-        .hulls                 = alloc::new_array(allocator, CookedHull, desc.cooked_capacity),
-        .meshes                = alloc::new_array(allocator, CookedMesh, desc.cooked_capacity),
-        .height_fields         = alloc::new_array(allocator, CookedHeightField, desc.cooked_capacity),
+        .hulls                 = alloc::new_array(allocator, PhysicsHull, desc.cooked_capacity),
+        .meshes                = alloc::new_array(allocator, PhysicsMesh, desc.cooked_capacity),
+        .height_fields         = alloc::new_array(allocator, PhysicsHeightField, desc.cooked_capacity),
         .contact_begin_storage = alloc::new_array(allocator, ContactEvent, desc.event_capacity),
         .contact_end_storage   = alloc::new_array(allocator, ContactEvent, desc.event_capacity),
         .hit_storage           = alloc::new_array(allocator, HitEvent, desc.event_capacity),

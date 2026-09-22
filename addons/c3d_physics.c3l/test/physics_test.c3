@@ -176,7 +176,7 @@ fn void test_hull_from_box_geometry_has_eight_vertices() @test {
     assert(body.colliders[0].wire.len == 24);
 }
 
-fn void test_cooked_mesh_is_shared_until_revision_moves() @test {
+fn void test_physics_mesh_is_shared_until_revision_moves() @test {
     Fixture fixture;
     setup(&fixture);
     defer teardown(&fixture);

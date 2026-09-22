@@ -94,7 +94,7 @@ fn Collider? create_shape(PhysicsWorld* world, b3::BodyId body, ColliderDesc* de
                 scale:     { 1, 1, 1 },
             )!;
         case HULL:
-            CookedHull* cooked = cooked_hull(world, desc.geometry)!;
+            PhysicsHull* cooked = resolve_hull(world, desc.geometry)!;
             record.shape = b3::create_transformed_hull_shape(
                 body:      body,
                 def:       &def,
@@ -104,7 +104,7 @@ fn Collider? create_shape(PhysicsWorld* world, b3::BodyId body, ColliderDesc* de
             )!;
             record.wire = cooked.wire;
         case MESH:
-            CookedMesh* cooked = cooked_mesh(world, desc.geometry)!;
+            PhysicsMesh* cooked = resolve_mesh(world, desc.geometry)!;
             record.shape = b3::create_mesh_shape(
                 body:  body,
                 def:   &def,
@@ -113,22 +113,22 @@ fn Collider? create_shape(PhysicsWorld* world, b3::BodyId body, ColliderDesc* de
             )!;
             record.wire = cooked.wire;
         case HEIGHT_FIELD:
-            CookedHeightField* cooked = cook_height_field(world, desc)!;
+            PhysicsHeightField* cooked = create_height_field(world, desc)!;
             record.shape = b3::create_height_field_shape(body, &def, cooked.field)!;
             record.wire = cooked.wire;
     }
     return record;
 }
 
-fn bool same_key(CookedKey a, CookedKey b) @local {
+fn bool same_key(PhysicsSourceKey a, PhysicsSourceKey b) @local {
     return a.geometry.index == b.geometry.index
         && a.geometry.generation == b.geometry.generation
         && a.revision == b.revision;
 }
 
-fn CookedHull*? cooked_hull(PhysicsWorld* world, GeometryId geometry) @local {
+fn PhysicsHull*? resolve_hull(PhysicsWorld* world, GeometryId geometry) @local {
     GeometryAsset* asset = world.assets.geometry(geometry);
-    CookedKey key = { .geometry = geometry, .revision = asset.header.revision };
+    PhysicsSourceKey key = { .geometry = geometry, .revision = asset.header.revision };
     foreach (&cooked : world.hulls[:world.hull_count]) {
         if (same_key(cooked.key, key)) return cooked;
     }
@@ -141,9 +141,9 @@ fn CookedHull*? cooked_hull(PhysicsWorld* world, GeometryId geometry) @local {
     return &world.hulls[world.hull_count++];
 }
 
-fn CookedMesh*? cooked_mesh(PhysicsWorld* world, GeometryId geometry) @local {
+fn PhysicsMesh*? resolve_mesh(PhysicsWorld* world, GeometryId geometry) @local {
     GeometryAsset* asset = world.assets.geometry(geometry);
-    CookedKey key = { .geometry = geometry, .revision = asset.header.revision };
+    PhysicsSourceKey key = { .geometry = geometry, .revision = asset.header.revision };
     foreach (&cooked : world.meshes[:world.mesh_count]) {
         if (same_key(cooked.key, key)) return cooked;
     }
@@ -168,7 +168,7 @@ fn CookedMesh*? cooked_mesh(PhysicsWorld* world, GeometryId geometry) @local {
     return &world.meshes[world.mesh_count++];
 }
 
-fn CookedHeightField*? cook_height_field(PhysicsWorld* world, ColliderDesc* desc) @local {
+fn PhysicsHeightField*? create_height_field(PhysicsWorld* world, ColliderDesc* desc) @local {
     if (world.height_field_count == world.desc.cooked_capacity) return c3d::CAPACITY_EXCEEDED~;
 
     HeightField field = desc.height_field;
