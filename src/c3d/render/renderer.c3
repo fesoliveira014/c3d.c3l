@@ -109,6 +109,7 @@ struct Renderer {
     Frame[FRAMES_IN_FLIGHT] frames;
     ulong                   frame_index;
     DeformationCache        deformation;
+    InstanceCache           instances;
 
     AssetStore*             assets;
     uint                    max_lights;
@@ -267,6 +268,7 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
         };
         reset_upload_ring(self, slot)!;
         reset_deformation_cache(&self.deformation);
+        reset_instance_cache(&self.instances);
         self.frame_started = clock::now();
 
         self.has_output = false;
@@ -775,6 +777,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .views                = pool::create_pool{ViewRecord, ViewId}(allocator, VIEW_CAPACITY),
         .pipelines            = create_pipeline_cache(allocator, shader::BUILTIN_REGISTRY),
         .deformation          = create_deformation_cache(allocator),
+        .instances            = create_instance_cache(allocator),
         .linear_clamp_sampler = linear_clamp_sampler,
         .log                  = log,
         .timestamps_enabled   = timestamps_enabled,
@@ -806,6 +809,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         free_buffers(&renderer);
         destroy_pipeline_cache(&renderer.device, &renderer.pipelines);
         destroy_deformation_cache(&renderer.deformation);
+        destroy_instance_cache(&renderer.instances);
         pool::destroy_pool{TargetRecord, RenderTargetId}(&renderer.targets);
         foreach (&record : renderer.views.items) release_view_images(&renderer, record);
         pool::destroy_pool{ViewRecord, ViewId}(&renderer.views);
@@ -854,6 +858,7 @@ fn void destroy_renderer(Renderer* renderer) {
     pool::destroy_pool{TargetRecord, RenderTargetId}(&renderer.targets);
     destroy_pipeline_cache(&renderer.device, &renderer.pipelines);
     destroy_deformation_cache(&renderer.deformation);
+    destroy_instance_cache(&renderer.instances);
 
     if (renderer.swapchain.is_valid()) {
         uint attempts = 0;

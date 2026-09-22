@@ -268,19 +268,26 @@ fn PipelineKey compute_pipeline_key(ComputeShaderId shader, uint revision) {
 
 <*
  Stage bytes a custom key selects from a shader record.
- @param [&in] stages : "Record whose vertex forms both exist when key.custom.vertex is set."
+ @param [&in] stages : "Record holding the vertex pair the key's flags select."
  @pure
 *>
 fn CustomStageSource custom_stage_source(asset::ShaderDesc* stages, PipelineKey key) {
     bool depth = (key.vertex.flags & shader::SHADER_FLAG_DEPTH_ONLY) != 0;
+    char[] vertex = depth ? stages.vertex.depth : stages.vertex.shaded;
+    if (key.vertex.flags & shader::SHADER_FLAG_INSTANCED) {
+        vertex = depth ? stages.vertex.instanced_depth : stages.vertex.instanced_shaded;
+    }
     return {
-        .vertex = depth ? stages.vertex.depth : stages.vertex.shaded,
+        .vertex = vertex,
         .fragment = key.custom.gbuffer ? stages.gbuffer : stages.fragment,
     };
 }
 
 fn bool key_stages_present(PipelineKey key, asset::ShaderDesc* stages) @private {
-    if (key.custom.vertex && stages.vertex.shaded.len == 0) return false;
+    if (key.custom.vertex) {
+        bool instanced = (key.vertex.flags & shader::SHADER_FLAG_INSTANCED) != 0;
+        if ((instanced ? stages.vertex.instanced_shaded : stages.vertex.shaded).len == 0) return false;
+    }
     return !key.custom.gbuffer || stages.gbuffer.len > 0;
 }
 

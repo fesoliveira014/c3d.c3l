@@ -9,6 +9,10 @@
 #include "normal_mapping.glsl"
 #endif
 
+#ifdef INSTANCED
+GPU_DECLARE_READONLY_ARRAY_REF(InstanceArray, InstanceGpu);
+#endif
+
 layout(location = 0) out vec3 v_world_pos;
 layout(location = 1) out vec3 v_normal;
 layout(location = 2) out vec4 v_tangent;
@@ -64,21 +68,36 @@ void apply_mesh_deformation(inout MeshVertexInput vertex, DrawRoot draw, Geometr
 }
 
 void write_mesh_outputs(MeshVertexInput vertex, DrawRoot draw, FrameRoot frame, GeometryRoot geometry) {
-    vec4 world = draw.model * vec4(vertex.position, 1.0);
+#ifdef INSTANCED
+    InstanceGpu instance = InstanceArray(draw.instance_data).values[gl_InstanceIndex];
+    mat4 model = instance.model;
+    mat3 normal_matrix = mat3(instance.normal_0.xyz, instance.normal_1.xyz, instance.normal_2.xyz);
+#else
+    mat4 model = draw.model;
+    mat3 normal_matrix = mat3(draw.normal_0.xyz, draw.normal_1.xyz, draw.normal_2.xyz);
+#endif
+    vec4 world = model * vec4(vertex.position, 1.0);
 #ifdef VELOCITY
+    // An instanced prev_model is the batch node's motion, applied after the current instance matrix.
+#ifdef INSTANCED
+    v_prev_clip_pos = frame.prev_view_proj * (draw.prev_model * world);
+#else
     v_prev_clip_pos = frame.prev_view_proj * (draw.prev_model * vec4(vertex.position, 1.0));
 #endif
+#endif
 #if !defined(DEPTH_ONLY) && !defined(VELOCITY)
-    mat3 normal_matrix = mat3(draw.normal_0.xyz, draw.normal_1.xyz, draw.normal_2.xyz);
     v_world_pos = world.xyz;
     v_normal = normalize(normal_matrix * vertex.normal);
     v_tangent = (geometry.flags & GEOMETRY_HAS_TANGENTS) != 0u
-        ? world_tangent(draw.model, vertex.tangent)
+        ? world_tangent(model, vertex.tangent)
         : vec4(0.0);
 #endif
     v_uv0 = vertex.uv0;
     v_uv1 = vertex.uv1;
     v_color = vertex.color;
+#ifdef INSTANCED
+    v_color *= instance.color;
+#endif
     v_clip_pos = frame.view_proj * world;
     gl_Position = v_clip_pos;
 }

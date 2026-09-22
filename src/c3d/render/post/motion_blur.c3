@@ -185,7 +185,7 @@ fn void? record_geometry_velocity(Renderer* renderer, ViewRecord* record, DrawIt
                 fragment_root:  item.root,
                 index_span:     item.geometry.indices,
                 index_count:    layout.index_count,
-                instance_count: 1,
+                instance_count: item.instance_count,
                 index_type:     layout.flags.indices_u16 ? gpu::IndexType.U16 : gpu::IndexType.U32,
             )!;
         } else {
@@ -194,7 +194,7 @@ fn void? record_geometry_velocity(Renderer* renderer, ViewRecord* record, DrawIt
                 vertex_root:    item.root,
                 fragment_root:  item.root,
                 vertex_count:   layout.vertex_count,
-                instance_count: 1,
+                instance_count: item.instance_count,
             )!;
         }
         renderer.stats.draws++;

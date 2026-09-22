@@ -22,6 +22,8 @@ struct ShadowDraw @private {
     gpu::GpuAddress skin;
     gpu::GpuAddress morph;
     gpu::GpuAddress alpha;
+    gpu::GpuAddress instance_data;
+    uint instance_count;
     bool masked;
     bool wireframe;
     bool reflected;
@@ -53,7 +55,8 @@ fn gpu::PipelineHandle? shadow_pipeline_for(
     if (material && material.kind == MaterialKind.CUSTOM) {
         asset::ShaderDesc* stages = &renderer.assets.shader(material.custom.shader).desc;
         if (stages.vertex.depth.len) {
-            key.vertex = { .shader = MESH, .flags = shader::SHADER_FLAG_DEPTH_ONLY };
+            uint instanced = vertex.flags & shader::SHADER_FLAG_INSTANCED;
+            key.vertex = { .shader = MESH, .flags = shader::SHADER_FLAG_DEPTH_ONLY | instanced };
             key.shader = material.custom.shader;
             key.shader_revision = renderer.shaders[material.custom.shader.index].revision;
             key.custom = { .vertex = true };
@@ -97,8 +100,11 @@ fn ShadowDraw[]? prepare_shadow_draws(Renderer* renderer, MeshCandidate[] candid
         }
         ShadowDraw* draw = &draws[count];
         GpuGeometry* geometry = resolve_geometry(renderer, candidate.geometry)!;
-        bool morphed = candidate.morph_weights.len > 0;
-        ShaderVariant vertex = depth_only_vertex_variant(geometry.layout.flags, morphed, candidate.skin != null);
+        ShaderVariant vertex = candidate_vertex_variant(
+            flags:      geometry.layout.flags,
+            candidate:  candidate,
+            base_flags: shader::SHADER_FLAG_DEPTH_ONLY,
+        );
         *draw = {
             .candidate = candidate,
             .geometry = geometry,
@@ -107,9 +113,11 @@ fn ShadowDraw[]? prepare_shadow_draws(Renderer* renderer, MeshCandidate[] candid
             .morph = vertex.flags & shader::SHADER_FLAG_MORPH
               ? resolve_morph_block(renderer, candidate)! : (gpu::GpuAddress)0,
             .alpha = custom_header,
+            .instance_data = candidate.batch ? resolve_instances(renderer, candidate)! : (gpu::GpuAddress)0,
+            .instance_count = candidate.instance_count,
             .masked = material.common.alpha_mode == AlphaMode.MASK,
             .wireframe = material.common.wireframe && renderer.caps.line_polygon_mode,
-            .reflected = candidate.node.world.determinant() < 0,
+            .reflected = (candidate.node.world.determinant() < 0) != candidate.mirrored,
             .cull = material.common.double_sided ? gpu::CullMode.NONE : gpu::CullMode.BACK,
         };
         gpu::PipelineHandle? pipeline = shadow_pipeline_for(
@@ -117,7 +125,7 @@ fn ShadowDraw[]? prepare_shadow_draws(Renderer* renderer, MeshCandidate[] candid
             wireframe:    draw.wireframe,
             vertex:       vertex,
             material:     material,
-            vertex_color: draw.masked && geometry.layout.flags.has_colors,
+            vertex_color: draw.masked && (geometry.layout.flags.has_colors || candidate.batch != null),
         );
         if (catch excuse = pipeline) {
             if (material.kind != MaterialKind.CUSTOM || !pipeline_rejected(renderer, material.custom.shader, excuse)) {
@@ -237,6 +245,7 @@ fn void? record_depth_draws(
                 flags: draw.masked ? shader::DRAW_ALPHA_MASK : 0,
                 skin: draw.skin,
                 morph: draw.morph,
+                instance_data: draw.instance_data,
             );
         } else {
             write_depth_draw_root(
@@ -249,32 +258,15 @@ fn void? record_depth_draws(
                 flags: draw.masked ? shader::DRAW_ALPHA_MASK : 0,
                 skin: draw.skin,
                 morph: draw.morph,
+                instance_data: draw.instance_data,
             );
         }
-        GeometryLayout* layout = &draw.geometry.layout;
-        if (layout.index_count) {
-            gpu::cmd_draw_indexed(
-                commands: &renderer.commands,
-                vertex_root: root.address,
-                fragment_root: root.address,
-                index_span: draw.geometry.indices,
-                index_count: layout.index_count,
-                instance_count: 1,
-                index_type: layout.flags.indices_u16 ? gpu::IndexType.U16 : gpu::IndexType.U32,
-            )!;
-        } else {
-            gpu::cmd_draw(
-                commands: &renderer.commands,
-                vertex_root: root.address,
-                fragment_root: root.address,
-                vertex_count: layout.vertex_count,
-                instance_count: 1,
-            )!;
-        }
-        renderer.stats.draws++;
-        if (draw.geometry.topology == Topology.TRIANGLES) {
-            renderer.stats.triangles += (layout.index_count ? layout.index_count : layout.vertex_count) / 3;
-        }
+        record_geometry_draw(
+            renderer:       renderer,
+            root:           root.address,
+            geometry:       draw.geometry,
+            instance_count: draw.instance_count,
+        )!;
     }
 }
 

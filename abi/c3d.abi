@@ -126,6 +126,14 @@ root DrawRoot {
     uint       _pad3;
 }
 
+struct InstanceGpu {
+    mat4 model;
+    vec4 normal_0;
+    vec4 normal_1;
+    vec4 normal_2;
+    vec4 color;
+}
+
 const uint MAX_ACTIVE_MORPH_TARGETS = 8;
 
 root MorphWeightsGpu {

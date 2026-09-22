@@ -31,7 +31,7 @@ enum DrawList {
 }
 
 <*
- Mesh that passed inclusion for one view, with its bounds in world space.
+ Mesh or batch range that passed inclusion for one view, with its bounds in world space.
 *>
 struct MeshCandidate {
     Node*          node;
@@ -44,6 +44,10 @@ struct MeshCandidate {
     float          ndc_depth;
     float          view_depth;
     bool           receive_shadow;
+    InstancedMesh* batch;
+    uint           instance_first;
+    uint           instance_count;
+    bool           mirrored;
 }
 
 <*
@@ -56,7 +60,7 @@ struct ExtractCounts {
 }
 
 <*
- Meshes of the scene inside the camera's frustum and layers, in component order.
+ Meshes and batches of the scene inside the camera's frustum and layers, in component order.
  @param allocator : "Owns the returned array."
  @param [&in] scene : "Pose as left by the last update_world."
  @param [&in] assets : "Resolves geometry bounds."
@@ -68,14 +72,40 @@ fn MeshCandidate[] extract_candidates(Allocator allocator, Scene* scene, AssetSt
   CameraMatrices* camera, uint layers, ExtractCounts* counts) {
     *counts = {};
     // Every emitted candidate is written whole before the slice is returned, so the array needs no zeroing.
-    MeshCandidate[] candidates = alloc::alloc_array(allocator, MeshCandidate, scene.count(Mesh));
+    MeshCandidate[] candidates = alloc::alloc_array(allocator, MeshCandidate, candidate_capacity(scene));
     scene.@each(Mesh; Entity entity, Mesh* mesh) {
         Node* node = scene.node(entity);
         if (node.visible_effective && (layers & node.layers) != 0) {
             include_mesh(candidates, scene, node, mesh, assets, camera, counts);
         }
     };
+    scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
+        Node* node = scene.node(entity);
+        if (batch.count && node.visible_effective && (layers & node.layers) != 0) {
+            include_batch(
+                candidates: candidates,
+                node:       node,
+                batch:      batch,
+                assets:     assets,
+                camera:     camera,
+                counts:     counts,
+            );
+        }
+    };
     return candidates[:counts.visible];
+}
+
+<*
+ Whether the batch's material can draw instanced; false for a dead custom shader.
+ @param [&in] assets : "Store the ids were issued by."
+ @param [&in] batch : "Live material id."
+*>
+fn bool instanced_material_drawable(AssetStore* assets, InstancedMesh* batch) {
+    Material* material = &assets.material(batch.material).data;
+    if (material.kind != MaterialKind.CUSTOM) return true;
+    if (!assets.shaders.is_live(material.custom.shader)) return false;
+    CustomVertex* vertex = &assets.shader(material.custom.shader).desc.vertex;
+    return !vertex.shaded.len || vertex.instanced_shaded.len;
 }
 
 <*
@@ -183,8 +213,64 @@ fn void include_mesh(MeshCandidate[] candidates, Scene* scene, Node* node, Mesh*
         .ndc_depth      = center_depth(camera, world),
         .view_depth     = center_view_depth(camera, world),
         .receive_shadow = mesh.receive_shadow,
+        .instance_count = 1,
     };
     counts.visible++;
+}
+
+fn void include_batch(
+    MeshCandidate[] candidates,
+    Node* node,
+    InstancedMesh* batch,
+    AssetStore* assets,
+    CameraMatrices* camera,
+    ExtractCounts* counts,
+) @local {
+    if (!batch_is_drawable(assets, batch)) {
+        counts.dangling++;
+        return;
+    }
+    Aabb world = spatial::instanced_world_bounds(assets, node, batch);
+    if (!maths::frustum_intersects_aabb(&camera.frustum, world)) {
+        counts.culled++;
+        return;
+    }
+    MeshCandidate template = {
+        .node           = node,
+        .geometry       = batch.geometry,
+        .material       = batch.material,
+        .world_bounds   = world,
+        .ndc_depth      = center_depth(camera, world),
+        .view_depth     = center_view_depth(camera, world),
+        .receive_shadow = batch.receive_shadow,
+        .batch          = batch,
+    };
+    emit_batch_candidates(candidates, counts, template);
+}
+
+fn bool batch_is_drawable(AssetStore* assets, InstancedMesh* batch) @local {
+    return spatial::instanced_mesh_is_live(assets, batch) && instanced_material_drawable(assets, batch);
+}
+
+fn void emit_batch_candidates(MeshCandidate[] candidates, ExtractCounts* counts, MeshCandidate template) @local {
+    uint mirrored = template.batch.mirrored_count();
+    uint unmirrored = template.batch.count - mirrored;
+    if (unmirrored) {
+        candidates[counts.visible] = template;
+        candidates[counts.visible].instance_count = unmirrored;
+        counts.visible++;
+    }
+    if (mirrored) {
+        candidates[counts.visible] = template;
+        candidates[counts.visible].instance_first = unmirrored;
+        candidates[counts.visible].instance_count = mirrored;
+        candidates[counts.visible].mirrored = true;
+        counts.visible++;
+    }
+}
+
+fn sz candidate_capacity(Scene* scene) @local {
+    return (sz)scene.count(Mesh) + 2 * (sz)scene.count(InstancedMesh);
 }
 
 fn float[] morph_weights_of(AssetStore* assets, Mesh* mesh) @local {
@@ -220,7 +306,7 @@ fn float center_depth(CameraMatrices* camera, Aabb world) @local {
 }
 
 <*
- Collect live visible casters independently of layer masks.
+ Collect live visible mesh and batch casters independently of layer masks.
  @param allocator : "Owns the returned candidate array."
  @param [&in] scene : "Current transforms; structurally unchanged during extraction."
  @param [&in] assets : "Supplies live ids and retained geometry bounds."
@@ -233,7 +319,7 @@ fn MeshCandidate[] extract_shadow_candidates(
     ExtractCounts* counts,
 ) {
     *counts = {};
-    MeshCandidate[] candidates = alloc::alloc_array(allocator, MeshCandidate, scene.count(Mesh));
+    MeshCandidate[] candidates = alloc::alloc_array(allocator, MeshCandidate, candidate_capacity(scene));
 
     scene.@each(Mesh; Entity entity, Mesh* mesh) {
         Node* node = scene.node(entity);
@@ -258,8 +344,27 @@ fn MeshCandidate[] extract_shadow_candidates(
                             skin:   skin,
                         ),
                         .receive_shadow = mesh.receive_shadow,
+                        .instance_count = 1,
                     };
                 }
+            }
+        }
+    };
+    scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
+        Node* node = scene.node(entity);
+        if (batch.count && node.visible_effective && batch.cast_shadow) {
+            if (!batch_is_drawable(assets, batch)) {
+                counts.dangling++;
+            } else if (assets.material(batch.material).data.common.alpha_mode != AlphaMode.BLEND) {
+                MeshCandidate template = {
+                    .node           = node,
+                    .geometry       = batch.geometry,
+                    .material       = batch.material,
+                    .world_bounds   = spatial::instanced_world_bounds(assets, node, batch),
+                    .receive_shadow = batch.receive_shadow,
+                    .batch          = batch,
+                };
+                emit_batch_candidates(candidates, counts, template);
             }
         }
     };

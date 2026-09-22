@@ -6,13 +6,16 @@ import c3d::camera;
 import c3d::geometry;
 import c3d::material;
 import c3d::maths;
+import c3d::render;
 import c3d::scene;
+import c3d::shader;
 import c3d::spatial;
 import std::math;
 
 const Vec4 WHITE @local = { 1, 1, 1, 1 };
 const Vec4 RED @local = { 1, 0, 0, 1 };
 const Vec4 GREEN @local = { 0, 1, 0, 1 };
+const Vec2 VIEWPORT @local = { 1600, 900 };
 
 struct Fixture @local {
     AssetStore assets;
@@ -26,7 +29,7 @@ fn Fixture make_fixture(Allocator allocator = mem) @local {
     fixture.assets = asset::create_asset_store(allocator, {
         .max_geometries = 2,
         .max_textures   = asset::BUILTIN_TEXTURE_COUNT,
-        .max_materials  = 2,
+        .max_materials  = 4,
         .max_samplers   = asset::BUILTIN_SAMPLER_COUNT,
         .max_shaders    = 1,
     });
@@ -229,4 +232,166 @@ fn void test_shader_desc_rejects_half_instanced_pair() @test {
     };
     ShaderId shader = fixture.assets.add_shader(&complete, "complete")!!;
     assert(fixture.assets.shader(shader).desc.vertex.instanced_depth.len == 4);
+}
+
+fn Node* add_camera(Fixture* fixture) @local {
+    Node* camera_node = fixture.scene.add_camera(camera::perspective_deg(60, 0.1f))!!;
+    camera_node.local.position = { 0, 0, 10 };
+    return camera_node;
+}
+
+fn render::MeshCandidate[] extract(
+    Allocator allocator,
+    Fixture* fixture,
+    Node* camera_node,
+    render::ExtractCounts* counts,
+) @local {
+    fixture.scene.update_world();
+    Camera* camera = fixture.scene.get(camera_node, Camera);
+    CameraMatrices matrices = camera::derive_matrices(*camera, camera_node.world, VIEWPORT);
+    return render::extract_candidates(
+        allocator: allocator,
+        scene:     &fixture.scene,
+        assets:    &fixture.assets,
+        camera:    &matrices,
+        layers:    scene::DEFAULT_LAYERS,
+        counts:    counts,
+    );
+}
+
+fn Transform mirrored_at(Vec3 position) @local {
+    Transform transform = at(position);
+    transform.scale.x = -1;
+    return transform;
+}
+
+fn void test_extract_emits_one_candidate_per_parity() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Node* camera_node = add_camera(&fixture);
+    Transform[3] transforms = { at({ -2, 0, 0 }), mirrored_at({ 0, 0, 0 }), at({ 2, 0, 0 }) };
+    fixture.scene.add_instanced_mesh(fixture.box, fixture.red, 3, transforms[..])!!;
+
+    @pool() {
+        render::ExtractCounts counts;
+        render::MeshCandidate[] candidates = extract(tmem, &fixture, camera_node, &counts);
+        assert(candidates.len == 2 && counts.visible == 2);
+        assert(candidates[0].instance_first == 0 && candidates[0].instance_count == 2 && !candidates[0].mirrored);
+        assert(candidates[1].instance_first == 2 && candidates[1].instance_count == 1 && candidates[1].mirrored);
+        assert(candidates[0].batch == candidates[1].batch && candidates[0].batch != null);
+    };
+}
+
+fn void test_extract_batch_counts() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Node* camera_node = add_camera(&fixture);
+    fixture.scene.add_instanced_mesh(fixture.box, fixture.red, 2)!!;
+    Transform[1] far = { at({ 100, 0, 0 }) };
+    fixture.scene.add_instanced_mesh(fixture.box, fixture.red, 1, far[..])!!;
+    MaterialId removed = fixture.assets.add_material(material::basic({ .color = GREEN }), "removed")!!;
+    Transform[1] near = { at({ 0, 0, 0 }) };
+    fixture.scene.add_instanced_mesh(fixture.box, removed, 1, near[..])!!;
+    fixture.assets.remove_material(removed);
+
+    @pool() {
+        render::ExtractCounts counts;
+        render::MeshCandidate[] candidates = extract(tmem, &fixture, camera_node, &counts);
+        assert(candidates.len == 0);
+        assert(counts.culled == 1 && counts.dangling == 1);
+    };
+}
+
+fn void test_extract_skips_custom_vertex_without_instanced_pair() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Node* camera_node = add_camera(&fixture);
+    char[4] stage = { 1, 2, 3, 4 };
+    ShaderDesc desc = { .fragment = stage[..], .vertex = { .shaded = stage[..], .depth = stage[..] } };
+    ShaderId shader = fixture.assets.add_shader(&desc, "plain")!!;
+    MaterialId custom = fixture.assets.add_material(material::custom(shader), "custom")!!;
+    Transform[1] transforms = { at({ 0, 0, 0 }) };
+    fixture.scene.add_instanced_mesh(fixture.box, custom, 1, transforms[..])!!;
+
+    @pool() {
+        render::ExtractCounts counts;
+        assert(extract(tmem, &fixture, camera_node, &counts).len == 0);
+        assert(counts.dangling == 1);
+    };
+
+    desc.vertex.instanced_shaded = stage[..];
+    desc.vertex.instanced_depth = stage[..];
+    fixture.assets.replace_shader(shader, &desc)!!;
+    @pool() {
+        render::ExtractCounts counts;
+        assert(extract(tmem, &fixture, camera_node, &counts).len == 1);
+        assert(counts.dangling == 0);
+    };
+}
+
+fn void test_shadow_candidates_follow_cast_shadow() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Transform[1] transforms = { at({ 0, 0, 0 }) };
+    Node* silent = fixture.scene.add_instanced_mesh(fixture.box, fixture.red, 1, transforms[..])!!;
+    fixture.scene.get(silent, InstancedMesh).cast_shadow = false;
+    Material blend = material::basic({ .color = GREEN });
+    blend.common.alpha_mode = AlphaMode.BLEND;
+    MaterialId blended = fixture.assets.add_material(blend, "blended")!!;
+    fixture.scene.add_instanced_mesh(fixture.box, blended, 1, transforms[..])!!;
+    Node* off_layer = fixture.scene.add_instanced_mesh(fixture.box, fixture.red, 1, transforms[..])!!;
+    off_layer.layers = 2;
+    fixture.scene.update_world();
+
+    @pool() {
+        render::ExtractCounts counts;
+        render::MeshCandidate[] candidates = render::extract_shadow_candidates(
+            allocator: tmem,
+            scene:     &fixture.scene,
+            assets:    &fixture.assets,
+            counts:    &counts,
+        );
+        assert(candidates.len == 1);
+        assert(candidates[0].node == off_layer && candidates[0].instance_count == 1);
+    };
+}
+
+fn void test_pack_instance_records_orders_by_parity() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Transform[3] transforms = { at({ -2, 0, 0 }), mirrored_at({ 0, 0, 0 }), at({ 2, 0, 0 }) };
+    Vec4[3] colors = { RED, GREEN, WHITE };
+    Node* node = fixture.scene.add_instanced_mesh(
+        geometry:   fixture.box,
+        material:   fixture.red,
+        capacity:   3,
+        transforms: transforms[..],
+        colors:     colors[..],
+    )!!;
+    InstanceGpu[3] records;
+
+    uint split = render::pack_instance_records(records[..], matrix::IDENTITY4, fixture.scene.get(node, InstancedMesh));
+
+    assert(split == 2);
+    assert(records[0].color == RED && records[1].color == WHITE && records[2].color == GREEN);
+    assert(records[1].model[3][0] == 2 && records[2].model[0][0] == -1);
+}
+
+fn void test_write_instance_packs_world_and_normal() @test {
+    Transform transform = {
+        .position = { 1, 2, 3 },
+        .rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, math::PI / 3),
+        .scale    = { 2, 1, 0.5f },
+    };
+    Mat4 world = transform.to_mat4();
+    InstanceGpu record;
+
+    render::write_instance(&record, world, GREEN);
+
+    Mat3 normal = maths::normal_matrix(world);
+    assert(bitcast(record.model, Mat4) == world);
+    assert(record.normal_0 == (Vec4){ normal.m00, normal.m10, normal.m20, 0 });
+    assert(record.normal_1 == (Vec4){ normal.m01, normal.m11, normal.m21, 0 });
+    assert(record.normal_2 == (Vec4){ normal.m02, normal.m12, normal.m22, 0 });
+    assert(record.color == GREEN);
 }
