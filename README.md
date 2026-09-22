@@ -369,6 +369,13 @@ See [profiling](docs/profiling.md) for capture lifetimes, feature selection and
 frame-wide GPU pass summaries. Run its CPU-only example with
 `c3c run capture --path addons/c3d_profile.c3l`.
 
+The optional `c3d_physics` add-on binds box3d rigid bodies to scene nodes: `create_physics_world`,
+`add_body` with sphere, capsule, box, hull, mesh and height-field colliders, fixed-step `update`
+with interpolated write-back, per-frame contact, hit and sensor events, `raycast` and
+`overlap_sphere`, and collider wireframes into the CPU debug sink. Applications select the
+library explicitly; core carries no physics dependency. Example:
+`python3 scripts/build.py --example physics`.
+
 Add c3d and its dependencies to your `project.json`, and list the feature flags you want. A C3
 library manifest cannot declare features, so every consumer enables them itself. Declarations
 guarded by a feature disappear when it is omitted; the native libraries a feature's module links
@@ -379,15 +386,14 @@ API and its C translation unit are included regardless of the `C3D_STB_IMAGE` in
 ```json
 {
   "dependency-search-paths": [ "path/to/c3d.c3l/lib" ],
-  "dependencies": [ "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "b3", "shaderc" ],
-  "features": [ "C3D_GUI", "C3D_PHYSICS", "C3D_FBX", "C3D_RAY_TRACING", "C3D_STB_IMAGE", "C3D_SHADER_COMPILER" ]
+  "dependencies": [ "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "shaderc" ],
+  "features": [ "C3D_GUI", "C3D_FBX", "C3D_RAY_TRACING", "C3D_STB_IMAGE", "C3D_SHADER_COMPILER" ]
 }
 ```
 
 | Feature | Enables |
 | --- | --- |
 | `C3D_GUI` | the developer GUI declarations (imgui stays a declared dependency) |
-| `C3D_PHYSICS` | the physics declarations (box3d stays a declared dependency) |
 | `C3D_FBX` | the FBX importer declarations (ufbx stays a declared dependency) |
 | `C3D_RAY_TRACING` | the ray tracing declarations |
 | `C3D_STB_IMAGE` | indicator only; the image API and native decoder compile when absent |

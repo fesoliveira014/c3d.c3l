@@ -11,11 +11,6 @@ const String VERSION = "0.0.0";
 const bool GUI_ENABLED @feat(C3D_GUI) = true;
 
 <*
- Present when the consumer selected the C3D_PHYSICS feature; the physics declarations follow the same guard.
-*>
-const bool PHYSICS_ENABLED @feat(C3D_PHYSICS) = true;
-
-<*
  Present when the consumer selected the C3D_FBX feature; the FBX importer follows the same guard.
 *>
 const bool FBX_ENABLED @feat(C3D_FBX) = true;
