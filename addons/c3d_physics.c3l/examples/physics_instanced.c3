@@ -60,10 +60,10 @@ struct FreeCamera @local {
 }
 
 struct BoxRing @local {
-    Node*[MAX_BOXES]           nodes;
-    uint[SCENE_NODE_CAPACITY]  slot_of_entity;
-    uint                       count;
-    float                      spawn_accumulator;
+    Node*[MAX_BOXES]              nodes;
+    uint[SCENE_NODE_CAPACITY + 1] slot_of_entity; // entity indices include the root, so they reach the capacity
+    uint                          count;
+    float                         spawn_accumulator;
 }
 
 struct Highlights @local {
