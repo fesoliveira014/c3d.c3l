@@ -13,14 +13,12 @@
     "sdl3",
     "c3imgui",
     "c3cg",
-    "b3",
     "cgltf",
     "ufbx",
     "shaderc"
   ],
   "features": [
     "C3D_GUI",
-    "C3D_PHYSICS",
     "C3D_FBX",
     "C3D_RAY_TRACING",
     "C3D_STB_IMAGE",

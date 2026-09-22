@@ -1,0 +1,32 @@
+{
+  "langrev": "1",
+  "dependency-search-paths": [ "lib", "../../lib", "../../lib/gpu.c3l/lib" ],
+  "dependencies": [
+    "c3d_physics",
+    "c3d",
+    "gpu",
+    "vk",
+    "vma",
+    "spvreflect",
+    "sdl3",
+    "c3imgui",
+    "c3cg",
+    "b3",
+    "cgltf",
+    "ufbx",
+    "shaderc"
+  ],
+  "wincrt": "static",
+  "output": "build",
+  "targets": {
+    "physics_test": {
+      "type": "test",
+      "sources": [ "test/**" ]
+    },
+    "physics": {
+      "type": "executable",
+      "sources": [ "examples/physics.c3" ],
+      "features": [ "C3D_GUI", "C3D_STB_IMAGE" ]
+    }
+  }
+}

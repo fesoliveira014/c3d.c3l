@@ -15,17 +15,20 @@ Entry point for every agent session in this repository. Read it fully before rea
 | sdl3.c3l | `sdl` | `c3d::platform` |
 | c3imgui.c3l | `imgui` | `c3d::gui` |
 | c3cg.c3l | `cg` | `c3d::geometry` |
-| box3d.c3l | `b3` | `c3d::physics` |
+| box3d.c3l | `b3` | `c3d::physics`, which lives in `addons/c3d_physics.c3l`; core never imports it |
 | cgltf.c3l | `gltf` | `c3d::asset::gltf` |
 | stb_image (C source) | `c3d::asset::image` bindings | `c3d::asset::image` |
 | ufbx.c3l | `ufbx` | `c3d::asset::fbx` |
 | shaderc.c3l | `shaderc` | `c3d::shader::compile` (`src/c3d/shader/compile.c3`), compiled only under the `C3D_SHADER_COMPILER` feature |
 | c3d_profile.c3l | `c3d::profile`, private `c3d::render::profile_gpu` | Applications select it explicitly; core imports it only through the gated CPU and GPU bridges |
 | c3d_profile_gui.c3l | profiler additions to `c3d::gui` | Applications select it explicitly; it imports only the standard library, `c3d::profile` and `imgui` |
+| c3d_physics.c3l | `c3d::physics` | Applications select it explicitly; it imports the standard library, `c3d` and `b3` |
 
 Boundaries are enforced by grep in CI. No dependency is added without updating this table.
 
 The `addons/c3d_profile.c3l` package bundles CPU/GPU capture, history and export. Its neutral `c3d::profile` module imports only the standard library. Its private `c3d::render::profile_gpu` module, under `src/gpu/` and gated by `C3D_PROFILE_GPU`, imports only the standard library, gpu.c3l and neutral profile values; it never imports core types. Core's approved profiler bridges are `c3d::instrumentation` for CPU+INTERNAL and `render/profile.c3` for GPU. Core has no unconditional profiler dependency; instrumented consumers select the collector add-on explicitly. The `addons/c3d_profile_gui.c3l` presentation adapter extends `c3d::gui` under `C3D_PROFILE_GUI`; it consumes neutral capture data and ImGui and is never imported by core or the collector. Standalone CPU collector builds need no native/shader setup. GUI consumers select ImGui and Vulkan bindings explicitly, while GPU data tests additionally select backend dependencies; neither data-test project creates a device.
+
+The `addons/c3d_physics.c3l` package owns rigid-body physics: the box3d world, bodies bound to scene nodes, cooked collision data and frame event lists. Its `c3d::physics` module imports the standard library, core (`c3d`) and `b3`, never `gpu`, `sdl` or `imgui`. Core never imports it and carries no physics feature flag; selecting the library is the gate. The package owns its `project.json`, `physics_test` target and `physics` example.
 
 # 2. Where truth lives
 
@@ -75,7 +78,7 @@ Steps run in this order and stop at the first failure: tools (c3c 0.8.3, glslang
 
 Before every commit: `scripts/build.py --test`. Broken builds are never committed. GPU examples run manually; CI runs `--test`. Every development run of a GPU example enables Vulkan validation through gpu.c3l.
 
-The default build also builds the collector's `capture` example, the root `profile_gpu` example and all four `profile_gui` feature targets. `--test` runs the collector's off, CPU, internal CPU, GPU, internal GPU, CPU+GPU and full CPU+GPU+INTERNAL targets, the presentation add-on's off, CPU, GPU and combined data targets, and the root integration targets. These tests never create a GPU device. Direct `c3c test profile_cpu --path addons/c3d_profile.c3l` exercises only the standalone collector package. Real Vulkan acceptance lives in the separately invoked `test/gpu/profile` project and the manually run profiler GUI examples; neither runs in CI.
+The default build also builds the collector's `capture` example, the physics package's `physics` example, the root `profile_gpu` example and all four `profile_gui` feature targets; `--target` and `--example` resolve add-on examples to their package project. `--test` runs the collector's off, CPU, internal CPU, GPU, internal GPU, CPU+GPU and full CPU+GPU+INTERNAL targets, the presentation add-on's off, CPU, GPU and combined data targets, the physics package's `physics_test` target, and the root integration targets. These tests never create a GPU device. Direct `c3c test profile_cpu --path addons/c3d_profile.c3l` exercises only the standalone collector package. Real Vulkan acceptance lives in the separately invoked `test/gpu/profile` project and the manually run profiler GUI examples; neither runs in CI.
 
 # 6. Style
 
@@ -175,7 +178,8 @@ grep -rn 'import gpu' src/c3d --include='*.c3' | grep -vE 'src/c3d/(render|shade
 grep -rn 'import sdl' src/c3d --include='*.c3' | grep -v 'src/c3d/platform/'
 grep -rn 'import imgui' src/c3d --include='*.c3' | grep -v 'src/c3d/gui/'
 grep -rn 'import cg' src/c3d --include='*.c3' | grep -v 'src/c3d/geometry/'
-grep -rn 'import b3' src/c3d --include='*.c3' | grep -v 'src/c3d/physics/'
+grep -rn 'import b3' src/c3d addons --include='*.c3' | grep -v 'addons/c3d_physics.c3l/'
+grep -rn '^import ' addons/c3d_physics.c3l/src --include='*.c3' | grep -vE ':import (std::|c3d[ ;:]|b3[ ;:])'
 grep -rn 'import gltf' src/c3d --include='*.c3' | grep -v 'src/c3d/asset/gltf/'
 grep -rn 'import ufbx' src/c3d --include='*.c3' | grep -v 'src/c3d/asset/fbx/'
 grep -rn 'import shaderc' src/c3d --include='*.c3' | grep -v 'src/c3d/shader/'
@@ -194,18 +198,19 @@ c3d.c3l/
 ├── manifest.json
 ├── addons/c3d_profile.c3l/ CPU/GPU capture package, standalone data tests and CPU example
 ├── addons/c3d_profile_gui.c3l/ ImGui presentation package and standalone data tests
+├── addons/c3d_physics.c3l/ box3d rigid bodies, colliders, events; owns its tests and example
 ├── abi/c3d.abi             shared C3 and GLSL layouts
 ├── docs/style.md           mandatory style baseline
 ├── lib/                    gpu.c3l · sdl3.c3l · c3imgui.c3l · c3cg.c3l · box3d.c3l · cgltf.c3l · ufbx.c3l · shaderc.c3l (submodules)
 │                           plus c3d.c3l, a symlink to the root, so consumers resolve c3d here
-│                           plus c3d_profile.c3l and c3d_profile_gui.c3l symlinks to the add-ons
+│                           plus c3d_profile.c3l, c3d_profile_gui.c3l and c3d_physics.c3l symlinks to the add-ons
 ├── linked-libs/            empty; every dependency ships its own native artifacts
 ├── csrc/                   stb_image
 ├── src/c3d/
 │   ├── types.c3            ids
 │   ├── faults.c3           root-module faults
 │   ├── pool.c3             the generic pool, module c3d::pool <Type, IdType>
-│   ├── maths/ ecs/  asset/  scene/  geometry/  camera/  material/  light/  anim/  model/  spatial/  physics/
+│   ├── maths/ ecs/  asset/  scene/  geometry/  camera/  material/  light/  anim/  model/  spatial/
 │   ├── platform/           the only sdl importer
 │   ├── render/  shader/  rt/                       the gpu importers; render/post/ holds display processing
 │   └── gui/                the only imgui importer; gui/backend imports gpu

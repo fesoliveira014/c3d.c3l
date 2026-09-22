@@ -8,6 +8,8 @@ Each step is a function; failures raise BuildError and stop the run.
   scripts/build.py --test           same, then run every test target (what CI runs)
   scripts/build.py --regen          rewrite the generated C3 and GLSL, then build
   scripts/build.py --example cube   build and run one example
+  scripts/build.py --example physics
+                                    add-on examples (capture, physics) resolve to their package project
   scripts/build.py --init-deps      initialize submodules and build native dependencies
   scripts/build.py --clean          remove c3c build directories
   scripts/build.py --target many_lights --define C3D_PROFILE_CPU --lib c3d_profile
@@ -32,6 +34,8 @@ EXAMPLES = ROOT / "examples"
 TEST = ROOT / "test"
 PROFILE = ROOT / "addons" / "c3d_profile.c3l"
 PROFILE_GUI = ROOT / "addons" / "c3d_profile_gui.c3l"
+PHYSICS = ROOT / "addons" / "c3d_physics.c3l"
+ADDON_EXAMPLES = {"capture": PROFILE, "physics": PHYSICS}
 PROFILE_TEST_TARGETS = (
     "profile_off", "profile_cpu", "profile_internal", "profile_gpu",
     "profile_gpu_internal", "profile_cpu_gpu", "profile_full",
@@ -39,6 +43,7 @@ PROFILE_TEST_TARGETS = (
 PROFILE_GUI_TEST_TARGETS = (
     "panel_off", "panel_cpu", "panel_gpu", "panel_combined",
 )
+PHYSICS_TEST_TARGETS = ("physics_test",)
 
 REQUIRED_C3C_VERSION = "0.8.3"
 C3IMGUI_RELEASE_TAG = "v0.1.3"
@@ -212,13 +217,17 @@ def step_build(options: Options) -> None:
     if options.skip_build:
         log("build: skipped")
         return
-    targets = [options.target] if options.target else project_targets(EXAMPLES)
+    if options.target:
+        targets = [(options.target, example_project(options.target))]
+    else:
+        targets = [(target, EXAMPLES) for target in project_targets(EXAMPLES)]
+        targets += [(target, project) for target, project in ADDON_EXAMPLES.items()]
     if not targets:
         raise BuildError(f"no targets found in {EXAMPLES / 'project.json'}")
     if (options.defines or options.libs) and not options.target:
         raise BuildError("--define and --lib need --target")
-    for target in targets:
-        command = [options.c3c, "build", target, "--path", str(EXAMPLES)]
+    for target, project in targets:
+        command = [options.c3c, "build", target, "--path", str(project)]
         if options.opt:
             command.append(f"-{options.opt}")
         for define in options.defines:
@@ -227,13 +236,14 @@ def step_build(options: Options) -> None:
             command += ["--lib", lib]
         run(command, ROOT, options.verbose)
     copy_windows_runtimes(EXAMPLES / "build")
+    copy_windows_runtimes(PHYSICS / "build")
     if not options.target or options.target == "profile_gpu":
         copy_windows_runtimes(ROOT / "build" / "profile_gpu")
-    if not options.target:
-        command = [options.c3c, "build", "capture", "--path", str(PROFILE)]
-        if options.opt:
-            command.append(f"-{options.opt}")
-        run(command, ROOT, options.verbose)
+
+
+def example_project(target: str) -> Path:
+    """Project directory that owns an example target."""
+    return ADDON_EXAMPLES.get(target, EXAMPLES)
 
 
 def copy_windows_runtimes(output: Path) -> None:
@@ -265,19 +275,21 @@ def step_test(options: Options) -> None:
         run([options.c3c, "test", target, "--path", str(PROFILE)], ROOT, options.verbose)
     for target in PROFILE_GUI_TEST_TARGETS:
         run([options.c3c, "test", target, "--path", str(PROFILE_GUI)], ROOT, options.verbose)
+    for target in PHYSICS_TEST_TARGETS:
+        run([options.c3c, "test", target, "--path", str(PHYSICS)], ROOT, options.verbose)
 
 
 def step_run(options: Options) -> None:
     if not options.example:
         return
-    command = [options.c3c, "run", options.example, "--path", str(EXAMPLES)]
+    command = [options.c3c, "run", options.example, "--path", str(example_project(options.example))]
     if options.opt:
         command.append(f"-{options.opt}")
     run(command, ROOT, options.verbose)
 
 
 def step_clean(options: Options) -> None:
-    for project_dir in (EXAMPLES, TEST, PROFILE, PROFILE_GUI):
+    for project_dir in (EXAMPLES, TEST, PROFILE, PROFILE_GUI, PHYSICS):
         if (project_dir / "project.json").exists():
             run([options.c3c, "clean", "--path", str(project_dir)], ROOT, options.verbose)
 

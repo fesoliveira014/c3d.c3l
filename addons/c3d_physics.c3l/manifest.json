@@ -1,0 +1,15 @@
+{
+  "provides": "c3d_physics",
+  "sources": [ "src/**" ],
+  "targets": {
+    "linux-x64": {
+      "dependencies": [ "c3d", "b3" ],
+      "linked-libraries": []
+    },
+    "windows-x64": {
+      "wincrt": "static",
+      "dependencies": [ "c3d", "b3" ],
+      "linked-libraries": []
+    }
+  }
+}
