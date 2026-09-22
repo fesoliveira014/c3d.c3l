@@ -126,11 +126,10 @@ fn void? record_clusters(
     ViewId view,
     gpu::MappedGpuSpan frame,
 ) @private {
-    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     FrameRoot* root = (FrameRoot*)frame.bytes.ptr;
     if (root.clusters != (gpu::GpuAddress)0) {
         acquire_environment_pipeline(renderer, &renderer.cluster_pipeline, LIGHT_CULL)!;
-        ClusterReadback* readback = &slot.cluster_readback;
+        ClusterReadback* readback = &record.cluster_readback[renderer.frame_index % FRAMES_IN_FLIGHT];
         if (!readback.mapped.span.allocation().is_valid()) {
             gpu::AllocationDesc desc = {
                 .size = ClusterCounterGpu::size,
@@ -165,27 +164,42 @@ fn void? record_clusters(
     end_profile_pass(renderer, Pass.LIGHT_CULL)!;
 }
 
-fn void? reset_cluster_recording(Renderer* renderer) @private {
-    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
-    slot.cluster_readback.pending = false;
+fn void clear_cluster_readback(Renderer* renderer, uint slot_index) @private {
+    foreach (&record : renderer.views.items) {
+        if (record.live) record.cluster_readback[slot_index].pending = false;
+    }
 }
 
-fn void? read_cluster_stats(Renderer* renderer, Frame* slot) @private {
-    ClusterReadback* readback = &slot.cluster_readback;
-    if (!readback.pending) return;
-    gpu::invalidate_mapped_span(&renderer.device, readback.mapped.span)!;
-    ClusterCounterGpu* counter = (ClusterCounterGpu*)readback.mapped.bytes.ptr;
-    renderer.stats.cluster_view = readback.view;
-    renderer.stats.cluster_count = readback.cluster_count;
-    renderer.stats.cluster_overflows = counter.overflows;
-    readback.pending = false;
+fn void reset_cluster_recording(Renderer* renderer, ViewRecord* record) @private {
+    record.cluster_readback[renderer.frame_index % FRAMES_IN_FLIGHT].pending = false;
+}
+
+fn void? read_cluster_stats(Renderer* renderer, uint slot_index) @private {
+    foreach (&record : renderer.views.items) {
+        ClusterReadback* readback = &record.cluster_readback[slot_index];
+        if (!record.live || !readback.pending) continue;
+        gpu::invalidate_mapped_span(&renderer.device, readback.mapped.span)!;
+        ClusterCounterGpu* counter = (ClusterCounterGpu*)readback.mapped.bytes.ptr;
+        record.stats.cluster_count = readback.cluster_count;
+        record.stats.cluster_overflows = counter.overflows;
+        renderer.stats.cluster_view = readback.view;
+        renderer.stats.cluster_count = readback.cluster_count;
+        renderer.stats.cluster_overflows = counter.overflows;
+        readback.pending = false;
+    }
+}
+
+fn void release_cluster_readback(gpu::Device* device, ViewRecord* record) @private {
+    foreach (&readback : record.cluster_readback) {
+        gpu::GpuAllocation allocation = readback.mapped.span.allocation();
+        if (allocation.is_valid()) (void)gpu::free_allocation(device, &allocation);
+        *readback = {};
+    }
 }
 
 fn void release_cluster_resources(Renderer* renderer) @private {
-    foreach (&slot : renderer.frames) {
-        gpu::GpuAllocation allocation = slot.cluster_readback.mapped.span.allocation();
-        if (allocation.is_valid()) (void)gpu::free_allocation(&renderer.device, &allocation);
-        slot.cluster_readback = {};
+    foreach (&record : renderer.views.items) {
+        if (record.live) release_cluster_readback(&renderer.device, record);
     }
     if (renderer.cluster_pipeline.is_valid()) {
         (void)gpu::destroy_pipeline(&renderer.device, renderer.cluster_pipeline);

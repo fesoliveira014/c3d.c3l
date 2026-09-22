@@ -57,6 +57,12 @@ struct ClusterDepth {
     uint slices;
 }
 
+<* Cluster cell of a shaded point; clustered is false where the flat list applies. *>
+struct ClusterCell {
+    uint[<3>] cell;
+    bool      clustered;
+}
+
 <*
  Starting grid configuration; storage is allocated only when enabled.
  @pure
@@ -155,6 +161,41 @@ fn Vec2 cluster_slice_bounds(ClusterDepth depth, uint slice) {
     if (slice == 0) bounds.x = depth.near;
     if (slice + 1 == depth.slices) bounds.y = depth.far;
     return bounds;
+}
+
+<*
+ Flat index of a cluster cell; mirrored as cluster_index in clusters.glsl.
+ @pure
+*>
+fn uint cluster_index(ClusterDesc desc, uint[<3>] cell) {
+    return cell.x + desc.tiles_x * (cell.y + desc.tiles_y * cell.z);
+}
+
+<*
+ Cluster cell the shaders select for a world position; mirrored as select_lights in lights.glsl.
+ @param view_proj : "Cluster projection of the view."
+ @param view_depth : "Forward camera distance of the position."
+*>
+fn ClusterCell cluster_cell(
+    ClusterDesc desc,
+    ClusterDepth depth,
+    Mat4 view_proj,
+    Vec3 world_position,
+    float view_depth,
+) {
+    if (depth.near >= depth.far || view_depth < depth.near || view_depth >= depth.far) return {};
+    Vec4 projected = view_proj.apply({ world_position.x, world_position.y, world_position.z, 1 });
+    if (projected.w <= 0) return {};
+    Vec2 uv = projected.xy / projected.w * (Vec2){ 0.5f, -0.5f } + 0.5f;
+    if (uv.x < 0 || uv.y < 0 || uv.x >= 1 || uv.y >= 1) return {};
+
+    bool orthographic = depth.projection == camera::Projection.ORTHOGRAPHIC;
+    float slice = math::floor((orthographic ? view_depth : math::ln(view_depth)) * depth.scale + depth.bias);
+    if (slice < 0 || slice >= (float)desc.depth_slices) return {};
+    Vec2 tile = uv * (Vec2){ (float)desc.tiles_x, (float)desc.tiles_y };
+    uint[<3>] cell = { (uint)tile.x, (uint)tile.y, (uint)slice };
+    if (cell.x >= desc.tiles_x || cell.y >= desc.tiles_y) return {};
+    return { .cell = cell, .clustered = true };
 }
 
 <*

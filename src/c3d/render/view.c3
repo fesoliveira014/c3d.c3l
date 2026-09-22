@@ -173,7 +173,8 @@ fn void? Renderer.render_view(
                 usz transmission_count;
                 usz transparent_count;
                 foreach (&candidate : candidates) {
-                    switch (view_draw_list(&self.assets.material(candidate.material).data, shading)) {
+                    Material* material_data = &self.assets.material(candidate.material).data;
+                    switch (view_draw_list(material_data, shading, custom_gbuffer_stage(self, material_data))) {
                         case GBUFFER: gbuffer_count++;
                         case OPAQUE: break;
                         case TRANSMISSION: transmission_count++;
@@ -201,7 +202,8 @@ fn void? Renderer.render_view(
                     )!;
                     bool morphed = candidate.morph_weights.len > 0;
                     ShaderVariant vertex = mesh_vertex_variant(geometry.layout.flags, morphed, candidate.skin != null);
-                    DrawList list = view_draw_list(material_description, shading);
+                    bool custom_gbuffer = custom_gbuffer_stage(self, material_description);
+                    DrawList list = view_draw_list(material_description, shading, custom_gbuffer);
                     gpu::PipelineHandle? pipeline = list == DrawList.GBUFFER
                       ? gbuffer_pipeline_for(self, material_description, vertex)
                       : pipeline_for(self, material_description, vertex);
@@ -292,7 +294,7 @@ fn void? Renderer.render_view(
                     shadow_address = shadow_span.address;
                 }
                 LightGpu[] lights = extraction.lights;
-                reset_cluster_recording(self)!;
+                reset_cluster_recording(self, record);
                 if (record.desc.lights == LightSelection.CLUSTERED) {
                     cluster_frame = prepare_cluster_frame(
                         renderer: self,
@@ -313,6 +315,8 @@ fn void? Renderer.render_view(
                 }
                 self.stats.lights += light_counts.packed;
                 self.stats.lights_dropped += light_counts.dropped;
+                record.stats.lights = light_counts.packed;
+                record.stats.lights_dropped = light_counts.dropped;
             };
 
             gpu::GpuAddress environment_address;
@@ -666,7 +670,12 @@ fn MeshPreparation? prepare_mesh(
         if (!custom_pipeline_rejected(renderer, data, excuse)) return excuse~;
         return {};
     }
-    if (gbuffer && gbuffer_encodable(data)) gbuffer_pipeline_for(renderer, data, vertex)!;
+    if (gbuffer && gbuffer_encodable(data, custom_gbuffer_stage(renderer, data))) {
+        if (catch excuse = gbuffer_pipeline_for(renderer, data, vertex)) {
+            if (!custom_pipeline_rejected(renderer, data, excuse)) return excuse~;
+            return {};
+        }
+    }
     if (depth && data.common.alpha_mode != AlphaMode.BLEND) {
         if (catch excuse = shadow_pipeline_for(
             renderer:     renderer,
@@ -1184,6 +1193,12 @@ fn gpu::PipelineHandle? first_pipeline(Renderer* renderer, DrawItem[] items) @pr
         .polygon = gpu::PolygonMode.FILL,
     };
     return renderer.pipelines.get(&renderer.device, key);
+}
+
+fn bool custom_gbuffer_stage(Renderer* renderer, Material* material) @private {
+    if (material.kind != MaterialKind.CUSTOM) return false;
+    ShaderId shader = material.custom.shader;
+    return renderer.assets.shaders.is_live(shader) && renderer.assets.shader(shader).desc.gbuffer.len > 0;
 }
 
 fn bool custom_pipeline_rejected(Renderer* renderer, Material* material, fault excuse) @private {

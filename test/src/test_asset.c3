@@ -404,8 +404,13 @@ fn void test_storage_rejects_compressed_and_srgb_formats() @test {
     assets.add_texture(accepted, pixels[..])!!;
 }
 
-fn ShaderDesc make_shader_desc(char[] fragment, char[] shaded = {}, char[] depth = {}) @local {
-    return { .fragment = fragment, .vertex = { .shaded = shaded, .depth = depth }, .param_block_size = 32 };
+fn ShaderDesc make_shader_desc(char[] fragment, char[] shaded = {}, char[] depth = {}, char[] gbuffer = {}) @local {
+    return {
+        .fragment = fragment,
+        .gbuffer = gbuffer,
+        .vertex = { .shaded = shaded, .depth = depth },
+        .param_block_size = 32,
+    };
 }
 
 fn void test_add_shader_copies_stages() @test {
@@ -483,6 +488,28 @@ fn void test_replace_shader_bumps_revision_and_copies() @test {
         assert(false, "an invalid replacement was accepted");
     }
     assert(record.header.revision == 2 && record.desc.fragment.len == 8);
+}
+
+fn void test_shader_gbuffer_stage_is_copied_and_replaceable() @test {
+    AssetStore store = make_store();
+    defer asset::destroy_asset_store(&store);
+    char[4] fragment = { 1, 2, 3, 4 };
+    char[3] gbuffer = { 9, 8, 7 };
+    ShaderDesc desc = make_shader_desc(fragment[..], gbuffer: gbuffer[..]);
+    ShaderId id = store.add_shader(&desc)!!;
+    gbuffer[0] = 0;
+
+    ShaderAsset* record = store.shader(id);
+    assert(record.desc.gbuffer.ptr != &gbuffer[0]);
+    assert(record.desc.gbuffer.len == 3 && record.desc.gbuffer[0] == 9 && record.desc.gbuffer[2] == 7);
+
+    ShaderDesc forward_only = make_shader_desc(fragment[..]);
+    store.replace_shader(id, &forward_only)!!;
+    assert(record.header.revision == 2);
+    assert(record.desc.gbuffer.len == 0 && record.desc.fragment.len == 4);
+
+    store.remove_shader(id);
+    assert(!store.shaders.is_live(id));
 }
 
 fn void test_remove_shader_makes_id_stale() @test {

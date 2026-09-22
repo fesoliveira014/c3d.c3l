@@ -70,6 +70,7 @@ const uint SHEEN_PREFILTER_SAMPLES = 4096u;
 const uint CUSTOM_TEXTURE_SLOTS = 8u;
 const uint CUSTOM_MAP_UV1_SHIFT = 8u;
 const uint MATERIAL_KIND_CUSTOM = 4u;
+const uint CUSTOM_CAPABILITY_GBUFFER = 1u;
 const uint TONEMAP_NONE = 0u;
 const uint TONEMAP_ACES = 1u;
 const uint TONEMAP_AGX = 2u;
@@ -473,7 +474,8 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer CustomMater
     uint map_flags;
     TextureMapGpu slots[8];
     uint64_t parameters;
-    uint64_t _pad0;
+    uint capabilities;
+    uint _pad0;
 };
 
 struct GradeGpu {

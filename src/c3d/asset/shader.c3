@@ -13,9 +13,11 @@ struct CustomVertex {
 
 <*
  User SPIR-V stages and the byte size of their parameter payload.
+ An empty gbuffer stage routes the material forward on deferred views.
 *>
 struct ShaderDesc {
     char[]       fragment;
+    char[]       gbuffer;
     CustomVertex vertex;
     usz          param_block_size;
 }
@@ -35,7 +37,7 @@ alias ShaderPool = Pool{ShaderAsset, ShaderId};
 
 <*
  Add a shader, copying every stage into the store.
- @param [&in] desc : "Fragment non-empty; vertex stages both or neither."
+ @param [&in] desc : "Fragment non-empty; vertex stages both or neither; gbuffer optional."
  @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
 *>
 fn ShaderId? AssetStore.add_shader(&self, ShaderDesc* desc, String key = "") {
@@ -60,7 +62,7 @@ fn ShaderAsset* AssetStore.shader(&self, ShaderId shader) {
 
 <*
  Replace every stage with copies of the new ones and advance the revision.
- @param [&in] desc : "Fragment non-empty; vertex stages both or neither."
+ @param [&in] desc : "Fragment non-empty; vertex stages both or neither; gbuffer optional."
  @return? c3d::INVALID_ARGUMENT
  @require self.shaders.is_live(shader)
 *>
@@ -114,6 +116,7 @@ fn void? check_shader_desc(ShaderDesc* desc) @private {
 fn ShaderDesc copy_shader_desc(Allocator allocator, ShaderDesc* desc) @private {
     return {
         .fragment = copy_slice(allocator, desc.fragment),
+        .gbuffer = desc.gbuffer.len ? copy_slice(allocator, desc.gbuffer) : (char[]){},
         .vertex = {
             .shaded = desc.vertex.shaded.len ? copy_slice(allocator, desc.vertex.shaded) : (char[]){},
             .depth = desc.vertex.depth.len ? copy_slice(allocator, desc.vertex.depth) : (char[]){},
@@ -124,6 +127,7 @@ fn ShaderDesc copy_shader_desc(Allocator allocator, ShaderDesc* desc) @private {
 
 fn void free_shader_desc(Allocator allocator, ShaderDesc* desc) @private {
     alloc::free(allocator, desc.fragment.ptr);
+    alloc::free(allocator, desc.gbuffer.ptr);
     alloc::free(allocator, desc.vertex.shaded.ptr);
     alloc::free(allocator, desc.vertex.depth.ptr);
     *desc = {};

@@ -86,6 +86,20 @@ fn void test_view_draw_list_selects_gbuffer_only_on_deferred_views() @test {
     assert(render::view_draw_list(&toon, ShadingPath.FORWARD) == DrawList.OPAQUE);
 }
 
+fn void test_custom_routes_by_gbuffer_stage() @test {
+    Material custom = { .kind = MaterialKind.CUSTOM, .common = material::MATERIAL_COMMON_DEFAULT };
+    Material blended = custom;
+    blended.common.alpha_mode = AlphaMode.BLEND;
+
+    assert(render::gbuffer_encodable(&custom, true));
+    assert(!render::gbuffer_encodable(&custom, false));
+    assert(!render::gbuffer_encodable(&blended, true));
+    assert(render::view_draw_list(&custom, ShadingPath.DEFERRED, true) == DrawList.GBUFFER);
+    assert(render::view_draw_list(&custom, ShadingPath.DEFERRED, false) == DrawList.OPAQUE);
+    assert(render::view_draw_list(&custom, ShadingPath.FORWARD, true) == DrawList.OPAQUE);
+    assert(render::view_draw_list(&blended, ShadingPath.DEFERRED, true) == DrawList.TRANSPARENT);
+}
+
 fn void test_octahedral_round_trip() @test {
     Vec3[17] normals = {
         { 1, 0, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, { 0, -1, 0 }, { 0, 0, 1 }, { 0, 0, -1 },

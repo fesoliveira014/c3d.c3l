@@ -15,11 +15,13 @@ const usz KEY_COLOR_TARGETS = 5; // the five G-buffer channels; keeps the key at
 
 <*
  Which stages of a key come from a store shader instead of the registry.
+ gbuffer selects the shader's G-buffer fragment in place of fragment.
 *>
 bitstruct CustomStages : uint {
     bool vertex   : 0;
     bool fragment : 1;
     bool compute  : 2;
+    bool gbuffer  : 3;
 }
 
 <*
@@ -113,6 +115,7 @@ fn void? acquire_compute_pipeline(
  @return? gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY, gpu::DEVICE_LOST
  @require !key.custom.vertex || custom.vertex.len > 0
  @require !key.custom.fragment || custom.fragment.len > 0
+ @require !key.custom.gbuffer || custom.fragment.len > 0
  @require !key.custom.compute || custom.compute.len > 0
 *>
 fn gpu::PipelineHandle? PipelineCache.get(
@@ -154,7 +157,7 @@ fn PipelineKey[] PipelineCache.compute_keys_of(&self, Allocator allocator, Compu
  @param allocator : "Owns the returned handles."
  @param [&inout] device : "Owns the created pipelines."
  @param [&in] stages : "New revision's SPIR-V; the depth vertex form serves DEPTH_ONLY keys."
- @return "Superseded handles, to retire after their submitted use."
+ @return "Superseded and dropped handles, to retire after their submitted use."
  @return? gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::INVALID_ARGUMENT
  @return? gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL, gpu::OUT_OF_HOST_MEMORY
  @return? gpu::OUT_OF_DEVICE_MEMORY, gpu::DEVICE_LOST
@@ -174,6 +177,7 @@ fn gpu::PipelineHandle[]? PipelineCache.replace_shader(
     defer catch foreach (handle : fresh[:created]) (void)gpu::destroy_pipeline(device, handle);
 
     foreach (index, key : keys) {
+        if (!key_stages_present(key, stages)) continue;
         PipelineKey replacement = key;
         replacement.shader_revision = new_revision;
         CustomStageSource source = custom_stage_source(stages, replacement);
@@ -185,6 +189,7 @@ fn gpu::PipelineHandle[]? PipelineCache.replace_shader(
     foreach (index, key : keys) {
         superseded[index] = self.pipelines.get(key)!!;
         self.pipelines.remove(key);
+        if (!key_stages_present(key, stages)) continue;
         PipelineKey replacement = key;
         replacement.shader_revision = new_revision;
         self.pipelines.set(replacement, fresh[index]);
@@ -270,8 +275,13 @@ fn CustomStageSource custom_stage_source(asset::ShaderDesc* stages, PipelineKey 
     bool depth = (key.vertex.flags & shader::SHADER_FLAG_DEPTH_ONLY) != 0;
     return {
         .vertex = depth ? stages.vertex.depth : stages.vertex.shaded,
-        .fragment = stages.fragment,
+        .fragment = key.custom.gbuffer ? stages.gbuffer : stages.fragment,
     };
+}
+
+fn bool key_stages_present(PipelineKey key, asset::ShaderDesc* stages) @private {
+    if (key.custom.vertex && stages.vertex.shaded.len == 0) return false;
+    return !key.custom.gbuffer || stages.gbuffer.len > 0;
 }
 
 <*
@@ -340,14 +350,15 @@ fn gpu::PipelineHandle? create_pipeline(
         };
         return gpu::create_compute_pipeline(device, &compute_desc);
     }
+    bool custom_fragment = key.custom.fragment || key.custom.gbuffer;
     gpu::GraphicsPipelineDesc desc = {
         .vertex_shader   = {
             .spirv = key.custom.vertex ? custom.vertex : registry.get(key.vertex)!,
             .debug_name = key.custom.vertex ? "custom_vertex" : "c3d_vertex",
         },
         .fragment_shader = {
-            .spirv = key.custom.fragment ? custom.fragment : registry.get(key.fragment)!,
-            .debug_name = key.custom.fragment ? "custom_fragment" : "c3d_fragment",
+            .spirv = custom_fragment ? custom.fragment : registry.get(key.fragment)!,
+            .debug_name = custom_fragment ? "custom_fragment" : "c3d_fragment",
         },
         .color_formats   = key.color_formats[:key.color_count],
         .depth_format    = key.depth_format,

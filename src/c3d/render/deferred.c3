@@ -1,6 +1,7 @@
 module c3d::render;
 
 import c3d;
+import c3d::asset;
 import c3d::material;
 import c3d::shader;
 import gpu;
@@ -13,7 +14,10 @@ fn ShaderVariant gbuffer_fragment(Material* material) @private {
     switch (material.kind) {
         case STANDARD: return { .shader = STANDARD_GBUFFER };
         case PHYSICAL: return { .shader = PHYSICAL_GBUFFER };
-        default:       unreachable("not encodable");
+        case CUSTOM:   return {};
+        case BASIC:
+        case TOON:
+            unreachable("not encodable");
     }
 }
 
@@ -37,7 +41,16 @@ fn gpu::PipelineHandle? gbuffer_pipeline_for(Renderer* renderer, Material* mater
         fragment: gbuffer_fragment(material),
         polygon:  wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL,
     );
-    return renderer.pipelines.get(&renderer.device, key);
+    if (material.kind != MaterialKind.CUSTOM) return renderer.pipelines.get(&renderer.device, key);
+
+    ShaderId shader = material.custom.shader;
+    asset::ShaderDesc* stages = &renderer.assets.shader(shader).desc;
+    key.shader = shader;
+    key.shader_revision = renderer.shaders[shader.index].revision;
+    key.custom = { .vertex = stages.vertex.shaded.len > 0, .gbuffer = true };
+    if (key.custom.vertex) key.vertex = { .shader = MESH };
+    CustomStageSource source = custom_stage_source(stages, key);
+    return renderer.pipelines.get(&renderer.device, key, &source);
 }
 
 fn gpu::PipelineHandle? default_gbuffer_pipeline(Renderer* renderer) @private {
