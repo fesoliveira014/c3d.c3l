@@ -266,6 +266,12 @@
         "src/custom_shader.c3"
       ]
     },
+    "instancing": {
+      "type": "executable",
+      "sources": [
+        "src/instancing.c3"
+      ]
+    },
     "custom_compute": {
       "type": "executable",
       "sources": [
