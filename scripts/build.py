@@ -9,7 +9,7 @@ Each step is a function; failures raise BuildError and stop the run.
   scripts/build.py --regen          rewrite the generated C3 and GLSL, then build
   scripts/build.py --example cube   build and run one example
   scripts/build.py --example physics
-                                    add-on examples (capture, physics) resolve to their package project
+                                    add-on examples (capture, physics, physics_instanced) resolve to their package project
   scripts/build.py --init-deps      initialize submodules and build native dependencies
   scripts/build.py --clean          remove c3c build directories
   scripts/build.py --target many_lights --define C3D_PROFILE_CPU --lib c3d_profile
@@ -35,7 +35,7 @@ TEST = ROOT / "test"
 PROFILE = ROOT / "addons" / "c3d_profile.c3l"
 PROFILE_GUI = ROOT / "addons" / "c3d_profile_gui.c3l"
 PHYSICS = ROOT / "addons" / "c3d_physics.c3l"
-ADDON_EXAMPLES = {"capture": PROFILE, "physics": PHYSICS}
+ADDON_EXAMPLES = {"capture": PROFILE, "physics": PHYSICS, "physics_instanced": PHYSICS}
 PROFILE_TEST_TARGETS = (
     "profile_off", "profile_cpu", "profile_internal", "profile_gpu",
     "profile_gpu_internal", "profile_cpu_gpu", "profile_full",

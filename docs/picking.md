@@ -32,9 +32,9 @@ scene.update_world();
 
 `pick` returns an array owned by the allocator, nearest first, with at most one hit per mesh; an empty array means no hit. A mesh takes part when it is effectively visible, on a layer of `options.layers`, and its geometry, material and, for a skinned mesh, skeleton ids are live. `PICK_OPTIONS_DEFAULT` picks bounds on every layer.
 
-`PickHit` carries the node, the world distance along the ray, the position `origin + distance * direction`, and, when a triangle was tested, `triangle_hit`, `triangle_index` and `barycentric`. `triangle_index` counts triangles in primitive order: indexed geometry triangle `t` uses `indices[3t]`, `indices[3t + 1]`, `indices[3t + 2]`; non-indexed geometry uses vertices `3t` to `3t + 2`. `barycentric` weights those three vertices in that order and sums to one. `instanced` and `instance_index` are reserved for instanced meshes and read `false` and zero until they exist.
+`PickHit` carries the node, the world distance along the ray, the position `origin + distance * direction`, and, when a triangle was tested, `triangle_hit`, `triangle_index` and `barycentric`. `triangle_index` counts triangles in primitive order: indexed geometry triangle `t` uses `indices[3t]`, `indices[3t + 1]`, `indices[3t + 2]`; non-indexed geometry uses vertices `3t` to `3t + 2`. `barycentric` weights those three vertices in that order and sums to one. For an [instanced batch](instancing.md), each live instance the ray meets is its own hit on the batch node, with `instanced` set and `instance_index` its array position; mesh hits read `false` and zero.
 
-Hits are ordered by ascending distance, then by node index. Node pointers are borrows; keep the entity id across structural scene changes.
+Hits are ordered by ascending distance, then by node index, then by instance index. Node pointers are borrows; keep the entity id across structural scene changes.
 
 ## Precision
 
