@@ -10,6 +10,7 @@ import c3d::maths;
 import std::math;
 
 const uint DEFAULT_MAX_NODES @local = 16384; // 2.5 MiB of Node plus the entity pool; the only per-node fixed cost
+const Vec4 INSTANCE_COLOR_DEFAULT @local = { 1, 1, 1, 1 };
 
 ulong scene_identity_counter @local;
 
@@ -109,6 +110,72 @@ fn Node*? Scene.add_light(
     Node* node = self.add_node(parent, name)!;
     self.world.add(node.id, light);
     return node;
+}
+
+<*
+ Add a node carrying a batch with scene-owned arrays of the capacity.
+ @param transforms : "Copied; the live count."
+ @param colors : "Copied; slots past its end are white."
+ @param [in] parent : "Null means the root."
+ @param name : "Copied into the scene allocator."
+ @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
+ @require capacity > 0
+*>
+fn Node*? Scene.add_instanced_mesh(
+    &self,
+    GeometryId geometry,
+    MaterialId material,
+    uint capacity,
+    Transform[] transforms = {},
+    Vec4[] colors = {},
+    Node* parent = null,
+    String name = "",
+) {
+    if (transforms.len > capacity) return c3d::CAPACITY_EXCEEDED~;
+    if (colors.len > transforms.len) return c3d::INVALID_ARGUMENT~;
+    Node* node = self.add_node(parent, name)!;
+    InstancedMesh batch = {
+        .geometry       = geometry,
+        .material       = material,
+        .transforms     = alloc::new_array(self.allocator, Transform, (sz)capacity),
+        .colors         = alloc::new_array(self.allocator, Vec4, (sz)capacity),
+        .cast_shadow    = true,
+        .receive_shadow = true,
+    };
+    batch.colors[..] = INSTANCE_COLOR_DEFAULT;
+    fill_instances(&batch, transforms, colors);
+    self.world.add(node.id, batch);
+    return node;
+}
+
+<*
+ Change the live count; new slots are identity and white.
+ @param [&in] node : "Carries an InstancedMesh."
+ @return? c3d::CAPACITY_EXCEEDED
+ @require self.has(node, InstancedMesh)
+*>
+fn void? Scene.resize_instances(&self, Node* node, uint count) {
+    InstancedMesh* batch = self.get(node, InstancedMesh);
+    if (count > batch.transforms.len) return c3d::CAPACITY_EXCEEDED~;
+    if (count > batch.count) {
+        batch.transforms[batch.count:count - batch.count] = maths::TRANSFORM_IDENTITY;
+        batch.colors[batch.count:count - batch.count] = INSTANCE_COLOR_DEFAULT;
+    }
+    batch.count = count;
+}
+
+<*
+ Replace the live instances with copies of the slices.
+ @param [&in] node : "Carries an InstancedMesh."
+ @param colors : "Slots past its end are white."
+ @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
+ @require self.has(node, InstancedMesh)
+*>
+fn void? Scene.set_instances(&self, Node* node, Transform[] transforms, Vec4[] colors = {}) {
+    InstancedMesh* batch = self.get(node, InstancedMesh);
+    if (transforms.len > batch.transforms.len) return c3d::CAPACITY_EXCEEDED~;
+    if (colors.len > transforms.len) return c3d::INVALID_ARGUMENT~;
+    fill_instances(batch, transforms, colors);
 }
 
 <*
@@ -259,7 +326,7 @@ fn SceneDesc default_scene_desc() {
 }
 
 <*
- Create a scene with mesh, camera, light, model instance, skin and animator components registered.
+ Create a scene with mesh, camera, light, model, skin, animator and batch components registered.
  @require desc.max_nodes > 0
 *>
 fn Scene create_scene(Allocator allocator, SceneDesc desc) {
@@ -292,11 +359,13 @@ fn Scene create_scene(Allocator allocator, SceneDesc desc) {
     scene.world.register(ModelInstance)!!;
     scene.world.register(SkinBinding)!!;
     scene.world.register(Animator)!!;
+    scene.world.register(InstancedMesh)!!;
     scene.ambient_color = { 1, 1, 1 };
     scene.world.set_remove_hook(Mesh, &free_morph_weights, scene.hook_allocator);
     scene.world.set_remove_hook(ModelInstance, &free_model_instance, scene.hook_allocator);
     scene.world.set_remove_hook(SkinBinding, &free_skin_binding, scene.hook_allocator);
     scene.world.set_remove_hook(Animator, &anim::free_animator, scene.hook_allocator);
+    scene.world.set_remove_hook(InstancedMesh, &free_instanced_mesh, scene.hook_allocator);
     return scene;
 }
 
@@ -338,6 +407,13 @@ fn void update_subtree(Node* node, Mat4 parent_world, bool parent_visible) @loca
     for (Node* child = node.first_child; child; child = child.next_sibling) {
         update_subtree(child, node.world, node.visible_effective);
     }
+}
+
+fn void fill_instances(InstancedMesh* batch, Transform[] transforms, Vec4[] colors) @local {
+    batch.transforms[:transforms.len] = transforms[..];
+    batch.colors[:colors.len] = colors[..];
+    batch.colors[colors.len:transforms.len - colors.len] = INSTANCE_COLOR_DEFAULT;
+    batch.count = (uint)transforms.len;
 }
 
 fn void free_morph_weights(Entity entity, void* component, void* user) @local {
