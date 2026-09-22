@@ -107,6 +107,26 @@ for its exit point. The same helpers are available to custom vertex consumers, u
 position/depth appropriate to that stage. See [view light selection](views.md#light-selection)
 for grid coverage and ownership.
 
+## G-buffer stage
+
+`ShaderDesc.gbuffer` is an optional second fragment stage. A shader that supplies it is
+G-buffer capable: on a `DEFERRED` view its opaque and masked draws join the G-buffer list and are
+lit by the lighting resolve, exactly like `STANDARD`; on a `FORWARD` view, and for `BLEND`
+materials, the `fragment` stage keeps drawing. A shader without the stage routes forward on every
+view. No material field selects the route.
+
+The stage consumes the same seven inputs as the forward stage and writes the five G-buffer
+outputs of `gbuffer_output.glsl`: fill a `StandardMaterialSample` (`standard_surface.glsl`) and
+call `write_gbuffer(sample, specular_weight, draw)`, or write locations 0 to 4 directly. Lighting,
+ambient and environment terms then come from the resolve, so a forward stage that computes
+less than the Standard model (the `pulse` example is diffuse only) differs from its G-buffer
+route by those terms. `examples/shaders/custom/pulse_gbuffer.frag.glsl` is the reference.
+
+The capability is also visible to shaders: `CustomMaterialGpu.capabilities` carries
+`CUSTOM_CAPABILITY_GBUFFER` when the stage is present. Pipelines for the G-buffer stage are keyed
+separately, so a rejected G-buffer stage leaves the forward stage of the same shader drawing, and
+a replacement that drops the stage retires its pipelines while the forward ones are rebuilt.
+
 ## Vertex contract
 
 A custom vertex stage includes `mesh_vertex.glsl`, which declares the push block, the seven outputs and three helpers, and applies its own displacement between pulling and writing:

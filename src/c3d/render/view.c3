@@ -173,7 +173,8 @@ fn void? Renderer.render_view(
                 usz transmission_count;
                 usz transparent_count;
                 foreach (&candidate : candidates) {
-                    switch (view_draw_list(&self.assets.material(candidate.material).data, shading)) {
+                    Material* material_data = &self.assets.material(candidate.material).data;
+                    switch (view_draw_list(material_data, shading, custom_gbuffer_stage(self, material_data))) {
                         case GBUFFER: gbuffer_count++;
                         case OPAQUE: break;
                         case TRANSMISSION: transmission_count++;
@@ -292,7 +293,7 @@ fn void? Renderer.render_view(
                     shadow_address = shadow_span.address;
                 }
                 LightGpu[] lights = extraction.lights;
-                reset_cluster_recording(self)!;
+                reset_cluster_recording(self, record);
                 if (record.desc.lights == LightSelection.CLUSTERED) {
                     cluster_frame = prepare_cluster_frame(
                         renderer: self,
@@ -1194,7 +1195,9 @@ fn gpu::PipelineHandle? first_pipeline(Renderer* renderer, DrawItem[] items) @pr
 }
 
 fn bool custom_gbuffer_stage(Renderer* renderer, Material* material) @private {
-    return material.kind == MaterialKind.CUSTOM && renderer.shaders[material.custom.shader.index].gbuffer;
+    if (material.kind != MaterialKind.CUSTOM) return false;
+    ShaderId shader = material.custom.shader;
+    return renderer.assets.shaders.is_live(shader) && renderer.assets.shader(shader).desc.gbuffer.len > 0;
 }
 
 fn bool custom_pipeline_rejected(Renderer* renderer, Material* material, fault excuse) @private {

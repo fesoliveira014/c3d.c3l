@@ -170,8 +170,8 @@ fn void clear_cluster_readback(Renderer* renderer, uint slot_index) @private {
     }
 }
 
-fn void? reset_cluster_recording(Renderer* renderer) @private {
-    clear_cluster_readback(renderer, (uint)(renderer.frame_index % FRAMES_IN_FLIGHT));
+fn void reset_cluster_recording(Renderer* renderer, ViewRecord* record) @private {
+    record.cluster_readback[renderer.frame_index % FRAMES_IN_FLIGHT].pending = false;
 }
 
 fn void? read_cluster_stats(Renderer* renderer, uint slot_index) @private {

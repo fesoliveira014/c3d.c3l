@@ -238,6 +238,25 @@ chain. `Stats.gpu_pass_ms` carries the three new passes. Dielectric F0 in the re
 
 Light selection follows `lights` on both paths: the resolve calls the same clustered or flat
 selection as the forward shaders, so `DEFERRED` with `CLUSTERED` needs no extra configuration.
+`render::cluster_cell` and `render::cluster_index` are the C3 twins of that selection.
+
+Custom materials take part through their shader: a `ShaderDesc` with a `gbuffer` stage routes
+like `STANDARD` on a deferred view, one without stays forward; see
+[custom shaders](custom_shaders.md#g-buffer-stage).
+
+Per-view numbers live on the view: `Renderer.view_stats(view)` returns `ViewStats` with the
+view's selected and dropped light counts, its cluster count and overflow count, and its completed
+GPU pass timings (`C3D_PROFILE_GPU`), while `Stats` keeps the renderer-wide sums.
+`gui::view_stats_table(renderer, views, labels)` prints several views side by side.
+
+```bash
+python3 scripts/build.py --example shading_paths
+```
+
+`examples/shading_paths` renders one scene with 48 point lights, a custom material with a
+G-buffer stage and one without, through all four `ShadingPath` and `LightSelection`
+combinations in a 2x2 grid, switches each view at runtime, shows the targets panel for a selected
+view and the view stats table for all four.
 Motion blur, depth of field, bloom, grading and FXAA read `hdr_color`, depth and velocity only and
 run unchanged.
 

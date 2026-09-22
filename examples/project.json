@@ -250,6 +250,12 @@
         "src/deferred.c3"
       ]
     },
+    "shading_paths": {
+      "type": "executable",
+      "sources": [
+        "src/shading_paths.c3"
+      ]
+    },
     "picking": {
       "type": "executable",
       "sources": [

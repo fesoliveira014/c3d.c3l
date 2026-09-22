@@ -208,6 +208,14 @@ python3 scripts/build.py --example effects
 half at runtime and shows the G-buffer channels through the targets panel; see the
 [shading path](docs/views.md#shading-path) section.
 
+`shading_paths` renders one scene with many lights and two custom materials through every
+shading path and light selection pair in a 2x2 grid, with a per-view switch and a side-by-side
+stats table:
+
+```bash
+python3 scripts/build.py --example shading_paths
+```
+
 `views` renders the same kind of scene twice per frame through [views and render
 targets](docs/views.md): a producer camera writes a capture target that a monitor slab samples
 through its material, while the window camera shows the whole scene. Its panel resizes the

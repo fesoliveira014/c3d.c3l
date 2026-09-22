@@ -11,7 +11,6 @@ struct ShaderRes {
     ShaderId asset;
     uint     revision;
     uint     rejected_revision;
-    bool     gbuffer;
 }
 
 <*
@@ -91,7 +90,6 @@ fn void? replace_shader_pipelines(Renderer* renderer, ShaderId shader) @private 
     mirror.asset = shader;
     mirror.revision = record.header.revision;
     mirror.rejected_revision = 0;
-    mirror.gbuffer = record.desc.gbuffer.len > 0;
     return;
 }
 
