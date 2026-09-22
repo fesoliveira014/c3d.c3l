@@ -201,7 +201,7 @@ fn void? Renderer.render_view(
                     )!;
                     bool morphed = candidate.morph_weights.len > 0;
                     ShaderVariant vertex = mesh_vertex_variant(geometry.layout.flags, morphed, candidate.skin != null);
-                    DrawList list = view_draw_list(material_description, shading);
+                    DrawList list = view_draw_list(material_description, shading, custom_gbuffer_stage(self, material_description));
                     gpu::PipelineHandle? pipeline = list == DrawList.GBUFFER
                       ? gbuffer_pipeline_for(self, material_description, vertex)
                       : pipeline_for(self, material_description, vertex);
@@ -666,7 +666,12 @@ fn MeshPreparation? prepare_mesh(
         if (!custom_pipeline_rejected(renderer, data, excuse)) return excuse~;
         return {};
     }
-    if (gbuffer && gbuffer_encodable(data)) gbuffer_pipeline_for(renderer, data, vertex)!;
+    if (gbuffer && gbuffer_encodable(data, custom_gbuffer_stage(renderer, data))) {
+        if (catch excuse = gbuffer_pipeline_for(renderer, data, vertex)) {
+            if (!custom_pipeline_rejected(renderer, data, excuse)) return excuse~;
+            return {};
+        }
+    }
     if (depth && data.common.alpha_mode != AlphaMode.BLEND) {
         if (catch excuse = shadow_pipeline_for(
             renderer:     renderer,
@@ -1184,6 +1189,10 @@ fn gpu::PipelineHandle? first_pipeline(Renderer* renderer, DrawItem[] items) @pr
         .polygon = gpu::PolygonMode.FILL,
     };
     return renderer.pipelines.get(&renderer.device, key);
+}
+
+fn bool custom_gbuffer_stage(Renderer* renderer, Material* material) @private {
+    return material.kind == MaterialKind.CUSTOM && renderer.shaders[material.custom.shader.index].gbuffer;
 }
 
 fn bool custom_pipeline_rejected(Renderer* renderer, Material* material, fault excuse) @private {

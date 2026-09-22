@@ -93,15 +93,17 @@ fn DrawList draw_list(Material* material) {
 <*
  Whether the G-buffer encodes the material without loss.
  @param [&in] material : "Valid active arm."
+ @param custom_gbuffer : "The custom material's shader supplies a G-buffer stage."
  @pure
 *>
-fn bool gbuffer_encodable(Material* material) {
+fn bool gbuffer_encodable(Material* material, bool custom_gbuffer = false) {
     if (material.common.alpha_mode == AlphaMode.BLEND) return false;
     switch (material.kind) {
         case BASIC:
         case TOON:
-        case CUSTOM:
             return false;
+        case CUSTOM:
+            return custom_gbuffer;
         case STANDARD:
             return true;
         case PHYSICAL:
@@ -117,11 +119,12 @@ fn bool gbuffer_encodable(Material* material) {
 <*
  Select the draw list on a view of the shading path; a forward view never selects GBUFFER.
  @param [&in] material : "Valid active arm."
+ @param custom_gbuffer : "The custom material's shader supplies a G-buffer stage."
  @pure
 *>
-fn DrawList view_draw_list(Material* material, ShadingPath shading) {
+fn DrawList view_draw_list(Material* material, ShadingPath shading, bool custom_gbuffer = false) {
     DrawList list = draw_list(material);
-    if (shading == ShadingPath.DEFERRED && list == DrawList.OPAQUE && gbuffer_encodable(material)) {
+    if (shading == ShadingPath.DEFERRED && list == DrawList.OPAQUE && gbuffer_encodable(material, custom_gbuffer)) {
         return DrawList.GBUFFER;
     }
     return list;

@@ -86,6 +86,7 @@ fn void write_material_block(
     Material* material,
     MaterialBindings bindings,
     gpu::GpuAddress parameters = (gpu::GpuAddress)0,
+    uint custom_capabilities = 0,
 ) {
     MaterialFlags flags = {
         .alpha_mask = material.common.alpha_mode == AlphaMode.MASK,
@@ -285,6 +286,7 @@ fn void write_material_block(
                 .alpha_cutoff = material.common.alpha_cutoff,
                 .map_flags = custom_map_flags(&material.custom.slots, &bindings.custom),
                 .parameters = parameters,
+                .capabilities = custom_capabilities,
             };
             foreach (index, slot : material.custom.slots) {
                 packed.slots[index] = pack_texture_map(slot, bindings.custom[index]);
@@ -477,14 +479,15 @@ fn MaterialRes*? resolve_material_dependencies(Renderer* renderer, MaterialId ma
     bool custom = record.data.kind == MaterialKind.CUSTOM;
     ShaderId shader;
     uint shader_revision;
+    uint capabilities;
     if (custom) {
         shader = record.data.custom.shader;
         if (!renderer.assets.shaders.is_live(shader)) return c3d::INVALID_ID~;
         ShaderRes* shader_mirror = resolve_shader(renderer, shader)!;
-        if (record.data.custom.param_block.len != renderer.assets.shader(shader).desc.param_block_size) {
-            return c3d::INVALID_ARGUMENT~;
-        }
+        asset::ShaderDesc* stages = &renderer.assets.shader(shader).desc;
+        if (record.data.custom.param_block.len != stages.param_block_size) return c3d::INVALID_ARGUMENT~;
         shader_revision = shader_mirror.revision;
+        if (stages.gbuffer.len) capabilities = shader::CUSTOM_CAPABILITY_GBUFFER;
     }
     bool same_shader = mirror.shader.index == shader.index && mirror.shader.generation == shader.generation
         && mirror.shader_revision == shader_revision;
@@ -496,10 +499,11 @@ fn MaterialRes*? resolve_material_dependencies(Renderer* renderer, MaterialId ma
     if (custom) parameters = resolve_custom_payload(renderer, mirror, record.data.custom.param_block)!;
     gpu::MappedGpuSpan staging = slot.upload.take(&renderer.device, MATERIAL_STRIDE, STREAM_ALIGNMENT)!;
     write_material_block(
-        block:      staging.bytes,
-        material:   &record.data,
-        bindings:   bindings,
-        parameters: parameters,
+        block:               staging.bytes,
+        material:            &record.data,
+        bindings:            bindings,
+        parameters:          parameters,
+        custom_capabilities: capabilities,
     );
     usz offset = (usz)material.index * MATERIAL_STRIDE;
     gpu::GpuSpan destination = renderer.material_heap_span.checked_subspan(offset, MATERIAL_STRIDE)!;
