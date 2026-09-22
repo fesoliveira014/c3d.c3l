@@ -40,6 +40,16 @@ fn float view_depth_of(CellFixture* fixture, Vec3 point) @local {
     return -fixture.matrices.view.apply({ point.x, point.y, point.z, 1 }).z;
 }
 
+fn ClusterCell cell_of(CellFixture* fixture, Vec3 point, float view_depth) @local {
+    return render::cluster_cell(
+        desc:           fixture.desc,
+        depth:          fixture.depth,
+        view_proj:      fixture.matrices.view_proj,
+        world_position: point,
+        view_depth:     view_depth,
+    );
+}
+
 fn void test_cluster_layout_aligns_regions() @test {
     ClusterDesc desc = {
         .tiles_x = 2, .tiles_y = 3, .depth_slices = 4,
@@ -230,20 +240,8 @@ fn void test_cluster_cell_agrees_for_reconstructed_position() @test {
         Vec2 uv = { ndc.x * 0.5f + 0.5f, 0.5f - ndc.y * 0.5f };
         Vec3 reconstructed = render::reconstruct_world_position(fixture.matrices.inv_view_proj, uv, ndc.z);
 
-        ClusterCell forward = render::cluster_cell(
-            desc:           fixture.desc,
-            depth:          fixture.depth,
-            view_proj:      fixture.matrices.view_proj,
-            world_position: point,
-            view_depth:     view_depth_of(&fixture, point),
-        );
-        ClusterCell resolved = render::cluster_cell(
-            desc:           fixture.desc,
-            depth:          fixture.depth,
-            view_proj:      fixture.matrices.view_proj,
-            world_position: reconstructed,
-            view_depth:     view_depth_of(&fixture, reconstructed),
-        );
+        ClusterCell forward = cell_of(&fixture, point, view_depth_of(&fixture, point));
+        ClusterCell resolved = cell_of(&fixture, reconstructed, view_depth_of(&fixture, reconstructed));
         assert(forward.clustered && resolved.clustered);
         assert(forward.cell == resolved.cell);
         assert(render::cluster_index(fixture.desc, forward.cell) == render::cluster_index(fixture.desc, resolved.cell));
@@ -256,27 +254,27 @@ fn void test_cluster_cell_slice_agrees_with_slice_bounds() @test {
         Vec2 bounds = render::cluster_slice_bounds(fixture.depth, slice);
         float middle = (bounds.x + bounds.y) * 0.5f;
         Vec3 point = CELL_CAMERA_POSITION + fixture.forward * middle;
-        ClusterCell cell = render::cluster_cell(fixture.desc, fixture.depth, fixture.matrices.view_proj, point, middle);
+        ClusterCell cell = cell_of(&fixture, point, middle);
         assert(cell.clustered && cell.cell.z == slice);
     }
 
     Vec3 nearest = CELL_CAMERA_POSITION + fixture.forward * fixture.depth.near;
-    ClusterCell first = render::cluster_cell(fixture.desc, fixture.depth, fixture.matrices.view_proj, nearest, fixture.depth.near);
+    ClusterCell first = cell_of(&fixture, nearest, fixture.depth.near);
     assert(first.clustered && first.cell.z == 0);
 
     Vec3 farthest = CELL_CAMERA_POSITION + fixture.forward * fixture.depth.far;
-    ClusterCell beyond = render::cluster_cell(fixture.desc, fixture.depth, fixture.matrices.view_proj, farthest, fixture.depth.far);
+    ClusterCell beyond = cell_of(&fixture, farthest, fixture.depth.far);
     assert(!beyond.clustered);
 }
 
 fn void test_cluster_cell_rejects_offscreen_and_behind() @test {
     CellFixture fixture = make_cell_fixture();
     Vec3 behind = CELL_CAMERA_POSITION - fixture.forward * 3;
-    ClusterCell reversed = render::cluster_cell(fixture.desc, fixture.depth, fixture.matrices.view_proj, behind, view_depth_of(&fixture, behind));
+    ClusterCell reversed = cell_of(&fixture, behind, view_depth_of(&fixture, behind));
     assert(!reversed.clustered);
 
     Vec3 right = fixture.forward.cross({ 0, 1, 0 }).normalize();
     Vec3 aside = CELL_CAMERA_POSITION + fixture.forward * 5 + right * 100;
-    ClusterCell offscreen = render::cluster_cell(fixture.desc, fixture.depth, fixture.matrices.view_proj, aside, view_depth_of(&fixture, aside));
+    ClusterCell offscreen = cell_of(&fixture, aside, view_depth_of(&fixture, aside));
     assert(!offscreen.clustered);
 }

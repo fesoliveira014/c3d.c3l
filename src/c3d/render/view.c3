@@ -202,7 +202,8 @@ fn void? Renderer.render_view(
                     )!;
                     bool morphed = candidate.morph_weights.len > 0;
                     ShaderVariant vertex = mesh_vertex_variant(geometry.layout.flags, morphed, candidate.skin != null);
-                    DrawList list = view_draw_list(material_description, shading, custom_gbuffer_stage(self, material_description));
+                    bool custom_gbuffer = custom_gbuffer_stage(self, material_description);
+                    DrawList list = view_draw_list(material_description, shading, custom_gbuffer);
                     gpu::PipelineHandle? pipeline = list == DrawList.GBUFFER
                       ? gbuffer_pipeline_for(self, material_description, vertex)
                       : pipeline_for(self, material_description, vertex);
