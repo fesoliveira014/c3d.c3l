@@ -127,16 +127,6 @@ fn void apply_free_camera(
     camera_node.local.rotation = maths::look_rotation(forward, up);
 }
 
-fn void rotate_about_x(Geometry* geometry, float angle) @local {
-    Quaternionf rotation = quaternion::from_axis_angle{float}({ 1, 0, 0 }, angle);
-    foreach (&position : geometry.positions) *position = rotation.rotate_vec3(*position);
-    foreach (&normal : geometry.normals) *normal = rotation.rotate_vec3(*normal);
-}
-
-fn void translate(Geometry* geometry, Vec3 offset) @local {
-    foreach (&position : geometry.positions) *position += offset;
-}
-
 fn GeometryId build_level_geometry(AssetStore* assets) @local {
     GeometryId level;
     @pool() {
@@ -145,8 +135,12 @@ fn GeometryId build_level_geometry(AssetStore* assets) @local {
         Vec3[3] ramp_offsets = { { -10, 1, 4 }, { 10, 1, -2 }, { 0, 1, -12 } };
         foreach (index, offset : ramp_offsets) {
             parts[index + 1] = geometry::box(tmem, RAMP_WIDTH, RAMP_HEIGHT, RAMP_DEPTH);
-            rotate_about_x(&parts[index + 1], RAMP_ANGLE);
-            translate(&parts[index + 1], offset);
+            maths::Transform placement = {
+                .position = offset,
+                .rotation = quaternion::from_axis_angle{float}({ 1, 0, 0 }, RAMP_ANGLE),
+                .scale    = { 1, 1, 1 },
+            };
+            parts[index + 1].transform(placement.to_mat4());
         }
         Geometry merged = geometry::merge(tmem, parts[..]);
         merged.finalize();
