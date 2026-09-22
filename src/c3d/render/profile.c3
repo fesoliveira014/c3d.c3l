@@ -106,13 +106,25 @@ fn void publish_gpu_summary(Renderer* renderer, profile_gpu::CompletedFrame comp
     stats.gpu_scopes_dropped = completed.dropped_scopes;
     stats.gpu_pass_ms = {};
     stats.gpu_pass_valid = {};
+    foreach (&record : renderer.views.items) {
+        if (!record.live) continue;
+        record.stats.gpu_pass_ms = {};
+        record.stats.gpu_pass_valid = {};
+    }
     uint shadow_count;
     foreach (sample : completed.samples) {
         switch (sample.info.kind) {
             case PASS:
             case COMPUTE_DISPATCH:
-                stats.gpu_pass_ms[sample.info.pass_ordinal] += (float)(sample.duration_ns / NANOSECONDS_PER_MILLISECOND);
+                float pass_ms = (float)(sample.duration_ns / NANOSECONDS_PER_MILLISECOND);
+                stats.gpu_pass_ms[sample.info.pass_ordinal] += pass_ms;
                 stats.gpu_pass_valid[sample.info.pass_ordinal] = true;
+                ViewId view = { .index = sample.info.view_index, .generation = sample.info.view_generation };
+                if (sample.info.has_view && renderer.views.is_live(view)) {
+                    ViewStats* view_stats = &renderer.views.get(view).stats;
+                    view_stats.gpu_pass_ms[sample.info.pass_ordinal] += pass_ms;
+                    view_stats.gpu_pass_valid[sample.info.pass_ordinal] = true;
+                }
             case SHADOW_LAYER:
                 renderer.shadow_timing_results[shadow_count++] = {
                     .light = { .index = sample.info.light_index, .generation = sample.info.light_generation },

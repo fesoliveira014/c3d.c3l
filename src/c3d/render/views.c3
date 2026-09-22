@@ -172,6 +172,18 @@ fn void free_view_history(Allocator allocator, ViewHistory* history) {
 }
 
 <*
+ Previous-frame counters and completed GPU timings of one view.
+*>
+struct ViewStats {
+    uint              lights;
+    uint              lights_dropped;
+    uint              cluster_count;
+    uint              cluster_overflows;
+    float[PASS_COUNT] gpu_pass_ms;
+    bool[PASS_COUNT]  gpu_pass_valid @if($feat(C3D_PROFILE_GPU));
+}
+
+<*
  Renderer-owned view: its configuration, working images and recording state.
 *>
 struct ViewRecord {
@@ -204,6 +216,8 @@ struct ViewRecord {
     ClusterBuffers                       clusters;
     gpu::GpuAddress                      cluster_root;
     ClusterDepth                         cluster_depth;
+    ClusterReadback[FRAMES_IN_FLIGHT]    cluster_readback;
+    ViewStats                            stats;
 }
 
 <*
@@ -300,6 +314,15 @@ fn bool Renderer.has_deferred_view(&self) {
 fn uint[<2>]? Renderer.view_extent(&self, ViewId view) {
     ViewRecord* record = self.views.try_get(view)!;
     return { record.hdr_color.width, record.hdr_color.height };
+}
+
+<*
+ Counters and completed GPU timings of the view.
+ @return? c3d::INVALID_ID
+*>
+fn ViewStats? Renderer.view_stats(&self, ViewId view) {
+    ViewRecord* record = self.views.try_get(view)!;
+    return record.stats;
 }
 
 <*
@@ -549,6 +572,7 @@ fn void? acquire_view_images(Renderer* renderer, ViewRecord* record) @private {
 
 fn void release_view_images(Renderer* renderer, ViewRecord* record) @private {
     destroy_cluster_buffers(&renderer.device, &record.clusters);
+    release_cluster_readback(&renderer.device, record);
     record.cluster_root = (gpu::GpuAddress)0;
     record.cluster_depth = {};
     release_scene_color(&renderer.device, record);

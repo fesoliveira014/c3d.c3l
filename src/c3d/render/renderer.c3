@@ -92,7 +92,6 @@ struct Frame {
     UploadRing            upload;
     RetireList            retire;
     RetireList            environment_temporaries;
-    ClusterReadback       cluster_readback;
 }
 
 <*
@@ -253,7 +252,7 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
         reset_frame_stats(&self.stats);
         instrumentation::@scope("renderer.readback") {
             collect_gpu_profile(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
-            read_cluster_stats(self, slot)!;
+            read_cluster_stats(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
         };
         instrumentation::@scope("renderer.retire") {
             drain_retired(&self.device, &slot.environment_temporaries);
@@ -963,7 +962,7 @@ fn void abort_frame(Renderer* renderer) {
     (void)gpu::discard_commands(&renderer.commands);
 
     if (!renderer.frame_submitted) {
-        renderer.frames[renderer.recording_slot].cluster_readback.pending = false;
+        clear_cluster_readback(renderer, renderer.recording_slot);
         renderer.shadow_atlas.state = renderer.frame_shadow_state;
         foreach (index, &target : renderer.targets.items) target.target.state = renderer.frame_target_states[index];
         foreach (index, &preview : renderer.previews) preview.image.state = renderer.frame_preview_states[index];

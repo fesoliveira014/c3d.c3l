@@ -313,6 +313,8 @@ fn void? Renderer.render_view(
                 }
                 self.stats.lights += light_counts.packed;
                 self.stats.lights_dropped += light_counts.dropped;
+                record.stats.lights = light_counts.packed;
+                record.stats.lights_dropped = light_counts.dropped;
             };
 
             gpu::GpuAddress environment_address;
