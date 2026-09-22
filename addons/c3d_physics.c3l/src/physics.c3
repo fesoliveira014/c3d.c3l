@@ -24,7 +24,7 @@ const float DEFAULT_HIT_SPEED_THRESHOLD = 1;
 <* Entries per event list. *>
 const uint  DEFAULT_EVENT_CAPACITY = 4096; // five lists of 4096 entries, about 800 KiB per world; the contact burst lever
 <* Collision snapshots per collider kind. *>
-const uint  DEFAULT_COOKED_CAPACITY = 256; // one slot per distinct geometry revision; the level variety lever
+const uint  DEFAULT_SNAPSHOT_CAPACITY = 256; // one slot per distinct geometry revision; the level variety lever
 <* Water density, kilograms per cubic meter. *>
 const float DEFAULT_DENSITY = 1000;
 <* Dry friction coefficient. *>
@@ -66,7 +66,7 @@ struct CollisionFilter {
 }
 
 <*
- Row-major heights, x fastest; copied when cooked.
+ Row-major heights, x fastest; copied when snapshot.
 *>
 struct HeightField {
     float[] heights;
@@ -110,7 +110,8 @@ struct BodyDesc {
 }
 
 <*
- World configuration: stepping policy, capacities and cooking.
+ World configuration: stepping policy, capacities and debug data.
+ cache_wireframes builds collider wireframes with each collision snapshot; off, debug_draw skips hull, mesh and height-field colliders.
 *>
 struct PhysicsDesc {
     Vec3  gravity;
@@ -119,13 +120,13 @@ struct PhysicsDesc {
     uint  max_steps_per_frame;
     float hit_speed_threshold;
     bool  interpolate;
-    bool  cook_wireframes;
+    bool  cache_wireframes;
     uint  event_capacity;
-    uint  cooked_capacity;
+    uint  snapshot_capacity;
 }
 
 <*
- One shape of a rigid body; wire borrows the world's cooked snapshot.
+ One shape of a rigid body; wire borrows the world's snapshot snapshot.
 *>
 struct Collider {
     b3::ShapeId      shape;
@@ -149,7 +150,7 @@ struct RigidBody {
 }
 
 <*
- Geometry revision a collision snapshot was cooked from.
+ Geometry revision a collision snapshot was snapshot from.
 *>
 struct PhysicsSourceKey {
     GeometryId geometry;
@@ -157,7 +158,7 @@ struct PhysicsSourceKey {
 }
 
 <*
- Convex hull cooked from a geometry revision, with its wireframe.
+ Convex hull snapshot from a geometry revision, with its wireframe.
 *>
 struct PhysicsHull {
     PhysicsSourceKey key;
@@ -166,7 +167,7 @@ struct PhysicsHull {
 }
 
 <*
- Triangle mesh cooked from a geometry revision, with its wireframe.
+ Triangle mesh snapshot from a geometry revision, with its wireframe.
 *>
 struct PhysicsMesh {
     PhysicsSourceKey key;
@@ -175,7 +176,7 @@ struct PhysicsMesh {
 }
 
 <*
- Height field cooked from application heights, with its wireframe.
+ Height field snapshot from application heights, with its wireframe.
 *>
 struct PhysicsHeightField {
     b3::HeightFieldData* field;
@@ -229,7 +230,7 @@ struct PhysicsDebugOptions {
 }
 
 <*
- Owner of one box3d world, its cooked collision data and the frame event lists.
+ Owner of one box3d world, its snapshot collision data and the frame event lists.
 *>
 struct PhysicsWorld {
     Allocator            allocator;
@@ -456,9 +457,9 @@ fn PhysicsDesc default_physics_desc() {
         .max_steps_per_frame = DEFAULT_MAX_STEPS,
         .hit_speed_threshold = DEFAULT_HIT_SPEED_THRESHOLD,
         .interpolate         = true,
-        .cook_wireframes     = true,
+        .cache_wireframes    = true,
         .event_capacity      = DEFAULT_EVENT_CAPACITY,
-        .cooked_capacity     = DEFAULT_COOKED_CAPACITY,
+        .snapshot_capacity   = DEFAULT_SNAPSHOT_CAPACITY,
     };
 }
 
@@ -512,9 +513,9 @@ fn PhysicsWorld? create_physics_world(
         .assets                = assets,
         .scene                 = scene,
         .desc                  = desc,
-        .hulls                 = alloc::new_array(allocator, PhysicsHull, desc.cooked_capacity),
-        .meshes                = alloc::new_array(allocator, PhysicsMesh, desc.cooked_capacity),
-        .height_fields         = alloc::new_array(allocator, PhysicsHeightField, desc.cooked_capacity),
+        .hulls                 = alloc::new_array(allocator, PhysicsHull, desc.snapshot_capacity),
+        .meshes                = alloc::new_array(allocator, PhysicsMesh, desc.snapshot_capacity),
+        .height_fields         = alloc::new_array(allocator, PhysicsHeightField, desc.snapshot_capacity),
         .contact_begin_storage = alloc::new_array(allocator, ContactEvent, desc.event_capacity),
         .contact_end_storage   = alloc::new_array(allocator, ContactEvent, desc.event_capacity),
         .hit_storage           = alloc::new_array(allocator, HitEvent, desc.event_capacity),
@@ -524,7 +525,7 @@ fn PhysicsWorld? create_physics_world(
 }
 
 <*
- Destroy the world, its bodies, cooked data and event lists; nodes remain.
+ Destroy the world, its bodies, snapshot data and event lists; nodes remain.
  @param [&inout] world : "Destroyed before its scene and asset store."
 *>
 fn void destroy_physics_world(PhysicsWorld* world) {
@@ -538,17 +539,17 @@ fn void destroy_physics_world(PhysicsWorld* world) {
     world.scene.set_remove_hook(RigidBody, null, null);
     b3::destroy_world(world.world);
 
-    foreach (&cooked : world.hulls[:world.hull_count]) {
-        b3::destroy_hull(cooked.hull);
-        alloc::free(world.allocator, cooked.wire.ptr);
+    foreach (&snapshot : world.hulls[:world.hull_count]) {
+        b3::destroy_hull(snapshot.hull);
+        alloc::free(world.allocator, snapshot.wire.ptr);
     }
-    foreach (&cooked : world.meshes[:world.mesh_count]) {
-        b3::destroy_mesh(cooked.mesh);
-        alloc::free(world.allocator, cooked.wire.ptr);
+    foreach (&snapshot : world.meshes[:world.mesh_count]) {
+        b3::destroy_mesh(snapshot.mesh);
+        alloc::free(world.allocator, snapshot.wire.ptr);
     }
-    foreach (&cooked : world.height_fields[:world.height_field_count]) {
-        b3::destroy_height_field(cooked.field);
-        alloc::free(world.allocator, cooked.wire.ptr);
+    foreach (&snapshot : world.height_fields[:world.height_field_count]) {
+        b3::destroy_height_field(snapshot.field);
+        alloc::free(world.allocator, snapshot.wire.ptr);
     }
     alloc::free(world.allocator, world.hulls.ptr);
     alloc::free(world.allocator, world.meshes.ptr);

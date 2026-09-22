@@ -94,28 +94,28 @@ fn Collider? create_shape(PhysicsWorld* world, b3::BodyId body, ColliderDesc* de
                 scale:     { 1, 1, 1 },
             )!;
         case HULL:
-            PhysicsHull* cooked = resolve_hull(world, desc.geometry)!;
+            PhysicsHull* snapshot = resolve_hull(world, desc.geometry)!;
             record.shape = b3::create_transformed_hull_shape(
                 body:      body,
                 def:       &def,
-                hull:      cooked.hull,
+                hull:      snapshot.hull,
                 transform: shape_frame(desc),
                 scale:     desc.local.scale,
             )!;
-            record.wire = cooked.wire;
+            record.wire = snapshot.wire;
         case MESH:
-            PhysicsMesh* cooked = resolve_mesh(world, desc.geometry)!;
+            PhysicsMesh* snapshot = resolve_mesh(world, desc.geometry)!;
             record.shape = b3::create_mesh_shape(
                 body:  body,
                 def:   &def,
-                mesh:  cooked.mesh,
+                mesh:  snapshot.mesh,
                 scale: desc.local.scale,
             )!;
-            record.wire = cooked.wire;
+            record.wire = snapshot.wire;
         case HEIGHT_FIELD:
-            PhysicsHeightField* cooked = create_height_field(world, desc)!;
-            record.shape = b3::create_height_field_shape(body, &def, cooked.field)!;
-            record.wire = cooked.wire;
+            PhysicsHeightField* snapshot = create_height_field(world, desc)!;
+            record.shape = b3::create_height_field_shape(body, &def, snapshot.field)!;
+            record.wire = snapshot.wire;
     }
     return record;
 }
@@ -129,14 +129,14 @@ fn bool same_key(PhysicsSourceKey a, PhysicsSourceKey b) @local {
 fn PhysicsHull*? resolve_hull(PhysicsWorld* world, GeometryId geometry) @local {
     GeometryAsset* asset = world.assets.geometry(geometry);
     PhysicsSourceKey key = { .geometry = geometry, .revision = asset.header.revision };
-    foreach (&cooked : world.hulls[:world.hull_count]) {
-        if (same_key(cooked.key, key)) return cooked;
+    foreach (&snapshot : world.hulls[:world.hull_count]) {
+        if (same_key(snapshot.key, key)) return snapshot;
     }
-    if (world.hull_count == world.desc.cooked_capacity) return c3d::CAPACITY_EXCEEDED~;
+    if (world.hull_count == world.desc.snapshot_capacity) return c3d::CAPACITY_EXCEEDED~;
 
     b3::HullData* hull = b3::create_hull(asset.data.positions, b3::MAX_HULL_VERTICES)!;
     Vec3[] wire;
-    if (world.desc.cook_wireframes) wire = hull_wire(world.allocator, hull);
+    if (world.desc.cache_wireframes) wire = hull_wire(world.allocator, hull);
     world.hulls[world.hull_count] = { .key = key, .hull = hull, .wire = wire };
     return &world.hulls[world.hull_count++];
 }
@@ -144,10 +144,10 @@ fn PhysicsHull*? resolve_hull(PhysicsWorld* world, GeometryId geometry) @local {
 fn PhysicsMesh*? resolve_mesh(PhysicsWorld* world, GeometryId geometry) @local {
     GeometryAsset* asset = world.assets.geometry(geometry);
     PhysicsSourceKey key = { .geometry = geometry, .revision = asset.header.revision };
-    foreach (&cooked : world.meshes[:world.mesh_count]) {
-        if (same_key(cooked.key, key)) return cooked;
+    foreach (&snapshot : world.meshes[:world.mesh_count]) {
+        if (same_key(snapshot.key, key)) return snapshot;
     }
-    if (world.mesh_count == world.desc.cooked_capacity) return c3d::CAPACITY_EXCEEDED~;
+    if (world.mesh_count == world.desc.snapshot_capacity) return c3d::CAPACITY_EXCEEDED~;
 
     Geometry* source = &asset.data;
     uint[] indices = source.indices;
@@ -163,13 +163,13 @@ fn PhysicsMesh*? resolve_mesh(PhysicsWorld* world, GeometryId geometry) @local {
     };
     b3::MeshData* mesh = b3::create_mesh(&def)!;
     Vec3[] wire;
-    if (world.desc.cook_wireframes) wire = mesh_wire(world.allocator, source.positions, indices);
+    if (world.desc.cache_wireframes) wire = mesh_wire(world.allocator, source.positions, indices);
     world.meshes[world.mesh_count] = { .key = key, .mesh = mesh, .wire = wire };
     return &world.meshes[world.mesh_count++];
 }
 
 fn PhysicsHeightField*? create_height_field(PhysicsWorld* world, ColliderDesc* desc) @local {
-    if (world.height_field_count == world.desc.cooked_capacity) return c3d::CAPACITY_EXCEEDED~;
+    if (world.height_field_count == world.desc.snapshot_capacity) return c3d::CAPACITY_EXCEEDED~;
 
     HeightField field = desc.height_field;
     float minimum = field.heights[0];
@@ -188,7 +188,7 @@ fn PhysicsHeightField*? create_height_field(PhysicsWorld* world, ColliderDesc* d
     };
     b3::HeightFieldData* data = b3::create_height_field(&def)!;
     Vec3[] wire;
-    if (world.desc.cook_wireframes) wire = height_field_wire(world.allocator, field, desc.local.scale);
+    if (world.desc.cache_wireframes) wire = height_field_wire(world.allocator, field, desc.local.scale);
     world.height_fields[world.height_field_count] = { .field = data, .wire = wire };
     return &world.height_fields[world.height_field_count++];
 }
