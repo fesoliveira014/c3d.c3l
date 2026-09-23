@@ -63,7 +63,7 @@ struct ViewDesc {
 <*
  Working images one view owns, in view_targets order.
 *>
-const uint VIEW_TARGET_COUNT = 5 + post::BLOOM_MAX_LEVELS + 8 + GBUFFER_CHANNEL_COUNT;
+const uint VIEW_TARGET_COUNT = 5 + post::BLOOM_MAX_LEVELS + 8 + GBUFFER_CHANNEL_COUNT + 7;
 
 <*
  Reverse-Z projection terms that recover forward distance from stored depth.
@@ -75,17 +75,31 @@ struct ProjectionTerms {
 }
 
 <*
+ Deformation and instance matrices a node had when the view last rendered it.
+*>
+struct PoseRecord {
+    Mat4f[]         palette;
+    Mat4f[]         instances;
+    uint            instance_count;
+    MorphWeightsGpu morph;
+    bool            morphed;
+}
+
+<*
  Pose the view last rendered: its camera and every node it drew, tagged by entity and scene.
 *>
 struct ViewHistory {
-    bool     valid;
-    bool     pending;
-    ulong    scene;
-    ulong    serial;
-    Mat4     view_proj;
-    Mat4[]   models;
-    Entity[] owners;
-    ulong[]  seen;
+    bool         valid;
+    bool         pending;
+    ulong        scene;
+    ulong        serial;
+    Mat4         view_proj;
+    Mat4[]       models;
+    Entity[]     owners;
+    ulong[]      seen;
+    PoseRecord[] poses;
+    uint         sample_index;
+    uint         slot;
 }
 
 <*
@@ -111,22 +125,39 @@ fn Mat4 ViewHistory.previous_model(&self, Scene* scene, Node* node) {
 }
 
 <*
- Remember the drawn candidates and the camera, pending publication by the frame's submit.
+ Deformation and instances the node had when this view last rendered it.
+ @param [&in] scene : "Scene the node belongs to."
+ @param [&in] node : "Live node."
+ @require self.has_previous(scene, node)
+*>
+fn PoseRecord* ViewHistory.previous_pose(&self, Scene* scene, Node* node) {
+    return &self.poses[node.id.index];
+}
+
+<*
+ Remember the drawn candidates, their deformation and the camera, pending publication.
+ @param [&in] assets : "Resolves skeleton inverse binds."
  @param [&in] scene : "Sizes the tables to its node capacity and identifies the history."
  @param candidates : "Every mesh this rendering drew."
 *>
 fn void ViewHistory.commit(
     &self,
     Allocator allocator,
+    AssetStore* assets,
     Scene* scene,
     MeshCandidate[] candidates,
     Mat4 view_proj,
 ) {
     if (self.models.len != scene.nodes.len) {
+        uint sample_index = self.sample_index;
+        uint slot = self.slot;
         free_view_history(allocator, self);
+        self.sample_index = sample_index;
+        self.slot = slot;
         self.models = alloc::new_array(allocator, Mat4, scene.nodes.len);
         self.owners = alloc::new_array(allocator, Entity, scene.nodes.len);
         self.seen = alloc::new_array(allocator, ulong, scene.nodes.len);
+        self.poses = alloc::new_array(allocator, PoseRecord, scene.nodes.len);
     }
     self.scene = scene.identity;
     self.serial++;
@@ -135,18 +166,21 @@ fn void ViewHistory.commit(
         self.models[index] = candidate.node.world;
         self.owners[index] = candidate.node.id;
         self.seen[index] = self.serial;
+        commit_pose(allocator, assets, &self.poses[index], candidate);
     }
     self.view_proj = view_proj;
     self.pending = true;
 }
 
 <*
- Publish the pending rendering as the previous pose.
+ Publish the pending rendering as the previous pose and advance the temporal sample.
 *>
 fn void ViewHistory.publish(&self) {
     if (!self.pending) return;
     self.valid = true;
     self.pending = false;
+    self.sample_index = (self.sample_index + 1) % post::TAA_SAMPLE_COUNT;
+    self.slot ^= 1;
 }
 
 <*
@@ -164,11 +198,50 @@ fn void ViewHistory.discard(&self) {
 *>
 fn void free_view_history(Allocator allocator, ViewHistory* history) {
     if (history.models.len) {
+        foreach (&pose : history.poses) {
+            alloc::free(allocator, pose.palette.ptr);
+            alloc::free(allocator, pose.instances.ptr);
+        }
         alloc::free(allocator, history.models.ptr);
         alloc::free(allocator, history.owners.ptr);
         alloc::free(allocator, history.seen.ptr);
+        alloc::free(allocator, history.poses.ptr);
     }
     *history = {};
+}
+
+fn void commit_pose(Allocator allocator, AssetStore* assets, PoseRecord* pose, MeshCandidate* candidate) @local {
+    Node* node = candidate.node;
+    if (candidate.skin) {
+        SkinBinding* binding = candidate.skin;
+        if (pose.palette.len != binding.joints.len) {
+            alloc::free(allocator, pose.palette.ptr);
+            pose.palette = alloc::new_array(allocator, Mat4f, binding.joints.len);
+        }
+        evaluate_palette(
+            palette:      pose.palette,
+            mesh_node:    node,
+            binding:      binding,
+            inverse_bind: assets.skeleton(binding.skeleton).data.inverse_bind,
+        );
+    }
+    pose.morphed = candidate.morph_weights.len > 0;
+    if (pose.morphed) {
+        geometry::MorphSelection selection = geometry::select_morph_targets(
+            candidate.morph_channels,
+            candidate.morph_weights,
+        );
+        pose.morph = pack_morph_selection(selection);
+    }
+    if (candidate.batch) {
+        InstancedMesh* batch = candidate.batch;
+        if (pose.instances.len != batch.transforms.len) {
+            alloc::free(allocator, pose.instances.ptr);
+            pose.instances = alloc::new_array(allocator, Mat4f, batch.transforms.len);
+        }
+        write_instance_worlds(pose.instances, node.world, batch);
+        pose.instance_count = batch.count;
+    }
 }
 
 <*
@@ -206,6 +279,10 @@ struct ViewRecord {
     Target                               velocity;
     Target                               motion_blur_out;
     Target[GBUFFER_CHANNEL_COUNT]        gbuffer;
+    Target[2]                            taa_color;
+    Target[2]                            taa_depth;
+    Target[2]                            taa_velocity;
+    Target                               taa_debug;
     Target*                              scene_input;
     bool                                 post_chain_open;
     bool                                 rendered;
@@ -258,6 +335,13 @@ fn Target*[VIEW_TARGET_COUNT] view_targets(ViewRecord* record) {
     targets[next + 6] = &record.velocity;
     targets[next + 7] = &record.motion_blur_out;
     foreach (channel, &target : record.gbuffer) targets[next + 8 + (uint)channel] = target;
+    next += 8 + GBUFFER_CHANNEL_COUNT;
+    for (uint slot = 0; slot < 2; slot++) {
+        targets[next + slot] = &record.taa_color[slot];
+        targets[next + 2 + slot] = &record.taa_depth[slot];
+        targets[next + 4 + slot] = &record.taa_velocity[slot];
+    }
+    targets[next + 6] = &record.taa_debug;
     return targets;
 }
 

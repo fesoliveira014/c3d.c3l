@@ -43,6 +43,7 @@ enum ShaderName : int {
     VELOCITY_CAMERA,
     VELOCITY,
     MOTION_BLUR,
+    TAA_RESOLVE,
     STANDARD_GBUFFER,
     PHYSICAL_GBUFFER,
     LIGHTING_RESOLVE,
@@ -133,6 +134,7 @@ const char[*] DOF_COMPOSITE_SPIRV @private = $embed("../../../shaders/spv/dof_co
 const char[*] VELOCITY_CAMERA_SPIRV @private = $embed("../../../shaders/spv/velocity_camera.spv");
 const char[*] VELOCITY_SPIRV @private = $embed("../../../shaders/spv/velocity.spv");
 const char[*] MOTION_BLUR_SPIRV @private = $embed("../../../shaders/spv/motion_blur.spv");
+const char[*] TAA_RESOLVE_SPIRV @private = $embed("../../../shaders/spv/taa_resolve.spv");
 const char[*] MESH_VELOCITY_SPIRV @private = $embed("../../../shaders/spv/mesh_velocity.spv");
 const char[*] MESH_SKINNED_VELOCITY_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_velocity.spv");
 const char[*] MESH_SKINNED_U16_VELOCITY_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_u16_velocity.spv");
@@ -149,7 +151,7 @@ const char[*] LIGHTING_RESOLVE_SPIRV @private = $embed("../../../shaders/spv/lig
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[62] SHADER_ENTRIES = {
+const ShaderEntry[63] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -200,6 +202,7 @@ const ShaderEntry[62] SHADER_ENTRIES = {
     { .variant = { .shader = VELOCITY_CAMERA }, .spirv = VELOCITY_CAMERA_SPIRV[..] },
     { .variant = { .shader = VELOCITY }, .spirv = VELOCITY_SPIRV[..] },
     { .variant = { .shader = MOTION_BLUR }, .spirv = MOTION_BLUR_SPIRV[..] },
+    { .variant = { .shader = TAA_RESOLVE }, .spirv = TAA_RESOLVE_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_VELOCITY }, .spirv = MESH_VELOCITY_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED | SHADER_FLAG_VELOCITY }, .spirv = MESH_SKINNED_VELOCITY_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED_U16 | SHADER_FLAG_VELOCITY }, .spirv = MESH_SKINNED_U16_VELOCITY_SPIRV[..] },

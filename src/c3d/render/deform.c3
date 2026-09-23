@@ -96,14 +96,28 @@ fn gpu::GpuAddress? resolve_palette(Renderer* renderer, Node* mesh_node, SkinBin
     if (try existing = renderer.deformation.palettes.get((ulong)(uptr)mesh_node)) return existing;
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan span = slot.upload.take(&renderer.device, binding.joints.len * Mat4f::size, STREAM_ALIGNMENT)!;
-    Mat4f* palette = (Mat4f*)span.bytes.ptr;
-    Mat4[] inverse_bind = renderer.assets.skeleton(binding.skeleton).data.inverse_bind;
+    evaluate_palette(
+        palette:      ((Mat4f*)span.bytes.ptr)[:binding.joints.len],
+        mesh_node:    mesh_node,
+        binding:      binding,
+        inverse_bind: renderer.assets.skeleton(binding.skeleton).data.inverse_bind,
+    );
+    renderer.deformation.palettes.set((ulong)(uptr)mesh_node, span.address);
+    return span.address;
+}
+
+<*
+ Mesh-space joint matrices of the binding under the current joint poses.
+ @param [out] palette : "One entry per joint; written only."
+ @param [&in] mesh_node : "World matrix as left by the last update."
+ @param [&in] binding : "Live joints."
+ @param inverse_bind : "The skeleton's inverse binds."
+*>
+fn void evaluate_palette(Mat4f[] palette, Node* mesh_node, SkinBinding* binding, Mat4[] inverse_bind) {
     Mat4 inverse_mesh = maths::inverse_affine(mesh_node.world);
     foreach (index, joint : binding.joints) {
         palette[index] = bitcast(inverse_mesh.mul(joint.world).mul(inverse_bind[index]), Mat4f);
     }
-    renderer.deformation.palettes.set((ulong)(uptr)mesh_node, span.address);
-    return span.address;
 }
 
 <*

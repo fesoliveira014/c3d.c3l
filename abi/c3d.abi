@@ -103,6 +103,10 @@ root FrameRoot {
     TextureIndex scene_color;
     SamplerIndex scene_sampler;
     GpuAddress clusters;
+    float      mip_bias;
+    uint       _pad0;
+    uint       _pad1;
+    uint       _pad2;
 }
 
 root DrawRoot {
@@ -124,6 +128,13 @@ root DrawRoot {
     TextureIndex sheen_lut;
     SamplerIndex sheen_sampler;
     uint       _pad3;
+}
+
+root PreviousPoseGpu {
+    GpuAddress skin;
+    GpuAddress morph;
+    GpuAddress instances;
+    GpuAddress _pad0;
 }
 
 struct InstanceGpu {
@@ -555,6 +566,11 @@ const uint DOF_PASS_COC = 0;
 const uint DOF_PASS_GATHER_NEAR = 1;
 const uint DOF_PASS_GATHER_FAR = 2;
 const uint DOF_PASS_COMPOSITE = 3;
+const uint TAA_DEBUG_NONE = 0;
+const uint TAA_DEBUG_VELOCITY = 1;
+const uint TAA_DEBUG_REJECTION = 2;
+const uint TAA_DEBUG_HISTORY_WEIGHT = 3;
+const uint TAA_DEBUG_VELOCITY_RANGE = 16;
 
 root TileRoot {
     TextureIndex input_texture;
@@ -595,8 +611,38 @@ root VelocityRoot {
     SamplerIndex sampler_index;
     uint orthographic;
     uint _pad0;
+    vec2 jitter_uv;
+    vec2 _pad1;
     mat4 inv_view_proj;
     mat4 prev_view_proj;
+}
+
+root TaaRoot {
+    TextureIndex color_texture;
+    TextureIndex depth_texture;
+    TextureIndex velocity_texture;
+    TextureIndex history_color;
+    TextureIndex history_depth;
+    TextureIndex history_velocity;
+    TextureIndex output_color;
+    TextureIndex output_depth;
+    TextureIndex output_velocity;
+    TextureIndex debug_texture;
+    SamplerIndex sampler_index;
+    uint width;
+    uint height;
+    uint history_valid;
+    uint orthographic;
+    uint debug;
+    vec2 texel;
+    vec2 jitter_uv;
+    float current_weight;
+    float clip_gamma;
+    float depth_tolerance;
+    float velocity_threshold;
+    float proj_22;
+    float proj_23;
+    vec2 _pad0;
 }
 
 root MotionBlurRoot {

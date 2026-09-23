@@ -8,35 +8,56 @@ import c3d::shader;
 import gpu;
 import std::math;
 
-const gpu::Format VELOCITY_TARGET_FORMAT @private = gpu::Format.RG16_FLOAT;
+<*
+ Record camera and geometry velocity of the view into its velocity image.
+ @param [&inout] renderer : "Open frame with the view's scene passes recorded."
+ @param [&inout] record : "Its velocity and depth change state."
+ @param items : "Opaque draw items with their roots written; moved ones are redrawn."
+ @param [&in] raster : "Rendered matrices, jittered on a TAA view."
+ @param view_proj : "Unjittered current view-projection; the previous one without history."
+ @param jitter : "NDC offset of the rendered matrices."
+ @return? c3d::SHADER_NOT_FOUND, gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::PIPELINE_CREATE_FAILED
+ @return? gpu::SLOT_TABLE_FULL, gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
+ @return? gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
+ @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+ @require record.velocity.texture.is_valid()
+*>
+fn void? record_velocity(
+    Renderer* renderer,
+    ViewRecord* record,
+    DrawItem[] items,
+    CameraMatrices* raster,
+    Mat4 view_proj,
+    Vec2 jitter,
+) {
+    acquire_velocity_pipelines(renderer, record.velocity.format)!;
+    render::begin_profile_pass(renderer, Pass.VELOCITY)!;
+    record_camera_velocity(
+        renderer:  renderer,
+        record:    record,
+        raster:    raster,
+        view_proj: view_proj,
+        jitter:    jitter,
+    )!;
+    record_geometry_velocity(renderer, record, items)!;
+    render::end_profile_pass(renderer, Pass.VELOCITY)!;
+}
 
 <*
- Record velocity and the motion-blur filter over the scene input into motion_blur_out.
- @param [&inout] renderer : "Open frame with its forward passes recorded; scene_input moves to motion_blur_out."
- @param [&inout] record : "Its velocity, tile and output images change state."
- @param items : "Opaque draw items with their roots written; moved ones are redrawn."
- @param [&in] matrices : "Current view matrices."
+ Record the motion-blur filter over the scene input into motion_blur_out.
+ @param [&inout] renderer : "Open frame with the view's velocity recorded; scene_input moves to motion_blur_out."
+ @param [&inout] record : "Its tile and output images change state."
  @return? c3d::SHADER_NOT_FOUND, gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::PIPELINE_CREATE_FAILED
  @return? gpu::SLOT_TABLE_FULL, gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
  @return? gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
  @require record.velocity.texture.is_valid(), record.tile_max.texture.is_valid()
 *>
-fn void? record_motion_blur(
-    Renderer* renderer,
-    ViewRecord* record,
-    DrawItem[] items,
-    CameraMatrices* matrices,
-) {
+fn void? record_motion_blur(Renderer* renderer, ViewRecord* record) {
     acquire_motion_blur_pipelines(renderer)!;
     Frame* slot = &renderer.frames[renderer.frame_index % render::FRAMES_IN_FLIGHT];
     uint width = record.velocity.width;
     uint height = record.velocity.height;
-
-    render::begin_profile_pass(renderer, Pass.VELOCITY)!;
-    record_camera_velocity(renderer, record, matrices)!;
-    record_geometry_velocity(renderer, record, items)!;
-    render::end_profile_pass(renderer, Pass.VELOCITY)!;
 
     open_post_chain(renderer, record)!;
     record_tiles(
@@ -82,24 +103,37 @@ fn void? acquire_motion_blur_pipelines(Renderer* renderer) @private {
         shader:     ShaderName.MOTION_BLUR,
         debug_name: "post_motion_blur",
     )!;
-    renderer.pipelines.get(&renderer.device, camera_velocity_pipeline_key())!;
 }
 
-fn void? record_camera_velocity(Renderer* renderer, ViewRecord* record, CameraMatrices* matrices) @private {
+fn void? acquire_velocity_pipelines(Renderer* renderer, gpu::Format format) @private {
+    renderer.pipelines.get(&renderer.device, camera_velocity_pipeline_key(format))!;
+}
+
+fn void? record_camera_velocity(
+    Renderer* renderer,
+    ViewRecord* record,
+    CameraMatrices* raster,
+    Mat4 view_proj,
+    Vec2 jitter,
+) @private {
     record.depth.transition(&renderer.commands, render::FRAGMENT_READ_STATE)!;
     record.velocity.transition(&renderer.commands, render::COLOR_ATTACHMENT_STATE)!;
 
     Frame* slot = &renderer.frames[renderer.frame_index % render::FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, VelocityRoot::size)!;
-    Mat4 prev_view_proj = record.history.valid ? record.history.view_proj : matrices.view_proj;
+    Mat4 prev_view_proj = record.history.valid ? record.history.view_proj : view_proj;
     *(VelocityRoot*)root.bytes.ptr = {
         .depth_texture  = record.depth.view.index,
         .sampler_index  = renderer.linear_clamp_sampler,
         .orthographic   = record.projection_terms.orthographic ? 1 : 0,
-        .inv_view_proj  = bitcast(matrices.inv_view_proj, Mat4f),
+        .jitter_uv      = jitter_uv(jitter),
+        .inv_view_proj  = bitcast(raster.inv_view_proj, Mat4f),
         .prev_view_proj = bitcast(prev_view_proj, Mat4f),
     };
-    gpu::PipelineHandle pipeline = renderer.pipelines.get(&renderer.device, camera_velocity_pipeline_key())!;
+    gpu::PipelineHandle pipeline = renderer.pipelines.get(
+        &renderer.device,
+        camera_velocity_pipeline_key(record.velocity.format),
+    )!;
     return render::record_fullscreen_pass(
         renderer:      renderer,
         target:        &record.velocity,
@@ -152,7 +186,7 @@ fn void? record_geometry_velocity(Renderer* renderer, ViewRecord* record, DrawIt
     };
 
     // Bound before the pass begins: the backend checks the bound pipeline against the pass formats at begin.
-    gpu::PipelineHandle bound = velocity_pipeline_for(renderer, first)!;
+    gpu::PipelineHandle bound = velocity_pipeline_for(renderer, first, record.velocity.format)!;
     gpu::cmd_bind_pipeline(&renderer.commands, bound)!;
     record.depth.transition(&renderer.commands, render::DEPTH_ATTACHMENT_STATE)!;
     gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
@@ -161,7 +195,7 @@ fn void? record_geometry_velocity(Renderer* renderer, ViewRecord* record, DrawIt
         if (!item.moved) continue;
 
         Material* material = &renderer.assets.material(item.material.asset).data;
-        gpu::PipelineHandle wanted = velocity_pipeline_for(renderer, item)!;
+        gpu::PipelineHandle wanted = velocity_pipeline_for(renderer, item, record.velocity.format)!;
         if (wanted.index != bound.index) {
             gpu::cmd_bind_pipeline(&renderer.commands, wanted)!;
             bound = wanted;
@@ -202,13 +236,13 @@ fn void? record_geometry_velocity(Renderer* renderer, ViewRecord* record, DrawIt
     gpu::cmd_end_render_pass(&renderer.commands)!;
 }
 
-fn gpu::PipelineHandle? velocity_pipeline_for(Renderer* renderer, DrawItem* item) @private {
+fn gpu::PipelineHandle? velocity_pipeline_for(Renderer* renderer, DrawItem* item, gpu::Format format) @private {
     Material* material = &renderer.assets.material(item.material.asset).data;
     bool wireframe = material.common.wireframe && renderer.caps.line_polygon_mode;
     PipelineKey key = {
         .vertex        = { .shader = MESH, .flags = item.vertex.flags | shader::SHADER_FLAG_VELOCITY },
         .fragment      = { .shader = VELOCITY },
-        .color_formats = { [0] = VELOCITY_TARGET_FORMAT },
+        .color_formats = { [0] = format },
         .color_count   = 1,
         .depth_format  = render::DEPTH_FORMAT,
         .samples       = gpu::SampleCount.ONE,
@@ -217,14 +251,18 @@ fn gpu::PipelineHandle? velocity_pipeline_for(Renderer* renderer, DrawItem* item
     return renderer.pipelines.get(&renderer.device, key);
 }
 
-fn PipelineKey camera_velocity_pipeline_key() @private {
+fn PipelineKey camera_velocity_pipeline_key(gpu::Format format) @private {
     return {
         .vertex        = { .shader = FULLSCREEN },
         .fragment      = { .shader = VELOCITY_CAMERA },
-        .color_formats = { [0] = VELOCITY_TARGET_FORMAT },
+        .color_formats = { [0] = format },
         .color_count   = 1,
         .depth_format  = gpu::Format.UNDEFINED,
         .samples       = gpu::SampleCount.ONE,
         .polygon       = gpu::PolygonMode.FILL,
     };
+}
+
+fn Vec2 jitter_uv(Vec2 jitter) @private {
+    return jitter * (Vec2){ 0.5f, -0.5f };
 }

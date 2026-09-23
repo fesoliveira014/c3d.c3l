@@ -28,6 +28,7 @@ layout(push_constant) uniform Push {
 void main() {
     DrawRoot draw = DrawRoot(pc.fragment_root_gpu);
     FrameRoot frame = FrameRoot(draw.frame);
+    material_mip_bias = frame.mip_bias;
     GeometryRoot geometry = GeometryRoot(draw.geometry);
     PhysicalMaterialGpu material = PhysicalMaterialGpu(draw.material);
     StandardMaterialSample material_sample = sample_standard_material(
@@ -147,10 +148,11 @@ void main() {
                 v_uv0,
                 v_uv1
             );
-            vec3 sampled = sample_texture_2d_implicit(
+            vec3 sampled = sample_texture_2d_bias(
                 material.anisotropy_map.texture_index,
                 material.anisotropy_map.sampler_index,
-                anisotropy_uv
+                anisotropy_uv,
+                material_mip_bias
             ).rgb;
             mat2 rotation = mat2(
                 anisotropy_direction.x, anisotropy_direction.y,

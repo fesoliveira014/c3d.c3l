@@ -68,6 +68,11 @@ enum TaaDebug {
     HISTORY_WEIGHT,
 }
 
+$assert TaaDebug.NONE.ordinal == shader::TAA_DEBUG_NONE;
+$assert TaaDebug.VELOCITY.ordinal == shader::TAA_DEBUG_VELOCITY;
+$assert TaaDebug.REJECTION.ordinal == shader::TAA_DEBUG_REJECTION;
+$assert TaaDebug.HISTORY_WEIGHT.ordinal == shader::TAA_DEBUG_HISTORY_WEIGHT;
+
 <*
  Display grading applied to scene-linear color before output encoding.
 *>

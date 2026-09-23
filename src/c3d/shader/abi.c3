@@ -80,6 +80,11 @@ const uint DOF_PASS_COC = 0;
 const uint DOF_PASS_GATHER_NEAR = 1;
 const uint DOF_PASS_GATHER_FAR = 2;
 const uint DOF_PASS_COMPOSITE = 3;
+const uint TAA_DEBUG_NONE = 0;
+const uint TAA_DEBUG_VELOCITY = 1;
+const uint TAA_DEBUG_REJECTION = 2;
+const uint TAA_DEBUG_HISTORY_WEIGHT = 3;
+const uint TAA_DEBUG_VELOCITY_RANGE = 16;
 
 struct CompositeRoot {
     TextureIndex source_texture;
@@ -224,8 +229,12 @@ struct FrameRoot {
     TextureIndex scene_color;
     SamplerIndex scene_sampler;
     GpuAddress   clusters;
+    float        mip_bias;
+    uint         _pad0;
+    uint         _pad1;
+    uint         _pad2;
 }
-$assert FrameRoot::size == 448;
+$assert FrameRoot::size == 464;
 $assert $reflect(FrameRoot.view).offset == 0;
 $assert $reflect(FrameRoot.proj).offset == 64;
 $assert $reflect(FrameRoot.view_proj).offset == 128;
@@ -246,6 +255,10 @@ $assert $reflect(FrameRoot.ambient).offset == 416;
 $assert $reflect(FrameRoot.scene_color).offset == 432;
 $assert $reflect(FrameRoot.scene_sampler).offset == 436;
 $assert $reflect(FrameRoot.clusters).offset == 440;
+$assert $reflect(FrameRoot.mip_bias).offset == 448;
+$assert $reflect(FrameRoot._pad0).offset == 452;
+$assert $reflect(FrameRoot._pad1).offset == 456;
+$assert $reflect(FrameRoot._pad2).offset == 460;
 
 struct DrawRoot {
     Mat4f        model;
@@ -286,6 +299,18 @@ $assert $reflect(DrawRoot.layers).offset == 240;
 $assert $reflect(DrawRoot.sheen_lut).offset == 244;
 $assert $reflect(DrawRoot.sheen_sampler).offset == 248;
 $assert $reflect(DrawRoot._pad3).offset == 252;
+
+struct PreviousPoseGpu {
+    GpuAddress skin;
+    GpuAddress morph;
+    GpuAddress instances;
+    GpuAddress _pad0;
+}
+$assert PreviousPoseGpu::size == 32;
+$assert $reflect(PreviousPoseGpu.skin).offset == 0;
+$assert $reflect(PreviousPoseGpu.morph).offset == 8;
+$assert $reflect(PreviousPoseGpu.instances).offset == 16;
+$assert $reflect(PreviousPoseGpu._pad0).offset == 24;
 
 struct InstanceGpu {
     Mat4f model;
@@ -994,16 +1019,74 @@ struct VelocityRoot {
     SamplerIndex sampler_index;
     uint         orthographic;
     uint         _pad0;
+    Vec2f        jitter_uv;
+    Vec2f        _pad1;
     Mat4f        inv_view_proj;
     Mat4f        prev_view_proj;
 }
-$assert VelocityRoot::size == 144;
+$assert VelocityRoot::size == 160;
 $assert $reflect(VelocityRoot.depth_texture).offset == 0;
 $assert $reflect(VelocityRoot.sampler_index).offset == 4;
 $assert $reflect(VelocityRoot.orthographic).offset == 8;
 $assert $reflect(VelocityRoot._pad0).offset == 12;
-$assert $reflect(VelocityRoot.inv_view_proj).offset == 16;
-$assert $reflect(VelocityRoot.prev_view_proj).offset == 80;
+$assert $reflect(VelocityRoot.jitter_uv).offset == 16;
+$assert $reflect(VelocityRoot._pad1).offset == 24;
+$assert $reflect(VelocityRoot.inv_view_proj).offset == 32;
+$assert $reflect(VelocityRoot.prev_view_proj).offset == 96;
+
+struct TaaRoot {
+    TextureIndex color_texture;
+    TextureIndex depth_texture;
+    TextureIndex velocity_texture;
+    TextureIndex history_color;
+    TextureIndex history_depth;
+    TextureIndex history_velocity;
+    TextureIndex output_color;
+    TextureIndex output_depth;
+    TextureIndex output_velocity;
+    TextureIndex debug_texture;
+    SamplerIndex sampler_index;
+    uint         width;
+    uint         height;
+    uint         history_valid;
+    uint         orthographic;
+    uint         debug;
+    Vec2f        texel;
+    Vec2f        jitter_uv;
+    float        current_weight;
+    float        clip_gamma;
+    float        depth_tolerance;
+    float        velocity_threshold;
+    float        proj_22;
+    float        proj_23;
+    Vec2f        _pad0;
+}
+$assert TaaRoot::size == 112;
+$assert $reflect(TaaRoot.color_texture).offset == 0;
+$assert $reflect(TaaRoot.depth_texture).offset == 4;
+$assert $reflect(TaaRoot.velocity_texture).offset == 8;
+$assert $reflect(TaaRoot.history_color).offset == 12;
+$assert $reflect(TaaRoot.history_depth).offset == 16;
+$assert $reflect(TaaRoot.history_velocity).offset == 20;
+$assert $reflect(TaaRoot.output_color).offset == 24;
+$assert $reflect(TaaRoot.output_depth).offset == 28;
+$assert $reflect(TaaRoot.output_velocity).offset == 32;
+$assert $reflect(TaaRoot.debug_texture).offset == 36;
+$assert $reflect(TaaRoot.sampler_index).offset == 40;
+$assert $reflect(TaaRoot.width).offset == 44;
+$assert $reflect(TaaRoot.height).offset == 48;
+$assert $reflect(TaaRoot.history_valid).offset == 52;
+$assert $reflect(TaaRoot.orthographic).offset == 56;
+$assert $reflect(TaaRoot.debug).offset == 60;
+$assert $reflect(TaaRoot.texel).offset == 64;
+$assert $reflect(TaaRoot.jitter_uv).offset == 72;
+$assert $reflect(TaaRoot.current_weight).offset == 80;
+$assert $reflect(TaaRoot.clip_gamma).offset == 84;
+$assert $reflect(TaaRoot.depth_tolerance).offset == 88;
+$assert $reflect(TaaRoot.velocity_threshold).offset == 92;
+$assert $reflect(TaaRoot.proj_22).offset == 96;
+$assert $reflect(TaaRoot.proj_23).offset == 100;
+$assert $reflect(TaaRoot._pad0).offset == 104;
 
 struct MotionBlurRoot {
     TextureIndex color_texture;

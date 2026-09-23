@@ -26,6 +26,7 @@ layout(push_constant) uniform Push {
 void main() {
     DrawRoot draw = DrawRoot(pc.fragment_root_gpu);
     FrameRoot frame = FrameRoot(draw.frame);
+    material_mip_bias = frame.mip_bias;
     StandardMaterialRoot material_root = StandardMaterialRoot(draw.material);
     StandardMaterialGpu material = material_root.material;
     StandardMaterialSample material_sample = sample_standard_material(
