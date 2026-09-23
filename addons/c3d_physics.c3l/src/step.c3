@@ -9,7 +9,7 @@ import c3d::scene;
 import b3;
 
 <*
- Advance the simulation by dt in fixed steps and write dynamic poses to their nodes.
+ Build authored bodies, advance the simulation by dt in fixed steps, and write dynamic poses.
  Event node pointers are valid until the scene flushes removals.
 *>
 fn void PhysicsWorld.update(&self, float dt) {
@@ -18,14 +18,16 @@ fn void PhysicsWorld.update(&self, float dt) {
     self.hit_count = 0;
     self.sensor_begin_count = 0;
     self.sensor_end_count = 0;
+    self.failure_count = 0;
     self.dropped_events = 0;
+    sync_bodies(self);
 
-    float fixed_dt = self.desc.fixed_dt;
+    float fixed_dt = self.desc.tuning.fixed_dt;
     self.accumulator += dt;
     uint steps;
-    while (self.accumulator >= fixed_dt && steps < self.desc.max_steps_per_frame) {
+    while (self.accumulator >= fixed_dt && steps < self.desc.tuning.max_steps_per_frame) {
         begin_step(self, fixed_dt);
-        b3::world_step(self.world, fixed_dt, (int)self.desc.sub_steps);
+        b3::world_step(self.world, fixed_dt, (int)self.desc.tuning.sub_steps);
         end_step(self);
         self.accumulator -= fixed_dt;
         steps++;
@@ -34,7 +36,7 @@ fn void PhysicsWorld.update(&self, float dt) {
     self.alpha = self.accumulator / fixed_dt;
     self.steps_last_update = steps;
 
-    float alpha = self.desc.interpolate ? self.alpha : 1;
+    float alpha = self.desc.tuning.interpolate ? self.alpha : 1;
     self.scene.@each(RigidBody; entity, body) {
         if (body.kind == DYNAMIC) {
             write_pose(self.scene, self.scene.node(entity), interpolate_pose(body.previous, body.current, alpha));
@@ -54,6 +56,7 @@ fn maths::Transform interpolate_pose(maths::Transform previous, maths::Transform
 }
 
 fn void begin_step(PhysicsWorld* world, float fixed_dt) @local {
+    apply_step_forces(world);
     world.scene.@each(RigidBody; entity, body) {
         body.previous = body.current;
         if (body.kind == KINEMATIC) {
@@ -143,6 +146,8 @@ fn void push_hit(PhysicsWorld* world, b3::ContactHitEvent event) @local {
         .point          = event.point,
         .normal         = event.normal,
         .approach_speed = event.approach_speed,
+        .surface_a      = (SurfaceMaterialId)event.user_material_id_a,
+        .surface_b      = (SurfaceMaterialId)event.user_material_id_b,
     };
 }
 
@@ -162,6 +167,94 @@ fn void push_sensor(
         return;
     }
     storage[(*count)++] = { .sensor = sensor_node, .visitor = visitor_node };
+}
+
+fn void sync_bodies(PhysicsWorld* world) @local {
+    Scene* scene = world.scene;
+    usz orphan_count;
+    scene.@each(RigidBody; entity, body) {
+        if (!scene.world.has(entity, PhysicsBody)) world.orphan_scratch[orphan_count++] = entity;
+    };
+    foreach (entity : world.orphan_scratch[:orphan_count]) scene.remove_component(scene.node(entity), RigidBody);
+
+    scene.@each(PhysicsBody; entity, physics_body) {
+        Node* node = scene.node(entity);
+        switch (physics_body.status) {
+            case LIVE:
+                break;
+            case PENDING:
+                if (scene.has(node, RigidBody)) scene.remove_component(node, RigidBody);
+                try_build(world, node, physics_body);
+            case FAILED:
+                if (physics_body.failure != SOURCE_UNAVAILABLE) break;
+                if (body_revision_sum(world, physics_body) == physics_body.failed_revisions) break;
+                try_build(world, node, physics_body);
+        }
+    };
+}
+
+fn void try_build(PhysicsWorld* world, Node* node, PhysicsBody* physics_body) @local {
+    if (catch excuse = build_body(world, node, physics_body)) {
+        physics_body.status = FAILED;
+        physics_body.failure = excuse;
+        physics_body.failed_revisions = excuse == SOURCE_UNAVAILABLE ? body_revision_sum(world, physics_body) : 0;
+        if (world.failure_count == world.failure_storage.len) {
+            world.dropped_events++;
+            return;
+        }
+        world.failure_storage[world.failure_count++] = { .node = node, .reason = excuse };
+    }
+}
+
+fn void? build_body(PhysicsWorld* world, Node* node, PhysicsBody* physics_body) @private {
+    BodyDesc desc = physics_body.body;
+    foreach (&collider : physics_body.colliders) check_collider(world, collider, desc.kind)!;
+
+    maths::Transform pose = maths::transform_from_mat4(node.world);
+    pose.scale = { 1, 1, 1 };
+    b3::BodyDef def = b3::default_body_def();
+    def.type = body_type(desc.kind);
+    def.position = (b3::Pos)pose.position;
+    def.rotation = pose.rotation;
+    def.linear_velocity = desc.linear_velocity;
+    def.angular_velocity = desc.angular_velocity;
+    def.linear_damping = desc.linear_damping;
+    def.angular_damping = desc.angular_damping;
+    def.gravity_scale = desc.gravity_scale;
+    def.name = (ZString)desc.name.ptr;
+    def.enable_sleep = desc.allow_sleep;
+    def.is_bullet = desc.bullet;
+    def.motion_locks = motion_locks(desc.locks);
+    def.user_data = pack_entity(node.id);
+    b3::BodyId body_id = b3::create_body(world.world, &def)!;
+
+    Collider[] records = alloc::new_array(world.snapshots.allocator, Collider, (sz)physics_body.colliders.len);
+    defer catch destroy_rigid_body(world.snapshots, body_id, records);
+    @pool() {
+        foreach (index, &collider : physics_body.colliders) records[index] = create_shape(world, body_id, collider)!;
+    };
+    if (desc.kind == DYNAMIC) b3::body_apply_mass_from_shapes(body_id);
+
+    world.scene.add(node, (RigidBody){
+        .body      = body_id,
+        .kind      = desc.kind,
+        .previous  = pose,
+        .current   = pose,
+        .colliders = records,
+    });
+    physics_body.status = LIVE;
+}
+
+// The body goes first: its shapes borrow the snapshot data the release may free.
+fn void destroy_rigid_body(SnapshotTable* table, b3::BodyId body, Collider[] colliders) @private {
+    b3::destroy_body(body);
+    foreach (&collider : colliders) release_snapshot(table, collider.snapshot);
+    alloc::free(table.allocator, colliders.ptr);
+}
+
+fn void remove_rigid_body(Entity entity, void* component, void* user) @private {
+    RigidBody* body = component;
+    destroy_rigid_body(user, body.body, body.colliders);
 }
 
 fn Node*? node_of(PhysicsWorld* world, b3::ShapeId shape) @private {

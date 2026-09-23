@@ -69,6 +69,7 @@ fn void draw_colliders(PhysicsWorld* world, debug::DebugDraw* sink) @local {
                         color: color,
                     );
                 case HEIGHT_FIELD:
+                case COMPOUND:
                     draw_wire(
                         sink:  sink,
                         world: body_world,

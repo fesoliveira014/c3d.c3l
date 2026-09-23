@@ -470,6 +470,7 @@ fn int main() {
 
     Scene scene = scene::create_scene(mem, { .max_nodes = SCENE_NODE_CAPACITY });
     defer scene::destroy_scene(&scene);
+    physics::register_physics(&scene)!!;
 
     PhysicsWorld physics = physics::create_physics_world(
         allocator: mem,
