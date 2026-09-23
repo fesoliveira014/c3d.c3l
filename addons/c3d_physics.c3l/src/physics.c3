@@ -9,7 +9,22 @@ import c3d::maths;
 import c3d::scene;
 import b3;
 
+<*
+ Application-defined surface identity passed to events, queries and mixing.
+*>
+typedef SurfaceMaterialId = ulong;
+
 alias Quat @private = Quaternionf;
+
+<*
+ Friction of two touching surfaces; pure, called inside the step.
+*>
+alias FrictionMixFn = fn float(float friction_a, SurfaceMaterialId surface_a, float friction_b, SurfaceMaterialId surface_b);
+
+<*
+ Restitution of two touching surfaces; pure, called inside the step.
+*>
+alias RestitutionMixFn = fn float(float restitution_a, SurfaceMaterialId surface_a, float restitution_b, SurfaceMaterialId surface_b);
 
 <* Earth gravity, Y up, meters per second squared. *>
 const Vec3  DEFAULT_GRAVITY = { 0, -9.81f, 0 };
@@ -22,18 +37,24 @@ const uint  DEFAULT_MAX_STEPS = 4; // a longer backlog is dropped, not simulated
 <* Approach speed above which hits are reported, meters per second. *>
 const float DEFAULT_HIT_SPEED_THRESHOLD = 1;
 <* Entries per event list. *>
-const uint  DEFAULT_EVENT_CAPACITY = 4096; // five lists of 4096 entries, about 800 KiB per world; the contact burst lever
-<* Collision snapshots per collider kind. *>
-const uint  DEFAULT_SNAPSHOT_CAPACITY = 256; // one slot per distinct geometry revision; the level variety lever
+const uint  DEFAULT_EVENT_CAPACITY = 4096; // six lists, 144 bytes per index across them: 576 KiB per world; the contact burst lever
+<* Collision snapshot slots per world. *>
+const uint  DEFAULT_SNAPSHOT_CAPACITY = 256; // one slot per distinct cooked key; the level variety lever
 <* Water density, kilograms per cubic meter. *>
 const float DEFAULT_DENSITY = 1000;
 <* Dry friction coefficient. *>
 const float DEFAULT_FRICTION = 0.6f;
+<* Explosion impulse multiplier of a shape. *>
+const float DEFAULT_EXPLOSION_SCALE = 1;
+<* Height-field cell index that removes the cell. *>
+const char  HEIGHT_FIELD_HOLE = char::max; // mirrored as B3_HEIGHT_FIELD_HOLE in box3d's types.h
 
 <*
  Every category, colliding with everything.
 *>
 const CollisionFilter FILTER_ALL = { .category = 1, .mask = ulong::max };
+
+$assert SurfaceMaterialId::size == ulong::size;
 
 <*
  How a body moves: never, by target pose, or by the solver.
@@ -54,6 +75,18 @@ enum ColliderKind {
     HULL,
     MESH,
     HEIGHT_FIELD,
+    COMPOUND,
+}
+
+<*
+ Shape of one compound part.
+*>
+enum CompoundChildKind {
+    SPHERE,
+    CAPSULE,
+    BOX,
+    HULL,
+    MESH,
 }
 
 <*
@@ -66,7 +99,7 @@ struct CollisionFilter {
 }
 
 <*
- Row-major heights, x fastest; copied when snapshot.
+ Row-major heights, x fastest; copied when cooked.
 *>
 struct HeightField {
     float[] heights;
@@ -75,58 +108,127 @@ struct HeightField {
 }
 
 <*
+ Contact properties of a surface.
+*>
+struct SurfaceMaterialDesc {
+    float             friction;
+    float             restitution;
+    float             rolling_resistance; // spheres and capsules only
+    Vec3              tangent_velocity;   // shape-local; conveyor belts
+    SurfaceMaterialId id;
+}
+
+<*
+ Axes the solver may not move or turn the body along.
+*>
+struct MotionLocks {
+    bool linear_x;
+    bool linear_y;
+    bool linear_z;
+    bool angular_x;
+    bool angular_y;
+    bool angular_z;
+}
+
+<*
+ One part of a compound collider; which fields apply depends on kind.
+*>
+struct CompoundChild {
+    CompoundChildKind     kind;
+    maths::Transform      local;
+    float                 radius;
+    float                 half_height;
+    Vec3                  half_extents;
+    GeometryId            geometry;
+    SurfaceMaterialDesc   material;
+    SurfaceMaterialDesc[] face_materials;   // MESH: highest material index plus one, at most b3::MAX_COMPOUND_MESH_MATERIALS
+    char[]                material_indices; // MESH: one per triangle
+}
+
+<*
  One shape of a body; which fields apply depends on kind.
 *>
 struct ColliderDesc {
-    ColliderKind     kind;
-    maths::Transform local;
-    float            radius;
-    float            half_height;
-    Vec3             half_extents;
-    GeometryId       geometry;
-    HeightField      height_field;
-    float            density;
-    float            friction;
-    float            restitution;
-    bool             sensor;
-    bool             contact_events;
-    bool             hit_events;
-    CollisionFilter  filter;
+    ColliderKind          kind;
+    maths::Transform      local;
+    float                 radius;
+    float                 half_height;
+    Vec3                  half_extents;
+    GeometryId            geometry;
+    HeightField           height_field;
+    CompoundChild[]       children;
+    float                 density;
+    float                 explosion_scale;
+    SurfaceMaterialDesc   material;
+    SurfaceMaterialDesc[] face_materials;
+    char[]                material_indices; // MESH: one per triangle; HEIGHT_FIELD: one per cell
+    bool                  sensor;
+    bool                  contact_events;
+    bool                  hit_events;
+    CollisionFilter       filter;
 }
 
 <*
  Motion properties of a body at creation.
 *>
 struct BodyDesc {
-    BodyKind kind;
-    Vec3     linear_velocity;
-    Vec3     angular_velocity;
-    float    linear_damping;
-    float    angular_damping;
-    float    gravity_scale;
-    bool     allow_sleep;
-    bool     bullet;
-    bool     lock_rotation;
+    BodyKind    kind;
+    String      name;
+    Vec3        linear_velocity;
+    Vec3        angular_velocity;
+    float       linear_damping;
+    float       angular_damping;
+    float       gravity_scale;
+    bool        allow_sleep;
+    bool        bullet;
+    MotionLocks locks;
 }
 
 <*
- World configuration: stepping policy, capacities and debug data.
- cache_wireframes builds collider wireframes with each collision snapshot; off, debug_draw skips hull, mesh and height-field colliders.
+ World settings that may change while bodies live.
+*>
+struct PhysicsTuning {
+    Vec3             gravity;
+    float            fixed_dt;
+    uint             sub_steps;
+    uint             max_steps_per_frame;
+    bool             interpolate;
+    float            hit_speed_threshold;
+    float            contact_hertz;
+    float            contact_damping_ratio;
+    float            contact_speed;
+    float            maximum_linear_speed;
+    float            restitution_threshold;
+    bool             continuous;
+    bool             sleep;
+    FrictionMixFn    friction_mix;
+    RestitutionMixFn restitution_mix;
+}
+
+<*
+ World configuration: runtime tuning plus creation-only capacities.
+ cache_wireframes builds collider wireframes with each collision snapshot; off, debug_draw skips cooked colliders.
 *>
 struct PhysicsDesc {
-    Vec3  gravity;
-    float fixed_dt;
-    uint  sub_steps;
-    uint  max_steps_per_frame;
-    float hit_speed_threshold;
-    bool  interpolate;
-    bool  cache_wireframes;
-    uint  event_capacity;
-    uint  snapshot_capacity;
+    PhysicsTuning tuning;
+    bool          cache_wireframes;
+    uint          event_capacity;
+    uint          snapshot_capacity;
 }
 
 <*
- One shape of a rigid body; wire borrows the world's snapshot snapshot.
+ Radial impulse from a point.
+*>
+struct ExplosionDesc {
+    Vec3  position;
+    float radius;
+    float falloff;
+    float impulse_per_area;
+    ulong mask;
+}
+
+<*
+ One shape of a rigid body; wire borrows its snapshot's.
 *>
 struct Collider {
     b3::ShapeId      shape;
@@ -135,6 +237,7 @@ struct Collider {
     float            radius;
     float            half_height;
     Vec3             half_extents;
+    SnapshotHandle   snapshot; // generation 0 for primitives
     Vec3[]           wire;
 }
 
@@ -150,40 +253,6 @@ struct RigidBody {
 }
 
 <*
- Geometry revision a collision snapshot was snapshot from.
-*>
-struct PhysicsSourceKey {
-    GeometryId geometry;
-    uint       revision;
-}
-
-<*
- Convex hull snapshot from a geometry revision, with its wireframe.
-*>
-struct PhysicsHull {
-    PhysicsSourceKey key;
-    b3::HullData*    hull;
-    Vec3[]           wire;
-}
-
-<*
- Triangle mesh snapshot from a geometry revision, with its wireframe.
-*>
-struct PhysicsMesh {
-    PhysicsSourceKey key;
-    b3::MeshData*    mesh;
-    Vec3[]           wire;
-}
-
-<*
- Height field snapshot from application heights, with its wireframe.
-*>
-struct PhysicsHeightField {
-    b3::HeightFieldData* field;
-    Vec3[]               wire;
-}
-
-<*
  Two shapes began or stopped touching; nodes are frame borrows.
 *>
 struct ContactEvent {
@@ -195,11 +264,13 @@ struct ContactEvent {
  Two shapes collided above the hit speed threshold; nodes are frame borrows.
 *>
 struct HitEvent {
-    Node* a;
-    Node* b;
-    Vec3  point;
-    Vec3  normal;
-    float approach_speed;
+    Node*             a;
+    Node*             b;
+    Vec3              point;
+    Vec3              normal;
+    float             approach_speed;
+    SurfaceMaterialId surface_a;
+    SurfaceMaterialId surface_b;
 }
 
 <*
@@ -211,13 +282,22 @@ struct SensorEvent {
 }
 
 <*
+ A body the world could not build this update; node is a frame borrow.
+*>
+struct BuildFailure {
+    Node* node;
+    fault reason;
+}
+
+<*
  Closest body along a ray.
 *>
 struct RayHit {
-    Node* node;
-    Vec3  point;
-    Vec3  normal;
-    float fraction;
+    Node*             node;
+    Vec3              point;
+    Vec3              normal;
+    float             fraction;
+    SurfaceMaterialId surface;
 }
 
 <*
@@ -230,42 +310,40 @@ struct PhysicsDebugOptions {
 }
 
 <*
- Owner of one box3d world, its snapshot collision data and the frame event lists.
+ Owner of one box3d world, its collision snapshots and the frame event lists.
 *>
 struct PhysicsWorld {
-    Allocator            allocator;
-    Allocator*           hook_allocator;
-    b3::WorldId          world;
-    AssetStore*          assets;
-    Scene*               scene;
-    PhysicsDesc          desc;
-    float                accumulator;
-    float                alpha;
-    uint                 steps_last_update;
-    uint                 dropped_events;
-    PhysicsHull[]        hulls;
-    uint                 hull_count;
-    PhysicsMesh[]        meshes;
-    uint                 mesh_count;
-    PhysicsHeightField[] height_fields;
-    uint                 height_field_count;
-    ContactEvent[]       contact_begin_storage;
-    uint                 contact_begin_count;
-    ContactEvent[]       contact_end_storage;
-    uint                 contact_end_count;
-    HitEvent[]           hit_storage;
-    uint                 hit_count;
-    SensorEvent[]        sensor_begin_storage;
-    uint                 sensor_begin_count;
-    SensorEvent[]        sensor_end_storage;
-    uint                 sensor_end_count;
+    Allocator      allocator;
+    SnapshotTable* snapshots;      // heap, so the RigidBody removal hook keeps a stable address
+    b3::WorldId    world;
+    AssetStore*    assets;
+    Scene*         scene;
+    PhysicsDesc    desc;
+    float          accumulator;
+    float          alpha;
+    uint           steps_last_update;
+    uint           dropped_events;
+    Entity[]       orphan_scratch; // scene node capacity
+    ContactEvent[] contact_begin_storage;
+    uint           contact_begin_count;
+    ContactEvent[] contact_end_storage;
+    uint           contact_end_count;
+    HitEvent[]     hit_storage;
+    uint           hit_count;
+    SensorEvent[]  sensor_begin_storage;
+    uint           sensor_begin_count;
+    SensorEvent[]  sensor_end_storage;
+    uint           sensor_end_count;
+    BuildFailure[] failure_storage;
+    uint           failure_count;
 }
 
 <*
- Create the body and its shapes from the node's world pose and attach a RigidBody.
+ Author a body on the node and build it now.
  @param [&in] node : "Its world matrix is the initial pose; update_world first."
- @param colliders : "At least one; a visitor with contact_events is visible to sensors."
- @return? BODY_EXISTS, STATIC_ONLY, SOURCE_UNAVAILABLE, c3d::INVALID_ID, c3d::UNSUPPORTED, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, b3::INVALID_DEFINITION, b3::INVALID_HANDLE, b3::DEGENERATE_GEOMETRY
+ @param colliders : "Copied; a visitor with contact_events is visible to sensors."
+ @return? BODY_EXISTS, STATIC_ONLY, SOURCE_UNAVAILABLE, c3d::INVALID_ID, c3d::UNSUPPORTED, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, b3::INVALID_DEFINITION, b3::INVALID_HANDLE, b3::DEGENERATE_GEOMETRY, b3::CHILD_LIMIT_REACHED
+ @require self.scene.world.is_registered(PhysicsBody), colliders.len > 0
 *>
 fn void? PhysicsWorld.add_body(
     &self,
@@ -273,52 +351,19 @@ fn void? PhysicsWorld.add_body(
     BodyDesc body,
     ColliderDesc[] colliders,
 ) {
-    if (self.scene.has(node, RigidBody)) return BODY_EXISTS~;
-    foreach (&collider : colliders) check_collider(self, collider, body.kind)!;
-
-    maths::Transform pose = maths::transform_from_mat4(node.world);
-    pose.scale = { 1, 1, 1 };
-    b3::BodyDef def = b3::default_body_def();
-    def.type = body_type(body.kind);
-    def.position = (b3::Pos)pose.position;
-    def.rotation = pose.rotation;
-    def.linear_velocity = body.linear_velocity;
-    def.angular_velocity = body.angular_velocity;
-    def.linear_damping = body.linear_damping;
-    def.angular_damping = body.angular_damping;
-    def.gravity_scale = body.gravity_scale;
-    def.enable_sleep = body.allow_sleep;
-    def.is_bullet = body.bullet;
-    def.motion_locks = {
-        .angular_x = body.lock_rotation,
-        .angular_y = body.lock_rotation,
-        .angular_z = body.lock_rotation,
-    };
-    def.user_data = pack_entity(node.id);
-    b3::BodyId body_id = b3::create_body(self.world, &def)!;
-    defer catch b3::destroy_body(body_id);
-
-    Collider[] records = alloc::new_array(self.allocator, Collider, (sz)colliders.len);
-    defer catch alloc::free(self.allocator, records.ptr);
-    foreach (index, &collider : colliders) records[index] = create_shape(self, body_id, collider)!;
-    if (body.kind == DYNAMIC) b3::body_apply_mass_from_shapes(body_id);
-
-    self.scene.add(node, (RigidBody){
-        .body      = body_id,
-        .kind      = body.kind,
-        .previous  = pose,
-        .current   = pose,
-        .colliders = records,
-    });
+    self.scene.add_physics_body(node, body, colliders)!;
+    defer catch self.scene.remove_component(node, PhysicsBody);
+    build_body(self, node, self.scene.get(node, PhysicsBody))!;
 }
 
 <*
- Remove the body through the component's removal hook.
- Invalidates RigidBody pointers.
- @require self.scene.has(node, RigidBody)
+ Remove the node's authored body and its built body now.
+ Invalidates PhysicsBody and RigidBody pointers.
+ @require self.scene.has(node, PhysicsBody)
 *>
 fn void PhysicsWorld.remove_body(&self, Node* node) {
-    self.scene.remove_component(node, RigidBody);
+    if (self.scene.has(node, RigidBody)) self.scene.remove_component(node, RigidBody);
+    self.scene.remove_component(node, PhysicsBody);
 }
 
 <*
@@ -331,25 +376,21 @@ fn b3::BodyId? PhysicsWorld.body(&self, Node* node) {
 }
 
 <*
- One static MESH body per Mesh node under root that has no body yet.
- @param [&in] root : "Subtree walked including root; world matrices current."
- @return "How many bodies were added."
- @return? SOURCE_UNAVAILABLE, c3d::INVALID_ID, c3d::CAPACITY_EXCEEDED, b3::INVALID_DEFINITION, b3::INVALID_HANDLE, b3::DEGENERATE_GEOMETRY
+ Apply new world settings to the live world.
+ @require tuning.fixed_dt > 0, tuning.sub_steps > 0
 *>
-fn uint? PhysicsWorld.add_static_meshes(&self, Node* root, CollisionFilter filter = FILTER_ALL) {
-    uint added;
-    if (self.scene.has(root, scene::Mesh) && !self.scene.has(root, RigidBody)) {
-        ColliderDesc collider = default_collider_desc(MESH);
-        collider.geometry = self.scene.get(root, scene::Mesh).geometry;
-        collider.local.scale = maths::transform_from_mat4(root.world).scale;
-        collider.filter = filter;
-        self.add_body(root, default_body_desc(STATIC), (&collider)[:1])!;
-        added++;
-    }
-    for (Node* child = root.first_child; child; child = child.next_sibling) {
-        added += self.add_static_meshes(child, filter)!;
-    }
-    return added;
+fn void PhysicsWorld.set_tuning(&self, PhysicsTuning tuning) {
+    b3::WorldId world = self.world;
+    world.set_gravity(tuning.gravity);
+    world.set_hit_event_threshold(tuning.hit_speed_threshold);
+    world.set_contact_tuning(tuning.contact_hertz, tuning.contact_damping_ratio, tuning.contact_speed);
+    world.set_maximum_linear_speed(tuning.maximum_linear_speed);
+    world.set_restitution_threshold(tuning.restitution_threshold);
+    world.enable_continuous(tuning.continuous);
+    world.enable_sleeping(tuning.sleep);
+    world.set_friction_callback((b3::FrictionFn)tuning.friction_mix);
+    world.set_restitution_callback((b3::RestitutionFn)tuning.restitution_mix);
+    self.desc.tuning = tuning;
 }
 
 <*
@@ -366,24 +407,6 @@ fn void PhysicsWorld.set_velocity(
     body.set_linear_velocity(linear);
     body.set_angular_velocity(angular);
     body.set_awake(true);
-}
-
-<*
- Apply a force at a world point and wake the body.
- @require self.scene.has(node, RigidBody)
-*>
-fn void PhysicsWorld.apply_force(
-    &self,
-    Node* node,
-    Vec3 force,
-    Vec3 world_point,
-) {
-    b3::body_apply_force(
-        body:  self.scene.get(node, RigidBody).body,
-        force: force,
-        point: (b3::Pos)world_point,
-        wake:  true,
-    );
 }
 
 <*
@@ -447,19 +470,34 @@ fn SensorEvent[] PhysicsWorld.sensors_begin(&self) => self.sensor_begin_storage[
 fn SensorEvent[] PhysicsWorld.sensors_end(&self) => self.sensor_end_storage[:self.sensor_end_count];
 
 <*
- Default world configuration.
+ Bodies the last update could not build.
+*>
+fn BuildFailure[] PhysicsWorld.build_failures(&self) => self.failure_storage[:self.failure_count];
+
+<*
+ Default world configuration, with box3d's own contact tuning.
 *>
 fn PhysicsDesc default_physics_desc() {
+    b3::WorldDef world = b3::default_world_def();
     return {
-        .gravity             = DEFAULT_GRAVITY,
-        .fixed_dt            = DEFAULT_FIXED_DT,
-        .sub_steps           = DEFAULT_SUB_STEPS,
-        .max_steps_per_frame = DEFAULT_MAX_STEPS,
-        .hit_speed_threshold = DEFAULT_HIT_SPEED_THRESHOLD,
-        .interpolate         = true,
-        .cache_wireframes    = true,
-        .event_capacity      = DEFAULT_EVENT_CAPACITY,
-        .snapshot_capacity   = DEFAULT_SNAPSHOT_CAPACITY,
+        .tuning = {
+            .gravity               = DEFAULT_GRAVITY,
+            .fixed_dt              = DEFAULT_FIXED_DT,
+            .sub_steps             = DEFAULT_SUB_STEPS,
+            .max_steps_per_frame   = DEFAULT_MAX_STEPS,
+            .interpolate           = true,
+            .hit_speed_threshold   = DEFAULT_HIT_SPEED_THRESHOLD,
+            .contact_hertz         = world.contact_hertz,
+            .contact_damping_ratio = world.contact_damping_ratio,
+            .contact_speed         = world.contact_speed,
+            .maximum_linear_speed  = world.maximum_linear_speed,
+            .restitution_threshold = world.restitution_threshold,
+            .continuous            = world.enable_continuous,
+            .sleep                 = world.enable_sleep,
+        },
+        .cache_wireframes  = true,
+        .event_capacity    = DEFAULT_EVENT_CAPACITY,
+        .snapshot_capacity = DEFAULT_SNAPSHOT_CAPACITY,
     };
 }
 
@@ -471,16 +509,42 @@ fn BodyDesc default_body_desc(BodyKind kind = DYNAMIC) {
 }
 
 <*
+ Default surface: dry friction, no bounce.
+*>
+fn SurfaceMaterialDesc default_surface_material() {
+    return { .friction = DEFAULT_FRICTION };
+}
+
+<*
  Default collider of the kind: identity placement, water density, dry friction.
 *>
 fn ColliderDesc default_collider_desc(ColliderKind kind) {
     return {
+        .kind            = kind,
+        .local           = maths::TRANSFORM_IDENTITY,
+        .density         = DEFAULT_DENSITY,
+        .explosion_scale = DEFAULT_EXPLOSION_SCALE,
+        .material        = default_surface_material(),
+        .filter          = FILTER_ALL,
+    };
+}
+
+<*
+ Default compound part of the kind: identity placement, dry friction.
+*>
+fn CompoundChild default_compound_child(CompoundChildKind kind) {
+    return {
         .kind     = kind,
         .local    = maths::TRANSFORM_IDENTITY,
-        .density  = DEFAULT_DENSITY,
-        .friction = DEFAULT_FRICTION,
-        .filter   = FILTER_ALL,
+        .material = default_surface_material(),
     };
+}
+
+<*
+ Explosion affecting every category; position, reach and strength left to fill.
+*>
+fn ExplosionDesc default_explosion_desc() {
+    return { .mask = ulong::max };
 }
 
 <*
@@ -488,6 +552,7 @@ fn ColliderDesc default_collider_desc(ColliderKind kind) {
  @param [&in] assets : "Borrowed; outlives the world."
  @param [&inout] scene : "Borrowed; outlives the world; gains the RigidBody store and hook."
  @return? c3d::CAPACITY_EXCEEDED, b3::WORLD_LIMIT_REACHED, b3::INVALID_DEFINITION
+ @require scene.world.is_registered(PhysicsBody)
 *>
 fn PhysicsWorld? create_physics_world(
     Allocator allocator,
@@ -495,81 +560,93 @@ fn PhysicsWorld? create_physics_world(
     Scene* scene,
     PhysicsDesc desc,
 ) {
+    PhysicsTuning tuning = desc.tuning;
     b3::WorldDef def = b3::default_world_def();
-    def.gravity = desc.gravity;
-    def.hit_event_threshold = desc.hit_speed_threshold;
+    def.gravity = tuning.gravity;
+    def.hit_event_threshold = tuning.hit_speed_threshold;
+    def.contact_hertz = tuning.contact_hertz;
+    def.contact_damping_ratio = tuning.contact_damping_ratio;
+    def.contact_speed = tuning.contact_speed;
+    def.maximum_linear_speed = tuning.maximum_linear_speed;
+    def.restitution_threshold = tuning.restitution_threshold;
+    def.enable_continuous = tuning.continuous;
+    def.enable_sleep = tuning.sleep;
+    def.friction_callback = (b3::FrictionFn)tuning.friction_mix;
+    def.restitution_callback = (b3::RestitutionFn)tuning.restitution_mix;
     b3::WorldId world = b3::create_world(&def)!;
     defer catch b3::destroy_world(world);
     scene.register(RigidBody)!;
 
-    Allocator* hook_allocator = alloc::new(allocator, Allocator);
-    *hook_allocator = allocator;
-    scene.set_remove_hook(RigidBody, &destroy_body, hook_allocator);
+    SnapshotTable* snapshots = create_snapshot_table(allocator, desc.snapshot_capacity);
+    scene.set_remove_hook(RigidBody, &remove_rigid_body, snapshots);
 
     return {
         .allocator             = allocator,
-        .hook_allocator        = hook_allocator,
+        .snapshots             = snapshots,
         .world                 = world,
         .assets                = assets,
         .scene                 = scene,
         .desc                  = desc,
-        .hulls                 = alloc::new_array(allocator, PhysicsHull, desc.snapshot_capacity),
-        .meshes                = alloc::new_array(allocator, PhysicsMesh, desc.snapshot_capacity),
-        .height_fields         = alloc::new_array(allocator, PhysicsHeightField, desc.snapshot_capacity),
+        .orphan_scratch        = alloc::new_array(allocator, Entity, (sz)scene.nodes.len),
         .contact_begin_storage = alloc::new_array(allocator, ContactEvent, desc.event_capacity),
         .contact_end_storage   = alloc::new_array(allocator, ContactEvent, desc.event_capacity),
         .hit_storage           = alloc::new_array(allocator, HitEvent, desc.event_capacity),
         .sensor_begin_storage  = alloc::new_array(allocator, SensorEvent, desc.event_capacity),
         .sensor_end_storage    = alloc::new_array(allocator, SensorEvent, desc.event_capacity),
+        .failure_storage       = alloc::new_array(allocator, BuildFailure, desc.event_capacity),
     };
 }
 
 <*
- Destroy the world, its bodies, snapshot data and event lists; nodes remain.
+ Destroy the world, bodies and snapshots; nodes and PhysicsBody components remain.
  @param [&inout] world : "Destroyed before its scene and asset store."
 *>
 fn void destroy_physics_world(PhysicsWorld* world) {
-    Entity[] entities = alloc::new_array(world.allocator, Entity, (sz)world.scene.count(RigidBody));
-    usz cursor;
-    world.scene.@each(RigidBody; entity, body) {
-        entities[cursor++] = entity;
+    Scene* scene = world.scene;
+    usz count;
+    scene.@each(RigidBody; entity, body) {
+        world.orphan_scratch[count++] = entity;
     };
-    foreach (entity : entities) world.scene.remove_component(world.scene.node(entity), RigidBody);
-    alloc::free(world.allocator, entities.ptr);
-    world.scene.set_remove_hook(RigidBody, null, null);
+    foreach (entity : world.orphan_scratch[:count]) scene.remove_component(scene.node(entity), RigidBody);
+    scene.@each(PhysicsBody; entity, physics_body) {
+        physics_body.status = PENDING;
+    };
+    scene.set_remove_hook(RigidBody, null, null);
     b3::destroy_world(world.world);
+    destroy_snapshot_table(world.snapshots);
 
-    foreach (&snapshot : world.hulls[:world.hull_count]) {
-        b3::destroy_hull(snapshot.hull);
-        alloc::free(world.allocator, snapshot.wire.ptr);
-    }
-    foreach (&snapshot : world.meshes[:world.mesh_count]) {
-        b3::destroy_mesh(snapshot.mesh);
-        alloc::free(world.allocator, snapshot.wire.ptr);
-    }
-    foreach (&snapshot : world.height_fields[:world.height_field_count]) {
-        b3::destroy_height_field(snapshot.field);
-        alloc::free(world.allocator, snapshot.wire.ptr);
-    }
-    alloc::free(world.allocator, world.hulls.ptr);
-    alloc::free(world.allocator, world.meshes.ptr);
-    alloc::free(world.allocator, world.height_fields.ptr);
+    alloc::free(world.allocator, world.orphan_scratch.ptr);
     alloc::free(world.allocator, world.contact_begin_storage.ptr);
     alloc::free(world.allocator, world.contact_end_storage.ptr);
     alloc::free(world.allocator, world.hit_storage.ptr);
     alloc::free(world.allocator, world.sensor_begin_storage.ptr);
     alloc::free(world.allocator, world.sensor_end_storage.ptr);
-    alloc::free(world.allocator, world.hook_allocator);
+    alloc::free(world.allocator, world.failure_storage.ptr);
     *world = {};
 }
 
-fn void destroy_body(Entity entity, void* component, void* user) @local {
-    RigidBody* body = component;
-    b3::destroy_body(body.body);
-    alloc::free(*(Allocator*)user, body.colliders.ptr);
+fn b3::SurfaceMaterial surface_material(SurfaceMaterialDesc desc) @private {
+    b3::SurfaceMaterial material = b3::default_surface_material();
+    material.friction = desc.friction;
+    material.restitution = desc.restitution;
+    material.rolling_resistance = desc.rolling_resistance;
+    material.tangent_velocity = desc.tangent_velocity;
+    material.user_material_id = (ulong)desc.id;
+    return material;
 }
 
-fn b3::BodyType body_type(BodyKind kind) @local {
+fn b3::MotionLocks motion_locks(MotionLocks locks) @private {
+    return {
+        .linear_x  = locks.linear_x,
+        .linear_y  = locks.linear_y,
+        .linear_z  = locks.linear_z,
+        .angular_x = locks.angular_x,
+        .angular_y = locks.angular_y,
+        .angular_z = locks.angular_z,
+    };
+}
+
+fn b3::BodyType body_type(BodyKind kind) @private {
     switch (kind) {
         case STATIC:    return b3::BodyType.STATIC;
         case KINEMATIC: return b3::BodyType.KINEMATIC;

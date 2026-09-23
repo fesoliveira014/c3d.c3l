@@ -30,6 +30,7 @@ fn RayHit? PhysicsWorld.raycast(
         .point    = result.point,
         .normal   = result.normal,
         .fraction = result.fraction,
+        .surface  = (SurfaceMaterialId)result.user_material_id,
     };
 }
 
