@@ -353,6 +353,7 @@ fn BenchmarkOptions? parse_options(String[] args) @local {
 }
 
 fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkOptions options) @local {
+    base.post.anti_aliasing = options.flags.anti_aliasing;
     base.shading = options.shading;
     base.lights = options.selection;
     base.clusters.lights_per_cluster = options.capacity;
@@ -449,7 +450,7 @@ fn int main(String[] args) {
     if (catch excuse = parsed) {
         if (excuse != c3d::UNSUPPORTED) {
             io::eprintfn("Invalid options: %s", excuse);
-            io::eprintn("Use --benchmark --mode flat|clustered --lights N --frames N --warmup N --capacity N --range N --width N --height N [--gpu-timings] [--validation] [--capture] [--window] [--panel] [--print-features].");
+            io::eprintn("Use --benchmark --mode flat|clustered --lights N --frames N --warmup N --capacity N --range N --width N --height N [--anti-aliasing none|fxaa|taa] [--gpu-timings] [--validation] [--capture] [--window] [--panel] [--print-features].");
         }
         return 1;
     }

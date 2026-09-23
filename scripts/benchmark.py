@@ -79,6 +79,8 @@ def parse_arguments():
     render.add_argument("--height", type=int, default=900)
     render.add_argument("--capacity", type=int, default=64)
     render.add_argument("--range", type=float, help="light range: render default 6 units; scene default 0.08 of the extent")
+    render.add_argument("--anti-aliasing", choices=["none", "fxaa", "taa"], default="fxaa",
+                        help="anti-aliasing filter of the measured view")
     render.add_argument("--gpu-timings", action="store_true", help="enable renderer timestamps")
     render.add_argument("--validation", action="store_true", help="enable Vulkan validation")
 
@@ -232,7 +234,8 @@ def common_switches(args):
 def workload_arguments(args, mode, lights, shading):
     return ["--benchmark", "--mode", mode, "--shading", shading, "--lights", str(lights), "--frames", str(args.frames),
             "--warmup", str(args.warmup), "--width", str(args.width), "--height", str(args.height),
-            "--capacity", str(args.capacity), "--range", str(args.range), *common_switches(args)]
+            "--capacity", str(args.capacity), "--range", str(args.range), "--anti-aliasing", args.anti_aliasing,
+            *common_switches(args)]
 
 
 def render_jobs(args):
