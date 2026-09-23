@@ -19,6 +19,7 @@ struct PostPipelines {
     gpu::PipelineHandle dof_gather;
     gpu::PipelineHandle dof_composite;
     gpu::PipelineHandle motion_blur;
+    gpu::PipelineHandle taa_resolve;
 }
 
 struct LutBinding @private {
@@ -49,7 +50,7 @@ fn void? record_display(
     bool bloom_needed = record.desc.post.bloom
         && (record.desc.post.bloom_params.intensity > 0 || render::bloom_preview_requested(renderer, record));
     BloomBinding bloom = bloom_needed ? record_bloom(renderer, record)! : (BloomBinding){};
-    if (!record.desc.post.fxaa) {
+    if (record.desc.post.anti_aliasing != AntiAliasing.FXAA) {
         close_post_chain(renderer, record)!;
         return record_fused_display(
             renderer: renderer,
@@ -173,9 +174,11 @@ fn void? prepare_display(Renderer* renderer, ViewRecord* record) {
     if (record.desc.post.bloom) acquire_bloom_pipelines(renderer)!;
     if (record.desc.post.depth_of_field) acquire_dof_pipelines(renderer)!;
     if (record.desc.post.motion_blur) acquire_motion_blur_pipelines(renderer)!;
+    if (uses_velocity(&record.desc.post)) acquire_velocity_pipelines(renderer, velocity_format(&record.desc.post))!;
+    if (record.desc.post.anti_aliasing == AntiAliasing.TAA) acquire_taa_pipeline(renderer)!;
     if (!record.hdr_color.texture.is_valid()) return;
     gpu::Format output_format = render::view_output_format(renderer, &record.desc);
-    if (record.desc.post.fxaa) {
+    if (record.desc.post.anti_aliasing == AntiAliasing.FXAA) {
         acquire_post_pipelines(renderer)!;
         renderer.pipelines.get(&renderer.device, fxaa_fragment_pipeline_key(output_format))!;
         return;
@@ -189,10 +192,10 @@ fn void? prepare_display(Renderer* renderer, ViewRecord* record) {
  @param [&inout] pipelines : "Cleared."
 *>
 fn void destroy_post_pipelines(gpu::Device* device, PostPipelines* pipelines) {
-    gpu::PipelineHandle*[10] handles = {
+    gpu::PipelineHandle*[11] handles = {
         &pipelines.grade, &pipelines.fxaa, &pipelines.bloom_downsample, &pipelines.bloom_upsample,
         &pipelines.tile_max, &pipelines.tile_neighbor, &pipelines.dof_coc, &pipelines.dof_gather,
-        &pipelines.dof_composite, &pipelines.motion_blur,
+        &pipelines.dof_composite, &pipelines.motion_blur, &pipelines.taa_resolve,
     };
     foreach (handle : handles) {
         if (handle.is_valid()) (void)gpu::destroy_pipeline(device, *handle);

@@ -4,6 +4,7 @@ import c3d;
 import c3d::gui;
 import c3d::platform;
 import c3d::render;
+import c3d::render::post;
 import c3d::scene;
 import gpu;
 import std::io;
@@ -28,6 +29,7 @@ struct BenchmarkFlags {
     uint warmup;
     uint width;
     uint height;
+    AntiAliasing anti_aliasing;
 }
 
 <*
@@ -67,10 +69,10 @@ struct BenchmarkRun {
 }
 
 <*
- Flags with 300 measured frames, 60 warmup frames and a 1440 by 900 extent.
+ Flags with 300 measured frames, 60 warmup frames, a 1440 by 900 extent and FXAA.
 *>
 fn BenchmarkFlags default_flags() {
-    return { .frames = 300, .warmup = 60, .width = 1440, .height = 900 };
+    return { .frames = 300, .warmup = 60, .width = 1440, .height = 900, .anti_aliasing = AntiAliasing.FXAA };
 }
 
 <*
@@ -112,6 +114,13 @@ fn bool? parse_flag(String[] args, usz* index, BenchmarkFlags* flags, String tar
         case "--warmup": flags.warmup = option_value(args, index)!.to_uint()!;
         case "--width": flags.width = option_value(args, index)!.to_uint()!;
         case "--height": flags.height = option_value(args, index)!.to_uint()!;
+        case "--anti-aliasing":
+            switch (option_value(args, index)!) {
+                case "none": flags.anti_aliasing = AntiAliasing.NONE;
+                case "fxaa": flags.anti_aliasing = AntiAliasing.FXAA;
+                case "taa": flags.anti_aliasing = AntiAliasing.TAA;
+                default: return c3d::INVALID_ARGUMENT~;
+            }
         default: return false;
     }
     return true;
@@ -198,10 +207,10 @@ fn usz? run_frames(BenchmarkRun* run, BenchmarkFlags flags, FrameSample[] sample
  @param timestamps_enabled : "False prints -1 in every GPU column."
 *>
 fn void write_samples(FrameSample[] samples, bool timestamps_enabled) {
-    io::printn("frame,wall_ms,update_ms,begin_ms,render_ms,finish_ms,end_ms,gui_ms,cpu_record_ms,draws,lights,dropped,overflows,material_resolutions,pipeline_lookups,gpu_shadow_ms,gpu_cull_ms,gpu_prepass_ms,gpu_gbuffer_ms,gpu_lighting_ms,gpu_opaque_ms,gpu_post_ms,gpu_composite_ms");
+    io::printn("frame,wall_ms,update_ms,begin_ms,render_ms,finish_ms,end_ms,gui_ms,cpu_record_ms,draws,lights,dropped,overflows,material_resolutions,pipeline_lookups,gpu_shadow_ms,gpu_cull_ms,gpu_prepass_ms,gpu_gbuffer_ms,gpu_lighting_ms,gpu_opaque_ms,gpu_post_ms,gpu_composite_ms,gpu_velocity_ms,gpu_taa_ms");
     foreach (index, sample : samples) {
         float unavailable = -1;
-        io::printfn("%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f",
+        io::printfn("%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f",
             index, sample.wall_ms, sample.update_ms, sample.begin_ms, sample.render_ms,
             sample.finish_ms, sample.end_ms, sample.gui_ms, sample.cpu_record_ms, sample.draws, sample.lights,
             sample.dropped, sample.overflows, sample.material_resolutions, sample.pipeline_lookups,
@@ -212,7 +221,9 @@ fn void write_samples(FrameSample[] samples, bool timestamps_enabled) {
             timestamps_enabled ? sample.gpu_ms[Pass.LIGHTING.ordinal] : unavailable,
             timestamps_enabled ? sample.gpu_ms[Pass.FORWARD_OPAQUE.ordinal] : unavailable,
             timestamps_enabled ? sample.gpu_ms[Pass.POST_CHAIN.ordinal] : unavailable,
-            timestamps_enabled ? sample.gpu_ms[Pass.COMPOSITE.ordinal] : unavailable);
+            timestamps_enabled ? sample.gpu_ms[Pass.COMPOSITE.ordinal] : unavailable,
+            timestamps_enabled ? sample.gpu_ms[Pass.VELOCITY.ordinal] : unavailable,
+            timestamps_enabled ? sample.gpu_ms[Pass.TEMPORAL_AA.ordinal] : unavailable);
     }
 }
 

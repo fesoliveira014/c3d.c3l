@@ -222,7 +222,7 @@ fn void? run_gui(
                 capture.hdr = true;
                 capture_recreate = true;
             }
-            capture_changed |= imgui::checkbox("FXAA", &capture.desc.post.fxaa);
+            capture_changed |= gui::anti_aliasing_combo("Anti-aliasing", &capture.desc.post.anti_aliasing);
             capture_changed |= imgui::checkbox("Bloom", &capture.desc.post.bloom);
         }
         imgui::end();

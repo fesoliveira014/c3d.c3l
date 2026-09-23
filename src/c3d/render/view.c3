@@ -13,8 +13,11 @@ import c3d::scene;
 import c3d::shader;
 import c3d::render::post @public;
 import gpu;
+import std::collections::map;
 import std::math;
 import std::sort;
+
+alias PreviousInstanceCache @private = HashMap{ulong, gpu::GpuAddress};
 
 <*
  Color format of the view targets.
@@ -140,7 +143,12 @@ fn void? Renderer.render_view(
             .m23          = matrices.proj.m23,
             .orthographic = camera.projection == Projection.ORTHOGRAPHIC,
         };
-        bool motion_blur = record.desc.post.motion_blur;
+        bool taa = record.desc.post.anti_aliasing == AntiAliasing.TAA;
+        bool temporal = taa || record.desc.post.motion_blur;
+        Vec2 jitter = taa
+          ? post::taa_jitter(record.history.sample_index, record.hdr_color.width, record.hdr_color.height)
+          : (Vec2){};
+        CameraMatrices raster = taa ? camera::jitter_matrices(matrices, jitter) : matrices;
         Frame* slot = &self.frames[self.frame_index % FRAMES_IN_FLIGHT];
         bool view_reflected = matrices.view.determinant() < 0;
 
@@ -339,7 +347,7 @@ fn void? Renderer.render_view(
                 frame_span = slot.upload.take(&self.device, FrameRoot::size, STREAM_ALIGNMENT)!;
                 write_frame_root(
                     root:        (FrameRoot*)frame_span.bytes.ptr,
-                    matrices:    &matrices,
+                    matrices:    &raster,
                     camera:      camera,
                     viewport:    viewport,
                     info:        self.info,
@@ -352,8 +360,10 @@ fn void? Renderer.render_view(
                     environment: environment_address,
                     scene_color: transmission_items.len ? record.scene_color.view.index : (gpu::TextureIndex)0,
                     scene_sampler: transmission_items.len ? self.linear_clamp_sampler : (gpu::SamplerIndex)0,
-                    prev_view_proj: motion_blur && record.history.valid ? &record.history.view_proj : null,
+                    prev_view_proj: temporal && record.history.valid ? &record.history.view_proj : &matrices.view_proj,
                     clusters: cluster_frame.clusters,
+                    jitter: jitter,
+                    mip_bias: taa ? record.desc.post.taa_params.mip_bias : 0,
                 );
                 if (record.desc.lights == LightSelection.CLUSTERED) {
                     record_clusters(
@@ -365,14 +375,26 @@ fn void? Renderer.render_view(
                     record.cluster_root = cluster_frame.clusters;
                     record.cluster_depth = cluster_frame.depth;
                 }
+                PreviousInstanceCache previous_instances;
+                previous_instances.init(tmem);
                 DrawItem[][3] draw_groups = { depth_items, transmission_items, transparent_items };
-                foreach (group : draw_groups) foreach (&item : group) {
+                foreach (group_index, group : draw_groups) foreach (&item : group) {
                     Node* node = item.candidate.node;
                     Mat4 prev_world = node.world;
-                    if (motion_blur && record.history.has_previous(scene, node)) {
-                        prev_world = record.history.previous_model(scene, node);
+                    bool has_previous = temporal && record.history.has_previous(scene, node);
+                    if (has_previous) prev_world = record.history.previous_model(scene, node);
+                    bool posed = item.skin != (gpu::GpuAddress)0 || item.morph != (gpu::GpuAddress)0
+                      || item.candidate.batch;
+                    item.moved = has_previous && (posed || !(prev_world == node.world));
+                    gpu::GpuAddress previous_pose;
+                    if (has_previous && posed && group_index == 0) {
+                        previous_pose = upload_previous_pose(
+                            renderer:  self,
+                            item:      item,
+                            pose:      record.history.previous_pose(scene, node),
+                            instances: &previous_instances,
+                        )!;
                     }
-                    item.moved = !(prev_world == node.world);
                     if (item.candidate.batch) prev_world = prev_world.mul(maths::inverse_affine(node.world));
                     gpu::MappedGpuSpan draw_span = slot.upload.take(&self.device, DrawRoot::size, STREAM_ALIGNMENT)!;
                     write_draw_root(
@@ -390,6 +412,7 @@ fn void? Renderer.render_view(
                         skin:          item.skin,
                         morph:         item.morph,
                         instance_data: item.instance_data,
+                        previous_pose: previous_pose,
                     );
                     item.root = draw_span.address;
                 }
@@ -448,19 +471,38 @@ fn void? Renderer.render_view(
                 }
 
                 if (debug && debug.vertices.len()) {
-                    record_debug_lines(self, record, matrices.view_proj, debug)!;
+                    record_debug_lines(self, record, raster.view_proj, debug)!;
                 }
 
-                if (motion_blur) {
-                    post::record_motion_blur(
-                        renderer: self,
-                        record:   record,
-                        items:    depth_items,
-                        matrices: &matrices,
+                if (temporal) {
+                    post::record_velocity(
+                        renderer:  self,
+                        record:    record,
+                        items:     depth_items,
+                        raster:    &raster,
+                        view_proj: matrices.view_proj,
+                        jitter:    jitter,
                     )!;
                 }
-                if (motion_blur) {
-                    record.history.commit(self.allocator, scene, candidates, matrices.view_proj);
+                if (taa) {
+                    post::record_taa(
+                        renderer: self,
+                        record:   record,
+                        scene:    scene,
+                        jitter:   jitter,
+                    )!;
+                }
+                if (record.desc.post.motion_blur && !post::taa_debug_enabled(&record.desc.post)) {
+                    post::record_motion_blur(self, record)!;
+                }
+                if (temporal) {
+                    record.history.commit(
+                        allocator:  self.allocator,
+                        assets:     self.assets,
+                        scene:      scene,
+                        candidates: candidates,
+                        view_proj:  matrices.view_proj,
+                    );
                 }
             };
         };
@@ -491,7 +533,8 @@ fn void? Renderer.finish_view(&self, ViewId view) {
     instrumentation::@scope("renderer.finish_view") {
         begin_profile_view(self, view, "view.finish")!;
         record.rendered = false;
-        if (record.desc.post.depth_of_field) post::record_dof(self, record)!;
+        bool taa_debug = post::taa_debug_enabled(&record.desc.post);
+        if (record.desc.post.depth_of_field && !taa_debug) post::record_dof(self, record)!;
         record_view_output(self, record)!;
         post::close_post_chain(self, record)!;
         end_profile_view(self)!;
@@ -738,11 +781,13 @@ fn void? prepare_views(Renderer* renderer) @private {
 <*
  Write the per-view root.
  @param [&out] root : "Overwritten whole."
- @param [&in] matrices : "Derived for the viewport."
+ @param [&in] matrices : "Rendered matrices, jittered on a TAA view."
  @param [&in] camera : "Supplies near, far and exposure."
  @param viewport : "Pixels."
- @param [in] prev_view_proj : "Null repeats the current view-projection."
+ @param [in] prev_view_proj : "Unjittered; null repeats the current view-projection."
  @param clusters : "Matching frame-ring cluster root borrowed through frame completion."
+ @param jitter : "NDC offset already applied to the rendered matrices."
+ @param mip_bias : "Added to material texture level of detail."
 *>
 fn void write_frame_root(
     FrameRoot* root,
@@ -761,6 +806,8 @@ fn void write_frame_root(
     gpu::SamplerIndex scene_sampler = (gpu::SamplerIndex)0,
     Mat4* prev_view_proj = null,
     gpu::GpuAddress clusters = (gpu::GpuAddress)0,
+    Vec2 jitter = {},
+    float mip_bias = 0,
 ) {
     *root = {
         .view            = bitcast(matrices.view, Mat4f),
@@ -770,7 +817,7 @@ fn void write_frame_root(
         .prev_view_proj  = bitcast(prev_view_proj ? *prev_view_proj : matrices.view_proj, Mat4f),
         .camera_position = { matrices.position.x, matrices.position.y, matrices.position.z, camera.exposure },
         .camera_params   = { camera.near, camera.far, viewport.x, viewport.y },
-        .jitter_time     = { 0, 0, (float)info.time, info.delta },
+        .jitter_time     = { jitter.x, jitter.y, (float)info.time, info.delta },
         .frame_index     = (uint)frame_index,
         .lights          = lights,
         .light_count     = light_count,
@@ -782,6 +829,7 @@ fn void write_frame_root(
         .scene_sampler   = scene_sampler,
         .clusters        = clusters,
         .flags           = clusters != (gpu::GpuAddress)0 ? shader::FRAME_LIGHTS_CLUSTERED : 0,
+        .mip_bias        = mip_bias,
     };
 }
 
@@ -793,6 +841,7 @@ fn void write_frame_root(
  @param skin : "Joint palette address; zero when unskinned."
  @param morph : "Morph block address; zero when unmorphed."
  @param instance_data : "First instance record; zero for a mesh."
+ @param previous_pose : "PreviousPoseGpu of a deformed or instanced velocity draw; zero otherwise."
 *>
 fn void write_draw_root(
     DrawRoot* root,
@@ -809,6 +858,7 @@ fn void write_draw_root(
     gpu::GpuAddress skin = (gpu::GpuAddress)0,
     gpu::GpuAddress morph = (gpu::GpuAddress)0,
     gpu::GpuAddress instance_data = (gpu::GpuAddress)0,
+    gpu::GpuAddress previous_pose = (gpu::GpuAddress)0,
 ) {
     Mat3 normal = maths::normal_matrix(world);
     *root = {
@@ -823,12 +873,48 @@ fn void write_draw_root(
         .skin          = skin,
         .morph         = morph,
         .instance_data = instance_data,
+        .previous_pose = previous_pose,
         .object_id     = object_id,
         .sheen_lut     = sheen_lut,
         .sheen_sampler = sheen_sampler,
         .layers        = layers,
         .flags         = flags,
     };
+}
+
+fn gpu::GpuAddress? upload_previous_pose(
+    Renderer* renderer,
+    DrawItem* item,
+    PoseRecord* pose,
+    PreviousInstanceCache* instances,
+) @private {
+    MeshCandidate* candidate = item.candidate;
+    PreviousPoseGpu previous = { .skin = item.skin, .morph = item.morph };
+    if (item.skin != (gpu::GpuAddress)0 && pose.palette.len == candidate.skin.joints.len) {
+        previous.skin = upload_bytes(renderer, pose.palette.ptr, pose.palette.len * Mat4f::size)!;
+    }
+    if (item.morph != (gpu::GpuAddress)0 && pose.morphed) {
+        previous.morph = upload_bytes(renderer, &pose.morph, MorphWeightsGpu::size)!;
+    }
+    if (candidate.batch && pose.instance_count == candidate.batch.count) {
+        ulong key = (ulong)(uptr)candidate.node;
+        gpu::GpuAddress base;
+        if (try existing = instances.get(key)) {
+            base = existing;
+        } else {
+            base = upload_bytes(renderer, pose.instances.ptr, pose.instance_count * Mat4f::size)!;
+            instances.set(key, base);
+        }
+        previous.instances = (gpu::GpuAddress)((ulong)base + (ulong)candidate.instance_first * Mat4f::size);
+    }
+    return upload_bytes(renderer, &previous, PreviousPoseGpu::size);
+}
+
+fn gpu::GpuAddress? upload_bytes(Renderer* renderer, void* data, usz size) @private {
+    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan span = slot.upload.take(&renderer.device, size, STREAM_ALIGNMENT)!;
+    mem::copy(span.bytes.ptr, data, (sz)size);
+    return span.address;
 }
 
 <*
@@ -981,6 +1067,16 @@ fn void? record_view_output(Renderer* renderer, ViewRecord* record) @private {
     // A window can shrink under an explicit viewport before the application reconfigures the view.
     PixelRect rect = clip_rect(record.desc.viewport, output.width, output.height);
     if (record.desc.viewport.width && (rect.width == 0 || rect.height == 0)) return;
+
+    if (post::taa_debug_enabled(&record.desc.post)) {
+        post::close_post_chain(renderer, record)!;
+        return composite_target(
+            renderer: renderer,
+            source:   record.scene_input,
+            output:   output,
+            rect:     rect,
+        );
+    }
 
     switch (record.desc.color) {
         case DISPLAY_LDR:

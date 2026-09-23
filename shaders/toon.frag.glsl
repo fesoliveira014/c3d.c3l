@@ -25,6 +25,7 @@ layout(push_constant) uniform Push {
 void main() {
     DrawRoot draw = DrawRoot(pc.fragment_root_gpu);
     FrameRoot frame = FrameRoot(draw.frame);
+    material_mip_bias = frame.mip_bias;
     ToonMaterialGpu material = ToonMaterialGpu(draw.material);
     vec4 base_color = material.color;
     if ((material.map_flags & MATERIAL_MAP_BASE_COLOR) != 0u) {

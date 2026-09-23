@@ -9,7 +9,9 @@ import std::math;
 
 fn void test_default_post_stack_is_neutral() @test {
     PostStack stack = post::default_post_stack();
-    assert(stack.fxaa);
+    assert(stack.anti_aliasing == AntiAliasing.FXAA);
+    assert(stack.taa_params.debug == TaaDebug.NONE);
+    assert(stack.taa_params.current_weight > 0 && stack.taa_params.current_weight <= 1);
     assert(stack.grade.tonemap == Tonemap.ACES);
     assert(stack.grade.contrast == 1 && stack.grade.saturation == 1);
     assert(stack.grade.temperature == 0 && stack.grade.tint == 0);

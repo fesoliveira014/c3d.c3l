@@ -26,6 +26,7 @@ void main() {
         if (coverage < custom.alpha_cutoff) discard;
         return;
     }
+    material_mip_bias = FrameRoot(draw.frame).mip_bias;
     float alpha = material.color.a;
     if ((material.map_flags & MATERIAL_MAP_BASE_COLOR) != 0u) {
         alpha *= sample_map(material.map, material.map_flags, MATERIAL_MAP_BASE_COLOR, v_uv0, v_uv1).a;

@@ -30,7 +30,7 @@ vec3 sample_material_normal(
 ) {
     vec2 uv = map_uv(map, map_flags, map_bit, uv0, uv1);
     vec3 mapped = decode_normal(
-        sample_texture_2d_implicit(map.texture_index, map.sampler_index, uv).rgb,
+        sample_texture_2d_bias(map.texture_index, map.sampler_index, uv, material_mip_bias).rgb,
         scale
     );
     if ((geometry.flags & GEOMETRY_HAS_TANGENTS) != 0u) {

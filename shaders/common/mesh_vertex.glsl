@@ -11,6 +11,9 @@
 
 #ifdef INSTANCED
 GPU_DECLARE_READONLY_ARRAY_REF(InstanceArray, InstanceGpu);
+#ifdef VELOCITY
+GPU_DECLARE_READONLY_ARRAY_REF(PreviousInstanceArray, mat4);
+#endif
 #endif
 
 layout(location = 0) out vec3 v_world_pos;
@@ -67,6 +70,22 @@ void apply_mesh_deformation(inout MeshVertexInput vertex, DrawRoot draw, Geometr
 #endif
 }
 
+#ifdef VELOCITY
+// Object-space position under the deformation the view drew last time.
+vec3 previous_position(DrawRoot draw, GeometryRoot geometry, uint index) {
+    vec3 position = pull_vec3(geometry.positions, index);
+#ifdef MORPH
+    MorphWeightsGpu morph = MorphWeightsGpu(PreviousPoseGpu(draw.previous_pose).morph);
+    position += morph_delta(geometry, morph, index, MORPH_STREAM_POSITION);
+#endif
+#if defined(SKINNED) || defined(SKINNED_U16)
+    mat4 skin = skin_matrix(geometry, PreviousPoseGpu(draw.previous_pose).skin, index);
+    position = (skin * vec4(position, 1.0)).xyz;
+#endif
+    return position;
+}
+#endif
+
 void write_mesh_outputs(MeshVertexInput vertex, DrawRoot draw, FrameRoot frame, GeometryRoot geometry) {
 #ifdef INSTANCED
     InstanceGpu instance = InstanceArray(draw.instance_data).values[gl_InstanceIndex];
@@ -78,11 +97,15 @@ void write_mesh_outputs(MeshVertexInput vertex, DrawRoot draw, FrameRoot frame, 
 #endif
     vec4 world = model * vec4(vertex.position, 1.0);
 #ifdef VELOCITY
-    // An instanced prev_model is the batch node's motion, applied after the current instance matrix.
+    vec4 previous = vec4(previous_position(draw, geometry, uint(gl_VertexIndex)), 1.0);
 #ifdef INSTANCED
-    v_prev_clip_pos = frame.prev_view_proj * (draw.prev_model * world);
+    // Without previous instance matrices, prev_model is the batch node's motion after the current instance matrix.
+    uint64_t previous_instances = PreviousPoseGpu(draw.previous_pose).instances;
+    v_prev_clip_pos = previous_instances != 0ul
+        ? frame.prev_view_proj * (PreviousInstanceArray(previous_instances).values[gl_InstanceIndex] * previous)
+        : frame.prev_view_proj * (draw.prev_model * (model * previous));
 #else
-    v_prev_clip_pos = frame.prev_view_proj * (draw.prev_model * vec4(vertex.position, 1.0));
+    v_prev_clip_pos = frame.prev_view_proj * (draw.prev_model * previous);
 #endif
 #endif
 #if !defined(DEPTH_ONLY) && !defined(VELOCITY)
@@ -98,8 +121,13 @@ void write_mesh_outputs(MeshVertexInput vertex, DrawRoot draw, FrameRoot frame, 
 #ifdef INSTANCED
     v_color *= instance.color;
 #endif
-    v_clip_pos = frame.view_proj * world;
-    gl_Position = v_clip_pos;
+    vec4 clip = frame.view_proj * world;
+    gl_Position = clip;
+#ifdef VELOCITY
+    // Velocity is unjittered: remove the view's jitter from the rasterized position.
+    clip.xy -= frame.jitter_time.xy * clip.w;
+#endif
+    v_clip_pos = clip;
 }
 
 #endif

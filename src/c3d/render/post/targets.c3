@@ -5,6 +5,7 @@ import gpu;
 
 const gpu::Format TILE_FORMAT @private = gpu::Format.RG16_FLOAT;
 const gpu::Format VELOCITY_FORMAT @private = gpu::Format.RG16_FLOAT;
+const gpu::Format TEMPORAL_VELOCITY_FORMAT @private = gpu::Format.RGBA16_FLOAT; // z carries the expected previous depth
 const ZString[BLOOM_MAX_LEVELS] BLOOM_LEVEL_NAMES @private = {
     "bloom_0", "bloom_1", "bloom_2", "bloom_3", "bloom_4", "bloom_5", "bloom_6", "bloom_7",
 };
@@ -63,7 +64,12 @@ fn void? acquire_effect_targets(Renderer* renderer, ViewRecord* record) {
     if (stack.bloom && !record.bloom_levels) acquire_bloom_chain(renderer, record)!;
     if (stack.depth_of_field && !record.dof_near.texture.is_valid()) acquire_dof_layers(renderer, record)!;
     if (uses_tiles(stack) && !record.tile_max.texture.is_valid()) acquire_tiles(renderer, record)!;
-    if (stack.motion_blur && !record.velocity.texture.is_valid()) acquire_motion_blur_images(renderer, record)!;
+    if (uses_velocity(stack) && !record.velocity.texture.is_valid()) acquire_velocity_image(renderer, record)!;
+    if (stack.motion_blur && !record.motion_blur_out.texture.is_valid()) acquire_motion_blur_output(renderer, record)!;
+    if (stack.anti_aliasing == AntiAliasing.TAA && !record.taa_color[0].texture.is_valid()) {
+        acquire_taa_images(renderer, record)!;
+    }
+    if (taa_debug_enabled(stack) && !record.taa_debug.texture.is_valid()) acquire_taa_debug_image(renderer, record)!;
 }
 
 <*
@@ -89,11 +95,20 @@ fn void retire_effect_targets(Renderer* renderer, ViewRecord* record) {
         retire_post_target(retire, &record.tile_max);
         retire_post_target(retire, &record.tile_neighbor);
     }
-    if (!stack.motion_blur && record.velocity.texture.is_valid()) {
+    bool velocity_stale = !uses_velocity(stack) || record.velocity.format != velocity_format(stack);
+    if (record.velocity.texture.is_valid() && velocity_stale) {
         retire.push({ .kind = RetiredKind.ATTACHMENT_VIEW, .attachment_view = record.velocity.attachment });
         retire_post_target(retire, &record.velocity);
+    }
+    if (!stack.motion_blur && record.motion_blur_out.texture.is_valid()) {
         retire_post_target(retire, &record.motion_blur_out);
     }
+    if (stack.anti_aliasing != AntiAliasing.TAA && record.taa_color[0].texture.is_valid()) {
+        foreach (&image : record.taa_color) retire_post_target(retire, image);
+        foreach (&image : record.taa_depth) retire_post_target(retire, image);
+        foreach (&image : record.taa_velocity) retire_post_target(retire, image);
+    }
+    if (!taa_debug_enabled(stack) && record.taa_debug.texture.is_valid()) retire_post_target(retire, &record.taa_debug);
 }
 
 <*
@@ -107,22 +122,33 @@ fn void release_effect_targets(gpu::Device* device, ViewRecord* record) {
     release_dof_layers(device, record);
     release_tiles(device, record);
     release_motion_blur_images(device, record);
+    release_taa_images(device, record);
 }
 
 fn bool uses_tiles(PostStack* stack) @private {
     return stack.depth_of_field || stack.motion_blur;
 }
 
-fn void? acquire_motion_blur_images(Renderer* renderer, ViewRecord* record) @private {
-    defer catch release_motion_blur_images(&renderer.device, record);
+fn bool uses_velocity(PostStack* stack) @private {
+    return stack.motion_blur || stack.anti_aliasing == AntiAliasing.TAA;
+}
+
+fn gpu::Format velocity_format(PostStack* stack) @private {
+    return stack.anti_aliasing == AntiAliasing.TAA ? TEMPORAL_VELOCITY_FORMAT : VELOCITY_FORMAT;
+}
+
+fn void? acquire_velocity_image(Renderer* renderer, ViewRecord* record) @private {
     record.velocity = render::allocate_target(
         device:     &renderer.device,
         width:      record.hdr_color.width,
         height:     record.hdr_color.height,
-        format:     VELOCITY_FORMAT,
+        format:     velocity_format(&record.desc.post),
         usage:      { .color_attach, .sampled, .storage },
         debug_name: "velocity",
     )!;
+}
+
+fn void? acquire_motion_blur_output(Renderer* renderer, ViewRecord* record) @private {
     record.motion_blur_out = allocate_post_target(
         device:     &renderer.device,
         width:      record.hdr_color.width,

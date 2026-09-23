@@ -22,6 +22,21 @@ const uint BLOOM_MAX_LEVELS = 8; // eight halvings reach 5 px from 1280; more le
 *>
 const uint MOTION_BLUR_MAX_SAMPLES = 32; // two color, depth and velocity reads per tap bound the filter cost
 
+<*
+ Temporal samples in one jitter cycle.
+*>
+const uint TAA_SAMPLE_COUNT = 8; // Halton(2,3) points; longer cycles resolve finer detail but converge slower
+
+<*
+ History images of each kind a TAA view keeps.
+*>
+const uint TAA_HISTORY_SLOTS = 2; // the resolve reads one slot while it writes the other
+
+<*
+ Most negative material mip bias a TAA view accepts.
+*>
+const float TAA_MIP_BIAS_MIN = -2.0f; // past two levels textures alias faster than one cycle resolves
+
 const float SENSOR_HEIGHT @private = 0.024f; // 35 mm frame; focal_length and aperture read as camera settings
 
 <*
@@ -38,6 +53,30 @@ $assert Tonemap.NONE.ordinal == shader::TONEMAP_NONE;
 $assert Tonemap.ACES.ordinal == shader::TONEMAP_ACES;
 $assert Tonemap.AGX.ordinal == shader::TONEMAP_AGX;
 $assert Tonemap.REINHARD.ordinal == shader::TONEMAP_REINHARD;
+
+<*
+ Anti-aliasing filter of a view.
+*>
+enum AntiAliasing {
+    NONE,
+    FXAA,
+    TAA,
+}
+
+<*
+ Diagnostic image the temporal resolve shows instead of color.
+*>
+enum TaaDebug {
+    NONE,
+    VELOCITY,
+    REJECTION,
+    HISTORY_WEIGHT,
+}
+
+$assert TaaDebug.NONE.ordinal == shader::TAA_DEBUG_NONE;
+$assert TaaDebug.VELOCITY.ordinal == shader::TAA_DEBUG_VELOCITY;
+$assert TaaDebug.REJECTION.ordinal == shader::TAA_DEBUG_REJECTION;
+$assert TaaDebug.HISTORY_WEIGHT.ordinal == shader::TAA_DEBUG_HISTORY_WEIGHT;
 
 <*
  Display grading applied to scene-linear color before output encoding.
@@ -84,11 +123,24 @@ struct MotionBlurParams {
 }
 
 <*
+ Temporal resolve tuning: tolerance relative to linear depth, threshold in pixels.
+*>
+struct TaaParams {
+    float    current_weight;
+    float    clip_gamma;
+    float    depth_tolerance;
+    float    velocity_threshold;
+    float    mip_bias;
+    TaaDebug debug;
+}
+
+<*
  Display processing of one view; a zeroed value is not neutral.
 *>
 struct PostStack {
     GradeParams      grade;
-    bool             fxaa;
+    AntiAliasing     anti_aliasing;
+    TaaParams        taa_params;
     bool             bloom;
     BloomParams      bloom_params;
     bool             depth_of_field;
@@ -109,7 +161,14 @@ fn PostStack default_post_stack() {
             .gamma      = { 1, 1, 1 },
             .gain       = { 1, 1, 1 },
         },
-        .fxaa = true,
+        .anti_aliasing = AntiAliasing.FXAA,
+        .taa_params = {
+            .current_weight     = 0.1f,
+            .clip_gamma         = 1,
+            .depth_tolerance    = 0.05f,
+            .velocity_threshold = 2,
+            .mip_bias           = -1,
+        },
         .bloom_params = { .threshold = 1, .knee = 0.5f, .intensity = 0.05f, .levels = 5 },
         .dof_params   = { .focus_distance = 5, .focal_length = 0.05f, .aperture = 2.8f, .max_coc = 16 },
         .motion_blur_params = { .shutter = 0.5f, .samples = 12, .max_velocity = 32 },
@@ -125,6 +184,7 @@ fn bool post_stack_valid(PostStack* stack) {
     if (stack.bloom && (stack.bloom_params.levels == 0 || stack.bloom_params.levels > BLOOM_MAX_LEVELS)) return false;
     if (stack.depth_of_field && !dof_params_valid(&stack.dof_params)) return false;
     if (stack.motion_blur && !motion_blur_params_valid(&stack.motion_blur_params)) return false;
+    if (stack.anti_aliasing == AntiAliasing.TAA && !taa_params_valid(&stack.taa_params)) return false;
     return true;
 }
 
@@ -254,6 +314,15 @@ fn bool dof_params_valid(DofParams* params) @private {
 fn bool motion_blur_params_valid(MotionBlurParams* params) @private {
     return params.samples > 0 && params.samples <= MOTION_BLUR_MAX_SAMPLES && params.max_velocity > 0
       && params.shutter >= 0;
+}
+
+<*
+ @pure
+*>
+fn bool taa_params_valid(TaaParams* params) @private {
+    return params.current_weight > 0 && params.current_weight <= 1 && params.clip_gamma > 0
+      && params.depth_tolerance > 0 && params.velocity_threshold > 0
+      && params.mip_bias >= TAA_MIP_BIAS_MIN && params.mip_bias <= 0;
 }
 
 <*

@@ -83,6 +83,11 @@ const uint DOF_PASS_COC = 0u;
 const uint DOF_PASS_GATHER_NEAR = 1u;
 const uint DOF_PASS_GATHER_FAR = 2u;
 const uint DOF_PASS_COMPOSITE = 3u;
+const uint TAA_DEBUG_NONE = 0u;
+const uint TAA_DEBUG_VELOCITY = 1u;
+const uint TAA_DEBUG_REJECTION = 2u;
+const uint TAA_DEBUG_HISTORY_WEIGHT = 3u;
+const uint TAA_DEBUG_VELOCITY_RANGE = 16u;
 
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer CompositeRoot {
     uint source_texture;
@@ -174,6 +179,10 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer FrameRoot {
     uint scene_color;
     uint scene_sampler;
     uint64_t clusters;
+    float mip_bias;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer DrawRoot {
@@ -195,6 +204,13 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer DrawRoot {
     uint sheen_lut;
     uint sheen_sampler;
     uint _pad3;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer PreviousPoseGpu {
+    uint64_t skin;
+    uint64_t morph;
+    uint64_t instances;
+    uint64_t _pad0;
 };
 
 struct InstanceGpu {
@@ -588,8 +604,38 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer VelocityRoo
     uint sampler_index;
     uint orthographic;
     uint _pad0;
+    vec2 jitter_uv;
+    vec2 _pad1;
     mat4 inv_view_proj;
     mat4 prev_view_proj;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer TaaRoot {
+    uint color_texture;
+    uint depth_texture;
+    uint velocity_texture;
+    uint history_color;
+    uint history_depth;
+    uint history_velocity;
+    uint output_color;
+    uint output_depth;
+    uint output_velocity;
+    uint debug_texture;
+    uint sampler_index;
+    uint width;
+    uint height;
+    uint history_valid;
+    uint orthographic;
+    uint debug;
+    vec2 texel;
+    vec2 jitter_uv;
+    float current_weight;
+    float clip_gamma;
+    float depth_tolerance;
+    float velocity_threshold;
+    float proj_22;
+    float proj_23;
+    vec2 _pad0;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer MotionBlurRoot {

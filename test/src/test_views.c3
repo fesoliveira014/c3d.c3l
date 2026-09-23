@@ -55,7 +55,7 @@ fn void test_texture_view_desc_defaults() @test {
     assert(desc.viewport.width == 0 && desc.viewport.height == 0);
     assert(desc.render_scale == 1);
     assert(desc.color == OutputMode.LINEAR_HDR);
-    assert(desc.post.fxaa);
+    assert(desc.post.anti_aliasing == AntiAliasing.FXAA);
 
     ViewDesc window = render::default_view_desc();
     assert(window.output == ViewOutput.WINDOW && window.color == OutputMode.DISPLAY_LDR);
