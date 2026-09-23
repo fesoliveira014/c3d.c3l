@@ -11,6 +11,9 @@ const uint SHADOW_FACE_POSITIVE_Z = 4;
 const uint SHADOW_FACE_NEGATIVE_Z = 5;
 const uint SHADOW_POINT_FACE_COUNT = 6;
 const uint MAX_DISPATCH_TEXTURES = 8;
+const uint BVH_STACK_DEPTH = 32;
+const uint TRACE_INSTANCE_ALPHA_MASK = 1;
+const uint TRACE_INSTANCE_DOUBLE_SIDED = 2;
 const uint FRAME_LIGHTS_CLUSTERED = 1;
 const uint CLUSTER_GROUP_SIZE = 64;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8;
@@ -135,8 +138,7 @@ struct GeometryRoot {
     uint       vertex_count;
     uint       morph_target_count;
     uint       flags;
-    uint       _pad0;
-    uint       _pad1;
+    GpuAddress indices;
 }
 $assert GeometryRoot::size == 104;
 $assert $reflect(GeometryRoot.positions).offset == 0;
@@ -153,8 +155,75 @@ $assert $reflect(GeometryRoot.custom_stride).offset == 80;
 $assert $reflect(GeometryRoot.vertex_count).offset == 84;
 $assert $reflect(GeometryRoot.morph_target_count).offset == 88;
 $assert $reflect(GeometryRoot.flags).offset == 92;
-$assert $reflect(GeometryRoot._pad0).offset == 96;
-$assert $reflect(GeometryRoot._pad1).offset == 100;
+$assert $reflect(GeometryRoot.indices).offset == 96;
+
+struct BvhNodeGpu {
+    float min_x;
+    float min_y;
+    float min_z;
+    uint  left_or_first;
+    float max_x;
+    float max_y;
+    float max_z;
+    uint  count;
+}
+$assert BvhNodeGpu::size == 32;
+$assert $reflect(BvhNodeGpu.min_x).offset == 0;
+$assert $reflect(BvhNodeGpu.min_y).offset == 4;
+$assert $reflect(BvhNodeGpu.min_z).offset == 8;
+$assert $reflect(BvhNodeGpu.left_or_first).offset == 12;
+$assert $reflect(BvhNodeGpu.max_x).offset == 16;
+$assert $reflect(BvhNodeGpu.max_y).offset == 20;
+$assert $reflect(BvhNodeGpu.max_z).offset == 24;
+$assert $reflect(BvhNodeGpu.count).offset == 28;
+
+struct TraceInstanceGpu {
+    GpuAddress geometry;
+    GpuAddress material;
+    uint       flags;
+    uint       material_kind;
+    uint       _pad0;
+    uint       _pad1;
+    Vec4f      world_to_local_0;
+    Vec4f      world_to_local_1;
+    Vec4f      world_to_local_2;
+    Vec4f      local_to_world_0;
+    Vec4f      local_to_world_1;
+    Vec4f      local_to_world_2;
+    GpuAddress nodes;
+    GpuAddress primitives;
+}
+$assert TraceInstanceGpu::size == 144;
+$assert $reflect(TraceInstanceGpu.geometry).offset == 0;
+$assert $reflect(TraceInstanceGpu.material).offset == 8;
+$assert $reflect(TraceInstanceGpu.flags).offset == 16;
+$assert $reflect(TraceInstanceGpu.material_kind).offset == 20;
+$assert $reflect(TraceInstanceGpu._pad0).offset == 24;
+$assert $reflect(TraceInstanceGpu._pad1).offset == 28;
+$assert $reflect(TraceInstanceGpu.world_to_local_0).offset == 32;
+$assert $reflect(TraceInstanceGpu.world_to_local_1).offset == 48;
+$assert $reflect(TraceInstanceGpu.world_to_local_2).offset == 64;
+$assert $reflect(TraceInstanceGpu.local_to_world_0).offset == 80;
+$assert $reflect(TraceInstanceGpu.local_to_world_1).offset == 96;
+$assert $reflect(TraceInstanceGpu.local_to_world_2).offset == 112;
+$assert $reflect(TraceInstanceGpu.nodes).offset == 128;
+$assert $reflect(TraceInstanceGpu.primitives).offset == 136;
+
+struct SceneTraceRoot {
+    GpuAddress top_nodes;
+    GpuAddress instances;
+    uint       instance_count;
+    uint       top_node_count;
+    uint       _pad0;
+    uint       _pad1;
+}
+$assert SceneTraceRoot::size == 32;
+$assert $reflect(SceneTraceRoot.top_nodes).offset == 0;
+$assert $reflect(SceneTraceRoot.instances).offset == 8;
+$assert $reflect(SceneTraceRoot.instance_count).offset == 16;
+$assert $reflect(SceneTraceRoot.top_node_count).offset == 20;
+$assert $reflect(SceneTraceRoot._pad0).offset == 24;
+$assert $reflect(SceneTraceRoot._pad1).offset == 28;
 
 struct ClusterRange {
     uint count;

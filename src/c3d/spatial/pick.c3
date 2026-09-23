@@ -139,7 +139,9 @@ fn bool hit_mesh(
     };
 
     GeometryAsset* record = assets.geometry(mesh.geometry);
-    if (options.precision != PickPrecision.TRIANGLES || !triangles_are_static(record, mesh, skin)) return true;
+    bool triangles = triangles_are_static(record, skin != null, mesh.has_bounds_override)
+        && record.data.positions.len > 0;
+    if (options.precision != PickPrecision.TRIANGLES || !triangles) return true;
     return nearest_triangle(
         ray:      ray,
         world:    node.world,
@@ -196,9 +198,13 @@ fn PickFaces face_policy(AssetStore* assets, MaterialId material, PickFaces face
     return assets.material(material).data.common.double_sided ? PickFaces.BOTH : PickFaces.FRONT;
 }
 
-fn bool triangles_are_static(GeometryAsset* record, Mesh* mesh, SkinBinding* skin) @local {
-    return !skin && !mesh.has_bounds_override && record.target_count == 0
-        && record.data.topology == Topology.TRIANGLES && record.data.positions.len > 0;
+<*
+ Whether the geometry's rest triangles are what the mesh draws.
+ @param [&in] record : "Live geometry record; its CPU arrays may be released."
+ @pure
+*>
+fn bool triangles_are_static(GeometryAsset* record, bool skinned, bool has_bounds_override) {
+    return !skinned && !has_bounds_override && record.target_count == 0 && record.data.topology == Topology.TRIANGLES;
 }
 
 fn bool nearest_triangle(

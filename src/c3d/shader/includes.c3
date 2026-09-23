@@ -30,6 +30,7 @@ const char[*] C3D_COMMON_MATERIAL_MAPS_TEXT @private = $embed("../../../shaders/
 const char[*] C3D_COMMON_MESH_VERTEX_TEXT @private = $embed("../../../shaders/common/mesh_vertex.glsl");
 const char[*] C3D_COMMON_NORMAL_MAPPING_TEXT @private = $embed("../../../shaders/common/normal_mapping.glsl");
 const char[*] C3D_COMMON_PHYSICAL_TEXT @private = $embed("../../../shaders/common/physical.glsl");
+const char[*] C3D_COMMON_SCENE_TRACE_TEXT @private = $embed("../../../shaders/common/scene_trace.glsl");
 const char[*] C3D_COMMON_SHADOWS_TEXT @private = $embed("../../../shaders/common/shadows.glsl");
 const char[*] C3D_COMMON_SHEEN_TEXT @private = $embed("../../../shaders/common/sheen.glsl");
 const char[*] C3D_COMMON_STANDARD_SURFACE_TEXT @private = $embed("../../../shaders/common/standard_surface.glsl");
@@ -46,7 +47,7 @@ const char[*] GPU_RAY_TRACING_TEXT @private = $embed("../../../lib/gpu.c3l/inclu
 <*
  Every include a custom stage may resolve, in table order.
 *>
-const ShaderInclude[33] SHADER_INCLUDES = {
+const ShaderInclude[34] SHADER_INCLUDES = {
     { .name = "c3d_abi.glsl", .text = (String)C3D_GENERATED_C3D_ABI_TEXT[..] },
     { .name = "brdf.glsl", .text = (String)C3D_COMMON_BRDF_TEXT[..] },
     { .name = "clusters.glsl", .text = (String)C3D_COMMON_CLUSTERS_TEXT[..] },
@@ -68,6 +69,7 @@ const ShaderInclude[33] SHADER_INCLUDES = {
     { .name = "mesh_vertex.glsl", .text = (String)C3D_COMMON_MESH_VERTEX_TEXT[..] },
     { .name = "normal_mapping.glsl", .text = (String)C3D_COMMON_NORMAL_MAPPING_TEXT[..] },
     { .name = "physical.glsl", .text = (String)C3D_COMMON_PHYSICAL_TEXT[..] },
+    { .name = "scene_trace.glsl", .text = (String)C3D_COMMON_SCENE_TRACE_TEXT[..] },
     { .name = "shadows.glsl", .text = (String)C3D_COMMON_SHADOWS_TEXT[..] },
     { .name = "sheen.glsl", .text = (String)C3D_COMMON_SHEEN_TEXT[..] },
     { .name = "standard_surface.glsl", .text = (String)C3D_COMMON_STANDARD_SURFACE_TEXT[..] },

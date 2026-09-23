@@ -66,7 +66,7 @@ fn Node*? Scene.add_node(&self, Node* parent = null, String name = "") {
 }
 
 <*
- Add a node carrying a mesh that casts and receives shadows.
+ Add a node carrying a mesh that casts, receives shadows and traces.
  @param [in] parent : "Null means the root."
  @param name : "Copied into the scene allocator."
  @return? c3d::CAPACITY_EXCEEDED
@@ -78,6 +78,7 @@ fn Node*? Scene.add_mesh(&self, GeometryId geometry, MaterialId material, Node* 
         .material       = material,
         .cast_shadow    = true,
         .receive_shadow = true,
+        .trace          = true,
     });
     return node;
 }
@@ -141,6 +142,7 @@ fn Node*? Scene.add_instanced_mesh(
         .colors         = alloc::new_array(self.allocator, Vec4, (sz)capacity),
         .cast_shadow    = true,
         .receive_shadow = true,
+        .trace          = true,
     };
     batch.colors[..] = INSTANCE_COLOR_DEFAULT;
     fill_instances(&batch, transforms, colors);

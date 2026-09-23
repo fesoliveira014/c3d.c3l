@@ -56,6 +56,7 @@ fn Node*? instantiate(
             .material       = mesh.material,
             .cast_shadow    = true,
             .receive_shadow = true,
+            .trace          = true,
             .morph_weights  = copy_slice(allocator, mesh.default_morph_weights),
         });
     }

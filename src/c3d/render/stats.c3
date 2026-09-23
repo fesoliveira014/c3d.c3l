@@ -69,6 +69,10 @@ struct Stats {
     uint  material_resolutions;
     uint  pipeline_lookups;
     uint  dangling_refs;
+    uint  trace_instances;
+    uint  trace_nodes;
+    uint  trace_skipped;
+    float trace_build_ms;
     uint  shader_rejections;
     float frame_ms;
     float cpu_record_ms;
