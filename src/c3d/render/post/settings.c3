@@ -28,6 +28,11 @@ const uint MOTION_BLUR_MAX_SAMPLES = 32; // two color, depth and velocity reads 
 const uint TAA_SAMPLE_COUNT = 8; // Halton(2,3) points; longer cycles resolve finer detail but converge slower
 
 <*
+ History images of each kind a TAA view keeps.
+*>
+const uint TAA_HISTORY_SLOTS = 2; // the resolve reads one slot while it writes the other
+
+<*
  Most negative material mip bias a TAA view accepts.
 *>
 const float TAA_MIP_BIAS_MIN = -2.0f; // past two levels textures alias faster than one cycle resolves

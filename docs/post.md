@@ -30,8 +30,8 @@ renderer packs the scene view's camera exposure into the display root each frame
 
 Both routes run inside `finish_view` and write the view's output rectangle.
 
-- Anti-aliasing other than FXAA: the scene image is sampled by `display.frag`, which grades, tone maps and applies the LUT
-  in the final fullscreen pass. No working image exists; `Stats.post_dispatches` is zero and the
+- Anti-aliasing other than FXAA: the scene image is sampled by `display.frag`, which grades, tone
+  maps and applies the LUT in the final fullscreen pass. No working image exists; `Stats.post_dispatches` is zero and the
   `POST_CHAIN` timing is empty.
 - FXAA: `grade.comp` writes the graded LDR image and its perceptual luma (alpha) into `post_a`.
   When the working image equals the output rectangle in pixels, `fxaa.frag` filters `post_a`

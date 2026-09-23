@@ -63,7 +63,7 @@ struct ViewDesc {
 <*
  Working images one view owns, in view_targets order.
 *>
-const uint VIEW_TARGET_COUNT = 5 + post::BLOOM_MAX_LEVELS + 8 + GBUFFER_CHANNEL_COUNT + 7;
+const uint VIEW_TARGET_COUNT = 5 + post::BLOOM_MAX_LEVELS + 8 + GBUFFER_CHANNEL_COUNT + 3 * post::TAA_HISTORY_SLOTS + 1;
 
 <*
  Reverse-Z projection terms that recover forward distance from stored depth.
@@ -166,7 +166,12 @@ fn void ViewHistory.commit(
         self.models[index] = candidate.node.world;
         self.owners[index] = candidate.node.id;
         self.seen[index] = self.serial;
-        commit_pose(allocator, assets, &self.poses[index], candidate);
+        commit_pose(
+            allocator: allocator,
+            assets:    assets,
+            pose:      &self.poses[index],
+            candidate: candidate,
+        );
     }
     self.view_proj = view_proj;
     self.pending = true;
@@ -180,7 +185,7 @@ fn void ViewHistory.publish(&self) {
     self.valid = true;
     self.pending = false;
     self.sample_index = (self.sample_index + 1) % post::TAA_SAMPLE_COUNT;
-    self.slot ^= 1;
+    self.slot = (self.slot + 1) % post::TAA_HISTORY_SLOTS;
 }
 
 <*
@@ -210,7 +215,12 @@ fn void free_view_history(Allocator allocator, ViewHistory* history) {
     *history = {};
 }
 
-fn void commit_pose(Allocator allocator, AssetStore* assets, PoseRecord* pose, MeshCandidate* candidate) @local {
+fn void commit_pose(
+    Allocator allocator,
+    AssetStore* assets,
+    PoseRecord* pose,
+    MeshCandidate* candidate,
+) @local {
     Node* node = candidate.node;
     if (candidate.skin) {
         SkinBinding* binding = candidate.skin;
@@ -279,9 +289,9 @@ struct ViewRecord {
     Target                               velocity;
     Target                               motion_blur_out;
     Target[GBUFFER_CHANNEL_COUNT]        gbuffer;
-    Target[2]                            taa_color;
-    Target[2]                            taa_depth;
-    Target[2]                            taa_velocity;
+    Target[post::TAA_HISTORY_SLOTS]      taa_color;
+    Target[post::TAA_HISTORY_SLOTS]      taa_depth;
+    Target[post::TAA_HISTORY_SLOTS]      taa_velocity;
     Target                               taa_debug;
     Target*                              scene_input;
     bool                                 post_chain_open;
@@ -336,12 +346,13 @@ fn Target*[VIEW_TARGET_COUNT] view_targets(ViewRecord* record) {
     targets[next + 7] = &record.motion_blur_out;
     foreach (channel, &target : record.gbuffer) targets[next + 8 + (uint)channel] = target;
     next += 8 + GBUFFER_CHANNEL_COUNT;
-    for (uint slot = 0; slot < 2; slot++) {
+    uint slots = post::TAA_HISTORY_SLOTS;
+    for (uint slot = 0; slot < slots; slot++) {
         targets[next + slot] = &record.taa_color[slot];
-        targets[next + 2 + slot] = &record.taa_depth[slot];
-        targets[next + 4 + slot] = &record.taa_velocity[slot];
+        targets[next + slots + slot] = &record.taa_depth[slot];
+        targets[next + 2 * slots + slot] = &record.taa_velocity[slot];
     }
-    targets[next + 6] = &record.taa_debug;
+    targets[next + 3 * slots] = &record.taa_debug;
     return targets;
 }
 

@@ -116,8 +116,8 @@ void main() {
             vec3 converted = to_ycocg(color);
             mean += converted;
             moment += converted * converted;
-            vec2 distance = offset - jitter_pixels;
-            float weight = exp(-FILTER_FALLOFF * dot(distance, distance));
+            vec2 tap_distance = offset - jitter_pixels;
+            float weight = exp(-FILTER_FALLOFF * dot(tap_distance, tap_distance));
             filtered += color * weight;
             filter_weight += weight;
             if (depth > nearest_depth) {

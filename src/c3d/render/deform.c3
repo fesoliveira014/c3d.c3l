@@ -111,9 +111,13 @@ fn gpu::GpuAddress? resolve_palette(Renderer* renderer, Node* mesh_node, SkinBin
  @param [out] palette : "One entry per joint; written only."
  @param [&in] mesh_node : "World matrix as left by the last update."
  @param [&in] binding : "Live joints."
- @param inverse_bind : "The skeleton's inverse binds."
 *>
-fn void evaluate_palette(Mat4f[] palette, Node* mesh_node, SkinBinding* binding, Mat4[] inverse_bind) {
+fn void evaluate_palette(
+    Mat4f[] palette,
+    Node* mesh_node,
+    SkinBinding* binding,
+    Mat4[] inverse_bind,
+) {
     Mat4 inverse_mesh = maths::inverse_affine(mesh_node.world);
     foreach (index, joint : binding.joints) {
         palette[index] = bitcast(inverse_mesh.mul(joint.world).mul(inverse_bind[index]), Mat4f);

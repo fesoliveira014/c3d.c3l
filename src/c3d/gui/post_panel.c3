@@ -100,8 +100,18 @@ fn bool post_panel(ViewDesc* desc, TextureId lut) {
     }
     if (desc.post.anti_aliasing == AntiAliasing.TAA && imgui::collapsing_header("Temporal AA", {})) {
         TaaParams* taa = &desc.post.taa_params;
-        changed |= edit_grade_factor("Current weight", &taa.current_weight, CURRENT_WEIGHT_MIN, 1);
-        changed |= edit_grade_factor("Clip gamma", &taa.clip_gamma, CLIP_GAMMA_MIN, CLIP_GAMMA_MAX);
+        changed |= edit_grade_factor(
+            label:   "Current weight",
+            value:   &taa.current_weight,
+            minimum: CURRENT_WEIGHT_MIN,
+            maximum: 1,
+        );
+        changed |= edit_grade_factor(
+            label:   "Clip gamma",
+            value:   &taa.clip_gamma,
+            minimum: CLIP_GAMMA_MIN,
+            maximum: CLIP_GAMMA_MAX,
+        );
         changed |= edit_grade_factor(
             label:   "Depth tolerance",
             value:   &taa.depth_tolerance,
@@ -114,9 +124,19 @@ fn bool post_panel(ViewDesc* desc, TextureId lut) {
             minimum: VELOCITY_THRESHOLD_MIN,
             maximum: VELOCITY_THRESHOLD_MAX,
         );
-        changed |= edit_grade_factor("Mip bias", &taa.mip_bias, post::TAA_MIP_BIAS_MIN, 0);
+        changed |= edit_grade_factor(
+            label:   "Mip bias",
+            value:   &taa.mip_bias,
+            minimum: post::TAA_MIP_BIAS_MIN,
+            maximum: 0,
+        );
         int debug = (int)taa.debug.ordinal;
-        if (imgui::combo_char("Debug", &debug, &TAA_DEBUG_LABELS[0], TaaDebug::len)) {
+        if (imgui::combo_char(
+            label:        "Debug",
+            current_item: &debug,
+            items:        &TAA_DEBUG_LABELS[0],
+            items_count:  TaaDebug::len,
+        )) {
             taa.debug = (TaaDebug)debug;
             changed = true;
         }
@@ -132,7 +152,13 @@ fn bool post_panel(ViewDesc* desc, TextureId lut) {
 *>
 fn bool anti_aliasing_combo(ZString label, AntiAliasing* anti_aliasing) {
     int selected = (int)anti_aliasing.ordinal;
-    if (!imgui::combo_char(label, &selected, &ANTI_ALIASING_LABELS[0], AntiAliasing::len)) return false;
+    bool changed = imgui::combo_char(
+        label:        label,
+        current_item: &selected,
+        items:        &ANTI_ALIASING_LABELS[0],
+        items_count:  AntiAliasing::len,
+    );
+    if (!changed) return false;
     *anti_aliasing = (AntiAliasing)selected;
     return true;
 }

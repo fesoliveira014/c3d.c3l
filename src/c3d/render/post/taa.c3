@@ -8,9 +8,9 @@ import std::math;
 
 const gpu::Format TAA_DEPTH_FORMAT @private = gpu::Format.R32_FLOAT;
 const gpu::Format TAA_VELOCITY_FORMAT @private = gpu::Format.RG16_FLOAT;
-const ZString[2] TAA_COLOR_NAMES @private = { "taa_color_0", "taa_color_1" };
-const ZString[2] TAA_DEPTH_NAMES @private = { "taa_depth_0", "taa_depth_1" };
-const ZString[2] TAA_VELOCITY_NAMES @private = { "taa_velocity_0", "taa_velocity_1" };
+const ZString[TAA_HISTORY_SLOTS] TAA_COLOR_NAMES @private = { "taa_color_0", "taa_color_1" };
+const ZString[TAA_HISTORY_SLOTS] TAA_DEPTH_NAMES @private = { "taa_depth_0", "taa_depth_1" };
+const ZString[TAA_HISTORY_SLOTS] TAA_VELOCITY_NAMES @private = { "taa_velocity_0", "taa_velocity_1" };
 
 <*
  Temporal jitter of a sample index, in NDC for the working extent.
@@ -30,7 +30,7 @@ fn bool taa_debug_enabled(PostStack* stack) @private {
 
 fn void? acquire_taa_images(Renderer* renderer, ViewRecord* record) @private {
     defer catch release_taa_images(&renderer.device, record);
-    for (uint slot = 0; slot < 2; slot++) {
+    for (uint slot = 0; slot < TAA_HISTORY_SLOTS; slot++) {
         record.taa_color[slot] = allocate_post_target(
             device:     &renderer.device,
             width:      record.hdr_color.width,
@@ -66,15 +66,13 @@ fn void? acquire_taa_debug_image(Renderer* renderer, ViewRecord* record) @privat
 }
 
 fn void release_taa_images(gpu::Device* device, ViewRecord* record) @private {
-    Target*[7] images = {
-        &record.taa_color[0], &record.taa_color[1],
-        &record.taa_depth[0], &record.taa_depth[1],
-        &record.taa_velocity[0], &record.taa_velocity[1],
-        &record.taa_debug,
-    };
-    foreach (image : images) {
-        if (image.texture.is_valid()) release_post_target(device, image);
+    for (uint slot = 0; slot < TAA_HISTORY_SLOTS; slot++) {
+        Target*[3] images = { &record.taa_color[slot], &record.taa_depth[slot], &record.taa_velocity[slot] };
+        foreach (image : images) {
+            if (image.texture.is_valid()) release_post_target(device, image);
+        }
     }
+    if (record.taa_debug.texture.is_valid()) release_post_target(device, &record.taa_debug);
 }
 
 <*
@@ -92,21 +90,21 @@ fn void? record_taa(Renderer* renderer, ViewRecord* record, Vec2 jitter) {
     acquire_taa_pipeline(renderer)!;
     Frame* slot = &renderer.frames[renderer.frame_index % render::FRAMES_IN_FLIGHT];
     uint previous = record.history.slot;
-    uint next = previous ^ 1;
+    uint next = (previous + 1) % TAA_HISTORY_SLOTS;
     bool debug = taa_debug_enabled(&record.desc.post);
     TaaParams* params = &record.desc.post.taa_params;
     Target* input = record.scene_input;
 
     render::begin_profile_pass(renderer, Pass.TEMPORAL_AA)!;
     gpu::TextureState sampled = gpu::sampled_at({ .compute });
-    gpu::TextureState stored = gpu::storage_at({ .compute }, { .read });
+    gpu::TextureState history_read = gpu::storage_at({ .compute }, { .read });
     gpu::TextureState written = gpu::storage_at({ .compute }, { .write });
     input.transition(&renderer.commands, sampled)!;
     record.depth.transition(&renderer.commands, sampled)!;
     record.velocity.transition(&renderer.commands, sampled)!;
     record.taa_color[previous].transition(&renderer.commands, sampled)!;
-    record.taa_depth[previous].transition(&renderer.commands, stored)!;
-    record.taa_velocity[previous].transition(&renderer.commands, stored)!;
+    record.taa_depth[previous].transition(&renderer.commands, history_read)!;
+    record.taa_velocity[previous].transition(&renderer.commands, history_read)!;
     record.taa_color[next].transition(&renderer.commands, written)!;
     record.taa_depth[next].transition(&renderer.commands, written)!;
     record.taa_velocity[next].transition(&renderer.commands, written)!;
@@ -158,16 +156,18 @@ fn void? acquire_taa_pipeline(Renderer* renderer) @private {
 }
 
 <*
- Move a TAA view's scene image off its history so a later write cannot reach the next resolve.
+ Copy a TAA view's scene image out of its history before a write.
  @param [&inout] renderer : "Open frame."
- @param [&inout] record : "scene_input moves to a copy in hdr_color when it is a history image."
+ @param [&inout] record : "Its scene_input moves to a copy in hdr_color."
  @return? c3d::SHADER_NOT_FOUND, gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::PIPELINE_CREATE_FAILED
  @return? gpu::SLOT_TABLE_FULL, gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
  @return? gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
 *>
 fn void? detach_scene_input(Renderer* renderer, ViewRecord* record) {
-    if (record.scene_input != &record.taa_color[0] && record.scene_input != &record.taa_color[1]) return;
+    bool history;
+    foreach (&image : record.taa_color) history |= record.scene_input == image;
+    if (!history) return;
     render::composite_target(
         renderer: renderer,
         source:   record.scene_input,

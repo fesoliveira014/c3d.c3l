@@ -27,5 +27,7 @@ void main() {
         ? root.prev_view_proj * vec4(world.xyz / world.w, 1.0)
         : root.prev_view_proj * vec4(world.xyz, 0.0);
     vec2 previous_uv = (previous.xy / previous.w) * vec2(0.5, -0.5) + 0.5;
-    out_velocity = vec4(v_uv - root.jitter_uv - previous_uv, previous.z / previous.w, 0.0);
+    // A direction keeps -m22 as its depth under a finite far plane; the stored depth of no geometry is 0.
+    float previous_depth = depth > 0.0 ? previous.z / previous.w : 0.0;
+    out_velocity = vec4(v_uv - root.jitter_uv - previous_uv, previous_depth, 0.0);
 }

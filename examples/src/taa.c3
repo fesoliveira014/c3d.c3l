@@ -46,6 +46,7 @@ const float GROUND_REPEAT @local = 24; // many texels per pixel at grazing angle
 const float CUBE_SIZE @local = 1.1f;
 const Vec3 CUBE_POSITION @local = { -3, 0.8f, 0.8f };
 const float FOX_HEIGHT @local = 1.2f;
+const uint FOX_WALK_CLIP @local = 1; // Fox.glb orders its clips Survey, Walk, Run
 const Vec3 FOX_POSITION @local = { 0, 0, 0.8f };
 const float MORPH_CUBE_SIZE @local = 1;
 const Vec3 MORPH_CUBE_POSITION @local = { 3, 0.8f, 0.8f };
@@ -187,7 +188,11 @@ fn void place_ring(Scene* scene, Node* ring, float angle) @local {
         float direction = index % 2 == 0 ? 1 : -1;
         float radius = RING_RADIUS * (index % 3 == 0 ? 0.6f : 1.0f);
         float instance_angle = phase + angle * direction * (1 + (float)(index % 4) * 0.25f);
-        batch.transforms[index].position = { math::cos(instance_angle) * radius, 0, math::sin(instance_angle) * radius };
+        batch.transforms[index].position = {
+            math::cos(instance_angle) * radius,
+            0,
+            math::sin(instance_angle) * radius,
+        };
     }
 }
 
@@ -247,8 +252,22 @@ fn Movers? build_scene(AssetStore* assets, Scene* scene) @local {
     movers.ring.local.position = RING_CENTER;
     place_ring(scene, movers.ring, 0);
 
-    add_animated(assets, scene, FOX_MODEL, FOX_HEIGHT, FOX_POSITION, 1)!;
-    add_animated(assets, scene, MORPH_MODEL, MORPH_CUBE_SIZE, MORPH_CUBE_POSITION, 0)!;
+    add_animated(
+        assets:         assets,
+        scene:          scene,
+        file:           FOX_MODEL,
+        height:         FOX_HEIGHT,
+        position:       FOX_POSITION,
+        preferred_clip: FOX_WALK_CLIP,
+    )!;
+    add_animated(
+        assets:         assets,
+        scene:          scene,
+        file:           MORPH_MODEL,
+        height:         MORPH_CUBE_SIZE,
+        position:       MORPH_CUBE_POSITION,
+        preferred_clip: 0,
+    )!;
 
     Node* sun = scene.add_light(light::directional({ 1, 0.96f, 0.9f }, SUN_INTENSITY), name: "sun")!;
     sun.local.rotation = maths::look_rotation((Vec3){ -0.4f, -0.8f, -0.45f }.normalize(), { 0, 1, 0 });

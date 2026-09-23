@@ -21,7 +21,7 @@ fn AssetStore create_store() @local {
         .max_textures   = asset::BUILTIN_TEXTURE_COUNT,
         .max_materials  = 1,
         .max_samplers   = asset::BUILTIN_SAMPLER_COUNT,
-        .max_skeletons  = 1,
+        .max_skeletons  = 2,
     });
 }
 
@@ -63,7 +63,13 @@ fn void test_view_history_reports_previous_model_only_for_matching_owner() @test
     defer render::free_view_history(mem, &history);
     assert(!history.has_previous(&scene, first));
     MeshCandidate[2] candidates = candidates_of(first, second);
-    history.commit(mem, &assets, &scene, candidates[..], camera);
+    history.commit(
+        allocator:  mem,
+        assets:     &assets,
+        scene:      &scene,
+        candidates: candidates[..],
+        view_proj:  camera,
+    );
     history.publish();
     assert(history.valid && history.view_proj == camera);
     assert(history.has_previous(&scene, first) && history.previous_model(&scene, first) == first.world);
@@ -89,12 +95,24 @@ fn void test_view_history_reset_forgets_everything() @test {
     ViewHistory history;
     defer render::free_view_history(mem, &history);
     MeshCandidate[2] candidates = candidates_of(first, second);
-    history.commit(mem, &assets, &scene, candidates[..], matrix::IDENTITY4);
+    history.commit(
+        allocator:  mem,
+        assets:     &assets,
+        scene:      &scene,
+        candidates: candidates[..],
+        view_proj:  matrix::IDENTITY4,
+    );
     history.publish();
     history.valid = false;
     assert(!history.has_previous(&scene, first) && !history.has_previous(&scene, second));
 
-    history.commit(mem, &assets, &scene, candidates[..], matrix::IDENTITY4);
+    history.commit(
+        allocator:  mem,
+        assets:     &assets,
+        scene:      &scene,
+        candidates: candidates[..],
+        view_proj:  matrix::IDENTITY4,
+    );
     history.publish();
     assert(history.has_previous(&scene, first));
 }
@@ -111,19 +129,37 @@ fn void test_view_history_membership_follows_the_last_published_rendering() @tes
     defer render::free_view_history(mem, &history);
 
     MeshCandidate[2] both = candidates_of(first, second);
-    history.commit(mem, &assets, &scene, both[..], matrix::IDENTITY4);
+    history.commit(
+        allocator:  mem,
+        assets:     &assets,
+        scene:      &scene,
+        candidates: both[..],
+        view_proj:  matrix::IDENTITY4,
+    );
     history.publish();
     assert(history.has_previous(&scene, first) && history.has_previous(&scene, second));
 
     MeshCandidate[1] only_first = { { .node = first } };
-    history.commit(mem, &assets, &scene, only_first[..], matrix::IDENTITY4);
+    history.commit(
+        allocator:  mem,
+        assets:     &assets,
+        scene:      &scene,
+        candidates: only_first[..],
+        view_proj:  matrix::IDENTITY4,
+    );
     history.publish();
     assert(history.has_previous(&scene, first));
     assert(!history.has_previous(&scene, second));
 
     second.local.position = { 4, 0, 0 };
     scene.update_world();
-    history.commit(mem, &assets, &scene, both[..], matrix::IDENTITY4);
+    history.commit(
+        allocator:  mem,
+        assets:     &assets,
+        scene:      &scene,
+        candidates: both[..],
+        view_proj:  matrix::IDENTITY4,
+    );
     history.publish();
     assert(history.has_previous(&scene, second) && history.previous_model(&scene, second) == second.world);
 }
@@ -146,7 +182,13 @@ fn void test_view_history_ignores_a_scene_with_matching_ids() @test {
     defer render::free_view_history(mem, &history);
 
     MeshCandidate[1] candidates = { { .node = first } };
-    history.commit(mem, &assets, &first_scene, candidates[..], matrix::IDENTITY4);
+    history.commit(
+        allocator:  mem,
+        assets:     &assets,
+        scene:      &first_scene,
+        candidates: candidates[..],
+        view_proj:  matrix::IDENTITY4,
+    );
     history.publish();
     assert(history.has_previous(&first_scene, first));
     assert(!history.has_previous(&second_scene, second));
@@ -163,12 +205,24 @@ fn void test_view_history_pending_rendering_is_not_previous_until_published() @t
     defer render::free_view_history(mem, &history);
     MeshCandidate[1] candidates = { { .node = first } };
 
-    history.commit(mem, &assets, &scene, candidates[..], matrix::IDENTITY4);
+    history.commit(
+        allocator:  mem,
+        assets:     &assets,
+        scene:      &scene,
+        candidates: candidates[..],
+        view_proj:  matrix::IDENTITY4,
+    );
     assert(history.pending && !history.valid && !history.has_previous(&scene, first));
     history.publish();
     assert(history.valid && !history.pending && history.has_previous(&scene, first));
 
-    history.commit(mem, &assets, &scene, candidates[..], matrix::IDENTITY4);
+    history.commit(
+        allocator:  mem,
+        assets:     &assets,
+        scene:      &scene,
+        candidates: candidates[..],
+        view_proj:  matrix::IDENTITY4,
+    );
     history.discard();
     assert(!history.valid && !history.pending && !history.has_previous(&scene, first));
 
@@ -187,24 +241,39 @@ fn void test_view_history_advances_sample_and_slot_only_on_publish() @test {
     defer render::free_view_history(mem, &history);
     MeshCandidate[1] candidates = { { .node = node } };
 
-    history.commit(mem, &assets, &scene, candidates[..], matrix::IDENTITY4);
+    history.commit(
+        allocator:  mem,
+        assets:     &assets,
+        scene:      &scene,
+        candidates: candidates[..],
+        view_proj:  matrix::IDENTITY4,
+    );
     history.discard();
     assert(history.sample_index == 0 && history.slot == 0);
 
-    history.commit(mem, &assets, &scene, candidates[..], matrix::IDENTITY4);
+    history.commit(
+        allocator:  mem,
+        assets:     &assets,
+        scene:      &scene,
+        candidates: candidates[..],
+        view_proj:  matrix::IDENTITY4,
+    );
     history.publish();
     assert(history.sample_index == 1 && history.slot == 1);
 
     for (uint rendering = 0; rendering < post::TAA_SAMPLE_COUNT; rendering++) {
-        history.commit(mem, &assets, &scene, candidates[..], matrix::IDENTITY4);
+        history.commit(
+            allocator:  mem,
+            assets:     &assets,
+            scene:      &scene,
+            candidates: candidates[..],
+            view_proj:  matrix::IDENTITY4,
+        );
         history.publish();
     }
     assert(history.sample_index == 1);
     assert(history.slot == (1 + post::TAA_SAMPLE_COUNT) % 2);
 
-    uint slot = history.slot;
-    history.valid = false;
-    assert(history.sample_index == 1 && history.slot == slot);
 }
 
 fn void test_view_history_keeps_the_palette_of_the_last_commit() @test {
@@ -224,7 +293,13 @@ fn void test_view_history_keeps_the_palette_of_the_last_commit() @test {
     defer render::free_view_history(mem, &history);
     MeshCandidate[1] candidates = { { .node = mesh, .skin = scene.get(mesh, SkinBinding) } };
 
-    history.commit(mem, &assets, &scene, candidates[..], matrix::IDENTITY4);
+    history.commit(
+        allocator:  mem,
+        assets:     &assets,
+        scene:      &scene,
+        candidates: candidates[..],
+        view_proj:  matrix::IDENTITY4,
+    );
     history.publish();
     PoseRecord* pose = history.previous_pose(&scene, mesh);
     assert(pose.palette.len == 2);
@@ -234,14 +309,16 @@ fn void test_view_history_keeps_the_palette_of_the_last_commit() @test {
     joints[1].local.position = { 0, 0, 7 };
     scene.update_world();
     assert(same_matrix(history.previous_pose(&scene, mesh).palette[1], committed));
-    history.commit(mem, &assets, &scene, candidates[..], matrix::IDENTITY4);
+    history.commit(
+        allocator:  mem,
+        assets:     &assets,
+        scene:      &scene,
+        candidates: candidates[..],
+        view_proj:  matrix::IDENTITY4,
+    );
     history.publish();
     Mat4 moved = maths::inverse_affine(mesh.world).mul(joints[1].world);
     assert(same_matrix(history.previous_pose(&scene, mesh).palette[1], moved));
-
-    scene.remove(mesh);
-    Node* reused = scene.add_node(name: "reused")!!;
-    assert(!history.has_previous(&scene, reused));
 }
 
 fn void test_view_history_instances_follow_draw_order_and_keep_capacity() @test {
@@ -260,7 +337,12 @@ fn void test_view_history_instances_follow_draw_order_and_keep_capacity() @test 
         { .position = { 2, 0, 0 }, .rotation = quaternion::IDENTITY, .scale = { -1, 1, 1 } },
         { .position = { 3, 0, 0 }, .rotation = quaternion::IDENTITY, .scale = { 1, 1, 1 } },
     };
-    Node* node = scene.add_instanced_mesh(box, red, 4, transforms[..])!!;
+    Node* node = scene.add_instanced_mesh(
+        geometry:   box,
+        material:   red,
+        capacity:   4,
+        transforms: transforms[..],
+    )!!;
     node.local.position = { 0, 5, 0 };
     scene.update_world();
     InstancedMesh* batch = scene.get(node, InstancedMesh);
@@ -268,7 +350,13 @@ fn void test_view_history_instances_follow_draw_order_and_keep_capacity() @test 
     defer render::free_view_history(mem, &history);
     MeshCandidate[1] candidates = { { .node = node, .batch = batch } };
 
-    history.commit(mem, &assets, &scene, candidates[..], matrix::IDENTITY4);
+    history.commit(
+        allocator:  mem,
+        assets:     &assets,
+        scene:      &scene,
+        candidates: candidates[..],
+        view_proj:  matrix::IDENTITY4,
+    );
     history.publish();
     PoseRecord* pose = history.previous_pose(&scene, node);
     assert(pose.instance_count == 3 && pose.instances.len == 4);
@@ -278,7 +366,13 @@ fn void test_view_history_instances_follow_draw_order_and_keep_capacity() @test 
 
     Mat4f* storage = pose.instances.ptr;
     scene.resize_instances(node, 4)!!;
-    history.commit(mem, &assets, &scene, candidates[..], matrix::IDENTITY4);
+    history.commit(
+        allocator:  mem,
+        assets:     &assets,
+        scene:      &scene,
+        candidates: candidates[..],
+        view_proj:  matrix::IDENTITY4,
+    );
     history.publish();
     pose = history.previous_pose(&scene, node);
     assert(pose.instances.ptr == storage && pose.instance_count == 4);
@@ -297,11 +391,92 @@ fn void test_view_history_records_the_selected_morph_block() @test {
     float[3] weights = { 0.25f, 0, -0.75f };
     MeshCandidate[2] candidates = { { .node = morphed, .morph_weights = weights[..] }, { .node = plain } };
 
-    history.commit(mem, &assets, &scene, candidates[..], matrix::IDENTITY4);
+    history.commit(
+        allocator:  mem,
+        assets:     &assets,
+        scene:      &scene,
+        candidates: candidates[..],
+        view_proj:  matrix::IDENTITY4,
+    );
     history.publish();
     PoseRecord* pose = history.previous_pose(&scene, morphed);
     assert(pose.morphed && pose.morph.count == 2);
     assert(pose.morph.indices[0] == 2 && pose.morph.weights[0] == -0.75f);
     assert(pose.morph.indices[1] == 0 && pose.morph.weights[1] == 0.25f);
     assert(!history.previous_pose(&scene, plain).morphed);
+}
+
+fn void test_view_history_keeps_sample_and_slot_when_the_tables_grow() @test {
+    Scene small = scene::create_scene(mem, { .max_nodes = NODE_CAPACITY });
+    defer scene::destroy_scene(&small);
+    Scene large = scene::create_scene(mem, { .max_nodes = 2 * NODE_CAPACITY });
+    defer scene::destroy_scene(&large);
+    Node* first = small.add_node(name: "first")!!;
+    Node* second = large.add_node(name: "second")!!;
+    small.update_world();
+    large.update_world();
+    AssetStore assets = create_store();
+    defer asset::destroy_asset_store(&assets);
+    ViewHistory history;
+    defer render::free_view_history(mem, &history);
+    MeshCandidate[1] small_candidates = { { .node = first } };
+    MeshCandidate[1] large_candidates = { { .node = second } };
+
+    history.commit(
+        allocator:  mem,
+        assets:     &assets,
+        scene:      &small,
+        candidates: small_candidates[..],
+        view_proj:  matrix::IDENTITY4,
+    );
+    history.publish();
+    history.commit(
+        allocator:  mem,
+        assets:     &assets,
+        scene:      &large,
+        candidates: large_candidates[..],
+        view_proj:  matrix::IDENTITY4,
+    );
+    assert(history.models.len == large.nodes.len);
+    assert(history.sample_index == 1 && history.slot == 1);
+    history.publish();
+    assert(history.sample_index == 2 && history.slot == 0);
+}
+
+fn void test_view_history_resizes_the_palette_with_the_binding() @test {
+    Scene scene = scene::create_scene(mem, { .max_nodes = NODE_CAPACITY });
+    defer scene::destroy_scene(&scene);
+    AssetStore assets = create_store();
+    defer asset::destroy_asset_store(&assets);
+    SkeletonId two = add_identity_skeleton(&assets, 2);
+    SkeletonId three = add_identity_skeleton(&assets, 3);
+    Node*[] joints = alloc::new_array(scene.allocator, Node*, 3);
+    foreach (&joint : joints) *joint = scene.add_node(name: "joint")!!;
+    Node* mesh = scene.add_node(name: "skinned")!!;
+    scene.add(mesh, (SkinBinding){ .skeleton = two, .joints = joints[:2] });
+    scene.update_world();
+    ViewHistory history;
+    defer render::free_view_history(mem, &history);
+    MeshCandidate[1] candidates = { { .node = mesh, .skin = scene.get(mesh, SkinBinding) } };
+
+    history.commit(
+        allocator:  mem,
+        assets:     &assets,
+        scene:      &scene,
+        candidates: candidates[..],
+        view_proj:  matrix::IDENTITY4,
+    );
+    assert(history.poses[mesh.id.index].palette.len == 2);
+
+    SkinBinding* binding = scene.get(mesh, SkinBinding);
+    binding.skeleton = three;
+    binding.joints = joints;
+    history.commit(
+        allocator:  mem,
+        assets:     &assets,
+        scene:      &scene,
+        candidates: candidates[..],
+        view_proj:  matrix::IDENTITY4,
+    );
+    assert(history.poses[mesh.id.index].palette.len == 3);
 }

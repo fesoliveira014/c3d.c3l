@@ -17,6 +17,8 @@ import std::collections::map;
 import std::math;
 import std::sort;
 
+alias PreviousInstanceCache @private = HashMap{ulong, gpu::GpuAddress};
+
 <*
  Color format of the view targets.
 *>
@@ -28,8 +30,6 @@ const gpu::Format HDR_FORMAT = gpu::Format.RGBA16_FLOAT;
 const gpu::Format DEPTH_FORMAT = gpu::Format.D32_FLOAT;
 
 const float DEPTH_CLEAR @private = 0; // reverse-Z far
-
-alias PreviousInstanceCache @private = HashMap{ulong, gpu::GpuAddress};
 
 struct DrawItem @private {
     ulong           sort_key;
@@ -489,7 +489,13 @@ fn void? Renderer.render_view(
                     post::record_motion_blur(self, record)!;
                 }
                 if (temporal) {
-                    record.history.commit(self.allocator, self.assets, scene, candidates, matrices.view_proj);
+                    record.history.commit(
+                        allocator:  self.allocator,
+                        assets:     self.assets,
+                        scene:      scene,
+                        candidates: candidates,
+                        view_proj:  matrices.view_proj,
+                    );
                 }
             };
         };
@@ -768,7 +774,7 @@ fn void? prepare_views(Renderer* renderer) @private {
 <*
  Write the per-view root.
  @param [&out] root : "Overwritten whole."
- @param [&in] matrices : "Rendered matrices, jittered on a temporal view."
+ @param [&in] matrices : "Rendered matrices, jittered on a TAA view."
  @param [&in] camera : "Supplies near, far and exposure."
  @param viewport : "Pixels."
  @param [in] prev_view_proj : "Unjittered; null repeats the current view-projection."
