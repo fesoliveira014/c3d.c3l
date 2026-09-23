@@ -378,13 +378,19 @@ See [profiling](docs/profiling.md) for capture lifetimes, feature selection and
 frame-wide GPU pass summaries. Run its CPU-only example with
 `c3c run capture --path addons/c3d_profile.c3l`.
 
-The optional `c3d_physics` add-on binds box3d rigid bodies to scene nodes: `create_physics_world`,
-`add_body` with sphere, capsule, box, hull, mesh and height-field colliders, fixed-step `update`
-with interpolated write-back, per-frame contact, hit and sensor events, `raycast` and
-`overlap_sphere`, and collider wireframes into the CPU debug sink. Applications select the
-library explicitly; core carries no physics dependency. Example:
-`python3 scripts/build.py --example physics`. `physics_instanced` is the same scene with every box
-drawn from one instanced batch: `python3 scripts/build.py --example physics_instanced`.
+The optional `c3d_physics` add-on binds box3d rigid bodies to scene nodes. Bodies are ECS data:
+after `register_physics`, a `PhysicsBody` component (`add_physics_body`, or
+`add_static_mesh_bodies` over a model instance) becomes a box3d body on the world's next `update`,
+is rebuilt after `mark_changed`, and leaves with the component; `add_body` authors and builds in
+one call. Colliders are sphere, capsule, box, hull, mesh, height field and static compound, with
+surface materials (friction, restitution, rolling resistance, conveyor tangent velocity, an
+application surface id) per shape or per face. The world steps at a fixed rate with interpolated
+write-back, applies `Wind` and `Force` components every step, takes runtime tuning through
+`set_tuning`, and reports contact, hit, sensor and build-failure events, `raycast`,
+`overlap_sphere`, `explode`, and collider wireframes into the CPU debug sink. Applications select
+the library explicitly; core carries no physics dependency. Examples:
+`python3 scripts/build.py --example physics`; `physics_instanced` is the same scene with every box
+drawn from one instanced batch; `physics_components` builds its level and bodies from components.
 
 Add c3d and its dependencies to your `project.json`, and list the feature flags you want. A C3
 library manifest cannot declare features, so every consumer enables them itself. Declarations
