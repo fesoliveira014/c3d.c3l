@@ -210,7 +210,8 @@ fn void release_snapshot(SnapshotTable* table, SnapshotHandle handle) @private {
     if (!handle.generation) return;
     CollisionSnapshot* slot = &table.slots[handle.index];
     slot.holders--;
-    if (!slot.holders && !slot.sources.len) free_snapshot(table, slot);
+    // A compound re-bakes from its child snapshots, which stay cooked; keeping it would only pin edited content.
+    if (!slot.holders && (!slot.sources.len || slot.kind == COMPOUND)) free_snapshot(table, slot);
 }
 
 fn void reclaim_unheld_stale(PhysicsWorld* world) @private {

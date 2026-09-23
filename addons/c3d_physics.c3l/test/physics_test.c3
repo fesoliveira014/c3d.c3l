@@ -761,6 +761,94 @@ fn void test_compound_mesh_child_material_count_must_match() @test {
     child.face_materials = materials[:1];
     collider = compound_collider((&child)[:1]);
     fixture.physics.add_body(add_static_node(&fixture), physics::default_body_desc(STATIC), (&collider)[:1])!!;
+
+    child.material_indices = {};
+    child.face_materials = {};
+    collider = compound_collider((&child)[:1]);
+    fixture.physics.add_body(add_static_node(&fixture), physics::default_body_desc(STATIC), (&collider)[:1])!!;
+}
+
+fn void test_compound_box_children_keep_their_own_extents() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    CompoundChild[2] children;
+    children[0] = physics::default_compound_child(BOX);
+    children[0].half_extents = { 0.5f, 0.1f, 0.5f };
+    children[0].local.position = { -2, 0, 0 };
+    children[1] = physics::default_compound_child(BOX);
+    children[1].half_extents = { 0.5f, 0.3f, 0.5f };
+    children[1].local.position = { 2, 0, 0 };
+    ColliderDesc collider = compound_collider(children[..]);
+    fixture.physics.add_body(add_static_node(&fixture), physics::default_body_desc(STATIC), (&collider)[:1])!!;
+
+    assert(close(fixture.physics.raycast({ -2, 5, 0 }, { 0, -1, 0 }, 10)!!.point.y, 0.1f));
+    assert(close(fixture.physics.raycast({ 2, 5, 0 }, { 0, -1, 0 }, 10)!!.point.y, 0.3f));
+}
+
+fn void test_edited_compound_frees_its_old_snapshot() @test {
+    PhysicsDesc desc = physics::default_physics_desc();
+    desc.snapshot_capacity = 2;
+    Fixture fixture;
+    setup(&fixture, desc);
+    defer teardown(&fixture);
+
+    CompoundChild child = physics::default_compound_child(HULL);
+    child.geometry = fixture.unit_box;
+    ColliderDesc collider = compound_collider((&child)[:1]);
+    Node* node = add_static_node(&fixture);
+    fixture.scene.add_physics_body(node, physics::default_body_desc(STATIC), (&collider)[:1])!!;
+    fixture.physics.update(0);
+    PhysicsBody* physics_body = fixture.scene.get(node, PhysicsBody);
+    for (uint edit = 1; edit <= 3; edit++) {
+        physics_body.colliders[0].children[0].local.position = { 0, edit, 0 };
+        physics_body.mark_changed();
+        fixture.physics.update(0);
+        assert(physics_body.status == LIVE);
+    }
+    assert(occupied_snapshots(&fixture.physics) == 2);
+    assert_holders_match(&fixture);
+}
+
+fn void test_physics_body_owns_its_desc_copy() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    char[12] indices;
+    SurfaceMaterialDesc[1] faces = { physics::default_surface_material() };
+    faces[0].id = ROCK_SURFACE;
+    CompoundChild child = physics::default_compound_child(MESH);
+    child.geometry = fixture.unit_box;
+    child.material_indices = indices[..];
+    child.face_materials = faces[..];
+    float[9] heights = { 0, 1, 0, 1, 2, 1, 0, 1, 0 };
+    ColliderDesc[2] colliders = { compound_collider((&child)[:1]), height_field_collider(heights[..]) };
+    char[5] name = "rocks";
+    BodyDesc body = physics::default_body_desc(STATIC);
+    body.name = (String)name[..];
+
+    Node* first = add_static_node(&fixture);
+    fixture.scene.add_physics_body(first, body, colliders[..])!!;
+    Node* second = add_static_node(&fixture, { 0, 0, 10 });
+    fixture.scene.add_physics_body(second, body, colliders[..])!!;
+    child.geometry = {};
+    indices[0] = 1;
+    faces[0].id = ICE_SURFACE;
+    heights[4] = 9;
+    name[0] = 'X';
+    fixture.scene.remove_component(first, PhysicsBody);
+    fixture.physics.update(0);
+
+    PhysicsBody* copy = fixture.scene.get(second, PhysicsBody);
+    assert(copy.status == LIVE);
+    assert(copy.body.name == "rocks");
+    CompoundChild* copied_child = &copy.colliders[0].children[0];
+    assert(copied_child.geometry.index == fixture.unit_box.index);
+    assert(copied_child.material_indices[0] == 0);
+    assert(copied_child.face_materials[0].id == ROCK_SURFACE);
+    assert(copy.colliders[1].height_field.heights[4] == 2);
 }
 
 fn void test_asset_snapshot_survives_zero_holders() @test {

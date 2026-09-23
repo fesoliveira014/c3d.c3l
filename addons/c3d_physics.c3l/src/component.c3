@@ -135,12 +135,12 @@ fn PhysicsBody carve_physics_body(BlockCursor* cursor, BodyDesc body, ColliderDe
     }
 
     char[] name = carve(cursor, char, body.name.len + 1);
+    BodyDesc body_copy = body;
     if (cursor.base) {
         name[:body.name.len] = body.name[..];
         name[body.name.len] = 0;
+        body_copy.name = (String)name[:body.name.len];
     }
-    BodyDesc body_copy = body;
-    body_copy.name = (String)name[:body.name.len];
     return { .body = body_copy, .colliders = copies, .status = PENDING };
 }
 
