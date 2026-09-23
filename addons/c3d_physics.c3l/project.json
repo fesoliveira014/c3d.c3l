@@ -32,6 +32,11 @@
       "type": "executable",
       "sources": [ "examples/physics_instanced.c3" ],
       "features": [ "C3D_GUI", "C3D_STB_IMAGE" ]
+    },
+    "physics_components": {
+      "type": "executable",
+      "sources": [ "examples/physics_components.c3" ],
+      "features": [ "C3D_GUI", "C3D_STB_IMAGE" ]
     }
   }
 }

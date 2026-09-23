@@ -35,7 +35,12 @@ TEST = ROOT / "test"
 PROFILE = ROOT / "addons" / "c3d_profile.c3l"
 PROFILE_GUI = ROOT / "addons" / "c3d_profile_gui.c3l"
 PHYSICS = ROOT / "addons" / "c3d_physics.c3l"
-ADDON_EXAMPLES = {"capture": PROFILE, "physics": PHYSICS, "physics_instanced": PHYSICS}
+ADDON_EXAMPLES = {
+    "capture": PROFILE,
+    "physics": PHYSICS,
+    "physics_instanced": PHYSICS,
+    "physics_components": PHYSICS,
+}
 PROFILE_TEST_TARGETS = (
     "profile_off", "profile_cpu", "profile_internal", "profile_gpu",
     "profile_gpu_internal", "profile_cpu_gpu", "profile_full",
