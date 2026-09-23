@@ -9,7 +9,7 @@ import c3d::scene;
 import b3;
 
 <*
- Build authored bodies, advance the simulation by dt in fixed steps, and write dynamic poses.
+ Build pending bodies, step the simulation by dt, write dynamic poses.
  Event node pointers are valid until the scene flushes removals.
 *>
 fn void PhysicsWorld.update(&self, float dt) {
@@ -183,7 +183,6 @@ fn void sync_bodies(PhysicsWorld* world) @local {
             case LIVE:
                 break;
             case PENDING:
-                if (scene.has(node, RigidBody)) scene.remove_component(node, RigidBody);
                 try_build(world, node, physics_body);
             case FAILED:
                 if (physics_body.failure != SOURCE_UNAVAILABLE) break;
@@ -206,7 +205,9 @@ fn void try_build(PhysicsWorld* world, Node* node, PhysicsBody* physics_body) @l
     }
 }
 
+// Replaces any body still on the node: a rebuild, or an orphan whose PhysicsBody left this frame.
 fn void? build_body(PhysicsWorld* world, Node* node, PhysicsBody* physics_body) @private {
+    if (world.scene.has(node, RigidBody)) world.scene.remove_component(node, RigidBody);
     BodyDesc desc = physics_body.body;
     foreach (&collider : physics_body.colliders) check_collider(world, collider, desc.kind)!;
 

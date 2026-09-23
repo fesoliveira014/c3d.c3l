@@ -19,7 +19,12 @@ fn void? check_collider(PhysicsWorld* world, ColliderDesc* desc, BodyKind kind) 
             if (kind != STATIC) return STATIC_ONLY~;
             check_placement(desc.local)!;
             check_source(world, desc.geometry)!;
-            return check_mesh_indices(world, desc.geometry, desc.material_indices, desc.face_materials.len);
+            return check_mesh_indices(
+                world:               world,
+                geometry:            desc.geometry,
+                material_indices:    desc.material_indices,
+                face_material_count: desc.face_materials.len,
+            );
         case HEIGHT_FIELD:
             if (kind != STATIC) return STATIC_ONLY~;
             check_placement(desc.local)!;
@@ -52,7 +57,12 @@ fn void? check_compound_child(PhysicsWorld* world, CompoundChild* child) @local 
             return check_source(world, child.geometry);
         case MESH:
             check_source(world, child.geometry)!;
-            check_mesh_indices(world, child.geometry, child.material_indices, child.face_materials.len)!;
+            check_mesh_indices(
+                world:               world,
+                geometry:            child.geometry,
+                material_indices:    child.material_indices,
+                face_material_count: child.face_materials.len,
+            )!;
             usz material_count = 1;
             foreach (index : child.material_indices) material_count = math::max(material_count, (usz)index + 1);
             if (material_count > b3::MAX_COMPOUND_MESH_MATERIALS) return c3d::INVALID_ARGUMENT~;

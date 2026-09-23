@@ -37,7 +37,7 @@ const uint  DEFAULT_MAX_STEPS = 4; // a longer backlog is dropped, not simulated
 <* Approach speed above which hits are reported, meters per second. *>
 const float DEFAULT_HIT_SPEED_THRESHOLD = 1;
 <* Entries per event list. *>
-const uint  DEFAULT_EVENT_CAPACITY = 4096; // six lists of 4096 entries, about 800 KiB per world; the contact burst lever
+const uint  DEFAULT_EVENT_CAPACITY = 4096; // six lists, 144 bytes per index across them: 576 KiB per world; the contact burst lever
 <* Collision snapshot slots per world. *>
 const uint  DEFAULT_SNAPSHOT_CAPACITY = 256; // one slot per distinct cooked key; the level variety lever
 <* Water density, kilograms per cubic meter. *>
@@ -598,7 +598,7 @@ fn PhysicsWorld? create_physics_world(
 }
 
 <*
- Destroy the world, its bodies, snapshots and event lists; nodes and PhysicsBody components remain.
+ Destroy the world, bodies and snapshots; nodes and PhysicsBody components remain.
  @param [&inout] world : "Destroyed before its scene and asset store."
 *>
 fn void destroy_physics_world(PhysicsWorld* world) {

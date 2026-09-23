@@ -16,8 +16,7 @@ enum BodyStatus {
 }
 
 <*
- Authored body; the world builds, rebuilds and removes its RigidBody.
- Arrays are the component's own copy; status is written by the world.
+ Authored body the world builds into a RigidBody; arrays are its own copy.
 *>
 struct PhysicsBody {
     BodyDesc       body;
@@ -61,7 +60,7 @@ fn void PhysicsBody.mark_changed(&self) {
 }
 
 <*
- Attach a copy of the body and colliders; the world builds it on its next update.
+ Attach a copy of the body; the next world update builds it.
  @param [&in] node : "Its world matrix is read at build time."
  @return? BODY_EXISTS
  @require self.world.is_registered(PhysicsBody), colliders.len > 0

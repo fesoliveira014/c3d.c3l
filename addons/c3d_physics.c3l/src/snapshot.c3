@@ -63,6 +63,12 @@ struct SnapshotTable {
     CollisionSnapshot[] slots;
 }
 
+struct SnapshotKey @local {
+    SnapshotKind     kind;
+    ulong            content;
+    SnapshotSource[] sources;
+}
+
 struct WireWriter @local {
     Vec3[] points;
     usz    count;
@@ -91,7 +97,7 @@ fn CollisionSnapshot* snapshot_of(SnapshotTable* table, SnapshotHandle handle) @
 fn SnapshotHandle? acquire_hull(PhysicsWorld* world, GeometryId geometry) @private {
     SnapshotSource[1] sources = { current_source(world, geometry) };
     foreach (usz index, &slot : world.snapshots.slots) {
-        if (matches(slot, HULL, 0, sources[..])) return hold(world.snapshots, index);
+        if (matches(slot, { .kind = HULL, .sources = sources[..] })) return hold(world.snapshots, index);
     }
 
     Vec3[] positions = world.assets.geometry(geometry).data.positions;
@@ -113,7 +119,7 @@ fn SnapshotHandle? acquire_mesh(PhysicsWorld* world, GeometryId geometry, char[]
     SnapshotSource[1] sources = { current_source(world, geometry) };
     ulong content = material_indices.len ? fnv64a::hash(material_indices) : 0;
     foreach (usz index, &slot : world.snapshots.slots) {
-        if (matches(slot, MESH, content, sources[..])) return hold(world.snapshots, index);
+        if (matches(slot, { .kind = MESH, .content = content, .sources = sources[..] })) return hold(world.snapshots, index);
     }
 
     Geometry* source = &world.assets.geometry(geometry).data;
@@ -174,7 +180,7 @@ fn SnapshotHandle? acquire_compound(PhysicsWorld* world, ColliderDesc* desc) @pr
     defer catch alloc::free(allocator, sources.ptr);
     ulong content = compound_content(desc.children);
     foreach (usz index, &slot : world.snapshots.slots) {
-        if (matches(slot, COMPOUND, content, sources)) {
+        if (matches(slot, { .kind = COMPOUND, .content = content, .sources = sources })) {
             alloc::free(allocator, sources.ptr);
             return hold(world.snapshots, index);
         }
@@ -287,15 +293,10 @@ fn usz? first_free_slot(SnapshotTable* table) @local {
     return c3d::CAPACITY_EXCEEDED~;
 }
 
-fn bool matches(
-    CollisionSnapshot* slot,
-    SnapshotKind kind,
-    ulong content,
-    SnapshotSource[] sources,
-) @local {
-    if (!is_occupied(slot) || slot.kind != kind || slot.content != content) return false;
-    if (slot.sources.len != sources.len) return false;
-    foreach (index, source : sources) {
+fn bool matches(CollisionSnapshot* slot, SnapshotKey key) @local {
+    if (!is_occupied(slot) || slot.kind != key.kind || slot.content != key.content) return false;
+    if (slot.sources.len != key.sources.len) return false;
+    foreach (index, source : key.sources) {
         SnapshotSource held = slot.sources[index];
         if (held.geometry.index != source.geometry.index || held.geometry.generation != source.geometry.generation) return false;
         if (held.revision != source.revision) return false;
@@ -418,7 +419,12 @@ fn b3::CompoundData*? bake_compound(PhysicsWorld* world, CompoundChild[] childre
                     };
                 case MESH:
                     held[index] = acquire_mesh(world, child.geometry, child.material_indices)!;
-                    meshes[mesh_cursor++] = mesh_child_def(world, child, snapshot_of(world.snapshots, held[index]).mesh, frame);
+                    meshes[mesh_cursor++] = mesh_child_def(
+                        world: world,
+                        child: child,
+                        mesh:  snapshot_of(world.snapshots, held[index]).mesh,
+                        frame: frame,
+                    );
             }
         }
 
@@ -484,9 +490,14 @@ fn Vec3[] compound_wire(PhysicsWorld* world, CompoundChild[] children, SnapshotH
         switch (child.kind) {
             case SPHERE:
                 Vec3 center = child.local.position;
-                write_ring(&writer, center, { 1, 0, 0 }, child.radius);
-                write_ring(&writer, center, { 0, 1, 0 }, child.radius);
-                write_ring(&writer, center, { 0, 0, 1 }, child.radius);
+                foreach (axis : (Vec3[3]){ { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } }) {
+                    write_ring(
+                        writer: &writer,
+                        center: center,
+                        axis:   axis,
+                        radius: child.radius,
+                    );
+                }
             case CAPSULE:
                 write_capsule(&writer, capsule_of(child.local, child.half_height, child.radius));
             case BOX:
@@ -517,8 +528,14 @@ fn void write_ring(WireWriter* writer, Vec3 center, Vec3 axis, float radius) @lo
 
 fn void write_capsule(WireWriter* writer, b3::Capsule capsule) @local {
     Vec3 axis = (capsule.center2 - capsule.center1).normalize();
-    write_ring(writer, capsule.center1, axis, capsule.radius);
-    write_ring(writer, capsule.center2, axis, capsule.radius);
+    foreach (center : (Vec3[2]){ capsule.center1, capsule.center2 }) {
+        write_ring(
+            writer: writer,
+            center: center,
+            axis:   axis,
+            radius: capsule.radius,
+        );
+    }
     Vec3 reference = math::abs(axis.y) < AXIS_PARALLEL_THRESHOLD ? (Vec3){ 0, 1, 0 } : (Vec3){ 1, 0, 0 };
     Vec3 side = axis.cross(reference).normalize() * capsule.radius;
     Vec3 forward = axis.cross(side).normalize() * capsule.radius;

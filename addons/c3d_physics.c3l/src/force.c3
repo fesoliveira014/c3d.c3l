@@ -35,6 +35,11 @@ fn void apply_step_forces(PhysicsWorld* world) @private {
     };
     world.scene.@each2(Force, RigidBody; entity, force, body) {
         Vec3 point = body.current.position + body.current.rotation.rotate_vec3(force.local_point);
-        b3::body_apply_force(body.body, force.force, (b3::Pos)point, true);
+        b3::body_apply_force(
+            body:  body.body,
+            force: force.force,
+            point: (b3::Pos)point,
+            wake:  true,
+        );
     };
 }

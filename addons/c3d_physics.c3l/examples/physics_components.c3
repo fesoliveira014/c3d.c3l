@@ -198,9 +198,23 @@ fn ModelId? build_level_model(AssetStore* assets) @local {
     foreach (index, &part : parts) {
         GeometryId geometry;
         @pool() {
-            Geometry shape = part.size.y == 0
-                ? geometry::plane(tmem, part.size.x, part.size.z, ICE_SEGMENTS, ICE_SEGMENTS)
-                : geometry::box(tmem, part.size.x, part.size.y, part.size.z);
+            Geometry shape;
+            if (part.size.y == 0) {
+                shape = geometry::plane(
+                    allocator:  tmem,
+                    width:      part.size.x,
+                    depth:      part.size.z,
+                    segments_x: ICE_SEGMENTS,
+                    segments_z: ICE_SEGMENTS,
+                );
+            } else {
+                shape = geometry::box(
+                    allocator: tmem,
+                    width:     part.size.x,
+                    height:    part.size.y,
+                    depth:     part.size.z,
+                );
+            }
             geometry = assets.add_geometry(&shape)!;
         };
         nodes[index + 1] = {
@@ -254,7 +268,12 @@ fn void? author_bridge(Scene* scene, Level* level) @local {
         children[plank] = physics::default_compound_child(BOX);
         children[plank].half_extents = { 0.45f, 0.08f, 1 };
         children[plank].local.position = { plank - (BRIDGE_PLANKS - 1) * 0.5f, 0, 0 };
-        Node* visual = scene.add_mesh(level.box_geometry, level.crate_material, bridge, "plank")!;
+        Node* visual = scene.add_mesh(
+            geometry: level.box_geometry,
+            material: level.crate_material,
+            parent:   bridge,
+            name:     "plank",
+        )!;
         visual.local.position = children[plank].local.position;
         visual.local.scale = children[plank].half_extents * 2;
     }
@@ -272,14 +291,24 @@ fn void? author_bridge(Scene* scene, Level* level) @local {
 fn Level? build_level(AssetStore* assets, Scene* scene) @local {
     Level level;
     @pool() {
-        Geometry box = geometry::box(tmem, 1, 1, 1);
+        Geometry box = geometry::box(
+            allocator: tmem,
+            width:     1,
+            height:    1,
+            depth:     1,
+        );
         level.box_geometry = assets.add_geometry(&box, "physics_components/box")!;
         level.crate_geometry = assets.add_geometry(&box, "physics_components/crate")!;
     };
     level.box_material = assets.add_material(material::standard(look({ 0.85f, 0.55f, 0.2f, 1 }, 0.6f)))!;
     level.crate_material = assets.add_material(material::standard(look({ 0.55f, 0.4f, 0.25f, 1 }, 0.8f)))!;
 
-    Node* root = model::instantiate(assets, scene, build_level_model(assets)!, name: "level")!;
+    Node* root = model::instantiate(
+        assets: assets,
+        scene:  scene,
+        model:  build_level_model(assets)!,
+        name:   "level",
+    )!;
     Node* sun = scene.add_light(light::directional({ 1, 0.95f, 0.85f }, 3), name: "sun")!;
     sun.local.rotation = maths::look_rotation(((Vec3){ -0.4f, -1, -0.3f }).normalize(), { 0, 1, 0 });
     scene.background = { .kind = COLOR, .color = { 0.55f, 0.7f, 0.9f, 1 } };
@@ -427,7 +456,12 @@ fn void explode_under_cursor(
     Vec2 pixel,
     Vec2 viewport,
 ) @local {
-    Ray ray = cursor_ray(scene, level, pixel, viewport);
+    Ray ray = cursor_ray(
+        scene:    scene,
+        level:    level,
+        pixel:    pixel,
+        viewport: viewport,
+    );
     if (try hit = physics.raycast(ray.origin, ray.direction, RAY_LENGTH)) {
         ExplosionDesc explosion = physics::default_explosion_desc();
         explosion.position = hit.point + hit.normal * 0.2f;
@@ -438,7 +472,12 @@ fn void explode_under_cursor(
     }
 }
 
-fn Ray cursor_ray(Scene* scene, Level* level, Vec2 pixel, Vec2 viewport) @local {
+fn Ray cursor_ray(
+    Scene* scene,
+    Level* level,
+    Vec2 pixel,
+    Vec2 viewport,
+) @local {
     camera::Camera* camera = scene.get(level.camera_node, camera::Camera);
     CameraMatrices matrices = camera::derive_matrices(*camera, level.camera_node.world, viewport);
     return camera::screen_to_ray(&matrices, pixel, viewport);
@@ -508,7 +547,12 @@ fn void? draw_frame(
     renderer.begin_frame(info)!;
     defer catch render::abort_frame(renderer);
     if (renderer.has_output) {
-        renderer.render_view(scene, camera_node, renderer.default_view, debug)!;
+        renderer.render_view(
+            scene:       scene,
+            camera_node: camera_node,
+            view:        renderer.default_view,
+            debug:       debug,
+        )!;
         renderer.finish_view(renderer.default_view)!;
         OverlayContext overlay = renderer.begin_overlay()!;
         gui_renderer.record(&overlay)!;
@@ -552,10 +596,23 @@ fn void? run(
 
         Hover hover;
         if (!input.mouse_captured_by_gui) {
-            Ray ray = cursor_ray(scene, level, input.mouse_position, viewport);
+            Ray ray = cursor_ray(
+                scene:    scene,
+                level:    level,
+                pixel:    input.mouse_position,
+                viewport: viewport,
+            );
             if (try hit = physics.raycast(ray.origin, ray.direction, RAY_LENGTH)) hover = { .node = hit.node, .surface = hit.surface };
             if (input.button_pressed(platform::MouseButton.LEFT)) {
-                if (catch excuse = spawn(scene, level, spawned, &camera, controls.spawn_crates)) io::eprintfn("spawn failed: %s", excuse);
+                if (catch excuse = spawn(
+                    scene:   scene,
+                    level:   level,
+                    spawned: spawned,
+                    camera:  &camera,
+                    crate:   controls.spawn_crates,
+                )) {
+                    io::eprintfn("spawn failed: %s", excuse);
+                }
             }
             if (input.button_pressed(platform::MouseButton.MIDDLE)) {
                 explode_under_cursor(
@@ -583,7 +640,12 @@ fn void? run(
             controls: &controls,
         );
 
-        apply_free_camera(camera: &camera, input: input, camera_node: level.camera_node, delta_seconds: delta);
+        apply_free_camera(
+            camera:        &camera,
+            input:         input,
+            camera_node:   level.camera_node,
+            delta_seconds: delta,
+        );
         debug.clear();
         apply_wind_region(scene, spawned, &debug);
         scene.update_world();

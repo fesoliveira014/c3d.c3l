@@ -181,12 +181,22 @@ fn ColliderDesc compound_collider(CompoundChild[] children) @private {
 
 fn void restore_unit_box(Fixture* fixture, float size) @private {
     fixture.assets.release_geometry_cpu(fixture.unit_box);
-    fixture.assets.geometry(fixture.unit_box).data = geometry::box(fixture.assets.allocator, size, size, size);
+    fixture.assets.geometry(fixture.unit_box).data = geometry::box(
+        allocator: fixture.assets.allocator,
+        width:     size,
+        height:    size,
+        depth:     size,
+    );
     fixture.assets.mark_geometry_dirty(fixture.unit_box);
 }
 
-fn fault add_body_fault(Fixture* fixture, Node* node, BodyKind kind, ColliderDesc[] colliders) @private {
-    if (catch excuse = fixture.physics.add_body(node, physics::default_body_desc(kind), colliders)) return excuse;
+fn fault add_body_fault(Fixture* fixture, BodyKind kind, ColliderDesc[] colliders) @private {
+    Node* node = add_static_node(fixture);
+    if (catch excuse = fixture.physics.add_body(node, physics::default_body_desc(kind), colliders)) {
+        assert(!fixture.scene.has(node, PhysicsBody));
+        assert(!fixture.scene.has(node, RigidBody));
+        return excuse;
+    }
     return {};
 }
 
@@ -625,11 +635,8 @@ fn void test_partial_build_failure_releases_snapshots() @test {
 
     float[9] heights;
     ColliderDesc[2] colliders = { height_field_collider(heights[..]), height_field_collider(heights[..]) };
-    Node* node = add_static_node(&fixture);
-    assert(add_body_fault(&fixture, node, STATIC, colliders[..]) == c3d::CAPACITY_EXCEEDED);
+    assert(add_body_fault(&fixture, STATIC, colliders[..]) == c3d::CAPACITY_EXCEEDED);
     assert(occupied_snapshots(&fixture.physics) == 0);
-    assert(!fixture.scene.has(node, PhysicsBody));
-    assert(!fixture.scene.has(node, RigidBody));
 }
 
 fn void test_add_physics_body_twice_faults() @test {
@@ -722,8 +729,7 @@ fn void test_compound_requires_static_body() @test {
 
     CompoundChild[3] children = bridge_children();
     ColliderDesc bridge = compound_collider(children[..]);
-    Node* node = add_static_node(&fixture);
-    assert(add_body_fault(&fixture, node, DYNAMIC, (&bridge)[:1]) == physics::STATIC_ONLY);
+    assert(add_body_fault(&fixture, DYNAMIC, (&bridge)[:1]) == physics::STATIC_ONLY);
     assert(occupied_snapshots(&fixture.physics) == 0);
 }
 
@@ -735,8 +741,7 @@ fn void test_compound_sensor_faults() @test {
     CompoundChild[3] children = bridge_children();
     ColliderDesc bridge = compound_collider(children[..]);
     bridge.sensor = true;
-    Node* node = add_static_node(&fixture);
-    assert(add_body_fault(&fixture, node, STATIC, (&bridge)[:1]) == c3d::INVALID_ARGUMENT);
+    assert(add_body_fault(&fixture, STATIC, (&bridge)[:1]) == c3d::INVALID_ARGUMENT);
 }
 
 fn void test_compound_mesh_child_material_count_must_match() @test {
@@ -751,12 +756,11 @@ fn void test_compound_mesh_child_material_count_must_match() @test {
     child.material_indices = indices[..];
     child.face_materials = materials[..];
     ColliderDesc collider = compound_collider((&child)[:1]);
-    Node* node = add_static_node(&fixture);
-    assert(add_body_fault(&fixture, node, STATIC, (&collider)[:1]) == c3d::INVALID_ARGUMENT);
+    assert(add_body_fault(&fixture, STATIC, (&collider)[:1]) == c3d::INVALID_ARGUMENT);
 
     child.face_materials = materials[:1];
     collider = compound_collider((&child)[:1]);
-    fixture.physics.add_body(node, physics::default_body_desc(STATIC), (&collider)[:1])!!;
+    fixture.physics.add_body(add_static_node(&fixture), physics::default_body_desc(STATIC), (&collider)[:1])!!;
 }
 
 fn void test_asset_snapshot_survives_zero_holders() @test {
@@ -884,7 +888,7 @@ fn void test_material_index_out_of_range_faults() @test {
     char[4] indices = { 0, 1, 2, 0 };
     SurfaceMaterialDesc[2] materials = { physics::default_surface_material(), physics::default_surface_material() };
     ColliderDesc terrain = height_field_collider(heights[..], indices[..], materials[..]);
-    assert(add_body_fault(&fixture, add_static_node(&fixture), STATIC, (&terrain)[:1]) == c3d::INVALID_ARGUMENT);
+    assert(add_body_fault(&fixture, STATIC, (&terrain)[:1]) == c3d::INVALID_ARGUMENT);
 }
 
 fn void test_explosion_moves_resting_box_and_respects_scale() @test {
@@ -1059,4 +1063,20 @@ fn void test_static_mesh_bodies_author_components() @test {
     fixture.physics.update(0);
     assert(fixture.scene.has(floor, RigidBody));
     assert(fixture.scene.has(authored, RigidBody));
+}
+
+fn void test_add_body_replaces_body_left_by_removed_component() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Node* box = add_component_box(&fixture, { 0, 2, 0 });
+    fixture.physics.update(0);
+    b3::BodyId first = fixture.physics.body(box)!!;
+    fixture.scene.remove_component(box, PhysicsBody);
+    ColliderDesc collider = box_collider({ 1, 1, 1 });
+    fixture.physics.add_body(box, physics::default_body_desc(DYNAMIC), (&collider)[:1])!!;
+    assert(!first.is_valid());
+    assert(fixture.scene.count(RigidBody) == 1);
+    assert(close_vec(fixture.scene.get(box, RigidBody).colliders[0].half_extents, { 1, 1, 1 }));
 }
