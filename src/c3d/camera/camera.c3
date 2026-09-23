@@ -144,6 +144,21 @@ fn CameraMatrices derive_matrices(Camera camera, Mat4 camera_world, Vec2 viewpor
 }
 
 <*
+ Matrices with the rendered projection offset in clip space; view and frustum stay unjittered.
+ @param jitter : "NDC offset added to clip.xy per unit of clip.w."
+*>
+fn CameraMatrices jitter_matrices(CameraMatrices matrices, Vec2 jitter) {
+    Mat4 shift = matrix::IDENTITY4;
+    shift.m03 = jitter.x;
+    shift.m13 = jitter.y;
+    CameraMatrices jittered = matrices;
+    jittered.proj = shift.mul(matrices.proj);
+    jittered.view_proj = jittered.proj.mul(matrices.view);
+    jittered.inv_view_proj = jittered.view_proj.inverse()!!;
+    return jittered;
+}
+
+<*
  World-space ray through a pixel of the viewport.
  @param [&in] matrices : "Derived for the same viewport."
  @param pixel : "Relative to the viewport's top-left corner."

@@ -49,7 +49,7 @@ fn void? record_display(
     bool bloom_needed = record.desc.post.bloom
         && (record.desc.post.bloom_params.intensity > 0 || render::bloom_preview_requested(renderer, record));
     BloomBinding bloom = bloom_needed ? record_bloom(renderer, record)! : (BloomBinding){};
-    if (!record.desc.post.fxaa) {
+    if (record.desc.post.anti_aliasing != AntiAliasing.FXAA) {
         close_post_chain(renderer, record)!;
         return record_fused_display(
             renderer: renderer,
@@ -175,7 +175,7 @@ fn void? prepare_display(Renderer* renderer, ViewRecord* record) {
     if (record.desc.post.motion_blur) acquire_motion_blur_pipelines(renderer)!;
     if (!record.hdr_color.texture.is_valid()) return;
     gpu::Format output_format = render::view_output_format(renderer, &record.desc);
-    if (record.desc.post.fxaa) {
+    if (record.desc.post.anti_aliasing == AntiAliasing.FXAA) {
         acquire_post_pipelines(renderer)!;
         renderer.pipelines.get(&renderer.device, fxaa_fragment_pipeline_key(output_format))!;
         return;

@@ -416,7 +416,7 @@ fn void? configure_view(Renderer* renderer, ViewId view, ViewDesc desc) {
         return resize_view(renderer, record);
     }
 
-    if (desc.post.fxaa) {
+    if (desc.post.anti_aliasing == AntiAliasing.FXAA) {
         post::acquire_post_targets(renderer, record)!;
     } else {
         post::retire_post_targets(renderer, record);
@@ -553,7 +553,7 @@ fn void? acquire_view_images(Renderer* renderer, ViewRecord* record) @private {
     if (extent.x == 0 || extent.y == 0) return;
     defer catch release_view_images(renderer, record);
     acquire_view_targets(renderer, record, extent.x, extent.y)!;
-    if (record.desc.post.fxaa) post::acquire_post_targets(renderer, record)!;
+    if (record.desc.post.anti_aliasing == AntiAliasing.FXAA) post::acquire_post_targets(renderer, record)!;
     post::acquire_effect_targets(renderer, record)!;
     if (record.desc.shading == ShadingPath.DEFERRED) acquire_gbuffer(renderer, record)!;
     if (record.desc.lights == LightSelection.CLUSTERED) {

@@ -30,7 +30,7 @@ views first. Renderer teardown releases remaining views, then targets.
 
 ```c3
 ViewDesc desc = render::texture_view_desc(capture, OutputMode.DISPLAY_LDR);
-desc.post.fxaa = false;
+desc.post.anti_aliasing = AntiAliasing.NONE;
 ViewId capture_view = render::create_view(&renderer, desc)!;
 defer (void)render::destroy_view(&renderer, capture_view);
 ```
