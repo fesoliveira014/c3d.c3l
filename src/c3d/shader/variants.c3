@@ -78,6 +78,11 @@ const uint SHADER_FLAG_VELOCITY = 1 << 4;
 *>
 const uint SHADER_FLAG_VERTEX_COLOR = 1 << 5;
 
+<*
+ Flag bit for INSTANCED.
+*>
+const uint SHADER_FLAG_INSTANCED = 1 << 6;
+
 const char[*] FULLSCREEN_SPIRV @private = $embed("../../../shaders/spv/fullscreen.spv");
 const char[*] GRADIENT_SPIRV @private = $embed("../../../shaders/spv/gradient.spv");
 const char[*] COMPOSITE_SPIRV @private = $embed("../../../shaders/spv/composite.spv");
@@ -134,6 +139,9 @@ const char[*] MESH_SKINNED_U16_VELOCITY_SPIRV @private = $embed("../../../shader
 const char[*] MESH_MORPH_VELOCITY_SPIRV @private = $embed("../../../shaders/spv/mesh_morph_velocity.spv");
 const char[*] MESH_SKINNED_MORPH_VELOCITY_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_morph_velocity.spv");
 const char[*] MESH_SKINNED_U16_MORPH_VELOCITY_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_u16_morph_velocity.spv");
+const char[*] MESH_INSTANCED_SPIRV @private = $embed("../../../shaders/spv/mesh_instanced.spv");
+const char[*] MESH_DEPTH_ONLY_INSTANCED_SPIRV @private = $embed("../../../shaders/spv/mesh_depth_only_instanced.spv");
+const char[*] MESH_VELOCITY_INSTANCED_SPIRV @private = $embed("../../../shaders/spv/mesh_velocity_instanced.spv");
 const char[*] STANDARD_GBUFFER_SPIRV @private = $embed("../../../shaders/spv/standard_gbuffer.spv");
 const char[*] PHYSICAL_GBUFFER_SPIRV @private = $embed("../../../shaders/spv/physical_gbuffer.spv");
 const char[*] LIGHTING_RESOLVE_SPIRV @private = $embed("../../../shaders/spv/lighting_resolve.spv");
@@ -141,7 +149,7 @@ const char[*] LIGHTING_RESOLVE_SPIRV @private = $embed("../../../shaders/spv/lig
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[59] SHADER_ENTRIES = {
+const ShaderEntry[62] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -198,6 +206,9 @@ const ShaderEntry[59] SHADER_ENTRIES = {
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_MORPH | SHADER_FLAG_VELOCITY }, .spirv = MESH_MORPH_VELOCITY_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED | SHADER_FLAG_MORPH | SHADER_FLAG_VELOCITY }, .spirv = MESH_SKINNED_MORPH_VELOCITY_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED_U16 | SHADER_FLAG_MORPH | SHADER_FLAG_VELOCITY }, .spirv = MESH_SKINNED_U16_MORPH_VELOCITY_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_INSTANCED }, .spirv = MESH_INSTANCED_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_DEPTH_ONLY | SHADER_FLAG_INSTANCED }, .spirv = MESH_DEPTH_ONLY_INSTANCED_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_VELOCITY | SHADER_FLAG_INSTANCED }, .spirv = MESH_VELOCITY_INSTANCED_SPIRV[..] },
     { .variant = { .shader = STANDARD_GBUFFER }, .spirv = STANDARD_GBUFFER_SPIRV[..] },
     { .variant = { .shader = PHYSICAL_GBUFFER }, .spirv = PHYSICAL_GBUFFER_SPIRV[..] },
     { .variant = { .shader = LIGHTING_RESOLVE }, .spirv = LIGHTING_RESOLVE_SPIRV[..] },

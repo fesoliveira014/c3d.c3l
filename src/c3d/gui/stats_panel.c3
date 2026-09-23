@@ -24,6 +24,7 @@ fn void? stats_panel(Renderer* renderer) {
     imgui::text("Post dispatches: %u", renderer.stats.post_dispatches);
     imgui::text("Dispatches: %u", renderer.stats.dispatches);
     imgui::text("Triangles: %u", renderer.stats.triangles);
+    imgui::text("Instances: %u", renderer.stats.instances);
     imgui::text("Culled: %u", renderer.stats.culled);
     imgui::text("Lights: %u", renderer.stats.lights);
     imgui::text("Lights dropped: %u", renderer.stats.lights_dropped);

@@ -48,7 +48,7 @@ fn gpu::PipelineHandle? gbuffer_pipeline_for(Renderer* renderer, Material* mater
     key.shader = shader;
     key.shader_revision = renderer.shaders[shader.index].revision;
     key.custom = { .vertex = stages.vertex.shaded.len > 0, .gbuffer = true };
-    if (key.custom.vertex) key.vertex = { .shader = MESH };
+    if (key.custom.vertex) key.vertex = { .shader = MESH, .flags = vertex.flags & shader::SHADER_FLAG_INSTANCED };
     CustomStageSource source = custom_stage_source(stages, key);
     return renderer.pipelines.get(&renderer.device, key, &source);
 }

@@ -197,6 +197,14 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer DrawRoot {
     uint _pad3;
 };
 
+struct InstanceGpu {
+    mat4 model;
+    vec4 normal_0;
+    vec4 normal_1;
+    vec4 normal_2;
+    vec4 color;
+};
+
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer MorphWeightsGpu {
     uint indices[8];
     float weights[8];

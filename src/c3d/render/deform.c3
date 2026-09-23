@@ -40,6 +40,23 @@ fn ShaderVariant mesh_vertex_variant(
     return { .shader = MESH, .flags = variant_flags };
 }
 
+fn ShaderVariant candidate_vertex_variant(GeometryFlags flags, MeshCandidate* candidate, uint base_flags = 0) @private {
+    if (candidate.batch) {
+        return mesh_vertex_variant(
+            flags:      flags,
+            morphed:    false,
+            skinned:    false,
+            base_flags: base_flags | shader::SHADER_FLAG_INSTANCED,
+        );
+    }
+    return mesh_vertex_variant(
+        flags:      flags,
+        morphed:    candidate.morph_weights.len > 0,
+        skinned:    candidate.skin != null,
+        base_flags: base_flags,
+    );
+}
+
 <*
  Pack a morph selection into the block the vertex stage reads.
  @pure

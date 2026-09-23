@@ -46,6 +46,35 @@ fn Aabb mesh_world_bounds(
 }
 
 <*
+ Whether the batch's geometry and material ids resolve.
+ @param [&in] assets : "Store the ids were issued by."
+ @param [&in] batch : "Any batch component."
+*>
+fn bool instanced_mesh_is_live(AssetStore* assets, InstancedMesh* batch) {
+    return assets.geometries.is_live(batch.geometry) && assets.materials.is_live(batch.material);
+}
+
+<*
+ World bound of the live instances: override, else geometry bound under each instance, merged.
+ @param [&in] assets : "Resolves the live geometry record."
+ @param [&in] node : "World matrix as left by the last update_world."
+ @param [&in] batch : "Live geometry id and live count above zero."
+*>
+fn Aabb instanced_world_bounds(AssetStore* assets, Node* node, InstancedMesh* batch) {
+    if (batch.has_bounds_override) return maths::aabb_transform(batch.local_bounds, node.world);
+    Aabb local = assets.geometry(batch.geometry).data.bounds;
+    Aabb result = instance_world_bounds(local, node.world, batch.transforms[0]);
+    foreach (transform : batch.transforms[1:batch.count - 1]) {
+        result = maths::aabb_merge(result, instance_world_bounds(local, node.world, transform));
+    }
+    return result;
+}
+
+fn Aabb instance_world_bounds(Aabb local, Mat4 node_world, Transform transform) @private {
+    return maths::aabb_transform(local, node_world.mul(transform.to_mat4()));
+}
+
+<*
  World bound of the skinned vertices: each joint's retained bound under its current pose, merged.
  @param [&in] bounds : "Retained per-joint bounds of the geometry."
  @param [&in] binding : "Joints with current world matrices."

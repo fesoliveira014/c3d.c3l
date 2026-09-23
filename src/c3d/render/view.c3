@@ -37,6 +37,8 @@ struct DrawItem @private {
     gpu::PipelineHandle pipeline;
     gpu::GpuAddress skin;
     gpu::GpuAddress morph;
+    gpu::GpuAddress instance_data;
+    uint            instance_count;
     gpu::GpuAddress root;
     gpu::FrontFace  front_face;
     bool            moved;
@@ -200,8 +202,7 @@ fn void? Renderer.render_view(
                         bindings: &material.bindings,
                         line_polygon_mode: self.caps.line_polygon_mode,
                     )!;
-                    bool morphed = candidate.morph_weights.len > 0;
-                    ShaderVariant vertex = mesh_vertex_variant(geometry.layout.flags, morphed, candidate.skin != null);
+                    ShaderVariant vertex = candidate_vertex_variant(geometry.layout.flags, candidate);
                     bool custom_gbuffer = custom_gbuffer_stage(self, material_description);
                     DrawList list = view_draw_list(material_description, shading, custom_gbuffer);
                     gpu::PipelineHandle? pipeline = list == DrawList.GBUFFER
@@ -218,7 +219,7 @@ fn void? Renderer.render_view(
                         case TRANSMISSION: index = transmission_start + transmission_filled++;
                         case TRANSPARENT: index = transparent_start + transparent_filled++;
                     }
-                    bool model_reflected = candidate.node.world.determinant() < 0;
+                    bool model_reflected = (candidate.node.world.determinant() < 0) != candidate.mirrored;
                     items[index] = {
                         .sort_key  = draw_sort_key(
                             vertex:    vertex,
@@ -238,6 +239,8 @@ fn void? Renderer.render_view(
                         .skin      = candidate.skin ? resolve_palette(self, candidate.node, candidate.skin)! : (gpu::GpuAddress)0,
                         .morph     = vertex.flags & shader::SHADER_FLAG_MORPH
                           ? resolve_morph_block(self, candidate)! : (gpu::GpuAddress)0,
+                        .instance_data  = candidate.batch ? resolve_instances(self, candidate)! : (gpu::GpuAddress)0,
+                        .instance_count = candidate.instance_count,
                         .front_face = model_reflected != view_reflected
                           ? gpu::FrontFace.CLOCKWISE : gpu::FrontFace.COUNTER_CLOCKWISE,
                     };
@@ -370,6 +373,7 @@ fn void? Renderer.render_view(
                         prev_world = record.history.previous_model(scene, node);
                     }
                     item.moved = !(prev_world == node.world);
+                    if (item.candidate.batch) prev_world = prev_world.mul(maths::inverse_affine(node.world));
                     gpu::MappedGpuSpan draw_span = slot.upload.take(&self.device, DrawRoot::size, STREAM_ALIGNMENT)!;
                     write_draw_root(
                         root:          (DrawRoot*)draw_span.bytes.ptr,
@@ -385,6 +389,7 @@ fn void? Renderer.render_view(
                         sheen_sampler: sheen ? self.environment_state.sheen_sampler : (gpu::SamplerIndex)0,
                         skin:          item.skin,
                         morph:         item.morph,
+                        instance_data: item.instance_data,
                     );
                     item.root = draw_span.address;
                 }
@@ -587,6 +592,20 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
             sheen |= prepared.sheen;
             transmission |= prepared.transmission;
         };
+        scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
+            bool casts = shadows_enabled && batch.cast_shadow && scene.node(entity).visible_effective;
+            MeshPreparation prepared = prepare_mesh(
+                renderer:    self,
+                geometry_id: batch.geometry,
+                material_id: batch.material,
+                morphed:     false,
+                depth:       casts || deferred,
+                gbuffer:     deferred,
+                instanced:   true,
+            )!;
+            sheen |= prepared.sheen;
+            transmission |= prepared.transmission;
+        };
         if (transmission) self.pipelines.get(&self.device, snapshot_pipeline_key())!;
         prepare_views(self)!;
         (void)resolve_view_environments(self, scene, sheen)!;
@@ -645,6 +664,7 @@ fn MeshPreparation? prepare_mesh(
     bool morphed,
     bool depth,
     bool gbuffer,
+    bool instanced = false,
 ) @private {
     if (!renderer.assets.geometries.is_live(geometry_id) || !renderer.assets.materials.is_live(material_id)) {
         renderer.stats.dangling_refs++;
@@ -665,7 +685,13 @@ fn MeshPreparation? prepare_mesh(
         bindings:          &material.bindings,
         line_polygon_mode: renderer.caps.line_polygon_mode,
     )!;
-    ShaderVariant vertex = mesh_vertex_variant(geometry.layout.flags, morphed, true);
+    uint instanced_flag = instanced ? shader::SHADER_FLAG_INSTANCED : 0;
+    ShaderVariant vertex = mesh_vertex_variant(
+        flags:      geometry.layout.flags,
+        morphed:    morphed,
+        skinned:    !instanced,
+        base_flags: instanced_flag,
+    );
     if (catch excuse = pipeline_for(renderer, data, vertex)) {
         if (!custom_pipeline_rejected(renderer, data, excuse)) return excuse~;
         return {};
@@ -680,9 +706,14 @@ fn MeshPreparation? prepare_mesh(
         if (catch excuse = shadow_pipeline_for(
             renderer:     renderer,
             wireframe:    data.common.wireframe && renderer.caps.line_polygon_mode,
-            vertex:       depth_only_vertex_variant(geometry.layout.flags, morphed),
+            vertex:       mesh_vertex_variant(
+                flags:      geometry.layout.flags,
+                morphed:    morphed,
+                skinned:    !instanced,
+                base_flags: shader::SHADER_FLAG_DEPTH_ONLY | instanced_flag,
+            ),
             material:     data,
-            vertex_color: data.common.alpha_mode == AlphaMode.MASK && geometry.layout.flags.has_colors,
+            vertex_color: data.common.alpha_mode == AlphaMode.MASK && (geometry.layout.flags.has_colors || instanced),
         )) {
             if (!custom_pipeline_rejected(renderer, data, excuse)) return excuse~;
             return {};
@@ -758,9 +789,10 @@ fn void write_frame_root(
  Write the per-draw root.
  @param [&out] root : "Overwritten whole."
  @param world : "Affine model matrix."
- @param prev_world : "Model matrix at the view's previous rendering."
+ @param prev_world : "Previous model matrix; a batch's previous node motion."
  @param skin : "Joint palette address; zero when unskinned."
  @param morph : "Morph block address; zero when unmorphed."
+ @param instance_data : "First instance record; zero for a mesh."
 *>
 fn void write_draw_root(
     DrawRoot* root,
@@ -776,6 +808,7 @@ fn void write_draw_root(
     gpu::SamplerIndex sheen_sampler = (gpu::SamplerIndex)0,
     gpu::GpuAddress skin = (gpu::GpuAddress)0,
     gpu::GpuAddress morph = (gpu::GpuAddress)0,
+    gpu::GpuAddress instance_data = (gpu::GpuAddress)0,
 ) {
     Mat3 normal = maths::normal_matrix(world);
     *root = {
@@ -789,6 +822,7 @@ fn void write_draw_root(
         .material      = material,
         .skin          = skin,
         .morph         = morph,
+        .instance_data = instance_data,
         .object_id     = object_id,
         .sheen_lut     = sheen_lut,
         .sheen_sampler = sheen_sampler,
@@ -803,6 +837,7 @@ fn void write_draw_root(
  @param world : "Affine model matrix."
  @param skin : "Joint palette address; zero when unskinned."
  @param morph : "Morph block address; zero when unmorphed."
+ @param instance_data : "First instance record; zero for a mesh."
 *>
 fn void write_depth_draw_root(
     DrawRoot* root,
@@ -814,16 +849,18 @@ fn void write_depth_draw_root(
     uint flags = 0,
     gpu::GpuAddress skin = (gpu::GpuAddress)0,
     gpu::GpuAddress morph = (gpu::GpuAddress)0,
+    gpu::GpuAddress instance_data = (gpu::GpuAddress)0,
 ) {
     *root = {
         .model     = bitcast(world, Mat4f),
         .frame     = frame,
         .geometry  = geometry,
         .material  = material,
-        .skin      = skin,
-        .morph     = morph,
-        .object_id = object_id,
-        .flags     = flags,
+        .skin          = skin,
+        .morph         = morph,
+        .instance_data = instance_data,
+        .object_id     = object_id,
+        .flags         = flags,
     };
 }
 
@@ -1085,30 +1122,46 @@ fn void? record_draws(
         }
         bound = wanted;
 
-        GeometryLayout* layout = &item.geometry.layout;
-        if (layout.index_count) {
-            gpu::cmd_draw_indexed(
-                commands: &renderer.commands,
-                vertex_root: item.root,
-                fragment_root: item.root,
-                index_span: item.geometry.indices,
-                index_count: layout.index_count,
-                instance_count: 1,
-                index_type: layout.flags.indices_u16 ? gpu::IndexType.U16 : gpu::IndexType.U32,
-            )!;
-        } else {
-            gpu::cmd_draw(
-                commands: &renderer.commands,
-                vertex_root: item.root,
-                fragment_root: item.root,
-                vertex_count: layout.vertex_count,
-                instance_count: 1,
-            )!;
-        }
-        renderer.stats.draws++;
-        if (item.geometry.topology == Topology.TRIANGLES) {
-            renderer.stats.triangles += (layout.index_count ? layout.index_count : layout.vertex_count) / 3;
-        }
+        record_geometry_draw(
+            renderer:       renderer,
+            root:           item.root,
+            geometry:       item.geometry,
+            instance_count: item.instance_count,
+        )!;
+    }
+}
+
+fn void? record_geometry_draw(
+    Renderer* renderer,
+    gpu::GpuAddress root,
+    GpuGeometry* geometry,
+    uint instance_count,
+) @private {
+    GeometryLayout* layout = &geometry.layout;
+    if (layout.index_count) {
+        gpu::cmd_draw_indexed(
+            commands:       &renderer.commands,
+            vertex_root:    root,
+            fragment_root:  root,
+            index_span:     geometry.indices,
+            index_count:    layout.index_count,
+            instance_count: instance_count,
+            index_type:     layout.flags.indices_u16 ? gpu::IndexType.U16 : gpu::IndexType.U32,
+        )!;
+    } else {
+        gpu::cmd_draw(
+            commands:       &renderer.commands,
+            vertex_root:    root,
+            fragment_root:  root,
+            vertex_count:   layout.vertex_count,
+            instance_count: instance_count,
+        )!;
+    }
+    renderer.stats.draws++;
+    renderer.stats.instances += instance_count;
+    if (geometry.topology == Topology.TRIANGLES) {
+        uint triangles = (layout.index_count ? layout.index_count : layout.vertex_count) / 3;
+        renderer.stats.triangles += triangles * instance_count;
     }
 }
 
@@ -1175,7 +1228,7 @@ fn gpu::PipelineHandle? pipeline_for(Renderer* renderer, Material* material, Sha
     key.shader = shader;
     key.shader_revision = renderer.shaders[shader.index].revision;
     key.custom = { .vertex = stages.vertex.shaded.len > 0, .fragment = true };
-    if (key.custom.vertex) key.vertex = { .shader = MESH };
+    if (key.custom.vertex) key.vertex = { .shader = MESH, .flags = vertex.flags & shader::SHADER_FLAG_INSTANCED };
     CustomStageSource source = custom_stage_source(stages, key);
     return renderer.pipelines.get(&renderer.device, key, &source);
 }

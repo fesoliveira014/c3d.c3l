@@ -236,6 +236,15 @@ python3 scripts/build.py --example picking
 ./examples/build/picking [model.glb]
 ```
 
+`instancing` draws [instanced batches](docs/instancing.md): three colored cubes in one batch, one of
+them mirrored and one bobbing on its own, 4096 props on a grid in a single batch, and eight pulsing
+spheres through a custom vertex stage compiled with `INSTANCED`. The panel toggles motion blur and
+deferred shading, and a left click reports the picked batch and instance index:
+
+```bash
+python3 scripts/build.py --example instancing
+```
+
 `custom_shader` draws a tinted sphere and a pulsing box through [custom shaders](docs/custom_shaders.md):
 their GLSL lives in `examples/shaders/custom/`, is compiled in process, and is reloaded when a file
 changes or on R. The box's vertex deformation is shared by its shadow, P pauses the pulse, and a
@@ -374,7 +383,8 @@ The optional `c3d_physics` add-on binds box3d rigid bodies to scene nodes: `crea
 with interpolated write-back, per-frame contact, hit and sensor events, `raycast` and
 `overlap_sphere`, and collider wireframes into the CPU debug sink. Applications select the
 library explicitly; core carries no physics dependency. Example:
-`python3 scripts/build.py --example physics`.
+`python3 scripts/build.py --example physics`. `physics_instanced` is the same scene with every box
+drawn from one instanced batch: `python3 scripts/build.py --example physics_instanced`.
 
 Add c3d and its dependencies to your `project.json`, and list the feature flags you want. A C3
 library manifest cannot declare features, so every consumer enables them itself. Declarations

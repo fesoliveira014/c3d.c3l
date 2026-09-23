@@ -13,7 +13,7 @@ ShaderDesc desc = {
 ShaderId shader = assets.add_shader(&desc, "pulse")!;
 ```
 
-Every byte array is copied. `fragment` is required. `vertex` is optional; when present both forms are required: `shaded` for the forward pass and `depth` for the shadow atlas, so a deformation is applied to the caster too. `add_shader` and `replace_shader` fault `INVALID_ARGUMENT` on an empty fragment or a half pair. `param_block_size` is the byte size of the payload the shader reads; zero means none, and a shader whose size is zero must not read `parameters` (the address is zero).
+Every byte array is copied. `fragment` is required. `vertex` is optional; when present both forms are required: `shaded` for the forward pass and `depth` for the shadow atlas, so a deformation is applied to the caster too. `instanced_shaded` and `instanced_depth` are the same pair compiled with `INSTANCED`, for [instanced batches](instancing.md); they are optional and need the plain pair. `add_shader` and `replace_shader` fault `INVALID_ARGUMENT` on an empty fragment or a half pair. `param_block_size` is the byte size of the payload the shader reads; zero means none, and a shader whose size is zero must not read `parameters` (the address is zero).
 
 The SPIR-V can come from anywhere: `$embed`ed `.spv` files, a build step, or the in-process compiler below.
 
@@ -151,7 +151,7 @@ void main() {
 }
 ```
 
-The same source compiled with `DEPTH_ONLY` is the `depth` form; `write_mesh_outputs` then writes only what the depth stage reads. `FrameRoot.jitter_time.z` is scene time.
+The same source compiled with `DEPTH_ONLY` is the `depth` form; `write_mesh_outputs` then writes only what the depth stage reads. Compiled with `INSTANCED`, and with both defines, it is the instanced pair; `write_mesh_outputs` then reads the instance's matrices and color. `FrameRoot.jitter_time.z` is scene time.
 
 Limits of a custom vertex stage:
 

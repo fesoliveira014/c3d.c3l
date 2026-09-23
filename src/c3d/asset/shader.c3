@@ -4,11 +4,14 @@ import c3d;
 import c3d::pool;
 
 <*
- Shaded and depth-only forms of one user vertex stage; both or neither.
+ Shaded and depth-only forms of one user vertex stage, plain and instanced.
+ Each pair is both or neither; the instanced pair requires the plain pair.
 *>
 struct CustomVertex {
     char[] shaded;
     char[] depth;
+    char[] instanced_shaded;
+    char[] instanced_depth;
 }
 
 <*
@@ -37,7 +40,7 @@ alias ShaderPool = Pool{ShaderAsset, ShaderId};
 
 <*
  Add a shader, copying every stage into the store.
- @param [&in] desc : "Fragment non-empty; vertex stages both or neither; gbuffer optional."
+ @param [&in] desc : "Fragment non-empty; vertex pairs both or neither; gbuffer optional."
  @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
 *>
 fn ShaderId? AssetStore.add_shader(&self, ShaderDesc* desc, String key = "") {
@@ -62,7 +65,7 @@ fn ShaderAsset* AssetStore.shader(&self, ShaderId shader) {
 
 <*
  Replace every stage with copies of the new ones and advance the revision.
- @param [&in] desc : "Fragment non-empty; vertex stages both or neither; gbuffer optional."
+ @param [&in] desc : "Fragment non-empty; vertex pairs both or neither; gbuffer optional."
  @return? c3d::INVALID_ARGUMENT
  @require self.shaders.is_live(shader)
 *>
@@ -109,7 +112,10 @@ fn ShaderId? AssetStore.find_shader(&self, String key) {
 
 fn void? check_shader_desc(ShaderDesc* desc) @private {
     if (desc.fragment.len == 0) return c3d::INVALID_ARGUMENT~;
-    if ((desc.vertex.shaded.len == 0) != (desc.vertex.depth.len == 0)) return c3d::INVALID_ARGUMENT~;
+    CustomVertex* vertex = &desc.vertex;
+    if ((vertex.shaded.len == 0) != (vertex.depth.len == 0)) return c3d::INVALID_ARGUMENT~;
+    if ((vertex.instanced_shaded.len == 0) != (vertex.instanced_depth.len == 0)) return c3d::INVALID_ARGUMENT~;
+    if (vertex.instanced_shaded.len && !vertex.shaded.len) return c3d::INVALID_ARGUMENT~;
     return;
 }
 
@@ -120,6 +126,10 @@ fn ShaderDesc copy_shader_desc(Allocator allocator, ShaderDesc* desc) @private {
         .vertex = {
             .shaded = desc.vertex.shaded.len ? copy_slice(allocator, desc.vertex.shaded) : (char[]){},
             .depth = desc.vertex.depth.len ? copy_slice(allocator, desc.vertex.depth) : (char[]){},
+            .instanced_shaded = desc.vertex.instanced_shaded.len
+              ? copy_slice(allocator, desc.vertex.instanced_shaded) : (char[]){},
+            .instanced_depth = desc.vertex.instanced_depth.len
+              ? copy_slice(allocator, desc.vertex.instanced_depth) : (char[]){},
         },
         .param_block_size = desc.param_block_size,
     };
@@ -130,5 +140,7 @@ fn void free_shader_desc(Allocator allocator, ShaderDesc* desc) @private {
     alloc::free(allocator, desc.gbuffer.ptr);
     alloc::free(allocator, desc.vertex.shaded.ptr);
     alloc::free(allocator, desc.vertex.depth.ptr);
+    alloc::free(allocator, desc.vertex.instanced_shaded.ptr);
+    alloc::free(allocator, desc.vertex.instanced_depth.ptr);
     *desc = {};
 }

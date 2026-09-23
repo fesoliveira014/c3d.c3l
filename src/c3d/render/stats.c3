@@ -51,6 +51,7 @@ struct Stats {
     uint  post_dispatches;
     uint  dispatches;
     uint  triangles;
+    uint  instances;
     uint  culled;
     uint  lights;
     uint  lights_dropped;

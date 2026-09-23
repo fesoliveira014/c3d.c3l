@@ -287,6 +287,20 @@ $assert $reflect(DrawRoot.sheen_lut).offset == 244;
 $assert $reflect(DrawRoot.sheen_sampler).offset == 248;
 $assert $reflect(DrawRoot._pad3).offset == 252;
 
+struct InstanceGpu {
+    Mat4f model;
+    Vec4f normal_0;
+    Vec4f normal_1;
+    Vec4f normal_2;
+    Vec4f color;
+}
+$assert InstanceGpu::size == 128;
+$assert $reflect(InstanceGpu.model).offset == 0;
+$assert $reflect(InstanceGpu.normal_0).offset == 64;
+$assert $reflect(InstanceGpu.normal_1).offset == 80;
+$assert $reflect(InstanceGpu.normal_2).offset == 96;
+$assert $reflect(InstanceGpu.color).offset == 112;
+
 struct MorphWeightsGpu {
     uint[8]  indices;
     float[8] weights;
