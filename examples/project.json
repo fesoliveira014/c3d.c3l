@@ -242,6 +242,12 @@
         "src/views.c3"
       ]
     },
+    "taa": {
+      "type": "executable",
+      "sources": [
+        "src/taa.c3"
+      ]
+    },
     "deferred": {
       "type": "executable",
       "sources": [

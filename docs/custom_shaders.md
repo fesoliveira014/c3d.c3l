@@ -156,7 +156,10 @@ The same source compiled with `DEPTH_ONLY` is the `depth` form; `write_mesh_outp
 Limits of a custom vertex stage:
 
 - It has one compiled form per pass. The renderer does not select `SKINNED`, `SKINNED_U16` or `MORPH` forms of user SPIR-V; compile with the defines that match the geometry when `apply_mesh_deformation` should skin or morph, or leave them out for rigid meshes. `DrawRoot.skin` and `DrawRoot.morph` are written either way.
-- Velocity uses the built-in `mesh` vertex variant, so motion blur sees the undeformed mesh.
+- Velocity uses the built-in `mesh` vertex variant, so motion blur and TAA see the undeformed mesh.
+- Built-in materials sample with `FrameRoot.mip_bias` on TAA views; a custom fragment opts in with
+  `sample_custom_map(material, slot, uv0, uv1, frame.mip_bias)`. The depth prepass cuts custom
+  alpha coverage unbiased.
 - A displaced mesh needs an authored `Mesh.local_bounds` override when the displacement can leave the geometry bounds; culling and shadow fitting use bounds, not vertices.
 - A displacement that changes the surface orientation must adjust `vertex.normal` and `vertex.tangent` itself; the pulse example is a uniform translation and leaves them alone.
 

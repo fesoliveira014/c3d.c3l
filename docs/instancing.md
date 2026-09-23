@@ -36,7 +36,7 @@ The instance index is the array position. It is not a generational identity: it 
 - **Culling.** The batch is culled as a whole against the bound of all live instances, or `local_bounds` when `has_bounds_override` is set. `cast_shadow` and `receive_shadow` apply to every instance.
 - **Mirrored instances.** A transform whose scale product is negative mirrors space. The renderer packs non-mirrored instances first and draws each group with its own front face, so a batch holding both makes two draws per pass.
 - **Color.** The instance color multiplies the vertex color, alpha included, in every built-in material. A masked material cuts per instance, and its shadow matches.
-- **Motion blur.** Moving the batch node blurs every instance. Instances moving inside a still batch show camera motion only.
+- **Motion blur and TAA.** Each instance moves by its own previous matrix, kept per view while the batch's live count stays the same; after a count change the batch node's motion applies for one rendering.
 - **Materials.** Opaque and masked materials are the supported case. Blended batches draw without sorting inside the batch, and do not cast shadows.
 - **Deformation.** Instances draw the rest pose of the geometry; skinning and morph targets are not applied.
 

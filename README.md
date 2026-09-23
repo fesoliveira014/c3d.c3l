@@ -204,6 +204,17 @@ sweep. Effects start enabled; the post panel's sections toggle and tune each one
 python3 scripts/build.py --example effects
 ```
 
+`taa` shows [temporal anti-aliasing](docs/post.md#temporal-anti-aliasing) on fine checker
+texture, a thin diagonal fence, a spinning cube, the skinned Fox, a morphing cube and a ring of
+individually orbiting instances, through a full-window view and a smaller inset of the same camera.
+Its panel freezes motion, sweeps the camera, cuts the main view and resizes the inset, each view
+with its own history; `--no-aa`, `--fxaa`, `--freeze`, `--sweep` and `--debug-velocity`,
+`--debug-rejection`, `--debug-weight` select a state at start:
+
+```bash
+python3 scripts/build.py --example taa
+```
+
 `deferred` renders one scene forward on the left and deferred on the right, switches either
 half at runtime and shows the G-buffer channels through the targets panel; see the
 [shading path](docs/views.md#shading-path) section.
