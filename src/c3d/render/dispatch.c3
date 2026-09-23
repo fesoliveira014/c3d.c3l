@@ -158,6 +158,7 @@ fn usz dispatch_root_size(usz root_len) {
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
  @return? gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR, gpu::DEVICE_BUSY, gpu::RESOURCE_IN_USE
+ @return? gpu::SHADER_INVALID, gpu::PIPELINE_CREATE_FAILED
 *>
 fn void? Renderer.dispatch(&self, DispatchDesc desc) {
     if (desc.textures.len > MAX_DISPATCH_TEXTURES) return c3d::INVALID_ARGUMENT~;
@@ -299,7 +300,9 @@ fn ResolvedDispatchTexture? resolve_dispatch_texture(
             entry.target = &renderer.targets.get(declared.target).target;
             slot.texture_index = entry.target.view.index;
         case VIEW_COLOR:
-            entry.target = renderer.views.get(declared.view).scene_input;
+            ViewRecord* record = renderer.views.get(declared.view);
+            if (declared.access != DispatchAccess.READ) post::detach_scene_input(renderer, record)!;
+            entry.target = record.scene_input;
             if (!entry.target.texture.is_valid()) return c3d::INVALID_ARGUMENT~;
             slot.texture_index = entry.target.view.index;
         case VIEW_DEPTH:

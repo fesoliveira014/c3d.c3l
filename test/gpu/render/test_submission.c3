@@ -249,6 +249,53 @@ fn void? enable_motion_blur(Fixture* fixture, ViewId view) @private {
     return render::configure_view(&fixture.renderer, view, desc);
 }
 
+fn void? enable_taa(
+    Fixture* fixture,
+    ViewId view,
+    TaaDebug debug = TaaDebug.NONE,
+    bool motion_blur = false,
+) @private {
+    ViewDesc desc = fixture.renderer.views.get(view).desc;
+    desc.post.anti_aliasing = AntiAliasing.TAA;
+    desc.post.taa_params.debug = debug;
+    desc.post.motion_blur = motion_blur;
+    return render::configure_view(&fixture.renderer, view, desc);
+}
+
+fn void? fill_view_color(Fixture* fixture, ViewId view, Vec4 color) @private {
+    FillRoot root = { .color = color, .size = TARGET_SIZE };
+    DispatchTexture[1] textures = { render::write_view_color(view) };
+    uint groups = TARGET_SIZE / FILL_GROUP_SIZE;
+    return fixture.renderer.dispatch({
+        .shader = fixture.fill_shader,
+        .root = ((char*)&root)[:FillRoot::size],
+        .groups = { groups, groups, 1 },
+        .textures = textures[..],
+    });
+}
+
+fn void? render_both_views(Fixture* fixture) @private {
+    Renderer* renderer = &fixture.renderer;
+    renderer.begin_frame()!;
+    defer catch render::abort_frame(renderer);
+    render_view_and_finish(fixture)!;
+    renderer.render_view(&fixture.scene, fixture.camera_node, fixture.second_view)!;
+    renderer.finish_view(fixture.second_view)!;
+    return renderer.end_frame();
+}
+
+fn uint? render_and_sample_view_color(Fixture* fixture) @private {
+    Renderer* renderer = &fixture.renderer;
+    renderer.begin_frame()!;
+    defer catch render::abort_frame(renderer);
+    renderer.render_view(&fixture.scene, fixture.camera_node, fixture.view)!;
+    sample(fixture, render::read_view_color(fixture.view))!;
+    record_readback(fixture)!;
+    renderer.finish_view(fixture.view)!;
+    renderer.end_frame()!;
+    return read_pixel(fixture);
+}
+
 fn GeometryId? add_colored_box(Fixture* fixture, Vec4 color) @private {
     Geometry box = geometry::box(
         allocator: tmem,
@@ -841,5 +888,133 @@ fn void test_zero_intensity_bloom_records_no_dispatches() @test {
     render_display_and_sample(&fixture, &tinted)!!;
     read_pixel(&fixture);
     assert(renderer.stats.post_dispatches > 1);
+    check_validation(renderer);
+}
+
+fn void test_taa_views_advance_jitter_on_submit_and_reset_independently() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    fill_frame(&fixture, fixture.storage_texture, RED)!!;
+    enable_taa(&fixture, fixture.view)!!;
+    enable_taa(&fixture, fixture.second_view)!!;
+    ViewRecord* first = renderer.views.get(fixture.view);
+    ViewRecord* second = renderer.views.get(fixture.second_view);
+
+    for (uint frame = 0; frame < 3; frame++) render_both_views(&fixture)!!;
+    assert(first.history.valid && first.history.sample_index == 3 && first.history.slot == 1);
+    assert(second.history.valid && second.history.sample_index == 3);
+    assert(renderer.stats.post_dispatches == 2);
+
+    ViewDesc scaled = second.desc;
+    scaled.render_scale = 0.5f;
+    render::configure_view(renderer, fixture.second_view, scaled)!!;
+    assert(!second.history.valid && first.history.valid);
+
+    renderer.begin_frame()!!;
+    render_view_and_finish(&fixture)!!;
+    render::abort_frame(renderer);
+    assert(!first.history.valid && first.history.sample_index == 3 && first.history.slot == 1);
+    check_validation(renderer);
+}
+
+fn void test_taa_resolve_of_a_still_scene_keeps_its_color() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    fill_frame(&fixture, fixture.storage_texture, RED)!!;
+    enable_taa(&fixture, fixture.view)!!;
+
+    for (uint frame = 0; frame < post::TAA_SAMPLE_COUNT; frame++) {
+        renderer.begin_frame()!!;
+        render_view_and_finish(&fixture)!!;
+        renderer.end_frame()!!;
+    }
+    check_channels(render_and_sample_view_color(&fixture)!!, RED);
+
+    render::reset_view_history(renderer, fixture.view)!!;
+    check_channels(render_and_sample_view_color(&fixture)!!, RED);
+    check_validation(renderer);
+}
+
+fn void test_taa_with_deformed_and_instanced_motion_records_cleanly() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    fill_frame(&fixture, fixture.storage_texture, RED)!!;
+    enable_taa(&fixture, fixture.view, motion_blur: true)!!;
+    DeformedScene moving = create_deformed_scene(&fixture, { 0, 0, 0 }, 0.25f)!!;
+    defer scene::destroy_scene(&moving.scene);
+    Transform[3] transforms = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
+    transforms[1].scale = { -1, 1, 1 };
+    Node* batch_node = moving.scene.add_instanced_mesh(
+        geometry:   fixture.box,
+        material:   fixture.plain,
+        capacity:   4,
+        transforms: transforms[..],
+    )!!;
+    InstancedMesh* batch = moving.scene.get(batch_node, InstancedMesh);
+    Node* joint = moving.scene.get(moving.mesh, SkinBinding).joints[0];
+    Mesh* mesh = moving.scene.get(moving.mesh, Mesh);
+
+    TaaDebug[4] modes = { TaaDebug.NONE, TaaDebug.VELOCITY, TaaDebug.REJECTION, TaaDebug.HISTORY_WEIGHT };
+    foreach (mode : modes) {
+        enable_taa(&fixture, fixture.view, mode, true)!!;
+        for (uint frame = 0; frame < 3; frame++) {
+            joint.local.position.x += 0.05f;
+            mesh.morph_weights[0] = 0.25f + 0.1f * (float)frame;
+            foreach (index, &transform : batch.transforms[:batch.count]) transform.position.y = 0.1f * (float)(frame + index);
+            moving.scene.update_world();
+            renderer.begin_frame()!!;
+            renderer.render_view(&moving.scene, moving.camera, fixture.view)!!;
+            renderer.finish_view(fixture.view)!!;
+            renderer.end_frame()!!;
+        }
+    }
+    check_validation(renderer);
+}
+
+fn void test_taa_display_view_writes_its_output() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    DeformedScene tinted = create_single_box_scene(&fixture, fixture.colored_box, fixture.plain, true)!!;
+    defer scene::destroy_scene(&tinted.scene);
+    enable_taa(&fixture, fixture.display_view)!!;
+
+    for (uint frame = 0; frame < 3; frame++) render_display_and_sample(&fixture, &tinted)!!;
+    check_opaque_color(read_pixel(&fixture));
+    check_validation(renderer);
+}
+
+fn void test_view_color_write_on_a_taa_view_leaves_the_history_alone() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    fill_frame(&fixture, fixture.storage_texture, RED)!!;
+    enable_taa(&fixture, fixture.view)!!;
+    ViewRecord* record = renderer.views.get(fixture.view);
+
+    renderer.begin_frame()!!;
+    render_view_and_finish(&fixture)!!;
+    renderer.end_frame()!!;
+
+    renderer.begin_frame()!!;
+    renderer.render_view(&fixture.scene, fixture.camera_node, fixture.view)!!;
+    assert(record.scene_input == &record.taa_color[record.history.slot ^ 1]);
+    fill_view_color(&fixture, fixture.view, BLUE)!!;
+    assert(record.scene_input == &record.hdr_color);
+    sample(&fixture, render::read_view_color(fixture.view))!!;
+    record_readback(&fixture)!!;
+    renderer.finish_view(fixture.view)!!;
+    renderer.end_frame()!!;
+    check_channels(read_pixel(&fixture), BLUE);
+
+    check_channels(render_and_sample_view_color(&fixture)!!, RED);
     check_validation(renderer);
 }

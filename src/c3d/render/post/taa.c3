@@ -156,3 +156,23 @@ fn void? acquire_taa_pipeline(Renderer* renderer) @private {
         debug_name: "post_taa_resolve",
     )!;
 }
+
+<*
+ Move a TAA view's scene image off its history so a later write cannot reach the next resolve.
+ @param [&inout] renderer : "Open frame."
+ @param [&inout] record : "scene_input moves to a copy in hdr_color when it is a history image."
+ @return? c3d::SHADER_NOT_FOUND, gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::PIPELINE_CREATE_FAILED
+ @return? gpu::SLOT_TABLE_FULL, gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
+ @return? gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
+ @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+*>
+fn void? detach_scene_input(Renderer* renderer, ViewRecord* record) {
+    if (record.scene_input != &record.taa_color[0] && record.scene_input != &record.taa_color[1]) return;
+    render::composite_target(
+        renderer: renderer,
+        source:   record.scene_input,
+        output:   &record.hdr_color,
+        rect:     {},
+    )!;
+    record.scene_input = &record.hdr_color;
+}
