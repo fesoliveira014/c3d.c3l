@@ -484,7 +484,14 @@ fn void? Renderer.render_view(
                         jitter:    jitter,
                     )!;
                 }
-                if (taa) post::record_taa(self, record, jitter)!;
+                if (taa) {
+                    post::record_taa(
+                        renderer: self,
+                        record:   record,
+                        scene:    scene,
+                        jitter:   jitter,
+                    )!;
+                }
                 if (record.desc.post.motion_blur && !post::taa_debug_enabled(&record.desc.post)) {
                     post::record_motion_blur(self, record)!;
                 }

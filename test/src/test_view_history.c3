@@ -273,7 +273,6 @@ fn void test_view_history_advances_sample_and_slot_only_on_publish() @test {
     }
     assert(history.sample_index == 1);
     assert(history.slot == (1 + post::TAA_SAMPLE_COUNT) % 2);
-
 }
 
 fn void test_view_history_keeps_the_palette_of_the_last_commit() @test {

@@ -159,7 +159,8 @@ Limits of a custom vertex stage:
 - Velocity uses the built-in `mesh` vertex variant, so motion blur and TAA see the undeformed mesh.
 - Built-in materials sample with `FrameRoot.mip_bias` on TAA views; a custom fragment opts in with
   `sample_custom_map(material, slot, uv0, uv1, frame.mip_bias)`. The depth prepass cuts custom
-  alpha coverage unbiased.
+  alpha coverage unbiased, so a masked custom material keeps the unbiased sample for its alpha:
+  a biased one cuts different coverage than the prepass tests `EQUAL` against.
 - A displaced mesh needs an authored `Mesh.local_bounds` override when the displacement can leave the geometry bounds; culling and shadow fitting use bounds, not vertices.
 - A displacement that changes the surface orientation must adjust `vertex.normal` and `vertex.tangent` itself; the pulse example is a uniform translation and leaves them alone.
 

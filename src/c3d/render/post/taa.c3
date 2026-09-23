@@ -2,6 +2,7 @@ module c3d::render::post;
 
 import c3d::maths;
 import c3d::render @public;
+import c3d::scene;
 import c3d::shader;
 import gpu;
 import std::math;
@@ -79,6 +80,7 @@ fn void release_taa_images(gpu::Device* device, ViewRecord* record) @private {
  Resolve the view's current color against its history into the next history image.
  @param [&inout] renderer : "Open frame with the view's velocity recorded; scene_input moves to the resolve."
  @param [&inout] record : "Its temporal images change state."
+ @param [&in] scene : "Scene being rendered; another scene's history is not reused."
  @param jitter : "NDC offset of the view's rendered matrices."
  @return? c3d::SHADER_NOT_FOUND, gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::PIPELINE_CREATE_FAILED
  @return? gpu::SLOT_TABLE_FULL, gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
@@ -86,12 +88,18 @@ fn void release_taa_images(gpu::Device* device, ViewRecord* record) @private {
  @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
  @require record.taa_color[0].texture.is_valid(), record.velocity.texture.is_valid()
 *>
-fn void? record_taa(Renderer* renderer, ViewRecord* record, Vec2 jitter) {
+fn void? record_taa(
+    Renderer* renderer,
+    ViewRecord* record,
+    Scene* scene,
+    Vec2 jitter,
+) {
     acquire_taa_pipeline(renderer)!;
     Frame* slot = &renderer.frames[renderer.frame_index % render::FRAMES_IN_FLIGHT];
     uint previous = record.history.slot;
     uint next = (previous + 1) % TAA_HISTORY_SLOTS;
     bool debug = taa_debug_enabled(&record.desc.post);
+    bool history_valid = record.history.valid && record.history.scene == scene.identity;
     TaaParams* params = &record.desc.post.taa_params;
     Target* input = record.scene_input;
 
@@ -127,7 +135,7 @@ fn void? record_taa(Renderer* renderer, ViewRecord* record, Vec2 jitter) {
         .sampler_index      = renderer.linear_clamp_sampler,
         .width              = width,
         .height             = height,
-        .history_valid      = record.history.valid ? 1 : 0,
+        .history_valid      = history_valid ? 1 : 0,
         .orthographic       = record.projection_terms.orthographic ? 1 : 0,
         .debug              = (uint)params.debug.ordinal,
         .texel              = { 1.0f / (float)width, 1.0f / (float)height },

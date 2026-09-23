@@ -104,7 +104,10 @@ may use TAA.
 - A dispatch that writes a TAA view's color (`render::write_view_color`) first moves the resolved
   image into `hdr_color`, so the write never reaches the next resolve.
 
-Documented subset: transparent surfaces carry the velocity of the surface behind them and ghost
+Documented subset: a one-pixel rim outside moving silhouettes takes the current sample, because the
+dilated velocity reprojects it onto background the object uncovered or covered, which the depth
+and velocity tests reject; a view that renders a different scene than its last rendering resolves
+from the current sample; transparent surfaces carry the velocity of the surface behind them and ghost
 when they move; custom vertex stages contribute built-in deformation only; an instance that changes
 parity or order inside its batch has wrong velocity for one rendering; `render_to` has no history.
 TAA runs at the working resolution; there is no temporal upscaler.
