@@ -145,7 +145,11 @@ fn void? draw_frame(
 
         uint[<2>] extent = renderer.view_extent(view)!;
         Camera* camera = scene.get(camera_node, Camera);
-        CameraMatrices matrices = camera::derive_matrices(*camera, camera_node.world, { (float)extent.x, (float)extent.y });
+        CameraMatrices matrices = camera::derive_matrices(
+            camera:       *camera,
+            camera_world: camera_node.world,
+            viewport:     { (float)extent.x, (float)extent.y },
+        );
         Vec3 eye = maths::transform_point(camera_node.world, { 0, 0, 0 });
         TracePrimaryRoot root = {
             .inverse_view_projection = matrices.inv_view_proj,

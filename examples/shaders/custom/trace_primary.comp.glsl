@@ -66,7 +66,14 @@ void main() {
     SceneTraceRoot scene = SceneTraceRoot(root.scene);
     SceneHit hit;
     vec3 color = MISS_COLOR;
-    if (trace_scene(scene, origin, direction, TRACE_FAR, hit)) {
+    bool met = trace_scene(
+        scene,
+        origin,
+        direction,
+        TRACE_FAR,
+        hit
+    );
+    if (met) {
         if (root.mode == MODE_DISTANCE) {
             color = vec3(1.0 - exp(-hit.t / DISTANCE_FALLOFF));
         } else if (root.mode == MODE_NORMAL) {

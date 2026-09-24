@@ -32,6 +32,8 @@ struct TraceGridResult {
 
 GPU_DECLARE_WRITEONLY_ARRAY_REF(TraceGridOutput, TraceGridResult);
 
+const float TRACE_FAR = 1.0e30;
+
 void main() {
     DispatchRoot dispatch = DispatchRoot(pc.root_gpu);
     TraceGridRoot root = TraceGridRoot(dispatch.parameters);
@@ -43,10 +45,31 @@ void main() {
     vec3 direction = normalize(target - root.origin.xyz);
     SceneTraceRoot scene = SceneTraceRoot(root.scene);
     SceneHit hit;
-    TraceGridResult result = TraceGridResult(0u, 0u, 0.0, 0u, vec2(0.0), vec2(0.0));
-    if (trace_scene(scene, root.origin.xyz, direction, 1e30, hit)) {
+    TraceGridResult result = TraceGridResult(
+        0u,
+        0u,
+        0.0,
+        0u,
+        vec2(0.0),
+        vec2(0.0)
+    );
+    bool met = trace_scene(
+        scene,
+        root.origin.xyz,
+        direction,
+        TRACE_FAR,
+        hit
+    );
+    if (met) {
         TraceInstanceGpu instance = TraceInstanceArray(scene.instances).values[hit.instance];
-        result = TraceGridResult(1u, hit.primitive, hit.t, uint(instance.geometry), hit.barycentrics, vec2(0.0));
+        result = TraceGridResult(
+            1u,
+            hit.primitive,
+            hit.t,
+            uint(instance.geometry),
+            hit.barycentrics,
+            vec2(0.0)
+        );
     }
     TraceGridOutput(root.output_address).values[cell.y * root.grid_size + cell.x] = result;
 }

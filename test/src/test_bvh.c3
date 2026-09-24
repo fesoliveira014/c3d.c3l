@@ -13,6 +13,12 @@ struct Random @local {
     uint state;
 }
 
+struct Traced @local {
+    Bvh    tree;
+    Vec3[] positions;
+    uint[] indices;
+}
+
 fn uint next_bits(Random* random) @local {
     random.state ^= random.state << 13;
     random.state ^= random.state >> 17;
@@ -81,7 +87,38 @@ fn uint max_depth(Bvh* tree, uint node_index, uint depth) @local {
     );
 }
 
-fn bool nearest_by_scan(Vec3[] positions, uint[] indices, Ray ray, BvhHit* nearest) @local {
+fn Traced build_traced(Vec3[] positions, uint[] indices, BvhBuildDesc desc = bvh::BVH_BUILD_DEFAULT) @local {
+    Bvh tree = bvh::build_triangle_bvh(
+        allocator: tmem,
+        positions: positions,
+        indices:   indices,
+        desc:      desc,
+    )!!;
+    return { .tree = tree, .positions = positions, .indices = indices };
+}
+
+fn bool nearest(Traced* traced, Ray ray, BvhHit* hit) @local {
+    return traced.tree.trace(
+        positions:      traced.positions,
+        indices:        traced.indices,
+        ray:            ray,
+        distance_limit: math::FLOAT_MAX,
+        hit:            hit,
+    );
+}
+
+fn bool any_closer(Traced* traced, Ray ray, float limit) @local {
+    return traced.tree.trace_any(
+        positions:      traced.positions,
+        indices:        traced.indices,
+        ray:            ray,
+        distance_limit: limit,
+    );
+}
+
+fn bool nearest_by_scan(Traced* traced, Ray ray, BvhHit* nearest) @local {
+    Vec3[] positions = traced.positions;
+    uint[] indices = traced.indices;
     usz triangle_count = indices.len ? indices.len / 3 : positions.len / 3;
     bool found;
     for (uint triangle = 0; triangle < triangle_count; triangle++) {
@@ -109,15 +146,15 @@ fn Ray random_ray(Random* random) @local {
 }
 
 fn void check_traces_match_scan(Random* random, Vec3[] positions, uint[] indices) @local {
-    Bvh tree = bvh::build_triangle_bvh(tmem, positions, indices)!!;
+    Traced traced = build_traced(positions, indices);
     for (usz ray_index = 0; ray_index < 1000; ray_index++) {
         Ray ray = random_ray(random);
         BvhHit expected;
         BvhHit actual;
-        bool scanned = nearest_by_scan(positions, indices, ray, &expected);
-        bool traced = tree.trace(positions, indices, ray, math::FLOAT_MAX, &actual);
-        assert(scanned == traced);
-        if (!traced) continue;
+        bool scanned = nearest_by_scan(&traced, ray, &expected);
+        bool met_by_tree = nearest(&traced, ray, &actual);
+        assert(scanned == met_by_tree);
+        if (!met_by_tree) continue;
         float tolerance = DISTANCE_TOLERANCE * math::max(1.0f, expected.distance);
         assert(math::abs(actual.distance - expected.distance) <= tolerance);
         if (actual.primitive == expected.primitive) continue;
@@ -176,17 +213,16 @@ fn void test_bvh_trace_matches_the_linear_scan() @test {
 fn void test_trace_any_agrees_with_trace() @test {
     @pool() {
         Random random = { SEED };
-        Vec3[] positions = random_triangles(&random, 2000);
-        Bvh tree = bvh::build_triangle_bvh(tmem, positions, {})!!;
+        Traced traced = build_traced(random_triangles(&random, 2000), {});
         for (usz ray_index = 0; ray_index < 1000; ray_index++) {
             Ray ray = random_ray(&random);
             BvhHit hit;
-            if (!tree.trace(positions, {}, ray, math::FLOAT_MAX, &hit)) {
-                assert(!tree.trace_any(positions, {}, ray, 1e6f));
+            if (!nearest(&traced, ray, &hit)) {
+                assert(!any_closer(&traced, ray, 1e6f));
                 continue;
             }
-            assert(tree.trace_any(positions, {}, ray, hit.distance * 1.001f));
-            assert(!tree.trace_any(positions, {}, ray, hit.distance * 0.999f));
+            assert(any_closer(&traced, ray, hit.distance * 1.001f));
+            assert(!any_closer(&traced, ray, hit.distance * 0.999f));
         }
     };
 }
@@ -199,11 +235,11 @@ fn void test_coincident_triangles_build_one_leaf() @test {
             positions[corner + 1] = { 1, -1, 0 };
             positions[corner + 2] = { 0, 1, 0 };
         }
-        Bvh tree = bvh::build_triangle_bvh(tmem, positions, {}, { .bins = 12, .leaf_size = 1 })!!;
-        assert(tree.nodes.len == 1 && tree.nodes[0].count == 1000);
+        Traced traced = build_traced(positions, {}, { .bins = 12, .leaf_size = 1 });
+        assert(traced.tree.nodes.len == 1 && traced.tree.nodes[0].count == 1000);
         BvhHit hit;
         Ray ray = { .origin = { 0, -1.0f / 3, 5 }, .direction = { 0, 0, -1 } };
-        assert(tree.trace(positions, {}, ray, math::FLOAT_MAX, &hit) && hit.primitive < 1000);
+        assert(nearest(&traced, ray, &hit) && hit.primitive < 1000);
     };
 }
 
@@ -216,7 +252,7 @@ fn void test_depth_stays_within_the_limit() @test {
             positions[3 * triangle + 1] = { center + 0.25f, 0, 0 };
             positions[3 * triangle + 2] = { center, 0.5f, 0 };
         }
-        Bvh peeled = bvh::build_triangle_bvh(tmem, positions, {}, { .bins = 2, .leaf_size = 1 })!!;
+        Bvh peeled = build_traced(positions, {}, { .bins = 2, .leaf_size = 1 }).tree;
         assert(max_depth(&peeled, 0, 0) <= bvh::BVH_MAX_DEPTH - 1);
         check_permutation(&peeled, 100);
         bool forced;
@@ -260,7 +296,9 @@ fn void test_box_bvh_covers_every_box() @test {
                 assert(contains(box, node_box(&tree.nodes[node.left_or_first + 1])));
                 continue;
             }
-            foreach (primitive : tree.primitives[node.left_or_first:node.count]) assert(contains(box, boxes[primitive]));
+            foreach (primitive : tree.primitives[node.left_or_first:node.count]) {
+                assert(contains(box, boxes[primitive]));
+            }
         }
     };
 }

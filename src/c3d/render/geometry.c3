@@ -253,7 +253,10 @@ fn GpuGeometry*? resolve_geometry(Renderer* renderer, GeometryId geometry) @priv
             renderer.pending_upload_retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = mirror.allocation });
         }
         if (!same_asset && mirror.trace.allocation.is_valid()) {
-            renderer.pending_upload_retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = mirror.trace.allocation });
+            renderer.pending_upload_retire.push({
+                .kind       = RetiredKind.ALLOCATION,
+                .allocation = mirror.trace.allocation,
+            });
             mirror.trace = {};
         }
         mirror.allocation = allocation;
@@ -340,7 +343,10 @@ fn void sweep_geometries(Renderer* renderer) @private {
         if (!mirror.allocation.is_valid() || renderer.assets.geometries.is_live(mirror.asset)) continue;
         renderer.pending_upload_retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = mirror.allocation });
         if (mirror.trace.allocation.is_valid()) {
-            renderer.pending_upload_retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = mirror.trace.allocation });
+            renderer.pending_upload_retire.push({
+                .kind       = RetiredKind.ALLOCATION,
+                .allocation = mirror.trace.allocation,
+            });
         }
         *mirror = {};
     }

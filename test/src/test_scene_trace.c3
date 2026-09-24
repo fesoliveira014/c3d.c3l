@@ -98,7 +98,12 @@ fn bool same_entity(Entity first, Entity second) @local {
 
 fn render::TraceInstance[] collect(Fixture* fixture) @local {
     uint dangling;
-    render::TraceInstance[] records = render::collect_trace_instances(tmem, &fixture.scene, &fixture.assets, &dangling);
+    render::TraceInstance[] records = render::collect_trace_instances(
+        allocator: tmem,
+        scene:     &fixture.scene,
+        assets:    &fixture.assets,
+        dangling:  &dangling,
+    );
     assert(dangling == 0);
     return records;
 }

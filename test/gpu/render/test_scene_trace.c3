@@ -20,7 +20,7 @@ const Vec4 TRACE_RECTANGLE @private = { -6, -3, 6, 3 };
 const float TRACE_PLANE_Z @private = -6;
 const float TRACE_DISTANCE_TOLERANCE @private = 1e-4f;
 const float TRACE_EDGE_WEIGHT @private = 1e-3f; // a ray this close to an edge may land on either side on CPU and GPU
-const usz TRACE_EDGE_BUDGET @private = TRACE_GRID_SIZE * TRACE_GRID_SIZE / 100; // at most one percent of rays graze an edge
+const usz TRACE_EDGE_BUDGET @private = TRACE_GRID_SIZE * TRACE_GRID_SIZE / 100; // one percent of the rays
 const usz TRACE_RESULT_BYTES @private = TRACE_GRID_SIZE * TRACE_GRID_SIZE * TraceGridResult::size;
 
 struct TraceGridRoot @private {
@@ -157,8 +157,17 @@ fn float min_weight(Vec3 weights) @private {
     return math::min(math::min(weights.x, weights.y), weights.z);
 }
 
-fn bool check_ray(Fixture* fixture, TraceScene* trace, Ray ray, TraceGridResult* result) @private {
-    PickOptions options = { .precision = PickPrecision.TRIANGLES, .faces = PickFaces.BOTH, .layers = camera::ALL_LAYERS };
+fn bool check_ray(
+    Fixture* fixture,
+    TraceScene* trace,
+    Ray ray,
+    TraceGridResult* result,
+) @private {
+    PickOptions options = {
+        .precision = PickPrecision.TRIANGLES,
+        .faces     = PickFaces.BOTH,
+        .layers    = camera::ALL_LAYERS,
+    };
     PickHit[] hits = spatial::pick(
         allocator: tmem,
         assets:    &fixture.assets,
@@ -167,7 +176,11 @@ fn bool check_ray(Fixture* fixture, TraceScene* trace, Ray ray, TraceGridResult*
         options:   options,
     );
     bool picked = hits.len > 0 && hits[0].triangle_hit;
-    Vec3 traced_weights = { 1 - result.barycentrics.x - result.barycentrics.y, result.barycentrics.x, result.barycentrics.y };
+    Vec3 traced_weights = {
+        1 - result.barycentrics.x - result.barycentrics.y,
+        result.barycentrics.x,
+        result.barycentrics.y,
+    };
     if (!picked || !result.hit) {
         float edge_weight = picked ? min_weight(hits[0].barycentric) : min_weight(traced_weights);
         assert((!picked && !result.hit) || edge_weight < TRACE_EDGE_WEIGHT);
@@ -206,7 +219,13 @@ fn void test_bvh_traversal_matches_cpu_picking() @test {
         for (uint cell_y = 0; cell_y < TRACE_GRID_SIZE; cell_y++) {
             for (uint cell_x = 0; cell_x < TRACE_GRID_SIZE; cell_x++) {
                 TraceGridResult* result = &first[cell_y * TRACE_GRID_SIZE + cell_x];
-                if (check_ray(&fixture, &trace, grid_ray(cell_x, cell_y), result)) edges++;
+                bool at_edge = check_ray(
+                    fixture: &fixture,
+                    trace:   &trace,
+                    ray:     grid_ray(cell_x, cell_y),
+                    result:  result,
+                );
+                if (at_edge) edges++;
                 if (result.hit) hits++;
             }
         }

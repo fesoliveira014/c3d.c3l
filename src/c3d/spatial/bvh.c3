@@ -14,6 +14,11 @@ const uint BVH_MAX_DEPTH = 32; // mirrored as BVH_STACK_DEPTH in c3d.abi; 128 by
 *>
 const BvhBuildDesc BVH_BUILD_DEFAULT = { .bins = 12, .leaf_size = 4 };
 
+const Aabb EMPTY_BOX @local = {
+    .min = { math::FLOAT_MAX, math::FLOAT_MAX, math::FLOAT_MAX },
+    .max = { -math::FLOAT_MAX, -math::FLOAT_MAX, -math::FLOAT_MAX },
+};
+
 <*
  Split candidates per axis and the leaf size a split must beat.
 *>
@@ -197,7 +202,13 @@ fn Bvh build(Allocator allocator, Aabb[] boxes, BvhBuildDesc desc) @local {
         *centroid = (boxes[index].min + boxes[index].max) * 0.5f;
         state.primitives[index] = (uint)index;
     }
-    subdivide(&state, 0, 0, (uint)primitive_count, 0);
+    subdivide(
+        state:      &state,
+        node_index: 0,
+        first:      0,
+        count:      (uint)primitive_count,
+        depth:      0,
+    );
     return {
         .nodes      = state.nodes[:state.node_count],
         .primitives = state.primitives,
@@ -205,7 +216,13 @@ fn Bvh build(Allocator allocator, Aabb[] boxes, BvhBuildDesc desc) @local {
     };
 }
 
-fn void subdivide(BuildState* state, uint node_index, uint first, uint count, uint depth) @local {
+fn void subdivide(
+    BuildState* state,
+    uint node_index,
+    uint first,
+    uint count,
+    uint depth,
+) @local {
     Aabb bounds = state.boxes[state.primitives[first]];
     Vec3 centroid_min = state.centroids[state.primitives[first]];
     Vec3 centroid_max = centroid_min;
@@ -234,13 +251,30 @@ fn void subdivide(BuildState* state, uint node_index, uint first, uint count, ui
         split_bin:   &split_bin,
     );
     if (!split) return;
-    uint left_count = partition(state, first, count, split_bin);
+    uint left_count = partition(
+        state:     state,
+        first:     first,
+        count:     count,
+        split_bin: split_bin,
+    );
 
     uint left = state.node_count;
     state.node_count += 2;
     *node = { .min = bounds.min, .max = bounds.max, .left_or_first = left, .count = 0 };
-    subdivide(state, left, first, left_count, depth + 1);
-    subdivide(state, left + 1, first + left_count, count - left_count, depth + 1);
+    subdivide(
+        state:      state,
+        node_index: left,
+        first:      first,
+        count:      left_count,
+        depth:      depth + 1,
+    );
+    subdivide(
+        state:      state,
+        node_index: left + 1,
+        first:      first + left_count,
+        count:      count - left_count,
+        depth:      depth + 1,
+    );
 }
 
 fn bool best_split(
@@ -268,19 +302,20 @@ fn bool best_split(
         state.bin_counts[bin]++;
     }
 
-    Aabb accumulated;
+    Aabb accumulated = EMPTY_BOX;
     uint accumulated_count;
     for (uint bin = bins - 1; bin > 0; bin--) {
-        accumulated = add_bin(state, bin, accumulated, accumulated_count);
+        if (state.bin_counts[bin]) accumulated = maths::aabb_merge(accumulated, state.bin_boxes[bin]);
         accumulated_count += state.bin_counts[bin];
         state.right_costs[bin] = accumulated_count ? surface_area(accumulated) * (float)accumulated_count : 0;
     }
 
     float best_cost = node_area * (float)count;
     bool found;
+    accumulated = EMPTY_BOX;
     accumulated_count = 0;
     for (uint bin = 0; bin < bins - 1; bin++) {
-        accumulated = add_bin(state, bin, accumulated, accumulated_count);
+        if (state.bin_counts[bin]) accumulated = maths::aabb_merge(accumulated, state.bin_boxes[bin]);
         accumulated_count += state.bin_counts[bin];
         if (!accumulated_count || accumulated_count == count) continue;
         float cost = surface_area(accumulated) * (float)accumulated_count + state.right_costs[bin + 1];
@@ -292,12 +327,12 @@ fn bool best_split(
     return found;
 }
 
-fn Aabb add_bin(BuildState* state, uint bin, Aabb accumulated, uint accumulated_count) @local {
-    if (!state.bin_counts[bin]) return accumulated;
-    return accumulated_count ? maths::aabb_merge(accumulated, state.bin_boxes[bin]) : state.bin_boxes[bin];
-}
-
-fn uint partition(BuildState* state, uint first, uint count, uint split_bin) @local {
+fn uint partition(
+    BuildState* state,
+    uint first,
+    uint count,
+    uint split_bin,
+) @local {
     uint left = first;
     uint right = first + count;
     while (left < right) {
@@ -348,7 +383,13 @@ fn bool traverse(
         if (stack.entries[stack.count] >= best) continue;
         BvhNode* node = &bvh.nodes[stack.nodes[stack.count]];
         if (!node.count) {
-            push_children(&stack, bvh, node, ray, best);
+            push_children(
+                stack: &stack,
+                bvh:   bvh,
+                node:  node,
+                ray:   ray,
+                limit: best,
+            );
             continue;
         }
         foreach (primitive : bvh.primitives[node.left_or_first:node.count]) {
@@ -373,7 +414,13 @@ fn bool traverse(
     return found;
 }
 
-fn void push_children(TraceStack* stack, Bvh* bvh, BvhNode* node, Ray ray, float limit) @local {
+fn void push_children(
+    TraceStack* stack,
+    Bvh* bvh,
+    BvhNode* node,
+    Ray ray,
+    float limit,
+) @local {
     uint left = node.left_or_first;
     float left_entry;
     float right_entry;

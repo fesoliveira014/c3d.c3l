@@ -81,6 +81,6 @@ The traversal keeps a stack of `BVH_STACK_DEPTH` entries per level; builds never
 python3 scripts/build.py --example software_rt
 ```
 
-In a GPU-profiling build (`c3c build software_rt --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL`), `--gpu-timings` shows rays per second in the panel, and `--gpu-timings --benchmark 300` opens 1920x1080, times the trace pass over 300 frames after a warm-up and prints the mean. On this project's WSL host Vulkan runs on llvmpipe, so those numbers measure the CPU rasterizer; take them on a native driver.
+In a GPU-profiling build (`c3c build software_rt --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL`), `--gpu-timings` shows rays per second in the panel, and `--gpu-timings --benchmark 300` opens 1920x1080, times the trace pass over 300 frames after a warm-up and prints the mean. On a software Vulkan driver such as llvmpipe those numbers measure the CPU; take them on a hardware driver.
 
 `cpu_bench bvh_top N` times a top-level build over `N` scattered boxes and `cpu_bench bvh_triangles S` a bottom-level build over a plane of `S` by `S` segments.

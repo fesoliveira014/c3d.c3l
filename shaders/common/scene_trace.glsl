@@ -52,7 +52,14 @@ float trace_box_entry(BvhNodeGpu node, TraceRay ray) {
     return max(max(near.x, near.y), max(near.z, 0.0));
 }
 
-bool trace_triangle(TraceRay ray, vec3 a, vec3 b, vec3 c, out float t, out vec2 weights) {
+bool trace_triangle(
+    TraceRay ray,
+    vec3 a,
+    vec3 b,
+    vec3 c,
+    out float t,
+    out vec2 weights
+) {
     t = 0.0;
     weights = vec2(0.0);
     vec3 edge_ab = b - a;
@@ -158,16 +165,40 @@ bool trace_instance(
             );
             if (!met || t >= t_max) continue;
             t_max = t;
-            hit = SceneHit(row, primitive, weights, t);
+            hit = SceneHit(
+                row,
+                primitive,
+                weights,
+                t
+            );
             found = true;
             if (first_hit) return true;
         }
-    } while (trace_next_node(nodes, ray, t_max, stack, stack_count, node_index));
+    } while (trace_next_node(
+        nodes,
+        ray,
+        t_max,
+        stack,
+        stack_count,
+        node_index
+    ));
     return found;
 }
 
-bool trace_scene_walk(SceneTraceRoot scene, vec3 origin, vec3 direction, float t_max, bool first_hit, out SceneHit hit) {
-    hit = SceneHit(0u, 0u, vec2(0.0), t_max);
+bool trace_scene_walk(
+    SceneTraceRoot scene,
+    vec3 origin,
+    vec3 direction,
+    float t_max,
+    bool first_hit,
+    out SceneHit hit
+) {
+    hit = SceneHit(
+        0u,
+        0u,
+        vec2(0.0),
+        t_max
+    );
     if (scene.instance_count == 0u) return false;
     TraceRay ray = make_trace_ray(origin, direction);
     BvhNodeArray nodes = BvhNodeArray(scene.top_nodes);
@@ -182,22 +213,63 @@ bool trace_scene_walk(SceneTraceRoot scene, vec3 origin, vec3 direction, float t
         BvhNodeGpu node = nodes.values[node_index];
         for (uint slot = 0u; slot < node.count; slot++) {
             uint row = node.left_or_first + slot;
-            if (trace_instance(instances.values[row], row, origin, direction, first_hit, t_max, hit)) {
+            bool met = trace_instance(
+                instances.values[row],
+                row,
+                origin,
+                direction,
+                first_hit,
+                t_max,
+                hit
+            );
+            if (met) {
                 found = true;
                 if (first_hit) return true;
             }
         }
-    } while (trace_next_node(nodes, ray, t_max, stack, stack_count, node_index));
+    } while (trace_next_node(
+        nodes,
+        ray,
+        t_max,
+        stack,
+        stack_count,
+        node_index
+    ));
     return found;
 }
 
-bool trace_scene(SceneTraceRoot scene, vec3 origin, vec3 direction, float t_max, out SceneHit hit) {
-    return trace_scene_walk(scene, origin, direction, t_max, false, hit);
+bool trace_scene(
+    SceneTraceRoot scene,
+    vec3 origin,
+    vec3 direction,
+    float t_max,
+    out SceneHit hit
+) {
+    return trace_scene_walk(
+        scene,
+        origin,
+        direction,
+        t_max,
+        false,
+        hit
+    );
 }
 
-bool trace_scene_any(SceneTraceRoot scene, vec3 origin, vec3 direction, float t_max) {
+bool trace_scene_any(
+    SceneTraceRoot scene,
+    vec3 origin,
+    vec3 direction,
+    float t_max
+) {
     SceneHit ignored;
-    return trace_scene_walk(scene, origin, direction, t_max, true, ignored);
+    return trace_scene_walk(
+        scene,
+        origin,
+        direction,
+        t_max,
+        true,
+        ignored
+    );
 }
 
 #endif

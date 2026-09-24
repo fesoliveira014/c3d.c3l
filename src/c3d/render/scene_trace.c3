@@ -26,7 +26,7 @@ $assert $reflect(BvhNode.count).offset == $reflect(BvhNodeGpu.count).offset;
 *>
 const uint DEFAULT_MAX_TRACE_INSTANCES = 4096; // 4096 x 144 B instances + 8191 x 32 B nodes: 0.81 MiB persistent
 
-const BvhBuildDesc TOP_LEVEL_BUILD @private = { .bins = 12, .leaf_size = 1 }; // an instance test walks a whole bottom level
+const BvhBuildDesc TOP_LEVEL_BUILD @private = { .bins = 12, .leaf_size = 1 }; // each instance test walks a bottom level
 
 enum TraceSource @private {
     REUSE,
@@ -121,7 +121,13 @@ fn TraceInstance[] collect_trace_instances(
             SkinBinding* skin = scene.get(node, SkinBinding);
             if (!spatial::mesh_is_live(assets, mesh, skin) || !material_shader_live(assets, mesh.material)) {
                 (*dangling)++;
-            } else if (traceable(assets, mesh.geometry, mesh.material, skin != null, mesh.has_bounds_override)) {
+            } else if (traceable(
+                assets:              assets,
+                geometry:            mesh.geometry,
+                material:            mesh.material,
+                skinned:             skin != null,
+                has_bounds_override: mesh.has_bounds_override,
+            )) {
                 records[count++] = trace_record(
                     assets:   assets,
                     entity:   entity,
@@ -137,7 +143,13 @@ fn TraceInstance[] collect_trace_instances(
         if (node.visible_effective && batch.trace && batch.count) {
             if (!spatial::instanced_mesh_is_live(assets, batch) || !material_shader_live(assets, batch.material)) {
                 (*dangling)++;
-            } else if (traceable(assets, batch.geometry, batch.material, false, batch.has_bounds_override)) {
+            } else if (traceable(
+                assets:              assets,
+                geometry:            batch.geometry,
+                material:            batch.material,
+                skinned:             false,
+                has_bounds_override: batch.has_bounds_override,
+            )) {
                 foreach (transform : batch.transforms[:batch.count]) {
                     records[count++] = trace_record(
                         assets:   assets,
@@ -271,7 +283,10 @@ fn void? build_trace_geometry(Renderer* renderer, GpuGeometry* mirror, GeometryA
     renderer.pending_copies.push({ .src = staging.span, .dst = block.checked_subspan(0, total_bytes)! });
 
     if (mirror.trace.allocation.is_valid()) {
-        renderer.pending_upload_retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = mirror.trace.allocation });
+        renderer.pending_upload_retire.push({
+            .kind       = RetiredKind.ALLOCATION,
+            .allocation = mirror.trace.allocation,
+        });
     }
     mirror.trace = {
         .allocation = allocation,
