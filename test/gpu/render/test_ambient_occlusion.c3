@@ -30,6 +30,7 @@ const int SHADING_PATH_TOLERANCE @private = 3;
 
 struct CreaseScene @private {
     Scene scene;
+    ViewId view;
     Node* camera;
     Node* quad;
     Node* masked_box;
@@ -136,14 +137,14 @@ fn Vec2 project_crease_uv(CreaseScene* crease, Vec3 point) @private {
     return { clip.x / clip.w * 0.5f + 0.5f, 0.5f - clip.y / clip.w * 0.5f };
 }
 
-fn uint? render_and_read(Fixture* fixture, CreaseScene* crease, ViewId view, Vec3 point) @private {
+fn uint? render_and_read(Fixture* fixture, CreaseScene* crease, Vec3 point) @private {
     Renderer* renderer = &fixture.renderer;
     renderer.begin_frame()!;
     defer catch render::abort_frame(renderer);
-    renderer.render_view(&crease.scene, crease.camera, view)!;
-    sample(fixture, render::read_view_color(view), project_crease_uv(crease, point))!;
+    renderer.render_view(&crease.scene, crease.camera, crease.view)!;
+    sample(fixture, render::read_view_color(crease.view), project_crease_uv(crease, point))!;
     record_readback(fixture)!;
-    renderer.finish_view(view)!;
+    renderer.finish_view(crease.view)!;
     renderer.end_frame()!;
     return read_pixel(fixture);
 }
@@ -160,6 +161,7 @@ fn void test_ambient_occlusion_images_follow_the_settings() @test {
     defer scene::destroy_scene(&crease.scene);
     AoView ao_view = create_ao_view(&fixture, ShadingPath.FORWARD)!!;
     defer destroy_ao_view(&fixture, &ao_view);
+    crease.view = ao_view.view;
     ViewRecord* record = fixture.renderer.views.get(ao_view.view);
 
     set_ambient_occlusion(&fixture, ao_view.view, render::AMBIENT_OCCLUSION_DEFAULT)!!;
@@ -178,7 +180,7 @@ fn void test_ambient_occlusion_images_follow_the_settings() @test {
 
     set_ambient_occlusion(&fixture, ao_view.view, render::AMBIENT_OCCLUSION_DEFAULT)!!;
     assert(record.ao_raw.texture.is_valid() && record.ao.texture.is_valid());
-    (void)render_and_read(&fixture, &crease, ao_view.view, OPEN_POINT)!!;
+    (void)render_and_read(&fixture, &crease, OPEN_POINT)!!;
     check_validation(&fixture.renderer);
 }
 
@@ -196,16 +198,14 @@ fn void test_gtao_darkens_a_crease_and_leaves_open_floor() @test {
     foreach (index, shading : paths) {
         AoView ao_view = create_ao_view(&fixture, shading)!!;
         defer destroy_ao_view(&fixture, &ao_view);
+        crease.view = ao_view.view;
 
-        int crease_none = red(render_and_read(&fixture, &crease, ao_view.view, CREASE_POINT)!!);
-        int open_none = red(render_and_read(&fixture, &crease, ao_view.view, OPEN_POINT)!!);
+        int crease_none = red(render_and_read(&fixture, &crease, CREASE_POINT)!!);
+        int open_none = red(render_and_read(&fixture, &crease, OPEN_POINT)!!);
         set_ambient_occlusion(&fixture, ao_view.view, render::AMBIENT_OCCLUSION_DEFAULT)!!;
-        int crease_ao = red(render_and_read(&fixture, &crease, ao_view.view, CREASE_POINT)!!);
-        int open_ao = red(render_and_read(&fixture, &crease, ao_view.view, OPEN_POINT)!!);
-        io::eprintfn(
-            "%s: crease %d -> %d, open %d -> %d",
-            shading, crease_none, crease_ao, open_none, open_ao,
-        );
+        int crease_ao = red(render_and_read(&fixture, &crease, CREASE_POINT)!!);
+        int open_ao = red(render_and_read(&fixture, &crease, OPEN_POINT)!!);
+        io::eprintfn("%s: crease %d -> %d, open %d -> %d", shading, crease_none, crease_ao, open_none, open_ao);
 
         assert(math::abs(crease_none - unoccluded) <= UNOCCLUDED_TOLERANCE);
         assert(math::abs(open_none - unoccluded) <= UNOCCLUDED_TOLERANCE);
@@ -229,15 +229,16 @@ fn void test_zero_intensity_matches_no_ambient_occlusion() @test {
     crease.scene.update_world();
     AoView ao_view = create_ao_view(&fixture, ShadingPath.FORWARD)!!;
     defer destroy_ao_view(&fixture, &ao_view);
+    crease.view = ao_view.view;
 
     Vec3[4] points = { CREASE_POINT, OPEN_POINT, MASKED_TOP_POINT, CUT_POINT };
     uint[4] without;
-    foreach (index, point : points) without[index] = render_and_read(&fixture, &crease, ao_view.view, point)!!;
+    foreach (index, point : points) without[index] = render_and_read(&fixture, &crease, point)!!;
     AmbientOcclusionDesc silent = render::AMBIENT_OCCLUSION_DEFAULT;
     silent.intensity = 0;
     set_ambient_occlusion(&fixture, ao_view.view, silent)!!;
     foreach (index, point : points) {
-        uint with = render_and_read(&fixture, &crease, ao_view.view, point)!!;
+        uint with = render_and_read(&fixture, &crease, point)!!;
         for (uint channel = 0; channel < 3; channel++) {
             int before = (int)((without[index] >> (8 * channel)) & 0xff);
             int after = (int)((with >> (8 * channel)) & 0xff);
@@ -257,12 +258,13 @@ fn void test_blend_draws_skip_ambient_occlusion() @test {
     crease.scene.update_world();
     AoView ao_view = create_ao_view(&fixture, ShadingPath.FORWARD)!!;
     defer destroy_ao_view(&fixture, &ao_view);
+    crease.view = ao_view.view;
 
-    int quad_none = red(render_and_read(&fixture, &crease, ao_view.view, QUAD_POINT)!!);
-    int crease_none = red(render_and_read(&fixture, &crease, ao_view.view, CREASE_POINT)!!);
+    int quad_none = red(render_and_read(&fixture, &crease, QUAD_POINT)!!);
+    int crease_none = red(render_and_read(&fixture, &crease, CREASE_POINT)!!);
     set_ambient_occlusion(&fixture, ao_view.view, render::AMBIENT_OCCLUSION_DEFAULT)!!;
-    int quad_ao = red(render_and_read(&fixture, &crease, ao_view.view, QUAD_POINT)!!);
-    int crease_ao = red(render_and_read(&fixture, &crease, ao_view.view, CREASE_POINT)!!);
+    int quad_ao = red(render_and_read(&fixture, &crease, QUAD_POINT)!!);
+    int crease_ao = red(render_and_read(&fixture, &crease, CREASE_POINT)!!);
     io::eprintfn("quad %d -> %d, crease %d -> %d", quad_none, quad_ao, crease_none, crease_ao);
 
     assert(math::abs(quad_none - quad_ao) <= CHANNEL_TOLERANCE);
