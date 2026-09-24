@@ -3,6 +3,7 @@
 #include "c3d_abi.glsl"
 #include "descriptor_heap.glsl"
 #include "gbuffer.glsl"
+#include "texture_fetch.glsl"
 #include "ambient_occlusion.glsl"
 
 layout(local_size_x = 8, local_size_y = 8) in;
@@ -37,7 +38,7 @@ void main() {
     float total = 0.0;
     float weight_sum = 0.0;
     float nearest_value = 1.0;
-    float nearest_gap = 1e30;
+    float nearest_gap = BACKGROUND_VIEW_DISTANCE;
     for (int y = 0; y < 4; y++) {
         for (int x = 0; x < 4; x++) {
             ivec2 tap = first + ivec2(x, y);

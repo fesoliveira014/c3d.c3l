@@ -41,7 +41,7 @@ const float AO_INTENSITY_MAX @local = 2;
 const ZString[Tonemap::len] TONEMAP_LABELS @local = { "None", "ACES", "AgX", "Reinhard" };
 const ZString[AntiAliasing::len] ANTI_ALIASING_LABELS @local = { "None", "FXAA", "TAA" };
 const ZString[TaaDebug::len] TAA_DEBUG_LABELS @local = { "None", "Velocity", "Rejection", "History weight" };
-const ZString[2] AO_KIND_LABELS @local = { "None", "SSAO" };
+const ZString[AoKind.RAY_TRACED.ordinal] AO_KIND_LABELS @local = { "None", "SSAO" };
 
 <*
  Edit the view's post settings; the caller applies them with configure_view.
@@ -159,7 +159,7 @@ fn bool post_panel(ViewDesc* desc, TextureId lut, bool ray_queries = false) {
 }
 
 fn bool edit_ambient_occlusion(AmbientOcclusionDesc* ambient_occlusion) @local {
-    int selected = ambient_occlusion.kind == AoKind.SSAO ? 1 : 0;
+    int selected = (int)ambient_occlusion.kind.ordinal;
     bool changed = imgui::combo_char(
         label:        "Kind",
         current_item: &selected,
@@ -167,7 +167,7 @@ fn bool edit_ambient_occlusion(AmbientOcclusionDesc* ambient_occlusion) @local {
         items_count:  AO_KIND_LABELS.len,
     );
     if (changed) {
-        AoKind kind = selected == 1 ? AoKind.SSAO : AoKind.NONE;
+        AoKind kind = (AoKind)selected;
         if (kind == AoKind.SSAO && ambient_occlusion.radius == 0) {
             *ambient_occlusion = render::AMBIENT_OCCLUSION_DEFAULT;
         }

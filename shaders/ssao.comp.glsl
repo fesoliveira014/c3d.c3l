@@ -5,6 +5,7 @@
 #include "constants.glsl"
 #include "gbuffer.glsl"
 #include "noise.glsl"
+#include "texture_fetch.glsl"
 #include "ambient_occlusion.glsl"
 
 layout(local_size_x = 8, local_size_y = 8) in;
@@ -43,8 +44,10 @@ vec3 neighbour_offset(
     float forward_depth = fetch_texture_2d(root.depth, forward_texel).r;
     float backward_depth = fetch_texture_2d(root.depth, backward_texel).r;
     float centre_distance = -position.z;
-    float forward_gap = forward_depth == 0.0 ? 1e30 : abs(view_distance(frame, forward_depth) - centre_distance);
-    float backward_gap = backward_depth == 0.0 ? 1e30 : abs(view_distance(frame, backward_depth) - centre_distance);
+    float forward_gap = forward_depth == 0.0
+        ? BACKGROUND_VIEW_DISTANCE : abs(view_distance(frame, forward_depth) - centre_distance);
+    float backward_gap = backward_depth == 0.0
+        ? BACKGROUND_VIEW_DISTANCE : abs(view_distance(frame, backward_depth) - centre_distance);
     if (forward_gap <= backward_gap) {
         if (forward_depth == 0.0) return vec3(0.0);
         return view_position(frame, forward_texel, extent, forward_depth) - position;
@@ -122,6 +125,8 @@ void main() {
         vec3 axis = normalize(cross(ortho_direction, view_vector));
         vec3 projected_normal = normal - axis * dot(normal, axis);
         float projected_length = length(projected_normal);
+        // A normal along the slice axis weights the slice by zero.
+        if (projected_length == 0.0) continue;
         float cos_normal = clamp(dot(projected_normal, view_vector) / projected_length, 0.0, 1.0);
         float normal_angle = sign(dot(ortho_direction, projected_normal)) * acos(cos_normal);
 

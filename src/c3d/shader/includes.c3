@@ -37,6 +37,7 @@ const char[*] C3D_COMMON_SCENE_TRACE_TEXT @private = $embed("../../../shaders/co
 const char[*] C3D_COMMON_SHADOWS_TEXT @private = $embed("../../../shaders/common/shadows.glsl");
 const char[*] C3D_COMMON_SHEEN_TEXT @private = $embed("../../../shaders/common/sheen.glsl");
 const char[*] C3D_COMMON_STANDARD_SURFACE_TEXT @private = $embed("../../../shaders/common/standard_surface.glsl");
+const char[*] C3D_COMMON_TEXTURE_FETCH_TEXT @private = $embed("../../../shaders/common/texture_fetch.glsl");
 const char[*] C3D_COMMON_TOON_TEXT @private = $embed("../../../shaders/common/toon.glsl");
 const char[*] C3D_COMMON_TRACE_SURFACE_TEXT @private = $embed("../../../shaders/common/trace_surface.glsl");
 const char[*] C3D_COMMON_TRANSMISSION_TEXT @private = $embed("../../../shaders/common/transmission.glsl");
@@ -51,7 +52,7 @@ const char[*] GPU_RAY_TRACING_TEXT @private = $embed("../../../lib/gpu.c3l/inclu
 <*
  Every include a custom stage may resolve, in table order.
 *>
-const ShaderInclude[38] SHADER_INCLUDES = {
+const ShaderInclude[39] SHADER_INCLUDES = {
     { .name = "c3d_abi.glsl", .text = (String)C3D_GENERATED_C3D_ABI_TEXT[..] },
     { .name = "ambient_occlusion.glsl", .text = (String)C3D_COMMON_AMBIENT_OCCLUSION_TEXT[..] },
     { .name = "brdf.glsl", .text = (String)C3D_COMMON_BRDF_TEXT[..] },
@@ -80,6 +81,7 @@ const ShaderInclude[38] SHADER_INCLUDES = {
     { .name = "shadows.glsl", .text = (String)C3D_COMMON_SHADOWS_TEXT[..] },
     { .name = "sheen.glsl", .text = (String)C3D_COMMON_SHEEN_TEXT[..] },
     { .name = "standard_surface.glsl", .text = (String)C3D_COMMON_STANDARD_SURFACE_TEXT[..] },
+    { .name = "texture_fetch.glsl", .text = (String)C3D_COMMON_TEXTURE_FETCH_TEXT[..] },
     { .name = "toon.glsl", .text = (String)C3D_COMMON_TOON_TEXT[..] },
     { .name = "trace_surface.glsl", .text = (String)C3D_COMMON_TRACE_SURFACE_TEXT[..] },
     { .name = "transmission.glsl", .text = (String)C3D_COMMON_TRANSMISSION_TEXT[..] },

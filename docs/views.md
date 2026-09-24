@@ -201,8 +201,10 @@ view's working resolution.
 ## Shading path
 
 `shading = DEFERRED` renders the view's encodable opaque materials through a G-buffer and one
-fullscreen lighting resolve; every other material keeps its forward pass on the same view. The
-forward view sequence is unchanged, and a `FORWARD` view allocates no G-buffer image.
+fullscreen lighting resolve; every other material keeps its forward pass on the same view. A
+`FORWARD` view allocates no G-buffer image. It records no depth prepass unless it has
+[ambient occlusion](ambient_occlusion.md): then it runs `DEPTH_PREPASS` and `AMBIENT_OCCLUSION`
+before `FORWARD_OPAQUE`, which draws with depth `EQUAL` and no depth write.
 
 ```bash
 python3 scripts/build.py --example deferred
@@ -232,7 +234,8 @@ The deferred view owns five images at its working extent, allocated by `create_v
 | `gbuffer_flags` | `R32_UINT` | receive-shadow bit |
 
 Pass order on a deferred view: uploads, shadow atlas, light culling, `DEPTH_PREPASS` over both opaque
-lists, `GBUFFER` (depth `EQUAL`, no write), `LIGHTING` (a fullscreen fragment pass that clears
+lists, `GBUFFER` (depth `EQUAL`, no write), `AMBIENT_OCCLUSION` when the view has ambient
+occlusion, `LIGHTING` (a fullscreen fragment pass that clears
 `hdr_color`, discards where no geometry was drawn and lights every G-buffer pixel from `FrameRoot`),
 `FORWARD_OPAQUE` (depth `EQUAL`, no write), sky, transmission, transparency, velocity and the post
 chain. `Stats.gpu_pass_ms` carries the three new passes. Dielectric F0 in the resolve is

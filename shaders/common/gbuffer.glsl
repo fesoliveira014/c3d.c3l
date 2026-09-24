@@ -28,11 +28,14 @@ vec3 reconstruct_world_position(FrameRoot frame, vec2 uv, float depth) {
     return world.xyz / world.w;
 }
 
-// Forward distance from reverse-Z depth, the formula of dof_linear_depth; depth 0 reads as infinitely far.
+// Stands in for infinity: depth 0 under an infinite far plane.
+const float BACKGROUND_VIEW_DISTANCE = 1e30;
+
+// Forward distance from reverse-Z depth, the formula of dof_linear_depth.
 float view_distance(FrameRoot frame, float depth) {
     if (frame.proj[3][3] != 0.0) return (frame.proj[3][2] - depth) / frame.proj[2][2];
     float denominator = depth + frame.proj[2][2];
-    return denominator > 0.0 ? frame.proj[3][2] / denominator : 1e30;
+    return denominator > 0.0 ? frame.proj[3][2] / denominator : BACKGROUND_VIEW_DISTANCE;
 }
 
 #endif
