@@ -297,6 +297,12 @@
         "src/compute_textures.c3"
       ]
     },
+    "software_rt": {
+      "type": "executable",
+      "sources": [
+        "src/software_rt.c3"
+      ]
+    },
     "profile_gpu": {
       "type": "executable",
       "dependencies": [

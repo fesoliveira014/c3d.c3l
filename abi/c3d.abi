@@ -46,6 +46,46 @@ root GeometryRoot {
     uint       vertex_count;
     uint       morph_target_count;
     uint       flags;
+    GpuAddress indices;
+}
+
+const uint BVH_STACK_DEPTH = 32;
+const uint TRACE_INSTANCE_ALPHA_MASK = 1;
+const uint TRACE_INSTANCE_DOUBLE_SIDED = 2;
+
+struct BvhNodeGpu {
+    float min_x;
+    float min_y;
+    float min_z;
+    uint  left_or_first;
+    float max_x;
+    float max_y;
+    float max_z;
+    uint  count;
+}
+
+struct TraceInstanceGpu {
+    GpuAddress geometry;
+    GpuAddress material;
+    uint       flags;
+    uint       material_kind;
+    uint       _pad0;
+    uint       _pad1;
+    vec4       world_to_local_0;
+    vec4       world_to_local_1;
+    vec4       world_to_local_2;
+    vec4       local_to_world_0;
+    vec4       local_to_world_1;
+    vec4       local_to_world_2;
+    GpuAddress nodes;
+    GpuAddress primitives;
+}
+
+root SceneTraceRoot {
+    GpuAddress top_nodes;
+    GpuAddress instances;
+    uint       instance_count;
+    uint       top_node_count;
     uint       _pad0;
     uint       _pad1;
 }

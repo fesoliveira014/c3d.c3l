@@ -73,6 +73,7 @@ struct RendererDesc {
     uint             max_lights;
     uint             shadow_resolution;
     uint             max_shadow_layers;
+    uint             max_trace_instances;
 }
 
 <*
@@ -110,11 +111,13 @@ struct Renderer {
     ulong                   frame_index;
     DeformationCache        deformation;
     InstanceCache           instances;
+    SceneTrace              scene_trace;
 
     AssetStore*             assets;
     uint                    max_lights;
     uint                    shadow_resolution;
     uint                    max_shadow_layers;
+    uint                    max_trace_instances;
     ShadowAtlas             shadow_atlas;
     GpuGeometry[]           geometries;
     List{gpu::BufferCopyDesc} pending_copies;
@@ -749,6 +752,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .max_lights           = desc.max_lights ? desc.max_lights : DEFAULT_MAX_LIGHTS,
         .shadow_resolution    = desc.shadow_resolution ? desc.shadow_resolution : DEFAULT_SHADOW_RESOLUTION,
         .max_shadow_layers    = max_shadow_layers,
+        .max_trace_instances  = desc.max_trace_instances ? desc.max_trace_instances : DEFAULT_MAX_TRACE_INSTANCES,
         .shadow_timing_results = shadow_timing_results,
         .shadow_frusta        = alloc::new_array(allocator, ShadowFrustum, max_shadow_layers),
         .validation           = desc.validation,
@@ -794,6 +798,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     renderer.pending_texture_uploads.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.texture_state_undo.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_upload_retire.init(allocator, RETIRE_INITIAL_CAPACITY);
+    renderer.scene_trace.pending_builds.init(allocator, RETIRE_INITIAL_CAPACITY);
     defer catch {
         if (catch excuse = wait_frames(&renderer)) handle_cleanup_fault(excuse);
         foreach (&slot : renderer.frames) drain_retired(&renderer.device, &slot.environment_temporaries);
@@ -807,6 +812,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         free_shaders(&renderer);
         free_compute_shaders(&renderer);
         free_buffers(&renderer);
+        free_scene_trace(&renderer);
         destroy_pipeline_cache(&renderer.device, &renderer.pipelines);
         destroy_deformation_cache(&renderer.deformation);
         destroy_instance_cache(&renderer.instances);
@@ -843,6 +849,7 @@ fn void destroy_renderer(Renderer* renderer) {
     free_shaders(renderer);
     free_compute_shaders(renderer);
     free_buffers(renderer);
+    free_scene_trace(renderer);
     destroy_shadow_atlas(&renderer.device, &renderer.shadow_atlas);
     if (renderer.shadow_timing_results.len) alloc::free(renderer.allocator, renderer.shadow_timing_results.ptr);
     alloc::free(renderer.allocator, renderer.shadow_frusta.ptr);

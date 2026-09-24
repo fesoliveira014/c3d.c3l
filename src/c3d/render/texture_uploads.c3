@@ -92,6 +92,7 @@ fn void commit_uploads(Renderer* renderer, Frame* slot) @private {
     renderer.pending_texture_uploads.clear();
     renderer.texture_state_undo.clear();
     renderer.pending_geometry_uploads.clear();
+    renderer.scene_trace.pending_builds.clear();
     renderer.uploads_recorded = false;
 
     foreach (retired : renderer.pending_upload_retire) slot.retire.push(retired);
@@ -114,6 +115,7 @@ fn void discard_uploads(Renderer* renderer) @private {
     }
     renderer.pending_geometry_uploads.clear();
     foreach (&material : renderer.materials) material.revision = 0;
+    discard_scene_trace(renderer);
 }
 
 fn void free_pending_uploads(Renderer* renderer) @private {

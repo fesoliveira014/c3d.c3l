@@ -9,8 +9,10 @@
 #define GEOMETRY_HAS_UV0 4u
 #define GEOMETRY_HAS_UV1 8u
 #define GEOMETRY_HAS_COLORS 16u
+#define GEOMETRY_INDICES_U16 128u
 
 GPU_DECLARE_READONLY_ARRAY_REF(FloatStream, float);
+GPU_DECLARE_READONLY_ARRAY_REF(IndexStream, uint);
 
 vec3 pull_vec3(uint64_t stream, uint index) {
     FloatStream values = FloatStream(stream);
@@ -30,6 +32,21 @@ vec4 pull_vec4(uint64_t stream, uint index) {
         values.values[4u * index + 2u],
         values.values[4u * index + 3u]
     );
+}
+
+uint pull_u16(IndexStream stream, uint index) {
+    uint word = stream.values[index >> 1u];
+    return (index & 1u) == 0u ? word & 0xffffu : word >> 16u;
+}
+
+uvec3 pull_triangle(GeometryRoot geometry, uint primitive) {
+    uint first = 3u * primitive;
+    if (geometry.indices == 0ul) return uvec3(first, first + 1u, first + 2u);
+    IndexStream stream = IndexStream(geometry.indices);
+    if ((geometry.flags & GEOMETRY_INDICES_U16) == 0u) {
+        return uvec3(stream.values[first], stream.values[first + 1u], stream.values[first + 2u]);
+    }
+    return uvec3(pull_u16(stream, first), pull_u16(stream, first + 1u), pull_u16(stream, first + 2u));
 }
 
 #endif

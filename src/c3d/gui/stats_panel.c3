@@ -33,6 +33,10 @@ fn void? stats_panel(Renderer* renderer) {
     imgui::text("Uploads: %u", renderer.stats.uploads);
     imgui::text("Asset upload bytes: %u", renderer.stats.upload_bytes);
     imgui::text("Dangling references: %u", renderer.stats.dangling_refs);
+    imgui::text("Trace instances: %u", renderer.stats.trace_instances);
+    imgui::text("Trace nodes: %u", renderer.stats.trace_nodes);
+    imgui::text("Trace skipped: %u", renderer.stats.trace_skipped);
+    imgui::text("Trace build: %.3f ms", (double)renderer.stats.trace_build_ms);
     imgui::text("Shader rejections: %u", renderer.stats.shader_rejections);
 
     imgui::text("Completed cluster view: %u:%u",

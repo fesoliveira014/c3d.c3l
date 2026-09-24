@@ -11,6 +11,7 @@ struct Mesh {
     MaterialId material;
     bool       cast_shadow;
     bool       receive_shadow;
+    bool       trace;
     float[]    morph_weights;
     bool       has_bounds_override;
     Aabb       local_bounds;

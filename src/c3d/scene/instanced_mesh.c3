@@ -16,6 +16,7 @@ struct InstancedMesh {
     uint        count;
     bool        cast_shadow;
     bool        receive_shadow;
+    bool        trace;
     bool        has_bounds_override;
     Aabb        local_bounds;
 }

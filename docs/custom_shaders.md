@@ -201,6 +201,8 @@ A configuration that fails on first use (a forward pipeline, or a shadow caster'
 
 An application runs its own compute stages inside a frame: a `ComputeShaderAsset` in the store, renderer-owned buffers and declared textures the stage reads and writes, and `Renderer.dispatch` recorded at its call position in the frame.
 
+A compute stage can trace rays against the static scene through `Renderer.prepare_scene_trace` and `scene_trace.glsl`; see [Scene tracing](scene_trace.md).
+
 ```c3
 ComputeShaderDesc compute_desc = { .compute = compute_spirv };
 ComputeShaderId simulate = assets.add_compute_shader(&compute_desc, "particles")!;

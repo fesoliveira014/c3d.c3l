@@ -14,6 +14,9 @@ const uint SHADOW_FACE_POSITIVE_Z = 4u;
 const uint SHADOW_FACE_NEGATIVE_Z = 5u;
 const uint SHADOW_POINT_FACE_COUNT = 6u;
 const uint MAX_DISPATCH_TEXTURES = 8u;
+const uint BVH_STACK_DEPTH = 32u;
+const uint TRACE_INSTANCE_ALPHA_MASK = 1u;
+const uint TRACE_INSTANCE_DOUBLE_SIDED = 2u;
 const uint FRAME_LIGHTS_CLUSTERED = 1u;
 const uint CLUSTER_GROUP_SIZE = 64u;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8u;
@@ -125,6 +128,42 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer GeometryRoot
     uint vertex_count;
     uint morph_target_count;
     uint flags;
+    uint64_t indices;
+};
+
+struct BvhNodeGpu {
+    float min_x;
+    float min_y;
+    float min_z;
+    uint left_or_first;
+    float max_x;
+    float max_y;
+    float max_z;
+    uint count;
+};
+
+struct TraceInstanceGpu {
+    uint64_t geometry;
+    uint64_t material;
+    uint flags;
+    uint material_kind;
+    uint _pad0;
+    uint _pad1;
+    vec4 world_to_local_0;
+    vec4 world_to_local_1;
+    vec4 world_to_local_2;
+    vec4 local_to_world_0;
+    vec4 local_to_world_1;
+    vec4 local_to_world_2;
+    uint64_t nodes;
+    uint64_t primitives;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer SceneTraceRoot {
+    uint64_t top_nodes;
+    uint64_t instances;
+    uint instance_count;
+    uint top_node_count;
     uint _pad0;
     uint _pad1;
 };

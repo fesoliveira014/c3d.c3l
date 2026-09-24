@@ -54,6 +54,12 @@ What the four cases establish:
   rectangle and falls back to the compute route otherwise; bloom at zero
   intensity records no dispatch.
 
+- The software scene trace matches CPU triangle picking ray for ray over a
+  64 by 64 grid (a box, a sphere, an instanced batch with a mirrored
+  instance and a non-indexed ground), skips a geometry released before its
+  first preparation and one whose index count is not a multiple of three, and
+  traces identically after every other geometry's CPU arrays are released.
+
 What they cannot establish: window clear-only and GUI-only frames need a
 window (run the `clear` and `cube_gui` examples with validation), and a
 presentation failure after submission needs a hardware observation.

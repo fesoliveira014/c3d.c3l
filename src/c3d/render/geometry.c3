@@ -61,6 +61,17 @@ struct GeometryLayout {
 }
 
 <*
+ Bottom-level trace data of one geometry mirror.
+*>
+struct TraceGeometry {
+    gpu::GpuAllocation allocation; // nodes, then primitive ids at STREAM_ALIGNMENT
+    gpu::GpuAddress    nodes;
+    gpu::GpuAddress    primitives;
+    uint               revision;          // header.revision it was built from; 0 when absent
+    uint               rejected_revision; // header.revision whose arrays form no triangle list; 0 when none
+}
+
+<*
  Renderer-owned GPU mirror of one geometry record.
 *>
 struct GpuGeometry {
@@ -73,6 +84,7 @@ struct GpuGeometry {
     GeometryLayout     layout;
     Topology           topology;
     Aabb               bounds;
+    TraceGeometry      trace;
 }
 
 <*
@@ -139,7 +151,8 @@ fn GeometryLayout geometry_layout(Geometry* geometry) {
     }
     if (layout.custom_stride) layout.custom_data = place(&cursor, (usz)layout.custom_stride * vertex_count);
     if (layout.index_count) layout.indices = place(&cursor, (usz)layout.index_stride * layout.index_count);
-    layout.total_bytes = cursor;
+    // Shaders read 16-bit indices as whole 32-bit words.
+    layout.total_bytes = align_up(cursor, uint::size);
     return layout;
 }
 
@@ -167,6 +180,7 @@ fn void write_geometry_block(char[] block, Geometry* geometry, GeometryLayout* l
         .vertex_count       = layout.vertex_count,
         .morph_target_count = layout.morph_count,
         .flags              = (uint)layout.flags,
+        .indices            = address_of(base, layout.indices),
     };
     copy_stream(block, layout.positions, geometry.positions);
     copy_stream(block, layout.normals, geometry.normals);
@@ -238,6 +252,13 @@ fn GpuGeometry*? resolve_geometry(Renderer* renderer, GeometryId geometry) @priv
 
         if (mirror.allocation.is_valid()) {
             renderer.pending_upload_retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = mirror.allocation });
+        }
+        if (!same_asset && mirror.trace.allocation.is_valid()) {
+            renderer.pending_upload_retire.push({
+                .kind       = RetiredKind.ALLOCATION,
+                .allocation = mirror.trace.allocation,
+            });
+            mirror.trace = {};
         }
         mirror.allocation = allocation;
         mirror.root = address;
@@ -322,6 +343,12 @@ fn void sweep_geometries(Renderer* renderer) @private {
     foreach (&mirror : renderer.geometries) {
         if (!mirror.allocation.is_valid() || renderer.assets.geometries.is_live(mirror.asset)) continue;
         renderer.pending_upload_retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = mirror.allocation });
+        if (mirror.trace.allocation.is_valid()) {
+            renderer.pending_upload_retire.push({
+                .kind       = RetiredKind.ALLOCATION,
+                .allocation = mirror.trace.allocation,
+            });
+        }
         *mirror = {};
     }
 }
@@ -329,6 +356,7 @@ fn void sweep_geometries(Renderer* renderer) @private {
 fn void free_geometries(Renderer* renderer) @private {
     foreach (&mirror : renderer.geometries) {
         if (mirror.allocation.is_valid()) (void)gpu::free_allocation(&renderer.device, &mirror.allocation);
+        if (mirror.trace.allocation.is_valid()) (void)gpu::free_allocation(&renderer.device, &mirror.trace.allocation);
     }
     alloc::free(renderer.allocator, renderer.geometries.ptr);
     renderer.pending_copies.free();

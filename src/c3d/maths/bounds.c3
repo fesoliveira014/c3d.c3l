@@ -2,7 +2,7 @@ module c3d::maths;
 
 import std::math;
 
-const float TRIANGLE_PARALLEL_EPSILON @local = 1e-8f; // determinant below this is a ray in the triangle's plane
+const float TRIANGLE_PARALLEL_EPSILON @local = 1e-8f; // ray lies in the plane below this; twin in scene_trace.glsl
 
 <*
  Axis-aligned bounding box.
