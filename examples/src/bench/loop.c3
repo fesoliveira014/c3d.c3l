@@ -30,6 +30,7 @@ struct BenchmarkFlags {
     uint width;
     uint height;
     AntiAliasing anti_aliasing;
+    AmbientOcclusionDesc ambient_occlusion;
 }
 
 <*
@@ -69,7 +70,7 @@ struct BenchmarkRun {
 }
 
 <*
- Flags with 300 measured frames, 60 warmup frames, a 1440 by 900 extent and FXAA.
+ Flags with 300 measured frames, 60 warmup frames, a 1440 by 900 extent, FXAA and no AO.
 *>
 fn BenchmarkFlags default_flags() {
     return { .frames = 300, .warmup = 60, .width = 1440, .height = 900, .anti_aliasing = AntiAliasing.FXAA };
@@ -119,6 +120,15 @@ fn bool? parse_flag(String[] args, usz* index, BenchmarkFlags* flags, String tar
                 case "none": flags.anti_aliasing = AntiAliasing.NONE;
                 case "fxaa": flags.anti_aliasing = AntiAliasing.FXAA;
                 case "taa": flags.anti_aliasing = AntiAliasing.TAA;
+                default: return c3d::INVALID_ARGUMENT~;
+            }
+        case "--ambient-occlusion":
+            switch (option_value(args, index)!) {
+                case "none": flags.ambient_occlusion = {};
+                case "half": flags.ambient_occlusion = render::AMBIENT_OCCLUSION_DEFAULT;
+                case "full":
+                    flags.ambient_occlusion = render::AMBIENT_OCCLUSION_DEFAULT;
+                    flags.ambient_occlusion.full_resolution = true;
                 default: return c3d::INVALID_ARGUMENT~;
             }
         default: return false;

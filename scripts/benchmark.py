@@ -81,6 +81,8 @@ def parse_arguments():
     render.add_argument("--range", type=float, help="light range: render default 6 units; scene default 0.08 of the extent")
     render.add_argument("--anti-aliasing", choices=["none", "fxaa", "taa"], default="fxaa",
                         help="anti-aliasing filter of the measured view")
+    render.add_argument("--ambient-occlusion", choices=["none", "half", "full"], default="none",
+                        help="ambient occlusion resolution of the measured view")
     render.add_argument("--gpu-timings", action="store_true", help="enable renderer timestamps")
     render.add_argument("--validation", action="store_true", help="enable Vulkan validation")
 
@@ -235,6 +237,7 @@ def workload_arguments(args, mode, lights, shading):
     return ["--benchmark", "--mode", mode, "--shading", shading, "--lights", str(lights), "--frames", str(args.frames),
             "--warmup", str(args.warmup), "--width", str(args.width), "--height", str(args.height),
             "--capacity", str(args.capacity), "--range", str(args.range), "--anti-aliasing", args.anti_aliasing,
+            "--ambient-occlusion", args.ambient_occlusion,
             *common_switches(args)]
 
 
