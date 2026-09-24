@@ -7,6 +7,10 @@
 #include "lights.glsl"
 #include "material_alpha.glsl"
 #include "material_maps.glsl"
+#ifdef RT_SHADOWS
+#define SCENE_TRACE_RAY_QUERY
+#include "scene_trace.glsl"
+#endif
 #include "shadows.glsl"
 #include "toon.glsl"
 
@@ -58,7 +62,7 @@ void main() {
         LightSample light_sample = sample_light(light, v_world_pos);
         float response = toon_response(material, dot(normal, light_sample.direction));
         float visibility = 1.0;
-        if ((draw.flags & DRAW_RECEIVE_SHADOW) != 0u && light.shadow_count != 0u) {
+        if ((draw.flags & DRAW_RECEIVE_SHADOW) != 0u && light_casts_shadow(light)) {
             visibility = shadow_visibility(frame, light, v_world_pos, normal, view_depth);
         }
         color += base_color.rgb / PI * response * light_sample.radiance * visibility;

@@ -28,7 +28,8 @@
       "type": "test",
       "sources": [
         "test_submission.c3",
-        "test_scene_trace.c3"
+        "test_scene_trace.c3",
+        "test_ray_tracing.c3"
       ]
     }
   }

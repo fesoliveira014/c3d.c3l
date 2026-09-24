@@ -25,6 +25,7 @@ struct ShadowSettings {
     uint cascades;
     float cascade_lambda;
     float max_distance;
+    bool ray_traced;
 }
 
 <*

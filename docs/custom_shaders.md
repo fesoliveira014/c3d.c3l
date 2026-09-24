@@ -84,6 +84,8 @@ void main() {
 
 `CustomMaterialGpu` (generated, 288 bytes) carries `kind`, `flags` (`MATERIAL_ALPHA_MASK`, `MATERIAL_DOUBLE_SIDED`, `MATERIAL_ALPHA_BLEND`), `alpha_cutoff`, `map_flags` (bit `i` = slot `i` present, bit `i + CUSTOM_MAP_UV1_SHIFT` = slot `i` reads UV1), `slots[8]` as `TextureMapGpu`, and `parameters`, the payload address. `custom_material.glsl` supplies `custom_slot_present`, `custom_map_uv` and `sample_custom_map`; `material_alpha.glsl` supplies `material_output`, which premultiplies for BLEND. Vertex inputs are the fixed locations 0 to 6 written by `mesh.vert.glsl`. `lights.glsl`, `shadows.glsl`, `ibl.glsl`, `brdf.glsl` and the other shared includes are available and read only `FrameRoot` through `DrawRoot.frame`.
 
+Custom fragment stages compile once, without the ray-traced shadow path: a light traced by the view (see [ray-traced shadows](shadows.md#ray-traced-shadows)) reaches them with `shadow_count == 0`, so `shadow_visibility` returns 1.
+
 A masked custom material (`alpha_mode == MASK`) discards in its own fragment stage; the shadow atlas reads the same header and uses slot 0's alpha against `alpha_cutoff` as the caster coverage. A custom caster's `DrawRoot.material` is always its `CustomMaterialGpu`, so a custom depth vertex form can read the payload.
 
 ### Light selection

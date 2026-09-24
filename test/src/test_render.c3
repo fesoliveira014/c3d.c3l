@@ -934,3 +934,42 @@ fn void test_draw_sort_key_groups_custom_by_shader() @test {
     assert(b > a_first);
     assert(key_of(5, 9, 9, 0) == a_first);
 }
+
+fn void test_frame_root_marks_trace_presence() @test {
+    shader::FrameRoot* root = mem::new(shader::FrameRoot);
+    defer free(root);
+    Camera camera = camera::perspective_deg(60, 0.1f, 100);
+    CameraMatrices matrices = camera::derive_matrices(camera, matrix::IDENTITY4, { 800, 600 });
+    render::write_frame_root(
+        root:        root,
+        matrices:    &matrices,
+        camera:      &camera,
+        viewport:    { 800, 600 },
+        info:        {},
+        frame_index: 1,
+        trace:       (gpu::GpuAddress)0x1000,
+    );
+    assert(root.trace == (gpu::GpuAddress)0x1000 && (root.flags & shader::FRAME_TRACE_PRESENT) != 0);
+
+    render::write_frame_root(
+        root:        root,
+        matrices:    &matrices,
+        camera:      &camera,
+        viewport:    { 800, 600 },
+        info:        {},
+        frame_index: 1,
+    );
+    assert(root.trace == (gpu::GpuAddress)0 && (root.flags & shader::FRAME_TRACE_PRESENT) == 0);
+
+    render::write_frame_root(
+        root:        root,
+        matrices:    &matrices,
+        camera:      &camera,
+        viewport:    { 800, 600 },
+        info:        {},
+        frame_index: 1,
+        clusters:    (gpu::GpuAddress)0x2000,
+        trace:       (gpu::GpuAddress)0x1000,
+    );
+    assert((root.flags & shader::FRAME_LIGHTS_CLUSTERED) != 0 && (root.flags & shader::FRAME_TRACE_PRESENT) != 0);
+}

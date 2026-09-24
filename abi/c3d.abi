@@ -52,6 +52,8 @@ root GeometryRoot {
 const uint BVH_STACK_DEPTH = 32;
 const uint TRACE_INSTANCE_ALPHA_MASK = 1;
 const uint TRACE_INSTANCE_DOUBLE_SIDED = 2;
+const uint TRACE_MASK_ALL = 1;
+const uint TRACE_MASK_SHADOW_CASTER = 2;
 
 struct BvhNodeGpu {
     float min_x;
@@ -69,7 +71,7 @@ struct TraceInstanceGpu {
     GpuAddress material;
     uint       flags;
     uint       material_kind;
-    uint       _pad0;
+    uint       mask;
     uint       _pad1;
     vec4       world_to_local_0;
     vec4       world_to_local_1;
@@ -86,11 +88,12 @@ root SceneTraceRoot {
     GpuAddress instances;
     uint       instance_count;
     uint       top_node_count;
-    uint       _pad0;
+    uint       tlas_index;
     uint       _pad1;
 }
 
 const uint FRAME_LIGHTS_CLUSTERED = 1;
+const uint FRAME_TRACE_PRESENT = 2;
 const uint CLUSTER_GROUP_SIZE = 64;
 
 struct ClusterRange {
@@ -134,7 +137,7 @@ root FrameRoot {
     GpuAddress lights;
     GpuAddress shadows;
     GpuAddress environment;
-    GpuAddress instances;
+    GpuAddress trace;
     uint       light_count;
     uint       shadow_count;
     uint       flags;
@@ -314,6 +317,8 @@ root CubePreviewRoot {
     uint _pad2;
 }
 
+const uint LIGHT_RT_SHADOW = 1;
+
 struct LightGpu {
     vec4 position_range;
     vec4 direction_cos_outer;
@@ -323,7 +328,7 @@ struct LightGpu {
     float cos_inner;
     uint shadow_first;
     uint shadow_count;
-    uint _pad0;
+    uint flags;
     uint _pad1;
     uint _pad2;
 }
@@ -516,6 +521,10 @@ root PhysicalMaterialGpu {
 
 const uint CUSTOM_TEXTURE_SLOTS = 8;
 const uint CUSTOM_MAP_UV1_SHIFT = 8;
+const uint MATERIAL_KIND_BASIC = 0;
+const uint MATERIAL_KIND_STANDARD = 1;
+const uint MATERIAL_KIND_TOON = 2;
+const uint MATERIAL_KIND_PHYSICAL = 3;
 const uint MATERIAL_KIND_CUSTOM = 4;
 const uint CUSTOM_CAPABILITY_GBUFFER = 1;
 

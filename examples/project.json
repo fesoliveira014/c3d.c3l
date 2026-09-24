@@ -20,7 +20,6 @@
   "features": [
     "C3D_GUI",
     "C3D_FBX",
-    "C3D_RAY_TRACING",
     "C3D_STB_IMAGE",
     "C3D_SHADER_COMPILER"
   ],
@@ -173,6 +172,12 @@
       "type": "executable",
       "sources": [
         "src/shadows.c3"
+      ]
+    },
+    "rt_shadows": {
+      "type": "executable",
+      "sources": [
+        "src/rt_shadows.c3"
       ]
     },
     "pbr": {

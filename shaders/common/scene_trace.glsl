@@ -1,27 +1,108 @@
 #ifndef C3D_SCENE_TRACE_GLSL
 #define C3D_SCENE_TRACE_GLSL
 
-#if !defined(SCENE_TRACE_BVH)
-#error "define SCENE_TRACE_BVH before including scene_trace.glsl"
+#if defined(SCENE_TRACE_BVH) == defined(SCENE_TRACE_RAY_QUERY)
+#error "define exactly one of SCENE_TRACE_BVH or SCENE_TRACE_RAY_QUERY before including scene_trace.glsl"
 #endif
 
 #include "c3d_abi.glsl"
 #include "buffer_reference.glsl"
 #include "vertex_pull.glsl"
+#include "trace_surface.glsl"
+
+GPU_DECLARE_READONLY_ARRAY_REF(TraceInstanceArray, TraceInstanceGpu);
+
+#ifdef SCENE_TRACE_RAY_QUERY
+
+#include "ray_query.glsl"
+
+bool trace_scene_query(
+    SceneTraceRoot scene,
+    vec3 origin,
+    vec3 direction,
+    float t_max,
+    uint instance_mask,
+    uint ray_flags,
+    out SceneHit hit
+) {
+    hit = SceneHit(
+        0u,
+        0u,
+        vec2(0.0),
+        t_max
+    );
+    if (scene.instance_count == 0u) return false;
+
+    TraceInstanceArray instances = TraceInstanceArray(scene.instances);
+    rayQueryEXT query;
+    GPU_RAY_QUERY_INITIALIZE(query, scene.tlas_index, ray_flags, instance_mask, origin, 0.0, direction, t_max);
+    while (rayQueryProceedEXT(query)) {
+        if (rayQueryGetIntersectionTypeEXT(query, false) != gl_RayQueryCandidateIntersectionTriangleEXT) continue;
+        SceneHit candidate = SceneHit(
+            rayQueryGetIntersectionInstanceCustomIndexEXT(query, false),
+            rayQueryGetIntersectionPrimitiveIndexEXT(query, false),
+            rayQueryGetIntersectionBarycentricsEXT(query, false),
+            rayQueryGetIntersectionTEXT(query, false)
+        );
+        if (trace_surface_passes(instances.values[candidate.instance], candidate)) {
+            rayQueryConfirmIntersectionEXT(query);
+        }
+    }
+    if (rayQueryGetIntersectionTypeEXT(query, true) != gl_RayQueryCommittedIntersectionTriangleEXT) return false;
+    hit = SceneHit(
+        rayQueryGetIntersectionInstanceCustomIndexEXT(query, true),
+        rayQueryGetIntersectionPrimitiveIndexEXT(query, true),
+        rayQueryGetIntersectionBarycentricsEXT(query, true),
+        rayQueryGetIntersectionTEXT(query, true)
+    );
+    return true;
+}
+
+bool trace_scene(
+    SceneTraceRoot scene,
+    vec3 origin,
+    vec3 direction,
+    float t_max,
+    uint instance_mask,
+    out SceneHit hit
+) {
+    return trace_scene_query(
+        scene,
+        origin,
+        direction,
+        t_max,
+        instance_mask,
+        gl_RayFlagsNoneEXT,
+        hit
+    );
+}
+
+bool trace_scene_any(
+    SceneTraceRoot scene,
+    vec3 origin,
+    vec3 direction,
+    float t_max,
+    uint instance_mask
+) {
+    SceneHit ignored;
+    return trace_scene_query(
+        scene,
+        origin,
+        direction,
+        t_max,
+        instance_mask,
+        gl_RayFlagsTerminateOnFirstHitEXT,
+        ignored
+    );
+}
+
+#else
 
 GPU_DECLARE_READONLY_ARRAY_REF(BvhNodeArray, BvhNodeGpu);
-GPU_DECLARE_READONLY_ARRAY_REF(TraceInstanceArray, TraceInstanceGpu);
 GPU_DECLARE_READONLY_ARRAY_REF(PrimitiveArray, uint);
 
 const float TRIANGLE_PARALLEL_EPSILON = 1e-8; // mirrored from maths/bounds.c3
 const float TRACE_MIN_DIRECTION = 1e-30; // keeps a zero direction component finite in the slab test
-
-struct SceneHit {
-    uint instance;
-    uint primitive;
-    vec2 barycentrics;
-    float t;
-};
 
 struct TraceRay {
     vec3 origin;
@@ -164,13 +245,16 @@ bool trace_instance(
                 weights
             );
             if (!met || t >= t_max) continue;
-            t_max = t;
-            hit = SceneHit(
+            SceneHit candidate = SceneHit(
                 row,
                 primitive,
                 weights,
                 t
             );
+            bool masked = (instance.flags & TRACE_INSTANCE_ALPHA_MASK) != 0u;
+            if (masked && !trace_surface_passes(instance, candidate)) continue;
+            t_max = t;
+            hit = candidate;
             found = true;
             if (first_hit) return true;
         }
@@ -190,6 +274,7 @@ bool trace_scene_walk(
     vec3 origin,
     vec3 direction,
     float t_max,
+    uint instance_mask,
     bool first_hit,
     out SceneHit hit
 ) {
@@ -213,8 +298,10 @@ bool trace_scene_walk(
         BvhNodeGpu node = nodes.values[node_index];
         for (uint slot = 0u; slot < node.count; slot++) {
             uint row = node.left_or_first + slot;
+            TraceInstanceGpu instance = instances.values[row];
+            if ((instance.mask & instance_mask) == 0u) continue;
             bool met = trace_instance(
-                instances.values[row],
+                instance,
                 row,
                 origin,
                 direction,
@@ -243,6 +330,7 @@ bool trace_scene(
     vec3 origin,
     vec3 direction,
     float t_max,
+    uint instance_mask,
     out SceneHit hit
 ) {
     return trace_scene_walk(
@@ -250,6 +338,7 @@ bool trace_scene(
         origin,
         direction,
         t_max,
+        instance_mask,
         false,
         hit
     );
@@ -259,7 +348,8 @@ bool trace_scene_any(
     SceneTraceRoot scene,
     vec3 origin,
     vec3 direction,
-    float t_max
+    float t_max,
+    uint instance_mask
 ) {
     SceneHit ignored;
     return trace_scene_walk(
@@ -267,9 +357,12 @@ bool trace_scene_any(
         origin,
         direction,
         t_max,
+        instance_mask,
         true,
         ignored
     );
 }
+
+#endif
 
 #endif

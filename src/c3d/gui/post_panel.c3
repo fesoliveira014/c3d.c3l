@@ -43,9 +43,10 @@ const ZString[TaaDebug::len] TAA_DEBUG_LABELS @local = { "None", "Velocity", "Re
  Edit the view's post settings; the caller applies them with configure_view.
  @param [&inout] desc : "Edited in place."
  @param lut : "Offered by a checkbox when live; zero hides it."
+ @param ray_queries : "Enables the ray tracing controls."
  @return "Whether any setting changed."
 *>
-fn bool post_panel(ViewDesc* desc, TextureId lut) {
+fn bool post_panel(ViewDesc* desc, TextureId lut, bool ray_queries = false) {
     bool visible = imgui::begin("Post", null, {});
     defer imgui::end();
     if (!visible) return false;
@@ -140,6 +141,11 @@ fn bool post_panel(ViewDesc* desc, TextureId lut) {
             taa.debug = (TaaDebug)debug;
             changed = true;
         }
+    }
+    if (imgui::collapsing_header("Ray tracing", {})) {
+        imgui::begin_disabled(!ray_queries);
+        changed |= imgui::checkbox("Shadows", &desc.ray_tracing.shadows);
+        imgui::end_disabled();
     }
 
     return changed;

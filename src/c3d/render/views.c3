@@ -46,6 +46,13 @@ struct PixelRect {
 }
 
 <*
+ Ray-query effects of a view; zero disables all.
+*>
+struct RayTracingDesc {
+    bool shadows;
+}
+
+<*
  CPU configuration of one view; copied into its record.
 *>
 struct ViewDesc {
@@ -58,6 +65,7 @@ struct ViewDesc {
     ShadingPath    shading;
     LightSelection lights;
     ClusterDesc    clusters;
+    RayTracingDesc ray_tracing;
 }
 
 <*
@@ -588,6 +596,7 @@ fn void? reset_view_history(Renderer* renderer, ViewId view) {
 }
 
 fn void? validate_view_desc(Renderer* renderer, ViewDesc* desc) @private {
+    if (desc.ray_tracing.shadows && !renderer.caps.ray_queries.enabled) return c3d::UNSUPPORTED~;
     if (desc.lights == LightSelection.CLUSTERED) {
         cluster_layout(
             desc: desc.clusters,

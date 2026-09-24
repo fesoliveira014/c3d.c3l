@@ -84,6 +84,11 @@ const uint SHADER_FLAG_VERTEX_COLOR = 1 << 5;
 *>
 const uint SHADER_FLAG_INSTANCED = 1 << 6;
 
+<*
+ Flag bit for RT_SHADOWS.
+*>
+const uint SHADER_FLAG_RT_SHADOWS = 1 << 7;
+
 const char[*] FULLSCREEN_SPIRV @private = $embed("../../../shaders/spv/fullscreen.spv");
 const char[*] GRADIENT_SPIRV @private = $embed("../../../shaders/spv/gradient.spv");
 const char[*] COMPOSITE_SPIRV @private = $embed("../../../shaders/spv/composite.spv");
@@ -97,8 +102,11 @@ const char[*] PREVIEW_SPIRV @private = $embed("../../../shaders/spv/preview.spv"
 const char[*] LIGHT_CULL_SPIRV @private = $embed("../../../shaders/spv/light_cull.spv");
 const char[*] CUBE_PREVIEW_SPIRV @private = $embed("../../../shaders/spv/cube_preview.spv");
 const char[*] STANDARD_SPIRV @private = $embed("../../../shaders/spv/standard.spv");
+const char[*] STANDARD_RT_SHADOWS_SPIRV @private = $embed("../../../shaders/spv/standard_rt_shadows.spv");
 const char[*] PHYSICAL_SPIRV @private = $embed("../../../shaders/spv/physical.spv");
+const char[*] PHYSICAL_RT_SHADOWS_SPIRV @private = $embed("../../../shaders/spv/physical_rt_shadows.spv");
 const char[*] TOON_SPIRV @private = $embed("../../../shaders/spv/toon.spv");
+const char[*] TOON_RT_SHADOWS_SPIRV @private = $embed("../../../shaders/spv/toon_rt_shadows.spv");
 const char[*] ENVIRONMENT_SOURCE_SPIRV @private = $embed("../../../shaders/spv/environment_source.spv");
 const char[*] ENVIRONMENT_PREFILTER_SPIRV @private = $embed("../../../shaders/spv/environment_prefilter.spv");
 const char[*] SHEEN_PREFILTER_SPIRV @private = $embed("../../../shaders/spv/sheen_prefilter.spv");
@@ -147,11 +155,12 @@ const char[*] MESH_VELOCITY_INSTANCED_SPIRV @private = $embed("../../../shaders/
 const char[*] STANDARD_GBUFFER_SPIRV @private = $embed("../../../shaders/spv/standard_gbuffer.spv");
 const char[*] PHYSICAL_GBUFFER_SPIRV @private = $embed("../../../shaders/spv/physical_gbuffer.spv");
 const char[*] LIGHTING_RESOLVE_SPIRV @private = $embed("../../../shaders/spv/lighting_resolve.spv");
+const char[*] LIGHTING_RESOLVE_RT_SHADOWS_SPIRV @private = $embed("../../../shaders/spv/lighting_resolve_rt_shadows.spv");
 
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[63] SHADER_ENTRIES = {
+const ShaderEntry[67] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -165,8 +174,11 @@ const ShaderEntry[63] SHADER_ENTRIES = {
     { .variant = { .shader = LIGHT_CULL }, .spirv = LIGHT_CULL_SPIRV[..] },
     { .variant = { .shader = CUBE_PREVIEW }, .spirv = CUBE_PREVIEW_SPIRV[..] },
     { .variant = { .shader = STANDARD }, .spirv = STANDARD_SPIRV[..] },
+    { .variant = { .shader = STANDARD, .flags = SHADER_FLAG_RT_SHADOWS }, .spirv = STANDARD_RT_SHADOWS_SPIRV[..] },
     { .variant = { .shader = PHYSICAL }, .spirv = PHYSICAL_SPIRV[..] },
+    { .variant = { .shader = PHYSICAL, .flags = SHADER_FLAG_RT_SHADOWS }, .spirv = PHYSICAL_RT_SHADOWS_SPIRV[..] },
     { .variant = { .shader = TOON }, .spirv = TOON_SPIRV[..] },
+    { .variant = { .shader = TOON, .flags = SHADER_FLAG_RT_SHADOWS }, .spirv = TOON_RT_SHADOWS_SPIRV[..] },
     { .variant = { .shader = ENVIRONMENT_SOURCE }, .spirv = ENVIRONMENT_SOURCE_SPIRV[..] },
     { .variant = { .shader = ENVIRONMENT_PREFILTER }, .spirv = ENVIRONMENT_PREFILTER_SPIRV[..] },
     { .variant = { .shader = SHEEN_PREFILTER }, .spirv = SHEEN_PREFILTER_SPIRV[..] },
@@ -215,4 +227,5 @@ const ShaderEntry[63] SHADER_ENTRIES = {
     { .variant = { .shader = STANDARD_GBUFFER }, .spirv = STANDARD_GBUFFER_SPIRV[..] },
     { .variant = { .shader = PHYSICAL_GBUFFER }, .spirv = PHYSICAL_GBUFFER_SPIRV[..] },
     { .variant = { .shader = LIGHTING_RESOLVE }, .spirv = LIGHTING_RESOLVE_SPIRV[..] },
+    { .variant = { .shader = LIGHTING_RESOLVE, .flags = SHADER_FLAG_RT_SHADOWS }, .spirv = LIGHTING_RESOLVE_RT_SHADOWS_SPIRV[..] },
 };

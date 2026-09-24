@@ -27,6 +27,7 @@ const char[*] C3D_COMMON_IRRADIANCE_TEXT @private = $embed("../../../shaders/com
 const char[*] C3D_COMMON_LIGHTS_TEXT @private = $embed("../../../shaders/common/lights.glsl");
 const char[*] C3D_COMMON_MATERIAL_ALPHA_TEXT @private = $embed("../../../shaders/common/material_alpha.glsl");
 const char[*] C3D_COMMON_MATERIAL_MAPS_TEXT @private = $embed("../../../shaders/common/material_maps.glsl");
+const char[*] C3D_COMMON_MATERIAL_UV_TEXT @private = $embed("../../../shaders/common/material_uv.glsl");
 const char[*] C3D_COMMON_MESH_VERTEX_TEXT @private = $embed("../../../shaders/common/mesh_vertex.glsl");
 const char[*] C3D_COMMON_NORMAL_MAPPING_TEXT @private = $embed("../../../shaders/common/normal_mapping.glsl");
 const char[*] C3D_COMMON_PHYSICAL_TEXT @private = $embed("../../../shaders/common/physical.glsl");
@@ -35,6 +36,7 @@ const char[*] C3D_COMMON_SHADOWS_TEXT @private = $embed("../../../shaders/common
 const char[*] C3D_COMMON_SHEEN_TEXT @private = $embed("../../../shaders/common/sheen.glsl");
 const char[*] C3D_COMMON_STANDARD_SURFACE_TEXT @private = $embed("../../../shaders/common/standard_surface.glsl");
 const char[*] C3D_COMMON_TOON_TEXT @private = $embed("../../../shaders/common/toon.glsl");
+const char[*] C3D_COMMON_TRACE_SURFACE_TEXT @private = $embed("../../../shaders/common/trace_surface.glsl");
 const char[*] C3D_COMMON_TRANSMISSION_TEXT @private = $embed("../../../shaders/common/transmission.glsl");
 const char[*] C3D_COMMON_VERTEX_PULL_TEXT @private = $embed("../../../shaders/common/vertex_pull.glsl");
 const char[*] GPU_BUFFER_REFERENCE_TEXT @private = $embed("../../../lib/gpu.c3l/include/shaders/buffer_reference.glsl");
@@ -47,7 +49,7 @@ const char[*] GPU_RAY_TRACING_TEXT @private = $embed("../../../lib/gpu.c3l/inclu
 <*
  Every include a custom stage may resolve, in table order.
 *>
-const ShaderInclude[34] SHADER_INCLUDES = {
+const ShaderInclude[36] SHADER_INCLUDES = {
     { .name = "c3d_abi.glsl", .text = (String)C3D_GENERATED_C3D_ABI_TEXT[..] },
     { .name = "brdf.glsl", .text = (String)C3D_COMMON_BRDF_TEXT[..] },
     { .name = "clusters.glsl", .text = (String)C3D_COMMON_CLUSTERS_TEXT[..] },
@@ -66,6 +68,7 @@ const ShaderInclude[34] SHADER_INCLUDES = {
     { .name = "lights.glsl", .text = (String)C3D_COMMON_LIGHTS_TEXT[..] },
     { .name = "material_alpha.glsl", .text = (String)C3D_COMMON_MATERIAL_ALPHA_TEXT[..] },
     { .name = "material_maps.glsl", .text = (String)C3D_COMMON_MATERIAL_MAPS_TEXT[..] },
+    { .name = "material_uv.glsl", .text = (String)C3D_COMMON_MATERIAL_UV_TEXT[..] },
     { .name = "mesh_vertex.glsl", .text = (String)C3D_COMMON_MESH_VERTEX_TEXT[..] },
     { .name = "normal_mapping.glsl", .text = (String)C3D_COMMON_NORMAL_MAPPING_TEXT[..] },
     { .name = "physical.glsl", .text = (String)C3D_COMMON_PHYSICAL_TEXT[..] },
@@ -74,6 +77,7 @@ const ShaderInclude[34] SHADER_INCLUDES = {
     { .name = "sheen.glsl", .text = (String)C3D_COMMON_SHEEN_TEXT[..] },
     { .name = "standard_surface.glsl", .text = (String)C3D_COMMON_STANDARD_SURFACE_TEXT[..] },
     { .name = "toon.glsl", .text = (String)C3D_COMMON_TOON_TEXT[..] },
+    { .name = "trace_surface.glsl", .text = (String)C3D_COMMON_TRACE_SURFACE_TEXT[..] },
     { .name = "transmission.glsl", .text = (String)C3D_COMMON_TRANSMISSION_TEXT[..] },
     { .name = "vertex_pull.glsl", .text = (String)C3D_COMMON_VERTEX_PULL_TEXT[..] },
     { .name = "buffer_reference.glsl", .text = (String)GPU_BUFFER_REFERENCE_TEXT[..] },

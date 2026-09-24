@@ -2,7 +2,6 @@
 #include "generated/shader_abi.glsl"
 #include "c3d_abi.glsl"
 #include "descriptor_heap.glsl"
-#define SCENE_TRACE_BVH
 #include "scene_trace.glsl"
 
 layout(local_size_x = 8, local_size_y = 8) in;
@@ -71,6 +70,7 @@ void main() {
         origin,
         direction,
         TRACE_FAR,
+        TRACE_MASK_ALL,
         hit
     );
     if (met) {

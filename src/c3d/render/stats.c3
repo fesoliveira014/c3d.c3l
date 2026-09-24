@@ -73,6 +73,8 @@ struct Stats {
     uint  trace_nodes;
     uint  trace_skipped;
     float trace_build_ms;
+    uint  blas_builds;
+    uint  tlas_builds;
     uint  shader_rejections;
     float frame_ms;
     float cpu_record_ms;

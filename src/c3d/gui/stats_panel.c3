@@ -37,6 +37,8 @@ fn void? stats_panel(Renderer* renderer) {
     imgui::text("Trace nodes: %u", renderer.stats.trace_nodes);
     imgui::text("Trace skipped: %u", renderer.stats.trace_skipped);
     imgui::text("Trace build: %.3f ms", (double)renderer.stats.trace_build_ms);
+    imgui::text("BLAS builds: %u", renderer.stats.blas_builds);
+    imgui::text("TLAS builds: %u", renderer.stats.tlas_builds);
     imgui::text("Shader rejections: %u", renderer.stats.shader_rejections);
 
     imgui::text("Completed cluster view: %u:%u",

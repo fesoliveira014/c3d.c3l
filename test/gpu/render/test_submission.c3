@@ -95,7 +95,12 @@ struct DeformedScene @private {
     Node* camera;
 }
 
-fn void? create_fixture(Allocator allocator, Fixture* fixture, usz upload_ring_bytes = 0) @private {
+fn void? create_fixture(
+    Allocator allocator,
+    Fixture* fixture,
+    usz upload_ring_bytes = 0,
+    bool ray_queries = false,
+) @private {
     fixture.allocator = allocator;
     fixture.assets = asset::create_asset_store(allocator, asset::default_asset_store_desc());
     defer catch asset::destroy_asset_store(&fixture.assets);
@@ -171,6 +176,7 @@ fn void? create_fixture(Allocator allocator, Fixture* fixture, usz upload_ring_b
             .max_shadow_layers = 1,
             .upload_ring_bytes = upload_ring_bytes,
             .application_name = "render_acceptance",
+            .ray_queries = ray_queries,
         },
     )!;
     defer catch render::destroy_renderer(&fixture.renderer);
@@ -329,8 +335,13 @@ fn DeformedScene? create_single_box_scene(Fixture* fixture, GeometryId geometry,
     return result;
 }
 
-fn ComputeShaderId? add_compute_shader(Fixture* fixture, String source) @private {
-    char[] spirv = compile::compile_glsl(fixture.allocator, source, ShaderStage.COMPUTE)!;
+fn ComputeShaderId? add_compute_shader(Fixture* fixture, String source, String[] defines = {}) @private {
+    char[] spirv = compile::compile_glsl(
+        allocator: fixture.allocator,
+        source:    source,
+        stage:     ShaderStage.COMPUTE,
+        defines:   defines,
+    )!;
     defer alloc::free(fixture.allocator, spirv.ptr);
     ComputeShaderDesc shader_desc = { .compute = spirv };
     return fixture.assets.add_compute_shader(&shader_desc);
