@@ -1,7 +1,7 @@
 #version 460
 #include "generated/shader_abi.glsl"
 #include "c3d_abi.glsl"
-#define SCENE_TRACE_BVH
+#include "descriptor_heap.glsl"
 #include "scene_trace.glsl"
 
 layout(local_size_x = 8, local_size_y = 8) in;
@@ -17,8 +17,8 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Tr
     vec4 rectangle;
     float plane_z;
     uint grid_size;
-    uint padding0;
-    uint padding1;
+    uint instance_mask;
+    uint padding;
 };
 
 struct TraceGridResult {
@@ -58,6 +58,7 @@ void main() {
         root.origin.xyz,
         direction,
         TRACE_FAR,
+        root.instance_mask,
         hit
     );
     if (met) {

@@ -153,11 +153,11 @@ fn int main(String[] args) {
     GeometryId sphere_geometry;
     GeometryId box_geometry;
     @pool() {
-        Geometry plane = geometry::plane(tmem, 20, 20);
+        Geometry plane = geometry::plane(tmem, 30, 30);
         plane_geometry = assets.add_geometry(&plane, "geometry/rt_shadows/plane")!!;
         Geometry sphere = geometry::sphere(tmem, 0.5f);
         sphere_geometry = assets.add_geometry(&sphere, "geometry/rt_shadows/sphere")!!;
-        Geometry box = geometry::box(tmem, 0.6f, 3, 0.6f);
+        Geometry box = geometry::box(tmem, 0.6f, 4, 0.6f);
         box_geometry = assets.add_geometry(&box, "geometry/rt_shadows/box")!!;
     };
     MaterialId ground_material = assets.add_material(material::standard({
@@ -191,17 +191,17 @@ fn int main(String[] args) {
     Node* sphere = scene.add_mesh(sphere_geometry, sphere_material, name: "sphere")!!;
     sphere.local.position = { 1.5f, 0.5f, 0 };
     Node* box = scene.add_mesh(box_geometry, box_material, name: "off_camera_box")!!;
-    box.local.position = { 0, 1.5f, 4 };
+    box.local.position = { 0, 2, 11 };
     Mesh* box_mesh = scene.get(box, Mesh);
 
     Light sun = light::directional({ 1, 0.95f, 0.85f }, 3);
     sun.shadow.enabled = true;
     sun.shadow.ray_traced = true;
     Node* sun_node = scene.add_light(sun, name: "sun")!!;
-    sun_node.local.rotation = maths::look_rotation((Vec3){ 0.2f, -0.6f, -1 }.normalize(), { 0, 1, 0 });
+    sun_node.local.rotation = maths::look_rotation((Vec3){ 0.1f, -0.4f, -1 }.normalize(), { 0, 1, 0 });
 
     Node* camera_node = scene.add_camera(camera::perspective_deg(55, 0.1f, 100), name: "camera")!!;
-    Orbit orbit = { .target = { 0, 0.5f, 0 }, .distance = 8, .yaw = math::PI, .pitch = 0.45f };
+    Orbit orbit = { .target = { 0, 0.5f, 0 }, .distance = 8, .yaw = 0, .pitch = 0.45f };
     apply_orbit(&orbit, &window.input, camera_node);
     scene.update_world();
     renderer.prepare_scene(&scene)!!;

@@ -679,8 +679,8 @@ fn void? write_top_level(Renderer* renderer, Scene* scene, TraceInstance[] recor
         .top_node_count = (uint)top.nodes.len,
         .tlas_index     = tlas_index,
     };
-    mem::copy(&staging.bytes[SceneTraceRoot::size], top.nodes.ptr, (sz)node_bytes);
-    TraceInstanceGpu* rows = (TraceInstanceGpu*)&staging.bytes[SceneTraceRoot::size + node_bytes];
+    mem::copy(staging.bytes.ptr + SceneTraceRoot::size, top.nodes.ptr, (sz)node_bytes);
+    TraceInstanceGpu* rows = (TraceInstanceGpu*)(staging.bytes.ptr + SceneTraceRoot::size + node_bytes);
     foreach (row, primitive : top.primitives) {
         write_trace_instance(&rows[row], &records[primitive]);
         trace.row_records[row] = primitive;
