@@ -64,14 +64,16 @@ struct ViewDesc {
     PostStack      post;
     ShadingPath    shading;
     LightSelection lights;
-    ClusterDesc    clusters;
-    RayTracingDesc ray_tracing;
+    ClusterDesc          clusters;
+    RayTracingDesc       ray_tracing;
+    AmbientOcclusionDesc ambient_occlusion;
 }
 
 <*
  Working images one view owns, in view_targets order.
 *>
-const uint VIEW_TARGET_COUNT = 5 + post::BLOOM_MAX_LEVELS + 8 + GBUFFER_CHANNEL_COUNT + 3 * post::TAA_HISTORY_SLOTS + 1;
+const uint VIEW_TARGET_COUNT = 5 + post::BLOOM_MAX_LEVELS + 8 + GBUFFER_CHANNEL_COUNT
+  + 3 * post::TAA_HISTORY_SLOTS + 1 + 2;
 
 <*
  Reverse-Z projection terms that recover forward distance from stored depth.
@@ -301,6 +303,8 @@ struct ViewRecord {
     Target[post::TAA_HISTORY_SLOTS]      taa_depth;
     Target[post::TAA_HISTORY_SLOTS]      taa_velocity;
     Target                               taa_debug;
+    Target                               ao_raw;
+    Target                               ao;
     Target*                              scene_input;
     bool                                 post_chain_open;
     bool                                 rendered;
@@ -361,6 +365,8 @@ fn Target*[VIEW_TARGET_COUNT] view_targets(ViewRecord* record) {
         targets[next + 2 * slots + slot] = &record.taa_velocity[slot];
     }
     targets[next + 3 * slots] = &record.taa_debug;
+    targets[next + 3 * slots + 1] = &record.ao_raw;
+    targets[next + 3 * slots + 2] = &record.ao;
     return targets;
 }
 
@@ -406,6 +412,18 @@ fn ViewDesc texture_view_desc(RenderTargetId target, OutputMode color = OutputMo
 fn bool Renderer.has_deferred_view(&self) {
     foreach (&record : self.views.items) {
         if (record.live && record.desc.shading == ShadingPath.DEFERRED) return true;
+    }
+    return false;
+}
+
+<*
+ Whether any live view draws a depth prepass before shading.
+*>
+fn bool Renderer.has_depth_prepass_view(&self) {
+    foreach (&record : self.views.items) {
+        if (!record.live) continue;
+        if (record.desc.shading == ShadingPath.DEFERRED) return true;
+        if (record.desc.ambient_occlusion.kind != AoKind.NONE) return true;
     }
     return false;
 }
@@ -559,11 +577,17 @@ fn void? configure_view(Renderer* renderer, ViewId view, ViewDesc desc) {
         record.cluster_root = (gpu::GpuAddress)0;
         record.cluster_depth = {};
     }
+    AmbientOcclusionDesc* ambient_occlusion = &desc.ambient_occlusion;
+    if (ambient_occlusion.kind == AoKind.NONE
+        || ambient_occlusion.full_resolution != record.desc.ambient_occlusion.full_resolution) {
+        retire_ao_images(renderer, record);
+    }
     record.desc = desc;
     record.history.valid = false;
     record.history.pending = false;
     post::retire_effect_targets(renderer, record);
     post::acquire_effect_targets(renderer, record)!;
+    acquire_ao_images(renderer, record)!;
 }
 
 <*
@@ -597,6 +621,8 @@ fn void? reset_view_history(Renderer* renderer, ViewId view) {
 
 fn void? validate_view_desc(Renderer* renderer, ViewDesc* desc) @private {
     if (desc.ray_tracing.shadows && !renderer.caps.ray_queries.enabled) return c3d::UNSUPPORTED~;
+    if (desc.ambient_occlusion.kind == AoKind.RAY_TRACED) return c3d::UNSUPPORTED~;
+    if (!ambient_occlusion_desc_valid(&desc.ambient_occlusion)) return c3d::INVALID_ARGUMENT~;
     if (desc.lights == LightSelection.CLUSTERED) {
         cluster_layout(
             desc: desc.clusters,
@@ -660,6 +686,7 @@ fn void? acquire_view_images(Renderer* renderer, ViewRecord* record) @private {
     if (record.desc.post.anti_aliasing == AntiAliasing.FXAA) post::acquire_post_targets(renderer, record)!;
     post::acquire_effect_targets(renderer, record)!;
     if (record.desc.shading == ShadingPath.DEFERRED) acquire_gbuffer(renderer, record)!;
+    acquire_ao_images(renderer, record)!;
     if (record.desc.lights == LightSelection.CLUSTERED) {
         ClusterLayout layout = cluster_layout(
             desc: record.desc.clusters,
@@ -681,6 +708,7 @@ fn void release_view_images(Renderer* renderer, ViewRecord* record) @private {
     record.cluster_depth = {};
     release_scene_color(&renderer.device, record);
     release_gbuffer(&renderer.device, record);
+    release_ao_images(&renderer.device, record);
     release_view_targets(&renderer.device, record);
     post::release_post_targets(&renderer.device, record);
     post::release_effect_targets(&renderer.device, record);

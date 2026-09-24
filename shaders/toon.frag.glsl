@@ -43,14 +43,15 @@ void main() {
     if ((material.flags & MATERIAL_ALPHA_MASK) != 0u && base_color.a < material.alpha_cutoff) discard;
 
     vec3 view_direction = standard_view_direction(frame, v_world_pos);
-    vec3 color = frame.ambient.rgb * base_color.rgb;
+    float ambient_occlusion = draw_ambient_occlusion(frame, draw.flags, ivec2(gl_FragCoord.xy));
+    vec3 color = frame.ambient.rgb * base_color.rgb * ambient_occlusion;
     if (frame.environment != 0ul) {
         EnvironmentGpu environment = EnvironmentGpu(frame.environment);
         vec3 irradiance = environment_irradiance(
             environment.sh,
             environment_rotate(environment.rotation, normal)
         );
-        color += base_color.rgb / PI * irradiance * environment.intensity;
+        color += base_color.rgb / PI * irradiance * environment.intensity * ambient_occlusion;
     }
 
     float view_depth = -(frame.view * vec4(v_world_pos, 1.0)).z;

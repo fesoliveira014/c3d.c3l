@@ -145,6 +145,7 @@ fn void? Renderer.render_view(
         };
         bool taa = record.desc.post.anti_aliasing == AntiAliasing.TAA;
         bool temporal = taa || record.desc.post.motion_blur;
+        bool ambient_occlusion = record.desc.ambient_occlusion.kind != AoKind.NONE;
         Vec2 jitter = taa
           ? post::taa_jitter(record.history.sample_index, record.hdr_color.width, record.hdr_color.height)
           : (Vec2){};
@@ -374,6 +375,7 @@ fn void? Renderer.render_view(
                     trace: trace_root,
                     jitter: jitter,
                     mip_bias: taa ? record.desc.post.taa_params.mip_bias : 0,
+                    ao_texture: ambient_occlusion ? record.ao.view.index : (gpu::TextureIndex)0,
                 );
                 if (record.desc.lights == LightSelection.CLUSTERED) {
                     record_clusters(
@@ -416,7 +418,8 @@ fn void? Renderer.render_view(
                         material:      item.material.address,
                         object_id:     item.candidate.node.id.index,
                         layers:        item.candidate.node.layers,
-                        flags:         item.candidate.receive_shadow ? shader::DRAW_RECEIVE_SHADOW : 0,
+                        flags:         (item.candidate.receive_shadow ? shader::DRAW_RECEIVE_SHADOW : 0)
+                          | (ambient_occlusion && group_index == 0 ? shader::DRAW_AMBIENT_OCCLUSION : 0),
                         sheen_lut:     sheen ? self.environment_state.sheen_lut.view.index : (gpu::TextureIndex)0,
                         sheen_sampler: sheen ? self.environment_state.sheen_sampler : (gpu::SamplerIndex)0,
                         skin:          item.skin,
@@ -443,15 +446,28 @@ fn void? Renderer.render_view(
                 }
                 switch (shading) {
                     case FORWARD:
+                        if (ambient_occlusion) {
+                            record_depth_prepass(
+                                renderer:       self,
+                                record:         record,
+                                frame:          frame_span.address,
+                                view_reflected: view_reflected,
+                                gbuffer:        {},
+                                opaque:         opaque_items,
+                            )!;
+                            record_ambient_occlusion(self, record, frame_span.address)!;
+                            record.depth.transition(&self.commands, DEPTH_ATTACHMENT_STATE)!;
+                        }
                         record_forward_pass(
-                            renderer:    self,
-                            record:      record,
-                            opaque:      opaque_items,
-                            transparent: transmission_items.len ? (DrawItem[]){} : transparent_items,
-                            sky_root:    sky_root,
-                            sky:         environments.sky != null,
-                            clear_color: environments.clear_color,
-                            loaded:      false,
+                            renderer:      self,
+                            record:        record,
+                            opaque:        opaque_items,
+                            transparent:   transmission_items.len ? (DrawItem[]){} : transparent_items,
+                            sky_root:      sky_root,
+                            sky:           environments.sky != null,
+                            clear_color:   environments.clear_color,
+                            color_loaded:  false,
+                            depth_matched: ambient_occlusion,
                         )!;
                     case DEFERRED:
                         record_deferred_scene(
@@ -615,6 +631,7 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
         bool transmission;
         bool shadows_enabled;
         bool deferred = self.has_deferred_view();
+        bool prepass = self.has_depth_prepass_view();
         @pool() {
             LightCounts counts;
             ShadowRequest[] requests = collect_shadow_requests(
@@ -639,7 +656,7 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
                 geometry_id: mesh.geometry,
                 material_id: mesh.material,
                 morphed:     mesh.morph_weights.len > 0,
-                depth:       casts || deferred,
+                depth:       casts || prepass,
                 gbuffer:     deferred,
             )!;
             sheen |= prepared.sheen;
@@ -652,7 +669,7 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
                 geometry_id: batch.geometry,
                 material_id: batch.material,
                 morphed:     false,
-                depth:       casts || deferred,
+                depth:       casts || prepass,
                 gbuffer:     deferred,
                 instanced:   true,
             )!;
@@ -785,6 +802,7 @@ fn void? prepare_views(Renderer* renderer) @private {
         if (record.desc.shading == ShadingPath.DEFERRED) {
             renderer.pipelines.get(&renderer.device, lighting_resolve_pipeline_key(record.desc.ray_tracing.shadows))!;
         }
+        if (record.desc.ambient_occlusion.kind != AoKind.NONE) acquire_ambient_occlusion_pipelines(renderer)!;
     }
 }
 
@@ -799,6 +817,7 @@ fn void? prepare_views(Renderer* renderer) @private {
  @param trace : "SceneTraceRoot address with a hardware half; zero when the view traces nothing."
  @param jitter : "NDC offset already applied to the rendered matrices."
  @param mip_bias : "Added to material texture level of detail."
+ @param ao_texture : "AO sampled view; zero when the view has none."
 *>
 fn void write_frame_root(
     FrameRoot* root,
@@ -820,6 +839,7 @@ fn void write_frame_root(
     gpu::GpuAddress trace = (gpu::GpuAddress)0,
     Vec2 jitter = {},
     float mip_bias = 0,
+    gpu::TextureIndex ao_texture = (gpu::TextureIndex)0,
 ) {
     *root = {
         .view            = bitcast(matrices.view, Mat4f),
@@ -842,8 +862,10 @@ fn void write_frame_root(
         .clusters        = clusters,
         .trace           = trace,
         .flags           = (clusters != (gpu::GpuAddress)0 ? shader::FRAME_LIGHTS_CLUSTERED : 0)
-          | (trace != (gpu::GpuAddress)0 ? shader::FRAME_TRACE_PRESENT : 0),
+          | (trace != (gpu::GpuAddress)0 ? shader::FRAME_TRACE_PRESENT : 0)
+          | (ao_texture != (gpu::TextureIndex)0 ? shader::FRAME_AO_PRESENT : 0),
         .mip_bias        = mip_bias,
+        .ao_texture      = ao_texture,
     };
 }
 
@@ -981,20 +1003,20 @@ fn void? record_forward_pass(
     gpu::GpuAddress sky_root,
     bool sky,
     Vec4 clear_color,
-    bool loaded,
+    bool color_loaded,
+    bool depth_matched,
 ) @private {
     uint width = record.hdr_color.width;
     uint height = record.hdr_color.height;
-    gpu::LoadOp load = loaded ? gpu::LoadOp.LOAD : gpu::LoadOp.CLEAR;
     gpu::ColorTargetDesc[1] colors = {{
         .view     = record.hdr_color.attachment,
-        .load_op  = load,
+        .load_op  = color_loaded ? gpu::LoadOp.LOAD : gpu::LoadOp.CLEAR,
         .store_op = gpu::StoreOp.STORE,
         .clear    = { .rgba = { clear_color.r, clear_color.g, clear_color.b, clear_color.a } },
     }};
     gpu::DepthTargetDesc depth = {
         .view     = record.depth.attachment,
-        .load_op  = load,
+        .load_op  = depth_matched ? gpu::LoadOp.LOAD : gpu::LoadOp.CLEAR,
         .store_op = gpu::StoreOp.STORE,
         .clear    = { .depth = DEPTH_CLEAR },
     };
@@ -1026,7 +1048,7 @@ fn void? record_forward_pass(
         record:     record,
         items:      opaque,
         pipeline:   bound,
-        pass_state: loaded ? match_depth : write_depth,
+        pass_state: depth_matched ? match_depth : write_depth,
     )!;
     end_profile_pass(renderer, Pass.FORWARD_OPAQUE)!;
     if (sky) {
@@ -1046,6 +1068,51 @@ fn void? record_forward_pass(
         end_profile_pass(renderer, Pass.FORWARD_TRANSPARENT)!;
     }
     gpu::cmd_end_render_pass(&renderer.commands)!;
+}
+
+fn void? record_depth_prepass(
+    Renderer* renderer,
+    ViewRecord* record,
+    gpu::GpuAddress frame,
+    bool view_reflected,
+    DrawItem[] gbuffer,
+    DrawItem[] opaque,
+) @private {
+    MeshCandidate[] candidates = alloc::new_array(tmem, MeshCandidate, gbuffer.len + opaque.len);
+    usz count;
+    foreach (&item : gbuffer) candidates[count++] = *item.candidate;
+    foreach (&item : opaque) candidates[count++] = *item.candidate;
+    ShadowDraw[] draws = prepare_shadow_draws(renderer, candidates)!;
+
+    uint width = record.depth.width;
+    uint height = record.depth.height;
+    gpu::DepthTargetDesc depth = {
+        .view     = record.depth.attachment,
+        .load_op  = gpu::LoadOp.CLEAR,
+        .store_op = gpu::StoreOp.STORE,
+        .clear    = { .depth = DEPTH_CLEAR },
+    };
+    gpu::RenderPassDesc pass = { .depth = &depth, .width = width, .height = height };
+    gpu::GraphicsState state = gpu::render_geometry_state(width, height)!;
+    state.viewport = flipped_viewport(width, height);
+    state.depth = { .test_enable = true, .write_enable = true, .compare = gpu::CompareOp.GREATER };
+    gpu::PipelineHandle first = draws.len
+      ? draws[0].pipeline : shadow_pipeline_for(renderer, false, depth_only_vertex_variant({}))!;
+
+    begin_profile_pass(renderer, Pass.DEPTH_PREPASS)!;
+    // Bound before the pass begins: the backend checks the bound pipeline against the pass formats at begin.
+    gpu::cmd_bind_pipeline(&renderer.commands, first)!;
+    gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
+    record_depth_draws(
+        renderer:       renderer,
+        draws:          draws,
+        frame:          frame,
+        view_reflected: view_reflected,
+        state:          &state,
+        first:          first,
+    )!;
+    gpu::cmd_end_render_pass(&renderer.commands)!;
+    end_profile_pass(renderer, Pass.DEPTH_PREPASS)!;
 }
 
 fn void? record_scene_color_snapshot(Renderer* renderer, ViewRecord* record) @private {

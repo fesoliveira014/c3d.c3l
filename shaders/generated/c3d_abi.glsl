@@ -21,10 +21,12 @@ const uint TRACE_MASK_ALL = 1u;
 const uint TRACE_MASK_SHADOW_CASTER = 2u;
 const uint FRAME_LIGHTS_CLUSTERED = 1u;
 const uint FRAME_TRACE_PRESENT = 2u;
+const uint FRAME_AO_PRESENT = 4u;
 const uint CLUSTER_GROUP_SIZE = 64u;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8u;
 const uint DRAW_RECEIVE_SHADOW = 1u;
 const uint DRAW_ALPHA_MASK = 2u;
+const uint DRAW_AMBIENT_OCCLUSION = 4u;
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1u;
 const uint MATERIAL_MAP_BASE_COLOR = 1u;
 const uint MATERIAL_MAP_METALLIC_ROUGHNESS = 2u;
@@ -46,6 +48,7 @@ const uint PREVIEW_MODE_CLUSTERS = 6u;
 const uint PREVIEW_MODE_RAW = 7u;
 const uint PREVIEW_MODE_OCTAHEDRAL_NORMAL = 8u;
 const uint PREVIEW_MODE_BITS = 9u;
+const uint PREVIEW_MODE_GRAY = 10u;
 const uint LIGHT_RT_SHADOW = 1u;
 const uint ENVIRONMENT_FACE_POSITIVE_X = 0u;
 const uint ENVIRONMENT_FACE_NEGATIVE_X = 1u;
@@ -227,7 +230,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer FrameRoot {
     uint scene_sampler;
     uint64_t clusters;
     float mip_bias;
-    uint _pad0;
+    uint ao_texture;
     uint _pad1;
     uint _pad2;
 };
@@ -287,6 +290,34 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer LightingReso
     uint depth;
     uint sampler_index;
     uint _pad0;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer SsaoRoot {
+    uint64_t frame;
+    uint depth;
+    uint normals;
+    uint output_texture;
+    uint width;
+    uint height;
+    float radius;
+    float intensity;
+    uint noise_frame;
+    uint _pad0;
+    uint _pad1;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer AoBlurRoot {
+    uint64_t frame;
+    uint input_texture;
+    uint depth;
+    uint output_texture;
+    uint width;
+    uint height;
+    uint input_width;
+    uint input_height;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
 };
 
 struct TextureMapGpu {

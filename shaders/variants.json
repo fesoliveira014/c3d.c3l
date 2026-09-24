@@ -55,6 +55,8 @@
     { "shader": "velocity", "source": "velocity.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "motion_blur", "source": "motion_blur.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "taa_resolve", "source": "taa_resolve.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "ssao", "source": "ssao.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "ao_blur", "source": "ao_blur.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["VELOCITY"] },
     { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["VELOCITY", "SKINNED"] },
     { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["VELOCITY", "SKINNED_U16"] },

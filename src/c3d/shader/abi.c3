@@ -18,10 +18,12 @@ const uint TRACE_MASK_ALL = 1;
 const uint TRACE_MASK_SHADOW_CASTER = 2;
 const uint FRAME_LIGHTS_CLUSTERED = 1;
 const uint FRAME_TRACE_PRESENT = 2;
+const uint FRAME_AO_PRESENT = 4;
 const uint CLUSTER_GROUP_SIZE = 64;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8;
 const uint DRAW_RECEIVE_SHADOW = 1;
 const uint DRAW_ALPHA_MASK = 2;
+const uint DRAW_AMBIENT_OCCLUSION = 4;
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1;
 const uint MATERIAL_MAP_BASE_COLOR = 1;
 const uint MATERIAL_MAP_METALLIC_ROUGHNESS = 2;
@@ -43,6 +45,7 @@ const uint PREVIEW_MODE_CLUSTERS = 6;
 const uint PREVIEW_MODE_RAW = 7;
 const uint PREVIEW_MODE_OCTAHEDRAL_NORMAL = 8;
 const uint PREVIEW_MODE_BITS = 9;
+const uint PREVIEW_MODE_GRAY = 10;
 const uint LIGHT_RT_SHADOW = 1;
 const uint ENVIRONMENT_FACE_POSITIVE_X = 0;
 const uint ENVIRONMENT_FACE_NEGATIVE_X = 1;
@@ -307,7 +310,7 @@ struct FrameRoot {
     SamplerIndex scene_sampler;
     GpuAddress   clusters;
     float        mip_bias;
-    uint         _pad0;
+    TextureIndex ao_texture;
     uint         _pad1;
     uint         _pad2;
 }
@@ -333,7 +336,7 @@ $assert $reflect(FrameRoot.scene_color).offset == 432;
 $assert $reflect(FrameRoot.scene_sampler).offset == 436;
 $assert $reflect(FrameRoot.clusters).offset == 440;
 $assert $reflect(FrameRoot.mip_bias).offset == 448;
-$assert $reflect(FrameRoot._pad0).offset == 452;
+$assert $reflect(FrameRoot.ao_texture).offset == 452;
 $assert $reflect(FrameRoot._pad1).offset == 456;
 $assert $reflect(FrameRoot._pad2).offset == 460;
 
@@ -440,6 +443,58 @@ $assert $reflect(LightingResolveRoot.flags).offset == 24;
 $assert $reflect(LightingResolveRoot.depth).offset == 28;
 $assert $reflect(LightingResolveRoot.sampler_index).offset == 32;
 $assert $reflect(LightingResolveRoot._pad0).offset == 36;
+
+struct SsaoRoot {
+    GpuAddress   frame;
+    TextureIndex depth;
+    TextureIndex normals;
+    TextureIndex output_texture;
+    uint         width;
+    uint         height;
+    float        radius;
+    float        intensity;
+    uint         noise_frame;
+    uint         _pad0;
+    uint         _pad1;
+}
+$assert SsaoRoot::size == 48;
+$assert $reflect(SsaoRoot.frame).offset == 0;
+$assert $reflect(SsaoRoot.depth).offset == 8;
+$assert $reflect(SsaoRoot.normals).offset == 12;
+$assert $reflect(SsaoRoot.output_texture).offset == 16;
+$assert $reflect(SsaoRoot.width).offset == 20;
+$assert $reflect(SsaoRoot.height).offset == 24;
+$assert $reflect(SsaoRoot.radius).offset == 28;
+$assert $reflect(SsaoRoot.intensity).offset == 32;
+$assert $reflect(SsaoRoot.noise_frame).offset == 36;
+$assert $reflect(SsaoRoot._pad0).offset == 40;
+$assert $reflect(SsaoRoot._pad1).offset == 44;
+
+struct AoBlurRoot {
+    GpuAddress   frame;
+    TextureIndex input_texture;
+    TextureIndex depth;
+    TextureIndex output_texture;
+    uint         width;
+    uint         height;
+    uint         input_width;
+    uint         input_height;
+    uint         _pad0;
+    uint         _pad1;
+    uint         _pad2;
+}
+$assert AoBlurRoot::size == 48;
+$assert $reflect(AoBlurRoot.frame).offset == 0;
+$assert $reflect(AoBlurRoot.input_texture).offset == 8;
+$assert $reflect(AoBlurRoot.depth).offset == 12;
+$assert $reflect(AoBlurRoot.output_texture).offset == 16;
+$assert $reflect(AoBlurRoot.width).offset == 20;
+$assert $reflect(AoBlurRoot.height).offset == 24;
+$assert $reflect(AoBlurRoot.input_width).offset == 28;
+$assert $reflect(AoBlurRoot.input_height).offset == 32;
+$assert $reflect(AoBlurRoot._pad0).offset == 36;
+$assert $reflect(AoBlurRoot._pad1).offset == 40;
+$assert $reflect(AoBlurRoot._pad2).offset == 44;
 
 struct TextureMapGpu {
     TextureIndex texture_index;

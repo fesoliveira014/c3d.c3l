@@ -207,10 +207,10 @@ fn usz? run_frames(BenchmarkRun* run, BenchmarkFlags flags, FrameSample[] sample
  @param timestamps_enabled : "False prints -1 in every GPU column."
 *>
 fn void write_samples(FrameSample[] samples, bool timestamps_enabled) {
-    io::printn("frame,wall_ms,update_ms,begin_ms,render_ms,finish_ms,end_ms,gui_ms,cpu_record_ms,draws,lights,dropped,overflows,material_resolutions,pipeline_lookups,gpu_shadow_ms,gpu_cull_ms,gpu_prepass_ms,gpu_gbuffer_ms,gpu_lighting_ms,gpu_opaque_ms,gpu_post_ms,gpu_composite_ms,gpu_velocity_ms,gpu_taa_ms");
+    io::printn("frame,wall_ms,update_ms,begin_ms,render_ms,finish_ms,end_ms,gui_ms,cpu_record_ms,draws,lights,dropped,overflows,material_resolutions,pipeline_lookups,gpu_shadow_ms,gpu_cull_ms,gpu_prepass_ms,gpu_gbuffer_ms,gpu_ambient_occlusion_ms,gpu_lighting_ms,gpu_opaque_ms,gpu_post_ms,gpu_composite_ms,gpu_velocity_ms,gpu_taa_ms");
     foreach (index, sample : samples) {
         float unavailable = -1;
-        io::printfn("%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f",
+        io::printfn("%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f",
             index, sample.wall_ms, sample.update_ms, sample.begin_ms, sample.render_ms,
             sample.finish_ms, sample.end_ms, sample.gui_ms, sample.cpu_record_ms, sample.draws, sample.lights,
             sample.dropped, sample.overflows, sample.material_resolutions, sample.pipeline_lookups,
@@ -218,6 +218,7 @@ fn void write_samples(FrameSample[] samples, bool timestamps_enabled) {
             timestamps_enabled ? sample.gpu_ms[Pass.LIGHT_CULL.ordinal] : unavailable,
             timestamps_enabled ? sample.gpu_ms[Pass.DEPTH_PREPASS.ordinal] : unavailable,
             timestamps_enabled ? sample.gpu_ms[Pass.GBUFFER.ordinal] : unavailable,
+            timestamps_enabled ? sample.gpu_ms[Pass.AMBIENT_OCCLUSION.ordinal] : unavailable,
             timestamps_enabled ? sample.gpu_ms[Pass.LIGHTING.ordinal] : unavailable,
             timestamps_enabled ? sample.gpu_ms[Pass.FORWARD_OPAQUE.ordinal] : unavailable,
             timestamps_enabled ? sample.gpu_ms[Pass.POST_CHAIN.ordinal] : unavailable,

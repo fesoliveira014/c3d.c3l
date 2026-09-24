@@ -94,6 +94,7 @@ root SceneTraceRoot {
 
 const uint FRAME_LIGHTS_CLUSTERED = 1;
 const uint FRAME_TRACE_PRESENT = 2;
+const uint FRAME_AO_PRESENT = 4;
 const uint CLUSTER_GROUP_SIZE = 64;
 
 struct ClusterRange {
@@ -147,7 +148,7 @@ root FrameRoot {
     SamplerIndex scene_sampler;
     GpuAddress clusters;
     float      mip_bias;
-    uint       _pad0;
+    TextureIndex ao_texture;
     uint       _pad1;
     uint       _pad2;
 }
@@ -201,6 +202,7 @@ root MorphWeightsGpu {
 
 const uint DRAW_RECEIVE_SHADOW = 1;
 const uint DRAW_ALPHA_MASK = 2;
+const uint DRAW_AMBIENT_OCCLUSION = 4;
 
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1;
 
@@ -214,6 +216,34 @@ root LightingResolveRoot {
     TextureIndex depth;
     SamplerIndex sampler_index;
     uint         _pad0;
+}
+
+root SsaoRoot {
+    GpuAddress   frame;
+    TextureIndex depth;
+    TextureIndex normals;
+    TextureIndex output_texture;
+    uint         width;
+    uint         height;
+    float        radius;
+    float        intensity;
+    uint         noise_frame;
+    uint         _pad0;
+    uint         _pad1;
+}
+
+root AoBlurRoot {
+    GpuAddress   frame;
+    TextureIndex input_texture;
+    TextureIndex depth;
+    TextureIndex output_texture;
+    uint         width;
+    uint         height;
+    uint         input_width;
+    uint         input_height;
+    uint         _pad0;
+    uint         _pad1;
+    uint         _pad2;
 }
 
 const uint MATERIAL_MAP_BASE_COLOR = 1;
@@ -287,6 +317,7 @@ const uint PREVIEW_MODE_CLUSTERS = 6;
 const uint PREVIEW_MODE_RAW = 7;
 const uint PREVIEW_MODE_OCTAHEDRAL_NORMAL = 8;
 const uint PREVIEW_MODE_BITS = 9;
+const uint PREVIEW_MODE_GRAY = 10;
 
 root PreviewRoot {
     TextureIndex input_texture;

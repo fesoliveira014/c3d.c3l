@@ -153,7 +153,8 @@ vec3 evaluate_physical_environment(
     EnvironmentGpu environment,
     PhysicalSurface surface,
     float base_roughness,
-    float occlusion
+    float occlusion,
+    float ambient_occlusion
 ) {
     vec3 diffuse;
     vec3 specular;
@@ -162,6 +163,7 @@ vec3 evaluate_physical_environment(
         surface.standard,
         base_roughness,
         occlusion,
+        ambient_occlusion,
         diffuse,
         specular
     );
@@ -184,7 +186,8 @@ vec3 evaluate_physical_environment(
             lod
         ).rgb;
         sheen = prefiltered * surface.sheen_color * surface.sheen_view_albedo
-            * environment.intensity;
+            * environment.intensity
+            * specular_occlusion(surface.standard.normal_view, ambient_occlusion, perceptual);
     }
 
     vec3 coat = vec3(0.0);
@@ -211,7 +214,8 @@ vec3 evaluate_physical_environment(
             environment.sampler_index,
             vec2(normal_view, perceptual)
         ).rg;
-        coat = prefiltered * (response.x + response.y) * environment.intensity;
+        coat = prefiltered * (response.x + response.y) * environment.intensity
+            * specular_occlusion(normal_view, ambient_occlusion, perceptual);
     }
     return (1.0 - surface.coat_weight) * (standard + sheen)
         + surface.coat_weight * coat;
