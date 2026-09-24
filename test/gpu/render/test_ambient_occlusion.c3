@@ -29,13 +29,13 @@ const int UNOCCLUDED_TOLERANCE @private = 2;
 const int SHADING_PATH_TOLERANCE @private = 3;
 
 struct CreaseScene @private {
-    Scene scene;
+    Scene  scene;
     ViewId view;
-    Node* camera;
-    Node* quad;
-    Node* masked_box;
-    Node* cut_box;
-    Node* sun;
+    Node*  camera;
+    Node*  quad;
+    Node*  masked_box;
+    Node*  cut_box;
+    Node*  sun;
 }
 
 struct AoView @private {

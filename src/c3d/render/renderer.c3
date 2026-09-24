@@ -141,13 +141,13 @@ struct Renderer {
     gpu::GpuAllocation      material_heap;
     gpu::GpuSpan            material_heap_span;
 
-    TargetPool              targets;
-    ViewPool                views;
-    ViewId                  default_view;
-    post::PostPipelines     post_pipelines;
+    TargetPool                targets;
+    ViewPool                  views;
+    ViewId                    default_view;
+    post::PostPipelines       post_pipelines;
     AmbientOcclusionPipelines ambient_occlusion_pipelines;
-    PipelineCache           pipelines;
-    gpu::SamplerIndex       linear_clamp_sampler;
+    PipelineCache             pipelines;
+    gpu::SamplerIndex         linear_clamp_sampler;
 
     DebugLog*                log;
     RendererGpuProfile       gpu_profile @if($feat(C3D_PROFILE_GPU));

@@ -56,14 +56,14 @@ struct RayTracingDesc {
  CPU configuration of one view; copied into its record.
 *>
 struct ViewDesc {
-    ViewOutput     output;
-    RenderTargetId target;
-    PixelRect      viewport;
-    float          render_scale;
-    OutputMode     color;
-    PostStack      post;
-    ShadingPath    shading;
-    LightSelection lights;
+    ViewOutput           output;
+    RenderTargetId       target;
+    PixelRect            viewport;
+    float                render_scale;
+    OutputMode           color;
+    PostStack            post;
+    ShadingPath          shading;
+    LightSelection       lights;
     ClusterDesc          clusters;
     RayTracingDesc       ray_tracing;
     AmbientOcclusionDesc ambient_occlusion;

@@ -199,6 +199,13 @@ fn void? run_gui(
             if (quit) break;
         }
 
+        imgui::set_next_window_pos(TARGETS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
+        imgui::set_next_window_size(TARGETS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
+        gui::targets_panel(renderer, edit_right ? views.right : views.left, &targets, environment)!;
+        // The targets panel reconfigures the view it inspects; edits below start from that state.
+        views.left_desc = renderer.views.get(views.left).desc;
+        views.right_desc = renderer.views.get(views.right).desc;
+
         bool views_changed;
         if (input.key_pressed(platform::Scancode.O) && !input.keyboard_captured_by_gui) {
             set_ambient_occlusion(&views, views.right_desc.ambient_occlusion.kind == AoKind.NONE);
@@ -224,11 +231,6 @@ fn void? run_gui(
         imgui::set_next_window_pos(POST_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(POST_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
         views_changed |= gui::post_panel(edit_right ? &views.right_desc : &views.left_desc, {});
-
-        imgui::set_next_window_pos(TARGETS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
-        imgui::set_next_window_size(TARGETS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
-        ViewId inspected = edit_right ? views.right : views.left;
-        gui::targets_panel(renderer, inspected, &targets, environment)!;
 
         imgui::set_next_window_pos(STATS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(STATS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
