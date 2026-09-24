@@ -32,21 +32,21 @@ fn bool taa_debug_enabled(PostStack* stack) @private {
 fn void? acquire_taa_images(Renderer* renderer, ViewRecord* record) @private {
     defer catch release_taa_images(&renderer.device, record);
     for (uint slot = 0; slot < TAA_HISTORY_SLOTS; slot++) {
-        record.taa_color[slot] = allocate_post_target(
+        record.taa_color[slot] = render::allocate_storage_target(
             device:     &renderer.device,
             width:      record.hdr_color.width,
             height:     record.hdr_color.height,
             format:     render::HDR_FORMAT,
             debug_name: TAA_COLOR_NAMES[slot],
         )!;
-        record.taa_depth[slot] = allocate_post_target(
+        record.taa_depth[slot] = render::allocate_storage_target(
             device:     &renderer.device,
             width:      record.hdr_color.width,
             height:     record.hdr_color.height,
             format:     TAA_DEPTH_FORMAT,
             debug_name: TAA_DEPTH_NAMES[slot],
         )!;
-        record.taa_velocity[slot] = allocate_post_target(
+        record.taa_velocity[slot] = render::allocate_storage_target(
             device:     &renderer.device,
             width:      record.hdr_color.width,
             height:     record.hdr_color.height,
@@ -57,7 +57,7 @@ fn void? acquire_taa_images(Renderer* renderer, ViewRecord* record) @private {
 }
 
 fn void? acquire_taa_debug_image(Renderer* renderer, ViewRecord* record) @private {
-    record.taa_debug = allocate_post_target(
+    record.taa_debug = render::allocate_storage_target(
         device:     &renderer.device,
         width:      record.hdr_color.width,
         height:     record.hdr_color.height,
@@ -70,10 +70,10 @@ fn void release_taa_images(gpu::Device* device, ViewRecord* record) @private {
     for (uint slot = 0; slot < TAA_HISTORY_SLOTS; slot++) {
         Target*[3] images = { &record.taa_color[slot], &record.taa_depth[slot], &record.taa_velocity[slot] };
         foreach (image : images) {
-            if (image.texture.is_valid()) release_post_target(device, image);
+            if (image.texture.is_valid()) render::release_storage_target(device, image);
         }
     }
-    if (record.taa_debug.texture.is_valid()) release_post_target(device, &record.taa_debug);
+    if (record.taa_debug.texture.is_valid()) render::release_storage_target(device, &record.taa_debug);
 }
 
 <*
@@ -148,7 +148,7 @@ fn void? record_taa(
         .proj_23            = record.projection_terms.m23,
     };
     gpu::cmd_bind_pipeline(&renderer.commands, renderer.post_pipelines.taa_resolve)!;
-    dispatch_over(renderer, root.address, &record.taa_color[next])!;
+    render::dispatch_over(renderer, root.address, &record.taa_color[next])!;
     render::end_profile_pass(renderer, Pass.TEMPORAL_AA)!;
     renderer.stats.post_dispatches += 1;
     record.scene_input = debug ? &record.taa_debug : &record.taa_color[next];

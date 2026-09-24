@@ -101,5 +101,5 @@ fn void? record_bloom_dispatch(
         .knee           = params.knee,
         .input_texel    = { 1.0f / (float)input.width, 1.0f / (float)input.height },
     };
-    return dispatch_over(renderer, root.address, output);
+    return render::dispatch_over(renderer, root.address, output);
 }

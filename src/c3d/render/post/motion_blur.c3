@@ -91,7 +91,7 @@ fn void? record_motion_blur(Renderer* renderer, ViewRecord* record) {
         .texel            = { 1.0f / (float)width, 1.0f / (float)height },
     };
     gpu::cmd_bind_pipeline(&renderer.commands, renderer.post_pipelines.motion_blur)!;
-    dispatch_over(renderer, root.address, &record.motion_blur_out)!;
+    render::dispatch_over(renderer, root.address, &record.motion_blur_out)!;
     renderer.stats.post_dispatches += 1;
     record.scene_input = &record.motion_blur_out;
 }

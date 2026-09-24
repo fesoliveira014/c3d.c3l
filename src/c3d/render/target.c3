@@ -250,6 +250,46 @@ fn void release_target(gpu::Device* device, Target* target) @private {
     *target = {};
 }
 
+fn Target? allocate_storage_target(
+    gpu::Device* device,
+    uint width,
+    uint height,
+    gpu::Format format,
+    ZString debug_name,
+) @private {
+    gpu::TextureDesc texture_desc = {
+        .width      = width,
+        .height     = height,
+        .format     = format,
+        .usage      = { .sampled, .storage },
+        .access     = { .graphics },
+        .debug_name = debug_name,
+    };
+    gpu::TextureHandle texture = gpu::create_texture(device, &texture_desc)!;
+    defer catch (void)gpu::destroy_texture(device, texture);
+
+    gpu::TextureView view = gpu::create_texture_view(device, texture, null)!;
+    return {
+        .texture = texture,
+        .view    = view,
+        .format  = format,
+        .width   = width,
+        .height  = height,
+    };
+}
+
+fn void retire_storage_target(RetireList* retire, Target* target) @private {
+    retire.push({ .kind = RetiredKind.TEXTURE_VIEW, .texture_view = target.view });
+    retire.push({ .kind = RetiredKind.TEXTURE, .texture = target.texture });
+    *target = {};
+}
+
+fn void release_storage_target(gpu::Device* device, Target* target) @private {
+    (void)gpu::destroy_texture_view(device, target.view);
+    (void)gpu::destroy_texture(device, target.texture);
+    *target = {};
+}
+
 <*
  Wait for every renderer-owned frame submission.
  @param [&inout] renderer : "Completion points remain owned by the renderer."
