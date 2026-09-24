@@ -57,8 +57,8 @@ What the four cases establish:
 - The software scene trace matches CPU triangle picking ray for ray over a
   64 by 64 grid (a box, a sphere, an instanced batch with a mirrored
   instance and a non-indexed ground), skips a geometry released before its
-  first preparation, and traces identically after every other geometry's CPU
-  arrays are released.
+  first preparation and one whose index count is not a multiple of three, and
+  traces identically after every other geometry's CPU arrays are released.
 
 What they cannot establish: window clear-only and GUI-only frames need a
 window (run the `clear` and `cube_gui` examples with validation), and a

@@ -58,6 +58,7 @@ fn void? create_trace_scene(Fixture* fixture, TraceScene* trace) @private {
     GeometryId sphere;
     GeometryId released;
     GeometryId ground;
+    GeometryId malformed;
     @pool() {
         Geometry sphere_geometry = geometry::sphere(tmem, 1);
         sphere = assets.add_geometry(&sphere_geometry)!;
@@ -65,6 +66,9 @@ fn void? create_trace_scene(Fixture* fixture, TraceScene* trace) @private {
         Geometry plane = geometry::plane(tmem, 16, 16, 4, 4);
         plane.unindex(tmem);
         ground = assets.add_geometry(&plane)!;
+        Geometry stray_index = geometry::box(tmem, 1, 1, 1);
+        stray_index.indices = stray_index.indices[:stray_index.indices.len - 1];
+        malformed = assets.add_geometry(&stray_index)!;
     };
     assets.release_geometry_cpu(released);
 
@@ -76,6 +80,8 @@ fn void? create_trace_scene(Fixture* fixture, TraceScene* trace) @private {
     ground_node.local.position = { 0, -1.5f, 0 };
     Node* released_node = scene.add_mesh(released, fixture.plain, name: "released")!;
     released_node.local.position = { 0, 12, 0 };
+    Node* malformed_node = scene.add_mesh(malformed, fixture.plain, name: "malformed")!;
+    malformed_node.local.position = { 5, 12, 0 };
     Transform[3] transforms = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
     foreach (index, &transform : transforms) transform.position = { (float)index * 2 - 2, 0, 0 };
     transforms[2].scale = { -1, 1, 1 };
@@ -211,7 +217,7 @@ fn void test_bvh_traversal_matches_cpu_picking() @test {
     TraceGridResult[] first = alloc::new_array(mem, TraceGridResult, TRACE_GRID_SIZE * TRACE_GRID_SIZE);
     defer alloc::free(mem, first.ptr);
     trace_grid(&fixture, &trace, first)!!;
-    assert(fixture.renderer.stats.trace_instances == 6 && fixture.renderer.stats.trace_skipped == 1);
+    assert(fixture.renderer.stats.trace_instances == 6 && fixture.renderer.stats.trace_skipped == 2);
 
     usz edges;
     usz hits;
@@ -240,5 +246,5 @@ fn void test_bvh_traversal_matches_cpu_picking() @test {
     defer alloc::free(mem, second.ptr);
     trace_grid(&fixture, &trace, second)!!;
     assert(mem::equals(first.ptr, second.ptr, (sz)TRACE_RESULT_BYTES));
-    assert(fixture.renderer.stats.trace_instances == 6 && fixture.renderer.stats.trace_skipped == 1);
+    assert(fixture.renderer.stats.trace_instances == 6 && fixture.renderer.stats.trace_skipped == 2);
 }

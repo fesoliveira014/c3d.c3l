@@ -241,14 +241,25 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceInstance[] 
             asset_record.header.revision,
             asset_record.data.positions.len > 0,
         );
-        if (source == TraceSource.SKIP) {
+        bool rejected = same_asset && mirror.trace.rejected_revision == asset_record.header.revision;
+        if (source == TraceSource.SKIP || rejected) {
             renderer.stats.trace_skipped++;
             continue;
         }
 
         mirror = resolve_geometry(renderer, record.geometry)!;
         MaterialRes* material = resolve_material(renderer, record.material)!;
-        if (source == TraceSource.BUILD) build_trace_geometry(renderer, mirror, asset_record)!;
+        if (source == TraceSource.BUILD) {
+            Bvh? tree = bvh::build_triangle_bvh(tmem, asset_record.data.positions, asset_record.data.indices);
+            // The builder faults only on arrays that form no triangle list, which raster still draws.
+            if (catch excuse = tree) {
+                mirror.trace.rejected_revision = asset_record.header.revision;
+                renderer.stats.trace_skipped++;
+                continue;
+            }
+            upload_trace_geometry(renderer, mirror, &tree)!;
+            mirror.trace.revision = asset_record.header.revision;
+        }
         record.geometry_root = mirror.root;
         record.material_address = material.address;
         record.nodes = mirror.trace.nodes;
@@ -258,8 +269,7 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceInstance[] 
     return records[:kept];
 }
 
-fn void? build_trace_geometry(Renderer* renderer, GpuGeometry* mirror, GeometryAsset* record) @local {
-    Bvh tree = bvh::build_triangle_bvh(tmem, record.data.positions, record.data.indices)!;
+fn void? upload_trace_geometry(Renderer* renderer, GpuGeometry* mirror, Bvh* tree) @local {
     usz node_bytes = tree.nodes.len * BvhNodeGpu::size;
     usz primitives_offset = align_up(node_bytes, STREAM_ALIGNMENT);
     usz total_bytes = primitives_offset + tree.primitives.len * uint::size;
@@ -292,7 +302,6 @@ fn void? build_trace_geometry(Renderer* renderer, GpuGeometry* mirror, GeometryA
         .allocation = allocation,
         .nodes      = address,
         .primitives = address + (gpu::GpuAddress)primitives_offset,
-        .revision   = record.header.revision,
     };
     renderer.scene_trace.pending_builds.push(mirror.asset);
     renderer.stats.uploads++;

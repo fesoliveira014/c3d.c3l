@@ -26,7 +26,9 @@ gpu::GpuAddress scene_trace = renderer.prepare_scene_trace(&scene)!;
 
 The call collects the eligible instances and builds each geometry's bottom level the first time the geometry traces, and again after its revision moves. It rebuilds the top level only when the eligible set, an instance's world matrix, geometry or material changed. A second call in the same frame for the same scene returns at once. The returned address is the same for the renderer's life. Copies it queues are recorded by the frame's next dispatch or view, or by `end_frame`.
 
-With no frame open, the call records, submits and waits on its own, like `Renderer.upload`. Use it on a loading screen:
+The renderer holds one top level. Prepare one scene per frame: preparing a second scene in the same frame rewrites the same buffer, which is ordered only after a dispatch or view has recorded the first scene's copies and consumed them.
+
+With no frame open, the call records, submits and waits on its own, like `Renderer.upload_geometry`. Use it on a loading screen:
 
 ```c3
 renderer.prepare_scene_trace(&scene)!;
@@ -34,6 +36,8 @@ foreach (geometry : static_geometry) assets.release_geometry_cpu(geometry);
 ```
 
 A bottom level built for the current revision keeps tracing after `release_geometry_cpu`. A geometry released before its first preparation has nothing to build from: its instances are skipped and counted in `Stats.trace_skipped`.
+
+Triangle geometry whose arrays form no triangle list (fewer than three positions, an index count that is not a multiple of three, an index past the last vertex) still draws, but it does not trace: its instances are skipped and counted in `Stats.trace_skipped` until its revision moves.
 
 `RendererDesc.max_trace_instances` bounds the instance table (4096 when zero). More eligible instances fault `c3d::CAPACITY_EXCEEDED` and leave the previous table in place. The top level, the instance table and the root live in one buffer of that capacity; each bottom level is one allocation owned by its geometry mirror and released with it.
 

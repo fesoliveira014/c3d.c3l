@@ -272,7 +272,7 @@ fn int main(String[] args) {
         .distance = radius * ORBIT_START_SCALE,
         .minimum  = radius * ORBIT_DISTANCE_MIN_SCALE,
         .maximum  = radius * ORBIT_DISTANCE_MAX_SCALE,
-        .yaw      = 1.5708f,
+        .yaw      = (float)math::HALF_PI,
         .pitch    = 0.15f,
     };
 

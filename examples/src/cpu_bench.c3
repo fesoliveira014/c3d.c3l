@@ -17,6 +17,9 @@ import std::time::clock;
 
 const uint WARMUP_BATCHES @local = 5; // populate temporary allocator pages before collecting samples
 const uint MAX_NODES @local = 65536; // bounds command-line allocation without changing library capacities
+const uint DEFAULT_NODES @local = 4096;
+const uint DEFAULT_PLANE_SEGMENTS @local = 128; // 32,768 triangles: the default run stays under a minute in a debug build
+const uint MAX_PLANE_SEGMENTS @local = 1024; // 2.1 million triangles; bounds the temporary memory of one build
 const double NANOSECONDS_PER_MICROSECOND @local = 1000;
 const float BOX_FIELD_SIZE @local = 100; // metres of the cube the bvh_top boxes scatter in
 const float PLANE_SIZE @local = 100;
@@ -167,19 +170,21 @@ fn void? benchmark(
     };
     MaterialId material = assets.add_material(material::standard(material::STANDARD_PARAMS_DEFAULT))!;
     bool builds_bvh = work == BVH_TRIANGLES || work == BVH_TOP;
-    for (uint index = 0; index < nodes && !builds_bvh; index++) {
-        Node* node;
-        if (work == LIGHTS || work == HIDDEN_LIGHTS) {
-            node = scene.add_light(light::point({ 1, 1, 1 }, 8, 6))!;
-        } else {
-            node = scene.add_mesh(box, material)!;
+    if (!builds_bvh) {
+        for (uint index = 0; index < nodes; index++) {
+            Node* node;
+            if (work == LIGHTS || work == HIDDEN_LIGHTS) {
+                node = scene.add_light(light::point({ 1, 1, 1 }, 8, 6))!;
+            } else {
+                node = scene.add_mesh(box, material)!;
+            }
+            node.local.position = {
+                (float)(index % 64) - 32 + (work == CULLED_MESHES ? 1000 : 0),
+                (float)(index / 64 % 32) - 16,
+                -(float)(index % 127) - 1,
+            };
+            node.visible = work != HIDDEN_WORLD && work != HIDDEN_MESHES && work != HIDDEN_LIGHTS;
         }
-        node.local.position = {
-            (float)(index % 64) - 32 + (work == CULLED_MESHES ? 1000 : 0),
-            (float)(index / 64 % 32) - 16,
-            -(float)(index % 127) - 1,
-        };
-        node.visible = work != HIDDEN_WORLD && work != HIDDEN_MESHES && work != HIDDEN_LIGHTS;
     }
     scene.update_world();
     CameraMatrices matrices = camera::derive_matrices(
@@ -222,14 +227,20 @@ fn int main(String[] args) {
     if (args.len < 2 || args.len > 5) {
         io::eprintn("Usage: cpu_bench CASE [nodes=4096] [iterations=100] [samples=30]");
         io::eprintn("Cases: world hidden_world meshes culled_meshes hidden_meshes shadows lights hidden_lights sort");
-        io::eprintn("       bvh_triangles (nodes = plane segments per side) bvh_top (nodes = boxes)");
+        io::eprintn("       bvh_triangles (nodes = plane segments per side, 128 by default, at most 1024)");
+        io::eprintn("       bvh_top (nodes = boxes)");
         return 1;
     }
-    uint nodes = args.len > 2 ? (args[2].to_uint() ?? 0) : 4096;
+    bool plane_case = args[1] == "bvh_triangles";
+    uint nodes = args.len > 2 ? (args[2].to_uint() ?? 0) : (plane_case ? DEFAULT_PLANE_SEGMENTS : DEFAULT_NODES);
     uint iterations = args.len > 3 ? (args[3].to_uint() ?? 0) : 100;
     uint samples = args.len > 4 ? (args[4].to_uint() ?? 0) : 30;
     if (!nodes || nodes > MAX_NODES || !iterations || iterations > 100000 || !samples || samples > 10000) {
         io::eprintn("Expected nodes 1..65536, iterations 1..100000, samples 1..10000.");
+        return 1;
+    }
+    if (plane_case && nodes > MAX_PLANE_SEGMENTS) {
+        io::eprintn("bvh_triangles takes 1..1024 plane segments per side.");
         return 1;
     }
     if (catch excuse = benchmark(
