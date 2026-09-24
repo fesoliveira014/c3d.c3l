@@ -60,6 +60,22 @@ What the four cases establish:
   first preparation and one whose index count is not a multiple of three, and
   traces identically after every other geometry's CPU arrays are released.
 
+- On a renderer with ray queries, the software walk and ray queries report
+  the same instance, triangle, distance and barycentrics over the same grid,
+  with a masked checker box and a box that casts no shadow added; rays
+  through the checker holes reach what lies behind on both, and the shadow
+  caster mask hides the non-caster on both.
+
+- A box casts a dark shadow on a plane under both the atlas and ray-traced
+  shadows; a fully transparent masked box and a box with `cast_shadow` off
+  cast nothing; the ray-traced frames record no atlas layer.
+
+- The top level rebuilds only when the traced set changes, including an
+  emptied and refilled set, and a same-frame software preparation leaves it
+  alone; a geometry edit rebuilds its bottom level once and the replaced one
+  is destroyed without a validation error; a renderer without ray queries
+  rejects hardware preparation and ray-traced views with `c3d::UNSUPPORTED`.
+
 What they cannot establish: window clear-only and GUI-only frames need a
 window (run the `clear` and `cube_gui` examples with validation), and a
 presentation failure after submission needs a hardware observation.

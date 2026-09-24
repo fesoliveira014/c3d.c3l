@@ -35,7 +35,7 @@ gpu::GpuAddress scene_trace = renderer.prepare_scene_trace(&scene)!;
 
 A shader reads only the kind it asked for. Asking for both kinds in the same frame keeps one set of rows: the second call fills in the other half.
 
-The call collects the eligible instances and builds each geometry's bottom level the first time the geometry traces, and again after its revision moves. It rebuilds the top level only when the eligible set, an instance's world matrix, geometry or material changed. A second call in the same frame for the same scene returns at once. The returned address is the same for the renderer's life. Copies it queues are recorded by the frame's next dispatch or view, or by `end_frame`.
+The call collects the eligible instances and builds each geometry's bottom level the first time the geometry traces, and again after its revision moves. It rebuilds the top level only when the eligible set, an instance's world matrix, geometry or material changed. A second call in the same frame for the same scene and kind returns at once. The returned address is the same for the renderer's life. Copies it queues are recorded by the frame's next dispatch or view, or by `end_frame`.
 
 The renderer holds one top level. Prepare one scene per frame: preparing a second scene in the same frame rewrites the same buffer, which is ordered only after a dispatch or view has recorded the first scene's copies and consumed them.
 
