@@ -48,12 +48,14 @@ defer (void)render::destroy_view(&renderer, capture_view);
 | `shading` | `FORWARD` or `DEFERRED` (see [Shading path](#shading-path)) |
 | `lights` | `FLAT` or `CLUSTERED` candidate light selection |
 | `clusters` | Editable `ClusterDesc`; ignored by `FLAT` |
+| `ambient_occlusion` | `AmbientOcclusionDesc`; zero is off (see [ambient occlusion](ambient_occlusion.md)) |
 
 `default_view_desc()` is a full-window `DISPLAY_LDR` view with neutral grading;
 `texture_view_desc(target, color = LINEAR_HDR)` covers a target. `create_view` and `configure_view`
 validate between frames: a dead target faults `INVALID_ID`; `LINEAR_HDR` on a window view or on an
 RGBA8 target, a viewport outside the output, a render scale outside its range and an invalid post
-stack fault `INVALID_ARGUMENT`; a full pool faults `CAPACITY_EXCEEDED` (`VIEW_CAPACITY` is 8).
+stack fault `INVALID_ARGUMENT`; invalid ambient occlusion settings fault `INVALID_ARGUMENT` and
+`AoKind.RAY_TRACED` faults `UNSUPPORTED`; a full pool faults `CAPACITY_EXCEEDED` (`VIEW_CAPACITY` is 8).
 `destroy_view` on the default view faults `INVALID_ARGUMENT`.
 
 The view owns its working images (`hdr_color`, `depth`, the scene-color snapshot, post and effect
