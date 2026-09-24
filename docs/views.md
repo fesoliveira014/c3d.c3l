@@ -208,9 +208,11 @@ fullscreen lighting resolve; every other material keeps its forward pass on the 
 then `FORWARD_OPAQUE` with depth `EQUAL` and no depth write, so every opaque pixel is shaded once.
 Without it, `FORWARD_OPAQUE` writes depth itself and shades every fragment that passes the depth
 test at the time it is drawn; ambient occlusion forces the prepass on. The prepass pays one more
-geometry pass with depth-only shaders; it wins wherever opaque overdraw is shaded more than once
-(Sponza at 1080p on an RTX 4090: forward opaque 1.8 ms without it, 0.8 ms with it plus 0.04 ms
-of prepass). A `DEFERRED` view always runs it and ignores the flag.
+geometry pass with depth-only shaders and wins wherever opaque overdraw would be shaded more than
+once. Measured on an RTX 4090 at 1080p with flat lights: Sponza with 64 lights, forward opaque
+1.70 to 1.89 ms without it against 0.85 to 0.98 ms plus a 0.04 ms prepass with it; the
+`many_lights` hall with 1024 lights, 4.82 to 5.07 ms against 4.07 to 4.08 ms plus 0.007 ms.
+A `DEFERRED` view always runs it and ignores the flag.
 
 ```bash
 python3 scripts/build.py --example deferred
