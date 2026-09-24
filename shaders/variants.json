@@ -1,5 +1,5 @@
 {
-  "flags": ["DEPTH_ONLY", "SKINNED", "SKINNED_U16", "MORPH", "VELOCITY", "VERTEX_COLOR", "INSTANCED"],
+  "flags": ["DEPTH_ONLY", "SKINNED", "SKINNED_U16", "MORPH", "VELOCITY", "VERTEX_COLOR", "INSTANCED", "RT_SHADOWS"],
   "entries": [
     { "shader": "fullscreen", "source": "fullscreen.vert.glsl", "stage": "vert", "defines": [] },
     { "shader": "gradient", "source": "gradient.frag.glsl", "stage": "frag", "defines": [] },
@@ -14,8 +14,11 @@
     { "shader": "light_cull", "source": "light_cull.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "cube_preview", "source": "cube_preview.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "standard", "source": "standard.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "standard", "source": "standard.frag.glsl", "stage": "frag", "defines": ["RT_SHADOWS"] },
     { "shader": "physical", "source": "physical.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "physical", "source": "physical.frag.glsl", "stage": "frag", "defines": ["RT_SHADOWS"] },
     { "shader": "toon", "source": "toon.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "toon", "source": "toon.frag.glsl", "stage": "frag", "defines": ["RT_SHADOWS"] },
     { "shader": "environment_source", "source": "environment_source.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "environment_prefilter", "source": "environment_prefilter.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "sheen_prefilter", "source": "sheen_prefilter.comp.glsl", "stage": "comp", "defines": [] },
@@ -63,6 +66,7 @@
     { "shader": "mesh", "source": "mesh.vert.glsl", "stage": "vert", "defines": ["VELOCITY", "INSTANCED"] },
     { "shader": "standard_gbuffer", "source": "standard_gbuffer.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "physical_gbuffer", "source": "physical_gbuffer.frag.glsl", "stage": "frag", "defines": [] },
-    { "shader": "lighting_resolve", "source": "lighting_resolve.frag.glsl", "stage": "frag", "defines": [] }
+    { "shader": "lighting_resolve", "source": "lighting_resolve.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "lighting_resolve", "source": "lighting_resolve.frag.glsl", "stage": "frag", "defines": ["RT_SHADOWS"] }
   ]
 }

@@ -74,6 +74,7 @@ struct RendererDesc {
     uint             shadow_resolution;
     uint             max_shadow_layers;
     uint             max_trace_instances;
+    bool             ray_queries;
 }
 
 <*
@@ -104,6 +105,7 @@ struct Renderer {
     gpu::Surface            surface;
     gpu::Device             device;
     gpu::DeviceCaps         caps;
+    gpu::StageMask          consumer_stages;
     gpu::Queue              graphics;
     gpu::SwapchainHandle    swapchain;
     gpu::SwapchainInfo      swapchain_info;
@@ -112,6 +114,7 @@ struct Renderer {
     DeformationCache        deformation;
     InstanceCache           instances;
     SceneTrace              scene_trace;
+    RtContext               rt;
 
     AssetStore*             assets;
     uint                    max_lights;
@@ -646,6 +649,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     runtime_desc.debug_callback = &record_debug_message;
     runtime_desc.debug_user_data = log;
     runtime_desc.enable_debug_names = true;
+    if (desc.ray_queries) runtime_desc.acceleration_structure_heap_capacity = FRAMES_IN_FLIGHT;
 
     gpu::Runtime runtime = gpu::create_runtime(&runtime_desc)!;
     defer catch (void)gpu::destroy_runtime(&runtime);
@@ -656,13 +660,19 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         if (surface.is_valid()) (void)gpu::destroy_surface(&surface);
     }
 
-    gpu::DeviceDesc device_desc = { .surface = surface };
+    gpu::DeviceDesc device_desc = { .surface = surface, .enable_ray_queries = desc.ray_queries };
     gpu::Adapter adapter = select_adapter(&runtime, &device_desc)!;
     gpu::Device device = gpu::create_device(&adapter, &device_desc)!;
     defer catch (void)gpu::destroy_device(&device);
 
     gpu::Queue graphics = gpu::get_queue(&device, gpu::QueueKind.GRAPHICS)!;
     gpu::DeviceCaps caps = gpu::get_device_caps(&device)!;
+    uint max_trace_instances = desc.max_trace_instances ? desc.max_trace_instances : DEFAULT_MAX_TRACE_INSTANCES;
+    if (desc.ray_queries && max_trace_instances > caps.acceleration_structures.max_instance_count) {
+        return c3d::UNSUPPORTED~;
+    }
+    gpu::StageMask consumer_stages = CONSUMER_STAGES;
+    consumer_stages.acceleration_structure_build = caps.ray_queries.enabled;
 
     uint max_shadow_layers = desc.max_shadow_layers ? desc.max_shadow_layers : DEFAULT_MAX_SHADOW_LAYERS;
     bool timestamps_enabled;
@@ -705,8 +715,9 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     }
     for (usz slot = 0; slot < FRAMES_IN_FLIGHT; slot++) {
         gpu::CommandAllocatorDesc allocator_desc = {
-            .command_buffer_capacity = COMMAND_BUFFERS_PER_FRAME,
-            .debug_name              = FRAME_ALLOCATOR_NAMES[slot],
+            .command_buffer_capacity                         = COMMAND_BUFFERS_PER_FRAME,
+            .debug_name                                      = FRAME_ALLOCATOR_NAMES[slot],
+            .max_acceleration_structure_geometries_per_build = desc.ray_queries ? 1 : 0,
         };
         frames[slot].allocator = gpu::create_command_allocator(&device, graphics, &allocator_desc)!;
         frames[slot].retire.init(allocator, RETIRE_INITIAL_CAPACITY);
@@ -752,7 +763,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .max_lights           = desc.max_lights ? desc.max_lights : DEFAULT_MAX_LIGHTS,
         .shadow_resolution    = desc.shadow_resolution ? desc.shadow_resolution : DEFAULT_SHADOW_RESOLUTION,
         .max_shadow_layers    = max_shadow_layers,
-        .max_trace_instances  = desc.max_trace_instances ? desc.max_trace_instances : DEFAULT_MAX_TRACE_INSTANCES,
+        .max_trace_instances  = max_trace_instances,
         .shadow_timing_results = shadow_timing_results,
         .shadow_frusta        = alloc::new_array(allocator, ShadowFrustum, max_shadow_layers),
         .validation           = desc.validation,
@@ -772,6 +783,8 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .surface              = surface,
         .device               = device,
         .caps                 = caps,
+        .consumer_stages      = consumer_stages,
+        .rt                   = { .current = FRAMES_IN_FLIGHT },
         .graphics             = graphics,
         .swapchain            = swapchain,
         .swapchain_info       = swapchain_info,
@@ -799,6 +812,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     renderer.texture_state_undo.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_upload_retire.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.scene_trace.pending_builds.init(allocator, RETIRE_INITIAL_CAPACITY);
+    renderer.rt.pending_blas.init(allocator, RETIRE_INITIAL_CAPACITY);
     defer catch {
         if (catch excuse = wait_frames(&renderer)) handle_cleanup_fault(excuse);
         foreach (&slot : renderer.frames) drain_retired(&renderer.device, &slot.environment_temporaries);
@@ -807,6 +821,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         free_environments(&renderer);
         free_pending_uploads(&renderer);
         free_textures(&renderer);
+        free_rt(&renderer);
         free_geometries(&renderer);
         alloc::free(allocator, renderer.materials.ptr);
         free_shaders(&renderer);
@@ -844,6 +859,7 @@ fn void destroy_renderer(Renderer* renderer) {
     free_environments(renderer);
     free_pending_uploads(renderer);
     free_textures(renderer);
+    free_rt(renderer);
     free_geometries(renderer);
     free_material_heap(renderer);
     free_shaders(renderer);

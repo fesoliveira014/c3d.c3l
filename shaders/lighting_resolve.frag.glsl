@@ -5,6 +5,10 @@
 #include "brdf.glsl"
 #include "ibl.glsl"
 #include "lights.glsl"
+#ifdef RT_SHADOWS
+#define SCENE_TRACE_RAY_QUERY
+#include "scene_trace.glsl"
+#endif
 #include "shadows.glsl"
 #include "gbuffer.glsl"
 
@@ -58,7 +62,7 @@ void main() {
         LightGpu light = LightArray(frame.lights).values[selected_light_index(frame, lights, index)];
         if ((layers & light.layers) == 0u) continue;
         float visibility = 1.0;
-        if ((flags & GBUFFER_FLAG_RECEIVE_SHADOW) != 0u && light.shadow_count != 0u) {
+        if ((flags & GBUFFER_FLAG_RECEIVE_SHADOW) != 0u && light_casts_shadow(light)) {
             visibility = shadow_visibility(frame, light, world_position, normal, view_depth);
         }
         color += visibility * evaluate_standard_light(light, world_position, surface);

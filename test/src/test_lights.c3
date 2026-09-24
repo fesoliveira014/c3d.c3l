@@ -5,7 +5,7 @@ import c3d::light;
 import c3d::camera;
 import c3d::material;
 import c3d::maths;
-import c3d::render;
+import c3d::render @public;
 import c3d::scene;
 import c3d::shader;
 import std::math;
@@ -319,5 +319,58 @@ fn void test_light_receiver_mask_is_not_restricted_to_camera_bits() @test {
         assert(packed.len == 1 && packed[0].layers == 2);
         assert(extraction.shadows.len == 1 && extraction.shadows[0].light_index == 0);
         assert(counts.dropped == 0);
+    };
+}
+
+fn void test_light_ray_traced_requires_every_gate() @test {
+    Light sun = light::directional({ 1, 1, 1 }, 1);
+    for (uint combination = 0; combination < 8; combination++) {
+        sun.shadow.enabled = (combination & 1) != 0;
+        sun.shadow.ray_traced = (combination & 2) != 0;
+        RayTracingDesc ray_tracing = { .shadows = (combination & 4) != 0 };
+        assert(render::light_ray_traced(&sun, ray_tracing) == (combination == 7));
+    }
+}
+
+fn void test_include_light_packs_the_flag_and_skips_the_atlas() @test {
+    Scene scene = scene::create_scene(mem, { .max_nodes = 4 });
+    defer scene::destroy_scene(&scene);
+    Light traced = light::directional({ 1, 1, 1 }, 1);
+    traced.shadow.enabled = true;
+    traced.shadow.cascades = 1;
+    traced.shadow.ray_traced = true;
+    scene.add_light(traced)!!;
+    Light atlas = light::directional({ 1, 1, 1 }, 2);
+    atlas.shadow.enabled = true;
+    atlas.shadow.cascades = 1;
+    scene.add_light(atlas)!!;
+    scene.update_world();
+
+    Frustum frustum = box_frustum();
+    LightCounts counts;
+    @pool() {
+        LightExtraction extraction = render::extract_lights(
+            allocator:   tmem,
+            scene:       &scene,
+            frustum:     &frustum,
+            view_layers: 1,
+            capacity:    4,
+            counts:      &counts,
+            ray_tracing: { .shadows = true },
+        );
+        assert(extraction.lights.len == 2);
+        assert(extraction.lights[0].flags == shader::LIGHT_RT_SHADOW && extraction.lights[1].flags == 0);
+        assert(extraction.shadows.len == 1 && extraction.shadows[0].light_index == 1);
+
+        extraction = render::extract_lights(
+            allocator:   tmem,
+            scene:       &scene,
+            frustum:     &frustum,
+            view_layers: 1,
+            capacity:    4,
+            counts:      &counts,
+        );
+        assert(extraction.shadows.len == 2);
+        assert(extraction.lights[0].flags == 0 && extraction.lights[1].flags == 0);
     };
 }

@@ -109,13 +109,15 @@ fn Aabb template_bounds(AssetStore* assets, ModelTemplate* template) @local {
     return bounds;
 }
 
-fn char[]? compile_compute_file(Allocator allocator, String path) @local {
+fn char[]? compile_compute_file(Allocator allocator, String path, String define) @local {
     String source = (String)file::load(tmem, path)!;
     String log;
+    String[1] defines = { define };
     char[]? spirv = compile::compile_glsl(
         allocator:  allocator,
         source:     source,
         stage:      ShaderStage.COMPUTE,
+        defines:    defines[..],
         debug_name: path,
         log:        &log,
     );
@@ -135,6 +137,7 @@ fn void? draw_frame(
     FrameInfo info,
     ComputeShaderId trace_shader,
     TraceMode mode,
+    TraceKind kind,
 ) @local {
     renderer.begin_frame(info)!;
     defer catch render::abort_frame(renderer);
@@ -154,7 +157,7 @@ fn void? draw_frame(
         TracePrimaryRoot root = {
             .inverse_view_projection = matrices.inv_view_proj,
             .camera_position         = { eye.x, eye.y, eye.z, 1 },
-            .scene                   = (ulong)renderer.prepare_scene_trace(scene)!,
+            .scene                   = (ulong)renderer.prepare_scene_trace(scene, kind)!,
             .mode                    = (uint)mode.ordinal,
             .width                   = extent.x,
             .height                  = extent.y,
@@ -194,8 +197,13 @@ fn float trace_pass_ms(Renderer* renderer) @local {
     return renderer.stats.gpu_pass_ms[Pass.CUSTOM_COMPUTE_POST.ordinal];
 }
 
-fn void trace_panel(Renderer* renderer, TraceMode mode) @local {
-    if (imgui::begin("Software trace", null, {})) {
+fn ZString kind_name(TraceKind kind) @local {
+    return kind == TraceKind.HARDWARE ? "ray queries" : "software BVH";
+}
+
+fn void trace_panel(Renderer* renderer, TraceMode mode, TraceKind kind) @local {
+    if (imgui::begin("Scene trace", null, {})) {
+        imgui::text("Traced through the %s", kind_name(kind));
         imgui::text("Right half: %s (M cycles)", mode_name(mode));
         float trace_ms = trace_pass_ms(renderer);
         if (trace_ms > 0) {
@@ -211,6 +219,7 @@ fn void trace_panel(Renderer* renderer, TraceMode mode) @local {
 fn int main(String[] args) {
     bool gpu_timings;
     uint benchmark_frames;
+    TraceKind kind = TraceKind.SOFTWARE;
     for (usz index = 1; index < args.len; index++) {
         if (args[index] == "--gpu-timings") {
             $if $feat(C3D_PROFILE_GPU):
@@ -219,6 +228,8 @@ fn int main(String[] args) {
                 io::eprintfn("--gpu-timings needs GPU profiling: c3c build <target> --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL");
                 return 1;
             $endif
+        } else if (args[index] == "--hardware") {
+            kind = TraceKind.HARDWARE;
         } else if (args[index] == "--benchmark" && index + 1 < args.len) {
             index++;
             benchmark_frames = args[index].to_uint() ?? 0;
@@ -246,7 +257,8 @@ fn int main(String[] args) {
 
     ComputeShaderId trace_shader;
     @pool() {
-        char[]? spirv = compile_compute_file(tmem, TRACE_FILE);
+        String define = kind == TraceKind.HARDWARE ? "SCENE_TRACE_RAY_QUERY" : "SCENE_TRACE_BVH";
+        char[]? spirv = compile_compute_file(tmem, TRACE_FILE, define);
         if (catch excuse = spirv) {
             io::printfn("trace: compile failed (%s); run from examples/build so ../shaders resolves", excuse);
             return 1;
@@ -289,13 +301,19 @@ fn int main(String[] args) {
         allocator: mem,
         window:    &window,
         assets:    &assets,
-        desc:      { .gpu_timings = gpu_timings, .validation = true, .application_name = "c3d_software_rt" },
+        desc:      {
+            .gpu_timings      = gpu_timings,
+            .validation       = true,
+            .application_name = "c3d_software_rt",
+            .ray_queries      = kind == TraceKind.HARDWARE,
+        },
     )!!;
     defer render::destroy_renderer(&renderer);
     renderer.prepare_scene(&scene)!!;
-    renderer.prepare_scene_trace(&scene)!!;
+    renderer.prepare_scene_trace(&scene, kind)!!;
     io::printfn(
-        "Bottom and top levels built in %.1f ms: %d instances, %d top-level nodes, %d skipped",
+        "Bottom and top levels (%s) built in %.1f ms: %d instances, %d top-level nodes, %d skipped",
+        kind_name(kind),
         renderer.stats.trace_build_ms,
         renderer.stats.trace_instances,
         renderer.stats.trace_nodes,
@@ -305,7 +323,7 @@ fn int main(String[] args) {
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, &renderer, &window)!!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
 
-    io::printn("The right half is traced through the software BVH; M cycles distance, normal and instance id");
+    io::printfn("The right half is traced through the %s; M cycles distance, normal and instance id", kind_name(kind));
     io::printn("Drag to orbit, wheel to zoom; Escape release quits");
     TraceMode mode = TraceMode.DISTANCE;
     uint frame;
@@ -328,7 +346,7 @@ fn int main(String[] args) {
         imgui::set_next_window_pos(STATS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(STATS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
         gui::stats_panel(&renderer)!!;
-        trace_panel(&renderer, mode);
+        trace_panel(&renderer, mode, kind);
         gui_renderer.finish_frame();
 
         platform::sync_window(&window, &renderer);
@@ -340,6 +358,7 @@ fn int main(String[] args) {
             info:         { .time = window.clock.total, .delta = window.clock.delta },
             trace_shader: trace_shader,
             mode:         mode,
+            kind:         kind,
         )!!;
 
         frame++;
@@ -351,7 +370,8 @@ fn int main(String[] args) {
             double rays_per_second = traced_rays(&renderer) / (mean_ms / MILLISECONDS_PER_SECOND);
             uint[<2>] extent = renderer.view_extent(renderer.default_view)!!;
             io::printfn(
-                "Trace pass: %.4f ms mean over %d frames at %dx%d, %.1f M rays per second",
+                "Trace pass (%s): %.4f ms mean over %d frames at %dx%d, %.1f M rays per second",
+                kind_name(kind),
                 mean_ms,
                 timed_frames,
                 extent.x,

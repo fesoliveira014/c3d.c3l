@@ -24,6 +24,10 @@ struct LightList {
     bool clustered;
 };
 
+bool light_casts_shadow(LightGpu light) {
+    return light.shadow_count != 0u || (light.flags & LIGHT_RT_SHADOW) != 0u;
+}
+
 bool global_light(LightGpu light) {
     return light.kind == LIGHT_DIRECTIONAL || light.position_range.w == 0.0;
 }

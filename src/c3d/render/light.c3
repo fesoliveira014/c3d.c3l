@@ -21,6 +21,7 @@ struct LightCounts {
  @param [&in] frustum : "Current view clipping planes."
  @param view_layers : "Camera visibility mask."
  @param [&inout] counts : "Overwritten with this view's counts."
+ @param ray_tracing : "Flagged lights trace instead of requesting atlas layers."
  @require capacity > 0
 *>
 fn LightExtraction extract_lights(
@@ -30,6 +31,7 @@ fn LightExtraction extract_lights(
     uint view_layers,
     uint capacity,
     LightCounts* counts,
+    RayTracingDesc ray_tracing = {},
 ) {
     LightGpu[] packed = alloc::new_array(allocator, LightGpu, math::min(scene.count(Light), capacity));
     ShadowRequest[] requests = collect_shadow_requests(
@@ -40,6 +42,7 @@ fn LightExtraction extract_lights(
         view_layers: view_layers,
         capacity: (uint)packed.len,
         counts: counts,
+        ray_tracing: ray_tracing,
     );
     return { .lights = packed[:counts.packed], .shadows = requests };
 }
@@ -52,6 +55,7 @@ fn ShadowRequest[] collect_shadow_requests(
     uint view_layers,
     uint capacity,
     LightCounts* counts,
+    RayTracingDesc ray_tracing = {},
 ) @private {
     *counts = {};
     ShadowRequest[] requests = alloc::new_array(allocator, ShadowRequest, capacity);
@@ -62,6 +66,7 @@ fn ShadowRequest[] collect_shadow_requests(
         if (node.visible_effective && (node.layers & view_layers)
             && light.layers != 0 && light.intensity > 0) {
             uint packed_index = counts.packed;
+            bool ray_traced = light_ray_traced(light, ray_tracing);
             include_light(
                 packed: packed,
                 node: node,
@@ -69,9 +74,10 @@ fn ShadowRequest[] collect_shadow_requests(
                 frustum: frustum,
                 capacity: capacity,
                 counts: counts,
+                ray_traced: ray_traced,
             );
 
-            if (counts.packed != packed_index && light.shadow.enabled) {
+            if (counts.packed != packed_index && light.shadow.enabled && !ray_traced) {
                 light.validate_shadow();
                 uint layer_count;
                 switch (light.kind) {
@@ -99,6 +105,7 @@ fn void include_light(
     Frustum* frustum,
     uint capacity,
     LightCounts* counts,
+    bool ray_traced,
 ) @local {
     Vec3 position = node.world_position();
     if (frustum && light.kind != DIRECTIONAL && light.range > 0
@@ -128,5 +135,10 @@ fn void include_light(
         .kind = (uint)light.kind.ordinal,
         .layers = light.layers,
         .cos_inner = light.kind == SPOT ? math::cos(light.inner_cone) : 0,
+        .flags = ray_traced ? shader::LIGHT_RT_SHADOW : 0,
     };
+}
+
+fn bool light_ray_traced(Light* light, RayTracingDesc ray_tracing) @private {
+    return light.shadow.enabled && light.shadow.ray_traced && ray_tracing.shadows;
 }

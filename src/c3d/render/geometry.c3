@@ -13,13 +13,13 @@ import std::math;
 *>
 const usz STREAM_ALIGNMENT = 16; // std430 vec4 alignment; keeps every stream readable by any reader
 
-const usz PACKED_VEC3_BYTES @local = 12; // three floats, not a 16-byte std430 vec3; the BLAS reader wants this stride
+const usz PACKED_VEC3_BYTES @private = 12; // three floats, not a 16-byte std430 vec3; the BLAS reader wants this stride
 $assert Vec3::size == PACKED_VEC3_BYTES;
 
 <*
- Stages that read geometry blocks; the far side of every upload barrier.
+ Stages that read geometry blocks without ray queries.
 *>
-const gpu::StageMask CONSUMER_STAGES = { .vertex_shader, .fragment_shader, .compute }; // ray tracing adds a stage
+const gpu::StageMask CONSUMER_STAGES = { .vertex_shader, .fragment_shader, .compute };
 
 <*
  Which streams a packed geometry carries; written to GeometryRoot.flags.
@@ -72,6 +72,15 @@ struct TraceGeometry {
 }
 
 <*
+ Bottom-level acceleration structure of one geometry mirror.
+*>
+struct RtBlas {
+    gpu::AccelerationStructureHandle handle;
+    uint                             revision; // header.revision it was built from; 0 when absent
+    usz                              scratch_size;
+}
+
+<*
  Renderer-owned GPU mirror of one geometry record.
 *>
 struct GpuGeometry {
@@ -85,6 +94,7 @@ struct GpuGeometry {
     Topology           topology;
     Aabb               bounds;
     TraceGeometry      trace;
+    RtBlas             blas;
 }
 
 <*
@@ -260,6 +270,13 @@ fn GpuGeometry*? resolve_geometry(Renderer* renderer, GeometryId geometry) @priv
             });
             mirror.trace = {};
         }
+        if (!same_asset && mirror.blas.handle.is_valid()) {
+            renderer.pending_upload_retire.push({
+                .kind                   = RetiredKind.ACCELERATION_STRUCTURE,
+                .acceleration_structure = mirror.blas.handle,
+            });
+            mirror.blas = {};
+        }
         mirror.allocation = allocation;
         mirror.root = address;
         mirror.positions = positions;
@@ -298,12 +315,12 @@ fn void? record_pending_copies(Renderer* renderer, gpu::CommandList* commands) @
     record_texture_uploads(renderer, commands)!;
     if (renderer.pending_copies.len()) {
         if (renderer.pending_overwrite) {
-            gpu::Barrier before_overwrite = { .before = CONSUMER_STAGES, .after = { .transfer } };
+            gpu::Barrier before_overwrite = { .before = renderer.consumer_stages, .after = { .transfer } };
             gpu::cmd_barrier(commands, &before_overwrite)!;
             renderer.pending_overwrite = false;
         }
         foreach (&copy : renderer.pending_copies) gpu::cmd_copy_buffer(commands, copy)!;
-        gpu::Barrier to_consumers = { .before = { .transfer }, .after = CONSUMER_STAGES };
+        gpu::Barrier to_consumers = { .before = { .transfer }, .after = renderer.consumer_stages };
         gpu::cmd_barrier(commands, &to_consumers)!;
         renderer.pending_copies.clear();
     }
@@ -326,6 +343,7 @@ fn void? submit_pending(Renderer* renderer) @private {
     gpu::CommandList commands = gpu::begin_commands(&slot.allocator)!;
     defer catch (void)gpu::discard_commands(&commands);
     record_pending_copies(renderer, &commands)!;
+    record_acceleration_builds(renderer, &commands)!;
     slot.upload.flush(&renderer.device)!;
 
     gpu::ExecutableCommandList[1] executable = { gpu::end_commands(&commands)! };
@@ -349,6 +367,12 @@ fn void sweep_geometries(Renderer* renderer) @private {
                 .allocation = mirror.trace.allocation,
             });
         }
+        if (mirror.blas.handle.is_valid()) {
+            renderer.pending_upload_retire.push({
+                .kind                   = RetiredKind.ACCELERATION_STRUCTURE,
+                .acceleration_structure = mirror.blas.handle,
+            });
+        }
         *mirror = {};
     }
 }
@@ -357,6 +381,7 @@ fn void free_geometries(Renderer* renderer) @private {
     foreach (&mirror : renderer.geometries) {
         if (mirror.allocation.is_valid()) (void)gpu::free_allocation(&renderer.device, &mirror.allocation);
         if (mirror.trace.allocation.is_valid()) (void)gpu::free_allocation(&renderer.device, &mirror.trace.allocation);
+        if (mirror.blas.handle.is_valid()) (void)gpu::destroy_acceleration_structure(&renderer.device, mirror.blas.handle);
     }
     alloc::free(renderer.allocator, renderer.geometries.ptr);
     renderer.pending_copies.free();

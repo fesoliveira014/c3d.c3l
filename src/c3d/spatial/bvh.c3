@@ -128,6 +128,20 @@ fn bool Bvh.trace_any(
 }
 
 <*
+ Whether the arrays form a triangle list the builders accept.
+ @param indices : "Empty for a triangle list of positions."
+ @pure
+*>
+fn bool triangle_list_valid(Vec3[] positions, uint[] indices) {
+    if (positions.len < 3 || indices.len % 3 != 0) return false;
+    if (!indices.len && positions.len % 3 != 0) return false;
+    foreach (index : indices) {
+        if (index >= positions.len) return false;
+    }
+    return true;
+}
+
+<*
  Binned-SAH BVH over an indexed triangle mesh or a triangle list.
  Scratch lives in the temp allocator.
  @param allocator : "Owns the result; release with free_bvh."
@@ -141,11 +155,7 @@ fn Bvh? build_triangle_bvh(
     uint[] indices,
     BvhBuildDesc desc = BVH_BUILD_DEFAULT,
 ) {
-    if (positions.len < 3 || indices.len % 3 != 0) return c3d::INVALID_ARGUMENT~;
-    if (!indices.len && positions.len % 3 != 0) return c3d::INVALID_ARGUMENT~;
-    foreach (index : indices) {
-        if (index >= positions.len) return c3d::INVALID_ARGUMENT~;
-    }
+    if (!triangle_list_valid(positions, indices)) return c3d::INVALID_ARGUMENT~;
 
     usz triangle_count = indices.len ? indices.len / 3 : positions.len / 3;
     Aabb[] boxes = alloc::alloc_array(tmem, Aabb, (sz)triangle_count);

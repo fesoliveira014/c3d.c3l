@@ -14,7 +14,10 @@ const uint MAX_DISPATCH_TEXTURES = 8;
 const uint BVH_STACK_DEPTH = 32;
 const uint TRACE_INSTANCE_ALPHA_MASK = 1;
 const uint TRACE_INSTANCE_DOUBLE_SIDED = 2;
+const uint TRACE_MASK_ALL = 1;
+const uint TRACE_MASK_SHADOW_CASTER = 2;
 const uint FRAME_LIGHTS_CLUSTERED = 1;
+const uint FRAME_TRACE_PRESENT = 2;
 const uint CLUSTER_GROUP_SIZE = 64;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8;
 const uint DRAW_RECEIVE_SHADOW = 1;
@@ -40,6 +43,7 @@ const uint PREVIEW_MODE_CLUSTERS = 6;
 const uint PREVIEW_MODE_RAW = 7;
 const uint PREVIEW_MODE_OCTAHEDRAL_NORMAL = 8;
 const uint PREVIEW_MODE_BITS = 9;
+const uint LIGHT_RT_SHADOW = 1;
 const uint ENVIRONMENT_FACE_POSITIVE_X = 0;
 const uint ENVIRONMENT_FACE_NEGATIVE_X = 1;
 const uint ENVIRONMENT_FACE_POSITIVE_Y = 2;
@@ -182,7 +186,7 @@ struct TraceInstanceGpu {
     GpuAddress material;
     uint       flags;
     uint       material_kind;
-    uint       _pad0;
+    uint       mask;
     uint       _pad1;
     Vec4f      world_to_local_0;
     Vec4f      world_to_local_1;
@@ -198,7 +202,7 @@ $assert $reflect(TraceInstanceGpu.geometry).offset == 0;
 $assert $reflect(TraceInstanceGpu.material).offset == 8;
 $assert $reflect(TraceInstanceGpu.flags).offset == 16;
 $assert $reflect(TraceInstanceGpu.material_kind).offset == 20;
-$assert $reflect(TraceInstanceGpu._pad0).offset == 24;
+$assert $reflect(TraceInstanceGpu.mask).offset == 24;
 $assert $reflect(TraceInstanceGpu._pad1).offset == 28;
 $assert $reflect(TraceInstanceGpu.world_to_local_0).offset == 32;
 $assert $reflect(TraceInstanceGpu.world_to_local_1).offset == 48;
@@ -214,7 +218,7 @@ struct SceneTraceRoot {
     GpuAddress instances;
     uint       instance_count;
     uint       top_node_count;
-    uint       _pad0;
+    uint       tlas_index;
     uint       _pad1;
 }
 $assert SceneTraceRoot::size == 32;
@@ -222,7 +226,7 @@ $assert $reflect(SceneTraceRoot.top_nodes).offset == 0;
 $assert $reflect(SceneTraceRoot.instances).offset == 8;
 $assert $reflect(SceneTraceRoot.instance_count).offset == 16;
 $assert $reflect(SceneTraceRoot.top_node_count).offset == 20;
-$assert $reflect(SceneTraceRoot._pad0).offset == 24;
+$assert $reflect(SceneTraceRoot.tlas_index).offset == 24;
 $assert $reflect(SceneTraceRoot._pad1).offset == 28;
 
 struct ClusterRange {
@@ -289,7 +293,7 @@ struct FrameRoot {
     GpuAddress   lights;
     GpuAddress   shadows;
     GpuAddress   environment;
-    GpuAddress   instances;
+    GpuAddress   trace;
     uint         light_count;
     uint         shadow_count;
     uint         flags;
@@ -315,7 +319,7 @@ $assert $reflect(FrameRoot.jitter_time).offset == 352;
 $assert $reflect(FrameRoot.lights).offset == 368;
 $assert $reflect(FrameRoot.shadows).offset == 376;
 $assert $reflect(FrameRoot.environment).offset == 384;
-$assert $reflect(FrameRoot.instances).offset == 392;
+$assert $reflect(FrameRoot.trace).offset == 392;
 $assert $reflect(FrameRoot.light_count).offset == 400;
 $assert $reflect(FrameRoot.shadow_count).offset == 404;
 $assert $reflect(FrameRoot.flags).offset == 408;
@@ -580,7 +584,7 @@ struct LightGpu {
     float cos_inner;
     uint  shadow_first;
     uint  shadow_count;
-    uint  _pad0;
+    uint  flags;
     uint  _pad1;
     uint  _pad2;
 }
@@ -593,7 +597,7 @@ $assert $reflect(LightGpu.layers).offset == 52;
 $assert $reflect(LightGpu.cos_inner).offset == 56;
 $assert $reflect(LightGpu.shadow_first).offset == 60;
 $assert $reflect(LightGpu.shadow_count).offset == 64;
-$assert $reflect(LightGpu._pad0).offset == 68;
+$assert $reflect(LightGpu.flags).offset == 68;
 $assert $reflect(LightGpu._pad1).offset == 72;
 $assert $reflect(LightGpu._pad2).offset == 76;
 

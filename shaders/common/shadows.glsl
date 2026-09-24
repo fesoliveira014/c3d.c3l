@@ -36,7 +36,37 @@ uint point_shadow_face(vec3 direction) {
     return direction.z >= 0.0 ? SHADOW_FACE_POSITIVE_Z : SHADOW_FACE_NEGATIVE_Z;
 }
 
+#ifdef RT_SHADOWS
+const float RT_SHADOW_OFFSET = 0.02; // world units along the normal; hides self-intersection at the cost of contact detail
+const float RT_SHADOW_FAR = 1.0e4; // world units; directional rays stop here
+
+float ray_shadow_visibility(FrameRoot frame, LightGpu light, vec3 world_position, vec3 normal) {
+    vec3 origin = world_position + normal * RT_SHADOW_OFFSET;
+    vec3 direction = -light.direction_cos_outer.xyz;
+    float t_max = RT_SHADOW_FAR;
+    if (light.kind != LIGHT_DIRECTIONAL) {
+        vec3 to_light = light.position_range.xyz - origin;
+        t_max = length(to_light);
+        if (t_max == 0.0) return 1.0;
+        direction = to_light / t_max;
+    }
+    bool occluded = trace_scene_any(
+        SceneTraceRoot(frame.trace),
+        origin,
+        direction,
+        t_max,
+        TRACE_MASK_SHADOW_CASTER
+    );
+    return occluded ? 0.0 : 1.0;
+}
+#endif
+
 float shadow_visibility(FrameRoot frame, LightGpu light, vec3 world_position, vec3 normal, float view_depth) {
+#ifdef RT_SHADOWS
+    if ((light.flags & LIGHT_RT_SHADOW) != 0u && (frame.flags & FRAME_TRACE_PRESENT) != 0u) {
+        return ray_shadow_visibility(frame, light, world_position, normal);
+    }
+#endif
     if (light.shadow_count == 0u) return 1.0;
 
     if (light.kind == LIGHT_DIRECTIONAL) {

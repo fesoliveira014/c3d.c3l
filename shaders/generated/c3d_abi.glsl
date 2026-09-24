@@ -17,7 +17,10 @@ const uint MAX_DISPATCH_TEXTURES = 8u;
 const uint BVH_STACK_DEPTH = 32u;
 const uint TRACE_INSTANCE_ALPHA_MASK = 1u;
 const uint TRACE_INSTANCE_DOUBLE_SIDED = 2u;
+const uint TRACE_MASK_ALL = 1u;
+const uint TRACE_MASK_SHADOW_CASTER = 2u;
 const uint FRAME_LIGHTS_CLUSTERED = 1u;
+const uint FRAME_TRACE_PRESENT = 2u;
 const uint CLUSTER_GROUP_SIZE = 64u;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8u;
 const uint DRAW_RECEIVE_SHADOW = 1u;
@@ -43,6 +46,7 @@ const uint PREVIEW_MODE_CLUSTERS = 6u;
 const uint PREVIEW_MODE_RAW = 7u;
 const uint PREVIEW_MODE_OCTAHEDRAL_NORMAL = 8u;
 const uint PREVIEW_MODE_BITS = 9u;
+const uint LIGHT_RT_SHADOW = 1u;
 const uint ENVIRONMENT_FACE_POSITIVE_X = 0u;
 const uint ENVIRONMENT_FACE_NEGATIVE_X = 1u;
 const uint ENVIRONMENT_FACE_POSITIVE_Y = 2u;
@@ -147,7 +151,7 @@ struct TraceInstanceGpu {
     uint64_t material;
     uint flags;
     uint material_kind;
-    uint _pad0;
+    uint mask;
     uint _pad1;
     vec4 world_to_local_0;
     vec4 world_to_local_1;
@@ -164,7 +168,7 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer SceneTraceRo
     uint64_t instances;
     uint instance_count;
     uint top_node_count;
-    uint _pad0;
+    uint tlas_index;
     uint _pad1;
 };
 
@@ -209,7 +213,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer FrameRoot {
     uint64_t lights;
     uint64_t shadows;
     uint64_t environment;
-    uint64_t instances;
+    uint64_t trace;
     uint light_count;
     uint shadow_count;
     uint flags;
@@ -368,7 +372,7 @@ struct LightGpu {
     float cos_inner;
     uint shadow_first;
     uint shadow_count;
-    uint _pad0;
+    uint flags;
     uint _pad1;
     uint _pad2;
 };

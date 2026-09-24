@@ -227,3 +227,96 @@ fn void test_geometry_root_carries_the_index_address() @test {
         assert(root.indices == (gpu::GpuAddress)0);
     };
 }
+
+fn void test_blas_desc_follows_the_geometry_layout() @test {
+    @pool() {
+        Geometry box = geometry::box(tmem, 1, 1, 1);
+        render::GeometryLayout layout = render::geometry_layout(&box);
+        gpu::AccelerationStructureGeometryDesc desc = render::blas_geometry_desc(&layout);
+        assert(desc.kind == gpu::AccelerationStructureGeometryKind.TRIANGLES && !desc.flags.opaque);
+        assert(desc.triangles.max_vertex_count == 24 && desc.triangles.max_primitive_count == 12);
+        assert(desc.triangles.index_type == gpu::AccelerationStructureIndexType.U16 && !desc.triangles.has_transform);
+
+        Geometry wide = {
+            .topology  = Topology.TRIANGLES,
+            .positions = alloc::new_array(tmem, Vec3, 70002),
+            .indices   = alloc::new_array(tmem, uint, 70002),
+        };
+        foreach (index, &value : wide.indices) *value = (uint)index;
+        render::GeometryLayout wide_layout = render::geometry_layout(&wide);
+        desc = render::blas_geometry_desc(&wide_layout);
+        assert(desc.triangles.index_type == gpu::AccelerationStructureIndexType.U32);
+        assert(desc.triangles.max_primitive_count == 23334 && desc.triangles.max_vertex_count == 70002);
+
+        box.unindex(tmem);
+        render::GeometryLayout list_layout = render::geometry_layout(&box);
+        desc = render::blas_geometry_desc(&list_layout);
+        assert(desc.triangles.index_type == gpu::AccelerationStructureIndexType.NONE);
+        assert(desc.triangles.max_primitive_count == 12 && desc.triangles.max_vertex_count == 36);
+    };
+}
+
+fn void test_tlas_instance_follows_the_row() @test {
+    render::TraceInstance record = {
+        .world        = matrix::IDENTITY4.translate({ 1, 2, 3 }).scale({ 2, 2, 2 }),
+        .mask         = 3,
+        .bottom_level = { .owner = 1, .index = 5, .generation = 1 },
+    };
+    gpu::AccelerationStructureInstanceDesc desc = render::tlas_instance_desc(&record, 7);
+    assert(desc.custom_index == 7 && desc.mask == 3 && desc.bottom_level.index == 5);
+    assert(desc.flags.triangle_cull_disable && desc.flags.force_opaque && !desc.flags.force_non_opaque);
+    assert(desc.transform_row_0 == (Vec4f){ 2, 0, 0, 1 });
+    assert(desc.transform_row_1 == (Vec4f){ 0, 2, 0, 2 });
+    assert(desc.transform_row_2 == (Vec4f){ 0, 0, 2, 3 });
+
+    record.flags = shader::TRACE_INSTANCE_ALPHA_MASK;
+    record.mask = 1;
+    desc = render::tlas_instance_desc(&record, 7);
+    assert(desc.flags.triangle_cull_disable && desc.flags.force_non_opaque && !desc.flags.force_opaque);
+    assert(desc.mask == 1);
+}
+
+fn void test_trace_kind_resolves_against_ray_queries() @test {
+    assert(render::resolve_trace_kind(TraceKind.AUTO, true)!! == TraceKind.HARDWARE);
+    assert(render::resolve_trace_kind(TraceKind.AUTO, false)!! == TraceKind.SOFTWARE);
+    assert(render::resolve_trace_kind(TraceKind.SOFTWARE, true)!! == TraceKind.SOFTWARE);
+    assert(render::resolve_trace_kind(TraceKind.HARDWARE, true)!! == TraceKind.HARDWARE);
+    if (catch excuse = render::resolve_trace_kind(TraceKind.HARDWARE, false)) {
+        assert(excuse == c3d::UNSUPPORTED);
+    } else {
+        assert(false);
+    }
+}
+
+fn void test_blas_source_needs_a_proven_list() @test {
+    assert(render::blas_source(3, 3, 0, false) == render::TraceSource.REUSE);
+    assert(render::blas_source(0, 3, 0, true) == render::TraceSource.BUILD);
+    assert(render::blas_source(2, 3, 3, false) == render::TraceSource.BUILD);
+    assert(render::blas_source(2, 3, 2, false) == render::TraceSource.SKIP);
+    assert(render::blas_source(0, 3, 0, false) == render::TraceSource.SKIP);
+}
+
+fn void test_trace_record_mask_follows_cast_shadow() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Scene* scene = &fixture.scene;
+    Node* caster = scene.add_mesh(fixture.box, fixture.opaque, name: "caster")!!;
+    Node* receiver = scene.add_mesh(fixture.box, fixture.opaque, name: "receiver")!!;
+    scene.get(receiver, Mesh).cast_shadow = false;
+    Transform[2] transforms = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
+    transforms[1].position = { 2, 0, 0 };
+    Node* batch = scene.add_instanced_mesh(fixture.box, fixture.opaque, 2, transforms[..], name: "batch")!!;
+    scene.get(batch, InstancedMesh).cast_shadow = false;
+    scene.update_world();
+
+    @pool() {
+        render::TraceInstance[] records = collect(&fixture);
+        assert(records.len == 4);
+        assert(records[0].mask == (shader::TRACE_MASK_ALL | shader::TRACE_MASK_SHADOW_CASTER));
+        foreach (record : records[1..]) assert(record.mask == shader::TRACE_MASK_ALL);
+
+        scene.get(caster, Mesh).cast_shadow = false;
+        render::TraceInstance[] toggled = collect(&fixture);
+        assert(!mem::equals(&records[0], &toggled[0], (sz)render::TraceInstance::size));
+    };
+}

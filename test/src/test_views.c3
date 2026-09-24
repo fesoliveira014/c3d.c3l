@@ -1,7 +1,7 @@
 module c3d::test::views;
 
 import c3d;
-import c3d::render;
+import c3d::render @public;
 import c3d::render::post;
 import gpu;
 
@@ -79,4 +79,18 @@ fn void test_texture_binding_matches_tracks_the_target() @test {
     render::TextureBinding resized = first;
     resized.texture_binding_revision = 4;
     assert(!render::texture_binding_matches(first, resized));
+}
+
+fn void test_view_desc_rejects_rt_shadows_without_ray_queries() @test {
+    Renderer* renderer = mem::new(Renderer);
+    defer free(renderer);
+    ViewDesc desc = render::default_view_desc();
+    desc.ray_tracing.shadows = true;
+    if (catch excuse = render::validate_view_desc(renderer, &desc)) {
+        assert(excuse == c3d::UNSUPPORTED);
+    } else {
+        assert(false);
+    }
+    renderer.caps.ray_queries.enabled = true;
+    render::validate_view_desc(renderer, &desc)!!;
 }

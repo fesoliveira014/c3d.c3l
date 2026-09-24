@@ -1,10 +1,7 @@
 #ifndef C3D_MATERIAL_MAPS_GLSL
 #define C3D_MATERIAL_MAPS_GLSL
 
-vec2 map_uv(TextureMapGpu map, uint flags, uint map_bit, vec2 uv0, vec2 uv1) {
-    vec2 uv = (flags & (map_bit << MATERIAL_MAP_UV1_SHIFT)) != 0u ? uv1 : uv0;
-    return vec2(dot(map.uv_linear.xy, uv), dot(map.uv_linear.zw, uv)) + map.uv_offset;
-}
+#include "material_uv.glsl"
 
 // Level-of-detail bias of built-in material sampling; a material fragment sets it from FrameRoot.mip_bias.
 float material_mip_bias = 0.0;

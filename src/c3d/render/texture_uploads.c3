@@ -93,6 +93,8 @@ fn void commit_uploads(Renderer* renderer, Frame* slot) @private {
     renderer.texture_state_undo.clear();
     renderer.pending_geometry_uploads.clear();
     renderer.scene_trace.pending_builds.clear();
+    renderer.rt.pending_blas.clear();
+    renderer.rt.recorded_blas = 0;
     renderer.uploads_recorded = false;
 
     foreach (retired : renderer.pending_upload_retire) slot.retire.push(retired);

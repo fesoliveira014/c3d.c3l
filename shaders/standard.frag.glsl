@@ -8,6 +8,10 @@
 #include "ibl.glsl"
 #include "lights.glsl"
 #include "material_alpha.glsl"
+#ifdef RT_SHADOWS
+#define SCENE_TRACE_RAY_QUERY
+#include "scene_trace.glsl"
+#endif
 #include "shadows.glsl"
 
 layout(location = 0) in vec3 v_world_pos;
@@ -71,7 +75,7 @@ void main() {
         LightGpu light = LightArray(frame.lights).values[selected_light_index(frame, lights, index)];
         if ((draw.layers & light.layers) == 0u) continue;
         float visibility = 1.0;
-        if ((draw.flags & DRAW_RECEIVE_SHADOW) != 0u && light.shadow_count != 0u) {
+        if ((draw.flags & DRAW_RECEIVE_SHADOW) != 0u && light_casts_shadow(light)) {
             visibility = shadow_visibility(
                 frame,
                 light,

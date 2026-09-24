@@ -414,7 +414,7 @@ API and its C translation unit are included regardless of the `C3D_STB_IMAGE` in
 {
   "dependency-search-paths": [ "path/to/c3d.c3l/lib" ],
   "dependencies": [ "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "shaderc" ],
-  "features": [ "C3D_GUI", "C3D_FBX", "C3D_RAY_TRACING", "C3D_STB_IMAGE", "C3D_SHADER_COMPILER" ]
+  "features": [ "C3D_GUI", "C3D_FBX", "C3D_STB_IMAGE", "C3D_SHADER_COMPILER" ]
 }
 ```
 
@@ -422,7 +422,6 @@ API and its C translation unit are included regardless of the `C3D_STB_IMAGE` in
 | --- | --- |
 | `C3D_GUI` | the developer GUI declarations (imgui stays a declared dependency) |
 | `C3D_FBX` | the FBX importer declarations (ufbx stays a declared dependency) |
-| `C3D_RAY_TRACING` | the ray tracing declarations |
 | `C3D_STB_IMAGE` | indicator only; the image API and native decoder compile when absent |
 | `C3D_SHADER_COMPILER` | in-process GLSL compilation (`shader::compile`), and shaderc; custom shaders from SPIR-V bytes work without it |
 

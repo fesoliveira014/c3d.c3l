@@ -215,7 +215,7 @@ fn void? Renderer.render_view(
                     DrawList list = view_draw_list(material_description, shading, custom_gbuffer);
                     gpu::PipelineHandle? pipeline = list == DrawList.GBUFFER
                       ? gbuffer_pipeline_for(self, material_description, vertex)
-                      : pipeline_for(self, material_description, vertex);
+                      : pipeline_for(self, material_description, vertex, record.desc.ray_tracing.shadows);
                     if (catch excuse = pipeline) {
                         if (!custom_pipeline_rejected(self, material_description, excuse)) return excuse~;
                         continue;
@@ -232,7 +232,8 @@ fn void? Renderer.render_view(
                         .sort_key  = draw_sort_key(
                             vertex:    vertex,
                             fragment:  list == DrawList.GBUFFER
-                              ? gbuffer_fragment(material_description) : material_fragment(material_description),
+                              ? gbuffer_fragment(material_description)
+                              : material_fragment(material_description, record.desc.ray_tracing.shadows),
                             material:  candidate.material,
                             geometry:  candidate.geometry,
                             ndc_depth: candidate.ndc_depth,
@@ -274,6 +275,13 @@ fn void? Renderer.render_view(
                 prepare_sampled_targets(self, record)!;
             };
 
+            gpu::GpuAddress trace_root;
+            if (record.desc.ray_tracing.shadows) {
+                instrumentation::@scope("view.trace") {
+                    trace_root = self.prepare_scene_trace(scene, TraceKind.HARDWARE)!;
+                };
+            }
+
             LightCounts light_counts;
             ShadowGpu[] shadows;
             gpu::GpuAddress shadow_address;
@@ -287,6 +295,7 @@ fn void? Renderer.render_view(
                     view_layers: camera.layers,
                     capacity: self.max_lights,
                     counts: &light_counts,
+                    ray_tracing: record.desc.ray_tracing,
                 );
                 shadows = record_shadows(
                     renderer: self,
@@ -362,6 +371,7 @@ fn void? Renderer.render_view(
                     scene_sampler: transmission_items.len ? self.linear_clamp_sampler : (gpu::SamplerIndex)0,
                     prev_view_proj: temporal && record.history.valid ? &record.history.view_proj : &matrices.view_proj,
                     clusters: cluster_frame.clusters,
+                    trace: trace_root,
                     jitter: jitter,
                     mip_bias: taa ? record.desc.post.taa_params.mip_bias : 0,
                 );
@@ -773,7 +783,7 @@ fn void? prepare_views(Renderer* renderer) @private {
             acquire_environment_pipeline(renderer, &renderer.cluster_pipeline, LIGHT_CULL)!;
         }
         if (record.desc.shading == ShadingPath.DEFERRED) {
-            renderer.pipelines.get(&renderer.device, lighting_resolve_pipeline_key())!;
+            renderer.pipelines.get(&renderer.device, lighting_resolve_pipeline_key(record.desc.ray_tracing.shadows))!;
         }
     }
 }
@@ -786,6 +796,7 @@ fn void? prepare_views(Renderer* renderer) @private {
  @param viewport : "Pixels."
  @param [in] prev_view_proj : "Unjittered; null repeats the current view-projection."
  @param clusters : "Matching frame-ring cluster root borrowed through frame completion."
+ @param trace : "SceneTraceRoot address with a hardware half; zero when the view traces nothing."
  @param jitter : "NDC offset already applied to the rendered matrices."
  @param mip_bias : "Added to material texture level of detail."
 *>
@@ -806,6 +817,7 @@ fn void write_frame_root(
     gpu::SamplerIndex scene_sampler = (gpu::SamplerIndex)0,
     Mat4* prev_view_proj = null,
     gpu::GpuAddress clusters = (gpu::GpuAddress)0,
+    gpu::GpuAddress trace = (gpu::GpuAddress)0,
     Vec2 jitter = {},
     float mip_bias = 0,
 ) {
@@ -828,7 +840,9 @@ fn void write_frame_root(
         .scene_color     = scene_color,
         .scene_sampler   = scene_sampler,
         .clusters        = clusters,
-        .flags           = clusters != (gpu::GpuAddress)0 ? shader::FRAME_LIGHTS_CLUSTERED : 0,
+        .trace           = trace,
+        .flags           = (clusters != (gpu::GpuAddress)0 ? shader::FRAME_LIGHTS_CLUSTERED : 0)
+          | (trace != (gpu::GpuAddress)0 ? shader::FRAME_TRACE_PRESENT : 0),
         .mip_bias        = mip_bias,
     };
 }
@@ -1295,22 +1309,28 @@ fn Material* material_data(Renderer* renderer, MaterialRes* material) @local {
     return &renderer.assets.material(material.asset).data;
 }
 
-fn ShaderVariant material_fragment(Material* material) @local {
+fn ShaderVariant material_fragment(Material* material, bool rt_shadows) @local {
+    uint flags = rt_shadows ? shader::SHADER_FLAG_RT_SHADOWS : 0;
     switch (material.kind) {
         case BASIC: return { .shader = BASIC };
-        case STANDARD: return { .shader = STANDARD };
-        case TOON: return { .shader = TOON };
-        case PHYSICAL: return { .shader = PHYSICAL };
+        case STANDARD: return { .shader = STANDARD, .flags = flags };
+        case TOON: return { .shader = TOON, .flags = flags };
+        case PHYSICAL: return { .shader = PHYSICAL, .flags = flags };
         case CUSTOM: return {};
     }
 }
 
-fn gpu::PipelineHandle? pipeline_for(Renderer* renderer, Material* material, ShaderVariant vertex) @private {
+fn gpu::PipelineHandle? pipeline_for(
+    Renderer* renderer,
+    Material* material,
+    ShaderVariant vertex,
+    bool rt_shadows = false,
+) @private {
     renderer.stats.pipeline_lookups++;
     bool wireframe = material.common.wireframe && renderer.caps.line_polygon_mode;
     PipelineKey key = {
         .vertex        = vertex,
-        .fragment      = material_fragment(material),
+        .fragment      = material_fragment(material, rt_shadows),
         .color_formats = { [0] = HDR_FORMAT },
         .color_count   = 1,
         .depth_format  = DEPTH_FORMAT,
