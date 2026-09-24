@@ -27,6 +27,9 @@ const Vec2 STATS_PANEL_POSITION @local = { 16, 16 };
 const Vec2 STATS_PANEL_SIZE @local = { 360, 560 };
 const Vec2 POST_PANEL_POSITION @local = { 1060, 16 };
 const Vec2 POST_PANEL_SIZE @local = { 360, 420 };
+const float SWAY_AMPLITUDE @local = 1.5f; // world units; keeps the swaying shadow on the ground in view
+const float SWAY_RADIANS_PER_SECOND @local = 1;
+const uint BENCHMARK_WARMUP_FRAMES @local = 30; // lets clocks and caches settle before the timed frames
 
 struct Orbit @local {
     Vec3  target;
@@ -109,20 +112,32 @@ fn void? draw_frame(
     return renderer.end_frame();
 }
 
+fn float build_pass_ms(Renderer* renderer) @local {
+    return renderer.stats.gpu_pass_ms[Pass.ACCELERATION_BUILD.ordinal];
+}
+
 fn int main(String[] args) {
     bool gpu_timings;
-    foreach (argument : args[1..]) {
-        if (argument == "--gpu-timings") {
+    uint benchmark_frames;
+    for (usz index = 1; index < args.len; index++) {
+        if (args[index] == "--gpu-timings") {
             $if $feat(C3D_PROFILE_GPU):
                 gpu_timings = true;
             $else
                 io::eprintfn("--gpu-timings needs GPU profiling: c3c build <target> --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL");
                 return 1;
             $endif
+        } else if (args[index] == "--benchmark" && index + 1 < args.len) {
+            index++;
+            benchmark_frames = args[index].to_uint() ?? 0;
         } else {
-            io::printfn("Unknown argument: %s", argument);
+            io::printfn("Unknown argument: %s", args[index]);
             return 1;
         }
+    }
+    if (benchmark_frames && !gpu_timings) {
+        io::eprintn("--benchmark FRAMES needs --gpu-timings");
+        return 1;
     }
 
     platform::Window window = platform::create_window(platform::default_window_desc("c3d rt shadows", 1440, 900))!!;
@@ -214,8 +229,14 @@ fn int main(String[] args) {
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
 
     io::printn("T toggles ray-traced shadows and the atlas; M swaps the box between opaque and masked");
+    io::printn("A sways the box, rebuilding the top level every frame");
     io::printn("Drag to orbit, wheel to zoom; Escape release quits");
     bool box_masked;
+    bool swaying = benchmark_frames > 0;
+    float sway_phase;
+    uint frame;
+    uint timed_frames;
+    double timed_ms;
     while (window.poll()) {
         gui_renderer.new_frame();
         defer {
@@ -232,6 +253,11 @@ fn int main(String[] args) {
         if (input.key_pressed(platform::Scancode.M) && !input.keyboard_captured_by_gui) {
             box_masked = !box_masked;
             box_mesh.material = box_masked ? masked_box_material : box_material;
+        }
+        if (input.key_pressed(platform::Scancode.A) && !input.keyboard_captured_by_gui) swaying = !swaying;
+        if (swaying) {
+            sway_phase += window.clock.delta * SWAY_RADIANS_PER_SECOND;
+            box.local.position.x = math::sin(sway_phase) * SWAY_AMPLITUDE;
         }
         apply_orbit(&orbit, input, camera_node);
         scene.update_world();
@@ -253,6 +279,20 @@ fn int main(String[] args) {
             gui_renderer: &gui_renderer,
             info:         { .time = window.clock.total, .delta = window.clock.delta },
         )!!;
+
+        frame++;
+        if (!benchmark_frames || frame <= BENCHMARK_WARMUP_FRAMES || build_pass_ms(&renderer) <= 0) continue;
+        timed_ms += build_pass_ms(&renderer);
+        timed_frames++;
+        if (timed_frames == benchmark_frames) {
+            io::printfn(
+                "Acceleration build: %.4f ms mean over %d frames, %d trace instances, one top-level build per frame",
+                timed_ms / timed_frames,
+                timed_frames,
+                renderer.stats.trace_instances,
+            );
+            break;
+        }
     }
     return 0;
 }
