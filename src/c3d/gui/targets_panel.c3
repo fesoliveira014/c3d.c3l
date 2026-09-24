@@ -170,6 +170,9 @@ fn PanelEntry[] collect_entries(Renderer* renderer, ViewId view, EnvironmentId e
             PreviewSource source = { .kind = VIEW_GBUFFER, .view = view, .level = (uint)channel };
             push_view_image(&entries, render::GBUFFER_NAMES[channel], source, target);
         }
+        push_view_image(&entries, "ao", { .kind = VIEW_AMBIENT_OCCLUSION, .view = view }, &record.ao);
+        PreviewSource raw_source = { .kind = VIEW_AMBIENT_OCCLUSION, .view = view, .level = 1 };
+        push_view_image(&entries, "ao_raw", raw_source, &record.ao_raw);
         if (record.desc.lights == CLUSTERED) {
             entries.push({
                 .label  = "clusters",

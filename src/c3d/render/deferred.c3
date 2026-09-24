@@ -96,63 +96,20 @@ fn void? record_deferred_scene(
         opaque:         opaque,
     )!;
     record_gbuffer_pass(renderer, record, gbuffer)!;
+    if (record.desc.ambient_occlusion.kind != AoKind.NONE) record_ambient_occlusion(renderer, record, frame)!;
     record_lighting_pass(renderer, record, frame, clear_color)!;
     record.depth.transition(&renderer.commands, DEPTH_ATTACHMENT_STATE)!;
     record_forward_pass(
-        renderer:    renderer,
-        record:      record,
-        opaque:      opaque,
-        transparent: transparent,
-        sky_root:    sky_root,
-        sky:         sky,
-        clear_color: clear_color,
-        loaded:      true,
+        renderer:      renderer,
+        record:        record,
+        opaque:        opaque,
+        transparent:   transparent,
+        sky_root:      sky_root,
+        sky:           sky,
+        clear_color:   clear_color,
+        color_loaded:  true,
+        depth_matched: true,
     )!;
-}
-
-fn void? record_depth_prepass(
-    Renderer* renderer,
-    ViewRecord* record,
-    gpu::GpuAddress frame,
-    bool view_reflected,
-    DrawItem[] gbuffer,
-    DrawItem[] opaque,
-) @private {
-    MeshCandidate[] candidates = alloc::new_array(tmem, MeshCandidate, gbuffer.len + opaque.len);
-    usz count;
-    foreach (&item : gbuffer) candidates[count++] = *item.candidate;
-    foreach (&item : opaque) candidates[count++] = *item.candidate;
-    ShadowDraw[] draws = prepare_shadow_draws(renderer, candidates)!;
-
-    uint width = record.depth.width;
-    uint height = record.depth.height;
-    gpu::DepthTargetDesc depth = {
-        .view     = record.depth.attachment,
-        .load_op  = gpu::LoadOp.CLEAR,
-        .store_op = gpu::StoreOp.STORE,
-        .clear    = { .depth = DEPTH_CLEAR },
-    };
-    gpu::RenderPassDesc pass = { .depth = &depth, .width = width, .height = height };
-    gpu::GraphicsState state = gpu::render_geometry_state(width, height)!;
-    state.viewport = flipped_viewport(width, height);
-    state.depth = { .test_enable = true, .write_enable = true, .compare = gpu::CompareOp.GREATER };
-    gpu::PipelineHandle first = draws.len
-      ? draws[0].pipeline : shadow_pipeline_for(renderer, false, depth_only_vertex_variant({}))!;
-
-    begin_profile_pass(renderer, Pass.DEPTH_PREPASS)!;
-    // Bound before the pass begins: the backend checks the bound pipeline against the pass formats at begin.
-    gpu::cmd_bind_pipeline(&renderer.commands, first)!;
-    gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
-    record_depth_draws(
-        renderer:       renderer,
-        draws:          draws,
-        frame:          frame,
-        view_reflected: view_reflected,
-        state:          &state,
-        first:          first,
-    )!;
-    gpu::cmd_end_render_pass(&renderer.commands)!;
-    end_profile_pass(renderer, Pass.DEPTH_PREPASS)!;
 }
 
 fn void? record_gbuffer_pass(Renderer* renderer, ViewRecord* record, DrawItem[] gbuffer) @private {

@@ -66,6 +66,9 @@ void main() {
         case PREVIEW_MODE_RAW:
             result = sample_texture_2d(root.input_texture, root.input_sampler, uv).rgb;
             break;
+        case PREVIEW_MODE_GRAY:
+            result = vec3(sample_texture_2d(root.input_texture, root.input_sampler, uv).r);
+            break;
         case PREVIEW_MODE_OCTAHEDRAL_NORMAL:
             vec2 encoded = sample_texture_2d(root.input_texture, root.input_sampler, uv).rg;
             result = decode_octahedral(encoded) * 0.5 + 0.5;

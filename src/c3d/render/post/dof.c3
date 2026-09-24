@@ -120,5 +120,5 @@ fn void? record_dof_dispatch(
         .half_texel     = { 1.0f / (float)record.dof_near.width, 1.0f / (float)record.dof_near.height },
         .full_texel     = { 1.0f / (float)record.hdr_color.width, 1.0f / (float)record.hdr_color.height },
     };
-    return dispatch_extent(renderer, root.address, output.width, output.height);
+    return render::dispatch_extent(renderer, root.address, output.width, output.height);
 }

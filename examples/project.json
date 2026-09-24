@@ -259,6 +259,12 @@
         "src/deferred.c3"
       ]
     },
+    "ambient_occlusion": {
+      "type": "executable",
+      "sources": [
+        "src/ambient_occlusion.c3"
+      ]
+    },
     "shading_paths": {
       "type": "executable",
       "sources": [

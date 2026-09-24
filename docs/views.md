@@ -46,14 +46,17 @@ defer (void)render::destroy_view(&renderer, capture_view);
 | `color` | `DISPLAY_LDR` runs the display route; `LINEAR_HDR` keeps scene-linear color |
 | `post` | The view's `PostStack` (see [display processing](post.md)) |
 | `shading` | `FORWARD` or `DEFERRED` (see [Shading path](#shading-path)) |
+| `depth_prepass` | A `FORWARD` view draws its opaque set into depth first and shades it once; on in both constructors |
 | `lights` | `FLAT` or `CLUSTERED` candidate light selection |
 | `clusters` | Editable `ClusterDesc`; ignored by `FLAT` |
+| `ambient_occlusion` | `AmbientOcclusionDesc`; zero is off (see [ambient occlusion](ambient_occlusion.md)) |
 
-`default_view_desc()` is a full-window `DISPLAY_LDR` view with neutral grading;
-`texture_view_desc(target, color = LINEAR_HDR)` covers a target. `create_view` and `configure_view`
+`default_view_desc()` is a full-window `DISPLAY_LDR` view with neutral grading and a depth
+prepass; `texture_view_desc(target, color = LINEAR_HDR)` covers a target with the same defaults. `create_view` and `configure_view`
 validate between frames: a dead target faults `INVALID_ID`; `LINEAR_HDR` on a window view or on an
 RGBA8 target, a viewport outside the output, a render scale outside its range and an invalid post
-stack fault `INVALID_ARGUMENT`; a full pool faults `CAPACITY_EXCEEDED` (`VIEW_CAPACITY` is 8).
+stack fault `INVALID_ARGUMENT`; invalid ambient occlusion settings fault `INVALID_ARGUMENT` and
+`AoKind.RAY_TRACED` faults `UNSUPPORTED`; a full pool faults `CAPACITY_EXCEEDED` (`VIEW_CAPACITY` is 8).
 `destroy_view` on the default view faults `INVALID_ARGUMENT`.
 
 The view owns its working images (`hdr_color`, `depth`, the scene-color snapshot, post and effect
@@ -199,8 +202,17 @@ view's working resolution.
 ## Shading path
 
 `shading = DEFERRED` renders the view's encodable opaque materials through a G-buffer and one
-fullscreen lighting resolve; every other material keeps its forward pass on the same view. The
-forward view sequence is unchanged, and a `FORWARD` view allocates no G-buffer image.
+fullscreen lighting resolve; every other material keeps its forward pass on the same view. A
+`FORWARD` view allocates no G-buffer image. With `depth_prepass` (the constructors' default) it runs
+`DEPTH_PREPASS` over its opaque set, then [`AMBIENT_OCCLUSION`](ambient_occlusion.md) when enabled,
+then `FORWARD_OPAQUE` with depth `EQUAL` and no depth write, so every opaque pixel is shaded once.
+Without it, `FORWARD_OPAQUE` writes depth itself and shades every fragment that passes the depth
+test at the time it is drawn; ambient occlusion forces the prepass on. The prepass pays one more
+geometry pass with depth-only shaders and wins wherever opaque overdraw would be shaded more than
+once. Measured on an RTX 4090 at 1080p with flat lights: Sponza with 64 lights, forward opaque
+1.70 to 1.89 ms without it against 0.85 to 0.98 ms plus a 0.04 ms prepass with it; the
+`many_lights` hall with 1024 lights, 4.82 to 5.07 ms against 4.07 to 4.08 ms plus 0.007 ms.
+A `DEFERRED` view always runs it and ignores the flag.
 
 ```bash
 python3 scripts/build.py --example deferred
@@ -230,7 +242,8 @@ The deferred view owns five images at its working extent, allocated by `create_v
 | `gbuffer_flags` | `R32_UINT` | receive-shadow bit |
 
 Pass order on a deferred view: uploads, shadow atlas, light culling, `DEPTH_PREPASS` over both opaque
-lists, `GBUFFER` (depth `EQUAL`, no write), `LIGHTING` (a fullscreen fragment pass that clears
+lists, `GBUFFER` (depth `EQUAL`, no write), `AMBIENT_OCCLUSION` when the view has ambient
+occlusion, `LIGHTING` (a fullscreen fragment pass that clears
 `hdr_color`, discards where no geometry was drawn and lights every G-buffer pixel from `FrameRoot`),
 `FORWARD_OPAQUE` (depth `EQUAL`, no write), sky, transmission, transparency, velocity and the post
 chain. `Stats.gpu_pass_ms` carries the three new passes. Dielectric F0 in the resolve is

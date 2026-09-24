@@ -274,8 +274,9 @@ void main() {
         transmitted = (1.0 - fresnel) * radiance * surface.transmission_color;
     }
 
+    float ambient_occlusion = draw_ambient_occlusion(frame, draw.flags, ivec2(gl_FragCoord.xy));
     vec3 base_ambient = frame.ambient.rgb * material_sample.base_color.rgb
-        * (1.0 - material_sample.metallic) * material_sample.occlusion;
+        * (1.0 - material_sample.metallic) * min(material_sample.occlusion, ambient_occlusion);
     vec3 base_fill = (1.0 - transmission) * base_ambient + transmission * transmitted;
     vec3 color;
     if (surface.coat_weight == 0.0 && surface.sheen_strength == 0.0) {
@@ -291,7 +292,8 @@ void main() {
             environment,
             surface,
             material_sample.roughness,
-            material_sample.occlusion
+            material_sample.occlusion,
+            ambient_occlusion
         );
     }
     float view_depth = -(frame.view * vec4(v_world_pos, 1.0)).z;

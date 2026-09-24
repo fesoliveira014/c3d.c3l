@@ -141,12 +141,13 @@ struct Renderer {
     gpu::GpuAllocation      material_heap;
     gpu::GpuSpan            material_heap_span;
 
-    TargetPool              targets;
-    ViewPool                views;
-    ViewId                  default_view;
-    post::PostPipelines     post_pipelines;
-    PipelineCache           pipelines;
-    gpu::SamplerIndex       linear_clamp_sampler;
+    TargetPool                targets;
+    ViewPool                  views;
+    ViewId                    default_view;
+    post::PostPipelines       post_pipelines;
+    AmbientOcclusionPipelines ambient_occlusion_pipelines;
+    PipelineCache             pipelines;
+    gpu::SamplerIndex         linear_clamp_sampler;
 
     DebugLog*                log;
     RendererGpuProfile       gpu_profile @if($feat(C3D_PROFILE_GPU));
@@ -874,6 +875,7 @@ fn void destroy_renderer(Renderer* renderer) {
     foreach (&record : renderer.views.items) release_view_images(renderer, record);
     pool::destroy_pool{ViewRecord, ViewId}(&renderer.views);
     post::destroy_post_pipelines(&renderer.device, &renderer.post_pipelines);
+    destroy_ambient_occlusion_pipelines(&renderer.device, &renderer.ambient_occlusion_pipelines);
 
     foreach (&record : renderer.targets.items) {
         if (record.target.texture.is_valid()) release_target(&renderer.device, &record.target);

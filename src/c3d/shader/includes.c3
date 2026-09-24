@@ -10,6 +10,7 @@ struct ShaderInclude {
 }
 
 const char[*] C3D_GENERATED_C3D_ABI_TEXT @private = $embed("../../../shaders/generated/c3d_abi.glsl");
+const char[*] C3D_COMMON_AMBIENT_OCCLUSION_TEXT @private = $embed("../../../shaders/common/ambient_occlusion.glsl");
 const char[*] C3D_COMMON_BRDF_TEXT @private = $embed("../../../shaders/common/brdf.glsl");
 const char[*] C3D_COMMON_CLUSTERS_TEXT @private = $embed("../../../shaders/common/clusters.glsl");
 const char[*] C3D_COMMON_CONSTANTS_TEXT @private = $embed("../../../shaders/common/constants.glsl");
@@ -29,12 +30,14 @@ const char[*] C3D_COMMON_MATERIAL_ALPHA_TEXT @private = $embed("../../../shaders
 const char[*] C3D_COMMON_MATERIAL_MAPS_TEXT @private = $embed("../../../shaders/common/material_maps.glsl");
 const char[*] C3D_COMMON_MATERIAL_UV_TEXT @private = $embed("../../../shaders/common/material_uv.glsl");
 const char[*] C3D_COMMON_MESH_VERTEX_TEXT @private = $embed("../../../shaders/common/mesh_vertex.glsl");
+const char[*] C3D_COMMON_NOISE_TEXT @private = $embed("../../../shaders/common/noise.glsl");
 const char[*] C3D_COMMON_NORMAL_MAPPING_TEXT @private = $embed("../../../shaders/common/normal_mapping.glsl");
 const char[*] C3D_COMMON_PHYSICAL_TEXT @private = $embed("../../../shaders/common/physical.glsl");
 const char[*] C3D_COMMON_SCENE_TRACE_TEXT @private = $embed("../../../shaders/common/scene_trace.glsl");
 const char[*] C3D_COMMON_SHADOWS_TEXT @private = $embed("../../../shaders/common/shadows.glsl");
 const char[*] C3D_COMMON_SHEEN_TEXT @private = $embed("../../../shaders/common/sheen.glsl");
 const char[*] C3D_COMMON_STANDARD_SURFACE_TEXT @private = $embed("../../../shaders/common/standard_surface.glsl");
+const char[*] C3D_COMMON_TEXTURE_FETCH_TEXT @private = $embed("../../../shaders/common/texture_fetch.glsl");
 const char[*] C3D_COMMON_TOON_TEXT @private = $embed("../../../shaders/common/toon.glsl");
 const char[*] C3D_COMMON_TRACE_SURFACE_TEXT @private = $embed("../../../shaders/common/trace_surface.glsl");
 const char[*] C3D_COMMON_TRANSMISSION_TEXT @private = $embed("../../../shaders/common/transmission.glsl");
@@ -49,8 +52,9 @@ const char[*] GPU_RAY_TRACING_TEXT @private = $embed("../../../lib/gpu.c3l/inclu
 <*
  Every include a custom stage may resolve, in table order.
 *>
-const ShaderInclude[36] SHADER_INCLUDES = {
+const ShaderInclude[39] SHADER_INCLUDES = {
     { .name = "c3d_abi.glsl", .text = (String)C3D_GENERATED_C3D_ABI_TEXT[..] },
+    { .name = "ambient_occlusion.glsl", .text = (String)C3D_COMMON_AMBIENT_OCCLUSION_TEXT[..] },
     { .name = "brdf.glsl", .text = (String)C3D_COMMON_BRDF_TEXT[..] },
     { .name = "clusters.glsl", .text = (String)C3D_COMMON_CLUSTERS_TEXT[..] },
     { .name = "constants.glsl", .text = (String)C3D_COMMON_CONSTANTS_TEXT[..] },
@@ -70,12 +74,14 @@ const ShaderInclude[36] SHADER_INCLUDES = {
     { .name = "material_maps.glsl", .text = (String)C3D_COMMON_MATERIAL_MAPS_TEXT[..] },
     { .name = "material_uv.glsl", .text = (String)C3D_COMMON_MATERIAL_UV_TEXT[..] },
     { .name = "mesh_vertex.glsl", .text = (String)C3D_COMMON_MESH_VERTEX_TEXT[..] },
+    { .name = "noise.glsl", .text = (String)C3D_COMMON_NOISE_TEXT[..] },
     { .name = "normal_mapping.glsl", .text = (String)C3D_COMMON_NORMAL_MAPPING_TEXT[..] },
     { .name = "physical.glsl", .text = (String)C3D_COMMON_PHYSICAL_TEXT[..] },
     { .name = "scene_trace.glsl", .text = (String)C3D_COMMON_SCENE_TRACE_TEXT[..] },
     { .name = "shadows.glsl", .text = (String)C3D_COMMON_SHADOWS_TEXT[..] },
     { .name = "sheen.glsl", .text = (String)C3D_COMMON_SHEEN_TEXT[..] },
     { .name = "standard_surface.glsl", .text = (String)C3D_COMMON_STANDARD_SURFACE_TEXT[..] },
+    { .name = "texture_fetch.glsl", .text = (String)C3D_COMMON_TEXTURE_FETCH_TEXT[..] },
     { .name = "toon.glsl", .text = (String)C3D_COMMON_TOON_TEXT[..] },
     { .name = "trace_surface.glsl", .text = (String)C3D_COMMON_TRACE_SURFACE_TEXT[..] },
     { .name = "transmission.glsl", .text = (String)C3D_COMMON_TRANSMISSION_TEXT[..] },

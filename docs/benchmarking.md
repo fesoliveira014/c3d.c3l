@@ -99,6 +99,8 @@ lacks it, so an excluded mode never silently reports zero timings.
 | `--panel` | `--window`, `--capture`, `C3D_PROFILE_GUI` | Draws the profiler panel every frame through the overlay and reports its cost as `gui_ms`. |
 | `--print-features` | nothing | Prints `cpu=<0|1> gpu=<0|1> internal=<0|1> gui=<0|1>` and exits. |
 | `--anti-aliasing none\|fxaa\|taa` | nothing | Selects the measured view's anti-aliasing filter (`benchmark.py --anti-aliasing`); FXAA by default. |
+| `--depth-prepass on\|off` | nothing | Selects the forward measured view's depth prepass (`benchmark.py --depth-prepass`); on by default, as in the view constructors. Deferred views always run it. |
+| `--ambient-occlusion none\|half\|full` | nothing | Selects the measured view's screen-space AO at half or full resolution (`benchmark.py --ambient-occlusion`); none by default. The CSV reports it as `gpu_ambient_occlusion_ms`. |
 
 The windowed run is a different workload from the headless one: the default view
 carries the interactive example's settings and window-system pacing applies. Compare
@@ -114,7 +116,7 @@ windowed rows only with other windowed rows.
 | `end_ms` | `end_frame` submission, including presentation in windowed runs |
 | `gui_ms` | Profiler panel draw and overlay recording; zero without `--panel` |
 | `cpu_record_ms` | Existing renderer statistic; excludes the beginning wait/readback/sweep work |
-| `gpu_*_ms` | Completed per-pass timestamps for shadow atlas, light culling, depth prepass, G-buffer, lighting resolve, forward opaque, post chain, composite, velocity and temporal resolve; `-1` when unavailable, zero for an omitted pass |
+| `gpu_*_ms` | Completed per-pass timestamps for shadow atlas, light culling, depth prepass, G-buffer, ambient occlusion, lighting resolve, forward opaque, post chain, composite, velocity and temporal resolve; `-1` when unavailable, zero for an omitted pass |
 | `draws`, `lights`, `dropped` | Current-frame renderer counters |
 | `overflows` | Completed cluster overflow count attributed to its submitted frame |
 | `material_resolutions` | Fresh material dependency resolutions in the frame; one per material per view traversal |

@@ -82,5 +82,5 @@ fn void? record_tile_dispatch(
         .height         = tiles_y,
         .mode           = mode,
     };
-    return dispatch_extent(renderer, root.address, tiles_x, tiles_y);
+    return render::dispatch_extent(renderer, root.address, tiles_x, tiles_y);
 }

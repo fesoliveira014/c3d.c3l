@@ -35,6 +35,7 @@ const float CAMERA_TURN_DEGREES @private = 2;
 const float CAMERA_SLIDE @private = 0.1f;
 const float ORTHOGRAPHIC_HEIGHT @private = 2;
 const uint SHARED_BOX_COUNT @private = 5;
+const uint PASSES_PER_OPAQUE_ITEM @private = 2; // the forward view's depth prepass and its opaque pass
 const uint SHARED_GRID_WIDTH @private = 8;
 const uint OVERFLOW_BOX_COUNT @private = 64; // about 20 KiB of draw roots per frame against a 4 KiB ring
 const usz TINY_RING_BYTES @private = 4096;
@@ -699,7 +700,7 @@ fn void test_shared_material_resolves_once_per_view_and_pipelines_once_per_item(
         renderer.render_view(&shared.scene, shared.camera, fixture.view)!!;
         renderer.render_view(&shared.scene, shared.camera, fixture.second_view)!!;
         assert(renderer.stats.material_resolutions == 2);
-        assert(renderer.stats.pipeline_lookups == 2 * SHARED_BOX_COUNT);
+        assert(renderer.stats.pipeline_lookups == 2 * PASSES_PER_OPAQUE_ITEM * SHARED_BOX_COUNT);
         renderer.finish_view(fixture.view)!!;
         renderer.finish_view(fixture.second_view)!!;
         renderer.end_frame()!!;
@@ -725,7 +726,7 @@ fn void test_shadowed_deformed_scene_draws_with_prepared_pipelines() @test {
     renderer.begin_frame()!!;
     renderer.render_view(&moving.scene, moving.camera, fixture.view)!!;
     assert(renderer.stats.shadow_layers == 1);
-    assert(renderer.stats.pipeline_lookups == 2);
+    assert(renderer.stats.pipeline_lookups == 1 + PASSES_PER_OPAQUE_ITEM);
     renderer.finish_view(fixture.view)!!;
     renderer.end_frame()!!;
     check_validation(renderer);

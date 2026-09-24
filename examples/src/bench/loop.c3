@@ -30,6 +30,8 @@ struct BenchmarkFlags {
     uint width;
     uint height;
     AntiAliasing anti_aliasing;
+    AmbientOcclusionDesc ambient_occlusion;
+    bool depth_prepass;
 }
 
 <*
@@ -69,10 +71,17 @@ struct BenchmarkRun {
 }
 
 <*
- Flags with 300 measured frames, 60 warmup frames, a 1440 by 900 extent and FXAA.
+ Default flags: 300 frames after 60 warmup, 1440 by 900, FXAA, depth prepass, no AO.
 *>
 fn BenchmarkFlags default_flags() {
-    return { .frames = 300, .warmup = 60, .width = 1440, .height = 900, .anti_aliasing = AntiAliasing.FXAA };
+    return {
+        .frames        = 300,
+        .warmup        = 60,
+        .width         = 1440,
+        .height        = 900,
+        .anti_aliasing = AntiAliasing.FXAA,
+        .depth_prepass = true,
+    };
 }
 
 <*
@@ -119,6 +128,21 @@ fn bool? parse_flag(String[] args, usz* index, BenchmarkFlags* flags, String tar
                 case "none": flags.anti_aliasing = AntiAliasing.NONE;
                 case "fxaa": flags.anti_aliasing = AntiAliasing.FXAA;
                 case "taa": flags.anti_aliasing = AntiAliasing.TAA;
+                default: return c3d::INVALID_ARGUMENT~;
+            }
+        case "--depth-prepass":
+            switch (option_value(args, index)!) {
+                case "on": flags.depth_prepass = true;
+                case "off": flags.depth_prepass = false;
+                default: return c3d::INVALID_ARGUMENT~;
+            }
+        case "--ambient-occlusion":
+            switch (option_value(args, index)!) {
+                case "none": flags.ambient_occlusion = {};
+                case "half": flags.ambient_occlusion = render::AMBIENT_OCCLUSION_DEFAULT;
+                case "full":
+                    flags.ambient_occlusion = render::AMBIENT_OCCLUSION_DEFAULT;
+                    flags.ambient_occlusion.full_resolution = true;
                 default: return c3d::INVALID_ARGUMENT~;
             }
         default: return false;
@@ -207,10 +231,10 @@ fn usz? run_frames(BenchmarkRun* run, BenchmarkFlags flags, FrameSample[] sample
  @param timestamps_enabled : "False prints -1 in every GPU column."
 *>
 fn void write_samples(FrameSample[] samples, bool timestamps_enabled) {
-    io::printn("frame,wall_ms,update_ms,begin_ms,render_ms,finish_ms,end_ms,gui_ms,cpu_record_ms,draws,lights,dropped,overflows,material_resolutions,pipeline_lookups,gpu_shadow_ms,gpu_cull_ms,gpu_prepass_ms,gpu_gbuffer_ms,gpu_lighting_ms,gpu_opaque_ms,gpu_post_ms,gpu_composite_ms,gpu_velocity_ms,gpu_taa_ms");
+    io::printn("frame,wall_ms,update_ms,begin_ms,render_ms,finish_ms,end_ms,gui_ms,cpu_record_ms,draws,lights,dropped,overflows,material_resolutions,pipeline_lookups,gpu_shadow_ms,gpu_cull_ms,gpu_prepass_ms,gpu_gbuffer_ms,gpu_ambient_occlusion_ms,gpu_lighting_ms,gpu_opaque_ms,gpu_post_ms,gpu_composite_ms,gpu_velocity_ms,gpu_taa_ms");
     foreach (index, sample : samples) {
         float unavailable = -1;
-        io::printfn("%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f",
+        io::printfn("%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f",
             index, sample.wall_ms, sample.update_ms, sample.begin_ms, sample.render_ms,
             sample.finish_ms, sample.end_ms, sample.gui_ms, sample.cpu_record_ms, sample.draws, sample.lights,
             sample.dropped, sample.overflows, sample.material_resolutions, sample.pipeline_lookups,
@@ -218,6 +242,7 @@ fn void write_samples(FrameSample[] samples, bool timestamps_enabled) {
             timestamps_enabled ? sample.gpu_ms[Pass.LIGHT_CULL.ordinal] : unavailable,
             timestamps_enabled ? sample.gpu_ms[Pass.DEPTH_PREPASS.ordinal] : unavailable,
             timestamps_enabled ? sample.gpu_ms[Pass.GBUFFER.ordinal] : unavailable,
+            timestamps_enabled ? sample.gpu_ms[Pass.AMBIENT_OCCLUSION.ordinal] : unavailable,
             timestamps_enabled ? sample.gpu_ms[Pass.LIGHTING.ordinal] : unavailable,
             timestamps_enabled ? sample.gpu_ms[Pass.FORWARD_OPAQUE.ordinal] : unavailable,
             timestamps_enabled ? sample.gpu_ms[Pass.POST_CHAIN.ordinal] : unavailable,

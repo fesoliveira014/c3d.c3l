@@ -35,9 +35,13 @@ const float DEPTH_TOLERANCE_MIN @local = 0.001f;
 const float DEPTH_TOLERANCE_MAX @local = 0.5f;
 const float VELOCITY_THRESHOLD_MIN @local = 0.1f;
 const float VELOCITY_THRESHOLD_MAX @local = 16;
+const float AO_RADIUS_MIN @local = 0.05f;
+const float AO_RADIUS_MAX @local = 5;
+const float AO_INTENSITY_MAX @local = 2;
 const ZString[Tonemap::len] TONEMAP_LABELS @local = { "None", "ACES", "AgX", "Reinhard" };
 const ZString[AntiAliasing::len] ANTI_ALIASING_LABELS @local = { "None", "FXAA", "TAA" };
 const ZString[TaaDebug::len] TAA_DEBUG_LABELS @local = { "None", "Velocity", "Rejection", "History weight" };
+const ZString[AoKind.RAY_TRACED.ordinal] AO_KIND_LABELS @local = { "None", "SSAO" };
 
 <*
  Edit the view's post settings; the caller applies them with configure_view.
@@ -59,6 +63,7 @@ fn bool post_panel(ViewDesc* desc, TextureId lut, bool ray_queries = false) {
         changed = true;
     }
     changed |= anti_aliasing_combo("Anti-aliasing", &desc.post.anti_aliasing);
+    changed |= imgui::checkbox("Depth prepass", &desc.depth_prepass);
     if (lut.generation) {
         bool lut_enabled = grade.lut.generation != 0;
         if (imgui::checkbox("LUT", &lut_enabled)) {
@@ -142,12 +147,36 @@ fn bool post_panel(ViewDesc* desc, TextureId lut, bool ray_queries = false) {
             changed = true;
         }
     }
+    if (imgui::collapsing_header("Ambient occlusion", {})) {
+        changed |= edit_ambient_occlusion(&desc.ambient_occlusion);
+    }
     if (imgui::collapsing_header("Ray tracing", {})) {
         imgui::begin_disabled(!ray_queries);
         changed |= imgui::checkbox("Shadows", &desc.ray_tracing.shadows);
         imgui::end_disabled();
     }
 
+    return changed;
+}
+
+fn bool edit_ambient_occlusion(AmbientOcclusionDesc* ambient_occlusion) @local {
+    int selected = (int)ambient_occlusion.kind.ordinal;
+    bool changed = imgui::combo_char(
+        label:        "Kind",
+        current_item: &selected,
+        items:        &AO_KIND_LABELS[0],
+        items_count:  AO_KIND_LABELS.len,
+    );
+    if (changed) {
+        AoKind kind = (AoKind)selected;
+        if (kind == AoKind.SSAO && ambient_occlusion.radius == 0) {
+            *ambient_occlusion = render::AMBIENT_OCCLUSION_DEFAULT;
+        }
+        ambient_occlusion.kind = kind;
+    }
+    changed |= edit_grade_factor("Radius", &ambient_occlusion.radius, AO_RADIUS_MIN, AO_RADIUS_MAX);
+    changed |= edit_grade_factor("AO intensity", &ambient_occlusion.intensity, 0, AO_INTENSITY_MAX);
+    changed |= imgui::checkbox("Full resolution", &ambient_occlusion.full_resolution);
     return changed;
 }
 

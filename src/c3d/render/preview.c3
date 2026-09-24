@@ -24,6 +24,7 @@ enum PreviewKind {
     TEXTURE,
     VIEW_CLUSTERS,
     VIEW_GBUFFER,
+    VIEW_AMBIENT_OCCLUSION,
 }
 
 <*
@@ -102,6 +103,7 @@ fn void? Renderer.request_preview(
         case VIEW_DOF_FAR:
         case VIEW_MOTION_BLUR:
         case VIEW_GBUFFER:
+        case VIEW_AMBIENT_OCCLUSION:
             bloom_levels = self.views.try_get(source.view)!.bloom_levels;
         case VIEW_CLUSTERS:
             ViewRecord* record = self.views.try_get(source.view)!;
@@ -169,6 +171,8 @@ fn void? validate_preview_request(
             if (source.level >= cluster_slices) return c3d::INVALID_ARGUMENT~;
         case VIEW_GBUFFER:
             if (source.level >= GBUFFER_CHANNEL_COUNT) return c3d::INVALID_ARGUMENT~;
+        case VIEW_AMBIENT_OCCLUSION:
+            if (source.level > 1) return c3d::INVALID_ARGUMENT~;
         case SHADOW_LAYER:
             if (source.layer >= layer_count) return c3d::INVALID_ARGUMENT~;
         case TEXTURE:
@@ -257,6 +261,7 @@ fn void? resolve_preview_source(Renderer* renderer, PreviewSlot* preview, Previe
         case VIEW_DOF_FAR:
         case VIEW_MOTION_BLUR:
         case VIEW_GBUFFER:
+        case VIEW_AMBIENT_OCCLUSION:
             ViewRecord* record = renderer.views.get(source.view);
             if (!record.live) return;
             Target* target = view_preview_target(record, source);
@@ -273,6 +278,8 @@ fn void? resolve_preview_source(Renderer* renderer, PreviewSlot* preview, Previe
                 root.mode = shader::PREVIEW_MODE_VELOCITY;
             } else if (source.kind == PreviewKind.VIEW_GBUFFER) {
                 root.mode = gbuffer_preview_mode(GBufferChannel::from_ordinal(source.level));
+            } else if (source.kind == PreviewKind.VIEW_AMBIENT_OCCLUSION) {
+                root.mode = shader::PREVIEW_MODE_GRAY;
             }
         case VIEW_CLUSTERS:
             if (!renderer.views.is_live(source.view)) return;
@@ -318,16 +325,17 @@ fn void? resolve_preview_source(Renderer* renderer, PreviewSlot* preview, Previe
 
 fn Target* view_preview_target(ViewRecord* record, PreviewSource source) @private {
     switch (source.kind) {
-        case VIEW_COLOR:       return &record.hdr_color;
-        case VIEW_DEPTH:       return &record.depth;
-        case VIEW_VELOCITY:    return &record.velocity;
-        case VIEW_SCENE_COLOR: return &record.scene_color;
-        case VIEW_BLOOM:       return &record.bloom[source.level];
-        case VIEW_DOF_NEAR:    return &record.dof_near;
-        case VIEW_DOF_FAR:     return &record.dof_far;
-        case VIEW_MOTION_BLUR: return &record.motion_blur_out;
-        case VIEW_GBUFFER:     return &record.gbuffer[source.level];
-        default:               unreachable("not a view image");
+        case VIEW_COLOR:             return &record.hdr_color;
+        case VIEW_DEPTH:             return &record.depth;
+        case VIEW_VELOCITY:          return &record.velocity;
+        case VIEW_SCENE_COLOR:       return &record.scene_color;
+        case VIEW_BLOOM:             return &record.bloom[source.level];
+        case VIEW_DOF_NEAR:          return &record.dof_near;
+        case VIEW_DOF_FAR:           return &record.dof_far;
+        case VIEW_MOTION_BLUR:       return &record.motion_blur_out;
+        case VIEW_GBUFFER:           return &record.gbuffer[source.level];
+        case VIEW_AMBIENT_OCCLUSION: return source.level == 0 ? &record.ao : &record.ao_raw;
+        default:                     unreachable("not a view image");
     }
 }
 

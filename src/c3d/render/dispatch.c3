@@ -423,3 +423,18 @@ fn void sweep_compute_shaders(Renderer* renderer) @private {
 fn void free_compute_shaders(Renderer* renderer) @private {
     alloc::free(renderer.allocator, renderer.compute_shaders.ptr);
 }
+
+fn void? dispatch_over(Renderer* renderer, gpu::GpuAddress root, Target* target) @private {
+    return dispatch_extent(renderer, root, target.width, target.height);
+}
+
+fn void? dispatch_extent(
+    Renderer* renderer,
+    gpu::GpuAddress root,
+    uint width,
+    uint height,
+) @private {
+    uint groups_x = (width + shader::POST_GROUP_SIZE - 1) / shader::POST_GROUP_SIZE;
+    uint groups_y = (height + shader::POST_GROUP_SIZE - 1) / shader::POST_GROUP_SIZE;
+    return gpu::cmd_dispatch(&renderer.commands, root, { groups_x, groups_y, 1 });
+}

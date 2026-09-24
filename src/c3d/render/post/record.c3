@@ -288,7 +288,7 @@ fn void? record_grade(
         bloom_intensity: bloom.intensity,
     );
     gpu::cmd_bind_pipeline(&renderer.commands, renderer.post_pipelines.grade)!;
-    dispatch_over(renderer, root.address, &record.post_a)!;
+    render::dispatch_over(renderer, root.address, &record.post_a)!;
 }
 
 fn void? record_fxaa(Renderer* renderer, ViewRecord* record) @private {
@@ -305,17 +305,7 @@ fn void? record_fxaa(Renderer* renderer, ViewRecord* record) @private {
         .height         = record.post_b.height,
     };
     gpu::cmd_bind_pipeline(&renderer.commands, renderer.post_pipelines.fxaa)!;
-    dispatch_over(renderer, root.address, &record.post_b)!;
-}
-
-fn void? dispatch_over(Renderer* renderer, gpu::GpuAddress root, Target* target) @private {
-    return dispatch_extent(renderer, root, target.width, target.height);
-}
-
-fn void? dispatch_extent(Renderer* renderer, gpu::GpuAddress root, uint width, uint height) @private {
-    uint groups_x = (width + shader::POST_GROUP_SIZE - 1) / shader::POST_GROUP_SIZE;
-    uint groups_y = (height + shader::POST_GROUP_SIZE - 1) / shader::POST_GROUP_SIZE;
-    return gpu::cmd_dispatch(&renderer.commands, root, { groups_x, groups_y, 1 });
+    render::dispatch_over(renderer, root.address, &record.post_b)!;
 }
 
 fn PipelineKey display_pipeline_key(gpu::Format output_format) @private {

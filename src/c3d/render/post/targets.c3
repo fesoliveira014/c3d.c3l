@@ -21,7 +21,7 @@ const ZString[BLOOM_MAX_LEVELS] BLOOM_LEVEL_NAMES @private = {
 fn void? acquire_post_targets(Renderer* renderer, ViewRecord* record) {
     if (record.post_a.texture.is_valid() || !record.hdr_color.texture.is_valid()) return;
 
-    record.post_a = allocate_post_target(
+    record.post_a = render::allocate_storage_target(
         device:     &renderer.device,
         width:      record.hdr_color.width,
         height:     record.hdr_color.height,
@@ -41,7 +41,7 @@ fn void? acquire_post_targets(Renderer* renderer, ViewRecord* record) {
 fn void? acquire_fxaa_fallback_target(Renderer* renderer, ViewRecord* record) {
     if (record.post_b.texture.is_valid()) return;
 
-    record.post_b = allocate_post_target(
+    record.post_b = render::allocate_storage_target(
         device:     &renderer.device,
         width:      record.hdr_color.width,
         height:     record.hdr_color.height,
@@ -82,33 +82,37 @@ fn void retire_effect_targets(Renderer* renderer, ViewRecord* record) {
     RetireList* retire = render::last_submitted_retire(renderer);
     bool bloom_stale = record.bloom_levels != stack.bloom_params.levels;
     if (record.bloom_levels && (!stack.bloom || bloom_stale)) {
-        for (uint level = 0; level < record.bloom_levels; level++) retire_post_target(retire, &record.bloom[level]);
+        for (uint level = 0; level < record.bloom_levels; level++) {
+            render::retire_storage_target(retire, &record.bloom[level]);
+        }
         record.bloom_levels = 0;
     }
     if (!stack.depth_of_field && record.dof_near.texture.is_valid()) {
-        retire_post_target(retire, &record.dof_near);
-        retire_post_target(retire, &record.dof_far);
-        retire_post_target(retire, &record.dof_near_blur);
-        retire_post_target(retire, &record.dof_far_blur);
+        render::retire_storage_target(retire, &record.dof_near);
+        render::retire_storage_target(retire, &record.dof_far);
+        render::retire_storage_target(retire, &record.dof_near_blur);
+        render::retire_storage_target(retire, &record.dof_far_blur);
     }
     if (!uses_tiles(stack) && record.tile_max.texture.is_valid()) {
-        retire_post_target(retire, &record.tile_max);
-        retire_post_target(retire, &record.tile_neighbor);
+        render::retire_storage_target(retire, &record.tile_max);
+        render::retire_storage_target(retire, &record.tile_neighbor);
     }
     bool velocity_stale = !uses_velocity(stack) || record.velocity.format != velocity_format(stack);
     if (record.velocity.texture.is_valid() && velocity_stale) {
         retire.push({ .kind = RetiredKind.ATTACHMENT_VIEW, .attachment_view = record.velocity.attachment });
-        retire_post_target(retire, &record.velocity);
+        render::retire_storage_target(retire, &record.velocity);
     }
     if (!stack.motion_blur && record.motion_blur_out.texture.is_valid()) {
-        retire_post_target(retire, &record.motion_blur_out);
+        render::retire_storage_target(retire, &record.motion_blur_out);
     }
     if (stack.anti_aliasing != AntiAliasing.TAA && record.taa_color[0].texture.is_valid()) {
-        foreach (&image : record.taa_color) retire_post_target(retire, image);
-        foreach (&image : record.taa_depth) retire_post_target(retire, image);
-        foreach (&image : record.taa_velocity) retire_post_target(retire, image);
+        foreach (&image : record.taa_color) render::retire_storage_target(retire, image);
+        foreach (&image : record.taa_depth) render::retire_storage_target(retire, image);
+        foreach (&image : record.taa_velocity) render::retire_storage_target(retire, image);
     }
-    if (!taa_debug_enabled(stack) && record.taa_debug.texture.is_valid()) retire_post_target(retire, &record.taa_debug);
+    if (!taa_debug_enabled(stack) && record.taa_debug.texture.is_valid()) {
+        render::retire_storage_target(retire, &record.taa_debug);
+    }
 }
 
 <*
@@ -117,7 +121,9 @@ fn void retire_effect_targets(Renderer* renderer, ViewRecord* record) {
  @param [&inout] record : "Effect images are cleared."
 *>
 fn void release_effect_targets(gpu::Device* device, ViewRecord* record) {
-    for (uint level = 0; level < record.bloom_levels; level++) release_post_target(device, &record.bloom[level]);
+    for (uint level = 0; level < record.bloom_levels; level++) {
+        render::release_storage_target(device, &record.bloom[level]);
+    }
     record.bloom_levels = 0;
     release_dof_layers(device, record);
     release_tiles(device, record);
@@ -149,7 +155,7 @@ fn void? acquire_velocity_image(Renderer* renderer, ViewRecord* record) @private
 }
 
 fn void? acquire_motion_blur_output(Renderer* renderer, ViewRecord* record) @private {
-    record.motion_blur_out = allocate_post_target(
+    record.motion_blur_out = render::allocate_storage_target(
         device:     &renderer.device,
         width:      record.hdr_color.width,
         height:     record.hdr_color.height,
@@ -160,7 +166,7 @@ fn void? acquire_motion_blur_output(Renderer* renderer, ViewRecord* record) @pri
 
 fn void release_motion_blur_images(gpu::Device* device, ViewRecord* record) @private {
     if (record.velocity.texture.is_valid()) render::release_target(device, &record.velocity);
-    if (record.motion_blur_out.texture.is_valid()) release_post_target(device, &record.motion_blur_out);
+    if (record.motion_blur_out.texture.is_valid()) render::release_storage_target(device, &record.motion_blur_out);
 }
 
 fn void? acquire_dof_layers(Renderer* renderer, ViewRecord* record) @private {
@@ -170,7 +176,7 @@ fn void? acquire_dof_layers(Renderer* renderer, ViewRecord* record) @private {
     ZString[4] names = { "dof_near", "dof_far", "dof_near_blur", "dof_far_blur" };
     defer catch release_dof_layers(&renderer.device, record);
     foreach (index, layer : layers) {
-        *layer = allocate_post_target(
+        *layer = render::allocate_storage_target(
             device:     &renderer.device,
             width:      width,
             height:     height,
@@ -184,14 +190,14 @@ fn void? acquire_tiles(Renderer* renderer, ViewRecord* record) @private {
     uint width = tile_count(record.hdr_color.width);
     uint height = tile_count(record.hdr_color.height);
     defer catch release_tiles(&renderer.device, record);
-    record.tile_max = allocate_post_target(
+    record.tile_max = render::allocate_storage_target(
         device:     &renderer.device,
         width:      width,
         height:     height,
         format:     TILE_FORMAT,
         debug_name: "tile_max",
     )!;
-    record.tile_neighbor = allocate_post_target(
+    record.tile_neighbor = render::allocate_storage_target(
         device:     &renderer.device,
         width:      width,
         height:     height,
@@ -203,20 +209,20 @@ fn void? acquire_tiles(Renderer* renderer, ViewRecord* record) @private {
 fn void release_dof_layers(gpu::Device* device, ViewRecord* record) @private {
     Target*[4] layers = { &record.dof_near, &record.dof_far, &record.dof_near_blur, &record.dof_far_blur };
     foreach (layer : layers) {
-        if (layer.texture.is_valid()) release_post_target(device, layer);
+        if (layer.texture.is_valid()) render::release_storage_target(device, layer);
     }
 }
 
 fn void release_tiles(gpu::Device* device, ViewRecord* record) @private {
-    if (record.tile_max.texture.is_valid()) release_post_target(device, &record.tile_max);
-    if (record.tile_neighbor.texture.is_valid()) release_post_target(device, &record.tile_neighbor);
+    if (record.tile_max.texture.is_valid()) render::release_storage_target(device, &record.tile_max);
+    if (record.tile_neighbor.texture.is_valid()) render::release_storage_target(device, &record.tile_neighbor);
 }
 
 fn void? acquire_bloom_chain(Renderer* renderer, ViewRecord* record) @private {
     uint levels = record.desc.post.bloom_params.levels;
     defer catch release_effect_targets(&renderer.device, record);
     for (uint level = 0; level < levels; level++) {
-        record.bloom[level] = allocate_post_target(
+        record.bloom[level] = render::allocate_storage_target(
             device:     &renderer.device,
             width:      bloom_level_extent(record.hdr_color.width, level),
             height:     bloom_level_extent(record.hdr_color.height, level),
@@ -236,8 +242,8 @@ fn void retire_post_targets(Renderer* renderer, ViewRecord* record) {
     if (!record.post_a.texture.is_valid()) return;
 
     RetireList* retire = render::last_submitted_retire(renderer);
-    retire_post_target(retire, &record.post_a);
-    if (record.post_b.texture.is_valid()) retire_post_target(retire, &record.post_b);
+    render::retire_storage_target(retire, &record.post_a);
+    if (record.post_b.texture.is_valid()) render::retire_storage_target(retire, &record.post_b);
 }
 
 <*
@@ -248,46 +254,6 @@ fn void retire_post_targets(Renderer* renderer, ViewRecord* record) {
 fn void release_post_targets(gpu::Device* device, ViewRecord* record) {
     if (!record.post_a.texture.is_valid()) return;
 
-    release_post_target(device, &record.post_a);
-    if (record.post_b.texture.is_valid()) release_post_target(device, &record.post_b);
-}
-
-fn Target? allocate_post_target(
-    gpu::Device* device,
-    uint width,
-    uint height,
-    gpu::Format format,
-    ZString debug_name,
-) @private {
-    gpu::TextureDesc texture_desc = {
-        .width      = width,
-        .height     = height,
-        .format     = format,
-        .usage      = { .sampled, .storage },
-        .access     = { .graphics },
-        .debug_name = debug_name,
-    };
-    gpu::TextureHandle texture = gpu::create_texture(device, &texture_desc)!;
-    defer catch (void)gpu::destroy_texture(device, texture);
-
-    gpu::TextureView view = gpu::create_texture_view(device, texture, null)!;
-    return {
-        .texture = texture,
-        .view    = view,
-        .format  = format,
-        .width   = width,
-        .height  = height,
-    };
-}
-
-fn void retire_post_target(RetireList* retire, Target* target) @private {
-    retire.push({ .kind = RetiredKind.TEXTURE_VIEW, .texture_view = target.view });
-    retire.push({ .kind = RetiredKind.TEXTURE, .texture = target.texture });
-    *target = {};
-}
-
-fn void release_post_target(gpu::Device* device, Target* target) @private {
-    (void)gpu::destroy_texture_view(device, target.view);
-    (void)gpu::destroy_texture(device, target.texture);
-    *target = {};
+    render::release_storage_target(device, &record.post_a);
+    if (record.post_b.texture.is_valid()) render::release_storage_target(device, &record.post_b);
 }

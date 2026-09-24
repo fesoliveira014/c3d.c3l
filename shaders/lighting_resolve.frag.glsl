@@ -51,10 +51,12 @@ void main() {
         vec3(specular_weight)
     );
 
-    vec3 color = frame.ambient.rgb * base_color * (1.0 - metallic) * occlusion + emissive_specular.rgb;
+    float ambient_occlusion = frame_ambient_occlusion(frame, ivec2(gl_FragCoord.xy));
+    vec3 color = frame.ambient.rgb * base_color * (1.0 - metallic) * min(occlusion, ambient_occlusion)
+        + emissive_specular.rgb;
     if (frame.environment != 0ul) {
         EnvironmentGpu environment = EnvironmentGpu(frame.environment);
-        color += evaluate_environment(environment, surface, roughness, occlusion);
+        color += evaluate_environment(environment, surface, roughness, occlusion, ambient_occlusion);
     }
     float view_depth = -(frame.view * vec4(world_position, 1.0)).z;
     LightList lights = select_lights(frame, world_position, view_depth);

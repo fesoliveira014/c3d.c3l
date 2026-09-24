@@ -56,10 +56,12 @@ fn void test_texture_view_desc_defaults() @test {
     assert(desc.render_scale == 1);
     assert(desc.color == OutputMode.LINEAR_HDR);
     assert(desc.post.anti_aliasing == AntiAliasing.FXAA);
+    assert(desc.depth_prepass);
 
     ViewDesc window = render::default_view_desc();
     assert(window.output == ViewOutput.WINDOW && window.color == OutputMode.DISPLAY_LDR);
     assert(window.render_scale == 1);
+    assert(window.depth_prepass);
 }
 
 fn void test_texture_binding_matches_tracks_the_target() @test {
@@ -93,4 +95,43 @@ fn void test_view_desc_rejects_rt_shadows_without_ray_queries() @test {
     }
     renderer.caps.ray_queries.enabled = true;
     render::validate_view_desc(renderer, &desc)!!;
+}
+
+fn void test_view_desc_rejects_ray_traced_and_invalid_ambient_occlusion() @test {
+    Renderer* renderer = mem::new(Renderer);
+    defer free(renderer);
+    ViewDesc desc = render::default_view_desc();
+
+    desc.ambient_occlusion = render::AMBIENT_OCCLUSION_DEFAULT;
+    render::validate_view_desc(renderer, &desc)!!;
+
+    desc.ambient_occlusion.kind = AoKind.RAY_TRACED;
+    if (catch excuse = render::validate_view_desc(renderer, &desc)) {
+        assert(excuse == c3d::UNSUPPORTED);
+    } else {
+        assert(false);
+    }
+
+    desc.ambient_occlusion = render::AMBIENT_OCCLUSION_DEFAULT;
+    desc.ambient_occlusion.radius = 0;
+    if (catch excuse = render::validate_view_desc(renderer, &desc)) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false);
+    }
+}
+
+fn void test_view_targets_list_every_image_once() @test {
+    ViewRecord* record = mem::new(ViewRecord);
+    defer free(record);
+    Target*[render::VIEW_TARGET_COUNT] targets = render::view_targets(record);
+    bool raw_listed;
+    bool ao_listed;
+    foreach (usz index, target : targets) {
+        assert(target != null);
+        for (usz other = index + 1; other < targets.len; other++) assert(target != targets[other]);
+        if (target == &record.ao_raw) raw_listed = true;
+        if (target == &record.ao) ao_listed = true;
+    }
+    assert(raw_listed && ao_listed);
 }
