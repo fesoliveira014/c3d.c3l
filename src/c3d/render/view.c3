@@ -146,6 +146,7 @@ fn void? Renderer.render_view(
         bool taa = record.desc.post.anti_aliasing == AntiAliasing.TAA;
         bool temporal = taa || record.desc.post.motion_blur;
         bool ambient_occlusion = record.desc.ambient_occlusion.kind != AoKind.NONE;
+        bool forward_prepass = record.desc.depth_prepass || ambient_occlusion;
         Vec2 jitter = taa
           ? post::taa_jitter(record.history.sample_index, record.hdr_color.width, record.hdr_color.height)
           : (Vec2){};
@@ -446,7 +447,7 @@ fn void? Renderer.render_view(
                 }
                 switch (shading) {
                     case FORWARD:
-                        if (ambient_occlusion) {
+                        if (forward_prepass) {
                             record_depth_prepass(
                                 renderer:       self,
                                 record:         record,
@@ -455,6 +456,8 @@ fn void? Renderer.render_view(
                                 gbuffer:        {},
                                 opaque:         opaque_items,
                             )!;
+                        }
+                        if (ambient_occlusion) {
                             record_ambient_occlusion(self, record, frame_span.address)!;
                             record.depth.transition(&self.commands, DEPTH_ATTACHMENT_STATE)!;
                         }
@@ -467,7 +470,7 @@ fn void? Renderer.render_view(
                             sky:           environments.sky != null,
                             clear_color:   environments.clear_color,
                             color_loaded:  false,
-                            depth_matched: ambient_occlusion,
+                            depth_matched: forward_prepass,
                         )!;
                     case DEFERRED:
                         record_deferred_scene(

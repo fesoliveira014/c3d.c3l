@@ -56,10 +56,12 @@ fn void test_texture_view_desc_defaults() @test {
     assert(desc.render_scale == 1);
     assert(desc.color == OutputMode.LINEAR_HDR);
     assert(desc.post.anti_aliasing == AntiAliasing.FXAA);
+    assert(desc.depth_prepass);
 
     ViewDesc window = render::default_view_desc();
     assert(window.output == ViewOutput.WINDOW && window.color == OutputMode.DISPLAY_LDR);
     assert(window.render_scale == 1);
+    assert(window.depth_prepass);
 }
 
 fn void test_texture_binding_matches_tracks_the_target() @test {

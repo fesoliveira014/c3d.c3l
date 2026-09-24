@@ -31,6 +31,7 @@ struct BenchmarkFlags {
     uint height;
     AntiAliasing anti_aliasing;
     AmbientOcclusionDesc ambient_occlusion;
+    bool depth_prepass;
 }
 
 <*
@@ -70,10 +71,17 @@ struct BenchmarkRun {
 }
 
 <*
- Flags with 300 measured frames, 60 warmup frames, a 1440 by 900 extent, FXAA and no AO.
+ Default flags: 300 frames after 60 warmup, 1440 by 900, FXAA, depth prepass, no AO.
 *>
 fn BenchmarkFlags default_flags() {
-    return { .frames = 300, .warmup = 60, .width = 1440, .height = 900, .anti_aliasing = AntiAliasing.FXAA };
+    return {
+        .frames        = 300,
+        .warmup        = 60,
+        .width         = 1440,
+        .height        = 900,
+        .anti_aliasing = AntiAliasing.FXAA,
+        .depth_prepass = true,
+    };
 }
 
 <*
@@ -120,6 +128,12 @@ fn bool? parse_flag(String[] args, usz* index, BenchmarkFlags* flags, String tar
                 case "none": flags.anti_aliasing = AntiAliasing.NONE;
                 case "fxaa": flags.anti_aliasing = AntiAliasing.FXAA;
                 case "taa": flags.anti_aliasing = AntiAliasing.TAA;
+                default: return c3d::INVALID_ARGUMENT~;
+            }
+        case "--depth-prepass":
+            switch (option_value(args, index)!) {
+                case "on": flags.depth_prepass = true;
+                case "off": flags.depth_prepass = false;
                 default: return c3d::INVALID_ARGUMENT~;
             }
         case "--ambient-occlusion":

@@ -63,6 +63,7 @@ struct ViewDesc {
     OutputMode           color;
     PostStack            post;
     ShadingPath          shading;
+    bool                 depth_prepass;
     LightSelection       lights;
     ClusterDesc          clusters;
     RayTracingDesc       ray_tracing;
@@ -376,33 +377,35 @@ fn Target*[VIEW_TARGET_COUNT] view_targets(ViewRecord* record) {
 alias ViewPool = Pool{ViewRecord, ViewId};
 
 <*
- Window output at full size with neutral grading.
+ Window output at full size with neutral grading and a depth prepass.
 *>
 fn ViewDesc default_view_desc() {
     return {
-        .output       = ViewOutput.WINDOW,
-        .render_scale = 1,
-        .color        = OutputMode.DISPLAY_LDR,
-        .post         = post::default_post_stack(),
-        .shading      = ShadingPath.FORWARD,
-        .lights       = LightSelection.FLAT,
-        .clusters     = default_cluster_desc(),
+        .output        = ViewOutput.WINDOW,
+        .render_scale  = 1,
+        .color         = OutputMode.DISPLAY_LDR,
+        .post          = post::default_post_stack(),
+        .shading       = ShadingPath.FORWARD,
+        .depth_prepass = true,
+        .lights        = LightSelection.FLAT,
+        .clusters      = default_cluster_desc(),
     };
 }
 
 <*
- Texture output covering the whole target with neutral grading.
+ Texture output covering the whole target with neutral grading and a depth prepass.
 *>
 fn ViewDesc texture_view_desc(RenderTargetId target, OutputMode color = OutputMode.LINEAR_HDR) {
     return {
-        .output       = ViewOutput.TEXTURE,
-        .target       = target,
-        .render_scale = 1,
-        .color        = color,
-        .post         = post::default_post_stack(),
-        .shading      = ShadingPath.FORWARD,
-        .lights       = LightSelection.FLAT,
-        .clusters     = default_cluster_desc(),
+        .output        = ViewOutput.TEXTURE,
+        .target        = target,
+        .render_scale  = 1,
+        .color         = color,
+        .post          = post::default_post_stack(),
+        .shading       = ShadingPath.FORWARD,
+        .depth_prepass = true,
+        .lights        = LightSelection.FLAT,
+        .clusters      = default_cluster_desc(),
     };
 }
 
@@ -422,7 +425,7 @@ fn bool Renderer.has_deferred_view(&self) {
 fn bool Renderer.has_depth_prepass_view(&self) {
     foreach (&record : self.views.items) {
         if (!record.live) continue;
-        if (record.desc.shading == ShadingPath.DEFERRED) return true;
+        if (record.desc.shading == ShadingPath.DEFERRED || record.desc.depth_prepass) return true;
         if (record.desc.ambient_occlusion.kind != AoKind.NONE) return true;
     }
     return false;

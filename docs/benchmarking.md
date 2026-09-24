@@ -99,6 +99,7 @@ lacks it, so an excluded mode never silently reports zero timings.
 | `--panel` | `--window`, `--capture`, `C3D_PROFILE_GUI` | Draws the profiler panel every frame through the overlay and reports its cost as `gui_ms`. |
 | `--print-features` | nothing | Prints `cpu=<0|1> gpu=<0|1> internal=<0|1> gui=<0|1>` and exits. |
 | `--anti-aliasing none\|fxaa\|taa` | nothing | Selects the measured view's anti-aliasing filter (`benchmark.py --anti-aliasing`); FXAA by default. |
+| `--depth-prepass on\|off` | nothing | Selects the forward measured view's depth prepass (`benchmark.py --depth-prepass`); on by default, as in the view constructors. Deferred views always run it. |
 | `--ambient-occlusion none\|half\|full` | nothing | Selects the measured view's screen-space AO at half or full resolution (`benchmark.py --ambient-occlusion`); none by default. The CSV reports it as `gpu_ambient_occlusion_ms`. |
 
 The windowed run is a different workload from the headless one: the default view

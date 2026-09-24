@@ -126,6 +126,12 @@ fn void? set_ambient_occlusion(Fixture* fixture, ViewId view, AmbientOcclusionDe
     return render::configure_view(&fixture.renderer, view, desc);
 }
 
+fn void? set_depth_prepass(Fixture* fixture, ViewId view, bool enabled) @private {
+    ViewDesc desc = fixture.renderer.views.get(view).desc;
+    desc.depth_prepass = enabled;
+    return render::configure_view(&fixture.renderer, view, desc);
+}
+
 fn Vec2 project_crease_uv(CreaseScene* crease, Vec3 point) @private {
     Camera* camera = crease.scene.get(crease.camera, Camera);
     CameraMatrices matrices = camera::derive_matrices(
@@ -269,5 +275,36 @@ fn void test_blend_draws_skip_ambient_occlusion() @test {
 
     assert(math::abs(quad_none - quad_ao) <= CHANNEL_TOLERANCE);
     assert((float)crease_ao < CREASE_RATIO_MAXIMUM * (float)crease_none);
+    check_validation(&fixture.renderer);
+}
+
+fn void test_forward_depth_prepass_matches_the_single_pass() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    CreaseScene crease = create_crease_scene(&fixture)!!;
+    defer scene::destroy_scene(&crease.scene);
+    crease.quad.visible = true;
+    crease.masked_box.visible = true;
+    crease.cut_box.visible = true;
+    crease.sun.visible = true;
+    crease.scene.update_world();
+    AoView ao_view = create_ao_view(&fixture, ShadingPath.FORWARD)!!;
+    defer destroy_ao_view(&fixture, &ao_view);
+    crease.view = ao_view.view;
+
+    Vec3[5] points = { CREASE_POINT, OPEN_POINT, MASKED_TOP_POINT, CUT_POINT, QUAD_POINT };
+    uint[5] single_pass;
+    set_depth_prepass(&fixture, ao_view.view, false)!!;
+    foreach (index, point : points) single_pass[index] = render_and_read(&fixture, &crease, point)!!;
+    set_depth_prepass(&fixture, ao_view.view, true)!!;
+    foreach (index, point : points) {
+        uint prepassed = render_and_read(&fixture, &crease, point)!!;
+        for (uint channel = 0; channel < 4; channel++) {
+            int before = (int)((single_pass[index] >> (8 * channel)) & 0xff);
+            int after = (int)((prepassed >> (8 * channel)) & 0xff);
+            assert(math::abs(before - after) <= CHANNEL_TOLERANCE);
+        }
+    }
     check_validation(&fixture.renderer);
 }

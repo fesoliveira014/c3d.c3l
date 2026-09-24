@@ -38,9 +38,9 @@ transmissive surfaces do not: the estimate describes the opaque surface behind t
 
 ## Cost and passes
 
-A forward view with AO draws its opaque set into depth first (the depth prepass deferred views
-already run) and then shades it with depth `EQUAL` and no depth write: one more geometry pass.
-A deferred view adds no geometry pass.
+AO needs the complete opaque depth before lighting, so a forward view with AO runs the depth
+prepass even when `ViewDesc.depth_prepass` is off, and shades opaque with depth `EQUAL` and no
+depth write. A deferred view already runs the prepass; AO adds no geometry pass on either path.
 
 The pass (`Pass.AMBIENT_OCCLUSION`) runs two compute dispatches between the depth producer and
 lighting:

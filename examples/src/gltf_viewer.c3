@@ -332,6 +332,7 @@ fn Node*? populate_benchmark_scene(
 fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkOptions options) @local {
     base.post.anti_aliasing = options.flags.anti_aliasing;
     base.ambient_occlusion = options.flags.ambient_occlusion;
+    base.depth_prepass = options.flags.depth_prepass;
     base.shading = options.shading;
     base.lights = options.selection;
     base.clusters.lights_per_cluster = options.capacity;
@@ -340,12 +341,13 @@ fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkOptions options) @local 
 
 fn void print_banner(BenchmarkOptions options, bool timestamps_active) @local {
     BenchmarkFlags flags = options.flags;
-    io::eprintfn("mode=%s shading=%s lights=%d shadows=%s range=%.3f capacity=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s",
+    io::eprintfn("mode=%s shading=%s lights=%d shadows=%s range=%.3f capacity=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s depth_prepass=%s ambient_occlusion=%s",
         options.selection == LightSelection.FLAT ? "flat" : "clustered",
         options.shading == ShadingPath.DEFERRED ? "deferred" : "forward", options.lights, options.shadows,
         options.range, options.capacity, flags.width, flags.height, flags.warmup, flags.frames,
         flags.validation, flags.gpu_timings, timestamps_active, flags.capture,
-        flags.window ? "window" : "none", flags.panel);
+        flags.window ? "window" : "none", flags.panel, flags.depth_prepass,
+        flags.ambient_occlusion.kind == AoKind.NONE ? "none" : flags.ambient_occlusion.full_resolution ? "full" : "half");
 }
 
 fn void? run_benchmark(BenchmarkOptions options) @local {
@@ -426,7 +428,7 @@ fn int main(String[] args) {
     if (catch excuse = parsed) {
         if (excuse != c3d::UNSUPPORTED) {
             io::eprintfn("Invalid options: %s", excuse);
-            io::eprintn("Use [model.gltf] [--gpu-timings] or --benchmark [model.gltf] --mode flat|clustered --lights N --shadows on|off --range R --capacity N --frames N --warmup N --width N --height N [--anti-aliasing none|fxaa|taa] [--ambient-occlusion none|half|full] [--gpu-timings] [--validation] [--capture] [--window] [--panel] [--print-features].");
+            io::eprintn("Use [model.gltf] [--gpu-timings] or --benchmark [model.gltf] --mode flat|clustered --lights N --shadows on|off --range R --capacity N --frames N --warmup N --width N --height N [--anti-aliasing none|fxaa|taa] [--ambient-occlusion none|half|full] [--depth-prepass on|off] [--gpu-timings] [--validation] [--capture] [--window] [--panel] [--print-features].");
         }
         return 1;
     }

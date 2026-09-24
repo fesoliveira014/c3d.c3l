@@ -63,6 +63,7 @@ fn bool post_panel(ViewDesc* desc, TextureId lut, bool ray_queries = false) {
         changed = true;
     }
     changed |= anti_aliasing_combo("Anti-aliasing", &desc.post.anti_aliasing);
+    changed |= imgui::checkbox("Depth prepass", &desc.depth_prepass);
     if (lut.generation) {
         bool lut_enabled = grade.lut.generation != 0;
         if (imgui::checkbox("LUT", &lut_enabled)) {
