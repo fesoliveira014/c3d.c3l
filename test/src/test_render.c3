@@ -973,3 +973,43 @@ fn void test_frame_root_marks_trace_presence() @test {
     );
     assert((root.flags & shader::FRAME_LIGHTS_CLUSTERED) != 0 && (root.flags & shader::FRAME_TRACE_PRESENT) != 0);
 }
+
+fn void test_frame_root_marks_ambient_occlusion() @test {
+    shader::FrameRoot* root = mem::new(shader::FrameRoot);
+    defer free(root);
+    Camera camera = camera::perspective_deg(60, 0.1f, 100);
+    CameraMatrices matrices = camera::derive_matrices(camera, matrix::IDENTITY4, { 800, 600 });
+    render::write_frame_root(
+        root:        root,
+        matrices:    &matrices,
+        camera:      &camera,
+        viewport:    { 800, 600 },
+        info:        {},
+        frame_index: 1,
+        ao_texture:  (gpu::TextureIndex)7,
+    );
+    assert(root.ao_texture == (gpu::TextureIndex)7 && (root.flags & shader::FRAME_AO_PRESENT) != 0);
+    assert((root.flags & shader::FRAME_TRACE_PRESENT) == 0);
+
+    render::write_frame_root(
+        root:        root,
+        matrices:    &matrices,
+        camera:      &camera,
+        viewport:    { 800, 600 },
+        info:        {},
+        frame_index: 1,
+        trace:       (gpu::GpuAddress)0x1000,
+        ao_texture:  (gpu::TextureIndex)7,
+    );
+    assert((root.flags & shader::FRAME_AO_PRESENT) != 0 && (root.flags & shader::FRAME_TRACE_PRESENT) != 0);
+
+    render::write_frame_root(
+        root:        root,
+        matrices:    &matrices,
+        camera:      &camera,
+        viewport:    { 800, 600 },
+        info:        {},
+        frame_index: 1,
+    );
+    assert(root.ao_texture == (gpu::TextureIndex)0 && (root.flags & shader::FRAME_AO_PRESENT) == 0);
+}

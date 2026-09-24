@@ -76,6 +76,13 @@ What the four cases establish:
   is destroyed without a validation error; a renderer without ray queries
   rejects hardware preparation and ray-traced views with `c3d::UNSUPPORTED`.
 
+- Ambient occlusion images follow the settings (half and full resolution,
+  retired when switched off); a floor pixel 5 cm from a wall darkens below
+  90 % of its unoccluded value while open floor stays above 97 %, alike on
+  forward and deferred views; intensity 0 reproduces the image without AO,
+  masked and cut-out surfaces included (the forward depth prepass and `EQUAL`
+  shading lose nothing); a transparent quad over the crease reads no AO.
+
 What they cannot establish: window clear-only and GUI-only frames need a
 window (run the `clear` and `cube_gui` examples with validation), and a
 presentation failure after submission needs a hardware observation.
