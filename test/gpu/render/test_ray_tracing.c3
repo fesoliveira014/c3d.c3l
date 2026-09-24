@@ -20,9 +20,9 @@ const float OVERHEAD_HEIGHT @private = 8;
 const int SHADE_TOLERANCE @private = 2;
 
 struct ShadowScene @private {
-    Scene    scene;
-    Node*    camera;
-    Node*    box;
+    Scene      scene;
+    Node*      camera;
+    Node*      box;
     GeometryId box_geometry;
     MaterialId opaque;
     MaterialId transparent;
@@ -150,6 +150,7 @@ fn void test_tlas_rebuilds_only_on_a_dirty_set() @test {
     Renderer* renderer = &fixture.renderer;
 
     assert(renderer.prepare_scene_trace(&scene, TraceKind.HARDWARE)!! != (gpu::GpuAddress)0);
+    assert(renderer.stats.blas_builds == 1 && renderer.stats.tlas_builds == 1);
     prepare_frame(&fixture, &scene)!!;
     assert(renderer.stats.blas_builds == 0 && renderer.stats.tlas_builds == 0);
     prepare_frame(&fixture, &scene)!!;

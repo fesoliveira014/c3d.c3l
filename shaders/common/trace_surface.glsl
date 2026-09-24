@@ -5,11 +5,6 @@
 #include "vertex_pull.glsl"
 #include "material_uv.glsl"
 
-const uint MATERIAL_KIND_BASIC = 0u; // mirrored as MaterialKind.BASIC
-const uint MATERIAL_KIND_STANDARD = 1u; // mirrored as MaterialKind.STANDARD
-const uint MATERIAL_KIND_TOON = 2u; // mirrored as MaterialKind.TOON
-const uint MATERIAL_KIND_PHYSICAL = 3u; // mirrored as MaterialKind.PHYSICAL
-
 struct SceneHit {
     uint instance;
     uint primitive;
@@ -63,7 +58,7 @@ bool trace_surface_passes(TraceInstanceGpu instance, SceneHit hit) {
             TextureMapGpu slot = custom.slots[0];
             return sample_texture_2d(slot.texture_index, slot.sampler_index, custom_map_uv(custom, 0u, uv0, uv1)).a
                 >= custom.alpha_cutoff;
-        default:
+        case MATERIAL_KIND_BASIC:
             BasicMaterialGpu basic = BasicMaterialGpu(instance.material);
             alpha = basic.color.a;
             cutoff = basic.alpha_cutoff;
@@ -71,6 +66,8 @@ bool trace_surface_passes(TraceInstanceGpu instance, SceneHit hit) {
                 alpha *= sample_hit_map(basic.map, basic.map_flags, uv0, uv1).a;
             }
             break;
+        default:
+            return true;
     }
     if ((geometry.flags & GEOMETRY_HAS_COLORS) != 0u) {
         alpha *= pull_vec4(geometry.colors, corners.x).a * weights.x

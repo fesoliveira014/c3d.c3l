@@ -26,6 +26,7 @@ const usz TRACE_EDGE_BUDGET @private = TRACE_GRID_SIZE * TRACE_GRID_SIZE / 100; 
 const usz TRACE_RESULT_BYTES @private = TRACE_GRID_SIZE * TRACE_GRID_SIZE * TraceGridResult::size;
 const uint PARITY_CHECKER_SIZE @private = 4;
 const float PARITY_BARYCENTRIC_TOLERANCE @private = 1e-3f;
+const usz PARITY_TEXEL_BUDGET @private = 4; // rays on a checker texel boundary; a wrong alpha test misses hundreds
 
 struct TraceGridRoot @private {
     gpu::GpuAddress scene;
@@ -323,8 +324,13 @@ fn uint geometry_low(Fixture* fixture, GeometryId geometry) @private {
     return (uint)(ulong)fixture.renderer.geometries[geometry.index].root;
 }
 
-fn usz compare_branches(TraceGridResult[] walked, TraceGridResult[] queried, uint masked_low) @private {
+struct ParityMismatches @private {
     usz edges;
+    usz texels;
+}
+
+fn ParityMismatches compare_branches(TraceGridResult[] walked, TraceGridResult[] queried, uint masked_low) @private {
+    ParityMismatches mismatches;
     foreach (index, &walk : walked) {
         TraceGridResult* query = &queried[index];
         Vec3 walk_weights = { 1 - walk.barycentrics.x - walk.barycentrics.y, walk.barycentrics.x, walk.barycentrics.y };
@@ -340,12 +346,19 @@ fn usz compare_branches(TraceGridResult[] walked, TraceGridResult[] queried, uin
                 && (walk.barycentrics - query.barycentrics).length() <= PARITY_BARYCENTRIC_TOLERANCE;
         }
         if (agree) continue;
-        // A ray at a checker texel boundary may read either texel, so a masked surface can differ like an edge.
-        bool masked = (walk.hit && walk.geometry_low == masked_low) || (query.hit && query.geometry_low == masked_low);
-        assert(masked || edge_weight < TRACE_EDGE_WEIGHT);
-        edges++;
+        if (edge_weight < TRACE_EDGE_WEIGHT) {
+            mismatches.edges++;
+            continue;
+        }
+        // A ray at a checker texel boundary may read either texel on the two branches.
+        assert((walk.hit && walk.geometry_low == masked_low) || (query.hit && query.geometry_low == masked_low));
+        mismatches.texels++;
     }
-    return edges;
+    return mismatches;
+}
+
+fn bool passes_through(TraceGridResult* result, float entry) @private {
+    return !result.hit || result.t > entry + 1;
 }
 
 fn void test_hardware_and_software_hits_agree() @test {
@@ -369,26 +382,37 @@ fn void test_hardware_and_software_hits_agree() @test {
     trace_grid(&fixture, &trace, queried, TraceKind.HARDWARE)!!;
     assert(fixture.renderer.stats.trace_instances == 8 && fixture.renderer.stats.trace_skipped == 2);
     uint masked_low = geometry_low(&fixture, nodes.masked_geometry);
-    usz edges = compare_branches(walked, queried, masked_low);
+    ParityMismatches mismatches = compare_branches(walked, queried, masked_low);
     Aabb masked_bounds = { .min = { -3.5f, -0.5f, -0.5f }, .max = { -2.5f, 0.5f, 0.5f } };
-    usz through_holes;
+    usz walked_holes;
+    usz queried_holes;
     usz masked_hits;
     for (uint cell_y = 0; cell_y < TRACE_GRID_SIZE; cell_y++) {
         for (uint cell_x = 0; cell_x < TRACE_GRID_SIZE; cell_x++) {
-            TraceGridResult* query = &queried[cell_y * TRACE_GRID_SIZE + cell_x];
-            if (query.hit && query.geometry_low == masked_low) masked_hits++;
+            usz cell = (usz)cell_y * TRACE_GRID_SIZE + cell_x;
+            if (queried[cell].hit && queried[cell].geometry_low == masked_low) masked_hits++;
             float entry;
             if (!maths::ray_intersects_aabb(grid_ray(cell_x, cell_y), masked_bounds, &entry)) continue;
-            if (!query.hit || query.t > entry + 1) through_holes++;
+            if (passes_through(&walked[cell], entry)) walked_holes++;
+            if (passes_through(&queried[cell], entry)) queried_holes++;
         }
     }
-    io::eprintfn("Parity grid: %d rays differ at an edge, %d masked hits, %d through holes", edges, masked_hits, through_holes);
-    assert(edges <= TRACE_EDGE_BUDGET && masked_hits > 0 && through_holes > 0);
+    io::eprintfn(
+        "Parity grid: %d edge and %d texel mismatches, %d masked hits, %d / %d through holes",
+        mismatches.edges,
+        mismatches.texels,
+        masked_hits,
+        walked_holes,
+        queried_holes,
+    );
+    assert(mismatches.edges <= TRACE_EDGE_BUDGET && mismatches.texels <= PARITY_TEXEL_BUDGET);
+    assert(masked_hits > 0 && walked_holes > 0 && queried_holes > 0);
 
     uint receiver_low = geometry_low(&fixture, nodes.receiver_geometry);
     trace_grid(&fixture, &trace, walked, TraceKind.SOFTWARE, shader::TRACE_MASK_SHADOW_CASTER)!!;
     trace_grid(&fixture, &trace, queried, TraceKind.HARDWARE, shader::TRACE_MASK_SHADOW_CASTER)!!;
-    assert(compare_branches(walked, queried, masked_low) <= TRACE_EDGE_BUDGET);
+    mismatches = compare_branches(walked, queried, masked_low);
+    assert(mismatches.edges <= TRACE_EDGE_BUDGET && mismatches.texels <= PARITY_TEXEL_BUDGET);
     foreach (index, &walk : walked) {
         assert(!walk.hit || walk.geometry_low != receiver_low);
         assert(!queried[index].hit || queried[index].geometry_low != receiver_low);

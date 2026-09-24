@@ -221,7 +221,7 @@ render::configure_view(&renderer, renderer.default_view, desc)!;
 - Shadows are hard; the sun has no angular size.
 - Custom fragment stages do not receive traced shadows: a traced light reaches them with `shadow_count == 0`.
 
-`examples/rt_shadows` shows a box behind the camera casting onto the ground. `T` switches between traced shadows and the atlas, `M` swaps the box to a masked checker material. On this WSL host the only Vulkan 1.3 device is llvmpipe, which supports ray queries: use it for correctness and a hardware driver for timing.
+`examples/rt_shadows` shows a box behind the camera casting onto the ground. `T` switches between traced shadows and the atlas, `M` swaps the box to a masked checker material. Under WSL the only Vulkan 1.3 device is llvmpipe, which supports ray queries: use it for correctness and a hardware driver for timing.
 
 ## Example and timing
 

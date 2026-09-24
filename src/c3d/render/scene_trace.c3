@@ -588,7 +588,11 @@ fn void? record_acceleration_builds(Renderer* renderer, gpu::CommandList* comman
         rt.build_pending = false;
         renderer.stats.tlas_builds++;
     }
-    gpu::Barrier built = { .before = { .acceleration_structure_build }, .after = { .fragment_shader, .compute } };
+    // A later batch in the same frame reuses this slot's scratch.
+    gpu::Barrier built = {
+        .before = { .acceleration_structure_build },
+        .after  = { .fragment_shader, .compute, .acceleration_structure_build },
+    };
     gpu::cmd_barrier(commands, &built)!;
     renderer.work_recorded = true;
     if (profiled) end_profile_pass(renderer, Pass.ACCELERATION_BUILD)!;

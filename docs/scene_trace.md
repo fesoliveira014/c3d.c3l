@@ -56,7 +56,7 @@ Triangle geometry whose arrays form no triangle list (fewer than three positions
 
 ### Hardware lifetime
 
-A geometry's bottom-level structure is created the first time a hardware preparation traces the geometry and again after its revision moves; the old one is destroyed after every frame that could trace it completed. The renderer keeps two top-level structures and rebuilds one only when the rows, their world matrices, geometry or material change. A frame reads one of them; a rebuild targets the other, so no rebuild waits on a frame in flight. Build scratch is per frame slot and grows to the largest build. `SceneTraceRoot.tlas_index` names the top level the frame reads, or 0 without hardware data.
+A geometry's bottom-level structure is created the first time a hardware preparation traces the geometry and again after its revision moves; the old one is destroyed after every frame that could trace it completed. The renderer keeps two top-level structures and rebuilds one only when the rows, their world matrices, geometry or material change. A frame reads at most one of them. A rebuild in a later frame targets the other, whose readers have completed; a rebuild in the same frame reuses the one the frame already reads, ordered after those reads. Build scratch is per frame slot and grows to the largest build. `SceneTraceRoot.tlas_index` names the top level the frame reads, or 0 without hardware data.
 
 ## Tracing in a shader
 
