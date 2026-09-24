@@ -61,6 +61,14 @@ only on a TAA view, where TAA integrates it; without TAA a still camera shows a 
 `PreviewKind.VIEW_AMBIENT_OCCLUSION` previews `ao` at level 0 and `ao_raw` at level 1, white
 where unoccluded. `examples/ambient_occlusion` renders Sponza on a forward and a deferred view
 side by side; `O` toggles AO and `--gpu-timings` shows the pass cost.
+It needs the benchmark assets (`python3 scripts/fetch_benchmark_assets.py`):
+
+```bash
+python3 scripts/build.py --example ambient_occlusion
+```
+
+The rendering benchmarks take `--ambient-occlusion none|half|full`
+([benchmarking](benchmarking.md)) and report the pass as `gpu_ambient_occlusion_ms`.
 
 ## Limits
 
