@@ -7,7 +7,7 @@ import c3d::shader;
 import gpu;
 import std::math;
 
-$assert LightingResolveRoot::size == 40;
+$assert LightingResolveRoot::size == 48;
 $assert GBUFFER_CHANNEL_COUNT == KEY_COLOR_TARGETS;
 
 fn ShaderVariant gbuffer_fragment(Material* material) @private {

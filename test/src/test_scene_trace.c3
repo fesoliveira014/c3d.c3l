@@ -288,6 +288,15 @@ fn void test_trace_kind_resolves_against_ray_queries() @test {
     }
 }
 
+fn void test_ray_cone_lod_follows_distance_density_and_obliquity() @test {
+    float base = render::ray_cone_lod(1024, 1, 0.01f, 1);
+    assert(math::abs(render::ray_cone_lod(1024, 1, 0.02f, 1) - (base + 1)) < 1e-5);
+    assert(math::abs(render::ray_cone_lod(4096, 1, 0.01f, 1) - (base + 1)) < 1e-5);
+    assert(math::abs(render::ray_cone_lod(1024, 4, 0.01f, 1) - (base - 1)) < 1e-5);
+    assert(math::abs(render::ray_cone_lod(1024, 1, 0.01f, 0.5f) - (base + 1)) < 1e-5);
+    assert(math::abs(render::ray_cone_lod(1, 1, 1, 1)) < 1e-5);
+}
+
 fn void test_blas_source_needs_a_proven_list() @test {
     assert(render::blas_source(3, 3, 0, false) == render::TraceSource.REUSE);
     assert(render::blas_source(0, 3, 0, true) == render::TraceSource.BUILD);

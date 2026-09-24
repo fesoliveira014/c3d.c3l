@@ -215,7 +215,9 @@ root LightingResolveRoot {
     TextureIndex flags;
     TextureIndex depth;
     SamplerIndex sampler_index;
-    uint         _pad0;
+    TextureIndex reflection_texture;
+    TextureIndex brdf_lut;
+    float        max_reflection_roughness;
 }
 
 root SsaoRoot {
@@ -244,6 +246,46 @@ root AoBlurRoot {
     uint         _pad0;
     uint         _pad1;
     uint         _pad2;
+}
+
+root RtAoRoot {
+    GpuAddress   frame;
+    TextureIndex depth;
+    TextureIndex normals;
+    TextureIndex output_texture;
+    uint         width;
+    uint         height;
+    float        radius;
+    float        intensity;
+    uint         noise_frame;
+    uint         ray_count;
+    uint         _pad0;
+}
+
+root RtReflectionRoot {
+    GpuAddress   frame;
+    TextureIndex depth;
+    TextureIndex normal_roughness;
+    TextureIndex emissive_specular;
+    TextureIndex output_texture;
+    uint         width;
+    uint         height;
+    float        max_roughness;
+    uint         noise_frame;
+    uint         _pad0;
+    uint         _pad1;
+}
+
+root RtReflectionBlurRoot {
+    GpuAddress   frame;
+    TextureIndex input_texture;
+    TextureIndex depth;
+    TextureIndex normal_roughness;
+    TextureIndex output_texture;
+    uint         width;
+    uint         height;
+    uint         _pad0;
+    uint         _pad1;
 }
 
 const uint MATERIAL_MAP_BASE_COLOR = 1;

@@ -8,6 +8,17 @@ import std::math;
 
 $assert SsaoRoot::size == 48;
 $assert AoBlurRoot::size == 48;
+$assert RtAoRoot::size == 48;
+
+<*
+ Fewest rays per texel on the ray-traced AO path.
+*>
+const uint RT_AO_RAYS_MIN = 1;
+
+<*
+ Most rays per texel on the ray-traced AO path.
+*>
+const uint RT_AO_RAYS_MAX = 16; // 16 rays over a half-resolution 1080p estimate trace 8.3 M rays a frame
 
 <*
  Half-resolution screen-space AO over half a metre.
@@ -16,10 +27,11 @@ const AmbientOcclusionDesc AMBIENT_OCCLUSION_DEFAULT = {
     .kind      = AoKind.SSAO,
     .radius    = 0.5f,
     .intensity = 1,
+    .ray_count = 4,
 };
 
 <*
- Ambient occlusion source of a view; RAY_TRACED is reserved and rejected.
+ Ambient occlusion source of a view.
 *>
 enum AoKind {
     NONE,
@@ -35,6 +47,7 @@ struct AmbientOcclusionDesc {
     float  radius;
     float  intensity;
     bool   full_resolution;
+    uint   ray_count;
 }
 
 struct AmbientOcclusionPipelines @private {
@@ -48,12 +61,13 @@ struct AmbientOcclusionPipelines @private {
  @pure
 *>
 fn bool ambient_occlusion_desc_valid(AmbientOcclusionDesc* desc) {
+    bool estimate_valid = math::is_finite(desc.radius) && desc.radius > 0
+        && math::is_finite(desc.intensity) && desc.intensity >= 0;
     switch (desc.kind) {
         case NONE: return true;
-        case SSAO:
-            return math::is_finite(desc.radius) && desc.radius > 0
-                && math::is_finite(desc.intensity) && desc.intensity >= 0;
-        case RAY_TRACED: return false;
+        case SSAO: return estimate_valid;
+        case RAY_TRACED:
+            return estimate_valid && desc.ray_count >= RT_AO_RAYS_MIN && desc.ray_count <= RT_AO_RAYS_MAX;
     }
 }
 

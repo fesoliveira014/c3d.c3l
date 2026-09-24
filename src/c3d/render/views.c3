@@ -49,7 +49,9 @@ struct PixelRect {
  Ray-query effects of a view; zero disables all.
 *>
 struct RayTracingDesc {
-    bool shadows;
+    bool  shadows;
+    bool  reflections;
+    float max_reflection_roughness;
 }
 
 <*
@@ -74,7 +76,7 @@ struct ViewDesc {
  Working images one view owns, in view_targets order.
 *>
 const uint VIEW_TARGET_COUNT = 5 + post::BLOOM_MAX_LEVELS + 8 + GBUFFER_CHANNEL_COUNT
-  + 3 * post::TAA_HISTORY_SLOTS + 1 + 2;
+  + 3 * post::TAA_HISTORY_SLOTS + 1 + 2 + 2;
 
 <*
  Reverse-Z projection terms that recover forward distance from stored depth.
@@ -306,6 +308,8 @@ struct ViewRecord {
     Target                               taa_debug;
     Target                               ao_raw;
     Target                               ao;
+    Target                               reflection;
+    Target                               reflection_blur;
     Target*                              scene_input;
     bool                                 post_chain_open;
     bool                                 rendered;
@@ -368,6 +372,8 @@ fn Target*[VIEW_TARGET_COUNT] view_targets(ViewRecord* record) {
     targets[next + 3 * slots] = &record.taa_debug;
     targets[next + 3 * slots + 1] = &record.ao_raw;
     targets[next + 3 * slots + 2] = &record.ao;
+    targets[next + 3 * slots + 3] = &record.reflection;
+    targets[next + 3 * slots + 4] = &record.reflection_blur;
     return targets;
 }
 
@@ -389,6 +395,7 @@ fn ViewDesc default_view_desc() {
         .depth_prepass = true,
         .lights        = LightSelection.FLAT,
         .clusters      = default_cluster_desc(),
+        .ray_tracing   = { .max_reflection_roughness = RT_REFLECTION_ROUGHNESS_DEFAULT },
     };
 }
 
@@ -406,6 +413,7 @@ fn ViewDesc texture_view_desc(RenderTargetId target, OutputMode color = OutputMo
         .depth_prepass = true,
         .lights        = LightSelection.FLAT,
         .clusters      = default_cluster_desc(),
+        .ray_tracing   = { .max_reflection_roughness = RT_REFLECTION_ROUGHNESS_DEFAULT },
     };
 }
 
@@ -585,12 +593,14 @@ fn void? configure_view(Renderer* renderer, ViewId view, ViewDesc desc) {
         || ambient_occlusion.full_resolution != record.desc.ambient_occlusion.full_resolution) {
         retire_ao_images(renderer, record);
     }
+    if (!desc.ray_tracing.reflections) retire_reflection_images(renderer, record);
     record.desc = desc;
     record.history.valid = false;
     record.history.pending = false;
     post::retire_effect_targets(renderer, record);
     post::acquire_effect_targets(renderer, record)!;
     acquire_ao_images(renderer, record)!;
+    acquire_reflection_images(renderer, record)!;
 }
 
 <*
@@ -623,9 +633,16 @@ fn void? reset_view_history(Renderer* renderer, ViewId view) {
 }
 
 fn void? validate_view_desc(Renderer* renderer, ViewDesc* desc) @private {
-    if (desc.ray_tracing.shadows && !renderer.caps.ray_queries.enabled) return c3d::UNSUPPORTED~;
-    if (desc.ambient_occlusion.kind == AoKind.RAY_TRACED) return c3d::UNSUPPORTED~;
+    bool ray_queries = renderer.caps.ray_queries.enabled;
+    if (desc.ray_tracing.shadows && !ray_queries) return c3d::UNSUPPORTED~;
+    if (desc.ambient_occlusion.kind == AoKind.RAY_TRACED && !ray_queries) return c3d::UNSUPPORTED~;
     if (!ambient_occlusion_desc_valid(&desc.ambient_occlusion)) return c3d::INVALID_ARGUMENT~;
+    RayTracingDesc* ray_tracing = &desc.ray_tracing;
+    if (ray_tracing.reflections) {
+        if (desc.shading != ShadingPath.DEFERRED || !ray_queries) return c3d::UNSUPPORTED~;
+        float roughness = ray_tracing.max_reflection_roughness;
+        if (!math::is_finite(roughness) || roughness <= 0 || roughness > 1) return c3d::INVALID_ARGUMENT~;
+    }
     if (desc.lights == LightSelection.CLUSTERED) {
         cluster_layout(
             desc: desc.clusters,
@@ -690,6 +707,7 @@ fn void? acquire_view_images(Renderer* renderer, ViewRecord* record) @private {
     post::acquire_effect_targets(renderer, record)!;
     if (record.desc.shading == ShadingPath.DEFERRED) acquire_gbuffer(renderer, record)!;
     acquire_ao_images(renderer, record)!;
+    acquire_reflection_images(renderer, record)!;
     if (record.desc.lights == LightSelection.CLUSTERED) {
         ClusterLayout layout = cluster_layout(
             desc: record.desc.clusters,
@@ -712,6 +730,7 @@ fn void release_view_images(Renderer* renderer, ViewRecord* record) @private {
     release_scene_color(&renderer.device, record);
     release_gbuffer(&renderer.device, record);
     release_ao_images(&renderer.device, record);
+    release_reflection_images(&renderer.device, record);
     release_view_targets(&renderer.device, record);
     post::release_post_targets(&renderer.device, record);
     post::release_effect_targets(&renderer.device, record);

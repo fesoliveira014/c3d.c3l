@@ -14,6 +14,7 @@ enum Pass : int {
     DEPTH_PREPASS,
     GBUFFER,
     AMBIENT_OCCLUSION,
+    RT_REFLECTIONS,
     LIGHTING,
     FORWARD_OPAQUE,
     SKY,

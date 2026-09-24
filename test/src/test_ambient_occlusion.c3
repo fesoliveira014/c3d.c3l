@@ -28,7 +28,33 @@ fn void test_ambient_occlusion_desc_validity() @test {
     }
 
     desc = render::AMBIENT_OCCLUSION_DEFAULT;
+    assert(desc.ray_count == 4);
+    desc.ray_count = 0;
+    assert(render::ambient_occlusion_desc_valid(&desc));
+    desc.ray_count = render::RT_AO_RAYS_MAX + 1;
+    assert(render::ambient_occlusion_desc_valid(&desc));
+
+    desc = render::AMBIENT_OCCLUSION_DEFAULT;
     desc.kind = AoKind.RAY_TRACED;
+    assert(render::ambient_occlusion_desc_valid(&desc));
+    uint[2] good_counts = { render::RT_AO_RAYS_MIN, render::RT_AO_RAYS_MAX };
+    foreach (count : good_counts) {
+        desc.ray_count = count;
+        assert(render::ambient_occlusion_desc_valid(&desc));
+    }
+    uint[2] bad_counts = { 0, render::RT_AO_RAYS_MAX + 1 };
+    foreach (count : bad_counts) {
+        desc.ray_count = count;
+        assert(!render::ambient_occlusion_desc_valid(&desc));
+    }
+
+    desc = render::AMBIENT_OCCLUSION_DEFAULT;
+    desc.kind = AoKind.RAY_TRACED;
+    desc.radius = 0;
+    assert(!render::ambient_occlusion_desc_valid(&desc));
+    desc = render::AMBIENT_OCCLUSION_DEFAULT;
+    desc.kind = AoKind.RAY_TRACED;
+    desc.intensity = float::nan;
     assert(!render::ambient_occlusion_desc_valid(&desc));
 }
 

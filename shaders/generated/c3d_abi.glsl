@@ -289,7 +289,9 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer LightingReso
     uint flags;
     uint depth;
     uint sampler_index;
-    uint _pad0;
+    uint reflection_texture;
+    uint brdf_lut;
+    float max_reflection_roughness;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer SsaoRoot {
@@ -318,6 +320,46 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer AoBlurRoot {
     uint _pad0;
     uint _pad1;
     uint _pad2;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer RtAoRoot {
+    uint64_t frame;
+    uint depth;
+    uint normals;
+    uint output_texture;
+    uint width;
+    uint height;
+    float radius;
+    float intensity;
+    uint noise_frame;
+    uint ray_count;
+    uint _pad0;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer RtReflectionRoot {
+    uint64_t frame;
+    uint depth;
+    uint normal_roughness;
+    uint emissive_specular;
+    uint output_texture;
+    uint width;
+    uint height;
+    float max_roughness;
+    uint noise_frame;
+    uint _pad0;
+    uint _pad1;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer RtReflectionBlurRoot {
+    uint64_t frame;
+    uint input_texture;
+    uint depth;
+    uint normal_roughness;
+    uint output_texture;
+    uint width;
+    uint height;
+    uint _pad0;
+    uint _pad1;
 };
 
 struct TextureMapGpu {
