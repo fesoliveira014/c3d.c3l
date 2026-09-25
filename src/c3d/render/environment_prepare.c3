@@ -155,7 +155,7 @@ fn void? record_environment_source(
     gpu::TextureBarrier ready = gpu::texture_transition(
         texture: result.source_cube,
         before: write.after,
-        after: gpu::sampled_at({ .compute, .fragment_shader }),
+        after: renderer.sampled_state,
     )!;
     gpu::cmd_texture_barrier(commands, &ready)!;
 }
@@ -256,7 +256,7 @@ fn void? record_cube_prefilter(
     gpu::TextureBarrier ready = gpu::texture_transition(
         texture: output,
         before: write.after,
-        after: gpu::sampled_at({ .fragment_shader }),
+        after: renderer.sampled_state,
     )!;
     gpu::cmd_texture_barrier(commands, &ready)!;
 }

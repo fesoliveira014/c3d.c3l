@@ -31,7 +31,8 @@
         "test_scene_trace.c3",
         "test_ray_tracing.c3",
         "test_ambient_occlusion.c3",
-        "test_ray_traced_effects.c3"
+        "test_ray_traced_effects.c3",
+        "test_path_tracing.c3"
       ]
     }
   }

@@ -70,13 +70,14 @@ struct ViewDesc {
     ClusterDesc          clusters;
     RayTracingDesc       ray_tracing;
     AmbientOcclusionDesc ambient_occlusion;
+    PathTraceDesc        path_trace;
 }
 
 <*
  Working images one view owns, in view_targets order.
 *>
 const uint VIEW_TARGET_COUNT = 5 + post::BLOOM_MAX_LEVELS + 8 + GBUFFER_CHANNEL_COUNT
-  + 3 * post::TAA_HISTORY_SLOTS + 1 + 2 + 2;
+  + 3 * post::TAA_HISTORY_SLOTS + 1 + 2 + 2 + 1;
 
 <*
  Reverse-Z projection terms that recover forward distance from stored depth.
@@ -113,6 +114,9 @@ struct ViewHistory {
     PoseRecord[] poses;
     uint         sample_index;
     uint         slot;
+    uint         accumulated_samples;
+    uint         pending_samples;
+    ulong        trace_revision;
 }
 
 <*
@@ -191,12 +195,32 @@ fn void ViewHistory.commit(
 }
 
 <*
+ Remember the camera, scene and sample count a path-traced image holds, pending publication.
+ @param trace_revision : "Scene trace revision the image was traced against."
+ @param samples : "Samples the image holds after this rendering."
+*>
+fn void ViewHistory.commit_accumulation(
+    &self,
+    ulong scene,
+    ulong trace_revision,
+    Mat4 view_proj,
+    uint samples,
+) {
+    self.scene = scene;
+    self.trace_revision = trace_revision;
+    self.view_proj = view_proj;
+    self.pending_samples = samples;
+    self.pending = true;
+}
+
+<*
  Publish the pending rendering as the previous pose and advance the temporal sample.
 *>
 fn void ViewHistory.publish(&self) {
     if (!self.pending) return;
     self.valid = true;
     self.pending = false;
+    self.accumulated_samples = self.pending_samples;
     self.sample_index = (self.sample_index + 1) % post::TAA_SAMPLE_COUNT;
     self.slot = (self.slot + 1) % post::TAA_HISTORY_SLOTS;
 }
@@ -275,6 +299,7 @@ struct ViewStats {
     uint              lights_dropped;
     uint              cluster_count;
     uint              cluster_overflows;
+    uint              accumulated_samples;
     float[PASS_COUNT] gpu_pass_ms;
     bool[PASS_COUNT]  gpu_pass_valid @if($feat(C3D_PROFILE_GPU));
 }
@@ -310,6 +335,7 @@ struct ViewRecord {
     Target                               ao;
     Target                               reflection;
     Target                               reflection_blur;
+    Target                               accumulation;
     Target*                              scene_input;
     bool                                 post_chain_open;
     bool                                 rendered;
@@ -374,6 +400,7 @@ fn Target*[VIEW_TARGET_COUNT] view_targets(ViewRecord* record) {
     targets[next + 3 * slots + 2] = &record.ao;
     targets[next + 3 * slots + 3] = &record.reflection;
     targets[next + 3 * slots + 4] = &record.reflection_blur;
+    targets[next + 3 * slots + 5] = &record.accumulation;
     return targets;
 }
 
@@ -396,6 +423,7 @@ fn ViewDesc default_view_desc() {
         .lights        = LightSelection.FLAT,
         .clusters      = default_cluster_desc(),
         .ray_tracing   = { .max_reflection_roughness = RT_REFLECTION_ROUGHNESS_DEFAULT },
+        .path_trace    = PATH_TRACE_DEFAULT,
     };
 }
 
@@ -414,6 +442,7 @@ fn ViewDesc texture_view_desc(RenderTargetId target, OutputMode color = OutputMo
         .lights        = LightSelection.FLAT,
         .clusters      = default_cluster_desc(),
         .ray_tracing   = { .max_reflection_roughness = RT_REFLECTION_ROUGHNESS_DEFAULT },
+        .path_trace    = PATH_TRACE_DEFAULT,
     };
 }
 
@@ -432,7 +461,7 @@ fn bool Renderer.has_deferred_view(&self) {
 *>
 fn bool Renderer.has_depth_prepass_view(&self) {
     foreach (&record : self.views.items) {
-        if (!record.live) continue;
+        if (!record.live || record.desc.shading == ShadingPath.PATH_TRACED) continue;
         if (record.desc.shading == ShadingPath.DEFERRED || record.desc.depth_prepass) return true;
         if (record.desc.ambient_occlusion.kind != AoKind.NONE) return true;
     }
@@ -594,13 +623,16 @@ fn void? configure_view(Renderer* renderer, ViewId view, ViewDesc desc) {
         retire_ao_images(renderer, record);
     }
     if (!desc.ray_tracing.reflections) retire_reflection_images(renderer, record);
+    if (desc.shading != ShadingPath.PATH_TRACED) retire_accumulation(renderer, record);
     record.desc = desc;
     record.history.valid = false;
     record.history.pending = false;
+    record.stats.accumulated_samples = 0;
     post::retire_effect_targets(renderer, record);
     post::acquire_effect_targets(renderer, record)!;
     acquire_ao_images(renderer, record)!;
     acquire_reflection_images(renderer, record)!;
+    acquire_accumulation(renderer, record)!;
 }
 
 <*
@@ -642,6 +674,13 @@ fn void? validate_view_desc(Renderer* renderer, ViewDesc* desc) @private {
         if (desc.shading != ShadingPath.DEFERRED || !ray_queries) return c3d::UNSUPPORTED~;
         float roughness = ray_tracing.max_reflection_roughness;
         if (!math::is_finite(roughness) || roughness <= 0 || roughness > 1) return c3d::INVALID_ARGUMENT~;
+    }
+    if (desc.shading == ShadingPath.PATH_TRACED) {
+        if (!renderer.caps.ray_tracing_pipelines.enabled) return c3d::UNSUPPORTED~;
+        bool raster_only = desc.post.anti_aliasing == AntiAliasing.TAA || desc.post.motion_blur
+          || desc.post.depth_of_field || desc.ambient_occlusion.kind != AoKind.NONE
+          || ray_tracing.shadows || desc.lights == LightSelection.CLUSTERED;
+        if (raster_only || !path_trace_desc_valid(&desc.path_trace)) return c3d::INVALID_ARGUMENT~;
     }
     if (desc.lights == LightSelection.CLUSTERED) {
         cluster_layout(
@@ -708,6 +747,7 @@ fn void? acquire_view_images(Renderer* renderer, ViewRecord* record) @private {
     if (record.desc.shading == ShadingPath.DEFERRED) acquire_gbuffer(renderer, record)!;
     acquire_ao_images(renderer, record)!;
     acquire_reflection_images(renderer, record)!;
+    acquire_accumulation(renderer, record)!;
     if (record.desc.lights == LightSelection.CLUSTERED) {
         ClusterLayout layout = cluster_layout(
             desc: record.desc.clusters,
@@ -731,6 +771,7 @@ fn void release_view_images(Renderer* renderer, ViewRecord* record) @private {
     release_gbuffer(&renderer.device, record);
     release_ao_images(&renderer.device, record);
     release_reflection_images(&renderer.device, record);
+    release_accumulation(&renderer.device, record);
     release_view_targets(&renderer.device, record);
     post::release_post_targets(&renderer.device, record);
     post::release_effect_targets(&renderer.device, record);
@@ -741,6 +782,7 @@ fn void? resize_view(Renderer* renderer, ViewRecord* record) @private {
     release_view_images(renderer, record);
     record.history.valid = false;
     record.history.pending = false;
+    record.stats.accumulated_samples = 0;
     return acquire_view_images(renderer, record);
 }
 

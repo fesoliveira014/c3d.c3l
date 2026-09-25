@@ -18,6 +18,7 @@ const ClusterDesc CLUSTER_DESC_DEFAULT @local = {
 enum ShadingPath : uint {
     FORWARD,
     DEFERRED,
+    PATH_TRACED,
 }
 $assert ShadingPath.FORWARD.ordinal == 0;
 

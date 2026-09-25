@@ -101,6 +101,7 @@ fn void? create_fixture(
     Fixture* fixture,
     usz upload_ring_bytes = 0,
     bool ray_queries = false,
+    bool ray_tracing_pipelines = false,
 ) @private {
     fixture.allocator = allocator;
     fixture.assets = asset::create_asset_store(allocator, asset::default_asset_store_desc());
@@ -178,6 +179,7 @@ fn void? create_fixture(
             .upload_ring_bytes = upload_ring_bytes,
             .application_name = "render_acceptance",
             .ray_queries = ray_queries,
+            .ray_tracing_pipelines = ray_tracing_pipelines,
         },
     )!;
     defer catch render::destroy_renderer(&fixture.renderer);

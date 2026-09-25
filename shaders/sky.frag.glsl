@@ -27,12 +27,5 @@ void main() {
     } else {
         direction = sky_unproject(frame, ndc, 0.5) - frame.camera_position.xyz;
     }
-    direction = environment_rotate(root.rotation, normalize(direction));
-    vec3 radiance = sample_texture_cube_lod(
-        root.source_cube,
-        root.sampler_index,
-        direction,
-        0.0
-    ).rgb;
-    out_color = vec4(radiance * root.intensity, 1.0);
+    out_color = vec4(sky_radiance(root, normalize(direction)), 1.0);
 }

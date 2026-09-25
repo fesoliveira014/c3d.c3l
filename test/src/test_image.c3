@@ -5,6 +5,7 @@ import c3d::asset;
 import c3d::asset::image;
 import c3d::material;
 import c3d::render;
+import std::io::file;
 import std::io::path;
 
 fn String fixture_path(String name) @local {
@@ -216,4 +217,45 @@ fn void test_loader_failures_release_decoded_pixels() @test {
     };
 
     assert(!tracker.has_leaks());
+}
+
+fn void test_write_png_round_trips_through_decode_image() @test {
+    const uint WIDTH = 4;
+    const uint HEIGHT = 3;
+    char[WIDTH * HEIGHT * 4] pixels;
+    for (uint y = 0; y < HEIGHT; y++) {
+        for (uint x = 0; x < WIDTH; x++) {
+            usz texel = (usz)(y * WIDTH + x) * 4;
+            pixels[texel] = (char)(x * 60);
+            pixels[texel + 1] = (char)(y * 80);
+            pixels[texel + 2] = (char)(x + y);
+            pixels[texel + 3] = (char)(255 - x * 10);
+        }
+    }
+    @pool() {
+        String file_path = (String)path::temp_directory(tmem)!!.tappend("c3d_write_png_round_trip.png")!!;
+        defer (void)file::delete(file_path);
+        image::write_png(file_path, WIDTH, HEIGHT, pixels[..])!!;
+
+        Image decoded = image::load_image(mem, file_path)!!;
+        defer image::destroy_image(&decoded);
+        assert(decoded.width == WIDTH && decoded.height == HEIGHT);
+        assert(decoded.format == PixelFormat.RGBA8_UNORM);
+        assert(decoded.pixels == pixels[..]);
+    };
+}
+
+fn void test_write_png_reports_specific_faults() @test {
+    char[16] pixels;
+    @pool() {
+        String file_path = (String)path::temp_directory(tmem)!!.tappend("c3d_write_png_fault.png")!!;
+        fault excuse = @catch(image::write_png(file_path, 0, 1, pixels[:0]));
+        assert(excuse == c3d::INVALID_ARGUMENT);
+        excuse = @catch(image::write_png(file_path, 2, 2, pixels[:15]));
+        assert(excuse == c3d::INVALID_ARGUMENT);
+
+        String missing = (String)path::temp_directory(tmem)!!.tappend("c3d_missing_directory", "image.png")!!;
+        excuse = @catch(image::write_png(missing, 2, 2, pixels[..]));
+        assert(excuse == c3d::ASSET_IO_ERROR);
+    };
 }

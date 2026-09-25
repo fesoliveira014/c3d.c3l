@@ -172,6 +172,7 @@ fn void test_view_targets_list_every_image_once() @test {
     bool ao_listed;
     bool reflection_listed;
     bool reflection_blur_listed;
+    bool accumulation_listed;
     foreach (usz index, target : targets) {
         assert(target != null);
         for (usz other = index + 1; other < targets.len; other++) assert(target != targets[other]);
@@ -179,6 +180,64 @@ fn void test_view_targets_list_every_image_once() @test {
         if (target == &record.ao) ao_listed = true;
         if (target == &record.reflection) reflection_listed = true;
         if (target == &record.reflection_blur) reflection_blur_listed = true;
+        if (target == &record.accumulation) accumulation_listed = true;
     }
-    assert(raw_listed && ao_listed && reflection_listed && reflection_blur_listed);
+    assert(raw_listed && ao_listed && reflection_listed && reflection_blur_listed && accumulation_listed);
+}
+
+fn void test_view_desc_gates_path_tracing() @test {
+    Renderer* renderer = mem::new(Renderer);
+    defer free(renderer);
+    ViewDesc base = render::default_view_desc();
+    assert(base.path_trace.max_bounces == render::PATH_TRACE_DEFAULT.max_bounces);
+    assert(base.path_trace.samples_per_frame == render::PATH_TRACE_DEFAULT.samples_per_frame);
+    assert(base.path_trace.max_samples == render::PATH_TRACE_DEFAULT.max_samples);
+
+    base.shading = ShadingPath.PATH_TRACED;
+    expect_view_desc_fault(renderer, &base, c3d::UNSUPPORTED);
+    renderer.caps.ray_queries.enabled = true;
+    renderer.caps.ray_tracing_pipelines.enabled = true;
+    render::validate_view_desc(renderer, &base)!!;
+
+    ViewDesc desc = base;
+    desc.post.anti_aliasing = AntiAliasing.TAA;
+    expect_view_desc_fault(renderer, &desc, c3d::INVALID_ARGUMENT);
+    desc = base;
+    desc.post.motion_blur = true;
+    expect_view_desc_fault(renderer, &desc, c3d::INVALID_ARGUMENT);
+    desc = base;
+    desc.post.depth_of_field = true;
+    expect_view_desc_fault(renderer, &desc, c3d::INVALID_ARGUMENT);
+    desc = base;
+    desc.ambient_occlusion = render::AMBIENT_OCCLUSION_DEFAULT;
+    expect_view_desc_fault(renderer, &desc, c3d::INVALID_ARGUMENT);
+    desc = base;
+    desc.ray_tracing.shadows = true;
+    expect_view_desc_fault(renderer, &desc, c3d::INVALID_ARGUMENT);
+    desc = base;
+    desc.lights = LightSelection.CLUSTERED;
+    expect_view_desc_fault(renderer, &desc, c3d::INVALID_ARGUMENT);
+    desc = base;
+    desc.ray_tracing.reflections = true;
+    expect_view_desc_fault(renderer, &desc, c3d::UNSUPPORTED);
+
+    uint[2] bad_counts = { 0, 17 };
+    foreach (count : bad_counts) {
+        desc = base;
+        desc.path_trace.max_bounces = count;
+        expect_view_desc_fault(renderer, &desc, c3d::INVALID_ARGUMENT);
+        desc = base;
+        desc.path_trace.samples_per_frame = count;
+        expect_view_desc_fault(renderer, &desc, c3d::INVALID_ARGUMENT);
+    }
+    desc = base;
+    desc.path_trace = { .max_bounces = 1, .samples_per_frame = 16 };
+    render::validate_view_desc(renderer, &desc)!!;
+    desc.path_trace = { .max_bounces = 16, .samples_per_frame = 1, .max_samples = 1_000_000 };
+    render::validate_view_desc(renderer, &desc)!!;
+
+    renderer.caps.ray_tracing_pipelines.enabled = false;
+    desc = render::default_view_desc();
+    desc.path_trace = {};
+    render::validate_view_desc(renderer, &desc)!!;
 }

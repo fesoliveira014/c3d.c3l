@@ -75,6 +75,7 @@ struct RendererDesc {
     uint             max_shadow_layers;
     uint             max_trace_instances;
     bool             ray_queries;
+    bool             ray_tracing_pipelines;
 }
 
 <*
@@ -106,6 +107,8 @@ struct Renderer {
     gpu::Device             device;
     gpu::DeviceCaps         caps;
     gpu::StageMask          consumer_stages;
+    gpu::StageMask          trace_stages;
+    gpu::TextureState       sampled_state;
     gpu::Queue              graphics;
     gpu::SwapchainHandle    swapchain;
     gpu::SwapchainInfo      swapchain_info;
@@ -147,6 +150,7 @@ struct Renderer {
     post::PostPipelines       post_pipelines;
     AmbientOcclusionPipelines ambient_occlusion_pipelines;
     ReflectionPipelines       reflection_pipelines;
+    PathTracer                path_tracer;
     PipelineCache             pipelines;
     gpu::SamplerIndex         linear_clamp_sampler;
 
@@ -651,7 +655,8 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     runtime_desc.debug_callback = &record_debug_message;
     runtime_desc.debug_user_data = log;
     runtime_desc.enable_debug_names = true;
-    if (desc.ray_queries) runtime_desc.acceleration_structure_heap_capacity = FRAMES_IN_FLIGHT;
+    bool ray_queries = desc.ray_queries || desc.ray_tracing_pipelines;
+    if (ray_queries) runtime_desc.acceleration_structure_heap_capacity = FRAMES_IN_FLIGHT;
 
     gpu::Runtime runtime = gpu::create_runtime(&runtime_desc)!;
     defer catch (void)gpu::destroy_runtime(&runtime);
@@ -662,7 +667,11 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         if (surface.is_valid()) (void)gpu::destroy_surface(&surface);
     }
 
-    gpu::DeviceDesc device_desc = { .surface = surface, .enable_ray_queries = desc.ray_queries };
+    gpu::DeviceDesc device_desc = {
+        .surface                      = surface,
+        .enable_ray_queries           = ray_queries,
+        .enable_ray_tracing_pipelines = desc.ray_tracing_pipelines,
+    };
     gpu::Adapter adapter = select_adapter(&runtime, &device_desc)!;
     gpu::Device device = gpu::create_device(&adapter, &device_desc)!;
     defer catch (void)gpu::destroy_device(&device);
@@ -670,11 +679,21 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     gpu::Queue graphics = gpu::get_queue(&device, gpu::QueueKind.GRAPHICS)!;
     gpu::DeviceCaps caps = gpu::get_device_caps(&device)!;
     uint max_trace_instances = desc.max_trace_instances ? desc.max_trace_instances : DEFAULT_MAX_TRACE_INSTANCES;
-    if (desc.ray_queries && max_trace_instances > caps.acceleration_structures.max_instance_count) {
+    if (ray_queries && max_trace_instances > caps.acceleration_structures.max_instance_count) {
         return c3d::UNSUPPORTED~;
     }
+    // A device without ray-tracing pipelines may reject the stage, so it is named only when enabled.
+    bool pipelines = caps.ray_tracing_pipelines.enabled;
     gpu::StageMask consumer_stages = CONSUMER_STAGES;
     consumer_stages.acceleration_structure_build = caps.ray_queries.enabled;
+    consumer_stages.ray_tracing = pipelines;
+    gpu::StageMask trace_stages = {
+        .fragment_shader,
+        .compute,
+        .acceleration_structure_build,
+        .ray_tracing = pipelines,
+    };
+    gpu::TextureState sampled_state = gpu::sampled_at({ .fragment_shader, .compute, .ray_tracing = pipelines });
 
     uint max_shadow_layers = desc.max_shadow_layers ? desc.max_shadow_layers : DEFAULT_MAX_SHADOW_LAYERS;
     bool timestamps_enabled;
@@ -719,7 +738,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         gpu::CommandAllocatorDesc allocator_desc = {
             .command_buffer_capacity                         = COMMAND_BUFFERS_PER_FRAME,
             .debug_name                                      = FRAME_ALLOCATOR_NAMES[slot],
-            .max_acceleration_structure_geometries_per_build = desc.ray_queries ? 1 : 0,
+            .max_acceleration_structure_geometries_per_build = ray_queries ? 1 : 0,
         };
         frames[slot].allocator = gpu::create_command_allocator(&device, graphics, &allocator_desc)!;
         frames[slot].retire.init(allocator, RETIRE_INITIAL_CAPACITY);
@@ -786,6 +805,8 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .device               = device,
         .caps                 = caps,
         .consumer_stages      = consumer_stages,
+        .trace_stages         = trace_stages,
+        .sampled_state        = sampled_state,
         .rt                   = { .current = FRAMES_IN_FLIGHT },
         .graphics             = graphics,
         .swapchain            = swapchain,
@@ -878,6 +899,7 @@ fn void destroy_renderer(Renderer* renderer) {
     post::destroy_post_pipelines(&renderer.device, &renderer.post_pipelines);
     destroy_ambient_occlusion_pipelines(&renderer.device, &renderer.ambient_occlusion_pipelines);
     destroy_reflection_pipelines(&renderer.device, &renderer.reflection_pipelines);
+    destroy_path_tracer(&renderer.device, &renderer.path_tracer);
 
     foreach (&record : renderer.targets.items) {
         if (record.target.texture.is_valid()) release_target(&renderer.device, &record.target);

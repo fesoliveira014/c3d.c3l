@@ -81,6 +81,7 @@ struct SceneTrace @private {
     uint[]             row_records;    // baseline record of each instance table row
     uint               tlas_index;     // as last written to the root
     ulong              prepared_frame; // frame_index + 1 of the last in-frame preparation
+    ulong              revision;       // advances whenever the rows are rewritten
     bool               software_requested;
     bool               hardware_requested;
     List{GeometryId}   pending_builds;
@@ -590,7 +591,7 @@ fn void? record_acceleration_builds(Renderer* renderer, gpu::CommandList* comman
     if (rt.build_pending) {
         if (rt.build_after_reads) {
             gpu::Barrier reads_done = {
-                .before = { .fragment_shader, .compute, .acceleration_structure_build },
+                .before = renderer.trace_stages,
                 .after  = { .acceleration_structure_build },
             };
             gpu::cmd_barrier(commands, &reads_done)!;
@@ -604,7 +605,7 @@ fn void? record_acceleration_builds(Renderer* renderer, gpu::CommandList* comman
     // A later batch in the same frame reuses this slot's scratch.
     gpu::Barrier built = {
         .before = { .acceleration_structure_build },
-        .after  = { .fragment_shader, .compute, .acceleration_structure_build },
+        .after  = renderer.trace_stages,
     };
     gpu::cmd_barrier(commands, &built)!;
     renderer.work_recorded = true;
@@ -725,6 +726,7 @@ fn void? write_top_level(Renderer* renderer, Scene* scene, TraceInstance[] recor
     trace.top_node_count = (uint)top.nodes.len;
     trace.tlas_index = tlas_index;
     trace.scene = scene.identity;
+    trace.revision++;
 }
 
 fn void? write_trace_root(Renderer* renderer, uint tlas_index) @local {
