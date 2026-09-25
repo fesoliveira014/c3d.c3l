@@ -9,7 +9,7 @@ import c3d::scene;
 import b3;
 
 <*
- Build pending bodies, step the simulation by dt, write dynamic poses.
+ Build pending bodies and joints, step the simulation by dt, write dynamic poses.
  Event node pointers are valid until the scene flushes removals.
 *>
 fn void PhysicsWorld.update(&self, float dt) {
@@ -18,9 +18,11 @@ fn void PhysicsWorld.update(&self, float dt) {
     self.hit_count = 0;
     self.sensor_begin_count = 0;
     self.sensor_end_count = 0;
+    self.joint_event_count = 0;
     self.failure_count = 0;
     self.dropped_events = 0;
     sync_bodies(self);
+    sync_joints(self);
 
     float fixed_dt = self.desc.tuning.fixed_dt;
     self.accumulator += dt;
@@ -111,6 +113,15 @@ fn void end_step(PhysicsWorld* world) @local {
             visitor: event.visitor_shape_id,
         );
     }
+    foreach (event : world.world.joint_events()) {
+        Node* node = world.scene.node(unpack_entity(event.user_data));
+        if (world.joint_event_count == world.joint_event_storage.len) {
+            world.dropped_events++;
+            continue;
+        }
+        Entity other = world.scene.get(node, Joint).other;
+        world.joint_event_storage[world.joint_event_count++] = { .node = node, .other = world.scene.node(other) };
+    }
 }
 
 fn void push_contact(
@@ -197,12 +208,16 @@ fn void try_build(PhysicsWorld* world, Node* node, PhysicsBody* physics_body) @l
         physics_body.status = FAILED;
         physics_body.failure = excuse;
         physics_body.failed_revisions = excuse == SOURCE_UNAVAILABLE ? body_revision_sum(world, physics_body) : 0;
-        if (world.failure_count == world.failure_storage.len) {
-            world.dropped_events++;
-            return;
-        }
-        world.failure_storage[world.failure_count++] = { .node = node, .reason = excuse };
+        push_failure(world, node, excuse);
     }
+}
+
+fn void push_failure(PhysicsWorld* world, Node* node, fault excuse) @private {
+    if (world.failure_count == world.failure_storage.len) {
+        world.dropped_events++;
+        return;
+    }
+    world.failure_storage[world.failure_count++] = { .node = node, .reason = excuse };
 }
 
 // Replaces any body still on the node: a rebuild, or an orphan whose PhysicsBody left this frame.

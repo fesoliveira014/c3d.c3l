@@ -20,22 +20,25 @@ const float AXIS_PARALLEL_THRESHOLD @local = 0.99f; // a capsule axis this close
 const float HEX_CHANNEL_SCALE @local = 1.0f / 255;
 
 <*
- Append collider wireframes, contacts and bounds to the sink.
+ Append collider wireframes, contacts, bounds and joints to the sink.
  @param [&inout] sink : "Cleared by the application."
 *>
 fn void PhysicsWorld.debug_draw(&self, debug::DebugDraw* sink, PhysicsDebugOptions options) {
     if (options.colliders) draw_colliders(self, sink);
-    if (!options.contacts && !options.bounds) return;
+    if (!options.contacts && !options.bounds && !options.joints && !options.joint_extras) return;
 
     draw::DebugDraw draw = draw::default_debug_draw();
     draw.draw_segment_fcn = &draw_segment;
     draw.draw_point_fcn = &draw_point;
     draw.draw_bounds_fcn = &draw_bounds;
+    draw.draw_box_fcn = &draw_box;
     draw.context = sink;
     draw.drawing_bounds = self.world.bounds();
     draw.draw_contacts = options.contacts;
     draw.draw_contact_normals = options.contacts;
     draw.draw_bounds = options.bounds;
+    draw.draw_joints = options.joints;
+    draw.draw_joint_extras = options.joint_extras;
     draw::world_draw(self.world, &draw, ulong::max);
 }
 
@@ -157,6 +160,17 @@ fn void draw_point(
 fn void draw_bounds(b3::Aabb bounds, draw::HexColor color, void* context) @local {
     debug::DebugDraw* sink = context;
     sink.aabb({ .min = bounds.lower_bound, .max = bounds.upper_bound }, sink_color(color));
+}
+
+fn void draw_box(
+    Vec3 extents,
+    b3::WorldTransform transform,
+    draw::HexColor color,
+    void* context,
+) @local {
+    debug::DebugDraw* sink = context;
+    maths::Transform pose = { .position = transform.p, .rotation = transform.q, .scale = { 1, 1, 1 } };
+    sink.box(pose.to_mat4(), { .min = -extents, .max = extents }, sink_color(color));
 }
 
 fn uint sink_color(draw::HexColor color) @local {
