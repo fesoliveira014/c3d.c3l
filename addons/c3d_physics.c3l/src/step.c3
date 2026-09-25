@@ -114,11 +114,11 @@ fn void end_step(PhysicsWorld* world) @local {
         );
     }
     foreach (event : world.world.joint_events()) {
-        Node* node = world.scene.node(unpack_entity(event.user_data));
         if (world.joint_event_count == world.joint_event_storage.len) {
             world.dropped_events++;
             continue;
         }
+        Node* node = world.scene.node(unpack_entity(event.user_data));
         Entity other = world.scene.get(node, Joint).other;
         world.joint_event_storage[world.joint_event_count++] = { .node = node, .other = world.scene.node(other) };
     }

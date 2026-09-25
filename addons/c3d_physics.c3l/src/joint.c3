@@ -105,7 +105,7 @@ struct WeldJoint {
 }
 
 <*
- Wheel: suspension and steering about the anchor x axis, spin about the node z.
+ Wheel: suspension along and steering about the anchor x axis, spin about the node z.
  Steering disabled holds the wheel straight.
 *>
 struct WheelJoint {
@@ -255,7 +255,9 @@ fn void PhysicsWorld.apply_joint(&self, Node* node) {
     if (!scene.has(node, Joint)) return;
     PhysicsJoint* physics_joint = scene.get(node, PhysicsJoint);
     Joint* joint = scene.get(node, Joint);
-    if (physics_joint.desc.kind != joint.kind || !same_entity(physics_joint.desc.other, joint.other)) {
+    // A removed anchor destroys the joint before the next update notices.
+    bool stale = !joint.joint.is_valid();
+    if (stale || physics_joint.desc.kind != joint.kind || !same_entity(physics_joint.desc.other, joint.other)) {
         scene.remove_component(node, Joint);
         physics_joint.status = PENDING;
         return;
@@ -286,7 +288,9 @@ fn JointState? PhysicsWorld.joint_state(&self, Node* node) {
 *>
 fn b3::JointId? PhysicsWorld.joint(&self, Node* node) {
     if (!self.scene.has(node, Joint)) return NO_JOINT~;
-    return self.scene.get(node, Joint).joint;
+    b3::JointId joint = self.scene.get(node, Joint).joint;
+    if (!joint.is_valid()) return NO_JOINT~;
+    return joint;
 }
 
 <*

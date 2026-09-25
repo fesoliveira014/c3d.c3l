@@ -176,6 +176,28 @@ fn void test_dead_other_fails_with_no_body_and_lists_once() @test {
     assert(fixture.physics.build_failures().len == 0);
 }
 
+fn void test_removed_anchor_makes_the_joint_stale_until_the_next_update() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Node* anchor = add_component_box(&fixture, { 0, 0, 0 }, STATIC);
+    Node* attached = hinge(&fixture, anchor, add_component_box(&fixture, { 2, 0, 0 }));
+    fixture.physics.update(0);
+
+    fixture.scene.remove(anchor);
+    assert(@catch(fixture.physics.joint(attached)) == physics::NO_JOINT);
+    assert(@catch(fixture.physics.joint_state(attached)) == physics::NO_JOINT);
+    fixture.physics.apply_joint(attached);
+    PhysicsJoint* physics_joint = fixture.scene.get(attached, PhysicsJoint);
+    assert(physics_joint.status == PENDING);
+    assert(!fixture.scene.has(attached, Joint));
+
+    fixture.physics.update(0);
+    assert(physics_joint.status == FAILED);
+    assert(physics_joint.failure == physics::NO_BODY);
+}
+
 fn void test_add_joint_without_a_live_body_faults_and_leaves_no_components() @test {
     Fixture fixture;
     setup(&fixture);
