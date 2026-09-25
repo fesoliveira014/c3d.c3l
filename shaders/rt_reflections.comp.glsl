@@ -39,6 +39,11 @@ void main() {
     vec3 position = reconstruct_world_position(frame, uv, depth);
     vec3 normal = decode_octahedral(normal_roughness.rg);
     vec3 view_direction = standard_view_direction(frame, position);
+    // A shading normal facing away from the eye reflects below the surface; the raster term stays.
+    if (dot(view_direction, normal) <= 0.0) {
+        store_storage_texture(root.output_texture, texel, vec4(0.0));
+        return;
+    }
     float perceptual = max(roughness, MIN_PERCEPTUAL_ROUGHNESS);
     float alpha = perceptual * perceptual;
 

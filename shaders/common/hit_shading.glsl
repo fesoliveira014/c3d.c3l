@@ -50,7 +50,7 @@ vec3 shade_standard_hit(FrameRoot frame, TraceSurface surface, vec3 view_directi
     for (uint index = 0u; index < frame.light_count; index++) {
         LightGpu light = LightArray(frame.lights).values[index];
         LightSample light_sample = sample_light(light, surface.position);
-        if (dot(surface.normal, light_sample.direction) <= 0.0) continue;
+        if (dot(surface.normal, light_sample.direction) <= 0.0 || light_sample.radiance == vec3(0.0)) continue;
         color += evaluate_standard_brdf(standard, light_sample.direction) * light_sample.radiance
             * hit_light_visibility(frame, light, surface);
     }
@@ -68,7 +68,7 @@ vec3 shade_toon_hit(FrameRoot frame, TraceSurface surface, vec3 view_direction) 
         LightGpu light = LightArray(frame.lights).values[index];
         LightSample light_sample = sample_light(light, surface.position);
         float normal_light = dot(surface.normal, light_sample.direction);
-        if (normal_light <= 0.0) continue;
+        if (normal_light <= 0.0 || light_sample.radiance == vec3(0.0)) continue;
         color += surface.albedo / PI * toon_response(material, normal_light) * light_sample.radiance
             * hit_light_visibility(frame, light, surface);
     }
@@ -81,7 +81,7 @@ vec3 shade_lambert_hit(FrameRoot frame, TraceSurface surface) {
         LightGpu light = LightArray(frame.lights).values[index];
         LightSample light_sample = sample_light(light, surface.position);
         float normal_light = dot(surface.normal, light_sample.direction);
-        if (normal_light <= 0.0) continue;
+        if (normal_light <= 0.0 || light_sample.radiance == vec3(0.0)) continue;
         color += surface.albedo / PI * normal_light * light_sample.radiance
             * hit_light_visibility(frame, light, surface);
     }

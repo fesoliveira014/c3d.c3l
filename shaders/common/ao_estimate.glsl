@@ -6,9 +6,7 @@
 
 const float AO_FALLOFF_FRACTION = 0.6; // outer share of the radius where occluders fade out; hides the cut-off ring
 
-// A G-buffer texel the opaque pass left cleared: a forward-shaded surface on a deferred view.
-// Written texels carry material occlusion in a, zero only under a fully occluding map, where the
-// reconstructed normal serves as well.
+// Cleared texels are forward-shaded surfaces of a deferred view; written ones carry material occlusion in a.
 bool ao_gbuffer_normal_written(vec4 normal_roughness) {
     return normal_roughness.a > 0.0;
 }

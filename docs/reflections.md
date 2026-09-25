@@ -97,6 +97,7 @@ python3 scripts/build.py --example rt_effects
 - One ray per pixel and a spatial blur; no temporal accumulation beyond what TAA provides.
 - Hits see the static traced scene: skinned, morphed and `BLEND` meshes are absent.
 - Hits use the view's light list, which drops finite lights outside the camera frustum, and
-  apply no light layers.
+  apply no light layers. Every hit loops the whole list (no clustering) with a shadow ray per
+  shadowing light in reach, so hit cost grows with the light count.
 - Hit shading evaluates the Standard lobes only, without normal maps.
 - The back of a single-sided surface reflects black.
