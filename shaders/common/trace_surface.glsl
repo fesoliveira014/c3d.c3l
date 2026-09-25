@@ -111,9 +111,13 @@ vec4 hit_tangent(TraceInstanceGpu instance, GeometryRoot geometry, uvec3 corners
     vec4 tangent = pull_vec4(geometry.tangents, corners.x) * weights.x
         + pull_vec4(geometry.tangents, corners.y) * weights.y
         + pull_vec4(geometry.tangents, corners.z) * weights.z;
-    mat3 linear = mat3(instance.local_to_world_0.xyz, instance.local_to_world_1.xyz, instance.local_to_world_2.xyz);
+    mat3 linear = transpose(mat3(
+        instance.local_to_world_0.xyz,
+        instance.local_to_world_1.xyz,
+        instance.local_to_world_2.xyz
+    ));
     float orientation = determinant(linear) < 0.0 ? -1.0 : 1.0;
-    return vec4(tangent.xyz * linear, tangent.w * orientation);
+    return vec4(linear * tangent.xyz, tangent.w * orientation);
 }
 
 vec2 corner_map_uv(TextureMapGpu map, uint map_flags, GeometryRoot geometry, uvec3 corners, vec3 corner) {

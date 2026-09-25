@@ -15,8 +15,8 @@ import std::math;
 const uint PATH_TARGET_SIZE @private = 32;
 const float EXACT_TOLERANCE @private = 1e-3f;
 const float FURNACE_ALBEDO @private = 0.5f;
-const float STANDARD_FURNACE_MINIMUM @private = 0.7f; // loose until measured; single scattering loses some energy
-const float STANDARD_FURNACE_MAXIMUM @private = 1.1f;
+const float STANDARD_FURNACE_MINIMUM @private = 0.9f; // single-scattering GGX loses a few percent at roughness 0.5
+const float STANDARD_FURNACE_MAXIMUM @private = 1.05f; // energy conservation; a doubled cosine or bad pdf leaves it
 const float RASTER_AGREEMENT @private = 0.02f;
 const float NORMAL_MAP_EFFECT_MINIMUM @private = 0.1f;
 const Vec3 EMITTER_RADIANCE @private = { 2, 1, 0.5f };

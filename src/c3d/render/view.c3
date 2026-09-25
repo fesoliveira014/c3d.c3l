@@ -290,7 +290,8 @@ fn void? record_raster_view(
                     .material  = material,
                     .vertex    = vertex,
                     .pipeline  = pipeline,
-                    .skin      = candidate.skin ? resolve_palette(renderer, candidate.node, candidate.skin)! : (gpu::GpuAddress)0,
+                    .skin      = candidate.skin
+                      ? resolve_palette(renderer, candidate.node, candidate.skin)! : (gpu::GpuAddress)0,
                     .morph     = vertex.flags & shader::SHADER_FLAG_MORPH
                       ? resolve_morph_block(renderer, candidate)! : (gpu::GpuAddress)0,
                     .instance_data  = candidate.batch ? resolve_instances(renderer, candidate)! : (gpu::GpuAddress)0,

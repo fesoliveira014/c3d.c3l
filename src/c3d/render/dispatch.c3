@@ -212,13 +212,13 @@ fn void? Renderer.dispatch(&self, DispatchDesc desc) {
     *(DispatchRoot*)root.bytes.ptr = { .textures = textures, .parameters = parameters };
 
     if (desc.writes.len) {
-        gpu::Barrier readers_done = { .before = CONSUMER_STAGES, .after = { .compute } };
+        gpu::Barrier readers_done = { .before = self.consumer_stages, .after = { .compute } };
         gpu::cmd_barrier(&self.commands, &readers_done)!;
     }
     gpu::cmd_bind_pipeline(&self.commands, pipeline)!;
     gpu::cmd_dispatch(&self.commands, root.address, { desc.groups.x, desc.groups.y, desc.groups.z })!;
     if (desc.writes.len) {
-        gpu::Barrier writes_visible = { .before = { .compute }, .after = CONSUMER_STAGES };
+        gpu::Barrier writes_visible = { .before = { .compute }, .after = self.consumer_stages };
         gpu::cmd_barrier(&self.commands, &writes_visible)!;
     }
     foreach (&entry : resolved[:desc.textures.len]) {
