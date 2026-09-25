@@ -128,3 +128,8 @@ and prints samples per second.
 python3 scripts/build.py --example path_tracer
 ./examples/build/path_tracer --headless --samples 1024 --out still.png
 ```
+
+`examples/gltf_viewer model.gltf` offers the same "Path traced" choice in its targets panel when the
+adapter has ray-tracing pipelines, for example on Sponza after `python3 scripts/fetch_benchmark_assets.py`:
+`./examples/build/gltf_viewer examples/assets/benchmark/sponza/glTF/Sponza.gltf`. The spinning instance
+holds still while the view is path traced, because any movement restarts accumulation.

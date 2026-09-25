@@ -40,6 +40,10 @@ const float FREE_FAST_MULTIPLIER @local = 4;
 const float FREE_SPEED_WHEEL_STEP @local = 1.25f;
 const Vec2 CAMERA_PANEL_POSITION @local = { 16, 16 };
 const Vec2 CAMERA_PANEL_SIZE @local = { 300, 150 };
+const Vec2 TARGETS_PANEL_POSITION @local = { 16, 180 };
+const Vec2 TARGETS_PANEL_SIZE @local = { 420, 300 };
+const Vec2 POST_PANEL_POSITION @local = { 1060, 16 };
+const Vec2 POST_PANEL_SIZE @local = { 360, 420 };
 const uint MODEL_CAPACITY @local = 4;
 const String DEFAULT_MODEL @local = "../assets/gltf/BoxTextured.glb";
 const String ENVIRONMENT_FILE @local = "../assets/ibl/studio_small_09_1k.hdr";
@@ -453,12 +457,19 @@ fn int run_example(String model_path, bool gpu_timings) @local {
     AssetStore assets = asset::create_asset_store(mem, store_desc);
     defer asset::destroy_asset_store(&assets);
 
-    render::Renderer renderer = platform::create_window_renderer(
-        allocator: mem,
-        window: &window,
-        assets: &assets,
-        desc: { .gpu_timings = gpu_timings, .validation = true, .application_name = "c3d_gltf_viewer" },
-    )!!;
+    RendererDesc renderer_desc = {
+        .gpu_timings           = gpu_timings,
+        .validation            = true,
+        .application_name      = "c3d_gltf_viewer",
+        .ray_tracing_pipelines = true,
+    };
+    render::Renderer? traced = platform::create_window_renderer(mem, &window, &assets, renderer_desc);
+    if (catch traced) {
+        // Adapters without ray-tracing pipelines still view the model; the Path traced choice stays disabled.
+        renderer_desc.ray_tracing_pipelines = false;
+        traced = platform::create_window_renderer(mem, &window, &assets, renderer_desc);
+    }
+    render::Renderer renderer = traced!!;
     defer render::destroy_renderer(&renderer);
 
     if (!model_path.len) model_path = example_path(DEFAULT_MODEL);
@@ -519,6 +530,7 @@ fn int run_example(String model_path, bool gpu_timings) @local {
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
     FreeCamera free_camera = free_camera_from(camera_node, radius * FREE_SPEED_SCALE);
     bool free_mode;
+    TargetsPanelState targets = gui::default_targets_panel_state();
 
     io::printn("drag to orbit, wheel to zoom; F or the Camera panel toggles the free camera: right drag looks, WASDQE move, Shift is fast, wheel scales speed; Escape release quits");
     double last_print;
@@ -545,10 +557,26 @@ fn int run_example(String model_path, bool gpu_timings) @local {
         }
         imgui::end();
         if (free_mode && !was_free) free_camera = free_camera_from(camera_node, free_camera.speed);
+        imgui::set_next_window_pos(TARGETS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
+        imgui::set_next_window_size(TARGETS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
+        gui::targets_panel(&renderer, renderer.default_view, &targets, environment)!!;
+        // The targets panel reconfigures the view it inspects; the post panel edits from that state.
+        ViewDesc view_desc = renderer.views.get(renderer.default_view).desc;
+        imgui::set_next_window_pos(POST_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
+        imgui::set_next_window_size(POST_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
+        bool view_changed = gui::post_panel(&view_desc, {}, renderer.caps.ray_queries.enabled);
         gui_renderer.finish_frame();
+        if (view_changed) {
+            if (catch excuse = render::configure_view(&renderer, renderer.default_view, view_desc)) {
+                io::printfn("gltf_viewer: settings rejected (%s)", excuse);
+            }
+        }
 
-        right.local.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 },
-            (float)window.clock.total * SPIN_RADIANS_PER_SECOND);
+        // A moving instance restarts path-traced accumulation every frame, so it holds still there.
+        if (view_desc.shading != ShadingPath.PATH_TRACED) {
+            right.local.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 },
+                (float)window.clock.total * SPIN_RADIANS_PER_SECOND);
+        }
         if (free_mode) {
             apply_free_camera(&free_camera, input, camera_node, (float)window.clock.delta);
         } else if (!input.mouse_captured_by_gui) {
