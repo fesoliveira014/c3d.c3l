@@ -232,14 +232,7 @@ fn BenchmarkOptions? parse_options(String[] args) @local {
                 } else {
                     return c3d::INVALID_ARGUMENT~;
                 }
-            case "--shading":
-                if (value == "forward") {
-                    options.shading = ShadingPath.FORWARD;
-                } else if (value == "deferred") {
-                    options.shading = ShadingPath.DEFERRED;
-                } else {
-                    return c3d::INVALID_ARGUMENT~;
-                }
+            case "--shading": options.shading = bench_loop::parse_shading(value)!;
             case "--shadows":
                 if (value == "on") {
                     options.shadows = true;
@@ -335,7 +328,8 @@ fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkOptions options) @local 
     base.depth_prepass = options.flags.depth_prepass;
     base.ray_tracing.reflections = options.flags.reflections;
     base.shading = options.shading;
-    base.lights = options.selection;
+    // A path-traced view loops every light itself and rejects the cluster grid.
+    base.lights = options.shading == ShadingPath.PATH_TRACED ? LightSelection.FLAT : options.selection;
     base.clusters.lights_per_cluster = options.capacity;
     return base;
 }
@@ -343,8 +337,8 @@ fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkOptions options) @local 
 fn void print_banner(BenchmarkOptions options, bool timestamps_active) @local {
     BenchmarkFlags flags = options.flags;
     io::eprintfn("mode=%s shading=%s lights=%d shadows=%s range=%.3f capacity=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s depth_prepass=%s ambient_occlusion=%s reflections=%s",
-        options.selection == LightSelection.FLAT ? "flat" : "clustered",
-        options.shading == ShadingPath.DEFERRED ? "deferred" : "forward", options.lights, options.shadows,
+        options.selection == LightSelection.FLAT || options.shading == ShadingPath.PATH_TRACED ? "flat" : "clustered",
+        bench_loop::shading_name(options.shading), options.lights, options.shadows,
         options.range, options.capacity, flags.width, flags.height, flags.warmup, flags.frames,
         flags.validation, flags.gpu_timings, timestamps_active, flags.capture,
         flags.window ? "window" : "none", flags.panel, flags.depth_prepass,
@@ -366,6 +360,7 @@ fn void? run_benchmark(BenchmarkOptions options) @local {
         .present_mode = gpu::PresentMode.IMMEDIATE,
         .application_name = "c3d_gltf_benchmark",
         .ray_queries = bench_loop::needs_ray_queries(flags),
+        .ray_tracing_pipelines = options.shading == ShadingPath.PATH_TRACED,
         .max_lights = BENCHMARK_LIGHTS_MAX,
     };
     $if $feat(C3D_PROFILE_CPU) || $feat(C3D_PROFILE_GPU):
@@ -430,7 +425,7 @@ fn int main(String[] args) {
     if (catch excuse = parsed) {
         if (excuse != c3d::UNSUPPORTED) {
             io::eprintfn("Invalid options: %s", excuse);
-            io::eprintn("Use [model.gltf] [--gpu-timings] or --benchmark [model.gltf] --mode flat|clustered --lights N --shadows on|off --range R --capacity N --frames N --warmup N --width N --height N [--anti-aliasing none|fxaa|taa] [--ambient-occlusion none|half|full] [--depth-prepass on|off] [--gpu-timings] [--validation] [--capture] [--window] [--panel] [--print-features].");
+            io::eprintn("Use [model.gltf] [--gpu-timings] or --benchmark [model.gltf] --mode flat|clustered [--shading forward|deferred|path-traced] --lights N --shadows on|off --range R --capacity N --frames N --warmup N --width N --height N [--anti-aliasing none|fxaa|taa] [--ambient-occlusion none|half|full] [--depth-prepass on|off] [--gpu-timings] [--validation] [--capture] [--window] [--panel] [--print-features].");
         }
         return 1;
     }

@@ -96,6 +96,15 @@ Clear the image's slice only after insertion succeeds. On failure it still owns
 its allocation. `load_texture` and `load_hdr` use this transfer path internally;
 keys follow the store's existing uniqueness policy and are not replaced.
 
+## Write a PNG
+
+`image::write_png(path, width, height, pixels)` encodes tightly packed RGBA8 rows, top row first,
+as a PNG file and writes the bytes unchanged (no colour-space chunk), so pass sRGB-encoded bytes
+for colour, such as a `read_render_target` copy of an `RGBA8_SRGB` target. A zero extent or a
+buffer that is not width x height x 4 bytes faults `INVALID_ARGUMENT`; a file that cannot be
+written faults `ASSET_IO_ERROR`. The encoder is C3 over the standard library's deflate and needs
+no C source.
+
 ## HDR data and mip filtering
 
 ```c3

@@ -45,12 +45,13 @@ defer (void)render::destroy_view(&renderer, capture_view);
 | `render_scale` | Working resolution relative to the viewport, in `(0, MAX_RENDER_SCALE]` |
 | `color` | `DISPLAY_LDR` runs the display route; `LINEAR_HDR` keeps scene-linear color |
 | `post` | The view's `PostStack` (see [display processing](post.md)) |
-| `shading` | `FORWARD` or `DEFERRED` (see [Shading path](#shading-path)) |
+| `shading` | `FORWARD`, `DEFERRED` (see [Shading path](#shading-path)) or `PATH_TRACED` (see [path tracing](path_tracing.md)) |
 | `depth_prepass` | A `FORWARD` view draws its opaque set into depth first and shades it once; on in both constructors |
 | `lights` | `FLAT` or `CLUSTERED` candidate light selection |
 | `clusters` | Editable `ClusterDesc`; ignored by `FLAT` |
 | `ray_tracing` | `RayTracingDesc`: `shadows` (see [shadows](shadows.md)), `reflections` and `max_reflection_roughness` (see [reflections](reflections.md)); zero disables all |
 | `ambient_occlusion` | `AmbientOcclusionDesc`; zero is off (see [ambient occlusion](ambient_occlusion.md)) |
+| `path_trace` | `PathTraceDesc`: bounces, samples per frame and sample cap of a `PATH_TRACED` view (see [path tracing](path_tracing.md)) |
 
 `default_view_desc()` is a full-window `DISPLAY_LDR` view with neutral grading and a depth
 prepass and `ray_tracing.max_reflection_roughness` at `RT_REFLECTION_ROUGHNESS_DEFAULT`;
@@ -182,6 +183,18 @@ the view's own output. The application orders the producer view before the consu
 frame and keeps the consumer's surfaces out of the producer camera's layers, so no view samples the
 image it is writing. Use `DISPLAY_LDR` output on an sRGB target for an unlit "monitor" surface and
 `LINEAR_HDR` on a float target for reflection or composition inputs.
+
+## Reading a target back
+
+`renderer.read_render_target(target, pixels)` copies a render target into caller memory. It runs
+with no frame open, waits for every submitted frame and then for its own copy, so it is for stills,
+tests and captures rather than every frame. `pixels.len` must equal width x height x the texel size
+(`render_target_texel_bytes`: 4 for `RGBA8_UNORM` and `RGBA8_SRGB`, 8 for `RGBA16_FLOAT`, 16 for
+`RGBA32_FLOAT`), otherwise it faults `INVALID_ARGUMENT`; a dead target faults `INVALID_ID`. Rows
+are tight and top row first, and the bytes come back as stored: sRGB-encoded for `RGBA8_SRGB`,
+half floats for `RGBA16_FLOAT`. A `DISPLAY_LDR` view writes linear values and relies on an sRGB
+format to encode them, so capture display output for an image file on an `RGBA8_SRGB` target and
+write it with `image::write_png`. Every render target carries transfer-source usage for this.
 
 ## Preparation
 

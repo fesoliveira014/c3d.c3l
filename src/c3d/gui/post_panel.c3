@@ -40,6 +40,7 @@ const float AO_RADIUS_MAX @local = 5;
 const float AO_INTENSITY_MAX @local = 2;
 const float REFLECTION_ROUGHNESS_MIN @local = 0.05f;
 const float REFLECTION_ROUGHNESS_MAX @local = 1;
+const uint PATH_TRACE_MAX_SAMPLES_LIMIT @local = 65536; // a float mean gains nothing visible beyond it
 const ZString[Tonemap::len] TONEMAP_LABELS @local = { "None", "ACES", "AgX", "Reinhard" };
 const ZString[AntiAliasing::len] ANTI_ALIASING_LABELS @local = { "None", "FXAA", "TAA" };
 const ZString[TaaDebug::len] TAA_DEBUG_LABELS @local = { "None", "Velocity", "Rejection", "History weight" };
@@ -64,7 +65,10 @@ fn bool post_panel(ViewDesc* desc, TextureId lut, bool ray_queries = false) {
         grade.tonemap = (Tonemap)tonemap;
         changed = true;
     }
+    bool path_traced = desc.shading == ShadingPath.PATH_TRACED;
     changed |= anti_aliasing_combo("Anti-aliasing", &desc.post.anti_aliasing);
+    // Accumulation already antialiases a path-traced view, and it rejects TAA.
+    if (path_traced && desc.post.anti_aliasing == AntiAliasing.TAA) desc.post.anti_aliasing = AntiAliasing.NONE;
     changed |= imgui::checkbox("Depth prepass", &desc.depth_prepass);
     if (lut.generation) {
         bool lut_enabled = grade.lut.generation != 0;
@@ -93,7 +97,9 @@ fn bool post_panel(ViewDesc* desc, TextureId lut, bool ray_queries = false) {
     }
     if (imgui::collapsing_header("Depth of field", {})) {
         DofParams* dof = &desc.post.dof_params;
+        imgui::begin_disabled(path_traced);
         changed |= imgui::checkbox("Enable depth of field", &desc.post.depth_of_field);
+        imgui::end_disabled();
         changed |= edit_grade_factor("Focus distance", &dof.focus_distance, FOCUS_DISTANCE_MIN, FOCUS_DISTANCE_MAX);
         changed |= edit_grade_factor("Focal length", &dof.focal_length, FOCAL_LENGTH_MIN, FOCAL_LENGTH_MAX);
         changed |= edit_grade_factor("Aperture", &dof.aperture, APERTURE_MIN, APERTURE_MAX);
@@ -101,7 +107,9 @@ fn bool post_panel(ViewDesc* desc, TextureId lut, bool ray_queries = false) {
     }
     if (imgui::collapsing_header("Motion blur", {})) {
         MotionBlurParams* blur = &desc.post.motion_blur_params;
+        imgui::begin_disabled(path_traced);
         changed |= imgui::checkbox("Enable motion blur", &desc.post.motion_blur);
+        imgui::end_disabled();
         changed |= edit_grade_factor("Shutter", &blur.shutter, 0, SHUTTER_MAX);
         changed |= edit_level_count("Samples", &blur.samples, 1, post::MOTION_BLUR_MAX_SAMPLES);
         changed |= edit_grade_factor("Max velocity", &blur.max_velocity, MAX_VELOCITY_MIN, MAX_VELOCITY_MAX);
@@ -149,11 +157,16 @@ fn bool post_panel(ViewDesc* desc, TextureId lut, bool ray_queries = false) {
             changed = true;
         }
     }
+    imgui::begin_disabled(path_traced);
     if (imgui::collapsing_header("Ambient occlusion", {})) {
         changed |= edit_ambient_occlusion(&desc.ambient_occlusion, ray_queries);
     }
     if (imgui::collapsing_header("Ray tracing", {})) {
         changed |= edit_ray_tracing(desc, ray_queries);
+    }
+    imgui::end_disabled();
+    if (path_traced && imgui::collapsing_header("Path tracing", {})) {
+        changed |= edit_path_trace(&desc.path_trace);
     }
 
     return changed;
@@ -184,6 +197,21 @@ fn bool edit_ambient_occlusion(AmbientOcclusionDesc* ambient_occlusion, bool ray
             minimum: render::RT_AO_RAYS_MIN,
             maximum: render::RT_AO_RAYS_MAX,
         );
+    }
+    return changed;
+}
+
+fn bool edit_path_trace(PathTraceDesc* path_trace) @local {
+    bool changed = edit_level_count("Bounces", &path_trace.max_bounces, 1, render::PATH_TRACE_BOUNCES_MAX);
+    changed |= edit_level_count(
+        label:   "Samples per frame",
+        value:   &path_trace.samples_per_frame,
+        minimum: 1,
+        maximum: render::PATH_TRACE_SAMPLES_PER_FRAME_MAX,
+    );
+    if (imgui::input_scalar("Max samples (0 = unlimited)", imgui::DATA_TYPE_U32, &path_trace.max_samples)) {
+        path_trace.max_samples = math::min(path_trace.max_samples, PATH_TRACE_MAX_SAMPLES_LIMIT);
+        changed = true;
     }
     return changed;
 }

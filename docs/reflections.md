@@ -99,5 +99,5 @@ python3 scripts/build.py --example rt_effects
 - Hits use the view's light list, which drops finite lights outside the camera frustum, and
   apply no light layers. Every hit loops the whole list (no clustering) with a shadow ray per
   shadowing light in reach, so hit cost grows with the light count.
-- Hit shading evaluates the Standard lobes only, without normal maps.
+- Hit shading evaluates the Standard lobes only; normal maps apply at hits.
 - The back of a single-sided surface reflects black.

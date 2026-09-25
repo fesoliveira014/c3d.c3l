@@ -83,11 +83,21 @@ fn void? targets_panel(
         }
         imgui::same_line();
         if (imgui::radio_button("Deferred", desc.shading == DEFERRED)) desc.shading = DEFERRED;
+        imgui::same_line();
+        imgui::begin_disabled(!renderer.caps.ray_tracing_pipelines.enabled);
+        if (imgui::radio_button("Path traced", desc.shading == PATH_TRACED)) select_path_tracing(&desc);
+        imgui::end_disabled();
         if (imgui::radio_button("Flat", desc.lights == FLAT)) desc.lights = FLAT;
         imgui::same_line();
+        imgui::begin_disabled(desc.shading == PATH_TRACED);
         if (imgui::radio_button("Clustered", desc.lights == CLUSTERED)) desc.lights = CLUSTERED;
+        imgui::end_disabled();
         if (desc.shading != record.desc.shading || desc.lights != record.desc.lights) {
             render::configure_view(renderer, view, desc)!;
+        }
+        if (record.desc.shading == PATH_TRACED) {
+            imgui::text("Accumulated samples: %u", record.stats.accumulated_samples);
+            if (imgui::button("Reset accumulation")) render::reset_view_history(renderer, view)!;
         }
 
         if (record.desc.lights == CLUSTERED) {
@@ -150,6 +160,19 @@ fn float preview_range(PreviewKind kind, TargetsPanelState* state) @local {
         case VIEW_VELOCITY: return state.velocity_range;
         default:            return 1;
     }
+}
+
+// Settings a path-traced view rejects are cleared so the switch always configures.
+fn void select_path_tracing(ViewDesc* desc) @local {
+    desc.shading = PATH_TRACED;
+    desc.lights = FLAT;
+    if (desc.post.anti_aliasing == TAA) desc.post.anti_aliasing = NONE;
+    desc.post.motion_blur = false;
+    desc.post.depth_of_field = false;
+    desc.ambient_occlusion = {};
+    desc.ray_tracing.shadows = false;
+    desc.ray_tracing.reflections = false;
+    if (desc.path_trace.max_bounces == 0) desc.path_trace = render::PATH_TRACE_DEFAULT;
 }
 
 fn PanelEntry[] collect_entries(Renderer* renderer, ViewId view, EnvironmentId environment) @local {
