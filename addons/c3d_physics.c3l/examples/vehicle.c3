@@ -140,7 +140,7 @@ fn Vehicle? build_vehicle(AssetStore* assets, Scene* scene) @local {
         StandardParams chassis_params = material::STANDARD_PARAMS_DEFAULT;
         chassis_params.base_color = { 0.8f, 0.2f, 0.15f, 1 };
         chassis_params.roughness = 0.4f;
-        MaterialId chassis_material = assets.add_material(material::standard(chassis_params), "vehicle/chassis_material")!;
+        MaterialId chassis_material = assets.add_material(material::standard(chassis_params), "vehicle/body_material")!;
         StandardParams wheel_params = material::STANDARD_PARAMS_DEFAULT;
         wheel_params.base_color = { 0.1f, 0.1f, 0.1f, 1 };
         wheel_params.metallic = 0;

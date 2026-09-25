@@ -309,27 +309,51 @@ fn JointDesc default_joint_desc(JointKind kind, Entity other) {
             desc.distance = {
                 .length             = def.length,
                 .range              = { .enabled = def.enable_limit, .lower = def.min_length, .upper = def.max_length },
-                .spring             = { .enabled = def.enable_spring, .hertz = def.hertz, .damping_ratio = def.damping_ratio },
+                .spring             = {
+                    .enabled       = def.enable_spring,
+                    .hertz         = def.hertz,
+                    .damping_ratio = def.damping_ratio,
+                },
                 .lower_spring_force = def.lower_spring_force,
                 .upper_spring_force = def.upper_spring_force,
-                .motor              = { .enabled = def.enable_motor, .speed = def.motor_speed, .max_force = def.max_motor_force },
+                .motor              = {
+                    .enabled   = def.enable_motor,
+                    .speed     = def.motor_speed,
+                    .max_force = def.max_motor_force,
+                },
             };
         case REVOLUTE:
             b3::RevoluteJointDef def = b3::default_revolute_joint_def();
             desc.revolute = {
                 .target_angle = def.target_angle,
                 .angle        = { .enabled = def.enable_limit, .lower = def.lower_angle, .upper = def.upper_angle },
-                .spring       = { .enabled = def.enable_spring, .hertz = def.hertz, .damping_ratio = def.damping_ratio },
-                .motor        = { .enabled = def.enable_motor, .speed = def.motor_speed, .max_force = def.max_motor_torque },
+                .spring       = {
+                    .enabled       = def.enable_spring,
+                    .hertz         = def.hertz,
+                    .damping_ratio = def.damping_ratio,
+                },
+                .motor        = {
+                    .enabled   = def.enable_motor,
+                    .speed     = def.motor_speed,
+                    .max_force = def.max_motor_torque,
+                },
             };
         case SPHERICAL:
             b3::SphericalJointDef def = b3::default_spherical_joint_def();
             desc.spherical = {
-                .spring           = { .enabled = def.enable_spring, .hertz = def.hertz, .damping_ratio = def.damping_ratio },
+                .spring           = {
+                    .enabled       = def.enable_spring,
+                    .hertz         = def.hertz,
+                    .damping_ratio = def.damping_ratio,
+                },
                 .target_rotation  = def.target_rotation,
                 .enable_cone      = def.enable_cone_limit,
                 .cone_angle       = def.cone_angle,
-                .twist            = { .enabled = def.enable_twist_limit, .lower = def.lower_twist_angle, .upper = def.upper_twist_angle },
+                .twist            = {
+                    .enabled = def.enable_twist_limit,
+                    .lower   = def.lower_twist_angle,
+                    .upper   = def.upper_twist_angle,
+                },
                 .enable_motor     = def.enable_motor,
                 .motor_velocity   = def.motor_velocity,
                 .max_motor_torque = def.max_motor_torque,
@@ -338,9 +362,21 @@ fn JointDesc default_joint_desc(JointKind kind, Entity other) {
             b3::PrismaticJointDef def = b3::default_prismatic_joint_def();
             desc.prismatic = {
                 .target_translation = def.target_translation,
-                .translation        = { .enabled = def.enable_limit, .lower = def.lower_translation, .upper = def.upper_translation },
-                .spring             = { .enabled = def.enable_spring, .hertz = def.hertz, .damping_ratio = def.damping_ratio },
-                .motor              = { .enabled = def.enable_motor, .speed = def.motor_speed, .max_force = def.max_motor_force },
+                .translation        = {
+                    .enabled = def.enable_limit,
+                    .lower   = def.lower_translation,
+                    .upper   = def.upper_translation,
+                },
+                .spring             = {
+                    .enabled       = def.enable_spring,
+                    .hertz         = def.hertz,
+                    .damping_ratio = def.damping_ratio,
+                },
+                .motor              = {
+                    .enabled   = def.enable_motor,
+                    .speed     = def.motor_speed,
+                    .max_force = def.max_motor_force,
+                },
             };
         case WELD:
             b3::WeldJointDef def = b3::default_weld_joint_def();
@@ -361,8 +397,16 @@ fn JointDesc default_joint_desc(JointKind kind, Entity other) {
                     .lower   = def.lower_suspension_limit,
                     .upper   = def.upper_suspension_limit,
                 },
-                .spin                  = { .enabled = def.enable_spin_motor, .speed = def.spin_speed, .max_force = def.max_spin_torque },
-                .steering              = { .enabled = def.enable_steering, .hertz = def.steering_hertz, .damping_ratio = def.steering_damping_ratio },
+                .spin                  = {
+                    .enabled   = def.enable_spin_motor,
+                    .speed     = def.spin_speed,
+                    .max_force = def.max_spin_torque,
+                },
+                .steering              = {
+                    .enabled       = def.enable_steering,
+                    .hertz         = def.steering_hertz,
+                    .damping_ratio = def.steering_damping_ratio,
+                },
                 .target_steering_angle = def.target_steering_angle,
                 .max_steering_torque   = def.max_steering_torque,
                 .steering_limit        = {
@@ -399,7 +443,8 @@ fn void sync_joints(PhysicsWorld* world) @private {
     Scene* scene = world.scene;
     usz orphan_count;
     scene.@each(Joint; entity, joint) {
-        if (!joint.joint.is_valid() || !scene.world.has(entity, PhysicsJoint)) world.orphan_scratch[orphan_count++] = entity;
+        bool orphan = !joint.joint.is_valid() || !scene.world.has(entity, PhysicsJoint);
+        if (orphan) world.orphan_scratch[orphan_count++] = entity;
     };
     foreach (entity : world.orphan_scratch[:orphan_count]) {
         Node* node = scene.node(entity);
