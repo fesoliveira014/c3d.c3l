@@ -14,6 +14,15 @@ vec3 environment_rotate(EnvironmentRotationGpu rotation, vec3 direction) {
     );
 }
 
+vec3 sky_radiance(SkyRoot sky, vec3 direction) {
+    return sample_texture_cube_lod(
+        sky.source_cube,
+        sky.sampler_index,
+        environment_rotate(sky.rotation, direction),
+        0.0
+    ).rgb * sky.intensity;
+}
+
 vec3 anisotropic_reflection_normal(StandardSurface surface, float perceptual_roughness) {
     if (surface.anisotropy == 0.0) return surface.normal;
 

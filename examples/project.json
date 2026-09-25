@@ -186,6 +186,12 @@
         "src/rt_effects.c3"
       ]
     },
+    "path_tracer": {
+      "type": "executable",
+      "sources": [
+        "src/path_tracer.c3"
+      ]
+    },
     "pbr": {
       "type": "executable",
       "sources": [

@@ -143,406 +143,439 @@ fn void? Renderer.render_view(
             .m23          = matrices.proj.m23,
             .orthographic = camera.projection == Projection.ORTHOGRAPHIC,
         };
-        bool taa = record.desc.post.anti_aliasing == AntiAliasing.TAA;
-        bool temporal = taa || record.desc.post.motion_blur;
-        bool ambient_occlusion = record.desc.ambient_occlusion.kind != AoKind.NONE;
-        bool forward_prepass = record.desc.depth_prepass || ambient_occlusion;
-        Vec2 jitter = taa
-          ? post::taa_jitter(record.history.sample_index, record.hdr_color.width, record.hdr_color.height)
-          : (Vec2){};
-        CameraMatrices raster = taa ? camera::jitter_matrices(matrices, jitter) : matrices;
-        Frame* slot = &self.frames[self.frame_index % FRAMES_IN_FLIGHT];
-        bool view_reflected = matrices.view.determinant() < 0;
 
-        @pool() {
-            MeshCandidate[] candidates;
-            instrumentation::@scope("view.extract") {
-                ExtractCounts counts;
-                candidates = extract_candidates(
-                    allocator: tmem,
-                    scene:     scene,
-                    assets:    self.assets,
-                    camera:    &matrices,
-                    layers:    camera.layers,
-                    counts:    &counts,
-                );
-                self.stats.culled += counts.culled;
-                self.stats.dangling_refs += counts.dangling;
-            };
-
-            DrawItem[] items;
-            usz gbuffer_count;
-            usz transmission_start;
-            usz transparent_start;
-            usz gbuffer_filled;
-            usz opaque_filled;
-            usz transmission_filled;
-            usz transparent_filled;
-            bool sheen;
-            ShadingPath shading = record.desc.shading;
-            instrumentation::@scope("view.resolve") {
-                items = alloc::new_array(tmem, DrawItem, candidates.len);
-                usz transmission_count;
-                usz transparent_count;
-                foreach (&candidate : candidates) {
-                    Material* material_data = &self.assets.material(candidate.material).data;
-                    switch (view_draw_list(material_data, shading, custom_gbuffer_stage(self, material_data))) {
-                        case GBUFFER: gbuffer_count++;
-                        case OPAQUE: break;
-                        case TRANSMISSION: transmission_count++;
-                        case TRANSPARENT: transparent_count++;
-                    }
-                }
-                transmission_start = candidates.len - transmission_count - transparent_count;
-                transparent_start = candidates.len - transparent_count;
-                foreach (&candidate : candidates) {
-                    GpuGeometry* geometry = resolve_geometry(self, candidate.geometry)!;
-                    Material* material_description = &self.assets.material(candidate.material).data;
-                    MaterialRes*? resolved = resolve_material(self, candidate.material);
-                    if (catch excuse = resolved) {
-                        if (!custom_material_unavailable(material_description, excuse)) return excuse~;
-                        self.stats.dangling_refs++;
-                        continue;
-                    }
-                    MaterialRes* material = resolved;
-                    sheen |= material_uses_sheen(material_description);
-                    validate_normal_geometry(
-                        geometry: geometry,
-                        material: material_description,
-                        bindings: &material.bindings,
-                        line_polygon_mode: self.caps.line_polygon_mode,
-                    )!;
-                    ShaderVariant vertex = candidate_vertex_variant(geometry.layout.flags, candidate);
-                    bool custom_gbuffer = custom_gbuffer_stage(self, material_description);
-                    DrawList list = view_draw_list(material_description, shading, custom_gbuffer);
-                    gpu::PipelineHandle? pipeline = list == DrawList.GBUFFER
-                      ? gbuffer_pipeline_for(self, material_description, vertex)
-                      : pipeline_for(self, material_description, vertex, record.desc.ray_tracing.shadows);
-                    if (catch excuse = pipeline) {
-                        if (!custom_pipeline_rejected(self, material_description, excuse)) return excuse~;
-                        continue;
-                    }
-                    usz index;
-                    switch (list) {
-                        case GBUFFER: index = gbuffer_filled++;
-                        case OPAQUE: index = gbuffer_count + opaque_filled++;
-                        case TRANSMISSION: index = transmission_start + transmission_filled++;
-                        case TRANSPARENT: index = transparent_start + transparent_filled++;
-                    }
-                    bool model_reflected = (candidate.node.world.determinant() < 0) != candidate.mirrored;
-                    items[index] = {
-                        .sort_key  = draw_sort_key(
-                            vertex:    vertex,
-                            fragment:  list == DrawList.GBUFFER
-                              ? gbuffer_fragment(material_description)
-                              : material_fragment(material_description, record.desc.ray_tracing.shadows),
-                            material:  candidate.material,
-                            geometry:  candidate.geometry,
-                            ndc_depth: candidate.ndc_depth,
-                            custom:    material_description.kind == MaterialKind.CUSTOM
-                              ? material_description.custom.shader : (ShaderId){},
-                        ),
-                        .candidate = candidate,
-                        .geometry  = geometry,
-                        .material  = material,
-                        .vertex    = vertex,
-                        .pipeline  = pipeline,
-                        .skin      = candidate.skin ? resolve_palette(self, candidate.node, candidate.skin)! : (gpu::GpuAddress)0,
-                        .morph     = vertex.flags & shader::SHADER_FLAG_MORPH
-                          ? resolve_morph_block(self, candidate)! : (gpu::GpuAddress)0,
-                        .instance_data  = candidate.batch ? resolve_instances(self, candidate)! : (gpu::GpuAddress)0,
-                        .instance_count = candidate.instance_count,
-                        .front_face = model_reflected != view_reflected
-                          ? gpu::FrontFace.CLOCKWISE : gpu::FrontFace.COUNTER_CLOCKWISE,
-                    };
-                }
-            };
-            DrawItem[] gbuffer_items = items[:gbuffer_filled];
-            DrawItem[] opaque_items = items[gbuffer_count:opaque_filled];
-            DrawItem[] depth_items = items[:gbuffer_count + opaque_filled];
-            DrawItem[] transmission_items = items[transmission_start:transmission_filled];
-            DrawItem[] transparent_items = items[transparent_start:transparent_filled];
-            instrumentation::@scope("view.sort") {
-                sort::quicksort(gbuffer_items, &by_sort_key);
-                sort::quicksort(opaque_items, &by_sort_key);
-                sort::quicksort(transmission_items, &by_transparent_depth);
-                sort::quicksort(transparent_items, &by_transparent_depth);
-            };
-
-            ViewEnvironments environments;
-            instrumentation::@scope("view.uploads") {
-                if (transmission_items.len) acquire_scene_color(self, record)!;
-                environments = resolve_view_environments(self, scene, sheen)!;
-                if (record.desc.ray_tracing.reflections) acquire_environment_lut(self)!;
-                record_pending_copies(self, &self.commands)!;
-                prepare_sampled_targets(self, record)!;
-            };
-
-            gpu::GpuAddress trace_root;
-            bool traces = record.desc.ray_tracing.shadows || record.desc.ray_tracing.reflections
-              || record.desc.ambient_occlusion.kind == AoKind.RAY_TRACED;
-            if (traces) {
-                instrumentation::@scope("view.trace") {
-                    trace_root = self.prepare_scene_trace(scene, TraceKind.HARDWARE)!;
-                };
-            }
-
-            LightCounts light_counts;
-            ShadowGpu[] shadows;
-            gpu::GpuAddress shadow_address;
-            gpu::GpuAddress light_address;
-            ClusterFrame cluster_frame;
-            instrumentation::@scope("view.lights") {
-                LightExtraction extraction = extract_lights(
-                    allocator: tmem,
-                    scene: scene,
-                    frustum: &matrices.frustum,
-                    view_layers: camera.layers,
-                    capacity: self.max_lights,
-                    counts: &light_counts,
-                    ray_tracing: record.desc.ray_tracing,
-                );
-                shadows = record_shadows(
+        switch (record.desc.shading) {
+            case FORWARD:
+            case DEFERRED:
+                record_raster_view(
                     renderer: self,
-                    scene: scene,
-                    camera: camera,
+                    view:     view,
+                    record:   record,
+                    scene:    scene,
+                    camera:   camera,
                     matrices: &matrices,
-                    extraction: &extraction,
+                    debug:    debug,
                 )!;
-                if (shadows.len) {
-                    gpu::MappedGpuSpan shadow_span = slot.upload.take(
-                        device: &self.device,
-                        size: shadows.len * ShadowGpu::size,
-                        alignment: STREAM_ALIGNMENT,
-                    )!;
-                    mem::copy(shadow_span.bytes.ptr, shadows.ptr, shadows.len * ShadowGpu::size);
-                    shadow_address = shadow_span.address;
-                }
-                LightGpu[] lights = extraction.lights;
-                reset_cluster_recording(self, record);
-                if (record.desc.lights == LightSelection.CLUSTERED) {
-                    cluster_frame = prepare_cluster_frame(
-                        renderer: self,
-                        record: record,
-                        camera: camera,
-                        matrices: &matrices,
-                        lights: lights,
-                    )!;
-                    light_address = cluster_frame.lights;
-                } else if (lights.len) {
-                    gpu::MappedGpuSpan light_span = slot.upload.take(
-                        device: &self.device,
-                        size: lights.len * LightGpu::size,
-                        alignment: STREAM_ALIGNMENT,
-                    )!;
-                    mem::copy(light_span.bytes.ptr, lights.ptr, lights.len * LightGpu::size);
-                    light_address = light_span.address;
-                }
-                self.stats.lights += light_counts.packed;
-                self.stats.lights_dropped += light_counts.dropped;
-                record.stats.lights = light_counts.packed;
-                record.stats.lights_dropped = light_counts.dropped;
-            };
-
-            gpu::GpuAddress environment_address;
-            gpu::MappedGpuSpan frame_span;
-            instrumentation::@scope("view.roots") {
-                if (environments.lighting) {
-                    environment_address = pack_lighting_environment(
-                        renderer: self,
-                        environment: environments.lighting,
-                        intensity: scene.environment_intensity,
-                        rotation: scene.environment_rotation,
-                        sheen: sheen,
-                    )!;
-                }
-                Vec3 ambient = environments.lighting && !scene.ambient_add
-                  ? (Vec3){} : scene.ambient_color * scene.ambient_intensity;
-                frame_span = slot.upload.take(&self.device, FrameRoot::size, STREAM_ALIGNMENT)!;
-                write_frame_root(
-                    root:        (FrameRoot*)frame_span.bytes.ptr,
-                    matrices:    &raster,
-                    camera:      camera,
-                    viewport:    viewport,
-                    info:        self.info,
-                    frame_index: self.frame_index,
-                    lights:      light_address,
-                    light_count: light_counts.packed,
-                    ambient:     { ambient.r, ambient.g, ambient.b, 0 },
-                    shadows:     shadow_address,
-                    shadow_count: (uint)shadows.len,
-                    environment: environment_address,
-                    scene_color: transmission_items.len ? record.scene_color.view.index : (gpu::TextureIndex)0,
-                    scene_sampler: transmission_items.len ? self.linear_clamp_sampler : (gpu::SamplerIndex)0,
-                    prev_view_proj: temporal && record.history.valid ? &record.history.view_proj : &matrices.view_proj,
-                    clusters: cluster_frame.clusters,
-                    trace: trace_root,
-                    jitter: jitter,
-                    mip_bias: taa ? record.desc.post.taa_params.mip_bias : 0,
-                    ao_texture: ambient_occlusion ? record.ao.view.index : (gpu::TextureIndex)0,
-                );
-                if (record.desc.lights == LightSelection.CLUSTERED) {
-                    record_clusters(
-                        renderer: self,
-                        record: record,
-                        view: view,
-                        frame: frame_span,
-                    )!;
-                    record.cluster_root = cluster_frame.clusters;
-                    record.cluster_depth = cluster_frame.depth;
-                }
-                PreviousInstanceCache previous_instances;
-                previous_instances.init(tmem);
-                DrawItem[][3] draw_groups = { depth_items, transmission_items, transparent_items };
-                foreach (group_index, group : draw_groups) foreach (&item : group) {
-                    Node* node = item.candidate.node;
-                    Mat4 prev_world = node.world;
-                    bool has_previous = temporal && record.history.has_previous(scene, node);
-                    if (has_previous) prev_world = record.history.previous_model(scene, node);
-                    bool posed = item.skin != (gpu::GpuAddress)0 || item.morph != (gpu::GpuAddress)0
-                      || item.candidate.batch;
-                    item.moved = has_previous && (posed || !(prev_world == node.world));
-                    gpu::GpuAddress previous_pose;
-                    if (has_previous && posed && group_index == 0) {
-                        previous_pose = upload_previous_pose(
-                            renderer:  self,
-                            item:      item,
-                            pose:      record.history.previous_pose(scene, node),
-                            instances: &previous_instances,
-                        )!;
-                    }
-                    if (item.candidate.batch) prev_world = prev_world.mul(maths::inverse_affine(node.world));
-                    gpu::MappedGpuSpan draw_span = slot.upload.take(&self.device, DrawRoot::size, STREAM_ALIGNMENT)!;
-                    write_draw_root(
-                        root:          (DrawRoot*)draw_span.bytes.ptr,
-                        world:         node.world,
-                        prev_world:    prev_world,
-                        frame:         frame_span.address,
-                        geometry:      item.geometry.root,
-                        material:      item.material.address,
-                        object_id:     item.candidate.node.id.index,
-                        layers:        item.candidate.node.layers,
-                        flags:         (item.candidate.receive_shadow ? shader::DRAW_RECEIVE_SHADOW : 0)
-                          | (ambient_occlusion && group_index == 0 ? shader::DRAW_AMBIENT_OCCLUSION : 0),
-                        sheen_lut:     sheen ? self.environment_state.sheen_lut.view.index : (gpu::TextureIndex)0,
-                        sheen_sampler: sheen ? self.environment_state.sheen_sampler : (gpu::SamplerIndex)0,
-                        skin:          item.skin,
-                        morph:         item.morph,
-                        instance_data: item.instance_data,
-                        previous_pose: previous_pose,
-                    );
-                    item.root = draw_span.address;
-                }
-            };
-
-            instrumentation::@scope("view.record") {
-                record.hdr_color.transition(&self.commands, COLOR_ATTACHMENT_STATE)!;
-                record.depth.transition(&self.commands, DEPTH_ATTACHMENT_STATE)!;
-                gpu::GpuAddress sky_root;
-                if (environments.sky) {
-                    sky_root = pack_sky(
-                        renderer: self,
-                        environment: environments.sky,
-                        frame: frame_span.address,
-                        intensity: scene.background.intensity,
-                        rotation: scene.background.rotation,
-                    )!;
-                }
-                switch (shading) {
-                    case FORWARD:
-                        if (forward_prepass) {
-                            record_depth_prepass(
-                                renderer:       self,
-                                record:         record,
-                                frame:          frame_span.address,
-                                view_reflected: view_reflected,
-                                gbuffer:        {},
-                                opaque:         opaque_items,
-                            )!;
-                        }
-                        if (ambient_occlusion) {
-                            record_ambient_occlusion(self, record, frame_span.address)!;
-                            record.depth.transition(&self.commands, DEPTH_ATTACHMENT_STATE)!;
-                        }
-                        record_forward_pass(
-                            renderer:      self,
-                            record:        record,
-                            opaque:        opaque_items,
-                            transparent:   transmission_items.len ? (DrawItem[]){} : transparent_items,
-                            sky_root:      sky_root,
-                            sky:           environments.sky != null,
-                            clear_color:   environments.clear_color,
-                            color_loaded:  false,
-                            depth_matched: forward_prepass,
-                        )!;
-                    case DEFERRED:
-                        record_deferred_scene(
-                            renderer:       self,
-                            record:         record,
-                            frame:          frame_span.address,
-                            view_reflected: view_reflected,
-                            gbuffer:        gbuffer_items,
-                            opaque:         opaque_items,
-                            transparent:    transmission_items.len ? (DrawItem[]){} : transparent_items,
-                            sky_root:       sky_root,
-                            sky:            environments.sky != null,
-                            clear_color:    environments.clear_color,
-                        )!;
-                }
-
-                if (transmission_items.len) {
-                    begin_profile_pass(self, Pass.TRANSMISSION)!;
-                    record_scene_color_snapshot(self, record)!;
-                    record_loaded_pass(self, record, transmission_items)!;
-                    end_profile_pass(self, Pass.TRANSMISSION)!;
-                    if (transparent_items.len) {
-                        begin_profile_pass(self, Pass.FORWARD_TRANSPARENT)!;
-                        record_loaded_pass(self, record, transparent_items)!;
-                        end_profile_pass(self, Pass.FORWARD_TRANSPARENT)!;
-                    }
-                }
-
-                if (debug && debug.vertices.len()) {
-                    record_debug_lines(self, record, raster.view_proj, debug)!;
-                }
-
-                if (temporal) {
-                    post::record_velocity(
-                        renderer:  self,
-                        record:    record,
-                        items:     depth_items,
-                        raster:    &raster,
-                        view_proj: matrices.view_proj,
-                        jitter:    jitter,
-                    )!;
-                }
-                if (taa) {
-                    post::record_taa(
-                        renderer: self,
-                        record:   record,
-                        scene:    scene,
-                        jitter:   jitter,
-                    )!;
-                }
-                if (record.desc.post.motion_blur && !post::taa_debug_enabled(&record.desc.post)) {
-                    post::record_motion_blur(self, record)!;
-                }
-                if (temporal) {
-                    record.history.commit(
-                        allocator:  self.allocator,
-                        assets:     self.assets,
-                        scene:      scene,
-                        candidates: candidates,
-                        view_proj:  matrices.view_proj,
-                    );
-                }
-            };
-        };
+            case PATH_TRACED:
+                record_path_traced_view(
+                    renderer: self,
+                    record:   record,
+                    scene:    scene,
+                    camera:   camera,
+                    matrices: &matrices,
+                )!;
+        }
         post::close_post_chain(self, record)!;
         end_profile_view(self)!;
         self.frame_recorded = true;
         self.work_recorded = true;
         record.rendered = true;
+    };
+}
+
+<*
+ @require renderer.frame_open, record.desc.shading != ShadingPath.PATH_TRACED
+*>
+fn void? record_raster_view(
+    Renderer* renderer,
+    ViewId view,
+    ViewRecord* record,
+    Scene* scene,
+    Camera* camera,
+    CameraMatrices* matrices,
+    DebugDraw* debug,
+) @private {
+    Vec2 viewport = { (float)record.hdr_color.width, (float)record.hdr_color.height };
+    bool taa = record.desc.post.anti_aliasing == AntiAliasing.TAA;
+    bool temporal = taa || record.desc.post.motion_blur;
+    bool ambient_occlusion = record.desc.ambient_occlusion.kind != AoKind.NONE;
+    bool forward_prepass = record.desc.depth_prepass || ambient_occlusion;
+    Vec2 jitter = taa
+      ? post::taa_jitter(record.history.sample_index, record.hdr_color.width, record.hdr_color.height)
+      : (Vec2){};
+    CameraMatrices raster = taa ? camera::jitter_matrices(*matrices, jitter) : *matrices;
+    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    bool view_reflected = matrices.view.determinant() < 0;
+
+    @pool() {
+        MeshCandidate[] candidates;
+        instrumentation::@scope("view.extract") {
+            ExtractCounts counts;
+            candidates = extract_candidates(
+                allocator: tmem,
+                scene:     scene,
+                assets:    renderer.assets,
+                camera:    matrices,
+                layers:    camera.layers,
+                counts:    &counts,
+            );
+            renderer.stats.culled += counts.culled;
+            renderer.stats.dangling_refs += counts.dangling;
+        };
+
+        DrawItem[] items;
+        usz gbuffer_count;
+        usz transmission_start;
+        usz transparent_start;
+        usz gbuffer_filled;
+        usz opaque_filled;
+        usz transmission_filled;
+        usz transparent_filled;
+        bool sheen;
+        ShadingPath shading = record.desc.shading;
+        instrumentation::@scope("view.resolve") {
+            items = alloc::new_array(tmem, DrawItem, candidates.len);
+            usz transmission_count;
+            usz transparent_count;
+            foreach (&candidate : candidates) {
+                Material* material_data = &renderer.assets.material(candidate.material).data;
+                switch (view_draw_list(material_data, shading, custom_gbuffer_stage(renderer, material_data))) {
+                    case GBUFFER: gbuffer_count++;
+                    case OPAQUE: break;
+                    case TRANSMISSION: transmission_count++;
+                    case TRANSPARENT: transparent_count++;
+                }
+            }
+            transmission_start = candidates.len - transmission_count - transparent_count;
+            transparent_start = candidates.len - transparent_count;
+            foreach (&candidate : candidates) {
+                GpuGeometry* geometry = resolve_geometry(renderer, candidate.geometry)!;
+                Material* material_description = &renderer.assets.material(candidate.material).data;
+                MaterialRes*? resolved = resolve_material(renderer, candidate.material);
+                if (catch excuse = resolved) {
+                    if (!custom_material_unavailable(material_description, excuse)) return excuse~;
+                    renderer.stats.dangling_refs++;
+                    continue;
+                }
+                MaterialRes* material = resolved;
+                sheen |= material_uses_sheen(material_description);
+                validate_normal_geometry(
+                    geometry: geometry,
+                    material: material_description,
+                    bindings: &material.bindings,
+                    line_polygon_mode: renderer.caps.line_polygon_mode,
+                )!;
+                ShaderVariant vertex = candidate_vertex_variant(geometry.layout.flags, candidate);
+                bool custom_gbuffer = custom_gbuffer_stage(renderer, material_description);
+                DrawList list = view_draw_list(material_description, shading, custom_gbuffer);
+                gpu::PipelineHandle? pipeline = list == DrawList.GBUFFER
+                  ? gbuffer_pipeline_for(renderer, material_description, vertex)
+                  : pipeline_for(renderer, material_description, vertex, record.desc.ray_tracing.shadows);
+                if (catch excuse = pipeline) {
+                    if (!custom_pipeline_rejected(renderer, material_description, excuse)) return excuse~;
+                    continue;
+                }
+                usz index;
+                switch (list) {
+                    case GBUFFER: index = gbuffer_filled++;
+                    case OPAQUE: index = gbuffer_count + opaque_filled++;
+                    case TRANSMISSION: index = transmission_start + transmission_filled++;
+                    case TRANSPARENT: index = transparent_start + transparent_filled++;
+                }
+                bool model_reflected = (candidate.node.world.determinant() < 0) != candidate.mirrored;
+                items[index] = {
+                    .sort_key  = draw_sort_key(
+                        vertex:    vertex,
+                        fragment:  list == DrawList.GBUFFER
+                          ? gbuffer_fragment(material_description)
+                          : material_fragment(material_description, record.desc.ray_tracing.shadows),
+                        material:  candidate.material,
+                        geometry:  candidate.geometry,
+                        ndc_depth: candidate.ndc_depth,
+                        custom:    material_description.kind == MaterialKind.CUSTOM
+                          ? material_description.custom.shader : (ShaderId){},
+                    ),
+                    .candidate = candidate,
+                    .geometry  = geometry,
+                    .material  = material,
+                    .vertex    = vertex,
+                    .pipeline  = pipeline,
+                    .skin      = candidate.skin
+                      ? resolve_palette(renderer, candidate.node, candidate.skin)! : (gpu::GpuAddress)0,
+                    .morph     = vertex.flags & shader::SHADER_FLAG_MORPH
+                      ? resolve_morph_block(renderer, candidate)! : (gpu::GpuAddress)0,
+                    .instance_data  = candidate.batch ? resolve_instances(renderer, candidate)! : (gpu::GpuAddress)0,
+                    .instance_count = candidate.instance_count,
+                    .front_face = model_reflected != view_reflected
+                      ? gpu::FrontFace.CLOCKWISE : gpu::FrontFace.COUNTER_CLOCKWISE,
+                };
+            }
+        };
+        DrawItem[] gbuffer_items = items[:gbuffer_filled];
+        DrawItem[] opaque_items = items[gbuffer_count:opaque_filled];
+        DrawItem[] depth_items = items[:gbuffer_count + opaque_filled];
+        DrawItem[] transmission_items = items[transmission_start:transmission_filled];
+        DrawItem[] transparent_items = items[transparent_start:transparent_filled];
+        instrumentation::@scope("view.sort") {
+            sort::quicksort(gbuffer_items, &by_sort_key);
+            sort::quicksort(opaque_items, &by_sort_key);
+            sort::quicksort(transmission_items, &by_transparent_depth);
+            sort::quicksort(transparent_items, &by_transparent_depth);
+        };
+
+        ViewEnvironments environments;
+        instrumentation::@scope("view.uploads") {
+            if (transmission_items.len) acquire_scene_color(renderer, record)!;
+            environments = resolve_view_environments(renderer, scene, sheen)!;
+            if (record.desc.ray_tracing.reflections) acquire_environment_lut(renderer)!;
+            record_pending_copies(renderer, &renderer.commands)!;
+            prepare_sampled_targets(renderer, record)!;
+        };
+
+        gpu::GpuAddress trace_root;
+        bool traces = record.desc.ray_tracing.shadows || record.desc.ray_tracing.reflections
+          || record.desc.ambient_occlusion.kind == AoKind.RAY_TRACED;
+        if (traces) {
+            instrumentation::@scope("view.trace") {
+                trace_root = renderer.prepare_scene_trace(scene, TraceKind.HARDWARE)!;
+            };
+        }
+
+        LightCounts light_counts;
+        ShadowGpu[] shadows;
+        gpu::GpuAddress shadow_address;
+        gpu::GpuAddress light_address;
+        ClusterFrame cluster_frame;
+        instrumentation::@scope("view.lights") {
+            LightExtraction extraction = extract_lights(
+                allocator: tmem,
+                scene: scene,
+                frustum: &matrices.frustum,
+                view_layers: camera.layers,
+                capacity: renderer.max_lights,
+                counts: &light_counts,
+                ray_tracing: record.desc.ray_tracing,
+            );
+            shadows = record_shadows(
+                renderer: renderer,
+                scene: scene,
+                camera: camera,
+                matrices: matrices,
+                extraction: &extraction,
+            )!;
+            if (shadows.len) {
+                gpu::MappedGpuSpan shadow_span = slot.upload.take(
+                    device: &renderer.device,
+                    size: shadows.len * ShadowGpu::size,
+                    alignment: STREAM_ALIGNMENT,
+                )!;
+                mem::copy(shadow_span.bytes.ptr, shadows.ptr, shadows.len * ShadowGpu::size);
+                shadow_address = shadow_span.address;
+            }
+            LightGpu[] lights = extraction.lights;
+            reset_cluster_recording(renderer, record);
+            if (record.desc.lights == LightSelection.CLUSTERED) {
+                cluster_frame = prepare_cluster_frame(
+                    renderer: renderer,
+                    record: record,
+                    camera: camera,
+                    matrices: matrices,
+                    lights: lights,
+                )!;
+                light_address = cluster_frame.lights;
+            } else {
+                light_address = upload_lights(renderer, lights)!;
+            }
+            renderer.stats.lights += light_counts.packed;
+            renderer.stats.lights_dropped += light_counts.dropped;
+            record.stats.lights = light_counts.packed;
+            record.stats.lights_dropped = light_counts.dropped;
+        };
+
+        gpu::GpuAddress environment_address;
+        gpu::MappedGpuSpan frame_span;
+        instrumentation::@scope("view.roots") {
+            if (environments.lighting) {
+                environment_address = pack_lighting_environment(
+                    renderer: renderer,
+                    environment: environments.lighting,
+                    intensity: scene.environment_intensity,
+                    rotation: scene.environment_rotation,
+                    sheen: sheen,
+                )!;
+            }
+            Vec3 ambient = environments.lighting && !scene.ambient_add
+              ? (Vec3){} : scene.ambient_color * scene.ambient_intensity;
+            frame_span = slot.upload.take(&renderer.device, FrameRoot::size, STREAM_ALIGNMENT)!;
+            write_frame_root(
+                root:        (FrameRoot*)frame_span.bytes.ptr,
+                matrices:    &raster,
+                camera:      camera,
+                viewport:    viewport,
+                info:        renderer.info,
+                frame_index: renderer.frame_index,
+                lights:      light_address,
+                light_count: light_counts.packed,
+                ambient:     { ambient.r, ambient.g, ambient.b, 0 },
+                shadows:     shadow_address,
+                shadow_count: (uint)shadows.len,
+                environment: environment_address,
+                scene_color: transmission_items.len ? record.scene_color.view.index : (gpu::TextureIndex)0,
+                scene_sampler: transmission_items.len ? renderer.linear_clamp_sampler : (gpu::SamplerIndex)0,
+                prev_view_proj: temporal && record.history.valid ? &record.history.view_proj : &matrices.view_proj,
+                clusters: cluster_frame.clusters,
+                trace: trace_root,
+                jitter: jitter,
+                mip_bias: taa ? record.desc.post.taa_params.mip_bias : 0,
+                ao_texture: ambient_occlusion ? record.ao.view.index : (gpu::TextureIndex)0,
+            );
+            if (record.desc.lights == LightSelection.CLUSTERED) {
+                record_clusters(
+                    renderer: renderer,
+                    record: record,
+                    view: view,
+                    frame: frame_span,
+                )!;
+                record.cluster_root = cluster_frame.clusters;
+                record.cluster_depth = cluster_frame.depth;
+            }
+            PreviousInstanceCache previous_instances;
+            previous_instances.init(tmem);
+            DrawItem[][3] draw_groups = { depth_items, transmission_items, transparent_items };
+            foreach (group_index, group : draw_groups) foreach (&item : group) {
+                Node* node = item.candidate.node;
+                Mat4 prev_world = node.world;
+                bool has_previous = temporal && record.history.has_previous(scene, node);
+                if (has_previous) prev_world = record.history.previous_model(scene, node);
+                bool posed = item.skin != (gpu::GpuAddress)0 || item.morph != (gpu::GpuAddress)0
+                  || item.candidate.batch;
+                item.moved = has_previous && (posed || !(prev_world == node.world));
+                gpu::GpuAddress previous_pose;
+                if (has_previous && posed && group_index == 0) {
+                    previous_pose = upload_previous_pose(
+                        renderer:  renderer,
+                        item:      item,
+                        pose:      record.history.previous_pose(scene, node),
+                        instances: &previous_instances,
+                    )!;
+                }
+                if (item.candidate.batch) prev_world = prev_world.mul(maths::inverse_affine(node.world));
+                gpu::MappedGpuSpan draw_span = slot.upload.take(&renderer.device, DrawRoot::size, STREAM_ALIGNMENT)!;
+                write_draw_root(
+                    root:          (DrawRoot*)draw_span.bytes.ptr,
+                    world:         node.world,
+                    prev_world:    prev_world,
+                    frame:         frame_span.address,
+                    geometry:      item.geometry.root,
+                    material:      item.material.address,
+                    object_id:     item.candidate.node.id.index,
+                    layers:        item.candidate.node.layers,
+                    flags:         (item.candidate.receive_shadow ? shader::DRAW_RECEIVE_SHADOW : 0)
+                      | (ambient_occlusion && group_index == 0 ? shader::DRAW_AMBIENT_OCCLUSION : 0),
+                    sheen_lut:     sheen ? renderer.environment_state.sheen_lut.view.index : (gpu::TextureIndex)0,
+                    sheen_sampler: sheen ? renderer.environment_state.sheen_sampler : (gpu::SamplerIndex)0,
+                    skin:          item.skin,
+                    morph:         item.morph,
+                    instance_data: item.instance_data,
+                    previous_pose: previous_pose,
+                );
+                item.root = draw_span.address;
+            }
+        };
+
+        instrumentation::@scope("view.record") {
+            record.hdr_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
+            record.depth.transition(&renderer.commands, DEPTH_ATTACHMENT_STATE)!;
+            gpu::GpuAddress sky_root;
+            if (environments.sky) {
+                sky_root = pack_sky(
+                    renderer: renderer,
+                    environment: environments.sky,
+                    frame: frame_span.address,
+                    intensity: scene.background.intensity,
+                    rotation: scene.background.rotation,
+                )!;
+            }
+            switch (shading) {
+                case FORWARD:
+                    if (forward_prepass) {
+                        record_depth_prepass(
+                            renderer:       renderer,
+                            record:         record,
+                            frame:          frame_span.address,
+                            view_reflected: view_reflected,
+                            gbuffer:        {},
+                            opaque:         opaque_items,
+                        )!;
+                    }
+                    if (ambient_occlusion) {
+                        record_ambient_occlusion(renderer, record, frame_span.address)!;
+                        record.depth.transition(&renderer.commands, DEPTH_ATTACHMENT_STATE)!;
+                    }
+                    record_forward_pass(
+                        renderer:      renderer,
+                        record:        record,
+                        opaque:        opaque_items,
+                        transparent:   transmission_items.len ? (DrawItem[]){} : transparent_items,
+                        sky_root:      sky_root,
+                        sky:           environments.sky != null,
+                        clear_color:   environments.clear_color,
+                        color_loaded:  false,
+                        depth_matched: forward_prepass,
+                    )!;
+                case DEFERRED:
+                    record_deferred_scene(
+                        renderer:       renderer,
+                        record:         record,
+                        frame:          frame_span.address,
+                        view_reflected: view_reflected,
+                        gbuffer:        gbuffer_items,
+                        opaque:         opaque_items,
+                        transparent:    transmission_items.len ? (DrawItem[]){} : transparent_items,
+                        sky_root:       sky_root,
+                        sky:            environments.sky != null,
+                        clear_color:    environments.clear_color,
+                    )!;
+                case PATH_TRACED:
+            }
+
+            if (transmission_items.len) {
+                begin_profile_pass(renderer, Pass.TRANSMISSION)!;
+                record_scene_color_snapshot(renderer, record)!;
+                record_loaded_pass(renderer, record, transmission_items)!;
+                end_profile_pass(renderer, Pass.TRANSMISSION)!;
+                if (transparent_items.len) {
+                    begin_profile_pass(renderer, Pass.FORWARD_TRANSPARENT)!;
+                    record_loaded_pass(renderer, record, transparent_items)!;
+                    end_profile_pass(renderer, Pass.FORWARD_TRANSPARENT)!;
+                }
+            }
+
+            if (debug && debug.vertices.len()) {
+                record_debug_lines(renderer, record, raster.view_proj, debug)!;
+            }
+
+            if (temporal) {
+                post::record_velocity(
+                    renderer:  renderer,
+                    record:    record,
+                    items:     depth_items,
+                    raster:    &raster,
+                    view_proj: matrices.view_proj,
+                    jitter:    jitter,
+                )!;
+            }
+            if (taa) {
+                post::record_taa(
+                    renderer: renderer,
+                    record:   record,
+                    scene:    scene,
+                    jitter:   jitter,
+                )!;
+            }
+            if (record.desc.post.motion_blur && !post::taa_debug_enabled(&record.desc.post)) {
+                post::record_motion_blur(renderer, record)!;
+            }
+            if (temporal) {
+                record.history.commit(
+                    allocator:  renderer.allocator,
+                    assets:     renderer.assets,
+                    scene:      scene,
+                    candidates: candidates,
+                    view_proj:  matrices.view_proj,
+                );
+            }
+        };
     };
 }
 
@@ -812,6 +845,7 @@ fn void? prepare_views(Renderer* renderer) @private {
             acquire_ambient_occlusion_pipelines(renderer, record.desc.ambient_occlusion.kind)!;
         }
         if (record.desc.ray_tracing.reflections) acquire_reflection_pipelines(renderer)!;
+        if (record.desc.shading == ShadingPath.PATH_TRACED) acquire_path_tracer(renderer)!;
     }
 }
 
@@ -876,6 +910,18 @@ fn void write_frame_root(
         .mip_bias        = mip_bias,
         .ao_texture      = ao_texture,
     };
+}
+
+fn gpu::GpuAddress? upload_lights(Renderer* renderer, LightGpu[] lights) @private {
+    if (!lights.len) return (gpu::GpuAddress)0;
+    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan span = slot.upload.take(
+        device:    &renderer.device,
+        size:      lights.len * LightGpu::size,
+        alignment: STREAM_ALIGNMENT,
+    )!;
+    mem::copy(span.bytes.ptr, lights.ptr, lights.len * LightGpu::size);
+    return span.address;
 }
 
 <*
@@ -1192,7 +1238,7 @@ fn void? prepare_sampled_targets(Renderer* renderer, ViewRecord* record) @privat
         if (!(renderer.sampled_target_bits & (1u << index)) || !target.target.texture.is_valid()) continue;
         // A producer never samples its own output; the barrier would only pair with the output stage's.
         if (record.desc.output == ViewOutput.TEXTURE && record.desc.target.index == index) continue;
-        target.target.transition(&renderer.commands, FRAGMENT_READ_STATE)!;
+        target.target.transition(&renderer.commands, renderer.sampled_state)!;
     }
     renderer.sampled_target_bits = 0;
 }

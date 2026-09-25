@@ -43,7 +43,7 @@ fn void? Renderer.upload_rgba8_texture(&self, gpu::TextureHandle texture, char[]
     gpu::TextureBarrier to_sampled = gpu::texture_transition(
         texture: texture,
         before: to_upload.after,
-        after: gpu::sampled_at({ .fragment_shader }),
+        after: self.sampled_state,
     )!;
     gpu::cmd_texture_barrier(&commands, &to_sampled)!;
 

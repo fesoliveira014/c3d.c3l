@@ -11,6 +11,7 @@ enum Pass : int {
     SHADOW_ATLAS,
     LIGHT_CULL,
     ACCELERATION_BUILD,
+    PATH_TRACE,
     DEPTH_PREPASS,
     GBUFFER,
     AMBIENT_OCCLUSION,
@@ -77,6 +78,7 @@ struct Stats {
     float trace_build_ms;
     uint  blas_builds;
     uint  tlas_builds;
+    uint  path_trace_samples;
     uint  shader_rejections;
     float frame_ms;
     float cpu_record_ms;

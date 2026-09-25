@@ -288,6 +288,20 @@ root RtReflectionBlurRoot {
     uint         _pad1;
 }
 
+root PathTraceRoot {
+    GpuAddress   frame;
+    GpuAddress   sky;
+    vec4         background_color;
+    TextureIndex accumulation;
+    TextureIndex output_texture;
+    uint         width;
+    uint         height;
+    uint         sample_index;
+    uint         sample_count;
+    uint         max_bounces;
+    uint         _pad0;
+}
+
 const uint MATERIAL_MAP_BASE_COLOR = 1;
 const uint MATERIAL_MAP_METALLIC_ROUGHNESS = 2;
 const uint MATERIAL_MAP_NORMAL = 4;

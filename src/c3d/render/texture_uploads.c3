@@ -75,7 +75,7 @@ fn void? record_texture_uploads(Renderer* renderer, gpu::CommandList* commands) 
         gpu::TextureBarrier to_sampled = gpu::texture_transition(
             texture: pending.texture,
             before: to_upload.after,
-            after: gpu::sampled_at({ .fragment_shader, .compute }),
+            after: renderer.sampled_state,
         )!;
         gpu::cmd_texture_barrier(commands, &to_sampled)!;
         pending.recorded = true;

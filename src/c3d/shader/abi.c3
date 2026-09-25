@@ -574,6 +574,32 @@ $assert $reflect(RtReflectionBlurRoot.height).offset == 28;
 $assert $reflect(RtReflectionBlurRoot._pad0).offset == 32;
 $assert $reflect(RtReflectionBlurRoot._pad1).offset == 36;
 
+struct PathTraceRoot {
+    GpuAddress   frame;
+    GpuAddress   sky;
+    Vec4f        background_color;
+    TextureIndex accumulation;
+    TextureIndex output_texture;
+    uint         width;
+    uint         height;
+    uint         sample_index;
+    uint         sample_count;
+    uint         max_bounces;
+    uint         _pad0;
+}
+$assert PathTraceRoot::size == 64;
+$assert $reflect(PathTraceRoot.frame).offset == 0;
+$assert $reflect(PathTraceRoot.sky).offset == 8;
+$assert $reflect(PathTraceRoot.background_color).offset == 16;
+$assert $reflect(PathTraceRoot.accumulation).offset == 32;
+$assert $reflect(PathTraceRoot.output_texture).offset == 36;
+$assert $reflect(PathTraceRoot.width).offset == 40;
+$assert $reflect(PathTraceRoot.height).offset == 44;
+$assert $reflect(PathTraceRoot.sample_index).offset == 48;
+$assert $reflect(PathTraceRoot.sample_count).offset == 52;
+$assert $reflect(PathTraceRoot.max_bounces).offset == 56;
+$assert $reflect(PathTraceRoot._pad0).offset == 60;
+
 struct TextureMapGpu {
     TextureIndex texture_index;
     SamplerIndex sampler_index;

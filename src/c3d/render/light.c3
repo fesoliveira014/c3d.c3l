@@ -18,10 +18,11 @@ struct LightCounts {
  Pack eligible lights in component order within the view budget.
  @param allocator : "Owns both returned arrays."
  @param [&in] scene : "Current world transforms and valid light descriptions."
- @param [&in] frustum : "Current view clipping planes."
+ @param [in] frustum : "Current view clipping planes; null keeps every light."
  @param view_layers : "Camera visibility mask."
  @param [&inout] counts : "Overwritten with this view's counts."
  @param ray_tracing : "Flagged lights trace instead of requesting atlas layers."
+ @param trace_shadows : "Every shadowing light traces, whatever its own flag says."
  @require capacity > 0
 *>
 fn LightExtraction extract_lights(
@@ -32,6 +33,7 @@ fn LightExtraction extract_lights(
     uint capacity,
     LightCounts* counts,
     RayTracingDesc ray_tracing = {},
+    bool trace_shadows = false,
 ) {
     LightGpu[] packed = alloc::new_array(allocator, LightGpu, math::min(scene.count(Light), capacity));
     ShadowRequest[] requests = collect_shadow_requests(
@@ -43,6 +45,7 @@ fn LightExtraction extract_lights(
         capacity: (uint)packed.len,
         counts: counts,
         ray_tracing: ray_tracing,
+        trace_shadows: trace_shadows,
     );
     return { .lights = packed[:counts.packed], .shadows = requests };
 }
@@ -56,6 +59,7 @@ fn ShadowRequest[] collect_shadow_requests(
     uint capacity,
     LightCounts* counts,
     RayTracingDesc ray_tracing = {},
+    bool trace_shadows = false,
 ) @private {
     *counts = {};
     ShadowRequest[] requests = alloc::new_array(allocator, ShadowRequest, capacity);
@@ -66,7 +70,7 @@ fn ShadowRequest[] collect_shadow_requests(
         if (node.visible_effective && (node.layers & view_layers)
             && light.layers != 0 && light.intensity > 0) {
             uint packed_index = counts.packed;
-            bool ray_traced = light_ray_traced(light, ray_tracing);
+            bool ray_traced = trace_shadows ? light.shadow.enabled : light_ray_traced(light, ray_tracing);
             include_light(
                 packed: packed,
                 node: node,

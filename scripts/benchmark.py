@@ -72,7 +72,7 @@ def parse_arguments():
     render = parser.add_argument_group("render and scene suites")
     render.add_argument("--lights", type=int, nargs="+", help="render default 64 256 1024 4096; scene default 16 64 256")
     render.add_argument("--modes", nargs="+", choices=["flat", "clustered"], default=["flat", "clustered"])
-    render.add_argument("--shadings", nargs="+", choices=["forward", "deferred"], default=["forward"])
+    render.add_argument("--shadings", nargs="+", choices=["forward", "deferred", "path-traced"], default=["forward"])
     render.add_argument("--frames", type=int, default=300)
     render.add_argument("--warmup", type=int, default=60)
     render.add_argument("--width", type=int, default=1440)

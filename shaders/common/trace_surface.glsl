@@ -6,6 +6,7 @@
 #include "vertex_pull.glsl"
 #include "material_uv.glsl"
 #include "texture_fetch.glsl"
+#include "normal_mapping.glsl"
 
 const float TRACE_SURFACE_OFFSET = 0.02; // world units along the normal; hides self-intersection at the cost of contact detail
 const float TRACE_MIN_COSINE = 1e-3; // grazing hits keep a finite cone footprint
@@ -106,6 +107,63 @@ vec3 transform_normal(TraceInstanceGpu instance, vec3 normal) {
     );
 }
 
+vec4 hit_tangent(TraceInstanceGpu instance, GeometryRoot geometry, uvec3 corners, vec3 weights) {
+    vec4 tangent = pull_vec4(geometry.tangents, corners.x) * weights.x
+        + pull_vec4(geometry.tangents, corners.y) * weights.y
+        + pull_vec4(geometry.tangents, corners.z) * weights.z;
+    mat3 linear = transpose(mat3(
+        instance.local_to_world_0.xyz,
+        instance.local_to_world_1.xyz,
+        instance.local_to_world_2.xyz
+    ));
+    float orientation = determinant(linear) < 0.0 ? -1.0 : 1.0;
+    return vec4(linear * tangent.xyz, tangent.w * orientation);
+}
+
+vec2 corner_map_uv(TextureMapGpu map, uint map_flags, GeometryRoot geometry, uvec3 corners, vec3 corner) {
+    return map_uv(
+        map,
+        map_flags,
+        MATERIAL_MAP_NORMAL,
+        hit_uv(geometry.uv0, corners, corner),
+        hit_uv(geometry.uv1, corners, corner)
+    );
+}
+
+// Without a tangent stream, the triangle's edges stand in for the screen derivatives raster uses.
+vec3 hit_mapped_normal(
+    TraceInstanceGpu instance,
+    GeometryRoot geometry,
+    StandardMaterialGpu standard,
+    uvec3 corners,
+    vec3 weights,
+    vec3 normal,
+    vec3 world_edge_1,
+    vec3 world_edge_2,
+    vec2 uv0,
+    vec2 uv1,
+    TraceFootprint footprint
+) {
+    vec3 mapped = decode_normal(
+        sample_hit_map_lod(standard.normal_map, standard.map_flags, MATERIAL_MAP_NORMAL, uv0, uv1, footprint).rgb,
+        standard.normal_scale
+    );
+    if ((geometry.flags & GEOMETRY_HAS_TANGENTS) != 0u) {
+        return tangent_normal(normal, hit_tangent(instance, geometry, corners, weights), mapped);
+    }
+    vec2 corner_uv_0 = corner_map_uv(standard.normal_map, standard.map_flags, geometry, corners, vec3(1.0, 0.0, 0.0));
+    vec2 corner_uv_1 = corner_map_uv(standard.normal_map, standard.map_flags, geometry, corners, vec3(0.0, 1.0, 0.0));
+    vec2 corner_uv_2 = corner_map_uv(standard.normal_map, standard.map_flags, geometry, corners, vec3(0.0, 0.0, 1.0));
+    return derivative_normal(
+        normal,
+        mapped,
+        world_edge_1,
+        world_edge_2,
+        corner_uv_1 - corner_uv_0,
+        corner_uv_2 - corner_uv_0
+    );
+}
+
 // cone_width is the cone's width at the hit in world units; maps sample at its ray-cone level of detail.
 TraceSurface surface_from_hit(SceneTraceRoot scene, SceneHit hit, vec3 ray_direction, float cone_width) {
     TraceInstanceGpu instance = trace_instance(scene, hit.instance);
@@ -141,10 +199,6 @@ TraceSurface surface_from_hit(SceneTraceRoot scene, SceneHit hit, vec3 ray_direc
     if (surface.back_face) {
         surface.albedo = vec3(0.0);
         return surface;
-    }
-    if (facing_back) {
-        surface.geometric_normal = -surface.geometric_normal;
-        surface.normal = -surface.normal;
     }
 
     vec2 uv0 = hit_uv(geometry.uv0, corners, weights);
@@ -205,6 +259,21 @@ TraceSurface surface_from_hit(SceneTraceRoot scene, SceneHit hit, vec3 ray_direc
                     footprint
                 ).rgb;
             }
+            if ((standard.map_flags & MATERIAL_MAP_NORMAL) != 0u && standard.normal_scale != 0.0) {
+                surface.normal = hit_mapped_normal(
+                    instance,
+                    geometry,
+                    standard,
+                    corners,
+                    weights,
+                    surface.normal,
+                    world_1 - world_0,
+                    world_2 - world_0,
+                    uv0,
+                    uv1,
+                    footprint
+                );
+            }
             break;
         case MATERIAL_KIND_TOON:
             ToonMaterialGpu toon = ToonMaterialGpu(instance.material);
@@ -230,6 +299,11 @@ TraceSurface surface_from_hit(SceneTraceRoot scene, SceneHit hit, vec3 ray_direc
             + pull_vec4(geometry.colors, corners.z) * weights.z;
     }
     surface.albedo = base.rgb;
+    // Raster maps the normal before flipping a double-sided back face; the same order here.
+    if (facing_back) {
+        surface.geometric_normal = -surface.geometric_normal;
+        surface.normal = -surface.normal;
+    }
     return surface;
 }
 

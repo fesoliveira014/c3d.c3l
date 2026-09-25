@@ -2,6 +2,7 @@
 #define C3D_SAMPLING_GLSL
 
 #include "constants.glsl"
+#include "brdf.glsl"
 
 const float GOLDEN_RATIO_CONJUGATE = 0.618034;
 const float VNDF_MIN_VIEW_Z = 1e-4; // grazing G-buffer normals can face away from the eye
@@ -32,6 +33,21 @@ vec3 sample_ggx_vndf(vec2 u, vec3 view_tangent, float alpha) {
     float sin_theta = sqrt(max(1.0 - z * z, 0.0));
     vec3 half_stretched = vec3(sin_theta * cos(phi), sin_theta * sin(phi), z) + stretched;
     return normalize(vec3(half_stretched.xy * alpha, max(half_stretched.z, 0.0)));
+}
+
+float cosine_hemisphere_pdf(float cosine) {
+    return max(cosine, 0.0) / PI;
+}
+
+float smith_g1(float normal_view, float alpha_squared) {
+    return 2.0 * normal_view
+        / (normal_view + sqrt(alpha_squared + (1.0 - alpha_squared) * normal_view * normal_view));
+}
+
+// Density of the direction sample_ggx_vndf reflects, under the same view clamp.
+float ggx_vndf_pdf(float normal_view, float normal_half, float alpha_squared) {
+    float view = max(normal_view, VNDF_MIN_VIEW_Z);
+    return distribution_ggx(normal_half, alpha_squared) * smith_g1(view, alpha_squared) / (4.0 * view);
 }
 
 #endif

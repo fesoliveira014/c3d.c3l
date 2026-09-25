@@ -362,6 +362,20 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer RtReflection
     uint _pad1;
 };
 
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer PathTraceRoot {
+    uint64_t frame;
+    uint64_t sky;
+    vec4 background_color;
+    uint accumulation;
+    uint output_texture;
+    uint width;
+    uint height;
+    uint sample_index;
+    uint sample_count;
+    uint max_bounces;
+    uint _pad0;
+};
+
 struct TextureMapGpu {
     uint texture_index;
     uint sampler_index;

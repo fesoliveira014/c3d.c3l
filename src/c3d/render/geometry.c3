@@ -337,13 +337,19 @@ fn void? open_closed_frame_slot(Renderer* renderer) @private {
     return reset_upload_ring(renderer, slot);
 }
 
-fn void? submit_pending(Renderer* renderer) @private {
+struct TextureReadback @private {
+    Target*      target;
+    gpu::GpuSpan destination;
+}
+
+fn void? submit_pending(Renderer* renderer, TextureReadback* readback = null) @private {
     defer catch discard_uploads(renderer);
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::CommandList commands = gpu::begin_commands(&slot.allocator)!;
     defer catch (void)gpu::discard_commands(&commands);
     record_pending_copies(renderer, &commands)!;
     record_acceleration_builds(renderer, &commands)!;
+    if (readback) record_texture_readback(&commands, readback)!;
     slot.upload.flush(&renderer.device)!;
 
     gpu::ExecutableCommandList[1] executable = { gpu::end_commands(&commands)! };
@@ -355,6 +361,25 @@ fn void? submit_pending(Renderer* renderer) @private {
     // This graphics submission also covers every earlier slot's temporary views.
     foreach (&completed : renderer.frames) drain_retired(&renderer.device, &completed.environment_temporaries);
     foreach (&completed : renderer.frames) drain_retired(&renderer.device, &completed.retire);
+}
+
+fn void? record_texture_readback(gpu::CommandList* commands, TextureReadback* readback) @private {
+    Target* target = readback.target;
+    gpu::TextureState previous = target.state;
+    target.transition(commands, TRANSFER_SOURCE_STATE)!;
+    gpu::TextureBufferCopyDesc copy = {
+        .texture     = target.texture,
+        .dst         = readback.destination,
+        .layer_count = 1,
+        .width       = target.width,
+        .height      = target.height,
+        .depth       = 1,
+    };
+    gpu::cmd_copy_texture_to_buffer(commands, &copy)!;
+    gpu::Barrier to_host = { .before = { .transfer }, .after = { .host } };
+    gpu::cmd_barrier(commands, &to_host)!;
+    // UNDEFINED is only a transition source: a never-written target keeps the transfer state.
+    if (previous.layout != gpu::TextureLayout.UNDEFINED) target.transition(commands, previous)!;
 }
 
 fn void sweep_geometries(Renderer* renderer) @private {

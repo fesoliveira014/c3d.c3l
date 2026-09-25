@@ -102,6 +102,7 @@ lacks it, so an excluded mode never silently reports zero timings.
 | `--depth-prepass on\|off` | nothing | Selects the forward measured view's depth prepass (`benchmark.py --depth-prepass`); on by default, as in the view constructors. Deferred views always run it. |
 | `--ambient-occlusion none\|half\|full\|ray-traced` | `ray-traced`: a ray-query adapter | Selects the measured view's AO: screen space at half or full resolution, or ray traced at half resolution with 4 rays (`benchmark.py --ambient-occlusion`); none by default. The CSV reports it as `gpu_ambient_occlusion_ms`. |
 | `--reflections on\|off` | a ray-query adapter and `--shading deferred` | Ray-traced reflections on the measured view (`benchmark.py --reflections`); off by default. A forward view faults `UNSUPPORTED`. The CSV reports it as `gpu_rt_reflections_ms`. |
+| `--shading path-traced` | a ray-tracing-pipeline adapter | Path traces the measured view with the default settings (6 bounces, one sample per frame, no cap); the light mode is forced to flat. The CSV reports the trace as `gpu_path_trace_ms`; samples per second is width x height / `gpu_path_trace_ms` x 1000. |
 
 The windowed run is a different workload from the headless one: the default view
 carries the interactive example's settings and window-system pacing applies. Compare
@@ -117,7 +118,7 @@ windowed rows only with other windowed rows.
 | `end_ms` | `end_frame` submission, including presentation in windowed runs |
 | `gui_ms` | Profiler panel draw and overlay recording; zero without `--panel` |
 | `cpu_record_ms` | Existing renderer statistic; excludes the beginning wait/readback/sweep work |
-| `gpu_*_ms` | Completed per-pass timestamps for shadow atlas, light culling, depth prepass, G-buffer, ambient occlusion, ray-traced reflections, lighting resolve, forward opaque, post chain, composite, velocity and temporal resolve; `-1` when unavailable, zero for an omitted pass |
+| `gpu_*_ms` | Completed per-pass timestamps for shadow atlas, light culling, depth prepass, G-buffer, ambient occlusion, ray-traced reflections, path tracing, lighting resolve, forward opaque, post chain, composite, velocity and temporal resolve; `-1` when unavailable, zero for an omitted pass |
 | `draws`, `lights`, `dropped` | Current-frame renderer counters |
 | `overflows` | Completed cluster overflow count attributed to its submitted frame |
 | `material_resolutions` | Fresh material dependency resolutions in the frame; one per material per view traversal |
@@ -130,7 +131,7 @@ steady-state submission throughput with frames in flight, not isolated GPU laten
 The pass timestamps are partial intervals and should not be presented as total
 frame time.
 
-`--shading forward|deferred` selects the view's shading path (`benchmark.py --shadings`);
+`--shading forward|deferred|path-traced` selects the view's shading path (`benchmark.py --shadings`);
 job names carry the path first. Keep extent, camera, range, capacity and material fixed when
 comparing flat and clustered modes or the two shading paths. Report overflow counts: overflow falls back to the complete flat
 light list rather than dropping contributions. A useful correctness stress is:

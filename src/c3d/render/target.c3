@@ -43,6 +43,12 @@ const gpu::TextureState DEPTH_ATTACHMENT_STATE = {
 *>
 const gpu::TextureState PRESENT_STATE = { .layout = gpu::TextureLayout.PRESENT };
 
+const gpu::TextureState TRANSFER_SOURCE_STATE @private = {
+    .layout = gpu::TextureLayout.TRANSFER_SOURCE,
+    .stages = { .transfer },
+    .access = { .read },
+};
+
 <*
  Size and pixel format of an application-owned render target.
 *>
@@ -105,6 +111,62 @@ fn RenderTargetDesc render_target_desc(uint width, uint height, PixelFormat form
 *>
 fn bool render_target_format_valid(PixelFormat format) {
     return @ok(render_target_format(format));
+}
+
+<*
+ Bytes one texel of a render-target format occupies.
+ @require render_target_format_valid(format)
+*>
+fn usz render_target_texel_bytes(PixelFormat format) {
+    switch (format) {
+        case RGBA8_UNORM:
+        case RGBA8_SRGB: return 4;
+        case RGBA16_FLOAT: return 8;
+        case RGBA32_FLOAT: return 16;
+        case BC1_RGBA_UNORM:
+        case BC1_RGBA_SRGB:
+        case BC3_UNORM:
+        case BC3_SRGB:
+        case BC4_UNORM:
+        case BC5_UNORM:
+        case BC6H_UFLOAT:
+        case BC7_UNORM:
+        case BC7_SRGB: return 0;
+    }
+}
+
+<*
+ Copy the target's pixels into caller memory once every submitted frame completes.
+ @param [out] pixels : "Tight rows, top row first, bytes as stored."
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, gpu::UNSUPPORTED_FEATURE
+ @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
+ @return? gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
+ @return? gpu::DEVICE_BUSY, gpu::WAIT_TIMEOUT, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+ @require !self.frame_open
+*>
+fn void? Renderer.read_render_target(&self, RenderTargetId target, char[] pixels) {
+    TargetRecord* record = self.targets.try_get(target)!;
+    Target* image = &record.target;
+    if (pixels.len != (usz)image.width * image.height * render_target_texel_bytes(record.format)) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+    wait_frames(self)!;
+    open_closed_frame_slot(self)!;
+
+    gpu::AllocationDesc desc = {
+        .size         = pixels.len,
+        .memory_class = gpu::MemoryClass.CPU_READ,
+        .access       = { .graphics },
+        .debug_name   = "render_target_readback",
+    };
+    gpu::GpuAllocation allocation = gpu::allocate_memory(&self.device, &desc)!;
+    defer (void)gpu::free_allocation(&self.device, &allocation);
+    gpu::GpuSpan destination = gpu::get_allocation_span(&self.device, allocation)!;
+
+    TextureReadback readback = { .target = image, .destination = destination };
+    submit_pending(self, &readback)!;
+    gpu::invalidate_mapped_span(&self.device, destination)!;
+    pixels[..] = gpu::mapped_gpu_span(&self.device, destination)!.bytes[:pixels.len];
 }
 
 <*
@@ -179,8 +241,8 @@ fn Target? allocate_render_target(
 ) @private {
     // Storage writes decode nothing, so an sRGB target stays sampled and attached only.
     gpu::TextureUsage usage = format == gpu::Format.RGBA8_SRGB
-        ? (gpu::TextureUsage){ .color_attach, .sampled }
-        : (gpu::TextureUsage){ .color_attach, .sampled, .storage };
+        ? (gpu::TextureUsage){ .color_attach, .sampled, .transfer_src }
+        : (gpu::TextureUsage){ .color_attach, .sampled, .storage, .transfer_src };
     return allocate_target(
         device:     &renderer.device,
         width:      width,

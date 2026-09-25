@@ -212,18 +212,18 @@ fn void? Renderer.dispatch(&self, DispatchDesc desc) {
     *(DispatchRoot*)root.bytes.ptr = { .textures = textures, .parameters = parameters };
 
     if (desc.writes.len) {
-        gpu::Barrier readers_done = { .before = CONSUMER_STAGES, .after = { .compute } };
+        gpu::Barrier readers_done = { .before = self.consumer_stages, .after = { .compute } };
         gpu::cmd_barrier(&self.commands, &readers_done)!;
     }
     gpu::cmd_bind_pipeline(&self.commands, pipeline)!;
     gpu::cmd_dispatch(&self.commands, root.address, { desc.groups.x, desc.groups.y, desc.groups.z })!;
     if (desc.writes.len) {
-        gpu::Barrier writes_visible = { .before = { .compute }, .after = CONSUMER_STAGES };
+        gpu::Barrier writes_visible = { .before = { .compute }, .after = self.consumer_stages };
         gpu::cmd_barrier(&self.commands, &writes_visible)!;
     }
     foreach (&entry : resolved[:desc.textures.len]) {
         if (entry.mirror && entry.use.layout == gpu::TextureLayout.STORAGE) {
-            transition_dispatch_texture(self, entry, gpu::sampled_at({ .fragment_shader, .compute }))!;
+            transition_dispatch_texture(self, entry, self.sampled_state)!;
         }
     }
     end_profile_scope(self, dispatch_scope)!;
@@ -314,7 +314,7 @@ fn ResolvedDispatchTexture? resolve_dispatch_texture(
         case READ:
             // A store texture already sits in the state materials sample from; only images with tracked state move.
             entry.use = entry.mirror
-                ? gpu::sampled_at({ .fragment_shader, .compute })
+                ? renderer.sampled_state
                 : gpu::sampled_at({ .compute });
             slot.sampler_index = declared.sampler.generation
                 ? resolve_sampler(renderer, declared.sampler)!.index

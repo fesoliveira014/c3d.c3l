@@ -49,6 +49,10 @@ enum ShaderName : int {
     RT_AO,
     RT_REFLECTIONS,
     RT_REFLECTION_BLUR,
+    PATH_TRACE,
+    PATH_TRACE_MISS,
+    PATH_TRACE_HIT,
+    PATH_TRACE_ANY_HIT,
     STANDARD_GBUFFER,
     PHYSICAL_GBUFFER,
     LIGHTING_RESOLVE,
@@ -153,6 +157,10 @@ const char[*] AO_BLUR_SPIRV @private = $embed("../../../shaders/spv/ao_blur.spv"
 const char[*] RT_AO_SPIRV @private = $embed("../../../shaders/spv/rt_ao.spv");
 const char[*] RT_REFLECTIONS_SPIRV @private = $embed("../../../shaders/spv/rt_reflections.spv");
 const char[*] RT_REFLECTION_BLUR_SPIRV @private = $embed("../../../shaders/spv/rt_reflection_blur.spv");
+const char[*] PATH_TRACE_SPIRV @private = $embed("../../../shaders/spv/path_trace.spv");
+const char[*] PATH_TRACE_MISS_SPIRV @private = $embed("../../../shaders/spv/path_trace_miss.spv");
+const char[*] PATH_TRACE_HIT_SPIRV @private = $embed("../../../shaders/spv/path_trace_hit.spv");
+const char[*] PATH_TRACE_ANY_HIT_SPIRV @private = $embed("../../../shaders/spv/path_trace_any_hit.spv");
 const char[*] MESH_VELOCITY_SPIRV @private = $embed("../../../shaders/spv/mesh_velocity.spv");
 const char[*] MESH_SKINNED_VELOCITY_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_velocity.spv");
 const char[*] MESH_SKINNED_U16_VELOCITY_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_u16_velocity.spv");
@@ -170,7 +178,7 @@ const char[*] LIGHTING_RESOLVE_RT_SHADOWS_SPIRV @private = $embed("../../../shad
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[72] SHADER_ENTRIES = {
+const ShaderEntry[76] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -230,6 +238,10 @@ const ShaderEntry[72] SHADER_ENTRIES = {
     { .variant = { .shader = RT_AO }, .spirv = RT_AO_SPIRV[..] },
     { .variant = { .shader = RT_REFLECTIONS }, .spirv = RT_REFLECTIONS_SPIRV[..] },
     { .variant = { .shader = RT_REFLECTION_BLUR }, .spirv = RT_REFLECTION_BLUR_SPIRV[..] },
+    { .variant = { .shader = PATH_TRACE }, .spirv = PATH_TRACE_SPIRV[..] },
+    { .variant = { .shader = PATH_TRACE_MISS }, .spirv = PATH_TRACE_MISS_SPIRV[..] },
+    { .variant = { .shader = PATH_TRACE_HIT }, .spirv = PATH_TRACE_HIT_SPIRV[..] },
+    { .variant = { .shader = PATH_TRACE_ANY_HIT }, .spirv = PATH_TRACE_ANY_HIT_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_VELOCITY }, .spirv = MESH_VELOCITY_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED | SHADER_FLAG_VELOCITY }, .spirv = MESH_SKINNED_VELOCITY_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED_U16 | SHADER_FLAG_VELOCITY }, .spirv = MESH_SKINNED_U16_VELOCITY_SPIRV[..] },
