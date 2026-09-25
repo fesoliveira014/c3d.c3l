@@ -209,6 +209,7 @@ fn void PhysicsJoint.mark_changed(&self) {
 
 <*
  Attach the joint; the next world update binds it once both bodies are live.
+ @param [&in] node : "The attached body's node."
  @return? JOINT_EXISTS
  @require self.world.is_registered(PhysicsJoint), !same_entity(desc.other, node.id)
 *>
@@ -219,6 +220,7 @@ fn void? Scene.add_physics_joint(&self, Node* node, JointDesc desc) {
 
 <*
  Attach the joint and bind it now; transactional.
+ @param [&in] node : "The attached body's node."
  @return? JOINT_EXISTS, NO_BODY, b3::INVALID_DEFINITION, b3::INVALID_HANDLE
  @require !same_entity(desc.other, node.id)
 *>
@@ -234,6 +236,7 @@ fn void? PhysicsWorld.add_joint(&self, Node* node, JointDesc desc) {
 <*
  Remove the authored joint and its bound joint now.
  Invalidates PhysicsJoint and Joint pointers.
+ @param [&in] node : "Carries the authored joint."
  @require self.scene.has(node, PhysicsJoint)
 *>
 fn void PhysicsWorld.remove_joint(&self, Node* node) {
@@ -244,6 +247,7 @@ fn void PhysicsWorld.remove_joint(&self, Node* node) {
 <*
  Push the node's joint desc into its bound joint.
  A changed kind or other rebinds on the next update instead.
+ @param [&in] node : "Carries the authored joint."
  @require self.scene.has(node, PhysicsJoint)
 *>
 fn void PhysicsWorld.apply_joint(&self, Node* node) {
@@ -262,6 +266,7 @@ fn void PhysicsWorld.apply_joint(&self, Node* node) {
 
 <*
  Constraint load and drift of the node's joint.
+ @param [&in] node : "Carries the bound joint."
  @return? NO_JOINT
 *>
 fn JointState? PhysicsWorld.joint_state(&self, Node* node) {
@@ -276,6 +281,7 @@ fn JointState? PhysicsWorld.joint_state(&self, Node* node) {
 
 <*
  The box3d joint of the node.
+ @param [&in] node : "Carries the bound joint."
  @return? NO_JOINT
 *>
 fn b3::JointId? PhysicsWorld.joint(&self, Node* node) {
@@ -434,14 +440,22 @@ fn void? bind_joint(PhysicsWorld* world, Node* node, PhysicsJoint* physics_joint
     Scene* scene = world.scene;
     if (scene.has(node, Joint)) scene.remove_component(node, Joint);
     JointDesc* desc = &physics_joint.desc;
-    b3::BodyId anchor = scene.get(scene.node(desc.other), RigidBody).body;
-    b3::BodyId attached = scene.get(node, RigidBody).body;
+    // Every typed default shares one base, so a filter def's base is valid for all kinds.
+    b3::JointDef base = b3::default_filter_joint_def().base;
+    base.body_id_a = scene.get(scene.node(desc.other), RigidBody).body;
+    base.body_id_b = scene.get(node, RigidBody).body;
+    base.local_frame_a = body_frame(desc.anchor_frame);
+    base.local_frame_b = body_frame(desc.frame);
+    base.collide_connected = desc.collide_connected;
+    base.force_threshold = desc.force_threshold;
+    base.torque_threshold = desc.torque_threshold;
+    base.user_data = pack_entity(node.id);
 
     b3::JointId joint;
     switch (desc.kind) {
         case DISTANCE:
             b3::DistanceJointDef def = b3::default_distance_joint_def();
-            fill_base(&def.base, desc, anchor, attached, node.id);
+            def.base = base;
             DistanceJoint* distance = &desc.distance;
             def.length = distance.length;
             def.enable_limit = distance.range.enabled;
@@ -458,7 +472,7 @@ fn void? bind_joint(PhysicsWorld* world, Node* node, PhysicsJoint* physics_joint
             joint = b3::create_distance_joint(world.world, &def)!;
         case REVOLUTE:
             b3::RevoluteJointDef def = b3::default_revolute_joint_def();
-            fill_base(&def.base, desc, anchor, attached, node.id);
+            def.base = base;
             RevoluteJoint* revolute = &desc.revolute;
             def.target_angle = revolute.target_angle;
             def.enable_limit = revolute.angle.enabled;
@@ -473,7 +487,7 @@ fn void? bind_joint(PhysicsWorld* world, Node* node, PhysicsJoint* physics_joint
             joint = b3::create_revolute_joint(world.world, &def)!;
         case SPHERICAL:
             b3::SphericalJointDef def = b3::default_spherical_joint_def();
-            fill_base(&def.base, desc, anchor, attached, node.id);
+            def.base = base;
             SphericalJoint* spherical = &desc.spherical;
             def.enable_spring = spherical.spring.enabled;
             def.hertz = spherical.spring.hertz;
@@ -490,7 +504,7 @@ fn void? bind_joint(PhysicsWorld* world, Node* node, PhysicsJoint* physics_joint
             joint = b3::create_spherical_joint(world.world, &def)!;
         case PRISMATIC:
             b3::PrismaticJointDef def = b3::default_prismatic_joint_def();
-            fill_base(&def.base, desc, anchor, attached, node.id);
+            def.base = base;
             PrismaticJoint* prismatic = &desc.prismatic;
             def.target_translation = prismatic.target_translation;
             def.enable_limit = prismatic.translation.enabled;
@@ -505,7 +519,7 @@ fn void? bind_joint(PhysicsWorld* world, Node* node, PhysicsJoint* physics_joint
             joint = b3::create_prismatic_joint(world.world, &def)!;
         case WELD:
             b3::WeldJointDef def = b3::default_weld_joint_def();
-            fill_base(&def.base, desc, anchor, attached, node.id);
+            def.base = base;
             def.linear_hertz = spring_hertz(desc.weld.linear);
             def.linear_damping_ratio = desc.weld.linear.damping_ratio;
             def.angular_hertz = spring_hertz(desc.weld.angular);
@@ -513,7 +527,7 @@ fn void? bind_joint(PhysicsWorld* world, Node* node, PhysicsJoint* physics_joint
             joint = b3::create_weld_joint(world.world, &def)!;
         case WHEEL:
             b3::WheelJointDef def = b3::default_wheel_joint_def();
-            fill_base(&def.base, desc, anchor, attached, node.id);
+            def.base = base;
             WheelJoint* wheel = &desc.wheel;
             def.enable_suspension_spring = wheel.suspension.enabled;
             def.suspension_hertz = wheel.suspension.hertz;
@@ -535,7 +549,7 @@ fn void? bind_joint(PhysicsWorld* world, Node* node, PhysicsJoint* physics_joint
             joint = b3::create_wheel_joint(world.world, &def)!;
         case MOTOR:
             b3::MotorJointDef def = b3::default_motor_joint_def();
-            fill_base(&def.base, desc, anchor, attached, node.id);
+            def.base = base;
             MotorJoint* motor = &desc.motor;
             def.linear_velocity = motor.linear_velocity;
             def.max_velocity_force = motor.max_velocity_force;
@@ -550,36 +564,19 @@ fn void? bind_joint(PhysicsWorld* world, Node* node, PhysicsJoint* physics_joint
             joint = b3::create_motor_joint(world.world, &def)!;
         case PARALLEL:
             b3::ParallelJointDef def = b3::default_parallel_joint_def();
-            fill_base(&def.base, desc, anchor, attached, node.id);
+            def.base = base;
             def.hertz = spring_hertz(desc.parallel.spring);
             def.damping_ratio = desc.parallel.spring.damping_ratio;
             def.max_torque = desc.parallel.max_torque;
             joint = b3::create_parallel_joint(world.world, &def)!;
         case FILTER:
             b3::FilterJointDef def = b3::default_filter_joint_def();
-            fill_base(&def.base, desc, anchor, attached, node.id);
+            def.base = base;
             joint = b3::create_filter_joint(world.world, &def)!;
     }
 
     scene.add(node, (Joint){ .joint = joint, .kind = desc.kind, .other = desc.other });
     physics_joint.status = LIVE;
-}
-
-fn void fill_base(
-    b3::JointDef* base,
-    JointDesc* desc,
-    b3::BodyId anchor,
-    b3::BodyId attached,
-    Entity entity,
-) @local {
-    base.body_id_a = anchor;
-    base.body_id_b = attached;
-    base.local_frame_a = body_frame(desc.anchor_frame);
-    base.local_frame_b = body_frame(desc.frame);
-    base.collide_connected = desc.collide_connected;
-    base.force_threshold = desc.force_threshold;
-    base.torque_threshold = desc.torque_threshold;
-    base.user_data = pack_entity(entity);
 }
 
 // Joint.kind matches the box3d joint type, so each typed cast below is exact.

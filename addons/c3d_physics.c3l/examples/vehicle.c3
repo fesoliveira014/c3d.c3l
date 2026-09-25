@@ -30,9 +30,10 @@ const float RAMP_DEPTH @local = 6;
 const float RAMP_ANGLE @local = 0.25f; // radians; shallow enough to drive up
 const Vec3  CHASSIS_START @local = { 0, 1, 0 };
 const Vec3  CHASSIS_HALF_EXTENTS @local = { 0.9f, 0.25f, 1.8f };
-const float CHASSIS_DENSITY @local = 100; // about 650 kg; wheels at the same density would not lift it
+const float CHASSIS_DENSITY @local = 100; // about 320 kg; the acceleration lever against SPIN_TORQUE
 const float WHEEL_RADIUS @local = 0.4f;
 const float WHEEL_WIDTH @local = 0.3f;
+const uint  WHEEL_SLICES @local = 12; // few enough facets that the spin shows
 const float WHEEL_DENSITY @local = 50;
 const float SUSPENSION_LOWER @local = -0.25f;
 const float SUSPENSION_UPPER @local = 0.1f;
@@ -82,7 +83,12 @@ fn Level? build_level(AssetStore* assets, Scene* scene, PhysicsWorld* physics) @
         parts[0] = geometry::plane(tmem, GROUND_SIZE, GROUND_SIZE);
         Vec3[2] ramp_offsets = { { -8, 0.9f, 14 }, { 8, 0.9f, 20 } };
         foreach (index, offset : ramp_offsets) {
-            parts[index + 1] = geometry::box(tmem, RAMP_WIDTH, RAMP_HEIGHT, RAMP_DEPTH);
+            parts[index + 1] = geometry::box(
+                allocator: tmem,
+                width:     RAMP_WIDTH,
+                height:    RAMP_HEIGHT,
+                depth:     RAMP_DEPTH,
+            );
             maths::Transform placement = {
                 .position = offset,
                 .rotation = quaternion::from_axis_angle{float}({ 1, 0, 0 }, -RAMP_ANGLE),
@@ -116,9 +122,20 @@ fn Level? build_level(AssetStore* assets, Scene* scene, PhysicsWorld* physics) @
 fn Vehicle? build_vehicle(AssetStore* assets, Scene* scene) @local {
     Vehicle vehicle;
     @pool() {
-        Geometry chassis_shape = geometry::box(tmem, CHASSIS_HALF_EXTENTS.x * 2, CHASSIS_HALF_EXTENTS.y * 2, CHASSIS_HALF_EXTENTS.z * 2);
+        Geometry chassis_shape = geometry::box(
+            allocator: tmem,
+            width:     CHASSIS_HALF_EXTENTS.x * 2,
+            height:    CHASSIS_HALF_EXTENTS.y * 2,
+            depth:     CHASSIS_HALF_EXTENTS.z * 2,
+        );
         GeometryId chassis_geometry = assets.add_geometry(&chassis_shape, "vehicle/chassis")!;
-        Geometry wheel_shape = geometry::cylinder(tmem, WHEEL_RADIUS, WHEEL_RADIUS, WHEEL_WIDTH, slices: 12);
+        Geometry wheel_shape = geometry::cylinder(
+            allocator:     tmem,
+            radius_top:    WHEEL_RADIUS,
+            radius_bottom: WHEEL_RADIUS,
+            height:        WHEEL_WIDTH,
+            slices:        WHEEL_SLICES,
+        );
         GeometryId wheel_geometry = assets.add_geometry(&wheel_shape, "vehicle/wheel")!;
         StandardParams chassis_params = material::STANDARD_PARAMS_DEFAULT;
         chassis_params.base_color = { 0.8f, 0.2f, 0.15f, 1 };
@@ -135,7 +152,12 @@ fn Vehicle? build_vehicle(AssetStore* assets, Scene* scene) @local {
         foreach (index, mount : WHEEL_MOUNTS) {
             Node* wheel = scene.add_node(name: "wheel")!;
             wheel.local.position = CHASSIS_START + mount;
-            Node* tire = scene.add_mesh(wheel_geometry, wheel_material, parent: wheel, name: "tire")!;
+            Node* tire = scene.add_mesh(
+                geometry: wheel_geometry,
+                material: wheel_material,
+                parent:   wheel,
+                name:     "tire",
+            )!;
             tire.local.rotation = quaternion::from_axis_angle{float}({ 0, 0, 1 }, (float)math::PI / 2);
             vehicle.wheels[index] = wheel;
         }

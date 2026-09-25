@@ -235,7 +235,12 @@ fn void test_anchor_is_body_a() @test {
     defer teardown(&fixture);
 
     Node* chassis = add_component_box(&fixture, { 0, 2, 0 });
-    Node* wheel = hinge(&fixture, chassis, add_component_box(&fixture, { 2, 2, 0 }), WHEEL);
+    Node* wheel = hinge(
+        fixture:  &fixture,
+        anchor:   chassis,
+        attached: add_component_box(&fixture, { 2, 2, 0 }),
+        kind:     WHEEL,
+    );
     Node* anchor = add_component_box(&fixture, { 0, 5, 0 }, STATIC);
     Node* door = hinge(&fixture, anchor, add_component_box(&fixture, { 2, 5, 0 }));
     fixture.physics.update(0);
