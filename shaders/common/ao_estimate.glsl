@@ -6,6 +6,13 @@
 
 const float AO_FALLOFF_FRACTION = 0.6; // outer share of the radius where occluders fade out; hides the cut-off ring
 
+// A G-buffer texel the opaque pass left cleared: a forward-shaded surface on a deferred view.
+// Written texels carry material occlusion in a, zero only under a fully occluding map, where the
+// reconstructed normal serves as well.
+bool ao_gbuffer_normal_written(vec4 normal_roughness) {
+    return normal_roughness.a > 0.0;
+}
+
 // Weight of an occluder at a distance: full inside the inner share of the radius, zero at the radius.
 float ao_falloff(float distance, float radius) {
     float falloff_range = radius * AO_FALLOFF_FRACTION;

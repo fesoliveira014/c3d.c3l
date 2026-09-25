@@ -34,8 +34,9 @@ void main() {
     vec2 uv = (vec2(texel) + 0.5) / vec2(extent);
     vec3 position = reconstruct_world_position(frame, uv, depth);
     vec3 normal;
-    if (root.normals != 0u) {
-        normal = decode_octahedral(fetch_texture_2d(root.normals, texel).rg);
+    vec4 gbuffer_normal = root.normals != 0u ? fetch_texture_2d(root.normals, texel) : vec4(0.0);
+    if (ao_gbuffer_normal_written(gbuffer_normal)) {
+        normal = decode_octahedral(gbuffer_normal.rg);
     } else {
         vec3 view_position = (frame.view * vec4(position, 1.0)).xyz;
         bool orthographic = frame.proj[3][3] != 0.0;

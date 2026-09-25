@@ -161,6 +161,36 @@ fn void test_ray_traced_ao_darkens_a_crease_and_leaves_open_floor() @test {
     check_validation(&fixture.renderer);
 }
 
+fn void test_forward_surfaces_of_a_deferred_view_use_their_own_normals() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture, ray_queries: true)!!;
+    defer destroy_fixture(&fixture);
+    CreaseScene crease = create_crease_scene(&fixture)!!;
+    defer scene::destroy_scene(&crease.scene);
+    ToonParams toon = material::TOON_PARAMS_DEFAULT;
+    toon.color = { LIT_ALBEDO, LIT_ALBEDO, LIT_ALBEDO, 1 };
+    MaterialId forward_only = fixture.assets.add_material(material::toon(toon))!!;
+    crease.scene.get(crease.floor, Mesh).material = forward_only;
+    AoView ao_view = create_ao_view(&fixture, ShadingPath.DEFERRED)!!;
+    defer destroy_ao_view(&fixture, &ao_view);
+    crease.view = ao_view.view;
+
+    int crease_none = red(render_and_read(&fixture, &crease, CREASE_POINT)!!);
+    int open_none = red(render_and_read(&fixture, &crease, OPEN_POINT)!!);
+    AoKind[2] kinds = { AoKind.SSAO, AoKind.RAY_TRACED };
+    foreach (kind : kinds) {
+        AmbientOcclusionDesc ambient_occlusion = render::AMBIENT_OCCLUSION_DEFAULT;
+        ambient_occlusion.kind = kind;
+        set_ambient_occlusion(&fixture, ao_view.view, ambient_occlusion)!!;
+        int crease_ao = red(render_and_read(&fixture, &crease, CREASE_POINT)!!);
+        int open_ao = red(render_and_read(&fixture, &crease, OPEN_POINT)!!);
+        io::eprintfn("%s on a forward surface: crease %d -> %d, open %d -> %d", kind, crease_none, crease_ao, open_none, open_ao);
+        assert((float)crease_ao < CREASE_RATIO_MAXIMUM * (float)crease_none);
+        assert((float)open_ao > OPEN_RATIO_MINIMUM * (float)open_none);
+    }
+    check_validation(&fixture.renderer);
+}
+
 fn void test_reflection_images_follow_the_settings() @test {
     Fixture fixture;
     create_fixture(mem, &fixture, ray_queries: true)!!;

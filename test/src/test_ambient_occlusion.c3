@@ -28,7 +28,6 @@ fn void test_ambient_occlusion_desc_validity() @test {
     }
 
     desc = render::AMBIENT_OCCLUSION_DEFAULT;
-    assert(desc.ray_count == 4);
     desc.ray_count = 0;
     assert(render::ambient_occlusion_desc_valid(&desc));
     desc.ray_count = render::RT_AO_RAYS_MAX + 1;

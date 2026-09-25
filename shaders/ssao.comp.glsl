@@ -46,8 +46,9 @@ void main() {
     vec3 position = ao_view_position(frame, texel, extent, depth);
     bool orthographic = frame.proj[3][3] != 0.0;
     vec3 view_vector = orthographic ? vec3(0.0, 0.0, 1.0) : normalize(-position);
-    vec3 normal = root.normals != 0u
-        ? normalize(mat3(frame.view) * decode_octahedral(fetch_texture_2d(root.normals, texel).rg))
+    vec4 gbuffer_normal = root.normals != 0u ? fetch_texture_2d(root.normals, texel) : vec4(0.0);
+    vec3 normal = ao_gbuffer_normal_written(gbuffer_normal)
+        ? normalize(mat3(frame.view) * decode_octahedral(gbuffer_normal.rg))
         : ao_reconstructed_normal(frame, root.depth, texel, extent, position, view_vector);
 
     float projected_scale = frame.proj[0][0] * 0.5 * float(extent.x);
