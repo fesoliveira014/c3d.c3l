@@ -97,6 +97,7 @@ fn void? record_deferred_scene(
     )!;
     record_gbuffer_pass(renderer, record, gbuffer)!;
     if (record.desc.ambient_occlusion.kind != AoKind.NONE) record_ambient_occlusion(renderer, record, frame)!;
+    if (record.desc.ray_tracing.reflections) record_reflections(renderer, record, frame)!;
     record_lighting_pass(renderer, record, frame, clear_color)!;
     record.depth.transition(&renderer.commands, DEPTH_ATTACHMENT_STATE)!;
     record_forward_pass(
@@ -163,16 +164,20 @@ fn void? record_lighting_pass(
     record.hdr_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
 
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    bool reflections = record.desc.ray_tracing.reflections;
     gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, LightingResolveRoot::size, STREAM_ALIGNMENT)!;
     *(LightingResolveRoot*)root.bytes.ptr = {
-        .frame               = frame,
-        .base_color_metallic = record.gbuffer[GBufferChannel.BASE_COLOR_METALLIC.ordinal].view.index,
-        .normal_roughness    = record.gbuffer[GBufferChannel.NORMAL_ROUGHNESS.ordinal].view.index,
-        .emissive_specular   = record.gbuffer[GBufferChannel.EMISSIVE_SPECULAR.ordinal].view.index,
-        .layers              = record.gbuffer[GBufferChannel.LAYERS.ordinal].view.index,
-        .flags               = record.gbuffer[GBufferChannel.FLAGS.ordinal].view.index,
-        .depth               = record.depth.view.index,
-        .sampler_index       = renderer.linear_clamp_sampler,
+        .frame                    = frame,
+        .base_color_metallic      = record.gbuffer[GBufferChannel.BASE_COLOR_METALLIC.ordinal].view.index,
+        .normal_roughness         = record.gbuffer[GBufferChannel.NORMAL_ROUGHNESS.ordinal].view.index,
+        .emissive_specular        = record.gbuffer[GBufferChannel.EMISSIVE_SPECULAR.ordinal].view.index,
+        .layers                   = record.gbuffer[GBufferChannel.LAYERS.ordinal].view.index,
+        .flags                    = record.gbuffer[GBufferChannel.FLAGS.ordinal].view.index,
+        .depth                    = record.depth.view.index,
+        .sampler_index            = renderer.linear_clamp_sampler,
+        .reflection_texture       = reflections ? record.reflection_blur.view.index : (gpu::TextureIndex)0,
+        .brdf_lut                 = reflections ? renderer.environment_state.brdf_lut.view.index : (gpu::TextureIndex)0,
+        .max_reflection_roughness = record.desc.ray_tracing.max_reflection_roughness,
     };
     gpu::PipelineHandle pipeline = renderer.pipelines.get(
         &renderer.device,

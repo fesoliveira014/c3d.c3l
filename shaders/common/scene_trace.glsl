@@ -10,8 +10,6 @@
 #include "vertex_pull.glsl"
 #include "trace_surface.glsl"
 
-GPU_DECLARE_READONLY_ARRAY_REF(TraceInstanceArray, TraceInstanceGpu);
-
 #ifdef SCENE_TRACE_RAY_QUERY
 
 #include "ray_query.glsl"

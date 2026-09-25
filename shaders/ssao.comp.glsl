@@ -7,6 +7,7 @@
 #include "noise.glsl"
 #include "texture_fetch.glsl"
 #include "ambient_occlusion.glsl"
+#include "ao_estimate.glsl"
 
 layout(local_size_x = 8, local_size_y = 8) in;
 
@@ -16,61 +17,8 @@ layout(push_constant) uniform Push {
 
 const uint SSAO_SLICE_COUNT = 2u;        // directions per texel; each costs 2 * SSAO_STEP_COUNT depth fetches
 const uint SSAO_STEP_COUNT = 4u;         // steps per side; 16 fetches per texel at 2 slices
-const float SSAO_FALLOFF_FRACTION = 0.6; // outer share of the radius where occluders fade out; hides the cut-off ring
 const float SSAO_MIN_STEP_PIXELS = 1.3;  // first step clears the centre texel; avoids self-occlusion
 const float HALF_PI = 0.5 * PI;
-
-vec3 view_position(
-    FrameRoot frame,
-    ivec2 texel,
-    ivec2 extent,
-    float depth
-) {
-    vec2 uv = (vec2(texel) + 0.5) / vec2(extent);
-    return (frame.view * vec4(reconstruct_world_position(frame, uv, depth), 1.0)).xyz;
-}
-
-// Per axis the neighbour on the same surface: the one nearer in view distance.
-vec3 neighbour_offset(
-    FrameRoot frame,
-    SsaoRoot root,
-    ivec2 texel,
-    ivec2 extent,
-    ivec2 axis_step,
-    vec3 position
-) {
-    ivec2 forward_texel = clamp(texel + axis_step, ivec2(0), extent - 1);
-    ivec2 backward_texel = clamp(texel - axis_step, ivec2(0), extent - 1);
-    float forward_depth = fetch_texture_2d(root.depth, forward_texel).r;
-    float backward_depth = fetch_texture_2d(root.depth, backward_texel).r;
-    float centre_distance = -position.z;
-    float forward_gap = forward_depth == 0.0
-        ? BACKGROUND_VIEW_DISTANCE : abs(view_distance(frame, forward_depth) - centre_distance);
-    float backward_gap = backward_depth == 0.0
-        ? BACKGROUND_VIEW_DISTANCE : abs(view_distance(frame, backward_depth) - centre_distance);
-    if (forward_gap <= backward_gap) {
-        if (forward_depth == 0.0) return vec3(0.0);
-        return view_position(frame, forward_texel, extent, forward_depth) - position;
-    }
-    return position - view_position(frame, backward_texel, extent, backward_depth);
-}
-
-vec3 reconstructed_normal(
-    FrameRoot frame,
-    SsaoRoot root,
-    ivec2 texel,
-    ivec2 extent,
-    vec3 position,
-    vec3 view_vector
-) {
-    vec3 right = neighbour_offset(frame, root, texel, extent, ivec2(1, 0), position);
-    vec3 down = neighbour_offset(frame, root, texel, extent, ivec2(0, 1), position);
-    vec3 normal = cross(down, right);
-    float normal_length = length(normal);
-    if (normal_length == 0.0) return view_vector;
-    normal /= normal_length;
-    return dot(normal, view_vector) < 0.0 ? -normal : normal;
-}
 
 // Jimenez 2016, cosine-weighted visibility between two horizon angles.
 float slice_visibility(float horizon_0, float horizon_1, float normal_angle) {
@@ -95,12 +43,12 @@ void main() {
         return;
     }
 
-    vec3 position = view_position(frame, texel, extent, depth);
+    vec3 position = ao_view_position(frame, texel, extent, depth);
     bool orthographic = frame.proj[3][3] != 0.0;
     vec3 view_vector = orthographic ? vec3(0.0, 0.0, 1.0) : normalize(-position);
     vec3 normal = root.normals != 0u
         ? normalize(mat3(frame.view) * decode_octahedral(fetch_texture_2d(root.normals, texel).rg))
-        : reconstructed_normal(frame, root, texel, extent, position, view_vector);
+        : ao_reconstructed_normal(frame, root.depth, texel, extent, position, view_vector);
 
     float projected_scale = frame.proj[0][0] * 0.5 * float(extent.x);
     float radius_pixels = root.radius * projected_scale / (orthographic ? 1.0 : -position.z);
@@ -113,8 +61,6 @@ void main() {
     float min_step = SSAO_MIN_STEP_PIXELS / radius_pixels;
     float slice_noise = interleaved_gradient_noise(vec2(pixel), root.noise_frame);
     float step_noise = interleaved_gradient_noise(vec2(pixel.yx), root.noise_frame);
-    float falloff_range = root.radius * SSAO_FALLOFF_FRACTION;
-    float falloff_from = root.radius - falloff_range;
 
     float visibility = 0.0;
     for (uint slice = 0u; slice < SSAO_SLICE_COUNT; slice++) {
@@ -146,10 +92,10 @@ void main() {
                 float sample_depth = fetch_texture_2d(root.depth, sample_texel).r;
                 if (sample_depth == 0.0) continue;
 
-                vec3 delta = view_position(frame, sample_texel, extent, sample_depth) - position;
+                vec3 delta = ao_view_position(frame, sample_texel, extent, sample_depth) - position;
                 float sample_distance = length(delta);
                 if (sample_distance == 0.0) continue;
-                float weight = clamp(1.0 - (sample_distance - falloff_from) / falloff_range, 0.0, 1.0);
+                float weight = ao_falloff(sample_distance, root.radius);
                 float start = side == 0 ? start_plus : start_minus;
                 float horizon = mix(start, dot(delta / sample_distance, view_vector), weight);
                 if (side == 0) {

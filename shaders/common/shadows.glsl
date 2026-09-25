@@ -37,11 +37,10 @@ uint point_shadow_face(vec3 direction) {
 }
 
 #ifdef RT_SHADOWS
-const float RT_SHADOW_OFFSET = 0.02; // world units along the normal; hides self-intersection at the cost of contact detail
 const float RT_SHADOW_FAR = 1.0e4; // world units; directional rays stop here
 
 float ray_shadow_visibility(FrameRoot frame, LightGpu light, vec3 world_position, vec3 normal) {
-    vec3 origin = world_position + normal * RT_SHADOW_OFFSET;
+    vec3 origin = world_position + normal * TRACE_SURFACE_OFFSET;
     vec3 direction = -light.direction_cos_outer.xyz;
     float t_max = RT_SHADOW_FAR;
     if (light.kind != LIGHT_DIRECTIONAL) {

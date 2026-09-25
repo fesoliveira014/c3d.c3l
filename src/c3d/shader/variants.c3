@@ -46,6 +46,9 @@ enum ShaderName : int {
     TAA_RESOLVE,
     SSAO,
     AO_BLUR,
+    RT_AO,
+    RT_REFLECTIONS,
+    RT_REFLECTION_BLUR,
     STANDARD_GBUFFER,
     PHYSICAL_GBUFFER,
     LIGHTING_RESOLVE,
@@ -147,6 +150,9 @@ const char[*] MOTION_BLUR_SPIRV @private = $embed("../../../shaders/spv/motion_b
 const char[*] TAA_RESOLVE_SPIRV @private = $embed("../../../shaders/spv/taa_resolve.spv");
 const char[*] SSAO_SPIRV @private = $embed("../../../shaders/spv/ssao.spv");
 const char[*] AO_BLUR_SPIRV @private = $embed("../../../shaders/spv/ao_blur.spv");
+const char[*] RT_AO_SPIRV @private = $embed("../../../shaders/spv/rt_ao.spv");
+const char[*] RT_REFLECTIONS_SPIRV @private = $embed("../../../shaders/spv/rt_reflections.spv");
+const char[*] RT_REFLECTION_BLUR_SPIRV @private = $embed("../../../shaders/spv/rt_reflection_blur.spv");
 const char[*] MESH_VELOCITY_SPIRV @private = $embed("../../../shaders/spv/mesh_velocity.spv");
 const char[*] MESH_SKINNED_VELOCITY_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_velocity.spv");
 const char[*] MESH_SKINNED_U16_VELOCITY_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_u16_velocity.spv");
@@ -164,7 +170,7 @@ const char[*] LIGHTING_RESOLVE_RT_SHADOWS_SPIRV @private = $embed("../../../shad
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[69] SHADER_ENTRIES = {
+const ShaderEntry[72] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -221,6 +227,9 @@ const ShaderEntry[69] SHADER_ENTRIES = {
     { .variant = { .shader = TAA_RESOLVE }, .spirv = TAA_RESOLVE_SPIRV[..] },
     { .variant = { .shader = SSAO }, .spirv = SSAO_SPIRV[..] },
     { .variant = { .shader = AO_BLUR }, .spirv = AO_BLUR_SPIRV[..] },
+    { .variant = { .shader = RT_AO }, .spirv = RT_AO_SPIRV[..] },
+    { .variant = { .shader = RT_REFLECTIONS }, .spirv = RT_REFLECTIONS_SPIRV[..] },
+    { .variant = { .shader = RT_REFLECTION_BLUR }, .spirv = RT_REFLECTION_BLUR_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_VELOCITY }, .spirv = MESH_VELOCITY_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED | SHADER_FLAG_VELOCITY }, .spirv = MESH_SKINNED_VELOCITY_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED_U16 | SHADER_FLAG_VELOCITY }, .spirv = MESH_SKINNED_U16_VELOCITY_SPIRV[..] },

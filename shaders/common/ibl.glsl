@@ -25,6 +25,17 @@ vec3 anisotropic_reflection_normal(StandardSurface surface, float perceptual_rou
     return normalize(mix(anisotropic_normal, surface.normal, bend));
 }
 
+// Split-sum weight of a specular radiance: reflectance x scale + grazing reflectance x bias.
+vec3 environment_brdf_weight(
+    uint brdf_lut,
+    uint sampler_index,
+    StandardSurface surface,
+    float perceptual_roughness
+) {
+    vec2 response = sample_texture_2d(brdf_lut, sampler_index, vec2(surface.normal_view, perceptual_roughness)).rg;
+    return surface.reflectance * response.x + surface.grazing_reflectance * response.y;
+}
+
 void evaluate_environment_lobes(
     EnvironmentGpu environment,
     StandardSurface surface,
@@ -51,13 +62,8 @@ void evaluate_environment_lobes(
         reflection,
         lod
     ).rgb;
-    vec2 response = sample_texture_2d(
-        environment.brdf_lut,
-        environment.sampler_index,
-        vec2(surface.normal_view, perceptual_roughness)
-    ).rg;
     specular = prefiltered
-        * (surface.reflectance * response.x + surface.grazing_reflectance * response.y)
+        * environment_brdf_weight(environment.brdf_lut, environment.sampler_index, surface, perceptual_roughness)
         * environment.intensity
         * specular_occlusion(surface.normal_view, ambient_occlusion, perceptual_roughness);
 }
