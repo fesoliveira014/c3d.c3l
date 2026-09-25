@@ -37,7 +37,7 @@ const uint  DEFAULT_MAX_STEPS = 4; // a longer backlog is dropped, not simulated
 <* Approach speed above which hits are reported, meters per second. *>
 const float DEFAULT_HIT_SPEED_THRESHOLD = 1;
 <* Entries per event list. *>
-const uint  DEFAULT_EVENT_CAPACITY = 4096; // six lists, 144 bytes per index across them: 576 KiB per world; the contact burst lever
+const uint  DEFAULT_EVENT_CAPACITY = 4096; // seven lists, 160 bytes per index across them: 640 KiB per world; the contact burst lever
 <* Collision snapshot slots per world. *>
 const uint  DEFAULT_SNAPSHOT_CAPACITY = 256; // one slot per distinct cooked key; the level variety lever
 <* Water density, kilograms per cubic meter. *>
@@ -307,6 +307,8 @@ struct PhysicsDebugOptions {
     bool colliders;
     bool contacts;
     bool bounds;
+    bool joints;
+    bool joint_extras;
 }
 
 <*
@@ -334,6 +336,8 @@ struct PhysicsWorld {
     uint           sensor_begin_count;
     SensorEvent[]  sensor_end_storage;
     uint           sensor_end_count;
+    JointEvent[]   joint_event_storage;
+    uint           joint_event_count;
     BuildFailure[] failure_storage;
     uint           failure_count;
 }
@@ -470,6 +474,11 @@ fn SensorEvent[] PhysicsWorld.sensors_begin(&self) => self.sensor_begin_storage[
 fn SensorEvent[] PhysicsWorld.sensors_end(&self) => self.sensor_end_storage[:self.sensor_end_count];
 
 <*
+ Joints that crossed their thresholds during the last update.
+*>
+fn JointEvent[] PhysicsWorld.joint_events(&self) => self.joint_event_storage[:self.joint_event_count];
+
+<*
  Bodies the last update could not build.
 *>
 fn BuildFailure[] PhysicsWorld.build_failures(&self) => self.failure_storage[:self.failure_count];
@@ -550,9 +559,9 @@ fn ExplosionDesc default_explosion_desc() {
 <*
  Create a physics world bound to the scene and its asset store.
  @param [&in] assets : "Borrowed; outlives the world."
- @param [&inout] scene : "Borrowed; outlives the world; gains the RigidBody store and hook."
+ @param [&inout] scene : "Borrowed; outlives the world; gains the RigidBody and Joint stores and hooks."
  @return? c3d::CAPACITY_EXCEEDED, b3::WORLD_LIMIT_REACHED, b3::INVALID_DEFINITION
- @require scene.world.is_registered(PhysicsBody)
+ @require scene.world.is_registered(PhysicsBody), scene.world.is_registered(PhysicsJoint)
 *>
 fn PhysicsWorld? create_physics_world(
     Allocator allocator,
@@ -576,9 +585,11 @@ fn PhysicsWorld? create_physics_world(
     b3::WorldId world = b3::create_world(&def)!;
     defer catch b3::destroy_world(world);
     scene.register(RigidBody)!;
+    scene.register(Joint)!;
 
     SnapshotTable* snapshots = create_snapshot_table(allocator, desc.snapshot_capacity);
     scene.set_remove_hook(RigidBody, &remove_rigid_body, snapshots);
+    scene.set_remove_hook(Joint, &remove_joint_component, null);
 
     return {
         .allocator             = allocator,
@@ -593,17 +604,23 @@ fn PhysicsWorld? create_physics_world(
         .hit_storage           = alloc::new_array(allocator, HitEvent, desc.event_capacity),
         .sensor_begin_storage  = alloc::new_array(allocator, SensorEvent, desc.event_capacity),
         .sensor_end_storage    = alloc::new_array(allocator, SensorEvent, desc.event_capacity),
+        .joint_event_storage   = alloc::new_array(allocator, JointEvent, desc.event_capacity),
         .failure_storage       = alloc::new_array(allocator, BuildFailure, desc.event_capacity),
     };
 }
 
 <*
- Destroy the world, bodies and snapshots; nodes and PhysicsBody components remain.
+ Destroy the world, joints, bodies and snapshots; nodes and authored components remain.
  @param [&inout] world : "Destroyed before its scene and asset store."
 *>
 fn void destroy_physics_world(PhysicsWorld* world) {
     Scene* scene = world.scene;
     usz count;
+    scene.@each(Joint; entity, joint) {
+        world.orphan_scratch[count++] = entity;
+    };
+    foreach (entity : world.orphan_scratch[:count]) scene.remove_component(scene.node(entity), Joint);
+    count = 0;
     scene.@each(RigidBody; entity, body) {
         world.orphan_scratch[count++] = entity;
     };
@@ -611,7 +628,11 @@ fn void destroy_physics_world(PhysicsWorld* world) {
     scene.@each(PhysicsBody; entity, physics_body) {
         physics_body.status = PENDING;
     };
+    scene.@each(PhysicsJoint; entity, physics_joint) {
+        physics_joint.status = PENDING;
+    };
     scene.set_remove_hook(RigidBody, null, null);
+    scene.set_remove_hook(Joint, null, null);
     b3::destroy_world(world.world);
     destroy_snapshot_table(world.snapshots);
 
@@ -621,6 +642,7 @@ fn void destroy_physics_world(PhysicsWorld* world) {
     alloc::free(world.allocator, world.hit_storage.ptr);
     alloc::free(world.allocator, world.sensor_begin_storage.ptr);
     alloc::free(world.allocator, world.sensor_end_storage.ptr);
+    alloc::free(world.allocator, world.joint_event_storage.ptr);
     alloc::free(world.allocator, world.failure_storage.ptr);
     *world = {};
 }

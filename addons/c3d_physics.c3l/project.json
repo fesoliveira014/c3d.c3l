@@ -37,6 +37,11 @@
       "type": "executable",
       "sources": [ "examples/physics_components.c3" ],
       "features": [ "C3D_GUI", "C3D_STB_IMAGE" ]
+    },
+    "vehicle": {
+      "type": "executable",
+      "sources": [ "examples/vehicle.c3" ],
+      "features": [ "C3D_GUI", "C3D_STB_IMAGE" ]
     }
   }
 }

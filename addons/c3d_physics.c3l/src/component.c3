@@ -106,6 +106,7 @@ fn void? register_physics(Scene* scene) {
     scene.register(PhysicsBody)!;
     scene.register(Wind)!;
     scene.register(Force)!;
+    scene.register(PhysicsJoint)!;
     scene.set_remove_hook(PhysicsBody, &free_physics_body, scene.hook_allocator);
 }
 
