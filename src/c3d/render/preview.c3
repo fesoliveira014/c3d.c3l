@@ -25,6 +25,7 @@ enum PreviewKind {
     VIEW_CLUSTERS,
     VIEW_GBUFFER,
     VIEW_AMBIENT_OCCLUSION,
+    VIEW_REFLECTION,
 }
 
 <*
@@ -104,6 +105,7 @@ fn void? Renderer.request_preview(
         case VIEW_MOTION_BLUR:
         case VIEW_GBUFFER:
         case VIEW_AMBIENT_OCCLUSION:
+        case VIEW_REFLECTION:
             bloom_levels = self.views.try_get(source.view)!.bloom_levels;
         case VIEW_CLUSTERS:
             ViewRecord* record = self.views.try_get(source.view)!;
@@ -172,6 +174,7 @@ fn void? validate_preview_request(
         case VIEW_GBUFFER:
             if (source.level >= GBUFFER_CHANNEL_COUNT) return c3d::INVALID_ARGUMENT~;
         case VIEW_AMBIENT_OCCLUSION:
+        case VIEW_REFLECTION:
             if (source.level > 1) return c3d::INVALID_ARGUMENT~;
         case SHADOW_LAYER:
             if (source.layer >= layer_count) return c3d::INVALID_ARGUMENT~;
@@ -262,6 +265,7 @@ fn void? resolve_preview_source(Renderer* renderer, PreviewSlot* preview, Previe
         case VIEW_MOTION_BLUR:
         case VIEW_GBUFFER:
         case VIEW_AMBIENT_OCCLUSION:
+        case VIEW_REFLECTION:
             ViewRecord* record = renderer.views.get(source.view);
             if (!record.live) return;
             Target* target = view_preview_target(record, source);
@@ -335,6 +339,7 @@ fn Target* view_preview_target(ViewRecord* record, PreviewSource source) @privat
         case VIEW_MOTION_BLUR:       return &record.motion_blur_out;
         case VIEW_GBUFFER:           return &record.gbuffer[source.level];
         case VIEW_AMBIENT_OCCLUSION: return source.level == 0 ? &record.ao : &record.ao_raw;
+        case VIEW_REFLECTION:        return source.level == 0 ? &record.reflection_blur : &record.reflection;
         default:                     unreachable("not a view image");
     }
 }

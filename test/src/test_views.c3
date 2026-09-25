@@ -97,7 +97,7 @@ fn void test_view_desc_rejects_rt_shadows_without_ray_queries() @test {
     render::validate_view_desc(renderer, &desc)!!;
 }
 
-fn void test_view_desc_rejects_ray_traced_and_invalid_ambient_occlusion() @test {
+fn void test_view_desc_gates_ray_traced_ambient_occlusion_on_ray_queries() @test {
     Renderer* renderer = mem::new(Renderer);
     defer free(renderer);
     ViewDesc desc = render::default_view_desc();
@@ -111,6 +111,14 @@ fn void test_view_desc_rejects_ray_traced_and_invalid_ambient_occlusion() @test 
     } else {
         assert(false);
     }
+    renderer.caps.ray_queries.enabled = true;
+    render::validate_view_desc(renderer, &desc)!!;
+    desc.ambient_occlusion.ray_count = 0;
+    if (catch excuse = render::validate_view_desc(renderer, &desc)) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false);
+    }
 
     desc.ambient_occlusion = render::AMBIENT_OCCLUSION_DEFAULT;
     desc.ambient_occlusion.radius = 0;
@@ -121,17 +129,56 @@ fn void test_view_desc_rejects_ray_traced_and_invalid_ambient_occlusion() @test 
     }
 }
 
+fn void expect_view_desc_fault(Renderer* renderer, ViewDesc* desc, fault expected) @local {
+    fault excuse = @catch(render::validate_view_desc(renderer, desc));
+    assert(excuse == expected);
+}
+
+fn void test_view_desc_gates_reflections() @test {
+    Renderer* renderer = mem::new(Renderer);
+    defer free(renderer);
+    ViewDesc desc = render::default_view_desc();
+    assert(desc.ray_tracing.max_reflection_roughness == render::RT_REFLECTION_ROUGHNESS_DEFAULT);
+
+    desc.ray_tracing.reflections = true;
+    expect_view_desc_fault(renderer, &desc, c3d::UNSUPPORTED);
+    desc.shading = ShadingPath.DEFERRED;
+    expect_view_desc_fault(renderer, &desc, c3d::UNSUPPORTED);
+
+    renderer.caps.ray_queries.enabled = true;
+    render::validate_view_desc(renderer, &desc)!!;
+    desc.shading = ShadingPath.FORWARD;
+    expect_view_desc_fault(renderer, &desc, c3d::UNSUPPORTED);
+
+    desc.shading = ShadingPath.DEFERRED;
+    float[5] bad_roughness = { 0, -0.1f, 1.5f, float::nan, float::inf };
+    foreach (roughness : bad_roughness) {
+        desc.ray_tracing.max_reflection_roughness = roughness;
+        expect_view_desc_fault(renderer, &desc, c3d::INVALID_ARGUMENT);
+    }
+    desc.ray_tracing.max_reflection_roughness = 1;
+    render::validate_view_desc(renderer, &desc)!!;
+
+    desc = render::default_view_desc();
+    desc.ray_tracing.max_reflection_roughness = 0;
+    render::validate_view_desc(renderer, &desc)!!;
+}
+
 fn void test_view_targets_list_every_image_once() @test {
     ViewRecord* record = mem::new(ViewRecord);
     defer free(record);
     Target*[render::VIEW_TARGET_COUNT] targets = render::view_targets(record);
     bool raw_listed;
     bool ao_listed;
+    bool reflection_listed;
+    bool reflection_blur_listed;
     foreach (usz index, target : targets) {
         assert(target != null);
         for (usz other = index + 1; other < targets.len; other++) assert(target != targets[other]);
         if (target == &record.ao_raw) raw_listed = true;
         if (target == &record.ao) ao_listed = true;
+        if (target == &record.reflection) reflection_listed = true;
+        if (target == &record.reflection_blur) reflection_blur_listed = true;
     }
-    assert(raw_listed && ao_listed);
+    assert(raw_listed && ao_listed && reflection_listed && reflection_blur_listed);
 }

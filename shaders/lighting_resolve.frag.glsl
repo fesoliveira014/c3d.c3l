@@ -11,6 +11,7 @@
 #endif
 #include "shadows.glsl"
 #include "gbuffer.glsl"
+#include "texture_fetch.glsl"
 
 layout(location = 0) in vec2 v_uv;
 layout(location = 0) out vec4 out_color;
@@ -19,6 +20,8 @@ layout(push_constant) uniform Push {
     uint64_t vertex_root_gpu;
     uint64_t fragment_root_gpu;
 } pc;
+
+const float RT_REFLECTION_FADE = 0.2; // share of the threshold over which traced and prefiltered radiance blend; hides the seam
 
 void main() {
     LightingResolveRoot root = LightingResolveRoot(pc.fragment_root_gpu);
@@ -51,13 +54,27 @@ void main() {
         vec3(specular_weight)
     );
 
-    float ambient_occlusion = frame_ambient_occlusion(frame, ivec2(gl_FragCoord.xy));
+    float ambient_occlusion = frame_ambient_occlusion(frame, texel);
     vec3 color = frame.ambient.rgb * base_color * (1.0 - metallic) * min(occlusion, ambient_occlusion)
         + emissive_specular.rgb;
+    vec3 diffuse = vec3(0.0);
+    vec3 specular = vec3(0.0);
     if (frame.environment != 0ul) {
         EnvironmentGpu environment = EnvironmentGpu(frame.environment);
-        color += evaluate_environment(environment, surface, roughness, occlusion, ambient_occlusion);
+        evaluate_environment_lobes(environment, surface, roughness, occlusion, ambient_occlusion, diffuse, specular);
     }
+    if (root.reflection_texture != 0u) {
+        // Texel fetch: a filtered read would blend traced and untraced texels at the region's edge.
+        vec4 traced = fetch_texture_2d(root.reflection_texture, texel);
+        if (traced.a > 0.0) {
+            float perceptual = max(roughness, MIN_PERCEPTUAL_ROUGHNESS);
+            vec3 traced_specular = traced.rgb
+                * environment_brdf_weight(root.brdf_lut, root.sampler_index, surface, perceptual);
+            float threshold = root.max_reflection_roughness;
+            specular = mix(specular, traced_specular, clamp((threshold - roughness) / (RT_REFLECTION_FADE * threshold), 0.0, 1.0));
+        }
+    }
+    color += diffuse + specular;
     float view_depth = -(frame.view * vec4(world_position, 1.0)).z;
     LightList lights = select_lights(frame, world_position, view_depth);
     for (uint index = 0u; index < lights.count; index++) {

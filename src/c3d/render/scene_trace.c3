@@ -167,6 +167,19 @@ fn gpu::GpuAddress? Renderer.prepare_scene_trace(&self, Scene* scene, TraceKind 
     return trace.root;
 }
 
+<*
+ Texture level of detail a ray cone selects at a hit; mirrored in trace_surface.glsl.
+ @param texel_area : "Triangle area in texels of the sampled map."
+ @param world_area : "Triangle area in world units squared."
+ @param cone_width : "Cone width at the hit, in world units."
+ @param cosine : "Absolute cosine between the ray and the geometric normal."
+ @require texel_area > 0 && world_area > 0 && cone_width > 0 && cosine > 0
+ @pure
+*>
+fn float ray_cone_lod(float texel_area, float world_area, float cone_width, float cosine) {
+    return 0.5f * math::log2(texel_area / world_area) + math::log2(cone_width / cosine);
+}
+
 fn TraceKind? resolve_trace_kind(TraceKind kind, bool ray_queries) @private {
     switch (kind) {
         case AUTO: return ray_queries ? TraceKind.HARDWARE : TraceKind.SOFTWARE;

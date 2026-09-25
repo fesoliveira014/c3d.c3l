@@ -49,10 +49,12 @@ defer (void)render::destroy_view(&renderer, capture_view);
 | `depth_prepass` | A `FORWARD` view draws its opaque set into depth first and shades it once; on in both constructors |
 | `lights` | `FLAT` or `CLUSTERED` candidate light selection |
 | `clusters` | Editable `ClusterDesc`; ignored by `FLAT` |
+| `ray_tracing` | `RayTracingDesc`: `shadows` (see [shadows](shadows.md)), `reflections` and `max_reflection_roughness` (see [reflections](reflections.md)); zero disables all |
 | `ambient_occlusion` | `AmbientOcclusionDesc`; zero is off (see [ambient occlusion](ambient_occlusion.md)) |
 
 `default_view_desc()` is a full-window `DISPLAY_LDR` view with neutral grading and a depth
-prepass; `texture_view_desc(target, color = LINEAR_HDR)` covers a target with the same defaults. `create_view` and `configure_view`
+prepass and `ray_tracing.max_reflection_roughness` at `RT_REFLECTION_ROUGHNESS_DEFAULT`;
+`texture_view_desc(target, color = LINEAR_HDR)` covers a target with the same defaults. `create_view` and `configure_view`
 validate between frames: a dead target faults `INVALID_ID`; `LINEAR_HDR` on a window view or on an
 RGBA8 target, a viewport outside the output, a render scale outside its range and an invalid post
 stack fault `INVALID_ARGUMENT`; invalid ambient occlusion settings fault `INVALID_ARGUMENT` and

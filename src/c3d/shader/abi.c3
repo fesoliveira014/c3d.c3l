@@ -431,9 +431,11 @@ struct LightingResolveRoot {
     TextureIndex flags;
     TextureIndex depth;
     SamplerIndex sampler_index;
-    uint         _pad0;
+    TextureIndex reflection_texture;
+    TextureIndex brdf_lut;
+    float        max_reflection_roughness;
 }
-$assert LightingResolveRoot::size == 40;
+$assert LightingResolveRoot::size == 48;
 $assert $reflect(LightingResolveRoot.frame).offset == 0;
 $assert $reflect(LightingResolveRoot.base_color_metallic).offset == 8;
 $assert $reflect(LightingResolveRoot.normal_roughness).offset == 12;
@@ -442,7 +444,9 @@ $assert $reflect(LightingResolveRoot.layers).offset == 20;
 $assert $reflect(LightingResolveRoot.flags).offset == 24;
 $assert $reflect(LightingResolveRoot.depth).offset == 28;
 $assert $reflect(LightingResolveRoot.sampler_index).offset == 32;
-$assert $reflect(LightingResolveRoot._pad0).offset == 36;
+$assert $reflect(LightingResolveRoot.reflection_texture).offset == 36;
+$assert $reflect(LightingResolveRoot.brdf_lut).offset == 40;
+$assert $reflect(LightingResolveRoot.max_reflection_roughness).offset == 44;
 
 struct SsaoRoot {
     GpuAddress   frame;
@@ -495,6 +499,80 @@ $assert $reflect(AoBlurRoot.input_height).offset == 32;
 $assert $reflect(AoBlurRoot._pad0).offset == 36;
 $assert $reflect(AoBlurRoot._pad1).offset == 40;
 $assert $reflect(AoBlurRoot._pad2).offset == 44;
+
+struct RtAoRoot {
+    GpuAddress   frame;
+    TextureIndex depth;
+    TextureIndex normals;
+    TextureIndex output_texture;
+    uint         width;
+    uint         height;
+    float        radius;
+    float        intensity;
+    uint         noise_frame;
+    uint         ray_count;
+    uint         _pad0;
+}
+$assert RtAoRoot::size == 48;
+$assert $reflect(RtAoRoot.frame).offset == 0;
+$assert $reflect(RtAoRoot.depth).offset == 8;
+$assert $reflect(RtAoRoot.normals).offset == 12;
+$assert $reflect(RtAoRoot.output_texture).offset == 16;
+$assert $reflect(RtAoRoot.width).offset == 20;
+$assert $reflect(RtAoRoot.height).offset == 24;
+$assert $reflect(RtAoRoot.radius).offset == 28;
+$assert $reflect(RtAoRoot.intensity).offset == 32;
+$assert $reflect(RtAoRoot.noise_frame).offset == 36;
+$assert $reflect(RtAoRoot.ray_count).offset == 40;
+$assert $reflect(RtAoRoot._pad0).offset == 44;
+
+struct RtReflectionRoot {
+    GpuAddress   frame;
+    TextureIndex depth;
+    TextureIndex normal_roughness;
+    TextureIndex emissive_specular;
+    TextureIndex output_texture;
+    uint         width;
+    uint         height;
+    float        max_roughness;
+    uint         noise_frame;
+    uint         _pad0;
+    uint         _pad1;
+}
+$assert RtReflectionRoot::size == 48;
+$assert $reflect(RtReflectionRoot.frame).offset == 0;
+$assert $reflect(RtReflectionRoot.depth).offset == 8;
+$assert $reflect(RtReflectionRoot.normal_roughness).offset == 12;
+$assert $reflect(RtReflectionRoot.emissive_specular).offset == 16;
+$assert $reflect(RtReflectionRoot.output_texture).offset == 20;
+$assert $reflect(RtReflectionRoot.width).offset == 24;
+$assert $reflect(RtReflectionRoot.height).offset == 28;
+$assert $reflect(RtReflectionRoot.max_roughness).offset == 32;
+$assert $reflect(RtReflectionRoot.noise_frame).offset == 36;
+$assert $reflect(RtReflectionRoot._pad0).offset == 40;
+$assert $reflect(RtReflectionRoot._pad1).offset == 44;
+
+struct RtReflectionBlurRoot {
+    GpuAddress   frame;
+    TextureIndex input_texture;
+    TextureIndex depth;
+    TextureIndex normal_roughness;
+    TextureIndex output_texture;
+    uint         width;
+    uint         height;
+    uint         _pad0;
+    uint         _pad1;
+}
+$assert RtReflectionBlurRoot::size == 40;
+$assert $reflect(RtReflectionBlurRoot.frame).offset == 0;
+$assert $reflect(RtReflectionBlurRoot.input_texture).offset == 8;
+$assert $reflect(RtReflectionBlurRoot.depth).offset == 12;
+$assert $reflect(RtReflectionBlurRoot.normal_roughness).offset == 16;
+$assert $reflect(RtReflectionBlurRoot.output_texture).offset == 20;
+$assert $reflect(RtReflectionBlurRoot.width).offset == 24;
+$assert $reflect(RtReflectionBlurRoot.height).offset == 28;
+$assert $reflect(RtReflectionBlurRoot._pad0).offset == 32;
+$assert $reflect(RtReflectionBlurRoot._pad1).offset == 36;
 
 struct TextureMapGpu {
     TextureIndex texture_index;

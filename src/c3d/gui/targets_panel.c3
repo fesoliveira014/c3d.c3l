@@ -77,7 +77,10 @@ fn void? targets_panel(
         ViewRecord* record = renderer.views.get(view);
         ViewDesc desc = record.desc;
         imgui::separator_text("Shading");
-        if (imgui::radio_button("Forward", desc.shading == FORWARD)) desc.shading = FORWARD;
+        if (imgui::radio_button("Forward", desc.shading == FORWARD)) {
+            desc.shading = FORWARD;
+            desc.ray_tracing.reflections = false;
+        }
         imgui::same_line();
         if (imgui::radio_button("Deferred", desc.shading == DEFERRED)) desc.shading = DEFERRED;
         if (imgui::radio_button("Flat", desc.lights == FLAT)) desc.lights = FLAT;
@@ -173,6 +176,9 @@ fn PanelEntry[] collect_entries(Renderer* renderer, ViewId view, EnvironmentId e
         push_view_image(&entries, "ao", { .kind = VIEW_AMBIENT_OCCLUSION, .view = view }, &record.ao);
         PreviewSource raw_source = { .kind = VIEW_AMBIENT_OCCLUSION, .view = view, .level = 1 };
         push_view_image(&entries, "ao_raw", raw_source, &record.ao_raw);
+        push_view_image(&entries, "reflection_blur", { .kind = VIEW_REFLECTION, .view = view }, &record.reflection_blur);
+        PreviewSource traced_source = { .kind = VIEW_REFLECTION, .view = view, .level = 1 };
+        push_view_image(&entries, "reflection", traced_source, &record.reflection);
         if (record.desc.lights == CLUSTERED) {
             entries.push({
                 .label  = "clusters",

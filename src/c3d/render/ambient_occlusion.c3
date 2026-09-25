@@ -8,6 +8,17 @@ import std::math;
 
 $assert SsaoRoot::size == 48;
 $assert AoBlurRoot::size == 48;
+$assert RtAoRoot::size == 48;
+
+<*
+ Fewest rays per texel on the ray-traced AO path.
+*>
+const uint RT_AO_RAYS_MIN = 1;
+
+<*
+ Most rays per texel on the ray-traced AO path.
+*>
+const uint RT_AO_RAYS_MAX = 16; // 16 rays over a half-resolution 1080p estimate trace 8.3 M rays a frame
 
 <*
  Half-resolution screen-space AO over half a metre.
@@ -16,10 +27,11 @@ const AmbientOcclusionDesc AMBIENT_OCCLUSION_DEFAULT = {
     .kind      = AoKind.SSAO,
     .radius    = 0.5f,
     .intensity = 1,
+    .ray_count = 4,
 };
 
 <*
- Ambient occlusion source of a view; RAY_TRACED is reserved and rejected.
+ Ambient occlusion source of a view.
 *>
 enum AoKind {
     NONE,
@@ -35,10 +47,12 @@ struct AmbientOcclusionDesc {
     float  radius;
     float  intensity;
     bool   full_resolution;
+    uint   ray_count;
 }
 
 struct AmbientOcclusionPipelines @private {
     gpu::PipelineHandle ssao;
+    gpu::PipelineHandle ray_traced;
     gpu::PipelineHandle blur;
 }
 
@@ -48,12 +62,13 @@ struct AmbientOcclusionPipelines @private {
  @pure
 *>
 fn bool ambient_occlusion_desc_valid(AmbientOcclusionDesc* desc) {
+    bool estimate_valid = math::is_finite(desc.radius) && desc.radius > 0
+        && math::is_finite(desc.intensity) && desc.intensity >= 0;
     switch (desc.kind) {
         case NONE: return true;
-        case SSAO:
-            return math::is_finite(desc.radius) && desc.radius > 0
-                && math::is_finite(desc.intensity) && desc.intensity >= 0;
-        case RAY_TRACED: return false;
+        case SSAO: return estimate_valid;
+        case RAY_TRACED:
+            return estimate_valid && desc.ray_count >= RT_AO_RAYS_MIN && desc.ray_count <= RT_AO_RAYS_MAX;
     }
 }
 
@@ -67,14 +82,22 @@ fn uint[<2>] ambient_occlusion_extent(uint width, uint height, bool full_resolut
     return { (width + 1) / 2, (height + 1) / 2 };
 }
 
-fn void? acquire_ambient_occlusion_pipelines(Renderer* renderer) @private {
+<*
+ @require kind != AoKind.NONE
+*>
+fn void? acquire_ambient_occlusion_pipelines(Renderer* renderer, AoKind kind) @private {
     AmbientOcclusionPipelines* pipelines = &renderer.ambient_occlusion_pipelines;
-    acquire_compute_pipeline(renderer, &pipelines.ssao, SSAO, "ssao")!;
+    switch (kind) {
+        case SSAO: acquire_compute_pipeline(renderer, &pipelines.ssao, SSAO, "ssao")!;
+        case RAY_TRACED: acquire_compute_pipeline(renderer, &pipelines.ray_traced, RT_AO, "rt_ao")!;
+        case NONE:
+    }
     acquire_compute_pipeline(renderer, &pipelines.blur, AO_BLUR, "ao_blur")!;
 }
 
 fn void destroy_ambient_occlusion_pipelines(gpu::Device* device, AmbientOcclusionPipelines* pipelines) @private {
     if (pipelines.ssao.is_valid()) (void)gpu::destroy_pipeline(device, pipelines.ssao);
+    if (pipelines.ray_traced.is_valid()) (void)gpu::destroy_pipeline(device, pipelines.ray_traced);
     if (pipelines.blur.is_valid()) (void)gpu::destroy_pipeline(device, pipelines.blur);
     *pipelines = {};
 }
@@ -116,15 +139,16 @@ fn void release_ao_images(gpu::Device* device, ViewRecord* record) @private {
     if (record.ao.texture.is_valid()) release_storage_target(device, &record.ao);
 }
 
-fn uint ambient_occlusion_noise_frame(ViewRecord* record) @private {
+fn uint temporal_noise_frame(ViewRecord* record) @private {
     return record.desc.post.anti_aliasing == AntiAliasing.TAA ? record.history.sample_index : 0;
 }
 
 <*
- @require record.ao.texture.is_valid()
+ @require record.ao.texture.is_valid() && record.desc.ambient_occlusion.kind != AoKind.NONE
 *>
 fn void? record_ambient_occlusion(Renderer* renderer, ViewRecord* record, gpu::GpuAddress frame) @private {
-    acquire_ambient_occlusion_pipelines(renderer)!;
+    AmbientOcclusionDesc* ambient_occlusion = &record.desc.ambient_occlusion;
+    acquire_ambient_occlusion_pipelines(renderer, ambient_occlusion.kind)!;
     bool deferred = record.desc.shading == ShadingPath.DEFERRED;
     Target* normals = &record.gbuffer[GBufferChannel.NORMAL_ROUGHNESS.ordinal];
     record.depth.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
@@ -132,22 +156,45 @@ fn void? record_ambient_occlusion(Renderer* renderer, ViewRecord* record, gpu::G
     record.ao_raw.transition(&renderer.commands, gpu::storage_at({ .compute }, { .write }))!;
 
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
-    gpu::MappedGpuSpan ssao_root = slot.upload.take(&renderer.device, SsaoRoot::size, STREAM_ALIGNMENT)!;
-    *(SsaoRoot*)ssao_root.bytes.ptr = {
-        .frame          = frame,
-        .depth          = record.depth.view.index,
-        .normals        = deferred ? normals.view.index : (gpu::TextureIndex)0,
-        .output_texture = record.ao_raw.view.index,
-        .width          = record.ao_raw.width,
-        .height         = record.ao_raw.height,
-        .radius         = record.desc.ambient_occlusion.radius,
-        .intensity      = record.desc.ambient_occlusion.intensity,
-        .noise_frame    = ambient_occlusion_noise_frame(record),
-    };
+    gpu::TextureIndex normals_index = deferred ? normals.view.index : (gpu::TextureIndex)0;
+    gpu::PipelineHandle estimate;
+    gpu::MappedGpuSpan estimate_root;
+    switch (ambient_occlusion.kind) {
+        case SSAO:
+            estimate = renderer.ambient_occlusion_pipelines.ssao;
+            estimate_root = slot.upload.take(&renderer.device, SsaoRoot::size, STREAM_ALIGNMENT)!;
+            *(SsaoRoot*)estimate_root.bytes.ptr = {
+                .frame          = frame,
+                .depth          = record.depth.view.index,
+                .normals        = normals_index,
+                .output_texture = record.ao_raw.view.index,
+                .width          = record.ao_raw.width,
+                .height         = record.ao_raw.height,
+                .radius         = ambient_occlusion.radius,
+                .intensity      = ambient_occlusion.intensity,
+                .noise_frame    = temporal_noise_frame(record),
+            };
+        case RAY_TRACED:
+            estimate = renderer.ambient_occlusion_pipelines.ray_traced;
+            estimate_root = slot.upload.take(&renderer.device, RtAoRoot::size, STREAM_ALIGNMENT)!;
+            *(RtAoRoot*)estimate_root.bytes.ptr = {
+                .frame          = frame,
+                .depth          = record.depth.view.index,
+                .normals        = normals_index,
+                .output_texture = record.ao_raw.view.index,
+                .width          = record.ao_raw.width,
+                .height         = record.ao_raw.height,
+                .radius         = ambient_occlusion.radius,
+                .intensity      = ambient_occlusion.intensity,
+                .noise_frame    = temporal_noise_frame(record),
+                .ray_count      = ambient_occlusion.ray_count,
+            };
+        case NONE:
+    }
 
     begin_profile_pass(renderer, Pass.AMBIENT_OCCLUSION)!;
-    gpu::cmd_bind_pipeline(&renderer.commands, renderer.ambient_occlusion_pipelines.ssao)!;
-    dispatch_over(renderer, ssao_root.address, &record.ao_raw)!;
+    gpu::cmd_bind_pipeline(&renderer.commands, estimate)!;
+    dispatch_over(renderer, estimate_root.address, &record.ao_raw)!;
 
     record.ao_raw.transition(&renderer.commands, gpu::storage_at({ .compute }, { .read }))!;
     record.ao.transition(&renderer.commands, gpu::storage_at({ .compute }, { .write }))!;

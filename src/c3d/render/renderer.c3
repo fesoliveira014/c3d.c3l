@@ -146,6 +146,7 @@ struct Renderer {
     ViewId                    default_view;
     post::PostPipelines       post_pipelines;
     AmbientOcclusionPipelines ambient_occlusion_pipelines;
+    ReflectionPipelines       reflection_pipelines;
     PipelineCache             pipelines;
     gpu::SamplerIndex         linear_clamp_sampler;
 
@@ -876,6 +877,7 @@ fn void destroy_renderer(Renderer* renderer) {
     pool::destroy_pool{ViewRecord, ViewId}(&renderer.views);
     post::destroy_post_pipelines(&renderer.device, &renderer.post_pipelines);
     destroy_ambient_occlusion_pipelines(&renderer.device, &renderer.ambient_occlusion_pipelines);
+    destroy_reflection_pipelines(&renderer.device, &renderer.reflection_pipelines);
 
     foreach (&record : renderer.targets.items) {
         if (record.target.texture.is_valid()) release_target(&renderer.device, &record.target);

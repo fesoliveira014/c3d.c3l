@@ -273,12 +273,15 @@ fn void? Renderer.render_view(
             instrumentation::@scope("view.uploads") {
                 if (transmission_items.len) acquire_scene_color(self, record)!;
                 environments = resolve_view_environments(self, scene, sheen)!;
+                if (record.desc.ray_tracing.reflections) acquire_environment_lut(self)!;
                 record_pending_copies(self, &self.commands)!;
                 prepare_sampled_targets(self, record)!;
             };
 
             gpu::GpuAddress trace_root;
-            if (record.desc.ray_tracing.shadows) {
+            bool traces = record.desc.ray_tracing.shadows || record.desc.ray_tracing.reflections
+              || record.desc.ambient_occlusion.kind == AoKind.RAY_TRACED;
+            if (traces) {
                 instrumentation::@scope("view.trace") {
                     trace_root = self.prepare_scene_trace(scene, TraceKind.HARDWARE)!;
                 };
@@ -805,7 +808,10 @@ fn void? prepare_views(Renderer* renderer) @private {
         if (record.desc.shading == ShadingPath.DEFERRED) {
             renderer.pipelines.get(&renderer.device, lighting_resolve_pipeline_key(record.desc.ray_tracing.shadows))!;
         }
-        if (record.desc.ambient_occlusion.kind != AoKind.NONE) acquire_ambient_occlusion_pipelines(renderer)!;
+        if (record.desc.ambient_occlusion.kind != AoKind.NONE) {
+            acquire_ambient_occlusion_pipelines(renderer, record.desc.ambient_occlusion.kind)!;
+        }
+        if (record.desc.ray_tracing.reflections) acquire_reflection_pipelines(renderer)!;
     }
 }
 

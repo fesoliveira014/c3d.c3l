@@ -216,7 +216,7 @@ render::configure_view(&renderer, renderer.default_view, desc)!;
 - A light traces when `shadow.enabled`, `shadow.ray_traced` and the view's `ray_tracing.shadows` are all set. Every other light keeps the atlas, so a view can mix both.
 - `ray_tracing.shadows` on a renderer without ray queries faults `c3d::UNSUPPORTED` from `create_view` and `configure_view`. Clear it to fall back to the atlas.
 - A traced light holds no atlas layer in that view.
-- The ray starts `RT_SHADOW_OFFSET` (0.02 world units) along the receiver's normal. The offset hides self-intersection at the cost of a small gap where a caster meets its receiver. `bias`, `normal_bias` and `max_distance` do not apply; directional rays stop at `RT_SHADOW_FAR` (10000 world units), punctual rays at the light.
+- The ray starts `TRACE_SURFACE_OFFSET` (0.02 world units, shared with every traced effect) along the receiver's normal. The offset hides self-intersection at the cost of a small gap where a caster meets its receiver. `bias`, `normal_bias` and `max_distance` do not apply; directional rays stop at `RT_SHADOW_FAR` (10000 world units), punctual rays at the light.
 - Casters are the traced static scene (see [scene tracing](scene_trace.md#what-traces)): `cast_shadow = false` keeps a mesh out of shadow rays, `MASK` materials cast their alpha-tested coverage, and off-camera objects cast like any other. Skinned, morphed and `BLEND` meshes do not cast traced shadows.
 - Shadows are hard; the sun has no angular size.
 - Custom fragment stages do not receive traced shadows: a traced light reaches them with `shadow_count == 0`.

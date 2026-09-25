@@ -38,10 +38,12 @@ const float VELOCITY_THRESHOLD_MAX @local = 16;
 const float AO_RADIUS_MIN @local = 0.05f;
 const float AO_RADIUS_MAX @local = 5;
 const float AO_INTENSITY_MAX @local = 2;
+const float REFLECTION_ROUGHNESS_MIN @local = 0.05f;
+const float REFLECTION_ROUGHNESS_MAX @local = 1;
 const ZString[Tonemap::len] TONEMAP_LABELS @local = { "None", "ACES", "AgX", "Reinhard" };
 const ZString[AntiAliasing::len] ANTI_ALIASING_LABELS @local = { "None", "FXAA", "TAA" };
 const ZString[TaaDebug::len] TAA_DEBUG_LABELS @local = { "None", "Velocity", "Rejection", "History weight" };
-const ZString[AoKind.RAY_TRACED.ordinal] AO_KIND_LABELS @local = { "None", "SSAO" };
+const ZString[AoKind::len] AO_KIND_LABELS @local = { "None", "SSAO", "Ray traced" };
 
 <*
  Edit the view's post settings; the caller applies them with configure_view.
@@ -148,28 +150,26 @@ fn bool post_panel(ViewDesc* desc, TextureId lut, bool ray_queries = false) {
         }
     }
     if (imgui::collapsing_header("Ambient occlusion", {})) {
-        changed |= edit_ambient_occlusion(&desc.ambient_occlusion);
+        changed |= edit_ambient_occlusion(&desc.ambient_occlusion, ray_queries);
     }
     if (imgui::collapsing_header("Ray tracing", {})) {
-        imgui::begin_disabled(!ray_queries);
-        changed |= imgui::checkbox("Shadows", &desc.ray_tracing.shadows);
-        imgui::end_disabled();
+        changed |= edit_ray_tracing(desc, ray_queries);
     }
 
     return changed;
 }
 
-fn bool edit_ambient_occlusion(AmbientOcclusionDesc* ambient_occlusion) @local {
+fn bool edit_ambient_occlusion(AmbientOcclusionDesc* ambient_occlusion, bool ray_queries) @local {
     int selected = (int)ambient_occlusion.kind.ordinal;
     bool changed = imgui::combo_char(
         label:        "Kind",
         current_item: &selected,
         items:        &AO_KIND_LABELS[0],
-        items_count:  AO_KIND_LABELS.len,
+        items_count:  ray_queries ? AoKind::len : AoKind.RAY_TRACED.ordinal,
     );
     if (changed) {
         AoKind kind = (AoKind)selected;
-        if (kind == AoKind.SSAO && ambient_occlusion.radius == 0) {
+        if (kind != AoKind.NONE && ambient_occlusion.radius == 0) {
             *ambient_occlusion = render::AMBIENT_OCCLUSION_DEFAULT;
         }
         ambient_occlusion.kind = kind;
@@ -177,6 +177,39 @@ fn bool edit_ambient_occlusion(AmbientOcclusionDesc* ambient_occlusion) @local {
     changed |= edit_grade_factor("Radius", &ambient_occlusion.radius, AO_RADIUS_MIN, AO_RADIUS_MAX);
     changed |= edit_grade_factor("AO intensity", &ambient_occlusion.intensity, 0, AO_INTENSITY_MAX);
     changed |= imgui::checkbox("Full resolution", &ambient_occlusion.full_resolution);
+    if (ambient_occlusion.kind == AoKind.RAY_TRACED) {
+        changed |= edit_level_count(
+            label:   "Rays",
+            value:   &ambient_occlusion.ray_count,
+            minimum: render::RT_AO_RAYS_MIN,
+            maximum: render::RT_AO_RAYS_MAX,
+        );
+    }
+    return changed;
+}
+
+fn bool edit_ray_tracing(ViewDesc* desc, bool ray_queries) @local {
+    RayTracingDesc* ray_tracing = &desc.ray_tracing;
+    imgui::begin_disabled(!ray_queries);
+    bool changed = imgui::checkbox("Shadows", &ray_tracing.shadows);
+    imgui::end_disabled();
+
+    imgui::begin_disabled(!ray_queries || desc.shading != ShadingPath.DEFERRED);
+    if (imgui::checkbox("Reflections", &ray_tracing.reflections)) {
+        if (ray_tracing.reflections && ray_tracing.max_reflection_roughness == 0) {
+            ray_tracing.max_reflection_roughness = render::RT_REFLECTION_ROUGHNESS_DEFAULT;
+        }
+        changed = true;
+    }
+    imgui::end_disabled();
+    if (ray_tracing.reflections) {
+        changed |= edit_grade_factor(
+            label:   "Max roughness",
+            value:   &ray_tracing.max_reflection_roughness,
+            minimum: REFLECTION_ROUGHNESS_MIN,
+            maximum: REFLECTION_ROUGHNESS_MAX,
+        );
+    }
     return changed;
 }
 

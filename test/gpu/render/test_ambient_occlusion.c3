@@ -32,6 +32,7 @@ struct CreaseScene @private {
     Scene  scene;
     ViewId view;
     Node*  camera;
+    Node*  floor;
     Node*  quad;
     Node*  masked_box;
     Node*  cut_box;
@@ -77,7 +78,7 @@ fn CreaseScene? create_crease_scene(Fixture* fixture) @private {
     clear.base_color.a = 0;
     MaterialId removed = fixture.assets.add_material(material::standard(params: clear, common: cutout))!;
 
-    result.scene.add_mesh(floor, surface, name: "floor")!;
+    result.floor = result.scene.add_mesh(floor, surface, name: "floor")!;
     Node* wall_node = result.scene.add_mesh(wall, surface, name: "wall")!;
     wall_node.local.position = { 0, 2, -2.25f };
     result.quad = result.scene.add_mesh(quad, glass, name: "quad")!;
