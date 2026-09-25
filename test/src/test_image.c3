@@ -235,7 +235,12 @@ fn void test_write_png_round_trips_through_decode_image() @test {
     @pool() {
         String file_path = (String)path::temp_directory(tmem)!!.tappend("c3d_write_png_round_trip.png")!!;
         defer (void)file::delete(file_path);
-        image::write_png(file_path, WIDTH, HEIGHT, pixels[..])!!;
+        image::write_png(
+            path:   file_path,
+            width:  WIDTH,
+            height: HEIGHT,
+            pixels: pixels[..],
+        )!!;
 
         Image decoded = image::load_image(mem, file_path)!!;
         defer image::destroy_image(&decoded);
@@ -249,13 +254,28 @@ fn void test_write_png_reports_specific_faults() @test {
     char[16] pixels;
     @pool() {
         String file_path = (String)path::temp_directory(tmem)!!.tappend("c3d_write_png_fault.png")!!;
-        fault excuse = @catch(image::write_png(file_path, 0, 1, pixels[:0]));
+        fault excuse = @catch(image::write_png(
+            path:   file_path,
+            width:  0,
+            height: 1,
+            pixels: pixels[:0],
+        ));
         assert(excuse == c3d::INVALID_ARGUMENT);
-        excuse = @catch(image::write_png(file_path, 2, 2, pixels[:15]));
+        excuse = @catch(image::write_png(
+            path:   file_path,
+            width:  2,
+            height: 2,
+            pixels: pixels[:15],
+        ));
         assert(excuse == c3d::INVALID_ARGUMENT);
 
         String missing = (String)path::temp_directory(tmem)!!.tappend("c3d_missing_directory", "image.png")!!;
-        excuse = @catch(image::write_png(missing, 2, 2, pixels[..]));
+        excuse = @catch(image::write_png(
+            path:   missing,
+            width:  2,
+            height: 2,
+            pixels: pixels[..],
+        ));
         assert(excuse == c3d::ASSET_IO_ERROR);
     };
 }

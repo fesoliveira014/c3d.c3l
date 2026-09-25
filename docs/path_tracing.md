@@ -61,15 +61,16 @@ also restart it. `Renderer.view_stats(view).accumulated_samples` reports the sam
   unlit in raster and acts as an emitter here: a path that hits it gains its colour and ends.
   Emission, base colour, metallic-roughness and normal maps are read at every hit; alpha-masked
   surfaces are tested in the any-hit stage.
-- **Lights.** Every punctual light in the scene is sampled at every bounce with a shadow ray
-  (next-event estimation), whether or not it lies in the camera frustum. A light with shadows
+- **Lights.** Every punctual light in the scene, up to the renderer's `max_lights`, is sampled at
+  every bounce with a shadow ray (next-event estimation), whether or not it lies in the camera
+  frustum. A light with shadows
   disabled is unoccluded, and a mesh with `cast_shadow` off does not block light, as in raster.
 - **Emitters and the environment** are reached by bounce rays only. A camera ray that misses shows
   the scene background; a bounce ray that misses reads the lighting environment, or the ambient
   colour without one.
 - **Sampling.** Pixel positions follow a Halton sequence; the lobe choice and bounce directions use
   a hash of pixel, sample and bounce, so a frame of four samples equals four frames of one.
-  Russian roulette may end a path after three bounces. A NaN or infinite sample is dropped.
+  Russian roulette may end a path after three bounces. A NaN or infinite sample counts as black.
 
 ## Reading the image back
 
@@ -86,7 +87,12 @@ while (renderer.view_stats(view)!.accumulated_samples < samples) {
 char[] pixels = mem::new_array(char, width * height * 4);
 defer free(pixels);
 renderer.read_render_target(still, pixels)!;
-image::write_png("still.png", width, height, pixels)!;
+image::write_png(
+    path:   "still.png",
+    width:  width,
+    height: height,
+    pixels: pixels,
+)!;
 ```
 
 The display route writes linear values and relies on an sRGB format to encode them, so an

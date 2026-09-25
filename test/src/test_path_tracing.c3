@@ -29,32 +29,57 @@ fn void test_sbt_layout_respects_alignments() @test {
     assert(layout.total_bytes == 176);
 }
 
+struct ResetCase @local {
+    bool  valid;
+    ulong scene;
+    ulong trace_revision;
+    Mat4  view_proj;
+    bool  reset;
+}
+
 fn void test_accumulation_resets_on_camera_scene_and_trace_changes() @test {
     Mat4 view_proj = test_view_proj();
-    ViewHistory history = { .valid = true, .scene = 7, .trace_revision = 3, .view_proj = view_proj };
-    assert(!render::accumulation_reset_needed(&history, 7, 3, view_proj));
-
-    history.valid = false;
-    assert(render::accumulation_reset_needed(&history, 7, 3, view_proj));
-    history.valid = true;
-
-    assert(render::accumulation_reset_needed(&history, 8, 3, view_proj));
-    assert(render::accumulation_reset_needed(&history, 7, 4, view_proj));
     Mat4 moved = view_proj;
     moved.m03 += 1e-6;
-    assert(render::accumulation_reset_needed(&history, 7, 3, moved));
+    ResetCase[5] cases = {
+        { .valid = true, .scene = 7, .trace_revision = 3, .view_proj = view_proj, .reset = false },
+        { .valid = false, .scene = 7, .trace_revision = 3, .view_proj = view_proj, .reset = true },
+        { .valid = true, .scene = 8, .trace_revision = 3, .view_proj = view_proj, .reset = true },
+        { .valid = true, .scene = 7, .trace_revision = 4, .view_proj = view_proj, .reset = true },
+        { .valid = true, .scene = 7, .trace_revision = 3, .view_proj = moved, .reset = true },
+    };
+    foreach (reset_case : cases) {
+        ViewHistory history = { .valid = reset_case.valid, .scene = 7, .trace_revision = 3, .view_proj = view_proj };
+        bool reset = render::accumulation_reset_needed(
+            history:        &history,
+            scene:          reset_case.scene,
+            trace_revision: reset_case.trace_revision,
+            view_proj:      reset_case.view_proj,
+        );
+        assert(reset == reset_case.reset);
+    }
 }
 
 fn void test_publish_carries_the_accumulated_samples() @test {
     Mat4 view_proj = test_view_proj();
     ViewHistory history;
-    history.commit_accumulation(7, 3, view_proj, 5);
+    history.commit_accumulation(
+        scene:          7,
+        trace_revision: 3,
+        view_proj:      view_proj,
+        samples:        5,
+    );
     history.publish();
     assert(history.valid);
     assert(!history.pending);
     assert(history.accumulated_samples == 5);
 
-    history.commit_accumulation(7, 3, view_proj, 9);
+    history.commit_accumulation(
+        scene:          7,
+        trace_revision: 3,
+        view_proj:      view_proj,
+        samples:        9,
+    );
     history.discard();
     assert(!history.valid);
     assert(history.accumulated_samples == 5);

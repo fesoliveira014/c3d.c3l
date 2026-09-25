@@ -231,16 +231,7 @@ fn void? record_path_traced_view(
                 counts:        &light_counts,
                 trace_shadows: true,
             );
-            LightGpu[] lights = extraction.lights;
-            if (lights.len) {
-                gpu::MappedGpuSpan light_span = slot.upload.take(
-                    device: &renderer.device,
-                    size: lights.len * LightGpu::size,
-                    alignment: STREAM_ALIGNMENT,
-                )!;
-                mem::copy(light_span.bytes.ptr, lights.ptr, lights.len * LightGpu::size);
-                light_address = light_span.address;
-            }
+            light_address = upload_lights(renderer, extraction.lights)!;
             renderer.stats.lights += light_counts.packed;
             renderer.stats.lights_dropped += light_counts.dropped;
             record.stats.lights = light_counts.packed;
@@ -290,7 +281,12 @@ fn void? record_path_traced_view(
         instrumentation::@scope("view.record") {
             PathTraceDesc* settings = &record.desc.path_trace;
             ulong revision = renderer.scene_trace.revision;
-            bool reset = accumulation_reset_needed(&record.history, scene.identity, revision, matrices.view_proj);
+            bool reset = accumulation_reset_needed(
+                history:        &record.history,
+                scene:          scene.identity,
+                trace_revision: revision,
+                view_proj:      matrices.view_proj,
+            );
             uint held = reset ? 0 : record.history.accumulated_samples;
             uint count = settings.samples_per_frame;
             if (settings.max_samples) {
@@ -324,7 +320,12 @@ fn void? record_path_traced_view(
             )!;
             end_profile_pass(renderer, Pass.PATH_TRACE)!;
 
-            record.history.commit_accumulation(scene.identity, revision, matrices.view_proj, held + count);
+            record.history.commit_accumulation(
+                scene:          scene.identity,
+                trace_revision: revision,
+                view_proj:      matrices.view_proj,
+                samples:        held + count,
+            );
             renderer.stats.path_trace_samples += count;
             record.stats.accumulated_samples = held + count;
         };

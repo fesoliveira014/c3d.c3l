@@ -372,14 +372,8 @@ fn void? record_raster_view(
                     lights: lights,
                 )!;
                 light_address = cluster_frame.lights;
-            } else if (lights.len) {
-                gpu::MappedGpuSpan light_span = slot.upload.take(
-                    device: &renderer.device,
-                    size: lights.len * LightGpu::size,
-                    alignment: STREAM_ALIGNMENT,
-                )!;
-                mem::copy(light_span.bytes.ptr, lights.ptr, lights.len * LightGpu::size);
-                light_address = light_span.address;
+            } else {
+                light_address = upload_lights(renderer, lights)!;
             }
             renderer.stats.lights += light_counts.packed;
             renderer.stats.lights_dropped += light_counts.dropped;
@@ -915,6 +909,18 @@ fn void write_frame_root(
         .mip_bias        = mip_bias,
         .ao_texture      = ao_texture,
     };
+}
+
+fn gpu::GpuAddress? upload_lights(Renderer* renderer, LightGpu[] lights) @private {
+    if (!lights.len) return (gpu::GpuAddress)0;
+    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan span = slot.upload.take(
+        device:    &renderer.device,
+        size:      lights.len * LightGpu::size,
+        alignment: STREAM_ALIGNMENT,
+    )!;
+    mem::copy(span.bytes.ptr, lights.ptr, lights.len * LightGpu::size);
+    return span.address;
 }
 
 <*

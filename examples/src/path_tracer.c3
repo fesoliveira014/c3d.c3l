@@ -30,11 +30,14 @@ const float ORBIT_DISTANCE_MAX @local = 20;
 const float ROOM_SIZE @local = 4;
 const float WALL_THICKNESS @local = 0.1f;
 const float SPHERE_RADIUS @local = 0.8f;
+const uint SPHERE_SLICES @local = 48; // smooth silhouettes in the metal sphere's reflections
+const uint SPHERE_STACKS @local = 24;
+const float PANEL_FRACTION @local = 0.3f; // a small emitter shows the slow convergence of bounce-only emitters
 const float LAMP_INTENSITY @local = 8;
 const float LAMP_RANGE @local = 12;
 const Vec3 PANEL_RADIANCE @local = { 1, 0.95f, 0.85f };
 const float PANEL_STRENGTH @local = 6;
-const PathTraceDesc STILL_SETTINGS @local = {
+const PathTraceDesc PATH_TRACE_SETTINGS @local = {
     .max_bounces       = 6,
     .samples_per_frame = 4,
 };
@@ -99,17 +102,8 @@ fn String example_path(String relative) @local {
     return (String)source.parent()!!.tappend(relative)!!;
 }
 
-fn MaterialId? add_standard(
-    AssetStore* assets,
-    Vec3 color,
-    float metallic,
-    float roughness,
-) @local {
-    return assets.add_material(material::standard({
-        .base_color = { color.x, color.y, color.z, 1 },
-        .metallic   = metallic,
-        .roughness  = roughness,
-    }));
+fn MaterialId? add_standard(AssetStore* assets, StandardParams params) @local {
+    return assets.add_material(material::standard(params));
 }
 
 // A Cornell-style room open towards the camera: the front side lets the environment in.
@@ -120,21 +114,41 @@ fn Node*? populate_scene(AssetStore* assets, Scene* scene) @local {
     GeometryId panel_geometry;
     float span = ROOM_SIZE + WALL_THICKNESS * 2;
     @pool() {
-        Geometry slab_box = geometry::box(tmem, span, WALL_THICKNESS, span);
+        Geometry slab_box = geometry::box(
+            allocator: tmem,
+            width:     span,
+            height:    WALL_THICKNESS,
+            depth:     span,
+        );
         slab = assets.add_geometry(&slab_box, "geometry/path_tracer/slab")!;
-        Geometry wall_box = geometry::box(tmem, WALL_THICKNESS, span, span);
+        Geometry wall_box = geometry::box(
+            allocator: tmem,
+            width:     WALL_THICKNESS,
+            height:    span,
+            depth:     span,
+        );
         wall = assets.add_geometry(&wall_box, "geometry/path_tracer/wall")!;
-        Geometry sphere = geometry::sphere(tmem, SPHERE_RADIUS, 48, 24);
+        Geometry sphere = geometry::sphere(
+            allocator: tmem,
+            radius:    SPHERE_RADIUS,
+            slices:    SPHERE_SLICES,
+            stacks:    SPHERE_STACKS,
+        );
         sphere_geometry = assets.add_geometry(&sphere, "geometry/path_tracer/sphere")!;
-        Geometry panel = geometry::box(tmem, ROOM_SIZE * 0.3f, WALL_THICKNESS * 0.5f, ROOM_SIZE * 0.3f);
+        Geometry panel = geometry::box(
+            allocator: tmem,
+            width:     ROOM_SIZE * PANEL_FRACTION,
+            height:    WALL_THICKNESS * 0.5f,
+            depth:     ROOM_SIZE * PANEL_FRACTION,
+        );
         panel_geometry = assets.add_geometry(&panel, "geometry/path_tracer/panel")!;
     };
 
     float half = ROOM_SIZE * 0.5f;
     float offset = half + WALL_THICKNESS * 0.5f;
-    MaterialId white = add_standard(assets, { 0.73f, 0.73f, 0.73f }, 0, 0.9f)!;
-    MaterialId red = add_standard(assets, { 0.63f, 0.07f, 0.05f }, 0, 0.9f)!;
-    MaterialId green = add_standard(assets, { 0.14f, 0.45f, 0.09f }, 0, 0.9f)!;
+    MaterialId white = add_standard(assets, { .base_color = { 0.73f, 0.73f, 0.73f, 1 }, .roughness = 0.9f })!;
+    MaterialId red = add_standard(assets, { .base_color = { 0.63f, 0.07f, 0.05f, 1 }, .roughness = 0.9f })!;
+    MaterialId green = add_standard(assets, { .base_color = { 0.14f, 0.45f, 0.09f, 1 }, .roughness = 0.9f })!;
     scene.add_mesh(slab, white, name: "floor")!.local.position = { 0, -WALL_THICKNESS * 0.5f, -half };
     scene.add_mesh(slab, white, name: "ceiling")!.local.position = { 0, ROOM_SIZE + WALL_THICKNESS * 0.5f, -half };
     Node* back = scene.add_mesh(wall, white, name: "back")!;
@@ -143,8 +157,12 @@ fn Node*? populate_scene(AssetStore* assets, Scene* scene) @local {
     scene.add_mesh(wall, red, name: "left")!.local.position = { -offset, half, -half };
     scene.add_mesh(wall, green, name: "right")!.local.position = { offset, half, -half };
 
-    MaterialId metal = add_standard(assets, { 0.95f, 0.85f, 0.6f }, 1, 0.15f)!;
-    MaterialId plastic = add_standard(assets, { 0.85f, 0.85f, 0.9f }, 0, 0.6f)!;
+    MaterialId metal = add_standard(assets, {
+        .base_color = { 0.95f, 0.85f, 0.6f, 1 },
+        .metallic   = 1,
+        .roughness  = 0.15f,
+    })!;
+    MaterialId plastic = add_standard(assets, { .base_color = { 0.85f, 0.85f, 0.9f, 1 }, .roughness = 0.6f })!;
     Node* metal_sphere = scene.add_mesh(sphere_geometry, metal, name: "metal_sphere")!;
     metal_sphere.local.position = { -0.9f, SPHERE_RADIUS, -half - 0.6f };
     Node* rough_sphere = scene.add_mesh(sphere_geometry, plastic, name: "rough_sphere")!;
@@ -186,7 +204,7 @@ fn Orbit starting_orbit() @local {
 fn ViewDesc path_traced(ViewDesc desc, uint max_samples) @local {
     desc.shading = ShadingPath.PATH_TRACED;
     desc.post.anti_aliasing = AntiAliasing.NONE;
-    desc.path_trace = STILL_SETTINGS;
+    desc.path_trace = PATH_TRACE_SETTINGS;
     desc.path_trace.max_samples = max_samples;
     return desc;
 }
@@ -257,7 +275,12 @@ fn void? render_still(Options options) @local {
     defer free(pixels);
     renderer.read_render_target(target, pixels)!;
     double seconds = (double)(clock::now() - started) / NANOSECONDS_PER_SECOND;
-    image::write_png(options.output, options.width, options.height, pixels)!;
+    image::write_png(
+        path:   options.output,
+        width:  options.width,
+        height: options.height,
+        pixels: pixels,
+    )!;
 
     double samples_per_second = (double)options.samples * options.width * options.height / seconds;
     io::printfn(

@@ -202,7 +202,12 @@ fn bool edit_ambient_occlusion(AmbientOcclusionDesc* ambient_occlusion, bool ray
 }
 
 fn bool edit_path_trace(PathTraceDesc* path_trace) @local {
-    bool changed = edit_level_count("Bounces", &path_trace.max_bounces, 1, render::PATH_TRACE_BOUNCES_MAX);
+    bool changed = edit_level_count(
+        label:   "Bounces",
+        value:   &path_trace.max_bounces,
+        minimum: 1,
+        maximum: render::PATH_TRACE_BOUNCES_MAX,
+    );
     changed |= edit_level_count(
         label:   "Samples per frame",
         value:   &path_trace.samples_per_frame,

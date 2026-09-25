@@ -196,6 +196,7 @@ fn void ViewHistory.commit(
 
 <*
  Remember the camera, scene and sample count a path-traced image holds, pending publication.
+ @param scene : "Identity of the traced scene."
  @param trace_revision : "Scene trace revision the image was traced against."
  @param samples : "Samples the image holds after this rendering."
 *>
