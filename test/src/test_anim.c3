@@ -343,3 +343,10 @@ fn void test_remove_instance_frees_animator_and_keeps_clip() @test {
     scene.remove(root);
     assert(scene.count(Animator) == 0 && assets.clips.is_live(clip));
 }
+
+fn void test_find_joint_returns_index_or_not_found() @test {
+    String[3] names = { "hips", "spine", "head" };
+    Skeleton skeleton = { .joint_names = names[..] };
+    assert(skeleton.find_joint("spine")!! == 1);
+    assert(@catch(skeleton.find_joint("tail")) == NOT_FOUND);
+}

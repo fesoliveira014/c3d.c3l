@@ -21,6 +21,7 @@ fn void PhysicsWorld.update(&self, float dt) {
     self.joint_event_count = 0;
     self.failure_count = 0;
     self.dropped_events = 0;
+    drive_ragdolls(self);
     sync_bodies(self);
     sync_joints(self);
 
