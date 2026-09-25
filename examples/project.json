@@ -180,6 +180,12 @@
         "src/rt_shadows.c3"
       ]
     },
+    "rt_effects": {
+      "type": "executable",
+      "sources": [
+        "src/rt_effects.c3"
+      ]
+    },
     "pbr": {
       "type": "executable",
       "sources": [

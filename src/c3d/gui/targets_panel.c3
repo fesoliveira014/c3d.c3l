@@ -173,6 +173,9 @@ fn PanelEntry[] collect_entries(Renderer* renderer, ViewId view, EnvironmentId e
         push_view_image(&entries, "ao", { .kind = VIEW_AMBIENT_OCCLUSION, .view = view }, &record.ao);
         PreviewSource raw_source = { .kind = VIEW_AMBIENT_OCCLUSION, .view = view, .level = 1 };
         push_view_image(&entries, "ao_raw", raw_source, &record.ao_raw);
+        push_view_image(&entries, "reflection_blur", { .kind = VIEW_REFLECTION, .view = view }, &record.reflection_blur);
+        PreviewSource traced_source = { .kind = VIEW_REFLECTION, .view = view, .level = 1 };
+        push_view_image(&entries, "reflection", traced_source, &record.reflection);
         if (record.desc.lights == CLUSTERED) {
             entries.push({
                 .label  = "clusters",

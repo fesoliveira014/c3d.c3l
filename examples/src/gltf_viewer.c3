@@ -333,6 +333,7 @@ fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkOptions options) @local 
     base.post.anti_aliasing = options.flags.anti_aliasing;
     base.ambient_occlusion = options.flags.ambient_occlusion;
     base.depth_prepass = options.flags.depth_prepass;
+    base.ray_tracing.reflections = options.flags.reflections;
     base.shading = options.shading;
     base.lights = options.selection;
     base.clusters.lights_per_cluster = options.capacity;
@@ -341,13 +342,13 @@ fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkOptions options) @local 
 
 fn void print_banner(BenchmarkOptions options, bool timestamps_active) @local {
     BenchmarkFlags flags = options.flags;
-    io::eprintfn("mode=%s shading=%s lights=%d shadows=%s range=%.3f capacity=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s depth_prepass=%s ambient_occlusion=%s",
+    io::eprintfn("mode=%s shading=%s lights=%d shadows=%s range=%.3f capacity=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s depth_prepass=%s ambient_occlusion=%s reflections=%s",
         options.selection == LightSelection.FLAT ? "flat" : "clustered",
         options.shading == ShadingPath.DEFERRED ? "deferred" : "forward", options.lights, options.shadows,
         options.range, options.capacity, flags.width, flags.height, flags.warmup, flags.frames,
         flags.validation, flags.gpu_timings, timestamps_active, flags.capture,
         flags.window ? "window" : "none", flags.panel, flags.depth_prepass,
-        flags.ambient_occlusion.kind == AoKind.NONE ? "none" : flags.ambient_occlusion.full_resolution ? "full" : "half");
+        bench_loop::ambient_occlusion_name(flags.ambient_occlusion), flags.reflections ? "on" : "off");
 }
 
 fn void? run_benchmark(BenchmarkOptions options) @local {
@@ -364,6 +365,7 @@ fn void? run_benchmark(BenchmarkOptions options) @local {
         .gpu_timings = flags.gpu_timings,
         .present_mode = gpu::PresentMode.IMMEDIATE,
         .application_name = "c3d_gltf_benchmark",
+        .ray_queries = bench_loop::needs_ray_queries(flags),
         .max_lights = BENCHMARK_LIGHTS_MAX,
     };
     $if $feat(C3D_PROFILE_CPU) || $feat(C3D_PROFILE_GPU):

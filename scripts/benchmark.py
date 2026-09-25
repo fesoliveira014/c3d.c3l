@@ -81,8 +81,10 @@ def parse_arguments():
     render.add_argument("--range", type=float, help="light range: render default 6 units; scene default 0.08 of the extent")
     render.add_argument("--anti-aliasing", choices=["none", "fxaa", "taa"], default="fxaa",
                         help="anti-aliasing filter of the measured view")
-    render.add_argument("--ambient-occlusion", choices=["none", "half", "full"], default="none",
-                        help="ambient occlusion resolution of the measured view")
+    render.add_argument("--ambient-occlusion", choices=["none", "half", "full", "ray-traced"], default="none",
+                        help="ambient occlusion of the measured view: screen-space resolution or ray traced")
+    render.add_argument("--reflections", choices=["on", "off"], default="off",
+                        help="ray-traced reflections of a deferred measured view")
     render.add_argument("--depth-prepass", choices=["on", "off"], default="on",
                         help="depth prepass of a forward measured view; deferred views always run it")
     render.add_argument("--gpu-timings", action="store_true", help="enable renderer timestamps")
@@ -240,7 +242,7 @@ def workload_arguments(args, mode, lights, shading):
             "--warmup", str(args.warmup), "--width", str(args.width), "--height", str(args.height),
             "--capacity", str(args.capacity), "--range", str(args.range), "--anti-aliasing", args.anti_aliasing,
             "--ambient-occlusion", args.ambient_occlusion, "--depth-prepass", args.depth_prepass,
-            *common_switches(args)]
+            "--reflections", args.reflections, *common_switches(args)]
 
 
 def render_jobs(args):

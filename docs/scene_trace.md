@@ -93,6 +93,23 @@ The instance mask selects rows: every row carries `TRACE_MASK_ALL`, and rows of 
 
 The traversal keeps a stack of `BVH_STACK_DEPTH` entries per level; builds never exceed that depth.
 
+### Hit surfaces
+
+`trace_surface.glsl`, which `scene_trace.glsl` includes, turns a hit into a surface:
+
+```glsl
+TraceSurface surface = surface_from_hit(scene, hit, direction, cone_width);
+```
+
+`TraceSurface` holds the world position, the shading and geometric normals, albedo (base colour
+times its map and vertex colour), emission, metallic and roughness (Standard and Physical rows;
+0 and 1 otherwise), the material kind and block address, and `back_face`, set when the ray hit
+the back of a single-sided surface. A double-sided surface hit from behind reports flipped
+normals instead. Maps sample at the level of detail a ray cone of width `cone_width` (world
+units, at the hit) selects over the triangle; `ray_cone_lod` in `c3d::render` is its CPU twin.
+Offset ray origins by `TRACE_SURFACE_OFFSET` along the normal. Ray-traced reflections and ambient
+occlusion use these helpers ([reflections](reflections.md), [ambient occlusion](ambient_occlusion.md#ray-traced)).
+
 ## Example
 
 `examples/software_rt` renders Sponza and overwrites the right half of the view with one primary ray per pixel. `M` cycles distance, geometric normal and instance colors. `--hardware` creates the renderer with ray queries, prepares hardware data and compiles the same trace shader with `SCENE_TRACE_RAY_QUERY`. It needs the benchmark assets: `python3 scripts/fetch_benchmark_assets.py`.
