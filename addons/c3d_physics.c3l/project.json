@@ -25,28 +25,23 @@
     },
     "physics": {
       "type": "executable",
-      "sources": [ "examples/physics.c3" ],
-      "features": [ "C3D_GUI", "C3D_STB_IMAGE" ]
+      "sources": [ "examples/physics.c3" ]
     },
     "physics_instanced": {
       "type": "executable",
-      "sources": [ "examples/physics_instanced.c3" ],
-      "features": [ "C3D_GUI", "C3D_STB_IMAGE" ]
+      "sources": [ "examples/physics_instanced.c3" ]
     },
     "physics_components": {
       "type": "executable",
-      "sources": [ "examples/physics_components.c3" ],
-      "features": [ "C3D_GUI", "C3D_STB_IMAGE" ]
+      "sources": [ "examples/physics_components.c3" ]
     },
     "vehicle": {
       "type": "executable",
-      "sources": [ "examples/vehicle.c3" ],
-      "features": [ "C3D_GUI", "C3D_STB_IMAGE" ]
+      "sources": [ "examples/vehicle.c3" ]
     },
     "ragdoll": {
       "type": "executable",
-      "sources": [ "examples/ragdoll.c3" ],
-      "features": [ "C3D_GUI", "C3D_STB_IMAGE" ]
+      "sources": [ "examples/ragdoll.c3" ]
     }
   }
 }

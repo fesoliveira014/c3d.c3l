@@ -344,9 +344,8 @@ The package vendors stb_image and compiles one C translation unit with c3c's
 selected C compiler during ordinary builds. Follow the repository's
 [prerequisites and native dependency setup](../README.md#prerequisites).
 The current package still requires its declared GPU, SDL3, ImGui, geometry and
-physics dependencies. `C3D_STB_IMAGE` is an indicator: omitting it does not remove
-the image API or native decoder compilation. Native package isolation remains
-deferred; there is no separate decoder package.
+physics dependencies. Native package isolation remains deferred; there is no
+separate decoder package.
 
 ## Run the example
 

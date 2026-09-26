@@ -403,26 +403,21 @@ the library explicitly; core carries no physics dependency. Examples:
 `python3 scripts/build.py --example physics`; `physics_instanced` is the same scene with every box
 drawn from one instanced batch; `physics_components` builds its level and bodies from components.
 
-Add c3d and its dependencies to your `project.json`, and list the feature flags you want. A C3
-library manifest cannot declare features, so every consumer enables them itself. Declarations
-guarded by a feature disappear when it is omitted; the native libraries a feature's module links
-stay declared dependencies of the package whether or not the feature is selected, and the image
-API and its C translation unit are included regardless of the `C3D_STB_IMAGE` indicator. The
-`*_ENABLED` constants in `c3d` exist exactly when their feature was selected:
+Add c3d and its dependencies to your `project.json`. A C3 library manifest cannot declare features,
+so every consumer enables them itself. Select `C3D_SHADER_COMPILER` for in-process GLSL; every other
+capability is present whenever its dependency is linked. shaderc stays a declared dependency of
+the package either way:
 
 ```json
 {
   "dependency-search-paths": [ "path/to/c3d.c3l/lib" ],
   "dependencies": [ "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "shaderc" ],
-  "features": [ "C3D_GUI", "C3D_FBX", "C3D_STB_IMAGE", "C3D_SHADER_COMPILER" ]
+  "features": [ "C3D_SHADER_COMPILER" ]
 }
 ```
 
 | Feature | Enables |
 | --- | --- |
-| `C3D_GUI` | the developer GUI declarations (imgui stays a declared dependency) |
-| `C3D_FBX` | the FBX importer declarations (ufbx stays a declared dependency) |
-| `C3D_STB_IMAGE` | indicator only; the image API and native decoder compile when absent |
 | `C3D_SHADER_COMPILER` | in-process GLSL compilation (`shader::compile`), and shaderc; custom shaders from SPIR-V bytes work without it |
 
 ## Contributing

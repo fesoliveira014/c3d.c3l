@@ -18,9 +18,6 @@
     "shaderc"
   ],
   "features": [
-    "C3D_GUI",
-    "C3D_FBX",
-    "C3D_STB_IMAGE",
     "C3D_SHADER_COMPILER"
   ],
   "wincrt": "static",
