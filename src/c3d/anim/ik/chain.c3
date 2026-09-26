@@ -183,7 +183,9 @@ fn Quat parent_rotation(Node* node) @private {
 }
 
 fn Quat rotation_between(Vec3 from, Vec3 to) @private {
-    if (from.dot(to) < -1 + IK_EPSILON) return quaternion::from_axis_angle{float}(perpendicular(from), (float)math::PI);
+    if (from.dot(to) < -1 + IK_EPSILON) {
+        return quaternion::from_axis_angle{float}(perpendicular(from), (float)math::PI);
+    }
     return quaternion::from_normalized_rotation{float}(from, to);
 }
 

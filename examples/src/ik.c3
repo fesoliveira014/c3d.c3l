@@ -28,8 +28,8 @@ const uint SCENE_NODE_CAPACITY @local = 256; // the 55-node character, IK target
 const float TERRAIN_SIZE @local = 16;
 const uint TERRAIN_SEGMENTS @local = 128; // 12.5 cm cells; finer than a foot, so the mesh matches the analytic ground
 const float TERRAIN_AMPLITUDE @local = 0.15f;
-const float TERRAIN_FREQUENCY @local = 1.2f; // radians per metre; two feet a stride apart sit at visibly different heights
-const float CHARACTER_START_X @local = 1.3f; // metres; the walk crosses the terrain's crests there, not its flat midline
+const float TERRAIN_FREQUENCY @local = 1.2f; // radians per metre; feet a stride apart differ visibly in height
+const float CHARACTER_START_X @local = 1.3f; // metres; the walk crosses crests there, not the flat midline
 const float WALK_SPEED @local = 1.1f; // metres per second; roughly the clip's stride rate, so feet slide little
 const float CROSS_FADE_SECONDS @local = 0.3f;
 const float WEIGHT_STEP @local = 0.25f;
@@ -356,7 +356,8 @@ fn void? draw_panel(
         ZString[2] sides = { "Left", "Right" };
         foreach (side, thigh : character.thighs) {
             FootIk* foot = scene.get(thigh, FootIk);
-            imgui::text("%s foot: %s, offset %.3f m", sides[side], foot.grounded ? "grounded" : "free", foot.ground_offset);
+            ZString contact = foot.grounded ? "grounded" : "free";
+            imgui::text("%s foot: %s, offset %.3f m", sides[side], contact, foot.ground_offset);
         }
         imgui::text("Pelvis drop: %.3f m", drop);
     }
