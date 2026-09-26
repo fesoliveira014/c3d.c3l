@@ -1,7 +1,9 @@
 module c3d::test::debug;
 
+import c3d::anim::ik;
 import c3d::debug;
 import c3d::maths;
+import c3d::scene;
 import c3d::shader;
 import std::math;
 
@@ -92,4 +94,34 @@ fn void test_debug_rgba_packs_red_low() @test {
     assert(debug::rgba(1, 0, 0) == 0xFF0000FF);
     assert(debug::rgba(0, 0, 1, 0.5f) == 0x80FF0000);
     assert(debug::rgba(2, -1, 0.5f, 3) == debug::rgba(1, 0, 0.5f, 1), "channels clamp");
+}
+
+fn void test_debug_ik_draws_chain_target_and_pole() @test {
+    Scene scene = scene::create_scene(mem, { .max_nodes = 8 });
+    defer scene::destroy_scene(&scene);
+    Node* root = scene.add_node()!!;
+    Node* middle = scene.add_node(root)!!;
+    Node* end = scene.add_node(middle)!!;
+    Node* target = scene.add_node()!!;
+    Node* pole = scene.add_node()!!;
+    middle.local.position = { 0, 1, 0 };
+    end.local.position = { 0, 1, 0 };
+    target.local.position = { 1, 1, 0 };
+    pole.local.position = { 0, 1, 1 };
+    IkChain chain = ik::ik_chain(
+        root:   root,
+        middle: middle,
+        end:    end,
+        target: target,
+        pole:   pole,
+    );
+    scene.add(root, chain);
+    scene.add(end, ik::look_at((&end)[:1], target, { 0, 0, -1 }));
+    scene.update_world();
+    DebugDraw draw = debug::create_debug_draw(mem, 256);
+    defer debug::destroy_debug_draw(&draw);
+
+    draw.ik(&scene, debug::COLOR_WHITE);
+
+    assert(draw.vertices.len() == 2 * (2 + debug::DEBUG_CIRCLE_SEGMENTS + 1 + 1));
 }
