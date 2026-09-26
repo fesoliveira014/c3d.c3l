@@ -11,7 +11,7 @@ Entry point for every agent session in this repository. Read it fully before rea
 
 | Library | Module | Imported only by |
 | --- | --- | --- |
-| gpu.c3l | `gpu` | `c3d::render` and its submodules, including the gated add-on `c3d::render::profile_gpu`, `c3d::shader`, `c3d::rt`, `c3d::gui::backend`; `c3d::platform` may import `gpu::surface` only |
+| gpu.c3l | `gpu` | `c3d::render` and its submodules, including the gated add-on `c3d::render::profile_gpu`, `c3d::shader`, `c3d::gui::backend`; `c3d::platform` may import `gpu::surface` only |
 | sdl3.c3l | `sdl` | `c3d::platform` |
 | c3imgui.c3l | `imgui` | `c3d::gui` |
 | c3cg.c3l | `cg` | `c3d::geometry` |
@@ -24,7 +24,7 @@ Entry point for every agent session in this repository. Read it fully before rea
 | c3d_profile_gui.c3l | profiler additions to `c3d::gui` | Applications select it explicitly; it imports only the standard library, `c3d::profile` and `imgui` |
 | c3d_physics.c3l | `c3d::physics` | Applications select it explicitly; it imports the standard library, `c3d` and `b3` |
 
-Boundaries are enforced by grep in CI. No dependency is added without updating this table.
+Boundaries are enforced by the build's `boundaries` step. No dependency is added without updating this table.
 
 The `addons/c3d_profile.c3l` package bundles CPU/GPU capture, history and export. Its neutral `c3d::profile` module imports only the standard library. Its private `c3d::render::profile_gpu` module, under `src/gpu/` and gated by `C3D_PROFILE_GPU`, imports only the standard library, gpu.c3l and neutral profile values; it never imports core types. Core's approved profiler bridges are `c3d::instrumentation` for CPU+INTERNAL and `render/profile.c3` for GPU. Core has no unconditional profiler dependency; instrumented consumers select the collector add-on explicitly. The `addons/c3d_profile_gui.c3l` presentation adapter extends `c3d::gui` under `C3D_PROFILE_GUI`; it consumes neutral capture data and ImGui and is never imported by core or the collector. Standalone CPU collector builds need no native/shader setup. GUI consumers select ImGui and Vulkan bindings explicitly, while GPU data tests additionally select backend dependencies; neither data-test project creates a device.
 
@@ -74,7 +74,7 @@ python3 scripts/build.py --init-deps      # first checkout: submodules and nativ
 python3 scripts/build.py --clean
 ```
 
-Steps run in this order and stop at the first failure: tools (c3c 0.8.3, glslang), deps (submodules present), abi (`gen_abi.py`, which builds gpu.c3l's `gpu_shaders` tool with `c3c build --path lib/gpu.c3l/tools/gpu_shaders` on first use), shaders (`build_shaders.py`), build (every target in `examples/project.json`, or `--target`), test (every target in `test/project.json`), run. `build_shaders.py` also embeds the GLSL include set as `src/c3d/shader/includes.c3` for the in-process compiler; on Windows the build copies `shaderc_shared.dll` and `SDL3.dll` next to example and test executables, while Linux shaderc executables carry an rpath to `lib/shaderc.c3l/linux`. SPIR-V is compiled into `shaders/spv/` (not committed) on every run; the generated C3 and GLSL twins are committed and verified unless `--regen` is given, which rewrites them. `--skip-abi`, `--skip-shaders`, `--skip-build`, and `--opt O3` narrow a run; `-v` prints each command.
+Steps run in this order and stop at the first failure: tools (c3c 0.8.3, glslang), deps (submodules present), boundaries (the import rules of section 10), abi (`gen_abi.py`, which builds gpu.c3l's `gpu_shaders` tool with `c3c build --path lib/gpu.c3l/tools/gpu_shaders` on first use), shaders (`build_shaders.py`), build (every target in `examples/project.json`, or `--target`), test (every target in `test/project.json`), run. `build_shaders.py` also embeds the GLSL include set as `src/c3d/shader/includes.c3` for the in-process compiler; on Windows the build copies `shaderc_shared.dll` and `SDL3.dll` next to example and test executables, while Linux shaderc executables carry an rpath to `lib/shaderc.c3l/linux`. SPIR-V is compiled into `shaders/spv/` (not committed) on every run; the generated C3 and GLSL twins are committed and verified unless `--regen` is given, which rewrites them. `--skip-boundaries`, `--skip-abi`, `--skip-shaders`, `--skip-build`, and `--opt O3` narrow a run; `-v` prints each command.
 
 Before every commit: `scripts/build.py --test`. Broken builds are never committed. GPU examples run manually; CI runs `--test`. Every development run of a GPU example enables Vulkan validation through gpu.c3l.
 
@@ -165,31 +165,13 @@ Counter-example, rejected on review:
 
 # 10. Architecture rules
 
-- Two layers. Scene-layer modules (`c3d`, `c3d::maths`, `c3d::ecs`, `c3d::asset`, `c3d::scene`, `c3d::geometry`, `c3d::camera`, `c3d::material`, `c3d::light`, `c3d::anim`, `c3d::model`, `c3d::spatial`, `c3d::physics`) never import `gpu`. The render layer (`c3d::render`, `c3d::shader`, `c3d::render::post`, `c3d::rt`, `c3d::gui`) owns every GPU object. `c3d::platform` imports `gpu::surface` alone, to hand native window handles to gpu.c3l; a bare `import gpu` there is a violation.
+- Two layers. Scene-layer modules (`c3d`, `c3d::maths`, `c3d::ecs`, `c3d::asset`, `c3d::scene`, `c3d::geometry`, `c3d::camera`, `c3d::material`, `c3d::light`, `c3d::anim`, `c3d::model`, `c3d::spatial`, `c3d::physics`) never import `gpu`. The render layer (`c3d::render`, `c3d::shader`, `c3d::render::post`, `c3d::gui`) owns every GPU object. `c3d::platform` imports `gpu::surface` alone, to hand native window handles to gpu.c3l; a bare `import gpu` there is a violation.
 - The renderer reads the scene; the scene never calls the renderer. Loaders write the asset store and the scene; they never touch the renderer.
 - All shader-visible data is std430 behind root pointers and defined once in `abi/c3d.abi`. Per-draw push data is exactly two root addresses.
 - Depth is reverse-Z; the Vulkan Y flip is one negative-height viewport; shaders use GL conventions and never flip.
 - Pass order is fixed; barriers are explicit; the renderer tracks `TextureState` only for targets it owns.
 - Every entity is a node; everything else about a node is a component. Systems are functions the application calls; there is no scheduler.
-- Reviewers check these boundaries with:
-
-```bash
-grep -rn 'import gpu' src/c3d --include='*.c3' | grep -vE 'src/c3d/(render|shader|post|rt|gui)/'
-grep -rn 'import sdl' src/c3d --include='*.c3' | grep -v 'src/c3d/platform/'
-grep -rn 'import imgui' src/c3d --include='*.c3' | grep -v 'src/c3d/gui/'
-grep -rn 'import cg' src/c3d --include='*.c3' | grep -v 'src/c3d/geometry/'
-grep -rn 'import b3' src/c3d addons --include='*.c3' | grep -v 'addons/c3d_physics.c3l/'
-grep -rn '^import ' addons/c3d_physics.c3l/src --include='*.c3' | grep -vE ':import (std::|c3d[ ;:]|b3[ ;:])'
-grep -rn 'import gltf' src/c3d --include='*.c3' | grep -v 'src/c3d/asset/gltf/'
-grep -rn 'import ufbx' src/c3d --include='*.c3' | grep -v 'src/c3d/asset/fbx/'
-grep -rn 'import shaderc' src/c3d --include='*.c3' | grep -v 'src/c3d/shader/'
-grep -rnE 'import c3d::(profile|render::profile_gpu)' src/c3d --include='*.c3' | grep -vE '^src/c3d/(instrumentation|render/profile).c3:'
-grep -rn '^import ' addons/c3d_profile.c3l/src --include='*.c3' | grep -v '/src/gpu/' | grep -v ':import std::'
-grep -rn '^import ' addons/c3d_profile.c3l/src/gpu --include='*.c3' | grep -vE ':import (std::|gpu[ ;:]|c3d::profile[ ;])'
-grep -rn '^import ' addons/c3d_profile_gui.c3l/src --include='*.c3' | grep -vE ':import (std::|c3d::profile[ ;]|imgui[ ;])'
-grep -n '"c3d_profile_gui"' manifest.json addons/c3d_profile.c3l/manifest.json
-grep -rnE 'ProfilerPanel|create_profiler_panel|destroy_profiler_panel|profiler_panel' src/c3d addons/c3d_profile.c3l/src --include='*.c3'
-```
+- `scripts/build.py` enforces these boundaries and the dependency table of section 1 as its `boundaries` step; its rule table is the only copy.
 
 # 11. Directory map
 
@@ -212,7 +194,7 @@ c3d.c3l/
 │   ├── pool.c3             the generic pool, module c3d::pool <Type, IdType>
 │   ├── maths/ ecs/  asset/  scene/  geometry/  camera/  material/  light/  anim/  model/  spatial/
 │   ├── platform/           the only sdl importer
-│   ├── render/  shader/  rt/                       the gpu importers; render/post/ holds display processing
+│   ├── render/  shader/                            the gpu importers; render/post/ holds display processing
 │   └── gui/                the only imgui importer; gui/backend imports gpu
 ├── shaders/                GLSL sources, variants.json, common/, generated/; spv/ is build output
 ├── scripts/                build.py (entry point) · gen_abi.py · build_shaders.py
