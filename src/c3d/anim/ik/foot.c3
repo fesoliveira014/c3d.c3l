@@ -47,7 +47,7 @@ fn Ray FootIk.ground_ray(&self) {
 <*
  Move the target by the ground's offset from the floor and record the hit.
  @param floor_height : "World height the clip's feet stand on."
- @require ik_chain_valid(&self.leg), self.lift_fade > 0
+ @require ik_chain_valid(&self.leg), self.lift_fade > 0, hit.normal.is_normalized()
 *>
 fn void FootIk.place(&self, GroundHit hit, float floor_height) {
     Vec3 ankle = self.leg.joints[2].world_position();

@@ -159,7 +159,7 @@ fn IkLimit cone_limit(Quat reference, Vec3 axis, float half_angle) {
 
 <*
  Whether the joints form a live parent chain with nonzero segments.
- @param [&in] chain
+ @param [&in] chain : "Chain to check before a solve."
 *>
 fn bool ik_chain_valid(IkChain* chain) {
     foreach (joint : chain.joints) {

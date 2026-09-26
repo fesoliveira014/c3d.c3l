@@ -160,9 +160,15 @@ fn void? add_foot(
     Node* pole = scene.add_node(character.root, "knee_pole")!;
     pole.local.position = to_root(character, shin_node.world_position()) + character.facing * KNEE_POLE_DISTANCE;
 
-    FootIk foot_ik = ik::foot_ik(thigh_node, shin_node, foot_node, target, pole);
+    FootIk foot_ik = ik::foot_ik(
+        hip:    thigh_node,
+        knee:   shin_node,
+        ankle:  foot_node,
+        target: target,
+        pole:   pole,
+    );
     foot_ik.leg.limits[1] = ik::hinge_limit(
-        reference: shin_node.local.rotation,
+        reference: quaternion::IDENTITY, // replaced by the incoming shin rotation before each solve
         axis:      { 1, 0, 0 },
         min_angle: -KNEE_CORRECTION_LIMIT,
         max_angle: KNEE_CORRECTION_LIMIT,
@@ -226,7 +232,14 @@ fn Character? build_character(AssetStore* assets, Scene* scene) @local {
     params.base_color = { 0.9f, 0.5f, 0.15f, 1 };
     MaterialId prop_material = assets.add_material(material::standard(params), "ik/prop_material")!;
     character.prop = scene.add_mesh(prop_geometry, prop_material, character.root, "prop")!;
-    scene.add(character.upper_arm, ik::ik_chain(character.upper_arm, forearm, hand, character.prop, elbow_pole));
+    IkChain arm = ik::ik_chain(
+        root:   character.upper_arm,
+        middle: forearm,
+        end:    hand,
+        target: character.prop,
+        pole:   elbow_pole,
+    );
+    scene.add(character.upper_arm, arm);
     return character;
 }
 

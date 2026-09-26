@@ -60,9 +60,23 @@ fn ChainRig make_chain() @local {
     rig.pole = rig.scene.add_node(name: "pole")!!;
     rig.middle.local.position = { 0, 1, 0 };
     rig.end.local.position = { 0, 1, 0 };
-    rig.chain = ik::ik_chain(rig.root, rig.middle, rig.end, rig.target);
+    rig.chain = ik::ik_chain(
+        root:   rig.root,
+        middle: rig.middle,
+        end:    rig.end,
+        target: rig.target,
+    );
     rig.scene.update_world();
     return rig;
+}
+
+fn FootIk rig_foot(ChainRig* rig) @local {
+    return ik::foot_ik(
+        hip:    rig.root,
+        knee:   rig.middle,
+        ankle:  rig.end,
+        target: rig.target,
+    );
 }
 
 fn void solve_at(ChainRig* rig, Vec3 target) @local {
@@ -179,7 +193,12 @@ fn void test_hinge_limit_clamps_the_middle_joint() @test {
     defer scene::destroy_scene(&rig.scene);
     rig.pole.local.position = { 0, 1, 1 };
     rig.chain.pole = rig.pole;
-    rig.chain.limits[1] = ik::hinge_limit(quaternion::IDENTITY, { 1, 0, 0 }, -0.5f, 0.5f);
+    rig.chain.limits[1] = ik::hinge_limit(
+        reference: quaternion::IDENTITY,
+        axis:      { 1, 0, 0 },
+        min_angle: -0.5f,
+        max_angle: 0.5f,
+    );
 
     solve_at(&rig, { 0, 0.6f, 0.3f });
 
@@ -247,7 +266,7 @@ fn void test_look_at_clamps_to_max_angle() @test {
 fn void test_foot_place_on_floor_height_keeps_the_ankle() @test {
     ChainRig rig = make_chain();
     defer scene::destroy_scene(&rig.scene);
-    FootIk foot = ik::foot_ik(rig.root, rig.middle, rig.end, rig.target);
+    FootIk foot = rig_foot(&rig);
 
     foot.place({ .point = { 0, 0, 0 }, .normal = { 0, 1, 0 } }, 0);
     rig.scene.update_world();
@@ -263,7 +282,7 @@ fn void test_foot_place_offsets_the_target_by_the_ground() @test {
     holder.local.position = { 1, 0, 0 };
     rig.scene.reparent(rig.target, holder);
     rig.scene.update_world();
-    FootIk foot = ik::foot_ik(rig.root, rig.middle, rig.end, rig.target);
+    FootIk foot = rig_foot(&rig);
 
     foot.place({ .point = { 0, -0.3f, 0 }, .normal = { 0, 1, 0 } }, 0);
     rig.scene.update_world();
@@ -275,7 +294,7 @@ fn void test_foot_place_offsets_the_target_by_the_ground() @test {
 fn void test_foot_release_puts_the_target_on_the_ankle() @test {
     ChainRig rig = make_chain();
     defer scene::destroy_scene(&rig.scene);
-    FootIk foot = ik::foot_ik(rig.root, rig.middle, rig.end, rig.target);
+    FootIk foot = rig_foot(&rig);
     foot.place({ .point = { 0, -0.3f, 0 }, .normal = { 0, 1, 0 } }, 0);
 
     foot.release();
@@ -289,7 +308,7 @@ fn void test_foot_release_puts_the_target_on_the_ankle() @test {
 fn void test_foot_align_tilts_up_onto_the_normal() @test {
     ChainRig rig = make_chain();
     defer scene::destroy_scene(&rig.scene);
-    FootIk foot = ik::foot_ik(rig.root, rig.middle, rig.end, rig.target);
+    FootIk foot = rig_foot(&rig);
     foot.foot_height = 2;
     Vec3 normal = (Vec3){ 0.6f, 0.8f, 0 }.normalize();
     Quat incoming = world_rotation_of(rig.end);
@@ -322,7 +341,7 @@ fn void test_lower_pelvis_drops_by_the_lowest_foot() @test {
     Vec3 before = pelvis.world_position();
 
     FootIk[3] feet;
-    foreach (&foot : feet) *foot = ik::foot_ik(rig.root, rig.middle, rig.end, rig.target);
+    foreach (&foot : feet) *foot = rig_foot(&rig);
     feet[0].grounded = true;
     feet[0].ground_offset = -0.2f;
     feet[1].grounded = true;

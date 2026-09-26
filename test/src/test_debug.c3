@@ -108,7 +108,14 @@ fn void test_debug_ik_draws_chain_target_and_pole() @test {
     end.local.position = { 0, 1, 0 };
     target.local.position = { 1, 1, 0 };
     pole.local.position = { 0, 1, 1 };
-    scene.add(root, ik::ik_chain(root, middle, end, target, pole));
+    IkChain chain = ik::ik_chain(
+        root:   root,
+        middle: middle,
+        end:    end,
+        target: target,
+        pole:   pole,
+    );
+    scene.add(root, chain);
     scene.add(end, ik::look_at(end, target, { 0, 0, -1 }));
     scene.update_world();
     DebugDraw draw = debug::create_debug_draw(mem, 256);
