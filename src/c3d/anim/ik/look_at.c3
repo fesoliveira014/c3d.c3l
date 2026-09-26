@@ -7,7 +7,7 @@ import std::math;
 <*
  Joints one aim constraint can spread its turn over.
 *>
-const uint MAX_LOOK_AT_JOINTS = 8; // a Rigify spine, neck and head are five; 72 bytes of pointers and weights each
+const uint MAX_LOOK_AT_JOINTS = 8; // a Rigify spine, neck and head are five; 96 bytes of pointers and weights per constraint
 
 const float WEIGHT_SUM_TOLERANCE @local = 1e-4f; // float sums of eight shares stay well inside it
 const uint LOOK_AT_PASSES @local = 2; // the second pass corrects the tip's own swing about the lower joints
