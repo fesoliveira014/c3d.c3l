@@ -211,7 +211,7 @@ fn void PhysicsJoint.mark_changed(&self) {
  Attach the joint; the next world update binds it once both bodies are live.
  @param [&in] node : "The attached body's node."
  @return? JOINT_EXISTS
- @require self.world.is_registered(PhysicsJoint), !same_entity(desc.other, node.id)
+ @require self.world.is_registered(PhysicsJoint), !c3d::same_id(desc.other, node.id)
 *>
 fn void? Scene.add_physics_joint(&self, Node* node, JointDesc desc) {
     if (self.has(node, PhysicsJoint)) return JOINT_EXISTS~;
@@ -222,7 +222,7 @@ fn void? Scene.add_physics_joint(&self, Node* node, JointDesc desc) {
  Attach the joint and bind it now; transactional.
  @param [&in] node : "The attached body's node."
  @return? JOINT_EXISTS, NO_BODY, b3::INVALID_DEFINITION, b3::INVALID_HANDLE
- @require !same_entity(desc.other, node.id)
+ @require !c3d::same_id(desc.other, node.id)
 *>
 fn void? PhysicsWorld.add_joint(&self, Node* node, JointDesc desc) {
     Scene* scene = self.scene;
@@ -257,7 +257,7 @@ fn void PhysicsWorld.apply_joint(&self, Node* node) {
     Joint* joint = scene.get(node, Joint);
     // A removed anchor destroys the joint before the next update notices.
     bool stale = !joint.joint.is_valid();
-    if (stale || physics_joint.desc.kind != joint.kind || !same_entity(physics_joint.desc.other, joint.other)) {
+    if (stale || physics_joint.desc.kind != joint.kind || !c3d::same_id(physics_joint.desc.other, joint.other)) {
         scene.remove_component(node, Joint);
         physics_joint.status = PENDING;
         return;
@@ -748,8 +748,4 @@ fn float spring_hertz(JointSpring spring) @local => spring.enabled ? spring.hert
 
 fn JointSpring spring_of(float hertz, float damping_ratio) @local {
     return { .enabled = hertz > 0, .hertz = hertz, .damping_ratio = damping_ratio };
-}
-
-fn bool same_entity(Entity first, Entity second) @local {
-    return first.index == second.index && first.generation == second.generation;
 }

@@ -45,7 +45,7 @@ fn void? rebuild_shader_pipelines(Renderer* renderer, ShaderId shader) @private 
 fn ShaderRes*? resolve_shader(Renderer* renderer, ShaderId shader) @private {
     ShaderAsset* record = renderer.assets.shader(shader);
     ShaderRes* mirror = &renderer.shaders[shader.index];
-    bool same_asset = mirror.asset.index == shader.index && mirror.asset.generation == shader.generation;
+    bool same_asset = c3d::same_id(mirror.asset, shader);
     if (same_asset && mirror.revision == record.header.revision) return mirror;
     if (same_asset && mirror.rejected_revision == record.header.revision) return mirror;
 
@@ -68,7 +68,7 @@ fn bool pipeline_rejected(Renderer* renderer, ShaderId shader, fault excuse) @pr
 fn void? replace_shader_pipelines(Renderer* renderer, ShaderId shader) @private {
     ShaderAsset* record = renderer.assets.shader(shader);
     ShaderRes* mirror = &renderer.shaders[shader.index];
-    bool same_asset = mirror.asset.index == shader.index && mirror.asset.generation == shader.generation;
+    bool same_asset = c3d::same_id(mirror.asset, shader);
     uint old_revision = same_asset ? mirror.revision : 0;
 
     RetireList* retire = renderer.frame_open

@@ -427,8 +427,7 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceInstance[] 
         GpuGeometry* mirror = &renderer.geometries[record.geometry.index];
         uint revision = asset_record.header.revision;
         bool cpu_present = asset_record.data.positions.len > 0;
-        bool same_asset = mirror.asset.index == record.geometry.index
-            && mirror.asset.generation == record.geometry.generation;
+        bool same_asset = c3d::same_id(mirror.asset, record.geometry);
         uint software_revision = same_asset ? mirror.trace.revision : 0;
         TraceSource source = trace_source(software_revision, revision, cpu_present);
         TraceSource hardware_source = blas_source(

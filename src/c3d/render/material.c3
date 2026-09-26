@@ -457,7 +457,7 @@ fn void end_material_scope(Renderer* renderer) @private {
 
 fn MaterialRes*? resolve_material(Renderer* renderer, MaterialId material) @private {
     MaterialRes* mirror = &renderer.materials[material.index];
-    bool same_asset = mirror.asset.index == material.index && mirror.asset.generation == material.generation;
+    bool same_asset = c3d::same_id(mirror.asset, material);
     if (renderer.material_scope_active && same_asset && mirror.resolved_epoch == renderer.material_epoch) {
         renderer.sampled_target_bits |= mirror.sampled_target_bits;
         return mirror;
@@ -479,7 +479,7 @@ fn MaterialRes*? resolve_material_dependencies(Renderer* renderer, MaterialId ma
     MaterialBindings bindings = resolve_material_bindings(renderer, &record.data)!;
     if (material_uses_sheen(&record.data)) acquire_sheen_lut(renderer)!;
 
-    bool same_asset = mirror.asset.index == material.index && mirror.asset.generation == material.generation;
+    bool same_asset = c3d::same_id(mirror.asset, material);
     bool custom = record.data.kind == MaterialKind.CUSTOM;
     ShaderId shader;
     uint shader_revision;
@@ -493,8 +493,7 @@ fn MaterialRes*? resolve_material_dependencies(Renderer* renderer, MaterialId ma
         shader_revision = shader_mirror.revision;
         if (stages.gbuffer.len) capabilities = shader::CUSTOM_CAPABILITY_GBUFFER;
     }
-    bool same_shader = mirror.shader.index == shader.index && mirror.shader.generation == shader.generation
-        && mirror.shader_revision == shader_revision;
+    bool same_shader = c3d::same_id(mirror.shader, shader) && mirror.shader_revision == shader_revision;
     if (same_asset && same_shader && mirror.revision == record.header.revision
         && material_bindings_match(mirror.bindings, bindings)) return mirror;
 

@@ -299,7 +299,7 @@ fn bool matches(CollisionSnapshot* slot, SnapshotKey key) @local {
     if (slot.sources.len != key.sources.len) return false;
     foreach (index, source : key.sources) {
         SnapshotSource held = slot.sources[index];
-        if (held.geometry.index != source.geometry.index || held.geometry.generation != source.geometry.generation) return false;
+        if (!c3d::same_id(held.geometry, source.geometry)) return false;
         if (held.revision != source.revision) return false;
     }
     return true;

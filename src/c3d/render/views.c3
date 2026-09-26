@@ -127,8 +127,7 @@ struct ViewHistory {
 fn bool ViewHistory.has_previous(&self, Scene* scene, Node* node) {
     if (!self.valid || scene.identity != self.scene || node.id.index >= self.owners.len) return false;
     Entity owner = self.owners[node.id.index];
-    return owner.index == node.id.index && owner.generation == node.id.generation
-        && self.seen[node.id.index] == self.serial;
+    return c3d::same_id(owner, node.id) && self.seen[node.id.index] == self.serial;
 }
 
 <*
@@ -566,9 +565,7 @@ fn void? configure_view(Renderer* renderer, ViewId view, ViewDesc desc) {
     ViewRecord wanted = { .live = true, .desc = desc };
     uint[<2>] current_extent = view_working_extent(renderer, record);
     uint[<2>] wanted_extent = view_working_extent(renderer, &wanted);
-    bool same_output = record.desc.output == desc.output
-        && record.desc.target.index == desc.target.index
-        && record.desc.target.generation == desc.target.generation;
+    bool same_output = record.desc.output == desc.output && c3d::same_id(record.desc.target, desc.target);
     if (!same_output || current_extent != wanted_extent) {
         wait_frames(renderer)!;
         record.cluster_root = (gpu::GpuAddress)0;

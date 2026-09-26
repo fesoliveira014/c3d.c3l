@@ -159,11 +159,9 @@ fn EnvironmentRes*? resolve_environment(
     PendingEnvironment* pending = &renderer.environment_state.pending[environment.index];
     EnvironmentRes* committed = &renderer.environment_state.mirrors[environment.index];
     EnvironmentRes* current = pending.active ? &pending.result : committed;
-    bool same_source = current.asset.index == environment.index
-      && current.asset.generation == environment.generation && current.source_ready
+    bool same_source = c3d::same_id(current.asset, environment) && current.source_ready
       && current.description.kind == description.kind
-      && current.description.source.index == description.source.index
-      && current.description.source.generation == description.source.generation
+      && c3d::same_id(current.description.source, description.source)
       && current.description.solid_color == description.solid_color
       && current.description.settings.conversion_size == description.settings.conversion_size
       && current.source_revision == source_revision

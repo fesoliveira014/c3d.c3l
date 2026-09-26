@@ -228,9 +228,7 @@ fn void? destroy_render_target(Renderer* renderer, RenderTargetId target) {
 }
 
 fn bool view_selects_target(ViewRecord* view, RenderTargetId target) @private {
-    return view.desc.output == ViewOutput.TEXTURE
-        && view.desc.target.index == target.index
-        && view.desc.target.generation == target.generation;
+    return view.desc.output == ViewOutput.TEXTURE && c3d::same_id(view.desc.target, target);
 }
 
 fn Target? allocate_render_target(
