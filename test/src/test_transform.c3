@@ -4,6 +4,7 @@ import c3d::maths;
 import std::math;
 
 const float TOLERANCE @local = 0.0005f;
+const float UNIT_TOLERANCE @local = 0.00001f;
 
 fn bool close(float first, float second) @local {
     return math::abs(first - second) <= TOLERANCE;
@@ -11,6 +12,14 @@ fn bool close(float first, float second) @local {
 
 fn bool close_vec3(Vec3 first, Vec3 second) @local {
     return close(first.x, second.x) && close(first.y, second.y) && close(first.z, second.z);
+}
+
+fn bool close_unit(float first, float second) @local {
+    return math::abs(first - second) <= UNIT_TOLERANCE;
+}
+
+fn bool close_unit_vec3(Vec3 first, Vec3 second) @local {
+    return close_unit(first.x, second.x) && close_unit(first.y, second.y) && close_unit(first.z, second.z);
 }
 
 fn bool close_mat4(Mat4 first, Mat4 second) @local {
@@ -198,5 +207,36 @@ fn void test_transform_from_affine_rejects_shear_and_non_finite() @test {
         assert(excuse == c3d::INVALID_ARGUMENT);
     } else {
         assert(false, "a non-finite matrix decomposed as a transform");
+    }
+}
+
+fn void test_rotation_between_takes_from_onto_to() @test {
+    Vec3[4] sources = { { 1, 0, 0 }, { 0, 0, 1 }, { 0, 1, 0 }, ((Vec3){ 1, 1, 0 }).normalize() };
+    Vec3[4] targets = { { 0, 1, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, ((Vec3){ 0, 1, 1 }).normalize() };
+    foreach (index, source : sources) {
+        Quat rotation = maths::rotation_between(source, targets[index]);
+        assert(close_unit_vec3(rotation.rotate_vec3(source), targets[index]));
+        assert(close_unit(rotation.length(), 1));
+    }
+    Quat parallel = maths::rotation_between(sources[2], targets[2]);
+    assert(close_unit(parallel.v.w, 1) && close_unit_vec3(parallel.v.xyz, { 0, 0, 0 }));
+}
+
+fn void test_rotation_between_opposed_is_a_half_turn() @test {
+    Vec3 source = { 1, 0, 0 };
+    Vec3 target = { -1, 0, 0 };
+    Quat rotation = maths::rotation_between(source, target);
+    assert(close_unit_vec3(rotation.rotate_vec3(source), target));
+    assert(close_unit(rotation.v.w, 0));
+    assert(close_unit(rotation.v.xyz.dot(source), 0));
+}
+
+fn void test_perpendicular_is_unit_and_orthogonal() @test {
+    // The oblique axis sits past the X helper limit and takes the Y helper.
+    Vec3[4] axes = { { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 }, ((Vec3){ 0.95f, 0.3f, 0 }).normalize() };
+    foreach (axis : axes) {
+        Vec3 perpendicular = maths::perpendicular(axis);
+        assert(close_unit(perpendicular.length(), 1));
+        assert(close_unit(perpendicular.dot(axis), 0));
     }
 }

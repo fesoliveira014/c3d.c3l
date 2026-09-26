@@ -29,7 +29,7 @@ fn void? Renderer.upload_sampler(&self, SamplerId sampler) {
 fn SamplerRes*? resolve_sampler(Renderer* renderer, SamplerId sampler) @private {
     SamplerAsset* record = renderer.assets.sampler(sampler);
     SamplerRes* mirror = &renderer.samplers[sampler.index];
-    bool same_asset = mirror.asset.index == sampler.index && mirror.asset.generation == sampler.generation;
+    bool same_asset = c3d::same_id(mirror.asset, sampler);
     if (same_asset && mirror.revision == record.header.revision) return mirror;
 
     bool anisotropic = record.desc.anisotropy_enable && renderer.caps.max_sampler_anisotropy > 0;

@@ -228,6 +228,12 @@ fn void? end_profile_pass(Renderer* renderer, Pass pass) @private {
     $endif
 }
 
+macro void? @profile_pass(Renderer* renderer, Pass pass; @body()) @private {
+    begin_profile_pass(renderer, pass)!;
+    @body();
+    end_profile_pass(renderer, pass)!;
+}
+
 fn void? begin_profile_view(Renderer* renderer, ViewId view, String label) @private {
     $if $feat(C3D_PROFILE_INTERNAL):
         renderer.gpu_profile.current_view = view;
@@ -316,6 +322,9 @@ fn void submit_gpu_profile(Renderer* renderer) @private {}
 fn void cancel_gpu_profile(Renderer* renderer) @private {}
 fn void? begin_profile_pass(Renderer* renderer, Pass pass) @private {}
 fn void? end_profile_pass(Renderer* renderer, Pass pass) @private {}
+macro void? @profile_pass(Renderer* renderer, Pass pass; @body()) @private {
+    @body();
+}
 fn void? begin_profile_view(Renderer* renderer, ViewId view, String label) @private {}
 fn void? end_profile_view(Renderer* renderer) @private {}
 fn void? end_profile_scope(Renderer* renderer, ProfileScopeToken token) @private {}

@@ -4,6 +4,8 @@ import c3d;
 import std::math;
 
 const float AFFINE_AXIS_TOLERANCE @private = 0.0001f; // cosine between decomposed axes above this is shear, not TRS
+const float PERPENDICULAR_HELPER_LIMIT @private = 0.9f; // an axis this close to X takes Y as its cross-product partner
+const float ANTIPARALLEL_EPSILON @private = 1e-5f; // dot products this close to -1 take the half-turn branch
 
 <*
  Transform that leaves every point where it is.
@@ -196,9 +198,24 @@ fn void complete_axes(Vec3[3]* axes, uint present) @private {
     }
 }
 
-fn Vec3 perpendicular(Vec3 axis) @private {
-    Vec3 helper = math::abs(axis.x) < 0.9f ? (Vec3){ 1, 0, 0 } : (Vec3){ 0, 1, 0 };
+<*
+ Unit vector perpendicular to the axis.
+ @require axis.is_normalized()
+*>
+fn Vec3 perpendicular(Vec3 axis) {
+    Vec3 helper = math::abs(axis.x) < PERPENDICULAR_HELPER_LIMIT ? (Vec3){ 1, 0, 0 } : (Vec3){ 0, 1, 0 };
     return axis.cross(helper).normalize();
+}
+
+<*
+ Shortest rotation from one unit vector onto another, opposed pairs included.
+ @require from.is_normalized(), to.is_normalized()
+*>
+fn Quat rotation_between(Vec3 from, Vec3 to) {
+    if (from.dot(to) < -1 + ANTIPARALLEL_EPSILON) {
+        return quaternion::from_axis_angle{float}(perpendicular(from), (float)math::PI);
+    }
+    return quaternion::from_normalized_rotation{float}(from, to);
 }
 
 fn Quat quat_from_axes(Vec3 axis_x, Vec3 axis_y, Vec3 axis_z) @private {

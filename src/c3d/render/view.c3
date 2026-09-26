@@ -530,14 +530,14 @@ fn void? record_raster_view(
             }
 
             if (transmission_items.len) {
-                begin_profile_pass(renderer, Pass.TRANSMISSION)!;
-                record_scene_color_snapshot(renderer, record)!;
-                record_loaded_pass(renderer, record, transmission_items)!;
-                end_profile_pass(renderer, Pass.TRANSMISSION)!;
+                @profile_pass(renderer, Pass.TRANSMISSION) {
+                    record_scene_color_snapshot(renderer, record)!;
+                    record_loaded_pass(renderer, record, transmission_items)!;
+                }!;
                 if (transparent_items.len) {
-                    begin_profile_pass(renderer, Pass.FORWARD_TRANSPARENT)!;
-                    record_loaded_pass(renderer, record, transparent_items)!;
-                    end_profile_pass(renderer, Pass.FORWARD_TRANSPARENT)!;
+                    @profile_pass(renderer, Pass.FORWARD_TRANSPARENT) {
+                        record_loaded_pass(renderer, record, transparent_items)!;
+                    }!;
                 }
             }
 
@@ -1094,33 +1094,33 @@ fn void? record_forward_pass(
     };
 
     gpu::PipelineHandle bound = first_pipeline(renderer, opaque)!;
-    begin_profile_pass(renderer, Pass.FORWARD_OPAQUE)!;
-    // Bound before the pass begins: the backend checks the bound pipeline against the pass formats at begin.
-    gpu::cmd_bind_pipeline(&renderer.commands, bound)!;
-    gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
-    record_draws(
-        renderer:   renderer,
-        record:     record,
-        items:      opaque,
-        pipeline:   bound,
-        pass_state: depth_matched ? match_depth : write_depth,
-    )!;
-    end_profile_pass(renderer, Pass.FORWARD_OPAQUE)!;
-    if (sky) {
-        begin_profile_pass(renderer, Pass.SKY)!;
-        bound = record_sky_draw(renderer, record, sky_root)!;
-        end_profile_pass(renderer, Pass.SKY)!;
-    }
-    if (transparent.len) {
-        begin_profile_pass(renderer, Pass.FORWARD_TRANSPARENT)!;
+    @profile_pass(renderer, Pass.FORWARD_OPAQUE) {
+        // Bound before the pass begins: the backend checks the bound pipeline against the pass formats at begin.
+        gpu::cmd_bind_pipeline(&renderer.commands, bound)!;
+        gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
         record_draws(
             renderer:   renderer,
             record:     record,
-            items:      transparent,
+            items:      opaque,
             pipeline:   bound,
-            pass_state: write_depth,
+            pass_state: depth_matched ? match_depth : write_depth,
         )!;
-        end_profile_pass(renderer, Pass.FORWARD_TRANSPARENT)!;
+    }!;
+    if (sky) {
+        @profile_pass(renderer, Pass.SKY) {
+            bound = record_sky_draw(renderer, record, sky_root)!;
+        }!;
+    }
+    if (transparent.len) {
+        @profile_pass(renderer, Pass.FORWARD_TRANSPARENT) {
+            record_draws(
+                renderer:   renderer,
+                record:     record,
+                items:      transparent,
+                pipeline:   bound,
+                pass_state: write_depth,
+            )!;
+        }!;
     }
     gpu::cmd_end_render_pass(&renderer.commands)!;
 }
@@ -1154,20 +1154,20 @@ fn void? record_depth_prepass(
     gpu::PipelineHandle first = draws.len
       ? draws[0].pipeline : shadow_pipeline_for(renderer, false, depth_only_vertex_variant({}))!;
 
-    begin_profile_pass(renderer, Pass.DEPTH_PREPASS)!;
-    // Bound before the pass begins: the backend checks the bound pipeline against the pass formats at begin.
-    gpu::cmd_bind_pipeline(&renderer.commands, first)!;
-    gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
-    record_depth_draws(
-        renderer:       renderer,
-        draws:          draws,
-        frame:          frame,
-        view_reflected: view_reflected,
-        state:          &state,
-        first:          first,
-    )!;
-    gpu::cmd_end_render_pass(&renderer.commands)!;
-    end_profile_pass(renderer, Pass.DEPTH_PREPASS)!;
+    @profile_pass(renderer, Pass.DEPTH_PREPASS) {
+        // Bound before the pass begins: the backend checks the bound pipeline against the pass formats at begin.
+        gpu::cmd_bind_pipeline(&renderer.commands, first)!;
+        gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
+        record_depth_draws(
+            renderer:       renderer,
+            draws:          draws,
+            frame:          frame,
+            view_reflected: view_reflected,
+            state:          &state,
+            first:          first,
+        )!;
+        gpu::cmd_end_render_pass(&renderer.commands)!;
+    }!;
 }
 
 fn void? record_scene_color_snapshot(Renderer* renderer, ViewRecord* record) @private {

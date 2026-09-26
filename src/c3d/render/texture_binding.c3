@@ -44,12 +44,9 @@ struct MaterialBindings {
  @pure
 *>
 fn bool texture_binding_matches(TextureBinding first, TextureBinding second) {
-    return first.texture.index == second.texture.index
-        && first.texture.generation == second.texture.generation
-        && first.target.index == second.target.index
-        && first.target.generation == second.target.generation
-        && first.sampler.index == second.sampler.index
-        && first.sampler.generation == second.sampler.generation
+    return c3d::same_id(first.texture, second.texture)
+        && c3d::same_id(first.target, second.target)
+        && c3d::same_id(first.sampler, second.sampler)
         && first.texture_binding_revision == second.texture_binding_revision
         && first.sampler_revision == second.sampler_revision
         && first.texture_index == second.texture_index

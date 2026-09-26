@@ -13,8 +13,6 @@ import b3;
 const float MIN_BONE_LENGTH @local = 0.0001f; // meters; a shorter child offset makes the bone a leaf
 const float MIN_AXIS_LENGTH @local = 0.0001f; // a shorter hinge axis has no direction
 const float SCALE_TOLERANCE @local = 0.0001f;
-const float ANTIPARALLEL_LENGTH @local = 0.000001f;
-const float AXIS_REFERENCE_LIMIT @local = 0.9f; // a from-vector this close to X takes Y as its cross reference
 const float MIN_HEADING_LENGTH @local = 0.3f; // a flattened heading shorter than this is too steep to set a yaw
 
 <*
@@ -131,7 +129,7 @@ fn void? Scene.build_ragdoll(
             lengths[index] = bone.length != 0 ? bone.length : distance;
             locals[index] = {
                 .position = bind[index].position + axes[index] * (lengths[index] / 2),
-                .rotation = rotation_from_to({ 0, 1, 0 }, axes[index]),
+                .rotation = maths::rotation_between({ 0, 1, 0 }, axes[index]),
                 .scale    = { 1, 1, 1 },
             };
             ragdoll.joint_in_bone[index] = relative(locals[index].to_mat4(), bind[index].to_mat4());
@@ -157,7 +155,7 @@ fn void? Scene.build_ragdoll(
             if (bone.kind == REVOLUTE) frame_axis = bind[index].rotation.rotate_vec3(bone.hinge_axis).normalize();
             Mat4 frame_skin = (maths::Transform){
                 .position = bind[index].position,
-                .rotation = rotation_from_to({ 0, 0, 1 }, frame_axis),
+                .rotation = maths::rotation_between({ 0, 0, 1 }, frame_axis),
                 .scale    = { 1, 1, 1 },
             }.to_mat4();
             JointDesc joint = default_joint_desc(bone.kind, ragdoll.bone_nodes[parent].id);
@@ -455,15 +453,4 @@ fn void free_ragdoll(Entity entity, void* component, void* user) @private {
 
 fn maths::Transform relative(Mat4 parent_world, Mat4 world) @local {
     return maths::transform_from_mat4(maths::inverse_affine(parent_world).mul(world));
-}
-
-fn Quat rotation_from_to(Vec3 from, Vec3 to) @local {
-    Vec3 half = from + to;
-    if (half.length() < ANTIPARALLEL_LENGTH) {
-        Vec3 reference = math::abs(from.x) < AXIS_REFERENCE_LIMIT ? (Vec3){ 1, 0, 0 } : (Vec3){ 0, 1, 0 };
-        return quaternion::from_axis_angle{float}(from.cross(reference).normalize(), (float)math::PI);
-    }
-    half = half.normalize();
-    Vec3 axis = from.cross(half);
-    return { .v = { axis.x, axis.y, axis.z, from.dot(half) } };
 }

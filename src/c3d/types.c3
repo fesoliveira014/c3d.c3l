@@ -47,3 +47,9 @@ struct AssetRef {
     AssetKind kind;
     Id        id;
 }
+
+<*
+ Whether both handles name the same slot and generation.
+ @require $Typeof(first) == $Typeof(second) : "Both handles have the same id type."
+*>
+macro bool same_id(first, second) => first.index == second.index && first.generation == second.generation;

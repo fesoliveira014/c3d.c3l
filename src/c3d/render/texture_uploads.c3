@@ -33,8 +33,7 @@ struct TextureStateUndo {
 *>
 fn void remember_texture_state(List{TextureStateUndo}* undo, TextureRes* mirror) {
     foreach (&entry : *undo) {
-        if (entry.asset.index == mirror.asset.index && entry.asset.generation == mirror.asset.generation
-            && entry.texture == mirror.texture) return;
+        if (c3d::same_id(entry.asset, mirror.asset) && entry.texture == mirror.texture) return;
     }
     undo.push({ .asset = mirror.asset, .texture = mirror.texture, .state = mirror.state });
 }
@@ -47,8 +46,7 @@ fn void remember_texture_state(List{TextureStateUndo}* undo, TextureRes* mirror)
 fn void restore_texture_states(List{TextureStateUndo}* undo, TextureRes[] textures) {
     foreach (&entry : *undo) {
         TextureRes* mirror = &textures[entry.asset.index];
-        if (mirror.asset.index != entry.asset.index || mirror.asset.generation != entry.asset.generation
-            || mirror.texture != entry.texture) continue;
+        if (!c3d::same_id(mirror.asset, entry.asset) || mirror.texture != entry.texture) continue;
         mirror.state = entry.state;
     }
     undo.clear();

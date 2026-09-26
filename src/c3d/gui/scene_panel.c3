@@ -52,10 +52,6 @@ fn void inspect_components(Scene* scene, Entity entity) @local {
     }
 }
 
-fn bool same_entity(Entity first, Entity second) @local {
-    return first.index == second.index && first.generation == second.generation;
-}
-
 fn void node_tree(Node* node, GuiPanelState* state) @local {
     imgui::push_id_int(bitcast(node.id.index, int));
     defer imgui::pop_id();
@@ -63,7 +59,7 @@ fn void node_tree(Node* node, GuiPanelState* state) @local {
     defer imgui::pop_id();
 
     imgui::TreeNodeFlags flags = {
-        .selected = same_entity(node.id, state.selected),
+        .selected = c3d::same_id(node.id, state.selected),
         .leaf = node.first_child == null,
         .open_on_arrow = true,
     };
@@ -85,7 +81,7 @@ fn void edit_transform(Node* node, GuiPanelState* state) @local {
 
     imgui::drag_float3("Position", (float*)&node.local.position);
 
-    if (!same_entity(state.rotation_node, node.id) || !state.rotation_active) {
+    if (!c3d::same_id(state.rotation_node, node.id) || !state.rotation_active) {
         Vec3 angles = node.local.rotation.to_euler();
         state.rotation_degrees = {
             math::rad_to_deg(angles.x),

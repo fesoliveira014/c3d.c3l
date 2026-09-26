@@ -379,8 +379,6 @@ is split into contiguous render/finish segments under its single pass bucket.
 survives CPU/work-counter reset while newer results are pending. GPU results
 may therefore describe an older frame than the current CPU counters.
 `shadow_timings` retains every measured layer instance with its original ViewId.
-The fixed-layout `pass_timestamp_slot` helper remains compatibility arithmetic;
-it does not locate the dynamic profiler's queries.
 
 GPU-enabled JSON extends schema version 1 with GPU feature availability, state,
 counts and completed samples. GPU-only captures have unavailable, empty CPU

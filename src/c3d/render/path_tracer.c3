@@ -310,15 +310,15 @@ fn void? record_path_traced_view(
                 .max_bounces      = settings.max_bounces,
             };
 
-            begin_profile_pass(renderer, Pass.PATH_TRACE)!;
-            gpu::cmd_bind_pipeline(&renderer.commands, renderer.path_tracer.pipeline)!;
-            gpu::cmd_trace_rays(
-                commands:             &renderer.commands,
-                root:                 root.address,
-                shader_binding_table: &renderer.path_tracer.regions,
-                dimensions:           { record.accumulation.width, record.accumulation.height, 1 },
-            )!;
-            end_profile_pass(renderer, Pass.PATH_TRACE)!;
+            @profile_pass(renderer, Pass.PATH_TRACE) {
+                gpu::cmd_bind_pipeline(&renderer.commands, renderer.path_tracer.pipeline)!;
+                gpu::cmd_trace_rays(
+                    commands:             &renderer.commands,
+                    root:                 root.address,
+                    shader_binding_table: &renderer.path_tracer.regions,
+                    dimensions:           { record.accumulation.width, record.accumulation.height, 1 },
+                )!;
+            }!;
 
             record.history.commit_accumulation(
                 scene:          scene.identity,

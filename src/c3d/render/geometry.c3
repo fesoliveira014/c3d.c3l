@@ -235,7 +235,7 @@ fn void write_geometry_block(char[] block, Geometry* geometry, GeometryLayout* l
 fn GpuGeometry*? resolve_geometry(Renderer* renderer, GeometryId geometry) @private {
     GeometryAsset* record = renderer.assets.geometry(geometry);
     GpuGeometry* mirror = &renderer.geometries[geometry.index];
-    bool same_asset = mirror.asset.index == geometry.index && mirror.asset.generation == geometry.generation;
+    bool same_asset = c3d::same_id(mirror.asset, geometry);
     if (same_asset && mirror.revision == record.header.revision) return mirror;
 
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];

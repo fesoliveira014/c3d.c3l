@@ -138,19 +138,23 @@ fn void? record_gbuffer_pass(Renderer* renderer, ViewRecord* record, DrawItem[] 
     };
     gpu::PipelineHandle first = gbuffer.len ? gbuffer[0].pipeline : default_gbuffer_pipeline(renderer)!;
 
-    begin_profile_pass(renderer, Pass.GBUFFER)!;
-    // Bound before the pass begins: the backend checks the bound pipeline against the pass formats at begin.
-    gpu::cmd_bind_pipeline(&renderer.commands, first)!;
-    gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
-    record_draws(
-        renderer:   renderer,
-        record:     record,
-        items:      gbuffer,
-        pipeline:   first,
-        pass_state: { .color_targets = color_targets[..], .depth_compare = gpu::CompareOp.EQUAL, .depth_write = false },
-    )!;
-    gpu::cmd_end_render_pass(&renderer.commands)!;
-    end_profile_pass(renderer, Pass.GBUFFER)!;
+    @profile_pass(renderer, Pass.GBUFFER) {
+        // Bound before the pass begins: the backend checks the bound pipeline against the pass formats at begin.
+        gpu::cmd_bind_pipeline(&renderer.commands, first)!;
+        gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
+        record_draws(
+            renderer:   renderer,
+            record:     record,
+            items:      gbuffer,
+            pipeline:   first,
+            pass_state: {
+                .color_targets = color_targets[..],
+                .depth_compare = gpu::CompareOp.EQUAL,
+                .depth_write   = false,
+            },
+        )!;
+        gpu::cmd_end_render_pass(&renderer.commands)!;
+    }!;
 }
 
 fn void? record_lighting_pass(
@@ -184,15 +188,15 @@ fn void? record_lighting_pass(
         lighting_resolve_pipeline_key(record.desc.ray_tracing.shadows),
     )!;
 
-    begin_profile_pass(renderer, Pass.LIGHTING)!;
-    record_fullscreen_pass(
-        renderer:      renderer,
-        target:        &record.hdr_color,
-        pipeline:      pipeline,
-        fragment_root: root.address,
-        rect:          {},
-        load:          gpu::LoadOp.CLEAR,
-        clear_color:   clear_color,
-    )!;
-    end_profile_pass(renderer, Pass.LIGHTING)!;
+    @profile_pass(renderer, Pass.LIGHTING) {
+        record_fullscreen_pass(
+            renderer:      renderer,
+            target:        &record.hdr_color,
+            pipeline:      pipeline,
+            fragment_root: root.address,
+            rect:          {},
+            load:          gpu::LoadOp.CLEAR,
+            clear_color:   clear_color,
+        )!;
+    }!;
 }

@@ -308,16 +308,14 @@ fn void? resolve_preview_source(Renderer* renderer, PreviewSlot* preview, Previe
             root.mode = shader::PREVIEW_MODE_DEPTH_RAW;
         case ENVIRONMENT_FACE:
             EnvironmentRes* environment = &renderer.environment_state.mirrors[source.environment.index];
-            bool current = environment.asset.index == source.environment.index
-                && environment.asset.generation == source.environment.generation;
+            bool current = c3d::same_id(environment.asset, source.environment);
             if (!current || !environment.lighting_ready) return;
             root.input_texture = environment.specular_view.index;
             root.input_sampler = renderer.environment_state.sampler;
             root.mode = shader::PREVIEW_MODE_CUBE_FACE;
         case TEXTURE:
             TextureRes* mirror = &renderer.textures[source.texture.index];
-            bool current = mirror.asset.index == source.texture.index
-                && mirror.asset.generation == source.texture.generation;
+            bool current = c3d::same_id(mirror.asset, source.texture);
             if (!current || !mirror.texture.is_valid()) return;
             gpu::TextureBarrier barrier = gpu::texture_transition(mirror.texture, mirror.state, compute_read)!;
             gpu::cmd_texture_barrier(&renderer.commands, &barrier)!;

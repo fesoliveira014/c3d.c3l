@@ -367,34 +367,34 @@ fn ShadowGpu[]? record_shadows(
     ShadowDraw[] layer_draws = alloc::new_array(tmem, ShadowDraw, draws.len);
     record_pending_copies(renderer, &renderer.commands)!;
     transition_shadow_atlas(&renderer.shadow_atlas, &renderer.commands, DEPTH_ATTACHMENT_STATE)!;
-    begin_profile_pass(renderer, Pass.SHADOW_ATLAS)!;
-    foreach (request : allocation.requests) {
-        Light* light = scene.get(scene.node(request.light), Light);
-        for (uint index = 0; index < request.layer_count; index++) {
-            uint layer = request.first_layer + index;
-            uint count;
-            foreach (draw : draws) {
-                if (maths::frustum_intersects_aabb(&shadow_matrices[layer].frustum, draw.candidate.world_bounds)) {
-                    layer_draws[count++] = draw;
+    @profile_pass(renderer, Pass.SHADOW_ATLAS) {
+        foreach (request : allocation.requests) {
+            Light* light = scene.get(scene.node(request.light), Light);
+            for (uint index = 0; index < request.layer_count; index++) {
+                uint layer = request.first_layer + index;
+                uint count;
+                foreach (draw : draws) {
+                    if (maths::frustum_intersects_aabb(&shadow_matrices[layer].frustum, draw.candidate.world_bounds)) {
+                        layer_draws[count++] = draw;
+                    }
                 }
+                ProfileScopeToken layer_scope = begin_profile_shadow(
+                    renderer: renderer,
+                    light: request.light,
+                    kind: light.kind,
+                    layer_index: index,
+                )!;
+                record_shadow_layer(
+                    renderer: renderer,
+                    matrices: &shadow_matrices[layer],
+                    draws: layer_draws[:count],
+                    layer: layer,
+                    bias: light.shadow.bias,
+                )!;
+                end_profile_scope(renderer, layer_scope)!;
             }
-            ProfileScopeToken layer_scope = begin_profile_shadow(
-                renderer: renderer,
-                light: request.light,
-                kind: light.kind,
-                layer_index: index,
-            )!;
-            record_shadow_layer(
-                renderer: renderer,
-                matrices: &shadow_matrices[layer],
-                draws: layer_draws[:count],
-                layer: layer,
-                bias: light.shadow.bias,
-            )!;
-            end_profile_scope(renderer, layer_scope)!;
         }
-    }
-    end_profile_pass(renderer, Pass.SHADOW_ATLAS)!;
+    }!;
     transition_shadow_atlas(
         atlas: &renderer.shadow_atlas,
         commands: &renderer.commands,

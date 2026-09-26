@@ -138,16 +138,16 @@ fn void? record_fxaa_fragment(
     };
     gpu::PipelineHandle pipeline = renderer.pipelines.get(&renderer.device, fxaa_fragment_pipeline_key(output.format))!;
 
-    render::begin_profile_pass(renderer, Pass.COMPOSITE)!;
-    render::record_fullscreen_pass(
-        renderer:      renderer,
-        target:        output,
-        pipeline:      pipeline,
-        fragment_root: root.address,
-        rect:          rect,
-        load:          render::output_load_op(output, rect),
-    )!;
-    render::end_profile_pass(renderer, Pass.COMPOSITE)!;
+    render::@profile_pass(renderer, Pass.COMPOSITE) {
+        render::record_fullscreen_pass(
+            renderer:      renderer,
+            target:        output,
+            pipeline:      pipeline,
+            fragment_root: root.address,
+            rect:          rect,
+            load:          render::output_load_op(output, rect),
+        )!;
+    }!;
 }
 
 fn PipelineKey fxaa_fragment_pipeline_key(gpu::Format output_format) @private {
@@ -244,16 +244,16 @@ fn void? record_fused_display(
     );
     gpu::PipelineHandle pipeline = renderer.pipelines.get(&renderer.device, display_pipeline_key(output.format))!;
 
-    render::begin_profile_pass(renderer, Pass.COMPOSITE)!;
-    render::record_fullscreen_pass(
-        renderer:      renderer,
-        target:        output,
-        pipeline:      pipeline,
-        fragment_root: root.address,
-        rect:          rect,
-        load:          render::output_load_op(output, rect),
-    )!;
-    render::end_profile_pass(renderer, Pass.COMPOSITE)!;
+    render::@profile_pass(renderer, Pass.COMPOSITE) {
+        render::record_fullscreen_pass(
+            renderer:      renderer,
+            target:        output,
+            pipeline:      pipeline,
+            fragment_root: root.address,
+            rect:          rect,
+            load:          render::output_load_op(output, rect),
+        )!;
+    }!;
 }
 
 fn void? record_grade(

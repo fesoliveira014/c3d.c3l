@@ -14,8 +14,6 @@ const uint TWO_BONE_JOINTS = 3;
 *>
 const float IK_EPSILON = 1e-5f; // metres and unit-vector lengths; guards normalizations, never validates input
 
-const float PERPENDICULAR_HELPER_LIMIT @local = 0.9f; // an axis this close to X takes Y as its cross-product partner
-
 <*
  Shape of the rotation bound on one joint.
 *>
@@ -87,7 +85,7 @@ fn void IkChain.solve(&self) {
     Vec3 end_solved = root_position + direction * target_distance;
 
     Quat root_world = world_rotation(root);
-    Quat root_delta = rotation_between(
+    Quat root_delta = maths::rotation_between(
         (middle_position - root_position).normalize(),
         (middle_solved - root_position).normalize(),
     );
@@ -95,7 +93,7 @@ fn void IkChain.solve(&self) {
     Quat root_local = parent_rotation(root).conjugate() * root_world_solved;
 
     Vec3 carried = root_delta * (end_position - middle_position);
-    Quat middle_delta = rotation_between(carried.normalize(), (end_solved - middle_solved).normalize());
+    Quat middle_delta = maths::rotation_between(carried.normalize(), (end_solved - middle_solved).normalize());
     Quat middle_world_solved = middle_delta * root_delta * world_rotation(middle);
     Quat middle_local = root_world_solved.conjugate() * middle_world_solved;
 
@@ -182,18 +180,6 @@ fn Quat parent_rotation(Node* node) @private {
     return world_rotation(node.parent);
 }
 
-fn Quat rotation_between(Vec3 from, Vec3 to) @private {
-    if (from.dot(to) < -1 + IK_EPSILON) {
-        return quaternion::from_axis_angle{float}(perpendicular(from), (float)math::PI);
-    }
-    return quaternion::from_normalized_rotation{float}(from, to);
-}
-
-fn Vec3 perpendicular(Vec3 axis) @private {
-    Vec3 helper = math::abs(axis.x) < PERPENDICULAR_HELPER_LIMIT ? (Vec3){ 1, 0, 0 } : (Vec3){ 0, 1, 0 };
-    return axis.cross(helper).normalize();
-}
-
 fn Vec3 off_axis(Vec3 vector, Vec3 axis) @local {
     return vector - axis * vector.dot(axis);
 }
@@ -216,9 +202,9 @@ fn Quat apply_limit(IkLimit* limit, Quat local) @private {
             float angle = math::acos(math::clamp(rotated.dot(limit.axis), -1.0f, 1.0f));
             if (angle <= limit.max_angle) return local;
             Vec3 swing_axis = limit.axis.cross(rotated);
-            swing_axis = swing_axis.length() < IK_EPSILON ? perpendicular(limit.axis) : swing_axis.normalize();
+            swing_axis = swing_axis.length() < IK_EPSILON ? maths::perpendicular(limit.axis) : swing_axis.normalize();
             Quat swing = quaternion::from_axis_angle{float}(swing_axis, limit.max_angle);
-            Quat twist = rotation_between(limit.axis, rotated).conjugate() * relative;
+            Quat twist = maths::rotation_between(limit.axis, rotated).conjugate() * relative;
             return limit.reference * swing * twist;
     }
 }

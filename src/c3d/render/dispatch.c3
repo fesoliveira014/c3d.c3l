@@ -356,7 +356,7 @@ fn void? rebuild_compute_pipeline(Renderer* renderer, ComputeShaderId shader) @p
 fn ComputeShaderRes*? resolve_compute_shader(Renderer* renderer, ComputeShaderId shader) @private {
     ComputeShaderAsset* record = renderer.assets.compute_shader(shader);
     ComputeShaderRes* mirror = &renderer.compute_shaders[shader.index];
-    bool same_asset = mirror.asset.index == shader.index && mirror.asset.generation == shader.generation;
+    bool same_asset = c3d::same_id(mirror.asset, shader);
     if (same_asset && mirror.revision == record.header.revision) return mirror;
     if (same_asset && mirror.rejected_revision == record.header.revision) return mirror;
 
@@ -379,7 +379,7 @@ fn bool compute_rejected(Renderer* renderer, ComputeShaderId shader, fault excus
 fn void? replace_compute_pipeline(Renderer* renderer, ComputeShaderId shader) @private {
     ComputeShaderAsset* record = renderer.assets.compute_shader(shader);
     ComputeShaderRes* mirror = &renderer.compute_shaders[shader.index];
-    bool same_asset = mirror.asset.index == shader.index && mirror.asset.generation == shader.generation;
+    bool same_asset = c3d::same_id(mirror.asset, shader);
     uint old_revision = same_asset ? mirror.revision : 0;
 
     RetireList* retire = renderer.frame_open

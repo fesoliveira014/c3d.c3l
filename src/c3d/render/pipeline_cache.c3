@@ -77,8 +77,7 @@ fn bool PipelineKey.equals(&self, PipelineKey other) {
         && self.depth_format == other.depth_format
         && self.samples == other.samples
         && self.polygon == other.polygon
-        && self.shader.index == other.shader.index
-        && self.shader.generation == other.shader.generation
+        && c3d::same_id(self.shader, other.shader)
         && self.shader_revision == other.shader_revision
         && (uint)self.custom == (uint)other.custom;
 }
@@ -331,8 +330,7 @@ fn gpu::PipelineHandle[] remove_matching(
 }
 
 fn bool key_names(PipelineKey key, ShaderId shader, bool compute) @private {
-    return key.shader.index == shader.index && key.shader.generation == shader.generation
-        && key.custom.compute == compute;
+    return c3d::same_id(key.shader, shader) && key.custom.compute == compute;
 }
 
 fn void forget_rejections(PipelineCache* cache, ShaderId shader, bool compute) @private {

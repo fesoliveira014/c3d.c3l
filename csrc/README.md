@@ -7,8 +7,7 @@ The full upstream dual-license notice remains in the header; c3d uses its MIT op
 
 `stb_image.c` enables only PNG, JPEG and Radiance HDR decoding from memory.
 The C3 package manifest compiles this translation unit using c3c's selected C
-compiler. A working C compiler is required. The current package includes the
-translation unit even when the `C3D_STB_IMAGE` feature indicator is absent.
+compiler. A working C compiler is required.
 
 The private declarations in `c3d::asset::image` are the only C3 entry points.
 Decoded native memory is copied into the requested C3 allocator and freed with

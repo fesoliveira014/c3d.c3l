@@ -55,12 +55,11 @@ fn void? Renderer.upload_texture(&self, TextureId texture) {
 fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture) @private {
     TextureAsset* record = renderer.assets.texture(texture);
     TextureRes* mirror = &renderer.textures[texture.index];
-    bool same_asset = mirror.asset.index == texture.index && mirror.asset.generation == texture.generation;
+    bool same_asset = c3d::same_id(mirror.asset, texture);
     if (same_asset && mirror.revision == record.header.revision) return mirror;
 
     foreach (&pending : renderer.pending_texture_uploads) {
-        if (pending.asset.index == texture.index && pending.asset.generation == texture.generation
-            && pending.revision == record.header.revision) return mirror;
+        if (c3d::same_id(pending.asset, texture) && pending.revision == record.header.revision) return mirror;
     }
 
     @pool() {
