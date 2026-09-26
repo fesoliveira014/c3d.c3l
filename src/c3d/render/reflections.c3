@@ -90,25 +90,26 @@ fn void? record_reflections(Renderer* renderer, ViewRecord* record, gpu::GpuAddr
         .noise_frame       = temporal_noise_frame(record),
     };
 
-    begin_profile_pass(renderer, Pass.RT_REFLECTIONS)!;
-    gpu::cmd_bind_pipeline(&renderer.commands, renderer.reflection_pipelines.trace)!;
-    dispatch_over(renderer, trace_root.address, &record.reflection)!;
+    @profile_pass(renderer, Pass.RT_REFLECTIONS) {
+        gpu::cmd_bind_pipeline(&renderer.commands, renderer.reflection_pipelines.trace)!;
+        dispatch_over(renderer, trace_root.address, &record.reflection)!;
 
-    record.reflection.transition(&renderer.commands, gpu::storage_at({ .compute }, { .read }))!;
-    record.reflection_blur.transition(&renderer.commands, gpu::storage_at({ .compute }, { .write }))!;
-    gpu::MappedGpuSpan blur_root = slot.upload.take(&renderer.device, RtReflectionBlurRoot::size, STREAM_ALIGNMENT)!;
-    *(RtReflectionBlurRoot*)blur_root.bytes.ptr = {
-        .frame            = frame,
-        .input_texture    = record.reflection.view.index,
-        .depth            = record.depth.view.index,
-        .normal_roughness = normals.view.index,
-        .output_texture   = record.reflection_blur.view.index,
-        .width            = record.reflection_blur.width,
-        .height           = record.reflection_blur.height,
-    };
-    gpu::cmd_bind_pipeline(&renderer.commands, renderer.reflection_pipelines.blur)!;
-    dispatch_over(renderer, blur_root.address, &record.reflection_blur)!;
-    end_profile_pass(renderer, Pass.RT_REFLECTIONS)!;
+        record.reflection.transition(&renderer.commands, gpu::storage_at({ .compute }, { .read }))!;
+        record.reflection_blur.transition(&renderer.commands, gpu::storage_at({ .compute }, { .write }))!;
+        gpu::MappedGpuSpan blur_root = slot.upload.take(
+            &renderer.device, RtReflectionBlurRoot::size, STREAM_ALIGNMENT)!;
+        *(RtReflectionBlurRoot*)blur_root.bytes.ptr = {
+            .frame            = frame,
+            .input_texture    = record.reflection.view.index,
+            .depth            = record.depth.view.index,
+            .normal_roughness = normals.view.index,
+            .output_texture   = record.reflection_blur.view.index,
+            .width            = record.reflection_blur.width,
+            .height           = record.reflection_blur.height,
+        };
+        gpu::cmd_bind_pipeline(&renderer.commands, renderer.reflection_pipelines.blur)!;
+        dispatch_over(renderer, blur_root.address, &record.reflection_blur)!;
+    }!;
 
     record.reflection_blur.transition(&renderer.commands, gpu::sampled_at({ .fragment_shader }))!;
     renderer.stats.post_dispatches += 2;

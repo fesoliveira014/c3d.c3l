@@ -192,26 +192,26 @@ fn void? record_ambient_occlusion(Renderer* renderer, ViewRecord* record, gpu::G
         case NONE:
     }
 
-    begin_profile_pass(renderer, Pass.AMBIENT_OCCLUSION)!;
-    gpu::cmd_bind_pipeline(&renderer.commands, estimate)!;
-    dispatch_over(renderer, estimate_root.address, &record.ao_raw)!;
+    @profile_pass(renderer, Pass.AMBIENT_OCCLUSION) {
+        gpu::cmd_bind_pipeline(&renderer.commands, estimate)!;
+        dispatch_over(renderer, estimate_root.address, &record.ao_raw)!;
 
-    record.ao_raw.transition(&renderer.commands, gpu::storage_at({ .compute }, { .read }))!;
-    record.ao.transition(&renderer.commands, gpu::storage_at({ .compute }, { .write }))!;
-    gpu::MappedGpuSpan blur_root = slot.upload.take(&renderer.device, AoBlurRoot::size, STREAM_ALIGNMENT)!;
-    *(AoBlurRoot*)blur_root.bytes.ptr = {
-        .frame          = frame,
-        .input_texture  = record.ao_raw.view.index,
-        .depth          = record.depth.view.index,
-        .output_texture = record.ao.view.index,
-        .width          = record.ao.width,
-        .height         = record.ao.height,
-        .input_width    = record.ao_raw.width,
-        .input_height   = record.ao_raw.height,
-    };
-    gpu::cmd_bind_pipeline(&renderer.commands, renderer.ambient_occlusion_pipelines.blur)!;
-    dispatch_over(renderer, blur_root.address, &record.ao)!;
-    end_profile_pass(renderer, Pass.AMBIENT_OCCLUSION)!;
+        record.ao_raw.transition(&renderer.commands, gpu::storage_at({ .compute }, { .read }))!;
+        record.ao.transition(&renderer.commands, gpu::storage_at({ .compute }, { .write }))!;
+        gpu::MappedGpuSpan blur_root = slot.upload.take(&renderer.device, AoBlurRoot::size, STREAM_ALIGNMENT)!;
+        *(AoBlurRoot*)blur_root.bytes.ptr = {
+            .frame          = frame,
+            .input_texture  = record.ao_raw.view.index,
+            .depth          = record.depth.view.index,
+            .output_texture = record.ao.view.index,
+            .width          = record.ao.width,
+            .height         = record.ao.height,
+            .input_width    = record.ao_raw.width,
+            .input_height   = record.ao_raw.height,
+        };
+        gpu::cmd_bind_pipeline(&renderer.commands, renderer.ambient_occlusion_pipelines.blur)!;
+        dispatch_over(renderer, blur_root.address, &record.ao)!;
+    }!;
 
     record.ao.transition(&renderer.commands, gpu::sampled_at({ .fragment_shader }))!;
     renderer.stats.post_dispatches += 2;

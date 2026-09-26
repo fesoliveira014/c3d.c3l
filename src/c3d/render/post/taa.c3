@@ -103,53 +103,53 @@ fn void? record_taa(
     TaaParams* params = &record.desc.post.taa_params;
     Target* input = record.scene_input;
 
-    render::begin_profile_pass(renderer, Pass.TEMPORAL_AA)!;
-    gpu::TextureState sampled = gpu::sampled_at({ .compute });
-    gpu::TextureState history_read = gpu::storage_at({ .compute }, { .read });
-    gpu::TextureState written = gpu::storage_at({ .compute }, { .write });
-    input.transition(&renderer.commands, sampled)!;
-    record.depth.transition(&renderer.commands, sampled)!;
-    record.velocity.transition(&renderer.commands, sampled)!;
-    record.taa_color[previous].transition(&renderer.commands, sampled)!;
-    record.taa_depth[previous].transition(&renderer.commands, history_read)!;
-    record.taa_velocity[previous].transition(&renderer.commands, history_read)!;
-    record.taa_color[next].transition(&renderer.commands, written)!;
-    record.taa_depth[next].transition(&renderer.commands, written)!;
-    record.taa_velocity[next].transition(&renderer.commands, written)!;
-    if (debug) record.taa_debug.transition(&renderer.commands, written)!;
+    render::@profile_pass(renderer, Pass.TEMPORAL_AA) {
+        gpu::TextureState sampled = gpu::sampled_at({ .compute });
+        gpu::TextureState history_read = gpu::storage_at({ .compute }, { .read });
+        gpu::TextureState written = gpu::storage_at({ .compute }, { .write });
+        input.transition(&renderer.commands, sampled)!;
+        record.depth.transition(&renderer.commands, sampled)!;
+        record.velocity.transition(&renderer.commands, sampled)!;
+        record.taa_color[previous].transition(&renderer.commands, sampled)!;
+        record.taa_depth[previous].transition(&renderer.commands, history_read)!;
+        record.taa_velocity[previous].transition(&renderer.commands, history_read)!;
+        record.taa_color[next].transition(&renderer.commands, written)!;
+        record.taa_depth[next].transition(&renderer.commands, written)!;
+        record.taa_velocity[next].transition(&renderer.commands, written)!;
+        if (debug) record.taa_debug.transition(&renderer.commands, written)!;
 
-    uint width = record.taa_color[next].width;
-    uint height = record.taa_color[next].height;
-    gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, TaaRoot::size)!;
-    *(TaaRoot*)root.bytes.ptr = {
-        .color_texture      = input.view.index,
-        .depth_texture      = record.depth.view.index,
-        .velocity_texture   = record.velocity.view.index,
-        .history_color      = record.taa_color[previous].view.index,
-        .history_depth      = record.taa_depth[previous].view.index,
-        .history_velocity   = record.taa_velocity[previous].view.index,
-        .output_color       = record.taa_color[next].view.index,
-        .output_depth       = record.taa_depth[next].view.index,
-        .output_velocity    = record.taa_velocity[next].view.index,
-        .debug_texture      = debug ? record.taa_debug.view.index : (gpu::TextureIndex)0,
-        .sampler_index      = renderer.linear_clamp_sampler,
-        .width              = width,
-        .height             = height,
-        .history_valid      = history_valid ? 1 : 0,
-        .orthographic       = record.projection_terms.orthographic ? 1 : 0,
-        .debug              = (uint)params.debug.ordinal,
-        .texel              = { 1.0f / (float)width, 1.0f / (float)height },
-        .jitter_uv          = jitter_uv(jitter),
-        .current_weight     = params.current_weight,
-        .clip_gamma         = params.clip_gamma,
-        .depth_tolerance    = params.depth_tolerance,
-        .velocity_threshold = params.velocity_threshold,
-        .proj_22            = record.projection_terms.m22,
-        .proj_23            = record.projection_terms.m23,
-    };
-    gpu::cmd_bind_pipeline(&renderer.commands, renderer.post_pipelines.taa_resolve)!;
-    render::dispatch_over(renderer, root.address, &record.taa_color[next])!;
-    render::end_profile_pass(renderer, Pass.TEMPORAL_AA)!;
+        uint width = record.taa_color[next].width;
+        uint height = record.taa_color[next].height;
+        gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, TaaRoot::size)!;
+        *(TaaRoot*)root.bytes.ptr = {
+            .color_texture      = input.view.index,
+            .depth_texture      = record.depth.view.index,
+            .velocity_texture   = record.velocity.view.index,
+            .history_color      = record.taa_color[previous].view.index,
+            .history_depth      = record.taa_depth[previous].view.index,
+            .history_velocity   = record.taa_velocity[previous].view.index,
+            .output_color       = record.taa_color[next].view.index,
+            .output_depth       = record.taa_depth[next].view.index,
+            .output_velocity    = record.taa_velocity[next].view.index,
+            .debug_texture      = debug ? record.taa_debug.view.index : (gpu::TextureIndex)0,
+            .sampler_index      = renderer.linear_clamp_sampler,
+            .width              = width,
+            .height             = height,
+            .history_valid      = history_valid ? 1 : 0,
+            .orthographic       = record.projection_terms.orthographic ? 1 : 0,
+            .debug              = (uint)params.debug.ordinal,
+            .texel              = { 1.0f / (float)width, 1.0f / (float)height },
+            .jitter_uv          = jitter_uv(jitter),
+            .current_weight     = params.current_weight,
+            .clip_gamma         = params.clip_gamma,
+            .depth_tolerance    = params.depth_tolerance,
+            .velocity_threshold = params.velocity_threshold,
+            .proj_22            = record.projection_terms.m22,
+            .proj_23            = record.projection_terms.m23,
+        };
+        gpu::cmd_bind_pipeline(&renderer.commands, renderer.post_pipelines.taa_resolve)!;
+        render::dispatch_over(renderer, root.address, &record.taa_color[next])!;
+    }!;
     renderer.stats.post_dispatches += 1;
     record.scene_input = debug ? &record.taa_debug : &record.taa_color[next];
 }

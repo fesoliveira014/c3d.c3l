@@ -497,16 +497,16 @@ fn void? composite_target(
     };
     gpu::PipelineHandle pipeline = renderer.pipelines.get(&renderer.device, key)!;
 
-    begin_profile_pass(renderer, Pass.COMPOSITE)!;
-    record_fullscreen_pass(
-        renderer:      renderer,
-        target:        output,
-        pipeline:      pipeline,
-        fragment_root: root.address,
-        rect:          rect,
-        load:          output_load_op(output, rect),
-    )!;
-    end_profile_pass(renderer, Pass.COMPOSITE)!;
+    @profile_pass(renderer, Pass.COMPOSITE) {
+        record_fullscreen_pass(
+            renderer:      renderer,
+            target:        output,
+            pipeline:      pipeline,
+            fragment_root: root.address,
+            rect:          rect,
+            load:          output_load_op(output, rect),
+        )!;
+    }!;
 }
 
 fn void? record_fullscreen_pass(

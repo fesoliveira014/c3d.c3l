@@ -31,16 +31,16 @@ fn void? record_velocity(
     Vec2 jitter,
 ) {
     acquire_velocity_pipelines(renderer, record.velocity.format)!;
-    render::begin_profile_pass(renderer, Pass.VELOCITY)!;
-    record_camera_velocity(
-        renderer:  renderer,
-        record:    record,
-        raster:    raster,
-        view_proj: view_proj,
-        jitter:    jitter,
-    )!;
-    record_geometry_velocity(renderer, record, items)!;
-    render::end_profile_pass(renderer, Pass.VELOCITY)!;
+    render::@profile_pass(renderer, Pass.VELOCITY) {
+        record_camera_velocity(
+            renderer:  renderer,
+            record:    record,
+            raster:    raster,
+            view_proj: view_proj,
+            jitter:    jitter,
+        )!;
+        record_geometry_velocity(renderer, record, items)!;
+    }!;
 }
 
 <*

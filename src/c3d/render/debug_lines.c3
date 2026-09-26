@@ -93,44 +93,44 @@ fn void? record_debug_lines(
         .height = height,
     };
 
-    begin_profile_pass(renderer, Pass.DEBUG_LINES)!;
-    gpu::cmd_bind_pipeline(&renderer.commands, pipeline)!;
-    record.hdr_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
-    record.depth.transition(&renderer.commands, DEPTH_ATTACHMENT_STATE)!;
-    gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
+    @profile_pass(renderer, Pass.DEBUG_LINES) {
+        gpu::cmd_bind_pipeline(&renderer.commands, pipeline)!;
+        record.hdr_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
+        record.depth.transition(&renderer.commands, DEPTH_ATTACHMENT_STATE)!;
+        gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
 
-    gpu::ColorTargetState[1] color_targets = { gpu::alpha_blend() };
-    gpu::GraphicsState state = gpu::render_geometry_state(width, height)!;
-    state.viewport = flipped_viewport(width, height);
-    state.color.targets = color_targets[..];
-    state.raster.topology = gpu::PrimitiveTopology.LINES;
-    state.raster.cull_mode = gpu::CullMode.NONE;
-    state.depth = {
-        .test_enable  = true,
-        .write_enable = false,
-        .compare      = gpu::CompareOp.GREATER,
-    };
-    gpu::cmd_set_graphics_state(&renderer.commands, &state)!;
-    gpu::cmd_draw(
-        commands:       &renderer.commands,
-        vertex_root:    solid_root.address,
-        fragment_root:  solid_root.address,
-        vertex_count:   (uint)vertices.len,
-        instance_count: 1,
-    )!;
+        gpu::ColorTargetState[1] color_targets = { gpu::alpha_blend() };
+        gpu::GraphicsState state = gpu::render_geometry_state(width, height)!;
+        state.viewport = flipped_viewport(width, height);
+        state.color.targets = color_targets[..];
+        state.raster.topology = gpu::PrimitiveTopology.LINES;
+        state.raster.cull_mode = gpu::CullMode.NONE;
+        state.depth = {
+            .test_enable  = true,
+            .write_enable = false,
+            .compare      = gpu::CompareOp.GREATER,
+        };
+        gpu::cmd_set_graphics_state(&renderer.commands, &state)!;
+        gpu::cmd_draw(
+            commands:       &renderer.commands,
+            vertex_root:    solid_root.address,
+            fragment_root:  solid_root.address,
+            vertex_count:   (uint)vertices.len,
+            instance_count: 1,
+        )!;
 
-    state.depth.test_enable = false;
-    gpu::cmd_set_graphics_state(&renderer.commands, &state)!;
-    gpu::cmd_draw(
-        commands:       &renderer.commands,
-        vertex_root:    overlay_root.address,
-        fragment_root:  overlay_root.address,
-        vertex_count:   (uint)vertices.len,
-        instance_count: 1,
-    )!;
+        state.depth.test_enable = false;
+        gpu::cmd_set_graphics_state(&renderer.commands, &state)!;
+        gpu::cmd_draw(
+            commands:       &renderer.commands,
+            vertex_root:    overlay_root.address,
+            fragment_root:  overlay_root.address,
+            vertex_count:   (uint)vertices.len,
+            instance_count: 1,
+        )!;
 
-    gpu::cmd_end_render_pass(&renderer.commands)!;
-    end_profile_pass(renderer, Pass.DEBUG_LINES)!;
+        gpu::cmd_end_render_pass(&renderer.commands)!;
+    }!;
 
     renderer.stats.draws += 2;
     renderer.stats.debug_lines += (uint)vertices.len / 2;
