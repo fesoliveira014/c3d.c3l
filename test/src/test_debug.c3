@@ -116,7 +116,7 @@ fn void test_debug_ik_draws_chain_target_and_pole() @test {
         pole:   pole,
     );
     scene.add(root, chain);
-    scene.add(end, ik::look_at(end, target, { 0, 0, -1 }));
+    scene.add(end, ik::look_at((&end)[:1], target, { 0, 0, -1 }));
     scene.update_world();
     DebugDraw draw = debug::create_debug_draw(mem, 256);
     defer debug::destroy_debug_draw(&draw);

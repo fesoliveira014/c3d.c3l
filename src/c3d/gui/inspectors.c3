@@ -245,7 +245,11 @@ fn bool look_at_inspector(void* component) @local {
     LookAt* look_at = (LookAt*)component;
     bool changed;
 
-    node_name_text("Node", look_at.node);
+    for (uint index = 0; index < look_at.joint_count; index++) {
+        node_name_text("Joint", look_at.joints[index]);
+        imgui::same_line();
+        imgui::text("share %.2f", look_at.weights[index]);
+    }
     node_name_text("Target", look_at.target);
     if (imgui::drag_float3("Forward", (float*)&look_at.forward) && look_at.forward.length() > 0) {
         look_at.forward = look_at.forward.normalize();

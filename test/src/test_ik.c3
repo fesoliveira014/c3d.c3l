@@ -10,6 +10,7 @@ const float TOLERANCE @local = 1e-4f;
 const float LENGTH_TOLERANCE @local = 1e-5f;
 const float QUAT_DOT_TOLERANCE @local = 1e-5f;
 const uint RIG_NODES @local = 16;
+const float AIM_TOLERANCE @local = 0.01f; // radians; two passes leave 0.005 on the swing test, one pass 0.065
 
 struct ChainRig @local {
     Scene   scene;
@@ -247,7 +248,7 @@ fn void test_look_at_clamps_to_max_angle() @test {
     rig.target.local.position = { 5, 0, 0 };
     rig.scene.update_world();
 
-    LookAt clamped = ik::look_at(rig.pole, rig.target, { 0, 0, -1 });
+    LookAt clamped = ik::look_at((&rig.pole)[:1], rig.target, { 0, 0, -1 });
     clamped.max_angle = 0.25f;
     clamped.solve();
     rig.scene.update_world();
@@ -256,11 +257,69 @@ fn void test_look_at_clamps_to_max_angle() @test {
 
     rig.pole.local.rotation = quaternion::IDENTITY;
     rig.scene.update_world();
-    LookAt free = ik::look_at(rig.pole, rig.target, { 0, 0, -1 });
+    LookAt free = ik::look_at((&rig.pole)[:1], rig.target, { 0, 0, -1 });
     free.solve();
     rig.scene.update_world();
     forward = maths::transform_dir(rig.pole.world, { 0, 0, -1 }).normalize();
     assert(close_vec3(forward, { 1, 0, 0 }));
+}
+
+fn float aim_error(Node* tip, Node* target) @local {
+    Vec3 forward = maths::transform_dir(tip.world, { 0, 0, -1 }).normalize();
+    Vec3 desired = (target.world_position() - tip.world_position()).normalize();
+    return math::acos(math::clamp(forward.dot(desired), -1.0f, 1.0f));
+}
+
+fn void test_look_at_spreads_the_turn_by_default_shares() @test {
+    ChainRig rig = make_chain();
+    defer scene::destroy_scene(&rig.scene);
+    rig.target.local.position = { 100, 2, 0 };
+    rig.scene.update_world();
+    Node*[3] spine = { rig.root, rig.middle, rig.end };
+
+    LookAt look_at = ik::look_at(spine[..], rig.target, { 0, 0, -1 });
+    look_at.solve();
+    rig.scene.update_world();
+
+    float[3] shares = { 1.0f / 6, 2.0f / 6, 3.0f / 6 };
+    foreach (index, joint : spine) {
+        assert(close(look_at.weights[index], shares[index], LENGTH_TOLERANCE));
+        Quat expected = quaternion::from_axis_angle{float}({ 0, -1, 0 }, (float)math::PI / 2 * shares[index]);
+        assert(close_quat(joint.local.rotation, expected));
+    }
+    assert(aim_error(rig.end, rig.target) <= TOLERANCE);
+}
+
+fn void test_look_at_second_pass_corrects_the_tip_swing() @test {
+    ChainRig rig = make_chain();
+    defer scene::destroy_scene(&rig.scene);
+    rig.middle.local.position = { 0, 0, -0.5f };
+    rig.end.local.position = { 0, 0, -0.5f };
+    rig.target.local.position = { 3, 0, -1 };
+    rig.scene.update_world();
+    Node*[3] spine = { rig.root, rig.middle, rig.end };
+
+    LookAt look_at = ik::look_at(spine[..], rig.target, { 0, 0, -1 });
+    look_at.solve();
+    rig.scene.update_world();
+
+    assert(aim_error(rig.end, rig.target) <= AIM_TOLERANCE);
+}
+
+fn void test_look_at_valid_rejects_bad_shares_and_broken_chains() @test {
+    ChainRig rig = make_chain();
+    defer scene::destroy_scene(&rig.scene);
+    Node*[3] spine = { rig.root, rig.middle, rig.end };
+    LookAt look_at = ik::look_at(spine[..], rig.target, { 0, 0, -1 });
+    assert(ik::look_at_valid(&look_at));
+
+    LookAt uneven = look_at;
+    uneven.weights[0] += 0.1f;
+    assert(!ik::look_at_valid(&uneven));
+
+    LookAt broken = look_at;
+    broken.joints[1] = rig.pole;
+    assert(!ik::look_at_valid(&broken));
 }
 
 fn void test_foot_place_on_floor_height_keeps_the_ankle() @test {

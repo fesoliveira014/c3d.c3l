@@ -208,7 +208,7 @@ fn void DebugDraw.ik(&self, Scene* scene, uint rgba) {
         }
     };
     scene.world.@each(LookAt; entity, look_at) {
-        self.line(look_at.node.world_position(), look_at.target.world_position(), rgba);
+        self.line(look_at.joints[look_at.joint_count - 1].world_position(), look_at.target.world_position(), rgba);
     };
 }
 
