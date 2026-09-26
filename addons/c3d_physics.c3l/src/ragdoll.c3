@@ -11,6 +11,7 @@ import c3d::scene;
 import b3;
 
 const float MIN_BONE_LENGTH @local = 0.0001f; // meters; a shorter child offset makes the bone a leaf
+const float MIN_AXIS_LENGTH @local = 0.0001f; // a shorter hinge axis has no direction
 const float SCALE_TOLERANCE @local = 0.0001f;
 const float ANTIPARALLEL_LENGTH @local = 0.000001f;
 const float AXIS_REFERENCE_LIMIT @local = 0.9f; // a from-vector this close to X takes Y as its cross reference
@@ -168,6 +169,7 @@ fn void? Scene.build_ragdoll(
     };
 
     order_joints(&ragdoll);
+    foreach (joint, node : self.get(skin_node, SkinBinding).joints) ragdoll.frozen[joint] = node.local;
     self.add(skin_node, ragdoll);
 }
 
@@ -343,7 +345,7 @@ fn void? index_bones(Ragdoll* ragdoll, Skeleton* skeleton, RagdollBone[] bones) 
             case SPHERICAL:
                 break;
             case REVOLUTE:
-                if (bone.hinge_axis.length() < MIN_BONE_LENGTH) return c3d::INVALID_ARGUMENT~;
+                if (bone.hinge_axis.length() < MIN_AXIS_LENGTH) return c3d::INVALID_ARGUMENT~;
             case DISTANCE:
             case PRISMATIC:
             case WELD:
@@ -446,5 +448,5 @@ fn Quat rotation_from_to(Vec3 from, Vec3 to) @local {
     }
     half = half.normalize();
     Vec3 axis = from.cross(half);
-    return { axis.x, axis.y, axis.z, from.dot(half) };
+    return { .v = { axis.x, axis.y, axis.z, from.dot(half) } };
 }
