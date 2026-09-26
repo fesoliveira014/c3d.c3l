@@ -80,7 +80,7 @@ fn void FootIk.align(&self) {
     if (!self.grounded || self.align_weight == 0) return;
 
     Node* ankle = self.leg.joints[2];
-    Quat tilt = rotation_between(WORLD_UP, self.ground.normal);
+    Quat tilt = maths::rotation_between(WORLD_UP, self.ground.normal);
     Quat aligned = parent_rotation(ankle).conjugate() * tilt * world_rotation(ankle);
     ankle.local.rotation = ankle.local.rotation.slerp(aligned, self.align_weight);
 }
