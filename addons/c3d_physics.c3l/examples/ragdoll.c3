@@ -25,7 +25,8 @@ alias Quat @local = Quaternionf;
 
 const String MODEL_PATH @local = "../../examples/assets/quaternius/AnimationLibrary_Godot.glb";
 const String WALK_CLIP @local = "Walk_Loop";
-const String IDLE_CLIP @local = "Idle_Loop";
+const String FACE_DOWN_CLIP @local = "Crawl_Exit"; // hands and knees to standing
+const String FACE_UP_CLIP @local = "GroundSit_Exit"; // sitting to standing
 const uint  MAX_BOXES @local = 256; // one node, one body and one draw per box
 const uint  SCENE_NODE_CAPACITY @local = MAX_BOXES + 128; // character nodes, bone nodes, level
 const float GROUND_SIZE @local = 40;
@@ -93,7 +94,9 @@ struct Character @local {
     Node*  root;
     Node*  skin;
     ClipId walk;
-    ClipId idle;
+    ClipId face_down_get_up;
+    ClipId face_up_get_up;
+    float  get_up_seconds;
     Phase  phase;
     float  timer;
 }
@@ -204,7 +207,8 @@ fn Character? build_character(AssetStore* assets, Scene* scene) @local {
     }
     if (!character.skin) return NOT_FOUND~;
     character.walk = find_clip(assets, instance.clips, WALK_CLIP)!;
-    character.idle = find_clip(assets, instance.clips, IDLE_CLIP)!;
+    character.face_down_get_up = find_clip(assets, instance.clips, FACE_DOWN_CLIP)!;
+    character.face_up_get_up = find_clip(assets, instance.clips, FACE_UP_CLIP)!;
     anim::add_animator(scene, character.root).play(assets, character.walk)!;
     anim::update(assets, scene, 0);
     scene.update_world();
@@ -265,13 +269,15 @@ fn void advance_character(
             character.timer = 0;
         case FALLEN:
             if (character.timer < FALLEN_SECONDS) return;
-            physics.recover_ragdoll(character.skin, character.root);
-            cross_fade_to(scene.get(character.root, Animator), assets, character.idle);
+            RagdollFacing facing = physics.recover_ragdoll(character.skin, character.root);
+            ClipId get_up = facing == FACE_DOWN ? character.face_down_get_up : character.face_up_get_up;
+            cross_fade_to(scene.get(character.root, Animator), assets, get_up);
+            character.get_up_seconds = assets.clip(get_up).data.duration;
             character.phase = RECOVERING;
             character.timer = 0;
         case RECOVERING:
             ragdoll.weight = math::max(1 - character.timer / BLEND_OUT_SECONDS, 0.0f);
-            if (ragdoll.weight > 0) return;
+            if (character.timer < character.get_up_seconds - CROSS_FADE_SECONDS) return;
             cross_fade_to(scene.get(character.root, Animator), assets, character.walk);
             character.phase = WALKING;
     }

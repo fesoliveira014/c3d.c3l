@@ -374,3 +374,64 @@ fn void test_remove_ragdoll_removes_bone_nodes_and_components() @test {
     assert(fixture.scene.count(RigidBody) == 0);
     assert(fixture.scene.count(Joint) == 0);
 }
+
+// Rotates every bone body about the world origin, as if the rig fell pivoting on its root joint.
+fn RagdollFacing fall_rotated(Fixture* fixture, Rig* rig, Ragdoll* ragdoll, Quat fall) @private {
+    fixture.physics.update(0);
+    fixture.physics.set_ragdoll_mode(rig.skin, SIMULATED);
+    ragdoll.weight = 1;
+    foreach (node : ragdoll.bone_nodes) {
+        RigidBody* body = fixture.scene.get(node, RigidBody);
+        fixture.physics.teleport(node, fall.rotate_vec3(body.current.position), fall.mul(body.current.rotation));
+    }
+    fixture.physics.update(0);
+    fixture.physics.update_ragdolls();
+    fixture.scene.update_world();
+    return fixture.physics.recover_ragdoll(rig.skin, rig.character);
+}
+
+fn Vec3 character_forward(Rig* rig) @private {
+    return maths::transform_from_mat4(rig.character.world).rotation.rotate_vec3({ 0, 0, 1 });
+}
+
+fn Quat about(Vec3 axis, float degrees) @private {
+    return quaternion::from_axis_angle{float}(axis, degrees * (float)math::PI / 180);
+}
+
+fn void test_recover_on_the_back_reports_face_up_and_keeps_heading() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Rig rig = add_chain(&fixture);
+    Ragdoll* ragdoll = build_two_bones(&fixture, &rig);
+    assert(fall_rotated(&fixture, &rig, ragdoll, about({ 1, 0, 0 }, -90)) == FACE_UP);
+    assert(close_vec(character_forward(&rig), { 0, 0, 1 }));
+}
+
+fn void test_recover_face_down_turns_toward_the_head() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Rig rig = add_chain(&fixture);
+    Ragdoll* ragdoll = build_two_bones(&fixture, &rig);
+    Quat fall = about({ 0, 1, 0 }, 90).mul(about({ 1, 0, 0 }, 90));
+    assert(fall_rotated(&fixture, &rig, ragdoll, fall) == FACE_DOWN);
+    assert(close_vec(character_forward(&rig), { 1, 0, 0 }));
+}
+
+fn void test_recover_counts_a_turn_made_before_the_fall_once() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Rig rig = add_chain(&fixture);
+    Quat turned = about({ 0, 1, 0 }, 90);
+    rig.character.local.rotation = turned;
+    fixture.scene.update_world();
+    Ragdoll* ragdoll = build_two_bones(&fixture, &rig);
+    Quat fall = turned.mul(about({ 1, 0, 0 }, 90)).mul(turned.conjugate());
+    assert(fall_rotated(&fixture, &rig, ragdoll, fall) == FACE_DOWN);
+    assert(close_vec(character_forward(&rig), { 1, 0, 0 }));
+}

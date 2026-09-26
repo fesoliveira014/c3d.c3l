@@ -15,7 +15,7 @@ const float MIN_AXIS_LENGTH @local = 0.0001f; // a shorter hinge axis has no dir
 const float SCALE_TOLERANCE @local = 0.0001f;
 const float ANTIPARALLEL_LENGTH @local = 0.000001f;
 const float AXIS_REFERENCE_LIMIT @local = 0.9f; // a from-vector this close to X takes Y as its cross reference
-const float MIN_FACING_LENGTH @local = 0.3f; // a flattened facing shorter than this is a pitch-only fall: yaw kept
+const float MIN_HEADING_LENGTH @local = 0.3f; // a flattened heading shorter than this is too steep to set a yaw
 
 <*
  Who drives the bone bodies.
@@ -23,6 +23,14 @@ const float MIN_FACING_LENGTH @local = 0.3f; // a flattened facing shorter than 
 enum RagdollMode {
     ANIMATED,     // kinematic bones follow the joint nodes
     SIMULATED,    // dynamic bones drive the joint nodes at weight
+}
+
+<*
+ Which side of the body faces up after a fall; picks the get-up clip.
+*>
+enum RagdollFacing {
+    FACE_UP,
+    FACE_DOWN,
 }
 
 <*
@@ -207,10 +215,11 @@ fn void PhysicsWorld.set_ragdoll_mode(&self, Node* skin_node, RagdollMode mode) 
  Stand the character where the hips lie and freeze the pose for blending out.
  Calls update_world.
  @param [&in] skin_node : "Carries the ragdoll."
- @param [&inout] character : "Ancestor of the skin node and its joint nodes; yawed with the hips."
+ @param [&inout] character : "Ancestor of the skin node and its joint nodes; turned to get up."
+ @return "Face down turns the character toward the head, face up toward the feet."
  @require self.scene.has(skin_node, Ragdoll)
 *>
-fn void PhysicsWorld.recover_ragdoll(&self, Node* skin_node, Node* character) {
+fn RagdollFacing PhysicsWorld.recover_ragdoll(&self, Node* skin_node, Node* character) {
     Scene* scene = self.scene;
     Ragdoll* ragdoll = scene.get(skin_node, Ragdoll);
     Node*[] joints = scene.get(skin_node, SkinBinding).joints;
@@ -221,19 +230,26 @@ fn void PhysicsWorld.recover_ragdoll(&self, Node* skin_node, Node* character) {
         ragdoll.joint_worlds[joint] = joint_target_world(scene, ragdoll, joint, alpha) ?? animated;
     }
 
+    RagdollFacing facing = FACE_UP;
     Node* hips_node = ragdoll.bone_nodes[0];
     if (scene.has(hips_node, RigidBody)) {
         RigidBody* hips = scene.get(hips_node, RigidBody);
         maths::Transform hips_pose = interpolate_pose(hips.previous, hips.current, alpha);
-        Quat standing = maths::transform_from_mat4(skin_node.world).rotation.mul(ragdoll.hips_bind_rotation);
-        Vec3 facing = hips_pose.rotation.mul(standing.conjugate()).rotate_vec3({ 0, 0, 1 });
-        facing.y = 0;
         maths::Transform pose = maths::transform_from_mat4(character.world);
+        Quat standing = maths::transform_from_mat4(skin_node.world).rotation.mul(ragdoll.hips_bind_rotation);
+        // The fall in character axes, so a turn made before falling is not counted twice.
+        Quat fall = pose.rotation.conjugate().mul(hips_pose.rotation).mul(standing.conjugate()).mul(pose.rotation);
+        Vec3 forward = fall.rotate_vec3({ 0, 0, 1 });
+        Vec3 head = fall.rotate_vec3({ 0, 1, 0 });
+        if (forward.y < 0) facing = FACE_DOWN;
+        Vec3 heading = facing == FACE_DOWN ? head : -head;
+        heading.y = 0;
+        if (heading.length() <= MIN_HEADING_LENGTH) heading = { forward.x, 0, forward.z };
         pose.position.x = hips_pose.position.x;
         pose.position.z = hips_pose.position.z;
-        if (facing.length() > MIN_FACING_LENGTH) {
-            Quat yaw = quaternion::from_axis_angle{float}({ 0, 1, 0 }, math::atan2(facing.x, facing.z));
-            pose.rotation = yaw.mul(pose.rotation).normalize();
+        if (heading.length() > MIN_HEADING_LENGTH) {
+            Quat yaw = quaternion::from_axis_angle{float}({ 0, 1, 0 }, math::atan2(heading.x, heading.z));
+            pose.rotation = pose.rotation.mul(yaw).normalize();
         }
         write_pose(scene, character, pose);
     }
@@ -243,6 +259,7 @@ fn void PhysicsWorld.recover_ragdoll(&self, Node* skin_node, Node* character) {
         ragdoll.frozen[joint] = relative(parent_world_of(ragdoll, joints, joint), ragdoll.joint_worlds[joint]);
     }
     self.set_ragdoll_mode(skin_node, ANIMATED);
+    return facing;
 }
 
 <*
