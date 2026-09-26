@@ -170,7 +170,7 @@ fn GeometryId? AssetStore.add_geometry(&self, Geometry* geometry, String key = "
 <*
  Solve the chain so its end joint reaches the target.
  Writes local rotations only.
- @require self.joints.len >= 2
+ @require ik_chain_valid(self)
 *>
 fn void IkChain.solve(&self)
 

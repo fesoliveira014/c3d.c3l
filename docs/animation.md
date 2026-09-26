@@ -16,7 +16,7 @@ renderer.render(&scene, camera_node)!;
 transforms of the instance nodes and the morph weights of the instance meshes.
 `Scene.update_world` turns the locals into world matrices. The renderer reads
 the pose it finds. Physics and IK, when present, run between the animation
-update and the final `update_world`.
+update and the final `update_world` ([Inverse kinematics](#inverse-kinematics)).
 
 ## Animator and actions
 
@@ -173,6 +173,90 @@ enter the store, and a fault removes every clip the call inserted
 ([Models, glTF and FBX import](models.md)). Rest-pose differences between rigs
 are not corrected.
 
+## Inverse kinematics
+
+`c3d::anim::ik` bends existing joint nodes toward targets after the animator
+has written its pose. Three types cover limbs, feet and heads:
+
+- `IkChain`: three joints (root, middle, end) solved analytically so the end
+  reaches `target`. `pole` picks the side the middle joint bends toward; without
+  one, the incoming bend is kept. `weight` blends from the incoming rotations
+  (0) to the solve (1). Only the root and middle local rotations are written, so
+  bone lengths never change. A target beyond reach straightens the limb toward
+  it.
+- `FootIk`: a leg `IkChain` whose target follows the ground under the ankle.
+- `LookAt`: turns one node's `forward` axis toward a target, at most
+  `max_angle` from the incoming pose, without adding roll.
+
+`create_scene` registers the three as components so the inspector and
+`DebugDraw.ik` find them. Nothing solves them for you: the application calls
+`solve`, `place`, `release` and `align` in its own order. Joints, targets and
+poles are borrowed nodes and must outlive the component that names them.
+
+Solvers read world matrices and write locals. A chain whose joints or target
+descend from a joint another solve writes needs an `update_world` between the
+two solves. Legs, arms and the head of one humanoid are independent once the
+pelvis has moved:
+
+```c3
+anim::update(&assets, &scene, dt);
+scene.update_world();
+// physics.update(dt); physics.update_ragdolls(); scene.update_world();
+foreach (foot : feet) {
+    Ray ray = foot.ground_ray();
+    if (try hit = query_ground(ray, foot.ray_length)) {
+        foot.place(hit, floor_height);
+    } else {
+        foot.release();
+    }
+}
+ik::lower_pelvis(hips, feet[..]);
+scene.update_world();
+foreach (foot : feet) foot.leg.solve();
+arm.solve();
+scene.update_world();
+foreach (foot : feet) foot.align();
+head.solve();
+scene.update_world();
+```
+
+### Feet
+
+The application owns the ground query. `ground_ray` returns a downward ray from
+`ray_height` above the ankle; the application casts it through physics or reads
+a height field and calls `place(hit, floor_height)` on a hit or `release()` on a
+miss. `floor_height` is the world height the clip's feet were authored on,
+usually the character root's height.
+
+The target keeps the clip's ankle motion and moves it by the ground's offset
+from the floor under the ankle. On flat ground at floor height the solve
+changes nothing, and a swinging foot keeps its arc. `align` tilts the ankle by
+the rotation from world up to the ground normal, faded out over `lift_fade` as
+the ankle rises above `foot_height`. `lower_pelvis` lowers the pelvis by the
+largest downhill offset of the grounded feet so the lower foot can reach its
+target. Stance feet are not locked: on a slope a planted foot follows the
+terrain height under it as the body moves.
+
+### Limits
+
+`IkChain.limits[0]` and `limits[1]` bound the root and middle rotations
+relative to `reference`, a local rotation, usually the rest pose; `hinge_limit`
+and `cone_limit` build them.
+
+- `HINGE` keeps only the twist about `axis`, clamped to `[min_angle, max_angle]`.
+  A knee or elbow has one degree of freedom, so a pole off the hinge plane can
+  leave the end short of the target.
+  A hinge referenced to the rest pose also drops any twist the clip gives the
+  joint. Rigs whose clips twist a joint about its bone axis (Rigify `DEF-shin`)
+  set `reference` to the joint's incoming local rotation before each solve, so
+  the hinge bounds the correction from the clip pose; the `ik` example does this
+  for both knees.
+- `CONE` clamps the angle between the rotated `axis` and `axis` to `max_angle`
+  and keeps the twist.
+
+Any clamped joint may leave the end short of the target: the middle joint is
+solved against the unlimited root.
+
 ## Example
 
 ```bash
@@ -186,3 +270,11 @@ morph targets. Keys `1` to `9` cross-fade the
 left instance to that clip, `Q` toggles the left action between full and
 quarter weight, `SPACE` pauses and resumes every action; drag orbits, the wheel
 zooms, Escape quits.
+
+`ik` stands the Quaternius Mannequin on a height-field terrain: both feet follow
+the ground with knee hinges, the right hand reaches an orbiting sphere and the
+head follows the camera.
+
+```bash
+python3 scripts/build.py --example ik
+```
