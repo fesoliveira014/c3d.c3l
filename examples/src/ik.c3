@@ -42,7 +42,8 @@ const float PROP_ORBIT_RADIUS @local = 0.15f;
 const float PROP_ORBIT_SPEED @local = 1.5f; // radians per second
 const float PROP_RADIUS @local = 0.04f;
 const float KNEE_CORRECTION_LIMIT @local = 1.2f; // radians the solve may bend a knee away from the clip
-const float HEAD_MAX_ANGLE @local = 1.0f; // radians; beyond this a person turns the body instead
+const float LOOK_MAX_ANGLE @local = 1.4f; // radians over spine, neck and head; past it a person turns the feet
+const String[5] LOOK_JOINTS @local = { "DEF-spine.001", "DEF-spine.002", "DEF-spine.003", "DEF-neck", "DEF-head" };
 const float ORBIT_RADIANS_PER_PIXEL @local = 0.005f;
 const float ORBIT_PITCH_LIMIT @local = 1.5f; // avoids the poles, where the up vector degenerates
 const float ORBIT_ZOOM_STEP @local = 0.9f;
@@ -67,7 +68,7 @@ struct Orbit @local {
 struct Controls @local {
     float legs;
     float arm;
-    float head;
+    float look;
     bool  lines;
     bool  walking;
 }
@@ -243,11 +244,13 @@ fn Character? build_character(AssetStore* assets, Scene* scene) @local {
     return character;
 }
 
-fn void add_head(Scene* scene, Character* character, Node* camera_node) @local {
+fn void? add_look(Scene* scene, Character* character, Node* camera_node) @local {
+    Node*[LOOK_JOINTS.len] spine;
+    foreach (index, name : LOOK_JOINTS) spine[index] = scene.find(name)!;
     Vec3 facing_world = maths::transform_dir(character.root.world, character.facing).normalize();
     Quat head_world = maths::transform_from_mat4(character.head.world).rotation;
-    LookAt look_at = ik::look_at(character.head, camera_node, head_world.conjugate() * facing_world);
-    look_at.max_angle = HEAD_MAX_ANGLE;
+    LookAt look_at = ik::look_at(spine[..], camera_node, head_world.conjugate() * facing_world);
+    look_at.max_angle = LOOK_MAX_ANGLE;
     scene.add(character.head, look_at);
 }
 
@@ -272,7 +275,7 @@ fn void handle_keys(
     if (step != 0) {
         controls.legs = math::clamp(controls.legs + step, 0.0f, 1.0f);
         controls.arm = math::clamp(controls.arm + step, 0.0f, 1.0f);
-        controls.head = math::clamp(controls.head + step, 0.0f, 1.0f);
+        controls.look = math::clamp(controls.look + step, 0.0f, 1.0f);
     }
     if (input.key_pressed(platform::Scancode.I)) controls.lines = !controls.lines;
 }
@@ -312,6 +315,12 @@ fn float solve_ik(Scene* scene, Character* character, Controls* controls) @local
     float drop = ik::lower_pelvis(character.hips, feet[..]);
     scene.update_world();
 
+    // The arm hangs off the upper spine, so the look turns the chest before the arm reads it.
+    LookAt* look = scene.get(character.head, LookAt);
+    look.weight = controls.look;
+    look.solve();
+    scene.update_world();
+
     foreach (foot : feet) foot.leg.solve();
     IkChain* arm = scene.get(character.upper_arm, IkChain);
     arm.weight = controls.arm;
@@ -319,9 +328,6 @@ fn float solve_ik(Scene* scene, Character* character, Controls* controls) @local
     scene.update_world();
 
     foreach (foot : feet) foot.align();
-    LookAt* head = scene.get(character.head, LookAt);
-    head.weight = controls.head;
-    head.solve();
     scene.update_world();
     return drop;
 }
@@ -363,7 +369,7 @@ fn void? draw_panel(
         imgui::text("Drag orbits, wheel zooms, Escape quits");
         imgui::slider_float("Legs", &controls.legs, 0, 1);
         imgui::slider_float("Arm", &controls.arm, 0, 1);
-        imgui::slider_float("Head", &controls.head, 0, 1);
+        imgui::slider_float("Look", &controls.look, 0, 1);
         imgui::checkbox("Lines", &controls.lines);
         imgui::separator();
         ZString[2] sides = { "Left", "Right" };
@@ -422,13 +428,13 @@ fn void? run(
     };
     apply_orbit(&orbit, &window.input, camera_node, character.root.world_position() + ORBIT_TARGET_OFFSET);
     scene.update_world();
-    add_head(scene, &character, camera_node);
+    add_look(scene, &character, camera_node)!;
 
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
     debug::DebugDraw debug = debug::create_debug_draw(mem);
     defer debug::destroy_debug_draw(&debug);
-    Controls controls = { .legs = 1, .arm = 1, .head = 1, .lines = true };
+    Controls controls = { .legs = 1, .arm = 1, .look = 1, .lines = true };
     renderer.prepare_scene(scene)!;
 
     float drop;

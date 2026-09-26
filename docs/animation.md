@@ -176,7 +176,7 @@ are not corrected.
 ## Inverse kinematics
 
 `c3d::anim::ik` bends existing joint nodes toward targets after the animator
-has written its pose. Three types cover limbs, feet and heads:
+has written its pose. Three types cover limbs, feet and looking:
 
 - `IkChain`: three joints (root, middle, end) solved analytically so the end
   reaches `target`. `pole` picks the side the middle joint bends toward; without
@@ -185,8 +185,12 @@ has written its pose. Three types cover limbs, feet and heads:
   bone lengths never change. A target beyond reach straightens the limb toward
   it.
 - `FootIk`: a leg `IkChain` whose target follows the ground under the ankle.
-- `LookAt`: turns one node's `forward` axis toward a target, at most
-  `max_angle` from the incoming pose, without adding roll.
+- `LookAt`: turns the `forward` axis of the last of up to eight joints toward a
+  target, at most `max_angle` from the incoming pose, without adding roll. The
+  turn is split over the joints by `weights`; `look_at` fills shares that grow
+  toward the tip and sum to 1, so one joint takes the whole turn and a spine,
+  neck and head chain turns mostly at the head. A second internal pass corrects
+  the tip's own swing about the lower joints.
 
 `create_scene` registers the three as components so the inspector and
 `DebugDraw.ik` find them. Nothing solves them for you: the application calls
@@ -195,8 +199,8 @@ poles are borrowed nodes and must outlive the component that names them.
 
 Solvers read world matrices and write locals. A chain whose joints or target
 descend from a joint another solve writes needs an `update_world` between the
-two solves. Legs, arms and the head of one humanoid are independent once the
-pelvis has moved:
+two solves. On a humanoid the arms hang off the upper spine, so a spine look-at
+solves before them; legs and arms are then independent:
 
 ```c3
 anim::update(&assets, &scene, dt);
@@ -212,11 +216,12 @@ foreach (foot : feet) {
 }
 ik::lower_pelvis(hips, feet[..]);
 scene.update_world();
+look.solve();
+scene.update_world();
 foreach (foot : feet) foot.leg.solve();
 arm.solve();
 scene.update_world();
 foreach (foot : feet) foot.align();
-head.solve();
 scene.update_world();
 ```
 
@@ -272,8 +277,8 @@ quarter weight, `SPACE` pauses and resumes every action; drag orbits, the wheel
 zooms, Escape quits.
 
 `ik` stands the Quaternius Mannequin on a height-field terrain: both feet follow
-the ground with knee hinges, the right hand reaches an orbiting sphere and the
-head follows the camera.
+the ground with knee hinges, the spine, neck and head turn toward the camera and
+the right hand reaches an orbiting sphere.
 
 ```bash
 python3 scripts/build.py --example ik
