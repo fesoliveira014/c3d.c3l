@@ -2,6 +2,7 @@ module c3d::scene;
 
 import c3d;
 import c3d::anim;
+import c3d::anim::ik;
 import c3d::camera;
 import c3d::light;
 import c3d::ecs;
@@ -328,7 +329,7 @@ fn SceneDesc default_scene_desc() {
 }
 
 <*
- Create a scene with mesh, camera, light, model, skin, animator and batch components registered.
+ Create a scene with mesh, camera, light, model, skin, animator, batch and IK components registered.
  @require desc.max_nodes > 0
 *>
 fn Scene create_scene(Allocator allocator, SceneDesc desc) {
@@ -362,6 +363,9 @@ fn Scene create_scene(Allocator allocator, SceneDesc desc) {
     scene.world.register(SkinBinding)!!;
     scene.world.register(Animator)!!;
     scene.world.register(InstancedMesh)!!;
+    scene.world.register(IkChain)!!;
+    scene.world.register(FootIk)!!;
+    scene.world.register(LookAt)!!;
     scene.ambient_color = { 1, 1, 1 };
     scene.world.set_remove_hook(Mesh, &free_morph_weights, scene.hook_allocator);
     scene.world.set_remove_hook(ModelInstance, &free_model_instance, scene.hook_allocator);

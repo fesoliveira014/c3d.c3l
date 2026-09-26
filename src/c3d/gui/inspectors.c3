@@ -2,6 +2,7 @@ module c3d::gui;
 
 import c3d;
 import c3d::anim;
+import c3d::anim::ik;
 import c3d::camera;
 import c3d::ecs;
 import c3d::ecs::store;
@@ -28,6 +29,7 @@ struct Inspector {
 const float CAMERA_FOV_MIN_DEGREES @local = 1;
 const float CAMERA_FOV_MAX_DEGREES @local = 179;
 const float CONE_MAX_DEGREES @local = 90;
+const float IK_ANGLE_MAX_DEGREES @local = 180;
 const float CAMERA_MIN_NEAR @local = 0.0001f;
 const float MIN_POSITIVE @local = 0.0001f;
 
@@ -220,6 +222,93 @@ fn bool light_inspector(void* component) @local {
     return changed;
 }
 
+fn bool ik_chain_inspector(void* component) @local {
+    return chain_widgets((IkChain*)component);
+}
+
+fn bool foot_ik_inspector(void* component) @local {
+    FootIk* foot = (FootIk*)component;
+    bool changed = chain_widgets(&foot.leg);
+
+    imgui::separator_text("Foot");
+    changed = nonnegative_drag("Foot height", &foot.foot_height) || changed;
+    changed = positive_drag("Lift fade", &foot.lift_fade) || changed;
+    changed = nonnegative_drag("Ray height", &foot.ray_height) || changed;
+    changed = positive_drag("Ray length", &foot.ray_length) || changed;
+    imgui::text("Grounded: %s", foot.grounded ? "yes" : "no");
+    imgui::text("Ground offset: %.3f", foot.ground_offset);
+    imgui::text("Align weight: %.2f", foot.align_weight);
+    return changed;
+}
+
+fn bool look_at_inspector(void* component) @local {
+    LookAt* look_at = (LookAt*)component;
+    bool changed;
+
+    node_name_text("Node", look_at.node);
+    node_name_text("Target", look_at.target);
+    if (imgui::drag_float3("Forward", (float*)&look_at.forward) && look_at.forward.length() > 0) {
+        look_at.forward = look_at.forward.normalize();
+        changed = true;
+    }
+    changed = degrees_slider("Max angle (deg)", &look_at.max_angle, 0) || changed;
+    changed = imgui::slider_float("Weight", &look_at.weight, 0, 1) || changed;
+    return changed;
+}
+
+fn bool chain_widgets(IkChain* chain) @local {
+    bool changed;
+    ZString[ik::TWO_BONE_JOINTS] joint_labels = { "Root", "Middle", "End" };
+    foreach (index, joint : chain.joints) node_name_text(joint_labels[index], joint);
+    node_name_text("Target", chain.target);
+    node_name_text("Pole", chain.pole);
+    changed = imgui::slider_float("Weight", &chain.weight, 0, 1) || changed;
+
+    ZString[ik::TWO_BONE_JOINTS - 1] limit_labels = { "Root limit", "Middle limit" };
+    foreach (index, label : limit_labels) {
+        imgui::push_id_int((int)index);
+        defer imgui::pop_id();
+        changed = limit_widgets(label, &chain.limits[index]) || changed;
+    }
+    return changed;
+}
+
+fn bool limit_widgets(ZString label, IkLimit* limit) @local {
+    imgui::separator_text(label);
+    bool changed;
+
+    int kind = limit.kind.ordinal;
+    ZString[IkLimitKind::len] kinds = { "None", "Hinge", "Cone" };
+    if (imgui::combo_char("Kind", &kind, &kinds, IkLimitKind::len)) {
+        limit.kind = IkLimitKind::from_ordinal((usz)kind);
+        changed = true;
+    }
+    if (limit.kind == IkLimitKind.NONE) return changed;
+
+    if (imgui::drag_float3("Axis", (float*)&limit.axis) && limit.axis.length() > 0) {
+        limit.axis = limit.axis.normalize();
+        changed = true;
+    }
+    if (limit.kind == IkLimitKind.CONE) {
+        return degrees_slider("Half angle (deg)", &limit.max_angle, 0) || changed;
+    }
+    changed = degrees_slider("Min angle (deg)", &limit.min_angle, -IK_ANGLE_MAX_DEGREES) || changed;
+    changed = degrees_slider("Max angle (deg)", &limit.max_angle, -IK_ANGLE_MAX_DEGREES) || changed;
+    return changed;
+}
+
+fn bool degrees_slider(ZString label, float* radians, float minimum_degrees) @local {
+    float degrees = math::rad_to_deg(*radians);
+    if (!imgui::slider_float(label, &degrees, minimum_degrees, IK_ANGLE_MAX_DEGREES)) return false;
+    *radians = math::deg_to_rad(degrees);
+    return true;
+}
+
+fn void node_name_text(ZString label, Node* node) @local {
+    ZString name = !node ? "(none)" : node.name.len ? node.name.zstr_tcopy() : "(unnamed)";
+    imgui::text("%s: %s", label, name);
+}
+
 fn bool positive_drag(ZString label, float* value, float minimum = MIN_POSITIVE) @local {
     if (!imgui::drag_float(label, value)) return false;
     *value = math::max(*value, minimum);
@@ -239,4 +328,7 @@ fn void expose_builtin_components() @private {
     expose(ModelInstance);
     expose(SkinBinding);
     expose(Animator);
+    expose(IkChain, &ik_chain_inspector);
+    expose(FootIk, &foot_ik_inspector);
+    expose(LookAt, &look_at_inspector);
 }

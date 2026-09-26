@@ -1,6 +1,7 @@
 module c3d::debug;
 
 import c3d;
+import c3d::anim::ik;
 import c3d::asset;
 import c3d::light;
 import c3d::maths;
@@ -27,6 +28,7 @@ const uint COLOR_YELLOW = 0xFF00FFFF;
 const float LIGHT_ARROW_LENGTH @local = 2;
 const float LIGHT_MARKER_RADIUS @local = 0.25f;
 const float JOINT_AXES_SIZE @local = 0.05f;
+const float IK_TARGET_RADIUS @local = 0.05f; // metres; visible at character scale without hiding the hand
 const float BASIS_PARALLEL_THRESHOLD @local = 0.99f; // a normal this close to Y takes X as its reference
 
 <*
@@ -192,6 +194,25 @@ fn void DebugDraw.joints(&self, Scene* scene, uint rgba) {
 }
 
 <*
+ Append IK chains, foot hits and look-at lines of every component.
+ @param [&in] scene : "Pose as left by the last update_world."
+*>
+fn void DebugDraw.ik(&self, Scene* scene, uint rgba) {
+    scene.world.@each(IkChain; entity, chain) {
+        chain_lines(self, chain, rgba);
+    };
+    scene.world.@each(FootIk; entity, foot) {
+        chain_lines(self, &foot.leg, rgba);
+        if (foot.grounded) {
+            self.line(foot.ground.point, foot.ground.point + foot.ground.normal * (IK_TARGET_RADIUS * 2), rgba);
+        }
+    };
+    scene.world.@each(LookAt; entity, look_at) {
+        self.line(look_at.node.world_position(), look_at.target.world_position(), rgba);
+    };
+}
+
+<*
  Append the axes of one node's world matrix.
  @param [&in] node : "Pose as left by the last update_world."
 *>
@@ -234,6 +255,14 @@ fn void box_edges(DebugDraw* draw, Vec3[8] corners, uint rgba) @local {
         if ((index & 2) == 0) draw.line(corners[index], corners[index | 2], rgba);
         if ((index & 4) == 0) draw.line(corners[index], corners[index | 4], rgba);
     }
+}
+
+fn void chain_lines(DebugDraw* draw, IkChain* chain, uint rgba) @local {
+    Vec3 middle = chain.joints[1].world_position();
+    draw.line(chain.joints[0].world_position(), middle, rgba);
+    draw.line(middle, chain.joints[2].world_position(), rgba);
+    draw.circle(chain.target.world_position(), { 0, 1, 0 }, IK_TARGET_RADIUS, rgba);
+    if (chain.pole) draw.line(middle, chain.pole.world_position(), rgba);
 }
 
 fn uint channel_byte(float value) @local {
