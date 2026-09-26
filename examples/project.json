@@ -241,6 +241,12 @@
         "src/animation.c3"
       ]
     },
+    "ik": {
+      "type": "executable",
+      "sources": [
+        "src/ik.c3"
+      ]
+    },
     "mixamo": {
       "type": "executable",
       "sources": [
