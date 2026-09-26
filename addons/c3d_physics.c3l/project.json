@@ -42,6 +42,11 @@
       "type": "executable",
       "sources": [ "examples/vehicle.c3" ],
       "features": [ "C3D_GUI", "C3D_STB_IMAGE" ]
+    },
+    "ragdoll": {
+      "type": "executable",
+      "sources": [ "examples/ragdoll.c3" ],
+      "features": [ "C3D_GUI", "C3D_STB_IMAGE" ]
     }
   }
 }

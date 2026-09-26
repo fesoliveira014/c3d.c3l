@@ -70,3 +70,15 @@ fn uint Track.stride(&self) {
             return self.interpolation == Interpolation.CUBIC_SPLINE ? per_key / 3 : per_key;
     }
 }
+
+<*
+ Skeleton joint index of the name.
+ @return? NOT_FOUND
+ @pure
+*>
+fn uint? Skeleton.find_joint(&self, String name) {
+    foreach (index, joint_name : self.joint_names) {
+        if (joint_name == name) return (uint)index;
+    }
+    return NOT_FOUND~;
+}

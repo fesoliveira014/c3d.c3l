@@ -44,7 +44,7 @@ struct Force {
     Vec3 local_point; // body space
 }
 
-struct BlockCursor @local {
+struct BlockCursor @private {
     char* base;
     usz   offset;
 }
@@ -108,9 +108,11 @@ fn void? register_physics(Scene* scene) {
     scene.register(Force)!;
     scene.register(PhysicsJoint)!;
     scene.set_remove_hook(PhysicsBody, &free_physics_body, scene.hook_allocator);
+    scene.register(Ragdoll)!;
+    scene.set_remove_hook(Ragdoll, &free_ragdoll, scene.hook_allocator);
 }
 
-fn PhysicsBody copy_physics_body(Allocator allocator, BodyDesc body, ColliderDesc[] colliders) @local {
+fn PhysicsBody copy_physics_body(Allocator allocator, BodyDesc body, ColliderDesc[] colliders) @private {
     BlockCursor measure;
     carve_physics_body(&measure, body, colliders);
     BlockCursor fill = { .base = alloc::malloc(allocator, (sz)measure.offset) };
@@ -145,7 +147,7 @@ fn PhysicsBody carve_physics_body(BlockCursor* cursor, BodyDesc body, ColliderDe
     return { .body = body_copy, .colliders = copies, .status = PENDING };
 }
 
-macro carve(BlockCursor* cursor, $Type, usz count) @local {
+macro carve(BlockCursor* cursor, $Type, usz count) @private {
     cursor.offset = (usz)mem::aligned_offset((sz)cursor.offset, $Type::alignment);
     $Type[] slice;
     if (cursor.base) slice = (($Type*)(cursor.base + cursor.offset))[:count];
