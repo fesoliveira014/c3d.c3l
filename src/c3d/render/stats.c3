@@ -34,11 +34,6 @@ enum Pass : int {
 *>
 const usz PASS_COUNT = Pass::len;
 
-<*
- Timestamps written per timed pass.
-*>
-const uint TIMESTAMPS_PER_PASS = 2;
-
 <* Availability of the latest completed GPU summary. *>
 enum GpuTimingState {
     UNAVAILABLE,
@@ -87,16 +82,6 @@ struct Stats {
     GpuTimingState gpu_timing_state @if($feat(C3D_PROFILE_GPU));
     bool[PASS_COUNT] gpu_pass_valid @if($feat(C3D_PROFILE_GPU));
     uint gpu_scopes_dropped @if($feat(C3D_PROFILE_GPU));
-}
-
-<*
- Fixed-layout timestamp offset kept for compatibility; capture uses independent query pairs.
- @require pass_ordinal < PASS_COUNT
- @pure
-*>
-fn uint pass_timestamp_slot(ulong frame_index, usz pass_ordinal) {
-    return (uint)(frame_index % FRAMES_IN_FLIGHT) * (uint)PASS_COUNT * TIMESTAMPS_PER_PASS
-      + (uint)pass_ordinal * TIMESTAMPS_PER_PASS;
 }
 
 fn void reset_frame_stats(Stats* stats) @private {

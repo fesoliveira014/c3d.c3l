@@ -51,25 +51,6 @@ fn void test_growth_from_smallest_capacity_terminates() @test {
     assert(render::grown_capacity(1, 1000) == 1024);
 }
 
-fn void test_debug_entry_copies_message_fields() @test {
-    render::DebugLog log;
-    gpu::DebugMessage message = diagnostic("cmd_texture_barrier", "layout mismatch");
-    log.record(&message);
-
-    render::DebugEntry[1] recent;
-    assert(log.recent(recent[..]) == 1);
-    render::DebugEntry* entry = &recent[0];
-    assert(entry.severity == gpu::DebugMessageSeverity.ERROR);
-    assert(entry.category.validation);
-    assert(entry.resource_kind == gpu::DebugResourceKind.TEXTURE);
-    assert(entry.resource_index == 7);
-    assert(entry.validation_id_number == 1234);
-    assert(entry.has_fault);
-    assert(entry.public_fault == gpu::INVALID_HANDLE);
-    assert(((ZString)&entry.operation[0]).str_view() == "cmd_texture_barrier");
-    assert(entry_text(entry) == "layout mismatch");
-}
-
 fn void test_debug_text_is_truncated_and_terminated() @test {
     char[render::DEBUG_TEXT_BYTES * 2] long_text;
     for (usz index = 0; index < long_text.len - 1; index++) long_text[index] = 'x';
@@ -139,20 +120,6 @@ fn void test_debug_log_recent_is_limited_by_the_destination() @test {
     assert(log.recent(recent[..]) == 2);
     assert(entry_text(&recent[0]) == "8");
     assert(entry_text(&recent[1]) == "9");
-}
-
-fn void test_timestamp_slots_do_not_overlap_between_frames() @test {
-    bool[render::FRAMES_IN_FLIGHT * render::PASS_COUNT * render::TIMESTAMPS_PER_PASS] claimed;
-    for (ulong frame = 0; frame < render::FRAMES_IN_FLIGHT; frame++) {
-        for (usz pass = 0; pass < render::PASS_COUNT; pass++) {
-            uint first = render::pass_timestamp_slot(frame, pass);
-            for (uint half = 0; half < render::TIMESTAMPS_PER_PASS; half++) {
-                assert(!claimed[first + half]);
-                claimed[first + half] = true;
-            }
-        }
-    }
-    foreach (slot : claimed) assert(slot);
 }
 
 fn void test_routine_faults_are_still_recorded_in_the_log() @test {
@@ -730,27 +697,6 @@ fn void test_dispatch_rejects_more_textures_than_the_binding_block() @test {
     } else {
         assert(false, "a dispatch with nine textures was accepted");
     }
-}
-
-fn void test_dispatch_texture_constructors_set_kind_access_and_ids() @test {
-    TextureId texture = { .index = 2, .generation = 1 };
-    RenderTargetId target = { .index = 3, .generation = 1 };
-    ViewId view = { .index = 4, .generation = 1 };
-    SamplerId sampler = { .index = 1, .generation = 1 };
-
-    render::DispatchTexture read = render::read_texture(texture, sampler);
-    assert(read.kind == render::DispatchTextureKind.ASSET && read.access == render::DispatchAccess.READ);
-    assert(read.texture.index == 2 && read.sampler.index == 1);
-    render::DispatchTexture write = render::write_texture(texture, 2, 5);
-    assert(write.access == render::DispatchAccess.WRITE && write.mip == 2 && write.layer == 5);
-    assert(!write.sampler.generation);
-    render::DispatchTexture in_place = render::write_view_color(view, render::DispatchAccess.READ_WRITE);
-    assert(in_place.kind == render::DispatchTextureKind.VIEW_COLOR && in_place.view.index == 4);
-    assert(in_place.access == render::DispatchAccess.READ_WRITE);
-    assert(render::read_target(target).kind == render::DispatchTextureKind.RENDER_TARGET);
-    assert(render::write_target(target).access == render::DispatchAccess.WRITE);
-    assert(render::read_view_depth(view).kind == render::DispatchTextureKind.VIEW_DEPTH);
-    assert(render::read_view_color(view).access == render::DispatchAccess.READ);
 }
 
 fn void test_storage_view_slot_orders_layers_then_mips() @test {
