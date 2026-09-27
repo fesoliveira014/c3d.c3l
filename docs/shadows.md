@@ -147,7 +147,8 @@ the shadow grid while the light, lens and coverage settings remain fixed.
 Changing those settings can change the projection.
 
 Each receiver selects one cascade by camera-space depth and uses a 3x3 comparison
-filter. A receiver exactly at a split uses the nearer cascade. Different cascade
+filter. A receiver exactly at a split selects the nearer cascade; with a band its
+weight there is one, so it shows the next cascade's visibility. Different cascade
 resolutions change the softness at a boundary, so each cascade except the last ends
 in a blend band: over the final `cascade_blend` fraction of its depth span a
 receiver samples both that cascade and the next and interpolates their visibility

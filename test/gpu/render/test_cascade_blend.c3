@@ -218,7 +218,6 @@ fn void test_cascade_blend_smooths_the_split() @test {
         float depth = depths[row];
         float next_depth = depths[row - 1];
         if (depth < band_start - LINE_LEAD || next_depth > split + LINE_TRAIL) continue;
-        io::eprintfn("depth %7.3f  direct %.5f  blended %.5f", depth, direct[row], blended[row]);
         // Past the band start cascade 1's fit is wider at 0.1, so only earlier rows match the direct image.
         if (depth < band_start) assert(direct[row] == blended[row]);
         if (depth > band_start && depth < split && direct[row] != blended[row]) band_differs = true;
