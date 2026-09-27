@@ -11,6 +11,14 @@ const uint     WALKABLE_COLOR @local = 0xFFFFC040;
 const uint     PORTAL_COLOR @local = 0xFFFFFFFF;
 const uint     LINK_COLOR @local = 0xFFFF40C0;
 const uint     UNLINKED_COLOR @local = 0xFF808080; // an off-mesh connection whose start found no polygon
+const uint     AGENT_COLOR @local = 0xFF40E040;
+const uint     OFF_MESH_AGENT_COLOR @local = 0xFFFF40C0;
+const uint     INVALID_AGENT_COLOR @local = 0xFF4040FF;
+const uint     VELOCITY_COLOR @local = 0xFFFFFF40;
+const uint     CORRIDOR_COLOR @local = 0xFF40A0FF;
+const uint     CORNER_COLOR @local = 0xFF20E0FF;
+const uint     BOUNDARY_COLOR @local = 0xFF4040FF;
+const uint     NEIGHBOUR_COLOR @local = 0xFFC0C0C0;
 const float    MESH_LIFT @local = 0.05f; // metres; outlines draw above the floor they lie on
 const uint[8]  AREA_PALETTE @local = {
     0xFF40FF40,
@@ -34,6 +42,14 @@ struct NavMeshDebugOptions {
     bool polys;     // polygon outlines by area
     bool links;     // linked portal edges and off-mesh connections
     bool bounds;    // tile bounds
+}
+
+<* What Crowd.debug_draw appends. *>
+struct CrowdDebugOptions {
+    bool agents;        // a circle at the radius, velocity as a line
+    bool corridors;     // corridor polygon outlines and the corners ahead
+    bool boundaries;    // local boundary segments
+    bool neighbours;    // lines to neighbours
 }
 
 <*
@@ -82,6 +98,41 @@ fn void NavBuilder.debug_draw(&self, debug::DebugDraw* sink, NavDebugOptions opt
                 sink.aabb(tile, record.dirty ? debug::COLOR_RED : TILE_COLOR);
             }
             if (options.polys && record.mesh.len) draw_tile_polys(sink, tile_mesh_view(record.mesh));
+        }
+    }
+}
+
+<*
+ Append agents, corridors, boundaries and neighbour links of every active agent to the sink.
+ @param [&inout] sink : "Cleared by the application."
+*>
+fn void Crowd.debug_draw(&self, debug::DebugDraw* sink, CrowdDebugOptions options) {
+    Vec3 up = { 0, 1, 0 };
+    Vec3 lift = { 0, MESH_LIFT * 2, 0 };
+    foreach (&agent : self.agents) {
+        if (!agent.active) continue;
+        Vec3 position = agent.position + lift;
+        if (options.agents) {
+            sink.circle(position, up, agent.params.radius, agent_color(agent.state));
+            sink.line(position, position + agent.velocity, VELOCITY_COLOR);
+        }
+        if (options.corridors) {
+            foreach (ref : agent.corridor.polys()) draw_poly_outline(sink, self.query.mesh, ref, CORRIDOR_COLOR);
+            Vec3 previous = position;
+            foreach (corner : agent.corners[:agent.corner_count]) {
+                sink.line(previous, corner.position + lift, CORNER_COLOR);
+                previous = corner.position + lift;
+            }
+        }
+        if (options.boundaries) {
+            foreach (segment : agent.boundary.segments[:agent.boundary.segment_count]) {
+                sink.line(segment.start + lift, segment.end + lift, BOUNDARY_COLOR);
+            }
+        }
+        if (options.neighbours) {
+            foreach (neighbour : agent.neighbours[:agent.neighbour_count]) {
+                sink.line(position, self.agents[neighbour.index].position + lift, NEIGHBOUR_COLOR);
+            }
         }
     }
 }
@@ -177,4 +228,30 @@ fn void draw_off_mesh_connection(debug::DebugDraw* sink, MeshTile* tile, Poly* p
     sink.line(start, end, color);
     sink.circle(start, up, connection.radius, color);
     sink.circle(end, up, connection.radius, color);
+}
+
+fn uint agent_color(AgentState state) @local {
+    switch (state) {
+        case INVALID:
+            return INVALID_AGENT_COLOR;
+        case WALKING:
+            return AGENT_COLOR;
+        case OFF_MESH:
+            return OFF_MESH_AGENT_COLOR;
+    }
+}
+
+// A polygon of a reinstalled tile is skipped until the corridor is replanned.
+fn void draw_poly_outline(
+    debug::DebugDraw* sink,
+    NavMesh* mesh,
+    PolyRef ref,
+    uint rgba,
+) @local {
+    TileAndPoly? found = mesh.tile_and_poly(ref);
+    if (catch found) return;
+    Vec3 lift = { 0, MESH_LIFT * 2, 0 };
+    Vec3[MAX_VERTS_PER_POLY] verts = polygon_vertices(found.tile, found.poly);
+    usz count = found.poly.vert_count;
+    for (usz edge = 0; edge < count; edge++) sink.line(verts[edge] + lift, verts[(edge + 1) % count] + lift, rgba);
 }

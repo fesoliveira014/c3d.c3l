@@ -45,6 +45,7 @@ ADDON_EXAMPLES = {
     "vehicle": PHYSICS,
     "ragdoll": PHYSICS,
     "navmesh": NAV,
+    "crowd": NAV,
     "character": CHARACTER,
 }
 PROFILE_TEST_TARGETS = (

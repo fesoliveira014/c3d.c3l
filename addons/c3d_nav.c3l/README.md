@@ -1,6 +1,7 @@
 # c3d_nav
 
-Navigation meshes for c3d: module `c3d::nav`, an add-on package that depends on core `c3d` only.
+Navigation meshes and crowds for c3d: module `c3d::nav`, an add-on package that depends on core
+`c3d` only.
 Applications select it explicitly; core never imports it.
 
 ## Port notice
@@ -46,13 +47,27 @@ From Detour:
   marking (`DetourTileCacheBuilder.cpp`), and the cache of layers with obstacles, its request and
   rebuild queues and the budgeted update (`DetourTileCache.cpp`). Layers are stored uncompressed.
 
+From DetourCrowd:
+
+- the path corridor and its three merges (`DetourPathCorridor.cpp`), the local boundary
+  (`DetourLocalBoundary.cpp`), velocity sampling on a grid and in adaptive rings against circles
+  and wall segments (`DetourObstacleAvoidance.cpp`), the proximity grid (`DetourProximityGrid.cpp`),
+  the round-robin path queue (`DetourPathQueue.cpp`) and the crowd update with its validity,
+  request, topology, neighbour, corner, off-mesh, steering, avoidance, integration, collision and
+  traversal phases (`DetourCrowd.cpp`). An agent added to a freed slot drops that slot's off-mesh
+  traversal, where upstream carries it over; the adaptive pattern of an even division count stores
+  its last sample in the slot it counts, where upstream writes one slot past it; the debug info names
+  an agent by its crowd slot, where upstream compares its place in the active list; a queued path
+  cut short by the slot's capacity reports `partial`.
+
 Not ported: `rcContext` logging and timers (failures are faults), the unsigned-short and flat-list
 rasterization overloads, `rcCalcBounds` (merge `Aabb` values instead), watershed and layer regions
 (`rcBuildRegions`, `rcBuildLayerRegions`), the distance field (`rcBuildDistanceField`), the detail
 mesh (`RecastMeshDetail.cpp`), `rcMergePolyMeshes` and `rcCopyPolyMesh`; from Detour, the 32-bit ref
 split, single-tile `dtNavMesh::init`, tile state save and restore (`storeTileState`,
 `restoreTileState`), endian swapping, the batched `dtPolyQuery` overload of `queryPolygons`, the
-tile cache's compressor and allocator interfaces, layer save and load, and the crowd.
+tile cache's compressor and allocator interfaces, and layer save and load; from DetourCrowd, the
+parallel arrays of `dtObstacleAvoidanceDebugData`, which an `AvoidanceSample` slice replaces.
 
 ## Building a navmesh
 
@@ -117,6 +132,34 @@ closed door:
 c3c build navmesh --path addons/c3d_nav.c3l && addons/c3d_nav.c3l/build/navmesh --cache
 ```
 
+## Crowds
+
+A `Crowd` from `create_crowd(allocator, desc, &mesh, scene)` steers up to `desc.max_agents` agents
+over the mesh; it allocates every array at creation and `Crowd.update` allocates nothing. Each update
+checks corridors, answers move requests with a short sliced search and then the path queue,
+shortens corridors, gathers neighbours and walls, steers toward the next corners, samples a velocity
+that avoids both, integrates, pushes overlapping agents apart and moves every agent along the
+surface. Agents pick one of the crowd's 16 query filters and 8 avoidance configurations by index; a
+target further than `CROWD_MAX_PATH` polygons is reached partially.
+
+Agents live on nodes: `Scene.add_nav_agent` authors a `NavAgent`, `set_nav_target`,
+`set_nav_velocity` and `clear_nav_target` request motion, and `crowd_update` adds and frees crowd
+slots to match the components, steps the crowd and writes each node's position in parent space.
+One crowd serves a scene: it installs the remove hook of `CrowdAgentRuntime`, so removing an agent's
+node frees its slot at the next `crowd_update`. A `NavAgent` marked `driven` keeps its node's
+position: the crowd reads it every update and steers through `CrowdAgent.velocity`, which the
+application applies to the node itself.
+
+The `crowd` example builds the navmesh level through cached layers and spawns 40 agents on random
+points, each drawing a new random goal every few seconds. A click sends every agent to the point,
+or selects the agent clicked; `O` closes the door between the two walls, a tile cache obstacle, and
+the agents reroute around the walls; `C` draws the corridors, and the panel shows the selected
+agent's state, corners and avoidance samples:
+
+```bash
+python3 scripts/build.py --example crowd
+```
+
 ## Tests
 
 `python3 scripts/build.py --test` runs the `nav_test` target, or directly:
@@ -125,4 +168,5 @@ c3c build navmesh --path addons/c3d_nav.c3l && addons/c3d_nav.c3l/build/navmesh 
 c3c test nav_test --path addons/c3d_nav.c3l
 ```
 
-The upstream Catch2 sections for rasterization and filtering are ported as tests.
+The upstream Catch2 sections for rasterization, filtering and `dtMergeCorridorStartMoved` are ported
+as tests.
