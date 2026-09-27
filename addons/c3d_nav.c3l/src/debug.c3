@@ -1,0 +1,111 @@
+module c3d::nav;
+
+import std::math;
+import c3d;
+import c3d::debug;
+import c3d::maths;
+
+const uint     TILE_COLOR @local = 0xFF808080;
+const uint     UNWALKABLE_SPAN_COLOR @local = 0xFF505050;
+const uint     WALKABLE_COLOR @local = 0xFFFFC040;
+const uint[8]  AREA_PALETTE @local = {
+    0xFF40FF40,
+    0xFF00A5FF,
+    0xFF3080D0,
+    0xFFFF40FF,
+    0xFF40FFFF,
+    0xFF4040FF,
+    0xFFFFFF40,
+    0xFFC0C0C0,
+};
+
+<* What NavBuilder.debug_draw appends. *>
+struct NavDebugOptions {
+    bool tiles;      // tile bounds; dirty tiles in red
+    bool polys;      // polygon outlines, coloured by area
+}
+
+<*
+ Append tile bounds and polygon outlines to the sink.
+ @param [&inout] sink : "Cleared by the application."
+*>
+fn void NavBuilder.debug_draw(&self, debug::DebugDraw* sink, NavDebugOptions options) {
+    float border = self.tile_config.border_size * self.config.cell_size;
+    for (uint tile_z = 0; tile_z < self.tiles_z; tile_z++) {
+        for (uint tile_x = 0; tile_x < self.tiles_x; tile_x++) {
+            TileRecord* record = &self.tiles[tile_x + tile_z * self.tiles_x];
+            if (options.tiles) {
+                Aabb tile = self.tile_bounds(tile_x, tile_z);
+                tile.min.x += border;
+                tile.min.z += border;
+                tile.max.x -= border;
+                tile.max.z -= border;
+                sink.aabb(tile, record.dirty ? debug::COLOR_RED : TILE_COLOR);
+            }
+            if (options.polys && record.mesh.len) draw_tile_polys(sink, tile_mesh_view(record.mesh));
+        }
+    }
+}
+
+<*
+ Append the top face of every span; walkable spans in the colour, the rest grey.
+ @param [&in] heightfield : "A slot's, between rasterize_next and commit."
+ @param [&inout] sink : "Cleared by the application."
+*>
+fn void debug_draw_heightfield(Heightfield* heightfield, debug::DebugDraw* sink, uint rgba) {
+    Vec3 origin = heightfield.bounds.min;
+    float cell = heightfield.cell_size;
+    for (uint z = 0; z < heightfield.height; z++) {
+        for (uint x = 0; x < heightfield.width; x++) {
+            for (uint index = heightfield.span_at(x, z); index != NULL_SPAN; index = heightfield.span(index).next) {
+                SpanExtent extent = heightfield.span(index).extent;
+                uint color = extent.area != NULL_AREA ? rgba : UNWALKABLE_SPAN_COLOR;
+                Vec3 corner = {
+                    origin.x + (float)x * cell,
+                    origin.y + (float)extent.max * heightfield.cell_height,
+                    origin.z + (float)z * cell,
+                };
+                Vec3 across_x = corner + { cell, 0, 0 };
+                Vec3 across_z = corner + { 0, 0, cell };
+                Vec3 opposite = corner + { cell, 0, cell };
+                sink.line(corner, across_x, color);
+                sink.line(across_x, opposite, color);
+                sink.line(opposite, across_z, color);
+                sink.line(across_z, corner, color);
+            }
+        }
+    }
+}
+
+// Lifted one cell height so the outlines draw above the floor they lie on.
+fn void draw_tile_polys(debug::DebugDraw* sink, TileMeshView view) @local {
+    TileMeshHeader* header = view.header;
+    uint stride = header.verts_per_poly;
+    Vec3 scale = { header.cell_size, header.cell_height, header.cell_size };
+    Vec3 origin = header.bounds.min + { 0, header.cell_height, 0 };
+    for (uint poly = 0; poly < header.poly_count; poly++) {
+        ushort[] indices = view.polys[(usz)poly * stride * 2:stride];
+        int count = count_poly_verts(indices);
+        uint color = area_color(view.areas[poly]);
+        for (int slot = 0; slot < count; slot++) {
+            Vec3 start = mesh_vertex_position(view, indices[slot], origin, scale);
+            Vec3 end = mesh_vertex_position(view, indices[(slot + 1) % count], origin, scale);
+            sink.line(start, end, color);
+        }
+    }
+}
+
+fn Vec3 mesh_vertex_position(
+    TileMeshView view,
+    ushort vertex,
+    Vec3 origin,
+    Vec3 scale,
+) @local {
+    ushort* voxel = &view.verts[vertex * 3];
+    return origin + (Vec3){ (float)voxel[0], (float)voxel[1], (float)voxel[2] } * scale;
+}
+
+fn uint area_color(char area) @local {
+    if (area == WALKABLE_AREA) return WALKABLE_COLOR;
+    return AREA_PALETTE[area % AREA_PALETTE.len];
+}

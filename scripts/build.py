@@ -44,6 +44,7 @@ ADDON_EXAMPLES = {
     "physics_components": PHYSICS,
     "vehicle": PHYSICS,
     "ragdoll": PHYSICS,
+    "navmesh": NAV,
     "character": CHARACTER,
 }
 PROFILE_TEST_TARGETS = (
@@ -249,6 +250,7 @@ def step_build(options: Options) -> None:
         run(command, ROOT, options.verbose)
     copy_windows_runtimes(EXAMPLES / "build")
     copy_windows_runtimes(PHYSICS / "build")
+    copy_windows_runtimes(NAV / "build")
     copy_windows_runtimes(CHARACTER / "build")
     if not options.target or options.target == "profile_gpu":
         copy_windows_runtimes(ROOT / "build" / "profile_gpu")
