@@ -189,7 +189,6 @@ fn Vec3 off_axis(Vec3 vector, Vec3 axis) @local {
     return vector - axis * vector.dot(axis);
 }
 
-// Signed rotation about the unit axis, wrapped to [-pi, pi].
 fn float hinge_angle(Quat rotation, Vec3 axis) @local {
     Vec3 imaginary = { rotation.v.x, rotation.v.y, rotation.v.z };
     float angle = 2 * math::atan2(imaginary.dot(axis), rotation.v.w);
