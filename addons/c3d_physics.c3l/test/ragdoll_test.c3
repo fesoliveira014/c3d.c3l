@@ -18,6 +18,7 @@ const float BONE_RADIUS @private = 0.1f;
 const uint  DRIVE_UPDATES @private = 10;
 const float DRIVE_SPEED @private = 1; // meters per second along X
 const float VELOCITY_TOLERANCE @private = 0.1f;
+const float ATTACHMENT_TOLERANCE @private = 0.02f; // meters; box3d's soft joint lets the anchor drift slightly
 
 struct Fixture @private {
     AssetStore   assets;
@@ -94,6 +95,13 @@ fn Rig add_chain(Fixture* fixture) @private {
     return add_rig(fixture, positions[..], parents[..]);
 }
 
+// A branch off the spine: hips, spine, arm and a hand joint without a bone.
+fn Rig add_arm_rig(Fixture* fixture) @private {
+    Vec3[4] positions = { { 0, 0, 0 }, { 0, 1, 0 }, { 1, 1, 0 }, { 2, 1, 0 } };
+    int[4] parents = { -1, 0, 1, 2 };
+    return add_rig(fixture, positions[..], parents[..]);
+}
+
 fn RagdollBone bone(uint joint, JointKind kind = SPHERICAL, float length = 0) @private {
     RagdollBone result = physics::default_ragdoll_bone(joint);
     result.radius = BONE_RADIUS;
@@ -112,6 +120,11 @@ fn Ragdoll* build(Fixture* fixture, Rig* rig, RagdollBone[] bones) @private {
 
 fn Ragdoll* build_two_bones(Fixture* fixture, Rig* rig) @private {
     RagdollBone[2] bones = { bone(0), bone(1, length: 1) };
+    return build(fixture, rig, bones[..]);
+}
+
+fn Ragdoll* build_arm(Fixture* fixture, Rig* rig) @private {
+    RagdollBone[3] bones = { bone(0), bone(1), bone(2) };
     return build(fixture, rig, bones[..]);
 }
 
@@ -305,6 +318,95 @@ fn void test_set_ragdoll_mode_keeps_bone_velocity() @test {
     assert(math::abs(speed - DRIVE_SPEED) <= VELOCITY_TOLERANCE);
 }
 
+// Only the arm simulates and blends; its body is moved one meter along z.
+fn void go_limp(Fixture* fixture, Rig* rig, Ragdoll* ragdoll) @private {
+    fixture.physics.update(0);
+    fixture.physics.set_bone_mode(rig.skin, 2, SIMULATED);
+    ragdoll.weight = 1;
+    ragdoll.bone_weights[0] = 0;
+    ragdoll.bone_weights[1] = 0;
+    Node* arm = ragdoll.bone_nodes[2];
+    RigidBody* body = fixture.scene.get(arm, RigidBody);
+    fixture.physics.teleport(arm, body.current.position + { 0, 0, 1 }, body.current.rotation);
+    fixture.physics.update(0);
+    fixture.physics.update_ragdolls();
+    fixture.scene.update_world();
+}
+
+fn void test_limp_arm_blends_while_the_spine_keeps_its_pose() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Rig rig = add_arm_rig(&fixture);
+    Ragdoll* ragdoll = build_arm(&fixture, &rig);
+    go_limp(&fixture, &rig, ragdoll);
+
+    assert(close_vec(world_position(rig.joints[0]), { 0, 0, 0 }));
+    assert(close_vec(world_position(rig.joints[1]), { 0, 1, 0 }));
+    assert(close_vec(world_position(rig.joints[2]), { 1, 1, 1 }));
+    assert(close_vec(world_position(rig.joints[3]), { 2, 1, 1 }));
+}
+
+fn void test_dynamic_bone_stays_attached_to_its_kinematic_parent() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Rig rig = add_chain(&fixture);
+    Ragdoll* ragdoll = build_two_bones(&fixture, &rig);
+    fixture.physics.update(0);
+    fixture.physics.set_bone_mode(rig.skin, 1, SIMULATED);
+    for (uint index = 0; index < 60; index++) fixture.physics.update(physics::DEFAULT_FIXED_DT);
+
+    assert(fixture.scene.get(ragdoll.bone_nodes[0], RigidBody).kind == KINEMATIC);
+    RigidBody* child = fixture.scene.get(ragdoll.bone_nodes[1], RigidBody);
+    Vec3 anchor = maths::translation(child.current.to_mat4().mul(ragdoll.joint_in_bone[1].to_mat4()));
+    assert((anchor - world_position(rig.joints[1])).length() <= ATTACHMENT_TOLERANCE);
+}
+
+fn void test_set_bone_mode_keeps_velocity() @test {
+    Fixture fixture;
+    setup(&fixture, weightless_desc());
+    defer teardown(&fixture);
+
+    Rig rig = add_chain(&fixture);
+    Ragdoll* ragdoll = build_two_bones(&fixture, &rig);
+    fixture.physics.update(0);
+    for (uint index = 0; index < DRIVE_UPDATES; index++) {
+        rig.joints[0].local.position.x += DRIVE_SPEED * physics::DEFAULT_FIXED_DT;
+        fixture.scene.update_world();
+        fixture.physics.update(physics::DEFAULT_FIXED_DT);
+    }
+
+    fixture.physics.set_bone_mode(rig.skin, 1, SIMULATED);
+    fixture.physics.set_bone_mode(rig.skin, 1, SIMULATED);
+    assert(fixture.scene.get(ragdoll.bone_nodes[0], RigidBody).kind == KINEMATIC);
+    assert(fixture.scene.get(ragdoll.bone_nodes[1], RigidBody).kind == DYNAMIC);
+    float speed = fixture.physics.body(ragdoll.bone_nodes[1])!!.linear_velocity().x;
+    assert(math::abs(speed - DRIVE_SPEED) <= VELOCITY_TOLERANCE);
+}
+
+fn void test_recover_bones_freezes_the_limp_arm_and_leaves_the_character() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Rig rig = add_arm_rig(&fixture);
+    Ragdoll* ragdoll = build_arm(&fixture, &rig);
+    go_limp(&fixture, &rig, ragdoll);
+    Vec3[4] recorded;
+    foreach (index, joint : rig.joints) recorded[index] = world_position(joint);
+    Vec3 character = world_position(rig.character);
+
+    fixture.physics.recover_bones(rig.skin);
+    foreach (mode : ragdoll.bone_modes) assert(mode == ANIMATED);
+    assert(close_vec(world_position(rig.character), character));
+    fixture.physics.update_ragdolls();
+    fixture.scene.update_world();
+    foreach (index, joint : rig.joints) assert(close_vec(world_position(joint), recorded[index]));
+}
+
 fn void fall_and_recover(Fixture* fixture, Rig* rig, Ragdoll* ragdoll, Vec3[] recorded) @private {
     fixture.physics.update(0);
     fixture.physics.set_ragdoll_mode(rig.skin, SIMULATED);
@@ -333,7 +435,7 @@ fn void test_recover_moves_the_character_and_keeps_joint_worlds() @test {
     Vec3 hips = fixture.scene.get(ragdoll.bone_nodes[0], RigidBody).current.position;
     Vec3 character = world_position(rig.character);
     assert(math::abs(character.x - hips.x) <= TOLERANCE && math::abs(character.z - hips.z) <= TOLERANCE);
-    assert(ragdoll.mode == ANIMATED);
+    foreach (mode : ragdoll.bone_modes) assert(mode == ANIMATED);
     fixture.physics.update_ragdolls();
     fixture.scene.update_world();
     foreach (index, joint : rig.joints) assert(close_vec(world_position(joint), recorded[index]));
