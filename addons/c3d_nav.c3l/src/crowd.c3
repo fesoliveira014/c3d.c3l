@@ -197,6 +197,20 @@ struct Crowd {
 }
 
 <*
+ Traversal point at time t: toward start over the approach share, then along the connection.
+ @pure
+*>
+fn Vec3 AgentAnimation.position_at(&self, float t) {
+    float approach = self.t_max * TRAVERSAL_APPROACH_SHARE;
+    if (t < approach) {
+        float share = math::clamp(t / approach, 0.0f, 1.0f);
+        return self.initial_position + (self.start - self.initial_position) * share;
+    }
+    float share = math::clamp((t - approach) / (self.t_max - approach), 0.0f, 1.0f);
+    return self.start + (self.end - self.start) * share;
+}
+
+<*
  Replace one avoidance configuration.
  @require index < MAX_AVOIDANCE_PARAMS
 *>
@@ -1104,15 +1118,8 @@ fn void update_traversals(Crowd* crowd, CrowdAgent*[] agents, float dt) @local {
             agent.state = WALKING;
             continue;
         }
-        float approach = animation.t_max * TRAVERSAL_APPROACH_SHARE;
-        if (animation.t < approach) {
-            agent.position = lerp_point(animation.initial_position, animation.start, tween(animation.t, 0, approach));
-        } else {
-            agent.position = lerp_point(animation.start, animation.end, tween(animation.t, approach, animation.t_max));
-        }
+        agent.position = animation.position_at(animation.t);
         agent.velocity = {};
         agent.desired_velocity = {};
     }
 }
-
-fn float tween(float t, float from, float to) @local => math::clamp((t - from) / (to - from), 0.0f, 1.0f);
