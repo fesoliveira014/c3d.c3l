@@ -63,8 +63,24 @@ fn void? CompactHeightfield.erode_walkable_area(&self, Allocator scratch, uint r
         for (int x = 0; x < width; x++) {
             CompactCell cell = self.cells[x + z * width];
             for (uint index = cell.index; index < cell.index + cell.count; index++) {
-                relax_distance(self, distances, x, z, index, 0, 3);
-                relax_distance(self, distances, x, z, index, 3, 2);
+                relax_distance(
+                    compact:   self,
+                    distances: distances,
+                    x:         x,
+                    z:         z,
+                    index:     index,
+                    direction: 0,
+                    turn:      3,
+                );
+                relax_distance(
+                    compact:   self,
+                    distances: distances,
+                    x:         x,
+                    z:         z,
+                    index:     index,
+                    direction: 3,
+                    turn:      2,
+                );
             }
         }
     }
@@ -72,8 +88,24 @@ fn void? CompactHeightfield.erode_walkable_area(&self, Allocator scratch, uint r
         for (int x = width - 1; x >= 0; x--) {
             CompactCell cell = self.cells[x + z * width];
             for (uint index = cell.index; index < cell.index + cell.count; index++) {
-                relax_distance(self, distances, x, z, index, 2, 1);
-                relax_distance(self, distances, x, z, index, 1, 0);
+                relax_distance(
+                    compact:   self,
+                    distances: distances,
+                    x:         x,
+                    z:         z,
+                    index:     index,
+                    direction: 2,
+                    turn:      1,
+                );
+                relax_distance(
+                    compact:   self,
+                    distances: distances,
+                    x:         x,
+                    z:         z,
+                    index:     index,
+                    direction: 1,
+                    turn:      0,
+                );
             }
         }
     }
