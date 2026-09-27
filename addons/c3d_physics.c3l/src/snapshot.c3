@@ -12,6 +12,7 @@ import b3;
 const uint COMPOUND_RING_SEGMENTS @local = 16; // 48 lines per sphere; the wire density lever
 const usz  BOX_EDGE_POINTS @local = 24;
 const float AXIS_PARALLEL_THRESHOLD @local = 0.99f; // an axis this close to Y takes X as its basis reference
+const usz  RGBA_CHANNELS @local = 4;
 
 <*
  Kind of cooked data a snapshot holds.
@@ -32,10 +33,11 @@ struct SnapshotHandle {
 }
 
 <*
- Geometry revision a snapshot was cooked from.
+ Asset revision a snapshot was cooked from: a texture for height fields, geometry otherwise.
 *>
 struct SnapshotSource {
     GeometryId geometry;
+    TextureId  texture;
     uint       revision;
 }
 
@@ -151,8 +153,47 @@ fn SnapshotHandle? acquire_mesh(PhysicsWorld* world, GeometryId geometry, char[]
 }
 
 fn SnapshotHandle? acquire_height_field(PhysicsWorld* world, ColliderDesc* desc) @private {
+    switch (desc.height_field.source) {
+        case HEIGHTS:
+            usz index = reserve_slot(world)!;
+            CollisionSnapshot snapshot = cook_height_field(world, desc, desc.height_field)!;
+            return occupy(world.snapshots, index, snapshot);
+        case TEXTURE:
+            return acquire_height_map(world, desc);
+    }
+}
+
+// Texture sources share one slot per texture revision, scale and material indices, like asset meshes.
+// Called inside build_body's @pool: the samples live in tmem until box3d copies them.
+fn SnapshotHandle? acquire_height_map(PhysicsWorld* world, ColliderDesc* desc) @local {
+    TextureId texture = desc.height_field.texture;
+    SnapshotSource[1] sources = { current_texture_source(world, texture) };
+    Fnv64a hash;
+    hash.init();
+    @hash_value(&hash, desc.local.scale);
+    hash.update(desc.material_indices);
+    ulong content = (ulong)hash;
+    foreach (usz index, &slot : world.snapshots.slots) {
+        if (matches(slot, { .kind = HEIGHT_FIELD, .content = content, .sources = sources[..] })) {
+            return hold(world.snapshots, index);
+        }
+    }
+
+    TextureAsset* record = world.assets.texture(texture);
+    if (!record.pixels.len) return SOURCE_UNAVAILABLE~;
     usz index = reserve_slot(world)!;
-    HeightField field = desc.height_field;
+    HeightField samples = {
+        .heights = height_map_samples(record, tmem),
+        .count_x = record.desc.width,
+        .count_z = record.desc.height,
+    };
+    CollisionSnapshot snapshot = cook_height_field(world, desc, samples)!;
+    snapshot.content = content;
+    snapshot.sources = copy_sources(world.snapshots.allocator, sources[..]);
+    return occupy(world.snapshots, index, snapshot);
+}
+
+fn CollisionSnapshot? cook_height_field(PhysicsWorld* world, ColliderDesc* desc, HeightField field) @local {
     float minimum = field.heights[0];
     float maximum = field.heights[0];
     foreach (height : field.heights) {
@@ -171,7 +212,7 @@ fn SnapshotHandle? acquire_height_field(PhysicsWorld* world, ColliderDesc* desc)
     b3::HeightFieldData* data = b3::create_height_field(&def)!;
     Vec3[] wire;
     if (world.desc.cache_wireframes) wire = height_field_wire(world.snapshots.allocator, field, desc.local.scale);
-    return occupy(world.snapshots, index, { .kind = HEIGHT_FIELD, .height_field = data, .wire = wire });
+    return { .kind = HEIGHT_FIELD, .height_field = data, .wire = wire };
 }
 
 fn SnapshotHandle? acquire_compound(PhysicsWorld* world, ColliderDesc* desc) @private {
@@ -216,16 +257,22 @@ fn void release_snapshot(SnapshotTable* table, SnapshotHandle handle) @private {
 
 fn void reclaim_unheld_stale(PhysicsWorld* world) @private {
     foreach (&slot : world.snapshots.slots) {
-        if (is_occupied(slot) && !slot.holders && slot.sources.len && !sources_current(world, slot.sources)) {
+        if (is_occupied(slot) && !slot.holders && slot.sources.len && !sources_current(world, slot)) {
             free_snapshot(world.snapshots, slot);
         }
     }
 }
 
-fn bool sources_current(PhysicsWorld* world, SnapshotSource[] sources) @private {
-    foreach (source : sources) {
-        if (!world.assets.geometries.is_live(source.geometry)) return false;
-        if (world.assets.geometry(source.geometry).header.revision != source.revision) return false;
+fn bool sources_current(PhysicsWorld* world, CollisionSnapshot* slot) @private {
+    foreach (source : slot.sources) {
+        switch (slot.kind) {
+            case HEIGHT_FIELD:
+                if (texture_revision_or_zero(world, source.texture) != source.revision) return false;
+            case HULL:
+            case MESH:
+            case COMPOUND:
+                if (revision_or_zero(world, source.geometry) != source.revision) return false;
+        }
     }
     return true;
 }
@@ -241,10 +288,12 @@ fn ulong body_revision_sum(PhysicsWorld* world, PhysicsBody* physics_body) @priv
                 foreach (&child : collider.children) {
                     if (child.kind == HULL || child.kind == MESH) sum += revision_or_zero(world, child.geometry);
                 }
+            case HEIGHT_FIELD:
+                HeightField field = collider.height_field;
+                if (field.source == TEXTURE) sum += texture_revision_or_zero(world, field.texture);
             case SPHERE:
             case CAPSULE:
             case BOX:
-            case HEIGHT_FIELD:
                 break;
         }
     }
@@ -300,6 +349,7 @@ fn bool matches(CollisionSnapshot* slot, SnapshotKey key) @local {
     foreach (index, source : key.sources) {
         SnapshotSource held = slot.sources[index];
         if (!c3d::same_id(held.geometry, source.geometry)) return false;
+        if (!c3d::same_id(held.texture, source.texture)) return false;
         if (held.revision != source.revision) return false;
     }
     return true;
@@ -312,6 +362,49 @@ fn SnapshotSource current_source(PhysicsWorld* world, GeometryId geometry) @loca
 fn ulong revision_or_zero(PhysicsWorld* world, GeometryId geometry) @local {
     if (!world.assets.geometries.is_live(geometry)) return 0;
     return world.assets.geometry(geometry).header.revision;
+}
+
+fn SnapshotSource current_texture_source(PhysicsWorld* world, TextureId texture) @local {
+    return { .texture = texture, .revision = world.assets.texture(texture).header.revision };
+}
+
+fn ulong texture_revision_or_zero(PhysicsWorld* world, TextureId texture) @local {
+    if (!world.assets.textures.is_live(texture)) return 0;
+    return world.assets.texture(texture).header.revision;
+}
+
+fn usz? height_texel_bytes(PixelFormat format) @private {
+    switch (format) {
+        case RGBA8_UNORM:
+            return RGBA_CHANNELS;
+        case RGBA32_FLOAT:
+            return RGBA_CHANNELS * float::size;
+        case RGBA8_SRGB:
+        case RGBA16_FLOAT:
+        case BC1_RGBA_UNORM:
+        case BC1_RGBA_SRGB:
+        case BC3_UNORM:
+        case BC3_SRGB:
+        case BC4_UNORM:
+        case BC5_UNORM:
+        case BC6H_UFLOAT:
+        case BC7_UNORM:
+        case BC7_SRGB:
+            return c3d::UNSUPPORTED~;
+    }
+}
+
+// Red channel only; the store allocator aligns pixels for the float view.
+fn float[] height_map_samples(TextureAsset* texture, Allocator allocator) @local {
+    usz count = (usz)texture.desc.width * texture.desc.height;
+    float[] samples = alloc::new_array(allocator, float, (sz)count);
+    bool float_texels = texture.desc.format == RGBA32_FLOAT;
+    foreach (usz index, &sample : samples) {
+        *sample = float_texels
+          ? ((float*)texture.pixels.ptr)[index * RGBA_CHANNELS]
+          : texture.pixels[index * RGBA_CHANNELS] / 255.0f;
+    }
+    return samples;
 }
 
 fn SnapshotSource[] copy_sources(Allocator allocator, SnapshotSource[] sources) @local {

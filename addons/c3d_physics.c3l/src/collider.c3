@@ -29,14 +29,14 @@ fn void? check_collider(PhysicsWorld* world, ColliderDesc* desc, BodyKind kind) 
             if (kind != STATIC) return STATIC_ONLY~;
             check_placement(desc.local)!;
             HeightField field = desc.height_field;
-            if (field.count_x < 2 || field.count_z < 2) return c3d::INVALID_ARGUMENT~;
-            if (field.heights.len != (usz)field.count_x * field.count_z) return c3d::INVALID_ARGUMENT~;
-            if (!desc.material_indices.len) return;
-            if (desc.material_indices.len != (usz)(field.count_x - 1) * (usz)(field.count_z - 1)) return c3d::INVALID_ARGUMENT~;
-            foreach (index : desc.material_indices) {
-                if (index != HEIGHT_FIELD_HOLE && index >= desc.face_materials.len) return c3d::INVALID_ARGUMENT~;
+            switch (field.source) {
+                case HEIGHTS:
+                    if (field.count_x < 2 || field.count_z < 2) return c3d::INVALID_ARGUMENT~;
+                    if (field.heights.len != (usz)field.count_x * field.count_z) return c3d::INVALID_ARGUMENT~;
+                    return check_cell_materials(desc, field.count_x, field.count_z);
+                case TEXTURE:
+                    return check_height_map(world, desc);
             }
-            return;
         case COMPOUND:
             if (kind != STATIC) return STATIC_ONLY~;
             if (desc.sensor || !desc.children.len) return c3d::INVALID_ARGUMENT~;
@@ -95,6 +95,29 @@ fn void? check_placement(maths::Transform local) @local {
 
 fn void? check_source(PhysicsWorld* world, GeometryId geometry) @local {
     if (!world.assets.geometries.is_live(geometry)) return c3d::INVALID_ID~;
+}
+
+// Pixels are checked only when present: released ones may still match a cooked snapshot.
+fn void? check_height_map(PhysicsWorld* world, ColliderDesc* desc) @local {
+    TextureId texture = desc.height_field.texture;
+    if (!world.assets.textures.is_live(texture)) return c3d::INVALID_ID~;
+    TextureAsset* record = world.assets.texture(texture);
+    TextureDesc source = record.desc;
+    if (record.source_kind != MIP_ZERO) return c3d::UNSUPPORTED~;
+    usz texel_bytes = height_texel_bytes(source.format)!;
+    if (source.layers != 1 || source.depth > 1 || source.is_cube) return c3d::UNSUPPORTED~;
+    if (source.width < 2 || source.height < 2) return c3d::INVALID_ARGUMENT~;
+    usz texels = (usz)source.width * source.height;
+    if (record.pixels.len && record.pixels.len != texels * texel_bytes) return c3d::INVALID_ARGUMENT~;
+    return check_cell_materials(desc, source.width, source.height);
+}
+
+fn void? check_cell_materials(ColliderDesc* desc, uint count_x, uint count_z) @local {
+    if (!desc.material_indices.len) return;
+    if (desc.material_indices.len != (usz)(count_x - 1) * (usz)(count_z - 1)) return c3d::INVALID_ARGUMENT~;
+    foreach (index : desc.material_indices) {
+        if (index != HEIGHT_FIELD_HOLE && index >= desc.face_materials.len) return c3d::INVALID_ARGUMENT~;
+    }
 }
 
 // Called inside the caller's @pool: the face material array lives in tmem until box3d copies it.
