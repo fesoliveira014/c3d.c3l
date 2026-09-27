@@ -3,6 +3,7 @@ module navmesh_example;
 import std::io;
 import std::math;
 import std::math::quaternion;
+import std::math::random;
 import c3d;
 import c3d::asset;
 import c3d::camera;
@@ -42,7 +43,7 @@ const float FREE_SPEED_WHEEL_STEP @local = 1.25f;
 const Vec3  CAMERA_START @local = { 0, 14, 20 };
 const float CAMERA_START_PITCH @local = -0.6f;
 const Vec2  PANEL_POSITION @local = { 16, 16 };
-const Vec2  PANEL_SIZE @local = { 430, 340 };
+const Vec2  PANEL_SIZE @local = { 430, 380 };
 const uint  QUERY_NODES @local = 2048; // 64 KiB of search nodes; the level's whole graph fits
 const usz   CORRIDOR_CAPACITY @local = 256;
 const usz   POINT_CAPACITY @local = 64;
@@ -60,6 +61,13 @@ const uint  PATH_COLOR @local = 0xFF20E0FF;
 const uint  WALKER_COLOR @local = 0xFFFFFF40;
 const uint  GOAL_COLOR @local = 0xFF4040FF;
 const float MARKER_RADIUS @local = 0.35f;
+const float WANDER_RADIUS @local = 8; // metres around the walker a wander goal is drawn from
+const float WANDER_ARRIVAL @local = 0.3f; // metres; this close to its goal the walker draws a new one
+const float STUCK_FRACTION @local = 0.1f; // a step covering less than this share of its length is blocked
+const float WALL_SEARCH_RADIUS @local = 3; // metres; the wall circle never grows past it
+const usz   MOVE_VISITED_CAPACITY @local = 16;
+const ulong WANDER_SEED @local = 0x3a11;
+const uint  WALL_COLOR @local = 0xFF40A0FF;
 
 struct FreeCamera @local {
     Vec3  position;
@@ -93,6 +101,11 @@ struct Walker @local {
     Vec3                          goal;
     bool                          has_goal;
     bool                          replan;
+    bool                          wander;
+    PolyRef                       ref;           // polygon under the walker while wandering
+    WallHit                       wall;
+    bool                          has_wall;
+    Lcg64Random                   generator;
     PolyRef[CORRIDOR_CAPACITY]    corridor;
     StraightPoint[POINT_CAPACITY] points;
     PathResult                    path;
@@ -362,10 +375,91 @@ fn void advance_walker(Walker* walker, float delta_seconds) @local {
     }
 }
 
+fn float next_wander_random(void* context) @local => random::next_float((Lcg64Random*)context);
+
+fn void toggle_wander(Walker* walker) @local {
+    walker.wander = !walker.wander;
+    walker.has_goal = false;
+    walker.has_wall = false;
+    walker.path = {};
+    walker.straight = {};
+    walker.ref = (PolyRef)0;
+}
+
+// A walker whose polygon went away with a reinstalled tile is snapped onto the mesh again.
+fn void? snap_walker(Walker* walker, NavQuery* query, QueryFilter* filter) @local {
+    if (query.is_valid_ref(walker.ref, filter)) return;
+    NearestPoly nearest = query.find_nearest_poly(walker.position, SNAP_EXTENTS, filter)!;
+    walker.ref = nearest.ref;
+    walker.position = nearest.point;
+}
+
+// Draws goals within reach, slides toward them along the surface and measures the room to the nearest wall.
+fn void wander(
+    Walker* walker,
+    NavQuery* query,
+    QueryFilter* filter,
+    float delta_seconds,
+) @local {
+    if (catch snap_walker(walker, query, filter)) return;
+    if (!walker.has_goal) {
+        RandomPoint? goal = query.find_random_point_around_circle(
+            start_ref:  walker.ref,
+            center:     walker.position,
+            max_radius: WANDER_RADIUS,
+            filter:     filter,
+            random:     &next_wander_random,
+            context:    &walker.generator,
+        );
+        if (catch goal) return;
+        walker.goal = goal.point;
+        walker.has_goal = true;
+    }
+    Vec3 offset = walker.goal - walker.position;
+    offset.y = 0;
+    float distance = offset.length();
+    if (distance < WANDER_ARRIVAL) {
+        walker.has_goal = false;
+        return;
+    }
+
+    float step = math::min(WALK_SPEED * delta_seconds, distance);
+    PolyRef[MOVE_VISITED_CAPACITY] visited;
+    MoveResult? moved = query.move_along_surface(
+        start_ref:   walker.ref,
+        start:       walker.position,
+        end:         walker.position + offset * (step / distance),
+        filter:      filter,
+        out_visited: visited[..],
+    );
+    if (catch moved) return;
+    Vec3 travelled = moved.position - walker.position;
+    travelled.y = 0;
+    if (moved.visited_count) walker.ref = visited[moved.visited_count - 1];
+    walker.position = moved.position;
+    walker.position.y = query.poly_height(walker.ref, walker.position) ?? walker.position.y;
+    // A wall between the walker and its goal leaves it sliding in place, so it draws another goal.
+    if (travelled.length() < step * STUCK_FRACTION) walker.has_goal = false;
+
+    WallHit? wall = query.find_distance_to_wall(
+        start_ref:  walker.ref,
+        center:     walker.position,
+        max_radius: WALL_SEARCH_RADIUS,
+        filter:     filter,
+    );
+    walker.has_wall = @ok(wall);
+    if (try wall) walker.wall = wall;
+}
+
 fn void draw_walker(Walker* walker, debug::DebugDraw* sink) @local {
     Vec3 up = { 0, 1, 0 };
     sink.circle(walker.position, up, MARKER_RADIUS, WALKER_COLOR);
     sink.line(walker.position, walker.position + up, WALKER_COLOR);
+    if (walker.wander && walker.has_wall) {
+        // A walker slid flush against a wall has no room left to draw.
+        if (walker.wall.distance > 0) sink.circle(walker.position, up, walker.wall.distance, WALL_COLOR);
+        sink.line(walker.position, walker.wall.point, WALL_COLOR);
+    }
     if (!walker.has_goal) return;
     sink.circle(walker.goal, up, MARKER_RADIUS, GOAL_COLOR);
     nav::debug_draw_path(sink, walker.points[:walker.straight.count], PATH_COLOR);
@@ -383,6 +477,7 @@ fn void draw_panel(
     if (imgui::begin("Navmesh", null, {})) {
         imgui::text("Click, 1 or 2 sets the goal; L toggles the ladder");
         imgui::text("M moves the platform; right drag looks, WASDQE move");
+        imgui::text("R wanders: random goals, sliding moves, the wall circle");
         imgui::checkbox("Tiles", &controls.draw.tiles);
         imgui::checkbox("Polygons", &controls.mesh.polys);
         imgui::checkbox("Links", &controls.mesh.links);
@@ -396,6 +491,8 @@ fn void draw_panel(
         imgui::text("Partial: %s   truncated: %s", walker.path.partial ? "yes".ptr : "no".ptr,
             walker.path.truncated || walker.straight.truncated ? "yes".ptr : "no".ptr);
         imgui::text("Nodes: %u of %u", walker.nodes_used, QUERY_NODES);
+        imgui::text("Wander: %s   wall: %.2f m", walker.wander ? "on".ptr : "off".ptr,
+            walker.has_wall ? walker.wall.distance : WALL_SEARCH_RADIUS);
         if (totals.failed) {
             TileFailure failure = builder.last_failure;
             @pool() {
@@ -464,6 +561,7 @@ fn void? run(
     Walker* walker = mem::new(Walker);
     defer free(walker);
     walker.position = WALKER_START;
+    random::seed(&walker.generator, WANDER_SEED);
 
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
@@ -500,6 +598,7 @@ fn void? run(
             if (input.key_pressed(platform::Scancode.L)) toggle_ladder(scene, &level);
             if (input.key_pressed(platform::Scancode.CODE_1)) set_goal(walker, PLATFORM_GOAL);
             if (input.key_pressed(platform::Scancode.CODE_2)) set_goal(walker, FLOOR_GOAL);
+            if (input.key_pressed(platform::Scancode.R)) toggle_wander(walker);
         }
         if (input.button_pressed(platform::MouseButton.LEFT) && !input.mouse_captured_by_gui) {
             Vec3? picked = pick_goal(
@@ -529,9 +628,18 @@ fn void? run(
         totals.built += result.built;
         totals.skipped += result.skipped;
         totals.failed += result.failed;
-        // An install invalidates the refs of the tiles it replaced, so the walk is planned again.
-        if (walker.has_goal && (walker.replan || result.installed)) plan_walk(walker, &query, &filter);
-        advance_walker(walker, window.clock.delta);
+        if (walker.wander) {
+            wander(
+                walker:        walker,
+                query:         &query,
+                filter:        &filter,
+                delta_seconds: window.clock.delta,
+            );
+        } else {
+            // An install invalidates the refs of the tiles it replaced, so the walk is planned again.
+            if (walker.has_goal && (walker.replan || result.installed)) plan_walk(walker, &query, &filter);
+            advance_walker(walker, window.clock.delta);
+        }
         draw_debug(
             builder:  &builder,
             mesh:     &mesh,

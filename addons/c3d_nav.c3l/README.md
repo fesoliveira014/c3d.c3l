@@ -34,15 +34,21 @@ From Detour:
   (`DetourCommon.cpp`);
 - the query filter with typed pass and cost hooks, and the queries nearest polygon, polygons in a
   box, closest point, closest boundary point, polygon height, A* path, straight path and raycast
-  (`DetourNavMeshQuery.cpp`).
+  (`DetourNavMeshQuery.cpp`);
+- the sliced A* search with its any-angle option and both finalizes, the circle and shape Dijkstra
+  searches and the path read back from them, local neighbourhood, move along surface, distance to
+  wall, polygon wall segments and random points (`DetourNavMeshQuery.cpp`). The any-angle shortcut
+  ray crosses up to 32 polygons, where upstream passes an empty path that stops it at the first;
+  `find_random_point` weights every polygon of the mesh by area, where upstream first picks a tile
+  uniformly.
 
 Not ported: `rcContext` logging and timers (failures are faults), the unsigned-short and flat-list
 rasterization overloads, `rcCalcBounds` (merge `Aabb` values instead), watershed and layer regions
 (`rcBuildRegions`, `rcBuildLayerRegions`), the distance field (`rcBuildDistanceField`), the detail
 mesh (`RecastMeshDetail.cpp`), `rcMergePolyMeshes` and `rcCopyPolyMesh`; from Detour, the 32-bit ref
 split, single-tile `dtNavMesh::init`, tile state save and restore (`storeTileState`,
-`restoreTileState`), endian swapping, the sliced path search, Dijkstra searches, local
-neighbourhood, move along surface, wall queries and random points, the tile cache and the crowd.
+`restoreTileState`), endian swapping, the batched `dtPolyQuery` overload of `queryPolygons`, the
+tile cache and the crowd.
 
 ## Building a navmesh
 
@@ -68,6 +74,14 @@ its node pools once and no query allocates. `find_nearest_poly` snaps a point to
 `find_path` fills a caller slice with the polygon corridor (`partial` when the goal is unreachable,
 `truncated` when the slice is short), `straight_path` pulls the corridor into points and marks the
 start of each off-mesh connection, and `raycast` walks a straight line along the surface.
+`init_sliced_find_path`, `update_sliced_find_path` and `finalize_sliced_find_path` spread one A*
+search over several calls; a `NavQuery` runs one sliced search at a time, and the A* and Dijkstra
+queries on the same query corrupt it until it is finalized. The local queries serve steering:
+`find_polys_around_circle` and `find_polys_around_shape` list the reachable polygons by cost,
+`find_local_neighbourhood` the non-overlapping ones, `move_along_surface` slides a point along the
+walls, `find_distance_to_wall` and `poly_wall_segments` report the boundary, and
+`find_random_point` and `find_random_point_around_circle` draw points weighted by area through a
+caller's `RandomFn`.
 A `QueryFilter` from `default_query_filter` passes every built polygon; applications set area costs,
 flags or `pass` and `cost` hooks, embedding `QueryFilter` as an `inline` first member to carry their
 own data.
@@ -75,7 +89,9 @@ own data.
 The `navmesh` example builds a level of ramps, a stair, walls, a movable platform and a mud volume
 and draws tiles, polygons, links and the spans of the slot being rasterized. A walker follows the
 straight path to a clicked goal, across tiles and up a two-way link onto the platform; `L` makes
-that link one-way, and a walk down reroutes through a second, one-way link:
+that link one-way, and a walk down reroutes through a second, one-way link. `R` switches the walker
+to wandering: it draws goals with `find_random_point_around_circle`, steps toward them with
+`move_along_surface`, and shows `find_distance_to_wall` as a circle around it:
 
 ```bash
 python3 scripts/build.py --example navmesh

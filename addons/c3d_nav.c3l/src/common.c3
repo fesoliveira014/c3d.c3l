@@ -7,6 +7,7 @@ const float PARALLEL_EPSILON @local = 0.000001f; // mirrors dtIntersectSegmentPo
 const float DEGENERATE_EPSILON @local = 1e-6f; // mirrors dtClosestHeightPointTriangle's and dtIntersectSegSeg2D's EPS
 const float MIN_TRIANGLE_WEIGHT @local = 0.001f; // mirrors dtRandomPointInConvexPoly's floor on a triangle's area
 const float EQUAL_POINT_DISTANCE @local = 1.0f / 16384.0f; // mirrors dtVequal's threshold
+const float OVERLAP_EPSILON @local = 1e-4f; // mirrors dtOverlapPolyPoly2D's eps; touching polygons do not overlap
 
 struct SegmentProjection @private {
     float distance_sqr;    // XZ
@@ -194,6 +195,37 @@ fn bool distance_pt_poly_edges_sqr(
         edge_t[previous] = projection.t;
     }
     return inside;
+}
+
+// Mirrors dtOverlapPolyPoly2D: separating axes in XZ.
+fn bool overlap_poly_poly_2d(Vec3[] first, Vec3[] second) @private {
+    return !has_separating_edge(first, second) && !has_separating_edge(second, first);
+}
+
+fn bool has_separating_edge(Vec3[] edges_of, Vec3[] other) @local {
+    usz previous = edges_of.len - 1;
+    for (usz current = 0; current < edges_of.len; previous = current++) {
+        Vec3 axis = {
+            edges_of[current].z - edges_of[previous].z,
+            0,
+            -(edges_of[current].x - edges_of[previous].x),
+        };
+        float[<2>] own = project_poly_2d(axis, edges_of);
+        float[<2>] projected = project_poly_2d(axis, other);
+        if (own[0] + OVERLAP_EPSILON > projected[1] || own[1] - OVERLAP_EPSILON < projected[0]) return true;
+    }
+    return false;
+}
+
+// Mirrors projectPoly.
+fn float[<2>] project_poly_2d(Vec3 axis, Vec3[] verts) @local {
+    float[<2>] range = { float::max, -float::max };
+    foreach (vertex : verts) {
+        float distance = axis.x * vertex.x + axis.z * vertex.z;
+        range[0] = math::min(range[0], distance);
+        range[1] = math::max(range[1], distance);
+    }
+    return range;
 }
 
 fn bool overlap_quant_bounds(
