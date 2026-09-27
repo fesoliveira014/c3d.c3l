@@ -17,6 +17,14 @@ const usz   SAMPLE_CAPACITY @private = 128;
 const float SIDEWAYS_SHARE @private = 0.1f; // of the speed; a smaller sideways part is not a detour
 const uint  QUEUE_ITERATIONS @private = 100;
 const uint  QUEUE_UPDATE_LIMIT @private = 100;
+const uint  CROWD_AGENTS @private = 8;
+const float CROWD_STEP @private = 1.0f / 60.0f;
+const uint  ARRIVAL_UPDATES @private = 600;
+const float STOPPED_SPEED @private = 0.05f; // metres per second
+const float CROSSING_DISTANCE @private = 8;
+const float RESOLVE_FACTOR @private = 0.7f; // mirrors the crowd's collision resolve factor
+const uint  REPLAN_LEAD_UPDATES @private = 30;
+const float ISLAND_EDGE_GAP @private = 1.5f; // metres; the eroded floor edge, a cell of rounding and one agent radius
 
 fn float recorded_penalty(AvoidanceSample[] samples, Vec3 velocity) @private {
     float penalty = float::max;
@@ -24,6 +32,40 @@ fn float recorded_penalty(AvoidanceSample[] samples, Vec3 velocity) @private {
         if ((sample.velocity - velocity).length() < QUERY_TOLERANCE) penalty = math::min(penalty, sample.penalty);
     }
     return penalty;
+}
+
+fn Crowd create_test_crowd(QueryFixture* fixture) @private {
+    return nav::create_crowd(
+        allocator: mem,
+        desc:      { .max_agents = CROWD_AGENTS, .max_agent_radius = nav::default_nav_agent_params().radius },
+        mesh:      &fixture.level.mesh,
+        scene:     &fixture.level.scene,
+    )!!;
+}
+
+fn float xz_distance(Vec3 first, Vec3 second) @private {
+    Vec3 offset = second - first;
+    offset.y = 0;
+    return offset.length();
+}
+
+fn bool arrived(CrowdAgent* agent, Vec3 target) @private {
+    return xz_distance(agent.position, target) < agent.params.radius && agent.velocity.length() < STOPPED_SPEED;
+}
+
+fn void send_agent(Crowd* crowd, uint index, Vec3 target) @private {
+    NearestPoly goal = crowd.query.find_nearest_poly(target, crowd.query_half_extents(), crowd.filter(0))!!;
+    crowd.request_move_target(index, goal.ref, goal.point);
+}
+
+// Updates until the agent arrives or the limit passes; the updates taken.
+fn uint walk_until_arrived(Crowd* crowd, CrowdAgent* agent, Vec3 target) @private {
+    uint updates;
+    while (updates < ARRIVAL_UPDATES && !arrived(agent, target)) {
+        crowd.update(CROWD_STEP);
+        updates++;
+    }
+    return updates;
 }
 
 fn void test_proximity_grid_returns_overlapping_items_once() @test {
@@ -155,4 +197,103 @@ fn void test_path_queue_answers_requests_over_updates() @test {
     assert(collected_count == nav::MAX_PATH_QUEUE);
     assert(updates > 1, "the iteration budget spreads the requests over updates");
     foreach (ref : requests) assert(queue.request_state(ref) == FAILED, "collected requests leave the queue");
+}
+
+fn void test_agent_reaches_its_target_and_stops() @test {
+    QueryFixture* fixture = floor_level(2);
+    defer destroy_level(fixture);
+    build_level(fixture);
+    Crowd crowd = create_test_crowd(fixture);
+    defer nav::destroy_crowd(&crowd);
+    Vec3 target = { 14, 0, 4 };
+    uint index = crowd.add_agent({ 4, 0, 4 }, nav::default_nav_agent_params())!!;
+    send_agent(&crowd, index, target);
+
+    uint updates = walk_until_arrived(&crowd, crowd.agent(index), target);
+
+    assert(arrived(crowd.agent(index), target), "not arrived after %d updates", updates);
+    assert(crowd.agent(index).target_state == VALID && !crowd.agent(index).partial);
+}
+
+fn void test_two_crossing_agents_do_not_overlap_beyond_radius() @test {
+    QueryFixture* fixture = floor_level(2);
+    defer destroy_level(fixture);
+    build_level(fixture);
+    Crowd crowd = create_test_crowd(fixture);
+    defer nav::destroy_crowd(&crowd);
+    NavAgentParams params = nav::default_nav_agent_params();
+    float middle = fixture.level.builder.tile_world_size;
+    Vec3 west = { middle - CROSSING_DISTANCE * 0.5f, 0, middle };
+    Vec3 east = { middle + CROSSING_DISTANCE * 0.5f, 0, middle };
+    uint westward = crowd.add_agent(east, params)!!;
+    uint eastward = crowd.add_agent(west, params)!!;
+    send_agent(&crowd, westward, west);
+    send_agent(&crowd, eastward, east);
+    CrowdAgent* first = crowd.agent(westward);
+    CrowdAgent* second = crowd.agent(eastward);
+    float allowed = 2 * params.radius - params.radius * (1 - RESOLVE_FACTOR);
+
+    uint updates;
+    while (updates < ARRIVAL_UPDATES && !(arrived(first, west) && arrived(second, east))) {
+        crowd.update(CROWD_STEP);
+        updates++;
+        float distance = xz_distance(first.position, second.position);
+        assert(distance > allowed, "%f apart at update %d", distance, updates);
+    }
+
+    assert(arrived(first, west) && arrived(second, east), "not arrived after %d updates", updates);
+}
+
+fn void test_agent_replans_when_its_corridor_is_invalidated() @test {
+    QueryFixture* fixture = floor_level(2);
+    defer destroy_level(fixture);
+    build_level(fixture);
+    Crowd crowd = create_test_crowd(fixture);
+    defer nav::destroy_crowd(&crowd);
+    Vec3 target = { 17, 0, 17 };
+    uint index = crowd.add_agent({ 2, 0, 2 }, nav::default_nav_agent_params())!!;
+    send_agent(&crowd, index, target);
+    for (uint update = 0; update < REPLAN_LEAD_UPDATES; update++) crowd.update(CROWD_STEP);
+    CrowdAgent* agent = crowd.agent(index);
+    PolyRef before = agent.corridor.first_poly();
+
+    fixture.level.scene.@each(NavSource; entity, source) {
+        source.mark_changed();
+    };
+    NavSyncResult rebuilt = build_everything(fixture.level);
+    crowd.update(CROWD_STEP);
+    bool replanned = agent.target_replan;
+    uint updates = walk_until_arrived(&crowd, agent, target);
+
+    assert(rebuilt.installed > 0, "the reinstall ran");
+    assert(!fixture.level.mesh.is_valid_ref(before), "the reinstall retired the corridor's refs");
+    assert(replanned, "the reinstall raised a replan");
+    assert(arrived(agent, target), "not arrived after %d updates", updates);
+}
+
+fn void test_partial_target_walks_to_the_closest_polygon() @test {
+    QueryFixture* fixture = floor_level(1);
+    defer destroy_level(fixture);
+    add_platform(fixture);
+    build_level(fixture);
+    Crowd crowd = create_test_crowd(fixture);
+    defer nav::destroy_crowd(&crowd);
+    Vec3 island = { PLATFORM_CENTRE.x, PLATFORM_SIZE.y, PLATFORM_CENTRE.z };
+    NearestPoly top = crowd.query.find_nearest_poly(island, crowd.query_half_extents(), crowd.filter(0))!!;
+    uint index = crowd.add_agent({ 1.5f, 0, PLATFORM_CENTRE.z }, nav::default_nav_agent_params())!!;
+    crowd.request_move_target(index, top.ref, top.point);
+    CrowdAgent* agent = crowd.agent(index);
+
+    uint updates;
+    while (updates < ARRIVAL_UPDATES && !(agent.target_state == VALID && arrived(agent, agent.corridor.target))) {
+        crowd.update(CROWD_STEP);
+        updates++;
+    }
+
+    Vec3 offset = agent.position - PLATFORM_CENTRE;
+    float gap = math::max(math::abs(offset.x), math::abs(offset.z)) - PLATFORM_SIZE.x * 0.5f;
+    assert(agent.partial, "the island is unreachable");
+    assert(agent.corridor.last_poly() != top.ref && agent.position.y < PLATFORM_SIZE.y * 0.5f, "on the floor");
+    assert(arrived(agent, agent.corridor.target), "not arrived after %d updates", updates);
+    assert(gap < ISLAND_EDGE_GAP, "%f m from the island", gap);
 }

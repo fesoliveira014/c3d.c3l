@@ -73,6 +73,11 @@ struct NavObstacleRuntime {
     ObstacleRef ref;    // 0 while no addition is queued
 }
 
+<* Runtime mirror of a NavAgent: its crowd slot. *>
+struct CrowdAgentRuntime {
+    uint index;
+}
+
 <*
  Request a rebuild of the tiles under the old and new bounds on the next sync.
  Moving the node or editing the geometry does nothing until this is called.
@@ -201,7 +206,7 @@ fn void? Scene.add_nav_obstacle(&self, Node* node, NavObstacle obstacle) {
 
 <*
  Register the nav components and their mirrors.
- @param [&inout] scene : "Gains NavSource, NavVolume, NavLink, NavObstacle and their runtime mirrors."
+ @param [&inout] scene : "Gains NavSource, NavVolume, NavLink, NavObstacle, their runtime mirrors and CrowdAgentRuntime."
  @return? c3d::CAPACITY_EXCEEDED
 *>
 fn void? register_nav(Scene* scene) {
@@ -213,4 +218,5 @@ fn void? register_nav(Scene* scene) {
     scene.register(NavVolumeRuntime)!;
     scene.register(NavLinkRuntime)!;
     scene.register(NavObstacleRuntime)!;
+    scene.register(CrowdAgentRuntime)!;
 }
