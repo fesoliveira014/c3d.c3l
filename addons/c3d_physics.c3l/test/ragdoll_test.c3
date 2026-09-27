@@ -19,6 +19,9 @@ const uint  DRIVE_UPDATES @private = 10;
 const float DRIVE_SPEED @private = 1; // meters per second along X
 const float VELOCITY_TOLERANCE @private = 0.1f;
 const float ATTACHMENT_TOLERANCE @private = 0.02f; // meters; box3d's soft joint lets the anchor drift slightly
+const float SPRING_HERTZ @private = 5;
+const uint  SPRING_SETTLE_UPDATES @private = 120;
+const float SPRING_TOLERANCE @private = 0.05f; // radians
 
 struct Fixture @private {
     AssetStore   assets;
@@ -128,6 +131,13 @@ fn Ragdoll* build_arm(Fixture* fixture, Rig* rig) @private {
     return build(fixture, rig, bones[..]);
 }
 
+fn Ragdoll* build_driven(Fixture* fixture, Rig* rig, JointKind kind) @private {
+    RagdollBone[2] bones = { bone(0), bone(1, kind, length: 1) };
+    bones[1].hinge_axis = { 1, 0, 0 };
+    bones[1].drive = { .enabled = true, .hertz = SPRING_HERTZ, .damping_ratio = 1 };
+    return build(fixture, rig, bones[..]);
+}
+
 fn fault build_fault(Fixture* fixture, Rig* rig, RagdollBone[] bones) @private {
     RagdollDesc desc = physics::default_ragdoll_desc();
     desc.bones = bones;
@@ -137,6 +147,10 @@ fn fault build_fault(Fixture* fixture, Rig* rig, RagdollBone[] bones) @private {
 fn Vec3 world_position(Node* node) @private => maths::translation(node.world);
 
 fn bool close_vec(Vec3 first, Vec3 second) @private => (first - second).length() <= TOLERANCE;
+
+fn float angle_between(Quat first, Quat second) @private {
+    return 2 * math::acos(math::min(math::abs(first.v.dot(second.v)), 1.0f));
+}
 
 fn bool same_body(b3::BodyId first, b3::BodyId second) @private {
     return first.index1 == second.index1 && first.world0 == second.world0 && first.generation == second.generation;
@@ -405,6 +419,69 @@ fn void test_recover_bones_freezes_the_limp_arm_and_leaves_the_character() @test
     fixture.physics.update_ragdolls();
     fixture.scene.update_world();
     foreach (index, joint : rig.joints) assert(close_vec(world_position(joint), recorded[index]));
+}
+
+// Bodies and joints are built by the first update; the drive pushes from the second.
+fn void power_bone(Fixture* fixture, Rig* rig, Ragdoll* ragdoll, float strength) @private {
+    fixture.physics.update(0);
+    fixture.physics.set_bone_mode(rig.skin, 1, SIMULATED);
+    ragdoll.drive_strength = strength;
+}
+
+fn void test_drive_target_is_identity_at_the_bind_pose() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Rig rig = add_chain(&fixture);
+    Ragdoll* ragdoll = build_driven(&fixture, &rig, SPHERICAL);
+    power_bone(&fixture, &rig, ragdoll, 1);
+    fixture.physics.update(0);
+
+    b3::SphericalJointId joint = fixture.physics.joint(ragdoll.bone_nodes[1])!!.as_spherical()!!;
+    assert(angle_between(joint.target_rotation(), quaternion::IDENTITY) <= TOLERANCE);
+    assert(math::abs(joint.spring_hertz() - SPRING_HERTZ) <= TOLERANCE);
+}
+
+fn void test_revolute_drive_targets_the_animated_hinge_angle() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Rig rig = add_chain(&fixture);
+    Ragdoll* ragdoll = build_driven(&fixture, &rig, REVOLUTE);
+    power_bone(&fixture, &rig, ragdoll, 1);
+    rig.joints[1].local.rotation = quaternion::from_axis_angle{float}({ 1, 0, 0 }, 0.4f);
+    fixture.scene.update_world();
+    fixture.physics.update(0);
+
+    b3::RevoluteJointId joint = fixture.physics.joint(ragdoll.bone_nodes[1])!!.as_revolute()!!;
+    assert(math::abs(joint.target_angle() - 0.4f) <= TOLERANCE);
+}
+
+// Angles of the settled bone body from the animated bone rotation and from its bind rotation.
+fn float[2] settle_driven_bone(float strength) @private {
+    Fixture fixture;
+    setup(&fixture, weightless_desc());
+    defer teardown(&fixture);
+
+    Rig rig = add_chain(&fixture);
+    Ragdoll* ragdoll = build_driven(&fixture, &rig, SPHERICAL);
+    power_bone(&fixture, &rig, ragdoll, strength);
+    Quat bind = fixture.scene.get(ragdoll.bone_nodes[1], RigidBody).current.rotation;
+    rig.joints[1].local.rotation = quaternion::from_axis_angle{float}({ 0, 0, 1 }, 0.5f);
+    fixture.scene.update_world();
+    for (uint index = 0; index < SPRING_SETTLE_UPDATES; index++) fixture.physics.update(physics::DEFAULT_FIXED_DT);
+
+    Quat body = fixture.scene.get(ragdoll.bone_nodes[1], RigidBody).current.rotation;
+    Quat joint_rotation = maths::transform_from_mat4(rig.joints[1].world).rotation;
+    Quat animated = joint_rotation * ragdoll.joint_in_bone[1].rotation.conjugate();
+    return { angle_between(body, animated), angle_between(body, bind) };
+}
+
+fn void test_sprung_bone_converges_to_the_animated_pose() @test {
+    assert(settle_driven_bone(1)[0] <= SPRING_TOLERANCE);
+    assert(settle_driven_bone(0)[1] <= SPRING_TOLERANCE);
 }
 
 fn void fall_and_recover(Fixture* fixture, Rig* rig, Ragdoll* ragdoll, Vec3[] recorded) @private {

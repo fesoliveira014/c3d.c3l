@@ -33,17 +33,19 @@ enum RagdollFacing {
 
 <*
  Capsule and joint of one skeleton bone; the bone runs from its joint to its child joint.
+ drive has no torque cap: stiffness is the only lever, and too stiff jitters with light bones.
 *>
 struct RagdollBone {
-    uint       joint;
-    float      radius;
-    float      density;
-    float      length;       // 0 measures to the child joint; leaf bones need a value
-    JointKind  kind;         // SPHERICAL or REVOLUTE, toward the parent bone
-    Vec3       hinge_axis;   // REVOLUTE, in the joint's bind-pose space
-    JointLimit cone;         // SPHERICAL; upper is the half angle
-    JointLimit twist;        // SPHERICAL
-    JointLimit angle;        // REVOLUTE
+    uint        joint;
+    float       radius;
+    float       density;
+    float       length;       // 0 measures to the child joint; leaf bones need a value
+    JointKind   kind;         // SPHERICAL or REVOLUTE, toward the parent bone
+    Vec3        hinge_axis;   // REVOLUTE, in the joint's bind-pose space
+    JointLimit  cone;         // SPHERICAL; upper is the half angle
+    JointLimit  twist;        // SPHERICAL
+    JointLimit  angle;        // REVOLUTE
+    JointSpring drive;        // pull toward the animated pose while simulated; hertz times drive_strength
 }
 
 <*
@@ -65,6 +67,8 @@ struct Ragdoll {
     maths::Transform[] joint_in_bone;      // joint frame in bone body space, from the bind pose
     float[]            bone_weights;       // per bone, times weight; 1 at build
     RagdollMode[]      bone_modes;         // per bone; ANIMATED at build
+    JointSpring[]      bone_drives;        // per bone, from the desc
+    int[]              bone_parents;       // per bone: parent bone index, -1 for a root bone
     int[]              joint_bone;         // per skeleton joint: bone index, -1 without a bone
     uint[]             joint_owner;        // per skeleton joint: the bone whose weight and mode it takes
     int[]              parents;            // copied, so the ragdoll outlives edits to the skeleton asset
@@ -73,6 +77,7 @@ struct Ragdoll {
     Mat4[]             joint_worlds;       // scratch for update_ragdolls and recovery
     Quat               hips_bind_rotation; // root bone rotation in skin-node space
     float              weight;             // 0 animated pose, 1 ragdoll pose; every bone's fade
+    float              drive_strength;     // 0 at build; scales every bone's drive hertz
 }
 
 <*
@@ -153,6 +158,8 @@ fn void? Scene.build_ragdoll(
             self.add(node, copy_physics_body(self.allocator, body, (&collider)[:1]));
 
             int parent = parent_bone[index];
+            ragdoll.bone_parents[index] = parent;
+            ragdoll.bone_drives[index] = bone.drive;
             if (parent < 0) continue;
             Vec3 frame_axis = axes[index];
             if (bone.kind == REVOLUTE) frame_axis = bind[index].rotation.rotate_vec3(bone.hinge_axis).normalize();
@@ -165,12 +172,16 @@ fn void? Scene.build_ragdoll(
             joint.anchor_frame = relative(locals[parent].to_mat4(), frame_skin);
             joint.frame = relative(locals[index].to_mat4(), frame_skin);
             joint.collide_connected = desc.collide_adjacent;
+            // The drive sets hertz and target each update while the bone simulates.
+            JointSpring spring = { .enabled = bone.drive.enabled, .damping_ratio = bone.drive.damping_ratio };
             if (bone.kind == REVOLUTE) {
                 joint.revolute.angle = bone.angle;
+                joint.revolute.spring = spring;
             } else {
                 joint.spherical.enable_cone = bone.cone.enabled;
                 joint.spherical.cone_angle = bone.cone.upper;
                 joint.spherical.twist = bone.twist;
+                joint.spherical.spring = spring;
             }
             self.add(node, (PhysicsJoint){ .desc = joint, .status = PENDING });
         }
@@ -321,7 +332,54 @@ fn void drive_ragdolls(PhysicsWorld* world) @private {
             node.world = joints[ragdoll.bone_joints[index]].world.mul(bone_in_joint);
             node.local = maths::transform_from_mat4(inverse_skin.mul(node.world));
         }
+        foreach (usz index, mode : ragdoll.bone_modes) {
+            if (mode != SIMULATED || ragdoll.bone_parents[index] < 0 || !ragdoll.bone_drives[index].enabled) continue;
+            drive_bone(scene, ragdoll, joints, index);
+        }
     };
+}
+
+// Pushes the animated pose as the spring target; a joint not bound yet waits for a later update.
+fn void drive_bone(
+    Scene* scene,
+    Ragdoll* ragdoll,
+    Node*[] joints,
+    usz bone,
+) @local {
+    Node* node = ragdoll.bone_nodes[bone];
+    if (!scene.has(node, Joint)) return;
+    Joint* joint = scene.get(node, Joint);
+    JointDesc* desc = &scene.get(node, PhysicsJoint).desc;
+    Quat parent = animated_bone_rotation(ragdoll, joints, (usz)ragdoll.bone_parents[bone]);
+    Quat target = desc.anchor_frame.rotation.conjugate() * parent.conjugate()
+        * animated_bone_rotation(ragdoll, joints, bone) * desc.frame.rotation;
+    float hertz = ragdoll.bone_drives[bone].hertz * ragdoll.drive_strength;
+    switch (joint.kind) {
+        case SPHERICAL:
+            b3::SphericalJointId spherical = (b3::SphericalJointId)joint.joint;
+            spherical.set_target_rotation(target);
+            spherical.set_spring_hertz(hertz);
+        case REVOLUTE:
+            b3::RevoluteJointId revolute = (b3::RevoluteJointId)joint.joint;
+            float angle = 2 * math::atan2(target.v.z, target.v.w);
+            if (angle > math::PI) angle -= 2 * (float)math::PI;
+            if (angle < -math::PI) angle += 2 * (float)math::PI;
+            revolute.set_target_angle(angle);
+            revolute.set_spring_hertz(hertz);
+        case DISTANCE:
+        case PRISMATIC:
+        case WELD:
+        case WHEEL:
+        case MOTOR:
+        case PARALLEL:
+        case FILTER:
+            break;
+    }
+}
+
+fn Quat animated_bone_rotation(Ragdoll* ragdoll, Node*[] joints, usz bone) @local {
+    Quat joint = maths::transform_from_mat4(joints[ragdoll.bone_joints[bone]].world).rotation;
+    return joint * ragdoll.joint_in_bone[bone].rotation.conjugate();
 }
 
 fn void switch_bone(
@@ -521,6 +579,8 @@ fn Ragdoll carve_ragdoll(BlockCursor* cursor, usz bone_count, usz joint_count) @
         .joint_in_bone = carve(cursor, maths::Transform, bone_count),
         .bone_weights  = carve(cursor, float, bone_count),
         .bone_modes    = carve(cursor, RagdollMode, bone_count),
+        .bone_drives   = carve(cursor, JointSpring, bone_count),
+        .bone_parents  = carve(cursor, int, bone_count),
         .joint_bone    = carve(cursor, int, joint_count),
         .joint_owner   = carve(cursor, uint, joint_count),
         .parents       = carve(cursor, int, joint_count),
