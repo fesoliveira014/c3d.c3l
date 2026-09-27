@@ -360,3 +360,9 @@ fn void test_slope_at_the_limit_is_unwalkable() @test {
         assert(areas[0] == (degrees < 45 ? nav::WALKABLE_AREA : nav::NULL_AREA));
     }
 }
+
+fn void test_grid_size_of_inverted_bounds_is_empty() @test {
+    Aabb inverted = { .min = { 4, 0, 4 }, .max = { 1, 0, 1 } };
+
+    assert(nav::grid_size(inverted, 1) == { 0, 0 });
+}

@@ -7,7 +7,6 @@ import c3d::maths;
 <* Neighbour layer meaning no connection; mirrors RC_NOT_CONNECTED. *>
 const uint NOT_CONNECTED = 0x3f;
 
-const int  COMPACT_OPEN_TOP @local = 0xffff; // mirrors rcBuildCompactHeightfield's MAX_HEIGHT: the top of a column with nothing above
 const int  MAX_CLEARANCE @local = 0xff; // the clearance field is eight bits
 const uint MAX_NEIGHBOUR_LAYER @local = NOT_CONNECTED - 1; // a neighbour column deeper than this cannot be linked
 const int[4] DIRECTION_OFFSET_X @local = { -1, 0, 1, 0 };
@@ -134,8 +133,8 @@ fn void fill_columns(CompactHeightfield* compact, Heightfield* heightfield) @loc
         for (uint index = head; index != NULL_SPAN; index = source[index].next) {
             if (source[index].extent.area == NULL_AREA) continue;
             int bottom = (int)source[index].extent.max;
-            int top = source[index].next != NULL_SPAN ? (int)source[source[index].next].extent.min : COMPACT_OPEN_TOP;
-            compact.spans[next_span].y = (ushort)math::clamp(bottom, 0, COMPACT_OPEN_TOP);
+            int top = source[index].next != NULL_SPAN ? (int)source[source[index].next].extent.min : OPEN_COLUMN_TOP;
+            compact.spans[next_span].y = (ushort)math::clamp(bottom, 0, OPEN_COLUMN_TOP);
             compact.spans[next_span].links.height = (uint)math::clamp(top - bottom, 0, MAX_CLEARANCE);
             compact.areas[next_span] = (char)source[index].extent.area;
             next_span++;

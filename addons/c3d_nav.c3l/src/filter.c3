@@ -2,8 +2,6 @@ module c3d::nav;
 
 import std::math;
 
-const int OPEN_COLUMN_TOP @local = 0xffff; // mirrors RecastFilter's MAX_HEIGHTFIELD_HEIGHT: the ceiling of a column with nothing above
-
 <*
  Mark unwalkable spans walkable when their top is within walkable_climb of the walkable span below; mirrors rcFilterLowHangingWalkableObstacles.
  Undoes filter_ledge_spans, so it runs first.

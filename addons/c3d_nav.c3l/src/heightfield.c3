@@ -16,7 +16,7 @@ const char NULL_AREA = 0;
 <* Default and highest area id of walkable space; mirrors RC_WALKABLE_AREA. *>
 const char WALKABLE_AREA = 63;
 
-<* Area ids a filter can cost; the area field is six bits. *>
+<* Distinct area ids; the area field is six bits. *>
 const uint MAX_AREAS = 64;
 
 <* Span index that ends a column. *>
@@ -25,6 +25,7 @@ const uint NULL_SPAN = uint::max;
 <* Spans a pool grows by. *>
 const uint SPAN_POOL_GROWTH = 2048; // 16 KiB per growth, mirrors RC_SPANS_PER_POOL; the rasterization allocation lever
 
+const int  OPEN_COLUMN_TOP @private = 0xffff; // the ceiling of a column with nothing above; mirrors upstream's MAX_HEIGHT and MAX_HEIGHTFIELD_HEIGHT
 const uint CLIP_VERTICES @local = 7; // a triangle clipped by one row and one column plane never exceeds seven vertices
 
 <* Packed limits and area of one span; min inclusive, max exclusive, in voxels. *>
@@ -230,8 +231,8 @@ fn void destroy_heightfield(Heightfield* heightfield) {
 *>
 fn uint[<2>] grid_size(Aabb bounds, float cell_size) {
     return {
-        (uint)((bounds.max.x - bounds.min.x) / cell_size + 0.5f),
-        (uint)((bounds.max.z - bounds.min.z) / cell_size + 0.5f),
+        (uint)math::max((int)((bounds.max.x - bounds.min.x) / cell_size + 0.5f), 0),
+        (uint)math::max((int)((bounds.max.z - bounds.min.z) / cell_size + 0.5f), 0),
     };
 }
 
