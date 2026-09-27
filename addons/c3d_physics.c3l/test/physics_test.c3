@@ -1099,7 +1099,7 @@ fn void test_worker_count_reaches_world() @test {
     assert(fixture.physics.worker_count() == 2);
     add_ground(&fixture);
     Node* box = add_box(&fixture, { 0, 5, 0 });
-    for (uint update = 0; update < 30; update++) fixture.physics.update(physics::DEFAULT_FIXED_DT);
+    run_updates(&fixture, 30);
     assert(fixture.scene.get(box, RigidBody).current.position.y < 5 - 0.01f);
 }
 
