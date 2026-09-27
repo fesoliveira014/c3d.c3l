@@ -16,6 +16,8 @@ Ported so far, from Recast:
   `RecastRasterization.cpp`);
 - the low-hanging obstacle, ledge and low-clearance span filters (`RecastFilter.cpp`);
 - the compact heightfield with neighbour links (`rcBuildCompactHeightfield`).
+- area erosion, the median filter, and box, convex polygon and cylinder area marking, with polygon
+  offsetting (`RecastArea.cpp`).
 
 Not ported: `rcContext` logging and timers (failures are faults), the unsigned-short and flat-list
 rasterization overloads, `rcCalcBounds` (merge `Aabb` values instead).
