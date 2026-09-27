@@ -90,7 +90,12 @@ struct StraightPathWriter @local {
  @param [&in] filter : "Polygons it rejects are skipped."
  @return? NO_POLY, c3d::INVALID_ARGUMENT
 *>
-fn NearestPoly? NavQuery.find_nearest_poly(&self, Vec3 center, Vec3 half_extents, QueryFilter* filter) {
+fn NearestPoly? NavQuery.find_nearest_poly(
+    &self,
+    Vec3 center,
+    Vec3 half_extents,
+    QueryFilter* filter,
+) {
     if (!finite_point(center) || !finite_point(half_extents)) return c3d::INVALID_ARGUMENT~;
     NearestPoly nearest;
     float nearest_distance = float::max;
@@ -112,14 +117,16 @@ fn NearestPoly? NavQuery.find_nearest_poly(&self, Vec3 center, Vec3 half_extents
  @param half_extents : "Search distance along each axis."
  @param [&in] filter : "Polygons it rejects are skipped."
  @param [out] out_refs : "Filled up to its length."
+ @return? c3d::INVALID_ARGUMENT
 *>
-fn QueryResult NavQuery.query_polygons(
+fn QueryResult? NavQuery.query_polygons(
     &self,
     Vec3 center,
     Vec3 half_extents,
     QueryFilter* filter,
     PolyRef[] out_refs,
 ) {
+    if (!finite_point(center) || !finite_point(half_extents)) return c3d::INVALID_ARGUMENT~;
     QueryResult result;
     Aabb box = { .min = center - half_extents, .max = center + half_extents };
     @each_poly_in_box(self, box, filter; tile, ref, poly) {
@@ -178,7 +185,7 @@ fn float? NavQuery.poly_height(&self, PolyRef ref, Vec3 position) {
 
 <*
  A* corridor of polygons from start to end; mirrors findPath.
- Replaces the closed list is_in_closed_list reads.
+ Leaves the closed list for is_in_closed_list.
  @param start : "Inside the start polygon."
  @param end : "Inside the end polygon."
  @param [&in] filter : "Polygons it rejects are not entered."
@@ -447,7 +454,7 @@ fn PathResult? NavQuery.straight_path(
 <*
  Walkability ray along the surface from start toward end, over the XZ plane; mirrors raycast.
  @param [&in] filter : "Polygons it rejects stop the ray."
- @param [out] out_path : "Polygons visited; may be empty."
+ @param [out] out_path : "Polygons visited; the ray stops when it fills."
  @return? INVALID_REF, c3d::INVALID_ARGUMENT
 *>
 fn RaycastHit? NavQuery.raycast(
@@ -637,7 +644,12 @@ fn Portal? portal_points_by_ref(NavMesh* mesh, PolyRef from_ref, PolyRef to_ref)
 }
 
 // INVALID_REF when from holds no link to to; mirrors getPortalPoints.
-fn Portal? portal_points(PolyRef from_ref, TileAndPoly from, PolyRef to_ref, TileAndPoly to) @local {
+fn Portal? portal_points(
+    PolyRef from_ref,
+    TileAndPoly from,
+    PolyRef to_ref,
+    TileAndPoly to,
+) @local {
     Link* link = find_link(from, to_ref)!;
     PolyType to_type = to.poly.area_type.type;
     if (from.poly.area_type.type == OFF_MESH_CONNECTION) {

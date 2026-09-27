@@ -85,7 +85,7 @@ fn uint links_on_side(MeshTile* tile, char side, uint target_index) @private {
     return count;
 }
 
-fn void test_random_point_in_convex_poly_with_s_one() @test {
+fn void test_random_point_in_convex_poly_with_t_one() @test {
     Vec3[3] points = { { 0, 0, 0 }, { 0, 0, 1 }, { 1, 0, 0 } };
 
     assert(near_point(nav::random_point_in_convex_poly(points[..], 0, 1), { 0, 0, 1 }));

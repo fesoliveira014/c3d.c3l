@@ -210,7 +210,12 @@ struct ConnectingPolys @local {
  @param last_ref : "Ref to restore when reloading; 0 takes any free slot."
  @return? c3d::INVALID_ARGUMENT, TILE_OCCUPIED, c3d::CAPACITY_EXCEEDED
 *>
-fn TileRef? NavMesh.add_tile(&self, char[] data, TileFlags flags, TileRef last_ref = (TileRef)0) {
+fn TileRef? NavMesh.add_tile(
+    &self,
+    char[] data,
+    TileFlags flags,
+    TileRef last_ref = (TileRef)0,
+) {
     if (data.len < TileHeader::size) return c3d::INVALID_ARGUMENT~;
     TileHeader* header = (TileHeader*)data.ptr;
     if (header.magic != TILE_MAGIC || header.version != TILE_VERSION) return c3d::INVALID_ARGUMENT~;
@@ -308,7 +313,12 @@ fn int[<2>] NavMesh.tile_location(&self, Vec3 position) {
 }
 
 <* Tile at the grid coordinate and layer, or null; mirrors getTileAt. *>
-fn MeshTile* NavMesh.tile_at(&self, int x, int z, int layer) {
+fn MeshTile* NavMesh.tile_at(
+    &self,
+    int x,
+    int z,
+    int layer,
+) {
     for (MeshTile* tile = self.lookup[tile_hash(x, z, self.lookup_mask)]; tile; tile = tile.next) {
         if (tile.header && tile.header.x == x && tile.header.z == z && tile.header.layer == layer) return tile;
     }
@@ -320,7 +330,12 @@ fn MeshTile* NavMesh.tile_at(&self, int x, int z, int layer) {
  @param [out] out_tiles : "Filled up to its length."
  @return "How many were written."
 *>
-fn usz NavMesh.tiles_at(&self, int x, int z, MeshTile*[] out_tiles) {
+fn usz NavMesh.tiles_at(
+    &self,
+    int x,
+    int z,
+    MeshTile*[] out_tiles,
+) {
     usz count;
     for (MeshTile* tile = self.lookup[tile_hash(x, z, self.lookup_mask)]; tile; tile = tile.next) {
         if (!tile.header || tile.header.x != x || tile.header.z != z) continue;
@@ -330,7 +345,12 @@ fn usz NavMesh.tiles_at(&self, int x, int z, MeshTile*[] out_tiles) {
 }
 
 <* Ref of the tile at the grid coordinate and layer, or 0. *>
-fn TileRef NavMesh.tile_ref_at(&self, int x, int z, int layer) {
+fn TileRef NavMesh.tile_ref_at(
+    &self,
+    int x,
+    int z,
+    int layer,
+) {
     MeshTile* tile = self.tile_at(x, z, layer);
     return tile ? self.tile_ref(tile) : (TileRef)0;
 }
@@ -729,7 +749,12 @@ fn Slab slab_end_points(Vec3 start, Vec3 end, int side) @local {
 }
 
 // The segments shrink by the tolerance so slabs that only touch at their ends do not connect.
-fn bool overlap_slabs(Slab first, Slab second, float tolerance, float climb) @local {
+fn bool overlap_slabs(
+    Slab first,
+    Slab second,
+    float tolerance,
+    float climb,
+) @local {
     float min_x = math::max(first.min[0] + tolerance, second.min[0] + tolerance);
     float max_x = math::min(first.max[0] - tolerance, second.max[0] - tolerance);
     if (min_x > max_x) return false;
@@ -814,7 +839,12 @@ fn Aabb polygon_bounds(MeshTile* tile, Poly* poly) @private {
     return bounds;
 }
 
-fn usz polys_in_tile(NavMesh* mesh, MeshTile* tile, Aabb box, PolyRef[] out_refs) @local {
+fn usz polys_in_tile(
+    NavMesh* mesh,
+    MeshTile* tile,
+    Aabb box,
+    PolyRef[] out_refs,
+) @local {
     usz count;
     @each_poly_overlapping(mesh, tile, box; ref, poly) {
         if (count < out_refs.len) out_refs[count++] = ref;

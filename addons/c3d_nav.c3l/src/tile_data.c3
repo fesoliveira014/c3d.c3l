@@ -145,7 +145,8 @@ fn void? create_tile_data(
     }
 
     if (!params.build_bv_tree) return;
-    // The link area stays unused until add_tile, so it holds the leaf items while the tree is built.
+    // The link area stays unused until add_tile and holds at least three 16-byte links per polygon, so it fits
+    // the one 16-byte leaf item per polygon the tree build sorts.
     BvNode[] items = ((BvNode*)tile.links.ptr)[:source.poly_count];
     foreach (index, &item : items) *item = poly_leaf(mesh, (uint)index);
     usz cursor;

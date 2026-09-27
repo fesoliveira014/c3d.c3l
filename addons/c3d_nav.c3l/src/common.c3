@@ -94,7 +94,12 @@ fn SegmentProjection distance_pt_seg_sqr_2d(Vec3 point, Vec3 start, Vec3 end) @p
 }
 
 // c3d::INVALID_ARGUMENT when the point's XZ lies outside the triangle or the triangle is degenerate.
-fn float? closest_height_point_triangle(Vec3 point, Vec3 a, Vec3 b, Vec3 c) @private {
+fn float? closest_height_point_triangle(
+    Vec3 point,
+    Vec3 a,
+    Vec3 b,
+    Vec3 c,
+) @private {
     Vec3 v0 = c - a;
     Vec3 v1 = b - a;
     Vec3 v2 = point - a;
