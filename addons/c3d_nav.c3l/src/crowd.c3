@@ -287,7 +287,12 @@ fn void Crowd.remove_agent(&self, uint index) {
  @param ref : "Polygon of the position."
  @require index < self.max_agents, ref != (PolyRef)0
 *>
-fn void Crowd.request_move_target(&self, uint index, PolyRef ref, Vec3 position) {
+fn void Crowd.request_move_target(
+    &self,
+    uint index,
+    PolyRef ref,
+    Vec3 position,
+) {
     CrowdAgent* agent = &self.agents[index];
     agent.target_ref = ref;
     agent.target_position = position;

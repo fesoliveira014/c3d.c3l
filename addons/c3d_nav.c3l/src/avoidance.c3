@@ -469,7 +469,12 @@ fn float[<2>]? sweep_circle_circle(
 }
 
 // Time along the ray where it crosses the segment; c3d::INVALID_ARGUMENT when it misses.
-fn float? intersect_ray_segment(Vec3 origin, Vec3 direction, Vec3 start, Vec3 end) @local {
+fn float? intersect_ray_segment(
+    Vec3 origin,
+    Vec3 direction,
+    Vec3 start,
+    Vec3 end,
+) @local {
     Vec3 along = end - start;
     Vec3 offset = origin - start;
     float denominator = perp_2d(direction, along);

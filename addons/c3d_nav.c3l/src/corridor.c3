@@ -207,7 +207,12 @@ fn void PathCorridor.trim_invalid_path(
  @param [&in] query : "Tests the polygons."
  @param [&in] filter : "Polygons it rejects are invalid."
 *>
-fn bool PathCorridor.is_valid(&self, usz max_look_ahead, NavQuery* query, QueryFilter* filter) {
+fn bool PathCorridor.is_valid(
+    &self,
+    usz max_look_ahead,
+    NavQuery* query,
+    QueryFilter* filter,
+) {
     foreach (ref : self.path[:math::min(self.count, max_look_ahead)]) {
         if (!query.is_valid_ref(ref, filter)) return false;
     }
@@ -379,6 +384,11 @@ fn CommonPoly? find_common_poly(PolyRef[] path, PolyRef[] visited, bool from_pat
 }
 
 // Mirrors the merges' memmove: the ranges may overlap.
-fn void move_refs(PolyRef[] path, sz from, sz to, sz count) @local {
+fn void move_refs(
+    PolyRef[] path,
+    sz from,
+    sz to,
+    sz count,
+) @local {
     mem::move(&path[to], &path[from], count * (sz)PolyRef::size);
 }
