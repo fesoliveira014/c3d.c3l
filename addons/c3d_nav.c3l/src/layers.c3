@@ -59,7 +59,7 @@ struct LayerRegion @local {
  @param border_size : "Voxels trimmed from each side."
  @return "Empty when nothing is walkable."
  @return? c3d::CAPACITY_EXCEEDED
- @require walkable_height >= 3
+ @require walkable_height > 0
 *>
 fn HeightfieldLayer[]? build_heightfield_layers(
     Allocator allocator,

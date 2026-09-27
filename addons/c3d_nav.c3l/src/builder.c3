@@ -143,7 +143,7 @@ struct NavBuilderDesc {
     bool           cache_layers;           // build layers into a TileCache instead of TileMesh blobs
     uint           max_obstacles;          // TileCache capacity with cache_layers
     usz            cache_scratch_bytes;    // the arena of one cached layer rebuild
-    uint           expected_layers_per_tile; // sizes the TileCache and create_nav_mesh_for with cache_layers
+    uint           expected_layers_per_tile; // cache pool; more layers fault in commit, the tile retries
 }
 
 <* Tile grid, slots and build state of one scene's navmesh sources. *>
@@ -523,6 +523,8 @@ fn void? build_layer_blobs(TileJob* job, CompactHeightfield* compact) @local {
         walkable_height: job.config.walkable_height,
     )!;
     if (!layers.len) return;
+    // A tile record holds MAX_LAYERS refs; islands in distinct height bands can split into more.
+    if (layers.len > MAX_LAYERS) return c3d::CAPACITY_EXCEEDED~;
 
     usz size;
     foreach (&layer : layers) size += LAYER_LENGTH_BYTES + aligned_layer_blob_size(layer_blob_size(layer));

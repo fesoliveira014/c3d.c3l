@@ -720,8 +720,11 @@ fn void pack_layer_tile_mesh(
     view.areas[..] = mesh.areas[..];
 }
 
-// Upstream's rotAux for a yaw about +Y: the half-angle terms mark_oriented_box_area reads.
-fn float[2] yaw_rotation(float yaw_radians) @private {
+<*
+ Half-yaw terms mark_oriented_box_area takes; mirrors the rotAux of dtTileCache::addBoxObstacle.
+ @pure
+*>
+fn float[2] yaw_rotation(float yaw_radians) {
     float cos_half = math::cos(0.5f * yaw_radians);
     float sin_half = math::sin(-0.5f * yaw_radians);
     return { cos_half * sin_half, cos_half * cos_half - 0.5f };
