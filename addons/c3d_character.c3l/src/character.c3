@@ -1,0 +1,185 @@
+module c3d::character;
+
+import std::math;
+import c3d;
+import c3d::ecs;
+import c3d::physics;
+import c3d::scene;
+
+<*
+ Planes one move keeps; the mover solver's cost lever.
+*>
+const usz MAX_CHARACTER_PLANES = 16; // 16 * 48 bytes in every Character store slot; a corner touches three
+
+<*
+ Collide, solve and cast passes per fixed step.
+*>
+const uint CHARACTER_SOLVE_ITERATIONS = 4; // three slide passes per move; a step retry adds two raised passes
+
+const float DEFAULT_RADIUS @local = 0.4f;
+const float DEFAULT_HALF_HEIGHT @local = 0.6f; // a 2 m capsule with the default radius
+const float DEFAULT_STEP_HEIGHT @local = 0.35f; // above a stair riser, below a knee-high ledge
+const float DEFAULT_MAX_SLOPE_DEGREES @local = 50;
+const float DEFAULT_SKIN @local = 0.005f; // one box3d linear slop; a thicker skin leaves a visible gap
+
+<*
+ Capsule and movement limits of a character.
+*>
+struct CharacterDesc {
+    float           radius;
+    float           half_height;        // capsule segment half length along world Y
+    float           step_height;        // highest ledge climbed in one move
+    float           max_slope_degrees;  // steeper planes are walls
+    float           skin;               // gap kept between the capsule and every surface
+    bool            push_bodies;        // carry a kinematic body that shoves bodies outside filter.mask
+    CollisionFilter filter;             // mask: what the capsule collides with; category: the push body's shape
+}
+
+<*
+ Kinematic capsule bound to a node; the system writes the node's position every update.
+*>
+struct Character {
+    CharacterDesc                    desc;
+    Vec3                             velocity;       // world space, after the last step
+    Vec3                             desired;        // horizontal intent for the next steps
+    bool                             grounded;
+    Vec3                             ground_normal;
+    Entity                           ground;         // node under the capsule; zero in the air
+    Vec3                             previous;       // capsule center before the last step
+    Vec3                             current;        // capsule center after the last step
+    bool                             jump_requested;
+    float                            jump_speed;
+    MoverPlane[MAX_CHARACTER_PLANES] planes;         // gathered in the last step
+    uint                             plane_count;
+}
+
+<*
+ Characters of one physics world; owns the mover pass.
+*>
+struct CharacterSystem {
+    Allocator       allocator;
+    CharacterState* state;            // the pass context; one heap block
+}
+
+<*
+ What the mover pass reads and counts.
+*>
+struct CharacterState {
+    PhysicsWorld* world;
+    Scene*        scene;
+    uint          stepped;            // character steps in the last update
+    uint          stepped_so_far;     // character steps of the update in progress
+}
+
+<*
+ Author a character on the node; with push_bodies, also a KINEMATIC PhysicsBody with one CAPSULE collider.
+ @param [&in] node : "Its world position is the initial capsule center; update_world first."
+ @return? CHARACTER_EXISTS, physics::BODY_EXISTS
+ @require self.world.is_registered(Character), desc.radius > 0, desc.half_height > 0
+*>
+fn void? Scene.add_character(&self, Node* node, CharacterDesc desc) {
+    if (self.has(node, Character)) return CHARACTER_EXISTS~;
+    Vec3 center = node.world_position();
+    self.add(node, (Character){ .desc = desc, .previous = center, .current = center });
+    if (!desc.push_bodies) return;
+
+    defer catch self.remove_component(node, Character);
+    ColliderDesc collider = physics::default_collider_desc(CAPSULE);
+    collider.radius = desc.radius;
+    collider.half_height = desc.half_height;
+    // The capsule stops short of everything its mask names, so the push body touches all categories to shove the rest.
+    collider.filter = { .category = desc.filter.category, .mask = ulong::max, .group = desc.filter.group };
+    self.add_physics_body(node, physics::default_body_desc(KINEMATIC), (&collider)[:1])!;
+}
+
+<*
+ Remove the character and, when present, its push body.
+ @require self.has(node, Character)
+*>
+fn void Scene.remove_character(&self, Node* node) {
+    if (self.get(node, Character).desc.push_bodies && self.has(node, PhysicsBody)) {
+        self.remove_component(node, PhysicsBody);
+    }
+    self.remove_component(node, Character);
+}
+
+<*
+ Set the horizontal intent the next fixed steps use; the last call before a step wins.
+ @require self.has(node, Character)
+*>
+fn void Scene.move_character(&self, Node* node, Vec3 desired_velocity) {
+    self.get(node, Character).desired = desired_velocity;
+}
+
+<*
+ Launch the character upward on its next step when grounded; dropped in the air.
+ @require self.has(node, Character)
+*>
+fn void Scene.jump_character(&self, Node* node, float speed) {
+    Character* character = self.get(node, Character);
+    character.jump_requested = true;
+    character.jump_speed = speed;
+}
+
+<*
+ Move the capsule without sweeping and write the node now.
+ @require self.has(node, Character)
+*>
+fn void Scene.teleport_character(&self, Node* node, Vec3 position) {
+    Character* character = self.get(node, Character);
+    character.previous = position;
+    character.current = position;
+    // The old ground is behind; its velocity must not carry the next step.
+    character.grounded = false;
+    character.ground = {};
+    character.plane_count = 0;
+    node.set_world_position(position);
+}
+
+<*
+ Default character: 0.4 m radius, 0.6 m half height, 0.35 m step, 50 degree slope, 5 mm skin, no push body.
+*>
+fn CharacterDesc default_character_desc() {
+    return {
+        .radius            = DEFAULT_RADIUS,
+        .half_height       = DEFAULT_HALF_HEIGHT,
+        .step_height       = DEFAULT_STEP_HEIGHT,
+        .max_slope_degrees = DEFAULT_MAX_SLOPE_DEGREES,
+        .skin              = DEFAULT_SKIN,
+        .filter            = physics::FILTER_ALL,
+    };
+}
+
+<*
+ Register the Character component.
+ @param [&inout] scene : "Gains the Character store."
+ @return? c3d::CAPACITY_EXCEEDED
+*>
+fn void? register_character(Scene* scene) {
+    scene.register(Character)!;
+}
+
+<*
+ System stepping every Character of the scene inside the world's fixed steps.
+ The mover pass stays registered on the world until destroy_character_system.
+ @param [&inout] world : "Receives the mover pass; outlives the system."
+ @param [&in] scene : "Registered through register_character; the world's scene."
+ @return? c3d::CAPACITY_EXCEEDED
+ @require world.mover_pass.step == null
+*>
+fn CharacterSystem? create_character_system(Allocator allocator, PhysicsWorld* world, Scene* scene) {
+    CharacterState*? state = alloc::new_try(allocator, CharacterState, { .world = world, .scene = scene });
+    if (catch state) return c3d::CAPACITY_EXCEEDED~;
+    world.set_mover_pass({ .step = &step_characters, .write = &write_characters, .context = state });
+    return { .allocator = allocator, .state = state };
+}
+
+<*
+ Remove the mover pass, then free the state.
+ @param [&inout] system : "Left zeroed."
+*>
+fn void destroy_character_system(CharacterSystem* system) {
+    system.state.world.set_mover_pass({});
+    alloc::free(system.allocator, system.state);
+    *system = {};
+}

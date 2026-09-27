@@ -18,6 +18,7 @@ C3 0.8.3. C3 is pre-1.0; check syntax against the installed compiler and the `c3
 | `module c3d::gui @feat(C3D_PROFILE_GUI & (C3D_PROFILE_CPU \| C3D_PROFILE_GPU));` | Profiler presentation in `addons/c3d_profile_gui.c3l`. Imports only stdlib, neutral profile values and ImGui. Every public declaration is absent unless GUI and at least one capture domain are selected. |
 | `module c3d::physics;` | Rigid bodies over box3d in `addons/c3d_physics.c3l`. Imports stdlib, core and `b3`; faults belong to the add-on; `PhysicsWorld.world`, `PhysicsWorld.body`, `PhysicsWorld.joint` and the component ids are the `b3` escape hatches. |
 | `module c3d::nav;` | Navigation meshes in `addons/c3d_nav.c3l`, a port of Recast/Detour. Imports stdlib and core; faults belong to the add-on. |
+| `module c3d::character;` | Kinematic capsule character controller in `addons/c3d_character.c3l`, on the physics mover primitives. Imports stdlib, core and `c3d::physics`, never `b3`; faults belong to the add-on. |
 | `module c3d::instrumentation @private;` | Core's optional scope bridge; only its CPU+INTERNAL section imports the profiler add-on. |
 
 Every module is `c3d` or a submodule of it. The repository directory name never appears in source. Dependency imports are confined per `AGENTS.md` section 1 and checked at review.

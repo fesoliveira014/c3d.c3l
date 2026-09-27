@@ -36,6 +36,7 @@ PROFILE = ROOT / "addons" / "c3d_profile.c3l"
 PROFILE_GUI = ROOT / "addons" / "c3d_profile_gui.c3l"
 PHYSICS = ROOT / "addons" / "c3d_physics.c3l"
 NAV = ROOT / "addons" / "c3d_nav.c3l"
+CHARACTER = ROOT / "addons" / "c3d_character.c3l"
 ADDON_EXAMPLES = {
     "capture": PROFILE,
     "physics": PHYSICS,
@@ -43,7 +44,7 @@ ADDON_EXAMPLES = {
     "physics_components": PHYSICS,
     "vehicle": PHYSICS,
     "ragdoll": PHYSICS,
-    "mover": PHYSICS,
+    "character": CHARACTER,
 }
 PROFILE_TEST_TARGETS = (
     "profile_off", "profile_cpu", "profile_internal", "profile_gpu",
@@ -54,6 +55,7 @@ PROFILE_GUI_TEST_TARGETS = (
 )
 PHYSICS_TEST_TARGETS = ("physics_test",)
 NAV_TEST_TARGETS = ("nav_test",)
+CHARACTER_TEST_TARGETS = ("character_test",)
 
 REQUIRED_C3C_VERSION = "0.8.3"
 C3IMGUI_RELEASE_TAG = "v0.1.3"
@@ -247,6 +249,7 @@ def step_build(options: Options) -> None:
         run(command, ROOT, options.verbose)
     copy_windows_runtimes(EXAMPLES / "build")
     copy_windows_runtimes(PHYSICS / "build")
+    copy_windows_runtimes(CHARACTER / "build")
     if not options.target or options.target == "profile_gpu":
         copy_windows_runtimes(ROOT / "build" / "profile_gpu")
 
@@ -289,6 +292,8 @@ def step_test(options: Options) -> None:
         run([options.c3c, "test", target, "--path", str(PHYSICS)], ROOT, options.verbose)
     for target in NAV_TEST_TARGETS:
         run([options.c3c, "test", target, "--path", str(NAV)], ROOT, options.verbose)
+    for target in CHARACTER_TEST_TARGETS:
+        run([options.c3c, "test", target, "--path", str(CHARACTER)], ROOT, options.verbose)
 
 
 def step_run(options: Options) -> None:
@@ -301,7 +306,7 @@ def step_run(options: Options) -> None:
 
 
 def step_clean(options: Options) -> None:
-    for project_dir in (EXAMPLES, TEST, PROFILE, PROFILE_GUI, PHYSICS, NAV):
+    for project_dir in (EXAMPLES, TEST, PROFILE, PROFILE_GUI, PHYSICS, NAV, CHARACTER):
         if (project_dir / "project.json").exists():
             run([options.c3c, "clean", "--path", str(project_dir)], ROOT, options.verbose)
 
