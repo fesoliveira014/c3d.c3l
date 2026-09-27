@@ -23,12 +23,15 @@ Entry point for every agent session in this repository. Read it fully before rea
 | c3d_profile.c3l | `c3d::profile`, private `c3d::render::profile_gpu` | Applications select it explicitly; core imports it only through the gated CPU and GPU bridges |
 | c3d_profile_gui.c3l | profiler additions to `c3d::gui` | Applications select it explicitly; it imports only the standard library, `c3d::profile` and `imgui` |
 | c3d_physics.c3l | `c3d::physics` | Applications select it explicitly; it imports the standard library, `c3d` and `b3` |
+| c3d_nav.c3l | `c3d::nav` | Applications select it explicitly; it imports the standard library and `c3d` |
 
 Boundaries are checked at review. No dependency is added without updating this table.
 
 The `addons/c3d_profile.c3l` package bundles CPU/GPU capture, history and export. Its neutral `c3d::profile` module imports only the standard library. Its private `c3d::render::profile_gpu` module, under `src/gpu/` and gated by `C3D_PROFILE_GPU`, imports only the standard library, gpu.c3l and neutral profile values; it never imports core types. Core's approved profiler bridges are `c3d::instrumentation` for CPU+INTERNAL and `render/profile.c3` for GPU. Core has no unconditional profiler dependency; instrumented consumers select the collector add-on explicitly. The `addons/c3d_profile_gui.c3l` presentation adapter extends `c3d::gui` under `C3D_PROFILE_GUI`; it consumes neutral capture data and ImGui and is never imported by core or the collector. Standalone CPU collector builds need no native/shader setup. GUI consumers select ImGui and Vulkan bindings explicitly, while GPU data tests additionally select backend dependencies; neither data-test project creates a device.
 
 The `addons/c3d_physics.c3l` package owns rigid-body physics: the box3d world, bodies bound to scene nodes, cooked collision data and frame event lists. Its `c3d::physics` module imports the standard library, core (`c3d`) and `b3`, never `gpu`, `sdl` or `imgui`. Core never imports it and carries no physics feature flag; selecting the library is the gate. The package owns its `project.json`, `physics_test` target and `physics`, `physics_instanced` and `physics_components` examples.
+
+The `addons/c3d_nav.c3l` package owns navigation meshes, a port of Recast/Detour (`recastnavigation` at `9f4ce64`, zlib; the notice ships in the package). Its `c3d::nav` module imports the standard library and core (`c3d`), never `gpu`, `sdl`, `imgui`, `b3` or `c3d::physics`. Core never imports it and carries no navigation feature flag; selecting the library is the gate. The package owns its `project.json` and `nav_test` target.
 
 # 2. Where truth lives
 
@@ -78,7 +81,7 @@ Steps run in this order and stop at the first failure: tools (c3c 0.8.3, glslang
 
 Before every commit: `scripts/build.py --test`. Broken builds are never committed. GPU examples run manually; CI runs `--test`. Every development run of a GPU example enables Vulkan validation through gpu.c3l.
 
-The default build also builds the collector's `capture` example, the physics package's `physics`, `physics_instanced` and `physics_components` examples, the root `profile_gpu` example and all four `profile_gui` feature targets; `--target` and `--example` resolve add-on examples to their package project. `--test` runs the collector's off, CPU, internal CPU, GPU, internal GPU, CPU+GPU and full CPU+GPU+INTERNAL targets, the presentation add-on's off, CPU, GPU and combined data targets, the physics package's `physics_test` target, and the root integration targets. These tests never create a GPU device. Direct `c3c test profile_cpu --path addons/c3d_profile.c3l` exercises only the standalone collector package. Real Vulkan acceptance lives in the separately invoked `test/gpu/profile` project and the manually run profiler GUI examples; neither runs in CI.
+The default build also builds the collector's `capture` example, the physics package's `physics`, `physics_instanced` and `physics_components` examples, the root `profile_gpu` example and all four `profile_gui` feature targets; `--target` and `--example` resolve add-on examples to their package project. `--test` runs the collector's off, CPU, internal CPU, GPU, internal GPU, CPU+GPU and full CPU+GPU+INTERNAL targets, the presentation add-on's off, CPU, GPU and combined data targets, the physics package's `physics_test` target, the nav package's `nav_test` target, and the root integration targets. These tests never create a GPU device. Direct `c3c test profile_cpu --path addons/c3d_profile.c3l` exercises only the standalone collector package. Real Vulkan acceptance lives in the separately invoked `test/gpu/profile` project and the manually run profiler GUI examples; neither runs in CI.
 
 # 6. Style
 
@@ -165,7 +168,7 @@ Counter-example, rejected on review:
 
 # 10. Architecture rules
 
-- Two layers. Scene-layer modules (`c3d`, `c3d::maths`, `c3d::ecs`, `c3d::asset`, `c3d::scene`, `c3d::geometry`, `c3d::camera`, `c3d::material`, `c3d::light`, `c3d::anim`, `c3d::model`, `c3d::spatial`, `c3d::physics`) never import `gpu`. The render layer (`c3d::render`, `c3d::shader`, `c3d::render::post`, `c3d::gui`) owns every GPU object. `c3d::platform` imports `gpu::surface` alone, to hand native window handles to gpu.c3l; a bare `import gpu` there is a violation.
+- Two layers. Scene-layer modules (`c3d`, `c3d::maths`, `c3d::ecs`, `c3d::asset`, `c3d::scene`, `c3d::geometry`, `c3d::camera`, `c3d::material`, `c3d::light`, `c3d::anim`, `c3d::model`, `c3d::spatial`, `c3d::physics`, `c3d::nav`) never import `gpu`. The render layer (`c3d::render`, `c3d::shader`, `c3d::render::post`, `c3d::gui`) owns every GPU object. `c3d::platform` imports `gpu::surface` alone, to hand native window handles to gpu.c3l; a bare `import gpu` there is a violation.
 - The renderer reads the scene; the scene never calls the renderer. Loaders write the asset store and the scene; they never touch the renderer.
 - All shader-visible data is std430 behind root pointers and defined once in `abi/c3d.abi`. Per-draw push data is exactly two root addresses.
 - Depth is reverse-Z; the Vulkan Y flip is one negative-height viewport; shaders use GL conventions and never flip.
@@ -181,11 +184,12 @@ c3d.c3l/
 ├── addons/c3d_profile.c3l/ CPU/GPU capture package, standalone data tests and CPU example
 ├── addons/c3d_profile_gui.c3l/ ImGui presentation package and standalone data tests
 ├── addons/c3d_physics.c3l/ box3d rigid bodies, colliders, events; owns its tests and example
+├── addons/c3d_nav.c3l/     Recast/Detour port: navmesh build; owns its tests
 ├── abi/c3d.abi             shared C3 and GLSL layouts
 ├── docs/style.md           mandatory style baseline
 ├── lib/                    gpu.c3l · sdl3.c3l · c3imgui.c3l · c3cg.c3l · box3d.c3l · cgltf.c3l · ufbx.c3l · shaderc.c3l (submodules)
 │                           plus c3d.c3l, a symlink to the root, so consumers resolve c3d here
-│                           plus c3d_profile.c3l, c3d_profile_gui.c3l and c3d_physics.c3l symlinks to the add-ons
+│                           plus c3d_profile.c3l, c3d_profile_gui.c3l, c3d_physics.c3l and c3d_nav.c3l symlinks to the add-ons
 ├── linked-libs/            empty; every dependency ships its own native artifacts
 ├── csrc/                   stb_image
 ├── src/c3d/
