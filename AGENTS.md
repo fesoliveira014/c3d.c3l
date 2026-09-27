@@ -187,7 +187,7 @@ c3d.c3l/
 ├── addons/c3d_profile.c3l/ CPU/GPU capture package, standalone data tests and CPU example
 ├── addons/c3d_profile_gui.c3l/ ImGui presentation package and standalone data tests
 ├── addons/c3d_physics.c3l/ box3d rigid bodies, colliders, events; owns its tests and example
-├── addons/c3d_nav.c3l/     Recast/Detour port: tiled navmesh build and store; owns its tests and example
+├── addons/c3d_nav.c3l/     Recast/Detour port: tiled navmesh build, store and path queries; owns its tests and example
 ├── addons/c3d_character.c3l/ capsule character controller on the physics mover primitives; owns its tests and example
 ├── abi/c3d.abi             shared C3 and GLSL layouts
 ├── docs/style.md           mandatory style baseline

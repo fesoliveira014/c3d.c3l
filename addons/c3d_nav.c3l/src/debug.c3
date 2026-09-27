@@ -87,6 +87,17 @@ fn void NavBuilder.debug_draw(&self, debug::DebugDraw* sink, NavDebugOptions opt
 }
 
 <*
+ Append a polyline through the points, lifted above the mesh outlines.
+ @param [&inout] sink : "Cleared by the application."
+*>
+fn void debug_draw_path(debug::DebugDraw* sink, StraightPoint[] points, uint rgba) {
+    Vec3 lift = { 0, MESH_LIFT * 2, 0 };
+    for (usz index = 1; index < points.len; index++) {
+        sink.line(points[index - 1].position + lift, points[index].position + lift, rgba);
+    }
+}
+
+<*
  Append the top face of every span; walkable spans in the colour, the rest grey.
  @param [&in] heightfield : "A slot's, between rasterize_next and commit."
  @param [&inout] sink : "Cleared by the application."

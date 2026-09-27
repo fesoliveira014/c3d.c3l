@@ -768,7 +768,7 @@ fn void unconnect_links(NavMesh* mesh, MeshTile* tile, MeshTile* target) @local 
     }
 }
 
-// Visits the polygons whose bounds overlap the box, through the BV tree when the tile has one; mirrors queryPolygonsInTile.
+// Polygons whose bounds overlap the box, through the BV tree when the tile has one; mirrors queryPolygonsInTile.
 macro void @each_poly_overlapping(NavMesh* mesh, MeshTile* tile, Aabb box; @body(PolyRef ref, Poly* poly)) @private {
     PolyRef base = mesh.poly_ref_base(tile);
     if (!tile.bv_tree.len) {

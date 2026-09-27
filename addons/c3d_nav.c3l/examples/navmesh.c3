@@ -16,6 +16,7 @@ import c3d::nav;
 import c3d::platform;
 import c3d::render;
 import c3d::scene;
+import c3d::spatial;
 import imgui;
 
 const uint  SCENE_NODE_CAPACITY @local = 64;
@@ -41,7 +42,24 @@ const float FREE_SPEED_WHEEL_STEP @local = 1.25f;
 const Vec3  CAMERA_START @local = { 0, 14, 20 };
 const float CAMERA_START_PITCH @local = -0.6f;
 const Vec2  PANEL_POSITION @local = { 16, 16 };
-const Vec2  PANEL_SIZE @local = { 380, 260 };
+const Vec2  PANEL_SIZE @local = { 430, 340 };
+const uint  QUERY_NODES @local = 2048; // 64 KiB of search nodes; the level's whole graph fits
+const usz   CORRIDOR_CAPACITY @local = 256;
+const usz   POINT_CAPACITY @local = 64;
+const Vec3  WALKER_START @local = { -9, 0, 8 };
+const Vec3  SNAP_EXTENTS @local = { 2, 4, 2 }; // metres; finds the floor or the platform under a pick
+const float WALK_SPEED @local = 3; // metres per second
+const float LINK_RADIUS @local = 0.6f;
+const Vec3  LADDER_BOTTOM @local = { 0, -0.5f, 3.5f }; // platform space; the floor on the +Z side
+const Vec3  LADDER_TOP @local = { 0, 0.5f, 0 };
+const Vec3  DROP_TOP @local = { 1.2f, 0.5f, 0 }; // platform space; one way down to the floor on the +X side
+const Vec3  DROP_BOTTOM @local = { 3.5f, -0.5f, 0 };
+const Vec3  PLATFORM_GOAL @local = { 7, 1, -6 };
+const Vec3  FLOOR_GOAL @local = { 9, 0, 9 };
+const uint  PATH_COLOR @local = 0xFF20E0FF;
+const uint  WALKER_COLOR @local = 0xFFFFFF40;
+const uint  GOAL_COLOR @local = 0xFF4040FF;
+const float MARKER_RADIUS @local = 0.35f;
 
 struct FreeCamera @local {
     Vec3  position;
@@ -51,8 +69,9 @@ struct FreeCamera @local {
 }
 
 struct Controls @local {
-    NavDebugOptions draw;
-    bool            spans;
+    NavDebugOptions     draw;
+    NavMeshDebugOptions mesh;
+    bool                spans;
 }
 
 struct BuildTotals @local {
@@ -63,8 +82,24 @@ struct BuildTotals @local {
 
 struct Level @local {
     Node* platform;
+    Node* ladder;             // two-way NavLink up the platform's +Z side; L makes it one-way up
+    Node* drop;               // one-way NavLink down the platform's +X side
     Node* camera_node;
     bool  platform_shifted;
+}
+
+struct Walker @local {
+    Vec3                          position;
+    Vec3                          goal;
+    bool                          has_goal;
+    bool                          replan;
+    PolyRef[CORRIDOR_CAPACITY]    corridor;
+    StraightPoint[POINT_CAPACITY] points;
+    PathResult                    path;
+    PathResult                    straight;
+    usz                           next_point;
+    float                         length;
+    uint                          nodes_used;
 }
 
 fn Vec3 free_forward(FreeCamera* camera) @local {
@@ -198,6 +233,22 @@ fn Level? build_level(AssetStore* assets, Scene* scene) @local {
         position: PLATFORM_HOME,
     )!;
 
+    level.ladder = scene.add_node(level.platform, "ladder")!;
+    scene.add_nav_link(level.ladder, {
+        .start         = LADDER_BOTTOM,
+        .end           = LADDER_TOP,
+        .radius        = LINK_RADIUS,
+        .bidirectional = true,
+        .area          = nav::WALKABLE_AREA,
+    })!;
+    level.drop = scene.add_node(level.platform, "drop")!;
+    scene.add_nav_link(level.drop, {
+        .start  = DROP_TOP,
+        .end    = DROP_BOTTOM,
+        .radius = LINK_RADIUS,
+        .area   = nav::WALKABLE_AREA,
+    })!;
+
     Node* mud = scene.add_node(name: "mud")!;
     scene.add_nav_volume(mud, {
         .kind = BOX,
@@ -219,19 +270,132 @@ fn void move_platform(Scene* scene, Level* level) @local {
     level.platform.local.position.x = PLATFORM_HOME.x - (level.platform_shifted ? PLATFORM_SHIFT : 0);
     scene.update_world();
     scene.get(level.platform, NavSource).mark_changed();
+    scene.get(level.ladder, NavLink).mark_changed();
+    scene.get(level.drop, NavLink).mark_changed();
 }
 
-fn void draw_panel(NavBuilder* builder, Controls* controls, BuildTotals* totals) @local {
+fn void toggle_ladder(Scene* scene, Level* level) @local {
+    NavLink* ladder = scene.get(level.ladder, NavLink);
+    ladder.bidirectional = !ladder.bidirectional;
+    ladder.mark_changed();
+}
+
+fn void set_goal(Walker* walker, Vec3 goal) @local {
+    walker.goal = goal;
+    walker.has_goal = true;
+    walker.replan = true;
+}
+
+fn Vec3? pick_goal(
+    AssetStore* assets,
+    Scene* scene,
+    Node* camera_node,
+    Vec2 pixel,
+    Vec2 viewport,
+) @local {
+    camera::Camera* camera = scene.get(camera_node, camera::Camera);
+    CameraMatrices matrices = camera::derive_matrices(*camera, camera_node.world, viewport);
+    Ray ray = camera::screen_to_ray(&matrices, pixel, viewport);
+    @pool() {
+        PickHit[] hits = spatial::pick(
+            allocator: tmem,
+            assets:    assets,
+            scene:     scene,
+            ray:       ray,
+            options:   { .precision = TRIANGLES, .faces = MATERIAL, .layers = camera::ALL_LAYERS },
+        );
+        if (!hits.len) return NOT_FOUND~;
+        return hits[0].position;
+    };
+}
+
+// Snaps the walker and the goal onto the mesh, then plans the corridor and its straight points.
+fn void plan_walk(Walker* walker, NavQuery* query, QueryFilter* filter) @local {
+    walker.replan = false;
+    walker.path = {};
+    walker.straight = {};
+    walker.next_point = 0;
+    walker.length = 0;
+    NearestPoly? start = query.find_nearest_poly(walker.position, SNAP_EXTENTS, filter);
+    NearestPoly? goal = query.find_nearest_poly(walker.goal, SNAP_EXTENTS, filter);
+    if (catch start, goal) return;
+    walker.position = start.point;
+    PathResult? corridor = query.find_path(
+        start_ref: start.ref,
+        end_ref:   goal.ref,
+        start:     start.point,
+        end:       goal.point,
+        filter:    filter,
+        out_path:  walker.corridor[..],
+    );
+    if (catch corridor) return;
+    walker.path = corridor;
+    walker.nodes_used = query.nodes.count;
+    PathResult? straight = query.straight_path(
+        start:      start.point,
+        end:        goal.point,
+        path:       walker.corridor[:corridor.count],
+        out_points: walker.points[..],
+    );
+    if (catch straight) return;
+    walker.straight = straight;
+    walker.next_point = 1;
+    for (usz index = 1; index < straight.count; index++) {
+        walker.length += (walker.points[index].position - walker.points[index - 1].position).length();
+    }
+}
+
+fn void advance_walker(Walker* walker, float delta_seconds) @local {
+    float step = WALK_SPEED * delta_seconds;
+    while (walker.next_point < walker.straight.count && step > 0) {
+        Vec3 target = walker.points[walker.next_point].position;
+        Vec3 offset = target - walker.position;
+        float distance = offset.length();
+        if (distance <= step) {
+            walker.position = target;
+            step -= distance;
+            walker.next_point++;
+        } else {
+            walker.position += offset * (step / distance);
+            step = 0;
+        }
+    }
+}
+
+fn void draw_walker(Walker* walker, debug::DebugDraw* sink) @local {
+    Vec3 up = { 0, 1, 0 };
+    sink.circle(walker.position, up, MARKER_RADIUS, WALKER_COLOR);
+    sink.line(walker.position, walker.position + up, WALKER_COLOR);
+    if (!walker.has_goal) return;
+    sink.circle(walker.goal, up, MARKER_RADIUS, GOAL_COLOR);
+    nav::debug_draw_path(sink, walker.points[:walker.straight.count], PATH_COLOR);
+}
+
+fn void draw_panel(
+    NavBuilder* builder,
+    Controls* controls,
+    BuildTotals* totals,
+    Walker* walker,
+    NavLink* ladder,
+) @local {
     imgui::set_next_window_pos(PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
     imgui::set_next_window_size(PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
     if (imgui::begin("Navmesh", null, {})) {
+        imgui::text("Click, 1 or 2 sets the goal; L toggles the ladder");
         imgui::text("M moves the platform; right drag looks, WASDQE move");
         imgui::checkbox("Tiles", &controls.draw.tiles);
-        imgui::checkbox("Polygons", &controls.draw.polys);
+        imgui::checkbox("Polygons", &controls.mesh.polys);
+        imgui::checkbox("Links", &controls.mesh.links);
         imgui::checkbox("Spans of the rasterizing slot", &controls.spans);
         imgui::separator();
         imgui::text("Tiles: %u x %u   dirty: %u", builder.tiles_x, builder.tiles_z, builder.dirty_count);
         imgui::text("Built: %u   skipped sources: %u   failed: %u", totals.built, totals.skipped, totals.failed);
+        imgui::separator();
+        imgui::text("Ladder: %s", ladder.bidirectional ? "two-way".ptr : "one-way up".ptr);
+        imgui::text("Path: %u polygons, %u points, %.1f m", (uint)walker.path.count, (uint)walker.straight.count, walker.length);
+        imgui::text("Partial: %s   truncated: %s", walker.path.partial ? "yes".ptr : "no".ptr,
+            walker.path.truncated || walker.straight.truncated ? "yes".ptr : "no".ptr);
+        imgui::text("Nodes: %u of %u", walker.nodes_used, QUERY_NODES);
         if (totals.failed) {
             TileFailure failure = builder.last_failure;
             @pool() {
@@ -243,9 +407,15 @@ fn void draw_panel(NavBuilder* builder, Controls* controls, BuildTotals* totals)
     imgui::end();
 }
 
-fn void draw_debug(NavBuilder* builder, debug::DebugDraw* sink, Controls* controls) @local {
+fn void draw_debug(
+    NavBuilder* builder,
+    NavMesh* mesh,
+    debug::DebugDraw* sink,
+    Controls* controls,
+) @local {
     sink.clear();
     builder.debug_draw(sink, controls.draw);
+    mesh.debug_draw(sink, controls.mesh);
     if (!controls.spans) return;
     foreach (&job : builder.jobs) {
         if (job.state == RASTERIZING) nav::debug_draw_heightfield(&job.heightfield, sink, SPAN_COLOR);
@@ -288,6 +458,12 @@ fn void? run(
     defer nav::destroy_nav_builder(&builder);
     NavMesh mesh = nav::create_nav_mesh_for(mem, &builder)!;
     defer nav::destroy_nav_mesh(&mesh);
+    NavQuery query = nav::create_nav_query(mem, &mesh, QUERY_NODES)!;
+    defer nav::destroy_nav_query(&query);
+    QueryFilter filter = nav::default_query_filter();
+    Walker* walker = mem::new(Walker);
+    defer free(walker);
+    walker.position = WALKER_START;
 
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
@@ -300,7 +476,7 @@ fn void? run(
         .pitch    = CAMERA_START_PITCH,
         .speed    = FREE_SPEED,
     };
-    Controls controls = { .draw = { .tiles = true, .polys = true }, .spans = true };
+    Controls controls = { .draw = { .tiles = true }, .mesh = { .polys = true, .links = true }, .spans = true };
     BuildTotals totals;
     renderer.prepare_scene(scene)!;
 
@@ -311,9 +487,30 @@ fn void? run(
         defer {
             if (gui_renderer.frame_open) gui_renderer.finish_frame();
         }
-        draw_panel(&builder, &controls, &totals);
+        draw_panel(
+            builder:  &builder,
+            controls: &controls,
+            totals:   &totals,
+            walker:   walker,
+            ladder:   scene.get(level.ladder, NavLink),
+        );
 
-        if (input.key_pressed(platform::Scancode.M) && !input.keyboard_captured_by_gui) move_platform(scene, &level);
+        if (!input.keyboard_captured_by_gui) {
+            if (input.key_pressed(platform::Scancode.M)) move_platform(scene, &level);
+            if (input.key_pressed(platform::Scancode.L)) toggle_ladder(scene, &level);
+            if (input.key_pressed(platform::Scancode.CODE_1)) set_goal(walker, PLATFORM_GOAL);
+            if (input.key_pressed(platform::Scancode.CODE_2)) set_goal(walker, FLOOR_GOAL);
+        }
+        if (input.button_pressed(platform::MouseButton.LEFT) && !input.mouse_captured_by_gui) {
+            Vec3? picked = pick_goal(
+                assets:      assets,
+                scene:       scene,
+                camera_node: level.camera_node,
+                pixel:       input.mouse_position,
+                viewport:    { (float)window.width, (float)window.height },
+            );
+            if (try picked) set_goal(walker, picked);
+        }
         apply_free_camera(
             camera:        &camera,
             input:         input,
@@ -332,7 +529,16 @@ fn void? run(
         totals.built += result.built;
         totals.skipped += result.skipped;
         totals.failed += result.failed;
-        draw_debug(&builder, &sink, &controls);
+        // An install invalidates the refs of the tiles it replaced, so the walk is planned again.
+        if (walker.has_goal && (walker.replan || result.installed)) plan_walk(walker, &query, &filter);
+        advance_walker(walker, window.clock.delta);
+        draw_debug(
+            builder:  &builder,
+            mesh:     &mesh,
+            sink:     &sink,
+            controls: &controls,
+        );
+        draw_walker(walker, &sink);
         gui_renderer.finish_frame();
 
         platform::sync_window(window, renderer);

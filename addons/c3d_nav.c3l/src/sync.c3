@@ -91,10 +91,10 @@ fn void NavBuilder.sync_sources(&self, Scene* scene, AssetStore* assets) {
  Apply scene changes, build up to budget tiles, then install every tile marked for relink into the mesh.
  Invalidates every PolyRef into a reinstalled tile.
  @param [&inout] builder : "Owns the TileMesh blobs."
- @param [&inout] mesh : "From create_nav_mesh_for(builder); owns the installed TileData blobs."
+ @param [&inout] mesh : "The builder's one mesh, from create_nav_mesh_for; owns the installed blobs."
  @param [&in] scene : "World matrices as left by the last update_world."
  @param [&in] assets : "Geometry arrays are read, never kept."
- @param budget : "Tiles taken from rasterization to commit this call; a slot left RASTERIZING counts; installs are not budgeted."
+ @param budget : "Tiles rasterized and committed this call; a slot left RASTERIZING counts; installs are unbudgeted."
 *>
 fn NavSyncResult nav_sync(
     NavBuilder* builder,
