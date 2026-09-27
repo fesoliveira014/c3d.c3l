@@ -296,6 +296,11 @@ fn bool limit_widgets(ZString label, IkLimit* limit) @local {
     if (limit.kind == IkLimitKind.CONE) {
         return degrees_slider("Half angle (deg)", &limit.max_angle, 0) || changed;
     }
+    // Zero turns the kept twist off, so only a nonzero axis is normalized.
+    if (imgui::drag_float3("Twist axis", (float*)&limit.twist_axis)) {
+        if (limit.twist_axis.length() > 0) limit.twist_axis = limit.twist_axis.normalize();
+        changed = true;
+    }
     changed = degrees_slider("Min angle (deg)", &limit.min_angle, -IK_ANGLE_MAX_DEGREES) || changed;
     changed = degrees_slider("Max angle (deg)", &limit.max_angle, -IK_ANGLE_MAX_DEGREES) || changed;
     return changed;

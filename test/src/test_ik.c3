@@ -206,6 +206,46 @@ fn void test_hinge_limit_clamps_the_middle_joint() @test {
     assert(close_quat(rig.middle.local.rotation, quaternion::from_axis_angle{float}({ 1, 0, 0 }, -0.5f)));
 }
 
+fn void test_hinge_keeps_the_clip_twist_about_the_bone_axis() @test {
+    ChainRig rig = make_chain();
+    defer scene::destroy_scene(&rig.scene);
+    Quat flexion = quaternion::from_axis_angle{float}({ 1, 0, 0 }, 0.3f);
+    Quat clip = flexion * quaternion::from_axis_angle{float}({ 0, 1, 0 }, 0.8f);
+    rig.middle.local.rotation = clip;
+    rig.scene.update_world();
+    rig.chain.limits[1] = ik::hinge_limit(
+        reference:  quaternion::IDENTITY,
+        axis:       { 1, 0, 0 },
+        min_angle:  -1,
+        max_angle:  1,
+        twist_axis: { 0, 1, 0 },
+    );
+
+    solve_at(&rig, rig.end.world_position());
+
+    assert(close_quat(rig.middle.local.rotation, clip));
+}
+
+fn void test_hinge_clamps_flexion_and_keeps_the_twist() @test {
+    ChainRig rig = make_chain();
+    defer scene::destroy_scene(&rig.scene);
+    Quat twist = quaternion::from_axis_angle{float}({ 0, 1, 0 }, 0.8f);
+    rig.middle.local.rotation = twist;
+    rig.pole.local.position = { 0, 1, 1 };
+    rig.chain.pole = rig.pole;
+    rig.chain.limits[1] = ik::hinge_limit(
+        reference:  quaternion::IDENTITY,
+        axis:       { 1, 0, 0 },
+        min_angle:  -0.5f,
+        max_angle:  0.5f,
+        twist_axis: { 0, 1, 0 },
+    );
+
+    solve_at(&rig, { 0, 0.6f, 0.3f });
+
+    assert(close_quat(rig.middle.local.rotation, quaternion::from_axis_angle{float}({ 1, 0, 0 }, -0.5f) * twist));
+}
+
 fn void test_cone_limit_bounds_the_root_swing() @test {
     ChainRig rig = make_chain();
     defer scene::destroy_scene(&rig.scene);
