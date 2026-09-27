@@ -92,6 +92,14 @@ enum CompoundChildKind {
 }
 
 <*
+ Where a height field's samples come from.
+*>
+enum HeightSource {
+    HEIGHTS,
+    TEXTURE,
+}
+
+<*
  Category and mask bits box3d tests before two shapes may touch.
 *>
 struct CollisionFilter {
@@ -102,11 +110,14 @@ struct CollisionFilter {
 
 <*
  Row-major heights, x fastest; copied when cooked.
+ TEXTURE reads mip 0's red channel, 8-bit as [0, 1], and takes its counts from the texture.
 *>
 struct HeightField {
-    float[] heights;
-    uint    count_x;
-    uint    count_z;
+    HeightSource source;
+    float[]      heights;
+    uint         count_x;
+    uint         count_z;
+    TextureId    texture;
 }
 
 <*

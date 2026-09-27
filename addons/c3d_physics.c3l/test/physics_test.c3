@@ -7,6 +7,7 @@ import c3d::asset;
 import c3d::ecs;
 import c3d::geometry;
 import c3d::maths;
+import c3d::material;
 import c3d::physics;
 import c3d::scene;
 import b3;
@@ -229,6 +230,46 @@ fn usz overlap_count(Fixture* fixture, Vec3 center) @private {
 fn void run_updates(Fixture* fixture, uint count) @private {
     for (uint update = 0; update < count; update++) fixture.physics.update(physics::DEFAULT_FIXED_DT);
     fixture.scene.update_world();
+}
+
+fn TextureId add_height_texture(
+    Fixture* fixture,
+    PixelFormat format,
+    uint width,
+    uint height,
+    float[] heights,
+) @private {
+    usz texel_bytes = format == RGBA32_FLOAT ? 4 * float::size : format == RGBA16_FLOAT ? 8 : 4;
+    TextureId texture;
+    @pool() {
+        char[] pixels = alloc::new_array(tmem, char, (sz)(texel_bytes * width * height));
+        foreach (usz index, value : heights) {
+            if (format == RGBA32_FLOAT) {
+                ((float*)pixels.ptr)[index * 4] = value;
+            } else {
+                pixels[index * texel_bytes] = (char)math::round(value * 255);
+            }
+        }
+        texture = fixture.assets.add_texture(material::texture_2d_desc(width, height, format), pixels)!!;
+    };
+    return texture;
+}
+
+fn ColliderDesc height_map_collider(TextureId texture, Vec3 scale = { 1, 1, 1 }) @private {
+    ColliderDesc collider = physics::default_collider_desc(HEIGHT_FIELD);
+    collider.height_field = { .source = TEXTURE, .texture = texture };
+    collider.local.scale = scale;
+    return collider;
+}
+
+fn Node* add_static_body(Fixture* fixture, ColliderDesc collider, Vec3 position = {}) @private {
+    Node* node = add_static_node(fixture, position);
+    fixture.physics.add_body(node, physics::default_body_desc(STATIC), (&collider)[:1])!!;
+    return node;
+}
+
+fn float ground_height(Fixture* fixture, float x, float z) @private {
+    return fixture.physics.raycast({ x, 5, z }, { 0, -1, 0 }, 10)!!.point.y;
 }
 
 fn void test_accumulator_steps_and_clamps() @test {
@@ -984,6 +1025,127 @@ fn void test_height_field_hole_lets_ray_through() @test {
         missed = true;
     }
     assert(missed);
+}
+
+fn void test_height_map_reads_red_channel_row_major() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    float[12] heights;
+    foreach (index : (usz[]){ 6, 7, 10, 11 }) heights[index] = 1;
+    TextureId texture = add_height_texture(&fixture, RGBA8_UNORM, 4, 3, heights[..]);
+    ColliderDesc collider = height_map_collider(texture, { 1, 2, 1 });
+    add_static_body(&fixture, collider);
+
+    assert(close(ground_height(&fixture, 2.5f, 1.5f), 2));
+    assert(close(ground_height(&fixture, 0.5f, 0.5f), 0));
+}
+
+fn void test_float_height_map_matches_height_array() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    float[12] heights = { 0, 0.5f, 1, 0.25f, 0.75f, 1.5f, 0.2f, 0.4f, 1, 0, 0.3f, 0.6f };
+    TextureId texture = add_height_texture(&fixture, RGBA32_FLOAT, 4, 3, heights[..]);
+    ColliderDesc from_texture = height_map_collider(texture);
+    add_static_body(&fixture, from_texture);
+    ColliderDesc from_array = physics::default_collider_desc(HEIGHT_FIELD);
+    from_array.height_field = { .heights = heights[..], .count_x = 4, .count_z = 3 };
+    add_static_body(&fixture, from_array, { 10, 0, 0 });
+
+    foreach (cell : (Vec2[]){ { 0.5f, 0.5f }, { 1.5f, 0.5f }, { 2.5f, 1.5f } }) {
+        assert(close(ground_height(&fixture, cell.x, cell.y), ground_height(&fixture, cell.x + 10, cell.y)));
+    }
+}
+
+fn void test_height_map_snapshot_shared_by_texture_scale_and_revision() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    float[9] heights;
+    TextureId texture = add_height_texture(&fixture, RGBA8_UNORM, 3, 3, heights[..]);
+    ColliderDesc collider = height_map_collider(texture);
+    add_static_body(&fixture, collider);
+    add_static_body(&fixture, collider, { 5, 0, 0 });
+    assert(occupied_snapshots(&fixture.physics) == 1);
+
+    ColliderDesc stretched = height_map_collider(texture, { 2, 1, 1 });
+    add_static_body(&fixture, stretched, { 10, 0, 0 });
+    assert(occupied_snapshots(&fixture.physics) == 2);
+
+    fixture.assets.mark_texture_dirty(texture);
+    add_static_body(&fixture, collider, { 15, 0, 0 });
+    assert(occupied_snapshots(&fixture.physics) == 3);
+    assert_holders_match(&fixture);
+}
+
+fn void test_released_height_map_rebuilds_from_its_snapshot() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    float[9] heights;
+    TextureId texture = add_height_texture(&fixture, RGBA8_UNORM, 3, 3, heights[..]);
+    ColliderDesc collider = height_map_collider(texture);
+    Node* terrain = add_static_node(&fixture);
+    fixture.physics.add_body(terrain, physics::default_body_desc(STATIC), (&collider)[:1])!!;
+    fixture.assets.release_texture_cpu(texture);
+    fixture.physics.remove_body(terrain);
+
+    fixture.physics.add_body(terrain, physics::default_body_desc(STATIC), (&collider)[:1])!!;
+    ColliderDesc stretched = height_map_collider(texture, { 2, 1, 1 });
+    assert(add_body_fault(&fixture, STATIC, (&stretched)[:1]) == physics::SOURCE_UNAVAILABLE);
+}
+
+fn void test_height_map_retries_after_revision_moves() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    float[9] heights;
+    TextureId texture = add_height_texture(&fixture, RGBA8_UNORM, 3, 3, heights[..]);
+    fixture.assets.release_texture_cpu(texture);
+    ColliderDesc collider = height_map_collider(texture);
+    Node* terrain = add_static_node(&fixture);
+    fixture.scene.add_physics_body(terrain, physics::default_body_desc(STATIC), (&collider)[:1])!!;
+    fixture.physics.update(0);
+    PhysicsBody* physics_body = fixture.scene.get(terrain, PhysicsBody);
+    assert(physics_body.status == FAILED);
+    assert(physics_body.failure == physics::SOURCE_UNAVAILABLE);
+
+    fixture.assets.texture(texture).pixels = alloc::new_array(fixture.assets.allocator, char, 9 * 4);
+    fixture.assets.mark_texture_dirty(texture);
+    fixture.physics.update(0);
+    assert(fixture.scene.get(terrain, PhysicsBody).status == LIVE);
+}
+
+fn void test_height_map_rejects_unreadable_textures() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    float[9] heights;
+    ColliderDesc srgb = height_map_collider(add_height_texture(&fixture, RGBA8_SRGB, 3, 3, heights[..]));
+    assert(add_body_fault(&fixture, STATIC, (&srgb)[:1]) == c3d::UNSUPPORTED);
+    ColliderDesc half = height_map_collider(add_height_texture(&fixture, RGBA16_FLOAT, 3, 3, heights[..]));
+    assert(add_body_fault(&fixture, STATIC, (&half)[:1]) == c3d::UNSUPPORTED);
+    ColliderDesc narrow = height_map_collider(add_height_texture(&fixture, RGBA8_UNORM, 1, 4, heights[:4]));
+    assert(add_body_fault(&fixture, STATIC, (&narrow)[:1]) == c3d::INVALID_ARGUMENT);
+
+    TextureId removed = add_height_texture(&fixture, RGBA8_UNORM, 3, 3, heights[..]);
+    fixture.assets.remove_texture(removed);
+    ColliderDesc dead = height_map_collider(removed);
+    assert(add_body_fault(&fixture, STATIC, (&dead)[:1]) == c3d::INVALID_ID);
+
+    char[3] indices;
+    SurfaceMaterialDesc material = physics::default_surface_material();
+    ColliderDesc short_indices = height_map_collider(add_height_texture(&fixture, RGBA8_UNORM, 3, 3, heights[..]));
+    short_indices.material_indices = indices[..];
+    short_indices.face_materials = (&material)[:1];
+    assert(add_body_fault(&fixture, STATIC, (&short_indices)[:1]) == c3d::INVALID_ARGUMENT);
 }
 
 fn void test_material_index_out_of_range_faults() @test {
