@@ -57,7 +57,7 @@ PROFILE_GUI_TEST_TARGETS = (
 )
 PHYSICS_TEST_TARGETS = ("physics_test",)
 NAV_TEST_TARGETS = ("nav_test",)
-CHARACTER_TEST_TARGETS = ("character_test",)
+CHARACTER_TEST_TARGETS = ("character_test", "character_nav_test")
 
 REQUIRED_C3C_VERSION = "0.8.3"
 C3IMGUI_RELEASE_TAG = "v0.1.3"

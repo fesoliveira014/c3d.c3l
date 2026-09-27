@@ -24,12 +24,26 @@ fn void step_characters(void* context, PhysicsWorld* world, float fixed_dt) @pri
     Scene* scene = state.scene;
     state.elapsed_so_far += fixed_dt;
     scene.@each(Character; entity, character) {
-        step_character(
-            world:     world,
-            node:      scene.node(entity),
-            character: character,
-            fixed_dt:  fixed_dt,
-        );
+        Node* node = scene.node(entity);
+        bool traversing;
+        $if $feat(C3D_CHARACTER_NAV):
+            traversing = traverse_off_mesh(
+                world:     world,
+                scene:     scene,
+                node:      node,
+                character: character,
+                elapsed:   state.elapsed_so_far,
+                fixed_dt:  fixed_dt,
+            );
+        $endif
+        if (!traversing) {
+            step_character(
+                world:     world,
+                node:      node,
+                character: character,
+                fixed_dt:  fixed_dt,
+            );
+        }
         state.stepped_so_far++;
     };
 }
