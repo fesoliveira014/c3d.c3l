@@ -84,6 +84,24 @@ fn void test_debug_line_capacity_truncates() @test {
     assert(draw.vertices.len() == 0);
 }
 
+fn void test_debug_capsule_emits_rings_and_sides() @test {
+    DebugDraw draw = debug::create_debug_draw(mem, 512);
+    defer debug::destroy_debug_draw(&draw);
+    Vec3 center = { 1, 2, 3 };
+    Vec3 axis = { 0, 0, 1 };
+    float half_height = 0.5f;
+    float radius = 0.25f;
+
+    draw.capsule(center, axis, half_height, radius, debug::COLOR_WHITE);
+
+    assert(draw.vertices.len() / 2 == 6 * debug::DEBUG_CIRCLE_SEGMENTS + 4);
+    foreach (vertex : draw.vertices.array_view()) {
+        float along = math::clamp((vertex.position - center).dot(axis), -half_height, half_height);
+        float distance = (vertex.position - (center + axis * along)).length();
+        assert(distance <= radius + TOLERANCE, "every vertex lies on the capsule surface or inside it");
+    }
+}
+
 fn void test_debug_vertex_layout_matches_gpu() @test {
     assert(DebugVertex::size == DebugVertexGpu::size);
     assert($reflect(DebugVertex.position).offset == $reflect(DebugVertexGpu.x).offset);

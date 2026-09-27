@@ -8,4 +8,5 @@ faultdef
     NO_JOINT,
     JOINT_EXISTS,
     NO_SKIN,
-    RAGDOLL_EXISTS;
+    RAGDOLL_EXISTS,
+    NOT_KINEMATIC;

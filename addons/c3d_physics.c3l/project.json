@@ -42,6 +42,10 @@
     "ragdoll": {
       "type": "executable",
       "sources": [ "examples/ragdoll.c3" ]
+    },
+    "mover": {
+      "type": "executable",
+      "sources": [ "examples/mover.c3" ]
     }
   }
 }

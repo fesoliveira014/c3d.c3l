@@ -340,6 +340,7 @@ struct PhysicsWorld {
     uint           joint_event_count;
     BuildFailure[] failure_storage;
     uint           failure_count;
+    MoverPass      mover_pass;
 }
 
 <*
@@ -414,6 +415,27 @@ fn void PhysicsWorld.set_velocity(
 }
 
 <*
+ World velocity of the node's body at a world point.
+ @return? NO_BODY
+*>
+fn Vec3? PhysicsWorld.point_velocity(&self, Node* node, Vec3 world_point) {
+    if (!self.scene.has(node, RigidBody)) return NO_BODY~;
+    return self.scene.get(node, RigidBody).body.world_point_velocity((b3::Pos)world_point);
+}
+
+<*
+ Pose the node's kinematic body reaches by the end of the current fixed step.
+ From a mover step it overrides the target begin_step took from node.world.
+ @return? NO_BODY, NOT_KINEMATIC
+*>
+fn void? PhysicsWorld.set_kinematic_target(&self, Node* node, Vec3 position, Quat rotation) {
+    if (!self.scene.has(node, RigidBody)) return NO_BODY~;
+    RigidBody* body = self.scene.get(node, RigidBody);
+    if (body.kind != KINEMATIC) return NOT_KINEMATIC~;
+    body.body.set_target_transform({ .p = (b3::Pos)position, .q = rotation }, self.desc.tuning.fixed_dt, true);
+}
+
+<*
  Apply an impulse at a world point and wake the body.
  @require self.scene.has(node, RigidBody)
 *>
@@ -445,7 +467,7 @@ fn void PhysicsWorld.teleport(
     body.body.set_transform((b3::Pos)position, rotation);
     body.current = { .position = position, .rotation = rotation, .scale = { 1, 1, 1 } };
     body.previous = body.current;
-    write_pose(self.scene, node, body.current);
+    node.set_world_pose(position, rotation);
 }
 
 <*

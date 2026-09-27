@@ -16,7 +16,6 @@ const uint  COLLIDER_DYNAMIC @local = 0xFF4DFF4D;
 const uint  COLLIDER_SLEEPING @local = 0xFF80B3CC;
 const uint  COLLIDER_SENSOR @local = 0xFF33FFFF;
 const float CONTACT_POINT_SIZE @local = 0.05f;
-const float AXIS_PARALLEL_THRESHOLD @local = 0.99f; // a capsule axis this close to Y takes X as its basis reference
 const float HEX_CHANNEL_SCALE @local = 1.0f / 255;
 
 <*
@@ -57,11 +56,14 @@ fn void draw_colliders(PhysicsWorld* world, debug::DebugDraw* sink) @local {
                     sink.circle(center, { 0, 1, 0 }, collider.radius, color);
                     sink.circle(center, { 0, 0, 1 }, collider.radius, color);
                 case CAPSULE:
-                    draw_capsule(
-                        sink:       sink,
-                        body_world: body_world,
-                        collider:   collider,
-                        color:      color,
+                    Vec3 center = maths::transform_point(body_world, collider.local.position);
+                    Vec3 axis = maths::transform_dir(body_world, collider.local.rotation.rotate_vec3({ 0, 1, 0 })).normalize();
+                    sink.capsule(
+                        center:      center,
+                        axis:        axis,
+                        half_height: collider.half_height,
+                        radius:      collider.radius,
+                        rgba:        color,
                     );
                 case HULL:
                 case MESH:
@@ -82,33 +84,6 @@ fn void draw_colliders(PhysicsWorld* world, debug::DebugDraw* sink) @local {
             }
         }
     };
-}
-
-fn void draw_capsule(
-    debug::DebugDraw* sink,
-    Mat4 body_world,
-    Collider* collider,
-    uint color,
-) @local {
-    Vec3 center = maths::transform_point(body_world, collider.local.position);
-    Vec3 axis = maths::transform_dir(body_world, collider.local.rotation.rotate_vec3({ 0, 1, 0 })).normalize();
-    Vec3 reference = math::abs(axis.y) < AXIS_PARALLEL_THRESHOLD ? (Vec3){ 0, 1, 0 } : (Vec3){ 1, 0, 0 };
-    Vec3 side = axis.cross(reference).normalize();
-    Vec3 forward = axis.cross(side);
-    Vec3 top = center + axis * collider.half_height;
-    Vec3 bottom = center - axis * collider.half_height;
-    float radius = collider.radius;
-
-    sink.circle(top, axis, radius, color);
-    sink.circle(bottom, axis, radius, color);
-    sink.circle(top, side, radius, color);
-    sink.circle(top, forward, radius, color);
-    sink.circle(bottom, side, radius, color);
-    sink.circle(bottom, forward, radius, color);
-    sink.line(top + side * radius, bottom + side * radius, color);
-    sink.line(top - side * radius, bottom - side * radius, color);
-    sink.line(top + forward * radius, bottom + forward * radius, color);
-    sink.line(top - forward * radius, bottom - forward * radius, color);
 }
 
 fn void draw_wire(

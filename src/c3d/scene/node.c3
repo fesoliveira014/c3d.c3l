@@ -45,3 +45,23 @@ fn void Node.look_at(&self, Vec3 target, Vec3 up = { 0, 1, 0 }) {
     Vec3 up_local = maths::transform_dir(parent_inverse, up);
     self.local.rotation = maths::look_rotation(forward, up_local);
 }
+
+<*
+ Move the node so its world position is the point; rotation and scale stay.
+ Reads the parent's world matrix as left by the last update.
+ @require self.parent != null
+*>
+fn void Node.set_world_position(&self, Vec3 position) {
+    self.local.position = maths::transform_point(maths::inverse_affine(self.parent.world), position);
+}
+
+<*
+ Place the node at a world position and rotation; scale is left untouched.
+ Reads the parent's world matrix as left by the last update.
+ @require self.parent != null
+*>
+fn void Node.set_world_pose(&self, Vec3 position, Quaternionf rotation) {
+    Quaternionf parent_rotation = maths::transform_from_mat4(self.parent.world).rotation;
+    self.local.position = maths::transform_point(maths::inverse_affine(self.parent.world), position);
+    self.local.rotation = parent_rotation.conjugate().mul(rotation).normalize();
+}

@@ -30,6 +30,7 @@ fn void PhysicsWorld.update(&self, float dt) {
     uint steps;
     while (self.accumulator >= fixed_dt && steps < self.desc.tuning.max_steps_per_frame) {
         begin_step(self, fixed_dt);
+        if (self.mover_pass.step) self.mover_pass.step(self.mover_pass.context, self, fixed_dt);
         b3::world_step(self.world, fixed_dt, (int)self.desc.tuning.sub_steps);
         end_step(self);
         self.accumulator -= fixed_dt;
@@ -42,9 +43,11 @@ fn void PhysicsWorld.update(&self, float dt) {
     float alpha = self.desc.tuning.interpolate ? self.alpha : 1;
     self.scene.@each(RigidBody; entity, body) {
         if (body.kind == DYNAMIC) {
-            write_pose(self.scene, self.scene.node(entity), interpolate_pose(body.previous, body.current, alpha));
+            maths::Transform pose = interpolate_pose(body.previous, body.current, alpha);
+            self.scene.node(entity).set_world_pose(pose.position, pose.rotation);
         }
     };
+    if (self.mover_pass.write) self.mover_pass.write(self.mover_pass.context, self, alpha);
 }
 
 <*
@@ -277,16 +280,4 @@ fn void remove_rigid_body(Entity entity, void* component, void* user) @private {
 fn Node*? node_of(PhysicsWorld* world, b3::ShapeId shape) @private {
     if (!shape.is_valid()) return NO_BODY~;
     return world.scene.node(unpack_entity(shape.body().user_data()));
-}
-
-fn void write_pose(Scene* scene, Node* node, maths::Transform pose) @private {
-    if (node.parent == scene.root) {
-        node.local.position = pose.position;
-        node.local.rotation = pose.rotation;
-        return;
-    }
-    Mat4 parent_inverse = maths::inverse_affine(node.parent.world);
-    Quat parent_rotation = maths::transform_from_mat4(node.parent.world).rotation;
-    node.local.position = maths::transform_point(parent_inverse, pose.position);
-    node.local.rotation = parent_rotation.conjugate().mul(pose.rotation).normalize();
 }
