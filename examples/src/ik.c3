@@ -41,7 +41,7 @@ const float PROP_LIFT @local = 0.35f; // metres above it; chest height makes the
 const float PROP_ORBIT_RADIUS @local = 0.15f;
 const float PROP_ORBIT_SPEED @local = 1.5f; // radians per second
 const float PROP_RADIUS @local = 0.04f;
-const float KNEE_CORRECTION_LIMIT @local = 1.2f; // radians the solve may bend a knee away from the clip
+const float KNEE_FLEX_LIMIT @local = 2.4f; // radians from rest; clips bend to 1.46, the rest is room for the solve
 const float LOOK_MAX_ANGLE @local = 1.4f; // radians over spine, neck and head; past it a person turns the feet
 const String[5] LOOK_JOINTS @local = { "DEF-spine.001", "DEF-spine.002", "DEF-spine.003", "DEF-neck", "DEF-head" };
 const float ORBIT_RADIANS_PER_PIXEL @local = 0.005f;
@@ -149,6 +149,7 @@ fn Vec3 to_root(Character* character, Vec3 world_position) @local {
 fn void? add_foot(
     Scene* scene,
     Character* character,
+    Skeleton* skeleton,
     usz side,
     String thigh,
     String shin,
@@ -169,10 +170,11 @@ fn void? add_foot(
         pole:   pole,
     );
     foot_ik.leg.limits[1] = ik::hinge_limit(
-        reference: quaternion::IDENTITY, // replaced by the incoming shin rotation before each solve
-        axis:      { 1, 0, 0 },
-        min_angle: -KNEE_CORRECTION_LIMIT,
-        max_angle: KNEE_CORRECTION_LIMIT,
+        reference:  skeleton.rest_pose[skeleton.find_joint(shin)!].rotation,
+        axis:       { 1, 0, 0 },
+        min_angle:  0,
+        max_angle:  KNEE_FLEX_LIMIT,
+        twist_axis: { 0, 1, 0 },
     );
     scene.add(thigh_node, foot_ik);
     character.thighs[side] = thigh_node;
@@ -185,9 +187,12 @@ fn Character? build_character(AssetStore* assets, Scene* scene) @local {
     ModelInstance* instance = scene.get(character.root, ModelInstance);
     character.idle = find_clip(assets, instance.clips, IDLE_CLIP)!;
     character.walk = find_clip(assets, instance.clips, WALK_CLIP)!;
+    Skeleton* skeleton;
     foreach (node : instance.nodes) {
         if (!scene.has(node, SkinBinding)) continue;
-        io::printfn("%s: %d skin joints", MODEL_FILE, scene.get(node, SkinBinding).joints.len);
+        SkinBinding* skin = scene.get(node, SkinBinding);
+        io::printfn("%s: %d skin joints", MODEL_FILE, skin.joints.len);
+        skeleton = &assets.skeleton(skin.skeleton).data;
         break;
     }
     anim::add_animator(scene, character.root).play(assets, character.idle)!;
@@ -203,6 +208,7 @@ fn Character? build_character(AssetStore* assets, Scene* scene) @local {
     add_foot(
         scene:     scene,
         character: &character,
+        skeleton:  skeleton,
         side:      0,
         thigh:     "DEF-thigh.L",
         shin:      "DEF-shin.L",
@@ -211,6 +217,7 @@ fn Character? build_character(AssetStore* assets, Scene* scene) @local {
     add_foot(
         scene:     scene,
         character: &character,
+        skeleton:  skeleton,
         side:      1,
         thigh:     "DEF-thigh.R",
         shin:      "DEF-shin.R",
@@ -302,8 +309,6 @@ fn float solve_ik(Scene* scene, Character* character, Controls* controls) @local
     foreach (side, thigh : character.thighs) {
         FootIk* foot = scene.get(thigh, FootIk);
         foot.leg.weight = controls.legs;
-        // The clip twists the shin about its bone axis, so the hinge bounds the correction from the clip pose.
-        foot.leg.limits[1].reference = foot.leg.joints[1].local.rotation;
         Ray ray = foot.ground_ray();
         if (try hit = terrain_hit(ray, foot.ray_length)) {
             foot.place(hit, floor_height);

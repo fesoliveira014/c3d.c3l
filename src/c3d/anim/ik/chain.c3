@@ -25,11 +25,13 @@ enum IkLimitKind {
 
 <*
  Rotation bound of one joint relative to a reference local rotation.
+ twist_axis is unit and perpendicular to axis, both in the reference frame.
 *>
 struct IkLimit {
     IkLimitKind kind;
     Quat        reference;   // local rotation the bound is centred on
     Vec3        axis;        // unit, in the reference frame: hinge axis or cone axis
+    Vec3        twist_axis;  // HINGE: kept bone twist axis; zero drops it
     float       min_angle;   // HINGE lower bound, radians
     float       max_angle;   // HINGE upper bound or CONE half-angle, radians
 }
@@ -122,6 +124,7 @@ fn IkChain ik_chain(
 <*
  One-axis bound; angles are signed about the axis.
  @param axis : "Unit, in the reference frame."
+ @param twist_axis : "Unit bone axis perpendicular to axis; zero drops the twist."
  @require min_angle <= max_angle
  @pure
 *>
@@ -130,13 +133,15 @@ fn IkLimit hinge_limit(
     Vec3 axis,
     float min_angle,
     float max_angle,
+    Vec3 twist_axis = {},
 ) {
     return {
-        .kind      = HINGE,
-        .reference = reference,
-        .axis      = axis,
-        .min_angle = min_angle,
-        .max_angle = max_angle,
+        .kind       = HINGE,
+        .reference  = reference,
+        .axis       = axis,
+        .twist_axis = twist_axis,
+        .min_angle  = min_angle,
+        .max_angle  = max_angle,
     };
 }
 
@@ -184,19 +189,38 @@ fn Vec3 off_axis(Vec3 vector, Vec3 axis) @local {
     return vector - axis * vector.dot(axis);
 }
 
+fn float hinge_angle(Quat rotation, Vec3 axis) @local {
+    Vec3 imaginary = { rotation.v.x, rotation.v.y, rotation.v.z };
+    float angle = 2 * math::atan2(imaginary.dot(axis), rotation.v.w);
+    if (angle > math::PI) angle -= 2 * (float)math::PI;
+    if (angle < -math::PI) angle += 2 * (float)math::PI;
+    return angle;
+}
+
+// The part of the rotation about the axis; a half-turn swing leaves no twist to measure.
+fn Quat bone_twist(Quat rotation, Vec3 axis) @local {
+    Vec3 imaginary = { rotation.v.x, rotation.v.y, rotation.v.z };
+    Vec3 along = axis * imaginary.dot(axis);
+    float length = math::sqrt(along.dot(along) + rotation.v.w * rotation.v.w);
+    if (length < IK_EPSILON) return quaternion::IDENTITY;
+    return { .v = { along.x / length, along.y / length, along.z / length, rotation.v.w / length } };
+}
+
 fn Quat apply_limit(IkLimit* limit, Quat local) @private {
     Quat relative = limit.reference.conjugate() * local;
-    Vec3 imaginary = { relative.v.x, relative.v.y, relative.v.z };
     switch (limit.kind) {
         case NONE:
             return local;
         case HINGE:
-            float signed_sine = imaginary.dot(limit.axis);
-            float angle = 2 * math::atan2(signed_sine, relative.v.w);
-            if (angle > math::PI) angle -= 2 * (float)math::PI;
-            if (angle < -math::PI) angle += 2 * (float)math::PI;
+            if (limit.twist_axis.length() < IK_EPSILON) {
+                float angle = hinge_angle(relative, limit.axis);
+                angle = math::clamp(angle, limit.min_angle, limit.max_angle);
+                return limit.reference * quaternion::from_axis_angle{float}(limit.axis, angle);
+            }
+            Quat twist = bone_twist(relative, limit.twist_axis);
+            float angle = hinge_angle(relative * twist.conjugate(), limit.axis);
             angle = math::clamp(angle, limit.min_angle, limit.max_angle);
-            return limit.reference * quaternion::from_axis_angle{float}(limit.axis, angle);
+            return limit.reference * quaternion::from_axis_angle{float}(limit.axis, angle) * twist;
         case CONE:
             Vec3 rotated = (relative * limit.axis).normalize();
             float angle = math::acos(math::clamp(rotated.dot(limit.axis), -1.0f, 1.0f));
