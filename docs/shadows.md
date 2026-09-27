@@ -72,6 +72,7 @@ without shadows retain the constructor's inclusive 90-degree limit.
 | `priority` | 0 | Higher values win when requests compete |
 | `cascades` | 4 | One to four shadow maps over the camera's depth range |
 | `cascade_lambda` | 0.8 | Perspective split distribution: 0 uniform, 1 logarithmic |
+| `cascade_blend` | 0.1 | Blend band before each split, as a fraction of the cascade's depth span; 0 selects one cascade |
 | `max_distance` | 100 | Directional depth endpoint or unbounded punctual fallback |
 | `bias` | 0.0005 | Nonnegative slope-scaled depth-bias magnitude |
 | `normal_bias` | 0.02 | Nonnegative receiver displacement in world units |
@@ -82,9 +83,9 @@ Call `Light.validate_shadow()` after authored edits to check these programming
 contracts in checked builds. Contract checks may be absent from optimized unchecked
 builds, so applications must not rely on them as runtime validation. Enabled
 directional settings require a finite positive `max_distance`, finite nonnegative
-biases, cascades in 1..4 and split weight in 0..1. Enabled punctual settings require
-a finite nonnegative range, a positive finite fallback when range is zero, and the
-spot cone rule above.
+biases, cascades in 1..4, split weight in 0..1 and blend band in 0..0.5. Enabled
+punctual settings require a finite nonnegative range, a positive finite fallback when
+range is zero, and the spot cone rule above.
 
 `RendererDesc.shadow_resolution` and `max_shadow_layers` set the atlas dimensions
 at renderer creation. Zero selects 2048 and 4, respectively. A nonzero resolution
@@ -147,8 +148,14 @@ Changing those settings can change the projection.
 
 Each receiver selects one cascade by camera-space depth and uses a 3x3 comparison
 filter. A receiver exactly at a split uses the nearer cascade. Different cascade
-resolutions can produce a visible change in softness at a boundary; there is no
-cross-cascade blend or fade at the end of shadow coverage.
+resolutions change the softness at a boundary, so each cascade except the last ends
+in a blend band: over the final `cascade_blend` fraction of its depth span a
+receiver samples both that cascade and the next and interpolates their visibility
+linearly with depth. The next cascade's receiver fit extends back over the band, so
+both maps cover it; the extension costs the coarser map some resolution, and a
+receiver in a band takes eighteen comparisons instead of nine. `cascade_blend = 0`
+selects one cascade exactly as without the band. There is no fade at the end of
+shadow coverage.
 
 Bias reduces self-shadowing artifacts but can separate a shadow from its caster.
 Normal offset moves the receiver along its unperturbed, face-corrected surface

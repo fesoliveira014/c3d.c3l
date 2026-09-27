@@ -301,6 +301,53 @@ fn void test_cascade_splits_match_endpoint_weights_and_finite_coverage() @test {
     assert(render::directional_cascade_splits(camera, settings).count == 0);
 }
 
+fn void test_cascade_blend_depth_spans_the_band_and_collapses_at_zero() @test {
+    CascadeSplits splits = render::directional_cascade_splits(
+        camera::perspective_deg(60, 1, 81),
+        light::SHADOW_SETTINGS_DEFAULT,
+    );
+    assert(splits.count == 4);
+    for (uint index = 0; index < splits.count; index++) {
+        float split = splits.far_depths[index];
+        float span = split - (index ? splits.far_depths[index - 1] : splits.near_depth);
+        float expected = index + 1 < splits.count ? split - 0.2f * span : split;
+        assert(render::cascade_blend_depth(splits, index, 0) == split);
+        assert(math::abs(render::cascade_blend_depth(splits, index, 0.2f) - expected) < 0.0001f);
+    }
+}
+
+fn void test_next_cascade_fit_covers_the_blend_band() @test {
+    Camera camera = camera::perspective_deg(60, 1, 50);
+    CameraMatrices matrices = camera::derive_matrices(camera, matrix::IDENTITY4, VIEWPORT);
+    CascadeSplits splits = render::directional_cascade_splits(camera, light::SHADOW_SETTINGS_DEFAULT);
+    float band_start = render::cascade_blend_depth(splits, 0, 0.2f);
+    ShadowCascade next = render::fit_directional_cascade(
+        view: &matrices,
+        near_depth: band_start,
+        far_depth: splits.far_depths[1],
+        light_direction: { 0, 0, -1 },
+        casters: {},
+        resolution: 1024,
+        normal_bias: 0.02f,
+    );
+
+    float[2] depths = { band_start, splits.far_depths[0] };
+    foreach (depth : depths) {
+        Vec4 depth_clip = matrices.proj.apply({ 0, 0, -depth, 1 });
+        for (uint corner = 0; corner < 4; corner++) {
+            float x = (corner & 1) != 0 ? 1.0f : -1.0f;
+            float y = (corner & 2) != 0 ? 1.0f : -1.0f;
+            Vec4 world = matrices.inv_view_proj.apply({ x, y, depth_clip.z / depth_clip.w, 1 });
+            world /= world.w;
+            Vec4 shadow = next.camera.view_proj.apply(world);
+            shadow /= shadow.w;
+            assert(math::abs(shadow.x) <= 1.0f - 3.0f / 1024 + 0.0001f);
+            assert(math::abs(shadow.y) <= 1.0f - 3.0f / 1024 + 0.0001f);
+            assert(shadow.z >= -0.0001f && shadow.z <= 1.0001f);
+        }
+    }
+}
+
 fn void test_orthographic_splits_accept_nonpositive_near_and_ignore_log_weight() @test {
     Camera camera = camera::orthographic(10, -10, 10);
     ShadowSettings settings = light::SHADOW_SETTINGS_DEFAULT;

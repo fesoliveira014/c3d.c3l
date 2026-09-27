@@ -428,7 +428,7 @@ struct ShadowGpu {
     float split_depth;
     float texel_size;
     float max_distance;
-    uint _pad1;
+    float blend_depth;
     uint _pad2;
 }
 

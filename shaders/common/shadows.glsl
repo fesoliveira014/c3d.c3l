@@ -72,7 +72,13 @@ float shadow_visibility(FrameRoot frame, LightGpu light, vec3 world_position, ve
         for (uint cascade = 0u; cascade < light.shadow_count; cascade++) {
             ShadowGpu shadow = ShadowArray(frame.shadows).values[light.shadow_first + cascade];
             if (view_depth > shadow.split_depth) continue;
-            return sample_shadow_visibility(shadow, world_position + normal * shadow.normal_bias);
+            float visibility = sample_shadow_visibility(shadow, world_position + normal * shadow.normal_bias);
+            if (view_depth <= shadow.blend_depth) return visibility;
+            ShadowGpu next = ShadowArray(frame.shadows).values[light.shadow_first + cascade + 1u];
+            float next_visibility = sample_shadow_visibility(next, world_position + normal * next.normal_bias);
+            // Positive here: blend_depth < view_depth <= split_depth.
+            float weight = (view_depth - shadow.blend_depth) / (shadow.split_depth - shadow.blend_depth);
+            return mix(visibility, next_visibility, weight);
         }
         return 1.0;
     }
