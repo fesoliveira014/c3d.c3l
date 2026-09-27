@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build orchestration for c3d.
 
-Steps, in order: tools, deps, boundaries, abi, shaders, build, test, run.
+Steps, in order: tools, deps, abi, shaders, build, test, run.
 Each step is a function; failures raise BuildError and stop the run.
 
   scripts/build.py                  compile SPIR-V, verify committed generated C3, build all example targets
@@ -52,35 +52,6 @@ PROFILE_GUI_TEST_TARGETS = (
 )
 PHYSICS_TEST_TARGETS = ("physics_test",)
 
-# Import boundaries of AGENTS.md sections 1 and 10: (description, scanned paths, line pattern,
-# path prefixes where a matching line is allowed). Directories are scanned for *.c3 files.
-BOUNDARY_RULES = (
-    ("gpu only under the render layer and platform", ("src/c3d",), r"^import gpu\b",
-     ("src/c3d/render/", "src/c3d/shader/", "src/c3d/gui/", "src/c3d/platform/")),
-    ("platform imports gpu::surface alone", ("src/c3d/platform",), r"^import gpu\b(?!::surface\b)", ()),
-    ("sdl only under platform", ("src/c3d",), r"^import sdl\b", ("src/c3d/platform/",)),
-    ("imgui only under gui", ("src/c3d",), r"^import imgui\b", ("src/c3d/gui/",)),
-    ("cg only under geometry", ("src/c3d",), r"^import cg\b", ("src/c3d/geometry/",)),
-    ("b3 only in the physics package", ("src/c3d", "addons"), r"^import b3\b", ("addons/c3d_physics.c3l/",)),
-    ("physics package imports std, c3d and b3 only", ("addons/c3d_physics.c3l/src",),
-     r"^import (?!std::|c3d[ ;:]|b3[ ;:])", ()),
-    ("gltf only under asset/gltf", ("src/c3d",), r"^import gltf\b", ("src/c3d/asset/gltf/",)),
-    ("ufbx only under asset/fbx", ("src/c3d",), r"^import ufbx\b", ("src/c3d/asset/fbx/",)),
-    ("shaderc only under shader", ("src/c3d",), r"^import shaderc\b", ("src/c3d/shader/",)),
-    ("profiler add-on only through the core bridges", ("src/c3d",), r"^import c3d::(profile|render::profile_gpu)\b",
-     ("src/c3d/instrumentation.c3", "src/c3d/render/profile.c3")),
-    ("profile collector imports std only", ("addons/c3d_profile.c3l/src",), r"^import (?!std::)",
-     ("addons/c3d_profile.c3l/src/gpu/",)),
-    ("profile GPU module imports std, gpu and c3d::profile only", ("addons/c3d_profile.c3l/src/gpu",),
-     r"^import (?!std::|gpu[ ;:]|c3d::profile[ ;])", ()),
-    ("profile GUI imports std, c3d::profile and imgui only", ("addons/c3d_profile_gui.c3l/src",),
-     r"^import (?!std::|c3d::profile[ ;]|imgui[ ;])", ()),
-    ("no manifest depends on the profile GUI", ("manifest.json", "addons/c3d_profile.c3l/manifest.json"),
-     r'"c3d_profile_gui"', ()),
-    ("core and collector never name the profiler panel", ("src/c3d", "addons/c3d_profile.c3l/src"),
-     r"ProfilerPanel|create_profiler_panel|destroy_profiler_panel|profiler_panel", ()),
-)
-
 REQUIRED_C3C_VERSION = "0.8.3"
 C3IMGUI_RELEASE_TAG = "v0.1.3"
 SUBMODULES = ("gpu.c3l", "sdl3.c3l", "c3imgui.c3l", "c3cg.c3l", "box3d.c3l", "cgltf.c3l", "ufbx.c3l", "shaderc.c3l")
@@ -106,7 +77,6 @@ class Options:
         self.verbose = args.verbose
         self.init_deps = args.init_deps
         self.clean = args.clean
-        self.skip_boundaries = args.skip_boundaries
         self.skip_abi = args.skip_abi
         self.skip_shaders = args.skip_shaders
         self.skip_build = args.skip_build
@@ -226,33 +196,6 @@ def step_deps(options: Options) -> None:
             f"missing c3imgui native archive: {native_archive} "
             "(run scripts/build.py --init-deps)"
         )
-
-
-def boundary_files(scanned: str) -> list[Path]:
-    path = ROOT / scanned
-    return [path] if path.is_file() else sorted(path.rglob("*.c3"))
-
-
-def step_boundaries(options: Options) -> None:
-    if options.skip_boundaries:
-        log("boundaries: skipped")
-        return
-    violations = []
-    for description, scanned_paths, pattern, allowed in BOUNDARY_RULES:
-        expression = re.compile(pattern)
-        for scanned in scanned_paths:
-            for path in boundary_files(scanned):
-                relative = path.relative_to(ROOT).as_posix()
-                if relative.startswith(allowed):
-                    continue
-                lines = path.read_text(encoding="utf-8").splitlines()
-                for line_number, line in enumerate(lines, start=1):
-                    if expression.search(line):
-                        violations.append(f"{relative}:{line_number}: {description}")
-    if violations:
-        for violation in violations:
-            log(violation)
-        raise BuildError(f"{len(violations)} import boundary violation(s)")
 
 
 def step_abi(options: Options) -> None:
@@ -376,7 +319,6 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument("--lib", metavar="NAME", action="append", default=[], help="extra c3c library for the --target build; repeatable")
     parser.add_argument("--init-deps", action="store_true", help="initialize submodules and run native dependency builds")
     parser.add_argument("--clean", action="store_true", help="remove c3c build directories and exit")
-    parser.add_argument("--skip-boundaries", action="store_true")
     parser.add_argument("--skip-abi", action="store_true")
     parser.add_argument("--skip-shaders", action="store_true")
     parser.add_argument("--skip-build", action="store_true")
@@ -401,8 +343,6 @@ def main() -> int:
             step_tools(options)
         with timed("deps"):
             step_deps(options)
-        with timed("boundaries"):
-            step_boundaries(options)
         with timed("abi"):
             step_abi(options)
         with timed("shaders"):

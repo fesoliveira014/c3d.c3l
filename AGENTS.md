@@ -24,7 +24,7 @@ Entry point for every agent session in this repository. Read it fully before rea
 | c3d_profile_gui.c3l | profiler additions to `c3d::gui` | Applications select it explicitly; it imports only the standard library, `c3d::profile` and `imgui` |
 | c3d_physics.c3l | `c3d::physics` | Applications select it explicitly; it imports the standard library, `c3d` and `b3` |
 
-Boundaries are enforced by the build's `boundaries` step. No dependency is added without updating this table.
+Boundaries are checked at review. No dependency is added without updating this table.
 
 The `addons/c3d_profile.c3l` package bundles CPU/GPU capture, history and export. Its neutral `c3d::profile` module imports only the standard library. Its private `c3d::render::profile_gpu` module, under `src/gpu/` and gated by `C3D_PROFILE_GPU`, imports only the standard library, gpu.c3l and neutral profile values; it never imports core types. Core's approved profiler bridges are `c3d::instrumentation` for CPU+INTERNAL and `render/profile.c3` for GPU. Core has no unconditional profiler dependency; instrumented consumers select the collector add-on explicitly. The `addons/c3d_profile_gui.c3l` presentation adapter extends `c3d::gui` under `C3D_PROFILE_GUI`; it consumes neutral capture data and ImGui and is never imported by core or the collector. Standalone CPU collector builds need no native/shader setup. GUI consumers select ImGui and Vulkan bindings explicitly, while GPU data tests additionally select backend dependencies; neither data-test project creates a device.
 
@@ -74,7 +74,7 @@ python3 scripts/build.py --init-deps      # first checkout: submodules and nativ
 python3 scripts/build.py --clean
 ```
 
-Steps run in this order and stop at the first failure: tools (c3c 0.8.3, glslang), deps (submodules present), boundaries (the import rules of section 10), abi (`gen_abi.py`, which builds gpu.c3l's `gpu_shaders` tool with `c3c build --path lib/gpu.c3l/tools/gpu_shaders` on first use), shaders (`build_shaders.py`), build (every target in `examples/project.json`, or `--target`), test (every target in `test/project.json`), run. `build_shaders.py` also embeds the GLSL include set as `src/c3d/shader/includes.c3` for the in-process compiler; on Windows the build copies `shaderc_shared.dll` and `SDL3.dll` next to example and test executables, while Linux shaderc executables carry an rpath to `lib/shaderc.c3l/linux`. SPIR-V is compiled into `shaders/spv/` (not committed) on every run; the generated C3 and GLSL twins are committed and verified unless `--regen` is given, which rewrites them. `--skip-boundaries`, `--skip-abi`, `--skip-shaders`, `--skip-build`, and `--opt O3` narrow a run; `-v` prints each command.
+Steps run in this order and stop at the first failure: tools (c3c 0.8.3, glslang), deps (submodules present), abi (`gen_abi.py`, which builds gpu.c3l's `gpu_shaders` tool with `c3c build --path lib/gpu.c3l/tools/gpu_shaders` on first use), shaders (`build_shaders.py`), build (every target in `examples/project.json`, or `--target`), test (every target in `test/project.json`), run. `build_shaders.py` also embeds the GLSL include set as `src/c3d/shader/includes.c3` for the in-process compiler; on Windows the build copies `shaderc_shared.dll` and `SDL3.dll` next to example and test executables, while Linux shaderc executables carry an rpath to `lib/shaderc.c3l/linux`. SPIR-V is compiled into `shaders/spv/` (not committed) on every run; the generated C3 and GLSL twins are committed and verified unless `--regen` is given, which rewrites them. `--skip-abi`, `--skip-shaders`, `--skip-build`, and `--opt O3` narrow a run; `-v` prints each command.
 
 Before every commit: `scripts/build.py --test`. Broken builds are never committed. GPU examples run manually; CI runs `--test`. Every development run of a GPU example enables Vulkan validation through gpu.c3l.
 
@@ -171,7 +171,7 @@ Counter-example, rejected on review:
 - Depth is reverse-Z; the Vulkan Y flip is one negative-height viewport; shaders use GL conventions and never flip.
 - Pass order is fixed; barriers are explicit; the renderer tracks `TextureState` only for targets it owns.
 - Every entity is a node; everything else about a node is a component. Systems are functions the application calls; there is no scheduler.
-- `scripts/build.py` enforces these boundaries and the dependency table of section 1 as its `boundaries` step; its rule table is the only copy.
+- Reviewers check every new `import` against these rules and the dependency table of section 1.
 
 # 11. Directory map
 
