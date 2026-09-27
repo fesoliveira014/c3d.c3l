@@ -24,10 +24,11 @@ const sz   RAW_POINTS_CAPACITY @local = 256; // mirrors upstream's verts(256); l
 const sz   SIMPLIFIED_POINTS_CAPACITY @local = 64; // mirrors upstream's simplified(64)
 const sz   MIN_CONTOUR_CAPACITY @local = 8; // mirrors upstream's max(maxRegions, 8) contour array
 
-<* Which edges simplification splits past max_edge_length; mirrors rcBuildContoursFlags. *>
+<* Which edges simplification splits past max_edge_length or refines; mirrors rcBuildContoursFlags. *>
 bitstruct ContourFlags : uint {
     bool tessellate_wall_edges : 0;
     bool tessellate_area_edges : 1;
+    bool refine_region_edges   : 2;    // edges between regions keep their corners as walls do; no upstream counterpart
 }
 
 <* One region outline; four ints per vertex: x, y, z in voxels and the neighbour region with flags. *>
@@ -511,7 +512,8 @@ fn void? simplify_contour(
 
         float max_deviation = 0;
         int max_index = -1;
-        if ((raw[current][3] & CONTOUR_REGION_MASK) == 0 || (raw[current][3] & AREA_BORDER) != 0) {
+        bool wall_or_area_edge = (raw[current][3] & CONTOUR_REGION_MASK) == 0 || (raw[current][3] & AREA_BORDER) != 0;
+        if (wall_or_area_edge || flags.refine_region_edges) {
             while (current != last) {
                 float deviation = point_segment_distance_sq(raw[current], start, end);
                 if (deviation > max_deviation) {
