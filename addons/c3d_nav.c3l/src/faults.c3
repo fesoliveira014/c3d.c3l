@@ -9,4 +9,6 @@ faultdef
     NO_POLY,
     TILE_OCCUPIED,
     LINK_EXISTS,
-    NO_PATH;
+    NO_PATH,
+    LAYER_CORRUPTED,
+    OBSTACLE_EXISTS;

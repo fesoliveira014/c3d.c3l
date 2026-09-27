@@ -21,6 +21,7 @@ Ported so far, from Recast:
 - monotone region partitioning with small-region removal and merging (`rcBuildRegionsMonotone`);
 - contour tracing, simplification and hole merging (`RecastContour.cpp`);
 - the polygon mesh with tile-border vertex removal and portal edges (`rcBuildPolyMesh`);
+- heightfield layers, non-overlapping height slices of a tile (`RecastLayers.cpp`);
 - the per-tile configuration, bounds and stage order of RecastDemo's `Sample_TileMesh::buildTileMesh`.
 
 From Detour:
@@ -41,6 +42,9 @@ From Detour:
   ray crosses up to 32 polygons, where upstream passes an empty path that stops it at the first;
   `find_random_point` weights every polygon of the mesh by area, where upstream first picks a tile
   uniformly.
+- the tile cache: layer regions, contours and polygon mesh, cylinder, box and yawed box area
+  marking (`DetourTileCacheBuilder.cpp`), and the cache of layers with obstacles, its request and
+  rebuild queues and the budgeted update (`DetourTileCache.cpp`). Layers are stored uncompressed.
 
 Not ported: `rcContext` logging and timers (failures are faults), the unsigned-short and flat-list
 rasterization overloads, `rcCalcBounds` (merge `Aabb` values instead), watershed and layer regions
@@ -48,7 +52,7 @@ rasterization overloads, `rcCalcBounds` (merge `Aabb` values instead), watershed
 mesh (`RecastMeshDetail.cpp`), `rcMergePolyMeshes` and `rcCopyPolyMesh`; from Detour, the 32-bit ref
 split, single-tile `dtNavMesh::init`, tile state save and restore (`storeTileState`,
 `restoreTileState`), endian swapping, the batched `dtPolyQuery` overload of `queryPolygons`, the
-tile cache and the crowd.
+tile cache's compressor and allocator interfaces, layer save and load, and the crowd.
 
 ## Building a navmesh
 
@@ -68,6 +72,14 @@ neighbours. `NavLink` components author off-mesh connections; adding, changing (
 removing one relinks the tiles under its endpoints without rebuilding them. Every install advances
 the tile's salt, so a `PolyRef` into a reinstalled tile stops resolving and is found again with a
 nearest-polygon query.
+
+With `NavBuilderDesc.cache_layers`, `build_tile` stops at the heightfield layers and `commit`
+stores them in the builder's `TileCache`; `nav_sync` rebuilds mesh tiles from the cached layers
+within its budget, marking `NavVolume` areas and obstacles at rebuild time. A volume change then
+rebuilds its tiles from the layers without rasterizing again. `NavObstacle` components author
+cylinder, box and yawed box obstacles; `mark_changed` re-adds one at the node's current transform,
+and removing the component or the node removes the obstacle. A builder without `cache_layers`
+skips obstacles and counts them in `NavSyncResult.skipped`.
 
 A `NavQuery` from `create_nav_query(allocator, &mesh, max_nodes)` answers the queries; it allocates
 its node pools once and no query allocates. `find_nearest_poly` snaps a point to the mesh,
@@ -95,6 +107,14 @@ to wandering: it draws goals with `find_random_point_around_circle`, steps towar
 
 ```bash
 python3 scripts/build.py --example navmesh
+```
+
+With `--cache` the same level builds through cached layers, with a door obstacle that `O` opens
+and closes and a crate that becomes an obstacle wherever it stops; the walker reroutes around the
+closed door:
+
+```bash
+c3c build navmesh --path addons/c3d_nav.c3l && addons/c3d_nav.c3l/build/navmesh --cache
 ```
 
 ## Tests

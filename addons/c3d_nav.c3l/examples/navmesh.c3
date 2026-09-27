@@ -4,6 +4,8 @@ import std::io;
 import std::math;
 import std::math::quaternion;
 import std::math::random;
+import std::time;
+import std::time::clock;
 import c3d;
 import c3d::asset;
 import c3d::camera;
@@ -43,7 +45,7 @@ const float FREE_SPEED_WHEEL_STEP @local = 1.25f;
 const Vec3  CAMERA_START @local = { 0, 14, 20 };
 const float CAMERA_START_PITCH @local = -0.6f;
 const Vec2  PANEL_POSITION @local = { 16, 16 };
-const Vec2  PANEL_SIZE @local = { 430, 380 };
+const Vec2  PANEL_SIZE @local = { 430, 480 };
 const uint  QUERY_NODES @local = 2048; // 64 KiB of search nodes; the level's whole graph fits
 const usz   CORRIDOR_CAPACITY @local = 256;
 const usz   POINT_CAPACITY @local = 64;
@@ -68,6 +70,21 @@ const float WALL_SEARCH_RADIUS @local = 3; // metres; the wall circle never grow
 const usz   MOVE_VISITED_CAPACITY @local = 16;
 const ulong WANDER_SEED @local = 0x3a11;
 const uint  WALL_COLOR @local = 0xFF40A0FF;
+const Vec3  DOOR_POSITION @local = { 0, 1, 8.15f }; // fills the gap between the two walls
+const Vec3  DOOR_SIZE @local = { 0.4f, 2, 3.3f };
+const Aabb  DOOR_OBSTACLE @local = { .min = { -0.3f, -1.5f, -1.65f }, .max = { 0.3f, 1, 1.65f } }; // node space; reaches below the floor
+const float DOOR_SINK @local = 2.5f; // metres the open door sinks into the floor
+const Vec3  CRATE_FIRST_STOP @local = { 3, 0.5f, -3 };
+const Vec3  CRATE_SECOND_STOP @local = { 9, 0.5f, -3 };
+const Vec3  CRATE_SIZE @local = { 1.2f, 1, 1.2f };
+const Vec3  CRATE_HALF_EXTENTS @local = { 0.6f, 1, 0.6f }; // one metre down, so the box spans the floor under the crate
+const float CRATE_YAW @local = 0.5f; // radians; the oriented box marks a turned footprint
+const float CRATE_SPEED @local = 1.5f; // metres per second
+const float CRATE_PAUSE @local = 2; // seconds at each stop, where the crate becomes an obstacle again
+const uint  PROCESSING_COLOR @local = 0xFF40FFFF;
+const uint  PROCESSED_COLOR @local = 0xFF4040FF;
+const uint  REMOVING_COLOR @local = 0xFF808080;
+const double NANOSECONDS_PER_MILLISECOND @local = 1_000_000.0;
 
 struct FreeCamera @local {
     Vec3  position;
@@ -94,6 +111,22 @@ struct Level @local {
     Node* drop;               // one-way NavLink down the platform's +X side
     Node* camera_node;
     bool  platform_shifted;
+}
+
+struct Crate @local {
+    Node* node;
+    float pause;            // seconds left at the current stop
+    bool  moving;
+    bool  towards_second;
+}
+
+// The cache mode's door and crate; zeroed without --cache.
+struct CacheLevel @local {
+    Node* door;
+    bool  door_open;
+    Crate crate;
+    uint  relayered;
+    float last_rebuild_ms;  // the last nav_sync that rebuilt cached layers
 }
 
 struct Walker @local {
@@ -293,6 +326,88 @@ fn void toggle_ladder(Scene* scene, Level* level) @local {
     ladder.mark_changed();
 }
 
+// Added after the level's sources, so neither the door nor the crate is rasterized.
+fn CacheLevel? add_cache_obstacles(AssetStore* assets, Scene* scene) @local {
+    MaterialId door_material = add_colour(assets, { 0.55f, 0.3f, 0.2f, 1 }, "navmesh/door")!;
+    MaterialId crate_material = add_colour(assets, { 0.85f, 0.65f, 0.25f, 1 }, "navmesh/crate")!;
+    Node* door = add_block(
+        scene:    scene,
+        assets:   assets,
+        material: door_material,
+        size:     DOOR_SIZE,
+        position: DOOR_POSITION,
+    )!;
+    scene.add_nav_obstacle(door, { .kind = BOX, .box = DOOR_OBSTACLE })!;
+    Node* crate = add_block(
+        scene:    scene,
+        assets:   assets,
+        material: crate_material,
+        size:     CRATE_SIZE,
+        position: CRATE_FIRST_STOP,
+    )!;
+    crate.local.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, CRATE_YAW);
+    scene.add_nav_obstacle(crate, { .kind = ORIENTED_BOX, .half_extents = CRATE_HALF_EXTENTS })!;
+    scene.update_world();
+    return { .door = door, .crate = { .node = crate, .pause = CRATE_PAUSE } };
+}
+
+fn void? toggle_door(Scene* scene, CacheLevel* level) @local {
+    level.door_open = !level.door_open;
+    if (level.door_open) {
+        scene.remove_component(level.door, NavObstacle);
+        level.door.local.position.y = DOOR_POSITION.y - DOOR_SINK;
+        return;
+    }
+    level.door.local.position.y = DOOR_POSITION.y;
+    scene.add_nav_obstacle(level.door, { .kind = BOX, .box = DOOR_OBSTACLE })!;
+}
+
+// The navmesh keeps the crate's last stop while it slides; each new stop re-adds its obstacle.
+fn void move_crate(Scene* scene, Crate* crate, float delta_seconds) @local {
+    if (!crate.moving) {
+        crate.pause -= delta_seconds;
+        if (crate.pause > 0) return;
+        crate.moving = true;
+        crate.towards_second = !crate.towards_second;
+        return;
+    }
+    Vec3 target = crate.towards_second ? CRATE_SECOND_STOP : CRATE_FIRST_STOP;
+    Vec3 offset = target - crate.node.local.position;
+    float distance = offset.length();
+    float step = CRATE_SPEED * delta_seconds;
+    if (distance > step) {
+        crate.node.local.position += offset * (step / distance);
+        return;
+    }
+    crate.node.local.position = target;
+    crate.moving = false;
+    crate.pause = CRATE_PAUSE;
+    scene.get(crate.node, NavObstacle).mark_changed();
+}
+
+fn uint obstacles_in_state(TileCache* cache, ObstacleState state) @local {
+    uint count;
+    foreach (&obstacle : cache.obstacles) {
+        if (obstacle.state == state) count++;
+    }
+    return count;
+}
+
+fn void draw_obstacles(TileCache* cache, debug::DebugDraw* sink) @local {
+    foreach (&obstacle : cache.obstacles) {
+        switch (obstacle.state) {
+            case EMPTY:
+                break;
+            case PROCESSING:
+                sink.aabb(obstacle.bounds(), PROCESSING_COLOR);
+            case PROCESSED:
+                sink.aabb(obstacle.bounds(), PROCESSED_COLOR);
+            case REMOVING:
+                sink.aabb(obstacle.bounds(), REMOVING_COLOR);
+        }
+    }
+}
+
 fn void set_goal(Walker* walker, Vec3 goal) @local {
     walker.goal = goal;
     walker.has_goal = true;
@@ -465,12 +580,23 @@ fn void draw_walker(Walker* walker, debug::DebugDraw* sink) @local {
     nav::debug_draw_path(sink, walker.points[:walker.straight.count], PATH_COLOR);
 }
 
+fn void draw_cache_panel(NavBuilder* builder, CacheLevel* level) @local {
+    TileCache* cache = &builder.cache;
+    imgui::separator();
+    imgui::text("O opens and closes the door: %s", level.door_open ? "open".ptr : "closed".ptr);
+    imgui::text("Rebuild queue: %u   obstacle requests: %u", cache.update_count, cache.request_count);
+    imgui::text("Obstacles: %u processing, %u processed, %u removing", obstacles_in_state(cache, PROCESSING),
+        obstacles_in_state(cache, PROCESSED), obstacles_in_state(cache, REMOVING));
+    imgui::text("Layers rebuilt: %u   last rebuilding sync: %.2f ms", level.relayered, level.last_rebuild_ms);
+}
+
 fn void draw_panel(
     NavBuilder* builder,
     Controls* controls,
     BuildTotals* totals,
     Walker* walker,
     NavLink* ladder,
+    CacheLevel* cache_level,
 ) @local {
     imgui::set_next_window_pos(PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
     imgui::set_next_window_size(PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
@@ -500,6 +626,7 @@ fn void draw_panel(
                     string::tformat_zstr("%s", failure.reason), string::tformat_zstr("%s", failure.stage));
             };
         }
+        if (builder.cache_layers) draw_cache_panel(builder, cache_level);
     }
     imgui::end();
 }
@@ -513,6 +640,7 @@ fn void draw_debug(
     sink.clear();
     builder.debug_draw(sink, controls.draw);
     mesh.debug_draw(sink, controls.mesh);
+    if (builder.cache_layers) draw_obstacles(&builder.cache, sink);
     if (!controls.spans) return;
     foreach (&job : builder.jobs) {
         if (job.state == RASTERIZING) nav::debug_draw_heightfield(&job.heightfield, sink, SPAN_COLOR);
@@ -544,13 +672,17 @@ fn void? run(
     render::Renderer* renderer,
     AssetStore* assets,
     Scene* scene,
+    bool cache_layers,
 ) @local {
     Level level = build_level(assets, scene)!;
+    CacheLevel cache_level;
+    if (cache_layers) cache_level = add_cache_obstacles(assets, scene)!;
     NavBuilderDesc desc = nav::default_nav_builder_desc({
         .min = { -LEVEL_HALF_SIZE, -1, -LEVEL_HALF_SIZE },
         .max = { LEVEL_HALF_SIZE, LEVEL_TOP, LEVEL_HALF_SIZE },
     });
     desc.rasterize_budget = RASTERIZE_BUDGET;
+    desc.cache_layers = cache_layers;
     NavBuilder builder = nav::create_nav_builder(mem, scene, desc)!;
     defer nav::destroy_nav_builder(&builder);
     NavMesh mesh = nav::create_nav_mesh_for(mem, &builder)!;
@@ -586,16 +718,18 @@ fn void? run(
             if (gui_renderer.frame_open) gui_renderer.finish_frame();
         }
         draw_panel(
-            builder:  &builder,
-            controls: &controls,
-            totals:   &totals,
-            walker:   walker,
-            ladder:   scene.get(level.ladder, NavLink),
+            builder:     &builder,
+            controls:    &controls,
+            totals:      &totals,
+            walker:      walker,
+            ladder:      scene.get(level.ladder, NavLink),
+            cache_level: &cache_level,
         );
 
         if (!input.keyboard_captured_by_gui) {
             if (input.key_pressed(platform::Scancode.M)) move_platform(scene, &level);
             if (input.key_pressed(platform::Scancode.L)) toggle_ladder(scene, &level);
+            if (cache_layers && input.key_pressed(platform::Scancode.O)) toggle_door(scene, &cache_level)!;
             if (input.key_pressed(platform::Scancode.CODE_1)) set_goal(walker, PLATFORM_GOAL);
             if (input.key_pressed(platform::Scancode.CODE_2)) set_goal(walker, FLOOR_GOAL);
             if (input.key_pressed(platform::Scancode.R)) toggle_wander(walker);
@@ -616,8 +750,10 @@ fn void? run(
             camera_node:   level.camera_node,
             delta_seconds: window.clock.delta,
         );
+        if (cache_layers) move_crate(scene, &cache_level.crate, window.clock.delta);
         scene.update_world();
 
+        time::Clock sync_started = clock::now();
         NavSyncResult result = nav::nav_sync(
             builder: &builder,
             mesh:    &mesh,
@@ -625,6 +761,10 @@ fn void? run(
             assets:  assets,
             budget:  TILES_PER_FRAME,
         );
+        if (result.relayered) {
+            cache_level.last_rebuild_ms = (float)((double)(clock::now() - sync_started) / NANOSECONDS_PER_MILLISECOND);
+            cache_level.relayered += result.relayered;
+        }
         totals.built += result.built;
         totals.skipped += result.skipped;
         totals.failed += result.failed;
@@ -661,7 +801,15 @@ fn void? run(
     }
 }
 
-fn int main() {
+fn int main(String[] args) {
+    bool cache_layers;
+    foreach (arg : args[1..]) {
+        if (arg != "--cache") {
+            io::eprintfn("Unknown argument: %s; --cache builds through cached layers with a door and a crate", arg);
+            return 1;
+        }
+        cache_layers = true;
+    }
     platform::Window window = platform::create_window(platform::default_window_desc("c3d navmesh", 1280, 720))!!;
     defer platform::destroy_window(&window);
 
@@ -681,10 +829,11 @@ fn int main() {
     nav::register_nav(&scene)!!;
 
     if (catch excuse = run(
-        window:   &window,
-        renderer: &renderer,
-        assets:   &assets,
-        scene:    &scene,
+        window:       &window,
+        renderer:     &renderer,
+        assets:       &assets,
+        scene:        &scene,
+        cache_layers: cache_layers,
     )) {
         io::eprintfn("navmesh example failed: %s", excuse);
         return 1;

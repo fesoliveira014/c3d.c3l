@@ -40,6 +40,17 @@ struct NavLink {
     bool   changed;
 }
 
+<* Obstacle in node space; the node's world matrix places it when added or changed. *>
+struct NavObstacle {
+    ObstacleKind kind;
+    Vec3         position;       // CYLINDER base; ORIENTED_BOX centre
+    float        radius;         // CYLINDER
+    float        height;
+    Aabb         box;            // BOX
+    Vec3         half_extents;   // ORIENTED_BOX; turned by the node's yaw
+    bool         changed;
+}
+
 <* Runtime mirror of a NavSource: the world bounds its tiles were dirtied with. *>
 struct NavSourceRuntime {
     Aabb bounds;
@@ -57,6 +68,11 @@ struct NavLinkRuntime {
     Vec3 end;
 }
 
+<* Runtime mirror of a NavObstacle: the cache obstacle it holds. *>
+struct NavObstacleRuntime {
+    ObstacleRef ref;    // 0 while no addition is queued
+}
+
 <*
  Request a rebuild of the tiles under the old and new bounds on the next sync.
  Moving the node or editing the geometry does nothing until this is called.
@@ -66,7 +82,7 @@ fn void NavSource.mark_changed(&self) {
 }
 
 <*
- Request a rebuild of the tiles under the old and new bounds on the next sync.
+ Request a rebuild, or a relayer with cached layers, of the tiles under the old and new bounds on the next sync.
  Moving the node does nothing until this is called.
 *>
 fn void NavVolume.mark_changed(&self) {
@@ -78,6 +94,14 @@ fn void NavVolume.mark_changed(&self) {
  Moving the node or editing the link does nothing until this is called.
 *>
 fn void NavLink.mark_changed(&self) {
+    self.changed = true;
+}
+
+<*
+ Request re-adding the obstacle at the node's current world matrix on the next sync.
+ Moving the node does nothing until this is called.
+*>
+fn void NavObstacle.mark_changed(&self) {
     self.changed = true;
 }
 
@@ -154,15 +178,39 @@ fn void? Scene.add_nav_link(&self, Node* node, NavLink link) {
 }
 
 <*
+ Author an obstacle on the node; a builder without cache_layers skips it.
+ @param [&in] node : "Places the obstacle through its world matrix."
+ @return? c3d::INVALID_ARGUMENT, OBSTACLE_EXISTS
+ @require self.world.is_registered(NavObstacle)
+*>
+fn void? Scene.add_nav_obstacle(&self, Node* node, NavObstacle obstacle) {
+    if (self.has(node, NavObstacle)) return OBSTACLE_EXISTS~;
+    switch (obstacle.kind) {
+        case CYLINDER:
+            if (obstacle.radius <= 0 || obstacle.height <= 0) return c3d::INVALID_ARGUMENT~;
+        case BOX:
+            Vec3 extent = obstacle.box.max - obstacle.box.min;
+            if (extent.x < 0 || extent.y < 0 || extent.z < 0) return c3d::INVALID_ARGUMENT~;
+        case ORIENTED_BOX:
+            Vec3 half = obstacle.half_extents;
+            if (half.x <= 0 || half.y <= 0 || half.z <= 0) return c3d::INVALID_ARGUMENT~;
+    }
+    obstacle.changed = false;
+    self.add(node, obstacle);
+}
+
+<*
  Register the nav components and their mirrors.
- @param [&inout] scene : "Gains NavSource, NavVolume, NavLink and their runtime mirrors."
+ @param [&inout] scene : "Gains NavSource, NavVolume, NavLink, NavObstacle and their runtime mirrors."
  @return? c3d::CAPACITY_EXCEEDED
 *>
 fn void? register_nav(Scene* scene) {
     scene.register(NavSource)!;
     scene.register(NavVolume)!;
     scene.register(NavLink)!;
+    scene.register(NavObstacle)!;
     scene.register(NavSourceRuntime)!;
     scene.register(NavVolumeRuntime)!;
     scene.register(NavLinkRuntime)!;
+    scene.register(NavObstacleRuntime)!;
 }
