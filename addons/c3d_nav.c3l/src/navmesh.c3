@@ -326,7 +326,7 @@ fn TileRef? NavMesh.add_tile_mesh(
 
 <*
  Replace the tile at params.tile_x, params.tile_z and params.tile_layer; an empty blob only removes it.
- Invalidates every PolyRef into the replaced tile.
+ Invalidates every PolyRef into the replaced tile; the resident tile must own its data, which is freed.
  @param [in] connections : "Off-mesh connections whose start lies in the tile."
  @return "The new tile, or 0 when the blob was empty."
  @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED

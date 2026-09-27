@@ -149,7 +149,8 @@ allocates nothing else. One voxel is one grid cell, so walls follow cell edges, 
 `ceil(agent_radius / cell_size)` whole cells and neighbouring floors connect when their height
 difference is within the climb. Regions split where the floor height changes, so each polygon lies
 on one floor; a vertex on a step takes the higher floor's height, as upstream's corner heights do,
-so a polygon beside a step slopes up to it.
+so a polygon beside a step slopes up to it. A grid whose heights differ from cell to cell, like a
+heightmap, therefore yields a region and a polygon per cell and pays for it in polygon count.
 
 `NavMesh.install_tile_mesh(blob, connections, params)` replaces the tile at `params.tile_x`,
 `params.tile_z` and `params.tile_layer`, or only removes it when the blob is empty, and
