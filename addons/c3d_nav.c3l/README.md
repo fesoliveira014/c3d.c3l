@@ -23,10 +23,22 @@ Ported so far, from Recast:
 - the polygon mesh with tile-border vertex removal and portal edges (`rcBuildPolyMesh`);
 - the per-tile configuration, bounds and stage order of RecastDemo's `Sample_TileMesh::buildTileMesh`.
 
+From Detour:
+
+- tile data with its BV tree and off-mesh connections (`dtCreateNavMeshData`), without detail arrays:
+  polygon heights come from each polygon's vertex fan, the triangles upstream builds when no detail
+  mesh is given;
+- the tiled navmesh: tile add and remove, internal, portal and off-mesh links, 64-bit salted refs
+  (`DetourNavMesh.cpp` with `DT_POLYREF64`);
+- the search node pool and priority queue (`DetourNode.cpp`) and the geometry helpers
+  (`DetourCommon.cpp`).
+
 Not ported: `rcContext` logging and timers (failures are faults), the unsigned-short and flat-list
 rasterization overloads, `rcCalcBounds` (merge `Aabb` values instead), watershed and layer regions
 (`rcBuildRegions`, `rcBuildLayerRegions`), the distance field (`rcBuildDistanceField`), the detail
-mesh (`RecastMeshDetail.cpp`), `rcMergePolyMeshes` and `rcCopyPolyMesh`.
+mesh (`RecastMeshDetail.cpp`), `rcMergePolyMeshes` and `rcCopyPolyMesh`; from Detour, the 32-bit ref
+split, single-tile `dtNavMesh::init`, tile state save and restore (`storeTileState`,
+`restoreTileState`), endian swapping, the tile cache and the crowd.
 
 ## Building a navmesh
 
@@ -39,6 +51,13 @@ volume dirties its tiles at the next sync. `build_tile` touches
 only its slot, so an application may call `sync_sources` and `rasterize_next` on the main thread,
 run `build_tile` on workers and `commit` back on the main thread. Each tile's result is a flat
 `TileMesh` blob read through `tile_mesh_view`.
+
+A `NavMesh` from `create_nav_mesh_for(builder)` receives the tiles: `nav_sync` turns every committed
+`TileMesh` into a `TileData` blob with `create_tile_data`, adds it with `add_tile` and links it to its
+neighbours. `NavLink` components author off-mesh connections; adding, changing (`mark_changed`) or
+removing one relinks the tiles under its endpoints without rebuilding them. Every install advances
+the tile's salt, so a `PolyRef` into a reinstalled tile stops resolving and is found again with a
+nearest-polygon query.
 
 The `navmesh` example builds a level of ramps, a stair, walls, a movable platform and a mud volume
 and draws tiles, polygons and the spans of the slot being rasterized:

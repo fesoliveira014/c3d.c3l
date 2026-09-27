@@ -28,6 +28,18 @@ struct NavVolume {
     bool                   changed;
 }
 
+<* Off-mesh connection authored on a node; endpoints in node space. *>
+struct NavLink {
+    Vec3   start;
+    Vec3   end;
+    float  radius;           // metres around each endpoint searched for a landing polygon
+    bool   bidirectional;
+    char   area;
+    ushort flags;            // POLY_FLAG_WALK when authored as 0
+    uint   user_id;
+    bool   changed;
+}
+
 <* Runtime mirror of a NavSource: the world bounds its tiles were dirtied with. *>
 struct NavSourceRuntime {
     Aabb bounds;
@@ -37,6 +49,12 @@ struct NavSourceRuntime {
 struct NavVolumeRuntime {
     Aabb         bounds;
     VolumeRecord record;
+}
+
+<* Runtime mirror of a NavLink: its world endpoints as built into tiles. *>
+struct NavLinkRuntime {
+    Vec3 start;
+    Vec3 end;
 }
 
 <*
@@ -52,6 +70,14 @@ fn void NavSource.mark_changed(&self) {
  Moving the node does nothing until this is called.
 *>
 fn void NavVolume.mark_changed(&self) {
+    self.changed = true;
+}
+
+<*
+ Request a relink of the tiles under the old and new endpoints on the next sync.
+ Moving the node or editing the link does nothing until this is called.
+*>
+fn void NavLink.mark_changed(&self) {
     self.changed = true;
 }
 
@@ -114,13 +140,29 @@ fn void? Scene.add_nav_volume(&self, Node* node, NavVolume volume) {
 }
 
 <*
+ Author an off-mesh connection on the node.
+ @param [&in] node : "Places the endpoints through its world matrix."
+ @return? c3d::INVALID_ARGUMENT, LINK_EXISTS
+ @require self.world.is_registered(NavLink)
+*>
+fn void? Scene.add_nav_link(&self, Node* node, NavLink link) {
+    if (self.has(node, NavLink)) return LINK_EXISTS~;
+    if (link.radius <= 0 || link.area >= MAX_AREAS || link.start == link.end) return c3d::INVALID_ARGUMENT~;
+    if (link.flags == 0) link.flags = POLY_FLAG_WALK;
+    link.changed = false;
+    self.add(node, link);
+}
+
+<*
  Register the nav components and their mirrors.
- @param [&inout] scene : "Gains NavSource, NavVolume, NavSourceRuntime and NavVolumeRuntime."
+ @param [&inout] scene : "Gains NavSource, NavVolume, NavLink and their runtime mirrors."
  @return? c3d::CAPACITY_EXCEEDED
 *>
 fn void? register_nav(Scene* scene) {
     scene.register(NavSource)!;
     scene.register(NavVolume)!;
+    scene.register(NavLink)!;
     scene.register(NavSourceRuntime)!;
     scene.register(NavVolumeRuntime)!;
+    scene.register(NavLinkRuntime)!;
 }

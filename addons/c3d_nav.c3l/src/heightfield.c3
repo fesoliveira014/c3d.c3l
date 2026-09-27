@@ -347,7 +347,7 @@ fn void? insert_span(
     }
 }
 
-fn bool overlap_bounds(Aabb first, Aabb second) @local {
+fn bool overlap_bounds(Aabb first, Aabb second) @private {
     return first.min.x <= second.max.x && first.max.x >= second.min.x
         && first.min.y <= second.max.y && first.max.y >= second.min.y
         && first.min.z <= second.max.z && first.max.z >= second.min.z;

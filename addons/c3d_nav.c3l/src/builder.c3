@@ -11,8 +11,8 @@ import c3d::scene;
 <* Vertices a convex volume may have. *>
 const uint MAX_VOLUME_VERTS = 12; // 144 bytes per volume record; a bevelled hexagon after offset_poly
 
-<* Nav mirror removals held between two syncs before every tile goes dirty. *>
-const uint REMOVAL_QUEUE_CAPACITY = 64; // about 1.5 KiB; a bulk unload past it costs one full rebuild
+<* Nav mirror removals of each kind held between two syncs before every tile goes dirty or relinks. *>
+const uint REMOVAL_QUEUE_CAPACITY = 64; // about 3 KiB; a bulk unload past it costs one full rebuild or relink
 
 const uint DEFAULT_SLOTS @local = 2; // one slot rasterizing while another builds on a worker
 const usz  DEFAULT_SLOT_SCRATCH_BYTES @local = 2 * 1024 * 1024; // per slot, once; a default tile with stair and ramp peaks at 47 KiB
@@ -27,7 +27,7 @@ enum JobState {
     FAILED,         // build_tile faulted; commit records it and frees the slot
 }
 
-<* Stage of build_tile, named in a failure. *>
+<* Stage of a tile build, named in a failure. *>
 enum BuildStage {
     COMPACT,
     AREAS,          // erosion and volume marking
@@ -35,6 +35,7 @@ enum BuildStage {
     CONTOURS,
     POLY_MESH,
     PACK,
+    INSTALL,        // create_tile_data and add_tile in nav_sync
 }
 
 <* Shape of a NavVolume. *>
@@ -81,10 +82,12 @@ struct TileJob {
 
 <* Built mesh and build state of one tile coordinate. *>
 struct TileRecord {
-    char[] mesh;        // TileMesh blob from the builder allocator; empty when never built or nothing walkable
-    uint   revision;    // advances on every accepted commit
-    uint   requests;    // advances every time a slot takes the tile
-    bool   dirty;
+    char[]  mesh;        // TileMesh blob from the builder allocator; empty when never built or nothing walkable
+    uint    revision;    // advances on every accepted commit
+    uint    requests;    // advances every time a slot takes the tile
+    bool    dirty;
+    bool    relink;      // the NavMesh tile is stale; nav_sync reinstalls it
+    TileRef ref;         // of the installed NavMesh tile; 0 when none
 }
 
 <* The last build that faulted. *>
@@ -95,11 +98,14 @@ struct TileFailure {
     BuildStage stage;
 }
 
-<* World bounds of nav mirrors removed since the last sync_sources; the remove hooks' context. *>
+<* Nav mirrors removed since the last sync_sources; the remove hooks' context. *>
 struct RemovalQueue {
-    Aabb[REMOVAL_QUEUE_CAPACITY] bounds;
-    uint                         count;
-    bool                         overflowed;    // every tile goes dirty at the next sync
+    Aabb[REMOVAL_QUEUE_CAPACITY]           bounds;              // of sources and volumes
+    uint                                   count;
+    bool                                   overflowed;          // every tile goes dirty at the next sync
+    NavLinkRuntime[REMOVAL_QUEUE_CAPACITY] links;
+    uint                                   link_count;
+    bool                                   links_overflowed;    // every tile relinks at the next sync
 }
 
 <* Capacities and configuration of a builder. *>
@@ -137,9 +143,10 @@ struct NavBuilder {
 <* Outcome of one nav_sync call. *>
 struct NavSyncResult {
     uint built;
+    uint installed;  // tiles added to the mesh, relinks included
     uint pending;    // dirty tiles left
     uint skipped;    // sources with released or non-triangle geometry
-    uint failed;     // tile builds or rasterizations that faulted; last_failure names the last build
+    uint failed;     // tile builds, installs or rasterizations that faulted; last_failure names the last tile
 }
 
 <*
@@ -278,6 +285,7 @@ fn void? NavBuilder.commit(&self, TileJob* job) {
     alloc::free(self.allocator, record.mesh.ptr);
     record.mesh = mesh;
     record.revision++;
+    record.relink = true;
 }
 
 <*
@@ -300,6 +308,7 @@ fn NavBuilderDesc default_nav_builder_desc(Aabb bounds, NavBuildConfig config = 
  @param [&inout] scene : "Gains the mirror remove hooks; outlives the builder."
  @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
  @require desc.slots > 0, scene.world.is_registered(NavSourceRuntime), scene.world.is_registered(NavVolumeRuntime)
+ @require scene.world.is_registered(NavLinkRuntime)
 *>
 fn NavBuilder? create_nav_builder(Allocator allocator, Scene* scene, NavBuilderDesc desc) {
     TileConfig tile = tile_config(desc.config)!;
@@ -358,6 +367,7 @@ fn NavBuilder? create_nav_builder(Allocator allocator, Scene* scene, NavBuilderD
     }
     scene.set_remove_hook(NavSourceRuntime, &queue_removed_source, removals);
     scene.set_remove_hook(NavVolumeRuntime, &queue_removed_volume, removals);
+    scene.set_remove_hook(NavLinkRuntime, &queue_removed_link, removals);
     return builder;
 }
 
@@ -369,6 +379,7 @@ fn void destroy_nav_builder(NavBuilder* builder) {
     Allocator allocator = builder.allocator;
     builder.scene.set_remove_hook(NavSourceRuntime, null, null);
     builder.scene.set_remove_hook(NavVolumeRuntime, null, null);
+    builder.scene.set_remove_hook(NavLinkRuntime, null, null);
     foreach (&record : builder.tiles) alloc::free(allocator, record.mesh.ptr);
     foreach (&job : builder.jobs) {
         destroy_heightfield(&job.heightfield);
@@ -503,6 +514,15 @@ fn void queue_removal(RemovalQueue* removals, Aabb bounds) @local {
         return;
     }
     removals.bounds[removals.count++] = bounds;
+}
+
+fn void queue_removed_link(Entity entity, void* component, void* user) @local {
+    RemovalQueue* removals = user;
+    if (removals.link_count == REMOVAL_QUEUE_CAPACITY) {
+        removals.links_overflowed = true;
+        return;
+    }
+    removals.links[removals.link_count++] = *(NavLinkRuntime*)component;
 }
 
 fn void redirty(NavBuilder* builder, TileRecord* record) @private {

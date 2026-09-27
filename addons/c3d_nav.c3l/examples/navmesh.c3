@@ -286,6 +286,8 @@ fn void? run(
     desc.rasterize_budget = RASTERIZE_BUDGET;
     NavBuilder builder = nav::create_nav_builder(mem, scene, desc)!;
     defer nav::destroy_nav_builder(&builder);
+    NavMesh mesh = nav::create_nav_mesh_for(mem, &builder)!;
+    defer nav::destroy_nav_mesh(&mesh);
 
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
@@ -322,6 +324,7 @@ fn void? run(
 
         NavSyncResult result = nav::nav_sync(
             builder: &builder,
+            mesh:    &mesh,
             scene:   scene,
             assets:  assets,
             budget:  TILES_PER_FRAME,

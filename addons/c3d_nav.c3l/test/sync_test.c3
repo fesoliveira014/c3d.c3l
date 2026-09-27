@@ -41,6 +41,7 @@ fn usz mirror_count(Scene* scene) @private {
 fn NavSyncResult sync(BuilderFixture* fixture, uint budget) @private {
     return nav::nav_sync(
         builder: &fixture.builder,
+        mesh:    &fixture.mesh,
         scene:   &fixture.scene,
         assets:  &fixture.assets,
         budget:  budget,

@@ -8,6 +8,10 @@ import c3d::maths;
 const uint     TILE_COLOR @local = 0xFF808080;
 const uint     UNWALKABLE_SPAN_COLOR @local = 0xFF505050;
 const uint     WALKABLE_COLOR @local = 0xFFFFC040;
+const uint     PORTAL_COLOR @local = 0xFFFFFFFF;
+const uint     LINK_COLOR @local = 0xFFFF40C0;
+const uint     UNLINKED_COLOR @local = 0xFF808080; // an off-mesh connection whose start found no polygon
+const float    MESH_LIFT @local = 0.05f; // metres; outlines draw above the floor they lie on
 const uint[8]  AREA_PALETTE @local = {
     0xFF40FF40,
     0xFF00A5FF,
@@ -23,6 +27,41 @@ const uint[8]  AREA_PALETTE @local = {
 struct NavDebugOptions {
     bool tiles;      // tile bounds; dirty tiles in red
     bool polys;      // polygon outlines, coloured by area
+}
+
+<* What NavMesh.debug_draw appends. *>
+struct NavMeshDebugOptions {
+    bool polys;     // polygon outlines by area
+    bool links;     // linked portal edges and off-mesh connections
+    bool bounds;    // tile bounds
+}
+
+<*
+ Append polygons, links and tile bounds of every resident tile to the sink.
+ @param [&inout] sink : "Cleared by the application."
+*>
+fn void NavMesh.debug_draw(&self, debug::DebugDraw* sink, NavMeshDebugOptions options) {
+    Vec3 lift = { 0, MESH_LIFT, 0 };
+    foreach (&tile : self.tiles) {
+        if (!tile.header) continue;
+        if (options.bounds) sink.aabb(tile.header.bounds, TILE_COLOR);
+        foreach (&poly : tile.polys) {
+            if (poly.area_type.type == OFF_MESH_CONNECTION) {
+                if (options.links) draw_off_mesh_connection(sink, tile, poly);
+                continue;
+            }
+            int count = poly.vert_count;
+            for (int edge = 0; edge < count; edge++) {
+                Vec3 start = tile.verts[poly.verts[edge]] + lift;
+                Vec3 end = tile.verts[poly.verts[(edge + 1) % count]] + lift;
+                if (options.links && has_portal_link(tile, poly, edge)) {
+                    sink.line(start + lift, end + lift, PORTAL_COLOR);
+                } else if (options.polys) {
+                    sink.line(start, end, area_color(poly.area_type.area));
+                }
+            }
+        }
+    }
 }
 
 <*
@@ -108,4 +147,23 @@ fn Vec3 mesh_vertex_position(
 fn uint area_color(char area) @local {
     if (area == WALKABLE_AREA) return WALKABLE_COLOR;
     return AREA_PALETTE[area % AREA_PALETTE.len];
+}
+
+fn bool has_portal_link(MeshTile* tile, Poly* poly, int edge) @local {
+    if ((poly.neighbours[edge] & EXTERNAL_LINK) == 0) return false;
+    for (uint link = poly.first_link; link != NULL_LINK; link = tile.links[link].next) {
+        if (tile.links[link].edge == edge) return true;
+    }
+    return false;
+}
+
+fn void draw_off_mesh_connection(debug::DebugDraw* sink, MeshTile* tile, Poly* poly) @local {
+    OffMeshConnection* connection = &tile.off_mesh[(uint)(poly - tile.polys.ptr) - tile.header.off_mesh_base];
+    uint color = poly.first_link == NULL_LINK ? UNLINKED_COLOR : LINK_COLOR;
+    Vec3 up = { 0, 1, 0 };
+    Vec3 start = tile.verts[poly.verts[0]];
+    Vec3 end = tile.verts[poly.verts[1]];
+    sink.line(start, end, color);
+    sink.circle(start, up, connection.radius, color);
+    sink.circle(end, up, connection.radius, color);
 }
