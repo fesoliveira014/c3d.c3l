@@ -71,7 +71,7 @@ fn Node*[] PhysicsWorld.overlap_sphere(
     return nodes;
 }
 
-fn b3::QueryFilter query_filter(CollisionFilter filter) @local {
+fn b3::QueryFilter query_filter(CollisionFilter filter) @private {
     b3::QueryFilter query = b3::default_query_filter();
     query.category_bits = filter.category;
     query.mask_bits = filter.mask;

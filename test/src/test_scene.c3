@@ -307,6 +307,47 @@ fn void test_look_at_faces_a_world_target_under_a_rotated_parent() @test {
     assert(close_vec3(forward, expected));
 }
 
+fn void test_set_world_position_under_a_rotated_scaled_parent() @test {
+    Scene scene = make_scene(4);
+    defer scene::destroy_scene(&scene);
+
+    Node* parent = scene.add_node()!!;
+    Node* child = scene.add_node(parent)!!;
+    parent.local.position = { 5, 0, 0 };
+    parent.local.rotation = quarter_turn_y();
+    parent.local.scale = { 2, 2, 2 };
+    child.local.rotation = quarter_turn_y();
+    child.local.scale = { 3, 3, 3 };
+    scene.update_world();
+
+    child.set_world_position({ 1, 2, 3 });
+    scene.update_world();
+
+    assert(close_vec3(child.world_position(), { 1, 2, 3 }));
+    assert(math::abs(child.local.rotation.v.dot(quarter_turn_y().v)) > 1 - 1e-5);
+    assert(close_vec3(child.local.scale, { 3, 3, 3 }));
+}
+
+fn void test_set_world_pose_under_a_rotated_parent() @test {
+    Scene scene = make_scene(4);
+    defer scene::destroy_scene(&scene);
+
+    Node* parent = scene.add_node()!!;
+    Node* child = scene.add_node(parent)!!;
+    parent.local.position = { 5, 0, 0 };
+    parent.local.rotation = quarter_turn_y();
+    scene.update_world();
+
+    Vec3 position = { -1, 4, 2 };
+    Quat rotation = quaternion::from_axis_angle{float}({ 1, 0, 0 }, 0.7f);
+    child.set_world_pose(position, rotation);
+    scene.update_world();
+
+    assert(close_vec3(child.world_position(), position));
+    Quat world_rotation = maths::transform_from_mat4(child.world).rotation;
+    assert(math::abs(world_rotation.v.dot(rotation.v)) > 1 - 1e-5);
+}
+
 fn void test_removal_frees_names_and_morph_weights() @test {
     TrackingAllocator tracker;
     tracker.init(mem);

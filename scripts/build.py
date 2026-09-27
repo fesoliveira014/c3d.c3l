@@ -42,6 +42,7 @@ ADDON_EXAMPLES = {
     "physics_components": PHYSICS,
     "vehicle": PHYSICS,
     "ragdoll": PHYSICS,
+    "mover": PHYSICS,
 }
 PROFILE_TEST_TARGETS = (
     "profile_off", "profile_cpu", "profile_internal", "profile_gpu",

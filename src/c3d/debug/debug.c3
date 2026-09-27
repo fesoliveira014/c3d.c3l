@@ -118,6 +118,37 @@ fn void DebugDraw.circle(&self, Vec3 center, Vec3 normal, float radius, uint rgb
 }
 
 <*
+ Append a capsule outline.
+ @param axis : "Unit length; direction of the segment."
+ @param half_height : "Half the segment length, caps excluded."
+*>
+fn void DebugDraw.capsule(
+    &self,
+    Vec3 center,
+    Vec3 axis,
+    float half_height,
+    float radius,
+    uint rgba,
+) {
+    Vec3 reference = math::abs(axis.y) < BASIS_PARALLEL_THRESHOLD ? (Vec3){ 0, 1, 0 } : (Vec3){ 1, 0, 0 };
+    Vec3 side = axis.cross(reference).normalize();
+    Vec3 forward = axis.cross(side);
+    Vec3 top = center + axis * half_height;
+    Vec3 bottom = center - axis * half_height;
+
+    self.circle(top, axis, radius, rgba);
+    self.circle(bottom, axis, radius, rgba);
+    self.circle(top, side, radius, rgba);
+    self.circle(top, forward, radius, rgba);
+    self.circle(bottom, side, radius, rgba);
+    self.circle(bottom, forward, radius, rgba);
+    self.line(top + side * radius, bottom + side * radius, rgba);
+    self.line(top - side * radius, bottom - side * radius, rgba);
+    self.line(top + forward * radius, bottom + forward * radius, rgba);
+    self.line(top - forward * radius, bottom - forward * radius, rgba);
+}
+
+<*
  Append red, green and blue axes of a world matrix, unscaled.
 *>
 fn void DebugDraw.axes(&self, Mat4 world, float size) {

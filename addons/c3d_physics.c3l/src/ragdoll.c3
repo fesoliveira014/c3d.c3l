@@ -249,7 +249,7 @@ fn RagdollFacing PhysicsWorld.recover_ragdoll(&self, Node* skin_node, Node* char
             Quat yaw = quaternion::from_axis_angle{float}({ 0, 1, 0 }, math::atan2(heading.x, heading.z));
             pose.rotation = pose.rotation.mul(yaw).normalize();
         }
-        write_pose(scene, character, pose);
+        character.set_world_pose(pose.position, pose.rotation);
     }
     scene.update_world();
 
