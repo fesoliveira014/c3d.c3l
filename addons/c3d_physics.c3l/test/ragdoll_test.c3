@@ -456,7 +456,7 @@ fn void test_revolute_drive_targets_the_animated_hinge_angle() @test {
     fixture.physics.update(0);
 
     b3::RevoluteJointId joint = fixture.physics.joint(ragdoll.bone_nodes[1])!!.as_revolute()!!;
-    assert(math::abs(joint.target_angle() - 0.4f) <= 0.0001f);
+    assert(math::abs(joint.target_angle() - 0.4f) <= TOLERANCE);
 }
 
 // Angles of the settled bone body from the animated bone rotation and from its bind rotation.
