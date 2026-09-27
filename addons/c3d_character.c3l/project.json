@@ -49,6 +49,28 @@
     "character": {
       "type": "executable",
       "sources": [ "examples/character.c3" ]
+    },
+    "character_nav": {
+      "type": "executable",
+      "sources": [ "examples/character_nav.c3" ],
+      "features": [ "C3D_CHARACTER_NAV" ],
+      "dependencies": [
+        "c3d_character",
+        "c3d_physics",
+        "c3d_nav",
+        "c3d",
+        "gpu",
+        "vk",
+        "vma",
+        "spvreflect",
+        "sdl3",
+        "c3imgui",
+        "c3cg",
+        "b3",
+        "cgltf",
+        "ufbx",
+        "shaderc"
+      ]
     }
   }
 }

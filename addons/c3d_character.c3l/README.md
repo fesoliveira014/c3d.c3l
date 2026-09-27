@@ -40,8 +40,8 @@ and `drive_characters` copies the agent's velocity into `Character.desired` and 
 traversal into `NavDriven.traversal` every frame. The character then collides with every physics
 body, including bodies the navmesh does not know, and crosses an off-mesh connection along the
 crowd's traversal without sweeping. `Scene.remove_nav_driven` returns the node to the application
-and stops the character. The package writes no rotation; an application that wants its characters
-to face their motion turns each node toward `Character.velocity` at a limited rate.
+and stops the character. The package writes no rotation; the `character_nav` example turns each
+node toward `Character.velocity` at a limited rate.
 
 ```c3
 scene.update_world();                          // world matrices; crowd_update reads driven nodes
@@ -51,7 +51,7 @@ physics.update(dt);                            // steps the characters, writes t
 scene.update_world();
 ```
 
-## Tests and example
+## Tests and examples
 
 `python3 scripts/build.py --test` runs the `character_test` and `character_nav_test` targets, or
 directly:
@@ -63,3 +63,7 @@ c3c test character_nav_test --path addons/c3d_character.c3l
 
 `python3 scripts/build.py --example character` builds and runs the example: walk, run, jump, push
 boxes, ride the platform, slide along walls, stop at steep slopes and climb the stair.
+
+`python3 scripts/build.py --example character_nav` builds and runs the driven example: a click sends
+ten driven characters across the nav level, around crates the navmesh does not contain and up the
+ladder link onto the platform, while the player walks among them and pushes the crates.

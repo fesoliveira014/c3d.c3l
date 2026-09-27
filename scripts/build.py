@@ -47,6 +47,7 @@ ADDON_EXAMPLES = {
     "navmesh": NAV,
     "crowd": NAV,
     "character": CHARACTER,
+    "character_nav": CHARACTER,
 }
 PROFILE_TEST_TARGETS = (
     "profile_off", "profile_cpu", "profile_internal", "profile_gpu",
