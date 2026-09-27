@@ -15,6 +15,8 @@ const float AVOIDING_SPEED @private = 3.5f;
 const Vec3  OBSTACLE_AHEAD @private = { 0, 0, 3 };
 const usz   SAMPLE_CAPACITY @private = 128;
 const float SIDEWAYS_SHARE @private = 0.1f; // of the speed; a smaller sideways part is not a detour
+const uint  QUEUE_ITERATIONS @private = 100;
+const uint  QUEUE_UPDATE_LIMIT @private = 100;
 
 fn float recorded_penalty(AvoidanceSample[] samples, Vec3 velocity) @private {
     float penalty = float::max;
@@ -98,4 +100,59 @@ fn void test_avoidance_adaptive_steers_around_a_circle() @test {
     assert(straight.recorded == 1 && (desired[0].velocity - forward).length() < QUERY_TOLERANCE);
     assert(math::abs(avoided.velocity.x) > AVOIDING_SPEED * SIDEWAYS_SHARE, "steers sideways");
     assert(recorded_penalty(samples[:avoided.recorded], avoided.velocity) < desired[0].penalty);
+}
+
+fn void test_path_queue_answers_requests_over_updates() @test {
+    QueryFixture* fixture = floor_level(2);
+    defer destroy_level(fixture);
+    add_stripes(fixture, 2);
+    build_level(fixture);
+    PathQueue queue = nav::create_path_queue(mem, PATH_CAPACITY, QUERY_NODES, &fixture.level.mesh)!!;
+    defer nav::destroy_path_queue(&queue);
+    float side = fixture.level.builder.tile_world_size * 2;
+    Vec3 start = { 1, 0, 1 };
+    PolyRef start_ref = nearest(fixture, start).ref;
+    Vec3[nav::MAX_PATH_QUEUE] goals;
+    PathQueueRef[nav::MAX_PATH_QUEUE] requests;
+    foreach (index, &goal : goals) {
+        *goal = { side - 1, 0, 1 + index * (side - 2) / (nav::MAX_PATH_QUEUE - 1) };
+        requests[index] = queue.request(
+            start_ref: start_ref,
+            end_ref:   nearest(fixture, *goal).ref,
+            start:     start,
+            end:       *goal,
+            filter:    &fixture.filter,
+        );
+    }
+
+    PathQueueRef overflow = queue.request(
+        start_ref: start_ref,
+        end_ref:   start_ref,
+        start:     start,
+        end:       start,
+        filter:    &fixture.filter,
+    );
+    // Results are collected as they finish, since an uncollected result is dropped after two updates.
+    bool[nav::MAX_PATH_QUEUE] collected;
+    uint collected_count;
+    uint updates;
+    PolyRef[PATH_CAPACITY] queued_path;
+    while (collected_count < nav::MAX_PATH_QUEUE && updates < QUEUE_UPDATE_LIMIT) {
+        queue.update(QUEUE_ITERATIONS);
+        updates++;
+        foreach (index, ref : requests) {
+            if (collected[index] || queue.request_state(ref) != DONE) continue;
+            PathResult queued = queue.path_result(ref, queued_path[..])!!;
+            PathResult direct = path_between(fixture, start, goals[index], &fixture.filter);
+            assert(same_refs(queued_path[:queued.count], fixture.path[:direct.count]), "request %d", index);
+            assert(queued.partial == direct.partial);
+            collected[index] = true;
+            collected_count++;
+        }
+    }
+
+    assert(overflow == (PathQueueRef)0, "every slot was taken");
+    assert(collected_count == nav::MAX_PATH_QUEUE);
+    assert(updates > 1, "the iteration budget spreads the requests over updates");
+    foreach (ref : requests) assert(queue.request_state(ref) == FAILED, "collected requests leave the queue");
 }
