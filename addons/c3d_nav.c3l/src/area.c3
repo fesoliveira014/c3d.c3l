@@ -346,7 +346,7 @@ fn uint neighbour_index(
     int z,
     uint index,
     uint direction,
-) @local {
+) @private {
     uint layer = compact.spans[index].connection(direction);
     if (layer == NOT_CONNECTED) return NULL_SPAN;
     int neighbour_x = x + dir_offset_x(direction);
