@@ -69,6 +69,11 @@ split, single-tile `dtNavMesh::init`, tile state save and restore (`storeTileSta
 tile cache's compressor and allocator interfaces, and layer save and load; from DetourCrowd, the
 parallel arrays of `dtObstacleAvoidanceDebugData`, which an `AvoidanceSample` slice replaces.
 
+Without an upstream counterpart: the grid source (`GridTileBuilder`), which feeds the floors of a
+tile map or voxel grid into the same heightfield instead of rasterizing triangles, and the contour
+flag `refine_region_edges` it builds with, which keeps the corners of edges between regions as
+upstream keeps those of walls.
+
 ## Building a navmesh
 
 Author `NavSource` components on mesh nodes (`Scene.add_nav_source`, or `add_nav_sources` for a
@@ -130,6 +135,37 @@ closed door:
 
 ```bash
 c3c build navmesh --path addons/c3d_nav.c3l && addons/c3d_nav.c3l/build/navmesh --cache
+```
+
+## Grid sources
+
+A tile map or a voxel grid builds navmesh tiles without triangles. The application answers each
+cell's floors through a `GridFloorsFn` over its own storage: up to `MAX_GRID_FLOORS` floors, bottom
+to top, each a height, a ceiling (`float::max` when open) and an area; a `NULL_AREA` floor is solid
+but not walkable. `create_grid_tile_builder(allocator, default_grid_build_config(cell_size),
+source)` allocates one heightfield and one arena, and `GridTileBuilder.build(tile_x, tile_z)`
+returns the tile's `TileMesh` blob, which stays in the arena until the next build; a build
+allocates nothing else. One voxel is one grid cell, so walls follow cell edges, erosion trims
+`ceil(agent_radius / cell_size)` whole cells and neighbouring floors connect when their height
+difference is within the climb. Regions split where the floor height changes, so each polygon lies
+on one floor; a vertex on a step takes the higher floor's height, as upstream's corner heights do,
+so a polygon beside a step slopes up to it. A grid whose heights differ from cell to cell, like a
+heightmap, therefore yields a region and a polygon per cell and pays for it in polygon count.
+
+`NavMesh.install_tile_mesh(blob, connections, params)` replaces the tile at `params.tile_x`,
+`params.tile_z` and `params.tile_layer`, or only removes it when the blob is empty, and
+`GridTileBuilder.mesh_desc` gives the matching mesh layout. The application knows its edits, so it
+rebuilds the tiles an edit touches: the edited cell's tile and every neighbour whose border of
+`tile_config.border_size` cells reaches the cell. The frame of an edit builds and installs those
+tiles before `crowd_update`, which replans the corridors through the replaced tiles.
+
+The `grid` example builds a 48 by 48 cell map of 3 by 3 tiles with walls, terraces, two stairs and
+a bridge over a corridor, and steers ten crowd agents. A click sends every agent to the point;
+Ctrl+click on the ground or on a wall toggles a wall cell, rebuilds and reinstalls its tiles, and
+the panel shows how many tiles the edit rebuilt and how long it took:
+
+```bash
+python3 scripts/build.py --example grid
 ```
 
 ## Crowds

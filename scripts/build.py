@@ -46,6 +46,7 @@ ADDON_EXAMPLES = {
     "ragdoll": PHYSICS,
     "navmesh": NAV,
     "crowd": NAV,
+    "grid": NAV,
     "character": CHARACTER,
     "character_nav": CHARACTER,
 }

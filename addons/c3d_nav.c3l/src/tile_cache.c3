@@ -412,9 +412,16 @@ fn void? TileCache.build_tile(&self, CachedLayerRef ref, NavMesh* mesh) {
         max_error:      self.desc.max_simplification_error,
     )!;
     LayerPolyMesh poly_mesh = build_tile_cache_poly_mesh(arena, arena, &contours)!;
-    TileRef resident = mesh.tile_ref_at(header.tile_x, header.tile_z, header.tile_layer);
+    TileDataParams params = {
+        .tile_x          = header.tile_x,
+        .tile_z          = header.tile_z,
+        .tile_layer      = header.tile_layer,
+        .walkable_height = self.desc.walkable_height,
+        .walkable_radius = self.desc.walkable_radius,
+        .walkable_climb  = self.desc.walkable_climb,
+    };
     if (poly_mesh.poly_count == 0) {
-        if (resident) (void)mesh.remove_tile(resident);
+        mesh.install_tile_mesh({}, {}, params)!;
         return;
     }
 
@@ -431,27 +438,7 @@ fn void? TileCache.build_tile(&self, CachedLayerRef ref, NavMesh* mesh) {
     if (self.desc.mesh_process) self.desc.mesh_process(self.desc.mesh_process_context, view, view.areas, view.flags);
     OffMeshConnectionDesc[] connections;
     if (self.desc.link_source) connections = self.desc.link_source(self.desc.link_source_context, header.bounds);
-
-    TileDataParams params = {
-        .tile_x          = header.tile_x,
-        .tile_z          = header.tile_z,
-        .tile_layer      = header.tile_layer,
-        .walkable_height = self.desc.walkable_height,
-        .walkable_radius = self.desc.walkable_radius,
-        .walkable_climb  = self.desc.walkable_climb,
-    };
-    // The mesh frees the blob with its own allocator when the tile leaves.
-    char[]? blob = alloc::alloc_array_try(mesh.allocator, char, (sz)tile_data_size(view, connections, params));
-    if (catch blob) return c3d::CAPACITY_EXCEEDED~;
-    if (catch excuse = create_tile_data(view, connections, params, blob)) {
-        alloc::free(mesh.allocator, blob.ptr);
-        return excuse~;
-    }
-    if (resident) (void)mesh.remove_tile(resident);
-    if (catch excuse = mesh.add_tile(blob, { .free_data = true })) {
-        alloc::free(mesh.allocator, blob.ptr);
-        return excuse~;
-    }
+    mesh.install_tile_mesh(packed, connections, params)!;
 }
 
 <*
