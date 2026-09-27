@@ -14,6 +14,7 @@ struct BuilderFixture @private {
     AssetStore assets;
     Scene      scene;
     NavBuilder builder;
+    NavMesh    mesh;
 }
 
 fn void setup(BuilderFixture* fixture, Aabb bounds, NavBuildConfig config = nav::default_nav_build_config()) @private {
@@ -25,9 +26,11 @@ fn void setup_with_desc(BuilderFixture* fixture, NavBuilderDesc desc) @private {
     fixture.scene = scene::create_scene(mem, scene::default_scene_desc());
     nav::register_nav(&fixture.scene)!!;
     fixture.builder = nav::create_nav_builder(mem, &fixture.scene, desc)!!;
+    fixture.mesh = nav::create_nav_mesh_for(mem, &fixture.builder)!!;
 }
 
 fn void teardown(BuilderFixture* fixture) @private {
+    nav::destroy_nav_mesh(&fixture.mesh);
     nav::destroy_nav_builder(&fixture.builder);
     scene::destroy_scene(&fixture.scene);
     asset::destroy_asset_store(&fixture.assets);
@@ -68,6 +71,7 @@ fn Node* add_source_node(BuilderFixture* fixture, GeometryId geometry, Vec3 posi
 fn NavSyncResult build_everything(BuilderFixture* fixture) @private {
     return nav::nav_sync(
         builder: &fixture.builder,
+        mesh:    &fixture.mesh,
         scene:   &fixture.scene,
         assets:  &fixture.assets,
         budget:  BUILD_ALL_BUDGET,

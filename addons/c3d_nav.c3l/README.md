@@ -23,10 +23,26 @@ Ported so far, from Recast:
 - the polygon mesh with tile-border vertex removal and portal edges (`rcBuildPolyMesh`);
 - the per-tile configuration, bounds and stage order of RecastDemo's `Sample_TileMesh::buildTileMesh`.
 
+From Detour:
+
+- tile data with its BV tree and off-mesh connections (`dtCreateNavMeshData`), without detail arrays:
+  polygon heights come from each polygon's vertex fan, the triangles upstream builds when no detail
+  mesh is given;
+- the tiled navmesh: tile add and remove, internal, portal and off-mesh links, 64-bit salted refs
+  (`DetourNavMesh.cpp` with `DT_POLYREF64`);
+- the search node pool and priority queue (`DetourNode.cpp`) and the geometry helpers
+  (`DetourCommon.cpp`);
+- the query filter with typed pass and cost hooks, and the queries nearest polygon, polygons in a
+  box, closest point, closest boundary point, polygon height, A* path, straight path and raycast
+  (`DetourNavMeshQuery.cpp`).
+
 Not ported: `rcContext` logging and timers (failures are faults), the unsigned-short and flat-list
 rasterization overloads, `rcCalcBounds` (merge `Aabb` values instead), watershed and layer regions
 (`rcBuildRegions`, `rcBuildLayerRegions`), the distance field (`rcBuildDistanceField`), the detail
-mesh (`RecastMeshDetail.cpp`), `rcMergePolyMeshes` and `rcCopyPolyMesh`.
+mesh (`RecastMeshDetail.cpp`), `rcMergePolyMeshes` and `rcCopyPolyMesh`; from Detour, the 32-bit ref
+split, single-tile `dtNavMesh::init`, tile state save and restore (`storeTileState`,
+`restoreTileState`), endian swapping, the sliced path search, Dijkstra searches, local
+neighbourhood, move along surface, wall queries and random points, the tile cache and the crowd.
 
 ## Building a navmesh
 
@@ -40,8 +56,26 @@ only its slot, so an application may call `sync_sources` and `rasterize_next` on
 run `build_tile` on workers and `commit` back on the main thread. Each tile's result is a flat
 `TileMesh` blob read through `tile_mesh_view`.
 
+A `NavMesh` from `create_nav_mesh_for(builder)` receives the tiles: `nav_sync` turns every committed
+`TileMesh` into a `TileData` blob with `create_tile_data`, adds it with `add_tile` and links it to its
+neighbours. `NavLink` components author off-mesh connections; adding, changing (`mark_changed`) or
+removing one relinks the tiles under its endpoints without rebuilding them. Every install advances
+the tile's salt, so a `PolyRef` into a reinstalled tile stops resolving and is found again with a
+nearest-polygon query.
+
+A `NavQuery` from `create_nav_query(allocator, &mesh, max_nodes)` answers the queries; it allocates
+its node pools once and no query allocates. `find_nearest_poly` snaps a point to the mesh,
+`find_path` fills a caller slice with the polygon corridor (`partial` when the goal is unreachable,
+`truncated` when the slice is short), `straight_path` pulls the corridor into points and marks the
+start of each off-mesh connection, and `raycast` walks a straight line along the surface.
+A `QueryFilter` from `default_query_filter` passes every built polygon; applications set area costs,
+flags or `pass` and `cost` hooks, embedding `QueryFilter` as an `inline` first member to carry their
+own data.
+
 The `navmesh` example builds a level of ramps, a stair, walls, a movable platform and a mud volume
-and draws tiles, polygons and the spans of the slot being rasterized:
+and draws tiles, polygons, links and the spans of the slot being rasterized. A walker follows the
+straight path to a clicked goal, across tiles and up a two-way link onto the platform; `L` makes
+that link one-way, and a walk down reroutes through a second, one-way link:
 
 ```bash
 python3 scripts/build.py --example navmesh

@@ -281,6 +281,7 @@ fn void test_build_failure_names_the_stage() @test {
 
     NavSyncResult result = nav::nav_sync(
         builder: &fixture.builder,
+        mesh:    &fixture.mesh,
         scene:   &fixture.scene,
         assets:  &fixture.assets,
         budget:  1,
