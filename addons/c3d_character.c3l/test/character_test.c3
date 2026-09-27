@@ -125,7 +125,7 @@ fn Node* add_character(Fixture* fixture, Vec3 position, CharacterDesc desc) @pri
 fn float resting_height(CharacterDesc desc) @private => desc.half_height + desc.radius;
 
 fn Node* add_standing_character(Fixture* fixture, CharacterDesc desc) @private {
-    Node* node = add_character(fixture, { 0, resting_height(desc) + DROP_HEIGHT, 0 }, desc);
+    Node* node = add_character(fixture, { 0, DROP_HEIGHT, 0 }, desc);
     settle(fixture, SETTLE_UPDATES);
     return node;
 }
@@ -156,7 +156,7 @@ fn void test_character_on_flat_ground_stays_grounded_with_zero_vertical_velocity
         assert(close(standing.velocity.y, 0));
         assert(close(standing.current.y, resting_height(desc), desc.skin + 1e-3));
     }
-    assert(close(node.world_position().y, resting_height(desc), desc.skin + 1e-3), "the write pass places the node");
+    assert(close(node.world_position().y, 0, desc.skin + 1e-3), "the write pass places the node");
 }
 
 fn void test_wall_clips_velocity_along_its_normal() @test {
@@ -202,7 +202,7 @@ fn void test_walking_down_a_walkable_slope_stays_grounded() @test {
     Node* ramp = add_ramp_rising_along_x(&fixture, WALKABLE_DEGREES);
     CharacterDesc desc = character::default_character_desc();
     float surface_y = (DOWNHILL_START_X - RAMP_START_X) * (float)math::tan(math::deg_to_rad(WALKABLE_DEGREES));
-    Node* node = add_character(&fixture, { DOWNHILL_START_X, surface_y + resting_height(desc) + DROP_HEIGHT, 0 }, desc);
+    Node* node = add_character(&fixture, { DOWNHILL_START_X, surface_y + DROP_HEIGHT, 0 }, desc);
     settle(&fixture, SETTLE_UPDATES);
     float start_y = character_of(&fixture, node).current.y;
 
@@ -352,7 +352,7 @@ fn void test_remove_character_removes_the_push_body_components() @test {
     add_ground(&fixture);
     CharacterDesc desc = character::default_character_desc();
     desc.push_bodies = true;
-    Node* node = add_character(&fixture, { 0, resting_height(desc), 0 }, desc);
+    Node* node = add_character(&fixture, { 0, 0, 0 }, desc);
     settle(&fixture, 1);
     assert(fixture.scene.has(node, PhysicsBody) && fixture.scene.has(node, RigidBody));
 
@@ -386,10 +386,11 @@ fn void test_create_character_system_registers_the_mover_pass() @test {
     setup(&fixture);
     defer teardown(&fixture);
     Node* node = add_character(&fixture, { 0, 5, 0 }, character::default_character_desc());
+    float start_y = character_of(&fixture, node).current.y;
 
     settle(&fixture, 1);
     float after_one_update = character_of(&fixture, node).current.y;
-    assert(after_one_update < 5);
+    assert(after_one_update < start_y);
     assert(fixture.system.state.stepped == 1);
 
     character::destroy_character_system(&fixture.system);
@@ -416,4 +417,18 @@ fn void test_steep_plane_is_a_wall() @test {
         assert(close(walker.current.y, start_y, STOP_TOLERANCE));
         assert(walker.velocity.y <= TOLERANCE);
     }
+}
+
+fn void test_node_origin_is_the_capsule_bottom() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    add_ground(&fixture);
+    CharacterDesc desc = character::default_character_desc();
+    Node* node = add_standing_character(&fixture, desc);
+
+    Character* standing = character_of(&fixture, node);
+    assert(standing.grounded);
+    assert(close(node.world_position().y, 0, desc.skin + 1e-3), "the node stands on the floor");
+    assert(close(standing.current.y - node.world_position().y, desc.half_height + desc.radius));
 }

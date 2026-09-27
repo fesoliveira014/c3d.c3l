@@ -12,6 +12,11 @@ the gathered planes, climb steps up to `step_height`, stop at slopes steeper tha
 dynamic bodies the capsule's filter mask leaves out. The pass writes the node's position only; the
 rotation stays the application's.
 
+The node origin is the capsule's lowest point, the feet: `add_character` reads the feet from the
+node, `teleport_character` takes the feet, and the pass writes the feet. `Character.previous` and
+`Character.current` hold the capsule center, `half_height + radius` above the feet. A capsule mesh
+is a child node raised by that offset; a model authored at the feet sits on the node itself.
+
 ## Frame order
 
 ```c3

@@ -26,11 +26,11 @@ struct CharacterDebugOptions {
 fn void CharacterSystem.debug_draw(&self, debug::DebugDraw* sink, CharacterDebugOptions options) {
     Scene* scene = self.state.scene;
     scene.@each(Character; entity, character) {
-        Vec3 center = scene.node(entity).world_position();
+        Vec3 feet = scene.node(entity).world_position();
         CharacterDesc desc = character.desc;
         if (options.capsules) {
             sink.capsule(
-                center:      center,
+                center:      feet + center_offset(desc),
                 axis:        { 0, 1, 0 },
                 half_height: desc.half_height,
                 radius:      desc.radius,
@@ -43,8 +43,7 @@ fn void CharacterSystem.debug_draw(&self, debug::DebugDraw* sink, CharacterDebug
             }
         }
         if (options.ground && character.grounded) {
-            Vec3 foot = center - (Vec3){ 0, desc.half_height + desc.radius, 0 };
-            sink.line(foot, foot + character.ground_normal * NORMAL_LENGTH, GROUND_COLOR);
+            sink.line(feet, feet + character.ground_normal * NORMAL_LENGTH, GROUND_COLOR);
         }
     };
 }

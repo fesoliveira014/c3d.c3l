@@ -23,7 +23,8 @@ import imgui;
 const uint  MAX_THROWN_BOXES @local = 64; // one node, one body and one draw per box; the scene capacity lever
 const uint  CRATE_COUNT @local = 4;
 const uint  SCENE_NODE_CAPACITY @local = MAX_THROWN_BOXES + CRATE_COUNT + 32;
-const Vec3  SPAWN @local = { 0, 1.5f, 4 };
+const Vec3  SPAWN @local = { 0, 0.5f, 4 };
+const float CENTER_HEIGHT @local = 1; // metres from the feet to the default capsule's center
 const float WALK_SPEED @local = 4; // metres per second on foot
 const float RUN_MULTIPLIER @local = 1.5f;
 const float JUMP_SPEED @local = 5; // about 1.3 m of rise under default gravity
@@ -283,7 +284,14 @@ fn Level build_level(AssetStore* assets, Scene* scene, PhysicsWorld* physics) @l
         level.platform = scene.add_mesh(platform_geometry, moving, name: "platform")!!;
         Geometry capsule = geometry::capsule(tmem, desc.radius, desc.half_height * 2);
         GeometryId player_geometry = assets.add_geometry(&capsule, "character/player_geometry")!!;
-        level.player = scene.add_mesh(player_geometry, player, name: "player")!!;
+        level.player = scene.add_node(name: "player")!!;
+        Node* body = scene.add_mesh(
+            geometry: player_geometry,
+            material: player,
+            parent:   level.player,
+            name:     "player body",
+        )!!;
+        body.local.position = { 0, desc.half_height + desc.radius, 0 };
         Geometry crate = geometry::box(
             allocator: tmem,
             width:     CRATE_HALF_EXTENTS.x * 2,
@@ -369,7 +377,7 @@ fn void throw_box(
     if (thrown.count == MAX_THROWN_BOXES) return;
     Vec3 aim = -orbit_offset(orbit);
     Vec3 ahead = (Vec3){ aim.x, 0, aim.z }.normalize();
-    Vec3 position = level.player.world_position() + ahead * THROW_OFFSET + (Vec3){ 0, THROW_LIFT, 0 };
+    Vec3 position = level.player.world_position() + ahead * THROW_OFFSET + (Vec3){ 0, CENTER_HEIGHT + THROW_LIFT, 0 };
     Node*? node = add_crate(
         scene:    scene,
         physics:  physics,
@@ -516,7 +524,7 @@ fn void? run(
         physics.update(delta);
         show_platform(scene, physics, level.platform);
         scene.update_world();
-        follow(&orbit, level.camera_node, level.player.world_position());
+        follow(&orbit, level.camera_node, level.player.world_position() + { 0, CENTER_HEIGHT, 0 });
         scene.update_world();
 
         debug.clear();
