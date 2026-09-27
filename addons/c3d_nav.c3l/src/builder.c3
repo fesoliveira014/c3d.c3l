@@ -12,11 +12,17 @@ import c3d::scene;
 const uint MAX_VOLUME_VERTS = 12; // 144 bytes per volume record; a bevelled hexagon after offset_poly
 
 <* Nav mirror removals of each kind held between two syncs before every tile goes dirty or relinks. *>
-const uint REMOVAL_QUEUE_CAPACITY = 64; // about 3 KiB; a bulk unload past it costs one full rebuild or relink
+const uint REMOVAL_QUEUE_CAPACITY = 64; // about 5 KiB; a bulk unload past it costs one full rebuild, relayer or relink
 
 const uint DEFAULT_SLOTS @local = 2; // one slot rasterizing while another builds on a worker
-const usz  DEFAULT_SLOT_SCRATCH_BYTES @local = 2 * 1024 * 1024; // per slot, once; a default tile with stair and ramp peaks at 47 KiB
+const usz  DEFAULT_SLOT_SCRATCH_BYTES @local = 2 * 1024 * 1024; // per slot, once; a default tile with stair and ramp peaks at 47 KiB, 23 KiB as layers
 const uint DEFAULT_VOLUMES_PER_TILE @local = 16; // about 3 KiB of volume records per slot
+const uint DEFAULT_MAX_OBSTACLES @local = 128; // mirrors RecastDemo's maxObstacles; 144 bytes per obstacle slot
+const usz  DEFAULT_CACHE_SCRATCH_BYTES @local = 64 * 1024; // once per cache; a default tile with stair, ramp and obstacle peaks at 4 KiB
+const uint DEFAULT_LAYERS_PER_TILE @local = 4; // mirrors RecastDemo's EXPECTED_LAYERS_PER_TILE; sizes the cache and the mesh
+const usz  LAYER_LENGTH_BYTES @local = uint::size; // each layer blob of a build's output follows its length
+const usz  LAYER_BLOB_ALIGNMENT @local = 4; // a layer header holds 32-bit fields
+const uint MAX_CACHED_TILE_CELLS @local = 255; // a layer header stores its width and height in bytes
 
 <* Where a slot is in the rasterize, build, commit cycle. *>
 enum JobState {
@@ -31,11 +37,12 @@ enum JobState {
 enum BuildStage {
     COMPACT,
     AREAS,          // erosion and volume marking
+    LAYERS,         // heightfield layers and their blobs, with cache_layers
     REGIONS,
     CONTOURS,
     POLY_MESH,
     PACK,
-    INSTALL,        // create_tile_data and add_tile in nav_sync
+    INSTALL,        // create_tile_data and add_tile in nav_sync, or a cached layer rebuild
 }
 
 <* Shape of a NavVolume. *>
@@ -75,19 +82,23 @@ struct TileJob {
     bool           volumes_overflowed;
     uint           source_cursor;     // rasterization progress across calls
     uint           triangle_cursor;
-    char[]         output;            // TileMesh blob in the arena after a BUILT build; empty for no walkable span
+    bool           cache_layers;      // build layer blobs; volumes wait for the cache rebuild
+    char[]         output;            // after a BUILT build, in the arena; empty when nothing is walkable
     fault          failure;
     BuildStage     failed_stage;
 }
 
 <* Built mesh and build state of one tile coordinate. *>
 struct TileRecord {
-    char[]  mesh;        // TileMesh blob from the builder allocator; empty when never built or nothing walkable
-    uint    revision;    // advances on every accepted commit
-    uint    requests;    // advances every time a slot takes the tile
-    bool    dirty;
-    bool    relink;      // the NavMesh tile is stale; nav_sync reinstalls it
-    TileRef ref;         // of the installed NavMesh tile; 0 when none
+    char[]                     mesh;           // TileMesh blob from the builder allocator; empty when never built or nothing walkable
+    uint                       revision;       // advances on every accepted commit
+    uint                       requests;       // advances every time a slot takes the tile
+    bool                       dirty;
+    bool                       relink;         // the NavMesh tile is stale; nav_sync reinstalls it
+    TileRef                    ref;            // of the installed NavMesh tile; 0 when none
+    bool                       relayer;        // with cache_layers: the next sync rebuilds its mesh tiles from the cache
+    CachedLayerRef[MAX_LAYERS] layers;         // with cache_layers
+    uint                       layer_count;
 }
 
 <* The last build that faulted. *>
@@ -100,12 +111,24 @@ struct TileFailure {
 
 <* Nav mirrors removed since the last sync_sources; the remove hooks' context. *>
 struct RemovalQueue {
-    Aabb[REMOVAL_QUEUE_CAPACITY]           bounds;              // of sources and volumes
+    Aabb[REMOVAL_QUEUE_CAPACITY]           bounds;              // of sources
     uint                                   count;
     bool                                   overflowed;          // every tile goes dirty at the next sync
+    Aabb[REMOVAL_QUEUE_CAPACITY]           volume_bounds;
+    uint                                   volume_count;
+    bool                                   volumes_overflowed;  // every tile goes dirty, or relayers, at the next sync
     NavLinkRuntime[REMOVAL_QUEUE_CAPACITY] links;
     uint                                   link_count;
     bool                                   links_overflowed;    // every tile relinks at the next sync
+    ObstacleRef[]                          obstacles;           // max_obstacles with cache_layers; one mirror holds each
+    uint                                   obstacle_count;
+}
+
+// What the cache's volume and link hooks read; on the heap so the builder value can move.
+struct CacheSources @private {
+    Scene*                  scene;
+    VolumeRecord[]          volumes;    // max_volumes_per_tile
+    OffMeshConnectionDesc[] links;      // scene node capacity; a node carries at most one link
 }
 
 <* Capacities and configuration of a builder. *>
@@ -117,6 +140,10 @@ struct NavBuilderDesc {
     uint           initial_spans;          // per slot pool
     uint           max_volumes_per_tile;
     uint           rasterize_budget;       // triangles per rasterize_next call; 0 is unlimited
+    bool           cache_layers;           // build layers into a TileCache instead of TileMesh blobs
+    uint           max_obstacles;          // TileCache capacity with cache_layers
+    usz            cache_scratch_bytes;    // the arena of one cached layer rebuild
+    uint           expected_layers_per_tile; // sizes the TileCache and create_nav_mesh_for with cache_layers
 }
 
 <* Tile grid, slots and build state of one scene's navmesh sources. *>
@@ -135,9 +162,13 @@ struct NavBuilder {
     uint           rasterize_budget;
     uint           dirty_count;
     uint           source_epoch;           // advances when sync_sources changes a source or a volume
-    uint           skipped_sources;        // released or non-triangle geometries met since the last nav_sync
+    uint           skipped_sources;        // released or non-triangle geometries and ignored obstacles since the last nav_sync
     TileFailure    last_failure;
     Entity[]       orphan_scratch;         // scene node capacity
+    bool           cache_layers;
+    uint           expected_layers_per_tile;
+    TileCache      cache;                  // valid with cache_layers
+    CacheSources*  cache_sources;
 }
 
 <* Outcome of one nav_sync call. *>
@@ -145,8 +176,9 @@ struct NavSyncResult {
     uint built;
     uint installed;  // tiles added to the mesh, relinks included
     uint pending;    // dirty tiles left
-    uint skipped;    // sources with released or non-triangle geometry
-    uint failed;     // tile builds, installs or rasterizations that faulted; last_failure names the last tile
+    uint skipped;    // sources with released or non-triangle geometry, obstacles on a builder without cache_layers
+    uint failed;     // tile builds, installs, rebuilds or rasterizations that faulted; last_failure names the last tile
+    uint relayered;  // cached layers rebuilt into the mesh
 }
 
 <*
@@ -154,23 +186,9 @@ struct NavSyncResult {
  @param box : "World space."
 *>
 fn void NavBuilder.mark_dirty(&self, Aabb box) {
-    float border = self.tile_config.border_size * self.config.cell_size;
-    Vec3 low = (box.min - self.bounds.min - { border, 0, border }) / self.tile_world_size;
-    Vec3 high = (box.max - self.bounds.min + { border, 0, border }) / self.tile_world_size;
-    // One tile of slack on the low side; the overlap test below is exact.
-    int first_x = math::max((int)math::floor(low.x) - 1, 0);
-    int first_z = math::max((int)math::floor(low.z) - 1, 0);
-    int last_x = math::min((int)math::floor(high.x), (int)self.tiles_x - 1);
-    int last_z = math::min((int)math::floor(high.z), (int)self.tiles_z - 1);
-    for (int tile_z = first_z; tile_z <= last_z; tile_z++) {
-        for (int tile_x = first_x; tile_x <= last_x; tile_x++) {
-            if (!overlaps_xz(box, self.tile_bounds((uint)tile_x, (uint)tile_z))) continue;
-            TileRecord* record = &self.tiles[tile_x + tile_z * (int)self.tiles_x];
-            if (record.dirty) continue;
-            record.dirty = true;
-            self.dirty_count++;
-        }
-    }
+    @each_tile_overlapping(self, box; TileRecord* record) {
+        redirty(self, record);
+    };
 }
 
 <*
@@ -250,9 +268,10 @@ fn TileJob*? NavBuilder.rasterize_next(&self, Scene* scene, AssetStore* assets) 
 }
 
 <*
- Copy a built mesh into its tile record and free the slot; a stale or failed build keeps the record.
+ Copy a built mesh, or swap in the built layers, into its tile record and free the slot.
+ A stale or failed build keeps the record.
  @param [&inout] job : "BUILT or FAILED; FREE afterwards."
- @return? c3d::CAPACITY_EXCEEDED
+ @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT, TILE_OCCUPIED
  @require job.state == JobState.BUILT || job.state == JobState.FAILED
 *>
 fn void? NavBuilder.commit(&self, TileJob* job) {
@@ -271,6 +290,7 @@ fn void? NavBuilder.commit(&self, TileJob* job) {
         return;
     }
     if (!latest) return;
+    if (self.cache_layers) return commit_layers(self, record, job);
 
     char[] mesh;
     if (job.output.len) {
@@ -289,16 +309,20 @@ fn void? NavBuilder.commit(&self, TileJob* job) {
 }
 
 <*
- Two slots of 2 MiB, 2048 initial spans, 16 volumes per tile, unlimited rasterization.
+ Two slots of 2 MiB, 2048 initial spans, 16 volumes per tile, unlimited rasterization, no layer cache.
+ Setting cache_layers uses 128 obstacles, 64 KiB of rebuild scratch and 4 layers per tile.
 *>
 fn NavBuilderDesc default_nav_builder_desc(Aabb bounds, NavBuildConfig config = default_nav_build_config()) {
     return {
-        .config               = config,
-        .bounds               = bounds,
-        .slots                = DEFAULT_SLOTS,
-        .slot_scratch_bytes   = DEFAULT_SLOT_SCRATCH_BYTES,
-        .initial_spans        = SPAN_POOL_GROWTH,
-        .max_volumes_per_tile = DEFAULT_VOLUMES_PER_TILE,
+        .config                   = config,
+        .bounds                   = bounds,
+        .slots                    = DEFAULT_SLOTS,
+        .slot_scratch_bytes       = DEFAULT_SLOT_SCRATCH_BYTES,
+        .initial_spans            = SPAN_POOL_GROWTH,
+        .max_volumes_per_tile     = DEFAULT_VOLUMES_PER_TILE,
+        .max_obstacles            = DEFAULT_MAX_OBSTACLES,
+        .cache_scratch_bytes      = DEFAULT_CACHE_SCRATCH_BYTES,
+        .expected_layers_per_tile = DEFAULT_LAYERS_PER_TILE,
     };
 }
 
@@ -308,12 +332,14 @@ fn NavBuilderDesc default_nav_builder_desc(Aabb bounds, NavBuildConfig config = 
  @param [&inout] scene : "Gains the mirror remove hooks; outlives the builder."
  @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
  @require desc.slots > 0, scene.world.is_registered(NavSourceRuntime), scene.world.is_registered(NavVolumeRuntime)
- @require scene.world.is_registered(NavLinkRuntime)
+ @require scene.world.is_registered(NavLinkRuntime), scene.world.is_registered(NavObstacleRuntime)
+ @require !desc.cache_layers || desc.expected_layers_per_tile > 0
 *>
 fn NavBuilder? create_nav_builder(Allocator allocator, Scene* scene, NavBuilderDesc desc) {
     TileConfig tile = tile_config(desc.config)!;
     Vec3 extent = desc.bounds.max - desc.bounds.min;
     if (extent.x <= 0 || extent.y < 0 || extent.z <= 0) return c3d::INVALID_ARGUMENT~;
+    if (desc.cache_layers && tile.width > MAX_CACHED_TILE_CELLS) return c3d::INVALID_ARGUMENT~;
     float tile_world_size = desc.config.tile_size * desc.config.cell_size;
     uint tiles_x = (uint)math::ceil(extent.x / tile_world_size);
     uint tiles_z = (uint)math::ceil(extent.z / tile_world_size);
@@ -329,6 +355,7 @@ fn NavBuilder? create_nav_builder(Allocator allocator, Scene* scene, NavBuilderD
         .tiles_z          = tiles_z,
         .rasterize_budget = desc.rasterize_budget,
         .dirty_count      = tiles_x * tiles_z,
+        .cache_layers     = desc.cache_layers,
     };
     defer catch destroy_nav_builder(&builder);
 
@@ -345,6 +372,7 @@ fn NavBuilder? create_nav_builder(Allocator allocator, Scene* scene, NavBuilderD
     RemovalQueue*? removals = alloc::new_try(allocator, RemovalQueue);
     if (catch removals) return c3d::CAPACITY_EXCEEDED~;
     builder.removals = removals;
+    if (desc.cache_layers) create_layer_cache(&builder, scene, desc)!;
 
     foreach (&job : jobs) {
         job.config = tile;
@@ -364,15 +392,17 @@ fn NavBuilder? create_nav_builder(Allocator allocator, Scene* scene, NavBuilderD
         VolumeRecord[]? volumes = alloc::new_array_try(allocator, VolumeRecord, desc.max_volumes_per_tile);
         if (catch volumes) return c3d::CAPACITY_EXCEEDED~;
         job.volumes = volumes;
+        job.cache_layers = desc.cache_layers;
     }
     scene.set_remove_hook(NavSourceRuntime, &queue_removed_source, removals);
     scene.set_remove_hook(NavVolumeRuntime, &queue_removed_volume, removals);
     scene.set_remove_hook(NavLinkRuntime, &queue_removed_link, removals);
+    scene.set_remove_hook(NavObstacleRuntime, &queue_removed_obstacle, removals);
     return builder;
 }
 
 <*
- Clear the mirror remove hooks, then free tiles, slots and every built mesh.
+ Clear the mirror remove hooks, then free tiles, slots, the layer cache and every built mesh.
  @param [&inout] builder : "Left zeroed."
 *>
 fn void destroy_nav_builder(NavBuilder* builder) {
@@ -380,6 +410,14 @@ fn void destroy_nav_builder(NavBuilder* builder) {
     builder.scene.set_remove_hook(NavSourceRuntime, null, null);
     builder.scene.set_remove_hook(NavVolumeRuntime, null, null);
     builder.scene.set_remove_hook(NavLinkRuntime, null, null);
+    builder.scene.set_remove_hook(NavObstacleRuntime, null, null);
+    if (builder.cache_layers) destroy_tile_cache(&builder.cache);
+    if (builder.cache_sources) {
+        alloc::free(allocator, builder.cache_sources.volumes.ptr);
+        alloc::free(allocator, builder.cache_sources.links.ptr);
+        alloc::free(allocator, builder.cache_sources);
+    }
+    if (builder.removals) alloc::free(allocator, builder.removals.obstacles.ptr);
     foreach (&record : builder.tiles) alloc::free(allocator, record.mesh.ptr);
     foreach (&job : builder.jobs) {
         destroy_heightfield(&job.heightfield);
@@ -429,6 +467,10 @@ fn void? build_stages(TileJob* job, BuildStage* stage) @local {
     *stage = AREAS;
     if (job.volumes_overflowed) return c3d::CAPACITY_EXCEEDED~;
     if (config.walkable_radius > 0) compact.erode_walkable_area(arena, config.walkable_radius)!;
+    if (job.cache_layers) {
+        *stage = LAYERS;
+        return build_layer_blobs(job, &compact);
+    }
     foreach (&volume : job.volumes[:job.volume_count]) apply_volume(&compact, volume);
 
     *stage = REGIONS;
@@ -470,6 +512,112 @@ fn void? build_stages(TileJob* job, BuildStage* stage) @local {
     job.output = blob;
 }
 
+// Volumes wait for the cache rebuild, so changing one relayers the tile instead of rebuilding it.
+fn void? build_layer_blobs(TileJob* job, CompactHeightfield* compact) @local {
+    Allocator arena = &job.arena;
+    HeightfieldLayer[] layers = build_heightfield_layers(
+        allocator:       arena,
+        scratch:         arena,
+        compact:         compact,
+        border_size:     job.config.border_size,
+        walkable_height: job.config.walkable_height,
+    )!;
+    if (!layers.len) return;
+
+    usz size;
+    foreach (&layer : layers) size += LAYER_LENGTH_BYTES + aligned_layer_blob_size(layer_blob_size(layer));
+    char[]? output = alloc::alloc_array_try(arena, char, (sz)size);
+    if (catch output) return c3d::CAPACITY_EXCEEDED~;
+    usz offset;
+    foreach (index, &layer : layers) {
+        usz blob_size = layer_blob_size(layer);
+        *(uint*)(output.ptr + offset) = (uint)blob_size;
+        build_tile_cache_layer(
+            layer:      layer,
+            tile_x:     job.tile_x,
+            tile_z:     job.tile_z,
+            tile_layer: (int)index,
+            blob:       output[offset + LAYER_LENGTH_BYTES:blob_size],
+        );
+        offset += LAYER_LENGTH_BYTES + aligned_layer_blob_size(blob_size);
+    }
+    job.output = output;
+}
+
+fn usz aligned_layer_blob_size(usz size) @local => (size + LAYER_BLOB_ALIGNMENT - 1) / LAYER_BLOB_ALIGNMENT * LAYER_BLOB_ALIGNMENT;
+
+// Swaps the tile's cached layers for the build's; the mesh tiles relink at the next sync.
+fn void? commit_layers(NavBuilder* builder, TileRecord* record, TileJob* job) @local {
+    TileCache* cache = &builder.cache;
+    foreach (ref : record.layers[:record.layer_count]) (void)cache.remove_tile(ref);
+    record.layer_count = 0;
+    record.relink = true;
+
+    usz offset;
+    while (offset < job.output.len) {
+        usz size = *(uint*)(job.output.ptr + offset);
+        char[] blob = job.output[offset + LAYER_LENGTH_BYTES:size];
+        offset += LAYER_LENGTH_BYTES + aligned_layer_blob_size(size);
+        // The cache frees the copy with its own allocator when the layer leaves.
+        char[]? copy = alloc::alloc_array_try(cache.allocator, char, (sz)size);
+        if (catch copy) {
+            redirty(builder, record);
+            return c3d::CAPACITY_EXCEEDED~;
+        }
+        copy[..] = blob[..];
+        CachedLayerRef? ref = cache.add_tile(copy, { .free_data = true });
+        if (catch excuse = ref) {
+            alloc::free(cache.allocator, copy.ptr);
+            redirty(builder, record);
+            return excuse~;
+        }
+        record.layers[record.layer_count++] = ref;
+    }
+    record.revision++;
+    retouch_obstacles(cache, builder.tile_bounds((uint)job.tile_x, (uint)job.tile_z));
+}
+
+fn void? create_layer_cache(NavBuilder* builder, Scene* scene, NavBuilderDesc desc) @local {
+    Allocator allocator = builder.allocator;
+    builder.expected_layers_per_tile = desc.expected_layers_per_tile;
+    ObstacleRef[]? obstacles = alloc::new_array_try(allocator, ObstacleRef, desc.max_obstacles);
+    if (catch obstacles) return c3d::CAPACITY_EXCEEDED~;
+    builder.removals.obstacles = obstacles;
+    CacheSources*? sources = alloc::new_try(allocator, CacheSources);
+    if (catch sources) return c3d::CAPACITY_EXCEEDED~;
+    builder.cache_sources = sources;
+    sources.scene = scene;
+    VolumeRecord[]? volumes = alloc::new_array_try(allocator, VolumeRecord, desc.max_volumes_per_tile);
+    if (catch volumes) return c3d::CAPACITY_EXCEEDED~;
+    sources.volumes = volumes;
+    OffMeshConnectionDesc[]? links = alloc::new_array_try(allocator, OffMeshConnectionDesc, scene.nodes.len);
+    if (catch links) return c3d::CAPACITY_EXCEEDED~;
+    sources.links = links;
+
+    NavBuildConfig config = desc.config;
+    builder.cache = create_tile_cache(
+        allocator:           allocator,
+        desc:                {
+            .origin                   = desc.bounds.min,
+            .cell_size                = config.cell_size,
+            .cell_height              = config.cell_height,
+            .width                    = config.tile_size,
+            .height                   = config.tile_size,
+            .walkable_height          = config.agent_height,
+            .walkable_radius          = config.agent_radius,
+            .walkable_climb           = config.agent_max_climb,
+            .max_simplification_error = config.edge_max_error,
+            .max_tiles                = builder.tiles_x * builder.tiles_z * desc.expected_layers_per_tile,
+            .max_obstacles            = desc.max_obstacles,
+            .volume_source            = &cache_volume_source,
+            .volume_source_context    = sources,
+            .link_source              = &cache_link_source,
+            .link_source_context      = sources,
+        },
+        build_scratch_bytes: desc.cache_scratch_bytes,
+    )!;
+}
+
 fn void apply_volume(CompactHeightfield* compact, VolumeRecord* volume) @local {
     switch (volume.kind) {
         case BOX:
@@ -491,7 +639,7 @@ fn void apply_volume(CompactHeightfield* compact, VolumeRecord* volume) @local {
     }
 }
 
-fn bool overlaps_xz(Aabb first, Aabb second) @local {
+fn bool overlaps_xz(Aabb first, Aabb second) @private {
     return first.min.x <= second.max.x && first.max.x >= second.min.x
         && first.min.z <= second.max.z && first.max.z >= second.min.z;
 }
@@ -505,7 +653,12 @@ fn void queue_removed_source(Entity entity, void* component, void* user) @local 
 }
 
 fn void queue_removed_volume(Entity entity, void* component, void* user) @local {
-    queue_removal(user, ((NavVolumeRuntime*)component).bounds);
+    RemovalQueue* removals = user;
+    if (removals.volume_count == REMOVAL_QUEUE_CAPACITY) {
+        removals.volumes_overflowed = true;
+        return;
+    }
+    removals.volume_bounds[removals.volume_count++] = ((NavVolumeRuntime*)component).bounds;
 }
 
 fn void queue_removal(RemovalQueue* removals, Aabb bounds) @local {
@@ -516,6 +669,13 @@ fn void queue_removal(RemovalQueue* removals, Aabb bounds) @local {
     removals.bounds[removals.count++] = bounds;
 }
 
+// One mirror holds each live obstacle, so max_obstacles entries never overflow.
+fn void queue_removed_obstacle(Entity entity, void* component, void* user) @local {
+    RemovalQueue* removals = user;
+    ObstacleRef ref = ((NavObstacleRuntime*)component).ref;
+    if (ref) removals.obstacles[removals.obstacle_count++] = ref;
+}
+
 fn void queue_removed_link(Entity entity, void* component, void* user) @local {
     RemovalQueue* removals = user;
     if (removals.link_count == REMOVAL_QUEUE_CAPACITY) {
@@ -523,6 +683,31 @@ fn void queue_removed_link(Entity entity, void* component, void* user) @local {
         return;
     }
     removals.links[removals.link_count++] = *(NavLinkRuntime*)component;
+}
+
+// The records of the tiles whose bounds, border included, overlap the box in XZ.
+macro void @each_tile_overlapping(NavBuilder* builder, Aabb box; @body(TileRecord* record)) @local {
+    float border = builder.tile_config.border_size * builder.config.cell_size;
+    Vec3 low = (box.min - builder.bounds.min - { border, 0, border }) / builder.tile_world_size;
+    Vec3 high = (box.max - builder.bounds.min + { border, 0, border }) / builder.tile_world_size;
+    // One tile of slack on the low side; the overlap test below is exact.
+    int first_x = math::max((int)math::floor(low.x) - 1, 0);
+    int first_z = math::max((int)math::floor(low.z) - 1, 0);
+    int last_x = math::min((int)math::floor(high.x), (int)builder.tiles_x - 1);
+    int last_z = math::min((int)math::floor(high.z), (int)builder.tiles_z - 1);
+    for (int tile_z = first_z; tile_z <= last_z; tile_z++) {
+        for (int tile_x = first_x; tile_x <= last_x; tile_x++) {
+            if (!overlaps_xz(box, builder.tile_bounds((uint)tile_x, (uint)tile_z))) continue;
+            @body(&builder.tiles[tile_x + tile_z * (int)builder.tiles_x]);
+        }
+    }
+}
+
+// With cache_layers a volume change rebuilds the mesh tiles from their cached layers.
+fn void relayer_tiles(NavBuilder* builder, Aabb box) @private {
+    @each_tile_overlapping(builder, box; TileRecord* record) {
+        record.relayer = true;
+    };
 }
 
 fn void redirty(NavBuilder* builder, TileRecord* record) @private {
@@ -551,6 +736,7 @@ fn void begin_rasterization(NavBuilder* builder, TileJob* job, Scene* scene) @lo
     job.output = {};
     job.volume_count = 0;
     job.volumes_overflowed = false;
+    if (builder.cache_layers) return;
 
     Aabb tile = job.heightfield.bounds;
     scene.@each(NavVolumeRuntime; entity, runtime) {

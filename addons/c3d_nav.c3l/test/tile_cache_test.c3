@@ -258,3 +258,57 @@ fn void test_request_queue_full_faults() @test {
     assert(fixture.cache.request_count == 0);
     assert(obstacles_in_state(&fixture.cache, PROCESSED) == nav::MAX_OBSTACLE_REQUESTS);
 }
+
+fn void test_rebuild_runs_without_scene_access() @test {
+    BuilderFixture* fixture = mem::new(BuilderFixture);
+    NavBuilderDesc builder_desc = nav::default_nav_builder_desc(tile_grid_bounds(2));
+    builder_desc.cache_layers = true;
+    setup_with_desc(fixture, builder_desc);
+    float tile = fixture.builder.tile_world_size;
+    add_plane(fixture, { tile * 2, tile * 2 }, { tile, 0, tile });
+    build_everything(fixture);
+    // The builder's hooks read the scene; this cache has none.
+    TileCacheDesc desc = fixture.builder.cache.desc;
+    desc.volume_source = null;
+    desc.link_source = null;
+    TileCache cache = nav::create_tile_cache(mem, desc, fixture.builder.cache.build_scratch.len)!!;
+    defer nav::destroy_tile_cache(&cache);
+    foreach (&layer : fixture.builder.cache.tiles) {
+        if (!layer.header) continue;
+        char[] copy = mem::new_array(char, layer.data.len);
+        copy[..] = layer.data[..];
+        cache.add_tile(copy, { .free_data = true })!!;
+    }
+    teardown(fixture);
+    free(fixture);
+
+    NavMesh mesh = nav::create_nav_mesh(mem, {
+        .origin      = desc.origin,
+        .tile_width  = tile,
+        .tile_height = tile,
+        .max_tiles   = desc.max_tiles,
+    })!!;
+    defer nav::destroy_nav_mesh(&mesh);
+    for (int tile_z = 0; tile_z < 2; tile_z++) {
+        for (int tile_x = 0; tile_x < 2; tile_x++) cache.build_tiles_at(tile_x, tile_z, &mesh)!!;
+    }
+    NavQuery query = nav::create_nav_query(mem, &mesh, QUERY_NODES)!!;
+    defer nav::destroy_nav_query(&query);
+    QueryFilter filter = nav::default_query_filter();
+    Vec3 from = { tile * 0.5f, 0, tile * 0.5f };
+    Vec3 to = { tile * 1.5f, 0, tile * 1.5f };
+    NearestPoly start = query.find_nearest_poly(from, NEAR_EXTENTS, &filter)!!;
+    NearestPoly end = query.find_nearest_poly(to, NEAR_EXTENTS, &filter)!!;
+    PolyRef[PATH_CAPACITY] corridor;
+    PathResult path = query.find_path(
+        start_ref: start.ref,
+        end_ref:   end.ref,
+        start:     start.point,
+        end:       end.point,
+        filter:    &filter,
+        out_path:  corridor[..],
+    )!!;
+
+    assert(path.count > 1 && !path.partial);
+    assert(nav::decode_tile(start.ref) != nav::decode_tile(end.ref));
+}
