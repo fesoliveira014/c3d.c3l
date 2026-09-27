@@ -421,7 +421,6 @@ fn void relink_tile_at(NavBuilder* builder, Vec3 point) @local {
     builder.tiles[tile_x + tile_z * (int)builder.tiles_x].relink = true;
 }
 
-// Removes the resident tile first, so a failure leaves the coordinate empty until the next change.
 fn void? install_tile(
     NavBuilder* builder,
     NavMesh* mesh,
@@ -430,36 +429,19 @@ fn void? install_tile(
 ) @local {
     TileRecord* record = &builder.tiles[index];
     record.relink = false;
-    if (record.ref) {
-        (void)mesh.remove_tile(record.ref);
-        record.ref = (TileRef)0;
-    }
-    if (!record.mesh.len) return;
-
-    TileMeshView view = tile_mesh_view(record.mesh);
+    record.ref = (TileRef)0;
     TileDataParams params = {
-        .tile_x          = view.header.tile_x,
-        .tile_z          = view.header.tile_z,
+        .tile_x          = (int)(index % builder.tiles_x),
+        .tile_z          = (int)(index / builder.tiles_x),
         .walkable_height = builder.config.agent_height,
         .walkable_radius = builder.config.agent_radius,
         .walkable_climb  = builder.config.agent_max_climb,
         .build_bv_tree   = true,
     };
     @pool() {
-        OffMeshConnectionDesc[] connections = tile_connections(scene, view.header.bounds);
-        // The mesh frees the blob with its own allocator when the tile leaves.
-        char[]? blob = alloc::alloc_array_try(mesh.allocator, char, (sz)tile_data_size(view, connections, params));
-        if (catch blob) return c3d::CAPACITY_EXCEEDED~;
-        if (catch excuse = create_tile_data(view, connections, params, blob)) {
-            alloc::free(mesh.allocator, blob.ptr);
-            return excuse~;
-        }
-        TileRef? ref = mesh.add_tile(blob, { .free_data = true });
-        if (catch excuse = ref) {
-            alloc::free(mesh.allocator, blob.ptr);
-            return excuse~;
-        }
-        record.ref = ref;
+        OffMeshConnectionDesc[] connections;
+        if (record.mesh.len) connections = tile_connections(scene, tile_mesh_view(record.mesh).header.bounds);
+        record.ref = mesh.install_tile_mesh(record.mesh, connections, params)!;
     };
 }
 

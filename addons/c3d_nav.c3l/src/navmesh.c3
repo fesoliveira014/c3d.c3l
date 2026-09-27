@@ -304,6 +304,46 @@ fn char[]? NavMesh.remove_tile(&self, TileRef ref) {
     return data;
 }
 
+<*
+ Add the tile built from a TileMesh blob; the mesh owns the TileData it allocates.
+ @param [in] connections : "Off-mesh connections whose start lies in the tile."
+ @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, TILE_OCCUPIED
+ @require tile_mesh.len > 0
+*>
+fn TileRef? NavMesh.add_tile_mesh(
+    &self,
+    char[] tile_mesh,
+    OffMeshConnectionDesc[] connections,
+    TileDataParams params,
+) {
+    TileMeshView view = tile_mesh_view(tile_mesh);
+    char[]? blob = alloc::alloc_array_try(self.allocator, char, (sz)tile_data_size(view, connections, params));
+    if (catch blob) return c3d::CAPACITY_EXCEEDED~;
+    defer catch alloc::free(self.allocator, blob.ptr);
+    create_tile_data(view, connections, params, blob)!;
+    return self.add_tile(blob, { .free_data = true });
+}
+
+<*
+ Replace the tile at params.tile_x, params.tile_z and params.tile_layer; an empty blob only removes it.
+ Invalidates every PolyRef into the replaced tile.
+ @param [in] connections : "Off-mesh connections whose start lies in the tile."
+ @return "The new tile, or 0 when the blob was empty."
+ @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+*>
+fn TileRef? NavMesh.install_tile_mesh(
+    &self,
+    char[] tile_mesh,
+    OffMeshConnectionDesc[] connections,
+    TileDataParams params,
+) {
+    // Removing first frees the slot the add takes; a failed add leaves the coordinate empty.
+    TileRef resident = self.tile_ref_at(params.tile_x, params.tile_z, params.tile_layer);
+    if (resident) (void)self.remove_tile(resident);
+    if (!tile_mesh.len) return (TileRef)0;
+    return self.add_tile_mesh(tile_mesh, connections, params);
+}
+
 <* Tile grid coordinate of a world position; mirrors calcTileLoc. *>
 fn int[<2>] NavMesh.tile_location(&self, Vec3 position) {
     return {
