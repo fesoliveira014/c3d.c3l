@@ -14,7 +14,7 @@ const usz MAX_CHARACTER_PLANES = 16; // 16 * 48 bytes in every Character store s
 <*
  Collide, solve and cast passes per fixed step.
 *>
-const uint CHARACTER_SOLVE_ITERATIONS = 4; // three slide passes plus one for the step retry
+const uint CHARACTER_SOLVE_ITERATIONS = 4; // three slide passes per move; a step retry adds two raised passes
 
 const float DEFAULT_RADIUS @local = 0.4f;
 const float DEFAULT_HALF_HEIGHT @local = 0.6f; // a 2 m capsule with the default radius
@@ -31,7 +31,7 @@ struct CharacterDesc {
     float           step_height;        // highest ledge climbed in one move
     float           max_slope_degrees;  // steeper planes are walls
     float           skin;               // gap kept between the capsule and every surface
-    bool            push_bodies;        // carry a kinematic body so dynamic bodies react
+    bool            push_bodies;        // carry a kinematic body that shoves bodies outside filter.mask
     CollisionFilter filter;             // mask: what the capsule collides with; category: the push body's shape
 }
 
