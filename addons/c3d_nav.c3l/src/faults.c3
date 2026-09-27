@@ -8,4 +8,5 @@ faultdef
     INVALID_REF,
     NO_POLY,
     TILE_OCCUPIED,
-    LINK_EXISTS;
+    LINK_EXISTS,
+    NO_PATH;

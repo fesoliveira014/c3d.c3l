@@ -7,9 +7,9 @@ import c3d;
 const uint TINY_NODE_POOL = 64;
 
 const uint  TINY_NODE_HASH @local = 32; // mirrors dtNavMeshQuery::init
-const float HEURISTIC_SCALE @local = 0.999f; // mirrors findPath's H_SCALE; keeps the heuristic below the cost
+const float HEURISTIC_SCALE @private = 0.999f; // mirrors findPath's H_SCALE; keeps the heuristic below the cost
 const float PORTAL_SKIP_DISTANCE @local = 0.001f; // metres; a start this close to the first portal skips it
-const float PORTAL_LIMIT_STEP @local = 1.0f / 255.0f; // a link's portal sub-range is stored in a byte
+const float PORTAL_LIMIT_STEP @private = 1.0f / 255.0f; // a link's portal sub-range is stored in a byte
 
 <* Flags of one straight-path point; mirrors dtStraightPathFlags. *>
 bitstruct StraightPathFlags : char {
@@ -67,13 +67,14 @@ struct RaycastHit {
 
 <* Pathfinding over one NavMesh with its own node pools; mirrors dtNavMeshQuery. *>
 struct NavQuery {
-    NavMesh*  mesh;
-    NodePool  nodes;
-    NodePool  tiny_nodes;
-    NodeQueue open;
+    NavMesh*    mesh;
+    NodePool    nodes;
+    NodePool    tiny_nodes;
+    NodeQueue   open;
+    SlicedQuery sliced;
 }
 
-struct Portal @local {
+struct Portal @private {
     Vec3     left;
     Vec3     right;
     PolyType to_type;
@@ -594,11 +595,11 @@ fn void destroy_nav_query(NavQuery* query) {
     *query = {};
 }
 
-fn bool finite_point(Vec3 point) @local {
+fn bool finite_point(Vec3 point) @private {
     return math::is_finite(point.x) && math::is_finite(point.y) && math::is_finite(point.z);
 }
 
-fn bool first_visit(SearchNode* node) @local => !node.bits.open && !node.bits.closed && !node.bits.parent_detached;
+fn bool first_visit(SearchNode* node) @private => !node.bits.open && !node.bits.closed && !node.bits.parent_detached;
 
 // Every polygon passing the filter whose bounds overlap the box, tile by tile; mirrors queryPolygons.
 macro void @each_poly_in_box(
@@ -624,7 +625,7 @@ macro void @each_poly_in_box(
 }
 
 // Mirrors getPathToNode: a path longer than the slice keeps its start.
-fn PathResult path_to_node(NodePool* nodes, SearchNode* end_node, PolyRef[] out_path) @local {
+fn PathResult path_to_node(NodePool* nodes, SearchNode* end_node, PolyRef[] out_path) @private {
     usz length;
     for (SearchNode* node = end_node; node; node = nodes.node_at(node.bits.parent)) length++;
     SearchNode* node = end_node;
@@ -649,7 +650,7 @@ fn Portal? portal_points(
     TileAndPoly from,
     PolyRef to_ref,
     TileAndPoly to,
-) @local {
+) @private {
     Link* link = find_link(from, to_ref)!;
     PolyType to_type = to.poly.area_type.type;
     if (from.poly.area_type.type == OFF_MESH_CONNECTION) {
@@ -673,7 +674,7 @@ fn Portal? portal_points(
     return portal;
 }
 
-fn Link*? find_link(TileAndPoly from, PolyRef to_ref) @local {
+fn Link*? find_link(TileAndPoly from, PolyRef to_ref) @private {
     for (uint link = from.poly.first_link; link != NULL_LINK; link = from.tile.links[link].next) {
         if (from.tile.links[link].ref == to_ref) return &from.tile.links[link];
     }
