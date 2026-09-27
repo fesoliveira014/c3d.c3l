@@ -69,22 +69,25 @@ struct CharacterState {
     Scene*        scene;
     uint          stepped;            // character steps in the last update
     uint          stepped_so_far;     // character steps of the update in progress
+    float         elapsed_so_far;     // fixed steps of the update in progress, in seconds
 }
 
 <*
  Author a character on the node; with push_bodies, also a KINEMATIC PhysicsBody with one CAPSULE collider.
- @param [&in] node : "Its world position is the initial capsule center; update_world first."
+ The node origin is the capsule's lowest point.
+ @param [&in] node : "Its world position is the initial feet position; update_world first."
  @return? CHARACTER_EXISTS, physics::BODY_EXISTS
  @require self.world.is_registered(Character), desc.radius > 0, desc.half_height > 0
 *>
 fn void? Scene.add_character(&self, Node* node, CharacterDesc desc) {
     if (self.has(node, Character)) return CHARACTER_EXISTS~;
-    Vec3 center = node.world_position();
+    Vec3 center = node.world_position() + center_offset(desc);
     self.add(node, (Character){ .desc = desc, .previous = center, .current = center });
     if (!desc.push_bodies) return;
 
     defer catch self.remove_component(node, Character);
     ColliderDesc collider = physics::default_collider_desc(CAPSULE);
+    collider.local.position = center_offset(desc);
     collider.radius = desc.radius;
     collider.half_height = desc.half_height;
     // The capsule stops short of everything its mask names, so the push body touches all categories to shove the rest.
@@ -123,12 +126,14 @@ fn void Scene.jump_character(&self, Node* node, float speed) {
 
 <*
  Move the capsule without sweeping and write the node now.
+ @param position : "The capsule's lowest point, as the node origin."
  @require self.has(node, Character)
 *>
 fn void Scene.teleport_character(&self, Node* node, Vec3 position) {
     Character* character = self.get(node, Character);
-    character.previous = position;
-    character.current = position;
+    Vec3 center = position + center_offset(character.desc);
+    character.previous = center;
+    character.current = center;
     // The old ground is behind; its velocity must not carry the next step.
     character.grounded = false;
     character.ground = {};
@@ -183,3 +188,5 @@ fn void destroy_character_system(CharacterSystem* system) {
     alloc::free(system.allocator, system.state);
     *system = {};
 }
+
+fn Vec3 center_offset(CharacterDesc desc) @private => { 0, desc.half_height + desc.radius, 0 };

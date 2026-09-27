@@ -24,7 +24,7 @@ Entry point for every agent session in this repository. Read it fully before rea
 | c3d_profile_gui.c3l | profiler additions to `c3d::gui` | Applications select it explicitly; it imports only the standard library, `c3d::profile` and `imgui` |
 | c3d_physics.c3l | `c3d::physics` | Applications select it explicitly; it imports the standard library, `c3d` and `b3` |
 | c3d_nav.c3l | `c3d::nav` | Applications select it explicitly; it imports the standard library and `c3d` |
-| c3d_character.c3l | `c3d::character` | Applications select it explicitly; it imports the standard library, `c3d` and `c3d::physics` (`c3d::nav` under `C3D_CHARACTER_NAV` once the nav binding lands) |
+| c3d_character.c3l | `c3d::character` | Applications select it explicitly; it imports the standard library, `c3d` and `c3d::physics`, and `c3d::nav` under `C3D_CHARACTER_NAV` |
 
 Boundaries are checked at review. No dependency is added without updating this table.
 
@@ -34,7 +34,7 @@ The `addons/c3d_physics.c3l` package owns rigid-body physics: the box3d world, b
 
 The `addons/c3d_nav.c3l` package owns navigation meshes, a port of Recast/Detour (`recastnavigation` at `9f4ce64`, zlib; the notice ships in the package). Its `c3d::nav` module imports the standard library and core (`c3d`), never `gpu`, `sdl`, `imgui`, `b3` or `c3d::physics`. Core never imports it and carries no navigation feature flag; selecting the library is the gate. The package owns its `project.json`, `nav_test` target and `navmesh` and `crowd` examples.
 
-The `addons/c3d_character.c3l` package owns the kinematic capsule character controller built on the physics package's mover primitives: the `Character` component, the `CharacterSystem` that installs the physics world's mover pass, the kinematic push body and debug drawing. Its `c3d::character` module imports the standard library, core (`c3d`) and `c3d::physics`, never `b3`, `gpu`, `sdl` or `imgui`. Core and the physics package never import it and core carries no character feature flag; selecting the library is the gate. The package owns its `project.json`, `character_test` target and `character` example.
+The `addons/c3d_character.c3l` package owns the kinematic capsule character controller built on the physics package's mover primitives: the `Character` component, the `CharacterSystem` that installs the physics world's mover pass, the kinematic push body and debug drawing. Its `c3d::character` module imports the standard library, core (`c3d`) and `c3d::physics`, never `b3`, `gpu`, `sdl` or `imgui`. Under `C3D_CHARACTER_NAV`, `src/nav/` adds the crowd binding (`NavDriven`, `drive_characters`) and imports `c3d::nav`; a consumer that enables the feature also selects `c3d_nav`, and the plain targets build without it. Core, the physics package and the nav package never import it and core carries no character feature flag; selecting the library is the gate. The package owns its `project.json`, `character_test` and `character_nav_test` targets and `character` and `character_nav` examples.
 
 # 2. Where truth lives
 
@@ -84,7 +84,7 @@ Steps run in this order and stop at the first failure: tools (c3c 0.8.3, glslang
 
 Before every commit: `scripts/build.py --test`. Broken builds are never committed. GPU examples run manually; CI runs `--test`. Every development run of a GPU example enables Vulkan validation through gpu.c3l.
 
-The default build also builds the collector's `capture` example, the physics package's `physics`, `physics_instanced` and `physics_components` examples, the nav package's `navmesh` and `crowd` examples, the character package's `character` example, the root `profile_gpu` example and all four `profile_gui` feature targets; `--target` and `--example` resolve add-on examples to their package project. `--test` runs the collector's off, CPU, internal CPU, GPU, internal GPU, CPU+GPU and full CPU+GPU+INTERNAL targets, the presentation add-on's off, CPU, GPU and combined data targets, the physics package's `physics_test` target, the nav package's `nav_test` target, the character package's `character_test` target, and the root integration targets. These tests never create a GPU device. Direct `c3c test profile_cpu --path addons/c3d_profile.c3l` exercises only the standalone collector package. Real Vulkan acceptance lives in the separately invoked `test/gpu/profile` project and the manually run profiler GUI examples; neither runs in CI.
+The default build also builds the collector's `capture` example, the physics package's `physics`, `physics_instanced` and `physics_components` examples, the nav package's `navmesh` and `crowd` examples, the character package's `character` and `character_nav` examples, the root `profile_gpu` example and all four `profile_gui` feature targets; `--target` and `--example` resolve add-on examples to their package project. `--test` runs the collector's off, CPU, internal CPU, GPU, internal GPU, CPU+GPU and full CPU+GPU+INTERNAL targets, the presentation add-on's off, CPU, GPU and combined data targets, the physics package's `physics_test` target, the nav package's `nav_test` target, the character package's `character_test` and `character_nav_test` targets, and the root integration targets. These tests never create a GPU device. Direct `c3c test profile_cpu --path addons/c3d_profile.c3l` exercises only the standalone collector package. Real Vulkan acceptance lives in the separately invoked `test/gpu/profile` project and the manually run profiler GUI examples; neither runs in CI.
 
 # 6. Style
 
@@ -188,7 +188,7 @@ c3d.c3l/
 ├── addons/c3d_profile_gui.c3l/ ImGui presentation package and standalone data tests
 ├── addons/c3d_physics.c3l/ box3d rigid bodies, colliders, events; owns its tests and example
 ├── addons/c3d_nav.c3l/     Recast/Detour port: tiled navmesh build, tile cache, store, path queries and crowds; owns its tests and examples
-├── addons/c3d_character.c3l/ capsule character controller on the physics mover primitives; owns its tests and example
+├── addons/c3d_character.c3l/ capsule character controller on the physics mover primitives, crowd binding under C3D_CHARACTER_NAV; owns its tests and examples
 ├── abi/c3d.abi             shared C3 and GLSL layouts
 ├── docs/style.md           mandatory style baseline
 ├── lib/                    gpu.c3l · sdl3.c3l · c3imgui.c3l · c3cg.c3l · box3d.c3l · cgltf.c3l · ufbx.c3l · shaderc.c3l (submodules)

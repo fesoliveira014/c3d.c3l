@@ -22,13 +22,28 @@ struct CharacterQuery @local {
 fn void step_characters(void* context, PhysicsWorld* world, float fixed_dt) @private {
     CharacterState* state = context;
     Scene* scene = state.scene;
+    state.elapsed_so_far += fixed_dt;
     scene.@each(Character; entity, character) {
-        step_character(
-            world:     world,
-            node:      scene.node(entity),
-            character: character,
-            fixed_dt:  fixed_dt,
-        );
+        Node* node = scene.node(entity);
+        bool traversing;
+        $if $feat(C3D_CHARACTER_NAV):
+            traversing = traverse_off_mesh(
+                world:     world,
+                scene:     scene,
+                node:      node,
+                character: character,
+                elapsed:   state.elapsed_so_far,
+                fixed_dt:  fixed_dt,
+            );
+        $endif
+        if (!traversing) {
+            step_character(
+                world:     world,
+                node:      node,
+                character: character,
+                fixed_dt:  fixed_dt,
+            );
+        }
         state.stepped_so_far++;
     };
 }
@@ -37,10 +52,12 @@ fn void write_characters(void* context, PhysicsWorld* world, float alpha) @priva
     CharacterState* state = context;
     Scene* scene = state.scene;
     scene.@each(Character; entity, character) {
-        scene.node(entity).set_world_position(character.previous + (character.current - character.previous) * alpha);
+        Vec3 center = character.previous + (character.current - character.previous) * alpha;
+        scene.node(entity).set_world_position(center - center_offset(character.desc));
     };
     state.stepped = state.stepped_so_far;
     state.stepped_so_far = 0;
+    state.elapsed_so_far = 0;
 }
 
 fn void step_character(
@@ -91,7 +108,11 @@ fn void step_character(
 
     if (desc.push_bodies) {
         // NO_BODY until sync_bodies builds the push body, or after the application removed it.
-        (void)world.set_kinematic_target(node, character.current, maths::transform_from_mat4(node.world).rotation);
+        (void)world.set_kinematic_target(
+            node:     node,
+            position: character.current - center_offset(desc),
+            rotation: maths::transform_from_mat4(node.world).rotation,
+        );
     }
 }
 
