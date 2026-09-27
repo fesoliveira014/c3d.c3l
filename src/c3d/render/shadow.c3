@@ -115,6 +115,20 @@ fn CascadeSplits directional_cascade_splits(Camera camera, ShadowSettings settin
 }
 
 <*
+ Camera depth where cascade index starts blending into the next one.
+ The span is the cascade's own split interval, so bands never compound.
+ @require index < splits.count
+ @require blend >= 0 && blend <= 0.5
+ @pure
+*>
+fn float cascade_blend_depth(CascadeSplits splits, uint index, float blend) {
+    float split = splits.far_depths[index];
+    if (index + 1 == splits.count) return split;
+    float near_depth = index ? splits.far_depths[index - 1] : splits.near_depth;
+    return split - blend * (split - near_depth);
+}
+
+<*
  Fit stable receiver coverage and conservative caster depth.
  @param [&in] view : "Current invertible camera matrices."
  @param near_depth : "Slice start in camera-space forward depth."

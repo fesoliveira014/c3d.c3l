@@ -66,6 +66,12 @@ What the four cases establish:
   through the checker holes reach what lies behind on both, and the shadow
   caster mask hides the non-caster on both.
 
+- A thin rod's shadow read along one image column across the first
+  directional split: with `cascade_blend = 0` the two cascades meet in one
+  luminance step; with 0.1 the image before the band is unchanged pixel for
+  pixel, the band differs, and no step along the column is as large as the
+  unblended seam (`line.comp.glsl` reads the column).
+
 - A box casts a dark shadow on a plane under both the atlas and ray-traced
   shadows; a fully transparent masked box and a box with `cast_shadow` off
   cast nothing; the ray-traced frames record no atlas layer.

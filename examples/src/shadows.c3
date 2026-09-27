@@ -174,6 +174,12 @@ fn void sun_shadow_controls(ZString title, Light* sunlight, bool orthographic) @
         );
     }
     edit_float(
+        label: "Cascade blend",
+        value: &sunlight.shadow.cascade_blend,
+        minimum: 0,
+        maximum: 0.5f,
+    );
+    edit_float(
         label: "Max distance",
         value: &sunlight.shadow.max_distance,
         minimum: SHADOW_DISTANCE_MIN,

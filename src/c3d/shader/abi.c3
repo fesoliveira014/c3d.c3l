@@ -772,7 +772,7 @@ struct ShadowGpu {
     float        split_depth;
     float        texel_size;
     float        max_distance;
-    uint         _pad1;
+    float        blend_depth;
     uint         _pad2;
 }
 $assert ShadowGpu::size == 96;
@@ -783,7 +783,7 @@ $assert $reflect(ShadowGpu.normal_bias).offset == 72;
 $assert $reflect(ShadowGpu.split_depth).offset == 76;
 $assert $reflect(ShadowGpu.texel_size).offset == 80;
 $assert $reflect(ShadowGpu.max_distance).offset == 84;
-$assert $reflect(ShadowGpu._pad1).offset == 88;
+$assert $reflect(ShadowGpu.blend_depth).offset == 88;
 $assert $reflect(ShadowGpu._pad2).offset == 92;
 
 struct StandardMaterialGpu {

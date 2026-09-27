@@ -13,6 +13,7 @@ const ShadowSettings SHADOW_SETTINGS_DEFAULT = {
     .normal_bias = 0.02f,
     .cascades = MAX_SHADOW_CASCADES,
     .cascade_lambda = 0.8f,
+    .cascade_blend = 0.1f,
     .max_distance = 100,
 };
 
@@ -24,6 +25,7 @@ struct ShadowSettings {
     float normal_bias;
     uint cascades;
     float cascade_lambda;
+    float cascade_blend;   // directional: blend band per cascade, a fraction of its depth span
     float max_distance;
     bool ray_traced;
 }
@@ -34,6 +36,7 @@ struct ShadowSettings {
  @require !self.shadow.enabled || (self.shadow.normal_bias >= 0 && math::is_finite(self.shadow.normal_bias))
  @require !self.shadow.enabled || self.kind != DIRECTIONAL || (self.shadow.cascades >= 1 && self.shadow.cascades <= MAX_SHADOW_CASCADES)
  @require !self.shadow.enabled || self.kind != DIRECTIONAL || (self.shadow.cascade_lambda >= 0 && self.shadow.cascade_lambda <= 1)
+ @require !self.shadow.enabled || self.kind != DIRECTIONAL || (self.shadow.cascade_blend >= 0 && self.shadow.cascade_blend <= 0.5)
  @require !self.shadow.enabled || self.kind == DIRECTIONAL || (self.range >= 0 && math::is_finite(self.range))
  @require !self.shadow.enabled || (self.kind != DIRECTIONAL && self.range > 0) || (self.shadow.max_distance > 0 && math::is_finite(self.shadow.max_distance))
  @require !self.shadow.enabled || self.kind != SPOT || (self.outer_cone > 0 && self.outer_cone < (float)math::PI / 2)

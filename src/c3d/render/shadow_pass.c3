@@ -315,11 +315,13 @@ fn ShadowGpu[]? record_shadows(
         for (uint index = 0; index < request.layer_count; index++) {
             uint layer = request.first_layer + index;
             float split_depth;
+            float blend_depth;
             switch (light.kind) {
                 case DIRECTIONAL:
+                    float blend = light.shadow.cascade_blend;
                     ShadowCascade cascade = fit_directional_cascade(
                         view: matrices,
-                        near_depth: index ? splits.far_depths[index - 1] : splits.near_depth,
+                        near_depth: index ? cascade_blend_depth(splits, index - 1, blend) : splits.near_depth,
                         far_depth: splits.far_depths[index],
                         light_direction: packed.direction_cos_outer.xyz,
                         casters: candidates,
@@ -328,6 +330,7 @@ fn ShadowGpu[]? record_shadows(
                     );
                     shadow_matrices[layer] = cascade.camera;
                     split_depth = cascade.split_depth;
+                    blend_depth = cascade_blend_depth(splits, index, blend);
                 case SPOT:
                     shadow_matrices[layer] = spot_shadow_camera(
                         position: packed.position_range.xyz,
@@ -354,6 +357,7 @@ fn ShadowGpu[]? record_shadows(
                 .sampler_index = renderer.shadow_atlas.sampler,
                 .normal_bias = light.shadow.normal_bias,
                 .split_depth = split_depth,
+                .blend_depth = blend_depth,
                 .texel_size = 1.0f / (float)renderer.shadow_resolution,
                 .max_distance = shadow_range,
             };
