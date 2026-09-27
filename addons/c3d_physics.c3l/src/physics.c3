@@ -428,7 +428,12 @@ fn Vec3? PhysicsWorld.point_velocity(&self, Node* node, Vec3 world_point) {
  From a mover step it overrides the target begin_step took from node.world.
  @return? NO_BODY, NOT_KINEMATIC
 *>
-fn void? PhysicsWorld.set_kinematic_target(&self, Node* node, Vec3 position, Quat rotation) {
+fn void? PhysicsWorld.set_kinematic_target(
+    &self,
+    Node* node,
+    Vec3 position,
+    Quat rotation,
+) {
     if (!self.scene.has(node, RigidBody)) return NO_BODY~;
     RigidBody* body = self.scene.get(node, RigidBody);
     if (body.kind != KINEMATIC) return NOT_KINEMATIC~;

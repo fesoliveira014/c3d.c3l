@@ -9,8 +9,6 @@ import c3d::maths;
 import c3d::physics;
 import c3d::scene;
 
-alias Quat @private = Quaternionf;
-
 const float TOLERANCE @private = 0.0001f;
 const float CAPSULE_RADIUS @private = 0.3f;
 const float CAPSULE_HALF_HEIGHT @private = 0.5f;
@@ -25,11 +23,10 @@ struct Fixture @private {
 }
 
 struct RecordingPass @private {
-    PhysicsWorld* world;
-    Node*         target;
-    uint          steps;
-    uint          writes;
-    float         alpha;
+    Node* target;
+    uint  steps;
+    uint  writes;
+    float alpha;
 }
 
 fn void setup(Fixture* fixture) @private {
@@ -197,7 +194,7 @@ fn void test_mover_step_runs_once_per_fixed_step_before_the_solver() @test {
     setup(&fixture);
     defer teardown(&fixture);
     Node* box = add_box(&fixture, { 0, 0, 0 }, { 0.5f, 0.5f, 0.5f }, KINEMATIC);
-    RecordingPass recording = { .world = &fixture.physics, .target = box };
+    RecordingPass recording = { .target = box };
     fixture.physics.set_mover_pass({ .step = &record_step, .write = &record_write, .context = &recording });
 
     float fixed_dt = fixture.physics.desc.tuning.fixed_dt;
@@ -213,7 +210,7 @@ fn void test_mover_write_runs_after_zero_steps_with_alpha() @test {
     Fixture fixture;
     setup(&fixture);
     defer teardown(&fixture);
-    RecordingPass recording = { .world = &fixture.physics };
+    RecordingPass recording;
     fixture.physics.set_mover_pass({ .step = &record_step, .write = &record_write, .context = &recording });
     float fixed_dt = fixture.physics.desc.tuning.fixed_dt;
 
@@ -234,7 +231,7 @@ fn void test_empty_pass_is_skipped() @test {
     Fixture fixture;
     setup(&fixture);
     defer teardown(&fixture);
-    RecordingPass recording = { .world = &fixture.physics };
+    RecordingPass recording;
     fixture.physics.set_mover_pass({ .step = &record_step, .write = &record_write, .context = &recording });
     fixture.physics.set_mover_pass({});
 
