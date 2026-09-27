@@ -216,7 +216,12 @@ fn char[]? TileCache.remove_tile(&self, CachedLayerRef ref) {
  @param [out] out_refs : "Filled up to its length."
  @return "How many were written."
 *>
-fn usz TileCache.tiles_at(&self, int x, int z, CachedLayerRef[] out_refs) {
+fn usz TileCache.tiles_at(
+    &self,
+    int x,
+    int z,
+    CachedLayerRef[] out_refs,
+) {
     usz count;
     for (CachedLayer* tile = self.lookup[cache_hash(x, z, self.lookup_mask)]; tile; tile = tile.next) {
         if (tile.header.tile_x != x || tile.header.tile_z != z) continue;
@@ -273,7 +278,12 @@ fn QueryResult TileCache.query_tiles(&self, Aabb box, CachedLayerRef[] out_refs)
  @return? c3d::CAPACITY_EXCEEDED
  @require radius > 0, height > 0
 *>
-fn ObstacleRef? TileCache.add_obstacle(&self, Vec3 base, float radius, float height) {
+fn ObstacleRef? TileCache.add_obstacle(
+    &self,
+    Vec3 base,
+    float radius,
+    float height,
+) {
     Obstacle* obstacle = take_obstacle(self, CYLINDER)!;
     obstacle.position = base;
     obstacle.radius = radius;
@@ -296,7 +306,12 @@ fn ObstacleRef? TileCache.add_box_obstacle(&self, Aabb box) {
  Queue a box obstacle turned about +Y; mirrors the oriented addBoxObstacle.
  @return? c3d::CAPACITY_EXCEEDED
 *>
-fn ObstacleRef? TileCache.add_oriented_box_obstacle(&self, Vec3 centre, Vec3 half_extents, float yaw_radians) {
+fn ObstacleRef? TileCache.add_oriented_box_obstacle(
+    &self,
+    Vec3 centre,
+    Vec3 half_extents,
+    float yaw_radians,
+) {
     Obstacle* obstacle = take_obstacle(self, ORIENTED_BOX)!;
     obstacle.position = centre;
     obstacle.half_extents = half_extents;
@@ -351,7 +366,12 @@ fn bool? TileCache.update(&self, NavMesh* mesh, uint budget = 1) {
  @param [&inout] mesh : "Receives one TileData blob per layer."
  @return? LAYER_CORRUPTED, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
 *>
-fn void? TileCache.build_tiles_at(&self, int x, int z, NavMesh* mesh) {
+fn void? TileCache.build_tiles_at(
+    &self,
+    int x,
+    int z,
+    NavMesh* mesh,
+) {
     CachedLayerRef[MAX_LAYERS_AT] layers;
     usz count = self.tiles_at(x, z, layers[..]);
     foreach (ref : layers[:count]) self.build_tile(ref, mesh)!;
@@ -545,7 +565,12 @@ fn void retouch_obstacles(TileCache* cache, Aabb bounds) @private {
 
 fn uint cache_hash(int x, int z, uint mask) @local => (CACHE_HASH_X * (uint)x + CACHE_HASH_Z * (uint)z) & mask;
 
-fn CachedLayer* cached_layer_at(TileCache* cache, int x, int z, int layer) @local {
+fn CachedLayer* cached_layer_at(
+    TileCache* cache,
+    int x,
+    int z,
+    int layer,
+) @local {
     for (CachedLayer* tile = cache.lookup[cache_hash(x, z, cache.lookup_mask)]; tile; tile = tile.next) {
         LayerHeader* header = tile.header;
         if (header.tile_x == x && header.tile_z == z && header.tile_layer == layer) return tile;

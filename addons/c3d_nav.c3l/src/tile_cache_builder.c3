@@ -740,13 +740,23 @@ fn bool clamp_layer_range(TileCacheLayer* layer, LayerCellRange* range) @local {
 }
 
 // Empty and eroded cells keep NULL_AREA, so a volume marking a walkable area never revives them.
-fn void mark_layer_cell(TileCacheLayer* layer, LayerCellRange* range, usz cell, char area) @local {
+fn void mark_layer_cell(
+    TileCacheLayer* layer,
+    LayerCellRange* range,
+    usz cell,
+    char area,
+) @local {
     int floor = layer.heights[cell];
     if (floor < range.min_y || floor > range.max_y || layer.areas[cell] == NULL_AREA) return;
     layer.areas[cell] = area;
 }
 
-fn bool layer_cells_connected(TileCacheLayer* layer, usz first, usz second, int walkable_climb) @local {
+fn bool layer_cells_connected(
+    TileCacheLayer* layer,
+    usz first,
+    usz second,
+    int walkable_climb,
+) @local {
     if (layer.areas[first] != layer.areas[second]) return false;
     return math::abs((int)layer.heights[first] - (int)layer.heights[second]) <= walkable_climb;
 }
@@ -771,7 +781,12 @@ fn bool can_merge_regions(char old_id, char new_id, MonotoneRegion[] records) @l
 }
 
 // Region across the edge in the direction; PORTAL_BASE + direction for a portal, NO_LAYER_CELL for a wall.
-fn char layer_neighbour_region(TileCacheLayer* layer, int x, int z, int direction) @local {
+fn char layer_neighbour_region(
+    TileCacheLayer* layer,
+    int x,
+    int z,
+    int direction,
+) @local {
     int width = layer.header.width;
     char connections = layer.connections[(usz)(x + z * width)];
     char mask = (char)(1 << direction);
@@ -780,7 +795,12 @@ fn char layer_neighbour_region(TileCacheLayer* layer, int x, int z, int directio
 }
 
 // False when the outline outgrows the trace buffer.
-fn bool walk_layer_contour(TileCacheLayer* layer, int x, int z, TraceContour* trace) @local {
+fn bool walk_layer_contour(
+    TileCacheLayer* layer,
+    int x,
+    int z,
+    TraceContour* trace,
+) @local {
     int width = layer.header.width;
     trace.vert_count = 0;
     char region = layer.regions[(usz)(x + z * width)];
@@ -1163,7 +1183,12 @@ fn int layer_vertex_hash(int x, int y, int z) @local {
     return (int)(hash & (LAYER_VERTEX_BUCKETS - 1));
 }
 
-fn ushort add_layer_vertex(LayerVertexWeld* weld, ushort x, ushort y, ushort z) @local {
+fn ushort add_layer_vertex(
+    LayerVertexWeld* weld,
+    ushort x,
+    ushort y,
+    ushort z,
+) @local {
     int bucket = layer_vertex_hash(x, 0, z);
     for (ushort index = weld.first[bucket]; index != MESH_NULL_INDEX; index = weld.next[index]) {
         ushort* existing = &weld.verts[index * 3];
@@ -1445,7 +1470,12 @@ fn void? remove_layer_vertex(LayerPolyMesh* mesh, ushort removed, int max_triang
     }
 }
 
-fn bool overlap_range_exclusive(ushort first_min, ushort first_max, ushort second_min, ushort second_max) @local {
+fn bool overlap_range_exclusive(
+    ushort first_min,
+    ushort first_max,
+    ushort second_min,
+    ushort second_max,
+) @local {
     return !(first_min >= second_max || first_max <= second_min);
 }
 

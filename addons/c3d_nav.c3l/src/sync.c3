@@ -285,7 +285,12 @@ fn void mark_volume_tiles(NavBuilder* builder, Aabb bounds) @local {
 }
 
 // A full request queue or no free obstacle slot leaves the obstacle changed, so the next sync retries it.
-fn void sync_obstacle(NavBuilder* builder, Scene* scene, Node* node, NavObstacle* obstacle) @local {
+fn void sync_obstacle(
+    NavBuilder* builder,
+    Scene* scene,
+    Node* node,
+    NavObstacle* obstacle,
+) @local {
     if (!scene.has(node, NavObstacleRuntime)) {
         scene.add(node, (NavObstacleRuntime){});
         obstacle.changed = true;

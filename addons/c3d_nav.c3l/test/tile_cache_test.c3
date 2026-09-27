@@ -154,7 +154,12 @@ fn bool same_snapshot(TileSnapshot* first, TileSnapshot* second) @private {
     return same_bytes(((char*)first.polys.ptr)[:first.polys.len * Poly::size], ((char*)second.polys.ptr)[:second.polys.len * Poly::size]);
 }
 
-fn bool polygon_covers(NavMesh* mesh, int tile_x, int tile_z, Vec3 point) @private {
+fn bool polygon_covers(
+    NavMesh* mesh,
+    int tile_x,
+    int tile_z,
+    Vec3 point,
+) @private {
     MeshTile* tile = mesh.tile_at(tile_x, tile_z, 0);
     foreach (&poly : tile.polys) {
         Vec3[nav::MAX_VERTS_PER_POLY] verts = nav::polygon_vertices(tile, poly);
