@@ -29,6 +29,10 @@
     "crowd": {
       "type": "executable",
       "sources": [ "examples/crowd.c3" ]
+    },
+    "grid": {
+      "type": "executable",
+      "sources": [ "examples/grid.c3" ]
     }
   }
 }
