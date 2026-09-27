@@ -1,14 +1,66 @@
 module c3d_nav_test;
 
+import std::core::mem::allocator;
 import std::math;
 import c3d::maths;
 import c3d::nav;
 
 const uint MAX_COLUMN_SPANS @private = 16;
+const usz  COMPACT_FIXTURE_BYTES @private = 64 * 1024;
+const uint COMPACT_FIXTURE_LAYERS @private = 16;
+const uint FIXTURE_WALKABLE_HEIGHT @private = 3;
+const uint FIXTURE_WALKABLE_CLIMB @private = 1;
+
+const String[] RECTANGLE_FLOOR @private = {
+    "############",
+    "############",
+    "############",
+    "############",
+    "############",
+    "############",
+    "############",
+    "############",
+};
+
+const String[] L_FLOOR @private = {
+    "##########",
+    "##########",
+    "##########",
+    "##########",
+    "####......",
+    "####......",
+    "####......",
+    "####......",
+    "####......",
+    "####......",
+};
+
+const String[] SQUARE_FLOOR @private = {
+    "############",
+    "############",
+    "############",
+    "############",
+    "############",
+    "############",
+    "############",
+    "############",
+    "############",
+    "############",
+    "############",
+    "############",
+};
 
 struct ColumnSpans @private {
     SpanExtent[MAX_COLUMN_SPANS] extents;
     usz                          count;
+}
+
+// The arena backs the compact field and serves as scratch and output for the builds under test.
+struct CompactFixture @private {
+    Heightfield                 field;
+    char[COMPACT_FIXTURE_BYTES] buffer;
+    ArenaAllocator              arena;
+    CompactHeightfield          compact;
 }
 
 fn Heightfield heightfield(
@@ -60,4 +112,49 @@ fn bool only_cells_hold(Heightfield* heightfield, uint[<2>][] cells, SpanExtent 
         }
     }
     return true;
+}
+
+// '#' is a walkable floor cell, a digit a floor cell of that area, '.' empty; one string per row of z.
+fn void compact_from(CompactFixture* fixture, String[] mask) @private {
+    fixture.field = heightfield(
+        width:       (uint)mask[0].len,
+        height:      (uint)mask.len,
+        layers:      COMPACT_FIXTURE_LAYERS,
+        cell_size:   1,
+        cell_height: 1,
+    );
+    fill_from_mask(&fixture.field, mask);
+    compact_fixture_field(fixture);
+}
+
+fn void fill_from_mask(Heightfield* field, String[] mask) @private {
+    foreach (z, row : mask) {
+        foreach (x, cell : row) {
+            if (cell == '.') continue;
+            field.add_span(
+                x:               (uint)x,
+                z:               (uint)z,
+                min:             0,
+                max:             1,
+                area:            cell == '#' ? nav::WALKABLE_AREA : cell - '0',
+                merge_threshold: 0,
+            )!!;
+        }
+    }
+}
+
+fn void compact_fixture_field(CompactFixture* fixture) @private {
+    fixture.arena.init(fixture.buffer[..]);
+    fixture.compact = nav::build_compact_heightfield(
+        allocator:       &fixture.arena,
+        heightfield:     &fixture.field,
+        walkable_height: FIXTURE_WALKABLE_HEIGHT,
+        walkable_climb:  FIXTURE_WALKABLE_CLIMB,
+    )!!;
+}
+
+fn void destroy_compact_fixture(CompactFixture* fixture) @private => nav::destroy_heightfield(&fixture.field);
+
+fn CompactSpan* first_span(CompactHeightfield* compact, uint x, uint z) @private {
+    return &compact.spans[compact.cells[x + z * compact.width].index];
 }

@@ -15,12 +15,15 @@ Ported so far, from Recast:
 - heightfield rasterization of triangles and walkable-slope marking (`Recast.cpp`,
   `RecastRasterization.cpp`);
 - the low-hanging obstacle, ledge and low-clearance span filters (`RecastFilter.cpp`);
-- the compact heightfield with neighbour links (`rcBuildCompactHeightfield`).
+- the compact heightfield with neighbour links (`rcBuildCompactHeightfield`);
 - area erosion, the median filter, and box, convex polygon and cylinder area marking, with polygon
-  offsetting (`RecastArea.cpp`).
+  offsetting (`RecastArea.cpp`);
+- monotone region partitioning with small-region removal and merging (`rcBuildRegionsMonotone`);
+- contour tracing, simplification and hole merging (`RecastContour.cpp`).
 
 Not ported: `rcContext` logging and timers (failures are faults), the unsigned-short and flat-list
-rasterization overloads, `rcCalcBounds` (merge `Aabb` values instead).
+rasterization overloads, `rcCalcBounds` (merge `Aabb` values instead), watershed and layer regions
+(`rcBuildRegions`, `rcBuildLayerRegions`) and the distance field (`rcBuildDistanceField`).
 
 ## Tests
 
