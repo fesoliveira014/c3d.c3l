@@ -248,14 +248,19 @@ terrain height under it as the body moves.
 relative to `reference`, a local rotation, usually the rest pose; `hinge_limit`
 and `cone_limit` build them.
 
-- `HINGE` keeps only the twist about `axis`, clamped to `[min_angle, max_angle]`.
-  A knee or elbow has one degree of freedom, so a pole off the hinge plane can
-  leave the end short of the target.
-  A hinge referenced to the rest pose also drops any twist the clip gives the
-  joint. Rigs whose clips twist a joint about its bone axis (Rigify `DEF-shin`)
-  set `reference` to the joint's incoming local rotation before each solve, so
-  the hinge bounds the correction from the clip pose; the `ik` example does this
-  for both knees.
+- `HINGE` keeps the rotation about `axis`, clamped to `[min_angle, max_angle]`,
+  and drops the rest. A knee or elbow has one degree of freedom, so a pole off
+  the hinge plane can leave the end short of the target.
+  Rigs whose clips twist a joint about its bone axis (Rigify `DEF-shin`) pass
+  that axis as `twist_axis`, unit and perpendicular to `axis`. The hinge then
+  splits the rotation into a swing and a twist about the bone, clamps the
+  swing's angle about `axis` and keeps the twist unbounded, so the limit stays
+  referenced to the rest pose and bounds the real joint angle. The kept twist is
+  the twist of the solved rotation; it equals the clip's twist when the solve's
+  correction turns about an axis perpendicular to the bone, as a planar knee
+  does. The `ik` example references both knees to the rest pose with the twist
+  on the shin's local Y; flexion on that rig is positive about X, so the range
+  is `[0, KNEE_FLEX_LIMIT]`.
 - `CONE` clamps the angle between the rotated `axis` and `axis` to `max_angle`
   and keeps the twist.
 
