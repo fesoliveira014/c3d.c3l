@@ -212,6 +212,25 @@ fn float record_mixed_surfaces(
     return 0.5f;
 }
 
+fn bool ray_hits_below(Fixture* fixture, Vec3 origin) @private {
+    if (catch excuse = fixture.physics.raycast(origin, { 0, -1, 0 }, 10)) {
+        assert(excuse == b3::NO_HIT);
+        return false;
+    }
+    return true;
+}
+
+fn usz overlap_count(Fixture* fixture, Vec3 center) @private {
+    Node*[] nodes = fixture.physics.overlap_sphere(mem, center, 1);
+    defer free(nodes.ptr);
+    return nodes.len;
+}
+
+fn void run_updates(Fixture* fixture, uint count) @private {
+    for (uint update = 0; update < count; update++) fixture.physics.update(physics::DEFAULT_FIXED_DT);
+    fixture.scene.update_world();
+}
+
 fn void test_accumulator_steps_and_clamps() @test {
     Fixture fixture;
     setup(&fixture);
@@ -1167,21 +1186,6 @@ fn void test_add_body_replaces_body_left_by_removed_component() @test {
     assert(!first.is_valid());
     assert(fixture.scene.count(RigidBody) == 1);
     assert(close_vec(fixture.scene.get(box, RigidBody).colliders[0].half_extents, { 1, 1, 1 }));
-}
-
-fn bool ray_hits_below(Fixture* fixture, Vec3 origin) @private {
-    return @ok(fixture.physics.raycast(origin, { 0, -1, 0 }, 10));
-}
-
-fn usz overlap_count(Fixture* fixture, Vec3 center) @private {
-    Node*[] nodes = fixture.physics.overlap_sphere(mem, center, 1);
-    defer free(nodes.ptr);
-    return nodes.len;
-}
-
-fn void run_updates(Fixture* fixture, uint count) @private {
-    for (uint update = 0; update < count; update++) fixture.physics.update(physics::DEFAULT_FIXED_DT);
-    fixture.scene.update_world();
 }
 
 fn void test_disabled_body_does_not_step() @test {
