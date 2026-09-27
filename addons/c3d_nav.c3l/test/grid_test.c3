@@ -39,7 +39,12 @@ struct GridFixture @private {
     StraightPoint[GRID_MAP_POINT_CAPACITY] points;
 }
 
-fn usz grid_map_floors(void* context, int cell_x, int cell_z, GridFloor[] out_floors) @private {
+fn usz grid_map_floors(
+    void* context,
+    int cell_x,
+    int cell_z,
+    GridFloor[] out_floors,
+) @private {
     GridMap* map = context;
     if (cell_x < 0 || cell_z < 0 || cell_x >= GRID_MAP_SIDE || cell_z >= GRID_MAP_SIDE) return 0;
     int cell = cell_x + cell_z * GRID_MAP_SIDE;

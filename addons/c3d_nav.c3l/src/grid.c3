@@ -92,7 +92,9 @@ fn char[]? GridTileBuilder.build(&self, int tile_x, int tile_z) {
     if (contours.contours.len == 0) return {};
     // Regions meet on the tile border at steps, so those corners stay instead of being removed as redundant.
     foreach (&contour : contours.contours) {
-        for (usz flag_word = 3; flag_word < contour.verts.len; flag_word += 4) contour.verts[flag_word] &= ~BORDER_VERTEX;
+        for (usz flag_word = 3; flag_word < contour.verts.len; flag_word += 4) {
+            contour.verts[flag_word] &= ~BORDER_VERTEX;
+        }
     }
     PolyMesh mesh = build_poly_mesh(
         allocator:      arena,

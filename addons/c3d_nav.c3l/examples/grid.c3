@@ -213,7 +213,12 @@ fn float surface_height(char cell) @local {
     }
 }
 
-fn usz level_floors(void* context, int cell_x, int cell_z, GridFloor[] out_floors) @local {
+fn usz level_floors(
+    void* context,
+    int cell_x,
+    int cell_z,
+    GridFloor[] out_floors,
+) @local {
     if (cell_x < 0 || cell_z < 0 || cell_x >= MAP_SIDE || cell_z >= MAP_SIDE) return 0;
     GridLevel* level = context;
     char cell = level.cells[cell_x + cell_z * MAP_SIDE];
