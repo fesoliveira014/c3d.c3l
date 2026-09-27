@@ -39,6 +39,8 @@ const float FALLEN_SECONDS @local = 3;
 const float BLEND_OUT_SECONDS @local = 0.8f;
 const float CROSS_FADE_SECONDS @local = 0.3f;
 const int   RAGDOLL_GROUP @local = -1; // bones never collide with each other; joints hold them apart
+const float DRIVE_HERTZ @local = 6; // full drive keeps a fallen body in the walk pose; stiffer jitters light forearms
+const float DRIVE_DAMPING @local = 1; // limbs settle on the pose without swinging past it
 const float FREE_LOOK_RADIANS_PER_PIXEL @local = 0.003f;
 const float FREE_PITCH_LIMIT @local = 1.5f; // avoids the poles, where the up vector degenerates
 const float FREE_SPEED @local = 4;
@@ -224,6 +226,7 @@ fn Character? build_character(AssetStore* assets, Scene* scene) @local {
         bone.twist = { .enabled = true, .lower = -spec.twist, .upper = spec.twist };
         bone.hinge_axis = { 1, 0, 0 };
         bone.angle = { .enabled = true, .lower = spec.lower, .upper = spec.upper };
+        bone.drive = { .enabled = true, .hertz = DRIVE_HERTZ, .damping_ratio = DRIVE_DAMPING };
         bones[index] = bone;
     }
     RagdollDesc desc = physics::default_ragdoll_desc();
@@ -324,6 +327,7 @@ fn void? draw_panel(
         imgui::checkbox("Joints", &controls.draw.joints);
         imgui::separator();
         Ragdoll* ragdoll = scene.get(character.skin, Ragdoll);
+        imgui::slider_float("Drive", &ragdoll.drive_strength, 0, 1);
         imgui::text("Phase: %s   weight: %.2f", PHASE_NAMES[character.phase.ordinal], ragdoll.weight);
     }
     imgui::end();
