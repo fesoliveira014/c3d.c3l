@@ -57,19 +57,22 @@ struct RagdollDesc {
 
 <*
  Ragdoll on a skin node; bone nodes are its children.
+ Bones may mix modes: box3d treats a kinematic parent of a dynamic bone as infinite mass.
 *>
 struct Ragdoll {
     Node*[]            bone_nodes;
     uint[]             bone_joints;
     maths::Transform[] joint_in_bone;      // joint frame in bone body space, from the bind pose
+    float[]            bone_weights;       // per bone, times weight; 1 at build
+    RagdollMode[]      bone_modes;         // per bone; ANIMATED at build
     int[]              joint_bone;         // per skeleton joint: bone index, -1 without a bone
+    uint[]             joint_owner;        // per skeleton joint: the bone whose weight and mode it takes
     int[]              parents;            // copied, so the ragdoll outlives edits to the skeleton asset
     uint[]             joint_order;        // skeleton joints, parents first
-    maths::Transform[] frozen;             // joint locals captured by recover_ragdoll
-    Mat4[]             joint_worlds;       // scratch for update_ragdolls and recover_ragdoll
+    maths::Transform[] frozen;             // joint locals captured by recovery
+    Mat4[]             joint_worlds;       // scratch for update_ragdolls and recovery
     Quat               hips_bind_rotation; // root bone rotation in skin-node space
-    float              weight;             // 0 animated pose, 1 ragdoll pose
-    RagdollMode        mode;
+    float              weight;             // 0 animated pose, 1 ragdoll pose; every bone's fade
 }
 
 <*
@@ -175,6 +178,9 @@ fn void? Scene.build_ragdoll(
     };
 
     order_joints(&ragdoll);
+    assign_joint_owners(&ragdoll);
+    ragdoll.bone_weights[..] = 1;
+    ragdoll.bone_modes[..] = ANIMATED;
     foreach (joint, node : self.get(skin_node, SkinBinding).joints) ragdoll.frozen[joint] = node.local;
     self.add(skin_node, ragdoll);
 }
@@ -191,22 +197,29 @@ fn void Scene.remove_ragdoll(&self, Node* skin_node) {
 }
 
 <*
- Switch bone bodies between kinematic and dynamic in place; velocities are kept.
+ Switch every bone body between kinematic and dynamic in place; velocities are kept.
  @param [&in] skin_node : "Carries the ragdoll."
  @require self.scene.has(skin_node, Ragdoll)
 *>
 fn void PhysicsWorld.set_ragdoll_mode(&self, Node* skin_node, RagdollMode mode) {
-    Scene* scene = self.scene;
-    Ragdoll* ragdoll = scene.get(skin_node, Ragdoll);
-    BodyKind kind = mode == SIMULATED ? DYNAMIC : KINEMATIC;
-    foreach (node : ragdoll.bone_nodes) {
-        scene.get(node, PhysicsBody).body.kind = kind;
-        if (!scene.has(node, RigidBody)) continue;
-        RigidBody* body = scene.get(node, RigidBody);
-        body.kind = kind;
-        body.body.set_type(body_type(kind));
-    }
-    ragdoll.mode = mode;
+    Ragdoll* ragdoll = self.scene.get(skin_node, Ragdoll);
+    for (usz bone = 0; bone < ragdoll.bone_nodes.len; bone++) switch_bone(self.scene, ragdoll, bone, mode);
+}
+
+<*
+ Switch one bone body between kinematic and dynamic in place; velocity is kept.
+ @param [&in] skin_node : "Carries the ragdoll."
+ @param bone : "Index into the desc's bones."
+ @require self.scene.has(skin_node, Ragdoll)
+ @require bone < self.scene.get(skin_node, Ragdoll).bone_nodes.len
+*>
+fn void PhysicsWorld.set_bone_mode(
+    &self,
+    Node* skin_node,
+    usz bone,
+    RagdollMode mode,
+) {
+    switch_bone(self.scene, self.scene.get(skin_node, Ragdoll), bone, mode);
 }
 
 <*
@@ -216,17 +229,14 @@ fn void PhysicsWorld.set_ragdoll_mode(&self, Node* skin_node, RagdollMode mode) 
  @param [&inout] character : "Ancestor of the skin node and its joint nodes; turned to get up."
  @return "Face down turns the character toward the head, face up toward the feet."
  @require self.scene.has(skin_node, Ragdoll)
+ @require self.scene.get(skin_node, Ragdoll).bone_modes[0] == SIMULATED
 *>
 fn RagdollFacing PhysicsWorld.recover_ragdoll(&self, Node* skin_node, Node* character) {
     Scene* scene = self.scene;
     Ragdoll* ragdoll = scene.get(skin_node, Ragdoll);
     Node*[] joints = scene.get(skin_node, SkinBinding).joints;
     float alpha = self.desc.tuning.interpolate ? self.alpha : 1;
-
-    foreach (joint : ragdoll.joint_order) {
-        Mat4 animated = parent_world_of(ragdoll, joints, joint).mul(joints[joint].local.to_mat4());
-        ragdoll.joint_worlds[joint] = joint_target_world(scene, ragdoll, joint, alpha) ?? animated;
-    }
+    sample_joint_worlds(scene, ragdoll, joints, alpha);
 
     RagdollFacing facing = FACE_UP;
     Node* hips_node = ragdoll.bone_nodes[0];
@@ -253,16 +263,29 @@ fn RagdollFacing PhysicsWorld.recover_ragdoll(&self, Node* skin_node, Node* char
     }
     scene.update_world();
 
-    foreach (joint : ragdoll.joint_order) {
-        ragdoll.frozen[joint] = relative(parent_world_of(ragdoll, joints, joint), ragdoll.joint_worlds[joint]);
-    }
-    self.set_ragdoll_mode(skin_node, ANIMATED);
+    freeze_joints(ragdoll, joints);
+    return_simulated_bones(scene, ragdoll);
     return facing;
 }
 
 <*
+ Freeze the simulated bones' pose and return them to animated; the character stays.
+ recover_ragdoll is the whole-body recovery.
+ @param [&in] skin_node : "Carries the ragdoll."
+ @require self.scene.has(skin_node, Ragdoll)
+*>
+fn void PhysicsWorld.recover_bones(&self, Node* skin_node) {
+    Scene* scene = self.scene;
+    Ragdoll* ragdoll = scene.get(skin_node, Ragdoll);
+    Node*[] joints = scene.get(skin_node, SkinBinding).joints;
+    sample_joint_worlds(scene, ragdoll, joints, self.desc.tuning.interpolate ? self.alpha : 1);
+    freeze_joints(ragdoll, joints);
+    return_simulated_bones(scene, ragdoll);
+}
+
+<*
  Blend ragdoll poses into joint nodes at each weight; call after update.
- While blending out, colliders follow the animated pose, not the blended one.
+ While blending out, colliders follow the animated pose; animated bones at nonzero weight blend toward frozen.
 *>
 fn void PhysicsWorld.update_ragdolls(&self) {
     Scene* scene = self.scene;
@@ -289,17 +312,60 @@ fn RagdollDesc default_ragdoll_desc() {
 fn void drive_ragdolls(PhysicsWorld* world) @private {
     Scene* scene = world.scene;
     scene.@each(Ragdoll; entity, ragdoll) {
-        if (ragdoll.mode == ANIMATED) {
-            Node* skin_node = scene.node(entity);
-            Node*[] joints = scene.get(skin_node, SkinBinding).joints;
-            Mat4 inverse_skin = maths::inverse_affine(skin_node.world);
-            foreach (index, node : ragdoll.bone_nodes) {
-                Mat4 bone_in_joint = maths::inverse_affine(ragdoll.joint_in_bone[index].to_mat4());
-                node.world = joints[ragdoll.bone_joints[index]].world.mul(bone_in_joint);
-                node.local = maths::transform_from_mat4(inverse_skin.mul(node.world));
-            }
+        Node* skin_node = scene.node(entity);
+        Node*[] joints = scene.get(skin_node, SkinBinding).joints;
+        Mat4 inverse_skin = maths::inverse_affine(skin_node.world);
+        foreach (index, node : ragdoll.bone_nodes) {
+            if (ragdoll.bone_modes[index] != ANIMATED) continue;
+            Mat4 bone_in_joint = maths::inverse_affine(ragdoll.joint_in_bone[index].to_mat4());
+            node.world = joints[ragdoll.bone_joints[index]].world.mul(bone_in_joint);
+            node.local = maths::transform_from_mat4(inverse_skin.mul(node.world));
         }
     };
+}
+
+fn void switch_bone(
+    Scene* scene,
+    Ragdoll* ragdoll,
+    usz bone,
+    RagdollMode mode,
+) @local {
+    BodyKind kind = mode == SIMULATED ? DYNAMIC : KINEMATIC;
+    Node* node = ragdoll.bone_nodes[bone];
+    scene.get(node, PhysicsBody).body.kind = kind;
+    ragdoll.bone_modes[bone] = mode;
+    if (!scene.has(node, RigidBody)) return;
+    RigidBody* body = scene.get(node, RigidBody);
+    body.kind = kind;
+    body.body.set_type(body_type(kind));
+}
+
+fn void return_simulated_bones(Scene* scene, Ragdoll* ragdoll) @local {
+    foreach (usz bone, mode : ragdoll.bone_modes) {
+        if (mode == SIMULATED) switch_bone(scene, ragdoll, bone, ANIMATED);
+    }
+}
+
+// Simulated bones sample their bodies, every other joint the animated pose, before any node moves.
+fn void sample_joint_worlds(
+    Scene* scene,
+    Ragdoll* ragdoll,
+    Node*[] joints,
+    float alpha,
+) @local {
+    foreach (joint : ragdoll.joint_order) {
+        Mat4 animated = parent_world_of(ragdoll, joints, joint).mul(joints[joint].local.to_mat4());
+        ragdoll.joint_worlds[joint] = animated;
+        if (ragdoll.bone_modes[ragdoll.joint_owner[joint]] == SIMULATED) {
+            ragdoll.joint_worlds[joint] = joint_target_world(scene, ragdoll, joint, alpha) ?? animated;
+        }
+    }
+}
+
+fn void freeze_joints(Ragdoll* ragdoll, Node*[] joints) @local {
+    foreach (joint : ragdoll.joint_order) {
+        ragdoll.frozen[joint] = relative(parent_world_of(ragdoll, joints, joint), ragdoll.joint_worlds[joint]);
+    }
 }
 
 fn void blend_ragdoll(
@@ -309,12 +375,14 @@ fn void blend_ragdoll(
     float alpha,
 ) @local {
     Node*[] joints = scene.get(skin_node, SkinBinding).joints;
-    float weight = math::min(ragdoll.weight, 1.0f);
+    float ragdoll_weight = math::min(ragdoll.weight, 1.0f);
     foreach (joint : ragdoll.joint_order) {
         Node* node = joints[joint];
         Mat4 parent_world = parent_world_of(ragdoll, joints, joint);
+        uint owner = ragdoll.joint_owner[joint];
+        float weight = ragdoll_weight * ragdoll.bone_weights[owner];
         maths::Transform target = node.local;
-        switch (ragdoll.mode) {
+        switch (ragdoll.bone_modes[owner]) {
             case ANIMATED:
                 target = ragdoll.frozen[joint];
             case SIMULATED:
@@ -425,6 +493,19 @@ fn void order_joints(Ragdoll* ragdoll) @local {
     };
 }
 
+// Parents come first in joint_order, so a joint without a bone inherits its parent's owner.
+fn void assign_joint_owners(Ragdoll* ragdoll) @local {
+    foreach (joint : ragdoll.joint_order) {
+        int bone = ragdoll.joint_bone[joint];
+        int parent = ragdoll.parents[joint];
+        if (bone >= 0) {
+            ragdoll.joint_owner[joint] = (uint)bone;
+        } else {
+            ragdoll.joint_owner[joint] = parent >= 0 ? ragdoll.joint_owner[parent] : 0;
+        }
+    }
+}
+
 fn Ragdoll carve_ragdoll_block(Allocator allocator, usz bone_count, usz joint_count) @local {
     BlockCursor measure;
     carve_ragdoll(&measure, bone_count, joint_count);
@@ -438,7 +519,10 @@ fn Ragdoll carve_ragdoll(BlockCursor* cursor, usz bone_count, usz joint_count) @
         .bone_nodes    = carve(cursor, Node*, bone_count),
         .bone_joints   = carve(cursor, uint, bone_count),
         .joint_in_bone = carve(cursor, maths::Transform, bone_count),
+        .bone_weights  = carve(cursor, float, bone_count),
+        .bone_modes    = carve(cursor, RagdollMode, bone_count),
         .joint_bone    = carve(cursor, int, joint_count),
+        .joint_owner   = carve(cursor, uint, joint_count),
         .parents       = carve(cursor, int, joint_count),
         .joint_order   = carve(cursor, uint, joint_count),
         .frozen        = carve(cursor, maths::Transform, joint_count),
