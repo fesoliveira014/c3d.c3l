@@ -181,6 +181,7 @@ struct BodyDesc {
     float       gravity_scale;
     bool        allow_sleep;
     bool        bullet;
+    bool        disabled;
     MotionLocks locks;
 }
 
@@ -379,6 +380,28 @@ fn b3::BodyId? PhysicsWorld.body(&self, Node* node) {
     if (!self.scene.has(node, RigidBody)) return NO_BODY~;
     return self.scene.get(node, RigidBody).body;
 }
+
+<*
+ Enable or disable the node's body; rebuilds keep the choice.
+ Velocities set while disabled are dropped; enable first.
+ @require self.scene.has(node, PhysicsBody)
+*>
+fn void PhysicsWorld.set_enabled(&self, Node* node, bool enabled) {
+    self.scene.get(node, PhysicsBody).body.disabled = !enabled;
+    if (!self.scene.has(node, RigidBody)) return;
+    b3::BodyId body = self.scene.get(node, RigidBody).body;
+    if (enabled) {
+        b3::body_enable(body);
+    } else {
+        b3::body_disable(body);
+    }
+}
+
+<*
+ Whether the node's body simulates, collides and answers queries.
+ @require self.scene.has(node, PhysicsBody)
+*>
+fn bool PhysicsWorld.is_enabled(&self, Node* node) => !self.scene.get(node, PhysicsBody).body.disabled;
 
 <*
  Apply new world settings to the live world.

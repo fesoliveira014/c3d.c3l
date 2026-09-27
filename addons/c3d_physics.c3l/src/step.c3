@@ -244,6 +244,7 @@ fn void? build_body(PhysicsWorld* world, Node* node, PhysicsBody* physics_body) 
     def.name = (ZString)desc.name.ptr;
     def.enable_sleep = desc.allow_sleep;
     def.is_bullet = desc.bullet;
+    def.is_enabled = !desc.disabled;
     def.motion_locks = motion_locks(desc.locks);
     def.user_data = pack_entity(node.id);
     b3::BodyId body_id = b3::create_body(world.world, &def)!;

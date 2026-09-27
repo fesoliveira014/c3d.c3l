@@ -212,6 +212,25 @@ fn float record_mixed_surfaces(
     return 0.5f;
 }
 
+fn bool ray_hits_below(Fixture* fixture, Vec3 origin) @private {
+    if (catch excuse = fixture.physics.raycast(origin, { 0, -1, 0 }, 10)) {
+        assert(excuse == b3::NO_HIT);
+        return false;
+    }
+    return true;
+}
+
+fn usz overlap_count(Fixture* fixture, Vec3 center) @private {
+    Node*[] nodes = fixture.physics.overlap_sphere(mem, center, 1);
+    defer free(nodes.ptr);
+    return nodes.len;
+}
+
+fn void run_updates(Fixture* fixture, uint count) @private {
+    for (uint update = 0; update < count; update++) fixture.physics.update(physics::DEFAULT_FIXED_DT);
+    fixture.scene.update_world();
+}
+
 fn void test_accumulator_steps_and_clamps() @test {
     Fixture fixture;
     setup(&fixture);
@@ -1167,4 +1186,104 @@ fn void test_add_body_replaces_body_left_by_removed_component() @test {
     assert(!first.is_valid());
     assert(fixture.scene.count(RigidBody) == 1);
     assert(close_vec(fixture.scene.get(box, RigidBody).colliders[0].half_extents, { 1, 1, 1 }));
+}
+
+fn void test_disabled_body_does_not_step() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Node* box = add_box(&fixture, { 0, 5, 0 });
+    fixture.physics.set_enabled(box, false);
+    run_updates(&fixture, 30);
+    assert(close_vec(box.world_position(), { 0, 5, 0 }));
+
+    fixture.physics.set_enabled(box, true);
+    run_updates(&fixture, 10);
+    assert(box.world_position().y < 5 - 0.01f);
+}
+
+fn void test_disabled_body_excluded_from_queries() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Node* box = add_box(&fixture, { 0, 0, 0 }, STATIC, false);
+    fixture.physics.set_enabled(box, false);
+    assert(!ray_hits_below(&fixture, { 0, 5, 0 }));
+    assert(overlap_count(&fixture, { 0, 0, 0 }) == 0);
+
+    fixture.physics.set_enabled(box, true);
+    assert(ray_hits_below(&fixture, { 0, 5, 0 }));
+    assert(overlap_count(&fixture, { 0, 0, 0 }) == 1);
+}
+
+fn void test_set_enabled_is_idempotent() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Node* box = add_box(&fixture, { 0, 0, 0 }, STATIC, false);
+    fixture.physics.set_enabled(box, false);
+    assert(!fixture.physics.is_enabled(box));
+    fixture.physics.set_enabled(box, false);
+    assert(!fixture.physics.is_enabled(box));
+    fixture.physics.set_enabled(box, true);
+    assert(fixture.physics.is_enabled(box));
+    fixture.physics.set_enabled(box, true);
+    assert(fixture.physics.is_enabled(box));
+    assert(ray_hits_below(&fixture, { 0, 5, 0 }));
+}
+
+fn void test_disabled_body_teleport_and_relaunch() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Node* box = add_box(&fixture, { 0, 5, 0 });
+    fixture.physics.set_enabled(box, false);
+    run_updates(&fixture, 1);
+    fixture.physics.teleport(box, { 10, 5, 0 }, quaternion::IDENTITY);
+    fixture.physics.set_enabled(box, true);
+    fixture.physics.set_velocity(box, { 1, 0, 0 }, { 0, 0, 0 });
+    run_updates(&fixture, 1);
+
+    Vec3 position = fixture.scene.get(box, RigidBody).current.position;
+    assert(position.x > 10);
+    assert(close_vec(position, { 10, 5, 0 }, 0.05f));
+}
+
+fn void test_rebuild_keeps_disabled() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Node* box = add_box(&fixture, { 0, 0, 0 }, STATIC, false);
+    b3::BodyId first = fixture.physics.body(box)!!;
+    fixture.physics.set_enabled(box, false);
+    fixture.scene.get(box, PhysicsBody).mark_changed();
+    fixture.physics.update(0);
+
+    assert(!first.is_valid());
+    assert(fixture.physics.body(box)!!.is_valid());
+    assert(!fixture.physics.is_enabled(box));
+    assert(!ray_hits_below(&fixture, { 0, 5, 0 }));
+}
+
+fn void test_authored_disabled_builds_disabled() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Node* box = fixture.scene.add_node(name: "box")!!;
+    fixture.scene.update_world();
+    BodyDesc body = physics::default_body_desc(DYNAMIC);
+    body.disabled = true;
+    ColliderDesc collider = box_collider({ 0.5f, 0.5f, 0.5f });
+    fixture.physics.add_body(box, body, (&collider)[:1])!!;
+
+    assert(!fixture.physics.is_enabled(box));
+    assert(!ray_hits_below(&fixture, { 0, 5, 0 }));
+    run_updates(&fixture, 30);
+    assert(close_vec(box.world_position(), { 0, 0, 0 }));
 }
