@@ -15,6 +15,7 @@ import b3;
 alias Quat @private = Quaternionf;
 
 const float TOLERANCE @private = 0.0001f;
+const usz   RGBA_CHANNELS @private = 4;
 const uint  SETTLE_UPDATES @private = 120;
 const SurfaceMaterialId ROCK_SURFACE @private = (SurfaceMaterialId)7;
 const SurfaceMaterialId ICE_SURFACE @private = (SurfaceMaterialId)9;
@@ -239,13 +240,16 @@ fn TextureId add_height_texture(
     uint height,
     float[] heights,
 ) @private {
-    usz texel_bytes = format == RGBA32_FLOAT ? 4 * float::size : format == RGBA16_FLOAT ? 8 : 4;
+    usz channel_bytes = char::size;
+    if (format == RGBA16_FLOAT) channel_bytes = float16::size;
+    if (format == RGBA32_FLOAT) channel_bytes = float::size;
+    usz texel_bytes = RGBA_CHANNELS * channel_bytes;
     TextureId texture;
     @pool() {
         char[] pixels = alloc::new_array(tmem, char, (sz)(texel_bytes * width * height));
         foreach (usz index, value : heights) {
             if (format == RGBA32_FLOAT) {
-                ((float*)pixels.ptr)[index * 4] = value;
+                ((float*)pixels.ptr)[index * RGBA_CHANNELS] = value;
             } else {
                 pixels[index * texel_bytes] = (char)math::round(value * 255);
             }

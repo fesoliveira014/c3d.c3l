@@ -164,6 +164,7 @@ fn SnapshotHandle? acquire_height_field(PhysicsWorld* world, ColliderDesc* desc)
 }
 
 // Texture sources share one slot per texture revision, scale and material indices, like asset meshes.
+// Called inside build_body's @pool: the samples live in tmem until box3d copies them.
 fn SnapshotHandle? acquire_height_map(PhysicsWorld* world, ColliderDesc* desc) @local {
     TextureId texture = desc.height_field.texture;
     SnapshotSource[1] sources = { current_texture_source(world, texture) };
