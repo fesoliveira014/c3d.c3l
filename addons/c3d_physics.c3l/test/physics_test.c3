@@ -1089,6 +1089,28 @@ fn void test_set_tuning_applies_and_stores() @test {
     assert(close(fixture.physics.desc.tuning.contact_hertz, 60));
 }
 
+fn void test_worker_count_reaches_world() @test {
+    PhysicsDesc desc = physics::default_physics_desc();
+    desc.worker_count = 2;
+    Fixture fixture;
+    setup(&fixture, desc);
+    defer teardown(&fixture);
+
+    assert(fixture.physics.worker_count() == 2);
+    add_ground(&fixture);
+    Node* box = add_box(&fixture, { 0, 5, 0 });
+    for (uint update = 0; update < 30; update++) fixture.physics.update(physics::DEFAULT_FIXED_DT);
+    assert(fixture.scene.get(box, RigidBody).current.position.y < 5 - 0.01f);
+}
+
+fn void test_default_world_is_serial() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    assert(fixture.physics.worker_count() == 1);
+}
+
 fn void test_friction_mix_receives_surface_ids() @test {
     PhysicsDesc desc = physics::default_physics_desc();
     desc.tuning.friction_mix = &record_mixed_surfaces;

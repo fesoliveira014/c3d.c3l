@@ -17,12 +17,12 @@ typedef SurfaceMaterialId = ulong;
 alias Quat @private = Quaternionf;
 
 <*
- Friction of two touching surfaces; pure, called inside the step.
+ Friction of two touching surfaces; pure, may run on box3d worker threads inside the step.
 *>
 alias FrictionMixFn = fn float(float friction_a, SurfaceMaterialId surface_a, float friction_b, SurfaceMaterialId surface_b);
 
 <*
- Restitution of two touching surfaces; pure, called inside the step.
+ Restitution of two touching surfaces; pure, may run on box3d worker threads inside the step.
 *>
 alias RestitutionMixFn = fn float(float restitution_a, SurfaceMaterialId surface_a, float restitution_b, SurfaceMaterialId surface_b);
 
@@ -40,6 +40,8 @@ const float DEFAULT_HIT_SPEED_THRESHOLD = 1;
 const uint  DEFAULT_EVENT_CAPACITY = 4096; // seven lists, 160 bytes per index across them: 640 KiB per world; the contact burst lever
 <* Collision snapshot slots per world. *>
 const uint  DEFAULT_SNAPSHOT_CAPACITY = 256; // one slot per distinct cooked key; the level variety lever
+<* Serial step; 0 means the same. *>
+const uint  DEFAULT_WORKER_COUNT = 1; // more workers split the step across box3d threads; the large-scene step-time lever
 <* Water density, kilograms per cubic meter. *>
 const float DEFAULT_DENSITY = 1000;
 <* Dry friction coefficient. *>
@@ -209,12 +211,14 @@ struct PhysicsTuning {
 <*
  World configuration: runtime tuning plus creation-only capacities.
  cache_wireframes builds collider wireframes with each collision snapshot; off, debug_draw skips cooked colliders.
+ worker_count is fixed at creation; above 1 steps on box3d threads, clamped at box3d's limit.
 *>
 struct PhysicsDesc {
     PhysicsTuning tuning;
     bool          cache_wireframes;
     uint          event_capacity;
     uint          snapshot_capacity;
+    uint          worker_count;
 }
 
 <*
@@ -404,6 +408,11 @@ fn void PhysicsWorld.set_enabled(&self, Node* node, bool enabled) {
 fn bool PhysicsWorld.is_enabled(&self, Node* node) => !self.scene.get(node, PhysicsBody).body.disabled;
 
 <*
+ Worker threads box3d steps on; 1 when serial.
+*>
+fn uint PhysicsWorld.worker_count(&self) => (uint)self.world.worker_count();
+
+<*
  Apply new world settings to the live world.
  @require tuning.fixed_dt > 0, tuning.sub_steps > 0
 *>
@@ -557,6 +566,7 @@ fn PhysicsDesc default_physics_desc() {
         .cache_wireframes  = true,
         .event_capacity    = DEFAULT_EVENT_CAPACITY,
         .snapshot_capacity = DEFAULT_SNAPSHOT_CAPACITY,
+        .worker_count      = DEFAULT_WORKER_COUNT,
     };
 }
 
@@ -632,6 +642,7 @@ fn PhysicsWorld? create_physics_world(
     def.enable_sleep = tuning.sleep;
     def.friction_callback = (b3::FrictionFn)tuning.friction_mix;
     def.restitution_callback = (b3::RestitutionFn)tuning.restitution_mix;
+    def.worker_count = desc.worker_count;
     b3::WorldId world = b3::create_world(&def)!;
     defer catch b3::destroy_world(world);
     scene.register(RigidBody)!;
