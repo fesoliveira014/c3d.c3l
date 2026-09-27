@@ -25,6 +25,10 @@
     "navmesh": {
       "type": "executable",
       "sources": [ "examples/navmesh.c3" ]
+    },
+    "crowd": {
+      "type": "executable",
+      "sources": [ "examples/crowd.c3" ]
     }
   }
 }
