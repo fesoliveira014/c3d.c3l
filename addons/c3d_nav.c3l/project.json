@@ -21,6 +21,10 @@
     "nav_test": {
       "type": "test",
       "sources": [ "test/**" ]
+    },
+    "navmesh": {
+      "type": "executable",
+      "sources": [ "examples/navmesh.c3" ]
     }
   }
 }
