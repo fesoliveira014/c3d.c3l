@@ -5,6 +5,13 @@ import c3d;
 import c3d::maths;
 import c3d::scene;
 
+<* What an agent is asked to do. *>
+enum AgentTargetKind : char {
+    NONE,
+    POSITION,
+    VELOCITY,
+}
+
 <* Geometry rasterized into the navmesh; walkable or obstacle, placed by the node's world matrix. *>
 struct NavSource {
     GeometryId geometry;    // the zero id names the node's Mesh geometry
@@ -49,6 +56,15 @@ struct NavObstacle {
     Aabb         box;            // BOX
     Vec3         half_extents;   // ORIENTED_BOX; turned by the node's yaw
     bool         changed;
+}
+
+<* Agent authored on a node; the crowd steers the node unless driven. *>
+struct NavAgent {
+    NavAgentParams  params;
+    AgentTargetKind target_kind;
+    Vec3            target;         // world position, or velocity
+    bool            driven;         // the node owns the position; the crowd steers through CrowdAgent.velocity
+    bool            changed;        // params or target changed since the last crowd_update
 }
 
 <* Runtime mirror of a NavSource: the world bounds its tiles were dirtied with. *>
@@ -107,6 +123,11 @@ fn void NavLink.mark_changed(&self) {
  Moving the node does nothing until this is called.
 *>
 fn void NavObstacle.mark_changed(&self) {
+    self.changed = true;
+}
+
+<* Push params and target to the crowd on the next crowd_update. *>
+fn void NavAgent.mark_changed(&self) {
     self.changed = true;
 }
 
@@ -205,8 +226,59 @@ fn void? Scene.add_nav_obstacle(&self, Node* node, NavObstacle obstacle) {
 }
 
 <*
+ Author an agent on the node; the next crowd_update binds it to a crowd slot.
+ @param [&in] node : "Its world position places the agent."
+ @return? c3d::INVALID_ARGUMENT, AGENT_EXISTS
+ @require self.world.is_registered(NavAgent)
+*>
+fn void? Scene.add_nav_agent(&self, Node* node, NavAgentParams params) {
+    if (self.has(node, NavAgent)) return AGENT_EXISTS~;
+    if (params.radius < 0 || params.height <= 0 || params.max_speed < 0) return c3d::INVALID_ARGUMENT~;
+    if (params.query_filter_type >= MAX_CROWD_FILTERS) return c3d::INVALID_ARGUMENT~;
+    if (params.obstacle_avoidance_type >= MAX_AVOIDANCE_PARAMS) return c3d::INVALID_ARGUMENT~;
+    self.add(node, (NavAgent){ .params = params });
+}
+
+<*
+ Ask the node's agent to walk to a world position, snapped to the mesh at the next crowd_update.
+ A target beyond CROWD_MAX_PATH polygons is reached partially.
+ @param [&in] node : "Carries a NavAgent."
+ @require self.has(node, NavAgent)
+*>
+fn void Scene.set_nav_target(&self, Node* node, Vec3 position) {
+    NavAgent* agent = self.get(node, NavAgent);
+    agent.target_kind = POSITION;
+    agent.target = position;
+    agent.changed = true;
+}
+
+<*
+ Ask the node's agent to move at a world velocity.
+ @param [&in] node : "Carries a NavAgent."
+ @require self.has(node, NavAgent)
+*>
+fn void Scene.set_nav_velocity(&self, Node* node, Vec3 velocity) {
+    NavAgent* agent = self.get(node, NavAgent);
+    agent.target_kind = VELOCITY;
+    agent.target = velocity;
+    agent.changed = true;
+}
+
+<*
+ Stop the node's agent where it stands.
+ @param [&in] node : "Carries a NavAgent."
+ @require self.has(node, NavAgent)
+*>
+fn void Scene.clear_nav_target(&self, Node* node) {
+    NavAgent* agent = self.get(node, NavAgent);
+    agent.target_kind = NONE;
+    agent.target = {};
+    agent.changed = true;
+}
+
+<*
  Register the nav components and their mirrors.
- @param [&inout] scene : "Gains NavSource, NavVolume, NavLink, NavObstacle, their runtime mirrors and CrowdAgentRuntime."
+ @param [&inout] scene : "Gains NavSource, NavVolume, NavLink, NavObstacle, NavAgent and their runtime mirrors."
  @return? c3d::CAPACITY_EXCEEDED
 *>
 fn void? register_nav(Scene* scene) {
@@ -214,6 +286,7 @@ fn void? register_nav(Scene* scene) {
     scene.register(NavVolume)!;
     scene.register(NavLink)!;
     scene.register(NavObstacle)!;
+    scene.register(NavAgent)!;
     scene.register(NavSourceRuntime)!;
     scene.register(NavVolumeRuntime)!;
     scene.register(NavLinkRuntime)!;
