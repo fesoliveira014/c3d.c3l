@@ -45,6 +45,7 @@ const uint SSGI_HISTORY_SLOTS = 2; // 1920 x 1080: 8.3 MB of accumulation and 4.
 
 const float SSGI_DEPTH_TOLERANCE @private = 0.05f;   // relative linear depth, TAA's default
 const float SSGI_VELOCITY_THRESHOLD @private = 2;    // full-resolution pixels a frame, TAA's default
+const uint SSGI_NOISE_PERIOD @private = 64;          // frames; at 8 rays the noise's float offset stays precise
 const ZString[SSGI_HISTORY_SLOTS] SSGI_HISTORY_NAMES @private = { "ssgi_history_0", "ssgi_history_1" };
 const ZString[SSGI_HISTORY_SLOTS] SSGI_DEPTH_NAMES @private = { "ssgi_depth_0", "ssgi_depth_1" };
 const float SSGI_BACKGROUND_DISTANCE @private = 1e30f; // mirrored as BACKGROUND_VIEW_DISTANCE in gbuffer.glsl
@@ -249,7 +250,7 @@ fn void? record_screen_space_gi(
             .max_distance    = desc.max_distance,
             .thickness       = desc.thickness,
             .depth_tolerance = SSGI_DEPTH_TOLERANCE,
-            .noise_frame     = (uint)renderer.frame_index,
+            .noise_frame     = (uint)(renderer.frame_index % SSGI_NOISE_PERIOD),
             .flags           = normal_flag | history_flag,
         };
         gpu::cmd_bind_pipeline(&renderer.commands, pipelines.trace)!;
