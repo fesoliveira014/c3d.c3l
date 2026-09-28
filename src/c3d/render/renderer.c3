@@ -132,6 +132,9 @@ struct Renderer {
     bool                    uploads_recorded;
     List{GeometryId}         pending_geometry_uploads;
     List{uint}               pending_instance_uploads;
+    PreparePool             prepares;
+    ulong                   next_prepare_sequence;
+    List{PrepareMark}       pending_prepare_marks;
     TextureRes[]            textures;
     EnvironmentState        environment_state;
     gpu::SamplerIndex       toon_gradient_sampler;
@@ -821,6 +824,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .pipelines            = create_pipeline_cache(allocator, shader::BUILTIN_REGISTRY),
         .deformation          = create_deformation_cache(allocator),
         .instances            = create_instance_table(allocator, max_instance_batches),
+        .prepares             = pool::create_pool{PrepareRecord, PrepareId}(allocator, PREPARE_CAPACITY),
         .linear_clamp_sampler = linear_clamp_sampler,
         .log                  = log,
         .timestamps_enabled   = timestamps_enabled,
@@ -835,6 +839,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     renderer.pending_copies.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_geometry_uploads.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_instance_uploads.init(allocator, RETIRE_INITIAL_CAPACITY);
+    renderer.pending_prepare_marks.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_texture_uploads.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.texture_state_undo.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_upload_retire.init(allocator, RETIRE_INITIAL_CAPACITY);
@@ -851,6 +856,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         free_rt(&renderer);
         free_geometries(&renderer);
         free_instance_buffers(&renderer);
+        free_prepares(&renderer);
         alloc::free(allocator, renderer.materials.ptr);
         free_shaders(&renderer);
         free_compute_shaders(&renderer);
@@ -889,6 +895,7 @@ fn void destroy_renderer(Renderer* renderer) {
     free_rt(renderer);
     free_geometries(renderer);
     free_instance_buffers(renderer);
+    free_prepares(renderer);
     free_material_heap(renderer);
     free_shaders(renderer);
     free_compute_shaders(renderer);

@@ -52,15 +52,21 @@ fn void? Renderer.upload_texture(&self, TextureId texture) {
     };
 }
 
+fn bool texture_current(Renderer* renderer, TextureId texture) @private {
+    TextureAsset* record = renderer.assets.texture(texture);
+    TextureRes* mirror = &renderer.textures[texture.index];
+    if (c3d::same_id(mirror.asset, texture) && mirror.revision == record.header.revision) return true;
+    foreach (&pending : renderer.pending_texture_uploads) {
+        if (c3d::same_id(pending.asset, texture) && pending.revision == record.header.revision) return true;
+    }
+    return false;
+}
+
 fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture) @private {
     TextureAsset* record = renderer.assets.texture(texture);
     TextureRes* mirror = &renderer.textures[texture.index];
+    if (texture_current(renderer, texture)) return mirror;
     bool same_asset = c3d::same_id(mirror.asset, texture);
-    if (same_asset && mirror.revision == record.header.revision) return mirror;
-
-    foreach (&pending : renderer.pending_texture_uploads) {
-        if (c3d::same_id(pending.asset, texture) && pending.revision == record.header.revision) return mirror;
-    }
 
     @pool() {
         TextureMipChain chain;

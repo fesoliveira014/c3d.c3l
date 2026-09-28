@@ -232,11 +232,17 @@ fn void write_geometry_block(char[] block, Geometry* geometry, GeometryLayout* l
     }
 }
 
+fn bool geometry_current(Renderer* renderer, GeometryId geometry) @private {
+    GpuGeometry* mirror = &renderer.geometries[geometry.index];
+    GeometryAsset* record = renderer.assets.geometry(geometry);
+    return c3d::same_id(mirror.asset, geometry) && mirror.revision == record.header.revision;
+}
+
 fn GpuGeometry*? resolve_geometry(Renderer* renderer, GeometryId geometry) @private {
     GeometryAsset* record = renderer.assets.geometry(geometry);
     GpuGeometry* mirror = &renderer.geometries[geometry.index];
+    if (geometry_current(renderer, geometry)) return mirror;
     bool same_asset = c3d::same_id(mirror.asset, geometry);
-    if (same_asset && mirror.revision == record.header.revision) return mirror;
 
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     GeometryLayout layout = geometry_layout(&record.data);

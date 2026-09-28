@@ -204,6 +204,56 @@ snapshot pipelines, and the display and effect pipelines of every live view, the
 depth-only variants unconditionally. Views created afterwards prepare their pipelines on first
 render.
 
+### Budgeted preparation
+
+```c3
+PrepareId prepare = renderer.begin_prepare_model(model)!;
+// every frame, while the record is neither READY nor FAILED
+renderer.begin_frame()!;
+renderer.advance_prepares()!;           // stages at most about 1 MiB of uploads this frame
+renderer.render_view(&scene, camera, renderer.default_view)!;
+renderer.end_frame()!;
+PrepareProgress progress = renderer.prepare_progress(prepare);
+if (progress.state == PrepareState.READY) {
+    model::instantiate(&assets, &scene, model)!;
+    renderer.end_prepare(prepare)!;      // outside a frame: before begin_frame or after end_frame
+}
+```
+
+`prepare_model` stalls the frame that calls it: for Sponza on the WSL host CPU it took 3966 ms in
+the default build and 1882 ms at `-O3`, almost all of it CPU mip generation (9.7 and 4.3 ms per
+staged MB; one 1024x1024 sRGB texture alone is 116 and 57 ms). The budgeted path spreads the same
+work over frames. `begin_prepare_model` lists the model's units in template order (its textures,
+then per mesh its geometry, material and pipelines, then one unit that creates the transmission
+snapshot pipeline and the view pipelines), leaving out textures and geometries already uploaded, and
+records `bytes_total`. `advance_prepares(budget_bytes)`, called inside the open frame, promotes
+finished records and then stages the next units of the open records in the order they began: a unit
+that does not fit the rest of the budget waits for the next call, except when nothing was staged
+yet in the call, so every call makes progress and stages at most the budget or one unit, whichever
+is larger. One exception: an asset changed after its own unit ran (a material that gained a texture)
+is staged by the next unit that resolves it, outside that bound. Pipeline units weigh nothing. A
+unit whose mirror is already current (uploaded earlier,
+by a view, or by another record) is done at zero cost, and a unit whose asset was removed is done
+and counts a dangling reference. `PrepareProgress.bytes_done` reaches `bytes_total`;
+`Stats.prepare_bytes` counts only what the frame staged.
+
+Call `advance_prepares` every frame while any record is neither `READY` nor `FAILED`: promotion to
+`READY` happens inside it, two frames after the last unit ran. `READY` means every unit whose asset
+was live is uploaded and its frame completed, with the pipelines `prepare_model` would create for
+the views live when each unit ran; a view created or reconfigured later creates what it lacks at its
+first draw, and a model changed while its record was pending draws like any model changed after
+preparation. The call does not abort the frame on a fault: the application aborts it, as for any
+fault inside a frame, and only then do the call's units return to not done. Asset and shader faults
+fail only the record (`failure` names the fault); the others propagate.
+
+`end_prepare` releases a record in any state, outside a frame; ending a pending record stops it, and
+what it already staged stays uploaded for later draws and records. A released or stale id reads as
+`FAILED` with `INVALID_ID`, and `end_prepare` faults `INVALID_ID` on it. Four records can be open;
+`begin_prepare_model` faults `INVALID_ID` for a dead model, then `CAPACITY_EXCEEDED` when all four are
+open. The default budget, `PREPARE_FRAME_BUDGET_BYTES`, is 1 MiB: below `OVERSIZED_UPLOAD_BYTES`, so a
+unit within it never takes an overflow allocation, and about 4.3 ms (`-O3`) or 9.7 ms (default build)
+of CPU per call on the WSL host.
+
 ## Example
 
 `examples/views` renders a rolled textured cube, two spheres and a ground plane twice per frame:

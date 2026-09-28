@@ -33,7 +33,7 @@ const double NANOSECONDS_PER_MILLISECOND @local = 1_000_000;
 
 enum Stage @local {
     WAITING,
-    PREPARE,
+    PREPARING,
     REPORT,
     SHOWN,
     FAILED,
@@ -43,19 +43,24 @@ struct Timings @local {
     double decode_ms;
     double publish_ms;
     double publish_frame_ms;
-    double prepare_ms;
-    double prepare_frame_ms;
+    uint   prepare_frames;
+    double advance_max_ms;
+    double prepare_frame_max_ms;
+    double first_frame_ms;
 }
 
 struct Showcase @local {
-    AsyncLoader* loader;
-    LoadId       request;
-    time::Clock  requested;
-    LoadStatus   status;
-    bool         decoded;
-    Stage        stage;
-    Timings      timings;
-    Node*        placeholder;
+    AsyncLoader*    loader;
+    LoadId          request;
+    time::Clock     requested;
+    LoadStatus      status;
+    PrepareId       prepare;
+    PrepareProgress progress;
+    bool            decoded;
+    bool            published_last_frame;
+    Stage           stage;
+    Timings         timings;
+    Node*           placeholder;
 }
 
 fn double elapsed_ms(time::Clock* clock) @local => (double)clock.mark() / NANOSECONDS_PER_MILLISECOND;
@@ -91,9 +96,14 @@ fn void panel(Showcase* showcase) @local {
         imgui::text("Phase: %s", gui::@enum_name(LoadPhase, showcase.status.phase));
         if (showcase.status.failure) imgui::text("Failure: %s", string::tformat_zstr("%s", showcase.status.failure));
         Timings* timings = &showcase.timings;
+        PrepareProgress* progress = &showcase.progress;
         imgui::text("Decode: %.1f ms", timings.decode_ms);
         imgui::text("Publish: %.3f ms, frame %.1f ms", timings.publish_ms, timings.publish_frame_ms);
-        imgui::text("Prepare: %.1f ms, frame %.1f ms", timings.prepare_ms, timings.prepare_frame_ms);
+        imgui::text("Prepare: %s", gui::@enum_name(PrepareState, progress.state));
+        imgui::text("Prepared bytes: %llu / %llu", (ulong)progress.bytes_done, (ulong)progress.bytes_total);
+        imgui::text("Prepared units: %u / %u", progress.units_done, progress.units_total);
+        imgui::text("Largest advance: %.2f ms", timings.advance_max_ms);
+        imgui::text("Largest frame while preparing: %.1f ms", timings.prepare_frame_max_ms);
     }
     imgui::end();
 }
@@ -122,24 +132,38 @@ fn void? advance(
                 io::printfn("streaming: failed: %s", showcase.status.failure);
             } else if (published) {
                 showcase.timings.publish_ms = publish_ms;
-                showcase.stage = Stage.PREPARE;
+                showcase.prepare = renderer.begin_prepare_model(showcase.status.model)!;
+                showcase.published_last_frame = true;
+                showcase.stage = Stage.PREPARING;
             }
-        case PREPARE:
-            showcase.timings.publish_frame_ms = frame_ms;
-            time::Clock clock = time::clock::now();
-            renderer.prepare_model(showcase.status.model)!;
-            showcase.timings.prepare_ms = elapsed_ms(&clock);
-            Node* instance = model::instantiate(assets, scene, showcase.status.model, name: "model")!;
-            instance.local.position = MODEL_POSITION;
-            showcase.placeholder.visible = false;
-            showcase.stage = Stage.REPORT;
-        case REPORT:
-            showcase.timings.prepare_frame_ms = frame_ms;
+        case PREPARING:
             Timings* timings = &showcase.timings;
+            if (showcase.published_last_frame) {
+                timings.publish_frame_ms = frame_ms;
+                showcase.published_last_frame = false;
+            } else {
+                timings.prepare_frame_max_ms = math::max(timings.prepare_frame_max_ms, frame_ms);
+            }
+            showcase.progress = renderer.prepare_progress(showcase.prepare);
+            if (showcase.progress.state == PrepareState.FAILED) {
+                io::printfn("streaming: preparation failed: %s", showcase.progress.failure);
+                renderer.end_prepare(showcase.prepare)!;
+                showcase.stage = Stage.FAILED;
+            } else if (showcase.progress.state == PrepareState.READY) {
+                Node* instance = model::instantiate(assets, scene, showcase.status.model, name: "model")!;
+                instance.local.position = MODEL_POSITION;
+                showcase.placeholder.visible = false;
+                renderer.end_prepare(showcase.prepare)!;
+                showcase.stage = Stage.REPORT;
+            }
+        case REPORT:
+            Timings* timings = &showcase.timings;
+            timings.first_frame_ms = frame_ms;
             io::printfn(
-                "streaming: decode %.1f ms, publish %.3f ms (frame %.1f ms), prepare %.1f ms (frame %.1f ms)",
-                timings.decode_ms, timings.publish_ms, timings.publish_frame_ms, timings.prepare_ms,
-                timings.prepare_frame_ms,
+                "streaming: decode %.1f ms, publish %.3f ms (frame %.1f ms), %d frames to ready, "
+                "largest advance %.2f ms, largest frame %.1f ms, first frame drawn %.1f ms",
+                timings.decode_ms, timings.publish_ms, timings.publish_frame_ms, timings.prepare_frames,
+                timings.advance_max_ms, timings.prepare_frame_max_ms, timings.first_frame_ms,
             );
             showcase.stage = Stage.SHOWN;
         case SHOWN:
@@ -153,10 +177,17 @@ fn void? draw_frame(
     Scene* scene,
     Node* camera_node,
     GuiRenderer* gui_renderer,
+    Showcase* showcase,
     FrameInfo info,
 ) @local {
     renderer.begin_frame(info)!;
     defer catch render::abort_frame(renderer);
+    if (showcase.stage == Stage.PREPARING) {
+        time::Clock clock = time::clock::now();
+        renderer.advance_prepares()!;
+        showcase.timings.advance_max_ms = math::max(showcase.timings.advance_max_ms, elapsed_ms(&clock));
+        showcase.timings.prepare_frames++;
+    }
     if (renderer.has_output) {
         renderer.render_view(scene, camera_node, renderer.default_view)!;
         renderer.finish_view(renderer.default_view)!;
@@ -210,6 +241,7 @@ fn void? run(
             scene:        scene,
             camera_node:  camera_node,
             gui_renderer: &gui_renderer,
+            showcase:     showcase,
             info:         { .time = window.clock.total, .delta = window.clock.delta },
         )!;
     }

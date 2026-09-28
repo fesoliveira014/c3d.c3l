@@ -15,8 +15,9 @@ typedef ViewId         = Id;
 typedef RenderTargetId = Id;
 typedef BufferId       = Id;
 typedef LoadId         = Id;
+typedef PrepareId      = Id;
 
-// ViewId, RenderTargetId, BufferId and LoadId name objects outside the store, so they have no kind.
+// ViewId, RenderTargetId, BufferId, LoadId and PrepareId name objects outside the store, so they have no kind.
 <*
  Asset kinds the store resolves by id.
 *>

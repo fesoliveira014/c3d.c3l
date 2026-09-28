@@ -722,8 +722,7 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
             sheen |= prepared.sheen;
             transmission |= prepared.transmission;
         };
-        if (transmission) self.pipelines.get(&self.device, snapshot_pipeline_key())!;
-        prepare_views(self)!;
+        prepare_finish(self, transmission)!;
         (void)resolve_view_environments(self, scene, sheen)!;
         if (!has_environment_preparations(self) && !self.pending_copies.len()
             && !self.pending_texture_uploads.len() && !self.pending_upload_retire.len()) return;
@@ -764,8 +763,7 @@ fn void? Renderer.prepare_model(&self, ModelId model) {
             )!;
             transmission |= prepared.transmission;
         }
-        if (transmission) self.pipelines.get(&self.device, snapshot_pipeline_key())!;
-        prepare_views(self)!;
+        prepare_finish(self, transmission)!;
         if (!self.pending_copies.len() && !self.pending_texture_uploads.len() && !self.pending_upload_retire.len()) {
             return;
         }
@@ -837,6 +835,11 @@ fn MeshPreparation? prepare_mesh(
         }
     }
     return { .sheen = material_uses_sheen(data), .transmission = draw_list(data) == DrawList.TRANSMISSION };
+}
+
+fn void? prepare_finish(Renderer* renderer, bool transmission) @private {
+    if (transmission) renderer.pipelines.get(&renderer.device, snapshot_pipeline_key())!;
+    return prepare_views(renderer);
 }
 
 fn void? prepare_views(Renderer* renderer) @private {

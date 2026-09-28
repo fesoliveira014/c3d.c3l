@@ -91,6 +91,7 @@ fn void commit_uploads(Renderer* renderer, Frame* slot) @private {
     renderer.texture_state_undo.clear();
     renderer.pending_geometry_uploads.clear();
     renderer.pending_instance_uploads.clear();
+    renderer.pending_prepare_marks.clear();
     renderer.scene_trace.pending_builds.clear();
     renderer.rt.pending_blas.clear();
     renderer.rt.recorded_blas = 0;
@@ -105,7 +106,10 @@ fn void discard_uploads(Renderer* renderer) @private {
     restore_texture_states(&renderer.texture_state_undo, renderer.textures);
     if (!renderer.uploads_recorded && !renderer.pending_copies.len()
         && !renderer.pending_texture_uploads.len() && !renderer.pending_geometry_uploads.len()
-        && !renderer.pending_instance_uploads.len()) return;
+        && !renderer.pending_instance_uploads.len()) {
+        renderer.pending_prepare_marks.clear();
+        return;
+    }
 
     renderer.uploads_recorded = false;
     renderer.pending_texture_uploads.clear();
@@ -116,6 +120,7 @@ fn void discard_uploads(Renderer* renderer) @private {
         renderer.geometries[geometry.index].revision = 0;
     }
     renderer.pending_geometry_uploads.clear();
+    rollback_prepare_marks(renderer);
     foreach (index : renderer.pending_instance_uploads) renderer.instances.slots[index].revision = 0;
     renderer.pending_instance_uploads.clear();
     foreach (&material : renderer.materials) material.revision = 0;

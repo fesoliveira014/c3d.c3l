@@ -33,6 +33,8 @@ fn void? stats_panel(Renderer* renderer) {
 
     imgui::text("Uploads: %u", renderer.stats.uploads);
     imgui::text("Upload bytes: %u", renderer.stats.upload_bytes);
+    imgui::text("Prepare units: %u", renderer.stats.prepare_units);
+    imgui::text("Prepare bytes: %llu", (ulong)renderer.stats.prepare_bytes);
     imgui::text("Dangling references: %u", renderer.stats.dangling_refs);
     imgui::text("Trace instances: %u", renderer.stats.trace_instances);
     imgui::text("Trace nodes: %u", renderer.stats.trace_nodes);
