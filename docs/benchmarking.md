@@ -67,6 +67,53 @@ iterations. Check that the instruction total is nonzero. Instruction shares and
 Valgrind elapsed times are not native CPU-time shares or speedup measurements;
 confirm a candidate change with independent native runs and matching output.
 
+### Scene index and triangle trees
+
+```bash
+./examples/build/cpu_bench index_refresh_crowd 1 10 300
+./examples/build/cpu_bench index_refresh_batch 1 10 300
+./examples/build/cpu_bench index_build_crowd 1 10 30
+./examples/build/cpu_bench index_build_batch 1 10 30
+./examples/build/cpu_bench index_pick_crowd 1 10 30
+./examples/build/cpu_bench scan_pick_crowd 1 10 30
+./examples/build/cpu_bench index_pick_triangles 1 10 30
+./examples/build/cpu_bench scan_pick_triangles 1 10 30
+./examples/build/cpu_bench triangle_warmup 128 2 30
+./examples/build/cpu_bench triangle_warmup 362 1 10
+```
+
+Build with `--opt O3` for readings. The crowd scene holds 2,000 unit-box mesh nodes on a
+grid and one 4,096-instance batch (6,096 index entries); the batch scene holds one
+65,536-instance batch. The scene cases ignore the `nodes` argument and print the entry
+count in its column.
+
+| Case | Work inside each timed iteration |
+| --- | --- |
+| `index_refresh_crowd`, `index_refresh_batch` | `SceneIndex.refresh` with nothing changed |
+| `index_build_crowd`, `index_build_batch` | The tree build of the first pick after the entries changed, plus that one ray |
+| `index_pick_crowd`, `scan_pick_crowd` | 64 fixed-seed rays at bounds precision through the index or `spatial::pick` |
+| `index_pick_triangles`, `scan_pick_triangles` | The same rays at triangle precision, triangle trees built beforehand |
+| `triangle_warmup` | `prepare_triangle_picks` on one plane mesh after `mark_geometry_dirty`; `nodes` is the plane segment count per side |
+
+The pick cases checksum each ray's hit count and nearest node and instance, so an index
+case and its scan case print equal checksums. `triangle_warmup` prints the tree's bytes
+(`# triangle tree bytes`) after the CSV.
+
+Readings on an Intel Core i9-14900K at O3 (medians; Windows host, WSL in parentheses):
+
+| Case | Microseconds per iteration |
+| --- | --- |
+| `index_refresh_crowd` | 14.2 (15.3) |
+| `index_refresh_batch` | 0.01 (0.011); a batch whose key changed recomputes and compares every instance, 1,244 (WSL) measured before the per-batch skip |
+| `index_build_crowd` | 524 (505) |
+| `index_build_batch` | 6,959 (6,354) |
+| `index_pick_crowd` | 265 (260) |
+| `scan_pick_crowd` | 11,429 (8,049) |
+| `index_pick_triangles` | 283 (298) |
+| `scan_pick_triangles` | 11,253 (8,061) |
+| `triangle_warmup` 128 (32,768 triangles, 655,328 bytes) | 3,231 (3,210) |
+| `triangle_warmup` 362 (262,088 triangles, 5,601,280 bytes) | 31,818 (32,278) |
+
 ## Headless many-light rendering
 
 ```bash
