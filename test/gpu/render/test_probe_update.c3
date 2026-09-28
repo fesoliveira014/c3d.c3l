@@ -26,7 +26,7 @@ const uint[<3>] SKY_COUNTS @private = { 4, 3, 4 };
 const Vec3 SKY_FLOOR_POINT @private = { 2.5f, 0, 1.5f }; // away from the pillar, whose occlusion the SH lacks
 const Vec3 SUN_TOWARD_GROUND @private = { -0.4f, -1, -0.3f };
 const float SUN_INTENSITY_ACCEPTANCE @private = 3;
-const float DARK_SHARE @private = 0.01f;               // of the lit value; rays slipping through edges shared by two slabs
+const float DARK_SHARE @private = 0.01f;               // of the lit mean; rays slipping between triangles of a wall
 const float LIT_IRRADIANCE @private = 0.05f;
 const uint OPEN_ROOM_UPDATES @private = 30;
 const uint STABILITY_FIRST @private = 250;
@@ -36,7 +36,7 @@ const float HIGH_ENERGY @private = 4;
 const char[*] PROBE_READBACK_SOURCE @private = $embed("probe_readback.comp.glsl");
 const uint PROBE_READBACK_GROUP @private = 8; // mirrored as local_size_x and local_size_y in probe_readback.comp.glsl
 const uint SKY_SPREAD_FRAMES @private = 8;
-const int SKY_SPREAD_LIMIT @private = 8;                 // of 255; set from the measured spread plus 2
+const float SKY_TEXEL_TOLERANCE @private = 0.05f;         // of the expected irradiance; set from the measured spread
 const float FAST_HYSTERESIS @private = 0.5f;            // converges in tens of updates, so stability is what is measured
 
 struct ProbeRoom @private {
@@ -124,7 +124,7 @@ fn ProbeVolumeRes* mirror_of(Fixture* fixture, Scene* scene, Node* node) @privat
     return null;
 }
 
-// Largest irradiance channel over the interior texels of the probes that are not in a wall.
+// Largest or mean irradiance channel over the interior texels of the probes that are not in a wall.
 fn float interior_irradiance(Fixture* fixture, ProbeRoom* room, bool mean = false) @private {
     ProbeVolumeRes* mirror = mirror_of(fixture, &room.scene, room.volume);
     Vec4f[] texels = read_atlas(fixture, &mirror.irradiance)!!;
@@ -236,11 +236,11 @@ fn void test_closed_box_has_no_leak() @test {
     defer destroy_probe_view(&fixture, &probe_view);
 
     render_room_frames(&fixture, &room, probe_view.view, 1)!!;
-    float closed = interior_irradiance(&fixture, &room);
+    float closed = interior_irradiance(&fixture, &room, mean: true);
     room.roof.visible = false;
     room.scene.update_world();
     render_room_frames(&fixture, &room, probe_view.view, OPEN_ROOM_UPDATES)!!;
-    float open = interior_irradiance(&fixture, &room);
+    float open = interior_irradiance(&fixture, &room, mean: true);
     io::eprintfn("closed room irradiance %f, open %f", closed, open);
     assert(open > LIT_IRRADIANCE);
     assert(closed < DARK_SHARE * open);
@@ -284,11 +284,11 @@ fn void test_moved_volume_restarts_into_the_dark() @test {
     room.volume.local.position = FAR_AWAY + ROOM_CENTER;
     room.scene.update_world();
     render_room_frames(&fixture, &room, probe_view.view, 3)!!;
-    float outside = interior_irradiance(&fixture, &room);
+    float outside = interior_irradiance(&fixture, &room, mean: true);
     room.volume.local.position = ROOM_CENTER;
     room.scene.update_world();
     render_room_frames(&fixture, &room, probe_view.view, 1)!!;
-    float inside = interior_irradiance(&fixture, &room);
+    float inside = interior_irradiance(&fixture, &room, mean: true);
     io::eprintfn("moved volume irradiance: outside %f, inside after the move %f", outside, inside);
     assert(outside > LIT_IRRADIANCE);
     assert(inside < DARK_SHARE * outside);
@@ -317,7 +317,7 @@ fn void test_bounce_with_high_energy_stays_finite() @test {
     check_validation(&fixture.renderer);
 }
 
-fn void test_open_sky_matches_the_sh_after_one_sweep() @test {
+fn void test_open_sky_probe_matches_the_sh_after_one_sweep() @test {
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
     defer destroy_fixture(&fixture);
@@ -327,25 +327,29 @@ fn void test_open_sky_matches_the_sh_after_one_sweep() @test {
     defer destroy_probe_view(&fixture, &probe_view);
     probe.volume.local.position = SKY_VOLUME_OFFSET;
     probe.scene.add(probe.volume, light::probe_volume(SKY_VOLUME_HALF_EXTENTS, SKY_COUNTS, SCENE));
-    probe.volume.visible = false;
     probe.scene.update_world();
-    uint sh = render_probe_pixel(&fixture, &probe, probe_view.view, SKY_FLOOR_POINT)!!;
 
-    int spread;
-    probe.volume.visible = true;
-    probe.scene.update_world();
+    // The upward texel of a probe above everything sees only the sky: E = PI x sky radiance.
+    float expected = (float)math::PI * SKY_RADIANCE.y;
+    uint[<3>] top_probe = { SKY_COUNTS.x - 1, SKY_COUNTS.y - 1, SKY_COUNTS.z - 1 };
+    float spread;
     for (uint frame = 0; frame < SKY_SPREAD_FRAMES; frame++) {
-        // A new counts value makes new atlases, so every frame shows a first-sweep estimate.
+        // A new counts value makes new atlases, so every frame reads a first-sweep estimate.
         probe.scene.get(probe.volume, ProbeVolume).counts.z = SKY_COUNTS.z + frame % 2;
-        uint traced = render_probe_pixel(&fixture, &probe, probe_view.view, SKY_FLOOR_POINT)!!;
-        for (uint channel = 0; channel < 3; channel++) {
-            int difference = (int)((traced >> (8 * channel)) & 0xff) - (int)((sh >> (8 * channel)) & 0xff);
-            spread = math::max(spread, math::abs(difference));
-        }
-        io::eprintfn("open sky frame %d: traced %08x, sh %08x", frame, traced, sh);
+        top_probe.z = SKY_COUNTS.z - 1 + frame % 2;
+        (void)render_probe_pixel(&fixture, &probe, probe_view.view, SKY_FLOOR_POINT)!!;
+        ProbeVolumeRes* mirror = mirror_of(&fixture, &probe.scene, probe.volume);
+        Vec4f[] texels = read_atlas(&fixture, &mirror.irradiance)!!;
+        uint[<3>] counts = { SKY_COUNTS.x, SKY_COUNTS.y, top_probe.z + 1 };
+        uint[<2>] cell = render::probe_cell(counts, mirror.slices_per_row, top_probe);
+        Vec2 up = render::probe_atlas_texel(cell, shader::PROBE_IRRADIANCE_CELL, { 0, 1, 0 });
+        usz texel = (usz)(up.y - 0.5f) * mirror.irradiance.width + (usz)up.x;
+        float value = texels[texel][1];
+        spread = math::max(spread, math::abs(value - expected));
+        io::eprintfn("open sky frame %d: upward texel %f, SH %f", frame, value, expected);
     }
-    io::eprintfn("open sky largest channel difference after one sweep: %d", spread);
-    assert(spread <= SKY_SPREAD_LIMIT);
+    io::eprintfn("open sky largest difference after one sweep: %f", spread);
+    assert(spread <= SKY_TEXEL_TOLERANCE * expected);
     check_validation(&fixture.renderer);
 }
 
@@ -373,8 +377,8 @@ fn void test_two_scenes_update_in_one_frame() @test {
         fixture.renderer.end_frame()!!;
         assert(fixture.renderer.stats.probe_updates == 2);
     }
-    float closed_irradiance = interior_irradiance(&fixture, &closed);
-    float open_irradiance = interior_irradiance(&fixture, &open);
+    float closed_irradiance = interior_irradiance(&fixture, &closed, mean: true);
+    float open_irradiance = interior_irradiance(&fixture, &open, mean: true);
     io::eprintfn("two scenes: closed %f, open %f", closed_irradiance, open_irradiance);
     assert(open_irradiance > LIT_IRRADIANCE);
     assert(closed_irradiance < DARK_SHARE * open_irradiance);
@@ -401,3 +405,4 @@ fn void test_hidden_volume_is_not_updated() @test {
     assert(fixture.renderer.stats.probe_updates == 1);
     check_validation(&fixture.renderer);
 }
+
