@@ -105,6 +105,12 @@
         "src/crowd.c3"
       ]
     },
+    "streaming": {
+      "type": "executable",
+      "sources": [
+        "src/streaming.c3"
+      ]
+    },
     "actions": {
       "type": "executable",
       "sources": [

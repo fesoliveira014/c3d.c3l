@@ -14,8 +14,9 @@ typedef SkeletonId     = Id;
 typedef ViewId         = Id;
 typedef RenderTargetId = Id;
 typedef BufferId       = Id;
+typedef LoadId         = Id;
 
-// ViewId, RenderTargetId and BufferId are renderer-owned and cannot be found in the store, so they have no kind.
+// ViewId, RenderTargetId, BufferId and LoadId name objects outside the store, so they have no kind.
 <*
  Asset kinds the store resolves by id.
 *>

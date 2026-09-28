@@ -233,6 +233,98 @@ capacity costs one entry record.
 | `publish_document` | `INVALID_ARGUMENT` | A document or entry key is in the store, two entries share a key, a material is `CUSTOM`, a geometry has invalid skin influences, or a storage texture has a non-storage format. |
 | | `CAPACITY_EXCEEDED` | A pool has fewer free slots than the document has entries of that kind; the model pool needs one. |
 
+## Background loading
+
+```c3
+AsyncLoader loader = loader::create_async_loader(mem, &assets)!;
+defer loader::destroy_async_loader(&loader);
+LoadId request = loader.request({
+    .path    = "models/city.gltf",
+    .format  = ModelFormat.GLTF,
+    .options = asset::LOAD_OPTIONS_DEFAULT,
+})!;
+
+// every frame, before update_world
+loader.publish();
+LoadStatus status = loader.status(request);
+if (status.phase == LoadPhase.PUBLISHED) {
+    renderer.prepare_model(status.model)!;
+    model::instantiate(&assets, &scene, status.model)!;
+    loader.release(request)!;
+} else if (status.phase == LoadPhase.FAILED) {
+    io::eprintfn("%s failed: %s", "models/city.gltf", status.failure);
+    loader.release(request)!;
+}
+```
+
+`c3d::asset::loader` decodes model files on one worker thread while the
+application keeps rendering. `request` queues a file with its importer
+(`ModelFormat.GLTF` or `FBX`) and options; the worker runs that importer's
+`decode_model` into a `ModelDocument`, one request at a time, in request order.
+`publish` inserts every decoded document into the store with
+`publish_document`, in request order, and returns how many requests it moved to
+`PUBLISHED` or `FAILED`; a decode that fails on the worker is in no count, so
+read `status` for every request. `release` frees a finished request's slot; a
+`QUEUED`, `DECODING` or `DECODED` request cannot be released, and there is no
+cancellation.
+
+One thread owns the loader: `request`, `status`, `publish`, `release` and
+`destroy_async_loader` are called from the same thread, which is also the only
+thread that writes the store. That thread may keep calling `load_model`,
+`decode_model` and `publish_document` while the worker decodes.
+
+The worker allocates every document from the store's allocator and its
+temporary pool from the loader's allocator, so both must be safe to use from
+another thread. The heap allocator `mem` qualifies. A `TrackingAllocator`
+qualifies because its `acquire`, `resize` and `release` take its own lock in
+c3c 0.8.3, although the standard library's comment above the struct says
+otherwise; read its `allocated()` only after the loader is destroyed. An arena
+does not qualify (it has no lock), and neither does `tmem`, which belongs to
+one thread. The worker's temporary pool starts at 256 KiB and grows through the
+loader's allocator for larger files; `decode_model`'s rule against `tmem`
+holds on the worker too, where `tmem` is the worker's own pool.
+
+`request` checks, in order: the path is a model key already in the store
+(`INVALID_ARGUMENT`), a queued, decoding or decoded request has the same path
+(`INVALID_ARGUMENT`), every slot holds an unreleased request
+(`CAPACITY_EXCEEDED`). Paths are compared byte for byte, as store keys are, so
+two spellings of one file are two keys. A request for a path that ended
+`FAILED` is accepted again. A key inserted into the store after the request
+makes that request fail at `publish` with the store's `INVALID_ARGUMENT`; a
+pool without room fails it with `CAPACITY_EXCEEDED`; the store is unchanged in
+both cases.
+
+`status` never faults. A released, stale or zero id reports `FAILED` with
+`failure == INVALID_ID`; a failed decode reports `FAILED` with the importer's
+fault; the `failure` field is what separates them.
+
+Memory: every unreleased slot can hold one decoded document until `publish`
+takes it, and the capacity (8 by default) bounds requests, not bytes. A decoded
+Sponza is 297,688,067 bytes, 285,212,736 of them texture pixels; eight waiting
+documents of that size hold about 2.4 GB. Call `publish` every frame to keep
+one or two at most.
+
+Cost: a `publish` call costs the sum over the documents that waited, each by
+its key count, not its bytes: pixels and vertex streams move by pointer. On the
+WSL host CPU, Sponza's 199 keys publish in 0.43 ms and decode in 1.3 to 1.7 s.
+`prepare_model` after publish is synchronous and uploads every texture and
+geometry of the model before it returns: 3.9 s for Sponza on WSL with llvmpipe,
+a stall of the frame that calls it.
+
+`destroy_async_loader` stops the worker and waits for the decode in progress,
+up to one decode (1.3 s for Sponza on the WSL host CPU), then frees every
+unpublished document and request. Destroy the loader before its store.
+
+| Function | Fault | Meaning |
+| --- | --- | --- |
+| `create_async_loader` | `thread::INIT_FAILED` | The mutex, the condition variable or the worker thread could not be created; nothing is left allocated. |
+| `request` | `INVALID_ARGUMENT` | The path is a model key in the store, or a queued, decoding or decoded request has the same path. |
+| | `CAPACITY_EXCEEDED` | Every slot holds an unreleased request. |
+| `release` | `INVALID_ID` | The id was released, is stale, or never named a request. |
+| `status` (`failure` of `FAILED`) | `INVALID_ID` | As for `release`. |
+| | `ASSET_IO_ERROR`, `ASSET_FORMAT_ERROR`, `UNSUPPORTED`, `INVALID_ARGUMENT` | The importer's decode fault; the wrong importer for a file gives `ASSET_FORMAT_ERROR`. |
+| | `INVALID_ARGUMENT`, `CAPACITY_EXCEEDED` | The store's `publish_document` fault: a key inserted since the request, a pool without room. |
+
 ## CPU release
 
 Templates hold only ids, names and transforms. Releasing a geometry's CPU
@@ -334,6 +426,13 @@ matches glTF.
 python3 scripts/build.py --example gltf_viewer
 ./examples/build/gltf_viewer path/to/model.glb --gpu-timings
 ```
+
+`streaming` renders a small scene while a glTF or GLB file decodes on the loader's
+worker (`./examples/build/streaming path/to/model.gltf`, the bundled BoxTextured
+by default; FBX paths end `FAILED` with `ASSET_FORMAT_ERROR` because the example
+requests the glTF importer). The panel shows the phase and failure, and the example
+prints the decode time, the `publish` call and its frame, and the `prepare_model`
+call and its frame.
 
 `gltf_viewer` loads the argument path, or the bundled
 [BoxTextured](../examples/assets/gltf/README.md) sample, instantiates it twice
