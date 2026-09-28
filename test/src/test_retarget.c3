@@ -556,6 +556,20 @@ fn void test_rest_correction_faults_on_an_unresolved_tracked_node() @test {
     assert(partial.tracks.len == 4);
 }
 
+fn void test_rest_correction_faults_on_two_animated_roots() @test {
+    Rig rig = make_rig();
+    defer destroy_rig(&rig);
+    alloc::free(mem, rig.source_nodes[2].name.ptr);
+    rig.source_nodes[2].name = "Mesh".copy(mem);
+    rig.clip.targets[1] = 2;
+    RetargetOptions options = corrected();
+    if (catch excuse = retarget::retarget_by_name(mem, &rig.clip, rig.source_nodes, &rig.target, options)) {
+        assert(excuse == c3d::ASSET_FORMAT_ERROR);
+        return;
+    }
+    assert(false);
+}
+
 fn void test_root_translation_scale_scales_hip_keys() @test {
     Rig rig = make_rig();
     defer destroy_rig(&rig);

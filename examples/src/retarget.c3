@@ -76,10 +76,10 @@ fn uint? node_named(ModelTemplate* template, String name) @local {
     return NOT_FOUND~;
 }
 
-fn usz mapped_joints(ModelTemplate* template) @local {
+fn usz mapped_joints(AssetStore* assets, ClipId clip) @local {
     usz count;
-    foreach (mapping : BODY_MAP) {
-        if (try node_named(template, mapping.target)) count++;
+    foreach (&track : assets.clip(clip).data.tracks) {
+        if (track.path == TargetPath.ROTATION) count++;
     }
     return count;
 }
@@ -140,7 +140,6 @@ fn int main() {
     uint target_hips = node_named(target_template, TARGET_HIPS)!!;
     float scale = retarget::rest_world_position(target_template.nodes, target_hips).y
         / retarget::rest_world_position(source_template.nodes, source_hips).y;
-    usz mapped = mapped_joints(target_template);
 
     RetargetOptions copy_options = retarget::RETARGET_OPTIONS_DEFAULT;
     copy_options.root_motion = RootMotion.STRIP_XZ;
@@ -157,6 +156,8 @@ fn int main() {
         .corrected_clip = retargeted_walk(&assets, required[1], target_model, corrected_options)!!,
         .corrected      = true,
     };
+
+    usz mapped = mapped_joints(&assets, showcase.corrected_clip);
 
     Scene scene = scene::create_scene(mem, scene::default_scene_desc());
     defer scene::destroy_scene(&scene);

@@ -98,7 +98,7 @@ fn AnimationClip? retarget_by_name(
 ) {
     bool extract = options.root_motion == RootMotion.EXTRACT;
     if (extract && options.root_node == NO_ROOT_NODE) return c3d::INVALID_ARGUMENT~;
-    // Zero stands for the default of the fields a literal written before them omits.
+    // A literal that omits these fields leaves them zero; zero selects the default.
     if (options.bake_rate == 0) options.bake_rate = BAKE_RATE_DEFAULT;
     if (options.root_translation_scale == 0) options.root_translation_scale = 1;
     if (options.rest_pose == RestPose.CORRECT) {

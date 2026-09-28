@@ -203,6 +203,8 @@ A corrected clip is baked:
   local frames. This assumes the destination root's ancestors are not mapped.
 - Non-root translations are never emitted; scale and morph tracks are copied as
   under `COPY`.
+- A corrected clip transfers one root: a source with more than one animated
+  root translation faults `ASSET_FORMAT_ERROR` in every root mode.
 
 `root_translation_scale` has two meanings. Under `COPY` it multiplies every
 root translation key. Under `CORRECT` it multiplies the displacement from the

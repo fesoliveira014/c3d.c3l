@@ -58,7 +58,7 @@ fn AnimationClip? bake_corrected(
                 root_count++;
             }
         }
-        if (extract && root_count > 1) return c3d::ASSET_FORMAT_ERROR~;
+        if (root_count > 1) return c3d::ASSET_FORMAT_ERROR~;
         bool root_track = root_count == 1;
 
         Quat[] source_rest = alloc::new_array(tmem, Quat, source_nodes.len);
@@ -92,7 +92,12 @@ fn AnimationClip? bake_corrected(
         foreach (uint destination, source_index : mapped) {
             if (source_index == NOT_MATCHED) continue;
             Track* track = &clip.tracks[track_slot++];
-            *track = baked_track(allocator, times, TargetPath.ROTATION, target_slot(&clip, &target_count, destination));
+            *track = baked_track(
+                allocator: allocator,
+                times:     times,
+                path:      TargetPath.ROTATION,
+                target:    target_slot(&clip, &target_count, destination),
+            );
             baked_rotations[destination] = track;
         }
         Track* hips_track;
@@ -125,15 +130,14 @@ fn AnimationClip? bake_corrected(
 
         uint[] cursors = alloc::new_array(tmem, uint, source.tracks.len);
         Quat[] source_world = alloc::new_array(tmem, Quat, source_nodes.len);
-        Vec3[] source_position = alloc::new_array(tmem, Vec3, source_nodes.len);
         Quat[] target_world = alloc::new_array(tmem, Quat, target.nodes.len);
         Vec3 root_rest = root_track ? rest_world_position(source_nodes, root_source) : (Vec3){};
         Vec3 first_displacement;
         float[QUAT_COMPONENTS] sample;
         foreach (usz key, time : times) {
+            Vec3 root_position;
             foreach (uint index, &node : source_nodes) {
                 Quat local = node.local.rotation;
-                Vec3 position = node.local.position;
                 if (Track* rotation = rotation_tracks[index]) {
                     anim::sample_track(rotation, time, &cursors[track_index(source, rotation)], sample[..]);
                     local = { .v = { sample[0], sample[1], sample[2], sample[3] } };
@@ -141,16 +145,9 @@ fn AnimationClip? bake_corrected(
                 if (index == root_source) {
                     Track* translation = translation_tracks[index];
                     anim::sample_track(translation, time, &cursors[track_index(source, translation)], sample[:3]);
-                    position = { sample[0], sample[1], sample[2] };
+                    root_position = { sample[0], sample[1], sample[2] };
                 }
-                if (node.parent < 0) {
-                    source_world[index] = local;
-                    source_position[index] = position;
-                } else {
-                    source_world[index] = source_world[node.parent].mul(local);
-                    Vec3 offset = source_world[node.parent].rotate_vec3(position);
-                    source_position[index] = offset + source_position[node.parent];
-                }
+                source_world[index] = node.parent < 0 ? local : source_world[node.parent].mul(local);
             }
 
             foreach (uint destination, &node : target.nodes) {
@@ -167,13 +164,13 @@ fn AnimationClip? bake_corrected(
             }
 
             if (!root_track) continue;
-            Vec3 displacement = (source_position[root_source] - root_rest) * options.root_translation_scale;
+            Vec3 displacement = (root_position - root_rest) * options.root_translation_scale;
             if (key == 0) first_displacement = displacement;
             Vec3 horizontal = { displacement.x - first_displacement.x, 0, displacement.z - first_displacement.z };
             Vec3 hips_vector = options.root_motion == RootMotion.KEEP ? displacement : displacement - horizontal;
-            write_translation_key(hips_track, key, place(target.nodes, destination_of[root_source], hips_vector));
+            write_translation_key(hips_track, key, place(target.nodes, target_rest, destination_of[root_source], hips_vector));
             if (!extract) continue;
-            write_translation_key(root_node_track, key, place(target.nodes, options.root_node, horizontal));
+            write_translation_key(root_node_track, key, place(target.nodes, target_rest, options.root_node, horizontal));
         }
     };
     return clip;
@@ -218,11 +215,15 @@ fn void write_translation_key(Track* track, usz key, Vec3 position) @private {
     slot[2] = position.z;
 }
 
-fn Vec3 place(NodeTemplate[] nodes, uint index, Vec3 model_vector) @private {
+fn Vec3 place(
+    NodeTemplate[] nodes,
+    Quat[] rest_rotations,
+    uint index,
+    Vec3 model_vector,
+) @private {
     int parent = nodes[index].parent;
     if (parent < 0) return model_vector + nodes[index].local.position;
-    Quat parent_rest = rest_world_rotation(nodes, (uint)parent);
-    return parent_rest.conjugate().rotate_vec3(model_vector) + nodes[index].local.position;
+    return rest_rotations[parent].conjugate().rotate_vec3(model_vector) + nodes[index].local.position;
 }
 
 fn usz track_index(AnimationClip* clip, Track* track) @private => (usz)(track - clip.tracks.ptr);
