@@ -51,3 +51,57 @@ A custom material whose shader has a vertex stage draws a batch only when the sh
 `spatial::pick` tests a batch's aggregate bound, then each live instance. A hit carries the batch node, `instanced = true` and `instance_index`.
 
 Example: `python3 scripts/build.py --example instancing`.
+
+## Crowds
+
+A crowd draws many animated copies of one skinned model, each instance with its own clip, time and
+speed, in one draw per skinned part per parity per pass.
+
+```c3
+Node* crowd = model::add_crowd(
+    assets:      &assets,
+    scene:       &scene,
+    model:       character,
+    capacity:    512,
+    pose_bounds: pose_bounds,
+    instances:   instances[..],
+)!;
+
+while (window.poll()) {
+    anim::crowd_update(&assets, &scene, window.clock.delta);
+    scene.update_world();
+    // render
+}
+```
+
+- `add_crowd` covers every skin of the template that shares one skeleton and joint list; it faults
+  `INVALID_ARGUMENT` for a template without skins, skins on different skeletons, more instances than
+  `capacity`, or an instance clip the template does not own. It creates the crowd node, which carries
+  `AnimatedCrowd`, and one child `InstancedMesh` node per skinned part: one scene node plus one per part.
+  Meshes without a skin (a rigid prop) are not drawn; `template.meshes.len - crowd.parts.len` of them
+  are left out.
+- Each `CrowdInstance` has a placement, a `CrowdPose` (`clip`, `time`, `speed`, `loop`) and a tint.
+  `set_crowd` replaces them and the live count for every part at once.
+- `crowd_update` advances every pose (loop wraps, otherwise the time clamps), samples its clip into one
+  model-space palette per instance, writes the placements into every part batch and bounds each batch
+  by `pose_bounds` under every placement. Poses are independent: no blending, fading or retargeting per
+  instance; a character that needs those is an `Animator` instance.
+- `pose_bounds` is instance-local and must cover every pose of one instance; culling and shadow fitting
+  use nothing else.
+- Part nodes keep an identity local transform and are removed only by removing the crowd node, which
+  removes them with it. The crowd's model must stay in the store while the crowd lives.
+- Every part reads the same palettes: all parts share the placements, so they pack instances in the
+  same parity order. Morph weights are per instance and per part.
+- The renderer uploads one palette array per crowd per frame (`joints * 64` bytes per instance) and
+  reuses it for every part, view and shadow layer. Above `OVERSIZED_UPLOAD_BYTES` (8 MiB, about 2470
+  instances of a 53-joint character) the upload takes dedicated overflow memory every frame.
+- Crowds never enter the ray tracing paths (shadows, ambient occlusion, reflections, path tracing),
+  whatever `InstancedMesh.trace` says; raster shadows and temporal views work. This is the limit plain
+  skinned meshes have.
+- Custom materials: a fragment-only custom material draws with the built-in skinned instanced stage. A
+  custom instanced vertex pair skins a crowd when compiled with the deformation defines
+  ([Custom shaders](custom_shaders.md)).
+
+Example: `python3 scripts/build.py --example crowd` walks 512 instances of the committed Quaternius
+character through six of its clips; `B` switches to 512 `Animator` instances of the same model for
+comparison, `--baseline` starts there.

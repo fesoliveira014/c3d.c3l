@@ -282,7 +282,7 @@ fn TraceInstance[] collect_trace_instances(
                 assets:              assets,
                 geometry:            batch.geometry,
                 material:            batch.material,
-                skinned:             false,
+                skinned:             node.parent != null && scene.has(node.parent, AnimatedCrowd),
                 has_bounds_override: batch.has_bounds_override,
             )) {
                 foreach (transform : batch.transforms[:batch.count]) {

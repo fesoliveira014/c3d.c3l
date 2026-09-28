@@ -99,6 +99,12 @@
         "src/cube_gui.c3"
       ]
     },
+    "crowd": {
+      "type": "executable",
+      "sources": [
+        "src/crowd.c3"
+      ]
+    },
     "actions": {
       "type": "executable",
       "sources": [

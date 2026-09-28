@@ -45,6 +45,8 @@ struct MeshCandidate {
     float          view_depth;
     bool           receive_shadow;
     InstancedMesh* batch;
+    AnimatedCrowd*         crowd;
+    uint           crowd_part;
     uint           instance_first;
     uint           instance_count;
     bool           mirrored;
@@ -84,6 +86,7 @@ fn MeshCandidate[] extract_candidates(Allocator allocator, Scene* scene, AssetSt
         if (batch.count && node.visible_effective && (layers & node.layers) != 0) {
             include_batch(
                 candidates: candidates,
+                scene:      scene,
                 node:       node,
                 batch:      batch,
                 assets:     assets,
@@ -220,6 +223,7 @@ fn void include_mesh(MeshCandidate[] candidates, Scene* scene, Node* node, Mesh*
 
 fn void include_batch(
     MeshCandidate[] candidates,
+    Scene* scene,
     Node* node,
     InstancedMesh* batch,
     AssetStore* assets,
@@ -245,7 +249,25 @@ fn void include_batch(
         .receive_shadow = batch.receive_shadow,
         .batch          = batch,
     };
+    attach_crowd(scene, &template);
     emit_batch_candidates(candidates, counts, template);
+}
+
+<*
+ Mark a batch candidate as a crowd part when its parent node carries the crowd.
+ @param [&in] scene
+ @param [&inout] candidate : "A batch candidate."
+*>
+fn void attach_crowd(Scene* scene, MeshCandidate* candidate) {
+    Node* parent = candidate.node.parent;
+    if (!parent || !scene.has(parent, AnimatedCrowd)) return;
+    AnimatedCrowd* crowd = scene.get(parent, AnimatedCrowd);
+    foreach (uint index, &part : crowd.parts) {
+        if (!c3d::same_id(part.batch, candidate.node.id)) continue;
+        candidate.crowd = crowd;
+        candidate.crowd_part = index;
+        return;
+    }
 }
 
 fn bool batch_is_drawable(AssetStore* assets, InstancedMesh* batch) @local {
@@ -364,6 +386,7 @@ fn MeshCandidate[] extract_shadow_candidates(
                     .receive_shadow = batch.receive_shadow,
                     .batch          = batch,
                 };
+                attach_crowd(scene, &template);
                 emit_batch_candidates(candidates, counts, template);
             }
         }

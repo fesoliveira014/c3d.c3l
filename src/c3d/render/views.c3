@@ -92,11 +92,12 @@ struct ProjectionTerms {
  Deformation and instance matrices a node had when the view last rendered it.
 *>
 struct PoseRecord {
-    Mat4f[]         palette;
-    Mat4f[]         instances;
-    uint            instance_count;
-    MorphWeightsGpu morph;
-    bool            morphed;
+    Mat4f[]           palette;
+    Mat4f[]           instances;
+    uint              instance_count;
+    MorphWeightsGpu   morph;
+    MorphWeightsGpu[] morphs;
+    bool              morphed;
 }
 
 <*
@@ -188,6 +189,14 @@ fn void ViewHistory.commit(
             pose:      &self.poses[index],
             candidate: candidate,
         );
+        if (!candidate.crowd) continue;
+        Node* crowd_node = candidate.node.parent;
+        usz crowd_index = crowd_node.id.index;
+        if (c3d::same_id(self.owners[crowd_index], crowd_node.id) && self.seen[crowd_index] == self.serial) continue;
+        self.models[crowd_index] = crowd_node.world;
+        self.owners[crowd_index] = crowd_node.id;
+        self.seen[crowd_index] = self.serial;
+        commit_crowd_pose(allocator, &self.poses[crowd_index], candidate.crowd);
     }
     self.view_proj = view_proj;
     self.pending = true;
@@ -242,6 +251,7 @@ fn void free_view_history(Allocator allocator, ViewHistory* history) {
         foreach (&pose : history.poses) {
             alloc::free(allocator, pose.palette.ptr);
             alloc::free(allocator, pose.instances.ptr);
+            alloc::free(allocator, pose.morphs.ptr);
         }
         alloc::free(allocator, history.models.ptr);
         alloc::free(allocator, history.owners.ptr);
@@ -278,6 +288,19 @@ fn void commit_pose(
             candidate.morph_weights,
         );
         pose.morph = pack_morph_selection(selection);
+    }
+    if (candidate.crowd && candidate.crowd.parts[candidate.crowd_part].target_count) {
+        AnimatedCrowd* crowd = candidate.crowd;
+        if (pose.morphs.len != crowd.placements.len) {
+            alloc::free(allocator, pose.morphs.ptr);
+            pose.morphs = alloc::new_array(allocator, MorphWeightsGpu, crowd.placements.len);
+        }
+        pack_crowd_morphs(
+            blocks:   pose.morphs[:crowd.count],
+            crowd:    crowd,
+            part:     candidate.crowd_part,
+            channels: assets.geometry(candidate.geometry).data.channels,
+        );
     }
     if (candidate.batch) {
         InstancedMesh* batch = candidate.batch;
@@ -786,4 +809,14 @@ fn void? resize_view(Renderer* renderer, ViewRecord* record) @private {
 fn bool lut_desc_valid(material::TextureDesc* desc) @private {
     bool rgba8 = desc.format == PixelFormat.RGBA8_UNORM || desc.format == PixelFormat.RGBA8_SRGB;
     return desc.depth > 0 && desc.layers == 1 && desc.mip_levels == 1 && !desc.generate_mips && !desc.is_cube && rgba8;
+}
+
+fn void commit_crowd_pose(Allocator allocator, PoseRecord* pose, AnimatedCrowd* crowd) @local {
+    usz capacity = (usz)crowd.joint_count * crowd.placements.len;
+    if (pose.palette.len != capacity) {
+        alloc::free(allocator, pose.palette.ptr);
+        pose.palette = alloc::new_array(allocator, Mat4f, (sz)capacity);
+    }
+    pack_crowd_palettes(pose.palette[:(usz)crowd.joint_count * crowd.count], crowd);
+    pose.instance_count = crowd.count;
 }

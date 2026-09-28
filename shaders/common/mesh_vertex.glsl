@@ -56,14 +56,33 @@ MeshVertexInput pull_mesh_vertex(GeometryRoot geometry, uint index) {
     return vertex;
 }
 
+#if defined(SKINNED) || defined(SKINNED_U16) || defined(MORPH)
+// A crowd instance reads its own palette and morph block; a single mesh reads the base address.
+uint64_t instance_palette(DrawRoot draw, uint64_t palette_base) {
+#ifdef INSTANCED
+    return palette_base + uint64_t(gl_InstanceIndex) * uint64_t(draw.skin_stride) * 64ul;
+#else
+    return palette_base;
+#endif
+}
+
+uint64_t instance_morph(uint64_t morph_base) {
+#ifdef INSTANCED
+    return morph_base + uint64_t(gl_InstanceIndex) * 80ul;
+#else
+    return morph_base;
+#endif
+}
+#endif
+
 void apply_mesh_deformation(inout MeshVertexInput vertex, DrawRoot draw, GeometryRoot geometry, uint index) {
 #ifdef MORPH
-    MorphWeightsGpu morph = MorphWeightsGpu(draw.morph);
+    MorphWeightsGpu morph = MorphWeightsGpu(instance_morph(draw.morph));
     vertex.position += morph_delta(geometry, morph, index, MORPH_STREAM_POSITION);
     vertex.normal += morph_delta(geometry, morph, index, MORPH_STREAM_NORMAL);
 #endif
 #if defined(SKINNED) || defined(SKINNED_U16)
-    mat4 skin = skin_matrix(geometry, draw.skin, index);
+    mat4 skin = skin_matrix(geometry, instance_palette(draw, draw.skin), index);
     vertex.position = (skin * vec4(vertex.position, 1.0)).xyz;
     vertex.normal = mat3(skin) * vertex.normal;
     vertex.tangent.xyz = mat3(skin) * vertex.tangent.xyz;
@@ -75,11 +94,11 @@ void apply_mesh_deformation(inout MeshVertexInput vertex, DrawRoot draw, Geometr
 vec3 previous_position(DrawRoot draw, GeometryRoot geometry, uint index) {
     vec3 position = pull_vec3(geometry.positions, index);
 #ifdef MORPH
-    MorphWeightsGpu morph = MorphWeightsGpu(PreviousPoseGpu(draw.previous_pose).morph);
+    MorphWeightsGpu morph = MorphWeightsGpu(instance_morph(PreviousPoseGpu(draw.previous_pose).morph));
     position += morph_delta(geometry, morph, index, MORPH_STREAM_POSITION);
 #endif
 #if defined(SKINNED) || defined(SKINNED_U16)
-    mat4 skin = skin_matrix(geometry, PreviousPoseGpu(draw.previous_pose).skin, index);
+    mat4 skin = skin_matrix(geometry, instance_palette(draw, PreviousPoseGpu(draw.previous_pose).skin), index);
     position = (skin * vec4(position, 1.0)).xyz;
 #endif
     return position;

@@ -253,7 +253,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer DrawRoot {
     uint layers;
     uint sheen_lut;
     uint sheen_sampler;
-    uint _pad3;
+    uint skin_stride;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer PreviousPoseGpu {
