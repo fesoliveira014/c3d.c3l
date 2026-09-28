@@ -85,6 +85,25 @@ is not the recording order of every view.
 - After `configure_view`, `reset_view_history`, a new scene, or on the first frame, the effect contributes
   nothing until a frame has been rendered.
 
+## Cost
+
+Measured on an RTX 4090 over Sponza (`gltf_viewer --benchmark --screen-space-gi on`), medians:
+
+| Path | Extent | `SCREEN_SPACE_GI` | `SSGI_COLOR_COPY` | `VELOCITY` |
+| --- | --- | --- | --- | --- |
+| deferred | 1920 x 1080 | 0.62 ms | 0.01 ms | 0.01 ms |
+| forward | 1920 x 1080 | 0.76 ms | 0.01 ms | 0.01 ms |
+| deferred | 3840 x 2160 | 2.44 ms | 0.05 ms | 0.05 ms |
+| forward | 3840 x 2160 | 3.06 ms | 0.05 ms | 0.04 ms |
+
+Forward views pay more because the filter reconstructs normals from depth. A view without TAA or motion blur
+also pays the velocity pass and the per-candidate history commit: `cpu_record` rose from 0.15 to 0.19 ms at
+1080p on Sponza.
+
+Noise, read on the acceptance scene (a red emitter on a grey floor, 8-bit readings of floor pixels beside
+it): a standard deviation of 0.9 to 1.9 levels over 20 frames at rest and 0.8 to 2.1 levels while the camera
+turns and the history is rejected, on bounces of 11 to 30 levels. One filter pass is kept for that reason.
+
 ## Memory
 
 At 1920 x 1080: raw estimate 4.1 MB, two accumulation slots 8.3 MB, two depth history slots 4.1 MB, the
