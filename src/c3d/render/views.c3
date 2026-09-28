@@ -70,6 +70,7 @@ struct ViewDesc {
     ClusterDesc          clusters;
     RayTracingDesc       ray_tracing;
     AmbientOcclusionDesc ambient_occlusion;
+    ScreenSpaceGiDesc    screen_space_gi;
     PathTraceDesc        path_trace;
     bool                 instance_culling;
 }
@@ -78,7 +79,7 @@ struct ViewDesc {
  Working images one view owns, in view_targets order.
 *>
 const uint VIEW_TARGET_COUNT = 5 + post::BLOOM_MAX_LEVELS + 8 + GBUFFER_CHANNEL_COUNT
-  + 3 * post::TAA_HISTORY_SLOTS + 1 + 2 + 2 + 1;
+  + 3 * post::TAA_HISTORY_SLOTS + 1 + 2 + 2 + 1 + 1 + 2 * SSGI_HISTORY_SLOTS + 2;
 
 <*
  Reverse-Z projection terms that recover forward distance from stored depth.
@@ -371,6 +372,11 @@ struct ViewRecord {
     Target                               reflection;
     Target                               reflection_blur;
     Target                               accumulation;
+    Target                               ssgi_raw;
+    Target[SSGI_HISTORY_SLOTS]           ssgi_history;
+    Target[SSGI_HISTORY_SLOTS]           ssgi_depth;
+    Target                               ssgi_color;
+    Target                               ssgi;
     Target*                              scene_input;
     bool                                 post_chain_open;
     bool                                 rendered;
@@ -436,6 +442,14 @@ fn Target*[VIEW_TARGET_COUNT] view_targets(ViewRecord* record) {
     targets[next + 3 * slots + 3] = &record.reflection;
     targets[next + 3 * slots + 4] = &record.reflection_blur;
     targets[next + 3 * slots + 5] = &record.accumulation;
+    next += 3 * slots + 6;
+    targets[next] = &record.ssgi_raw;
+    for (uint slot = 0; slot < SSGI_HISTORY_SLOTS; slot++) {
+        targets[next + 1 + slot] = &record.ssgi_history[slot];
+        targets[next + 1 + SSGI_HISTORY_SLOTS + slot] = &record.ssgi_depth[slot];
+    }
+    targets[next + 1 + 2 * SSGI_HISTORY_SLOTS] = &record.ssgi_color;
+    targets[next + 2 + 2 * SSGI_HISTORY_SLOTS] = &record.ssgi;
     return targets;
 }
 
@@ -500,7 +514,7 @@ fn bool Renderer.has_depth_prepass_view(&self) {
     foreach (&record : self.views.items) {
         if (!record.live || record.desc.shading == ShadingPath.PATH_TRACED) continue;
         if (record.desc.shading == ShadingPath.DEFERRED || record.desc.depth_prepass) return true;
-        if (record.desc.ambient_occlusion.kind != AoKind.NONE) return true;
+        if (record.desc.ambient_occlusion.kind != AoKind.NONE || record.desc.screen_space_gi.enabled) return true;
     }
     return false;
 }
@@ -657,6 +671,7 @@ fn void? configure_view(Renderer* renderer, ViewId view, ViewDesc desc) {
         || ambient_occlusion.full_resolution != record.desc.ambient_occlusion.full_resolution) {
         retire_ao_images(renderer, record);
     }
+    if (!desc.screen_space_gi.enabled) retire_ssgi_images(renderer, record);
     if (!desc.ray_tracing.reflections) retire_reflection_images(renderer, record);
     if (desc.shading != ShadingPath.PATH_TRACED) retire_accumulation(renderer, record);
     record.desc = desc;
@@ -666,6 +681,7 @@ fn void? configure_view(Renderer* renderer, ViewId view, ViewDesc desc) {
     post::retire_effect_targets(renderer, record);
     post::acquire_effect_targets(renderer, record)!;
     acquire_ao_images(renderer, record)!;
+    acquire_ssgi_images(renderer, record)!;
     acquire_reflection_images(renderer, record)!;
     acquire_accumulation(renderer, record)!;
 }
@@ -704,6 +720,7 @@ fn void? validate_view_desc(Renderer* renderer, ViewDesc* desc) @private {
     if (desc.ray_tracing.shadows && !ray_queries) return c3d::UNSUPPORTED~;
     if (desc.ambient_occlusion.kind == AoKind.RAY_TRACED && !ray_queries) return c3d::UNSUPPORTED~;
     if (!ambient_occlusion_desc_valid(&desc.ambient_occlusion)) return c3d::INVALID_ARGUMENT~;
+    if (!screen_space_gi_desc_valid(&desc.screen_space_gi)) return c3d::INVALID_ARGUMENT~;
     RayTracingDesc* ray_tracing = &desc.ray_tracing;
     if (ray_tracing.reflections) {
         if (desc.shading != ShadingPath.DEFERRED || !ray_queries) return c3d::UNSUPPORTED~;
@@ -714,7 +731,7 @@ fn void? validate_view_desc(Renderer* renderer, ViewDesc* desc) @private {
         if (!renderer.caps.ray_tracing_pipelines.enabled) return c3d::UNSUPPORTED~;
         bool raster_only = desc.post.anti_aliasing == AntiAliasing.TAA || desc.post.motion_blur
           || desc.post.depth_of_field || desc.ambient_occlusion.kind != AoKind.NONE
-          || ray_tracing.shadows || desc.lights == LightSelection.CLUSTERED;
+          || ray_tracing.shadows || desc.lights == LightSelection.CLUSTERED || desc.screen_space_gi.enabled;
         if (raster_only || !path_trace_desc_valid(&desc.path_trace)) return c3d::INVALID_ARGUMENT~;
     }
     if (desc.lights == LightSelection.CLUSTERED) {
@@ -781,6 +798,7 @@ fn void? acquire_view_images(Renderer* renderer, ViewRecord* record) @private {
     post::acquire_effect_targets(renderer, record)!;
     if (record.desc.shading == ShadingPath.DEFERRED) acquire_gbuffer(renderer, record)!;
     acquire_ao_images(renderer, record)!;
+    acquire_ssgi_images(renderer, record)!;
     acquire_reflection_images(renderer, record)!;
     acquire_accumulation(renderer, record)!;
     if (record.desc.lights == LightSelection.CLUSTERED) {
@@ -805,6 +823,7 @@ fn void release_view_images(Renderer* renderer, ViewRecord* record) @private {
     release_scene_color(&renderer.device, record);
     release_gbuffer(&renderer.device, record);
     release_ao_images(&renderer.device, record);
+    release_ssgi_images(&renderer.device, record);
     release_reflection_images(&renderer.device, record);
     release_accumulation(&renderer.device, record);
     release_view_targets(&renderer.device, record);

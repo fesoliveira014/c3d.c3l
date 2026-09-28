@@ -58,8 +58,9 @@ void main() {
         material_sample.view_direction
     );
     float ambient_occlusion = draw_ambient_occlusion(frame, draw.flags, ivec2(gl_FragCoord.xy));
-    vec3 color = frame.ambient.rgb * material_sample.base_color.rgb
-        * (1.0 - material_sample.metallic) * min(material_sample.occlusion, ambient_occlusion)
+    vec4 screen_indirect = draw_screen_space_indirect(frame, draw.flags, ivec2(gl_FragCoord.xy));
+    vec3 color = frame.ambient.rgb * material_sample.base_color.rgb * (1.0 - material_sample.metallic)
+        * screen_space_base_share(material_sample.occlusion, ambient_occlusion, screen_indirect)
         + material_sample.emissive;
     if (frame_has_indirect(frame)) {
         color += evaluate_environment(
@@ -68,7 +69,8 @@ void main() {
             surface,
             material_sample.roughness,
             material_sample.occlusion,
-            ambient_occlusion
+            ambient_occlusion,
+            screen_indirect
         );
     }
     float view_depth = -(frame.view * vec4(v_world_pos, 1.0)).z;

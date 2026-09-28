@@ -404,6 +404,7 @@ fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkOptions options) @local 
     base.ambient_occlusion = options.flags.ambient_occlusion;
     base.depth_prepass = options.flags.depth_prepass;
     base.ray_tracing.reflections = options.flags.reflections;
+    if (options.flags.screen_space_gi) base.screen_space_gi = render::SCREEN_SPACE_GI_DEFAULT;
     base.shading = options.shading;
     // A path-traced view loops every light itself and rejects the cluster grid.
     base.lights = options.shading == ShadingPath.PATH_TRACED ? LightSelection.FLAT : options.selection;
@@ -415,13 +416,14 @@ fn void print_banner(BenchmarkOptions options, bool timestamps_active) @local {
     BenchmarkFlags flags = options.flags;
     bool scene_probes = options.probe_volumes != 0 && options.probe_fill == ProbeFill.SCENE;
     bool path_traced = options.shading == ShadingPath.PATH_TRACED;
-    io::eprintfn("mode=%s shading=%s lights=%d shadows=%s range=%.3f capacity=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s depth_prepass=%s ambient_occlusion=%s reflections=%s probe_volumes=%d probe_counts=%dx%dx%d probe_fill=%s probe_window=%d probe_rays=%d point_shadows=%s trace=%s",
+    io::eprintfn("mode=%s shading=%s lights=%d shadows=%s range=%.3f capacity=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s depth_prepass=%s ambient_occlusion=%s reflections=%s screen_space_gi=%s probe_volumes=%d probe_counts=%dx%dx%d probe_fill=%s probe_window=%d probe_rays=%d point_shadows=%s trace=%s",
         options.selection == LightSelection.FLAT || options.shading == ShadingPath.PATH_TRACED ? "flat" : "clustered",
         bench_loop::shading_name(options.shading), options.lights, options.shadows,
         options.range, options.capacity, flags.width, flags.height, flags.warmup, flags.frames,
         flags.validation, flags.gpu_timings, timestamps_active, flags.capture,
         flags.window ? "window" : "none", flags.panel, flags.depth_prepass,
         bench_loop::ambient_occlusion_name(flags.ambient_occlusion), flags.reflections ? "on" : "off",
+        flags.screen_space_gi ? "on" : "off",
         options.probe_volumes, options.probe_counts.x, options.probe_counts.y, options.probe_counts.z,
         options.probe_fill == ProbeFill.SCENE ? "scene" : "environment", options.probe_window, options.probe_rays,
         options.point_shadows, bench_loop::trace_name(

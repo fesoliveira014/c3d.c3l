@@ -44,10 +44,12 @@ void main() {
 
     vec3 view_direction = standard_view_direction(frame, v_world_pos);
     float ambient_occlusion = draw_ambient_occlusion(frame, draw.flags, ivec2(gl_FragCoord.xy));
-    vec3 color = frame.ambient.rgb * base_color.rgb * ambient_occlusion;
+    vec4 screen_indirect = draw_screen_space_indirect(frame, draw.flags, ivec2(gl_FragCoord.xy));
+    float base_share = screen_space_base_share(1.0, ambient_occlusion, screen_indirect);
+    vec3 color = frame.ambient.rgb * base_color.rgb * base_share;
     if (frame_has_indirect(frame)) {
         vec3 irradiance = indirect_diffuse_irradiance(frame, v_world_pos, normal, view_direction);
-        color += base_color.rgb / PI * irradiance * ambient_occlusion;
+        color += base_color.rgb / PI * (irradiance * base_share + screen_indirect.rgb);
     }
 
     float view_depth = -(frame.view * vec4(v_world_pos, 1.0)).z;

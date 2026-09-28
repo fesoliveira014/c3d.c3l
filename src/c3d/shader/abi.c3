@@ -19,13 +19,16 @@ const uint TRACE_MASK_SHADOW_CASTER = 2;
 const uint FRAME_LIGHTS_CLUSTERED = 1;
 const uint FRAME_TRACE_PRESENT = 2;
 const uint FRAME_AO_PRESENT = 4;
+const uint FRAME_SSGI_PRESENT = 8;
 const uint CLUSTER_GROUP_SIZE = 64;
 const uint INSTANCE_CULL_GROUP_SIZE = 64;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8;
 const uint DRAW_RECEIVE_SHADOW = 1;
 const uint DRAW_ALPHA_MASK = 2;
-const uint DRAW_AMBIENT_OCCLUSION = 4;
+const uint DRAW_SCREEN_SPACE_TERMS = 4;
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1;
+const uint SSGI_FLAG_GBUFFER_NORMALS = 1;
+const uint SSGI_FLAG_HISTORY_VALID = 2;
 const uint MATERIAL_MAP_BASE_COLOR = 1;
 const uint MATERIAL_MAP_METALLIC_ROUGHNESS = 2;
 const uint MATERIAL_MAP_NORMAL = 4;
@@ -320,8 +323,12 @@ struct FrameRoot {
     float        mip_bias;
     TextureIndex ao_texture;
     GpuAddress   probe_volumes;
+    TextureIndex ssgi_texture;
+    uint         _pad0;
+    uint         _pad1;
+    uint         _pad2;
 }
-$assert FrameRoot::size == 464;
+$assert FrameRoot::size == 480;
 $assert $reflect(FrameRoot.view).offset == 0;
 $assert $reflect(FrameRoot.proj).offset == 64;
 $assert $reflect(FrameRoot.view_proj).offset == 128;
@@ -345,6 +352,10 @@ $assert $reflect(FrameRoot.clusters).offset == 440;
 $assert $reflect(FrameRoot.mip_bias).offset == 448;
 $assert $reflect(FrameRoot.ao_texture).offset == 452;
 $assert $reflect(FrameRoot.probe_volumes).offset == 456;
+$assert $reflect(FrameRoot.ssgi_texture).offset == 464;
+$assert $reflect(FrameRoot._pad0).offset == 468;
+$assert $reflect(FrameRoot._pad1).offset == 472;
+$assert $reflect(FrameRoot._pad2).offset == 476;
 
 struct DrawRoot {
     Mat4f        model;
@@ -537,6 +548,108 @@ $assert $reflect(AoBlurRoot.input_height).offset == 32;
 $assert $reflect(AoBlurRoot._pad0).offset == 36;
 $assert $reflect(AoBlurRoot._pad1).offset == 40;
 $assert $reflect(AoBlurRoot._pad2).offset == 44;
+
+struct SsgiTraceRoot {
+    GpuAddress   frame;
+    TextureIndex depth;
+    TextureIndex normals;
+    TextureIndex velocity;
+    TextureIndex previous_color;
+    TextureIndex previous_depth;
+    TextureIndex output_texture;
+    SamplerIndex sampler_index;
+    uint         width;
+    uint         height;
+    uint         rays;
+    uint         max_steps;
+    float        max_distance;
+    float        thickness;
+    float        depth_tolerance;
+    uint         noise_frame;
+    uint         flags;
+    uint         _pad0;
+    uint         _pad1;
+}
+$assert SsgiTraceRoot::size == 80;
+$assert $reflect(SsgiTraceRoot.frame).offset == 0;
+$assert $reflect(SsgiTraceRoot.depth).offset == 8;
+$assert $reflect(SsgiTraceRoot.normals).offset == 12;
+$assert $reflect(SsgiTraceRoot.velocity).offset == 16;
+$assert $reflect(SsgiTraceRoot.previous_color).offset == 20;
+$assert $reflect(SsgiTraceRoot.previous_depth).offset == 24;
+$assert $reflect(SsgiTraceRoot.output_texture).offset == 28;
+$assert $reflect(SsgiTraceRoot.sampler_index).offset == 32;
+$assert $reflect(SsgiTraceRoot.width).offset == 36;
+$assert $reflect(SsgiTraceRoot.height).offset == 40;
+$assert $reflect(SsgiTraceRoot.rays).offset == 44;
+$assert $reflect(SsgiTraceRoot.max_steps).offset == 48;
+$assert $reflect(SsgiTraceRoot.max_distance).offset == 52;
+$assert $reflect(SsgiTraceRoot.thickness).offset == 56;
+$assert $reflect(SsgiTraceRoot.depth_tolerance).offset == 60;
+$assert $reflect(SsgiTraceRoot.noise_frame).offset == 64;
+$assert $reflect(SsgiTraceRoot.flags).offset == 68;
+$assert $reflect(SsgiTraceRoot._pad0).offset == 72;
+$assert $reflect(SsgiTraceRoot._pad1).offset == 76;
+
+struct SsgiTemporalRoot {
+    GpuAddress   frame;
+    TextureIndex raw;
+    TextureIndex history;
+    TextureIndex previous_depth;
+    TextureIndex depth;
+    TextureIndex velocity;
+    TextureIndex output_texture;
+    TextureIndex output_depth;
+    SamplerIndex sampler_index;
+    uint         width;
+    uint         height;
+    float        history_weight;
+    float        depth_tolerance;
+    float        velocity_threshold;
+    uint         flags;
+}
+$assert SsgiTemporalRoot::size == 64;
+$assert $reflect(SsgiTemporalRoot.frame).offset == 0;
+$assert $reflect(SsgiTemporalRoot.raw).offset == 8;
+$assert $reflect(SsgiTemporalRoot.history).offset == 12;
+$assert $reflect(SsgiTemporalRoot.previous_depth).offset == 16;
+$assert $reflect(SsgiTemporalRoot.depth).offset == 20;
+$assert $reflect(SsgiTemporalRoot.velocity).offset == 24;
+$assert $reflect(SsgiTemporalRoot.output_texture).offset == 28;
+$assert $reflect(SsgiTemporalRoot.output_depth).offset == 32;
+$assert $reflect(SsgiTemporalRoot.sampler_index).offset == 36;
+$assert $reflect(SsgiTemporalRoot.width).offset == 40;
+$assert $reflect(SsgiTemporalRoot.height).offset == 44;
+$assert $reflect(SsgiTemporalRoot.history_weight).offset == 48;
+$assert $reflect(SsgiTemporalRoot.depth_tolerance).offset == 52;
+$assert $reflect(SsgiTemporalRoot.velocity_threshold).offset == 56;
+$assert $reflect(SsgiTemporalRoot.flags).offset == 60;
+
+struct SsgiFilterRoot {
+    GpuAddress   frame;
+    TextureIndex input_texture;
+    TextureIndex depth;
+    TextureIndex normals;
+    TextureIndex output_texture;
+    uint         input_width;
+    uint         input_height;
+    uint         width;
+    uint         height;
+    float        intensity;
+    uint         flags;
+}
+$assert SsgiFilterRoot::size == 48;
+$assert $reflect(SsgiFilterRoot.frame).offset == 0;
+$assert $reflect(SsgiFilterRoot.input_texture).offset == 8;
+$assert $reflect(SsgiFilterRoot.depth).offset == 12;
+$assert $reflect(SsgiFilterRoot.normals).offset == 16;
+$assert $reflect(SsgiFilterRoot.output_texture).offset == 20;
+$assert $reflect(SsgiFilterRoot.input_width).offset == 24;
+$assert $reflect(SsgiFilterRoot.input_height).offset == 28;
+$assert $reflect(SsgiFilterRoot.width).offset == 32;
+$assert $reflect(SsgiFilterRoot.height).offset == 36;
+$assert $reflect(SsgiFilterRoot.intensity).offset == 40;
+$assert $reflect(SsgiFilterRoot.flags).offset == 44;
 
 struct RtAoRoot {
     GpuAddress   frame;

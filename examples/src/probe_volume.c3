@@ -9,8 +9,10 @@ import c3d::asset::gltf;
 import c3d::asset::image;
 import c3d::camera;
 import c3d::debug;
+import c3d::geometry;
 import c3d::gui;
 import c3d::light;
+import c3d::material;
 import c3d::maths;
 import c3d::model;
 import c3d::platform;
@@ -36,10 +38,13 @@ const uint WINDOW_HEIGHT @local = 720;
 const uint PROBE_COLOR @local = 0xFF40C0FF;
 const float SUN_RADIANS_PER_SECOND @local = 0.2f;
 const Vec3 SUN_DIRECTION @local = { -0.3f, -1, -0.2f };
+const Vec3 BRIGHT_OBJECT_SIZE @local = { 0.4f, 0.4f, 0.4f };   // a contact bounce the width of a floor tile
+const Vec3 BRIGHT_OBJECT_EMISSION @local = { 1, 0.15f, 0.05f };
+const float BRIGHT_OBJECT_STRENGTH @local = 8;
 const Vec2 CONTROLS_PANEL_POSITION @local = { 16, 16 };
-const Vec2 CONTROLS_PANEL_SIZE @local = { 320, 150 };
-const Vec2 SCENE_PANEL_POSITION @local = { 16, 180 };
-const Vec2 SCENE_PANEL_SIZE @local = { 320, 520 };
+const Vec2 CONTROLS_PANEL_SIZE @local = { 320, 200 };
+const Vec2 SCENE_PANEL_POSITION @local = { 16, 230 };
+const Vec2 SCENE_PANEL_SIZE @local = { 320, 470 };
 const Vec2 TARGETS_PANEL_POSITION @local = { 920, 16 };
 const Vec2 TARGETS_PANEL_SIZE @local = { 344, 690 };
 const Vec2 STATS_PANEL_POSITION @local = { 352, 16 };
@@ -133,6 +138,7 @@ fn void? run_gui(
     Node* camera_node,
     Node* volume_node,
     Node* sun,
+    Node* bright_object,
     Orbit* orbit,
     EnvironmentId environment,
     Options options,
@@ -152,6 +158,7 @@ fn void? run_gui(
     bool draw_probes = true;
     bool move_sun;
     float sun_angle;
+    bool screen_space_gi;
 
     while (window.poll()) {
         gui_renderer.new_frame();
@@ -168,6 +175,11 @@ fn void? run_gui(
             imgui::checkbox("Volume visible", &volume_node.visible);
             imgui::checkbox("Draw probes", &draw_probes);
             imgui::checkbox("Move sun", &move_sun);
+            imgui::checkbox("Bright object", &bright_object.visible);
+            if (imgui::checkbox("Screen-space GI", &screen_space_gi)) {
+                view_desc.screen_space_gi = screen_space_gi ? render::SCREEN_SPACE_GI_DEFAULT : (ScreenSpaceGiDesc){};
+                render::configure_view(renderer, renderer.default_view, view_desc)!;
+            }
             imgui::text("Trace: %s", renderer.caps.ray_queries.enabled ? "ray queries" : "software BVH");
         }
         imgui::end();
@@ -278,6 +290,18 @@ fn int main(String[] args) {
     @pool() {
         bounds = template_bounds(&assets, &assets.model(model).data);
     };
+    GeometryId bright_box;
+    @pool() {
+        Geometry box = geometry::box(tmem, BRIGHT_OBJECT_SIZE.x, BRIGHT_OBJECT_SIZE.y, BRIGHT_OBJECT_SIZE.z);
+        bright_box = assets.add_geometry(&box)!!;
+    };
+    StandardParams bright = material::STANDARD_PARAMS_DEFAULT;
+    bright.emissive = BRIGHT_OBJECT_EMISSION;
+    bright.emissive_strength = BRIGHT_OBJECT_STRENGTH;
+    MaterialId bright_material = assets.add_material(material::standard(bright))!!;
+    Node* bright_object = scene.add_mesh(bright_box, bright_material, name: "bright_object")!!;
+    Vec3 centre = (bounds.min + bounds.max) * 0.5f;
+    bright_object.local.position = { centre.x, BRIGHT_OBJECT_SIZE.y * 0.5f, centre.z };
     Node* volume_node = scene.add_node(name: "probe_volume")!!;
     volume_node.local.position = (bounds.min + bounds.max) * 0.5f;
     scene.add(volume_node, light::probe_volume((bounds.max - bounds.min) * 0.5f, PROBE_COUNTS, options.fill));
@@ -316,15 +340,16 @@ fn int main(String[] args) {
     defer render::destroy_renderer(&renderer);
 
     if (catch excuse = run_gui(
-        window:      &window,
-        renderer:    &renderer,
-        scene:       &scene,
-        camera_node: camera_node,
-        volume_node: volume_node,
-        sun:         sun,
-        orbit:       &orbit,
-        environment: environment,
-        options:     options,
+        window:        &window,
+        renderer:      &renderer,
+        scene:         &scene,
+        camera_node:   camera_node,
+        volume_node:   volume_node,
+        sun:           sun,
+        bright_object: bright_object,
+        orbit:         &orbit,
+        environment:   environment,
+        options:       options,
     )) {
         io::printfn("GUI failed: %s", excuse);
         return 1;

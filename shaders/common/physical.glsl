@@ -155,7 +155,8 @@ vec3 evaluate_physical_environment(
     PhysicalSurface surface,
     float base_roughness,
     float occlusion,
-    float ambient_occlusion
+    float ambient_occlusion,
+    vec4 screen_indirect
 ) {
     vec3 diffuse;
     vec3 specular;
@@ -166,6 +167,7 @@ vec3 evaluate_physical_environment(
         base_roughness,
         occlusion,
         ambient_occlusion,
+        screen_indirect,
         diffuse,
         specular
     );
@@ -224,6 +226,25 @@ vec3 evaluate_physical_environment(
     }
     return (1.0 - surface.coat_weight) * (standard + sheen)
         + surface.coat_weight * coat;
+}
+
+vec3 evaluate_physical_environment(
+    FrameRoot frame,
+    vec3 world_position,
+    PhysicalSurface surface,
+    float base_roughness,
+    float occlusion,
+    float ambient_occlusion
+) {
+    return evaluate_physical_environment(
+        frame,
+        world_position,
+        surface,
+        base_roughness,
+        occlusion,
+        ambient_occlusion,
+        vec4(0.0)
+    );
 }
 
 #endif

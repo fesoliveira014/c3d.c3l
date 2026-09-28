@@ -9,7 +9,7 @@ float frame_ambient_occlusion(FrameRoot frame, ivec2 pixel) {
 }
 
 float draw_ambient_occlusion(FrameRoot frame, uint draw_flags, ivec2 pixel) {
-    if ((draw_flags & DRAW_AMBIENT_OCCLUSION) == 0u) return 1.0;
+    if ((draw_flags & DRAW_SCREEN_SPACE_TERMS) == 0u) return 1.0;
     return frame_ambient_occlusion(frame, pixel);
 }
 

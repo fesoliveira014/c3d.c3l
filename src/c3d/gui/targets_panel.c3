@@ -171,6 +171,7 @@ fn void select_path_tracing(ViewDesc* desc) @local {
     desc.post.motion_blur = false;
     desc.post.depth_of_field = false;
     desc.ambient_occlusion = {};
+    desc.screen_space_gi = {};
     desc.ray_tracing.shadows = false;
     desc.ray_tracing.reflections = false;
     if (desc.path_trace.max_bounces == 0) desc.path_trace = render::PATH_TRACE_DEFAULT;
@@ -203,6 +204,9 @@ fn PanelEntry[] collect_entries(Renderer* renderer, ViewId view, EnvironmentId e
         push_view_image(&entries, "reflection_blur", { .kind = VIEW_REFLECTION, .view = view }, &record.reflection_blur);
         PreviewSource traced_source = { .kind = VIEW_REFLECTION, .view = view, .level = 1 };
         push_view_image(&entries, "reflection", traced_source, &record.reflection);
+        push_view_image(&entries, "ssgi", { .kind = VIEW_SCREEN_SPACE_GI, .view = view }, &record.ssgi);
+        PreviewSource ssgi_raw_source = { .kind = VIEW_SCREEN_SPACE_GI, .view = view, .level = 1 };
+        push_view_image(&entries, "ssgi_raw", ssgi_raw_source, &record.ssgi_raw);
         if (record.desc.lights == CLUSTERED) {
             entries.push({
                 .label  = "clusters",

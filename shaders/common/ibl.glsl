@@ -6,6 +6,7 @@
 #include "irradiance.glsl"
 #include "ambient_occlusion.glsl"
 #include "probe_volume.glsl"
+#include "screen_space_gi.glsl"
 
 vec3 environment_rotate(EnvironmentRotationGpu rotation, vec3 direction) {
     return vec3(
@@ -59,7 +60,7 @@ vec3 trace_miss_radiance(FrameRoot frame, vec3 direction) {
 }
 
 bool frame_has_indirect(FrameRoot frame) {
-    return frame.environment != 0ul || frame.probe_volumes != 0ul;
+    return frame.environment != 0ul || frame.probe_volumes != 0ul || (frame.flags & FRAME_SSGI_PRESENT) != 0u;
 }
 
 // Irradiance E from the first probe volume containing the position, else the environment SH, else zero.
@@ -77,6 +78,7 @@ vec3 indirect_diffuse_irradiance(FrameRoot frame, vec3 position, vec3 normal, ve
         * environment.intensity;
 }
 
+// screen_indirect: the pixel's premultiplied screen-space bounce and hit share, zero where there is none.
 void evaluate_environment_lobes(
     FrameRoot frame,
     vec3 world_position,
@@ -84,12 +86,15 @@ void evaluate_environment_lobes(
     float roughness,
     float occlusion,
     float ambient_occlusion,
+    vec4 screen_indirect,
     out vec3 diffuse,
     out vec3 specular
 ) {
     vec3 fresnel = fresnel_schlick(surface.reflectance, surface.grazing_reflectance, surface.normal_view);
-    diffuse = indirect_diffuse_irradiance(frame, world_position, surface.normal, surface.view_direction)
-        * surface.diffuse_color * (1.0 - fresnel) * min(occlusion, ambient_occlusion);
+    vec3 irradiance = indirect_diffuse_irradiance(frame, world_position, surface.normal, surface.view_direction)
+        * screen_space_base_share(occlusion, ambient_occlusion, screen_indirect)
+        + screen_indirect.rgb * occlusion;
+    diffuse = irradiance * surface.diffuse_color * (1.0 - fresnel);
     specular = vec3(0.0);
     if (frame.environment == 0ul) return;
 
@@ -112,13 +117,37 @@ void evaluate_environment_lobes(
         * specular_occlusion(surface.normal_view, ambient_occlusion, perceptual_roughness);
 }
 
+void evaluate_environment_lobes(
+    FrameRoot frame,
+    vec3 world_position,
+    StandardSurface surface,
+    float roughness,
+    float occlusion,
+    float ambient_occlusion,
+    out vec3 diffuse,
+    out vec3 specular
+) {
+    evaluate_environment_lobes(
+        frame,
+        world_position,
+        surface,
+        roughness,
+        occlusion,
+        ambient_occlusion,
+        vec4(0.0),
+        diffuse,
+        specular
+    );
+}
+
 vec3 evaluate_environment(
     FrameRoot frame,
     vec3 world_position,
     StandardSurface surface,
     float roughness,
     float occlusion,
-    float ambient_occlusion
+    float ambient_occlusion,
+    vec4 screen_indirect
 ) {
     vec3 diffuse;
     vec3 specular;
@@ -129,10 +158,22 @@ vec3 evaluate_environment(
         roughness,
         occlusion,
         ambient_occlusion,
+        screen_indirect,
         diffuse,
         specular
     );
     return diffuse + specular;
+}
+
+vec3 evaluate_environment(
+    FrameRoot frame,
+    vec3 world_position,
+    StandardSurface surface,
+    float roughness,
+    float occlusion,
+    float ambient_occlusion
+) {
+    return evaluate_environment(frame, world_position, surface, roughness, occlusion, ambient_occlusion, vec4(0.0));
 }
 
 #endif

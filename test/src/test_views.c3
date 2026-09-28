@@ -218,6 +218,9 @@ fn void test_view_desc_gates_path_tracing() @test {
     desc.lights = LightSelection.CLUSTERED;
     expect_view_desc_fault(renderer, &desc, c3d::INVALID_ARGUMENT);
     desc = base;
+    desc.screen_space_gi = render::SCREEN_SPACE_GI_DEFAULT;
+    expect_view_desc_fault(renderer, &desc, c3d::INVALID_ARGUMENT);
+    desc = base;
     desc.ray_tracing.reflections = true;
     expect_view_desc_fault(renderer, &desc, c3d::UNSUPPORTED);
 
