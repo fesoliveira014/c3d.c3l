@@ -37,9 +37,10 @@ const int HALO_MIN @private = 4;                   // red levels the bounce must
 const int FAR_TOLERANCE @private = 1;
 const int EDGE_TOLERANCE @private = 2;
 const int MOVE_TOLERANCE @private = 2;
-const int SYMMETRY_TOLERANCE @private = 2;
+const int SYMMETRY_TOLERANCE @private = 4;         // two deviations of the difference of two accumulated readings
 const float ACCUMULATION_TOLERANCE @private = 2;   // red levels between the settled and the unaccumulated mean
-const uint MEAN_FRAMES @private = 20;              // frames averaged on an unaccumulated view
+const uint MEAN_FRAMES @private = 64;              // one period of the noise sequence
+const uint MOVE_DECAY_FRAMES @private = 10;        // 0.9^10 leaves a third of the halo, several levels
 const float CORNER_ALBEDO @private = 0.8f;
 const Vec3 CORNER_LIGHT @private = { -0.5f, 0.6f, -0.5f };
 const float CORNER_LIGHT_INTENSITY @private = 0.3f;
@@ -245,15 +246,15 @@ fn void test_ssgi_adds_a_tinted_halo_beside_a_bright_object() @test {
         uint far = render_gi_pixel(&fixture, &gi, views.with_gi, FAR_FROM_CUBE)!!;
         uint plain = render_gi_pixel(&fixture, &gi, views.without_gi, BESIDE_CUBE)!!;
         uint plain_far = render_gi_pixel(&fixture, &gi, views.without_gi, FAR_FROM_CUBE)!!;
-        float single_frame = mean_red(&fixture, &gi, unaccumulated, BESIDE_CUBE, MEAN_FRAMES);
+        float unaccumulated_mean = mean_red(&fixture, &gi, unaccumulated, BESIDE_CUBE, MEAN_FRAMES);
         io::eprintfn(
             "%s halo: beside %08x mirror %08x without %08x; far %08x without %08x; unaccumulated red %f",
-            shading, halo, mirror, plain, far, plain_far, single_frame,
+            shading, halo, mirror, plain, far, plain_far, unaccumulated_mean,
         );
         assert(pixel_channel(halo, 0) - pixel_channel(plain, 0) > HALO_MIN);
         assert(pixel_channel(halo, 0) > pixel_channel(halo, 1));
         assert(math::abs(pixel_channel(halo, 0) - pixel_channel(mirror, 0)) <= SYMMETRY_TOLERANCE);
-        assert(math::abs((float)pixel_channel(halo, 0) - single_frame) <= ACCUMULATION_TOLERANCE);
+        assert(math::abs((float)pixel_channel(halo, 0) - unaccumulated_mean) <= ACCUMULATION_TOLERANCE);
         for (uint channel = 0; channel < 3; channel++) {
             assert(math::abs(pixel_channel(far, channel) - pixel_channel(plain_far, channel)) <= FAR_TOLERANCE);
         }
@@ -306,14 +307,15 @@ fn void test_ssgi_follows_a_moved_object() @test {
         gi.cube.local.position = CUBE_MOVED_PLACE;
         gi.scene.update_world();
         uint new_place = render_gi_pixel(&fixture, &gi, unaccumulated, BESIDE_MOVED_CUBE)!!;
-        uint old_place = render_gi_pixel(&fixture, &gi, views.with_gi, BESIDE_CUBE)!!;
         uint plain_new = render_gi_pixel(&fixture, &gi, views.without_gi, BESIDE_MOVED_CUBE)!!;
+        render_gi_frames(&fixture, &gi, views.with_gi, MOVE_DECAY_FRAMES - 1)!!;
+        uint old_place = render_gi_pixel(&fixture, &gi, views.with_gi, BESIDE_CUBE)!!;
         render_gi_frames(&fixture, &gi, views.with_gi, SSGI_SETTLE_FRAMES)!!;
         uint old_settled = render_gi_pixel(&fixture, &gi, views.with_gi, BESIDE_CUBE)!!;
         uint new_settled = render_gi_pixel(&fixture, &gi, views.with_gi, BESIDE_MOVED_CUBE)!!;
         uint plain_old = render_gi_pixel(&fixture, &gi, views.without_gi, BESIDE_CUBE)!!;
         io::eprintfn(
-            "%s moved: settled %08x; after the move new %08x (without %08x) old %08x; "
+            "%s moved: settled %08x; after the move new %08x (without %08x); decaying old %08x; "
             "later old %08x (without %08x) new %08x",
             shading, settled, new_place, plain_new, old_place, old_settled, plain_old, new_settled,
         );
