@@ -85,7 +85,12 @@ fn PickHit[] pick(
         if (node.visible_effective && (options.layers & node.layers) != 0) {
             SkinBinding* skin = scene.get(node, SkinBinding);
             if (mesh_is_live(assets, mesh, skin)) {
-                SceneEntry entry = mesh_entry(assets, node, mesh, skin);
+                SceneEntry entry = mesh_entry(
+                    assets: assets,
+                    node:   node,
+                    mesh:   mesh,
+                    skin:   skin,
+                );
                 bool hit = hit_entry(
                     assets:  assets,
                     scene:   scene,
@@ -104,7 +109,12 @@ fn PickHit[] pick(
         if (batch.count && node.visible_effective && (options.layers & node.layers) != 0
             && instanced_mesh_is_live(assets, batch)
             && maths::ray_intersects_aabb(ray, instanced_world_bounds(assets, node, batch), &distance)) {
-            SceneEntryFlags flags = batch_flags(assets, scene, node, batch);
+            SceneEntryFlags flags = batch_flags(
+                assets: assets,
+                scene:  scene,
+                node:   node,
+                batch:  batch,
+            );
             Aabb local = assets.geometry(batch.geometry).data.bounds;
             foreach (uint index, transform : batch.transforms[:batch.count]) {
                 SceneEntry entry = instance_entry(

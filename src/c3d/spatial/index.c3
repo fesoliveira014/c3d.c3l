@@ -66,10 +66,10 @@ struct SceneIndex {
 *>
 fn SceneIndex create_scene_index(Allocator allocator, uint capacity) {
     return {
-        .allocator = allocator,
+        .allocator  = allocator,
         .entries    = alloc::new_array(allocator, SceneEntry, (sz)capacity),
         .batch_keys = alloc::new_array(allocator, BatchKey, (sz)capacity),
-        .tree      = {
+        .tree       = {
             .nodes      = alloc::new_array(allocator, BvhNode, (sz)tree_node_capacity(capacity)),
             .primitives = alloc::new_array(allocator, uint, (sz)capacity),
         },
@@ -106,7 +106,13 @@ fn void? SceneIndex.refresh(&self, AssetStore* assets, Scene* scene) {
             SkinBinding* skin = scene.get(node, SkinBinding);
             if (mesh_is_live(assets, mesh, skin)) {
                 if (needed < self.entries.len) {
-                    changed |= store_entry(&self.entries[needed], mesh_entry(assets, node, mesh, skin));
+                    SceneEntry entry = mesh_entry(
+                        assets: assets,
+                        node:   node,
+                        mesh:   mesh,
+                        skin:   skin,
+                    );
+                    changed |= store_entry(&self.entries[needed], entry);
                 }
                 needed++;
             } else {
@@ -220,7 +226,12 @@ fn bool store_batch(
     InstancedMesh* batch,
     usz first,
 ) @local {
-    SceneEntryFlags flags = batch_flags(assets, index.scene, node, batch);
+    SceneEntryFlags flags = batch_flags(
+        assets: assets,
+        scene:  index.scene,
+        node:   node,
+        batch:  batch,
+    );
     GeometryAsset* record = assets.geometry(batch.geometry);
     bool fits = first + batch.count <= index.entries.len;
     BatchKey key = {
@@ -277,7 +288,12 @@ fn void prepare_triangle_tree(AssetStore* assets, GeometryId geometry) @local {
     (void)assets.triangle_bvh(geometry);
 }
 
-fn SceneEntry mesh_entry(AssetStore* assets, Node* node, Mesh* mesh, SkinBinding* skin) @private {
+fn SceneEntry mesh_entry(
+    AssetStore* assets,
+    Node* node,
+    Mesh* mesh,
+    SkinBinding* skin,
+) @private {
     GeometryAsset* record = assets.geometry(mesh.geometry);
     return {
         .node   = node,
@@ -295,11 +311,17 @@ fn SceneEntry mesh_entry(AssetStore* assets, Node* node, Mesh* mesh, SkinBinding
     };
 }
 
-fn SceneEntryFlags batch_flags(AssetStore* assets, Scene* scene, Node* node, InstancedMesh* batch) @private {
+fn SceneEntryFlags batch_flags(
+    AssetStore* assets,
+    Scene* scene,
+    Node* node,
+    InstancedMesh* batch,
+) @private {
     GeometryAsset* record = assets.geometry(batch.geometry);
     return {
         .instanced        = true,
-        .static_triangles = batch_triangles_static(record, batch.has_bounds_override) && record.data.positions.len > 0,
+        .static_triangles = batch_triangles_static(record, batch.has_bounds_override)
+          && record.data.positions.len > 0,
         .skinned          = scene.has(node.parent, AnimatedCrowd),
     };
 }

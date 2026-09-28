@@ -118,7 +118,12 @@ fn Node* add_skinned_box(Fixture* fixture, Vec3 joint_position) @local {
     return skinned;
 }
 
-fn Node* add_random_batch(Fixture* fixture, Random* random, uint count, Node* parent = null) @local {
+fn Node* add_random_batch(
+    Fixture* fixture,
+    Random* random,
+    uint count,
+    Node* parent = null,
+) @local {
     Transform[] transforms = alloc::new_array(tmem, Transform, (sz)count);
     foreach (&transform : transforms) *transform = random_transform(random, 4);
     Node* node = fixture.scene.add_instanced_mesh(

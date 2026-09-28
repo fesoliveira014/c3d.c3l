@@ -77,7 +77,12 @@ index.refresh(&assets, &scene)!;
 
 // on a click
 @pool() {
-    PickHit[] hits = index.pick(tmem, &assets, ray, options);
+    PickHit[] hits = index.pick(
+        allocator: tmem,
+        assets:    &assets,
+        ray:       ray,
+        options:   options,
+    );
     if (hits.len > 0) selected = hits[0].node.id;
 };
 ```
