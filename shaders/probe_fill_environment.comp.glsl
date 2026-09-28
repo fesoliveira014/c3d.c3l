@@ -21,7 +21,8 @@ void main() {
     if (local.x == 0u || local.y == 0u || local.x == last || local.y == last) return;
 
     if (root.kind == PROBE_ATLAS_VISIBILITY) {
-        store_storage_texture(root.atlas, ivec2(texel), vec4(root.max_distance, root.max_distance * root.max_distance, 0.0, 0.0));
+        vec2 moments = vec2(root.max_distance, root.max_distance * root.max_distance);
+        store_storage_texture(root.atlas, ivec2(texel), vec4(moments, 0.0, 0.0));
         return;
     }
     vec2 encoded = (vec2(local - 1u) + 0.5) / float(root.cell_edge - 2u) * 2.0 - 1.0;

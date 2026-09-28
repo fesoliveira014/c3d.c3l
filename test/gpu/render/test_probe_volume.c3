@@ -294,7 +294,8 @@ fn void test_nested_volumes_select_the_smallest_box() @test {
 
     uint interior_pixel = render_probe_pixel(&fixture, &probe, probe_view.view, INTERIOR_CENTER - { 0, 1, 0 })!!;
     uint exterior_pixel = render_probe_pixel(&fixture, &probe, probe_view.view, EXTERIOR_ONLY_POINT)!!;
-    io::eprintfn("nested: interior %08x (sh %08x), exterior %08x (sh %08x)", interior_pixel, interior_sh, exterior_pixel, exterior_sh);
+    io::eprintfn("nested: interior %08x (sh %08x)", interior_pixel, interior_sh);
+    io::eprintfn("nested: exterior %08x (sh %08x)", exterior_pixel, exterior_sh);
     assert((interior_pixel & 0xffffff) == 0);
     assert_channels_close(exterior_pixel, exterior_sh, PROBE_CHANNEL_TOLERANCE);
 
@@ -373,7 +374,8 @@ fn void test_probe_atlas_glsl_matches_the_c3_twins() @test {
         for (uint index = 0; index < TWIN_DIRECTIONS; index++) {
             Vec2 expected = render::probe_atlas_texel({ 3, 2 }, edge, twin_direction(index));
             Vec2 found = results[slot++];
-            assert(math::abs(found.x - expected.x) <= TWIN_TOLERANCE && math::abs(found.y - expected.y) <= TWIN_TOLERANCE);
+            assert(math::abs(found.x - expected.x) <= TWIN_TOLERANCE);
+            assert(math::abs(found.y - expected.y) <= TWIN_TOLERANCE);
         }
         for (uint y = 0; y < edge; y++) {
             for (uint x = 0; x < edge; x++) {

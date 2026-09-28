@@ -286,7 +286,8 @@ fn void test_view_probe_volumes_skip_hidden_masked_and_unfilled() @test {
     masked.layers = 2;
     hidden_parent.visible = false;
     Node*[5] nodes = { large, small, masked, hidden, unfilled };
-    Vec3[5] half_extents = { { 1, 2, 4 }, { 0.5f, 1, 2 }, { 0.1f, 0.1f, 0.1f }, { 0.1f, 0.1f, 0.1f }, { 0.1f, 0.1f, 0.1f } };
+    Vec3 tiny = { 0.1f, 0.1f, 0.1f };
+    Vec3[5] half_extents = { { 1, 2, 4 }, { 0.5f, 1, 2 }, tiny, tiny, tiny };
     foreach (index, node : nodes) scene.add(node, light::probe_volume(half_extents[index], { 2, 2, 2 }));
     scene.update_world();
 

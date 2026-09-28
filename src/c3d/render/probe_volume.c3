@@ -10,7 +10,7 @@ import std::math;
 
 $assert ProbeVolumeSetGpu::size == 16 + ProbeVolumeGpu::size * shader::PROBE_VOLUME_CAPACITY;
 
-const ulong PROBE_MIRROR_ABSENCE_FRAMES @private = FRAMES_IN_FLIGHT + 1; // longer keeps an unrendered scene's atlases; shorter refills a scene rendered every few frames
+const ulong PROBE_MIRROR_ABSENCE_FRAMES @private = FRAMES_IN_FLIGHT + 1; // longer holds idle scenes' atlases; shorter refills more
 const gpu::Format PROBE_IRRADIANCE_FORMAT @local = gpu::Format.RGBA16_FLOAT;
 const gpu::Format PROBE_VISIBILITY_FORMAT @local = gpu::Format.RG16_FLOAT;
 
