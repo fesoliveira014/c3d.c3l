@@ -60,7 +60,7 @@ struct BvhHit {
     Vec3  barycentric;
 }
 
-struct TraceStack @local {
+struct TraceStack @private {
     uint[BVH_MAX_DEPTH]  nodes;
     float[BVH_MAX_DEPTH] entries;
     uint                 count;
@@ -81,9 +81,10 @@ struct BuildState @local {
 }
 
 <*
- Nearest two-sided triangle hit closer than distance_limit.
+ Nearest triangle hit closer than distance_limit; among equal distances the lowest primitive index wins.
  @param [&in] self : "Built by build_triangle_bvh from the same arrays."
  @param [&out] hit : "Untouched when nothing is hit."
+ @param front_only : "Skip triangles whose winding faces away from the ray."
 *>
 fn bool Bvh.trace(
     &self,
@@ -92,6 +93,7 @@ fn bool Bvh.trace(
     Ray ray,
     float distance_limit,
     BvhHit* hit,
+    bool front_only = false,
 ) {
     return traverse(
         bvh:            self,
@@ -100,13 +102,15 @@ fn bool Bvh.trace(
         ray:            ray,
         distance_limit: distance_limit,
         first_hit:      false,
+        front_only:     front_only,
         hit:            hit,
     );
 }
 
 <*
- Whether any two-sided triangle lies closer than distance_limit.
+ Whether any triangle lies closer than distance_limit.
  @param [&in] self : "Built by build_triangle_bvh from the same arrays."
+ @param front_only : "Skip triangles whose winding faces away from the ray."
 *>
 fn bool Bvh.trace_any(
     &self,
@@ -114,6 +118,7 @@ fn bool Bvh.trace_any(
     uint[] indices,
     Ray ray,
     float distance_limit,
+    bool front_only = false,
 ) {
     BvhHit ignored;
     return traverse(
@@ -123,8 +128,39 @@ fn bool Bvh.trace_any(
         ray:            ray,
         distance_limit: distance_limit,
         first_hit:      true,
+        front_only:     front_only,
         hit:            &ignored,
     );
+}
+
+<*
+ Visit every primitive of every leaf whose box the ray enters before distance_limit.
+ Visited primitives are candidates, not hits: the body tests its own primitive.
+ @param [&in] self : "Any built tree."
+*>
+macro void Bvh.@each_ray_hit(&self, Ray ray, float distance_limit; @body(uint primitive)) {
+    float root_entry;
+    if (!maths::ray_intersects_aabb(ray, node_bounds(&self.nodes[0]), &root_entry) || root_entry >= distance_limit) {
+        return;
+    }
+    TraceStack stack;
+    push_node(&stack, 0, root_entry);
+    while (stack.count) {
+        stack.count--;
+        BvhNode* node = &self.nodes[stack.nodes[stack.count]];
+        if (!node.count) {
+            push_children(
+                stack:     &stack,
+                bvh:       self,
+                node:      node,
+                ray:       ray,
+                limit:     distance_limit,
+                inclusive: false,
+            );
+            continue;
+        }
+        foreach (primitive : self.primitives[node.left_or_first:node.count]) @body(primitive);
+    }
 }
 
 <*
@@ -182,6 +218,19 @@ fn Bvh? build_box_bvh(Allocator allocator, Aabb[] boxes, BvhBuildDesc desc = BVH
 }
 
 <*
+ Binned-SAH BVH over boxes into caller storage; leaf primitives are box indices.
+ Scratch lives in the temp allocator.
+ @param [&inout] storage : "Capacity for the boxes; nodes and primitives are shortened to what the build used."
+ @return? c3d::INVALID_ARGUMENT
+ @require storage.nodes.len >= 2 * boxes.len - 1 && storage.primitives.len >= boxes.len
+ @require desc.bins >= 2 && desc.leaf_size >= 1
+*>
+fn void? build_box_bvh_into(Bvh* storage, Aabb[] boxes, BvhBuildDesc desc = BVH_BUILD_DEFAULT) {
+    if (!boxes.len) return c3d::INVALID_ARGUMENT~;
+    *storage = build_into(storage.nodes, storage.primitives, boxes, desc);
+}
+
+<*
  Release a BVH with the allocator that built it.
  @param [&inout] bvh : "Left zeroed."
 *>
@@ -195,9 +244,14 @@ fn Bvh build(Allocator allocator, Aabb[] boxes, BvhBuildDesc desc) @local {
     usz node_capacity = 2 * primitive_count - 1;
     usz id_nodes = (primitive_count * uint::size + BvhNode::size - 1) / BvhNode::size;
     BvhNode[] block = alloc::alloc_array(allocator, BvhNode, (sz)(node_capacity + id_nodes));
+    return build_into(block[:node_capacity], ((uint*)&block[node_capacity])[:primitive_count], boxes, desc);
+}
+
+fn Bvh build_into(BvhNode[] nodes, uint[] primitives, Aabb[] boxes, BvhBuildDesc desc) @local {
+    usz primitive_count = boxes.len;
     BuildState state = {
-        .nodes       = block[:node_capacity],
-        .primitives  = ((uint*)&block[node_capacity])[:primitive_count],
+        .nodes       = nodes,
+        .primitives  = primitives[:primitive_count],
         .boxes       = boxes,
         .centroids   = alloc::alloc_array(tmem, Vec3, (sz)primitive_count),
         .bin_of      = alloc::alloc_array(tmem, uint, (sz)primitive_count),
@@ -363,7 +417,7 @@ fn float surface_area(Aabb box) @local {
     return 2 * (size.x * size.y + size.y * size.z + size.z * size.x);
 }
 
-fn Aabb node_bounds(BvhNode* node) @local {
+fn Aabb node_bounds(BvhNode* node) @private {
     return { .min = (Vec3)node.min, .max = (Vec3)node.max };
 }
 
@@ -380,6 +434,7 @@ fn bool traverse(
     Ray ray,
     float distance_limit,
     bool first_hit,
+    bool front_only,
     BvhHit* hit,
 ) @local {
     float root_entry;
@@ -390,20 +445,25 @@ fn bool traverse(
     bool found;
     while (stack.count) {
         stack.count--;
-        if (stack.entries[stack.count] >= best) continue;
+        // After a hit a node at exactly the best distance may still hold a lower-index tie.
+        float entry = stack.entries[stack.count];
+        if (found ? entry > best : entry >= best) continue;
         BvhNode* node = &bvh.nodes[stack.nodes[stack.count]];
         if (!node.count) {
             push_children(
-                stack: &stack,
-                bvh:   bvh,
-                node:  node,
-                ray:   ray,
-                limit: best,
+                stack:     &stack,
+                bvh:       bvh,
+                node:      node,
+                ray:       ray,
+                limit:     best,
+                inclusive: found,
             );
             continue;
         }
         foreach (primitive : bvh.primitives[node.left_or_first:node.count]) {
             Vec3[3] corners = triangle_corners(positions, indices, primitive);
+            Vec3 normal = (corners[1] - corners[0]).cross(corners[2] - corners[0]);
+            if (front_only && normal.dot(ray.direction) >= 0) continue;
             float distance;
             Vec3 barycentric;
             bool met = maths::ray_intersects_triangle(
@@ -414,7 +474,11 @@ fn bool traverse(
                 distance:    &distance,
                 barycentric: &barycentric,
             );
-            if (!met || distance >= best) continue;
+            if (!met) continue;
+            bool farther = found
+                ? distance > best || (distance == best && primitive >= hit.primitive)
+                : distance >= best;
+            if (farther) continue;
             *hit = { .primitive = primitive, .distance = distance, .barycentric = barycentric };
             if (first_hit) return true;
             best = distance;
@@ -430,14 +494,15 @@ fn void push_children(
     BvhNode* node,
     Ray ray,
     float limit,
-) @local {
+    bool inclusive,
+) @private {
     uint left = node.left_or_first;
     float left_entry;
     float right_entry;
     bool left_met = maths::ray_intersects_aabb(ray, node_bounds(&bvh.nodes[left]), &left_entry)
-        && left_entry < limit;
+        && (inclusive ? left_entry <= limit : left_entry < limit);
     bool right_met = maths::ray_intersects_aabb(ray, node_bounds(&bvh.nodes[left + 1]), &right_entry)
-        && right_entry < limit;
+        && (inclusive ? right_entry <= limit : right_entry < limit);
     bool left_first = !right_met || (left_met && left_entry <= right_entry);
     if (left_first) {
         if (right_met) push_node(stack, left + 1, right_entry);
@@ -448,7 +513,7 @@ fn void push_children(
     push_node(stack, left + 1, right_entry);
 }
 
-fn void push_node(TraceStack* stack, uint node, float entry) @local {
+fn void push_node(TraceStack* stack, uint node, float entry) @private {
     stack.nodes[stack.count] = node;
     stack.entries[stack.count] = entry;
     stack.count++;

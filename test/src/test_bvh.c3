@@ -8,6 +8,10 @@ import std::math;
 
 const uint SEED @local = 0x9e3779b9;
 const float DISTANCE_TOLERANCE @local = 1e-5f;
+const uint BOX_COUNT @local = 500;
+const uint RAY_COUNT @local = 32;
+const uint GRID_CELLS @local = 8;
+const int GRID_HALF @local = 4; // the plane spans -4 to 4 on x and z
 
 struct Random @local {
     uint state;
@@ -300,5 +304,133 @@ fn void test_box_bvh_covers_every_box() @test {
                 assert(contains(box, boxes[primitive]));
             }
         }
+    };
+}
+
+fn Aabb[] random_boxes(Random* random, usz count) @local {
+    Aabb[] boxes = alloc::alloc_array(tmem, Aabb, (sz)count);
+    foreach (&box : boxes) {
+        Vec3 center = next_point(random, -50, 50);
+        Vec3 half = next_point(random, 0.1f, 2);
+        *box = { .min = center - half, .max = center + half };
+    }
+    return boxes;
+}
+
+fn Ray ray_into_field(Random* random) @local {
+    Vec3 origin = next_point(random, -80, 80);
+    origin.y = 80;
+    return { .origin = origin, .direction = (next_point(random, -50, 50) - origin).normalize() };
+}
+
+fn void test_build_into_matches_build() @test {
+    @pool() {
+        Random random = { SEED };
+        Aabb[] boxes = random_boxes(&random, BOX_COUNT);
+        Bvh built = bvh::build_box_bvh(tmem, boxes)!!;
+        Bvh storage = {
+            .nodes      = alloc::alloc_array(tmem, BvhNode, (sz)(2 * BOX_COUNT - 1)),
+            .primitives = alloc::alloc_array(tmem, uint, (sz)BOX_COUNT),
+        };
+        bvh::build_box_bvh_into(&storage, boxes)!!;
+        assert(storage.nodes.len == built.nodes.len && storage.primitives.len == built.primitives.len);
+        assert(mem::equals(storage.nodes, built.nodes) && mem::equals(storage.primitives, built.primitives));
+        assert(storage.bounds.min == built.bounds.min && storage.bounds.max == built.bounds.max);
+    };
+}
+
+fn void test_each_ray_hit_visits_every_entered_box() @test {
+    @pool() {
+        Random random = { SEED };
+        Aabb[] boxes = random_boxes(&random, BOX_COUNT);
+        Bvh tree = bvh::build_box_bvh(tmem, boxes)!!;
+        uint checked_rays;
+        for (uint ray_index = 0; ray_index < RAY_COUNT; ray_index++) {
+            Ray ray = ray_into_field(&random);
+            bool[] visited = alloc::new_array(tmem, bool, BOX_COUNT);
+            uint nearest_visited = uint::max;
+            float nearest_visited_distance = math::FLOAT_MAX;
+            tree.@each_ray_hit(ray, math::FLOAT_MAX; uint primitive) {
+                assert(primitive < BOX_COUNT);
+                visited[primitive] = true;
+                float distance;
+                bool entered = maths::ray_intersects_aabb(ray, boxes[primitive], &distance);
+                bool closer = distance < nearest_visited_distance
+                    || (distance == nearest_visited_distance && primitive < nearest_visited);
+                if (entered && closer) {
+                    nearest_visited = primitive;
+                    nearest_visited_distance = distance;
+                }
+            };
+            checked_rays++;
+
+            bool[] in_entered_leaf = alloc::new_array(tmem, bool, BOX_COUNT);
+            foreach (&node : tree.nodes) {
+                float entry;
+                if (!node.count || !maths::ray_intersects_aabb(ray, node_box(node), &entry)) continue;
+                foreach (primitive : tree.primitives[node.left_or_first:node.count]) in_entered_leaf[primitive] = true;
+            }
+            uint nearest_scanned = uint::max;
+            float nearest_scanned_distance = math::FLOAT_MAX;
+            foreach (uint index, box : boxes) {
+                float distance;
+                if (visited[index]) assert(in_entered_leaf[index]);
+                if (!maths::ray_intersects_aabb(ray, box, &distance)) continue;
+                assert(visited[index]);
+                if (distance < nearest_scanned_distance) {
+                    nearest_scanned = index;
+                    nearest_scanned_distance = distance;
+                }
+            }
+            assert(nearest_visited == nearest_scanned && nearest_visited_distance == nearest_scanned_distance);
+        }
+        assert(checked_rays == RAY_COUNT);
+    };
+}
+
+fn void test_trace_front_only_skips_back_faces() @test {
+    @pool() {
+        Vec3[3] positions = { { 0, 0, 0 }, { 1, 0, 0 }, { 0, 0, 1 } };
+        Traced traced = build_traced(positions[..], {});
+        Ray from_above = { .origin = { 0.25f, 5, 0.25f }, .direction = { 0, -1, 0 } };
+        Ray from_below = { .origin = { 0.25f, -5, 0.25f }, .direction = { 0, 1, 0 } };
+        BvhHit hit;
+        Vec3[] points = traced.positions;
+        uint[] indices = traced.indices;
+        assert(traced.tree.trace(points, indices, from_above, math::FLOAT_MAX, &hit));
+        assert(!traced.tree.trace(points, indices, from_above, math::FLOAT_MAX, &hit, front_only: true));
+        assert(!traced.tree.trace_any(points, indices, from_above, math::FLOAT_MAX, front_only: true));
+        assert(traced.tree.trace(points, indices, from_below, math::FLOAT_MAX, &hit, front_only: true));
+        assert(traced.tree.trace_any(points, indices, from_below, math::FLOAT_MAX, front_only: true));
+    };
+}
+
+fn void test_trace_ties_take_the_lowest_primitive() @test {
+    @pool() {
+        Geometry grid = geometry::plane(tmem, GRID_CELLS, GRID_CELLS, GRID_CELLS, GRID_CELLS);
+        BvhBuildDesc[3] descs = {
+            { .bins = 12, .leaf_size = 1 },
+            bvh::BVH_BUILD_DEFAULT,
+            { .bins = 4, .leaf_size = 1 },
+        };
+        uint hits;
+        foreach (desc : descs) {
+            Traced traced = build_traced(grid.positions, grid.indices, desc);
+            for (int step_x = -2 * GRID_HALF; step_x <= 2 * GRID_HALF; step_x++) {
+                for (int step_z = -2 * GRID_HALF; step_z <= 2 * GRID_HALF; step_z++) {
+                    // Half-cell steps land on shared vertices and on the midpoints of shared edges, exact in float.
+                    Ray ray = { .origin = { 0.5f * step_x, 5, 0.5f * step_z }, .direction = { 0, -1, 0 } };
+                    BvhHit expected;
+                    BvhHit actual;
+                    bool scanned = nearest_by_scan(&traced, ray, &expected);
+                    assert(scanned == nearest(&traced, ray, &actual));
+                    if (!scanned) continue;
+                    hits++;
+                    assert(actual.primitive == expected.primitive);
+                    assert(actual.distance == expected.distance && actual.barycentric == expected.barycentric);
+                }
+            }
+        }
+        assert(hits > 0);
     };
 }
