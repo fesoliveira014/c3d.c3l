@@ -178,14 +178,60 @@ variants and GPU instancing import as if absent.
 | `ASSET_IO_ERROR` | The file, an external buffer or an external image could not be read. |
 | `ASSET_FORMAT_ERROR` | The document failed to parse or validate, an image failed to decode, an accessor could not be read, a joint or animation target lies outside the imported nodes, or a numeric value lies outside the constructor domains. |
 | `UNSUPPORTED` | A required extension or a compressed primitive the importer does not implement. |
-| `CAPACITY_EXCEEDED` | A store pool is full. |
-| `INVALID_ARGUMENT` | The model key is already present. |
+| `CAPACITY_EXCEEDED` | A store pool has fewer free slots than the model needs. |
+| `INVALID_ARGUMENT` | The model key or a content key is already present, an image file is empty, a skin stream has invalid influences, or a storage texture has a non-storage format. |
 | `INVALID_ID` | `instantiate` received a dead model id. |
 
-On any fault the loader removes every asset it inserted during that call and
-frees an uninserted template; assets that existed before the call are never
-touched. An instantiation that runs out of nodes removes the partial subtree
-and leaves no instance behind.
+A loader decides every store fault before it inserts anything, so a fault
+leaves the store as it was. An instantiation that runs out of nodes removes
+the partial subtree and leaves no instance behind.
+
+## Decode and publish
+
+```c3
+ModelDocument document = gltf::decode_model(assets.allocator, "models/helmet.glb")!;
+defer asset::destroy_model_document(&document);
+ModelId helmet = assets.publish_document(&document)!;
+```
+
+Every loader is a decode followed by a publish. `gltf::decode_model`,
+`gltf::decode_model_memory` and `fbx::decode_model` read the file into a
+`ModelDocument` and touch no store, scene or renderer. The allocator owns
+everything in the document; it must be the allocator of the store the
+document is published into, and never `tmem`, because the decoder opens a
+temporary pool of its own.
+
+`AssetStore.publish_document` inserts the document's samplers, textures,
+materials, geometries, skeletons and clips, then its template as a model under
+the document key. Before the first insertion it checks every key against the
+store and against the other keys of the document, the free slots of every pool
+the document needs, and the content: no `CUSTOM` material, valid skin
+influences, storage formats on storage textures. A failed check returns its
+fault with the store and the document untouched. On success the store owns
+every payload and the document is empty. Call `destroy_model_document` after
+either outcome.
+
+Inside a document, a reference to one of its entries is a typed id holding
+the entry index plus one at generation zero; no pool ever issues generation
+zero, so a reference never resolves in a store. The zero id means none, as
+everywhere else. Publish maps each reference to the id the store issued; the
+builtin texture and sampler ids, which a converter may put in a material slot,
+pass through unchanged.
+
+An application can build a document by hand: `create_model_document` with a
+`ModelDocumentBounds`, then `push_sampler`, `push_texture`, `push_material`,
+`push_geometry`, `push_skeleton` and `push_clip`, each of which returns the
+reference to use in later entries and in the template. A bound is the most
+entries of that kind the document will hold. Every entry array is allocated at
+its bound up front, a push past a bound is a programming error, and unused
+capacity costs one entry record.
+
+| Function | Fault | Meaning |
+| --- | --- | --- |
+| `decode_model`, `decode_model_memory` | `ASSET_IO_ERROR`, `ASSET_FORMAT_ERROR`, `UNSUPPORTED` | As for the loaders above. |
+| | `INVALID_ARGUMENT` | An image file has zero bytes. |
+| `publish_document` | `INVALID_ARGUMENT` | A document or entry key is in the store, two entries share a key, a material is `CUSTOM`, a geometry has invalid skin influences, or a storage texture has a non-storage format. |
+| | `CAPACITY_EXCEEDED` | A pool has fewer free slots than the document has entries of that kind; the model pool needs one. |
 
 ## CPU release
 
