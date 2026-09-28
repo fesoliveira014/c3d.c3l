@@ -25,7 +25,7 @@ import ragdoll_bones;
 
 const uint  MAX_BOXES @local = 256; // one node, one body and one draw per box; bounds the sink reading below
 const uint  SCENE_NODE_CAPACITY @local = MAX_BOXES + 256; // level, chain, figure bones and the character
-const usz   INSPECTOR_SINK_SEGMENTS @local = 1 << 17; // 4 MiB of vertices; room for every flag with the replay open
+const usz   INSPECTOR_SINK_SEGMENTS @local = 36864; // demo peak 28935 with every flag and the replay; 1.1 MiB
 const String MODEL_PATH @local = "../../examples/assets/quaternius/AnimationLibrary_Godot.glb";
 const String WALK_CLIP @local = "Walk_Loop";
 const float GROUND_SIZE @local = 40;
