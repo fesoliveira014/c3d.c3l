@@ -23,7 +23,7 @@ import c3d::scene;
 import imgui;
 import ragdoll_bones;
 
-const uint  MAX_BOXES @local = 1024; // one node, one body and one draw per box; the scene and store capacity lever
+const uint  MAX_BOXES @local = 256; // one node, one body and one draw per box; bounds the sink reading below
 const uint  SCENE_NODE_CAPACITY @local = MAX_BOXES + 256; // level, chain, figure bones and the character
 const usz   INSPECTOR_SINK_SEGMENTS @local = 1 << 17; // 4 MiB of vertices; room for every flag with the replay open
 const String MODEL_PATH @local = "../../examples/assets/quaternius/AnimationLibrary_Godot.glb";
@@ -61,8 +61,8 @@ const Vec2  STATS_PANEL_POSITION @local = { 16, 452 };
 const Vec2  STATS_PANEL_SIZE @local = { 340, 300 };
 const uint  WINDOW_WIDTH @local = 1340;
 const uint  WINDOW_HEIGHT @local = 900;
-const uint  DEMO_SPAWN_INTERVAL @local = 15;   // frames between thrown boxes
-const uint  DEMO_SPAWN_END @local = 300;
+const uint  DEMO_SPAWN_INTERVAL @local = 2;    // frames between thrown boxes; reaches MAX_BOXES
+const uint  DEMO_SPAWN_END @local = DEMO_SPAWN_INTERVAL * MAX_BOXES;
 const uint  DEMO_RECORD_START @local = 60;
 const uint  DEMO_LIMP @local = 120;
 const uint  DEMO_RECORD_STOP @local = 300;
