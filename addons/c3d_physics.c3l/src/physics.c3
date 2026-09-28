@@ -8,6 +8,7 @@ import c3d::ecs;
 import c3d::maths;
 import c3d::scene;
 import b3;
+import b3::record;
 
 <*
  Application-defined surface identity passed to events, queries and mixing.
@@ -320,11 +321,19 @@ struct RayHit {
  What debug_draw appends to the sink.
 *>
 struct PhysicsDebugOptions {
-    bool colliders;
-    bool contacts;
-    bool bounds;
-    bool joints;
-    bool joint_extras;
+    bool  colliders;        // c3d wires of every RigidBody collider
+    bool  contacts;         // contact points and normals
+    bool  bounds;           // shape bounds
+    bool  joints;
+    bool  joint_extras;
+    bool  mass;             // centre-of-mass frames
+    bool  anchor_a;         // contacts drawn from the first body's centre; needs contacts
+    bool  contact_forces;   // normal and friction forces scaled by force_scale; needs contacts
+    bool  graph_colors;     // contact points coloured by constraint graph colour; needs contacts
+    bool  islands;          // island bounds
+    bool  queries;          // a replay's recorded queries of the replayed frame; the live world ignores it
+    float force_scale;      // 0 keeps box3d's scale of 1
+    float joint_scale;      // 0 keeps box3d's scale of 1
 }
 
 <*
@@ -357,6 +366,7 @@ struct PhysicsWorld {
     BuildFailure[] failure_storage;
     uint           failure_count;
     MoverPass      mover_pass;
+    b3::record::Recording* recording; // null when idle
 }
 
 <*
@@ -705,6 +715,10 @@ fn void destroy_physics_world(PhysicsWorld* world) {
     };
     scene.set_remove_hook(RigidBody, null, null);
     scene.set_remove_hook(Joint, null, null);
+    if (world.recording) {
+        record::world_stop_recording(world.world);
+        record::destroy_recording(world.recording);
+    }
     b3::destroy_world(world.world);
     destroy_snapshot_table(world.snapshots);
 

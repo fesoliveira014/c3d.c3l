@@ -86,13 +86,34 @@ fn void? Scene.add_character(&self, Node* node, CharacterDesc desc) {
     if (!desc.push_bodies) return;
 
     defer catch self.remove_component(node, Character);
-    ColliderDesc collider = physics::default_collider_desc(CAPSULE);
-    collider.local.position = center_offset(desc);
-    collider.radius = desc.radius;
-    collider.half_height = desc.half_height;
-    // The capsule stops short of everything its mask names, so the push body touches all categories to shove the rest.
-    collider.filter = { .category = desc.filter.category, .mask = ulong::max, .group = desc.filter.group };
+    ColliderDesc collider = push_collider(desc);
     self.add_physics_body(node, physics::default_body_desc(KINEMATIC), (&collider)[:1])!;
+}
+
+<*
+ Replace the character's desc after add_character; keeps the feet and the motion.
+ @param [&inout] node : "Carries the Character; its position is unchanged."
+ @return? physics::BODY_EXISTS
+ @require self.has(node, Character), desc.radius > 0, desc.half_height > 0
+*>
+fn void? Scene.set_character_desc(&self, Node* node, CharacterDesc desc) {
+    CharacterDesc previous = self.get(node, Character).desc;
+    if (desc.push_bodies && !previous.push_bodies) {
+        ColliderDesc collider = push_collider(desc);
+        self.add_physics_body(node, physics::default_body_desc(KINEMATIC), (&collider)[:1])!;
+    } else if (!desc.push_bodies && previous.push_bodies && self.has(node, PhysicsBody)) {
+        self.remove_component(node, PhysicsBody);
+    } else if (desc.push_bodies && push_shape_changed(previous, desc) && self.has(node, PhysicsBody)) {
+        PhysicsBody* body = self.get(node, PhysicsBody);
+        body.colliders[0] = push_collider(desc);
+        body.mark_changed();
+    }
+
+    Character* character = self.get(node, Character);
+    Vec3 shift = center_offset(desc) - center_offset(previous);
+    character.previous += shift;
+    character.current += shift;
+    character.desc = desc;
 }
 
 <*
@@ -190,3 +211,18 @@ fn void destroy_character_system(CharacterSystem* system) {
 }
 
 fn Vec3 center_offset(CharacterDesc desc) @private => { 0, desc.half_height + desc.radius, 0 };
+
+fn ColliderDesc push_collider(CharacterDesc desc) @local {
+    ColliderDesc collider = physics::default_collider_desc(CAPSULE);
+    collider.local.position = center_offset(desc);
+    collider.radius = desc.radius;
+    collider.half_height = desc.half_height;
+    // The capsule stops short of everything its mask names, so the push body touches all categories to shove the rest.
+    collider.filter = { .category = desc.filter.category, .mask = ulong::max, .group = desc.filter.group };
+    return collider;
+}
+
+fn bool push_shape_changed(CharacterDesc previous, CharacterDesc desc) @local {
+    return previous.radius != desc.radius || previous.half_height != desc.half_height
+        || previous.filter.category != desc.filter.category || previous.filter.group != desc.filter.group;
+}

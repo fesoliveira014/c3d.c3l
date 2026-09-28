@@ -41,11 +41,12 @@ struct DebugVertex {
 }
 
 <*
- Line list an application fills each frame and hands to views.
+ Line list an application fills each frame and hands to views; a full sink refuses and counts segments.
 *>
 struct DebugDraw {
     Allocator         allocator;
-    usz               capacity;
+    usz               capacity; // segments
+    usz               dropped;  // segments refused since the last clear
     List{DebugVertex} vertices;
 }
 
@@ -54,13 +55,17 @@ struct DebugDraw {
 *>
 fn void DebugDraw.clear(&self) {
     self.vertices.clear();
+    self.dropped = 0;
 }
 
 <*
- Append one segment; dropped once the sink is full.
+ Append one segment; counted in dropped once the sink is full.
 *>
 fn void DebugDraw.line(&self, Vec3 from, Vec3 to, uint rgba) {
-    if ((usz)self.vertices.len() + 2 > self.capacity) return;
+    if ((usz)self.vertices.len() / 2 + 1 > self.capacity) {
+        self.dropped++;
+        return;
+    }
     self.vertices.push({ .position = from, .rgba = rgba });
     self.vertices.push({ .position = to, .rgba = rgba });
 }
@@ -276,11 +281,12 @@ fn uint rgba(float red, float green, float blue, float alpha = 1) {
 
 <*
  Create an empty sink of fixed capacity.
- @require capacity >= 2
+ @param capacity : "Segments."
+ @require capacity >= 1
 *>
 fn DebugDraw create_debug_draw(Allocator allocator, usz capacity = DEBUG_LINE_CAPACITY) {
     DebugDraw draw = { .allocator = allocator, .capacity = capacity };
-    draw.vertices.init(allocator, (sz)capacity);
+    draw.vertices.init(allocator, (sz)(capacity * 2));
     return draw;
 }
 

@@ -18,6 +18,19 @@ node, `teleport_character` takes the feet, and the pass writes the feet. `Charac
 `Character.current` hold the capsule center, `half_height + radius` above the feet. A capsule mesh
 is a child node raised by that offset; a model authored at the feet sits on the node itself.
 
+## Changing a character
+
+`set_character_desc(node, desc)` is the way to change a desc after `add_character`. It keeps the feet
+of both poses, so the node does not move, and keeps the velocity, the intent and the ground. It adds
+or removes the push body when `push_bodies` changes, and rewrites the push body's capsule and filter
+(category and group) when those change, which rebuilds the body on the next update. Turning
+`push_bodies` on over a `PhysicsBody` the application added faults `physics::BODY_EXISTS` and changes
+nothing. The step reads every desc field each fixed step, so a direct write of `step_height`,
+`max_slope_degrees` or `skin` works, but a direct write of `radius`, `half_height`, `filter` or
+`push_bodies` moves the feet or leaves the push body stale. A capsule that grows into geometry is
+pushed out by the next step's collide pass: a capsule grown 0.15 m into a wall stands at the wall's
+face after one update.
+
 ## Frame order
 
 ```c3

@@ -598,6 +598,33 @@ fn void test_recover_face_down_turns_toward_the_head() @test {
     Quat fall = about({ 0, 1, 0 }, 90).mul(about({ 1, 0, 0 }, 90));
     assert(fall_rotated(&fixture, &rig, ragdoll, fall) == FACE_DOWN);
     assert(close_vec(character_forward(&rig), { 1, 0, 0 }));
+    assert(ragdoll.last_facing == FACE_DOWN && ragdoll.recoveries == 1);
+    RagdollFacing second = fall_rotated(&fixture, &rig, ragdoll, about({ 1, 0, 0 }, -90));
+    assert(ragdoll.last_facing == second && ragdoll.recoveries == 2);
+}
+
+fn void test_fresh_ragdoll_has_no_recovery() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Rig rig = add_chain(&fixture);
+    Ragdoll* ragdoll = build_two_bones(&fixture, &rig);
+    assert(ragdoll.recoveries == 0);
+}
+
+fn void test_recover_bones_keeps_the_recovery_reading() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Rig rig = add_chain(&fixture);
+    Ragdoll* ragdoll = build_two_bones(&fixture, &rig);
+    Quat fall = about({ 0, 1, 0 }, 90).mul(about({ 1, 0, 0 }, 90));
+    assert(fall_rotated(&fixture, &rig, ragdoll, fall) == FACE_DOWN);
+    fixture.physics.set_ragdoll_mode(rig.skin, SIMULATED);
+    fixture.physics.recover_bones(rig.skin);
+    assert(ragdoll.last_facing == FACE_DOWN && ragdoll.recoveries == 1);
 }
 
 fn void test_recover_counts_a_turn_made_before_the_fall_once() @test {
