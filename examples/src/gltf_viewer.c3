@@ -73,6 +73,7 @@ struct BenchmarkOptions @local {
     uint[<3>] probe_counts;
     ProbeFill probe_fill;
     uint probe_window;
+    uint probe_rays;
     bool point_shadows;
 }
 
@@ -225,6 +226,7 @@ fn BenchmarkOptions? parse_options(String[] args) @local {
         .lights = 64, .capacity = 64, .range = 0.08f, .shadows = true,
         .probe_counts = { 16, 8, 8 },
         .probe_fill = ProbeFill.ENVIRONMENT,
+        .probe_rays = light::PROBE_UPDATE_DEFAULT.rays_per_probe,
     };
     for (usz index = 1; index < args.len; index++) {
         if (bench_loop::parse_flag(args, &index, &options.flags, "gltf_viewer")!) continue;
@@ -258,6 +260,7 @@ fn BenchmarkOptions? parse_options(String[] args) @local {
             case "--range": options.range = value.to_float()!;
             case "--probe-volumes": options.probe_volumes = value.to_uint()!;
             case "--probe-window": options.probe_window = value.to_uint()!;
+            case "--probe-rays": options.probe_rays = value.to_uint()!;
             case "--probe-fill":
                 switch (value) {
                     case "environment": options.probe_fill = ProbeFill.ENVIRONMENT;
@@ -277,7 +280,7 @@ fn BenchmarkOptions? parse_options(String[] args) @local {
             default: return c3d::INVALID_ARGUMENT~;
         }
     }
-    bench_loop::validate_flags(options.flags)!;
+    bench_loop::validate_flags(options.flags, options.shading)!;
     if (options.lights > BENCHMARK_LIGHTS_MAX || !options.capacity || options.capacity > BENCHMARK_CAPACITY_MAX
         || !math::is_finite(options.range) || options.range <= 0 || options.range > BENCHMARK_RANGE_MAX) {
         return c3d::INVALID_ARGUMENT~;
@@ -287,6 +290,9 @@ fn BenchmarkOptions? parse_options(String[] args) @local {
     }
     foreach (count : options.probe_counts) {
         if (count < light::PROBE_COUNT_MIN || count > light::PROBE_COUNT_MAX) return c3d::INVALID_ARGUMENT~;
+    }
+    if (options.probe_rays < light::PROBE_RAYS_MIN || options.probe_rays > light::PROBE_RAYS_MAX) {
+        return c3d::INVALID_ARGUMENT~;
     }
     return options;
 }
@@ -333,6 +339,7 @@ fn void? place_probe_volumes(Scene* scene, Aabb bounds, BenchmarkOptions options
                 node.local.position = bounds.min + half_extents * (Vec3)(octant * 2 + 1);
                 ProbeVolume volume = light::probe_volume(half_extents, options.probe_counts, options.probe_fill);
                 volume.update.probes_per_frame = options.probe_window;
+                volume.update.rays_per_probe = options.probe_rays;
                 scene.add(node, volume);
             }
         }
@@ -406,7 +413,9 @@ fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkOptions options) @local 
 
 fn void print_banner(BenchmarkOptions options, bool timestamps_active) @local {
     BenchmarkFlags flags = options.flags;
-    io::eprintfn("mode=%s shading=%s lights=%d shadows=%s range=%.3f capacity=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s depth_prepass=%s ambient_occlusion=%s reflections=%s probe_volumes=%d probe_counts=%dx%dx%d probe_fill=%s probe_window=%d point_shadows=%s",
+    bool scene_probes = options.probe_volumes != 0 && options.probe_fill == ProbeFill.SCENE;
+    bool path_traced = options.shading == ShadingPath.PATH_TRACED;
+    io::eprintfn("mode=%s shading=%s lights=%d shadows=%s range=%.3f capacity=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s depth_prepass=%s ambient_occlusion=%s reflections=%s probe_volumes=%d probe_counts=%dx%dx%d probe_fill=%s probe_window=%d probe_rays=%d point_shadows=%s trace=%s",
         options.selection == LightSelection.FLAT || options.shading == ShadingPath.PATH_TRACED ? "flat" : "clustered",
         bench_loop::shading_name(options.shading), options.lights, options.shadows,
         options.range, options.capacity, flags.width, flags.height, flags.warmup, flags.frames,
@@ -414,7 +423,11 @@ fn void print_banner(BenchmarkOptions options, bool timestamps_active) @local {
         flags.window ? "window" : "none", flags.panel, flags.depth_prepass,
         bench_loop::ambient_occlusion_name(flags.ambient_occlusion), flags.reflections ? "on" : "off",
         options.probe_volumes, options.probe_counts.x, options.probe_counts.y, options.probe_counts.z,
-        options.probe_fill == ProbeFill.SCENE ? "scene" : "environment", options.probe_window, options.point_shadows);
+        options.probe_fill == ProbeFill.SCENE ? "scene" : "environment", options.probe_window, options.probe_rays,
+        options.point_shadows, bench_loop::trace_name(
+            traces:      scene_probes || bench_loop::needs_ray_queries(flags) || path_traced,
+            ray_queries: bench_loop::requests_ray_queries(flags) || path_traced,
+        ));
 }
 
 fn void? run_benchmark(BenchmarkOptions options) @local {
@@ -431,7 +444,7 @@ fn void? run_benchmark(BenchmarkOptions options) @local {
         .gpu_timings = flags.gpu_timings,
         .present_mode = gpu::PresentMode.IMMEDIATE,
         .application_name = "c3d_gltf_benchmark",
-        .ray_queries = bench_loop::needs_ray_queries(flags),
+        .ray_queries = bench_loop::requests_ray_queries(flags),
         .ray_tracing_pipelines = options.shading == ShadingPath.PATH_TRACED,
         .max_lights = BENCHMARK_LIGHTS_MAX,
     };

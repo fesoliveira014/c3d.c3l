@@ -14,6 +14,13 @@ fn void test_every_manifest_entry_resolves_to_spirv() @test {
     }
 }
 
+fn void test_probe_trace_variants_differ_by_trace_flag() @test {
+    char[] ray_query = shader::BUILTIN_REGISTRY.get({ .shader = PROBE_TRACE })!!;
+    ShaderVariant software_variant = { .shader = PROBE_TRACE, .flags = shader::SHADER_FLAG_SCENE_TRACE_BVH };
+    char[] software = shader::BUILTIN_REGISTRY.get(software_variant)!!;
+    assert(!(ray_query.len == software.len && mem::equals(ray_query.ptr, software.ptr, (sz)ray_query.len)));
+}
+
 fn void test_unlisted_variant_faults_shader_not_found() @test {
     shader::ShaderRegistry registry = { .entries = shader::SHADER_ENTRIES[:1] };
     if (catch excuse = registry.get(shader::SHADER_ENTRIES[1].variant)) {

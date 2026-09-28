@@ -336,7 +336,7 @@ fn BenchmarkOptions? parse_options(String[] args) @local {
             default: return c3d::INVALID_ARGUMENT~;
         }
     }
-    bench_loop::validate_flags(options.flags)!;
+    bench_loop::validate_flags(options.flags, options.shading)!;
     if (!options.lights || options.lights > MAX_POINT_LIGHTS
         || !options.capacity || options.capacity > 256
         || !math::is_finite(options.range) || options.range < RANGE_MIN || options.range > RANGE_MAX) {
@@ -359,13 +359,17 @@ fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkOptions options) @local 
 
 fn void print_banner(BenchmarkOptions options, bool timestamps_active) @local {
     BenchmarkFlags flags = options.flags;
-    io::eprintfn("mode=%s shading=%s lights=%d range=%.1f capacity=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s depth_prepass=%s ambient_occlusion=%s reflections=%s",
+    io::eprintfn("mode=%s shading=%s lights=%d range=%.1f capacity=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s depth_prepass=%s ambient_occlusion=%s reflections=%s trace=%s",
         options.selection == LightSelection.FLAT || options.shading == ShadingPath.PATH_TRACED ? "flat" : "clustered",
         bench_loop::shading_name(options.shading), options.lights, options.range,
         options.capacity, flags.width, flags.height, flags.warmup, flags.frames,
         flags.validation, flags.gpu_timings, timestamps_active, flags.capture,
         flags.window ? "window" : "none", flags.panel, flags.depth_prepass,
-        bench_loop::ambient_occlusion_name(flags.ambient_occlusion), flags.reflections ? "on" : "off");
+        bench_loop::ambient_occlusion_name(flags.ambient_occlusion), flags.reflections ? "on" : "off",
+        bench_loop::trace_name(
+            traces:      bench_loop::needs_ray_queries(flags) || options.shading == ShadingPath.PATH_TRACED,
+            ray_queries: bench_loop::requests_ray_queries(flags) || options.shading == ShadingPath.PATH_TRACED,
+        ));
 }
 
 fn void? run_benchmark(BenchmarkOptions options) @local {
@@ -386,7 +390,7 @@ fn void? run_benchmark(BenchmarkOptions options) @local {
         .gpu_timings = flags.gpu_timings,
         .present_mode = gpu::PresentMode.IMMEDIATE,
         .application_name = "c3d_many_lights_benchmark",
-        .ray_queries = bench_loop::needs_ray_queries(flags),
+        .ray_queries = bench_loop::requests_ray_queries(flags),
         .ray_tracing_pipelines = options.shading == ShadingPath.PATH_TRACED,
         .max_lights = MAX_POINT_LIGHTS,
     };

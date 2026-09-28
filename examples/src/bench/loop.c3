@@ -33,6 +33,7 @@ struct BenchmarkFlags {
     AmbientOcclusionDesc ambient_occlusion;
     bool depth_prepass;
     bool reflections;
+    TraceKind trace; // AUTO: ray queries exactly when a traced effect needs them
 }
 
 <*
@@ -155,6 +156,12 @@ fn bool? parse_flag(String[] args, usz* index, BenchmarkFlags* flags, String tar
                 case "off": flags.reflections = false;
                 default: return c3d::INVALID_ARGUMENT~;
             }
+        case "--trace":
+            switch (option_value(args, index)!) {
+                case "software": flags.trace = TraceKind.SOFTWARE;
+                case "hardware": flags.trace = TraceKind.HARDWARE;
+                default: return c3d::INVALID_ARGUMENT~;
+            }
         default: return false;
     }
     return true;
@@ -173,10 +180,11 @@ fn String? option_value(String[] args, usz* index) {
  Reject frame counts, extents and flag combinations the loop cannot run.
  @return? c3d::INVALID_ARGUMENT
 *>
-fn void? validate_flags(BenchmarkFlags flags) {
+fn void? validate_flags(BenchmarkFlags flags, ShadingPath shading) {
     if (!flags.frames || flags.frames > FRAMES_MAX || flags.warmup > FRAMES_MAX
         || !flags.width || flags.width > EXTENT_MAX || !flags.height || flags.height > EXTENT_MAX
-        || (flags.panel && (!flags.window || !flags.capture))) {
+        || (flags.panel && (!flags.window || !flags.capture))
+        || (flags.trace == TraceKind.SOFTWARE && (needs_ray_queries(flags) || shading == ShadingPath.PATH_TRACED))) {
         return c3d::INVALID_ARGUMENT~;
     }
 }
@@ -186,6 +194,27 @@ fn void? validate_flags(BenchmarkFlags flags) {
 *>
 fn bool needs_ray_queries(BenchmarkFlags flags) {
     return flags.reflections || flags.ambient_occlusion.kind == AoKind.RAY_TRACED;
+}
+
+<*
+ Banner word of a run's trace kind: none, software or hardware.
+ @param traces : "Whether the run has a trace consumer."
+ @param ray_queries : "Whether the renderer was created with ray queries."
+*>
+fn String trace_name(bool traces, bool ray_queries) {
+    if (!traces) return "none";
+    return ray_queries ? "hardware" : "software";
+}
+
+<*
+ Whether the renderer is created with ray queries, which every trace consumer then uses.
+*>
+fn bool requests_ray_queries(BenchmarkFlags flags) {
+    switch (flags.trace) {
+        case AUTO: return needs_ray_queries(flags);
+        case SOFTWARE: return false;
+        case HARDWARE: return true;
+    }
 }
 
 <*
@@ -283,10 +312,10 @@ fn usz? run_frames(BenchmarkRun* run, BenchmarkFlags flags, FrameSample[] sample
  @param timestamps_enabled : "False prints -1 in every GPU column."
 *>
 fn void write_samples(FrameSample[] samples, bool timestamps_enabled) {
-    io::printn("frame,wall_ms,update_ms,begin_ms,render_ms,finish_ms,end_ms,gui_ms,cpu_record_ms,draws,lights,dropped,overflows,material_resolutions,pipeline_lookups,gpu_shadow_ms,gpu_cull_ms,gpu_prepass_ms,gpu_gbuffer_ms,gpu_ambient_occlusion_ms,gpu_rt_reflections_ms,gpu_path_trace_ms,gpu_lighting_ms,gpu_opaque_ms,gpu_post_ms,gpu_composite_ms,gpu_velocity_ms,gpu_taa_ms,gpu_probe_update_ms");
+    io::printn("frame,wall_ms,update_ms,begin_ms,render_ms,finish_ms,end_ms,gui_ms,cpu_record_ms,draws,lights,dropped,overflows,material_resolutions,pipeline_lookups,gpu_shadow_ms,gpu_cull_ms,gpu_prepass_ms,gpu_gbuffer_ms,gpu_ambient_occlusion_ms,gpu_rt_reflections_ms,gpu_path_trace_ms,gpu_lighting_ms,gpu_opaque_ms,gpu_post_ms,gpu_composite_ms,gpu_velocity_ms,gpu_taa_ms,gpu_probe_update_ms,gpu_acceleration_build_ms");
     foreach (index, sample : samples) {
         float unavailable = -1;
-        io::printfn("%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f",
+        io::printfn("%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f",
             index, sample.wall_ms, sample.update_ms, sample.begin_ms, sample.render_ms,
             sample.finish_ms, sample.end_ms, sample.gui_ms, sample.cpu_record_ms, sample.draws, sample.lights,
             sample.dropped, sample.overflows, sample.material_resolutions, sample.pipeline_lookups,
@@ -303,7 +332,8 @@ fn void write_samples(FrameSample[] samples, bool timestamps_enabled) {
             timestamps_enabled ? sample.gpu_ms[Pass.COMPOSITE.ordinal] : unavailable,
             timestamps_enabled ? sample.gpu_ms[Pass.VELOCITY.ordinal] : unavailable,
             timestamps_enabled ? sample.gpu_ms[Pass.TEMPORAL_AA.ordinal] : unavailable,
-            timestamps_enabled ? sample.gpu_ms[Pass.PROBE_UPDATE.ordinal] : unavailable);
+            timestamps_enabled ? sample.gpu_ms[Pass.PROBE_UPDATE.ordinal] : unavailable,
+            timestamps_enabled ? sample.gpu_ms[Pass.ACCELERATION_BUILD.ordinal] : unavailable);
     }
 }
 

@@ -37,9 +37,9 @@ const uint PROBE_COLOR @local = 0xFF40C0FF;
 const float SUN_RADIANS_PER_SECOND @local = 0.2f;
 const Vec3 SUN_DIRECTION @local = { -0.3f, -1, -0.2f };
 const Vec2 CONTROLS_PANEL_POSITION @local = { 16, 16 };
-const Vec2 CONTROLS_PANEL_SIZE @local = { 320, 130 };
-const Vec2 SCENE_PANEL_POSITION @local = { 16, 160 };
-const Vec2 SCENE_PANEL_SIZE @local = { 320, 540 };
+const Vec2 CONTROLS_PANEL_SIZE @local = { 320, 150 };
+const Vec2 SCENE_PANEL_POSITION @local = { 16, 180 };
+const Vec2 SCENE_PANEL_SIZE @local = { 320, 520 };
 const Vec2 TARGETS_PANEL_POSITION @local = { 920, 16 };
 const Vec2 TARGETS_PANEL_SIZE @local = { 344, 690 };
 const Vec2 STATS_PANEL_POSITION @local = { 352, 16 };
@@ -57,6 +57,7 @@ struct Orbit @local {
 struct Options @local {
     bool      gpu_timings;
     bool      deferred;
+    bool      ray_queries;
     ProbeFill fill;
 }
 
@@ -167,6 +168,7 @@ fn void? run_gui(
             imgui::checkbox("Volume visible", &volume_node.visible);
             imgui::checkbox("Draw probes", &draw_probes);
             imgui::checkbox("Move sun", &move_sun);
+            imgui::text("Trace: %s", renderer.caps.ray_queries.enabled ? "ray queries" : "software BVH");
         }
         imgui::end();
 
@@ -223,6 +225,14 @@ fn int main(String[] args) {
                 case "scene": options.fill = ProbeFill.SCENE;
                 default:
                     io::printfn("Unknown fill: %s", args[index]);
+                    return 1;
+            }
+        } else if (argument == "--trace" && index + 1 < args.len) {
+            switch (args[++index]) {
+                case "software": options.ray_queries = false;
+                case "hardware": options.ray_queries = true;
+                default:
+                    io::printfn("Unknown trace: %s", args[index]);
                     return 1;
             }
         } else {
@@ -287,16 +297,22 @@ fn int main(String[] args) {
         platform::default_window_desc("c3d probe volume", WINDOW_WIDTH, WINDOW_HEIGHT))!!;
     defer platform::destroy_window(&window);
 
-    render::Renderer renderer = platform::create_window_renderer(
+    render::Renderer? created = platform::create_window_renderer(
         allocator: mem,
         window:    &window,
         assets:    &assets,
         desc:      {
             .gpu_timings      = options.gpu_timings,
             .validation       = true,
+            .ray_queries      = options.ray_queries,
             .application_name = "c3d_probe_volume",
         },
-    )!!;
+    );
+    if (catch excuse = created) {
+        io::printfn("probe_volume: renderer creation failed (%s)", excuse);
+        return 1;
+    }
+    render::Renderer renderer = created;
     defer render::destroy_renderer(&renderer);
 
     if (catch excuse = run_gui(

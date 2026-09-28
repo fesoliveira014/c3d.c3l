@@ -40,6 +40,9 @@ const float SKY_TEXEL_TOLERANCE @private = 0.05f;         // of the expected irr
 const float FAST_HYSTERESIS @private = 0.5f;            // converges in tens of updates; stability is what is measured
 const Vec4 RED_WALL_COLOR @private = { 0.8f, 0.1f, 0.1f, 1 };
 const uint BOUNCE_UPDATES @private = 60;                 // 60 half-lives at the fast hysteresis
+const bool[2] TRACE_KINDS @private = { false, true };  // ray_queries of each fixture: software walk, then ray queries
+const float KIND_IRRADIANCE_SHARE @private = 0.02f;     // of the mean software texel; the milestone's bound
+const float KIND_VISIBILITY_SHARE @private = 0.001f;   // measured below 1e-6 on the RTX 4090; margin for other devices
 const float BOUNCE_GAIN @private = 2.5f;                // measured 3.07 on the RTX 4090; below it the bounce is lost
 
 struct ProbeRoom @private {
@@ -50,6 +53,26 @@ struct ProbeRoom @private {
     Node* volume;
     Node* sun;
     Node* lamp;
+}
+
+struct AtlasReading @private {
+    Vec4f[] texels;
+    uint    width;
+    uint    slices_per_row;
+}
+
+struct BounceReadings @private {
+    AtlasReading[2] irradiance; // after the first update, after convergence
+    AtlasReading[2] visibility;
+    ulong[2]        frames;
+}
+
+struct KindDifference @private {
+    float all;
+    float interior;        // probes not in a wall
+    uint  worst_probe;
+    float worst;           // that probe's mean absolute difference per channel
+    float worst_reference; // that probe's mean software value per channel
 }
 
 struct ProbeReadbackRoot @private {
@@ -230,6 +253,107 @@ fn ProbeRoom? create_probe_room(Fixture* fixture, bool lamp = false) @private {
     return room;
 }
 
+fn ZString trace_name(bool ray_queries) @private {
+    return ray_queries ? "ray queries" : "software BVH";
+}
+
+fn ProbeRoom? create_bounce_room(Fixture* fixture) @private {
+    ProbeRoom room = create_probe_room(fixture, lamp: true)!;
+    defer catch scene::destroy_scene(&room.scene);
+    StandardParams red = { .base_color = RED_WALL_COLOR, .roughness = 1 };
+    room.scene.get(room.east, Mesh).material = fixture.assets.add_material(material::standard(red))!;
+    room.scene.get(room.volume, ProbeVolume).update.hysteresis = FAST_HYSTERESIS;
+    return room;
+}
+
+fn AtlasReading? keep_atlas(Fixture* fixture, ProbeVolumeRes* mirror, Target* atlas) @private {
+    Vec4f[] texels = read_atlas(fixture, atlas)!;
+    Vec4f[] kept = alloc::new_array(mem, Vec4f, (sz)texels.len);
+    kept[..] = texels[..];
+    return { .texels = kept, .width = atlas.width, .slices_per_row = mirror.slices_per_row };
+}
+
+// The same frame sequence on each kind, readbacks included, so both cast the same rays.
+fn BounceReadings? read_bounce_room(bool ray_queries) @private {
+    Fixture fixture;
+    create_fixture(mem, &fixture, ray_queries: ray_queries)!;
+    defer destroy_fixture(&fixture);
+    print_adapter(&fixture);
+    ProbeRoom room = create_bounce_room(&fixture)!;
+    defer scene::destroy_scene(&room.scene);
+    ProbeView probe_view = create_probe_view(&fixture, ShadingPath.FORWARD)!;
+    defer destroy_probe_view(&fixture, &probe_view);
+
+    BounceReadings readings;
+    uint[2] updates = { 1, BOUNCE_UPDATES };
+    foreach (usz stage, count : updates) {
+        render_room_frames(&fixture, &room, probe_view.view, count)!;
+        // The first frame builds the top level only when the updates trace through ray queries.
+        if (stage == 0) assert((fixture.renderer.stats.tlas_builds > 0) == ray_queries);
+        ProbeVolumeRes* mirror = mirror_of(&fixture, &room.scene, room.volume);
+        readings.frames[stage] = fixture.renderer.frame_index;
+        readings.irradiance[stage] = keep_atlas(&fixture, mirror, &mirror.irradiance)!;
+        readings.visibility[stage] = keep_atlas(&fixture, mirror, &mirror.visibility)!;
+    }
+    check_validation(&fixture.renderer);
+    return readings;
+}
+
+fn void free_bounce_readings(BounceReadings* readings) @private {
+    foreach (&reading : readings.irradiance) alloc::free(mem, reading.texels.ptr);
+    foreach (&reading : readings.visibility) alloc::free(mem, reading.texels.ptr);
+}
+
+// Mean absolute difference over the mean software texel, over the interior texels of every probe.
+fn KindDifference atlas_difference(
+    AtlasReading* software,
+    AtlasReading* hardware,
+    uint cell_edge,
+    usz channels,
+) @private {
+    float[2] difference;
+    float[2] reference;
+    KindDifference result;
+    for (uint z = 0; z < ROOM_COUNTS.z; z++) {
+        for (uint y = 0; y < ROOM_COUNTS.y; y++) {
+            for (uint x = 0; x < ROOM_COUNTS.x; x++) {
+                bool in_wall = x == 0 || y == 0 || z == 0
+                    || x + 1 == ROOM_COUNTS.x || y + 1 == ROOM_COUNTS.y || z + 1 == ROOM_COUNTS.z;
+                uint[<2>] cell = render::probe_cell(ROOM_COUNTS, software.slices_per_row, { x, y, z });
+                float probe_difference;
+                float probe_reference;
+                for (uint texel_y = 1; texel_y + 1 < cell_edge; texel_y++) {
+                    for (uint texel_x = 1; texel_x + 1 < cell_edge; texel_x++) {
+                        usz row = (usz)(cell.y * cell_edge + texel_y);
+                        usz texel = row * software.width + (usz)(cell.x * cell_edge + texel_x);
+                        for (usz channel = 0; channel < channels; channel++) {
+                            float expected = software.texels[texel][channel];
+                            probe_difference += math::abs(hardware.texels[texel][channel] - expected);
+                            probe_reference += expected;
+                        }
+                    }
+                }
+                difference[0] += probe_difference;
+                reference[0] += probe_reference;
+                if (!in_wall) {
+                    difference[1] += probe_difference;
+                    reference[1] += probe_reference;
+                }
+                usz interior = (usz)cell_edge - 2;
+                float samples = (float)(interior * interior * channels);
+                if (probe_difference / samples > result.worst) {
+                    result.worst = probe_difference / samples;
+                    result.worst_reference = probe_reference / samples;
+                    result.worst_probe = x + ROOM_COUNTS.x * (y + ROOM_COUNTS.y * z);
+                }
+            }
+        }
+    }
+    result.all = difference[0] / reference[0];
+    result.interior = difference[1] / reference[1];
+    return result;
+}
+
 fn void? render_room_frames(Fixture* fixture, ProbeRoom* room, ViewId view, uint frames) @private {
     for (uint frame = 0; frame < frames; frame++) {
         fixture.renderer.begin_frame()!;
@@ -241,212 +365,264 @@ fn void? render_room_frames(Fixture* fixture, ProbeRoom* room, ViewId view, uint
 }
 
 fn void test_closed_box_has_no_leak() @test {
-    Fixture fixture;
-    create_fixture(mem, &fixture)!!;
-    defer destroy_fixture(&fixture);
-    print_adapter(&fixture);
-    ProbeRoom room = create_probe_room(&fixture)!!;
-    defer scene::destroy_scene(&room.scene);
-    ProbeView probe_view = create_probe_view(&fixture, ShadingPath.FORWARD)!!;
-    defer destroy_probe_view(&fixture, &probe_view);
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        print_adapter(&fixture);
+        ProbeRoom room = create_probe_room(&fixture)!!;
+        defer scene::destroy_scene(&room.scene);
+        ProbeView probe_view = create_probe_view(&fixture, ShadingPath.FORWARD)!!;
+        defer destroy_probe_view(&fixture, &probe_view);
 
-    render_room_frames(&fixture, &room, probe_view.view, 1)!!;
-    float closed = interior_irradiance(&fixture, &room);
-    room.roof.visible = false;
-    room.scene.update_world();
-    render_room_frames(&fixture, &room, probe_view.view, OPEN_ROOM_UPDATES)!!;
-    float open = interior_irradiance(&fixture, &room);
-    io::eprintfn("closed room irradiance %f, open %f", closed, open);
-    assert(open > LIT_IRRADIANCE);
-    assert(closed < DARK_SHARE * open);
-    check_validation(&fixture.renderer);
+        render_room_frames(&fixture, &room, probe_view.view, 1)!!;
+        float closed = interior_irradiance(&fixture, &room);
+        room.roof.visible = false;
+        room.scene.update_world();
+        render_room_frames(&fixture, &room, probe_view.view, OPEN_ROOM_UPDATES)!!;
+        float open = interior_irradiance(&fixture, &room);
+        io::eprintfn("%s: closed room irradiance %f, open %f", trace_name(ray_queries), closed, open);
+        assert(open > LIT_IRRADIANCE);
+        assert(closed < DARK_SHARE * open);
+        check_validation(&fixture.renderer);
+    }
 }
 
 fn void test_scene_atlases_hold_no_nan() @test {
-    Fixture fixture;
-    create_fixture(mem, &fixture)!!;
-    defer destroy_fixture(&fixture);
-    ProbeRoom room = create_probe_room(&fixture)!!;
-    defer scene::destroy_scene(&room.scene);
-    ProbeView probe_view = create_probe_view(&fixture, ShadingPath.FORWARD)!!;
-    defer destroy_probe_view(&fixture, &probe_view);
-    room.scene.get(room.volume, ProbeVolume).update.probes_per_frame = 16;
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        ProbeRoom room = create_probe_room(&fixture)!!;
+        defer scene::destroy_scene(&room.scene);
+        ProbeView probe_view = create_probe_view(&fixture, ShadingPath.FORWARD)!!;
+        defer destroy_probe_view(&fixture, &probe_view);
+        room.scene.get(room.volume, ProbeVolume).update.probes_per_frame = 16;
 
-    render_room_frames(&fixture, &room, probe_view.view, 1)!!;
-    ProbeVolumeRes* mirror = mirror_of(&fixture, &room.scene, room.volume);
-    @pool() {
-        assert_finite(read_atlas(&fixture, &mirror.irradiance)!!);
-        assert_finite(read_atlas(&fixture, &mirror.visibility)!!);
-    };
-    render_room_frames(&fixture, &room, probe_view.view, 10)!!;
-    assert(mirror.fill.scene_swept);
-    @pool() {
-        assert_finite(read_atlas(&fixture, &mirror.irradiance)!!);
-        assert_finite(read_atlas(&fixture, &mirror.visibility)!!);
-    };
-    check_validation(&fixture.renderer);
+        render_room_frames(&fixture, &room, probe_view.view, 1)!!;
+        ProbeVolumeRes* mirror = mirror_of(&fixture, &room.scene, room.volume);
+        @pool() {
+            assert_finite(read_atlas(&fixture, &mirror.irradiance)!!);
+            assert_finite(read_atlas(&fixture, &mirror.visibility)!!);
+        };
+        render_room_frames(&fixture, &room, probe_view.view, 10)!!;
+        assert(mirror.fill.scene_swept);
+        @pool() {
+            assert_finite(read_atlas(&fixture, &mirror.irradiance)!!);
+            assert_finite(read_atlas(&fixture, &mirror.visibility)!!);
+        };
+        check_validation(&fixture.renderer);
+    }
 }
 
 fn void test_moved_volume_restarts_into_the_dark() @test {
-    Fixture fixture;
-    create_fixture(mem, &fixture)!!;
-    defer destroy_fixture(&fixture);
-    ProbeRoom room = create_probe_room(&fixture)!!;
-    defer scene::destroy_scene(&room.scene);
-    ProbeView probe_view = create_probe_view(&fixture, ShadingPath.FORWARD)!!;
-    defer destroy_probe_view(&fixture, &probe_view);
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        ProbeRoom room = create_probe_room(&fixture)!!;
+        defer scene::destroy_scene(&room.scene);
+        ProbeView probe_view = create_probe_view(&fixture, ShadingPath.FORWARD)!!;
+        defer destroy_probe_view(&fixture, &probe_view);
 
-    room.volume.local.position = FAR_AWAY + ROOM_CENTER;
-    room.scene.update_world();
-    render_room_frames(&fixture, &room, probe_view.view, 3)!!;
-    float outside = interior_irradiance(&fixture, &room);
-    room.volume.local.position = ROOM_CENTER;
-    room.scene.update_world();
-    render_room_frames(&fixture, &room, probe_view.view, 1)!!;
-    float inside = interior_irradiance(&fixture, &room);
-    io::eprintfn("moved volume irradiance: outside %f, inside after the move %f", outside, inside);
-    assert(outside > LIT_IRRADIANCE);
-    assert(inside < DARK_SHARE * outside);
-    check_validation(&fixture.renderer);
+        room.volume.local.position = FAR_AWAY + ROOM_CENTER;
+        room.scene.update_world();
+        render_room_frames(&fixture, &room, probe_view.view, 3)!!;
+        float outside = interior_irradiance(&fixture, &room);
+        room.volume.local.position = ROOM_CENTER;
+        room.scene.update_world();
+        render_room_frames(&fixture, &room, probe_view.view, 1)!!;
+        float inside = interior_irradiance(&fixture, &room);
+        io::eprintfn(
+            "%s: moved volume irradiance: outside %f, inside after the move %f",
+            trace_name(ray_queries), outside, inside,
+        );
+        assert(outside > LIT_IRRADIANCE);
+        assert(inside < DARK_SHARE * outside);
+        check_validation(&fixture.renderer);
+    }
 }
 
 fn void test_bounce_with_high_energy_stays_finite() @test {
-    Fixture fixture;
-    create_fixture(mem, &fixture)!!;
-    defer destroy_fixture(&fixture);
-    ProbeRoom room = create_probe_room(&fixture, lamp: true)!!;
-    defer scene::destroy_scene(&room.scene);
-    ProbeVolume* volume = room.scene.get(room.volume, ProbeVolume);
-    volume.energy = HIGH_ENERGY;
-    volume.update.hysteresis = FAST_HYSTERESIS;
-    ProbeView probe_view = create_probe_view(&fixture, ShadingPath.FORWARD)!!;
-    defer destroy_probe_view(&fixture, &probe_view);
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        ProbeRoom room = create_probe_room(&fixture, lamp: true)!!;
+        defer scene::destroy_scene(&room.scene);
+        ProbeVolume* volume = room.scene.get(room.volume, ProbeVolume);
+        volume.energy = HIGH_ENERGY;
+        volume.update.hysteresis = FAST_HYSTERESIS;
+        ProbeView probe_view = create_probe_view(&fixture, ShadingPath.FORWARD)!!;
+        defer destroy_probe_view(&fixture, &probe_view);
 
-    render_room_frames(&fixture, &room, probe_view.view, STABILITY_FIRST)!!;
-    float first = interior_irradiance(&fixture, &room);
-    render_room_frames(&fixture, &room, probe_view.view, STABILITY_SECOND - STABILITY_FIRST)!!;
-    float second = interior_irradiance(&fixture, &room);
-    io::eprintfn(
-        "lamp room mean irradiance after %d updates %f, after %d %f",
-        STABILITY_FIRST, first, STABILITY_SECOND, second,
-    );
-    assert(first > 0 && math::is_finite(second));
-    assert(math::abs(second - first) <= STABILITY_TOLERANCE * first);
-    check_validation(&fixture.renderer);
+        render_room_frames(&fixture, &room, probe_view.view, STABILITY_FIRST)!!;
+        float first = interior_irradiance(&fixture, &room);
+        render_room_frames(&fixture, &room, probe_view.view, STABILITY_SECOND - STABILITY_FIRST)!!;
+        float second = interior_irradiance(&fixture, &room);
+        io::eprintfn(
+            "%s: lamp room mean irradiance after %d updates %f, after %d %f",
+            trace_name(ray_queries), STABILITY_FIRST, first, STABILITY_SECOND, second,
+        );
+        assert(first > 0 && math::is_finite(second));
+        assert(math::abs(second - first) <= STABILITY_TOLERANCE * first);
+        check_validation(&fixture.renderer);
+    }
 }
 
 fn void test_open_sky_probe_matches_the_sky_after_one_sweep() @test {
-    Fixture fixture;
-    create_fixture(mem, &fixture)!!;
-    defer destroy_fixture(&fixture);
-    ProbeScene probe = create_probe_scene(&fixture, toon_floor: true)!!;
-    defer scene::destroy_scene(&probe.scene);
-    ProbeView probe_view = create_probe_view(&fixture, ShadingPath.FORWARD)!!;
-    defer destroy_probe_view(&fixture, &probe_view);
-    probe.volume.local.position = SKY_VOLUME_OFFSET;
-    probe.scene.add(probe.volume, light::probe_volume(SKY_VOLUME_HALF_EXTENTS, SKY_COUNTS, SCENE));
-    probe.scene.update_world();
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        ProbeScene probe = create_probe_scene(&fixture, toon_floor: true)!!;
+        defer scene::destroy_scene(&probe.scene);
+        ProbeView probe_view = create_probe_view(&fixture, ShadingPath.FORWARD)!!;
+        defer destroy_probe_view(&fixture, &probe_view);
+        probe.volume.local.position = SKY_VOLUME_OFFSET;
+        probe.scene.add(probe.volume, light::probe_volume(SKY_VOLUME_HALF_EXTENTS, SKY_COUNTS, SCENE));
+        probe.scene.update_world();
 
-    // The upward texel of a probe above everything sees only the sky: E = PI x sky radiance.
-    float expected = (float)math::PI * SKY_RADIANCE.y;
-    uint[<3>] top_probe = { SKY_COUNTS.x - 1, SKY_COUNTS.y - 1, SKY_COUNTS.z - 1 };
-    float spread;
-    for (uint frame = 0; frame < SKY_SPREAD_FRAMES; frame++) {
-        // A new counts value makes new atlases, so every frame reads a first-sweep estimate.
-        probe.scene.get(probe.volume, ProbeVolume).counts.z = SKY_COUNTS.z + frame % 2;
-        top_probe.z = SKY_COUNTS.z - 1 + frame % 2;
-        (void)render_probe_pixel(&fixture, &probe, probe_view.view, SKY_FLOOR_POINT)!!;
-        ProbeVolumeRes* mirror = mirror_of(&fixture, &probe.scene, probe.volume);
-        Vec4f[] texels = read_atlas(&fixture, &mirror.irradiance)!!;
-        uint[<3>] counts = { SKY_COUNTS.x, SKY_COUNTS.y, top_probe.z + 1 };
-        uint[<2>] cell = render::probe_cell(counts, mirror.slices_per_row, top_probe);
-        Vec2 up = render::probe_atlas_texel(cell, shader::PROBE_IRRADIANCE_CELL, { 0, 1, 0 });
-        usz texel = (usz)up.y * mirror.irradiance.width + (usz)up.x;
-        float value = texels[texel][1];
-        spread = math::max(spread, math::abs(value - expected));
-        io::eprintfn("open sky frame %d: upward texel %f, PI x sky %f", frame, value, expected);
+        // The upward texel of a probe above everything sees only the sky: E = PI x sky radiance.
+        float expected = (float)math::PI * SKY_RADIANCE.y;
+        uint[<3>] top_probe = { SKY_COUNTS.x - 1, SKY_COUNTS.y - 1, SKY_COUNTS.z - 1 };
+        float spread;
+        for (uint frame = 0; frame < SKY_SPREAD_FRAMES; frame++) {
+            // A new counts value makes new atlases, so every frame reads a first-sweep estimate.
+            probe.scene.get(probe.volume, ProbeVolume).counts.z = SKY_COUNTS.z + frame % 2;
+            top_probe.z = SKY_COUNTS.z - 1 + frame % 2;
+            (void)render_probe_pixel(&fixture, &probe, probe_view.view, SKY_FLOOR_POINT)!!;
+            ProbeVolumeRes* mirror = mirror_of(&fixture, &probe.scene, probe.volume);
+            Vec4f[] texels = read_atlas(&fixture, &mirror.irradiance)!!;
+            uint[<3>] counts = { SKY_COUNTS.x, SKY_COUNTS.y, top_probe.z + 1 };
+            uint[<2>] cell = render::probe_cell(counts, mirror.slices_per_row, top_probe);
+            Vec2 up = render::probe_atlas_texel(cell, shader::PROBE_IRRADIANCE_CELL, { 0, 1, 0 });
+            usz texel = (usz)up.y * mirror.irradiance.width + (usz)up.x;
+            float value = texels[texel][1];
+            spread = math::max(spread, math::abs(value - expected));
+            io::eprintfn(
+                "%s: open sky frame %d: upward texel %f, PI x sky %f",
+                trace_name(ray_queries), frame, value, expected,
+            );
+        }
+        io::eprintfn("%s: open sky largest difference after one sweep: %f", trace_name(ray_queries), spread);
+        assert(spread <= SKY_TEXEL_TOLERANCE * expected);
+        check_validation(&fixture.renderer);
     }
-    io::eprintfn("open sky largest difference after one sweep: %f", spread);
-    assert(spread <= SKY_TEXEL_TOLERANCE * expected);
-    check_validation(&fixture.renderer);
 }
 
 fn void test_two_scenes_update_in_one_frame() @test {
-    Fixture fixture;
-    create_fixture(mem, &fixture)!!;
-    defer destroy_fixture(&fixture);
-    ProbeRoom closed = create_probe_room(&fixture)!!;
-    defer scene::destroy_scene(&closed.scene);
-    ProbeRoom open = create_probe_room(&fixture)!!;
-    defer scene::destroy_scene(&open.scene);
-    open.roof.visible = false;
-    open.scene.update_world();
-    ProbeView first_view = create_probe_view(&fixture, ShadingPath.FORWARD)!!;
-    defer destroy_probe_view(&fixture, &first_view);
-    ProbeView second_view = create_probe_view(&fixture, ShadingPath.FORWARD)!!;
-    defer destroy_probe_view(&fixture, &second_view);
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        ProbeRoom closed = create_probe_room(&fixture)!!;
+        defer scene::destroy_scene(&closed.scene);
+        ProbeRoom open = create_probe_room(&fixture)!!;
+        defer scene::destroy_scene(&open.scene);
+        open.roof.visible = false;
+        open.scene.update_world();
+        ProbeView first_view = create_probe_view(&fixture, ShadingPath.FORWARD)!!;
+        defer destroy_probe_view(&fixture, &first_view);
+        ProbeView second_view = create_probe_view(&fixture, ShadingPath.FORWARD)!!;
+        defer destroy_probe_view(&fixture, &second_view);
 
-    for (uint frame = 0; frame < OPEN_ROOM_UPDATES; frame++) {
-        fixture.renderer.begin_frame()!!;
-        fixture.renderer.render_view(&closed.scene, closed.camera, first_view.view)!!;
-        fixture.renderer.finish_view(first_view.view)!!;
-        fixture.renderer.render_view(&open.scene, open.camera, second_view.view)!!;
-        fixture.renderer.finish_view(second_view.view)!!;
-        fixture.renderer.end_frame()!!;
-        assert(fixture.renderer.stats.probe_updates == 2);
+        for (uint frame = 0; frame < OPEN_ROOM_UPDATES; frame++) {
+            fixture.renderer.begin_frame()!!;
+            fixture.renderer.render_view(&closed.scene, closed.camera, first_view.view)!!;
+            fixture.renderer.finish_view(first_view.view)!!;
+            fixture.renderer.render_view(&open.scene, open.camera, second_view.view)!!;
+            fixture.renderer.finish_view(second_view.view)!!;
+            fixture.renderer.end_frame()!!;
+            assert(fixture.renderer.stats.probe_updates == 2);
+        }
+        float closed_irradiance = interior_irradiance(&fixture, &closed);
+        float open_irradiance = interior_irradiance(&fixture, &open);
+        io::eprintfn("%s: two scenes: closed %f, open %f", trace_name(ray_queries), closed_irradiance, open_irradiance);
+        assert(open_irradiance > LIT_IRRADIANCE);
+        assert(closed_irradiance < DARK_SHARE * open_irradiance);
+        check_validation(&fixture.renderer);
     }
-    float closed_irradiance = interior_irradiance(&fixture, &closed);
-    float open_irradiance = interior_irradiance(&fixture, &open);
-    io::eprintfn("two scenes: closed %f, open %f", closed_irradiance, open_irradiance);
-    assert(open_irradiance > LIT_IRRADIANCE);
-    assert(closed_irradiance < DARK_SHARE * open_irradiance);
-    check_validation(&fixture.renderer);
 }
 
 fn void test_hidden_volume_is_not_updated() @test {
-    Fixture fixture;
-    create_fixture(mem, &fixture)!!;
-    defer destroy_fixture(&fixture);
-    ProbeRoom room = create_probe_room(&fixture)!!;
-    defer scene::destroy_scene(&room.scene);
-    ProbeView probe_view = create_probe_view(&fixture, ShadingPath.FORWARD)!!;
-    defer destroy_probe_view(&fixture, &probe_view);
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        ProbeRoom room = create_probe_room(&fixture)!!;
+        defer scene::destroy_scene(&room.scene);
+        ProbeView probe_view = create_probe_view(&fixture, ShadingPath.FORWARD)!!;
+        defer destroy_probe_view(&fixture, &probe_view);
 
-    room.volume.visible = false;
-    room.scene.update_world();
-    render_room_frames(&fixture, &room, probe_view.view, 1)!!;
-    assert(fixture.renderer.stats.probe_updates == 0 && fixture.renderer.stats.probe_rays == 0);
-    assert(!mirror_of(&fixture, &room.scene, room.volume));
-    room.volume.visible = true;
-    room.scene.update_world();
-    render_room_frames(&fixture, &room, probe_view.view, 1)!!;
-    assert(fixture.renderer.stats.probe_updates == 1);
-    check_validation(&fixture.renderer);
+        room.volume.visible = false;
+        room.scene.update_world();
+        render_room_frames(&fixture, &room, probe_view.view, 1)!!;
+        assert(fixture.renderer.stats.probe_updates == 0 && fixture.renderer.stats.probe_rays == 0);
+        assert(!mirror_of(&fixture, &room.scene, room.volume));
+        room.volume.visible = true;
+        room.scene.update_world();
+        render_room_frames(&fixture, &room, probe_view.view, 1)!!;
+        assert(fixture.renderer.stats.probe_updates == 1);
+        check_validation(&fixture.renderer);
+    }
 }
 
 fn void test_bounce_brightens_and_tints_the_room() @test {
-    Fixture fixture;
-    create_fixture(mem, &fixture)!!;
-    defer destroy_fixture(&fixture);
-    ProbeRoom room = create_probe_room(&fixture, lamp: true)!!;
-    defer scene::destroy_scene(&room.scene);
-    StandardParams red = { .base_color = RED_WALL_COLOR, .roughness = 1 };
-    room.scene.get(room.east, Mesh).material = fixture.assets.add_material(material::standard(red))!!;
-    room.scene.get(room.volume, ProbeVolume).update.hysteresis = FAST_HYSTERESIS;
-    ProbeView probe_view = create_probe_view(&fixture, ShadingPath.FORWARD)!!;
-    defer destroy_probe_view(&fixture, &probe_view);
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        ProbeRoom room = create_bounce_room(&fixture)!!;
+        defer scene::destroy_scene(&room.scene);
+        ProbeView probe_view = create_probe_view(&fixture, ShadingPath.FORWARD)!!;
+        defer destroy_probe_view(&fixture, &probe_view);
 
-    render_room_frames(&fixture, &room, probe_view.view, 1)!!;
-    Vec3 direct = interior_channels(&fixture, &room);
-    render_room_frames(&fixture, &room, probe_view.view, BOUNCE_UPDATES)!!;
-    Vec3 bounced = interior_channels(&fixture, &room);
-    float direct_mean = (direct.x + direct.y + direct.z) / 3;
-    float bounced_mean = (bounced.x + bounced.y + bounced.z) / 3;
-    io::eprintfn(
-        "bounce: first update %s mean %f red/green %f; after %d updates %s mean %f red/green %f",
-        direct, direct_mean, direct.x / direct.y, BOUNCE_UPDATES, bounced, bounced_mean, bounced.x / bounced.y,
-    );
-    assert(bounced_mean > BOUNCE_GAIN * direct_mean);
-    assert(bounced.x / bounced.y > direct.x / direct.y);
-    check_validation(&fixture.renderer);
+        render_room_frames(&fixture, &room, probe_view.view, 1)!!;
+        Vec3 direct = interior_channels(&fixture, &room);
+        render_room_frames(&fixture, &room, probe_view.view, BOUNCE_UPDATES)!!;
+        Vec3 bounced = interior_channels(&fixture, &room);
+        float direct_mean = (direct.x + direct.y + direct.z) / 3;
+        float bounced_mean = (bounced.x + bounced.y + bounced.z) / 3;
+        io::eprintfn(
+            "%s: bounce: first update %s mean %f red/green %f; after %d updates %s mean %f red/green %f",
+            trace_name(ray_queries), direct, direct_mean, direct.x / direct.y,
+            BOUNCE_UPDATES, bounced, bounced_mean, bounced.x / bounced.y,
+        );
+        assert(bounced_mean > BOUNCE_GAIN * direct_mean);
+        assert(bounced.x / bounced.y > direct.x / direct.y);
+        check_validation(&fixture.renderer);
+    }
+}
+
+fn void test_trace_kinds_agree_in_the_bounce_room() @test {
+    BounceReadings software = read_bounce_room(false)!!;
+    defer free_bounce_readings(&software);
+    BounceReadings hardware = read_bounce_room(true)!!;
+    defer free_bounce_readings(&hardware);
+
+    foreach (usz stage, frame : software.frames) {
+        assert(hardware.frames[stage] == frame);
+        KindDifference irradiance = atlas_difference(
+            software: &software.irradiance[stage],
+            hardware: &hardware.irradiance[stage],
+            cell_edge: shader::PROBE_IRRADIANCE_CELL,
+            channels: 3,
+        );
+        KindDifference visibility = atlas_difference(
+            software: &software.visibility[stage],
+            hardware: &hardware.visibility[stage],
+            cell_edge: shader::PROBE_VISIBILITY_CELL,
+            channels: 2,
+        );
+        io::eprintfn(
+            "trace kinds at frame %d: irradiance %f (not in a wall %f; worst probe %d differs by %f of %f), "
+            "visibility %f (not in a wall %f; worst probe %d differs by %f of %f)",
+            frame, irradiance.all, irradiance.interior, irradiance.worst_probe, irradiance.worst,
+            irradiance.worst_reference, visibility.all, visibility.interior, visibility.worst_probe,
+            visibility.worst, visibility.worst_reference,
+        );
+        assert(irradiance.all < KIND_IRRADIANCE_SHARE);
+        assert(visibility.all < KIND_VISIBILITY_SHARE);
+    }
 }

@@ -93,7 +93,7 @@ fn gpu::GpuAddress? prepare_probe_updates(Renderer* renderer, Scene* scene) @pri
         due |= volume.fill == ProbeFill.SCENE && probe_scene_due(renderer, scene, entity);
     };
     if (!due) return (gpu::GpuAddress)0;
-    return renderer.prepare_scene_trace(scene, TraceKind.SOFTWARE);
+    return renderer.prepare_scene_trace(scene, TraceKind.AUTO);
 }
 
 fn void write_probe_frame_root(
@@ -127,7 +127,7 @@ fn void write_probe_frame_root(
 
 fn void? acquire_probe_update_pipelines(Renderer* renderer) @private {
     ProbeUpdateState* state = &renderer.probe_update;
-    acquire_compute_pipeline(renderer, &state.trace, PROBE_TRACE, "probe_trace")!;
+    acquire_compute_pipeline(renderer, &state.trace, PROBE_TRACE, "probe_trace", trace_shader_flags(renderer))!;
     acquire_compute_pipeline(renderer, &state.blend, PROBE_BLEND, "probe_blend")!;
 }
 
@@ -205,9 +205,10 @@ fn void? record_probe_updates(Renderer* renderer, ProbeFillRecording* recording,
     );
 
     Quat rotation = maths::random_rotation({
-        maths::halton((uint)renderer.frame_index, 2),
-        maths::halton((uint)renderer.frame_index, 3),
-        maths::halton((uint)renderer.frame_index, 5),
+        // Index 0 is the all-zero point, a half turn about y that leaves one ray in each probe layer's plane.
+        maths::halton((uint)renderer.frame_index + 1, 2),
+        maths::halton((uint)renderer.frame_index + 1, 3),
+        maths::halton((uint)renderer.frame_index + 1, 5),
     });
     foreach (&update : recording.updates[:recording.update_count]) {
         usz set_index;

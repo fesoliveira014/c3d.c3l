@@ -102,6 +102,7 @@ lacks it, so an excluded mode never silently reports zero timings.
 | `--depth-prepass on\|off` | nothing | Selects the forward measured view's depth prepass (`benchmark.py --depth-prepass`); on by default, as in the view constructors. Deferred views always run it. |
 | `--ambient-occlusion none\|half\|full\|ray-traced` | `ray-traced`: a ray-query adapter | Selects the measured view's AO: screen space at half or full resolution, or ray traced at half resolution with 4 rays (`benchmark.py --ambient-occlusion`); none by default. The CSV reports it as `gpu_ambient_occlusion_ms`. |
 | `--reflections on\|off` | a ray-query adapter and `--shading deferred` | Ray-traced reflections on the measured view (`benchmark.py --reflections`); off by default. A forward view faults `UNSUPPORTED`. The CSV reports it as `gpu_rt_reflections_ms`. |
+| `--trace software\|hardware` | `hardware`: a ray-query adapter | Creates the renderer with (`hardware`) or without (`software`) ray queries; every trace consumer of the run, probe updates included, follows. The default is `hardware` exactly when `--reflections on` or `--ambient-occlusion ray-traced` is given. `software` with either of those, or with `--shading path-traced` (whose ray-tracing pipelines imply ray queries), is rejected as an invalid argument: they need ray queries until the software path for ray-query effects lands. The banner prints `trace=none\|software\|hardware` (`none`: the run traces nothing). With a traced effect on the command line the probe update of a `--probe-fill scene` row now runs on ray queries; earlier rows ran it in software beside a hardware view. |
 | `--shading path-traced` | a ray-tracing-pipeline adapter | Path traces the measured view with the default settings (6 bounces, one sample per frame, no cap); the light mode is forced to flat. The CSV reports the trace as `gpu_path_trace_ms`; samples per second is width x height / `gpu_path_trace_ms` x 1000. |
 
 The windowed run is a different workload from the headless one: the default view
@@ -118,7 +119,7 @@ windowed rows only with other windowed rows.
 | `end_ms` | `end_frame` submission, including presentation in windowed runs |
 | `gui_ms` | Profiler panel draw and overlay recording; zero without `--panel` |
 | `cpu_record_ms` | Existing renderer statistic; excludes the beginning wait/readback/sweep work |
-| `gpu_*_ms` | Completed per-pass timestamps for shadow atlas, light culling, depth prepass, G-buffer, ambient occlusion, ray-traced reflections, path tracing, lighting resolve, forward opaque, post chain, composite, velocity and temporal resolve; `-1` when unavailable, zero for an omitted pass |
+| `gpu_*_ms` | Completed per-pass timestamps for shadow atlas, light culling, depth prepass, G-buffer, ambient occlusion, ray-traced reflections, path tracing, lighting resolve, forward opaque, post chain, composite, velocity, temporal resolve, probe update and acceleration builds; `-1` when unavailable, zero for an omitted pass |
 | `draws`, `lights`, `dropped` | Current-frame renderer counters |
 | `overflows` | Completed cluster overflow count attributed to its submitted frame |
 | `material_resolutions` | Fresh material dependency resolutions in the frame; one per material per view traversal |
@@ -179,8 +180,9 @@ without.
 `--probe-volumes 0|1|8` adds probe volumes (one over the model bounds, or one per octant) with
 `--probe-counts X,Y,Z` probes each (default 16,8,8), filled from the environment or, with
 `--probe-fill scene`, traced every frame (`--probe-window N` probes per update, 0 for all);
-`--point-shadows on` enables shadows on the point lights. The banner prints them and the CSV has
-`gpu_probe_update_ms`. See [probe volumes](probe_volumes.md).
+`--point-shadows on` enables shadows on the point lights; `--probe-rays N` sets rays per probe (32 to
+256, default 128). The banner prints them and the CSV has `gpu_probe_update_ms`. The kind of the probe
+trace follows `--trace`. See [probe volumes](probe_volumes.md).
 
 Any glTF file can replace Sponza through the positional path or
 `benchmark.py scene --model`; the light and camera placement derive from the
