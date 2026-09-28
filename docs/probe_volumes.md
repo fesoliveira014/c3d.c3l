@@ -106,8 +106,10 @@ Measured on an RTX 4090 over Sponza at 3840 x 2160, `Pass.PROBE_UPDATE` median p
 | 16 x 16 x 16 probes, 128 rays, window 512 | 0.65 ms | 0.80 ms |
 | 32 x 32 x 32 probes, 128 rays, window 512 | 0.70 ms | |
 
-The last row differs from the second only by the border copies over the larger atlases. A ray-traced
-reflection view records in 0.21 ms of CPU with a `SCENE` volume and 0.18 ms without one.
+A window's cost depends on how many of its rays hit: the windowed rows range from about 0.25 ms to
+about 1.0 ms between the 10th and 90th percentiles, and the border copies over the 32 x 32 x 32 atlases do
+not show above that spread. A ray-traced reflection view records in 0.21 ms of CPU with a `SCENE` volume
+and 0.18 ms without one.
 
 ## Which volume lights a surface
 
