@@ -68,7 +68,6 @@ struct TraceGeometry {
     gpu::GpuAddress    nodes;
     gpu::GpuAddress    primitives;
     uint               revision;          // header.revision it was built from; 0 when absent
-    uint               rejected_revision; // header.revision whose arrays form no triangle list; 0 when none
 }
 
 <*

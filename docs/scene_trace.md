@@ -46,9 +46,9 @@ renderer.prepare_scene_trace(&scene)!;
 foreach (geometry : static_geometry) assets.release_geometry_cpu(geometry);
 ```
 
-A bottom level built for the current revision keeps tracing after `release_geometry_cpu`. A geometry released before its first preparation has nothing to build from: its instances are skipped and counted in `Stats.trace_skipped`. An acceleration structure builds from the geometry's GPU streams, but only after the CPU arrays, or a software level of the same revision, proved the arrays form a valid triangle list; a geometry released before any preparation is skipped by both kinds.
+A bottom level built for the current revision keeps tracing after `release_geometry_cpu`. A geometry released before its first preparation has nothing to build from: its instances are skipped and counted in `Stats.trace_skipped`. An acceleration structure builds from the geometry's GPU streams, but only once the asset store proved the arrays form a valid triangle list for the current revision (`AssetStore.triangles_valid`). The store records that answer per revision, so a proof made before the release by a trace preparation or a triangle pick carries over; a geometry released before any proof is skipped by both kinds.
 
-Triangle geometry whose arrays form no triangle list (fewer than three positions, an index count that is not a multiple of three, an index past the last vertex) still draws, but it does not trace: its instances are skipped and counted in `Stats.trace_skipped` until its revision moves.
+Triangle geometry whose arrays form no triangle list (fewer than three positions, an index count that is not a multiple of three, an index past the last vertex) still draws, but it does not trace: its instances are skipped and counted in `Stats.trace_skipped` until its revision moves. The software level is the store's triangle tree (`AssetStore.triangle_bvh`), built once per revision and shared with triangle picks.
 
 `RendererDesc.max_trace_instances` bounds the instance table (4096 when zero). More eligible instances fault `c3d::CAPACITY_EXCEEDED` and leave the previous table in place. The top level, the instance table and the root live in one buffer of that capacity; each bottom level is one allocation owned by its geometry mirror and released with it.
 

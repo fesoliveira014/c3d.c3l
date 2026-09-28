@@ -297,12 +297,18 @@ fn void test_ray_cone_lod_follows_distance_density_and_obliquity() @test {
     assert(math::abs(render::ray_cone_lod(1, 1, 1, 1)) < 1e-5);
 }
 
+fn void test_trace_source_needs_arrays_or_a_level() @test {
+    assert(render::trace_source(3, 3, false) == render::TraceSource.REUSE);
+    assert(render::trace_source(0, 3, true) == render::TraceSource.BUILD);
+    assert(render::trace_source(2, 3, false) == render::TraceSource.SKIP);
+}
+
 fn void test_blas_source_needs_a_proven_list() @test {
-    assert(render::blas_source(3, 3, 0, false) == render::TraceSource.REUSE);
-    assert(render::blas_source(0, 3, 0, true) == render::TraceSource.BUILD);
-    assert(render::blas_source(2, 3, 3, false) == render::TraceSource.BUILD);
-    assert(render::blas_source(2, 3, 2, false) == render::TraceSource.SKIP);
-    assert(render::blas_source(0, 3, 0, false) == render::TraceSource.SKIP);
+    assert(render::blas_source(3, 3, false) == render::TraceSource.REUSE);
+    assert(render::blas_source(0, 3, true) == render::TraceSource.BUILD);
+    assert(render::blas_source(2, 3, true) == render::TraceSource.BUILD);
+    assert(render::blas_source(2, 3, false) == render::TraceSource.SKIP);
+    assert(render::blas_source(0, 3, false) == render::TraceSource.SKIP);
 }
 
 fn void test_trace_record_mask_follows_cast_shadow() @test {
@@ -327,5 +333,24 @@ fn void test_trace_record_mask_follows_cast_shadow() @test {
         scene.get(caster, Mesh).cast_shadow = false;
         render::TraceInstance[] toggled = collect(&fixture);
         assert(!mem::equals(&records[0], &toggled[0], (sz)render::TraceInstance::size));
+    };
+}
+
+fn void test_trace_record_carries_the_instance_index() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Scene* scene = &fixture.scene;
+    scene.add_mesh(fixture.box, fixture.opaque, name: "single")!!;
+    Transform[3] transforms = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
+    transforms[1].position = { 2, 0, 0 };
+    transforms[2].position = { 4, 0, 0 };
+    scene.add_instanced_mesh(fixture.box, fixture.opaque, 3, transforms[..], name: "batch")!!;
+    scene.update_world();
+
+    @pool() {
+        render::TraceInstance[] records = collect(&fixture);
+        assert(records.len == 4);
+        assert(records[0].instance_index == 0);
+        foreach (uint index, record : records[1..]) assert(record.instance_index == index);
     };
 }
