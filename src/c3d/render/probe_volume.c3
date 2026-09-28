@@ -320,7 +320,6 @@ fn void? resolve_probe_volume(
         *mirror = { .scene = scene, .entity = entity, .last_frame = renderer.frame_index };
         defer catch *mirror = {};
         create_probe_atlases(renderer, mirror, volume.counts)!;
-        state = {};
     }
 
     ProbeScenePlan plan;

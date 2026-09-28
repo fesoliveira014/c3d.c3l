@@ -56,7 +56,8 @@ void main() {
             weight_sum += weight;
         }
     }
-    vec3 estimate = sum / max(weight_sum, PROBE_MIN_WEIGHT_SUM);
+    // The cosine-weighted mean radiance times PI is the irradiance E the texels store.
+    vec3 estimate = sum / max(weight_sum, PROBE_MIN_WEIGHT_SUM) * (irradiance ? PI : 1.0);
     uint atlas = irradiance ? volume.irradiance : volume.visibility;
     vec4 previous = load_storage_texture(atlas, texel);
     vec3 blended = mix(estimate, previous.rgb, root.hysteresis);

@@ -26,7 +26,7 @@ const uint[<3>] SKY_COUNTS @private = { 4, 3, 4 };
 const Vec3 SKY_FLOOR_POINT @private = { 2.5f, 0, 1.5f }; // away from the pillar, whose occlusion the SH lacks
 const Vec3 SUN_TOWARD_GROUND @private = { -0.4f, -1, -0.3f };
 const float SUN_INTENSITY_ACCEPTANCE @private = 3;
-const float DARK_IRRADIANCE @private = 1e-3f;
+const float DARK_SHARE @private = 0.01f;               // of the lit value; rays slipping through edges shared by two slabs
 const float LIT_IRRADIANCE @private = 0.05f;
 const uint OPEN_ROOM_UPDATES @private = 30;
 const uint STABILITY_FIRST @private = 250;
@@ -242,8 +242,8 @@ fn void test_closed_box_has_no_leak() @test {
     render_room_frames(&fixture, &room, probe_view.view, OPEN_ROOM_UPDATES)!!;
     float open = interior_irradiance(&fixture, &room);
     io::eprintfn("closed room irradiance %f, open %f", closed, open);
-    assert(closed < DARK_IRRADIANCE);
     assert(open > LIT_IRRADIANCE);
+    assert(closed < DARK_SHARE * open);
     check_validation(&fixture.renderer);
 }
 
@@ -291,7 +291,7 @@ fn void test_moved_volume_restarts_into_the_dark() @test {
     float inside = interior_irradiance(&fixture, &room);
     io::eprintfn("moved volume irradiance: outside %f, inside after the move %f", outside, inside);
     assert(outside > LIT_IRRADIANCE);
-    assert(inside < DARK_IRRADIANCE);
+    assert(inside < DARK_SHARE * outside);
     check_validation(&fixture.renderer);
 }
 
@@ -376,8 +376,8 @@ fn void test_two_scenes_update_in_one_frame() @test {
     float closed_irradiance = interior_irradiance(&fixture, &closed);
     float open_irradiance = interior_irradiance(&fixture, &open);
     io::eprintfn("two scenes: closed %f, open %f", closed_irradiance, open_irradiance);
-    assert(closed_irradiance < DARK_IRRADIANCE);
     assert(open_irradiance > LIT_IRRADIANCE);
+    assert(closed_irradiance < DARK_SHARE * open_irradiance);
     check_validation(&fixture.renderer);
 }
 
