@@ -105,9 +105,11 @@ Forward views pay more because the filter reconstructs normals from depth. A vie
 also pays the velocity pass and the per-candidate history commit: `cpu_record` rose from 0.15 to 0.19 ms at
 1080p on Sponza.
 
-Noise, read on the acceptance scene (a red emitter on a grey floor, 8-bit readings of floor pixels beside
-it): a standard deviation of 0.9 to 1.9 levels over 20 frames at rest and 0.8 to 2.1 levels while the camera
-turns and the history is rejected, on bounces of 11 to 30 levels. One filter pass is kept for that reason.
+Noise, read on the acceptance scene (a red emitter on a grey floor, 8-bit red readings of three floor pixels
+beside it over 64 frames at rest, bounces of 6 to 72 levels): a standard deviation of 5.8 to 15.7 levels with
+`history_weight = 0` and 0.7 to 1.9 levels at the default 0.9, 0.11 to 0.15 of the single-frame figure. While
+the image moves faster than the velocity threshold the history is rejected and each frame shows the
+single-frame noise. One filter pass is kept: the accumulation holds the noise at rest under 2 levels.
 
 ## Memory
 
