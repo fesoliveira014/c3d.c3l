@@ -389,3 +389,62 @@ fn void test_prepare_triangle_picks_builds_each_static_geometry_once() @test {
     spatial::prepare_triangle_picks(&fixture.assets, scene);
     assert(shared.triangles.nodes.ptr == shared_nodes && hidden_record.triangles.nodes.ptr == hidden_nodes);
 }
+
+fn void assert_matches_fresh_refresh(SceneIndex* kept, Fixture* fixture) @local {
+    kept.refresh(&fixture.assets, &fixture.scene)!!;
+    SceneIndex fresh = spatial::create_scene_index(mem, (uint)kept.entries.len);
+    defer spatial::destroy_scene_index(&fresh);
+    fresh.refresh(&fixture.assets, &fixture.scene)!!;
+    assert(kept.count == fresh.count);
+    assert(mem::equals(kept.entries.ptr, fresh.entries.ptr, (sz)(fresh.count * SceneEntry::size)));
+}
+
+fn void test_batch_skip_matches_a_fresh_refresh() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Scene* scene = &fixture.scene;
+    Random random = { SEED };
+    Node* leading = add_box(&fixture, { 0, 0, -3 });
+    Node* first_batch;
+    Node* second_batch;
+    @pool() {
+        first_batch = add_random_batch(&fixture, &random, 4);
+        second_batch = add_random_batch(&fixture, &random, 6);
+    };
+    scene.resize_instances(first_batch, 3)!!;
+    scene.update_world();
+    SceneIndex kept = spatial::create_scene_index(mem, 16);
+    defer spatial::destroy_scene_index(&kept);
+    assert_matches_fresh_refresh(&kept, &fixture);
+    uint revision = kept.revision;
+    assert_matches_fresh_refresh(&kept, &fixture);
+    assert(kept.revision == revision);
+
+    first_batch.local.position += { 1, 0, 0 };
+    scene.update_world();
+    assert_matches_fresh_refresh(&kept, &fixture);
+
+    InstancedMesh* second = scene.get(second_batch, InstancedMesh);
+    second.transforms[2].position += { 0, 1, 0 };
+    scene.mark_instances_dirty(second_batch);
+    assert_matches_fresh_refresh(&kept, &fixture);
+
+    scene.resize_instances(first_batch, 4)!!;
+    assert_matches_fresh_refresh(&kept, &fixture);
+
+    GeometryAsset* record = fixture.assets.geometry(fixture.box);
+    record.data.bounds.max.y += 1;
+    fixture.assets.mark_geometry_dirty(fixture.box);
+    assert_matches_fresh_refresh(&kept, &fixture);
+
+    second.has_bounds_override = true;
+    second.local_bounds = { .min = { -2, -2, -2 }, .max = { 2, 2, 2 } };
+    assert_matches_fresh_refresh(&kept, &fixture);
+
+    leading.visible = false;
+    scene.update_world();
+    assert_matches_fresh_refresh(&kept, &fixture);
+    leading.visible = true;
+    scene.update_world();
+    assert_matches_fresh_refresh(&kept, &fixture);
+}

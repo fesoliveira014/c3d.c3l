@@ -30,6 +30,19 @@ struct SceneEntry {
 // Refresh compares entries bytewise, so the entry holds no padding.
 $assert SceneEntry::size == 40;
 
+struct BatchKey @private {
+    Mat4            world;
+    Entity          entity;
+    GeometryId      geometry;
+    uint            geometry_revision;
+    uint            batch_revision;
+    uint            count;
+    SceneEntryFlags flags;
+    uint            refresh;            // refresh that last wrote or kept the batch's entries
+}
+// Refresh compares keys bytewise, so the key holds no padding.
+$assert BatchKey::size == 100;
+
 <*
  Entries of one scene with a tree over their bounds.
 *>
@@ -42,6 +55,8 @@ struct SceneIndex {
     Bvh          tree;              // over entries[0 .. count); storage sized at creation
     uint         tree_revision;     // revision the tree was built for; 0 when never built
     uint         dangling;          // meshes and batches the last refresh skipped for dead ids
+    BatchKey[]   batch_keys;        // capacity-sized; valid at the first entry of a batch
+    uint         refreshes;         // refreshes run; stamps batch keys
 }
 
 <*
@@ -52,7 +67,8 @@ struct SceneIndex {
 fn SceneIndex create_scene_index(Allocator allocator, uint capacity) {
     return {
         .allocator = allocator,
-        .entries   = alloc::new_array(allocator, SceneEntry, (sz)capacity),
+        .entries    = alloc::new_array(allocator, SceneEntry, (sz)capacity),
+        .batch_keys = alloc::new_array(allocator, BatchKey, (sz)capacity),
         .tree      = {
             .nodes      = alloc::new_array(allocator, BvhNode, (sz)tree_node_capacity(capacity)),
             .primitives = alloc::new_array(allocator, uint, (sz)capacity),
@@ -66,6 +82,7 @@ fn SceneIndex create_scene_index(Allocator allocator, uint capacity) {
 *>
 fn void destroy_scene_index(SceneIndex* index) {
     alloc::free(index.allocator, index.entries.ptr);
+    alloc::free(index.allocator, index.batch_keys.ptr);
     alloc::free(index.allocator, index.tree.nodes.ptr);
     alloc::free(index.allocator, index.tree.primitives.ptr);
     *index = {};
@@ -79,6 +96,7 @@ fn void destroy_scene_index(SceneIndex* index) {
 *>
 fn void? SceneIndex.refresh(&self, AssetStore* assets, Scene* scene) {
     self.scene = scene;
+    self.refreshes++;
     usz needed;
     uint dangling;
     bool changed;
@@ -100,21 +118,14 @@ fn void? SceneIndex.refresh(&self, AssetStore* assets, Scene* scene) {
         Node* node = scene.node(entity);
         if (node.visible_effective && batch.count) {
             if (instanced_mesh_is_live(assets, batch)) {
-                SceneEntryFlags flags = batch_flags(assets, scene, node, batch);
-                Aabb local = assets.geometry(batch.geometry).data.bounds;
-                foreach (uint index, transform : batch.transforms[:batch.count]) {
-                    if (needed < self.entries.len) {
-                        SceneEntry entry = instance_entry(
-                            node:      node,
-                            index:     index,
-                            flags:     flags,
-                            local:     local,
-                            transform: transform,
-                        );
-                        changed |= store_entry(&self.entries[needed], entry);
-                    }
-                    needed++;
-                }
+                changed |= store_batch(
+                    index:  self,
+                    assets: assets,
+                    node:   node,
+                    batch:  batch,
+                    first:  needed,
+                );
+                needed += batch.count;
             } else {
                 dangling++;
             }
@@ -198,6 +209,53 @@ fn bool store_entry(SceneEntry* slot, SceneEntry entry) @local {
     if (mem::equals(slot, &entry, (sz)SceneEntry::size)) return false;
     *slot = entry;
     return true;
+}
+
+// A batch whose key matches the one the previous refresh stamped at the same first entry keeps its entries:
+// that refresh wrote or kept them there, and later batches write only past them.
+fn bool store_batch(
+    SceneIndex* index,
+    AssetStore* assets,
+    Node* node,
+    InstancedMesh* batch,
+    usz first,
+) @local {
+    SceneEntryFlags flags = batch_flags(assets, index.scene, node, batch);
+    GeometryAsset* record = assets.geometry(batch.geometry);
+    bool fits = first + batch.count <= index.entries.len;
+    BatchKey key = {
+        .world             = node.world,
+        .entity            = node.id,
+        .geometry          = batch.geometry,
+        .geometry_revision = record.header.revision,
+        .batch_revision    = batch.revision,
+        .count             = batch.count,
+        .flags             = flags,
+        .refresh           = index.refreshes - 1,
+    };
+    if (fits && mem::equals(&index.batch_keys[first], &key, (sz)BatchKey::size)) {
+        index.batch_keys[first].refresh = index.refreshes;
+        return false;
+    }
+    if (fits) {
+        key.refresh = index.refreshes;
+        index.batch_keys[first] = key;
+    }
+    bool changed;
+    usz slot = first;
+    foreach (uint instance, transform : batch.transforms[:batch.count]) {
+        if (slot == index.entries.len) break;
+        SceneEntry entry = instance_entry(
+            node:      node,
+            index:     instance,
+            flags:     flags,
+            local:     record.data.bounds,
+            transform: transform,
+        );
+        changed |= store_entry(&index.entries[slot], entry);
+        slot++;
+    }
+    return changed;
 }
 
 fn void build_tree(SceneIndex* index) @local {
