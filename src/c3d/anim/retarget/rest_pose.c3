@@ -168,9 +168,11 @@ fn AnimationClip? bake_corrected(
             if (key == 0) first_displacement = displacement;
             Vec3 horizontal = { displacement.x - first_displacement.x, 0, displacement.z - first_displacement.z };
             Vec3 hips_vector = options.root_motion == RootMotion.KEEP ? displacement : displacement - horizontal;
-            write_translation_key(hips_track, key, place(target.nodes, target_rest, destination_of[root_source], hips_vector));
+            Vec3 hips_local = place(target.nodes, target_rest, destination_of[root_source], hips_vector);
+            write_translation_key(hips_track, key, hips_local);
             if (!extract) continue;
-            write_translation_key(root_node_track, key, place(target.nodes, target_rest, options.root_node, horizontal));
+            Vec3 root_local = place(target.nodes, target_rest, options.root_node, horizontal);
+            write_translation_key(root_node_track, key, root_local);
         }
     };
     return clip;
