@@ -6,6 +6,7 @@ import c3d::anim::retarget;
 import c3d::asset;
 import c3d::maths;
 import std::math;
+import std::math::quaternion;
 
 const float TOLERANCE @local = 0.0005f;
 
@@ -306,4 +307,312 @@ fn void test_retarget_cubic_hips_keep_values_and_zero_stripped_tangents() @test 
     Vec3 hips_mid = sample_translation(hips, 1);
     Vec3 original_mid = sample_translation(&rig.clip.tracks[0], 1);
     assert(close(hips_mid.y, original_mid.y));
+}
+
+const float STRICT @local = 1e-5f;
+
+fn Quat about(Vec3 axis, float degrees) @local {
+    return quaternion::from_axis_angle{float}(axis, degrees * (float)math::PI / 180);
+}
+
+fn NodeTemplate make_rotated_node(String name, int parent, Vec3 position, Quat rotation) @local {
+    NodeTemplate node = make_node(name, parent, position);
+    node.local.rotation = rotation;
+    return node;
+}
+
+fn Rig make_rotated_rig() @local {
+    Quat rx = about({ 1, 0, 0 }, -90);
+    Quat ry = about({ 0, 1, 0 }, 90);
+    Quat ry30 = about({ 0, 1, 0 }, 30);
+    Rig rig;
+    rig.source_nodes = alloc::new_array(mem, NodeTemplate, 3);
+    rig.source_nodes[0] = make_node("Hips", -1, { 0, 1, 0 });
+    rig.source_nodes[1] = make_node("Spine", 0, { 0, 0.2f, 0 });
+    rig.source_nodes[2] = make_node("Head", 1, { 0, 0.3f, 0 });
+
+    rig.target.nodes = alloc::new_array(mem, NodeTemplate, 5);
+    rig.target.nodes[0] = make_rotated_node("Root", -1, { 0, 0, 0 }, rx);
+    rig.target.nodes[1] = make_rotated_node("Hips", 0, { 0, 0, 0.9f }, ry);
+    rig.target.nodes[2] = make_rotated_node("Pelvis", 1, { 0, 0.1f, 0 }, rx);
+    rig.target.nodes[3] = make_rotated_node("Spine", 2, { 0, 0.2f, 0 }, ry);
+    rig.target.nodes[4] = make_rotated_node("Head", 3, { 0, 0.3f, 0 }, ry);
+
+    float[2] times = { 0, 1 };
+    float[8] spine_rotation = { 0, 0, 0, 1, ry30.i, ry30.j, ry30.k, ry30.l };
+    float[6] hips_translation = { 0, 1, 0, 0.3f, 1.2f, 1 };
+    float[6] spine_translation = { 0, 0.2f, 0, 0, 0.25f, 0 };
+    rig.clip = {
+        .name     = "sway".copy(mem),
+        .duration = 1,
+        .tracks   = alloc::new_array(mem, Track, 3),
+        .targets  = alloc::new_array(mem, uint, 2),
+    };
+    rig.clip.targets[0] = 0;
+    rig.clip.targets[1] = 1;
+    rig.clip.tracks[0] = make_track(1, TargetPath.ROTATION, times[..], spine_rotation[..]);
+    rig.clip.tracks[1] = make_track(0, TargetPath.TRANSLATION, times[..], hips_translation[..]);
+    rig.clip.tracks[2] = make_track(1, TargetPath.TRANSLATION, times[..], spine_translation[..]);
+    return rig;
+}
+
+fn RetargetOptions corrected(RootMotion root_motion = RootMotion.KEEP) @local {
+    RetargetOptions options = retarget::RETARGET_OPTIONS_DEFAULT;
+    options.rest_pose = RestPose.CORRECT;
+    options.allow_partial = true;
+    options.root_motion = root_motion;
+    return options;
+}
+
+fn Quat sampled_rotation(AnimationClip* clip, ModelTemplate* target, uint node, float time) @local {
+    Track* track = track_of(clip, node, TargetPath.ROTATION);
+    if (!track) return target.nodes[node].local.rotation;
+    float[4] out;
+    uint cursor;
+    anim::sample_track(track, time, &cursor, out[..]);
+    return { .v = { out[0], out[1], out[2], out[3] } };
+}
+
+fn Vec3 sampled_position(AnimationClip* clip, ModelTemplate* target, uint node, float time) @local {
+    Track* track = track_of(clip, node, TargetPath.TRANSLATION);
+    if (!track) return target.nodes[node].local.position;
+    return sample_translation(track, time);
+}
+
+fn Quat model_rotation(AnimationClip* clip, ModelTemplate* target, uint node, float time) @local {
+    Quat rotation = sampled_rotation(clip, target, node, time);
+    for (int parent = target.nodes[node].parent; parent >= 0; parent = target.nodes[parent].parent) {
+        rotation = sampled_rotation(clip, target, (uint)parent, time).mul(rotation);
+    }
+    return rotation;
+}
+
+fn Vec3 model_position(AnimationClip* clip, ModelTemplate* target, uint node, float time) @local {
+    Vec3 position = sampled_position(clip, target, node, time);
+    for (int parent = target.nodes[node].parent; parent >= 0; parent = target.nodes[parent].parent) {
+        position = sampled_rotation(clip, target, (uint)parent, time).rotate_vec3(position)
+            + sampled_position(clip, target, (uint)parent, time);
+    }
+    return position;
+}
+
+fn Vec4 rotation_key(Track* track, usz key) @local {
+    float[] value = track.values[key * 4:4];
+    return { value[0], value[1], value[2], value[3] };
+}
+
+fn bool same_rotation(Quat first, Quat second) @local => math::abs(first.v.dot(second.v)) >= 1 - STRICT;
+
+fn bool near_position(Vec3 first, Vec3 second) @local => (first - second).length() <= STRICT * 10;
+
+fn AnimationClip retarget_rotated(Rig* rig, RetargetOptions options) @local {
+    return retarget::retarget_by_name(mem, &rig.clip, rig.source_nodes, &rig.target, options)!!;
+}
+
+fn void test_rest_correction_reproduces_the_target_rest_from_a_source_rest_key() @test {
+    Rig rig = make_rotated_rig();
+    defer destroy_rig(&rig);
+    AnimationClip result = retarget_rotated(&rig, corrected());
+    defer asset::free_clip(mem, &result);
+
+    foreach (uint node : (uint[3]){ 1, 3, 4 }) {
+        assert(same_rotation(sampled_rotation(&result, &rig.target, node, 0), rig.target.nodes[node].local.rotation));
+    }
+    assert(near_position(sampled_position(&result, &rig.target, 1, 0), rig.target.nodes[1].local.position));
+}
+
+fn void test_rest_correction_transfers_the_model_space_delta() @test {
+    Rig rig = make_rotated_rig();
+    defer destroy_rig(&rig);
+    AnimationClip result = retarget_rotated(&rig, corrected());
+    defer asset::free_clip(mem, &result);
+
+    Quat expected = about({ 0, 1, 0 }, 30).mul(retarget::rest_world_rotation(rig.target.nodes, 3));
+    assert(same_rotation(model_rotation(&result, &rig.target, 3, 1), expected));
+    foreach (&track : result.tracks) {
+        if (track.path != TargetPath.ROTATION) continue;
+        for (usz key = 1; key < track.times.len; key++) {
+            assert(rotation_key(track, key - 1).dot(rotation_key(track, key)) >= 0);
+        }
+    }
+}
+
+fn void test_rest_correction_keeps_unmapped_joints_at_rest() @test {
+    Rig rig = make_rotated_rig();
+    defer destroy_rig(&rig);
+    AnimationClip result = retarget_rotated(&rig, corrected());
+    defer asset::free_clip(mem, &result);
+
+    foreach (target : result.targets) assert(target != 0 && target != 2);
+}
+
+fn void test_rest_correction_bakes_linear_keys_at_the_rate() @test {
+    Rig rig = make_rotated_rig();
+    defer destroy_rig(&rig);
+    RetargetOptions options = corrected();
+
+    AnimationClip thirty = retarget_rotated(&rig, options);
+    defer asset::free_clip(mem, &thirty);
+    Track* spine = track_of(&thirty, 3, TargetPath.ROTATION);
+    assert(spine.times.len == 31);
+    foreach (&track : thirty.tracks) assert(track.interpolation == Interpolation.LINEAR);
+
+    options.bake_rate = 10;
+    AnimationClip ten = retarget_rotated(&rig, options);
+    defer asset::free_clip(mem, &ten);
+    assert(track_of(&ten, 3, TargetPath.ROTATION).times.len == 11);
+
+    options.bake_rate = 30;
+    float duration = 31.0f / 30.0f + 1e-6f;
+    rig.clip.duration = duration;
+    AnimationClip odd = retarget_rotated(&rig, options);
+    defer asset::free_clip(mem, &odd);
+    float[] times = track_of(&odd, 3, TargetPath.ROTATION).times;
+    assert(times.len == 32);
+    for (usz key = 1; key < times.len; key++) assert(times[key] > times[key - 1]);
+    assert(times[^1] == duration);
+
+    rig.clip.duration = 0;
+    AnimationClip still = retarget_rotated(&rig, options);
+    defer asset::free_clip(mem, &still);
+    Track* single = track_of(&still, 3, TargetPath.ROTATION);
+    assert(single.times.len == 1 && single.times[0] == 0);
+}
+
+fn void test_rest_correction_never_emits_non_root_translations() @test {
+    Rig rig = make_rotated_rig();
+    defer destroy_rig(&rig);
+    AnimationClip result = retarget_rotated(&rig, corrected());
+    defer asset::free_clip(mem, &result);
+
+    assert(track_of(&result, 3, TargetPath.TRANSLATION) == null);
+    assert(track_of(&result, 1, TargetPath.TRANSLATION) != null);
+}
+
+fn void test_rest_correction_moves_the_root_in_model_space() @test {
+    Rig rig = make_rotated_rig();
+    defer destroy_rig(&rig);
+    RetargetOptions options = corrected();
+    options.root_translation_scale = 0.5f;
+    AnimationClip result = retarget_rotated(&rig, options);
+    defer asset::free_clip(mem, &result);
+
+    Vec3 moved = model_position(&result, &rig.target, 1, 1) - retarget::rest_world_position(rig.target.nodes, 1);
+    assert(near_position(moved, { 0.15f, 0.1f, 0.5f }));
+}
+
+fn void test_rest_correction_strip_xz_holds_the_horizontal_model_position() @test {
+    Rig rig = make_rotated_rig();
+    defer destroy_rig(&rig);
+    AnimationClip result = retarget_rotated(&rig, corrected(RootMotion.STRIP_XZ));
+    defer asset::free_clip(mem, &result);
+
+    Vec3 start = model_position(&result, &rig.target, 1, 0);
+    Vec3 end = model_position(&result, &rig.target, 1, 1);
+    assert(near_position({ end.x, 0, end.z }, { start.x, 0, start.z }));
+    assert(math::abs(end.y - start.y - 0.2f) <= STRICT * 10);
+}
+
+fn void test_rest_correction_extract_moves_the_horizontal_to_the_root_node() @test {
+    Rig rig = make_rotated_rig();
+    defer destroy_rig(&rig);
+    RetargetOptions options = corrected(RootMotion.EXTRACT);
+    options.root_node = 0;
+    AnimationClip result = retarget_rotated(&rig, options);
+    defer asset::free_clip(mem, &result);
+
+    Vec3 root_moved = model_position(&result, &rig.target, 0, 1) - model_position(&result, &rig.target, 0, 0);
+    assert(near_position(root_moved, { 0.3f, 0, 1 }));
+    Vec3 hips_start = model_position(&result, &rig.target, 1, 0) - model_position(&result, &rig.target, 0, 0);
+    Vec3 hips_end = model_position(&result, &rig.target, 1, 1) - model_position(&result, &rig.target, 0, 1);
+    assert(near_position(hips_end - hips_start, { 0, 0.2f, 0 }));
+}
+
+fn void test_rest_correction_faults_on_an_unresolved_tracked_node() @test {
+    Rig rig = make_rotated_rig();
+    defer destroy_rig(&rig);
+    NodeTemplate[] nodes = alloc::new_array(mem, NodeTemplate, 4);
+    nodes[:3] = rig.source_nodes[..];
+    nodes[3] = make_node("Tail", 0, { 0, -0.1f, 0 });
+    alloc::free(mem, rig.source_nodes.ptr);
+    rig.source_nodes = nodes;
+    uint[] targets = alloc::new_array(mem, uint, 3);
+    targets[:2] = rig.clip.targets[..];
+    targets[2] = 3;
+    alloc::free(mem, rig.clip.targets.ptr);
+    rig.clip.targets = targets;
+    rig.clip.tracks[2].target = 2;
+
+    RetargetOptions options = corrected();
+    options.allow_partial = false;
+    if (catch excuse = retarget::retarget_by_name(mem, &rig.clip, rig.source_nodes, &rig.target, options)) {
+        assert(excuse == c3d::ASSET_FORMAT_ERROR);
+    } else {
+        assert(false);
+    }
+    AnimationClip partial = retarget_rotated(&rig, corrected());
+    defer asset::free_clip(mem, &partial);
+    foreach (target : partial.targets) assert(target < rig.target.nodes.len);
+    assert(partial.tracks.len == 4);
+}
+
+fn void test_rest_correction_faults_on_two_animated_roots() @test {
+    Rig rig = make_rig();
+    defer destroy_rig(&rig);
+    alloc::free(mem, rig.source_nodes[2].name.ptr);
+    rig.source_nodes[2].name = "Mesh".copy(mem);
+    rig.clip.targets[1] = 2;
+    RetargetOptions options = corrected();
+    if (catch excuse = retarget::retarget_by_name(mem, &rig.clip, rig.source_nodes, &rig.target, options)) {
+        assert(excuse == c3d::ASSET_FORMAT_ERROR);
+        return;
+    }
+    assert(false);
+}
+
+fn void test_root_translation_scale_scales_hip_keys() @test {
+    Rig rig = make_rig();
+    defer destroy_rig(&rig);
+    RetargetOptions options = retarget::RETARGET_OPTIONS_DEFAULT;
+    AnimationClip full = retarget::retarget_by_name(mem, &rig.clip, rig.source_nodes, &rig.target, options)!!;
+    defer asset::free_clip(mem, &full);
+    options.root_translation_scale = 0.5f;
+    AnimationClip half = retarget::retarget_by_name(mem, &rig.clip, rig.source_nodes, &rig.target, options)!!;
+    defer asset::free_clip(mem, &half);
+    Track* full_hips = track_of(&full, 1, TargetPath.TRANSLATION);
+    Track* half_hips = track_of(&half, 1, TargetPath.TRANSLATION);
+    foreach (index, value : full_hips.values) assert(close(half_hips.values[index], value * 0.5f));
+
+    options.root_motion = RootMotion.EXTRACT;
+    options.root_node = 0;
+    AnimationClip extracted = retarget::retarget_by_name(mem, &rig.clip, rig.source_nodes, &rig.target, options)!!;
+    defer asset::free_clip(mem, &extracted);
+    Vec3 travel = sample_translation(track_of(&extracted, 0, TargetPath.TRANSLATION), 1);
+    assert(close(travel.x, 0.5f) && close(travel.z, 0.2f));
+}
+
+fn void test_default_fields_at_zero_keep_copy_output() @test {
+    Rig rig = make_rig();
+    defer destroy_rig(&rig);
+    RetargetOptions literal = { .root_motion = RootMotion.STRIP_XZ, .root_node = retarget::NO_ROOT_NODE };
+    RetargetOptions defaults = retarget::RETARGET_OPTIONS_DEFAULT;
+    defaults.root_motion = RootMotion.STRIP_XZ;
+    AnimationClip first = retarget::retarget_by_name(mem, &rig.clip, rig.source_nodes, &rig.target, literal)!!;
+    defer asset::free_clip(mem, &first);
+    AnimationClip second = retarget::retarget_by_name(mem, &rig.clip, rig.source_nodes, &rig.target, defaults)!!;
+    defer asset::free_clip(mem, &second);
+    assert(first.tracks.len == second.tracks.len);
+    foreach (index, &track : first.tracks) {
+        assert(track.values.len == second.tracks[index].values.len);
+        foreach (value_index, value : track.values) assert(value == second.tracks[index].values[value_index]);
+    }
+}
+
+fn void test_rest_world_helpers_compose_parents_first() @test {
+    Rig rig = make_rotated_rig();
+    defer destroy_rig(&rig);
+    Quat rx = about({ 1, 0, 0 }, -90);
+    Quat ry = about({ 0, 1, 0 }, 90);
+    assert(same_rotation(retarget::rest_world_rotation(rig.target.nodes, 3), rx.mul(ry).mul(rx).mul(ry)));
+    assert(near_position(retarget::rest_world_position(rig.target.nodes, 1), { 0, 0.9f, 0 }));
 }

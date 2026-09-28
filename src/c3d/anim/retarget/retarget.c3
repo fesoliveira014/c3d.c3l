@@ -13,12 +13,25 @@ import std::math;
 const uint NO_ROOT_NODE = uint::max;
 
 <*
+ Keys per second of a corrected clip.
+*>
+const float BAKE_RATE_DEFAULT = 30; // the Mixamo export rate; a 10 s clip is 301 keys per track
+
+<*
  Keep, strip or move the horizontal motion of root source nodes.
 *>
 enum RootMotion {
     KEEP,
     STRIP_XZ,
     EXTRACT,
+}
+
+<*
+ How source rotation keys reach the destination rig.
+*>
+enum RestPose {
+    COPY,
+    CORRECT,
 }
 
 <*
@@ -31,6 +44,7 @@ struct NameMapping {
 
 <*
  Retarget switches; root_node receives the extracted root track.
+ root_translation_scale scales keys under COPY, rest displacement under CORRECT.
 *>
 struct RetargetOptions {
     RootMotion    root_motion;
@@ -38,12 +52,21 @@ struct RetargetOptions {
     bool          copy_translations;
     uint          root_node;
     NameMapping[] name_map;
+    RestPose      rest_pose;
+    float         bake_rate;
+    float         root_translation_scale;
 }
 
 <*
- Keep root motion, fault on unmatched nodes, root translations only, no root track.
+ Keep root motion, fault on unmatched nodes, root translations only, no root track, keys copied.
 *>
-const RetargetOptions RETARGET_OPTIONS_DEFAULT = { .root_motion = RootMotion.KEEP, .root_node = NO_ROOT_NODE };
+const RetargetOptions RETARGET_OPTIONS_DEFAULT = {
+    .root_motion            = RootMotion.KEEP,
+    .root_node              = NO_ROOT_NODE,
+    .rest_pose              = RestPose.COPY,
+    .bake_rate              = BAKE_RATE_DEFAULT,
+    .root_translation_scale = 1,
+};
 
 const uint NOT_MATCHED @private = uint::max;
 const uint AMBIGUOUS @private = uint::max - 1;
@@ -64,6 +87,7 @@ struct Binding @private {
  @param [&in] target : "Destination template."
  @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ARGUMENT
  @require options.root_node == NO_ROOT_NODE || options.root_node < target.nodes.len
+ @require options.bake_rate >= 0 && options.root_translation_scale >= 0
 *>
 fn AnimationClip? retarget_by_name(
     Allocator allocator,
@@ -74,6 +98,18 @@ fn AnimationClip? retarget_by_name(
 ) {
     bool extract = options.root_motion == RootMotion.EXTRACT;
     if (extract && options.root_node == NO_ROOT_NODE) return c3d::INVALID_ARGUMENT~;
+    // A literal that omits these fields leaves them zero; zero selects the default.
+    if (options.bake_rate == 0) options.bake_rate = BAKE_RATE_DEFAULT;
+    if (options.root_translation_scale == 0) options.root_translation_scale = 1;
+    if (options.rest_pose == RestPose.CORRECT) {
+        return bake_corrected(
+            allocator:    allocator,
+            source:       source,
+            source_nodes: source_nodes,
+            target:       target,
+            options:      &options,
+        );
+    }
     AnimationClip clip;
     @pool() {
         HashMap{String, uint} destinations = destination_table(target);
@@ -114,6 +150,9 @@ fn AnimationClip? retarget_by_name(
             Track* copy = &clip.tracks[track_slot++];
             *copy = copy_track(allocator, track, target_slot(&clip, &target_count, binding.destination));
             if (track.path != TargetPath.TRANSLATION || !binding.root) continue;
+            if (options.root_translation_scale != 1) {
+                foreach (&value : copy.values) *value *= options.root_translation_scale;
+            }
             if (options.root_motion == RootMotion.KEEP) continue;
             if (root_track) {
                 clip.tracks[track_slot++] = root_track_of(
@@ -128,6 +167,30 @@ fn AnimationClip? retarget_by_name(
         clip.targets = clip.targets[:target_count];
     };
     return clip;
+}
+
+<*
+ Rest rotation of a template node in model space.
+ @require index < nodes.len
+*>
+fn Quat rest_world_rotation(NodeTemplate[] nodes, uint index) {
+    Quat rotation = nodes[index].local.rotation;
+    for (int parent = nodes[index].parent; parent >= 0; parent = nodes[parent].parent) {
+        rotation = nodes[parent].local.rotation.mul(rotation);
+    }
+    return rotation;
+}
+
+<*
+ Rest position of a template node in model space.
+ @require index < nodes.len
+*>
+fn Vec3 rest_world_position(NodeTemplate[] nodes, uint index) {
+    Vec3 position = nodes[index].local.position;
+    for (int parent = nodes[index].parent; parent >= 0; parent = nodes[parent].parent) {
+        position = nodes[parent].local.rotation.rotate_vec3(position) + nodes[parent].local.position;
+    }
+    return position;
 }
 
 fn HashMap{String, uint} destination_table(ModelTemplate* target) @private {

@@ -95,8 +95,9 @@ fn ClipId[]? load_animations(
     defer catch remove_clips(assets, clips);
     @pool() {
         String mode = mode_label(options.root_motion);
+        String rest = options.rest_pose == RestPose.CORRECT ? "#rest" : "";
         foreach (index, stack : importer.scene.anim_stacks) {
-            String key = string::tformat("%s#anim/%d#%s#%s", path, index, record.header.key, mode);
+            String key = string::tformat("%s#anim/%d#%s#%s%s", path, index, record.header.key, mode, rest);
             if (assets.keys.has_key(key)) return c3d::INVALID_ARGUMENT~;
         }
         importer.node_remap = alloc::new_array(assets.allocator, uint, importer.scene.nodes.len);
@@ -112,7 +113,7 @@ fn ClipId[]? load_animations(
                 options:      options,
             )!;
             defer catch asset::free_clip(assets.allocator, &clip);
-            String key = string::tformat("%s#anim/%d#%s#%s", path, index, record.header.key, mode);
+            String key = string::tformat("%s#anim/%d#%s#%s%s", path, index, record.header.key, mode, rest);
             clips[index] = assets.add_clip_owned(&clip, key)!;
         }
     };

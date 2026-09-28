@@ -256,6 +256,12 @@
         "src/mixamo.c3"
       ]
     },
+    "retarget": {
+      "type": "executable",
+      "sources": [
+        "src/retarget.c3"
+      ]
+    },
     "effects": {
       "type": "executable",
       "sources": [

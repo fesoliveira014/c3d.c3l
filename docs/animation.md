@@ -135,12 +135,14 @@ with rest y, the first key's x and z as origin, zero y tangents and the source x
 onto another model's template:
 
 ```c3
+RetargetOptions options = retarget::RETARGET_OPTIONS_DEFAULT;
+options.root_motion = RootMotion.STRIP_XZ;
 AnimationClip walk = retarget::retarget_by_name(
     allocator:    assets.allocator,
     source:       &baked,
     source_nodes: source_template.nodes,
     target:       &assets.model(hero).data,
-    options:      { .root_motion = RootMotion.STRIP_XZ, .root_node = retarget::NO_ROOT_NODE },
+    options:      options,
 )!;
 ```
 
@@ -170,8 +172,53 @@ animation file privately, bakes every stack, retargets it onto the model and
 stores the clips under `<path>#anim/<k>#<model key>#<keep|strip_xz|extract>`,
 returning their ids in the caller's allocator; the file's own nodes never
 enter the store, and a fault removes every clip the call inserted
-([Models, glTF and FBX import](models.md)). Rest-pose differences between rigs
-are not corrected.
+([Models, glTF and FBX import](models.md)). With `rest_pose = CORRECT` the key
+gains `#rest`, so both variants of one file can live in one store.
+
+### Rest-pose correction
+
+`RetargetOptions.rest_pose` chooses how rotation keys reach the destination.
+`COPY` (the default) copies them verbatim, which is right only when both rigs
+share their rest orientations. `CORRECT` transfers motion in model space: for
+each source joint it takes the rotation the joint made away from its own rest,
+and applies that same model-space rotation to the destination joint's rest.
+At the source's rest pose the destination therefore shows its own rest pose
+exactly, whatever the two rigs' joint orientations are.
+
+A corrected clip is baked:
+
+- Every mapped destination joint gets a `LINEAR` rotation track on one shared
+  cadence of `bake_rate` keys per second (`BAKE_RATE_DEFAULT` is 30). The last
+  key lands on the clip duration. A source authored at another rate is
+  resampled, so pass the source rate when it is known. Cubic tangents are not
+  carried over.
+- Every source node that resolves by name is bound, animated or not, so a
+  joint without its own track still follows its parents. Unmapped destination
+  joints keep their rest locals.
+- The root translation is transferred in model space: the source root's
+  displacement from its rest, times `root_translation_scale`, is applied to the
+  destination root from its own rest, so the destination keeps its own standing
+  height. `STRIP_XZ` and `EXTRACT` split that displacement into horizontal and
+  vertical parts in model space before it is written into the destination's
+  local frames. This assumes the destination root's ancestors are not mapped.
+- Non-root translations are never emitted; scale and morph tracks are copied as
+  under `COPY`.
+- A corrected clip transfers one root: a source with more than one animated
+  root translation faults `ASSET_FORMAT_ERROR` in every root mode.
+
+`root_translation_scale` has two meanings. Under `COPY` it multiplies every
+root translation key. Under `CORRECT` it multiplies the displacement from the
+source rest. With the ratio of the two rigs' hip heights
+(`rest_world_position(nodes, hips).y`) both give the same standing height. A
+zero `root_translation_scale` or `bake_rate` stands for its default, so an
+options literal that omits them keeps the `COPY` behaviour.
+
+Correction transfers motion, not proportions or poses: both rigs must face the
+same model axis and rest in the same kind of pose (both T or both A). A
+T-pose source on an A-pose destination keeps the arms offset by the difference
+for the whole clip. Foot contact and sliding follow from the rigs' proportions.
+The `retarget` example plays a Mixamo walk on the Quaternius rig with both
+modes.
 
 ## Inverse kinematics
 
