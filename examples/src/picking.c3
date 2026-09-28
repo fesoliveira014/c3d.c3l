@@ -334,7 +334,7 @@ fn void picking_panel(
     Selection* selection,
 ) @local {
     if (imgui::begin("Picking", null, {})) {
-        imgui::checkbox("Crowd: 2000 meshes and 4096 instances; picks use the index", &picker.crowd.visible);
+        imgui::checkbox("Crowd (picks use the index)", &picker.crowd.visible);
         imgui::text("Index: %d entries, revision %d, refresh %.3f ms", picker.index.count, picker.index.revision,
             picker.refresh_ms);
         imgui::text("Last click: index %.3f ms, scan %.3f ms", picker.index_ms, picker.scan_ms);
