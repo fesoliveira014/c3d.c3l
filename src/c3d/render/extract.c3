@@ -45,7 +45,7 @@ struct MeshCandidate {
     float          view_depth;
     bool           receive_shadow;
     InstancedMesh* batch;
-    AnimatedCrowd*         crowd;
+    AnimatedCrowd* crowd;
     uint           crowd_part;
     uint           instance_first;
     uint           instance_count;
@@ -260,7 +260,7 @@ fn void include_batch(
 *>
 fn void attach_crowd(Scene* scene, MeshCandidate* candidate) {
     Node* parent = candidate.node.parent;
-    if (!parent || !scene.has(parent, AnimatedCrowd)) return;
+    if (!scene.has(parent, AnimatedCrowd)) return;
     AnimatedCrowd* crowd = scene.get(parent, AnimatedCrowd);
     foreach (uint index, &part : crowd.parts) {
         if (!c3d::same_id(part.batch, candidate.node.id)) continue;

@@ -247,6 +247,12 @@ fn void test_add_crowd_rejects_invalid_models() @test {
     } else {
         assert(false);
     }
+    fixture.assets.model(fixture.model).data.skins[1].mesh_node = 2;
+    if (catch excuse = model::add_crowd(&fixture.assets, &fixture.scene, fixture.model, 4, unit_bounds())) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false);
+    }
     fixture.assets.remove_model(fixture.model);
     if (catch excuse = model::add_crowd(&fixture.assets, &fixture.scene, fixture.model, 4, unit_bounds())) {
         assert(excuse == c3d::INVALID_ID);

@@ -61,7 +61,7 @@ fn void free_crowd(Entity entity, void* component, void* user) @private {
 
 <*
  Copy the live placements and count into every part batch and bound them.
- @param [&inout] crowd : "Its part batches are alive."
+ @param [&inout] crowd
 *>
 fn void Scene.write_crowd_batches(&self, AnimatedCrowd* crowd) {
     Aabb bounds = crowd.pose_bounds;

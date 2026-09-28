@@ -45,6 +45,9 @@ fn Node*? add_crowd(
         }
     }
     check_instances(template, capacity, instances)!;
+    foreach (&skin : template.skins) {
+        if (catch mesh_of(template, skin.mesh_node)) return c3d::INVALID_ARGUMENT~;
+    }
 
     uint max_tracks;
     foreach (clip : template.clips) max_tracks = math::max(max_tracks, (uint)assets.clip(clip).data.tracks.len);
@@ -66,7 +69,7 @@ fn Node*? add_crowd(
         .palettes       = alloc::new_array(allocator, Mat4, (sz)capacity * first.joint_nodes.len),
     };
     foreach (usz index, &skin : template.skins) {
-        ModelMesh* mesh = mesh_at(template, skin.mesh_node);
+        ModelMesh* mesh = mesh_of(template, skin.mesh_node)!!;
         crowd.parts[index] = {
             .template_node = skin.mesh_node,
             .target_count  = assets.geometry(mesh.geometry).target_count,
@@ -78,7 +81,7 @@ fn Node*? add_crowd(
     scene.add(root, crowd);
 
     foreach (usz index, &skin : template.skins) {
-        ModelMesh* mesh = mesh_at(template, skin.mesh_node);
+        ModelMesh* mesh = mesh_of(template, skin.mesh_node)!!;
         Node* part = scene.add_instanced_mesh(
             geometry: mesh.geometry,
             material: mesh.material,
@@ -91,7 +94,7 @@ fn Node*? add_crowd(
         batch.has_bounds_override = true;
         scene.get(root, AnimatedCrowd).parts[index].batch = part.id;
     }
-    fill_crowd(template, scene, scene.get(root, AnimatedCrowd), instances);
+    fill_crowd(scene, scene.get(root, AnimatedCrowd), instances);
     return root;
 }
 
@@ -107,7 +110,7 @@ fn void? set_crowd(AssetStore* assets, Scene* scene, Node* node, CrowdInstance[]
     AnimatedCrowd* crowd = scene.get(node, AnimatedCrowd);
     ModelTemplate* template = &assets.model(crowd.model).data;
     check_instances(template, (uint)crowd.placements.len, instances)!;
-    fill_crowd(template, scene, crowd, instances);
+    fill_crowd(scene, crowd, instances);
 }
 
 fn void? check_instances(ModelTemplate* template, uint capacity, CrowdInstance[] instances) @local {
@@ -119,7 +122,7 @@ fn void? check_instances(ModelTemplate* template, uint capacity, CrowdInstance[]
     }
 }
 
-fn void fill_crowd(ModelTemplate* template, Scene* scene, AnimatedCrowd* crowd, CrowdInstance[] instances) @local {
+fn void fill_crowd(Scene* scene, AnimatedCrowd* crowd, CrowdInstance[] instances) @local {
     crowd.count = (uint)instances.len;
     foreach (usz index, &instance : instances) {
         crowd.placements[index] = instance.placement;
@@ -141,9 +144,9 @@ fn bool same_joints(uint[] first, uint[] second) @local {
     return true;
 }
 
-fn ModelMesh* mesh_at(ModelTemplate* template, uint node) @local {
+fn ModelMesh*? mesh_of(ModelTemplate* template, uint node) @local {
     foreach (&mesh : template.meshes) {
         if (mesh.node == node) return mesh;
     }
-    unreachable("a template skin names a node without a mesh");
+    return NOT_FOUND~;
 }

@@ -57,10 +57,13 @@ MeshVertexInput pull_mesh_vertex(GeometryRoot geometry, uint index) {
 }
 
 #if defined(SKINNED) || defined(SKINNED_U16) || defined(MORPH)
+#define PALETTE_MATRIX_BYTES 64ul // mirrors Mat4f::size of a palette entry
+#define MORPH_BLOCK_BYTES 80ul // mirrors MorphWeightsGpu::size
+
 // A crowd instance reads its own palette and morph block; a single mesh reads the base address.
 uint64_t instance_palette(DrawRoot draw, uint64_t palette_base) {
 #ifdef INSTANCED
-    return palette_base + uint64_t(gl_InstanceIndex) * uint64_t(draw.skin_stride) * 64ul;
+    return palette_base + uint64_t(gl_InstanceIndex) * uint64_t(draw.skin_stride) * PALETTE_MATRIX_BYTES;
 #else
     return palette_base;
 #endif
@@ -68,7 +71,7 @@ uint64_t instance_palette(DrawRoot draw, uint64_t palette_base) {
 
 uint64_t instance_morph(uint64_t morph_base) {
 #ifdef INSTANCED
-    return morph_base + uint64_t(gl_InstanceIndex) * 80ul;
+    return morph_base + uint64_t(gl_InstanceIndex) * MORPH_BLOCK_BYTES;
 #else
     return morph_base;
 #endif
