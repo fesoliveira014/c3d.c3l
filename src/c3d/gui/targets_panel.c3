@@ -171,6 +171,7 @@ fn void select_path_tracing(ViewDesc* desc) @local {
     desc.post.motion_blur = false;
     desc.post.depth_of_field = false;
     desc.ambient_occlusion = {};
+    desc.screen_space_gi = {};
     desc.ray_tracing.shadows = false;
     desc.ray_tracing.reflections = false;
     if (desc.path_trace.max_bounces == 0) desc.path_trace = render::PATH_TRACE_DEFAULT;

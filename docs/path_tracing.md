@@ -35,8 +35,8 @@ pipeline and shadow rays through ray queries.
 Both view constructors set `PATH_TRACE_DEFAULT` (6 bounces, 1 sample per frame, no cap).
 `create_view` and `configure_view` fault `c3d::UNSUPPORTED` for a path-traced view on a renderer
 without ray-tracing pipelines, and `c3d::INVALID_ARGUMENT` for a range violation or for a setting a
-path-traced view cannot honour: TAA, motion blur, depth of field, ambient occlusion, ray-traced
-shadows or `CLUSTERED` lights. Ray-traced reflections fault `UNSUPPORTED` (they need a deferred
+path-traced view cannot honour: TAA, motion blur, depth of field, ambient occlusion, screen-space
+GI, ray-traced shadows or `CLUSTERED` lights. Ray-traced reflections fault `UNSUPPORTED` (they need a deferred
 view). `depth_prepass` is ignored. The view has no depth image, so debug lines are not drawn on it.
 
 ## Accumulation and resets

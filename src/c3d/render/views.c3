@@ -731,7 +731,7 @@ fn void? validate_view_desc(Renderer* renderer, ViewDesc* desc) @private {
         if (!renderer.caps.ray_tracing_pipelines.enabled) return c3d::UNSUPPORTED~;
         bool raster_only = desc.post.anti_aliasing == AntiAliasing.TAA || desc.post.motion_blur
           || desc.post.depth_of_field || desc.ambient_occlusion.kind != AoKind.NONE
-          || ray_tracing.shadows || desc.lights == LightSelection.CLUSTERED;
+          || ray_tracing.shadows || desc.lights == LightSelection.CLUSTERED || desc.screen_space_gi.enabled;
         if (raster_only || !path_trace_desc_valid(&desc.path_trace)) return c3d::INVALID_ARGUMENT~;
     }
     if (desc.lights == LightSelection.CLUSTERED) {
