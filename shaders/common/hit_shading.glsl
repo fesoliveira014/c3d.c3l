@@ -13,18 +13,6 @@
 #include "scene_trace.glsl"
 #include "shadows.glsl"
 
-// Radiance along a ray that leaves the scene: the lighting environment, not the background cube.
-vec3 trace_miss_radiance(FrameRoot frame, vec3 direction) {
-    if (frame.environment == 0ul) return frame.ambient.rgb;
-    EnvironmentGpu environment = EnvironmentGpu(frame.environment);
-    return sample_texture_cube_lod(
-        environment.specular_cube,
-        environment.sampler_index,
-        environment_rotate(environment.rotation, direction),
-        0.0
-    ).rgb * environment.intensity;
-}
-
 // Raster atlas layers are fitted to the camera, so every shadowing light traces at a hit.
 float hit_light_visibility(FrameRoot frame, LightGpu light, TraceSurface surface) {
     if (!light_casts_shadow(light)) return 1.0;

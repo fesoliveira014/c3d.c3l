@@ -34,6 +34,8 @@ const float NEAR_PLANE_SCALE @local = 0.002f;
 const uint WINDOW_WIDTH @local = 1280;
 const uint WINDOW_HEIGHT @local = 720;
 const uint PROBE_COLOR @local = 0xFF40C0FF;
+const float SUN_RADIANS_PER_SECOND @local = 0.2f;
+const Vec3 SUN_DIRECTION @local = { -0.3f, -1, -0.2f };
 const Vec2 CONTROLS_PANEL_POSITION @local = { 16, 16 };
 const Vec2 CONTROLS_PANEL_SIZE @local = { 320, 130 };
 const Vec2 SCENE_PANEL_POSITION @local = { 16, 160 };
@@ -53,8 +55,9 @@ struct Orbit @local {
 }
 
 struct Options @local {
-    bool gpu_timings;
-    bool deferred;
+    bool      gpu_timings;
+    bool      deferred;
+    ProbeFill fill;
 }
 
 fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
@@ -128,6 +131,7 @@ fn void? run_gui(
     Scene* scene,
     Node* camera_node,
     Node* volume_node,
+    Node* sun,
     Orbit* orbit,
     EnvironmentId environment,
     Options options,
@@ -145,6 +149,8 @@ fn void? run_gui(
     TargetsPanelState targets = gui::default_targets_panel_state();
     GuiPanelState panel = { .selected = volume_node.id };
     bool draw_probes = true;
+    bool move_sun;
+    float sun_angle;
 
     while (window.poll()) {
         gui_renderer.new_frame();
@@ -160,6 +166,7 @@ fn void? run_gui(
             imgui::text_unformatted("Hiding the volume node shows the SH term.");
             imgui::checkbox("Volume visible", &volume_node.visible);
             imgui::checkbox("Draw probes", &draw_probes);
+            imgui::checkbox("Move sun", &move_sun);
         }
         imgui::end();
 
@@ -175,6 +182,9 @@ fn void? run_gui(
         imgui::set_next_window_size(STATS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
         gui::stats_panel(renderer)!;
 
+        if (move_sun) sun_angle += SUN_RADIANS_PER_SECOND * window.clock.delta;
+        Quat turn = quaternion::from_axis_angle{float}({ 0, 1, 0 }, sun_angle);
+        sun.local.rotation = maths::look_rotation(turn.rotate_vec3(SUN_DIRECTION.normalize()), { 0, 1, 0 });
         apply_orbit(orbit, input, camera_node);
         scene.update_world();
         debug.clear();
@@ -194,8 +204,9 @@ fn void? run_gui(
 }
 
 fn int main(String[] args) {
-    Options options;
-    foreach (argument : args[1..]) {
+    Options options = { .fill = ProbeFill.ENVIRONMENT };
+    for (usz index = 1; index < args.len; index++) {
+        String argument = args[index];
         if (argument == "--gpu-timings") {
             $if $feat(C3D_PROFILE_GPU):
                 options.gpu_timings = true;
@@ -205,6 +216,15 @@ fn int main(String[] args) {
             $endif
         } else if (argument == "--deferred") {
             options.deferred = true;
+        } else if (argument == "--fill" && index + 1 < args.len) {
+            switch (args[++index]) {
+                case "none": options.fill = ProbeFill.NONE;
+                case "environment": options.fill = ProbeFill.ENVIRONMENT;
+                case "scene": options.fill = ProbeFill.SCENE;
+                default:
+                    io::printfn("Unknown fill: %s", args[index]);
+                    return 1;
+            }
         } else {
             io::printfn("Unknown argument: %s", argument);
             return 1;
@@ -242,7 +262,7 @@ fn int main(String[] args) {
     scene.background.environment = environment;
     scene.background.intensity = BACKGROUND_INTENSITY;
     Node* sun = scene.add_light(light::directional({ 1, 0.95f, 0.85f }, SUN_INTENSITY), name: "sun")!!;
-    sun.local.rotation = maths::look_rotation((Vec3){ -0.3f, -1, -0.2f }.normalize(), { 0, 1, 0 });
+    sun.local.rotation = maths::look_rotation(SUN_DIRECTION.normalize(), { 0, 1, 0 });
 
     Aabb bounds;
     @pool() {
@@ -250,7 +270,7 @@ fn int main(String[] args) {
     };
     Node* volume_node = scene.add_node(name: "probe_volume")!!;
     volume_node.local.position = (bounds.min + bounds.max) * 0.5f;
-    scene.add(volume_node, light::probe_volume((bounds.max - bounds.min) * 0.5f, PROBE_COUNTS));
+    scene.add(volume_node, light::probe_volume((bounds.max - bounds.min) * 0.5f, PROBE_COUNTS, options.fill));
 
     float radius = math::max((bounds.max - bounds.min).length() * 0.5f, 0.001f);
     Node* camera_node = scene.add_camera(camera::perspective_deg(60, radius * NEAR_PLANE_SCALE), name: "camera")!!;
@@ -285,6 +305,7 @@ fn int main(String[] args) {
         scene:       &scene,
         camera_node: camera_node,
         volume_node: volume_node,
+        sun:         sun,
         orbit:       &orbit,
         environment: environment,
         options:     options,

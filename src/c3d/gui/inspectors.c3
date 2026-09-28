@@ -32,6 +32,7 @@ const float CONE_MAX_DEGREES @local = 90;
 const float IK_ANGLE_MAX_DEGREES @local = 180;
 const float CAMERA_MIN_NEAR @local = 0.0001f;
 const float MIN_POSITIVE @local = 0.0001f;
+const float PROBE_HYSTERESIS_MAX @local = 0.999f; // hysteresis must stay below 1 or the texels never change
 
 Inspector[ecs::MAX_COMPONENT_TYPES] inspectors @local;
 
@@ -327,9 +328,21 @@ fn bool probe_volume_inspector(void* component) @local {
     changed = nonnegative_drag("Max distance", &volume.max_distance) || changed;
 
     int fill = volume.fill.ordinal;
-    ZString[ProbeFill::len] fills = { "None", "Environment" };
+    ZString[ProbeFill::len] fills = { "None", "Environment", "Scene" };
     if (imgui::combo_char("Fill", &fill, &fills, ProbeFill::len)) {
         volume.fill = ProbeFill::from_ordinal((usz)fill);
+        changed = true;
+    }
+
+    imgui::separator_text("Scene update");
+    int rays = (int)volume.update.rays_per_probe;
+    if (imgui::slider_int("Rays per probe", &rays, (int)light::PROBE_RAYS_MIN, (int)light::PROBE_RAYS_MAX)) {
+        volume.update.rays_per_probe = (uint)math::clamp(rays, (int)light::PROBE_RAYS_MIN, (int)light::PROBE_RAYS_MAX);
+        changed = true;
+    }
+    changed = imgui::input_scalar("Probes per frame", imgui::DATA_TYPE_U32, &volume.update.probes_per_frame) || changed;
+    if (imgui::slider_float("Hysteresis", &volume.update.hysteresis, 0, PROBE_HYSTERESIS_MAX)) {
+        volume.update.hysteresis = math::clamp(volume.update.hysteresis, 0.0f, PROBE_HYSTERESIS_MAX);
         changed = true;
     }
     return changed;

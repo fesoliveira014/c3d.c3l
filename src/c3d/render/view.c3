@@ -319,8 +319,9 @@ fn void? record_raster_view(
             environments = resolve_view_environments(renderer, scene, sheen)!;
             if (record.desc.ray_tracing.reflections) acquire_environment_lut(renderer)!;
             prepare_cull_stage(renderer, view_culls, record.desc.instance_culling)!;
+            gpu::GpuAddress probe_trace = prepare_probe_updates(renderer, scene)!;
             record_pending_copies(renderer, &renderer.commands)!;
-            record_probe_volumes(renderer, scene, environments.lighting)!;
+            record_probe_volumes(renderer, scene, environments.lighting, probe_trace)!;
             record_instance_cull(renderer, view_culls)!;
             prepare_sampled_targets(renderer, record)!;
         };

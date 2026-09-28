@@ -554,6 +554,38 @@ root ProbeBorderRoot {
     uint         height;
 }
 
+struct RayResultGpu {
+    vec4 radiance_distance;
+}
+
+root ProbeTraceRoot {
+    GpuAddress frame;
+    GpuAddress rays;
+    vec4       rotation;
+    uint       volume;
+    uint       first_probe;
+    uint       probe_count;
+    uint       rays_per_probe;
+    float      ray_far;
+    float      cone_spread;
+    uint       _pad0;
+    uint       _pad1;
+}
+
+root ProbeBlendRoot {
+    GpuAddress frame;
+    GpuAddress rays;
+    vec4       rotation;
+    uint       volume;
+    uint       first_probe;
+    uint       probe_count;
+    uint       rays_per_probe;
+    uint       kind;
+    float      hysteresis;
+    uint       _pad0;
+    uint       _pad1;
+}
+
 root EnvironmentGpu {
     TextureIndex specular_cube;
     SamplerIndex sampler_index;

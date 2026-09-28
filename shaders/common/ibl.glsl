@@ -46,6 +46,18 @@ vec3 environment_brdf_weight(
     return surface.reflectance * response.x + surface.grazing_reflectance * response.y;
 }
 
+// Radiance along a ray that leaves the scene: the lighting environment, not the background cube.
+vec3 trace_miss_radiance(FrameRoot frame, vec3 direction) {
+    if (frame.environment == 0ul) return frame.ambient.rgb;
+    EnvironmentGpu environment = EnvironmentGpu(frame.environment);
+    return sample_texture_cube_lod(
+        environment.specular_cube,
+        environment.sampler_index,
+        environment_rotate(environment.rotation, direction),
+        0.0
+    ).rgb * environment.intensity;
+}
+
 bool frame_has_indirect(FrameRoot frame) {
     return frame.environment != 0ul || frame.probe_volumes != 0ul;
 }
