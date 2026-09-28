@@ -91,7 +91,7 @@ fn PhysicsReplay? create_physics_replay(
         .friction_mix    = friction_mix,
         .restitution_mix = restitution_mix,
     };
-    replay.install_mixes();
+    install_replay_mixes(&replay);
     return replay;
 }
 
@@ -153,10 +153,10 @@ fn void PhysicsReplay.debug_draw(&self, debug::DebugDraw* sink, PhysicsDebugOpti
     draw::world_draw(world, &draw, ulong::max);
 }
 
-fn void PhysicsReplay.install_mixes(&self) @local {
-    b3::WorldId world = self.player.world_id();
-    world.set_friction_callback((b3::FrictionFn)self.friction_mix);
-    world.set_restitution_callback((b3::RestitutionFn)self.restitution_mix);
+fn void install_replay_mixes(PhysicsReplay* replay) @local {
+    b3::WorldId world = replay.player.world_id();
+    world.set_friction_callback((b3::FrictionFn)replay.friction_mix);
+    world.set_restitution_callback((b3::RestitutionFn)replay.restitution_mix);
 }
 
 fn void* create_replay_shape(draw::DebugShape* shape, void* context) @local {
