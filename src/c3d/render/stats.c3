@@ -47,6 +47,7 @@ enum GpuTimingState {
 *>
 struct Stats {
     uint  draws;
+    uint  indirect_draws;
     uint  post_dispatches;
     uint  dispatches;
     uint  triangles;

@@ -23,7 +23,6 @@ struct ShadowDraw @private {
     gpu::GpuAddress morph;
     gpu::GpuAddress alpha;
     gpu::GpuAddress instance_data;
-    uint instance_count;
     bool masked;
     bool wireframe;
     bool reflected;
@@ -113,7 +112,6 @@ fn ShadowDraw[]? prepare_shadow_draws(Renderer* renderer, MeshCandidate[] candid
             .morph = resolve_candidate_morph(renderer, candidate, vertex)!,
             .alpha = custom_header,
             .instance_data = candidate.batch ? resolve_instances(renderer, candidate)! : (gpu::GpuAddress)0,
-            .instance_count = candidate.instance_count,
             .masked = material.common.alpha_mode == AlphaMode.MASK,
             .wireframe = material.common.wireframe && renderer.caps.line_polygon_mode,
             .reflected = (candidate.node.world.determinant() < 0) != candidate.mirrored,
@@ -262,12 +260,16 @@ fn void? record_depth_draws(
                 skin_stride: candidate_skin_stride(draw.candidate),
             );
         }
-        record_geometry_draw(
-            renderer:       renderer,
-            root:           root.address,
-            geometry:       draw.geometry,
-            instance_count: draw.instance_count,
-        )!;
+        if (draw.candidate.batch) {
+            record_batch_draw(
+                renderer: renderer,
+                root:     root.address,
+                geometry: draw.geometry,
+                range:    prepare_cull_range(renderer, draw.candidate, draw.geometry)!,
+            )!;
+        } else {
+            record_geometry_draw(renderer, root.address, draw.geometry)!;
+        }
     }
 }
 

@@ -21,6 +21,7 @@ fn void? stats_panel(Renderer* renderer) {
     imgui::text("CPU record: %.3f ms", (double)renderer.stats.cpu_record_ms);
 
     imgui::text("Draws: %u", renderer.stats.draws);
+    imgui::text("Indirect draws: %u", renderer.stats.indirect_draws);
     imgui::text("Post dispatches: %u", renderer.stats.post_dispatches);
     imgui::text("Dispatches: %u", renderer.stats.dispatches);
     imgui::text("Triangles: %u", renderer.stats.triangles);

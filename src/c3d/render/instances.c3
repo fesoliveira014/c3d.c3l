@@ -53,6 +53,14 @@ struct InstanceTable {
 }
 
 <*
+ Batch instance range drawn through one indirect command.
+*>
+struct CullRange {
+    gpu::GpuSpan args;
+    uint         count;
+}
+
+<*
  Hash of the scene identity and the full entity.
 *>
 fn uint InstanceKey.hash(self) => fnv32a::hash(@as_char_view(self));
@@ -187,6 +195,81 @@ fn bool needs_upload(
 ) {
     return slot.key != key || slot.capacity < batch.transforms.len || slot.revision != batch.revision
         || slot.world != world;
+}
+
+<*
+ Indirect command bytes the geometry's draws take.
+ @param [&in] layout
+*>
+fn usz indirect_args_bytes(GeometryLayout* layout) {
+    return layout.index_count ? gpu::DrawIndexedIndirectCommand::size : gpu::DrawIndirectCommand::size;
+}
+
+<*
+ Write one indexed or non-indexed indirect command drawing count instances.
+ @param [out] args : "Overwritten."
+ @param [&in] layout
+ @require args.len >= indirect_args_bytes(layout)
+ @require (uptr)args.ptr % uint::alignment == 0
+*>
+fn void write_indirect_args(char[] args, GeometryLayout* layout, uint count) {
+    if (layout.index_count) {
+        *(gpu::DrawIndexedIndirectCommand*)args.ptr = { .index_count = layout.index_count, .instance_count = count };
+        return;
+    }
+    *(gpu::DrawIndirectCommand*)args.ptr = { .vertex_count = layout.vertex_count, .instance_count = count };
+}
+
+fn CullRange? prepare_cull_range(Renderer* renderer, MeshCandidate* candidate, GpuGeometry* geometry) @private {
+    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    usz bytes = indirect_args_bytes(&geometry.layout);
+    gpu::MappedGpuSpan args = slot.upload.take(&renderer.device, bytes, STREAM_ALIGNMENT)!;
+    write_indirect_args(args.bytes, &geometry.layout, candidate.instance_count);
+    return { .args = args.span, .count = candidate.instance_count };
+}
+
+fn void? issue_batch_draw(
+    Renderer* renderer,
+    gpu::GpuAddress root,
+    GpuGeometry* geometry,
+    CullRange range,
+) @private {
+    GeometryLayout* layout = &geometry.layout;
+    if (layout.index_count) {
+        gpu::cmd_draw_indexed_indirect(
+            commands:      &renderer.commands,
+            vertex_root:   root,
+            fragment_root: root,
+            args:          range.args,
+            draw_count:    1,
+            index_span:    geometry.indices,
+            index_type:    layout.flags.indices_u16 ? gpu::IndexType.U16 : gpu::IndexType.U32,
+        )!;
+    } else {
+        gpu::cmd_draw_indirect(
+            commands:      &renderer.commands,
+            vertex_root:   root,
+            fragment_root: root,
+            args:          range.args,
+            draw_count:    1,
+        )!;
+    }
+    renderer.stats.indirect_draws++;
+}
+
+fn void? record_batch_draw(
+    Renderer* renderer,
+    gpu::GpuAddress root,
+    GpuGeometry* geometry,
+    CullRange range,
+) @private {
+    issue_batch_draw(
+        renderer: renderer,
+        root:     root,
+        geometry: geometry,
+        range:    range,
+    )!;
+    count_draw(renderer, geometry, range.count);
 }
 
 fn gpu::GpuAddress? resolve_instances(Renderer* renderer, MeshCandidate* candidate) @private {
