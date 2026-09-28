@@ -61,6 +61,13 @@ const Vec2  STATS_PANEL_POSITION @local = { 16, 452 };
 const Vec2  STATS_PANEL_SIZE @local = { 340, 300 };
 const uint  WINDOW_WIDTH @local = 1340;
 const uint  WINDOW_HEIGHT @local = 900;
+const uint  DEMO_SPAWN_INTERVAL @local = 15;   // frames between thrown boxes
+const uint  DEMO_SPAWN_END @local = 300;
+const uint  DEMO_RECORD_START @local = 60;
+const uint  DEMO_LIMP @local = 120;
+const uint  DEMO_RECORD_STOP @local = 300;
+const uint  DEMO_RECOVER @local = 420;
+const uint  DEMO_SELECT @local = 450;
 
 struct FreeCamera @local {
     Vec3  position;
@@ -76,7 +83,17 @@ struct Level @local {
     Node*      camera_node;
     Node*      figure;
     Node*      figure_skin;
+    Node*      first_link;
     uint       boxes;
+}
+
+// Command line: --demo plays a scripted run, --draw-all raises every draw flag, --replay-default-mixes opens
+// replays with box3d's mixes, --frames N closes after N frames.
+struct Options @local {
+    bool demo;
+    bool draw_all;
+    bool replay_default_mixes;
+    uint frames;
 }
 
 fn float max_friction(
@@ -191,12 +208,12 @@ fn Level? build_level(AssetStore* assets, Scene* scene, PhysicsWorld* physics) @
     ColliderDesc platform_collider = physics::default_collider_desc(BOX);
     platform_collider.half_extents = PLATFORM_SIZE * 0.5f;
     physics.add_body(level.platform, physics::default_body_desc(KINEMATIC), (&platform_collider)[:1])!;
-    build_chain(scene, physics, link_geometry, link_material)!;
+    level.first_link = build_chain(scene, physics, link_geometry, link_material)!;
     build_figure(assets, scene, &level)!;
     return level;
 }
 
-fn void? build_chain(
+fn Node*? build_chain(
     Scene* scene,
     PhysicsWorld* physics,
     GeometryId link_geometry,
@@ -210,6 +227,7 @@ fn void? build_chain(
     physics.add_body(anchor, physics::default_body_desc(STATIC), (&anchor_collider)[:1])!;
 
     Node* previous = anchor;
+    Node* first;
     Vec3 previous_bottom = CHAIN_ANCHOR;
     for (uint link = 0; link < CHAIN_LINKS; link++) {
         Node* node = scene.add_mesh(link_geometry, link_material, name: "chain link")!;
@@ -222,9 +240,11 @@ fn void? build_chain(
         hinge.frame.position = { 0, LINK_HALF_EXTENTS.y, 0 };
         hinge.anchor_frame.position = link == 0 ? (Vec3){} : (Vec3){ 0, -LINK_HALF_EXTENTS.y, 0 };
         physics.add_joint(node, hinge)!;
+        if (!first) first = node;
         previous = node;
         previous_bottom = node.local.position - (Vec3){ 0, LINK_HALF_EXTENTS.y, 0 };
     }
+    return first;
 }
 
 fn void? build_figure(AssetStore* assets, Scene* scene, Level* level) @local {
@@ -328,6 +348,63 @@ fn void handle_keys(
     }
 }
 
+fn void play_demo(
+    uint frame,
+    PhysicsPanel* panel,
+    PhysicsWorld* physics,
+    Scene* scene,
+    Level* level,
+    FreeCamera* camera,
+) @local {
+    if (frame < DEMO_SPAWN_END && frame % DEMO_SPAWN_INTERVAL == 0) {
+        spawn_box(
+            scene:   scene,
+            physics: physics,
+            level:   level,
+            camera:  camera,
+        );
+    }
+    if (frame == DEMO_RECORD_START) panel.start_recording();
+    if (frame == DEMO_LIMP) {
+        physics.set_ragdoll_mode(level.figure_skin, SIMULATED);
+        scene.get(level.figure_skin, Ragdoll).weight = 1;
+    }
+    if (frame == DEMO_RECORD_STOP) {
+        panel.stop_recording();
+        panel.open_replay();
+    }
+    if (frame > DEMO_RECORD_STOP && panel.has_replay) (void)panel.replay.step();
+    if (frame == DEMO_RECOVER) {
+        physics.recover_ragdoll(level.figure_skin, level.figure);
+        scene.get(level.figure_skin, Ragdoll).weight = 0;
+    }
+    if (frame == DEMO_SELECT) panel.selection.selected = level.first_link.id;
+}
+
+fn void print_readings(
+    PhysicsPanel* panel,
+    Scene* scene,
+    Level* level,
+    usz sink_peak,
+) @local {
+    io::printfn("sink peak: %d segments of %d", sink_peak, INSPECTOR_SINK_SEGMENTS);
+    io::printfn("events logged: %d of %d rows", panel.event_count, panel.events.len);
+    io::printfn("last recording: %d bytes", panel.recording.len);
+    if (panel.has_replay) {
+        io::printfn("replay: frame %d of %d", panel.replay.frame(), panel.replay.frame_count());
+        uint? diverged = panel.replay.diverge_frame();
+        if (try diverged) {
+            io::printfn("replay diverged at frame %d", diverged);
+        } else {
+            io::printfn("replay: no divergence");
+        }
+    }
+    Ragdoll* ragdoll = scene.get(level.figure_skin, Ragdoll);
+    io::printfn("ragdoll recoveries: %d, last facing %s", ragdoll.recoveries, ragdoll.last_facing);
+    PhysicsCounters counters = panel.physics.counters();
+    io::printfn("bodies %d, shapes %d, joints %d", counters.bodies, counters.shapes, counters.joints);
+}
+
 fn void? draw_panels(
     render::Renderer* renderer,
     Scene* scene,
@@ -371,6 +448,7 @@ fn void? run(
     AssetStore* assets,
     Scene* scene,
     PhysicsWorld* physics,
+    Options options,
 ) @local {
     Level level = build_level(assets, scene, physics)!;
     $if $feat(C3D_PHYSICS_GUI_CHARACTER):
@@ -385,13 +463,40 @@ fn void? run(
     GuiPanelState selection;
     PhysicsPanel panel = gui::create_physics_panel(mem, physics, scene, &selection);
     defer gui::destroy_physics_panel(&panel);
+    panel.replay_default_mixes = options.replay_default_mixes;
+    if (options.draw_all) {
+        panel.draw = {
+            .colliders      = true,
+            .contacts       = true,
+            .bounds         = true,
+            .joints         = true,
+            .joint_extras   = true,
+            .mass           = true,
+            .contact_forces = true,
+            .graph_colors   = true,
+            .islands        = true,
+        };
+    }
 
     FreeCamera camera = { .position = CAMERA_START, .yaw = (float)math::PI, .speed = FREE_SPEED };
     usz sink_peak;
     renderer.prepare_scene(scene)!;
+    uint frame;
     while (window.poll()) {
         Input* input = &window.input;
         if (input.key_released(platform::Scancode.ESCAPE) && !input.keyboard_captured_by_gui) break;
+        if (options.frames && frame == options.frames) break;
+        if (options.demo) {
+            play_demo(
+                frame:   frame,
+                panel:   &panel,
+                physics: physics,
+                scene:   scene,
+                level:   &level,
+                camera:  &camera,
+            );
+        }
+        frame++;
         float delta = window.clock.delta;
         gui_renderer.new_frame();
         defer {
@@ -462,10 +567,28 @@ fn void? run(
             info:         { .time = window.clock.total, .delta = window.clock.delta },
         )!;
     }
-    io::printfn("sink peak: %d segments of %d", sink_peak, INSPECTOR_SINK_SEGMENTS);
+    print_readings(
+        panel:     &panel,
+        scene:     scene,
+        level:     &level,
+        sink_peak: sink_peak,
+    );
 }
 
-fn int main() {
+fn int main(String[] args) {
+    Options options;
+    for (usz index = 1; index < args.len; index++) {
+        switch (args[index]) {
+            case "--demo": options.demo = true;
+            case "--draw-all": options.draw_all = true;
+            case "--replay-default-mixes": options.replay_default_mixes = true;
+            case "--frames":
+                if (index + 1 < args.len) options.frames = args[++index].to_uint() ?? 0;
+            default:
+                io::printfn("Unknown option: %s", args[index]);
+                return 1;
+        }
+    }
     String title = "c3d physics inspector";
     platform::WindowDesc window_desc = platform::default_window_desc(title, WINDOW_WIDTH, WINDOW_HEIGHT);
     platform::Window window = platform::create_window(window_desc)!!;
@@ -505,6 +628,7 @@ fn int main() {
         assets:   &assets,
         scene:    &scene,
         physics:  &physics,
+        options:  options,
     )) {
         io::eprintfn("physics inspector failed: %s", excuse);
         return 1;
