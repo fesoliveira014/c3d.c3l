@@ -38,11 +38,15 @@ const uint PROBE_READBACK_GROUP @private = 8; // mirrored as local_size_x and lo
 const uint SKY_SPREAD_FRAMES @private = 8;
 const float SKY_TEXEL_TOLERANCE @private = 0.05f;         // of the expected irradiance; set from the measured spread
 const float FAST_HYSTERESIS @private = 0.5f;            // converges in tens of updates; stability is what is measured
+const Vec4 RED_WALL_COLOR @private = { 0.8f, 0.1f, 0.1f, 1 };
+const uint BOUNCE_UPDATES @private = 60;                 // 60 half-lives at the fast hysteresis
+const float BOUNCE_GAIN @private = 2.5f;                // measured 3.07 on the RTX 4090; below it the bounce is lost
 
 struct ProbeRoom @private {
     Scene scene;
     Node* camera;
     Node* roof;
+    Node* east;
     Node* volume;
     Node* sun;
     Node* lamp;
@@ -124,13 +128,13 @@ fn ProbeVolumeRes* mirror_of(Fixture* fixture, Scene* scene, Node* node) @privat
     return null;
 }
 
-// Mean irradiance channel over the interior texels of the probes that are not in a wall.
-fn float interior_irradiance(Fixture* fixture, ProbeRoom* room) @private {
+// Mean irradiance per channel over the interior texels of the probes that are not in a wall.
+fn Vec3 interior_channels(Fixture* fixture, ProbeRoom* room) @private {
     ProbeVolumeRes* mirror = mirror_of(fixture, &room.scene, room.volume);
     Vec4f[] texels = read_atlas(fixture, &mirror.irradiance)!!;
     assert_finite(texels);
     uint edge = shader::PROBE_IRRADIANCE_CELL;
-    float sum;
+    Vec3 sum;
     uint samples;
     for (uint z = 1; z + 1 < ROOM_COUNTS.z; z++) {
         for (uint y = 1; y + 1 < ROOM_COUNTS.y; y++) {
@@ -140,16 +144,19 @@ fn float interior_irradiance(Fixture* fixture, ProbeRoom* room) @private {
                     for (uint texel_x = 1; texel_x + 1 < edge; texel_x++) {
                         usz row = (usz)(cell.y * edge + texel_y);
                         usz texel = row * mirror.irradiance.width + (usz)(cell.x * edge + texel_x);
-                        for (usz channel = 0; channel < 3; channel++) {
-                            sum += texels[texel][channel];
-                            samples++;
-                        }
+                        sum += { texels[texel].x, texels[texel].y, texels[texel].z };
+                        samples++;
                     }
                 }
             }
         }
     }
     return sum / (float)samples;
+}
+
+fn float interior_irradiance(Fixture* fixture, ProbeRoom* room) @private {
+    Vec3 channels = interior_channels(fixture, room);
+    return (channels.x + channels.y + channels.z) / 3;
 }
 
 fn Node*? add_slab(
@@ -200,7 +207,7 @@ fn ProbeRoom? create_probe_room(Fixture* fixture, bool lamp = false) @private {
     add_slab(&room.scene, surface, unit_box, { 0, wall / 2, 0 }, flat, "floor")!;
     room.roof = add_slab(&room.scene, surface, unit_box, { 0, outer.y - wall / 2, 0 }, flat, "roof")!;
     add_slab(&room.scene, surface, unit_box, { -(outer.x - wall) / 2, outer.y / 2, 0 }, side, "west")!;
-    add_slab(&room.scene, surface, unit_box, { (outer.x - wall) / 2, outer.y / 2, 0 }, side, "east")!;
+    room.east = add_slab(&room.scene, surface, unit_box, { (outer.x - wall) / 2, outer.y / 2, 0 }, side, "east")!;
     add_slab(&room.scene, surface, unit_box, { 0, outer.y / 2, -(outer.z - wall) / 2 }, end, "north")!;
     add_slab(&room.scene, surface, unit_box, { 0, outer.y / 2, (outer.z - wall) / 2 }, end, "south")!;
     Node* open_ground = room.scene.add_mesh(ground, surface, name: "open_ground")!;
@@ -417,3 +424,29 @@ fn void test_hidden_volume_is_not_updated() @test {
     check_validation(&fixture.renderer);
 }
 
+fn void test_bounce_brightens_and_tints_the_room() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    ProbeRoom room = create_probe_room(&fixture, lamp: true)!!;
+    defer scene::destroy_scene(&room.scene);
+    StandardParams red = { .base_color = RED_WALL_COLOR, .roughness = 1 };
+    room.scene.get(room.east, Mesh).material = fixture.assets.add_material(material::standard(red))!!;
+    room.scene.get(room.volume, ProbeVolume).update.hysteresis = FAST_HYSTERESIS;
+    ProbeView probe_view = create_probe_view(&fixture, ShadingPath.FORWARD)!!;
+    defer destroy_probe_view(&fixture, &probe_view);
+
+    render_room_frames(&fixture, &room, probe_view.view, 1)!!;
+    Vec3 direct = interior_channels(&fixture, &room);
+    render_room_frames(&fixture, &room, probe_view.view, BOUNCE_UPDATES)!!;
+    Vec3 bounced = interior_channels(&fixture, &room);
+    float direct_mean = (direct.x + direct.y + direct.z) / 3;
+    float bounced_mean = (bounced.x + bounced.y + bounced.z) / 3;
+    io::eprintfn(
+        "bounce: first update %s mean %f red/green %f; after %d updates %s mean %f red/green %f",
+        direct, direct_mean, direct.x / direct.y, BOUNCE_UPDATES, bounced, bounced_mean, bounced.x / bounced.y,
+    );
+    assert(bounced_mean > BOUNCE_GAIN * direct_mean);
+    assert(bounced.x / bounced.y > direct.x / direct.y);
+    check_validation(&fixture.renderer);
+}
