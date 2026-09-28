@@ -5,6 +5,7 @@ import c3d;
 import c3d::asset;
 import c3d::geometry;
 import c3d::material;
+import c3d::spatial::bvh;
 
 fn AssetStore make_store() @local {
     return asset::create_asset_store(mem, {
@@ -663,4 +664,114 @@ fn void test_typed_custom_params_round_trip() @test {
     live.color.y = 42;
     assert(((TestParams*)store.material(id).data.custom.param_block.ptr).color.y == 42);
     assert(store.material(id).header.revision == 2);
+}
+
+fn GeometryId add_malformed_quad(AssetStore* assets) @local {
+    @pool() {
+        Geometry quad = make_quad(tmem);
+        quad.indices[5] = 9;
+        return assets.add_geometry(&quad)!!;
+    };
+}
+
+fn GeometryId add_valid_quad(AssetStore* assets) @local {
+    @pool() {
+        Geometry quad = make_quad(tmem);
+        return assets.add_geometry(&quad)!!;
+    };
+}
+
+fn void test_triangle_bvh_is_built_once_per_revision() @test {
+    AssetStore assets = make_store();
+    defer asset::destroy_asset_store(&assets);
+    GeometryId quad = add_valid_quad(&assets);
+
+    Bvh* first = assets.triangle_bvh(quad)!!;
+    BvhNode* nodes = first.nodes.ptr;
+    assert(assets.triangle_bvh(quad)!!.nodes.ptr == nodes);
+    GeometryAsset* record = assets.geometry(quad);
+    record.data.positions[2] = { 2, 1, 0 };
+    assets.mark_geometry_dirty(quad);
+    Bvh* rebuilt = assets.triangle_bvh(quad)!!;
+    assert(record.triangle_revision == record.header.revision);
+    assert(rebuilt.bounds.max.x == 2);
+}
+
+fn void test_triangle_bvh_rejects_malformed_lists_and_remembers() @test {
+    AssetStore assets = make_store();
+    defer asset::destroy_asset_store(&assets);
+    GeometryId quad = add_malformed_quad(&assets);
+    GeometryAsset* record = assets.geometry(quad);
+
+    assert(@catch(assets.triangle_bvh(quad)) == c3d::INVALID_ARGUMENT);
+    assert(record.rejected_revision == record.header.revision && record.triangle_revision == 0);
+    assert(@catch(assets.triangle_bvh(quad)) == c3d::INVALID_ARGUMENT);
+    assert(record.triangles.nodes.len == 0);
+}
+
+fn void test_triangle_bvh_needs_cpu_arrays() @test {
+    AssetStore assets = make_store();
+    defer asset::destroy_asset_store(&assets);
+    GeometryId quad = add_valid_quad(&assets);
+    assets.release_geometry_cpu(quad);
+
+    assert(@catch(assets.triangle_bvh(quad)) == c3d::ASSET_DATA_UNAVAILABLE);
+}
+
+fn void test_triangles_valid_remembers_per_revision() @test {
+    AssetStore assets = make_store();
+    defer asset::destroy_asset_store(&assets);
+    GeometryId valid = add_valid_quad(&assets);
+    GeometryId malformed = add_malformed_quad(&assets);
+
+    assert(assets.triangles_valid(valid)!! && !assets.triangles_valid(malformed)!!);
+    assets.release_geometry_cpu(valid);
+    assets.release_geometry_cpu(malformed);
+    assert(assets.triangles_valid(valid)!! && !assets.triangles_valid(malformed)!!);
+}
+
+fn void test_triangles_valid_faults_without_arrays_or_answer() @test {
+    AssetStore assets = make_store();
+    defer asset::destroy_asset_store(&assets);
+    GeometryId quad = add_valid_quad(&assets);
+    assets.release_geometry_cpu(quad);
+
+    assert(@catch(assets.triangles_valid(quad)) == c3d::ASSET_DATA_UNAVAILABLE);
+}
+
+fn void test_release_frees_the_tree_and_keeps_validity() @test {
+    AssetStore assets = make_store();
+    defer asset::destroy_asset_store(&assets);
+    GeometryId quad = add_valid_quad(&assets);
+    (void)assets.triangle_bvh(quad)!!;
+    assets.release_geometry_cpu(quad);
+
+    assert(@catch(assets.triangle_bvh(quad)) == c3d::ASSET_DATA_UNAVAILABLE);
+    assert(assets.geometry(quad).triangle_revision == 0 && assets.geometry(quad).triangles.nodes.len == 0);
+    assert(assets.triangles_valid(quad)!!);
+}
+
+fn void test_dirty_geometry_is_checked_again() @test {
+    AssetStore assets = make_store();
+    defer asset::destroy_asset_store(&assets);
+    GeometryId quad = add_valid_quad(&assets);
+    assert(assets.triangles_valid(quad)!!);
+
+    GeometryAsset* record = assets.geometry(quad);
+    record.data.indices[5] = 9;
+    assets.mark_geometry_dirty(quad);
+    assert(!assets.triangles_valid(quad)!!);
+    assert(record.rejected_revision == record.header.revision);
+}
+
+fn void test_non_triangle_topology_is_not_a_triangle_list() @test {
+    AssetStore assets = make_store();
+    defer asset::destroy_asset_store(&assets);
+    GeometryId lines;
+    @pool() {
+        Geometry quad = make_quad(tmem);
+        quad.topology = Topology.LINES;
+        lines = assets.add_geometry(&quad)!!;
+    };
+    assert(!assets.triangles_valid(lines)!!);
 }
