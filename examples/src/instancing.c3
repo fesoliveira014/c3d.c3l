@@ -21,11 +21,13 @@ import imgui;
 
 const String PULSE_VERTEX_FILE @local = "../shaders/custom/pulse.vert.glsl";
 const String PULSE_FRAGMENT_FILE @local = "../shaders/custom/pulse.frag.glsl";
-const uint GRID_SIDE @local = 64; // 4096 props in one batch; the instance-count lever of the example
+const uint GRID_SIDE @local = 316; // 99,856 props in one batch; the instance-count lever of the example
 const float GRID_SPACING @local = 0.5f;
 const float PROP_SIZE @local = 0.3f;
 const uint PULSE_COUNT @local = 8;
 const float PULSE_RING_RADIUS @local = 5;
+const float PULSE_RADIUS @local = 0.5f;
+const float PULSE_HEIGHT @local = 0.8f;
 const float PULSE_AMPLITUDE @local = 0.4f;
 const float PULSE_ANGULAR_FREQUENCY @local = 3;
 const float TRIO_HEIGHT @local = 1.5f;
@@ -39,9 +41,9 @@ const float ORBIT_ZOOM_STEP @local = 0.9f;
 const float ORBIT_DISTANCE_MIN @local = 3;
 const float ORBIT_DISTANCE_MAX @local = 60;
 const Vec2 CONTROLS_PANEL_POSITION @local = { 10, 10 };
-const Vec2 CONTROLS_PANEL_SIZE @local = { 340, 170 };
+const Vec2 CONTROLS_PANEL_SIZE @local = { 340, 180 };
 const Vec2 STATS_PANEL_POSITION @local = { 10, 190 };
-const Vec2 STATS_PANEL_SIZE @local = { 340, 440 };
+const Vec2 STATS_PANEL_SIZE @local = { 340, 500 };
 
 struct PulseParams @local {
     Vec4 color;
@@ -65,6 +67,7 @@ struct Controls @local {
     bool motion_blur;
     bool deferred;
     bool animate;
+    bool culling;
     bool picked;
     String pick_name;
     uint pick_instance;
@@ -166,17 +169,28 @@ fn Node*? add_pulses(Scene* scene, GeometryId sphere, MaterialId pulse_material)
     for (uint index = 0; index < PULSE_COUNT; index++) {
         float angle = (float)index / PULSE_COUNT * 2 * (float)math::PI;
         transforms[index] = maths::TRANSFORM_IDENTITY;
-        transforms[index].position = { math::cos(angle) * PULSE_RING_RADIUS, 0.8f, math::sin(angle) * PULSE_RING_RADIUS };
+        transforms[index].position = {
+            math::cos(angle) * PULSE_RING_RADIUS,
+            PULSE_HEIGHT,
+            math::sin(angle) * PULSE_RING_RADIUS,
+        };
         colors[index] = { 0.5f + 0.5f * math::cos(angle), 1, 0.5f + 0.5f * math::sin(angle), 1 };
     }
-    return scene.add_instanced_mesh(
+    Node* node = scene.add_instanced_mesh(
         geometry:   sphere,
         material:   pulse_material,
         capacity:   PULSE_COUNT,
         transforms: transforms[..],
         colors:     colors[..],
         name:       "pulses",
-    );
+    )!;
+    // The vertex stage moves each sphere by up to PULSE_AMPLITUDE; the geometry bound does not cover that.
+    InstancedMesh* batch = scene.get(node, InstancedMesh);
+    float reach = PULSE_RING_RADIUS + PULSE_RADIUS;
+    float rise = PULSE_RADIUS + PULSE_AMPLITUDE;
+    batch.has_bounds_override = true;
+    batch.local_bounds = { .min = { -reach, PULSE_HEIGHT - rise, -reach }, .max = { reach, PULSE_HEIGHT + rise, reach } };
+    return node;
 }
 
 fn Batches? build_scene(AssetStore* assets, Scene* scene, ShaderId pulse_shader) @local {
@@ -191,7 +205,7 @@ fn Batches? build_scene(AssetStore* assets, Scene* scene, ShaderId pulse_shader)
         cube = assets.add_geometry(&cube_geometry, "instancing/cube")!;
         Geometry prop_geometry = geometry::box(tmem, PROP_SIZE, PROP_SIZE, PROP_SIZE);
         prop = assets.add_geometry(&prop_geometry, "instancing/prop")!;
-        Geometry sphere_geometry = geometry::sphere(tmem, 0.5f);
+        Geometry sphere_geometry = geometry::sphere(tmem, PULSE_RADIUS);
         sphere = assets.add_geometry(&sphere_geometry, "instancing/sphere")!;
     };
 
@@ -268,6 +282,7 @@ fn bool draw_controls(Controls* controls) @local {
         imgui::checkbox("Animate", &controls.animate);
         changed |= imgui::checkbox("Motion blur", &controls.motion_blur);
         changed |= imgui::checkbox("Deferred shading", &controls.deferred);
+        changed |= imgui::checkbox("Instance culling", &controls.culling);
         if (controls.picked) {
             imgui::text("Picked: %.*s instance %u", (int)controls.pick_name.len, controls.pick_name.ptr, controls.pick_instance);
         } else {
@@ -282,6 +297,7 @@ fn ViewDesc view_desc_of(Controls* controls) @local {
     ViewDesc desc = render::default_view_desc();
     desc.post.motion_blur = controls.motion_blur;
     desc.shading = controls.deferred ? ShadingPath.DEFERRED : ShadingPath.FORWARD;
+    desc.instance_culling = controls.culling;
     return desc;
 }
 
@@ -320,7 +336,7 @@ fn void? run(
 
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
-    Controls controls = { .animate = true };
+    Controls controls = { .animate = true, .culling = true };
     render::configure_view(renderer, renderer.default_view, view_desc_of(&controls))!;
     renderer.prepare_scene(scene)!;
 
