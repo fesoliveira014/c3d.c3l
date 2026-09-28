@@ -43,6 +43,11 @@ renderer has drained and detached. One thread owns the recorder, its producers
 and panel. The complete capture states, measured-span axes and frozen-snapshot
 behavior are described in [Profiling](profiling.md#inspect-captures-with-imgui).
 
+## Physics inspector
+
+The optional `c3d_physics_gui` add-on adds a physics panel and the physics component inspectors; see
+[Physics inspector](physics_inspector.md).
+
 ## Creation and ownership
 
 Create the window, asset store and renderer first, then call

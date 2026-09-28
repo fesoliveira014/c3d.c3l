@@ -61,6 +61,24 @@ on it; above that it lies past it, by a full slop from two slops of radius on. A
 Mesh, height field and compound shapes are world queries (`PhysicsWorld.raycast`,
 `overlap_sphere`), not these.
 
+## World queries
+
+`PhysicsWorld` answers the same questions about the bodies it holds, in the caller's allocator:
+
+- `raycast(origin, direction, max_distance)`: the closest body along a ray.
+- `overlap_sphere(allocator, center, radius)`: the nodes whose shapes overlap a sphere, each once, at most
+  `MAX_OVERLAP_SHAPES` (256) shapes.
+- `overlap_aabb(allocator, bounds)`: the nodes with a shape whose bounds overlap the box, each once. This is
+  box3d's broad phase: a shape whose bounds touch the box counts even if the shape does not. At most
+  `MAX_OVERLAP_SHAPES` shapes.
+- `cast_shape(allocator, shape, translation)`: every shape a moving sphere, capsule or box would touch, nearest
+  first, at most `MAX_CAST_HITS` (128).
+- `contact_points(allocator, node)`: the points where the node's body touched others in the last step, from
+  at most `MAX_BODY_CONTACTS` (64) contacts, with the normal from the node toward the other body. box3d keeps
+  speculative points, so a point may be slightly separated.
+
+Results past a cap are dropped.
+
 ## Names beside box3d
 
 `collide::Sweep`, `collide::Manifold` and `collide::ManifoldPoint` share names with `b3` types. A
