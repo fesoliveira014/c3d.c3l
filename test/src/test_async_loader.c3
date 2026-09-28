@@ -41,7 +41,7 @@ fn LoadStatus settle(AsyncLoader* loader, LoadId id) @local {
 
 fn AsyncLoader start_loader(AssetStore* assets) @local => loader::create_async_loader(mem, assets, 2)!!;
 
-fn usz[8] free_slots(AssetStore* assets) @local {
+fn usz[8] store_counts(AssetStore* assets) @local {
     return {
         assets.geometries.free_count, assets.textures.free_count, assets.materials.free_count,
         assets.samplers.free_count, assets.models.free_count, assets.skeletons.free_count,
@@ -228,7 +228,7 @@ fn void test_publish_reports_a_full_pool() @test {
     AsyncLoader loader = loader::create_async_loader(mem, &assets)!!;
     defer loader::destroy_async_loader(&loader);
     gltf::load_model(&assets, fixture_path("quad.gltf"))!!;
-    usz[8] counts = free_slots(&assets);
+    usz[8] counts = store_counts(&assets);
 
     LoadId id = loader.request(gltf_request("hierarchy.gltf"))!!;
     assert(settle(&loader, id).phase == LoadPhase.DECODED);
@@ -236,7 +236,7 @@ fn void test_publish_reports_a_full_pool() @test {
 
     LoadStatus status = loader.status(id);
     assert(status.phase == LoadPhase.FAILED && status.failure == c3d::CAPACITY_EXCEEDED);
-    assert(free_slots(&assets) == counts);
+    assert(store_counts(&assets) == counts);
 }
 
 fn void test_destroy_frees_unpublished_documents() @test {

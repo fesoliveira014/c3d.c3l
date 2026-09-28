@@ -251,6 +251,9 @@ if (status.phase == LoadPhase.PUBLISHED) {
     renderer.prepare_model(status.model)!;
     model::instantiate(&assets, &scene, status.model)!;
     loader.release(request)!;
+} else if (status.phase == LoadPhase.FAILED) {
+    io::eprintfn("%s failed: %s", "models/city.gltf", status.failure);
+    loader.release(request)!;
 }
 ```
 
@@ -311,6 +314,16 @@ a stall of the frame that calls it.
 `destroy_async_loader` stops the worker and waits for the decode in progress,
 up to one decode (1.3 s for Sponza on the WSL host CPU), then frees every
 unpublished document and request. Destroy the loader before its store.
+
+| Function | Fault | Meaning |
+| --- | --- | --- |
+| `create_async_loader` | `thread::INIT_FAILED` | The mutex, the condition variable or the worker thread could not be created; nothing is left allocated. |
+| `request` | `INVALID_ARGUMENT` | The path is a model key in the store, or a queued, decoding or decoded request has the same path. |
+| | `CAPACITY_EXCEEDED` | Every slot holds an unreleased request. |
+| `release` | `INVALID_ID` | The id was released, is stale, or never named a request. |
+| `status` (`failure` of `FAILED`) | `INVALID_ID` | As for `release`. |
+| | `ASSET_IO_ERROR`, `ASSET_FORMAT_ERROR`, `UNSUPPORTED`, `INVALID_ARGUMENT` | The importer's decode fault; the wrong importer for a file gives `ASSET_FORMAT_ERROR`. |
+| | `INVALID_ARGUMENT`, `CAPACITY_EXCEEDED` | The store's `publish_document` fault: a key inserted since the request, a pool without room. |
 
 ## CPU release
 

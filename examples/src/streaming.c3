@@ -191,11 +191,11 @@ fn void? run(
         if (input.key_released(platform::Scancode.ESCAPE) && !input.keyboard_captured_by_gui) break;
 
         advance(
-            showcase:  showcase,
-            assets:    assets,
-            scene:     scene,
-            renderer:  renderer,
-            frame_ms:  window.clock.delta * MILLISECONDS_PER_SECOND,
+            showcase: showcase,
+            assets:   assets,
+            scene:    scene,
+            renderer: renderer,
+            frame_ms: window.clock.delta * MILLISECONDS_PER_SECOND,
         )!;
         showcase.placeholder.local.rotation = quaternion::from_axis_angle{float}(
             { 0, 1, 0 },
