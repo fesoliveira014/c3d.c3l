@@ -35,6 +35,12 @@
         "cap/**"
       ]
     },
+    "gamepad": {
+      "type": "executable",
+      "sources": [
+        "gamepad/**"
+      ]
+    },
     "profile_application": {
       "type": "executable",
       "dependencies": ["c3d_profile"],
