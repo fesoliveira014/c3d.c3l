@@ -245,22 +245,6 @@ fn bool lists_unit(PrepareUnit[] units, PrepareUnitKind kind, Id asset) @private
     return false;
 }
 
-fn bool texture_current(Renderer* renderer, TextureId texture) @private {
-    TextureAsset* record = renderer.assets.texture(texture);
-    TextureRes* mirror = &renderer.textures[texture.index];
-    if (c3d::same_id(mirror.asset, texture) && mirror.revision == record.header.revision) return true;
-    foreach (&pending : renderer.pending_texture_uploads) {
-        if (c3d::same_id(pending.asset, texture) && pending.revision == record.header.revision) return true;
-    }
-    return false;
-}
-
-fn bool geometry_current(Renderer* renderer, GeometryId geometry) @private {
-    GpuGeometry* mirror = &renderer.geometries[geometry.index];
-    GeometryAsset* record = renderer.assets.geometry(geometry);
-    return c3d::same_id(mirror.asset, geometry) && mirror.revision == record.header.revision;
-}
-
 fn usz prepare_texture_bytes(TextureAsset* record) @private {
     switch (record.source_kind) {
         case MIP_ZERO:
@@ -358,7 +342,10 @@ fn void? run_prepare_unit(Renderer* renderer, PrepareRecord* record, PrepareUnit
         case GEOMETRY:
             resolve_geometry(renderer, unit.geometry)!;
         case MATERIAL:
-            resolve_material(renderer, unit.material)!;
+            if (catch excuse = resolve_material(renderer, unit.material)) {
+                // Counted as dangling by the mesh's pipeline unit, through prepare_mesh, as prepare_model does.
+                if (!custom_material_unavailable(&renderer.assets.material(unit.material).data, excuse)) return excuse~;
+            }
         case PIPELINES:
             MeshPreparation prepared = prepare_mesh(
                 renderer:    renderer,
