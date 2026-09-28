@@ -18,7 +18,8 @@ scene.add(volume_node, light::probe_volume((bounds.max - bounds.min) * 0.5f, { 1
 | `view_bias` | Offset toward the viewer before sampling, world units |
 | `energy` | Scale of the sampled irradiance |
 | `max_distance` | Visibility clamp, world units |
-| `fill` | Source of the atlas texels: `NONE` or `ENVIRONMENT` |
+| `fill` | Source of the atlas texels: `NONE`, `ENVIRONMENT` or `SCENE` |
+| `update` | Ray budget and blend of `SCENE` updates (`ProbeUpdateDesc`) |
 
 `probe_volume(half_extents, counts, fill = ENVIRONMENT)` derives the rest from the probe spacing:
 `normal_bias` 0.05 and `view_bias` 0.1 of the smallest spacing, `max_distance` 1.5 times the
@@ -36,11 +37,62 @@ volume lights anything.
   lighting (a regenerated source included), its intensity or its rotation changes; a changed
   `max_distance` refills the visibility atlas only. Without a live scene environment the volume
   holds no fill and lights nothing.
+- `SCENE` traces the scene from every probe each update and blends the result into the atlases (see
+  [Scene updates](#scene-updates)).
 - `NONE` never fills. A volume that was filled keeps its texels, so switching `ENVIRONMENT` to
   `NONE` freezes the atlas; a volume that was never filled lights nothing. Changing `counts` under
   `NONE` replaces the atlases and loses the frozen texels.
 - A volume lights a view when its node is visible (`visible_effective`) and shares a layer bit
   with the camera. Hiding the node switches the volume off without losing its atlases.
+
+## Scene updates
+
+A `SCENE` volume casts `update.rays_per_probe` rays from each probe of a window through the software scene
+trace (the same data as [scene tracing](scene_trace.md)), shades each hit, and blends the per-texel
+estimate into the atlases: `texel = mix(estimate, previous, update.hysteresis)`.
+
+| `ProbeUpdateDesc` field | Meaning |
+| --- | --- |
+| `rays_per_probe` | `PROBE_RAYS_MIN` (32) to `PROBE_RAYS_MAX` (256); default 128 |
+| `probes_per_frame` | Round-robin window; 0 (default) or at least the probe count updates every probe |
+| `hysteresis` | Share of the previous texel kept per update, `[0, 1)`; default 0.97, 95 percent of a change after 99 updates of a probe |
+
+A hit adds its diffuse direct light, its emission and the bounce the probe atlases already hold
+(`albedo / PI` times the irradiance at the hit), so light bounces further with every update. Misses read the
+lighting environment (or the flat ambient without one). Back faces return no light and mark the probe's
+view of that direction as blocked. Every update rotates its ray set by a rotation drawn from the frame
+index.
+
+- **Lights.** Hits are lit by every light on a visible node with nonzero layers, whatever the camera sees
+  and whatever the light's layers say: a light hidden from one camera by a layer still lights the probes.
+  Every light with shadows enabled traces one shadow ray per hit that it can reach (facing, in range and
+  cone); the shadow atlas is not used. Up to `RendererDesc.max_lights` lights; drops count in
+  `Stats.lights_dropped`.
+- **First sweep.** A new atlas is cleared (zero irradiance) in the frame it is created, and each probe's first
+  visit replaces its texels instead of blending. Views keep the SH until every probe holds an estimate; with
+  `probes_per_frame = 0` that is the first frame, with a window `ceil(count / window)` frames. Bounces during
+  the sweep read the texels as they stand.
+- **Switching fill.** `ENVIRONMENT` to `SCENE` blends from the environment texels without a sweep; `SCENE`
+  to `ENVIRONMENT` refills at once; `SCENE` to `NONE` freezes the texels.
+- **Moving the node.** A move of more than half the smallest spacing between two updates restarts the atlas
+  (clear and first sweep); smaller moves are followed with the lag of the blend, about 33 updates of travel
+  at the default hysteresis.
+- **Hidden volumes** are not updated; they keep their texels and resume from them when shown.
+- **Energy** scales what views see; the bounce between probes always uses the texels at unit energy, so a
+  high `energy` cannot make the feedback diverge.
+- **Static geometry only.** Skinned and morphed meshes, and batches or meshes with `trace = false`, are not
+  hit. A scene with a `SCENE` volume prepares the software scene trace every frame it renders, which walks
+  every traceable mesh and batch instance.
+- **Two scenes in one frame** both update; the software trace is rebuilt for each.
+- **Faults.** A scene with a due `SCENE` volume can make `render_view` fault as a ray-traced view does:
+  `c3d::CAPACITY_EXCEEDED` when the scene has more traceable instances than
+  `RendererDesc.max_trace_instances`, `c3d::ASSET_DATA_UNAVAILABLE` when a traceable geometry's CPU arrays
+  were released before its first trace upload, and the gpu faults of the trace and ray-buffer allocation.
+
+Cost per update: `window x rays_per_probe` primary rays (`Stats.probe_rays`; shadow rays are not counted, at
+most one per hit and shadowing light), five dispatches (trace, two blends, two border copies over the whole
+atlas), and a ray buffer of 16 bytes per ray at the largest window seen (64 MiB for 32 x 32 x 32 probes at
+128 rays), kept until `destroy_renderer`. `Pass.PROBE_UPDATE` times fills and updates.
 
 ## Which volume lights a surface
 
@@ -102,5 +154,10 @@ python3 scripts/fetch_benchmark_assets.py
 python3 scripts/build.py --example probe_volume
 ```
 
-`gltf_viewer --benchmark` takes `--probe-volumes 0|1|8` and `--probe-counts X,Y,Z` (default
-16,8,8) to measure the shading cost: 1 places one volume over the model bounds, 8 one per octant.
+`--fill none|environment|scene` selects the source and a "Move sun" control turns the sun, so a `SCENE`
+volume shows its update converge; the stats panel lists probe rays and updates.
+
+`gltf_viewer --benchmark` takes `--probe-volumes 0|1|8`, `--probe-counts X,Y,Z` (default 16,8,8),
+`--probe-fill environment|scene` and `--probe-window N` to measure the shading and update costs: 1 places
+one volume over the model bounds, 8 one per octant; `--point-shadows on` gives the point lights shadows, so
+every one of them traces at probe hits. The CSV has `gpu_probe_update_ms`.
