@@ -114,7 +114,8 @@ are not registered. Callbacks borrow their list/command and must not submit or p
 
 ## Statistics
 
-Draw totals include composition and GUI. Triangle totals include mesh and GUI geometry.
+Draw totals include composition and GUI. Indirect draws count batch draws issued through
+indirect commands, every pass included. Triangle totals include mesh and GUI geometry.
 Upload bytes count the frame's asset and instance record uploads; they are not GPU resident memory.
 Ring usage reports the previous frame slot's head/capacity and overflow allocation count separately;
 a dormant frame can also be the previous slot.
