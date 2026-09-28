@@ -215,21 +215,21 @@ fn bool edit_screen_space_gi(ScreenSpaceGiDesc* screen_space_gi) @local {
     if (changed) *screen_space_gi = enabled ? render::SCREEN_SPACE_GI_DEFAULT : (ScreenSpaceGiDesc){};
     if (!screen_space_gi.enabled) return changed;
     changed |= edit_level_count(
-        label:   "Rays",
+        label:   "GI rays",
         value:   &screen_space_gi.rays,
         minimum: render::SSGI_RAYS_MIN,
         maximum: render::SSGI_RAYS_MAX,
     );
     changed |= edit_level_count(
-        label:   "Steps",
+        label:   "GI steps",
         value:   &screen_space_gi.max_steps,
         minimum: render::SSGI_STEPS_MIN,
         maximum: render::SSGI_STEPS_MAX,
     );
-    changed |= edit_grade_factor("Distance", &screen_space_gi.max_distance, SSGI_DISTANCE_MIN, SSGI_DISTANCE_MAX);
-    changed |= edit_grade_factor("Thickness", &screen_space_gi.thickness, SSGI_THICKNESS_MIN, SSGI_THICKNESS_MAX);
+    changed |= edit_grade_factor("GI distance", &screen_space_gi.max_distance, SSGI_DISTANCE_MIN, SSGI_DISTANCE_MAX);
+    changed |= edit_grade_factor("GI thickness", &screen_space_gi.thickness, SSGI_THICKNESS_MIN, SSGI_THICKNESS_MAX);
     changed |= edit_grade_factor("GI intensity", &screen_space_gi.intensity, 0, 1);
-    changed |= edit_grade_factor("History weight", &screen_space_gi.history_weight, 0, SSGI_HISTORY_WEIGHT_MAX);
+    changed |= edit_grade_factor("GI history weight", &screen_space_gi.history_weight, 0, SSGI_HISTORY_WEIGHT_MAX);
     return changed;
 }
 

@@ -204,6 +204,9 @@ fn PanelEntry[] collect_entries(Renderer* renderer, ViewId view, EnvironmentId e
         push_view_image(&entries, "reflection_blur", { .kind = VIEW_REFLECTION, .view = view }, &record.reflection_blur);
         PreviewSource traced_source = { .kind = VIEW_REFLECTION, .view = view, .level = 1 };
         push_view_image(&entries, "reflection", traced_source, &record.reflection);
+        push_view_image(&entries, "ssgi", { .kind = VIEW_SCREEN_SPACE_GI, .view = view }, &record.ssgi);
+        PreviewSource ssgi_raw_source = { .kind = VIEW_SCREEN_SPACE_GI, .view = view, .level = 1 };
+        push_view_image(&entries, "ssgi_raw", ssgi_raw_source, &record.ssgi_raw);
         if (record.desc.lights == CLUSTERED) {
             entries.push({
                 .label  = "clusters",

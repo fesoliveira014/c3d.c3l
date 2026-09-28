@@ -21,8 +21,9 @@ render::configure_view(&renderer, view, desc)!;
 | `intensity` | Blend strength in `[0, 1]`; 0 gives the base term exactly; default 1 |
 | `history_weight` | Share of the accumulation kept per frame, `[0, 1)`; default 0.9 |
 
-`configure_view` faults `c3d::INVALID_ARGUMENT` for values outside these ranges. A forward view with the
-effect gets a depth prepass whatever `depth_prepass` says, as a view with ambient occlusion does.
+`configure_view` faults `c3d::INVALID_ARGUMENT` for values outside these ranges and for the effect on a
+`PATH_TRACED` view. A forward view with the effect gets a depth prepass whatever `depth_prepass` says, as a
+view with ambient occlusion does.
 
 ## How it works
 
@@ -63,6 +64,10 @@ deferred:  depth prepass, G-buffer, velocity, [ambient occlusion], screen-space 
 
 `Pass.SCREEN_SPACE_GI` times the three dispatches and `Pass.SSGI_COLOR_COPY` the copy; the `Pass` enum order
 is not the recording order of every view.
+
+`gui::targets_panel` lists `ssgi` and `ssgi_raw`; programmatically `PreviewKind.VIEW_SCREEN_SPACE_GI`
+previews `ssgi` at level 0 and `ssgi_raw` at level 1. The post panel's "Screen-space GI" header edits the
+settings.
 
 ## Limits
 
