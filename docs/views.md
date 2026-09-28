@@ -47,6 +47,7 @@ defer (void)render::destroy_view(&renderer, capture_view);
 | `post` | The view's `PostStack` (see [display processing](post.md)) |
 | `shading` | `FORWARD`, `DEFERRED` (see [Shading path](#shading-path)) or `PATH_TRACED` (see [path tracing](path_tracing.md)) |
 | `depth_prepass` | A `FORWARD` view draws its opaque set into depth first and shades it once; on in both constructors |
+| `instance_culling` | Batch instances are culled per instance on the GPU in this view, its depth prepass and its shadow layers (see [instancing](instancing.md#instance-culling)); on in both constructors |
 | `lights` | `FLAT` or `CLUSTERED` candidate light selection |
 | `clusters` | Editable `ClusterDesc`; ignored by `FLAT` |
 | `ray_tracing` | `RayTracingDesc`: `shadows` (see [shadows](shadows.md)), `reflections` and `max_reflection_roughness` (see [reflections](reflections.md)); zero disables all |
