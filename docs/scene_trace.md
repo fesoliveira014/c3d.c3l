@@ -80,6 +80,8 @@ if (trace_scene(scene, origin, direction, 1.0e30, TRACE_MASK_ALL, hit)) {
 bool blocked = trace_scene_any(scene, origin, direction, distance_to_light, TRACE_MASK_SHADOW_CASTER);
 ```
 
+A built-in shader that serves both kinds is compiled twice through the `SCENE_TRACE_BVH` flag of `shaders/variants.json`: the source defines `SCENE_TRACE_RAY_QUERY` unless the flag is set, and the renderer picks the variant from `caps.ray_queries.enabled`, the same bit that selects the prepared kind. The probe update (`probe_trace.comp.glsl`) is the first such shader.
+
 The instance mask selects rows: every row carries `TRACE_MASK_ALL`, and rows of meshes with `cast_shadow` also carry `TRACE_MASK_SHADOW_CASTER`. A row whose mask shares no bit with the argument is skipped.
 
 `SceneHit` carries:

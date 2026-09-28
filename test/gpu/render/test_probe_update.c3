@@ -42,7 +42,7 @@ const Vec4 RED_WALL_COLOR @private = { 0.8f, 0.1f, 0.1f, 1 };
 const uint BOUNCE_UPDATES @private = 60;                 // 60 half-lives at the fast hysteresis
 const bool[2] TRACE_KINDS @private = { false, true };  // ray_queries of each fixture: software walk, then ray queries
 const float KIND_IRRADIANCE_SHARE @private = 0.02f;     // of the mean software texel; the milestone's bound
-const float KIND_VISIBILITY_SHARE @private = 1.0f;
+const float KIND_VISIBILITY_SHARE @private = 0.001f;   // measured below 1e-6 on the RTX 4090; margin for other devices
 const float BOUNCE_GAIN @private = 2.5f;                // measured 3.07 on the RTX 4090; below it the bounce is lost
 
 struct ProbeRoom @private {
@@ -288,6 +288,8 @@ fn BounceReadings? read_bounce_room(bool ray_queries) @private {
     uint[2] updates = { 1, BOUNCE_UPDATES };
     foreach (usz stage, count : updates) {
         render_room_frames(&fixture, &room, probe_view.view, count)!;
+        // The first frame builds the top level only when the updates trace through ray queries.
+        if (stage == 0) assert((fixture.renderer.stats.tlas_builds > 0) == ray_queries);
         ProbeVolumeRes* mirror = mirror_of(&fixture, &room.scene, room.volume);
         readings.frames[stage] = fixture.renderer.frame_index;
         readings.irradiance[stage] = keep_atlas(&fixture, mirror, &mirror.irradiance)!;

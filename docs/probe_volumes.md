@@ -47,9 +47,15 @@ volume lights anything.
 
 ## Scene updates
 
-A `SCENE` volume casts `update.rays_per_probe` rays from each probe of a window through the software scene
-trace (the same data as [scene tracing](scene_trace.md)), shades each hit, and blends the per-texel
-estimate into the atlases: `texel = mix(estimate, previous, update.hysteresis)`.
+A `SCENE` volume casts `update.rays_per_probe` rays from each probe of a window through the
+[scene trace](scene_trace.md), shades each hit, and blends the per-texel estimate into the atlases:
+`texel = mix(estimate, previous, update.hysteresis)`.
+
+**Trace kind.** A renderer created with `RendererDesc.ray_queries` traces probe rays through ray queries;
+any other renderer uses the software walk. There is no setting: comparing the two means two renderers. Both
+kinds hit the same triangles, report back faces the same way (a probe inside a wall reads dark on both) and
+use the same default of 128 rays per probe; on the RTX 4090 their atlases agree within 0.3 percent after the
+first update of the acceptance room and to the half-float precision after convergence.
 
 | `ProbeUpdateDesc` field | Meaning |
 | --- | --- |
@@ -81,9 +87,13 @@ rotates its ray set by a rotation drawn from the frame index.
 - **Energy** scales what views see; the bounce between probes always uses the texels at unit energy, so a
   high `energy` cannot make the feedback diverge.
 - **Static geometry only.** Skinned and morphed meshes, and batches or meshes with `trace = false`, are not
-  hit. A scene with a `SCENE` volume prepares the software scene trace every frame it renders, which walks
-  every traceable mesh and batch instance.
-- **Two scenes in one frame** both update; the software trace is rebuilt for each.
+  hit. A scene with a `SCENE` volume prepares the scene trace every frame it renders, which walks every
+  traceable mesh and batch instance and rewrites the software top level and rows when they change, on
+  either kind. On a ray-query renderer the first due update also builds one bottom level per traceable
+  geometry (once per geometry revision) and the top level whenever the traced set changes; a scene whose
+  only trace consumer is a probe volume pays those builds in the first frame it renders. They record in the
+  frame's uploads, before `Pass.PROBE_UPDATE`, and a traced view of the same scene reuses them.
+- **Two scenes in one frame** both update; the trace is rebuilt for each.
 - **Probes inside or behind geometry.** A probe inside a wall sees mostly back faces and reads dark, so it
   carries no light into a closed room. Points near such probes weight them low through the visibility term,
   not to zero, so a surface close to a wall or floor with probes in or behind it can read darker than the
@@ -94,7 +104,11 @@ rotates its ray set by a rotation drawn from the frame index.
 - **Faults.** A scene with a due `SCENE` volume can make `render_view` fault as a ray-traced view does:
   `c3d::CAPACITY_EXCEEDED` when the scene has more traceable instances than
   `RendererDesc.max_trace_instances`, `c3d::ASSET_DATA_UNAVAILABLE` when a traceable geometry's CPU arrays
-  were released before its first trace upload, and the gpu faults of the trace and ray-buffer allocation.
+  were released before its first trace upload, and the gpu faults of the trace and ray-buffer allocation. On
+  a ray-query renderer the acceleration-structure faults join them: `gpu::OUT_OF_DEVICE_MEMORY` or
+  `gpu::OUT_OF_HOST_MEMORY` for a bottom level, the top level or their scratch, `gpu::UNSUPPORTED_FEATURE`
+  for a build the device refuses, `gpu::SLOT_TABLE_FULL` or `gpu::DESCRIPTOR_HEAP_FULL` when the top-level
+  view cannot be published.
 
 Cost per update: `window x rays_per_probe` primary rays (`Stats.probe_rays`; shadow rays are not counted, at
 most one per hit and shadowing light), five dispatches (trace, two blends, two border copies over the whole
@@ -175,9 +189,12 @@ python3 scripts/build.py --example probe_volume
 ```
 
 `--fill none|environment|scene` selects the source and a "Move sun" control turns the sun, so a `SCENE`
-volume shows its update converge; the stats panel lists probe rays and updates.
+volume shows its update converge; the stats panel lists probe rays and updates. `--trace hardware` creates
+the renderer with ray queries (the example exits with the reason on a device without them); the controls
+panel names the kind in use.
 
 `gltf_viewer --benchmark` takes `--probe-volumes 0|1|8`, `--probe-counts X,Y,Z` (default 16,8,8),
 `--probe-fill environment|scene` and `--probe-window N` to measure the shading and update costs: 1 places
 one volume over the model bounds, 8 one per octant; `--point-shadows on` gives the point lights shadows, so
-every one of them traces at probe hits. The CSV has `gpu_probe_update_ms`.
+every one of them traces at probe hits; `--probe-rays N` sets `rays_per_probe`; `--trace software|hardware`
+selects the kind. The CSV has `gpu_probe_update_ms` and `gpu_acceleration_build_ms`.
