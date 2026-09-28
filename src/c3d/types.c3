@@ -30,6 +30,7 @@ enum AssetKind {
     SHADER,
     COMPUTE_SHADER,
     ENVIRONMENT,
+    CUSTOM,
 }
 
 <*
@@ -45,6 +46,7 @@ struct Id {
 *>
 struct AssetRef {
     AssetKind kind;
+    uint      slot;
     Id        id;
 }
 
