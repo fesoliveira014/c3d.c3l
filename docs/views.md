@@ -231,7 +231,8 @@ finished records and then stages the next units of the open records in the order
 that does not fit the rest of the budget waits for the next call, except when nothing was staged
 yet in the call, so every call makes progress and stages at most the budget or one unit, whichever
 is larger. One exception: an asset changed after its own unit ran (a material that gained a texture)
-is staged by the next unit that resolves it, outside that bound. Pipeline units weigh nothing. A unit whose mirror is already current (uploaded earlier,
+is staged by the next unit that resolves it, outside that bound. Pipeline units weigh nothing. A
+unit whose mirror is already current (uploaded earlier,
 by a view, or by another record) is done at zero cost, and a unit whose asset was removed is done
 and counts a dangling reference. `PrepareProgress.bytes_done` reaches `bytes_total`;
 `Stats.prepare_bytes` counts only what the frame staged.
