@@ -109,9 +109,8 @@ fn ShadowDraw[]? prepare_shadow_draws(Renderer* renderer, MeshCandidate[] candid
             .candidate = candidate,
             .geometry = geometry,
             .vertex = vertex,
-            .skin = candidate.skin ? resolve_palette(renderer, candidate.node, candidate.skin)! : (gpu::GpuAddress)0,
-            .morph = vertex.flags & shader::SHADER_FLAG_MORPH
-              ? resolve_morph_block(renderer, candidate)! : (gpu::GpuAddress)0,
+            .skin = resolve_candidate_skin(renderer, candidate)!,
+            .morph = resolve_candidate_morph(renderer, candidate, vertex)!,
             .alpha = custom_header,
             .instance_data = candidate.batch ? resolve_instances(renderer, candidate)! : (gpu::GpuAddress)0,
             .instance_count = candidate.instance_count,
@@ -246,6 +245,7 @@ fn void? record_depth_draws(
                 skin: draw.skin,
                 morph: draw.morph,
                 instance_data: draw.instance_data,
+                skin_stride: candidate_skin_stride(draw.candidate),
             );
         } else {
             write_depth_draw_root(
@@ -259,6 +259,7 @@ fn void? record_depth_draws(
                 skin: draw.skin,
                 morph: draw.morph,
                 instance_data: draw.instance_data,
+                skin_stride: candidate_skin_stride(draw.candidate),
             );
         }
         record_geometry_draw(

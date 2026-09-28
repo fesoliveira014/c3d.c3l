@@ -358,7 +358,7 @@ struct DrawRoot {
     uint         layers;
     TextureIndex sheen_lut;
     SamplerIndex sheen_sampler;
-    uint         _pad3;
+    uint         skin_stride;
 }
 $assert DrawRoot::size == 256;
 $assert $reflect(DrawRoot.model).offset == 0;
@@ -378,7 +378,7 @@ $assert $reflect(DrawRoot.flags).offset == 236;
 $assert $reflect(DrawRoot.layers).offset == 240;
 $assert $reflect(DrawRoot.sheen_lut).offset == 244;
 $assert $reflect(DrawRoot.sheen_sampler).offset == 248;
-$assert $reflect(DrawRoot._pad3).offset == 252;
+$assert $reflect(DrawRoot.skin_stride).offset == 252;
 
 struct PreviousPoseGpu {
     GpuAddress skin;

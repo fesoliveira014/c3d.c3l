@@ -170,6 +170,21 @@ const char[*] MESH_SKINNED_U16_MORPH_VELOCITY_SPIRV @private = $embed("../../../
 const char[*] MESH_INSTANCED_SPIRV @private = $embed("../../../shaders/spv/mesh_instanced.spv");
 const char[*] MESH_DEPTH_ONLY_INSTANCED_SPIRV @private = $embed("../../../shaders/spv/mesh_depth_only_instanced.spv");
 const char[*] MESH_VELOCITY_INSTANCED_SPIRV @private = $embed("../../../shaders/spv/mesh_velocity_instanced.spv");
+const char[*] MESH_SKINNED_INSTANCED_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_instanced.spv");
+const char[*] MESH_SKINNED_U16_INSTANCED_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_u16_instanced.spv");
+const char[*] MESH_MORPH_INSTANCED_SPIRV @private = $embed("../../../shaders/spv/mesh_morph_instanced.spv");
+const char[*] MESH_SKINNED_MORPH_INSTANCED_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_morph_instanced.spv");
+const char[*] MESH_SKINNED_U16_MORPH_INSTANCED_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_u16_morph_instanced.spv");
+const char[*] MESH_DEPTH_ONLY_SKINNED_INSTANCED_SPIRV @private = $embed("../../../shaders/spv/mesh_depth_only_skinned_instanced.spv");
+const char[*] MESH_DEPTH_ONLY_SKINNED_U16_INSTANCED_SPIRV @private = $embed("../../../shaders/spv/mesh_depth_only_skinned_u16_instanced.spv");
+const char[*] MESH_DEPTH_ONLY_MORPH_INSTANCED_SPIRV @private = $embed("../../../shaders/spv/mesh_depth_only_morph_instanced.spv");
+const char[*] MESH_DEPTH_ONLY_SKINNED_MORPH_INSTANCED_SPIRV @private = $embed("../../../shaders/spv/mesh_depth_only_skinned_morph_instanced.spv");
+const char[*] MESH_DEPTH_ONLY_SKINNED_U16_MORPH_INSTANCED_SPIRV @private = $embed("../../../shaders/spv/mesh_depth_only_skinned_u16_morph_instanced.spv");
+const char[*] MESH_SKINNED_VELOCITY_INSTANCED_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_velocity_instanced.spv");
+const char[*] MESH_SKINNED_U16_VELOCITY_INSTANCED_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_u16_velocity_instanced.spv");
+const char[*] MESH_MORPH_VELOCITY_INSTANCED_SPIRV @private = $embed("../../../shaders/spv/mesh_morph_velocity_instanced.spv");
+const char[*] MESH_SKINNED_MORPH_VELOCITY_INSTANCED_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_morph_velocity_instanced.spv");
+const char[*] MESH_SKINNED_U16_MORPH_VELOCITY_INSTANCED_SPIRV @private = $embed("../../../shaders/spv/mesh_skinned_u16_morph_velocity_instanced.spv");
 const char[*] STANDARD_GBUFFER_SPIRV @private = $embed("../../../shaders/spv/standard_gbuffer.spv");
 const char[*] PHYSICAL_GBUFFER_SPIRV @private = $embed("../../../shaders/spv/physical_gbuffer.spv");
 const char[*] LIGHTING_RESOLVE_SPIRV @private = $embed("../../../shaders/spv/lighting_resolve.spv");
@@ -178,7 +193,7 @@ const char[*] LIGHTING_RESOLVE_RT_SHADOWS_SPIRV @private = $embed("../../../shad
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[76] SHADER_ENTRIES = {
+const ShaderEntry[91] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -251,6 +266,21 @@ const ShaderEntry[76] SHADER_ENTRIES = {
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_INSTANCED }, .spirv = MESH_INSTANCED_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_DEPTH_ONLY | SHADER_FLAG_INSTANCED }, .spirv = MESH_DEPTH_ONLY_INSTANCED_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_VELOCITY | SHADER_FLAG_INSTANCED }, .spirv = MESH_VELOCITY_INSTANCED_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED | SHADER_FLAG_INSTANCED }, .spirv = MESH_SKINNED_INSTANCED_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED_U16 | SHADER_FLAG_INSTANCED }, .spirv = MESH_SKINNED_U16_INSTANCED_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_MORPH | SHADER_FLAG_INSTANCED }, .spirv = MESH_MORPH_INSTANCED_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED | SHADER_FLAG_MORPH | SHADER_FLAG_INSTANCED }, .spirv = MESH_SKINNED_MORPH_INSTANCED_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED_U16 | SHADER_FLAG_MORPH | SHADER_FLAG_INSTANCED }, .spirv = MESH_SKINNED_U16_MORPH_INSTANCED_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_DEPTH_ONLY | SHADER_FLAG_SKINNED | SHADER_FLAG_INSTANCED }, .spirv = MESH_DEPTH_ONLY_SKINNED_INSTANCED_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_DEPTH_ONLY | SHADER_FLAG_SKINNED_U16 | SHADER_FLAG_INSTANCED }, .spirv = MESH_DEPTH_ONLY_SKINNED_U16_INSTANCED_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_DEPTH_ONLY | SHADER_FLAG_MORPH | SHADER_FLAG_INSTANCED }, .spirv = MESH_DEPTH_ONLY_MORPH_INSTANCED_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_DEPTH_ONLY | SHADER_FLAG_SKINNED | SHADER_FLAG_MORPH | SHADER_FLAG_INSTANCED }, .spirv = MESH_DEPTH_ONLY_SKINNED_MORPH_INSTANCED_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_DEPTH_ONLY | SHADER_FLAG_SKINNED_U16 | SHADER_FLAG_MORPH | SHADER_FLAG_INSTANCED }, .spirv = MESH_DEPTH_ONLY_SKINNED_U16_MORPH_INSTANCED_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED | SHADER_FLAG_VELOCITY | SHADER_FLAG_INSTANCED }, .spirv = MESH_SKINNED_VELOCITY_INSTANCED_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED_U16 | SHADER_FLAG_VELOCITY | SHADER_FLAG_INSTANCED }, .spirv = MESH_SKINNED_U16_VELOCITY_INSTANCED_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_MORPH | SHADER_FLAG_VELOCITY | SHADER_FLAG_INSTANCED }, .spirv = MESH_MORPH_VELOCITY_INSTANCED_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED | SHADER_FLAG_MORPH | SHADER_FLAG_VELOCITY | SHADER_FLAG_INSTANCED }, .spirv = MESH_SKINNED_MORPH_VELOCITY_INSTANCED_SPIRV[..] },
+    { .variant = { .shader = MESH, .flags = SHADER_FLAG_SKINNED_U16 | SHADER_FLAG_MORPH | SHADER_FLAG_VELOCITY | SHADER_FLAG_INSTANCED }, .spirv = MESH_SKINNED_U16_MORPH_VELOCITY_INSTANCED_SPIRV[..] },
     { .variant = { .shader = STANDARD_GBUFFER }, .spirv = STANDARD_GBUFFER_SPIRV[..] },
     { .variant = { .shader = PHYSICAL_GBUFFER }, .spirv = PHYSICAL_GBUFFER_SPIRV[..] },
     { .variant = { .shader = LIGHTING_RESOLVE }, .spirv = LIGHTING_RESOLVE_SPIRV[..] },

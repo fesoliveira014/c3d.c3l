@@ -290,10 +290,8 @@ fn void? record_raster_view(
                     .material  = material,
                     .vertex    = vertex,
                     .pipeline  = pipeline,
-                    .skin      = candidate.skin
-                      ? resolve_palette(renderer, candidate.node, candidate.skin)! : (gpu::GpuAddress)0,
-                    .morph     = vertex.flags & shader::SHADER_FLAG_MORPH
-                      ? resolve_morph_block(renderer, candidate)! : (gpu::GpuAddress)0,
+                    .skin      = resolve_candidate_skin(renderer, candidate)!,
+                    .morph     = resolve_candidate_morph(renderer, candidate, vertex)!,
                     .instance_data  = candidate.batch ? resolve_instances(renderer, candidate)! : (gpu::GpuAddress)0,
                     .instance_count = candidate.instance_count,
                     .front_face = model_reflected != view_reflected
@@ -442,11 +440,16 @@ fn void? record_raster_view(
                 item.moved = has_previous && (posed || !(prev_world == node.world));
                 gpu::GpuAddress previous_pose;
                 if (has_previous && posed && group_index == 0) {
+                    PoseRecord* crowd_pose;
+                    if (item.candidate.crowd && record.history.has_previous(scene, node.parent)) {
+                        crowd_pose = record.history.previous_pose(scene, node.parent);
+                    }
                     previous_pose = upload_previous_pose(
-                        renderer:  renderer,
-                        item:      item,
-                        pose:      record.history.previous_pose(scene, node),
-                        instances: &previous_instances,
+                        renderer:   renderer,
+                        item:       item,
+                        pose:       record.history.previous_pose(scene, node),
+                        crowd_pose: crowd_pose,
+                        instances:  &previous_instances,
                     )!;
                 }
                 if (item.candidate.batch) prev_world = prev_world.mul(maths::inverse_affine(node.world));
@@ -468,6 +471,7 @@ fn void? record_raster_view(
                     morph:         item.morph,
                     instance_data: item.instance_data,
                     previous_pose: previous_pose,
+                    skin_stride:   candidate_skin_stride(item.candidate),
                 );
                 item.root = draw_span.address;
             }
@@ -703,14 +707,17 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
         };
         scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
             bool casts = shadows_enabled && batch.cast_shadow && scene.node(entity).visible_effective;
+            MeshCandidate part = { .node = scene.node(entity), .batch = batch };
+            attach_crowd(scene, &part);
             MeshPreparation prepared = prepare_mesh(
                 renderer:    self,
                 geometry_id: batch.geometry,
                 material_id: batch.material,
-                morphed:     false,
+                morphed:     part.crowd != null && part.crowd.parts[part.crowd_part].target_count > 0,
                 depth:       casts || prepass,
                 gbuffer:     deferred,
                 instanced:   true,
+                crowd:       part.crowd != null,
             )!;
             sheen |= prepared.sheen;
             transmission |= prepared.transmission;
@@ -774,6 +781,7 @@ fn MeshPreparation? prepare_mesh(
     bool depth,
     bool gbuffer,
     bool instanced = false,
+    bool crowd = false,
 ) @private {
     if (!renderer.assets.geometries.is_live(geometry_id) || !renderer.assets.materials.is_live(material_id)) {
         renderer.stats.dangling_refs++;
@@ -798,7 +806,7 @@ fn MeshPreparation? prepare_mesh(
     ShaderVariant vertex = mesh_vertex_variant(
         flags:      geometry.layout.flags,
         morphed:    morphed,
-        skinned:    !instanced,
+        skinned:    !instanced || crowd,
         base_flags: instanced_flag,
     );
     if (catch excuse = pipeline_for(renderer, data, vertex)) {
@@ -818,7 +826,7 @@ fn MeshPreparation? prepare_mesh(
             vertex:       mesh_vertex_variant(
                 flags:      geometry.layout.flags,
                 morphed:    morphed,
-                skinned:    !instanced,
+                skinned:    !instanced || crowd,
                 base_flags: shader::SHADER_FLAG_DEPTH_ONLY | instanced_flag,
             ),
             material:     data,
@@ -933,6 +941,7 @@ fn gpu::GpuAddress? upload_lights(Renderer* renderer, LightGpu[] lights) @privat
  @param morph : "Morph block address; zero when unmorphed."
  @param instance_data : "First instance record; zero for a mesh."
  @param previous_pose : "PreviousPoseGpu of a deformed or instanced velocity draw; zero otherwise."
+ @param skin_stride : "Joints per crowd instance; zero for a shared palette."
 *>
 fn void write_draw_root(
     DrawRoot* root,
@@ -950,6 +959,7 @@ fn void write_draw_root(
     gpu::GpuAddress morph = (gpu::GpuAddress)0,
     gpu::GpuAddress instance_data = (gpu::GpuAddress)0,
     gpu::GpuAddress previous_pose = (gpu::GpuAddress)0,
+    uint skin_stride = 0,
 ) {
     Mat3 normal = maths::normal_matrix(world);
     *root = {
@@ -970,6 +980,7 @@ fn void write_draw_root(
         .sheen_sampler = sheen_sampler,
         .layers        = layers,
         .flags         = flags,
+        .skin_stride   = skin_stride,
     };
 }
 
@@ -977,15 +988,37 @@ fn gpu::GpuAddress? upload_previous_pose(
     Renderer* renderer,
     DrawItem* item,
     PoseRecord* pose,
+    PoseRecord* crowd_pose,
     PreviousInstanceCache* instances,
 ) @private {
     MeshCandidate* candidate = item.candidate;
     PreviousPoseGpu previous = { .skin = item.skin, .morph = item.morph };
-    if (item.skin != (gpu::GpuAddress)0 && pose.palette.len == candidate.skin.joints.len) {
-        previous.skin = upload_bytes(renderer, pose.palette.ptr, pose.palette.len * Mat4f::size)!;
-    }
-    if (item.morph != (gpu::GpuAddress)0 && pose.morphed) {
-        previous.morph = upload_bytes(renderer, &pose.morph, MorphWeightsGpu::size)!;
+    if (AnimatedCrowd* crowd = candidate.crowd) {
+        bool same_count = crowd_pose && crowd_pose.instance_count == crowd.count;
+        if (item.skin != (gpu::GpuAddress)0 && same_count) {
+            ulong key = (ulong)(uptr)candidate.node.parent;
+            gpu::GpuAddress base;
+            if (try existing = instances.get(key)) {
+                base = existing;
+            } else {
+                usz count = (usz)crowd.joint_count * crowd.count;
+                base = upload_bytes(renderer, crowd_pose.palette.ptr, count * Mat4f::size)!;
+                instances.set(key, base);
+            }
+            ulong offset = (ulong)candidate.instance_first * crowd.joint_count * Mat4f::size;
+            previous.skin = (gpu::GpuAddress)((ulong)base + offset);
+        }
+        if (item.morph != (gpu::GpuAddress)0 && same_count && pose.morphs.len) {
+            gpu::GpuAddress base = upload_bytes(renderer, pose.morphs.ptr, crowd.count * MorphWeightsGpu::size)!;
+            previous.morph = (gpu::GpuAddress)((ulong)base + (ulong)candidate.instance_first * MorphWeightsGpu::size);
+        }
+    } else {
+        if (item.skin != (gpu::GpuAddress)0 && pose.palette.len == candidate.skin.joints.len) {
+            previous.skin = upload_bytes(renderer, pose.palette.ptr, pose.palette.len * Mat4f::size)!;
+        }
+        if (item.morph != (gpu::GpuAddress)0 && pose.morphed) {
+            previous.morph = upload_bytes(renderer, &pose.morph, MorphWeightsGpu::size)!;
+        }
     }
     if (candidate.batch && pose.instance_count == candidate.batch.count) {
         ulong key = (ulong)(uptr)candidate.node;
@@ -1015,6 +1048,7 @@ fn gpu::GpuAddress? upload_bytes(Renderer* renderer, void* data, usz size) @priv
  @param skin : "Joint palette address; zero when unskinned."
  @param morph : "Morph block address; zero when unmorphed."
  @param instance_data : "First instance record; zero for a mesh."
+ @param skin_stride : "Joints per crowd instance; zero for a shared palette."
 *>
 fn void write_depth_draw_root(
     DrawRoot* root,
@@ -1027,6 +1061,7 @@ fn void write_depth_draw_root(
     gpu::GpuAddress skin = (gpu::GpuAddress)0,
     gpu::GpuAddress morph = (gpu::GpuAddress)0,
     gpu::GpuAddress instance_data = (gpu::GpuAddress)0,
+    uint skin_stride = 0,
 ) {
     *root = {
         .model     = bitcast(world, Mat4f),
@@ -1038,6 +1073,7 @@ fn void write_depth_draw_root(
         .instance_data = instance_data,
         .object_id     = object_id,
         .flags         = flags,
+        .skin_stride   = skin_stride,
     };
 }
 

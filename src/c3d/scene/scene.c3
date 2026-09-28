@@ -329,7 +329,7 @@ fn SceneDesc default_scene_desc() {
 }
 
 <*
- Create a scene with mesh, camera, light, model, skin, animator, batch and IK components registered.
+ Create a scene with mesh, camera, light, model, skin, animator, batch, crowd and IK components registered.
  @require desc.max_nodes > 0
 *>
 fn Scene create_scene(Allocator allocator, SceneDesc desc) {
@@ -366,12 +366,14 @@ fn Scene create_scene(Allocator allocator, SceneDesc desc) {
     scene.world.register(IkChain)!!;
     scene.world.register(FootIk)!!;
     scene.world.register(LookAt)!!;
+    scene.world.register(AnimatedCrowd)!!;
     scene.ambient_color = { 1, 1, 1 };
     scene.world.set_remove_hook(Mesh, &free_morph_weights, scene.hook_allocator);
     scene.world.set_remove_hook(ModelInstance, &free_model_instance, scene.hook_allocator);
     scene.world.set_remove_hook(SkinBinding, &free_skin_binding, scene.hook_allocator);
     scene.world.set_remove_hook(Animator, &anim::free_animator, scene.hook_allocator);
     scene.world.set_remove_hook(InstancedMesh, &free_instanced_mesh, scene.hook_allocator);
+    scene.world.set_remove_hook(AnimatedCrowd, &free_crowd, scene.hook_allocator);
     return scene;
 }
 

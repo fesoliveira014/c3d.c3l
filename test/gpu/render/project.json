@@ -33,7 +33,8 @@
         "test_ambient_occlusion.c3",
         "test_ray_traced_effects.c3",
         "test_path_tracing.c3",
-        "test_cascade_blend.c3"
+        "test_cascade_blend.c3",
+        "test_crowd_variants.c3"
       ]
     }
   }
