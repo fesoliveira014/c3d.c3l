@@ -154,6 +154,7 @@ fn void? record_shadow_layer(
     Renderer* renderer,
     CameraMatrices* matrices,
     ShadowDraw[] draws,
+    CullRange[] ranges,
     uint layer,
     float bias,
 ) @private {
@@ -188,6 +189,7 @@ fn void? record_shadow_layer(
     record_depth_draws(
         renderer:       renderer,
         draws:          draws,
+        ranges:         ranges,
         frame:          frame.address,
         view_reflected: matrices.view.determinant() < 0,
         state:          &state,
@@ -200,6 +202,7 @@ fn void? record_shadow_layer(
 fn void? record_depth_draws(
     Renderer* renderer,
     ShadowDraw[] draws,
+    CullRange[] ranges,
     gpu::GpuAddress frame,
     bool view_reflected,
     gpu::GraphicsState* state,
@@ -208,7 +211,7 @@ fn void? record_depth_draws(
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     ShadowDrawState bound = { .pipeline = first };
     bool state_set;
-    foreach (draw : draws) {
+    foreach (index, draw : draws) {
         ShadowDrawState wanted = {
             .pipeline = draw.pipeline,
             .cull = draw.cull,
@@ -229,6 +232,13 @@ fn void? record_depth_draws(
         }
         bound = wanted;
 
+        BatchAddresses addresses = batch_addresses(
+            candidate: draw.candidate,
+            range:     &ranges[index],
+            skin:      draw.skin,
+            morph:     draw.morph,
+            records:   draw.instance_data,
+        );
         gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, DrawRoot::size, STREAM_ALIGNMENT)!;
         if (draw.material.kind == MaterialKind.CUSTOM) {
             write_draw_root(
@@ -240,10 +250,11 @@ fn void? record_depth_draws(
                 material: draw.alpha,
                 object_id: draw.candidate.node.id.index,
                 flags: draw.masked ? shader::DRAW_ALPHA_MASK : 0,
-                skin: draw.skin,
-                morph: draw.morph,
-                instance_data: draw.instance_data,
+                skin: addresses.skin,
+                morph: addresses.morph,
+                instance_data: addresses.instance_data,
                 skin_stride: candidate_skin_stride(draw.candidate),
+                instance_indices: addresses.instance_indices,
             );
         } else {
             write_depth_draw_root(
@@ -254,10 +265,11 @@ fn void? record_depth_draws(
                 material: draw.alpha,
                 object_id: draw.candidate.node.id.index,
                 flags: draw.masked ? shader::DRAW_ALPHA_MASK : 0,
-                skin: draw.skin,
-                morph: draw.morph,
-                instance_data: draw.instance_data,
+                skin: addresses.skin,
+                morph: addresses.morph,
+                instance_data: addresses.instance_data,
                 skin_stride: candidate_skin_stride(draw.candidate),
+                instance_indices: addresses.instance_indices,
             );
         }
         if (draw.candidate.batch) {
@@ -265,7 +277,7 @@ fn void? record_depth_draws(
                 renderer: renderer,
                 root:     root.address,
                 geometry: draw.geometry,
-                range:    prepare_cull_range(renderer, draw.candidate, draw.geometry)!,
+                range:    ranges[index],
             )!;
         } else {
             record_geometry_draw(renderer, root.address, draw.geometry)!;
@@ -279,6 +291,7 @@ fn ShadowGpu[]? record_shadows(
     Camera* camera,
     CameraMatrices* matrices,
     LightExtraction* extraction,
+    bool culling,
 ) @private {
     renderer.shadow_frustum_count = 0;
     uint covered;
@@ -371,20 +384,38 @@ fn ShadowGpu[]? record_shadows(
         if (participating[index]) candidates[included++] = candidate;
     }
     ShadowDraw[] draws = prepare_shadow_draws(renderer, candidates[:included])!;
-    ShadowDraw[] layer_draws = alloc::new_array(tmem, ShadowDraw, draws.len);
+    ShadowDraw[][] layer_draws = alloc::new_array(tmem, ShadowDraw[], allocation.layer_count);
+    CullRange[][] layer_ranges = alloc::new_array(tmem, CullRange[], allocation.layer_count);
+    CullItem[][] layer_culls = alloc::new_array(tmem, CullItem[], allocation.layer_count);
+    usz cull_count;
+    foreach (layer, &frustum_matrices : shadow_matrices) {
+        ShadowDraw[] visible = alloc::new_array(tmem, ShadowDraw, draws.len);
+        uint count;
+        foreach (draw : draws) {
+            if (maths::frustum_intersects_aabb(&frustum_matrices.frustum, draw.candidate.world_bounds)) {
+                visible[count++] = draw;
+            }
+        }
+        layer_draws[layer] = visible[:count];
+        layer_ranges[layer] = alloc::new_array(tmem, CullRange, count);
+        layer_culls[layer] = shadow_cull_items(layer_draws[layer], layer_ranges[layer], &frustum_matrices.frustum);
+        cull_count += layer_culls[layer].len;
+    }
+    CullItem[] atlas_culls = alloc::new_array(tmem, CullItem, (sz)cull_count);
+    usz cull_filled;
+    foreach (culls : layer_culls) {
+        atlas_culls[cull_filled:culls.len] = culls[..];
+        cull_filled += culls.len;
+    }
+    prepare_cull_stage(renderer, atlas_culls, culling)!;
     record_pending_copies(renderer, &renderer.commands)!;
+    record_instance_cull(renderer, atlas_culls)!;
     transition_shadow_atlas(&renderer.shadow_atlas, &renderer.commands, DEPTH_ATTACHMENT_STATE)!;
     @profile_pass(renderer, Pass.SHADOW_ATLAS) {
         foreach (request : allocation.requests) {
             Light* light = scene.get(scene.node(request.light), Light);
             for (uint index = 0; index < request.layer_count; index++) {
                 uint layer = request.first_layer + index;
-                uint count;
-                foreach (draw : draws) {
-                    if (maths::frustum_intersects_aabb(&shadow_matrices[layer].frustum, draw.candidate.world_bounds)) {
-                        layer_draws[count++] = draw;
-                    }
-                }
                 ProfileScopeToken layer_scope = begin_profile_shadow(
                     renderer: renderer,
                     light: request.light,
@@ -394,7 +425,8 @@ fn ShadowGpu[]? record_shadows(
                 record_shadow_layer(
                     renderer: renderer,
                     matrices: &shadow_matrices[layer],
-                    draws: layer_draws[:count],
+                    draws: layer_draws[layer],
+                    ranges: layer_ranges[layer],
                     layer: layer,
                     bias: light.shadow.bias,
                 )!;

@@ -11,6 +11,7 @@
 
 #ifdef INSTANCED
 GPU_DECLARE_READONLY_ARRAY_REF(InstanceArray, InstanceGpu);
+GPU_DECLARE_READONLY_ARRAY_REF(VisibleArray, uint);
 #ifdef VELOCITY
 GPU_DECLARE_READONLY_ARRAY_REF(PreviousInstanceArray, mat4);
 #endif
@@ -31,6 +32,15 @@ layout(push_constant) uniform Push {
     uint64_t vertex_root_gpu;
     uint64_t fragment_root_gpu;
 } pc;
+
+#ifdef INSTANCED
+// A culled range draws over its visible list; every per-instance read indexes through this.
+uint instance_source(DrawRoot draw) {
+    return draw.instance_indices != 0ul
+        ? VisibleArray(draw.instance_indices).values[gl_InstanceIndex]
+        : uint(gl_InstanceIndex);
+}
+#endif
 
 struct MeshVertexInput {
     vec3 position;
@@ -63,15 +73,15 @@ MeshVertexInput pull_mesh_vertex(GeometryRoot geometry, uint index) {
 // A crowd instance reads its own palette and morph block; a single mesh reads the base address.
 uint64_t instance_palette(DrawRoot draw, uint64_t palette_base) {
 #ifdef INSTANCED
-    return palette_base + uint64_t(gl_InstanceIndex) * uint64_t(draw.skin_stride) * PALETTE_MATRIX_BYTES;
+    return palette_base + uint64_t(instance_source(draw)) * uint64_t(draw.skin_stride) * PALETTE_MATRIX_BYTES;
 #else
     return palette_base;
 #endif
 }
 
-uint64_t instance_morph(uint64_t morph_base) {
+uint64_t instance_morph(DrawRoot draw, uint64_t morph_base) {
 #ifdef INSTANCED
-    return morph_base + uint64_t(gl_InstanceIndex) * MORPH_BLOCK_BYTES;
+    return morph_base + uint64_t(instance_source(draw)) * MORPH_BLOCK_BYTES;
 #else
     return morph_base;
 #endif
@@ -80,7 +90,7 @@ uint64_t instance_morph(uint64_t morph_base) {
 
 void apply_mesh_deformation(inout MeshVertexInput vertex, DrawRoot draw, GeometryRoot geometry, uint index) {
 #ifdef MORPH
-    MorphWeightsGpu morph = MorphWeightsGpu(instance_morph(draw.morph));
+    MorphWeightsGpu morph = MorphWeightsGpu(instance_morph(draw, draw.morph));
     vertex.position += morph_delta(geometry, morph, index, MORPH_STREAM_POSITION);
     vertex.normal += morph_delta(geometry, morph, index, MORPH_STREAM_NORMAL);
 #endif
@@ -97,7 +107,7 @@ void apply_mesh_deformation(inout MeshVertexInput vertex, DrawRoot draw, Geometr
 vec3 previous_position(DrawRoot draw, GeometryRoot geometry, uint index) {
     vec3 position = pull_vec3(geometry.positions, index);
 #ifdef MORPH
-    MorphWeightsGpu morph = MorphWeightsGpu(instance_morph(PreviousPoseGpu(draw.previous_pose).morph));
+    MorphWeightsGpu morph = MorphWeightsGpu(instance_morph(draw, PreviousPoseGpu(draw.previous_pose).morph));
     position += morph_delta(geometry, morph, index, MORPH_STREAM_POSITION);
 #endif
 #if defined(SKINNED) || defined(SKINNED_U16)
@@ -110,7 +120,8 @@ vec3 previous_position(DrawRoot draw, GeometryRoot geometry, uint index) {
 
 void write_mesh_outputs(MeshVertexInput vertex, DrawRoot draw, FrameRoot frame, GeometryRoot geometry) {
 #ifdef INSTANCED
-    InstanceGpu instance = InstanceArray(draw.instance_data).values[gl_InstanceIndex];
+    uint source = instance_source(draw);
+    InstanceGpu instance = InstanceArray(draw.instance_data).values[source];
     mat4 model = instance.model;
     mat3 normal_matrix = mat3(instance.normal_0.xyz, instance.normal_1.xyz, instance.normal_2.xyz);
 #else
@@ -124,7 +135,7 @@ void write_mesh_outputs(MeshVertexInput vertex, DrawRoot draw, FrameRoot frame, 
     // Without previous instance matrices, prev_model is the batch node's motion after the current instance matrix.
     uint64_t previous_instances = PreviousPoseGpu(draw.previous_pose).instances;
     v_prev_clip_pos = previous_instances != 0ul
-        ? frame.prev_view_proj * (PreviousInstanceArray(previous_instances).values[gl_InstanceIndex] * previous)
+        ? frame.prev_view_proj * (PreviousInstanceArray(previous_instances).values[source] * previous)
         : frame.prev_view_proj * (draw.prev_model * (model * previous));
 #else
     v_prev_clip_pos = frame.prev_view_proj * (draw.prev_model * previous);

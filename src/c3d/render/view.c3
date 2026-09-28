@@ -310,12 +310,17 @@ fn void? record_raster_view(
             sort::quicksort(transparent_items, &by_transparent_depth);
         };
 
+        record.frustum = matrices.frustum;
+        DrawItem[][3] cull_groups = { depth_items, transmission_items, transparent_items };
+        CullItem[] view_culls = batch_cull_items(cull_groups[..], &record.frustum);
         ViewEnvironments environments;
         instrumentation::@scope("view.uploads") {
             if (transmission_items.len) acquire_scene_color(renderer, record)!;
             environments = resolve_view_environments(renderer, scene, sheen)!;
             if (record.desc.ray_tracing.reflections) acquire_environment_lut(renderer)!;
+            prepare_cull_stage(renderer, view_culls, record.desc.instance_culling)!;
             record_pending_copies(renderer, &renderer.commands)!;
+            record_instance_cull(renderer, view_culls)!;
             prepare_sampled_targets(renderer, record)!;
         };
 
@@ -349,6 +354,7 @@ fn void? record_raster_view(
                 camera: camera,
                 matrices: matrices,
                 extraction: &extraction,
+                culling: record.desc.instance_culling,
             )!;
             if (shadows.len) {
                 gpu::MappedGpuSpan shadow_span = slot.upload.take(
@@ -452,6 +458,13 @@ fn void? record_raster_view(
                     )!;
                 }
                 if (item.candidate.batch) prev_world = prev_world.mul(maths::inverse_affine(node.world));
+                BatchAddresses addresses = batch_addresses(
+                    candidate: item.candidate,
+                    range:     &item.range,
+                    skin:      item.skin,
+                    morph:     item.morph,
+                    records:   item.instance_data,
+                );
                 gpu::MappedGpuSpan draw_span = slot.upload.take(&renderer.device, DrawRoot::size, STREAM_ALIGNMENT)!;
                 write_draw_root(
                     root:          (DrawRoot*)draw_span.bytes.ptr,
@@ -466,14 +479,14 @@ fn void? record_raster_view(
                       | (ambient_occlusion && group_index == 0 ? shader::DRAW_AMBIENT_OCCLUSION : 0),
                     sheen_lut:     sheen ? renderer.environment_state.sheen_lut.view.index : (gpu::TextureIndex)0,
                     sheen_sampler: sheen ? renderer.environment_state.sheen_sampler : (gpu::SamplerIndex)0,
-                    skin:          item.skin,
-                    morph:         item.morph,
-                    instance_data: item.instance_data,
+                    skin:          addresses.skin,
+                    morph:         addresses.morph,
+                    instance_data: addresses.instance_data,
                     previous_pose: previous_pose,
                     skin_stride:   candidate_skin_stride(item.candidate),
+                    instance_indices: addresses.instance_indices,
                 );
                 item.root = draw_span.address;
-                if (item.candidate.batch) item.range = prepare_cull_range(renderer, item.candidate, item.geometry)!;
             }
         };
 
@@ -945,6 +958,7 @@ fn gpu::GpuAddress? upload_lights(Renderer* renderer, LightGpu[] lights) @privat
  @param instance_data : "First instance record; zero for a mesh."
  @param previous_pose : "PreviousPoseGpu of a deformed or instanced velocity draw; zero otherwise."
  @param skin_stride : "Joints per crowd instance; zero for a shared palette."
+ @param instance_indices : "Visible list of a culled batch range; zero otherwise."
 *>
 fn void write_draw_root(
     DrawRoot* root,
@@ -963,6 +977,7 @@ fn void write_draw_root(
     gpu::GpuAddress instance_data = (gpu::GpuAddress)0,
     gpu::GpuAddress previous_pose = (gpu::GpuAddress)0,
     uint skin_stride = 0,
+    gpu::GpuAddress instance_indices = (gpu::GpuAddress)0,
 ) {
     Mat3 normal = maths::normal_matrix(world);
     *root = {
@@ -984,6 +999,7 @@ fn void write_draw_root(
         .layers        = layers,
         .flags         = flags,
         .skin_stride   = skin_stride,
+        .instance_indices = instance_indices,
     };
 }
 
@@ -995,7 +1011,15 @@ fn gpu::GpuAddress? upload_previous_pose(
     PreviousInstanceCache* instances,
 ) @private {
     MeshCandidate* candidate = item.candidate;
-    PreviousPoseGpu previous = { .skin = item.skin, .morph = item.morph };
+    uint offset = instance_offset(&item.range);
+    BatchAddresses current = batch_addresses(
+        candidate: candidate,
+        range:     &item.range,
+        skin:      item.skin,
+        morph:     item.morph,
+        records:   item.instance_data,
+    );
+    PreviousPoseGpu previous = { .skin = current.skin, .morph = current.morph };
     if (AnimatedCrowd* crowd = candidate.crowd) {
         bool same_count = crowd_pose && crowd_pose.instance_count == crowd.count;
         if (item.skin != (gpu::GpuAddress)0 && same_count) {
@@ -1008,12 +1032,11 @@ fn gpu::GpuAddress? upload_previous_pose(
                 base = upload_bytes(renderer, crowd_pose.palette.ptr, count * Mat4f::size)!;
                 instances.set(key, base);
             }
-            ulong offset = (ulong)candidate.instance_first * crowd.joint_count * Mat4f::size;
-            previous.skin = (gpu::GpuAddress)((ulong)base + offset);
+            previous.skin = offset_by_instances(base, offset, (usz)crowd.joint_count * Mat4f::size);
         }
         if (item.morph != (gpu::GpuAddress)0 && same_count && pose.morphs.len) {
             gpu::GpuAddress base = upload_bytes(renderer, pose.morphs.ptr, crowd.count * MorphWeightsGpu::size)!;
-            previous.morph = (gpu::GpuAddress)((ulong)base + (ulong)candidate.instance_first * MorphWeightsGpu::size);
+            previous.morph = offset_by_instances(base, offset, MorphWeightsGpu::size);
         }
     } else {
         if (item.skin != (gpu::GpuAddress)0 && pose.palette.len == candidate.skin.joints.len) {
@@ -1032,7 +1055,7 @@ fn gpu::GpuAddress? upload_previous_pose(
             base = upload_bytes(renderer, pose.instances.ptr, pose.instance_count * Mat4f::size)!;
             instances.set(key, base);
         }
-        previous.instances = (gpu::GpuAddress)((ulong)base + (ulong)candidate.instance_first * Mat4f::size);
+        previous.instances = offset_by_instances(base, offset, Mat4f::size);
     }
     return upload_bytes(renderer, &previous, PreviousPoseGpu::size);
 }
@@ -1052,6 +1075,7 @@ fn gpu::GpuAddress? upload_bytes(Renderer* renderer, void* data, usz size) @priv
  @param morph : "Morph block address; zero when unmorphed."
  @param instance_data : "First instance record; zero for a mesh."
  @param skin_stride : "Joints per crowd instance; zero for a shared palette."
+ @param instance_indices : "Visible list of a culled batch range; zero otherwise."
 *>
 fn void write_depth_draw_root(
     DrawRoot* root,
@@ -1065,6 +1089,7 @@ fn void write_depth_draw_root(
     gpu::GpuAddress morph = (gpu::GpuAddress)0,
     gpu::GpuAddress instance_data = (gpu::GpuAddress)0,
     uint skin_stride = 0,
+    gpu::GpuAddress instance_indices = (gpu::GpuAddress)0,
 ) {
     *root = {
         .model     = bitcast(world, Mat4f),
@@ -1077,6 +1102,7 @@ fn void write_depth_draw_root(
         .object_id     = object_id,
         .flags         = flags,
         .skin_stride   = skin_stride,
+        .instance_indices = instance_indices,
     };
 }
 
@@ -1177,6 +1203,11 @@ fn void? record_depth_prepass(
     foreach (&item : gbuffer) candidates[count++] = *item.candidate;
     foreach (&item : opaque) candidates[count++] = *item.candidate;
     ShadowDraw[] draws = prepare_shadow_draws(renderer, candidates)!;
+    CullRange[] ranges = alloc::new_array(tmem, CullRange, (sz)draws.len);
+    CullItem[] culls = shadow_cull_items(draws, ranges, &record.frustum);
+    prepare_cull_stage(renderer, culls, record.desc.instance_culling)!;
+    record_pending_copies(renderer, &renderer.commands)!;
+    record_instance_cull(renderer, culls)!;
 
     uint width = record.depth.width;
     uint height = record.depth.height;
@@ -1200,6 +1231,7 @@ fn void? record_depth_prepass(
         record_depth_draws(
             renderer:       renderer,
             draws:          draws,
+            ranges:         ranges,
             frame:          frame,
             view_reflected: view_reflected,
             state:          &state,

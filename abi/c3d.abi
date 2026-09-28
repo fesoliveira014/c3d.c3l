@@ -172,6 +172,9 @@ root DrawRoot {
     TextureIndex sheen_lut;
     SamplerIndex sheen_sampler;
     uint       skin_stride;
+    GpuAddress instance_indices;
+    uint       _pad0;
+    uint       _pad1;
 }
 
 root PreviousPoseGpu {
@@ -179,6 +182,22 @@ root PreviousPoseGpu {
     GpuAddress morph;
     GpuAddress instances;
     GpuAddress _pad0;
+}
+
+const uint INSTANCE_CULL_GROUP_SIZE = 64;
+
+root InstanceCullRoot {
+    GpuAddress instances;
+    GpuAddress visible;
+    GpuAddress args;
+    GpuAddress counter;
+    vec4[6]    planes;
+    vec4       bounds_min;
+    vec4       bounds_max;
+    uint       first;
+    uint       count;
+    uint       _pad0;
+    uint       _pad1;
 }
 
 struct InstanceGpu {

@@ -56,8 +56,11 @@ struct InstanceTable {
  Batch instance range drawn through one indirect command.
 *>
 struct CullRange {
-    gpu::GpuSpan args;
-    uint         count;
+    gpu::GpuSpan    args;
+    uint            count;
+    uint            first;
+    gpu::GpuAddress visible;
+    bool            culled;
 }
 
 <*
@@ -225,7 +228,7 @@ fn CullRange? prepare_cull_range(Renderer* renderer, MeshCandidate* candidate, G
     usz bytes = indirect_args_bytes(&geometry.layout);
     gpu::MappedGpuSpan args = slot.upload.take(&renderer.device, bytes, STREAM_ALIGNMENT)!;
     write_indirect_args(args.bytes, &geometry.layout, candidate.instance_count);
-    return { .args = args.span, .count = candidate.instance_count };
+    return { .args = args.span, .count = candidate.instance_count, .first = candidate.instance_first };
 }
 
 fn void? issue_batch_draw(
@@ -269,7 +272,7 @@ fn void? record_batch_draw(
         geometry: geometry,
         range:    range,
     )!;
-    count_draw(renderer, geometry, range.count);
+    count_draw(renderer, geometry, range.culled ? 0 : range.count);
 }
 
 fn gpu::GpuAddress? resolve_instances(Renderer* renderer, MeshCandidate* candidate) @private {
@@ -284,7 +287,7 @@ fn gpu::GpuAddress? resolve_instances(Renderer* renderer, MeshCandidate* candida
             world:    candidate.node.world,
         )!;
     }
-    return (gpu::GpuAddress)((ulong)slot.records + (ulong)candidate.instance_first * InstanceGpu::size);
+    return slot.records;
 }
 
 fn void? upload_instance_records(

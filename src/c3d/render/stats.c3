@@ -8,6 +8,7 @@ import c3d;
 enum Pass : int {
     UPLOADS,
     CUSTOM_COMPUTE,
+    INSTANCE_CULL,
     SHADOW_ATLAS,
     LIGHT_CULL,
     ACCELERATION_BUILD,
@@ -52,6 +53,10 @@ struct Stats {
     uint  dispatches;
     uint  triangles;
     uint  instances;
+    uint  cull_dispatches;   // this frame
+    uint  cull_overflows;    // this frame: ranges drawn unculled because the arena was full
+    uint  instances_tested;  // the read-back frame, FRAMES_IN_FLIGHT frames late
+    uint  instances_visible; // the read-back frame; never above instances_tested
     uint  culled;
     uint  lights;
     uint  lights_dropped;
