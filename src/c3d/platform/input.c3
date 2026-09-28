@@ -45,7 +45,7 @@ struct Clock {
 }
 
 <*
- Keyboard and mouse state for the current frame.
+ Keyboard, mouse and gamepad state for the current frame.
 *>
 struct Input {
     bool[KEY_COUNT]          keys;
@@ -59,6 +59,7 @@ struct Input {
     bool                     mouse_captured_by_gui;
     bool                     keyboard_captured_by_gui;
     Keymod                   modifiers;
+    Gamepad[GAMEPAD_COUNT]   gamepads;
 }
 
 <*
@@ -90,6 +91,46 @@ fn bool Input.button_down(&self, MouseButton button) => self.mouse_buttons[(usz)
 fn bool Input.button_pressed(&self, MouseButton button) => self.mouse_pressed[(usz)button];
 
 <*
+ Whether the gamepad button is held.
+ @require slot < GAMEPAD_COUNT
+ @require (usz)button < GAMEPAD_BUTTON_COUNT
+*>
+fn bool Input.gamepad_down(&self, GamepadButton button, usz slot = 0) => self.gamepads[slot].buttons[(usz)button];
+
+<*
+ Whether the gamepad button went down this frame.
+ @require slot < GAMEPAD_COUNT
+ @require (usz)button < GAMEPAD_BUTTON_COUNT
+*>
+fn bool Input.gamepad_pressed(&self, GamepadButton button, usz slot = 0) => self.gamepads[slot].pressed[(usz)button];
+
+<*
+ Whether the gamepad button went up this frame.
+ @require slot < GAMEPAD_COUNT
+ @require (usz)button < GAMEPAD_BUTTON_COUNT
+*>
+fn bool Input.gamepad_released(&self, GamepadButton button, usz slot = 0) => self.gamepads[slot].released[(usz)button];
+
+<*
+ Axis value; sticks keep SDL's sign.
+ @require slot < GAMEPAD_COUNT
+ @require (usz)axis < GAMEPAD_AXIS_COUNT
+*>
+fn float Input.gamepad_axis(&self, GamepadAxis axis, usz slot = 0) => self.gamepads[slot].axes[(usz)axis];
+
+<*
+ Stick position with y up.
+ @require slot < GAMEPAD_COUNT
+*>
+fn Vec2 Input.gamepad_stick(&self, GamepadStick stick, usz slot = 0) {
+    Gamepad* gamepad = &self.gamepads[slot];
+    switch (stick) {
+        case LEFT: return { gamepad.axes[(usz)GamepadAxis.LEFTX], -gamepad.axes[(usz)GamepadAxis.LEFTY] };
+        case RIGHT: return { gamepad.axes[(usz)GamepadAxis.RIGHTX], -gamepad.axes[(usz)GamepadAxis.RIGHTY] };
+    }
+}
+
+<*
  Clear the state that lasts a single frame.
  @param [&inout] self : "Input whose transient state is cleared."
 *>
@@ -99,6 +140,10 @@ fn void Input.begin_frame(&self) {
     self.mouse_pressed = {};
     self.mouse_delta = { 0, 0 };
     self.wheel = 0;
+    foreach (&gamepad : self.gamepads) {
+        gamepad.pressed = {};
+        gamepad.released = {};
+    }
 }
 
 <*

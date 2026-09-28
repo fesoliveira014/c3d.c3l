@@ -170,6 +170,11 @@ fn void feed_event(imgui::Io io, platform::Event* event, float density) @local {
             imgui::io::add_focus_event(io, false);
         case RESIZED:
         case QUIT:
+        case GAMEPAD_CONNECTED:
+        case GAMEPAD_DISCONNECTED:
+        case GAMEPAD_BUTTON_DOWN:
+        case GAMEPAD_BUTTON_UP:
+        case GAMEPAD_AXIS_MOTION:
             break;
     }
 }

@@ -9,6 +9,10 @@ $assert $reflect(sdl::KeyboardEvent.down).offset == 36;
 $assert $reflect(sdl::KeyboardEvent.repeat).offset == 37;
 $assert (usz)Scancode.COUNT == KEY_COUNT;
 $assert (usz)sdl::Scancode.COUNT == KEY_COUNT;
+$assert (usz)GamepadButton.COUNT == GAMEPAD_BUTTON_COUNT;
+$assert (usz)sdl::GamepadButton.COUNT == GAMEPAD_BUTTON_COUNT;
+$assert (usz)GamepadAxis.COUNT == GAMEPAD_AXIS_COUNT;
+$assert (usz)sdl::GamepadAxis.COUNT == GAMEPAD_AXIS_COUNT;
 
 <*
  How a window is opened.
@@ -61,6 +65,7 @@ fn void Window.clear_events(&self) {
 
 <*
  Fold one event into the window's input and flags.
+ Never opens or closes a pad; dispatch_event does.
  @param [&inout] self : "Window receiving its own events."
  @param [&in] event : "Borrowed for the call."
  @return "False when the event asks the application to quit."
@@ -150,6 +155,46 @@ fn bool Window.apply_event(&self, sdl::Event* event) {
                 .position = self.input.mouse_position,
                 .scroll   = scroll,
             });
+        case EventType.GAMEPAD_ADDED:
+            usz? slot = gamepad_slot(event.gdevice.which);
+            if (catch slot) break;
+            if (self.input.gamepads[slot].connected) break;
+            self.input.gamepads[slot].connected = true;
+            push_event(self, { .kind = EventKind.GAMEPAD_CONNECTED, .gamepad_slot = slot });
+        case EventType.GAMEPAD_REMOVED:
+            usz? slot = gamepad_slot(event.gdevice.which);
+            if (catch slot) break;
+            self.input.gamepads[slot] = {};
+            push_event(self, { .kind = EventKind.GAMEPAD_DISCONNECTED, .gamepad_slot = slot });
+        case EventType.GAMEPAD_BUTTON_DOWN:
+        case EventType.GAMEPAD_BUTTON_UP:
+            usz? slot = gamepad_slot(event.gbutton.which);
+            if (catch slot) break;
+            usz button = (usz)event.gbutton.button;
+            if (button >= GAMEPAD_BUTTON_COUNT) break;
+            Gamepad* gamepad = &self.input.gamepads[slot];
+            bool down = event.gbutton.down;
+            if (down && !gamepad.buttons[button]) gamepad.pressed[button] = true;
+            if (!down && gamepad.buttons[button]) gamepad.released[button] = true;
+            gamepad.buttons[button] = down;
+            push_event(self, {
+                .kind           = down ? EventKind.GAMEPAD_BUTTON_DOWN : EventKind.GAMEPAD_BUTTON_UP,
+                .gamepad_slot   = slot,
+                .gamepad_button = (GamepadButton)button,
+            });
+        case EventType.GAMEPAD_AXIS_MOTION:
+            usz? slot = gamepad_slot(event.gaxis.which);
+            if (catch slot) break;
+            usz axis = (usz)event.gaxis.axis;
+            if (axis >= GAMEPAD_AXIS_COUNT) break;
+            float value = normalize_axis((GamepadAxis)axis, event.gaxis.value);
+            self.input.gamepads[slot].axes[axis] = value;
+            push_event(self, {
+                .kind         = EventKind.GAMEPAD_AXIS_MOTION,
+                .gamepad_slot = slot,
+                .gamepad_axis = (GamepadAxis)axis,
+                .axis_value   = value,
+            });
         default:
             break;
     }
@@ -207,9 +252,23 @@ fn bool poll_windows(Window*[] windows) {
     bool running = true;
     sdl::Event event;
     while (sdl::poll_event(&event)) {
-        if ((EventType)event.common.type == EventType.QUIT) running = false;
-        foreach (window : windows) window.apply_event(&event);
+        if (!dispatch_event(windows, &event)) running = false;
     }
+    return running;
+}
+
+<*
+ Fold one SDL event into every window, connecting and disconnecting pads.
+ @param windows : "Borrowed live windows, each supplied once."
+ @param [&in] event : "Borrowed for the call."
+ @return "False when the event asks the application to quit."
+*>
+fn bool dispatch_event(Window*[] windows, sdl::Event* event) {
+    EventType type = (EventType)event.common.type;
+    if (type == EventType.GAMEPAD_ADDED) open_gamepad_slot(event.gdevice.which);
+    bool running = type != EventType.QUIT;
+    foreach (window : windows) window.apply_event(event);
+    if (type == EventType.GAMEPAD_REMOVED) close_gamepad_slot(event.gdevice.which);
     return running;
 }
 
@@ -246,7 +305,7 @@ fn WindowDesc default_window_desc(String title, uint width, uint height) {
 
 <*
  Open a native window.
- @return? VIDEO_INIT_FAILED, WINDOW_CREATION_FAILED
+ @return? VIDEO_INIT_FAILED, GAMEPAD_INIT_FAILED, WINDOW_CREATION_FAILED
 *>
 fn Window? create_window(WindowDesc desc) {
     if (!video_users && !sdl::init({ .video = true })) return VIDEO_INIT_FAILED~;
@@ -255,6 +314,8 @@ fn Window? create_window(WindowDesc desc) {
         video_users--;
         if (!video_users) sdl::quit_sub_system({ .video = true });
     }
+    acquire_gamepads()!;
+    defer catch release_gamepads();
 
     sdl::Window* handle;
     @pool() {
@@ -271,7 +332,7 @@ fn Window? create_window(WindowDesc desc) {
     int height;
     sdl::get_window_size_in_pixels(handle, &width, &height);
 
-    return {
+    Window window = {
         .handle = handle,
         .window_id = sdl::get_window_id(handle),
         .width  = (uint)width,
@@ -279,6 +340,8 @@ fn Window? create_window(WindowDesc desc) {
         .pixel_density = sdl::get_window_pixel_density(handle),
         .clock  = { .counter = sdl::get_performance_counter() },
     };
+    seed_gamepads(&window.input);
+    return window;
 }
 
 <*
@@ -288,6 +351,7 @@ fn Window? create_window(WindowDesc desc) {
 fn void destroy_window(Window* window) {
     window.set_text_input(false);
     sdl::destroy_window(window.handle);
+    release_gamepads();
     video_users--;
     if (!video_users) {
         if (clipboard_retained) sdl::stdinc::free(clipboard_retained);
