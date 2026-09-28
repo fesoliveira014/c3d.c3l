@@ -424,7 +424,6 @@ fn void test_hidden_volume_is_not_updated() @test {
     check_validation(&fixture.renderer);
 }
 
-
 fn void test_bounce_brightens_and_tints_the_room() @test {
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
