@@ -189,6 +189,7 @@ fn DocumentGeometry* ModelDocument.geometry(&self, GeometryId reference) {
  @param [&inout] document : "Emptied on success; intact on a fault."
  @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
  @require document.allocator == self.allocator
+ @require self.allocator != tmem
 *>
 fn ModelId? AssetStore.publish_document(&self, ModelDocument* document) {
     ModelId model;

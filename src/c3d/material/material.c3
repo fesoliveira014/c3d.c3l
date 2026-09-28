@@ -35,6 +35,8 @@ const StandardParams STANDARD_PARAMS_DEFAULT = {
 
 const usz MAX_TEXTURE_SLOTS_PER_MATERIAL @private = 15; // a physical material: five standard and ten layer maps
 
+$assert MAX_CUSTOM_TEXTURE_SLOTS <= MAX_TEXTURE_SLOTS_PER_MATERIAL;
+
 <*
  Shading family of a material.
 *>
