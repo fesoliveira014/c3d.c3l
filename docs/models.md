@@ -6,7 +6,8 @@ glTF 2.0 and GLB files through cgltf and `c3d::asset::fbx` reads FBX files throu
 template into live scene nodes. The renderer sees ordinary meshes, cameras and
 lights afterwards and needs no model-specific path. Skeletons and animation
 clips are shared assets; `c3d::anim` plays clips onto instances
-([Animation](animation.md)).
+([Animation](animation.md)). Asset kinds the store does not define are
+registered by their owners ([Custom asset kinds](custom_assets.md)).
 
 ## Load once, instantiate twice
 

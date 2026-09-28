@@ -11,7 +11,7 @@ C3 0.8.3. C3 is pre-1.0; check syntax against the installed compiler and the `c3
 | `module c3d;` | Ids and root faults. `src/c3d/types.c3`, `src/c3d/faults.c3`. |
 | `module c3d::pool <Type, IdType>;` | The generic pool, `src/c3d/pool.c3`. A generic module rather than a generic struct, because C3 rejects methods on a generic struct declared in a non-generic module. |
 | `module c3d::<area>;` | One directory per architecture module: `maths`, `ecs`, `asset`, `scene`, `geometry`, `camera`, `material`, `light`, `anim`, `model`, `spatial`, `platform`, `render`, `shader`, `gui`. Public declarations in `<area>.c3i` where an interface file helps; otherwise one `.c3` per topic. |
-| `module c3d::<area>::<sub>;` | Submodules named in the architecture: `asset::gltf`, `asset::fbx`, `asset::image`, `anim::ik`, `anim::retarget`, `spatial::bvh`, `render::post`, `gui::backend`, `ecs::store`, `shader::compile` (gated by `@feat(C3D_SHADER_COMPILER)`). A submodule that records with the renderer's private helpers opens them with `import c3d::render @public;`. |
+| `module c3d::<area>::<sub>;` | Submodules named in the architecture: `asset::gltf`, `asset::fbx`, `asset::image`, `asset::custom <Type>`, `anim::ik`, `anim::retarget`, `spatial::bvh`, `render::post`, `gui::backend`, `ecs::store`, `shader::compile` (gated by `@feat(C3D_SHADER_COMPILER)`). A submodule that records with the renderer's private helpers opens them with `import c3d::render @public;`. |
 | `module c3d::<area>::internal @private;` | Implementation that must not be visible outside the area. Use only when a symbol would otherwise leak into the public surface. |
 | `module c3d::profile;` | Neutral CPU/GPU capture values, history and export in `addons/c3d_profile.c3l`. Imports only the standard library; faults belong to the add-on. |
 | `module c3d::render::profile_gpu @private;` | GPU query ownership inside the same add-on, gated by `C3D_PROFILE_GPU`. Imports only stdlib, gpu.c3l and neutral profile values; no core Renderer/Scene/id types. |
@@ -99,7 +99,7 @@ return CAPACITY_EXCEEDED~;
 
 # 8. Handles and ids
 
-Use the typed id: `GeometryId geometry`, not `uint geometry`; `gpu::TextureHandle texture`, not `ulong texture`. Ids are generational distinct typedefs of `Id` (never `inline`); a stale id resolves to nothing. Every pool is `Pool{Type, IdType}` and takes only its own id type; `Id` and an id type meet only inside `pool.c3` and in the `AssetStore.find_*` adapters that unpack an `AssetRef`, and no cast between them appears anywhere else.
+Use the typed id: `GeometryId geometry`, not `uint geometry`; `gpu::TextureHandle texture`, not `ulong texture`. Ids are generational distinct typedefs of `Id` (never `inline`); a stale id resolves to nothing. Every pool is `Pool{Type, IdType}` and takes only its own id type; `Id` and an id type meet only inside `pool.c3` and in the `AssetStore.find_*` adapters that unpack an `AssetRef`, and no cast between them appears anywhere else. A custom asset kind's id is `custom::CustomId{T}`, a struct rather than a typedef so that ids of two kinds cannot be cast into each other; `asset::custom_ref` and `asset::custom_id` are its `AssetRef` adapters.
 
 # 9. Call formatting
 

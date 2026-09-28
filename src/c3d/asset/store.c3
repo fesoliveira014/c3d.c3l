@@ -4,6 +4,20 @@ import c3d;
 import c3d::pool;
 import std::collections::map;
 
+<*
+ Payload release of one custom record at store destruction.
+ @param [inout] data : "Payload; arrays came from allocator."
+ @param [in] user : "Pointer given to register."
+*>
+alias CustomFreeFn = fn void (Allocator allocator, void* data, void* user);
+
+alias ErasedDestroy @local = fn void (void* erased, Allocator allocator, CustomFreeFn on_destroy, void* user);
+
+<*
+ Custom asset kinds one process can register.
+*>
+const uint MAX_CUSTOM_ASSET_TYPES = 16; // one CustomSlot per store; a scene has a few add-on kinds
+
 const uint DEFAULT_MAX_GEOMETRIES @local   = 4096; // 15 Asset Store defaults; one mirror slot each in the renderer
 const uint DEFAULT_MAX_TEXTURES @local     = 4096;
 const uint DEFAULT_MAX_MATERIALS @local    = 4096; // one heap slot each in the renderer
@@ -15,12 +29,21 @@ const uint DEFAULT_MAX_CLIPS @local        = 1024; // one record each; key array
 const uint DEFAULT_MAX_SHADERS @local      = 64; // one ShaderRes each in the renderer; a scene has a handful of user shaders
 const uint DEFAULT_MAX_COMPUTE_SHADERS @local = 16; // one ComputeShaderRes each in the renderer; a scene has a few compute stages
 
+uint registered_kind_count @local;
+
 <*
  Key and content revision shared by every asset record.
 *>
 struct AssetHeader {
     String key;
     uint   revision;
+}
+
+struct CustomSlot @private {
+    void*         pool;
+    ErasedDestroy destroy;
+    CustomFreeFn  on_destroy;
+    void*         user;
 }
 
 <*
@@ -55,6 +78,7 @@ struct AssetStore {
     ShaderPool                shaders;
     ComputeShaderPool         compute_shaders;
     HashMap{String, AssetRef} keys;
+    CustomSlot[MAX_CUSTOM_ASSET_TYPES] custom;
 }
 
 <*
@@ -103,6 +127,73 @@ fn SamplerId? AssetStore.find_sampler(&self, String key) {
     AssetRef found = self.find(key)!;
     if (found.kind != AssetKind.SAMPLER) return c3d::INVALID_ARGUMENT~;
     return (SamplerId){ .index = found.id.index, .generation = found.id.generation };
+}
+
+<*
+ Give the type a process-wide kind slot and this store a pool.
+ A repeated call keeps the first capacity and hook.
+ @param on_destroy : "Runs on each live record at store destruction."
+ @param [in] user : "Passed to on_destroy unchanged."
+ @return? c3d::CAPACITY_EXCEEDED
+ @require capacity > 0
+*>
+macro void? AssetStore.register(
+    &self,
+    $Type,
+    uint capacity,
+    CustomFreeFn on_destroy = null,
+    void* user = null,
+) {
+    if (!custom::slot{$Type}) {
+        if (registered_kind_count == MAX_CUSTOM_ASSET_TYPES) return c3d::CAPACITY_EXCEEDED~;
+        registered_kind_count++;
+        custom::slot{$Type} = registered_kind_count;
+    }
+    CustomSlot* slot = &self.custom[custom::slot{$Type} - 1];
+    if (slot.pool) return;
+    *slot = {
+        .pool       = custom::create_erased{$Type}(self.allocator, capacity),
+        .destroy    = &custom::destroy_erased{$Type},
+        .on_destroy = on_destroy,
+        .user       = user,
+    };
+    return;
+}
+
+<*
+ Whether this store has a pool for the type.
+*>
+macro bool AssetStore.is_registered(&self, $Type) {
+    return custom::slot{$Type} != 0 && self.custom[custom::slot{$Type} - 1].pool != null;
+}
+
+<*
+ Pool of the registered kind.
+ @require self.is_registered($Type)
+*>
+macro AssetStore.pool(&self, $Type) {
+    return (custom::CustomPool{$Type}*)self.custom[custom::slot{$Type} - 1].pool;
+}
+
+<*
+ Kind-carrying reference of a custom id, for key registration.
+ @require custom::slot{$Type} != 0
+*>
+macro AssetRef custom_ref($Type, id) {
+    return {
+        .kind = AssetKind.CUSTOM,
+        .slot = custom::slot{$Type},
+        .id   = { .index = id.index, .generation = id.generation },
+    };
+}
+
+<*
+ Custom id of a reference of the type's kind.
+ @return? c3d::INVALID_ARGUMENT
+*>
+macro custom_id($Type, AssetRef ref) {
+    if (ref.kind != AssetKind.CUSTOM || ref.slot != custom::slot{$Type}) return c3d::INVALID_ARGUMENT~;
+    return (custom::CustomId{$Type}){ .index = ref.id.index, .generation = ref.id.generation };
 }
 
 <*
@@ -209,6 +300,9 @@ fn void destroy_asset_store(AssetStore* store) {
         free_string(store.allocator, record.header.key);
         alloc::free(store.allocator, record.desc.compute.ptr);
     }
+    foreach (&slot : store.custom) {
+        if (slot.pool) slot.destroy(slot.pool, store.allocator, slot.on_destroy, slot.user);
+    }
     store.keys.free();
     pool::destroy_pool{GeometryAsset, GeometryId}(&store.geometries);
     pool::destroy_pool{TextureAsset, TextureId}(&store.textures);
@@ -223,24 +317,43 @@ fn void destroy_asset_store(AssetStore* store) {
     *store = {};
 }
 
-fn void? check_key(AssetStore* store, String key) @private {
+<*
+ Fault when a non-empty key is already taken.
+ @param [&in] store
+ @return? c3d::INVALID_ARGUMENT
+*>
+fn void? check_key(AssetStore* store, String key) {
     if (key.len && store.keys.has_key(key)) return c3d::INVALID_ARGUMENT~;
     return;
 }
 
-fn void register_key(AssetStore* store, String key, AssetRef ref) @private {
+<*
+ Map a non-empty key to the reference.
+ @param [&inout] store
+*>
+fn void register_key(AssetStore* store, String key, AssetRef ref) {
     if (key.len) store.keys.set(key, ref);
 }
 
-fn void forget_key(AssetStore* store, String key) @private {
+<*
+ Drop a non-empty key.
+ @param [&inout] store
+*>
+fn void forget_key(AssetStore* store, String key) {
     if (key.len) (void)store.keys.remove(key);
 }
 
-fn String copy_string(Allocator allocator, String key) @private {
+<*
+ Copy of the key in the allocator; an empty key stays empty.
+*>
+fn String copy_string(Allocator allocator, String key) {
     return key.len ? key.copy(allocator) : (String){};
 }
 
-fn void free_string(Allocator allocator, String key) @private {
+<*
+ Free a key made by copy_string.
+*>
+fn void free_string(Allocator allocator, String key) {
     alloc::free(allocator, key.ptr);
 }
 
