@@ -1,6 +1,7 @@
 #version 460
 #include "generated/shader_abi.glsl"
 #include "c3d_abi.glsl"
+#include "buffer_reference.glsl"
 #include "descriptor_heap.glsl"
 #include "probe_atlas.glsl"
 
