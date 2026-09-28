@@ -150,19 +150,19 @@ fn uint pack_instance_records(InstanceGpu[] records, Mat4 node_world, InstancedM
 }
 
 <*
- World matrices of the live instances in draw order: unmirrored first, each group in array order.
- @param [out] worlds : "At least batch.count long."
+ Node-local matrices of the live instances in draw order: unmirrored first, each group in array order.
+ @param [out] locals : "At least batch.count long."
  @param [&in] batch : "Live count above zero."
 *>
-fn void write_instance_worlds(Mat4f[] worlds, Mat4 node_world, InstancedMesh* batch) {
+fn void write_instance_locals(Mat4f[] locals, InstancedMesh* batch) {
     uint written;
     foreach (transform : batch.transforms[:batch.count]) {
         if (scene::transform_mirrored(transform)) continue;
-        worlds[written++] = bitcast(node_world.mul(transform.to_mat4()), Mat4f);
+        locals[written++] = bitcast(transform.to_mat4(), Mat4f);
     }
     foreach (transform : batch.transforms[:batch.count]) {
         if (!scene::transform_mirrored(transform)) continue;
-        worlds[written++] = bitcast(node_world.mul(transform.to_mat4()), Mat4f);
+        locals[written++] = bitcast(transform.to_mat4(), Mat4f);
     }
 }
 

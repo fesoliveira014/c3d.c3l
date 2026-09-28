@@ -14,6 +14,15 @@ import std::math;
 
 const uint NODE_CAPACITY @local = 8;
 const Vec3 JOINT_OFFSET @local = { 10, 0, 0 };
+const Mat4 SENTINEL @local = { .m00 = 7, .m11 = 7, .m22 = 7, .m33 = 7 };
+
+struct BatchHistory @local {
+    Scene        scene;
+    AssetStore   assets;
+    GeometryId   box;
+    MaterialId   red;
+    ViewHistory  history;
+}
 
 fn AssetStore create_store() @local {
     return asset::create_asset_store(mem, {
@@ -359,9 +368,9 @@ fn void test_view_history_instances_follow_draw_order_and_keep_capacity() @test 
     history.publish();
     PoseRecord* pose = history.previous_pose(&scene, node);
     assert(pose.instance_count == 3 && pose.instances.len == 4);
-    assert(same_matrix(pose.instances[0], node.world.mul(transforms[0].to_mat4())));
-    assert(same_matrix(pose.instances[1], node.world.mul(transforms[2].to_mat4())));
-    assert(same_matrix(pose.instances[2], node.world.mul(transforms[1].to_mat4())));
+    assert(same_matrix(pose.instances[0], transforms[0].to_mat4()));
+    assert(same_matrix(pose.instances[1], transforms[2].to_mat4()));
+    assert(same_matrix(pose.instances[2], transforms[1].to_mat4()));
 
     Mat4f* storage = pose.instances.ptr;
     scene.resize_instances(node, 4)!!;
@@ -478,4 +487,112 @@ fn void test_view_history_resizes_the_palette_with_the_binding() @test {
         view_proj:  matrix::IDENTITY4,
     );
     assert(history.poses[mesh.id.index].palette.len == 3);
+}
+
+fn BatchHistory create_batch_history() @local {
+    BatchHistory fixture = {
+        .scene  = scene::create_scene(mem, { .max_nodes = NODE_CAPACITY }),
+        .assets = create_store(),
+    };
+    @pool() {
+        Geometry shape = geometry::box(tmem, 1, 1, 1);
+        fixture.box = fixture.assets.add_geometry(&shape, "box")!!;
+    };
+    fixture.red = fixture.assets.add_material(material::basic({ .color = { 1, 0, 0, 1 } }), "red")!!;
+    return fixture;
+}
+
+fn void destroy_batch_history(BatchHistory* fixture) @local {
+    render::free_view_history(mem, &fixture.history);
+    asset::destroy_asset_store(&fixture.assets);
+    scene::destroy_scene(&fixture.scene);
+}
+
+fn Node* add_pair_batch(BatchHistory* fixture, float spread) @local {
+    Transform[2] transforms = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
+    transforms[0].position = { -spread, 0, 0 };
+    transforms[1].position = { spread, 0, 0 };
+    Node* node = fixture.scene.add_instanced_mesh(
+        geometry:   fixture.box,
+        material:   fixture.red,
+        capacity:   2,
+        transforms: transforms[..],
+    )!!;
+    node.local.position = { 3, 0, 0 };
+    fixture.scene.update_world();
+    return node;
+}
+
+fn void commit_batch(BatchHistory* fixture, Node* node) @local {
+    MeshCandidate[1] candidates = { { .node = node, .batch = fixture.scene.get(node, InstancedMesh) } };
+    fixture.history.commit(
+        allocator:  mem,
+        assets:     &fixture.assets,
+        scene:      &fixture.scene,
+        candidates: candidates[..],
+        view_proj:  matrix::IDENTITY4,
+    );
+}
+
+fn void test_history_rewrites_only_on_a_new_revision() @test {
+    BatchHistory fixture = create_batch_history();
+    defer destroy_batch_history(&fixture);
+    Node* node = add_pair_batch(&fixture, 1);
+    InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
+
+    commit_batch(&fixture, node);
+    PoseRecord* pose = &fixture.history.poses[node.id.index];
+    assert(pose.instance_revision == batch.revision);
+    assert(same_matrix(pose.instances[0], batch.transforms[0].to_mat4()));
+    assert(same_matrix(pose.instances[1], batch.transforms[1].to_mat4()));
+
+    pose.instances[0] = bitcast(SENTINEL, Mat4f);
+    commit_batch(&fixture, node);
+    assert(same_matrix(pose.instances[0], SENTINEL));
+
+    fixture.scene.mark_instances_dirty(node);
+    commit_batch(&fixture, node);
+    assert(same_matrix(pose.instances[0], batch.transforms[0].to_mat4()));
+    assert(pose.instance_revision == batch.revision);
+}
+
+fn void test_history_stamp_survives_discard() @test {
+    BatchHistory fixture = create_batch_history();
+    defer destroy_batch_history(&fixture);
+    Node* node = add_pair_batch(&fixture, 1);
+    InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
+
+    commit_batch(&fixture, node);
+    PoseRecord* pose = &fixture.history.poses[node.id.index];
+    pose.instances[1] = bitcast(SENTINEL, Mat4f);
+    fixture.history.discard();
+    commit_batch(&fixture, node);
+    assert(pose.instance_revision == batch.revision && same_matrix(pose.instances[1], SENTINEL));
+
+    fixture.history.discard();
+    fixture.scene.mark_instances_dirty(node);
+    commit_batch(&fixture, node);
+    assert(pose.instance_revision == batch.revision);
+    assert(same_matrix(pose.instances[1], batch.transforms[1].to_mat4()));
+}
+
+fn void test_history_slot_reuse_clears_the_stamp() @test {
+    BatchHistory fixture = create_batch_history();
+    defer destroy_batch_history(&fixture);
+    Node* first = add_pair_batch(&fixture, 1);
+    usz slot = first.id.index;
+    commit_batch(&fixture, first);
+    fixture.history.publish();
+    fixture.scene.remove(first);
+
+    Node* second = add_pair_batch(&fixture, 4);
+    assert(second.id.index == slot);
+    InstancedMesh* batch = fixture.scene.get(second, InstancedMesh);
+    PoseRecord* pose = &fixture.history.poses[slot];
+    assert(pose.instance_revision == batch.revision);
+    assert(!fixture.history.has_previous(&fixture.scene, second));
+
+    pose.instances[0] = bitcast(SENTINEL, Mat4f);
+    commit_batch(&fixture, second);
+    assert(same_matrix(pose.instances[0], batch.transforms[0].to_mat4()));
 }
