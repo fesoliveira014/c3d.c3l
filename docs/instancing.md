@@ -37,6 +37,7 @@ The instance index is the array position. It is not a generational identity: it 
 ## Drawing
 
 - **Culling.** The batch is culled as a whole against the bound of all live instances, or `local_bounds` when `has_bounds_override` is set. `cast_shadow` and `receive_shadow` apply to every instance.
+- **Indirect draws.** Every batch draws through one indirect command per parity range and pass, with its arguments written by the CPU into the frame upload ring (20 bytes indexed, 16 non-indexed, 32 with alignment), `draw_count` 1 and first instance 0; plain meshes draw directly. `Stats.indirect_draws` counts these draws across every pass, the velocity pass included.
 - **Mirrored instances.** A transform whose scale product is negative mirrors space. The renderer packs non-mirrored instances first and draws each group with its own front face, so a batch holding both makes two draws per pass.
 - **Color.** The instance color multiplies the vertex color, alpha included, in every built-in material. A masked material cuts per instance, and its shadow matches.
 - **Motion blur and TAA.** Each instance moves by its own previous matrix, kept per view while the batch's live count stays the same; after a count change the batch node's motion applies for one rendering.

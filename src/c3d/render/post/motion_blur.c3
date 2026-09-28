@@ -212,14 +212,21 @@ fn void? record_geometry_velocity(Renderer* renderer, ViewRecord* record, DrawIt
         }
 
         GeometryLayout* layout = &item.geometry.layout;
-        if (layout.index_count) {
+        if (item.candidate.batch) {
+            render::issue_batch_draw(
+                renderer: renderer,
+                root:     item.root,
+                geometry: item.geometry,
+                range:    item.range,
+            )!;
+        } else if (layout.index_count) {
             gpu::cmd_draw_indexed(
                 commands:       &renderer.commands,
                 vertex_root:    item.root,
                 fragment_root:  item.root,
                 index_span:     item.geometry.indices,
                 index_count:    layout.index_count,
-                instance_count: item.instance_count,
+                instance_count: 1,
                 index_type:     layout.flags.indices_u16 ? gpu::IndexType.U16 : gpu::IndexType.U32,
             )!;
         } else {
@@ -228,7 +235,7 @@ fn void? record_geometry_velocity(Renderer* renderer, ViewRecord* record, DrawIt
                 vertex_root:    item.root,
                 fragment_root:  item.root,
                 vertex_count:   layout.vertex_count,
-                instance_count: item.instance_count,
+                instance_count: 1,
             )!;
         }
         renderer.stats.draws++;

@@ -41,7 +41,7 @@ struct DrawItem @private {
     gpu::GpuAddress skin;
     gpu::GpuAddress morph;
     gpu::GpuAddress instance_data;
-    uint            instance_count;
+    CullRange       range;
     gpu::GpuAddress root;
     gpu::FrontFace  front_face;
     bool            moved;
@@ -293,7 +293,6 @@ fn void? record_raster_view(
                     .skin      = resolve_candidate_skin(renderer, candidate)!,
                     .morph     = resolve_candidate_morph(renderer, candidate, vertex)!,
                     .instance_data  = candidate.batch ? resolve_instances(renderer, candidate)! : (gpu::GpuAddress)0,
-                    .instance_count = candidate.instance_count,
                     .front_face = model_reflected != view_reflected
                       ? gpu::FrontFace.CLOCKWISE : gpu::FrontFace.COUNTER_CLOCKWISE,
                 };
@@ -474,6 +473,7 @@ fn void? record_raster_view(
                     skin_stride:   candidate_skin_stride(item.candidate),
                 );
                 item.root = draw_span.address;
+                if (item.candidate.batch) item.range = prepare_cull_range(renderer, item.candidate, item.geometry)!;
             }
         };
 
@@ -1390,21 +1390,20 @@ fn void? record_draws(
         }
         bound = wanted;
 
-        record_geometry_draw(
-            renderer:       renderer,
-            root:           item.root,
-            geometry:       item.geometry,
-            instance_count: item.instance_count,
-        )!;
+        if (item.candidate.batch) {
+            record_batch_draw(
+                renderer: renderer,
+                root:     item.root,
+                geometry: item.geometry,
+                range:    item.range,
+            )!;
+        } else {
+            record_geometry_draw(renderer, item.root, item.geometry)!;
+        }
     }
 }
 
-fn void? record_geometry_draw(
-    Renderer* renderer,
-    gpu::GpuAddress root,
-    GpuGeometry* geometry,
-    uint instance_count,
-) @private {
+fn void? record_geometry_draw(Renderer* renderer, gpu::GpuAddress root, GpuGeometry* geometry) @private {
     GeometryLayout* layout = &geometry.layout;
     if (layout.index_count) {
         gpu::cmd_draw_indexed(
@@ -1413,7 +1412,7 @@ fn void? record_geometry_draw(
             fragment_root:  root,
             index_span:     geometry.indices,
             index_count:    layout.index_count,
-            instance_count: instance_count,
+            instance_count: 1,
             index_type:     layout.flags.indices_u16 ? gpu::IndexType.U16 : gpu::IndexType.U32,
         )!;
     } else {
@@ -1422,14 +1421,19 @@ fn void? record_geometry_draw(
             vertex_root:    root,
             fragment_root:  root,
             vertex_count:   layout.vertex_count,
-            instance_count: instance_count,
+            instance_count: 1,
         )!;
     }
+    count_draw(renderer, geometry, 1);
+}
+
+fn void count_draw(Renderer* renderer, GpuGeometry* geometry, uint instances) @private {
     renderer.stats.draws++;
-    renderer.stats.instances += instance_count;
+    renderer.stats.instances += instances;
     if (geometry.topology == Topology.TRIANGLES) {
+        GeometryLayout* layout = &geometry.layout;
         uint triangles = (layout.index_count ? layout.index_count : layout.vertex_count) / 3;
-        renderer.stats.triangles += triangles * instance_count;
+        renderer.stats.triangles += triangles * instances;
     }
 }
 

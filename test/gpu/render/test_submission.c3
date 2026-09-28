@@ -44,6 +44,8 @@ const Vec4 CONVERGED_WEIGHT @private = { 0.9f, 0.9f, 0.9f, 1 }; // history weigh
 const Vec2 BACKGROUND_UV @private = { 0.05f, 0.05f }; // a corner the unit box never covers
 const float BACKGROUND_HISTORY_MINIMUM @private = 0.85f; // converged history keeps 1 - current_weight = 0.9
 const float BLURRED_CENTER_MINIMUM @private = 0.8f; // a few pixels of true motion keep the box center nearly solid; a background velocity clamped at max_velocity smears it dark
+const uint PARITY_RANGES @private = 4; // two batches, each with an unmirrored and a mirrored range
+const uint BATCH_PASSES @private = 4; // shadow layer, depth prepass, forward opaque pass, velocity pass
 
 struct FillRoot @private {
     Vec4 color;
@@ -1024,6 +1026,64 @@ fn Uploads frame_uploads(Renderer* renderer) @private => { renderer.stats.upload
 
 fn void check_uploads(Renderer* renderer, Uploads expected) @private {
     assert(renderer.stats.uploads == expected.count && renderer.stats.upload_bytes == expected.bytes);
+}
+
+fn Node*? add_parity_batch(DeformedScene* target, GeometryId geometry, MaterialId material, float x) @private {
+    Transform[3] transforms = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
+    transforms[0].position = { x, 0.8f, 0 };
+    transforms[1].position = { x, -0.8f, 0 };
+    transforms[2].position = { x + 0.4f, 0, 0 };
+    transforms[2].scale = { -1, 1, 1 };
+    return target.scene.add_instanced_mesh(
+        geometry:   geometry,
+        material:   material,
+        capacity:   3,
+        transforms: transforms[..],
+    );
+}
+
+fn void? render_scene_frame(Fixture* fixture, DeformedScene* target) @private {
+    Renderer* renderer = &fixture.renderer;
+    target.scene.update_world();
+    renderer.begin_frame()!;
+    defer catch render::abort_frame(renderer);
+    renderer.render_view(&target.scene, target.camera, fixture.view)!;
+    renderer.finish_view(fixture.view)!;
+    return renderer.end_frame();
+}
+
+fn void test_batch_draws_are_indirect_on_every_pass() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    GeometryId triangle;
+    @pool() {
+        Geometry listed = {
+            .topology  = Topology.TRIANGLES,
+            .positions = alloc::new_array(tmem, Vec3, 3),
+            .normals   = alloc::new_array(tmem, Vec3, 3),
+        };
+        listed.positions[0] = { -0.3f, -0.3f, 0 };
+        listed.positions[1] = { 0.3f, -0.3f, 0 };
+        listed.positions[2] = { 0, 0.3f, 0 };
+        listed.normals[..] = (Vec3){ 0, 0, 1 };
+        listed.finalize();
+        triangle = fixture.assets.add_geometry(&listed, "indirect/triangle")!!;
+    };
+    DeformedScene target = create_single_box_scene(&fixture, fixture.box, fixture.plain, true)!!;
+    defer scene::destroy_scene(&target.scene);
+    Node* boxes = add_parity_batch(&target, fixture.box, fixture.plain, -1.2f)!!;
+    Node* triangles = add_parity_batch(&target, triangle, fixture.plain, 0.8f)!!;
+    enable_taa(&fixture, fixture.view, motion_blur: true)!!;
+
+    render_scene_frame(&fixture, &target)!!;
+    boxes.local.position.x += 0.1f;
+    triangles.local.position.x += 0.1f;
+    render_scene_frame(&fixture, &target)!!;
+
+    assert(renderer.stats.indirect_draws == PARITY_RANGES * BATCH_PASSES);
+    check_validation(renderer);
 }
 
 fn void test_instance_records_upload_only_on_change() @test {
