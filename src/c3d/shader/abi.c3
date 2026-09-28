@@ -970,6 +970,64 @@ $assert $reflect(ProbeBorderRoot.cell_edge).offset == 4;
 $assert $reflect(ProbeBorderRoot.width).offset == 8;
 $assert $reflect(ProbeBorderRoot.height).offset == 12;
 
+struct RayResultGpu {
+    Vec4f radiance_distance;
+}
+$assert RayResultGpu::size == 16;
+$assert $reflect(RayResultGpu.radiance_distance).offset == 0;
+
+struct ProbeTraceRoot {
+    GpuAddress frame;
+    GpuAddress rays;
+    Vec4f      rotation;
+    uint       volume;
+    uint       first_probe;
+    uint       probe_count;
+    uint       rays_per_probe;
+    float      ray_far;
+    float      cone_spread;
+    uint       _pad0;
+    uint       _pad1;
+}
+$assert ProbeTraceRoot::size == 64;
+$assert $reflect(ProbeTraceRoot.frame).offset == 0;
+$assert $reflect(ProbeTraceRoot.rays).offset == 8;
+$assert $reflect(ProbeTraceRoot.rotation).offset == 16;
+$assert $reflect(ProbeTraceRoot.volume).offset == 32;
+$assert $reflect(ProbeTraceRoot.first_probe).offset == 36;
+$assert $reflect(ProbeTraceRoot.probe_count).offset == 40;
+$assert $reflect(ProbeTraceRoot.rays_per_probe).offset == 44;
+$assert $reflect(ProbeTraceRoot.ray_far).offset == 48;
+$assert $reflect(ProbeTraceRoot.cone_spread).offset == 52;
+$assert $reflect(ProbeTraceRoot._pad0).offset == 56;
+$assert $reflect(ProbeTraceRoot._pad1).offset == 60;
+
+struct ProbeBlendRoot {
+    GpuAddress frame;
+    GpuAddress rays;
+    Vec4f      rotation;
+    uint       volume;
+    uint       first_probe;
+    uint       probe_count;
+    uint       rays_per_probe;
+    uint       kind;
+    float      hysteresis;
+    uint       _pad0;
+    uint       _pad1;
+}
+$assert ProbeBlendRoot::size == 64;
+$assert $reflect(ProbeBlendRoot.frame).offset == 0;
+$assert $reflect(ProbeBlendRoot.rays).offset == 8;
+$assert $reflect(ProbeBlendRoot.rotation).offset == 16;
+$assert $reflect(ProbeBlendRoot.volume).offset == 32;
+$assert $reflect(ProbeBlendRoot.first_probe).offset == 36;
+$assert $reflect(ProbeBlendRoot.probe_count).offset == 40;
+$assert $reflect(ProbeBlendRoot.rays_per_probe).offset == 44;
+$assert $reflect(ProbeBlendRoot.kind).offset == 48;
+$assert $reflect(ProbeBlendRoot.hysteresis).offset == 52;
+$assert $reflect(ProbeBlendRoot._pad0).offset == 56;
+$assert $reflect(ProbeBlendRoot._pad1).offset == 60;
+
 struct EnvironmentGpu {
     TextureIndex           specular_cube;
     SamplerIndex           sampler_index;

@@ -585,6 +585,38 @@ layout(buffer_reference, std430, buffer_reference_align = 4) buffer ProbeBorderR
     uint height;
 };
 
+struct RayResultGpu {
+    vec4 radiance_distance;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer ProbeTraceRoot {
+    uint64_t frame;
+    uint64_t rays;
+    vec4 rotation;
+    uint volume;
+    uint first_probe;
+    uint probe_count;
+    uint rays_per_probe;
+    float ray_far;
+    float cone_spread;
+    uint _pad0;
+    uint _pad1;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer ProbeBlendRoot {
+    uint64_t frame;
+    uint64_t rays;
+    vec4 rotation;
+    uint volume;
+    uint first_probe;
+    uint probe_count;
+    uint rays_per_probe;
+    uint kind;
+    float hysteresis;
+    uint _pad0;
+    uint _pad1;
+};
+
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer EnvironmentGpu {
     uint specular_cube;
     uint sampler_index;

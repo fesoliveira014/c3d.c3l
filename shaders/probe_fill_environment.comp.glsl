@@ -25,6 +25,10 @@ void main() {
         store_storage_texture(root.atlas, ivec2(texel), vec4(moments, 0.0, 0.0));
         return;
     }
+    if (root.environment == 0ul) {
+        store_storage_texture(root.atlas, ivec2(texel), vec4(0.0, 0.0, 0.0, 1.0));
+        return;
+    }
     vec2 encoded = (vec2(local - 1u) + 0.5) / float(root.cell_edge - 2u) * 2.0 - 1.0;
     vec3 direction = decode_octahedral(encoded);
     EnvironmentGpu environment = EnvironmentGpu(root.environment);

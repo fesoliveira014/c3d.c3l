@@ -35,6 +35,9 @@ fn void? stats_panel(Renderer* renderer) {
     imgui::text("Culled: %u", renderer.stats.culled);
     imgui::text("Lights: %u", renderer.stats.lights);
     imgui::text("Lights dropped: %u", renderer.stats.lights_dropped);
+    imgui::text("Probe rays: %u", renderer.stats.probe_rays);
+    imgui::text("Probe updates: %u", renderer.stats.probe_updates);
+    imgui::text("Probe volumes dropped: %u", renderer.stats.probe_volumes_dropped);
     imgui::text("Debug lines: %u", renderer.stats.debug_lines);
 
     imgui::text("Uploads: %u", renderer.stats.uploads);

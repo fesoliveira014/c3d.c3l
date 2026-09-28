@@ -8,6 +8,19 @@ const uint PROBE_COUNT_MIN = 2;
 <* Most probes on one axis of a volume. *>
 const uint PROBE_COUNT_MAX = 32; // 48 MiB of atlases per volume at 32^3; 384 MiB for eight
 
+<* Fewest rays a probe casts per update. *>
+const uint PROBE_RAYS_MIN = 32; // below it a one-update estimate, which a first sweep shows, is mostly noise
+
+<* Most rays a probe casts per update. *>
+const uint PROBE_RAYS_MAX = 256; // the blend reads every ray per texel; 128 MiB of ray results for 32^3 probes
+
+<* Ray budget of a constructed volume. *>
+const ProbeUpdateDesc PROBE_UPDATE_DEFAULT = {
+    .rays_per_probe   = 128,   // 4.2 M primary rays and 64 MiB of ray results for 32^3 probes per update
+    .probes_per_frame = 0,
+    .hysteresis       = 0.97f, // 95 percent of a change after 99 updates of a probe
+};
+
 const float PROBE_NORMAL_BIAS_SCALE @local = 0.05f;
 const float PROBE_VIEW_BIAS_SCALE @local = 0.1f;
 const float PROBE_MAX_DISTANCE_SCALE @local = 1.5f;
@@ -16,17 +29,26 @@ const float PROBE_MAX_DISTANCE_SCALE @local = 1.5f;
 enum ProbeFill {
     NONE,
     ENVIRONMENT,
+    SCENE,
+}
+
+<* Per-update ray budget and temporal blend of a SCENE volume. *>
+struct ProbeUpdateDesc {
+    uint  rays_per_probe;
+    uint  probes_per_frame; // 0 or at least the probe count: every probe each update
+    float hysteresis;       // share of the previous texel kept per update, in [0, 1)
 }
 
 <* Grid of light probes centered on its node, axis aligned; node rotation and scale are ignored. *>
 struct ProbeVolume {
-    Vec3      half_extents;
-    uint[<3>] counts;       // probes per axis
-    float     normal_bias;  // world units along the surface normal
-    float     view_bias;    // world units toward the viewer
-    float     energy;
-    float     max_distance; // visibility clamp, world units
-    ProbeFill fill;
+    Vec3            half_extents;
+    uint[<3>]       counts;       // probes per axis
+    float           normal_bias;  // world units along the surface normal
+    float           view_bias;    // world units toward the viewer
+    float           energy;
+    float           max_distance; // visibility clamp, world units
+    ProbeFill       fill;
+    ProbeUpdateDesc update;
 }
 
 <*
@@ -70,7 +92,9 @@ fn bool probe_volume_valid(ProbeVolume* volume) {
     foreach (scalar : scalars) {
         if (!math::is_finite(scalar) || scalar < 0) return false;
     }
-    return true;
+    ProbeUpdateDesc* update = &volume.update;
+    if (update.rays_per_probe < PROBE_RAYS_MIN || update.rays_per_probe > PROBE_RAYS_MAX) return false;
+    return math::is_finite(update.hysteresis) && update.hysteresis >= 0 && update.hysteresis < 1;
 }
 
 <*
@@ -82,7 +106,13 @@ fn bool probe_volume_valid(ProbeVolume* volume) {
  @pure
 *>
 fn ProbeVolume probe_volume(Vec3 half_extents, uint[<3>] counts, ProbeFill fill = ProbeFill.ENVIRONMENT) {
-    ProbeVolume volume = { .half_extents = half_extents, .counts = counts, .energy = 1, .fill = fill };
+    ProbeVolume volume = {
+        .half_extents = half_extents,
+        .counts       = counts,
+        .energy       = 1,
+        .fill         = fill,
+        .update       = PROBE_UPDATE_DEFAULT,
+    };
     Vec3 spacing = volume.spacing();
     float smallest = math::min(spacing.x, spacing.y, spacing.z);
     float largest = math::max(spacing.x, spacing.y, spacing.z);

@@ -4,7 +4,7 @@
 #include "constants.glsl"
 #include "brdf.glsl"
 
-const float GOLDEN_RATIO_CONJUGATE = 0.618034;
+const float GOLDEN_RATIO_CONJUGATE = 0.618034; // mirrored as GOLDEN_RATIO_CONJUGATE in sequence.c3
 const float VNDF_MIN_VIEW_Z = 1e-4; // grazing G-buffer normals can face away from the eye
 
 // z up; density cos(theta) / PI.
@@ -33,6 +33,20 @@ vec3 sample_ggx_vndf(vec2 u, vec3 view_tangent, float alpha) {
     float sin_theta = sqrt(max(1.0 - z * z, 0.0));
     vec3 half_stretched = vec3(sin_theta * cos(phi), sin_theta * sin(phi), z) + stretched;
     return normalize(vec3(half_stretched.xy * alpha, max(half_stretched.z, 0.0)));
+}
+
+// Mirrored as spherical_fibonacci in sequence.c3.
+vec3 spherical_fibonacci(uint index, uint count) {
+    float z = 1.0 - (2.0 * float(index) + 1.0) / float(count);
+    float radius = sqrt(max(1.0 - z * z, 0.0));
+    float phi = 2.0 * PI * fract(float(index) * GOLDEN_RATIO_CONJUGATE);
+    return vec3(radius * cos(phi), radius * sin(phi), z);
+}
+
+// A unit quaternion as xyz vector part and w scalar part, the layout of std's Quat.
+vec3 quaternion_rotate(vec4 rotation, vec3 vector) {
+    vec3 twice = 2.0 * cross(rotation.xyz, vector);
+    return vector + rotation.w * twice + cross(rotation.xyz, twice);
 }
 
 float cosine_hemisphere_pdf(float cosine) {

@@ -8,10 +8,10 @@ import c3d;
 enum Pass : int {
     UPLOADS,
     CUSTOM_COMPUTE,
+    PROBE_UPDATE,
     INSTANCE_CULL,
     SHADOW_ATLAS,
     LIGHT_CULL,
-    PROBE_UPDATE,
     ACCELERATION_BUILD,
     PATH_TRACE,
     DEPTH_PREPASS,
@@ -62,6 +62,8 @@ struct Stats {
     uint  lights;
     uint  lights_dropped;
     uint  probe_volumes_dropped; // this frame, per failed acquisition: two views of one scene count a volume twice
+    uint  probe_rays;            // this frame: primary probe rays; shadow rays are not counted
+    uint  probe_updates;         // this frame: scene updates of probe volumes
     ViewId cluster_view;
     uint  cluster_count;
     uint  cluster_overflows;

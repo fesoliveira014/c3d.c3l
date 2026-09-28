@@ -30,6 +30,10 @@ struct ProbeFillState @private {
     ProbeFillIdentity irradiance;          // a zero environment id: no irradiance fill
     float             visibility_distance;
     bool              visibility_filled;
+    bool              scene_defined;       // texels hold defined values for scene updates
+    bool              scene_swept;         // every probe holds at least one scene estimate
+    uint              cursor;              // next probe the scene round-robin visits
+    Vec3              traced_origin;       // grid origin of the last scene update
 }
 
 <*
@@ -44,7 +48,9 @@ struct ProbeVolumeRes {
     Target            irradiance;
     Target            visibility;
     ProbeFillState    fill;
-    bool              fill_recorded;       // a discarded frame clears fill
+    ProbeFillState    frame_fill;          // fill at begin_frame; a discarded frame restores it
+    bool              fill_recorded;
+    ulong             updated_frame;       // frame_index + 1 of the last scene update
     gpu::TextureState frame_irradiance_state;
     gpu::TextureState frame_visibility_state;
 }
@@ -54,15 +60,30 @@ struct ProbeVolumePipelines @private {
     gpu::PipelineHandle border;
 }
 
+struct ProbeSceneUpdate @private {
+    usz            slot;
+    ProbeScenePlan plan;
+}
+
 struct ProbeFillRecording @private {
     Scene*          scene;
     EnvironmentRes* lighting;
     gpu::GpuAddress environment;
     bool            environment_ready;
+    ProbeSceneUpdate[shader::PROBE_VOLUME_CAPACITY] updates;
+    usz             update_count;
 }
 
 fn bool ProbeFillState.filled(&self) {
     return self.irradiance.environment.generation != 0 && self.visibility_filled;
+}
+
+fn bool ProbeFillState.in_hit_set(&self) {
+    return self.filled() || self.scene_defined;
+}
+
+fn bool ProbeFillState.in_view_set(&self) {
+    return self.filled() || self.scene_swept;
 }
 
 fn bool probe_fill_identity_equals(ProbeFillIdentity* first, ProbeFillIdentity* second) @private {
@@ -80,6 +101,7 @@ fn ProbeFillWork plan_probe_fill(
 ) @private {
     switch (fill) {
         case NONE:
+        case SCENE:
             return {};
         case ENVIRONMENT:
             if (!current) {
@@ -93,6 +115,9 @@ fn ProbeFillWork plan_probe_fill(
             state.irradiance = *current;
             state.visibility_distance = max_distance;
             state.visibility_filled = true;
+            state.scene_defined = false;
+            state.scene_swept = false;
+            state.cursor = 0;
             return work;
     }
 }
@@ -119,13 +144,31 @@ fn usz order_view_probe_volumes(
     uint view_layers,
     usz[] order,
 ) @private {
+    return order_probe_volumes(mirrors, scene, view_layers, false, order);
+}
+
+<*
+ @require order.len >= shader::PROBE_VOLUME_CAPACITY
+*>
+fn usz order_hit_probe_volumes(ProbeVolumeRes[] mirrors, Scene* scene, usz[] order) @private {
+    return order_probe_volumes(mirrors, scene, uint::max, true, order);
+}
+
+fn usz order_probe_volumes(
+    ProbeVolumeRes[] mirrors,
+    Scene* scene,
+    uint layers,
+    bool hit_set,
+    usz[] order,
+) @local {
     float[shader::PROBE_VOLUME_CAPACITY] box_volumes;
     usz count;
     foreach (usz index, &mirror : mirrors) {
-        if (mirror.scene != scene.identity || !mirror.fill.filled()) continue;
+        if (mirror.scene != scene.identity) continue;
+        if (!(hit_set ? mirror.fill.in_hit_set() : mirror.fill.in_view_set())) continue;
         ProbeVolume* volume = scene.world.get(mirror.entity, ProbeVolume);
         Node* node = scene.node(mirror.entity);
-        if (!node.visible_effective || !(node.layers & view_layers)) continue;
+        if (!node.visible_effective || !(node.layers & layers)) continue;
 
         float box_volume = volume.half_extents.x * volume.half_extents.y * volume.half_extents.z;
         usz position = count;
@@ -183,6 +226,7 @@ fn void? create_probe_atlases(Renderer* renderer, ProbeVolumeRes* mirror, uint[<
     mirror.counts = counts;
     mirror.slices_per_row = probe_slices_per_row(counts);
     mirror.fill = {};
+    mirror.frame_fill = {};
     mirror.frame_irradiance_state = mirror.irradiance.state;
     mirror.frame_visibility_state = mirror.visibility.state;
 }
@@ -201,14 +245,19 @@ fn void sweep_probe_volumes(Renderer* renderer, Scene* scene) @private {
     }
 }
 
-fn ProbeVolumeRes* find_probe_volume(Renderer* renderer, ulong scene, Entity entity) @local {
+fn ProbeVolumeRes* find_probe_volume(Renderer* renderer, ulong scene, Entity entity) @private {
     foreach (&mirror : renderer.probe_volumes) {
         if (mirror.scene == scene && c3d::same_id(mirror.entity, entity)) return mirror;
     }
     return null;
 }
 
-fn void? record_probe_volumes(Renderer* renderer, Scene* scene, EnvironmentRes* lighting) @private {
+fn void? record_probe_volumes(
+    Renderer* renderer,
+    Scene* scene,
+    EnvironmentRes* lighting,
+    gpu::GpuAddress trace_root,
+) @private {
     sweep_probe_volumes(renderer, scene);
     if (!scene.count(ProbeVolume)) return;
 
@@ -231,6 +280,7 @@ fn void? record_probe_volumes(Renderer* renderer, Scene* scene, EnvironmentRes* 
             current:   lighting ? &identity : null,
         )!;
     };
+    if (recording.update_count) record_probe_updates(renderer, &recording, trace_root)!;
 }
 
 <*
@@ -244,6 +294,8 @@ fn void? resolve_probe_volume(
     ProbeFillIdentity* current,
 ) @private {
     ulong scene = recording.scene.identity;
+    Node* node = recording.scene.node(entity);
+    bool scene_due = volume.fill == ProbeFill.SCENE && probe_scene_due(renderer, recording.scene, entity);
     ProbeVolumeRes* mirror = find_probe_volume(renderer, scene, entity);
     if (mirror) {
         mirror.last_frame = renderer.frame_index;
@@ -257,7 +309,7 @@ fn void? resolve_probe_volume(
     ProbeFillState state = mirror ? mirror.fill : {};
     ProbeFillWork work = plan_probe_fill(&state, volume.fill, current, volume.max_distance);
     if (!mirror) {
-        if (work == (ProbeFillWork){}) return;
+        if (work == (ProbeFillWork){} && !scene_due) return;
         usz? slot = choose_probe_slot(&renderer.probe_volumes, scene, renderer.frame_index);
         if (catch slot) {
             renderer.stats.probe_volumes_dropped++;
@@ -268,12 +320,25 @@ fn void? resolve_probe_volume(
         *mirror = { .scene = scene, .entity = entity, .last_frame = renderer.frame_index };
         defer catch *mirror = {};
         create_probe_atlases(renderer, mirror, volume.counts)!;
+        state = {};
     }
 
+    ProbeScenePlan plan;
+    if (scene_due) {
+        Vec3 spacing = volume.spacing();
+        plan = plan_probe_scene(
+            state:            &state,
+            origin:           node.world_position() - volume.half_extents,
+            smallest_spacing: math::min(spacing.x, spacing.y, spacing.z),
+            probe_count:      volume.probe_count(),
+            desc:             volume.update,
+        );
+    }
     mirror.fill = state;
-    if (work == (ProbeFillWork){}) return;
+    if (work == (ProbeFillWork){} && !scene_due) return;
+
     mirror.fill_recorded = true;
-    if (work.irradiance) {
+    if (work.irradiance || plan.clear) {
         record_probe_atlas_fill(
             renderer:     renderer,
             recording:    recording,
@@ -281,9 +346,10 @@ fn void? resolve_probe_volume(
             cell_edge:    shader::PROBE_IRRADIANCE_CELL,
             kind:         shader::PROBE_ATLAS_IRRADIANCE,
             max_distance: volume.max_distance,
+            clear:        plan.clear,
         )!;
     }
-    if (work.visibility) {
+    if (work.visibility || plan.clear) {
         record_probe_atlas_fill(
             renderer:     renderer,
             recording:    recording,
@@ -291,7 +357,12 @@ fn void? resolve_probe_volume(
             cell_edge:    shader::PROBE_VISIBILITY_CELL,
             kind:         shader::PROBE_ATLAS_VISIBILITY,
             max_distance: volume.max_distance,
+            clear:        plan.clear,
         )!;
+    }
+    if (scene_due) {
+        mirror.updated_frame = renderer.frame_index + 1;
+        recording.updates[recording.update_count++] = { .slot = (usz)(mirror - &renderer.probe_volumes[0]), .plan = plan };
     }
 }
 
@@ -302,6 +373,7 @@ fn void? record_probe_atlas_fill(
     uint cell_edge,
     uint kind,
     float max_distance,
+    bool clear,
 ) @private {
     acquire_probe_pipelines(renderer)!;
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
@@ -309,13 +381,15 @@ fn void? record_probe_atlas_fill(
         // The fill reads the SH buffer an environment preparation may have written this frame.
         gpu::Barrier environment_written = { .before = { .compute }, .after = { .compute } };
         gpu::cmd_barrier(&renderer.commands, &environment_written)!;
-        recording.environment = pack_lighting_environment(
-            renderer:    renderer,
-            environment: recording.lighting,
-            intensity:   recording.scene.environment_intensity,
-            rotation:    recording.scene.environment_rotation,
-            sheen:       false,
-        )!;
+        if (recording.lighting) {
+            recording.environment = pack_lighting_environment(
+                renderer:    renderer,
+                environment: recording.lighting,
+                intensity:   recording.scene.environment_intensity,
+                rotation:    recording.scene.environment_rotation,
+                sheen:       false,
+            )!;
+        }
         recording.environment_ready = true;
     }
 
@@ -323,7 +397,7 @@ fn void? record_probe_atlas_fill(
         atlas.transition(&renderer.commands, gpu::storage_at({ .compute }, { .write }))!;
         gpu::MappedGpuSpan fill_root = slot.upload.take(&renderer.device, ProbeFillRoot::size, STREAM_ALIGNMENT)!;
         *(ProbeFillRoot*)fill_root.bytes.ptr = {
-            .environment  = recording.environment,
+            .environment  = clear ? (gpu::GpuAddress)0 : recording.environment,
             .atlas        = atlas.view.index,
             .width        = atlas.width,
             .height       = atlas.height,
@@ -355,6 +429,16 @@ fn gpu::GpuAddress? pack_probe_volumes(Renderer* renderer, Scene* scene, uint vi
     usz[shader::PROBE_VOLUME_CAPACITY] order;
     usz count = order_view_probe_volumes(&renderer.probe_volumes, scene, view_layers, &order);
     if (!count) return (gpu::GpuAddress)0;
+    return pack_probe_set(renderer, scene, order[:count]);
+}
+
+fn gpu::GpuAddress? pack_probe_set(
+    Renderer* renderer,
+    Scene* scene,
+    usz[] order,
+    bool unit_energy = false,
+) @private {
+    usz count = order.len;
 
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan span = slot.upload.take(&renderer.device, ProbeVolumeSetGpu::size, STREAM_ALIGNMENT)!;
@@ -366,7 +450,7 @@ fn gpu::GpuAddress? pack_probe_volumes(Renderer* renderer, Scene* scene, uint vi
         Vec3 origin = scene.node(mirror.entity).world_position() - volume.half_extents;
         Vec3 spacing = volume.spacing();
         set.volumes[index] = {
-            .origin_energy        = { origin.x, origin.y, origin.z, volume.energy },
+            .origin_energy        = { origin.x, origin.y, origin.z, unit_energy ? 1 : volume.energy },
             .spacing_max_distance = { spacing.x, spacing.y, spacing.z, volume.max_distance },
             .biases               = { volume.normal_bias, volume.view_bias, 0, 0 },
             .count_x              = mirror.counts.x,
@@ -385,6 +469,7 @@ fn void snapshot_probe_states(Renderer* renderer) @private {
     foreach (&mirror : renderer.probe_volumes) {
         mirror.frame_irradiance_state = mirror.irradiance.state;
         mirror.frame_visibility_state = mirror.visibility.state;
+        mirror.frame_fill = mirror.fill;
         mirror.fill_recorded = false;
     }
 }
@@ -399,8 +484,9 @@ fn void restore_probe_states(Renderer* renderer) @private {
 fn void discard_probe_fills(Renderer* renderer) @private {
     foreach (&mirror : renderer.probe_volumes) {
         if (!mirror.fill_recorded) continue;
-        mirror.fill = {};
+        mirror.fill = mirror.frame_fill;
         mirror.fill_recorded = false;
+        mirror.updated_frame = 0;
     }
 }
 
