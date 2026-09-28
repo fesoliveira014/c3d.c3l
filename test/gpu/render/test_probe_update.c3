@@ -124,13 +124,12 @@ fn ProbeVolumeRes* mirror_of(Fixture* fixture, Scene* scene, Node* node) @privat
     return null;
 }
 
-// Largest or mean irradiance channel over the interior texels of the probes that are not in a wall.
-fn float interior_irradiance(Fixture* fixture, ProbeRoom* room, bool mean = false) @private {
+// Mean irradiance channel over the interior texels of the probes that are not in a wall.
+fn float interior_irradiance(Fixture* fixture, ProbeRoom* room) @private {
     ProbeVolumeRes* mirror = mirror_of(fixture, &room.scene, room.volume);
     Vec4f[] texels = read_atlas(fixture, &mirror.irradiance)!!;
     assert_finite(texels);
     uint edge = shader::PROBE_IRRADIANCE_CELL;
-    float largest;
     float sum;
     uint samples;
     for (uint z = 1; z + 1 < ROOM_COUNTS.z; z++) {
@@ -141,9 +140,7 @@ fn float interior_irradiance(Fixture* fixture, ProbeRoom* room, bool mean = fals
                     for (uint texel_x = 1; texel_x + 1 < edge; texel_x++) {
                         usz texel = (usz)(cell.y * edge + texel_y) * mirror.irradiance.width + (usz)(cell.x * edge + texel_x);
                         for (usz channel = 0; channel < 3; channel++) {
-                            float value = texels[texel][channel];
-                            largest = math::max(largest, value);
-                            sum += value;
+                            sum += texels[texel][channel];
                             samples++;
                         }
                     }
@@ -151,7 +148,7 @@ fn float interior_irradiance(Fixture* fixture, ProbeRoom* room, bool mean = fals
             }
         }
     }
-    return mean ? sum / (float)samples : largest;
+    return sum / (float)samples;
 }
 
 fn Node*? add_slab(Scene* scene, MaterialId material, GeometryId box, Vec3 center, Vec3 size, String name) @private {
@@ -236,11 +233,11 @@ fn void test_closed_box_has_no_leak() @test {
     defer destroy_probe_view(&fixture, &probe_view);
 
     render_room_frames(&fixture, &room, probe_view.view, 1)!!;
-    float closed = interior_irradiance(&fixture, &room, mean: true);
+    float closed = interior_irradiance(&fixture, &room);
     room.roof.visible = false;
     room.scene.update_world();
     render_room_frames(&fixture, &room, probe_view.view, OPEN_ROOM_UPDATES)!!;
-    float open = interior_irradiance(&fixture, &room, mean: true);
+    float open = interior_irradiance(&fixture, &room);
     io::eprintfn("closed room irradiance %f, open %f", closed, open);
     assert(open > LIT_IRRADIANCE);
     assert(closed < DARK_SHARE * open);
@@ -284,11 +281,11 @@ fn void test_moved_volume_restarts_into_the_dark() @test {
     room.volume.local.position = FAR_AWAY + ROOM_CENTER;
     room.scene.update_world();
     render_room_frames(&fixture, &room, probe_view.view, 3)!!;
-    float outside = interior_irradiance(&fixture, &room, mean: true);
+    float outside = interior_irradiance(&fixture, &room);
     room.volume.local.position = ROOM_CENTER;
     room.scene.update_world();
     render_room_frames(&fixture, &room, probe_view.view, 1)!!;
-    float inside = interior_irradiance(&fixture, &room, mean: true);
+    float inside = interior_irradiance(&fixture, &room);
     io::eprintfn("moved volume irradiance: outside %f, inside after the move %f", outside, inside);
     assert(outside > LIT_IRRADIANCE);
     assert(inside < DARK_SHARE * outside);
@@ -308,9 +305,9 @@ fn void test_bounce_with_high_energy_stays_finite() @test {
     defer destroy_probe_view(&fixture, &probe_view);
 
     render_room_frames(&fixture, &room, probe_view.view, STABILITY_FIRST)!!;
-    float first = interior_irradiance(&fixture, &room, mean: true);
+    float first = interior_irradiance(&fixture, &room);
     render_room_frames(&fixture, &room, probe_view.view, STABILITY_SECOND - STABILITY_FIRST)!!;
-    float second = interior_irradiance(&fixture, &room, mean: true);
+    float second = interior_irradiance(&fixture, &room);
     io::eprintfn("lamp room mean irradiance after %d updates %f, after %d %f", STABILITY_FIRST, first, STABILITY_SECOND, second);
     assert(first > 0 && math::is_finite(second));
     assert(math::abs(second - first) <= STABILITY_TOLERANCE * first);
@@ -377,8 +374,8 @@ fn void test_two_scenes_update_in_one_frame() @test {
         fixture.renderer.end_frame()!!;
         assert(fixture.renderer.stats.probe_updates == 2);
     }
-    float closed_irradiance = interior_irradiance(&fixture, &closed, mean: true);
-    float open_irradiance = interior_irradiance(&fixture, &open, mean: true);
+    float closed_irradiance = interior_irradiance(&fixture, &closed);
+    float open_irradiance = interior_irradiance(&fixture, &open);
     io::eprintfn("two scenes: closed %f, open %f", closed_irradiance, open_irradiance);
     assert(open_irradiance > LIT_IRRADIANCE);
     assert(closed_irradiance < DARK_SHARE * open_irradiance);
