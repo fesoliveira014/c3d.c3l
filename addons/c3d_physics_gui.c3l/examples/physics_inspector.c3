@@ -485,6 +485,7 @@ fn void? run(
     usz sink_peak;
     renderer.prepare_scene(scene)!;
     uint frame;
+    double panels_ms;
     while (window.poll()) {
         Input* input = &window.input;
         if (input.key_released(platform::Scancode.ESCAPE) && !input.keyboard_captured_by_gui) break;
@@ -505,12 +506,14 @@ fn void? run(
         defer {
             if (gui_renderer.frame_open) gui_renderer.finish_frame();
         }
+        time::Clock panels_started = clock::now();
         draw_panels(
             renderer:  renderer,
             scene:     scene,
             selection: &selection,
             panel:     &panel,
         )!;
+        panels_ms += (double)(long)panels_started.to_now() / 1_000_000;
 
         handle_keys(
             input:   input,
@@ -577,6 +580,7 @@ fn void? run(
         level:     &level,
         sink_peak: sink_peak,
     );
+    if (frame) io::printfn("panels: %.3f ms a frame (scene, physics and stats)", panels_ms / frame);
 }
 
 fn int main(String[] args) {
