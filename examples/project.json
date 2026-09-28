@@ -304,6 +304,12 @@
         "src/ambient_occlusion.c3"
       ]
     },
+    "probe_volume": {
+      "type": "executable",
+      "sources": [
+        "src/probe_volume.c3"
+      ]
+    },
     "shading_paths": {
       "type": "executable",
       "sources": [
