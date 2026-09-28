@@ -69,6 +69,7 @@ const uint  DEMO_LIMP @local = 120;
 const uint  DEMO_RECORD_STOP @local = 300;
 const uint  DEMO_RECOVER @local = 420;
 const uint  DEMO_SELECT @local = 450;
+const uint  DEMO_SELECT_WALKER @local = 600;
 
 struct FreeCamera @local {
     Vec3  position;
@@ -537,6 +538,7 @@ fn void? run(
         }
         $if $feat(C3D_PHYSICS_GUI_CHARACTER):
             drive_inspector_character(&walker, input);
+            if (options.demo && frame == DEMO_SELECT_WALKER) selection.selected = walker.node.id;
         $endif
         float step = panel.step_dt(delta);
         if (step > 0) {

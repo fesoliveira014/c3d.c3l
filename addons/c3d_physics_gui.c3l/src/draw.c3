@@ -338,7 +338,7 @@ fn void queries_section(PhysicsPanel* panel) @local {
 }
 
 fn void recording_section(PhysicsPanel* panel) @local {
-    if (!imgui::collapsing_header("Recording", {})) return;
+    if (!imgui::collapsing_header("Recording", { .default_open = true })) return;
     PhysicsWorld* physics = panel.physics;
     uint kibibytes = (uint)(panel.recording_capacity / KIBIBYTE);
     if (imgui::input_scalar("Start size (KiB)", imgui::DATA_TYPE_U32, &kibibytes)) {
