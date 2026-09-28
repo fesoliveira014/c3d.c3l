@@ -48,6 +48,7 @@ const float IMPULSE @local = 20;
 const float RAY_LENGTH @local = 200;
 const float SPAWN_DISTANCE @local = 2;
 const float LAUNCH_SPEED @local = 15;
+const float BOX_FRICTION @local = 0.2f; // below the level's, so the friction mix decides every box contact
 const float FREE_LOOK_RADIANS_PER_PIXEL @local = 0.003f;
 const float FREE_PITCH_LIMIT @local = 1.5f; // avoids the poles, where the up vector degenerates
 const float FREE_SPEED @local = 8;
@@ -289,6 +290,7 @@ fn void spawn_box(
     collider.half_extents = { 0.5f, 0.5f, 0.5f };
     collider.contact_events = true;
     collider.hit_events = true;
+    collider.material.friction = BOX_FRICTION;
     BodyDesc body = physics::default_body_desc(DYNAMIC);
     body.linear_velocity = forward * LAUNCH_SPEED;
     if (catch excuse = physics.add_body(node, body, (&collider)[:1])) {
