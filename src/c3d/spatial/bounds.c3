@@ -55,8 +55,8 @@ fn bool instanced_mesh_is_live(AssetStore* assets, InstancedMesh* batch) {
 }
 
 <*
- World bound of the live instances as of the batch revision: override, else the kept node-local aggregate.
- Writes batch.aggregate when its identity is stale; observable scene state does not change.
+ World bound of the batch's live instances.
+ Writes the kept node-local batch.aggregate when its identity is stale; observable scene state does not change.
  @param [&in] assets : "Resolves the live geometry record."
  @param [&in] node : "World matrix as left by the last update_world."
  @param [&inout] batch : "Live geometry id and live count above zero."

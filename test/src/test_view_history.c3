@@ -57,6 +57,51 @@ fn MeshCandidate[2] candidates_of(Node* first, Node* second) @local {
     return { { .node = first }, { .node = second } };
 }
 
+fn BatchHistory create_batch_history() @local {
+    BatchHistory fixture = {
+        .scene  = scene::create_scene(mem, { .max_nodes = NODE_CAPACITY }),
+        .assets = create_store(),
+    };
+    @pool() {
+        Geometry shape = geometry::box(tmem, 1, 1, 1);
+        fixture.box = fixture.assets.add_geometry(&shape, "box")!!;
+    };
+    fixture.red = fixture.assets.add_material(material::basic({ .color = { 1, 0, 0, 1 } }), "red")!!;
+    return fixture;
+}
+
+fn void destroy_batch_history(BatchHistory* fixture) @local {
+    render::free_view_history(mem, &fixture.history);
+    asset::destroy_asset_store(&fixture.assets);
+    scene::destroy_scene(&fixture.scene);
+}
+
+fn Node* add_pair_batch(BatchHistory* fixture, float spread) @local {
+    Transform[2] transforms = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
+    transforms[0].position = { -spread, 0, 0 };
+    transforms[1].position = { spread, 0, 0 };
+    Node* node = fixture.scene.add_instanced_mesh(
+        geometry:   fixture.box,
+        material:   fixture.red,
+        capacity:   2,
+        transforms: transforms[..],
+    )!!;
+    node.local.position = { 3, 0, 0 };
+    fixture.scene.update_world();
+    return node;
+}
+
+fn void commit_batch(BatchHistory* fixture, Node* node) @local {
+    MeshCandidate[1] candidates = { { .node = node, .batch = fixture.scene.get(node, InstancedMesh) } };
+    fixture.history.commit(
+        allocator:  mem,
+        assets:     &fixture.assets,
+        scene:      &fixture.scene,
+        candidates: candidates[..],
+        view_proj:  matrix::IDENTITY4,
+    );
+}
+
 fn void test_view_history_reports_previous_model_only_for_matching_owner() @test {
     Scene scene = scene::create_scene(mem, { .max_nodes = NODE_CAPACITY });
     defer scene::destroy_scene(&scene);
@@ -487,51 +532,6 @@ fn void test_view_history_resizes_the_palette_with_the_binding() @test {
         view_proj:  matrix::IDENTITY4,
     );
     assert(history.poses[mesh.id.index].palette.len == 3);
-}
-
-fn BatchHistory create_batch_history() @local {
-    BatchHistory fixture = {
-        .scene  = scene::create_scene(mem, { .max_nodes = NODE_CAPACITY }),
-        .assets = create_store(),
-    };
-    @pool() {
-        Geometry shape = geometry::box(tmem, 1, 1, 1);
-        fixture.box = fixture.assets.add_geometry(&shape, "box")!!;
-    };
-    fixture.red = fixture.assets.add_material(material::basic({ .color = { 1, 0, 0, 1 } }), "red")!!;
-    return fixture;
-}
-
-fn void destroy_batch_history(BatchHistory* fixture) @local {
-    render::free_view_history(mem, &fixture.history);
-    asset::destroy_asset_store(&fixture.assets);
-    scene::destroy_scene(&fixture.scene);
-}
-
-fn Node* add_pair_batch(BatchHistory* fixture, float spread) @local {
-    Transform[2] transforms = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
-    transforms[0].position = { -spread, 0, 0 };
-    transforms[1].position = { spread, 0, 0 };
-    Node* node = fixture.scene.add_instanced_mesh(
-        geometry:   fixture.box,
-        material:   fixture.red,
-        capacity:   2,
-        transforms: transforms[..],
-    )!!;
-    node.local.position = { 3, 0, 0 };
-    fixture.scene.update_world();
-    return node;
-}
-
-fn void commit_batch(BatchHistory* fixture, Node* node) @local {
-    MeshCandidate[1] candidates = { { .node = node, .batch = fixture.scene.get(node, InstancedMesh) } };
-    fixture.history.commit(
-        allocator:  mem,
-        assets:     &fixture.assets,
-        scene:      &fixture.scene,
-        candidates: candidates[..],
-        view_proj:  matrix::IDENTITY4,
-    );
 }
 
 fn void test_history_rewrites_only_on_a_new_revision() @test {

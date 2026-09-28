@@ -23,16 +23,16 @@ struct InstanceAggregate {
  aggregate is kept by the library from the arrays under revision; applications do not write it.
 *>
 struct InstancedMesh {
-    GeometryId  geometry;
-    MaterialId  material;
-    Transform[] transforms;
-    Vec4[]      colors;
-    uint        count;
-    bool        cast_shadow;
-    bool        receive_shadow;
-    bool        trace;
-    bool        has_bounds_override;
-    Aabb        local_bounds;
+    GeometryId        geometry;
+    MaterialId        material;
+    Transform[]       transforms;
+    Vec4[]            colors;
+    uint              count;
+    bool              cast_shadow;
+    bool              receive_shadow;
+    bool              trace;
+    bool              has_bounds_override;
+    Aabb              local_bounds;
     uint              revision; // compared for equality only; never 0, so a renderer slot at 0 always uploads
     InstanceAggregate aggregate;
 }
