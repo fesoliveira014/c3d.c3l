@@ -71,6 +71,9 @@ struct BenchmarkOptions @local {
     String model_path;
     uint probe_volumes;
     uint[<3>] probe_counts;
+    ProbeFill probe_fill;
+    uint probe_window;
+    bool point_shadows;
 }
 
 struct Orbit @local {
@@ -221,6 +224,7 @@ fn BenchmarkOptions? parse_options(String[] args) @local {
         .selection = LightSelection.CLUSTERED,
         .lights = 64, .capacity = 64, .range = 0.08f, .shadows = true,
         .probe_counts = { 16, 8, 8 },
+        .probe_fill = ProbeFill.ENVIRONMENT,
     };
     for (usz index = 1; index < args.len; index++) {
         if (bench_loop::parse_flag(args, &index, &options.flags, "gltf_viewer")!) continue;
@@ -253,6 +257,19 @@ fn BenchmarkOptions? parse_options(String[] args) @local {
             case "--capacity": options.capacity = value.to_uint()!;
             case "--range": options.range = value.to_float()!;
             case "--probe-volumes": options.probe_volumes = value.to_uint()!;
+            case "--probe-window": options.probe_window = value.to_uint()!;
+            case "--probe-fill":
+                switch (value) {
+                    case "environment": options.probe_fill = ProbeFill.ENVIRONMENT;
+                    case "scene": options.probe_fill = ProbeFill.SCENE;
+                    default: return c3d::INVALID_ARGUMENT~;
+                }
+            case "--point-shadows":
+                switch (value) {
+                    case "on": options.point_shadows = true;
+                    case "off": options.point_shadows = false;
+                    default: return c3d::INVALID_ARGUMENT~;
+                }
             case "--probe-counts":
                 String[] counts = value.tsplit(",");
                 if (counts.len != 3) return c3d::INVALID_ARGUMENT~;
@@ -282,7 +299,7 @@ fn Vec3 light_color(uint index) @local {
     }
 }
 
-fn void? place_point_lights(Scene* scene, Aabb bounds, uint count, float range) @local {
+fn void? place_point_lights(Scene* scene, Aabb bounds, uint count, float range, bool shadows) @local {
     Vec3 extent = bounds.max - bounds.min;
     uint columns = math::max(1u, (uint)math::ceil(math::sqrt((float)count)));
     uint rows = (count + columns - 1) / columns;
@@ -290,12 +307,19 @@ fn void? place_point_lights(Scene* scene, Aabb bounds, uint count, float range) 
     for (uint index = 0; index < count; index++) {
         float across = ((float)(index % columns) + 0.5f) / (float)columns;
         float along = ((float)(index / columns) + 0.5f) / (float)rows;
-        Node* node = scene.add_light(light::point(light_color(index), BENCHMARK_LIGHT_INTENSITY, range))!;
+        Light point = light::point(light_color(index), BENCHMARK_LIGHT_INTENSITY, range);
+        point.shadow.enabled = shadows;
+        Node* node = scene.add_light(point)!;
         node.local.position = { bounds.min.x + extent.x * across, height, bounds.min.z + extent.z * along };
     }
 }
 
-fn void? place_probe_volumes(Scene* scene, Aabb bounds, uint volumes, uint[<3>] counts) @local {
+fn void? place_probe_volumes(
+    Scene* scene,
+    Aabb bounds,
+    BenchmarkOptions options,
+) @local {
+    uint volumes = options.probe_volumes;
     if (!volumes) return;
     uint split = volumes == 1 ? 1 : 2;
     Vec3 half_extents = (bounds.max - bounds.min) / (float)(2 * split);
@@ -305,7 +329,9 @@ fn void? place_probe_volumes(Scene* scene, Aabb bounds, uint volumes, uint[<3>] 
                 Node* node = scene.add_node(name: "probe_volume")!;
                 uint[<3>] octant = { x, y, z };
                 node.local.position = bounds.min + half_extents * (Vec3)(octant * 2 + 1);
-                scene.add(node, light::probe_volume(half_extents, counts));
+                ProbeVolume volume = light::probe_volume(half_extents, options.probe_counts, options.probe_fill);
+                volume.update.probes_per_frame = options.probe_window;
+                scene.add(node, volume);
             }
         }
     }
@@ -352,8 +378,14 @@ fn Node*? populate_benchmark_scene(
     Light sun = light::directional({ 1, 0.95f, 0.85f }, LIGHT_INTENSITY, options.shadows);
     Node* sun_node = scene.add_light(sun, name: "sun")!;
     sun_node.local.rotation = maths::look_rotation((Vec3){ -0.5f, -1, -0.6f }.normalize(), { 0, 1, 0 });
-    place_point_lights(scene, bounds, options.lights, options.range * math::max(extent.x, extent.z))!;
-    place_probe_volumes(scene, bounds, options.probe_volumes, options.probe_counts)!;
+    place_point_lights(
+        scene:   scene,
+        bounds:  bounds,
+        count:   options.lights,
+        range:   options.range * math::max(extent.x, extent.z),
+        shadows: options.point_shadows,
+    )!;
+    place_probe_volumes(scene, bounds, options)!;
     io::eprintfn("model=%s nodes=%d meshes=%d", options.model_path, template.nodes.len, template.meshes.len);
     return place_camera(scene, bounds);
 }
@@ -372,14 +404,15 @@ fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkOptions options) @local 
 
 fn void print_banner(BenchmarkOptions options, bool timestamps_active) @local {
     BenchmarkFlags flags = options.flags;
-    io::eprintfn("mode=%s shading=%s lights=%d shadows=%s range=%.3f capacity=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s depth_prepass=%s ambient_occlusion=%s reflections=%s probe_volumes=%d probe_counts=%dx%dx%d",
+    io::eprintfn("mode=%s shading=%s lights=%d shadows=%s range=%.3f capacity=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s depth_prepass=%s ambient_occlusion=%s reflections=%s probe_volumes=%d probe_counts=%dx%dx%d probe_fill=%s probe_window=%d point_shadows=%s",
         options.selection == LightSelection.FLAT || options.shading == ShadingPath.PATH_TRACED ? "flat" : "clustered",
         bench_loop::shading_name(options.shading), options.lights, options.shadows,
         options.range, options.capacity, flags.width, flags.height, flags.warmup, flags.frames,
         flags.validation, flags.gpu_timings, timestamps_active, flags.capture,
         flags.window ? "window" : "none", flags.panel, flags.depth_prepass,
         bench_loop::ambient_occlusion_name(flags.ambient_occlusion), flags.reflections ? "on" : "off",
-        options.probe_volumes, options.probe_counts.x, options.probe_counts.y, options.probe_counts.z);
+        options.probe_volumes, options.probe_counts.x, options.probe_counts.y, options.probe_counts.z,
+        options.probe_fill == ProbeFill.SCENE ? "scene" : "environment", options.probe_window, options.point_shadows);
 }
 
 fn void? run_benchmark(BenchmarkOptions options) @local {
