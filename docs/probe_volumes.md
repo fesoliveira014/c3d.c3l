@@ -59,9 +59,9 @@ estimate into the atlases: `texel = mix(estimate, previous, update.hysteresis)`.
 
 A hit adds its diffuse direct light, its emission and the bounce the probe atlases already hold
 (`albedo / PI` times the irradiance at the hit), so light bounces further with every update. Misses read the
-lighting environment (or the flat ambient without one). Back faces return no light and mark the probe's
-view of that direction as blocked. Every update rotates its ray set by a rotation drawn from the frame
-index.
+lighting environment (or the flat ambient without one). Back faces return no light, count in the
+probe's irradiance with their weight and mark the probe's view of that direction as blocked. Every update
+rotates its ray set by a rotation drawn from the frame index.
 
 - **Lights.** Hits are lit by every light on a visible node with nonzero layers, whatever the camera sees
   and whatever the light's layers say: a light hidden from one camera by a layer still lights the probes.
@@ -84,6 +84,10 @@ index.
   hit. A scene with a `SCENE` volume prepares the software scene trace every frame it renders, which walks
   every traceable mesh and batch instance.
 - **Two scenes in one frame** both update; the software trace is rebuilt for each.
+- **Probes inside or behind geometry.** A probe inside a wall sees mostly back faces and reads dark, so it
+  carries no light into a closed room. Points near such probes weight them low through the visibility term,
+  not to zero, so a surface close to a wall or floor with probes in or behind it can read darker than the
+  SH. Probes are not moved out of geometry or switched off.
 - **Faults.** A scene with a due `SCENE` volume can make `render_view` fault as a ray-traced view does:
   `c3d::CAPACITY_EXCEEDED` when the scene has more traceable instances than
   `RendererDesc.max_trace_instances`, `c3d::ASSET_DATA_UNAVAILABLE` when a traceable geometry's CPU arrays
@@ -93,6 +97,17 @@ Cost per update: `window x rays_per_probe` primary rays (`Stats.probe_rays`; sha
 most one per hit and shadowing light), five dispatches (trace, two blends, two border copies over the whole
 atlas), and a ray buffer of 16 bytes per ray at the largest window seen (64 MiB for 32 x 32 x 32 probes at
 128 rays), kept until `destroy_renderer`. `Pass.PROBE_UPDATE` times fills and updates.
+
+Measured on an RTX 4090 over Sponza at 3840 x 2160, `Pass.PROBE_UPDATE` median per frame:
+
+| Volume | Sun only | 64 shadowing point lights |
+| --- | --- | --- |
+| 8 x 4 x 8 probes, 128 rays, every probe | 0.69 ms | 0.95 ms |
+| 16 x 16 x 16 probes, 128 rays, window 512 | 0.65 ms | 0.80 ms |
+| 32 x 32 x 32 probes, 128 rays, window 512 | 0.70 ms | |
+
+The last row differs from the second only by the border copies over the larger atlases. A ray-traced
+reflection view records in 0.21 ms of CPU with a `SCENE` volume and 0.18 ms without one.
 
 ## Which volume lights a surface
 

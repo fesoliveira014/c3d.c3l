@@ -299,7 +299,13 @@ fn Vec3 light_color(uint index) @local {
     }
 }
 
-fn void? place_point_lights(Scene* scene, Aabb bounds, uint count, float range, bool shadows) @local {
+fn void? place_point_lights(
+    Scene* scene,
+    Aabb bounds,
+    uint count,
+    float range,
+    bool shadows,
+) @local {
     Vec3 extent = bounds.max - bounds.min;
     uint columns = math::max(1u, (uint)math::ceil(math::sqrt((float)count)));
     uint rows = (count + columns - 1) / columns;
@@ -314,11 +320,7 @@ fn void? place_point_lights(Scene* scene, Aabb bounds, uint count, float range, 
     }
 }
 
-fn void? place_probe_volumes(
-    Scene* scene,
-    Aabb bounds,
-    BenchmarkOptions options,
-) @local {
+fn void? place_probe_volumes(Scene* scene, Aabb bounds, BenchmarkOptions options) @local {
     uint volumes = options.probe_volumes;
     if (!volumes) return;
     uint split = volumes == 1 ? 1 : 2;
