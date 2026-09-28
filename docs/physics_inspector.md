@@ -19,7 +19,7 @@ PhysicsPanel panel = gui::create_physics_panel(mem, &physics, &scene, &selection
 defer gui::destroy_physics_panel(&panel);
 gui::expose_physics_components();   // after register_physics and create_gui_renderer
 
-// each frame
+// each frame, inside the frame's @pool(): labels, queries and contact lists use tmem
 gui_renderer.new_frame();
 gui::scene_panel(&scene, &selection);
 gui::physics_panel(&panel);

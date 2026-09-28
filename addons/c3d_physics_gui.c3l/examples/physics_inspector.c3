@@ -490,89 +490,91 @@ fn void? run(
         Input* input = &window.input;
         if (input.key_released(platform::Scancode.ESCAPE) && !input.keyboard_captured_by_gui) break;
         if (options.frames && frame == options.frames) break;
-        if (options.demo) {
-            play_demo(
-                frame:   frame,
+        @pool() {
+            if (options.demo) {
+                play_demo(
+                    frame:   frame,
+                    panel:   &panel,
+                    physics: physics,
+                    scene:   scene,
+                    level:   &level,
+                    camera:  &camera,
+                );
+            }
+            frame++;
+            float delta = window.clock.delta;
+            gui_renderer.new_frame();
+            defer {
+                if (gui_renderer.frame_open) gui_renderer.finish_frame();
+            }
+            time::Clock panels_started = clock::now();
+            draw_panels(
+                renderer:  renderer,
+                scene:     scene,
+                selection: &selection,
+                panel:     &panel,
+            )!;
+            panels_ms += (double)(long)panels_started.to_now() / 1_000_000;
+
+            handle_keys(
+                input:   input,
                 panel:   &panel,
                 physics: physics,
                 scene:   scene,
                 level:   &level,
-                camera:  &camera,
             );
-        }
-        frame++;
-        float delta = window.clock.delta;
-        gui_renderer.new_frame();
-        defer {
-            if (gui_renderer.frame_open) gui_renderer.finish_frame();
-        }
-        time::Clock panels_started = clock::now();
-        draw_panels(
-            renderer:  renderer,
-            scene:     scene,
-            selection: &selection,
-            panel:     &panel,
-        )!;
-        panels_ms += (double)(long)panels_started.to_now() / 1_000_000;
+            if (!input.mouse_captured_by_gui && input.button_pressed(platform::MouseButton.LEFT)) {
+                spawn_box(
+                    scene:   scene,
+                    physics: physics,
+                    level:   &level,
+                    camera:  &camera,
+                );
+            }
+            if (!input.mouse_captured_by_gui && input.button_pressed(platform::MouseButton.MIDDLE)) {
+                push_under_cursor(
+                    scene:    scene,
+                    physics:  physics,
+                    level:    &level,
+                    pixel:    input.mouse_position,
+                    viewport: { renderer.output_width, renderer.output_height },
+                );
+            }
+            $if $feat(C3D_PHYSICS_GUI_CHARACTER):
+                drive_inspector_character(&walker, input);
+                if (options.demo && frame == DEMO_SELECT_WALKER) selection.selected = walker.node.id;
+            $endif
+            float step = panel.step_dt(delta);
+            if (step > 0) {
+                float swing = (float)math::sin(window.clock.total * PLATFORM_RATE);
+                level.platform.local.position.x = PLATFORM_HOME.x + PLATFORM_AMPLITUDE * swing;
+            }
+            apply_free_camera(camera: &camera, input: input, camera_node: level.camera_node, delta_seconds: delta);
 
-        handle_keys(
-            input:   input,
-            panel:   &panel,
-            physics: physics,
-            scene:   scene,
-            level:   &level,
-        );
-        if (!input.mouse_captured_by_gui && input.button_pressed(platform::MouseButton.LEFT)) {
-            spawn_box(
-                scene:   scene,
-                physics: physics,
-                level:   &level,
-                camera:  &camera,
-            );
-        }
-        if (!input.mouse_captured_by_gui && input.button_pressed(platform::MouseButton.MIDDLE)) {
-            push_under_cursor(
-                scene:    scene,
-                physics:  physics,
-                level:    &level,
-                pixel:    input.mouse_position,
-                viewport: { renderer.output_width, renderer.output_height },
-            );
-        }
-        $if $feat(C3D_PHYSICS_GUI_CHARACTER):
-            drive_inspector_character(&walker, input);
-            if (options.demo && frame == DEMO_SELECT_WALKER) selection.selected = walker.node.id;
-        $endif
-        float step = panel.step_dt(delta);
-        if (step > 0) {
-            float swing = (float)math::sin(window.clock.total * PLATFORM_RATE);
-            level.platform.local.position.x = PLATFORM_HOME.x + PLATFORM_AMPLITUDE * swing;
-        }
-        apply_free_camera(camera: &camera, input: input, camera_node: level.camera_node, delta_seconds: delta);
+            anim::update(assets, scene, step);
+            scene.update_world();
+            time::Clock started = clock::now();
+            physics.update(step);
+            panel.record_events((float)(long)started.to_now() / 1_000_000);
+            physics.update_ragdolls();
+            scene.flush_removals();
+            scene.update_world();
 
-        anim::update(assets, scene, step);
-        scene.update_world();
-        time::Clock started = clock::now();
-        physics.update(step);
-        panel.record_events((float)(long)started.to_now() / 1_000_000);
-        physics.update_ragdolls();
-        scene.flush_removals();
-        scene.update_world();
+            sink.clear();
+            panel.debug_draw(&sink);
+            sink_peak = math::max(sink_peak, panel.sink_segments + panel.sink_dropped);
+            gui_renderer.finish_frame();
 
-        sink.clear();
-        panel.debug_draw(&sink);
-        sink_peak = math::max(sink_peak, panel.sink_segments + panel.sink_dropped);
-        gui_renderer.finish_frame();
-
-        platform::sync_window(window, renderer);
-        draw_frame(
-            renderer:     renderer,
-            scene:        scene,
-            camera_node:  level.camera_node,
-            gui_renderer: &gui_renderer,
-            sink:         &sink,
-            info:         { .time = window.clock.total, .delta = window.clock.delta },
-        )!;
+            platform::sync_window(window, renderer);
+            draw_frame(
+                renderer:     renderer,
+                scene:        scene,
+                camera_node:  level.camera_node,
+                gui_renderer: &gui_renderer,
+                sink:         &sink,
+                info:         { .time = window.clock.total, .delta = window.clock.delta },
+            )!;
+        };
     }
     print_readings(
         panel:     &panel,
