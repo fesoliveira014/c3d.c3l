@@ -71,6 +71,7 @@ struct ViewDesc {
     RayTracingDesc       ray_tracing;
     AmbientOcclusionDesc ambient_occlusion;
     PathTraceDesc        path_trace;
+    bool                 instance_culling;
 }
 
 <*
@@ -332,6 +333,7 @@ struct ViewStats {
 struct ViewRecord {
     bool                                 live;
     ViewDesc                             desc;
+    Frustum                              frustum; // of the rendering in progress; the depth prepass culls with it
     Target                               hdr_color;
     Target                               depth;
     Target                               scene_color;
@@ -436,16 +438,17 @@ alias ViewPool = Pool{ViewRecord, ViewId};
 *>
 fn ViewDesc default_view_desc() {
     return {
-        .output        = ViewOutput.WINDOW,
-        .render_scale  = 1,
-        .color         = OutputMode.DISPLAY_LDR,
-        .post          = post::default_post_stack(),
-        .shading       = ShadingPath.FORWARD,
-        .depth_prepass = true,
-        .lights        = LightSelection.FLAT,
-        .clusters      = default_cluster_desc(),
-        .ray_tracing   = { .max_reflection_roughness = RT_REFLECTION_ROUGHNESS_DEFAULT },
-        .path_trace    = PATH_TRACE_DEFAULT,
+        .output           = ViewOutput.WINDOW,
+        .render_scale     = 1,
+        .color            = OutputMode.DISPLAY_LDR,
+        .post             = post::default_post_stack(),
+        .shading          = ShadingPath.FORWARD,
+        .depth_prepass    = true,
+        .lights           = LightSelection.FLAT,
+        .clusters         = default_cluster_desc(),
+        .ray_tracing      = { .max_reflection_roughness = RT_REFLECTION_ROUGHNESS_DEFAULT },
+        .path_trace       = PATH_TRACE_DEFAULT,
+        .instance_culling = true,
     };
 }
 
@@ -454,17 +457,18 @@ fn ViewDesc default_view_desc() {
 *>
 fn ViewDesc texture_view_desc(RenderTargetId target, OutputMode color = OutputMode.LINEAR_HDR) {
     return {
-        .output        = ViewOutput.TEXTURE,
-        .target        = target,
-        .render_scale  = 1,
-        .color         = color,
-        .post          = post::default_post_stack(),
-        .shading       = ShadingPath.FORWARD,
-        .depth_prepass = true,
-        .lights        = LightSelection.FLAT,
-        .clusters      = default_cluster_desc(),
-        .ray_tracing   = { .max_reflection_roughness = RT_REFLECTION_ROUGHNESS_DEFAULT },
-        .path_trace    = PATH_TRACE_DEFAULT,
+        .output           = ViewOutput.TEXTURE,
+        .target           = target,
+        .render_scale     = 1,
+        .color            = color,
+        .post             = post::default_post_stack(),
+        .shading          = ShadingPath.FORWARD,
+        .depth_prepass    = true,
+        .lights           = LightSelection.FLAT,
+        .clusters         = default_cluster_desc(),
+        .ray_tracing      = { .max_reflection_roughness = RT_REFLECTION_ROUGHNESS_DEFAULT },
+        .path_trace       = PATH_TRACE_DEFAULT,
+        .instance_culling = true,
     };
 }
 

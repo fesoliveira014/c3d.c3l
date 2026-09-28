@@ -26,6 +26,12 @@ fn void? stats_panel(Renderer* renderer) {
     imgui::text("Dispatches: %u", renderer.stats.dispatches);
     imgui::text("Triangles: %u", renderer.stats.triangles);
     imgui::text("Instances: %u", renderer.stats.instances);
+    uint tested = renderer.stats.instances_tested;
+    uint visible_instances = renderer.stats.instances_visible;
+    double visible_percent = tested ? 100.0 * visible_instances / tested : 0;
+    imgui::text("Visible instances: %u of %u (%.1f%%)", visible_instances, tested, visible_percent);
+    imgui::text("Cull dispatches: %u", renderer.stats.cull_dispatches);
+    imgui::text("Cull overflows: %u", renderer.stats.cull_overflows);
     imgui::text("Culled: %u", renderer.stats.culled);
     imgui::text("Lights: %u", renderer.stats.lights);
     imgui::text("Lights dropped: %u", renderer.stats.lights_dropped);

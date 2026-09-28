@@ -155,6 +155,8 @@ void main() {
 
 The same source compiled with `DEPTH_ONLY` is the `depth` form; `write_mesh_outputs` then writes only what the depth stage reads. Compiled with `INSTANCED`, and with both defines, it is the instanced pair; `write_mesh_outputs` then reads the instance's matrices and color. `FrameRoot.jitter_time.z` is scene time.
 
+An instanced stage that reads per-instance data itself indexes it with `instance_source(draw)`, never `gl_InstanceIndex`. With [instance culling](instancing.md#instance-culling) on, `gl_InstanceIndex` is the position in the visible list and `instance_source` maps it back to the instance; with culling off both are equal. `write_mesh_outputs` and `apply_mesh_deformation` already use it.
+
 Limits of a custom vertex stage:
 
 - It has one compiled form per pass. The renderer does not select `SKINNED`, `SKINNED_U16` or `MORPH` forms of user SPIR-V; compile with the defines that match the geometry when `apply_mesh_deformation` should skin or morph, or leave them out for rigid meshes. `DrawRoot.skin` and `DrawRoot.morph` are written either way.
@@ -164,7 +166,7 @@ Limits of a custom vertex stage:
   `sample_custom_map(material, slot, uv0, uv1, frame.mip_bias)`. The depth prepass cuts custom
   alpha coverage unbiased, so a masked custom material keeps the unbiased sample for its alpha:
   a biased one cuts different coverage than the prepass tests `EQUAL` against.
-- A displaced mesh needs an authored `Mesh.local_bounds` override when the displacement can leave the geometry bounds; culling and shadow fitting use bounds, not vertices.
+- A displaced mesh needs an authored `Mesh.local_bounds` override when the displacement can leave the geometry bounds; culling and shadow fitting use bounds, not vertices. A displaced batch sets `InstancedMesh.local_bounds` with `has_bounds_override`; its instances are then not culled one by one.
 - A displacement that changes the surface orientation must adjust `vertex.normal` and `vertex.tangent` itself; the pulse example is a uniform translation and leaves them alone.
 
 ## In-process compilation

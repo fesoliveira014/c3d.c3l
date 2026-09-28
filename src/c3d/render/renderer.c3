@@ -75,6 +75,7 @@ struct RendererDesc {
     uint             max_shadow_layers;
     uint             max_trace_instances;
     uint             max_instance_batches;
+    usz              instance_cull_bytes;
     bool             ray_queries;
     bool             ray_tracing_pipelines;
 }
@@ -117,6 +118,12 @@ struct Renderer {
     ulong                   frame_index;
     DeformationCache        deformation;
     InstanceTable           instances;
+    CullArena[FRAMES_IN_FLIGHT] cull_arenas;
+    CullReadback[FRAMES_IN_FLIGHT] cull_readbacks;
+    gpu::PipelineHandle     instance_cull_pipeline;
+    usz                     instance_cull_bytes;
+    bool                    cull_counter_cleared;
+    uint                    cull_tested;
     SceneTrace              scene_trace;
     RtContext               rt;
 
@@ -271,6 +278,7 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
         instrumentation::@scope("renderer.readback") {
             collect_gpu_profile(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
             read_cluster_stats(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
+            read_cull_stats(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
         };
         instrumentation::@scope("renderer.retire") {
             drain_retired(&self.device, &slot.environment_temporaries);
@@ -286,6 +294,7 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
         };
         reset_upload_ring(self, slot)!;
         reset_deformation_cache(&self.deformation);
+        reset_instance_culling(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT));
         self.frame_started = clock::now();
 
         self.has_output = false;
@@ -380,6 +389,7 @@ fn void? Renderer.end_frame(&self) {
             if (record.live && record.rendered) return c3d::INVALID_ARGUMENT~;
         }
         record_pending_copies(self, &self.commands)!;
+        record_cull_readback(self, (uint)(frame % FRAMES_IN_FLIGHT))!;
         if (!self.work_recorded) {
             abort_frame(self);
             self.stats.frame_ms = elapsed_ms(self.frame_started);
@@ -824,6 +834,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .pipelines            = create_pipeline_cache(allocator, shader::BUILTIN_REGISTRY),
         .deformation          = create_deformation_cache(allocator),
         .instances            = create_instance_table(allocator, max_instance_batches),
+        .instance_cull_bytes  = desc.instance_cull_bytes ? desc.instance_cull_bytes : INSTANCE_CULL_ARENA_BYTES,
         .prepares             = pool::create_pool{PrepareRecord, PrepareId}(allocator, PREPARE_CAPACITY),
         .linear_clamp_sampler = linear_clamp_sampler,
         .log                  = log,
@@ -856,6 +867,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         free_rt(&renderer);
         free_geometries(&renderer);
         free_instance_buffers(&renderer);
+        free_instance_culling(&renderer);
         free_prepares(&renderer);
         alloc::free(allocator, renderer.materials.ptr);
         free_shaders(&renderer);
@@ -895,6 +907,7 @@ fn void destroy_renderer(Renderer* renderer) {
     free_rt(renderer);
     free_geometries(renderer);
     free_instance_buffers(renderer);
+    free_instance_culling(renderer);
     free_prepares(renderer);
     free_material_heap(renderer);
     free_shaders(renderer);
@@ -1028,6 +1041,7 @@ fn void abort_frame(Renderer* renderer) {
 
     if (!renderer.frame_submitted) {
         clear_cluster_readback(renderer, renderer.recording_slot);
+        renderer.cull_readbacks[renderer.recording_slot].pending = false;
         renderer.shadow_atlas.state = renderer.frame_shadow_state;
         foreach (index, &target : renderer.targets.items) target.target.state = renderer.frame_target_states[index];
         foreach (index, &preview : renderer.previews) preview.image.state = renderer.frame_preview_states[index];

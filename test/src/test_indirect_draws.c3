@@ -19,6 +19,11 @@ fn void test_indirect_args_pack() @test {
     assert(indexed_command.first_instance == 0);
 
     buffer[..] = UNWRITTEN;
+    render::write_indirect_args(buffer[..], &indexed, 0);
+    assert(indexed_command.index_count == 36 && indexed_command.instance_count == 0);
+    assert(indexed_command.first_index == 0 && indexed_command.first_instance == 0);
+
+    buffer[..] = UNWRITTEN;
     GeometryLayout listed = { .vertex_count = 3 };
     assert(render::indirect_args_bytes(&listed) == gpu::DrawIndirectCommand::size);
     render::write_indirect_args(buffer[..], &listed, 5);

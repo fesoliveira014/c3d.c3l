@@ -23,6 +23,7 @@ const uint FRAME_LIGHTS_CLUSTERED = 1u;
 const uint FRAME_TRACE_PRESENT = 2u;
 const uint FRAME_AO_PRESENT = 4u;
 const uint CLUSTER_GROUP_SIZE = 64u;
+const uint INSTANCE_CULL_GROUP_SIZE = 64u;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8u;
 const uint DRAW_RECEIVE_SHADOW = 1u;
 const uint DRAW_ALPHA_MASK = 2u;
@@ -254,6 +255,9 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer DrawRoot {
     uint sheen_lut;
     uint sheen_sampler;
     uint skin_stride;
+    uint64_t instance_indices;
+    uint _pad0;
+    uint _pad1;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer PreviousPoseGpu {
@@ -261,6 +265,20 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer PreviousPose
     uint64_t morph;
     uint64_t instances;
     uint64_t _pad0;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer InstanceCullRoot {
+    uint64_t instances;
+    uint64_t visible;
+    uint64_t args;
+    uint64_t counter;
+    vec4 planes[6];
+    vec4 bounds_min;
+    vec4 bounds_max;
+    uint first;
+    uint count;
+    uint _pad0;
+    uint _pad1;
 };
 
 struct InstanceGpu {

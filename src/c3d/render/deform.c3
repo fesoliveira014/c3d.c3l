@@ -150,8 +150,7 @@ fn gpu::GpuAddress? resolve_crowd_palettes(Renderer* renderer, MeshCandidate* ca
         renderer.deformation.crowd_palettes.set(key, span.address);
         base = span.address;
     }
-    ulong offset = (ulong)candidate.instance_first * crowd.joint_count * Mat4f::size;
-    return (gpu::GpuAddress)((ulong)base + offset);
+    return base;
 }
 
 fn gpu::GpuAddress? resolve_crowd_morphs(Renderer* renderer, MeshCandidate* candidate) @private {
@@ -176,7 +175,7 @@ fn gpu::GpuAddress? resolve_crowd_morphs(Renderer* renderer, MeshCandidate* cand
         renderer.deformation.crowd_morphs.set(key, span.address);
         base = span.address;
     }
-    return (gpu::GpuAddress)((ulong)base + (ulong)candidate.instance_first * MorphWeightsGpu::size);
+    return base;
 }
 
 <*

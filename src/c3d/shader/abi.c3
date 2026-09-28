@@ -20,6 +20,7 @@ const uint FRAME_LIGHTS_CLUSTERED = 1;
 const uint FRAME_TRACE_PRESENT = 2;
 const uint FRAME_AO_PRESENT = 4;
 const uint CLUSTER_GROUP_SIZE = 64;
+const uint INSTANCE_CULL_GROUP_SIZE = 64;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8;
 const uint DRAW_RECEIVE_SHADOW = 1;
 const uint DRAW_ALPHA_MASK = 2;
@@ -359,8 +360,11 @@ struct DrawRoot {
     TextureIndex sheen_lut;
     SamplerIndex sheen_sampler;
     uint         skin_stride;
+    GpuAddress   instance_indices;
+    uint         _pad0;
+    uint         _pad1;
 }
-$assert DrawRoot::size == 256;
+$assert DrawRoot::size == 272;
 $assert $reflect(DrawRoot.model).offset == 0;
 $assert $reflect(DrawRoot.prev_model).offset == 64;
 $assert $reflect(DrawRoot.normal_0).offset == 128;
@@ -379,6 +383,9 @@ $assert $reflect(DrawRoot.layers).offset == 240;
 $assert $reflect(DrawRoot.sheen_lut).offset == 244;
 $assert $reflect(DrawRoot.sheen_sampler).offset == 248;
 $assert $reflect(DrawRoot.skin_stride).offset == 252;
+$assert $reflect(DrawRoot.instance_indices).offset == 256;
+$assert $reflect(DrawRoot._pad0).offset == 264;
+$assert $reflect(DrawRoot._pad1).offset == 268;
 
 struct PreviousPoseGpu {
     GpuAddress skin;
@@ -391,6 +398,32 @@ $assert $reflect(PreviousPoseGpu.skin).offset == 0;
 $assert $reflect(PreviousPoseGpu.morph).offset == 8;
 $assert $reflect(PreviousPoseGpu.instances).offset == 16;
 $assert $reflect(PreviousPoseGpu._pad0).offset == 24;
+
+struct InstanceCullRoot {
+    GpuAddress instances;
+    GpuAddress visible;
+    GpuAddress args;
+    GpuAddress counter;
+    Vec4f[6]   planes;
+    Vec4f      bounds_min;
+    Vec4f      bounds_max;
+    uint       first;
+    uint       count;
+    uint       _pad0;
+    uint       _pad1;
+}
+$assert InstanceCullRoot::size == 176;
+$assert $reflect(InstanceCullRoot.instances).offset == 0;
+$assert $reflect(InstanceCullRoot.visible).offset == 8;
+$assert $reflect(InstanceCullRoot.args).offset == 16;
+$assert $reflect(InstanceCullRoot.counter).offset == 24;
+$assert $reflect(InstanceCullRoot.planes).offset == 32;
+$assert $reflect(InstanceCullRoot.bounds_min).offset == 128;
+$assert $reflect(InstanceCullRoot.bounds_max).offset == 144;
+$assert $reflect(InstanceCullRoot.first).offset == 160;
+$assert $reflect(InstanceCullRoot.count).offset == 164;
+$assert $reflect(InstanceCullRoot._pad0).offset == 168;
+$assert $reflect(InstanceCullRoot._pad1).offset == 172;
 
 struct InstanceGpu {
     Mat4f model;

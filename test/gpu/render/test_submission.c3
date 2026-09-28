@@ -49,6 +49,7 @@ const float BACKGROUND_HISTORY_MINIMUM @private = 0.85f; // converged history ke
 const float BLURRED_CENTER_MINIMUM @private = 0.8f; // a few pixels of true motion keep the box center nearly solid; a background velocity clamped at max_velocity smears it dark
 const uint PARITY_RANGES @private = 4; // two batches, each with an unmirrored and a mirrored range
 const uint BATCH_PASSES @private = 4; // shadow layer, depth prepass, forward opaque pass, velocity pass
+const uint CULLING_PASSES @private = 3; // shadow layer, depth prepass, view; the velocity pass reuses the view's ranges
 const String TEXTURED_MODEL @private = "../../../examples/assets/gltf/BoxTextured.glb";
 const uint PREPARE_FRAME_LIMIT @private = 64; // one unit per frame; the textured box has a handful
 
@@ -114,6 +115,7 @@ fn void? create_fixture(
     usz upload_ring_bytes = 0,
     bool ray_queries = false,
     bool ray_tracing_pipelines = false,
+    usz instance_cull_bytes = 0,
 ) @private {
     fixture.allocator = allocator;
     fixture.assets = asset::create_asset_store(allocator, asset::default_asset_store_desc());
@@ -192,6 +194,7 @@ fn void? create_fixture(
             .application_name = "render_acceptance",
             .ray_queries = ray_queries,
             .ray_tracing_pipelines = ray_tracing_pipelines,
+            .instance_cull_bytes = instance_cull_bytes,
         },
     )!;
     defer catch render::destroy_renderer(&fixture.renderer);
@@ -1088,6 +1091,7 @@ fn void test_batch_draws_are_indirect_on_every_pass() @test {
     render_scene_frame(&fixture, &target)!!;
 
     assert(renderer.stats.indirect_draws == PARITY_RANGES * BATCH_PASSES);
+    assert(renderer.stats.cull_dispatches == PARITY_RANGES * CULLING_PASSES);
     check_validation(renderer);
 }
 
