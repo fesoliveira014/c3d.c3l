@@ -8,6 +8,7 @@ import c3d::character;
 import c3d::ecs;
 import c3d::physics;
 import c3d::scene;
+import std::io;
 
 const float TOLERANCE @private = 0.0001f;
 const float STOP_TOLERANCE @private = 0.01f;
@@ -42,6 +43,8 @@ const Vec3  CRATE_HALF_EXTENTS @private = { 0.5f, 0.5f, 0.5f };
 const float CRATE_X @private = 1.5f;
 const ulong CRATE_CATEGORY @private = 2;
 const float MIN_PUSH @private = 0.1f;
+const float GROWTH_GAP @private = 0.05f;
+const float GROWTH @private = 0.2f; // four times the gap, so the grown capsule overlaps the wall
 
 struct Fixture @private {
     AssetStore      assets;
@@ -73,6 +76,11 @@ fn void teardown(Fixture* fixture) @private {
 
 fn bool close(float first, float second, float tolerance = TOLERANCE) @private {
     return math::abs(first - second) <= tolerance;
+}
+
+fn bool close_vec(Vec3 first, Vec3 second, float tolerance = 1e-5f) @private {
+    return close(first.x, second.x, tolerance) && close(first.y, second.y, tolerance)
+        && close(first.z, second.z, tolerance);
 }
 
 fn Node* add_box(
@@ -431,4 +439,146 @@ fn void test_node_origin_is_the_capsule_bottom() @test {
     assert(standing.grounded);
     assert(close(node.world_position().y, 0, desc.skin + 1e-3), "the node stands on the floor");
     assert(close(standing.current.y - node.world_position().y, desc.half_height + desc.radius));
+}
+
+fn Vec3 feet_of(Vec3 center, CharacterDesc desc) @private => center - (Vec3){ 0, desc.half_height + desc.radius, 0 };
+
+fn void test_set_character_desc_keeps_the_feet() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Node* node = add_character(&fixture, { 1, 0, 2 }, character::default_character_desc());
+    Vec3 position = node.world_position();
+
+    CharacterDesc desc = character::default_character_desc();
+    desc.radius = 0.6f;
+    fixture.scene.set_character_desc(node, desc)!!;
+    desc.half_height = 1.0f;
+    fixture.scene.set_character_desc(node, desc)!!;
+
+    Character* character = character_of(&fixture, node);
+    assert(close_vec(feet_of(character.previous, desc), { 1, 0, 2 }));
+    assert(close_vec(feet_of(character.current, desc), { 1, 0, 2 }));
+    assert(close_vec(node.world_position(), position));
+}
+
+fn void test_set_character_desc_keeps_the_motion() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Node* ground = add_ground(&fixture);
+    CharacterDesc desc = character::default_character_desc();
+    Node* node = add_standing_character(&fixture, desc);
+    fixture.scene.move_character(node, { WALK_SPEED, 0, 0 });
+    settle(&fixture, HOLD_UPDATES);
+    Character before = *character_of(&fixture, node);
+    assert(before.grounded && c3d::same_id(before.ground, ground.id));
+
+    desc.radius = 0.5f;
+    fixture.scene.set_character_desc(node, desc)!!;
+    Character* after = character_of(&fixture, node);
+    assert(close_vec(after.velocity, before.velocity) && close_vec(after.desired, before.desired));
+    assert(after.grounded && c3d::same_id(after.ground, before.ground));
+    assert(close_vec(after.ground_normal, before.ground_normal));
+}
+
+fn void test_push_body_follows_the_flag() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    CharacterDesc desc = character::default_character_desc();
+    Node* node = add_character(&fixture, { 0, 1, 0 }, desc);
+    assert(!fixture.scene.has(node, PhysicsBody));
+
+    desc.push_bodies = true;
+    fixture.scene.set_character_desc(node, desc)!!;
+    PhysicsBody* body = fixture.scene.get(node, PhysicsBody);
+    assert(body.colliders.len == 1 && body.colliders[0].kind == CAPSULE);
+    desc.push_bodies = false;
+    fixture.scene.set_character_desc(node, desc)!!;
+    assert(!fixture.scene.has(node, PhysicsBody));
+}
+
+fn void test_push_body_collider_follows_the_desc() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    CharacterDesc desc = character::default_character_desc();
+    desc.push_bodies = true;
+    Node* node = add_character(&fixture, { 0, 1, 0 }, desc);
+    settle(&fixture, 1);
+    assert(fixture.scene.get(node, PhysicsBody).status == LIVE);
+
+    desc.radius = 0.5f;
+    desc.half_height = 0.8f;
+    fixture.scene.set_character_desc(node, desc)!!;
+    desc.filter.category = 4;
+    desc.filter.group = 2;
+    fixture.scene.set_character_desc(node, desc)!!;
+
+    PhysicsBody* body = fixture.scene.get(node, PhysicsBody);
+    ColliderDesc collider = body.colliders[0];
+    assert(close(collider.radius, 0.5f) && close(collider.half_height, 0.8f));
+    assert(close_vec(collider.local.position, { 0, 0.8f + 0.5f, 0 }));
+    assert(collider.filter.category == 4 && collider.filter.group == 2 && collider.filter.mask == ulong::max);
+    assert(body.status == PENDING);
+}
+
+fn void test_set_character_desc_faults_over_an_application_body() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    CharacterDesc desc = character::default_character_desc();
+    Node* node = add_character(&fixture, { 0, 1, 0 }, desc);
+    ColliderDesc collider = physics::default_collider_desc(SPHERE);
+    collider.radius = 0.3f;
+    fixture.scene.add_physics_body(node, physics::default_body_desc(KINEMATIC), (&collider)[:1])!!;
+    Character before = *character_of(&fixture, node);
+    Vec3 position = node.world_position();
+
+    CharacterDesc pushing = desc;
+    pushing.push_bodies = true;
+    pushing.radius = 0.7f;
+    assert(@catch(fixture.scene.set_character_desc(node, pushing)) == physics::BODY_EXISTS);
+    Character* after = character_of(&fixture, node);
+    assert(!after.desc.push_bodies && close(after.desc.radius, desc.radius));
+    assert(close_vec(after.current, before.current) && close_vec(node.world_position(), position));
+    assert(fixture.scene.get(node, PhysicsBody).colliders[0].kind == SPHERE);
+}
+
+fn void test_step_height_applies_on_the_next_step() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    add_ground(&fixture);
+    Node* ledge = add_ledge(&fixture, HIGH_LEDGE_HEIGHT);
+    CharacterDesc desc = character::default_character_desc();
+    Node* node = add_standing_character(&fixture, desc);
+    fixture.scene.move_character(node, { WALK_SPEED, 0, 0 });
+    settle(&fixture, WALK_UPDATES);
+    assert(!c3d::same_id(character_of(&fixture, node).ground, ledge.id));
+
+    desc.step_height = HIGH_LEDGE_HEIGHT + 0.1f;
+    fixture.scene.set_character_desc(node, desc)!!;
+    settle(&fixture, WALK_UPDATES);
+    assert(c3d::same_id(character_of(&fixture, node).ground, ledge.id));
+}
+
+fn void test_grown_capsule_is_pushed_out_of_a_wall() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    add_ground(&fixture);
+    add_box(&fixture, { WALL_X, WALL_HALF_EXTENTS.y, 0 }, WALL_HALF_EXTENTS);
+    CharacterDesc desc = character::default_character_desc();
+    float wall_face = WALL_X - WALL_HALF_EXTENTS.x;
+    Node* node = add_character(&fixture, { wall_face - desc.radius - GROWTH_GAP, DROP_HEIGHT, 0 }, desc);
+    settle(&fixture, SETTLE_UPDATES);
+
+    desc.radius += GROWTH;
+    fixture.scene.set_character_desc(node, desc)!!;
+    settle(&fixture, 1);
+    float surface = character_of(&fixture, node).current.x + desc.radius;
+    io::eprintfn("grown capsule surface %f against the wall face %f", surface, wall_face);
+    assert(surface <= wall_face + desc.skin * 2);
 }
