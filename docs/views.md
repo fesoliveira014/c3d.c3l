@@ -52,6 +52,7 @@ defer (void)render::destroy_view(&renderer, capture_view);
 | `clusters` | Editable `ClusterDesc`; ignored by `FLAT` |
 | `ray_tracing` | `RayTracingDesc`: `shadows` (see [shadows](shadows.md)), `reflections` and `max_reflection_roughness` (see [reflections](reflections.md)); zero disables all |
 | `ambient_occlusion` | `AmbientOcclusionDesc`; zero is off (see [ambient occlusion](ambient_occlusion.md)) |
+| `screen_space_gi` | `ScreenSpaceGiDesc`; zero is off (see [screen-space GI](screen_space_gi.md)) |
 | `path_trace` | `PathTraceDesc`: bounces, samples per frame and sample cap of a `PATH_TRACED` view (see [path tracing](path_tracing.md)) |
 
 `default_view_desc()` is a full-window `DISPLAY_LDR` view with neutral grading and a depth
@@ -273,7 +274,7 @@ fullscreen lighting resolve; every other material keeps its forward pass on the 
 `DEPTH_PREPASS` over its opaque set, then [`AMBIENT_OCCLUSION`](ambient_occlusion.md) when enabled,
 then `FORWARD_OPAQUE` with depth `EQUAL` and no depth write, so every opaque pixel is shaded once.
 Without it, `FORWARD_OPAQUE` writes depth itself and shades every fragment that passes the depth
-test at the time it is drawn; ambient occlusion forces the prepass on. The prepass pays one more
+test at the time it is drawn; ambient occlusion and screen-space GI force the prepass on. The prepass pays one more
 geometry pass with depth-only shaders and wins wherever opaque overdraw would be shaded more than
 once. Measured on an RTX 4090 at 1080p with flat lights: Sponza with 64 lights, forward opaque
 1.70 to 1.89 ms without it against 0.85 to 0.98 ms plus a 0.04 ms prepass with it; the
