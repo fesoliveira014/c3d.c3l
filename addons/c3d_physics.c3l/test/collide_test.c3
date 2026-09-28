@@ -11,6 +11,7 @@ alias Quat @private = Quaternionf;
 const float TOLERANCE @private = 1e-4f;
 const float LOOSE @private = 1e-3f;
 const float LINEAR_SLOP @private = 0.005f; // box3d's contact target; casts and sweeps stop within it
+const uint  BOX_CORNER_COUNT @private = 8;
 const Vec3 FAR @private = { 10, 0, 0 };
 const Vec3 SLAB_HALF_EXTENTS @private = { 1, 0.5f, 0.25f };
 
@@ -78,6 +79,21 @@ fn void test_manifold_reports_world_space_for_a_moved_rotated_a() @test {
     }
 }
 
+fn void test_box_on_a_box_gives_face_points() @test {
+    collide::Manifold found = collide::manifold(
+        a:      slab(),
+        pose_a: posed(FAR, rotated()),
+        b:      collide::box_shape({ 0.5f, 0.5f, 0.5f }),
+        pose_b: posed({ 10, 1.49f, 0 }),
+    );
+    assert(found.count >= 1 && found.count <= collide::MAX_MANIFOLD_POINTS);
+    assert(near_vector(found.normal, { 0, 1, 0 }));
+    for (uint index = 0; index < found.count; index++) {
+        assert(near(found.points[index].point.y, 1, 1e-2f));
+        assert(near(found.points[index].separation, -0.01f, LOOSE));
+    }
+}
+
 fn void test_capsule_on_a_box_gives_up_to_four_points() @test {
     Quat lying = quaternion::from_axis_angle{float}({ 0, 0, 1 }, (float)math::PI / 2);
     collide::Manifold found = collide::manifold(
@@ -137,7 +153,7 @@ fn void test_cast_sphere_into_box_reports_the_contact_time() @test {
         pose_b:      posed({ -3, 0, 0 }),
         translation: { 6, 0, 0 },
     )!!;
-    assert(near(impact.time, (3 - 0.5f - 0.5f) / 6, LOOSE));
+    assert(near(impact.time * 6, 3 - 0.5f - 0.5f, 2 * LINEAR_SLOP));
     assert(near_vector(impact.normal, { -1, 0, 0 }));
 }
 
@@ -149,7 +165,7 @@ fn void test_cast_reports_world_space_for_a_moved_rotated_a() @test {
         pose_b:      posed({ 7, 0, 0 }),
         translation: { 6, 0, 0 },
     )!!;
-    assert(near(impact.time, (9.5f - 0.5f - 7) / 6, LOOSE));
+    assert(near(impact.time * 6, 9.5f - 0.5f - 7, 2 * LINEAR_SLOP));
     assert(near(impact.point.x, 9.5f, LOOSE));
     assert(near_vector(impact.normal, { -1, 0, 0 }));
 }
@@ -189,9 +205,22 @@ fn void test_time_of_impact_reports_world_space() @test {
         b:       collide::sphere_shape(0.5f),
         sweep_b: moving,
     )!!;
-    assert(near(impact.time, (9.5f - 0.5f - 7) / 6, LOOSE));
+    assert(near(impact.time * 6, 9.5f - 0.5f - 7, 2 * LINEAR_SLOP));
     assert(near(impact.point.x, 9.5f, LINEAR_SLOP));
     assert(near_vector(impact.normal, { -1, 0, 0 }, LOOSE));
+}
+
+fn void test_time_of_impact_from_an_overlapped_start_reports_time_zero() @test {
+    collide::Sweep resting = { .start = posed(FAR, rotated()), .end = posed(FAR, rotated()) };
+    collide::Sweep moving = { .start = posed({ 10, 0.8f, 0 }), .end = posed({ 11, 0.8f, 0 }) };
+    Impact impact = collide::time_of_impact(
+        a:       slab(),
+        sweep_a: resting,
+        b:       collide::sphere_shape(0.5f),
+        sweep_b: moving,
+    )!!;
+    assert(impact.time == 0);
+    assert(impact.normal == (Vec3){ 0, 0, 0 });
 }
 
 fn void test_time_of_impact_separated_faults_no_hit() @test {
@@ -262,8 +291,8 @@ fn void test_ray_cast_miss_faults_no_hit() @test {
 }
 
 fn void test_create_hull_cooks_from_points() @test {
-    Vec3[8] corners;
-    for (uint corner = 0; corner < 8; corner++) {
+    Vec3[BOX_CORNER_COUNT] corners;
+    for (uint corner = 0; corner < BOX_CORNER_COUNT; corner++) {
         Vec3 sign = { corner & 1 ? 1 : -1, corner & 2 ? 1 : -1, corner & 4 ? 1 : -1 };
         corners[corner] = SLAB_HALF_EXTENTS * sign;
     }

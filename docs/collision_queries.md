@@ -46,13 +46,17 @@ Every returned point, normal and distance is in world space.
   a resting `a`. `time` is the fraction of the translation; the normal points from `a` to `b`. A
   start that already overlaps reports time 0 and a zero normal. Faults `b3::NO_HIT` on a miss.
 - `time_of_impact(a, sweep_a, b, sweep_b)`: first contact of two shapes moving from their start to
-  their end poses; same result rules as `cast`. Faults `b3::NO_HIT` when they never touch.
+  their end poses; same result rules as `cast`, including time 0 and a zero normal for an overlapped
+  start. Faults `b3::NO_HIT` when they never touch.
+- `hull_points(shape)`: the cooked points of a `HULL` shape, borrowed until `destroy_hull`, for drawing.
 - `ray_cast(shape, pose, origin, direction, max_distance)`: nearest entry of a unit-length ray;
   `fraction` is of `max_distance`. A ray starting inside reports fraction 0 and a zero normal.
   Faults `b3::NO_HIT` on a miss.
 
-Casts and sweeps stop within box3d's linear slop (5 mm) of the touching pose, so `time` is short
-of the exact contact by up to that distance.
+Casts and sweeps aim at box3d's linear slop (5 mm) of overlap rather than the exact touch. When the
+two shapes' radii sum to less than one slop the stop falls short of the touch; at one slop it lands
+on it; above that it lies past it, by a full slop from two slops of radius on. A pose built from
+`time` can therefore overlap by up to one slop.
 
 Mesh, height field and compound shapes are world queries (`PhysicsWorld.raycast`,
 `overlap_sphere`), not these.

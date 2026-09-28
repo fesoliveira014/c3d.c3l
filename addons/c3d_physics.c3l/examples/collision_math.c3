@@ -23,7 +23,6 @@ const float SPIN_SPEED @local = 0.6f;
 const Vec3  SPIN_AXIS @local = { 0.3f, 1, 0.2f };
 const float SWEEP_LENGTH @local = 6;
 const float MARKER_SIZE @local = 0.06f;
-const float CIRCLE_SEGMENT_RADIUS @local = 1;
 const Vec3  SHAPE_A_POSITION @local = { 0, 1, 0 };
 const Vec3  SHAPE_B_START @local = { -2.5f, 1.2f, 0.3f };
 const Vec3  CAMERA_POSITION @local = { 0, 4, 8 };
@@ -69,9 +68,8 @@ fn void draw_shape(debug::DebugDraw* draw, Shape shape, maths::Transform pose, u
         case BOX:
             draw.box(pose.to_mat4(), { .min = -shape.half_extents, .max = shape.half_extents }, rgba);
         case HULL:
-            Vec3* points = (Vec3*)((char*)shape.hull + shape.hull.point_offset);
-            for (int index = 0; index < shape.hull.vertex_count; index++) {
-                Vec3 point = pose.rotation.rotate_vec3(points[index]) + pose.position;
+            foreach (local_point : collide::hull_points(shape)) {
+                Vec3 point = pose.rotation.rotate_vec3(local_point) + pose.position;
                 draw.line(point - (Vec3){ MARKER_SIZE, 0, 0 }, point + (Vec3){ MARKER_SIZE, 0, 0 }, rgba);
                 draw.line(point - (Vec3){ 0, MARKER_SIZE, 0 }, point + (Vec3){ 0, MARKER_SIZE, 0 }, rgba);
                 draw.line(point - (Vec3){ 0, 0, MARKER_SIZE }, point + (Vec3){ 0, 0, MARKER_SIZE }, rgba);
@@ -80,8 +78,8 @@ fn void draw_shape(debug::DebugDraw* draw, Shape shape, maths::Transform pose, u
 }
 
 fn void draw_marker(debug::DebugDraw* draw, Vec3 point, uint rgba) @local {
-    draw.circle(point, { 0, 1, 0 }, MARKER_SIZE * CIRCLE_SEGMENT_RADIUS, rgba);
-    draw.circle(point, { 1, 0, 0 }, MARKER_SIZE * CIRCLE_SEGMENT_RADIUS, rgba);
+    draw.circle(point, { 0, 1, 0 }, MARKER_SIZE, rgba);
+    draw.circle(point, { 1, 0, 0 }, MARKER_SIZE, rgba);
 }
 
 fn void move_shape_b(Demo* demo, Input* input, float delta) @local {
@@ -126,12 +124,15 @@ fn void draw_queries(debug::DebugDraw* draw, Demo* demo) @local {
     maths::Transform end = demo.pose_b;
     end.position += sweep;
     draw.line(demo.pose_b.position, end.position, debug::rgba(0.7f, 0.7f, 0.7f));
-    if (try impact = collide::cast(
-        a:           shape_a,
-        pose_a:      demo.pose_a,
-        b:           shape_b,
-        pose_b:      demo.pose_b,
-        translation: sweep,
+    maths::Transform spun = demo.pose_a;
+    spun.rotation = quaternion::from_axis_angle{float}(SPIN_AXIS.normalize(), demo.spin + SPIN_SPEED);
+    collide::Sweep sweep_a = { .start = demo.pose_a, .end = spun };
+    collide::Sweep sweep_b = { .start = demo.pose_b, .end = end };
+    if (try impact = collide::time_of_impact(
+        a:       shape_a,
+        sweep_a: sweep_a,
+        b:       shape_b,
+        sweep_b: sweep_b,
     )) {
         maths::Transform touching = demo.pose_b;
         touching.position += sweep * impact.time;

@@ -15,6 +15,8 @@ const uint MAX_MANIFOLD_POINTS = 4; // mirrors b3::MAX_MANIFOLD_POINTS
 *>
 const float UNIT_SCALE_TOLERANCE = 1e-4f; // a pose decomposed from a world matrix reads 0.99999994
 
+const uint BOX_CORNER_COUNT @local = 8;
+
 $assert (int)MAX_MANIFOLD_POINTS == b3::MAX_MANIFOLD_POINTS;
 $assert b3::MAX_HULL_VERTICES == b3::MAX_SHAPE_CAST_POINTS;
 
@@ -82,7 +84,7 @@ struct Sweep {
 }
 
 <*
- First contact of a cast or sweep, in world space.
+ First contact of a cast or sweep, in world space; normal from a to b.
 *>
 struct Impact {
     float time;
@@ -101,7 +103,7 @@ struct ShapeRayHit {
 
 struct Proxy @local {
     b3::ShapeProxy proxy;
-    Vec3[8]        corners;
+    Vec3[BOX_CORNER_COUNT] corners;
 }
 
 <*
@@ -160,6 +162,15 @@ fn bool unit_scale(maths::Transform pose) {
 }
 
 <*
+ Points of a cooked hull shape; borrowed until destroy_hull.
+ @require shape.kind == ShapeKind.HULL && cooked(shape)
+*>
+fn Vec3[] hull_points(Shape shape) {
+    Vec3* points = (Vec3*)((char*)shape.hull + shape.hull.point_offset);
+    return points[:shape.hull.vertex_count];
+}
+
+<*
  Whether a HULL shape still carries a cooked hull; other kinds always do.
  @pure
 *>
@@ -214,7 +225,7 @@ fn Distance distance(
 }
 
 <*
- First contact when b moves by translation against a resting a; the normal points from a to b.
+ First contact when b moves by translation against a resting a.
  An overlapped start reports time 0 and a zero normal.
  @return? b3::NO_HIT
  @require unit_scale(pose_a) && unit_scale(pose_b)
@@ -246,8 +257,11 @@ fn Impact? cast(
 }
 
 <*
- First contact of two shapes moving along their sweeps; the normal points from a to b.
+ First contact of two shapes moving along their sweeps.
+ An overlapped start reports time 0 and a zero normal.
  @return? b3::NO_HIT
+ @require unit_scale(sweep_a.start) && unit_scale(sweep_a.end)
+ @require unit_scale(sweep_b.start) && unit_scale(sweep_b.end)
  @require cooked(a) && cooked(b)
 *>
 fn Impact? time_of_impact(
@@ -269,8 +283,9 @@ fn Impact? time_of_impact(
     })!!;
     switch (output.state) {
         case HIT:
-        case OVERLAPPED:
             return { .time = output.fraction, .point = output.point, .normal = output.normal };
+        case OVERLAPPED:
+            return { .time = 0, .point = output.point };
         case UNKNOWN:
         case FAILED:
         case SEPARATED:
@@ -386,14 +401,14 @@ fn void proxy_of(Shape* shape, Proxy* proxy) @local {
             proxy.corners[1] = { 0, shape.half_height, 0 };
             proxy.proxy = { .points = &proxy.corners, .count = 2, .radius = shape.radius };
         case BOX:
-            for (uint corner = 0; corner < 8; corner++) {
+            for (uint corner = 0; corner < BOX_CORNER_COUNT; corner++) {
                 Vec3 sign = { corner & 1 ? 1 : -1, corner & 2 ? 1 : -1, corner & 4 ? 1 : -1 };
                 proxy.corners[corner] = shape.half_extents * sign;
             }
-            proxy.proxy = { .points = &proxy.corners, .count = 8 };
+            proxy.proxy = { .points = &proxy.corners, .count = BOX_CORNER_COUNT };
         case HULL:
-            b3::HullData* hull = shape.hull;
-            proxy.proxy = { .points = (Vec3*)((char*)hull + hull.point_offset), .count = hull.vertex_count };
+            Vec3[] points = hull_points(*shape);
+            proxy.proxy = { .points = points.ptr, .count = (int)points.len };
     }
 }
 
