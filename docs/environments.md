@@ -256,5 +256,5 @@ keyboard capture to close. Full validation is enabled; GPU timing is optional.
 Rendering writes scene-linear HDR. The current display composite has no
 tonemapping or exposure control, so highlights can clip on presentation. Source
 and lighting intensities help inspect the result but do not replace display
-processing. Local probes, environment capture and compressed cube processing are
-not supported.
+processing. Environment capture and compressed cube processing are not supported. Local
+diffuse lighting from a grid of probes is described in [probe volumes](probe_volumes.md).

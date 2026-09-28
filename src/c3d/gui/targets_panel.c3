@@ -156,9 +156,10 @@ fn void? targets_panel(
 
 fn float preview_range(PreviewKind kind, TargetsPanelState* state) @local {
     switch (kind) {
-        case VIEW_DEPTH:    return state.depth_range;
-        case VIEW_VELOCITY: return state.velocity_range;
-        default:            return 1;
+        case VIEW_DEPTH:       return state.depth_range;
+        case PROBE_VISIBILITY: return state.depth_range;
+        case VIEW_VELOCITY:    return state.velocity_range;
+        default:               return 1;
     }
 }
 
@@ -229,6 +230,22 @@ fn PanelEntry[] collect_entries(Renderer* renderer, ViewId view, EnvironmentId e
             .source = { .kind = SHADOW_LAYER, .layer = (uint)layer },
             .width  = renderer.shadow_atlas.resolution,
             .height = renderer.shadow_atlas.resolution,
+        });
+    }
+
+    foreach (slot, &mirror : renderer.probe_volumes) {
+        if (!mirror.irradiance.texture.is_valid()) continue;
+        entries.push({
+            .label  = string::tformat("probe irradiance %d", slot).zstr_tcopy(),
+            .source = { .kind = PROBE_IRRADIANCE, .layer = (uint)slot },
+            .width  = mirror.irradiance.width,
+            .height = mirror.irradiance.height,
+        });
+        entries.push({
+            .label  = string::tformat("probe visibility %d", slot).zstr_tcopy(),
+            .source = { .kind = PROBE_VISIBILITY, .layer = (uint)slot },
+            .width  = mirror.visibility.width,
+            .height = mirror.visibility.height,
         });
     }
 

@@ -150,7 +150,8 @@ vec3 evaluate_physical_light(
 }
 
 vec3 evaluate_physical_environment(
-    EnvironmentGpu environment,
+    FrameRoot frame,
+    vec3 world_position,
     PhysicalSurface surface,
     float base_roughness,
     float occlusion,
@@ -159,7 +160,8 @@ vec3 evaluate_physical_environment(
     vec3 diffuse;
     vec3 specular;
     evaluate_environment_lobes(
-        environment,
+        frame,
+        world_position,
         surface.standard,
         base_roughness,
         occlusion,
@@ -171,6 +173,9 @@ vec3 evaluate_physical_environment(
     if (surface.coat_weight == 0.0 && surface.sheen_strength == 0.0) return standard;
 
     standard *= physical_sheen_attenuation(surface);
+    if (frame.environment == 0ul) return (1.0 - surface.coat_weight) * standard;
+
+    EnvironmentGpu environment = EnvironmentGpu(frame.environment);
     vec3 sheen = vec3(0.0);
     if (surface.sheen_strength != 0.0) {
         vec3 reflection = environment_rotate(

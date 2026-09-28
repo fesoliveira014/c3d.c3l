@@ -34,6 +34,7 @@ struct EnvironmentLut {
 struct EnvironmentRes {
     EnvironmentId asset;
     uint revision;
+    uint lighting_revision;
     EnvironmentDesc description;
     uint source_revision;
     uint source_binding_revision;
@@ -88,6 +89,7 @@ struct EnvironmentState {
     EnvironmentLut brdf_lut;
     EnvironmentLut sheen_lut;
     gpu::SamplerIndex sheen_sampler;
+    uint lighting_serial;
 }
 
 <*
@@ -224,6 +226,7 @@ fn EnvironmentRes*? resolve_environment(
         )!;
         acquire_environment_lut(renderer)!;
         result.lighting_ready = true;
+        result.lighting_revision = ++renderer.environment_state.lighting_serial;
     } else if (!same_lighting) {
         result.lighting_ready = false;
     }

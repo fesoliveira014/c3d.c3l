@@ -162,6 +162,8 @@ struct Renderer {
     post::PostPipelines       post_pipelines;
     AmbientOcclusionPipelines ambient_occlusion_pipelines;
     ReflectionPipelines       reflection_pipelines;
+    ProbeVolumeRes[shader::PROBE_VOLUME_CAPACITY] probe_volumes;
+    ProbeVolumePipelines      probe_pipelines;
     PathTracer                path_tracer;
     PipelineCache             pipelines;
     gpu::SamplerIndex         linear_clamp_sampler;
@@ -311,6 +313,7 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
         self.frame_shadow_state = self.shadow_atlas.state;
         foreach (index, target : self.targets.items) self.frame_target_states[index] = target.target.state;
         foreach (index, &preview : self.previews) self.frame_preview_states[index] = preview.image.state;
+        snapshot_probe_states(self);
         foreach (&record : self.views.items) {
             record.snapshot_states();
             record.cluster_root = (gpu::GpuAddress)0;
@@ -902,6 +905,7 @@ fn void destroy_renderer(Renderer* renderer) {
     foreach (&slot : renderer.frames) drain_retired(&renderer.device, &slot.environment_temporaries);
     foreach (&slot : renderer.frames) drain_retired(&renderer.device, &slot.retire);
     free_environments(renderer);
+    free_probe_volumes(renderer);
     free_pending_uploads(renderer);
     free_textures(renderer);
     free_rt(renderer);
@@ -1045,6 +1049,7 @@ fn void abort_frame(Renderer* renderer) {
         renderer.shadow_atlas.state = renderer.frame_shadow_state;
         foreach (index, &target : renderer.targets.items) target.target.state = renderer.frame_target_states[index];
         foreach (index, &preview : renderer.previews) preview.image.state = renderer.frame_preview_states[index];
+        restore_probe_states(renderer);
         foreach (&record : renderer.views.items) {
             record.restore_states();
             record.history.discard();

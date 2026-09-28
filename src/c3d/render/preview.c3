@@ -26,6 +26,8 @@ enum PreviewKind {
     VIEW_GBUFFER,
     VIEW_AMBIENT_OCCLUSION,
     VIEW_REFLECTION,
+    PROBE_IRRADIANCE,
+    PROBE_VISIBILITY,
 }
 
 <*
@@ -113,6 +115,8 @@ fn void? Renderer.request_preview(
         case RENDER_TARGET:
             self.targets.try_get(source.target)!;
         case SHADOW_LAYER:
+        case PROBE_IRRADIANCE:
+        case PROBE_VISIBILITY:
             break;
         case ENVIRONMENT_FACE:
             if (!self.assets.environments.is_live(source.environment)) return c3d::INVALID_ID~;
@@ -178,6 +182,9 @@ fn void? validate_preview_request(
             if (source.level > 1) return c3d::INVALID_ARGUMENT~;
         case SHADOW_LAYER:
             if (source.layer >= layer_count) return c3d::INVALID_ARGUMENT~;
+        case PROBE_IRRADIANCE:
+        case PROBE_VISIBILITY:
+            if (source.layer >= shader::PROBE_VOLUME_CAPACITY) return c3d::INVALID_ARGUMENT~;
         case TEXTURE:
             if (texture_is_cube || texture_depth) return c3d::INVALID_ARGUMENT~;
         default:
@@ -322,6 +329,16 @@ fn void? resolve_preview_source(Renderer* renderer, PreviewSlot* preview, Previe
             mirror.state = compute_read;
             root.input_texture = mirror.view.index;
             root.mode = shader::PREVIEW_MODE_COLOR;
+        case PROBE_IRRADIANCE:
+            ProbeVolumeRes* probe_mirror = &renderer.probe_volumes[source.layer];
+            if (!probe_mirror.fill.filled()) return;
+            root.input_texture = probe_mirror.irradiance.view.index;
+            root.mode = shader::PREVIEW_MODE_COLOR;
+        case PROBE_VISIBILITY:
+            ProbeVolumeRes* probe_mirror = &renderer.probe_volumes[source.layer];
+            if (!probe_mirror.fill.filled()) return;
+            root.input_texture = probe_mirror.visibility.view.index;
+            root.mode = shader::PREVIEW_MODE_DISTANCE;
     }
 }
 

@@ -11,6 +11,7 @@ enum Pass : int {
     INSTANCE_CULL,
     SHADOW_ATLAS,
     LIGHT_CULL,
+    PROBE_UPDATE,
     ACCELERATION_BUILD,
     PATH_TRACE,
     DEPTH_PREPASS,
@@ -60,6 +61,7 @@ struct Stats {
     uint  culled;
     uint  lights;
     uint  lights_dropped;
+    uint  probe_volumes_dropped; // this frame, per failed acquisition: two views of one scene count a volume twice
     ViewId cluster_view;
     uint  cluster_count;
     uint  cluster_overflows;

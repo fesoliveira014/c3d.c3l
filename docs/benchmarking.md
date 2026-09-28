@@ -176,6 +176,10 @@ in `many_lights --benchmark`, and the CSV columns are the same. Shadow casting
 dominates the draw count: about 470 draws with the sun shadowed against about 85
 without.
 
+`--probe-volumes 0|1|8` adds probe volumes filled from the environment (one over the model
+bounds, or one per octant) with `--probe-counts X,Y,Z` probes each (default 16,8,8); the banner
+prints both. See [probe volumes](probe_volumes.md).
+
 Any glTF file can replace Sponza through the positional path or
 `benchmark.py scene --model`; the light and camera placement derive from the
 model bounds.

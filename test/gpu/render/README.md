@@ -91,6 +91,13 @@ What the four cases establish:
   depth prepass (opaque, masked, cut-out and transparent surfaces), so the
   prepass and `EQUAL` shading lose nothing.
 
+- Probe volumes filled from the environment record four dispatches when first seen, none on a
+  frame where nothing changed and two when only the environment rotation or `max_distance` moved,
+  once per scene when two views render it; a surface inside a volume matches the SH render within
+  2 of 255 on both shading paths, also for a volume whose slices wrap into rows, and an edited
+  environment source refills the volume; of two nested volumes the smaller one lights the surfaces
+  it contains; the GLSL atlas helpers match their C3 twins; removing the component frees the slot.
+
 What they cannot establish: window clear-only and GUI-only frames need a
 window (run the `clear` and `cube_gui` examples with validation), and a
 presentation failure after submission needs a hardware observation.

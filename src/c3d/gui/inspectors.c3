@@ -306,6 +306,35 @@ fn bool limit_widgets(ZString label, IkLimit* limit) @local {
     return changed;
 }
 
+fn bool probe_volume_inspector(void* component) @local {
+    ProbeVolume* volume = (ProbeVolume*)component;
+    bool changed;
+
+    if (imgui::drag_float3("Half extents", (float*)&volume.half_extents)) {
+        foreach (&axis : volume.half_extents) *axis = math::max(*axis, MIN_POSITIVE);
+        changed = true;
+    }
+    int[3] counts = { (int)volume.counts.x, (int)volume.counts.y, (int)volume.counts.z };
+    if (imgui::slider_int3("Counts", &counts[0], (int)light::PROBE_COUNT_MIN, (int)light::PROBE_COUNT_MAX)) {
+        foreach (axis, count : counts) {
+            volume.counts[axis] = (uint)math::clamp(count, (int)light::PROBE_COUNT_MIN, (int)light::PROBE_COUNT_MAX);
+        }
+        changed = true;
+    }
+    changed = nonnegative_drag("Normal bias", &volume.normal_bias) || changed;
+    changed = nonnegative_drag("View bias", &volume.view_bias) || changed;
+    changed = nonnegative_drag("Energy", &volume.energy) || changed;
+    changed = nonnegative_drag("Max distance", &volume.max_distance) || changed;
+
+    int fill = volume.fill.ordinal;
+    ZString[ProbeFill::len] fills = { "None", "Environment" };
+    if (imgui::combo_char("Fill", &fill, &fills, ProbeFill::len)) {
+        volume.fill = ProbeFill::from_ordinal((usz)fill);
+        changed = true;
+    }
+    return changed;
+}
+
 fn bool degrees_slider(ZString label, float* radians, float minimum_degrees) @local {
     float degrees = math::rad_to_deg(*radians);
     if (!imgui::slider_float(label, &degrees, minimum_degrees, IK_ANGLE_MAX_DEGREES)) return false;
@@ -340,4 +369,5 @@ fn void expose_builtin_components() @private {
     expose(IkChain, &ik_chain_inspector);
     expose(FootIk, &foot_ik_inspector);
     expose(LookAt, &look_at_inspector);
+    expose(ProbeVolume, &probe_volume_inspector);
 }

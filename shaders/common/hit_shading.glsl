@@ -31,11 +31,8 @@ float hit_light_visibility(FrameRoot frame, LightGpu light, TraceSurface surface
     return ray_shadow_visibility(frame, light, surface.position, surface.geometric_normal);
 }
 
-vec3 hit_environment_diffuse(FrameRoot frame, vec3 albedo, vec3 normal) {
-    if (frame.environment == 0ul) return vec3(0.0);
-    EnvironmentGpu environment = EnvironmentGpu(frame.environment);
-    vec3 irradiance = environment_irradiance(environment.sh, environment_rotate(environment.rotation, normal));
-    return albedo / PI * irradiance * environment.intensity;
+vec3 hit_environment_diffuse(FrameRoot frame, vec3 albedo, TraceSurface surface, vec3 view_direction) {
+    return albedo / PI * indirect_diffuse_irradiance(frame, surface.position, surface.normal, view_direction);
 }
 
 vec3 shade_standard_hit(FrameRoot frame, TraceSurface surface, vec3 view_direction) {
@@ -54,16 +51,16 @@ vec3 shade_standard_hit(FrameRoot frame, TraceSurface surface, vec3 view_directi
         color += evaluate_standard_brdf(standard, light_sample.direction) * light_sample.radiance
             * hit_light_visibility(frame, light, surface);
     }
-    if (frame.environment != 0ul) {
-        EnvironmentGpu environment = EnvironmentGpu(frame.environment);
-        color += evaluate_environment(environment, standard, surface.roughness, 1.0, 1.0);
+    if (frame_has_indirect(frame)) {
+        color += evaluate_environment(frame, surface.position, standard, surface.roughness, 1.0, 1.0);
     }
     return color;
 }
 
 vec3 shade_toon_hit(FrameRoot frame, TraceSurface surface, vec3 view_direction) {
     ToonMaterialGpu material = ToonMaterialGpu(surface.material);
-    vec3 color = frame.ambient.rgb * surface.albedo + hit_environment_diffuse(frame, surface.albedo, surface.normal);
+    vec3 color = frame.ambient.rgb * surface.albedo
+        + hit_environment_diffuse(frame, surface.albedo, surface, view_direction);
     for (uint index = 0u; index < frame.light_count; index++) {
         LightGpu light = LightArray(frame.lights).values[index];
         LightSample light_sample = sample_light(light, surface.position);
@@ -75,8 +72,9 @@ vec3 shade_toon_hit(FrameRoot frame, TraceSurface surface, vec3 view_direction) 
     return color + toon_rim(material, surface.normal, view_direction);
 }
 
-vec3 shade_lambert_hit(FrameRoot frame, TraceSurface surface) {
-    vec3 color = frame.ambient.rgb * surface.albedo + hit_environment_diffuse(frame, surface.albedo, surface.normal);
+vec3 shade_lambert_hit(FrameRoot frame, TraceSurface surface, vec3 view_direction) {
+    vec3 color = frame.ambient.rgb * surface.albedo
+        + hit_environment_diffuse(frame, surface.albedo, surface, view_direction);
     for (uint index = 0u; index < frame.light_count; index++) {
         LightGpu light = LightArray(frame.lights).values[index];
         LightSample light_sample = sample_light(light, surface.position);
@@ -100,7 +98,7 @@ vec3 shade_hit(FrameRoot frame, TraceSurface surface, vec3 view_direction) {
         case MATERIAL_KIND_TOON:
             return shade_toon_hit(frame, surface, view_direction);
         default:
-            return shade_lambert_hit(frame, surface);
+            return shade_lambert_hit(frame, surface, view_direction);
     }
 }
 

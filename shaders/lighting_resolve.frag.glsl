@@ -59,9 +59,17 @@ void main() {
         + emissive_specular.rgb;
     vec3 diffuse = vec3(0.0);
     vec3 specular = vec3(0.0);
-    if (frame.environment != 0ul) {
-        EnvironmentGpu environment = EnvironmentGpu(frame.environment);
-        evaluate_environment_lobes(environment, surface, roughness, occlusion, ambient_occlusion, diffuse, specular);
+    if (frame_has_indirect(frame)) {
+        evaluate_environment_lobes(
+            frame,
+            world_position,
+            surface,
+            roughness,
+            occlusion,
+            ambient_occlusion,
+            diffuse,
+            specular
+        );
     }
     if (root.reflection_texture != 0u) {
         // Texel fetch: a filtered read would blend traced and untraced texels at the region's edge.
