@@ -486,7 +486,7 @@ fn void? record_raster_view(
                     layers:        item.candidate.node.layers,
                     flags:         (item.candidate.receive_shadow ? shader::DRAW_RECEIVE_SHADOW : 0)
                       | ((ambient_occlusion || screen_space_gi) && group_index == 0
-                        ? shader::DRAW_AMBIENT_OCCLUSION : 0),
+                        ? shader::DRAW_SCREEN_SPACE_TERMS : 0),
                     sheen_lut:     sheen ? renderer.environment_state.sheen_lut.view.index : (gpu::TextureIndex)0,
                     sheen_sampler: sheen ? renderer.environment_state.sheen_sampler : (gpu::SamplerIndex)0,
                     skin:          addresses.skin,

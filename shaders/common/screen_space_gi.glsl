@@ -12,7 +12,7 @@ vec4 frame_screen_space_indirect(FrameRoot frame, ivec2 pixel) {
 
 // The image describes the opaque surface of the pixel, so draws outside the prepass set take none of it.
 vec4 draw_screen_space_indirect(FrameRoot frame, uint draw_flags, ivec2 pixel) {
-    if ((draw_flags & DRAW_AMBIENT_OCCLUSION) == 0u) return vec4(0.0);
+    if ((draw_flags & DRAW_SCREEN_SPACE_TERMS) == 0u) return vec4(0.0);
     return frame_screen_space_indirect(frame, pixel);
 }
 
