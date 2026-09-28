@@ -70,6 +70,7 @@ struct Stats {
     uint  cluster_count;
     uint  cluster_overflows;
     uint  debug_lines;
+    uint  debug_dropped;         // segments a sink drawn this frame refused; the largest count
     uint  shadow_layers;
     uint  shadow_requests_dropped;
     ShadowTiming[] shadow_timings;

@@ -75,13 +75,55 @@ fn void test_debug_line_capacity_truncates() @test {
     DebugDraw draw = debug::create_debug_draw(mem, 4);
     defer debug::destroy_debug_draw(&draw);
 
-    draw.line({ 0, 0, 0 }, { 1, 0, 0 }, debug::COLOR_WHITE);
-    draw.line({ 0, 0, 0 }, { 0, 1, 0 }, debug::COLOR_WHITE);
-    draw.line({ 0, 0, 0 }, { 0, 0, 1 }, debug::COLOR_WHITE);
+    for (uint line = 0; line < 5; line++) draw.line({ 0, 0, 0 }, { 1, (float)line, 0 }, debug::COLOR_WHITE);
 
-    assert(draw.vertices.len() == 4);
+    assert(draw.vertices.len() == 8);
+    assert(draw.dropped == 1);
     draw.clear();
     assert(draw.vertices.len() == 0);
+}
+
+fn void test_debug_sink_counts_refused_segments() @test {
+    DebugDraw draw = debug::create_debug_draw(mem, 5);
+    defer debug::destroy_debug_draw(&draw);
+
+    draw.aabb({ .min = { 0, 0, 0 }, .max = { 1, 1, 1 } }, debug::COLOR_WHITE);
+
+    assert(draw.vertices.len() == 10);
+    assert(draw.dropped == 7);
+}
+
+fn void test_debug_clear_resets_dropped() @test {
+    DebugDraw draw = debug::create_debug_draw(mem, 5);
+    defer debug::destroy_debug_draw(&draw);
+    draw.aabb({ .min = { 0, 0, 0 }, .max = { 1, 1, 1 } }, debug::COLOR_WHITE);
+
+    draw.clear();
+    assert(draw.dropped == 0 && draw.capacity == 5);
+    draw.aabb({ .min = { 0, 0, 0 }, .max = { 1, 1, 1 } }, debug::COLOR_WHITE);
+    assert(draw.vertices.len() == 10 && draw.dropped == 7);
+}
+
+fn void test_debug_sink_filled_exactly_drops_nothing() @test {
+    DebugDraw draw = debug::create_debug_draw(mem, 3);
+    defer debug::destroy_debug_draw(&draw);
+
+    for (uint line = 0; line < 3; line++) draw.line({ 0, 0, 0 }, { 1, (float)line, 0 }, debug::COLOR_WHITE);
+    assert(draw.dropped == 0 && draw.vertices.len() == 6);
+    draw.line({ 0, 0, 0 }, { 0, 0, 1 }, debug::COLOR_WHITE);
+    assert(draw.dropped == 1 && draw.vertices.len() == 6);
+}
+
+fn void test_default_sink_holds_its_capacity_in_segments() @test {
+    DebugDraw draw = debug::create_debug_draw(mem);
+    defer debug::destroy_debug_draw(&draw);
+
+    for (usz line = 0; line < debug::DEBUG_LINE_CAPACITY; line++) {
+        draw.line({ 0, 0, 0 }, { 1, 0, 0 }, debug::COLOR_WHITE);
+    }
+    assert((usz)draw.vertices.len() == 2 * debug::DEBUG_LINE_CAPACITY && draw.dropped == 0);
+    draw.line({ 0, 0, 0 }, { 1, 0, 0 }, debug::COLOR_WHITE);
+    assert(draw.dropped == 1);
 }
 
 fn void test_debug_capsule_emits_rings_and_sides() @test {

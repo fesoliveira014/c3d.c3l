@@ -134,4 +134,5 @@ fn void? record_debug_lines(
 
     renderer.stats.draws += 2;
     renderer.stats.debug_lines += (uint)vertices.len / 2;
+    renderer.stats.debug_dropped = math::max(renderer.stats.debug_dropped, (uint)debug.dropped);
 }
