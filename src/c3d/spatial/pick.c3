@@ -63,7 +63,7 @@ struct PickHit {
  Meshes the ray meets, nearest first; empty when nothing is hit.
  @param allocator : "Owns the returned array."
  @param [&in] assets : "Resolves geometry, material and skeleton records."
- @param [&in] scene : "Pose as left by the last update_world."
+ @param [&inout] scene : "Pose as left by the last update_world; only batch aggregates are written."
  @param ray : "World space; direction normalized."
 *>
 fn PickHit[] pick(

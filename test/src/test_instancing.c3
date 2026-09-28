@@ -6,7 +6,7 @@ import c3d::camera;
 import c3d::geometry;
 import c3d::material;
 import c3d::maths;
-import c3d::render;
+import c3d::render @public;
 import c3d::scene;
 import c3d::shader;
 import c3d::spatial;
@@ -16,6 +16,7 @@ const Vec4 WHITE @local = { 1, 1, 1, 1 };
 const Vec4 RED @local = { 1, 0, 0, 1 };
 const Vec4 GREEN @local = { 0, 1, 0, 1 };
 const Vec2 VIEWPORT @local = { 1600, 900 };
+const float BOUNDS_TOLERANCE @local = 1e-5f;
 const GpuInstances ALLOCATED_SLOT @local = { .allocation = { .owner = 1, .index = 0, .generation = 1 } };
 
 struct Fixture @local {
@@ -185,6 +186,120 @@ fn void test_instanced_world_bounds_merges_instances() @test {
     batch.local_bounds = { .min = { -1, -1, -1 }, .max = { 1, 1, 1 } };
     Aabb overridden = spatial::instanced_world_bounds(&fixture.assets, node, batch);
     assert(overridden.min == (Vec3){ -2, -2, -2 } && overridden.max == (Vec3){ 2, 2, 2 });
+}
+
+fn Aabb exact_instanced_bounds(AssetStore* assets, Node* node, InstancedMesh* batch) @local {
+    Aabb local = assets.geometry(batch.geometry).data.bounds;
+    Aabb result = maths::aabb_transform(local, node.world.mul(batch.transforms[0].to_mat4()));
+    foreach (transform : batch.transforms[1:batch.count - 1]) {
+        result = maths::aabb_merge(result, maths::aabb_transform(local, node.world.mul(transform.to_mat4())));
+    }
+    return result;
+}
+
+fn bool near_bounds(Aabb first, Aabb second) @local {
+    Vec3 low = first.min - second.min;
+    Vec3 high = first.max - second.max;
+    return math::abs(low).max() <= BOUNDS_TOLERANCE && math::abs(high).max() <= BOUNDS_TOLERANCE;
+}
+
+fn void test_instanced_bounds_follow_the_revision() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Node* node = fixture.scene.add_instanced_mesh(fixture.box, fixture.red, 3)!!;
+    Transform[3] transforms = { at({ -1, 0, 0 }), at({ 0, 0, 0 }), at({ 1, 0, 0 }) };
+    fixture.scene.set_instances(node, transforms[..])!!;
+    fixture.scene.update_world();
+    InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
+
+    Aabb kept = spatial::instanced_world_bounds(&fixture.assets, node, batch);
+    assert(near_bounds(kept, exact_instanced_bounds(&fixture.assets, node, batch)));
+
+    batch.transforms[0].position.x = -5;
+    Aabb unmarked = spatial::instanced_world_bounds(&fixture.assets, node, batch);
+    assert(unmarked.min == kept.min && unmarked.max == kept.max);
+
+    fixture.scene.mark_instances_dirty(node);
+    Aabb marked = spatial::instanced_world_bounds(&fixture.assets, node, batch);
+    assert(math::abs(marked.min.x - -5.5f) <= BOUNDS_TOLERANCE);
+}
+
+fn void test_instanced_bounds_follow_the_geometry() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    GeometryId large;
+    @pool() {
+        Geometry box = geometry::box(tmem, 4, 4, 4);
+        large = fixture.assets.add_geometry(&box, "large")!!;
+    };
+    Transform[1] transforms = { at({ 0, 0, 0 }) };
+    Node* node = fixture.scene.add_instanced_mesh(fixture.box, fixture.red, 1, transforms[..])!!;
+    fixture.scene.update_world();
+    InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
+    assert(spatial::instanced_world_bounds(&fixture.assets, node, batch).max.y == 0.5f);
+
+    batch.geometry = large;
+    assert(spatial::instanced_world_bounds(&fixture.assets, node, batch).max.y == 2);
+
+    batch.geometry = fixture.box;
+    assert(spatial::instanced_world_bounds(&fixture.assets, node, batch).max.y == 0.5f);
+    fixture.assets.geometry(fixture.box).data.bounds.max.y = 3;
+    assert(spatial::instanced_world_bounds(&fixture.assets, node, batch).max.y == 0.5f);
+    fixture.assets.mark_geometry_dirty(fixture.box);
+    assert(spatial::instanced_world_bounds(&fixture.assets, node, batch).max.y == 3);
+}
+
+fn void test_mirrored_count_follows_the_revision() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Transform[3] transforms = { at({ -1, 0, 0 }), at({ 0, 0, 0 }), at({ 1, 0, 0 }) };
+    transforms[0].scale.x = -1;
+    Node* node = fixture.scene.add_instanced_mesh(fixture.box, fixture.red, 3, transforms[..])!!;
+    InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
+    assert(batch.mirrored_count() == 1);
+
+    batch.transforms[1].scale.x = -1;
+    assert(batch.mirrored_count() == 1);
+
+    fixture.scene.mark_instances_dirty(node);
+    assert(batch.mirrored_count() == 2);
+}
+
+fn void test_rotated_node_bound_contains_the_exact_bound() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Transform[3] transforms = { at({ -2, 0, -2 }), at({ 0, 0, 0 }), at({ 2, 0, 2 }) };
+    Node* node = fixture.scene.add_instanced_mesh(fixture.box, fixture.red, 3, transforms[..])!!;
+    fixture.scene.update_world();
+    InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
+    assert(near_bounds(
+        spatial::instanced_world_bounds(&fixture.assets, node, batch),
+        exact_instanced_bounds(&fixture.assets, node, batch),
+    ));
+
+    node.local.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, (float)math::PI / 4);
+    fixture.scene.update_world();
+    Aabb kept = spatial::instanced_world_bounds(&fixture.assets, node, batch);
+    Aabb exact = exact_instanced_bounds(&fixture.assets, node, batch);
+    Vec3 below = exact.min - kept.min;
+    Vec3 above = kept.max - exact.max;
+    assert(below.min() >= -BOUNDS_TOLERANCE && above.min() >= -BOUNDS_TOLERANCE);
+    assert(below.z > 1 && above.z > 1);
+}
+
+fn void test_batch_prev_model_is_exact_identity_at_rest() @test {
+    Transform placement = {
+        .position = { 3.3f, -1.7f, 12.9f },
+        .rotation = quaternion::from_axis_angle{float}(((Vec3){ 1, 2, 3 }).normalize(), 0.7f),
+        .scale    = { 1.3f, 1.3f, 1.3f },
+    };
+    Mat4 world = placement.to_mat4();
+    Mat4 identity = matrix::IDENTITY4;
+    assert(!(world.mul(maths::inverse_affine(world)) == identity));
+    assert(render::batch_prev_model(world, world) == identity);
+
+    Mat4 moved = identity.translate({ 1, 0, 0 }).mul(world);
+    assert(render::batch_prev_model(moved, world) == moved.mul(maths::inverse_affine(world)));
 }
 
 fn void test_pick_reports_instance_index() @test {

@@ -65,7 +65,7 @@ struct ExtractCounts {
 <*
  Meshes and batches of the scene inside the camera's frustum and layers, in component order.
  @param allocator : "Owns the returned array."
- @param [&in] scene : "Pose as left by the last update_world."
+ @param [&inout] scene : "Pose as left by the last update_world; only batch aggregates are written."
  @param [&in] assets : "Resolves geometry bounds."
  @param [&in] camera : "Frustum and view-projection of the view."
  @param layers : "Camera layer mask."
@@ -332,7 +332,7 @@ fn float center_depth(CameraMatrices* camera, Aabb world) @local {
 <*
  Collect live visible mesh and batch casters independently of layer masks.
  @param allocator : "Owns the returned candidate array."
- @param [&in] scene : "Current transforms; structurally unchanged during extraction."
+ @param [&inout] scene : "Current transforms; only batch aggregates are written."
  @param [&in] assets : "Supplies live ids and retained geometry bounds."
  @param [&inout] counts : "Reset, then populated for broad caster inclusion."
 *>

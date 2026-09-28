@@ -6,8 +6,21 @@ import c3d::maths;
 import std::math;
 
 <*
+ Derived summary of a batch's live instances, kept by the library; zero until first read.
+*>
+struct InstanceAggregate {
+    Aabb       bounds;            // node-local: each live instance's transform applied to the geometry bound
+    GeometryId geometry;          // identity bounds were computed for, with geometry_revision and bounds_revision
+    uint       geometry_revision;
+    uint       bounds_revision;   // batch revision of bounds; 0 = not computed, since a revision is never 0
+    uint       mirrored;
+    uint       mirrored_revision; // batch revision of mirrored; 0 = not computed
+}
+
+<*
  Batch of one geometry and material; instances live in [0, count) of capacity-sized arrays.
- In-place edits of transforms or colors reach the renderer only through mark_instances_dirty.
+ In-place edits of transforms or colors reach the renderer, bounds and history only through mark_instances_dirty.
+ aggregate is kept by the library from the arrays under revision; applications do not write it.
 *>
 struct InstancedMesh {
     GeometryId  geometry;
@@ -20,18 +33,22 @@ struct InstancedMesh {
     bool        trace;
     bool        has_bounds_override;
     Aabb        local_bounds;
-    uint        revision; // compared for equality only; never 0, so a renderer slot at 0 always uploads
+    uint              revision; // compared for equality only; never 0, so a renderer slot at 0 always uploads
+    InstanceAggregate aggregate;
 }
 
 <*
- Live instances whose transform mirrors space.
- @pure
+ Live instances whose transform mirrors space, as of the current revision.
+ Writes aggregate when stale.
 *>
 fn uint InstancedMesh.mirrored_count(&self) {
+    if (self.aggregate.mirrored_revision == self.revision) return self.aggregate.mirrored;
     uint mirrored;
     foreach (transform : self.transforms[:self.count]) {
         if (transform_mirrored(transform)) mirrored++;
     }
+    self.aggregate.mirrored = mirrored;
+    self.aggregate.mirrored_revision = self.revision;
     return mirrored;
 }
 
