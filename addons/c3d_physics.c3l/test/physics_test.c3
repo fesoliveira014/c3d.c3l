@@ -4,6 +4,7 @@ import std::math;
 import std::math::quaternion;
 import c3d;
 import c3d::asset;
+import c3d::debug;
 import c3d::ecs;
 import c3d::geometry;
 import c3d::maths;
@@ -11,12 +12,14 @@ import c3d::material;
 import c3d::physics;
 import c3d::scene;
 import b3;
+import std::io;
 
 alias Quat @private = Quaternionf;
 
 const float TOLERANCE @private = 0.0001f;
 const usz   RGBA_CHANNELS @private = 4;
 const uint  SETTLE_UPDATES @private = 120;
+const float CONTACT_SLOP @private = 0.01f; // box3d's speculative margin; resting points sit within it
 const SurfaceMaterialId ROCK_SURFACE @private = (SurfaceMaterialId)7;
 const SurfaceMaterialId ICE_SURFACE @private = (SurfaceMaterialId)9;
 const SurfaceMaterialId GROUND_SURFACE @private = (SurfaceMaterialId)3;
@@ -1474,4 +1477,146 @@ fn void test_authored_disabled_builds_disabled() @test {
     assert(!ray_hits_below(&fixture, { 0, 5, 0 }));
     run_updates(&fixture, 30);
     assert(close_vec(box.world_position(), { 0, 0, 0 }));
+}
+
+fn void test_counters_reflect_the_world() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    add_ground(&fixture);
+    Node* first = add_box(&fixture, { 0, 2, 0 });
+    Node* second = add_box(&fixture, { 2, 2, 0 });
+    fixture.physics.add_joint(second, physics::default_joint_desc(REVOLUTE, first.id))!!;
+    run_updates(&fixture, 1);
+
+    PhysicsCounters counters = fixture.physics.counters();
+    assert(counters.bodies == 3 && counters.shapes == 3 && counters.joints == 1);
+    assert(counters.occupied_snapshots == 0);
+    assert(counters.snapshot_capacity == fixture.physics.desc.snapshot_capacity);
+    add_geometry_body(&fixture, HULL, DYNAMIC);
+    run_updates(&fixture, 1);
+    assert(fixture.physics.counters().occupied_snapshots == 1);
+}
+
+fn void test_body_state_reports_velocity_mass_and_centre() @test {
+    PhysicsDesc desc = physics::default_physics_desc();
+    desc.tuning.gravity = {};
+    Fixture fixture;
+    setup(&fixture, desc);
+    defer teardown(&fixture);
+
+    Node* node = add_static_node(&fixture, { 1, 2, 3 });
+    ColliderDesc collider = box_collider({ 0.5f, 0.5f, 0.5f });
+    collider.density = 1000;
+    fixture.physics.add_body(node, physics::default_body_desc(DYNAMIC), (&collider)[:1])!!;
+    run_updates(&fixture, 1);
+    fixture.physics.set_velocity(node, { 1, 0, 0 }, { 0, 2, 0 });
+    run_updates(&fixture, 1);
+
+    BodyState state = fixture.physics.body_state(node);
+    assert(close_vec(state.linear_velocity, { 1, 0, 0 }));
+    assert(close_vec(state.angular_velocity, { 0, 2, 0 }));
+    assert(math::abs(state.mass - 1000) <= 0.01f);
+    Vec3 position = fixture.physics.body(node)!!.position();
+    assert(close_vec(state.center_of_mass, position));
+    assert(state.awake);
+}
+
+fn void test_overlap_aabb_reports_each_body_once() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Node* pair = add_static_node(&fixture);
+    ColliderDesc[2] colliders = { box_collider({ 0.25f, 0.25f, 0.25f }), box_collider({ 0.25f, 0.25f, 0.25f }) };
+    colliders[0].local.position = { -0.6f, 0, 0 };
+    colliders[1].local.position = { 0.6f, 0, 0 };
+    fixture.physics.add_body(pair, physics::default_body_desc(STATIC), colliders[..])!!;
+    add_box(&fixture, { 10, 0, 0 }, STATIC);
+    run_updates(&fixture, 1);
+
+    Node*[] nodes = fixture.physics.overlap_aabb(tmem, { .min = { -2, -2, -2 }, .max = { 2, 2, 2 } });
+    assert(nodes.len == 1 && nodes[0] == pair);
+}
+
+fn void test_cast_shape_reports_nearest_first() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Node* near = add_box(&fixture, { 2, 0, 0 }, STATIC);
+    Node* far = add_box(&fixture, { 5, 0, 0 }, STATIC);
+    run_updates(&fixture, 1);
+
+    ColliderKind[3] kinds = { SPHERE, CAPSULE, BOX };
+    foreach (kind : kinds) {
+        ColliderDesc shape = physics::default_collider_desc(kind);
+        shape.radius = 0.25f;
+        shape.half_height = 0.25f;
+        shape.half_extents = { 0.25f, 0.25f, 0.25f };
+        ShapeCastHit[] hits = fixture.physics.cast_shape(tmem, shape, { 10, 0, 0 });
+        assert(hits.len == 2);
+        assert(hits[0].fraction <= hits[1].fraction);
+        assert(hits[0].node == near && hits[1].node == far);
+        assert(math::abs(hits[0].fraction - (2 - 0.5f - 0.25f) / 10) <= 0.01f);
+    }
+}
+
+fn void test_contact_points_of_a_resting_box() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Node* ground = add_ground(&fixture);
+    Node* box = add_box(&fixture, { 0, 1, 0 });
+    run_updates(&fixture, SETTLE_UPDATES);
+
+    ContactPoint[] points = fixture.physics.contact_points(tmem, box);
+    assert(points.len >= 1);
+    foreach (point : points) {
+        assert(point.other == ground);
+        assert(point.separation <= CONTACT_SLOP);
+        assert(close_vec(point.normal, { 0, -1, 0 }, 1e-3f));
+        assert(math::abs(point.point.y) <= CONTACT_SLOP);
+    }
+    ContactPoint[] ground_points = fixture.physics.contact_points(tmem, ground);
+    assert(ground_points.len >= 1);
+    foreach (point : ground_points) {
+        assert(point.other == box);
+        assert(close_vec(point.normal, { 0, 1, 0 }, 1e-3f));
+    }
+}
+
+fn void test_widened_flags_add_segments() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    add_ground(&fixture);
+    add_box(&fixture, { 0, 0.5f, 0 });
+    Node* first = add_box(&fixture, { 4, 3, 0 }, STATIC);
+    Node* second = add_box(&fixture, { 4, 1.5f, 0 });
+    fixture.physics.add_joint(second, physics::default_joint_desc(REVOLUTE, first.id))!!;
+    fixture.physics.desc.tuning.sleep = false;
+    fixture.physics.set_tuning(fixture.physics.desc.tuning);
+    run_updates(&fixture, SETTLE_UPDATES);
+
+    debug::DebugDraw sink = debug::create_debug_draw(mem, 1 << 16);
+    defer debug::destroy_debug_draw(&sink);
+    PhysicsDebugOptions base = { .colliders = true, .contacts = true, .joints = true };
+    fixture.physics.debug_draw(&sink, base);
+    usz base_segments = (usz)sink.vertices.len() / 2;
+
+    PhysicsDebugOptions[4] widened = { base, base, base, base };
+    widened[0].mass = true;
+    widened[1].contact_forces = true;
+    widened[2].islands = true;
+    widened[3].joint_extras = true;
+    foreach (index, options : widened) {
+        sink.clear();
+        fixture.physics.debug_draw(&sink, options);
+        io::eprintfn("flag %d: %d segments over %d", index, sink.vertices.len() / 2, base_segments);
+        assert((usz)sink.vertices.len() / 2 > base_segments);
+    }
 }

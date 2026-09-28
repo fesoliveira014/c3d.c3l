@@ -483,14 +483,6 @@ fn Ray cursor_ray(
     return camera::screen_to_ray(&matrices, pixel, viewport);
 }
 
-fn uint occupied_snapshots(PhysicsWorld* physics) @local {
-    uint count;
-    foreach (&slot : physics.snapshots.slots) {
-        if (slot.generation % 2 == 1) count++;
-    }
-    return count;
-}
-
 fn float average_milliseconds(Timing* timing) @local {
     float sum;
     foreach (sample : timing.milliseconds) sum += sample;
@@ -521,7 +513,7 @@ fn void draw_panel(
         imgui::separator();
         imgui::text("Spawned: %u / %u", spawned.count, MAX_SPAWNED);
         imgui::text("Crate geometry: %s", level.crate_released ? "CPU streams released" : "CPU streams resident");
-        imgui::text("Occupied snapshots: %u", occupied_snapshots(physics));
+        imgui::text("Occupied snapshots: %u", physics.counters().occupied_snapshots);
         b3::Counters counters = physics.world.counters();
         imgui::text("Bodies: %d   awake: %d   contacts: %d", counters.body_count, physics.world.awake_body_count(), counters.contact_count);
         imgui::text("physics.update: %.3f ms (mean of %u frames)", average_milliseconds(timing), TIMING_WINDOW);
