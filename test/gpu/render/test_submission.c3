@@ -3,17 +3,20 @@ module c3d::render::acceptance;
 import c3d;
 import c3d::anim;
 import c3d::asset;
+import c3d::asset::gltf;
 import c3d::camera;
 import c3d::geometry;
 import c3d::light;
 import c3d::material;
 import c3d::maths;
+import c3d::model;
 import c3d::render @public;
 import c3d::scene;
 import c3d::shader;
 import c3d::shader::compile;
 import gpu;
 import std::io;
+import std::io::path;
 import std::math;
 
 const char[*] FILL_SOURCE @private = $embed("fill.comp.glsl");
@@ -46,6 +49,8 @@ const float BACKGROUND_HISTORY_MINIMUM @private = 0.85f; // converged history ke
 const float BLURRED_CENTER_MINIMUM @private = 0.8f; // a few pixels of true motion keep the box center nearly solid; a background velocity clamped at max_velocity smears it dark
 const uint PARITY_RANGES @private = 4; // two batches, each with an unmirrored and a mirrored range
 const uint BATCH_PASSES @private = 4; // shadow layer, depth prepass, forward opaque pass, velocity pass
+const String TEXTURED_MODEL @private = "../../../examples/assets/gltf/BoxTextured.glb";
+const uint PREPARE_FRAME_LIMIT @private = 64; // one unit per frame; the textured box has a handful
 
 struct FillRoot @private {
     Vec4 color;
@@ -1083,6 +1088,58 @@ fn void test_batch_draws_are_indirect_on_every_pass() @test {
     render_scene_frame(&fixture, &target)!!;
 
     assert(renderer.stats.indirect_draws == PARITY_RANGES * BATCH_PASSES);
+    check_validation(renderer);
+}
+
+fn void? render_model_frame(Fixture* fixture, Scene* scene, Node* camera_node) @private {
+    Renderer* renderer = &fixture.renderer;
+    scene.update_world();
+    renderer.begin_frame()!;
+    defer catch render::abort_frame(renderer);
+    renderer.render_view(scene, camera_node, fixture.view)!;
+    renderer.finish_view(fixture.view)!;
+    return renderer.end_frame();
+}
+
+fn String repository_path(String relative) @private {
+    Path source = path::tnew($$FILEPATH)!!;
+    return (String)source.parent()!!.tappend(relative)!!;
+}
+
+fn void test_budgeted_prepare_matches_synchronous_prepare() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    ModelId model = gltf::load_model(&fixture.assets, repository_path(TEXTURED_MODEL))!!;
+
+    PrepareId prepare = renderer.begin_prepare_model(model)!!;
+    PrepareProgress progress = renderer.prepare_progress(prepare);
+    for (uint frame = 0; frame < PREPARE_FRAME_LIMIT && progress.state != PrepareState.READY; frame++) {
+        renderer.begin_frame()!!;
+        renderer.advance_prepares(1)!!;
+        renderer.end_frame()!!;
+        progress = renderer.prepare_progress(prepare);
+    }
+    assert(progress.state == PrepareState.READY && progress.bytes_total > 0);
+    assert(progress.bytes_done == progress.bytes_total && progress.units_done == progress.units_total);
+    renderer.end_prepare(prepare)!!;
+
+    sz pipelines = renderer.pipelines.pipelines.len();
+    uint uploads = renderer.stats.uploads;
+    renderer.prepare_model(model)!!;
+    assert(renderer.stats.uploads == uploads && renderer.pipelines.pipelines.len() == pipelines);
+
+    Scene scene = scene::create_scene(mem, scene::default_scene_desc());
+    defer scene::destroy_scene(&scene);
+    Node* camera_node = scene.add_camera(camera::perspective_deg(60, 0.1f))!!;
+    camera_node.local.position = CAMERA_POSITION;
+    // The view's first rendering creates its own composite pipeline; it belongs to the view, not the model.
+    render_model_frame(&fixture, &scene, camera_node)!!;
+    sz view_pipelines = renderer.pipelines.pipelines.len();
+    model::instantiate(&fixture.assets, &scene, model)!!;
+    render_model_frame(&fixture, &scene, camera_node)!!;
+    assert(renderer.stats.uploads == 0 && renderer.pipelines.pipelines.len() == view_pipelines);
     check_validation(renderer);
 }
 

@@ -65,6 +65,8 @@ struct Stats {
     uint  environment_prepares;
     uint  uploads;
     uint  upload_bytes;
+    uint  prepare_units;
+    usz   prepare_bytes;
     uint  material_resolutions;
     uint  pipeline_lookups;
     uint  dangling_refs;
