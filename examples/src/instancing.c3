@@ -189,7 +189,10 @@ fn Node*? add_pulses(Scene* scene, GeometryId sphere, MaterialId pulse_material)
     float reach = PULSE_RING_RADIUS + PULSE_RADIUS;
     float rise = PULSE_RADIUS + PULSE_AMPLITUDE;
     batch.has_bounds_override = true;
-    batch.local_bounds = { .min = { -reach, PULSE_HEIGHT - rise, -reach }, .max = { reach, PULSE_HEIGHT + rise, reach } };
+    batch.local_bounds = {
+        .min = { -reach, PULSE_HEIGHT - rise, -reach },
+        .max = { reach, PULSE_HEIGHT + rise, reach },
+    };
     return node;
 }
 

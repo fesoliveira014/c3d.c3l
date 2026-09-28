@@ -11,7 +11,7 @@ import std::math;
 const uint SEED @local = 0x2545f491;
 const uint RANDOM_CASES @local = 1000;
 const float HALF_DIAGONAL @local = 0.70710678f; // a unit half-diagonal once turned 45 degrees about y
-const Vec3 BESIDE_RIGHT_PLANE @local = { 7.044f, 0, -10 }; // corners 0.23 outside the right plane, AABB corner 0.27 inside
+const Vec3 BESIDE_RIGHT_PLANE @local = { 7.044f, 0, -10 }; // corners 0.23 outside the right plane, box corner 0.27 in
 const gpu::GpuAddress RECORDS @local = (gpu::GpuAddress)0x10000;
 const gpu::GpuAddress SKIN @local = (gpu::GpuAddress)0x20000;
 const gpu::GpuAddress MORPH @local = (gpu::GpuAddress)0x30000;
@@ -177,7 +177,10 @@ fn void test_cull_bound_follows_the_batch_kind() @test {
     Aabb plain_bound = render::cull_bound(&plain_batch, &geometry)!!;
     assert(plain_bound.min == geometry.bounds.min && plain_bound.max == geometry.bounds.max);
 
-    InstancedMesh overridden = { .has_bounds_override = true, .local_bounds = { .min = { -5, -5, -5 }, .max = { 5, 5, 5 } } };
+    InstancedMesh overridden = {
+        .has_bounds_override = true,
+        .local_bounds        = { .min = { -5, -5, -5 }, .max = { 5, 5, 5 } },
+    };
     AnimatedCrowd crowd = { .pose_bounds = { .min = { -2, 0, -2 }, .max = { 2, 3, 2 } } };
     MeshCandidate crowd_part = { .batch = &overridden, .crowd = &crowd };
     Aabb crowd_bound = render::cull_bound(&crowd_part, &geometry)!!;

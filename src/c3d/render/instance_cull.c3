@@ -10,7 +10,7 @@ import std::math;
 <*
  Per-frame cull memory when RendererDesc.instance_cull_bytes is 0.
 *>
-const usz INSTANCE_CULL_ARENA_BYTES = 16 << 20; // per slot on the device; grows with instances x culling passes; instancing 100k: 6 x 400 KB
+const usz INSTANCE_CULL_ARENA_BYTES = 16 << 20; // per slot on the device; instances x culling passes; 100k: 6 x 400 KB
 
 const usz CULL_ARGS_STRIDE @private = 32; // one indirect command at STREAM_ALIGNMENT
 const usz CULL_COUNTER_BYTES @private = 16; // the frame's visible counter, first in the arena, at STREAM_ALIGNMENT
@@ -130,6 +130,7 @@ fn BatchAddresses batch_addresses(
 
 fn void? acquire_instance_culling(Renderer* renderer) @private {
     if (renderer.cull_arenas[0].allocation.is_valid()) return;
+    defer catch free_instance_culling(renderer);
     foreach (&arena : renderer.cull_arenas) {
         gpu::AllocationDesc arena_desc = {
             .size         = renderer.instance_cull_bytes,
@@ -235,7 +236,8 @@ fn void? prepare_cull_stage(Renderer* renderer, CullItem[] items, bool culling) 
                 if (try visible_offset = arena_place(arena, (usz)item.candidate.instance_count * uint::size)) {
                     usz args_at = block + slot * CULL_ARGS_STRIDE;
                     usz bytes = indirect_args_bytes(&item.geometry.layout);
-                    write_indirect_args(staging.bytes[slot * CULL_ARGS_STRIDE:CULL_ARGS_STRIDE], &item.geometry.layout, 0);
+                    char[] staged_args = staging.bytes[slot * CULL_ARGS_STRIDE:CULL_ARGS_STRIDE];
+                    write_indirect_args(staged_args, &item.geometry.layout, 0);
                     *item.range = {
                         .args    = arena.span.checked_subspan(args_at, bytes)!,
                         .count   = item.candidate.instance_count,
@@ -277,7 +279,11 @@ fn void? record_instance_cull(Renderer* renderer, CullItem[] items) @private {
         foreach (&item : items) {
             CullRange* range = item.range;
             if (!range.culled) continue;
-            gpu::MappedGpuSpan root_span = slot.upload.take(&renderer.device, InstanceCullRoot::size, STREAM_ALIGNMENT)!;
+            gpu::MappedGpuSpan root_span = slot.upload.take(
+                &renderer.device,
+                InstanceCullRoot::size,
+                STREAM_ALIGNMENT,
+            )!;
             InstanceCullRoot* root = (InstanceCullRoot*)root_span.bytes.ptr;
             *root = {
                 .instances  = item.records,
