@@ -17,6 +17,7 @@ C3 0.8.3. C3 is pre-1.0; check syntax against the installed compiler and the `c3
 | `module c3d::render::profile_gpu @private;` | GPU query ownership inside the same add-on, gated by `C3D_PROFILE_GPU`. Imports only stdlib, gpu.c3l and neutral profile values; no core Renderer/Scene/id types. |
 | `module c3d::gui @feat(C3D_PROFILE_GUI & (C3D_PROFILE_CPU \| C3D_PROFILE_GPU));` | Profiler presentation in `addons/c3d_profile_gui.c3l`. Imports only stdlib, neutral profile values and ImGui. Every public declaration is absent unless GUI and at least one capture domain are selected. |
 | `module c3d::physics;` | Rigid bodies over box3d in `addons/c3d_physics.c3l`. Imports stdlib, core and `b3`; faults belong to the add-on; `PhysicsWorld.world`, `PhysicsWorld.body`, `PhysicsWorld.joint` and the component ids are the `b3` escape hatches. |
+| `module c3d::physics::collide;` | World-free collision queries in the same package. Imports stdlib, `c3d::maths` and `b3`; no private state of `c3d::physics`. `Sweep`, `Manifold` and `ManifoldPoint` share names with `b3`; a module importing both qualifies them. |
 | `module c3d::nav;` | Navigation meshes in `addons/c3d_nav.c3l`, a port of Recast/Detour. Imports stdlib and core; faults belong to the add-on. |
 | `module c3d::character;` | Kinematic capsule character controller in `addons/c3d_character.c3l`, on the physics mover primitives. Imports stdlib, core and `c3d::physics`, never `b3`; faults belong to the add-on. |
 | `module c3d::character @feat(C3D_CHARACTER_NAV);` | The crowd binding in `addons/c3d_character.c3l/src/nav/`: `NavDriven` and `drive_characters`. Imports `c3d::nav` besides the package's imports; a consumer enabling the feature selects `c3d_nav`. |
@@ -191,7 +192,7 @@ Code and shipped documentation describe current behavior. No schedules, roadmap 
 
 # 15. Public signature hygiene
 
-Public `c3d` signatures never contain `gpu::`, `sdl::`, `imgui::`, `cg::`, `b3::`, or C-binding types except where the architecture names an escape hatch: `PhysicsWorld.world` (a `b3::WorldId`), `PhysicsWorld.body` (a `b3::BodyId`), `PhysicsWorld.joint` (a `b3::JointId`), custom-shader SPIR-V, the `gpu::GpuAddress` values a custom material root receives, and `c3d::platform`, whose `sdl::Window*` and `sdl::Event*` are exposed on purpose so an application can drive its own SDL loop. Scene-layer modules never import `gpu`.
+Public `c3d` signatures never contain `gpu::`, `sdl::`, `imgui::`, `cg::`, `b3::`, or C-binding types except where the architecture names an escape hatch: `PhysicsWorld.world` (a `b3::WorldId`), `PhysicsWorld.body` (a `b3::BodyId`), `PhysicsWorld.joint` (a `b3::JointId`), `collide::Hull.data` and `collide::Shape.hull` (a `b3::HullData*`), custom-shader SPIR-V, the `gpu::GpuAddress` values a custom material root receives, and `c3d::platform`, whose `sdl::Window*` and `sdl::Event*` are exposed on purpose so an application can drive its own SDL loop. Scene-layer modules never import `gpu`.
 
 # 16. Shaders
 

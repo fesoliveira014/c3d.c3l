@@ -44,6 +44,7 @@ ADDON_EXAMPLES = {
     "physics_components": PHYSICS,
     "vehicle": PHYSICS,
     "ragdoll": PHYSICS,
+    "collision_math": PHYSICS,
     "navmesh": NAV,
     "crowd": NAV,
     "grid": NAV,

@@ -42,6 +42,10 @@
     "ragdoll": {
       "type": "executable",
       "sources": [ "examples/ragdoll.c3" ]
+    },
+    "collision_math": {
+      "type": "executable",
+      "sources": [ "examples/collision_math.c3" ]
     }
   }
 }
