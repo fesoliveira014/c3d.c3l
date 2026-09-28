@@ -4,10 +4,10 @@
 #include "descriptor_heap.glsl"
 #include "probe_atlas.glsl"
 
-const float PROBE_BACKFACE_FLOOR = 0.2;     // keeps probes behind the surface from vanishing on thin walls
-const float PROBE_MIN_VARIANCE = 1e-4;
-const float PROBE_CHEBYSHEV_FLOOR = 0.05;
-const float PROBE_MIN_WEIGHT = 1e-3;
+const float PROBE_BACKFACE_FLOOR = 0.2;   // keeps probes behind the surface from vanishing on thin walls
+const float PROBE_MIN_VARIANCE = 1e-4;    // world units squared; a flat distance distribution still falls off smoothly
+const float PROBE_CHEBYSHEV_FLOOR = 0.05; // an occluded probe keeps a trace of weight, so no cell goes black
+const float PROBE_MIN_WEIGHT = 1e-3;      // the weight sum never reaches zero
 
 vec3 probe_volume_last_corner(ProbeVolumeGpu volume) {
     vec3 last = vec3(float(volume.count_x - 1u), float(volume.count_y - 1u), float(volume.count_z - 1u));
@@ -28,7 +28,14 @@ bool probe_volume_select(ProbeVolumeSetGpu set, vec3 position, out uint index) {
 }
 
 // Explicit level: this include compiles into compute and ray-generation stages.
-vec4 probe_atlas_sample(uint atlas, uint sampler_index, uvec2 cell, uint cell_edge, vec3 direction, uvec2 extent) {
+vec4 probe_atlas_sample(
+    uint atlas,
+    uint sampler_index,
+    uvec2 cell,
+    uint cell_edge,
+    vec3 direction,
+    uvec2 extent
+) {
     vec2 texel = probe_atlas_texel(cell, cell_edge, direction);
     return sample_texture_2d(atlas, sampler_index, texel / vec2(extent));
 }

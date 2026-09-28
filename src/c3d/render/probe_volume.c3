@@ -10,7 +10,7 @@ import std::math;
 
 $assert ProbeVolumeSetGpu::size == 16 + ProbeVolumeGpu::size * shader::PROBE_VOLUME_CAPACITY;
 
-const ulong PROBE_MIRROR_ABSENCE_FRAMES @private = FRAMES_IN_FLIGHT + 1; // longer holds idle scenes' atlases; shorter refills more
+const ulong PROBE_MIRROR_ABSENCE_FRAMES @private = FRAMES_IN_FLIGHT + 1; // longer holds idle atlases longer
 const gpu::Format PROBE_IRRADIANCE_FORMAT @local = gpu::Format.RGBA16_FLOAT;
 const gpu::Format PROBE_VISIBILITY_FORMAT @local = gpu::Format.RG16_FLOAT;
 
@@ -123,10 +123,9 @@ fn usz order_view_probe_volumes(
     usz count;
     foreach (usz index, &mirror : mirrors) {
         if (mirror.scene != scene.identity || !mirror.fill.filled()) continue;
-        if (!scene.world.is_alive(mirror.entity)) continue;
         ProbeVolume* volume = scene.world.get(mirror.entity, ProbeVolume);
         Node* node = scene.node(mirror.entity);
-        if (!volume || !node.visible_effective || !(node.layers & view_layers)) continue;
+        if (!node.visible_effective || !(node.layers & view_layers)) continue;
 
         float box_volume = volume.half_extents.x * volume.half_extents.y * volume.half_extents.z;
         usz position = count;
@@ -310,15 +309,13 @@ fn void? record_probe_atlas_fill(
         // The fill reads the SH buffer an environment preparation may have written this frame.
         gpu::Barrier environment_written = { .before = { .compute }, .after = { .compute } };
         gpu::cmd_barrier(&renderer.commands, &environment_written)!;
-        if (recording.lighting) {
-            recording.environment = pack_lighting_environment(
-                renderer:    renderer,
-                environment: recording.lighting,
-                intensity:   recording.scene.environment_intensity,
-                rotation:    recording.scene.environment_rotation,
-                sheen:       false,
-            )!;
-        }
+        recording.environment = pack_lighting_environment(
+            renderer:    renderer,
+            environment: recording.lighting,
+            intensity:   recording.scene.environment_intensity,
+            rotation:    recording.scene.environment_rotation,
+            sheen:       false,
+        )!;
         recording.environment_ready = true;
     }
 

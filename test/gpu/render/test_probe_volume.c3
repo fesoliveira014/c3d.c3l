@@ -24,7 +24,7 @@ const Vec3 EDITED_SKY_RADIANCE @private = { 0.8f, 0.3f, 0.3f };
 const Vec3 GROUND_RADIANCE @private = { 0.05f, 0.025f, 0.0125f };
 const Vec3 PROBE_CAMERA_POSITION @private = { 0, 6, 7 };
 const Vec3 PROBE_CAMERA_TARGET @private = { 0, 0, 0 };
-const Vec3 VOLUME_CENTER @private = { 0, 1, 0 };
+const Vec3 VOLUME_CENTER @private = { 0, 0.5f, 0 }; // the floor at y = 0 lies inside, not on a face
 const Vec3 VOLUME_HALF_EXTENTS @private = { 4, 1, 4 };
 const uint[<3>] PLAIN_COUNTS @private = { 8, 4, 8 };
 const uint[<3>] WRAPPED_COUNTS @private = { 32, 4, 32 }; // 8 slices per row, 4 rows
@@ -32,7 +32,8 @@ const Vec3 FLOOR_INSIDE @private = { 2, 0, 1 };
 const Vec3 BOX_FACE @private = { 0, 1, 0.5f };
 const Vec3 FLOOR_OUTSIDE @private = { 4.6f, 0, 1 };
 const Vec3 INTERIOR_HALF_EXTENTS @private = { 1, 1, 1 };
-const Vec3 INTERIOR_CENTER @private = { 2, 1, 1 };
+const Vec3 INTERIOR_CENTER @private = { 2, 0.5f, 1 };
+const Vec3 INTERIOR_FLOOR @private = { 2, 0, 1 };
 const Vec3 EXTERIOR_ONLY_POINT @private = { -2, 0, 1 };
 const float FLOOR_ALBEDO @private = 0.8f;
 const float TURN_DEGREES @private = 30;
@@ -40,7 +41,7 @@ const int PROBE_CHANNEL_TOLERANCE @private = 2;
 const uint FILL_DISPATCHES @private = 4; // fill and border for each of the two atlases
 const uint ATLAS_DISPATCHES @private = 2;
 const usz TWIN_DIRECTIONS @private = 64;
-const float TWIN_TOLERANCE @private = 1e-5f;
+const float TWIN_TOLERANCE @private = 1e-4f; // a few float steps at atlas coordinates near 64
 
 struct ProbeScene @private {
     Scene         scene;
@@ -281,7 +282,7 @@ fn void test_nested_volumes_select_the_smallest_box() @test {
     ProbeView probe_view = create_probe_view(&fixture, ShadingPath.FORWARD)!!;
     defer destroy_probe_view(&fixture, &probe_view);
 
-    uint interior_sh = render_probe_pixel(&fixture, &probe, probe_view.view, INTERIOR_CENTER - { 0, 1, 0 })!!;
+    uint interior_sh = render_probe_pixel(&fixture, &probe, probe_view.view, INTERIOR_FLOOR)!!;
     uint exterior_sh = render_probe_pixel(&fixture, &probe, probe_view.view, EXTERIOR_ONLY_POINT)!!;
 
     probe.scene.add(probe.volume, light::probe_volume(VOLUME_HALF_EXTENTS, PLAIN_COUNTS));
@@ -292,7 +293,7 @@ fn void test_nested_volumes_select_the_smallest_box() @test {
     probe.scene.add(interior, dark);
     probe.scene.update_world();
 
-    uint interior_pixel = render_probe_pixel(&fixture, &probe, probe_view.view, INTERIOR_CENTER - { 0, 1, 0 })!!;
+    uint interior_pixel = render_probe_pixel(&fixture, &probe, probe_view.view, INTERIOR_FLOOR)!!;
     uint exterior_pixel = render_probe_pixel(&fixture, &probe, probe_view.view, EXTERIOR_ONLY_POINT)!!;
     io::eprintfn("nested: interior %08x (sh %08x)", interior_pixel, interior_sh);
     io::eprintfn("nested: exterior %08x (sh %08x)", exterior_pixel, exterior_sh);
@@ -301,7 +302,7 @@ fn void test_nested_volumes_select_the_smallest_box() @test {
 
     interior.visible = false;
     probe.scene.update_world();
-    uint uncovered = render_probe_pixel(&fixture, &probe, probe_view.view, INTERIOR_CENTER - { 0, 1, 0 })!!;
+    uint uncovered = render_probe_pixel(&fixture, &probe, probe_view.view, INTERIOR_FLOOR)!!;
     assert_channels_close(uncovered, interior_sh, PROBE_CHANNEL_TOLERANCE);
     check_validation(&fixture.renderer);
 }

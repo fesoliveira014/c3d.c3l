@@ -37,7 +37,8 @@ volume lights anything.
   `max_distance` refills the visibility atlas only. Without a live scene environment the volume
   holds no fill and lights nothing.
 - `NONE` never fills. A volume that was filled keeps its texels, so switching `ENVIRONMENT` to
-  `NONE` freezes the atlas; a volume that was never filled lights nothing.
+  `NONE` freezes the atlas; a volume that was never filled lights nothing. Changing `counts` under
+  `NONE` replaces the atlases and loses the frozen texels.
 - A volume lights a view when its node is visible (`visible_effective`) and shares a layer bit
   with the camera. Hiding the node switches the volume off without losing its atlases.
 
