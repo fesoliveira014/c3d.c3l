@@ -56,8 +56,8 @@ any other renderer uses the software walk. There is no setting: comparing the tw
 kinds hit the same triangles, report back faces the same way (a probe inside a wall reads dark on both) and
 use the same default of 128 rays per probe; on the RTX 4090 every ray result of the acceptance room agrees
 between them. A hit that lands exactly on a volume's box face takes the probes or the SH term by the last
-bit of its distance, so there the kinds can differ; the ray rotations skip the all-zero Halton point, whose
-half turn about y kept one ray in each probe layer's plane and put its hits on the box faces.
+bit of its distance, so there the kinds can differ. The ray rotations start after the all-zero Halton point,
+which would keep one ray of every probe in its layer's plane.
 
 | `ProbeUpdateDesc` field | Meaning |
 | --- | --- |
