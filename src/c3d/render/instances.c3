@@ -27,6 +27,7 @@ struct InstanceKey {
     ulong  scene;
     Entity node;
 }
+$assert InstanceKey::size == ulong::size + Entity::size;
 
 <*
  Persistent instance records of one batch node.
@@ -229,6 +230,7 @@ fn void? upload_instance_records(
         slot.allocation = allocation;
         slot.records = address;
         slot.capacity = capacity;
+        slot.revision = 0;
     } else {
         renderer.pending_overwrite = true;
     }
