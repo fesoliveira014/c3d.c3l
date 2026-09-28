@@ -41,7 +41,7 @@
     },
     "ragdoll": {
       "type": "executable",
-      "sources": [ "examples/ragdoll.c3" ]
+      "sources": [ "examples/ragdoll.c3", "examples/ragdoll_bones.c3" ]
     },
     "collision_math": {
       "type": "executable",
