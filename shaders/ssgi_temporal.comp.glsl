@@ -31,7 +31,9 @@ void main() {
     vec4 result = fetch_texture_2d(root.raw, ivec2(pixel));
     if (depth != 0.0 && (root.flags & SSGI_FLAG_HISTORY_VALID) != 0u) {
         vec4 velocity = fetch_texture_2d(root.velocity, texel);
-        vec2 previous_uv = ssgi_previous_uv(frame, (vec2(texel) + 0.5) / vec2(extent), velocity);
+        // The history is half resolution: reproject the half-resolution texel centre, not its depth texel's.
+        vec2 centre_uv = (vec2(pixel) + 0.5) / vec2(root.width, root.height);
+        vec2 previous_uv = ssgi_previous_uv(frame, centre_uv, velocity);
         if (ssgi_uv_inside(previous_uv)) {
             bool depth_match = ssgi_depth_matches(
                 frame,

@@ -26,6 +26,7 @@ const float CUBE_STRENGTH @private = 4;
 const Vec3 CUBE_PLACE @private = { 0, 0.25f, 0 };
 const Vec3 CUBE_MOVED_PLACE @private = { -3, 0.25f, 0 };  // beyond max_distance of the old place
 const Vec3 BESIDE_CUBE @private = { 0.45f, 0, 0 };
+const Vec3 MIRROR_BESIDE_CUBE @private = { -0.45f, 0, 0 };  // the camera is on x = 0 and the scene symmetric in x
 const Vec3 BESIDE_MOVED_CUBE @private = { -2.55f, 0, 0 };
 const Vec3 FAR_FROM_CUBE @private = { -2.5f, 0, -1 };
 const Vec3 WALL_CENTER @private = { 0, 1, -2.75f };
@@ -36,6 +37,9 @@ const int HALO_MIN @private = 4;                   // red levels the bounce must
 const int FAR_TOLERANCE @private = 1;
 const int EDGE_TOLERANCE @private = 2;
 const int MOVE_TOLERANCE @private = 2;
+const int SYMMETRY_TOLERANCE @private = 2;
+const float ACCUMULATION_TOLERANCE @private = 2;   // red levels between the settled and the unaccumulated mean
+const uint MEAN_FRAMES @private = 20;              // frames averaged on an unaccumulated view
 const float CORNER_ALBEDO @private = 0.8f;
 const Vec3 CORNER_LIGHT @private = { -0.5f, 0.6f, -0.5f };
 const float CORNER_LIGHT_INTENSITY @private = 0.3f;
@@ -144,6 +148,14 @@ fn float corner_mean(Fixture* fixture, GiScene* gi, ViewId view) @private {
     return sum / (float)(CORNER_POINTS.len * 3);
 }
 
+fn float mean_red(Fixture* fixture, GiScene* gi, ViewId view, Vec3 point, uint frames) @private {
+    float sum;
+    for (uint frame = 0; frame < frames; frame++) {
+        sum += (float)pixel_channel(render_gi_pixel(fixture, gi, view, point)!!, 0);
+    }
+    return sum / (float)frames;
+}
+
 fn ViewId? create_gi_view(
     Fixture* fixture,
     RenderTargetId target,
@@ -224,18 +236,24 @@ fn void test_ssgi_adds_a_tinted_halo_beside_a_bright_object() @test {
         defer scene::destroy_scene(&gi.scene);
         GiViews views = create_gi_views(&fixture, shading)!!;
         defer destroy_gi_views(&fixture, &views);
+        ViewId unaccumulated = create_gi_view(&fixture, views.target, shading, true, history_weight: 0)!!;
+        defer render::destroy_view(&fixture.renderer, unaccumulated)!!;
 
         render_gi_frames(&fixture, &gi, views.with_gi, SSGI_SETTLE_FRAMES)!!;
         uint halo = render_gi_pixel(&fixture, &gi, views.with_gi, BESIDE_CUBE)!!;
+        uint mirror = render_gi_pixel(&fixture, &gi, views.with_gi, MIRROR_BESIDE_CUBE)!!;
         uint far = render_gi_pixel(&fixture, &gi, views.with_gi, FAR_FROM_CUBE)!!;
         uint plain = render_gi_pixel(&fixture, &gi, views.without_gi, BESIDE_CUBE)!!;
         uint plain_far = render_gi_pixel(&fixture, &gi, views.without_gi, FAR_FROM_CUBE)!!;
+        float single_frame = mean_red(&fixture, &gi, unaccumulated, BESIDE_CUBE, MEAN_FRAMES);
         io::eprintfn(
-            "%s halo: beside %08x without %08x; far %08x without %08x",
-            shading, halo, plain, far, plain_far,
+            "%s halo: beside %08x mirror %08x without %08x; far %08x without %08x; unaccumulated red %f",
+            shading, halo, mirror, plain, far, plain_far, single_frame,
         );
         assert(pixel_channel(halo, 0) - pixel_channel(plain, 0) > HALO_MIN);
         assert(pixel_channel(halo, 0) > pixel_channel(halo, 1));
+        assert(math::abs(pixel_channel(halo, 0) - pixel_channel(mirror, 0)) <= SYMMETRY_TOLERANCE);
+        assert(math::abs((float)pixel_channel(halo, 0) - single_frame) <= ACCUMULATION_TOLERANCE);
         for (uint channel = 0; channel < 3; channel++) {
             assert(math::abs(pixel_channel(far, channel) - pixel_channel(plain_far, channel)) <= FAR_TOLERANCE);
         }
