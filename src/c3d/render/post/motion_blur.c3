@@ -270,6 +270,27 @@ fn PipelineKey camera_velocity_pipeline_key(gpu::Format format) @private {
     };
 }
 
+// Mirrored as the body of velocity_camera.frag.glsl; the renderer records the shader, tests check this twin.
+fn Vec3 camera_velocity(
+    Vec2 uv,
+    float depth,
+    Mat4 inv_view_proj,
+    Mat4 prev_view_proj,
+    Vec2 jitter_offset,
+    bool orthographic,
+) @private {
+    if (depth == 0 && orthographic) return {};
+    Vec2 ndc = (uv * 2 - 1) * (Vec2){ 1, -1 };
+    Vec4 world = inv_view_proj * (Vec4){ ndc.x, ndc.y, depth, 1 };
+    Vec4 previous = depth > 0
+      ? prev_view_proj * (Vec4){ world.x / world.w, world.y / world.w, world.z / world.w, 1 }
+      : prev_view_proj * (Vec4){ world.x, world.y, world.z, 0 };
+    Vec2 previous_uv = (Vec2){ previous.x / previous.w, previous.y / previous.w } * (Vec2){ 0.5f, -0.5f } + 0.5f;
+    float previous_depth = depth > 0 ? previous.z / previous.w : 0;
+    Vec2 motion = uv - jitter_offset - previous_uv;
+    return { motion.x, motion.y, previous_depth };
+}
+
 fn Vec2 jitter_uv(Vec2 jitter) @private {
     return jitter * (Vec2){ 0.5f, -0.5f };
 }

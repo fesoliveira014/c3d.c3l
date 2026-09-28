@@ -95,6 +95,7 @@ root SceneTraceRoot {
 const uint FRAME_LIGHTS_CLUSTERED = 1;
 const uint FRAME_TRACE_PRESENT = 2;
 const uint FRAME_AO_PRESENT = 4;
+const uint FRAME_SSGI_PRESENT = 8;
 const uint CLUSTER_GROUP_SIZE = 64;
 
 struct ClusterRange {
@@ -150,6 +151,10 @@ root FrameRoot {
     float      mip_bias;
     TextureIndex ao_texture;
     GpuAddress probe_volumes;
+    TextureIndex ssgi_texture;
+    uint       _pad0;
+    uint       _pad1;
+    uint       _pad2;
 }
 
 root DrawRoot {
@@ -264,6 +269,63 @@ root AoBlurRoot {
     uint         _pad0;
     uint         _pad1;
     uint         _pad2;
+}
+
+const uint SSGI_FLAG_GBUFFER_NORMALS = 1;
+const uint SSGI_FLAG_HISTORY_VALID = 2;
+
+root SsgiTraceRoot {
+    GpuAddress   frame;
+    TextureIndex depth;
+    TextureIndex normals;
+    TextureIndex velocity;
+    TextureIndex previous_color;
+    TextureIndex previous_depth;
+    TextureIndex output_texture;
+    SamplerIndex sampler_index;
+    uint         width;
+    uint         height;
+    uint         rays;
+    uint         max_steps;
+    float        max_distance;
+    float        thickness;
+    float        depth_tolerance;
+    uint         noise_frame;
+    uint         flags;
+    uint         _pad0;
+    uint         _pad1;
+}
+
+root SsgiTemporalRoot {
+    GpuAddress   frame;
+    TextureIndex raw;
+    TextureIndex history;
+    TextureIndex previous_depth;
+    TextureIndex depth;
+    TextureIndex velocity;
+    TextureIndex output_texture;
+    TextureIndex output_depth;
+    SamplerIndex sampler_index;
+    uint         width;
+    uint         height;
+    float        history_weight;
+    float        depth_tolerance;
+    float        velocity_threshold;
+    uint         flags;
+}
+
+root SsgiFilterRoot {
+    GpuAddress   frame;
+    TextureIndex input_texture;
+    TextureIndex depth;
+    TextureIndex normals;
+    TextureIndex output_texture;
+    uint         input_width;
+    uint         input_height;
+    uint         width;
+    uint         height;
+    float        intensity;
+    uint         flags;
 }
 
 root RtAoRoot {

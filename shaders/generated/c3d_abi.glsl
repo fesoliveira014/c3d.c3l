@@ -22,6 +22,7 @@ const uint TRACE_MASK_SHADOW_CASTER = 2u;
 const uint FRAME_LIGHTS_CLUSTERED = 1u;
 const uint FRAME_TRACE_PRESENT = 2u;
 const uint FRAME_AO_PRESENT = 4u;
+const uint FRAME_SSGI_PRESENT = 8u;
 const uint CLUSTER_GROUP_SIZE = 64u;
 const uint INSTANCE_CULL_GROUP_SIZE = 64u;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8u;
@@ -29,6 +30,8 @@ const uint DRAW_RECEIVE_SHADOW = 1u;
 const uint DRAW_ALPHA_MASK = 2u;
 const uint DRAW_AMBIENT_OCCLUSION = 4u;
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1u;
+const uint SSGI_FLAG_GBUFFER_NORMALS = 1u;
+const uint SSGI_FLAG_HISTORY_VALID = 2u;
 const uint MATERIAL_MAP_BASE_COLOR = 1u;
 const uint MATERIAL_MAP_METALLIC_ROUGHNESS = 2u;
 const uint MATERIAL_MAP_NORMAL = 4u;
@@ -240,6 +243,10 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer FrameRoot {
     float mip_bias;
     uint ao_texture;
     uint64_t probe_volumes;
+    uint ssgi_texture;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer DrawRoot {
@@ -344,6 +351,60 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer AoBlurRoot {
     uint _pad0;
     uint _pad1;
     uint _pad2;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer SsgiTraceRoot {
+    uint64_t frame;
+    uint depth;
+    uint normals;
+    uint velocity;
+    uint previous_color;
+    uint previous_depth;
+    uint output_texture;
+    uint sampler_index;
+    uint width;
+    uint height;
+    uint rays;
+    uint max_steps;
+    float max_distance;
+    float thickness;
+    float depth_tolerance;
+    uint noise_frame;
+    uint flags;
+    uint _pad0;
+    uint _pad1;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer SsgiTemporalRoot {
+    uint64_t frame;
+    uint raw;
+    uint history;
+    uint previous_depth;
+    uint depth;
+    uint velocity;
+    uint output_texture;
+    uint output_depth;
+    uint sampler_index;
+    uint width;
+    uint height;
+    float history_weight;
+    float depth_tolerance;
+    float velocity_threshold;
+    uint flags;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer SsgiFilterRoot {
+    uint64_t frame;
+    uint input_texture;
+    uint depth;
+    uint normals;
+    uint output_texture;
+    uint input_width;
+    uint input_height;
+    uint width;
+    uint height;
+    float intensity;
+    uint flags;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer RtAoRoot {

@@ -55,7 +55,9 @@ void main() {
     );
 
     float ambient_occlusion = frame_ambient_occlusion(frame, texel);
-    vec3 color = frame.ambient.rgb * base_color * (1.0 - metallic) * min(occlusion, ambient_occlusion)
+    vec4 screen_indirect = frame_screen_space_indirect(frame, texel);
+    vec3 color = frame.ambient.rgb * base_color * (1.0 - metallic)
+        * screen_space_base_share(occlusion, ambient_occlusion, screen_indirect)
         + emissive_specular.rgb;
     vec3 diffuse = vec3(0.0);
     vec3 specular = vec3(0.0);
@@ -67,6 +69,7 @@ void main() {
             roughness,
             occlusion,
             ambient_occlusion,
+            screen_indirect,
             diffuse,
             specular
         );

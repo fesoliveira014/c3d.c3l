@@ -50,6 +50,9 @@ enum ShaderName : int {
     PROBE_FILL_ENVIRONMENT,
     PROBE_BORDER,
     PROBE_TRACE,
+    SSGI_TRACE,
+    SSGI_TEMPORAL,
+    SSGI_FILTER,
     PROBE_BLEND,
     RT_AO,
     RT_REFLECTIONS,
@@ -169,6 +172,9 @@ const char[*] PROBE_FILL_ENVIRONMENT_SPIRV @private = $embed("../../../shaders/s
 const char[*] PROBE_BORDER_SPIRV @private = $embed("../../../shaders/spv/probe_border.spv");
 const char[*] PROBE_TRACE_SPIRV @private = $embed("../../../shaders/spv/probe_trace.spv");
 const char[*] PROBE_TRACE_SCENE_TRACE_BVH_SPIRV @private = $embed("../../../shaders/spv/probe_trace_scene_trace_bvh.spv");
+const char[*] SSGI_TRACE_SPIRV @private = $embed("../../../shaders/spv/ssgi_trace.spv");
+const char[*] SSGI_TEMPORAL_SPIRV @private = $embed("../../../shaders/spv/ssgi_temporal.spv");
+const char[*] SSGI_FILTER_SPIRV @private = $embed("../../../shaders/spv/ssgi_filter.spv");
 const char[*] PROBE_BLEND_SPIRV @private = $embed("../../../shaders/spv/probe_blend.spv");
 const char[*] RT_AO_SPIRV @private = $embed("../../../shaders/spv/rt_ao.spv");
 const char[*] RT_REFLECTIONS_SPIRV @private = $embed("../../../shaders/spv/rt_reflections.spv");
@@ -209,7 +215,7 @@ const char[*] LIGHTING_RESOLVE_RT_SHADOWS_SPIRV @private = $embed("../../../shad
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[97] SHADER_ENTRIES = {
+const ShaderEntry[100] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -271,6 +277,9 @@ const ShaderEntry[97] SHADER_ENTRIES = {
     { .variant = { .shader = PROBE_BORDER }, .spirv = PROBE_BORDER_SPIRV[..] },
     { .variant = { .shader = PROBE_TRACE }, .spirv = PROBE_TRACE_SPIRV[..] },
     { .variant = { .shader = PROBE_TRACE, .flags = SHADER_FLAG_SCENE_TRACE_BVH }, .spirv = PROBE_TRACE_SCENE_TRACE_BVH_SPIRV[..] },
+    { .variant = { .shader = SSGI_TRACE }, .spirv = SSGI_TRACE_SPIRV[..] },
+    { .variant = { .shader = SSGI_TEMPORAL }, .spirv = SSGI_TEMPORAL_SPIRV[..] },
+    { .variant = { .shader = SSGI_FILTER }, .spirv = SSGI_FILTER_SPIRV[..] },
     { .variant = { .shader = PROBE_BLEND }, .spirv = PROBE_BLEND_SPIRV[..] },
     { .variant = { .shader = RT_AO }, .spirv = RT_AO_SPIRV[..] },
     { .variant = { .shader = RT_REFLECTIONS }, .spirv = RT_REFLECTIONS_SPIRV[..] },

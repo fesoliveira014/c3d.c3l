@@ -161,6 +161,7 @@ struct Renderer {
     ViewId                    default_view;
     post::PostPipelines       post_pipelines;
     AmbientOcclusionPipelines ambient_occlusion_pipelines;
+    ScreenSpaceGiPipelines    screen_space_gi_pipelines;
     ReflectionPipelines       reflection_pipelines;
     ProbeVolumeRes[shader::PROBE_VOLUME_CAPACITY] probe_volumes;
     ProbeVolumePipelines      probe_pipelines;
@@ -929,6 +930,7 @@ fn void destroy_renderer(Renderer* renderer) {
     pool::destroy_pool{ViewRecord, ViewId}(&renderer.views);
     post::destroy_post_pipelines(&renderer.device, &renderer.post_pipelines);
     destroy_ambient_occlusion_pipelines(&renderer.device, &renderer.ambient_occlusion_pipelines);
+    destroy_screen_space_gi_pipelines(&renderer.device, &renderer.screen_space_gi_pipelines);
     destroy_reflection_pipelines(&renderer.device, &renderer.reflection_pipelines);
     destroy_path_tracer(&renderer.device, &renderer.path_tracer);
 

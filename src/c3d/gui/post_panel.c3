@@ -38,6 +38,11 @@ const float VELOCITY_THRESHOLD_MAX @local = 16;
 const float AO_RADIUS_MIN @local = 0.05f;
 const float AO_RADIUS_MAX @local = 5;
 const float AO_INTENSITY_MAX @local = 2;
+const float SSGI_DISTANCE_MIN @local = 0.1f;
+const float SSGI_DISTANCE_MAX @local = 10;
+const float SSGI_THICKNESS_MIN @local = 0.01f;
+const float SSGI_THICKNESS_MAX @local = 2;
+const float SSGI_HISTORY_WEIGHT_MAX @local = 0.99f; // the weight must stay below 1 or the history never changes
 const float REFLECTION_ROUGHNESS_MIN @local = 0.05f;
 const float REFLECTION_ROUGHNESS_MAX @local = 1;
 const uint PATH_TRACE_MAX_SAMPLES_LIMIT @local = 65536; // a float mean gains nothing visible beyond it
@@ -161,6 +166,9 @@ fn bool post_panel(ViewDesc* desc, TextureId lut, bool ray_queries = false) {
     if (imgui::collapsing_header("Ambient occlusion", {})) {
         changed |= edit_ambient_occlusion(&desc.ambient_occlusion, ray_queries);
     }
+    if (imgui::collapsing_header("Screen-space GI", {})) {
+        changed |= edit_screen_space_gi(&desc.screen_space_gi);
+    }
     if (imgui::collapsing_header("Ray tracing", {})) {
         changed |= edit_ray_tracing(desc, ray_queries);
     }
@@ -198,6 +206,30 @@ fn bool edit_ambient_occlusion(AmbientOcclusionDesc* ambient_occlusion, bool ray
             maximum: render::RT_AO_RAYS_MAX,
         );
     }
+    return changed;
+}
+
+fn bool edit_screen_space_gi(ScreenSpaceGiDesc* screen_space_gi) @local {
+    bool enabled = screen_space_gi.enabled;
+    bool changed = imgui::checkbox("Enabled", &enabled);
+    if (changed) *screen_space_gi = enabled ? render::SCREEN_SPACE_GI_DEFAULT : (ScreenSpaceGiDesc){};
+    if (!screen_space_gi.enabled) return changed;
+    changed |= edit_level_count(
+        label:   "Rays",
+        value:   &screen_space_gi.rays,
+        minimum: render::SSGI_RAYS_MIN,
+        maximum: render::SSGI_RAYS_MAX,
+    );
+    changed |= edit_level_count(
+        label:   "Steps",
+        value:   &screen_space_gi.max_steps,
+        minimum: render::SSGI_STEPS_MIN,
+        maximum: render::SSGI_STEPS_MAX,
+    );
+    changed |= edit_grade_factor("Distance", &screen_space_gi.max_distance, SSGI_DISTANCE_MIN, SSGI_DISTANCE_MAX);
+    changed |= edit_grade_factor("Thickness", &screen_space_gi.thickness, SSGI_THICKNESS_MIN, SSGI_THICKNESS_MAX);
+    changed |= edit_grade_factor("GI intensity", &screen_space_gi.intensity, 0, 1);
+    changed |= edit_grade_factor("History weight", &screen_space_gi.history_weight, 0, SSGI_HISTORY_WEIGHT_MAX);
     return changed;
 }
 

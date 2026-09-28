@@ -64,7 +64,7 @@ fn void? acquire_effect_targets(Renderer* renderer, ViewRecord* record) {
     if (stack.bloom && !record.bloom_levels) acquire_bloom_chain(renderer, record)!;
     if (stack.depth_of_field && !record.dof_near.texture.is_valid()) acquire_dof_layers(renderer, record)!;
     if (uses_tiles(stack) && !record.tile_max.texture.is_valid()) acquire_tiles(renderer, record)!;
-    if (uses_velocity(stack) && !record.velocity.texture.is_valid()) acquire_velocity_image(renderer, record)!;
+    if (uses_velocity(&record.desc) && !record.velocity.texture.is_valid()) acquire_velocity_image(renderer, record)!;
     if (stack.motion_blur && !record.motion_blur_out.texture.is_valid()) acquire_motion_blur_output(renderer, record)!;
     if (stack.anti_aliasing == AntiAliasing.TAA && !record.taa_color[0].texture.is_valid()) {
         acquire_taa_images(renderer, record)!;
@@ -97,7 +97,7 @@ fn void retire_effect_targets(Renderer* renderer, ViewRecord* record) {
         render::retire_storage_target(retire, &record.tile_max);
         render::retire_storage_target(retire, &record.tile_neighbor);
     }
-    bool velocity_stale = !uses_velocity(stack) || record.velocity.format != velocity_format(stack);
+    bool velocity_stale = !uses_velocity(&record.desc) || record.velocity.format != velocity_format(&record.desc);
     if (record.velocity.texture.is_valid() && velocity_stale) {
         retire.push({ .kind = RetiredKind.ATTACHMENT_VIEW, .attachment_view = record.velocity.attachment });
         render::retire_storage_target(retire, &record.velocity);
@@ -135,12 +135,14 @@ fn bool uses_tiles(PostStack* stack) @private {
     return stack.depth_of_field || stack.motion_blur;
 }
 
-fn bool uses_velocity(PostStack* stack) @private {
-    return stack.motion_blur || stack.anti_aliasing == AntiAliasing.TAA;
+fn bool uses_velocity(ViewDesc* desc) @private {
+    return desc.post.motion_blur || desc.post.anti_aliasing == AntiAliasing.TAA || desc.screen_space_gi.enabled;
 }
 
-fn gpu::Format velocity_format(PostStack* stack) @private {
-    return stack.anti_aliasing == AntiAliasing.TAA ? TEMPORAL_VELOCITY_FORMAT : VELOCITY_FORMAT;
+// The expected previous depth in z serves both TAA and the screen-space GI rejection.
+fn gpu::Format velocity_format(ViewDesc* desc) @private {
+    bool previous_depth = desc.post.anti_aliasing == AntiAliasing.TAA || desc.screen_space_gi.enabled;
+    return previous_depth ? TEMPORAL_VELOCITY_FORMAT : VELOCITY_FORMAT;
 }
 
 fn void? acquire_velocity_image(Renderer* renderer, ViewRecord* record) @private {
@@ -148,7 +150,7 @@ fn void? acquire_velocity_image(Renderer* renderer, ViewRecord* record) @private
         device:     &renderer.device,
         width:      record.hdr_color.width,
         height:     record.hdr_color.height,
-        format:     velocity_format(&record.desc.post),
+        format:     velocity_format(&record.desc),
         usage:      { .color_attach, .sampled, .storage },
         debug_name: "velocity",
     )!;

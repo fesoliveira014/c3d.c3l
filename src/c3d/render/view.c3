@@ -187,9 +187,12 @@ fn void? record_raster_view(
 ) @private {
     Vec2 viewport = { (float)record.hdr_color.width, (float)record.hdr_color.height };
     bool taa = record.desc.post.anti_aliasing == AntiAliasing.TAA;
-    bool temporal = taa || record.desc.post.motion_blur;
+    bool screen_space_gi = record.desc.screen_space_gi.enabled;
+    bool temporal = taa || record.desc.post.motion_blur || screen_space_gi;
     bool ambient_occlusion = record.desc.ambient_occlusion.kind != AoKind.NONE;
-    bool forward_prepass = record.desc.depth_prepass || ambient_occlusion;
+    bool forward_prepass = record.desc.depth_prepass || ambient_occlusion || screen_space_gi;
+    bool early_velocity = velocity_before_lighting(&record.desc);
+    bool ssgi_history_valid = record.history.valid && record.history.scene == scene.identity;
     Vec2 jitter = taa
       ? post::taa_jitter(record.history.sample_index, record.hdr_color.width, record.hdr_color.height)
       : (Vec2){};
@@ -425,6 +428,7 @@ fn void? record_raster_view(
                 mip_bias: taa ? record.desc.post.taa_params.mip_bias : 0,
                 ao_texture: ambient_occlusion ? record.ao.view.index : (gpu::TextureIndex)0,
                 probe_volumes: probe_volumes,
+                ssgi_texture: screen_space_gi ? record.ssgi.view.index : (gpu::TextureIndex)0,
             );
             if (record.desc.lights == LightSelection.CLUSTERED) {
                 record_clusters(
@@ -520,8 +524,21 @@ fn void? record_raster_view(
                             opaque:         opaque_items,
                         )!;
                     }
-                    if (ambient_occlusion) {
-                        record_ambient_occlusion(renderer, record, frame_span.address)!;
+                    if (early_velocity) {
+                        post::record_velocity(
+                            renderer:  renderer,
+                            record:    record,
+                            items:     depth_items,
+                            raster:    &raster,
+                            view_proj: matrices.view_proj,
+                            jitter:    jitter,
+                        )!;
+                    }
+                    if (ambient_occlusion) record_ambient_occlusion(renderer, record, frame_span.address)!;
+                    if (screen_space_gi) {
+                        record_screen_space_gi(renderer, record, frame_span.address, ssgi_history_valid)!;
+                    }
+                    if (ambient_occlusion || screen_space_gi) {
                         record.depth.transition(&renderer.commands, DEPTH_ATTACHMENT_STATE)!;
                     }
                     record_forward_pass(
@@ -536,17 +553,34 @@ fn void? record_raster_view(
                         depth_matched: forward_prepass,
                     )!;
                 case DEFERRED:
-                    record_deferred_scene(
+                    record_deferred_geometry(
                         renderer:       renderer,
                         record:         record,
                         frame:          frame_span.address,
                         view_reflected: view_reflected,
                         gbuffer:        gbuffer_items,
                         opaque:         opaque_items,
-                        transparent:    transmission_items.len ? (DrawItem[]){} : transparent_items,
-                        sky_root:       sky_root,
-                        sky:            environments.sky != null,
-                        clear_color:    environments.clear_color,
+                    )!;
+                    if (early_velocity) {
+                        post::record_velocity(
+                            renderer:  renderer,
+                            record:    record,
+                            items:     depth_items,
+                            raster:    &raster,
+                            view_proj: matrices.view_proj,
+                            jitter:    jitter,
+                        )!;
+                    }
+                    record_deferred_shading(
+                        renderer:           renderer,
+                        record:             record,
+                        frame:              frame_span.address,
+                        opaque:             opaque_items,
+                        transparent:        transmission_items.len ? (DrawItem[]){} : transparent_items,
+                        sky_root:           sky_root,
+                        sky:                environments.sky != null,
+                        clear_color:        environments.clear_color,
+                        ssgi_history_valid: ssgi_history_valid,
                     )!;
                 case PATH_TRACED:
             }
@@ -563,11 +597,12 @@ fn void? record_raster_view(
                 }
             }
 
+            if (screen_space_gi) record_ssgi_color_copy(renderer, record)!;
             if (debug && debug.vertices.len()) {
                 record_debug_lines(renderer, record, raster.view_proj, debug)!;
             }
 
-            if (temporal) {
+            if (temporal && !early_velocity) {
                 post::record_velocity(
                     renderer:  renderer,
                     record:    record,
@@ -878,6 +913,11 @@ fn void? prepare_views(Renderer* renderer) @private {
     }
 }
 
+// On a screen-space GI view the velocity feeds the effect before lighting; elsewhere it records after the scene.
+fn bool velocity_before_lighting(ViewDesc* desc) @private {
+    return desc.screen_space_gi.enabled;
+}
+
 <*
  Write the per-view root.
  @param [&out] root : "Overwritten whole."
@@ -891,6 +931,7 @@ fn void? prepare_views(Renderer* renderer) @private {
  @param mip_bias : "Added to material texture level of detail."
  @param ao_texture : "AO sampled view; zero when the view has none."
  @param probe_volumes : "ProbeVolumeSetGpu of the view; zero when no volume applies."
+ @param ssgi_texture : "Screen-space GI sampled view; zero when the view has none."
 *>
 fn void write_frame_root(
     FrameRoot* root,
@@ -914,6 +955,7 @@ fn void write_frame_root(
     float mip_bias = 0,
     gpu::TextureIndex ao_texture = (gpu::TextureIndex)0,
     gpu::GpuAddress probe_volumes = (gpu::GpuAddress)0,
+    gpu::TextureIndex ssgi_texture = (gpu::TextureIndex)0,
 ) {
     *root = {
         .view            = bitcast(matrices.view, Mat4f),
@@ -937,10 +979,12 @@ fn void write_frame_root(
         .trace           = trace,
         .flags           = (clusters != (gpu::GpuAddress)0 ? shader::FRAME_LIGHTS_CLUSTERED : 0)
           | (trace != (gpu::GpuAddress)0 ? shader::FRAME_TRACE_PRESENT : 0)
-          | (ao_texture != (gpu::TextureIndex)0 ? shader::FRAME_AO_PRESENT : 0),
+          | (ao_texture != (gpu::TextureIndex)0 ? shader::FRAME_AO_PRESENT : 0)
+          | (ssgi_texture != (gpu::TextureIndex)0 ? shader::FRAME_SSGI_PRESENT : 0),
         .mip_bias        = mip_bias,
         .ao_texture      = ao_texture,
         .probe_volumes   = probe_volumes,
+        .ssgi_texture    = ssgi_texture,
     };
 }
 

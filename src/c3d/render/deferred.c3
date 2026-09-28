@@ -75,17 +75,13 @@ fn PipelineKey lighting_resolve_pipeline_key(bool rt_shadows) @private {
     };
 }
 
-fn void? record_deferred_scene(
+fn void? record_deferred_geometry(
     Renderer* renderer,
     ViewRecord* record,
     gpu::GpuAddress frame,
     bool view_reflected,
     DrawItem[] gbuffer,
     DrawItem[] opaque,
-    DrawItem[] transparent,
-    gpu::GpuAddress sky_root,
-    bool sky,
-    Vec4 clear_color,
 ) @private {
     record_depth_prepass(
         renderer:       renderer,
@@ -96,7 +92,21 @@ fn void? record_deferred_scene(
         opaque:         opaque,
     )!;
     record_gbuffer_pass(renderer, record, gbuffer)!;
+}
+
+fn void? record_deferred_shading(
+    Renderer* renderer,
+    ViewRecord* record,
+    gpu::GpuAddress frame,
+    DrawItem[] opaque,
+    DrawItem[] transparent,
+    gpu::GpuAddress sky_root,
+    bool sky,
+    Vec4 clear_color,
+    bool ssgi_history_valid,
+) @private {
     if (record.desc.ambient_occlusion.kind != AoKind.NONE) record_ambient_occlusion(renderer, record, frame)!;
+    if (record.desc.screen_space_gi.enabled) record_screen_space_gi(renderer, record, frame, ssgi_history_valid)!;
     if (record.desc.ray_tracing.reflections) record_reflections(renderer, record, frame)!;
     record_lighting_pass(renderer, record, frame, clear_color)!;
     record.depth.transition(&renderer.commands, DEPTH_ATTACHMENT_STATE)!;

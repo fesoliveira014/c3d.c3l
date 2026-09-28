@@ -350,6 +350,7 @@ fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkOptions options) @local 
     base.ambient_occlusion = options.flags.ambient_occlusion;
     base.depth_prepass = options.flags.depth_prepass;
     base.ray_tracing.reflections = options.flags.reflections;
+    if (options.flags.screen_space_gi) base.screen_space_gi = render::SCREEN_SPACE_GI_DEFAULT;
     base.shading = options.shading;
     // A path-traced view loops every light itself and rejects the cluster grid.
     base.lights = options.shading == ShadingPath.PATH_TRACED ? LightSelection.FLAT : options.selection;
@@ -359,13 +360,14 @@ fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkOptions options) @local 
 
 fn void print_banner(BenchmarkOptions options, bool timestamps_active) @local {
     BenchmarkFlags flags = options.flags;
-    io::eprintfn("mode=%s shading=%s lights=%d range=%.1f capacity=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s depth_prepass=%s ambient_occlusion=%s reflections=%s trace=%s",
+    io::eprintfn("mode=%s shading=%s lights=%d range=%.1f capacity=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s depth_prepass=%s ambient_occlusion=%s reflections=%s screen_space_gi=%s trace=%s",
         options.selection == LightSelection.FLAT || options.shading == ShadingPath.PATH_TRACED ? "flat" : "clustered",
         bench_loop::shading_name(options.shading), options.lights, options.range,
         options.capacity, flags.width, flags.height, flags.warmup, flags.frames,
         flags.validation, flags.gpu_timings, timestamps_active, flags.capture,
         flags.window ? "window" : "none", flags.panel, flags.depth_prepass,
         bench_loop::ambient_occlusion_name(flags.ambient_occlusion), flags.reflections ? "on" : "off",
+        flags.screen_space_gi ? "on" : "off",
         bench_loop::trace_name(
             traces:      bench_loop::needs_ray_queries(flags) || options.shading == ShadingPath.PATH_TRACED,
             ray_queries: bench_loop::requests_ray_queries(flags) || options.shading == ShadingPath.PATH_TRACED,
