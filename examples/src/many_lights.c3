@@ -336,7 +336,7 @@ fn BenchmarkOptions? parse_options(String[] args) @local {
             default: return c3d::INVALID_ARGUMENT~;
         }
     }
-    bench_loop::validate_flags(options.flags)!;
+    bench_loop::validate_flags(options.flags, options.shading)!;
     if (!options.lights || options.lights > MAX_POINT_LIGHTS
         || !options.capacity || options.capacity > 256
         || !math::is_finite(options.range) || options.range < RANGE_MIN || options.range > RANGE_MAX) {

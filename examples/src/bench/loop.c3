@@ -180,11 +180,11 @@ fn String? option_value(String[] args, usz* index) {
  Reject frame counts, extents and flag combinations the loop cannot run.
  @return? c3d::INVALID_ARGUMENT
 *>
-fn void? validate_flags(BenchmarkFlags flags) {
+fn void? validate_flags(BenchmarkFlags flags, ShadingPath shading) {
     if (!flags.frames || flags.frames > FRAMES_MAX || flags.warmup > FRAMES_MAX
         || !flags.width || flags.width > EXTENT_MAX || !flags.height || flags.height > EXTENT_MAX
         || (flags.panel && (!flags.window || !flags.capture))
-        || (flags.trace == TraceKind.SOFTWARE && needs_ray_queries(flags))) {
+        || (flags.trace == TraceKind.SOFTWARE && (needs_ray_queries(flags) || shading == ShadingPath.PATH_TRACED))) {
         return c3d::INVALID_ARGUMENT~;
     }
 }

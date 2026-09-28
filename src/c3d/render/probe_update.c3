@@ -205,9 +205,10 @@ fn void? record_probe_updates(Renderer* renderer, ProbeFillRecording* recording,
     );
 
     Quat rotation = maths::random_rotation({
-        maths::halton((uint)renderer.frame_index, 2),
-        maths::halton((uint)renderer.frame_index, 3),
-        maths::halton((uint)renderer.frame_index, 5),
+        // Index 0 is the all-zero point, a half turn about y that leaves one ray in each probe layer's plane.
+        maths::halton((uint)renderer.frame_index + 1, 2),
+        maths::halton((uint)renderer.frame_index + 1, 3),
+        maths::halton((uint)renderer.frame_index + 1, 5),
     });
     foreach (&update : recording.updates[:recording.update_count]) {
         usz set_index;
