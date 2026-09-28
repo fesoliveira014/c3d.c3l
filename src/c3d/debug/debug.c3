@@ -30,6 +30,7 @@ const float LIGHT_MARKER_RADIUS @local = 0.25f;
 const float JOINT_AXES_SIZE @local = 0.05f;
 const float IK_TARGET_RADIUS @local = 0.05f; // metres; visible at character scale without hiding the hand
 const float BASIS_PARALLEL_THRESHOLD @local = 0.99f; // a normal this close to Y takes X as its reference
+const float PROBE_MARKER_SCALE @local = 0.1f;        // of the smallest spacing; small enough to keep neighbours apart
 
 <*
  Line endpoint with a packed color, red in the low byte.
@@ -210,6 +211,17 @@ fn void DebugDraw.light_volumes(&self, Scene* scene, uint rgba) {
 }
 
 <*
+ Append the box and a cross per probe of every volume on a visible node.
+ @param [&in] scene : "Pose as left by the last update_world."
+*>
+fn void DebugDraw.probe_volumes(&self, Scene* scene, uint rgba) {
+    scene.world.@each(ProbeVolume; entity, volume) {
+        Node* node = scene.node(entity);
+        if (node.visible_effective) probe_volume_lines(self, node.world_position(), volume, rgba);
+    };
+}
+
+<*
  Append the bone segments and joint axes of every skin binding.
  @param [&in] scene : "Pose as left by the last update_world."
 *>
@@ -278,6 +290,22 @@ fn DebugDraw create_debug_draw(Allocator allocator, usz capacity = DEBUG_LINE_CA
 fn void destroy_debug_draw(DebugDraw* draw) {
     draw.vertices.free();
     *draw = {};
+}
+
+fn void probe_volume_lines(DebugDraw* draw, Vec3 center, ProbeVolume* volume, uint rgba) @local {
+    draw.aabb({ .min = center - volume.half_extents, .max = center + volume.half_extents }, rgba);
+    Vec3 spacing = volume.spacing();
+    float half_size = PROBE_MARKER_SCALE * math::min(spacing.x, spacing.y, spacing.z);
+    for (uint z = 0; z < volume.counts.z; z++) {
+        for (uint y = 0; y < volume.counts.y; y++) {
+            for (uint x = 0; x < volume.counts.x; x++) {
+                Vec3 probe = volume.probe_position(center, { x, y, z });
+                draw.line(probe - { half_size, 0, 0 }, probe + { half_size, 0, 0 }, rgba);
+                draw.line(probe - { 0, half_size, 0 }, probe + { 0, half_size, 0 }, rgba);
+                draw.line(probe - { 0, 0, half_size }, probe + { 0, 0, half_size }, rgba);
+            }
+        }
+    }
 }
 
 fn void box_edges(DebugDraw* draw, Vec3[8] corners, uint rgba) @local {

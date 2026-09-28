@@ -84,6 +84,7 @@ fn void? record_texture_uploads(Renderer* renderer, gpu::CommandList* commands) 
 
 fn void commit_uploads(Renderer* renderer, Frame* slot) @private {
     commit_environment_preparations(renderer, slot);
+    commit_probe_fills(renderer);
     foreach (&pending : renderer.pending_texture_uploads) {
         renderer.textures[pending.asset.index].revision = pending.revision;
     }
@@ -102,6 +103,7 @@ fn void commit_uploads(Renderer* renderer, Frame* slot) @private {
 }
 
 fn void discard_uploads(Renderer* renderer) @private {
+    discard_probe_fills(renderer);
     discard_environment_preparations(renderer);
     restore_texture_states(&renderer.texture_state_undo, renderer.textures);
     if (!renderer.uploads_recorded && !renderer.pending_copies.len()

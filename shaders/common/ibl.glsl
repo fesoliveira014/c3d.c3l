@@ -5,6 +5,7 @@
 #include "brdf.glsl"
 #include "irradiance.glsl"
 #include "ambient_occlusion.glsl"
+#include "probe_volume.glsl"
 
 vec3 environment_rotate(EnvironmentRotationGpu rotation, vec3 direction) {
     return vec3(
@@ -45,8 +46,28 @@ vec3 environment_brdf_weight(
     return surface.reflectance * response.x + surface.grazing_reflectance * response.y;
 }
 
+bool frame_has_indirect(FrameRoot frame) {
+    return frame.environment != 0ul || frame.probe_volumes != 0ul;
+}
+
+// Irradiance E from the first probe volume containing the position, else the environment SH, else zero.
+vec3 indirect_diffuse_irradiance(FrameRoot frame, vec3 position, vec3 normal, vec3 view_direction) {
+    if (frame.probe_volumes != 0ul) {
+        ProbeVolumeSetGpu set = ProbeVolumeSetGpu(frame.probe_volumes);
+        uint index;
+        if (probe_volume_select(set, position, index)) {
+            return probe_irradiance(set.volumes[index], position, normal, view_direction);
+        }
+    }
+    if (frame.environment == 0ul) return vec3(0.0);
+    EnvironmentGpu environment = EnvironmentGpu(frame.environment);
+    return environment_irradiance(environment.sh, environment_rotate(environment.rotation, normal))
+        * environment.intensity;
+}
+
 void evaluate_environment_lobes(
-    EnvironmentGpu environment,
+    FrameRoot frame,
+    vec3 world_position,
     StandardSurface surface,
     float roughness,
     float occlusion,
@@ -54,16 +75,18 @@ void evaluate_environment_lobes(
     out vec3 diffuse,
     out vec3 specular
 ) {
+    vec3 fresnel = fresnel_schlick(surface.reflectance, surface.grazing_reflectance, surface.normal_view);
+    diffuse = indirect_diffuse_irradiance(frame, world_position, surface.normal, surface.view_direction)
+        * surface.diffuse_color * (1.0 - fresnel) * min(occlusion, ambient_occlusion);
+    specular = vec3(0.0);
+    if (frame.environment == 0ul) return;
+
+    EnvironmentGpu environment = EnvironmentGpu(frame.environment);
     float perceptual_roughness = max(roughness, MIN_PERCEPTUAL_ROUGHNESS);
-    vec3 normal = environment_rotate(environment.rotation, surface.normal);
     vec3 reflection = environment_rotate(
         environment.rotation,
         reflect(-surface.view_direction, anisotropic_reflection_normal(surface, perceptual_roughness))
     );
-    vec3 fresnel = fresnel_schlick(surface.reflectance, surface.grazing_reflectance, surface.normal_view);
-    diffuse = environment_irradiance(environment.sh, normal)
-        * surface.diffuse_color * (1.0 - fresnel) * min(occlusion, ambient_occlusion) * environment.intensity;
-
     float lod = perceptual_roughness * float(ENVIRONMENT_SPECULAR_MIPS - 1u);
     vec3 prefiltered = sample_texture_cube_lod(
         environment.specular_cube,
@@ -78,7 +101,8 @@ void evaluate_environment_lobes(
 }
 
 vec3 evaluate_environment(
-    EnvironmentGpu environment,
+    FrameRoot frame,
+    vec3 world_position,
     StandardSurface surface,
     float roughness,
     float occlusion,
@@ -86,7 +110,16 @@ vec3 evaluate_environment(
 ) {
     vec3 diffuse;
     vec3 specular;
-    evaluate_environment_lobes(environment, surface, roughness, occlusion, ambient_occlusion, diffuse, specular);
+    evaluate_environment_lobes(
+        frame,
+        world_position,
+        surface,
+        roughness,
+        occlusion,
+        ambient_occlusion,
+        diffuse,
+        specular
+    );
     return diffuse + specular;
 }
 

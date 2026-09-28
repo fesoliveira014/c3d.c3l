@@ -47,6 +47,7 @@ const uint PREVIEW_MODE_RAW = 7;
 const uint PREVIEW_MODE_OCTAHEDRAL_NORMAL = 8;
 const uint PREVIEW_MODE_BITS = 9;
 const uint PREVIEW_MODE_GRAY = 10;
+const uint PREVIEW_MODE_DISTANCE = 11;
 const uint LIGHT_RT_SHADOW = 1;
 const uint ENVIRONMENT_FACE_POSITIVE_X = 0;
 const uint ENVIRONMENT_FACE_NEGATIVE_X = 1;
@@ -62,6 +63,12 @@ const uint ENVIRONMENT_SH_GROUPS = 64;
 const uint ENVIRONMENT_SH_GROUP_SIZE = 64;
 const uint ENVIRONMENT_SOURCE_EQUIRECTANGULAR = 0;
 const uint ENVIRONMENT_SOURCE_SOLID = 1;
+const uint PROBE_VOLUME_CAPACITY = 8;
+const uint PROBE_IRRADIANCE_CELL = 8;
+const uint PROBE_VISIBILITY_CELL = 16;
+const uint PROBE_ATLAS_COLUMNS = 256;
+const uint PROBE_ATLAS_IRRADIANCE = 0;
+const uint PROBE_ATLAS_VISIBILITY = 1;
 const uint PHYSICAL_MAP_CLEARCOAT = 1;
 const uint PHYSICAL_MAP_CLEARCOAT_ROUGHNESS = 2;
 const uint PHYSICAL_MAP_CLEARCOAT_NORMAL = 4;
@@ -312,8 +319,7 @@ struct FrameRoot {
     GpuAddress   clusters;
     float        mip_bias;
     TextureIndex ao_texture;
-    uint         _pad1;
-    uint         _pad2;
+    GpuAddress   probe_volumes;
 }
 $assert FrameRoot::size == 464;
 $assert $reflect(FrameRoot.view).offset == 0;
@@ -338,8 +344,7 @@ $assert $reflect(FrameRoot.scene_sampler).offset == 436;
 $assert $reflect(FrameRoot.clusters).offset == 440;
 $assert $reflect(FrameRoot.mip_bias).offset == 448;
 $assert $reflect(FrameRoot.ao_texture).offset == 452;
-$assert $reflect(FrameRoot._pad1).offset == 456;
-$assert $reflect(FrameRoot._pad2).offset == 460;
+$assert $reflect(FrameRoot.probe_volumes).offset == 456;
 
 struct DrawRoot {
     Mat4f        model;
@@ -894,6 +899,76 @@ struct IrradianceGpu {
 }
 $assert IrradianceGpu::size == 144;
 $assert $reflect(IrradianceGpu.coefficients).offset == 0;
+
+struct ProbeVolumeGpu {
+    Vec4f        origin_energy;
+    Vec4f        spacing_max_distance;
+    Vec4f        biases;
+    uint         count_x;
+    uint         count_y;
+    uint         count_z;
+    uint         _pad0;
+    TextureIndex irradiance;
+    TextureIndex visibility;
+    SamplerIndex sampler_index;
+    uint         slices_per_row;
+}
+$assert ProbeVolumeGpu::size == 80;
+$assert $reflect(ProbeVolumeGpu.origin_energy).offset == 0;
+$assert $reflect(ProbeVolumeGpu.spacing_max_distance).offset == 16;
+$assert $reflect(ProbeVolumeGpu.biases).offset == 32;
+$assert $reflect(ProbeVolumeGpu.count_x).offset == 48;
+$assert $reflect(ProbeVolumeGpu.count_y).offset == 52;
+$assert $reflect(ProbeVolumeGpu.count_z).offset == 56;
+$assert $reflect(ProbeVolumeGpu._pad0).offset == 60;
+$assert $reflect(ProbeVolumeGpu.irradiance).offset == 64;
+$assert $reflect(ProbeVolumeGpu.visibility).offset == 68;
+$assert $reflect(ProbeVolumeGpu.sampler_index).offset == 72;
+$assert $reflect(ProbeVolumeGpu.slices_per_row).offset == 76;
+
+struct ProbeVolumeSetGpu {
+    uint              count;
+    uint              _pad0;
+    uint              _pad1;
+    uint              _pad2;
+    ProbeVolumeGpu[8] volumes;
+}
+$assert ProbeVolumeSetGpu::size == 656;
+$assert $reflect(ProbeVolumeSetGpu.count).offset == 0;
+$assert $reflect(ProbeVolumeSetGpu._pad0).offset == 4;
+$assert $reflect(ProbeVolumeSetGpu._pad1).offset == 8;
+$assert $reflect(ProbeVolumeSetGpu._pad2).offset == 12;
+$assert $reflect(ProbeVolumeSetGpu.volumes).offset == 16;
+
+struct ProbeFillRoot {
+    GpuAddress   environment;
+    TextureIndex atlas;
+    uint         width;
+    uint         height;
+    uint         cell_edge;
+    uint         kind;
+    float        max_distance;
+}
+$assert ProbeFillRoot::size == 32;
+$assert $reflect(ProbeFillRoot.environment).offset == 0;
+$assert $reflect(ProbeFillRoot.atlas).offset == 8;
+$assert $reflect(ProbeFillRoot.width).offset == 12;
+$assert $reflect(ProbeFillRoot.height).offset == 16;
+$assert $reflect(ProbeFillRoot.cell_edge).offset == 20;
+$assert $reflect(ProbeFillRoot.kind).offset == 24;
+$assert $reflect(ProbeFillRoot.max_distance).offset == 28;
+
+struct ProbeBorderRoot {
+    TextureIndex atlas;
+    uint         cell_edge;
+    uint         width;
+    uint         height;
+}
+$assert ProbeBorderRoot::size == 16;
+$assert $reflect(ProbeBorderRoot.atlas).offset == 0;
+$assert $reflect(ProbeBorderRoot.cell_edge).offset == 4;
+$assert $reflect(ProbeBorderRoot.width).offset == 8;
+$assert $reflect(ProbeBorderRoot.height).offset == 12;
 
 struct EnvironmentGpu {
     TextureIndex           specular_cube;

@@ -2,4 +2,6 @@ module c3d::render;
 
 faultdef
     PIPELINE_REJECTED,
-    NO_INSTANCE_BOUND;
+    NO_INSTANCE_BOUND,
+    NO_PROBE_SLOT,
+    NO_PROBE_VOLUME;

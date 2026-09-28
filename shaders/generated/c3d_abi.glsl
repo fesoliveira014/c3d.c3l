@@ -50,6 +50,7 @@ const uint PREVIEW_MODE_RAW = 7u;
 const uint PREVIEW_MODE_OCTAHEDRAL_NORMAL = 8u;
 const uint PREVIEW_MODE_BITS = 9u;
 const uint PREVIEW_MODE_GRAY = 10u;
+const uint PREVIEW_MODE_DISTANCE = 11u;
 const uint LIGHT_RT_SHADOW = 1u;
 const uint ENVIRONMENT_FACE_POSITIVE_X = 0u;
 const uint ENVIRONMENT_FACE_NEGATIVE_X = 1u;
@@ -65,6 +66,12 @@ const uint ENVIRONMENT_SH_GROUPS = 64u;
 const uint ENVIRONMENT_SH_GROUP_SIZE = 64u;
 const uint ENVIRONMENT_SOURCE_EQUIRECTANGULAR = 0u;
 const uint ENVIRONMENT_SOURCE_SOLID = 1u;
+const uint PROBE_VOLUME_CAPACITY = 8u;
+const uint PROBE_IRRADIANCE_CELL = 8u;
+const uint PROBE_VISIBILITY_CELL = 16u;
+const uint PROBE_ATLAS_COLUMNS = 256u;
+const uint PROBE_ATLAS_IRRADIANCE = 0u;
+const uint PROBE_ATLAS_VISIBILITY = 1u;
 const uint PHYSICAL_MAP_CLEARCOAT = 1u;
 const uint PHYSICAL_MAP_CLEARCOAT_ROUGHNESS = 2u;
 const uint PHYSICAL_MAP_CLEARCOAT_NORMAL = 4u;
@@ -232,8 +239,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer FrameRoot {
     uint64_t clusters;
     float mip_bias;
     uint ao_texture;
-    uint _pad1;
-    uint _pad2;
+    uint64_t probe_volumes;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer DrawRoot {
@@ -538,6 +544,45 @@ struct EnvironmentRotationGpu {
 
 struct IrradianceGpu {
     vec4 coefficients[9];
+};
+
+struct ProbeVolumeGpu {
+    vec4 origin_energy;
+    vec4 spacing_max_distance;
+    vec4 biases;
+    uint count_x;
+    uint count_y;
+    uint count_z;
+    uint _pad0;
+    uint irradiance;
+    uint visibility;
+    uint sampler_index;
+    uint slices_per_row;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer ProbeVolumeSetGpu {
+    uint count;
+    uint _pad0;
+    uint _pad1;
+    uint _pad2;
+    ProbeVolumeGpu volumes[8];
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer ProbeFillRoot {
+    uint64_t environment;
+    uint atlas;
+    uint width;
+    uint height;
+    uint cell_edge;
+    uint kind;
+    float max_distance;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer ProbeBorderRoot {
+    uint atlas;
+    uint cell_edge;
+    uint width;
+    uint height;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer EnvironmentGpu {

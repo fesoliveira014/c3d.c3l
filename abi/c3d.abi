@@ -149,8 +149,7 @@ root FrameRoot {
     GpuAddress clusters;
     float      mip_bias;
     TextureIndex ao_texture;
-    uint       _pad1;
-    uint       _pad2;
+    GpuAddress probe_volumes;
 }
 
 root DrawRoot {
@@ -393,6 +392,7 @@ const uint PREVIEW_MODE_RAW = 7;
 const uint PREVIEW_MODE_OCTAHEDRAL_NORMAL = 8;
 const uint PREVIEW_MODE_BITS = 9;
 const uint PREVIEW_MODE_GRAY = 10;
+const uint PREVIEW_MODE_DISTANCE = 11;
 
 root PreviewRoot {
     TextureIndex input_texture;
@@ -506,6 +506,52 @@ struct EnvironmentRotationGpu {
 
 struct IrradianceGpu {
     vec4[9] coefficients;
+}
+
+const uint PROBE_VOLUME_CAPACITY = 8;
+const uint PROBE_IRRADIANCE_CELL = 8;
+const uint PROBE_VISIBILITY_CELL = 16;
+const uint PROBE_ATLAS_COLUMNS = 256;
+const uint PROBE_ATLAS_IRRADIANCE = 0;
+const uint PROBE_ATLAS_VISIBILITY = 1;
+
+struct ProbeVolumeGpu {
+    vec4         origin_energy;
+    vec4         spacing_max_distance;
+    vec4         biases;
+    uint         count_x;
+    uint         count_y;
+    uint         count_z;
+    uint         _pad0;
+    TextureIndex irradiance;
+    TextureIndex visibility;
+    SamplerIndex sampler_index;
+    uint         slices_per_row;
+}
+
+root ProbeVolumeSetGpu {
+    uint              count;
+    uint              _pad0;
+    uint              _pad1;
+    uint              _pad2;
+    ProbeVolumeGpu[8] volumes;
+}
+
+root ProbeFillRoot {
+    GpuAddress   environment;
+    TextureIndex atlas;
+    uint         width;
+    uint         height;
+    uint         cell_edge;
+    uint         kind;
+    float        max_distance;
+}
+
+root ProbeBorderRoot {
+    TextureIndex atlas;
+    uint         cell_edge;
+    uint         width;
+    uint         height;
 }
 
 root EnvironmentGpu {

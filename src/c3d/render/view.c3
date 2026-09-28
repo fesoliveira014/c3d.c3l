@@ -320,6 +320,7 @@ fn void? record_raster_view(
             if (record.desc.ray_tracing.reflections) acquire_environment_lut(renderer)!;
             prepare_cull_stage(renderer, view_culls, record.desc.instance_culling)!;
             record_pending_copies(renderer, &renderer.commands)!;
+            record_probe_volumes(renderer, scene, environments.lighting)!;
             record_instance_cull(renderer, view_culls)!;
             prepare_sampled_targets(renderer, record)!;
         };
@@ -399,6 +400,7 @@ fn void? record_raster_view(
             }
             Vec3 ambient = environments.lighting && !scene.ambient_add
               ? (Vec3){} : scene.ambient_color * scene.ambient_intensity;
+            gpu::GpuAddress probe_volumes = pack_probe_volumes(renderer, scene, camera.layers)!;
             frame_span = slot.upload.take(&renderer.device, FrameRoot::size, STREAM_ALIGNMENT)!;
             write_frame_root(
                 root:        (FrameRoot*)frame_span.bytes.ptr,
@@ -421,6 +423,7 @@ fn void? record_raster_view(
                 jitter: jitter,
                 mip_bias: taa ? record.desc.post.taa_params.mip_bias : 0,
                 ao_texture: ambient_occlusion ? record.ao.view.index : (gpu::TextureIndex)0,
+                probe_volumes: probe_volumes,
             );
             if (record.desc.lights == LightSelection.CLUSTERED) {
                 record_clusters(
@@ -886,6 +889,7 @@ fn void? prepare_views(Renderer* renderer) @private {
  @param jitter : "NDC offset already applied to the rendered matrices."
  @param mip_bias : "Added to material texture level of detail."
  @param ao_texture : "AO sampled view; zero when the view has none."
+ @param probe_volumes : "ProbeVolumeSetGpu of the view; zero when no volume applies."
 *>
 fn void write_frame_root(
     FrameRoot* root,
@@ -908,6 +912,7 @@ fn void write_frame_root(
     Vec2 jitter = {},
     float mip_bias = 0,
     gpu::TextureIndex ao_texture = (gpu::TextureIndex)0,
+    gpu::GpuAddress probe_volumes = (gpu::GpuAddress)0,
 ) {
     *root = {
         .view            = bitcast(matrices.view, Mat4f),
@@ -934,6 +939,7 @@ fn void write_frame_root(
           | (ao_texture != (gpu::TextureIndex)0 ? shader::FRAME_AO_PRESENT : 0),
         .mip_bias        = mip_bias,
         .ao_texture      = ao_texture,
+        .probe_volumes   = probe_volumes,
     };
 }
 

@@ -286,10 +286,10 @@ void main() {
             * (base_fill * physical_sheen_attenuation(surface)
                 + material_sample.emissive);
     }
-    if (frame.environment != 0ul) {
-        EnvironmentGpu environment = EnvironmentGpu(frame.environment);
+    if (frame_has_indirect(frame)) {
         color += evaluate_physical_environment(
-            environment,
+            frame,
+            v_world_pos,
             surface,
             material_sample.roughness,
             material_sample.occlusion,
