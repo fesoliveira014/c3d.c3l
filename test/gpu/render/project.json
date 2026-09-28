@@ -37,7 +37,8 @@
         "test_crowd_variants.c3",
         "test_instance_cull.c3",
         "test_probe_volume.c3",
-        "test_probe_update.c3"
+        "test_probe_update.c3",
+        "test_screen_space_gi.c3"
       ]
     }
   }
