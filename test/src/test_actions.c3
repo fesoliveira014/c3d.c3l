@@ -195,7 +195,9 @@ fn void test_add_faults_on_duplicate_name_and_full_map() @test {
 fn void test_bind_faults_when_the_map_is_full() @test {
     ActionMap actions = platform::default_action_map();
     ActionId jump = actions.add("jump", ActionKind.BUTTON)!!;
-    for (usz index = 0; index < platform::BINDING_COUNT; index++) actions.bind(jump, platform::key_binding(Scancode.SPACE))!!;
+    for (usz index = 0; index < platform::BINDING_COUNT; index++) {
+        actions.bind(jump, platform::key_binding(Scancode.SPACE))!!;
+    }
     if (catch excuse = actions.bind(jump, platform::key_binding(Scancode.SPACE))) {
         assert(excuse == c3d::CAPACITY_EXCEEDED);
     } else {

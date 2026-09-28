@@ -123,10 +123,10 @@ fn float Input.gamepad_axis(&self, GamepadAxis axis, usz slot = 0) => self.gamep
  @require slot < GAMEPAD_COUNT
 *>
 fn Vec2 Input.gamepad_stick(&self, GamepadStick stick, usz slot = 0) {
-    float[GAMEPAD_AXIS_COUNT]* axes = &self.gamepads[slot].axes;
+    Gamepad* gamepad = &self.gamepads[slot];
     switch (stick) {
-        case LEFT: return { (*axes)[(usz)GamepadAxis.LEFTX], -(*axes)[(usz)GamepadAxis.LEFTY] };
-        case RIGHT: return { (*axes)[(usz)GamepadAxis.RIGHTX], -(*axes)[(usz)GamepadAxis.RIGHTY] };
+        case LEFT: return { gamepad.axes[(usz)GamepadAxis.LEFTX], -gamepad.axes[(usz)GamepadAxis.LEFTY] };
+        case RIGHT: return { gamepad.axes[(usz)GamepadAxis.RIGHTX], -gamepad.axes[(usz)GamepadAxis.RIGHTY] };
     }
 }
 

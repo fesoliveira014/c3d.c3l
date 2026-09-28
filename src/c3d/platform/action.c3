@@ -15,7 +15,7 @@ const usz ACTION_COUNT = 64; // a game's control scheme; 64 * 32 B = 2 KiB
 <*
  Bindings one map holds.
 *>
-const usz BINDING_COUNT = 256; // four sources per action; 32 B per binding across both arrays, 8 KiB
+const usz BINDING_COUNT = 256; // four sources per action; 28 B per binding across both arrays, 7 KiB
 <*
  Stick deadzone of a default map.
 *>

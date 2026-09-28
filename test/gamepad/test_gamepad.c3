@@ -65,14 +65,15 @@ fn void test_pads_take_the_lowest_free_slot_and_reuse_it() @test {
     for (usz slot = 0; slot < platform::GAMEPAD_COUNT; slot++) assert(window.input.gamepads[slot].connected);
     assert(count_events(&window, EventKind.GAMEPAD_CONNECTED) == platform::GAMEPAD_COUNT);
 
+    usz freed = platform::gamepad_slot(pads[1])!!;
     detach_pad(pads[1]);
     drain(windows[..]);
-    assert(!window.input.gamepads[1].connected);
+    assert(!window.input.gamepads[freed].connected);
 
     sdl::JoystickID replacement = attach_pad();
     drain(windows[..]);
-    assert(window.input.gamepads[1].connected);
-    assert(platform::gamepad_slot(replacement)!! == 1);
+    assert(window.input.gamepads[freed].connected);
+    assert(platform::gamepad_slot(replacement)!! == freed);
 
     detach_pad(replacement);
     foreach (usz index, pad : pads) {
@@ -125,6 +126,13 @@ fn void test_axis_motion_is_normalized() @test {
     assert(window.input.gamepad_axis(GamepadAxis.LEFTY) == -1);
     assert(window.input.gamepad_stick(GamepadStick.LEFT).y == 1);
     assert(window.input.gamepad_axis(GamepadAxis.RIGHT_TRIGGER) == 1);
+    bool listed;
+    foreach (event : window.events()) {
+        if (event.kind == EventKind.GAMEPAD_AXIS_MOTION && event.gamepad_axis == GamepadAxis.LEFTY) {
+            listed = listed || event.axis_value == -1;
+        }
+    }
+    assert(listed);
 
     detach_pad(pad);
     drain(windows[..]);

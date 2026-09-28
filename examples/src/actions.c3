@@ -248,8 +248,10 @@ fn int main(String[] args) {
         ground = assets.add_geometry(&ground_geometry, "actions/ground")!!;
     };
 
-    MaterialId orange = assets.add_material(material::basic({ .color = { 0.95f, 0.55f, 0.15f, 1 } }), "actions/player_material")!!;
-    MaterialId grey = assets.add_material(material::basic({ .color = { 0.35f, 0.38f, 0.4f, 1 } }), "actions/ground_material")!!;
+    Material player_material = material::basic({ .color = { 0.95f, 0.55f, 0.15f, 1 } });
+    MaterialId orange = assets.add_material(player_material, "actions/player_material")!!;
+    Material ground_material = material::basic({ .color = { 0.35f, 0.38f, 0.4f, 1 } });
+    MaterialId grey = assets.add_material(ground_material, "actions/ground_material")!!;
 
     Scene scene = scene::create_scene(mem, scene::default_scene_desc());
     defer scene::destroy_scene(&scene);
