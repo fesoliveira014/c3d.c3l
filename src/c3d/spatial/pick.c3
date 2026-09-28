@@ -7,6 +7,7 @@ import c3d::geometry;
 import c3d::material;
 import c3d::maths;
 import c3d::scene;
+import c3d::spatial::bvh;
 import std::math;
 import std::sort;
 
@@ -60,9 +61,9 @@ struct PickHit {
 }
 
 <*
- Meshes the ray meets, nearest first; empty when nothing is hit.
+ Meshes the ray meets, nearest first; empty when nothing is hit. Linear reference; needs no index.
  @param allocator : "Owns the returned array."
- @param [&in] assets : "Resolves geometry, material and skeleton records."
+ @param [&inout] assets : "Resolves geometry, material and skeleton records; triangle trees may be built."
  @param [&inout] scene : "Pose as left by the last update_world; only batch aggregates are written."
  @param ray : "World space; direction normalized."
 *>
@@ -84,11 +85,11 @@ fn PickHit[] pick(
         if (node.visible_effective && (options.layers & node.layers) != 0) {
             SkinBinding* skin = scene.get(node, SkinBinding);
             if (mesh_is_live(assets, mesh, skin)) {
-                bool hit = hit_mesh(
+                SceneEntry entry = mesh_entry(assets, node, mesh, skin);
+                bool hit = hit_entry(
                     assets:  assets,
-                    node:    node,
-                    mesh:    mesh,
-                    skin:    skin,
+                    scene:   scene,
+                    entry:   &entry,
                     ray:     ray,
                     options: options,
                     hit:     &hits[count],
@@ -99,98 +100,81 @@ fn PickHit[] pick(
     };
     scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
         Node* node = scene.node(entity);
+        float distance;
         if (batch.count && node.visible_effective && (options.layers & node.layers) != 0
-            && instanced_mesh_is_live(assets, batch)) {
-            count += hit_batch(
-                assets:  assets,
-                node:    node,
-                batch:   batch,
-                ray:     ray,
-                options: options,
-                hits:    hits[count..],
-            );
+            && instanced_mesh_is_live(assets, batch)
+            && maths::ray_intersects_aabb(ray, instanced_world_bounds(assets, node, batch), &distance)) {
+            SceneEntryFlags flags = batch_flags(assets, scene, node, batch);
+            Aabb local = assets.geometry(batch.geometry).data.bounds;
+            foreach (uint index, transform : batch.transforms[:batch.count]) {
+                SceneEntry entry = instance_entry(
+                    node:      node,
+                    index:     index,
+                    flags:     flags,
+                    local:     local,
+                    transform: transform,
+                );
+                bool hit = hit_entry(
+                    assets:  assets,
+                    scene:   scene,
+                    entry:   &entry,
+                    ray:     ray,
+                    options: options,
+                    hit:     &hits[count],
+                );
+                if (hit) count++;
+            }
         }
     };
     sort::quicksort(hits[:count], &by_distance);
     return hits[:count];
 }
 
-fn bool hit_mesh(
+fn bool hit_entry(
     AssetStore* assets,
-    Node* node,
-    Mesh* mesh,
-    SkinBinding* skin,
+    Scene* scene,
+    SceneEntry* entry,
     Ray ray,
     PickOptions options,
     PickHit* hit,
-) @local {
-    Aabb bounds = mesh_world_bounds(
-        assets: assets,
-        node:   node,
-        mesh:   mesh,
-        skin:   skin,
-    );
+) @private {
     float distance;
-    if (!maths::ray_intersects_aabb(ray, bounds, &distance)) return false;
+    if (!maths::ray_intersects_aabb(ray, entry.bounds, &distance)) return false;
+    Node* node = entry.node;
+    Mat4 world = node.world;
+    GeometryId geometry;
+    MaterialId material;
+    if (entry.flags.instanced) {
+        InstancedMesh* batch = scene.get(node, InstancedMesh);
+        float batch_distance;
+        // An override bounds the whole batch, which the scan tests before any instance.
+        bool outside = batch.has_bounds_override
+            && !maths::ray_intersects_aabb(ray, maths::aabb_transform(batch.local_bounds, world), &batch_distance);
+        if (outside) return false;
+        world = world.mul(batch.transforms[entry.instance_index].to_mat4());
+        geometry = batch.geometry;
+        material = batch.material;
+    } else {
+        Mesh* mesh = scene.get(node, Mesh);
+        geometry = mesh.geometry;
+        material = mesh.material;
+    }
     *hit = {
-        .node     = node,
-        .distance = distance,
-        .position = ray.origin + ray.direction * distance,
+        .node           = node,
+        .instanced      = entry.flags.instanced,
+        .instance_index = entry.instance_index,
+        .distance       = distance,
+        .position       = ray.origin + ray.direction * distance,
     };
-
-    GeometryAsset* record = assets.geometry(mesh.geometry);
-    bool triangles = triangles_are_static(record, skin != null, mesh.has_bounds_override)
-        && record.data.positions.len > 0;
-    if (options.precision != PickPrecision.TRIANGLES || !triangles) return true;
+    if (options.precision != PickPrecision.TRIANGLES || !entry.flags.static_triangles) return true;
     return nearest_triangle(
+        assets:   assets,
+        geometry: geometry,
         ray:      ray,
-        world:    node.world,
-        geometry: &record.data,
-        faces:    face_policy(assets, mesh.material, options.faces),
+        world:    world,
+        faces:    face_policy(assets, material, options.faces),
         hit:      hit,
     );
-}
-
-fn usz hit_batch(
-    AssetStore* assets,
-    Node* node,
-    InstancedMesh* batch,
-    Ray ray,
-    PickOptions options,
-    PickHit[] hits,
-) @local {
-    float distance;
-    if (!maths::ray_intersects_aabb(ray, instanced_world_bounds(assets, node, batch), &distance)) return 0;
-    GeometryAsset* record = assets.geometry(batch.geometry);
-    bool triangles = options.precision == PickPrecision.TRIANGLES && !batch.has_bounds_override
-        && record.data.topology == Topology.TRIANGLES && record.data.positions.len > 0;
-    PickFaces faces = face_policy(assets, batch.material, options.faces);
-
-    usz count;
-    foreach (uint index, transform : batch.transforms[:batch.count]) {
-        Mat4 world = node.world.mul(transform.to_mat4());
-        if (!maths::ray_intersects_aabb(ray, maths::aabb_transform(record.data.bounds, world), &distance)) continue;
-        PickHit* hit = &hits[count];
-        *hit = {
-            .node           = node,
-            .instanced      = true,
-            .instance_index = index,
-            .distance       = distance,
-            .position       = ray.origin + ray.direction * distance,
-        };
-        if (triangles) {
-            bool met = nearest_triangle(
-                ray:      ray,
-                world:    world,
-                geometry: &record.data,
-                faces:    faces,
-                hit:      hit,
-            );
-            if (!met) continue;
-        }
-        count++;
-    }
-    return count;
 }
 
 fn PickFaces face_policy(AssetStore* assets, MaterialId material, PickFaces faces) @local {
@@ -208,61 +192,41 @@ fn bool triangles_are_static(GeometryAsset* record, bool skinned, bool has_bound
 }
 
 fn bool nearest_triangle(
+    AssetStore* assets,
+    GeometryId geometry,
     Ray ray,
     Mat4 world,
-    Geometry* geometry,
     PickFaces faces,
     PickHit* hit,
 ) @local {
+    Bvh*? tree = assets.triangle_bvh(geometry);
+    // A list that forms no triangles keeps the bounds hit.
+    if (catch tree) return true;
     Mat4 inverse = maths::inverse_affine(world);
     Ray local = {
         .origin    = maths::transform_point(inverse, ray.origin),
         .direction = maths::transform_dir(inverse, ray.direction),
     };
-    usz triangle_count = geometry.indices.len ? geometry.indices.len / 3 : geometry.positions.len / 3;
-    bool found;
-    for (usz triangle = 0; triangle < triangle_count; triangle++) {
-        Vec3[3] corners = corner_positions(geometry, triangle);
-        Vec3 edge_ab = corners[1] - corners[0];
-        Vec3 edge_ac = corners[2] - corners[0];
-        if (faces == PickFaces.FRONT && edge_ab.cross(edge_ac).dot(local.direction) >= 0) continue;
-        float distance;
-        Vec3 barycentric;
-        bool met = maths::ray_intersects_triangle(
-            ray:         local,
-            a:           corners[0],
-            b:           corners[1],
-            c:           corners[2],
-            distance:    &distance,
-            barycentric: &barycentric,
-        );
-        if (!met) continue;
-        if (found && distance >= hit.distance) continue;
-        found = true;
-        hit.distance = distance;
-        hit.triangle_index = (uint)triangle;
-        hit.barycentric = barycentric;
-    }
-    if (found) {
-        hit.position = ray.origin + ray.direction * hit.distance;
-        hit.triangle_hit = true;
-    }
-    return found;
+    Geometry* data = &assets.geometry(geometry).data;
+    BvhHit triangle;
+    bool met = tree.trace(
+        positions:      data.positions,
+        indices:        data.indices,
+        ray:            local,
+        distance_limit: math::FLOAT_MAX,
+        hit:            &triangle,
+        front_only:     faces == PickFaces.FRONT,
+    );
+    if (!met) return false;
+    hit.distance = triangle.distance;
+    hit.position = ray.origin + ray.direction * triangle.distance;
+    hit.triangle_hit = true;
+    hit.triangle_index = triangle.primitive;
+    hit.barycentric = triangle.barycentric;
+    return true;
 }
 
-fn Vec3[3] corner_positions(Geometry* geometry, usz triangle) @local {
-    usz first = triangle * 3;
-    if (geometry.indices.len == 0) {
-        return { geometry.positions[first], geometry.positions[first + 1], geometry.positions[first + 2] };
-    }
-    return {
-        geometry.positions[geometry.indices[first]],
-        geometry.positions[geometry.indices[first + 1]],
-        geometry.positions[geometry.indices[first + 2]],
-    };
-}
-
-fn int by_distance(PickHit first, PickHit second) @local {
+fn int by_distance(PickHit first, PickHit second) @private {
     if (first.distance < second.distance) return -1;
     if (first.distance > second.distance) return 1;
     if (first.node.id.index < second.node.id.index) return -1;
