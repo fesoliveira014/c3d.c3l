@@ -248,8 +248,8 @@ LoadId request = loader.request({
 loader.publish();
 LoadStatus status = loader.status(request);
 if (status.phase == LoadPhase.PUBLISHED) {
-    renderer.prepare_model(status.model)!;
-    model::instantiate(&assets, &scene, status.model)!;
+    // upload over frames; instantiate when prepare_progress reads READY (see Views, Budgeted preparation)
+    prepare = renderer.begin_prepare_model(status.model)!;
     loader.release(request)!;
 } else if (status.phase == LoadPhase.FAILED) {
     io::eprintfn("%s failed: %s", "models/city.gltf", status.failure);
@@ -309,7 +309,8 @@ its key count, not its bytes: pixels and vertex streams move by pointer. On the
 WSL host CPU, Sponza's 199 keys publish in 0.43 ms and decode in 1.3 to 1.7 s.
 `prepare_model` after publish is synchronous and uploads every texture and
 geometry of the model before it returns: 3.9 s for Sponza on WSL with llvmpipe,
-a stall of the frame that calls it.
+a stall of the frame that calls it. `begin_prepare_model` spreads the same work
+over frames under a byte budget ([Views](views.md#budgeted-preparation)).
 
 `destroy_async_loader` stops the worker and waits for the decode in progress,
 up to one decode (1.3 s for Sponza on the WSL host CPU), then frees every
