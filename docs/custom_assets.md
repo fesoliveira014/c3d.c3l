@@ -14,6 +14,17 @@ defer asset::destroy_asset_store(&assets);
 assets.register(AudioClip, 256, &free_audio_clip_payload)!;
 ```
 
+The hook re-types the payload and calls the kind's own free:
+
+```c3
+fn void free_audio_clip_payload(Allocator allocator, void* data, void* user) {
+    free_audio_clip(allocator, (AudioClip*)data);
+}
+```
+
+`free_audio_clip(Allocator, AudioClip*)` is the owner's function that frees the
+payload's arrays; `remove_audio_clip` below calls it too.
+
 - `register($Type, capacity, on_destroy, user)` gives the type a process-wide
   slot the first time any store registers it, then allocates this store's pool
   of `capacity` records. A second call on the same store changes nothing; the
@@ -88,8 +99,7 @@ fn AudioClipId? AssetStore.find_audio_clip(&self, String key) => asset::custom_i
 ```
 
 `check_key` runs before a pool slot is taken, so a duplicate key faults
-`INVALID_ARGUMENT` without consuming capacity. `CustomFreeFn` is the hook type;
-it is not named `FreeFn` because box3d, cgltf and ufbx each declare one.
+`INVALID_ARGUMENT` without consuming capacity. `CustomFreeFn` is the hook type.
 
 ## Keys and find
 
@@ -106,6 +116,9 @@ into an id of another.
 
 - A record with `header.revision == 0` is an empty slot. `add_*_owned` sets
   revision 1; `remove_*` zeroes the record before `pool.remove`.
+- An owner that edits a payload in place advances `header.revision`, as
+  `mark_material_dirty` does for materials, so consumers keyed on the revision
+  see the change.
 - `remove_*` frees the payload itself; `on_destroy` covers only records still
   live when the store is destroyed.
 - `destroy_asset_store` releases custom pools after the builtin records and
