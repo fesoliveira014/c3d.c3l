@@ -54,8 +54,10 @@ A `SCENE` volume casts `update.rays_per_probe` rays from each probe of a window 
 **Trace kind.** A renderer created with `RendererDesc.ray_queries` traces probe rays through ray queries;
 any other renderer uses the software walk. There is no setting: comparing the two means two renderers. Both
 kinds hit the same triangles, report back faces the same way (a probe inside a wall reads dark on both) and
-use the same default of 128 rays per probe; on the RTX 4090 their atlases agree within 0.3 percent after the
-first update of the acceptance room and to the half-float precision after convergence.
+use the same default of 128 rays per probe; on the RTX 4090 every ray result of the acceptance room agrees
+between them. A hit that lands exactly on a volume's box face takes the probes or the SH term by the last
+bit of its distance, so there the kinds can differ; the ray rotations skip the all-zero Halton point, whose
+half turn about y kept one ray in each probe layer's plane and put its hits on the box faces.
 
 | `ProbeUpdateDesc` field | Meaning |
 | --- | --- |
