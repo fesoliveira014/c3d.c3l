@@ -90,6 +90,7 @@ fn void commit_uploads(Renderer* renderer, Frame* slot) @private {
     renderer.pending_texture_uploads.clear();
     renderer.texture_state_undo.clear();
     renderer.pending_geometry_uploads.clear();
+    renderer.pending_instance_uploads.clear();
     renderer.scene_trace.pending_builds.clear();
     renderer.rt.pending_blas.clear();
     renderer.rt.recorded_blas = 0;
@@ -103,7 +104,8 @@ fn void discard_uploads(Renderer* renderer) @private {
     discard_environment_preparations(renderer);
     restore_texture_states(&renderer.texture_state_undo, renderer.textures);
     if (!renderer.uploads_recorded && !renderer.pending_copies.len()
-        && !renderer.pending_texture_uploads.len() && !renderer.pending_geometry_uploads.len()) return;
+        && !renderer.pending_texture_uploads.len() && !renderer.pending_geometry_uploads.len()
+        && !renderer.pending_instance_uploads.len()) return;
 
     renderer.uploads_recorded = false;
     renderer.pending_texture_uploads.clear();
@@ -114,6 +116,8 @@ fn void discard_uploads(Renderer* renderer) @private {
         renderer.geometries[geometry.index].revision = 0;
     }
     renderer.pending_geometry_uploads.clear();
+    foreach (index : renderer.pending_instance_uploads) renderer.instances.slots[index].revision = 0;
+    renderer.pending_instance_uploads.clear();
     foreach (&material : renderer.materials) material.revision = 0;
     discard_scene_trace(renderer);
 }
@@ -124,4 +128,5 @@ fn void free_pending_uploads(Renderer* renderer) @private {
     renderer.pending_texture_uploads.free();
     renderer.texture_state_undo.free();
     renderer.pending_geometry_uploads.free();
+    renderer.pending_instance_uploads.free();
 }

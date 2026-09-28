@@ -90,6 +90,11 @@ struct Fixture @private {
     bool renderer_alive;
 }
 
+struct Uploads @private {
+    uint count;
+    uint bytes;
+}
+
 struct DeformedScene @private {
     Scene scene;
     Node* mesh;
@@ -995,6 +1000,7 @@ fn void test_taa_with_deformed_and_instanced_motion_records_cleanly() @test {
             foreach (index, &transform : batch.transforms[:batch.count]) {
                 transform.position.y = 0.1f * (float)(frame + index);
             }
+            moving.scene.mark_instances_dirty(batch_node);
             moving.scene.update_world();
             renderer.begin_frame()!!;
             renderer.render_view(&moving.scene, moving.camera, fixture.view)!!;
@@ -1002,6 +1008,81 @@ fn void test_taa_with_deformed_and_instanced_motion_records_cleanly() @test {
             renderer.end_frame()!!;
         }
     }
+    check_validation(renderer);
+}
+
+fn void? render_instanced_frame(Fixture* fixture, bool both_views = false) @private {
+    fixture.scene.update_world();
+    if (both_views) return render_both_views(fixture);
+    fixture.renderer.begin_frame()!;
+    defer catch render::abort_frame(&fixture.renderer);
+    render_view_and_finish(fixture)!;
+    return fixture.renderer.end_frame();
+}
+
+fn Uploads frame_uploads(Renderer* renderer) @private => { renderer.stats.uploads, renderer.stats.upload_bytes };
+
+fn void check_uploads(Renderer* renderer, Uploads expected) @private {
+    assert(renderer.stats.uploads == expected.count && renderer.stats.upload_bytes == expected.bytes);
+}
+
+fn void test_instance_records_upload_only_on_change() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    Transform[3] transforms = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
+    transforms[0].position.x = -1;
+    transforms[2].position.x = 1;
+    Node* batch_node = fixture.scene.add_instanced_mesh(
+        geometry:   fixture.box,
+        material:   fixture.plain,
+        capacity:   4,
+        transforms: transforms[..],
+    )!!;
+    InstancedMesh* batch = fixture.scene.get(batch_node, InstancedMesh);
+    batch.cast_shadow = false;
+    uint record_bytes = (uint)(transforms.len * InstanceGpu::size);
+
+    render_instanced_frame(&fixture)!!;
+    assert(renderer.instances.lookup.len() == 1);
+    render_instanced_frame(&fixture)!!;
+    Uploads unchanged = frame_uploads(renderer);
+    render_instanced_frame(&fixture)!!;
+    check_uploads(renderer, unchanged);
+    Uploads one_batch = { unchanged.count + 1, unchanged.bytes + record_bytes };
+
+    batch.transforms[1].position.y = 0.5f;
+    fixture.scene.mark_instances_dirty(batch_node);
+    render_instanced_frame(&fixture)!!;
+    check_uploads(renderer, one_batch);
+
+    batch_node.local.position.x += 0.1f;
+    render_instanced_frame(&fixture)!!;
+    check_uploads(renderer, one_batch);
+
+    render_instanced_frame(&fixture, both_views: true)!!;
+    Uploads both_unchanged = frame_uploads(renderer);
+    fixture.scene.mark_instances_dirty(batch_node);
+    render_instanced_frame(&fixture, both_views: true)!!;
+    check_uploads(renderer, { both_unchanged.count + 1, both_unchanged.bytes + record_bytes });
+
+    batch_node.visible = false;
+    for (ulong frame = 0; frame <= render::INSTANCE_ABSENCE_FRAMES; frame++) render_instanced_frame(&fixture)!!;
+    assert(renderer.instances.lookup.len() == 0);
+    batch_node.visible = true;
+    render_instanced_frame(&fixture)!!;
+    check_uploads(renderer, one_batch);
+    assert(renderer.instances.lookup.len() == 1);
+
+    Quat facing = fixture.camera_node.local.rotation;
+    fixture.camera_node.local.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, (float)math::PI);
+    for (ulong frame = 0; frame <= render::INSTANCE_ABSENCE_FRAMES; frame++) render_instanced_frame(&fixture)!!;
+    assert(renderer.instances.lookup.len() == 0);
+    fixture.camera_node.local.rotation = facing;
+    render_instanced_frame(&fixture)!!;
+    check_uploads(renderer, one_batch);
+    assert(renderer.instances.lookup.len() == 1);
     check_validation(renderer);
 }
 

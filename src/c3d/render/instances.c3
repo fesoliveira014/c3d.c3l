@@ -1,18 +1,104 @@
 module c3d::render;
 
 import c3d;
+import c3d::ecs;
 import c3d::maths;
 import c3d::scene;
 import c3d::shader;
 import gpu;
 import std::collections::map;
+import std::hash::fnv32a;
 import std::math;
 
 <*
- Packed instance arrays written this frame, keyed by the stable batch node.
+ Batch slots when RendererDesc.max_instance_batches is 0.
 *>
-struct InstanceCache {
-    HashMap{ulong, gpu::GpuAddress} arrays;
+const uint DEFAULT_MAX_INSTANCE_BATCHES = 1024; // 120 B CPU per slot; live plus recently unresolved batch nodes
+
+<*
+ Frames a batch may go unresolved before its records retire.
+*>
+const ulong INSTANCE_ABSENCE_FRAMES = FRAMES_IN_FLIGHT + 1; // longer holds hidden records; shorter re-uploads on return
+
+<*
+ Identity of a batch node across the scenes a renderer serves.
+*>
+struct InstanceKey {
+    ulong  scene;
+    Entity node;
+}
+
+<*
+ Persistent instance records of one batch node.
+*>
+struct GpuInstances {
+    InstanceKey        key;
+    uint               revision; // 0 forces an upload: InstancedMesh.revision is never 0
+    uint               capacity;
+    ulong              last_seen;
+    Mat4               world; // records bake the node world, so a moved node re-uploads
+    gpu::GpuAllocation allocation;
+    gpu::GpuAddress    records;
+}
+
+<*
+ Fixed table of instance record slots, allocated on the first acquire.
+*>
+struct InstanceTable {
+    Allocator                  allocator;
+    uint                       capacity;
+    GpuInstances[]             slots;
+    HashMap{InstanceKey, uint} lookup;
+}
+
+<*
+ Hash of the scene identity and the full entity.
+*>
+fn uint InstanceKey.hash(self) => fnv32a::hash(@as_char_view(self));
+
+<*
+ Whether both keys name the same scene and entity generation.
+ @pure
+*>
+fn bool InstanceKey.equals(self, InstanceKey other) @operator(==) {
+    return self.scene == other.scene && c3d::same_id(self.node, other.node);
+}
+
+<*
+ Slot of the key, claiming the first free slot for a new key; marks it seen.
+ @param frame_index : "Renderer frame being recorded."
+ @return? c3d::CAPACITY_EXCEEDED
+ @require key.scene != 0
+*>
+fn uint? InstanceTable.acquire(&self, InstanceKey key, ulong frame_index) {
+    if (!self.slots.len) {
+        self.slots = alloc::new_array(self.allocator, GpuInstances, (sz)self.capacity);
+        self.lookup.init(self.allocator, (sz)self.capacity);
+    }
+    if (try index = self.lookup.get(key)) {
+        self.slots[index].last_seen = frame_index;
+        return index;
+    }
+    foreach (uint index, &slot : self.slots) {
+        if (slot.key.scene) continue;
+        *slot = { .key = key, .last_seen = frame_index };
+        self.lookup.set(key, index);
+        return index;
+    }
+    return c3d::CAPACITY_EXCEEDED~;
+}
+
+<*
+ Free every slot unresolved for more than INSTANCE_ABSENCE_FRAMES frames.
+ @param [&inout] retire : "Receives each freed slot's allocation."
+*>
+fn void InstanceTable.sweep(&self, ulong frame_index, RetireList* retire) {
+    foreach (&slot : self.slots) {
+        if (!slot.key.scene || frame_index - slot.last_seen <= INSTANCE_ABSENCE_FRAMES) continue;
+        if (slot.allocation.is_valid()) retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = slot.allocation });
+        self.lookup.remove(slot.key);
+        *slot = {};
+    }
 }
 
 <*
@@ -68,35 +154,102 @@ fn void write_instance_worlds(Mat4f[] worlds, Mat4 node_world, InstancedMesh* ba
     }
 }
 
-fn InstanceCache create_instance_cache(Allocator allocator) @private {
-    InstanceCache cache;
-    cache.arrays.init(allocator);
-    return cache;
+<*
+ Table of capacity slots; nothing is allocated until the first acquire.
+ @require capacity > 0
+*>
+fn InstanceTable create_instance_table(Allocator allocator, uint capacity) {
+    return { .allocator = allocator, .capacity = capacity };
 }
 
-fn void destroy_instance_cache(InstanceCache* cache) @private {
-    cache.arrays.free();
+<*
+ Release the table's CPU storage; slot allocations are the caller's to free first.
+ @param [&inout] table : "Left zeroed."
+*>
+fn void destroy_instance_table(InstanceTable* table) {
+    alloc::free(table.allocator, table.slots.ptr);
+    table.lookup.free();
+    *table = {};
 }
 
-fn void reset_instance_cache(InstanceCache* cache) @private {
-    cache.arrays.clear();
+<*
+ Whether the slot must upload the batch's records.
+ @param [&in] slot
+ @param [&in] batch
+ @param world : "Batch node world matrix."
+*>
+fn bool needs_upload(
+    GpuInstances* slot,
+    InstanceKey key,
+    InstancedMesh* batch,
+    Mat4 world,
+) {
+    return slot.key != key || slot.capacity < batch.transforms.len || slot.revision != batch.revision
+        || slot.world != world;
 }
 
 fn gpu::GpuAddress? resolve_instances(Renderer* renderer, MeshCandidate* candidate) @private {
-    gpu::GpuAddress base;
-    if (try existing = renderer.instances.arrays.get((ulong)(uptr)candidate.node)) {
-        base = existing;
-    } else {
-        InstancedMesh* batch = candidate.batch;
-        Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
-        gpu::MappedGpuSpan span = slot.upload.take(
-            device:    &renderer.device,
-            size:      batch.count * InstanceGpu::size,
-            alignment: STREAM_ALIGNMENT,
+    InstanceKey key = { .scene = candidate.scene_identity, .node = candidate.node.id };
+    uint index = renderer.instances.acquire(key, renderer.frame_index)!;
+    GpuInstances* slot = &renderer.instances.slots[index];
+    if (needs_upload(slot, key, candidate.batch, candidate.node.world)) {
+        upload_instance_records(
+            renderer: renderer,
+            index:    index,
+            batch:    candidate.batch,
+            world:    candidate.node.world,
         )!;
-        pack_instance_records(((InstanceGpu*)span.bytes.ptr)[:batch.count], candidate.node.world, batch);
-        renderer.instances.arrays.set((ulong)(uptr)candidate.node, span.address);
-        base = span.address;
     }
-    return (gpu::GpuAddress)((ulong)base + (ulong)candidate.instance_first * InstanceGpu::size);
+    return (gpu::GpuAddress)((ulong)slot.records + (ulong)candidate.instance_first * InstanceGpu::size);
+}
+
+fn void? upload_instance_records(
+    Renderer* renderer,
+    uint index,
+    InstancedMesh* batch,
+    Mat4 world,
+) @private {
+    GpuInstances* slot = &renderer.instances.slots[index];
+    uint capacity = (uint)batch.transforms.len;
+    if (slot.capacity < capacity) {
+        gpu::AllocationDesc records_desc = {
+            .size         = (usz)capacity * InstanceGpu::size,
+            .alignment    = STREAM_ALIGNMENT,
+            .memory_class = gpu::MemoryClass.GPU_PRIVATE,
+            .access       = { .graphics },
+            .debug_name   = "instance_records",
+        };
+        gpu::GpuAllocation allocation = gpu::allocate_memory(&renderer.device, &records_desc)!;
+        defer catch (void)gpu::free_allocation(&renderer.device, &allocation);
+        gpu::GpuSpan block = gpu::get_allocation_span(&renderer.device, allocation)!;
+        gpu::GpuAddress address = gpu::get_span_address(&renderer.device, block)!;
+        if (slot.allocation.is_valid()) {
+            renderer.pending_upload_retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = slot.allocation });
+        }
+        slot.allocation = allocation;
+        slot.records = address;
+        slot.capacity = capacity;
+    } else {
+        renderer.pending_overwrite = true;
+    }
+
+    usz bytes = (usz)batch.count * InstanceGpu::size;
+    Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan staging = frame.upload.take(&renderer.device, bytes, STREAM_ALIGNMENT)!;
+    pack_instance_records(((InstanceGpu*)staging.bytes.ptr)[:batch.count], world, batch);
+    gpu::GpuSpan destination = gpu::get_allocation_span(&renderer.device, slot.allocation)!;
+    renderer.pending_copies.push({ .src = staging.span, .dst = destination.checked_subspan(0, bytes)! });
+
+    renderer.pending_instance_uploads.push(index);
+    slot.revision = batch.revision;
+    slot.world = world;
+    renderer.stats.uploads++;
+    renderer.stats.upload_bytes += (uint)bytes;
+}
+
+fn void free_instance_buffers(Renderer* renderer) @private {
+    foreach (&slot : renderer.instances.slots) {
+        if (slot.allocation.is_valid()) (void)gpu::free_allocation(&renderer.device, &slot.allocation);
+    }
+    destroy_instance_table(&renderer.instances);
 }

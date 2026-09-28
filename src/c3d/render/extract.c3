@@ -45,6 +45,7 @@ struct MeshCandidate {
     float          view_depth;
     bool           receive_shadow;
     InstancedMesh* batch;
+    ulong          scene_identity;
     AnimatedCrowd* crowd;
     uint           crowd_part;
     uint           instance_first;
@@ -248,6 +249,7 @@ fn void include_batch(
         .view_depth     = center_view_depth(camera, world),
         .receive_shadow = batch.receive_shadow,
         .batch          = batch,
+        .scene_identity = scene.identity,
     };
     attach_crowd(scene, &template);
     emit_batch_candidates(candidates, counts, template);
@@ -385,6 +387,7 @@ fn MeshCandidate[] extract_shadow_candidates(
                     .world_bounds   = spatial::instanced_world_bounds(assets, node, batch),
                     .receive_shadow = batch.receive_shadow,
                     .batch          = batch,
+                    .scene_identity = scene.identity,
                 };
                 attach_crowd(scene, &template);
                 emit_batch_candidates(candidates, counts, template);

@@ -7,6 +7,7 @@ import std::math;
 
 <*
  Batch of one geometry and material; instances live in [0, count) of capacity-sized arrays.
+ In-place edits of transforms or colors reach the renderer only through mark_instances_dirty.
 *>
 struct InstancedMesh {
     GeometryId  geometry;
@@ -19,6 +20,7 @@ struct InstancedMesh {
     bool        trace;
     bool        has_bounds_override;
     Aabb        local_bounds;
+    uint        revision; // compared for equality only; never 0, so a renderer slot at 0 always uploads
 }
 
 <*

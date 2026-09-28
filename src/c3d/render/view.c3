@@ -74,7 +74,7 @@ struct DrawPassState @private {
  @param [&inout] self : "Owns recording, submission and window presentation."
  @param [&in] scene : "Pose as left by the last update_world; not advanced."
  @param [&in] camera_node : "Carries a Camera component."
- @return? c3d::INVALID_ARGUMENT, c3d::SHADER_NOT_FOUND
+ @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::SHADER_NOT_FOUND
  @return? gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL
  @return? gpu::DEVICE_BUSY, gpu::RESOURCE_IN_USE, gpu::SURFACE_LOST
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
@@ -107,7 +107,7 @@ fn void? Renderer.render(
  @param [&in] scene : "Pose as left by the last update_world; not advanced."
  @param [&in] camera_node : "Carries a Camera component."
  @param [in] debug : "Null draws nothing; lines drawn after transparency; not cleared."
- @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::SHADER_NOT_FOUND
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::SHADER_NOT_FOUND
  @return? gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
  @return? gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY

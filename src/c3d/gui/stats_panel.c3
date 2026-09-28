@@ -31,7 +31,7 @@ fn void? stats_panel(Renderer* renderer) {
     imgui::text("Debug lines: %u", renderer.stats.debug_lines);
 
     imgui::text("Uploads: %u", renderer.stats.uploads);
-    imgui::text("Asset upload bytes: %u", renderer.stats.upload_bytes);
+    imgui::text("Upload bytes: %u", renderer.stats.upload_bytes);
     imgui::text("Dangling references: %u", renderer.stats.dangling_refs);
     imgui::text("Trace instances: %u", renderer.stats.trace_instances);
     imgui::text("Trace nodes: %u", renderer.stats.trace_nodes);
