@@ -117,11 +117,17 @@ atlas), and a ray buffer of 16 bytes per ray at the largest window seen (64 MiB 
 
 Measured on an RTX 4090 over Sponza at 3840 x 2160, `Pass.PROBE_UPDATE` median per frame:
 
-| Volume | Sun only | 64 shadowing point lights |
-| --- | --- | --- |
-| 8 x 4 x 8 probes, 128 rays, every probe | 0.69 ms | 0.95 ms |
-| 16 x 16 x 16 probes, 128 rays, window 512 | 0.65 ms | 0.80 ms |
-| 32 x 32 x 32 probes, 128 rays, window 512 | 0.70 ms | |
+| Volume | Trace | Sun only | 64 shadowing point lights |
+| --- | --- | --- | --- |
+| 8 x 4 x 8 probes, 128 rays, every probe | software | 0.69 ms | 0.96 ms |
+| 8 x 4 x 8 probes, 256 rays, every probe | software | 0.79 ms | 1.08 ms |
+| 8 x 4 x 8 probes, 128 rays, every probe | ray queries | 0.08 ms | 0.10 ms |
+| 8 x 4 x 8 probes, 256 rays, every probe | ray queries | 0.11 ms | 0.14 ms |
+| 16 x 16 x 16 probes, 128 rays, window 512 | software | 0.65 ms | 0.80 ms |
+| 32 x 32 x 32 probes, 128 rays, window 512 | software | 0.70 ms | |
+
+On ray queries the first frame builds the bottom levels of every traceable geometry: `Pass.ACCELERATION_BUILD`
+read 51 ms in that frame for Sponza (one reading), and zero afterwards while the scene holds still.
 
 A window's cost depends on how many of its rays hit: the windowed rows range from about 0.25 ms to
 about 1.0 ms between the 10th and 90th percentiles, and the border copies over the 32 x 32 x 32 atlases do
