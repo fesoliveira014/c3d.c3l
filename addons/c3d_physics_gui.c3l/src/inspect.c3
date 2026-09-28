@@ -8,6 +8,7 @@ import std::math;
 
 const float COLLIDER_SIZE_MIN @local = 0.001f;
 const ZString EDITED_IN_PANEL @private = "Edit in the Physics panel.";
+const ZString[3] BODY_KIND_NAMES @local = { "static", "kinematic", "dynamic" };
 
 <*
  Register the physics component inspectors; call after register_physics and create_gui_renderer.
@@ -27,7 +28,7 @@ fn void expose_physics_components() {
 
 fn bool physics_body_inspector(void* component) @local {
     PhysicsBody* body = component;
-    bool changed = inspect::inspect{BodyDesc}(&body.body);
+    bool changed = edit_body_desc(&body.body);
     foreach (index, &collider : body.colliders) {
         imgui::push_id_int((int)index);
         imgui::separator_text(@enum_name(ColliderKind, collider.kind));
@@ -36,6 +37,20 @@ fn bool physics_body_inspector(void* component) @local {
     }
     if (changed) body.mark_changed();
     imgui::text("Status: %s", @enum_name(BodyStatus, body.status));
+    return changed;
+}
+
+fn bool edit_body_desc(BodyDesc* desc) @local {
+    int kind = (int)desc.kind.ordinal;
+    bool changed = imgui::combo_char("Kind", &kind, &BODY_KIND_NAMES[0], BodyKind::len);
+    if (changed) desc.kind = BodyKind::from_ordinal(kind);
+    changed |= imgui::drag_float3("Linear velocity", (float*)&desc.linear_velocity);
+    changed |= imgui::drag_float3("Angular velocity", (float*)&desc.angular_velocity);
+    changed |= imgui::drag_float("Linear damping", &desc.linear_damping);
+    changed |= imgui::drag_float("Angular damping", &desc.angular_damping);
+    changed |= imgui::drag_float("Gravity scale", &desc.gravity_scale);
+    changed |= imgui::checkbox("Allow sleep", &desc.allow_sleep);
+    changed |= imgui::checkbox("Bullet", &desc.bullet);
     return changed;
 }
 

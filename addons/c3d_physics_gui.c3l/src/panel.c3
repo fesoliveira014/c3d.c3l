@@ -13,9 +13,16 @@ import c3d::physics;
 import c3d::scene;
 import std::math;
 
+<*
+ Updates the panel's mean update time spans.
+*>
 const uint PHYSICS_TIMING_WINDOW = 60;       // one second of updates at 60 Hz; the mean's smoothing lever
+
+<*
+ Rows the event log keeps unless create_physics_panel is told otherwise.
+*>
 const uint PHYSICS_EVENT_CAPACITY = 256;     // 12 KiB of rows; the event log's depth lever
-const usz  PHYSICS_RECORDING_CAPACITY = 1 << 20; // starting size of a recording; box3d grows it
+const usz  PHYSICS_RECORDING_CAPACITY @private = 1 << 20; // starting size of a recording; box3d grows it
 const float SELECTED_AXES_SIZE @local = 0.5f;    // metres; the selected node's frame beside a unit body
 const float CONTACT_MARK_SIZE @local = 0.05f;
 const float CONTACT_NORMAL_LENGTH @local = 0.3f;
@@ -94,6 +101,7 @@ struct PhysicsPanel {
 
 <*
  Panel over a world, its scene and the scene panel's selection; borrows all three.
+ @param allocator : "Outlives the panel; the event log, recording bytes and replays come from it, never tmem."
  @param [&inout] physics : "Its tuning is edited through set_tuning."
  @param [&inout] scene : "Components are edited through their owners' calls."
  @param [&inout] selection : "The panel writes selected only."
@@ -183,10 +191,12 @@ fn void PhysicsPanel.record_events(&self, float update_ms) {
 *>
 fn void PhysicsPanel.debug_draw(&self, debug::DebugDraw* sink) {
     clear_dead_selection(self);
-    if (self.scene.world.is_alive(self.selection.selected)) {
-        draw_selected_node(self, sink, self.scene.node(self.selection.selected));
-    }
-    if (self.show_queries) draw_queries(self, sink);
+    @pool() {
+        if (self.scene.world.is_alive(self.selection.selected)) {
+            draw_selected_node(self, sink, self.scene.node(self.selection.selected));
+        }
+        if (self.show_queries) draw_queries(self, sink);
+    };
     self.physics.debug_draw(sink, self.draw);
     if (self.has_replay) self.replay.debug_draw(sink, self.draw);
     self.sink_segments = (usz)sink.vertices.len() / 2;

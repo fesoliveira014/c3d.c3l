@@ -16,6 +16,8 @@ fn bool has_character(Scene* scene, Node* node) @private => scene.has(node, Char
 
 fn void characters_section(PhysicsPanel* panel) @private {
     if (!imgui::collapsing_header("Characters", {})) return;
+    imgui::push_id("characters");
+    defer imgui::pop_id();
     if (!imgui::begin_table("physics_characters", 3, { .row_bg = true, .resizable = true })) return;
     defer imgui::end_table();
     imgui::table_setup_column("Name", {});
@@ -37,6 +39,8 @@ fn void characters_section(PhysicsPanel* panel) @private {
 
 fn void character_block(PhysicsPanel* panel, Node* node) @private {
     imgui::separator_text("Character");
+    imgui::push_id("character_block");
+    defer imgui::pop_id();
     Character* character = panel.scene.get(node, Character);
     CharacterDesc desc = character.desc;
     bool changed = imgui::slider_float("Radius", &desc.radius, CHARACTER_SIZE_MIN, CHARACTER_SIZE_MAX);

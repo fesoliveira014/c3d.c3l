@@ -19,7 +19,7 @@ PhysicsPanel panel = gui::create_physics_panel(mem, &physics, &scene, &selection
 defer gui::destroy_physics_panel(&panel);
 gui::expose_physics_components();   // after register_physics and create_gui_renderer
 
-// each frame, inside the frame's @pool(): labels, queries and contact lists use tmem
+// each frame
 gui_renderer.new_frame();
 gui::scene_panel(&scene, &selection);
 gui::physics_panel(&panel);
@@ -30,10 +30,13 @@ scene.flush_removals();
 sink.clear();
 panel.debug_draw(&sink);
 gui_renderer.finish_frame();
+renderer.render_view(&scene, camera_node, view, debug: &sink)!;
 ```
 
 The panel borrows the world, the scene and the scene panel's `GuiPanelState`; both panels select the same
-node. `step_dt` returns 0 while paused (components still sync and poses hold) and one fixed step after Step.
+node. `physics_panel` and `debug_draw` open their own temporary pools; the panel's allocator must outlive it,
+since the recording bytes and replays come from it. `step_dt` returns 0 while paused (components still sync
+and poses hold) and one fixed step after Step.
 `record_events` must run after the update and before `flush_removals`: it stores the entities of each event,
 never node pointers.
 
@@ -42,8 +45,10 @@ never node pointers.
 - **World**: tuning applied through `set_tuning`, Pause and Step, steps, alpha, dropped events and the mean
   update time.
 - **Counters** and **Profile**: `PhysicsWorld.counters()` and the last fixed step's phase timings.
-- **Draw**: every `PhysicsDebugOptions` flag. Contact forces, graph colours and anchors need Contacts.
-  box3d's sleep and contact-feature drawing produce no lines and are not offered. The sink reading (segments
+- **Draw**: every `PhysicsDebugOptions` flag; "Replay queries" draws the queries the replayed frame re-issued
+  (casts as segments, movers and cast shapes as capsules and spheres, overlaps as boxes). Contact forces,
+  graph colours and anchors need Contacts. box3d's sleep and contact-feature drawing produce no lines and are
+  not offered. The sink reading (segments
   used, capacity, dropped in red) is one frame old: it covers what the sink held when `debug_draw` finished.
 - **Bodies** and **Characters**: tables; a click selects the node.
 - **Selected**: one block per physics component of the selected node. Body: state, Enabled, Wake, Rebuild,
@@ -61,11 +66,12 @@ live world and the replay. A full sink therefore loses the replay first and the 
 ## Where each component is edited
 
 Component-level changes (a desc plus the component's change call) are edited in the scene panel's
-inspectors: `PhysicsBody` (body desc and colliders, then `mark_changed`), `PhysicsJoint` (the fields of its
-kind, then `mark_changed`), `Wind` and `Force`. Edits that need the world or the scene live in the physics
-panel's Selected section: ragdoll modes, weights and drive strength (`set_bone_mode`), character descs
-(`set_character_desc`), velocities, enable, wake and teleport. `RigidBody`, `Joint`, `Ragdoll` and `Character`
-inspectors are read-only and say where the edit is.
+inspectors: `PhysicsBody` (the body desc except `disabled`, and the colliders, then `mark_changed`),
+`PhysicsJoint` (the fields of its kind, then `mark_changed`), `Wind` and `Force`. Enabling goes through the
+panel's Enabled checkbox (`set_enabled`), which keeps the body's motion. Edits that need the world or the
+scene live in the physics panel's Selected section: ragdoll modes, weights and drive strength
+(`set_bone_mode`), character descs (`set_character_desc`), velocities, enable, wake and teleport. `RigidBody`,
+`Joint`, `Ragdoll` and `Character` inspectors are read-only and say where the edit is.
 
 ## Recording and replay
 

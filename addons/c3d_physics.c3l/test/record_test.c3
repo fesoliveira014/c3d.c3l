@@ -3,6 +3,7 @@ module c3d_physics_test;
 import std::math;
 import std::math::quaternion;
 import c3d;
+import c3d::debug;
 import c3d::physics @public;
 import c3d::scene;
 import b3;
@@ -153,4 +154,30 @@ fn void test_replay_shapes_cook_wires_and_bounds() @test {
     b3::Aabb expected = mesh_data.compute_aabb({ .q = quaternion::IDENTITY }, mesh.scale);
     assert(cooked.wire.len == 0 && cooked.has_bounds);
     assert(close_vec(cooked.bounds.min, expected.lower_bound) && close_vec(cooked.bounds.max, expected.upper_bound));
+}
+
+fn void test_replay_draws_the_recorded_queries() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    add_ground(&fixture);
+    add_box(&fixture, { 0, 0.5f, 0 });
+    fixture.physics.start_recording(0)!!;
+    for (uint update = 0; update < RECORDED_UPDATES; update++) {
+        (void)fixture.physics.overlap_sphere(tmem, { 0, 0.5f, 0 }, 1);
+        fixture.physics.update(physics::DEFAULT_FIXED_DT);
+    }
+    char[] bytes = fixture.physics.stop_recording(mem)!!;
+    defer free(bytes);
+
+    PhysicsReplay replay = physics::create_physics_replay(mem, bytes, null, null)!!;
+    defer physics::destroy_physics_replay(&replay);
+    assert(replay.step() && replay.step());
+    debug::DebugDraw sink = debug::create_debug_draw(mem, 1 << 14);
+    defer debug::destroy_debug_draw(&sink);
+    replay.debug_draw(&sink, { .colliders = true });
+    usz without_queries = (usz)sink.vertices.len();
+    sink.clear();
+    replay.debug_draw(&sink, { .colliders = true, .queries = true });
+    assert((usz)sink.vertices.len() > without_queries);
 }

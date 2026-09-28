@@ -331,6 +331,7 @@ struct PhysicsDebugOptions {
     bool  contact_forces;   // normal and friction forces scaled by force_scale; needs contacts
     bool  graph_colors;     // contact points coloured by constraint graph colour; needs contacts
     bool  islands;          // island bounds
+    bool  queries;          // a replay's recorded queries of the replayed frame; the live world ignores it
     float force_scale;      // 0 keeps box3d's scale of 1
     float joint_scale;      // 0 keeps box3d's scale of 1
 }

@@ -10,7 +10,7 @@ import b3::draw;
 import b3::record;
 
 const uint REPLAY_COLOR @local = 0xFFFF66CC;  // magenta over the live world's greens and greys
-const int  REPLAY_WORKERS @local = 1;
+const int  REPLAY_WORKERS @local = 1; // recordings made at any worker count replay with matching hashes (tested)
 const usz  CAPSULE_WIRE_POINTS @local = 2 * COMPOUND_RING_SEGMENTS * 2 + 8;
 const usz  SPHERE_WIRE_POINTS @local = 3 * COMPOUND_RING_SEGMENTS * 2;
 const b3::Transform IDENTITY_POSE @local = { .q = quaternion::IDENTITY };
@@ -144,13 +144,14 @@ fn uint? PhysicsReplay.diverge_frame(&self) => (uint)self.player.diverge_frame()
  @param [&inout] sink : "Cleared by the application."
 *>
 fn void PhysicsReplay.debug_draw(&self, debug::DebugDraw* sink, PhysicsDebugOptions options) {
-    if (!options.colliders && !draws_through_box3d(options)) return;
+    if (!options.colliders && !options.queries && !draws_through_box3d(options)) return;
     b3::WorldId world = self.player.world_id();
     draw::DebugDraw draw = box3d_draw(sink, options);
     draw.draw_shapes = options.colliders;
     draw.draw_shape_fcn = &draw_replay_shape;
     draw.drawing_bounds = world.bounds();
     draw::world_draw(world, &draw, ulong::max);
+    if (options.queries) record::player_draw_frame_queries(self.player, &draw, -1, -1);
 }
 
 fn void install_replay_mixes(PhysicsReplay* replay) @local {

@@ -37,22 +37,30 @@ fn void physics_panel(PhysicsPanel* panel) {
     bool visible = imgui::begin("Physics", null, {});
     defer imgui::end();
     if (!visible) return;
-    world_section(panel);
-    counters_section(panel.physics);
-    profile_section(panel.physics);
-    draw_section(panel);
-    bodies_section(panel);
-    $if $feat(C3D_PHYSICS_GUI_CHARACTER):
-        characters_section(panel);
-    $endif
-    selected_section(panel);
-    events_section(panel);
-    queries_section(panel);
-    recording_section(panel);
+    @pool() {
+        if (panel.last_failure) {
+            ZString failure = string::tformat("%s", panel.last_failure).zstr_tcopy();
+            imgui::text_colored(WARNING_COLOR, "Last action failed: %s", failure);
+        }
+        world_section(panel);
+        counters_section(panel.physics);
+        profile_section(panel.physics);
+        draw_section(panel);
+        bodies_section(panel);
+        $if $feat(C3D_PHYSICS_GUI_CHARACTER):
+            characters_section(panel);
+        $endif
+        selected_section(panel);
+        events_section(panel);
+        queries_section(panel);
+        recording_section(panel);
+    };
 }
 
 fn void world_section(PhysicsPanel* panel) @local {
     if (!imgui::collapsing_header("World", { .default_open = true })) return;
+    imgui::push_id("world");
+    defer imgui::pop_id();
     PhysicsWorld* physics = panel.physics;
     PhysicsTuning tuning = physics.desc.tuning;
     bool changed = imgui::drag_float3("Gravity", (float*)&tuning.gravity);
@@ -92,6 +100,8 @@ fn void world_section(PhysicsPanel* panel) @local {
 
 fn void counters_section(PhysicsWorld* physics) @local {
     if (!imgui::collapsing_header("Counters", {})) return;
+    imgui::push_id("counters");
+    defer imgui::pop_id();
     PhysicsCounters counters = physics.counters();
     if (!imgui::begin_table("physics_counters", 2, { .row_bg = true })) return;
     defer imgui::end_table();
@@ -111,6 +121,8 @@ fn void counters_section(PhysicsWorld* physics) @local {
 
 fn void profile_section(PhysicsWorld* physics) @local {
     if (!imgui::collapsing_header("Profile", {})) return;
+    imgui::push_id("profile");
+    defer imgui::pop_id();
     PhysicsProfile profile = physics.profile();
     if (!imgui::begin_table("physics_profile", 2, { .row_bg = true })) return;
     defer imgui::end_table();
@@ -121,6 +133,8 @@ fn void profile_section(PhysicsWorld* physics) @local {
 
 fn void draw_section(PhysicsPanel* panel) @local {
     if (!imgui::collapsing_header("Draw", {})) return;
+    imgui::push_id("draw");
+    defer imgui::pop_id();
     PhysicsDebugOptions* draw = &panel.draw;
     imgui::checkbox("Colliders", &draw.colliders);
     imgui::checkbox("Contacts", &draw.contacts);
@@ -129,6 +143,7 @@ fn void draw_section(PhysicsPanel* panel) @local {
     imgui::checkbox("Joint extras", &draw.joint_extras);
     imgui::checkbox("Mass frames", &draw.mass);
     imgui::checkbox("Islands", &draw.islands);
+    imgui::checkbox("Replay queries", &draw.queries);
     imgui::begin_disabled(!draw.contacts);
     imgui::checkbox("Contact forces", &draw.contact_forces);
     imgui::checkbox("Graph colours", &draw.graph_colors);
@@ -142,11 +157,14 @@ fn void draw_section(PhysicsPanel* panel) @local {
 
 fn void bodies_section(PhysicsPanel* panel) @local {
     if (!imgui::collapsing_header("Bodies", {})) return;
-    if (!imgui::begin_table("physics_bodies", 6, { .row_bg = true, .resizable = true })) return;
+    imgui::push_id("bodies");
+    defer imgui::pop_id();
+    if (!imgui::begin_table("physics_bodies", 7, { .row_bg = true, .resizable = true })) return;
     defer imgui::end_table();
     imgui::table_setup_column("Name", {});
     imgui::table_setup_column("Kind", {});
     imgui::table_setup_column("Status", {});
+    imgui::table_setup_column("Enabled", {});
     imgui::table_setup_column("Awake", {});
     imgui::table_setup_column("Mass", {});
     imgui::table_setup_column("Speed", {});
@@ -161,6 +179,8 @@ fn void bodies_section(PhysicsPanel* panel) @local {
         imgui::text_unformatted(@enum_name(BodyKind, body.body.kind));
         (void)imgui::table_next_column();
         imgui::text_unformatted(@enum_name(BodyStatus, body.status));
+        (void)imgui::table_next_column();
+        imgui::text_unformatted(body.body.disabled ? (ZString)"no" : (ZString)"yes");
         if (scene.has(node, RigidBody)) {
             BodyState state = panel.physics.body_state(node);
             (void)imgui::table_next_column();
@@ -175,6 +195,8 @@ fn void bodies_section(PhysicsPanel* panel) @local {
 
 fn void selected_section(PhysicsPanel* panel) @local {
     if (!imgui::collapsing_header("Selected", { .default_open = true })) return;
+    imgui::push_id("selected");
+    defer imgui::pop_id();
     Scene* scene = panel.scene;
     PhysicsSelectionBlocks blocks = physics_selection_blocks(scene, panel.selection.selected);
     if (!blocks) {
@@ -183,9 +205,6 @@ fn void selected_section(PhysicsPanel* panel) @local {
     }
     Node* node = scene.node(panel.selection.selected);
     imgui::text_unformatted(string::tformat("%s", node.name).zstr_tcopy());
-    if (panel.last_failure) {
-        imgui::text_colored(WARNING_COLOR, "%s", string::tformat("%s", panel.last_failure).zstr_tcopy());
-    }
     if (blocks.body) body_block(panel, node);
     if (blocks.joint) joint_block(panel, node);
     if (blocks.ragdoll) ragdoll_block(panel, node);
@@ -196,6 +215,8 @@ fn void selected_section(PhysicsPanel* panel) @local {
 
 fn void body_block(PhysicsPanel* panel, Node* node) @local {
     imgui::separator_text("Body");
+    imgui::push_id("body_block");
+    defer imgui::pop_id();
     Scene* scene = panel.scene;
     PhysicsWorld* physics = panel.physics;
     if (scene.has(node, PhysicsBody)) {
@@ -238,6 +259,8 @@ fn void body_block(PhysicsPanel* panel, Node* node) @local {
 
 fn void joint_block(PhysicsPanel* panel, Node* node) @local {
     imgui::separator_text("Joint");
+    imgui::push_id("joint_block");
+    defer imgui::pop_id();
     JointState? state = panel.physics.joint_state(node);
     if (catch state) {
         imgui::text_unformatted("Not bound");
@@ -250,6 +273,8 @@ fn void joint_block(PhysicsPanel* panel, Node* node) @local {
 
 fn void ragdoll_block(PhysicsPanel* panel, Node* node) @local {
     imgui::separator_text("Ragdoll");
+    imgui::push_id("ragdoll_block");
+    defer imgui::pop_id();
     Ragdoll* ragdoll = panel.scene.get(node, Ragdoll);
     imgui::slider_float("Weight", &ragdoll.weight, 0, 1);
     imgui::slider_float("Drive strength", &ragdoll.drive_strength, 0, 1);
@@ -272,6 +297,8 @@ fn void ragdoll_block(PhysicsPanel* panel, Node* node) @local {
 
 fn void events_section(PhysicsPanel* panel) @local {
     if (!imgui::collapsing_header("Events", {})) return;
+    imgui::push_id("events");
+    defer imgui::pop_id();
     if (!imgui::begin_table("physics_events", 5, { .row_bg = true, .resizable = true })) return;
     defer imgui::end_table();
     imgui::table_setup_column("Update", {});
@@ -302,6 +329,8 @@ fn void events_section(PhysicsPanel* panel) @local {
 
 fn void queries_section(PhysicsPanel* panel) @local {
     if (!imgui::collapsing_header("Queries", {})) return;
+    imgui::push_id("queries");
+    defer imgui::pop_id();
     imgui::checkbox("Show", &panel.show_queries);
     ColliderDesc* shape = &panel.cast_shape;
     int kind;
@@ -339,6 +368,8 @@ fn void queries_section(PhysicsPanel* panel) @local {
 
 fn void recording_section(PhysicsPanel* panel) @local {
     if (!imgui::collapsing_header("Recording", { .default_open = true })) return;
+    imgui::push_id("recording");
+    defer imgui::pop_id();
     PhysicsWorld* physics = panel.physics;
     uint kibibytes = (uint)(panel.recording_capacity / KIBIBYTE);
     if (imgui::input_scalar("Start size (KiB)", imgui::DATA_TYPE_U32, &kibibytes)) {
@@ -380,6 +411,7 @@ fn void recording_section(PhysicsPanel* panel) @local {
  Start recording the world and keep its mixes for the replay; a fault shows in the panel.
 *>
 fn void PhysicsPanel.start_recording(&self) {
+    self.last_failure = {};
     PhysicsTuning tuning = self.physics.desc.tuning;
     if (catch failure = self.physics.start_recording(self.recording_capacity)) {
         self.last_failure = failure;
@@ -393,6 +425,7 @@ fn void PhysicsPanel.start_recording(&self) {
  Stop recording and keep the bytes as the last recording; a fault shows in the panel.
 *>
 fn void PhysicsPanel.stop_recording(&self) {
+    self.last_failure = {};
     char[]? bytes = self.physics.stop_recording(self.allocator);
     if (catch failure = bytes) {
         self.last_failure = failure;
@@ -406,6 +439,7 @@ fn void PhysicsPanel.stop_recording(&self) {
  Open a replay of the last recording, replacing an open one; a fault shows in the panel.
 *>
 fn void PhysicsPanel.open_replay(&self) {
+    self.last_failure = {};
     if (self.has_replay) physics::destroy_physics_replay(&self.replay);
     self.has_replay = false;
     FrictionMixFn friction_mix = self.replay_default_mixes ? null : self.recording_friction_mix;

@@ -1,6 +1,7 @@
 module c3d_physics_gui_panel_test @feat(C3D_PHYSICS_GUI);
 
 import std::math;
+import std::math::quaternion;
 import c3d;
 import c3d::anim;
 import c3d::asset;
@@ -13,6 +14,10 @@ const float FRAME_DT @private = 0.016f;
 const uint  RING_CAPACITY @private = 4;
 const float HIT_THRESHOLD @private = 0.5f;
 const uint  FALL_UPDATES @private = 120;
+const uint  RECORDED_UPDATES @private = 30;
+const float SLIDER_FRICTION @private = 0.2f;
+const float SLOPE_FRICTION @private = 0.8f;
+const float SLOPE_ANGLE @private = 0.3f;     // radians; steep enough that 0.2 slides and 0.8 holds
 
 struct Fixture @private {
     AssetStore    assets;
@@ -228,4 +233,57 @@ fn void test_selection_blocks_follow_the_components() @test {
     Entity dead = plain.id;
     scene.remove(plain);
     assert(!gui::physics_selection_blocks(scene, dead));
+}
+
+fn float max_friction(
+    float friction_a,
+    SurfaceMaterialId surface_a,
+    float friction_b,
+    SurfaceMaterialId surface_b,
+) @private => math::max(friction_a, friction_b);
+
+fn void add_sliding_boxes(Fixture* fixture) @private {
+    Node* slope = fixture.scene.add_node(name: "slope")!!;
+    slope.local.rotation = quaternion::from_axis_angle{float}({ 0, 0, 1 }, SLOPE_ANGLE);
+    fixture.scene.update_world();
+    ColliderDesc surface = physics::default_collider_desc(BOX);
+    surface.half_extents = { 10, 0.5f, 4 };
+    surface.material.friction = SLOPE_FRICTION;
+    fixture.physics.add_body(slope, physics::default_body_desc(STATIC), (&surface)[:1])!!;
+    for (uint index = 0; index < 3; index++) {
+        Node* box = fixture.scene.add_node(name: "crate")!!;
+        box.local.position = { -2 + 2 * (float)index, 2, 0 };
+        box.local.rotation = slope.local.rotation;
+        fixture.scene.update_world();
+        ColliderDesc crate = physics::default_collider_desc(BOX);
+        crate.half_extents = { 0.4f, 0.4f, 0.4f };
+        crate.material.friction = SLIDER_FRICTION;
+        fixture.physics.add_body(box, physics::default_body_desc(DYNAMIC), (&crate)[:1])!!;
+    }
+}
+
+fn void test_replay_opens_with_the_mixes_kept_at_start() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    PhysicsTuning tuning = fixture.physics.desc.tuning;
+    tuning.friction_mix = &max_friction;
+    fixture.physics.set_tuning(tuning);
+    PhysicsPanel* panel = &fixture.panel;
+
+    panel.start_recording();
+    add_sliding_boxes(&fixture);
+    for (uint update = 0; update < RECORDED_UPDATES; update++) fixture.physics.update(tuning.fixed_dt);
+    panel.stop_recording();
+    tuning.friction_mix = null;
+    fixture.physics.set_tuning(tuning);
+    assert(!panel.last_failure && panel.recording.len > 0);
+
+    panel.open_replay();
+    while (panel.replay.step()) {}
+    assert(!@ok(panel.replay.diverge_frame()));
+    panel.replay_default_mixes = true;
+    panel.open_replay();
+    while (panel.replay.step()) {}
+    assert(@ok(panel.replay.diverge_frame()));
 }
