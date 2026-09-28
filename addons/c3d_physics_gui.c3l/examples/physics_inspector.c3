@@ -478,6 +478,7 @@ fn void? run(
             .contact_forces = true,
             .graph_colors   = true,
             .islands        = true,
+            .queries        = true,
         };
     }
 
