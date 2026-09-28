@@ -15,14 +15,14 @@ Entry point for every agent session in this repository. Read it fully before rea
 | sdl3.c3l | `sdl` | `c3d::platform` |
 | c3imgui.c3l | `imgui` | `c3d::gui` |
 | c3cg.c3l | `cg` | `c3d::geometry` |
-| box3d.c3l | `b3` | `c3d::physics`, which lives in `addons/c3d_physics.c3l`; core never imports it |
+| box3d.c3l | `b3` | `c3d::physics` and its submodule `c3d::physics::collide`, which live in `addons/c3d_physics.c3l`; core never imports it |
 | cgltf.c3l | `gltf` | `c3d::asset::gltf` |
 | stb_image (C source) | `c3d::asset::image` bindings | `c3d::asset::image` |
 | ufbx.c3l | `ufbx` | `c3d::asset::fbx` |
 | shaderc.c3l | `shaderc` | `c3d::shader::compile` (`src/c3d/shader/compile.c3`), compiled only under the `C3D_SHADER_COMPILER` feature |
 | c3d_profile.c3l | `c3d::profile`, private `c3d::render::profile_gpu` | Applications select it explicitly; core imports it only through the gated CPU and GPU bridges |
 | c3d_profile_gui.c3l | profiler additions to `c3d::gui` | Applications select it explicitly; it imports only the standard library, `c3d::profile` and `imgui` |
-| c3d_physics.c3l | `c3d::physics` | Applications select it explicitly; it imports the standard library, `c3d` and `b3` |
+| c3d_physics.c3l | `c3d::physics`, `c3d::physics::collide` | Applications select it explicitly; it imports the standard library, `c3d` and `b3` |
 | c3d_nav.c3l | `c3d::nav` | Applications select it explicitly; it imports the standard library and `c3d` |
 | c3d_character.c3l | `c3d::character` | Applications select it explicitly; it imports the standard library, `c3d` and `c3d::physics`, and `c3d::nav` under `C3D_CHARACTER_NAV` |
 
@@ -30,7 +30,7 @@ Boundaries are checked at review. No dependency is added without updating this t
 
 The `addons/c3d_profile.c3l` package bundles CPU/GPU capture, history and export. Its neutral `c3d::profile` module imports only the standard library. Its private `c3d::render::profile_gpu` module, under `src/gpu/` and gated by `C3D_PROFILE_GPU`, imports only the standard library, gpu.c3l and neutral profile values; it never imports core types. Core's approved profiler bridges are `c3d::instrumentation` for CPU+INTERNAL and `render/profile.c3` for GPU. Core has no unconditional profiler dependency; instrumented consumers select the collector add-on explicitly. The `addons/c3d_profile_gui.c3l` presentation adapter extends `c3d::gui` under `C3D_PROFILE_GUI`; it consumes neutral capture data and ImGui and is never imported by core or the collector. Standalone CPU collector builds need no native/shader setup. GUI consumers select ImGui and Vulkan bindings explicitly, while GPU data tests additionally select backend dependencies; neither data-test project creates a device.
 
-The `addons/c3d_physics.c3l` package owns rigid-body physics: the box3d world, bodies bound to scene nodes, cooked collision data and frame event lists. Its `c3d::physics` module imports the standard library, core (`c3d`) and `b3`, never `gpu`, `sdl` or `imgui`. Core never imports it and carries no physics feature flag; selecting the library is the gate. The package owns its `project.json`, `physics_test` target and `physics`, `physics_instanced` and `physics_components` examples.
+The `addons/c3d_physics.c3l` package owns rigid-body physics: the box3d world, bodies bound to scene nodes, cooked collision data and frame event lists, and the world-free collision queries of `c3d::physics::collide` (manifolds, distance, casts, time of impact, ray casts against one shape). Its `c3d::physics` module imports the standard library, core (`c3d`) and `b3`, never `gpu`, `sdl` or `imgui`. Core never imports it and carries no physics feature flag; selecting the library is the gate. The package owns its `project.json`, `physics_test` target and `physics`, `physics_instanced`, `physics_components` and `collision_math` examples.
 
 The `addons/c3d_nav.c3l` package owns navigation meshes, a port of Recast/Detour (`recastnavigation` at `9f4ce64`, zlib; the notice ships in the package). Its `c3d::nav` module imports the standard library and core (`c3d`), never `gpu`, `sdl`, `imgui`, `b3` or `c3d::physics`. Core never imports it and carries no navigation feature flag; selecting the library is the gate. The package owns its `project.json`, `nav_test` target and `navmesh`, `crowd` and `grid` examples.
 
