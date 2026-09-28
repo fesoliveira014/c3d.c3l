@@ -93,7 +93,7 @@ fn gpu::GpuAddress? prepare_probe_updates(Renderer* renderer, Scene* scene) @pri
         due |= volume.fill == ProbeFill.SCENE && probe_scene_due(renderer, scene, entity);
     };
     if (!due) return (gpu::GpuAddress)0;
-    return renderer.prepare_scene_trace(scene, TraceKind.SOFTWARE);
+    return renderer.prepare_scene_trace(scene, TraceKind.AUTO);
 }
 
 fn void write_probe_frame_root(
@@ -127,7 +127,7 @@ fn void write_probe_frame_root(
 
 fn void? acquire_probe_update_pipelines(Renderer* renderer) @private {
     ProbeUpdateState* state = &renderer.probe_update;
-    acquire_compute_pipeline(renderer, &state.trace, PROBE_TRACE, "probe_trace")!;
+    acquire_compute_pipeline(renderer, &state.trace, PROBE_TRACE, "probe_trace", trace_shader_flags(renderer))!;
     acquire_compute_pipeline(renderer, &state.blend, PROBE_BLEND, "probe_blend")!;
 }
 

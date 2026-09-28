@@ -1,5 +1,5 @@
 {
-  "flags": ["DEPTH_ONLY", "SKINNED", "SKINNED_U16", "MORPH", "VELOCITY", "VERTEX_COLOR", "INSTANCED", "RT_SHADOWS"],
+  "flags": ["DEPTH_ONLY", "SKINNED", "SKINNED_U16", "MORPH", "VELOCITY", "VERTEX_COLOR", "INSTANCED", "RT_SHADOWS", "SCENE_TRACE_BVH"],
   "entries": [
     { "shader": "fullscreen", "source": "fullscreen.vert.glsl", "stage": "vert", "defines": [] },
     { "shader": "gradient", "source": "gradient.frag.glsl", "stage": "frag", "defines": [] },
@@ -61,6 +61,7 @@
     { "shader": "probe_fill_environment", "source": "probe_fill_environment.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "probe_border", "source": "probe_border.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "probe_trace", "source": "probe_trace.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "probe_trace", "source": "probe_trace.comp.glsl", "stage": "comp", "defines": ["SCENE_TRACE_BVH"] },
     { "shader": "probe_blend", "source": "probe_blend.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "rt_ao", "source": "rt_ao.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "rt_reflections", "source": "rt_reflections.comp.glsl", "stage": "comp", "defines": [] },

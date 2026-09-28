@@ -103,6 +103,11 @@ const uint SHADER_FLAG_INSTANCED = 1 << 6;
 *>
 const uint SHADER_FLAG_RT_SHADOWS = 1 << 7;
 
+<*
+ Flag bit for SCENE_TRACE_BVH.
+*>
+const uint SHADER_FLAG_SCENE_TRACE_BVH = 1 << 8;
+
 const char[*] FULLSCREEN_SPIRV @private = $embed("../../../shaders/spv/fullscreen.spv");
 const char[*] GRADIENT_SPIRV @private = $embed("../../../shaders/spv/gradient.spv");
 const char[*] COMPOSITE_SPIRV @private = $embed("../../../shaders/spv/composite.spv");
@@ -163,6 +168,7 @@ const char[*] AO_BLUR_SPIRV @private = $embed("../../../shaders/spv/ao_blur.spv"
 const char[*] PROBE_FILL_ENVIRONMENT_SPIRV @private = $embed("../../../shaders/spv/probe_fill_environment.spv");
 const char[*] PROBE_BORDER_SPIRV @private = $embed("../../../shaders/spv/probe_border.spv");
 const char[*] PROBE_TRACE_SPIRV @private = $embed("../../../shaders/spv/probe_trace.spv");
+const char[*] PROBE_TRACE_SCENE_TRACE_BVH_SPIRV @private = $embed("../../../shaders/spv/probe_trace_scene_trace_bvh.spv");
 const char[*] PROBE_BLEND_SPIRV @private = $embed("../../../shaders/spv/probe_blend.spv");
 const char[*] RT_AO_SPIRV @private = $embed("../../../shaders/spv/rt_ao.spv");
 const char[*] RT_REFLECTIONS_SPIRV @private = $embed("../../../shaders/spv/rt_reflections.spv");
@@ -203,7 +209,7 @@ const char[*] LIGHTING_RESOLVE_RT_SHADOWS_SPIRV @private = $embed("../../../shad
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[96] SHADER_ENTRIES = {
+const ShaderEntry[97] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -264,6 +270,7 @@ const ShaderEntry[96] SHADER_ENTRIES = {
     { .variant = { .shader = PROBE_FILL_ENVIRONMENT }, .spirv = PROBE_FILL_ENVIRONMENT_SPIRV[..] },
     { .variant = { .shader = PROBE_BORDER }, .spirv = PROBE_BORDER_SPIRV[..] },
     { .variant = { .shader = PROBE_TRACE }, .spirv = PROBE_TRACE_SPIRV[..] },
+    { .variant = { .shader = PROBE_TRACE, .flags = SHADER_FLAG_SCENE_TRACE_BVH }, .spirv = PROBE_TRACE_SCENE_TRACE_BVH_SPIRV[..] },
     { .variant = { .shader = PROBE_BLEND }, .spirv = PROBE_BLEND_SPIRV[..] },
     { .variant = { .shader = RT_AO }, .spirv = RT_AO_SPIRV[..] },
     { .variant = { .shader = RT_REFLECTIONS }, .spirv = RT_REFLECTIONS_SPIRV[..] },

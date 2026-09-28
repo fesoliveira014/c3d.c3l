@@ -191,6 +191,10 @@ fn TraceKind? resolve_trace_kind(TraceKind kind, bool ray_queries) @private {
     }
 }
 
+fn uint trace_shader_flags(Renderer* renderer) @private {
+    return renderer.caps.ray_queries.enabled ? 0 : shader::SHADER_FLAG_SCENE_TRACE_BVH;
+}
+
 fn TraceSource trace_source(uint built_revision, uint revision, bool cpu_present) @private {
     if (built_revision != 0 && built_revision == revision) return TraceSource.REUSE;
     return cpu_present ? TraceSource.BUILD : TraceSource.SKIP;

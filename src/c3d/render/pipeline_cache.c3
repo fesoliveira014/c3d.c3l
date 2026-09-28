@@ -85,6 +85,7 @@ fn bool PipelineKey.equals(&self, PipelineKey other) {
 <*
  Create a registry compute pipeline into the caller's slot once; a valid slot is kept.
  @param [&inout] pipeline : "Caller-owned slot; written only after successful creation."
+ @param flags : "SHADER_FLAG_* bits of the variant; zero selects the plain entry."
  @return? c3d::SHADER_NOT_FOUND, gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::PIPELINE_CREATE_FAILED
  @return? gpu::SLOT_TABLE_FULL, gpu::INVALID_ARGUMENT, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::DEVICE_LOST, gpu::BACKEND_ERROR
@@ -94,11 +95,12 @@ fn void? acquire_compute_pipeline(
     gpu::PipelineHandle* pipeline,
     ShaderName shader,
     ZString debug_name,
+    uint flags = 0,
 ) @private {
     if (pipeline.is_valid()) return;
 
     gpu::ComputePipelineDesc description = {
-        .shader     = { .spirv = renderer.pipelines.registry.get({ .shader = shader })! },
+        .shader     = { .spirv = renderer.pipelines.registry.get({ .shader = shader, .flags = flags })! },
         .debug_name = debug_name,
     };
     *pipeline = gpu::create_compute_pipeline(&renderer.device, &description)!;
