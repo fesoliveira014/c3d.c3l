@@ -33,7 +33,8 @@ const uint STABILITY_FIRST @private = 250;
 const uint STABILITY_SECOND @private = 300;
 const float STABILITY_TOLERANCE @private = 0.01f;       // relative change of the mean irradiance over 50 updates
 const float HIGH_ENERGY @private = 4;
-const uint HALF_EXPONENT_MASK @private = 0x7c00;
+const char[*] PROBE_READBACK_SOURCE @private = $embed("probe_readback.comp.glsl");
+const uint PROBE_READBACK_GROUP @private = 8; // mirrored as local_size_x and local_size_y in probe_readback.comp.glsl
 const uint SKY_SPREAD_FRAMES @private = 8;
 const int SKY_SPREAD_LIMIT @private = 8;                 // of 255; set from the measured spread plus 2
 const float FAST_HYSTERESIS @private = 0.5f;            // converges in tens of updates, so stability is what is measured
@@ -47,39 +48,73 @@ struct ProbeRoom @private {
     Node* lamp;
 }
 
-fn float half_to_float(ushort bits) @private {
-    uint exponent = (bits >> 10) & 0x1f;
-    uint mantissa = bits & 0x3ff;
-    float magnitude = exponent == 0
-      ? (float)mantissa * math::pow(2.0f, -24)
-      : (1 + (float)mantissa / 1024) * math::pow(2.0f, (float)exponent - 15);
-    return (bits & 0x8000) ? -magnitude : magnitude;
+struct ProbeReadbackRoot @private {
+    gpu::GpuAddress   output_address;
+    gpu::TextureIndex atlas;
+    uint              width;
+    uint              height;
+    uint              padding;
 }
+$assert ProbeReadbackRoot::size == 24;
 
-fn ushort[]? read_atlas_halves(Fixture* fixture, Target* atlas, uint channels) @private {
+fn Vec4f[]? read_atlas(Fixture* fixture, Target* atlas) @private {
     Renderer* renderer = &fixture.renderer;
-    render::wait_frames(renderer)!;
-    render::open_closed_frame_slot(renderer)!;
-    usz bytes = (usz)atlas.width * atlas.height * channels * ushort::size;
-    gpu::AllocationDesc desc = {
+    usz texels = (usz)atlas.width * atlas.height;
+    usz bytes = texels * Vec4f::size;
+    ComputeShaderId shader = add_compute_shader(fixture, (String)PROBE_READBACK_SOURCE[..])!;
+    BufferId output = renderer.create_buffer({ .size = bytes, .debug_name = "probe_readback_output" })!;
+    gpu::AllocationDesc readback_desc = {
         .size         = bytes,
+        .alignment    = 16,
         .memory_class = gpu::MemoryClass.CPU_READ,
         .access       = { .graphics },
-        .debug_name   = "probe_atlas_readback",
+        .debug_name   = "probe_readback",
     };
-    gpu::GpuAllocation allocation = gpu::allocate_memory(&renderer.device, &desc)!;
-    defer (void)gpu::free_allocation(&renderer.device, &allocation);
-    gpu::GpuSpan destination = gpu::get_allocation_span(&renderer.device, allocation)!;
-    render::TextureReadback readback = { .target = atlas, .destination = destination };
-    render::submit_pending(renderer, &readback)!;
-    gpu::invalidate_mapped_span(&renderer.device, destination)!;
-    ushort[] halves = alloc::new_array(tmem, ushort, (sz)(bytes / ushort::size));
-    mem::copy(halves.ptr, gpu::mapped_gpu_span(&renderer.device, destination)!.bytes.ptr, (sz)bytes);
-    return halves;
+    gpu::MappedGpuSpan readback = gpu::allocate_mapped_memory(&renderer.device, &readback_desc)!;
+    defer {
+        (void)render::wait_frames(renderer);
+        gpu::GpuAllocation allocation = readback.span.allocation();
+        (void)gpu::free_allocation(&renderer.device, &allocation);
+    }
+
+    renderer.begin_frame()!;
+    defer catch render::abort_frame(renderer);
+    ProbeReadbackRoot root = {
+        .output_address = renderer.buffer_address(output),
+        .atlas          = atlas.view.index,
+        .width          = atlas.width,
+        .height         = atlas.height,
+    };
+    BufferId[1] writes = { output };
+    uint groups_x = (atlas.width + PROBE_READBACK_GROUP - 1) / PROBE_READBACK_GROUP;
+    uint groups_y = (atlas.height + PROBE_READBACK_GROUP - 1) / PROBE_READBACK_GROUP;
+    renderer.dispatch({
+        .shader = shader,
+        .root   = ((char*)&root)[:ProbeReadbackRoot::size],
+        .groups = { groups_x, groups_y, 1 },
+        .writes = writes[..],
+    })!;
+    gpu::Barrier written = { .before = { .all }, .after = { .transfer } };
+    gpu::cmd_barrier(&renderer.commands, &written)!;
+    gpu::BufferCopyDesc copy = {
+        .src = gpu::get_allocation_span(&renderer.device, renderer.buffers.get(output).allocation)!,
+        .dst = readback.span,
+    };
+    gpu::cmd_copy_buffer(&renderer.commands, &copy)!;
+    gpu::Barrier host_read = { .before = { .transfer }, .after = { .host } };
+    gpu::cmd_barrier(&renderer.commands, &host_read)!;
+    renderer.end_frame()!;
+    render::wait_frames(renderer)!;
+    gpu::invalidate_mapped_span(&renderer.device, readback.span)!;
+    Vec4f[] values = alloc::new_array(tmem, Vec4f, (sz)texels);
+    mem::copy(values.ptr, readback.bytes.ptr, (sz)bytes);
+    return values;
 }
 
-fn void assert_no_nan(ushort[] halves) @private {
-    foreach (half : halves) assert((half & HALF_EXPONENT_MASK) != HALF_EXPONENT_MASK);
+fn void assert_finite(Vec4f[] values) @private {
+    foreach (value : values) {
+        for (usz channel = 0; channel < 4; channel++) assert(math::is_finite(value[channel]));
+    }
 }
 
 fn ProbeVolumeRes* mirror_of(Fixture* fixture, Scene* scene, Node* node) @private {
@@ -92,8 +127,8 @@ fn ProbeVolumeRes* mirror_of(Fixture* fixture, Scene* scene, Node* node) @privat
 // Largest irradiance channel over the interior texels of the probes that are not in a wall.
 fn float interior_irradiance(Fixture* fixture, ProbeRoom* room, bool mean = false) @private {
     ProbeVolumeRes* mirror = mirror_of(fixture, &room.scene, room.volume);
-    ushort[] halves = read_atlas_halves(fixture, &mirror.irradiance, 4)!!;
-    assert_no_nan(halves);
+    Vec4f[] texels = read_atlas(fixture, &mirror.irradiance)!!;
+    assert_finite(texels);
     uint edge = shader::PROBE_IRRADIANCE_CELL;
     float largest;
     float sum;
@@ -106,7 +141,7 @@ fn float interior_irradiance(Fixture* fixture, ProbeRoom* room, bool mean = fals
                     for (uint texel_x = 1; texel_x + 1 < edge; texel_x++) {
                         usz texel = (usz)(cell.y * edge + texel_y) * mirror.irradiance.width + (usz)(cell.x * edge + texel_x);
                         for (usz channel = 0; channel < 3; channel++) {
-                            float value = half_to_float(halves[texel * 4 + channel]);
+                            float value = texels[texel][channel];
                             largest = math::max(largest, value);
                             sum += value;
                             samples++;
@@ -225,14 +260,14 @@ fn void test_scene_atlases_hold_no_nan() @test {
     render_room_frames(&fixture, &room, probe_view.view, 1)!!;
     ProbeVolumeRes* mirror = mirror_of(&fixture, &room.scene, room.volume);
     @pool() {
-        assert_no_nan(read_atlas_halves(&fixture, &mirror.irradiance, 4)!!);
-        assert_no_nan(read_atlas_halves(&fixture, &mirror.visibility, 2)!!);
+        assert_finite(read_atlas(&fixture, &mirror.irradiance)!!);
+        assert_finite(read_atlas(&fixture, &mirror.visibility)!!);
     };
     render_room_frames(&fixture, &room, probe_view.view, 10)!!;
     assert(mirror.fill.scene_swept);
     @pool() {
-        assert_no_nan(read_atlas_halves(&fixture, &mirror.irradiance, 4)!!);
-        assert_no_nan(read_atlas_halves(&fixture, &mirror.visibility, 2)!!);
+        assert_finite(read_atlas(&fixture, &mirror.irradiance)!!);
+        assert_finite(read_atlas(&fixture, &mirror.visibility)!!);
     };
     check_validation(&fixture.renderer);
 }
