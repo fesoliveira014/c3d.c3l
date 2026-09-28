@@ -18,7 +18,7 @@ fn void? convert_skins(Importer* importer) @private {
     }
     if (!skin_count) return;
 
-    importer.template.skins = alloc::new_array(importer.assets.allocator, ModelSkin, (sz)skin_count);
+    importer.template.skins = alloc::new_array(importer.allocator, ModelSkin, (sz)skin_count);
     usz slot;
     foreach (mesh : scene.meshes) {
         if (!mesh.skin_deformers.len) continue;
@@ -67,8 +67,8 @@ fn bool uses_rigid_joint(Importer* importer, ufbx::Mesh* mesh, ufbx::SkinDeforme
     usz first_slot = importer.part_offsets[mesh.typed_id];
     foreach (usz part_index, &part : mesh.material_parts) {
         GeometryId geometry = importer.geometries[first_slot + part_index];
-        if (!geometry.generation) continue;
-        foreach (joints : importer.assets.geometry(geometry).data.joints) {
+        if (c3d::same_id(geometry, (GeometryId){})) continue;
+        foreach (joints : importer.document.geometry(geometry).data.joints) {
             if (joints[0] == rigid_joint) return true;
         }
     }
@@ -81,9 +81,9 @@ fn SkeletonId? skeleton_for(
     ufbx::SkinDeformer* skin,
     bool rigid,
 ) @private {
-    if (importer.skeletons[skin.typed_id].generation) return importer.skeletons[skin.typed_id];
+    if (!c3d::same_id(importer.skeletons[skin.typed_id], (SkeletonId){})) return importer.skeletons[skin.typed_id];
 
-    alloc::Allocator allocator = importer.assets.allocator;
+    alloc::Allocator allocator = importer.allocator;
     usz joint_count = skin.clusters.len + (rigid ? 1 : 0);
     Skeleton skeleton = {
         .joint_names  = alloc::new_array(allocator, String, (sz)joint_count),
@@ -110,7 +110,7 @@ fn SkeletonId? skeleton_for(
     }
 
     String key = string::tformat("%s#skeleton/%d", importer.key, skin.typed_id);
-    importer.skeletons[skin.typed_id] = importer.assets.add_skeleton_owned(&skeleton, key)!;
+    importer.skeletons[skin.typed_id] = importer.document.push_skeleton(&skeleton, key);
     return importer.skeletons[skin.typed_id];
 }
 
@@ -129,7 +129,7 @@ fn uint[] joint_nodes(
     bool rigid,
     uint mesh_node,
 ) @private {
-    uint[] joints = alloc::new_array(importer.assets.allocator, uint, skin.clusters.len + (rigid ? 1 : 0));
+    uint[] joints = alloc::new_array(importer.allocator, uint, skin.clusters.len + (rigid ? 1 : 0));
     foreach (index, cluster : skin.clusters) joints[index] = importer.node_remap[cluster.bone_node.typed_id];
     if (rigid) joints[skin.clusters.len] = mesh_node;
     return joints;

@@ -33,6 +33,10 @@ const StandardParams STANDARD_PARAMS_DEFAULT = {
     .emissive_map = { .transform = UV_TRANSFORM_IDENTITY },
 };
 
+const usz MAX_TEXTURE_SLOTS_PER_MATERIAL @private = 15; // a physical material: five standard and ten layer maps
+
+$assert MAX_CUSTOM_TEXTURE_SLOTS <= MAX_TEXTURE_SLOTS_PER_MATERIAL;
+
 <*
  Shading family of a material.
 *>
@@ -122,6 +126,52 @@ fn Material standard(
     MaterialCommon common = MATERIAL_COMMON_DEFAULT,
 ) {
     return { .kind = STANDARD, .common = common, .standard = params };
+}
+
+<*
+ Visit every asset texture reference and its sampler; a toon gradient has a null sampler.
+ @param [&inout] material
+*>
+macro void @each_texture_reference(Material* material; @body(TextureId* texture, SamplerId* sampler)) {
+    TextureSlot*[MAX_TEXTURE_SLOTS_PER_MATERIAL] slots;
+    usz count;
+    switch (material.kind) {
+        case BASIC:
+            slots[count++] = &material.basic.map;
+        case STANDARD:
+            count = standard_slots(&material.standard, slots[..]);
+        case PHYSICAL:
+            PhysicalParams* physical = &material.physical;
+            count = standard_slots(&physical.standard, slots[..]);
+            slots[count++] = &physical.clearcoat_map;
+            slots[count++] = &physical.clearcoat_roughness_map;
+            slots[count++] = &physical.clearcoat_normal_map;
+            slots[count++] = &physical.sheen_color_map;
+            slots[count++] = &physical.sheen_roughness_map;
+            slots[count++] = &physical.specular_map;
+            slots[count++] = &physical.specular_color_map;
+            slots[count++] = &physical.anisotropy_map;
+            slots[count++] = &physical.transmission_map;
+            slots[count++] = &physical.thickness_map;
+        case TOON:
+            slots[count++] = &material.toon.map;
+            @body(&material.toon.gradient_map, null);
+        case CUSTOM:
+            foreach (&slot : material.custom.slots) slots[count++] = slot;
+    }
+    foreach (slot : slots[:count]) {
+        if (slot.texture.kind == ASSET) @body(&slot.texture.asset, &slot.sampler);
+    }
+}
+
+fn usz standard_slots(StandardParams* params, TextureSlot*[] slots) @private {
+    usz count;
+    slots[count++] = &params.base_color_map;
+    slots[count++] = &params.metallic_roughness_map;
+    slots[count++] = &params.normal_map;
+    slots[count++] = &params.occlusion_map;
+    slots[count++] = &params.emissive_map;
+    return count;
 }
 
 macro bool @in_unit_interval(float #value) @private {

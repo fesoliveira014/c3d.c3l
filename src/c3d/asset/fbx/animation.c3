@@ -15,12 +15,11 @@ const usz QUAT_COMPONENTS @private = 4;
 
 fn void? convert_animations(Importer* importer) @private {
     ufbx::Scene* scene = importer.scene;
-    alloc::Allocator allocator = importer.assets.allocator;
+    alloc::Allocator allocator = importer.allocator;
     foreach (stack_index, stack : scene.anim_stacks) {
         AnimationClip clip = convert_stack(importer, stack, allocator)!;
-        defer catch asset::free_clip(allocator, &clip);
         String key = string::tformat("%s#anim/%d", importer.key, stack_index);
-        importer.clips[stack_index] = importer.assets.add_clip_owned(&clip, key)!;
+        importer.clips[stack_index] = importer.document.push_clip(&clip, key);
     }
     if (!scene.anim_stacks.len) return;
     importer.template.clips = alloc::new_array(allocator, ClipId, scene.anim_stacks.len);

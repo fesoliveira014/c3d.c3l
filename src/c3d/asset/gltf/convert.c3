@@ -13,7 +13,7 @@ import std::math;
 const String DATA_URI_PREFIX @private = "data:";
 const uint UV_SET_MAX @private = 1; // texture_slot accepts UV0 and UV1 only
 
-fn void? convert_samplers(Importer* importer) @private {
+fn void convert_samplers(Importer* importer) @private {
     foreach (index, &sampler : importer.data.samplers) {
         SamplerDesc desc = {
             .min_filter = min_filter(sampler.min_filter),
@@ -25,9 +25,8 @@ fn void? convert_samplers(Importer* importer) @private {
             .debug_name = "gltf_sampler",
         };
         String key = string::tformat("%s#sampler/%d", importer.key, index);
-        importer.samplers[index] = importer.assets.add_sampler(desc, key)!;
+        importer.samplers[index] = importer.document.push_sampler(desc, key);
     }
-    return;
 }
 
 fn Filter min_filter(gltf::FilterType filter) @private {
@@ -63,10 +62,10 @@ fn TextureId? texture_for(Importer* importer, gltf::Texture* texture, bool srgb)
     if (!texture.image) return texture.has_basisu || texture.has_webp ? c3d::UNSUPPORTED~ : c3d::ASSET_FORMAT_ERROR~;
     usz image_index = gltf::image_index(importer.data, texture.image);
     TextureId[] table = srgb ? importer.srgb_textures : importer.linear_textures;
-    if (table[image_index].generation) return table[image_index];
+    if (!c3d::same_id(table[image_index], (TextureId){})) return table[image_index];
 
     char[] encoded = image_bytes(importer, texture.image)!;
-    image::Image decoded = image::decode_image(importer.assets.allocator, encoded)!;
+    image::Image decoded = image::decode_image(importer.allocator, encoded)!;
     defer catch image::destroy_image(&decoded);
     if (decoded.format != RGBA8_UNORM) return c3d::ASSET_FORMAT_ERROR~;
 
@@ -77,7 +76,7 @@ fn TextureId? texture_for(Importer* importer, gltf::Texture* texture, bool srgb)
         debug_name: "gltf_image",
     );
     String key = string::tformat("%s#image/%d/%s", importer.key, image_index, srgb ? "srgb" : "linear");
-    TextureId id = importer.assets.add_texture_owned(desc, decoded.pixels, key)!;
+    TextureId id = importer.document.push_texture(desc, decoded.pixels, key);
     table[image_index] = id;
     return id;
 }
@@ -130,15 +129,15 @@ fn void? convert_materials(Importer* importer) @private {
     foreach (index, &source : importer.data.materials) {
         material::Material converted = convert_material(importer, source)!;
         String key = string::tformat("%s#material/%d", importer.key, index);
-        importer.materials[index] = importer.assets.add_material(converted, key)!;
+        importer.materials[index] = importer.document.push_material(converted, key);
     }
     return;
 }
 
-fn MaterialId? default_material(Importer* importer) @private {
-    if (importer.default_material.generation) return importer.default_material;
+fn MaterialId default_material(Importer* importer) @private {
+    if (!c3d::same_id(importer.default_material, (MaterialId){})) return importer.default_material;
     String key = string::tformat("%s#material/default", importer.key);
-    importer.default_material = importer.assets.add_material(material::standard(), key)!;
+    importer.default_material = importer.document.push_material(material::standard(), key);
     return importer.default_material;
 }
 

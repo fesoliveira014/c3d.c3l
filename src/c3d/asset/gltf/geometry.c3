@@ -42,7 +42,7 @@ fn GeometryId? convert_primitive(
     if (!positions || !positions.count) return c3d::ASSET_FORMAT_ERROR~;
     usz vertex_count = positions.count;
 
-    Allocator allocator = importer.assets.allocator;
+    Allocator allocator = importer.allocator;
     Geometry geometry;
     defer catch asset::free_geometry(allocator, &geometry);
 
@@ -81,7 +81,7 @@ fn GeometryId? convert_primitive(
     geometry.finalize();
 
     String key = string::tformat("%s#mesh/%d/%d", importer.key, mesh_index, primitive_index);
-    return importer.assets.add_geometry_owned(&geometry, key);
+    return importer.document.push_geometry(&geometry, key);
 }
 
 fn bool compressed(gltf::Accessor* accessor) @private {
@@ -91,19 +91,23 @@ fn bool compressed(gltf::Accessor* accessor) @private {
 fn bool has_normal_map(Importer* importer, gltf::Primitive* primitive) @private {
     if (!primitive.material) return false;
     MaterialId material_id = importer.materials[gltf::material_index(importer.data, primitive.material)];
-    material::Material* material = &importer.assets.material(material_id).data;
+    material::Material* material = &importer.document.material(material_id).data;
     switch (material.kind) {
         case STANDARD:
-            return material.standard.normal_map.texture.asset.generation != 0;
+            return has_texture(&material.standard.normal_map);
         case PHYSICAL:
-            return material.physical.standard.normal_map.texture.asset.generation != 0
-                || material.physical.clearcoat_normal_map.texture.asset.generation != 0;
+            return has_texture(&material.physical.standard.normal_map)
+                || has_texture(&material.physical.clearcoat_normal_map);
         case CUSTOM:
             return false;
         case BASIC:
         case TOON:
             return false;
     }
+}
+
+fn bool has_texture(TextureSlot* slot) @private {
+    return !c3d::same_id(slot.texture.asset, (TextureId){});
 }
 
 fn float[]? read_floats(
@@ -113,7 +117,7 @@ fn float[]? read_floats(
     usz count,
 ) @private {
     if (accessor.count != count || accessor.component_count() != components) return c3d::ASSET_FORMAT_ERROR~;
-    float[]? floats = accessor.unpack_floats(importer.assets.allocator);
+    float[]? floats = accessor.unpack_floats(importer.allocator);
     if (catch excuse = floats) return load_fault(excuse)~;
     return floats;
 }
@@ -135,7 +139,7 @@ fn Vec4[]? read_vec4(Importer* importer, gltf::Accessor* accessor, usz count) @p
 
 fn Vec4[]? read_colors(Importer* importer, gltf::Accessor* accessor, usz count) @private {
     if (accessor.component_count() == VEC4_COMPONENTS) return read_vec4(importer, accessor, count);
-    Allocator allocator = importer.assets.allocator;
+    Allocator allocator = importer.allocator;
     Vec3[] rgb = read_vec3(importer, accessor, count)!;
     defer alloc::free(allocator, rgb.ptr);
     Vec4[] colors = alloc::new_array(allocator, Vec4, (sz)count);
@@ -145,7 +149,7 @@ fn Vec4[]? read_colors(Importer* importer, gltf::Accessor* accessor, usz count) 
 
 fn ushort[<4>][]? read_joints(Importer* importer, gltf::Accessor* accessor, usz count) @private {
     if (accessor.count != count || accessor.component_count() != VEC4_COMPONENTS) return c3d::ASSET_FORMAT_ERROR~;
-    Allocator allocator = importer.assets.allocator;
+    Allocator allocator = importer.allocator;
     ushort[<4>][] joints = alloc::new_array(allocator, ushort[<4>], (sz)count);
     defer catch alloc::free(allocator, joints.ptr);
     uint[VEC4_COMPONENTS] element;
@@ -157,7 +161,7 @@ fn ushort[<4>][]? read_joints(Importer* importer, gltf::Accessor* accessor, usz 
 }
 
 fn uint[]? read_indices(Importer* importer, gltf::Accessor* accessor) @private {
-    uint[]? indices = accessor.unpack_indices(importer.assets.allocator);
+    uint[]? indices = accessor.unpack_indices(importer.allocator);
     if (catch excuse = indices) return load_fault(excuse)~;
     return indices;
 }
@@ -250,7 +254,7 @@ fn void? read_morph_targets(
     usz vertex_count,
 ) @private {
     if (!primitive.targets.len) return;
-    Allocator allocator = importer.assets.allocator;
+    Allocator allocator = importer.allocator;
     geometry.targets = alloc::new_array(allocator, geometry::MorphTarget, (sz)primitive.targets.len);
     foreach (target_index, &target : primitive.targets) {
         geometry::MorphTarget* morph = &geometry.targets[target_index];

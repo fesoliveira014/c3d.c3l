@@ -100,7 +100,7 @@ return CAPACITY_EXCEEDED~;
 
 # 8. Handles and ids
 
-Use the typed id: `GeometryId geometry`, not `uint geometry`; `gpu::TextureHandle texture`, not `ulong texture`. Ids are generational distinct typedefs of `Id` (never `inline`); a stale id resolves to nothing. Every pool is `Pool{Type, IdType}` and takes only its own id type; `Id` and an id type meet only inside `pool.c3` and in the `AssetStore.find_*` adapters that unpack an `AssetRef`, and no cast between them appears anywhere else. A custom asset kind's id is `custom::CustomId{T}`, a struct rather than a typedef so that ids of two kinds cannot be cast into each other; `asset::custom_ref` and `asset::custom_id` are its `AssetRef` adapters.
+Use the typed id: `GeometryId geometry`, not `uint geometry`; `gpu::TextureHandle texture`, not `ulong texture`. Ids are generational distinct typedefs of `Id` (never `inline`); a stale id resolves to nothing. Every pool is `Pool{Type, IdType}` and takes only its own id type; `Id` and an id type meet only inside `pool.c3` and in the `AssetStore.find_*` adapters that unpack an `AssetRef`, and no cast between them appears anywhere else. A custom asset kind's id is `custom::CustomId{T}`, a struct rather than a typedef so that ids of two kinds cannot be cast into each other; `asset::custom_ref` and `asset::custom_id` are its `AssetRef` adapters. A model document holds references to its own entries as typed ids with the entry index plus one at generation 0, built and read only by the two reference helpers in `asset/document.c3`.
 
 # 9. Call formatting
 
