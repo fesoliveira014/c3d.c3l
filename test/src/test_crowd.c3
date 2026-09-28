@@ -528,3 +528,23 @@ fn void test_removing_the_crowd_node_removes_its_parts() @test {
     foreach (part : parts) assert(!fixture.scene.world.is_alive(part));
     assert(fixture.scene.count(AnimatedCrowd) == 0 && fixture.scene.count(InstancedMesh) == 0);
 }
+
+fn void test_crowd_update_marks_every_part_dirty() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    CrowdInstance[2] instances = { walker(&fixture, placed({ 0, 0, 0 })), walker(&fixture, placed({ 3, 0, 0 })) };
+    Node* node = add_crowd(&fixture, instances[..]);
+    AnimatedCrowd* crowd = fixture.scene.get(node, AnimatedCrowd);
+    anim::crowd_update(&fixture.assets, &fixture.scene, 0);
+    uint[2] recorded;
+    foreach (usz part, &revision : recorded) *revision = part_batch(&fixture, crowd, part).revision;
+
+    crowd.placements[1].position = { 5, 0, 0 };
+    anim::crowd_update(&fixture.assets, &fixture.scene, 0);
+
+    foreach (usz part, revision : recorded) {
+        InstancedMesh* batch = part_batch(&fixture, crowd, part);
+        assert(batch.revision != revision);
+        assert(batch.transforms[1].position == (Vec3){ 5, 0, 0 });
+    }
+}

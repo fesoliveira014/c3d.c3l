@@ -144,6 +144,7 @@ fn Node*? Scene.add_instanced_mesh(
         .cast_shadow    = true,
         .receive_shadow = true,
         .trace          = true,
+        .revision       = 1,
     };
     batch.colors[..] = INSTANCE_COLOR_DEFAULT;
     fill_instances(&batch, transforms, colors);
@@ -165,6 +166,7 @@ fn void? Scene.resize_instances(&self, Node* node, uint count) {
         batch.colors[batch.count:count - batch.count] = INSTANCE_COLOR_DEFAULT;
     }
     batch.count = count;
+    advance_revision(batch);
 }
 
 <*
@@ -179,6 +181,16 @@ fn void? Scene.set_instances(&self, Node* node, Transform[] transforms, Vec4[] c
     if (transforms.len > batch.transforms.len) return c3d::CAPACITY_EXCEEDED~;
     if (colors.len > transforms.len) return c3d::INVALID_ARGUMENT~;
     fill_instances(batch, transforms, colors);
+    advance_revision(batch);
+}
+
+<*
+ Declare in-place edits of transforms or colors to the renderer.
+ @param [&in] node : "Carries an InstancedMesh."
+ @require self.has(node, InstancedMesh)
+*>
+fn void Scene.mark_instances_dirty(&self, Node* node) {
+    advance_revision(self.get(node, InstancedMesh));
 }
 
 <*
@@ -422,6 +434,10 @@ fn void fill_instances(InstancedMesh* batch, Transform[] transforms, Vec4[] colo
     batch.colors[:colors.len] = colors[..];
     batch.colors[colors.len:transforms.len - colors.len] = INSTANCE_COLOR_DEFAULT;
     batch.count = (uint)transforms.len;
+}
+
+fn void advance_revision(InstancedMesh* batch) @local {
+    batch.revision = batch.revision == uint::max ? 1 : batch.revision + 1;
 }
 
 fn void free_morph_weights(Entity entity, void* component, void* user) @local {

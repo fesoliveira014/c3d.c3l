@@ -74,5 +74,6 @@ fn void Scene.write_crowd_batches(&self, AnimatedCrowd* crowd) {
         batch.transforms[:crowd.count] = crowd.placements[:crowd.count];
         batch.count = crowd.count;
         batch.local_bounds = bounds;
+        self.mark_instances_dirty(self.node(part.batch));
     }
 }

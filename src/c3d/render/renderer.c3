@@ -74,6 +74,7 @@ struct RendererDesc {
     uint             shadow_resolution;
     uint             max_shadow_layers;
     uint             max_trace_instances;
+    uint             max_instance_batches;
     bool             ray_queries;
     bool             ray_tracing_pipelines;
 }
@@ -115,7 +116,7 @@ struct Renderer {
     Frame[FRAMES_IN_FLIGHT] frames;
     ulong                   frame_index;
     DeformationCache        deformation;
-    InstanceCache           instances;
+    InstanceTable           instances;
     SceneTrace              scene_trace;
     RtContext               rt;
 
@@ -130,6 +131,7 @@ struct Renderer {
     bool                    pending_overwrite;
     bool                    uploads_recorded;
     List{GeometryId}         pending_geometry_uploads;
+    List{uint}               pending_instance_uploads;
     TextureRes[]            textures;
     EnvironmentState        environment_state;
     gpu::SamplerIndex       toon_gradient_sampler;
@@ -271,6 +273,7 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
             drain_retired(&self.device, &slot.environment_temporaries);
             drain_retired(&self.device, &slot.retire);
             sweep_geometries(self);
+            self.instances.sweep(self.frame_index, &self.pending_upload_retire);
             sweep_environments(self);
             sweep_textures(self);
             sweep_samplers(self);
@@ -280,7 +283,6 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
         };
         reset_upload_ring(self, slot)!;
         reset_deformation_cache(&self.deformation);
-        reset_instance_cache(&self.instances);
         self.frame_started = clock::now();
 
         self.has_output = false;
@@ -682,6 +684,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     if (ray_queries && max_trace_instances > caps.acceleration_structures.max_instance_count) {
         return c3d::UNSUPPORTED~;
     }
+    uint max_instance_batches = desc.max_instance_batches ? desc.max_instance_batches : DEFAULT_MAX_INSTANCE_BATCHES;
     // A device without ray-tracing pipelines may reject the stage, so it is named only when enabled.
     bool pipelines = caps.ray_tracing_pipelines.enabled;
     gpu::StageMask consumer_stages = CONSUMER_STAGES;
@@ -817,7 +820,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .views                = pool::create_pool{ViewRecord, ViewId}(allocator, VIEW_CAPACITY),
         .pipelines            = create_pipeline_cache(allocator, shader::BUILTIN_REGISTRY),
         .deformation          = create_deformation_cache(allocator),
-        .instances            = create_instance_cache(allocator),
+        .instances            = create_instance_table(allocator, max_instance_batches),
         .linear_clamp_sampler = linear_clamp_sampler,
         .log                  = log,
         .timestamps_enabled   = timestamps_enabled,
@@ -831,6 +834,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     renderer.environment_state.temporaries.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_copies.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_geometry_uploads.init(allocator, RETIRE_INITIAL_CAPACITY);
+    renderer.pending_instance_uploads.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_texture_uploads.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.texture_state_undo.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_upload_retire.init(allocator, RETIRE_INITIAL_CAPACITY);
@@ -846,6 +850,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         free_textures(&renderer);
         free_rt(&renderer);
         free_geometries(&renderer);
+        free_instance_buffers(&renderer);
         alloc::free(allocator, renderer.materials.ptr);
         free_shaders(&renderer);
         free_compute_shaders(&renderer);
@@ -853,7 +858,6 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         free_scene_trace(&renderer);
         destroy_pipeline_cache(&renderer.device, &renderer.pipelines);
         destroy_deformation_cache(&renderer.deformation);
-        destroy_instance_cache(&renderer.instances);
         pool::destroy_pool{TargetRecord, RenderTargetId}(&renderer.targets);
         foreach (&record : renderer.views.items) release_view_images(&renderer, record);
         pool::destroy_pool{ViewRecord, ViewId}(&renderer.views);
@@ -884,6 +888,7 @@ fn void destroy_renderer(Renderer* renderer) {
     free_textures(renderer);
     free_rt(renderer);
     free_geometries(renderer);
+    free_instance_buffers(renderer);
     free_material_heap(renderer);
     free_shaders(renderer);
     free_compute_shaders(renderer);
@@ -907,7 +912,6 @@ fn void destroy_renderer(Renderer* renderer) {
     pool::destroy_pool{TargetRecord, RenderTargetId}(&renderer.targets);
     destroy_pipeline_cache(&renderer.device, &renderer.pipelines);
     destroy_deformation_cache(&renderer.deformation);
-    destroy_instance_cache(&renderer.instances);
 
     if (renderer.swapchain.is_valid()) {
         uint attempts = 0;

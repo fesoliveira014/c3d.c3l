@@ -194,6 +194,7 @@ fn void place_ring(Scene* scene, Node* ring, float angle) @local {
             math::sin(instance_angle) * radius,
         };
     }
+    scene.mark_instances_dirty(ring);
 }
 
 fn Movers? build_scene(AssetStore* assets, Scene* scene) @local {

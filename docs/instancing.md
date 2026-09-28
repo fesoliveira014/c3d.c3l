@@ -19,13 +19,16 @@ Node* trio = scene.add_instanced_mesh(
 
 `add_instanced_mesh` allocates `transforms` and `colors` once, at `capacity`, from the scene allocator, and copies the slices in. Instances live in `[0, count)`. Colors past the given slice start white. The node's world matrix applies to every instance: an instance's model matrix is `node.world * transforms[i].to_mat4()`.
 
-Edit elements in place between frames; the next extraction reads them:
+Edit elements in place, then mark the batch before the `render_view` that should show the edit:
 
 ```c3
 InstancedMesh* batch = scene.get(trio, InstancedMesh);
 batch.transforms[1].position.y = height;
 batch.colors[2] = { 0.2f, 0.4f, 1, 1 };
+scene.mark_instances_dirty(trio);
 ```
+
+The drawn records change only through `mark_instances_dirty`, `set_instances` or `resize_instances`; each advances `InstancedMesh.revision`, which is never 0 and is compared for equality only. An unmarked edit is not drawn, with no fault and no message. Extraction bounds, picking, tracing and view history read the arrays at once, so an unmarked edit moves bounds, picks and traces while the drawn instances stay. A mark after `render_view` takes effect in the next frame.
 
 Change the count with `resize_instances(node, count)`, which fills new slots with the identity transform and white, or replace the live instances with `set_instances(node, transforms, colors)`. Neither allocates; past the capacity both fault `CAPACITY_EXCEEDED`. A color slice longer than the transform slice is `INVALID_ARGUMENT`. Removing the node frees both arrays and never the assets.
 
@@ -40,7 +43,11 @@ The instance index is the array position. It is not a generational identity: it 
 - **Materials.** Opaque and masked materials are the supported case. Blended batches draw without sorting inside the batch, and do not cast shadows.
 - **Deformation.** Instances draw the rest pose of the geometry; skinning and morph targets are not applied.
 
-Packed instance data goes through the frame upload ring, 128 bytes per instance, once per frame per batch, and is reused by every view and shadow layer of the frame. `Stats.instances` counts drawn instances across passes; `Stats.triangles` counts each instance's triangles.
+The renderer keeps each batch's instance records in its own GPU memory, 128 bytes per instance of capacity, and shares them across every view and shadow layer. It uploads them when the batch's revision or its node's world matrix changes, or its capacity grows; a batch at rest uploads nothing. `Stats.uploads` and `Stats.upload_bytes` count these uploads. `Stats.instances` counts drawn instances across passes; `Stats.triangles` counts each instance's triangles.
+
+Records are world-space, so a batch whose node moves re-uploads every record in that frame: a batch of 100,000 instances under a moving node uploads 12.8 MB per frame. For a large batch that must stay resident, move the instances and keep the node at rest.
+
+`RendererDesc.max_instance_batches` (default 1024) bounds the batch nodes holding records: live ones plus those unresolved within the last `INSTANCE_ABSENCE_FRAMES` frames. Past it, `render_view` faults `CAPACITY_EXCEEDED`. A batch not drawn by any view or shadow layer for more than `INSTANCE_ABSENCE_FRAMES` frames (hidden, culled, removed) releases its records and uploads them again on its next draw. Shadow layers draw a shadow-casting batch whether or not a view sees it, so such a batch keeps its records while a shadow-casting light is on.
 
 ## Custom vertex stages
 
@@ -92,6 +99,8 @@ while (window.poll()) {
   removes them with it. The crowd's model must stay in the store while the crowd lives.
 - Every part reads the same palettes: all parts share the placements, so they pack instances in the
   same parity order. Morph weights are per instance and per part.
+- `crowd_update` marks every part batch, so part records upload every frame (128 bytes per instance
+  per part).
 - The renderer uploads one palette array per crowd per frame (`joints * 64` bytes per instance) and
   reuses it for every part, view and shadow layer. Above `OVERSIZED_UPLOAD_BYTES` (8 MiB, about 2470
   instances of a 53-joint character) the upload takes dedicated overflow memory every frame.

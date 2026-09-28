@@ -229,6 +229,7 @@ fn void animate(Scene* scene, Batches* batches, double time) @local {
     );
     InstancedMesh* trio = scene.get(batches.trio, InstancedMesh);
     trio.transforms[1].position.y = BOB_HEIGHT * (float)math::sin(time * BOB_RADIANS_PER_SECOND);
+    scene.mark_instances_dirty(batches.trio);
 }
 
 fn void pick_under_cursor(

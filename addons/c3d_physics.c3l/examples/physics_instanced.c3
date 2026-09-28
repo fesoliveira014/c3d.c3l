@@ -242,6 +242,7 @@ fn void sync_instances(Scene* scene, Level* level, BoxRing* ring) @local {
     foreach (slot, node : ring.nodes[:ring.count]) {
         batch.transforms[slot] = maths::transform_from_mat4(node.world);
     }
+    scene.mark_instances_dirty(level.boxes);
 }
 
 fn void apply_highlights(
@@ -258,6 +259,7 @@ fn void apply_highlights(
         highlight(ring: ring, highlights: highlights, batch: batch, node: contact.a);
         highlight(ring: ring, highlights: highlights, batch: batch, node: contact.b);
     }
+    scene.mark_instances_dirty(level.boxes);
 }
 
 fn void highlight(

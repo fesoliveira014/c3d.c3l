@@ -16,6 +16,7 @@ const Vec4 WHITE @local = { 1, 1, 1, 1 };
 const Vec4 RED @local = { 1, 0, 0, 1 };
 const Vec4 GREEN @local = { 0, 1, 0, 1 };
 const Vec2 VIEWPORT @local = { 1600, 900 };
+const GpuInstances ALLOCATED_SLOT @local = { .allocation = { .owner = 1, .index = 0, .generation = 1 } };
 
 struct Fixture @local {
     AssetStore assets;
@@ -394,4 +395,192 @@ fn void test_write_instance_packs_world_and_normal() @test {
     assert(record.normal_1 == (Vec4){ normal.m01, normal.m11, normal.m21, 0 });
     assert(record.normal_2 == (Vec4){ normal.m02, normal.m12, normal.m22, 0 });
     assert(record.color == GREEN);
+}
+
+fn void test_set_instances_bumps_revision() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Transform[5] transforms = { at({ 0, 0, 0 }), at({ 1, 0, 0 }), at({ 2, 0, 0 }), at({ 3, 0, 0 }), at({ 4, 0, 0 }) };
+    Node* node = fixture.scene.add_instanced_mesh(fixture.box, fixture.red, 4, transforms[:2])!!;
+    InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
+    assert(batch.revision == 1);
+
+    fixture.scene.set_instances(node, transforms[:3])!!;
+    assert(batch.revision == 2);
+
+    assert(@catch(fixture.scene.set_instances(node, transforms[..])) == c3d::CAPACITY_EXCEEDED);
+    assert(batch.revision == 2);
+}
+
+fn void test_resize_instances_bumps_revision() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Node* node = fixture.scene.add_instanced_mesh(fixture.box, fixture.red, 4)!!;
+    InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
+    assert(batch.revision == 1);
+
+    fixture.scene.resize_instances(node, 3)!!;
+    assert(batch.revision == 2);
+    fixture.scene.resize_instances(node, 0)!!;
+    assert(batch.revision == 3);
+
+    assert(@catch(fixture.scene.resize_instances(node, 5)) == c3d::CAPACITY_EXCEEDED);
+    assert(batch.revision == 3);
+}
+
+fn void test_mark_instances_dirty_bumps_revision() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Transform[2] transforms = { at({ 0, 0, 0 }), at({ 1, 0, 0 }) };
+    Node* node = fixture.scene.add_instanced_mesh(fixture.box, fixture.red, 4, transforms[..])!!;
+    InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
+
+    batch.transforms[0].position = { 5, 0, 0 };
+    batch.colors[1] = GREEN;
+    assert(batch.revision == 1);
+    fixture.scene.mark_instances_dirty(node);
+    assert(batch.revision == 2);
+
+    batch.revision = uint::max;
+    fixture.scene.mark_instances_dirty(node);
+    assert(batch.revision == 1);
+}
+
+fn void test_needs_upload_follows_key_capacity_revision_and_world() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Transform[2] transforms = { at({ 0, 0, 0 }), at({ 1, 0, 0 }) };
+    Node* node = fixture.scene.add_instanced_mesh(fixture.box, fixture.red, 4, transforms[..])!!;
+    node.local.position = { 1, 2, 3 };
+    node.local.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, 0.7f);
+    fixture.scene.update_world();
+    InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
+    InstanceKey key = { .scene = fixture.scene.identity, .node = node.id };
+    GpuInstances uploaded = { .key = key, .revision = 1, .capacity = 4, .world = node.world };
+
+    GpuInstances free_slot;
+    assert(render::needs_upload(slot: &free_slot, key: key, batch: batch, world: node.world));
+    GpuInstances recycled = uploaded;
+    recycled.key.node.generation++;
+    assert(render::needs_upload(slot: &recycled, key: key, batch: batch, world: node.world));
+    GpuInstances smaller = uploaded;
+    smaller.capacity = 3;
+    assert(render::needs_upload(slot: &smaller, key: key, batch: batch, world: node.world));
+    GpuInstances discarded = uploaded;
+    discarded.revision = 0;
+    assert(render::needs_upload(slot: &discarded, key: key, batch: batch, world: node.world));
+    assert(!render::needs_upload(slot: &uploaded, key: key, batch: batch, world: node.world));
+    GpuInstances larger = uploaded;
+    larger.capacity = 8;
+    assert(!render::needs_upload(slot: &larger, key: key, batch: batch, world: node.world));
+    Mat4 moved = at({ 0, 1, 0 }).to_mat4().mul(node.world);
+    assert(render::needs_upload(slot: &uploaded, key: key, batch: batch, world: moved));
+    fixture.scene.mark_instances_dirty(node);
+    assert(render::needs_upload(slot: &uploaded, key: key, batch: batch, world: node.world));
+
+    uploaded.revision = batch.revision;
+    fixture.scene.update_world();
+    assert(!render::needs_upload(slot: &uploaded, key: key, batch: batch, world: node.world));
+    fixture.scene.update_world();
+    assert(!render::needs_upload(slot: &uploaded, key: key, batch: batch, world: node.world));
+}
+
+fn InstanceKey table_key(uint index) @local => { .scene = 1, .node = { .index = index, .generation = 1 } };
+
+fn void test_instance_key_separates_scenes_and_recycled_entities() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Scene other = scene::create_scene(mem, { .max_nodes = 8 });
+    defer scene::destroy_scene(&other);
+    Transform[1] transforms = { at({ 0, 0, 0 }) };
+    Node* first = fixture.scene.add_instanced_mesh(fixture.box, fixture.red, 4, transforms[..])!!;
+    Node* second = other.add_instanced_mesh(fixture.box, fixture.red, 4, transforms[..])!!;
+    assert(c3d::same_id(first.id, second.id));
+    assert(fixture.scene.identity != other.identity);
+    InstanceTable table = render::create_instance_table(mem, 4);
+    defer render::destroy_instance_table(&table);
+    InstanceKey first_key = { .scene = fixture.scene.identity, .node = first.id };
+    InstanceKey second_key = { .scene = other.identity, .node = second.id };
+
+    uint first_index = table.acquire(first_key, 1)!!;
+    uint second_index = table.acquire(second_key, 1)!!;
+    assert(first_index != second_index);
+    assert(table.acquire(first_key, 1)!! == first_index);
+    assert(table.lookup.len() == 2);
+
+    fixture.scene.update_world();
+    GpuInstances* uploaded = &table.slots[first_index];
+    uploaded.revision = 1;
+    uploaded.capacity = 4;
+    uploaded.world = first.world;
+    uploaded.allocation = ALLOCATED_SLOT.allocation;
+    fixture.scene.remove(first);
+    Node* recycled = fixture.scene.add_instanced_mesh(fixture.box, fixture.red, 4, transforms[..])!!;
+    fixture.scene.update_world();
+    assert(recycled.id.index == first_key.node.index);
+    assert(recycled.id.generation != first_key.node.generation);
+    InstanceKey recycled_key = { .scene = fixture.scene.identity, .node = recycled.id };
+
+    uint recycled_index = table.acquire(recycled_key, 2)!!;
+    assert(recycled_index != first_index && recycled_index != second_index);
+    InstancedMesh* batch = fixture.scene.get(recycled, InstancedMesh);
+    assert(render::needs_upload(
+        slot:  &table.slots[recycled_index],
+        key:   recycled_key,
+        batch: batch,
+        world: recycled.world,
+    ));
+    assert(table.lookup.len() == 3);
+}
+
+fn void test_instance_table_faults_when_every_slot_is_occupied() @test {
+    InstanceTable table = render::create_instance_table(mem, 2);
+    defer render::destroy_instance_table(&table);
+    RetireList retire;
+    retire.init(mem);
+    defer retire.free();
+
+    uint first = table.acquire(table_key(1), 10)!!;
+    table.slots[first].allocation = ALLOCATED_SLOT.allocation;
+    table.acquire(table_key(2), 10)!!;
+    assert(@catch(table.acquire(table_key(3), 10)) == c3d::CAPACITY_EXCEEDED);
+
+    for (ulong frame = 11; frame <= 10 + render::INSTANCE_ABSENCE_FRAMES; frame++) {
+        table.sweep(frame, &retire);
+        table.acquire(table_key(2), frame)!!;
+        assert(@catch(table.acquire(table_key(3), frame)) == c3d::CAPACITY_EXCEEDED);
+    }
+
+    ulong returned = 11 + render::INSTANCE_ABSENCE_FRAMES;
+    table.sweep(returned, &retire);
+    assert(retire.len() == 1);
+    assert(table.acquire(table_key(3), returned)!! == first);
+}
+
+fn void test_instance_table_retires_slots_after_absence() @test {
+    InstanceTable table = render::create_instance_table(mem, 4);
+    defer render::destroy_instance_table(&table);
+    RetireList retire;
+    retire.init(mem);
+    defer retire.free();
+
+    uint absent = table.acquire(table_key(1), 20)!!;
+    table.slots[absent].allocation = ALLOCATED_SLOT.allocation;
+    uint kept = table.acquire(table_key(2), 20)!!;
+    table.acquire(table_key(3), 20)!!;
+    for (ulong frame = 21; frame <= 20 + render::INSTANCE_ABSENCE_FRAMES; frame++) {
+        table.sweep(frame, &retire);
+        table.acquire(table_key(2), frame)!!;
+    }
+    assert(retire.len() == 0 && table.lookup.len() == 3);
+
+    table.sweep(21 + render::INSTANCE_ABSENCE_FRAMES, &retire);
+
+    assert(retire.len() == 1 && retire[0].kind == RetiredKind.ALLOCATION);
+    assert(retire[0].allocation.owner == ALLOCATED_SLOT.allocation.owner);
+    assert(retire[0].allocation.generation == ALLOCATED_SLOT.allocation.generation);
+    assert(table.lookup.len() == 1 && table.lookup.has_key(table_key(2)));
+    assert(!table.lookup.has_key(table_key(1)) && !table.lookup.has_key(table_key(3)));
+    assert(table.slots[absent].key.scene == 0 && !table.slots[absent].allocation.is_valid());
+    assert(table.slots[kept].last_seen == 20 + render::INSTANCE_ABSENCE_FRAMES);
 }
