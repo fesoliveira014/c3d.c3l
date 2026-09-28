@@ -24,7 +24,7 @@ fn void? build_template(Importer* importer) @private {
     ImportCounts counts;
     foreach (child : root.children) count_subtree(importer, child, &counts);
 
-    alloc::Allocator allocator = importer.nodes_only ? tmem : importer.assets.allocator;
+    alloc::Allocator allocator = importer.nodes_only ? tmem : importer.allocator;
     importer.template = {
         .nodes   = alloc::new_array(allocator, NodeTemplate, (sz)counts.nodes),
         .meshes  = alloc::new_array(allocator, ModelMesh, (sz)counts.meshes),
@@ -67,7 +67,7 @@ fn void? emit_subtree(
     importer.node_remap[node.typed_id] = index;
     template.nodes[index] = {
         .parent  = parent,
-        .name    = copy_name(importer.nodes_only ? tmem : importer.assets.allocator, node.name),
+        .name    = copy_name(importer.nodes_only ? tmem : importer.allocator, node.name),
         .local   = transform_of(node.local_transform),
         .layers  = scene::DEFAULT_LAYERS,
         .visible = node.visible,
@@ -105,7 +105,7 @@ fn void? emit_parts(
     uint index,
     ImportCounts* cursor,
 ) @private {
-    alloc::Allocator allocator = importer.assets.allocator;
+    alloc::Allocator allocator = importer.allocator;
     ModelTemplate* template = &importer.template;
     ufbx::Mesh* mesh = node.mesh;
     maths::Transform local = node.has_geometry_transform
@@ -124,14 +124,14 @@ fn void? emit_parts(
         template.meshes[cursor.meshes++] = {
             .node                  = child,
             .geometry              = importer.geometries[importer.part_offsets[mesh.typed_id] + part_index],
-            .material              = part_material(importer, node, part)!,
+            .material              = part_material(importer, node, part),
             .default_morph_weights = default_morph_weights(allocator, mesh),
         };
     }
     return;
 }
 
-fn MaterialId? part_material(Importer* importer, ufbx::Node* node, ufbx::MeshPart* part) @private {
+fn MaterialId part_material(Importer* importer, ufbx::Node* node, ufbx::MeshPart* part) @private {
     ufbx::Material* source;
     if (part.index < node.materials.len) {
         source = node.materials[part.index];

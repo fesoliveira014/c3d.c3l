@@ -33,7 +33,7 @@ fn void? build_template(Importer* importer) @private {
         count_subtree(importer, root, &counts);
     };
 
-    Allocator allocator = importer.assets.allocator;
+    Allocator allocator = importer.allocator;
     importer.template = {
         .nodes   = alloc::new_array(allocator, NodeTemplate, (sz)counts.nodes),
         .meshes  = alloc::new_array(allocator, ModelMesh, (sz)counts.meshes),
@@ -66,7 +66,7 @@ fn void? emit_subtree(
     ImportCounts* cursor,
 ) @private {
     gltf::Data* data = importer.data;
-    Allocator allocator = importer.assets.allocator;
+    Allocator allocator = importer.allocator;
     ModelTemplate* template = &importer.template;
 
     uint index = (uint)cursor.nodes++;
@@ -96,7 +96,7 @@ fn void? emit_subtree(
             if (primitive.material) {
                 material = importer.materials[gltf::material_index(data, primitive.material)];
             } else {
-                material = default_material(importer)!;
+                material = default_material(importer);
             }
             template.meshes[cursor.meshes++] = {
                 .node                  = child,

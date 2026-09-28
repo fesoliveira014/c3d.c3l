@@ -43,7 +43,7 @@ fn GeometryId? convert_part(
     ufbx::MeshPart* part,
     usz part_index,
 ) @private {
-    alloc::Allocator allocator = importer.assets.allocator;
+    alloc::Allocator allocator = importer.allocator;
     usz corner_count = part.num_triangles * TRIANGLE_CORNERS;
     CornerStreams streams = corner_streams(mesh, part, corner_count);
 
@@ -94,7 +94,7 @@ fn GeometryId? convert_part(
     geometry.finalize();
 
     String key = string::tformat("%s#mesh/%d/%d", importer.key, mesh.typed_id, part_index);
-    return importer.assets.add_geometry_owned(&geometry, key);
+    return importer.document.push_geometry(&geometry, key);
 }
 
 fn CornerStreams corner_streams(ufbx::Mesh* mesh, ufbx::MeshPart* part, usz corner_count) @private {

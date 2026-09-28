@@ -19,15 +19,15 @@ fn void? convert_materials(Importer* importer) @private {
     foreach (source : importer.scene.materials) {
         material::Material converted = convert_material(importer, source)!;
         String key = string::tformat("%s#material/%d", importer.key, source.typed_id);
-        importer.materials[source.typed_id] = importer.assets.add_material(converted, key)!;
+        importer.materials[source.typed_id] = importer.document.push_material(converted, key);
     }
     return;
 }
 
-fn MaterialId? default_material(Importer* importer) @private {
-    if (importer.default_material.generation) return importer.default_material;
+fn MaterialId default_material(Importer* importer) @private {
+    if (!c3d::same_id(importer.default_material, (MaterialId){})) return importer.default_material;
     String key = string::tformat("%s#material/default", importer.key);
-    importer.default_material = importer.assets.add_material(material::standard(), key)!;
+    importer.default_material = importer.document.push_material(material::standard(), key);
     return importer.default_material;
 }
 
@@ -154,10 +154,9 @@ fn image::Image? decode(Importer* importer, ufbx::Texture* texture, alloc::Alloc
 
 fn TextureId? plain_texture(Importer* importer, ufbx::Texture* texture, bool srgb) @private {
     TextureId[] table = srgb ? importer.srgb_textures : importer.linear_textures;
-    if (table[texture.typed_id].generation) return table[texture.typed_id];
+    if (!c3d::same_id(table[texture.typed_id], (TextureId){})) return table[texture.typed_id];
 
-    image::Image decoded = decode(importer, texture, importer.assets.allocator)!;
-    defer catch image::destroy_image(&decoded);
+    image::Image decoded = decode(importer, texture, importer.allocator)!;
     TextureDesc desc = material::texture_2d_desc(
         width:      decoded.width,
         height:     decoded.height,
@@ -165,7 +164,7 @@ fn TextureId? plain_texture(Importer* importer, ufbx::Texture* texture, bool srg
         debug_name: "fbx_image",
     );
     String key = string::tformat("%s#image/%d/%s", importer.key, texture.typed_id, srgb ? "srgb" : "linear");
-    TextureId id = importer.assets.add_texture_owned(desc, decoded.pixels, key)!;
+    TextureId id = importer.document.push_texture(desc, decoded.pixels, key);
     table[texture.typed_id] = id;
     return id;
 }
@@ -176,12 +175,12 @@ fn SamplerId? sampler_for(Importer* importer, ufbx::Texture* texture) @private {
     if (repeat_u == repeat_v) return repeat_u ? asset::SAMPLER_LINEAR_REPEAT : asset::SAMPLER_LINEAR_CLAMP;
 
     usz slot = repeat_u ? MIXED_REPEAT_CLAMP : MIXED_CLAMP_REPEAT;
-    if (importer.mixed_samplers[slot].generation) return importer.mixed_samplers[slot];
+    if (!c3d::same_id(importer.mixed_samplers[slot], (SamplerId){})) return importer.mixed_samplers[slot];
     SamplerDesc desc = material::sampler_desc(Filter.LINEAR, AddressMode.REPEAT, "fbx_sampler");
     desc.address_u = repeat_u ? AddressMode.REPEAT : AddressMode.CLAMP_TO_EDGE;
     desc.address_v = repeat_v ? AddressMode.REPEAT : AddressMode.CLAMP_TO_EDGE;
     String key = string::tformat("%s#sampler/%s", importer.key, repeat_u ? "repeat_clamp" : "clamp_repeat");
-    importer.mixed_samplers[slot] = importer.assets.add_sampler(desc, key)!;
+    importer.mixed_samplers[slot] = importer.document.push_sampler(desc, key);
     return importer.mixed_samplers[slot];
 }
 
@@ -216,7 +215,7 @@ fn TextureId? metallic_roughness_texture(
         metallic_roughness: true,
         invert_roughness:   glossiness,
     );
-    if (existing.generation) return existing;
+    if (!c3d::same_id(existing, (TextureId){})) return existing;
 
     image::Image roughness_image;
     image::Image metalness_image;
@@ -225,9 +224,8 @@ fn TextureId? metallic_roughness_texture(
     uint width = math::max(roughness_image.width, metalness_image.width);
     uint height = math::max(roughness_image.height, metalness_image.height);
 
-    alloc::Allocator allocator = importer.assets.allocator;
+    alloc::Allocator allocator = importer.allocator;
     char[] pixels = alloc::new_array(allocator, char, (sz)width * height * RGBA_CHANNELS);
-    defer catch alloc::free(allocator, pixels.ptr);
     for (uint y = 0; y < height; y++) {
         for (uint x = 0; x < width; x++) {
             usz texel = ((usz)y * width + x) * RGBA_CHANNELS;
@@ -272,7 +270,7 @@ fn TextureId? metallic_roughness_texture(
         texture_label(metalness_id),
         glossiness ? "inverted" : "direct",
     );
-    TextureId id = importer.assets.add_texture_owned(desc, pixels, key)!;
+    TextureId id = importer.document.push_texture(desc, pixels, key);
     importer.derived_textures[importer.derived_count++] = {
         .first              = roughness_id,
         .second             = metalness_id,
@@ -291,7 +289,7 @@ fn TextureId? base_opacity_texture(Importer* importer, ufbx::Texture* base, ufbx
         second:             opacity.typed_id,
         metallic_roughness: false,
     );
-    if (existing.generation) return existing;
+    if (!c3d::same_id(existing, (TextureId){})) return existing;
 
     image::Image base_image;
     if (base) base_image = decode(importer, base, tmem)!;
@@ -299,9 +297,8 @@ fn TextureId? base_opacity_texture(Importer* importer, ufbx::Texture* base, ufbx
     uint width = base ? base_image.width : opacity_image.width;
     uint height = base ? base_image.height : opacity_image.height;
 
-    alloc::Allocator allocator = importer.assets.allocator;
+    alloc::Allocator allocator = importer.allocator;
     char[] pixels = alloc::new_array(allocator, char, (sz)width * height * RGBA_CHANNELS);
-    defer catch alloc::free(allocator, pixels.ptr);
     for (uint y = 0; y < height; y++) {
         for (uint x = 0; x < width; x++) {
             usz texel = ((usz)y * width + x) * RGBA_CHANNELS;
@@ -332,7 +329,7 @@ fn TextureId? base_opacity_texture(Importer* importer, ufbx::Texture* base, ufbx
         debug_name: "fbx_base_opacity",
     );
     String key = string::tformat("%s#image/%s+%d/srgb", importer.key, texture_label(base_id), opacity.typed_id);
-    TextureId id = importer.assets.add_texture_owned(desc, pixels, key)!;
+    TextureId id = importer.document.push_texture(desc, pixels, key);
     importer.derived_textures[importer.derived_count++] = {
         .first              = base_id,
         .second             = opacity.typed_id,

@@ -13,12 +13,11 @@ const usz SCALAR_COMPONENTS @private = 1;
 
 fn void? convert_skins(Importer* importer) @private {
     gltf::Data* data = importer.data;
-    Allocator allocator = importer.assets.allocator;
+    Allocator allocator = importer.allocator;
     foreach (skin_index, &skin : data.skins) {
         Skeleton skeleton = convert_skeleton(importer, skin)!;
-        defer catch asset::free_skeleton(allocator, &skeleton);
         String key = string::tformat("%s#skeleton/%d", importer.key, skin_index);
-        importer.skeletons[skin_index] = importer.assets.add_skeleton_owned(&skeleton, key)!;
+        importer.skeletons[skin_index] = importer.document.push_skeleton(&skeleton, key);
     }
 
     usz skin_count;
@@ -48,7 +47,7 @@ fn void? convert_skins(Importer* importer) @private {
 
 fn Skeleton? convert_skeleton(Importer* importer, gltf::Skin* skin) @private {
     gltf::Data* data = importer.data;
-    Allocator allocator = importer.assets.allocator;
+    Allocator allocator = importer.allocator;
     usz joint_count = skin.joints.len;
     uint[] joint_nodes = joint_template_indices(importer, skin)!;
     defer alloc::free(allocator, joint_nodes.ptr);
@@ -87,8 +86,8 @@ fn Skeleton? convert_skeleton(Importer* importer, gltf::Skin* skin) @private {
 
 fn uint[]? joint_template_indices(Importer* importer, gltf::Skin* skin) @private {
     gltf::Data* data = importer.data;
-    uint[] joints = alloc::new_array(importer.assets.allocator, uint, (sz)skin.joints.len);
-    defer catch alloc::free(importer.assets.allocator, joints.ptr);
+    uint[] joints = alloc::new_array(importer.allocator, uint, (sz)skin.joints.len);
+    defer catch alloc::free(importer.allocator, joints.ptr);
     foreach (index, joint : skin.joints) {
         usz template_index = importer.node_remap[gltf::node_index(data, joint)];
         if (template_index == usz::max) return c3d::ASSET_FORMAT_ERROR~;
@@ -99,12 +98,11 @@ fn uint[]? joint_template_indices(Importer* importer, gltf::Skin* skin) @private
 
 fn void? convert_animations(Importer* importer) @private {
     gltf::Data* data = importer.data;
-    Allocator allocator = importer.assets.allocator;
+    Allocator allocator = importer.allocator;
     foreach (animation_index, &animation : data.animations) {
         AnimationClip clip = convert_clip(importer, animation)!;
-        defer catch asset::free_clip(allocator, &clip);
         String key = string::tformat("%s#anim/%d", importer.key, animation_index);
-        importer.clips[animation_index] = importer.assets.add_clip_owned(&clip, key)!;
+        importer.clips[animation_index] = importer.document.push_clip(&clip, key);
     }
     if (!data.animations.len) return;
     importer.template.clips = alloc::new_array(allocator, ClipId, data.animations.len);
@@ -114,7 +112,7 @@ fn void? convert_animations(Importer* importer) @private {
 
 fn AnimationClip? convert_clip(Importer* importer, gltf::Animation* animation) @private {
     gltf::Data* data = importer.data;
-    Allocator allocator = importer.assets.allocator;
+    Allocator allocator = importer.allocator;
 
     usz track_count;
     foreach (&channel : animation.channels) {

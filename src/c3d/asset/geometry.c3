@@ -106,7 +106,7 @@ fn void AssetStore.remove_geometry(&self, GeometryId geometry) {
     self.geometries.remove(geometry);
 }
 
-fn void? check_influences(Geometry* geometry) @local {
+fn void? check_influences(Geometry* geometry) @private {
     if (!geometry.joints.len && !geometry.weights.len) return;
     if (geometry.joints.len != geometry.positions.len || geometry.weights.len != geometry.positions.len) {
         return c3d::INVALID_ARGUMENT~;
