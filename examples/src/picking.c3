@@ -3,6 +3,8 @@ module picking_example;
 import std::io;
 import std::io::path;
 import std::math;
+import std::time;
+import std::time::clock;
 import c3d;
 import c3d::asset;
 import c3d::asset::gltf;
@@ -46,9 +48,18 @@ const uint MONITOR_FRONT_FACE @local = 4; // geometry::box face order: +X, -X, +
 const uint TRIANGLES_PER_BOX_FACE @local = 2;
 const float SUN_INTENSITY @local = 3;
 const float AMBIENT_INTENSITY @local = 0.15f;
+const uint CROWD_MESHES @local = 2000;
+const uint CROWD_ROW @local = 50; // crowd meshes per row
+const uint CROWD_INSTANCES @local = 4096;
+const uint CROWD_INSTANCE_ROW @local = 64;
+const float CROWD_SPACING @local = 0.6f;
+const float CROWD_BOX_SCALE @local = 0.3f;
+const float CROWD_BATCH_HEIGHT @local = 3; // the batch floats above the crowd's meshes
+const Vec3 CROWD_ORIGIN @local = { -15, 0.15f, -40 }; // behind the monitor, clear of the ground plane
+const double NANOSECONDS_PER_MILLISECOND @local = 1_000_000;
 const Vec2 PICKING_PANEL_POSITION @local = { 16, 16 };
-const Vec2 PICKING_PANEL_SIZE @local = { 380, 300 };
-const Vec2 SCENE_PANEL_POSITION @local = { 16, 332 };
+const Vec2 PICKING_PANEL_SIZE @local = { 380, 400 };
+const Vec2 SCENE_PANEL_POSITION @local = { 16, 432 };
 const Vec2 SCENE_PANEL_SIZE @local = { 380, 400 };
 const String DEFAULT_MODEL @local = "../assets/gltf/BoxTextured.glb";
 
@@ -63,6 +74,16 @@ struct Capture @local {
     RenderTargetId target;
     ViewId         view;
     ViewDesc       desc;
+}
+
+struct Picker @local {
+    SceneIndex index;
+    Node*      crowd;
+    double     refresh_ms;
+    double     index_ms;    // the last click's picks through the index
+    double     scan_ms;     // the same picks through the linear scan
+    usz        index_hits;  // hits of the last click's picks through the index
+    usz        scan_hits;   // the same through the linear scan
 }
 
 struct Selection @local {
@@ -153,6 +174,80 @@ fn Ray view_ray(
     return camera::screen_to_ray(&matrices, pixel, viewport);
 }
 
+fn double elapsed_ms(time::Clock started) @local => (double)(clock::now() - started) / NANOSECONDS_PER_MILLISECOND;
+
+fn Node*? add_crowd(
+    Scene* scene,
+    GeometryId box,
+    MaterialId orange,
+    MaterialId teal,
+) @local {
+    Node* crowd = scene.add_node(name: "crowd")!;
+    crowd.local.position = CROWD_ORIGIN;
+    crowd.visible = false;
+    for (uint index = 0; index < CROWD_MESHES; index++) {
+        Node* node = scene.add_mesh(box, index % 2 == 0 ? orange : teal, parent: crowd)!;
+        node.local.position = {
+            (float)(index % CROWD_ROW) * CROWD_SPACING,
+            0,
+            (float)(index / CROWD_ROW) * CROWD_SPACING,
+        };
+        node.local.scale = { CROWD_BOX_SCALE, CROWD_BOX_SCALE, CROWD_BOX_SCALE };
+    }
+    @pool() {
+        Transform[] transforms = alloc::new_array(tmem, Transform, (sz)CROWD_INSTANCES);
+        foreach (uint index, &transform : transforms) {
+            *transform = maths::TRANSFORM_IDENTITY;
+            transform.position = {
+                (float)(index % CROWD_INSTANCE_ROW) * CROWD_SPACING / 2,
+                CROWD_BATCH_HEIGHT,
+                (float)(index / CROWD_INSTANCE_ROW) * CROWD_SPACING / 2,
+            };
+            transform.scale = { CROWD_BOX_SCALE / 2, CROWD_BOX_SCALE / 2, CROWD_BOX_SCALE / 2 };
+        }
+        scene.add_instanced_mesh(
+            geometry:   box,
+            material:   teal,
+            capacity:   CROWD_INSTANCES,
+            transforms: transforms,
+            parent:     crowd,
+            name:       "crowd batch",
+        )!;
+    };
+    return crowd;
+}
+
+fn uint entry_capacity(Scene* scene) @local {
+    uint capacity = (uint)scene.count(Mesh);
+    scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
+        capacity += (uint)batch.transforms.len;
+    };
+    return capacity;
+}
+
+fn PickHit[] pick_timed(
+    Picker* picker,
+    AssetStore* assets,
+    Scene* scene,
+    Ray ray,
+    PickOptions options,
+) @local {
+    time::Clock started = clock::now();
+    PickHit[] indexed = picker.index.pick(
+        allocator: tmem,
+        assets:    assets,
+        ray:       ray,
+        options:   options,
+    );
+    picker.index_ms += elapsed_ms(started);
+    started = clock::now();
+    PickHit[] scanned = pick_with(assets, scene, ray, options);
+    picker.scan_ms += elapsed_ms(started);
+    picker.index_hits += indexed.len;
+    picker.scan_hits += scanned.len;
+    return picker.crowd.visible ? indexed : scanned;
+}
+
 fn PickHit[] pick_with(AssetStore* assets, Scene* scene, Ray ray, PickOptions options) @local {
     return spatial::pick(
         allocator: tmem,
@@ -164,6 +259,7 @@ fn PickHit[] pick_with(AssetStore* assets, Scene* scene, Ray ray, PickOptions op
 }
 
 fn Selection select_at(
+    Picker* picker,
     AssetStore* assets,
     Scene* scene,
     Node* camera_node,
@@ -174,13 +270,23 @@ fn Selection select_at(
     PickOptions options,
 ) @local {
     Selection selection;
+    picker.index_ms = 0;
+    picker.scan_ms = 0;
+    picker.index_hits = 0;
+    picker.scan_hits = 0;
     selection.ray = view_ray(
         scene:       scene,
         camera_node: camera_node,
         pixel:       pixel,
         viewport:    viewport,
     );
-    PickHit[] hits = pick_with(assets, scene, selection.ray, options);
+    PickHit[] hits = pick_timed(
+        picker:  picker,
+        assets:  assets,
+        scene:   scene,
+        ray:     selection.ray,
+        options: options,
+    );
     if (hits.len == 0) return selection;
     selection.valid = true;
     selection.hit = hits[0];
@@ -189,7 +295,13 @@ fn Selection select_at(
     PickOptions monitor_options = options;
     monitor_options.precision = TRIANGLES;
     monitor_options.layers = MONITOR_LAYER;
-    PickHit[] monitor_hits = pick_with(assets, scene, selection.ray, monitor_options);
+    PickHit[] monitor_hits = pick_timed(
+        picker:  picker,
+        assets:  assets,
+        scene:   scene,
+        ray:     selection.ray,
+        options: monitor_options,
+    );
     if (monitor_hits.len == 0) return selection;
     Mesh* monitor = scene.get(monitor_node, Mesh);
     Geometry* slab = &assets.geometry(monitor.geometry).data;
@@ -201,7 +313,13 @@ fn Selection select_at(
         pixel:       uv * capture_viewport,
         viewport:    capture_viewport,
     );
-    PickHit[] capture_hits = pick_with(assets, scene, capture_ray, options);
+    PickHit[] capture_hits = pick_timed(
+        picker:  picker,
+        assets:  assets,
+        scene:   scene,
+        ray:     capture_ray,
+        options: options,
+    );
     if (capture_hits.len == 0) return selection;
     selection.hit = capture_hits[0];
     selection.ray = capture_ray;
@@ -209,8 +327,18 @@ fn Selection select_at(
     return selection;
 }
 
-fn void picking_panel(Scene* scene, PickOptions* options, Selection* selection) @local {
+fn void picking_panel(
+    Scene* scene,
+    Picker* picker,
+    PickOptions* options,
+    Selection* selection,
+) @local {
     if (imgui::begin("Picking", null, {})) {
+        imgui::checkbox("Crowd: 2000 meshes and 4096 instances; picks use the index", &picker.crowd.visible);
+        imgui::text("Index: %d entries, revision %d, refresh %.3f ms", picker.index.count, picker.index.revision,
+            picker.refresh_ms);
+        imgui::text("Last click: index %.3f ms, scan %.3f ms", picker.index_ms, picker.scan_ms);
+        imgui::text("Last click hits: index %d, scan %d", picker.index_hits, picker.scan_hits);
         imgui::separator_text("Precision");
         if (imgui::radio_button("Bounds", options.precision == BOUNDS)) options.precision = BOUNDS;
         imgui::same_line();
@@ -302,6 +430,7 @@ fn void? run(
     Node* camera_node,
     Node* producer_node,
     Node* monitor_node,
+    Node* crowd,
     MaterialId monitor,
     Orbit* orbit,
 ) @local {
@@ -315,6 +444,11 @@ fn void? run(
     create_capture(renderer, assets, monitor, &capture)!;
     defer (void)destroy_capture(renderer, &capture);
     renderer.prepare_scene(scene)!;
+
+    Picker picker = { .index = spatial::create_scene_index(mem, entry_capacity(scene)), .crowd = crowd };
+    defer spatial::destroy_scene_index(&picker.index);
+    spatial::prepare_triangle_picks(assets, scene);
+    picker.index.refresh(assets, scene)!;
 
     GuiPanelState panels;
     PickOptions options = spatial::PICK_OPTIONS_DEFAULT;
@@ -341,7 +475,12 @@ fn void? run(
 
         imgui::set_next_window_pos(PICKING_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(PICKING_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
-        picking_panel(scene, &options, &selection);
+        picking_panel(
+            scene:     scene,
+            picker:    &picker,
+            options:   &options,
+            selection: &selection,
+        );
         imgui::set_next_window_pos(SCENE_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(SCENE_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
         gui::scene_panel(scene, &panels);
@@ -349,6 +488,7 @@ fn void? run(
         if (input.button_pressed(platform::MouseButton.LEFT) && !input.mouse_captured_by_gui) {
             @pool() {
                 selection = select_at(
+                    picker:        &picker,
                     assets:        assets,
                     scene:         scene,
                     camera_node:   camera_node,
@@ -360,11 +500,22 @@ fn void? run(
                 );
             };
             if (selection.valid) panels.selected = selection.hit.node.id;
+            io::printfn(
+                "click: index %d hits in %.3f ms, scan %d hits in %.3f ms, %s",
+                picker.index_hits,
+                picker.index_ms,
+                picker.scan_hits,
+                picker.scan_ms,
+                selection.valid ? selection.hit.node.name : "nothing",
+            );
         }
         if (selection.valid && !scene.world.is_alive(selection.hit.node.id)) selection = {};
 
         apply_orbit(orbit, input, camera_node);
         scene.update_world();
+        time::Clock refreshed = clock::now();
+        picker.index.refresh(assets, scene)!;
+        picker.refresh_ms = elapsed_ms(refreshed);
 
         debug.clear();
         if (scene.world.is_alive(panels.selected)) {
@@ -400,6 +551,7 @@ fn void? run(
 
 fn int main(String[] args) {
     bool gpu_timings;
+    bool crowd_shown;
     String model_path;
     foreach (argument : args[1..]) {
         if (argument == "--gpu-timings") {
@@ -409,6 +561,8 @@ fn int main(String[] args) {
                 io::eprintfn("--gpu-timings needs GPU profiling: c3c build <target> --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL");
                 return 1;
             $endif
+        } else if (argument == "--crowd") {
+            crowd_shown = true;
         } else if (!model_path.len && !argument.starts_with("--")) {
             model_path = argument;
         } else {
@@ -508,6 +662,8 @@ fn int main(String[] args) {
     Node* monitor_node = scene.add_mesh(screen, monitor, name: "monitor")!!;
     monitor_node.local.position = MONITOR_POSITION;
     monitor_node.layers = MONITOR_LAYER;
+    Node* crowd = add_crowd(&scene, box, orange, teal)!!;
+    crowd.visible = crowd_shown;
     Node* sun = scene.add_light(light::directional({ 1, 0.95f, 0.85f }, SUN_INTENSITY), name: "sun")!!;
     sun.local.rotation = maths::look_rotation((Vec3){ -0.5f, -1, -0.6f }.normalize(), { 0, 1, 0 });
 
@@ -534,6 +690,7 @@ fn int main(String[] args) {
         camera_node:   camera_node,
         producer_node: producer_node,
         monitor_node:  monitor_node,
+        crowd:         crowd,
         monitor:       monitor,
         orbit:         &orbit,
     )) {

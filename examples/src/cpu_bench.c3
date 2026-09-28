@@ -460,8 +460,8 @@ fn int main(String[] args) {
         io::eprintn("Cases: world hidden_world meshes culled_meshes hidden_meshes shadows lights hidden_lights sort");
         io::eprintn("       bvh_triangles (nodes = plane segments per side, 128 by default, at most 1024)");
         io::eprintn("       bvh_top (nodes = boxes)");
-        io::eprintn("       index_refresh_crowd index_refresh_batch index_build_crowd index_build_batch index_pick_crowd");
-        io::eprintn("       scan_pick_crowd index_pick_triangles scan_pick_triangles (nodes ignored)");
+        io::eprintn("       index_refresh_crowd index_refresh_batch index_build_crowd index_build_batch");
+        io::eprintn("       index_pick_crowd scan_pick_crowd index_pick_triangles scan_pick_triangles (nodes ignored)");
         io::eprintn("       triangle_warmup (nodes = plane segments per side, as bvh_triangles)");
         return 1;
     }
