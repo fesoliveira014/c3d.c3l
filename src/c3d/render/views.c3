@@ -94,8 +94,11 @@ struct ProjectionTerms {
 *>
 struct PoseRecord {
     Mat4f[]           palette;
+    // Node-local, unlike the world-space instance records: a node moves between renderings without an
+    // edit, and the root's prev_model carries that motion, so these follow the batch revision alone.
     Mat4f[]           instances;
     uint              instance_count;
+    uint              instance_revision; // batch revision of instances; 0 = none
     MorphWeightsGpu   morph;
     MorphWeightsGpu[] morphs;
     bool              morphed;
@@ -177,10 +180,14 @@ fn void ViewHistory.commit(
         self.seen = alloc::new_array(allocator, ulong, scene.nodes.len);
         self.poses = alloc::new_array(allocator, PoseRecord, scene.nodes.len);
     }
+    bool same_scene = self.scene == scene.identity;
     self.scene = scene.identity;
     self.serial++;
     foreach (&candidate : candidates) {
         usz index = candidate.node.id.index;
+        if (!same_scene || !c3d::same_id(self.owners[index], candidate.node.id)) {
+            self.poses[index].instance_revision = 0;
+        }
         self.models[index] = candidate.node.world;
         self.owners[index] = candidate.node.id;
         self.seen[index] = self.serial;
@@ -308,8 +315,12 @@ fn void commit_pose(
         if (pose.instances.len != batch.transforms.len) {
             alloc::free(allocator, pose.instances.ptr);
             pose.instances = alloc::new_array(allocator, Mat4f, batch.transforms.len);
+            pose.instance_revision = 0;
         }
-        write_instance_worlds(pose.instances, node.world, batch);
+        if (pose.instance_revision != batch.revision) {
+            write_instance_locals(pose.instances, batch);
+            pose.instance_revision = batch.revision;
+        }
         pose.instance_count = batch.count;
     }
 }

@@ -55,23 +55,29 @@ fn bool instanced_mesh_is_live(AssetStore* assets, InstancedMesh* batch) {
 }
 
 <*
- World bound of the live instances: override, else geometry bound under each instance, merged.
+ World bound of the batch's live instances.
+ Writes the kept node-local batch.aggregate when its identity is stale; observable scene state does not change.
  @param [&in] assets : "Resolves the live geometry record."
  @param [&in] node : "World matrix as left by the last update_world."
- @param [&in] batch : "Live geometry id and live count above zero."
+ @param [&inout] batch : "Live geometry id and live count above zero."
 *>
 fn Aabb instanced_world_bounds(AssetStore* assets, Node* node, InstancedMesh* batch) {
     if (batch.has_bounds_override) return maths::aabb_transform(batch.local_bounds, node.world);
-    Aabb local = assets.geometry(batch.geometry).data.bounds;
-    Aabb result = instance_world_bounds(local, node.world, batch.transforms[0]);
-    foreach (transform : batch.transforms[1:batch.count - 1]) {
-        result = maths::aabb_merge(result, instance_world_bounds(local, node.world, transform));
+    GeometryAsset* record = assets.geometry(batch.geometry);
+    InstanceAggregate* aggregate = &batch.aggregate;
+    bool current = aggregate.bounds_revision == batch.revision && c3d::same_id(aggregate.geometry, batch.geometry)
+      && aggregate.geometry_revision == record.header.revision;
+    if (!current) {
+        Aabb local = record.data.bounds;
+        aggregate.bounds = maths::aabb_transform(local, batch.transforms[0].to_mat4());
+        foreach (transform : batch.transforms[1:batch.count - 1]) {
+            aggregate.bounds = maths::aabb_merge(aggregate.bounds, maths::aabb_transform(local, transform.to_mat4()));
+        }
+        aggregate.geometry = batch.geometry;
+        aggregate.geometry_revision = record.header.revision;
+        aggregate.bounds_revision = batch.revision;
     }
-    return result;
-}
-
-fn Aabb instance_world_bounds(Aabb local, Mat4 node_world, Transform transform) @private {
-    return maths::aabb_transform(local, node_world.mul(transform.to_mat4()));
+    return maths::aabb_transform(aggregate.bounds, node.world);
 }
 
 <*

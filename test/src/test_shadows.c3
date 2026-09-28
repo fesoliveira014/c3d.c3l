@@ -10,6 +10,7 @@ import c3d::maths;
 import c3d::render;
 import c3d::scene;
 import c3d::shader;
+import c3d::spatial;
 import std::math;
 import gpu;
 
@@ -581,4 +582,54 @@ fn void test_shadow_alpha_matches_both_visible_material_payloads() @test {
     render::write_shadow_material_block(&shadow, &standard, binding);
     assert((shadow.map_flags & shader::MATERIAL_MAP_BASE_COLOR) == 0);
     assert(shadow.color.a == 0.6f);
+}
+
+fn ShadowCascade fit_line_caster(Aabb caster_bounds) @local {
+    Camera camera = camera::perspective_deg(60, 0.1f, 50);
+    Mat4 camera_world = matrix::IDENTITY4;
+    camera_world.m23 = 8;
+    CameraMatrices matrices = camera::derive_matrices(camera, camera_world, VIEWPORT);
+    MeshCandidate[1] casters = { { .world_bounds = caster_bounds } };
+    return render::fit_directional_cascade(
+        view: &matrices,
+        near_depth: 0.1f,
+        far_depth: 20,
+        light_direction: ((Vec3){ -0.3f, -1, -0.2f }).normalize(),
+        casters: casters[..],
+        resolution: 1024,
+        normal_bias: 0.02f,
+    );
+}
+
+fn Aabb exact_batch_bounds(AssetStore* assets, Node* node, InstancedMesh* batch) @local {
+    Aabb local = assets.geometry(batch.geometry).data.bounds;
+    Aabb result = maths::aabb_transform(local, node.world.mul(batch.transforms[0].to_mat4()));
+    foreach (transform : batch.transforms[1:batch.count - 1]) {
+        result = maths::aabb_merge(result, maths::aabb_transform(local, node.world.mul(transform.to_mat4())));
+    }
+    return result;
+}
+
+fn void test_cascade_fit_unchanged_for_an_unrotated_batch_node() @test {
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+    Scene scene = scene::create_scene(mem, { .max_nodes = 4 });
+    defer scene::destroy_scene(&scene);
+    GeometryId box;
+    @pool() {
+        Geometry shape = geometry::box(tmem, 1, 1, 1);
+        box = assets.add_geometry(&shape)!!;
+    };
+    MaterialId plain = assets.add_material(material::basic({ .color = { 1, 1, 1, 1 } }))!!;
+    Transform[3] transforms = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
+    transforms[0].position = { -2, 0, -2 };
+    transforms[2].position = { 2, 0, 2 };
+    Node* node = scene.add_instanced_mesh(box, plain, 3, transforms[..])!!;
+    node.local.position = { 1, 0.5f, -3 };
+    scene.update_world();
+    InstancedMesh* batch = scene.get(node, InstancedMesh);
+
+    ShadowCascade kept = fit_line_caster(spatial::instanced_world_bounds(&assets, node, batch));
+    ShadowCascade exact = fit_line_caster(exact_batch_bounds(&assets, node, batch));
+    assert(kept.camera.proj.m22 == exact.camera.proj.m22 && kept.camera.view_proj == exact.camera.view_proj);
 }

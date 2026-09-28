@@ -375,3 +375,84 @@ fn void test_culled_custom_vertex_batch_draws_survivors() @test {
     assert(settle_and_sample(&fixture, &line)!! == culled_pixel);
     check_validation(renderer);
 }
+
+fn uint? settle_at_rest(Fixture* fixture, DeformedScene* line, Vec2 uv = CENTER_UV) @private {
+    uint pixel;
+    for (uint frame = 0; frame < SETTLE_FRAMES; frame++) pixel = render_scene_and_sample(fixture, line, uv)!;
+    return pixel;
+}
+
+fn void check_near_pixel(uint actual, uint expected) @private {
+    check_channels(actual, {
+        (float)(expected & 0xff) / 255,
+        (float)((expected >> 8) & 0xff) / 255,
+        (float)((expected >> 16) & 0xff) / 255,
+        (float)(expected >> 24) / 255,
+    });
+}
+
+fn void test_batch_at_rest_has_zero_velocity() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    DeformedScene line = create_line_scene(&fixture, fixture.plain)!!;
+    defer scene::destroy_scene(&line.scene);
+    enable_taa(&fixture, fixture.view, debug: TaaDebug.VELOCITY)!!;
+
+    uint batch_velocity = settle_at_rest(&fixture, &line)!!;
+    uint background_velocity = settle_at_rest(&fixture, &line, BACKGROUND_UV)!!;
+    assert(batch_velocity == background_velocity);
+    check_validation(&fixture.renderer);
+}
+
+fn uint? move_line_node(Fixture* fixture, DeformedScene* line, bool mark) @private {
+    enable_taa(fixture, fixture.view, debug: TaaDebug.VELOCITY)!;
+    line.mesh.local.position.x = 0;
+    uint pixel;
+    for (uint frame = 0; frame < SETTLE_FRAMES; frame++) {
+        line.mesh.local.position.x += LINE_STEP;
+        if (mark) line.scene.mark_instances_dirty(line.mesh);
+        pixel = render_scene_and_sample(fixture, line)!;
+    }
+    return pixel;
+}
+
+fn void test_moving_batch_node_velocity_matches_per_instance() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    DeformedScene line = create_line_scene(&fixture, fixture.plain)!!;
+    defer scene::destroy_scene(&line.scene);
+
+    uint node_motion = move_line_node(&fixture, &line, false)!!;
+    uint per_instance = move_line_node(&fixture, &line, true)!!;
+    check_near_pixel(node_motion, per_instance);
+    uint at_rest = settle_at_rest(&fixture, &line)!!;
+    assert(node_motion != at_rest);
+    check_validation(&fixture.renderer);
+}
+
+fn void test_edit_after_rest_keeps_per_instance_velocity() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    DeformedScene line = create_line_scene(&fixture, fixture.plain)!!;
+    defer scene::destroy_scene(&line.scene);
+    InstancedMesh* batch = line.scene.get(line.mesh, InstancedMesh);
+    enable_taa(&fixture, fixture.view, debug: TaaDebug.VELOCITY)!!;
+
+    uint at_rest = settle_at_rest(&fixture, &line)!!;
+    batch.transforms[LINE_CENTER].position.x += LINE_STEP;
+    line.scene.mark_instances_dirty(line.mesh);
+    uint edited = render_scene_and_sample(&fixture, &line)!!;
+    assert(edited != at_rest);
+
+    batch.transforms[LINE_CENTER].position.x -= LINE_STEP;
+    line.scene.mark_instances_dirty(line.mesh);
+    enable_taa(&fixture, fixture.view, debug: TaaDebug.VELOCITY)!!;
+    settle_at_rest(&fixture, &line)!!;
+    line.mesh.local.position.x += LINE_STEP;
+    uint moved = render_scene_and_sample(&fixture, &line)!!;
+    check_near_pixel(edited, moved);
+    check_validation(&fixture.renderer);
+}

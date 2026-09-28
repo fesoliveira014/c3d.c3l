@@ -72,7 +72,7 @@ struct DrawPassState @private {
  Render one frame of the scene from the camera to the window.
  Material, environment and source descriptions remain stable for the call.
  @param [&inout] self : "Owns recording, submission and window presentation."
- @param [&in] scene : "Pose as left by the last update_world; not advanced."
+ @param [&inout] scene : "Pose as left by the last update_world; only batch aggregates are written."
  @param [&in] camera_node : "Carries a Camera component."
  @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::SHADER_NOT_FOUND
  @return? gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL
@@ -104,7 +104,7 @@ fn void? Renderer.render(
  Extract, upload and record the scene passes from the camera into the view; finish_view writes its output.
  A window view records nothing without an acquired image; authoring inputs stay stable until end_frame.
  @param [&inout] self : "Records into the current frame before composition."
- @param [&in] scene : "Pose as left by the last update_world; not advanced."
+ @param [&inout] scene : "Pose as left by the last update_world; only batch aggregates are written."
  @param [&in] camera_node : "Carries a Camera component."
  @param [in] debug : "Null draws nothing; lines drawn after transparency; not cleared."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::SHADER_NOT_FOUND
@@ -450,14 +450,15 @@ fn void? record_raster_view(
                         crowd_pose = record.history.previous_pose(scene, node.parent);
                     }
                     previous_pose = upload_previous_pose(
-                        renderer:   renderer,
-                        item:       item,
-                        pose:       record.history.previous_pose(scene, node),
-                        crowd_pose: crowd_pose,
-                        instances:  &previous_instances,
+                        renderer:       renderer,
+                        item:           item,
+                        pose:           record.history.previous_pose(scene, node),
+                        crowd_pose:     crowd_pose,
+                        instances:      &previous_instances,
+                        previous_world: prev_world,
                     )!;
                 }
-                if (item.candidate.batch) prev_world = prev_world.mul(maths::inverse_affine(node.world));
+                if (item.candidate.batch) prev_world = batch_prev_model(prev_world, node.world);
                 BatchAddresses addresses = batch_addresses(
                     candidate: item.candidate,
                     range:     &item.range,
@@ -627,7 +628,7 @@ fn void? Renderer.finish_view(&self, ViewId view) {
  Render the scene from the camera into the target once, with default post settings and no history.
  The window shows nothing new for this call.
  @param [&inout] self : "Creates and destroys a view around one frame."
- @param [&in] scene : "Pose as left by the last update_world; not advanced."
+ @param [&inout] scene : "Pose as left by the last update_world; only batch aggregates are written."
  @param [&in] camera_node : "Carries a Camera component."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::SHADER_NOT_FOUND
  @return? gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL
@@ -1009,6 +1010,7 @@ fn gpu::GpuAddress? upload_previous_pose(
     PoseRecord* pose,
     PoseRecord* crowd_pose,
     PreviousInstanceCache* instances,
+    Mat4 previous_world,
 ) @private {
     MeshCandidate* candidate = item.candidate;
     uint offset = instance_offset(&item.range);
@@ -1046,18 +1048,33 @@ fn gpu::GpuAddress? upload_previous_pose(
             previous.morph = upload_bytes(renderer, &pose.morph, MorphWeightsGpu::size)!;
         }
     }
-    if (candidate.batch && pose.instance_count == candidate.batch.count) {
+    InstancedMesh* batch = candidate.batch;
+    if (batch && pose.instance_count == batch.count && pose.instance_revision != batch.revision) {
         ulong key = (ulong)(uptr)candidate.node;
         gpu::GpuAddress base;
         if (try existing = instances.get(key)) {
             base = existing;
         } else {
-            base = upload_bytes(renderer, pose.instances.ptr, pose.instance_count * Mat4f::size)!;
+            base = upload_previous_worlds(renderer, pose.instances[:pose.instance_count], previous_world)!;
             instances.set(key, base);
         }
         previous.instances = offset_by_instances(base, offset, Mat4f::size);
     }
     return upload_bytes(renderer, &previous, PreviousPoseGpu::size);
+}
+
+fn Mat4 batch_prev_model(Mat4 prev_world, Mat4 world) @private {
+    // The product is the identity only up to rounding; at rest the velocity must be exactly zero.
+    if (prev_world == world) return matrix::IDENTITY4;
+    return prev_world.mul(maths::inverse_affine(world));
+}
+
+fn gpu::GpuAddress? upload_previous_worlds(Renderer* renderer, Mat4f[] locals, Mat4 previous_world) @private {
+    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan span = slot.upload.take(&renderer.device, locals.len * Mat4f::size, STREAM_ALIGNMENT)!;
+    Mat4f* worlds = (Mat4f*)span.bytes.ptr;
+    foreach (index, local : locals) worlds[index] = bitcast(previous_world.mul(bitcast(local, Mat4)), Mat4f);
+    return span.address;
 }
 
 fn gpu::GpuAddress? upload_bytes(Renderer* renderer, void* data, usz size) @private {

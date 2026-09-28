@@ -28,7 +28,7 @@ batch.colors[2] = { 0.2f, 0.4f, 1, 1 };
 scene.mark_instances_dirty(trio);
 ```
 
-The drawn records change only through `mark_instances_dirty`, `set_instances` or `resize_instances`; each advances `InstancedMesh.revision`, which is never 0 and is compared for equality only. An unmarked edit is not drawn, with no fault and no message. Extraction bounds, picking, tracing and view history read the arrays at once, so an unmarked edit moves bounds, picks and traces while the drawn instances stay. A mark after `render_view` takes effect in the next frame.
+The drawn records change only through `mark_instances_dirty`, `set_instances` or `resize_instances`; each advances `InstancedMesh.revision`, which is never 0 and is compared for equality only. An unmarked edit is not drawn, with no fault and no message. The batch bound that extraction, shadows and picking use, the mirrored count and view history also follow the revision, so an unmarked edit moves none of them. Tracing and picking's per-instance tests read the arrays at once, so an unmarked edit does move traces and per-instance picks. A mark after `render_view` takes effect in the next frame.
 
 Change the count with `resize_instances(node, count)`, which fills new slots with the identity transform and white, or replace the live instances with `set_instances(node, transforms, colors)`. Neither allocates; past the capacity both fault `CAPACITY_EXCEEDED`. A color slice longer than the transform slice is `INVALID_ARGUMENT`. Removing the node frees both arrays and never the assets.
 
@@ -36,11 +36,11 @@ The instance index is the array position. It is not a generational identity: it 
 
 ## Drawing
 
-- **Culling.** Extraction culls the batch as a whole against the bound of all live instances, or `local_bounds` when `has_bounds_override` is set; [instance culling](#instance-culling) then culls each instance on the GPU. `cast_shadow` and `receive_shadow` apply to every instance.
+- **Culling.** Extraction culls the batch as a whole against the bound of all live instances, or `local_bounds` when `has_bounds_override` is set; [instance culling](#instance-culling) then culls each instance on the GPU. The bound of all live instances is kept node-local on the batch (`InstancedMesh.aggregate`, written by the library). It is computed once per revision and geometry revision, and transformed by the node's world each frame. Under a rotated node it is the box of that box, looser than a per-instance merge, and the looseness grows with the batch's extent: for a batch about 5.7 units long under a node turned 45 degrees, the shadow cascade's depth range grew by up to 1.3%. `cast_shadow` and `receive_shadow` apply to every instance.
 - **Indirect draws.** Every batch draws through one indirect command per parity range and pass, `draw_count` 1 and first instance 0; plain meshes draw directly. An unculled range's arguments are written by the CPU into the frame upload ring (20 bytes indexed, 16 non-indexed, 32 with alignment); a culled range's are written by the cull pass. `Stats.indirect_draws` counts these draws across every pass, the velocity pass included.
 - **Mirrored instances.** A transform whose scale product is negative mirrors space. The renderer packs non-mirrored instances first and draws each group with its own front face, so a batch holding both makes two draws per pass.
 - **Color.** The instance color multiplies the vertex color, alpha included, in every built-in material. A masked material cuts per instance, and its shadow matches.
-- **Motion blur and TAA.** Each instance moves by its own previous matrix, kept per view while the batch's live count stays the same; after a count change the batch node's motion applies for one rendering.
+- **Motion blur and TAA.** Each instance moves by its own previous matrix, kept per view while the batch's live count stays the same; after a count change the batch node's motion applies for one rendering. The view keeps node-local matrices and rewrites them only when the batch's revision changes. A batch at rest, or one whose node moves without an edit, draws through the node's motion, with no per-instance work and no upload; at rest its velocity is exactly zero. In the frame of an edit the renderer uploads 64 bytes per instance. A batch marked every frame (an animated batch, a crowd part) pays that every frame, so a large batch that must stay cheap is edited rarely.
 - **Materials.** Opaque and masked materials are the supported case. Blended batches draw without sorting inside the batch, and do not cast shadows.
 - **Deformation.** Instances draw the rest pose of the geometry; skinning and morph targets are not applied.
 
@@ -60,7 +60,19 @@ Records are world-space, so a batch whose node moves re-uploads every record in 
 - **Memory.** Each frame slot owns one device-local arena of `RendererDesc.instance_cull_bytes` (default `INSTANCE_CULL_ARENA_BYTES`, 16 MiB), so culling reserves `FRAMES_IN_FLIGHT x instance_cull_bytes` of device memory once the first range is culled. A culling pass places one 32-byte indirect command per range and a visible list of 4 bytes per instance, all or nothing per range. A range that does not fit is drawn unculled and counted in `Stats.cull_overflows`; nothing faults. `instancing` at 99,856 instances uses about 400 KB per culling pass.
 - **Turning it off.** `instance_culling = false` restores the CPU-written arguments and draws every instance; nothing else changes.
 
-Cost model. GPU work grows with instances tested: one invocation per instance per culling pass. CPU recording grows with culled ranges times culling passes: a 176-byte root and one dispatch each, plus one barrier per pass. `instancing` culls 3 ranges (two trio parities and the props) in up to 6 passes (four shadow cascades, the depth prepass, the view): 16 to 18 dispatches as the trio enters and leaves cascades. 300 batches with one range each in 6 passes would record about 1,800. Measured on WSL llvmpipe (environment only, not a GPU number) at 99,856 instances: `cpu_record` median 23.54 ms culled against 23.41 ms unculled, 26 frames against 13 in the same six seconds, 170,818 of 599,151 instances visible across passes.
+Cost model. GPU work grows with instances tested: one invocation per instance per culling pass. CPU recording grows with culled ranges times culling passes: a 176-byte root and one dispatch each, plus one barrier per pass. `instancing` culls 3 ranges (two trio parities and the props) in up to 6 passes (four shadow cascades, the depth prepass, the view): 16 to 18 dispatches as the trio enters and leaves cascades. 300 batches with one range each in 6 passes would record about 1,800. Culling on against culling off at one count, 99,856 instances, WSL llvmpipe (frame counts are environment only): `cpu_record` median 23.54 ms culled against 23.41 ms unculled before the aggregate and history below, and 26 frames against 13 in the same six seconds. 170,818 of 599,151 instances were visible across passes.
+
+Recording against instance count, one build with the grid size as the only difference, culling on, host CPU, 12-second runs:
+
+| Props | Non-temporal `cpu_record` | Temporal `cpu_record` | Temporal ring bytes |
+| --- | --- | --- | --- |
+| 1,024 | 0.539 ms | 0.629 ms | 68,824 |
+| 10,000 | 0.532 ms | 0.615 ms | 69,000 |
+| 99,856 | 0.535 ms | 0.620 ms | 69,288 |
+
+Before the kept aggregate and the stamped history, the same runs took 0.786, 2.850 and 23.803 ms (non-temporal) and 0.957, 3.698 and 30.903 ms (temporal, with 6.46 MB of previous matrices per frame at 99,856).
+
+"Flat" covers a batch at rest in views that do not trace. These still walk every instance: a batch with `trace` set in a view that traces (the trace instance list), a batch whose node moves (its world-space records re-upload, 128 bytes per instance: 16.0 ms and 12.8 MB at 99,856), a batch marked every frame, and picking, per call.
 
 | `Stats` field | Frame | Meaning |
 | --- | --- | --- |
