@@ -104,6 +104,9 @@ fn ProbeFillWork plan_probe_fill(
         case SCENE:
             return {};
         case ENVIRONMENT:
+            state.scene_defined = false;
+            state.scene_swept = false;
+            state.cursor = 0;
             if (!current) {
                 state.irradiance = {};
                 return {};
@@ -115,9 +118,6 @@ fn ProbeFillWork plan_probe_fill(
             state.irradiance = *current;
             state.visibility_distance = max_distance;
             state.visibility_filled = true;
-            state.scene_defined = false;
-            state.scene_swept = false;
-            state.cursor = 0;
             return work;
     }
 }
@@ -151,7 +151,7 @@ fn usz order_view_probe_volumes(
  @require order.len >= shader::PROBE_VOLUME_CAPACITY
 *>
 fn usz order_hit_probe_volumes(ProbeVolumeRes[] mirrors, Scene* scene, usz[] order) @private {
-    return order_probe_volumes(mirrors, scene, uint::max, true, order);
+    return order_probe_volumes(mirrors, scene, 0, true, order);
 }
 
 fn usz order_probe_volumes(
@@ -168,7 +168,8 @@ fn usz order_probe_volumes(
         if (!(hit_set ? mirror.fill.in_hit_set() : mirror.fill.in_view_set())) continue;
         ProbeVolume* volume = scene.world.get(mirror.entity, ProbeVolume);
         Node* node = scene.node(mirror.entity);
-        if (!node.visible_effective || !(node.layers & layers)) continue;
+        // Probe hits see every volume, whatever the layers.
+        if (!node.visible_effective || (!hit_set && !(node.layers & layers))) continue;
 
         float box_volume = volume.half_extents.x * volume.half_extents.y * volume.half_extents.z;
         usz position = count;
@@ -361,7 +362,8 @@ fn void? resolve_probe_volume(
     }
     if (scene_due) {
         mirror.updated_frame = renderer.frame_index + 1;
-        recording.updates[recording.update_count++] = { .slot = (usz)(mirror - &renderer.probe_volumes[0]), .plan = plan };
+        usz slot = (usz)(mirror - &renderer.probe_volumes[0]);
+        recording.updates[recording.update_count++] = { .slot = slot, .plan = plan };
     }
 }
 

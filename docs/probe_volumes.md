@@ -87,7 +87,10 @@ rotates its ray set by a rotation drawn from the frame index.
 - **Probes inside or behind geometry.** A probe inside a wall sees mostly back faces and reads dark, so it
   carries no light into a closed room. Points near such probes weight them low through the visibility term,
   not to zero, so a surface close to a wall or floor with probes in or behind it can read darker than the
-  SH. Probes are not moved out of geometry or switched off.
+  SH. Probes are not moved out of geometry or switched off. Place the grid so floors and walls lie just
+  under the next probe layer rather than just over a buried one: from the sampling weights, a floor 0.1 of
+  a spacing above a buried layer gives the buried probes about 0.31 of a floor point's weight, 0.9 of a
+  spacing above about 0.006.
 - **Faults.** A scene with a due `SCENE` volume can make `render_view` fault as a ray-traced view does:
   `c3d::CAPACITY_EXCEEDED` when the scene has more traceable instances than
   `RendererDesc.max_trace_instances`, `c3d::ASSET_DATA_UNAVAILABLE` when a traceable geometry's CPU arrays

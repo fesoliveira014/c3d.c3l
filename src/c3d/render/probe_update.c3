@@ -8,8 +8,8 @@ import c3d::shader;
 import gpu;
 import std::math;
 
-const float PROBE_RESTART_SPACING @private = 0.5f; // of the smallest spacing; a larger jump between updates restarts the atlas
-const float PROBE_RAY_FAR @private = 1e4f;          // world units; a miss must read the sky, not a clamp inside a long hall
+const float PROBE_RESTART_SPACING @private = 0.5f; // of the smallest spacing; a larger jump restarts the atlas
+const float PROBE_RAY_FAR @private = 1e4f;          // world units; a miss reads the sky, not a clamp in a long hall
 const uint PROBE_TRACE_GROUP_SIZE @local = 64;      // mirrored as local_size_x in probe_trace.comp.glsl
 const uint PROBE_UPDATE_DISPATCHES @local = 5;      // trace, two blends, two borders
 
@@ -85,7 +85,6 @@ fn bool probe_scene_due(Renderer* renderer, Scene* scene, Entity entity) @privat
 }
 
 <*
- Software trace for this frame's scene updates; zero when none is due.
  @require renderer.frame_open
 *>
 fn gpu::GpuAddress? prepare_probe_updates(Renderer* renderer, Scene* scene) @private {

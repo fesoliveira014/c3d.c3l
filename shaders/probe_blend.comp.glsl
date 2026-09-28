@@ -46,7 +46,8 @@ void main() {
         vec3 direction = quaternion_rotate(root.rotation, spherical_fibonacci(ray, root.rays_per_probe));
         float cosine = max(dot(texel_direction, direction), 0.0);
         if (irradiance) {
-            // Back-face rays carry zero radiance and keep their weight, so a probe inside geometry goes dark.
+            // Back-face rays carry zero radiance and keep their weight, so a probe inside geometry goes dark
+            // instead of taking its estimate from the few grazing rays that reach lit faces.
             sum += cosine * result.rgb;
             weight_sum += cosine;
         } else {

@@ -26,5 +26,6 @@ void main() {
     ProbeReadbackRoot root = ProbeReadbackRoot(dispatch.parameters);
     uvec2 texel = gl_GlobalInvocationID.xy;
     if (texel.x >= root.width || texel.y >= root.height) return;
-    ProbeReadbackOutput(root.output_address).values[texel.y * root.width + texel.x] = fetch_texture_2d(root.atlas, ivec2(texel));
+    uint index = texel.y * root.width + texel.x;
+    ProbeReadbackOutput(root.output_address).values[index] = fetch_texture_2d(root.atlas, ivec2(texel));
 }

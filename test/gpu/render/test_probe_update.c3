@@ -17,7 +17,7 @@ import std::math;
 const Vec3 ROOM_CENTER @private = { 0, 1.5f, 0 };        // outer 4 x 3 x 4, walls 0.2 thick, inner 3.6 x 2.6 x 3.6
 const Vec3 ROOM_OUTER @private = { 4, 3, 4 };
 const float ROOM_WALL @private = 0.2f;
-const Vec3 ROOM_VOLUME_HALF_EXTENTS @private = { 1.9f, 1.4f, 1.9f }; // outer probes 0.1 inside the walls; floor 0.1 inside
+const Vec3 ROOM_VOLUME_HALF_EXTENTS @private = { 1.9f, 1.4f, 1.9f }; // outer probes 0.1 inside walls and floor
 const uint[<3>] ROOM_COUNTS @private = { 6, 4, 6 };
 const Vec3 FAR_AWAY @private = { 30, 0, 0 };             // the open-sky volume's place, far from the room
 const Vec3 SKY_VOLUME_HALF_EXTENTS @private = { 3, 1.1f, 3 }; // the floor at y = 0 lies 0.1 inside
@@ -26,7 +26,7 @@ const uint[<3>] SKY_COUNTS @private = { 4, 3, 4 };
 const Vec3 SKY_FLOOR_POINT @private = { 2.5f, 0, 1.5f }; // away from the pillar, whose occlusion the SH lacks
 const Vec3 SUN_TOWARD_GROUND @private = { -0.4f, -1, -0.3f };
 const float SUN_INTENSITY_ACCEPTANCE @private = 3;
-const float DARK_SHARE @private = 0.01f;               // of the lit mean; probes inside the walls still see a few grazing rays
+const float DARK_SHARE @private = 0.01f;               // of the lit mean; probes in the walls see a few grazing rays
 const float LIT_IRRADIANCE @private = 0.05f;
 const uint OPEN_ROOM_UPDATES @private = 30;
 const uint STABILITY_FIRST @private = 250;
@@ -37,7 +37,7 @@ const char[*] PROBE_READBACK_SOURCE @private = $embed("probe_readback.comp.glsl"
 const uint PROBE_READBACK_GROUP @private = 8; // mirrored as local_size_x and local_size_y in probe_readback.comp.glsl
 const uint SKY_SPREAD_FRAMES @private = 8;
 const float SKY_TEXEL_TOLERANCE @private = 0.05f;         // of the expected irradiance; set from the measured spread
-const float FAST_HYSTERESIS @private = 0.5f;            // converges in tens of updates, so stability is what is measured
+const float FAST_HYSTERESIS @private = 0.5f;            // converges in tens of updates; stability is what is measured
 
 struct ProbeRoom @private {
     Scene scene;
@@ -138,7 +138,8 @@ fn float interior_irradiance(Fixture* fixture, ProbeRoom* room) @private {
                 uint[<2>] cell = render::probe_cell(ROOM_COUNTS, mirror.slices_per_row, { x, y, z });
                 for (uint texel_y = 1; texel_y + 1 < edge; texel_y++) {
                     for (uint texel_x = 1; texel_x + 1 < edge; texel_x++) {
-                        usz texel = (usz)(cell.y * edge + texel_y) * mirror.irradiance.width + (usz)(cell.x * edge + texel_x);
+                        usz row = (usz)(cell.y * edge + texel_y);
+                        usz texel = row * mirror.irradiance.width + (usz)(cell.x * edge + texel_x);
                         for (usz channel = 0; channel < 3; channel++) {
                             sum += texels[texel][channel];
                             samples++;
@@ -151,7 +152,14 @@ fn float interior_irradiance(Fixture* fixture, ProbeRoom* room) @private {
     return sum / (float)samples;
 }
 
-fn Node*? add_slab(Scene* scene, MaterialId material, GeometryId box, Vec3 center, Vec3 size, String name) @private {
+fn Node*? add_slab(
+    Scene* scene,
+    MaterialId material,
+    GeometryId box,
+    Vec3 center,
+    Vec3 size,
+    String name,
+) @private {
     Node* node = scene.add_mesh(box, material, name: name)!;
     node.local.position = center;
     node.local.scale = size;
@@ -186,12 +194,15 @@ fn ProbeRoom? create_probe_room(Fixture* fixture, bool lamp = false) @private {
 
     float wall = ROOM_WALL;
     Vec3 outer = ROOM_OUTER;
-    add_slab(&room.scene, surface, unit_box, { 0, wall / 2, 0 }, { outer.x, wall, outer.z }, "floor")!;
-    room.roof = add_slab(&room.scene, surface, unit_box, { 0, outer.y - wall / 2, 0 }, { outer.x, wall, outer.z }, "roof")!;
-    add_slab(&room.scene, surface, unit_box, { -(outer.x - wall) / 2, outer.y / 2, 0 }, { wall, outer.y, outer.z }, "west")!;
-    add_slab(&room.scene, surface, unit_box, { (outer.x - wall) / 2, outer.y / 2, 0 }, { wall, outer.y, outer.z }, "east")!;
-    add_slab(&room.scene, surface, unit_box, { 0, outer.y / 2, -(outer.z - wall) / 2 }, { outer.x, outer.y, wall }, "north")!;
-    add_slab(&room.scene, surface, unit_box, { 0, outer.y / 2, (outer.z - wall) / 2 }, { outer.x, outer.y, wall }, "south")!;
+    Vec3 flat = { outer.x, wall, outer.z };
+    Vec3 side = { wall, outer.y, outer.z };
+    Vec3 end = { outer.x, outer.y, wall };
+    add_slab(&room.scene, surface, unit_box, { 0, wall / 2, 0 }, flat, "floor")!;
+    room.roof = add_slab(&room.scene, surface, unit_box, { 0, outer.y - wall / 2, 0 }, flat, "roof")!;
+    add_slab(&room.scene, surface, unit_box, { -(outer.x - wall) / 2, outer.y / 2, 0 }, side, "west")!;
+    add_slab(&room.scene, surface, unit_box, { (outer.x - wall) / 2, outer.y / 2, 0 }, side, "east")!;
+    add_slab(&room.scene, surface, unit_box, { 0, outer.y / 2, -(outer.z - wall) / 2 }, end, "north")!;
+    add_slab(&room.scene, surface, unit_box, { 0, outer.y / 2, (outer.z - wall) / 2 }, end, "south")!;
     Node* open_ground = room.scene.add_mesh(ground, surface, name: "open_ground")!;
     open_ground.local.position = FAR_AWAY;
 
@@ -308,13 +319,16 @@ fn void test_bounce_with_high_energy_stays_finite() @test {
     float first = interior_irradiance(&fixture, &room);
     render_room_frames(&fixture, &room, probe_view.view, STABILITY_SECOND - STABILITY_FIRST)!!;
     float second = interior_irradiance(&fixture, &room);
-    io::eprintfn("lamp room mean irradiance after %d updates %f, after %d %f", STABILITY_FIRST, first, STABILITY_SECOND, second);
+    io::eprintfn(
+        "lamp room mean irradiance after %d updates %f, after %d %f",
+        STABILITY_FIRST, first, STABILITY_SECOND, second,
+    );
     assert(first > 0 && math::is_finite(second));
     assert(math::abs(second - first) <= STABILITY_TOLERANCE * first);
     check_validation(&fixture.renderer);
 }
 
-fn void test_open_sky_probe_matches_the_sh_after_one_sweep() @test {
+fn void test_open_sky_probe_matches_the_sky_after_one_sweep() @test {
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
     defer destroy_fixture(&fixture);
@@ -340,10 +354,10 @@ fn void test_open_sky_probe_matches_the_sh_after_one_sweep() @test {
         uint[<3>] counts = { SKY_COUNTS.x, SKY_COUNTS.y, top_probe.z + 1 };
         uint[<2>] cell = render::probe_cell(counts, mirror.slices_per_row, top_probe);
         Vec2 up = render::probe_atlas_texel(cell, shader::PROBE_IRRADIANCE_CELL, { 0, 1, 0 });
-        usz texel = (usz)(up.y - 0.5f) * mirror.irradiance.width + (usz)up.x;
+        usz texel = (usz)up.y * mirror.irradiance.width + (usz)up.x;
         float value = texels[texel][1];
         spread = math::max(spread, math::abs(value - expected));
-        io::eprintfn("open sky frame %d: upward texel %f, SH %f", frame, value, expected);
+        io::eprintfn("open sky frame %d: upward texel %f, PI x sky %f", frame, value, expected);
     }
     io::eprintfn("open sky largest difference after one sweep: %f", spread);
     assert(spread <= SKY_TEXEL_TOLERANCE * expected);

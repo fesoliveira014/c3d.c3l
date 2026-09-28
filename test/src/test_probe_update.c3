@@ -167,6 +167,9 @@ fn void test_fill_switches_start_no_sweep() @test {
 
     plan = render::plan_probe_scene(&state, ORIGIN, 1, 8, update_desc(0));
     assert(!plan.clear && state.in_view_set());
+
+    render::plan_probe_fill(&state, ENVIRONMENT, null, 1);
+    assert(!state.in_view_set() && !state.in_hit_set());
 }
 
 fn void test_discard_restores_the_fill_state() @test {
@@ -191,25 +194,28 @@ fn void test_hit_set_ignores_layers_and_keeps_unswept_volumes() @test {
     Node* unswept = scene.add_node(name: "unswept")!!;
     Node* swept = scene.add_node(name: "swept")!!;
     Node* hidden = scene.add_node(name: "hidden")!!;
+    Node* no_layers = scene.add_node(name: "no_layers")!!;
     unswept.layers = 2;
     hidden.visible = false;
+    no_layers.layers = 0;
     scene.add(unswept, light::probe_volume({ 0.5f, 0.5f, 0.5f }, { 2, 2, 2 }, SCENE));
     scene.add(swept, light::probe_volume({ 2, 2, 2 }, { 2, 2, 2 }, SCENE));
     scene.add(hidden, light::probe_volume({ 1, 1, 1 }, { 2, 2, 2 }, SCENE));
+    scene.add(no_layers, light::probe_volume({ 1.5f, 1.5f, 1.5f }, { 2, 2, 2 }, SCENE));
     scene.update_world();
 
     ProbeVolumeRes[shader::PROBE_VOLUME_CAPACITY] mirrors;
-    Node*[3] nodes = { unswept, swept, hidden };
+    Node*[4] nodes = { unswept, swept, hidden, no_layers };
     foreach (index, node : nodes) {
         mirrors[index] = { .scene = scene.identity, .entity = node.id };
         render::plan_probe_scene(&mirrors[index].fill, ORIGIN, 1, 8, update_desc(node == unswept ? 4 : 0));
     }
-    mirrors[3] = { .scene = scene.identity + 1, .entity = swept.id };
-    render::plan_probe_scene(&mirrors[3].fill, ORIGIN, 1, 8, update_desc(0));
+    mirrors[4] = { .scene = scene.identity + 1, .entity = swept.id };
+    render::plan_probe_scene(&mirrors[4].fill, ORIGIN, 1, 8, update_desc(0));
 
     usz[shader::PROBE_VOLUME_CAPACITY] order;
     usz hits = render::order_hit_probe_volumes(&mirrors, &scene, &order);
-    assert(hits == 2 && order[0] == 0 && order[1] == 1);
+    assert(hits == 3 && order[0] == 0 && order[1] == 3 && order[2] == 1);
     usz views = render::order_view_probe_volumes(&mirrors, &scene, 1, &order);
     assert(views == 1 && order[0] == 1);
 }
