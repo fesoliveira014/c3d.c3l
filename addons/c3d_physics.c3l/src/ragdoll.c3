@@ -78,6 +78,8 @@ struct Ragdoll {
     Quat               hips_bind_rotation; // root bone rotation in skin-node space
     float              weight;             // 0 animated pose, 1 ragdoll pose; every bone's fade
     float              drive_strength;     // 0 at build; scales every bone's drive hertz
+    RagdollFacing      last_facing;        // what the last recover_ragdoll chose; FACE_UP before any
+    uint               recoveries;         // recover_ragdoll calls since build
 }
 
 <*
@@ -276,6 +278,8 @@ fn RagdollFacing PhysicsWorld.recover_ragdoll(&self, Node* skin_node, Node* char
 
     freeze_joints(ragdoll, joints);
     return_simulated_bones(scene, ragdoll);
+    ragdoll.last_facing = facing;
+    ragdoll.recoveries++;
     return facing;
 }
 
