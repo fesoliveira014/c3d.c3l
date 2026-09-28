@@ -44,6 +44,8 @@ const Vec4 CONVERGED_WEIGHT @private = { 0.9f, 0.9f, 0.9f, 1 }; // history weigh
 const Vec2 BACKGROUND_UV @private = { 0.05f, 0.05f }; // a corner the unit box never covers
 const float BACKGROUND_HISTORY_MINIMUM @private = 0.85f; // converged history keeps 1 - current_weight = 0.9
 const float BLURRED_CENTER_MINIMUM @private = 0.8f; // a few pixels of true motion keep the box center nearly solid; a background velocity clamped at max_velocity smears it dark
+const uint PARITY_RANGES @private = 4; // two batches, each with an unmirrored and a mirrored range
+const uint BATCH_PASSES @private = 4; // shadow layer, depth prepass, forward opaque pass, velocity pass
 
 struct FillRoot @private {
     Vec4 color;
@@ -1080,9 +1082,7 @@ fn void test_batch_draws_are_indirect_on_every_pass() @test {
     triangles.local.position.x += 0.1f;
     render_scene_frame(&fixture, &target)!!;
 
-    // Four parity ranges, each drawn by the shadow layer, the depth prepass, the forward opaque pass
-    // and the velocity pass.
-    assert(renderer.stats.indirect_draws == 16);
+    assert(renderer.stats.indirect_draws == PARITY_RANGES * BATCH_PASSES);
     check_validation(renderer);
 }
 
