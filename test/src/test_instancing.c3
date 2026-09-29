@@ -19,6 +19,8 @@ const Vec2 VIEWPORT @local = { 1600, 900 };
 const float BOUNDS_TOLERANCE @local = 1e-5f;
 const double PHASE_TOLERANCE @local = 1e-5;
 const GpuInstances ALLOCATED_SLOT @local = { .allocation = { .owner = 1, .index = 0, .generation = 1 } };
+const Vec3 VIEW_CAMERA_POSITION @local = { 0, 0, 10 };
+const InstanceFade FAR_FADE @local = { .start = 50, .end = 100 }; // ends 9.5 short of a unit box at z = -100
 
 struct Fixture @local {
     AssetStore assets;
@@ -390,7 +392,7 @@ fn void test_shader_desc_rejects_half_instanced_pair() @test {
 
 fn Node* add_camera(Fixture* fixture) @local {
     Node* camera_node = fixture.scene.add_camera(camera::perspective_deg(60, 0.1f))!!;
-    camera_node.local.position = { 0, 0, 10 };
+    camera_node.local.position = VIEW_CAMERA_POSITION;
     return camera_node;
 }
 
@@ -508,6 +510,91 @@ fn void test_shadow_candidates_follow_cast_shadow() @test {
         );
         assert(candidates.len == 1);
         assert(candidates[0].node == off_layer && candidates[0].instance_count == 1);
+    };
+}
+
+fn void test_batch_wholly_past_its_fade_band_is_skipped() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Node* camera_node = add_camera(&fixture);
+    Transform[2] far = { at({ -2, 0, -100 }), mirrored_at({ 2, 0, -100 }) };
+    Node* faded = fixture.scene.add_instanced_mesh(
+        geometry:   fixture.box,
+        material:   fixture.red,
+        capacity:   2,
+        transforms: far[..],
+    )!!;
+    fixture.scene.get(faded, InstancedMesh).fade = FAR_FADE;
+    Transform[1] aside = { at({ 1000, 0, 0 }) };
+    Node* outside = fixture.scene.add_instanced_mesh(
+        geometry:   fixture.box,
+        material:   fixture.red,
+        capacity:   1,
+        transforms: aside[..],
+    )!!;
+    fixture.scene.get(outside, InstancedMesh).fade = FAR_FADE;
+
+    @pool() {
+        render::ExtractCounts counts;
+        assert(extract(tmem, &fixture, camera_node, &counts).len == 0);
+        assert(counts.batches_faded == 1 && counts.culled == 1 && counts.visible == 0);
+    };
+}
+
+fn void test_batch_straddling_its_fade_band_is_kept() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Node* camera_node = add_camera(&fixture);
+    // The bound's centre lies 107.5 from the camera, its nearest point 4.5.
+    Transform[2] spread = { at({ 0, 0, 5 }), at({ 0, 0, -200 }) };
+    Node* node = fixture.scene.add_instanced_mesh(
+        geometry:   fixture.box,
+        material:   fixture.red,
+        capacity:   2,
+        transforms: spread[..],
+    )!!;
+    fixture.scene.get(node, InstancedMesh).fade = { .start = 20, .end = 50 };
+
+    @pool() {
+        render::ExtractCounts counts;
+        render::MeshCandidate[] candidates = extract(tmem, &fixture, camera_node, &counts);
+        assert(candidates.len == 1 && candidates[0].instance_count == 2);
+        assert(counts.batches_faded == 0);
+    };
+}
+
+fn void test_shadow_candidates_skip_batches_past_the_band_from_the_view_camera() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Transform[1] far = { at({ 0, 0, -100 }) };
+    Node* node = fixture.scene.add_instanced_mesh(
+        geometry:   fixture.box,
+        material:   fixture.red,
+        capacity:   1,
+        transforms: far[..],
+    )!!;
+    fixture.scene.get(node, InstancedMesh).fade = FAR_FADE;
+    fixture.scene.update_world();
+    Vec3 beside_the_batch = { 0, 5, -100 };
+
+    @pool() {
+        render::ExtractCounts counts;
+        render::MeshCandidate[] candidates = render::extract_shadow_candidates(
+            allocator:   tmem,
+            scene:       &fixture.scene,
+            assets:      &fixture.assets,
+            fade_origin: VIEW_CAMERA_POSITION,
+            counts:      &counts,
+        );
+        assert(candidates.len == 0 && counts.batches_faded == 1);
+        candidates = render::extract_shadow_candidates(
+            allocator:   tmem,
+            scene:       &fixture.scene,
+            assets:      &fixture.assets,
+            fade_origin: beside_the_batch,
+            counts:      &counts,
+        );
+        assert(candidates.len == 1 && counts.batches_faded == 0);
     };
 }
 

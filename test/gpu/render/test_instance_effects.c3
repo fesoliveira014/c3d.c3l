@@ -15,7 +15,9 @@ const float SWAY_FREQUENCY @private = 0.5f;
 const double SWAY_PERIOD @private = 1.0 / SWAY_FREQUENCY;
 const InstanceFade FADE_BEYOND @private = { .start = 0.1f, .end = 0.2f }; // every anchor lies about 3 from the camera
 const InstanceFade FADE_AHEAD @private = { .start = 100, .end = 200 };
+const InstanceFade FADE_STRADDLING @private = { .start = 3.02f, .end = 3.08f }; // anchors: centre 3.007, next 3.087
 const Vec2 SIDE_UV @private = { 0.609375f, 0.5f }; // (0.35, 0, 0.2): background, then the centre box moved 0.2
+const Vec2 NEIGHBOUR_UV @private = { 0.734375f, 0.5f }; // (0.76, 0, 0.2): the front face of LINE_CENTER + 1
 const Vec2 REACHING_UV @private = { 0.953125f, 0.5f }; // (1.6, 0, -0.06): LINE_CENTER + 3's -X face swayed 0.3
 const Vec3 WALL_POSITION @private = { 0, 0, -1 };
 const Vec3 WALL_SCALE @private = { 6, 3, 0.05f };
@@ -252,6 +254,25 @@ fn void test_faded_batch_leaves_view_shadow_and_cull_lists() @test {
     sample_row(&fixture, &walled, ahead_row[..])!!;
     foreach (index, pixel : ahead_row) assert(pixel == shown_row[index]);
     assert(settle_and_sample(&fixture, &walled)!! == shown_centre);
+    check_validation(renderer);
+}
+
+fn void test_straddling_batch_draws_its_near_instances() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    DeformedScene line = create_line_scene(&fixture, fixture.plain)!!;
+    defer scene::destroy_scene(&line.scene);
+    InstancedMesh* batch = line.scene.get(line.mesh, InstancedMesh);
+
+    uint centre = settle_and_sample(&fixture, &line)!!;
+    uint neighbour = settle_and_sample(&fixture, &line, NEIGHBOUR_UV)!!;
+    batch.fade = FADE_STRADDLING;
+    assert(settle_and_sample(&fixture, &line)!! == centre);
+    assert(renderer.stats.batches_faded == 0);
+    assert(renderer.stats.instances_visible == VIEW_CULLING_PASSES);
+    assert(pixels_differ(settle_and_sample(&fixture, &line, NEIGHBOUR_UV)!!, neighbour));
     check_validation(renderer);
 }
 
