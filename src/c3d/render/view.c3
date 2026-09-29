@@ -250,7 +250,7 @@ fn void? record_raster_view(
                 DrawList counted = view_draw_list(
                     material:       material_data,
                     shading:        shading,
-                    custom_gbuffer: custom_gbuffer_stage(renderer, material_data),
+                    custom_gbuffer: custom_gbuffer_stage(renderer, material_data)!,
                     custom_reads:   custom_scene_reads(renderer, material_data)!,
                 );
                 switch (counted) {
@@ -284,7 +284,7 @@ fn void? record_raster_view(
                 DrawList list = view_draw_list(
                     material:       material_description,
                     shading:        shading,
-                    custom_gbuffer: custom_gbuffer_stage(renderer, material_description),
+                    custom_gbuffer: custom_gbuffer_stage(renderer, material_description)!,
                     custom_reads:   custom_reads,
                 );
                 gpu::PipelineHandle? pipeline = list == DrawList.GBUFFER
@@ -336,7 +336,7 @@ fn void? record_raster_view(
                     .effects   = effects,
                     .front_face = model_reflected != view_reflected
                       ? gpu::FrontFace.CLOCKWISE : gpu::FrontFace.COUNTER_CLOCKWISE,
-                    .custom_velocity = custom_velocity_stage(renderer, material_description, candidate.batch != null),
+                    .custom_velocity = custom_velocity_stage(renderer, material_description, candidate.batch != null)!,
                 };
             }
         };
@@ -925,7 +925,7 @@ fn MeshPreparation? prepare_mesh(
         if (!custom_pipeline_rejected(renderer, data, excuse)) return excuse~;
         return {};
     }
-    if (gbuffer && gbuffer_encodable(data, custom_gbuffer_stage(renderer, data))) {
+    if (gbuffer && gbuffer_encodable(data, custom_gbuffer_stage(renderer, data)!)) {
         if (catch excuse = gbuffer_pipeline_for(renderer, data, vertex)) {
             if (!custom_pipeline_rejected(renderer, data, excuse)) return excuse~;
             return {};
@@ -1683,15 +1683,11 @@ fn gpu::PipelineHandle? pipeline_for(
     };
     if (material.kind != MaterialKind.CUSTOM) return renderer.pipelines.get(&renderer.device, key);
 
-    ShaderId shader = material.custom.shader;
-    asset::ShaderDesc* stages = &renderer.assets.shader(shader).desc;
-    key.shader = shader;
-    key.shader_revision = renderer.shaders[shader.index].revision;
-    key.custom = { .vertex = stages.vertex.shaded.len > 0, .fragment = true };
-    key.fragment = custom_fragment_variant(stages, shadow_flags);
+    ShaderRes* published = resolve_shader(renderer, material.custom.shader)!;
+    key.custom = { .vertex = published.desc.vertex.shaded.len > 0, .fragment = true };
+    key.fragment = custom_fragment_variant(&published.desc, shadow_flags);
     if (key.custom.vertex) key.vertex = { .shader = MESH, .flags = vertex.flags & shader::SHADER_FLAG_INSTANCED };
-    CustomStageSource source = custom_stage_source(stages, key);
-    return renderer.pipelines.get(&renderer.device, key, &source);
+    return custom_pipeline(renderer, published, key);
 }
 
 fn gpu::PipelineHandle? first_pipeline(Renderer* renderer, DrawItem[] items) @private {
@@ -1709,15 +1705,16 @@ fn gpu::PipelineHandle? first_pipeline(Renderer* renderer, DrawItem[] items) @pr
     return renderer.pipelines.get(&renderer.device, key);
 }
 
-fn bool custom_gbuffer_stage(Renderer* renderer, Material* material) @private {
+fn bool? custom_gbuffer_stage(Renderer* renderer, Material* material) @private {
     if (material.kind != MaterialKind.CUSTOM) return false;
     ShaderId shader = material.custom.shader;
-    return renderer.assets.shaders.is_live(shader) && renderer.assets.shader(shader).desc.gbuffer.len > 0;
+    if (!renderer.assets.shaders.is_live(shader)) return false;
+    return resolve_shader(renderer, shader)!.desc.gbuffer.len > 0;
 }
 
-fn bool custom_velocity_stage(Renderer* renderer, Material* material, bool instanced) @private {
+fn bool? custom_velocity_stage(Renderer* renderer, Material* material, bool instanced) @private {
     if (material.kind != MaterialKind.CUSTOM) return false;
-    asset::CustomVertex* vertex = &renderer.assets.shader(material.custom.shader).desc.vertex;
+    asset::CustomVertex* vertex = &resolve_shader(renderer, material.custom.shader)!.desc.vertex;
     return (instanced ? vertex.instanced_velocity : vertex.velocity).len > 0;
 }
 
@@ -1731,7 +1728,7 @@ fn SceneReads? custom_scene_reads(Renderer* renderer, Material* material) @priva
     if (material.kind != MaterialKind.CUSTOM) return {};
     ShaderId shader = material.custom.shader;
     if (!renderer.assets.shaders.is_live(shader)) return {};
-    return resolve_shader(renderer, shader)!.scene_reads;
+    return resolve_shader(renderer, shader)!.desc.scene_reads;
 }
 
 fn bool custom_pipeline_rejected(Renderer* renderer, Material* material, fault excuse) @private {

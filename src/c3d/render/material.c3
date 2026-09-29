@@ -487,11 +487,10 @@ fn MaterialRes*? resolve_material_dependencies(Renderer* renderer, MaterialId ma
     if (custom) {
         shader = record.data.custom.shader;
         if (!renderer.assets.shaders.is_live(shader)) return c3d::INVALID_ID~;
-        ShaderRes* shader_mirror = resolve_shader(renderer, shader)!;
-        asset::ShaderDesc* stages = &renderer.assets.shader(shader).desc;
-        if (record.data.custom.param_block.len != stages.param_block_size) return c3d::INVALID_ARGUMENT~;
-        shader_revision = shader_mirror.revision;
-        if (stages.gbuffer.len) capabilities = shader::CUSTOM_CAPABILITY_GBUFFER;
+        ShaderRes* published = resolve_shader(renderer, shader)!;
+        if (record.data.custom.param_block.len != published.desc.param_block_size) return c3d::INVALID_ARGUMENT~;
+        shader_revision = published.revision;
+        if (published.desc.gbuffer.len) capabilities = shader::CUSTOM_CAPABILITY_GBUFFER;
     }
     bool same_shader = c3d::same_id(mirror.shader, shader) && mirror.shader_revision == shader_revision;
     if (same_asset && same_shader && mirror.revision == record.header.revision
