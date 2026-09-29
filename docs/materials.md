@@ -50,10 +50,12 @@ RGBA for source-over composition.
 
 Blended objects draw back to front after opaque/masked objects and the sky. The
 order uses each object's world-bounds center in the current camera view, with a
-stable entity-id tie break. It does not sort triangles or fragments, so
-intersecting transparent geometry and large objects whose centers do not match
-their visible depth can compose incorrectly. Record each view with its own camera;
-ordering is recalculated per view.
+stable entity-id tie break. Instances of a blended batch order inside the batch
+by their own box centers ([Instancing](instancing.md#blended-batches)); the
+batch orders among blended objects by its bound center. It does not sort
+triangles or fragments, so intersecting transparent geometry and large objects
+whose centers do not match their visible depth can compose incorrectly. Record
+each view with its own camera; ordering is recalculated per view.
 
 `BLEND` honors `depth_test` but always disables effective depth writes. The
 authored `depth_write` value remains stored, so switching back to `OPAQUE` or
