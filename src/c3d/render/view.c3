@@ -443,6 +443,7 @@ fn void? record_raster_view(
                 scene_sampler: view_reads.color ? renderer.linear_clamp_sampler : (gpu::SamplerIndex)0,
                 scene_depth: view_reads.depth ? record.scene_depth.view.index : (gpu::TextureIndex)0,
                 prev_view_proj: temporal && record.history.valid ? &record.history.view_proj : &matrices.view_proj,
+                previous_time: temporal && record.history.valid ? &record.history.time : null,
                 clusters: cluster_frame.clusters,
                 trace: trace_root,
                 jitter: jitter,
@@ -654,6 +655,7 @@ fn void? record_raster_view(
                     scene:      scene,
                     candidates: candidates,
                     view_proj:  matrices.view_proj,
+                    time:       renderer.info.time,
                 );
             }
         };
@@ -955,6 +957,7 @@ fn bool velocity_before_lighting(ViewDesc* desc) @private {
  @param viewport : "Pixels."
  @param scene_depth : "Depth snapshot sampled view; zero when the view reads none."
  @param [in] prev_view_proj : "Unjittered; null repeats the current view-projection."
+ @param [in] previous_time : "Time of the view's last rendering; null repeats info.time."
  @param clusters : "Matching frame-ring cluster root borrowed through frame completion."
  @param trace : "SceneTraceRoot address with a hardware half; zero when the view traces nothing."
  @param jitter : "NDC offset already applied to the rendered matrices."
@@ -980,6 +983,7 @@ fn void write_frame_root(
     gpu::SamplerIndex scene_sampler = (gpu::SamplerIndex)0,
     gpu::TextureIndex scene_depth = (gpu::TextureIndex)0,
     Mat4* prev_view_proj = null,
+    double* previous_time = null,
     gpu::GpuAddress clusters = (gpu::GpuAddress)0,
     gpu::GpuAddress trace = (gpu::GpuAddress)0,
     Vec2 jitter = {},
@@ -1017,6 +1021,7 @@ fn void write_frame_root(
         .probe_volumes   = probe_volumes,
         .ssgi_texture    = ssgi_texture,
         .scene_depth     = scene_depth,
+        .previous_time   = (float)(previous_time ? *previous_time : info.time),
     };
 }
 

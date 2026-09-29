@@ -325,7 +325,7 @@ struct FrameRoot {
     GpuAddress   probe_volumes;
     TextureIndex ssgi_texture;
     TextureIndex scene_depth;
-    uint         _pad1;
+    float        previous_time;
     uint         _pad2;
 }
 $assert FrameRoot::size == 480;
@@ -354,7 +354,7 @@ $assert $reflect(FrameRoot.ao_texture).offset == 452;
 $assert $reflect(FrameRoot.probe_volumes).offset == 456;
 $assert $reflect(FrameRoot.ssgi_texture).offset == 464;
 $assert $reflect(FrameRoot.scene_depth).offset == 468;
-$assert $reflect(FrameRoot._pad1).offset == 472;
+$assert $reflect(FrameRoot.previous_time).offset == 472;
 $assert $reflect(FrameRoot._pad2).offset == 476;
 
 struct DrawRoot {

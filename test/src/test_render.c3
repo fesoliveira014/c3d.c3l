@@ -338,6 +338,34 @@ fn void test_frame_root_packs_camera() @test {
     assert((ulong)root.shadows == 0 && root.shadow_count == 0);
 }
 
+fn void test_frame_root_carries_previous_time() @test {
+    shader::FrameRoot* root = mem::new(shader::FrameRoot);
+    defer free(root);
+    Camera camera = camera::perspective_deg(60, 0.1f, 100);
+    CameraMatrices matrices = camera::derive_matrices(camera, matrix::IDENTITY4, { 800, 600 });
+    double previous = 12.25;
+    render::write_frame_root(
+        root:          root,
+        matrices:      &matrices,
+        camera:        &camera,
+        viewport:      { 800, 600 },
+        info:          { .time = 12.5, .delta = 0.25f },
+        frame_index:   1,
+        previous_time: &previous,
+    );
+    assert(root.previous_time == 12.25f && root.jitter_time.z == 12.5f);
+
+    render::write_frame_root(
+        root:        root,
+        matrices:    &matrices,
+        camera:      &camera,
+        viewport:    { 800, 600 },
+        info:        { .time = 12.5, .delta = 0.25f },
+        frame_index: 1,
+    );
+    assert(root.previous_time == root.jitter_time.z);
+}
+
 fn void test_draw_root_packs_normal_columns() @test {
     shader::DrawRoot* root = mem::new(shader::DrawRoot);
     defer free(root);

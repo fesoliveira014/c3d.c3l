@@ -106,7 +106,7 @@ struct PoseRecord {
 }
 
 <*
- Pose the view last rendered: its camera and every node it drew, tagged by entity and scene.
+ Camera, time and tagged node poses of the view's last rendering.
 *>
 struct ViewHistory {
     bool         valid;
@@ -114,6 +114,7 @@ struct ViewHistory {
     ulong        scene;
     ulong        serial;
     Mat4         view_proj;
+    double       time;
     Mat4[]       models;
     Entity[]     owners;
     ulong[]      seen;
@@ -157,10 +158,11 @@ fn PoseRecord* ViewHistory.previous_pose(&self, Scene* scene, Node* node) {
 }
 
 <*
- Remember the drawn candidates, their deformation and the camera, pending publication.
+ Remember the rendering's candidates, deformation, camera and time, pending publication.
  @param [&in] assets : "Resolves skeleton inverse binds."
  @param [&in] scene : "Sizes the tables to its node capacity and identifies the history."
  @param candidates : "Every mesh this rendering drew."
+ @param time : "FrameInfo.time of this rendering."
 *>
 fn void ViewHistory.commit(
     &self,
@@ -169,6 +171,7 @@ fn void ViewHistory.commit(
     Scene* scene,
     MeshCandidate[] candidates,
     Mat4 view_proj,
+    double time,
 ) {
     if (self.models.len != scene.nodes.len) {
         uint sample_index = self.sample_index;
@@ -208,6 +211,7 @@ fn void ViewHistory.commit(
         commit_crowd_pose(allocator, &self.poses[crowd_index], candidate.crowd);
     }
     self.view_proj = view_proj;
+    self.time = time;
     self.pending = true;
 }
 

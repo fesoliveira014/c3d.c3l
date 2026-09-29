@@ -99,6 +99,7 @@ fn void commit_batch(BatchHistory* fixture, Node* node) @local {
         scene:      &fixture.scene,
         candidates: candidates[..],
         view_proj:  matrix::IDENTITY4,
+        time:       0,
     );
 }
 
@@ -123,6 +124,7 @@ fn void test_view_history_reports_previous_model_only_for_matching_owner() @test
         scene:      &scene,
         candidates: candidates[..],
         view_proj:  camera,
+        time:       0,
     );
     history.publish();
     assert(history.valid && history.view_proj == camera);
@@ -155,6 +157,7 @@ fn void test_view_history_reset_forgets_everything() @test {
         scene:      &scene,
         candidates: candidates[..],
         view_proj:  matrix::IDENTITY4,
+        time:       0,
     );
     history.publish();
     history.valid = false;
@@ -166,6 +169,7 @@ fn void test_view_history_reset_forgets_everything() @test {
         scene:      &scene,
         candidates: candidates[..],
         view_proj:  matrix::IDENTITY4,
+        time:       0,
     );
     history.publish();
     assert(history.has_previous(&scene, first));
@@ -189,6 +193,7 @@ fn void test_view_history_membership_follows_the_last_published_rendering() @tes
         scene:      &scene,
         candidates: both[..],
         view_proj:  matrix::IDENTITY4,
+        time:       0,
     );
     history.publish();
     assert(history.has_previous(&scene, first) && history.has_previous(&scene, second));
@@ -200,6 +205,7 @@ fn void test_view_history_membership_follows_the_last_published_rendering() @tes
         scene:      &scene,
         candidates: only_first[..],
         view_proj:  matrix::IDENTITY4,
+        time:       0,
     );
     history.publish();
     assert(history.has_previous(&scene, first));
@@ -213,6 +219,7 @@ fn void test_view_history_membership_follows_the_last_published_rendering() @tes
         scene:      &scene,
         candidates: both[..],
         view_proj:  matrix::IDENTITY4,
+        time:       0,
     );
     history.publish();
     assert(history.has_previous(&scene, second) && history.previous_model(&scene, second) == second.world);
@@ -242,6 +249,7 @@ fn void test_view_history_ignores_a_scene_with_matching_ids() @test {
         scene:      &first_scene,
         candidates: candidates[..],
         view_proj:  matrix::IDENTITY4,
+        time:       0,
     );
     history.publish();
     assert(history.has_previous(&first_scene, first));
@@ -265,6 +273,7 @@ fn void test_view_history_pending_rendering_is_not_previous_until_published() @t
         scene:      &scene,
         candidates: candidates[..],
         view_proj:  matrix::IDENTITY4,
+        time:       0,
     );
     assert(history.pending && !history.valid && !history.has_previous(&scene, first));
     history.publish();
@@ -276,6 +285,7 @@ fn void test_view_history_pending_rendering_is_not_previous_until_published() @t
         scene:      &scene,
         candidates: candidates[..],
         view_proj:  matrix::IDENTITY4,
+        time:       0,
     );
     history.discard();
     assert(!history.valid && !history.pending && !history.has_previous(&scene, first));
@@ -301,6 +311,7 @@ fn void test_view_history_advances_sample_and_slot_only_on_publish() @test {
         scene:      &scene,
         candidates: candidates[..],
         view_proj:  matrix::IDENTITY4,
+        time:       0,
     );
     history.discard();
     assert(history.sample_index == 0 && history.slot == 0);
@@ -311,6 +322,7 @@ fn void test_view_history_advances_sample_and_slot_only_on_publish() @test {
         scene:      &scene,
         candidates: candidates[..],
         view_proj:  matrix::IDENTITY4,
+        time:       0,
     );
     history.publish();
     assert(history.sample_index == 1 && history.slot == 1);
@@ -322,6 +334,7 @@ fn void test_view_history_advances_sample_and_slot_only_on_publish() @test {
             scene:      &scene,
             candidates: candidates[..],
             view_proj:  matrix::IDENTITY4,
+            time:       0,
         );
         history.publish();
     }
@@ -352,6 +365,7 @@ fn void test_view_history_keeps_the_palette_of_the_last_commit() @test {
         scene:      &scene,
         candidates: candidates[..],
         view_proj:  matrix::IDENTITY4,
+        time:       0,
     );
     history.publish();
     PoseRecord* pose = history.previous_pose(&scene, mesh);
@@ -368,6 +382,7 @@ fn void test_view_history_keeps_the_palette_of_the_last_commit() @test {
         scene:      &scene,
         candidates: candidates[..],
         view_proj:  matrix::IDENTITY4,
+        time:       0,
     );
     history.publish();
     Mat4 moved = maths::inverse_affine(mesh.world).mul(joints[1].world);
@@ -409,6 +424,7 @@ fn void test_view_history_instances_follow_draw_order_and_keep_capacity() @test 
         scene:      &scene,
         candidates: candidates[..],
         view_proj:  matrix::IDENTITY4,
+        time:       0,
     );
     history.publish();
     PoseRecord* pose = history.previous_pose(&scene, node);
@@ -425,6 +441,7 @@ fn void test_view_history_instances_follow_draw_order_and_keep_capacity() @test 
         scene:      &scene,
         candidates: candidates[..],
         view_proj:  matrix::IDENTITY4,
+        time:       0,
     );
     history.publish();
     pose = history.previous_pose(&scene, node);
@@ -450,6 +467,7 @@ fn void test_view_history_records_the_selected_morph_block() @test {
         scene:      &scene,
         candidates: candidates[..],
         view_proj:  matrix::IDENTITY4,
+        time:       0,
     );
     history.publish();
     PoseRecord* pose = history.previous_pose(&scene, morphed);
@@ -481,6 +499,7 @@ fn void test_view_history_keeps_sample_and_slot_when_the_tables_grow() @test {
         scene:      &small,
         candidates: small_candidates[..],
         view_proj:  matrix::IDENTITY4,
+        time:       0,
     );
     history.publish();
     history.commit(
@@ -489,6 +508,7 @@ fn void test_view_history_keeps_sample_and_slot_when_the_tables_grow() @test {
         scene:      &large,
         candidates: large_candidates[..],
         view_proj:  matrix::IDENTITY4,
+        time:       0,
     );
     assert(history.models.len == large.nodes.len);
     assert(history.sample_index == 1 && history.slot == 1);
@@ -518,6 +538,7 @@ fn void test_view_history_resizes_the_palette_with_the_binding() @test {
         scene:      &scene,
         candidates: candidates[..],
         view_proj:  matrix::IDENTITY4,
+        time:       0,
     );
     assert(history.poses[mesh.id.index].palette.len == 2);
 
@@ -530,6 +551,7 @@ fn void test_view_history_resizes_the_palette_with_the_binding() @test {
         scene:      &scene,
         candidates: candidates[..],
         view_proj:  matrix::IDENTITY4,
+        time:       0,
     );
     assert(history.poses[mesh.id.index].palette.len == 3);
 }

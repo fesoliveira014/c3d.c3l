@@ -153,7 +153,7 @@ root FrameRoot {
     GpuAddress probe_volumes;
     TextureIndex ssgi_texture;
     TextureIndex scene_depth;
-    uint       _pad1;
+    float      previous_time;
     uint       _pad2;
 }
 
