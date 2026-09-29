@@ -23,15 +23,24 @@ struct CustomVertex {
 }
 
 <*
+ Fragment forms drawn on views that trace shadows; either may be empty.
+*>
+struct TracedFragment {
+    char[] hardware; // compiled with RT_SHADOWS; drawn on renderers with ray queries
+    char[] software; // compiled with RT_SHADOWS and SCENE_TRACE_BVH; drawn without them
+}
+
+<*
  User SPIR-V stages, a fragment stage required, and their parameter payload size.
  An empty gbuffer stage routes the material forward on deferred views.
 *>
 struct ShaderDesc {
-    char[]       fragment;
-    char[]       gbuffer;
-    CustomVertex vertex;
-    usz          param_block_size;
-    SceneReads   scene_reads;
+    char[]         fragment;
+    char[]         gbuffer;
+    TracedFragment traced_fragment;
+    CustomVertex   vertex;
+    usz            param_block_size;
+    SceneReads     scene_reads;
 }
 
 <*
@@ -133,6 +142,12 @@ fn ShaderDesc copy_shader_desc(Allocator allocator, ShaderDesc* desc) @private {
     return {
         .fragment = copy_slice(allocator, desc.fragment),
         .gbuffer = desc.gbuffer.len ? copy_slice(allocator, desc.gbuffer) : (char[]){},
+        .traced_fragment = {
+            .hardware = desc.traced_fragment.hardware.len
+              ? copy_slice(allocator, desc.traced_fragment.hardware) : (char[]){},
+            .software = desc.traced_fragment.software.len
+              ? copy_slice(allocator, desc.traced_fragment.software) : (char[]){},
+        },
         .vertex = {
             .shaded = desc.vertex.shaded.len ? copy_slice(allocator, desc.vertex.shaded) : (char[]){},
             .depth = desc.vertex.depth.len ? copy_slice(allocator, desc.vertex.depth) : (char[]){},
@@ -149,6 +164,8 @@ fn ShaderDesc copy_shader_desc(Allocator allocator, ShaderDesc* desc) @private {
 fn void free_shader_desc(Allocator allocator, ShaderDesc* desc) @private {
     alloc::free(allocator, desc.fragment.ptr);
     alloc::free(allocator, desc.gbuffer.ptr);
+    alloc::free(allocator, desc.traced_fragment.hardware.ptr);
+    alloc::free(allocator, desc.traced_fragment.software.ptr);
     alloc::free(allocator, desc.vertex.shaded.ptr);
     alloc::free(allocator, desc.vertex.depth.ptr);
     alloc::free(allocator, desc.vertex.instanced_shaded.ptr);

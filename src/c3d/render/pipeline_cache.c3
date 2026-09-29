@@ -268,8 +268,19 @@ fn PipelineKey compute_pipeline_key(ComputeShaderId shader, uint revision) {
 }
 
 <*
+ Fragment variant a custom forward key takes on a view.
+ @param [&in] stages : "Record whose traced forms decide the variant."
+ @param shadow_flags : "Traced-shadow flags of the view; zero when it traces none."
+ @pure
+*>
+fn ShaderVariant custom_fragment_variant(asset::ShaderDesc* stages, uint shadow_flags) {
+    if ((custom_fragment_form(stages, shadow_flags) @pure).len == 0) return {};
+    return { .flags = shadow_flags };
+}
+
+<*
  Stage bytes a custom key selects from a shader record.
- @param [&in] stages : "Record holding the vertex pair the key's flags select."
+ @param [&in] stages : "Record holding the forms the key's flags select."
  @pure
 *>
 fn CustomStageSource custom_stage_source(asset::ShaderDesc* stages, PipelineKey key) {
@@ -279,9 +290,15 @@ fn CustomStageSource custom_stage_source(asset::ShaderDesc* stages, PipelineKey 
         vertex = depth ? stages.vertex.instanced_depth : stages.vertex.instanced_shaded;
     }
     return {
-        .vertex = vertex,
-        .fragment = key.custom.gbuffer ? stages.gbuffer : stages.fragment,
+        .vertex   = vertex,
+        .fragment = key.custom.gbuffer ? stages.gbuffer : custom_fragment_form(stages, key.fragment.flags) @pure,
     };
+}
+
+fn char[] custom_fragment_form(asset::ShaderDesc* stages, uint fragment_flags) @private {
+    if ((fragment_flags & shader::SHADER_FLAG_RT_SHADOWS) == 0) return stages.fragment;
+    if (fragment_flags & shader::SHADER_FLAG_SCENE_TRACE_BVH) return stages.traced_fragment.software;
+    return stages.traced_fragment.hardware;
 }
 
 fn bool key_stages_present(PipelineKey key, asset::ShaderDesc* stages) @private {
@@ -289,6 +306,7 @@ fn bool key_stages_present(PipelineKey key, asset::ShaderDesc* stages) @private 
         bool instanced = (key.vertex.flags & shader::SHADER_FLAG_INSTANCED) != 0;
         if ((instanced ? stages.vertex.instanced_shaded : stages.vertex.shaded).len == 0) return false;
     }
+    if (key.custom.fragment && custom_fragment_form(stages, key.fragment.flags).len == 0) return false;
     return !key.custom.gbuffer || stages.gbuffer.len > 0;
 }
 

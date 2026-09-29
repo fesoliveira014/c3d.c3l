@@ -554,6 +554,38 @@ fn void test_shader_rejects_a_gbuffer_stage_with_scene_reads() @test {
     assert(record.desc.scene_reads == (SceneReads){});
 }
 
+fn void test_shader_traced_fragment_forms_are_copied_and_replaceable() @test {
+    AssetStore store = make_store();
+    defer asset::destroy_asset_store(&store);
+    char[4] fragment = { 1, 2, 3, 4 };
+    char[3] hardware = { 5, 6, 7 };
+    char[2] software = { 8, 9 };
+    ShaderDesc desc = make_shader_desc(fragment[..]);
+    desc.traced_fragment = { .hardware = hardware[..], .software = software[..] };
+    ShaderId id = store.add_shader(&desc)!!;
+    hardware[0] = 0;
+    software[0] = 0;
+
+    ShaderAsset* record = store.shader(id);
+    TracedFragment* traced = &record.desc.traced_fragment;
+    assert(traced.hardware.ptr != &hardware[0] && traced.software.ptr != &software[0]);
+    assert(traced.hardware.len == 3 && traced.hardware[0] == 5 && traced.hardware[2] == 7);
+    assert(traced.software.len == 2 && traced.software[0] == 8 && traced.software[1] == 9);
+
+    ShaderDesc software_only = make_shader_desc(fragment[..]);
+    software_only.traced_fragment.software = software[..];
+    store.replace_shader(id, &software_only)!!;
+    assert(record.header.revision == 2 && traced.hardware.len == 0);
+    assert(traced.software.len == 2 && traced.software.ptr != &software[0] && traced.software[1] == 9);
+
+    ShaderDesc plain = make_shader_desc(fragment[..]);
+    store.replace_shader(id, &plain)!!;
+    assert(record.header.revision == 3 && traced.hardware.len == 0 && traced.software.len == 0);
+
+    store.remove_shader(id);
+    assert(!store.shaders.is_live(id));
+}
+
 fn void test_remove_shader_makes_id_stale() @test {
     AssetStore store = make_store();
     defer asset::destroy_asset_store(&store);
