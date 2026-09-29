@@ -188,6 +188,7 @@ root PreviousPoseGpu {
 }
 
 const uint INSTANCE_CULL_GROUP_SIZE = 64;
+// 128 threads is the Vulkan 1.3 core minimum; a 1,024-key block takes 8 KiB of shared memory, 2,048 (16 KiB) cuts 36 steps to 28 at 131,072.
 const uint INSTANCE_SORT_GROUP_SIZE = 128;
 const uint INSTANCE_SORT_BLOCK = 1024;
 const uint INSTANCE_SORT_BLOCKS = 1;
