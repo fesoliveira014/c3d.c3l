@@ -200,19 +200,41 @@ With one worker the caller doubles the throughput by running ranges while it wai
 grows with the worker count, since every range takes and returns one lock. At 31 workers, batch 64 costs 5 %
 of the serial time; batches of 128 items or more stay under 3 %.
 
-### Windows host
+### Windows host, 32 logical processors (default 31 workers)
 
-To be filled from the three Windows host runs before merge: the logical processor count from the `#` line,
-and the same two tables.
+Medians of three runs, with the range of the three in parentheses; every pooled output equals its serial
+output and no overhead run ran a range inline.
 
-```powershell
-python scripts\build.py --target job_bench --opt O3
-1..3 | ForEach-Object { addons\c3d_job.c3l\build\job_bench.exe > "build\job_bench_windows_$_.csv" }
-```
+| Workers | µs per empty range |
+| ---: | ---: |
+| 0 | 0.0059 (0.0052–0.0062) |
+| 1 | 0.0284 (0.0266–0.0292) |
+| 3 | 0.0480 (0.0431–0.0568) |
+| 31 | 0.1430 (0.1121–0.2395) |
+
+| Workers | Items | Batch | Speedup | Overhead share |
+| ---: | ---: | ---: | ---: | ---: |
+| 31 | 16384 | 64 | 5.30 | 0.0545 (0.0439–0.0942) |
+| 31 | 65536 | 64 | 6.69 | 0.0540 (0.0432–0.0929) |
+| 31 | 262144 | 64 | 7.24 | 0.0514 (0.0416–0.0875) |
+| 31 | 16384 | 1024 | 6.18 | 0.0033–0.0035 |
+| 31 | 65536 | 1024 | 6.66 | 0.0033–0.0035 |
+| 31 | 262144 | 1024 | 10.07 | 0.0033–0.0035 |
+| 31 | 16384 | 128 | 6.41 | |
+| 31 | 65536 | 512 | 7.44 | |
+| 31 | 262144 | 2048 | 8.80 | |
+
+At 3 workers the speedup is 3.5 to 4.1 with every overhead share below 0.019; at 1 worker it is 1.9 to 2.0,
+apart from the runs split into 8 ranges. Peak scratch per range is 4 KiB at batch 64 and up to 2 MiB at batch
+32 768 with one worker, as on WSL.
 
 ### Revisit threshold
 
 The single-lock queue is revisited when a median exceeds 2 µs per empty range, or a kernel median overhead
 share exceeds 0.05. On WSL the time per range stays under 0.18 µs, and the overhead share crosses 0.05 at 31
-workers and batch 64 with 16 384 items (0.0524) and 65 536 items (0.0514). The Windows verdict is added with
-its tables.
+workers and batch 64 with 16 384 items (0.0524) and 65 536 items (0.0514). On the Windows host the time per
+range stays under 0.24 µs, and the share crosses 0.05 at 31 workers and batch 64 on all three item counts
+(0.051 to 0.055). Both machines therefore cross the threshold narrowly, at the finest batch with every
+worker; the queue is kept, and a per-run atomic claim cursor (and `wait`'s scan of the ring for its run's
+ranges) are the remedies to measure when a consumer needs that grain. With many workers, use batches of about
+512 items or more: at 1024 the share is 0.003 on both machines.
