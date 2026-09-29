@@ -3,6 +3,7 @@ module c3d::asset;
 import c3d;
 import c3d::geometry;
 import c3d::pool;
+import c3d::spatial::bvh;
 import std::math;
 
 <*
@@ -15,6 +16,10 @@ struct GeometryAsset {
     uint        vertex_count;
     uint        index_count;
     uint        target_count;
+    Bvh         triangles;           // over data.positions and data.indices at triangle_revision; empty when absent
+    uint        triangle_revision;   // header.revision the tree matches; 0 when absent
+    uint        validated_revision;  // header.revision whose arrays form a triangle list; 0 when unknown
+    uint        rejected_revision;   // header.revision whose arrays form none, or whose topology is not TRIANGLES
 }
 
 <*
@@ -85,11 +90,52 @@ fn void AssetStore.mark_geometry_dirty(&self, GeometryId geometry) {
 }
 
 <*
- Free the arrays; keep counts, bounds, channels, id, and revision.
+ Free the arrays and their triangle tree; keep counts, bounds, channels, id, revision and validity.
  @require self.geometries.is_live(geometry)
 *>
 fn void AssetStore.release_geometry_cpu(&self, GeometryId geometry) {
-    free_geometry_streams(self.allocator, &self.geometries.get(geometry).data);
+    GeometryAsset* record = self.geometries.get(geometry);
+    free_geometry_streams(self.allocator, &record.data);
+    free_triangle_tree(self.allocator, record);
+}
+
+<*
+ Whether the arrays form a triangle list; remembers the answer of the current revision.
+ @return? c3d::ASSET_DATA_UNAVAILABLE
+ @require self.geometries.is_live(geometry)
+*>
+fn bool? AssetStore.triangles_valid(&self, GeometryId geometry) {
+    GeometryAsset* record = self.geometries.get(geometry);
+    uint revision = record.header.revision;
+    if (record.validated_revision == revision) return true;
+    if (record.rejected_revision == revision) return false;
+    if (!record.data.positions.len) return c3d::ASSET_DATA_UNAVAILABLE~;
+    bool valid = record.data.topology == Topology.TRIANGLES
+        && bvh::triangle_list_valid(record.data.positions, record.data.indices);
+    if (valid) {
+        record.validated_revision = revision;
+    } else {
+        record.rejected_revision = revision;
+    }
+    return valid;
+}
+
+<*
+ Triangle tree of the current revision, built on first use and kept until the revision moves or the arrays go.
+ Scratch lives in the temp allocator.
+ @return? c3d::INVALID_ARGUMENT, c3d::ASSET_DATA_UNAVAILABLE
+ @require self.geometries.is_live(geometry)
+*>
+fn Bvh*? AssetStore.triangle_bvh(&self, GeometryId geometry) {
+    if (!self.triangles_valid(geometry)!) return c3d::INVALID_ARGUMENT~;
+    GeometryAsset* record = self.geometries.get(geometry);
+    if (record.triangle_revision == record.header.revision) return &record.triangles;
+    if (!record.data.positions.len) return c3d::ASSET_DATA_UNAVAILABLE~;
+    free_triangle_tree(self.allocator, record);
+    // The list was proven above, so the build cannot fault.
+    record.triangles = bvh::build_triangle_bvh(self.allocator, record.data.positions, record.data.indices)!!;
+    record.triangle_revision = record.header.revision;
+    return &record.triangles;
 }
 
 <*
@@ -102,8 +148,14 @@ fn void AssetStore.remove_geometry(&self, GeometryId geometry) {
     free_string(self.allocator, record.header.key);
     free_geometry(self.allocator, &record.data);
     geometry::free_skin_bounds(self.allocator, &record.skin_bounds);
+    free_triangle_tree(self.allocator, record);
     *record = {};
     self.geometries.remove(geometry);
+}
+
+fn void free_triangle_tree(Allocator allocator, GeometryAsset* record) @private {
+    if (record.triangles.nodes.len) bvh::free_bvh(allocator, &record.triangles);
+    record.triangle_revision = 0;
 }
 
 fn void? check_influences(Geometry* geometry) @private {

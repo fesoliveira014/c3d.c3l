@@ -14,6 +14,7 @@ import c3d::physics::collide;
 import c3d::platform;
 import c3d::render;
 import c3d::scene;
+import c3d::spatial::bvh;
 import imgui;
 
 alias Quat @private = Quaternionf;
@@ -31,6 +32,12 @@ const Vec2  PANEL_SIZE @local = { 380, 300 };
 const Vec2  STATS_PANEL_POSITION @local = { 16, 332 };
 const Vec2  STATS_PANEL_SIZE @local = { 380, 360 };
 const int   SHAPE_KIND_COUNT @local = 4;
+const uint  SCATTER_BOXES @local = 64;
+const uint  SCATTER_SEED @local = 0x2545f491;
+const Vec3  SCATTER_MIN @local = { -6, 0, -7 }; // behind the shapes, in view of the camera
+const Vec3  SCATTER_MAX @local = { 6, 3, -2 };
+const float SCATTER_HALF_MIN @local = 0.1f;
+const float SCATTER_HALF_MAX @local = 0.35f;
 
 struct Demo @local {
     Shape[SHAPE_KIND_COUNT] shapes;
@@ -39,6 +46,72 @@ struct Demo @local {
     maths::Transform        pose_a;
     maths::Transform        pose_b;
     float                   spin;
+}
+
+struct Scatter @local {
+    Aabb[] boxes;
+    Bvh    tree;
+    bool   picked;
+    uint   picked_box;
+}
+
+fn float next_unit(uint* state) @local {
+    *state ^= *state << 13;
+    *state ^= *state >> 17;
+    *state ^= *state << 5;
+    return (float)(*state >> 8) / (float)(1u << 24);
+}
+
+fn Scatter? create_scatter() @local {
+    Aabb[] boxes = alloc::new_array(mem, Aabb, (sz)SCATTER_BOXES);
+    defer catch alloc::free(mem, boxes.ptr);
+    uint state = SCATTER_SEED;
+    foreach (&box : boxes) {
+        Vec3 center;
+        Vec3 half;
+        for (usz axis = 0; axis < 3; axis++) {
+            center[axis] = SCATTER_MIN[axis] + (SCATTER_MAX[axis] - SCATTER_MIN[axis]) * next_unit(&state);
+            half[axis] = SCATTER_HALF_MIN + (SCATTER_HALF_MAX - SCATTER_HALF_MIN) * next_unit(&state);
+        }
+        *box = { .min = center - half, .max = center + half };
+    }
+    return { .boxes = boxes, .tree = bvh::build_box_bvh(mem, boxes)! };
+}
+
+fn void destroy_scatter(Scatter* scatter) @local {
+    bvh::free_bvh(mem, &scatter.tree);
+    alloc::free(mem, scatter.boxes.ptr);
+}
+
+fn void pick_scatter_box(Scatter* scatter, Ray ray) @local {
+    float nearest = math::FLOAT_MAX;
+    scatter.picked = false;
+    scatter.tree.@each_ray_hit(ray, math::FLOAT_MAX; uint primitive) {
+        float distance;
+        if (maths::ray_intersects_aabb(ray, scatter.boxes[primitive], &distance) && distance < nearest) {
+            nearest = distance;
+            scatter.picked = true;
+            scatter.picked_box = primitive;
+        }
+    };
+}
+
+fn void draw_scatter(debug::DebugDraw* draw, Scatter* scatter) @local {
+    foreach (uint index, box : scatter.boxes) {
+        bool picked = scatter.picked && scatter.picked_box == index;
+        draw.box(matrix::IDENTITY4, box, picked ? debug::COLOR_YELLOW : debug::rgba(0.6f, 0.6f, 0.6f));
+    }
+}
+
+fn Ray cursor_ray(
+    Scene* scene,
+    Node* camera_node,
+    Input* input,
+    Vec2 viewport,
+) @local {
+    camera::Camera* camera = scene.get(camera_node, camera::Camera);
+    CameraMatrices matrices = camera::derive_matrices(*camera, camera_node.world, viewport);
+    return camera::screen_to_ray(&matrices, input.mouse_position, viewport);
 }
 
 fn Shape[SHAPE_KIND_COUNT] make_shapes(Hull* hull) @local {
@@ -157,6 +230,7 @@ fn void draw_panel(Demo* demo, render::Renderer* renderer) @local {
     imgui::set_next_window_size(PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
     if (imgui::begin("Collision queries", null, {})) {
         imgui::text("Arrows and Page Up/Down move shape B");
+        imgui::text("Left click highlights the nearest grey box");
         imgui::separator_text("Shape A");
         shape_picker("a", &demo.kind_a);
         imgui::separator_text("Shape B");
@@ -223,6 +297,8 @@ fn void? run(
         .pose_b = { .position = SHAPE_B_START, .rotation = { 0, 0, 0, 1 }, .scale = { 1, 1, 1 } },
     };
     renderer.prepare_scene(scene)!;
+    Scatter scatter = create_scatter()!;
+    defer destroy_scatter(&scatter);
 
     while (window.poll()) {
         Input* input = &window.input;
@@ -236,6 +312,17 @@ fn void? run(
         demo.spin += delta * SPIN_SPEED;
         demo.pose_a.rotation = quaternion::from_axis_angle{float}(SPIN_AXIS.normalize(), demo.spin);
         move_shape_b(&demo, input, delta);
+        if (input.button_pressed(platform::MouseButton.LEFT) && !input.mouse_captured_by_gui) {
+            Vec2 viewport = { (float)window.width, (float)window.height };
+            Ray ray = cursor_ray(
+                scene:       scene,
+                camera_node: camera_node,
+                input:       input,
+                viewport:    viewport,
+            );
+            pick_scatter_box(&scatter, ray);
+            if (scatter.picked) io::printfn("picked box %d", scatter.picked_box);
+        }
         draw_panel(&demo, renderer);
         imgui::set_next_window_pos(STATS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(STATS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
@@ -244,6 +331,7 @@ fn void? run(
         scene.update_world();
         draw.clear();
         draw_queries(&draw, &demo);
+        draw_scatter(&draw, &scatter);
         gui_renderer.finish_frame();
 
         platform::sync_window(window, renderer);

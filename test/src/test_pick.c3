@@ -262,6 +262,21 @@ fn void test_released_geometry_falls_back_to_bounds() @test {
     };
 }
 
+fn void test_triangle_pick_uses_the_shared_tree() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    add_box_at(&fixture, -5, "box");
+    fixture.scene.update_world();
+    GeometryAsset* record = fixture.assets.geometry(fixture.box);
+    assert(record.triangle_revision == 0);
+
+    @pool() {
+        PickHit[] hits = pick_along(&fixture, ray_toward_minus_z({ 0, 0, 0 }), TRIANGLES);
+        assert(hits.len == 1 && hits[0].triangle_hit);
+    };
+    assert(record.triangle_revision == record.header.revision);
+}
+
 fn void test_skinned_mesh_uses_joint_bounds_not_triangles() @test {
     Fixture fixture = make_fixture();
     defer destroy_fixture(&fixture);

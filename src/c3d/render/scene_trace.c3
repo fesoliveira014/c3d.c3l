@@ -60,7 +60,7 @@ struct TraceInstance @private {
     Mat4            world;
     gpu::AccelerationStructureHandle bottom_level;
     uint            mask;
-    uint            _pad0;
+    uint            instance_index;   // batch instance the row came from; 0 for a mesh
     gpu::GpuAddress geometry_root;
     gpu::GpuAddress material_address;
     gpu::GpuAddress nodes;
@@ -195,15 +195,21 @@ fn uint trace_shader_flags(Renderer* renderer) @private {
     return renderer.caps.ray_queries.enabled ? 0 : shader::SHADER_FLAG_SCENE_TRACE_BVH;
 }
 
-fn TraceSource trace_source(uint built_revision, uint revision, bool cpu_present) @private {
+// buildable: the store proved the list for this revision and still holds the CPU arrays.
+fn TraceSource trace_source(uint built_revision, uint revision, bool buildable) @private {
     if (built_revision != 0 && built_revision == revision) return TraceSource.REUSE;
-    return cpu_present ? TraceSource.BUILD : TraceSource.SKIP;
+    return buildable ? TraceSource.BUILD : TraceSource.SKIP;
 }
 
-// Without CPU arrays only a software level of the same revision proves the list safe to build from.
-fn TraceSource blas_source(uint built_revision, uint revision, uint software_revision, bool cpu_present) @private {
+// proven: the store proved the list for this revision; streams: the CPU arrays or a current GPU copy to build from.
+fn TraceSource blas_source(
+    uint built_revision,
+    uint revision,
+    bool proven,
+    bool streams,
+) @private {
     if (built_revision != 0 && built_revision == revision) return TraceSource.REUSE;
-    return cpu_present || software_revision == revision ? TraceSource.BUILD : TraceSource.SKIP;
+    return proven && streams ? TraceSource.BUILD : TraceSource.SKIP;
 }
 
 fn uint blas_primitive_count(GeometryLayout* layout) @private {
@@ -289,14 +295,15 @@ fn TraceInstance[] collect_trace_instances(
                 skinned:             scene.has(node.parent, AnimatedCrowd),
                 has_bounds_override: batch.has_bounds_override,
             )) {
-                foreach (transform : batch.transforms[:batch.count]) {
+                foreach (uint index, transform : batch.transforms[:batch.count]) {
                     records[count++] = trace_record(
-                        assets:      assets,
-                        entity:      entity,
-                        geometry:    batch.geometry,
-                        material:    batch.material,
-                        world:       node.world.mul(transform.to_mat4()),
-                        cast_shadow: batch.cast_shadow,
+                        assets:         assets,
+                        entity:         entity,
+                        geometry:       batch.geometry,
+                        material:       batch.material,
+                        world:          node.world.mul(transform.to_mat4()),
+                        cast_shadow:    batch.cast_shadow,
+                        instance_index: index,
                     );
                 }
             }
@@ -432,37 +439,28 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceInstance[] 
         uint revision = asset_record.header.revision;
         bool cpu_present = asset_record.data.positions.len > 0;
         bool same_asset = c3d::same_id(mirror.asset, record.geometry);
-        uint software_revision = same_asset ? mirror.trace.revision : 0;
-        TraceSource source = trace_source(software_revision, revision, cpu_present);
+        // A list the store never proved (arrays gone before any answer) or rejected does not trace.
+        bool proven = renderer.assets.triangles_valid(record.geometry) ?? false;
+        TraceSource source = trace_source(same_asset ? mirror.trace.revision : 0, revision, proven && cpu_present);
         TraceSource hardware_source = blas_source(
-            built_revision:    same_asset ? mirror.blas.revision : 0,
-            revision:          revision,
-            software_revision: software_revision,
-            cpu_present:       cpu_present,
+            built_revision: same_asset ? mirror.blas.revision : 0,
+            revision:       revision,
+            proven:         proven,
+            streams:        cpu_present || geometry_current(renderer, record.geometry),
         );
-        bool rejected = same_asset && mirror.trace.rejected_revision == revision;
         bool unavailable = (software && source == TraceSource.SKIP) || (hardware && hardware_source == TraceSource.SKIP);
-        if (unavailable || rejected) {
+        if (unavailable) {
             renderer.stats.trace_skipped++;
             continue;
         }
 
         mirror = resolve_geometry(renderer, record.geometry)!;
         MaterialRes* material = resolve_material(renderer, record.material)!;
-        if (hardware && hardware_source == TraceSource.BUILD && !resolve_blas(renderer, mirror, asset_record)!) {
-            renderer.stats.trace_skipped++;
-            continue;
-        }
+        if (hardware && hardware_source == TraceSource.BUILD) resolve_blas(renderer, mirror, asset_record)!;
         if (software && source == TraceSource.BUILD) {
-            Bvh? tree = bvh::build_triangle_bvh(tmem, asset_record.data.positions, asset_record.data.indices);
-            // The builder faults only on arrays that form no triangle list, which raster still draws.
-            if (catch excuse = tree) {
-                mirror.trace.rejected_revision = asset_record.header.revision;
-                renderer.stats.trace_skipped++;
-                continue;
-            }
-            upload_trace_geometry(renderer, mirror, &tree)!;
-            mirror.trace.revision = asset_record.header.revision;
+            // Proven with the arrays present, so the store's build cannot fault.
+            upload_trace_geometry(renderer, mirror, renderer.assets.triangle_bvh(record.geometry)!!)!;
+            mirror.trace.revision = revision;
         }
         record.geometry_root = mirror.root;
         record.material_address = material.address;
@@ -474,14 +472,8 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceInstance[] 
     return records[:kept];
 }
 
-// The backend checks no index range, so an unproven list never reaches a build.
-fn bool? resolve_blas(Renderer* renderer, GpuGeometry* mirror, GeometryAsset* asset_record) @local {
-    Geometry* data = &asset_record.data;
-    if (data.positions.len && !bvh::triangle_list_valid(data.positions, data.indices)) {
-        mirror.trace.rejected_revision = asset_record.header.revision;
-        return false;
-    }
-
+// Only a list the store proved reaches a build: the backend checks no index range.
+fn void? resolve_blas(Renderer* renderer, GpuGeometry* mirror, GeometryAsset* asset_record) @local {
     gpu::AccelerationStructureGeometryDesc[1] geometries = { blas_geometry_desc(&mirror.layout) };
     gpu::AccelerationStructureDesc desc = {
         .kind       = gpu::AccelerationStructureKind.BOTTOM_LEVEL,
@@ -507,7 +499,6 @@ fn bool? resolve_blas(Renderer* renderer, GpuGeometry* mirror, GeometryAsset* as
     };
     renderer.rt.pending_blas.push(mirror.asset);
     renderer.stats.blas_builds++;
-    return true;
 }
 
 fn void? acquire_rt_top_levels(Renderer* renderer) @local {
@@ -795,6 +786,7 @@ fn TraceInstance trace_record(
     MaterialId material,
     Mat4 world,
     bool cast_shadow,
+    uint instance_index = 0,
 ) @local {
     Material* data = &assets.material(material).data;
     uint flags = data.common.alpha_mode == AlphaMode.MASK ? shader::TRACE_INSTANCE_ALPHA_MASK : 0;
@@ -806,6 +798,7 @@ fn TraceInstance trace_record(
         .geometry      = geometry,
         .material      = material,
         .world         = world,
-        .mask          = shader::TRACE_MASK_ALL | (cast_shadow ? shader::TRACE_MASK_SHADOW_CASTER : 0),
+        .mask           = shader::TRACE_MASK_ALL | (cast_shadow ? shader::TRACE_MASK_SHADOW_CASTER : 0),
+        .instance_index = instance_index,
     };
 }
