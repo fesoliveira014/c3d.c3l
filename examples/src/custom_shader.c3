@@ -42,6 +42,7 @@ struct PulseParams @local {
 struct ShaderFiles @local {
     String fragment;
     String vertex;
+    bool velocity;
     usz param_block_size;
     String name;
     Time fragment_seen;
@@ -101,6 +102,14 @@ fn ShaderDesc? compile_shader_files(Allocator allocator, ShaderFiles* files) @lo
     if (files.vertex.len) {
         desc.vertex.shaded = compile_file(allocator, files.vertex, ShaderStage.VERTEX)!;
         desc.vertex.depth = compile_file(allocator, files.vertex, ShaderStage.VERTEX, { "DEPTH_ONLY" })!;
+        if (files.velocity) {
+            desc.vertex.velocity = compile_file(
+                allocator: allocator,
+                path:      files.vertex,
+                stage:     ShaderStage.VERTEX,
+                defines:   { "VELOCITY" },
+            )!;
+        }
     }
     return desc;
 }
@@ -148,6 +157,7 @@ fn int main() {
     ShaderFiles pulse_files = {
         .fragment = PULSE_FRAGMENT_FILE,
         .vertex = PULSE_VERTEX_FILE,
+        .velocity = true,
         .param_block_size = PulseParams::size,
         .name = "pulse",
     };
@@ -235,7 +245,10 @@ fn int main() {
 
     io::printn("Edit examples/shaders/custom/*.glsl and save: the scene reloads; R forces a reload");
     io::printn("P pauses the pulse; drag to orbit, wheel to zoom; Escape release quits");
+    io::printn("M toggles motion blur, V the TAA velocity view, N the pulse velocity form");
 
+    ViewDesc view_desc = render::default_view_desc();
+    AntiAliasing default_filter = view_desc.post.anti_aliasing;
     double next_poll = POLL_INTERVAL_SECONDS;
     bool paused;
     while (window.poll()) {
@@ -267,6 +280,25 @@ fn int main() {
             PulseParams* live = assets.@custom_params(pulse_material, PulseParams);
             live.motion.x = paused ? 0 : PULSE_AMPLITUDE;
             assets.mark_material_dirty(pulse_material);
+        }
+        if (input.key_pressed(platform::Scancode.M)) {
+            view_desc.post.motion_blur = !view_desc.post.motion_blur;
+            render::configure_view(&renderer, renderer.default_view, view_desc)!!;
+        }
+        if (input.key_pressed(platform::Scancode.V)) {
+            bool showing = view_desc.post.taa_params.debug == TaaDebug.VELOCITY;
+            view_desc.post.anti_aliasing = showing ? default_filter : AntiAliasing.TAA;
+            view_desc.post.taa_params.debug = showing ? TaaDebug.NONE : TaaDebug.VELOCITY;
+            render::configure_view(&renderer, renderer.default_view, view_desc)!!;
+        }
+        if (input.key_pressed(platform::Scancode.N)) {
+            pulse_files.velocity = !pulse_files.velocity;
+            reload_shader(
+                assets:   &assets,
+                renderer: &renderer,
+                files:    &pulse_files,
+                shader:   pulse_shader,
+            );
         }
 
         apply_orbit(&orbit, input, camera_node);

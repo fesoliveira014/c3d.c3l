@@ -46,6 +46,8 @@ struct DrawItem @private {
     gpu::GpuAddress root;
     gpu::FrontFace  front_face;
     bool            moved;
+    bool            custom_velocity;
+    gpu::PipelineHandle velocity_pipeline;
 }
 
 struct MeshPreparation @private {
@@ -193,6 +195,7 @@ fn void? record_raster_view(
     bool ambient_occlusion = record.desc.ambient_occlusion.kind != AoKind.NONE;
     bool forward_prepass = record.desc.depth_prepass || ambient_occlusion || screen_space_gi;
     bool early_velocity = velocity_before_lighting(&record.desc);
+    bool late_velocity = temporal && !early_velocity;
     bool ssgi_history_valid = record.history.valid && record.history.scene == scene.identity;
     Vec2 jitter = taa
       ? post::taa_jitter(record.history.sample_index, record.hdr_color.width, record.hdr_color.height)
@@ -317,6 +320,7 @@ fn void? record_raster_view(
                     .instance_data  = candidate.batch ? resolve_instances(renderer, candidate)! : (gpu::GpuAddress)0,
                     .front_face = model_reflected != view_reflected
                       ? gpu::FrontFace.CLOCKWISE : gpu::FrontFace.COUNTER_CLOCKWISE,
+                    .custom_velocity = custom_velocity_stage(renderer, material_description, candidate.batch != null),
                 };
             }
         };
@@ -443,6 +447,7 @@ fn void? record_raster_view(
                 scene_sampler: view_reads.color ? renderer.linear_clamp_sampler : (gpu::SamplerIndex)0,
                 scene_depth: view_reads.depth ? record.scene_depth.view.index : (gpu::TextureIndex)0,
                 prev_view_proj: temporal && record.history.valid ? &record.history.view_proj : &matrices.view_proj,
+                previous_time: temporal && record.history.valid ? &record.history.time : null,
                 clusters: cluster_frame.clusters,
                 trace: trace_root,
                 jitter: jitter,
@@ -471,9 +476,11 @@ fn void? record_raster_view(
                 if (has_previous) prev_world = record.history.previous_model(scene, node);
                 bool posed = item.skin != (gpu::GpuAddress)0 || item.morph != (gpu::GpuAddress)0
                   || item.candidate.batch;
-                item.moved = has_previous && (posed || !(prev_world == node.world));
+                item.moved = has_previous && (posed || item.custom_velocity || !(prev_world == node.world));
+                bool redrawn_by_velocity = group_index == 0
+                  || (group_index == 1 && late_velocity && writes_own_depth(material_data(renderer, item.material)));
                 gpu::GpuAddress previous_pose;
-                if (has_previous && posed && group_index == 0) {
+                if (has_previous && posed && redrawn_by_velocity) {
                     PoseRecord* crowd_pose;
                     if (item.candidate.crowd && record.history.has_previous(scene, node.parent)) {
                         crowd_pose = record.history.previous_pose(scene, node.parent);
@@ -626,7 +633,7 @@ fn void? record_raster_view(
                 record_debug_lines(renderer, record, raster.view_proj, debug)!;
             }
 
-            if (temporal && !early_velocity) {
+            if (late_velocity) {
                 post::record_velocity(
                     renderer:  renderer,
                     record:    record,
@@ -634,6 +641,7 @@ fn void? record_raster_view(
                     raster:    &raster,
                     view_proj: matrices.view_proj,
                     jitter:    jitter,
+                    after_opaque: scene_read_items,
                 )!;
             }
             if (taa) {
@@ -654,6 +662,7 @@ fn void? record_raster_view(
                     scene:      scene,
                     candidates: candidates,
                     view_proj:  matrices.view_proj,
+                    time:       renderer.info.time,
                 );
             }
         };
@@ -955,6 +964,7 @@ fn bool velocity_before_lighting(ViewDesc* desc) @private {
  @param viewport : "Pixels."
  @param scene_depth : "Depth snapshot sampled view; zero when the view reads none."
  @param [in] prev_view_proj : "Unjittered; null repeats the current view-projection."
+ @param [in] previous_time : "Time of the view's last rendering; null repeats info.time."
  @param clusters : "Matching frame-ring cluster root borrowed through frame completion."
  @param trace : "SceneTraceRoot address with a hardware half; zero when the view traces nothing."
  @param jitter : "NDC offset already applied to the rendered matrices."
@@ -980,6 +990,7 @@ fn void write_frame_root(
     gpu::SamplerIndex scene_sampler = (gpu::SamplerIndex)0,
     gpu::TextureIndex scene_depth = (gpu::TextureIndex)0,
     Mat4* prev_view_proj = null,
+    double* previous_time = null,
     gpu::GpuAddress clusters = (gpu::GpuAddress)0,
     gpu::GpuAddress trace = (gpu::GpuAddress)0,
     Vec2 jitter = {},
@@ -1017,6 +1028,7 @@ fn void write_frame_root(
         .probe_volumes   = probe_volumes,
         .ssgi_texture    = ssgi_texture,
         .scene_depth     = scene_depth,
+        .previous_time   = (float)(previous_time ? *previous_time : info.time),
     };
 }
 
@@ -1662,6 +1674,18 @@ fn bool custom_gbuffer_stage(Renderer* renderer, Material* material) @private {
     if (material.kind != MaterialKind.CUSTOM) return false;
     ShaderId shader = material.custom.shader;
     return renderer.assets.shaders.is_live(shader) && renderer.assets.shader(shader).desc.gbuffer.len > 0;
+}
+
+fn bool custom_velocity_stage(Renderer* renderer, Material* material, bool instanced) @private {
+    if (material.kind != MaterialKind.CUSTOM) return false;
+    asset::CustomVertex* vertex = &renderer.assets.shader(material.custom.shader).desc.vertex;
+    return (instanced ? vertex.instanced_velocity : vertex.velocity).len > 0;
+}
+
+// The velocity pass redraws with depth EQUAL, so it can match only a draw that left its own depth.
+fn bool writes_own_depth(Material* material) @private {
+    MaterialCommon* common = &material.common;
+    return common.alpha_mode != AlphaMode.BLEND && common.depth_test && common.depth_write;
 }
 
 fn SceneReads? custom_scene_reads(Renderer* renderer, Material* material) @private {

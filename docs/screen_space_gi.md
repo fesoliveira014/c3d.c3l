@@ -48,7 +48,8 @@ the opaque surface of the pixel.
 
 A view with the effect records its velocity once depth is complete (after the prepass, and after the
 G-buffer on deferred views), before ambient occlusion, the effect and lighting; other views record velocity
-after the scene passes as before. The velocity image then uses the four-channel format whose third channel
+after the scene passes as before. Scene-read items draw after the velocity on these views and keep the camera
+velocity. The velocity image then uses the four-channel format whose third channel
 holds the expected previous depth, and the view keeps a full motion history like a view with TAA or motion
 blur. The previous colour is a copy of the lit image taken after the transparent pass and before debug
 lines, TAA and post-processing.

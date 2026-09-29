@@ -477,6 +477,7 @@ fn void test_view_history_keeps_crowd_palettes_per_instance() @test {
             scene:      &fixture.scene,
             candidates: candidates,
             view_proj:  matrix::IDENTITY4,
+            time:       0,
         );
     };
     history.publish();

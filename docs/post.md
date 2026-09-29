@@ -107,10 +107,11 @@ may use TAA.
 Documented subset: a one-pixel rim outside moving silhouettes takes the current sample, because the
 dilated velocity reprojects it onto background the object uncovered or covered, which the depth
 and velocity tests reject; a view that renders a different scene than its last rendering resolves
-from the current sample; transparent surfaces carry the velocity of the surface behind them and ghost
-when they move; custom vertex stages contribute built-in deformation only; an instance that changes
-parity or order inside its batch has wrong velocity for one rendering; `render_to` has no history.
-TAA runs at the working resolution; there is no temporal upscaler.
+from the current sample; blended surfaces carry the velocity of the surface behind them and ghost
+when they move; depth-writing scene-read surfaces carry their own velocity on views that record
+velocity after the scene; custom vertex stages contribute their displacement only through a velocity
+form; an instance that changes parity or order inside its batch has wrong velocity for one rendering;
+`render_to` has no history. TAA runs at the working resolution; there is no temporal upscaler.
 
 ## Bloom
 
@@ -158,8 +159,11 @@ UV (top-left origin) in an RG16_FLOAT `velocity` image: `velocity_camera.frag` f
 every pixel through the view's previous view-projection from stored depth (no geometry reprojects
 as a direction), then a geometry pass with the `VELOCITY` vertex variant redraws the opaque items
 that moved, are skinned or morphed, or are instanced batches, with depth test EQUAL and no depth
-write. Skinned and morphed surfaces use the palette and morph block the view drew last time, and
-instances use their own previous matrices (`DrawRoot.previous_pose`). Both passes are timed under
+write. Items whose custom shader supplies a [velocity form](custom_shaders.md#velocity-form) for the
+draw are redrawn through that form on every rendering with history, and on views that record velocity
+after the scene the pass also redraws the moved depth-writing items of the scene-read list. Skinned
+and morphed surfaces use the palette and morph block the view drew last time, and instances use
+their own previous matrices (`DrawRoot.previous_pose`). Both passes are timed under
 `VELOCITY`. `tile_max.comp` and `tile_neighbor.comp` reduce the velocity to
 16-pixel tile maxima, and `motion_blur.comp` (McGuire 2012) samples `samples` taps along the
 tile's dominant motion scaled by `shutter` and clamped to `max_velocity`, weighted by cone,
@@ -167,16 +171,17 @@ cylinder and depth order, into `motion_blur_out`, which the later stages read in
 `hdr_color`. Three dispatches are counted under `POST_CHAIN`.
 
 The previous pose is renderer-owned per view (`ViewHistory`): the camera's view-projection, the
-world matrix of every mesh the view drew and the palette, morph block and instance matrices of
-the deformed and instanced ones, tagged by entity so a reused slot never matches,
+rendering's `FrameInfo.time` (read back as `FrameRoot.previous_time`), the world matrix of every
+mesh the view drew and the palette, morph block and instance matrices of the deformed and instanced
+ones, tagged by entity so a reused slot never matches,
 stamped with the rendering so a mesh absent from the last rendering has no previous model when it
 returns, and keyed by the scene's identity so a view that switches scenes starts without motion and
 a replaced scene needs no reset. It is committed at the end of `render_view` when motion blur or
 TAA is on and published when the frame submits; an unsubmitted abort drops it and the next rendering
 carries no motion. `configure_view`, a resize and `render::reset_view_history(&renderer, view)`
-(a camera cut) reset it; the first rendering after a reset carries no motion. Under an
-orthographic projection a depth-zero pixel has zero camera velocity, since a direction has no finite
-reprojection there. Enabling allocates the velocity image, the blur
+(a camera cut or a jump in `FrameInfo.time`) reset it; the first rendering after a reset carries no
+motion. Under an orthographic projection a depth-zero pixel has zero camera velocity, since a
+direction has no finite reprojection there. Enabling allocates the velocity image, the blur
 output and the shared tile images; disabling retires them. `configure_view` faults
 `INVALID_ARGUMENT` when motion blur is on with `samples` outside `[1, 32]`, a non-positive
 `max_velocity` or a negative `shutter`.
