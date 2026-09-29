@@ -201,10 +201,15 @@ fn TraceSource trace_source(uint built_revision, uint revision, bool buildable) 
     return buildable ? TraceSource.BUILD : TraceSource.SKIP;
 }
 
-// proven: the store proved the list for this revision; the GPU streams build it without the CPU arrays.
-fn TraceSource blas_source(uint built_revision, uint revision, bool proven) @private {
+// proven: the store proved the list for this revision; streams: the CPU arrays or a current GPU copy to build from.
+fn TraceSource blas_source(
+    uint built_revision,
+    uint revision,
+    bool proven,
+    bool streams,
+) @private {
     if (built_revision != 0 && built_revision == revision) return TraceSource.REUSE;
-    return proven ? TraceSource.BUILD : TraceSource.SKIP;
+    return proven && streams ? TraceSource.BUILD : TraceSource.SKIP;
 }
 
 fn uint blas_primitive_count(GeometryLayout* layout) @private {
@@ -437,7 +442,12 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceInstance[] 
         // A list the store never proved (arrays gone before any answer) or rejected does not trace.
         bool proven = renderer.assets.triangles_valid(record.geometry) ?? false;
         TraceSource source = trace_source(same_asset ? mirror.trace.revision : 0, revision, proven && cpu_present);
-        TraceSource hardware_source = blas_source(same_asset ? mirror.blas.revision : 0, revision, proven);
+        TraceSource hardware_source = blas_source(
+            built_revision: same_asset ? mirror.blas.revision : 0,
+            revision:       revision,
+            proven:         proven,
+            streams:        cpu_present || geometry_current(renderer, record.geometry),
+        );
         bool unavailable = (software && source == TraceSource.SKIP) || (hardware && hardware_source == TraceSource.SKIP);
         if (unavailable) {
             renderer.stats.trace_skipped++;

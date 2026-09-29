@@ -453,3 +453,37 @@ fn void test_batch_skip_matches_a_fresh_refresh() @test {
     scene.update_world();
     assert_matches_fresh_refresh(&kept, &fixture);
 }
+
+fn Node* add_level(Fixture* fixture, Scene* scene) @local {
+    Node* box = scene.add_mesh(fixture.box, fixture.one_sided)!!;
+    box.local.position = { 0, 0, -3 };
+    Transform[3] transforms = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
+    transforms[1].position = { 2, 0, 0 };
+    transforms[2].position = { 4, 0, 0 };
+    Node* batch = scene.add_instanced_mesh(fixture.box, fixture.two_sided, 3, transforms[..])!!;
+    scene.update_world();
+    return batch;
+}
+
+fn void test_refresh_with_another_scene_keeps_no_batch_entries() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Scene second = scene::create_scene(mem, { .max_nodes = 16 });
+    defer scene::destroy_scene(&second);
+    add_level(&fixture, &fixture.scene);
+    Node* second_batch = add_level(&fixture, &second);
+
+    SceneIndex kept = spatial::create_scene_index(mem, 8);
+    defer spatial::destroy_scene_index(&kept);
+    kept.refresh(&fixture.assets, &fixture.scene)!!;
+    kept.refresh(&fixture.assets, &second)!!;
+    foreach (entry : kept.entries[:kept.count]) {
+        if (entry.flags.instanced) assert(entry.node == second_batch);
+    }
+
+    SceneIndex fresh = spatial::create_scene_index(mem, 8);
+    defer spatial::destroy_scene_index(&fresh);
+    fresh.refresh(&fixture.assets, &second)!!;
+    assert(kept.count == fresh.count);
+    assert(mem::equals(kept.entries.ptr, fresh.entries.ptr, (sz)(fresh.count * SceneEntry::size)));
+}

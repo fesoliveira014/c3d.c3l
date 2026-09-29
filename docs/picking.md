@@ -71,7 +71,7 @@ spatial::prepare_triangle_picks(&assets, &scene);
 SceneIndex index = spatial::create_scene_index(mem, capacity);
 defer spatial::destroy_scene_index(&index);
 
-// every frame
+// after the last change of the scene, before a pick
 scene.update_world();
 index.refresh(&assets, &scene)!;
 

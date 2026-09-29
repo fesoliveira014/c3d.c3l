@@ -12,6 +12,7 @@ import gpu;
 import std::math;
 
 const gpu::GpuAddress BLOCK_BASE @local = (gpu::GpuAddress)0x10000;
+const uint CURRENT_REVISION @local = 3;
 
 struct Fixture @local {
     AssetStore assets;
@@ -303,12 +304,22 @@ fn void test_trace_source_needs_arrays_or_a_level() @test {
     assert(render::trace_source(2, 3, false) == render::TraceSource.SKIP);
 }
 
-fn void test_blas_source_needs_a_proven_list() @test {
-    assert(render::blas_source(3, 3, false) == render::TraceSource.REUSE);
-    assert(render::blas_source(0, 3, true) == render::TraceSource.BUILD);
-    assert(render::blas_source(2, 3, true) == render::TraceSource.BUILD);
-    assert(render::blas_source(2, 3, false) == render::TraceSource.SKIP);
-    assert(render::blas_source(0, 3, false) == render::TraceSource.SKIP);
+fn render::TraceSource hardware_source(uint built_revision, bool proven, bool streams) @local {
+    return render::blas_source(
+        built_revision: built_revision,
+        revision:       CURRENT_REVISION,
+        proven:         proven,
+        streams:        streams,
+    );
+}
+
+fn void test_blas_source_needs_a_proven_list_and_streams() @test {
+    assert(hardware_source(CURRENT_REVISION, false, false) == render::TraceSource.REUSE);
+    assert(hardware_source(0, true, true) == render::TraceSource.BUILD);
+    assert(hardware_source(CURRENT_REVISION - 1, true, true) == render::TraceSource.BUILD);
+    assert(hardware_source(CURRENT_REVISION - 1, true, false) == render::TraceSource.SKIP);
+    assert(hardware_source(CURRENT_REVISION - 1, false, true) == render::TraceSource.SKIP);
+    assert(hardware_source(0, false, false) == render::TraceSource.SKIP);
 }
 
 fn void test_trace_record_mask_follows_cast_shadow() @test {

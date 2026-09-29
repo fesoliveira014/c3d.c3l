@@ -57,6 +57,7 @@ struct SceneIndex {
     uint         dangling;          // meshes and batches the last refresh skipped for dead ids
     BatchKey[]   batch_keys;        // capacity-sized; valid at the first entry of a batch
     uint         refreshes;         // refreshes run; stamps batch keys
+    ulong        scene_identity;    // Scene.identity of the last refresh
 }
 
 <*
@@ -97,6 +98,9 @@ fn void destroy_scene_index(SceneIndex* index) {
 fn void? SceneIndex.refresh(&self, AssetStore* assets, Scene* scene) {
     self.scene = scene;
     self.refreshes++;
+    // Another scene may rebuild equal batches at the same slots, and their kept entries would name its nodes.
+    if (scene.identity != self.scene_identity) self.refreshes++;
+    self.scene_identity = scene.identity;
     usz needed;
     uint dangling;
     bool changed;
