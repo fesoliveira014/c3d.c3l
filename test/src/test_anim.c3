@@ -278,6 +278,46 @@ fn void test_cross_fade_hands_weight_over() @test {
     assert(animator.actions[0].clip.index == low_clip.index);
 }
 
+fn void test_stop_with_fade_at_zero_weight_removes_on_next_update() @test {
+    AssetStore assets = create_store();
+    defer asset::destroy_asset_store(&assets);
+    Scene scene = scene::create_scene(mem, { .max_nodes = 16 });
+    defer scene::destroy_scene(&scene);
+    ModelId model = gltf::load_model(&assets, fixture_path("skin.gltf"))!!;
+    Node* root = model::instantiate(&assets, &scene, model)!!;
+    Track[1] tracks = { constant_translation({ 0, 9, 0 }) };
+    uint[1] targets = { 3 };
+    ClipId clip = add_clip(&assets, "lift", tracks[..], targets[..], 1);
+
+    Animator* animator = anim::add_animator(&scene, root);
+    Action* action = animator.play(&assets, clip, fade_in: 0.5f)!!;
+    animator.stop(action, 0.3f);
+    anim::update(&assets, &scene, 0.1f);
+    assert(animator.actions.len() == 0);
+}
+
+fn void test_cross_fade_from_zero_weight_removes_it_on_next_update() @test {
+    AssetStore assets = create_store();
+    defer asset::destroy_asset_store(&assets);
+    Scene scene = scene::create_scene(mem, { .max_nodes = 16 });
+    defer scene::destroy_scene(&scene);
+    ModelId model = gltf::load_model(&assets, fixture_path("skin.gltf"))!!;
+    Node* root = model::instantiate(&assets, &scene, model)!!;
+    uint[1] targets = { 3 };
+    Track[1] high = { constant_translation({ 0, 9, 0 }) };
+    Track[1] low = { constant_translation({ 0, 5, 0 }) };
+    ClipId high_clip = add_clip(&assets, "high", high[..], targets[..], 1);
+    ClipId low_clip = add_clip(&assets, "low", low[..], targets[..], 1);
+
+    Animator* animator = anim::add_animator(&scene, root);
+    animator.play(&assets, high_clip)!!;
+    animator.play(&assets, low_clip, fade_in: 0.5f)!!;
+    animator.cross_fade(&animator.actions[1], &animator.actions[0], 0.3f);
+    anim::update(&assets, &scene, 0.1f);
+    assert(animator.actions.len() == 1);
+    assert(animator.actions[0].clip.index == high_clip.index && animator.actions[0].weight == 1);
+}
+
 fn void test_looping_wraps_and_non_looping_clamps() @test {
     AssetStore assets = create_store();
     defer asset::destroy_asset_store(&assets);
