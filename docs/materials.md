@@ -97,7 +97,7 @@ environment reflection or normal-map slot.
 intensity ramp. The renderer samples red only at `(NdotL, 0.5)`, explicitly from
 mip zero, using a fixed nearest/clamp sampler; green, blue and alpha are ignored.
 Load ramp data as linear, not sRGB. A zero, missing or stale id falls back to
-uniform steps. A live cube, array or 3D source returns `c3d::UNSUPPORTED`.
+uniform steps. A live cube, array, 3D or `R16_UINT` source returns `c3d::UNSUPPORTED`.
 
 The rim adds `rim_color * rim_strength * (1 - NdotV)^rim_power` after diffuse and
 indirect lighting. It is independent of base texture color, lights and shadows,
@@ -132,7 +132,7 @@ occlusion and emissive maps retain their scalar behavior; an absent normal map
 retains the geometry normal. Occlusion never changes direct lighting or emission,
 and strength zero removes its effect. A black emissive factor keeps emission
 black even with a populated map. Normal scale zero disables normal perturbation.
-Live cube and render-target references return `c3d::UNSUPPORTED`; comparison
+Live cube, `R16_UINT` and render-target references return `c3d::UNSUPPORTED`; comparison
 samplers and UV sets above 1 return `c3d::INVALID_ARGUMENT`.
 
 ## Tangent frames

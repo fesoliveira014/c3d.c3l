@@ -23,7 +23,10 @@ and white `(255, 255, 255, 0)`.
 `(2, 1, 0.5)` and `(0.25, 0.5, 1)`.
 `test/fixtures/truncated.png` is the first twelve bytes of `rgba.png`,
 an intentionally malformed input for file-loader fault coverage.
-Both were generated with Python's standard library:
+`test/fixtures/gray16.png` is a 2×2 16-bit grayscale image holding
+`0, 1, 0x1234, 0xFFFF`, top row first; 1 and `0x1234` are not multiples of
+257, so an 8-bit decode cannot produce them.
+They were generated with Python's standard library:
 
 ```python
 from pathlib import Path
@@ -48,6 +51,12 @@ pixels = bytes([
 (fixtures / "radiance.hdr").write_bytes(
     b"#?RADIANCE\nFORMAT=32-bit_rle_rgbe\n\n-Y 1 +X 2\n"
     + bytes([128, 64, 32, 130, 32, 64, 128, 129]))
+rows = [struct.pack(">HH", 0, 1), struct.pack(">HH", 0x1234, 0xFFFF)]
+(fixtures / "gray16.png").write_bytes(
+    b"\x89PNG\r\n\x1a\n"
+    + chunk(b"IHDR", struct.pack(">IIBBBBB", 2, 2, 16, 0, 0, 0, 0))
+    + chunk(b"IDAT", zlib.compress(b"".join(b"\0" + row for row in rows)))
+    + chunk(b"IEND", b""))
 ```
 
 `test/fixtures/gray.jpg` contains two grayscale pixels with value 128. It was
