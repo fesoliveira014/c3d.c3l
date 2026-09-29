@@ -181,6 +181,9 @@ scene.get(ground, PhysicsBody).mark_changed();
 - A revision whose map fails the checks, or whose side differs from the accepted side, is rejected: `update`
   returns the fault, keeps the old bounds and hides the terrain (batch count 0) until a conforming revision,
   which rebuilds everything.
+- `TerrainRuntime.last_refresh` keeps the last accepted refresh until the next one: the height-map revisions
+  before and after it and the rectangle it covered, the whole map unless it took a `mark_dirty` rectangle. A
+  rejected revision leaves it. Consumers that follow the ground, such as [vegetation](vegetation.md), read it.
 
 ## Removal
 

@@ -27,7 +27,7 @@ Entry point for every agent session in this repository. Read it fully before rea
 | c3d_character.c3l | `c3d::character` | Applications select it explicitly; it imports the standard library, `c3d` and `c3d::physics`, and `c3d::nav` under `C3D_CHARACTER_NAV` |
 | c3d_physics_gui.c3l | physics additions to `c3d::gui` | Applications select it explicitly; it imports the standard library, `c3d`, `c3d::physics` and `imgui`, and `c3d::character` only under `C3D_PHYSICS_GUI_CHARACTER` |
 | c3d_job.c3l | `c3d::job` | Applications select it explicitly; it imports the standard library and `c3d` |
-| c3d_landscape.c3l | `c3d::landscape`, `c3d::landscape::terrain` | Applications select it explicitly; it imports the standard library and `c3d` |
+| c3d_landscape.c3l | `c3d::landscape`, `c3d::landscape::terrain`, `c3d::landscape::foliage` | Applications select it explicitly; it imports the standard library and `c3d` |
 
 Boundaries are checked at review. No dependency is added without updating this table.
 
@@ -43,7 +43,7 @@ The `addons/c3d_physics_gui.c3l` package is the physics inspector: under `C3D_PH
 
 The `addons/c3d_job.c3l` package owns the fork-join job pool: a fixed set of worker threads running a function over index ranges, with inline execution at zero workers. Its `c3d::job` module imports the standard library and core (`c3d`), never `gpu`, `sdl`, `imgui`, `b3` or another add-on. Core never imports it and carries no job feature flag; selecting the library is the gate. The package owns its `project.json`, `job_test` target and `job_bench` example.
 
-The `addons/c3d_landscape.c3l` package owns height-field terrain: the `Terrain` component over an `R16_UINT` height map, drawn as the node's own instanced batch of quadtree chunks through a custom material, with CPU height queries on the physics height-field convention. Its root module `c3d::landscape` holds only the generated constants of its shader package; `c3d::landscape::terrain` imports the standard library and core (`c3d`), never `gpu`, `sdl`, `imgui`, `b3`, `c3d::shader`, `c3d::render` or another add-on. Core never imports it and carries no terrain feature flag; selecting the library is the gate. The package owns its `project.json`, `landscape_test` target (which selects `c3d_physics` for the height equality test), the manual `test/gpu` acceptance project and the `terrain` and `vegetation` examples.
+The `addons/c3d_landscape.c3l` package owns height-field terrain: the `Terrain` component over an `R16_UINT` height map, drawn as the node's own instanced batch of quadtree chunks through a custom material, with CPU height queries on the physics height-field convention. Its root module `c3d::landscape` holds only the generated constants of its shader package; `c3d::landscape::terrain` imports the standard library and core (`c3d`), never `gpu`, `sdl`, `imgui`, `b3`, `c3d::shader`, `c3d::render` or another add-on. It also owns vegetation: `c3d::landscape::foliage` scatters one geometry and material per `Foliage` layer over a terrain node into per-cell instanced batches drawn with core sway and fade, and imports the standard library, core and `c3d::landscape::terrain`, never `gpu`, `sdl`, `imgui`, `b3`, `c3d::shader`, `c3d::render` or another add-on. Core never imports it and carries no terrain feature flag; selecting the library is the gate. The package owns its `project.json`, `landscape_test` target (which selects `c3d_physics` for the height equality test), the manual `test/gpu` acceptance project and the `terrain` and `vegetation` examples.
 
 # 2. Where truth lives
 
@@ -200,7 +200,7 @@ c3d.c3l/
 ├── addons/c3d_character.c3l/ capsule character controller on the physics mover primitives, crowd binding under C3D_CHARACTER_NAV; owns its tests and examples
 ├── addons/c3d_physics_gui.c3l/ physics inspector panel and component inspectors, characters under C3D_PHYSICS_GUI_CHARACTER; owns its tests and examples
 ├── addons/c3d_job.c3l/     fork-join job pool over index ranges; owns its tests and benchmark example
-├── addons/c3d_landscape.c3l/ height-field terrain, its shader package, tests and example
+├── addons/c3d_landscape.c3l/ height-field terrain and vegetation, its shader package, tests and examples
 │                           an add-on that ships GLSL keeps shaders/shaders.json, its sources and shaders/include/<name>/ under its own shaders/, and a generated, committed src/shaders.c3
 ├── abi/c3d.abi             shared C3 and GLSL layouts
 ├── docs/style.md           mandatory style baseline
