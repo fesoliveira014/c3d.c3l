@@ -37,6 +37,26 @@
         "ufbx",
         "shaderc"
       ]
+    },
+    "terrain": {
+      "type": "executable",
+      "sources": [ "examples/terrain.c3" ],
+      "dependencies": [
+        "c3d_landscape",
+        "c3d_physics",
+        "c3d",
+        "gpu",
+        "vk",
+        "vma",
+        "spvreflect",
+        "sdl3",
+        "c3imgui",
+        "c3cg",
+        "b3",
+        "cgltf",
+        "ufbx",
+        "shaderc"
+      ]
     }
   }
 }
