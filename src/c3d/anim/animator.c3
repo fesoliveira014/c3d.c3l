@@ -172,11 +172,11 @@ fn void advance(Animator* animator, AssetStore* assets, float dt) @local {
             if (math::abs(remaining) <= step) {
                 action.weight = action.fade_target;
                 action.fade_rate = 0;
-                if (action.fade_target == 0) remove_action(animator, index - 1);
             } else {
                 action.weight += remaining < 0 ? -step : step;
             }
         }
+        if (action.fade_target == 0 && action.weight == 0) remove_action(animator, index - 1);
     }
 }
 
