@@ -4,15 +4,16 @@ import c3d;
 import c3d::shader;
 
 const char[4] SPIRV_MAGIC_BYTES = { 0x03, 0x02, 0x23, 0x07 };
-const usz SPIRV_HEADER_WORDS @local = 5;
-const uint SPIRV_OP_EXTENSION @local = 10;                            // OpExtension
-const uint SPIRV_OP_CAPABILITY @local = 17;                           // OpCapability
-const uint SPIRV_CAPABILITY_RAY_QUERY_PROVISIONAL @local = 4471;      // RayQueryProvisionalKHR
-const uint SPIRV_CAPABILITY_RAY_QUERY @local = 4472;                  // RayQueryKHR
-const uint SPIRV_CAPABILITY_RAY_TRAVERSAL_CULLING @local = 4478;      // RayTraversalPrimitiveCullingKHR
-const uint SPIRV_CAPABILITY_RAY_TRACING @local = 4479;                // RayTracingKHR
+const usz SPIRV_HEADER_WORDS @private = 5;
+const uint SPIRV_OP_NAME @private = 5;                                // OpName
+const uint SPIRV_OP_EXTENSION @private = 10;                          // OpExtension
+const uint SPIRV_OP_CAPABILITY @private = 17;                         // OpCapability
+const uint SPIRV_CAPABILITY_RAY_QUERY_PROVISIONAL @private = 4471;    // RayQueryProvisionalKHR
+const uint SPIRV_CAPABILITY_RAY_QUERY @private = 4472;                // RayQueryKHR
+const uint SPIRV_CAPABILITY_RAY_TRAVERSAL_CULLING @private = 4478;    // RayTraversalPrimitiveCullingKHR
+const uint SPIRV_CAPABILITY_RAY_TRACING @private = 4479;              // RayTracingKHR
 
-struct SpirvFeatures @local {
+struct SpirvFeatures @private {
     bool ray_capability;
     bool ray_query_capability;
     bool ray_extension;
@@ -58,12 +59,12 @@ fn void test_every_include_is_named_once() @test {
     assert(has_abi && has_heap);
 }
 
-fn uint spirv_word(char[] spirv, usz word) @local {
+fn uint spirv_word(char[] spirv, usz word) @private {
     usz byte = word * 4;
     return (uint)spirv[byte] | (uint)spirv[byte + 1] << 8 | (uint)spirv[byte + 2] << 16 | (uint)spirv[byte + 3] << 24;
 }
 
-fn SpirvFeatures spirv_ray_features(char[] spirv) @local {
+fn SpirvFeatures spirv_ray_features(char[] spirv) @private {
     SpirvFeatures features;
     usz word_count = spirv.len / 4;
     usz word = SPIRV_HEADER_WORDS;
@@ -119,6 +120,39 @@ fn void test_software_trace_variants_declare_no_ray_capability() @test {
         software_count++;
     }
     assert(software_count == 7);
+}
+
+// glslang names a function by its signature, so the name up to the parenthesis is the function.
+fn bool spirv_names_function(char[] spirv, String function) @local {
+    usz word_count = spirv.len / 4;
+    usz word = SPIRV_HEADER_WORDS;
+    while (word < word_count) {
+        uint instruction = spirv_word(spirv, word);
+        uint length = instruction >> 16;
+        if ((instruction & 0xFFFF) == SPIRV_OP_NAME) {
+            String name = ((ZString)&spirv[(word + 2) * 4]).str_view();
+            if (name.len > function.len && name[function.len] == '(' && name.starts_with(function)) return true;
+        }
+        word += length;
+    }
+    return false;
+}
+
+fn void test_builtin_standard_shades_through_the_public_include() @test {
+    usz standard_count;
+    usz resolve_count;
+    foreach (&entry : shader::SHADER_ENTRIES) {
+        if (entry.variant.shader == ShaderName.STANDARD) {
+            assert(spirv_names_function(entry.spirv, "shade_standard_surface"));
+            standard_count++;
+        }
+        if (entry.variant.shader == ShaderName.LIGHTING_RESOLVE) {
+            assert(spirv_names_function(entry.spirv, "evaluate_standard_lights"));
+            assert(spirv_names_function(entry.spirv, "standard_ambient_fill"));
+            resolve_count++;
+        }
+    }
+    assert(standard_count > 0 && resolve_count > 0);
 }
 
 module c3d::test::shader_compile @feat(C3D_SHADER_COMPILER);

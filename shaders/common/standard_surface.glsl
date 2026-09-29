@@ -4,6 +4,7 @@
 #include "descriptor_heap.glsl"
 #include "material_maps.glsl"
 #include "normal_mapping.glsl"
+#include "vertex_pull.glsl"
 
 struct StandardMaterialSample {
     vec4 base_color;

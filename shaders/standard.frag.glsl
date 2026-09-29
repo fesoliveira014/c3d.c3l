@@ -3,18 +3,8 @@
 #include "c3d_abi.glsl"
 #include "descriptor_heap.glsl"
 #include "vertex_pull.glsl"
-#include "standard_surface.glsl"
-#include "brdf.glsl"
-#include "ibl.glsl"
-#include "lights.glsl"
 #include "material_alpha.glsl"
-#ifdef RT_SHADOWS
-#ifndef SCENE_TRACE_BVH
-#define SCENE_TRACE_RAY_QUERY
-#endif
-#include "scene_trace.glsl"
-#endif
-#include "shadows.glsl"
+#include "standard_shading.glsl"
 
 layout(location = 0) in vec3 v_world_pos;
 layout(location = 1) in vec3 v_normal;
@@ -52,45 +42,6 @@ void main() {
     if ((material.flags & MATERIAL_ALPHA_MASK) != 0u
         && material_sample.base_color.a < material.alpha_cutoff) discard;
 
-    StandardSurface surface = prepare_standard_surface(
-        material_sample.base_color.rgb,
-        material_sample.metallic,
-        material_sample.roughness,
-        material_sample.normal,
-        material_sample.view_direction
-    );
-    float ambient_occlusion = draw_ambient_occlusion(frame, draw.flags, ivec2(gl_FragCoord.xy));
-    vec4 screen_indirect = draw_screen_space_indirect(frame, draw.flags, ivec2(gl_FragCoord.xy));
-    vec3 color = frame.ambient.rgb * material_sample.base_color.rgb * (1.0 - material_sample.metallic)
-        * screen_space_base_share(material_sample.occlusion, ambient_occlusion, screen_indirect)
-        + material_sample.emissive;
-    if (frame_has_indirect(frame)) {
-        color += evaluate_environment(
-            frame,
-            v_world_pos,
-            surface,
-            material_sample.roughness,
-            material_sample.occlusion,
-            ambient_occlusion,
-            screen_indirect
-        );
-    }
-    float view_depth = -(frame.view * vec4(v_world_pos, 1.0)).z;
-    LightList lights = select_lights(frame, v_world_pos, view_depth);
-    for (uint index = 0u; index < lights.count; index++) {
-        LightGpu light = LightArray(frame.lights).values[selected_light_index(frame, lights, index)];
-        if ((draw.layers & light.layers) == 0u) continue;
-        float visibility = 1.0;
-        if ((draw.flags & DRAW_RECEIVE_SHADOW) != 0u && light_casts_shadow(light)) {
-            visibility = shadow_visibility(
-                frame,
-                light,
-                v_world_pos,
-                material_sample.offset_normal,
-                view_depth
-            );
-        }
-        color += visibility * evaluate_standard_light(light, v_world_pos, surface);
-    }
+    vec3 color = shade_standard_surface(frame, draw, material_sample, 1.0, v_world_pos, ivec2(gl_FragCoord.xy));
     out_color = material_output(color, material_sample.base_color.a, material.flags);
 }

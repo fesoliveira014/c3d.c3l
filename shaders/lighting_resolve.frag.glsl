@@ -5,13 +5,8 @@
 #include "brdf.glsl"
 #include "ibl.glsl"
 #include "lights.glsl"
-#ifdef RT_SHADOWS
-#ifndef SCENE_TRACE_BVH
-#define SCENE_TRACE_RAY_QUERY
-#endif
-#include "scene_trace.glsl"
-#endif
 #include "shadows.glsl"
+#include "standard_shading.glsl"
 #include "gbuffer.glsl"
 #include "texture_fetch.glsl"
 
@@ -58,8 +53,7 @@ void main() {
 
     float ambient_occlusion = frame_ambient_occlusion(frame, texel);
     vec4 screen_indirect = frame_screen_space_indirect(frame, texel);
-    vec3 color = frame.ambient.rgb * base_color * (1.0 - metallic)
-        * screen_space_base_share(occlusion, ambient_occlusion, screen_indirect)
+    vec3 color = standard_ambient_fill(frame, base_color, metallic, occlusion, ambient_occlusion, screen_indirect)
         + emissive_specular.rgb;
     vec3 diffuse = vec3(0.0);
     vec3 specular = vec3(0.0);
@@ -88,16 +82,13 @@ void main() {
         }
     }
     color += diffuse + specular;
-    float view_depth = -(frame.view * vec4(world_position, 1.0)).z;
-    LightList lights = select_lights(frame, world_position, view_depth);
-    for (uint index = 0u; index < lights.count; index++) {
-        LightGpu light = LightArray(frame.lights).values[selected_light_index(frame, lights, index)];
-        if ((layers & light.layers) == 0u) continue;
-        float visibility = 1.0;
-        if ((flags & GBUFFER_FLAG_RECEIVE_SHADOW) != 0u && light_casts_shadow(light)) {
-            visibility = shadow_visibility(frame, light, world_position, normal, view_depth);
-        }
-        color += visibility * evaluate_standard_light(light, world_position, surface);
-    }
+    color += evaluate_standard_lights(
+        frame,
+        surface,
+        world_position,
+        normal,
+        layers,
+        (flags & GBUFFER_FLAG_RECEIVE_SHADOW) != 0u
+    );
     out_color = vec4(color, 1.0);
 }
