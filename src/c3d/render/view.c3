@@ -220,6 +220,7 @@ fn void? record_raster_view(
             renderer.stats.culled += counts.culled;
             renderer.stats.dangling_refs += counts.dangling;
         };
+
         InstanceEffectsView effects_view = {
             .scene       = scene,
             .history     = temporal ? &record.history : null,
