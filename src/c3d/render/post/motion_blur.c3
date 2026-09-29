@@ -323,9 +323,15 @@ fn Vec3 camera_velocity(
     if (depth == 0 && orthographic) return {};
     Vec2 ndc = (uv * 2 - 1) * (Vec2){ 1, -1 };
     Vec4 world = inv_view_proj * (Vec4){ ndc.x, ndc.y, depth, 1 };
-    Vec4 previous = depth > 0
-      ? prev_view_proj * (Vec4){ world.x / world.w, world.y / world.w, world.z / world.w, 1 }
-      : prev_view_proj * (Vec4){ world.x, world.y, world.z, 0 };
+    Vec4 previous;
+    if (depth > 0) {
+        previous = prev_view_proj * (Vec4){ world.x / world.w, world.y / world.w, world.z / world.w, 1 };
+    } else {
+        // A finite far plane unprojects depth 0 to a point; the ray from the near plane to it is the direction.
+        Vec4 near_point = inv_view_proj * (Vec4){ ndc.x, ndc.y, 1, 1 };
+        Vec3 direction = world.xyz - near_point.xyz * (world.w / near_point.w);
+        previous = prev_view_proj * (Vec4){ direction.x, direction.y, direction.z, 0 };
+    }
     Vec2 previous_uv = (Vec2){ previous.x / previous.w, previous.y / previous.w } * (Vec2){ 0.5f, -0.5f } + 0.5f;
     float previous_depth = depth > 0 ? previous.z / previous.w : 0;
     Vec2 motion = uv - jitter_offset - previous_uv;

@@ -23,9 +23,15 @@ void main() {
     }
     vec2 ndc = (v_uv * 2.0 - 1.0) * vec2(1.0, -1.0);
     vec4 world = root.inv_view_proj * vec4(ndc, depth, 1.0);
-    vec4 previous = depth > 0.0
-        ? root.prev_view_proj * vec4(world.xyz / world.w, 1.0)
-        : root.prev_view_proj * vec4(world.xyz, 0.0);
+    vec4 previous;
+    if (depth > 0.0) {
+        previous = root.prev_view_proj * vec4(world.xyz / world.w, 1.0);
+    } else {
+        // A finite far plane unprojects depth 0 to a point; the ray from the near plane to it is the direction.
+        vec4 near_point = root.inv_view_proj * vec4(ndc, 1.0, 1.0);
+        vec3 direction = world.xyz - near_point.xyz * (world.w / near_point.w);
+        previous = root.prev_view_proj * vec4(direction, 0.0);
+    }
     vec2 previous_uv = (previous.xy / previous.w) * vec2(0.5, -0.5) + 0.5;
     // A direction keeps -m22 as its depth under a finite far plane; the stored depth of no geometry is 0.
     float previous_depth = depth > 0.0 ? previous.z / previous.w : 0.0;

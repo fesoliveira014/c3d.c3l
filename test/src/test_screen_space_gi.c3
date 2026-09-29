@@ -11,6 +11,10 @@ const float TOLERANCE @local = 0.05f;
 const float THRESHOLD @local = 2;
 const Vec2 VIEWPORT @local = { 800, 600 };
 const float DISTANCE @local = 5;
+const Vec3 CAMERA_OFF_ORIGIN @local = { 0, 0, 3 }; // a far-plane point and its ray differ by the camera position
+const float FINITE_FAR @local = 100;
+const float TURN_DEGREES @local = 2;
+const Vec2 BACKGROUND_UV @local = { 0.2f, 0.3f }; // off the view axis, which the camera position lies on
 
 fn bool close(float first, float second, float tolerance = EPSILON) @local {
     return math::abs(first - second) <= tolerance;
@@ -19,6 +23,21 @@ fn bool close(float first, float second, float tolerance = EPSILON) @local {
 fn CameraMatrices camera_at(Vec3 position) @local {
     Transform pose = { .position = position, .rotation = quaternion::IDENTITY, .scale = { 1, 1, 1 } };
     return camera::derive_matrices(camera::perspective_deg(60, 0.1f), pose.to_mat4(), VIEWPORT);
+}
+
+fn Vec3 background_velocity(Camera lens, float turn_degrees) @local {
+    Transform pose = { .position = CAMERA_OFF_ORIGIN, .rotation = quaternion::IDENTITY, .scale = { 1, 1, 1 } };
+    CameraMatrices previous = camera::derive_matrices(lens, pose.to_mat4(), VIEWPORT);
+    pose.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, math::deg_to_rad(turn_degrees));
+    CameraMatrices current = camera::derive_matrices(lens, pose.to_mat4(), VIEWPORT);
+    return post::camera_velocity(
+        uv:             BACKGROUND_UV,
+        depth:          0,
+        inv_view_proj:  current.inv_view_proj,
+        prev_view_proj: previous.view_proj,
+        jitter_offset:  {},
+        orthographic:   false,
+    );
 }
 
 fn Vec3 uv_depth_of(Mat4 view_proj, Vec3 point) @local {
@@ -143,6 +162,16 @@ fn void test_camera_velocity_reprojects_a_still_texel_onto_itself() @test {
     assert(close(motion.x, -0.5f * matrices.proj.m00 / DISTANCE, 1e-4f));
     assert(close(motion.y, 0, 1e-4f));
     assert(close(motion.z, moved_texel.z, 1e-4f));
+}
+
+fn void test_camera_velocity_of_background_ignores_a_finite_far_plane() @test {
+    Camera finite = camera::perspective_deg(60, 0.1f, FINITE_FAR);
+    Vec3 still = background_velocity(finite, 0);
+    assert(close(still.x, 0) && close(still.y, 0));
+
+    Vec3 turned = background_velocity(finite, TURN_DEGREES);
+    Vec3 expected = background_velocity(camera::perspective_deg(60, 0.1f), TURN_DEGREES);
+    assert(close(turned.x, expected.x) && close(turned.y, expected.y));
 }
 
 fn void test_screen_space_composite_bounds_the_base() @test {
