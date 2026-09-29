@@ -55,29 +55,34 @@ fn bool instanced_mesh_is_live(AssetStore* assets, InstancedMesh* batch) {
 }
 
 <*
- World bound of the batch's live instances.
+ World bound of the batch's live instances, grown by the sway reach.
  Writes the kept node-local batch.aggregate when its identity is stale; observable scene state does not change.
  @param [&in] assets : "Resolves the live geometry record."
  @param [&in] node : "World matrix as left by the last update_world."
  @param [&inout] batch : "Live geometry id and live count above zero."
 *>
 fn Aabb instanced_world_bounds(AssetStore* assets, Node* node, InstancedMesh* batch) {
-    if (batch.has_bounds_override) return maths::aabb_transform(batch.local_bounds, node.world);
+    Aabb local = batch.has_bounds_override ? batch.local_bounds : kept_instance_bounds(assets, batch);
+    Aabb world = maths::aabb_transform(local, node.world);
+    Vec3 reach = batch.sway.reach();
+    return { .min = world.min - reach, .max = world.max + reach };
+}
+
+fn Aabb kept_instance_bounds(AssetStore* assets, InstancedMesh* batch) @local {
     GeometryAsset* record = assets.geometry(batch.geometry);
     InstanceAggregate* aggregate = &batch.aggregate;
     bool current = aggregate.bounds_revision == batch.revision && c3d::same_id(aggregate.geometry, batch.geometry)
       && aggregate.geometry_revision == record.header.revision;
-    if (!current) {
-        Aabb local = record.data.bounds;
-        aggregate.bounds = maths::aabb_transform(local, batch.transforms[0].to_mat4());
-        foreach (transform : batch.transforms[1:batch.count - 1]) {
-            aggregate.bounds = maths::aabb_merge(aggregate.bounds, maths::aabb_transform(local, transform.to_mat4()));
-        }
-        aggregate.geometry = batch.geometry;
-        aggregate.geometry_revision = record.header.revision;
-        aggregate.bounds_revision = batch.revision;
+    if (current) return aggregate.bounds;
+    Aabb local = record.data.bounds;
+    aggregate.bounds = maths::aabb_transform(local, batch.transforms[0].to_mat4());
+    foreach (transform : batch.transforms[1:batch.count - 1]) {
+        aggregate.bounds = maths::aabb_merge(aggregate.bounds, maths::aabb_transform(local, transform.to_mat4()));
     }
-    return maths::aabb_transform(aggregate.bounds, node.world);
+    aggregate.geometry = batch.geometry;
+    aggregate.geometry_revision = record.header.revision;
+    aggregate.bounds_revision = batch.revision;
+    return aggregate.bounds;
 }
 
 <*
