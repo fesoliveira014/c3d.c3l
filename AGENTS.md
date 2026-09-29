@@ -27,6 +27,7 @@ Entry point for every agent session in this repository. Read it fully before rea
 | c3d_character.c3l | `c3d::character` | Applications select it explicitly; it imports the standard library, `c3d` and `c3d::physics`, and `c3d::nav` under `C3D_CHARACTER_NAV` |
 | c3d_physics_gui.c3l | physics additions to `c3d::gui` | Applications select it explicitly; it imports the standard library, `c3d`, `c3d::physics` and `imgui`, and `c3d::character` only under `C3D_PHYSICS_GUI_CHARACTER` |
 | c3d_job.c3l | `c3d::job` | Applications select it explicitly; it imports the standard library and `c3d` |
+| c3d_landscape.c3l | `c3d::landscape`, `c3d::landscape::terrain` | Applications select it explicitly; it imports the standard library and `c3d` |
 
 Boundaries are checked at review. No dependency is added without updating this table.
 
@@ -41,6 +42,8 @@ The `addons/c3d_character.c3l` package owns the kinematic capsule character cont
 The `addons/c3d_physics_gui.c3l` package is the physics inspector: under `C3D_PHYSICS_GUI` it extends `c3d::gui` with the physics panel (world tuning, pause and step, counters, step profile, debug-draw flags, bodies, the selected node, events, queries, recording and replay) and the inspectors of the physics components. It imports the standard library, core (`c3d`), `c3d::physics` and `imgui`, never `b3`, `gpu` or `sdl`. Under `C3D_PHYSICS_GUI_CHARACTER`, `src/character/` adds the characters table, the character block and the `Character` inspector and alone imports `c3d::character`; a consumer that enables that feature also selects `c3d_character`. Its manifest names no dependency; consumers select `c3d_physics`, ImGui and the rest. Core, the physics package and the character package never import it. The package owns its `project.json`, the `physics_panel_off`, `physics_panel` and `physics_panel_character` targets and the `physics_inspector` and `physics_inspector_character` examples.
 
 The `addons/c3d_job.c3l` package owns the fork-join job pool: a fixed set of worker threads running a function over index ranges, with inline execution at zero workers. Its `c3d::job` module imports the standard library and core (`c3d`), never `gpu`, `sdl`, `imgui`, `b3` or another add-on. Core never imports it and carries no job feature flag; selecting the library is the gate. The package owns its `project.json`, `job_test` target and `job_bench` example.
+
+The `addons/c3d_landscape.c3l` package owns height-field terrain: the `Terrain` component over an `R16_UINT` height map, drawn as the node's own instanced batch of quadtree chunks through a custom material, with CPU height queries on the physics height-field convention. Its root module `c3d::landscape` holds only the generated constants of its shader package; `c3d::landscape::terrain` imports the standard library and core (`c3d`), never `gpu`, `sdl`, `imgui`, `b3`, `c3d::shader`, `c3d::render` or another add-on. Core never imports it and carries no terrain feature flag; selecting the library is the gate. The package owns its `project.json`, `landscape_test` target (which selects `c3d_physics` for the height equality test), the manual `test/gpu` acceptance project and the `terrain` example.
 
 # 2. Where truth lives
 
@@ -90,7 +93,7 @@ Steps run in this order and stop at the first failure: tools (c3c 0.8.3, glslang
 
 Before every commit: `scripts/build.py --test`. Broken builds are never committed. GPU examples run manually; CI runs `--test`. Every development run of a GPU example enables Vulkan validation through gpu.c3l.
 
-The default build also builds the collector's `capture` example, the physics package's `physics`, `physics_instanced` and `physics_components` examples, the nav package's `navmesh`, `crowd` and `grid` examples, the character package's `character` and `character_nav` examples, the physics GUI package's `physics_inspector` and `physics_inspector_character` examples, the job package's `job_bench` example, the root `profile_gpu` example and all four `profile_gui` feature targets; `--target` and `--example` resolve add-on examples to their package project. `--test` runs the collector's off, CPU, internal CPU, GPU, internal GPU, CPU+GPU and full CPU+GPU+INTERNAL targets, the presentation add-on's off, CPU, GPU and combined data targets, the physics package's `physics_test` target, the nav package's `nav_test` target, the character package's `character_test` and `character_nav_test` targets, the physics GUI package's `physics_panel_off`, `physics_panel` and `physics_panel_character` targets, the job package's `job_test` target, and the root integration targets. These tests never create a GPU device. Direct `c3c test profile_cpu --path addons/c3d_profile.c3l` exercises only the standalone collector package. Real Vulkan acceptance lives in the separately invoked `test/gpu/profile` project and the manually run profiler GUI examples; neither runs in CI.
+The default build also builds the collector's `capture` example, the physics package's `physics`, `physics_instanced` and `physics_components` examples, the nav package's `navmesh`, `crowd` and `grid` examples, the character package's `character` and `character_nav` examples, the physics GUI package's `physics_inspector` and `physics_inspector_character` examples, the job package's `job_bench` example, the landscape package's `terrain` example, the root `profile_gpu` example and all four `profile_gui` feature targets; `--target` and `--example` resolve add-on examples to their package project. `--test` runs the collector's off, CPU, internal CPU, GPU, internal GPU, CPU+GPU and full CPU+GPU+INTERNAL targets, the presentation add-on's off, CPU, GPU and combined data targets, the physics package's `physics_test` target, the nav package's `nav_test` target, the character package's `character_test` and `character_nav_test` targets, the physics GUI package's `physics_panel_off`, `physics_panel` and `physics_panel_character` targets, the job package's `job_test` target, the landscape package's `landscape_test` target, and the root integration targets. These tests never create a GPU device. Direct `c3c test profile_cpu --path addons/c3d_profile.c3l` exercises only the standalone collector package. Real Vulkan acceptance lives in the separately invoked `test/gpu/profile` project and the manually run profiler GUI examples; neither runs in CI.
 
 # 6. Style
 
@@ -177,7 +180,7 @@ Counter-example, rejected on review:
 
 # 10. Architecture rules
 
-- Two layers. Scene-layer modules (`c3d`, `c3d::maths`, `c3d::ecs`, `c3d::asset`, `c3d::scene`, `c3d::geometry`, `c3d::camera`, `c3d::material`, `c3d::light`, `c3d::anim`, `c3d::model`, `c3d::spatial`, `c3d::physics`, `c3d::nav`, `c3d::character`, `c3d::job`) never import `gpu`. The render layer (`c3d::render`, `c3d::shader`, `c3d::render::post`, `c3d::gui`) owns every GPU object. `c3d::platform` imports `gpu::surface` alone, to hand native window handles to gpu.c3l; a bare `import gpu` there is a violation.
+- Two layers. Scene-layer modules (`c3d`, `c3d::maths`, `c3d::ecs`, `c3d::asset`, `c3d::scene`, `c3d::geometry`, `c3d::camera`, `c3d::material`, `c3d::light`, `c3d::anim`, `c3d::model`, `c3d::spatial`, `c3d::physics`, `c3d::nav`, `c3d::character`, `c3d::job`, `c3d::landscape`) never import `gpu`. The render layer (`c3d::render`, `c3d::shader`, `c3d::render::post`, `c3d::gui`) owns every GPU object. `c3d::platform` imports `gpu::surface` alone, to hand native window handles to gpu.c3l; a bare `import gpu` there is a violation.
 - The renderer reads the scene; the scene never calls the renderer. Loaders write the asset store and the scene; they never touch the renderer.
 - All shader-visible data is std430 behind root pointers and defined once in `abi/c3d.abi`. Per-draw push data is exactly two root addresses.
 - Depth is reverse-Z; the Vulkan Y flip is one negative-height viewport; shaders use GL conventions and never flip.
@@ -197,12 +200,13 @@ c3d.c3l/
 ├── addons/c3d_character.c3l/ capsule character controller on the physics mover primitives, crowd binding under C3D_CHARACTER_NAV; owns its tests and examples
 ├── addons/c3d_physics_gui.c3l/ physics inspector panel and component inspectors, characters under C3D_PHYSICS_GUI_CHARACTER; owns its tests and examples
 ├── addons/c3d_job.c3l/     fork-join job pool over index ranges; owns its tests and benchmark example
+├── addons/c3d_landscape.c3l/ height-field terrain, its shader package, tests and example
 │                           an add-on that ships GLSL keeps shaders/shaders.json, its sources and shaders/include/<name>/ under its own shaders/, and a generated, committed src/shaders.c3
 ├── abi/c3d.abi             shared C3 and GLSL layouts
 ├── docs/style.md           mandatory style baseline
 ├── lib/                    gpu.c3l · sdl3.c3l · c3imgui.c3l · c3cg.c3l · box3d.c3l · cgltf.c3l · ufbx.c3l · shaderc.c3l (submodules)
 │                           plus c3d.c3l, a symlink to the root, so consumers resolve c3d here
-│                           plus c3d_profile.c3l, c3d_profile_gui.c3l, c3d_physics.c3l, c3d_nav.c3l, c3d_character.c3l, c3d_physics_gui.c3l and c3d_job.c3l symlinks to the add-ons
+│                           plus c3d_profile.c3l, c3d_profile_gui.c3l, c3d_physics.c3l, c3d_nav.c3l, c3d_character.c3l, c3d_physics_gui.c3l, c3d_job.c3l and c3d_landscape.c3l symlinks to the add-ons
 ├── linked-libs/            empty; every dependency ships its own native artifacts
 ├── csrc/                   stb_image
 ├── src/c3d/
