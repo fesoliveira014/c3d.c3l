@@ -13,7 +13,7 @@ ShaderDesc desc = {
 ShaderId shader = assets.add_shader(&desc, "pulse")!;
 ```
 
-Every byte array is copied. `fragment` is required. `vertex` is optional; when present both forms are required: `shaded` for the forward pass and `depth` for the shadow atlas, so a deformation is applied to the caster too. `instanced_shaded` and `instanced_depth` are the same pair compiled with `INSTANCED`, for [instanced batches](instancing.md); they are optional and need the plain pair. `traced_fragment.hardware` and `traced_fragment.software` are the forward stage compiled for views that trace shadows ([traced shadows](#traced-shadows)); either may be empty or supplied alone, and neither is validated. `add_shader` and `replace_shader` fault `INVALID_ARGUMENT` on an empty fragment, a half pair, or a `gbuffer` stage with nonzero [`scene_reads`](#scene-reads). `param_block_size` is the byte size of the payload the shader reads; zero means none, and a shader whose size is zero must not read `parameters` (the address is zero).
+Every byte array is copied. `fragment` is required. `vertex` is optional; when present both forms are required: `shaded` for the forward pass and `depth` for the shadow atlas, so a deformation is applied to the caster too. `instanced_shaded` and `instanced_depth` are the same pair compiled with `INSTANCED`, for [instanced batches](instancing.md); they are optional and need the plain pair. `velocity` is the source compiled with `VELOCITY` and `instanced_velocity` the source compiled with `VELOCITY` and `INSTANCED`, for the [velocity pass](#velocity-form); both are optional, `velocity` needs the plain pair, and `instanced_velocity` needs the instanced pair and `velocity`. `traced_fragment.hardware` and `traced_fragment.software` are the forward stage compiled for views that trace shadows ([traced shadows](#traced-shadows)); either may be empty or supplied alone, and neither is validated. `add_shader` and `replace_shader` fault `INVALID_ARGUMENT` on an empty fragment, a half pair, an instanced or velocity form without the forms it needs, or a `gbuffer` stage with nonzero [`scene_reads`](#scene-reads). `param_block_size` is the byte size of the payload the shader reads; zero means none, and a shader whose size is zero must not read `parameters` (the address is zero).
 
 The SPIR-V can come from anywhere: `$embed`ed `.spv` files, a build step, or the in-process compiler below.
 
@@ -273,7 +273,7 @@ available display holds it.
 
 ## Vertex contract
 
-A custom vertex stage includes `mesh_vertex.glsl`, which declares the push block, the seven outputs and three helpers, and applies its own displacement between pulling and writing:
+A custom vertex stage includes `mesh_vertex.glsl`, which declares the push block, the seven outputs and the helpers `pull_mesh_vertex`, `apply_mesh_deformation` and `write_mesh_outputs` (a [velocity form](#velocity-form) also calls `previous_mesh_position` and the five-argument `write_mesh_outputs`), and applies its own displacement between pulling and writing:
 
 ```glsl
 #version 460
@@ -303,13 +303,40 @@ Limits of a custom vertex stage:
 
 - It has one compiled form per pass. The renderer does not select `SKINNED`, `SKINNED_U16` or `MORPH` forms of user SPIR-V; compile with the defines that match the geometry when `apply_mesh_deformation` should skin or morph, or leave them out for rigid meshes. `DrawRoot.skin` and `DrawRoot.morph` are written either way.
 - A crowd part (see [Instancing](instancing.md)) draws through the instanced pair. Compiled with `INSTANCED` and the deformation defines, `apply_mesh_deformation` reads each instance's palette at `DrawRoot.skin_stride` joints per instance and its own morph block; compiled without them, the crowd draws at the bind pose.
-- Velocity uses the built-in `mesh` vertex variant, so motion blur and TAA see the undeformed mesh.
+- The velocity pass draws the velocity form when the shader supplies one for the draw; those items are redrawn on every rendering with history. Without it, velocity uses the built-in `mesh` variant and sees the undisplaced mesh.
 - Built-in materials sample with `FrameRoot.mip_bias` on TAA views; a custom fragment opts in with
   `sample_custom_map(material, slot, uv0, uv1, frame.mip_bias)`. The depth prepass cuts custom
   alpha coverage unbiased, so a masked custom material keeps the unbiased sample for its alpha:
   a biased one cuts different coverage than the prepass tests `EQUAL` against.
 - A displaced mesh needs an authored `Mesh.local_bounds` override when the displacement can leave the geometry bounds; culling and shadow fitting use bounds, not vertices. A displaced batch sets `InstancedMesh.local_bounds` with `has_bounds_override`; its instances are then not culled one by one.
 - A displacement that changes the surface orientation must adjust `vertex.normal` and `vertex.tangent` itself; the pulse example is a uniform translation and leaves them alone.
+
+### Velocity form
+
+Motion blur, TAA and screen-space GI read the view's velocity image. Its geometry pass redraws each moved item with depth test `EQUAL` and no depth write. A custom vertex stage makes its own displacement visible there through a velocity form: `velocity` for meshes and `instanced_velocity` for batches, the same source compiled with `VELOCITY` (and `INSTANCED`). The pulse example's body:
+
+```glsl
+    MeshVertexInput vertex = pull_mesh_vertex(geometry, index);
+    apply_mesh_deformation(vertex, draw, geometry, index);
+    PulseParams params = PulseParams(material.parameters);
+    vertex.position = pulse_position(vertex.position, frame.jitter_time.z, params.motion);
+#ifdef VELOCITY
+    vec3 previous = pulse_position(previous_mesh_position(draw, geometry, index), frame.previous_time, params.motion);
+    write_mesh_outputs(vertex, previous, draw, frame, geometry);
+#else
+    write_mesh_outputs(vertex, draw, frame, geometry);
+#endif
+```
+
+- `previous_mesh_position(draw, geometry, index)` exists only under `VELOCITY`: the object-space position under the skin and morph the view drew last time.
+- `write_mesh_outputs(vertex, previous_position, draw, frame, geometry)` takes the previous object-space position with the stage's displacement applied; every other form ignores it. The four-argument call passes `previous_mesh_position` in a velocity form, so a velocity form that ends in it sees the undisplaced previous position.
+- `FrameRoot.previous_time` is the `FrameInfo.time` of the view's last rendering, narrowed to float like `jitter_time.z`. It equals `jitter_time.z` on a view's first rendering, after `render::reset_view_history`, `configure_view`, a resize or an aborted frame, on a view without motion blur, TAA or screen-space GI, and in shadow, path-traced and probe roots. Any stage may read it; it is meaningful in velocity forms.
+- A velocity form computes its current position exactly as its depth form does, with the same source and expressions and only `VELOCITY` added: the pass tests `EQUAL` against the depth the depth or shaded form wrote.
+- A velocity stage that does not include `mesh_vertex.glsl` declares the 16-byte push block and writes `gl_Position`, identical to its depth form's; location 6 `vec4 v_clip_pos`, `gl_Position` with `xy -= frame.jitter_time.xy * gl_Position.w`; and location 7 `vec4 v_prev_clip_pos`, `frame.prev_view_proj * previous_world` with `previous = vec4(previous_local, 1.0)` and `previous_world` `draw.prev_model * previous` for a plain form. For an instanced form, with `model` the current instance matrix, `previous_world` is `PreviousInstanceArray(PreviousPoseGpu(draw.previous_pose).instances).values[instance_source(draw)] * previous` when that address is non-zero and `draw.prev_model * (model * previous)` otherwise.
+- An item whose shader has the velocity form for its draw is redrawn on every rendering whose view has its node in history, also at a still node; at frozen time and rest its velocity equals the camera velocity.
+- The previous displacement uses the current material parameters at the previous time, so a parameter edit shows no motion of its own.
+- Call `render::reset_view_history` after a jump in `FrameInfo.time` (a seek, a loaded save), as after a camera cut.
+- `jitter_time.z` and `previous_time` are floats: from 65,536 s (about 18 h) each rounds to within 1/256 s and their difference is off by up to 1/128 s, up to about half of a 60 Hz step. An application that runs that long wraps its time and calls `render::reset_view_history` at the wrap, which is itself a time jump.
 
 ## In-process compilation
 
@@ -433,7 +460,7 @@ if (catch excuse = renderer.upload(shader)) { /* SHADER_INVALID or PIPELINE_CREA
 
 `replace_shader` copies the new stages and advances the revision. The renderer notices the moved revision at the next frame that draws the material, or immediately through `Renderer.upload(shader)`: every pipeline built from the old revision is rebuilt from the new stages first; on total success the new set is published and the old handles are retired after the frames that may reference them complete; on a backend rejection nothing is published, the previous pipelines and payload keep drawing, gpu.c3l's diagnostic lands in the renderer's `DebugLog` and on stderr, and `Stats.shader_rejections` counts it. Neither a rejected replacement nor a rejected configuration is retried until the shader is replaced again; `upload` returns the fault. Repeated use of one revision and configuration reuses its pipeline; a new configuration (a wireframe toggle, a shadow caster) adds one entry.
 
-A configuration that fails on first use (a forward pipeline, or a shadow caster's depth form) skips those draws until the shader is replaced; other configurations of the same shader keep drawing.
+A configuration that fails on first use (a forward pipeline, a shadow caster's depth form, or a velocity form, whose velocity draw is skipped while the camera velocity stands) skips those draws until the shader is replaced; other configurations of the same shader keep drawing.
 
 ## Compute dispatch
 
@@ -530,7 +557,7 @@ Compute pipelines share the pipeline cache and the reload behavior of custom mat
 
 ## Example
 
-`examples/custom_shader` keeps `tint.frag.glsl`, `pulse.vert.glsl` and `pulse.frag.glsl` under `examples/shaders/custom/`, compiles them in process at startup, and every half second compares the files' modification times with the ones it last saw; a change, or R, recompiles and replaces the shader, printing the compiler log or the rejection fault. P pauses the pulse through `@custom_params`. Editing `pulse.frag.glsl` so its push block does not match (add a member to `Push`) demonstrates the rejection: the console shows the `SHADER_INVALID` diagnostic, the stats panel counts a rejection, and the box keeps drawing with the previous shader until the file is fixed.
+`examples/custom_shader` keeps `tint.frag.glsl`, `pulse.vert.glsl` and `pulse.frag.glsl` under `examples/shaders/custom/`, compiles them in process at startup, and every half second compares the files' modification times with the ones it last saw; a change, or R, recompiles and replaces the shader, printing the compiler log or the rejection fault. P pauses the pulse through `@custom_params`. The pulse shader supplies a velocity form: M toggles motion blur, V toggles TAA with the velocity view (`TaaDebug.VELOCITY`), and N drops or restores the velocity form and reloads the shader. With V and a still camera the pulsing box's green channel swings above and below neutral at the pulse rate while the tint sphere and the floor stay neutral grey; after N the box is neutral too. With M and a still camera the box's top and bottom edges blur along the pulse; without the form they stay sharp. Editing `pulse.frag.glsl` so its push block does not match (add a member to `Push`) demonstrates the rejection: the console shows the `SHADER_INVALID` diagnostic, the stats panel counts a rejection, and the box keeps drawing with the previous shader until the file is fixed.
 
 `examples/custom_compute` advances a particle buffer with `particles.comp.glsl` every frame and draws it as camera-facing quads through a custom material whose vertex stage pulls each particle by `gl_VertexIndex / 4` from the same buffer; an `UPLOAD` buffer carries the moving emitter. The particles are a blended [scene reader](#scene-reads) of depth: each fades by `scene_depth_gap` over `softness` metres into what lies behind it, so they dissolve into the floor and the water instead of cutting through them; S switches `softness` between 0 and its default through `@set_custom_params`, and the hard intersections return. A 5 × 5 pool over the floor draws with `water.frag.glsl`, an opaque reader of color and depth: it refracts the checker floor through animated ripples, keeps the unrefracted uv where the offset sample lies in front of the surface, darkens and tints the floor by the length of the water path, and foams where the gap to the scene behind is small, around a Basic post standing in the pool. W shows or hides the pool. The stats panel shows `Scene snapshots: 3` with the pool (color and depth before the scene-read list, depth again before the particles) and `1` without it; with `--gpu-timings` the `SCENE_SNAPSHOT` and `SCENE_READ` rows appear, and `SCENE_READ` reads `N/A` while the pool is hidden. All four GLSL files are polled and reloaded like the custom shader example, Space reseeds the particles, and the stats panel shows `Dispatches: 1` and the completed custom compute time. Breaking the compute push block demonstrates the rejection: the console shows `SHADER_INVALID`, and the particles keep moving under the previous revision until the file is fixed.
 
