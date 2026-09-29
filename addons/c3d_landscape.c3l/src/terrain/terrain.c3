@@ -40,6 +40,15 @@ struct TexelRect {
 }
 
 <*
+ Height-map revisions around a terrain's last accepted refresh and the texels it covered.
+*>
+struct TerrainRefresh {
+    uint      revision_before;
+    uint      revision_after;
+    TexelRect rect;            // the whole map unless the refresh took a mark_dirty rectangle
+}
+
+<*
  Maps, scales, layers and LOD tunables of one terrain.
 *>
 struct TerrainDesc {
@@ -81,6 +90,7 @@ struct TerrainRuntime {
     bool[]                   split;            // per node: split in the last selection
     uint[MAX_TERRAIN_LEVELS] chunks_per_level; // of the last selection
     uint                     lod_switches;     // splits plus merges in the last selection
+    TerrainRefresh           last_refresh;     // kept until the next accepted refresh
 }
 
 <*
@@ -140,6 +150,11 @@ fn void? add_terrain(
     runtime.material = owned;
     runtime.revision = height_map.header.revision;
     runtime.pixels = height_map.pixels.ptr;
+    runtime.last_refresh = {
+        .revision_before = runtime.revision,
+        .revision_after  = runtime.revision,
+        .rect            = whole_map(texels),
+    };
     refresh_bounds(&runtime, height_texels(height_map), whole_map(texels));
     InstancedMesh batch = create_batch(
         allocator: scene.allocator,
@@ -249,7 +264,13 @@ fn void? refresh_changed_bounds(AssetStore* assets, TerrainDesc* desc, TerrainRu
     if (texture.desc.width != runtime.texels) return c3d::INVALID_ARGUMENT~;
     // The rectangle covers in-place writes only: new pixels or a rejected revision rebuild everything.
     bool in_place = runtime.has_pending && !runtime.rejected && texture.pixels.ptr == runtime.pixels;
-    refresh_bounds(runtime, height_texels(texture), in_place ? runtime.pending : whole_map(runtime.texels));
+    TexelRect refreshed = in_place ? runtime.pending : whole_map(runtime.texels);
+    refresh_bounds(runtime, height_texels(texture), refreshed);
+    runtime.last_refresh = {
+        .revision_before = runtime.revision,
+        .revision_after  = texture.header.revision,
+        .rect            = refreshed,
+    };
     runtime.pixels = texture.pixels.ptr;
     runtime.rejected = false;
     runtime.has_pending = false;
