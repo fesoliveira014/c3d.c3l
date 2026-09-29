@@ -40,7 +40,8 @@
         "test_probe_update.c3",
         "test_screen_space_gi.c3",
         "test_scene_reads.c3",
-        "test_custom_shading.c3"
+        "test_custom_shading.c3",
+        "test_custom_velocity.c3"
       ]
     }
   }
