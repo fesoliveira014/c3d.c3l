@@ -286,6 +286,7 @@ fn usz? run_frames(BenchmarkRun* run, BenchmarkFlags flags, FrameSample[] sample
     Renderer* renderer = run.renderer;
     renderer.prepare_scene(run.scene)!;
     usz collected;
+    float first_trace_build_ms;
     for (uint frame = 0; frame < flags.warmup + flags.frames + render::FRAMES_IN_FLIGHT; frame++) {
         if (run.window && !run.window.poll()) break;
         FrameSample sample;
@@ -298,6 +299,15 @@ fn usz? run_frames(BenchmarkRun* run, BenchmarkFlags flags, FrameSample[] sample
         $else
             record_frame(run, frame, &sample)!;
         $endif
+        if (frame == 0) first_trace_build_ms = renderer.stats.trace_build_ms;
+        // A frame's GPU timings arrive once its slot comes round again.
+        if (frame == render::FRAMES_IN_FLIGHT && first_trace_build_ms > 0) {
+            io::eprintfn(
+                "first frame: trace preparation %.3f ms CPU, acceleration build %.3f ms GPU",
+                first_trace_build_ms,
+                renderer.stats.gpu_pass_ms[Pass.ACCELERATION_BUILD.ordinal],
+            );
+        }
         if (frame >= flags.warmup + render::FRAMES_IN_FLIGHT) {
             uint completed = frame - flags.warmup - render::FRAMES_IN_FLIGHT;
             samples[completed].gpu_ms = renderer.stats.gpu_pass_ms;
