@@ -83,21 +83,28 @@ fn void test_texture_binding_matches_tracks_the_target() @test {
     assert(!render::texture_binding_matches(first, resized));
 }
 
-fn void test_view_desc_rejects_rt_shadows_without_ray_queries() @test {
+fn void test_view_desc_accepts_traced_effects_without_ray_queries() @test {
     Renderer* renderer = mem::new(Renderer);
     defer free(renderer);
     ViewDesc desc = render::default_view_desc();
+    desc.shading = ShadingPath.DEFERRED;
     desc.ray_tracing.shadows = true;
-    if (catch excuse = render::validate_view_desc(renderer, &desc)) {
-        assert(excuse == c3d::UNSUPPORTED);
-    } else {
-        assert(false);
-    }
-    renderer.caps.ray_queries.enabled = true;
+    desc.ray_tracing.reflections = true;
+    desc.ambient_occlusion = render::AMBIENT_OCCLUSION_DEFAULT;
+    desc.ambient_occlusion.kind = AoKind.RAY_TRACED;
     render::validate_view_desc(renderer, &desc)!!;
+
+    desc.shading = ShadingPath.FORWARD;
+    expect_view_desc_fault(renderer, &desc, c3d::UNSUPPORTED);
+    desc.shading = ShadingPath.DEFERRED;
+    desc.ambient_occlusion.ray_count = 0;
+    expect_view_desc_fault(renderer, &desc, c3d::INVALID_ARGUMENT);
+    desc.ambient_occlusion = render::AMBIENT_OCCLUSION_DEFAULT;
+    desc.ray_tracing.max_reflection_roughness = 1.5f;
+    expect_view_desc_fault(renderer, &desc, c3d::INVALID_ARGUMENT);
 }
 
-fn void test_view_desc_gates_ray_traced_ambient_occlusion_on_ray_queries() @test {
+fn void test_view_desc_checks_ray_traced_ambient_occlusion() @test {
     Renderer* renderer = mem::new(Renderer);
     defer free(renderer);
     ViewDesc desc = render::default_view_desc();
@@ -106,12 +113,6 @@ fn void test_view_desc_gates_ray_traced_ambient_occlusion_on_ray_queries() @test
     render::validate_view_desc(renderer, &desc)!!;
 
     desc.ambient_occlusion.kind = AoKind.RAY_TRACED;
-    if (catch excuse = render::validate_view_desc(renderer, &desc)) {
-        assert(excuse == c3d::UNSUPPORTED);
-    } else {
-        assert(false);
-    }
-    renderer.caps.ray_queries.enabled = true;
     render::validate_view_desc(renderer, &desc)!!;
     desc.ambient_occlusion.ray_count = 0;
     if (catch excuse = render::validate_view_desc(renderer, &desc)) {
@@ -134,7 +135,7 @@ fn void expect_view_desc_fault(Renderer* renderer, ViewDesc* desc, fault expecte
     assert(excuse == expected);
 }
 
-fn void test_view_desc_gates_reflections() @test {
+fn void test_view_desc_gates_reflections_on_deferred() @test {
     Renderer* renderer = mem::new(Renderer);
     defer free(renderer);
     ViewDesc desc = render::default_view_desc();
@@ -143,9 +144,6 @@ fn void test_view_desc_gates_reflections() @test {
     desc.ray_tracing.reflections = true;
     expect_view_desc_fault(renderer, &desc, c3d::UNSUPPORTED);
     desc.shading = ShadingPath.DEFERRED;
-    expect_view_desc_fault(renderer, &desc, c3d::UNSUPPORTED);
-
-    renderer.caps.ray_queries.enabled = true;
     render::validate_view_desc(renderer, &desc)!!;
     desc.shading = ShadingPath.FORWARD;
     expect_view_desc_fault(renderer, &desc, c3d::UNSUPPORTED);

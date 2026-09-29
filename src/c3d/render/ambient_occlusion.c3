@@ -89,7 +89,14 @@ fn void? acquire_ambient_occlusion_pipelines(Renderer* renderer, AoKind kind) @p
     AmbientOcclusionPipelines* pipelines = &renderer.ambient_occlusion_pipelines;
     switch (kind) {
         case SSAO: acquire_compute_pipeline(renderer, &pipelines.ssao, SSAO, "ssao")!;
-        case RAY_TRACED: acquire_compute_pipeline(renderer, &pipelines.ray_traced, RT_AO, "rt_ao")!;
+        case RAY_TRACED:
+            acquire_compute_pipeline(
+                renderer:   renderer,
+                pipeline:   &pipelines.ray_traced,
+                shader:     RT_AO,
+                debug_name: "rt_ao",
+                flags:      trace_shader_flags(renderer),
+            )!;
         case NONE:
     }
     acquire_compute_pipeline(renderer, &pipelines.blur, AO_BLUR, "ao_blur")!;

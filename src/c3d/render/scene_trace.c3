@@ -27,6 +27,7 @@ $assert $reflect(BvhNode.count).offset == $reflect(BvhNodeGpu.count).offset;
 const uint DEFAULT_MAX_TRACE_INSTANCES = 4096; // 4096 x 144 B instances + 8191 x 32 B nodes: 0.81 MiB persistent
 
 const BvhBuildDesc TOP_LEVEL_BUILD @private = { .bins = 12, .leaf_size = 1 }; // each instance test walks a bottom level
+const bool TRACE_FACING_FLIP @private = true; // the backend's default front is the clockwise side; raster's is not
 
 // The top level depends on a record only up to its software bottom level, which a later preparation may fill.
 const usz TOP_LEVEL_PREFIX_BYTES @private = $reflect(TraceInstance.nodes).offset;
@@ -195,6 +196,10 @@ fn uint trace_shader_flags(Renderer* renderer) @private {
     return renderer.caps.ray_queries.enabled ? 0 : shader::SHADER_FLAG_SCENE_TRACE_BVH;
 }
 
+fn uint rt_shadow_flags(Renderer* renderer, bool rt_shadows) @private {
+    return rt_shadows ? shader::SHADER_FLAG_RT_SHADOWS | trace_shader_flags(renderer) : 0;
+}
+
 // buildable: the store proved the list for this revision and still holds the CPU arrays.
 fn TraceSource trace_source(uint built_revision, uint revision, bool buildable) @private {
     if (built_revision != 0 && built_revision == revision) return TraceSource.REUSE;
@@ -236,6 +241,7 @@ fn gpu::AccelerationStructureGeometryDesc blas_geometry_desc(GeometryLayout* lay
 fn gpu::AccelerationStructureInstanceDesc tlas_instance_desc(TraceInstance* record, uint row) @private {
     Mat4 world = record.world;
     bool masked = (record.flags & shader::TRACE_INSTANCE_ALPHA_MASK) != 0;
+    bool double_sided = (record.flags & shader::TRACE_INSTANCE_DOUBLE_SIDED) != 0;
     return {
         .transform_row_0 = { world.m00, world.m01, world.m02, world.m03 },
         .transform_row_1 = { world.m10, world.m11, world.m12, world.m13 },
@@ -243,7 +249,14 @@ fn gpu::AccelerationStructureInstanceDesc tlas_instance_desc(TraceInstance* reco
         .bottom_level    = record.bottom_level,
         .custom_index    = row,
         .mask            = record.mask,
-        .flags           = { .triangle_cull_disable, .force_opaque = !masked, .force_non_opaque = masked },
+        // Vulkan decides facing in object space, where a mirrored instance keeps its winding, so one flip value
+        // turns the backend's front into the counter-clockwise front raster draws, for every row.
+        .flags           = {
+            .triangle_cull_disable = double_sided,
+            .triangle_facing_flip  = TRACE_FACING_FLIP,
+            .force_opaque          = !masked,
+            .force_non_opaque      = masked,
+        },
     };
 }
 

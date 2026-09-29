@@ -276,12 +276,13 @@ fn void? record_raster_view(
                     case TRANSPARENT: index = transparent_start + transparent_filled++;
                 }
                 bool model_reflected = (candidate.node.world.determinant() < 0) != candidate.mirrored;
+                ShaderVariant fragment = list == DrawList.GBUFFER
+                  ? gbuffer_fragment(material_description)
+                  : material_fragment(material_description, rt_shadow_flags(renderer, record.desc.ray_tracing.shadows));
                 items[index] = {
                     .sort_key  = draw_sort_key(
                         vertex:    vertex,
-                        fragment:  list == DrawList.GBUFFER
-                          ? gbuffer_fragment(material_description)
-                          : material_fragment(material_description, record.desc.ray_tracing.shadows),
+                        fragment:  fragment,
                         material:  candidate.material,
                         geometry:  candidate.geometry,
                         ndc_depth: candidate.ndc_depth,
@@ -334,7 +335,7 @@ fn void? record_raster_view(
           || record.desc.ambient_occlusion.kind == AoKind.RAY_TRACED;
         if (traces) {
             instrumentation::@scope("view.trace") {
-                trace_root = renderer.prepare_scene_trace(scene, TraceKind.HARDWARE)!;
+                trace_root = renderer.prepare_scene_trace(scene, TraceKind.AUTO)!;
             };
         }
 
@@ -904,7 +905,8 @@ fn void? prepare_views(Renderer* renderer) @private {
             acquire_environment_pipeline(renderer, &renderer.cluster_pipeline, LIGHT_CULL)!;
         }
         if (record.desc.shading == ShadingPath.DEFERRED) {
-            renderer.pipelines.get(&renderer.device, lighting_resolve_pipeline_key(record.desc.ray_tracing.shadows))!;
+            uint shadow_flags = rt_shadow_flags(renderer, record.desc.ray_tracing.shadows);
+            renderer.pipelines.get(&renderer.device, lighting_resolve_pipeline_key(shadow_flags))!;
         }
         if (record.desc.ambient_occlusion.kind != AoKind.NONE) {
             acquire_ambient_occlusion_pipelines(renderer, record.desc.ambient_occlusion.kind)!;
@@ -1575,13 +1577,12 @@ fn Material* material_data(Renderer* renderer, MaterialRes* material) @local {
     return &renderer.assets.material(material.asset).data;
 }
 
-fn ShaderVariant material_fragment(Material* material, bool rt_shadows) @local {
-    uint flags = rt_shadows ? shader::SHADER_FLAG_RT_SHADOWS : 0;
+fn ShaderVariant material_fragment(Material* material, uint shadow_flags) @local {
     switch (material.kind) {
         case BASIC: return { .shader = BASIC };
-        case STANDARD: return { .shader = STANDARD, .flags = flags };
-        case TOON: return { .shader = TOON, .flags = flags };
-        case PHYSICAL: return { .shader = PHYSICAL, .flags = flags };
+        case STANDARD: return { .shader = STANDARD, .flags = shadow_flags };
+        case TOON: return { .shader = TOON, .flags = shadow_flags };
+        case PHYSICAL: return { .shader = PHYSICAL, .flags = shadow_flags };
         case CUSTOM: return {};
     }
 }
@@ -1596,7 +1597,7 @@ fn gpu::PipelineHandle? pipeline_for(
     bool wireframe = material.common.wireframe && renderer.caps.line_polygon_mode;
     PipelineKey key = {
         .vertex        = vertex,
-        .fragment      = material_fragment(material, rt_shadows),
+        .fragment      = material_fragment(material, rt_shadow_flags(renderer, rt_shadows)),
         .color_formats = { [0] = HDR_FORMAT },
         .color_count   = 1,
         .depth_format  = DEPTH_FORMAT,

@@ -19,7 +19,13 @@ struct ReflectionPipelines @private {
 
 fn void? acquire_reflection_pipelines(Renderer* renderer) @private {
     ReflectionPipelines* pipelines = &renderer.reflection_pipelines;
-    acquire_compute_pipeline(renderer, &pipelines.trace, RT_REFLECTIONS, "rt_reflections")!;
+    acquire_compute_pipeline(
+        renderer:   renderer,
+        pipeline:   &pipelines.trace,
+        shader:     RT_REFLECTIONS,
+        debug_name: "rt_reflections",
+        flags:      trace_shader_flags(renderer),
+    )!;
     acquire_compute_pipeline(renderer, &pipelines.blur, RT_REFLECTION_BLUR, "rt_reflection_blur")!;
 }
 
