@@ -144,7 +144,11 @@ fn void? check_shader_desc(ShaderDesc* desc) @private {
     return;
 }
 
-fn ShaderDesc copy_shader_desc(Allocator allocator, ShaderDesc* desc) @private {
+<*
+ Copy of every stage in the allocator; an empty stage stays empty.
+ @param [&in] desc
+*>
+fn ShaderDesc copy_shader_desc(Allocator allocator, ShaderDesc* desc) {
     return {
         .fragment = copy_slice(allocator, desc.fragment),
         .gbuffer = desc.gbuffer.len ? copy_slice(allocator, desc.gbuffer) : (char[]){},
@@ -170,7 +174,11 @@ fn ShaderDesc copy_shader_desc(Allocator allocator, ShaderDesc* desc) @private {
     };
 }
 
-fn void free_shader_desc(Allocator allocator, ShaderDesc* desc) @private {
+<*
+ Free every stage allocated with the allocator.
+ @param [&inout] desc : "Left zeroed."
+*>
+fn void free_shader_desc(Allocator allocator, ShaderDesc* desc) {
     alloc::free(allocator, desc.fragment.ptr);
     alloc::free(allocator, desc.gbuffer.ptr);
     alloc::free(allocator, desc.traced_fragment.hardware.ptr);
