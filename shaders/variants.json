@@ -137,6 +137,8 @@
     { "include": "mesh_vertex.glsl", "stage": "vert", "defines": ["INSTANCED"] },
     { "include": "mesh_vertex.glsl", "stage": "vert", "defines": ["DEPTH_ONLY"] },
     { "include": "mesh_vertex.glsl", "stage": "vert", "defines": ["DEPTH_ONLY", "INSTANCED"] },
+    { "include": "mesh_vertex.glsl", "stage": "vert", "defines": ["VELOCITY"] },
+    { "include": "mesh_vertex.glsl", "stage": "vert", "defines": ["VELOCITY", "INSTANCED"] },
     { "include": "scene_trace.glsl", "stage": "comp", "defines": ["SCENE_TRACE_BVH"] },
     { "include": "scene_trace.glsl", "stage": "comp", "defines": ["SCENE_TRACE_RAY_QUERY"] }
   ]

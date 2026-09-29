@@ -139,10 +139,10 @@ A custom or package stage starts with the prelude, `generated/shader_abi.glsl` (
 | `standard_shading.glsl` | `standard_ambient_fill`, `evaluate_standard_lights`, `shade_standard_surface` |
 | `gbuffer_output.glsl` | `write_gbuffer`, outputs at locations 0 to 4 |
 | `vertex_pull.glsl` | `pull_vec2`, `pull_vec3`, `pull_vec4`, `pull_triangle`, `GEOMETRY_*` |
-| `mesh_vertex.glsl` | the push block, outputs 0 to 6, `MeshVertexInput`, `pull_mesh_vertex`, `apply_mesh_deformation`, `write_mesh_outputs`, `instance_source` (`INSTANCED`) |
+| `mesh_vertex.glsl` | the push block, outputs 0 to 6, `MeshVertexInput`, `pull_mesh_vertex`, `apply_mesh_deformation`, `write_mesh_outputs` (five arguments in `VELOCITY` forms), `previous_mesh_position` (`VELOCITY`), `instance_source` (`INSTANCED`) |
 | `scene_trace.glsl` | as in [Scene tracing](scene_trace.md) |
 
-`shadows.glsl` and `standard_shading.glsl` are probed plain, with `RT_SHADOWS`, and with `RT_SHADOWS` and `SCENE_TRACE_BVH`; `lights.glsl` in fragment and vertex stages; `mesh_vertex.glsl` plain, with `INSTANCED`, `DEPTH_ONLY`, and both; `scene_trace.glsl` in compute with each trace kind.
+`shadows.glsl` and `standard_shading.glsl` are probed plain, with `RT_SHADOWS`, and with `RT_SHADOWS` and `SCENE_TRACE_BVH`; `lights.glsl` in fragment and vertex stages; `mesh_vertex.glsl` plain, with `INSTANCED`, `DEPTH_ONLY`, both, `VELOCITY`, and `VELOCITY` with `INSTANCED`; `scene_trace.glsl` in compute with each trace kind.
 
 ### Traced shadows
 
@@ -395,7 +395,7 @@ addons/c3d_landscape.c3l/
 | --- | --- | --- |
 | `module` | yes | Module of the generated file; its last component `<name>` names the include directory and the include table |
 | `output` | yes | Generated C3 path relative to the package root; committed |
-| `flags` | yes, may be empty | Defines entries may use, in constant-name order |
+| `flags` | yes, may be empty | Defines entries may use, in constant-name order; vertex entries name `DEPTH_ONLY`, `INSTANCED` and `VELOCITY` here for their depth, instanced and [velocity](#velocity-form) forms |
 | `entries[]` | yes | `shader`, `source` (under `shaders/`), `stage` (the core stage names: `vert`, `frag`, `comp` and the rest glslang takes) and optional `defines` (a subset of `flags`) |
 
 A package compiles against core's include roots, so every [public include](#public-includes) is available, plus its own `shaders/include/`. Its includes live in `shaders/include/<name>/` and are written `#include "<name>/x.glsl"`, also between the package's own includes, because the in-process resolver matches names exactly. Another package's includes are never visible: cross-package includes are unsupported. Package includes are not probed; the entries that include them compile them. SPIR-V goes to `<package>/shaders/spv/<shader>{_<define>}.spv`.
