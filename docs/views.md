@@ -274,6 +274,23 @@ Every mesh vertex stage declares `ClipDistance`, so the device must support `sha
 without checking the feature: on a machine whose discrete adapter lacks it, `create_renderer`
 faults even when another adapter has it.
 
+Cost, measured on an RTX 4090 (driver 610.88). Writing the clip distance costs nothing measurable:
+Sponza, forward, 64 lights, shadows on, means of six alternated runs before and after the clip write
+(ms):
+
+| 2560 × 1440 | Depth prepass | Opaque | Shadow atlas | GPU frame |
+| --- | --- | --- | --- | --- |
+| Flat lights, before | 0.0420 | 1.0812 | 0.0975 | 1.2825 |
+| Flat lights, after | 0.0432 | 1.0827 | 0.0992 | 1.2857 |
+| Clustered lights, before | 0.0464 | 0.2768 | 0.1000 | 0.5034 |
+| Clustered lights, after | 0.0461 | 0.2751 | 0.1014 | 0.4985 |
+
+At 1920 × 1080 the frames run under 1 ms and the differences are inside the noise (flat: opaque
+0.7008 against 0.6898 ms). The `views` example's mirror view sums 0.065 to 0.074 ms of GPU passes at
+render scale 0.5 and 1.0, with and without the plane, about 0.045 ms of it the shadow atlas; on that
+small scene neither the plane nor the render scale moves the time beyond the run-to-run spread. The
+plane culls the buried crate (`Stats.culled` 1 with it, 0 without).
+
 ## Preparation
 
 `prepare_scene(scene)` uploads every asset the scene references, creates its mesh, shadow and
