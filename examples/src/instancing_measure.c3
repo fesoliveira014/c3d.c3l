@@ -42,7 +42,7 @@ const uint MEASURE_HEIGHT @local = 1080;
 const uint MEASURE_WARMUP_FRAMES @local = 120; // pipelines built, records uploaded, history valid
 const usz MEASURE_FRAMES @local = 1200; // captured frames per run
 const String RESOLVE_SCOPE @local = "view.resolve";
-const String CONFIGURATION @local = "before";
+const String CONFIGURATION @local = "after";
 
 struct PulseParams @local {
     Vec4 color;
@@ -229,6 +229,14 @@ fn Node*? add_measure_camera(Scene* scene) @local {
     return camera_node;
 }
 
+fn usz published_stage_bytes(render::Renderer* renderer, ShaderId shader) @local {
+    ShaderDesc* desc = &renderer.shaders[shader.index].desc;
+    CustomVertex* vertex = &desc.vertex;
+    return desc.fragment.len + desc.gbuffer.len + desc.traced_fragment.hardware.len
+        + desc.traced_fragment.software.len + vertex.shaded.len + vertex.depth.len + vertex.instanced_shaded.len
+        + vertex.instanced_depth.len + vertex.velocity.len + vertex.instanced_velocity.len;
+}
+
 fn float median(float[] values) @local {
     if (!values.len) return -1;
     sort::quicksort(values);
@@ -265,6 +273,7 @@ fn void? run(
     desc.instance_culling = true;
     render::configure_view(renderer, renderer.default_view, desc)!;
     renderer.prepare_scene(scene)!;
+    io::printfn("MEASURE published_stage_bytes=%d shader=pulse", published_stage_bytes(renderer, pulse_shader));
 
     profile::Recorder recorder = profile::create_recorder(mem, {
         .frame_capacity        = 4,
