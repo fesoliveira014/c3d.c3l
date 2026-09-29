@@ -191,6 +191,22 @@ snapshots they sample.
 `gui::targets_panel` lists `scene_color` and `scene_depth`; `PreviewKind.VIEW_SCENE_DEPTH` previews
 `scene_depth` as distance, like `VIEW_DEPTH`.
 
+Measured cost on an RTX 4090 (driver 610.88) at 1920 × 1080, `--gpu-timings`, mean of three runs of
+600 frames with the range:
+
+| Case | Pass | Time (ms) |
+| --- | --- | --- |
+| `materials`, transmission | `SCENE_SNAPSHOT` (one color copy) | 0.020 (0.018–0.022) |
+| `materials`, transmission | `SCENE_SNAPSHOT` + `SCENE_READ` | 0.077 (0.071–0.082) |
+| `materials`, transmission, before scene reads | the former single transmission pass | 0.084 (0.078–0.095) |
+| `custom_compute`, pool hidden | `SCENE_SNAPSHOT` (one depth copy) | 0.012 (0.008–0.015) |
+| `custom_compute`, pool shown | `SCENE_SNAPSHOT` (color and two depth copies) | 0.070 (0.062–0.086) |
+| `custom_compute`, pool shown | `SCENE_READ` | 0.012 (0.011–0.013) |
+
+Transmission costs the same as before within the spread. Frames run about 1.5 ms, so per-pass
+timestamps carry clock noise; the differences above are inside it. 3840 × 2160 was not measured: no
+available display holds it.
+
 ## Vertex contract
 
 A custom vertex stage includes `mesh_vertex.glsl`, which declares the push block, the seven outputs and three helpers, and applies its own displacement between pulling and writing:
