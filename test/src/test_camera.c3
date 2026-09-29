@@ -116,3 +116,48 @@ fn void test_screen_to_ray_round_trips_world_to_screen() @test {
         assert(close(screen.x, 300) && close(screen.y, 700));
     }
 }
+
+fn float size_at(Camera camera, Vec3 eye, Vec3 offset) @local {
+    return camera::projected_size(
+        camera:          camera,
+        camera_position: eye,
+        bounds:          { .center = eye + offset, .radius = 1 },
+        output_height:   VIEWPORT.y,
+    );
+}
+
+fn void test_projected_size_matches_the_projected_span() @test {
+    Camera[2] cameras = { camera::perspective_deg(60, 0.1f), camera::orthographic(8, 0.1f, 100) };
+    Vec3 eye = { 1, 2, 3 };
+    Sphere bounds = { .center = eye + (Vec3){ 0, 0, -12 }, .radius = 1.5f };
+    Vec3 half_height = { 0, bounds.radius, 0 };
+    foreach (camera : cameras) {
+        CameraMatrices matrices = camera::derive_matrices(camera, camera_at(eye), VIEWPORT);
+        Vec3 top = camera::world_to_screen(&matrices, bounds.center + half_height, VIEWPORT);
+        Vec3 bottom = camera::world_to_screen(&matrices, bounds.center - half_height, VIEWPORT);
+        float size = camera::projected_size(
+            camera:          camera,
+            camera_position: eye,
+            bounds:          bounds,
+            output_height:   VIEWPORT.y,
+        );
+        assert(close(size, bottom.y - top.y));
+    }
+}
+
+fn void test_projected_size_ignores_camera_facing() @test {
+    Camera camera = camera::perspective_deg(60, 0.1f);
+    Vec3 eye = { 1, 2, 3 };
+    float ahead = size_at(camera, eye, { 0, 0, -10 });
+    assert(close(size_at(camera, eye, { 10, 0, 0 }), ahead));
+    assert(close(size_at(camera, eye, { 0, 6, 8 }), ahead));
+}
+
+fn void test_projected_size_doubles_at_half_distance() @test {
+    Camera camera = camera::perspective_deg(60, 0.1f);
+    Camera flat = camera::orthographic(8, 0.1f, 100);
+    Vec3 eye = { 1, 2, 3 };
+    Vec3 direction = (Vec3){ 3, -4, 12 }.normalize();
+    assert(close(size_at(camera, eye, direction * 10), 2 * size_at(camera, eye, direction * 20)));
+    assert(close(size_at(flat, eye, direction * 10), size_at(flat, eye, direction * 20)));
+}

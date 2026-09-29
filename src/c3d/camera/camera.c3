@@ -187,6 +187,30 @@ fn Vec3 world_to_screen(CameraMatrices* matrices, Vec3 point, Vec2 viewport) {
     return { (ndc.x + 1.0f) * 0.5f * viewport.x, (1.0f - ndc.y) * 0.5f * viewport.y, ndc.z };
 }
 
+<*
+ Screen height of a bounding sphere in pixels, independent of camera facing.
+ @param camera_position : "World position of the camera node."
+ @param output_height : "Pixels of the output the size is measured in."
+ @return "Pixels spanned by the diameter; infinite at the sphere's centre."
+ @require output_height > 0, bounds.radius >= 0
+ @pure
+*>
+fn float projected_size(
+    Camera camera,
+    Vec3 camera_position,
+    Sphere bounds,
+    float output_height,
+) {
+    float diameter = 2 * bounds.radius;
+    switch (camera.projection) {
+        case PERSPECTIVE:
+            float pixels_per_unit = output_height / (2 * math::tan(camera.fov_y * 0.5f));
+            return diameter * pixels_per_unit / camera_position.distance(bounds.center);
+        case ORTHOGRAPHIC:
+            return diameter * output_height / camera.ortho_height;
+    }
+}
+
 fn Vec2 pixel_to_ndc(Vec2 pixel, Vec2 viewport) @local {
     return { 2.0f * pixel.x / viewport.x - 1.0f, 1.0f - 2.0f * pixel.y / viewport.y };
 }
