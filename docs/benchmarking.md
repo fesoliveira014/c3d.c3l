@@ -206,7 +206,7 @@ windowed rows only with other windowed rows.
 | `end_ms` | `end_frame` submission, including presentation in windowed runs |
 | `gui_ms` | Profiler panel draw and overlay recording; zero without `--panel` |
 | `cpu_record_ms` | Existing renderer statistic; excludes the beginning wait/readback/sweep work |
-| `gpu_*_ms` | Completed per-pass timestamps for shadow atlas, light culling, depth prepass, G-buffer, ambient occlusion, ray-traced reflections, path tracing, lighting resolve, forward opaque, post chain, composite, velocity, temporal resolve, probe update, acceleration builds, screen-space GI and its colour copy; `-1` when unavailable, zero for an omitted pass |
+| `gpu_*_ms` | Completed per-pass timestamps for shadow atlas, light culling, depth prepass, G-buffer, ambient occlusion, ray-traced reflections, path tracing, lighting resolve, forward opaque, post chain, composite, velocity, temporal resolve, probe update, acceleration builds, screen-space GI, its colour copy and instance culling (`gpu_instance_cull_ms`, last); `-1` when unavailable, zero for an omitted pass |
 | `draws`, `lights`, `dropped` | Current-frame renderer counters |
 | `overflows` | Completed cluster overflow count attributed to its submitted frame |
 | `material_resolutions` | Fresh material dependency resolutions in the frame; one per material per view traversal |
@@ -275,10 +275,27 @@ Any glTF file can replace Sponza through the positional path or
 `benchmark.py scene --model`; the light and camera placement derive from the
 model bounds.
 
+## Instancing benchmark
+
+```bash
+python3 scripts/benchmark.py instancing --output results/instancing --build --features gpu --gpu-timings \
+  --width 1280 --height 720 --repeats 3
+./examples/build/instancing --benchmark --fade-field --frames 300 --warmup 60 --width 1280 --height 720
+```
+
+`instancing --benchmark` renders the interactive example's scene headless from its starting camera: the
+99,856-prop batch, the trio, the pulse spheres and the glass cloud, with instance culling and motion blur on
+and the sun's four cascades. The scene is still: nothing animates but the sway, which follows the loop's fixed
+frame time. `--fade-field` adds a 64 × 64 grid of 32 m cell batches, 64 swaying props each (4,096 batches,
+262,144 props), with a 60 to 90 m fade band: the shape of one foliage layer, most of whose cells lie wholly past
+the band. `RendererDesc.max_instance_batches` is raised to hold every cell. The common options behave as in
+`many_lights --benchmark`, and the CSV columns are the same.
+`benchmark.py instancing` runs `fade-field-off` and `fade-field-on` jobs (`--fade-fields` selects them).
+
 ## Profiling configurations and overhead
 
-`benchmark.py render --features NAME` (and `scene`) selects the profiling features compiled into
-the workload binary. With `--build` the runner builds `many_lights` with the matching
+`benchmark.py render --features NAME` (and `scene` and `instancing`) selects the profiling features compiled into
+the workload binary. With `--build` the runner builds the suite's target with the matching
 `--define` and `--lib` flags through `scripts/build.py`, copies the binary to
 `examples/build/bench/<target>-NAME` so configurations coexist, and checks the
 binary's `--print-features` line against the request before any job runs. Without

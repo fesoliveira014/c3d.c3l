@@ -5,6 +5,7 @@
   scripts/benchmark.py scene --output results/scene --build --features off
   scripts/benchmark.py render --output results/render --build --features internal --capture
   scripts/benchmark.py render --output results/x --dry-run --features full --panel
+  scripts/benchmark.py instancing --output results/instancing --build --features gpu --gpu-timings
 
 A run builds or locates one benchmark binary, checks its compiled profiling
 features, writes environment.json, then runs every job as an independent
@@ -34,7 +35,7 @@ EXECUTABLE_SUFFIX = ".exe" if os.name == "nt" else ""
 
 CPU_CASES = ["world", "hidden_world", "meshes", "culled_meshes", "hidden_meshes",
              "shadows", "lights", "hidden_lights", "sort"]
-TARGETS = {"cpu": "cpu_bench", "render": "many_lights", "scene": "gltf_viewer"}
+TARGETS = {"cpu": "cpu_bench", "render": "many_lights", "scene": "gltf_viewer", "instancing": "instancing"}
 SCENE_MODEL = ROOT / "examples/assets/benchmark/sponza/glTF/Sponza.gltf"
 FETCH_HINT = "fetch it with: python3 scripts/fetch_benchmark_assets.py"
 FEATURES = {
@@ -69,7 +70,7 @@ def parse_arguments():
     cpu.add_argument("--iterations", type=int, default=100)
     cpu.add_argument("--samples", type=int, default=30)
 
-    render = parser.add_argument_group("render and scene suites")
+    render = parser.add_argument_group("render, scene and instancing suites")
     render.add_argument("--lights", type=int, nargs="+", help="render default 64 256 1024 4096; scene default 16 64 256")
     render.add_argument("--modes", nargs="+", choices=["flat", "clustered"], default=["flat", "clustered"])
     render.add_argument("--shadings", nargs="+", choices=["forward", "deferred", "path-traced"], default=["forward"])
@@ -94,7 +95,11 @@ def parse_arguments():
     scene.add_argument("--model", type=Path, default=SCENE_MODEL, help="glTF file rendered by the scene suite")
     scene.add_argument("--shadows", choices=["on", "off"], default="on", help="shadowed sun in the scene suite")
 
-    profiling = parser.add_argument_group("render and scene suite profiling")
+    instancing = parser.add_argument_group("instancing suite")
+    instancing.add_argument("--fade-fields", nargs="+", choices=["off", "on"], default=["off", "on"],
+                            help="runs without and with the 4,096 fading cell batches")
+
+    profiling = parser.add_argument_group("render, scene and instancing suite profiling")
     profiling.add_argument("--features", choices=sorted(FEATURES), default="off",
                            help="profiling configuration compiled into the binary")
     profiling.add_argument("--capture", action="store_true", help="open a profiler capture around every frame")
@@ -118,7 +123,7 @@ def validate_arguments(parser, args):
     if args.build and args.binary:
         parser.error("--build and --binary are mutually exclusive")
     if args.suite == "cpu" and (args.features != "off" or args.capture or args.window or args.panel):
-        parser.error("--features, --capture, --window and --panel apply to the render and scene suites")
+        parser.error("--features, --capture, --window and --panel apply to the render, scene and instancing suites")
     if args.suite == "scene" and not args.model.is_file():
         parser.error(f"scene model does not exist: {args.model}; {FETCH_HINT}")
     if args.capture and args.features == "off":
@@ -256,6 +261,15 @@ def scene_jobs(args):
             for lights in args.lights for mode in args.modes for shading in args.shadings]
 
 
+def instancing_jobs(args):
+    common = ["--benchmark", "--frames", str(args.frames), "--warmup", str(args.warmup), "--width", str(args.width),
+              "--height", str(args.height), "--anti-aliasing", args.anti_aliasing,
+              "--ambient-occlusion", args.ambient_occlusion, "--depth-prepass", args.depth_prepass,
+              *common_switches(args)]
+    return [(f"fade-field-{field}", [*(["--fade-field"] if field == "on" else []), *common])
+            for field in args.fade_fields]
+
+
 def run_job(output, name, command, timeout):
     """Run one job process, keeping its command, CSV and stderr; return the CSV rows."""
     (output / f"{name}.command.json").write_text(json.dumps(command))
@@ -293,7 +307,7 @@ def write_summary(output, summary):
 def main():
     args = parse_arguments()
     plan = Plan(args)
-    jobs = {"cpu": cpu_jobs, "render": render_jobs, "scene": scene_jobs}[args.suite](args)
+    jobs = {"cpu": cpu_jobs, "render": render_jobs, "scene": scene_jobs, "instancing": instancing_jobs}[args.suite](args)
 
     if args.dry_run:
         print(json.dumps(plan.describe()))
