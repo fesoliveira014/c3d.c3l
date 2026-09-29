@@ -480,7 +480,12 @@ fn void? run(
     ShaderId pulse_shader,
     bool fade_field,
 ) @local {
-    Batches batches = build_scene(assets, scene, pulse_shader, fade_field)!;
+    Batches batches = build_scene(
+        assets:       assets,
+        scene:        scene,
+        pulse_shader: pulse_shader,
+        fade_field:   fade_field,
+    )!;
     Orbit orbit = ORBIT_START;
     Node* camera_node = add_orbit_camera(scene, &orbit)!;
     scene.update_world();
@@ -535,7 +540,13 @@ fn void? run(
 fn BenchmarkOptions? parse_options(String[] args) @local {
     BenchmarkOptions options = { .flags = bench_loop::default_flags() };
     for (usz index = 1; index < args.len; index++) {
-        if (bench_loop::parse_flag(args, &index, &options.flags, "instancing")!) continue;
+        bool common_option = bench_loop::parse_flag(
+            args:   args,
+            index:  &index,
+            flags:  &options.flags,
+            target: "instancing",
+        )!;
+        if (common_option) continue;
         if (args[index] != "--fade-field") return c3d::INVALID_ARGUMENT~;
         options.fade_field = true;
     }
@@ -570,7 +581,12 @@ fn void? run_benchmark(BenchmarkOptions options) @local {
     ShaderId pulse_shader = add_pulse_shader(&assets)!;
     Scene scene = scene::create_scene(mem, scene::default_scene_desc());
     defer scene::destroy_scene(&scene);
-    build_scene(&assets, &scene, pulse_shader, options.fade_field)!;
+    build_scene(
+        assets:       &assets,
+        scene:        &scene,
+        pulse_shader: pulse_shader,
+        fade_field:   options.fade_field,
+    )!;
     Orbit orbit = ORBIT_START;
     BenchmarkRun run = { .scene = &scene, .camera_node = add_orbit_camera(&scene, &orbit)! };
     scene.update_world();
@@ -599,9 +615,15 @@ fn void? run_benchmark(BenchmarkOptions options) @local {
     usz collected;
     if (flags.window) {
         platform::Window window = platform::create_window(
-            platform::default_window_desc("c3d instancing benchmark", flags.width, flags.height))!;
+            desc: platform::default_window_desc("c3d instancing benchmark", flags.width, flags.height),
+        )!;
         defer platform::destroy_window(&window);
-        render::Renderer renderer = platform::create_window_renderer(mem, &window, &assets, renderer_desc)!;
+        render::Renderer renderer = platform::create_window_renderer(
+            allocator: mem,
+            window:    &window,
+            assets:    &assets,
+            desc:      renderer_desc,
+        )!;
         defer render::destroy_renderer(&renderer);
         render::configure_view(
             renderer: &renderer,
@@ -631,8 +653,10 @@ fn void? run_benchmark(BenchmarkOptions options) @local {
     } else {
         render::Renderer renderer = render::create_renderer(mem, &assets, renderer_desc)!;
         defer render::destroy_renderer(&renderer);
-        RenderTargetId target = render::create_render_target(&renderer,
-            render::render_target_desc(flags.width, flags.height, PixelFormat.RGBA8_UNORM))!;
+        RenderTargetId target = render::create_render_target(
+            renderer: &renderer,
+            desc:     render::render_target_desc(flags.width, flags.height, PixelFormat.RGBA8_UNORM),
+        )!;
         ViewDesc view_desc = benchmark_view_desc(render::texture_view_desc(target, OutputMode.DISPLAY_LDR), flags);
         run.renderer = &renderer;
         run.view = render::create_view(&renderer, view_desc)!;
