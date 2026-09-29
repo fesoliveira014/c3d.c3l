@@ -188,6 +188,12 @@ root PreviousPoseGpu {
 }
 
 const uint INSTANCE_CULL_GROUP_SIZE = 64;
+const uint INSTANCE_SORT_GROUP_SIZE = 128;
+const uint INSTANCE_SORT_BLOCK = 1024;
+const uint INSTANCE_SORT_BLOCKS = 1;
+const uint INSTANCE_SORT_GLOBAL = 2;
+const uint INSTANCE_SORT_MERGE = 4;
+const uint INSTANCE_SORT_WRITE_LIST = 8;
 
 root InstanceCullRoot {
     GpuAddress instances;
@@ -199,11 +205,21 @@ root InstanceCullRoot {
     vec4       bounds_max;
     uint       first;
     uint       count;
-    uint       _pad0;
-    uint       _pad1;
+    GpuAddress keys;
     GpuAddress instance_effects;
     uint       _pad2;
     uint       _pad3;
+    vec4       depth_axis;
+}
+
+root InstanceSortRoot {
+    GpuAddress keys;
+    GpuAddress visible;
+    GpuAddress args;
+    uint       capacity;
+    uint       stage;
+    uint       distance;
+    uint       mode;
 }
 
 struct InstanceGpu {

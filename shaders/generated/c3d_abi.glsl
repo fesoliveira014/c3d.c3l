@@ -25,6 +25,12 @@ const uint FRAME_AO_PRESENT = 4u;
 const uint FRAME_SSGI_PRESENT = 8u;
 const uint CLUSTER_GROUP_SIZE = 64u;
 const uint INSTANCE_CULL_GROUP_SIZE = 64u;
+const uint INSTANCE_SORT_GROUP_SIZE = 128u;
+const uint INSTANCE_SORT_BLOCK = 1024u;
+const uint INSTANCE_SORT_BLOCKS = 1u;
+const uint INSTANCE_SORT_GLOBAL = 2u;
+const uint INSTANCE_SORT_MERGE = 4u;
+const uint INSTANCE_SORT_WRITE_LIST = 8u;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8u;
 const uint DRAW_RECEIVE_SHADOW = 1u;
 const uint DRAW_ALPHA_MASK = 2u;
@@ -292,11 +298,21 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer InstanceCul
     vec4 bounds_max;
     uint first;
     uint count;
-    uint _pad0;
-    uint _pad1;
+    uint64_t keys;
     uint64_t instance_effects;
     uint _pad2;
     uint _pad3;
+    vec4 depth_axis;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer InstanceSortRoot {
+    uint64_t keys;
+    uint64_t visible;
+    uint64_t args;
+    uint capacity;
+    uint stage;
+    uint distance;
+    uint mode;
 };
 
 struct InstanceGpu {

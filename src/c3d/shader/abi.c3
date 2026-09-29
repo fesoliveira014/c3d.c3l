@@ -22,6 +22,12 @@ const uint FRAME_AO_PRESENT = 4;
 const uint FRAME_SSGI_PRESENT = 8;
 const uint CLUSTER_GROUP_SIZE = 64;
 const uint INSTANCE_CULL_GROUP_SIZE = 64;
+const uint INSTANCE_SORT_GROUP_SIZE = 128;
+const uint INSTANCE_SORT_BLOCK = 1024;
+const uint INSTANCE_SORT_BLOCKS = 1;
+const uint INSTANCE_SORT_GLOBAL = 2;
+const uint INSTANCE_SORT_MERGE = 4;
+const uint INSTANCE_SORT_WRITE_LIST = 8;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8;
 const uint DRAW_RECEIVE_SHADOW = 1;
 const uint DRAW_ALPHA_MASK = 2;
@@ -426,13 +432,13 @@ struct InstanceCullRoot {
     Vec4f      bounds_max;
     uint       first;
     uint       count;
-    uint       _pad0;
-    uint       _pad1;
+    GpuAddress keys;
     GpuAddress instance_effects;
     uint       _pad2;
     uint       _pad3;
+    Vec4f      depth_axis;
 }
-$assert InstanceCullRoot::size == 192;
+$assert InstanceCullRoot::size == 208;
 $assert $reflect(InstanceCullRoot.instances).offset == 0;
 $assert $reflect(InstanceCullRoot.visible).offset == 8;
 $assert $reflect(InstanceCullRoot.args).offset == 16;
@@ -442,11 +448,29 @@ $assert $reflect(InstanceCullRoot.bounds_min).offset == 128;
 $assert $reflect(InstanceCullRoot.bounds_max).offset == 144;
 $assert $reflect(InstanceCullRoot.first).offset == 160;
 $assert $reflect(InstanceCullRoot.count).offset == 164;
-$assert $reflect(InstanceCullRoot._pad0).offset == 168;
-$assert $reflect(InstanceCullRoot._pad1).offset == 172;
+$assert $reflect(InstanceCullRoot.keys).offset == 168;
 $assert $reflect(InstanceCullRoot.instance_effects).offset == 176;
 $assert $reflect(InstanceCullRoot._pad2).offset == 184;
 $assert $reflect(InstanceCullRoot._pad3).offset == 188;
+$assert $reflect(InstanceCullRoot.depth_axis).offset == 192;
+
+struct InstanceSortRoot {
+    GpuAddress keys;
+    GpuAddress visible;
+    GpuAddress args;
+    uint       capacity;
+    uint       stage;
+    uint       distance;
+    uint       mode;
+}
+$assert InstanceSortRoot::size == 40;
+$assert $reflect(InstanceSortRoot.keys).offset == 0;
+$assert $reflect(InstanceSortRoot.visible).offset == 8;
+$assert $reflect(InstanceSortRoot.args).offset == 16;
+$assert $reflect(InstanceSortRoot.capacity).offset == 24;
+$assert $reflect(InstanceSortRoot.stage).offset == 28;
+$assert $reflect(InstanceSortRoot.distance).offset == 32;
+$assert $reflect(InstanceSortRoot.mode).offset == 36;
 
 struct InstanceGpu {
     Mat4f model;

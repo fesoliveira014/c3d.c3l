@@ -17,6 +17,7 @@ enum ShaderName : int {
     PREVIEW,
     LIGHT_CULL,
     INSTANCE_CULL,
+    INSTANCE_SORT,
     CUBE_PREVIEW,
     STANDARD,
     PHYSICAL,
@@ -123,6 +124,7 @@ const char[*] LINES_FRAGMENT_SPIRV @private = $embed("../../../shaders/spv/lines
 const char[*] PREVIEW_SPIRV @private = $embed("../../../shaders/spv/preview.spv");
 const char[*] LIGHT_CULL_SPIRV @private = $embed("../../../shaders/spv/light_cull.spv");
 const char[*] INSTANCE_CULL_SPIRV @private = $embed("../../../shaders/spv/instance_cull.spv");
+const char[*] INSTANCE_SORT_SPIRV @private = $embed("../../../shaders/spv/instance_sort.spv");
 const char[*] CUBE_PREVIEW_SPIRV @private = $embed("../../../shaders/spv/cube_preview.spv");
 const char[*] STANDARD_SPIRV @private = $embed("../../../shaders/spv/standard.spv");
 const char[*] STANDARD_RT_SHADOWS_SPIRV @private = $embed("../../../shaders/spv/standard_rt_shadows.spv");
@@ -221,7 +223,7 @@ const char[*] LIGHTING_RESOLVE_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV @private = $embe
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[106] SHADER_ENTRIES = {
+const ShaderEntry[107] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -234,6 +236,7 @@ const ShaderEntry[106] SHADER_ENTRIES = {
     { .variant = { .shader = PREVIEW }, .spirv = PREVIEW_SPIRV[..] },
     { .variant = { .shader = LIGHT_CULL }, .spirv = LIGHT_CULL_SPIRV[..] },
     { .variant = { .shader = INSTANCE_CULL }, .spirv = INSTANCE_CULL_SPIRV[..] },
+    { .variant = { .shader = INSTANCE_SORT }, .spirv = INSTANCE_SORT_SPIRV[..] },
     { .variant = { .shader = CUBE_PREVIEW }, .spirv = CUBE_PREVIEW_SPIRV[..] },
     { .variant = { .shader = STANDARD }, .spirv = STANDARD_SPIRV[..] },
     { .variant = { .shader = STANDARD, .flags = SHADER_FLAG_RT_SHADOWS }, .spirv = STANDARD_RT_SHADOWS_SPIRV[..] },

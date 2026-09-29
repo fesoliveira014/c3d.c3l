@@ -30,6 +30,8 @@ fn void? stats_panel(Renderer* renderer) {
     imgui::text("Visible instances: %u of %u (%.1f%%)", visible_instances, tested, visible_percent);
     imgui::text("Cull dispatches: %u", renderer.stats.cull_dispatches);
     imgui::text("Cull overflows: %u", renderer.stats.cull_overflows);
+    imgui::text("Sort dispatches: %u", renderer.stats.sort_dispatches);
+    imgui::text("Sort overflows: %u", renderer.stats.sort_overflows);
     imgui::text("Culled: %u", renderer.stats.culled);
     imgui::text("Lights: %u", renderer.stats.lights);
     imgui::text("Lights dropped: %u", renderer.stats.lights_dropped);

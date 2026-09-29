@@ -121,6 +121,7 @@ struct Renderer {
     CullArena[FRAMES_IN_FLIGHT] cull_arenas;
     CullReadback[FRAMES_IN_FLIGHT] cull_readbacks;
     gpu::PipelineHandle     instance_cull_pipeline;
+    gpu::PipelineHandle     instance_sort_pipeline;
     usz                     instance_cull_bytes;
     bool                    cull_counter_cleared;
     uint                    cull_tested;

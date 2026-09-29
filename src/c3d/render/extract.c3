@@ -332,7 +332,7 @@ fn float center_view_depth(CameraMatrices* camera, Aabb world) @local {
 }
 
 <*
- Order transparent bounds centers from far to near, then entity identity.
+ Order transparent bounds centers from far to near, then entity identity, then instance range.
  @param first : "Live candidate with finite view depth."
  @param second : "Live candidate with finite view depth."
  @return "Negative when first orders earlier."
@@ -344,7 +344,9 @@ fn int compare_transparent_candidates(MeshCandidate first, MeshCandidate second)
     if (first.node.id.index < second.node.id.index) return -1;
     if (first.node.id.index > second.node.id.index) return 1;
     if (first.node.id.generation < second.node.id.generation) return -1;
-    return first.node.id.generation > second.node.id.generation ? 1 : 0;
+    if (first.node.id.generation > second.node.id.generation) return 1;
+    if (first.instance_first < second.instance_first) return -1;
+    return first.instance_first > second.instance_first ? 1 : 0;
 }
 
 fn float center_depth(CameraMatrices* camera, Aabb world) @local {

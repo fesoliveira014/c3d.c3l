@@ -353,7 +353,12 @@ fn void? record_raster_view(
 
         record.frustum = matrices.frustum;
         DrawItem[][3] cull_groups = { depth_items, scene_read_items, transparent_items };
-        CullItem[] view_culls = batch_cull_items(cull_groups[..], &record.frustum);
+        CullItem[] view_culls = batch_cull_items(
+            assets:     renderer.assets,
+            groups:     cull_groups[..],
+            frustum:    &record.frustum,
+            depth_axis: view_depth_axis(matrices.view),
+        );
         SceneReads view_reads = scene_read_reads | transparent_reads;
         ViewEnvironments environments;
         instrumentation::@scope("view.uploads") {
@@ -365,6 +370,7 @@ fn void? record_raster_view(
             record_pending_copies(renderer, &renderer.commands)!;
             record_probe_volumes(renderer, scene, environments.lighting, probe_trace)!;
             record_instance_cull(renderer, view_culls)!;
+            record_instance_sort(renderer, view_culls)!;
             prepare_sampled_targets(renderer, record)!;
         };
 
@@ -1074,7 +1080,7 @@ fn gpu::GpuAddress? upload_lights(Renderer* renderer, LightGpu[] lights) @privat
  @param instance_data : "First instance record; zero for a mesh."
  @param previous_pose : "PreviousPoseGpu of a deformed or instanced velocity draw; zero otherwise."
  @param skin_stride : "Joints per crowd instance; zero for a shared palette."
- @param instance_indices : "Visible list of a culled batch range; zero otherwise."
+ @param instance_indices : "Visible list of a culled or sorted batch range; zero otherwise."
  @param instance_effects : "InstanceEffectsGpu of a batch with sway or fade; zero otherwise."
 *>
 fn void write_draw_root(

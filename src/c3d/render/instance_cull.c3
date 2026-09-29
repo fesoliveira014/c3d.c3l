@@ -10,7 +10,7 @@ import std::math;
 <*
  Per-frame cull memory when RendererDesc.instance_cull_bytes is 0.
 *>
-const usz INSTANCE_CULL_ARENA_BYTES = 16 << 20; // per slot on the device; instances x culling passes; 100k: 6 x 400 KB
+const usz INSTANCE_CULL_ARENA_BYTES = 16 << 20; // per slot on the device; instances x culling passes; 100k: 6 x 400 KB culled, 1.45 MB sorted
 
 const usz CULL_ARGS_STRIDE @private = 32; // one indirect command at STREAM_ALIGNMENT
 const usz CULL_COUNTER_BYTES @private = 16; // the frame's visible counter, first in the arena, at STREAM_ALIGNMENT
@@ -44,7 +44,10 @@ struct CullItem @private {
     CullRange*      range;
     Aabb            bound;
     bool            bounded;
+    bool            sorted;
+    Vec4            depth_axis;
     gpu::GpuAddress args_address;
+    gpu::GpuAddress keys_address;
     gpu::GpuAddress effects;
 }
 
@@ -171,7 +174,12 @@ fn void reset_instance_culling(Renderer* renderer, uint slot_index) @private {
     renderer.cull_tested = 0;
 }
 
-fn CullItem[] batch_cull_items(DrawItem[][] groups, Frustum* frustum) @private {
+fn CullItem[] batch_cull_items(
+    AssetStore* assets,
+    DrawItem[][] groups,
+    Frustum* frustum,
+    Vec4 depth_axis,
+) @private {
     usz count;
     foreach (group : groups) foreach (&item : group) {
         if (item.candidate.batch) count++;
@@ -181,12 +189,14 @@ fn CullItem[] batch_cull_items(DrawItem[][] groups, Frustum* frustum) @private {
     foreach (group : groups) foreach (&item : group) {
         if (!item.candidate.batch) continue;
         culls[filled++] = {
-            .candidate = item.candidate,
-            .geometry  = item.geometry,
-            .records   = item.instance_data,
-            .frustum   = frustum,
-            .range     = &item.range,
-            .effects   = item.effects,
+            .candidate  = item.candidate,
+            .geometry   = item.geometry,
+            .records    = item.instance_data,
+            .frustum    = frustum,
+            .range      = &item.range,
+            .sorted     = assets.material(item.material.asset).data.common.alpha_mode == AlphaMode.BLEND,
+            .depth_axis = depth_axis,
+            .effects    = item.effects,
         };
     }
     return culls;
@@ -216,14 +226,11 @@ fn CullItem[] shadow_cull_items(ShadowDraw[] draws, CullRange[] ranges, Frustum*
 fn void? prepare_cull_stage(Renderer* renderer, CullItem[] items, bool culling) @private {
     uint slot_index = (uint)(renderer.frame_index % FRAMES_IN_FLIGHT);
     uint eligible;
-    if (culling) {
-        foreach (&item : items) {
-            if (try bound = cull_bound(item.candidate, item.geometry)) {
-                item.bound = bound;
-                item.bounded = true;
-                eligible++;
-            }
-        }
+    foreach (&item : items) {
+        Aabb? bound = cull_bound(item.candidate, item.geometry);
+        item.bounded = culling && @ok(bound);
+        item.bound = bound ?? item.geometry.bounds;
+        if (item.bounded || item.sorted) eligible++;
     }
     CullArena* arena = &renderer.cull_arenas[slot_index];
     usz? args_offset = c3d::CAPACITY_EXCEEDED~;
@@ -238,11 +245,15 @@ fn void? prepare_cull_stage(Renderer* renderer, CullItem[] items, bool culling) 
     }
     uint args_index;
     uint culled;
+    uint sorted;
     foreach (&item : items) {
-        if (item.bounded) {
+        if (item.bounded || item.sorted) {
             uint slot = args_index++;
             if (try block = args_offset) {
-                if (try visible_offset = arena_place(arena, (usz)item.candidate.instance_count * uint::size)) {
+                usz? list_offset = item.sorted
+                  ? arena_place_sorted(arena, item.candidate.instance_count)
+                  : arena_place(arena, (usz)item.candidate.instance_count * uint::size);
+                if (try visible_offset = list_offset) {
                     usz args_at = block + slot * CULL_ARGS_STRIDE;
                     usz bytes = indirect_args_bytes(&item.geometry.layout);
                     char[] staged_args = staging.bytes[slot * CULL_ARGS_STRIDE:CULL_ARGS_STRIDE];
@@ -255,15 +266,32 @@ fn void? prepare_cull_stage(Renderer* renderer, CullItem[] items, bool culling) 
                         .culled  = true,
                     };
                     item.args_address = (gpu::GpuAddress)((ulong)arena.address + args_at);
+                    if (item.sorted) {
+                        usz keys_at = visible_offset + sorted_list_bytes(item.candidate.instance_count);
+                        item.keys_address = (gpu::GpuAddress)((ulong)arena.address + keys_at);
+                        sorted++;
+                    }
                     culled++;
                     continue;
                 }
             }
-            renderer.stats.cull_overflows++;
+            if (item.sorted) {
+                renderer.stats.sort_overflows++;
+            } else {
+                renderer.stats.cull_overflows++;
+            }
         }
         *item.range = prepare_cull_range(renderer, item.candidate, item.geometry)!;
     }
     if (!culled) return;
+    if (sorted) {
+        acquire_compute_pipeline(
+            renderer:   renderer,
+            pipeline:   &renderer.instance_sort_pipeline,
+            shader:     INSTANCE_SORT,
+            debug_name: "instance_sort",
+        )!;
+    }
     if (!renderer.cull_counter_cleared) {
         gpu::cmd_fill_buffer(&renderer.commands, arena.span.checked_subspan(0, CULL_COUNTER_BYTES)!, 0)!;
         renderer.cull_counter_cleared = true;
@@ -276,13 +304,16 @@ fn void? prepare_cull_stage(Renderer* renderer, CullItem[] items, bool culling) 
 
 fn void? record_instance_cull(Renderer* renderer, CullItem[] items) @private {
     uint culled;
+    bool sorted;
     foreach (&item : items) {
         if (item.range.culled) culled++;
+        if (item.keys_address != (gpu::GpuAddress)0) sorted = true;
     }
     if (!culled) return;
     uint slot_index = (uint)(renderer.frame_index % FRAMES_IN_FLIGHT);
     Frame* slot = &renderer.frames[slot_index];
     gpu::GpuAddress counter = renderer.cull_arenas[slot_index].address;
+    Frustum open_frustum;
     @profile_pass(renderer, Pass.INSTANCE_CULL) {
         gpu::cmd_bind_pipeline(&renderer.commands, renderer.instance_cull_pipeline)!;
         foreach (&item : items) {
@@ -295,23 +326,26 @@ fn void? record_instance_cull(Renderer* renderer, CullItem[] items) @private {
             )!;
             InstanceCullRoot* root = (InstanceCullRoot*)root_span.bytes.ptr;
             *root = {
-                .instances  = item.records,
-                .visible    = range.visible,
-                .args       = item.args_address,
-                .counter    = counter,
-                .bounds_min = { item.bound.min.x, item.bound.min.y, item.bound.min.z, 0 },
-                .bounds_max = { item.bound.max.x, item.bound.max.y, item.bound.max.z, 0 },
-                .first      = range.first,
-                .count      = range.count,
+                .instances        = item.records,
+                .visible          = range.visible,
+                .args             = item.args_address,
+                .counter          = counter,
+                .bounds_min       = { item.bound.min.x, item.bound.min.y, item.bound.min.z, 0 },
+                .bounds_max       = { item.bound.max.x, item.bound.max.y, item.bound.max.z, 0 },
+                .first            = range.first,
+                .count            = range.count,
+                .keys             = item.keys_address,
                 .instance_effects = item.effects,
+                .depth_axis       = item.depth_axis,
             };
-            write_cull_planes(root, item.frustum);
+            write_cull_planes(root, item.bounded ? item.frustum : &open_frustum);
             uint groups = (range.count + shader::INSTANCE_CULL_GROUP_SIZE - 1) / shader::INSTANCE_CULL_GROUP_SIZE;
             gpu::cmd_dispatch(&renderer.commands, root_span.address, { groups, 1, 1 })!;
             renderer.stats.cull_dispatches++;
             renderer.cull_tested += range.count;
         }
         gpu::Barrier culled_stage = { .before = { .compute }, .after = { .vertex_shader, .indirect } };
+        culled_stage.after.compute = sorted;
         gpu::cmd_barrier(&renderer.commands, &culled_stage)!;
     }!;
 }
@@ -349,6 +383,10 @@ fn void free_instance_culling(Renderer* renderer) @private {
     if (renderer.instance_cull_pipeline.is_valid()) {
         (void)gpu::destroy_pipeline(&renderer.device, renderer.instance_cull_pipeline);
         renderer.instance_cull_pipeline = {};
+    }
+    if (renderer.instance_sort_pipeline.is_valid()) {
+        (void)gpu::destroy_pipeline(&renderer.device, renderer.instance_sort_pipeline);
+        renderer.instance_sort_pipeline = {};
     }
     foreach (&arena : renderer.cull_arenas) {
         if (arena.allocation.is_valid()) (void)gpu::free_allocation(&renderer.device, &arena.allocation);
