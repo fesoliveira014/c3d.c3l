@@ -146,6 +146,6 @@ while (window.poll()) {
   custom instanced vertex pair skins a crowd when compiled with the deformation defines
   ([Custom shaders](custom_shaders.md)).
 
-Example: `python3 scripts/build.py --example crowd` walks 512 instances of the committed Quaternius
+Example: `python3 scripts/build.py --example skinned_crowd` walks 512 instances of the committed Quaternius
 character through six of its clips; `B` switches to 512 `Animator` instances of the same model for
 comparison, `--baseline` starts there.

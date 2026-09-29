@@ -21,3 +21,6 @@ examples/assets/mixamo/*.fbx
 
 # Benchmark assets fetched by scripts/fetch_benchmark_assets.py; Sponza's license forbids redistribution here.
 examples/assets/benchmark/
+
+# Benchmark output; docs/benchmarking.md writes runs under results/<name>.
+results/
