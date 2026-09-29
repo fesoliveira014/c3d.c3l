@@ -137,6 +137,29 @@ fn Transform? transform_from_affine(Mat4 model) {
 }
 
 <*
+ Affine reflection across the plane.
+ @require plane.normal.is_normalized()
+*>
+fn Mat4 reflection_matrix(Plane plane) {
+    Vec3 normal = plane.normal;
+    return {
+        .m00 = 1 - 2 * normal.x * normal.x,
+        .m01 = -2 * normal.x * normal.y,
+        .m02 = -2 * normal.x * normal.z,
+        .m03 = -2 * normal.x * plane.d,
+        .m10 = -2 * normal.y * normal.x,
+        .m11 = 1 - 2 * normal.y * normal.y,
+        .m12 = -2 * normal.y * normal.z,
+        .m13 = -2 * normal.y * plane.d,
+        .m20 = -2 * normal.z * normal.x,
+        .m21 = -2 * normal.z * normal.y,
+        .m22 = 1 - 2 * normal.z * normal.z,
+        .m23 = -2 * normal.z * plane.d,
+        .m33 = 1,
+    };
+}
+
+<*
  Matrix that keeps normals perpendicular under non-uniform scale.
 *>
 fn Mat3 normal_matrix(Mat4 model) {

@@ -210,6 +210,31 @@ fn void test_transform_from_affine_rejects_shear_and_non_finite() @test {
     }
 }
 
+fn void test_reflection_matrix_mirrors_across_the_plane() @test {
+    Plane water = { .normal = { 0, 1, 0 }, .d = 1.2f };
+    Mat4 reflection = maths::reflection_matrix(water);
+    Vec3 image = maths::transform_point(reflection, { 1, 2, 3 });
+    assert(close_unit_vec3(image, { 1, -4.4f, 3 }));
+    assert(close_unit_vec3(maths::transform_point(reflection, { 5, -1.2f, -7 }), { 5, -1.2f, -7 }));
+    assert(close_unit_vec3(maths::transform_point(reflection, image), { 1, 2, 3 }));
+    assert(close_unit(reflection.determinant(), -1));
+
+    Plane tilted = { .normal = (Vec3){ 1, 2, 2 } / 3, .d = -0.5f };
+    Vec3 point = { 0.3f, -1.7f, 2.2f };
+    Vec3 mirrored = maths::transform_point(maths::reflection_matrix(tilted), point);
+    assert(close_unit(tilted.normal.dot(mirrored) + tilted.d, -(tilted.normal.dot(point) + tilted.d)));
+
+    Transform camera_transform = {
+        .position = { 2, 3, 6 },
+        .rotation = maths::look_rotation({ -0.3f, -0.4f, -1 }, { 0, 1, 0 }),
+        .scale    = { 1, 1, 1 },
+    };
+    Mat4 product = reflection.mul(camera_transform.to_mat4());
+    Transform mirror = maths::transform_from_affine(product)!!;
+    assert(mirror.scale.x < 0);
+    assert(close_mat4(mirror.to_mat4(), product));
+}
+
 fn void test_rotation_between_takes_from_onto_to() @test {
     Vec3[4] sources = { { 1, 0, 0 }, { 0, 0, 1 }, { 0, 1, 0 }, ((Vec3){ 1, 1, 0 }).normalize() };
     Vec3[4] targets = { { 0, 1, 0 }, { -1, 0, 0 }, { 0, 1, 0 }, ((Vec3){ 0, 1, 1 }).normalize() };
