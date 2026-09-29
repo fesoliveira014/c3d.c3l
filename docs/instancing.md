@@ -96,6 +96,14 @@ A batch whose material has `alpha_mode == BLEND` draws its instances back to fro
 - **Memory.** A sorted range of `n` instances takes `32 + align8(4n) + 8 * pow2(n)` bytes of the arena: 1,448,608 B at 100,000, per view and frame slot.
 - **Overflow.** A range above `MAX_SORTED_INSTANCES`, or whose list and keys do not fit the arena, draws unsorted and unculled from CPU arguments and counts in `Stats.sort_overflows`; nothing faults.
 - **Stats.** A blended range reports through the culling fields with culling on or off: it adds to `cull_dispatches`, `instances_tested` and `instances_visible`, and not to `Stats.instances` or `Stats.triangles`. With culling off, a blended batch still reserves the cull arena.
+- **Cost.** Measured on an RTX 4090 (driver 610.88) with `instancing`'s glass cloud, validation on, medians of three interleaved runs:
+
+| Glass cubes | Sort steps | `INSTANCE_SORT` 1280 × 720 (ms) | `INSTANCE_SORT` 2560 × 1440 (ms) | `FORWARD_TRANSPARENT` 1280 × 720 (ms) |
+| --- | --- | --- | --- | --- |
+| 10,648 | 15 | 0.068 | 0.162 | 0.042 |
+| 103,823 | 36 | 0.135 | 0.199 | 0.259 |
+
+  At 10,648 cubes one of the three 720p runs read 0.192 ms. The sort's work does not depend on the resolution; the small cloud's 1440p reading (0.162 ms) is above its 720p one for a reason not isolated here, and above the 0.10 ms the sort was planned to stay under at that count. Showing the cloud adds to `cpu_record` 0.008 ms at 10,648 and 0.021 ms at 103,823 without validation, and 0.053 and 0.113 ms with it: the validation layer's per-dispatch cost is most of the recording cost of the sort steps. `INSTANCE_SORT_BLOCK` (1,024 keys, 8 KiB of shared memory per group) sets the step count: 2,048 (16 KiB) would take 16,384 instances in 10 steps instead of 15. It stays at 1,024 until a measured workload asks for the change.
 
 ## Sway and distance fade
 
