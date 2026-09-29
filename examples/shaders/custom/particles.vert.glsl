@@ -17,7 +17,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Pa
     uint count;
     float size;
     float lifetime;
-    uint _pad0;
+    float softness;
     uint _pad1;
     uint _pad2;
     vec4 color_young;

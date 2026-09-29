@@ -22,6 +22,7 @@ import imgui;
 const String COMPUTE_FILE @local = "../shaders/custom/particles.comp.glsl";
 const String VERTEX_FILE @local = "../shaders/custom/particles.vert.glsl";
 const String FRAGMENT_FILE @local = "../shaders/custom/particles.frag.glsl";
+const String WATER_FILE @local = "../shaders/custom/water.frag.glsl";
 const double POLL_INTERVAL_SECONDS @local = 0.5; // one stat per file per half second; keeps the loop free of file traffic
 const uint PARTICLE_COUNT @local = 4096;
 const uint WORKGROUP_SIZE @local = 64; // mirrored as local_size_x in particles.comp.glsl
@@ -39,6 +40,11 @@ const float ORBIT_ZOOM_STEP @local = 0.9f;
 const float ORBIT_DISTANCE_MIN @local = 2;
 const float ORBIT_DISTANCE_MAX @local = 40;
 const float CHECKER_REPEATS @local = 12;
+const float POOL_SIZE @local = 5;
+const float POOL_HEIGHT @local = -0.6f; // 0.4 m of water over the floor
+const Vec3 POST_SIZE @local = { 0.4f, 1, 0.4f };
+const Vec3 POST_POSITION @local = { 1.2f, -0.6f, 0.8f }; // crosses the surface, so foam rings it
+const float SOFT_DISTANCE @local = 0.3f; // forward metres over which a particle fades into what lies behind it
 const Vec2 STATS_PANEL_POSITION @local = { 16, 16 };
 const Vec2 STATS_PANEL_SIZE @local = { 360, 420 };
 
@@ -61,7 +67,7 @@ struct ParticleParams @local {
     uint  count;
     float size;
     float lifetime;
-    uint  _pad0;
+    float softness;
     uint  _pad1;
     uint  _pad2;
     Vec4  color_young;
@@ -136,6 +142,14 @@ fn ShaderDesc? compile_material_files(Allocator allocator, ShaderFile* vertex, S
             )!,
         },
         .param_block_size = ParticleParams::size,
+        .scene_reads      = { .depth },
+    };
+}
+
+fn ShaderDesc? compile_water_desc(Allocator allocator, ShaderFile* fragment) @local {
+    return {
+        .fragment    = compile_file(allocator, fragment.path, ShaderStage.FRAGMENT)!,
+        .scene_reads = { .color, .depth },
     };
 }
 
@@ -173,6 +187,28 @@ fn void reload_material_shader(
         return;
     }
     io::printfn("particles material: reloaded, revision %d", assets.shader(shader).header.revision);
+}
+
+fn void reload_water_shader(
+    AssetStore* assets,
+    Renderer* renderer,
+    ShaderFile* fragment,
+    ShaderId shader,
+) @local {
+    remember_time(fragment);
+    @pool() {
+        ShaderDesc? desc = compile_water_desc(tmem, fragment);
+        if (catch excuse = desc) {
+            io::printfn("water material: compile failed (%s); keeping the previous shader", excuse);
+            return;
+        }
+        assets.replace_shader(shader, &desc)!!;
+    };
+    if (catch excuse = renderer.upload(shader)) {
+        io::printfn("water material: replacement rejected (%s); keeping the previous pipelines", excuse);
+        return;
+    }
+    io::printfn("water material: reloaded, revision %d", assets.shader(shader).header.revision);
 }
 
 fn void reload_compute_shader(
@@ -295,11 +331,14 @@ fn int main(String[] args) {
     ShaderFile compute_file = { .path = COMPUTE_FILE };
     ShaderFile vertex_file = { .path = VERTEX_FILE };
     ShaderFile fragment_file = { .path = FRAGMENT_FILE };
+    ShaderFile water_file = { .path = WATER_FILE };
     ComputeShaderId compute_shader;
     ShaderId material_shader;
+    ShaderId water_shader;
     @pool() {
         char[]? compute_spirv = compile_file(tmem, COMPUTE_FILE, ShaderStage.COMPUTE);
         ShaderDesc? material_desc = compile_material_files(tmem, &vertex_file, &fragment_file);
+        ShaderDesc? water_desc = compile_water_desc(tmem, &water_file);
         if (catch excuse = compute_spirv) {
             io::printfn("particles compute: compile failed (%s); run from examples/build so ../shaders resolves", excuse);
             return 1;
@@ -308,22 +347,39 @@ fn int main(String[] args) {
             io::printfn("particles material: compile failed (%s); run from examples/build so ../shaders resolves", excuse);
             return 1;
         }
+        if (catch excuse = water_desc) {
+            io::printfn("water material: compile failed (%s); run from examples/build so ../shaders resolves", excuse);
+            return 1;
+        }
         ComputeShaderDesc compute_desc = { .compute = compute_spirv };
         compute_shader = assets.add_compute_shader(&compute_desc, "particles")!!;
         material_shader = assets.add_shader(&material_desc, "particles_material")!!;
+        water_shader = assets.add_shader(&water_desc, "water_material")!!;
     };
     remember_time(&compute_file);
     remember_time(&vertex_file);
     remember_time(&fragment_file);
+    remember_time(&water_file);
 
     GeometryId floor;
     GeometryId quads;
+    GeometryId pool;
+    GeometryId post;
     @pool() {
         Geometry floor_geometry = geometry::plane(tmem, 16, 16);
         foreach (&uv : floor_geometry.uv0) *uv *= CHECKER_REPEATS;
         floor = assets.add_geometry(&floor_geometry)!!;
         Geometry quad_geometry = particle_quads(tmem);
         quads = assets.add_geometry(&quad_geometry)!!;
+        Geometry pool_geometry = geometry::plane(tmem, POOL_SIZE, POOL_SIZE);
+        pool = assets.add_geometry(&pool_geometry)!!;
+        Geometry post_geometry = geometry::box(
+            allocator: tmem,
+            width:     POST_SIZE.x,
+            height:    POST_SIZE.y,
+            depth:     POST_SIZE.z,
+        );
+        post = assets.add_geometry(&post_geometry)!!;
     };
 
     platform::Window window = platform::create_window(
@@ -356,6 +412,7 @@ fn int main(String[] args) {
         .count       = PARTICLE_COUNT,
         .size        = PARTICLE_SIZE,
         .lifetime    = PARTICLE_LIFETIME,
+        .softness    = SOFT_DISTANCE,
         .color_young = { 1, 0.85f, 0.3f, 1 },
         .color_old   = { 0.6f, 0.1f, 0.4f, 1 },
     };
@@ -363,7 +420,15 @@ fn int main(String[] args) {
         .color = { 0.9f, 0.9f, 0.9f, 1 },
         .map = material::texture_slot(asset::TEXTURE_CHECKER),
     }))!!;
-    MaterialId particle_material = assets.add_material(material::custom(material_shader, material::@as_bytes(params)))!!;
+    MaterialCommon blended = material::MATERIAL_COMMON_DEFAULT;
+    blended.alpha_mode = AlphaMode.BLEND;
+    MaterialId particle_material = assets.add_material(material::custom(
+        shader:      material_shader,
+        param_block: material::@as_bytes(params),
+        common:      blended,
+    ))!!;
+    MaterialId water_material = assets.add_material(material::custom(water_shader))!!;
+    MaterialId post_material = assets.add_material(material::basic({ .color = { 0.45f, 0.35f, 0.3f, 1 } }))!!;
 
     Scene scene = scene::create_scene(mem, scene::default_scene_desc());
     defer scene::destroy_scene(&scene);
@@ -371,6 +436,11 @@ fn int main(String[] args) {
     floor_node.local.position = { 0, -1, 0 };
     Node* particle_node = scene.add_mesh(quads, particle_material, name: "particles")!!;
     scene.get(particle_node, Mesh).cast_shadow = false;
+    Node* pool_node = scene.add_mesh(pool, water_material, name: "pool")!!;
+    pool_node.local.position = { 0, POOL_HEIGHT, 0 };
+    scene.get(pool_node, Mesh).cast_shadow = false;
+    Node* post_node = scene.add_mesh(post, post_material, name: "post")!!;
+    post_node.local.position = POST_POSITION;
     Node* sun = scene.add_light(light::directional({ 1, 0.97f, 0.9f }, 3), name: "sun")!!;
     sun.local.rotation = maths::look_rotation((Vec3){ -0.4f, -1, -0.5f }.normalize(), { 0, 1, 0 });
     scene.ambient_intensity = 0.25f;
@@ -384,7 +454,8 @@ fn int main(String[] args) {
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, &renderer, &window)!!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
 
-    io::printn("Edit examples/shaders/custom/particles.*.glsl and save: the stages reload; R forces a reload");
+    io::printn("Edit examples/shaders/custom/particles.*.glsl or water.frag.glsl: the stages reload; R forces a reload");
+    io::printn("W shows or hides the pool; S switches the particles between soft and hard edges");
     io::printn("Space reseeds the particles; drag to orbit, wheel to zoom; Escape release quits");
 
     double next_poll = POLL_INTERVAL_SECONDS;
@@ -413,8 +484,23 @@ fn int main(String[] args) {
                     shader:   material_shader,
                 );
             }
+            if (forced || file_changed(&water_file)) {
+                reload_water_shader(
+                    assets:   &assets,
+                    renderer: &renderer,
+                    fragment: &water_file,
+                    shader:   water_shader,
+                );
+            }
         }
         if (input.key_pressed(platform::Scancode.SPACE) && !input.keyboard_captured_by_gui) reset = true;
+        if (input.key_pressed(platform::Scancode.W) && !input.keyboard_captured_by_gui) {
+            pool_node.visible = !pool_node.visible;
+        }
+        if (input.key_pressed(platform::Scancode.S) && !input.keyboard_captured_by_gui) {
+            params.softness = params.softness > 0 ? 0 : SOFT_DISTANCE;
+            assets.@set_custom_params(particle_material, params)!!;
+        }
 
         apply_orbit(&orbit, input, camera_node);
         scene.update_world();
