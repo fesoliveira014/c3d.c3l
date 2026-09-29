@@ -240,6 +240,8 @@ base instead of 0.95 m. Traced shadows need no such bias.
   chunk and, on temporal views, 64 B per chunk of previous matrices the stage ignores.
 - Normals at a tile border use one-sided differences, so matching edge texels still leave a shading seam.
 - Every set layer is sampled on every pixel, whatever its weight; four layers is the limit.
+- Layers are projected from above: `uv0` is terrain-local x and z, so on steep slopes and cliffs the layer
+  textures stretch along the fall line.
 - Edits re-upload the whole height map; with a collider, the end of a stroke re-cooks the whole field.
 - Updates run on the calling thread and change scene structure, so they never run inside a job range;
   `sample_height` and `sample_normal` may.
@@ -270,8 +272,52 @@ Interactive runs always validate; benchmark runs validate only with `--validatio
 
 ## Measured cost
 
-WSL numbers below come from llvmpipe, a CPU Vulkan implementation: frame and pass times are environment only,
-never GPU numbers. CPU-side lines (bounds, edits, selection) are the terrain's own work on an i9-14900K.
+### RTX 4090, driver 610.88, 2560 × 1440
+
+Windows host, `--opt O3` with GPU timings, atlas shadows, three runs of each case (48 in all); medians, and
+per-pass run-to-run ranges within ±1 %. Both gates pass in every run. GPU pass medians of the still segment,
+in ms:
+
+| Case | Prepass | G-buffer | Shadow atlas | Forward opaque | Lighting | Velocity | Instance cull |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 2049 forward | 0.095 | | 0.463 | 0.406 | | 0.112 | 0.023 |
+| 2049 forward, 1 layer | 0.095 | | 0.463 | 0.204 | | 0.113 | 0.023 |
+| 2049 forward, hidden | 0.001 | | 0.013 | 0.004 | | 0.022 | |
+| 2049 forward, finest | 0.161 | | 0.587 | 0.473 | | 0.178 | 0.023 |
+| 2049 deferred | 0.095 | 0.289 | 0.462 | | 0.073 | 0.112 | 0.023 |
+| 2049 deferred, 1 layer | 0.095 | 0.161 | 0.463 | | 0.071 | 0.112 | 0.023 |
+| 2049 deferred, finest | 0.161 | 0.345 | 0.587 | | 0.073 | 0.178 | 0.023 |
+| 4097 forward | 0.134 | | 0.636 | 0.355 | | 0.155 | 0.023 |
+| 4097 forward, 1 layer | 0.133 | | 0.634 | 0.221 | | 0.155 | 0.023 |
+| 4097 forward, finest | 0.561 | | 1.418 | 0.776 | | 0.583 | 0.023 |
+| 4097 deferred | 0.134 | 0.280 | 0.634 | | 0.076 | 0.155 | 0.023 |
+| 4097 deferred, 1 layer | 0.134 | 0.186 | 0.635 | | 0.074 | 0.155 | 0.023 |
+| 4097 deferred, finest | 0.561 | 0.706 | 1.418 | | 0.074 | 0.583 | 0.023 |
+
+- **Terrain cost.** Visible against hidden, about 1.06 ms at 2049 and 1.25 ms at 4097; the shadow atlas is the
+  largest share.
+- **What LOD saves.** Against the finest level everywhere (`--lod-threshold 0`), the default threshold saves
+  23 % of the GPU total at 2049 (1.42 to 1.10 ms) and 61 % at 4097 (3.36 to 1.30 ms).
+- **Four layers against one.** Forward opaque +0.20 ms at 2049 and +0.13 ms at 4097; G-buffer +0.13 and
+  +0.09 ms.
+
+CPU, Windows host, median of three runs (range):
+
+| Line | 2049 | 4097 |
+| --- | --- | --- |
+| `bounds_build_ms` | 0.24 (0.18 to 0.29) | 2.8 to 3.3 |
+| `edit_update_ms` median / p99 | 0.0064 / 0.0095 | 0.0100 / 0.019 |
+| `physics_recook_ms` | 239 to 243 | 1,026 to 1,028 |
+| `selection_us` median, still | 1.9 | 3.4 to 3.6 |
+| `selection_us` p99, sweep | 3.0 to 3.2 | 6.0 to 6.2 |
+
+The full bounds build runs at load, not per frame. The edit an application pays for is the whole-texture
+re-upload and, with a collider, the physics re-cook at the end of a stroke.
+
+### WSL, llvmpipe, 1920 × 1080
+
+llvmpipe is a CPU Vulkan implementation: its frame and pass times are environment only, never GPU numbers.
+CPU-side lines (bounds, edits, selection) are the terrain's own work on an i9-14900K.
 
 Scripted benchmark, 1920 × 1080, atlas shadows, four layers, 300 frames per segment (2049 forward and
 deferred, 4097 forward; `--opt O3`). Both gates pass in every run.
@@ -292,6 +338,3 @@ The still segment uploads nothing after its first frame and the hover segment sw
 first second. A sweep frame that re-selects uploads 128 B per chunk (up to 21 KiB at 2049, 31 KiB at 4097). A
 stamp frame's update, bounds refresh included, stays under 0.13 ms; the whole-texture re-upload and the
 physics re-cook are the costs of an edit.
-
-The RTX 4090 medians of the run matrix (2560 × 1440, forward and deferred, one and four layers, terrain
-hidden, `--lod-threshold 0`) are recorded here when measured.
