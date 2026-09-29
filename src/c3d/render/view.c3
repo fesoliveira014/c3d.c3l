@@ -46,6 +46,7 @@ struct DrawItem @private {
     gpu::GpuAddress root;
     gpu::FrontFace  front_face;
     bool            moved;
+    gpu::PipelineHandle velocity_pipeline;
 }
 
 struct MeshPreparation @private {
@@ -193,6 +194,7 @@ fn void? record_raster_view(
     bool ambient_occlusion = record.desc.ambient_occlusion.kind != AoKind.NONE;
     bool forward_prepass = record.desc.depth_prepass || ambient_occlusion || screen_space_gi;
     bool early_velocity = velocity_before_lighting(&record.desc);
+    bool late_velocity = temporal && !early_velocity;
     bool ssgi_history_valid = record.history.valid && record.history.scene == scene.identity;
     Vec2 jitter = taa
       ? post::taa_jitter(record.history.sample_index, record.hdr_color.width, record.hdr_color.height)
@@ -473,8 +475,10 @@ fn void? record_raster_view(
                 bool posed = item.skin != (gpu::GpuAddress)0 || item.morph != (gpu::GpuAddress)0
                   || item.candidate.batch;
                 item.moved = has_previous && (posed || !(prev_world == node.world));
+                bool redrawn_by_velocity = group_index == 0
+                  || (group_index == 1 && late_velocity && writes_own_depth(material_data(renderer, item.material)));
                 gpu::GpuAddress previous_pose;
-                if (has_previous && posed && group_index == 0) {
+                if (has_previous && posed && redrawn_by_velocity) {
                     PoseRecord* crowd_pose;
                     if (item.candidate.crowd && record.history.has_previous(scene, node.parent)) {
                         crowd_pose = record.history.previous_pose(scene, node.parent);
@@ -627,7 +631,7 @@ fn void? record_raster_view(
                 record_debug_lines(renderer, record, raster.view_proj, debug)!;
             }
 
-            if (temporal && !early_velocity) {
+            if (late_velocity) {
                 post::record_velocity(
                     renderer:  renderer,
                     record:    record,
@@ -635,6 +639,7 @@ fn void? record_raster_view(
                     raster:    &raster,
                     view_proj: matrices.view_proj,
                     jitter:    jitter,
+                    after_opaque: scene_read_items,
                 )!;
             }
             if (taa) {
@@ -1667,6 +1672,12 @@ fn bool custom_gbuffer_stage(Renderer* renderer, Material* material) @private {
     if (material.kind != MaterialKind.CUSTOM) return false;
     ShaderId shader = material.custom.shader;
     return renderer.assets.shaders.is_live(shader) && renderer.assets.shader(shader).desc.gbuffer.len > 0;
+}
+
+// The velocity pass redraws with depth EQUAL, so it can match only a draw that left its own depth.
+fn bool writes_own_depth(Material* material) @private {
+    MaterialCommon* common = &material.common;
+    return common.alpha_mode != AlphaMode.BLEND && common.depth_test && common.depth_write;
 }
 
 fn SceneReads? custom_scene_reads(Renderer* renderer, Material* material) @private {
