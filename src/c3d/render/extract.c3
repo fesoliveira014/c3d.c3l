@@ -26,7 +26,7 @@ const uint SHADER_FLAG_SHIFT @private = 8; // ShaderVariant.flags start at bit 8
 enum DrawList {
     GBUFFER,
     OPAQUE,
-    TRANSMISSION,
+    SCENE_READ,
     TRANSPARENT,
 }
 
@@ -113,15 +113,33 @@ fn bool instanced_material_drawable(AssetStore* assets, InstancedMesh* batch) {
 }
 
 <*
- Select the draw list: transmission first, then blend, else opaque.
+ Select the draw list: transmission, blend, scene readers, else opaque.
  @param [&in] material : "Valid active arm."
+ @param custom_reads : "Scene reads of the custom material's published shader."
  @pure
 *>
-fn DrawList draw_list(Material* material) {
+fn DrawList draw_list(Material* material, SceneReads custom_reads = {}) {
     if (material.kind == MaterialKind.PHYSICAL && material.physical.transmission > 0) {
-        return DrawList.TRANSMISSION;
+        return DrawList.SCENE_READ;
     }
-    return material.common.alpha_mode == AlphaMode.BLEND ? DrawList.TRANSPARENT : DrawList.OPAQUE;
+    if (material.common.alpha_mode == AlphaMode.BLEND) return DrawList.TRANSPARENT;
+    return material_scene_reads(material, custom_reads) != (SceneReads){} ? DrawList.SCENE_READ : DrawList.OPAQUE;
+}
+
+<*
+ Scene snapshots one draw of the material samples.
+ @param [&in] material : "Valid active arm."
+ @param custom_reads : "Scene reads of the custom material's published shader."
+ @pure
+*>
+fn SceneReads material_scene_reads(Material* material, SceneReads custom_reads = {}) {
+    switch (material.kind) {
+        case PHYSICAL: return { .color = material.physical.transmission > 0 };
+        case CUSTOM: return custom_reads;
+        case BASIC:
+        case STANDARD:
+        case TOON: return {};
+    }
 }
 
 <*
@@ -154,10 +172,16 @@ fn bool gbuffer_encodable(Material* material, bool custom_gbuffer = false) {
  Select the draw list on a view of the shading path; a forward view never selects GBUFFER.
  @param [&in] material : "Valid active arm."
  @param custom_gbuffer : "The custom material's shader supplies a G-buffer stage."
+ @param custom_reads : "Scene reads of the custom material's published shader."
  @pure
 *>
-fn DrawList view_draw_list(Material* material, ShadingPath shading, bool custom_gbuffer = false) {
-    DrawList list = draw_list(material);
+fn DrawList view_draw_list(
+    Material* material,
+    ShadingPath shading,
+    bool custom_gbuffer = false,
+    SceneReads custom_reads = {},
+) {
+    DrawList list = draw_list(material, custom_reads);
     if (shading == ShadingPath.DEFERRED && list == DrawList.OPAQUE && gbuffer_encodable(material, custom_gbuffer)) {
         return DrawList.GBUFFER;
     }

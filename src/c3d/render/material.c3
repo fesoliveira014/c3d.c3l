@@ -172,7 +172,7 @@ fn void write_material_block(
                     map_bit: shader::PHYSICAL_EXTENSION_MAP_ANISOTROPY,
                 );
             }
-            if (draw_list(material) == DrawList.TRANSMISSION) {
+            if (params.transmission > 0) {
                 extension_map_flags |= texture_map_flags(
                     slot: params.transmission_map,
                     binding: bindings.transmission,
@@ -411,7 +411,7 @@ fn MaterialBindings? resolve_material_bindings(Renderer* renderer, Material* mat
             if (params.anisotropy > 0) {
                 bindings.anisotropy = resolve_texture_slot(renderer, params.anisotropy_map)!;
             }
-            if (draw_list(material) == DrawList.TRANSMISSION) {
+            if (params.transmission > 0) {
                 bindings.transmission = resolve_texture_slot(renderer, params.transmission_map)!;
                 bindings.thickness = resolve_texture_slot(renderer, params.thickness_map)!;
             }

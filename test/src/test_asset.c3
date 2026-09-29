@@ -513,6 +513,47 @@ fn void test_shader_gbuffer_stage_is_copied_and_replaceable() @test {
     assert(!store.shaders.is_live(id));
 }
 
+fn void test_shader_scene_reads_survive_add_and_replace() @test {
+    AssetStore store = make_store();
+    defer asset::destroy_asset_store(&store);
+    char[4] fragment = { 1, 2, 3, 4 };
+    ShaderDesc desc = make_shader_desc(fragment[..]);
+    desc.scene_reads = { .depth };
+    ShaderId id = store.add_shader(&desc)!!;
+    ShaderAsset* record = store.shader(id);
+    assert(record.desc.scene_reads == (SceneReads){ .depth });
+
+    ShaderDesc replacement = make_shader_desc(fragment[..]);
+    replacement.scene_reads = { .color };
+    store.replace_shader(id, &replacement)!!;
+    assert(record.header.revision == 2 && record.desc.scene_reads == (SceneReads){ .color });
+}
+
+fn void test_shader_rejects_a_gbuffer_stage_with_scene_reads() @test {
+    AssetStore store = make_store();
+    defer asset::destroy_asset_store(&store);
+    char[4] fragment = { 1, 2, 3, 4 };
+    char[3] gbuffer = { 9, 8, 7 };
+    ShaderDesc reader_with_gbuffer = make_shader_desc(fragment[..], gbuffer: gbuffer[..]);
+    reader_with_gbuffer.scene_reads = { .color };
+    if (catch excuse = store.add_shader(&reader_with_gbuffer)) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "a G-buffer stage with scene reads was accepted");
+    }
+
+    ShaderDesc forward = make_shader_desc(fragment[..]);
+    ShaderId id = store.add_shader(&forward)!!;
+    if (catch excuse = store.replace_shader(id, &reader_with_gbuffer)) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "a replacement with a G-buffer stage and scene reads was accepted");
+    }
+    ShaderAsset* record = store.shader(id);
+    assert(record.header.revision == 1 && record.desc.gbuffer.len == 0);
+    assert(record.desc.scene_reads == (SceneReads){});
+}
+
 fn void test_remove_shader_makes_id_stale() @test {
     AssetStore store = make_store();
     defer asset::destroy_asset_store(&store);

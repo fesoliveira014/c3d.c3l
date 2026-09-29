@@ -22,7 +22,8 @@ enum Pass : int {
     LIGHTING,
     FORWARD_OPAQUE,
     SKY,
-    TRANSMISSION,
+    SCENE_SNAPSHOT,
+    SCENE_READ,
     FORWARD_TRANSPARENT,
     SSGI_COLOR_COPY,
     DEBUG_LINES,
@@ -53,6 +54,7 @@ struct Stats {
     uint  draws;
     uint  indirect_draws;
     uint  post_dispatches;
+    uint  scene_snapshots;   // this frame: one per snapshot image copied
     uint  dispatches;
     uint  triangles;
     uint  instances;

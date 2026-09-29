@@ -173,12 +173,45 @@ fn void test_draw_list_prefers_transmission_over_blend() @test {
     materials[6].common.alpha_mode = AlphaMode.BLEND;
     DrawList[7] expected = {
         DrawList.OPAQUE, DrawList.TRANSPARENT, DrawList.OPAQUE,
-        DrawList.TRANSMISSION, DrawList.TRANSMISSION, DrawList.TRANSMISSION,
+        DrawList.SCENE_READ, DrawList.SCENE_READ, DrawList.SCENE_READ,
         DrawList.TRANSPARENT,
     };
     foreach (index, &material : materials) {
         assert(render::draw_list(material) == expected[index]);
     }
+}
+
+fn void test_scene_readers_route_by_alpha_mode() @test {
+    Material opaque = { .kind = MaterialKind.CUSTOM, .common = material::MATERIAL_COMMON_DEFAULT };
+    Material masked = opaque;
+    masked.common.alpha_mode = AlphaMode.MASK;
+    Material blended = opaque;
+    blended.common.alpha_mode = AlphaMode.BLEND;
+    Material standard = material::standard();
+
+    assert(render::draw_list(&opaque, { .depth }) == DrawList.SCENE_READ);
+    assert(render::draw_list(&masked, { .color }) == DrawList.SCENE_READ);
+    assert(render::draw_list(&blended, { .color, .depth }) == DrawList.TRANSPARENT);
+    assert(render::draw_list(&opaque) == DrawList.OPAQUE);
+    assert(render::draw_list(&blended) == DrawList.TRANSPARENT);
+    assert(render::draw_list(&standard, { .depth }) == DrawList.OPAQUE);
+}
+
+fn void test_material_scene_reads_by_kind() @test {
+    PhysicalParams transmissive = material::PHYSICAL_PARAMS_DEFAULT;
+    transmissive.transmission = 0.5f;
+    Material glass = material::physical(transmissive);
+    Material blended_glass = material::physical(transmissive);
+    blended_glass.common.alpha_mode = AlphaMode.BLEND;
+    Material physical = material::physical();
+    Material[3] built_ins = { material::basic(), material::standard(), material::toon() };
+    Material custom = { .kind = MaterialKind.CUSTOM, .common = material::MATERIAL_COMMON_DEFAULT };
+
+    assert(render::material_scene_reads(&glass) == (SceneReads){ .color });
+    assert(render::material_scene_reads(&blended_glass) == (SceneReads){ .color });
+    assert(render::material_scene_reads(&physical) == (SceneReads){});
+    foreach (&built_in : built_ins) assert(render::material_scene_reads(built_in, { .depth }) == (SceneReads){});
+    assert(render::material_scene_reads(&custom, { .depth }) == (SceneReads){ .depth });
 }
 
 fn void test_released_morph_geometry_keeps_candidate_weights() @test {

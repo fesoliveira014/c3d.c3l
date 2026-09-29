@@ -302,3 +302,33 @@ fn void test_prepare_texture_bytes_match_the_mip_chain() @test {
         };
     }
 }
+
+fn void test_scene_reads_follow_the_published_shader_revision() @test {
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+    char[4] fragment = { 1, 2, 3, 4 };
+    ShaderDesc reader = { .fragment = fragment[..], .scene_reads = { .depth } };
+    ShaderId shader = assets.add_shader(&reader)!!;
+    Material custom = material::custom(shader);
+    Material basic = material::basic();
+    Renderer renderer = {
+        .allocator = mem,
+        .assets    = &assets,
+        .shaders   = alloc::new_array(mem, ShaderRes, (sz)assets.shaders.items.len),
+    };
+    defer alloc::free(mem, renderer.shaders.ptr);
+    ShaderRes* mirror = &renderer.shaders[shader.index];
+    *mirror = { .asset = shader, .revision = 1, .scene_reads = { .depth } };
+
+    ShaderDesc flat = { .fragment = fragment[..] };
+    assets.replace_shader(shader, &flat)!!;
+    mirror.rejected_revision = 2;
+    assert(render::custom_scene_reads(&renderer, &custom)!! == (SceneReads){ .depth });
+
+    *mirror = { .asset = shader, .revision = 2 };
+    assert(render::custom_scene_reads(&renderer, &custom)!! == (SceneReads){});
+    assert(render::custom_scene_reads(&renderer, &basic)!! == (SceneReads){});
+
+    assets.remove_shader(shader);
+    assert(render::custom_scene_reads(&renderer, &custom)!! == (SceneReads){});
+}

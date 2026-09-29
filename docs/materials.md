@@ -314,13 +314,16 @@ volume attenuation; `attenuation_color` components lie in [0, 1]. With
 | `thickness_map` | G | Linear | Multiplies `thickness` |
 
 Both slots are ignored when `transmission` is zero. A transmissive material's
-draws form a separate list rendered after opaque geometry and the sky and before
-ordinary blends, sorted back to front by bounds center. Any alpha mode is allowed:
-OPAQUE and MASK glass keeps its depth write setting and casts opaque shadows;
-BLEND glass follows the ordinary blend rules and never casts.
+draws join the scene-read list, which they share with opaque and masked
+[custom scene readers](custom_shaders.md#scene-reads): rendered after opaque
+geometry and the sky and before ordinary blends, sorted back to front by bounds
+center. Any alpha mode is allowed: OPAQUE and MASK glass keeps its depth write
+setting and casts opaque shadows; BLEND glass follows the ordinary blend rules
+and never casts.
 
 Before that list the renderer copies the finished opaque color into the
-view's own `scene_color` image, allocated on first use at the view size. Each
+view's own `scene_color` image, allocated on first use at the view size;
+`Pass.SCENE_SNAPSHOT` times the copy and `Pass.SCENE_READ` the list. Each
 transmissive fragment refracts the view direction by `1 / ior`, walks the
 thickness through the volume, projects the exit point and samples `scene_color`
 at mip zero, so rough transmission is not blurred. An exit point outside the
@@ -329,8 +332,8 @@ direction, or to black without an environment. The transmitted radiance replaces
 the dielectric diffuse response by the transmission factor, is scaled by base
 color and the non-metallic fraction, and is weighted by the surface's own
 Fresnel; direct lights add a mirrored-light transmission lobe. Transmissive
-surfaces never see each other or ordinary blends: glass behind glass shows the
-opaque scene through both.
+surfaces never see each other, the custom readers of the same list or ordinary
+blends: glass behind glass shows the opaque scene through both.
 
 ## Importing materials
 

@@ -78,8 +78,8 @@ fn void test_view_draw_list_selects_gbuffer_only_on_deferred_views() @test {
 
     assert(render::view_draw_list(&standard, ShadingPath.DEFERRED) == DrawList.GBUFFER);
     assert(render::view_draw_list(&standard, ShadingPath.FORWARD) == DrawList.OPAQUE);
-    assert(render::view_draw_list(&transmissive, ShadingPath.DEFERRED) == DrawList.TRANSMISSION);
-    assert(render::view_draw_list(&transmissive, ShadingPath.FORWARD) == DrawList.TRANSMISSION);
+    assert(render::view_draw_list(&transmissive, ShadingPath.DEFERRED) == DrawList.SCENE_READ);
+    assert(render::view_draw_list(&transmissive, ShadingPath.FORWARD) == DrawList.SCENE_READ);
     assert(render::view_draw_list(&blended, ShadingPath.DEFERRED) == DrawList.TRANSPARENT);
     assert(render::view_draw_list(&blended, ShadingPath.FORWARD) == DrawList.TRANSPARENT);
     assert(render::view_draw_list(&toon, ShadingPath.DEFERRED) == DrawList.OPAQUE);
@@ -98,6 +98,34 @@ fn void test_custom_routes_by_gbuffer_stage() @test {
     assert(render::view_draw_list(&custom, ShadingPath.DEFERRED, false) == DrawList.OPAQUE);
     assert(render::view_draw_list(&custom, ShadingPath.FORWARD, true) == DrawList.OPAQUE);
     assert(render::view_draw_list(&blended, ShadingPath.DEFERRED, true) == DrawList.TRANSPARENT);
+}
+
+fn void test_scene_reading_custom_never_joins_the_gbuffer() @test {
+    Material custom = { .kind = MaterialKind.CUSTOM, .common = material::MATERIAL_COMMON_DEFAULT };
+    Material blended = custom;
+    blended.common.alpha_mode = AlphaMode.BLEND;
+
+    DrawList deferred = render::view_draw_list(
+        material:       &custom,
+        shading:        ShadingPath.DEFERRED,
+        custom_gbuffer: true,
+        custom_reads:   { .depth },
+    );
+    DrawList forward = render::view_draw_list(
+        material:       &custom,
+        shading:        ShadingPath.FORWARD,
+        custom_gbuffer: true,
+        custom_reads:   { .depth },
+    );
+    DrawList blended_deferred = render::view_draw_list(
+        material:       &blended,
+        shading:        ShadingPath.DEFERRED,
+        custom_gbuffer: true,
+        custom_reads:   { .depth },
+    );
+    assert(deferred == DrawList.SCENE_READ);
+    assert(forward == DrawList.SCENE_READ);
+    assert(blended_deferred == DrawList.TRANSPARENT);
 }
 
 fn void test_octahedral_round_trip() @test {

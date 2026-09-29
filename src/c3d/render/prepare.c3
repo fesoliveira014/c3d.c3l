@@ -80,7 +80,7 @@ struct PrepareRecord @private {
     usz           bytes_total;
     usz           bytes_done;
     uint          units_done;
-    bool          transmission;
+    SceneReads    scene_reads;
     bool          open;
 }
 
@@ -355,9 +355,9 @@ fn void? run_prepare_unit(Renderer* renderer, PrepareRecord* record, PrepareUnit
                 depth:       true,
                 gbuffer:     renderer.has_deferred_view(),
             )!;
-            record.transmission |= prepared.transmission;
+            record.scene_reads |= prepared.scene_reads;
         case FINISH:
-            prepare_finish(renderer, record.transmission)!;
+            prepare_finish(renderer, record.scene_reads)!;
     }
 }
 

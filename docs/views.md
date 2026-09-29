@@ -64,7 +64,7 @@ stack fault `INVALID_ARGUMENT`; invalid ambient occlusion settings fault `INVALI
 `AoKind.RAY_TRACED` faults `UNSUPPORTED`; a full pool faults `CAPACITY_EXCEEDED` (`VIEW_CAPACITY` is 8).
 `destroy_view` on the default view faults `INVALID_ARGUMENT`.
 
-The view owns its working images (`hdr_color`, `depth`, the scene-color snapshot, post and effect
+The view owns its working images (`hdr_color`, `depth`, the scene color and depth snapshots, post and effect
 images) at the working extent `working_extent(viewport, output, render_scale)`, at least one pixel
 per dimension. Reconfiguring with a different extent or output waits for outstanding frames and
 reallocates them; every configuration resets the view's history, which is otherwise keyed by scene
@@ -226,8 +226,8 @@ if (progress.state == PrepareState.READY) {
 the default build and 1882 ms at `-O3`, almost all of it CPU mip generation (9.7 and 4.3 ms per
 staged MB; one 1024x1024 sRGB texture alone is 116 and 57 ms). The budgeted path spreads the same
 work over frames. `begin_prepare_model` lists the model's units in template order (its textures,
-then per mesh its geometry, material and pipelines, then one unit that creates the transmission
-snapshot pipeline and the view pipelines), leaving out textures and geometries already uploaded, and
+then per mesh its geometry, material and pipelines, then one unit that creates the scene snapshot
+pipelines its materials read and the view pipelines), leaving out textures and geometries already uploaded, and
 records `bytes_total`. `advance_prepares(budget_bytes)`, called inside the open frame, promotes
 finished records and then stages the next units of the open records in the order they began: a unit
 that does not fit the rest of the budget waits for the next call, except when nothing was staged
@@ -312,8 +312,9 @@ Pass order on a deferred view: uploads, shadow atlas, light culling, `DEPTH_PREP
 lists, `GBUFFER` (depth `EQUAL`, no write), `AMBIENT_OCCLUSION` when the view has ambient
 occlusion, `LIGHTING` (a fullscreen fragment pass that clears
 `hdr_color`, discards where no geometry was drawn and lights every G-buffer pixel from `FrameRoot`),
-`FORWARD_OPAQUE` (depth `EQUAL`, no write), sky, transmission, transparency, velocity and the post
-chain. `Stats.gpu_pass_ms` carries the three new passes. Dielectric F0 in the resolve is
+`FORWARD_OPAQUE` (depth `EQUAL`, no write), sky, `SCENE_SNAPSHOT` and `SCENE_READ` when the view
+draws scene readers, `SCENE_SNAPSHOT` again when a blended draw reads the scene, transparency,
+velocity and the post chain. `Stats.gpu_pass_ms` carries the three new passes. Dielectric F0 in the resolve is
 `0.04 · specular` for IOR 1.5, which is why other IORs and tinted specular colors route forward.
 
 Light selection follows `lights` on both paths: the resolve calls the same clustered or flat

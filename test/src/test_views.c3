@@ -171,6 +171,7 @@ fn void test_view_targets_list_every_image_once() @test {
     bool reflection_listed;
     bool reflection_blur_listed;
     bool accumulation_listed;
+    bool scene_depth_listed;
     foreach (usz index, target : targets) {
         assert(target != null);
         for (usz other = index + 1; other < targets.len; other++) assert(target != targets[other]);
@@ -179,8 +180,10 @@ fn void test_view_targets_list_every_image_once() @test {
         if (target == &record.reflection) reflection_listed = true;
         if (target == &record.reflection_blur) reflection_blur_listed = true;
         if (target == &record.accumulation) accumulation_listed = true;
+        if (target == &record.scene_depth) scene_depth_listed = true;
     }
     assert(raw_listed && ao_listed && reflection_listed && reflection_blur_listed && accumulation_listed);
+    assert(scene_depth_listed);
 }
 
 fn void test_view_desc_gates_path_tracing() @test {

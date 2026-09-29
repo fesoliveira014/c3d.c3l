@@ -98,6 +98,14 @@ What the four cases establish:
   environment source refills the volume; of two nested volumes the smaller one lights the surfaces
   it contains; the GLSL atlas helpers match their C3 twins; removing the component frees the slot.
 
+- A custom material that reads the scene colour shows the scene behind it, within 1 of 255, on
+  forward, half-scale, deferred and TAA views; one that reads depth measures its gap to the floor
+  under an orthographic and a perspective camera; a blended reader above an opaque reader sees the
+  opaque reader's depth, not the floor's; views without readers copy nothing and allocate neither
+  snapshot, and Physical transmission alone copies colour only; a replacement the backend rejects
+  keeps drawing with its old pipelines and snapshots, and an accepted one that reads nothing drops
+  them (`scene_probe.frag.glsl`).
+
 What they cannot establish: window clear-only and GUI-only frames need a
 window (run the `clear` and `cube_gui` examples with validation), and a
 presentation failure after submission needs a hardware observation.

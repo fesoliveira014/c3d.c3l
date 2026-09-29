@@ -21,6 +21,7 @@ fn void? stats_panel(Renderer* renderer) {
     imgui::text("Indirect draws: %u", renderer.stats.indirect_draws);
     imgui::text("Post dispatches: %u", renderer.stats.post_dispatches);
     imgui::text("Dispatches: %u", renderer.stats.dispatches);
+    imgui::text("Scene snapshots: %u", renderer.stats.scene_snapshots);
     imgui::text("Triangles: %u", renderer.stats.triangles);
     imgui::text("Instances: %u", renderer.stats.instances);
     uint tested = renderer.stats.instances_tested;

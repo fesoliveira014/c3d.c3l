@@ -197,5 +197,6 @@ Auto-exposure is not implemented.
 
 Bloom records only when its intensity is positive or a bloom preview waits for the view; a bloom preview
 requested after its view finished stays pending until a frame records the chain. Opaque, sky and
-ordinary transparent draws share one attachment pass; transmission ends it for the scene-color
-snapshot and continues in loaded passes.
+ordinary transparent draws share one attachment pass; a scene reader (Physical transmission or a
+custom material with scene reads) ends it for the scene snapshots, and drawing continues in loaded
+passes.
