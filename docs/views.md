@@ -334,13 +334,23 @@ of CPU per call on the WSL host.
 
 ## Example
 
-`examples/views` renders a rolled textured cube, two spheres and a ground plane twice per frame:
-a producer camera orbiting the scene writes a 512x512 capture target, and a monitor slab on its
-own layer samples that target through a Basic material while the window camera shows the whole
-scene. The panel resizes the capture target (256, 512, 1024), switches the capture between
+`examples/views` renders a rolled textured cube, three spheres, a crate and a ground plane three
+times per frame: a producer camera orbiting the scene writes a 512x512 capture target, and a monitor
+slab on its own layer samples that target through a Basic material while the window camera shows the
+whole scene. The panel resizes the capture target (256, 512, 1024), switches the capture between
 `DISPLAY_LDR` on an sRGB target and `LINEAR_HDR` on a float target (recreating the target and view
 and rebinding the material), toggles FXAA and bloom on the capture view, and scales the window
 view's working resolution.
+
+The ground is a mirror floor. A third view renders a mirror camera, placed each frame with the
+[planar reflection](#planar-reflections) recipe, into a half-size float target, clipped to the
+ground plane; the ground's custom material (`examples/shaders/custom/mirror.frag.glsl`, compiled at
+startup) shades the concrete through `shade_standard_surface` and mixes in the target. The ground
+sits on its own layer, so only the window camera draws it and the capture shows no floor. A chrome
+sphere sits half sunk into the ground and a crate lies wholly under it: with "Clip plane" off, the
+reflection shows the sphere's buried half and the crate as if they rose out of the floor. The panel
+also sets the mirror view's render scale and the floor's reflectance, and a "View stats" window
+compares the window, capture and mirror views.
 
 ## Shading path
 
