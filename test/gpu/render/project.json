@@ -43,7 +43,8 @@
         "test_scene_reads.c3",
         "test_custom_shading.c3",
         "test_custom_velocity.c3",
-        "test_instance_effects.c3"
+        "test_instance_effects.c3",
+        "test_clip_plane.c3"
       ]
     }
   }
