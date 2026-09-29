@@ -139,10 +139,11 @@ A custom or package stage starts with the prelude, `generated/shader_abi.glsl` (
 | `standard_shading.glsl` | `standard_ambient_fill`, `evaluate_standard_lights`, `shade_standard_surface` |
 | `gbuffer_output.glsl` | `write_gbuffer`, outputs at locations 0 to 4 |
 | `vertex_pull.glsl` | `pull_vec2`, `pull_vec3`, `pull_vec4`, `pull_triangle`, `GEOMETRY_*` |
-| `mesh_vertex.glsl` | the push block, outputs 0 to 6, `MeshVertexInput`, `pull_mesh_vertex`, `apply_mesh_deformation`, `write_mesh_outputs` (five arguments in `VELOCITY` forms), `previous_mesh_position` (`VELOCITY`), `instance_source` (`INSTANCED`) |
+| `instance_effects.glsl` | `instance_anchor`, `instance_fade_scale`, `sway_offset` ([sway and fade](instancing.md#sway-and-distance-fade); the blocks are `c3d_abi.glsl`'s `InstanceEffectsGpu` and `SwayGpu`) |
+| `mesh_vertex.glsl` | the push block, outputs 0 to 6, `MeshVertexInput`, `pull_mesh_vertex`, `apply_mesh_deformation`, `write_mesh_outputs` (five arguments in `VELOCITY` forms), `previous_mesh_position` (`VELOCITY`), `instance_source`, `instance_bend_weight` and `apply_instance_effects` (`INSTANCED`), `apply_previous_instance_effects` (`VELOCITY` with `INSTANCED`) |
 | `scene_trace.glsl` | as in [Scene tracing](scene_trace.md) |
 
-`shadows.glsl` and `standard_shading.glsl` are probed plain, with `RT_SHADOWS`, and with `RT_SHADOWS` and `SCENE_TRACE_BVH`; `lights.glsl` in fragment and vertex stages; `mesh_vertex.glsl` plain, with `INSTANCED`, `DEPTH_ONLY`, both, `VELOCITY`, and `VELOCITY` with `INSTANCED`; `scene_trace.glsl` in compute with each trace kind.
+`shadows.glsl` and `standard_shading.glsl` are probed plain, with `RT_SHADOWS`, and with `RT_SHADOWS` and `SCENE_TRACE_BVH`; `lights.glsl` in fragment and vertex stages; `mesh_vertex.glsl` plain, with `INSTANCED`, `DEPTH_ONLY`, both, `VELOCITY`, and `VELOCITY` with `INSTANCED`; `instance_effects.glsl` in vertex and compute stages; `scene_trace.glsl` in compute with each trace kind.
 
 ### Traced shadows
 
