@@ -146,16 +146,23 @@ fn void test_traced_shadow_matches_the_atlas_on_a_plane() @test {
     }
 }
 
-fn bool? caster_shadows(Fixture* fixture, ShadowScene* shadow, bool ray_traced, Vec3 point, int lit) @private {
-    set_ray_traced_shadows(fixture, ray_traced)!;
-    int value = shade(render_and_sample(fixture, shadow, point)!);
-    // The fixture's 64-texel atlas only darkens; a traced shadow is black.
+// lit is the same mode's value where nothing casts: the fixture's 64-texel atlas darkens even open ground.
+fn bool is_shadowed(int value, int lit, bool ray_traced) @private {
+    // A traced shadow is black; the atlas only darkens.
     if (ray_traced) {
         assert(value == 0 || math::abs(value - lit) <= 3 * SHADE_TOLERANCE);
         return value == 0;
     }
     assert(value < lit - 3 * SHADE_TOLERANCE || math::abs(value - lit) <= 3 * SHADE_TOLERANCE);
     return value < lit - 3 * SHADE_TOLERANCE;
+}
+
+fn bool? caster_shadows(Fixture* fixture, ShadowScene* shadow, bool ray_traced) @private {
+    set_ray_traced_shadows(fixture, ray_traced)!;
+    int lit = shade(render_and_sample(fixture, shadow, LIT_POINT)!);
+    int value = shade(render_and_sample(fixture, shadow, SHADOWED_POINT)!);
+    io::eprintfn("  %s: %d against lit %d", ray_traced ? "traced" : "atlas", value, lit);
+    return is_shadowed(value, lit, ray_traced);
 }
 
 fn void test_single_sided_casters_shadow_as_the_atlas() @test {
@@ -197,10 +204,8 @@ fn void test_single_sided_casters_shadow_as_the_atlas() @test {
             shadow.scene.get(roof, Mesh).material = caster.double_sided ? double_sided : shadow.opaque;
             shadow.scene.update_world();
 
-            set_ray_traced_shadows(&fixture, false)!!;
-            int lit = shade(render_and_sample(&fixture, &shadow, LIT_POINT)!!);
-            bool atlas = caster_shadows(&fixture, &shadow, false, SHADOWED_POINT, lit)!!;
-            bool traced = caster_shadows(&fixture, &shadow, true, SHADOWED_POINT, lit)!!;
+            bool atlas = caster_shadows(&fixture, &shadow, false)!!;
+            bool traced = caster_shadows(&fixture, &shadow, true)!!;
             io::eprintfn("%s, %s: atlas %s, traced %s", trace_name(ray_queries), caster.name, atlas, traced);
             assert(atlas == caster.shadowed && traced == caster.shadowed);
         }
@@ -225,16 +230,24 @@ fn void test_closed_room_shadows_its_inside() @test {
         shadow.box.visible = false;
         shadow.camera.local.position = ROOM_CAMERA_POSITION;
 
-        room.visible = false;
-        shadow.scene.update_world();
-        set_ray_traced_shadows(&fixture, false)!!;
-        int lit = shade(render_and_sample(&fixture, &shadow, ROOM_FLOOR_POINT)!!);
-        room.visible = true;
-        shadow.scene.update_world();
-        bool atlas = caster_shadows(&fixture, &shadow, false, ROOM_FLOOR_POINT, lit)!!;
-        bool traced = caster_shadows(&fixture, &shadow, true, ROOM_FLOOR_POINT, lit)!!;
-        io::eprintfn("%s, closed room: lit %d, atlas %s, traced %s", trace_name(ray_queries), lit, atlas, traced);
-        assert(lit > 0 && atlas && traced);
+        bool[2] modes = { false, true };
+        foreach (ray_traced : modes) {
+            set_ray_traced_shadows(&fixture, ray_traced)!!;
+            room.visible = false;
+            shadow.scene.update_world();
+            int lit = shade(render_and_sample(&fixture, &shadow, ROOM_FLOOR_POINT)!!);
+            room.visible = true;
+            shadow.scene.update_world();
+            int inside = shade(render_and_sample(&fixture, &shadow, ROOM_FLOOR_POINT)!!);
+            io::eprintfn(
+                "%s, closed room, %s: inside %d against lit %d",
+                trace_name(ray_queries),
+                ray_traced ? "traced" : "atlas",
+                inside,
+                lit,
+            );
+            assert(lit > 0 && is_shadowed(inside, lit, ray_traced));
+        }
         check_validation(&fixture.renderer);
     }
 }
