@@ -35,14 +35,18 @@ const float TRIO_SPACING @local = 1.8f;
 const float TRIO_SPIN_RADIANS_PER_SECOND @local = 0.8f;
 const float BOB_HEIGHT @local = 0.8f;
 const float BOB_RADIANS_PER_SECOND @local = 2;
+const uint GLASS_SIDE @local = 22; // 10,648 blended cubes, the sorted-instance lever; 47 gives 103,823
+const float GLASS_SPACING @local = 0.4f;
+const float GLASS_ALPHA @local = 0.35f;
+const Vec3 GLASS_POSITION @local = { 0, 5, -10 };
 const float ORBIT_RADIANS_PER_PIXEL @local = 0.005f;
 const float ORBIT_PITCH_LIMIT @local = 1.5f; // avoids the poles, where the up vector degenerates
 const float ORBIT_ZOOM_STEP @local = 0.9f;
 const float ORBIT_DISTANCE_MIN @local = 3;
 const float ORBIT_DISTANCE_MAX @local = 60;
 const Vec2 CONTROLS_PANEL_POSITION @local = { 10, 10 };
-const Vec2 CONTROLS_PANEL_SIZE @local = { 340, 250 };
-const Vec2 STATS_PANEL_POSITION @local = { 10, 260 };
+const Vec2 CONTROLS_PANEL_SIZE @local = { 340, 275 };
+const Vec2 STATS_PANEL_POSITION @local = { 10, 285 };
 const Vec2 STATS_PANEL_SIZE @local = { 340, 500 };
 // Tops move at most 0.12, the batch bounds grow by that and per-instance culling stays on.
 const InstanceSway PROP_WIND @local = {
@@ -72,6 +76,7 @@ struct Batches @local {
     Node* trio;
     Node* props;
     Node* pulses;
+    Node* glass;
 }
 
 struct Controls @local {
@@ -81,6 +86,7 @@ struct Controls @local {
     bool culling;
     bool wind;
     bool fade;
+    bool glass;
     bool taa;
     bool picked;
     String pick_name;
@@ -223,6 +229,32 @@ fn Node*? add_pulses(Scene* scene, GeometryId sphere, MaterialId pulse_material)
     return node;
 }
 
+fn Node*? add_glass(Scene* scene, GeometryId prop, MaterialId glass) @local {
+    uint count = GLASS_SIDE * GLASS_SIDE * GLASS_SIDE;
+    Node* node = scene.add_instanced_mesh(
+        geometry: prop,
+        material: glass,
+        capacity: count,
+        name:     "glass",
+    )!;
+    scene.resize_instances(node, count)!;
+    InstancedMesh* batch = scene.get(node, InstancedMesh);
+    float half_extent = (GLASS_SIDE - 1) * GLASS_SPACING * 0.5f;
+    float last = (float)(GLASS_SIDE - 1);
+    for (uint index = 0; index < count; index++) {
+        Vec3 cell = {
+            (float)(index % GLASS_SIDE),
+            (float)(index / GLASS_SIDE % GLASS_SIDE),
+            (float)(index / (GLASS_SIDE * GLASS_SIDE)),
+        };
+        batch.transforms[index].position = cell * GLASS_SPACING - (Vec3){ half_extent, half_extent, half_extent };
+        batch.colors[index] = { cell.x / last, cell.y / last, cell.z / last, GLASS_ALPHA };
+    }
+    scene.mark_instances_dirty(node);
+    node.local.position = GLASS_POSITION;
+    return node;
+}
+
 fn Batches? build_scene(AssetStore* assets, Scene* scene, ShaderId pulse_shader) @local {
     GeometryId ground;
     GeometryId cube;
@@ -246,6 +278,9 @@ fn Batches? build_scene(AssetStore* assets, Scene* scene, ShaderId pulse_shader)
     surface.base_color = { 1, 1, 1, 1 };
     surface.roughness = 0.4f;
     MaterialId white = assets.add_material(material::standard(surface), "instancing/white")!;
+    MaterialCommon blended = material::MATERIAL_COMMON_DEFAULT;
+    blended.alpha_mode = AlphaMode.BLEND;
+    MaterialId glass = assets.add_material(material::standard(surface, blended), "instancing/glass")!;
     PulseParams pulse = {
         .color  = { 1, 1, 1, 1 },
         .motion = { PULSE_AMPLITUDE, PULSE_ANGULAR_FREQUENCY, 0, 0 },
@@ -263,6 +298,7 @@ fn Batches? build_scene(AssetStore* assets, Scene* scene, ShaderId pulse_shader)
         .trio   = add_trio(scene, cube, white)!,
         .props  = add_props(scene, prop, white)!,
         .pulses = add_pulses(scene, sphere, pulse_material)!,
+        .glass  = add_glass(scene, prop, glass)!,
     };
 }
 
@@ -320,6 +356,7 @@ fn bool draw_controls(Controls* controls, Scene* scene, Batches* batches) @local
         changed |= imgui::checkbox("TAA", &controls.taa);
         changed |= imgui::checkbox("Deferred shading", &controls.deferred);
         changed |= imgui::checkbox("Instance culling", &controls.culling);
+        imgui::checkbox("Glass cloud", &controls.glass);
         if (imgui::checkbox("Wind", &controls.wind)) apply_wind(scene, batches, controls.wind);
         if (imgui::checkbox("Distance fade", &controls.fade)) {
             scene.get(batches.props, InstancedMesh).fade = controls.fade ? PROP_FADE : (InstanceFade){};
@@ -378,7 +415,7 @@ fn void? run(
 
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
-    Controls controls = { .animate = true, .culling = true };
+    Controls controls = { .animate = true, .culling = true, .glass = true };
     render::configure_view(renderer, renderer.default_view, view_desc_of(&controls))!;
     renderer.prepare_scene(scene)!;
 
@@ -397,6 +434,7 @@ fn void? run(
 
         if (controls.animate) animate(scene, &batches, window.clock.total);
         apply_orbit(&orbit, input, camera_node);
+        batches.glass.visible = controls.glass;
         scene.update_world();
         if (input.button_pressed(platform::MouseButton.LEFT) && !input.mouse_captured_by_gui) {
             pick_under_cursor(

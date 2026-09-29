@@ -160,17 +160,20 @@ fn void test_transparent_order_uses_depth_before_entity_ties() @test {
         { .id = { .index = 1, .generation = 2 } },
         { .id = { .index = 9, .generation = 1 } },
     };
-    MeshCandidate[4] candidates = {
+    MeshCandidate[5] candidates = {
         { .node = &nodes[0], .view_depth = 4 },
         { .node = &nodes[1], .view_depth = 5 },
+        { .node = &nodes[2], .view_depth = 5, .instance_first = 5, .mirrored = true },
         { .node = &nodes[2], .view_depth = 5 },
         { .node = &nodes[3], .view_depth = 5.0001f },
     };
     sort::quicksort(candidates[..], &render::compare_transparent_candidates);
     assert(candidates[0].node == &nodes[3]);
-    assert(candidates[1].node == &nodes[2]);
-    assert(candidates[2].node == &nodes[1]);
-    assert(candidates[3].node == &nodes[0]);
+    assert(candidates[1].node == &nodes[2] && !candidates[1].mirrored);
+    assert(candidates[2].node == &nodes[2] && candidates[2].mirrored);
+    assert(candidates[3].node == &nodes[1]);
+    assert(candidates[4].node == &nodes[0]);
+    assert(render::compare_transparent_candidates(candidates[1], candidates[2]) == -1);
     assert(render::compare_transparent_candidates(candidates[0], candidates[0]) == 0);
 }
 

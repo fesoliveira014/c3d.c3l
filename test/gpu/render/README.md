@@ -127,6 +127,12 @@ What the four cases establish:
   keeps an instance the sway brings into view; a custom instanced stage sways through
   `write_mesh_outputs`; vertex-alpha weighting keeps masked coverage in the depth prepass.
 
+- A blended batch of 5,000 boxes stored in scrambled depth order draws far to near: a fragment
+  that knows each instance's expected rank leaves the center pixel opaque green, with and without
+  instance culling. A culled translucent line batch lists and sorts only its survivors; a sort that
+  does not fit the cull arena draws from CPU arguments and counts one overflow; an opaque view
+  never creates the sort pipeline.
+
 What they cannot establish: window clear-only and GUI-only frames need a
 window (run the `clear` and `cube_gui` examples with validation), and a
 presentation failure after submission needs a hardware observation.

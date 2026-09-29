@@ -131,6 +131,7 @@ fn void test_culled_batch_draws_only_survivors() @test {
     assert(renderer.stats.instances_tested == VIEW_CULLING_PASSES * LINE_COUNT);
     assert(renderer.stats.instances_visible == VIEW_CULLING_PASSES * survivors);
     check_opaque_color(culled_pixel);
+    assert(renderer.stats.sort_dispatches == 0 && !renderer.instance_sort_pipeline.is_valid());
 
     set_view_culling(&fixture, false)!!;
     uint unculled_pixel = settle_and_sample(&fixture, &line)!!;

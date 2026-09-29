@@ -10,6 +10,7 @@ enum Pass : int {
     CUSTOM_COMPUTE,
     PROBE_UPDATE,
     INSTANCE_CULL,
+    INSTANCE_SORT,
     SHADOW_ATLAS,
     LIGHT_CULL,
     ACCELERATION_BUILD,
@@ -60,6 +61,8 @@ struct Stats {
     uint  instances;
     uint  cull_dispatches;   // this frame
     uint  cull_overflows;    // this frame: ranges drawn unculled because the arena was full
+    uint  sort_dispatches;   // this frame
+    uint  sort_overflows;    // this frame: blended ranges drawn unsorted and unculled because they did not fit
     uint  instances_tested;  // the read-back frame, FRAMES_IN_FLIGHT frames late
     uint  instances_visible; // the read-back frame; never above instances_tested
     uint  culled;

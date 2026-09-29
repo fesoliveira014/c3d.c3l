@@ -35,7 +35,7 @@ layout(push_constant) uniform Push {
 } pc;
 
 #ifdef INSTANCED
-// A culled range draws over its visible list; every per-instance read indexes through this.
+// A culled or sorted range draws over its visible list; every per-instance read indexes through this.
 uint instance_source(DrawRoot draw) {
     return draw.instance_indices != 0ul
         ? VisibleArray(draw.instance_indices).values[gl_InstanceIndex]
