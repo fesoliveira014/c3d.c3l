@@ -57,6 +57,10 @@
         "ufbx",
         "shaderc"
       ]
+    },
+    "vegetation": {
+      "type": "executable",
+      "sources": [ "examples/vegetation.c3", "examples/landscape_ground.c3" ]
     }
   }
 }

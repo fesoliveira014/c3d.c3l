@@ -58,6 +58,7 @@ ADDON_EXAMPLES = {
     "physics_inspector_character": PHYSICS_GUI,
     "job_bench": JOB,
     "terrain": LANDSCAPE,
+    "vegetation": LANDSCAPE,
 }
 PROFILE_TEST_TARGETS = (
     "profile_off", "profile_cpu", "profile_internal", "profile_gpu",
