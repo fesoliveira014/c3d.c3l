@@ -54,7 +54,8 @@ const float CRATE_DROP_HEIGHT @local = 8; // metres above the ground a crate sta
 const float CRATE_DROP_DISTANCE @local = 6; // metres in front of the camera
 const uint CRATE_STACK_SIDE @local = 3; // the benchmark drops a 3 x 3 grid of casters in the still view
 const float CRATE_STACK_SPACING @local = 3;
-const float CRATE_IMPULSE @local = 12;
+const float CRATE_MASS @local = CRATE_SIZE * CRATE_SIZE * CRATE_SIZE * physics::DEFAULT_DENSITY; // default density
+const float PUSH_SPEED @local = 6; // m/s a click adds to a crate: a visible toss of a few metres
 const float PICK_DISTANCE @local = 500;
 const float PHYSICS_RAY_START @local = 400; // above HEIGHT_SCALE, so the ray starts over every ridge
 const float PHYSICS_RAY_LENGTH @local = 800;
@@ -68,10 +69,13 @@ const float FAST_MULTIPLIER @local = 4;
 const float LOOK_RADIANS_PER_PIXEL @local = 0.003f;
 const float PITCH_LIMIT @local = 1.5f; // avoids the poles, where the up vector degenerates
 const uint BRUSH_RADIUS @local = 24; // texels; a stamp touches 49 x 49 texels, the typical edit
-const float BRUSH_RISE @local = 600; // texel units at the centre, 2.7 m at the example's height scale
+const float BRUSH_RISE @local = 600; // texel units at the centre per benchmark stamp, 2.7 m at this height scale
+const float BRUSH_RISE_PER_SECOND @local = 1200; // texel units at the centre while B is held, 5.5 m/s
+const float BRUSH_STAMP_SECONDS @local = 1.0f / 30; // held painting stamps at this period whatever the frame rate
 const Vec3 SUN_DIRECTION @local = { -0.45f, -0.6f, -0.35f };
 const float SUN_INTENSITY @local = 3;
 const float SHADOW_DISTANCE @local = 1500; // metres; the cascades spread over it, the atlas cost is fixed
+const float SHADOW_NORMAL_BIAS @local = 0.5f; // metres; cascade texels here are 0.1 to 1.8 m, less bands gentle ground
 const float AMBIENT_INTENSITY @local = 0.25f;
 const Vec4 SKY_COLOR @local = { 0.55f, 0.7f, 0.9f, 1 };
 const uint WINDOW_WIDTH @local = 1600;
@@ -497,6 +501,7 @@ fn Demo? build_demo(
 
     Light sun = light::directional({ 1, 0.95f, 0.85f }, SUN_INTENSITY);
     sun.shadow.max_distance = SHADOW_DISTANCE;
+    sun.shadow.normal_bias = SHADOW_NORMAL_BIAS;
     sun.shadow.ray_traced = options.traced_shadows;
     Node* sun_node = scene.add_light(sun, name: "sun")!;
     sun_node.local.rotation = maths::look_rotation(SUN_DIRECTION.normalize(), { 0, 1, 0 });
@@ -557,6 +562,7 @@ fn void stamp_brush(
     Node* terrain_node,
     uint center_x,
     uint center_z,
+    float rise,
 ) @local {
     TextureId height_map = scene.get(terrain_node, Terrain).desc.height_map;
     TextureAsset* record = assets.texture(height_map);
@@ -574,7 +580,7 @@ fn void stamp_brush(
             float falloff = 1 - (offset_x * offset_x + offset_z * offset_z) / radius_squared;
             if (falloff <= 0) continue;
             usz index = (usz)z * side + x;
-            uint raised = (uint)texels[index] + (uint)(BRUSH_RISE * falloff);
+            uint raised = (uint)texels[index] + (uint)(rise * falloff + 0.5f);
             texels[index] = (ushort)min(raised, (uint)ushort::max);
         }
     }
@@ -592,7 +598,7 @@ fn void end_stroke(Scene* scene, Node* terrain_node) @local {
     if (scene.has(terrain_node, PhysicsBody)) scene.get(terrain_node, PhysicsBody).mark_changed();
 }
 
-fn bool? stamp_under(Demo* demo, Vec3 position) @local {
+fn bool? stamp_under(Demo* demo, Vec3 position, float rise) @local {
     HeightView view = terrain::height_view(demo.scene, demo.assets, demo.terrain_node.id)!;
     Vec3 local = maths::transform_point(view.local_from_world, position);
     float column = math::round(local.x / view.cell_size);
@@ -605,6 +611,7 @@ fn bool? stamp_under(Demo* demo, Vec3 position) @local {
         terrain_node: demo.terrain_node,
         center_x:     (uint)column,
         center_z:     (uint)row,
+        rise:         rise,
     );
     return true;
 }
@@ -765,8 +772,10 @@ fn void push_picked_crate(Demo* demo, Renderer* renderer, Vec2 pixel) @local {
             options:   options,
         );
         if (!hits.len || hits[0].distance > PICK_DISTANCE) return;
-        Vec3 impulse = (ray.direction + (Vec3){ 0, 1, 0 }) * CRATE_IMPULSE;
-        demo.physics.apply_impulse(hits[0].node, impulse, hits[0].position);
+        // A crate dropped this frame has no simulated body until the next physics update.
+        if (!demo.scene.has(hits[0].node, RigidBody)) return;
+        Vec3 direction = (ray.direction + (Vec3){ 0, 1, 0 }).normalize();
+        demo.physics.apply_impulse(hits[0].node, direction * (CRATE_MASS * PUSH_SPEED), hits[0].position);
     };
 }
 
@@ -879,6 +888,7 @@ fn void? run_interactive(Options options) @local {
     FlyCamera fly_camera = { .position = extent_point(&demo, STILL_POSITION), .yaw = STILL_YAW };
     renderer.prepare_scene(&scene)!;
     bool painting;
+    float brush_seconds;
     while (window.poll()) {
         Input* input = &window.input;
         if (input.key_released(platform::Scancode.ESCAPE) && !input.keyboard_captured_by_gui) break;
@@ -904,10 +914,17 @@ fn void? run_interactive(Options options) @local {
                 }
             }
             if (input.key_down(platform::Scancode.B)) {
-                if (stamp_under(&demo, fly_camera.position)!) painting = true;
-            } else if (painting) {
-                end_stroke(&scene, demo.terrain_node);
-                painting = false;
+                brush_seconds += delta;
+                uint stamps = (uint)(brush_seconds / BRUSH_STAMP_SECONDS);
+                brush_seconds -= (float)stamps * BRUSH_STAMP_SECONDS;
+                float rise = BRUSH_RISE_PER_SECOND * BRUSH_STAMP_SECONDS * (float)stamps;
+                if (stamps && stamp_under(&demo, fly_camera.position, rise)!) painting = true;
+            } else {
+                brush_seconds = 0;
+                if (painting) {
+                    end_stroke(&scene, demo.terrain_node);
+                    painting = false;
+                }
             }
         }
         if (!input.mouse_captured_by_gui && input.button_pressed(platform::MouseButton.LEFT)) {
@@ -1093,7 +1110,7 @@ fn void? run_segments(
             hover:          hover,
         )!;
         bool stamped = timed && segment == Segment.EDIT && segment_step % STAMP_PERIOD == 0;
-        if (stamped) stamp_under(demo, demo.camera_node.local.position)!;
+        if (stamped) stamp_under(demo, demo.camera_node.local.position, BRUSH_RISE)!;
 
         demo.scene.update_world();
         demo.physics.update(TIME_STEP);

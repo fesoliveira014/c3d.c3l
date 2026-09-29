@@ -202,6 +202,15 @@ derived. Loading calls `add_terrain` with the stored desc.
 drawn heights. The terrain's own queries are the supported hit. Give the terrain node its own layer bit and
 leave it out of `PickOptions.layers`, as the example does; the scene index sees chunk boxes too.
 
+## Shadows
+
+At landscape shadow distances a cascade texel spans decimetres to metres, so the 2 cm default
+`ShadowSettings.normal_bias` bands flat and gentle ground under atlas shadows; set the sun's normal bias to about
+a cascade texel. The example uses 0.5 m at a 1500 m shadow distance, where its four cascades have texels of
+about 0.1, 0.2, 0.46 and 1.8 m. The bias lifts the shadow lookup along the receiver's normal, so a 1 m crate's
+contact shadow stays attached but shortens: at the example's 46° sun it reaches about 0.5 m past the crate's
+base instead of 0.95 m. Traced shadows need no such bias.
+
 ## Faults
 
 | Where | Fault | When |
@@ -239,9 +248,9 @@ leave it out of `PickOptions.layers`, as the example does; the scene index sees 
 
 `python3 scripts/build.py --example terrain` generates a ridged height map (1 m cells, 300 m height scale), a
 control map from height and slope and four tiled layers, then walks the camera over it. F toggles flight, G
-drops a crate onto the height-field collider, B held paints a bump under the camera and B released ends the
-stroke, P toggles the collider, and a click pushes the crate under the cursor through `spatial::pick` with the
-terrain's layer left out. The panel shows chunks per level, LOD switches, the height and normal under the
+drops a crate onto the height-field collider, B held raises a bump under the camera at a fixed rate whatever
+the frame rate and B released ends the stroke, P toggles the collider, and a click tosses the crate under the
+cursor (a 6 m/s velocity change) through `spatial::pick` with the terrain's layer left out. The panel shows chunks per level, LOD switches, the height and normal under the
 camera beside the physics ray height, and the LOD threshold.
 
 `--benchmark [frames]` renders to an offscreen target without a window and runs a scripted, deterministic path
