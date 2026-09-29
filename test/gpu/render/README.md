@@ -142,6 +142,11 @@ What the four cases establish:
   plane; and the prepass and deferred paths cover an oblique cut exactly as the single pass does,
   column by column (`line.comp.glsl`).
 
+- A shader replacement that gpu.c3l rejects leaves later pipelines on the published revision: a
+  deferred view first rendered after the rejection draws the published box through its depth prepass
+  and `EQUAL`, a batch added after it draws without a second rejection, and `prepare_scene` skips a
+  batch whose shader has no instanced pair (`shifted.vert.glsl`).
+
 What they cannot establish: window clear-only and GUI-only frames need a
 window (run the `clear` and `cube_gui` examples with validation), and a
 presentation failure after submission needs a hardware observation.

@@ -1,7 +1,6 @@
 module c3d::render;
 
 import c3d;
-import c3d::asset;
 import c3d::camera;
 import c3d::ecs;
 import c3d::geometry;
@@ -53,15 +52,12 @@ fn gpu::PipelineHandle? shadow_pipeline_for(
         .polygon = wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL,
     };
     if (material && material.kind == MaterialKind.CUSTOM) {
-        asset::ShaderDesc* stages = &renderer.assets.shader(material.custom.shader).desc;
-        if (stages.vertex.depth.len) {
+        ShaderRes* published = resolve_shader(renderer, material.custom.shader)!;
+        if (published.desc.vertex.depth.len) {
             uint instanced = vertex.flags & shader::SHADER_FLAG_INSTANCED;
             key.vertex = { .shader = MESH, .flags = shader::SHADER_FLAG_DEPTH_ONLY | instanced };
-            key.shader = material.custom.shader;
-            key.shader_revision = renderer.shaders[material.custom.shader.index].revision;
             key.custom = { .vertex = true };
-            CustomStageSource source = custom_stage_source(stages, key);
-            return renderer.pipelines.get(&renderer.device, key, &source);
+            return custom_pipeline(renderer, published, key);
         }
     }
     return renderer.pipelines.get(&renderer.device, key);

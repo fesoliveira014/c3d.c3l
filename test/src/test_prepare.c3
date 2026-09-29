@@ -6,6 +6,8 @@ import c3d::geometry;
 import c3d::material;
 import c3d::pool;
 import c3d::render @public;
+import c3d::shader;
+import gpu;
 import std::collections::list;
 
 const usz MIB @local = 1 << 20;
@@ -26,7 +28,7 @@ fn void create_prepare_fixture(PrepareFixture* fixture) @local {
     AssetStore* assets = &fixture.assets;
     @pool() {
         char[] pixels = alloc::new_array(tmem, char, (sz)TEXTURE_EXTENT * TEXTURE_EXTENT * 4);
-        TextureDesc desc = material::texture_2d_desc(TEXTURE_EXTENT, TEXTURE_EXTENT, PixelFormat.RGBA8_UNORM);
+        material::TextureDesc desc = material::texture_2d_desc(TEXTURE_EXTENT, TEXTURE_EXTENT, PixelFormat.RGBA8_UNORM);
         fixture.texture = assets.add_texture(desc, pixels, "prepare/texture")!!;
         Geometry box = geometry::box(tmem, 1, 1, 1);
         fixture.first = assets.add_geometry(&box, "prepare/first")!!;
@@ -75,6 +77,21 @@ fn Renderer record_renderer() @local {
     };
     renderer.pending_prepare_marks.init(mem);
     return renderer;
+}
+
+fn Renderer create_shader_renderer(AssetStore* assets) @local {
+    return {
+        .allocator = mem,
+        .assets    = assets,
+        .shaders   = alloc::new_array(mem, ShaderRes, (sz)assets.shaders.items.len),
+        .pipelines = render::create_pipeline_cache(mem, shader::BUILTIN_REGISTRY),
+    };
+}
+
+fn void destroy_shader_renderer(Renderer* renderer) @local {
+    render::free_shaders(renderer);
+    renderer.pipelines.pipelines.free();
+    renderer.pipelines.rejected.free();
 }
 
 fn PrepareId add_record(Renderer* renderer, usz[] unit_bytes, ulong sequence) @local {
@@ -288,7 +305,7 @@ fn void test_released_prepare_id_is_stale() @test {
 }
 
 fn void test_prepare_texture_bytes_match_the_mip_chain() @test {
-    TextureDesc[3] descs = {
+    material::TextureDesc[3] descs = {
         material::texture_2d_desc(64, 64, PixelFormat.RGBA8_UNORM),
         material::texture_2d_desc(64, 64, PixelFormat.RGBA8_SRGB),
         material::texture_2d_desc(300, 200, PixelFormat.RGBA8_UNORM),
@@ -307,28 +324,101 @@ fn void test_scene_reads_follow_the_published_shader_revision() @test {
     AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
     defer asset::destroy_asset_store(&assets);
     char[4] fragment = { 1, 2, 3, 4 };
-    ShaderDesc reader = { .fragment = fragment[..], .scene_reads = { .depth } };
+    asset::ShaderDesc reader = { .fragment = fragment[..], .scene_reads = { .depth } };
+    asset::ShaderDesc flat = { .fragment = fragment[..] };
     ShaderId shader = assets.add_shader(&reader)!!;
     Material custom = material::custom(shader);
     Material basic = material::basic();
-    Renderer renderer = {
-        .allocator = mem,
-        .assets    = &assets,
-        .shaders   = alloc::new_array(mem, ShaderRes, (sz)assets.shaders.items.len),
-    };
-    defer alloc::free(mem, renderer.shaders.ptr);
-    ShaderRes* mirror = &renderer.shaders[shader.index];
-    *mirror = { .asset = shader, .revision = 1, .scene_reads = { .depth } };
-
-    ShaderDesc flat = { .fragment = fragment[..] };
-    assets.replace_shader(shader, &flat)!!;
-    mirror.rejected_revision = 2;
+    Renderer renderer = create_shader_renderer(&assets);
+    defer destroy_shader_renderer(&renderer);
     assert(render::custom_scene_reads(&renderer, &custom)!! == (SceneReads){ .depth });
 
-    *mirror = { .asset = shader, .revision = 2 };
+    assets.replace_shader(shader, &flat)!!;
+    assert(render::pipeline_rejected(&renderer, shader, gpu::SHADER_INVALID));
+    assert(render::custom_scene_reads(&renderer, &custom)!! == (SceneReads){ .depth });
+
+    assets.replace_shader(shader, &flat)!!;
     assert(render::custom_scene_reads(&renderer, &custom)!! == (SceneReads){});
     assert(render::custom_scene_reads(&renderer, &basic)!! == (SceneReads){});
 
     assets.remove_shader(shader);
     assert(render::custom_scene_reads(&renderer, &custom)!! == (SceneReads){});
+}
+
+fn void test_published_shader_copy_follows_accepted_revisions() @test {
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+    char[4] first = { 1, 1, 1, 1 };
+    char[4] second = { 2, 2, 2, 2 };
+    asset::ShaderDesc first_desc = { .fragment = first[..], .vertex = { .shaded = first[..], .depth = first[..] } };
+    asset::ShaderDesc second_desc = { .fragment = second[..], .gbuffer = second[..], .param_block_size = 16 };
+    ShaderId shader = assets.add_shader(&first_desc)!!;
+    Renderer renderer = create_shader_renderer(&assets);
+    defer destroy_shader_renderer(&renderer);
+
+    ShaderRes* published = render::resolve_shader(&renderer, shader)!!;
+    assert(published.revision == 1 && published.desc.vertex.depth[0] == 1);
+    assert(published.desc.fragment.ptr != assets.shader(shader).desc.fragment.ptr);
+
+    assets.replace_shader(shader, &second_desc)!!;
+    published = render::resolve_shader(&renderer, shader)!!;
+    assert(published.revision == 2 && published.desc.fragment[0] == 2 && published.desc.gbuffer.len == 4);
+    assert(published.desc.vertex.depth.len == 0 && published.desc.param_block_size == 16);
+
+    assets.shader(shader).desc.fragment[0] = 9;
+    assert(render::resolve_shader(&renderer, shader)!!.desc.fragment[0] == 2);
+
+    assets.remove_shader(shader);
+    render::sweep_shaders(&renderer);
+    assert(!renderer.shaders[shader.index].asset.generation);
+    assert(renderer.shaders[shader.index].desc.fragment.len == 0);
+}
+
+fn void test_rejected_replacement_keeps_the_published_stages() @test {
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+    char[4] first = { 1, 1, 1, 1 };
+    char[4] second = { 2, 2, 2, 2 };
+    asset::ShaderDesc first_desc = {
+        .fragment = first[..],
+        .gbuffer  = first[..],
+        .vertex   = { .shaded = first[..], .depth = first[..], .velocity = first[..] },
+    };
+    asset::ShaderDesc second_desc = {
+        .fragment = second[..],
+        .vertex   = {
+            .shaded           = second[..],
+            .depth            = second[..],
+            .instanced_shaded = second[..],
+            .instanced_depth  = second[..],
+        },
+    };
+    ShaderId shader = assets.add_shader(&first_desc)!!;
+    Material custom = material::custom(shader);
+    Renderer renderer = create_shader_renderer(&assets);
+    defer destroy_shader_renderer(&renderer);
+    ShaderRes* published = render::resolve_shader(&renderer, shader)!!;
+    assets.replace_shader(shader, &second_desc)!!;
+    assert(render::pipeline_rejected(&renderer, shader, gpu::SHADER_INVALID));
+
+    assert(render::custom_gbuffer_stage(&renderer, &custom)!!);
+    assert(render::custom_velocity_stage(&renderer, &custom, false)!!);
+
+    PipelineKey forward = { .vertex = { .shader = MESH }, .custom = { .vertex = true, .fragment = true } };
+    CustomStageSource source = render::published_key_stages(published, &forward)!!;
+    assert(forward.shader_revision == 1 && c3d::same_id(forward.shader, shader));
+    assert(source.vertex[0] == 1 && source.fragment[0] == 1);
+
+    PipelineKey caster = {
+        .vertex = { .shader = MESH, .flags = shader::SHADER_FLAG_DEPTH_ONLY },
+        .custom = { .vertex = true },
+    };
+    assert(render::published_key_stages(published, &caster)!!.vertex[0] == 1);
+
+    PipelineKey instanced = {
+        .vertex = { .shader = MESH, .flags = shader::SHADER_FLAG_INSTANCED },
+        .custom = { .vertex = true, .fragment = true },
+    };
+    assert(@catch(render::published_key_stages(published, &instanced)) == render::PIPELINE_REJECTED);
+    assert(renderer.stats.shader_rejections == 1);
 }
