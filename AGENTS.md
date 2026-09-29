@@ -26,6 +26,7 @@ Entry point for every agent session in this repository. Read it fully before rea
 | c3d_nav.c3l | `c3d::nav` | Applications select it explicitly; it imports the standard library and `c3d` |
 | c3d_character.c3l | `c3d::character` | Applications select it explicitly; it imports the standard library, `c3d` and `c3d::physics`, and `c3d::nav` under `C3D_CHARACTER_NAV` |
 | c3d_physics_gui.c3l | physics additions to `c3d::gui` | Applications select it explicitly; it imports the standard library, `c3d`, `c3d::physics` and `imgui`, and `c3d::character` only under `C3D_PHYSICS_GUI_CHARACTER` |
+| c3d_job.c3l | `c3d::job` | Applications select it explicitly; it imports the standard library and `c3d` |
 
 Boundaries are checked at review. No dependency is added without updating this table.
 
@@ -38,6 +39,8 @@ The `addons/c3d_nav.c3l` package owns navigation meshes, a port of Recast/Detour
 The `addons/c3d_character.c3l` package owns the kinematic capsule character controller built on the physics package's mover primitives: the `Character` component, the `CharacterSystem` that installs the physics world's mover pass, the kinematic push body and debug drawing. Its `c3d::character` module imports the standard library, core (`c3d`) and `c3d::physics`, never `b3`, `gpu`, `sdl` or `imgui`. Under `C3D_CHARACTER_NAV`, `src/nav/` adds the crowd binding (`NavDriven`, `drive_characters`) and imports `c3d::nav`; a consumer that enables the feature also selects `c3d_nav`, and the plain targets build without it. Core, the physics package and the nav package never import it and core carries no character feature flag; selecting the library is the gate. The package owns its `project.json`, `character_test` and `character_nav_test` targets and `character` and `character_nav` examples.
 
 The `addons/c3d_physics_gui.c3l` package is the physics inspector: under `C3D_PHYSICS_GUI` it extends `c3d::gui` with the physics panel (world tuning, pause and step, counters, step profile, debug-draw flags, bodies, the selected node, events, queries, recording and replay) and the inspectors of the physics components. It imports the standard library, core (`c3d`), `c3d::physics` and `imgui`, never `b3`, `gpu` or `sdl`. Under `C3D_PHYSICS_GUI_CHARACTER`, `src/character/` adds the characters table, the character block and the `Character` inspector and alone imports `c3d::character`; a consumer that enables that feature also selects `c3d_character`. Its manifest names no dependency; consumers select `c3d_physics`, ImGui and the rest. Core, the physics package and the character package never import it. The package owns its `project.json`, the `physics_panel_off`, `physics_panel` and `physics_panel_character` targets and the `physics_inspector` and `physics_inspector_character` examples.
+
+The `addons/c3d_job.c3l` package owns the fork-join job pool: a fixed set of worker threads running a function over index ranges, with inline execution at zero workers. Its `c3d::job` module imports the standard library and core (`c3d`), never `gpu`, `sdl`, `imgui`, `b3` or another add-on. Core never imports it and carries no job feature flag; selecting the library is the gate. The package owns its `project.json` and `job_test` target.
 
 # 2. Where truth lives
 
@@ -87,7 +90,7 @@ Steps run in this order and stop at the first failure: tools (c3c 0.8.3, glslang
 
 Before every commit: `scripts/build.py --test`. Broken builds are never committed. GPU examples run manually; CI runs `--test`. Every development run of a GPU example enables Vulkan validation through gpu.c3l.
 
-The default build also builds the collector's `capture` example, the physics package's `physics`, `physics_instanced` and `physics_components` examples, the nav package's `navmesh`, `crowd` and `grid` examples, the character package's `character` and `character_nav` examples, the physics GUI package's `physics_inspector` and `physics_inspector_character` examples, the root `profile_gpu` example and all four `profile_gui` feature targets; `--target` and `--example` resolve add-on examples to their package project. `--test` runs the collector's off, CPU, internal CPU, GPU, internal GPU, CPU+GPU and full CPU+GPU+INTERNAL targets, the presentation add-on's off, CPU, GPU and combined data targets, the physics package's `physics_test` target, the nav package's `nav_test` target, the character package's `character_test` and `character_nav_test` targets, the physics GUI package's `physics_panel_off`, `physics_panel` and `physics_panel_character` targets, and the root integration targets. These tests never create a GPU device. Direct `c3c test profile_cpu --path addons/c3d_profile.c3l` exercises only the standalone collector package. Real Vulkan acceptance lives in the separately invoked `test/gpu/profile` project and the manually run profiler GUI examples; neither runs in CI.
+The default build also builds the collector's `capture` example, the physics package's `physics`, `physics_instanced` and `physics_components` examples, the nav package's `navmesh`, `crowd` and `grid` examples, the character package's `character` and `character_nav` examples, the physics GUI package's `physics_inspector` and `physics_inspector_character` examples, the root `profile_gpu` example and all four `profile_gui` feature targets; `--target` and `--example` resolve add-on examples to their package project. `--test` runs the collector's off, CPU, internal CPU, GPU, internal GPU, CPU+GPU and full CPU+GPU+INTERNAL targets, the presentation add-on's off, CPU, GPU and combined data targets, the physics package's `physics_test` target, the nav package's `nav_test` target, the character package's `character_test` and `character_nav_test` targets, the physics GUI package's `physics_panel_off`, `physics_panel` and `physics_panel_character` targets, the job package's `job_test` target, and the root integration targets. These tests never create a GPU device. Direct `c3c test profile_cpu --path addons/c3d_profile.c3l` exercises only the standalone collector package. Real Vulkan acceptance lives in the separately invoked `test/gpu/profile` project and the manually run profiler GUI examples; neither runs in CI.
 
 # 6. Style
 
@@ -98,7 +101,7 @@ Project refinements:
 - **Names are descriptive.** `Renderer renderer`, `AssetStore assets`, `GeometryId geometry_id`. Single letters only for loop counters and coordinate math in scopes under ten lines. No abbreviations that are not already in the architecture vocabulary (`rt`, `gpu`, `uv`, `sh`, `ik` are vocabulary; `r`, `mgr`, `ctx`, `tmp` are not).
 - **Contracts are the precondition mechanism.** A precondition that only a programming error can violate is a `@require` in the docstring, not a runtime branch. An operational failure (input data, capacity, I/O, device, a dead id at an API entry point) returns a named fault. Runtime `assert` appears only under `test/`. `$assert` layout pins are required on every ABI-visible struct.
 - **Happy path.** No defensive checks on internal paths. A function trusts its contract and the invariants of the structs it receives. `try_get` exists at API entry points; inside the renderer, `get` with a contract.
-- **Ids** live in `src/c3d/types.c3`; `std::math` supplies the vector, matrix and quaternion types, and c3d declares no aliases for them. Faults for the root module live in `src/c3d/faults.c3`; a module with its own faults has its own `faults.c3`.
+- **Ids** live in `src/c3d/types.c3`; an add-on declares its own ids in its package; `std::math` supplies the vector, matrix and quaternion types, and c3d declares no aliases for them. Faults for the root module live in `src/c3d/faults.c3`; a module with its own faults has its own `faults.c3`.
 - **Ownership.** Free functions `create_x` and `destroy_x` own project resources. `X` owns, `XView` borrows, views have no destructor. GPU objects live only in `c3d::render` mirrors; the store owns CPU assets; the scene owns nodes.
 - **Interfaces** only at user extension points named in the architecture. Everything hot is enums with `switch` or component stores.
 - **Tunable constants** state their why and cost in a trailing comment: `const uint MAX_LIGHTS = 256; // 16 KiB per frame in the ring; the flat light loop's cost lever`.
@@ -174,7 +177,7 @@ Counter-example, rejected on review:
 
 # 10. Architecture rules
 
-- Two layers. Scene-layer modules (`c3d`, `c3d::maths`, `c3d::ecs`, `c3d::asset`, `c3d::scene`, `c3d::geometry`, `c3d::camera`, `c3d::material`, `c3d::light`, `c3d::anim`, `c3d::model`, `c3d::spatial`, `c3d::physics`, `c3d::nav`, `c3d::character`) never import `gpu`. The render layer (`c3d::render`, `c3d::shader`, `c3d::render::post`, `c3d::gui`) owns every GPU object. `c3d::platform` imports `gpu::surface` alone, to hand native window handles to gpu.c3l; a bare `import gpu` there is a violation.
+- Two layers. Scene-layer modules (`c3d`, `c3d::maths`, `c3d::ecs`, `c3d::asset`, `c3d::scene`, `c3d::geometry`, `c3d::camera`, `c3d::material`, `c3d::light`, `c3d::anim`, `c3d::model`, `c3d::spatial`, `c3d::physics`, `c3d::nav`, `c3d::character`, `c3d::job`) never import `gpu`. The render layer (`c3d::render`, `c3d::shader`, `c3d::render::post`, `c3d::gui`) owns every GPU object. `c3d::platform` imports `gpu::surface` alone, to hand native window handles to gpu.c3l; a bare `import gpu` there is a violation.
 - The renderer reads the scene; the scene never calls the renderer. Loaders write the asset store and the scene; they never touch the renderer.
 - All shader-visible data is std430 behind root pointers and defined once in `abi/c3d.abi`. Per-draw push data is exactly two root addresses.
 - Depth is reverse-Z; the Vulkan Y flip is one negative-height viewport; shaders use GL conventions and never flip.
@@ -193,12 +196,13 @@ c3d.c3l/
 ├── addons/c3d_nav.c3l/     Recast/Detour port: tiled navmesh build, tile cache, store, path queries and crowds; owns its tests and examples
 ├── addons/c3d_character.c3l/ capsule character controller on the physics mover primitives, crowd binding under C3D_CHARACTER_NAV; owns its tests and examples
 ├── addons/c3d_physics_gui.c3l/ physics inspector panel and component inspectors, characters under C3D_PHYSICS_GUI_CHARACTER; owns its tests and examples
+├── addons/c3d_job.c3l/     fork-join job pool over index ranges; owns its tests
 │                           an add-on that ships GLSL keeps shaders/shaders.json, its sources and shaders/include/<name>/ under its own shaders/, and a generated, committed src/shaders.c3
 ├── abi/c3d.abi             shared C3 and GLSL layouts
 ├── docs/style.md           mandatory style baseline
 ├── lib/                    gpu.c3l · sdl3.c3l · c3imgui.c3l · c3cg.c3l · box3d.c3l · cgltf.c3l · ufbx.c3l · shaderc.c3l (submodules)
 │                           plus c3d.c3l, a symlink to the root, so consumers resolve c3d here
-│                           plus c3d_profile.c3l, c3d_profile_gui.c3l, c3d_physics.c3l, c3d_nav.c3l, c3d_character.c3l and c3d_physics_gui.c3l symlinks to the add-ons
+│                           plus c3d_profile.c3l, c3d_profile_gui.c3l, c3d_physics.c3l, c3d_nav.c3l, c3d_character.c3l, c3d_physics_gui.c3l and c3d_job.c3l symlinks to the add-ons
 ├── linked-libs/            empty; every dependency ships its own native artifacts
 ├── csrc/                   stb_image
 ├── src/c3d/
