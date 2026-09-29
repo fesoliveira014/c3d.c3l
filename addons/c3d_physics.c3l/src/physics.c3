@@ -101,7 +101,8 @@ enum HeightSource {
 }
 
 <*
- Category and mask bits box3d tests before two shapes may touch.
+ Category, mask and group box3d tests before two shapes may touch.
+ Queries and mover casts test category and mask only; group filters shape pairs.
 *>
 struct CollisionFilter {
     ulong category;

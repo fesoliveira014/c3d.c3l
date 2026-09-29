@@ -3,7 +3,6 @@ module c3d::gui;
 import c3d;
 import c3d::material;
 import c3d::render;
-import gpu;
 import imgui;
 import std::collections::list;
 import std::math;
@@ -56,11 +55,7 @@ fn TargetsPanelState default_targets_panel_state() {
  @param [&inout] renderer : "Receives preview requests for the next overlay; no frame open."
  @param [&inout] state : "Open entries and scales retained between frames."
  @param environment : "Faces of this environment are listed when it is uploaded."
- @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
- @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
- @return? gpu::UNSUPPORTED_FEATURE, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
- @return? gpu::DEVICE_BUSY, gpu::RESOURCE_IN_USE, gpu::SLOT_TABLE_FULL, gpu::DESCRIPTOR_HEAP_FULL
- @return? gpu::COMMAND_RECORDING_ERROR, gpu::WAIT_TIMEOUT, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+ @return? c3d::render::configure_view!, c3d::render::reset_view_history!, c3d::render::Renderer.request_preview!
  @require !renderer.frame_open
 *>
 fn void? targets_panel(

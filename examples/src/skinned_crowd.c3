@@ -1,4 +1,4 @@
-module crowd_example;
+module skinned_crowd_example;
 
 import std::io;
 import std::io::path;

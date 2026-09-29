@@ -99,10 +99,10 @@
         "src/cube_gui.c3"
       ]
     },
-    "crowd": {
+    "skinned_crowd": {
       "type": "executable",
       "sources": [
-        "src/crowd.c3"
+        "src/skinned_crowd.c3"
       ]
     },
     "streaming": {
