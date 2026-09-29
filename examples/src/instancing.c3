@@ -2,6 +2,7 @@ module instancing_example;
 
 import std::io;
 import std::io::file;
+import std::io::path;
 import std::math;
 import c3d;
 import c3d::asset;
@@ -17,6 +18,8 @@ import c3d::scene;
 import c3d::shader;
 import c3d::shader::compile;
 import c3d::spatial;
+import bench_loop;
+import gpu;
 import imgui;
 
 const String PULSE_VERTEX_FILE @local = "../shaders/custom/pulse.vert.glsl";
@@ -59,6 +62,13 @@ const InstanceSway PROP_WIND @local = {
     .weight     = SwayWeight.HEIGHT,
 };
 const InstanceFade PROP_FADE @local = { .start = 25, .end = 45 }; // no prop past 45 draws or casts a shadow
+const uint FIELD_SIDE @local = 64; // 4,096 cell batches: one foliage layer of 32 m cells over 2,048 m
+const float FIELD_CELL_SIZE @local = 32;
+const uint FIELD_CELL_SIDE @local = 8; // 64 props per cell, 262,144 in the field
+const uint FIELD_CELL_PROPS @local = FIELD_CELL_SIDE * FIELD_CELL_SIDE;
+const InstanceFade FIELD_FADE @local = { .start = 60, .end = 90 }; // a grass band; most cells lie wholly past it
+const uint FIELD_BATCH_SLOTS @local = FIELD_SIDE * FIELD_SIDE + 4; // every cell may hold records, plus four batches
+const Orbit ORBIT_START @local = { .target = { 0, 1, 4 }, .distance = 14, .pitch = 0.45f };
 
 struct PulseParams @local {
     Vec4 color;
@@ -77,6 +87,11 @@ struct Batches @local {
     Node* props;
     Node* pulses;
     Node* glass;
+}
+
+struct BenchmarkOptions @local {
+    BenchmarkFlags flags;
+    bool           fade_field;
 }
 
 struct Controls @local {
@@ -116,8 +131,13 @@ fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
     camera_node.local.rotation = maths::look_rotation(-offset, { 0, 1, 0 });
 }
 
+fn String example_path(String relative) @local {
+    Path source = path::tnew($$FILEPATH)!!;
+    return (String)source.parent()!!.tappend(relative)!!;
+}
+
 fn char[]? compile_file(Allocator allocator, String path, ShaderStage stage, String[] defines = {}) @local {
-    String source = (String)file::load(tmem, path)!;
+    String source = (String)file::load(tmem, example_path(path))!;
     String log;
     char[]? spirv = compile::compile_glsl(
         allocator:  allocator,
@@ -131,7 +151,7 @@ fn char[]? compile_file(Allocator allocator, String path, ShaderStage stage, Str
     return spirv;
 }
 
-fn ShaderDesc? compile_pulse(Allocator allocator) @local {
+fn asset::ShaderDesc? compile_pulse(Allocator allocator) @local {
     String[2] depth_instanced = { "DEPTH_ONLY", "INSTANCED" };
     String[2] velocity_instanced = { "VELOCITY", "INSTANCED" };
     return {
@@ -229,6 +249,46 @@ fn Node*? add_pulses(Scene* scene, GeometryId sphere, MaterialId pulse_material)
     return node;
 }
 
+fn ShaderId? add_pulse_shader(AssetStore* assets) @local {
+    @pool() {
+        asset::ShaderDesc desc = compile_pulse(tmem)!;
+        return assets.add_shader(&desc, "pulse");
+    };
+}
+
+fn void? add_fade_field(Scene* scene, GeometryId prop, MaterialId white) @local {
+    Transform[FIELD_CELL_PROPS] transforms;
+    float spacing = FIELD_CELL_SIZE / FIELD_CELL_SIDE;
+    foreach (uint index, &transform : transforms) {
+        *transform = maths::TRANSFORM_IDENTITY;
+        transform.position = {
+            ((float)(index % FIELD_CELL_SIDE) + 0.5f) * spacing,
+            0,
+            ((float)(index / FIELD_CELL_SIDE) + 0.5f) * spacing,
+        };
+    }
+    float corner = -0.5f * FIELD_SIDE * FIELD_CELL_SIZE;
+    for (uint row = 0; row < FIELD_SIDE; row++) {
+        for (uint column = 0; column < FIELD_SIDE; column++) {
+            Node* cell = scene.add_instanced_mesh(
+                geometry:   prop,
+                material:   white,
+                capacity:   FIELD_CELL_PROPS,
+                transforms: transforms[..],
+                name:       "field_cell",
+            )!;
+            cell.local.position = {
+                corner + column * FIELD_CELL_SIZE,
+                PROP_SIZE * 0.5f,
+                corner + row * FIELD_CELL_SIZE,
+            };
+            InstancedMesh* batch = scene.get(cell, InstancedMesh);
+            batch.sway = PROP_WIND;
+            batch.fade = FIELD_FADE;
+        }
+    }
+}
+
 fn Node*? add_glass(Scene* scene, GeometryId prop, MaterialId glass) @local {
     uint count = GLASS_SIDE * GLASS_SIDE * GLASS_SIDE;
     Node* node = scene.add_instanced_mesh(
@@ -255,7 +315,12 @@ fn Node*? add_glass(Scene* scene, GeometryId prop, MaterialId glass) @local {
     return node;
 }
 
-fn Batches? build_scene(AssetStore* assets, Scene* scene, ShaderId pulse_shader) @local {
+fn Batches? build_scene(
+    AssetStore* assets,
+    Scene* scene,
+    ShaderId pulse_shader,
+    bool fade_field,
+) @local {
     GeometryId ground;
     GeometryId cube;
     GeometryId prop;
@@ -294,6 +359,7 @@ fn Batches? build_scene(AssetStore* assets, Scene* scene, ShaderId pulse_shader)
     Node* sun = scene.add_light(light::directional({ 1, 0.97f, 0.9f }, 3), name: "sun")!;
     sun.local.rotation = maths::look_rotation((Vec3){ -0.4f, -1, -0.5f }.normalize(), { 0, 1, 0 });
     scene.ambient_intensity = 0.25f;
+    if (fade_field) add_fade_field(scene, prop, white)!;
     return {
         .trio   = add_trio(scene, cube, white)!,
         .props  = add_props(scene, prop, white)!,
@@ -337,6 +403,13 @@ fn void pick_under_cursor(
             io::printfn("picked %s", controls.pick_name);
         }
     };
+}
+
+fn Node*? add_orbit_camera(Scene* scene, Orbit* orbit) @local {
+    Node* camera_node = scene.add_camera(camera::perspective_deg(55, 0.1f), name: "camera")!;
+    Input initial_input;
+    apply_orbit(orbit, &initial_input, camera_node);
+    return camera_node;
 }
 
 fn void apply_wind(Scene* scene, Batches* batches, bool wind) @local {
@@ -405,12 +478,16 @@ fn void? run(
     AssetStore* assets,
     Scene* scene,
     ShaderId pulse_shader,
+    bool fade_field,
 ) @local {
-    Batches batches = build_scene(assets, scene, pulse_shader)!;
-    Node* camera_node = scene.add_camera(camera::perspective_deg(55, 0.1f), name: "camera")!;
-    Orbit orbit = { .distance = 14, .pitch = 0.45f, .target = { 0, 1, 4 } };
-    Input initial_input;
-    apply_orbit(&orbit, &initial_input, camera_node);
+    Batches batches = build_scene(
+        assets:       assets,
+        scene:        scene,
+        pulse_shader: pulse_shader,
+        fade_field:   fade_field,
+    )!;
+    Orbit orbit = ORBIT_START;
+    Node* camera_node = add_orbit_camera(scene, &orbit)!;
     scene.update_world();
 
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
@@ -460,38 +537,184 @@ fn void? run(
     }
 }
 
-fn int main() {
+fn BenchmarkOptions? parse_options(String[] args) @local {
+    BenchmarkOptions options = { .flags = bench_loop::default_flags() };
+    for (usz index = 1; index < args.len; index++) {
+        bool common_option = bench_loop::parse_flag(
+            args:   args,
+            index:  &index,
+            flags:  &options.flags,
+            target: "instancing",
+        )!;
+        if (common_option) continue;
+        if (args[index] != "--fade-field") return c3d::INVALID_ARGUMENT~;
+        options.fade_field = true;
+    }
+    bench_loop::validate_flags(options.flags, ShadingPath.FORWARD)!;
+    return options;
+}
+
+fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkFlags flags) @local {
+    base.post.motion_blur = true;
+    base.post.anti_aliasing = flags.anti_aliasing;
+    base.ambient_occlusion = flags.ambient_occlusion;
+    base.depth_prepass = flags.depth_prepass;
+    base.ray_tracing.reflections = flags.reflections;
+    if (flags.screen_space_gi) base.screen_space_gi = render::SCREEN_SPACE_GI_DEFAULT;
+    base.instance_culling = true;
+    return base;
+}
+
+fn void print_banner(BenchmarkOptions options, bool timestamps_active) @local {
+    BenchmarkFlags flags = options.flags;
+    io::eprintfn("fade_field=%s cells=%d props=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s depth_prepass=%s ambient_occlusion=%s",
+        options.fade_field, options.fade_field ? FIELD_SIDE * FIELD_SIDE : 0, GRID_SIDE * GRID_SIDE,
+        flags.width, flags.height, flags.warmup, flags.frames, flags.validation, flags.gpu_timings, timestamps_active,
+        flags.capture, flags.window ? "window" : "none", flags.panel, flags.depth_prepass,
+        bench_loop::ambient_occlusion_name(flags.ambient_occlusion));
+}
+
+fn void? run_benchmark(BenchmarkOptions options) @local {
+    BenchmarkFlags flags = options.flags;
     AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
     defer asset::destroy_asset_store(&assets);
-    ShaderId pulse_shader;
-    @pool() {
-        ShaderDesc? pulse_desc = compile_pulse(tmem);
-        if (catch excuse = pulse_desc) {
-            io::eprintfn("pulse: compile failed (%s); run from examples/build so ../shaders resolves", excuse);
-            return 1;
-        }
-        pulse_shader = assets.add_shader(&pulse_desc, "pulse")!!;
+    ShaderId pulse_shader = add_pulse_shader(&assets)!;
+    Scene scene = scene::create_scene(mem, scene::default_scene_desc());
+    defer scene::destroy_scene(&scene);
+    build_scene(
+        assets:       &assets,
+        scene:        &scene,
+        pulse_shader: pulse_shader,
+        fade_field:   options.fade_field,
+    )!;
+    Orbit orbit = ORBIT_START;
+    BenchmarkRun run = { .scene = &scene, .camera_node = add_orbit_camera(&scene, &orbit)! };
+    scene.update_world();
+    FrameSample[] samples = alloc::new_array(mem, FrameSample, flags.frames);
+    defer alloc::free(mem, samples.ptr);
+    RendererDesc renderer_desc = {
+        .validation           = flags.validation,
+        .gpu_timings          = flags.gpu_timings,
+        .present_mode         = gpu::PresentMode.IMMEDIATE,
+        .application_name     = "c3d_instancing_benchmark",
+        .ray_queries          = bench_loop::requests_ray_queries(flags),
+        .max_instance_batches = options.fade_field ? FIELD_BATCH_SLOTS : 0,
     };
+    $if $feat(C3D_PROFILE_CPU) || $feat(C3D_PROFILE_GPU):
+        BenchmarkRecorder recorder;
+        if (flags.capture) {
+            recorder = bench_loop::create_recorder()!;
+            run.recorder = &recorder;
+            $if $feat(C3D_PROFILE_GPU):
+                renderer_desc.profiler = &recorder;
+            $endif
+        }
+        defer if (flags.capture) bench_loop::destroy_recorder(&recorder);
+    $endif
 
-    platform::Window window = platform::create_window(platform::default_window_desc("c3d instancing", 1280, 720))!!;
+    usz collected;
+    if (flags.window) {
+        platform::Window window = platform::create_window(
+            desc: platform::default_window_desc("c3d instancing benchmark", flags.width, flags.height),
+        )!;
+        defer platform::destroy_window(&window);
+        render::Renderer renderer = platform::create_window_renderer(
+            allocator: mem,
+            window:    &window,
+            assets:    &assets,
+            desc:      renderer_desc,
+        )!;
+        defer render::destroy_renderer(&renderer);
+        render::configure_view(
+            renderer: &renderer,
+            view:     renderer.default_view,
+            desc:     benchmark_view_desc(render::default_view_desc(), flags),
+        )!;
+        run.renderer = &renderer;
+        run.window = &window;
+        run.view = renderer.default_view;
+        $if $feat(C3D_PROFILE_GUI):
+            GuiRenderer gui_renderer;
+            gui::ProfilerPanel panel;
+            if (flags.panel) {
+                gui_renderer = gui::create_gui_renderer(mem, &renderer, &window)!;
+                run.gui_renderer = &gui_renderer;
+            }
+            defer if (flags.panel) (void)gui::destroy_gui_renderer(&gui_renderer);
+            if (flags.panel) {
+                panel = gui::create_profiler_panel(mem, run.recorder)!;
+                run.panel = &panel;
+            }
+            defer if (flags.panel) gui::destroy_profiler_panel(&panel);
+        $endif
+        print_banner(options, renderer.timestamps_enabled);
+        collected = bench_loop::run_frames(&run, flags, samples)!;
+        bench_loop::write_samples(samples[:collected], renderer.timestamps_enabled);
+    } else {
+        render::Renderer renderer = render::create_renderer(mem, &assets, renderer_desc)!;
+        defer render::destroy_renderer(&renderer);
+        RenderTargetId target = render::create_render_target(
+            renderer: &renderer,
+            desc:     render::render_target_desc(flags.width, flags.height, PixelFormat.RGBA8_UNORM),
+        )!;
+        ViewDesc view_desc = benchmark_view_desc(render::texture_view_desc(target, OutputMode.DISPLAY_LDR), flags);
+        run.renderer = &renderer;
+        run.view = render::create_view(&renderer, view_desc)!;
+        print_banner(options, renderer.timestamps_enabled);
+        collected = bench_loop::run_frames(&run, flags, samples)!;
+        bench_loop::write_samples(samples[:collected], renderer.timestamps_enabled);
+    }
+}
+
+fn void? run_example(BenchmarkOptions options) @local {
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+    ShaderId pulse_shader = add_pulse_shader(&assets)!;
+
+    platform::Window window = platform::create_window(platform::default_window_desc("c3d instancing", 1280, 720))!;
     defer platform::destroy_window(&window);
     render::Renderer renderer = platform::create_window_renderer(
         allocator: mem,
         window:    &window,
         assets:    &assets,
-        desc:      { .validation = true, .application_name = "c3d_instancing" },
-    )!!;
+        desc:      {
+            .validation           = true,
+            .gpu_timings          = options.flags.gpu_timings,
+            .application_name     = "c3d_instancing",
+            .max_instance_batches = options.fade_field ? FIELD_BATCH_SLOTS : 0,
+        },
+    )!;
     defer render::destroy_renderer(&renderer);
     Scene scene = scene::create_scene(mem, scene::default_scene_desc());
     defer scene::destroy_scene(&scene);
 
-    if (catch excuse = run(
+    return run(
         window:       &window,
         renderer:     &renderer,
         assets:       &assets,
         scene:        &scene,
         pulse_shader: pulse_shader,
-    )) {
+        fade_field:   options.fade_field,
+    );
+}
+
+<* Draw the instancing scene, or run its fixed headless benchmark. *>
+fn int main(String[] args) {
+    BenchmarkOptions? parsed = parse_options(args);
+    if (catch excuse = parsed) {
+        if (excuse != c3d::UNSUPPORTED) {
+            io::eprintfn("Invalid options: %s", excuse);
+            io::eprintn("Use [--fade-field] [--gpu-timings] or --benchmark [--fade-field] --frames N --warmup N --width N --height N [--anti-aliasing none|fxaa|taa] [--ambient-occlusion none|half|full] [--depth-prepass on|off] [--gpu-timings] [--validation] [--capture] [--window] [--panel] [--print-features].");
+        }
+        return 1;
+    }
+    BenchmarkOptions options = parsed;
+    if (options.flags.print_features) {
+        bench_loop::print_features();
+        return 0;
+    }
+    fault excuse = options.flags.enabled ? @catch(run_benchmark(options)) : @catch(run_example(options));
+    if (excuse) {
         io::eprintfn("instancing example failed: %s", excuse);
         return 1;
     }

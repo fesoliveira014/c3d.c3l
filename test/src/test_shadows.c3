@@ -504,6 +504,7 @@ fn void test_caster_extraction_ignores_layers_and_keeps_authored_bounds() @test 
             allocator: tmem,
             scene: &scene,
             assets: &assets,
+            fade_origin: {},
             counts: &counts,
         );
         assert(candidates.len == 1 && candidates[0].node == caster);

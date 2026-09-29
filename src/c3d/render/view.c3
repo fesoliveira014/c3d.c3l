@@ -219,6 +219,7 @@ fn void? record_raster_view(
                 clip_plane: record.desc.clip_plane,
             );
             renderer.stats.culled += counts.culled;
+            renderer.stats.batches_faded += counts.batches_faded;
             renderer.stats.dangling_refs += counts.dangling;
         };
 

@@ -331,7 +331,8 @@
     "instancing": {
       "type": "executable",
       "sources": [
-        "src/instancing.c3"
+        "src/instancing.c3",
+        "src/bench/loop.c3"
       ]
     },
     "custom_compute": {
