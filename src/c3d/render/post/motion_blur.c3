@@ -292,14 +292,11 @@ fn gpu::PipelineHandle? velocity_pipeline_for(Renderer* renderer, DrawItem* item
     };
     if (!item.custom_velocity) return renderer.pipelines.get(&renderer.device, key);
 
-    ShaderId shader = material.custom.shader;
+    ShaderRes* published = render::resolve_shader(renderer, material.custom.shader)!;
     uint instanced = item.vertex.flags & shader::SHADER_FLAG_INSTANCED;
     key.vertex = { .shader = MESH, .flags = shader::SHADER_FLAG_VELOCITY | instanced };
-    key.shader = shader;
-    key.shader_revision = renderer.shaders[shader.index].revision;
     key.custom = { .vertex = true };
-    CustomStageSource source = render::custom_stage_source(&renderer.assets.shader(shader).desc, key);
-    return renderer.pipelines.get(&renderer.device, key, &source);
+    return render::custom_pipeline(renderer, published, key);
 }
 
 fn PipelineKey camera_velocity_pipeline_key(gpu::Format format) @private {

@@ -1,7 +1,6 @@
 module c3d::render;
 
 import c3d;
-import c3d::asset;
 import c3d::material;
 import c3d::shader;
 import gpu;
@@ -43,14 +42,10 @@ fn gpu::PipelineHandle? gbuffer_pipeline_for(Renderer* renderer, Material* mater
     );
     if (material.kind != MaterialKind.CUSTOM) return renderer.pipelines.get(&renderer.device, key);
 
-    ShaderId shader = material.custom.shader;
-    asset::ShaderDesc* stages = &renderer.assets.shader(shader).desc;
-    key.shader = shader;
-    key.shader_revision = renderer.shaders[shader.index].revision;
-    key.custom = { .vertex = stages.vertex.shaded.len > 0, .gbuffer = true };
+    ShaderRes* published = resolve_shader(renderer, material.custom.shader)!;
+    key.custom = { .vertex = published.desc.vertex.shaded.len > 0, .gbuffer = true };
     if (key.custom.vertex) key.vertex = { .shader = MESH, .flags = vertex.flags & shader::SHADER_FLAG_INSTANCED };
-    CustomStageSource source = custom_stage_source(stages, key);
-    return renderer.pipelines.get(&renderer.device, key, &source);
+    return custom_pipeline(renderer, published, key);
 }
 
 fn gpu::PipelineHandle? default_gbuffer_pipeline(Renderer* renderer) @private {
