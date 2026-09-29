@@ -27,7 +27,6 @@ $assert $reflect(BvhNode.count).offset == $reflect(BvhNodeGpu.count).offset;
 const uint DEFAULT_MAX_TRACE_INSTANCES = 4096; // 4096 x 144 B instances + 8191 x 32 B nodes: 0.81 MiB persistent
 
 const BvhBuildDesc TOP_LEVEL_BUILD @private = { .bins = 12, .leaf_size = 1 }; // each instance test walks a bottom level
-const bool TRACE_FACING_FLIP @private = true; // the backend's default front is the clockwise side; raster's is not
 
 // The top level depends on a record only up to its software bottom level, which a later preparation may fill.
 const usz TOP_LEVEL_PREFIX_BYTES @private = $reflect(TraceInstance.nodes).offset;
@@ -249,11 +248,10 @@ fn gpu::AccelerationStructureInstanceDesc tlas_instance_desc(TraceInstance* reco
         .bottom_level    = record.bottom_level,
         .custom_index    = row,
         .mask            = record.mask,
-        // Vulkan decides facing in object space, where a mirrored instance keeps its winding, so one flip value
-        // turns the backend's front into the counter-clockwise front raster draws, for every row.
+        // Vulkan decides facing in object space, where a mirrored instance keeps its winding, and its default
+        // front is the counter-clockwise side raster draws, so no row flips.
         .flags           = {
             .triangle_cull_disable = double_sided,
-            .triangle_facing_flip  = TRACE_FACING_FLIP,
             .force_opaque          = !masked,
             .force_non_opaque      = masked,
         },

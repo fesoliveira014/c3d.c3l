@@ -269,22 +269,22 @@ fn void test_tlas_instance_follows_the_row() @test {
     assert(desc.transform_row_0 == (Vec4f){ 2, 0, 0, 1 });
     assert(desc.transform_row_1 == (Vec4f){ 0, 2, 0, 2 });
     assert(desc.transform_row_2 == (Vec4f){ 0, 0, 2, 3 });
-    bool facing_flip = desc.flags.triangle_facing_flip;
+    assert(!desc.flags.triangle_facing_flip);
 
     record.flags = shader::TRACE_INSTANCE_DOUBLE_SIDED;
     desc = render::tlas_instance_desc(&record, 7);
-    assert(desc.flags.triangle_cull_disable && desc.flags.triangle_facing_flip == facing_flip);
+    assert(desc.flags.triangle_cull_disable && !desc.flags.triangle_facing_flip);
 
     record.flags = shader::TRACE_INSTANCE_ALPHA_MASK;
     record.mask = 1;
     desc = render::tlas_instance_desc(&record, 7);
     assert(!desc.flags.triangle_cull_disable && desc.flags.force_non_opaque && !desc.flags.force_opaque);
-    assert(desc.flags.triangle_facing_flip == facing_flip && desc.mask == 1);
+    assert(!desc.flags.triangle_facing_flip && desc.mask == 1);
 
     record.flags = 0;
     record.world = matrix::IDENTITY4.scale({ -1, 1, 1 });
     desc = render::tlas_instance_desc(&record, 7);
-    assert(!desc.flags.triangle_cull_disable && desc.flags.triangle_facing_flip == facing_flip);
+    assert(!desc.flags.triangle_cull_disable && !desc.flags.triangle_facing_flip);
 }
 
 fn void test_rt_shadow_flags_follow_ray_queries() @test {
