@@ -21,6 +21,10 @@
     "job_test": {
       "type": "test",
       "sources": [ "test/**" ]
+    },
+    "job_bench": {
+      "type": "executable",
+      "sources": [ "examples/job_bench.c3" ]
     }
   }
 }

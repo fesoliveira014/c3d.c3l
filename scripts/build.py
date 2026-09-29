@@ -55,6 +55,7 @@ ADDON_EXAMPLES = {
     "character_nav": CHARACTER,
     "physics_inspector": PHYSICS_GUI,
     "physics_inspector_character": PHYSICS_GUI,
+    "job_bench": JOB,
 }
 PROFILE_TEST_TARGETS = (
     "profile_off", "profile_cpu", "profile_internal", "profile_gpu",
