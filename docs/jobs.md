@@ -35,7 +35,7 @@ thread-safe and must not be `tmem`.
 
 `destroy_job_pool` waits for every outstanding run, stops and joins the workers, frees everything and zeroes
 the handle. A `defer` on an error path is safe while runs are in flight. `JobPool` is a value handle over
-heap state: a copy or a move of the handle names the same pool.
+heap state: moving the handle keeps the pool running, and copies share one pool, which is destroyed once.
 
 | `JobPoolDesc` field | Default | Meaning |
 | --- | --- | --- |

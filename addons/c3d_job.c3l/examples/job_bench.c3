@@ -84,7 +84,7 @@ fn bool report_kernel(
     uint workers,
     uint items,
     uint batch,
-    double us_per_range,
+    double microseconds_per_range,
 ) @local {
     Mat4[] serial_output = mem::new_array(Mat4, items);
     defer free(serial_output);
@@ -93,7 +93,7 @@ fn bool report_kernel(
     Kernel serial = { .chain = chain, .output = serial_output };
     Kernel pooled = { .chain = chain, .output = pooled_output };
 
-    double serial_us = time_run(
+    double serial_microseconds = time_run(
         pool:  serial_pool,
         range: &kernel_range,
         data:  &serial,
@@ -101,7 +101,7 @@ fn bool report_kernel(
         batch: batch,
     );
     ulong inline_before = pool.inline_ranges();
-    double pooled_us = time_run(
+    double pooled_microseconds = time_run(
         pool:  pool,
         range: &kernel_range,
         data:  &pooled,
@@ -117,10 +117,10 @@ fn bool report_kernel(
         items,
         batch,
         ranges,
-        serial_us,
-        pooled_us,
-        serial_us / pooled_us,
-        ranges * us_per_range / serial_us,
+        serial_microseconds,
+        pooled_microseconds,
+        serial_microseconds / pooled_microseconds,
+        ranges * microseconds_per_range / serial_microseconds,
         pooled.peak_scratch_bytes.load(),
         pool.inline_ranges() - inline_before,
         equal ? 1 : 0,
@@ -147,20 +147,26 @@ fn int main() {
         worker_counts[worker_kinds++] = defaults.worker_count;
     }
 
-    double[FIXED_WORKER_COUNTS.len + 1] us_per_range;
+    double[FIXED_WORKER_COUNTS.len + 1] microseconds_per_range;
     io::printn("# overhead,workers,ranges,us_per_range,inline_ranges");
     foreach (index, workers : worker_counts[:worker_kinds]) {
         JobPool pool = create_bench_pool(workers);
         defer job::destroy_job_pool(&pool);
-        double pass_us = time_run(
+        double pass_microseconds = time_run(
             pool:  &pool,
             range: &empty_range,
             data:  null,
             count: OVERHEAD_RANGES,
             batch: 1,
         );
-        us_per_range[index] = pass_us / OVERHEAD_RANGES;
-        io::printfn("overhead,%d,%d,%.4f,%d", workers, OVERHEAD_RANGES, us_per_range[index], pool.inline_ranges());
+        microseconds_per_range[index] = pass_microseconds / OVERHEAD_RANGES;
+        io::printfn(
+            "overhead,%d,%d,%.4f,%d",
+            workers,
+            OVERHEAD_RANGES,
+            microseconds_per_range[index],
+            pool.inline_ranges(),
+        );
     }
 
     Mat4[KERNEL_MULTIPLIES] chain;
@@ -185,13 +191,13 @@ fn int main() {
             foreach (batch_index, batch : batches) {
                 if (array::contains(batches[:batch_index], batch)) continue;
                 bool equal = report_kernel(
-                    pool:         &pool,
-                    serial_pool:  &serial_pool,
-                    chain:        &chain,
-                    workers:      workers,
-                    items:        items,
-                    batch:        batch,
-                    us_per_range: us_per_range[index],
+                    pool:                   &pool,
+                    serial_pool:            &serial_pool,
+                    chain:                  &chain,
+                    workers:                workers,
+                    items:                  items,
+                    batch:                  batch,
+                    microseconds_per_range: microseconds_per_range[index],
                 );
                 all_equal = all_equal && equal;
             }
