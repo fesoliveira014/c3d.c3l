@@ -1,0 +1,42 @@
+{
+  "langrev": "1",
+  "dependency-search-paths": [ "lib", "../../lib", "../../lib/gpu.c3l/lib" ],
+  "dependencies": [
+    "c3d_landscape",
+    "c3d",
+    "gpu",
+    "vk",
+    "vma",
+    "spvreflect",
+    "sdl3",
+    "c3imgui",
+    "c3cg",
+    "cgltf",
+    "ufbx",
+    "shaderc"
+  ],
+  "wincrt": "static",
+  "output": "build",
+  "targets": {
+    "landscape_test": {
+      "type": "test",
+      "sources": [ "test/terrain_test.c3" ],
+      "dependencies": [
+        "c3d_landscape",
+        "c3d_physics",
+        "c3d",
+        "gpu",
+        "vk",
+        "vma",
+        "spvreflect",
+        "sdl3",
+        "c3imgui",
+        "c3cg",
+        "b3",
+        "cgltf",
+        "ufbx",
+        "shaderc"
+      ]
+    }
+  }
+}
