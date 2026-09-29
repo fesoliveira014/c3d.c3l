@@ -144,6 +144,23 @@ Measured on an RTX 4090 (driver 610.88), `instancing` at 99,856 props, 1280 × 7
 
 Off costs nothing measurable: every pass is within 1.3 % of the build before sway and fade. With fade on, 43,346 of 599,154 instances stay visible across passes (7.2 %), against 170,818 of 599,151 without it, and the passes after culling shrink with them. The `view.resolve` scope of a frame that re-packs all props rises from 12.74 ms (12.69–13.11) to 15.21 ms (15.07–15.35). The third runs of "Sway and fade on" and of the re-pack before the change hit a lower GPU clock state; those two medians use the steady runs.
 
+Skipping batches wholly past the band, measured on an RTX 4090 (driver 610.88) with `instancing --benchmark`, 1280 × 720,
+three repeats; medians in ms with the range across repeats. `--fade-field` adds 4,096 cell batches of 64 props, most of
+them past a 60–90 m band:
+
+| `--fade-field` | Before | After |
+| --- | ---: | ---: |
+| `cpu_record` | 2.821 (2.815–2.989) | 0.260 (0.255–0.265) |
+| Instance cull | 0.290 (0.289–0.291) | 0.048 (0.047–0.048) |
+| Depth prepass | 0.061 | 0.047 |
+| Forward opaque | 0.094 | 0.078 |
+| Shadow atlas | 0.247 | 0.234 |
+| Velocity | 0.063 | 0.053 |
+| Draws | 2,957 | 137 |
+| `batches_faded` | — | 926 |
+
+Without the field every pass is within noise (`cpu_record` 0.092 before, 0.082 after; the GPU passes within 1 %).
+
 ## Custom vertex stages
 
 A custom material whose shader has a vertex stage draws a batch only when the shader also supplies the instanced pair, `CustomVertex.instanced_shaded` and `instanced_depth`: the same source compiled with `INSTANCED`, and with `DEPTH_ONLY` and `INSTANCED`. A stage that ends in `write_mesh_outputs` needs no source change, and it inherits the batch's sway and fade; instanced SPIR-V built against an older `mesh_vertex.glsl` draws without them until it is rebuilt. Without the pair the batch is skipped and counted in `Stats.dangling_refs`. The published revision's pair draws; a batch whose pair exists only in a rejected replacement is skipped without a count (see [Reload](custom_shaders.md#reload)). `CustomVertex.instanced_velocity`, the same source compiled with `VELOCITY` and `INSTANCED`, is optional and needs the instanced pair and `velocity` (see [Velocity form](custom_shaders.md#velocity-form)); without it a batch's velocity uses the built-in instanced variant and sees the undisplaced instances. Fragment-only custom materials draw batches unchanged.
