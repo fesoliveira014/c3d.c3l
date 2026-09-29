@@ -1,0 +1,218 @@
+# Job pool
+
+The `c3d_job` add-on (`addons/c3d_job.c3l`, module `c3d::job`) runs a function over index ranges on a fixed
+pool of worker threads. It is fork-join: `run` splits `[0, count)` into ranges and queues them, `wait`
+returns once every range of that run has finished. With zero workers every range runs on the calling thread.
+The package imports only the standard library and `c3d`; core never imports it and has no job feature flag.
+
+```bash
+python3 scripts/build.py --example job_bench
+```
+
+## Select the package
+
+List `c3d_job` before `c3d` in the application's `project.json`, with c3d's own dependencies:
+
+```json
+{
+  "dependency-search-paths": [ "path/to/c3d.c3l/lib" ],
+  "dependencies": [ "c3d_job", "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "cgltf", "ufbx", "shaderc" ]
+}
+```
+
+## Create and destroy
+
+```c3
+JobPool pool = job::create_job_pool(mem, job::default_job_pool_desc())!;
+defer job::destroy_job_pool(&pool);
+```
+
+`create_job_pool` allocates the pool state, the worker array, the range ring and the run table once, then
+starts the workers. It faults `c3d::CAPACITY_EXCEEDED` when an allocation fails and passes on
+`thread::INIT_FAILED` when the system refuses the mutex, a condition variable or a thread; either way
+everything created so far is released. The allocator is called from the worker threads, so it must be
+thread-safe and must not be `tmem`.
+
+`destroy_job_pool` waits for every outstanding run, stops and joins the workers, frees everything and zeroes
+the handle. A `defer` on an error path is safe while runs are in flight. `JobPool` is a value handle over
+heap state: a copy or a move of the handle names the same pool.
+
+| `JobPoolDesc` field | Default | Meaning |
+| --- | --- | --- |
+| `worker_count` | logical processors minus one, at least 1 | Worker threads; 0 runs every range on the calling thread. |
+| `worker_temp_bytes` | 256 KiB | Initial temp allocator of each worker. |
+| `ring_capacity` | 4096 | Ranges queued at once across every run. |
+| `run_capacity` | 64 | Runs with queued or running ranges at once. |
+
+`default_job_pool_desc()` fills these. The worker count has four caveats:
+
+1. On Linux, `native_cpu()` is `get_nprocs_conf()`: it ignores CPU affinity and cgroup quotas, so a container
+   over-reports. Set `worker_count` from the container's quota there.
+2. On Windows it counts the current processor group only.
+3. box3d's workers run only inside `PhysicsWorld.step`. The two pools oversubscribe the machine only when an
+   application runs jobs during a physics step; such an application lowers `worker_count`.
+4. There is no upper limit; none has been measured to be needed.
+
+## Run and wait
+
+```c3
+struct Particles {
+    Vec3[] positions;
+    Vec3[] velocities;
+    float  dt;
+}
+
+fn void integrate_range(void* data, uint first, uint count) {
+    Particles* particles = data;
+    for (uint item = first; item < first + count; item++) {
+        particles.positions[item] += particles.velocities[item] * particles.dt;
+    }
+}
+
+JobId id = pool.run(
+    range: &integrate_range,
+    data:  &particles,
+    count: (uint)particles.positions.len,
+    batch: 256,
+);
+// other work on this thread
+pool.wait(id);
+```
+
+- **Split.** A run of `count` items at `batch = b` has `ceil(count / b)` ranges, `[i * b, min((i + 1) * b,
+  count))`; only the last one is short. `batch = 0` lets the pool choose about four ranges per pool thread,
+  the caller included. `count = 0` runs nothing.
+- **`run`** queues the ranges and returns at once with a `JobId`. `data` is handed to every range and must
+  outlive the wait; it may be null.
+- **`wait(id)`** returns once every range of the run has finished. Meanwhile the waiting thread runs that run's
+  queued ranges itself. Everything the ranges wrote is visible to the caller after `wait` returns.
+- **Zero and stale ids.** `run` returns the zero id when every range ran inside the call. An id goes stale when
+  its run finishes; its slot is reused only after that. `wait` on a zero or stale id returns at once and never
+  waits on a later run in the same slot.
+- **`wait_all`** returns once nothing is queued or running, running any queued range meanwhile.
+- **Inline mode.** With `worker_count = 0`, `run` runs every range on the calling thread, in ascending order,
+  and returns the zero id. Results equal the pooled results when ranges follow the rules below.
+- **Nesting.** A range may call `run` on its own pool. The nested run executes inline on the range's thread,
+  so nesting never deadlocks, and returns the zero id; `wait` on it returns at once. This holds for ranges on
+  a worker and for ranges the caller runs while it waits.
+
+Order between ranges and between runs is not a guarantee.
+
+## Queue sizing
+
+Each queued range takes one ring entry; the entry is released when a thread takes the range. A run takes
+`ceil(count / batch)` entries, so a large `count` with a small `batch` is the practical way to fill the ring:
+the defaults hold 262 144 items in batches of 64. Each run with queued or running ranges holds one run slot.
+
+`run` never faults and never blocks. Ranges that find no ring entry run inline on the caller before `run`
+returns; a run that finds no run slot, or no ring entry at all, runs inline entirely and `run` returns the
+zero id. `JobPool.inline_ranges()` counts those ranges since the pool was created. A count that grows is the
+sign that `ring_capacity` or `run_capacity` is too small. Nested runs are inline by design and are not
+counted.
+
+## Temp memory
+
+Every range runs inside its own `@pool()` on the thread that runs it, so `tmem` inside a range is that
+thread's and is reset after the range. Each worker creates its temp allocator once, `worker_temp_bytes` from
+the pool's allocator. A range whose scratch exceeds `worker_temp_bytes` allocates and frees a page each time it
+runs; size it to the largest range's scratch. Each range's `@pool()` also needs about 17 KiB of it (the
+standard library's 16 KiB minimum plus a 1 KiB reserve), so at 16 KiB or less every range allocates, empty
+or not.
+
+`job_bench`'s kernel holds 64 bytes of scratch per item: 4 KiB per range at batch 64, 64 KiB at 1024, and up
+to 2 MiB at its coarsest batch (32 768 items), which exceeds the default and allocates a page per range.
+
+## Thread-affinity and memory rules
+
+The pool does not check these; a range that breaks them races.
+
+- A range runs on a worker or on the thread that called `run`, `wait` or `wait_all`. It never calls the
+  renderer, gpu.c3l submission or command recording, SDL or ImGui; never changes scene or ECS structure
+  (adding or removing nodes or components, registering component types); never writes a store another range
+  reads.
+- Outputs are disjoint per item. Any reduction is gathered in index order after the wait. A consumer's result
+  must not depend on how the work is split.
+- A range allocates scratch only through `tmem`, which is its own thread's and reset after the range; it must
+  not keep `tmem` memory beyond the range, and must not use an allocator passed in from the caller, such as a
+  caller's `tmem` stored in `data`. Inline ranges on the caller follow the same rule under their own
+  `@pool()`.
+- A thread other than the main thread that calls `run`, `wait` or `wait_all` has its own temp allocator
+  (`@pool_init`), because ranges it runs open `@pool()`.
+- A range may call `run` on its own pool (it runs inline) and `wait` on the zero id it gets. A range never
+  calls `wait_all` or `destroy_job_pool` on its own pool, and never waits on any other run of its own pool
+  (its own run, an outer run, or a run that waits on it): all three are contracts, so the deadlock fires as a
+  contract failure instead of hanging. Waiting on another pool's run is not detected.
+
+## Profiling
+
+The pool records no profiler scopes. The profiler's recorder is per thread, so ranges on workers are never
+recorded; only the caller's thread records. Wrap `run` and `wait` in application scopes to see submission
+and waiting, including the ranges the caller runs while it waits. `job_bench` measures with its own timer.
+
+## Measured cost
+
+`job_bench` (built with `python3 scripts/build.py --target job_bench --opt O3`) prints one CSV line per
+configuration. Overhead lines time one run of 1024 empty ranges at batch 1; the time per range is the median
+of eleven passes divided by 1024. Kernel lines run 16 `Mat4` multiplies per item against a shared chain;
+serial is the same run on a zero-worker pool (the same split, on the caller), and the overhead share is
+`ranges * us_per_range / serial_us` with the overhead line of the same worker count. Every pooled output
+equals its serial output bit for bit. The tables hold the median of three process runs per line.
+
+### WSL, 32 logical processors (default 31 workers)
+
+| Workers | µs per empty range | Inline ranges |
+| ---: | ---: | ---: |
+| 0 | 0.0076 | 0 |
+| 1 | 0.0432 | 0 |
+| 3 | 0.0592 | 0 |
+| 31 | 0.1768 | 0 |
+
+| Workers | Items | Batch | Ranges | Serial µs | Pooled µs | Speedup | Overhead share | Peak scratch |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 16384 | 64 | 256 | 899.5 | 467.7 | 1.93 | 0.0128 | 4 KiB |
+| 1 | 16384 | 1024 | 16 | 905.6 | 473.2 | 1.99 | 0.0008 | 64 KiB |
+| 1 | 16384 | 2048 | 8 | 892.6 | 461.3 | 1.94 | 0.0004 | 128 KiB |
+| 1 | 65536 | 64 | 1024 | 3662.6 | 1881.9 | 1.94 | 0.0125 | 4 KiB |
+| 1 | 65536 | 1024 | 64 | 3655.9 | 1815.1 | 2.00 | 0.0008 | 64 KiB |
+| 1 | 65536 | 8192 | 8 | 3658.8 | 1855.1 | 1.97 | 0.0001 | 512 KiB |
+| 1 | 262144 | 64 | 4096 | 15091.3 | 7586.9 | 1.99 | 0.0120 | 4 KiB |
+| 1 | 262144 | 1024 | 256 | 14893.3 | 7309.3 | 2.03 | 0.0008 | 64 KiB |
+| 1 | 262144 | 32768 | 8 | 14780.6 | 7390.6 | 2.00 | 0.0000 | 2 MiB |
+| 3 | 16384 | 64 | 256 | 899.3 | 259.3 | 3.47 | 0.0140 | 4 KiB |
+| 3 | 16384 | 1024 | 16 | 895.7 | 242.9 | 3.69 | 0.0011 | 64 KiB |
+| 3 | 65536 | 64 | 1024 | 3622.2 | 1009.9 | 3.62 | 0.0169 | 4 KiB |
+| 3 | 65536 | 1024 | 64 | 3623.2 | 994.4 | 3.60 | 0.0011 | 64 KiB |
+| 3 | 65536 | 4096 | 16 | 3654.1 | 939.3 | 3.83 | 0.0003 | 256 KiB |
+| 3 | 262144 | 64 | 4096 | 15219.9 | 3845.7 | 3.96 | 0.0163 | 4 KiB |
+| 3 | 262144 | 1024 | 256 | 14884.7 | 3650.7 | 4.08 | 0.0010 | 64 KiB |
+| 3 | 262144 | 16384 | 16 | 15018.2 | 3762.8 | 3.97 | 0.0001 | 1 MiB |
+| 31 | 16384 | 64 | 256 | 888.5 | 305.1 | 2.83 | 0.0524 | 4 KiB |
+| 31 | 16384 | 1024 | 16 | 893.4 | 264.2 | 3.35 | 0.0032 | 64 KiB |
+| 31 | 16384 | 128 | 128 | 884.7 | 250.1 | 3.55 | 0.0263 | 8 KiB |
+| 31 | 65536 | 64 | 1024 | 3654.8 | 739.3 | 4.97 | 0.0514 | 4 KiB |
+| 31 | 65536 | 1024 | 64 | 3608.3 | 740.0 | 4.83 | 0.0032 | 64 KiB |
+| 31 | 65536 | 512 | 128 | 3619.6 | 697.7 | 5.02 | 0.0065 | 32 KiB |
+| 31 | 262144 | 64 | 4096 | 15169.6 | 1898.0 | 8.01 | 0.0491 | 4 KiB |
+| 31 | 262144 | 1024 | 256 | 14834.5 | 1491.1 | 10.01 | 0.0031 | 64 KiB |
+| 31 | 262144 | 2048 | 128 | 14912.2 | 1556.5 | 9.45 | 0.0015 | 128 KiB |
+
+With one worker the caller doubles the throughput by running ranges while it waits. The time per empty range
+grows with the worker count, since every range takes and returns one lock. At 31 workers, batch 64 costs 5 %
+of the serial time; batches of 128 items or more stay under 3 %.
+
+### Windows host
+
+To be filled from the three Windows host runs before merge: the logical processor count from the `#` line,
+and the same two tables.
+
+```powershell
+python scripts\build.py --target job_bench --opt O3
+1..3 | ForEach-Object { addons\c3d_job.c3l\build\job_bench.exe > "build\job_bench_windows_$_.csv" }
+```
+
+### Revisit threshold
+
+The single-lock queue is revisited when a median exceeds 2 µs per empty range, or a kernel median overhead
+share exceeds 0.05. On WSL the time per range stays under 0.18 µs, and the overhead share crosses 0.05 at 31
+workers and batch 64 with 16 384 items (0.0524) and 65 536 items (0.0514). The Windows verdict is added with
+its tables.

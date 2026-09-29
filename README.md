@@ -404,6 +404,12 @@ the library explicitly; core carries no physics dependency. Examples:
 `python3 scripts/build.py --example physics`; `physics_instanced` is the same scene with every box
 drawn from one instanced batch; `physics_components` builds its level and bodies from components.
 
+The optional `c3d_job` add-on runs a function over index ranges on a fixed pool of worker threads:
+`run` splits the work into ranges, `wait` returns once they have finished, and at zero workers every range
+runs on the calling thread. Core never depends on it. See [the job pool](docs/jobs.md) for the rules a range
+follows, queue and temp-memory sizing and the measured cost; `python3 scripts/build.py --example job_bench`
+runs its benchmark.
+
 Add c3d and its dependencies to your `project.json`. A C3 library manifest cannot declare features,
 so every consumer enables them itself. Select `C3D_SHADER_COMPILER` for in-process GLSL; every other
 capability is present whenever its dependency is linked. shaderc stays a declared dependency of
