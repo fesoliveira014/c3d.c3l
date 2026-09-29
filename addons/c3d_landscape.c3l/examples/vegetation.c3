@@ -56,6 +56,7 @@ const float BLADE_HEIGHT @local = 0.5f;
 const float BLADE_WIDTH @local = 0.05f;
 const float BLADE_MID_WIDTH_SHARE @local = 0.6f;
 const float BLADE_LEAN @local = 0.12f; // metres the tip leans out from the clump centre
+const float BLADE_MID_LEAN_SHARE @local = 0.25f; // the lean grows with the squared height: a quarter at half height
 const float BLADE_NORMAL_LIFT @local = 0.4f; // tilts blade normals up so the clump shades like a surface
 const float CLUMP_RADIUS @local = 0.06f;
 const uint VERTICES_PER_BLADE @local = 5; // two base, two middle, one tip
@@ -90,12 +91,15 @@ const uint CANOPY_INDICES @local = CANOPY_QUADS * QUAD_INDICES;
 const float TREE_ALPHA_CUTOFF @local = 0.5f;
 const uint ATLAS_SIZE @local = 256; // 256 KiB; bark in the left half, leaves in the right
 const float ATLAS_INSET @local = 4.0f / ATLAS_SIZE; // four texels: bilinear and mip taps stay inside each half
-const uint ATLAS_SEED @local = 0xa71a5;
+const uint BARK_SEED @local = 0xa71a5;
+const uint LEAF_SEED @local = 0x1eaf;
+const uint LEAF_SHADE_SEED @local = 0x5ade;
 const float BARK_STREAKS @local = 24; // noise cells across the bark half; stretched along v
 const float BARK_STRETCH @local = 8;
 const Vec3 BARK_DARK @local = { 0.16f, 0.1f, 0.06f };
 const Vec3 BARK_LIGHT @local = { 0.36f, 0.25f, 0.15f };
 const float LEAF_NOISE_CELLS @local = 16;
+const float LEAF_SHADE_CELLS @local = 32; // finer than the cut-out, so single leaves vary in shade
 const float LEAF_CUT @local = 0.5f; // the noise and rim blend above it is leaf, alpha 255; below, cut out
 const float LEAF_NOISE_WEIGHT @local = 0.5f; // share of the cut the noise decides; the rest rounds the canopy
 const float LEAF_EDGE_POWER @local = 2;
@@ -238,12 +242,6 @@ struct BenchmarkResult @local {
     bool          timestamps;
 }
 
-fn Vec3 WindControls.velocity(&self, double time) {
-    float speed = self.speed;
-    if (self.gust) speed *= gust_share(time);
-    return wind_velocity(speed, self.heading_degrees);
-}
-
 fn float gust_share(double time) @local {
     float phase = 2 * (float)math::PI * (float)(time / GUST_PERIOD_SECONDS);
     return GUST_BASE + GUST_SWING * math::sin(phase);
@@ -252,6 +250,12 @@ fn float gust_share(double time) @local {
 fn Vec3 wind_velocity(float speed, float heading_degrees) @local {
     float heading = math::deg_to_rad(heading_degrees);
     return { math::sin(heading) * speed, 0, math::cos(heading) * speed };
+}
+
+fn Vec3 controls_wind(WindControls* controls, double time) @local {
+    float speed = controls.speed;
+    if (controls.gust) speed *= gust_share(time);
+    return wind_velocity(speed, controls.heading_degrees);
 }
 
 fn Layer[] active_layers(Demo* demo) @local => demo.layers[:demo.layer_count];
@@ -318,7 +322,6 @@ fn void write_texel(
     pixels[offset + 3] = opaque ? char::max : 0;
 }
 
-// Bark noise with alpha 255 on the left half, leaf clusters cut out of value noise on the right.
 fn TextureId? add_leaf_atlas(AssetStore* assets) @local {
     TextureId atlas;
     @pool() {
@@ -330,7 +333,7 @@ fn TextureId? add_leaf_atlas(AssetStore* assets) @local {
                 float v = (float)row / (float)ATLAS_SIZE;
                 if (column < half) {
                     float u = (float)column / (float)half;
-                    float streak = value_noise(ATLAS_SEED, u * BARK_STREAKS, v * BARK_STREAKS / BARK_STRETCH);
+                    float streak = value_noise(BARK_SEED, u * BARK_STREAKS, v * BARK_STREAKS / BARK_STRETCH);
                     write_texel(
                         pixels: pixels,
                         index:  index,
@@ -342,8 +345,8 @@ fn TextureId? add_leaf_atlas(AssetStore* assets) @local {
                 float u = (float)(column - half) / (float)half;
                 Vec2 centred = { u * 2 - 1, v * 2 - 1 };
                 float rim = 1 - math::pow(math::min(centred.length(), 1.0f), LEAF_EDGE_POWER);
-                float noise = value_noise(ATLAS_SEED + 1, u * LEAF_NOISE_CELLS, v * LEAF_NOISE_CELLS);
-                float shade = value_noise(ATLAS_SEED + 2, u * LEAF_NOISE_CELLS * 2, v * LEAF_NOISE_CELLS * 2);
+                float noise = value_noise(LEAF_SEED, u * LEAF_NOISE_CELLS, v * LEAF_NOISE_CELLS);
+                float shade = value_noise(LEAF_SHADE_SEED, u * LEAF_SHADE_CELLS, v * LEAF_SHADE_CELLS);
                 write_texel(
                     pixels: pixels,
                     index:  index,
@@ -363,7 +366,6 @@ fn TextureId? add_leaf_atlas(AssetStore* assets) @local {
     return atlas;
 }
 
-// Tapered blades around the clump centre, each a quad and a tip; positions and normals.
 fn GeometryId? add_grass_clump(AssetStore* assets) @local {
     GeometryId clump;
     @pool() {
@@ -378,7 +380,7 @@ fn GeometryId? add_grass_clump(AssetStore* assets) @local {
             Vec3 outward = { math::cos(angle), 0, math::sin(angle) };
             Vec3 across = { -outward.z, 0, outward.x };
             Vec3 base = outward * CLUMP_RADIUS;
-            Vec3 middle = base + outward * (BLADE_LEAN * 0.25f) + (Vec3){ 0, BLADE_HEIGHT * 0.5f, 0 };
+            Vec3 middle = base + outward * (BLADE_LEAN * BLADE_MID_LEAN_SHARE) + (Vec3){ 0, BLADE_HEIGHT * 0.5f, 0 };
             Vec3 tip = base + outward * BLADE_LEAN + (Vec3){ 0, BLADE_HEIGHT, 0 };
             float half_width = BLADE_WIDTH * 0.5f;
             float middle_half_width = half_width * BLADE_MID_WIDTH_SHARE;
@@ -399,7 +401,7 @@ fn GeometryId? add_grass_clump(AssetStore* assets) @local {
     return clump;
 }
 
-// A tapered trunk and crossed canopy quads; vertex alpha is the bend weight.
+// Vertex alpha is the sway weight: 0 plants the trunk's base, 1 frees the canopy's top.
 fn GeometryId? add_tree(AssetStore* assets) @local {
     GeometryId tree;
     @pool() {
@@ -945,7 +947,7 @@ fn void? run_interactive(Options options) @local {
             camera_node:          demo.camera_node,
             output_height_pixels: (float)max(renderer.output_height, 1u),
         )!;
-        foliage::update(&scene, &assets, wind.velocity(window.clock.total))!;
+        foliage::update(&scene, &assets, controls_wind(&wind, window.clock.total))!;
 
         vegetation_panel(
             demo:     &demo,
@@ -1042,7 +1044,7 @@ fn uint placed_cells(Demo* demo) @local {
     return placed;
 }
 
-// Every slot with a key except the terrain's batch: the cells holding instance records.
+// The terrain's slot is left out: the formula it is checked against counts cells only.
 fn uint batch_slots_held(Demo* demo, Renderer* renderer) @local {
     uint held;
     foreach (&slot : renderer.instances.slots) {
