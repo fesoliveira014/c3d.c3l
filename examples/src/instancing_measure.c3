@@ -67,6 +67,17 @@ const String[MEASURED_PASS_COUNT] MEASURED_PASS_NAMES @local = {
     "velocity",
 };
 const String RESOLVE_SCOPE @local = "view.resolve";
+// The instancing example's wind and fade.
+const InstanceSway PROP_WIND @local = {
+    .direction  = { 1, 0, 0.3f },
+    .amplitude  = 0.12f,
+    .frequency  = 0.6f,
+    .lean       = 0.3f,
+    .wavelength = 8,
+    .variation  = 0.3f,
+    .weight     = SwayWeight.HEIGHT,
+};
+const InstanceFade PROP_FADE @local = { .start = 25, .end = 45 };
 
 struct PulseParams @local {
     Vec4 color;
@@ -88,6 +99,8 @@ struct Batches @local {
 
 struct MeasureOptions @local {
     bool mark_props;
+    bool wind;
+    bool fade;
 }
 
 struct Series @local {
@@ -99,6 +112,8 @@ struct Measurements @local {
     Series[MEASURED_PASS_COUNT] passes;
     Series cpu_record;
     Series view_resolve;
+    Series instances_visible;
+    Series instances_tested;
 }
 
 struct Controls @local {
@@ -374,7 +389,12 @@ fn void free_series(Series* series) @local {
 }
 
 fn Measurements create_measurements() @local {
-    Measurements measurements = { .cpu_record = create_series(), .view_resolve = create_series() };
+    Measurements measurements = {
+        .cpu_record        = create_series(),
+        .view_resolve      = create_series(),
+        .instances_visible = create_series(),
+        .instances_tested  = create_series(),
+    };
     foreach (&series : measurements.passes) *series = create_series();
     return measurements;
 }
@@ -383,6 +403,8 @@ fn void free_measurements(Measurements* measurements) @local {
     foreach (&series : measurements.passes) free_series(series);
     free_series(&measurements.cpu_record);
     free_series(&measurements.view_resolve);
+    free_series(&measurements.instances_visible);
+    free_series(&measurements.instances_tested);
 }
 
 fn void record_frame(
@@ -395,6 +417,8 @@ fn void record_frame(
 ) @local {
     render::Stats* stats = &renderer.stats;
     measurements.cpu_record.push(stats.cpu_record_ms);
+    measurements.instances_visible.push((float)stats.instances_visible);
+    measurements.instances_tested.push((float)stats.instances_tested);
     if (stats.gpu_frame_index != *timed_frame) {
         foreach (index, pass : MEASURED_PASSES) {
             if (!stats.gpu_pass_valid[pass.ordinal]) continue;
@@ -419,6 +443,8 @@ fn void report(Measurements* measurements, String configuration, render::Rendere
     foreach (index, name : MEASURED_PASS_NAMES) io::printf(" %s=%.4f", name, measurements.passes[index].median());
     io::printf(" cpu_record=%.4f", measurements.cpu_record.median());
     if (measurements.view_resolve.count) io::printf(" view_resolve=%.4f", measurements.view_resolve.median());
+    io::printf(" instances_visible=%.0f", measurements.instances_visible.median());
+    io::printf(" instances_tested=%.0f", measurements.instances_tested.median());
     io::printfn("");
 }
 
@@ -451,6 +477,11 @@ fn void? run(
     String configuration,
 ) @local {
     Batches batches = build_scene(assets, scene, pulse_shader)!;
+    if (options.wind) {
+        scene.get(batches.props, InstancedMesh).sway = PROP_WIND;
+        scene.get(batches.pulses, InstancedMesh).sway = PROP_WIND;
+    }
+    if (options.fade) scene.get(batches.props, InstancedMesh).fade = PROP_FADE;
     Node* camera_node = scene.add_camera(camera::perspective_deg(55, 0.1f), name: "camera")!;
     Orbit orbit = { .distance = 14, .pitch = 0.45f, .target = { 0, 1, 4 } };
     Input initial_input;
@@ -544,8 +575,15 @@ fn int main(String[] args) {
     MeasureOptions options;
     foreach (argument : args[1..]) {
         if (argument == "--mark-props") options.mark_props = true;
+        if (argument == "--wind") options.wind = true;
+        if (argument == "--fade") options.fade = true;
     }
-    String configuration = options.mark_props ? "main_marked" : "main";
+    String configuration = string::tformat(
+        "change_wind_%s_fade_%s%s",
+        options.wind ? "on" : "off",
+        options.fade ? "on" : "off",
+        options.mark_props ? "_marked" : "",
+    );
     AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
     defer asset::destroy_asset_store(&assets);
     ShaderId pulse_shader;
