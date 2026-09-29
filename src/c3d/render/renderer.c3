@@ -506,16 +506,7 @@ fn void? composite_target(
         .source_sampler = renderer.linear_clamp_sampler,
     };
 
-    PipelineKey key = {
-        .vertex        = { .shader = FULLSCREEN },
-        .fragment      = { .shader = COMPOSITE },
-        .color_formats = { [0] = output.format },
-        .color_count   = 1,
-        .depth_format  = gpu::Format.UNDEFINED,
-        .samples       = gpu::SampleCount.ONE,
-        .polygon       = gpu::PolygonMode.FILL,
-    };
-    gpu::PipelineHandle pipeline = renderer.pipelines.get(&renderer.device, key)!;
+    gpu::PipelineHandle pipeline = renderer.pipelines.get(&renderer.device, composite_pipeline_key(output.format))!;
 
     @profile_pass(renderer, Pass.COMPOSITE) {
         record_fullscreen_pass(
@@ -527,6 +518,18 @@ fn void? composite_target(
             load:          output_load_op(output, rect),
         )!;
     }!;
+}
+
+fn PipelineKey composite_pipeline_key(gpu::Format target_format) @private {
+    return {
+        .vertex        = { .shader = FULLSCREEN },
+        .fragment      = { .shader = COMPOSITE },
+        .color_formats = { [0] = target_format },
+        .color_count   = 1,
+        .depth_format  = gpu::Format.UNDEFINED,
+        .samples       = gpu::SampleCount.ONE,
+        .polygon       = gpu::PolygonMode.FILL,
+    };
 }
 
 fn void? record_fullscreen_pass(

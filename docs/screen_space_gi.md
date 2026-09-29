@@ -56,10 +56,10 @@ lines, TAA and post-processing.
 Pass order of a view with the effect:
 
 ```
-forward:   depth prepass, velocity, [ambient occlusion], screen-space GI, forward pass, transmission and
+forward:   depth prepass, velocity, [ambient occlusion], screen-space GI, forward pass, scene reads and
            transparent, colour copy, debug lines, [TAA], [motion blur]
 deferred:  depth prepass, G-buffer, velocity, [ambient occlusion], screen-space GI, [reflections], lighting,
-           forward pass, transmission and transparent, colour copy, debug lines, [TAA], [motion blur]
+           forward pass, scene reads and transparent, colour copy, debug lines, [TAA], [motion blur]
 ```
 
 `Pass.SCREEN_SPACE_GI` times the three dispatches and `Pass.SSGI_COLOR_COPY` the copy; the `Pass` enum order

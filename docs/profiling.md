@@ -86,10 +86,10 @@ size.
 | | `view.extract` | mesh candidate extraction and culling |
 | | `view.resolve` | geometry, material, skin and morph resolution into draw items |
 | | `view.sort` | draw list sorting |
-| | `view.uploads` | scene color, environment resolution, pending copies, sampled targets |
+| | `view.uploads` | scene snapshot images, environment resolution, pending copies, sampled targets |
 | | `view.lights` | light extraction, shadow recording, light and cluster upload |
 | | `view.roots` | frame root and draw root writes |
-| | `view.record` | scene pass, sky, transmission, transparent, debug and motion-blur recording |
+| | `view.record` | scene pass, sky, scene snapshots and scene reads, transparent, debug and motion-blur recording |
 | `Renderer.finish_view` | `renderer.finish_view` | depth of field, view output, post chain closure |
 | `Renderer.end_frame` | `renderer.end_frame` | the whole call |
 | | `renderer.submit` | upload flush, command list end and submission |

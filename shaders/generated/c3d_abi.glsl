@@ -244,7 +244,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer FrameRoot {
     uint ao_texture;
     uint64_t probe_volumes;
     uint ssgi_texture;
-    uint _pad0;
+    uint scene_depth;
     uint _pad1;
     uint _pad2;
 };

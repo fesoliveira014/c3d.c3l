@@ -39,6 +39,7 @@ const char[*] C3D_COMMON_PHYSICAL_TEXT @private = $embed("../../../shaders/commo
 const char[*] C3D_COMMON_PROBE_ATLAS_TEXT @private = $embed("../../../shaders/common/probe_atlas.glsl");
 const char[*] C3D_COMMON_PROBE_VOLUME_TEXT @private = $embed("../../../shaders/common/probe_volume.glsl");
 const char[*] C3D_COMMON_SAMPLING_TEXT @private = $embed("../../../shaders/common/sampling.glsl");
+const char[*] C3D_COMMON_SCENE_SNAPSHOT_TEXT @private = $embed("../../../shaders/common/scene_snapshot.glsl");
 const char[*] C3D_COMMON_SCENE_TRACE_TEXT @private = $embed("../../../shaders/common/scene_trace.glsl");
 const char[*] C3D_COMMON_SCREEN_SPACE_GI_TEXT @private = $embed("../../../shaders/common/screen_space_gi.glsl");
 const char[*] C3D_COMMON_SHADOWS_TEXT @private = $embed("../../../shaders/common/shadows.glsl");
@@ -59,7 +60,7 @@ const char[*] GPU_RAY_TRACING_TEXT @private = $embed("../../../lib/gpu.c3l/inclu
 <*
  Every include a custom stage may resolve, in table order.
 *>
-const ShaderInclude[46] SHADER_INCLUDES = {
+const ShaderInclude[47] SHADER_INCLUDES = {
     { .name = "c3d_abi.glsl", .text = (String)C3D_GENERATED_C3D_ABI_TEXT[..] },
     { .name = "ambient_occlusion.glsl", .text = (String)C3D_COMMON_AMBIENT_OCCLUSION_TEXT[..] },
     { .name = "ao_estimate.glsl", .text = (String)C3D_COMMON_AO_ESTIMATE_TEXT[..] },
@@ -90,6 +91,7 @@ const ShaderInclude[46] SHADER_INCLUDES = {
     { .name = "probe_atlas.glsl", .text = (String)C3D_COMMON_PROBE_ATLAS_TEXT[..] },
     { .name = "probe_volume.glsl", .text = (String)C3D_COMMON_PROBE_VOLUME_TEXT[..] },
     { .name = "sampling.glsl", .text = (String)C3D_COMMON_SAMPLING_TEXT[..] },
+    { .name = "scene_snapshot.glsl", .text = (String)C3D_COMMON_SCENE_SNAPSHOT_TEXT[..] },
     { .name = "scene_trace.glsl", .text = (String)C3D_COMMON_SCENE_TRACE_TEXT[..] },
     { .name = "screen_space_gi.glsl", .text = (String)C3D_COMMON_SCREEN_SPACE_GI_TEXT[..] },
     { .name = "shadows.glsl", .text = (String)C3D_COMMON_SHADOWS_TEXT[..] },

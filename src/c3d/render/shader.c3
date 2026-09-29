@@ -8,9 +8,10 @@ import gpu;
  Renderer-owned record of one store shader and the revision its pipelines hold.
 *>
 struct ShaderRes {
-    ShaderId asset;
-    uint     revision;
-    uint     rejected_revision;
+    ShaderId   asset;
+    uint       revision;
+    uint       rejected_revision;
+    SceneReads scene_reads;
 }
 
 <*
@@ -59,6 +60,7 @@ fn bool pipeline_rejected(Renderer* renderer, ShaderId shader, fault excuse) @pr
     if (excuse == PIPELINE_REJECTED) return true;
     if (excuse != gpu::SHADER_INVALID && excuse != gpu::PIPELINE_CREATE_FAILED) return false;
     ShaderRes* mirror = &renderer.shaders[shader.index];
+    if (!c3d::same_id(mirror.asset, shader)) mirror.scene_reads = {};
     mirror.asset = shader;
     mirror.rejected_revision = renderer.assets.shader(shader).header.revision;
     renderer.stats.shader_rejections++;
@@ -90,6 +92,7 @@ fn void? replace_shader_pipelines(Renderer* renderer, ShaderId shader) @private 
     mirror.asset = shader;
     mirror.revision = record.header.revision;
     mirror.rejected_revision = 0;
+    mirror.scene_reads = record.desc.scene_reads;
     return;
 }
 

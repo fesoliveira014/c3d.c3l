@@ -324,7 +324,7 @@ struct FrameRoot {
     TextureIndex ao_texture;
     GpuAddress   probe_volumes;
     TextureIndex ssgi_texture;
-    uint         _pad0;
+    TextureIndex scene_depth;
     uint         _pad1;
     uint         _pad2;
 }
@@ -353,7 +353,7 @@ $assert $reflect(FrameRoot.mip_bias).offset == 448;
 $assert $reflect(FrameRoot.ao_texture).offset == 452;
 $assert $reflect(FrameRoot.probe_volumes).offset == 456;
 $assert $reflect(FrameRoot.ssgi_texture).offset == 464;
-$assert $reflect(FrameRoot._pad0).offset == 468;
+$assert $reflect(FrameRoot.scene_depth).offset == 468;
 $assert $reflect(FrameRoot._pad1).offset == 472;
 $assert $reflect(FrameRoot._pad2).offset == 476;
 

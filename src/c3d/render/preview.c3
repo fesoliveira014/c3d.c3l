@@ -14,6 +14,7 @@ enum PreviewKind {
     VIEW_DEPTH,
     VIEW_VELOCITY,
     VIEW_SCENE_COLOR,
+    VIEW_SCENE_DEPTH,
     VIEW_BLOOM,
     VIEW_DOF_NEAR,
     VIEW_DOF_FAR,
@@ -102,6 +103,7 @@ fn void? Renderer.request_preview(
         case VIEW_DEPTH:
         case VIEW_VELOCITY:
         case VIEW_SCENE_COLOR:
+        case VIEW_SCENE_DEPTH:
         case VIEW_BLOOM:
         case VIEW_DOF_NEAR:
         case VIEW_DOF_FAR:
@@ -269,6 +271,7 @@ fn void? resolve_preview_source(Renderer* renderer, PreviewSlot* preview, Previe
         case VIEW_DEPTH:
         case VIEW_VELOCITY:
         case VIEW_SCENE_COLOR:
+        case VIEW_SCENE_DEPTH:
         case VIEW_BLOOM:
         case VIEW_DOF_NEAR:
         case VIEW_DOF_FAR:
@@ -284,7 +287,7 @@ fn void? resolve_preview_source(Renderer* renderer, PreviewSlot* preview, Previe
             target.transition(&renderer.commands, compute_read)!;
             root.input_texture = target.view.index;
             root.mode = shader::PREVIEW_MODE_COLOR;
-            if (source.kind == PreviewKind.VIEW_DEPTH) {
+            if (source.kind == PreviewKind.VIEW_DEPTH || source.kind == PreviewKind.VIEW_SCENE_DEPTH) {
                 root.mode = shader::PREVIEW_MODE_DEPTH_VIEW;
                 root.proj_22 = record.projection_terms.m22;
                 root.proj_23 = record.projection_terms.m23;
@@ -352,6 +355,7 @@ fn Target* view_preview_target(ViewRecord* record, PreviewSource source) @privat
         case VIEW_DEPTH:             return &record.depth;
         case VIEW_VELOCITY:          return &record.velocity;
         case VIEW_SCENE_COLOR:       return &record.scene_color;
+        case VIEW_SCENE_DEPTH:       return &record.scene_depth;
         case VIEW_BLOOM:             return &record.bloom[source.level];
         case VIEW_DOF_NEAR:          return &record.dof_near;
         case VIEW_DOF_FAR:           return &record.dof_far;

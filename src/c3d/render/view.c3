@@ -30,6 +30,7 @@ const gpu::Format HDR_FORMAT = gpu::Format.RGBA16_FLOAT;
 const gpu::Format DEPTH_FORMAT = gpu::Format.D32_FLOAT;
 
 const float DEPTH_CLEAR @private = 0; // reverse-Z far
+const gpu::Format SCENE_DEPTH_FORMAT @private = gpu::Format.R32_FLOAT; // holds D32 depth bit for bit in a sampled color image
 
 struct DrawItem @private {
     ulong           sort_key;
@@ -48,8 +49,8 @@ struct DrawItem @private {
 }
 
 struct MeshPreparation @private {
-    bool sheen;
-    bool transmission;
+    bool       sheen;
+    SceneReads scene_reads;
 }
 
 struct DrawState @private {
@@ -218,28 +219,36 @@ fn void? record_raster_view(
 
         DrawItem[] items;
         usz gbuffer_count;
-        usz transmission_start;
+        usz scene_read_start;
         usz transparent_start;
         usz gbuffer_filled;
         usz opaque_filled;
-        usz transmission_filled;
+        usz scene_read_filled;
         usz transparent_filled;
+        SceneReads scene_read_reads;
+        SceneReads transparent_reads;
         bool sheen;
         ShadingPath shading = record.desc.shading;
         instrumentation::@scope("view.resolve") {
             items = alloc::new_array(tmem, DrawItem, candidates.len);
-            usz transmission_count;
+            usz scene_read_count;
             usz transparent_count;
             foreach (&candidate : candidates) {
                 Material* material_data = &renderer.assets.material(candidate.material).data;
-                switch (view_draw_list(material_data, shading, custom_gbuffer_stage(renderer, material_data))) {
+                DrawList counted = view_draw_list(
+                    material:       material_data,
+                    shading:        shading,
+                    custom_gbuffer: custom_gbuffer_stage(renderer, material_data),
+                    custom_reads:   custom_scene_reads(renderer, material_data)!,
+                );
+                switch (counted) {
                     case GBUFFER: gbuffer_count++;
                     case OPAQUE: break;
-                    case TRANSMISSION: transmission_count++;
+                    case SCENE_READ: scene_read_count++;
                     case TRANSPARENT: transparent_count++;
                 }
             }
-            transmission_start = candidates.len - transmission_count - transparent_count;
+            scene_read_start = candidates.len - scene_read_count - transparent_count;
             transparent_start = candidates.len - transparent_count;
             foreach (&candidate : candidates) {
                 GpuGeometry* geometry = resolve_geometry(renderer, candidate.geometry)!;
@@ -259,8 +268,13 @@ fn void? record_raster_view(
                     line_polygon_mode: renderer.caps.line_polygon_mode,
                 )!;
                 ShaderVariant vertex = candidate_vertex_variant(geometry.layout.flags, candidate);
-                bool custom_gbuffer = custom_gbuffer_stage(renderer, material_description);
-                DrawList list = view_draw_list(material_description, shading, custom_gbuffer);
+                SceneReads custom_reads = custom_scene_reads(renderer, material_description)!;
+                DrawList list = view_draw_list(
+                    material:       material_description,
+                    shading:        shading,
+                    custom_gbuffer: custom_gbuffer_stage(renderer, material_description),
+                    custom_reads:   custom_reads,
+                );
                 gpu::PipelineHandle? pipeline = list == DrawList.GBUFFER
                   ? gbuffer_pipeline_for(renderer, material_description, vertex)
                   : pipeline_for(renderer, material_description, vertex, record.desc.ray_tracing.shadows);
@@ -272,8 +286,12 @@ fn void? record_raster_view(
                 switch (list) {
                     case GBUFFER: index = gbuffer_filled++;
                     case OPAQUE: index = gbuffer_count + opaque_filled++;
-                    case TRANSMISSION: index = transmission_start + transmission_filled++;
-                    case TRANSPARENT: index = transparent_start + transparent_filled++;
+                    case SCENE_READ:
+                        index = scene_read_start + scene_read_filled++;
+                        scene_read_reads |= material_scene_reads(material_description, custom_reads);
+                    case TRANSPARENT:
+                        index = transparent_start + transparent_filled++;
+                        transparent_reads |= material_scene_reads(material_description, custom_reads);
                 }
                 bool model_reflected = (candidate.node.world.determinant() < 0) != candidate.mirrored;
                 ShaderVariant fragment = list == DrawList.GBUFFER
@@ -305,21 +323,22 @@ fn void? record_raster_view(
         DrawItem[] gbuffer_items = items[:gbuffer_filled];
         DrawItem[] opaque_items = items[gbuffer_count:opaque_filled];
         DrawItem[] depth_items = items[:gbuffer_count + opaque_filled];
-        DrawItem[] transmission_items = items[transmission_start:transmission_filled];
+        DrawItem[] scene_read_items = items[scene_read_start:scene_read_filled];
         DrawItem[] transparent_items = items[transparent_start:transparent_filled];
         instrumentation::@scope("view.sort") {
             sort::quicksort(gbuffer_items, &by_sort_key);
             sort::quicksort(opaque_items, &by_sort_key);
-            sort::quicksort(transmission_items, &by_transparent_depth);
+            sort::quicksort(scene_read_items, &by_transparent_depth);
             sort::quicksort(transparent_items, &by_transparent_depth);
         };
 
         record.frustum = matrices.frustum;
-        DrawItem[][3] cull_groups = { depth_items, transmission_items, transparent_items };
+        DrawItem[][3] cull_groups = { depth_items, scene_read_items, transparent_items };
         CullItem[] view_culls = batch_cull_items(cull_groups[..], &record.frustum);
+        SceneReads view_reads = scene_read_reads | transparent_reads;
         ViewEnvironments environments;
         instrumentation::@scope("view.uploads") {
-            if (transmission_items.len) acquire_scene_color(renderer, record)!;
+            acquire_scene_snapshots(renderer, record, view_reads)!;
             environments = resolve_view_environments(renderer, scene, sheen)!;
             if (record.desc.ray_tracing.reflections) acquire_environment_lut(renderer)!;
             prepare_cull_stage(renderer, view_culls, record.desc.instance_culling)!;
@@ -420,8 +439,9 @@ fn void? record_raster_view(
                 shadows:     shadow_address,
                 shadow_count: (uint)shadows.len,
                 environment: environment_address,
-                scene_color: transmission_items.len ? record.scene_color.view.index : (gpu::TextureIndex)0,
-                scene_sampler: transmission_items.len ? renderer.linear_clamp_sampler : (gpu::SamplerIndex)0,
+                scene_color: view_reads.color ? record.scene_color.view.index : (gpu::TextureIndex)0,
+                scene_sampler: view_reads.color ? renderer.linear_clamp_sampler : (gpu::SamplerIndex)0,
+                scene_depth: view_reads.depth ? record.scene_depth.view.index : (gpu::TextureIndex)0,
                 prev_view_proj: temporal && record.history.valid ? &record.history.view_proj : &matrices.view_proj,
                 clusters: cluster_frame.clusters,
                 trace: trace_root,
@@ -443,7 +463,7 @@ fn void? record_raster_view(
             }
             PreviousInstanceCache previous_instances;
             previous_instances.init(tmem);
-            DrawItem[][3] draw_groups = { depth_items, transmission_items, transparent_items };
+            DrawItem[][3] draw_groups = { depth_items, scene_read_items, transparent_items };
             foreach (group_index, group : draw_groups) foreach (&item : group) {
                 Node* node = item.candidate.node;
                 Mat4 prev_world = node.world;
@@ -501,6 +521,7 @@ fn void? record_raster_view(
             }
         };
 
+        bool transparent_after_snapshots = scene_read_items.len > 0 || transparent_reads != (SceneReads){};
         instrumentation::@scope("view.record") {
             record.hdr_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
             record.depth.transition(&renderer.commands, DEPTH_ATTACHMENT_STATE)!;
@@ -547,7 +568,7 @@ fn void? record_raster_view(
                         renderer:      renderer,
                         record:        record,
                         opaque:        opaque_items,
-                        transparent:   transmission_items.len ? (DrawItem[]){} : transparent_items,
+                        transparent:   transparent_after_snapshots ? (DrawItem[]){} : transparent_items,
                         sky_root:      sky_root,
                         sky:           environments.sky != null,
                         clear_color:   environments.clear_color,
@@ -578,7 +599,7 @@ fn void? record_raster_view(
                         record:             record,
                         frame:              frame_span.address,
                         opaque:             opaque_items,
-                        transparent:        transmission_items.len ? (DrawItem[]){} : transparent_items,
+                        transparent:        transparent_after_snapshots ? (DrawItem[]){} : transparent_items,
                         sky_root:           sky_root,
                         sky:                environments.sky != null,
                         clear_color:        environments.clear_color,
@@ -587,16 +608,17 @@ fn void? record_raster_view(
                 case PATH_TRACED:
             }
 
-            if (transmission_items.len) {
-                @profile_pass(renderer, Pass.TRANSMISSION) {
-                    record_scene_color_snapshot(renderer, record)!;
-                    record_loaded_pass(renderer, record, transmission_items)!;
+            if (scene_read_items.len) {
+                record_scene_snapshots(renderer, record, scene_read_reads)!;
+                @profile_pass(renderer, Pass.SCENE_READ) {
+                    record_loaded_pass(renderer, record, scene_read_items)!;
                 }!;
-                if (transparent_items.len) {
-                    @profile_pass(renderer, Pass.FORWARD_TRANSPARENT) {
-                        record_loaded_pass(renderer, record, transparent_items)!;
-                    }!;
-                }
+            }
+            if (transparent_after_snapshots && transparent_items.len) {
+                if (transparent_reads != (SceneReads){}) record_scene_snapshots(renderer, record, transparent_reads)!;
+                @profile_pass(renderer, Pass.FORWARD_TRANSPARENT) {
+                    record_loaded_pass(renderer, record, transparent_items)!;
+                }!;
             }
 
             if (screen_space_gi) record_ssgi_color_copy(renderer, record)!;
@@ -726,7 +748,7 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
         open_closed_frame_slot(self)!;
         defer catch discard_uploads(self);
         bool sheen;
-        bool transmission;
+        SceneReads scene_reads;
         bool shadows_enabled;
         bool deferred = self.has_deferred_view();
         bool prepass = self.has_depth_prepass_view();
@@ -758,7 +780,7 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
                 gbuffer:     deferred,
             )!;
             sheen |= prepared.sheen;
-            transmission |= prepared.transmission;
+            scene_reads |= prepared.scene_reads;
         };
         scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
             bool casts = shadows_enabled && batch.cast_shadow && scene.node(entity).visible_effective;
@@ -775,9 +797,9 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
                 crowd:       part.crowd != null,
             )!;
             sheen |= prepared.sheen;
-            transmission |= prepared.transmission;
+            scene_reads |= prepared.scene_reads;
         };
-        prepare_finish(self, transmission)!;
+        prepare_finish(self, scene_reads)!;
         (void)resolve_view_environments(self, scene, sheen)!;
         if (!has_environment_preparations(self) && !self.pending_copies.len()
             && !self.pending_texture_uploads.len() && !self.pending_upload_retire.len()) return;
@@ -805,7 +827,7 @@ fn void? Renderer.prepare_model(&self, ModelId model) {
         defer end_material_scope(self);
         open_closed_frame_slot(self)!;
         defer catch discard_uploads(self);
-        bool transmission;
+        SceneReads scene_reads;
         bool deferred = self.has_deferred_view();
         foreach (&mesh : record.data.meshes) {
             MeshPreparation prepared = prepare_mesh(
@@ -816,9 +838,9 @@ fn void? Renderer.prepare_model(&self, ModelId model) {
                 depth:       true,
                 gbuffer:     deferred,
             )!;
-            transmission |= prepared.transmission;
+            scene_reads |= prepared.scene_reads;
         }
-        prepare_finish(self, transmission)!;
+        prepare_finish(self, scene_reads)!;
         if (!self.pending_copies.len() && !self.pending_texture_uploads.len() && !self.pending_upload_retire.len()) {
             return;
         }
@@ -889,11 +911,15 @@ fn MeshPreparation? prepare_mesh(
             return {};
         }
     }
-    return { .sheen = material_uses_sheen(data), .transmission = draw_list(data) == DrawList.TRANSMISSION };
+    return {
+        .sheen       = material_uses_sheen(data),
+        .scene_reads = material_scene_reads(data, custom_scene_reads(renderer, data)!),
+    };
 }
 
-fn void? prepare_finish(Renderer* renderer, bool transmission) @private {
-    if (transmission) renderer.pipelines.get(&renderer.device, snapshot_pipeline_key())!;
+fn void? prepare_finish(Renderer* renderer, SceneReads reads) @private {
+    if (reads.color) renderer.pipelines.get(&renderer.device, composite_pipeline_key(HDR_FORMAT))!;
+    if (reads.depth) renderer.pipelines.get(&renderer.device, composite_pipeline_key(SCENE_DEPTH_FORMAT))!;
     return prepare_views(renderer);
 }
 
@@ -927,6 +953,7 @@ fn bool velocity_before_lighting(ViewDesc* desc) @private {
  @param [&in] matrices : "Rendered matrices, jittered on a TAA view."
  @param [&in] camera : "Supplies near, far and exposure."
  @param viewport : "Pixels."
+ @param scene_depth : "Depth snapshot sampled view; zero when the view reads none."
  @param [in] prev_view_proj : "Unjittered; null repeats the current view-projection."
  @param clusters : "Matching frame-ring cluster root borrowed through frame completion."
  @param trace : "SceneTraceRoot address with a hardware half; zero when the view traces nothing."
@@ -951,6 +978,7 @@ fn void write_frame_root(
     gpu::GpuAddress environment = (gpu::GpuAddress)0,
     gpu::TextureIndex scene_color = (gpu::TextureIndex)0,
     gpu::SamplerIndex scene_sampler = (gpu::SamplerIndex)0,
+    gpu::TextureIndex scene_depth = (gpu::TextureIndex)0,
     Mat4* prev_view_proj = null,
     gpu::GpuAddress clusters = (gpu::GpuAddress)0,
     gpu::GpuAddress trace = (gpu::GpuAddress)0,
@@ -988,6 +1016,7 @@ fn void write_frame_root(
         .ao_texture      = ao_texture,
         .probe_volumes   = probe_volumes,
         .ssgi_texture    = ssgi_texture,
+        .scene_depth     = scene_depth,
     };
 }
 
@@ -1312,28 +1341,36 @@ fn void? record_depth_prepass(
     }!;
 }
 
-fn void? record_scene_color_snapshot(Renderer* renderer, ViewRecord* record) @private {
-    record.hdr_color.transition(&renderer.commands, FRAGMENT_READ_STATE)!;
-    record.scene_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
+fn void? record_scene_snapshots(Renderer* renderer, ViewRecord* record, SceneReads reads) @private {
+    @profile_pass(renderer, Pass.SCENE_SNAPSHOT) {
+        if (reads.color) record_snapshot_copy(renderer, &record.hdr_color, &record.scene_color)!;
+        if (reads.depth) record_snapshot_copy(renderer, &record.depth, &record.scene_depth)!;
+    }!;
+}
+
+// Leaves the source readable; the loaded pass that follows moves it back to its attachment state.
+fn void? record_snapshot_copy(Renderer* renderer, Target* source, Target* snapshot) @private {
+    source.transition(&renderer.commands, FRAGMENT_READ_STATE)!;
+    snapshot.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
 
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, CompositeRoot::size)!;
     *(CompositeRoot*)root.bytes.ptr = {
-        .source_texture = record.hdr_color.view.index,
+        .source_texture = source.view.index,
         .source_sampler = renderer.linear_clamp_sampler,
     };
-    gpu::PipelineHandle pipeline = renderer.pipelines.get(&renderer.device, snapshot_pipeline_key())!;
+    gpu::PipelineHandle pipeline = renderer.pipelines.get(&renderer.device, composite_pipeline_key(snapshot.format))!;
     record_fullscreen_pass(
         renderer:      renderer,
-        target:        &record.scene_color,
+        target:        snapshot,
         pipeline:      pipeline,
         fragment_root: root.address,
         rect:          {},
         load:          gpu::LoadOp.DONT_CARE,
     )!;
 
-    record.scene_color.transition(&renderer.commands, FRAGMENT_READ_STATE)!;
-    record.hdr_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
+    snapshot.transition(&renderer.commands, FRAGMENT_READ_STATE)!;
+    renderer.stats.scene_snapshots++;
 }
 
 fn void? record_view_output(Renderer* renderer, ViewRecord* record) @private {
@@ -1393,18 +1430,6 @@ fn PixelRect clip_rect(PixelRect rect, uint width, uint height) @local {
         .y      = rect.y,
         .width  = math::min(rect.width, width - rect.x),
         .height = math::min(rect.height, height - rect.y),
-    };
-}
-
-fn PipelineKey snapshot_pipeline_key() @local {
-    return {
-        .vertex        = { .shader = FULLSCREEN },
-        .fragment      = { .shader = COMPOSITE },
-        .color_formats = { [0] = HDR_FORMAT },
-        .color_count   = 1,
-        .depth_format  = gpu::Format.UNDEFINED,
-        .samples       = gpu::SampleCount.ONE,
-        .polygon       = gpu::PolygonMode.FILL,
     };
 }
 
@@ -1637,6 +1662,13 @@ fn bool custom_gbuffer_stage(Renderer* renderer, Material* material) @private {
     return renderer.assets.shaders.is_live(shader) && renderer.assets.shader(shader).desc.gbuffer.len > 0;
 }
 
+fn SceneReads? custom_scene_reads(Renderer* renderer, Material* material) @private {
+    if (material.kind != MaterialKind.CUSTOM) return {};
+    ShaderId shader = material.custom.shader;
+    if (!renderer.assets.shaders.is_live(shader)) return {};
+    return resolve_shader(renderer, shader)!.scene_reads;
+}
+
 fn bool custom_pipeline_rejected(Renderer* renderer, Material* material, fault excuse) @private {
     return material.kind == MaterialKind.CUSTOM && pipeline_rejected(renderer, material.custom.shader, excuse);
 }
@@ -1684,20 +1716,32 @@ fn void release_view_targets(gpu::Device* device, ViewRecord* record) @private {
     if (record.depth.texture.is_valid()) release_target(device, &record.depth);
 }
 
-fn void? acquire_scene_color(Renderer* renderer, ViewRecord* record) @private {
-    if (record.scene_color.texture.is_valid()) return;
-    record.scene_color = allocate_target(
-        device:     &renderer.device,
-        width:      record.hdr_color.width,
-        height:     record.hdr_color.height,
-        format:     HDR_FORMAT,
-        usage:      { .color_attach, .sampled },
-        debug_name: "scene_color",
-    )!;
+fn void? acquire_scene_snapshots(Renderer* renderer, ViewRecord* record, SceneReads reads) @private {
+    if (reads.color && !record.scene_color.texture.is_valid()) {
+        record.scene_color = allocate_target(
+            device:     &renderer.device,
+            width:      record.hdr_color.width,
+            height:     record.hdr_color.height,
+            format:     HDR_FORMAT,
+            usage:      { .color_attach, .sampled },
+            debug_name: "scene_color",
+        )!;
+    }
+    if (reads.depth && !record.scene_depth.texture.is_valid()) {
+        record.scene_depth = allocate_target(
+            device:     &renderer.device,
+            width:      record.hdr_color.width,
+            height:     record.hdr_color.height,
+            format:     SCENE_DEPTH_FORMAT,
+            usage:      { .color_attach, .sampled },
+            debug_name: "scene_depth",
+        )!;
+    }
 }
 
-fn void release_scene_color(gpu::Device* device, ViewRecord* record) @private {
+fn void release_scene_snapshots(gpu::Device* device, ViewRecord* record) @private {
     if (record.scene_color.texture.is_valid()) release_target(device, &record.scene_color);
+    if (record.scene_depth.texture.is_valid()) release_target(device, &record.scene_depth);
 }
 
 fn bool environment_view_valid(AssetStore* assets, Scene* scene) @private {

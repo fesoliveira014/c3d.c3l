@@ -152,6 +152,7 @@ fn void? targets_panel(
 fn float preview_range(PreviewKind kind, TargetsPanelState* state) @local {
     switch (kind) {
         case VIEW_DEPTH:       return state.depth_range;
+        case VIEW_SCENE_DEPTH: return state.depth_range;
         case PROBE_VISIBILITY: return state.depth_range;
         case VIEW_VELOCITY:    return state.velocity_range;
         default:               return 1;
@@ -182,6 +183,7 @@ fn PanelEntry[] collect_entries(Renderer* renderer, ViewId view, EnvironmentId e
         push_view_image(&entries, "depth", { .kind = VIEW_DEPTH, .view = view }, &record.depth);
         push_view_image(&entries, "velocity", { .kind = VIEW_VELOCITY, .view = view }, &record.velocity);
         push_view_image(&entries, "scene_color", { .kind = VIEW_SCENE_COLOR, .view = view }, &record.scene_color);
+        push_view_image(&entries, "scene_depth", { .kind = VIEW_SCENE_DEPTH, .view = view }, &record.scene_depth);
         for (uint level = 0; level < record.bloom_levels; level++) {
             ZString label = string::tformat("bloom %d", level).zstr_tcopy();
             push_view_image(&entries, label, { .kind = VIEW_BLOOM, .view = view, .level = level }, &record.bloom[level]);

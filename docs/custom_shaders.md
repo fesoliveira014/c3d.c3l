@@ -13,7 +13,7 @@ ShaderDesc desc = {
 ShaderId shader = assets.add_shader(&desc, "pulse")!;
 ```
 
-Every byte array is copied. `fragment` is required. `vertex` is optional; when present both forms are required: `shaded` for the forward pass and `depth` for the shadow atlas, so a deformation is applied to the caster too. `instanced_shaded` and `instanced_depth` are the same pair compiled with `INSTANCED`, for [instanced batches](instancing.md); they are optional and need the plain pair. `add_shader` and `replace_shader` fault `INVALID_ARGUMENT` on an empty fragment or a half pair. `param_block_size` is the byte size of the payload the shader reads; zero means none, and a shader whose size is zero must not read `parameters` (the address is zero).
+Every byte array is copied. `fragment` is required. `vertex` is optional; when present both forms are required: `shaded` for the forward pass and `depth` for the shadow atlas, so a deformation is applied to the caster too. `instanced_shaded` and `instanced_depth` are the same pair compiled with `INSTANCED`, for [instanced batches](instancing.md); they are optional and need the plain pair. `add_shader` and `replace_shader` fault `INVALID_ARGUMENT` on an empty fragment, a half pair, or a `gbuffer` stage with nonzero [`scene_reads`](#scene-reads). `param_block_size` is the byte size of the payload the shader reads; zero means none, and a shader whose size is zero must not read `parameters` (the address is zero).
 
 The SPIR-V can come from anywhere: `$embed`ed `.spv` files, a build step, or the in-process compiler below.
 
@@ -82,7 +82,7 @@ void main() {
 }
 ```
 
-`CustomMaterialGpu` (generated, 288 bytes) carries `kind`, `flags` (`MATERIAL_ALPHA_MASK`, `MATERIAL_DOUBLE_SIDED`, `MATERIAL_ALPHA_BLEND`), `alpha_cutoff`, `map_flags` (bit `i` = slot `i` present, bit `i + CUSTOM_MAP_UV1_SHIFT` = slot `i` reads UV1), `slots[8]` as `TextureMapGpu`, and `parameters`, the payload address. `custom_material.glsl` supplies `custom_slot_present`, `custom_map_uv` and `sample_custom_map`; `material_alpha.glsl` supplies `material_output`, which premultiplies for BLEND. Vertex inputs are the fixed locations 0 to 6 written by `mesh.vert.glsl`. `lights.glsl`, `shadows.glsl`, `ibl.glsl`, `brdf.glsl` and the other shared includes are available and read only `FrameRoot` through `DrawRoot.frame`. A forward stage receives the view's ambient occlusion with `draw_ambient_occlusion(frame, draw.flags, ivec2(gl_FragCoord.xy))` from `ambient_occlusion.glsl` (1 when the view has none or the draw is transparent); pass it to `evaluate_environment(frame, world_position, surface, roughness, occlusion, ambient_occlusion)` after the material occlusion (the frame and the world position select a [probe volume](probe_volumes.md) where one covers the surface; call it when `frame_has_indirect(frame)`) and multiply the ambient fill by `min(material occlusion, ambient occlusion)`. A view with [screen-space GI](screen_space_gi.md) adds `draw_screen_space_indirect(frame, draw.flags, ivec2(gl_FragCoord.xy))` from `screen_space_gi.glsl`: pass it to the `evaluate_environment` overload that takes a `vec4 screen_indirect` last, and multiply the ambient fill by `screen_space_base_share(material occlusion, ambient occlusion, screen_indirect)` instead. A G-buffer stage receives both through the lighting resolve.
+`CustomMaterialGpu` (generated, 288 bytes) carries `kind`, `flags` (`MATERIAL_ALPHA_MASK`, `MATERIAL_DOUBLE_SIDED`, `MATERIAL_ALPHA_BLEND`), `alpha_cutoff`, `map_flags` (bit `i` = slot `i` present, bit `i + CUSTOM_MAP_UV1_SHIFT` = slot `i` reads UV1), `slots[8]` as `TextureMapGpu`, and `parameters`, the payload address. `custom_material.glsl` supplies `custom_slot_present`, `custom_map_uv` and `sample_custom_map`; `material_alpha.glsl` supplies `material_output`, which premultiplies for BLEND. Vertex inputs are the fixed locations 0 to 6 written by `mesh.vert.glsl`. `lights.glsl`, `shadows.glsl`, `ibl.glsl`, `brdf.glsl` and the other shared includes are available and read only `FrameRoot` through `DrawRoot.frame`. A forward stage receives the view's ambient occlusion with `draw_ambient_occlusion(frame, draw.flags, ivec2(gl_FragCoord.xy))` from `ambient_occlusion.glsl` (1 when the view has none or the draw is transparent or a [scene reader](#scene-reads)); pass it to `evaluate_environment(frame, world_position, surface, roughness, occlusion, ambient_occlusion)` after the material occlusion (the frame and the world position select a [probe volume](probe_volumes.md) where one covers the surface; call it when `frame_has_indirect(frame)`) and multiply the ambient fill by `min(material occlusion, ambient occlusion)`. A view with [screen-space GI](screen_space_gi.md) adds `draw_screen_space_indirect(frame, draw.flags, ivec2(gl_FragCoord.xy))` from `screen_space_gi.glsl`: pass it to the `evaluate_environment` overload that takes a `vec4 screen_indirect` last, and multiply the ambient fill by `screen_space_base_share(material occlusion, ambient occlusion, screen_indirect)` instead. A G-buffer stage receives both through the lighting resolve.
 
 Custom fragment stages compile once, without the ray-traced shadow path: a light traced by the view (see [ray-traced shadows](shadows.md#ray-traced-shadows)) reaches them with `shadow_count == 0`, so `shadow_visibility` returns 1.
 
@@ -115,7 +115,8 @@ for grid coverage and ownership.
 G-buffer capable: on a `DEFERRED` view its opaque and masked draws join the G-buffer list and are
 lit by the lighting resolve, exactly like `STANDARD`; on a `FORWARD` view, and for `BLEND`
 materials, the `fragment` stage keeps drawing. A shader without the stage routes forward on every
-view. No material field selects the route.
+view. No material field selects the route. A shader that declares [scene reads](#scene-reads) has
+no G-buffer stage.
 
 The stage consumes the same seven inputs as the forward stage and writes the five G-buffer
 outputs of `gbuffer_output.glsl`: fill a `StandardMaterialSample` (`standard_surface.glsl`) and
@@ -128,6 +129,66 @@ The capability is also visible to shaders: `CustomMaterialGpu.capabilities` carr
 `CUSTOM_CAPABILITY_GBUFFER` when the stage is present. Pipelines for the G-buffer stage are keyed
 separately, so a rejected G-buffer stage leaves the forward stage of the same shader drawing, and
 a replacement that drops the stage retires its pipelines while the forward ones are rebuilt.
+
+## Scene reads
+
+A custom fragment stage can sample the rendered scene behind it: its color for refraction, its
+depth for absorption, soft particles, depth fog or decals. `ShaderDesc.scene_reads` declares what
+the stage samples:
+
+```c3
+ShaderDesc desc = {
+    .fragment    = water_spirv,
+    .scene_reads = { .color, .depth },
+};
+```
+
+A shader with a nonzero `scene_reads` has no G-buffer stage: `add_shader` and `replace_shader` fault
+`INVALID_ARGUMENT` on the pair.
+
+Routing follows the material's alpha mode. An opaque or masked reader draws in the scene-read list,
+the list Physical transmission uses: after opaque, masked and the sky, sorted far to near by bounds
+center, in a pass that keeps `MaterialCommon.depth_write`, so water writes depth for what follows. A
+blended reader stays in the transparent list, sorted with every other blend, and never writes
+depth.
+
+Before each list that holds a reader the renderer copies the finished scene into the view's snapshot
+images, at most twice per view and frame and only the kinds the list's draws declare: before the
+scene-read list the snapshot holds opaque, masked and sky; before the transparent list, when it holds
+a reader, it also holds the scene-read draws. No reader sees ordinary blends or the other draws of its
+own list. A view whose frame draws no reader copies nothing; each image is allocated at the view's
+working extent the first time a frame needs it and kept until the view's images are released.
+`scene_color` is `RGBA16_FLOAT`; `scene_depth` is `R32_FLOAT` holding the reverse-Z depth bit for bit,
+4 bytes per pixel (8.3 MB at 1920 × 1080, 33.2 MB at 3840 × 2160).
+
+`scene_snapshot.glsl` samples the snapshots through `FrameRoot.scene_color` and `FrameRoot.scene_depth`.
+Include it after `generated/shader_abi.glsl` and `c3d_abi.glsl`:
+
+| Helper | Needs | Returns |
+| --- | --- | --- |
+| `scene_uv(frame, gl_FragCoord.xy)` | nothing | the fragment's snapshot uv, origin at the top left |
+| `scene_color_at(frame, uv)` | `color` | the scene color, linearly filtered, mip zero |
+| `scene_depth_at(frame, uv)` | `depth` | the reverse-Z depth of the nearest texel; 0 is background |
+| `scene_view_distance_at(frame, uv)` | `depth` | the forward distance of that depth |
+| `scene_position_at(frame, uv)` | `depth` | the world position; test `scene_depth_at` for background first |
+| `scene_depth_gap(frame, gl_FragCoord)` | `depth` | the forward distance from the fragment to the scene behind it |
+
+Only the `fragment` stage of a custom material may call them, and only for the images its
+`scene_reads` declares: the snapshots are in a fragment read state, so vertex stages cannot, and
+compute dispatches keep `read_view_color` and `read_view_depth`. Background pixels read depth 0;
+`scene_view_distance_at` returns `BACKGROUND_VIEW_DISTANCE` under an infinite far plane and the far
+distance otherwise. The snapshots have the view's working extent and share the frame's jittered
+matrices, so render scale and TAA need nothing from the shader. Readers receive ambient occlusion
+and screen-space GI as 1, like transparent draws.
+
+Routing uses the scene reads of the shader revision whose pipelines are drawing, not the store's
+current desc: a replacement the backend rejects keeps the previous pipelines drawing and keeps the
+snapshots they sample.
+
+`Stats.scene_snapshots` counts the images copied in the frame (each copy also counts one
+`Stats.draws`); `Pass.SCENE_SNAPSHOT` times the copies and `Pass.SCENE_READ` the scene-read list.
+`gui::targets_panel` lists `scene_color` and `scene_depth`; `PreviewKind.VIEW_SCENE_DEPTH` previews
+`scene_depth` as distance, like `VIEW_DEPTH`.
 
 ## Vertex contract
 

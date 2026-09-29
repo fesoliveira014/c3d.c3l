@@ -152,7 +152,7 @@ root FrameRoot {
     TextureIndex ao_texture;
     GpuAddress probe_volumes;
     TextureIndex ssgi_texture;
-    uint       _pad0;
+    TextureIndex scene_depth;
     uint       _pad1;
     uint       _pad2;
 }

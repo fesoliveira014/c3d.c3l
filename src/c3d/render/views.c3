@@ -79,7 +79,7 @@ struct ViewDesc {
  Working images one view owns, in view_targets order.
 *>
 const uint VIEW_TARGET_COUNT = 5 + post::BLOOM_MAX_LEVELS + 8 + GBUFFER_CHANNEL_COUNT
-  + 3 * post::TAA_HISTORY_SLOTS + 1 + 2 + 2 + 1 + 1 + 2 * SSGI_HISTORY_SLOTS + 2;
+  + 3 * post::TAA_HISTORY_SLOTS + 1 + 2 + 2 + 1 + 1 + 2 * SSGI_HISTORY_SLOTS + 2 + 1;
 
 <*
  Reverse-Z projection terms that recover forward distance from stored depth.
@@ -349,6 +349,7 @@ struct ViewRecord {
     Target                               hdr_color;
     Target                               depth;
     Target                               scene_color;
+    Target                               scene_depth;
     Target                               post_a;
     Target                               post_b;
     Target[post::BLOOM_MAX_LEVELS]       bloom;
@@ -450,6 +451,7 @@ fn Target*[VIEW_TARGET_COUNT] view_targets(ViewRecord* record) {
     }
     targets[next + 1 + 2 * SSGI_HISTORY_SLOTS] = &record.ssgi_color;
     targets[next + 2 + 2 * SSGI_HISTORY_SLOTS] = &record.ssgi;
+    targets[next + 3 + 2 * SSGI_HISTORY_SLOTS] = &record.scene_depth;
     return targets;
 }
 
@@ -817,7 +819,7 @@ fn void release_view_images(Renderer* renderer, ViewRecord* record) @private {
     release_cluster_readback(&renderer.device, record);
     record.cluster_root = (gpu::GpuAddress)0;
     record.cluster_depth = {};
-    release_scene_color(&renderer.device, record);
+    release_scene_snapshots(&renderer.device, record);
     release_gbuffer(&renderer.device, record);
     release_ao_images(&renderer.device, record);
     release_ssgi_images(&renderer.device, record);
