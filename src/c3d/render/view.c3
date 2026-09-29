@@ -42,6 +42,7 @@ struct DrawItem @private {
     gpu::GpuAddress skin;
     gpu::GpuAddress morph;
     gpu::GpuAddress instance_data;
+    gpu::GpuAddress effects;
     CullRange       range;
     gpu::GpuAddress root;
     gpu::FrontFace  front_face;
@@ -219,6 +220,12 @@ fn void? record_raster_view(
             renderer.stats.culled += counts.culled;
             renderer.stats.dangling_refs += counts.dangling;
         };
+        InstanceEffectsView effects_view = {
+            .scene       = scene,
+            .history     = temporal ? &record.history : null,
+            .fade_origin = matrices.position,
+        };
+        effects_view.blocks.init(tmem);
 
         DrawItem[] items;
         usz gbuffer_count;
@@ -285,6 +292,12 @@ fn void? record_raster_view(
                     if (!custom_pipeline_rejected(renderer, material_description, excuse)) return excuse~;
                     continue;
                 }
+                gpu::GpuAddress effects = resolve_instance_effects(
+                    renderer:     renderer,
+                    effects_view: &effects_view,
+                    candidate:    candidate,
+                    geometry:     geometry,
+                )!;
                 usz index;
                 switch (list) {
                     case GBUFFER: index = gbuffer_filled++;
@@ -318,6 +331,7 @@ fn void? record_raster_view(
                     .skin      = resolve_candidate_skin(renderer, candidate)!,
                     .morph     = resolve_candidate_morph(renderer, candidate, vertex)!,
                     .instance_data  = candidate.batch ? resolve_instances(renderer, candidate)! : (gpu::GpuAddress)0,
+                    .effects   = effects,
                     .front_face = model_reflected != view_reflected
                       ? gpu::FrontFace.CLOCKWISE : gpu::FrontFace.COUNTER_CLOCKWISE,
                     .custom_velocity = custom_velocity_stage(renderer, material_description, candidate.batch != null),
@@ -384,6 +398,7 @@ fn void? record_raster_view(
                 matrices: matrices,
                 extraction: &extraction,
                 culling: record.desc.instance_culling,
+                effects_view: &effects_view,
             )!;
             if (shadows.len) {
                 gpu::MappedGpuSpan shadow_span = slot.upload.take(
@@ -514,7 +529,8 @@ fn void? record_raster_view(
                     layers:        item.candidate.node.layers,
                     flags:         (item.candidate.receive_shadow ? shader::DRAW_RECEIVE_SHADOW : 0)
                       | ((ambient_occlusion || screen_space_gi) && group_index == 0
-                        ? shader::DRAW_SCREEN_SPACE_TERMS : 0),
+                        ? shader::DRAW_SCREEN_SPACE_TERMS : 0)
+                      | batch_effect_flags(item.candidate),
                     sheen_lut:     sheen ? renderer.environment_state.sheen_lut.view.index : (gpu::TextureIndex)0,
                     sheen_sampler: sheen ? renderer.environment_state.sheen_sampler : (gpu::SamplerIndex)0,
                     skin:          addresses.skin,
@@ -523,6 +539,7 @@ fn void? record_raster_view(
                     previous_pose: previous_pose,
                     skin_stride:   candidate_skin_stride(item.candidate),
                     instance_indices: addresses.instance_indices,
+                    instance_effects: item.effects,
                 );
                 item.root = draw_span.address;
             }
@@ -552,6 +569,7 @@ fn void? record_raster_view(
                             view_reflected: view_reflected,
                             gbuffer:        {},
                             opaque:         opaque_items,
+                            effects_view:   &effects_view,
                         )!;
                     }
                     if (early_velocity) {
@@ -590,6 +608,7 @@ fn void? record_raster_view(
                         view_reflected: view_reflected,
                         gbuffer:        gbuffer_items,
                         opaque:         opaque_items,
+                        effects_view:   &effects_view,
                     )!;
                     if (early_velocity) {
                         post::record_velocity(
@@ -1055,6 +1074,7 @@ fn gpu::GpuAddress? upload_lights(Renderer* renderer, LightGpu[] lights) @privat
  @param previous_pose : "PreviousPoseGpu of a deformed or instanced velocity draw; zero otherwise."
  @param skin_stride : "Joints per crowd instance; zero for a shared palette."
  @param instance_indices : "Visible list of a culled batch range; zero otherwise."
+ @param instance_effects : "InstanceEffectsGpu of a batch with sway or fade; zero otherwise."
 *>
 fn void write_draw_root(
     DrawRoot* root,
@@ -1074,6 +1094,7 @@ fn void write_draw_root(
     gpu::GpuAddress previous_pose = (gpu::GpuAddress)0,
     uint skin_stride = 0,
     gpu::GpuAddress instance_indices = (gpu::GpuAddress)0,
+    gpu::GpuAddress instance_effects = (gpu::GpuAddress)0,
 ) {
     Mat3 normal = maths::normal_matrix(world);
     *root = {
@@ -1096,6 +1117,7 @@ fn void write_draw_root(
         .flags         = flags,
         .skin_stride   = skin_stride,
         .instance_indices = instance_indices,
+        .instance_effects = instance_effects,
     };
 }
 
@@ -1188,6 +1210,7 @@ fn gpu::GpuAddress? upload_bytes(Renderer* renderer, void* data, usz size) @priv
  @param instance_data : "First instance record; zero for a mesh."
  @param skin_stride : "Joints per crowd instance; zero for a shared palette."
  @param instance_indices : "Visible list of a culled batch range; zero otherwise."
+ @param instance_effects : "InstanceEffectsGpu of a batch with sway or fade; zero otherwise."
 *>
 fn void write_depth_draw_root(
     DrawRoot* root,
@@ -1202,6 +1225,7 @@ fn void write_depth_draw_root(
     gpu::GpuAddress instance_data = (gpu::GpuAddress)0,
     uint skin_stride = 0,
     gpu::GpuAddress instance_indices = (gpu::GpuAddress)0,
+    gpu::GpuAddress instance_effects = (gpu::GpuAddress)0,
 ) {
     *root = {
         .model     = bitcast(world, Mat4f),
@@ -1215,6 +1239,7 @@ fn void write_depth_draw_root(
         .flags         = flags,
         .skin_stride   = skin_stride,
         .instance_indices = instance_indices,
+        .instance_effects = instance_effects,
     };
 }
 
@@ -1309,12 +1334,13 @@ fn void? record_depth_prepass(
     bool view_reflected,
     DrawItem[] gbuffer,
     DrawItem[] opaque,
+    InstanceEffectsView* effects_view,
 ) @private {
     MeshCandidate[] candidates = alloc::new_array(tmem, MeshCandidate, gbuffer.len + opaque.len);
     usz count;
     foreach (&item : gbuffer) candidates[count++] = *item.candidate;
     foreach (&item : opaque) candidates[count++] = *item.candidate;
-    ShadowDraw[] draws = prepare_shadow_draws(renderer, candidates)!;
+    ShadowDraw[] draws = prepare_shadow_draws(renderer, candidates, effects_view)!;
     CullRange[] ranges = alloc::new_array(tmem, CullRange, (sz)draws.len);
     CullItem[] culls = shadow_cull_items(draws, ranges, &record.frustum);
     prepare_cull_stage(renderer, culls, record.desc.instance_culling)!;

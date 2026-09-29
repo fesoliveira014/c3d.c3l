@@ -114,15 +114,21 @@ fn void InstanceTable.sweep(&self, ulong frame_index, RetireList* retire) {
 }
 
 <*
- Write one instance record from its world matrix and color.
+ Write one instance record from its world matrix, color and seed.
  @param [&out] record : "Overwritten whole."
  @param world : "Affine instance matrix."
+ @param seed : "Instance seed in [0, 1), carried in normal_0.w."
 *>
-fn void write_instance(InstanceGpu* record, Mat4 world, Vec4 color) {
+fn void write_instance(
+    InstanceGpu* record,
+    Mat4 world,
+    Vec4 color,
+    float seed,
+) {
     Mat3 normal = maths::normal_matrix(world);
     *record = {
         .model    = bitcast(world, Mat4f),
-        .normal_0 = { normal.m00, normal.m10, normal.m20, 0 },
+        .normal_0 = { normal.m00, normal.m10, normal.m20, seed },
         .normal_1 = { normal.m01, normal.m11, normal.m21, 0 },
         .normal_2 = { normal.m02, normal.m12, normal.m22, 0 },
         .color    = color,
@@ -139,12 +145,22 @@ fn uint pack_instance_records(InstanceGpu[] records, Mat4 node_world, InstancedM
     uint written;
     foreach (index, transform : batch.transforms[:batch.count]) {
         if (scene::transform_mirrored(transform)) continue;
-        write_instance(&records[written++], node_world.mul(transform.to_mat4()), batch.colors[index]);
+        write_instance(
+            record: &records[written++],
+            world:  node_world.mul(transform.to_mat4()),
+            color:  batch.colors[index],
+            seed:   instance_seed(transform.position),
+        );
     }
     uint split = written;
     foreach (index, transform : batch.transforms[:batch.count]) {
         if (!scene::transform_mirrored(transform)) continue;
-        write_instance(&records[written++], node_world.mul(transform.to_mat4()), batch.colors[index]);
+        write_instance(
+            record: &records[written++],
+            world:  node_world.mul(transform.to_mat4()),
+            color:  batch.colors[index],
+            seed:   instance_seed(transform.position),
+        );
     }
     return split;
 }

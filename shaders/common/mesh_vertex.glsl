@@ -10,6 +10,7 @@
 #endif
 
 #ifdef INSTANCED
+#include "instance_effects.glsl"
 GPU_DECLARE_READONLY_ARRAY_REF(InstanceArray, InstanceGpu);
 GPU_DECLARE_READONLY_ARRAY_REF(VisibleArray, uint);
 #ifdef VELOCITY
@@ -118,6 +119,56 @@ vec3 previous_mesh_position(DrawRoot draw, GeometryRoot geometry, uint index) {
 }
 #endif
 
+#ifdef INSTANCED
+// The effects block is read only under DRAW_SWAY or DRAW_DISTANCE_FADE; DRAW_SWAY_VERTEX_ALPHA alone reads vertex colour only.
+float instance_bend_weight(DrawRoot draw, vec3 local_position, vec4 color) {
+    if ((draw.flags & DRAW_SWAY) == 0u) return 0.0;
+    if ((draw.flags & DRAW_SWAY_VERTEX_ALPHA) != 0u) return clamp(color.a, 0.0, 1.0);
+    vec4 anchor = InstanceEffectsGpu(draw.instance_effects).anchor;
+    // Height weight assumes +Y up in geometry space.
+    float height = clamp((local_position.y - anchor.y) * anchor.w, 0.0, 1.0);
+    return height * height;
+}
+
+vec3 apply_instance_effects(DrawRoot draw, InstanceGpu instance, vec3 world_position, float bend_weight) {
+    if ((draw.flags & (DRAW_SWAY | DRAW_DISTANCE_FADE)) == 0u) return world_position;
+    InstanceEffectsGpu effects = InstanceEffectsGpu(draw.instance_effects);
+    vec3 anchor = instance_anchor(effects, instance.model);
+    float seed = instance.normal_0.w;
+    vec3 position = world_position;
+    if ((draw.flags & DRAW_SWAY) != 0u) position += sway_offset(effects.sway, anchor, seed, bend_weight);
+    if ((draw.flags & DRAW_DISTANCE_FADE) != 0u) {
+        float scale = instance_fade_scale(effects, anchor, seed);
+        // mix is not exact at 1 on every backend; an instance before the band keeps its position bit for bit.
+        if (scale < 1.0) position = mix(anchor, position, scale);
+    }
+    return position;
+}
+
+#ifdef VELOCITY
+vec3 apply_previous_instance_effects(
+    DrawRoot draw,
+    InstanceGpu instance,
+    mat4 previous_model,
+    vec3 previous_world_position,
+    float bend_weight
+) {
+    if ((draw.flags & (DRAW_SWAY | DRAW_DISTANCE_FADE)) == 0u) return previous_world_position;
+    InstanceEffectsGpu effects = InstanceEffectsGpu(draw.instance_effects);
+    vec3 previous_anchor = instance_anchor(effects, previous_model);
+    float seed = instance.normal_0.w;
+    vec3 position = previous_world_position;
+    if ((draw.flags & DRAW_SWAY) != 0u) position += sway_offset(effects.previous_sway, previous_anchor, seed, bend_weight);
+    if ((draw.flags & DRAW_DISTANCE_FADE) != 0u) {
+        // The current scale: the collapse itself carries no motion.
+        float scale = instance_fade_scale(effects, instance_anchor(effects, instance.model), seed);
+        if (scale < 1.0) position = mix(previous_anchor, position, scale);
+    }
+    return position;
+}
+#endif
+#endif
+
 // Non-velocity forms ignore previous_position.
 void write_mesh_outputs(
     MeshVertexInput vertex,
@@ -136,14 +187,30 @@ void write_mesh_outputs(
     mat3 normal_matrix = mat3(draw.normal_0.xyz, draw.normal_1.xyz, draw.normal_2.xyz);
 #endif
     vec4 world = model * vec4(vertex.position, 1.0);
+#ifdef INSTANCED
+    world.xyz = apply_instance_effects(draw, instance, world.xyz, instance_bend_weight(draw, vertex.position, vertex.color));
+#endif
 #ifdef VELOCITY
     vec4 previous = vec4(previous_position, 1.0);
 #ifdef INSTANCED
     // Without previous instance matrices, prev_model is the batch node's motion after the current instance matrix.
     uint64_t previous_instances = PreviousPoseGpu(draw.previous_pose).instances;
-    v_prev_clip_pos = previous_instances != 0ul
-        ? frame.prev_view_proj * (PreviousInstanceArray(previous_instances).values[source] * previous)
-        : frame.prev_view_proj * (draw.prev_model * (model * previous));
+    vec4 previous_world = previous_instances != 0ul
+        ? PreviousInstanceArray(previous_instances).values[source] * previous
+        : draw.prev_model * (model * previous);
+    if ((draw.flags & (DRAW_SWAY | DRAW_DISTANCE_FADE)) != 0u) {
+        mat4 previous_model = previous_instances != 0ul
+            ? PreviousInstanceArray(previous_instances).values[source]
+            : draw.prev_model * model;
+        previous_world.xyz = apply_previous_instance_effects(
+            draw,
+            instance,
+            previous_model,
+            previous_world.xyz,
+            instance_bend_weight(draw, previous_position, vertex.color)
+        );
+    }
+    v_prev_clip_pos = frame.prev_view_proj * previous_world;
 #else
     v_prev_clip_pos = frame.prev_view_proj * (draw.prev_model * previous);
 #endif
@@ -159,6 +226,7 @@ void write_mesh_outputs(
     v_uv1 = vertex.uv1;
     v_color = vertex.color;
 #ifdef INSTANCED
+    if ((draw.flags & DRAW_SWAY_VERTEX_ALPHA) != 0u) v_color.a = 1.0;
     v_color *= instance.color;
 #endif
     vec4 clip = frame.view_proj * world;

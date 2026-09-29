@@ -299,16 +299,18 @@ The same source compiled with `DEPTH_ONLY` is the `depth` form; `write_mesh_outp
 
 An instanced stage that reads per-instance data itself indexes it with `instance_source(draw)`, never `gl_InstanceIndex`. With [instance culling](instancing.md#instance-culling) on, `gl_InstanceIndex` is the position in the visible list and `instance_source` maps it back to the instance; with culling off both are equal. `write_mesh_outputs` and `apply_mesh_deformation` already use it.
 
+In `INSTANCED` forms `write_mesh_outputs` applies the batch's [sway and fade](instancing.md#sway-and-distance-fade) in world space after the instance matrix, the sway first and then the collapse, and under `SwayWeight.VERTEX_ALPHA` writes `v_color.a = 1` before the instance tint. A stage that writes its outputs itself calls the helpers `mesh_vertex.glsl` declares under `INSTANCED`: `instance_bend_weight`, `apply_instance_effects` on the world position and, in velocity forms, `apply_previous_instance_effects` on the previous world position; it sets `v_color.a = 1` when `DRAW_SWAY_VERTEX_ALPHA` is set. A stage supplies its own bend weight by writing `vertex.color.a` before `write_mesh_outputs` and selecting `VERTEX_ALPHA`. Instanced SPIR-V built against an older `mesh_vertex.glsl` draws without sway and fade until it is rebuilt.
+
 Limits of a custom vertex stage:
 
 - It has one compiled form per pass. The renderer does not select `SKINNED`, `SKINNED_U16` or `MORPH` forms of user SPIR-V; compile with the defines that match the geometry when `apply_mesh_deformation` should skin or morph, or leave them out for rigid meshes. `DrawRoot.skin` and `DrawRoot.morph` are written either way.
 - A crowd part (see [Instancing](instancing.md)) draws through the instanced pair. Compiled with `INSTANCED` and the deformation defines, `apply_mesh_deformation` reads each instance's palette at `DrawRoot.skin_stride` joints per instance and its own morph block; compiled without them, the crowd draws at the bind pose.
-- The velocity pass draws the velocity form when the shader supplies one for the draw; those items are redrawn on every rendering with history. Without it, velocity uses the built-in `mesh` variant and sees the undisplaced mesh.
+- The velocity pass draws the velocity form when the shader supplies one for the draw; those items are redrawn on every rendering with history. Without it, velocity uses the built-in `mesh` variant and sees the undisplaced mesh. The built-in instanced velocity variant, and velocity forms that end in `write_mesh_outputs`, include the batch's sway.
 - Built-in materials sample with `FrameRoot.mip_bias` on TAA views; a custom fragment opts in with
   `sample_custom_map(material, slot, uv0, uv1, frame.mip_bias)`. The depth prepass cuts custom
   alpha coverage unbiased, so a masked custom material keeps the unbiased sample for its alpha:
   a biased one cuts different coverage than the prepass tests `EQUAL` against.
-- A displaced mesh needs an authored `Mesh.local_bounds` override when the displacement can leave the geometry bounds; culling and shadow fitting use bounds, not vertices. A displaced batch sets `InstancedMesh.local_bounds` with `has_bounds_override`; its instances are then not culled one by one.
+- A displaced mesh needs an authored `Mesh.local_bounds` override when the displacement can leave the geometry bounds; culling and shadow fitting use bounds, not vertices. A displaced batch sets `InstancedMesh.local_bounds` with `has_bounds_override`; its instances are then not culled one by one. The built-in sway needs no override: it grows the bound itself and keeps per-instance culling.
 - A displacement that changes the surface orientation must adjust `vertex.normal` and `vertex.tangent` itself; the pulse example is a uniform translation and leaves them alone.
 
 ### Velocity form

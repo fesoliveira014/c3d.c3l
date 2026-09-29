@@ -23,6 +23,7 @@ struct ShadowDraw @private {
     gpu::GpuAddress morph;
     gpu::GpuAddress alpha;
     gpu::GpuAddress instance_data;
+    gpu::GpuAddress effects;
     bool masked;
     bool wireframe;
     bool reflected;
@@ -81,7 +82,11 @@ fn ShaderVariant depth_only_vertex_variant(GeometryFlags flags, bool morphed = f
     );
 }
 
-fn ShadowDraw[]? prepare_shadow_draws(Renderer* renderer, MeshCandidate[] candidates) @private {
+fn ShadowDraw[]? prepare_shadow_draws(
+    Renderer* renderer,
+    MeshCandidate[] candidates,
+    InstanceEffectsView* effects_view,
+) @private {
     ShadowDraw[] draws = alloc::new_array(tmem, ShadowDraw, candidates.len);
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     usz count;
@@ -132,6 +137,12 @@ fn ShadowDraw[]? prepare_shadow_draws(Renderer* renderer, MeshCandidate[] candid
         }
         draw.material = material;
         draw.pipeline = pipeline;
+        draw.effects = resolve_instance_effects(
+            renderer:     renderer,
+            effects_view: effects_view,
+            candidate:    candidate,
+            geometry:     geometry,
+        )!;
         count++;
         if (!draw.masked || material.kind == MaterialKind.CUSTOM) continue;
         TextureSlot base_map;
@@ -249,12 +260,13 @@ fn void? record_depth_draws(
                 geometry: draw.geometry.root,
                 material: draw.alpha,
                 object_id: draw.candidate.node.id.index,
-                flags: draw.masked ? shader::DRAW_ALPHA_MASK : 0,
+                flags: (draw.masked ? shader::DRAW_ALPHA_MASK : 0) | batch_effect_flags(draw.candidate),
                 skin: addresses.skin,
                 morph: addresses.morph,
                 instance_data: addresses.instance_data,
                 skin_stride: candidate_skin_stride(draw.candidate),
                 instance_indices: addresses.instance_indices,
+                instance_effects: draw.effects,
             );
         } else {
             write_depth_draw_root(
@@ -264,12 +276,13 @@ fn void? record_depth_draws(
                 geometry: draw.geometry.root,
                 material: draw.alpha,
                 object_id: draw.candidate.node.id.index,
-                flags: draw.masked ? shader::DRAW_ALPHA_MASK : 0,
+                flags: (draw.masked ? shader::DRAW_ALPHA_MASK : 0) | batch_effect_flags(draw.candidate),
                 skin: addresses.skin,
                 morph: addresses.morph,
                 instance_data: addresses.instance_data,
                 skin_stride: candidate_skin_stride(draw.candidate),
                 instance_indices: addresses.instance_indices,
+                instance_effects: draw.effects,
             );
         }
         if (draw.candidate.batch) {
@@ -292,6 +305,7 @@ fn ShadowGpu[]? record_shadows(
     CameraMatrices* matrices,
     LightExtraction* extraction,
     bool culling,
+    InstanceEffectsView* effects_view,
 ) @private {
     renderer.shadow_frustum_count = 0;
     uint covered;
@@ -383,7 +397,7 @@ fn ShadowGpu[]? record_shadows(
     foreach (index, candidate : candidates) {
         if (participating[index]) candidates[included++] = candidate;
     }
-    ShadowDraw[] draws = prepare_shadow_draws(renderer, candidates[:included])!;
+    ShadowDraw[] draws = prepare_shadow_draws(renderer, candidates[:included], effects_view)!;
     ShadowDraw[][] layer_draws = alloc::new_array(tmem, ShadowDraw[], allocation.layer_count);
     CullRange[][] layer_ranges = alloc::new_array(tmem, CullRange[], allocation.layer_count);
     CullItem[][] layer_culls = alloc::new_array(tmem, CullItem[], allocation.layer_count);

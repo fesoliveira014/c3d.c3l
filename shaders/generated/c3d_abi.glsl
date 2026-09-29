@@ -29,6 +29,9 @@ const uint MAX_ACTIVE_MORPH_TARGETS = 8u;
 const uint DRAW_RECEIVE_SHADOW = 1u;
 const uint DRAW_ALPHA_MASK = 2u;
 const uint DRAW_SCREEN_SPACE_TERMS = 4u;
+const uint DRAW_SWAY = 8u;
+const uint DRAW_DISTANCE_FADE = 16u;
+const uint DRAW_SWAY_VERTEX_ALPHA = 32u;
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1u;
 const uint SSGI_FLAG_GBUFFER_NORMALS = 1u;
 const uint SSGI_FLAG_HISTORY_VALID = 2u;
@@ -269,8 +272,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer DrawRoot {
     uint sheen_sampler;
     uint skin_stride;
     uint64_t instance_indices;
-    uint _pad0;
-    uint _pad1;
+    uint64_t instance_effects;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer PreviousPoseGpu {
@@ -292,6 +294,9 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer InstanceCul
     uint count;
     uint _pad0;
     uint _pad1;
+    uint64_t instance_effects;
+    uint _pad2;
+    uint _pad3;
 };
 
 struct InstanceGpu {
@@ -300,6 +305,25 @@ struct InstanceGpu {
     vec4 normal_1;
     vec4 normal_2;
     vec4 color;
+};
+
+struct SwayGpu {
+    vec4 direction_amplitude;
+    float phase;
+    float lean;
+    float waves_per_unit;
+    float variation;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer InstanceEffectsGpu {
+    SwayGpu sway;
+    SwayGpu previous_sway;
+    vec4 anchor;
+    vec4 fade_origin;
+    float fade_start;
+    float fade_end;
+    float fade_transition;
+    uint _pad0;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer MorphWeightsGpu {

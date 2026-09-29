@@ -177,8 +177,7 @@ root DrawRoot {
     SamplerIndex sheen_sampler;
     uint       skin_stride;
     GpuAddress instance_indices;
-    uint       _pad0;
-    uint       _pad1;
+    GpuAddress instance_effects;
 }
 
 root PreviousPoseGpu {
@@ -202,6 +201,9 @@ root InstanceCullRoot {
     uint       count;
     uint       _pad0;
     uint       _pad1;
+    GpuAddress instance_effects;
+    uint       _pad2;
+    uint       _pad3;
 }
 
 struct InstanceGpu {
@@ -210,6 +212,25 @@ struct InstanceGpu {
     vec4 normal_1;
     vec4 normal_2;
     vec4 color;
+}
+
+struct SwayGpu {
+    vec4  direction_amplitude;
+    float phase;
+    float lean;
+    float waves_per_unit;
+    float variation;
+}
+
+root InstanceEffectsGpu {
+    SwayGpu sway;
+    SwayGpu previous_sway;
+    vec4    anchor;
+    vec4    fade_origin;
+    float   fade_start;
+    float   fade_end;
+    float   fade_transition;
+    uint    _pad0;
 }
 
 const uint MAX_ACTIVE_MORPH_TARGETS = 8;
@@ -226,6 +247,10 @@ root MorphWeightsGpu {
 const uint DRAW_RECEIVE_SHADOW = 1;
 const uint DRAW_ALPHA_MASK = 2;
 const uint DRAW_SCREEN_SPACE_TERMS = 4;
+// DrawRoot.instance_effects is read only under DRAW_SWAY or DRAW_DISTANCE_FADE; DRAW_SWAY_VERTEX_ALPHA alone reads vertex colour only.
+const uint DRAW_SWAY = 8;
+const uint DRAW_DISTANCE_FADE = 16;
+const uint DRAW_SWAY_VERTEX_ALPHA = 32;
 
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1;
 
