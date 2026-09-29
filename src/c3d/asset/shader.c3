@@ -12,14 +12,16 @@ bitstruct SceneReads : char {
 }
 
 <*
- Shaded and depth-only forms of one user vertex stage, plain and instanced.
- Each pair is both or neither; the instanced pair requires the plain pair.
+ Shaded, depth and velocity forms of one user vertex stage.
+ Pairs are whole; an instanced form needs its plain form, a velocity form its shaded one.
 *>
 struct CustomVertex {
     char[] shaded;
     char[] depth;
     char[] instanced_shaded;
     char[] instanced_depth;
+    char[] velocity;
+    char[] instanced_velocity;
 }
 
 <*
@@ -134,6 +136,10 @@ fn void? check_shader_desc(ShaderDesc* desc) @private {
     if ((vertex.shaded.len == 0) != (vertex.depth.len == 0)) return c3d::INVALID_ARGUMENT~;
     if ((vertex.instanced_shaded.len == 0) != (vertex.instanced_depth.len == 0)) return c3d::INVALID_ARGUMENT~;
     if (vertex.instanced_shaded.len && !vertex.shaded.len) return c3d::INVALID_ARGUMENT~;
+    if (vertex.velocity.len && !vertex.shaded.len) return c3d::INVALID_ARGUMENT~;
+    if (vertex.instanced_velocity.len && (!vertex.instanced_shaded.len || !vertex.velocity.len)) {
+        return c3d::INVALID_ARGUMENT~;
+    }
     if (desc.gbuffer.len && desc.scene_reads != (SceneReads){}) return c3d::INVALID_ARGUMENT~;
     return;
 }
@@ -155,6 +161,9 @@ fn ShaderDesc copy_shader_desc(Allocator allocator, ShaderDesc* desc) @private {
               ? copy_slice(allocator, desc.vertex.instanced_shaded) : (char[]){},
             .instanced_depth = desc.vertex.instanced_depth.len
               ? copy_slice(allocator, desc.vertex.instanced_depth) : (char[]){},
+            .velocity = desc.vertex.velocity.len ? copy_slice(allocator, desc.vertex.velocity) : (char[]){},
+            .instanced_velocity = desc.vertex.instanced_velocity.len
+              ? copy_slice(allocator, desc.vertex.instanced_velocity) : (char[]){},
         },
         .param_block_size = desc.param_block_size,
         .scene_reads = desc.scene_reads,
@@ -170,5 +179,7 @@ fn void free_shader_desc(Allocator allocator, ShaderDesc* desc) @private {
     alloc::free(allocator, desc.vertex.depth.ptr);
     alloc::free(allocator, desc.vertex.instanced_shaded.ptr);
     alloc::free(allocator, desc.vertex.instanced_depth.ptr);
+    alloc::free(allocator, desc.vertex.velocity.ptr);
+    alloc::free(allocator, desc.vertex.instanced_velocity.ptr);
     *desc = {};
 }
