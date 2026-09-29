@@ -2,7 +2,9 @@
 #include "generated/shader_abi.glsl"
 #include "c3d_abi.glsl"
 #include "descriptor_heap.glsl"
+#ifndef SCENE_TRACE_BVH
 #define SCENE_TRACE_RAY_QUERY
+#endif
 #define RT_SHADOWS
 #include "constants.glsl"
 #include "gbuffer.glsl"

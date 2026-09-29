@@ -4,6 +4,20 @@ import c3d;
 import c3d::shader;
 
 const char[4] SPIRV_MAGIC_BYTES = { 0x03, 0x02, 0x23, 0x07 };
+const usz SPIRV_HEADER_WORDS @local = 5;
+const uint SPIRV_OP_EXTENSION @local = 10;                            // OpExtension
+const uint SPIRV_OP_CAPABILITY @local = 17;                           // OpCapability
+const uint SPIRV_CAPABILITY_RAY_QUERY_PROVISIONAL @local = 4471;      // RayQueryProvisionalKHR
+const uint SPIRV_CAPABILITY_RAY_QUERY @local = 4472;                  // RayQueryKHR
+const uint SPIRV_CAPABILITY_RAY_TRAVERSAL_CULLING @local = 4478;      // RayTraversalPrimitiveCullingKHR
+const uint SPIRV_CAPABILITY_RAY_TRACING @local = 4479;                // RayTracingKHR
+
+struct SpirvFeatures @local {
+    bool ray_capability;
+    bool ray_query_capability;
+    bool ray_extension;
+    bool ray_query_extension;
+}
 
 fn void test_every_manifest_entry_resolves_to_spirv() @test {
     foreach (&entry : shader::SHADER_ENTRIES) {
@@ -42,6 +56,69 @@ fn void test_every_include_is_named_once() @test {
         has_heap |= include.name == "descriptor_heap.glsl";
     }
     assert(has_abi && has_heap);
+}
+
+fn uint spirv_word(char[] spirv, usz word) @local {
+    usz byte = word * 4;
+    return (uint)spirv[byte] | (uint)spirv[byte + 1] << 8 | (uint)spirv[byte + 2] << 16 | (uint)spirv[byte + 3] << 24;
+}
+
+fn SpirvFeatures spirv_ray_features(char[] spirv) @local {
+    SpirvFeatures features;
+    usz word_count = spirv.len / 4;
+    usz word = SPIRV_HEADER_WORDS;
+    while (word < word_count) {
+        uint instruction = spirv_word(spirv, word);
+        uint length = instruction >> 16;
+        uint opcode = instruction & 0xFFFF;
+        if (opcode == SPIRV_OP_CAPABILITY) {
+            uint capability = spirv_word(spirv, word + 1);
+            features.ray_query_capability |= capability == SPIRV_CAPABILITY_RAY_QUERY;
+            features.ray_capability |= capability == SPIRV_CAPABILITY_RAY_QUERY_PROVISIONAL
+                || capability == SPIRV_CAPABILITY_RAY_QUERY || capability == SPIRV_CAPABILITY_RAY_TRAVERSAL_CULLING
+                || capability == SPIRV_CAPABILITY_RAY_TRACING;
+        }
+        if (opcode == SPIRV_OP_EXTENSION) {
+            ZString name = (ZString)&spirv[(word + 1) * 4];
+            String extension = name.str_view();
+            features.ray_query_extension |= extension == "SPV_KHR_ray_query";
+            features.ray_extension |= extension == "SPV_KHR_ray_query" || extension == "SPV_KHR_ray_tracing";
+        }
+        word += length;
+    }
+    return features;
+}
+
+fn void test_registry_holds_the_software_trace_variants() @test {
+    uint shadow_flags = shader::SHADER_FLAG_RT_SHADOWS | shader::SHADER_FLAG_SCENE_TRACE_BVH;
+    ShaderVariant[6] variants = {
+        { .shader = STANDARD, .flags = shadow_flags },
+        { .shader = PHYSICAL, .flags = shadow_flags },
+        { .shader = TOON, .flags = shadow_flags },
+        { .shader = LIGHTING_RESOLVE, .flags = shadow_flags },
+        { .shader = RT_AO, .flags = shader::SHADER_FLAG_SCENE_TRACE_BVH },
+        { .shader = RT_REFLECTIONS, .flags = shader::SHADER_FLAG_SCENE_TRACE_BVH },
+    };
+    foreach (variant : variants) shader::BUILTIN_REGISTRY.get(variant)!!;
+    ShaderVariant walk_alone = { .shader = STANDARD, .flags = shader::SHADER_FLAG_SCENE_TRACE_BVH };
+    if (catch excuse = shader::BUILTIN_REGISTRY.get(walk_alone)) {
+        assert(excuse == c3d::SHADER_NOT_FOUND);
+        return;
+    }
+    assert(false, "the software walk resolved without traced shadows");
+}
+
+fn void test_software_trace_variants_declare_no_ray_capability() @test {
+    SpirvFeatures hardware = spirv_ray_features(shader::BUILTIN_REGISTRY.get({ .shader = RT_AO })!!);
+    assert(hardware.ray_query_capability && hardware.ray_query_extension);
+    usz software_count;
+    foreach (&entry : shader::SHADER_ENTRIES) {
+        if ((entry.variant.flags & shader::SHADER_FLAG_SCENE_TRACE_BVH) == 0) continue;
+        SpirvFeatures features = spirv_ray_features(entry.spirv);
+        assert(!features.ray_capability && !features.ray_extension);
+        software_count++;
+    }
+    assert(software_count == 7);
 }
 
 module c3d::test::shader_compile @feat(C3D_SHADER_COMPILER);

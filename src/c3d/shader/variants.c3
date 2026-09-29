@@ -126,10 +126,13 @@ const char[*] INSTANCE_CULL_SPIRV @private = $embed("../../../shaders/spv/instan
 const char[*] CUBE_PREVIEW_SPIRV @private = $embed("../../../shaders/spv/cube_preview.spv");
 const char[*] STANDARD_SPIRV @private = $embed("../../../shaders/spv/standard.spv");
 const char[*] STANDARD_RT_SHADOWS_SPIRV @private = $embed("../../../shaders/spv/standard_rt_shadows.spv");
+const char[*] STANDARD_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV @private = $embed("../../../shaders/spv/standard_rt_shadows_scene_trace_bvh.spv");
 const char[*] PHYSICAL_SPIRV @private = $embed("../../../shaders/spv/physical.spv");
 const char[*] PHYSICAL_RT_SHADOWS_SPIRV @private = $embed("../../../shaders/spv/physical_rt_shadows.spv");
+const char[*] PHYSICAL_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV @private = $embed("../../../shaders/spv/physical_rt_shadows_scene_trace_bvh.spv");
 const char[*] TOON_SPIRV @private = $embed("../../../shaders/spv/toon.spv");
 const char[*] TOON_RT_SHADOWS_SPIRV @private = $embed("../../../shaders/spv/toon_rt_shadows.spv");
+const char[*] TOON_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV @private = $embed("../../../shaders/spv/toon_rt_shadows_scene_trace_bvh.spv");
 const char[*] ENVIRONMENT_SOURCE_SPIRV @private = $embed("../../../shaders/spv/environment_source.spv");
 const char[*] ENVIRONMENT_PREFILTER_SPIRV @private = $embed("../../../shaders/spv/environment_prefilter.spv");
 const char[*] SHEEN_PREFILTER_SPIRV @private = $embed("../../../shaders/spv/sheen_prefilter.spv");
@@ -177,7 +180,9 @@ const char[*] SSGI_TEMPORAL_SPIRV @private = $embed("../../../shaders/spv/ssgi_t
 const char[*] SSGI_FILTER_SPIRV @private = $embed("../../../shaders/spv/ssgi_filter.spv");
 const char[*] PROBE_BLEND_SPIRV @private = $embed("../../../shaders/spv/probe_blend.spv");
 const char[*] RT_AO_SPIRV @private = $embed("../../../shaders/spv/rt_ao.spv");
+const char[*] RT_AO_SCENE_TRACE_BVH_SPIRV @private = $embed("../../../shaders/spv/rt_ao_scene_trace_bvh.spv");
 const char[*] RT_REFLECTIONS_SPIRV @private = $embed("../../../shaders/spv/rt_reflections.spv");
+const char[*] RT_REFLECTIONS_SCENE_TRACE_BVH_SPIRV @private = $embed("../../../shaders/spv/rt_reflections_scene_trace_bvh.spv");
 const char[*] RT_REFLECTION_BLUR_SPIRV @private = $embed("../../../shaders/spv/rt_reflection_blur.spv");
 const char[*] PATH_TRACE_SPIRV @private = $embed("../../../shaders/spv/path_trace.spv");
 const char[*] PATH_TRACE_MISS_SPIRV @private = $embed("../../../shaders/spv/path_trace_miss.spv");
@@ -211,11 +216,12 @@ const char[*] STANDARD_GBUFFER_SPIRV @private = $embed("../../../shaders/spv/sta
 const char[*] PHYSICAL_GBUFFER_SPIRV @private = $embed("../../../shaders/spv/physical_gbuffer.spv");
 const char[*] LIGHTING_RESOLVE_SPIRV @private = $embed("../../../shaders/spv/lighting_resolve.spv");
 const char[*] LIGHTING_RESOLVE_RT_SHADOWS_SPIRV @private = $embed("../../../shaders/spv/lighting_resolve_rt_shadows.spv");
+const char[*] LIGHTING_RESOLVE_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV @private = $embed("../../../shaders/spv/lighting_resolve_rt_shadows_scene_trace_bvh.spv");
 
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[100] SHADER_ENTRIES = {
+const ShaderEntry[106] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -231,10 +237,13 @@ const ShaderEntry[100] SHADER_ENTRIES = {
     { .variant = { .shader = CUBE_PREVIEW }, .spirv = CUBE_PREVIEW_SPIRV[..] },
     { .variant = { .shader = STANDARD }, .spirv = STANDARD_SPIRV[..] },
     { .variant = { .shader = STANDARD, .flags = SHADER_FLAG_RT_SHADOWS }, .spirv = STANDARD_RT_SHADOWS_SPIRV[..] },
+    { .variant = { .shader = STANDARD, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_SCENE_TRACE_BVH }, .spirv = STANDARD_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV[..] },
     { .variant = { .shader = PHYSICAL }, .spirv = PHYSICAL_SPIRV[..] },
     { .variant = { .shader = PHYSICAL, .flags = SHADER_FLAG_RT_SHADOWS }, .spirv = PHYSICAL_RT_SHADOWS_SPIRV[..] },
+    { .variant = { .shader = PHYSICAL, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_SCENE_TRACE_BVH }, .spirv = PHYSICAL_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV[..] },
     { .variant = { .shader = TOON }, .spirv = TOON_SPIRV[..] },
     { .variant = { .shader = TOON, .flags = SHADER_FLAG_RT_SHADOWS }, .spirv = TOON_RT_SHADOWS_SPIRV[..] },
+    { .variant = { .shader = TOON, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_SCENE_TRACE_BVH }, .spirv = TOON_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV[..] },
     { .variant = { .shader = ENVIRONMENT_SOURCE }, .spirv = ENVIRONMENT_SOURCE_SPIRV[..] },
     { .variant = { .shader = ENVIRONMENT_PREFILTER }, .spirv = ENVIRONMENT_PREFILTER_SPIRV[..] },
     { .variant = { .shader = SHEEN_PREFILTER }, .spirv = SHEEN_PREFILTER_SPIRV[..] },
@@ -282,7 +291,9 @@ const ShaderEntry[100] SHADER_ENTRIES = {
     { .variant = { .shader = SSGI_FILTER }, .spirv = SSGI_FILTER_SPIRV[..] },
     { .variant = { .shader = PROBE_BLEND }, .spirv = PROBE_BLEND_SPIRV[..] },
     { .variant = { .shader = RT_AO }, .spirv = RT_AO_SPIRV[..] },
+    { .variant = { .shader = RT_AO, .flags = SHADER_FLAG_SCENE_TRACE_BVH }, .spirv = RT_AO_SCENE_TRACE_BVH_SPIRV[..] },
     { .variant = { .shader = RT_REFLECTIONS }, .spirv = RT_REFLECTIONS_SPIRV[..] },
+    { .variant = { .shader = RT_REFLECTIONS, .flags = SHADER_FLAG_SCENE_TRACE_BVH }, .spirv = RT_REFLECTIONS_SCENE_TRACE_BVH_SPIRV[..] },
     { .variant = { .shader = RT_REFLECTION_BLUR }, .spirv = RT_REFLECTION_BLUR_SPIRV[..] },
     { .variant = { .shader = PATH_TRACE }, .spirv = PATH_TRACE_SPIRV[..] },
     { .variant = { .shader = PATH_TRACE_MISS }, .spirv = PATH_TRACE_MISS_SPIRV[..] },
@@ -316,4 +327,5 @@ const ShaderEntry[100] SHADER_ENTRIES = {
     { .variant = { .shader = PHYSICAL_GBUFFER }, .spirv = PHYSICAL_GBUFFER_SPIRV[..] },
     { .variant = { .shader = LIGHTING_RESOLVE }, .spirv = LIGHTING_RESOLVE_SPIRV[..] },
     { .variant = { .shader = LIGHTING_RESOLVE, .flags = SHADER_FLAG_RT_SHADOWS }, .spirv = LIGHTING_RESOLVE_RT_SHADOWS_SPIRV[..] },
+    { .variant = { .shader = LIGHTING_RESOLVE, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_SCENE_TRACE_BVH }, .spirv = LIGHTING_RESOLVE_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV[..] },
 };

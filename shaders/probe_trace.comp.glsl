@@ -59,7 +59,8 @@ void main() {
     SceneTraceRoot scene = SceneTraceRoot(frame.trace);
     SceneHit hit;
     vec4 result;
-    if (!trace_scene(scene, origin, direction, root.ray_far, TRACE_MASK_ALL, hit)) {
+    // A probe inside geometry must read dark, so its own ray keeps the back faces the effects cull.
+    if (!trace_scene_with_back_faces(scene, origin, direction, root.ray_far, TRACE_MASK_ALL, hit)) {
         result = vec4(trace_miss_radiance(frame, direction), root.ray_far);
     } else {
         TraceSurface surface = surface_from_hit(scene, hit, direction, hit.t * root.cone_spread);

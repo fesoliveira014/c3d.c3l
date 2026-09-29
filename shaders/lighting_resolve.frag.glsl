@@ -6,7 +6,9 @@
 #include "ibl.glsl"
 #include "lights.glsl"
 #ifdef RT_SHADOWS
+#ifndef SCENE_TRACE_BVH
 #define SCENE_TRACE_RAY_QUERY
+#endif
 #include "scene_trace.glsl"
 #endif
 #include "shadows.glsl"
