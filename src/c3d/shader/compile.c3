@@ -1,5 +1,6 @@
 module c3d::shader::compile @feat(C3D_SHADER_COMPILER);
 
+import c3d::asset;
 import c3d::shader;
 import shaderc;
 
@@ -32,7 +33,7 @@ fn char[]? compile_glsl(
     String[] defines = {},
     String debug_name = "custom",
     String* log = null,
-    ShaderInclude[] includes = {},
+    asset::ShaderInclude[] includes = {},
 ) {
     shaderc::Compiler compiler = shaderc::compiler_create();
     defer compiler.release();
@@ -85,7 +86,7 @@ fn shaderc::IncludeResult* resolve_include(
 ) @private {
     String requested = ((ZString)requested_source).str_view();
     shaderc::IncludeResult* result = mem::new(shaderc::IncludeResult);
-    ShaderInclude[][2] tables = { shader::SHADER_INCLUDES[..], *(ShaderInclude[]*)user_data };
+    asset::ShaderInclude[][2] tables = { shader::SHADER_INCLUDES[..], *(asset::ShaderInclude[]*)user_data };
     foreach (table : tables) {
         foreach (&include : table) {
             if (include.name != requested) continue;
