@@ -317,7 +317,7 @@ fn void? check_document(AssetStore* store, ModelDocument* document) @local {
         if (entry.data.kind == MaterialKind.CUSTOM) return c3d::INVALID_ARGUMENT~;
     }
     foreach (&entry : document.geometries) check_influences(&entry.data)!;
-    foreach (&entry : document.textures) check_storage_format(entry.desc)!;
+    foreach (&entry : document.textures) check_format_use(entry.desc)!;
     return;
 }
 

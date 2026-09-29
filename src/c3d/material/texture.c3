@@ -21,6 +21,7 @@ enum PixelFormat {
     RGBA8_SRGB,
     RGBA16_FLOAT,
     RGBA32_FLOAT,
+    R16_UINT,
     BC1_RGBA_UNORM,
     BC1_RGBA_SRGB,
     BC3_UNORM,

@@ -62,7 +62,7 @@ fn uint texture_mip_count(uint width, uint height) {
 
 <*
  Prepare uncompressed 2D or cube mips from complete base layers.
- @param pixels : "Borrowed mip-zero RGBA texels in layer order."
+ @param pixels : "Borrowed mip-zero texels of the format, in layer order."
  @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
 *>
 fn TextureMipChain? create_texture_mips(Allocator allocator, material::TextureDesc desc, char[] pixels) {
@@ -107,6 +107,13 @@ fn TextureMipChain? create_texture_mips(Allocator allocator, material::TextureDe
                 desc: desc,
                 pixels: pixels,
             );
+        case R16_UINT:
+            return create_single_texture_mip(
+                allocator: allocator,
+                desc: desc,
+                pixels: pixels,
+                texel_bytes: ushort::size,
+            );
         case BC1_RGBA_UNORM:
         case BC1_RGBA_SRGB:
         case BC3_UNORM:
@@ -132,6 +139,7 @@ fn TextureMipChain? create_volume_texture_mips(
             break;
         case RGBA16_FLOAT:
         case RGBA32_FLOAT:
+        case R16_UINT:
         case BC1_RGBA_UNORM:
         case BC1_RGBA_SRGB:
         case BC3_UNORM:
@@ -151,6 +159,23 @@ fn TextureMipChain? create_volume_texture_mips(
     char[] copy = alloc::new_array(allocator, char, (sz)pixels.len);
     mem::copy(copy.ptr, pixels.ptr, pixels.len);
     return { .allocator = allocator, .mip_count = 1, .layer_count = 1, .pixels = copy };
+}
+
+fn TextureMipChain? create_single_texture_mip(
+    Allocator allocator,
+    material::TextureDesc desc,
+    char[] pixels,
+    usz texel_bytes,
+) @local {
+    if (desc.generate_mips) return c3d::UNSUPPORTED~;
+    ulong texels = (ulong)desc.width * desc.height;
+    if (texels > (ulong)sz::max / texel_bytes / desc.layers) return c3d::INVALID_ARGUMENT~;
+    if (!pixels.len) return c3d::ASSET_DATA_UNAVAILABLE~;
+    if (pixels.len != (usz)texels * texel_bytes * desc.layers) return c3d::INVALID_ARGUMENT~;
+
+    char[] copy = alloc::new_array(allocator, char, (sz)pixels.len);
+    mem::copy(copy.ptr, pixels.ptr, pixels.len);
+    return { .allocator = allocator, .mip_count = 1, .layer_count = desc.layers, .pixels = copy };
 }
 
 <*

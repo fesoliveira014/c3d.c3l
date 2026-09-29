@@ -405,6 +405,18 @@ fn void test_storage_rejects_compressed_and_srgb_formats() @test {
     assets.add_texture(accepted, pixels[..])!!;
 }
 
+fn void test_r16_texture_with_generated_mips_is_invalid() @test {
+    AssetStore assets = make_store();
+    defer asset::destroy_asset_store(&assets);
+    ushort[4] texels;
+    char[] pixels = ((char*)&texels)[:texels.len * ushort::size];
+
+    TextureDesc desc = material::texture_2d_desc(2, 2, PixelFormat.R16_UINT);
+    assert(@catch(assets.add_texture(desc, pixels)) == c3d::INVALID_ARGUMENT);
+    desc.generate_mips = false;
+    assets.add_texture(desc, pixels)!!;
+}
+
 fn ShaderDesc make_shader_desc(char[] fragment, char[] shaded = {}, char[] depth = {}, char[] gbuffer = {}) @local {
     return {
         .fragment = fragment,

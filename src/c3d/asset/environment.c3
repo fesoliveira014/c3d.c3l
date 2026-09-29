@@ -54,6 +54,7 @@ fn void? AssetStore.validate_environment(&self, EnvironmentDesc desc) {
                     case RGBA16_FLOAT:
                     case RGBA32_FLOAT:
                         return;
+                    case R16_UINT:
                     case BC1_RGBA_UNORM:
                     case BC1_RGBA_SRGB:
                     case BC3_UNORM:
