@@ -114,6 +114,36 @@ Readings on an Intel Core i9-14900K at O3 (medians; Windows host, WSL in parenth
 | `triangle_warmup` 128 (32,768 triangles, 655,328 bytes) | 3,231 (3,210) |
 | `triangle_warmup` 362 (262,088 triangles, 5,601,280 bytes) | 31,818 (32,278) |
 
+### Traced effects in software and on ray queries
+
+```bash
+./examples/build/rt_shadows --gpu-timings --benchmark 300 --atlas-shadows
+./examples/build/rt_shadows --gpu-timings --benchmark 300 [--software]
+./examples/build/rt_effects --gpu-timings --benchmark 300 [--software]
+./examples/build/gltf_viewer --benchmark --gpu-timings --frames 300 --warmup 60 --shading deferred \
+    --ambient-occlusion ray-traced --reflections on --trace software|hardware --width 3840 --height 2160
+```
+
+Build the three targets with `--opt O3 --define C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL --lib
+c3d_profile`. `rt_shadows` and `rt_effects` benchmark at 1920x1080 and print pass means and the GPU frame
+(the sum of the pass timestamps); `rt_shadows` reports the forward pass, where traced shadows cost, and
+`--atlas-shadows` gives the base to subtract. `gltf_viewer` prints `first frame:` with the trace
+preparation's CPU time and the acceleration builds' GPU time.
+
+Readings on an RTX 4090 (medians of 300 frames; GPU frame in parentheses):
+
+| Run | Ray queries | Software walk |
+| --- | --- | --- |
+| `rt_shadows`, forward pass, atlas base | 0.051 (0.121) | 0.051 (0.120) |
+| `rt_shadows`, forward pass, traced | 0.077 (0.159) | 0.213 (0.270) |
+| `rt_effects` AO / reflections | 0.138 / 0.095 (0.509) | 0.414 / 0.603 (1.607) |
+| Sponza 1080p AO / reflections | 0.270 / 0.160 (0.820) | 2.978 / 1.822 (5.184) |
+| Sponza 2160p AO / reflections | 0.852 / 0.453 (2.364) | 9.181 / 5.400 (15.656) |
+| Sponza first frame | 49.9 GPU acceleration builds, 0.6 CPU | 31.0 CPU (triangle trees and upload) |
+
+Ratios are quoted only where both frames exceed 1 ms: at 2160p the software walk costs 10.8 times the ray
+queries for AO and 11.9 times for reflections.
+
 ## Headless many-light rendering
 
 ```bash
@@ -150,7 +180,7 @@ lacks it, so an excluded mode never silently reports zero timings.
 | `--ambient-occlusion none\|half\|full\|ray-traced` | `ray-traced`: a ray-query adapter | Selects the measured view's AO: screen space at half or full resolution, or ray traced at half resolution with 4 rays (`benchmark.py --ambient-occlusion`); none by default. The CSV reports it as `gpu_ambient_occlusion_ms`. |
 | `--reflections on\|off` | a ray-query adapter and `--shading deferred` | Ray-traced reflections on the measured view (`benchmark.py --reflections`); off by default. A forward view faults `UNSUPPORTED`. The CSV reports it as `gpu_rt_reflections_ms`. |
 | `--screen-space-gi on\|off` | nothing | [Screen-space GI](screen_space_gi.md) at the defaults on the measured view; off by default. The CSV reports it as `gpu_screen_space_gi_ms` and the colour copy as `gpu_ssgi_copy_ms`; a view with it records velocity every frame. |
-| `--trace software\|hardware` | `hardware`: a ray-query adapter | Creates the renderer with (`hardware`) or without (`software`) ray queries; every trace consumer of the run, probe updates included, follows. The default is `hardware` exactly when `--reflections on` or `--ambient-occlusion ray-traced` is given. `software` with either of those, or with `--shading path-traced` (whose ray-tracing pipelines imply ray queries), is rejected as an invalid argument: they need ray queries until the software path for ray-query effects lands. The banner prints `trace=none\|software\|hardware` (`none`: the run traces nothing). With a traced effect on the command line the probe update of a `--probe-fill scene` row now runs on ray queries; earlier rows ran it in software beside a hardware view. |
+| `--trace software\|hardware` | `hardware`: a ray-query adapter | Creates the renderer with (`hardware`) or without (`software`) ray queries; every trace consumer of the run, probe updates included, follows. The default is `hardware` exactly when `--reflections on` or `--ambient-occlusion ray-traced` is given; `software` runs those effects on the software walk. `software` with `--shading path-traced` (whose ray-tracing pipelines imply ray queries) is rejected as an invalid argument. The banner prints `trace=none\|software\|hardware` (`none`: the run traces nothing). With a traced effect on the command line the probe update of a `--probe-fill scene` row now runs on ray queries; earlier rows ran it in software beside a hardware view. |
 | `--shading path-traced` | a ray-tracing-pipeline adapter | Path traces the measured view with the default settings (6 bounces, one sample per frame, no cap); the light mode is forced to flat. The CSV reports the trace as `gpu_path_trace_ms`; samples per second is width x height / `gpu_path_trace_ms` x 1000. |
 
 The windowed run is a different workload from the headless one: the default view
