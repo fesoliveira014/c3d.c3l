@@ -26,6 +26,9 @@ const uint MAX_ACTIVE_MORPH_TARGETS = 8;
 const uint DRAW_RECEIVE_SHADOW = 1;
 const uint DRAW_ALPHA_MASK = 2;
 const uint DRAW_SCREEN_SPACE_TERMS = 4;
+const uint DRAW_SWAY = 8;
+const uint DRAW_DISTANCE_FADE = 16;
+const uint DRAW_SWAY_VERTEX_ALPHA = 32;
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1;
 const uint SSGI_FLAG_GBUFFER_NORMALS = 1;
 const uint SSGI_FLAG_HISTORY_VALID = 2;
@@ -377,8 +380,7 @@ struct DrawRoot {
     SamplerIndex sheen_sampler;
     uint         skin_stride;
     GpuAddress   instance_indices;
-    uint         _pad0;
-    uint         _pad1;
+    GpuAddress   instance_effects;
 }
 $assert DrawRoot::size == 272;
 $assert $reflect(DrawRoot.model).offset == 0;
@@ -400,8 +402,7 @@ $assert $reflect(DrawRoot.sheen_lut).offset == 244;
 $assert $reflect(DrawRoot.sheen_sampler).offset == 248;
 $assert $reflect(DrawRoot.skin_stride).offset == 252;
 $assert $reflect(DrawRoot.instance_indices).offset == 256;
-$assert $reflect(DrawRoot._pad0).offset == 264;
-$assert $reflect(DrawRoot._pad1).offset == 268;
+$assert $reflect(DrawRoot.instance_effects).offset == 264;
 
 struct PreviousPoseGpu {
     GpuAddress skin;
@@ -427,8 +428,11 @@ struct InstanceCullRoot {
     uint       count;
     uint       _pad0;
     uint       _pad1;
+    GpuAddress instance_effects;
+    uint       _pad2;
+    uint       _pad3;
 }
-$assert InstanceCullRoot::size == 176;
+$assert InstanceCullRoot::size == 192;
 $assert $reflect(InstanceCullRoot.instances).offset == 0;
 $assert $reflect(InstanceCullRoot.visible).offset == 8;
 $assert $reflect(InstanceCullRoot.args).offset == 16;
@@ -440,6 +444,9 @@ $assert $reflect(InstanceCullRoot.first).offset == 160;
 $assert $reflect(InstanceCullRoot.count).offset == 164;
 $assert $reflect(InstanceCullRoot._pad0).offset == 168;
 $assert $reflect(InstanceCullRoot._pad1).offset == 172;
+$assert $reflect(InstanceCullRoot.instance_effects).offset == 176;
+$assert $reflect(InstanceCullRoot._pad2).offset == 184;
+$assert $reflect(InstanceCullRoot._pad3).offset == 188;
 
 struct InstanceGpu {
     Mat4f model;
@@ -454,6 +461,40 @@ $assert $reflect(InstanceGpu.normal_0).offset == 64;
 $assert $reflect(InstanceGpu.normal_1).offset == 80;
 $assert $reflect(InstanceGpu.normal_2).offset == 96;
 $assert $reflect(InstanceGpu.color).offset == 112;
+
+struct SwayGpu {
+    Vec4f direction_amplitude;
+    float phase;
+    float lean;
+    float waves_per_unit;
+    float variation;
+}
+$assert SwayGpu::size == 32;
+$assert $reflect(SwayGpu.direction_amplitude).offset == 0;
+$assert $reflect(SwayGpu.phase).offset == 16;
+$assert $reflect(SwayGpu.lean).offset == 20;
+$assert $reflect(SwayGpu.waves_per_unit).offset == 24;
+$assert $reflect(SwayGpu.variation).offset == 28;
+
+struct InstanceEffectsGpu {
+    SwayGpu sway;
+    SwayGpu previous_sway;
+    Vec4f   anchor;
+    Vec4f   fade_origin;
+    float   fade_start;
+    float   fade_end;
+    float   fade_transition;
+    uint    _pad0;
+}
+$assert InstanceEffectsGpu::size == 112;
+$assert $reflect(InstanceEffectsGpu.sway).offset == 0;
+$assert $reflect(InstanceEffectsGpu.previous_sway).offset == 32;
+$assert $reflect(InstanceEffectsGpu.anchor).offset == 64;
+$assert $reflect(InstanceEffectsGpu.fade_origin).offset == 80;
+$assert $reflect(InstanceEffectsGpu.fade_start).offset == 96;
+$assert $reflect(InstanceEffectsGpu.fade_end).offset == 100;
+$assert $reflect(InstanceEffectsGpu.fade_transition).offset == 104;
+$assert $reflect(InstanceEffectsGpu._pad0).offset == 108;
 
 struct MorphWeightsGpu {
     uint[8]  indices;

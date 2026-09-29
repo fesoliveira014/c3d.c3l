@@ -120,6 +120,13 @@ What the four cases establish:
   use skips its velocity draw, and a rejected replacement keeps the previous form drawing
   (`broken_push.vert.glsl`).
 
+- A swayed batch draws, shadows and moves like a batch whose node moved, in the view, the depth
+  prepass and the shadow layers, with instance culling on and off; its velocity follows the sway
+  the view last drew and that sway's phase; a batch past its fade band leaves the image, the shadows
+  and the culled lists, and one before the band draws bit for bit as without fade; the cull margin
+  keeps an instance the sway brings into view; a custom instanced stage sways through
+  `write_mesh_outputs`; vertex-alpha weighting keeps masked coverage in the depth prepass.
+
 What they cannot establish: window clear-only and GUI-only frames need a
 window (run the `clear` and `cube_gui` examples with validation), and a
 presentation failure after submission needs a hardware observation.

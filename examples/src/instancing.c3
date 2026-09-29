@@ -41,9 +41,20 @@ const float ORBIT_ZOOM_STEP @local = 0.9f;
 const float ORBIT_DISTANCE_MIN @local = 3;
 const float ORBIT_DISTANCE_MAX @local = 60;
 const Vec2 CONTROLS_PANEL_POSITION @local = { 10, 10 };
-const Vec2 CONTROLS_PANEL_SIZE @local = { 340, 180 };
-const Vec2 STATS_PANEL_POSITION @local = { 10, 190 };
+const Vec2 CONTROLS_PANEL_SIZE @local = { 340, 250 };
+const Vec2 STATS_PANEL_POSITION @local = { 10, 260 };
 const Vec2 STATS_PANEL_SIZE @local = { 340, 500 };
+// Tops move at most 0.12, the batch bounds grow by that and per-instance culling stays on.
+const InstanceSway PROP_WIND @local = {
+    .direction  = { 1, 0, 0.3f },
+    .amplitude  = 0.12f,
+    .frequency  = 0.6f,
+    .lean       = 0.3f,
+    .wavelength = 8,
+    .variation  = 0.3f,
+    .weight     = SwayWeight.HEIGHT,
+};
+const InstanceFade PROP_FADE @local = { .start = 25, .end = 45 }; // no prop past 45 draws or casts a shadow
 
 struct PulseParams @local {
     Vec4 color;
@@ -68,6 +79,9 @@ struct Controls @local {
     bool deferred;
     bool animate;
     bool culling;
+    bool wind;
+    bool fade;
+    bool taa;
     bool picked;
     String pick_name;
     uint pick_instance;
@@ -289,7 +303,13 @@ fn void pick_under_cursor(
     };
 }
 
-fn bool draw_controls(Controls* controls) @local {
+fn void apply_wind(Scene* scene, Batches* batches, bool wind) @local {
+    InstanceSway sway = wind ? PROP_WIND : (InstanceSway){};
+    scene.get(batches.props, InstancedMesh).sway = sway;
+    scene.get(batches.pulses, InstancedMesh).sway = sway;
+}
+
+fn bool draw_controls(Controls* controls, Scene* scene, Batches* batches) @local {
     bool changed;
     imgui::set_next_window_pos(CONTROLS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
     imgui::set_next_window_size(CONTROLS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
@@ -297,8 +317,13 @@ fn bool draw_controls(Controls* controls) @local {
         imgui::text("Right drag orbits, wheel zooms, left click picks");
         imgui::checkbox("Animate", &controls.animate);
         changed |= imgui::checkbox("Motion blur", &controls.motion_blur);
+        changed |= imgui::checkbox("TAA", &controls.taa);
         changed |= imgui::checkbox("Deferred shading", &controls.deferred);
         changed |= imgui::checkbox("Instance culling", &controls.culling);
+        if (imgui::checkbox("Wind", &controls.wind)) apply_wind(scene, batches, controls.wind);
+        if (imgui::checkbox("Distance fade", &controls.fade)) {
+            scene.get(batches.props, InstancedMesh).fade = controls.fade ? PROP_FADE : (InstanceFade){};
+        }
         if (controls.picked) {
             imgui::text("Picked: %.*s instance %u", (int)controls.pick_name.len, controls.pick_name.ptr, controls.pick_instance);
         } else {
@@ -312,6 +337,7 @@ fn bool draw_controls(Controls* controls) @local {
 fn ViewDesc view_desc_of(Controls* controls) @local {
     ViewDesc desc = render::default_view_desc();
     desc.post.motion_blur = controls.motion_blur;
+    desc.post.anti_aliasing = controls.taa ? AntiAliasing.TAA : AntiAliasing.FXAA;
     desc.shading = controls.deferred ? ShadingPath.DEFERRED : ShadingPath.FORWARD;
     desc.instance_culling = controls.culling;
     return desc;
@@ -364,7 +390,7 @@ fn void? run(
         Input* input = &window.input;
         if (input.key_released(platform::Scancode.ESCAPE) && !input.keyboard_captured_by_gui) break;
 
-        bool changed = draw_controls(&controls);
+        bool changed = draw_controls(&controls, scene, &batches);
         imgui::set_next_window_pos(STATS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(STATS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
         gui::stats_panel(renderer)!;
