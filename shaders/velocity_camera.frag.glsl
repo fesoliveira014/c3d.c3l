@@ -29,7 +29,7 @@ void main() {
     } else {
         // A finite far plane unprojects depth 0 to a point; the ray from the near plane to it is the direction.
         vec4 near_point = root.inv_view_proj * vec4(ndc, 1.0, 1.0);
-        vec3 direction = world.xyz * near_point.w - near_point.xyz * world.w;
+        vec3 direction = world.xyz - near_point.xyz * (world.w / near_point.w);
         previous = root.prev_view_proj * vec4(direction, 0.0);
     }
     vec2 previous_uv = (previous.xy / previous.w) * vec2(0.5, -0.5) + 0.5;

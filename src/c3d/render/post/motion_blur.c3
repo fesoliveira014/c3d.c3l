@@ -329,7 +329,7 @@ fn Vec3 camera_velocity(
     } else {
         // A finite far plane unprojects depth 0 to a point; the ray from the near plane to it is the direction.
         Vec4 near_point = inv_view_proj * (Vec4){ ndc.x, ndc.y, 1, 1 };
-        Vec3 direction = world.xyz * near_point.w - near_point.xyz * world.w;
+        Vec3 direction = world.xyz - near_point.xyz * (world.w / near_point.w);
         previous = prev_view_proj * (Vec4){ direction.x, direction.y, direction.z, 0 };
     }
     Vec2 previous_uv = (Vec2){ previous.x / previous.w, previous.y / previous.w } * (Vec2){ 0.5f, -0.5f } + 0.5f;
