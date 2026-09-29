@@ -178,8 +178,9 @@ Only the `fragment` stage of a custom material may call them, and only for the i
 compute dispatches keep `read_view_color` and `read_view_depth`. Background pixels read depth 0;
 `scene_view_distance_at` returns `BACKGROUND_VIEW_DISTANCE` under an infinite far plane and the far
 distance otherwise. The snapshots have the view's working extent and share the frame's jittered
-matrices, so render scale and TAA need nothing from the shader. Readers receive ambient occlusion
-and screen-space GI as 1, like transparent draws.
+matrices, so render scale and TAA need nothing from the shader. Like transparent draws, readers get
+no screen-space terms: `draw_ambient_occlusion` returns 1 and `draw_screen_space_indirect` returns
+zero.
 
 Routing uses the scene reads of the shader revision whose pipelines are drawing, not the store's
 current desc: a replacement the backend rejects keeps the previous pipelines drawing and keeps the

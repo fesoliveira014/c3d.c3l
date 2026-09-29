@@ -124,6 +124,8 @@ indirect commands, every pass included. Triangle totals include mesh and GUI geo
 Upload bytes count the frame's asset and instance record uploads; they are not GPU resident memory.
 Prepare units count every unit `advance_prepares` ran this frame, pipeline and finish units included;
 prepare bytes count only what those units staged.
+Scene snapshots count the images copied this frame for [scene readers](custom_shaders.md#scene-reads);
+each copy is also one draw.
 Ring usage reports the previous frame slot's head/capacity and overflow allocation count separately;
 a dormant frame can also be the previous slot.
 
