@@ -155,6 +155,62 @@ fn void test_extract_depth_is_nearer_for_closer_mesh() @test {
     };
 }
 
+fn render::MeshCandidate[] extract_with_plane(
+    Fixture* fixture,
+    CameraMatrices* matrices,
+    Plane clip_plane,
+    render::ExtractCounts* counts,
+) @local {
+    return render::extract_candidates(
+        allocator:  tmem,
+        scene:      &fixture.scene,
+        assets:     &fixture.assets,
+        camera:     matrices,
+        layers:     scene::DEFAULT_LAYERS,
+        counts:     counts,
+        clip_plane: clip_plane,
+    );
+}
+
+fn bool has_candidate(render::MeshCandidate[] candidates, Node* node) @local {
+    foreach (&candidate : candidates) {
+        if (candidate.node == node) return true;
+    }
+    return false;
+}
+
+fn void test_extract_clip_plane_culls_bounds_wholly_behind_it() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Transform[2] transforms = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
+    transforms[0].position = { 0, -3, 0 };
+    transforms[1].position = { 0, -4, 0 };
+    Node* buried = fixture.scene.add_instanced_mesh(
+        geometry:   fixture.box,
+        material:   fixture.red,
+        capacity:   2,
+        transforms: transforms[..],
+    )!!;
+    fixture.scene.update_world();
+    CameraMatrices matrices = matrices_of(&fixture);
+    Plane keep_above_one = { .normal = { 0, 1, 0 }, .d = -1 };
+    Plane keep_above_zero = { .normal = { 0, 1, 0 } };
+    @pool() {
+        render::ExtractCounts counts;
+        render::MeshCandidate[] candidates = extract_with_plane(&fixture, &matrices, keep_above_one, &counts);
+        assert(candidates.len == 0);
+        assert(counts.culled == 3 && counts.dangling == 1);
+
+        candidates = extract_with_plane(&fixture, &matrices, keep_above_zero, &counts);
+        assert(candidates.len == 1 && candidates[0].node == fixture.visible);
+        assert(counts.culled == 2);
+
+        candidates = extract_with_plane(&fixture, &matrices, {}, &counts);
+        assert(has_candidate(candidates, fixture.visible) && has_candidate(candidates, buried));
+        assert(counts.culled == 1);
+    };
+}
+
 fn void test_draw_list_prefers_transmission_over_blend() @test {
     PhysicalParams transmissive = material::PHYSICAL_PARAMS_DEFAULT;
     transmissive.transmission = 0.5f;

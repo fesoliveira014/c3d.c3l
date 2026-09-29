@@ -20,6 +20,7 @@ const uint FRAME_LIGHTS_CLUSTERED = 1;
 const uint FRAME_TRACE_PRESENT = 2;
 const uint FRAME_AO_PRESENT = 4;
 const uint FRAME_SSGI_PRESENT = 8;
+const uint FRAME_CLIP_PLANE = 16;
 const uint CLUSTER_GROUP_SIZE = 64;
 const uint INSTANCE_CULL_GROUP_SIZE = 64;
 const uint INSTANCE_SORT_GROUP_SIZE = 128;
@@ -336,8 +337,9 @@ struct FrameRoot {
     TextureIndex scene_depth;
     float        previous_time;
     uint         _pad2;
+    Vec4f        clip_plane;
 }
-$assert FrameRoot::size == 480;
+$assert FrameRoot::size == 496;
 $assert $reflect(FrameRoot.view).offset == 0;
 $assert $reflect(FrameRoot.proj).offset == 64;
 $assert $reflect(FrameRoot.view_proj).offset == 128;
@@ -365,6 +367,7 @@ $assert $reflect(FrameRoot.ssgi_texture).offset == 464;
 $assert $reflect(FrameRoot.scene_depth).offset == 468;
 $assert $reflect(FrameRoot.previous_time).offset == 472;
 $assert $reflect(FrameRoot._pad2).offset == 476;
+$assert $reflect(FrameRoot.clip_plane).offset == 480;
 
 struct DrawRoot {
     Mat4f        model;

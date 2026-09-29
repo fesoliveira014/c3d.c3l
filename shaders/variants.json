@@ -134,6 +134,7 @@
     { "include": "standard_shading.glsl", "stage": "frag", "defines": ["RT_SHADOWS", "SCENE_TRACE_BVH"] },
     { "include": "gbuffer_output.glsl", "stage": "frag", "defines": [] },
     { "include": "vertex_pull.glsl", "stage": "vert", "defines": [] },
+    { "include": "view_clip.glsl", "stage": "vert", "defines": [] },
     { "include": "instance_effects.glsl", "stage": "vert", "defines": [] },
     { "include": "instance_effects.glsl", "stage": "comp", "defines": [] },
     { "include": "mesh_vertex.glsl", "stage": "vert", "defines": [] },

@@ -96,6 +96,7 @@ const uint FRAME_LIGHTS_CLUSTERED = 1;
 const uint FRAME_TRACE_PRESENT = 2;
 const uint FRAME_AO_PRESENT = 4;
 const uint FRAME_SSGI_PRESENT = 8;
+const uint FRAME_CLIP_PLANE = 16;
 const uint CLUSTER_GROUP_SIZE = 64;
 
 struct ClusterRange {
@@ -155,6 +156,7 @@ root FrameRoot {
     TextureIndex scene_depth;
     float      previous_time;
     uint       _pad2;
+    vec4       clip_plane;
 }
 
 root DrawRoot {

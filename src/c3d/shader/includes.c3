@@ -52,6 +52,7 @@ const char[*] C3D_COMMON_TOON_TEXT @private = $embed("../../../shaders/common/to
 const char[*] C3D_COMMON_TRACE_SURFACE_TEXT @private = $embed("../../../shaders/common/trace_surface.glsl");
 const char[*] C3D_COMMON_TRANSMISSION_TEXT @private = $embed("../../../shaders/common/transmission.glsl");
 const char[*] C3D_COMMON_VERTEX_PULL_TEXT @private = $embed("../../../shaders/common/vertex_pull.glsl");
+const char[*] C3D_COMMON_VIEW_CLIP_TEXT @private = $embed("../../../shaders/common/view_clip.glsl");
 const char[*] GPU_BUFFER_REFERENCE_TEXT @private = $embed("../../../lib/gpu.c3l/include/shaders/buffer_reference.glsl");
 const char[*] GPU_DESCRIPTOR_HEAP_TEXT @private = $embed("../../../lib/gpu.c3l/include/shaders/descriptor_heap.glsl");
 const char[*] GPU_GENERATED_SHADER_ABI_TEXT @private = $embed("../../../lib/gpu.c3l/include/shaders/generated/shader_abi.glsl");
@@ -62,7 +63,7 @@ const char[*] GPU_RAY_TRACING_TEXT @private = $embed("../../../lib/gpu.c3l/inclu
 <*
  Every include a custom stage may resolve, in table order.
 *>
-const ShaderInclude[49] SHADER_INCLUDES = {
+const ShaderInclude[50] SHADER_INCLUDES = {
     { .name = "c3d_abi.glsl", .text = (String)C3D_GENERATED_C3D_ABI_TEXT[..] },
     { .name = "ambient_occlusion.glsl", .text = (String)C3D_COMMON_AMBIENT_OCCLUSION_TEXT[..] },
     { .name = "ao_estimate.glsl", .text = (String)C3D_COMMON_AO_ESTIMATE_TEXT[..] },
@@ -106,6 +107,7 @@ const ShaderInclude[49] SHADER_INCLUDES = {
     { .name = "trace_surface.glsl", .text = (String)C3D_COMMON_TRACE_SURFACE_TEXT[..] },
     { .name = "transmission.glsl", .text = (String)C3D_COMMON_TRANSMISSION_TEXT[..] },
     { .name = "vertex_pull.glsl", .text = (String)C3D_COMMON_VERTEX_PULL_TEXT[..] },
+    { .name = "view_clip.glsl", .text = (String)C3D_COMMON_VIEW_CLIP_TEXT[..] },
     { .name = "buffer_reference.glsl", .text = (String)GPU_BUFFER_REFERENCE_TEXT[..] },
     { .name = "descriptor_heap.glsl", .text = (String)GPU_DESCRIPTOR_HEAP_TEXT[..] },
     { .name = "generated/shader_abi.glsl", .text = (String)GPU_GENERATED_SHADER_ABI_TEXT[..] },

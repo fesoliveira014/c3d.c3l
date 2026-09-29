@@ -70,29 +70,48 @@ struct ExtractCounts {
  @param [&in] camera : "Frustum and view-projection of the view."
  @param layers : "Camera layer mask."
  @param [&inout] counts : "Zeroed first, then accumulated."
+ @param clip_plane : "Culls bounds wholly on its negative side; zero culls nothing."
 *>
-fn MeshCandidate[] extract_candidates(Allocator allocator, Scene* scene, AssetStore* assets,
-  CameraMatrices* camera, uint layers, ExtractCounts* counts) {
+fn MeshCandidate[] extract_candidates(
+    Allocator allocator,
+    Scene* scene,
+    AssetStore* assets,
+    CameraMatrices* camera,
+    uint layers,
+    ExtractCounts* counts,
+    Plane clip_plane = {},
+) {
     *counts = {};
     // Every emitted candidate is written whole before the slice is returned, so the array needs no zeroing.
     MeshCandidate[] candidates = alloc::alloc_array(allocator, MeshCandidate, candidate_capacity(scene));
+    Frustum clip_frustum = { .planes = { [0] = clip_plane }, .plane_count = 1 };
     scene.@each(Mesh; Entity entity, Mesh* mesh) {
         Node* node = scene.node(entity);
         if (node.visible_effective && (layers & node.layers) != 0) {
-            include_mesh(candidates, scene, node, mesh, assets, camera, counts);
+            include_mesh(
+                candidates:   candidates,
+                scene:        scene,
+                node:         node,
+                mesh:         mesh,
+                assets:       assets,
+                camera:       camera,
+                clip_frustum: &clip_frustum,
+                counts:       counts,
+            );
         }
     };
     scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
         Node* node = scene.node(entity);
         if (batch.count && node.visible_effective && (layers & node.layers) != 0) {
             include_batch(
-                candidates: candidates,
-                scene:      scene,
-                node:       node,
-                batch:      batch,
-                assets:     assets,
-                camera:     camera,
-                counts:     counts,
+                candidates:   candidates,
+                scene:        scene,
+                node:         node,
+                batch:        batch,
+                assets:       assets,
+                camera:       camera,
+                clip_frustum: &clip_frustum,
+                counts:       counts,
             );
         }
     };
@@ -213,8 +232,16 @@ fn ulong draw_sort_key(
         | depth;
 }
 
-fn void include_mesh(MeshCandidate[] candidates, Scene* scene, Node* node, Mesh* mesh, AssetStore* assets,
-  CameraMatrices* camera, ExtractCounts* counts) @local {
+fn void include_mesh(
+    MeshCandidate[] candidates,
+    Scene* scene,
+    Node* node,
+    Mesh* mesh,
+    AssetStore* assets,
+    CameraMatrices* camera,
+    Frustum* clip_frustum,
+    ExtractCounts* counts,
+) @local {
     SkinBinding* skin = scene.get(node, SkinBinding);
     if (!spatial::mesh_is_live(assets, mesh, skin)) {
         counts.dangling++;
@@ -226,7 +253,8 @@ fn void include_mesh(MeshCandidate[] candidates, Scene* scene, Node* node, Mesh*
         mesh:   mesh,
         skin:   skin,
     );
-    if (!maths::frustum_intersects_aabb(&camera.frustum, world)) {
+    if (!maths::frustum_intersects_aabb(&camera.frustum, world)
+        || !maths::frustum_intersects_aabb(clip_frustum, world)) {
         counts.culled++;
         return;
     }
@@ -253,6 +281,7 @@ fn void include_batch(
     InstancedMesh* batch,
     AssetStore* assets,
     CameraMatrices* camera,
+    Frustum* clip_frustum,
     ExtractCounts* counts,
 ) @local {
     if (!batch_is_drawable(assets, batch)) {
@@ -261,7 +290,8 @@ fn void include_batch(
     }
     batch.validate_effects();
     Aabb world = spatial::instanced_world_bounds(assets, node, batch);
-    if (!maths::frustum_intersects_aabb(&camera.frustum, world)) {
+    if (!maths::frustum_intersects_aabb(&camera.frustum, world)
+        || !maths::frustum_intersects_aabb(clip_frustum, world)) {
         counts.culled++;
         return;
     }

@@ -13,6 +13,7 @@ const uint SPIRV_CAPABILITY_RAY_QUERY_PROVISIONAL @private = 4471;    // RayQuer
 const uint SPIRV_CAPABILITY_RAY_QUERY @private = 4472;                // RayQueryKHR
 const uint SPIRV_CAPABILITY_RAY_TRAVERSAL_CULLING @private = 4478;    // RayTraversalPrimitiveCullingKHR
 const uint SPIRV_CAPABILITY_RAY_TRACING @private = 4479;              // RayTracingKHR
+const uint SPIRV_CAPABILITY_CLIP_DISTANCE @private = 32;              // ClipDistance
 
 struct SpirvFeatures @private {
     bool ray_capability;
@@ -89,6 +90,28 @@ fn SpirvFeatures spirv_ray_features(char[] spirv) @private {
         word += length;
     }
     return features;
+}
+
+fn bool spirv_declares_capability(char[] spirv, uint capability) @private {
+    usz word_count = spirv.len / 4;
+    usz word = SPIRV_HEADER_WORDS;
+    while (word + 1 < word_count) {
+        uint instruction = spirv_word(spirv, word);
+        if ((instruction & 0xFFFF) != SPIRV_OP_CAPABILITY) return false;
+        if (spirv_word(spirv, word + 1) == capability) return true;
+        word += (usz)(instruction >> 16);
+    }
+    return false;
+}
+
+fn void test_mesh_vertex_forms_declare_clip_distance() @test {
+    usz mesh_count;
+    foreach (&entry : shader::SHADER_ENTRIES) {
+        bool mesh = entry.variant.shader == MESH;
+        assert(spirv_declares_capability(entry.spirv, SPIRV_CAPABILITY_CLIP_DISTANCE) == mesh);
+        if (mesh) mesh_count++;
+    }
+    assert(mesh_count > 0);
 }
 
 fn void test_registry_holds_the_software_trace_variants() @test {
