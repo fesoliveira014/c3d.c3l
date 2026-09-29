@@ -938,7 +938,7 @@ fn void test_custom_stage_source_selects_velocity_forms() @test {
     assert(render::custom_stage_source(&plain_pair, key).vertex.len == 0);
 }
 
-fn void test_custom_material_block_packs_slots_and_payload_address() @test {
+fn void test_custom_material_block_packs_slots_payload_and_references() @test {
     char[] block = mem::new_array(char, render::MATERIAL_STRIDE);
     defer free(block.ptr);
     TextureSlot[material::MAX_CUSTOM_TEXTURE_SLOTS] slots = material::CUSTOM_SLOTS_DEFAULT;
@@ -948,11 +948,15 @@ fn void test_custom_material_block_packs_slots_and_payload_address() @test {
     render::MaterialBindings bindings;
     bindings.custom[0] = { .present = true, .texture_index = (gpu::TextureIndex)5, .sampler_index = (gpu::SamplerIndex)2 };
     bindings.custom[3] = { .present = true, .texture_index = (gpu::TextureIndex)7, .sampler_index = (gpu::SamplerIndex)1 };
+    gpu::GpuAddress[material::MAX_CUSTOM_MATERIAL_REFERENCES] references;
+    references[0] = (gpu::GpuAddress)0x2000;
+    references[2] = (gpu::GpuAddress)0x2280;
     render::write_material_block(
-        block:      block,
-        material:   &custom,
-        bindings:   bindings,
-        parameters: (gpu::GpuAddress)0x1000,
+        block:             block,
+        material:          &custom,
+        bindings:          bindings,
+        parameters:        (gpu::GpuAddress)0x1000,
+        custom_references: references,
     );
 
     shader::CustomMaterialGpu* packed = (shader::CustomMaterialGpu*)block.ptr;
@@ -963,6 +967,7 @@ fn void test_custom_material_block_packs_slots_and_payload_address() @test {
     assert(packed.slots[3].uv_offset == (Vec2f){ 0.25f, 0.5f });
     assert(packed.slots[1].uv_linear == (Vec4f){ 1, 0, 0, 1 });
     assert((ulong)packed.parameters == 0x1000);
+    foreach (index, reference : references) assert(packed.references[index] == reference);
 }
 
 fn void test_custom_fragment_variant_follows_the_traced_forms() @test {

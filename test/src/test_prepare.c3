@@ -422,3 +422,22 @@ fn void test_rejected_replacement_keeps_the_published_stages() @test {
     assert(@catch(render::published_key_stages(published, &instanced)) == render::PIPELINE_REJECTED);
     assert(renderer.stats.shader_rejections == 1);
 }
+
+fn void test_custom_references_accept_only_live_standard_materials() @test {
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+    MaterialId layer = assets.add_material(material::standard())!!;
+    MaterialId toon = assets.add_material(material::toon())!!;
+    MaterialId physical = assets.add_material(material::physical())!!;
+    MaterialId removed = assets.add_material(material::standard())!!;
+    assets.remove_material(removed);
+    Material layered = material::custom({ .index = 1, .generation = 1 }, references: { [0] = layer, [2] = layer });
+    render::check_custom_references(&assets, &layered.custom)!!;
+
+    MaterialId self_reference = assets.add_material(layered)!!;
+    MaterialId[4] rejected = { toon, physical, removed, self_reference };
+    foreach (reference : rejected) {
+        layered.custom.references[1] = reference;
+        assert(@catch(render::check_custom_references(&assets, &layered.custom)) == c3d::INVALID_ARGUMENT);
+    }
+}

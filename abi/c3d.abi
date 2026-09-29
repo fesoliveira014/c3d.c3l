@@ -817,6 +817,7 @@ const uint MATERIAL_KIND_TOON = 2;
 const uint MATERIAL_KIND_PHYSICAL = 3;
 const uint MATERIAL_KIND_CUSTOM = 4;
 const uint CUSTOM_CAPABILITY_GBUFFER = 1;
+const uint CUSTOM_MATERIAL_REFERENCES = 4;
 
 root CustomMaterialGpu {
     uint kind;
@@ -827,6 +828,7 @@ root CustomMaterialGpu {
     GpuAddress parameters;
     uint capabilities;
     uint _pad0;
+    GpuAddress[4] references;
 }
 
 const uint TONEMAP_NONE = 0;

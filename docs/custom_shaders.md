@@ -28,6 +28,8 @@ MaterialId pulse_material = assets.add_material(material::custom(shader, materia
 
 The payload bytes are copied into the store. Their layout is the application's: write a C3 struct matching the std430 layout the shader declares and pass its bytes through `material::@as_bytes`. The length must equal the shader's `param_block_size`; a mismatch, or a dead shader id, skips the material's draws (counted in `Stats.dangling_refs`) and makes `Renderer.upload(material)` fault `INVALID_ARGUMENT` or `INVALID_ID`.
 
+`references` names up to `MAX_CUSTOM_MATERIAL_REFERENCES` (4) Standard materials the stage reads ([material references](#material-references)).
+
 Edits go through the store:
 
 ```c3
@@ -82,7 +84,7 @@ void main() {
 }
 ```
 
-`CustomMaterialGpu` (generated, 288 bytes) carries `kind`, `flags` (`MATERIAL_ALPHA_MASK`, `MATERIAL_DOUBLE_SIDED`, `MATERIAL_ALPHA_BLEND`), `alpha_cutoff`, `map_flags` (bit `i` = slot `i` present, bit `i + CUSTOM_MAP_UV1_SHIFT` = slot `i` reads UV1), `slots[8]` as `TextureMapGpu`, and `parameters`, the payload address. `custom_material.glsl` supplies `custom_slot_present`, `custom_map_uv` and `sample_custom_map`; `material_alpha.glsl` supplies `material_output`, which premultiplies for BLEND. Vertex inputs are the fixed locations 0 to 6 written by `mesh.vert.glsl`. The shared includes read only `FrameRoot` through `DrawRoot.frame`.
+`CustomMaterialGpu` (generated, 320 bytes) carries `kind`, `flags` (`MATERIAL_ALPHA_MASK`, `MATERIAL_DOUBLE_SIDED`, `MATERIAL_ALPHA_BLEND`), `alpha_cutoff`, `map_flags` (bit `i` = slot `i` present, bit `i + CUSTOM_MAP_UV1_SHIFT` = slot `i` reads UV1), `slots[8]` as `TextureMapGpu`, `parameters`, the payload address, and `references`, the heap addresses of up to four referenced Standard blocks (0 when unused). `custom_material.glsl` supplies `custom_slot_present`, `custom_map_uv`, `sample_custom_map` and `custom_reference`; `material_alpha.glsl` supplies `material_output`, which premultiplies for BLEND. Vertex inputs are the fixed locations 0 to 6 written by `mesh.vert.glsl`. The shared includes read only `FrameRoot` through `DrawRoot.frame`.
 
 A slot may hold an `R16_UINT` texture (see [sixteen-bit single-channel data](textures.md#sixteen-bit-single-channel-data)). The stage reads it with `gpu_fetch_uint(material.slots[i].texture_index, texel, 0)`, never `sample_custom_map`; slot 0 of a masked material cannot hold one, and the material faults `UNSUPPORTED` when uploaded.
 
@@ -116,6 +118,66 @@ vec3 standard_ambient_fill(FrameRoot frame, vec3 base_color, float metallic, flo
 
 The reference is `examples/shaders/custom/standard_twin.glsl` (include name `custom/standard_twin.glsl`) with `standard_twin.frag.glsl` and `standard_twin_gbuffer.frag.glsl`. `twin_surface` builds Standard's sample from a payload of base colour, metallic, roughness, occlusion and emissive, with slot 0 as the base colour map and slot 1 as a tangent-space normal map. Vertex colours, the normal-map scale, derivative normals for meshes without tangents and Standard's other maps stay in `sample_standard_material`; the twin does not reproduce them.
 
+### Material references
+
+A custom material reads up to four Standard materials through `CustomParams.references`, for example the layers of a splat material:
+
+```c3
+MaterialId[material::MAX_CUSTOM_MATERIAL_REFERENCES] layers = { [0] = grass, [1] = rock };
+MaterialId splat = assets.add_material(material::custom(splat_shader, slots: splat_slots, references: layers))!;
+```
+
+- An entry is unused (the zero id) or a live `STANDARD` material. A dead id or another kind skips the custom material's draws and counts them in `Stats.dangling_refs`, leaves its traced meshes out of the trace (counted the same way), and makes `Renderer.upload(material)` fault `INVALID_ARGUMENT`. A referenced material's own `INVALID_ID` or `INVALID_ARGUMENT` (a slot whose `uv_set` is above 1, a comparison sampler) skips the custom draws the same way; its other faults propagate.
+- References are one level deep. A referenced material is uploaded, with its textures, whenever the custom material resolves, whether or not anything draws it.
+- An edit to a referenced material needs only its own `mark_material_dirty`: its block is rewritten in place at the same address, and the custom block stays current. Changing `references` is an edit of the custom material and needs `mark_material_dirty` on it.
+- Each layer is sampled with its own maps, UV sets, transforms and samplers. There is no per-layer UV scale.
+- The custom material's `common`, `flags` and `alpha_cutoff` govern raster state, masking and `material_output`; the layer blocks supply factors and maps.
+
+In GLSL, `custom_reference(material, index)` returns the `index`-th referenced block as `StandardMaterialGpu`. An unused entry is address zero, so a stage reads only the entries its material sets. Sample each layer with `sample_standard_material`, blend the samples, and pass the blend to `shade_standard_surface` from `main`, or to `write_gbuffer` in a G-buffer stage. Two layers blended by slot 1's red channel, in a stage that declares the inputs and push block of [the fragment contract](#fragment-contract) and includes `descriptor_heap.glsl`, `vertex_pull.glsl`, `custom_material.glsl` and `standard_shading.glsl`:
+
+```glsl
+StandardMaterialSample sample_layer(StandardMaterialGpu layer, GeometryRoot geometry, vec3 view_direction) {
+    return sample_standard_material(
+        layer,
+        geometry,
+        v_world_pos,
+        v_normal,
+        v_tangent,
+        v_uv0,
+        v_uv1,
+        view_direction,
+        !gl_FrontFacing
+    );
+}
+
+void main() {
+    DrawRoot draw = DrawRoot(pc.fragment_root_gpu);
+    FrameRoot frame = FrameRoot(draw.frame);
+    material_mip_bias = frame.mip_bias;
+    CustomMaterialGpu material = CustomMaterialGpu(draw.material);
+    float weight = sample_custom_map(material, 1u, v_uv0, v_uv1, frame.mip_bias).r;
+    GeometryRoot geometry = GeometryRoot(draw.geometry);
+    vec3 view_direction = standard_view_direction(frame, v_world_pos);
+    StandardMaterialSample first = sample_layer(custom_reference(material, 0u), geometry, view_direction);
+    StandardMaterialSample second = sample_layer(custom_reference(material, 1u), geometry, view_direction);
+
+    StandardMaterialSample blend = first;
+    blend.base_color = mix(first.base_color, second.base_color, weight);
+    blend.metallic = mix(first.metallic, second.metallic, weight);
+    blend.roughness = mix(first.roughness, second.roughness, weight);
+    blend.occlusion = mix(first.occlusion, second.occlusion, weight);
+    blend.emissive = mix(first.emissive, second.emissive, weight);
+    blend.normal = normalize(mix(first.normal, second.normal, weight));
+
+    vec3 color = shade_standard_surface(frame, draw, blend, 1.0, v_world_pos, ivec2(gl_FragCoord.xy));
+    out_color = material_output(color, 1.0, material.flags);
+}
+```
+
+`offset_normal` and `view_direction` are the same for both layers, so `blend` keeps the first layer's.
+
+Traced hit shading (probe updates, reflections, the path tracer) reads a custom material as before, with slot 0's alpha as coverage, and ignores its references. `begin_prepare_model` uploads a referenced material's textures inside the custom material's unit, not as units of their own.
+
 ### Public includes
 
 A custom or package stage starts with the prelude, `generated/shader_abi.glsl` (gpu.c3l) and `c3d_abi.glsl`, then includes what it uses. The includes below are the contract for custom and package stages: each compiles after the prelude alone, which the build checks on every run by compiling one probe per row of `public_includes` in `shaders/variants.json` (a probe that fails stops the shaders step with `public include <name> is not self-contained` and glslang's output). The other files of the embedded set resolve too but may change without notice.
@@ -125,7 +187,7 @@ A custom or package stage starts with the prelude, `generated/shader_abi.glsl` (
 | `constants.glsl` | `PI` |
 | `material_uv.glsl` | `custom_slot_present`, `custom_map_uv` |
 | `material_alpha.glsl` | `material_output` |
-| `custom_material.glsl` | `sample_custom_map` (both overloads) |
+| `custom_material.glsl` | `sample_custom_map` (both overloads), `custom_reference` |
 | `normal_mapping.glsl` | `decode_normal`, `tangent_normal`, `derivative_normal`, `derivative_tangent`, `surface_tangent_frame` |
 | `noise.glsl` | `interleaved_gradient_noise`, `pcg_hash`, `hash_unit` |
 | `texture_fetch.glsl` | `fetch_texture_2d`, `texture_extent`, `sample_texture_2d_lod` |

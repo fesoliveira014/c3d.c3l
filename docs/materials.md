@@ -369,8 +369,11 @@ anisotropy and volume factors and five more map records. Layer presence lives in
 `extension_map_flags`, with `PHYSICAL_EXTENSION_MAP_SPECULAR`,
 `PHYSICAL_EXTENSION_MAP_SPECULAR_COLOR`, `PHYSICAL_EXTENSION_MAP_ANISOTROPY`,
 `PHYSICAL_EXTENSION_MAP_TRANSMISSION` and `PHYSICAL_EXTENSION_MAP_THICKNESS` and
-the same `MATERIAL_MAP_UV1_SHIFT`. The default 4096-slot material heap is
-2,621,440 bytes. Custom renderer-side packing supplies
+the same `MATERIAL_MAP_UV1_SHIFT`. `CustomMaterialGpu` occupies 320 bytes: its
+header, eight slot records, the payload address and capabilities, then four referenced
+Standard block addresses at offset 288
+([material references](custom_shaders.md#material-references)). The default 4096-slot
+material heap is 2,621,440 bytes. Custom renderer-side packing supplies
 one `TextureBinding` per Standard, Toon and Physical slot. Basic uses only its base
 color binding; Toon uses base color and gradient; disabled layer bindings stay
 empty. Bindless index zero is not a presence test. Ordinary consumers
