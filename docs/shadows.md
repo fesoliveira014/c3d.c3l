@@ -220,7 +220,7 @@ desc.ray_tracing.shadows = true;
 render::configure_view(&renderer, renderer.default_view, desc)!;
 ```
 
-- `RendererDesc.ray_queries` requests ray queries. With no adapter that supports them, `create_renderer` faults `c3d::UNSUPPORTED`. A renderer created without them traces shadows through the software walk ([scene tracing](scene_trace.md)); On an RTX 4090 at 1080p the `rt_shadows` scene's traced shadow adds 0.16 ms to the forward pass in software against 0.03 ms on ray queries.
+- `RendererDesc.ray_queries` requests ray queries. With no adapter that supports them, `create_renderer` faults `c3d::UNSUPPORTED`. A renderer created without them traces shadows through the software walk ([scene tracing](scene_trace.md)). On an RTX 4090, tracing Sponza's sun shadow at 2160p adds 5.8 ms to the deferred lighting pass in software against 0.33 ms on ray queries, about 18 times, measured against the atlas (GPU frames 6.8 and 1.3 ms; [benchmarking](benchmarking.md#traced-effects-in-software-and-on-ray-queries)).
 - A light traces when `shadow.enabled`, `shadow.ray_traced` and the view's `ray_tracing.shadows` are all set. Every other light keeps the atlas, so a view can mix both.
 - A traced light holds no atlas layer in that view.
 - The ray starts `TRACE_SURFACE_OFFSET` (0.02 world units, shared with every traced effect) along the receiver's normal. The offset hides self-intersection at the cost of a small gap where a caster meets its receiver. `bias`, `normal_bias` and `max_distance` do not apply; directional rays stop at `RT_SHADOW_FAR` (10000 world units), punctual rays at the light.

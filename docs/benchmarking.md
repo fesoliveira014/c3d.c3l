@@ -122,13 +122,16 @@ Readings on an Intel Core i9-14900K at O3 (medians; Windows host, WSL in parenth
 ./examples/build/rt_effects --gpu-timings --benchmark 300 [--software]
 ./examples/build/gltf_viewer --benchmark --gpu-timings --frames 300 --warmup 60 --shading deferred \
     --ambient-occlusion ray-traced --reflections on --trace software|hardware --width 3840 --height 2160
+./examples/build/gltf_viewer --benchmark --gpu-timings --frames 300 --warmup 60 --shading deferred \
+    --shadows on|traced --trace software|hardware --width 3840 --height 2160
 ```
 
 Build the three targets with `--opt O3 --define C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL --lib
 c3d_profile`. `rt_shadows` and `rt_effects` benchmark at 1920x1080 and print pass means and the GPU frame
 (the sum of the pass timestamps); `rt_shadows` reports the forward pass, where traced shadows cost, and
 `--atlas-shadows` gives the base to subtract. `gltf_viewer` prints `first frame:` with the trace
-preparation's CPU time and the acceleration builds' GPU time.
+preparation's CPU time and the acceleration builds' GPU time; `--shadows traced` traces the sun's shadow
+(an `AUTO` run then creates the renderer with ray queries), and `--shadows on` keeps the atlas as its base.
 
 Readings on an RTX 4090 (medians of 300 frames; GPU frame in parentheses):
 
@@ -140,9 +143,13 @@ Readings on an RTX 4090 (medians of 300 frames; GPU frame in parentheses):
 | Sponza 1080p AO / reflections | 0.270 / 0.160 (0.820) | 2.978 / 1.822 (5.184) |
 | Sponza 2160p AO / reflections | 0.852 / 0.453 (2.364) | 9.181 / 5.400 (15.656) |
 | Sponza first frame | 49.9 GPU acceleration builds, 0.6 CPU | 31.0 CPU (triangle trees and upload) |
+| Sponza 2160p lighting pass, atlas sun shadow (base) | 0.464 (1.070) | 0.450 (1.038) |
+| Sponza 2160p lighting pass, traced sun shadow | 0.789 (1.280) | 6.261 (6.768) |
 
 Ratios are quoted only where both frames exceed 1 ms: at 2160p the software walk costs 10.8 times the ray
-queries for AO and 11.9 times for reflections.
+queries for AO, 11.9 times for reflections, and 17.9 times for the sun's traced shadow (5.81 against 0.325 ms of
+lighting pass over the atlas base). The `rt_shadows` and `rt_effects` frames stay below 1 ms, so their figures carry
+no ratio.
 
 ## Headless many-light rendering
 
@@ -244,7 +251,7 @@ model and prints the fetch command.
 
 `gltf_viewer --benchmark` reuses the viewer's loading and environment: one
 instance at the origin, the studio HDR as environment and background, a sun
-that casts shadows unless `--shadows off`, and `--lights N` point lights on a
+that casts shadows unless `--shadows off` (`--shadows traced` traces them), and `--lights N` point lights on a
 deterministic grid inside the model bounds at 0.35 of the vertical extent, with
 `--range R` as a fraction of the largest horizontal extent (default 0.08). The
 camera sits inside the atrium at 0.3 of the height, 0.35 of the long axis behind
