@@ -1,0 +1,27 @@
+{
+  "langrev": "1",
+  "dependency-search-paths": [ "../../lib", "../../../../lib", "../../../../lib/gpu.c3l/lib" ],
+  "dependencies": [
+    "c3d_landscape",
+    "c3d",
+    "gpu",
+    "vk",
+    "vma",
+    "spvreflect",
+    "sdl3",
+    "c3imgui",
+    "c3cg",
+    "cgltf",
+    "ufbx",
+    "shaderc"
+  ],
+  "features": [ "C3D_SHADER_COMPILER" ],
+  "wincrt": "static",
+  "output": "../../build/terrain_acceptance",
+  "targets": {
+    "terrain_acceptance": {
+      "type": "test",
+      "sources": [ "terrain_acceptance.c3" ]
+    }
+  }
+}

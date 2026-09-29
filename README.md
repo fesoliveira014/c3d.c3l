@@ -410,6 +410,12 @@ runs on the calling thread. Core never depends on it. See [the job pool](docs/jo
 follows, queue and temp-memory sizing and the measured cost; `python3 scripts/build.py --example job_bench`
 runs its benchmark.
 
+The optional `c3d_landscape` add-on draws height-field terrain from an `R16_UINT` height map: quadtree
+chunks selected once per frame on projected size, drawn as one instanced batch through a custom material in
+both shading paths and every shadow view, up to four Standard layers blended through a control map, and CPU
+heights that match a physics height-field collider. Core never depends on it. See [terrain](docs/terrain.md);
+`python3 scripts/build.py --example terrain` runs its example and scripted benchmark.
+
 Add c3d and its dependencies to your `project.json`. A C3 library manifest cannot declare features,
 so every consumer enables them itself. Select `C3D_SHADER_COMPILER` for in-process GLSL; every other
 capability is present whenever its dependency is linked. shaderc stays a declared dependency of

@@ -22,6 +22,8 @@ C3 0.8.3. C3 is pre-1.0; check syntax against the installed compiler and the `c3
 | `module c3d::character;` | Kinematic capsule character controller in `addons/c3d_character.c3l`, on the physics mover primitives. Imports stdlib, core and `c3d::physics`, never `b3`; faults belong to the add-on. |
 | `module c3d::character @feat(C3D_CHARACTER_NAV);` | The crowd binding in `addons/c3d_character.c3l/src/nav/`: `NavDriven` and `drive_characters`. Imports `c3d::nav` besides the package's imports; a consumer enabling the feature selects `c3d_nav`. |
 | `module c3d::job;` | Fork-join job pool in `addons/c3d_job.c3l`. Imports stdlib and core; no faults of its own. |
+| `module c3d::landscape;` | Generated shader constants of the shader package in `addons/c3d_landscape.c3l`; imports `c3d::asset` only. Submodules read them with `import c3d::landscape @public;`. |
+| `module c3d::landscape::terrain;` | Height-field terrain in `addons/c3d_landscape.c3l`. Imports stdlib and core; no faults of its own. |
 | `module c3d::instrumentation @private;` | Core's optional scope bridge; only its CPU+INTERNAL section imports the profiler add-on. |
 
 Every module is `c3d` or a submodule of it. The repository directory name never appears in source. Dependency imports are confined per `AGENTS.md` section 1 and checked at review.
