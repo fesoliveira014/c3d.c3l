@@ -63,6 +63,9 @@ grain on rougher surfaces.
 A spatial blur then averages each traced pixel with neighbours of similar depth, normal and
 roughness over a 5x5 footprint that widens with roughness; mirror-like pixels are not blurred.
 
+Traced reflections ignore a view's clip plane: they trace the whole scene. A planar mirror is a
+clipped view of its own (see [clip plane](views.md#clip-plane)).
+
 ## Lighting
 
 The lighting resolve uses the traced radiance in place of the prefiltered environment

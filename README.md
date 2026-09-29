@@ -4,7 +4,8 @@ A scene-level 3D rendering library for [C3](https://c3-lang.org/): an ECS scene,
 animation, and asset import, on top of Vulkan 1.3 through gpu.c3l. Not a game engine; a base
 for one.
 
-Target platforms are linux-x64 and windows-x64. C3 0.8.3 exactly.
+Target platforms are linux-x64 and windows-x64. C3 0.8.3 exactly. The Vulkan device must support
+`shaderClipDistance`; `create_renderer` faults `UNSUPPORTED` without it.
 
 See [Benchmarking](docs/benchmarking.md) for CPU extraction profiles, headless many-light
 sweeps and reproducible CSV measurements. The Sponza scene suite needs
