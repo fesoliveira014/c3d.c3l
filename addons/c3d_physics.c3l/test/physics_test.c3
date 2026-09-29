@@ -246,18 +246,22 @@ fn TextureId add_height_texture(
     usz channel_bytes = char::size;
     if (format == RGBA16_FLOAT) channel_bytes = float16::size;
     if (format == RGBA32_FLOAT) channel_bytes = float::size;
-    usz texel_bytes = RGBA_CHANNELS * channel_bytes;
+    usz texel_bytes = format == R16_UINT ? ushort::size : RGBA_CHANNELS * channel_bytes;
+    material::TextureDesc desc = material::texture_2d_desc(width, height, format);
+    desc.generate_mips = false;
     TextureId texture;
     @pool() {
         char[] pixels = alloc::new_array(tmem, char, (sz)(texel_bytes * width * height));
         foreach (usz index, value : heights) {
             if (format == RGBA32_FLOAT) {
                 ((float*)pixels.ptr)[index * RGBA_CHANNELS] = value;
+            } else if (format == R16_UINT) {
+                ((ushort*)pixels.ptr)[index] = (ushort)math::round(value * 65535);
             } else {
                 pixels[index * texel_bytes] = (char)math::round(value * 255);
             }
         }
-        texture = fixture.assets.add_texture(material::texture_2d_desc(width, height, format), pixels)!!;
+        texture = fixture.assets.add_texture(desc, pixels)!!;
     };
     return texture;
 }
@@ -1064,6 +1068,26 @@ fn void test_float_height_map_matches_height_array() @test {
 
     foreach (cell : (Vec2[]){ { 0.5f, 0.5f }, { 1.5f, 0.5f }, { 2.5f, 1.5f } }) {
         assert(close(ground_height(&fixture, cell.x, cell.y), ground_height(&fixture, cell.x + 10, cell.y)));
+    }
+}
+
+fn void test_r16_height_map_matches_height_array() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    float[12] heights = { 0, 0.5f, 1, 0.25f, 0.75f, 0.125f, 0.2f, 0.4f, 1, 0, 0.3f, 0.6f };
+    TextureId texture = add_height_texture(&fixture, R16_UINT, 4, 3, heights[..]);
+    add_static_body(&fixture, height_map_collider(texture, { 1, 2, 1 }));
+    float[12] quantized;
+    foreach (index, value : heights) quantized[index] = math::round(value * 65535) / 65535;
+    ColliderDesc from_array = physics::default_collider_desc(HEIGHT_FIELD);
+    from_array.height_field = { .heights = quantized[..], .count_x = 4, .count_z = 3 };
+    from_array.local.scale = { 1, 2, 1 };
+    add_static_body(&fixture, from_array, { 10, 0, 0 });
+
+    foreach (point : (Vec2[]){ { 0.5f, 0.5f }, { 1.5f, 0.5f }, { 2.5f, 1.5f }, { 1.25f, 1.75f } }) {
+        assert(close(ground_height(&fixture, point.x, point.y), ground_height(&fixture, point.x + 10, point.y)));
     }
 }
 

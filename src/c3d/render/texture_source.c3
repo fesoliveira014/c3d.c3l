@@ -118,6 +118,7 @@ fn bool texture_is_compressed(PixelFormat format) @private {
         case RGBA8_SRGB:
         case RGBA16_FLOAT:
         case RGBA32_FLOAT:
+        case R16_UINT:
             return false;
         case BC1_RGBA_UNORM:
         case BC1_RGBA_SRGB:
@@ -138,6 +139,7 @@ fn gpu::Format texture_format(PixelFormat format) @private {
         case RGBA8_SRGB: return gpu::Format.RGBA8_SRGB;
         case RGBA16_FLOAT: return gpu::Format.RGBA16_FLOAT;
         case RGBA32_FLOAT: return gpu::Format.RGBA32_FLOAT;
+        case R16_UINT: return gpu::Format.R16_UINT;
         case BC1_RGBA_UNORM: return gpu::Format.BC1_RGBA_UNORM;
         case BC1_RGBA_SRGB: return gpu::Format.BC1_RGBA_SRGB;
         case BC3_UNORM: return gpu::Format.BC3_UNORM;

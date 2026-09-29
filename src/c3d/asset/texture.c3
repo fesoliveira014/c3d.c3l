@@ -50,7 +50,7 @@ fn TextureId? AssetStore.add_texture(
     String key = "",
 ) {
     check_key(self, key)!;
-    check_storage_format(desc)!;
+    check_format_use(desc)!;
     TextureId id = self.textures.add({})!;
     *self.textures.get(id) = {
         .header = { .key = copy_string(self.allocator, key), .revision = 1 },
@@ -76,7 +76,7 @@ fn TextureId? AssetStore.add_texture_owned(
     String key = "",
 ) {
     check_key(self, key)!;
-    check_storage_format(desc)!;
+    check_format_use(desc)!;
     TextureId id = self.textures.add({})!;
     *self.textures.get(id) = {
         .header = { .key = copy_string(self.allocator, key), .revision = 1 },
@@ -102,7 +102,7 @@ fn TextureId? AssetStore.add_texture_mips(
     String key = "",
 ) {
     check_key(self, key)!;
-    check_storage_format(desc)!;
+    check_format_use(desc)!;
     if (!desc.mip_levels || !desc.layers || desc.generate_mips) return c3d::INVALID_ARGUMENT~;
     if ((ulong)desc.mip_levels * desc.layers != levels.len) return c3d::INVALID_ARGUMENT~;
     if (levels.len > (usz)sz::max / TextureMipData::size) return c3d::INVALID_ARGUMENT~;
@@ -150,7 +150,7 @@ fn TextureId? AssetStore.add_texture_empty(&self, TextureDesc desc, String key =
     desc.storage = true;
     if (!desc.mip_levels) desc.mip_levels = 1;
     if (!desc.layers) desc.layers = 1;
-    check_storage_format(desc)!;
+    check_format_use(desc)!;
     TextureId id = self.textures.add({})!;
     *self.textures.get(id) = {
         .header = { .key = copy_string(self.allocator, key), .revision = 1 },
@@ -214,13 +214,16 @@ fn void free_texture_source(Allocator allocator, TextureAsset* record) @private 
     record.supplied_mips = {};
 }
 
-fn void? check_storage_format(TextureDesc desc) @private {
+fn void? check_format_use(TextureDesc desc) @private {
+    // The mip filter averages color; integer texels take mip zero only.
+    if (desc.format == R16_UINT && desc.generate_mips) return c3d::INVALID_ARGUMENT~;
     if (!desc.storage) return;
     switch (desc.format) {
         case RGBA8_UNORM:
         case RGBA16_FLOAT:
         case RGBA32_FLOAT: return;
         case RGBA8_SRGB:
+        case R16_UINT:
         case BC1_RGBA_UNORM:
         case BC1_RGBA_SRGB:
         case BC3_UNORM:

@@ -279,3 +279,37 @@ fn void test_write_png_reports_specific_faults() @test {
         assert(excuse == c3d::ASSET_IO_ERROR);
     };
 }
+
+fn void test_decode_r16_keeps_sixteen_bits() @test {
+    image::Image decoded = image::decode_image_r16(mem, $embed("../fixtures/gray16.png"))!!;
+    defer image::destroy_image(&decoded);
+
+    assert(decoded.width == 2 && decoded.height == 2 && decoded.format == R16_UINT);
+    ushort[4] expected = { 0, 1, 0x1234, 0xFFFF };
+    assert(((ushort*)decoded.pixels.ptr)[:4] == expected[..]);
+}
+
+fn void test_r16_loader_widens_eight_bit_files_without_mips() @test {
+    @pool() {
+        AssetStore assets = create_image_store(mem);
+        defer asset::destroy_asset_store(&assets);
+
+        TextureAsset* sixteen = assets.texture(image::load_texture_r16(&assets, fixture_path("gray16.png"))!!);
+        assert(sixteen.desc.format == R16_UINT && !sixteen.desc.generate_mips);
+        assert(sixteen.source_kind == MIP_ZERO && sixteen.pixels.len == 4 * ushort::size);
+
+        TextureAsset* widened = assets.texture(image::load_texture_r16(&assets, fixture_path("gray.jpg"))!!);
+        ushort[2] expected = { 128 * 257, 128 * 257 };
+        assert(widened.desc.width == 2 && widened.desc.height == 1);
+        assert(((ushort*)widened.pixels.ptr)[:2] == expected[..]);
+    };
+}
+
+fn void test_r16_loader_rejects_radiance() @test {
+    @pool() {
+        AssetStore assets = create_image_store(mem);
+        defer asset::destroy_asset_store(&assets);
+
+        assert(@catch(image::load_texture_r16(&assets, fixture_path("radiance.hdr"))) == c3d::ASSET_FORMAT_ERROR);
+    };
+}

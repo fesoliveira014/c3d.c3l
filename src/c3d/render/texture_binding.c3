@@ -55,7 +55,7 @@ fn bool texture_binding_matches(TextureBinding first, TextureBinding second) {
 }
 
 
-fn TextureBinding? resolve_texture_slot(Renderer* renderer, TextureSlot slot) @private {
+fn TextureBinding? resolve_texture_slot(Renderer* renderer, TextureSlot slot, bool custom_read = false) @private {
     if (slot.uv_set > 1) return c3d::INVALID_ARGUMENT~;
     SamplerId sampler = renderer.assets.samplers.is_live(slot.sampler)
         ? slot.sampler : c3d::asset::SAMPLER_LINEAR_REPEAT;
@@ -77,7 +77,11 @@ fn TextureBinding? resolve_texture_slot(Renderer* renderer, TextureSlot slot) @p
     }
 
     bool present = slot.texture.kind == TextureRefKind.ASSET && renderer.assets.textures.is_live(slot.texture.asset);
-    if (present && renderer.assets.texture(slot.texture.asset).desc.is_cube) return c3d::UNSUPPORTED~;
+    if (present) {
+        material::TextureDesc desc = renderer.assets.texture(slot.texture.asset).desc;
+        // Built-in stages sample as float; integer texels are read only through gpu_fetch_uint.
+        if (desc.is_cube || (desc.format == R16_UINT && !custom_read)) return c3d::UNSUPPORTED~;
+    }
     TextureId texture = present ? slot.texture.asset : c3d::asset::TEXTURE_WHITE;
     TextureRes* texture_mirror = resolve_texture(renderer, texture)!;
     return {
@@ -95,7 +99,7 @@ fn TextureBinding? resolve_gradient_map(Renderer* renderer, TextureId texture) @
     if (!renderer.assets.textures.is_live(texture)) return {};
 
     TextureAsset* record = renderer.assets.texture(texture);
-    if (record.desc.is_cube || record.desc.depth != 0 || record.desc.layers != 1) {
+    if (record.desc.is_cube || record.desc.depth != 0 || record.desc.layers != 1 || record.desc.format == R16_UINT) {
         return c3d::UNSUPPORTED~;
     }
 

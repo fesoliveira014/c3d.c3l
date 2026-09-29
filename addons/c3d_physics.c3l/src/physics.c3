@@ -112,7 +112,7 @@ struct CollisionFilter {
 
 <*
  Row-major heights, x fastest; copied when cooked.
- TEXTURE reads mip 0's red channel, 8-bit as [0, 1], and takes its counts from the texture.
+ TEXTURE reads mip 0's red channel (8-bit / 255, R16_UINT / 65535); counts come from the texture.
 *>
 struct HeightField {
     HeightSource source;

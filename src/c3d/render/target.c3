@@ -123,6 +123,7 @@ fn usz render_target_texel_bytes(PixelFormat format) {
         case RGBA8_SRGB: return 4;
         case RGBA16_FLOAT: return 8;
         case RGBA32_FLOAT: return 16;
+        case R16_UINT:
         case BC1_RGBA_UNORM:
         case BC1_RGBA_SRGB:
         case BC3_UNORM:
@@ -257,6 +258,7 @@ fn gpu::Format? render_target_format(PixelFormat format) @private {
         case RGBA8_SRGB: return gpu::Format.RGBA8_SRGB;
         case RGBA16_FLOAT: return gpu::Format.RGBA16_FLOAT;
         case RGBA32_FLOAT: return gpu::Format.RGBA32_FLOAT;
+        case R16_UINT:
         case BC1_RGBA_UNORM:
         case BC1_RGBA_SRGB:
         case BC3_UNORM:

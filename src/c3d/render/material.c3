@@ -423,8 +423,10 @@ fn MaterialBindings? resolve_material_bindings(Renderer* renderer, Material* mat
             };
         case CUSTOM:
             MaterialBindings bindings;
+            // The depth stage and traced coverage sample slot 0 of a masked material.
+            bool masked = material.common.alpha_mode == AlphaMode.MASK;
             foreach (index, slot : material.custom.slots) {
-                bindings.custom[index] = resolve_texture_slot(renderer, slot)!;
+                bindings.custom[index] = resolve_texture_slot(renderer, slot, custom_read: index > 0 || !masked)!;
             }
             return bindings;
     }

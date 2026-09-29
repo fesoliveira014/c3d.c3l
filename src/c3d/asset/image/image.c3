@@ -6,9 +6,10 @@ import c3d::material;
 import std::io::file;
 
 const int IMAGE_CHANNELS @local = 4;
+const int R16_CHANNELS @local = 1;
 
 <*
- Decoded RGBA pixels owned by one allocator.
+ Decoded pixels in their format, owned by one allocator.
 *>
 struct Image {
     Allocator allocator;
@@ -35,6 +36,15 @@ extern fn float* loadf_from_memory(
     int* channels,
     int desired_channels,
 ) @cname("stbi_loadf_from_memory") @local;
+
+extern fn ushort* load_16_from_memory(
+    char* bytes,
+    int length,
+    int* width,
+    int* height,
+    int* channels,
+    int desired_channels,
+) @cname("stbi_load_16_from_memory") @local;
 
 extern fn int is_hdr_from_memory(char* bytes, int length) @cname("stbi_is_hdr_from_memory") @local;
 extern fn void image_free(void* pixels) @cname("stbi_image_free") @local;
@@ -84,6 +94,43 @@ fn Image? decode_image(Allocator allocator, char[] bytes) {
         .width = (uint)width,
         .height = (uint)height,
         .format = hdr ? RGBA32_FLOAT : RGBA8_UNORM,
+        .pixels = pixels,
+    };
+}
+
+<*
+ Decode PNG or JPEG bytes to one R16_UINT channel without changing row order.
+ @param bytes : "Borrowed PNG or JPEG; 8-bit widens by 257, color to luminance."
+ @return? c3d::INVALID_ARGUMENT, c3d::ASSET_FORMAT_ERROR
+*>
+fn Image? decode_image_r16(Allocator allocator, char[] bytes) {
+    if (!bytes.len || bytes.len > int::max) return c3d::INVALID_ARGUMENT~;
+    // stb converts Radiance input to 8-bit before widening, which would pass as heights.
+    if (is_hdr_from_memory(bytes.ptr, (int)bytes.len) != 0) return c3d::ASSET_FORMAT_ERROR~;
+
+    int width;
+    int height;
+    int channels;
+    ushort* decoded = load_16_from_memory(
+        bytes: bytes.ptr,
+        length: (int)bytes.len,
+        width: &width,
+        height: &height,
+        channels: &channels,
+        desired_channels: R16_CHANNELS,
+    );
+    if (!decoded) return c3d::ASSET_FORMAT_ERROR~;
+    defer image_free(decoded);
+
+    usz byte_count = (usz)width * (usz)height * ushort::size;
+    char[] pixels = alloc::new_array(allocator, char, (sz)byte_count);
+    mem::copy(pixels.ptr, decoded, (sz)byte_count);
+
+    return {
+        .allocator = allocator,
+        .width = (uint)width,
+        .height = (uint)height,
+        .format = R16_UINT,
         .pixels = pixels,
     };
 }
@@ -139,6 +186,39 @@ fn TextureId? load_texture(
         format: srgb ? RGBA8_SRGB : RGBA8_UNORM,
         debug_name: "image_texture",
     );
+    TextureId texture = assets.add_texture_owned(desc, decoded.pixels, key)!;
+    decoded.pixels = {};
+
+    return texture;
+}
+
+<*
+ Load a PNG or JPEG as single-mip R16_UINT data, such as heights.
+ Not for filtered sampling: shaders read it through gpu_fetch_uint.
+ @param [&inout] assets : "Owns transferred pixels on successful insertion."
+ @return? c3d::ASSET_IO_ERROR, c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ARGUMENT
+ @return? c3d::CAPACITY_EXCEEDED
+ @require path.len > 0
+*>
+fn TextureId? load_texture_r16(AssetStore* assets, String path, String key = "") {
+    char[] bytes;
+    if (try loaded = file::load(mem, path)) {
+        bytes = loaded;
+    } else {
+        return c3d::ASSET_IO_ERROR~;
+    }
+    defer free(bytes.ptr);
+
+    Image decoded = decode_image_r16(assets.allocator, bytes)!;
+    defer destroy_image(&decoded);
+
+    material::TextureDesc desc = material::texture_2d_desc(
+        width: decoded.width,
+        height: decoded.height,
+        format: R16_UINT,
+        debug_name: "r16_texture",
+    );
+    desc.generate_mips = false;
     TextureId texture = assets.add_texture_owned(desc, decoded.pixels, key)!;
     decoded.pixels = {};
 

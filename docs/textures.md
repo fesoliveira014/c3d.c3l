@@ -119,13 +119,15 @@ PNG/JPEG rather than implicitly converting their range. Conversely,
 [image-based lighting or an independent sky](environments.md). Texture loading
 does not perform display tonemapping.
 
-Two-dimensional uploads support `RGBA8_UNORM`, `RGBA8_SRGB`, `RGBA16_FLOAT` and
-`RGBA32_FLOAT`. `texture_2d_desc` requests a complete mip chain by default. Mips
-filter sRGB RGB channels in linear light, alpha linearly, and floating-point
-channels without clamping their range. Odd edges contribute to the filtered
-result. Disable `desc.generate_mips` for mip zero alone. Uncompressed cube textures
-use the same formats and filter each face independently. Supplied levels, including
-compressed ones, use the copying API below and are never regenerated.
+Two-dimensional uploads support `RGBA8_UNORM`, `RGBA8_SRGB`, `RGBA16_FLOAT`,
+`RGBA32_FLOAT` and `R16_UINT`. `texture_2d_desc` requests a complete mip chain by
+default. Mips filter sRGB RGB channels in linear light, alpha linearly, and
+floating-point channels without clamping their range. Odd edges contribute to the
+filtered result. Disable `desc.generate_mips` for mip zero alone. `R16_UINT` takes
+no generated mips: `add_texture` rejects the request with
+`c3d::INVALID_ARGUMENT`. Uncompressed cube textures use the same formats and
+filter each face independently. Supplied levels, including compressed ones, use
+the copying API below and are never regenerated.
 
 Builtin sampler ids are `asset::SAMPLER_NEAREST`,
 `asset::SAMPLER_LINEAR_REPEAT`, `asset::SAMPLER_LINEAR_CLAMP` and
@@ -138,7 +140,44 @@ released after preparation.
 A zero or stale map reference uses that slot's scalar or unperturbed-normal
 fallback; a zero or stale sampler reference selects builtin trilinear repeat.
 A live cube reference in any Basic or Standard material slot reports `c3d::UNSUPPORTED`; cube views use a different sampled-image heap.
+So does an `R16_UINT` texture, which only an integer fetch can read.
 Render-target references, non-cube arrays and volumes remain unsupported.
+
+## Sixteen-bit single-channel data
+
+`R16_UINT` holds one unsigned 16-bit integer per texel, such as a height map.
+Load one from a PNG or JPEG:
+
+```c3
+TextureId heights = image::load_texture_r16(&assets, "heights.png")!;
+```
+
+`load_texture_r16` stores a single-mip, linear texture with the top row first and
+the texels in native byte order; `decode_image_r16` returns the same data as an
+`Image` without inserting it. A 16-bit PNG keeps all 16 bits. An 8-bit PNG or JPEG
+widens exactly, `v × 257`, so 255 becomes 65535, and color reduces to luminance.
+Radiance input is rejected with `c3d::ASSET_FORMAT_ERROR`, since its decoder
+would pass 8-bit values as heights. For RAW heights, pass native-order `ushort`
+texels to `add_texture` with an `R16_UINT` description and `generate_mips`
+disabled.
+
+Shaders read the texture only through gpu.c3l's integer fetch, never through a
+sampler, so filtering is manual. `texture_fetch.glsl` includes it:
+
+```glsl
+uint height = gpu_fetch_uint(material.slots[0].texture_index, texel, 0);
+```
+
+A custom material may hold it in any slot except slot 0 of a masked material,
+which the depth stage and traced coverage sample for alpha. A dispatch reads it
+through a `read_texture` entry. A Basic, Standard, Physical or Toon map, a Toon
+gradient map, and slot 0 of a masked custom material report `c3d::UNSUPPORTED`
+when the material is uploaded or drawn. `R16_UINT` is not a storage, render
+target, volume or environment source format.
+
+Heights follow `offset + scale × texel / 65535`, beside the 8-bit
+`texel / 255`. A physics height field reads an `R16_UINT` texture with the same
+convention: its node's position and `local.scale.y` supply the offset and scale.
 
 ## Load six cube faces
 
@@ -339,6 +378,11 @@ missing or misordered records, empty payloads and size overflow as
 `c3d::INVALID_ARGUMENT`. Upload preparation also validates exact per-layer byte
 footprints, accepted shapes and mip count. Malformed cube metadata is
 `c3d::INVALID_ARGUMENT`; unsupported texture forms are `c3d::UNSUPPORTED`.
+An `R16_UINT` description with generated mips or storage is
+`c3d::INVALID_ARGUMENT` at insertion. `c3d::UNSUPPORTED` covers an `R16_UINT`
+texture in a built-in material slot, a Toon gradient map or slot 0 of a masked
+custom material when the material is uploaded or drawn, an `R16_UINT` volume at
+upload, an `R16_UINT` render target, and an `R16_UINT` environment source.
 
 The package vendors stb_image and compiles one C translation unit with c3c's
 selected C compiler during ordinary builds. Follow the repository's

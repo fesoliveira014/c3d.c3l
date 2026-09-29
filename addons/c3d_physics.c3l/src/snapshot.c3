@@ -371,6 +371,8 @@ fn usz? height_texel_bytes(PixelFormat format) @private {
             return RGBA_CHANNELS;
         case RGBA32_FLOAT:
             return RGBA_CHANNELS * float::size;
+        case R16_UINT:
+            return ushort::size;
         case RGBA8_SRGB:
         case RGBA16_FLOAT:
         case BC1_RGBA_UNORM:
@@ -386,15 +388,31 @@ fn usz? height_texel_bytes(PixelFormat format) @private {
     }
 }
 
-// Red channel only; the store allocator aligns pixels for the float view.
+// Red channel only; the store allocator aligns pixels for the ushort and float views.
 fn float[] height_map_samples(TextureAsset* texture, Allocator allocator) @local {
     usz count = (usz)texture.desc.width * texture.desc.height;
     float[] samples = alloc::new_array(allocator, float, (sz)count);
-    bool float_texels = texture.desc.format == RGBA32_FLOAT;
-    foreach (usz index, &sample : samples) {
-        *sample = float_texels
-          ? ((float*)texture.pixels.ptr)[index * RGBA_CHANNELS]
-          : texture.pixels[index * RGBA_CHANNELS] / 255.0f;
+    switch (texture.desc.format) {
+        case RGBA8_UNORM:
+            foreach (usz index, &sample : samples) *sample = texture.pixels[index * RGBA_CHANNELS] / 255.0f;
+        case R16_UINT:
+            ushort* texels = (ushort*)texture.pixels.ptr;
+            foreach (usz index, &sample : samples) *sample = texels[index] / 65535.0f;
+        case RGBA32_FLOAT:
+            float* texels = (float*)texture.pixels.ptr;
+            foreach (usz index, &sample : samples) *sample = texels[index * RGBA_CHANNELS];
+        case RGBA8_SRGB:
+        case RGBA16_FLOAT:
+        case BC1_RGBA_UNORM:
+        case BC1_RGBA_SRGB:
+        case BC3_UNORM:
+        case BC3_SRGB:
+        case BC4_UNORM:
+        case BC5_UNORM:
+        case BC6H_UFLOAT:
+        case BC7_UNORM:
+        case BC7_SRGB:
+            unreachable();
     }
     return samples;
 }

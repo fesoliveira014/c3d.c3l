@@ -147,6 +147,11 @@ What the four cases establish:
   and `EQUAL`, a batch added after it draws without a second rejection, and `prepare_scene` skips a
   batch whose shader has no instanced pair (`shifted.vert.glsl`).
 
+- An `R16_UINT` texture keeps all 16 bits through upload and `gpu_fetch_uint`
+  (`fetch_r16.comp.glsl`); a Basic map, a Toon gradient map and slot 0 of a masked custom
+  material refuse it with `c3d::UNSUPPORTED`, while slot 0 of an opaque custom material and
+  slot 1 of a masked one accept it.
+
 What they cannot establish: window clear-only and GUI-only frames need a
 window (run the `clear` and `cube_gui` examples with validation), and a
 presentation failure after submission needs a hardware observation.
