@@ -21,6 +21,30 @@ vec3 standard_ambient_fill(
         * screen_space_base_share(occlusion, ambient_occlusion, screen_indirect);
 }
 
+// Expanded in place rather than called: on an RTX 4090 the software-traced loop costs twice as much when it
+// runs two calls below main.
+#define STANDARD_LIGHT_LOOP(RADIANCE, FRAME, SURFACE, POSITION, SHADOW_NORMAL, LAYERS, RECEIVE_SHADOW) \
+    { \
+        float standard_view_depth = -((FRAME).view * vec4(POSITION, 1.0)).z; \
+        LightList standard_lights = select_lights(FRAME, POSITION, standard_view_depth); \
+        for (uint standard_index = 0u; standard_index < standard_lights.count; standard_index++) { \
+            LightGpu standard_light = LightArray((FRAME).lights).values[ \
+                selected_light_index(FRAME, standard_lights, standard_index)]; \
+            if (((LAYERS) & standard_light.layers) == 0u) continue; \
+            float standard_visibility = 1.0; \
+            if ((RECEIVE_SHADOW) && light_casts_shadow(standard_light)) { \
+                standard_visibility = shadow_visibility( \
+                    FRAME, \
+                    standard_light, \
+                    POSITION, \
+                    SHADOW_NORMAL, \
+                    standard_view_depth \
+                ); \
+            } \
+            RADIANCE += standard_visibility * evaluate_standard_light(standard_light, POSITION, SURFACE); \
+        } \
+    }
+
 vec3 evaluate_standard_lights(
     FrameRoot frame,
     StandardSurface surface,
@@ -30,17 +54,7 @@ vec3 evaluate_standard_lights(
     bool receive_shadow
 ) {
     vec3 radiance = vec3(0.0);
-    float view_depth = -(frame.view * vec4(world_position, 1.0)).z;
-    LightList lights = select_lights(frame, world_position, view_depth);
-    for (uint index = 0u; index < lights.count; index++) {
-        LightGpu light = LightArray(frame.lights).values[selected_light_index(frame, lights, index)];
-        if ((layers & light.layers) == 0u) continue;
-        float visibility = 1.0;
-        if (receive_shadow && light_casts_shadow(light)) {
-            visibility = shadow_visibility(frame, light, world_position, shadow_normal, view_depth);
-        }
-        radiance += visibility * evaluate_standard_light(light, world_position, surface);
-    }
+    STANDARD_LIGHT_LOOP(radiance, frame, surface, world_position, shadow_normal, layers, receive_shadow)
     return radiance;
 }
 
@@ -83,14 +97,16 @@ vec3 shade_standard_surface(
             screen_indirect
         );
     }
-    return color + evaluate_standard_lights(
+    STANDARD_LIGHT_LOOP(
+        color,
         frame,
         surface,
         world_position,
         surface_sample.offset_normal,
         draw.layers,
         (draw.flags & DRAW_RECEIVE_SHADOW) != 0u
-    );
+    )
+    return color;
 }
 
 #endif

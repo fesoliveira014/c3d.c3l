@@ -99,7 +99,7 @@ vec3 standard_ambient_fill(FrameRoot frame, vec3 base_color, float metallic, flo
                            float ambient_occlusion, vec4 screen_indirect);
 ```
 
-`shade_standard_surface` returns linear radiance without alpha: the ambient fill, the emissive term, the environment (when `frame_has_indirect(frame)`; the frame and the world position select a [probe volume](probe_volumes.md) where one covers the surface) and every selected light with its shadow. Pass it to `material_output`. `evaluate_standard_lights` and `standard_ambient_fill` are its parts, for a stage that composes its own environment term. The caller fills the sample:
+`shade_standard_surface` returns linear radiance without alpha: the ambient fill, the emissive term, the environment (when `frame_has_indirect(frame)`; the frame and the world position select a [probe volume](probe_volumes.md) where one covers the surface) and every selected light with its shadow. Pass it to `material_output`. `evaluate_standard_lights` and `standard_ambient_fill` are its parts, for a stage that composes its own environment term. Call `evaluate_standard_lights` from `main`: with software-traced shadows its light loop costs about twice as much when it runs two calls below `main`, which is why `shade_standard_surface` expands the same loop in place instead of calling it. The caller fills the sample:
 
 | Field | Contents |
 | --- | --- |
