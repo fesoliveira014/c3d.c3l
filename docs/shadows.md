@@ -227,9 +227,9 @@ render::configure_view(&renderer, renderer.default_view, desc)!;
 - A single-sided caster casts where its front faces the light, as in the atlas; a double-sided one casts from both faces ([facing](scene_trace.md#facing)).
 - Casters are the traced static scene (see [scene tracing](scene_trace.md#what-traces)): `cast_shadow = false` keeps a mesh out of shadow rays, `MASK` materials cast their alpha-tested coverage, and off-camera objects cast like any other. Skinned, morphed and `BLEND` meshes do not cast traced shadows.
 - Shadows are hard; the sun has no angular size.
-- Custom fragment stages do not receive traced shadows: a traced light reaches them with `shadow_count == 0`.
+- Custom forward stages receive traced shadows through `ShaderDesc.traced_fragment`, a form compiled with `RT_SHADOWS` for renderers with ray queries and one with `RT_SHADOWS` and `SCENE_TRACE_BVH` for the software walk ([custom shaders](custom_shaders.md#traced-shadows)). Without the form the view draws the plain stage, which a traced light reaches with `shadow_count == 0`: lit, without that shadow. Custom G-buffer stages are shadowed by the lighting resolve.
 
-`examples/rt_shadows` shows a box behind the camera casting onto the ground. `T` switches between traced shadows and the atlas, `M` swaps the box to a masked checker material. `--software` creates the renderer without ray queries, and the Trace panel names the kind. Under WSL the only Vulkan 1.3 device is llvmpipe, which supports ray queries: use it for correctness and a hardware driver for timing.
+`examples/rt_shadows` shows a box behind the camera casting onto the ground. `T` switches between traced shadows and the atlas, `M` swaps the box to a masked checker material, `C` swaps the ground between its Standard material and a custom twin with traced forms (`--twin-ground` starts on the twin). `--software` creates the renderer without ray queries, and the Trace panel names the kind. Under WSL the only Vulkan 1.3 device is llvmpipe, which supports ray queries: use it for correctness and a hardware driver for timing.
 
 ## Example and timing
 

@@ -4,7 +4,7 @@ Entry point for every agent session in this repository. Read it fully before rea
 
 - **Project:** `c3d`, a scene-level 3D rendering library with an ECS scene, physics, animation, and asset import. Not a game engine; a base for one.
 - **Language:** C3 **0.8.3**. C3 is pre-1.0. Verify syntax against the installed compiler and the `c3-expert` skill, never against memory of another version.
-- **Shading language:** GLSL, Vulkan 1.3 semantics through gpu.c3l. Files are `<name>.<stage>.glsl`; shared includes are plain `.glsl`. SPIR-V is built offline by `scripts/build_shaders.py` and embedded with `$embed`.
+- **Shading language:** GLSL, Vulkan 1.3 semantics through gpu.c3l. Files are `<name>.<stage>.glsl`; shared includes are plain `.glsl`. The includes listed under `public_includes` in `shaders/variants.json` are the stable contract for custom and package stages. SPIR-V is built offline by `scripts/build_shaders.py`, for core and for every shader package (a directory with `shaders/shaders.json`), and embedded with `$embed`.
 - **Module root:** `c3d`. Every module is `c3d` or a submodule of it (`c3d::render`, `c3d::asset::gltf`). The repository directory name never appears in source.
 - **Build tooling:** `scripts/build.py` is the entry point; it drives ABI codegen, shader compilation, `c3c build`, and optionally `c3c test` and `c3c run`. Python 3.10+ standard library only, under `scripts/`, only for build orchestration and code generation.
 - **Dependencies** (git submodules under `lib/`, pinned, plus project add-ons linked there):
@@ -83,7 +83,7 @@ python3 scripts/build.py --init-deps      # first checkout: submodules and nativ
 python3 scripts/build.py --clean
 ```
 
-Steps run in this order and stop at the first failure: tools (c3c 0.8.3, glslang), deps (submodules present), abi (`gen_abi.py`, which builds gpu.c3l's `gpu_shaders` tool with `c3c build --path lib/gpu.c3l/tools/gpu_shaders` on first use), shaders (`build_shaders.py`), build (every target in `examples/project.json`, or `--target`), test (every target in `test/project.json`), run. `build_shaders.py` also embeds the GLSL include set as `src/c3d/shader/includes.c3` for the in-process compiler; on Windows the build copies `shaderc_shared.dll` and `SDL3.dll` next to example and test executables, while Linux shaderc executables carry an rpath to `lib/shaderc.c3l/linux`. SPIR-V is compiled into `shaders/spv/` (not committed) on every run; the generated C3 and GLSL twins are committed and verified unless `--regen` is given, which rewrites them. `--skip-abi`, `--skip-shaders`, `--skip-build`, and `--opt O3` narrow a run; `-v` prints each command.
+Steps run in this order and stop at the first failure: tools (c3c 0.8.3, glslang), deps (submodules present), abi (`gen_abi.py`, which builds gpu.c3l's `gpu_shaders` tool with `c3c build --path lib/gpu.c3l/tools/gpu_shaders` on first use), shaders (`build_shaders.py`: core's `shaders/variants.json`, its public-include probes, then every shader package, `addons/*/` and `test/` with a `shaders/shaders.json`), build (every target in `examples/project.json`, or `--target`), test (every target in `test/project.json`), run. `build_shaders.py` also embeds the GLSL include set as `src/c3d/shader/includes.c3` for the in-process compiler, compiles one probe per public include so each compiles after the ABI headers alone, and writes each package's `output` C3 file (its SPIR-V as `@private` `$embed` constants and, when it has `shaders/include/<name>/`, a public `<NAME>_SHADER_INCLUDES` table); on Windows the build copies `shaderc_shared.dll` and `SDL3.dll` next to example and test executables, while Linux shaderc executables carry an rpath to `lib/shaderc.c3l/linux`. SPIR-V is compiled into `shaders/spv/` and each package's `shaders/spv/` (not committed) on every run; the generated C3 (`src/c3d/shader/*.c3` and every package `output`) and GLSL twins are committed and verified unless `--regen` is given, which rewrites them. A consumer outside the repository compiles its own package with `python3 lib/c3d.c3l/scripts/build_shaders.py --package <dir>`. `--skip-abi`, `--skip-shaders`, `--skip-build`, and `--opt O3` narrow a run; `-v` prints each command.
 
 Before every commit: `scripts/build.py --test`. Broken builds are never committed. GPU examples run manually; CI runs `--test`. Every development run of a GPU example enables Vulkan validation through gpu.c3l.
 
@@ -193,6 +193,7 @@ c3d.c3l/
 ├── addons/c3d_nav.c3l/     Recast/Detour port: tiled navmesh build, tile cache, store, path queries and crowds; owns its tests and examples
 ├── addons/c3d_character.c3l/ capsule character controller on the physics mover primitives, crowd binding under C3D_CHARACTER_NAV; owns its tests and examples
 ├── addons/c3d_physics_gui.c3l/ physics inspector panel and component inspectors, characters under C3D_PHYSICS_GUI_CHARACTER; owns its tests and examples
+│                           an add-on that ships GLSL keeps shaders/shaders.json, its sources and shaders/include/<name>/ under its own shaders/, and a generated, committed src/shaders.c3
 ├── abi/c3d.abi             shared C3 and GLSL layouts
 ├── docs/style.md           mandatory style baseline
 ├── lib/                    gpu.c3l · sdl3.c3l · c3imgui.c3l · c3cg.c3l · box3d.c3l · cgltf.c3l · ufbx.c3l · shaderc.c3l (submodules)
@@ -208,10 +209,10 @@ c3d.c3l/
 │   ├── platform/           the only sdl importer
 │   ├── render/  shader/                            the gpu importers; render/post/ holds display processing
 │   └── gui/                the only imgui importer; gui/backend imports gpu
-├── shaders/                GLSL sources, variants.json, common/, generated/; spv/ is build output
+├── shaders/                GLSL sources, variants.json (registry entries and public includes), common/, generated/; spv/ is build output
 ├── scripts/                build.py (entry point) · gen_abi.py · build_shaders.py
 ├── examples/               one executable per milestone
-└── test/                   CPU tests, one file per group
+└── test/                   CPU tests, one file per group; test/shaders/ is the shader package the unit tests read
 ```
 
 # 12. Anti-patterns, rejected on sight

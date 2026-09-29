@@ -118,7 +118,7 @@ Readings on an Intel Core i9-14900K at O3 (medians; Windows host, WSL in parenth
 
 ```bash
 ./examples/build/rt_shadows --gpu-timings --benchmark 300 --atlas-shadows
-./examples/build/rt_shadows --gpu-timings --benchmark 300 [--software]
+./examples/build/rt_shadows --gpu-timings --benchmark 300 [--software] [--twin-ground]
 ./examples/build/rt_effects --gpu-timings --benchmark 300 [--software]
 ./examples/build/gltf_viewer --benchmark --gpu-timings --frames 300 --warmup 60 --shading deferred \
     --ambient-occlusion ray-traced --reflections on --trace software|hardware --width 3840 --height 2160
@@ -129,7 +129,9 @@ Readings on an Intel Core i9-14900K at O3 (medians; Windows host, WSL in parenth
 Build the three targets with `--opt O3 --define C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL --lib
 c3d_profile`. `rt_shadows` and `rt_effects` benchmark at 1920x1080 and print pass means and the GPU frame
 (the sum of the pass timestamps); `rt_shadows` reports the forward pass, where traced shadows cost, and
-`--atlas-shadows` gives the base to subtract. `gltf_viewer` prints `first frame:` with the trace
+`--atlas-shadows` gives the base to subtract; `--twin-ground` draws the ground with the custom twin of its
+Standard material, which shades through `standard_shading.glsl` and its traced forms, and the line names the
+ground. `gltf_viewer` prints `first frame:` with the trace
 preparation's CPU time and the acceleration builds' GPU time; `--shadows traced` traces the sun's shadow
 (an `AUTO` run then creates the renderer with ray queries), and `--shadows on` keeps the atlas as its base.
 
