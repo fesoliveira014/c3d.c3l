@@ -38,6 +38,11 @@ const Vec2 POST_PANEL_SIZE @local = { 360, 420 };
 const Vec2 TARGETS_PANEL_POSITION @local = { 16, 600 };
 const Vec2 TARGETS_PANEL_SIZE @local = { 420, 280 };
 const uint BENCHMARK_WARMUP_FRAMES @local = 30; // lets clocks and caches settle before the timed frames
+const uint WINDOW_WIDTH @local = 1440;
+const uint WINDOW_HEIGHT @local = 900;
+const uint BENCHMARK_WIDTH @local = 1920;
+const uint BENCHMARK_HEIGHT @local = 1080;
+const Vec2 TRACE_PANEL_POSITION @local = { 460, 16 };
 
 struct Orbit @local {
     Vec3  target;
@@ -49,6 +54,7 @@ struct Orbit @local {
 struct PassTimings @local {
     double ambient_occlusion_ms;
     double reflections_ms;
+    double gpu_frame_ms;
     uint   frames;
 }
 
@@ -200,14 +206,28 @@ fn bool edit_from_keys(Input* input, ViewDesc* desc) @local {
 fn void accumulate_timings(PassTimings* timings, Renderer* renderer) @local {
     timings.ambient_occlusion_ms += renderer.stats.gpu_pass_ms[Pass.AMBIENT_OCCLUSION.ordinal];
     timings.reflections_ms += renderer.stats.gpu_pass_ms[Pass.RT_REFLECTIONS.ordinal];
+    foreach (pass_ms : renderer.stats.gpu_pass_ms) timings.gpu_frame_ms += pass_ms;
     timings.frames++;
+}
+
+fn ZString trace_name(Renderer* renderer) @local {
+    return renderer.caps.ray_queries.enabled ? "ray queries" : "software BVH";
+}
+
+fn void trace_panel(Renderer* renderer) @local {
+    imgui::set_next_window_pos(TRACE_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
+    if (imgui::begin("Trace", null, {})) imgui::text("Trace: %s", trace_name(renderer));
+    imgui::end();
 }
 
 fn int main(String[] args) {
     bool gpu_timings;
+    bool software;
     uint benchmark_frames;
     for (usz index = 1; index < args.len; index++) {
-        if (args[index] == "--gpu-timings") {
+        if (args[index] == "--software") {
+            software = true;
+        } else if (args[index] == "--gpu-timings") {
             $if $feat(C3D_PROFILE_GPU):
                 gpu_timings = true;
             $else
@@ -227,7 +247,11 @@ fn int main(String[] args) {
         return 1;
     }
 
-    platform::Window window = platform::create_window(platform::default_window_desc("c3d rt effects", 1440, 900))!!;
+    platform::Window window = platform::create_window(platform::default_window_desc(
+        "c3d rt effects",
+        benchmark_frames ? BENCHMARK_WIDTH : WINDOW_WIDTH,
+        benchmark_frames ? BENCHMARK_HEIGHT : WINDOW_HEIGHT,
+    ))!!;
     defer platform::destroy_window(&window);
 
     AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
@@ -240,7 +264,7 @@ fn int main(String[] args) {
             .gpu_timings      = gpu_timings,
             .validation       = true,
             .application_name = "c3d_rt_effects",
-            .ray_queries      = true,
+            .ray_queries      = !software,
         },
     );
     if (catch excuse = created) {
@@ -249,6 +273,7 @@ fn int main(String[] args) {
     }
     Renderer renderer = created;
     defer render::destroy_renderer(&renderer);
+    io::printfn("rt_effects: tracing through the %s", trace_name(&renderer));
 
     Scene scene = scene::create_scene(mem, scene::default_scene_desc());
     defer scene::destroy_scene(&scene);
@@ -307,9 +332,10 @@ fn int main(String[] args) {
         imgui::set_next_window_pos(STATS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(STATS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
         gui::stats_panel(&renderer)!!;
+        trace_panel(&renderer);
         imgui::set_next_window_pos(POST_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(POST_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
-        view_changed |= gui::post_panel(&view_desc, {}, renderer.caps.ray_queries.enabled);
+        view_changed |= gui::post_panel(&view_desc, {});
         apply_orbit(&orbit, input, camera_node);
         scene.update_world();
         gui_renderer.finish_frame();
@@ -333,9 +359,11 @@ fn int main(String[] args) {
         accumulate_timings(&timings, &renderer);
         if (timings.frames == benchmark_frames) {
             io::printfn(
-                "Ray-traced AO: %.4f ms, reflections: %.4f ms, mean over %d frames at %dx%d",
+                "Ray-traced AO: %.4f ms, reflections: %.4f ms, GPU frame: %.4f ms, %s, mean over %d frames at %dx%d",
                 timings.ambient_occlusion_ms / timings.frames,
                 timings.reflections_ms / timings.frames,
+                timings.gpu_frame_ms / timings.frames,
+                trace_name(&renderer),
                 timings.frames,
                 renderer.swapchain_info.width,
                 renderer.swapchain_info.height,

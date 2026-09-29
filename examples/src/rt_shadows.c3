@@ -30,6 +30,11 @@ const Vec2 POST_PANEL_SIZE @local = { 360, 420 };
 const float SWAY_AMPLITUDE @local = 1.5f; // world units; keeps the swaying shadow on the ground in view
 const float SWAY_RADIANS_PER_SECOND @local = 1;
 const uint BENCHMARK_WARMUP_FRAMES @local = 30; // lets clocks and caches settle before the timed frames
+const uint WINDOW_WIDTH @local = 1440;
+const uint WINDOW_HEIGHT @local = 900;
+const uint BENCHMARK_WIDTH @local = 1920;
+const uint BENCHMARK_HEIGHT @local = 1080;
+const Vec2 TRACE_PANEL_POSITION @local = { 400, 16 };
 
 struct Orbit @local {
     Vec3  target;
@@ -116,11 +121,33 @@ fn float build_pass_ms(Renderer* renderer) @local {
     return renderer.stats.gpu_pass_ms[Pass.ACCELERATION_BUILD.ordinal];
 }
 
+fn float gpu_frame_ms(Renderer* renderer) @local {
+    float total;
+    foreach (pass_ms : renderer.stats.gpu_pass_ms) total += pass_ms;
+    return total;
+}
+
+fn ZString trace_name(Renderer* renderer) @local {
+    return renderer.caps.ray_queries.enabled ? "ray queries" : "software BVH";
+}
+
+fn void trace_panel(Renderer* renderer) @local {
+    imgui::set_next_window_pos(TRACE_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
+    if (imgui::begin("Trace", null, {})) imgui::text("Trace: %s", trace_name(renderer));
+    imgui::end();
+}
+
 fn int main(String[] args) {
     bool gpu_timings;
+    bool software;
+    bool atlas_shadows;
     uint benchmark_frames;
     for (usz index = 1; index < args.len; index++) {
-        if (args[index] == "--gpu-timings") {
+        if (args[index] == "--software") {
+            software = true;
+        } else if (args[index] == "--atlas-shadows") {
+            atlas_shadows = true;
+        } else if (args[index] == "--gpu-timings") {
             $if $feat(C3D_PROFILE_GPU):
                 gpu_timings = true;
             $else
@@ -140,7 +167,11 @@ fn int main(String[] args) {
         return 1;
     }
 
-    platform::Window window = platform::create_window(platform::default_window_desc("c3d rt shadows", 1440, 900))!!;
+    platform::Window window = platform::create_window(platform::default_window_desc(
+        "c3d rt shadows",
+        benchmark_frames ? BENCHMARK_WIDTH : WINDOW_WIDTH,
+        benchmark_frames ? BENCHMARK_HEIGHT : WINDOW_HEIGHT,
+    ))!!;
     defer platform::destroy_window(&window);
 
     AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
@@ -153,7 +184,7 @@ fn int main(String[] args) {
             .gpu_timings      = gpu_timings,
             .validation       = true,
             .application_name = "c3d_rt_shadows",
-            .ray_queries      = true,
+            .ray_queries      = !software,
         },
     );
     if (catch excuse = created) {
@@ -162,6 +193,7 @@ fn int main(String[] args) {
     }
     Renderer renderer = created;
     defer render::destroy_renderer(&renderer);
+    io::printfn("rt_shadows: tracing through the %s", trace_name(&renderer));
 
     TextureId checker = add_checker(&assets);
     GeometryId plane_geometry;
@@ -222,7 +254,7 @@ fn int main(String[] args) {
     renderer.prepare_scene(&scene)!!;
 
     ViewDesc view_desc = renderer.views.get(renderer.default_view).desc;
-    view_desc.ray_tracing.shadows = true;
+    view_desc.ray_tracing.shadows = !atlas_shadows;
     render::configure_view(&renderer, renderer.default_view, view_desc)!!;
 
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, &renderer, &window)!!;
@@ -236,7 +268,10 @@ fn int main(String[] args) {
     float sway_phase;
     uint frame;
     uint timed_frames;
-    double timed_ms;
+    uint build_frames;
+    double build_ms;
+    double forward_ms;
+    double frame_ms;
     while (window.poll()) {
         gui_renderer.new_frame();
         defer {
@@ -265,9 +300,10 @@ fn int main(String[] args) {
         imgui::set_next_window_pos(STATS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(STATS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
         gui::stats_panel(&renderer)!!;
+        trace_panel(&renderer);
         imgui::set_next_window_pos(POST_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(POST_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
-        view_changed |= gui::post_panel(&view_desc, {}, renderer.caps.ray_queries.enabled);
+        view_changed |= gui::post_panel(&view_desc, {});
         gui_renderer.finish_frame();
 
         platform::sync_window(&window, &renderer);
@@ -281,14 +317,27 @@ fn int main(String[] args) {
         )!!;
 
         frame++;
-        if (!benchmark_frames || frame <= BENCHMARK_WARMUP_FRAMES || build_pass_ms(&renderer) <= 0) continue;
-        timed_ms += build_pass_ms(&renderer);
+        if (!benchmark_frames || frame <= BENCHMARK_WARMUP_FRAMES) continue;
+        if (build_pass_ms(&renderer) > 0) {
+            build_ms += build_pass_ms(&renderer);
+            build_frames++;
+        }
+        forward_ms += renderer.stats.gpu_pass_ms[Pass.FORWARD_OPAQUE.ordinal];
+        frame_ms += gpu_frame_ms(&renderer);
         timed_frames++;
         if (timed_frames == benchmark_frames) {
             io::printfn(
-                "Acceleration build: %.4f ms mean over %d frames, %d trace instances, one top-level build per frame",
-                timed_ms / timed_frames,
+                "Forward opaque: %.4f ms, GPU frame: %.4f ms, acceleration build: %.4f ms over %d builds, "
+                  "%s shadows, %s, mean over %d frames at %dx%d, %d trace instances",
+                forward_ms / timed_frames,
+                frame_ms / timed_frames,
+                build_frames ? build_ms / build_frames : 0,
+                build_frames,
+                atlas_shadows ? "atlas" : "traced",
+                trace_name(&renderer),
                 timed_frames,
+                renderer.swapchain_info.width,
+                renderer.swapchain_info.height,
                 renderer.stats.trace_instances,
             );
             break;

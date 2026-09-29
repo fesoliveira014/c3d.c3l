@@ -647,7 +647,7 @@ fn int run_example(String model_path, bool gpu_timings) @local {
         ViewDesc view_desc = renderer.views.get(renderer.default_view).desc;
         imgui::set_next_window_pos(POST_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(POST_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
-        bool view_changed = gui::post_panel(&view_desc, {}, renderer.caps.ray_queries.enabled);
+        bool view_changed = gui::post_panel(&view_desc, {});
         gui_renderer.finish_frame();
         if (view_changed) {
             if (catch excuse = render::configure_view(&renderer, renderer.default_view, view_desc)) {
