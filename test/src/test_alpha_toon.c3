@@ -253,6 +253,7 @@ fn void test_blended_materials_are_excluded_from_shadow_candidates() @test {
             allocator: tmem,
             scene: &scene,
             assets: &assets,
+            fade_origin: {},
             counts: &counts,
         );
         assert(candidates.len == 6 && counts.visible == 6);

@@ -48,7 +48,7 @@ The renderer keeps each batch's instance records in its own GPU memory, 128 byte
 
 Records are world-space, so a batch whose node moves re-uploads every record in that frame: a batch of 100,000 instances under a moving node uploads 12.8 MB per frame. For a large batch that must stay resident, move the instances and keep the node at rest.
 
-`RendererDesc.max_instance_batches` (default 1024) bounds the batch nodes holding records: live ones plus those unresolved within the last `INSTANCE_ABSENCE_FRAMES` frames. Past it, `render_view` faults `CAPACITY_EXCEEDED`. A batch not drawn by any view or shadow layer for more than `INSTANCE_ABSENCE_FRAMES` frames (hidden, culled, removed) releases its records and uploads them again on its next draw. Shadow layers draw a shadow-casting batch whether or not a view sees it, so such a batch keeps its records while a shadow-casting light is on.
+`RendererDesc.max_instance_batches` (default 1024) bounds the batch nodes holding records: live ones plus those unresolved within the last `INSTANCE_ABSENCE_FRAMES` frames. Past it, `render_view` faults `CAPACITY_EXCEEDED`. A batch not drawn by any view or shadow layer for more than `INSTANCE_ABSENCE_FRAMES` frames (hidden, culled, wholly past its [fade band](#sway-and-distance-fade), removed) releases its records and uploads them again on its next draw. Shadow layers draw a shadow-casting batch whether or not a view sees it, so such a batch keeps its records while a shadow-casting light is on, unless it lies wholly past its fade band.
 
 ## Instance culling
 
@@ -83,6 +83,7 @@ Before the kept aggregate and the stamped history, the same runs took 0.786, 2.8
 | `instances_tested` | Read back, `FRAMES_IN_FLIGHT` frames late | Instances of listed ranges, summed over culling passes |
 | `instances_visible` | Same frame as `instances_tested` | Instances that survived, faded ones excluded; never above `instances_tested` |
 | `indirect_draws` | This frame | Unchanged: culled and unculled ranges alike |
+| `batches_faded` | This frame | View batches inside the frustum and wholly past their [fade band](#sway-and-distance-fade); they list no range and record no draw |
 
 `instances_tested` and `instances_visible` describe one earlier frame together and count listed ranges only; an aborted frame reports nothing. `stats_panel` shows them as a percentage.
 
@@ -125,10 +126,10 @@ grass.fade = { .start = 30, .end = 60 };
 
 - **Motion.** A vertex moves by `direction * amplitude * weight * (lean + (1 - lean) * swing)` in world space, after the instance matrix. `lean` is the share of the amplitude held as a steady bend downwind; `swing` sums two sines of one phase and never exceeds 1 in size, so no vertex moves further than `amplitude`. The phase advances `frequency` cycles per second of `FrameInfo.time`, computed on the CPU in double precision; gust crests travel along the direction `wavelength` world units apart (0 keeps the batch in phase); `variation` spreads the phase over the instances. An instance's seed hashes its node-local position, so it holds under node motion and reordering. A `frequency` edit moves the phase at once. `FrameInfo` time 0, the `begin_frame` default, holds the sway still.
 - **Weight.** `SwayWeight.HEIGHT`, the default, weighs a vertex by the square of its height within the instance-local bound, so the base stays planted; it assumes +Y up in geometry space, and a flat bound does not sway. `SwayWeight.VERTEX_ALPHA` takes the vertex colour's alpha as the weight and consumes it: shading, masking, the depth prepass and shadows see vertex alpha 1, so the alpha no longer cuts a masked material. A geometry without colours then weighs 1 everywhere and sways rigidly. A custom vertex stage supplies any weight by writing `vertex.color.a` and selecting `VERTEX_ALPHA` ([Custom shaders](custom_shaders.md#vertex-contract)).
-- **Fade.** Each instance collapses toward the base centre of its local bound once the view camera's distance to that point crosses the instance's vanish distance, hashed from its seed across the band: the first instances shrink from `start`, none is drawn past `end`, and one instance takes a quarter of the band (`FADE_COLLAPSE_SHARE`) to collapse. An instance before the band draws exactly as without fade. The cull pass drops fully collapsed instances, so they leave `instances_visible`; on an opaque or masked batch with instance culling off or with `has_bounds_override`, collapsed instances still run the vertex stage as degenerate triangles. A batch wholly past the band still records its dispatches and draws.
+- **Fade.** Each instance collapses toward the base centre of its local bound once the view camera's distance to that point crosses the instance's vanish distance, hashed from its seed across the band: the first instances shrink from `start`, none is drawn past `end`, and one instance takes a quarter of the band (`FADE_COLLAPSE_SHARE`) to collapse. An instance before the band draws exactly as without fade. The cull pass drops fully collapsed instances, so they leave `instances_visible`; on an opaque or masked batch with instance culling off or with `has_bounds_override`, collapsed instances still run the vertex stage as degenerate triangles. Extraction skips a batch whose bound lies wholly past `end` from the view camera, in the view and in its shadow layers alike: every anchor lies inside the bound and no vanish distance exceeds `end`, so none of its instances would draw. A skipped batch records no root, dispatch or draw; `Stats.batches_faded` counts the view's skipped batches inside the frustum.
 - **Passes.** The view's passes, its depth prepass and its shadow layers read one block per batch, so shadows sway with the batch and fade from the view's camera, not the light's. The depth prepass, forward and velocity passes compute identical positions, so their `EQUAL` depth tests hold.
 - **Bounds.** The batch bound grows by the sway reach, `|normalize(direction)| * amplitude` per axis, after the node transform; the per-instance cull test admits a box within `amplitude` of each plane. The collapse moves toward a point inside both.
-- **Motion vectors.** The velocity pass uses the sway the view last drew the batch with, at the view's previous time, so a batch whose sway parameters change every frame keeps exact motion. A view without history uses the current sway for both. The collapse carries no motion vector.
+- **Motion vectors.** The velocity pass uses the sway the view last drew the batch with, at the view's previous time, so a batch whose sway parameters change every frame keeps exact motion. A view without history uses the current sway for both. The collapse carries no motion vector. A batch the view skipped past the band has no history there: in the rendering that brings it back it draws without object motion, while its instances are still collapsed at the far edge of the band.
 - **Cost.** One 112-byte block per batch and view in the frame upload ring, and the seed written into `InstanceGpu.normal_0.w` whenever records upload; no per-instance CPU work per frame. The seed adds about 25 ns per record to a re-pack: 2.5 ms (+19 %) for a full re-pack of 99,856 records, paid only on frames that re-pack a batch. Measured below.
 - **Limits.** Picking's per-instance tests, CPU triangle trees and the scene trace (ray-traced shadows, reflections, ambient occlusion, path tracing, probe traces) see the rest pose and every instance; a swaying batch in a traced view casts a still traced shadow, so such a batch sets `trace = false`. Picking's broad phase uses the grown bound. Normals and tangents are not bent. Amplitude neither varies per instance nor scales with it. No fade for plain meshes, no per-view opt-out (a minimap fades from its own camera), no dithered or alpha fade, and no weight from `Geometry.custom_data`.
 
@@ -143,6 +144,23 @@ Measured on an RTX 4090 (driver 610.88), `instancing` at 99,856 props, 1280 × 7
 
 Off costs nothing measurable: every pass is within 1.3 % of the build before sway and fade. With fade on, 43,346 of 599,154 instances stay visible across passes (7.2 %), against 170,818 of 599,151 without it, and the passes after culling shrink with them. The `view.resolve` scope of a frame that re-packs all props rises from 12.74 ms (12.69–13.11) to 15.21 ms (15.07–15.35). The third runs of "Sway and fade on" and of the re-pack before the change hit a lower GPU clock state; those two medians use the steady runs.
 
+Skipping batches wholly past the band, measured on an RTX 4090 (driver 610.88) with `instancing --benchmark`, 1280 × 720,
+three repeats; medians in ms with the range across repeats. `--fade-field` adds 4,096 cell batches of 64 props, most of
+them past a 60–90 m band:
+
+| `--fade-field` | Before | After |
+| --- | ---: | ---: |
+| `cpu_record` | 2.821 (2.815–2.989) | 0.260 (0.255–0.265) |
+| Instance cull | 0.290 (0.289–0.291) | 0.048 (0.047–0.048) |
+| Depth prepass | 0.061 | 0.047 |
+| Forward opaque | 0.094 | 0.078 |
+| Shadow atlas | 0.247 | 0.234 |
+| Velocity | 0.063 | 0.053 |
+| Draws | 2,957 | 137 |
+| `batches_faded` | — | 926 |
+
+Without the field every pass is within noise (`cpu_record` 0.092 before, 0.082 after; the GPU passes within 1 %).
+
 ## Custom vertex stages
 
 A custom material whose shader has a vertex stage draws a batch only when the shader also supplies the instanced pair, `CustomVertex.instanced_shaded` and `instanced_depth`: the same source compiled with `INSTANCED`, and with `DEPTH_ONLY` and `INSTANCED`. A stage that ends in `write_mesh_outputs` needs no source change, and it inherits the batch's sway and fade; instanced SPIR-V built against an older `mesh_vertex.glsl` draws without them until it is rebuilt. Without the pair the batch is skipped and counted in `Stats.dangling_refs`. The published revision's pair draws; a batch whose pair exists only in a rejected replacement is skipped without a count (see [Reload](custom_shaders.md#reload)). `CustomVertex.instanced_velocity`, the same source compiled with `VELOCITY` and `INSTANCED`, is optional and needs the instanced pair and `velocity` (see [Velocity form](custom_shaders.md#velocity-form)); without it a batch's velocity uses the built-in instanced variant and sees the undisplaced instances. Fragment-only custom materials draw batches unchanged.
@@ -151,7 +169,7 @@ A custom material whose shader has a vertex stage draws a batch only when the sh
 
 `spatial::pick` tests a batch's aggregate bound, then each live instance. A hit carries the batch node, `instanced = true` and `instance_index`.
 
-Example: `python3 scripts/build.py --example instancing`.
+Example: `python3 scripts/build.py --example instancing`. `--fade-field` adds 4,096 fading cell batches around the scene and the stats panel shows `Faded batches`; `--gpu-timings` needs the profile add-on; `--benchmark` runs the headless benchmark ([Benchmarking](benchmarking.md#instancing-benchmark)).
 
 ## Crowds
 

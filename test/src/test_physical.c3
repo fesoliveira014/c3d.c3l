@@ -237,6 +237,7 @@ fn void test_physical_blends_do_not_enter_shadow_candidates() @test {
             allocator: tmem,
             scene: &scene,
             assets: &assets,
+            fade_origin: {},
             counts: &counts,
         );
         assert(candidates.len == 2 && counts.visible == 2);

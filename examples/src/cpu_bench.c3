@@ -149,6 +149,7 @@ fn double run_iteration(
                     allocator: tmem,
                     scene: scene,
                     assets: assets,
+                    fade_origin: {},
                     counts: &counts,
                 );
                 return (double)candidates.len + (candidates.len ? (double)candidates[0].world_bounds.min.x : 0);
