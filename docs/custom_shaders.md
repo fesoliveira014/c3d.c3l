@@ -134,6 +134,7 @@ A custom or package stage starts with the prelude, `generated/shader_abi.glsl` (
 | `ibl.glsl` | `frame_has_indirect`, `indirect_diffuse_irradiance`, `evaluate_environment` (both), `evaluate_environment_lobes` (both) |
 | `ambient_occlusion.glsl` | `draw_ambient_occlusion`, `frame_ambient_occlusion`, `specular_occlusion` |
 | `screen_space_gi.glsl` | `draw_screen_space_indirect`, `frame_screen_space_indirect`, `screen_space_base_share` |
+| `scene_snapshot.glsl` | `scene_uv`, `scene_color_at`, `scene_depth_at`, `scene_view_distance_at`, `scene_position_at`, `scene_depth_gap` ([scene reads](#scene-reads)) |
 | `standard_surface.glsl` | `StandardMaterialSample` (fields frozen), `sample_standard_material` |
 | `standard_shading.glsl` | `standard_ambient_fill`, `evaluate_standard_lights`, `shade_standard_surface` |
 | `gbuffer_output.glsl` | `write_gbuffer`, outputs at locations 0 to 4 |

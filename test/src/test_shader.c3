@@ -255,27 +255,6 @@ void main() {
 }
 `;
 
-const String SCENE_SNAPSHOT_FRAGMENT = `#version 460
-#include "generated/shader_abi.glsl"
-#include "c3d_abi.glsl"
-#include "scene_snapshot.glsl"
-layout(location = 0) out vec4 out_color;
-layout(push_constant) uniform Push { uint64_t vertex_root_gpu; uint64_t fragment_root_gpu; } pc;
-void main() {
-    FrameRoot frame = FrameRoot(DrawRoot(pc.fragment_root_gpu).frame);
-    vec2 uv = scene_uv(frame, gl_FragCoord.xy);
-    vec3 position = scene_position_at(frame, uv);
-    float gap = scene_depth_gap(frame, gl_FragCoord) + scene_view_distance_at(frame, uv);
-    out_color = vec4(scene_color_at(frame, uv) + position, gap);
-}
-`;
-
-fn void test_compile_glsl_compiles_the_scene_snapshot_helpers() @test {
-    char[] spirv = compile::compile_glsl(mem, SCENE_SNAPSHOT_FRAGMENT, ShaderStage.FRAGMENT)!!;
-    defer free(spirv.ptr);
-    assert(spirv.len >= SPIRV_MAGIC.len && spirv.len % 4 == 0);
-}
-
 fn void test_compile_glsl_compiles_a_texture_compute_stage() @test {
     char[] spirv = compile::compile_glsl(mem, FOG_COMPUTE, ShaderStage.COMPUTE)!!;
     defer free(spirv.ptr);

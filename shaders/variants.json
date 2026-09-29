@@ -126,6 +126,7 @@
     { "include": "ibl.glsl", "stage": "frag", "defines": [] },
     { "include": "ambient_occlusion.glsl", "stage": "frag", "defines": [] },
     { "include": "screen_space_gi.glsl", "stage": "frag", "defines": [] },
+    { "include": "scene_snapshot.glsl", "stage": "frag", "defines": [] },
     { "include": "standard_surface.glsl", "stage": "frag", "defines": [] },
     { "include": "standard_shading.glsl", "stage": "frag", "defines": [] },
     { "include": "standard_shading.glsl", "stage": "frag", "defines": ["RT_SHADOWS"] },
