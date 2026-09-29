@@ -115,9 +115,10 @@ fn char[]? compile_file(Allocator allocator, String path, ShaderStage stage, Str
     return spirv;
 }
 
-fn ShaderDesc? compile_pulse(Allocator allocator) @local {
+fn ShaderDesc? compile_pulse(Allocator allocator, bool velocity_forms) @local {
     String[2] depth_instanced = { "DEPTH_ONLY", "INSTANCED" };
-    return {
+    String[2] velocity_instanced = { "VELOCITY", "INSTANCED" };
+    ShaderDesc desc = {
         .fragment = compile_file(allocator, PULSE_FRAGMENT_FILE, ShaderStage.FRAGMENT)!,
         .vertex   = {
             .shaded           = compile_file(allocator, PULSE_VERTEX_FILE, ShaderStage.VERTEX)!,
@@ -127,6 +128,16 @@ fn ShaderDesc? compile_pulse(Allocator allocator) @local {
         },
         .param_block_size = PulseParams::size,
     };
+    if (velocity_forms) {
+        desc.vertex.velocity = compile_file(allocator, PULSE_VERTEX_FILE, ShaderStage.VERTEX, { "VELOCITY" })!;
+        desc.vertex.instanced_velocity = compile_file(
+            allocator: allocator,
+            path:      PULSE_VERTEX_FILE,
+            stage:     ShaderStage.VERTEX,
+            defines:   velocity_instanced[..],
+        )!;
+    }
+    return desc;
 }
 
 fn Node*? add_trio(Scene* scene, GeometryId cube, MaterialId white) @local {
@@ -414,13 +425,17 @@ fn void? run(
     if (sampled) report(samples[:sampled], configuration, renderer);
 }
 
-fn int main() {
-    String configuration = "before";
+fn int main(String[] args) {
+    bool velocity_forms = true;
+    foreach (argument : args[1..]) {
+        if (argument == "--without-velocity-forms") velocity_forms = false;
+    }
+    String configuration = velocity_forms ? "with_velocity_forms" : "without_velocity_forms";
     AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
     defer asset::destroy_asset_store(&assets);
     ShaderId pulse_shader;
     @pool() {
-        ShaderDesc? pulse_desc = compile_pulse(tmem);
+        ShaderDesc? pulse_desc = compile_pulse(tmem, velocity_forms);
         if (catch excuse = pulse_desc) {
             io::eprintfn("pulse: compile failed (%s); run from examples/build so ../shaders resolves", excuse);
             return 1;
