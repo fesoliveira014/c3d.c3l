@@ -94,7 +94,7 @@ vec3 trace_path(PathTraceRoot root, FrameRoot frame, SceneTraceRoot scene, PathR
         path_hit.instance = PATH_TRACE_MISS;
         traceRayEXT(
             GPU_ACCELERATION_STRUCTURE(scene.tlas_index),
-            gl_RayFlagsNoneEXT,
+            gl_RayFlagsCullBackFacingTrianglesEXT,
             TRACE_MASK_ALL,
             0,
             0,
@@ -113,7 +113,6 @@ vec3 trace_path(PathTraceRoot root, FrameRoot frame, SceneTraceRoot scene, PathR
         }
 
         TraceSurface surface = surface_from_hit(scene, path_hit, ray.direction, ray.width + ray.spread * path_hit.t);
-        if (surface.back_face) break;
         if (surface.material_kind == MATERIAL_KIND_BASIC) return radiance + throughput * surface.albedo;
         radiance += throughput * surface.emissive;
 

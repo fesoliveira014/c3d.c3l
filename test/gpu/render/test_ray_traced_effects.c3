@@ -27,6 +27,7 @@ const float MISS_WEIGHT_MINIMUM @private = 0.85f;           // split-sum weight 
 const int DARK_MAXIMUM @private = 8;
 const int EMITTER_MINIMUM @private = 200;
 const int MIRROR_TOLERANCE @private = 2;
+const float EMITTER_SHEET_SIZE @private = 2; // wide enough to hold the emitter image point's reflection ray
 
 struct MirrorScene @private {
     Scene       scene;
@@ -34,6 +35,8 @@ struct MirrorScene @private {
     MaterialId  mirror;
     MaterialId  rough;
     Node*       floor;
+    Node*       emitter;
+    StandardParams glow;
 }
 
 fn MirrorScene? create_mirror_scene(Fixture* fixture, bool sunlit) @private {
@@ -55,12 +58,12 @@ fn MirrorScene? create_mirror_scene(Fixture* fixture, bool sunlit) @private {
     result.mirror = fixture.assets.add_material(material::standard(metal))!;
     metal.roughness = ROUGH_FLOOR_ROUGHNESS;
     result.rough = fixture.assets.add_material(material::standard(metal))!;
-    StandardParams glow = { .base_color = { 0, 0, 0, 1 }, .emissive = { 1, 0, 0 }, .emissive_strength = 1, .roughness = 1 };
-    MaterialId emitter = fixture.assets.add_material(material::standard(glow))!;
+    result.glow = { .base_color = { 0, 0, 0, 1 }, .emissive = { 1, 0, 0 }, .emissive_strength = 1, .roughness = 1 };
+    MaterialId emitter = fixture.assets.add_material(material::standard(result.glow))!;
 
     result.floor = result.scene.add_mesh(floor, result.mirror, name: "floor")!;
-    Node* panel_node = result.scene.add_mesh(panel, emitter, name: "emitter")!;
-    panel_node.local.position = EMITTER_POSITION;
+    result.emitter = result.scene.add_mesh(panel, emitter, name: "emitter")!;
+    result.emitter.local.position = EMITTER_POSITION;
     if (sunlit) {
         Node* sun = result.scene.add_light(light::directional({ 1, 1, 1 }, 1, shadow: false), name: "sun")!;
         sun.local.rotation = maths::look_rotation((Vec3){ 0.3f, -1, -0.4f }.normalize(), { 0, 0, -1 });
@@ -118,153 +121,255 @@ fn int blue(uint pixel) @private {
 }
 
 fn void test_ray_traced_ao_darkens_a_crease_and_leaves_open_floor() @test {
-    Fixture fixture;
-    create_fixture(mem, &fixture, ray_queries: true)!!;
-    defer destroy_fixture(&fixture);
-    print_adapter(&fixture);
-    CreaseScene crease = create_crease_scene(&fixture)!!;
-    defer scene::destroy_scene(&crease.scene);
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        print_adapter(&fixture);
+        CreaseScene crease = create_crease_scene(&fixture)!!;
+        defer scene::destroy_scene(&crease.scene);
 
-    AmbientOcclusionDesc ray_traced = render::AMBIENT_OCCLUSION_DEFAULT;
-    ray_traced.kind = AoKind.RAY_TRACED;
-    int[2] open_values;
-    ShadingPath[2] paths = { ShadingPath.FORWARD, ShadingPath.DEFERRED };
-    foreach (index, shading : paths) {
-        AoView ao_view = create_ao_view(&fixture, shading)!!;
+        AmbientOcclusionDesc ray_traced = render::AMBIENT_OCCLUSION_DEFAULT;
+        ray_traced.kind = AoKind.RAY_TRACED;
+        int[2] open_values;
+        ShadingPath[2] paths = { ShadingPath.FORWARD, ShadingPath.DEFERRED };
+        foreach (index, shading : paths) {
+            AoView ao_view = create_ao_view(&fixture, shading)!!;
+            defer destroy_ao_view(&fixture, &ao_view);
+            crease.view = ao_view.view;
+
+            int crease_none = red(render_and_read(&fixture, &crease, CREASE_POINT)!!);
+            int open_none = red(render_and_read(&fixture, &crease, OPEN_POINT)!!);
+            set_ambient_occlusion(&fixture, ao_view.view, ray_traced)!!;
+            int crease_ao = red(render_and_read(&fixture, &crease, CREASE_POINT)!!);
+            int open_ao = red(render_and_read(&fixture, &crease, OPEN_POINT)!!);
+            io::eprintfn(
+                "%s, %s ray traced: crease %d -> %d, open %d -> %d",
+                trace_name(ray_queries),
+                shading,
+                crease_none,
+                crease_ao,
+                open_none,
+                open_ao,
+            );
+
+            assert((float)crease_ao < CREASE_RATIO_MAXIMUM * (float)crease_none);
+            assert((float)open_ao > OPEN_RATIO_MINIMUM * (float)open_none);
+            open_values[index] = open_ao;
+        }
+        assert(math::abs(open_values[0] - open_values[1]) <= SHADING_PATH_TOLERANCE);
+
+        AoView ao_view = create_ao_view(&fixture, ShadingPath.FORWARD)!!;
+        defer destroy_ao_view(&fixture, &ao_view);
+        crease.view = ao_view.view;
+        int crease_none = red(render_and_read(&fixture, &crease, CREASE_POINT)!!);
+        set_ambient_occlusion(&fixture, ao_view.view, render::AMBIENT_OCCLUSION_DEFAULT)!!;
+        float screen_space_ratio = (float)red(render_and_read(&fixture, &crease, CREASE_POINT)!!) / (float)crease_none;
+        ray_traced.ray_count = render::RT_AO_RAYS_MAX;
+        set_ambient_occlusion(&fixture, ao_view.view, ray_traced)!!;
+        float ray_traced_ratio = (float)red(render_and_read(&fixture, &crease, CREASE_POINT)!!) / (float)crease_none;
+        io::eprintfn(
+            "%s, crease ratio: gtao %.3f, ray traced (%d rays) %.3f",
+            trace_name(ray_queries),
+            screen_space_ratio,
+            ray_traced.ray_count,
+            ray_traced_ratio,
+        );
+        assert(screen_space_ratio < CREASE_RATIO_MAXIMUM && ray_traced_ratio < CREASE_RATIO_MAXIMUM);
+        check_validation(&fixture.renderer);
+    }
+}
+
+fn void test_forward_surfaces_of_a_deferred_view_use_their_own_normals() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        CreaseScene crease = create_crease_scene(&fixture)!!;
+        defer scene::destroy_scene(&crease.scene);
+        ToonParams toon = material::TOON_PARAMS_DEFAULT;
+        toon.color = { LIT_ALBEDO, LIT_ALBEDO, LIT_ALBEDO, 1 };
+        MaterialId forward_only = fixture.assets.add_material(material::toon(toon))!!;
+        crease.scene.get(crease.floor, Mesh).material = forward_only;
+        AoView ao_view = create_ao_view(&fixture, ShadingPath.DEFERRED)!!;
         defer destroy_ao_view(&fixture, &ao_view);
         crease.view = ao_view.view;
 
         int crease_none = red(render_and_read(&fixture, &crease, CREASE_POINT)!!);
         int open_none = red(render_and_read(&fixture, &crease, OPEN_POINT)!!);
-        set_ambient_occlusion(&fixture, ao_view.view, ray_traced)!!;
-        int crease_ao = red(render_and_read(&fixture, &crease, CREASE_POINT)!!);
-        int open_ao = red(render_and_read(&fixture, &crease, OPEN_POINT)!!);
-        io::eprintfn("%s ray traced: crease %d -> %d, open %d -> %d", shading, crease_none, crease_ao, open_none, open_ao);
-
-        assert((float)crease_ao < CREASE_RATIO_MAXIMUM * (float)crease_none);
-        assert((float)open_ao > OPEN_RATIO_MINIMUM * (float)open_none);
-        open_values[index] = open_ao;
+        AoKind[2] kinds = { AoKind.SSAO, AoKind.RAY_TRACED };
+        foreach (kind : kinds) {
+            AmbientOcclusionDesc ambient_occlusion = render::AMBIENT_OCCLUSION_DEFAULT;
+            ambient_occlusion.kind = kind;
+            set_ambient_occlusion(&fixture, ao_view.view, ambient_occlusion)!!;
+            int crease_ao = red(render_and_read(&fixture, &crease, CREASE_POINT)!!);
+            int open_ao = red(render_and_read(&fixture, &crease, OPEN_POINT)!!);
+            io::eprintfn(
+                "%s, %s on a forward surface: crease %d -> %d, open %d -> %d",
+                trace_name(ray_queries),
+                kind,
+                crease_none,
+                crease_ao,
+                open_none,
+                open_ao,
+            );
+            assert((float)crease_ao < CREASE_RATIO_MAXIMUM * (float)crease_none);
+            assert((float)open_ao > OPEN_RATIO_MINIMUM * (float)open_none);
+        }
+        check_validation(&fixture.renderer);
     }
-    assert(math::abs(open_values[0] - open_values[1]) <= SHADING_PATH_TOLERANCE);
-
-    AoView ao_view = create_ao_view(&fixture, ShadingPath.FORWARD)!!;
-    defer destroy_ao_view(&fixture, &ao_view);
-    crease.view = ao_view.view;
-    int crease_none = red(render_and_read(&fixture, &crease, CREASE_POINT)!!);
-    set_ambient_occlusion(&fixture, ao_view.view, render::AMBIENT_OCCLUSION_DEFAULT)!!;
-    float screen_space_ratio = (float)red(render_and_read(&fixture, &crease, CREASE_POINT)!!) / (float)crease_none;
-    ray_traced.ray_count = render::RT_AO_RAYS_MAX;
-    set_ambient_occlusion(&fixture, ao_view.view, ray_traced)!!;
-    float ray_traced_ratio = (float)red(render_and_read(&fixture, &crease, CREASE_POINT)!!) / (float)crease_none;
-    io::eprintfn("crease ratio: gtao %.3f, ray traced (%d rays) %.3f", screen_space_ratio, ray_traced.ray_count, ray_traced_ratio);
-    assert(screen_space_ratio < CREASE_RATIO_MAXIMUM && ray_traced_ratio < CREASE_RATIO_MAXIMUM);
-    check_validation(&fixture.renderer);
-}
-
-fn void test_forward_surfaces_of_a_deferred_view_use_their_own_normals() @test {
-    Fixture fixture;
-    create_fixture(mem, &fixture, ray_queries: true)!!;
-    defer destroy_fixture(&fixture);
-    CreaseScene crease = create_crease_scene(&fixture)!!;
-    defer scene::destroy_scene(&crease.scene);
-    ToonParams toon = material::TOON_PARAMS_DEFAULT;
-    toon.color = { LIT_ALBEDO, LIT_ALBEDO, LIT_ALBEDO, 1 };
-    MaterialId forward_only = fixture.assets.add_material(material::toon(toon))!!;
-    crease.scene.get(crease.floor, Mesh).material = forward_only;
-    AoView ao_view = create_ao_view(&fixture, ShadingPath.DEFERRED)!!;
-    defer destroy_ao_view(&fixture, &ao_view);
-    crease.view = ao_view.view;
-
-    int crease_none = red(render_and_read(&fixture, &crease, CREASE_POINT)!!);
-    int open_none = red(render_and_read(&fixture, &crease, OPEN_POINT)!!);
-    AoKind[2] kinds = { AoKind.SSAO, AoKind.RAY_TRACED };
-    foreach (kind : kinds) {
-        AmbientOcclusionDesc ambient_occlusion = render::AMBIENT_OCCLUSION_DEFAULT;
-        ambient_occlusion.kind = kind;
-        set_ambient_occlusion(&fixture, ao_view.view, ambient_occlusion)!!;
-        int crease_ao = red(render_and_read(&fixture, &crease, CREASE_POINT)!!);
-        int open_ao = red(render_and_read(&fixture, &crease, OPEN_POINT)!!);
-        io::eprintfn("%s on a forward surface: crease %d -> %d, open %d -> %d", kind, crease_none, crease_ao, open_none, open_ao);
-        assert((float)crease_ao < CREASE_RATIO_MAXIMUM * (float)crease_none);
-        assert((float)open_ao > OPEN_RATIO_MINIMUM * (float)open_none);
-    }
-    check_validation(&fixture.renderer);
 }
 
 fn void test_reflection_images_follow_the_settings() @test {
-    Fixture fixture;
-    create_fixture(mem, &fixture, ray_queries: true)!!;
-    defer destroy_fixture(&fixture);
-    MirrorScene mirror = create_mirror_scene(&fixture, false)!!;
-    defer scene::destroy_scene(&mirror.scene);
-    AoView mirror_view = create_ao_view(&fixture, ShadingPath.DEFERRED)!!;
-    defer destroy_ao_view(&fixture, &mirror_view);
-    ViewRecord* record = fixture.renderer.views.get(mirror_view.view);
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        MirrorScene mirror = create_mirror_scene(&fixture, false)!!;
+        defer scene::destroy_scene(&mirror.scene);
+        AoView mirror_view = create_ao_view(&fixture, ShadingPath.DEFERRED)!!;
+        defer destroy_ao_view(&fixture, &mirror_view);
+        ViewRecord* record = fixture.renderer.views.get(mirror_view.view);
 
-    assert(!record.reflection.texture.is_valid() && !record.reflection_blur.texture.is_valid());
-    set_reflections(&fixture, mirror_view.view, true)!!;
-    Target*[2] images = { &record.reflection, &record.reflection_blur };
-    foreach (image : images) {
-        assert(image.texture.is_valid());
-        assert(image.width == AO_TARGET_WIDTH && image.height == AO_TARGET_HEIGHT);
-        assert(image.format == gpu::Format.RGBA16_FLOAT);
+        assert(!record.reflection.texture.is_valid() && !record.reflection_blur.texture.is_valid());
+        set_reflections(&fixture, mirror_view.view, true)!!;
+        Target*[2] images = { &record.reflection, &record.reflection_blur };
+        foreach (image : images) {
+            assert(image.texture.is_valid());
+            assert(image.width == AO_TARGET_WIDTH && image.height == AO_TARGET_HEIGHT);
+            assert(image.format == gpu::Format.RGBA16_FLOAT);
+        }
+        (void)render_mirror(&fixture, &mirror, mirror_view.view, MISS_POINT)!!;
+
+        set_reflections(&fixture, mirror_view.view, false)!!;
+        assert(!record.reflection.texture.is_valid() && !record.reflection_blur.texture.is_valid());
+        set_reflections(&fixture, mirror_view.view, true)!!;
+        (void)render_mirror(&fixture, &mirror, mirror_view.view, MISS_POINT)!!;
+        check_validation(&fixture.renderer);
     }
-    (void)render_mirror(&fixture, &mirror, mirror_view.view, MISS_POINT)!!;
-
-    set_reflections(&fixture, mirror_view.view, false)!!;
-    assert(!record.reflection.texture.is_valid() && !record.reflection_blur.texture.is_valid());
-    set_reflections(&fixture, mirror_view.view, true)!!;
-    (void)render_mirror(&fixture, &mirror, mirror_view.view, MISS_POINT)!!;
-    check_validation(&fixture.renderer);
 }
 
 fn void test_reflections_show_an_off_screen_emitter() @test {
-    Fixture fixture;
-    create_fixture(mem, &fixture, ray_queries: true)!!;
-    defer destroy_fixture(&fixture);
-    print_adapter(&fixture);
-    MirrorScene mirror = create_mirror_scene(&fixture, false)!!;
-    defer scene::destroy_scene(&mirror.scene);
-    AoView mirror_view = create_ao_view(&fixture, ShadingPath.DEFERRED)!!;
-    defer destroy_ao_view(&fixture, &mirror_view);
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        print_adapter(&fixture);
+        MirrorScene mirror = create_mirror_scene(&fixture, false)!!;
+        defer scene::destroy_scene(&mirror.scene);
+        AoView mirror_view = create_ao_view(&fixture, ShadingPath.DEFERRED)!!;
+        defer destroy_ao_view(&fixture, &mirror_view);
 
-    Vec4 lowest = mirror_clip(&mirror, EMITTER_LOWEST_POINT);
-    assert(lowest.w > 0 && lowest.y / lowest.w > 1);
+        Vec4 lowest = mirror_clip(&mirror, EMITTER_LOWEST_POINT);
+        assert(lowest.w > 0 && lowest.y / lowest.w > 1);
 
-    uint image_off = render_mirror(&fixture, &mirror, mirror_view.view, EMITTER_IMAGE_POINT)!!;
-    uint miss_off = render_mirror(&fixture, &mirror, mirror_view.view, MISS_POINT)!!;
-    set_reflections(&fixture, mirror_view.view, true)!!;
-    uint image_on = render_mirror(&fixture, &mirror, mirror_view.view, EMITTER_IMAGE_POINT)!!;
-    uint miss_on = render_mirror(&fixture, &mirror, mirror_view.view, MISS_POINT)!!;
-    io::eprintfn("emitter image: off %06x on %06x; miss: off %06x on %06x", image_off, image_on, miss_off, miss_on);
+        uint image_off = render_mirror(&fixture, &mirror, mirror_view.view, EMITTER_IMAGE_POINT)!!;
+        uint miss_off = render_mirror(&fixture, &mirror, mirror_view.view, MISS_POINT)!!;
+        set_reflections(&fixture, mirror_view.view, true)!!;
+        uint image_on = render_mirror(&fixture, &mirror, mirror_view.view, EMITTER_IMAGE_POINT)!!;
+        uint miss_on = render_mirror(&fixture, &mirror, mirror_view.view, MISS_POINT)!!;
+        io::eprintfn(
+            "%s, emitter image: off %06x on %06x; miss: off %06x on %06x",
+            trace_name(ray_queries),
+            image_off,
+            image_on,
+            miss_off,
+            miss_on,
+        );
 
-    assert(red(image_off) < DARK_MAXIMUM && blue(image_off) < DARK_MAXIMUM);
-    assert(red(image_on) > EMITTER_MINIMUM && green(image_on) < DARK_MAXIMUM);
-    float ambient = MIRROR_AMBIENT_INTENSITY * 255;
-    assert(blue(miss_off) < DARK_MAXIMUM);
-    assert((float)blue(miss_on) >= MISS_WEIGHT_MINIMUM * ambient && (float)blue(miss_on) <= ambient + 1);
-    assert(red(miss_on) < DARK_MAXIMUM);
-    check_validation(&fixture.renderer);
+        assert(red(image_off) < DARK_MAXIMUM && blue(image_off) < DARK_MAXIMUM);
+        assert(red(image_on) > EMITTER_MINIMUM && green(image_on) < DARK_MAXIMUM);
+        float ambient = MIRROR_AMBIENT_INTENSITY * 255;
+        assert(blue(miss_off) < DARK_MAXIMUM);
+        assert((float)blue(miss_on) >= MISS_WEIGHT_MINIMUM * ambient && (float)blue(miss_on) <= ambient + 1);
+        assert(red(miss_on) < DARK_MAXIMUM);
+        check_validation(&fixture.renderer);
+    }
 }
 
 fn void test_reflections_leave_rough_pixels_to_the_environment() @test {
-    Fixture fixture;
-    create_fixture(mem, &fixture, ray_queries: true)!!;
-    defer destroy_fixture(&fixture);
-    MirrorScene mirror = create_mirror_scene(&fixture, true)!!;
-    defer scene::destroy_scene(&mirror.scene);
-    mirror.scene.get(mirror.floor, Mesh).material = mirror.rough;
-    AoView mirror_view = create_ao_view(&fixture, ShadingPath.DEFERRED)!!;
-    defer destroy_ao_view(&fixture, &mirror_view);
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        MirrorScene mirror = create_mirror_scene(&fixture, true)!!;
+        defer scene::destroy_scene(&mirror.scene);
+        mirror.scene.get(mirror.floor, Mesh).material = mirror.rough;
+        AoView mirror_view = create_ao_view(&fixture, ShadingPath.DEFERRED)!!;
+        defer destroy_ao_view(&fixture, &mirror_view);
 
-    uint reflections_off = render_mirror(&fixture, &mirror, mirror_view.view, EMITTER_IMAGE_POINT)!!;
-    set_reflections(&fixture, mirror_view.view, true)!!;
-    uint reflections_on = render_mirror(&fixture, &mirror, mirror_view.view, EMITTER_IMAGE_POINT)!!;
-    io::eprintfn("rough floor: off %06x on %06x", reflections_off, reflections_on);
+        uint reflections_off = render_mirror(&fixture, &mirror, mirror_view.view, EMITTER_IMAGE_POINT)!!;
+        set_reflections(&fixture, mirror_view.view, true)!!;
+        uint reflections_on = render_mirror(&fixture, &mirror, mirror_view.view, EMITTER_IMAGE_POINT)!!;
+        io::eprintfn("%s, rough floor: off %06x on %06x", trace_name(ray_queries), reflections_off, reflections_on);
 
-    assert(red(reflections_off) > DARK_MAXIMUM);
-    assert(math::abs(red(reflections_on) - red(reflections_off)) <= MIRROR_TOLERANCE);
-    assert(math::abs(green(reflections_on) - green(reflections_off)) <= MIRROR_TOLERANCE);
-    assert(math::abs(blue(reflections_on) - blue(reflections_off)) <= MIRROR_TOLERANCE);
-    check_validation(&fixture.renderer);
+        assert(red(reflections_off) > DARK_MAXIMUM);
+        assert(math::abs(red(reflections_on) - red(reflections_off)) <= MIRROR_TOLERANCE);
+        assert(math::abs(green(reflections_on) - green(reflections_off)) <= MIRROR_TOLERANCE);
+        assert(math::abs(blue(reflections_on) - blue(reflections_off)) <= MIRROR_TOLERANCE);
+        check_validation(&fixture.renderer);
+    }
+}
+
+fn void test_reflections_skip_a_single_sided_panel_seen_from_behind() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        MirrorScene mirror = create_mirror_scene(&fixture, false)!!;
+        defer scene::destroy_scene(&mirror.scene);
+        AoView mirror_view = create_ao_view(&fixture, ShadingPath.DEFERRED)!!;
+        defer destroy_ao_view(&fixture, &mirror_view);
+        set_reflections(&fixture, mirror_view.view, true)!!;
+        GeometryId sheet;
+        @pool() {
+            Geometry plane = geometry::plane(tmem, EMITTER_SHEET_SIZE, EMITTER_SHEET_SIZE);
+            sheet = fixture.assets.add_geometry(&plane)!!;
+        };
+        MaterialCommon both_faces = material::MATERIAL_COMMON_DEFAULT;
+        both_faces.double_sided = true;
+        MaterialId double_sided = fixture.assets.add_material(material::standard(mirror.glow, both_faces))!!;
+        // The sheet's front faces up, away from the floor that reflects it.
+        Mesh* emitter = mirror.scene.get(mirror.emitter, Mesh);
+        emitter.geometry = sheet;
+        mirror.scene.update_world();
+
+        uint single_sided = render_mirror(&fixture, &mirror, mirror_view.view, EMITTER_IMAGE_POINT)!!;
+        emitter.material = double_sided;
+        uint both = render_mirror(&fixture, &mirror, mirror_view.view, EMITTER_IMAGE_POINT)!!;
+        io::eprintfn(
+            "%s, sheet seen from behind: single-sided %06x, double-sided %06x",
+            trace_name(ray_queries),
+            single_sided,
+            both,
+        );
+        float ambient = MIRROR_AMBIENT_INTENSITY * 255;
+        assert(red(single_sided) < DARK_MAXIMUM && (float)blue(single_sided) >= MISS_WEIGHT_MINIMUM * ambient);
+        assert(red(both) > EMITTER_MINIMUM && green(both) < DARK_MAXIMUM);
+        check_validation(&fixture.renderer);
+    }
+}
+
+fn void test_reflections_show_a_mirrored_emitter_like_its_twin() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        MirrorScene mirror = create_mirror_scene(&fixture, false)!!;
+        defer scene::destroy_scene(&mirror.scene);
+        AoView mirror_view = create_ao_view(&fixture, ShadingPath.DEFERRED)!!;
+        defer destroy_ao_view(&fixture, &mirror_view);
+        set_reflections(&fixture, mirror_view.view, true)!!;
+
+        uint twin = render_mirror(&fixture, &mirror, mirror_view.view, EMITTER_IMAGE_POINT)!!;
+        mirror.emitter.local.scale = { -1, 1, 1 };
+        mirror.scene.update_world();
+        uint mirrored = render_mirror(&fixture, &mirror, mirror_view.view, EMITTER_IMAGE_POINT)!!;
+        io::eprintfn("%s, emitter image: twin %06x, mirrored %06x", trace_name(ray_queries), twin, mirrored);
+        assert(red(twin) > EMITTER_MINIMUM);
+        assert(math::abs(red(mirrored) - red(twin)) <= MIRROR_TOLERANCE);
+        assert(math::abs(green(mirrored) - green(twin)) <= MIRROR_TOLERANCE);
+        assert(math::abs(blue(mirrored) - blue(twin)) <= MIRROR_TOLERANCE);
+        check_validation(&fixture.renderer);
+    }
 }

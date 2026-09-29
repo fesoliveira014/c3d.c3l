@@ -195,6 +195,10 @@ fn uint trace_shader_flags(Renderer* renderer) @private {
     return renderer.caps.ray_queries.enabled ? 0 : shader::SHADER_FLAG_SCENE_TRACE_BVH;
 }
 
+fn uint rt_shadow_flags(Renderer* renderer, bool rt_shadows) @private {
+    return rt_shadows ? shader::SHADER_FLAG_RT_SHADOWS | trace_shader_flags(renderer) : 0;
+}
+
 // buildable: the store proved the list for this revision and still holds the CPU arrays.
 fn TraceSource trace_source(uint built_revision, uint revision, bool buildable) @private {
     if (built_revision != 0 && built_revision == revision) return TraceSource.REUSE;
@@ -236,6 +240,7 @@ fn gpu::AccelerationStructureGeometryDesc blas_geometry_desc(GeometryLayout* lay
 fn gpu::AccelerationStructureInstanceDesc tlas_instance_desc(TraceInstance* record, uint row) @private {
     Mat4 world = record.world;
     bool masked = (record.flags & shader::TRACE_INSTANCE_ALPHA_MASK) != 0;
+    bool double_sided = (record.flags & shader::TRACE_INSTANCE_DOUBLE_SIDED) != 0;
     return {
         .transform_row_0 = { world.m00, world.m01, world.m02, world.m03 },
         .transform_row_1 = { world.m10, world.m11, world.m12, world.m13 },
@@ -243,7 +248,13 @@ fn gpu::AccelerationStructureInstanceDesc tlas_instance_desc(TraceInstance* reco
         .bottom_level    = record.bottom_level,
         .custom_index    = row,
         .mask            = record.mask,
-        .flags           = { .triangle_cull_disable, .force_opaque = !masked, .force_non_opaque = masked },
+        // Vulkan decides facing in object space, where a mirrored instance keeps its winding, and its default
+        // front is the counter-clockwise side raster draws, so no row flips.
+        .flags           = {
+            .triangle_cull_disable = double_sided,
+            .force_opaque          = !masked,
+            .force_non_opaque      = masked,
+        },
     };
 }
 

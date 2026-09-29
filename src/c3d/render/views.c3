@@ -716,14 +716,11 @@ fn void? reset_view_history(Renderer* renderer, ViewId view) {
 }
 
 fn void? validate_view_desc(Renderer* renderer, ViewDesc* desc) @private {
-    bool ray_queries = renderer.caps.ray_queries.enabled;
-    if (desc.ray_tracing.shadows && !ray_queries) return c3d::UNSUPPORTED~;
-    if (desc.ambient_occlusion.kind == AoKind.RAY_TRACED && !ray_queries) return c3d::UNSUPPORTED~;
     if (!ambient_occlusion_desc_valid(&desc.ambient_occlusion)) return c3d::INVALID_ARGUMENT~;
     if (!screen_space_gi_desc_valid(&desc.screen_space_gi)) return c3d::INVALID_ARGUMENT~;
     RayTracingDesc* ray_tracing = &desc.ray_tracing;
     if (ray_tracing.reflections) {
-        if (desc.shading != ShadingPath.DEFERRED || !ray_queries) return c3d::UNSUPPORTED~;
+        if (desc.shading != ShadingPath.DEFERRED) return c3d::UNSUPPORTED~;
         float roughness = ray_tracing.max_reflection_roughness;
         if (!math::is_finite(roughness) || roughness <= 0 || roughness > 1) return c3d::INVALID_ARGUMENT~;
     }

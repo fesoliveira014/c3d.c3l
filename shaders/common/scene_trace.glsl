@@ -56,7 +56,50 @@ bool trace_scene_query(
     return true;
 }
 
+// Nearest hit a viewer at the origin sees: a single-sided face counts only from its front.
 bool trace_scene(
+    SceneTraceRoot scene,
+    vec3 origin,
+    vec3 direction,
+    float t_max,
+    uint instance_mask,
+    out SceneHit hit
+) {
+    return trace_scene_query(
+        scene,
+        origin,
+        direction,
+        t_max,
+        instance_mask,
+        gl_RayFlagsCullBackFacingTrianglesEXT,
+        hit
+    );
+}
+
+// Shadow test toward the far end: a single-sided face counts only where a light there sees its front, so the
+// answer depends on the ray's direction.
+bool trace_scene_any(
+    SceneTraceRoot scene,
+    vec3 origin,
+    vec3 direction,
+    float t_max,
+    uint instance_mask
+) {
+    SceneHit ignored;
+    return trace_scene_query(
+        scene,
+        origin,
+        direction,
+        t_max,
+        instance_mask,
+        gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsCullFrontFacingTrianglesEXT,
+        ignored
+    );
+}
+
+// Nearest hit on either face of every instance; the instance mask and the alpha test still apply.
+// surface_from_hit sets TraceSurface.back_face for a single-sided hit from behind.
+bool trace_scene_with_back_faces(
     SceneTraceRoot scene,
     vec3 origin,
     vec3 direction,
@@ -75,25 +118,6 @@ bool trace_scene(
     );
 }
 
-bool trace_scene_any(
-    SceneTraceRoot scene,
-    vec3 origin,
-    vec3 direction,
-    float t_max,
-    uint instance_mask
-) {
-    SceneHit ignored;
-    return trace_scene_query(
-        scene,
-        origin,
-        direction,
-        t_max,
-        instance_mask,
-        gl_RayFlagsTerminateOnFirstHitEXT,
-        ignored
-    );
-}
-
 #else
 
 GPU_DECLARE_READONLY_ARRAY_REF(BvhNodeArray, BvhNodeGpu);
@@ -101,6 +125,9 @@ GPU_DECLARE_READONLY_ARRAY_REF(PrimitiveArray, uint);
 
 const float TRIANGLE_PARALLEL_EPSILON = 1e-8; // mirrored from maths/bounds.c3
 const float TRACE_MIN_DIRECTION = 1e-30; // keeps a zero direction component finite in the slab test
+const uint TRACE_CULL_BACK_FACES = 0u;  // a looking ray keeps the faces a viewer at its origin sees
+const uint TRACE_CULL_FRONT_FACES = 1u; // a shadow ray keeps the faces the light at its far end sees
+const uint TRACE_CULL_NONE = 2u;
 
 struct TraceRay {
     vec3 origin;
@@ -137,14 +164,15 @@ bool trace_triangle(
     vec3 b,
     vec3 c,
     out float t,
-    out vec2 weights
+    out vec2 weights,
+    out float determinant
 ) {
     t = 0.0;
     weights = vec2(0.0);
     vec3 edge_ab = b - a;
     vec3 edge_ac = c - a;
     vec3 perpendicular = cross(ray.direction, edge_ac);
-    float determinant = dot(edge_ab, perpendicular);
+    determinant = dot(edge_ab, perpendicular);
     if (abs(determinant) < TRIANGLE_PARALLEL_EPSILON) return false;
 
     float inverse_determinant = 1.0 / determinant;
@@ -201,6 +229,7 @@ bool trace_next_node(
 bool trace_instance(
     TraceInstanceGpu instance,
     uint row,
+    uint cull,
     vec3 origin,
     vec3 direction,
     bool first_hit,
@@ -227,6 +256,7 @@ bool trace_instance(
     uint stack_count = 0u;
     uint node_index = 0u;
     bool found = false;
+    uint row_cull = (instance.flags & TRACE_INSTANCE_DOUBLE_SIDED) != 0u ? TRACE_CULL_NONE : cull;
     do {
         BvhNodeGpu node = nodes.values[node_index];
         for (uint slot = 0u; slot < node.count; slot++) {
@@ -234,15 +264,22 @@ bool trace_instance(
             uvec3 corners = pull_triangle(geometry, primitive);
             float t;
             vec2 weights;
+            float determinant;
             bool met = trace_triangle(
                 ray,
                 pull_vec3(geometry.positions, corners.x),
                 pull_vec3(geometry.positions, corners.y),
                 pull_vec3(geometry.positions, corners.z),
                 t,
-                weights
+                weights,
+                determinant
             );
             if (!met || t >= t_max) continue;
+            // The determinant is -dot(direction, cross(b - a, c - a)) in local space: positive meets the
+            // counter-clockwise front, the side raster draws, mirrored or not. Zero is a ray in the triangle's
+            // plane, which the intersection already rejects.
+            if (row_cull == TRACE_CULL_BACK_FACES && determinant <= 0.0) continue;
+            if (row_cull == TRACE_CULL_FRONT_FACES && determinant >= 0.0) continue;
             SceneHit candidate = SceneHit(
                 row,
                 primitive,
@@ -269,6 +306,7 @@ bool trace_instance(
 
 bool trace_scene_walk(
     SceneTraceRoot scene,
+    uint cull,
     vec3 origin,
     vec3 direction,
     float t_max,
@@ -301,6 +339,7 @@ bool trace_scene_walk(
             bool met = trace_instance(
                 instance,
                 row,
+                cull,
                 origin,
                 direction,
                 first_hit,
@@ -323,6 +362,7 @@ bool trace_scene_walk(
     return found;
 }
 
+// Nearest hit a viewer at the origin sees: a single-sided face counts only from its front.
 bool trace_scene(
     SceneTraceRoot scene,
     vec3 origin,
@@ -333,6 +373,7 @@ bool trace_scene(
 ) {
     return trace_scene_walk(
         scene,
+        TRACE_CULL_BACK_FACES,
         origin,
         direction,
         t_max,
@@ -342,6 +383,8 @@ bool trace_scene(
     );
 }
 
+// Shadow test toward the far end: a single-sided face counts only where a light there sees its front, so the
+// answer depends on the ray's direction.
 bool trace_scene_any(
     SceneTraceRoot scene,
     vec3 origin,
@@ -352,12 +395,35 @@ bool trace_scene_any(
     SceneHit ignored;
     return trace_scene_walk(
         scene,
+        TRACE_CULL_FRONT_FACES,
         origin,
         direction,
         t_max,
         instance_mask,
         true,
         ignored
+    );
+}
+
+// Nearest hit on either face of every instance; the instance mask and the alpha test still apply.
+// surface_from_hit sets TraceSurface.back_face for a single-sided hit from behind.
+bool trace_scene_with_back_faces(
+    SceneTraceRoot scene,
+    vec3 origin,
+    vec3 direction,
+    float t_max,
+    uint instance_mask,
+    out SceneHit hit
+) {
+    return trace_scene_walk(
+        scene,
+        TRACE_CULL_NONE,
+        origin,
+        direction,
+        t_max,
+        instance_mask,
+        false,
+        hit
     );
 }
 

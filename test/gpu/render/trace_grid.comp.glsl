@@ -18,7 +18,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer Tr
     float plane_z;
     uint grid_size;
     uint instance_mask;
-    uint padding;
+    uint entry;
 };
 
 struct TraceGridResult {
@@ -27,12 +27,14 @@ struct TraceGridResult {
     float t;
     uint geometry_low;
     vec2 barycentrics;
-    vec2 padding;
+    uint back_face;
+    uint padding;
 };
 
 GPU_DECLARE_WRITEONLY_ARRAY_REF(TraceGridOutput, TraceGridResult);
 
 const float TRACE_FAR = 1.0e30;
+const uint TRACE_ENTRY_WITH_BACK_FACES = 1u; // mirrored as TRACE_ENTRY_WITH_BACK_FACES in test_scene_trace.c3
 
 void main() {
     DispatchRoot dispatch = DispatchRoot(pc.root_gpu);
@@ -51,16 +53,12 @@ void main() {
         0.0,
         0u,
         vec2(0.0),
-        vec2(0.0)
+        0u,
+        0u
     );
-    bool met = trace_scene(
-        scene,
-        root.origin.xyz,
-        direction,
-        TRACE_FAR,
-        root.instance_mask,
-        hit
-    );
+    bool met = root.entry == TRACE_ENTRY_WITH_BACK_FACES
+        ? trace_scene_with_back_faces(scene, root.origin.xyz, direction, TRACE_FAR, root.instance_mask, hit)
+        : trace_scene(scene, root.origin.xyz, direction, TRACE_FAR, root.instance_mask, hit);
     if (met) {
         TraceInstanceGpu instance = TraceInstanceArray(scene.instances).values[hit.instance];
         result = TraceGridResult(
@@ -69,7 +67,8 @@ void main() {
             hit.t,
             uint(instance.geometry),
             hit.barycentrics,
-            vec2(0.0)
+            surface_from_hit(scene, hit, direction, 0.0).back_face ? 1u : 0u,
+            0u
         );
     }
     TraceGridOutput(root.output_address).values[cell.y * root.grid_size + cell.x] = result;

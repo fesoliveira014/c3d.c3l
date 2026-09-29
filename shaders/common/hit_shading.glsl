@@ -1,8 +1,8 @@
 #ifndef C3D_HIT_SHADING_GLSL
 #define C3D_HIT_SHADING_GLSL
 
-#if !defined(SCENE_TRACE_RAY_QUERY) || !defined(RT_SHADOWS)
-#error "define SCENE_TRACE_RAY_QUERY and RT_SHADOWS before including hit_shading.glsl"
+#ifndef RT_SHADOWS
+#error "define RT_SHADOWS before including hit_shading.glsl"
 #endif
 
 #include "constants.glsl"
@@ -76,7 +76,6 @@ vec3 shade_lambert_hit(FrameRoot frame, TraceSurface surface, vec3 view_directio
 
 // Light layers are not applied: trace rows carry none.
 vec3 shade_hit(FrameRoot frame, TraceSurface surface, vec3 view_direction) {
-    if (surface.back_face) return vec3(0.0);
     switch (surface.material_kind) {
         case MATERIAL_KIND_BASIC:
             return surface.albedo;

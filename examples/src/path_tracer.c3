@@ -381,7 +381,7 @@ fn int run_window() @local {
         gui::stats_panel(&renderer)!!;
         imgui::set_next_window_pos(POST_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(POST_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
-        bool view_changed = gui::post_panel(&view_desc, {}, renderer.caps.ray_queries.enabled);
+        bool view_changed = gui::post_panel(&view_desc, {});
         apply_orbit(&orbit, input, camera_node);
         scene.update_world();
         gui_renderer.finish_frame();

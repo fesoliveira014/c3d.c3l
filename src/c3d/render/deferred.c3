@@ -63,10 +63,10 @@ fn gpu::PipelineHandle? default_gbuffer_pipeline(Renderer* renderer) @private {
     return renderer.pipelines.get(&renderer.device, key);
 }
 
-fn PipelineKey lighting_resolve_pipeline_key(bool rt_shadows) @private {
+fn PipelineKey lighting_resolve_pipeline_key(uint shadow_flags) @private {
     return {
         .vertex        = { .shader = FULLSCREEN },
-        .fragment      = { .shader = LIGHTING_RESOLVE, .flags = rt_shadows ? shader::SHADER_FLAG_RT_SHADOWS : 0 },
+        .fragment      = { .shader = LIGHTING_RESOLVE, .flags = shadow_flags },
         .color_formats = { [0] = HDR_FORMAT },
         .color_count   = 1,
         .depth_format  = gpu::Format.UNDEFINED,
@@ -195,7 +195,7 @@ fn void? record_lighting_pass(
     };
     gpu::PipelineHandle pipeline = renderer.pipelines.get(
         &renderer.device,
-        lighting_resolve_pipeline_key(record.desc.ray_tracing.shadows),
+        lighting_resolve_pipeline_key(rt_shadow_flags(renderer, record.desc.ray_tracing.shadows)),
     )!;
 
     @profile_pass(renderer, Pass.LIGHTING) {

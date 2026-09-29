@@ -78,9 +78,10 @@ if (trace_scene(scene, origin, direction, 1.0e30, TRACE_MASK_ALL, hit)) {
     uvec3 corners = pull_triangle(geometry, hit.primitive);
 }
 bool blocked = trace_scene_any(scene, origin, direction, distance_to_light, TRACE_MASK_SHADOW_CASTER);
+bool met = trace_scene_with_back_faces(scene, origin, direction, 1.0e30, TRACE_MASK_ALL, hit);
 ```
 
-A built-in shader that serves both kinds is compiled twice through the `SCENE_TRACE_BVH` flag of `shaders/variants.json`: the source defines `SCENE_TRACE_RAY_QUERY` unless the flag is set, and the renderer picks the variant from `caps.ray_queries.enabled`, the same bit that selects the prepared kind. The probe update (`probe_trace.comp.glsl`) is the first such shader.
+A built-in shader that serves both kinds is compiled twice through the `SCENE_TRACE_BVH` flag of `shaders/variants.json`: the source defines `SCENE_TRACE_RAY_QUERY` unless the flag is set, and the renderer picks the variant from `caps.ray_queries.enabled`, the same bit that selects the prepared kind. Every built-in consumer does: traced shadows in the `standard`, `physical`, `toon` and `lighting_resolve` fragment stages, ray-traced ambient occlusion, ray-traced reflections and the probe update. A renderer created without ray queries therefore runs every traced effect on the software walk; the path tracer alone needs ray-tracing pipelines.
 
 The instance mask selects rows: every row carries `TRACE_MASK_ALL`, and rows of meshes with `cast_shadow` also carry `TRACE_MASK_SHADOW_CASTER`. A row whose mask shares no bit with the argument is skipped.
 
@@ -91,9 +92,19 @@ The instance mask selects rows: every row carries `TRACE_MASK_ALL`, and rows of 
 - `barycentrics`: the weights of the triangle's second and third corners.
 - `t`: the distance along `direction` as given. It is a world distance when `direction` is normalized.
 
-`TraceInstanceGpu` gives the hit's `GeometryRoot`, material block address, material kind, `TRACE_INSTANCE_ALPHA_MASK` and `TRACE_INSTANCE_DOUBLE_SIDED` flags, the instance mask and both affine transforms as rows. Triangles are two-sided. A masked row (`TRACE_INSTANCE_ALPHA_MASK`) reports a triangle only where its coverage reaches the material's `alpha_cutoff`: base color alpha times the base map's alpha at the hit's UV (sampled at the top mip), times vertex alpha when the geometry has colors; a custom material uses slot 0's alpha. Both kinds apply the same test, so they report the same hits.
+`TraceInstanceGpu` gives the hit's `GeometryRoot`, material block address, material kind, `TRACE_INSTANCE_ALPHA_MASK` and `TRACE_INSTANCE_DOUBLE_SIDED` flags, the instance mask and both affine transforms as rows. Which faces a ray meets is set by the entry point ([Facing](#facing)). A masked row (`TRACE_INSTANCE_ALPHA_MASK`) reports a triangle only where its coverage reaches the material's `alpha_cutoff`: base color alpha times the base map's alpha at the hit's UV (sampled at the top mip), times vertex alpha when the geometry has colors; a custom material uses slot 0's alpha. Both kinds apply the same test, so they report the same hits.
 
 The traversal keeps a stack of `BVH_STACK_DEPTH` entries per level; builds never exceed that depth.
+
+### Facing
+
+A triangle's front is its counter-clockwise side in the geometry's local space: the side raster draws, for mirrored models too, and the side `PickFaces.FRONT` accepts. A double-sided material (`TRACE_INSTANCE_DOUBLE_SIDED`) has two fronts. The entry points keep what raster would show from the ray's point of view:
+
+- `trace_scene` is a looking ray. It keeps the faces a viewer at its origin sees: a single-sided triangle counts only from its front. Primary, ambient occlusion, reflection and path-tracer bounce rays use it.
+- `trace_scene_any` is a shadow test toward the ray's far end. It keeps the faces a light there sees, the faces the shadow atlas draws: a single-sided triangle counts only when its front faces the far end. Its answer depends on the ray's direction; it is not a symmetric line-of-sight test.
+- `trace_scene_with_back_faces` keeps both faces of every triangle, and `surface_from_hit` sets `TraceSurface.back_face` for a single-sided triangle hit from behind. The probe update uses it, because a probe inside geometry must read dark.
+
+The instance mask and the alpha test apply to all three, after the facing test. Both kinds give the same hits. `trace_scene` and `trace_scene_any` counted both faces before the software path for traced effects landed; a shader that relied on that uses `trace_scene_with_back_faces` for a nearest hit. CPU picking applies `PickOptions.faces`, whose default `MATERIAL` matches `trace_scene`.
 
 ### Hit surfaces
 
@@ -106,7 +117,7 @@ TraceSurface surface = surface_from_hit(scene, hit, direction, cone_width);
 `TraceSurface` holds the world position, the shading and geometric normals, albedo (base colour
 times its map and vertex colour), emission, metallic and roughness (Standard and Physical rows;
 0 and 1 otherwise), the material kind and block address, and `back_face`, set when the ray hit
-the back of a single-sided surface. Standard and Physical normal maps apply to the shading
+the back of a single-sided surface (only `trace_scene_with_back_faces` reports such hits). Standard and Physical normal maps apply to the shading
 normal, through the tangent stream when the geometry has one and through the triangle's edges
 otherwise. A double-sided surface hit from behind reports flipped normals instead. Maps sample at the level of detail a ray cone of width `cone_width` (world
 units, at the hit) selects over the triangle; `ray_cone_lod` in `c3d::render` is its CPU twin.

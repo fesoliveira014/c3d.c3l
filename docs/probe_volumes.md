@@ -53,7 +53,8 @@ A `SCENE` volume casts `update.rays_per_probe` rays from each probe of a window 
 
 **Trace kind.** A renderer created with `RendererDesc.ray_queries` traces probe rays through ray queries;
 any other renderer uses the software walk. There is no setting: comparing the two means two renderers. Both
-kinds hit the same triangles, report back faces the same way (a probe inside a wall reads dark on both) and
+kinds hit the same triangles, report back faces the same way (a probe inside a wall reads dark on both: the probe
+ray keeps both faces through `trace_scene_with_back_faces`, while its hits' shadow rays follow the atlas) and
 use the same default of 128 rays per probe; on the RTX 4090 every ray result of the acceptance room agrees
 between them. A hit that lands exactly on a volume's box face takes the probes or the SH term by the last
 bit of its distance, so there the kinds can differ. The ray rotations start after the all-zero Halton point,

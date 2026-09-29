@@ -69,8 +69,11 @@ desc.ambient_occlusion.kind = AoKind.RAY_TRACED;
 render::configure_view(&renderer, renderer.default_view, desc)!;
 ```
 
-- It needs `RendererDesc.ray_queries`; without it `create_view` and `configure_view` fault
-  `UNSUPPORTED`. There is no software fallback.
+- With `RendererDesc.ray_queries` the rays run on ray queries; without them on the software walk
+  ([scene tracing](scene_trace.md)). On an RTX 4090 (Sponza,
+  2160p) the software rays cost about 11 times the ray-query rays: 9.2 ms against 0.85 ms.
+- A ray sees what a viewer at its origin would: the front of a single-sided surface, both faces of a
+  double-sided one ([facing](scene_trace.md#facing)).
 - Every estimate texel casts `ray_count` cosine-weighted rays over the hemisphere of its normal
   (G-buffer on deferred views, reconstructed from depth on forward views), each up to `radius`.
   A ray's nearest hit counts with the same distance falloff as the screen-space estimate: fully

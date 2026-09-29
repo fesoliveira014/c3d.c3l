@@ -113,8 +113,8 @@ button, and the post panel's "Path tracing" header edits bounces, samples per fr
   are not sampled; `BLEND` surfaces, skinned and morphed meshes are not traced; custom shader code
   does not run at hits.
 - Light layers and camera layers are not applied.
-- The back of a single-sided surface renders black where raster culls it and shows what lies
-  behind it.
+- Camera and bounce rays pass the back of a single-sided surface, as raster culls it, and shadow
+  rays keep the faces the light sees ([facing](scene_trace.md#facing)).
 
 ## Example
 

@@ -184,7 +184,9 @@ output and the shared tile images; disabling retires them. `configure_view` faul
 ## GUI
 
 `gui::post_panel(&view_desc, lut)` edits every setting and returns whether something changed; the
-example calls `configure_view` before its next frame when it did. `gui::anti_aliasing_combo`
+example calls `configure_view` before its next frame when it did. The ray-traced controls are enabled on
+every renderer, since traced effects run without ray queries too; reflections stay disabled on a
+`FORWARD` view. `gui::anti_aliasing_combo`
 selects one view's filter on its own. `gui::stats_panel` reports post
 dispatches and the completed velocity and post-chain timings.
 

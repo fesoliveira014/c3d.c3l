@@ -24,8 +24,10 @@ render::configure_view(&renderer, renderer.default_view, desc)!;
 `default_view_desc` and `texture_view_desc` set `max_reflection_roughness` to
 `RT_REFLECTION_ROUGHNESS_DEFAULT` (0.5). `create_view` and `configure_view` fault:
 
-- `UNSUPPORTED` when `reflections` is set on a `FORWARD` view or on a renderer created without
-  `RendererDesc.ray_queries`. There is no software fallback.
+- `UNSUPPORTED` when `reflections` is set on a `FORWARD` view. On a renderer created without
+  `RendererDesc.ray_queries` the reflection rays run on the software walk
+  ([scene tracing](scene_trace.md)). On an RTX 4090 (Sponza, 2160p) they cost about 12 times the
+  ray-query rays: 5.4 ms against 0.45 ms.
 - `INVALID_ARGUMENT` when `reflections` is set and `max_reflection_roughness` is not finite or
   lies outside `(0, 1]`.
 
@@ -52,8 +54,9 @@ grain on rougher surfaces.
   them at the hit through a shadow ray. Emission, the ambient fill and the lighting environment
   add to it. Textures sample at a level of detail from the ray's cone footprint (ray cones,
   Akenine-Möller et al. 2019); normal and occlusion maps are not read at hits.
-- **Back face.** A hit on the back of a single-sided surface is black; double-sided materials
-  shade both sides.
+- **Back face.** A reflection ray passes the back of a single-sided surface, as raster culls it,
+  and reflects what lies behind; double-sided materials shade both sides
+  ([facing](scene_trace.md#facing)).
 - **Miss.** A ray that leaves the scene reads the lighting environment at its sharpest level
   (`scene.environment`, not the background), or the ambient colour without an environment.
 
@@ -100,4 +103,3 @@ python3 scripts/build.py --example rt_effects
   apply no light layers. Every hit loops the whole list (no clustering) with a shadow ray per
   shadowing light in reach, so hit cost grows with the light count.
 - Hit shading evaluates the Standard lobes only; normal maps apply at hits.
-- The back of a single-sided surface reflects black.

@@ -16,10 +16,13 @@
     { "shader": "cube_preview", "source": "cube_preview.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "standard", "source": "standard.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "standard", "source": "standard.frag.glsl", "stage": "frag", "defines": ["RT_SHADOWS"] },
+    { "shader": "standard", "source": "standard.frag.glsl", "stage": "frag", "defines": ["RT_SHADOWS", "SCENE_TRACE_BVH"] },
     { "shader": "physical", "source": "physical.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "physical", "source": "physical.frag.glsl", "stage": "frag", "defines": ["RT_SHADOWS"] },
+    { "shader": "physical", "source": "physical.frag.glsl", "stage": "frag", "defines": ["RT_SHADOWS", "SCENE_TRACE_BVH"] },
     { "shader": "toon", "source": "toon.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "toon", "source": "toon.frag.glsl", "stage": "frag", "defines": ["RT_SHADOWS"] },
+    { "shader": "toon", "source": "toon.frag.glsl", "stage": "frag", "defines": ["RT_SHADOWS", "SCENE_TRACE_BVH"] },
     { "shader": "environment_source", "source": "environment_source.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "environment_prefilter", "source": "environment_prefilter.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "sheen_prefilter", "source": "sheen_prefilter.comp.glsl", "stage": "comp", "defines": [] },
@@ -67,7 +70,9 @@
     { "shader": "ssgi_filter", "source": "ssgi_filter.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "probe_blend", "source": "probe_blend.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "rt_ao", "source": "rt_ao.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "rt_ao", "source": "rt_ao.comp.glsl", "stage": "comp", "defines": ["SCENE_TRACE_BVH"] },
     { "shader": "rt_reflections", "source": "rt_reflections.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "rt_reflections", "source": "rt_reflections.comp.glsl", "stage": "comp", "defines": ["SCENE_TRACE_BVH"] },
     { "shader": "rt_reflection_blur", "source": "rt_reflection_blur.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "path_trace", "source": "path_trace.rgen.glsl", "stage": "rgen", "defines": [] },
     { "shader": "path_trace_miss", "source": "path_trace.rmiss.glsl", "stage": "rmiss", "defines": [] },
@@ -100,6 +105,7 @@
     { "shader": "standard_gbuffer", "source": "standard_gbuffer.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "physical_gbuffer", "source": "physical_gbuffer.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "lighting_resolve", "source": "lighting_resolve.frag.glsl", "stage": "frag", "defines": [] },
-    { "shader": "lighting_resolve", "source": "lighting_resolve.frag.glsl", "stage": "frag", "defines": ["RT_SHADOWS"] }
+    { "shader": "lighting_resolve", "source": "lighting_resolve.frag.glsl", "stage": "frag", "defines": ["RT_SHADOWS"] },
+    { "shader": "lighting_resolve", "source": "lighting_resolve.frag.glsl", "stage": "frag", "defines": ["RT_SHADOWS", "SCENE_TRACE_BVH"] }
   ]
 }

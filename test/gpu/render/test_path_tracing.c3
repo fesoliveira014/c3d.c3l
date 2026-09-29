@@ -228,6 +228,41 @@ fn void test_path_traced_emitters_and_basic_surfaces_show_their_radiance() @test
     check_validation(&fixture.renderer);
 }
 
+fn void test_path_tracer_sees_through_a_single_sided_back_face() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture, ray_tracing_pipelines: true)!!;
+    defer destroy_fixture(&fixture);
+
+    PathScene veiled = create_path_scene(&fixture, OVERHEAD_POSE)!!;
+    defer scene::destroy_scene(&veiled.scene);
+    GeometryId plane = add_plane(&fixture, 1)!!;
+    MaterialId glow = fixture.assets.add_material(material::standard({
+        .base_color        = { 0, 0, 0, 1 },
+        .roughness         = 1,
+        .emissive          = EMITTER_RADIANCE,
+        .emissive_strength = 1,
+    }))!!;
+    MaterialId grey = fixture.assets.add_material(material::standard({ .base_color = { 0.5f, 0.5f, 0.5f, 1 } }))!!;
+    veiled.scene.add_mesh(plane, glow, name: "emitter")!!;
+    // Turned over, the veil's front faces the emitter and the camera sees its back.
+    Node* veil = veiled.scene.add_mesh(plane, grey, name: "veil")!!;
+    veil.local.position = { 0, 1, 0 };
+    veil.local.rotation = quaternion::from_axis_angle{float}({ 1, 0, 0 }, (float)math::PI);
+    veiled.scene.update_world();
+
+    RenderTargetId target = float_target(&fixture)!!;
+    ViewId view = create_path_view(&fixture, target, render::PATH_TRACE_DEFAULT)!!;
+    PathRun run = { .fixture = &fixture, .path_scene = &veiled, .view = view };
+    fixture.renderer.prepare_scene(&veiled.scene)!!;
+    render_frames(&run, 1)!!;
+    Vec4[] pixels = read_float_target(&fixture, target)!!;
+    defer free(pixels);
+    Vec4 centre = centre_texel(pixels);
+    io::eprintfn("Emitter behind a turned-over veil: %.4f %.4f %.4f", centre.x, centre.y, centre.z);
+    assert(near_rgb(centre, EMITTER_RADIANCE, EXACT_TOLERANCE));
+    check_validation(&fixture.renderer);
+}
+
 fn Vec4? render_lit_plane_centre(Fixture* fixture, LitPlaneCase lit_case) @private {
     PathScene lit = create_path_scene(fixture, OVERHEAD_POSE)!;
     defer scene::destroy_scene(&lit.scene);
