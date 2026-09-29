@@ -4,6 +4,14 @@ import c3d;
 import c3d::pool;
 
 <*
+ Scene snapshots a custom fragment stage samples; none with a gbuffer stage.
+*>
+bitstruct SceneReads : char {
+    bool color : 0;
+    bool depth : 1;
+}
+
+<*
  Shaded and depth-only forms of one user vertex stage, plain and instanced.
  Each pair is both or neither; the instanced pair requires the plain pair.
 *>
@@ -15,7 +23,7 @@ struct CustomVertex {
 }
 
 <*
- User SPIR-V stages and the byte size of their parameter payload.
+ User SPIR-V stages, a fragment stage required, and their parameter payload size.
  An empty gbuffer stage routes the material forward on deferred views.
 *>
 struct ShaderDesc {
@@ -23,6 +31,7 @@ struct ShaderDesc {
     char[]       gbuffer;
     CustomVertex vertex;
     usz          param_block_size;
+    SceneReads   scene_reads;
 }
 
 <*
@@ -40,7 +49,7 @@ alias ShaderPool = Pool{ShaderAsset, ShaderId};
 
 <*
  Add a shader, copying every stage into the store.
- @param [&in] desc : "Fragment non-empty; vertex pairs both or neither; gbuffer optional."
+ @param [&in] desc : "Forms pair as the ShaderDesc and CustomVertex docs require."
  @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
 *>
 fn ShaderId? AssetStore.add_shader(&self, ShaderDesc* desc, String key = "") {
@@ -65,7 +74,7 @@ fn ShaderAsset* AssetStore.shader(&self, ShaderId shader) {
 
 <*
  Replace every stage with copies of the new ones and advance the revision.
- @param [&in] desc : "Fragment non-empty; vertex pairs both or neither; gbuffer optional."
+ @param [&in] desc : "Forms pair as the ShaderDesc and CustomVertex docs require."
  @return? c3d::INVALID_ARGUMENT
  @require self.shaders.is_live(shader)
 *>
@@ -116,6 +125,7 @@ fn void? check_shader_desc(ShaderDesc* desc) @private {
     if ((vertex.shaded.len == 0) != (vertex.depth.len == 0)) return c3d::INVALID_ARGUMENT~;
     if ((vertex.instanced_shaded.len == 0) != (vertex.instanced_depth.len == 0)) return c3d::INVALID_ARGUMENT~;
     if (vertex.instanced_shaded.len && !vertex.shaded.len) return c3d::INVALID_ARGUMENT~;
+    if (desc.gbuffer.len && desc.scene_reads != (SceneReads){}) return c3d::INVALID_ARGUMENT~;
     return;
 }
 
@@ -132,6 +142,7 @@ fn ShaderDesc copy_shader_desc(Allocator allocator, ShaderDesc* desc) @private {
               ? copy_slice(allocator, desc.vertex.instanced_depth) : (char[]){},
         },
         .param_block_size = desc.param_block_size,
+        .scene_reads = desc.scene_reads,
     };
 }
 
