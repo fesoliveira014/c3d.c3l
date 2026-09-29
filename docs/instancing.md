@@ -108,8 +108,19 @@ grass.fade = { .start = 30, .end = 60 };
 - **Passes.** The view's passes, its depth prepass and its shadow layers read one block per batch, so shadows sway with the batch and fade from the view's camera, not the light's. The depth prepass, forward and velocity passes compute identical positions, so their `EQUAL` depth tests hold.
 - **Bounds.** The batch bound grows by the sway reach, `|normalize(direction)| * amplitude` per axis, after the node transform; the per-instance cull test admits a box within `amplitude` of each plane. The collapse moves toward a point inside both.
 - **Motion vectors.** The velocity pass uses the sway the view last drew the batch with, at the view's previous time, so a batch whose sway parameters change every frame keeps exact motion. A view without history uses the current sway for both. The collapse carries no motion vector.
-- **Cost.** One 112-byte block per batch and view in the frame upload ring, and the seed written into `InstanceGpu.normal_0.w` whenever records upload; no per-instance CPU work per frame.
+- **Cost.** One 112-byte block per batch and view in the frame upload ring, and the seed written into `InstanceGpu.normal_0.w` whenever records upload; no per-instance CPU work per frame. The seed adds about 25 ns per record to a re-pack: 2.5 ms (+19 %) for a full re-pack of 99,856 records, paid only on frames that re-pack a batch. Measured below.
 - **Limits.** Picking's per-instance tests, CPU triangle trees and the scene trace (ray-traced shadows, reflections, ambient occlusion, path tracing, probe traces) see the rest pose and every instance; a swaying batch in a traced view casts a still traced shadow, so such a batch sets `trace = false`. Picking's broad phase uses the grown bound. Normals and tangents are not bent. Amplitude neither varies per instance nor scales with it. No fade for plain meshes, no per-view opt-out (a minimap fades from its own camera), no dithered or alpha fade, and no weight from `Geometry.custom_data`.
+
+Measured on an RTX 4090 (driver 610.88), `instancing` at 99,856 props, 1280 × 720, instance culling and motion blur on, 12-second runs; medians in ms, each the median of three interleaved runs:
+
+| Configuration | Depth prepass | Forward opaque | Shadow atlas | Instance cull | Velocity | `cpu_record` |
+| --- | --- | --- | --- | --- | --- | --- |
+| Before sway and fade | 0.0881 | 0.1782 | 0.6160 | 0.0632 | 0.1065 | 1.433 |
+| Sway and fade off | 0.0884 | 0.1782 | 0.6169 | 0.0640 | 0.1075 | 1.433 |
+| Sway on | 0.0887 | 0.1802 | 0.6097 | 0.0667 | 0.1075 | 1.433 |
+| Sway and fade on | 0.0444 | 0.1116 | 0.3357 | 0.0719 | 0.0461 | 1.456 |
+
+Off costs nothing measurable: every pass is within 1.3 % of the build before sway and fade. With fade on, 43,346 of 599,154 instances stay visible across passes (7.2 %), against 170,818 of 599,151 without it, and the passes after culling shrink with them. The `view.resolve` scope of a frame that re-packs all props rises from 12.74 ms (12.69–13.11) to 15.21 ms (15.07–15.35). The third runs of "Sway and fade on" and of the re-pack before the change hit a lower GPU clock state; those two medians use the steady runs.
 
 ## Custom vertex stages
 
