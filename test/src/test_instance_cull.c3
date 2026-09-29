@@ -12,6 +12,10 @@ const uint SEED @local = 0x2545f491;
 const uint RANDOM_CASES @local = 1000;
 const float HALF_DIAGONAL @local = 0.70710678f; // a unit half-diagonal once turned 45 degrees about y
 const Vec3 BESIDE_RIGHT_PLANE @local = { 7.044f, 0, -10 }; // corners 0.23 outside the right plane, box corner 0.27 in
+const Aabb TURNED_SLAB @local = {
+    .min = { -HALF_DIAGONAL, -0.5f, -HALF_DIAGONAL },
+    .max = { HALF_DIAGONAL, 0.5f, HALF_DIAGONAL },
+};
 const gpu::GpuAddress RECORDS @local = (gpu::GpuAddress)0x10000;
 const gpu::GpuAddress SKIN @local = (gpu::GpuAddress)0x20000;
 const gpu::GpuAddress MORPH @local = (gpu::GpuAddress)0x30000;
@@ -41,6 +45,15 @@ fn Frustum infinite_frustum() @local {
     return maths::frustum_from_view_proj(projection, infinite_far: true);
 }
 
+fn Mat4 slab_beside_right_plane() @local {
+    Transform turned = {
+        .position = BESIDE_RIGHT_PLANE,
+        .rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, math::PI / 4),
+        .scale    = { 1, 1, 1 },
+    };
+    return turned.to_mat4();
+}
+
 fn void test_instance_visible_is_tighter_than_the_world_aabb() @test {
     Frustum frustum = infinite_frustum();
     Random random = { .state = SEED };
@@ -61,15 +74,60 @@ fn void test_instance_visible_is_tighter_than_the_world_aabb() @test {
     }
     assert(visible > 0 && visible < RANDOM_CASES);
 
-    Aabb slab = { .min = { -HALF_DIAGONAL, -0.5f, -HALF_DIAGONAL }, .max = { HALF_DIAGONAL, 0.5f, HALF_DIAGONAL } };
-    Transform turned = {
-        .position = BESIDE_RIGHT_PLANE,
-        .rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, math::PI / 4),
-        .scale    = { 1, 1, 1 },
-    };
-    Mat4 model = turned.to_mat4();
-    assert(!render::instance_visible(&frustum, slab, model));
-    assert(maths::frustum_intersects_aabb(&frustum, maths::aabb_transform(slab, model)));
+    Mat4 model = slab_beside_right_plane();
+    assert(!render::instance_visible(&frustum, TURNED_SLAB, model));
+    assert(maths::frustum_intersects_aabb(&frustum, maths::aabb_transform(TURNED_SLAB, model)));
+}
+
+fn void test_instance_visible_margin_admits_reaching_instances() @test {
+    Frustum frustum = infinite_frustum();
+    Mat4 model = slab_beside_right_plane();
+
+    assert(!render::instance_visible(&frustum, TURNED_SLAB, model));
+    assert(!render::instance_visible(
+        frustum:      &frustum,
+        local_bounds: TURNED_SLAB,
+        model:        model,
+        margin:       0.2f,
+    ));
+    assert(render::instance_visible(
+        frustum:      &frustum,
+        local_bounds: TURNED_SLAB,
+        model:        model,
+        margin:       0.25f,
+    ));
+}
+
+fn void test_fade_scale_spans_the_band() @test {
+    InstanceFade fade = { .start = 30, .end = 60 };
+    float[3] seeds = { 0, 0.37f, 0.999f };
+    foreach (seed : seeds) {
+        assert(render::instance_fade_scale(fade, seed, 0) == 1 && render::instance_fade_scale(fade, seed, 30) == 1);
+        assert(render::instance_fade_scale(fade, seed, 60) == 0 && render::instance_fade_scale(fade, seed, 100) == 0);
+        float nearer = 1;
+        for (uint step = 0; step <= 64; step++) {
+            float scale = render::instance_fade_scale(fade, seed, 29 + 32 * (float)step / 64);
+            assert(scale <= nearer);
+            nearer = scale;
+        }
+    }
+    float transition = 30 * render::FADE_COLLAPSE_SHARE;
+    assert(render::instance_fade_scale(fade, 0, 30 + transition) == 0);
+    assert(render::instance_fade_scale(fade, 0.999f, 60 - transition) > 0.99f);
+}
+
+fn void test_effect_flags_turn_on_with_their_fields() @test {
+    InstanceFade fade = { .start = 1, .end = 2 };
+    InstanceSway alpha_only = { .weight = SwayWeight.VERTEX_ALPHA };
+    InstanceSway windy = { .direction = { 1, 0, 0 }, .amplitude = 0.1f };
+
+    assert(render::instance_effect_flags({}, {}) == 0);
+    assert(render::instance_effect_flags(alpha_only, {}) == shader::DRAW_SWAY_VERTEX_ALPHA);
+    assert(render::instance_effect_flags(windy, {}) == shader::DRAW_SWAY);
+    assert(render::instance_effect_flags({}, fade) == shader::DRAW_DISTANCE_FADE);
+    windy.weight = SwayWeight.VERTEX_ALPHA;
+    assert(render::instance_effect_flags(windy, fade)
+        == (shader::DRAW_SWAY | shader::DRAW_DISTANCE_FADE | shader::DRAW_SWAY_VERTEX_ALPHA));
 }
 
 fn void test_cull_root_planes_pad_the_missing_far_plane() @test {

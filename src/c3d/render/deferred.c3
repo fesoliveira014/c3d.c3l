@@ -82,6 +82,7 @@ fn void? record_deferred_geometry(
     bool view_reflected,
     DrawItem[] gbuffer,
     DrawItem[] opaque,
+    InstanceEffectsView* effects_view,
 ) @private {
     record_depth_prepass(
         renderer:       renderer,
@@ -90,6 +91,7 @@ fn void? record_deferred_geometry(
         view_reflected: view_reflected,
         gbuffer:        gbuffer,
         opaque:         opaque,
+        effects_view:   effects_view,
     )!;
     record_gbuffer_pass(renderer, record, gbuffer)!;
 }

@@ -74,15 +74,20 @@ fn DeformedScene? create_line_scene(Fixture* fixture, MaterialId material, bool 
     return result;
 }
 
-fn uint line_survivors(Fixture* fixture, DeformedScene* target) @private {
+fn uint line_survivors(Fixture* fixture, DeformedScene* target, float margin = 0) @private {
     Camera* camera = target.scene.get(target.camera, Camera);
     CameraMatrices matrices = camera::derive_matrices(*camera, target.camera.world, { TARGET_SIZE, TARGET_SIZE });
     InstancedMesh* batch = target.scene.get(target.mesh, InstancedMesh);
     Aabb local = fixture.assets.geometry(fixture.box).data.bounds;
     uint survivors;
     foreach (transform : batch.transforms[:batch.count]) {
-        Mat4 model = target.mesh.world.mul(transform.to_mat4());
-        if (render::instance_visible(&matrices.frustum, local, model)) survivors++;
+        bool visible = render::instance_visible(
+            frustum:      &matrices.frustum,
+            local_bounds: local,
+            model:        target.mesh.world.mul(transform.to_mat4()),
+            margin:       margin,
+        );
+        if (visible) survivors++;
     }
     return survivors;
 }

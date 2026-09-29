@@ -2,6 +2,7 @@
 #include "generated/shader_abi.glsl"
 #include "c3d_abi.glsl"
 #include "buffer_reference.glsl"
+#include "instance_effects.glsl"
 
 layout(local_size_x = INSTANCE_CULL_GROUP_SIZE, local_size_y = 1, local_size_z = 1) in;
 
@@ -22,7 +23,7 @@ layout(buffer_reference, std430, buffer_reference_align = 4) buffer CullCounter 
     uint visible;
 };
 
-bool box_visible(InstanceCullRoot root, mat4 model) {
+bool box_visible(InstanceCullRoot root, mat4 model, float margin) {
     vec3 corners[8];
     for (uint corner = 0u; corner < 8u; corner++) {
         vec3 local = vec3(
@@ -36,7 +37,7 @@ bool box_visible(InstanceCullRoot root, mat4 model) {
         vec4 coefficients = root.planes[plane];
         bool outside = true;
         for (uint corner = 0u; corner < 8u; corner++) {
-            if (dot(coefficients.xyz, corners[corner]) + coefficients.w >= 0.0) {
+            if (dot(coefficients.xyz, corners[corner]) + coefficients.w >= -margin) {
                 outside = false;
                 break;
             }
@@ -51,7 +52,18 @@ void main() {
     uint slot = gl_GlobalInvocationID.x;
     if (slot >= root.count) return;
     uint source = root.first + slot;
-    if (!box_visible(root, CullInstances(root.instances).values[source].model)) return;
+    mat4 model = CullInstances(root.instances).values[source].model;
+    float margin = 0.0;
+    if (root.instance_effects != 0ul) {
+        InstanceEffectsGpu effects = InstanceEffectsGpu(root.instance_effects);
+        margin = effects.sway.direction_amplitude.w;
+        // Only a complete collapse is dropped, the same scale the vertex stage draws with.
+        if (effects.fade_end > 0.0) {
+            float seed = CullInstances(root.instances).values[source].normal_0.w;
+            if (instance_fade_scale(effects, instance_anchor(effects, model), seed) == 0.0) return;
+        }
+    }
+    if (!box_visible(root, model, margin)) return;
     uint index = atomicAdd(CullArgs(root.args).instance_count, 1u);
     VisibleOutput(root.visible).values[index] = source;
     atomicAdd(CullCounter(root.counter).visible, 1u);

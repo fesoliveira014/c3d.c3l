@@ -91,7 +91,7 @@ fn Node* add_pair_batch(BatchHistory* fixture, float spread) @local {
     return node;
 }
 
-fn void commit_batch(BatchHistory* fixture, Node* node) @local {
+fn void commit_batch(BatchHistory* fixture, Node* node, double time = 0) @local {
     MeshCandidate[1] candidates = { { .node = node, .batch = fixture.scene.get(node, InstancedMesh) } };
     fixture.history.commit(
         allocator:  mem,
@@ -99,7 +99,7 @@ fn void commit_batch(BatchHistory* fixture, Node* node) @local {
         scene:      &fixture.scene,
         candidates: candidates[..],
         view_proj:  matrix::IDENTITY4,
-        time:       0,
+        time:       time,
     );
 }
 
@@ -617,4 +617,41 @@ fn void test_history_slot_reuse_clears_the_stamp() @test {
     pose.instances[0] = bitcast(SENTINEL, Mat4f);
     commit_batch(&fixture, second);
     assert(same_matrix(pose.instances[0], batch.transforms[0].to_mat4()));
+}
+
+fn void test_view_history_keeps_the_sway_of_the_last_commit() @test {
+    BatchHistory fixture = create_batch_history();
+    defer destroy_batch_history(&fixture);
+    Node* node = add_pair_batch(&fixture, 1);
+    InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
+    batch.sway = { .direction = { 1, 0, 0 }, .amplitude = 0.2f };
+
+    commit_batch(&fixture, node, 1.5);
+    fixture.history.publish();
+    assert(fixture.history.has_previous(&fixture.scene, node));
+    assert(fixture.history.previous_pose(&fixture.scene, node).sway.amplitude == 0.2f);
+    assert(fixture.history.time == 1.5);
+
+    batch.sway.amplitude = 0.5f;
+    commit_batch(&fixture, node, 2.0);
+    fixture.history.publish();
+    assert(fixture.history.previous_pose(&fixture.scene, node).sway.amplitude == 0.5f);
+    assert(fixture.history.time == 2.0);
+
+    batch.sway.amplitude = 0.7f;
+    commit_batch(&fixture, node, 2.5);
+    fixture.history.discard();
+    assert(!fixture.history.valid && !fixture.history.has_previous(&fixture.scene, node));
+
+    MeshCandidate[1] plain = { { .node = node } };
+    fixture.history.commit(
+        allocator:  mem,
+        assets:     &fixture.assets,
+        scene:      &fixture.scene,
+        candidates: plain[..],
+        view_proj:  matrix::IDENTITY4,
+        time:       3.0,
+    );
+    fixture.history.publish();
+    assert(fixture.history.previous_pose(&fixture.scene, node).sway.amplitude == 0);
 }
