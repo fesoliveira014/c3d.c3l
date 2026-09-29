@@ -103,8 +103,8 @@ void apply_mesh_deformation(inout MeshVertexInput vertex, DrawRoot draw, Geometr
 }
 
 #ifdef VELOCITY
-// Object-space position under the deformation the view drew last time.
-vec3 previous_position(DrawRoot draw, GeometryRoot geometry, uint index) {
+// Object-space position under the skin and morph the view drew last time.
+vec3 previous_mesh_position(DrawRoot draw, GeometryRoot geometry, uint index) {
     vec3 position = pull_vec3(geometry.positions, index);
 #ifdef MORPH
     MorphWeightsGpu morph = MorphWeightsGpu(instance_morph(draw, PreviousPoseGpu(draw.previous_pose).morph));
@@ -118,7 +118,14 @@ vec3 previous_position(DrawRoot draw, GeometryRoot geometry, uint index) {
 }
 #endif
 
-void write_mesh_outputs(MeshVertexInput vertex, DrawRoot draw, FrameRoot frame, GeometryRoot geometry) {
+// Non-velocity forms ignore previous_position.
+void write_mesh_outputs(
+    MeshVertexInput vertex,
+    vec3 previous_position,
+    DrawRoot draw,
+    FrameRoot frame,
+    GeometryRoot geometry
+) {
 #ifdef INSTANCED
     uint source = instance_source(draw);
     InstanceGpu instance = InstanceArray(draw.instance_data).values[source];
@@ -130,7 +137,7 @@ void write_mesh_outputs(MeshVertexInput vertex, DrawRoot draw, FrameRoot frame, 
 #endif
     vec4 world = model * vec4(vertex.position, 1.0);
 #ifdef VELOCITY
-    vec4 previous = vec4(previous_position(draw, geometry, uint(gl_VertexIndex)), 1.0);
+    vec4 previous = vec4(previous_position, 1.0);
 #ifdef INSTANCED
     // Without previous instance matrices, prev_model is the batch node's motion after the current instance matrix.
     uint64_t previous_instances = PreviousPoseGpu(draw.previous_pose).instances;
@@ -161,6 +168,14 @@ void write_mesh_outputs(MeshVertexInput vertex, DrawRoot draw, FrameRoot frame, 
     clip.xy -= frame.jitter_time.xy * clip.w;
 #endif
     v_clip_pos = clip;
+}
+
+void write_mesh_outputs(MeshVertexInput vertex, DrawRoot draw, FrameRoot frame, GeometryRoot geometry) {
+#ifdef VELOCITY
+    write_mesh_outputs(vertex, previous_mesh_position(draw, geometry, uint(gl_VertexIndex)), draw, frame, geometry);
+#else
+    write_mesh_outputs(vertex, vertex.position, draw, frame, geometry);
+#endif
 }
 
 #endif

@@ -16,6 +16,7 @@ import std::math;
  @param [&in] raster : "Rendered matrices, jittered on a TAA view."
  @param view_proj : "Unjittered current view-projection; the previous one without history."
  @param jitter : "NDC offset of the rendered matrices."
+ @param after_opaque : "Scene-read items already drawn; moved depth writers are redrawn."
  @return? c3d::SHADER_NOT_FOUND, gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::PIPELINE_CREATE_FAILED
  @return? gpu::SLOT_TABLE_FULL, gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
  @return? gpu::COMMAND_RECORDING_ERROR, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
@@ -29,6 +30,7 @@ fn void? record_velocity(
     CameraMatrices* raster,
     Mat4 view_proj,
     Vec2 jitter,
+    DrawItem[] after_opaque = {},
 ) {
     acquire_velocity_pipelines(renderer, record.velocity.format)!;
     render::@profile_pass(renderer, Pass.VELOCITY) {
@@ -39,7 +41,12 @@ fn void? record_velocity(
             view_proj: view_proj,
             jitter:    jitter,
         )!;
-        record_geometry_velocity(renderer, record, items)!;
+        record_geometry_velocity(
+            renderer:     renderer,
+            record:       record,
+            items:        items,
+            after_opaque: after_opaque,
+        )!;
     }!;
 }
 
@@ -144,15 +151,15 @@ fn void? record_camera_velocity(
     );
 }
 
-fn void? record_geometry_velocity(Renderer* renderer, ViewRecord* record, DrawItem[] items) @private {
-    DrawItem* first;
-    foreach (&item : items) {
-        if (item.moved) {
-            first = item;
-            break;
-        }
-    }
-    if (!first) return;
+fn void? record_geometry_velocity(
+    Renderer* renderer,
+    ViewRecord* record,
+    DrawItem[] items,
+    DrawItem[] after_opaque,
+) @private {
+    DrawItem[][2] groups = { items, after_opaque };
+    gpu::PipelineHandle bound = resolve_velocity_pipelines(renderer, groups[..], record.velocity.format)!;
+    if (!bound.is_valid()) return;
 
     uint width = record.velocity.width;
     uint height = record.velocity.height;
@@ -186,19 +193,17 @@ fn void? record_geometry_velocity(Renderer* renderer, ViewRecord* record, DrawIt
     };
 
     // Bound before the pass begins: the backend checks the bound pipeline against the pass formats at begin.
-    gpu::PipelineHandle bound = velocity_pipeline_for(renderer, first, record.velocity.format)!;
     gpu::cmd_bind_pipeline(&renderer.commands, bound)!;
     record.depth.transition(&renderer.commands, render::DEPTH_ATTACHMENT_STATE)!;
     gpu::cmd_begin_render_pass(&renderer.commands, &pass)!;
     bool state_set;
-    foreach (&item : items) {
-        if (!item.moved) continue;
+    foreach (group : groups) foreach (&item : group) {
+        if (!item.velocity_pipeline.is_valid()) continue;
 
         Material* material = &renderer.assets.material(item.material.asset).data;
-        gpu::PipelineHandle wanted = velocity_pipeline_for(renderer, item, record.velocity.format)!;
-        if (wanted.index != bound.index) {
-            gpu::cmd_bind_pipeline(&renderer.commands, wanted)!;
-            bound = wanted;
+        if (item.velocity_pipeline.index != bound.index) {
+            gpu::cmd_bind_pipeline(&renderer.commands, item.velocity_pipeline)!;
+            bound = item.velocity_pipeline;
         }
         gpu::CullMode cull = material.common.double_sided ? gpu::CullMode.NONE : gpu::CullMode.BACK;
         gpu::PrimitiveTopology topology = render::primitive_topology(item.geometry.topology);
@@ -243,6 +248,36 @@ fn void? record_geometry_velocity(Renderer* renderer, ViewRecord* record, DrawIt
     gpu::cmd_end_render_pass(&renderer.commands)!;
 }
 
+// An invalid result means no item is redrawn, so the pass is not begun.
+fn gpu::PipelineHandle? resolve_velocity_pipelines(
+    Renderer* renderer,
+    DrawItem[][] groups,
+    gpu::Format format,
+) @private {
+    gpu::PipelineHandle first;
+    foreach (group_index, group : groups) foreach (&item : group) {
+        if (!velocity_redrawn(renderer, item, group_index > 0)) continue;
+        gpu::PipelineHandle? pipeline = velocity_pipeline_for(renderer, item, format);
+        if (catch excuse = pipeline) {
+            if (!velocity_form_rejected(renderer, item, excuse)) return excuse~;
+            continue;
+        }
+        item.velocity_pipeline = pipeline;
+        if (!first.is_valid()) first = pipeline;
+    }
+    return first;
+}
+
+fn bool velocity_redrawn(Renderer* renderer, DrawItem* item, bool after_opaque) @private {
+    if (!item.moved) return false;
+    return !after_opaque || render::writes_own_depth(&renderer.assets.material(item.material.asset).data);
+}
+
+fn bool velocity_form_rejected(Renderer* renderer, DrawItem* item, fault excuse) @private {
+    if (!item.custom_velocity) return false;
+    return render::custom_pipeline_rejected(renderer, &renderer.assets.material(item.material.asset).data, excuse);
+}
+
 fn gpu::PipelineHandle? velocity_pipeline_for(Renderer* renderer, DrawItem* item, gpu::Format format) @private {
     Material* material = &renderer.assets.material(item.material.asset).data;
     bool wireframe = material.common.wireframe && renderer.caps.line_polygon_mode;
@@ -255,7 +290,16 @@ fn gpu::PipelineHandle? velocity_pipeline_for(Renderer* renderer, DrawItem* item
         .samples       = gpu::SampleCount.ONE,
         .polygon       = wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL,
     };
-    return renderer.pipelines.get(&renderer.device, key);
+    if (!item.custom_velocity) return renderer.pipelines.get(&renderer.device, key);
+
+    ShaderId shader = material.custom.shader;
+    uint instanced = item.vertex.flags & shader::SHADER_FLAG_INSTANCED;
+    key.vertex = { .shader = MESH, .flags = shader::SHADER_FLAG_VELOCITY | instanced };
+    key.shader = shader;
+    key.shader_revision = renderer.shaders[shader.index].revision;
+    key.custom = { .vertex = true };
+    CustomStageSource source = render::custom_stage_source(&renderer.assets.shader(shader).desc, key);
+    return renderer.pipelines.get(&renderer.device, key, &source);
 }
 
 fn PipelineKey camera_velocity_pipeline_key(gpu::Format format) @private {

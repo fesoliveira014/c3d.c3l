@@ -86,7 +86,7 @@ Before the kept aggregate and the stamped history, the same runs took 0.786, 2.8
 
 ## Custom vertex stages
 
-A custom material whose shader has a vertex stage draws a batch only when the shader also supplies the instanced pair, `CustomVertex.instanced_shaded` and `instanced_depth`: the same source compiled with `INSTANCED`, and with `DEPTH_ONLY` and `INSTANCED`. A stage that ends in `write_mesh_outputs` needs no source change. Without the pair the batch is skipped and counted in `Stats.dangling_refs`. Fragment-only custom materials draw batches unchanged.
+A custom material whose shader has a vertex stage draws a batch only when the shader also supplies the instanced pair, `CustomVertex.instanced_shaded` and `instanced_depth`: the same source compiled with `INSTANCED`, and with `DEPTH_ONLY` and `INSTANCED`. A stage that ends in `write_mesh_outputs` needs no source change. Without the pair the batch is skipped and counted in `Stats.dangling_refs`. `CustomVertex.instanced_velocity`, the same source compiled with `VELOCITY` and `INSTANCED`, is optional and needs the instanced pair and `velocity` (see [Velocity form](custom_shaders.md#velocity-form)); without it a batch's velocity uses the built-in instanced variant and sees the undisplaced instances. Fragment-only custom materials draw batches unchanged.
 
 ## Picking
 

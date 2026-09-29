@@ -24,5 +24,10 @@ void main() {
     apply_mesh_deformation(vertex, draw, geometry, index);
     PulseParams params = PulseParams(material.parameters);
     vertex.position = pulse_position(vertex.position, frame.jitter_time.z, params.motion);
+#ifdef VELOCITY
+    vec3 previous = pulse_position(previous_mesh_position(draw, geometry, index), frame.previous_time, params.motion);
+    write_mesh_outputs(vertex, previous, draw, frame, geometry);
+#else
     write_mesh_outputs(vertex, draw, frame, geometry);
+#endif
 }

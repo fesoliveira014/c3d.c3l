@@ -463,6 +463,61 @@ fn void test_add_shader_rejects_half_vertex_pair() @test {
     assert(store.add_shader(&valid)!!.index == 0);
 }
 
+fn void test_add_shader_rejects_unpaired_velocity_forms() @test {
+    AssetStore store = make_store();
+    defer asset::destroy_asset_store(&store);
+    char[4] bytes = { 1, 2, 3, 4 };
+    char[4] velocity = { 5, 6, 7, 8 };
+    char[4] instanced_velocity = { 9, 10, 11, 12 };
+
+    ShaderDesc without_shaded = make_shader_desc(bytes[..]);
+    without_shaded.vertex.velocity = velocity[..];
+    if (catch excuse = store.add_shader(&without_shaded)) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "a velocity form without its shaded form was accepted");
+    }
+
+    ShaderDesc without_velocity = make_shader_desc(bytes[..], shaded: bytes[..], depth: bytes[..]);
+    without_velocity.vertex.instanced_shaded = bytes[..];
+    without_velocity.vertex.instanced_depth = bytes[..];
+    without_velocity.vertex.instanced_velocity = instanced_velocity[..];
+    if (catch excuse = store.add_shader(&without_velocity)) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "an instanced velocity form without the plain velocity form was accepted");
+    }
+
+    ShaderDesc without_instanced_pair = make_shader_desc(bytes[..], shaded: bytes[..], depth: bytes[..]);
+    without_instanced_pair.vertex.velocity = velocity[..];
+    without_instanced_pair.vertex.instanced_velocity = instanced_velocity[..];
+    if (catch excuse = store.add_shader(&without_instanced_pair)) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "an instanced velocity form without the instanced pair was accepted");
+    }
+
+    ShaderDesc all_forms = make_shader_desc(bytes[..], shaded: bytes[..], depth: bytes[..]);
+    all_forms.vertex.instanced_shaded = bytes[..];
+    all_forms.vertex.instanced_depth = bytes[..];
+    all_forms.vertex.velocity = velocity[..];
+    all_forms.vertex.instanced_velocity = instanced_velocity[..];
+    ShaderId id = store.add_shader(&all_forms)!!;
+    velocity[0] = 0;
+    instanced_velocity[0] = 0;
+    ShaderAsset* record = store.shader(id);
+    assert(record.desc.vertex.velocity[0] == 5 && record.desc.vertex.instanced_velocity[0] == 9);
+    assert(record.desc.vertex.velocity.ptr != &velocity[0]);
+    assert(record.desc.vertex.instanced_velocity.ptr != &instanced_velocity[0]);
+
+    if (catch excuse = store.replace_shader(id, &without_shaded)) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "a replacement with a velocity form without its shaded form was accepted");
+    }
+    assert(record.header.revision == 1 && record.desc.vertex.velocity[0] == 5);
+}
+
 fn void test_replace_shader_bumps_revision_and_copies() @test {
     AssetStore store = make_store();
     defer asset::destroy_asset_store(&store);

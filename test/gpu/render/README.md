@@ -112,6 +112,14 @@ What the four cases establish:
   sun's shadow on both kinds, and after a replacement without them the plain form draws unshadowed
   without a rejection.
 
+- A custom shader's velocity form moves a still displaced box by its displacement between the
+  view's previous and current time, also when another view rendered in between, on late and early
+  velocity views; at frozen time it matches the background; an instanced form indexes by
+  `instance_source` under culling (`wave.vert.glsl`); a moving opaque glass box and glass batch write
+  geometry velocity while a blended one keeps the camera velocity; a velocity form rejected at first
+  use skips its velocity draw, and a rejected replacement keeps the previous form drawing
+  (`broken_push.vert.glsl`).
+
 What they cannot establish: window clear-only and GUI-only frames need a
 window (run the `clear` and `cube_gui` examples with validation), and a
 presentation failure after submission needs a hardware observation.
