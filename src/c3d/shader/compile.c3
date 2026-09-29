@@ -12,16 +12,17 @@ enum ShaderStage {
     COMPUTE,
 }
 
-const String MISSING_INCLUDE_MESSAGE @private = "include is not part of the embedded shader include set";
+const String MISSING_INCLUDE_MESSAGE @private = "include is in neither the embedded nor the caller's include set";
 const String EMPTY_SOURCE_NAME @private = "";
 
 <*
- Compile GLSL to SPIR-V with the embedded include set.
+ Compile GLSL to SPIR-V with the embedded and the caller's includes.
  @param allocator : "Owns the returned bytes and the log."
- @param source : "GLSL with #version; includes resolve against SHADER_INCLUDES only."
+ @param source : "GLSL with #version."
  @param defines : "Names defined as 1, in order."
  @param debug_name : "Names the source in compiler messages."
  @param [out] log : "Compiler messages allocated with allocator; empty when clean. Null discards them."
+ @param includes : "Searched after SHADER_INCLUDES, in order; borrowed for the call."
  @return? shader::SHADER_COMPILE_FAILED
 *>
 fn char[]? compile_glsl(
@@ -31,6 +32,7 @@ fn char[]? compile_glsl(
     String[] defines = {},
     String debug_name = "custom",
     String* log = null,
+    ShaderInclude[] includes = {},
 ) {
     shaderc::Compiler compiler = shaderc::compiler_create();
     defer compiler.release();
@@ -39,7 +41,7 @@ fn char[]? compile_glsl(
     options.set_target_env(shaderc::TargetEnv.TARGET_ENV_VULKAN, shaderc::EnvVersion.ENV_VERSION_VULKAN_1_3);
     options.set_target_spirv(shaderc::SpirvVersion.SPIRV_VERSION_1_5);
     options.set_optimization_level(shaderc::OptimizationLevel.OPTIMIZATION_LEVEL_ZERO);
-    options.set_include_callbacks(&resolve_include, &release_include, null);
+    options.set_include_callbacks(&resolve_include, &release_include, &includes);
     foreach (define : defines) options.add_macro_definition(define.ptr, define.len, "1", 1);
 
     shaderc::Result result;
@@ -83,15 +85,18 @@ fn shaderc::IncludeResult* resolve_include(
 ) @private {
     String requested = ((ZString)requested_source).str_view();
     shaderc::IncludeResult* result = mem::new(shaderc::IncludeResult);
-    foreach (&include : shader::SHADER_INCLUDES) {
-        if (include.name != requested) continue;
-        *result = {
-            .source_name        = include.name.ptr,
-            .source_name_length = include.name.len,
-            .content            = include.text.ptr,
-            .content_length     = include.text.len,
-        };
-        return result;
+    ShaderInclude[][2] tables = { shader::SHADER_INCLUDES[..], *(ShaderInclude[]*)user_data };
+    foreach (table : tables) {
+        foreach (&include : table) {
+            if (include.name != requested) continue;
+            *result = {
+                .source_name        = include.name.ptr,
+                .source_name_length = include.name.len,
+                .content            = include.text.ptr,
+                .content_length     = include.text.len,
+            };
+            return result;
+        }
     }
     *result = {
         .source_name    = EMPTY_SOURCE_NAME.ptr,
