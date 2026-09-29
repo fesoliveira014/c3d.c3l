@@ -113,6 +113,7 @@ fn char[]? compile_file(Allocator allocator, String path, ShaderStage stage, Str
 
 fn ShaderDesc? compile_pulse(Allocator allocator) @local {
     String[2] depth_instanced = { "DEPTH_ONLY", "INSTANCED" };
+    String[2] velocity_instanced = { "VELOCITY", "INSTANCED" };
     return {
         .fragment = compile_file(allocator, PULSE_FRAGMENT_FILE, ShaderStage.FRAGMENT)!,
         .vertex   = {
@@ -120,6 +121,18 @@ fn ShaderDesc? compile_pulse(Allocator allocator) @local {
             .depth            = compile_file(allocator, PULSE_VERTEX_FILE, ShaderStage.VERTEX, { "DEPTH_ONLY" })!,
             .instanced_shaded = compile_file(allocator, PULSE_VERTEX_FILE, ShaderStage.VERTEX, { "INSTANCED" })!,
             .instanced_depth  = compile_file(allocator, PULSE_VERTEX_FILE, ShaderStage.VERTEX, depth_instanced[..])!,
+            .velocity         = compile_file(
+                allocator: allocator,
+                path:      PULSE_VERTEX_FILE,
+                stage:     ShaderStage.VERTEX,
+                defines:   { "VELOCITY" },
+            )!,
+            .instanced_velocity = compile_file(
+                allocator: allocator,
+                path:      PULSE_VERTEX_FILE,
+                stage:     ShaderStage.VERTEX,
+                defines:   velocity_instanced[..],
+            )!,
         },
         .param_block_size = PulseParams::size,
     };
