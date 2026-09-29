@@ -152,6 +152,12 @@ What the four cases establish:
   material refuse it with `c3d::UNSUPPORTED`, while slot 0 of an opaque custom material and
   slot 1 of a masked one accept it.
 
+- A custom stage that reads a referenced Standard block through `custom_reference`
+  (`reference.frag.glsl`) matches the Standard material's own pixels while no drawable uses the
+  referenced material; after both are edited and marked dirty the pair still matches without
+  dirtying the custom material; removing the referenced material, even with a new material in its
+  heap slot, skips the custom draws and counts them in `Stats.dangling_refs`.
+
 What they cannot establish: window clear-only and GUI-only frames need a
 window (run the `clear` and `cube_gui` examples with validation), and a
 presentation failure after submission needs a hardware observation.

@@ -46,7 +46,8 @@
         "test_instance_effects.c3",
         "test_clip_plane.c3",
         "test_published_stages.c3",
-        "test_r16_texture.c3"
+        "test_r16_texture.c3",
+        "test_material_references.c3"
       ]
     }
   }
