@@ -91,7 +91,7 @@ struct ProjectionTerms {
 }
 
 <*
- Deformation and instance matrices a node had when the view last rendered it.
+ Deformation, instance matrices and sway a node had when the view last rendered it.
 *>
 struct PoseRecord {
     Mat4f[]           palette;
@@ -103,6 +103,7 @@ struct PoseRecord {
     MorphWeightsGpu   morph;
     MorphWeightsGpu[] morphs;
     bool              morphed;
+    InstanceSway      sway;
 }
 
 <*
@@ -281,6 +282,7 @@ fn void commit_pose(
     MeshCandidate* candidate,
 ) @local {
     Node* node = candidate.node;
+    pose.sway = candidate.batch ? candidate.batch.sway : (InstanceSway){};
     if (candidate.skin) {
         SkinBinding* binding = candidate.skin;
         if (pose.palette.len != binding.joints.len) {

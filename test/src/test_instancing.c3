@@ -17,6 +17,7 @@ const Vec4 RED @local = { 1, 0, 0, 1 };
 const Vec4 GREEN @local = { 0, 1, 0, 1 };
 const Vec2 VIEWPORT @local = { 1600, 900 };
 const float BOUNDS_TOLERANCE @local = 1e-5f;
+const double PHASE_TOLERANCE @local = 1e-5;
 const GpuInstances ALLOCATED_SLOT @local = { .allocation = { .owner = 1, .index = 0, .generation = 1 } };
 
 struct Fixture @local {
@@ -539,14 +540,91 @@ fn void test_write_instance_packs_world_and_normal() @test {
     Mat4 world = transform.to_mat4();
     InstanceGpu record;
 
-    render::write_instance(&record, world, GREEN);
+    render::write_instance(
+        record: &record,
+        world:  world,
+        color:  GREEN,
+        seed:   0.25f,
+    );
 
     Mat3 normal = maths::normal_matrix(world);
     assert(bitcast(record.model, Mat4) == world);
-    assert(record.normal_0 == (Vec4){ normal.m00, normal.m10, normal.m20, 0 });
+    assert(record.normal_0 == (Vec4){ normal.m00, normal.m10, normal.m20, 0.25f });
     assert(record.normal_1 == (Vec4){ normal.m01, normal.m11, normal.m21, 0 });
     assert(record.normal_2 == (Vec4){ normal.m02, normal.m12, normal.m22, 0 });
     assert(record.color == GREEN);
+}
+
+fn void test_packed_records_carry_the_local_seed() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Transform[3] transforms = { at({ -2, 0, 0 }), mirrored_at({ 0, 0, 0 }), at({ 2, 0, 0 }) };
+    Node* node = fixture.scene.add_instanced_mesh(fixture.box, fixture.red, 3, transforms[..])!!;
+    InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
+    Transform placement = {
+        .position = { 5, 1, -3 },
+        .rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, math::PI / 3),
+        .scale    = { 1, 1, 1 },
+    };
+    InstanceGpu[3] at_origin;
+    InstanceGpu[3] placed;
+
+    render::pack_instance_records(at_origin[..], matrix::IDENTITY4, batch);
+    render::pack_instance_records(placed[..], placement.to_mat4(), batch);
+
+    uint[3] draw_order = { 0, 2, 1 };
+    foreach (record_index, source : draw_order) {
+        float seed = render::instance_seed(transforms[source].position);
+        assert(at_origin[record_index].normal_0.w == seed && placed[record_index].normal_0.w == seed);
+        assert(seed >= 0 && seed < 1);
+    }
+}
+
+fn void test_sway_phase_keeps_precision_at_long_times() @test {
+    SwayGpu steady = render::pack_sway({ .direction = { 3, 0, 4 }, .amplitude = 2, .frequency = 1 }, 1_000_000.25);
+    assert(steady.phase == 0.25f);
+    assert(steady.direction_amplitude == (Vec4){ 0.6f, 0, 0.8f, 2 });
+
+    float frequency = 0.7f;
+    double time = 2_592_000.1;
+    SwayGpu month = render::pack_sway({ .direction = { 1, 0, 0 }, .amplitude = 1, .frequency = frequency }, time);
+    double cycles = time * (double)frequency;
+    assert(math::abs((double)month.phase - (cycles - math::floor(cycles))) <= PHASE_TOLERANCE);
+    assert(month.phase >= 0 && month.phase <= 1);
+
+    SwayGpu calm = render::pack_sway({ .direction = { 1, 0, 0 } }, time);
+    SwayGpu zero;
+    assert(mem::equals(&calm, &zero, SwayGpu::size));
+}
+
+fn void test_instance_effects_block_describes_geometry_and_view() @test {
+    InstancedMesh batch = {
+        .sway = { .direction = { 0, 0, 1 }, .amplitude = 0.3f, .frequency = 0.5f, .lean = 0.2f, .wavelength = 4 },
+        .fade = { .start = 30, .end = 60 },
+    };
+    SwayGpu previous = render::pack_sway({ .direction = { 1, 0, 0 }, .amplitude = 0.1f, .frequency = 2 }, 1.25);
+
+    InstanceEffectsGpu block = render::pack_instance_effects(
+        batch:         &batch,
+        local_bounds:  { .min = { -1, 0, -1 }, .max = { 1, 2, 1 } },
+        fade_origin:   { 4, 5, 6 },
+        previous_sway: previous,
+        time:          0,
+    );
+    assert(block.anchor == (Vec4){ 0, 0, 0, 0.5f });
+    assert(block.fade_origin == (Vec4){ 4, 5, 6, 0 });
+    assert(block.fade_start == 30 && block.fade_end == 60);
+    assert(block.fade_transition == 30 * render::FADE_COLLAPSE_SHARE);
+    assert(mem::equals(&block.previous_sway, &previous, SwayGpu::size));
+
+    InstanceEffectsGpu flat = render::pack_instance_effects(
+        batch:         &batch,
+        local_bounds:  { .min = { -1, 1, -1 }, .max = { 1, 1, 1 } },
+        fade_origin:   { 4, 5, 6 },
+        previous_sway: previous,
+        time:          0,
+    );
+    assert(flat.anchor.y == 1 && flat.anchor.w == 0);
 }
 
 fn void test_set_instances_bumps_revision() @test {

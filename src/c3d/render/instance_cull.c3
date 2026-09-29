@@ -45,6 +45,7 @@ struct CullItem @private {
     Aabb            bound;
     bool            bounded;
     gpu::GpuAddress args_address;
+    gpu::GpuAddress effects;
 }
 
 <*
@@ -52,8 +53,14 @@ struct CullItem @private {
  @param [&in] frustum : "Normalized inward-facing planes."
  @param local_bounds : "Instance-local bound."
  @param model : "Instance world matrix."
+ @param margin : "World distance a corner may lie outside a plane; the sway amplitude."
 *>
-fn bool instance_visible(Frustum* frustum, Aabb local_bounds, Mat4 model) {
+fn bool instance_visible(
+    Frustum* frustum,
+    Aabb local_bounds,
+    Mat4 model,
+    float margin = 0,
+) {
     Vec3[8] corners;
     foreach (uint corner, &world : corners) {
         Vec3 local = {
@@ -66,7 +73,7 @@ fn bool instance_visible(Frustum* frustum, Aabb local_bounds, Mat4 model) {
     foreach (&plane : frustum.planes[:frustum.plane_count]) {
         bool outside = true;
         foreach (world : corners) {
-            if (plane.normal.dot(world) + plane.d >= 0) {
+            if (plane.normal.dot(world) + plane.d >= -margin) {
                 outside = false;
                 break;
             }
@@ -179,6 +186,7 @@ fn CullItem[] batch_cull_items(DrawItem[][] groups, Frustum* frustum) @private {
             .records   = item.instance_data,
             .frustum   = frustum,
             .range     = &item.range,
+            .effects   = item.effects,
         };
     }
     return culls;
@@ -199,6 +207,7 @@ fn CullItem[] shadow_cull_items(ShadowDraw[] draws, CullRange[] ranges, Frustum*
             .records   = draw.instance_data,
             .frustum   = frustum,
             .range     = &ranges[index],
+            .effects   = draw.effects,
         };
     }
     return culls;
@@ -294,6 +303,7 @@ fn void? record_instance_cull(Renderer* renderer, CullItem[] items) @private {
                 .bounds_max = { item.bound.max.x, item.bound.max.y, item.bound.max.z, 0 },
                 .first      = range.first,
                 .count      = range.count,
+                .instance_effects = item.effects,
             };
             write_cull_planes(root, item.frustum);
             uint groups = (range.count + shader::INSTANCE_CULL_GROUP_SIZE - 1) / shader::INSTANCE_CULL_GROUP_SIZE;
