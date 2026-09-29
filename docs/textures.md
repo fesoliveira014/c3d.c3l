@@ -170,7 +170,7 @@ uint height = gpu_fetch_uint(material.slots[0].texture_index, texel, 0);
 
 A custom material may hold it in any slot except slot 0 of a masked material,
 which the depth stage and traced coverage sample for alpha. A dispatch reads it
-through a `read_texture` entry. A Basic, Standard or Physical map, a Toon
+through a `read_texture` entry. A Basic, Standard, Physical or Toon map, a Toon
 gradient map, and slot 0 of a masked custom material report `c3d::UNSUPPORTED`
 when the material is uploaded or drawn. `R16_UINT` is not a storage, render
 target, volume or environment source format.
