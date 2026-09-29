@@ -202,6 +202,7 @@ fn void test_package_traced_forms_follow_their_defines() @test {
 
 module c3d::test::shader_compile @feat(C3D_SHADER_COMPILER);
 
+import c3d::asset;
 import c3d::shader;
 import c3d::shader::compile;
 import c3d::test::shader @public;
