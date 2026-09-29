@@ -287,6 +287,43 @@ fn void test_rotated_node_bound_contains_the_exact_bound() @test {
     assert(below.z > 1 && above.z > 1);
 }
 
+fn void test_sway_reach_grows_the_batch_bound() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Transform[1] transforms = { at({ 0, 0, 0 }) };
+    Node* node = fixture.scene.add_instanced_mesh(fixture.box, fixture.red, 1, transforms[..])!!;
+    fixture.scene.update_world();
+    InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
+    batch.sway = { .direction = { 3, 0, 4 }, .amplitude = 0.5f };
+
+    Aabb swayed = spatial::instanced_world_bounds(&fixture.assets, node, batch);
+    assert(near_bounds(swayed, { .min = { -0.8f, -0.5f, -0.9f }, .max = { 0.8f, 0.5f, 0.9f } }));
+
+    batch.has_bounds_override = true;
+    batch.local_bounds = { .min = { -1, -1, -1 }, .max = { 1, 1, 1 } };
+    Aabb overridden = spatial::instanced_world_bounds(&fixture.assets, node, batch);
+    assert(near_bounds(overridden, { .min = { -1.3f, -1, -1.4f }, .max = { 1.3f, 1, 1.4f } }));
+}
+
+fn void test_sway_edit_moves_the_bound_without_a_mark() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Transform[1] transforms = { at({ 0, 0, 0 }) };
+    Node* node = fixture.scene.add_instanced_mesh(fixture.box, fixture.red, 1, transforms[..])!!;
+    fixture.scene.update_world();
+    InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
+    batch.sway = { .direction = { 1, 0, 0 } };
+    Aabb calm = spatial::instanced_world_bounds(&fixture.assets, node, batch);
+    InstanceAggregate kept = batch.aggregate;
+
+    batch.sway.amplitude = 1;
+    Aabb windy = spatial::instanced_world_bounds(&fixture.assets, node, batch);
+
+    assert(near_bounds(windy, { .min = calm.min - (Vec3){ 1, 0, 0 }, .max = calm.max + (Vec3){ 1, 0, 0 } }));
+    assert(batch.aggregate.bounds.min == kept.bounds.min && batch.aggregate.bounds.max == kept.bounds.max);
+    assert(batch.aggregate.bounds_revision == kept.bounds_revision);
+}
+
 fn void test_batch_prev_model_is_exact_identity_at_rest() @test {
     Transform placement = {
         .position = { 3.3f, -1.7f, 12.9f },

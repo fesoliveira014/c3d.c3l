@@ -259,6 +259,7 @@ fn void include_batch(
         counts.dangling++;
         return;
     }
+    batch.validate_effects();
     Aabb world = spatial::instanced_world_bounds(assets, node, batch);
     if (!maths::frustum_intersects_aabb(&camera.frustum, world)) {
         counts.culled++;
@@ -404,6 +405,7 @@ fn MeshCandidate[] extract_shadow_candidates(
             if (!batch_is_drawable(assets, batch)) {
                 counts.dangling++;
             } else if (assets.material(batch.material).data.common.alpha_mode != AlphaMode.BLEND) {
+                batch.validate_effects();
                 MeshCandidate template = {
                     .node           = node,
                     .geometry       = batch.geometry,
