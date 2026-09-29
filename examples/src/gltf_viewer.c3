@@ -68,6 +68,7 @@ struct BenchmarkOptions @local {
     uint capacity;
     float range;
     bool shadows;
+    bool traced_shadows;
     String model_path;
     uint probe_volumes;
     uint[<3>] probe_counts;
@@ -248,10 +249,12 @@ fn BenchmarkOptions? parse_options(String[] args) @local {
                 }
             case "--shading": options.shading = bench_loop::parse_shading(value)!;
             case "--shadows":
-                if (value == "on") {
+                if (value == "on" || value == "traced") {
                     options.shadows = true;
+                    options.traced_shadows = value == "traced";
                 } else if (value == "off") {
                     options.shadows = false;
+                    options.traced_shadows = false;
                 } else {
                     return c3d::INVALID_ARGUMENT~;
                 }
@@ -385,6 +388,7 @@ fn Node*? populate_benchmark_scene(
     Vec3 extent = bounds.max - bounds.min;
     model::instantiate(assets, scene, model, name: "model")!;
     Light sun = light::directional({ 1, 0.95f, 0.85f }, LIGHT_INTENSITY, options.shadows);
+    sun.shadow.ray_traced = options.traced_shadows;
     Node* sun_node = scene.add_light(sun, name: "sun")!;
     sun_node.local.rotation = maths::look_rotation((Vec3){ -0.5f, -1, -0.6f }.normalize(), { 0, 1, 0 });
     place_point_lights(
@@ -399,11 +403,18 @@ fn Node*? populate_benchmark_scene(
     return place_camera(scene, bounds);
 }
 
+// Traced sun shadows are a traced effect, so an AUTO run creates the renderer with ray queries for them too.
+fn bool requests_ray_queries(BenchmarkOptions options) @local {
+    bool automatic = options.flags.trace == TraceKind.AUTO;
+    return bench_loop::requests_ray_queries(options.flags) || (automatic && options.traced_shadows);
+}
+
 fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkOptions options) @local {
     base.post.anti_aliasing = options.flags.anti_aliasing;
     base.ambient_occlusion = options.flags.ambient_occlusion;
     base.depth_prepass = options.flags.depth_prepass;
     base.ray_tracing.reflections = options.flags.reflections;
+    base.ray_tracing.shadows = options.traced_shadows;
     if (options.flags.screen_space_gi) base.screen_space_gi = render::SCREEN_SPACE_GI_DEFAULT;
     base.shading = options.shading;
     // A path-traced view loops every light itself and rejects the cluster grid.
@@ -418,7 +429,8 @@ fn void print_banner(BenchmarkOptions options, bool timestamps_active) @local {
     bool path_traced = options.shading == ShadingPath.PATH_TRACED;
     io::eprintfn("mode=%s shading=%s lights=%d shadows=%s range=%.3f capacity=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s depth_prepass=%s ambient_occlusion=%s reflections=%s screen_space_gi=%s probe_volumes=%d probe_counts=%dx%dx%d probe_fill=%s probe_window=%d probe_rays=%d point_shadows=%s trace=%s",
         options.selection == LightSelection.FLAT || options.shading == ShadingPath.PATH_TRACED ? "flat" : "clustered",
-        bench_loop::shading_name(options.shading), options.lights, options.shadows,
+        bench_loop::shading_name(options.shading), options.lights,
+        options.traced_shadows ? "traced" : options.shadows ? "on" : "off",
         options.range, options.capacity, flags.width, flags.height, flags.warmup, flags.frames,
         flags.validation, flags.gpu_timings, timestamps_active, flags.capture,
         flags.window ? "window" : "none", flags.panel, flags.depth_prepass,
@@ -427,8 +439,8 @@ fn void print_banner(BenchmarkOptions options, bool timestamps_active) @local {
         options.probe_volumes, options.probe_counts.x, options.probe_counts.y, options.probe_counts.z,
         options.probe_fill == ProbeFill.SCENE ? "scene" : "environment", options.probe_window, options.probe_rays,
         options.point_shadows, bench_loop::trace_name(
-            traces:      scene_probes || bench_loop::needs_ray_queries(flags) || path_traced,
-            ray_queries: bench_loop::requests_ray_queries(flags) || path_traced,
+            traces:      scene_probes || bench_loop::needs_ray_queries(flags) || options.traced_shadows || path_traced,
+            ray_queries: requests_ray_queries(options) || path_traced,
         ));
 }
 
@@ -446,7 +458,7 @@ fn void? run_benchmark(BenchmarkOptions options) @local {
         .gpu_timings = flags.gpu_timings,
         .present_mode = gpu::PresentMode.IMMEDIATE,
         .application_name = "c3d_gltf_benchmark",
-        .ray_queries = bench_loop::requests_ray_queries(flags),
+        .ray_queries = requests_ray_queries(options),
         .ray_tracing_pipelines = options.shading == ShadingPath.PATH_TRACED,
         .max_lights = BENCHMARK_LIGHTS_MAX,
     };
@@ -512,7 +524,7 @@ fn int main(String[] args) {
     if (catch excuse = parsed) {
         if (excuse != c3d::UNSUPPORTED) {
             io::eprintfn("Invalid options: %s", excuse);
-            io::eprintn("Use [model.gltf] [--gpu-timings] or --benchmark [model.gltf] --mode flat|clustered [--shading forward|deferred|path-traced] --lights N --shadows on|off --range R --capacity N --frames N --warmup N --width N --height N [--anti-aliasing none|fxaa|taa] [--ambient-occlusion none|half|full] [--depth-prepass on|off] [--gpu-timings] [--validation] [--capture] [--window] [--panel] [--print-features].");
+            io::eprintn("Use [model.gltf] [--gpu-timings] or --benchmark [model.gltf] --mode flat|clustered [--shading forward|deferred|path-traced] --lights N --shadows on|off|traced --range R --capacity N --frames N --warmup N --width N --height N [--anti-aliasing none|fxaa|taa] [--ambient-occlusion none|half|full] [--depth-prepass on|off] [--gpu-timings] [--validation] [--capture] [--window] [--panel] [--print-features].");
         }
         return 1;
     }
