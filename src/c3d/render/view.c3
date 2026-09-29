@@ -46,6 +46,7 @@ struct DrawItem @private {
     gpu::GpuAddress root;
     gpu::FrontFace  front_face;
     bool            moved;
+    bool            custom_velocity;
     gpu::PipelineHandle velocity_pipeline;
 }
 
@@ -319,6 +320,7 @@ fn void? record_raster_view(
                     .instance_data  = candidate.batch ? resolve_instances(renderer, candidate)! : (gpu::GpuAddress)0,
                     .front_face = model_reflected != view_reflected
                       ? gpu::FrontFace.CLOCKWISE : gpu::FrontFace.COUNTER_CLOCKWISE,
+                    .custom_velocity = custom_velocity_stage(renderer, material_description, candidate.batch != null),
                 };
             }
         };
@@ -474,7 +476,7 @@ fn void? record_raster_view(
                 if (has_previous) prev_world = record.history.previous_model(scene, node);
                 bool posed = item.skin != (gpu::GpuAddress)0 || item.morph != (gpu::GpuAddress)0
                   || item.candidate.batch;
-                item.moved = has_previous && (posed || !(prev_world == node.world));
+                item.moved = has_previous && (posed || item.custom_velocity || !(prev_world == node.world));
                 bool redrawn_by_velocity = group_index == 0
                   || (group_index == 1 && late_velocity && writes_own_depth(material_data(renderer, item.material)));
                 gpu::GpuAddress previous_pose;
@@ -1672,6 +1674,12 @@ fn bool custom_gbuffer_stage(Renderer* renderer, Material* material) @private {
     if (material.kind != MaterialKind.CUSTOM) return false;
     ShaderId shader = material.custom.shader;
     return renderer.assets.shaders.is_live(shader) && renderer.assets.shader(shader).desc.gbuffer.len > 0;
+}
+
+fn bool custom_velocity_stage(Renderer* renderer, Material* material, bool instanced) @private {
+    if (material.kind != MaterialKind.CUSTOM) return false;
+    asset::CustomVertex* vertex = &renderer.assets.shader(material.custom.shader).desc.vertex;
+    return (instanced ? vertex.instanced_velocity : vertex.velocity).len > 0;
 }
 
 // The velocity pass redraws with depth EQUAL, so it can match only a draw that left its own depth.

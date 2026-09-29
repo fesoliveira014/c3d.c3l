@@ -257,8 +257,13 @@ fn gpu::PipelineHandle? resolve_velocity_pipelines(
     gpu::PipelineHandle first;
     foreach (group_index, group : groups) foreach (&item : group) {
         if (!velocity_redrawn(renderer, item, group_index > 0)) continue;
-        item.velocity_pipeline = velocity_pipeline_for(renderer, item, format)!;
-        if (!first.is_valid()) first = item.velocity_pipeline;
+        gpu::PipelineHandle? pipeline = velocity_pipeline_for(renderer, item, format);
+        if (catch excuse = pipeline) {
+            if (!velocity_form_rejected(renderer, item, excuse)) return excuse~;
+            continue;
+        }
+        item.velocity_pipeline = pipeline;
+        if (!first.is_valid()) first = pipeline;
     }
     return first;
 }
@@ -266,6 +271,11 @@ fn gpu::PipelineHandle? resolve_velocity_pipelines(
 fn bool velocity_redrawn(Renderer* renderer, DrawItem* item, bool after_opaque) @private {
     if (!item.moved) return false;
     return !after_opaque || render::writes_own_depth(&renderer.assets.material(item.material.asset).data);
+}
+
+fn bool velocity_form_rejected(Renderer* renderer, DrawItem* item, fault excuse) @private {
+    if (!item.custom_velocity) return false;
+    return render::custom_pipeline_rejected(renderer, &renderer.assets.material(item.material.asset).data, excuse);
 }
 
 fn gpu::PipelineHandle? velocity_pipeline_for(Renderer* renderer, DrawItem* item, gpu::Format format) @private {
@@ -280,7 +290,16 @@ fn gpu::PipelineHandle? velocity_pipeline_for(Renderer* renderer, DrawItem* item
         .samples       = gpu::SampleCount.ONE,
         .polygon       = wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL,
     };
-    return renderer.pipelines.get(&renderer.device, key);
+    if (!item.custom_velocity) return renderer.pipelines.get(&renderer.device, key);
+
+    ShaderId shader = material.custom.shader;
+    uint instanced = item.vertex.flags & shader::SHADER_FLAG_INSTANCED;
+    key.vertex = { .shader = MESH, .flags = shader::SHADER_FLAG_VELOCITY | instanced };
+    key.shader = shader;
+    key.shader_revision = renderer.shaders[shader.index].revision;
+    key.custom = { .vertex = true };
+    CustomStageSource source = render::custom_stage_source(&renderer.assets.shader(shader).desc, key);
+    return renderer.pipelines.get(&renderer.device, key, &source);
 }
 
 fn PipelineKey camera_velocity_pipeline_key(gpu::Format format) @private {

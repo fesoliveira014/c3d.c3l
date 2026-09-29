@@ -157,7 +157,7 @@ fn PipelineKey[] PipelineCache.compute_keys_of(&self, Allocator allocator, Compu
  Rebuild every pipeline of the shader under the new revision; publish all or none.
  @param allocator : "Owns the returned handles."
  @param [&inout] device : "Owns the created pipelines."
- @param [&in] stages : "New revision's SPIR-V; the depth vertex form serves DEPTH_ONLY keys."
+ @param [&in] stages : "New revision's SPIR-V; each key takes the vertex form its flags name."
  @return "Superseded and dropped handles, to retire after their submitted use."
  @return? gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::INVALID_ARGUMENT
  @return? gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL, gpu::OUT_OF_HOST_MEMORY
@@ -284,13 +284,8 @@ fn ShaderVariant custom_fragment_variant(asset::ShaderDesc* stages, uint shadow_
  @pure
 *>
 fn CustomStageSource custom_stage_source(asset::ShaderDesc* stages, PipelineKey key) {
-    bool depth = (key.vertex.flags & shader::SHADER_FLAG_DEPTH_ONLY) != 0;
-    char[] vertex = depth ? stages.vertex.depth : stages.vertex.shaded;
-    if (key.vertex.flags & shader::SHADER_FLAG_INSTANCED) {
-        vertex = depth ? stages.vertex.instanced_depth : stages.vertex.instanced_shaded;
-    }
     return {
-        .vertex   = vertex,
+        .vertex   = custom_vertex_form(&stages.vertex, key.vertex.flags) @pure,
         .fragment = key.custom.gbuffer ? stages.gbuffer : custom_fragment_form(stages, key.fragment.flags) @pure,
     };
 }
@@ -301,11 +296,15 @@ fn char[] custom_fragment_form(asset::ShaderDesc* stages, uint fragment_flags) @
     return stages.traced_fragment.hardware;
 }
 
+fn char[] custom_vertex_form(asset::CustomVertex* vertex, uint flags) @private {
+    bool instanced = (flags & shader::SHADER_FLAG_INSTANCED) != 0;
+    if (flags & shader::SHADER_FLAG_DEPTH_ONLY) return instanced ? vertex.instanced_depth : vertex.depth;
+    if (flags & shader::SHADER_FLAG_VELOCITY) return instanced ? vertex.instanced_velocity : vertex.velocity;
+    return instanced ? vertex.instanced_shaded : vertex.shaded;
+}
+
 fn bool key_stages_present(PipelineKey key, asset::ShaderDesc* stages) @private {
-    if (key.custom.vertex) {
-        bool instanced = (key.vertex.flags & shader::SHADER_FLAG_INSTANCED) != 0;
-        if ((instanced ? stages.vertex.instanced_shaded : stages.vertex.shaded).len == 0) return false;
-    }
+    if (key.custom.vertex && custom_stage_source(stages, key).vertex.len == 0) return false;
     if (key.custom.fragment && custom_fragment_form(stages, key.fragment.flags).len == 0) return false;
     return !key.custom.gbuffer || stages.gbuffer.len > 0;
 }

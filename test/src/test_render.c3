@@ -860,6 +860,44 @@ fn void test_custom_stage_source_selects_depth_form_for_depth_only_keys() @test 
     assert(depth_source.vertex.ptr == &depth[0]);
 }
 
+fn void test_custom_stage_source_selects_velocity_forms() @test {
+    char[4] fragment = { 1, 1, 1, 1 };
+    char[4] shaded = { 2, 2, 2, 2 };
+    char[4] depth = { 3, 3, 3, 3 };
+    char[4] instanced_shaded = { 4, 4, 4, 4 };
+    char[4] instanced_depth = { 5, 5, 5, 5 };
+    char[4] velocity = { 6, 6, 6, 6 };
+    char[4] instanced_velocity = { 7, 7, 7, 7 };
+    asset::ShaderDesc stages = {
+        .fragment = fragment[..],
+        .vertex   = {
+            .shaded             = shaded[..],
+            .depth              = depth[..],
+            .instanced_shaded   = instanced_shaded[..],
+            .instanced_depth    = instanced_depth[..],
+            .velocity           = velocity[..],
+            .instanced_velocity = instanced_velocity[..],
+        },
+    };
+    render::PipelineKey key = custom_key(3, 1);
+    key.custom = { .vertex = true };
+
+    key.vertex = { .shader = MESH, .flags = shader::SHADER_FLAG_VELOCITY };
+    assert(render::custom_stage_source(&stages, key).vertex.ptr == &velocity[0]);
+    key.vertex.flags = shader::SHADER_FLAG_VELOCITY | shader::SHADER_FLAG_INSTANCED;
+    assert(render::custom_stage_source(&stages, key).vertex.ptr == &instanced_velocity[0]);
+    key.vertex.flags = shader::SHADER_FLAG_DEPTH_ONLY | shader::SHADER_FLAG_INSTANCED;
+    assert(render::custom_stage_source(&stages, key).vertex.ptr == &instanced_depth[0]);
+    key.vertex.flags = shader::SHADER_FLAG_INSTANCED;
+    assert(render::custom_stage_source(&stages, key).vertex.ptr == &instanced_shaded[0]);
+    key.vertex.flags = 0;
+    assert(render::custom_stage_source(&stages, key).vertex.ptr == &shaded[0]);
+
+    asset::ShaderDesc plain_pair = { .fragment = fragment[..], .vertex = { .shaded = shaded[..], .depth = depth[..] } };
+    key.vertex.flags = shader::SHADER_FLAG_VELOCITY;
+    assert(render::custom_stage_source(&plain_pair, key).vertex.len == 0);
+}
+
 fn void test_custom_material_block_packs_slots_and_payload_address() @test {
     char[] block = mem::new_array(char, render::MATERIAL_STRIDE);
     defer free(block.ptr);
