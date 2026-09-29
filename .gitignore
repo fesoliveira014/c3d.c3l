@@ -13,8 +13,8 @@ build/
 # Python bytecode from the build scripts.
 __pycache__/
 
-# SPIR-V is compiled by scripts/build_shaders.py on every build; the C3 twin is committed.
-shaders/spv/
+# SPIR-V is compiled by scripts/build_shaders.py on every build, for core and every shader package; the C3 twins are committed.
+**/shaders/spv/
 
 # Mixamo downloads stay local; Adobe's terms govern them.
 examples/assets/mixamo/*.fbx

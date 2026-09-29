@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Build orchestration for c3d.
 
-Steps, in order: tools, deps, abi, shaders, build, test, run.
+Steps, in order: tools, deps, abi, shaders, build, test, run. The shaders step compiles core's registry, its
+public-include probes and every shader package (scripts/build_shaders.py).
 Each step is a function; failures raise BuildError and stop the run.
 
   scripts/build.py                  compile SPIR-V, verify committed generated C3, build all example targets

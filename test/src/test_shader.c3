@@ -2,6 +2,7 @@ module c3d::test::shader;
 
 import c3d;
 import c3d::shader;
+import c3d::test::shader_package @public;
 
 const char[4] SPIRV_MAGIC_BYTES = { 0x03, 0x02, 0x23, 0x07 };
 const usz SPIRV_HEADER_WORDS @private = 5;
@@ -153,6 +154,27 @@ fn void test_builtin_standard_shades_through_the_public_include() @test {
         }
     }
     assert(standard_count > 0 && resolve_count > 0);
+}
+
+fn void test_package_constants_hold_spirv() @test {
+    char[][3] forms = {
+        shader_package::SURFACE_SPIRV[..],
+        shader_package::SURFACE_RT_SHADOWS_SPIRV[..],
+        shader_package::SURFACE_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV[..],
+    };
+    foreach (spirv : forms) {
+        assert(spirv.len >= SPIRV_MAGIC_BYTES.len && spirv.len % 4 == 0);
+        foreach (index, expected : SPIRV_MAGIC_BYTES) assert(spirv[index] == expected);
+    }
+}
+
+fn void test_package_traced_forms_follow_their_defines() @test {
+    SpirvFeatures plain = spirv_ray_features(shader_package::SURFACE_SPIRV[..]);
+    SpirvFeatures hardware = spirv_ray_features(shader_package::SURFACE_RT_SHADOWS_SPIRV[..]);
+    SpirvFeatures software = spirv_ray_features(shader_package::SURFACE_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV[..]);
+    assert(hardware.ray_query_capability && hardware.ray_query_extension);
+    assert(!plain.ray_capability && !plain.ray_extension);
+    assert(!software.ray_capability && !software.ray_extension);
 }
 
 module c3d::test::shader_compile @feat(C3D_SHADER_COMPILER);

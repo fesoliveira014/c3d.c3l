@@ -1,0 +1,10 @@
+{
+  "module": "c3d::test::shader_package",
+  "output": "shaders/shader_package.c3",
+  "flags": ["RT_SHADOWS", "SCENE_TRACE_BVH"],
+  "entries": [
+    { "shader": "surface", "source": "surface.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "surface", "source": "surface.frag.glsl", "stage": "frag", "defines": ["RT_SHADOWS"] },
+    { "shader": "surface", "source": "surface.frag.glsl", "stage": "frag", "defines": ["RT_SHADOWS", "SCENE_TRACE_BVH"] }
+  ]
+}
