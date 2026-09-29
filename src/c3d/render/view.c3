@@ -210,12 +210,13 @@ fn void? record_raster_view(
         instrumentation::@scope("view.extract") {
             ExtractCounts counts;
             candidates = extract_candidates(
-                allocator: tmem,
-                scene:     scene,
-                assets:    renderer.assets,
-                camera:    matrices,
-                layers:    camera.layers,
-                counts:    &counts,
+                allocator:  tmem,
+                scene:      scene,
+                assets:     renderer.assets,
+                camera:     matrices,
+                layers:     camera.layers,
+                counts:     &counts,
+                clip_plane: record.desc.clip_plane,
             );
             renderer.stats.culled += counts.culled;
             renderer.stats.dangling_refs += counts.dangling;
@@ -477,6 +478,7 @@ fn void? record_raster_view(
                 ao_texture: ambient_occlusion ? record.ao.view.index : (gpu::TextureIndex)0,
                 probe_volumes: probe_volumes,
                 ssgi_texture: screen_space_gi ? record.ssgi.view.index : (gpu::TextureIndex)0,
+                clip_plane: record.desc.clip_plane,
             );
             if (record.desc.lights == LightSelection.CLUSTERED) {
                 record_clusters(
@@ -998,6 +1000,7 @@ fn bool velocity_before_lighting(ViewDesc* desc) @private {
  @param ao_texture : "AO sampled view; zero when the view has none."
  @param probe_volumes : "ProbeVolumeSetGpu of the view; zero when no volume applies."
  @param ssgi_texture : "Screen-space GI sampled view; zero when the view has none."
+ @param clip_plane : "World plane whose positive side stays; zero clips nothing."
 *>
 fn void write_frame_root(
     FrameRoot* root,
@@ -1024,6 +1027,7 @@ fn void write_frame_root(
     gpu::TextureIndex ao_texture = (gpu::TextureIndex)0,
     gpu::GpuAddress probe_volumes = (gpu::GpuAddress)0,
     gpu::TextureIndex ssgi_texture = (gpu::TextureIndex)0,
+    Plane clip_plane = {},
 ) {
     *root = {
         .view            = bitcast(matrices.view, Mat4f),
@@ -1048,13 +1052,15 @@ fn void write_frame_root(
         .flags           = (clusters != (gpu::GpuAddress)0 ? shader::FRAME_LIGHTS_CLUSTERED : 0)
           | (trace != (gpu::GpuAddress)0 ? shader::FRAME_TRACE_PRESENT : 0)
           | (ao_texture != (gpu::TextureIndex)0 ? shader::FRAME_AO_PRESENT : 0)
-          | (ssgi_texture != (gpu::TextureIndex)0 ? shader::FRAME_SSGI_PRESENT : 0),
+          | (ssgi_texture != (gpu::TextureIndex)0 ? shader::FRAME_SSGI_PRESENT : 0)
+          | (clip_plane.normal != (Vec3){} ? shader::FRAME_CLIP_PLANE : 0),
         .mip_bias        = mip_bias,
         .ao_texture      = ao_texture,
         .probe_volumes   = probe_volumes,
         .ssgi_texture    = ssgi_texture,
         .scene_depth     = scene_depth,
         .previous_time   = (float)(previous_time ? *previous_time : info.time),
+        .clip_plane      = { clip_plane.normal.x, clip_plane.normal.y, clip_plane.normal.z, clip_plane.d },
     };
 }
 

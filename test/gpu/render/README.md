@@ -133,6 +133,15 @@ What the four cases establish:
   does not fit the cull arena draws from CPU arguments and counts one overflow; an opaque view
   never creates the sort pipeline.
 
+- A world clip plane cuts a box and a batch on forward views with and without the depth prepass
+  and on deferred views, and culls a box wholly behind it (one more `Stats.culled`) without
+  reallocating the view's images; a caster behind the plane still casts its shadow; a plane that
+  keeps everything changes no pixel; a mirror camera built with `reflection_matrix` and
+  `transform_from_affine` shows only the kept side with single-sided faces kept; a custom stage
+  clips through `write_mesh_outputs`; a clipped moving box keeps its geometry velocity above the
+  plane; and the prepass and deferred paths cover an oblique cut exactly as the single pass does,
+  column by column (`line.comp.glsl`).
+
 What they cannot establish: window clear-only and GUI-only frames need a
 window (run the `clear` and `cube_gui` examples with validation), and a
 presentation failure after submission needs a hardware observation.

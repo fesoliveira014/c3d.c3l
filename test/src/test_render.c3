@@ -366,6 +366,46 @@ fn void test_frame_root_carries_previous_time() @test {
     assert(root.previous_time == root.jitter_time.z);
 }
 
+fn void test_frame_root_marks_clip_plane() @test {
+    shader::FrameRoot* root = mem::new(shader::FrameRoot);
+    defer free(root);
+    Camera camera = camera::perspective_deg(60, 0.1f, 100);
+    CameraMatrices matrices = camera::derive_matrices(camera, matrix::IDENTITY4, { 800, 600 });
+    Plane water = { .normal = { 0, 1, 0 }, .d = 1.2f };
+    render::write_frame_root(
+        root:        root,
+        matrices:    &matrices,
+        camera:      &camera,
+        viewport:    { 800, 600 },
+        info:        {},
+        frame_index: 1,
+        clip_plane:  water,
+    );
+    assert((root.flags & shader::FRAME_CLIP_PLANE) != 0 && root.clip_plane == (Vec4f){ 0, 1, 0, 1.2f });
+
+    render::write_frame_root(
+        root:        root,
+        matrices:    &matrices,
+        camera:      &camera,
+        viewport:    { 800, 600 },
+        info:        {},
+        frame_index: 1,
+        trace:       (gpu::GpuAddress)0x1000,
+        clip_plane:  water,
+    );
+    assert((root.flags & shader::FRAME_CLIP_PLANE) != 0 && (root.flags & shader::FRAME_TRACE_PRESENT) != 0);
+
+    render::write_frame_root(
+        root:        root,
+        matrices:    &matrices,
+        camera:      &camera,
+        viewport:    { 800, 600 },
+        info:        {},
+        frame_index: 1,
+    );
+    assert((root.flags & shader::FRAME_CLIP_PLANE) == 0 && root.clip_plane == (Vec4f){});
+}
+
 fn void test_draw_root_packs_normal_columns() @test {
     shader::DrawRoot* root = mem::new(shader::DrawRoot);
     defer free(root);

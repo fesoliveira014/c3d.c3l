@@ -702,6 +702,8 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
 
     gpu::Queue graphics = gpu::get_queue(&device, gpu::QueueKind.GRAPHICS)!;
     gpu::DeviceCaps caps = gpu::get_device_caps(&device)!;
+    // Every mesh vertex stage declares ClipDistance, which the backend rejects without the feature.
+    if (!caps.clip_distance) return c3d::UNSUPPORTED~;
     uint max_trace_instances = desc.max_trace_instances ? desc.max_trace_instances : DEFAULT_MAX_TRACE_INSTANCES;
     if (ray_queries && max_trace_instances > caps.acceleration_structures.max_instance_count) {
         return c3d::UNSUPPORTED~;

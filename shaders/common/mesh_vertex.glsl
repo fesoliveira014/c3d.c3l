@@ -2,6 +2,7 @@
 #define C3D_MESH_VERTEX_GLSL
 
 #include "vertex_pull.glsl"
+#include "view_clip.glsl"
 #if defined(SKINNED) || defined(SKINNED_U16) || defined(MORPH)
 #include "deform.glsl"
 #endif
@@ -231,6 +232,7 @@ void write_mesh_outputs(
 #endif
     vec4 clip = frame.view_proj * world;
     gl_Position = clip;
+    gl_ClipDistance[0] = view_clip_distance(frame, world.xyz);
 #ifdef VELOCITY
     // Velocity is unjittered: remove the view's jitter from the rasterized position.
     clip.xy -= frame.jitter_time.xy * clip.w;

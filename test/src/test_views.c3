@@ -4,6 +4,7 @@ import c3d;
 import c3d::render @public;
 import c3d::render::post;
 import gpu;
+import std::math;
 
 fn void test_working_extent_uses_the_whole_output_for_a_zero_viewport() @test {
     uint[<2>] extent = render::working_extent({}, 1280, 720, 1);
@@ -160,6 +161,36 @@ fn void test_view_desc_gates_reflections_on_deferred() @test {
     desc = render::default_view_desc();
     desc.ray_tracing.max_reflection_roughness = 0;
     render::validate_view_desc(renderer, &desc)!!;
+}
+
+fn void test_view_desc_checks_clip_plane() @test {
+    Renderer* renderer = mem::new(Renderer);
+    defer free(renderer);
+    ViewDesc desc = render::default_view_desc();
+    assert(desc.clip_plane.normal == (Vec3){} && desc.clip_plane.d == 0);
+    render::validate_view_desc(renderer, &desc)!!;
+    desc.clip_plane = { .normal = { 0, 1, 0 }, .d = 1.2f };
+    render::validate_view_desc(renderer, &desc)!!;
+
+    Plane[5] invalid = {
+        { .normal = { 0, 2, 0 } },
+        { .d = 1 },
+        { .normal = { 0, 1, 0 }, .d = float::nan },
+        { .normal = { 0, 1, 0 }, .d = float::inf },
+        { .normal = { float::nan, 0, 0 } },
+    };
+    foreach (plane : invalid) {
+        desc.clip_plane = plane;
+        expect_view_desc_fault(renderer, &desc, c3d::INVALID_ARGUMENT);
+    }
+
+    renderer.caps.ray_queries.enabled = true;
+    renderer.caps.ray_tracing_pipelines.enabled = true;
+    desc = render::default_view_desc();
+    desc.shading = ShadingPath.PATH_TRACED;
+    render::validate_view_desc(renderer, &desc)!!;
+    desc.clip_plane = { .normal = { 0, 1, 0 }, .d = 1.2f };
+    expect_view_desc_fault(renderer, &desc, c3d::INVALID_ARGUMENT);
 }
 
 fn void test_view_targets_list_every_image_once() @test {

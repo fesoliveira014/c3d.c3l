@@ -54,13 +54,16 @@ defer (void)render::destroy_view(&renderer, capture_view);
 | `ambient_occlusion` | `AmbientOcclusionDesc`; zero is off (see [ambient occlusion](ambient_occlusion.md)) |
 | `screen_space_gi` | `ScreenSpaceGiDesc`; zero is off (see [screen-space GI](screen_space_gi.md)) |
 | `path_trace` | `PathTraceDesc`: bounces, samples per frame and sample cap of a `PATH_TRACED` view (see [path tracing](path_tracing.md)) |
+| `clip_plane` | World-space `maths::Plane`; geometry on its negative side is not drawn (see [Clip plane](#clip-plane)); the zero plane clips nothing and both constructors produce it |
 
 `default_view_desc()` is a full-window `DISPLAY_LDR` view with neutral grading and a depth
 prepass and `ray_tracing.max_reflection_roughness` at `RT_REFLECTION_ROUGHNESS_DEFAULT`;
 `texture_view_desc(target, color = LINEAR_HDR)` covers a target with the same defaults. `create_view` and `configure_view`
 validate between frames: a dead target faults `INVALID_ID`; `LINEAR_HDR` on a window view or on an
 RGBA8 target, a viewport outside the output, a render scale outside its range and an invalid post
-stack fault `INVALID_ARGUMENT`; invalid ambient occlusion settings fault `INVALID_ARGUMENT` and
+stack fault `INVALID_ARGUMENT`; a `clip_plane` other than the zero plane with a normal that is not
+unit length or a `d` that is not finite, and any non-zero `clip_plane` on a `PATH_TRACED` view, fault
+`INVALID_ARGUMENT`; invalid ambient occlusion settings fault `INVALID_ARGUMENT` and
 `AoKind.RAY_TRACED` faults `UNSUPPORTED`; a full pool faults `CAPACITY_EXCEEDED` (`VIEW_CAPACITY` is 8).
 `destroy_view` on the default view faults `INVALID_ARGUMENT`.
 
@@ -198,6 +201,96 @@ half floats for `RGBA16_FLOAT`. A `DISPLAY_LDR` view writes linear values and re
 format to encode them, so capture display output for an image file on an `RGBA8_SRGB` target and
 write it with `image::write_png`. Every render target carries transfer-source usage for this.
 
+## Clip plane
+
+`ViewDesc.clip_plane` drops the geometry on one side of a world plane, for planar reflections
+(water, floor and wall mirrors) and section views. A point stays when
+`dot(normal, point) + d >= 0`, the rule `maths::Plane` states; the normal is unit length. The zero
+plane (`{}`) clips nothing, and both constructors produce it.
+
+```c3
+ViewDesc desc = render::texture_view_desc(mirror_target);
+desc.clip_plane = { .normal = { 0, 1, 0 }, .d = -water_level }; // keeps y >= water_level
+ViewId mirror_view = render::create_view(&renderer, desc)!;
+```
+
+| Pass or effect | Clipped |
+| --- | --- |
+| Depth prepass, G-buffer, forward opaque, scene reads, transparent | Yes, per vertex; every `EQUAL` pass tests against the same clipped depth |
+| Geometry velocity | Yes, in the built-in and in custom velocity forms |
+| TAA, motion blur, depth of field, ambient occlusion, screen-space GI, cluster depth | Through the clipped depth and velocity |
+| Sky | No; it fills what the plane removed |
+| Debug lines | No |
+| Shadow atlas | Never; casters behind the plane still cast |
+| Ray-traced shadows, ambient occlusion and reflections | No; secondary rays trace the whole scene |
+| Probe updates, light extraction, picking | No |
+
+Every mesh vertex stage writes `gl_ClipDistance[0]` from the world position that feeds
+`gl_Position`, so the depth prepass, the G-buffer, `EQUAL` shading and velocity agree along the cut.
+Custom vertex stages clip through `write_mesh_outputs` or `view_clip.glsl` (see
+[custom shaders](custom_shaders.md#vertex-contract)). `FrameRoot.clip_plane` holds `(normal, d)`
+when `FRAME_CLIP_PLANE` is set in `FrameRoot.flags`, and zero otherwise; any stage may read it. A
+`PATH_TRACED` view rejects a non-zero plane with `INVALID_ARGUMENT`, like the other raster-only
+settings.
+
+Extraction also drops a mesh or batch whose world bounds lie wholly behind the plane and counts it
+in `Stats.culled`. A batch that straddles the plane is drawn whole: GPU instance culling ignores
+the plane, so its instances behind it are clipped, not culled.
+
+Changing only the plane through `configure_view` allocates and retires nothing, but like every
+configuration it resets the view's history. Set the plane once for a water level or a wall mirror;
+the mirror camera moves every frame, the world-space plane does not.
+
+### Planar reflections
+
+A mirror view renders the scene from the main camera reflected across the plane, clipped to the
+plane's front side, into a target that the reflective surface samples:
+
+```c3
+Plane floor_plane = { .normal = { 0, 1, 0 }, .d = -floor_level };
+// Every frame, after moving the main camera and before scene.update_world():
+Mat4 mirrored = maths::reflection_matrix(floor_plane).mul(camera_node.local.to_mat4());
+mirror_node.local = maths::transform_from_affine(mirrored)!;
+scene.get(mirror_node, Camera).aspect = main_aspect;
+```
+
+- `reflection_matrix(plane)` maps `p` to `p - 2 (n·p + d) n`; `transform_from_affine` stores the
+  reflection as a negative x scale. The mirror camera's world matrix then has a negative
+  determinant, and the renderer flips the view's front face for it, so single-sided surfaces keep
+  their faces.
+- The recipe reads `local` before `update_world`, so the reflection has no frame of lag, and
+  assumes both camera nodes are roots. For a parented node, reflect the main camera's world matrix
+  and express the result relative to the mirror node's parent.
+- Exclude the reflective surface's layer from the mirror camera's `Camera.layers`, so the view
+  never draws the surface that samples its target (see [Sampling a target](#sampling-a-target)).
+- Set the mirror camera's `Camera.aspect` to the main view's when the target's aspect can differ,
+  for example a target of fixed size under a resizable window.
+- The surface's fragment stage samples the target at `gl_FragCoord.xy / frame.camera_params.zw`:
+  the mirror view projects a point on the plane where the main view does.
+- Render the mirror view before the view that shows the surface.
+
+Every mesh vertex stage declares `ClipDistance`, so the device must support `shaderClipDistance`;
+`create_renderer` faults `UNSUPPORTED` without it. Adapter selection prefers a discrete adapter
+without checking the feature: on a machine whose discrete adapter lacks it, `create_renderer`
+faults even when another adapter has it.
+
+Cost, measured on an RTX 4090 (driver 610.88). Writing the clip distance costs nothing measurable:
+Sponza, forward, 64 lights, shadows on, means of six alternated runs before and after the clip write
+(ms):
+
+| 2560 × 1440 | Depth prepass | Opaque | Shadow atlas | GPU frame |
+| --- | --- | --- | --- | --- |
+| Flat lights, before | 0.0420 | 1.0812 | 0.0975 | 1.2825 |
+| Flat lights, after | 0.0432 | 1.0827 | 0.0992 | 1.2857 |
+| Clustered lights, before | 0.0464 | 0.2768 | 0.1000 | 0.5034 |
+| Clustered lights, after | 0.0461 | 0.2751 | 0.1014 | 0.4985 |
+
+At 1920 × 1080 the frames run under 1 ms and the differences are inside the noise (flat: opaque
+0.7008 against 0.6898 ms). The `views` example's mirror view sums 0.065 to 0.074 ms of GPU passes at
+render scale 0.5 and 1.0, with and without the plane, about 0.045 ms of it the shadow atlas; on that
+small scene neither the plane nor the render scale moves the time beyond the run-to-run spread. The
+plane culls the buried crate (`Stats.culled` 1 with it, 0 without).
+
 ## Preparation
 
 `prepare_scene(scene)` uploads every asset the scene references, creates its mesh, shadow and
@@ -258,13 +351,23 @@ of CPU per call on the WSL host.
 
 ## Example
 
-`examples/views` renders a rolled textured cube, two spheres and a ground plane twice per frame:
-a producer camera orbiting the scene writes a 512x512 capture target, and a monitor slab on its
-own layer samples that target through a Basic material while the window camera shows the whole
-scene. The panel resizes the capture target (256, 512, 1024), switches the capture between
+`examples/views` renders a rolled textured cube, three spheres, a crate and a ground plane three
+times per frame: a producer camera orbiting the scene writes a 512x512 capture target, and a monitor
+slab on its own layer samples that target through a Basic material while the window camera shows the
+whole scene. The panel resizes the capture target (256, 512, 1024), switches the capture between
 `DISPLAY_LDR` on an sRGB target and `LINEAR_HDR` on a float target (recreating the target and view
 and rebinding the material), toggles FXAA and bloom on the capture view, and scales the window
 view's working resolution.
+
+The ground is a mirror floor. A third view renders a mirror camera, placed each frame with the
+[planar reflection](#planar-reflections) recipe, into a half-size float target, clipped to the
+ground plane; the ground's custom material (`examples/shaders/custom/mirror.frag.glsl`, compiled at
+startup) shades the concrete through `shade_standard_surface` and mixes in the target. The ground
+sits on its own layer, so only the window camera draws it and the capture shows no floor. A chrome
+sphere sits half sunk into the ground and a crate lies wholly under it: with "Clip plane" off, the
+reflection shows the sphere's buried half and the crate as if they rose out of the floor. The panel
+also sets the mirror view's render scale and the floor's reflectance, and a "View stats" window
+compares the window, capture and mirror views.
 
 ## Shading path
 

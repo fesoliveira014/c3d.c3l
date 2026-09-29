@@ -23,6 +23,7 @@ const uint FRAME_LIGHTS_CLUSTERED = 1u;
 const uint FRAME_TRACE_PRESENT = 2u;
 const uint FRAME_AO_PRESENT = 4u;
 const uint FRAME_SSGI_PRESENT = 8u;
+const uint FRAME_CLIP_PLANE = 16u;
 const uint CLUSTER_GROUP_SIZE = 64u;
 const uint INSTANCE_CULL_GROUP_SIZE = 64u;
 const uint INSTANCE_SORT_GROUP_SIZE = 128u;
@@ -256,6 +257,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer FrameRoot {
     uint scene_depth;
     float previous_time;
     uint _pad2;
+    vec4 clip_plane;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer DrawRoot {

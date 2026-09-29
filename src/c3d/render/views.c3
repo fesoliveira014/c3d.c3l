@@ -73,6 +73,7 @@ struct ViewDesc {
     ScreenSpaceGiDesc    screen_space_gi;
     PathTraceDesc        path_trace;
     bool                 instance_culling;
+    Plane                clip_plane; // world space; the zero plane clips nothing
 }
 
 <*
@@ -724,6 +725,7 @@ fn void? reset_view_history(Renderer* renderer, ViewId view) {
 }
 
 fn void? validate_view_desc(Renderer* renderer, ViewDesc* desc) @private {
+    if (!clip_plane_valid(desc.clip_plane)) return c3d::INVALID_ARGUMENT~;
     if (!ambient_occlusion_desc_valid(&desc.ambient_occlusion)) return c3d::INVALID_ARGUMENT~;
     if (!screen_space_gi_desc_valid(&desc.screen_space_gi)) return c3d::INVALID_ARGUMENT~;
     RayTracingDesc* ray_tracing = &desc.ray_tracing;
@@ -736,7 +738,8 @@ fn void? validate_view_desc(Renderer* renderer, ViewDesc* desc) @private {
         if (!renderer.caps.ray_tracing_pipelines.enabled) return c3d::UNSUPPORTED~;
         bool raster_only = desc.post.anti_aliasing == AntiAliasing.TAA || desc.post.motion_blur
           || desc.post.depth_of_field || desc.ambient_occlusion.kind != AoKind.NONE
-          || ray_tracing.shadows || desc.lights == LightSelection.CLUSTERED || desc.screen_space_gi.enabled;
+          || ray_tracing.shadows || desc.lights == LightSelection.CLUSTERED || desc.screen_space_gi.enabled
+          || desc.clip_plane.normal != (Vec3){};
         if (raster_only || !path_trace_desc_valid(&desc.path_trace)) return c3d::INVALID_ARGUMENT~;
     }
     if (desc.lights == LightSelection.CLUSTERED) {
@@ -768,6 +771,11 @@ fn void? validate_view_desc(Renderer* renderer, ViewDesc* desc) @private {
         if (!lut_desc_valid(&lut.desc)) return c3d::INVALID_ARGUMENT~;
         renderer.upload_texture(desc.post.grade.lut)!;
     }
+}
+
+fn bool clip_plane_valid(Plane plane) @local {
+    if (plane.normal == (Vec3){} && plane.d == 0) return true;
+    return math::is_finite(plane.d) && plane.normal.is_normalized();
 }
 
 fn uint[<2>] view_output_extent(Renderer* renderer, ViewDesc* desc) @private {
