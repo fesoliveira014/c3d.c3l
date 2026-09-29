@@ -3,6 +3,7 @@
 
 #include "buffer_reference.glsl"
 #include "clusters.glsl"
+#include "brdf.glsl"
 
 GPU_DECLARE_READONLY_ARRAY_REF(LightArray, LightGpu);
 

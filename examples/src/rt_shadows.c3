@@ -13,6 +13,8 @@ import c3d::maths;
 import c3d::platform;
 import c3d::render;
 import c3d::scene;
+import c3d::shader;
+import c3d::shader::compile;
 import imgui;
 
 const float ORBIT_RADIANS_PER_PIXEL @local = 0.005f;
@@ -35,6 +37,12 @@ const uint WINDOW_HEIGHT @local = 900;
 const uint BENCHMARK_WIDTH @local = 1920;
 const uint BENCHMARK_HEIGHT @local = 1080;
 const Vec2 TRACE_PANEL_POSITION @local = { 400, 16 };
+const char[*] TWIN_INCLUDE_SOURCE @local = $embed("../shaders/custom/standard_twin.glsl");
+const char[*] TWIN_FRAGMENT_SOURCE @local = $embed("../shaders/custom/standard_twin.frag.glsl");
+const char[*] TWIN_GBUFFER_SOURCE @local = $embed("../shaders/custom/standard_twin_gbuffer.frag.glsl");
+const ShaderInclude[1] TWIN_INCLUDES @local = {
+    { .name = "custom/standard_twin.glsl", .text = (String)TWIN_INCLUDE_SOURCE[..] },
+};
 
 struct Orbit @local {
     Vec3  target;
@@ -42,6 +50,13 @@ struct Orbit @local {
     float yaw;
     float pitch;
 }
+
+struct TwinParams @local {
+    Vec4 base_color;
+    Vec4 metallic_roughness_occlusion;
+    Vec4 emissive;
+}
+$assert TwinParams::size == 48;
 
 fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
     if (!input.mouse_captured_by_gui) {
@@ -96,6 +111,36 @@ fn TextureId add_checker(AssetStore* assets) @local {
     return texture;
 }
 
+fn char[]? compile_twin_stage(String source, String[] defines = {}) @local {
+    String log;
+    char[]? spirv = compile::compile_glsl(
+        allocator:  tmem,
+        source:     source,
+        stage:      ShaderStage.FRAGMENT,
+        defines:    defines,
+        debug_name: "standard_twin",
+        log:        &log,
+        includes:   TWIN_INCLUDES[..],
+    );
+    if (log.len) io::printfn("%s", log);
+    return spirv;
+}
+
+fn ShaderId? add_twin_shader(AssetStore* assets) @local {
+    @pool() {
+        ShaderDesc desc = {
+            .fragment         = compile_twin_stage((String)TWIN_FRAGMENT_SOURCE[..])!,
+            .gbuffer          = compile_twin_stage((String)TWIN_GBUFFER_SOURCE[..])!,
+            .traced_fragment  = {
+                .hardware = compile_twin_stage((String)TWIN_FRAGMENT_SOURCE[..], { "RT_SHADOWS" })!,
+                .software = compile_twin_stage((String)TWIN_FRAGMENT_SOURCE[..], { "RT_SHADOWS", "SCENE_TRACE_BVH" })!,
+            },
+            .param_block_size = TwinParams::size,
+        };
+        return assets.add_shader(&desc, "shader/rt_shadows/standard_twin");
+    };
+}
+
 fn void? draw_frame(
     Renderer* renderer,
     Scene* scene,
@@ -141,12 +186,15 @@ fn int main(String[] args) {
     bool gpu_timings;
     bool software;
     bool atlas_shadows;
+    bool twin_ground;
     uint benchmark_frames;
     for (usz index = 1; index < args.len; index++) {
         if (args[index] == "--software") {
             software = true;
         } else if (args[index] == "--atlas-shadows") {
             atlas_shadows = true;
+        } else if (args[index] == "--twin-ground") {
+            twin_ground = true;
         } else if (args[index] == "--gpu-timings") {
             $if $feat(C3D_PROFILE_GPU):
                 gpu_timings = true;
@@ -195,6 +243,11 @@ fn int main(String[] args) {
     defer render::destroy_renderer(&renderer);
     io::printfn("rt_shadows: tracing through the %s", trace_name(&renderer));
 
+    ShaderId? twin_shader = add_twin_shader(&assets);
+    if (catch excuse = twin_shader) {
+        io::printfn("rt_shadows: the Standard twin did not compile (%s)", excuse);
+        return 1;
+    }
     TextureId checker = add_checker(&assets);
     GeometryId plane_geometry;
     GeometryId sphere_geometry;
@@ -207,10 +260,16 @@ fn int main(String[] args) {
         Geometry box = geometry::box(tmem, 0.6f, 4, 0.6f);
         box_geometry = assets.add_geometry(&box, "geometry/rt_shadows/box")!!;
     };
-    MaterialId ground_material = assets.add_material(material::standard({
-        .base_color = { 0.72f, 0.72f, 0.7f, 1 },
-        .roughness  = 0.8f,
-    }), "material/rt_shadows/ground")!!;
+    StandardParams ground_params = { .base_color = { 0.72f, 0.72f, 0.7f, 1 }, .roughness = 0.8f };
+    MaterialId ground_material = assets.add_material(material::standard(ground_params), "material/rt_shadows/ground")!!;
+    TwinParams ground_twin_params = {
+        .base_color                   = ground_params.base_color,
+        .metallic_roughness_occlusion = { ground_params.metallic, ground_params.roughness, 1, 0 },
+    };
+    MaterialId ground_twin_material = assets.add_material(
+        material::custom(twin_shader, material::@as_bytes(ground_twin_params)),
+        "material/rt_shadows/ground_twin",
+    )!!;
     MaterialId sphere_material = assets.add_material(material::standard({
         .base_color = { 0.2f, 0.45f, 0.9f, 1 },
         .roughness  = 0.4f,
@@ -234,7 +293,12 @@ fn int main(String[] args) {
     Scene scene = scene::create_scene(mem, scene::default_scene_desc());
     defer scene::destroy_scene(&scene);
     scene.ambient_intensity = 0.05f;
-    scene.add_mesh(plane_geometry, ground_material, name: "ground")!!;
+    Node* ground = scene.add_mesh(
+        geometry: plane_geometry,
+        material: twin_ground ? ground_twin_material : ground_material,
+        name:     "ground",
+    )!!;
+    Mesh* ground_mesh = scene.get(ground, Mesh);
     Node* sphere = scene.add_mesh(sphere_geometry, sphere_material, name: "sphere")!!;
     sphere.local.position = { 1.5f, 0.5f, 0 };
     Node* box = scene.add_mesh(box_geometry, box_material, name: "off_camera_box")!!;
@@ -262,6 +326,7 @@ fn int main(String[] args) {
 
     io::printn("T toggles ray-traced shadows and the atlas; M swaps the box between opaque and masked");
     io::printn("A sways the box, rebuilding the top level every frame");
+    io::printn("C swaps the ground between Standard and its custom twin");
     io::printn("Drag to orbit, wheel to zoom; Escape release quits");
     bool box_masked;
     bool swaying = benchmark_frames > 0;
@@ -290,6 +355,10 @@ fn int main(String[] args) {
             box_mesh.material = box_masked ? masked_box_material : box_material;
         }
         if (input.key_pressed(platform::Scancode.A) && !input.keyboard_captured_by_gui) swaying = !swaying;
+        if (input.key_pressed(platform::Scancode.C) && !input.keyboard_captured_by_gui) {
+            twin_ground = !twin_ground;
+            ground_mesh.material = twin_ground ? ground_twin_material : ground_material;
+        }
         if (swaying) {
             sway_phase += window.clock.delta * SWAY_RADIANS_PER_SECOND;
             box.local.position.x = math::sin(sway_phase) * SWAY_AMPLITUDE;
@@ -328,13 +397,14 @@ fn int main(String[] args) {
         if (timed_frames == benchmark_frames) {
             io::printfn(
                 "Forward opaque: %.4f ms, GPU frame: %.4f ms, acceleration build: %.4f ms over %d builds, "
-                  "%s shadows, %s, mean over %d frames at %dx%d, %d trace instances",
+                  "%s shadows, %s, %s ground, mean over %d frames at %dx%d, %d trace instances",
                 forward_ms / timed_frames,
                 frame_ms / timed_frames,
                 build_frames ? build_ms / build_frames : 0,
                 build_frames,
                 atlas_shadows ? "atlas" : "traced",
                 trace_name(&renderer),
+                twin_ground ? "twin" : "standard",
                 timed_frames,
                 renderer.swapchain_info.width,
                 renderer.swapchain_info.height,

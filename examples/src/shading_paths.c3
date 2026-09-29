@@ -25,6 +25,10 @@ const String TINT_FRAGMENT_FILE @local = "../shaders/custom/tint.frag.glsl";
 const String PULSE_VERTEX_FILE @local = "../shaders/custom/pulse.vert.glsl";
 const String PULSE_FRAGMENT_FILE @local = "../shaders/custom/pulse.frag.glsl";
 const String PULSE_GBUFFER_FILE @local = "../shaders/custom/pulse_gbuffer.frag.glsl";
+const String TWIN_FRAGMENT_FILE @local = "../shaders/custom/standard_twin.frag.glsl";
+const String TWIN_GBUFFER_FILE @local = "../shaders/custom/standard_twin_gbuffer.frag.glsl";
+const String TWIN_INCLUDE_FILE @local = "../shaders/custom/standard_twin.glsl";
+const String TWIN_INCLUDE_NAME @local = "custom/standard_twin.glsl";
 const float ORBIT_RADIANS_PER_PIXEL @local = 0.005f;
 const float ORBIT_PITCH_LIMIT @local = 1.5f; // just short of the poles, where the up vector degenerates
 const float ORBIT_ZOOM_STEP @local = 0.9f;
@@ -49,7 +53,6 @@ const float GROUND_SIZE @local = 16;
 const float GROUND_LEVEL @local = -0.7f;
 const float PULSE_AMPLITUDE @local = 0.25f;
 const float PULSE_ANGULAR_FREQUENCY @local = 3;
-const uint COLUMNS @local = 5;
 const uint VIEW_COUNT @local = 4;
 const Vec2 CONTROLS_PANEL_POSITION @local = { 16, 16 };
 const Vec2 CONTROLS_PANEL_SIZE @local = { 360, 260 };
@@ -74,10 +77,19 @@ struct PulseParams @local {
     Vec4 motion;
 }
 
+struct TwinParams @local {
+    Vec4 base_color;
+    Vec4 metallic_roughness_occlusion;
+    Vec4 emissive;
+}
+$assert TwinParams::size == 48;
+
 struct ShaderFiles @local {
     String fragment;
     String gbuffer;
     String vertex;
+    String include_name;
+    String include_file;
     usz    param_block_size;
     String name;
 }
@@ -104,6 +116,7 @@ struct Options @local {
 struct Materials @local {
     MaterialId ground;
     MaterialId dielectric;
+    MaterialId standard_twin;
     MaterialId mapped;
     MaterialId physical_plain;
     MaterialId physical_coat;
@@ -186,7 +199,13 @@ fn bool path_radios(ZString label, ViewDesc* desc) @local {
     return changed;
 }
 
-fn char[]? compile_file(Allocator allocator, String path, ShaderStage stage, String[] defines = {}) @local {
+fn char[]? compile_file(
+    Allocator allocator,
+    String path,
+    ShaderStage stage,
+    String[] defines = {},
+    ShaderInclude[] includes = {},
+) @local {
     String source = (String)file::load(tmem, path)!;
     String log;
     char[]? spirv = compile::compile_glsl(
@@ -196,20 +215,50 @@ fn char[]? compile_file(Allocator allocator, String path, ShaderStage stage, Str
         defines:    defines,
         debug_name: path,
         log:        &log,
+        includes:   includes,
     );
     if (log.len) io::printfn("%s", log);
     return spirv;
 }
 
 fn ShaderDesc? compile_shader_files(Allocator allocator, ShaderFiles* files) @local {
+    ShaderInclude[1] include_table = { { .name = files.include_name } };
+    ShaderInclude[] includes;
+    if (files.include_file.len) {
+        include_table[0].text = (String)file::load(tmem, files.include_file)!;
+        includes = include_table[..];
+    }
     ShaderDesc desc = {
-        .fragment = compile_file(allocator, files.fragment, ShaderStage.FRAGMENT)!,
+        .fragment = compile_file(
+            allocator: allocator,
+            path:      files.fragment,
+            stage:     ShaderStage.FRAGMENT,
+            includes:  includes,
+        )!,
         .param_block_size = files.param_block_size,
     };
-    if (files.gbuffer.len) desc.gbuffer = compile_file(allocator, files.gbuffer, ShaderStage.FRAGMENT)!;
+    if (files.gbuffer.len) {
+        desc.gbuffer = compile_file(
+            allocator: allocator,
+            path:      files.gbuffer,
+            stage:     ShaderStage.FRAGMENT,
+            includes:  includes,
+        )!;
+    }
     if (files.vertex.len) {
-        desc.vertex.shaded = compile_file(allocator, files.vertex, ShaderStage.VERTEX)!;
-        desc.vertex.depth = compile_file(allocator, files.vertex, ShaderStage.VERTEX, { "DEPTH_ONLY" })!;
+        desc.vertex.shaded = compile_file(
+            allocator: allocator,
+            path:      files.vertex,
+            stage:     ShaderStage.VERTEX,
+            includes:  includes,
+        )!;
+        desc.vertex.depth = compile_file(
+            allocator: allocator,
+            path:      files.vertex,
+            stage:     ShaderStage.VERTEX,
+            defines:   { "DEPTH_ONLY" },
+            includes:  includes,
+        )!;
     }
     return desc;
 }
@@ -369,6 +418,7 @@ fn Materials? create_materials(
     TextureId normal,
     ShaderId tint_shader,
     ShaderId pulse_shader,
+    ShaderId twin_shader,
 ) @local {
     PhysicalParams plain = material::PHYSICAL_PARAMS_DEFAULT;
     plain.standard.base_color = { 0.2f, 0.35f, 0.9f, 1 };
@@ -389,6 +439,11 @@ fn Materials? create_materials(
     ToonParams toon = material::TOON_PARAMS_DEFAULT;
     toon.color = { 0.3f, 0.8f, 0.35f, 1 };
     toon.steps = 3;
+    StandardParams dielectric = { .base_color = { 0.85f, 0.3f, 0.2f, 1 }, .metallic = 0, .roughness = 0.4f };
+    TwinParams twin = {
+        .base_color                   = dielectric.base_color,
+        .metallic_roughness_occlusion = { dielectric.metallic, dielectric.roughness, 1, 0 },
+    };
     TintParams tint = { .color = { 1, 0.55f, 0.2f, 1 } };
     PulseParams pulse = {
         .color = { 0.3f, 0.6f, 1, 1 },
@@ -400,9 +455,10 @@ fn Materials? create_materials(
             material::standard({ .base_color = { 0.45f, 0.45f, 0.47f, 1 }, .metallic = 0, .roughness = 0.85f }),
             "shading_paths/floor",
         )!,
-        .dielectric = assets.add_material(
-            material::standard({ .base_color = { 0.85f, 0.3f, 0.2f, 1 }, .metallic = 0, .roughness = 0.4f }),
-            "shading_paths/dielectric",
+        .dielectric = assets.add_material(material::standard(dielectric), "shading_paths/dielectric")!,
+        .standard_twin = assets.add_material(
+            material::custom(twin_shader, material::@as_bytes(twin)),
+            "shading_paths/standard_twin",
         )!,
         .mapped = assets.add_material(
             material::standard({
@@ -479,10 +535,20 @@ fn int main(String[] args) {
         .param_block_size = PulseParams::size,
         .name = "pulse",
     };
+    ShaderFiles twin_files = {
+        .fragment = TWIN_FRAGMENT_FILE,
+        .gbuffer = TWIN_GBUFFER_FILE,
+        .include_name = TWIN_INCLUDE_NAME,
+        .include_file = TWIN_INCLUDE_FILE,
+        .param_block_size = TwinParams::size,
+        .name = "standard_twin",
+    };
     ShaderId? tint_shader = add_shader_files(&assets, &tint_files);
     ShaderId? pulse_shader = add_shader_files(&assets, &pulse_files);
+    ShaderId? twin_shader = add_shader_files(&assets, &twin_files);
     if (catch tint_shader) return 1;
     if (catch pulse_shader) return 1;
+    if (catch twin_shader) return 1;
 
     TextureId studio_source;
     TextureId base_color;
@@ -528,6 +594,7 @@ fn int main(String[] args) {
         normal:        normal,
         tint_shader:   tint_shader,
         pulse_shader:  pulse_shader,
+        twin_shader:   twin_shader,
     )!!;
 
     Scene scene = scene::create_scene(mem, scene::default_scene_desc());
@@ -543,10 +610,11 @@ fn int main(String[] args) {
 
     Node* floor = scene.add_mesh(ground, materials.ground, name: "ground")!!;
     floor.local.position = { 0, GROUND_LEVEL, 0 };
-    MaterialId[COLUMNS] back_row = {
-        materials.dielectric, materials.mapped, materials.physical_plain, materials.physical_coat, materials.tint,
+    MaterialId[*] back_row = {
+        materials.dielectric, materials.standard_twin, materials.mapped, materials.physical_plain,
+        materials.physical_coat, materials.tint,
     };
-    MaterialId[COLUMNS] front_row = {
+    MaterialId[*] front_row = {
         materials.toon, materials.pulse, materials.glass, materials.transmissive, materials.mapped,
     };
     place_row(&scene, sphere, back_row[..], -ROW_SPACING * 0.5f, "back")!!;

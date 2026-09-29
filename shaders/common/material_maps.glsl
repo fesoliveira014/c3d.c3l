@@ -2,6 +2,7 @@
 #define C3D_MATERIAL_MAPS_GLSL
 
 #include "material_uv.glsl"
+#include "descriptor_heap.glsl"
 
 // Level-of-detail bias of built-in material sampling; a material fragment sets it from FrameRoot.mip_bias.
 float material_mip_bias = 0.0;

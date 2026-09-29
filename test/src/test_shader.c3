@@ -2,17 +2,19 @@ module c3d::test::shader;
 
 import c3d;
 import c3d::shader;
+import c3d::test::shader_package @public;
 
 const char[4] SPIRV_MAGIC_BYTES = { 0x03, 0x02, 0x23, 0x07 };
-const usz SPIRV_HEADER_WORDS @local = 5;
-const uint SPIRV_OP_EXTENSION @local = 10;                            // OpExtension
-const uint SPIRV_OP_CAPABILITY @local = 17;                           // OpCapability
-const uint SPIRV_CAPABILITY_RAY_QUERY_PROVISIONAL @local = 4471;      // RayQueryProvisionalKHR
-const uint SPIRV_CAPABILITY_RAY_QUERY @local = 4472;                  // RayQueryKHR
-const uint SPIRV_CAPABILITY_RAY_TRAVERSAL_CULLING @local = 4478;      // RayTraversalPrimitiveCullingKHR
-const uint SPIRV_CAPABILITY_RAY_TRACING @local = 4479;                // RayTracingKHR
+const usz SPIRV_HEADER_WORDS @private = 5;
+const uint SPIRV_OP_NAME @private = 5;                                // OpName
+const uint SPIRV_OP_EXTENSION @private = 10;                          // OpExtension
+const uint SPIRV_OP_CAPABILITY @private = 17;                         // OpCapability
+const uint SPIRV_CAPABILITY_RAY_QUERY_PROVISIONAL @private = 4471;    // RayQueryProvisionalKHR
+const uint SPIRV_CAPABILITY_RAY_QUERY @private = 4472;                // RayQueryKHR
+const uint SPIRV_CAPABILITY_RAY_TRAVERSAL_CULLING @private = 4478;    // RayTraversalPrimitiveCullingKHR
+const uint SPIRV_CAPABILITY_RAY_TRACING @private = 4479;              // RayTracingKHR
 
-struct SpirvFeatures @local {
+struct SpirvFeatures @private {
     bool ray_capability;
     bool ray_query_capability;
     bool ray_extension;
@@ -58,12 +60,12 @@ fn void test_every_include_is_named_once() @test {
     assert(has_abi && has_heap);
 }
 
-fn uint spirv_word(char[] spirv, usz word) @local {
+fn uint spirv_word(char[] spirv, usz word) @private {
     usz byte = word * 4;
     return (uint)spirv[byte] | (uint)spirv[byte + 1] << 8 | (uint)spirv[byte + 2] << 16 | (uint)spirv[byte + 3] << 24;
 }
 
-fn SpirvFeatures spirv_ray_features(char[] spirv) @local {
+fn SpirvFeatures spirv_ray_features(char[] spirv) @private {
     SpirvFeatures features;
     usz word_count = spirv.len / 4;
     usz word = SPIRV_HEADER_WORDS;
@@ -121,12 +123,69 @@ fn void test_software_trace_variants_declare_no_ray_capability() @test {
     assert(software_count == 7);
 }
 
+// glslang names a function by its signature, so the name up to the parenthesis is the function.
+fn bool spirv_names_function(char[] spirv, String function) @local {
+    usz word_count = spirv.len / 4;
+    usz word = SPIRV_HEADER_WORDS;
+    while (word < word_count) {
+        uint instruction = spirv_word(spirv, word);
+        uint length = instruction >> 16;
+        if ((instruction & 0xFFFF) == SPIRV_OP_NAME) {
+            String name = ((ZString)&spirv[(word + 2) * 4]).str_view();
+            if (name.len > function.len && name[function.len] == '(' && name.starts_with(function)) return true;
+        }
+        word += length;
+    }
+    return false;
+}
+
+fn void test_builtin_standard_shades_through_the_public_include() @test {
+    usz standard_count;
+    usz resolve_count;
+    foreach (&entry : shader::SHADER_ENTRIES) {
+        if (entry.variant.shader == ShaderName.STANDARD) {
+            assert(spirv_names_function(entry.spirv, "shade_standard_surface"));
+            standard_count++;
+        }
+        if (entry.variant.shader == ShaderName.LIGHTING_RESOLVE) {
+            assert(spirv_names_function(entry.spirv, "evaluate_standard_lights"));
+            assert(spirv_names_function(entry.spirv, "standard_ambient_fill"));
+            resolve_count++;
+        }
+    }
+    assert(standard_count > 0 && resolve_count > 0);
+}
+
+fn void test_package_constants_hold_spirv() @test {
+    char[][3] forms = {
+        shader_package::SURFACE_SPIRV[..],
+        shader_package::SURFACE_RT_SHADOWS_SPIRV[..],
+        shader_package::SURFACE_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV[..],
+    };
+    foreach (spirv : forms) {
+        assert(spirv.len >= SPIRV_MAGIC_BYTES.len && spirv.len % 4 == 0);
+        foreach (index, expected : SPIRV_MAGIC_BYTES) assert(spirv[index] == expected);
+    }
+}
+
+fn void test_package_traced_forms_follow_their_defines() @test {
+    SpirvFeatures plain = spirv_ray_features(shader_package::SURFACE_SPIRV[..]);
+    SpirvFeatures hardware = spirv_ray_features(shader_package::SURFACE_RT_SHADOWS_SPIRV[..]);
+    SpirvFeatures software = spirv_ray_features(shader_package::SURFACE_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV[..]);
+    assert(hardware.ray_query_capability && hardware.ray_query_extension);
+    assert(!plain.ray_capability && !plain.ray_extension);
+    assert(!software.ray_capability && !software.ray_extension);
+}
+
 module c3d::test::shader_compile @feat(C3D_SHADER_COMPILER);
 
 import c3d::shader;
 import c3d::shader::compile;
+import c3d::test::shader @public;
+import c3d::test::shader_package;
 
 const char[4] SPIRV_MAGIC = { 0x03, 0x02, 0x23, 0x07 };
+const char[*] PACKAGE_SURFACE_SOURCE = $embed("../shaders/surface.frag.glsl");
 
 const String LIT_FRAGMENT = `#version 460
 #include "generated/shader_abi.glsl"
@@ -196,27 +255,6 @@ void main() {
 }
 `;
 
-const String SCENE_SNAPSHOT_FRAGMENT = `#version 460
-#include "generated/shader_abi.glsl"
-#include "c3d_abi.glsl"
-#include "scene_snapshot.glsl"
-layout(location = 0) out vec4 out_color;
-layout(push_constant) uniform Push { uint64_t vertex_root_gpu; uint64_t fragment_root_gpu; } pc;
-void main() {
-    FrameRoot frame = FrameRoot(DrawRoot(pc.fragment_root_gpu).frame);
-    vec2 uv = scene_uv(frame, gl_FragCoord.xy);
-    vec3 position = scene_position_at(frame, uv);
-    float gap = scene_depth_gap(frame, gl_FragCoord) + scene_view_distance_at(frame, uv);
-    out_color = vec4(scene_color_at(frame, uv) + position, gap);
-}
-`;
-
-fn void test_compile_glsl_compiles_the_scene_snapshot_helpers() @test {
-    char[] spirv = compile::compile_glsl(mem, SCENE_SNAPSHOT_FRAGMENT, ShaderStage.FRAGMENT)!!;
-    defer free(spirv.ptr);
-    assert(spirv.len >= SPIRV_MAGIC.len && spirv.len % 4 == 0);
-}
-
 fn void test_compile_glsl_compiles_a_texture_compute_stage() @test {
     char[] spirv = compile::compile_glsl(mem, FOG_COMPUTE, ShaderStage.COMPUTE)!!;
     defer free(spirv.ptr);
@@ -250,4 +288,106 @@ fn void test_compile_glsl_rejects_unknown_include() @test {
         return;
     }
     assert(false, "an include outside the embedded set resolved");
+}
+
+const String CALLER_INCLUDE_TEXT = "const vec4 APP_COLOR = vec4(1.0, 0.5, 0.25, 1.0);\n";
+
+const String CALLER_INCLUDE_FRAGMENT = `#version 460
+#include "app/params.glsl"
+layout(location = 0) out vec4 out_color;
+void main() {
+    out_color = APP_COLOR;
+}
+`;
+
+const String PI_FRAGMENT = `#version 460
+#include "constants.glsl"
+layout(location = 0) out vec4 out_color;
+void main() {
+    out_color = vec4(PI);
+}
+`;
+
+const String STANDARD_SHADING_FRAGMENT = `#version 460
+#include "generated/shader_abi.glsl"
+#include "c3d_abi.glsl"
+#include "custom_material.glsl"
+#include "standard_shading.glsl"
+layout(location = 0) in vec3 v_world_pos;
+layout(location = 1) in vec3 v_normal;
+layout(location = 0) out vec4 out_color;
+layout(push_constant) uniform Push { uint64_t vertex_root_gpu; uint64_t fragment_root_gpu; } pc;
+void main() {
+    DrawRoot draw = DrawRoot(pc.fragment_root_gpu);
+    FrameRoot frame = FrameRoot(draw.frame);
+    CustomMaterialGpu material = CustomMaterialGpu(draw.material);
+    StandardMaterialSample surface_sample;
+    surface_sample.base_color = vec4(0.8, 0.8, 0.8, 1.0);
+    surface_sample.metallic = 0.0;
+    surface_sample.roughness = 0.5;
+    surface_sample.occlusion = 1.0;
+    surface_sample.emissive = vec3(0.0);
+    surface_sample.normal = normalize(v_normal);
+    surface_sample.offset_normal = surface_sample.normal;
+    surface_sample.view_direction = standard_view_direction(frame, v_world_pos);
+    vec3 color = shade_standard_surface(frame, draw, surface_sample, 1.0, v_world_pos, ivec2(gl_FragCoord.xy));
+    out_color = material_output(color, 1.0, material.flags);
+}
+`;
+
+fn void test_compile_glsl_resolves_caller_includes() @test {
+    ShaderInclude[1] includes = { { .name = "app/params.glsl", .text = CALLER_INCLUDE_TEXT } };
+    char[] spirv = compile::compile_glsl(
+        allocator: mem,
+        source:    CALLER_INCLUDE_FRAGMENT,
+        stage:     ShaderStage.FRAGMENT,
+        includes:  includes[..],
+    )!!;
+    defer free(spirv.ptr);
+    assert(spirv.len >= SPIRV_MAGIC.len && spirv.len % 4 == 0);
+    if (catch excuse = compile::compile_glsl(mem, CALLER_INCLUDE_FRAGMENT, ShaderStage.FRAGMENT)) {
+        assert(excuse == shader::SHADER_COMPILE_FAILED);
+        return;
+    }
+    assert(false, "an include in neither table resolved");
+}
+
+fn void test_compile_glsl_prefers_embedded_includes() @test {
+    ShaderInclude[1] includes = { { .name = "constants.glsl", .text = "not glsl" } };
+    char[] spirv = compile::compile_glsl(
+        allocator: mem,
+        source:    PI_FRAGMENT,
+        stage:     ShaderStage.FRAGMENT,
+        includes:  includes[..],
+    )!!;
+    defer free(spirv.ptr);
+    assert(spirv.len >= SPIRV_MAGIC.len && spirv.len % 4 == 0);
+}
+
+fn void test_standard_shading_compiles_in_every_traced_form() @test {
+    String[][3] define_sets = { {}, { "RT_SHADOWS" }, { "RT_SHADOWS", "SCENE_TRACE_BVH" } };
+    foreach (index, defines : define_sets) {
+        char[] spirv = compile::compile_glsl(
+            allocator: mem,
+            source:    STANDARD_SHADING_FRAGMENT,
+            stage:     ShaderStage.FRAGMENT,
+            defines:   defines,
+        )!!;
+        defer free(spirv.ptr);
+        test::shader::SpirvFeatures features = test::shader::spirv_ray_features(spirv);
+        bool ray_queries = index == 1;
+        assert(features.ray_query_capability == ray_queries && features.ray_query_extension == ray_queries);
+        assert(features.ray_capability == ray_queries && features.ray_extension == ray_queries);
+    }
+}
+
+fn void test_compile_glsl_resolves_package_includes() @test {
+    char[] spirv = compile::compile_glsl(
+        allocator: mem,
+        source:    (String)PACKAGE_SURFACE_SOURCE[..],
+        stage:     ShaderStage.FRAGMENT,
+        includes:  shader_package::SHADER_PACKAGE_SHADER_INCLUDES[..],
+    )!!;
+    defer free(spirv.ptr);
+    assert(spirv.len >= SPIRV_MAGIC.len && spirv.len % 4 == 0);
 }

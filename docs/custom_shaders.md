@@ -13,7 +13,7 @@ ShaderDesc desc = {
 ShaderId shader = assets.add_shader(&desc, "pulse")!;
 ```
 
-Every byte array is copied. `fragment` is required. `vertex` is optional; when present both forms are required: `shaded` for the forward pass and `depth` for the shadow atlas, so a deformation is applied to the caster too. `instanced_shaded` and `instanced_depth` are the same pair compiled with `INSTANCED`, for [instanced batches](instancing.md); they are optional and need the plain pair. `add_shader` and `replace_shader` fault `INVALID_ARGUMENT` on an empty fragment, a half pair, or a `gbuffer` stage with nonzero [`scene_reads`](#scene-reads). `param_block_size` is the byte size of the payload the shader reads; zero means none, and a shader whose size is zero must not read `parameters` (the address is zero).
+Every byte array is copied. `fragment` is required. `vertex` is optional; when present both forms are required: `shaded` for the forward pass and `depth` for the shadow atlas, so a deformation is applied to the caster too. `instanced_shaded` and `instanced_depth` are the same pair compiled with `INSTANCED`, for [instanced batches](instancing.md); they are optional and need the plain pair. `traced_fragment.hardware` and `traced_fragment.software` are the forward stage compiled for views that trace shadows ([traced shadows](#traced-shadows)); either may be empty or supplied alone, and neither is validated. `add_shader` and `replace_shader` fault `INVALID_ARGUMENT` on an empty fragment, a half pair, or a `gbuffer` stage with nonzero [`scene_reads`](#scene-reads). `param_block_size` is the byte size of the payload the shader reads; zero means none, and a shader whose size is zero must not read `parameters` (the address is zero).
 
 The SPIR-V can come from anywhere: `$embed`ed `.spv` files, a build step, or the in-process compiler below.
 
@@ -82,11 +82,73 @@ void main() {
 }
 ```
 
-`CustomMaterialGpu` (generated, 288 bytes) carries `kind`, `flags` (`MATERIAL_ALPHA_MASK`, `MATERIAL_DOUBLE_SIDED`, `MATERIAL_ALPHA_BLEND`), `alpha_cutoff`, `map_flags` (bit `i` = slot `i` present, bit `i + CUSTOM_MAP_UV1_SHIFT` = slot `i` reads UV1), `slots[8]` as `TextureMapGpu`, and `parameters`, the payload address. `custom_material.glsl` supplies `custom_slot_present`, `custom_map_uv` and `sample_custom_map`; `material_alpha.glsl` supplies `material_output`, which premultiplies for BLEND. Vertex inputs are the fixed locations 0 to 6 written by `mesh.vert.glsl`. `lights.glsl`, `shadows.glsl`, `ibl.glsl`, `brdf.glsl` and the other shared includes are available and read only `FrameRoot` through `DrawRoot.frame`. A forward stage receives the view's ambient occlusion with `draw_ambient_occlusion(frame, draw.flags, ivec2(gl_FragCoord.xy))` from `ambient_occlusion.glsl` (1 when the view has none or the draw is transparent or a [scene reader](#scene-reads)); pass it to `evaluate_environment(frame, world_position, surface, roughness, occlusion, ambient_occlusion)` after the material occlusion (the frame and the world position select a [probe volume](probe_volumes.md) where one covers the surface; call it when `frame_has_indirect(frame)`) and multiply the ambient fill by `min(material occlusion, ambient occlusion)`. A view with [screen-space GI](screen_space_gi.md) adds `draw_screen_space_indirect(frame, draw.flags, ivec2(gl_FragCoord.xy))` from `screen_space_gi.glsl`: pass it to the `evaluate_environment` overload that takes a `vec4 screen_indirect` last, and multiply the ambient fill by `screen_space_base_share(material occlusion, ambient occlusion, screen_indirect)` instead. A G-buffer stage receives both through the lighting resolve.
-
-Custom fragment stages compile once, without the ray-traced shadow path: a light traced by the view (see [ray-traced shadows](shadows.md#ray-traced-shadows)) reaches them with `shadow_count == 0`, so `shadow_visibility` returns 1.
+`CustomMaterialGpu` (generated, 288 bytes) carries `kind`, `flags` (`MATERIAL_ALPHA_MASK`, `MATERIAL_DOUBLE_SIDED`, `MATERIAL_ALPHA_BLEND`), `alpha_cutoff`, `map_flags` (bit `i` = slot `i` present, bit `i + CUSTOM_MAP_UV1_SHIFT` = slot `i` reads UV1), `slots[8]` as `TextureMapGpu`, and `parameters`, the payload address. `custom_material.glsl` supplies `custom_slot_present`, `custom_map_uv` and `sample_custom_map`; `material_alpha.glsl` supplies `material_output`, which premultiplies for BLEND. Vertex inputs are the fixed locations 0 to 6 written by `mesh.vert.glsl`. The shared includes read only `FrameRoot` through `DrawRoot.frame`.
 
 A masked custom material (`alpha_mode == MASK`) discards in its own fragment stage; the shadow atlas reads the same header and uses slot 0's alpha against `alpha_cutoff` as the caster coverage. A custom caster's `DrawRoot.material` is always its `CustomMaterialGpu`, so a custom depth vertex form can read the payload.
+
+### Standard shading
+
+`standard_shading.glsl` is the Standard model as functions. The built-in Standard forward stage and the lighting resolve call them, so a custom stage that passes the sample Standard builds, with the same weight, returns Standard's radiance on every view configuration:
+
+```glsl
+vec3 shade_standard_surface(FrameRoot frame, DrawRoot draw, StandardMaterialSample surface_sample,
+                            float specular_weight, vec3 world_position, ivec2 pixel);
+vec3 evaluate_standard_lights(FrameRoot frame, StandardSurface surface, vec3 world_position,
+                              vec3 shadow_normal, uint layers, bool receive_shadow);
+vec3 standard_ambient_fill(FrameRoot frame, vec3 base_color, float metallic, float occlusion,
+                           float ambient_occlusion, vec4 screen_indirect);
+```
+
+`shade_standard_surface` returns linear radiance without alpha: the ambient fill, the emissive term, the environment (when `frame_has_indirect(frame)`; the frame and the world position select a [probe volume](probe_volumes.md) where one covers the surface) and every selected light with its shadow. Pass it to `material_output`. `evaluate_standard_lights` and `standard_ambient_fill` are its parts, for a stage that composes its own environment term. Call `evaluate_standard_lights` from `main`: with software-traced shadows its light loop costs about twice as much when it runs two calls below `main`, which is why `shade_standard_surface` expands the same loop in place instead of calling it. The caller fills the sample:
+
+| Field | Contents |
+| --- | --- |
+| `base_color` | Linear, alpha included; alpha is not shaded |
+| `metallic`, `roughness`, `occlusion` | In [0, 1] |
+| `emissive` | Linear radiance |
+| `normal` | Shading normal |
+| `offset_normal` | Geometric normal for the shadow offset. Both normals are flipped for double-sided back faces, as `sample_standard_material` does |
+| `view_direction` | `standard_view_direction(frame, world_position)` |
+
+`specular_weight` is 1 for Standard and 0 for a diffuse-only surface, the value a G-buffer stage passes to `write_gbuffer`. `pixel` is `ivec2(gl_FragCoord.xy)`: ambient occlusion and [screen-space GI](screen_space_gi.md) follow the draw flags the renderer sets for the opaque list, custom draws included, and read 1 and no indirect term on views without them, for transparent draws and for [scene readers](#scene-reads). The field list of `StandardMaterialSample` is frozen: a new surface property arrives as a new parameter or a new struct, never a new field, so a stage that initializes the sample field by field stays complete. A G-buffer stage fills the same sample and calls `write_gbuffer`; the resolve runs the same functions.
+
+The reference is `examples/shaders/custom/standard_twin.glsl` (include name `custom/standard_twin.glsl`) with `standard_twin.frag.glsl` and `standard_twin_gbuffer.frag.glsl`. `twin_surface` builds Standard's sample from a payload of base colour, metallic, roughness, occlusion and emissive, with slot 0 as the base colour map and slot 1 as a tangent-space normal map. Vertex colours, the normal-map scale, derivative normals for meshes without tangents and Standard's other maps stay in `sample_standard_material`; the twin does not reproduce them.
+
+### Public includes
+
+A custom or package stage starts with the prelude, `generated/shader_abi.glsl` (gpu.c3l) and `c3d_abi.glsl`, then includes what it uses. The includes below are the contract for custom and package stages: each compiles after the prelude alone, which the build checks on every run by compiling one probe per row of `public_includes` in `shaders/variants.json` (a probe that fails stops the shaders step with `public include <name> is not self-contained` and glslang's output). The other files of the embedded set resolve too but may change without notice.
+
+| Include | Public surface |
+| --- | --- |
+| `constants.glsl` | `PI` |
+| `material_uv.glsl` | `custom_slot_present`, `custom_map_uv` |
+| `material_alpha.glsl` | `material_output` |
+| `custom_material.glsl` | `sample_custom_map` (both overloads) |
+| `normal_mapping.glsl` | `decode_normal`, `tangent_normal`, `derivative_normal`, `derivative_tangent`, `surface_tangent_frame` |
+| `noise.glsl` | `interleaved_gradient_noise`, `pcg_hash`, `hash_unit` |
+| `texture_fetch.glsl` | `fetch_texture_2d`, `texture_extent`, `sample_texture_2d_lod` |
+| `gbuffer.glsl` | `reconstruct_world_position`, `view_distance`, `BACKGROUND_VIEW_DISTANCE`, `encode_octahedral`, `decode_octahedral` |
+| `brdf.glsl` | `StandardSurface`, `prepare_surface`, `prepare_standard_surface`, `apply_anisotropy`, `evaluate_standard_lobes`, `evaluate_standard_brdf`, `fresnel_schlick` |
+| `lights.glsl` | `LightArray`, `LightList`, `LightSample`, `select_lights`, `flat_lights`, `selected_light_index`, `sample_light`, `light_casts_shadow`, `standard_view_direction`, `evaluate_standard_light` |
+| `shadows.glsl` | `shadow_visibility` |
+| `ibl.glsl` | `frame_has_indirect`, `indirect_diffuse_irradiance`, `evaluate_environment` (both), `evaluate_environment_lobes` (both) |
+| `ambient_occlusion.glsl` | `draw_ambient_occlusion`, `frame_ambient_occlusion`, `specular_occlusion` |
+| `screen_space_gi.glsl` | `draw_screen_space_indirect`, `frame_screen_space_indirect`, `screen_space_base_share` |
+| `scene_snapshot.glsl` | `scene_uv`, `scene_color_at`, `scene_depth_at`, `scene_view_distance_at`, `scene_position_at`, `scene_depth_gap` ([scene reads](#scene-reads)) |
+| `standard_surface.glsl` | `StandardMaterialSample` (fields frozen), `sample_standard_material` |
+| `standard_shading.glsl` | `standard_ambient_fill`, `evaluate_standard_lights`, `shade_standard_surface` |
+| `gbuffer_output.glsl` | `write_gbuffer`, outputs at locations 0 to 4 |
+| `vertex_pull.glsl` | `pull_vec2`, `pull_vec3`, `pull_vec4`, `pull_triangle`, `GEOMETRY_*` |
+| `mesh_vertex.glsl` | the push block, outputs 0 to 6, `MeshVertexInput`, `pull_mesh_vertex`, `apply_mesh_deformation`, `write_mesh_outputs`, `instance_source` (`INSTANCED`) |
+| `scene_trace.glsl` | as in [Scene tracing](scene_trace.md) |
+
+`shadows.glsl` and `standard_shading.glsl` are probed plain, with `RT_SHADOWS`, and with `RT_SHADOWS` and `SCENE_TRACE_BVH`; `lights.glsl` in fragment and vertex stages; `mesh_vertex.glsl` plain, with `INSTANCED`, `DEPTH_ONLY`, and both; `scene_trace.glsl` in compute with each trace kind.
+
+### Traced shadows
+
+A custom forward stage receives ray-traced shadows through `ShaderDesc.traced_fragment`. `hardware` is the forward source compiled with `RT_SHADOWS`, drawn on renderers with ray queries; `software` is the same source compiled with `RT_SHADOWS` and `SCENE_TRACE_BVH`, drawn on renderers without them (see [ray-traced shadows](shadows.md#ray-traced-shadows) and [scene tracing](scene_trace.md)). `shadows.glsl` defines `SCENE_TRACE_RAY_QUERY` under `RT_SHADOWS` unless `SCENE_TRACE_BVH` is set, so one source serves all three forms.
+
+A view that traces shadows draws the form of its renderer's kind; a view that traces none draws `fragment`. When the matching form is empty, the view draws `fragment`, which receives a traced light with `shadow_count == 0`, so `shadow_visibility` returns 1 and the surface is lit without that shadow. A shader without traced forms allocates nothing extra and draws `fragment` everywhere. G-buffer stages need no traced form: the lighting resolve shadows them. A traced form the backend rejects behaves like any other configuration (see [reload](#reload)); a replacement that drops a form retires its pipelines, and the next frame draws `fragment`.
 
 ### Light selection
 
@@ -123,7 +185,9 @@ outputs of `gbuffer_output.glsl`: fill a `StandardMaterialSample` (`standard_sur
 call `write_gbuffer(sample, specular_weight, draw)`, or write locations 0 to 4 directly. Lighting,
 ambient and environment terms then come from the resolve, so a forward stage that computes
 less than the Standard model (the `pulse` example is diffuse only) differs from its G-buffer
-route by those terms. `examples/shaders/custom/pulse_gbuffer.frag.glsl` is the reference.
+route by those terms; a forward stage that calls `shade_standard_surface` with the sample and
+weight its G-buffer stage writes matches that route, as the Standard twin does.
+`examples/shaders/custom/pulse_gbuffer.frag.glsl` is the reference.
 
 The capability is also visible to shaders: `CustomMaterialGpu.capabilities` carries
 `CUSTOM_CAPABILITY_GBUFFER` when the stage is present. Pipelines for the G-buffer stage are keyed
@@ -255,19 +319,110 @@ With the `C3D_SHADER_COMPILER` feature and `shaderc` in the consumer's dependenc
 import c3d::shader::compile;
 
 String log;
+ShaderInclude[1] includes = { { .name = "custom/standard_twin.glsl", .text = twin_include_text } };
 char[]? spirv = compile::compile_glsl(
     allocator:  tmem,
     source:     glsl_text,
     stage:      ShaderStage.FRAGMENT,
-    defines:    {},
-    debug_name: "pulse.frag",
+    defines:    { "RT_SHADOWS" },
+    debug_name: "standard_twin.frag",
     log:        &log,
+    includes:   includes[..],
 );
 ```
 
-Targets Vulkan 1.3 semantics and SPIR-V 1.5 like the offline build. `#include` resolves against the embedded table `shader::SHADER_INCLUDES`: every file under `shaders/common/`, `shaders/generated/` and gpu.c3l's `include/shaders/`, by the same names the built-in shaders use. An unknown include is a compile error. `SHADER_COMPILE_FAILED` carries no text; the optional `log` receives the compiler messages, including warnings on success.
+Targets Vulkan 1.3 semantics and SPIR-V 1.5 like the offline build. `#include` resolves against the embedded table `shader::SHADER_INCLUDES` first: every file under `shaders/common/`, `shaders/generated/` and gpu.c3l's `include/shaders/`, by the same names the built-in shaders use. It then searches the optional `includes`, in order: an application's or a [shader package's](#shader-packages) own includes, borrowed for the call. Names match exactly and the first match wins, so a caller entry never replaces an embedded file, and an include written relative to its sibling (`"params.glsl"` inside `app/`) does not resolve: write the full name (`"app/params.glsl"`). An include in neither table is a compile error. `SHADER_COMPILE_FAILED` carries no text; the optional `log` receives the compiler messages, including warnings on success.
 
 Without the feature the module does not exist and `shaderc` is not linked; `ShaderDesc` still takes SPIR-V bytes from any other producer.
+
+## Shader packages
+
+An add-on or an application that ships GLSL compiles it offline with `scripts/build_shaders.py` into a committed C3 file of `$embed` constants. A shader package is a directory with `shaders/shaders.json`:
+
+```
+addons/c3d_landscape.c3l/
+├── shaders/
+│   ├── shaders.json
+│   ├── terrain.frag.glsl                         entries' sources
+│   ├── include/landscape/terrain_layers.glsl     includes, under the package name
+│   └── spv/                                      build output, not committed
+└── src/shaders.c3                                the generated output, committed
+```
+
+```json
+{
+  "module": "c3d::landscape",
+  "output": "src/shaders.c3",
+  "flags": ["DEPTH_ONLY", "RT_SHADOWS", "SCENE_TRACE_BVH"],
+  "entries": [
+    { "shader": "terrain_fragment", "source": "terrain.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "terrain_fragment", "source": "terrain.frag.glsl", "stage": "frag", "defines": ["RT_SHADOWS"] },
+    { "shader": "terrain_fragment", "source": "terrain.frag.glsl", "stage": "frag", "defines": ["RT_SHADOWS", "SCENE_TRACE_BVH"] },
+    { "shader": "terrain_vertex", "source": "terrain.vert.glsl", "stage": "vert", "defines": [] },
+    { "shader": "terrain_vertex", "source": "terrain.vert.glsl", "stage": "vert", "defines": ["DEPTH_ONLY"] }
+  ]
+}
+```
+
+| Field | Required | Meaning |
+| --- | --- | --- |
+| `module` | yes | Module of the generated file; its last component `<name>` names the include directory and the include table |
+| `output` | yes | Generated C3 path relative to the package root; committed |
+| `flags` | yes, may be empty | Defines entries may use, in constant-name order |
+| `entries[]` | yes | `shader`, `source` (under `shaders/`), `stage` (the core stage names: `vert`, `frag`, `comp` and the rest glslang takes) and optional `defines` (a subset of `flags`) |
+
+A package compiles against core's include roots, so every [public include](#public-includes) is available, plus its own `shaders/include/`. Its includes live in `shaders/include/<name>/` and are written `#include "<name>/x.glsl"`, also between the package's own includes, because the in-process resolver matches names exactly. Another package's includes are never visible: cross-package includes are unsupported. Package includes are not probed; the entries that include them compile them. SPIR-V goes to `<package>/shaders/spv/<shader>{_<define>}.spv`.
+
+The generated file declares the module, one `@private` constant per entry named as core's registry names them (`<SHADER>{_<DEFINE>}_SPIRV`, defines in `flags` order), and, when the package has includes, the public `<NAME>_SHADER_INCLUDES` table for `compile_glsl(includes:)`:
+
+```c3
+// Generated by build_shaders.py from shaders/shaders.json - do not edit.
+module c3d::landscape;
+
+import c3d::shader;
+
+const char[*] TERRAIN_FRAGMENT_SPIRV @private = $embed("../shaders/spv/terrain_fragment.spv");
+const char[*] TERRAIN_FRAGMENT_RT_SHADOWS_SPIRV @private = $embed("../shaders/spv/terrain_fragment_rt_shadows.spv");
+...
+const char[*] INCLUDE_LANDSCAPE_TERRAIN_LAYERS_TEXT @private = $embed("../shaders/include/landscape/terrain_layers.glsl");
+
+<*
+ GLSL includes of this package, by the name a shader writes.
+*>
+const shader::ShaderInclude[1] LANDSCAPE_SHADER_INCLUDES = {
+    { .name = "landscape/terrain_layers.glsl", .text = (String)INCLUDE_LANDSCAPE_TERRAIN_LAYERS_TEXT[..] },
+};
+```
+
+The SPIR-V constants are `@private` to the package's module. A submodule of the add-on reads them with `import c3d::landscape @public;`, which lifts the private visibility for the importing module; every add-on with submodules follows this rule:
+
+```c3
+module c3d::landscape::terrain;
+
+import c3d::landscape @public;
+
+ShaderDesc desc = {
+    .fragment         = landscape::TERRAIN_FRAGMENT_SPIRV[..],
+    .traced_fragment  = {
+        .hardware = landscape::TERRAIN_FRAGMENT_RT_SHADOWS_SPIRV[..],
+        .software = landscape::TERRAIN_FRAGMENT_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV[..],
+    },
+    .vertex           = {
+        .shaded = landscape::TERRAIN_VERTEX_SPIRV[..],
+        .depth  = landscape::TERRAIN_VERTEX_DEPTH_ONLY_SPIRV[..],
+    },
+    .param_block_size = TerrainParams::size,
+};
+ShaderId shader = assets.add_shader(&desc, "terrain")!;
+```
+
+`add_shader` copies the bytes into the store. Payload structs stay hand-mirrored C3 structs with `$assert` size pins.
+
+In-repo packages are discovered: every `addons/*/shaders/shaders.json` and `test/shaders/shaders.json` (the shader package the unit tests read). `python3 scripts/build.py` compiles them after core's registry and probes, and `--regen` rewrites their outputs; without it, a stale output fails the shaders step. An application outside the repository compiles its own package with `python3 lib/c3d.c3l/scripts/build_shaders.py --package <dir>` (repeatable; `--check` verifies the output instead of writing it). An add-on without `shaders/shaders.json` needs nothing.
+
+A manifest error stops the step with `[shaders] manifest error:` and exits 1: a missing field; an unknown stage or a missing source; a define outside `flags`, or duplicate flags; a duplicate `(shader, defines)`; a `.glsl` under `shaders/include/` outside `<name>/`; a package name equal to a first-level directory of core's include roots (`generated`, `internal`); an include name equal to a core include or to another package's include in the same run; a `--package` directory without `shaders/shaders.json`.
+
+Committed: `shaders.json`, the sources, `shaders/include/**` and the output. Build output, ignored: `shaders/spv/`.
 
 ## Reload
 
@@ -378,5 +533,7 @@ Compute pipelines share the pipeline cache and the reload behavior of custom mat
 `examples/custom_shader` keeps `tint.frag.glsl`, `pulse.vert.glsl` and `pulse.frag.glsl` under `examples/shaders/custom/`, compiles them in process at startup, and every half second compares the files' modification times with the ones it last saw; a change, or R, recompiles and replaces the shader, printing the compiler log or the rejection fault. P pauses the pulse through `@custom_params`. Editing `pulse.frag.glsl` so its push block does not match (add a member to `Push`) demonstrates the rejection: the console shows the `SHADER_INVALID` diagnostic, the stats panel counts a rejection, and the box keeps drawing with the previous shader until the file is fixed.
 
 `examples/custom_compute` advances a particle buffer with `particles.comp.glsl` every frame and draws it as camera-facing quads through a custom material whose vertex stage pulls each particle by `gl_VertexIndex / 4` from the same buffer; an `UPLOAD` buffer carries the moving emitter. The particles are a blended [scene reader](#scene-reads) of depth: each fades by `scene_depth_gap` over `softness` metres into what lies behind it, so they dissolve into the floor and the water instead of cutting through them; S switches `softness` between 0 and its default through `@set_custom_params`, and the hard intersections return. A 5 × 5 pool over the floor draws with `water.frag.glsl`, an opaque reader of color and depth: it refracts the checker floor through animated ripples, keeps the unrefracted uv where the offset sample lies in front of the surface, darkens and tints the floor by the length of the water path, and foams where the gap to the scene behind is small, around a Basic post standing in the pool. W shows or hides the pool. The stats panel shows `Scene snapshots: 3` with the pool (color and depth before the scene-read list, depth again before the particles) and `1` without it; with `--gpu-timings` the `SCENE_SNAPSHOT` and `SCENE_READ` rows appear, and `SCENE_READ` reads `N/A` while the pool is hidden. All four GLSL files are polled and reloaded like the custom shader example, Space reseeds the particles, and the stats panel shows `Dispatches: 1` and the completed custom compute time. Breaking the compute push block demonstrates the rejection: the console shows `SHADER_INVALID`, and the particles keep moving under the previous revision until the file is fixed.
+
+`examples/shading_paths` puts a `standard_twin` sphere beside the Standard `dielectric` sphere with the same parameters. The twin compiles in process from its two stage files, which share `custom/standard_twin.glsl` through `compile_glsl(includes:)`; the two spheres look the same in all four views (forward and deferred, flat and clustered). `examples/rt_shadows` swaps its ground between the Standard material and a twin with the same parameters on `C` (`--twin-ground` starts on the twin); the twin carries both traced forms, so with ray-traced shadows on, on either trace kind (`--software`), the off-camera box's shadow stays on the ground across the swap.
 
 `examples/compute_textures` writes an animated value-noise pattern into an empty storage texture every frame with `noise.comp.glsl` and binds it as the boxes' base map, then, between `render_view` and `finish_view`, runs `fog.comp.glsl` over the view: it samples the depth image and loads and stores the scene image in place. F toggles the fog, N freezes the noise, R reloads; both files are polled.

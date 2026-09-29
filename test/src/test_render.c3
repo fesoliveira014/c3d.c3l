@@ -859,6 +859,42 @@ fn void test_custom_material_block_packs_slots_and_payload_address() @test {
     assert((ulong)packed.parameters == 0x1000);
 }
 
+fn void test_custom_fragment_variant_follows_the_traced_forms() @test {
+    char[4] fragment = { 1, 1, 1, 1 };
+    char[4] hardware = { 2, 2, 2, 2 };
+    char[4] software = { 3, 3, 3, 3 };
+    uint traced = shader::SHADER_FLAG_RT_SHADOWS;
+    uint walked = shader::SHADER_FLAG_RT_SHADOWS | shader::SHADER_FLAG_SCENE_TRACE_BVH;
+    asset::ShaderDesc stages = { .fragment = fragment[..], .traced_fragment = { .hardware = hardware[..] } };
+    assert(render::custom_fragment_variant(&stages, traced) == (ShaderVariant){ .flags = traced });
+    assert(render::custom_fragment_variant(&stages, walked) == (ShaderVariant){});
+    assert(render::custom_fragment_variant(&stages, 0) == (ShaderVariant){});
+
+    stages.traced_fragment.software = software[..];
+    assert(render::custom_fragment_variant(&stages, walked) == (ShaderVariant){ .flags = walked });
+    assert(render::custom_fragment_variant(&stages, traced) == (ShaderVariant){ .flags = traced });
+}
+
+fn void test_custom_stage_source_selects_the_traced_fragment_form() @test {
+    char[4] fragment = { 1, 1, 1, 1 };
+    char[4] hardware = { 2, 2, 2, 2 };
+    char[4] software = { 3, 3, 3, 3 };
+    char[4] gbuffer = { 4, 4, 4, 4 };
+    asset::ShaderDesc stages = {
+        .fragment        = fragment[..],
+        .gbuffer         = gbuffer[..],
+        .traced_fragment = { .hardware = hardware[..], .software = software[..] },
+    };
+    render::PipelineKey key = custom_key(3, 1);
+    assert(render::custom_stage_source(&stages, key).fragment.ptr == &fragment[0]);
+    key.fragment = { .flags = shader::SHADER_FLAG_RT_SHADOWS };
+    assert(render::custom_stage_source(&stages, key).fragment.ptr == &hardware[0]);
+    key.fragment = { .flags = shader::SHADER_FLAG_RT_SHADOWS | shader::SHADER_FLAG_SCENE_TRACE_BVH };
+    assert(render::custom_stage_source(&stages, key).fragment.ptr == &software[0]);
+    key.custom = { .gbuffer = true };
+    assert(render::custom_stage_source(&stages, key).fragment.ptr == &gbuffer[0]);
+}
+
 fn ulong custom_key_of(ShaderId shader, uint slot, float depth) @local {
     return render::draw_sort_key(
         vertex:    { .shader = MESH },

@@ -2,6 +2,14 @@
 #define C3D_SHADOWS_GLSL
 
 #include "buffer_reference.glsl"
+#include "descriptor_heap.glsl"
+#include "lights.glsl"
+#ifdef RT_SHADOWS
+#if !defined(SCENE_TRACE_BVH) && !defined(SCENE_TRACE_RAY_QUERY)
+#define SCENE_TRACE_RAY_QUERY
+#endif
+#include "scene_trace.glsl"
+#endif
 
 GPU_DECLARE_READONLY_ARRAY_REF(ShadowArray, ShadowGpu);
 

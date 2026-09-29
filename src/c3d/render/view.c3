@@ -1620,9 +1620,10 @@ fn gpu::PipelineHandle? pipeline_for(
 ) @private {
     renderer.stats.pipeline_lookups++;
     bool wireframe = material.common.wireframe && renderer.caps.line_polygon_mode;
+    uint shadow_flags = rt_shadow_flags(renderer, rt_shadows);
     PipelineKey key = {
         .vertex        = vertex,
-        .fragment      = material_fragment(material, rt_shadow_flags(renderer, rt_shadows)),
+        .fragment      = material_fragment(material, shadow_flags),
         .color_formats = { [0] = HDR_FORMAT },
         .color_count   = 1,
         .depth_format  = DEPTH_FORMAT,
@@ -1636,6 +1637,7 @@ fn gpu::PipelineHandle? pipeline_for(
     key.shader = shader;
     key.shader_revision = renderer.shaders[shader.index].revision;
     key.custom = { .vertex = stages.vertex.shaded.len > 0, .fragment = true };
+    key.fragment = custom_fragment_variant(stages, shadow_flags);
     if (key.custom.vertex) key.vertex = { .shader = MESH, .flags = vertex.flags & shader::SHADER_FLAG_INSTANCED };
     CustomStageSource source = custom_stage_source(stages, key);
     return renderer.pipelines.get(&renderer.device, key, &source);

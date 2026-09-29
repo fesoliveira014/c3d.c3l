@@ -106,6 +106,12 @@ What the four cases establish:
   keeps drawing with its old pipelines and snapshots, and an accepted one that reads nothing drops
   them (`scene_probe.frag.glsl`).
 
+- A custom twin of the Standard material, built on `standard_shading.glsl` and compiled in process
+  with an application include, renders the same image as Standard within one half-float step on
+  forward and deferred views with flat and clustered lights; its traced forms receive the traced
+  sun's shadow on both kinds, and after a replacement without them the plain form draws unshadowed
+  without a rejection.
+
 What they cannot establish: window clear-only and GUI-only frames need a
 window (run the `clear` and `cube_gui` examples with validation), and a
 presentation failure after submission needs a hardware observation.

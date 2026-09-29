@@ -2,6 +2,7 @@
 #define C3D_GBUFFER_OUTPUT_GLSL
 
 #include "gbuffer.glsl"
+#include "standard_surface.glsl"
 
 layout(location = 0) out vec4 out_base_color_metallic;
 layout(location = 1) out vec4 out_normal_roughness;

@@ -1,0 +1,35 @@
+#version 460
+#include "generated/shader_abi.glsl"
+#include "c3d_abi.glsl"
+#include "gbuffer_output.glsl"
+#include "custom/standard_twin.glsl"
+
+layout(location = 0) in vec3 v_world_pos;
+layout(location = 1) in vec3 v_normal;
+layout(location = 2) in vec4 v_tangent;
+layout(location = 3) in vec2 v_uv0;
+layout(location = 4) in vec2 v_uv1;
+
+layout(push_constant) uniform Push {
+    uint64_t vertex_root_gpu;
+    uint64_t fragment_root_gpu;
+} pc;
+
+void main() {
+    DrawRoot draw = DrawRoot(pc.fragment_root_gpu);
+    FrameRoot frame = FrameRoot(draw.frame);
+    CustomMaterialGpu material = CustomMaterialGpu(draw.material);
+    StandardMaterialSample surface_sample = twin_surface(
+        material,
+        frame,
+        v_world_pos,
+        v_normal,
+        v_tangent,
+        v_uv0,
+        v_uv1,
+        !gl_FrontFacing
+    );
+    if ((material.flags & MATERIAL_ALPHA_MASK) != 0u && surface_sample.base_color.a < material.alpha_cutoff) discard;
+
+    write_gbuffer(surface_sample, 1.0, draw);
+}

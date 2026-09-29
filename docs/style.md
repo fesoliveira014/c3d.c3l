@@ -196,7 +196,7 @@ Public `c3d` signatures never contain `gpu::`, `sdl::`, `imgui::`, `cg::`, `b3::
 
 # 16. Shaders
 
-Explicit `set`/`binding` and `location`. `std430` for root and table data. Shared structs come from `abi/c3d.abi` through `gen_abi.py`; a constant mirrored by hand names its twin on both sides. No `vec3` in shared structs. Vertex outputs use the fixed locations from 08 Shader System. Shaders use GL conventions; no shader flips Y.
+Explicit `set`/`binding` and `location`. `std430` for root and table data. Shared structs come from `abi/c3d.abi` through `gen_abi.py`; a constant mirrored by hand names its twin on both sides. No `vec3` in shared structs. Vertex outputs use the fixed locations from 08 Shader System. Shaders use GL conventions; no shader flips Y. A public include (listed under `public_includes` in `shaders/variants.json`) includes every include it uses; the build compiles each after the two ABI headers alone.
 
 # 17. Debug names
 
