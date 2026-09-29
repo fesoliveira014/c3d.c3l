@@ -23,6 +23,7 @@ const float ROOF_SIZE @private = 2;
 const Vec3 ROOM_SIZE @private = { 4, 3, 4 };
 const Vec3 ROOM_CAMERA_POSITION @private = { 0, 2.5f, 0 }; // inside the room, under its roof
 const Vec3 ROOM_FLOOR_POINT @private = { 1, 0, 1 };        // its ray to the sun meets the roof from inside
+const StandardParams SHADOW_GROUND_PARAMS @private = { .base_color = { 0.8f, 0.8f, 0.8f, 1 }, .roughness = 1 };
 
 struct CasterCase @private {
     ZString name;
@@ -36,6 +37,7 @@ struct CasterCase @private {
 struct ShadowScene @private {
     Scene      scene;
     Node*      camera;
+    Node*      ground;
     Node*      box;
     GeometryId box_geometry;
     MaterialId opaque;
@@ -53,10 +55,7 @@ fn ShadowScene? create_shadow_scene(Fixture* fixture) @private {
         Geometry box = geometry::box(tmem, 1, 3, 1);
         result.box_geometry = fixture.assets.add_geometry(&box)!;
     };
-    MaterialId ground_material = fixture.assets.add_material(material::standard({
-        .base_color = { 0.8f, 0.8f, 0.8f, 1 },
-        .roughness  = 1,
-    }))!;
+    MaterialId ground_material = fixture.assets.add_material(material::standard(SHADOW_GROUND_PARAMS))!;
     result.opaque = fixture.assets.add_material(material::standard({ .base_color = { 1, 1, 1, 1 }, .roughness = 1 }))!;
     MaterialCommon cutout = material::MATERIAL_COMMON_DEFAULT;
     cutout.alpha_mode = AlphaMode.MASK;
@@ -66,7 +65,7 @@ fn ShadowScene? create_shadow_scene(Fixture* fixture) @private {
         common: cutout,
     ))!;
 
-    result.scene.add_mesh(ground, ground_material, name: "ground")!;
+    result.ground = result.scene.add_mesh(ground, ground_material, name: "ground")!;
     result.box = result.scene.add_mesh(result.box_geometry, result.opaque, name: "box")!;
     result.box.local.position = { 0, 1.5f, 0 };
     Light sun = light::directional({ 1, 1, 1 }, 3);
