@@ -320,6 +320,7 @@ fn ShadowGpu[]? record_shadows(
         allocator: tmem,
         scene: scene,
         assets: renderer.assets,
+        fade_origin: effects_view.fade_origin,
         counts: &counts,
     );
     renderer.stats.dangling_refs += counts.dangling;

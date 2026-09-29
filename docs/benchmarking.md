@@ -208,6 +208,7 @@ windowed rows only with other windowed rows.
 | `cpu_record_ms` | Existing renderer statistic; excludes the beginning wait/readback/sweep work |
 | `gpu_*_ms` | Completed per-pass timestamps for shadow atlas, light culling, depth prepass, G-buffer, ambient occlusion, ray-traced reflections, path tracing, lighting resolve, forward opaque, post chain, composite, velocity, temporal resolve, probe update, acceleration builds, screen-space GI, its colour copy and instance culling (`gpu_instance_cull_ms`, last); `-1` when unavailable, zero for an omitted pass |
 | `draws`, `lights`, `dropped` | Current-frame renderer counters |
+| `batches_faded` | Current-frame `Stats.batches_faded`: view batches inside the frustum wholly past their fade band |
 | `overflows` | Completed cluster overflow count attributed to its submitted frame |
 | `material_resolutions` | Fresh material dependency resolutions in the frame; one per material per view traversal |
 | `pipeline_lookups` | Draw pipeline cache lookups in the frame; one per prepared draw item and shadow draw |
@@ -289,7 +290,7 @@ and the sun's four cascades. The scene is still: nothing animates but the sway, 
 frame time. `--fade-field` adds a 64 × 64 grid of 32 m cell batches, 64 swaying props each (4,096 batches,
 262,144 props), with a 60 to 90 m fade band: the shape of one foliage layer, most of whose cells lie wholly past
 the band. `RendererDesc.max_instance_batches` is raised to hold every cell. The common options behave as in
-`many_lights --benchmark`, and the CSV columns are the same.
+`many_lights --benchmark`, and the CSV columns are the same; `batches_faded` counts the skipped cells.
 `benchmark.py instancing` runs `fade-field-off` and `fade-field-on` jobs (`--fade-fields` selects them).
 
 ## Profiling configurations and overhead

@@ -500,10 +500,11 @@ fn void test_shadow_candidates_follow_cast_shadow() @test {
     @pool() {
         render::ExtractCounts counts;
         render::MeshCandidate[] candidates = render::extract_shadow_candidates(
-            allocator: tmem,
-            scene:     &fixture.scene,
-            assets:    &fixture.assets,
-            counts:    &counts,
+            allocator:   tmem,
+            scene:       &fixture.scene,
+            assets:      &fixture.assets,
+            fade_origin: {},
+            counts:      &counts,
         );
         assert(candidates.len == 1);
         assert(candidates[0].node == off_layer && candidates[0].instance_count == 1);

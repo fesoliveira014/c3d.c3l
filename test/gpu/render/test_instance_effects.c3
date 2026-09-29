@@ -243,7 +243,8 @@ fn void test_faded_batch_leaves_view_shadow_and_cull_lists() @test {
         sample_row(&fixture, &walled, faded_row[..])!!;
         foreach (index, pixel : faded_row) assert(pixel == hidden_row[index]);
         assert(settle_and_sample(&fixture, &walled)!! == hidden_centre);
-        if (culling) assert(renderer.stats.instances_visible == 0 && renderer.stats.instances_tested > 0);
+        assert(renderer.stats.batches_faded == 1);
+        assert(renderer.stats.indirect_draws == 0 && renderer.stats.cull_dispatches == 0);
     }
 
     set_view_culling(&fixture, true)!!;

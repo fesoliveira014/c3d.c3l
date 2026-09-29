@@ -57,6 +57,7 @@ struct FrameSample {
     uint overflows;
     uint material_resolutions;
     uint pipeline_lookups;
+    uint batches_faded;
 }
 
 <*
@@ -329,10 +330,10 @@ fn usz? run_frames(BenchmarkRun* run, BenchmarkFlags flags, FrameSample[] sample
  @param timestamps_enabled : "False prints -1 in every GPU column."
 *>
 fn void write_samples(FrameSample[] samples, bool timestamps_enabled) {
-    io::printn("frame,wall_ms,update_ms,begin_ms,render_ms,finish_ms,end_ms,gui_ms,cpu_record_ms,draws,lights,dropped,overflows,material_resolutions,pipeline_lookups,gpu_shadow_ms,gpu_cull_ms,gpu_prepass_ms,gpu_gbuffer_ms,gpu_ambient_occlusion_ms,gpu_rt_reflections_ms,gpu_path_trace_ms,gpu_lighting_ms,gpu_opaque_ms,gpu_post_ms,gpu_composite_ms,gpu_velocity_ms,gpu_taa_ms,gpu_probe_update_ms,gpu_acceleration_build_ms,gpu_screen_space_gi_ms,gpu_ssgi_copy_ms,gpu_instance_cull_ms");
+    io::printn("frame,wall_ms,update_ms,begin_ms,render_ms,finish_ms,end_ms,gui_ms,cpu_record_ms,draws,lights,dropped,overflows,material_resolutions,pipeline_lookups,gpu_shadow_ms,gpu_cull_ms,gpu_prepass_ms,gpu_gbuffer_ms,gpu_ambient_occlusion_ms,gpu_rt_reflections_ms,gpu_path_trace_ms,gpu_lighting_ms,gpu_opaque_ms,gpu_post_ms,gpu_composite_ms,gpu_velocity_ms,gpu_taa_ms,gpu_probe_update_ms,gpu_acceleration_build_ms,gpu_screen_space_gi_ms,gpu_ssgi_copy_ms,gpu_instance_cull_ms,batches_faded");
     foreach (index, sample : samples) {
         float unavailable = -1;
-        io::printfn("%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f",
+        io::printfn("%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d,%d,%d,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%.6f,%d",
             index, sample.wall_ms, sample.update_ms, sample.begin_ms, sample.render_ms,
             sample.finish_ms, sample.end_ms, sample.gui_ms, sample.cpu_record_ms, sample.draws, sample.lights,
             sample.dropped, sample.overflows, sample.material_resolutions, sample.pipeline_lookups,
@@ -353,7 +354,8 @@ fn void write_samples(FrameSample[] samples, bool timestamps_enabled) {
             timestamps_enabled ? sample.gpu_ms[Pass.ACCELERATION_BUILD.ordinal] : unavailable,
             timestamps_enabled ? sample.gpu_ms[Pass.SCREEN_SPACE_GI.ordinal] : unavailable,
             timestamps_enabled ? sample.gpu_ms[Pass.SSGI_COLOR_COPY.ordinal] : unavailable,
-            timestamps_enabled ? sample.gpu_ms[Pass.INSTANCE_CULL.ordinal] : unavailable);
+            timestamps_enabled ? sample.gpu_ms[Pass.INSTANCE_CULL.ordinal] : unavailable,
+            sample.batches_faded);
     }
 }
 
@@ -395,6 +397,7 @@ fn void? record_frame(BenchmarkRun* run, uint frame, FrameSample* sample) @priva
     sample.dropped = renderer.stats.lights_dropped;
     sample.material_resolutions = renderer.stats.material_resolutions;
     sample.pipeline_lookups = renderer.stats.pipeline_lookups;
+    sample.batches_faded = renderer.stats.batches_faded;
 }
 
 module bench_loop @feat(C3D_PROFILE_CPU | C3D_PROFILE_GPU);

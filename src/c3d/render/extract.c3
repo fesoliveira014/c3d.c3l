@@ -60,6 +60,7 @@ struct ExtractCounts {
     uint visible;
     uint culled;
     uint dangling;
+    uint batches_faded; // bound wholly past the batch's fade band from the view camera
 }
 
 <*
@@ -67,7 +68,7 @@ struct ExtractCounts {
  @param allocator : "Owns the returned array."
  @param [&inout] scene : "Pose as left by the last update_world; only batch aggregates are written."
  @param [&in] assets : "Resolves geometry bounds."
- @param [&in] camera : "Frustum and view-projection of the view."
+ @param [&in] camera : "Frustum, view-projection and fade origin of the view."
  @param layers : "Camera layer mask."
  @param [&inout] counts : "Zeroed first, then accumulated."
  @param clip_plane : "Culls bounds wholly on its negative side; zero culls nothing."
@@ -295,6 +296,10 @@ fn void include_batch(
         counts.culled++;
         return;
     }
+    if (past_fade_band(batch.fade, world, camera.position)) {
+        counts.batches_faded++;
+        return;
+    }
     MeshCandidate template = {
         .node           = node,
         .geometry       = batch.geometry,
@@ -325,6 +330,13 @@ fn void attach_crowd(Scene* scene, MeshCandidate* candidate) {
         candidate.crowd_part = index;
         return;
     }
+}
+
+// Every anchor lies inside the bound and no vanish distance exceeds end, so no instance of the batch is drawn.
+fn bool past_fade_band(InstanceFade fade, Aabb world_bounds, Vec3 fade_origin) @local {
+    if (fade.end == 0) return false;
+    Vec3 nearest = math::clamp(fade_origin, world_bounds.min, world_bounds.max);
+    return nearest.distance(fade_origin) > fade.end;
 }
 
 fn bool batch_is_drawable(AssetStore* assets, InstancedMesh* batch) @local {
@@ -391,12 +403,14 @@ fn float center_depth(CameraMatrices* camera, Aabb world) @local {
  @param allocator : "Owns the returned candidate array."
  @param [&inout] scene : "Current transforms; only batch aggregates are written."
  @param [&in] assets : "Supplies live ids and retained geometry bounds."
+ @param fade_origin : "View camera position batch fades are measured from."
  @param [&inout] counts : "Reset, then populated for broad caster inclusion."
 *>
 fn MeshCandidate[] extract_shadow_candidates(
     Allocator allocator,
     Scene* scene,
     AssetStore* assets,
+    Vec3 fade_origin,
     ExtractCounts* counts,
 ) {
     *counts = {};
@@ -438,17 +452,22 @@ fn MeshCandidate[] extract_shadow_candidates(
                 counts.dangling++;
             } else if (assets.material(batch.material).data.common.alpha_mode != AlphaMode.BLEND) {
                 batch.validate_effects();
-                MeshCandidate template = {
-                    .node           = node,
-                    .geometry       = batch.geometry,
-                    .material       = batch.material,
-                    .world_bounds   = spatial::instanced_world_bounds(assets, node, batch),
-                    .receive_shadow = batch.receive_shadow,
-                    .batch          = batch,
-                    .scene_identity = scene.identity,
-                };
-                attach_crowd(scene, &template);
-                emit_batch_candidates(candidates, counts, template);
+                Aabb world = spatial::instanced_world_bounds(assets, node, batch);
+                if (past_fade_band(batch.fade, world, fade_origin)) {
+                    counts.batches_faded++;
+                } else {
+                    MeshCandidate template = {
+                        .node           = node,
+                        .geometry       = batch.geometry,
+                        .material       = batch.material,
+                        .world_bounds   = world,
+                        .receive_shadow = batch.receive_shadow,
+                        .batch          = batch,
+                        .scene_identity = scene.identity,
+                    };
+                    attach_crowd(scene, &template);
+                    emit_batch_candidates(candidates, counts, template);
+                }
             }
         }
     };

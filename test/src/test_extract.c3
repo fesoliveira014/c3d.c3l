@@ -370,7 +370,13 @@ fn void test_skinned_candidate_bounds_follow_joints() @test {
         assert(bounds.min.y < 20 && bounds.max.y > 20 && bounds.min.y > 19 && bounds.max.y < 21);
         assert(counts.culled == 1 && counts.dangling == 1);
 
-        render::MeshCandidate[] casters = render::extract_shadow_candidates(tmem, &scene, &assets, &counts);
+        render::MeshCandidate[] casters = render::extract_shadow_candidates(
+            allocator:   tmem,
+            scene:       &scene,
+            assets:      &assets,
+            fade_origin: {},
+            counts:      &counts,
+        );
         assert(casters.len == 2 && counts.dangling == 1);
     };
 }
