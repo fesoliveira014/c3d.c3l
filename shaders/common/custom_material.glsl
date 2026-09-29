@@ -15,4 +15,9 @@ vec4 sample_custom_map(CustomMaterialGpu material, uint slot, vec2 uv0, vec2 uv1
     return sample_texture_2d_bias(map.texture_index, map.sampler_index, custom_map_uv(material, slot, uv0, uv1), bias);
 }
 
+// An unused reference is address zero: read only the references the material sets.
+StandardMaterialGpu custom_reference(CustomMaterialGpu material, uint index) {
+    return StandardMaterialRoot(material.references[index]).material;
+}
+
 #endif

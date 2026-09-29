@@ -106,6 +106,7 @@ const uint MATERIAL_KIND_TOON = 2u;
 const uint MATERIAL_KIND_PHYSICAL = 3u;
 const uint MATERIAL_KIND_CUSTOM = 4u;
 const uint CUSTOM_CAPABILITY_GBUFFER = 1u;
+const uint CUSTOM_MATERIAL_REFERENCES = 4u;
 const uint TONEMAP_NONE = 0u;
 const uint TONEMAP_ACES = 1u;
 const uint TONEMAP_AGX = 2u;
@@ -832,6 +833,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer CustomMater
     uint64_t parameters;
     uint capabilities;
     uint _pad0;
+    uint64_t references[4];
 };
 
 struct GradeGpu {

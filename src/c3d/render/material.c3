@@ -19,6 +19,7 @@ $assert MATERIAL_STRIDE >= ToonMaterialGpu::size;
 $assert MATERIAL_STRIDE >= PhysicalMaterialGpu::size;
 $assert MATERIAL_STRIDE >= CustomMaterialGpu::size;
 $assert material::MAX_CUSTOM_TEXTURE_SLOTS == shader::CUSTOM_TEXTURE_SLOTS;
+$assert material::MAX_CUSTOM_MATERIAL_REFERENCES == shader::CUSTOM_MATERIAL_REFERENCES;
 $assert (uint)MaterialKind.BASIC.ordinal == shader::MATERIAL_KIND_BASIC;
 $assert (uint)MaterialKind.STANDARD.ordinal == shader::MATERIAL_KIND_STANDARD;
 $assert (uint)MaterialKind.TOON.ordinal == shader::MATERIAL_KIND_TOON;
@@ -83,6 +84,7 @@ fn void? Renderer.upload_material(&self, MaterialId material) {
  @param block : "Aligned to STREAM_ALIGNMENT; active fields overwritten."
  @param [&in] material : "Valid active material arm and texture coordinates."
  @param parameters : "Custom payload address; zero for built-in kinds."
+ @param custom_references : "Heap addresses of the referenced blocks; zero when unused."
  @require block.len >= MATERIAL_STRIDE, (uptr)block.ptr % STREAM_ALIGNMENT == 0
 *>
 fn void write_material_block(
@@ -91,6 +93,7 @@ fn void write_material_block(
     MaterialBindings bindings,
     gpu::GpuAddress parameters = (gpu::GpuAddress)0,
     uint custom_capabilities = 0,
+    gpu::GpuAddress[material::MAX_CUSTOM_MATERIAL_REFERENCES] custom_references = {},
 ) {
     MaterialFlags flags = {
         .alpha_mask = material.common.alpha_mode == AlphaMode.MASK,
@@ -291,6 +294,7 @@ fn void write_material_block(
                 .map_flags = custom_map_flags(&material.custom.slots, &bindings.custom),
                 .parameters = parameters,
                 .capabilities = custom_capabilities,
+                .references = custom_references,
             };
             foreach (index, slot : material.custom.slots) {
                 packed.slots[index] = pack_texture_map(slot, bindings.custom[index]);
@@ -486,9 +490,15 @@ fn MaterialRes*? resolve_material_dependencies(Renderer* renderer, MaterialId ma
     ShaderId shader;
     uint shader_revision;
     uint capabilities;
+    gpu::GpuAddress[material::MAX_CUSTOM_MATERIAL_REFERENCES] references;
     if (custom) {
         shader = record.data.custom.shader;
         if (!renderer.assets.shaders.is_live(shader)) return c3d::INVALID_ID~;
+        // Before the early return: a current block must neither outlive a removed layer nor miss its new revision.
+        check_custom_references(renderer.assets, &record.data.custom)!;
+        foreach (index, reference : record.data.custom.references) {
+            if (reference.generation != 0) references[index] = resolve_material(renderer, reference)!.address;
+        }
         ShaderRes* published = resolve_shader(renderer, shader)!;
         if (record.data.custom.param_block.len != published.desc.param_block_size) return c3d::INVALID_ARGUMENT~;
         shader_revision = published.revision;
@@ -508,6 +518,7 @@ fn MaterialRes*? resolve_material_dependencies(Renderer* renderer, MaterialId ma
         bindings:            bindings,
         parameters:          parameters,
         custom_capabilities: capabilities,
+        custom_references:   references,
     );
     usz offset = (usz)material.index * MATERIAL_STRIDE;
     gpu::GpuSpan destination = renderer.material_heap_span.checked_subspan(offset, MATERIAL_STRIDE)!;
@@ -524,6 +535,14 @@ fn MaterialRes*? resolve_material_dependencies(Renderer* renderer, MaterialId ma
     renderer.stats.uploads++;
     renderer.stats.upload_bytes += (uint)MATERIAL_STRIDE;
     return mirror;
+}
+
+fn void? check_custom_references(AssetStore* assets, CustomParams* params) @private {
+    foreach (reference : params.references) {
+        if (reference.generation == 0) continue;
+        if (!assets.materials.is_live(reference)) return c3d::INVALID_ARGUMENT~;
+        if (assets.material(reference).data.kind != MaterialKind.STANDARD) return c3d::INVALID_ARGUMENT~;
+    }
 }
 
 fn gpu::GpuAddress? resolve_custom_payload(Renderer* renderer, MaterialRes* mirror, char[] bytes) @private {

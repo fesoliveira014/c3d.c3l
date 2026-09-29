@@ -274,7 +274,7 @@ fn TraceInstance[] collect_trace_instances(
         Node* node = scene.node(entity);
         if (node.visible_effective && mesh.trace) {
             SkinBinding* skin = scene.get(node, SkinBinding);
-            if (!spatial::mesh_is_live(assets, mesh, skin) || !material_shader_live(assets, mesh.material)) {
+            if (!spatial::mesh_is_live(assets, mesh, skin) || !material_dependencies_live(assets, mesh.material)) {
                 (*dangling)++;
             } else if (traceable(
                 assets:              assets,
@@ -297,7 +297,8 @@ fn TraceInstance[] collect_trace_instances(
     scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
         Node* node = scene.node(entity);
         if (node.visible_effective && batch.trace && batch.count) {
-            if (!spatial::instanced_mesh_is_live(assets, batch) || !material_shader_live(assets, batch.material)) {
+            if (!spatial::instanced_mesh_is_live(assets, batch)
+                || !material_dependencies_live(assets, batch.material)) {
                 (*dangling)++;
             } else if (traceable(
                 assets:              assets,
@@ -774,9 +775,10 @@ fn void write_trace_instance(TraceInstanceGpu* row, TraceInstance* record) @loca
     };
 }
 
-fn bool material_shader_live(AssetStore* assets, MaterialId material) @local {
+fn bool material_dependencies_live(AssetStore* assets, MaterialId material) @local {
     Material* data = &assets.material(material).data;
-    return data.kind != MaterialKind.CUSTOM || assets.shaders.is_live(data.custom.shader);
+    if (data.kind != MaterialKind.CUSTOM) return true;
+    return assets.shaders.is_live(data.custom.shader) && @ok(check_custom_references(assets, &data.custom));
 }
 
 fn bool traceable(

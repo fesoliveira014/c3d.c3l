@@ -28,9 +28,10 @@ fn Fixture make_fixture() @local {
     fixture.assets = asset::create_asset_store(mem, {
         .max_geometries = 4,
         .max_textures   = asset::BUILTIN_TEXTURE_COUNT,
-        .max_materials  = 3,
+        .max_materials  = 5,
         .max_samplers   = asset::BUILTIN_SAMPLER_COUNT,
         .max_skeletons  = 1,
+        .max_shaders    = 1,
     });
     @pool() {
         Geometry box = geometry::box(tmem, 1, 1, 1);
@@ -384,5 +385,30 @@ fn void test_trace_record_carries_the_instance_index() @test {
         assert(records.len == 4);
         assert(records[0].instance_index == 0);
         foreach (uint index, record : records[1..]) assert(record.instance_index == index);
+    };
+}
+
+fn void test_trace_collection_counts_invalid_material_references_as_dangling() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    char[4] fragment = { 1, 2, 3, 4 };
+    asset::ShaderDesc desc = { .fragment = fragment[..] };
+    ShaderId shader = fixture.assets.add_shader(&desc)!!;
+    MaterialId layer = fixture.assets.add_material(material::standard())!!;
+    MaterialId custom = fixture.assets.add_material(material::custom(shader, references: { [0] = layer }))!!;
+    fixture.scene.add_mesh(fixture.box, custom, name: "layered")!!;
+    fixture.scene.update_world();
+
+    @pool() {
+        assert(collect(&fixture).len == 1);
+        fixture.assets.remove_material(layer);
+        uint dangling;
+        render::TraceInstance[] records = render::collect_trace_instances(
+            allocator: tmem,
+            scene:     &fixture.scene,
+            assets:    &fixture.assets,
+            dangling:  &dangling,
+        );
+        assert(records.len == 0 && dangling == 1);
     };
 }

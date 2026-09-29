@@ -103,6 +103,7 @@ const uint MATERIAL_KIND_TOON = 2;
 const uint MATERIAL_KIND_PHYSICAL = 3;
 const uint MATERIAL_KIND_CUSTOM = 4;
 const uint CUSTOM_CAPABILITY_GBUFFER = 1;
+const uint CUSTOM_MATERIAL_REFERENCES = 4;
 const uint TONEMAP_NONE = 0;
 const uint TONEMAP_ACES = 1;
 const uint TONEMAP_AGX = 2;
@@ -1406,8 +1407,9 @@ struct CustomMaterialGpu {
     GpuAddress       parameters;
     uint             capabilities;
     uint             _pad0;
+    GpuAddress[4]    references;
 }
-$assert CustomMaterialGpu::size == 288;
+$assert CustomMaterialGpu::size == 320;
 $assert $reflect(CustomMaterialGpu.kind).offset == 0;
 $assert $reflect(CustomMaterialGpu.flags).offset == 4;
 $assert $reflect(CustomMaterialGpu.alpha_cutoff).offset == 8;
@@ -1416,6 +1418,7 @@ $assert $reflect(CustomMaterialGpu.slots).offset == 16;
 $assert $reflect(CustomMaterialGpu.parameters).offset == 272;
 $assert $reflect(CustomMaterialGpu.capabilities).offset == 280;
 $assert $reflect(CustomMaterialGpu._pad0).offset == 284;
+$assert $reflect(CustomMaterialGpu.references).offset == 288;
 
 struct GradeGpu {
     float        exposure;
