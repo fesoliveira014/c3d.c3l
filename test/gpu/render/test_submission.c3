@@ -473,6 +473,28 @@ fn uint? run_camera_motion(Fixture* fixture, Camera camera) @private {
     return read_pixel(fixture);
 }
 
+fn uint? run_background_turn(Fixture* fixture, Camera lens, float turn_degrees) @private {
+    Renderer* renderer = &fixture.renderer;
+    *fixture.scene.get(fixture.camera_node, Camera) = lens;
+    fixture.camera_node.local.rotation = quaternion::IDENTITY;
+    fixture.scene.update_world();
+    renderer.begin_frame()!;
+    defer catch render::abort_frame(renderer);
+    render_view_and_finish(fixture)!;
+    renderer.end_frame()!;
+
+    Quat turn = quaternion::from_axis_angle{float}({ 0, 1, 0 }, math::deg_to_rad(turn_degrees));
+    fixture.camera_node.local.rotation = turn;
+    fixture.scene.update_world();
+    renderer.begin_frame()!;
+    renderer.render_view(&fixture.scene, fixture.camera_node, fixture.view)!;
+    sample(fixture, render::read_view_color(fixture.view), BACKGROUND_UV)!;
+    record_readback(fixture)!;
+    renderer.finish_view(fixture.view)!;
+    renderer.end_frame()!;
+    return read_pixel(fixture);
+}
+
 fn uint read_pixel(Fixture* fixture) @private {
     render::wait_frames(&fixture.renderer)!!;
     gpu::invalidate_mapped_span(&fixture.renderer.device, fixture.readback.span)!!;
@@ -1300,6 +1322,30 @@ fn void test_taa_keeps_background_history_under_a_finite_far_plane() @test {
     float history_weight = (float)(read_pixel(&fixture) & 0xff) / 255;
     assert(history_weight >= BACKGROUND_HISTORY_MINIMUM);
     check_validation(renderer);
+}
+
+fn void test_still_background_velocity_is_zero_under_a_finite_far_plane() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    enable_taa(&fixture, fixture.view, debug: TaaDebug.VELOCITY)!!;
+
+    uint still = run_background_turn(&fixture, camera::perspective_deg(60, 0.1f, FINITE_FAR), 0)!!;
+    io::eprintfn("finite far background velocity: %08x", still);
+    check_channels(still, NEUTRAL_VELOCITY);
+    check_validation(&fixture.renderer);
+}
+
+fn void test_turning_background_velocity_ignores_a_finite_far_plane() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    enable_taa(&fixture, fixture.view, debug: TaaDebug.VELOCITY)!!;
+
+    uint infinite = run_background_turn(&fixture, camera::perspective_deg(60, 0.1f), CAMERA_TURN_DEGREES)!!;
+    uint finite = run_background_turn(&fixture, camera::perspective_deg(60, 0.1f, FINITE_FAR), CAMERA_TURN_DEGREES)!!;
+    check_near_pixel(finite, infinite);
+    check_validation(&fixture.renderer);
 }
 
 fn void test_taa_does_not_reuse_another_scene_history() @test {
