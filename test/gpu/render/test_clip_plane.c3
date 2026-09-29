@@ -48,11 +48,12 @@ const RasterPath[3] RASTER_PATHS @private = {
 };
 
 struct ClipScene @private {
-    Scene scene;
-    Node* camera;
-    Node* box;
-    Node* batch;
-    Node* buried;
+    Scene  scene;
+    ViewId view;
+    Node*  camera;
+    Node*  box;
+    Node*  batch;
+    Node*  buried;
 }
 
 struct RasterPath @private {
@@ -67,12 +68,13 @@ struct CasterScene @private {
 }
 
 struct ReflectedScene @private {
-    Scene scene;
-    Node* main_camera;
-    Node* mirror_camera;
-    Node* downward_quad;
-    Node* upward_quad;
-    Node* box;
+    Scene  scene;
+    ViewId view;
+    Node*  main_camera;
+    Node*  mirror_camera;
+    Node*  downward_quad;
+    Node*  upward_quad;
+    Node*  box;
 }
 
 struct CutLine @private {
@@ -163,12 +165,12 @@ fn uint? render_clip_view(
     return read_pixel(fixture);
 }
 
-fn uint? read_clip_point(Fixture* fixture, ClipScene* clip, ViewId view, Vec3 point) @private {
+fn uint? read_clip_point(Fixture* fixture, ClipScene* clip, Vec3 point) @private {
     return render_clip_view(
         fixture:     fixture,
         scene:       &clip.scene,
         camera_node: clip.camera,
-        view:        view,
+        view:        clip.view,
         uv:          clip_view_uv(&clip.scene, clip.camera, point),
     );
 }
@@ -199,18 +201,19 @@ fn void test_clip_plane_cuts_meshes_on_every_raster_path() @test {
     foreach (path : RASTER_PATHS) {
         AoView clip_view = create_clip_view(&fixture, path)!!;
         defer destroy_ao_view(&fixture, &clip_view);
+        clip.view = clip_view.view;
 
         uint[3] background;
         set_clip_meshes_visible(&clip, false);
-        foreach (index, point : removed) background[index] = read_clip_point(&fixture, &clip, clip_view.view, point)!!;
+        foreach (index, point : removed) background[index] = read_clip_point(&fixture, &clip, point)!!;
         set_clip_meshes_visible(&clip, true);
 
         uint[2] unclipped;
         foreach (index, point : kept) {
-            unclipped[index] = read_clip_point(&fixture, &clip, clip_view.view, point)!!;
+            unclipped[index] = read_clip_point(&fixture, &clip, point)!!;
             check_dominant_channel(unclipped[index], 0);
         }
-        check_dominant_channel(read_clip_point(&fixture, &clip, clip_view.view, BURIED_POINT)!!, 2);
+        check_dominant_channel(read_clip_point(&fixture, &clip, BURIED_POINT)!!, 2);
         uint unclipped_culled = renderer.stats.culled;
 
         ViewRecord* record = renderer.views.get(clip_view.view);
@@ -220,10 +223,10 @@ fn void test_clip_plane_cuts_meshes_on_every_raster_path() @test {
         assert(same_texture(record.hdr_color.texture, color) && same_texture(record.depth.texture, depth));
 
         foreach (index, point : kept) {
-            check_near_pixel(read_clip_point(&fixture, &clip, clip_view.view, point)!!, unclipped[index]);
+            check_near_pixel(read_clip_point(&fixture, &clip, point)!!, unclipped[index]);
         }
         foreach (index, point : removed) {
-            check_near_pixel(read_clip_point(&fixture, &clip, clip_view.view, point)!!, background[index]);
+            check_near_pixel(read_clip_point(&fixture, &clip, point)!!, background[index]);
         }
         io::eprintfn(
             "%s prepass %s: culled %d -> %d",
@@ -374,12 +377,12 @@ fn ReflectedScene? create_reflected_scene(Fixture* fixture) @private {
     return result;
 }
 
-fn uint? read_reflection(Fixture* fixture, ReflectedScene* reflected, ViewId view, Vec3 image_point) @private {
+fn uint? read_reflection(Fixture* fixture, ReflectedScene* reflected, Vec3 image_point) @private {
     return render_clip_view(
         fixture:     fixture,
         scene:       &reflected.scene,
         camera_node: reflected.mirror_camera,
-        view:        view,
+        view:        reflected.view,
         uv:          clip_view_uv(&reflected.scene, reflected.main_camera, image_point),
     );
 }
@@ -392,6 +395,7 @@ fn void test_mirrored_camera_reflects_only_the_kept_side() @test {
     defer scene::destroy_scene(&reflected.scene);
     AoView mirror_view = create_clip_view(&fixture, RASTER_PATHS[1])!!;
     defer destroy_ao_view(&fixture, &mirror_view);
+    reflected.view = mirror_view.view;
 
     Vec3 downward_image = { DOWNWARD_QUAD_POSITION.x, -DOWNWARD_QUAD_POSITION.y, DOWNWARD_QUAD_POSITION.z };
     Vec3 upward_image = { UPWARD_QUAD_POSITION.x, -UPWARD_QUAD_POSITION.y, UPWARD_QUAD_POSITION.z };
@@ -402,17 +406,17 @@ fn void test_mirrored_camera_reflects_only_the_kept_side() @test {
     reflected.upward_quad.visible = false;
     reflected.box.visible = false;
     foreach (index, image : images) {
-        background[index] = read_reflection(&fixture, &reflected, mirror_view.view, image)!!;
+        background[index] = read_reflection(&fixture, &reflected, image)!!;
     }
     reflected.downward_quad.visible = true;
     reflected.upward_quad.visible = true;
     reflected.box.visible = true;
-    check_dominant_channel(read_reflection(&fixture, &reflected, mirror_view.view, box_image)!!, 2);
+    check_dominant_channel(read_reflection(&fixture, &reflected, box_image)!!, 2);
 
     set_clip_plane(&fixture, mirror_view.view, KEEP_ABOVE_GROUND)!!;
-    check_dominant_channel(read_reflection(&fixture, &reflected, mirror_view.view, downward_image)!!, 0);
-    check_near_pixel(read_reflection(&fixture, &reflected, mirror_view.view, upward_image)!!, background[1]);
-    check_near_pixel(read_reflection(&fixture, &reflected, mirror_view.view, box_image)!!, background[2]);
+    check_dominant_channel(read_reflection(&fixture, &reflected, downward_image)!!, 0);
+    check_near_pixel(read_reflection(&fixture, &reflected, upward_image)!!, background[1]);
+    check_near_pixel(read_reflection(&fixture, &reflected, box_image)!!, background[2]);
     check_validation(&fixture.renderer);
 }
 
@@ -432,25 +436,26 @@ fn void test_custom_vertex_stage_clips_through_write_mesh_outputs() @test {
     foreach (path : RASTER_PATHS[:2]) {
         AoView clip_view = create_clip_view(&fixture, path)!!;
         defer destroy_ao_view(&fixture, &clip_view);
+        clip.view = clip_view.view;
         clip.box.visible = false;
-        uint background = read_clip_point(&fixture, &clip, clip_view.view, BOX_CLIPPED_POINT)!!;
+        uint background = read_clip_point(&fixture, &clip, BOX_CLIPPED_POINT)!!;
         clip.box.visible = true;
-        uint unclipped = read_clip_point(&fixture, &clip, clip_view.view, BOX_KEPT_POINT)!!;
+        uint unclipped = read_clip_point(&fixture, &clip, BOX_KEPT_POINT)!!;
         assert(red(unclipped) >= DOMINANT_CHANNEL_MINIMUM && blue(unclipped) >= DOMINANT_CHANNEL_MINIMUM);
         assert(green(unclipped) * 2 < red(unclipped));
 
         set_clip_plane(&fixture, clip_view.view, KEEP_ABOVE_GROUND)!!;
-        check_near_pixel(read_clip_point(&fixture, &clip, clip_view.view, BOX_KEPT_POINT)!!, unclipped);
-        check_near_pixel(read_clip_point(&fixture, &clip, clip_view.view, BOX_CLIPPED_POINT)!!, background);
+        check_near_pixel(read_clip_point(&fixture, &clip, BOX_KEPT_POINT)!!, unclipped);
+        check_near_pixel(read_clip_point(&fixture, &clip, BOX_CLIPPED_POINT)!!, background);
     }
     check_validation(&fixture.renderer);
 }
 
-fn uint? read_moving_box(Fixture* fixture, ClipScene* clip, ViewId view, Vec3 point) @private {
+fn uint? read_moving_box(Fixture* fixture, ClipScene* clip, Vec3 point) @private {
     uint pixel;
     for (uint frame = 0; frame < SETTLE_FRAMES; frame++) {
         clip.box.local.position.x = (float)frame * VELOCITY_STEP;
-        pixel = read_clip_point(fixture, clip, view, point)!;
+        pixel = read_clip_point(fixture, clip, point)!;
     }
     return pixel;
 }
@@ -464,14 +469,15 @@ fn void test_clipped_moving_mesh_keeps_geometry_velocity_above_the_plane() @test
     defer scene::destroy_scene(&clip.scene);
     AoView clip_view = create_clip_view(&fixture, RASTER_PATHS[1])!!;
     defer destroy_ao_view(&fixture, &clip_view);
+    clip.view = clip_view.view;
     enable_taa(&fixture, clip_view.view, debug: TaaDebug.VELOCITY)!!;
 
-    uint kept_unclipped = read_moving_box(&fixture, &clip, clip_view.view, BOX_KEPT_POINT)!!;
+    uint kept_unclipped = read_moving_box(&fixture, &clip, BOX_KEPT_POINT)!!;
     set_clip_plane(&fixture, clip_view.view, KEEP_ABOVE_GROUND)!!;
-    uint kept_clipped = read_moving_box(&fixture, &clip, clip_view.view, BOX_KEPT_POINT)!!;
-    uint removed_clipped = read_moving_box(&fixture, &clip, clip_view.view, BOX_CLIPPED_POINT)!!;
+    uint kept_clipped = read_moving_box(&fixture, &clip, BOX_KEPT_POINT)!!;
+    uint removed_clipped = read_moving_box(&fixture, &clip, BOX_CLIPPED_POINT)!!;
     clip.box.visible = false;
-    uint removed_hidden = read_moving_box(&fixture, &clip, clip_view.view, BOX_CLIPPED_POINT)!!;
+    uint removed_hidden = read_moving_box(&fixture, &clip, BOX_CLIPPED_POINT)!!;
     io::eprintfn(
         "kept %08x -> %08x, removed %08x, hidden %08x",
         kept_unclipped,
@@ -513,7 +519,6 @@ fn void? read_cut_columns(
     Fixture* fixture,
     ClipScene* clip,
     CutLine* line,
-    ViewId view,
     uint first_column,
     float[] luminance,
 ) @private {
@@ -521,9 +526,9 @@ fn void? read_cut_columns(
     clip.scene.update_world();
     renderer.begin_frame()!;
     defer catch render::abort_frame(renderer);
-    renderer.render_view(&clip.scene, clip.camera, view)!;
+    renderer.render_view(&clip.scene, clip.camera, clip.view)!;
     BufferId[1] writes = { line.output };
-    DispatchTexture[1] textures = { render::read_view_color(view) };
+    DispatchTexture[1] textures = { render::read_view_color(clip.view) };
     gpu::GpuAddress base = renderer.buffer_address(line.output);
     for (uint column = 0; column < CUT_COLUMNS; column++) {
         LineRoot root = {
@@ -549,7 +554,7 @@ fn void? read_cut_columns(
     gpu::cmd_copy_buffer(&renderer.commands, &buffer_copy)!;
     gpu::Barrier host_read = { .before = { .transfer }, .after = { .host } };
     gpu::cmd_barrier(&renderer.commands, &host_read)!;
-    renderer.finish_view(view)!;
+    renderer.finish_view(clip.view)!;
     renderer.end_frame()!;
 
     render::wait_frames(renderer)!;
@@ -579,9 +584,24 @@ fn void test_clip_plane_cut_line_matches_the_single_pass() @test {
     foreach (index, path : RASTER_PATHS) {
         AoView clip_view = create_clip_view(&fixture, path)!!;
         defer destroy_ao_view(&fixture, &clip_view);
-        if (index == 0) read_cut_columns(&fixture, &clip, &line, clip_view.view, first_column, unclipped[..])!!;
+        clip.view = clip_view.view;
+        if (index == 0) {
+            read_cut_columns(
+                fixture:      &fixture,
+                clip:         &clip,
+                line:         &line,
+                first_column: first_column,
+                luminance:    unclipped[..],
+            )!!;
+        }
         set_clip_plane(&fixture, clip_view.view, KEEP_ABOVE_GROUND)!!;
-        read_cut_columns(&fixture, &clip, &line, clip_view.view, first_column, clipped[index][..])!!;
+        read_cut_columns(
+            fixture:      &fixture,
+            clip:         &clip,
+            line:         &line,
+            first_column: first_column,
+            luminance:    clipped[index][..],
+        )!!;
     }
 
     float brightest;

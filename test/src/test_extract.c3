@@ -155,17 +155,13 @@ fn void test_extract_depth_is_nearer_for_closer_mesh() @test {
     };
 }
 
-fn render::MeshCandidate[] extract_with_plane(
-    Fixture* fixture,
-    CameraMatrices* matrices,
-    Plane clip_plane,
-    render::ExtractCounts* counts,
-) @local {
+fn render::MeshCandidate[] extract_clipped(Fixture* fixture, Plane clip_plane, render::ExtractCounts* counts) @local {
+    CameraMatrices matrices = matrices_of(fixture);
     return render::extract_candidates(
         allocator:  tmem,
         scene:      &fixture.scene,
         assets:     &fixture.assets,
-        camera:     matrices,
+        camera:     &matrices,
         layers:     scene::DEFAULT_LAYERS,
         counts:     counts,
         clip_plane: clip_plane,
@@ -192,20 +188,19 @@ fn void test_extract_clip_plane_culls_bounds_wholly_behind_it() @test {
         transforms: transforms[..],
     )!!;
     fixture.scene.update_world();
-    CameraMatrices matrices = matrices_of(&fixture);
     Plane keep_above_one = { .normal = { 0, 1, 0 }, .d = -1 };
     Plane keep_above_zero = { .normal = { 0, 1, 0 } };
     @pool() {
         render::ExtractCounts counts;
-        render::MeshCandidate[] candidates = extract_with_plane(&fixture, &matrices, keep_above_one, &counts);
+        render::MeshCandidate[] candidates = extract_clipped(&fixture, keep_above_one, &counts);
         assert(candidates.len == 0);
         assert(counts.culled == 3 && counts.dangling == 1);
 
-        candidates = extract_with_plane(&fixture, &matrices, keep_above_zero, &counts);
+        candidates = extract_clipped(&fixture, keep_above_zero, &counts);
         assert(candidates.len == 1 && candidates[0].node == fixture.visible);
         assert(counts.culled == 2);
 
-        candidates = extract_with_plane(&fixture, &matrices, {}, &counts);
+        candidates = extract_clipped(&fixture, {}, &counts);
         assert(has_candidate(candidates, fixture.visible) && has_candidate(candidates, buried));
         assert(counts.culled == 1);
     };
