@@ -27,6 +27,11 @@ const usz TRACE_RESULT_BYTES @private = TRACE_GRID_SIZE * TRACE_GRID_SIZE * Trac
 const uint PARITY_CHECKER_SIZE @private = 4;
 const float PARITY_BARYCENTRIC_TOLERANCE @private = 1e-3f;
 const usz PARITY_TEXEL_BUDGET @private = 4; // rays on a checker texel boundary; a wrong alpha test misses hundreds
+const uint TRACE_ENTRY_CULLING @private = 0;
+const uint TRACE_ENTRY_WITH_BACK_FACES @private = 1; // mirrored as TRACE_ENTRY_WITH_BACK_FACES in trace_grid.comp.glsl
+const Vec3 SHEET_POSITION @private = { 0, 0.6f, 3 }; // between TRACE_ORIGIN and the box, across the rays that meet it
+const float SHEET_SIZE @private = 2;
+const float SHEET_HALF_THICKNESS @private = 1e-3f;
 
 struct TraceGridRoot @private {
     gpu::GpuAddress scene;
@@ -36,7 +41,7 @@ struct TraceGridRoot @private {
     float           plane_z;
     uint            grid_size;
     uint            instance_mask;
-    uint            padding;
+    uint            entry;
 }
 $assert TraceGridRoot::size == 64;
 
@@ -46,7 +51,8 @@ struct TraceGridResult @private {
     float t;
     uint  geometry_low;
     Vec2  barycentrics;
-    Vec2  padding;
+    uint  back_face;
+    uint  padding;
 }
 $assert TraceGridResult::size == 32;
 
@@ -136,6 +142,7 @@ fn void? trace_grid(
     TraceGridResult[] results,
     TraceKind kind = TraceKind.SOFTWARE,
     uint instance_mask = shader::TRACE_MASK_ALL,
+    uint entry = TRACE_ENTRY_CULLING,
 ) @private {
     Renderer* renderer = &fixture.renderer;
     renderer.begin_frame()!;
@@ -148,6 +155,7 @@ fn void? trace_grid(
         .rectangle      = TRACE_RECTANGLE,
         .plane_z        = TRACE_PLANE_Z,
         .grid_size      = TRACE_GRID_SIZE,
+        .entry          = entry,
     };
     BufferId[1] writes = { trace.output };
     uint groups = TRACE_GRID_SIZE / TRACE_GROUP_SIZE;
@@ -188,9 +196,10 @@ fn bool check_ray(
     Ray ray,
     TraceGridResult* result,
 ) @private {
+    // The trace skips single-sided back faces as FRONT picking does.
     PickOptions options = {
         .precision = PickPrecision.TRIANGLES,
-        .faces     = PickFaces.BOTH,
+        .faces     = PickFaces.FRONT,
         .layers    = camera::ALL_LAYERS,
     };
     PickHit[] hits = spatial::pick(
@@ -417,4 +426,121 @@ fn void test_hardware_and_software_hits_agree() @test {
         assert(!walk.hit || walk.geometry_low != receiver_low);
         assert(!queried[index].hit || queried[index].geometry_low != receiver_low);
     }
+}
+
+struct SheetCase @private {
+    ZString name;
+    bool    toward_origin;
+    bool    mirrored;
+    bool    double_sided;
+    uint    entry;
+    bool    reports_sheet;
+    bool    back_face;
+}
+
+fn void test_single_sided_back_faces_are_invisible_to_rays() @test {
+    SheetCase[7] cases = {
+        { .name = "facing away", .entry = TRACE_ENTRY_CULLING },
+        { .name = "facing the origin", .toward_origin = true, .entry = TRACE_ENTRY_CULLING, .reports_sheet = true },
+        {
+            .name          = "double-sided, facing away",
+            .double_sided  = true,
+            .entry         = TRACE_ENTRY_CULLING,
+            .reports_sheet = true,
+        },
+        { .name = "mirrored, facing away", .mirrored = true, .entry = TRACE_ENTRY_CULLING },
+        {
+            .name          = "facing away, both faces kept",
+            .entry         = TRACE_ENTRY_WITH_BACK_FACES,
+            .reports_sheet = true,
+            .back_face     = true,
+        },
+        {
+            .name          = "mirrored, facing away, both faces kept",
+            .mirrored      = true,
+            .entry         = TRACE_ENTRY_WITH_BACK_FACES,
+            .reports_sheet = true,
+            .back_face     = true,
+        },
+        {
+            .name          = "facing the origin, both faces kept",
+            .toward_origin = true,
+            .entry         = TRACE_ENTRY_WITH_BACK_FACES,
+            .reports_sheet = true,
+        },
+    };
+    Fixture fixture;
+    create_fixture(mem, &fixture, ray_queries: true)!!;
+    defer destroy_fixture(&fixture);
+    print_adapter(&fixture);
+    TraceScene trace;
+    create_trace_scene(&fixture, &trace)!!;
+    defer destroy_trace_scene(&fixture, &trace);
+    GeometryId sheet_geometry;
+    @pool() {
+        Geometry plane = geometry::plane(tmem, SHEET_SIZE, SHEET_SIZE);
+        sheet_geometry = fixture.assets.add_geometry(&plane)!!;
+    };
+    MaterialCommon both_faces = material::MATERIAL_COMMON_DEFAULT;
+    both_faces.double_sided = true;
+    MaterialId double_sided = fixture.assets.add_material(material::basic({ .color = { 1, 1, 1, 1 } }, both_faces))!!;
+    Node* sheet = trace.scene.add_mesh(sheet_geometry, fixture.plain, name: "sheet")!!;
+    sheet.local.position = SHEET_POSITION;
+    Aabb sheet_bounds = {
+        .min = SHEET_POSITION - (Vec3){ SHEET_SIZE / 2, SHEET_SIZE / 2, SHEET_HALF_THICKNESS },
+        .max = SHEET_POSITION + (Vec3){ SHEET_SIZE / 2, SHEET_SIZE / 2, SHEET_HALF_THICKNESS },
+    };
+
+    sz cells = TRACE_GRID_SIZE * TRACE_GRID_SIZE;
+    TraceGridResult[] walked = alloc::new_array(mem, TraceGridResult, cells);
+    defer alloc::free(mem, walked.ptr);
+    TraceGridResult[] queried = alloc::new_array(mem, TraceGridResult, cells);
+    defer alloc::free(mem, queried.ptr);
+    foreach (&sheet_case : cases) {
+        // The plane's front is +y; a quarter turn about x points it at the origin (+z) or away from it.
+        float turn = sheet_case.toward_origin ? (float)math::PI / 2 : -(float)math::PI / 2;
+        sheet.local.rotation = quaternion::from_axis_angle{float}({ 1, 0, 0 }, turn);
+        sheet.local.scale = sheet_case.mirrored ? (Vec3){ -1, 1, 1 } : (Vec3){ 1, 1, 1 };
+        trace.scene.get(sheet, Mesh).material = sheet_case.double_sided ? double_sided : fixture.plain;
+        trace.scene.update_world();
+        trace_grid(
+            fixture: &fixture,
+            trace:   &trace,
+            results: walked,
+            kind:    TraceKind.SOFTWARE,
+            entry:   sheet_case.entry,
+        )!!;
+        trace_grid(
+            fixture: &fixture,
+            trace:   &trace,
+            results: queried,
+            kind:    TraceKind.HARDWARE,
+            entry:   sheet_case.entry,
+        )!!;
+        uint sheet_low = geometry_low(&fixture, sheet_geometry);
+        usz sheet_rays;
+        for (uint cell_y = 0; cell_y < TRACE_GRID_SIZE; cell_y++) {
+            for (uint cell_x = 0; cell_x < TRACE_GRID_SIZE; cell_x++) {
+                float entry_t;
+                if (!maths::ray_intersects_aabb(grid_ray(cell_x, cell_y), sheet_bounds, &entry_t)) continue;
+                usz cell = (usz)cell_y * TRACE_GRID_SIZE + cell_x;
+                TraceGridResult*[2] results = { &walked[cell], &queried[cell] };
+                foreach (result : results) {
+                    if (sheet_case.reports_sheet) {
+                        assert(result.hit && result.geometry_low == sheet_low);
+                        float tolerance = TRACE_DISTANCE_TOLERANCE * math::max(1.0f, entry_t) + SHEET_HALF_THICKNESS;
+                        assert(math::abs(result.t - entry_t) <= tolerance);
+                        assert((result.back_face != 0) == sheet_case.back_face);
+                    } else {
+                        assert(passes_through(result, entry_t));
+                    }
+                }
+                assert(walked[cell].primitive == queried[cell].primitive || !sheet_case.reports_sheet);
+                sheet_rays++;
+            }
+        }
+        io::eprintfn("Sheet %s: %d rays through its square", sheet_case.name, sheet_rays);
+        assert(sheet_rays > 0);
+    }
+    check_validation(&fixture.renderer);
 }
