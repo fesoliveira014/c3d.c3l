@@ -54,6 +54,14 @@ struct ShaderAsset {
 }
 
 <*
+ One GLSL include by the name a shader writes.
+*>
+struct ShaderInclude {
+    String name;
+    String text;
+}
+
+<*
  Pool of shader records addressed by ShaderId.
 *>
 alias ShaderPool = Pool{ShaderAsset, ShaderId};
