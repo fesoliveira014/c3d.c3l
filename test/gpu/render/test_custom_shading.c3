@@ -3,7 +3,6 @@ module c3d::render::acceptance;
 import c3d;
 import c3d::asset;
 import c3d::camera;
-import c3d::geometry;
 import c3d::light;
 import c3d::material;
 import c3d::maths;
@@ -11,7 +10,6 @@ import c3d::render @public;
 import c3d::scene;
 import c3d::shader;
 import c3d::shader::compile;
-import gpu;
 import std::io;
 import std::math;
 
@@ -114,9 +112,9 @@ fn TwinScene? create_twin_scene(Fixture* fixture) @private {
         char[] pixels = alloc::new_array(tmem, char, (usz)SKY_WIDTH * SKY_HEIGHT * 4 * float::size);
         write_sky(pixels, SKY_RADIANCE);
         material::TextureDesc sky_desc = material::texture_2d_desc(
-            width: SKY_WIDTH,
-            height: SKY_HEIGHT,
-            format: RGBA32_FLOAT,
+            width:      SKY_WIDTH,
+            height:     SKY_HEIGHT,
+            format:     RGBA32_FLOAT,
             debug_name: "twin_sky",
         );
         TextureId sky = fixture.assets.add_texture(sky_desc, pixels)!;
