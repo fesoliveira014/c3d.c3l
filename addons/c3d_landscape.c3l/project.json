@@ -20,7 +20,7 @@
   "targets": {
     "landscape_test": {
       "type": "test",
-      "sources": [ "test/terrain_test.c3" ],
+      "sources": [ "test/terrain_test.c3", "test/foliage_test.c3" ],
       "dependencies": [
         "c3d_landscape",
         "c3d_physics",
@@ -57,6 +57,10 @@
         "ufbx",
         "shaderc"
       ]
+    },
+    "vegetation": {
+      "type": "executable",
+      "sources": [ "examples/vegetation.c3", "examples/landscape_ground.c3" ]
     }
   }
 }

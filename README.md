@@ -416,6 +416,12 @@ both shading paths and every shadow view, up to four Standard layers blended thr
 heights that match a physics height-field collider. Core never depends on it. See [terrain](docs/terrain.md);
 `python3 scripts/build.py --example terrain` runs its example and scripted benchmark.
 
+The same add-on scatters vegetation layers over a terrain: a deterministic scatter from a density-map channel
+with slope and altitude rules, one instanced batch per cell drawn with core's sway and distance fade, and the
+application's wind mapped onto each layer's sway. Terrain edits re-place only the cells they touch. See
+[vegetation](docs/vegetation.md); `python3 scripts/build.py --example vegetation` runs its example and scripted
+benchmark.
+
 Add c3d and its dependencies to your `project.json`. A C3 library manifest cannot declare features,
 so every consumer enables them itself. Select `C3D_SHADER_COMPILER` for in-process GLSL; every other
 capability is present whenever its dependency is linked. shaderc stays a declared dependency of
