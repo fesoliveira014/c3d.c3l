@@ -19,6 +19,8 @@ const char[*] REJECTED_SOURCE @private = $embed("rejected.comp.glsl");
 const uint TARGET_SIZE @private = 32;
 const uint PIXEL_ALPHA_MASK @private = 0xff000000;
 const uint PIXEL_COLOR_MASK @private = 0x00ffffff;
+const Vec3 SOLID_SKY @private = { 0.2f, 0.3f, 0.5f };
+const EnvironmentSettings SMALL_PROCESSING @private = { .conversion_size = 32, .specular_size = 32 };
 const FixtureLimits DEFAULT_LIMITS @private = {
     .history_frames = 8,
     .history_scopes = 128,
@@ -478,6 +480,50 @@ fn void test_resize_and_closed_preparation_collect_prior_frames() @test {
     assert(fixture.recorder.frame(1)!!.gpu_state == profile::CaptureState.READY);
     assert(fixture.recorder.frame(2)!!.gpu_state == profile::CaptureState.READY);
     check_output(&fixture, 23);
+}
+
+fn uint environment_passes(Fixture* fixture, ulong frame_id) @private {
+    uint count;
+    foreach (sample : fixture.recorder.frame(frame_id)!!.gpu) {
+        if (sample.info.kind == profile::GpuScopeKind.PASS && sample.info.pass_ordinal == Pass.ENVIRONMENT.ordinal) {
+            count++;
+        }
+    }
+    return count;
+}
+
+fn uint[render::ENVIRONMENT_STAGE_COUNT] environment_stages(Fixture* fixture, ulong frame_id) @private {
+    profile::FrameCaptureView frame = fixture.recorder.frame(frame_id)!!;
+    uint[render::ENVIRONMENT_STAGE_COUNT] counts;
+    foreach (sample : frame.gpu) {
+        if (sample.info.kind != profile::GpuScopeKind.PASS_STAGE) continue;
+        assert(sample.has_parent);
+        profile::GpuSample parent = frame.gpu[sample.parent_index];
+        assert(parent.info.kind == profile::GpuScopeKind.PASS && parent.info.pass_ordinal == Pass.ENVIRONMENT.ordinal);
+        assert(sample.label == EnvironmentStage::from_ordinal(sample.info.stage_ordinal).label);
+        counts[sample.info.stage_ordinal]++;
+    }
+    return counts;
+}
+
+fn void test_environment_preparation_in_a_frame_is_timed_once() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    require_timestamps(&fixture);
+    fixture.scene.environment = fixture.assets.add_environment(light::solid_environment(SOLID_SKY, SMALL_PROCESSING))!!;
+    record_frame(&fixture, 0, 11)!!;
+    record_frame(&fixture, 1, 13)!!;
+    check_output(&fixture, 13);
+    assert(fixture.recorder.frame(0)!!.gpu_state == profile::CaptureState.READY);
+    assert(fixture.recorder.frame(1)!!.gpu_state == profile::CaptureState.READY);
+    assert(environment_passes(&fixture, 0) == 1 && environment_passes(&fixture, 1) == 0);
+
+    uint[render::ENVIRONMENT_STAGE_COUNT] prepared = environment_stages(&fixture, 0);
+    assert(prepared[EnvironmentStage.SOURCE.ordinal] == 1 && prepared[EnvironmentStage.IRRADIANCE.ordinal] == 1);
+    assert(prepared[EnvironmentStage.PREFILTER.ordinal] == 1 && prepared[EnvironmentStage.LUTS.ordinal] == 1);
+    assert(prepared[EnvironmentStage.SHEEN.ordinal] == 0);
+    foreach (count : environment_stages(&fixture, 1)) assert(count == 0);
 }
 
 fn void test_runtime_disabled_gpu_scope_skips_labels() @test {

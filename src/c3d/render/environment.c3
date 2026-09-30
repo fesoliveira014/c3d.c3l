@@ -15,6 +15,9 @@ $assert shader::ENVIRONMENT_FACE_POSITIVE_Z == (uint)material::CubeFace.POSITIVE
 $assert shader::ENVIRONMENT_FACE_NEGATIVE_Z == (uint)material::CubeFace.NEGATIVE_Z.ordinal;
 $assert shader::ENVIRONMENT_FACE_COUNT == material::CUBE_FACE_COUNT;
 
+// Storage views per face and mip, mip-major.
+const uint ENVIRONMENT_FILTERED_FACES @private = shader::ENVIRONMENT_FACE_COUNT * shader::ENVIRONMENT_SPECULAR_MIPS;
+
 <* Preparation and submission state of one shared environment lookup. *>
 enum EnvironmentLutState {
     NONE,
@@ -39,18 +42,25 @@ struct EnvironmentRes {
     uint source_revision;
     uint source_binding_revision;
     uint source_size;
+    uint specular_size;
+    uint sheen_size;
     bool source_owned;
     bool source_ready;
     bool lighting_ready;
     bool sheen_ready;
     gpu::TextureHandle source_cube;
     gpu::TextureView source_view;
+    gpu::TextureView[shader::ENVIRONMENT_FACE_COUNT] source_faces;
     gpu::TextureHandle specular_cube;
     gpu::TextureView specular_view;
+    gpu::TextureView[ENVIRONMENT_FILTERED_FACES] specular_faces;
     gpu::TextureHandle sheen_cube;
     gpu::TextureView sheen_view;
+    gpu::TextureView[ENVIRONMENT_FILTERED_FACES] sheen_faces;
     gpu::GpuAllocation irradiance;
     gpu::GpuAddress irradiance_address;
+    gpu::GpuAllocation irradiance_partials;
+    gpu::GpuAddress partials_address;
 }
 
 <* Stable tentative mirror and its unsubmitted ownership. *>
@@ -60,6 +70,9 @@ struct PendingEnvironment {
     bool new_source;
     bool new_lighting;
     bool new_sheen;
+    bool write_source;
+    bool write_lighting;
+    bool write_sheen;
     bool source_recorded;
     bool lighting_recorded;
     bool sheen_recorded;
@@ -82,7 +95,6 @@ struct EnvironmentState {
     EnvironmentRes[] mirrors;
     PendingEnvironment[] pending;
     EnvironmentPipelines pipelines;
-    RetireList temporaries;
     gpu::SamplerIndex source_sampler;
     gpu::SamplerIndex sampler;
     bool samplers_ready;
@@ -179,6 +191,7 @@ fn EnvironmentRes*? resolve_environment(
     }
 
     EnvironmentRes result = *current;
+    if (!c3d::same_id(result.asset, environment)) result = { .asset = environment };
     bool new_source;
     bool new_lighting;
     bool new_sheen;
@@ -188,42 +201,43 @@ fn EnvironmentRes*? resolve_environment(
         if (new_sheen) release_environment_sheen(&renderer.device, &result);
     }
     if (!same_source) {
-        result = {
-            .asset = environment,
-            .source_revision = source_revision,
-            .source_binding_revision = source_binding_revision,
-            .source_size = source_size,
-            .source_owned = source_owned,
-        };
-        if (source_owned) {
-            create_environment_cube(renderer, &result, false)!;
-            new_source = true;
-        } else {
+        bool rewrite = source_owned && result.source_owned && result.source_cube.is_valid()
+          && result.source_size == source_size;
+        result.source_revision = source_revision;
+        result.source_binding_revision = source_binding_revision;
+        result.source_size = source_size;
+        result.source_owned = source_owned;
+        if (!source_owned) {
             result.source_cube = texture.texture;
             result.source_view = texture.view;
+            result.source_faces = {};
+        } else if (!rewrite) {
+            create_environment_cube(renderer, &result, false)!;
+            new_source = true;
         }
         result.source_ready = true;
+        result.lighting_ready = false;
+        result.sheen_ready = false;
     }
     result.description = description;
     result.revision = record.header.revision;
+    uint filtered_size = description.settings.specular_size;
     if (lighting && !same_lighting) {
-        result.specular_cube = {};
-        result.specular_view = {};
-        result.irradiance = {};
-        result.irradiance_address = (gpu::GpuAddress)0;
-        create_environment_cube(renderer, &result, true)!;
-        new_lighting = true;
-        gpu::AllocationDesc allocation_desc = {
-            .size = IrradianceGpu::size,
-            .alignment = STREAM_ALIGNMENT,
-            .memory_class = gpu::MemoryClass.GPU_PRIVATE,
-            .access = { .graphics },
-            .debug_name = "environment_irradiance",
-        };
-        result.irradiance = gpu::allocate_memory(&renderer.device, &allocation_desc)!;
-        result.irradiance_address = gpu::get_span_address(
-            &renderer.device, gpu::get_allocation_span(&renderer.device, result.irradiance)!,
-        )!;
+        if (!result.specular_cube.is_valid() || result.specular_size != filtered_size) {
+            result.specular_size = filtered_size;
+            result.irradiance = {};
+            result.irradiance_partials = {};
+            create_environment_cube(renderer, &result, true)!;
+            new_lighting = true;
+            result.irradiance = allocate_environment_buffer(renderer, IrradianceGpu::size, "environment_irradiance")!;
+            result.irradiance_address = environment_buffer_address(renderer, result.irradiance)!;
+            result.irradiance_partials = allocate_environment_buffer(
+                renderer,
+                IrradianceGpu::size * shader::ENVIRONMENT_SH_GROUPS,
+                "environment_irradiance_partials",
+            )!;
+            result.partials_address = environment_buffer_address(renderer, result.irradiance_partials)!;
+        }
         acquire_environment_lut(renderer)!;
         result.lighting_ready = true;
         result.lighting_revision = ++renderer.environment_state.lighting_serial;
@@ -231,15 +245,14 @@ fn EnvironmentRes*? resolve_environment(
         result.lighting_ready = false;
     }
     if (sheen && !same_sheen) {
-        result.sheen_cube = {};
-        result.sheen_view = {};
-        create_environment_sheen(renderer, &result)!;
-        new_sheen = true;
+        if (!result.sheen_cube.is_valid() || result.sheen_size != filtered_size) {
+            result.sheen_size = filtered_size;
+            create_environment_sheen(renderer, &result)!;
+            new_sheen = true;
+        }
         acquire_sheen_lut(renderer)!;
         result.sheen_ready = true;
     } else if (!same_sheen) {
-        result.sheen_cube = {};
-        result.sheen_view = {};
         result.sheen_ready = false;
     }
     acquire_environment_samplers(renderer)!;
@@ -249,14 +262,17 @@ fn EnvironmentRes*? resolve_environment(
     pending.new_source |= new_source;
     pending.new_lighting |= new_lighting;
     pending.new_sheen |= new_sheen;
+    pending.write_source |= !same_source && source_owned;
+    pending.write_lighting |= lighting && !same_lighting;
+    pending.write_sheen |= sheen && !same_sheen;
     if (texture) pending.input_texture = texture.view.index;
     return &pending.result;
 }
 
 fn void? create_environment_cube(Renderer* renderer, EnvironmentRes* result, bool specular) @local {
     gpu::TextureDesc description = {
-        .width = specular ? result.description.settings.specular_size : result.source_size,
-        .height = specular ? result.description.settings.specular_size : result.source_size,
+        .width = specular ? result.specular_size : result.source_size,
+        .height = specular ? result.specular_size : result.source_size,
         .mip_levels = specular ? shader::ENVIRONMENT_SPECULAR_MIPS : 1,
         .array_layers = shader::ENVIRONMENT_FACE_COUNT,
         .cube_compatible = true,
@@ -269,13 +285,46 @@ fn void? create_environment_cube(Renderer* renderer, EnvironmentRes* result, boo
     defer catch (void)gpu::destroy_texture(&renderer.device, texture);
     gpu::TextureViewDesc view_desc = { .cube = true };
     gpu::TextureView view = gpu::create_texture_view(&renderer.device, texture, &view_desc)!;
+    defer catch (void)gpu::destroy_texture_view(&renderer.device, view);
     if (specular) {
+        create_environment_faces(renderer, texture, result.specular_faces[..])!;
         result.specular_cube = texture;
         result.specular_view = view;
     } else {
+        create_environment_faces(renderer, texture, result.source_faces[..])!;
         result.source_cube = texture;
         result.source_view = view;
     }
+}
+
+fn void? create_environment_faces(Renderer* renderer, gpu::TextureHandle texture, gpu::TextureView[] faces) @private {
+    usz created;
+    defer catch release_environment_faces(&renderer.device, faces[:created]);
+    foreach (index, &face : faces) {
+        gpu::TextureViewDesc description = {
+            .base_mip = (uint)(index / shader::ENVIRONMENT_FACE_COUNT),
+            .mip_count = 1,
+            .base_layer = (uint)(index % shader::ENVIRONMENT_FACE_COUNT),
+            .layer_count = 1,
+        };
+        *face = gpu::create_texture_view(&renderer.device, texture, &description)!;
+        created++;
+    }
+}
+
+fn gpu::GpuAllocation? allocate_environment_buffer(Renderer* renderer, usz size, ZString debug_name) @local {
+    gpu::AllocationDesc description = {
+        .size = size,
+        .alignment = STREAM_ALIGNMENT,
+        .memory_class = gpu::MemoryClass.GPU_PRIVATE,
+        .access = { .graphics },
+        .debug_name = debug_name,
+    };
+    return gpu::allocate_memory(&renderer.device, &description);
+}
+
+fn gpu::GpuAddress? environment_buffer_address(Renderer* renderer, gpu::GpuAllocation allocation) @local {
+    return gpu::get_span_address(&renderer.device, gpu::get_allocation_span(&renderer.device, allocation)!);
 }
 
 fn void? acquire_environment_samplers(Renderer* renderer) @local {
@@ -298,30 +347,46 @@ fn void? acquire_environment_samplers(Renderer* renderer) @local {
     renderer.environment_state.samplers_ready = true;
 }
 
+fn void release_environment_faces(gpu::Device* device, gpu::TextureView[] faces) @private {
+    foreach (face : faces) if (face.is_valid()) (void)gpu::destroy_texture_view(device, face);
+}
+
+fn void retire_environment_faces(RetireList* retire, gpu::TextureView[] faces) @private {
+    foreach (face : faces) if (face.is_valid()) retire.push({ .kind = RetiredKind.TEXTURE_VIEW, .texture_view = face });
+}
+
 fn void release_environment_source(gpu::Device* device, EnvironmentRes* result) @private {
     if (!result.source_owned) return;
+    release_environment_faces(device, result.source_faces[..]);
     if (result.source_view.is_valid()) (void)gpu::destroy_texture_view(device, result.source_view);
     if (result.source_cube.is_valid()) (void)gpu::destroy_texture(device, result.source_cube);
 }
 
 fn void release_environment_lighting(gpu::Device* device, EnvironmentRes* result) @private {
+    release_environment_faces(device, result.specular_faces[..]);
     if (result.specular_view.is_valid()) (void)gpu::destroy_texture_view(device, result.specular_view);
     if (result.specular_cube.is_valid()) (void)gpu::destroy_texture(device, result.specular_cube);
     if (result.irradiance.is_valid()) (void)gpu::free_allocation(device, &result.irradiance);
+    if (result.irradiance_partials.is_valid()) (void)gpu::free_allocation(device, &result.irradiance_partials);
 }
 
 fn void retire_environment_source(RetireList* retire, EnvironmentRes* result) @local {
     if (!result.source_owned || !result.source_cube.is_valid()) return;
+    retire_environment_faces(retire, result.source_faces[..]);
     retire.push({ .kind = RetiredKind.TEXTURE_VIEW, .texture_view = result.source_view });
     retire.push({ .kind = RetiredKind.TEXTURE, .texture = result.source_cube });
 }
 
 fn void retire_environment_lighting(RetireList* retire, EnvironmentRes* result) @local {
     if (result.specular_cube.is_valid()) {
+        retire_environment_faces(retire, result.specular_faces[..]);
         retire.push({ .kind = RetiredKind.TEXTURE_VIEW, .texture_view = result.specular_view });
         retire.push({ .kind = RetiredKind.TEXTURE, .texture = result.specular_cube });
     }
     if (result.irradiance.is_valid()) retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = result.irradiance });
+    if (result.irradiance_partials.is_valid()) {
+        retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = result.irradiance_partials });
+    }
 }
 
 fn bool lut_unsubmitted(EnvironmentLut lut) @private {
@@ -357,12 +422,9 @@ fn void commit_environment_preparations(Renderer* renderer, Frame* slot) @privat
     if (renderer.environment_state.sheen_lut.state == EnvironmentLutState.RECORDED) {
         renderer.environment_state.sheen_lut.state = EnvironmentLutState.READY;
     }
-    foreach (retired : renderer.environment_state.temporaries) slot.environment_temporaries.push(retired);
-    renderer.environment_state.temporaries.clear();
 }
 
 fn void discard_environment_preparations(Renderer* renderer) @private {
-    drain_retired(&renderer.device, &renderer.environment_state.temporaries);
     foreach (&pending : renderer.environment_state.pending) {
         if (!pending.active) continue;
         if (pending.new_source) release_environment_source(&renderer.device, &pending.result);
@@ -408,7 +470,6 @@ fn void free_environments(Renderer* renderer) @private {
         renderer.environment_state.pipelines.sheen_lut,
     };
     foreach (pipeline : pipelines) if (pipeline.is_valid()) (void)gpu::destroy_pipeline(&renderer.device, pipeline);
-    renderer.environment_state.temporaries.free();
     alloc::free(renderer.allocator, renderer.environment_state.pending.ptr);
     alloc::free(renderer.allocator, renderer.environment_state.mirrors.ptr);
 }

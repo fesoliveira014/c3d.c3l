@@ -144,6 +144,7 @@ fn bool same_gpu_aggregate_key(profile::GpuSample left, profile::GpuSample right
         && left.info.view_index == right.info.view_index
         && left.info.view_generation == right.info.view_generation
         && left.info.pass_ordinal == right.info.pass_ordinal
+        && left.info.stage_ordinal == right.info.stage_ordinal
         && left.info.light_index == right.info.light_index
         && left.info.light_generation == right.info.light_generation
         && left.info.light_kind == right.info.light_kind

@@ -95,7 +95,9 @@ What the four cases establish:
   frame where nothing changed and two when only the environment rotation or `max_distance` moved,
   once per scene when two views render it; a surface inside a volume matches the SH render within
   2 of 255 on both shading paths, also for a volume whose slices wrap into rows, and an edited
-  environment source refills the volume; of two nested volumes the smaller one lights the surfaces
+  environment source refills the volume; a source edit rewrites the source, GGX and Charlie cubes
+  and the SH in place and still refills the volume, while a `specular_size` change reallocates the
+  GGX and Charlie cubes and keeps the source cube; of two nested volumes the smaller one lights the surfaces
   it contains; the GLSL atlas helpers match their C3 twins; removing the component frees the slot.
 
 - A custom material that reads the scene colour shows the scene behind it, within 1 of 255, on

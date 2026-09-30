@@ -131,11 +131,17 @@ Generated cubes use RGBA16_FLOAT and its precision/range. At the defaults, the
 converted source occupies 12 MiB and the GGX-filtered cube occupies just under
 4 MiB of texels per equirectangular environment. An environment used by an active
 sheen material adds a separate Charlie-filtered cube of the same size. These
-figures exclude the original source texture and its mips, CPU pixels, temporary
-allocations, allocator overhead, the renderer-shared 256-square BRDF LUT and the
-512 KiB renderer-shared sheen LUT. A native cube needs no converted copy; a solid
-source uses one texel per face. Doubling an edge dimension roughly quadruples each
-generated cube's storage and processing work.
+figures exclude the original source texture and its mips, CPU pixels, allocator
+overhead, the renderer-shared 256-square BRDF LUT and the 512 KiB renderer-shared
+sheen LUT. Each generated cube also keeps one storage view per face and mip (6 for
+a converted or solid source, 36 for each filtered cube), and a lit environment keeps
+a 9 KiB buffer for its SH projection. The views occupy texture heap slots while their
+cube lives: 42 for a lit environment with a converted or solid source, 36 with a
+native cube, and 36 more with a Charlie cube, against the renderer's default heap of
+4,096 slots. A full heap fails the preparation with `gpu::DESCRIPTOR_HEAP_FULL`. A
+native cube needs no converted copy; a solid source uses one texel per face. Doubling
+an edge dimension roughly quadruples each generated cube's storage and processing
+work.
 
 ## Preparation and edits
 
@@ -184,6 +190,31 @@ its lighting. Source texture identity, content revision or backing changes also
 invalidate derived results; call `assets.mark_texture_dirty(source)` after a pixel
 edit. Redundant dirty marks and changes to inactive settings do not regenerate
 equivalent processing.
+
+Regeneration at unchanged sizes writes the existing cubes and SH through their views and
+allocates nothing: a source pixel edit, a new solid color or a re-uploaded native
+cube. A changed `conversion_size` or `specular_size` reallocates the affected cubes
+and retires the replaced ones after their submitted consumers complete. Probe
+volumes filled from the environment refill in the frame its lighting regenerates.
+A source change keeps the filtered cubes of an environment that is not lit this frame;
+they are rewritten when lighting or sheen next needs them.
+
+`Pass.ENVIRONMENT` times environment work recorded inside a frame. Its stage scopes
+split it by `EnvironmentStage`: `environment.source` (conversion of an equirectangular
+or solid source), `environment.prefilter` (GGX), `environment.irradiance` (SH
+projection), `environment.sheen` (Charlie) and `environment.luts` (the shared lookup
+tables, once). `Stats.gpu_environment_stage_ms` holds their completed times.
+Preparation outside a frame is not timed. `gltf_viewer --benchmark
+--environment-refresh on` regenerates its environment every frame; see
+[benchmarking](benchmarking.md#scene-benchmark).
+
+One refresh of the default environment costs 9.900 ms of GPU time on an RTX 4090 (driver 610.88,
+`gltf_viewer`, median of three runs): prefilter 9.723 ms (98 %), irradiance 0.142 ms, source
+0.029 ms; sheen and the lookup tables read 0 in the measured frames. The prefilter's fixed sample
+count dominates. With refresh off, the in-place path costs nothing measurable: `cpu_record` reads
+0.157 ms against 0.158 ms before this path, and every pass stays inside the before range. The
+benchmark's refresh-on `cpu_record` of 4.25 ms is the re-upload of its 1K HDR source each frame, not
+the in-place regeneration.
 
 Keep environment descriptions, processing settings and source pixels stable from
 `begin_frame` through `end_frame` or `abort_frame`. Cheap scene lighting/background

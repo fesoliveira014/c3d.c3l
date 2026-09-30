@@ -32,6 +32,7 @@ fn void draw_gpu_context(profile::GpuScopeInfo info) @private {
         case PASS: imgui::text_unformatted("Pass scope");
         case SHADOW_LAYER: imgui::text_unformatted("Shadow layer scope");
         case COMPUTE_DISPATCH: imgui::text_unformatted("Compute dispatch scope");
+        case PASS_STAGE: imgui::text_unformatted("Pass stage scope");
     }
     imgui::text("Has view: %s", info.has_view ? "yes" : "no");
     imgui::text(info.has_view ? "View %u:%u" : "View N/A (captured %u:%u)",
@@ -41,12 +42,16 @@ fn void draw_gpu_context(profile::GpuScopeInfo info) @private {
     switch (info.kind) {
         case PASS:
         case SHADOW_LAYER:
-        case COMPUTE_DISPATCH: has_pass = true;
+        case COMPUTE_DISPATCH:
+        case PASS_STAGE: has_pass = true;
         case APPLICATION:
         case FRAME:
         case VIEW:
     }
     imgui::text(has_pass ? "/ pass %u" : "/ pass N/A (captured %u)", info.pass_ordinal);
+    imgui::same_line();
+    imgui::text(info.kind == profile::GpuScopeKind.PASS_STAGE ? "/ stage %u" : "/ stage N/A (captured %u)",
+      info.stage_ordinal);
     imgui::text(info.kind == profile::GpuScopeKind.SHADOW_LAYER ? "Light %u:%u" : "Light N/A (captured %u:%u)",
       info.light_index, info.light_generation);
     imgui::same_line();

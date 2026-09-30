@@ -28,6 +28,7 @@ enum GpuScopeKind @feat(C3D_PROFILE_GPU) {
     PASS,
     SHADOW_LAYER,
     COMPUTE_DISPATCH,
+    PASS_STAGE,
 }
 
 <* Fixed storage limits for capture. *>
@@ -59,6 +60,7 @@ struct GpuScopeInfo @feat(C3D_PROFILE_GPU) {
     uint view_index;
     uint view_generation;
     uint pass_ordinal;
+    uint stage_ordinal;
     uint light_index;
     uint light_generation;
     uint light_kind;

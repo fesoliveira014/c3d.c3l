@@ -42,6 +42,11 @@ const uint FILL_DISPATCHES @private = 4; // fill and border for each of the two 
 const uint ATLAS_DISPATCHES @private = 2;
 const usz TWIN_DIRECTIONS @private = 64;
 const float TWIN_TOLERANCE @private = 1e-4f; // a few float steps at atlas coordinates near 64
+// A short prefilter on software devices.
+const EnvironmentSettings SMALL_PROCESSING @private = { .conversion_size = 32, .specular_size = 32 };
+const uint RESIZED_SPECULAR_SIZE @private = 64;
+const Vec3 SHEEN_COLOR @private = { 0.6f, 0.6f, 0.6f };
+const Vec3 SHEEN_BOX_POSITION @private = { -2, 0.5f, 1 };
 
 struct ProbeScene @private {
     Scene         scene;
@@ -271,6 +276,84 @@ fn void test_source_edit_refills_the_volume() @test {
     io::eprintfn("edited sky: volume %08x, sh %08x", with, without);
     assert_channels_close(with, without, PROBE_CHANNEL_TOLERANCE);
     check_validation(&fixture.renderer);
+}
+
+fn ProbeScene? create_small_probe_scene(Fixture* fixture) @private {
+    ProbeScene probe = create_probe_scene(fixture)!;
+    defer catch scene::destroy_scene(&probe.scene);
+    fixture.assets.environment(probe.environment).desc.settings = SMALL_PROCESSING;
+    probe.scene.add(probe.volume, light::probe_volume(VOLUME_HALF_EXTENTS, PLAIN_COUNTS));
+
+    GeometryId box;
+    @pool() {
+        Geometry cube = geometry::box(
+            allocator: tmem,
+            width: 1,
+            height: 1,
+            depth: 1,
+        );
+        box = fixture.assets.add_geometry(&cube)!;
+    };
+    PhysicalParams velvet = material::PHYSICAL_PARAMS_DEFAULT;
+    velvet.sheen_color = SHEEN_COLOR;
+    MaterialId sheen_surface = fixture.assets.add_material(material::physical(velvet))!;
+    Node* sheen_box = probe.scene.add_mesh(box, sheen_surface, name: "sheen")!;
+    sheen_box.local.position = SHEEN_BOX_POSITION;
+    probe.scene.update_world();
+    return probe;
+}
+
+fn void test_source_refresh_rewrites_in_place_and_refills_the_volume() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    ProbeScene probe = create_small_probe_scene(&fixture)!!;
+    defer scene::destroy_scene(&probe.scene);
+    ProbeView probe_view = create_probe_view(&fixture, ShadingPath.FORWARD)!!;
+    defer destroy_probe_view(&fixture, &probe_view);
+    ViewId[1] one = { probe_view.view };
+
+    (void)render_dispatches(&fixture, &probe, one[..])!!;
+    uint baseline = render_dispatches(&fixture, &probe, one[..])!!;
+    EnvironmentRes prepared = renderer.environment_state.mirrors[probe.environment.index];
+    assert(prepared.sheen_cube.is_valid());
+
+    write_sky(fixture.assets.texture(probe.sky).pixels, EDITED_SKY_RADIANCE);
+    fixture.assets.mark_texture_dirty(probe.sky);
+    assert(render_dispatches(&fixture, &probe, one[..])!! == baseline + ATLAS_DISPATCHES);
+    assert(renderer.stats.environment_prepares == 1);
+    EnvironmentRes refreshed = renderer.environment_state.mirrors[probe.environment.index];
+    assert(refreshed.lighting_revision != prepared.lighting_revision);
+    assert(refreshed.source_cube == prepared.source_cube && refreshed.specular_cube == prepared.specular_cube);
+    assert(refreshed.sheen_cube == prepared.sheen_cube);
+    assert(refreshed.irradiance_address == prepared.irradiance_address);
+    check_validation(renderer);
+}
+
+fn void test_specular_resize_reallocates_the_lighting_cube() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    ProbeScene probe = create_small_probe_scene(&fixture)!!;
+    defer scene::destroy_scene(&probe.scene);
+    ProbeView probe_view = create_probe_view(&fixture, ShadingPath.FORWARD)!!;
+    defer destroy_probe_view(&fixture, &probe_view);
+    ViewId[1] one = { probe_view.view };
+
+    (void)render_dispatches(&fixture, &probe, one[..])!!;
+    uint baseline = render_dispatches(&fixture, &probe, one[..])!!;
+    EnvironmentRes prepared = renderer.environment_state.mirrors[probe.environment.index];
+
+    fixture.assets.environment(probe.environment).desc.settings.specular_size = RESIZED_SPECULAR_SIZE;
+    fixture.assets.mark_environment_dirty(probe.environment);
+    assert(render_dispatches(&fixture, &probe, one[..])!! == baseline + ATLAS_DISPATCHES);
+    EnvironmentRes resized = renderer.environment_state.mirrors[probe.environment.index];
+    assert(resized.lighting_revision != prepared.lighting_revision);
+    assert(resized.source_cube == prepared.source_cube && resized.specular_cube != prepared.specular_cube);
+    assert(resized.sheen_cube.is_valid() && resized.sheen_cube != prepared.sheen_cube);
+    check_validation(renderer);
 }
 
 fn void test_nested_volumes_select_the_smallest_box() @test {

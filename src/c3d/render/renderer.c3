@@ -96,7 +96,6 @@ struct Frame {
     gpu::CompletionPoint  done;
     UploadRing            upload;
     RetireList            retire;
-    RetireList            environment_temporaries;
 }
 
 <*
@@ -286,7 +285,6 @@ fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
             read_cull_stats(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
         };
         instrumentation::@scope("renderer.retire") {
-            drain_retired(&self.device, &slot.environment_temporaries);
             drain_retired(&self.device, &slot.retire);
             sweep_geometries(self);
             self.instances.sweep(self.frame_index, &self.pending_upload_retire);
@@ -755,8 +753,6 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         for (usz slot = 0; slot < slots_created; slot++) {
             (void)gpu::destroy_command_allocator(&frames[slot].allocator);
             free_upload_ring(&device, &frames[slot].upload);
-            drain_retired(&device, &frames[slot].environment_temporaries);
-            frames[slot].environment_temporaries.free();
             drain_retired(&device, &frames[slot].retire);
             frames[slot].retire.free();
         }
@@ -769,7 +765,6 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         };
         frames[slot].allocator = gpu::create_command_allocator(&device, graphics, &allocator_desc)!;
         frames[slot].retire.init(allocator, RETIRE_INITIAL_CAPACITY);
-        frames[slot].environment_temporaries.init(allocator, RETIRE_INITIAL_CAPACITY);
         frames[slot].upload.overflow.init(allocator, RETIRE_INITIAL_CAPACITY);
         slots_created++;
         allocate_upload_ring(
@@ -857,7 +852,6 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         renderer.gpu_profile = gpu_profile;
         renderer.stats.gpu_timing_state = timestamps_enabled ? GpuTimingState.PENDING : GpuTimingState.UNAVAILABLE;
     $endif
-    renderer.environment_state.temporaries.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_copies.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_geometry_uploads.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_instance_uploads.init(allocator, RETIRE_INITIAL_CAPACITY);
@@ -869,7 +863,6 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     renderer.rt.pending_blas.init(allocator, RETIRE_INITIAL_CAPACITY);
     defer catch {
         if (catch excuse = wait_frames(&renderer)) handle_cleanup_fault(excuse);
-        foreach (&slot : renderer.frames) drain_retired(&renderer.device, &slot.environment_temporaries);
         foreach (&slot : renderer.frames) drain_retired(&renderer.device, &slot.retire);
         release_cluster_resources(&renderer);
         free_environments(&renderer);
@@ -910,7 +903,6 @@ fn void destroy_renderer(Renderer* renderer) {
         if (excuse != gpu::SURFACE_LOST || renderer.acquired.texture.is_valid()) handle_cleanup_fault(excuse);
     }
     if (catch excuse = wait_frames(renderer)) handle_cleanup_fault(excuse);
-    foreach (&slot : renderer.frames) drain_retired(&renderer.device, &slot.environment_temporaries);
     foreach (&slot : renderer.frames) drain_retired(&renderer.device, &slot.retire);
     free_environments(renderer);
     free_probe_volumes(renderer);
@@ -965,7 +957,6 @@ fn void destroy_renderer(Renderer* renderer) {
     foreach (&slot : renderer.frames) {
         drain_retired(&renderer.device, &slot.retire);
         slot.retire.free();
-        slot.environment_temporaries.free();
         free_upload_ring(&renderer.device, &slot.upload);
         (void)gpu::destroy_command_allocator(&slot.allocator);
     }
