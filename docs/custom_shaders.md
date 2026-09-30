@@ -261,6 +261,26 @@ The capability is also visible to shaders: `CustomMaterialGpu.capabilities` carr
 separately, so a rejected G-buffer stage leaves the forward stage of the same shader drawing, and
 a replacement that drops the stage retires its pipelines while the forward ones are rebuilt.
 
+## Additive output and fog
+
+Set `MaterialCommon.alpha_mode = BLEND` and `blend_mode = ADDITIVE` for additive
+RGB with destination alpha preserved. Custom stages emit premultiplied RGB and
+coverage through `material_output`, as for ordinary blended materials. Material,
+texture and vertex opacity scale the contribution; output alpha need not be zero.
+`MATERIAL_BLEND_ADDITIVE` is set in the packed flags only for this combination.
+
+The public `fog.glsl` include supplies
+`apply_material_fog(frame, world_position, straight_color, material_flags)`.
+It returns straight RGB after fog: colour times transmittance for additive
+materials, plus in-scatter for source-over materials. Apply coverage afterward,
+once, through `material_output`. With no fog the input colour is unchanged.
+
+The existing three-argument `apply_fog` retains its source-over behaviour. An
+additive stage uses the material-aware helper to avoid another fog-colour
+contribution over the background. Both helpers use the current view's analytic
+or volumetric fog. Declaring scene reads is required only if the stage also
+samples a scene snapshot, such as depth for soft fading.
+
 ## Scene reads
 
 A custom fragment stage can sample the rendered scene behind it: its color for refraction, its

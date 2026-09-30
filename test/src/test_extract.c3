@@ -232,6 +232,27 @@ fn void test_draw_list_prefers_transmission_over_blend() @test {
     }
 }
 
+fn void test_additive_mode_preserves_material_routing() @test {
+    Material blended = material::basic();
+    blended.common.alpha_mode = AlphaMode.BLEND;
+    blended.common.blend_mode = BlendMode.ADDITIVE;
+    assert(render::draw_list(&blended) == DrawList.TRANSPARENT);
+    assert(!render::gbuffer_encodable(&blended));
+
+    Material reader = { .kind = MaterialKind.CUSTOM, .common = blended.common };
+    assert(render::draw_list(&reader, { .depth }) == DrawList.TRANSPARENT);
+
+    PhysicalParams transmission = material::PHYSICAL_PARAMS_DEFAULT;
+    transmission.transmission = 0.5f;
+    Material glass = material::physical(transmission, blended.common);
+    assert(render::draw_list(&glass) == DrawList.SCENE_READ);
+
+    Material opaque = material::standard();
+    opaque.common.blend_mode = BlendMode.ADDITIVE;
+    assert(render::draw_list(&opaque) == DrawList.OPAQUE);
+    assert(render::gbuffer_encodable(&opaque));
+}
+
 fn void test_scene_readers_route_by_alpha_mode() @test {
     Material opaque = { .kind = MaterialKind.CUSTOM, .common = material::MATERIAL_COMMON_DEFAULT };
     Material masked = opaque;

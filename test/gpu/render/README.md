@@ -160,6 +160,12 @@ What the four cases establish:
   dirtying the custom material; removing the referenced material, even with a new material in its
   heap slot, skips the custom draws and counts them in `Stats.dangling_refs`.
 
+- Additive materials add coverage-scaled RGB while preserving HDR alpha, switch
+  between additive and source-over composition on the same pipeline, and share
+  those rules with instanced draws under both culling settings. Basic and custom
+  additive fog output is attenuated without another in-scatter contribution;
+  zero opacity leaves the background unchanged.
+
 What they cannot establish: window clear-only and GUI-only frames need a
 window (run the `clear` and `cube_gui` examples with validation), and a
 presentation failure after submission needs a hardware observation.

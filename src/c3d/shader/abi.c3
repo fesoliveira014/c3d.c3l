@@ -48,6 +48,7 @@ const uint MATERIAL_MAP_UV1_SHIFT = 5;
 const uint MATERIAL_ALPHA_MASK = 1;
 const uint MATERIAL_DOUBLE_SIDED = 2;
 const uint MATERIAL_ALPHA_BLEND = 4;
+const uint MATERIAL_BLEND_ADDITIVE = 8;
 const uint TOON_MAP_GRADIENT = 1024;
 const uint PREVIEW_MODE_COLOR = 0;
 const uint PREVIEW_MODE_DEPTH_VIEW = 1;

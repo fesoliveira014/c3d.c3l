@@ -64,6 +64,7 @@ struct DrawState @private {
     bool                   depth_test;
     bool                   depth_write;
     bool                   blend;
+    BlendMode              blend_mode;
 }
 
 struct DrawPassState @private {
@@ -1585,6 +1586,20 @@ fn void? record_loaded_pass(Renderer* renderer, ViewRecord* record, DrawItem[] i
     gpu::cmd_end_render_pass(&renderer.commands)!;
 }
 
+fn gpu::ColorTargetState blend_target(bool enabled, BlendMode mode) @private {
+    if (!enabled) return gpu::color_blend_disabled();
+
+    switch (mode) {
+        case PREMULTIPLIED_ALPHA:
+            return gpu::premultiplied_alpha_blend();
+        case ADDITIVE:
+            gpu::ColorTargetState target = gpu::additive_blend();
+            target.blend.src_alpha = gpu::BlendFactor.ZERO;
+            target.blend.dst_alpha = gpu::BlendFactor.ONE;
+            return target;
+    }
+}
+
 fn void? record_draws(
     Renderer* renderer,
     ViewRecord* record,
@@ -1615,14 +1630,16 @@ fn void? record_draws(
             .depth_test = common.depth_test,
             .depth_write = blend ? false : common.depth_write && pass_state.depth_write,
             .blend = blend,
+            .blend_mode = blend ? common.blend_mode : BlendMode.PREMULTIPLIED_ALPHA,
         };
         if (wanted.pipeline.index != bound.pipeline.index) {
             gpu::cmd_bind_pipeline(&renderer.commands, wanted.pipeline)!;
         }
         if (!state_set || wanted.cull != bound.cull || wanted.front_face != bound.front_face
             || wanted.topology != bound.topology || wanted.depth_test != bound.depth_test
-            || wanted.depth_write != bound.depth_write || wanted.blend != bound.blend) {
-            color_targets[0] = wanted.blend ? gpu::premultiplied_alpha_blend() : gpu::color_blend_disabled();
+            || wanted.depth_write != bound.depth_write || wanted.blend != bound.blend
+            || wanted.blend_mode != bound.blend_mode) {
+            color_targets[0] = blend_target(wanted.blend, wanted.blend_mode);
             state.raster.cull_mode = wanted.cull;
             state.raster.front_face = wanted.front_face;
             state.raster.topology = wanted.topology;

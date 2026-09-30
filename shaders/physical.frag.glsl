@@ -329,7 +329,7 @@ void main() {
     }
     // A transmissive draw sits in the scene-read list, before the fog pass, which fogs it at what lies behind it.
     bool blended = (material.standard.flags & MATERIAL_ALPHA_BLEND) != 0u && material.transmission == 0.0;
-    if (blended) color = apply_fog(frame, v_world_pos, color);
+    if (blended) color = apply_material_fog(frame, v_world_pos, color, material.standard.flags);
     out_color = material_output(
         color,
         material_sample.base_color.a,

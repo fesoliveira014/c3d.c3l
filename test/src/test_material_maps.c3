@@ -32,6 +32,48 @@ fn void assert_map_transform(TextureMapGpu map, Vec2 expected_offset, Vec4 expec
     assert((map.uv_linear - expected_linear).length() < 0.0001f);
 }
 
+fn void test_material_packing_preserves_and_clears_additive_mode() @test {
+    char[render::MATERIAL_STRIDE] storage @align(16);
+    char[] bytes = storage[..];
+    Material[5] materials = {
+        material::basic(),
+        material::standard(),
+        material::toon(),
+        material::physical(),
+        { .kind = MaterialKind.CUSTOM, .common = material::MATERIAL_COMMON_DEFAULT },
+    };
+
+    foreach (&material_data : materials) {
+        material_data.common.alpha_mode = AlphaMode.BLEND;
+        material_data.common.blend_mode = BlendMode.ADDITIVE;
+        material_data.common.double_sided = true;
+        render::write_material_block(bytes, material_data, {});
+        uint flags = ((BasicMaterialGpu*)bytes.ptr).flags;
+        assert((flags & shader::MATERIAL_ALPHA_BLEND) != 0);
+        assert((flags & shader::MATERIAL_BLEND_ADDITIVE) != 0);
+        assert((flags & shader::MATERIAL_DOUBLE_SIDED) != 0);
+
+        material_data.common.blend_mode = BlendMode.PREMULTIPLIED_ALPHA;
+        render::write_material_block(bytes, material_data, {});
+        flags = ((BasicMaterialGpu*)bytes.ptr).flags;
+        assert((flags & shader::MATERIAL_ALPHA_BLEND) != 0);
+        assert((flags & shader::MATERIAL_BLEND_ADDITIVE) == 0);
+
+        material_data.common.blend_mode = BlendMode.ADDITIVE;
+        material_data.common.alpha_mode = AlphaMode.OPAQUE;
+        render::write_material_block(bytes, material_data, {});
+        flags = ((BasicMaterialGpu*)bytes.ptr).flags;
+        assert((flags & shader::MATERIAL_ALPHA_BLEND) == 0);
+        assert((flags & shader::MATERIAL_BLEND_ADDITIVE) == 0);
+
+        material_data.common.alpha_mode = AlphaMode.MASK;
+        render::write_material_block(bytes, material_data, {});
+        flags = ((BasicMaterialGpu*)bytes.ptr).flags;
+        assert((flags & shader::MATERIAL_ALPHA_MASK) != 0);
+        assert((flags & shader::MATERIAL_BLEND_ADDITIVE) == 0);
+    }
+}
+
 fn void test_standard_packing_keeps_all_map_bindings() @test {
     char[render::MATERIAL_STRIDE] storage @align(16);
     char[] bytes = storage[..];

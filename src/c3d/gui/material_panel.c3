@@ -221,6 +221,20 @@ fn bool edit_material_common(MaterialCommon* common) @local {
     changed |= imgui::checkbox("Depth test", &common.depth_test);
 
     if (common.alpha_mode == BLEND) {
+        BlendMode selected_blend_mode = common.blend_mode;
+        imgui::separator_text("Blend mode");
+        if (imgui::radio_button("Alpha", selected_blend_mode == BlendMode.PREMULTIPLIED_ALPHA)) {
+            selected_blend_mode = BlendMode.PREMULTIPLIED_ALPHA;
+        }
+        imgui::same_line();
+        if (imgui::radio_button("Additive", selected_blend_mode == BlendMode.ADDITIVE)) {
+            selected_blend_mode = BlendMode.ADDITIVE;
+        }
+        if (selected_blend_mode != common.blend_mode) {
+            common.blend_mode = selected_blend_mode;
+            changed = true;
+        }
+
         bool effective_depth_write;
         imgui::begin_disabled(true);
         imgui::checkbox("Depth write", &effective_depth_write);

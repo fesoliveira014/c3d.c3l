@@ -235,11 +235,23 @@ FogTerms fog_background_terms(FrameRoot frame, vec2 uv) {
     return height_fog_beyond(frame, sky, uv, origin, direction, near);
 }
 
-// Fog a blended surface's radiance at its own position; the view's fog pass fogs everything else.
-vec3 apply_fog(FrameRoot frame, vec3 world_position, vec3 color) {
+// Additive radiance adds no second in-scatter over the already-fogged background.
+vec3 apply_material_fog(
+    FrameRoot frame,
+    vec3 world_position,
+    vec3 color,
+    uint material_flags
+) {
     if (frame.sky_fog == 0ul) return color;
     FogTerms fog = fog_terms(frame, fog_screen_uv(frame, world_position), world_position);
-    return color * fog.transmittance + fog.inscatter;
+    vec3 attenuated = color * fog.transmittance;
+    return (material_flags & MATERIAL_BLEND_ADDITIVE) != 0u
+        ? attenuated : attenuated + fog.inscatter;
+}
+
+// Fog a blended surface's radiance at its own position; the view's fog pass fogs everything else.
+vec3 apply_fog(FrameRoot frame, vec3 world_position, vec3 color) {
+    return apply_material_fog(frame, world_position, color, 0u);
 }
 
 // Fog between a surface and the scene behind it at a depth sample; depth 0 is the background.

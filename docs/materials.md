@@ -40,13 +40,38 @@ perceptual roughness at 0.045 for shading while preserving the authored value.
 
 ## Alpha, depth and raster state
 
-`MaterialCommon` controls alpha mode, cutoff, sidedness, depth testing, authored
+`MaterialCommon` controls alpha mode, blend mode, cutoff, sidedness, depth testing, authored
 depth writes and wireframe drawing for every family. Base factor alpha and sampled
 base-texture alpha are straight-alpha inputs. `OPAQUE` ignores the resulting
 coverage and writes output alpha 1. `MASK` discards values below `alpha_cutoff`
 and writes output alpha 1 for surviving fragments. `BLEND` clamps coverage to
 [0, 1], multiplies the complete shaded RGB by it once, and writes premultiplied
-RGBA for source-over composition.
+RGBA. Its `blend_mode` selects composition: `PREMULTIPLIED_ALPHA` is the default
+source-over mode; `ADDITIVE` adds RGB and preserves destination alpha. The setting
+is ignored for `OPAQUE` and `MASK`.
+
+For straight source RGB `C`, coverage `a` and destination `(D, A)`:
+
+| Blend mode | Output RGB | Output alpha |
+| --- | --- | --- |
+| `PREMULTIPLIED_ALPHA` | `C*a + D*(1-a)` | `a + A*(1-a)` |
+| `ADDITIVE` | `C*a + D` | `A` |
+
+Texture, vertex and material alpha scale additive brightness; they do not reduce
+the destination colour. HDR RGB may grow above one. Additive materials retain the
+ordinary blended routing, per-view instance sorting and depth rules below.
+
+```c3
+MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
+common.alpha_mode = AlphaMode.BLEND;
+common.blend_mode = BlendMode.ADDITIVE;
+Material sparks = material::basic({ .color = { 1, 0.5f, 0.2f, 0.25f } }, common);
+```
+
+Additive surfaces receive fog attenuation without another fog in-scatter
+contribution. Custom stages use `apply_material_fog` from `fog.glsl` with their
+packed material flags ([Custom shaders](custom_shaders.md)). Physical transmission
+retains its existing scene-read routing and fog composition.
 
 Blended objects draw back to front after opaque/masked objects and the sky. The
 order uses each object's world-bounds center in the current camera view, with a
