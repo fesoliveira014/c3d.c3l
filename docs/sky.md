@@ -43,13 +43,14 @@ rotation and scale are ignored:
 | `density` | 0.002 | extinction per metre at the node's world y |
 | `falloff` | 0.02 | per metre of height; the density halves every 35 m above the node; 0 is uniform fog |
 | `albedo` | 1 | scattered share of the extinction, per channel |
-| `max_distance` | 200 | metres of view a volumetric fog covers; validated, unused by the analytic fog |
+| `max_distance` | 200 | metres of view the [volumetric fog](#volumetric-fog) covers; the analytic fog continues past it |
+| `anisotropy` | 0.3 | Henyey-Greenstein `g` of the volumetric fog's sun light, in (-1, 1) |
 
 `light::atmosphere_valid` and `light::height_fog_valid` state what the renderer accepts. An
 atmosphere needs finite positive radii, heights, scale heights, ozone width and sun radius (below
 π/2), finite nonnegative coefficients, an albedo in [0, 1], `|mie_anisotropy| < 1` and an observer in
 [0, atmosphere height). A fog needs finite nonnegative density, falloff and albedo and a finite
-positive `max_distance`.
+positive `max_distance` and an `anisotropy` with `|anisotropy| < 1`.
 
 `light::sun_radiance(atmosphere, sun, to_sun, altitude)` and `light::atmosphere_transmittance` are the
 CPU twins of the sun's attenuation (a 64-step march, within 0.35 % of a 100,000-step double
@@ -172,6 +173,41 @@ The sky-view and aerial perspective tables record only when the scene has an atm
 pass samples depth at compute and rewrites `hdr_color` in place; the transparent pass reopens with
 depth attached for testing.
 
+## Volumetric fog
+
+`ViewDesc.volumetric_fog` gives a raster view a froxel volume of its `HeightFog`: the fog's optical depth and the
+light it scatters, computed per view every frame. The view keeps the fog pass of [Where fog
+applies](#where-fog-applies); the pass reads the volume where the analytic fog would integrate a closed form, so
+the sun's light in the haze is shadowed and shows shafts. A view without the switch, without a valid `HeightFog`
+or with a `PATH_TRACED` shading path (`create_view` and `configure_view` fault `INVALID_ARGUMENT` for that
+combination) records nothing extra.
+
+- The medium is the `HeightFog`: `density`, `falloff`, `albedo`, `max_distance` (metres the volume covers) and
+  `anisotropy`, the Henyey-Greenstein `g` of the sun's scattering in (-1, 1); 0 is isotropic, positive favours
+  looking toward the sun.
+- The fog's sun is the atmosphere's sun. Without an atmosphere it is the first directional light in component
+  order. With an atmosphere whose sun is below the horizon the fog has no sun, even when another directional
+  light exists; the volume then scatters the ambient only.
+- The sun's light is shadowed by the shadow atlas, or by rays under `RayTracingDesc.shadows`. A froxel has no
+  surface, so its shadow lookup passes a zero normal and `ShadowGpu.normal_bias` does not move it. Fog past the
+  atlas's cascades is unshadowed. Local lights are not scattered.
+- The grid is one froxel per 16 × 16 pixels of the view's working image by 64 slices, squared toward the camera
+  and ending at `max_distance`: 160 × 90 × 64 at 2560 × 1440. It is RGBA16F, 7.03 MiB at 2560 × 1440 and
+  3.98 MiB at 1920 × 1080, one heap slot, allocated with the view and freed with it.
+- Two compute passes record after the sky tables and before the fog pass: `FOG_SCATTERING` (one thread per froxel)
+  and `FOG_INTEGRATION` (one thread per column, accumulating in-scatter and transmittance along the slices).
+- Volume then analytic: inside `max_distance` a pixel takes the volume's in-scatter and transmittance; past it the
+  analytic fog continues from the volume's end, so the fog is continuous there. The in-scatter's slope changes at
+  `max_distance`, where the sun's shadowing stops.
+- A view with a clip plane (a planar mirror) needs the switch of its own; its volume starts at the plane.
+- Custom stages need no change: `fog_terms`, `fog_background_terms`, `apply_fog`, `fog_behind` and
+  `apply_fog_refracted` include the volume when the view has one.
+- The volume is recomputed every frame from one shadow sample per froxel and is not reprojected or jittered.
+- The volume changes the haze's colour, not only its shadows. Inside `max_distance` the in-scatter is lit by the
+  sun and the ambient, while the analytic fog takes the sky's colour, so the same fog looks brighter and warmer
+  with the switch: the upper sky at noon at the default density goes from (31, 60, 100) to (76, 91, 117). Views of
+  one scene with and without the switch show two haze colours.
+
 ## Custom stages
 
 `fog.glsl` is a public include:
@@ -242,7 +278,11 @@ sky example does under `--path-traced`.
 - Screen-space GI gathers unfogged radiance without blended draws on fogged views.
 - Memory: 418 KiB and two heap slots per raster view; about 0.6 MiB and 46 heap slots per atmosphere
   (0.85 MiB and 83 with sheen); four atmospheres at once.
-- No clouds, no observers above the atmosphere, no volumetric fog or light shafts.
+- Volumetric fog has no temporal reprojection or jitter, scatters only the sun, is unshadowed past the shadow
+  atlas, changes its in-scatter slope at `max_distance` and does not exist on path-traced views.
+- The analytic fog has no direct-sun phase term, so a view with volumetric fog and a view without it show
+  different haze colours.
+- No clouds, no observers above the atmosphere.
 
 ## Example
 
@@ -266,8 +306,12 @@ frame. `--shading forward|deferred`, `--shadows atlas|traced`, `--ssgi`, `--path
 `--fog on|off`, `--atmosphere on|off`, `--preset`, `--gpu-timings` and `--validation` select the
 configuration. See [benchmarking](benchmarking.md#sky-benchmark).
 
+`--volumetric-fog` gives the main and mirror views a fog volume, `--taa` turns on TAA, and the `pan` preset and
+segment sweep the camera's yaw 8° a second from −20° with the sun 15° up. The fog panel edits density, falloff,
+anisotropy and `max_distance`. Under `--path-traced` the switch is ignored.
+
 The landscape examples `terrain`, `vegetation` and `water` take `--sky`: an `ATMOSPHERE_EARTH` on
-their sun and a haze pooling in the valleys.
+their sun and a haze pooling in the valleys, and `--volumetric-fog` with it.
 
 ## Measured cost
 
@@ -320,6 +364,49 @@ peaks seen directly.
 
 A refresh (0.84 ms) is far under the 4.2 ms at which refreshes would be time-sliced; a second view's
 tables (0.035 ms) do not call for a per-view switch; the −4° twilight does not call for pre-exposure.
+
+### Volumetric fog, RTX 4090, 2560 × 1440
+
+Same build and method; the fog's density raised to 0.01 for the judgements below.
+
+| Volume passes, `FOG_SCATTERING` + `FOG_INTEGRATION`, ms | Main | Mirror |
+| --- | ---: | ---: |
+| forward, noon | 0.0266 + 0.0164 = 0.043 | 0.0181 + 0.0205 = 0.039 |
+| deferred, noon | 0.0276 + 0.0174 = 0.045 | 0.0174 + 0.0205 = 0.038 |
+| `--shadows traced`, noon | 0.0266 + 0.0141 = 0.041 | 0.0133 + 0.0209 = 0.034 |
+| forward, pan / valley / twilight (no sun) | 0.048 / 0.044 / 0.027 | 0.040 / 0.039 / 0.029 |
+
+At 160 × 90 × 64 with a four-cascade sun the passes cost 0.043 ms, about a tenth of a 0.5 ms budget; traced
+shadows cost 0.95 times the atlas. The fog pass reads the volume's lookup even without the switch: `FOG` goes
+from 0.0369 to 0.0410 ms on the main view and from 0.0123 to 0.0133 ms on the mirror; with the switch it is
+0.0430 ms.
+
+| `sky` frame, forward, ms | Before | Without the switch | With it |
+| --- | ---: | ---: | ---: |
+| noon | 0.501 | 0.506 | 0.586 |
+| twilight | 0.360 | 0.369 | 0.432 |
+| valley | 0.429 | 0.436 | 0.522 |
+| time-lapse | 0.504 | 0.512 | 0.597 |
+| pan | | 0.513 | 0.597 |
+
+With the switch at noon: deferred 0.654, `--shadows traced` 0.487, `--taa` 0.707. The environment refresh stays
+at 0.842 ms and `sun_radiance` at 0.90 µs. Sponza without fog: `cpu_record_ms` 0.1444 (0.1429 to 0.1638) before
+and 0.1518 (0.1424 to 0.1661) after, with its six largest passes overlapping.
+
+| Landscape `still` frame, ms | `--sky` | `--sky --volumetric-fog` | Volume passes |
+| --- | ---: | ---: | --- |
+| `terrain` | 1.464 | 1.488 | 0.0307 + 0.0154 |
+| `vegetation` | 1.377 | 1.407 | 0.0314 + 0.0154 |
+| `water` | 2.369 | 2.489 | main 0.0297 + 0.0152, mirror 0.0184 + 0.0205 |
+
+Memory: 7.03 MiB per 2560 × 1440 view.
+
+Judged on the 4090: across 12 frames of a slow pan, with and without `--taa`, the haze near the horizon changes
+by at most 2 levels a frame and the shadowed fog behind the boxes moves with them, so the volume needs no
+reprojection; at `max_distance` 200 and 500 m a ground column steps at most 2 levels a row (1 in the valley at
+500 m), so 64 slices suffice; shadowed-fog edges are soft at 16 px, the only stair-step being the atlas's own;
+no ring shows at `max_distance`; twilight shows no banding; the water's reflections are no hazier than the peaks
+seen directly and no veil sits in front of the mirror plane.
 
 ### WSL, llvmpipe
 

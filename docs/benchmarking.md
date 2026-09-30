@@ -291,11 +291,11 @@ python3 scripts/build.py --target sky --opt O3 --define C3D_PROFILE_GPU --define
 ```
 
 `sky --benchmark [frames]` renders the [sky example](sky.md#example) offscreen at 2560 × 1440 after 60
-warm-up frames: noon, twilight (the sun at −4°), valley (the camera 300 m up, looking 30° down into the fog)
-and a time-lapse four segments long (the sun rising 0.0045° a frame from 10°). Lines:
+warm-up frames: noon, twilight (the sun at −4°), valley (the camera 300 m up, looking 30° down into the fog),
+pan (the sun 15° up, the camera's yaw sweeping 8° a second from −20°) and a time-lapse four segments long (the sun rising 0.0045° a frame from 10°). Lines:
 
 ```
-# sky shading=forward shadows=atlas ssgi=off path_traced=off fog=on atmosphere=on extent=2560x1440 frames=300
+# sky shading=forward shadows=atlas ssgi=off path_traced=off fog=on atmosphere=on volumetric_fog=off taa=off extent=2560x1440 frames=300
 sun_extract_us median=<>
 gpu_ms view=<main|mirror> segment=<s> pass=<pass> median=<> p99=<>
 frame_ms segment=<s> median=<> p99=<>
@@ -308,7 +308,9 @@ gate steady_sky <pass|fail>
 `refresh_ms` reads the frames that regenerated the sky; `total` is the whole `ENVIRONMENT` pass. The
 time-lapse gate expects `floor(sweep / period)` regenerations after its first frame, with
 `period = (floor(0.5° / step) + 1) · step`, and none without an atmosphere; `steady_sky` expects none after
-the noon segment's first frame. A failed gate exits 1. `--fog off --atmosphere off` is the fog-off baseline.
+the noon segment's first frame. `--volumetric-fog` adds a froxel volume to the main and mirror views and the
+`FOG_SCATTERING` and `FOG_INTEGRATION` pass lines report it (0 without the switch); `--taa` turns on TAA, so
+`--volumetric-fog --taa` on the pan segment shows whether sun shafts crawl. A failed gate exits 1. `--fog off --atmosphere off` is the fog-off baseline.
 
 ## Instancing benchmark
 

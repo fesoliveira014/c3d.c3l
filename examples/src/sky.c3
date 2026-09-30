@@ -40,6 +40,9 @@ const float TIME_LAPSE_DEGREES_PER_SECOND @local = 0.27f;
 const float TIME_LAPSE_START_DEGREES @local = 10;
 const float NOON_ELEVATION_DEGREES @local = 60;
 const float VALLEY_ELEVATION_DEGREES @local = 20;
+const float PAN_ELEVATION_DEGREES @local = 15;
+const float PAN_START_DEGREES @local = -20;
+const float PAN_DEGREES_PER_SECOND @local = 8; // 40 degrees across the default segment; shafts sweep through the view
 const float SUN_AZIMUTH_DEGREES @local = 30; // from the view axis toward +x: the sun ahead, its glow in view
 const float MIN_ELEVATION_DEGREES @local = -8;
 const float MAX_ELEVATION_DEGREES @local = 90;
@@ -103,15 +106,20 @@ const float AMBIENT_INTENSITY @local = 0.3f;
 
 const float FOG_DENSITY_MAX @local = 0.02f;
 const float FOG_FALLOFF_MAX @local = 0.1f;
+const float FOG_ANISOTROPY_LIMIT @local = 0.9f;
+const float FOG_DISTANCE_MIN @local = 50;
+const float FOG_DISTANCE_MAX @local = 1000;
 const Vec2 PANEL_POSITION @local = { 16, 16 };
 const Vec2 PANEL_SIZE @local = { 440, 520 };
 const Vec2 STATS_PANEL_POSITION @local = { 472, 16 };
 const Vec2 STATS_PANEL_SIZE @local = { 420, 260 };
 
-const String[Segment::len] SEGMENT_NAMES @local = { "noon", "twilight", "valley", "time-lapse" };
-const Pass[15] REPORTED_PASSES @local = {
+const String[Segment::len] SEGMENT_NAMES @local = { "noon", "twilight", "valley", "pan", "time-lapse" };
+const Pass[17] REPORTED_PASSES @local = {
     Pass.SKY_VIEW,
     Pass.AERIAL_PERSPECTIVE,
+    Pass.FOG_SCATTERING,
+    Pass.FOG_INTEGRATION,
     Pass.DEPTH_PREPASS,
     Pass.GBUFFER,
     Pass.LIGHTING,
@@ -136,6 +144,7 @@ enum Segment @local {
     NOON,
     TWILIGHT,
     VALLEY,
+    PAN,
     TIME_LAPSE,
 }
 
@@ -143,6 +152,7 @@ enum Preset @local {
     NOON,
     TWILIGHT,
     VALLEY,
+    PAN,
     TIME_LAPSE,
 }
 
@@ -165,6 +175,8 @@ struct Options @local {
     bool        path_traced;
     bool        fog;
     bool        atmosphere;
+    bool        volumetric_fog;
+    bool        taa;
     Preset      preset;
     uint        width;
     uint        height;
@@ -496,6 +508,8 @@ fn RendererDesc renderer_desc(Options options, bool validation, ZString applicat
 fn ViewDesc main_view_desc(ViewDesc desc, Options options) @local {
     desc.shading = options.shading;
     desc.ray_tracing.shadows = options.traced_shadows;
+    desc.volumetric_fog = options.volumetric_fog && !options.path_traced;
+    if (options.taa && !options.path_traced) desc.post.anti_aliasing = AntiAliasing.TAA;
     if (options.ssgi) {
         desc.post.anti_aliasing = AntiAliasing.TAA;
         desc.screen_space_gi = render::SCREEN_SPACE_GI_DEFAULT;
@@ -525,6 +539,7 @@ fn void? create_mirror(
     desc.post.anti_aliasing = AntiAliasing.NONE;
     desc.clip_plane = MIRROR_PLANE;
     desc.ray_tracing.shadows = demo.options.traced_shadows;
+    desc.volumetric_fog = demo.options.volumetric_fog;
     demo.mirror.view = render::create_view(renderer, desc)!;
     AssetStore* assets = demo.assets;
     assets.material(demo.mirror_material).data.custom.slots[0].texture = {
@@ -578,6 +593,9 @@ fn SkyPose preset_pose(Preset preset) @local {
             pose.camera_position.y = VALLEY_HEIGHT;
             pose.pitch = VALLEY_PITCH_DEGREES * DEGREE;
             pose.elevation_degrees = VALLEY_ELEVATION_DEGREES;
+        case PAN:
+            pose.yaw = PAN_START_DEGREES * DEGREE;
+            pose.elevation_degrees = PAN_ELEVATION_DEGREES;
         case TIME_LAPSE: pose.elevation_degrees = TIME_LAPSE_START_DEGREES;
     }
     return pose;
@@ -640,6 +658,8 @@ fn Options? parse_options(String[] args) @local {
                 }
             case "--ssgi": options.ssgi = true;
             case "--path-traced": options.path_traced = true;
+            case "--volumetric-fog": options.volumetric_fog = true;
+            case "--taa": options.taa = true;
             case "--fog": options.fog = on_off(option_value(args, &index)!)!;
             case "--atmosphere": options.atmosphere = on_off(option_value(args, &index)!)!;
             case "--preset":
@@ -647,6 +667,7 @@ fn Options? parse_options(String[] args) @local {
                     case "noon": options.preset = Preset.NOON;
                     case "twilight": options.preset = Preset.TWILIGHT;
                     case "valley": options.preset = Preset.VALLEY;
+                    case "pan": options.preset = Preset.PAN;
                     case "time-lapse": options.preset = Preset.TIME_LAPSE;
                     default: return c3d::INVALID_ARGUMENT~;
                 }
@@ -728,6 +749,8 @@ fn void sky_panel(
         imgui::same_line();
         if (imgui::button("Valley")) apply_preset(controls, fly_camera, Preset.VALLEY);
         imgui::same_line();
+        if (imgui::button("Pan")) apply_preset(controls, fly_camera, Preset.PAN);
+        imgui::same_line();
         if (imgui::button("Time-lapse")) apply_preset(controls, fly_camera, Preset.TIME_LAPSE);
         if (demo.fog) {
             imgui::separator_text("Height fog");
@@ -743,6 +766,18 @@ fn void sky_panel(
                 v:     &fog.falloff,
                 v_min: 0,
                 v_max: FOG_FALLOFF_MAX,
+            );
+            imgui::slider_float(
+                label: "Anisotropy",
+                v:     &fog.anisotropy,
+                v_min: -FOG_ANISOTROPY_LIMIT,
+                v_max: FOG_ANISOTROPY_LIMIT,
+            );
+            imgui::slider_float(
+                label: "Max distance",
+                v:     &fog.max_distance,
+                v_min: FOG_DISTANCE_MIN,
+                v_max: FOG_DISTANCE_MAX,
             );
         }
         imgui::separator_text("Frame");
@@ -913,6 +948,10 @@ fn SkyPose segment_pose(Segment segment, uint step) @local {
         case NOON: return preset_pose(Preset.NOON);
         case TWILIGHT: return preset_pose(Preset.TWILIGHT);
         case VALLEY: return preset_pose(Preset.VALLEY);
+        case PAN:
+            SkyPose pose = preset_pose(Preset.PAN);
+            pose.yaw += PAN_DEGREES_PER_SECOND * DEGREE * (float)step * TIME_STEP;
+            return pose;
         case TIME_LAPSE:
             SkyPose pose = preset_pose(Preset.TIME_LAPSE);
             pose.elevation_degrees += (float)step * time_lapse_step_degrees();
@@ -1169,13 +1208,16 @@ fn bool print_results(Demo* demo, BenchmarkResult* result) @local {
 
 fn void print_header(Options options) @local {
     io::printfn(
-        "# sky shading=%s shadows=%s ssgi=%s path_traced=%s fog=%s atmosphere=%s extent=%dx%d frames=%d",
+        "# sky shading=%s shadows=%s ssgi=%s path_traced=%s fog=%s atmosphere=%s "
+          "volumetric_fog=%s taa=%s extent=%dx%d frames=%d",
         options.shading == ShadingPath.DEFERRED ? "deferred" : "forward",
         options.traced_shadows ? "traced" : "atlas",
         options.ssgi ? "on" : "off",
         options.path_traced ? "on" : "off",
         options.fog ? "on" : "off",
         options.atmosphere ? "on" : "off",
+        options.volumetric_fog ? "on" : "off",
+        options.taa ? "on" : "off",
         options.width,
         options.height,
         options.segment_frames,
@@ -1246,8 +1288,9 @@ fn int main(String[] args) {
         if (excuse != c3d::UNSUPPORTED) {
             io::eprintfn("Invalid options: %s", excuse);
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
-              "[--shadows atlas|traced] [--ssgi] [--path-traced] [--fog on|off] [--atmosphere on|off] "
-              "[--preset noon|twilight|valley|time-lapse] [--width W] [--height H].");
+              "[--shadows atlas|traced] [--ssgi] [--path-traced] [--volumetric-fog] [--taa] "
+              "[--fog on|off] [--atmosphere on|off] "
+              "[--preset noon|twilight|valley|pan|time-lapse] [--width W] [--height H].");
         }
         return 1;
     }

@@ -46,12 +46,9 @@ float height_fog_limit_transmittance(SkyFogGpu sky, vec3 origin, vec3 direction)
     return density > 0.0 ? 0.0 : 1.0;
 }
 
-// Light the fog scatters toward the viewer: the sky at the view direction, else the environment, else ambient.
-vec3 fog_inscatter_color(FrameRoot frame, SkyFogGpu sky, vec3 direction) {
+// Light the fog scatters from the lighting environment, else the ambient; the volume adds its sun to it.
+vec3 fog_ambient_color(FrameRoot frame, SkyFogGpu sky, vec3 direction) {
     vec3 albedo = sky.fog_albedo_density.rgb;
-    if ((sky.flags & SKY_FOG_ATMOSPHERE) != 0u) {
-        return albedo * sky_view_radiance(sky, direction, true) * sky.sun_illuminance.rgb;
-    }
     if (frame.environment != 0ul) {
         EnvironmentGpu environment = EnvironmentGpu(frame.environment);
         vec3 rotated = vec3(
@@ -62,6 +59,14 @@ vec3 fog_inscatter_color(FrameRoot frame, SkyFogGpu sky, vec3 direction) {
         return albedo * environment_irradiance(environment.sh, rotated) * environment.intensity / PI;
     }
     return albedo * frame.ambient.rgb;
+}
+
+// Light the fog scatters toward the viewer: the sky at the view direction, else the environment, else ambient.
+vec3 fog_inscatter_color(FrameRoot frame, SkyFogGpu sky, vec3 direction) {
+    if ((sky.flags & SKY_FOG_ATMOSPHERE) != 0u) {
+        return sky.fog_albedo_density.rgb * sky_view_radiance(sky, direction, true) * sky.sun_illuminance.rgb;
+    }
+    return fog_ambient_color(frame, sky, direction);
 }
 
 // The camera ray a world position lies on: its origin, unit direction and the distance along it.
@@ -143,11 +148,8 @@ FogTerms fog_compose(FogTerms near, FogTerms far) {
     return terms;
 }
 
-// Aerial perspective over [near, far] of a pixel's ray: the camera's table divided by its value at near.
-FogTerms aerial_perspective_segment(SkyFogGpu sky, vec2 uv, float near, float far) {
-    FogTerms to_far = aerial_perspective_terms(sky, uv, far);
-    if (near <= 0.0) return to_far;
-    FogTerms to_near = aerial_perspective_terms(sky, uv, near);
+// The medium between near and far, from its values from the camera to each.
+FogTerms fog_between(FogTerms to_near, FogTerms to_far) {
     vec3 near_transmittance = max(to_near.transmittance, vec3(FOG_TRANSMITTANCE_FLOOR));
     FogTerms terms;
     terms.transmittance = to_far.transmittance / near_transmittance;
@@ -155,11 +157,59 @@ FogTerms aerial_perspective_segment(SkyFogGpu sky, vec2 uv, float near, float fa
     return terms;
 }
 
+// Aerial perspective over [near, far] of a pixel's ray: the camera's table divided by its value at near.
+FogTerms aerial_perspective_segment(SkyFogGpu sky, vec2 uv, float near, float far) {
+    FogTerms to_far = aerial_perspective_terms(sky, uv, far);
+    if (near <= 0.0) return to_far;
+    return fog_between(aerial_perspective_terms(sky, uv, near), to_far);
+}
+
+// Distance along a froxel ray to slice boundary k; slices are squared toward the camera.
+float fog_slice_distance(SkyFogGpu sky, uint boundary) {
+    float share = float(boundary) / float(FOG_VOLUME_SLICES);
+    return share * share * sky.fog_max_distance;
+}
+
+// The volume from the camera to a distance along a pixel's ray; texel k holds the integral to boundary k + 1.
+FogTerms fog_volume_terms(SkyFogGpu sky, vec2 uv, float distance) {
+    float slice = sqrt(clamp(distance / sky.fog_max_distance, 0.0, 1.0)) * float(FOG_VOLUME_SLICES);
+    float depth = (max(slice, 1.0) - 0.5) / float(FOG_VOLUME_SLICES);
+    vec4 volume = sample_texture_3d(sky.fog_volume, sky.lut_sampler, vec3(uv, depth));
+    float weight = min(slice, 1.0); // below the first boundary the volume grows linearly from the camera
+    FogTerms terms;
+    terms.transmittance = vec3(mix(1.0, volume.a, weight));
+    terms.inscatter = volume.rgb * weight;
+    return terms;
+}
+
+FogTerms fog_volume_segment(SkyFogGpu sky, vec2 uv, float near, float far) {
+    FogTerms to_far = fog_volume_terms(sky, uv, far);
+    if (near <= 0.0) return to_far;
+    return fog_between(fog_volume_terms(sky, uv, near), to_far);
+}
+
+// Height fog over [near, far] of a pixel's ray: the volume up to its end, the analytic fog past it.
+FogTerms height_fog_range(FrameRoot frame, SkyFogGpu sky, vec2 uv, vec3 origin, vec3 direction, float near, float far) {
+    if (sky.fog_volume == 0u) return height_fog_segment(frame, sky, origin, direction, near, far);
+    float end = sky.fog_max_distance;
+    FogTerms volume = near < end ? fog_volume_segment(sky, uv, near, min(far, end)) : fog_none();
+    FogTerms tail = far > end ? height_fog_segment(frame, sky, origin, direction, max(near, end), far) : fog_none();
+    return fog_compose(volume, tail);
+}
+
+// Height fog from near along a pixel's ray to infinity: the volume up to its end, the analytic limit past it.
+FogTerms height_fog_beyond(FrameRoot frame, SkyFogGpu sky, vec2 uv, vec3 origin, vec3 direction, float near) {
+    if (sky.fog_volume == 0u) return height_fog_to_infinity(frame, sky, origin + direction * near, direction);
+    float end = sky.fog_max_distance;
+    FogTerms volume = near < end ? fog_volume_segment(sky, uv, near, end) : fog_none();
+    return fog_compose(volume, height_fog_to_infinity(frame, sky, origin + direction * max(near, end), direction));
+}
+
 // Fog over [near, far] of a ray: aerial perspective behind the height fog.
 FogTerms fog_segment(FrameRoot frame, SkyFogGpu sky, vec2 uv, vec3 origin, vec3 direction, float near, float far) {
     if (near >= far) return fog_none();
     return fog_compose(
-        height_fog_segment(frame, sky, origin, direction, near, far),
+        height_fog_range(frame, sky, uv, origin, direction, near, far),
         aerial_perspective_segment(sky, uv, near, far)
     );
 }
@@ -182,7 +232,7 @@ FogTerms fog_background_terms(FrameRoot frame, vec2 uv) {
     fog_pixel_ray(frame, uv, origin, direction);
     float near = fog_clip_start(frame, origin, direction);
     if (near >= BACKGROUND_VIEW_DISTANCE) return fog_none();
-    return height_fog_to_infinity(frame, sky, origin + direction * near, direction);
+    return height_fog_beyond(frame, sky, uv, origin, direction, near);
 }
 
 // Fog a blended surface's radiance at its own position; the view's fog pass fogs everything else.
@@ -201,7 +251,8 @@ vec3 fog_behind(FrameRoot frame, vec3 surface_position, vec3 behind, float behin
     float near;
     fog_view_ray(frame, surface_position, origin, direction, near);
     if (behind_depth == 0.0) {
-        FogTerms beyond = height_fog_to_infinity(frame, sky, origin + direction * near, direction);
+        vec2 uv = fog_screen_uv(frame, surface_position);
+        FogTerms beyond = height_fog_beyond(frame, sky, uv, origin, direction, near);
         return behind * beyond.transmittance + beyond.inscatter;
     }
     vec3 forward = -normalize(vec3(frame.view[0][2], frame.view[1][2], frame.view[2][2]));

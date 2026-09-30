@@ -41,6 +41,7 @@ fn LightExtraction extract_lights(
     bool trace_shadows = false,
 ) {
     LightGpu[] packed = alloc::new_array(allocator, LightGpu, math::min(scene.count(Light), capacity));
+    uint sun_light;
     ShadowRequest[] requests = collect_shadow_requests(
         allocator: allocator,
         scene: scene,
@@ -53,8 +54,9 @@ fn LightExtraction extract_lights(
         altitude: altitude,
         ray_tracing: ray_tracing,
         trace_shadows: trace_shadows,
+        sun_light: &sun_light,
     );
-    return { .lights = packed[:counts.packed], .shadows = requests };
+    return { .lights = packed[:counts.packed], .shadows = requests, .sun_light = sun_light };
 }
 
 fn ShadowRequest[] collect_shadow_requests(
@@ -69,6 +71,7 @@ fn ShadowRequest[] collect_shadow_requests(
     float altitude = 0,
     RayTracingDesc ray_tracing = {},
     bool trace_shadows = false,
+    uint* sun_light = null,
 ) @private {
     *counts = {};
     ShadowRequest[] requests = alloc::new_array(allocator, ShadowRequest, capacity);
@@ -79,7 +82,9 @@ fn ShadowRequest[] collect_shadow_requests(
         bool eligible = node.visible_effective && (node.layers & view_layers)
           && light.layers != 0 && light.intensity > 0;
         Vec4 color_intensity = { light.color.r, light.color.g, light.color.b, light.intensity };
-        if (eligible && atmosphere && atmosphere.atmosphere && c3d::same_id(entity, atmosphere.entity)) {
+        bool atmosphere_sun = eligible && atmosphere && atmosphere.atmosphere
+          && c3d::same_id(entity, atmosphere.entity);
+        if (atmosphere_sun) {
             Vec3 radiance = light::sun_radiance(
                 atmosphere: atmosphere.atmosphere,
                 sun:        light,
@@ -105,6 +110,7 @@ fn ShadowRequest[] collect_shadow_requests(
                 counts: counts,
                 ray_traced: ray_traced,
             );
+            if (sun_light && atmosphere_sun && counts.packed != packed_index) *sun_light = packed_index + 1;
 
             if (counts.packed != packed_index && light.shadow.enabled && !ray_traced) {
                 light.validate_shadow();

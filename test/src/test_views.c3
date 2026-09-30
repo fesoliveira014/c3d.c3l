@@ -203,6 +203,7 @@ fn void test_view_targets_list_every_image_once() @test {
     bool reflection_blur_listed;
     bool accumulation_listed;
     bool scene_depth_listed;
+    bool fog_volume_listed;
     foreach (usz index, target : targets) {
         assert(target != null);
         for (usz other = index + 1; other < targets.len; other++) assert(target != targets[other]);
@@ -212,9 +213,10 @@ fn void test_view_targets_list_every_image_once() @test {
         if (target == &record.reflection_blur) reflection_blur_listed = true;
         if (target == &record.accumulation) accumulation_listed = true;
         if (target == &record.scene_depth) scene_depth_listed = true;
+        if (target == &record.fog_volume) fog_volume_listed = true;
     }
     assert(raw_listed && ao_listed && reflection_listed && reflection_blur_listed && accumulation_listed);
-    assert(scene_depth_listed);
+    assert(scene_depth_listed && fog_volume_listed);
 }
 
 fn void test_view_desc_gates_path_tracing() @test {
@@ -251,6 +253,9 @@ fn void test_view_desc_gates_path_tracing() @test {
     expect_view_desc_fault(renderer, &desc, c3d::INVALID_ARGUMENT);
     desc = base;
     desc.screen_space_gi = render::SCREEN_SPACE_GI_DEFAULT;
+    expect_view_desc_fault(renderer, &desc, c3d::INVALID_ARGUMENT);
+    desc = base;
+    desc.volumetric_fog = true;
     expect_view_desc_fault(renderer, &desc, c3d::INVALID_ARGUMENT);
     desc = base;
     desc.ray_tracing.reflections = true;

@@ -79,7 +79,13 @@ const Pass[8] REPORTED_PASSES @local = {
     Pass.UPLOADS,
 };
 
-const Pass[3] SKY_PASSES @local = { Pass.SKY_VIEW, Pass.AERIAL_PERSPECTIVE, Pass.FOG };
+const Pass[5] SKY_PASSES @local = {
+    Pass.SKY_VIEW,
+    Pass.AERIAL_PERSPECTIVE,
+    Pass.FOG_SCATTERING,
+    Pass.FOG_INTEGRATION,
+    Pass.FOG,
+};
 
 enum Segment @local {
     STILL,
@@ -103,6 +109,7 @@ struct Options @local {
     ShadingPath shading;
     bool        traced_shadows;
     bool        sky;
+    bool        volumetric_fog;
     uint        size;
     uint        layers;
     float       lod_threshold;
@@ -230,6 +237,7 @@ fn ViewDesc configure_desc(ViewDesc desc, Options options) @local {
     desc.shading = options.shading;
     desc.post.anti_aliasing = AntiAliasing.TAA;
     desc.ray_tracing.shadows = options.traced_shadows;
+    desc.volumetric_fog = options.volumetric_fog;
     return desc;
 }
 
@@ -316,11 +324,13 @@ fn Options? parse_options(String[] args) @local {
                 options.lod_threshold = option_value(args, &index)!.to_float()!;
                 if (!(options.lod_threshold >= 0)) return c3d::INVALID_ARGUMENT~;
             case "--sky": options.sky = true;
+            case "--volumetric-fog": options.volumetric_fog = true;
             case "--width": options.width = option_value(args, &index)!.to_uint()!;
             case "--height": options.height = option_value(args, &index)!.to_uint()!;
             default: return c3d::INVALID_ARGUMENT~;
         }
     }
+    if (options.volumetric_fog && !options.sky) return c3d::INVALID_ARGUMENT~;
     if (!options.width) options.width = options.benchmark ? BENCHMARK_WIDTH : WINDOW_WIDTH;
     if (!options.height) options.height = options.benchmark ? BENCHMARK_HEIGHT : WINDOW_HEIGHT;
     return options;
@@ -908,7 +918,7 @@ fn bool? run_benchmark(Options options) @local {
 
     io::printfn(
         "# terrain size=%d layers=%d shading=%s shadows=%s lod_threshold=%g hysteresis=%g extent=%dx%d frames=%d "
-          "terrain=%s sky=%s",
+          "terrain=%s sky=%s volumetric_fog=%s",
         options.size,
         options.layers,
         options.shading == ShadingPath.DEFERRED ? "deferred" : "forward",
@@ -920,6 +930,7 @@ fn bool? run_benchmark(Options options) @local {
         options.segment_frames,
         options.hide_terrain ? "hidden" : "visible",
         options.sky ? "on" : "off",
+        options.volumetric_fog ? "on" : "off",
     );
     run_segments(
         demo:     &demo,
@@ -939,7 +950,7 @@ fn int main(String[] args) {
             io::eprintfn("Invalid options: %s", excuse);
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
               "[--shadows atlas|traced] [--size 1025|2049|4097] [--layers 1|4] [--lod-threshold PIXELS] "
-              "[--width W] [--height H] [--hide-terrain] [--sky].");
+              "[--width W] [--height H] [--hide-terrain] [--sky] [--volumetric-fog].");
         }
         return 1;
     }

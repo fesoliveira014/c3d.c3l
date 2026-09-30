@@ -71,6 +71,7 @@ const HeightFog LANDSCAPE_FOG @local = { // a haze that pools below 100 m of the
     .falloff      = 0.01f,
     .albedo       = { 1, 1, 1 },
     .max_distance = 400,
+    .anisotropy   = 0.3f,
 };
 
 const LayerLook[LAYER_COUNT] LAYER_LOOKS @local = {

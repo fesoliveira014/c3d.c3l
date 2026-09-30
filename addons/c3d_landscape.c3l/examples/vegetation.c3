@@ -75,7 +75,13 @@ const Pass[7] REPORTED_PASSES @local = {
     Pass.INSTANCE_CULL,
 };
 
-const Pass[3] SKY_PASSES @local = { Pass.SKY_VIEW, Pass.AERIAL_PERSPECTIVE, Pass.FOG };
+const Pass[5] SKY_PASSES @local = {
+    Pass.SKY_VIEW,
+    Pass.AERIAL_PERSPECTIVE,
+    Pass.FOG_SCATTERING,
+    Pass.FOG_INTEGRATION,
+    Pass.FOG,
+};
 
 enum Segment @local {
     STILL,
@@ -110,6 +116,7 @@ struct Options @local {
     ShadingPath   shading;
     bool          traced_shadows;
     bool          sky;
+    bool          volumetric_fog;
     uint          size;
     FoliageChoice foliage;
     float         tree_fade_end;
@@ -325,6 +332,7 @@ fn ViewDesc configure_desc(ViewDesc desc, Options options) @local {
     desc.shading = options.shading;
     desc.post.anti_aliasing = AntiAliasing.TAA;
     desc.ray_tracing.shadows = options.traced_shadows;
+    desc.volumetric_fog = options.volumetric_fog;
     return desc;
 }
 
@@ -441,11 +449,13 @@ fn Options? parse_options(String[] args) @local {
                 options.tree_fade_end = option_value(args, &index)!.to_float()!;
                 if (!(options.tree_fade_end > 0)) return c3d::INVALID_ARGUMENT~;
             case "--sky": options.sky = true;
+            case "--volumetric-fog": options.volumetric_fog = true;
             case "--width": options.width = option_value(args, &index)!.to_uint()!;
             case "--height": options.height = option_value(args, &index)!.to_uint()!;
             default: return c3d::INVALID_ARGUMENT~;
         }
     }
+    if (options.volumetric_fog && !options.sky) return c3d::INVALID_ARGUMENT~;
     if (!options.width) options.width = options.benchmark ? BENCHMARK_WIDTH : WINDOW_WIDTH;
     if (!options.height) options.height = options.benchmark ? BENCHMARK_HEIGHT : WINDOW_HEIGHT;
     return options;
@@ -984,7 +994,7 @@ fn void print_header(Demo* demo, uint max_instance_batches) @local {
     uint tree_cells = options.foliage == BOTH ? grid_cells(demo.ground.extent, landscape_foliage::TREE_CELL_SIZE) : 0;
     io::printfn(
         "# vegetation size=%d shading=%s shadows=%s foliage=%s tree_fade_end=%g extent=%dx%d frames=%d "
-          "grass_cells=%d tree_cells=%d max_nodes=%d max_instance_batches=%d sky=%s",
+          "grass_cells=%d tree_cells=%d max_nodes=%d max_instance_batches=%d sky=%s volumetric_fog=%s",
         options.size,
         options.shading == ShadingPath.DEFERRED ? "deferred" : "forward",
         options.traced_shadows ? "traced" : "atlas",
@@ -998,6 +1008,7 @@ fn void print_header(Demo* demo, uint max_instance_batches) @local {
         scene_node_budget(options, demo.ground.extent),
         max_instance_batches,
         options.sky ? "on" : "off",
+        options.volumetric_fog ? "on" : "off",
     );
     foreach (&layer : active_layers(demo)) {
         FoliageRuntime* runtime = demo.scene.get(layer.node, FoliageRuntime);
@@ -1079,7 +1090,7 @@ fn int main(String[] args) {
             io::eprintfn("Invalid options: %s", excuse);
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
               "[--shadows atlas|traced] [--size 1025|2049|4097] [--foliage both|grass|none] "
-              "[--tree-fade-end METRES] [--width W] [--height H] [--sky].");
+              "[--tree-fade-end METRES] [--width W] [--height H] [--sky] [--volumetric-fog].");
         }
         return 1;
     }

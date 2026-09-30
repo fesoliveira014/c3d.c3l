@@ -90,6 +90,19 @@ fn void aim_sun(Scene* scene, Node* node, Vec3 to_sun) @local {
     scene.update_world();
 }
 
+fn LightExtraction extract_all(Scene* scene, AtmosphereSelection* atmosphere, LightCounts* counts) @local {
+    return render::extract_lights(
+        allocator:   tmem,
+        scene:       scene,
+        frustum:     null,
+        view_layers: uint::max,
+        capacity:    4,
+        counts:      counts,
+        atmosphere:  atmosphere,
+        altitude:    0,
+    );
+}
+
 fn void test_sun_radiance_matches_the_double_reference() @test {
     Atmosphere atmosphere = light::ATMOSPHERE_EARTH;
     Light sun = light::directional(SUN_COLOR, SUN_INTENSITY);
@@ -204,6 +217,7 @@ fn void test_extract_lights_attenuates_only_the_atmosphere_sun() @test {
             altitude:    0,
         );
         assert(zenith.lights.len == 2 && zenith.shadows.len == 1);
+        assert(zenith.sun_light == 1);
         Vec4 sun_packed = zenith.lights[0].color_intensity;
         for (uint channel = 0; channel < 3; channel++) {
             float full = SUN_COLOR[channel] * SUN_INTENSITY;
@@ -225,6 +239,7 @@ fn void test_extract_lights_attenuates_only_the_atmosphere_sun() @test {
             altitude:    0,
         );
         assert(night.lights.len == 1 && night.shadows.len == 0 && counts.culled == 1);
+        assert(night.sun_light == 0);
         assert(night.lights[0].color_intensity == (Vec4){ SECOND_COLOR.x, SECOND_COLOR.y, SECOND_COLOR.z, 2 });
 
         ShadowRequest[] prepared = render::collect_shadow_requests(
@@ -237,6 +252,39 @@ fn void test_extract_lights_attenuates_only_the_atmosphere_sun() @test {
             counts:      &counts,
         );
         assert(prepared.len == 1 && prepared[0].light.index == sun.id.index);
+    };
+}
+
+fn void test_fog_sun_prefers_the_atmosphere_sun() @test {
+    Scene scene = scene::create_scene(mem, { .max_nodes = 4 });
+    defer scene::destroy_scene(&scene);
+    scene.add_light(light::point(SECOND_COLOR, 2, 10), name: "lamp")!!;
+    Node* moon = scene.add_light(light::directional(SECOND_COLOR, 2, false), name: "moon")!!;
+    Node* sun = scene.add_light(light::directional(SUN_COLOR, SUN_INTENSITY), name: "sun")!!;
+    scene.add(sun, light::ATMOSPHERE_EARTH);
+    aim_sun(&scene, sun, { 0, 1, 0 });
+    AtmosphereSelection atmosphere = render::select_atmosphere(&scene);
+    AtmosphereSelection none;
+    LightCounts counts;
+
+    @pool() {
+        LightExtraction day = extract_all(&scene, &atmosphere, &counts);
+        assert(day.sun_light == 3 && render::fog_sun_light(&day, true) == 3);
+        LightExtraction plain = extract_all(&scene, &none, &counts);
+        assert(plain.sun_light == 0 && render::fog_sun_light(&plain, false) == 2);
+    };
+
+    aim_sun(&scene, sun, elevated(-5 * DEGREE));
+    @pool() {
+        LightExtraction night = extract_all(&scene, &atmosphere, &counts);
+        assert(night.sun_light == 0 && render::fog_sun_light(&night, true) == 0);
+    };
+
+    scene.remove(sun);
+    scene.remove(moon);
+    @pool() {
+        LightExtraction lamp_only = extract_all(&scene, &none, &counts);
+        assert(render::fog_sun_light(&lamp_only, false) == 0);
     };
 }
 
@@ -308,13 +356,19 @@ fn void test_atmosphere_and_fog_validity_reject_each_arm() @test {
     HeightFog uniform = fog;
     uniform.falloff = 0;
     assert(light::height_fog_valid(&uniform));
-    HeightFog[5] broken = { fog, fog, fog, fog, fog };
+    HeightFog[8] broken = { fog, fog, fog, fog, fog, fog, fog, fog };
     broken[0].density = -0.1f;
     broken[1].falloff = -0.1f;
     broken[2].albedo.z = float::nan;
     broken[3].max_distance = 0;
     broken[4].density = float::inf;
+    broken[5].anisotropy = 1;
+    broken[6].anisotropy = -1;
+    broken[7].anisotropy = float::nan;
     foreach (index, &medium : broken) assert(!light::height_fog_valid(medium), "arm %d", index);
+    HeightFog backward = fog;
+    backward.anisotropy = -0.99f;
+    assert(light::height_fog_valid(&backward));
 }
 
 fn void test_sky_fog_block_packs_the_atmosphere_and_the_fog() @test {
@@ -329,7 +383,11 @@ fn void test_sky_fog_block_packs_the_atmosphere_and_the_fog() @test {
         sun_illuminance: { 3, 2, 1 },
         altitude:        -25,
         fog:             &fog,
-        tables:          { .transmittance = (gpu::TextureIndex)5, .sky_view = (gpu::TextureIndex)7 },
+        tables:          {
+            .transmittance = (gpu::TextureIndex)5,
+            .sky_view      = (gpu::TextureIndex)7,
+            .fog_volume    = (gpu::TextureIndex)9,
+        },
     );
     assert(block.flags == (shader::SKY_FOG_ATMOSPHERE | shader::SKY_FOG_HEIGHT_FOG));
     assert(block.camera_altitude == 0 && block.planet_radius == 6_360_000 && block.top_radius == 6_460_000);
@@ -338,7 +396,7 @@ fn void test_sky_fog_block_packs_the_atmosphere_and_the_fog() @test {
     assert(block.fog_base_height == 40 && block.fog_albedo_density.w == medium.density);
     assert(block.transmittance_lut == (gpu::TextureIndex)5 && block.sky_view_lut == (gpu::TextureIndex)7);
     assert(block.aerial_perspective_distance == render::AERIAL_PERSPECTIVE_DISTANCE);
-    assert(block.fog_volume == (gpu::TextureIndex)0);
+    assert(block.fog_volume == (gpu::TextureIndex)9 && block.fog_anisotropy == medium.anisotropy);
 
     FogSelection no_fog;
     render::write_sky_fog(

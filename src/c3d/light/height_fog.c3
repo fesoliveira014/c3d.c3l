@@ -10,6 +10,7 @@ const HeightFog HEIGHT_FOG_DEFAULT = {
     .falloff      = 0.02f,
     .albedo       = { 1, 1, 1 },
     .max_distance = 200,
+    .anisotropy   = 0.3f,
 };
 
 <*
@@ -25,6 +26,7 @@ struct HeightFog {
     float falloff;      // per metre of height; zero is uniform fog
     Vec3  albedo;       // scattered share of the extinction
     float max_distance; // metres of view the volumetric fog covers
+    float anisotropy;   // Henyey-Greenstein g of the volumetric fog's sun light, in (-1, 1)
 }
 
 <*
@@ -40,6 +42,7 @@ fn bool height_fog_valid(HeightFog* fog) {
     foreach (channel : fog.albedo) {
         if (!math::is_finite(channel) || channel < 0) return false;
     }
+    if (!math::is_finite(fog.anisotropy) || math::abs(fog.anisotropy) >= 1) return false;
     return math::is_finite(fog.max_distance) && fog.max_distance > 0;
 }
 

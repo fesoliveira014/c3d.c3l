@@ -97,6 +97,7 @@ struct SkyFogTables @private {
     gpu::TextureIndex sky_view;
     gpu::TextureIndex aerial_perspective;
     gpu::SamplerIndex sampler;
+    gpu::TextureIndex fog_volume;
 }
 
 struct SkyPipelines @private {
@@ -106,6 +107,9 @@ struct SkyPipelines @private {
     gpu::PipelineHandle aerial_perspective;
     gpu::PipelineHandle environment;
     gpu::PipelineHandle fog;
+    gpu::PipelineHandle fog_scattering;
+    gpu::PipelineHandle fog_scattering_traced;
+    gpu::PipelineHandle fog_integration;
 }
 
 <*
@@ -203,6 +207,7 @@ fn void write_sky_fog(
         .sky_view_lut           = tables.sky_view,
         .aerial_perspective_lut = tables.aerial_perspective,
         .lut_sampler            = tables.sampler,
+        .fog_volume             = tables.fog_volume,
     };
     if (atmosphere) {
         float top = atmosphere.planet_radius + atmosphere.atmosphere_height;
@@ -245,6 +250,7 @@ fn void write_sky_fog(
         root.fog_base_height = fog.base_height;
         root.fog_falloff = medium.falloff;
         root.fog_max_distance = medium.max_distance;
+        root.fog_anisotropy = medium.anisotropy;
     }
 }
 
@@ -652,10 +658,12 @@ fn void free_atmospheres(Renderer* renderer) @private {
         if (mirror.entity.generation) release_atmosphere(&renderer.device, mirror);
         *mirror = {};
     }
-    gpu::PipelineHandle[6] pipelines = {
+    gpu::PipelineHandle[9] pipelines = {
         renderer.sky_pipelines.transmittance, renderer.sky_pipelines.multi_scattering,
         renderer.sky_pipelines.sky_view, renderer.sky_pipelines.aerial_perspective,
         renderer.sky_pipelines.environment, renderer.sky_pipelines.fog,
+        renderer.sky_pipelines.fog_scattering, renderer.sky_pipelines.fog_scattering_traced,
+        renderer.sky_pipelines.fog_integration,
     };
     foreach (pipeline : pipelines) if (pipeline.is_valid()) (void)gpu::destroy_pipeline(&renderer.device, pipeline);
     renderer.sky_pipelines = {};
@@ -704,11 +712,13 @@ fn gpu::GpuAddress? pack_view_sky_fog(
     AtmosphereSelection* selection,
     FogSelection* fog,
     Vec3 camera_position,
+    gpu::TextureIndex fog_volume,
 ) @private {
     if (!atmosphere && !fog.fog) return (gpu::GpuAddress)0;
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan span = slot.upload.take(&renderer.device, SkyFogGpu::size, STREAM_ALIGNMENT)!;
     SkyFogTables tables = { .sampler = renderer.linear_clamp_sampler };
+    if (fog.fog) tables.fog_volume = fog_volume;
     Vec3 to_sun;
     Vec3 illuminance;
     if (atmosphere) {

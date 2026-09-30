@@ -74,13 +74,14 @@ struct ViewDesc {
     PathTraceDesc        path_trace;
     bool                 instance_culling;
     Plane                clip_plane; // world space; the zero plane clips nothing
+    bool                 volumetric_fog; // a froxel volume for the view's HeightFog; allocated with the view
 }
 
 <*
  Working images one view owns, in view_targets order.
 *>
 const uint VIEW_TARGET_COUNT = 5 + post::BLOOM_MAX_LEVELS + 8 + GBUFFER_CHANNEL_COUNT
-  + 3 * post::TAA_HISTORY_SLOTS + 1 + 2 + 2 + 1 + 1 + 2 * SSGI_HISTORY_SLOTS + 2 + 1 + 2;
+  + 3 * post::TAA_HISTORY_SLOTS + 1 + 2 + 2 + 1 + 1 + 2 * SSGI_HISTORY_SLOTS + 2 + 1 + 3;
 
 <*
  Reverse-Z projection terms that recover forward distance from stored depth.
@@ -387,6 +388,7 @@ struct ViewRecord {
     Target                               ssgi;
     Target                               sky_view;
     Target                               aerial_perspective;
+    Target                               fog_volume;
     Target*                              scene_input;
     bool                                 post_chain_open;
     bool                                 rendered;
@@ -463,6 +465,7 @@ fn Target*[VIEW_TARGET_COUNT] view_targets(ViewRecord* record) {
     targets[next + 3 + 2 * SSGI_HISTORY_SLOTS] = &record.scene_depth;
     targets[next + 4 + 2 * SSGI_HISTORY_SLOTS] = &record.sky_view;
     targets[next + 5 + 2 * SSGI_HISTORY_SLOTS] = &record.aerial_perspective;
+    targets[next + 6 + 2 * SSGI_HISTORY_SLOTS] = &record.fog_volume;
     return targets;
 }
 
@@ -688,6 +691,7 @@ fn void? configure_view(Renderer* renderer, ViewId view, ViewDesc desc) {
     if (!desc.ray_tracing.reflections) retire_reflection_images(renderer, record);
     if (desc.shading != ShadingPath.PATH_TRACED) retire_accumulation(renderer, record);
     if (desc.shading == ShadingPath.PATH_TRACED) retire_sky_view_images(renderer, record);
+    if (!desc.volumetric_fog || desc.shading == ShadingPath.PATH_TRACED) retire_fog_volume(renderer, record);
     record.desc = desc;
     record.history.valid = false;
     record.history.pending = false;
@@ -699,6 +703,7 @@ fn void? configure_view(Renderer* renderer, ViewId view, ViewDesc desc) {
     acquire_reflection_images(renderer, record)!;
     acquire_accumulation(renderer, record)!;
     acquire_sky_view_images(renderer, record)!;
+    acquire_fog_volume(renderer, record)!;
 }
 
 <*
@@ -745,7 +750,7 @@ fn void? validate_view_desc(Renderer* renderer, ViewDesc* desc) @private {
         bool raster_only = desc.post.anti_aliasing == AntiAliasing.TAA || desc.post.motion_blur
           || desc.post.depth_of_field || desc.ambient_occlusion.kind != AoKind.NONE
           || ray_tracing.shadows || desc.lights == LightSelection.CLUSTERED || desc.screen_space_gi.enabled
-          || desc.clip_plane.normal != (Vec3){};
+          || desc.clip_plane.normal != (Vec3){} || desc.volumetric_fog;
         if (raster_only || !path_trace_desc_valid(&desc.path_trace)) return c3d::INVALID_ARGUMENT~;
     }
     if (desc.lights == LightSelection.CLUSTERED) {
@@ -821,6 +826,7 @@ fn void? acquire_view_images(Renderer* renderer, ViewRecord* record) @private {
     acquire_reflection_images(renderer, record)!;
     acquire_accumulation(renderer, record)!;
     acquire_sky_view_images(renderer, record)!;
+    acquire_fog_volume(renderer, record)!;
     if (record.desc.lights == LightSelection.CLUSTERED) {
         ClusterLayout layout = cluster_layout(
             desc: record.desc.clusters,
@@ -847,6 +853,7 @@ fn void release_view_images(Renderer* renderer, ViewRecord* record) @private {
     release_reflection_images(&renderer.device, record);
     release_accumulation(&renderer.device, record);
     release_sky_view_images(&renderer.device, record);
+    release_fog_volume(&renderer.device, record);
     release_view_targets(&renderer.device, record);
     post::release_post_targets(&renderer.device, record);
     post::release_effect_targets(&renderer.device, record);
