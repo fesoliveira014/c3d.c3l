@@ -365,8 +365,10 @@ fn void write_samples(FrameSample[] samples, bool timestamps_enabled) {
             timestamps_enabled ? sample.gpu_environment_stage_ms[EnvironmentStage.PREFILTER.ordinal] : unavailable,
             timestamps_enabled ? sample.gpu_environment_stage_ms[EnvironmentStage.SHEEN.ordinal] : unavailable,
             timestamps_enabled ? sample.gpu_environment_stage_ms[EnvironmentStage.LUTS.ordinal] : unavailable,
-            timestamps_enabled ? sample.gpu_environment_stage_ms[EnvironmentStage.SKY_TRANSMITTANCE.ordinal] : unavailable,
-            timestamps_enabled ? sample.gpu_environment_stage_ms[EnvironmentStage.SKY_MULTI_SCATTERING.ordinal] : unavailable,
+            timestamps_enabled
+              ? sample.gpu_environment_stage_ms[EnvironmentStage.SKY_TRANSMITTANCE.ordinal] : unavailable,
+            timestamps_enabled
+              ? sample.gpu_environment_stage_ms[EnvironmentStage.SKY_MULTI_SCATTERING.ordinal] : unavailable,
             timestamps_enabled ? sample.gpu_environment_stage_ms[EnvironmentStage.SKY.ordinal] : unavailable,
             sample.batches_faded);
     }

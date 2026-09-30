@@ -38,7 +38,7 @@ struct Atmosphere {
     float mie_scattering;        // per metre at the surface
     float mie_absorption;        // per metre at the surface
     float mie_scale_height;      // metres
-    float mie_anisotropy;        // Henyey-Greenstein g
+    float mie_anisotropy;        // Cornette-Shanks g
     Vec3  ozone_absorption;      // per metre at the layer centre
     float ozone_center_altitude; // metres
     float ozone_half_width;      // metres; the layer thins to zero over it

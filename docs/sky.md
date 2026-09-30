@@ -43,7 +43,7 @@ rotation and scale are ignored:
 | `density` | 0.002 | extinction per metre at the node's world y |
 | `falloff` | 0.02 | per metre of height; the density halves every 35 m above the node; 0 is uniform fog |
 | `albedo` | 1 | scattered share of the extinction, per channel |
-| `max_distance` | 200 | metres of view a volumetric fog would cover; validated, not yet read |
+| `max_distance` | 200 | metres of view a volumetric fog covers; validated, unused by the analytic fog |
 
 `light::atmosphere_valid` and `light::height_fog_valid` state what the renderer accepts. An
 atmosphere needs finite positive radii, heights, scale heights, ozone width and sun radius (below

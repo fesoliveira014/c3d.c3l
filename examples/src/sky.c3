@@ -196,8 +196,6 @@ struct Controls @local {
     float azimuth_degrees;
     bool  playing;
     bool  exposure_table;
-    float fog_density;
-    float fog_falloff;
     uint  regenerations;
 }
 
@@ -236,7 +234,8 @@ fn Vec3 look_direction(float yaw, float pitch) @local {
 fn Vec3 sun_to(float elevation_degrees, float azimuth_degrees) @local {
     float elevation = elevation_degrees * DEGREE;
     float azimuth = azimuth_degrees * DEGREE;
-    return { math::cos(elevation) * math::sin(azimuth), math::sin(elevation), -math::cos(elevation) * math::cos(azimuth) };
+    float horizontal = math::cos(elevation);
+    return { horizontal * math::sin(azimuth), math::sin(elevation), -horizontal * math::cos(azimuth) };
 }
 
 fn void aim_sun(Node* sun, Vec3 to_sun) @local {
@@ -244,7 +243,6 @@ fn void aim_sun(Node* sun, Vec3 to_sun) @local {
     sun.local.rotation = maths::look_rotation(-to_sun, up);
 }
 
-// Log-linear between the table's entries; clamped at both ends.
 fn float exposure_for(float elevation_degrees) @local {
     if (elevation_degrees >= EXPOSURE_ELEVATIONS[0]) return EXPOSURE_VALUES[0];
     for (usz index = 1; index < EXPOSURE_ELEVATIONS.len; index++) {
@@ -252,8 +250,9 @@ fn float exposure_for(float elevation_degrees) @local {
         if (elevation_degrees < lower) continue;
         float upper = EXPOSURE_ELEVATIONS[index - 1];
         float share = (elevation_degrees - upper) / (lower - upper);
-        float stops = math::log2(EXPOSURE_VALUES[index - 1]) * (1 - share) + math::log2(EXPOSURE_VALUES[index]) * share;
-        return math::exp2(stops);
+        float upper_stops = math::log2(EXPOSURE_VALUES[index - 1]);
+        float lower_stops = math::log2(EXPOSURE_VALUES[index]);
+        return math::exp2(upper_stops + (lower_stops - upper_stops) * share);
     }
     return EXPOSURE_VALUES[EXPOSURE_VALUES.len - 1];
 }
