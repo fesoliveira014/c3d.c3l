@@ -136,7 +136,13 @@ const Pass[9] REPORTED_PASSES @local = {
     Pass.TEMPORAL_AA,
 };
 
-const Pass[3] SKY_PASSES @local = { Pass.SKY_VIEW, Pass.AERIAL_PERSPECTIVE, Pass.FOG };
+const Pass[5] SKY_PASSES @local = {
+    Pass.SKY_VIEW,
+    Pass.AERIAL_PERSPECTIVE,
+    Pass.FOG_SCATTERING,
+    Pass.FOG_INTEGRATION,
+    Pass.FOG,
+};
 
 enum Segment @local {
     STILL,
@@ -179,6 +185,7 @@ struct Options @local {
     uint        crates;
     bool        ssgi;
     bool        sky;
+    bool        volumetric_fog;
     bool        traced;
     bool        capture;
     bool        ripples;
@@ -599,6 +606,7 @@ fn Mirror? create_mirror(
     Node* lake,
     uint[<2>] output_size,
     float render_scale,
+    bool volumetric_fog,
 ) @local {
     RenderTargetId mirror_target = render::create_render_target(
         renderer,
@@ -607,6 +615,7 @@ fn Mirror? create_mirror(
     ViewDesc mirror_desc = render::texture_view_desc(mirror_target);
     mirror_desc.render_scale = render_scale;
     mirror_desc.post.anti_aliasing = AntiAliasing.NONE;
+    mirror_desc.volumetric_fog = volumetric_fog;
     mirror_desc.clip_plane = scene.get(lake, WaterRuntime).clip_plane;
     ViewId mirror_view = render::create_view(renderer, mirror_desc)!;
     water::set_reflection_target(
@@ -735,6 +744,7 @@ fn ViewDesc main_view_desc(ViewDesc desc, Options options) @local {
     desc.shading = options.shading;
     desc.post.anti_aliasing = AntiAliasing.TAA;
     if (options.ssgi) desc.screen_space_gi = render::SCREEN_SPACE_GI_DEFAULT;
+    desc.volumetric_fog = options.volumetric_fog && !options.traced;
     if (options.traced) {
         desc.shading = ShadingPath.PATH_TRACED;
         desc.post.anti_aliasing = AntiAliasing.NONE;
@@ -809,12 +819,13 @@ fn void? prepare_views(Demo* demo, Renderer* renderer, uint[<2>] output_size) @l
         time:           0,
     )!;
     demo.mirror = create_mirror(
-        renderer:     renderer,
-        scene:        demo.scene,
-        assets:       demo.assets,
-        lake:         demo.lake,
-        output_size:  output_size,
-        render_scale: demo.mirror_scale,
+        renderer:       renderer,
+        scene:          demo.scene,
+        assets:         demo.assets,
+        lake:           demo.lake,
+        output_size:    output_size,
+        render_scale:   demo.mirror_scale,
+        volumetric_fog: demo.options.volumetric_fog,
     )!;
     apply_reflection(demo, demo.options.reflection)!;
     if (demo.options.capture) demo.capture = create_capture(renderer, demo)!;
@@ -948,11 +959,13 @@ fn Options? parse_options(String[] args) @local {
                     default: return c3d::INVALID_ARGUMENT~;
                 }
             case "--sky": options.sky = true;
+            case "--volumetric-fog": options.volumetric_fog = true;
             case "--width": options.width = option_value(args, &index)!.to_uint()!;
             case "--height": options.height = option_value(args, &index)!.to_uint()!;
             default: return c3d::INVALID_ARGUMENT~;
         }
     }
+    if (options.volumetric_fog && !options.sky) return c3d::INVALID_ARGUMENT~;
     if (!options.width) options.width = options.benchmark ? BENCHMARK_WIDTH : WINDOW_WIDTH;
     if (!options.height) options.height = options.benchmark ? BENCHMARK_HEIGHT : WINDOW_HEIGHT;
     return options;
@@ -1523,7 +1536,7 @@ fn String reflection_name(Reflection reflection) @local {
 fn void print_header(Options options) @local {
     io::printfn(
         "# water size=%d shading=%s reflection=%s mirror_scale=%g crates=%d ripples=%s foliage=both ssgi=%s "
-          "extent=%dx%d frames=%d sky=%s",
+          "extent=%dx%d frames=%d sky=%s volumetric_fog=%s",
         options.size,
         options.shading == ShadingPath.DEFERRED ? "deferred" : "forward",
         reflection_name(options.reflection),
@@ -1535,6 +1548,7 @@ fn void print_header(Options options) @local {
         options.height,
         options.segment_frames,
         options.sky ? "on" : "off",
+        options.volumetric_fog ? "on" : "off",
     );
 }
 
@@ -1618,7 +1632,7 @@ fn int main(String[] args) {
             io::eprintfn("Invalid options: %s", excuse);
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
               "[--size 1025|2049|4097] [--reflection planar|march|env] [--mirror-scale 0.5|1] [--crates 16|256] "
-              "[--ssgi] [--traced] [--capture] [--ripples on|off] [--width W] [--height H] [--sky].");
+              "[--ssgi] [--traced] [--capture] [--ripples on|off] [--width W] [--height H] [--sky] [--volumetric-fog].");
         }
         return 1;
     }
