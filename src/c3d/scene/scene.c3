@@ -10,7 +10,7 @@ import c3d::instrumentation @public;
 import c3d::maths;
 import std::math;
 
-const uint DEFAULT_MAX_NODES @local = 16384; // 2.5 MiB of Node plus the entity pool; the only per-node fixed cost
+const uint DEFAULT_MAX_NODES @local = 16384; // 2.625 MiB of Node plus the entity pool; the only per-node fixed cost
 const Vec4 INSTANCE_COLOR_DEFAULT @local = { 1, 1, 1, 1 };
 
 ulong scene_identity_counter @local;
@@ -56,6 +56,7 @@ fn Node*? Scene.add_node(&self, Node* parent = null, String name = "") {
     *node = {
         .id                = entity,
         .name              = name.copy(self.allocator),
+        .transform_space   = TransformSpace.PARENT,
         .local             = maths::TRANSFORM_IDENTITY,
         .world             = parent.world,
         .layers            = DEFAULT_LAYERS,
@@ -229,14 +230,20 @@ fn void Scene.flush_removals(&self) {
 }
 
 <*
- Move the node under another parent, keeping its local or its world transform.
- With keep_world, reads both world matrices as left by the last update.
- @param [in] parent : "Null means the root; never the node or a descendant."
+ Move a node beneath another parent, preserving its transform space.
+ @param [&inout] node : "Live node being reparented."
+ @param [in] parent : "Null selects root; neither node nor its descendant."
+ @param keep_world : "Preserve PARENT placement using current world matrices."
  @require node != self.root, self.world.is_alive(node.id)
 *>
-fn void Scene.reparent(&self, Node* node, Node* parent, bool keep_world = false) {
+fn void Scene.reparent(
+    &self,
+    Node* node,
+    Node* parent,
+    bool keep_world = false,
+) {
     if (!parent) parent = self.root;
-    if (keep_world) {
+    if (keep_world && node.transform_space == TransformSpace.PARENT) {
         Mat4 parent_inverse = maths::inverse_affine(parent.world);
         node.local = maths::transform_from_mat4(parent_inverse.mul(node.world));
     }
@@ -362,6 +369,7 @@ fn Scene create_scene(Allocator allocator, SceneDesc desc) {
     scene.root = &scene.nodes[root_entity.index];
     *scene.root = {
         .id                = root_entity,
+        .transform_space   = TransformSpace.PARENT,
         .local             = maths::TRANSFORM_IDENTITY,
         .world             = matrix::IDENTITY4,
         .layers            = DEFAULT_LAYERS,
@@ -425,7 +433,9 @@ fn void unlink(Node* node) @local {
 }
 
 fn void update_subtree(Node* node, Mat4 parent_world, bool parent_visible) @local {
-    node.world = parent_world.mul(node.local.to_mat4());
+    Mat4 authored = node.local.to_mat4();
+    node.world = node.transform_space == TransformSpace.WORLD
+      ? authored : parent_world.mul(authored);
     node.visible_effective = parent_visible && node.visible;
     for (Node* child = node.first_child; child; child = child.next_sibling) {
         update_subtree(child, node.world, node.visible_effective);

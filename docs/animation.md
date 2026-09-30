@@ -244,6 +244,13 @@ has written its pose. Three types cover limbs, feet and looking:
 `solve`, `place`, `release` and `align` in its own order. Joints, targets and
 poles are borrowed nodes and must outlive the component that names them.
 
+The first joint of an `IkChain` or `LookAt` may use `TransformSpace.WORLD`.
+Every later joint must use `PARENT`, because the solvers articulate descendants
+by rotating their ancestors. Their validity predicates reject a `WORLD`
+interior joint. Targets, poles and the pelvis may use either transform space;
+foot placement and pelvis lowering convert through their selected basis.
+See [scene transforms](scene.md#authored-and-published-transforms).
+
 Solvers read world matrices and write locals. A chain whose joints or target
 descend from a joint another solve writes needs an `update_world` between the
 two solves. On a humanoid the arms hang off the upper spine, so a spine look-at

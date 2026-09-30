@@ -161,7 +161,7 @@ fn IkLimit cone_limit(Quat reference, Vec3 axis, float half_angle) {
 }
 
 <*
- Whether the joints form a live parent chain with nonzero segments.
+ Whether live joints form an articulated chain with nonzero segments.
  @param [&in] chain : "Chain to check before a solve."
 *>
 fn bool ik_chain_valid(IkChain* chain) {
@@ -173,6 +173,8 @@ fn bool ik_chain_valid(IkChain* chain) {
     return chain.joints[0].parent != null
         && chain.joints[1].parent == chain.joints[0]
         && chain.joints[2].parent == chain.joints[1]
+        && chain.joints[1].transform_space == TransformSpace.PARENT
+        && chain.joints[2].transform_space == TransformSpace.PARENT
         && chain.joints[1].local.position.length() > IK_EPSILON
         && chain.joints[2].local.position.length() > IK_EPSILON;
 }
@@ -182,7 +184,7 @@ fn Quat world_rotation(Node* node) @private {
 }
 
 fn Quat parent_rotation(Node* node) @private {
-    return world_rotation(node.parent);
+    return maths::transform_from_mat4(node.transform_basis()).rotation;
 }
 
 fn Vec3 off_axis(Vec3 vector, Vec3 axis) @local {

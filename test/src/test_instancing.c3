@@ -902,3 +902,41 @@ fn void test_instance_table_retires_slots_after_absence() @test {
     assert(table.slots[absent].key.scene == 0 && !table.slots[absent].allocation.is_valid());
     assert(table.slots[kept].last_seen == 20 + render::INSTANCE_ABSENCE_FRAMES);
 }
+
+fn void test_world_batch_bounds_and_removal_stay_with_its_parent() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    {
+        Fixture fixture = make_fixture(&tracker);
+        defer destroy_fixture(&fixture);
+        Node* emitter = fixture.scene.add_node()!!;
+        emitter.local.position = { 10, 4, -6 };
+        emitter.local.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, 0.7f);
+        emitter.local.scale = { 2, 3, 0.5f };
+        Transform[2] transforms = { at({ -2, 0, 0 }), at({ 2, 0, 0 }) };
+        Node* node = fixture.scene.add_instanced_mesh(
+            geometry: fixture.box,
+            material: fixture.red,
+            capacity: 2,
+            transforms: transforms[..],
+            parent: emitter,
+        )!!;
+        node.transform_space = TransformSpace.WORLD;
+        fixture.scene.update_world();
+        InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
+        Aabb before = spatial::instanced_world_bounds(&fixture.assets, node, batch);
+        assert(before.min == (Vec3){ -2.5f, -0.5f, -0.5f });
+        assert(before.max == (Vec3){ 2.5f, 0.5f, 0.5f });
+        emitter.local.position = { -5, -1, 9 };
+        fixture.scene.update_world();
+        Aabb after = spatial::instanced_world_bounds(&fixture.assets, node, batch);
+        assert(near_bounds(before, after));
+        sz allocated = tracker.allocated();
+        Entity batch_id = node.id;
+        fixture.scene.remove(emitter);
+        assert(!fixture.scene.world.is_alive(batch_id));
+        assert(allocated - tracker.allocated() >= 2 * (Transform::size + Vec4::size));
+        assert(fixture.assets.geometries.is_live(fixture.box));
+    }
+}

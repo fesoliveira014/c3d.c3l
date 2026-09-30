@@ -87,7 +87,7 @@ fn LookAt look_at(Node*[] joints, Node* target, Vec3 forward) {
 }
 
 <*
- Whether the joints form a live parent chain with shares summing to one.
+ Whether live joints form an articulated chain with normalized shares.
  @param [&in] look_at : "Constraint to check before a solve."
 *>
 fn bool look_at_valid(LookAt* look_at) {
@@ -97,14 +97,15 @@ fn bool look_at_valid(LookAt* look_at) {
     for (uint index = 0; index < look_at.joint_count; index++) {
         Node* joint = look_at.joints[index];
         if (!joint || !joint.parent) return false;
-        if (index > 0 && joint.parent != look_at.joints[index - 1]) return false;
+        if (index > 0 && (joint.parent != look_at.joints[index - 1]
+            || joint.transform_space != TransformSpace.PARENT)) return false;
         total += look_at.weights[index];
     }
     return math::abs(total - 1) <= WEIGHT_SUM_TOLERANCE;
 }
 
 fn Vec3 chain_tip_position(LookAt* look_at) @local {
-    Mat4 world = look_at.joints[0].parent.world;
+    Mat4 world = look_at.joints[0].transform_basis();
     for (uint index = 0; index < look_at.joint_count; index++) {
         world = world.mul(look_at.joints[index].local.to_mat4());
     }

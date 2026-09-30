@@ -461,6 +461,7 @@ fn void blend_ragdoll(
 
 // A root joint's parent is a scene node; the others were written earlier in joint_order.
 fn Mat4 parent_world_of(Ragdoll* ragdoll, Node*[] joints, uint joint) @local {
+    if (joints[joint].transform_space == TransformSpace.WORLD) return matrix::IDENTITY4;
     int parent = ragdoll.parents[joint];
     return parent < 0 ? joints[joint].parent.world : ragdoll.joint_worlds[parent];
 }
