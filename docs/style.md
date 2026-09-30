@@ -25,6 +25,7 @@ C3 0.8.3. C3 is pre-1.0; check syntax against the installed compiler and the `c3
 | `module c3d::landscape;` | Generated shader constants of the shader package in `addons/c3d_landscape.c3l`; imports `c3d::asset` only. Submodules read them with `import c3d::landscape @public;`. |
 | `module c3d::landscape::terrain;` | Height-field terrain in `addons/c3d_landscape.c3l`. Imports stdlib and core; no faults of its own. |
 | `module c3d::landscape::foliage;` | Vegetation layers in `addons/c3d_landscape.c3l`. Imports stdlib, core and `c3d::landscape::terrain`, opened with `@public` for its placement predicate; no faults of its own. |
+| `module c3d::landscape::water;` | Water bodies in `addons/c3d_landscape.c3l`. Imports stdlib, core, `c3d::landscape` and `c3d::landscape::terrain` (`@public`: the SPIR-V constants and the query predicate); no faults of its own. |
 | `module c3d::instrumentation @private;` | Core's optional scope bridge; only its CPU+INTERNAL section imports the profiler add-on. |
 
 Every module is `c3d` or a submodule of it. The repository directory name never appears in source. Dependency imports are confined per `AGENTS.md` section 1 and checked at review.

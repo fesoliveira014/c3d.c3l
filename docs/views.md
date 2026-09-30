@@ -268,6 +268,7 @@ scene.get(mirror_node, Camera).aspect = main_aspect;
 - The surface's fragment stage samples the target at `gl_FragCoord.xy / frame.camera_params.zw`:
   the mirror view projects a point on the plane where the main view does.
 - Render the mirror view before the view that shows the surface.
+- Water from the landscape add-on places its mirror camera and clip plane for you; see [water](water.md#the-mirror).
 
 Every mesh vertex stage declares `ClipDistance`, so the device must support `shaderClipDistance`;
 `create_renderer` faults `UNSUPPORTED` without it. Adapter selection prefers a discrete adapter

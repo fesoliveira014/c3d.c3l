@@ -22,6 +22,26 @@
     "terrain_acceptance": {
       "type": "test",
       "sources": [ "terrain_acceptance.c3" ]
+    },
+    "water_acceptance": {
+      "type": "test",
+      "sources": [ "water_acceptance.c3" ],
+      "dependencies": [
+        "c3d_landscape",
+        "c3d_physics",
+        "c3d",
+        "gpu",
+        "vk",
+        "vma",
+        "spvreflect",
+        "sdl3",
+        "c3imgui",
+        "c3cg",
+        "b3",
+        "cgltf",
+        "ufbx",
+        "shaderc"
+      ]
     }
   }
 }

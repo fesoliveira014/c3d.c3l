@@ -20,7 +20,7 @@ fn void? PhysicsWorld.explode(&self, ExplosionDesc desc) {
 }
 
 // box3d clears applied forces after every step, so persistent forces are applied before each one.
-fn void apply_step_forces(PhysicsWorld* world) @private {
+fn void apply_step_forces(PhysicsWorld* world, float step_offset) @private {
     world.scene.@each2(Wind, RigidBody; entity, wind, body) {
         foreach (&collider : body.colliders) {
             b3::shape_apply_wind(
@@ -40,6 +40,14 @@ fn void apply_step_forces(PhysicsWorld* world) @private {
             force: force.force,
             point: (b3::Pos)point,
             wake:  true,
+        );
+    };
+    world.scene.@each2(Buoyancy, RigidBody; entity, buoyancy, body) {
+        apply_buoyancy(
+            world:       world,
+            buoyancy:    buoyancy,
+            body:        body,
+            step_offset: step_offset,
         );
     };
 }
