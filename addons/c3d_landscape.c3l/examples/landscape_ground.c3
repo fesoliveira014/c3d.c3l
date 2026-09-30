@@ -25,6 +25,9 @@ const uint LAYER_COUNT = 4;
 <* Node layer bit of the terrain, left out of picks. *>
 const uint TERRAIN_LAYER = 1 << 1;
 
+<* Direction the sunlight travels in, before normalization. *>
+const Vec3 SUN_DIRECTION = { -0.45f, -0.6f, -0.35f };
+
 <* Rise of one scripted brush stamp, in height texel units at the centre. *>
 const float BRUSH_RISE = 600; // 2.7 m at this height scale
 
@@ -58,7 +61,6 @@ const float FLY_SPEED @local = 60;
 const float FAST_MULTIPLIER @local = 4;
 const float LOOK_RADIANS_PER_PIXEL @local = 0.003f;
 const float PITCH_LIMIT @local = 1.5f; // avoids the poles, where the up vector degenerates
-const Vec3 SUN_DIRECTION @local = { -0.45f, -0.6f, -0.35f };
 const float SUN_INTENSITY @local = 3;
 const float SHADOW_DISTANCE @local = 1500; // metres; the cascades spread over it, the atlas cost is fixed
 const float SHADOW_NORMAL_BIAS @local = 0.5f; // metres; cascade texels 0.1 to 1.8 m; smaller biases band gentle ground

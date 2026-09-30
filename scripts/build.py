@@ -59,6 +59,7 @@ ADDON_EXAMPLES = {
     "job_bench": JOB,
     "terrain": LANDSCAPE,
     "vegetation": LANDSCAPE,
+    "water": LANDSCAPE,
 }
 PROFILE_TEST_TARGETS = (
     "profile_off", "profile_cpu", "profile_internal", "profile_gpu",

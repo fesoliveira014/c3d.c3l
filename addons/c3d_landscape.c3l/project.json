@@ -61,6 +61,26 @@
     "vegetation": {
       "type": "executable",
       "sources": [ "examples/vegetation.c3", "examples/landscape_ground.c3", "examples/landscape_foliage.c3" ]
+    },
+    "water": {
+      "type": "executable",
+      "sources": [ "examples/water.c3", "examples/landscape_ground.c3", "examples/landscape_foliage.c3" ],
+      "dependencies": [
+        "c3d_landscape",
+        "c3d_physics",
+        "c3d",
+        "gpu",
+        "vk",
+        "vma",
+        "spvreflect",
+        "sdl3",
+        "c3imgui",
+        "c3cg",
+        "b3",
+        "cgltf",
+        "ufbx",
+        "shaderc"
+      ]
     }
   }
 }
