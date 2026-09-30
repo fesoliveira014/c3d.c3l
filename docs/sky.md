@@ -212,7 +212,8 @@ sky example's table, measured from its zenith luminance at sun intensity 3:
 
 Below about intensity × 10⁻⁵ the sky sits in `RGBA16F`'s subnormal range, whose steps of 6 × 10⁻⁸
 band after exposure. The table stops at −4°, above civil twilight, where the zenith leaves the normal
-half-float range.
+half-float range. On an RTX 4090 the −4° sky shows no banding: a zenith-to-horizon column holds 270
+distinct values over 430 rows, with no run longer than 5 rows and no step above 2 levels.
 
 ## Path tracing
 
@@ -269,6 +270,56 @@ The landscape examples `terrain`, `vegetation` and `water` take `--sky`: an `ATM
 their sun and a haze pooling in the valleys.
 
 ## Measured cost
+
+### RTX 4090, driver 610.88, 2560 × 1440
+
+`--opt O3` with GPU profiling, medians of three runs of per-run medians, ms. The mirror view renders at
+half size.
+
+| Sky tables and fog, per view | Main | Mirror |
+| --- | ---: | ---: |
+| `SKY_VIEW` | 0.013 | 0.014 |
+| `AERIAL_PERSPECTIVE` | 0.020 | 0.020 |
+| `FOG`, forward | 0.037 | 0.012 |
+| `FOG`, deferred | 0.037 | 0.012 |
+| `water --sky`: `SKY_VIEW`, `AERIAL_PERSPECTIVE`, `FOG` | 0.014, 0.020, 0.041 | 0.015, 0.020, 0.014 |
+
+One refresh of the 64-texel sky cube (the time-lapse's 11 refreshes a run): `environment.sky` 0.015,
+`environment.prefilter` 0.813, `environment.irradiance` 0.011, `ENVIRONMENT` total 0.840, max 0.862 (1.06
+once in deferred). The prefilter is 97 % of it. At 0.27° a second the sky regenerates 30.0 times a
+minute (period 0.504°). `sun_radiance` costs 0.90 µs on the CPU.
+
+| `sky` frame, ms | Noon | Twilight | Valley | Time-lapse |
+| --- | ---: | ---: | ---: | ---: |
+| forward | 0.492 | 0.354 | 0.430 | 0.500 |
+| deferred | 0.558 | 0.419 | 0.515 | 0.564 |
+| `--shadows traced` | 0.397 | 0.381 | 0.345 | 0.406 |
+| `--ssgi` | 1.355 | 1.220 | 1.292 | 1.361 |
+| `--fog off --atmosphere off` | 0.324 | 0.248 | 0.275 | 0.323 |
+
+`--path-traced`: `PATH_TRACE` 0.424, frame 0.614 at noon.
+
+Fog off costs nothing: Sponza in `gltf_viewer --benchmark` records `cpu_record_ms` 0.1437 before this
+change and 0.1431 after, and its six largest passes overlap before and after.
+
+| Landscape `still` frame, ms | Without `--sky` | With `--sky` |
+| --- | ---: | ---: |
+| `terrain` | 1.313 | 1.434 |
+| `vegetation` | 1.228 | 1.355 |
+| `water` | 2.233 | 2.362 |
+| `water` mirror view total | 0.721 | 0.772 |
+
+Terrain's +0.121 ms is `FOG` 0.038, the tables 0.035 and 0.049 more `FORWARD_OPAQUE` for the sky's
+image-based lighting.
+
+Judged on the 4090: the lighting's regeneration steps at 0.27° a second stay under one 8-bit level on an
+image-lit face (+0.47 to +0.61 against −0.05 a frame between) and are not visible; the −4° twilight
+shows no banding; valley haze seen from 300 m up takes the warm horizon colour; the blended
+transmission pane shows no double fog; the water's reflections of far peaks are no hazier than the
+peaks seen directly.
+
+A refresh (0.84 ms) is far under the 4.2 ms at which refreshes would be time-sliced; a second view's
+tables (0.035 ms) do not call for a per-view switch; the −4° twilight does not call for pre-exposure.
 
 ### WSL, llvmpipe
 
