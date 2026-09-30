@@ -20,7 +20,7 @@
   "targets": {
     "landscape_test": {
       "type": "test",
-      "sources": [ "test/terrain_test.c3", "test/foliage_test.c3" ],
+      "sources": [ "test/terrain_test.c3", "test/foliage_test.c3", "test/water_test.c3" ],
       "dependencies": [
         "c3d_landscape",
         "c3d_physics",

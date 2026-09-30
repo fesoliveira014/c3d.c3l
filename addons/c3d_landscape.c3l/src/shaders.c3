@@ -13,13 +13,23 @@ const char[*] TERRAIN_FRAGMENT_SPIRV @private = $embed("../shaders/spv/terrain_f
 const char[*] TERRAIN_FRAGMENT_RT_SHADOWS_SPIRV @private = $embed("../shaders/spv/terrain_fragment_rt_shadows.spv");
 const char[*] TERRAIN_FRAGMENT_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV @private = $embed("../shaders/spv/terrain_fragment_rt_shadows_scene_trace_bvh.spv");
 const char[*] TERRAIN_GBUFFER_SPIRV @private = $embed("../shaders/spv/terrain_gbuffer.spv");
+const char[*] WATER_VERTEX_SPIRV @private = $embed("../shaders/spv/water_vertex.spv");
+const char[*] WATER_VERTEX_DEPTH_ONLY_SPIRV @private = $embed("../shaders/spv/water_vertex_depth_only.spv");
+const char[*] WATER_VERTEX_VELOCITY_SPIRV @private = $embed("../shaders/spv/water_vertex_velocity.spv");
+const char[*] WATER_FRAGMENT_SPIRV @private = $embed("../shaders/spv/water_fragment.spv");
+const char[*] WATER_FRAGMENT_RT_SHADOWS_SPIRV @private = $embed("../shaders/spv/water_fragment_rt_shadows.spv");
+const char[*] WATER_FRAGMENT_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV @private = $embed("../shaders/spv/water_fragment_rt_shadows_scene_trace_bvh.spv");
 const char[*] INCLUDE_LANDSCAPE_TERRAIN_HEIGHT_TEXT @private = $embed("../shaders/include/landscape/terrain_height.glsl");
 const char[*] INCLUDE_LANDSCAPE_TERRAIN_SURFACE_TEXT @private = $embed("../shaders/include/landscape/terrain_surface.glsl");
+const char[*] INCLUDE_LANDSCAPE_WATER_REFLECTION_TEXT @private = $embed("../shaders/include/landscape/water_reflection.glsl");
+const char[*] INCLUDE_LANDSCAPE_WATER_WAVES_TEXT @private = $embed("../shaders/include/landscape/water_waves.glsl");
 
 <*
  GLSL includes of this package, by the name a shader writes.
 *>
-const asset::ShaderInclude[2] LANDSCAPE_SHADER_INCLUDES = {
+const asset::ShaderInclude[4] LANDSCAPE_SHADER_INCLUDES = {
     { .name = "landscape/terrain_height.glsl", .text = (String)INCLUDE_LANDSCAPE_TERRAIN_HEIGHT_TEXT[..] },
     { .name = "landscape/terrain_surface.glsl", .text = (String)INCLUDE_LANDSCAPE_TERRAIN_SURFACE_TEXT[..] },
+    { .name = "landscape/water_reflection.glsl", .text = (String)INCLUDE_LANDSCAPE_WATER_REFLECTION_TEXT[..] },
+    { .name = "landscape/water_waves.glsl", .text = (String)INCLUDE_LANDSCAPE_WATER_WAVES_TEXT[..] },
 };
