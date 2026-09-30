@@ -82,8 +82,9 @@ ground, the spacing and the seed are the application's. `add_foliage` checks eve
 | `fade` | Core's `InstanceFade`; zero is off, else `0 <= start < end` |
 | `cast_shadow`, `receive_shadow`, `trace` | Copied onto every cell's `InstancedMesh` |
 
-The desc is read by `add_foliage` only. To change a seed, a rule, the template, the fade or the shadow and
-trace flags, remove `Foliage`, call `update` and add the layer again.
+The desc is read by `add_foliage` only: `FoliageRuntime.desc` keeps the checked copy the cells follow, so an edit
+of `Foliage.desc` has no effect. To change a seed, a rule, the template, the fade or the shadow and trace flags,
+remove `Foliage`, call `update` and add the layer again.
 
 ## Scatter
 
@@ -293,6 +294,48 @@ the `both` against `grass` difference; the grass layer's is `grass` against `non
 
 ## Measured cost
 
+### RTX 4090, driver 610.88, 2560 × 1440
+
+Windows host, `--opt O3` with GPU timings, atlas shadows, three runs of each of eight cases (24 runs); medians,
+forward shading at `--size 2049` unless named. Both gates pass in every run, and every `batch_slots` peak is
+under its formula. A `--benchmark 60 --validation --shadows traced` run is validation-clean with both gates.
+
+Load and edit, per map size:
+
+| Line | 1025 | 2049 | 4097 |
+| --- | ---: | ---: | ---: |
+| Grass: instances, cells with a node | 198,207, 995 | 195,188, 3,895 | 173,585, 14,540 |
+| Trees: instances, cells with a node | 4,049, 249 | 3,351, 898 | 4,514, 2,814 |
+| `scatter_ms load`, grass / trees | 63.4 / 2.0 | 66.7 / 2.0 | 60.7 / 3.0 |
+| `rescatter_ms`, both layers | 61.0 | 65.0 | 58.9 |
+| `replace_ms` median / p99 per 49 × 49 stamp (cells placed) | 0.294 / 0.421 (10) | 0.095 / 0.099 (10) | 0.026 / 0.034 (10) |
+| `update_us`, steady / gusting wind | 0.2 / 2.2 | 0.3 / 8.4 | 0.4 / 49.9 |
+| `first_pack_ms` | 9.8 | 10.0 | 9.6 |
+| `batch_slots` max / formula | 177 / 245 | 171 / 245 | 142 / 245 |
+
+The still segment by layer set and tree fade end, ms:
+
+| Line | none | grass | both | both, deferred | trees fade at 250 m | trees fade at 600 m |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `cpu_record` | 0.074 | 0.218 | 0.414 | 0.394 | 0.316 | 0.502 |
+| `DEPTH_PREPASS` | 0.102 | 0.101 | 0.119 | 0.117 | 0.118 | 0.119 |
+| `SHADOW_ATLAS` | 0.460 | 0.460 | 0.462 | 0.463 | 0.462 | 0.465 |
+| `FORWARD_OPAQUE`, or `GBUFFER` deferred | 0.309 | 0.305 | 0.267 | 0.221 | 0.267 | 0.267 |
+| `VELOCITY` | 0.117 | 0.116 | 0.120 | 0.122 | 0.120 | 0.120 |
+| `INSTANCE_CULL` | 0.023 | 0.029 | 0.075 | 0.075 | 0.053 | 0.108 |
+| `batch_slots` max / formula | 0 / 0 | 19 / 49 | 171 / 245 | 171 / 245 | 87 / 130 | 338 / 449 |
+
+- **Grass** adds nothing measurable to the GPU passes at this density; its cost is `cpu_record` (+0.14 ms).
+- **Trees** add +0.018 ms of depth prepass and +0.002 ms of shadow atlas: masked bark is not a measurable cost.
+  Forward opaque falls as foliage covers terrain pixels, which cost more to shade. The tree layer's cost is per
+  batch, not per instance: `INSTANCE_CULL` +0.046 ms and `cpu_record` +0.20 ms at a 400 m fade, both growing with
+  the tree cells in range (cull 0.053, 0.075 and 0.108 ms at 250, 400 and 600 m).
+- **Segments** at 2049, both layers: the spin uploads on 22 frames, at most 50.7 KB, with `cpu_record` 0.374 ms,
+  below still; the far view skips 4,306 faded batches, with prepass 0.132, forward opaque 0.404 and shadow atlas
+  0.285 ms. The frame's wall time stays about 1.2 ms throughout.
+- **Loads and edits.** `scatter_ms load` is a load time. A whole re-scatter costs 59 to 65 ms, a one-off hitch
+  that nothing in the example triggers during play; a stamp re-places its cells in under 0.5 ms.
+
 ### WSL, llvmpipe
 
 llvmpipe is a CPU Vulkan implementation: frame and pass times there are environment only, never GPU numbers.
@@ -317,8 +360,3 @@ layer move or a ground move would cost at run time; the example has none of them
 re-places only the cells it reaches, well under a millisecond. A gusting wind costs one sway store per cell,
 2 to 4 ns each. At 2049 the peak batch slots were 32 against 49 with grass alone, 85 against 130 with a
 250 m tree fade and 340 against 449 with 600 m.
-
-### RTX 4090
-
-Pending: the scripted runs at 2560 × 1440 (both shading paths, `--foliage grass` and `none` for the layer
-deltas, sizes 1025 and 4097, tree fade ends 250 and 600, and a traced validation run).
