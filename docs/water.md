@@ -221,7 +221,9 @@ plane lowered by the total amplitude, so everything above the deepest trough sta
 target, the view and the order. The example renders the mirror at
 
 ```c3
-const float MIRROR_RENDER_SCALE = 0.5f; // a quarter of the pixels; --mirror-scale 1 measures the saving
+// A quarter of the pixels: on an RTX 4090 at 2560 x 1440 the mirror view takes 0.721 against 0.815 ms still,
+// 0.796 against 0.922 ms in orbit, and the frame 2.236 against 2.331 ms.
+const float MIRROR_RENDER_SCALE = 0.5f;
 ```
 
 as `render_scale`, with these lines of its code, kept identical by hand:
@@ -325,7 +327,8 @@ body on the same node. Destroy the scene before the store.
   water work.
 - **One mirror per plane and viewing camera**; the viewing camera is a root node. A second view that sees the
   water reflects the mirror camera of the first; leave the water node's layer out of that view's camera layers.
-  The mirror view renders its own shadow atlas.
+  The mirror view renders its own shadow atlas: 0.48 ms on an RTX 4090 at 2560 × 1440, 21 to 22 % of the frame's
+  GPU time, until core offers per-view shadow control.
 - **Clip plane at the deepest trough**: geometry between a trough and the local surface can appear in the
   reflection; the amplitude bounds the error.
 - **Screen-space march**: opaque, masked and sky from this view only; no blends, nothing off-screen or behind
@@ -400,6 +403,36 @@ camera leaves out the water's layer), `--ripples on|off` and `--width W --height
 benchmark mode). Interactive runs always validate.
 
 ## Measured cost
+
+### RTX 4090, driver 610.88, 2560 × 1440
+
+Windows host, `--opt O3` with GPU timings, eight cases × three runs; medians of three runs, still segment, main
+view unless named, ms. Both gates pass in all 24 runs: still-segment uploads are 0, the settle mean is 0.5999
+and the worst 0.5996 against 0.6 (0.5981 at 256 crates). `--benchmark 60 --validation` runs with `--traced`
+and `--capture` are validation-clean with both gates.
+
+| | planar | march | env | planar, ripples off | mirror scale 1 | 256 crates | deferred | `--ssgi` |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `FORWARD_OPAQUE` | 0.397 | 0.398 | 0.397 | 0.397 | 0.398 | 0.390 | `GBUFFER` 0.255, `LIGHTING` 0.118 | 0.423 |
+| `SCENE_SNAPSHOT` | 0.030 | 0.029 | 0.029 | 0.030 | 0.030 | 0.030 | 0.035 | 0.032 |
+| `SCENE_READ` (water) | 0.144 | 0.485 | 0.155 | 0.110 | 0.144 | 0.138 | 0.144 | 0.144 |
+| `SHADOW_ATLAS` | 0.480 | 0.482 | 0.483 | 0.480 | 0.481 | 0.485 | 0.479 | 0.481 |
+| mirror total | 0.721 | none | none | 0.721 | 0.815 | 0.733 | 0.721 | 0.722 |
+| mirror shadow atlas | 0.482 | none | none | 0.482 | 0.482 | 0.488 | 0.483 | 0.483 |
+| mirror shadow share | 21.9 % | none | none | 22.3 % | 21.0 % | 22.1 % | 22.1 % | 14.8 % |
+| `frame_ms` still | 2.236 | 1.855 | 1.521 | 2.197 | 2.331 | 2.240 | 2.222 | 3.297 |
+| `frame_ms` orbit | 2.366 | 1.704 | 1.582 | 2.351 | 2.507 | 2.382 | 2.359 | 3.512 |
+
+- **Water pass.** The march costs 0.33 ms over the environment fallback; the planar sample next to nothing; the
+  ripples 0.034 ms.
+- **The mirror** costs about 0.7 ms of frame time, 0.48 ms of it in its own shadow atlas: 21.9 % of the frame's
+  GPU time in the still segment and 21.6 % in orbit, 21 to 22 % in every planar case and 14.8 % with `--ssgi`,
+  whose frame is longer. The half-resolution mirror saves 0.09 ms (still, 0.815 to 0.721) to 0.13 ms (orbit,
+  0.922 to 0.796) of mirror time and 0.095 ms of frame (2.331 to 2.236) against a full-resolution one.
+- **Buoyancy:** `buoyancy_us` 25.4 µs (25.1 to 25.5) at 16 crates and 304.8 µs (302.6 to 323.3) at 256 per
+  fixed step; `sample_ns` 98.8, so 2,048 samples cost about 0.2 ms of the 256-crate step.
+- **SSGI:** with `--ssgi` and a still camera the ripples stay as crisp as without it; readers' camera-only
+  velocity shows no visible smear here.
 
 ### WSL, llvmpipe
 
