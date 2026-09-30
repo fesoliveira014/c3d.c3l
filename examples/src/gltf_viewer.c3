@@ -76,6 +76,7 @@ struct BenchmarkOptions @local {
     uint probe_window;
     uint probe_rays;
     bool point_shadows;
+    bool environment_refresh;
 }
 
 struct Orbit @local {
@@ -276,6 +277,12 @@ fn BenchmarkOptions? parse_options(String[] args) @local {
                     case "off": options.point_shadows = false;
                     default: return c3d::INVALID_ARGUMENT~;
                 }
+            case "--environment-refresh":
+                switch (value) {
+                    case "on": options.environment_refresh = true;
+                    case "off": options.environment_refresh = false;
+                    default: return c3d::INVALID_ARGUMENT~;
+                }
             case "--probe-counts":
                 String[] counts = value.tsplit(",");
                 if (counts.len != 3) return c3d::INVALID_ARGUMENT~;
@@ -427,7 +434,7 @@ fn void print_banner(BenchmarkOptions options, bool timestamps_active) @local {
     BenchmarkFlags flags = options.flags;
     bool scene_probes = options.probe_volumes != 0 && options.probe_fill == ProbeFill.SCENE;
     bool path_traced = options.shading == ShadingPath.PATH_TRACED;
-    io::eprintfn("mode=%s shading=%s lights=%d shadows=%s range=%.3f capacity=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s depth_prepass=%s ambient_occlusion=%s reflections=%s screen_space_gi=%s probe_volumes=%d probe_counts=%dx%dx%d probe_fill=%s probe_window=%d probe_rays=%d point_shadows=%s trace=%s",
+    io::eprintfn("mode=%s shading=%s lights=%d shadows=%s range=%.3f capacity=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s depth_prepass=%s ambient_occlusion=%s reflections=%s screen_space_gi=%s probe_volumes=%d probe_counts=%dx%dx%d probe_fill=%s probe_window=%d probe_rays=%d point_shadows=%s environment_refresh=%s trace=%s",
         options.selection == LightSelection.FLAT || options.shading == ShadingPath.PATH_TRACED ? "flat" : "clustered",
         bench_loop::shading_name(options.shading), options.lights,
         options.traced_shadows ? "traced" : options.shadows ? "on" : "off",
@@ -438,7 +445,7 @@ fn void print_banner(BenchmarkOptions options, bool timestamps_active) @local {
         flags.screen_space_gi ? "on" : "off",
         options.probe_volumes, options.probe_counts.x, options.probe_counts.y, options.probe_counts.z,
         options.probe_fill == ProbeFill.SCENE ? "scene" : "environment", options.probe_window, options.probe_rays,
-        options.point_shadows, bench_loop::trace_name(
+        options.point_shadows, options.environment_refresh, bench_loop::trace_name(
             traces:      scene_probes || bench_loop::needs_ray_queries(flags) || options.traced_shadows || path_traced,
             ray_queries: requests_ray_queries(options) || path_traced,
         ));
@@ -486,6 +493,7 @@ fn void? run_benchmark(BenchmarkOptions options) @local {
         run.window = &window;
         run.view = renderer.default_view;
         run.camera_node = populate_benchmark_scene(&assets, &scene, &renderer, options)!;
+        if (options.environment_refresh) run.refreshed_texture = assets.environment(scene.environment).desc.source;
         $if $feat(C3D_PROFILE_GUI):
             GuiRenderer gui_renderer;
             gui::ProfilerPanel panel;
@@ -512,6 +520,7 @@ fn void? run_benchmark(BenchmarkOptions options) @local {
         run.view = render::create_view(&renderer,
             benchmark_view_desc(render::texture_view_desc(target, OutputMode.DISPLAY_LDR), options))!;
         run.camera_node = populate_benchmark_scene(&assets, &scene, &renderer, options)!;
+        if (options.environment_refresh) run.refreshed_texture = assets.environment(scene.environment).desc.source;
         print_banner(options, renderer.timestamps_enabled);
         collected = bench_loop::run_frames(&run, flags, samples)!;
         bench_loop::write_samples(samples[:collected], renderer.timestamps_enabled);
@@ -524,7 +533,7 @@ fn int main(String[] args) {
     if (catch excuse = parsed) {
         if (excuse != c3d::UNSUPPORTED) {
             io::eprintfn("Invalid options: %s", excuse);
-            io::eprintn("Use [model.gltf] [--gpu-timings] or --benchmark [model.gltf] --mode flat|clustered [--shading forward|deferred|path-traced] --lights N --shadows on|off|traced --range R --capacity N --frames N --warmup N --width N --height N [--anti-aliasing none|fxaa|taa] [--ambient-occlusion none|half|full] [--depth-prepass on|off] [--gpu-timings] [--validation] [--capture] [--window] [--panel] [--print-features].");
+            io::eprintn("Use [model.gltf] [--gpu-timings] or --benchmark [model.gltf] --mode flat|clustered [--shading forward|deferred|path-traced] --lights N --shadows on|off|traced --range R --capacity N --frames N --warmup N --width N --height N [--anti-aliasing none|fxaa|taa] [--ambient-occlusion none|half|full] [--depth-prepass on|off] [--environment-refresh on|off] [--gpu-timings] [--validation] [--capture] [--window] [--panel] [--print-features].");
         }
         return 1;
     }

@@ -100,7 +100,7 @@ fn void test_cpu_aggregation_preserves_origin_and_incomplete_self() @test @feat(
 
 fn void test_gpu_aggregation_preserves_context() @test @feat(C3D_PROFILE_GPU) {
     GpuSample base = inspection_gpu_sample("dispatch");
-    GpuSample[18] samples;
+    GpuSample[19] samples;
     samples[0] = base;
     samples[1] = base;
     samples[1].parent_index = 999;
@@ -123,13 +123,14 @@ fn void test_gpu_aggregation_preserves_context() @test @feat(C3D_PROFILE_GPU) {
     samples[14].info.shader_index++;
     samples[15].info.shader_generation++;
     samples[16].info.shader_revision++;
-    samples[17].label = "dispatch##detail";
-    GpuSample[18] original_samples = samples;
-    ScopeAggregate[18] rows;
+    samples[17].info.stage_ordinal++;
+    samples[18].label = "dispatch##detail";
+    GpuSample[19] original_samples = samples;
+    ScopeAggregate[19] rows;
 
     usz row_count = gui::aggregate_gpu(samples[..], rows[..]);
 
-    assert(row_count == 17);
+    assert(row_count == 18);
     assert(rows[0].sample_index == 0 && rows[0].call_count == 2);
     assert(rows[0].inclusive_ns == 50.0);
     assert(rows[0].self_ns == 0.0 && !rows[0].self_complete);
@@ -140,7 +141,7 @@ fn void test_gpu_aggregation_preserves_context() @test @feat(C3D_PROFILE_GPU) {
     }
     assert(samples[0].renderer_frame == LARGE_RENDERER_FRAME);
     assert(samples[3].renderer_frame == LARGE_RENDERER_FRAME + 1);
-    assert(mem::equals((char*)&original_samples, (char*)&samples, GpuSample[18]::size));
+    assert(mem::equals((char*)&original_samples, (char*)&samples, GpuSample[19]::size));
 }
 
 fn void test_interval_span_preserves_clock_groups() @test {

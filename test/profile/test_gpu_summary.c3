@@ -51,6 +51,33 @@ fn void test_gpu_summary_sums_pass_instances_without_nested_scopes() @test {
     assert(renderer.stats.gpu_pass_ms[Pass.SHADOW_ATLAS.ordinal] == 0);
 }
 
+fn void test_gpu_summary_sums_environment_stages_apart_from_passes() @test {
+    Renderer renderer;
+    profile::GpuScopeInfo pass = { .kind = PASS, .pass_ordinal = (uint)Pass.ENVIRONMENT.ordinal };
+    profile::GpuScopeInfo prefilter = {
+        .kind = PASS_STAGE,
+        .pass_ordinal = (uint)Pass.ENVIRONMENT.ordinal,
+        .stage_ordinal = (uint)EnvironmentStage.PREFILTER.ordinal,
+    };
+    profile::GpuScopeInfo irradiance = { ...prefilter, .stage_ordinal = (uint)EnvironmentStage.IRRADIANCE.ordinal };
+    profile::GpuSample[4] samples = {
+        { .info = pass, .duration_ns = 5_000_000 },
+        { .info = prefilter, .duration_ns = 2_000_000 },
+        { .info = irradiance, .duration_ns = 500_000 },
+        { .info = prefilter, .duration_ns = 1_000_000 },
+    };
+    render::publish_gpu_summary(&renderer, { .samples = samples[..], .renderer_frame = 12, .available = true });
+    render::reset_frame_stats(&renderer.stats);
+    assert(renderer.stats.gpu_pass_ms[Pass.ENVIRONMENT.ordinal] == 5);
+    assert(renderer.stats.gpu_environment_stage_ms[EnvironmentStage.PREFILTER.ordinal] == 3);
+    assert(renderer.stats.gpu_environment_stage_ms[EnvironmentStage.IRRADIANCE.ordinal] == 0.5f);
+    assert(renderer.stats.gpu_environment_stage_ms[EnvironmentStage.SOURCE.ordinal] == 0);
+
+    render::publish_gpu_summary(&renderer, { .samples = samples[:1], .renderer_frame = 13, .available = true });
+    assert(renderer.stats.gpu_pass_ms[Pass.ENVIRONMENT.ordinal] == 5);
+    foreach (stage_ms : renderer.stats.gpu_environment_stage_ms) assert(stage_ms == 0);
+}
+
 fn void test_gpu_summary_retains_newest_completion_and_partial_state() @test {
     Renderer renderer;
     assert(renderer.stats.gpu_timing_state == GpuTimingState.UNAVAILABLE);

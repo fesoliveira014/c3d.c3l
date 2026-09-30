@@ -7,6 +7,7 @@ import c3d;
 *>
 enum Pass : int {
     UPLOADS,
+    ENVIRONMENT,
     CUSTOM_COMPUTE,
     PROBE_UPDATE,
     INSTANCE_CULL,
@@ -39,6 +40,22 @@ enum Pass : int {
  Number of pass categories in timing summaries.
 *>
 const usz PASS_COUNT = Pass::len;
+
+<*
+ Environment preparation work timed separately inside Pass.ENVIRONMENT.
+*>
+enum EnvironmentStage : int (String label) {
+    SOURCE { "environment.source" },
+    IRRADIANCE { "environment.irradiance" },
+    PREFILTER { "environment.prefilter" },
+    SHEEN { "environment.sheen" },
+    LUTS { "environment.luts" },
+}
+
+<*
+ Number of environment stages in timing summaries.
+*>
+const usz ENVIRONMENT_STAGE_COUNT = EnvironmentStage::len;
 
 <* Availability of the latest completed GPU summary. *>
 enum GpuTimingState {
@@ -99,6 +116,7 @@ struct Stats {
     float frame_ms;
     float cpu_record_ms;
     float[PASS_COUNT] gpu_pass_ms;
+    float[ENVIRONMENT_STAGE_COUNT] gpu_environment_stage_ms; // parts of the ENVIRONMENT pass, not added to it
     ulong gpu_frame_index @if($feat(C3D_PROFILE_GPU));
     GpuTimingState gpu_timing_state @if($feat(C3D_PROFILE_GPU));
     bool[PASS_COUNT] gpu_pass_valid @if($feat(C3D_PROFILE_GPU));
@@ -109,6 +127,7 @@ fn void reset_frame_stats(Stats* stats) @private {
     Stats previous = *stats;
     *stats = {};
     stats.gpu_pass_ms = previous.gpu_pass_ms;
+    stats.gpu_environment_stage_ms = previous.gpu_environment_stage_ms;
     stats.shadow_timings = previous.shadow_timings;
     $if $feat(C3D_PROFILE_GPU):
         stats.gpu_frame_index = previous.gpu_frame_index;

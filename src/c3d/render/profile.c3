@@ -106,6 +106,7 @@ fn void publish_gpu_summary(Renderer* renderer, profile_gpu::CompletedFrame comp
     stats.gpu_scopes_dropped = completed.dropped_scopes;
     stats.gpu_pass_ms = {};
     stats.gpu_pass_valid = {};
+    stats.gpu_environment_stage_ms = {};
     foreach (&record : renderer.views.items) {
         if (!record.live) continue;
         record.stats.gpu_pass_ms = {};
@@ -125,6 +126,10 @@ fn void publish_gpu_summary(Renderer* renderer, profile_gpu::CompletedFrame comp
                     view_stats.gpu_pass_ms[sample.info.pass_ordinal] += pass_ms;
                     view_stats.gpu_pass_valid[sample.info.pass_ordinal] = true;
                 }
+            case PASS_STAGE:
+                // Pass.ENVIRONMENT is the only pass with stages.
+                float stage_ms = (float)(sample.duration_ns / NANOSECONDS_PER_MILLISECOND);
+                stats.gpu_environment_stage_ms[sample.info.stage_ordinal] += stage_ms;
             case SHADOW_LAYER:
                 renderer.shadow_timing_results[shadow_count++] = {
                     .light = { .index = sample.info.light_index, .generation = sample.info.light_generation },
@@ -234,6 +239,23 @@ macro void? @profile_pass(Renderer* renderer, Pass pass; @body()) @private {
     end_profile_pass(renderer, pass)!;
 }
 
+fn ProfileScopeToken? begin_profile_stage(Renderer* renderer, EnvironmentStage stage) @private {
+    $if $feat(C3D_PROFILE_INTERNAL):
+        profile::GpuScopeInfo info = profile_view_info(renderer, profile::GpuScopeKind.PASS_STAGE);
+        info.pass_ordinal = (uint)Pass.ENVIRONMENT.ordinal;
+        info.stage_ordinal = (uint)stage.ordinal;
+        return begin_internal_gpu_scope(renderer, stage.label, info);
+    $else
+        return {};
+    $endif
+}
+
+macro void? @profile_stage(Renderer* renderer, EnvironmentStage stage; @body()) @private {
+    ProfileScopeToken token = begin_profile_stage(renderer, stage)!;
+    @body();
+    end_profile_scope(renderer, token)!;
+}
+
 fn void? begin_profile_view(Renderer* renderer, ViewId view, String label) @private {
     $if $feat(C3D_PROFILE_INTERNAL):
         renderer.gpu_profile.current_view = view;
@@ -323,6 +345,9 @@ fn void cancel_gpu_profile(Renderer* renderer) @private {}
 fn void? begin_profile_pass(Renderer* renderer, Pass pass) @private {}
 fn void? end_profile_pass(Renderer* renderer, Pass pass) @private {}
 macro void? @profile_pass(Renderer* renderer, Pass pass; @body()) @private {
+    @body();
+}
+macro void? @profile_stage(Renderer* renderer, EnvironmentStage stage; @body()) @private {
     @body();
 }
 fn void? begin_profile_view(Renderer* renderer, ViewId view, String label) @private {}

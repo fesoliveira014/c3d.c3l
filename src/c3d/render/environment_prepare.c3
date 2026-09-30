@@ -36,20 +36,55 @@ fn void? acquire_environment_pipeline(
 }
 
 fn void? record_environment_preparations(Renderer* renderer, gpu::CommandList* commands) @private {
+    if (!environment_work_unrecorded(renderer)) return;
+    @profile_pass(renderer, Pass.ENVIRONMENT) {
+        foreach (&pending : renderer.environment_state.pending) {
+            if (pending.write_source && !pending.source_recorded) {
+                @profile_stage(renderer, EnvironmentStage.SOURCE) {
+                    record_environment_source(renderer, commands, pending)!;
+                }!;
+                pending.source_recorded = true;
+            }
+            if (pending.write_lighting && !pending.lighting_recorded) {
+                @profile_stage(renderer, EnvironmentStage.PREFILTER) {
+                    record_environment_prefilter(renderer, commands, pending)!;
+                }!;
+                @profile_stage(renderer, EnvironmentStage.IRRADIANCE) {
+                    record_environment_irradiance(renderer, commands, pending)!;
+                }!;
+                pending.lighting_recorded = true;
+            }
+            if (pending.write_sheen && !pending.sheen_recorded) {
+                @profile_stage(renderer, EnvironmentStage.SHEEN) {
+                    record_environment_sheen(renderer, commands, pending)!;
+                }!;
+                pending.sheen_recorded = true;
+            }
+        }
+        if (environment_luts_unrecorded(renderer)) {
+            @profile_stage(renderer, EnvironmentStage.LUTS) {
+                record_environment_luts(renderer, commands)!;
+            }!;
+        }
+    }!;
+}
+
+fn bool environment_work_unrecorded(Renderer* renderer) @local {
+    if (environment_luts_unrecorded(renderer)) return true;
     foreach (&pending : renderer.environment_state.pending) {
-        if (pending.write_source && !pending.source_recorded) {
-            record_environment_source(renderer, commands, pending)!;
-            pending.source_recorded = true;
-        }
-        if (pending.write_lighting && !pending.lighting_recorded) {
-            record_environment_lighting(renderer, commands, pending)!;
-            pending.lighting_recorded = true;
-        }
-        if (pending.write_sheen && !pending.sheen_recorded) {
-            record_environment_sheen(renderer, commands, pending)!;
-            pending.sheen_recorded = true;
-        }
+        if (pending.write_source && !pending.source_recorded) return true;
+        if (pending.write_lighting && !pending.lighting_recorded) return true;
+        if (pending.write_sheen && !pending.sheen_recorded) return true;
     }
+    return false;
+}
+
+fn bool environment_luts_unrecorded(Renderer* renderer) @local {
+    return renderer.environment_state.sheen_lut.state == EnvironmentLutState.PENDING
+      || renderer.environment_state.brdf_lut.state == EnvironmentLutState.PENDING;
+}
+
+fn void? record_environment_luts(Renderer* renderer, gpu::CommandList* commands) @local {
     if (renderer.environment_state.sheen_lut.state == EnvironmentLutState.PENDING) {
         record_sheen_lut(renderer, commands)!;
     }
@@ -136,16 +171,13 @@ fn void? record_environment_source(
     gpu::cmd_texture_barrier(commands, &ready)!;
 }
 
-fn void? record_environment_lighting(
+fn void? record_environment_prefilter(
     Renderer* renderer,
     gpu::CommandList* commands,
     PendingEnvironment* pending,
 ) @local {
     acquire_environment_pipeline(renderer, &renderer.environment_state.pipelines.prefilter, ENVIRONMENT_PREFILTER)!;
-    acquire_environment_pipeline(renderer, &renderer.environment_state.pipelines.project, IRRADIANCE_PROJECT)!;
-    acquire_environment_pipeline(renderer, &renderer.environment_state.pipelines.reduce, IRRADIANCE_REDUCE)!;
     EnvironmentRes* result = &pending.result;
-    Frame* slot = recording_frame(renderer, commands);
     record_cube_prefilter(
         renderer: renderer,
         commands: commands,
@@ -156,7 +188,17 @@ fn void? record_environment_lighting(
         previous: pending.new_lighting ? (gpu::TextureState){} : renderer.sampled_state,
         base_size: result.specular_size,
     )!;
+}
 
+fn void? record_environment_irradiance(
+    Renderer* renderer,
+    gpu::CommandList* commands,
+    PendingEnvironment* pending,
+) @local {
+    acquire_environment_pipeline(renderer, &renderer.environment_state.pipelines.project, IRRADIANCE_PROJECT)!;
+    acquire_environment_pipeline(renderer, &renderer.environment_state.pipelines.reduce, IRRADIANCE_REDUCE)!;
+    EnvironmentRes* result = &pending.result;
+    Frame* slot = recording_frame(renderer, commands);
     // Orders the rewrite of the SH and partials after their earlier readers on this queue.
     gpu::Barrier earlier_reads = { .before = renderer.consumer_stages, .after = { .compute } };
     gpu::cmd_barrier(commands, &earlier_reads)!;
