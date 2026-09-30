@@ -75,6 +75,8 @@ const Pass[7] REPORTED_PASSES @local = {
     Pass.INSTANCE_CULL,
 };
 
+const Pass[3] SKY_PASSES @local = { Pass.SKY_VIEW, Pass.AERIAL_PERSPECTIVE, Pass.FOG };
+
 enum Segment @local {
     STILL,
     SPIN,
@@ -107,6 +109,7 @@ struct Options @local {
     bool          validation;
     ShadingPath   shading;
     bool          traced_shadows;
+    bool          sky;
     uint          size;
     FoliageChoice foliage;
     float         tree_fade_end;
@@ -271,7 +274,7 @@ fn Demo? build_demo(Options options, AssetStore* assets, Scene* scene) @local {
         layers:        landscape_ground::LAYER_COUNT,
         lod_threshold: terrain::DEFAULT_LOD_THRESHOLD,
     )!;
-    landscape_ground::add_sun_and_sky(scene, options.traced_shadows)!;
+    landscape_ground::add_sun_and_sky(scene, options.traced_shadows, options.sky)!;
     Node* camera_node = scene.add_camera(
         camera::perspective_deg(CAMERA_FOV_DEGREES, CAMERA_NEAR, CAMERA_FAR),
         name: "camera",
@@ -437,6 +440,7 @@ fn Options? parse_options(String[] args) @local {
             case "--tree-fade-end":
                 options.tree_fade_end = option_value(args, &index)!.to_float()!;
                 if (!(options.tree_fade_end > 0)) return c3d::INVALID_ARGUMENT~;
+            case "--sky": options.sky = true;
             case "--width": options.width = option_value(args, &index)!.to_uint()!;
             case "--height": options.height = option_value(args, &index)!.to_uint()!;
             default: return c3d::INVALID_ARGUMENT~;
@@ -952,6 +956,12 @@ fn bool print_results(Demo* demo, BenchmarkResult* result) @local {
                 double median = percentile(gather_pass(records, pass, result.scratch), 0.5f);
                 io::printfn("gpu_ms segment=%s pass=%s median=%.4f", name, pass, median);
             }
+            if (demo.options.sky) {
+                foreach (pass : SKY_PASSES) {
+                    double median = percentile(gather_pass(records, pass, result.scratch), 0.5f);
+                    io::printfn("gpu_ms segment=%s pass=%s median=%.4f", name, pass, median);
+                }
+            }
         }
         print_median_p99("frame_ms", name, gather(records, FRAME_MS, result.scratch));
     }
@@ -974,7 +984,7 @@ fn void print_header(Demo* demo, uint max_instance_batches) @local {
     uint tree_cells = options.foliage == BOTH ? grid_cells(demo.ground.extent, landscape_foliage::TREE_CELL_SIZE) : 0;
     io::printfn(
         "# vegetation size=%d shading=%s shadows=%s foliage=%s tree_fade_end=%g extent=%dx%d frames=%d "
-          "grass_cells=%d tree_cells=%d max_nodes=%d max_instance_batches=%d",
+          "grass_cells=%d tree_cells=%d max_nodes=%d max_instance_batches=%d sky=%s",
         options.size,
         options.shading == ShadingPath.DEFERRED ? "deferred" : "forward",
         options.traced_shadows ? "traced" : "atlas",
@@ -987,6 +997,7 @@ fn void print_header(Demo* demo, uint max_instance_batches) @local {
         tree_cells,
         scene_node_budget(options, demo.ground.extent),
         max_instance_batches,
+        options.sky ? "on" : "off",
     );
     foreach (&layer : active_layers(demo)) {
         FoliageRuntime* runtime = demo.scene.get(layer.node, FoliageRuntime);
@@ -1068,7 +1079,7 @@ fn int main(String[] args) {
             io::eprintfn("Invalid options: %s", excuse);
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
               "[--shadows atlas|traced] [--size 1025|2049|4097] [--foliage both|grass|none] "
-              "[--tree-fade-end METRES] [--width W] [--height H].");
+              "[--tree-fade-end METRES] [--width W] [--height H] [--sky].");
         }
         return 1;
     }

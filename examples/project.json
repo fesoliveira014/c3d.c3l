@@ -310,6 +310,12 @@
         "src/probe_volume.c3"
       ]
     },
+    "sky": {
+      "type": "executable",
+      "sources": [
+        "src/sky.c3"
+      ]
+    },
     "shading_paths": {
       "type": "executable",
       "sources": [

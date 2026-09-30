@@ -136,6 +136,8 @@ const Pass[9] REPORTED_PASSES @local = {
     Pass.TEMPORAL_AA,
 };
 
+const Pass[3] SKY_PASSES @local = { Pass.SKY_VIEW, Pass.AERIAL_PERSPECTIVE, Pass.FOG };
+
 enum Segment @local {
     STILL,
     ORBIT,
@@ -176,6 +178,7 @@ struct Options @local {
     float       mirror_scale;
     uint        crates;
     bool        ssgi;
+    bool        sky;
     bool        traced;
     bool        capture;
     bool        ripples;
@@ -759,7 +762,7 @@ fn void? build_demo(Demo* demo) @local {
         centre: site,
         level:  level,
     );
-    landscape_ground::add_sun_and_sky(scene, false)!;
+    landscape_ground::add_sun_and_sky(scene, false, demo.options.sky)!;
     EnvironmentId sky = add_sky(assets)!;
     scene.environment = sky;
     scene.background = scene::BACKGROUND_DEFAULT;
@@ -944,6 +947,7 @@ fn Options? parse_options(String[] args) @local {
                     case "off": options.ripples = false;
                     default: return c3d::INVALID_ARGUMENT~;
                 }
+            case "--sky": options.sky = true;
             case "--width": options.width = option_value(args, &index)!.to_uint()!;
             case "--height": options.height = option_value(args, &index)!.to_uint()!;
             default: return c3d::INVALID_ARGUMENT~;
@@ -1421,6 +1425,22 @@ fn void print_median_p99(String label, String segment_name, double[] samples) @l
     );
 }
 
+fn void print_sky_passes(
+    FrameRecord[] records,
+    String segment_name,
+    bool mirrored,
+    double[] scratch,
+) @local {
+    foreach (pass : SKY_PASSES) {
+        double median = percentile(gather_pass(records, pass, scratch), 0.5f);
+        io::printfn("gpu_ms view=main segment=%s pass=%s median=%.4f", segment_name, pass, median);
+        if (!mirrored) continue;
+        foreach (index, record : records) scratch[index] = (double)record.mirror_gpu_ms[pass.ordinal];
+        median = percentile(scratch[:records.len], 0.5f);
+        io::printfn("gpu_ms view=mirror segment=%s pass=%s median=%.4f", segment_name, pass, median);
+    }
+}
+
 fn bool print_results(Demo* demo, BenchmarkResult* result) @local {
     Options options = demo.options;
     io::printfn("sample_ns median=%.1f", result.sample_ns);
@@ -1442,6 +1462,14 @@ fn bool print_results(Demo* demo, BenchmarkResult* result) @local {
             foreach (pass : REPORTED_PASSES) {
                 double median = percentile(gather_pass(records, pass, result.scratch), 0.5f);
                 io::printfn("gpu_ms view=main segment=%s pass=%s median=%.4f", name, pass, median);
+            }
+            if (options.sky) {
+                print_sky_passes(
+                    records:      records,
+                    segment_name: name,
+                    mirrored:     mirrored,
+                    scratch:      result.scratch,
+                );
             }
         }
         print_median_p99("frame_ms", name, gather(records, FRAME_MS, result.scratch));
@@ -1495,7 +1523,7 @@ fn String reflection_name(Reflection reflection) @local {
 fn void print_header(Options options) @local {
     io::printfn(
         "# water size=%d shading=%s reflection=%s mirror_scale=%g crates=%d ripples=%s foliage=both ssgi=%s "
-          "extent=%dx%d frames=%d",
+          "extent=%dx%d frames=%d sky=%s",
         options.size,
         options.shading == ShadingPath.DEFERRED ? "deferred" : "forward",
         reflection_name(options.reflection),
@@ -1506,6 +1534,7 @@ fn void print_header(Options options) @local {
         options.width,
         options.height,
         options.segment_frames,
+        options.sky ? "on" : "off",
     );
 }
 
@@ -1589,7 +1618,7 @@ fn int main(String[] args) {
             io::eprintfn("Invalid options: %s", excuse);
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
               "[--size 1025|2049|4097] [--reflection planar|march|env] [--mirror-scale 0.5|1] [--crates 16|256] "
-              "[--ssgi] [--traced] [--capture] [--ripples on|off] [--width W] [--height H].");
+              "[--ssgi] [--traced] [--capture] [--ripples on|off] [--width W] [--height H] [--sky].");
         }
         return 1;
     }
