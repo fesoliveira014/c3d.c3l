@@ -208,6 +208,14 @@ Preparation outside a frame is not timed. `gltf_viewer --benchmark
 --environment-refresh on` regenerates its environment every frame; see
 [benchmarking](benchmarking.md#scene-benchmark).
 
+One refresh of the default environment costs 9.900 ms of GPU time on an RTX 4090 (driver 610.88,
+`gltf_viewer`, median of three runs): prefilter 9.723 ms (98 %), irradiance 0.142 ms, source
+0.029 ms; sheen and the lookup tables read 0 in the measured frames. The prefilter's fixed sample
+count dominates. With refresh off, the in-place path costs nothing measurable: `cpu_record` reads
+0.157 ms against 0.158 ms before this path, and every pass stays inside the before range. The
+benchmark's refresh-on `cpu_record` of 4.25 ms is the re-upload of its 1K HDR source each frame, not
+the in-place regeneration.
+
 Keep environment descriptions, processing settings and source pixels stable from
 `begin_frame` through `end_frame` or `abort_frame`. Cheap scene lighting/background
 values can differ between ordered views. Recorded outputs become committed only
