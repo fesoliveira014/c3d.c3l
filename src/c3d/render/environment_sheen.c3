@@ -87,10 +87,10 @@ fn void? record_sheen_lut(Renderer* renderer, gpu::CommandList* commands) @priva
 fn void? record_environment_sheen(
     Renderer* renderer,
     gpu::CommandList* commands,
-    PendingEnvironment* pending,
+    EnvironmentRes* result,
+    gpu::TextureState previous,
 ) @private {
     acquire_environment_pipeline(renderer, &renderer.environment_state.pipelines.sheen_prefilter, SHEEN_PREFILTER)!;
-    EnvironmentRes* result = &pending.result;
     record_cube_prefilter(
         renderer: renderer,
         commands: commands,
@@ -98,7 +98,7 @@ fn void? record_environment_sheen(
         source_view: result.source_view,
         output: result.sheen_cube,
         faces: result.sheen_faces[..],
-        previous: pending.new_sheen ? (gpu::TextureState){} : renderer.sampled_state,
+        previous: previous,
         base_size: result.sheen_size,
     )!;
 }

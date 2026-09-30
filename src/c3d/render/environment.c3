@@ -269,7 +269,7 @@ fn EnvironmentRes*? resolve_environment(
     return &pending.result;
 }
 
-fn void? create_environment_cube(Renderer* renderer, EnvironmentRes* result, bool specular) @local {
+fn void? create_environment_cube(Renderer* renderer, EnvironmentRes* result, bool specular) @private {
     gpu::TextureDesc description = {
         .width = specular ? result.specular_size : result.source_size,
         .height = specular ? result.specular_size : result.source_size,
@@ -312,7 +312,7 @@ fn void? create_environment_faces(Renderer* renderer, gpu::TextureHandle texture
     }
 }
 
-fn gpu::GpuAllocation? allocate_environment_buffer(Renderer* renderer, usz size, ZString debug_name) @local {
+fn gpu::GpuAllocation? allocate_environment_buffer(Renderer* renderer, usz size, ZString debug_name) @private {
     gpu::AllocationDesc description = {
         .size = size,
         .alignment = STREAM_ALIGNMENT,
@@ -323,11 +323,11 @@ fn gpu::GpuAllocation? allocate_environment_buffer(Renderer* renderer, usz size,
     return gpu::allocate_memory(&renderer.device, &description);
 }
 
-fn gpu::GpuAddress? environment_buffer_address(Renderer* renderer, gpu::GpuAllocation allocation) @local {
+fn gpu::GpuAddress? environment_buffer_address(Renderer* renderer, gpu::GpuAllocation allocation) @private {
     return gpu::get_span_address(&renderer.device, gpu::get_allocation_span(&renderer.device, allocation)!);
 }
 
-fn void? acquire_environment_samplers(Renderer* renderer) @local {
+fn void? acquire_environment_samplers(Renderer* renderer) @private {
     if (renderer.environment_state.samplers_ready) return;
     gpu::SamplerDesc description = {
         .min_filter = gpu::Filter.LINEAR,
@@ -370,14 +370,14 @@ fn void release_environment_lighting(gpu::Device* device, EnvironmentRes* result
     if (result.irradiance_partials.is_valid()) (void)gpu::free_allocation(device, &result.irradiance_partials);
 }
 
-fn void retire_environment_source(RetireList* retire, EnvironmentRes* result) @local {
+fn void retire_environment_source(RetireList* retire, EnvironmentRes* result) @private {
     if (!result.source_owned || !result.source_cube.is_valid()) return;
     retire_environment_faces(retire, result.source_faces[..]);
     retire.push({ .kind = RetiredKind.TEXTURE_VIEW, .texture_view = result.source_view });
     retire.push({ .kind = RetiredKind.TEXTURE, .texture = result.source_cube });
 }
 
-fn void retire_environment_lighting(RetireList* retire, EnvironmentRes* result) @local {
+fn void retire_environment_lighting(RetireList* retire, EnvironmentRes* result) @private {
     if (result.specular_cube.is_valid()) {
         retire_environment_faces(retire, result.specular_faces[..]);
         retire.push({ .kind = RetiredKind.TEXTURE_VIEW, .texture_view = result.specular_view });
@@ -403,7 +403,7 @@ fn bool has_environment_preparations(Renderer* renderer) @private {
     if (lut_unsubmitted(renderer.environment_state.sheen_lut)) return true;
     if (lut_unsubmitted(renderer.environment_state.brdf_lut)) return true;
     foreach (pending : renderer.environment_state.pending) if (pending.active) return true;
-    return false;
+    return has_atmosphere_preparations(renderer);
 }
 
 fn void commit_environment_preparations(Renderer* renderer, Frame* slot) @private {
@@ -422,6 +422,7 @@ fn void commit_environment_preparations(Renderer* renderer, Frame* slot) @privat
     if (renderer.environment_state.sheen_lut.state == EnvironmentLutState.RECORDED) {
         renderer.environment_state.sheen_lut.state = EnvironmentLutState.READY;
     }
+    commit_atmosphere_preparations(renderer);
 }
 
 fn void discard_environment_preparations(Renderer* renderer) @private {
@@ -438,6 +439,7 @@ fn void discard_environment_preparations(Renderer* renderer) @private {
     if (lut_unsubmitted(renderer.environment_state.brdf_lut)) {
         release_lut(&renderer.device, &renderer.environment_state.brdf_lut);
     }
+    discard_atmosphere_preparations(renderer);
 }
 
 fn void sweep_environments(Renderer* renderer) @private {

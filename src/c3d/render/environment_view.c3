@@ -1,19 +1,53 @@
 module c3d::render;
 
 import c3d;
+import c3d::light;
 import c3d::scene;
 import c3d::shader;
 import gpu;
 import std::math;
 
+// The scene's lighting source and background; every reader of either goes through it.
 struct ViewEnvironments @private {
-    EnvironmentRes* lighting;
-    EnvironmentRes* sky;
-    Vec4             clear_color;
+    EnvironmentRes*     lighting;
+    float               lighting_intensity;
+    Quat                lighting_rotation;
+    EnvironmentRes*     sky;             // the background cube; the atmosphere's cube serves the path tracer
+    float               sky_intensity;
+    Quat                sky_rotation;
+    AtmosphereRes*      atmosphere;      // supplies the lighting and the background when present
+    AtmosphereSelection atmosphere_selection;
+    Vec4                clear_color;
 }
 
 fn ViewEnvironments? resolve_view_environments(Renderer* renderer, Scene* scene_data, bool sheen) @private {
-    ViewEnvironments selected = { .clear_color = scene_data.background.color };
+    ViewEnvironments selected = {
+        .lighting_intensity = scene_data.environment_intensity,
+        .lighting_rotation  = scene_data.environment_rotation,
+        .sky_intensity      = scene_data.background.intensity,
+        .sky_rotation       = scene_data.background.rotation,
+        .clear_color        = scene_data.background.color,
+    };
+    AtmosphereSelection selection = select_atmosphere(scene_data);
+    selected.atmosphere = resolve_atmosphere(
+        renderer:  renderer,
+        scene:     scene_data,
+        selection: &selection,
+        sheen:     sheen,
+    )!;
+    if (selected.atmosphere) {
+        // The cubes bake the sun's colour; its intensity scales them here.
+        float sun_intensity = selection.sun.intensity;
+        selected.atmosphere_selection = selection;
+        selected.lighting = &selected.atmosphere.lighting;
+        selected.lighting_intensity = scene_data.environment_intensity * sun_intensity;
+        selected.lighting_rotation = quaternion::IDENTITY;
+        selected.sky = &selected.atmosphere.lighting;
+        selected.sky_intensity = sun_intensity;
+        selected.sky_rotation = quaternion::IDENTITY;
+        sky_atmosphere_pipeline(renderer)!;
+        return selected;
+    }
     if (renderer.assets.environments.is_live(scene_data.environment)) {
         selected.lighting = resolve_environment(
             renderer: renderer,
@@ -103,7 +137,12 @@ fn gpu::PipelineHandle? sky_pipeline(Renderer* renderer) @private {
     return renderer.pipelines.get(&renderer.device, key);
 }
 
-fn gpu::PipelineHandle? record_sky_draw(Renderer* renderer, ViewRecord* record, gpu::GpuAddress root) @private {
+fn gpu::PipelineHandle? record_sky_draw(
+    Renderer* renderer,
+    ViewRecord* record,
+    gpu::GpuAddress root,
+    bool atmosphere,
+) @private {
     gpu::ColorTargetState[1] color_targets = { gpu::color_blend_disabled() };
     gpu::GraphicsState state = fullscreen_state(
         width:         record.hdr_color.width,
@@ -117,7 +156,7 @@ fn gpu::PipelineHandle? record_sky_draw(Renderer* renderer, ViewRecord* record, 
         .compare      = gpu::CompareOp.GREATER_EQUAL,
     };
 
-    gpu::PipelineHandle pipeline = sky_pipeline(renderer)!;
+    gpu::PipelineHandle pipeline = atmosphere ? sky_atmosphere_pipeline(renderer)! : sky_pipeline(renderer)!;
     gpu::cmd_bind_pipeline(&renderer.commands, pipeline)!;
     gpu::cmd_set_graphics_state(&renderer.commands, &state)!;
     gpu::cmd_draw(

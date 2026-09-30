@@ -4,6 +4,8 @@
 #include "descriptor_heap.glsl"
 #include "brdf.glsl"
 #include "ibl.glsl"
+#include "scene_snapshot.glsl"
+#include "fog.glsl"
 
 const float MIN_TRANSMISSION_ALPHA = MIN_PERCEPTUAL_ROUGHNESS * MIN_PERCEPTUAL_ROUGHNESS;
 
@@ -22,31 +24,38 @@ vec3 volume_attenuation(
     return pow(attenuation_color, vec3(distance / attenuation_distance)) * radiance;
 }
 
+// writes_depth: the fog pass fogs a draw without depth at what lies behind it, so only a depth-writing one fogs its own
+// segment behind the surface.
 vec3 transmitted_radiance(
     FrameRoot frame,
     vec3 position,
     vec3 ray,
     vec3 refracted,
-    float roughness
+    float roughness,
+    bool writes_depth
 ) {
     vec4 clip = frame.view_proj * vec4(position + ray, 1.0);
     if (clip.w > 0.0) {
         vec2 ndc = clip.xy / clip.w;
         vec2 uv = vec2(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
         if (all(greaterThanEqual(uv, vec2(0.0))) && all(lessThanEqual(uv, vec2(1.0)))) {
-            return sample_texture_2d(frame.scene_color, frame.scene_sampler, uv).rgb;
+            vec3 behind = sample_texture_2d(frame.scene_color, frame.scene_sampler, uv).rgb;
+            // Only a fogged view takes a depth snapshot with every colour snapshot.
+            if (frame.sky_fog == 0ul || !writes_depth) return behind;
+            return fog_behind(frame, position, behind, scene_depth_at(frame, uv));
         }
     }
-    if (frame.environment == 0ul) return vec3(0.0);
+    if (frame.environment == 0ul) return writes_depth ? fog_behind(frame, position, vec3(0.0), 0.0) : vec3(0.0);
 
     EnvironmentGpu environment = EnvironmentGpu(frame.environment);
     float lod = max(roughness, MIN_PERCEPTUAL_ROUGHNESS) * float(ENVIRONMENT_SPECULAR_MIPS - 1u);
-    return sample_texture_cube_lod(
+    vec3 surroundings = sample_texture_cube_lod(
         environment.specular_cube,
         environment.sampler_index,
         environment_rotate(environment.rotation, normalize(refracted)),
         lod
     ).rgb * environment.intensity;
+    return writes_depth ? fog_behind(frame, position, surroundings, 0.0) : surroundings;
 }
 
 vec3 punctual_transmission(

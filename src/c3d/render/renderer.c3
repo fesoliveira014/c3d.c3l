@@ -164,6 +164,8 @@ struct Renderer {
     ScreenSpaceGiPipelines    screen_space_gi_pipelines;
     ReflectionPipelines       reflection_pipelines;
     ProbeVolumeRes[shader::PROBE_VOLUME_CAPACITY] probe_volumes;
+    AtmosphereRes[ATMOSPHERE_CAPACITY] atmospheres;
+    SkyPipelines              sky_pipelines;
     ProbeVolumePipelines      probe_pipelines;
     ProbeUpdateState          probe_update;
     PathTracer                path_tracer;
@@ -906,6 +908,7 @@ fn void destroy_renderer(Renderer* renderer) {
     foreach (&slot : renderer.frames) drain_retired(&renderer.device, &slot.retire);
     free_environments(renderer);
     free_probe_volumes(renderer);
+    free_atmospheres(renderer);
     free_probe_update(renderer);
     free_pending_uploads(renderer);
     free_textures(renderer);

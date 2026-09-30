@@ -30,6 +30,13 @@ enum ShaderName : int {
     BRDF_LUT,
     SHEEN_LUT,
     SKY,
+    SKY_ATMOSPHERE,
+    SKY_TRANSMITTANCE,
+    SKY_MULTI_SCATTERING,
+    SKY_VIEW,
+    AERIAL_PERSPECTIVE,
+    SKY_ENVIRONMENT,
+    FOG,
     DEPTH_ONLY,
     GRADE,
     FXAA,
@@ -143,6 +150,13 @@ const char[*] IRRADIANCE_REDUCE_SPIRV @private = $embed("../../../shaders/spv/ir
 const char[*] BRDF_LUT_SPIRV @private = $embed("../../../shaders/spv/brdf_lut.spv");
 const char[*] SHEEN_LUT_SPIRV @private = $embed("../../../shaders/spv/sheen_lut.spv");
 const char[*] SKY_SPIRV @private = $embed("../../../shaders/spv/sky.spv");
+const char[*] SKY_ATMOSPHERE_SPIRV @private = $embed("../../../shaders/spv/sky_atmosphere.spv");
+const char[*] SKY_TRANSMITTANCE_SPIRV @private = $embed("../../../shaders/spv/sky_transmittance.spv");
+const char[*] SKY_MULTI_SCATTERING_SPIRV @private = $embed("../../../shaders/spv/sky_multi_scattering.spv");
+const char[*] SKY_VIEW_SPIRV @private = $embed("../../../shaders/spv/sky_view.spv");
+const char[*] AERIAL_PERSPECTIVE_SPIRV @private = $embed("../../../shaders/spv/aerial_perspective.spv");
+const char[*] SKY_ENVIRONMENT_SPIRV @private = $embed("../../../shaders/spv/sky_environment.spv");
+const char[*] FOG_SPIRV @private = $embed("../../../shaders/spv/fog.spv");
 const char[*] MESH_DEPTH_ONLY_SPIRV @private = $embed("../../../shaders/spv/mesh_depth_only.spv");
 const char[*] DEPTH_ONLY_SPIRV @private = $embed("../../../shaders/spv/depth_only.spv");
 const char[*] DEPTH_ONLY_VERTEX_COLOR_SPIRV @private = $embed("../../../shaders/spv/depth_only_vertex_color.spv");
@@ -223,7 +237,7 @@ const char[*] LIGHTING_RESOLVE_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV @private = $embe
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[107] SHADER_ENTRIES = {
+const ShaderEntry[114] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -255,6 +269,13 @@ const ShaderEntry[107] SHADER_ENTRIES = {
     { .variant = { .shader = BRDF_LUT }, .spirv = BRDF_LUT_SPIRV[..] },
     { .variant = { .shader = SHEEN_LUT }, .spirv = SHEEN_LUT_SPIRV[..] },
     { .variant = { .shader = SKY }, .spirv = SKY_SPIRV[..] },
+    { .variant = { .shader = SKY_ATMOSPHERE }, .spirv = SKY_ATMOSPHERE_SPIRV[..] },
+    { .variant = { .shader = SKY_TRANSMITTANCE }, .spirv = SKY_TRANSMITTANCE_SPIRV[..] },
+    { .variant = { .shader = SKY_MULTI_SCATTERING }, .spirv = SKY_MULTI_SCATTERING_SPIRV[..] },
+    { .variant = { .shader = SKY_VIEW }, .spirv = SKY_VIEW_SPIRV[..] },
+    { .variant = { .shader = AERIAL_PERSPECTIVE }, .spirv = AERIAL_PERSPECTIVE_SPIRV[..] },
+    { .variant = { .shader = SKY_ENVIRONMENT }, .spirv = SKY_ENVIRONMENT_SPIRV[..] },
+    { .variant = { .shader = FOG }, .spirv = FOG_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_DEPTH_ONLY }, .spirv = MESH_DEPTH_ONLY_SPIRV[..] },
     { .variant = { .shader = DEPTH_ONLY }, .spirv = DEPTH_ONLY_SPIRV[..] },
     { .variant = { .shader = DEPTH_ONLY, .flags = SHADER_FLAG_VERTEX_COLOR }, .spirv = DEPTH_ONLY_VERTEX_COLOR_SPIRV[..] },

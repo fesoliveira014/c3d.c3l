@@ -21,13 +21,14 @@ bitstruct ProbeFillWork : char @private {
 
 struct ProbeFillIdentity @private {
     EnvironmentId environment;
+    Entity        atmosphere;          // the lighting source when the scene has an atmosphere
     uint          lighting_revision;
     float         intensity;
     Quat          rotation;
 }
 
 struct ProbeFillState @private {
-    ProbeFillIdentity irradiance;          // a zero environment id: no irradiance fill
+    ProbeFillIdentity irradiance;          // zero environment and atmosphere ids: no irradiance fill
     float             visibility_distance;
     bool              visibility_filled;
     bool              scene_defined;       // texels hold defined values for scene updates
@@ -66,16 +67,18 @@ struct ProbeSceneUpdate @private {
 }
 
 struct ProbeFillRecording @private {
-    Scene*          scene;
-    EnvironmentRes* lighting;
-    gpu::GpuAddress environment;
-    bool            environment_ready;
+    Scene*            scene;
+    ViewEnvironments* environments;
+    EnvironmentRes*   lighting;
+    gpu::GpuAddress   environment;
+    bool              environment_ready;
     ProbeSceneUpdate[shader::PROBE_VOLUME_CAPACITY] updates;
-    usz             update_count;
+    usz               update_count;
 }
 
 fn bool ProbeFillState.filled(&self) {
-    return self.irradiance.environment.generation != 0 && self.visibility_filled;
+    bool lit = self.irradiance.environment.generation != 0 || self.irradiance.atmosphere.generation != 0;
+    return lit && self.visibility_filled;
 }
 
 fn bool ProbeFillState.in_hit_set(&self) {
@@ -88,6 +91,7 @@ fn bool ProbeFillState.in_view_set(&self) {
 
 fn bool probe_fill_identity_equals(ProbeFillIdentity* first, ProbeFillIdentity* second) @private {
     return c3d::same_id(first.environment, second.environment)
+        && c3d::same_id(first.atmosphere, second.atmosphere)
         && first.lighting_revision == second.lighting_revision
         && first.intensity == second.intensity
         && first.rotation.v == second.rotation.v;
@@ -256,22 +260,24 @@ fn ProbeVolumeRes* find_probe_volume(Renderer* renderer, ulong scene, Entity ent
 fn void? record_probe_volumes(
     Renderer* renderer,
     Scene* scene,
-    EnvironmentRes* lighting,
+    ViewEnvironments* environments,
     gpu::GpuAddress trace_root,
 ) @private {
     sweep_probe_volumes(renderer, scene);
     if (!scene.count(ProbeVolume)) return;
 
+    EnvironmentRes* lighting = environments.lighting;
     ProbeFillIdentity identity;
     if (lighting) {
         identity = {
             .environment       = lighting.asset,
+            .atmosphere        = environments.atmosphere ? environments.atmosphere.entity : (Entity){},
             .lighting_revision = lighting.lighting_revision,
-            .intensity         = scene.environment_intensity,
-            .rotation          = scene.environment_rotation,
+            .intensity         = environments.lighting_intensity,
+            .rotation          = environments.lighting_rotation,
         };
     }
-    ProbeFillRecording recording = { .scene = scene, .lighting = lighting };
+    ProbeFillRecording recording = { .scene = scene, .environments = environments, .lighting = lighting };
     scene.@each(ProbeVolume; Entity entity, ProbeVolume* volume) {
         resolve_probe_volume(
             renderer:  renderer,
@@ -386,8 +392,8 @@ fn void? record_probe_atlas_fill(
             recording.environment = pack_lighting_environment(
                 renderer:    renderer,
                 environment: recording.lighting,
-                intensity:   recording.scene.environment_intensity,
-                rotation:    recording.scene.environment_rotation,
+                intensity:   recording.environments.lighting_intensity,
+                rotation:    recording.environments.lighting_rotation,
                 sheen:       false,
             )!;
         }

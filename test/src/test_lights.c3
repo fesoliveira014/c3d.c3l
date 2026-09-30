@@ -64,6 +64,8 @@ fn void test_light_inclusion_precedes_budget_and_preserves_receiver_mask() @test
             view_layers: 1,
             capacity: 1,
             counts: &counts,
+            atmosphere: null,
+            altitude: 0,
         );
         LightGpu[] packed = extraction.lights;
         assert(packed.len == 1 && packed[0].color_intensity.w == 5);
@@ -101,6 +103,8 @@ fn void test_unbounded_and_directional_lights_survive_spatial_culling() @test {
             view_layers: 1,
             capacity: 4,
             counts: &counts,
+            atmosphere: null,
+            altitude: 0,
         );
         LightGpu[] packed = extraction.lights;
         assert(packed.len == 3 && counts.culled == 1 && counts.dropped == 0);
@@ -129,6 +133,8 @@ fn void test_light_budget_follows_current_component_order() @test {
             view_layers: 1,
             capacity: 2,
             counts: &counts,
+            atmosphere: null,
+            altitude: 0,
         );
         LightGpu[] packed = extraction.lights;
         assert(packed.len == 2 && counts.dropped == 1);
@@ -145,6 +151,8 @@ fn void test_light_budget_follows_current_component_order() @test {
             view_layers: 1,
             capacity: 1,
             counts: &counts,
+            atmosphere: null,
+            altitude: 0,
         );
         LightGpu[] packed = extraction.lights;
         assert(packed.len == 1 && counts.packed == 1 && counts.dropped == 1);
@@ -180,6 +188,8 @@ fn void test_spot_world_pose_does_not_scale_range_or_intensity() @test {
             view_layers: 1,
             capacity: 1,
             counts: &counts,
+            atmosphere: null,
+            altitude: 0,
         );
         LightGpu[] packed = extraction.lights;
         assert(packed.len == 1);
@@ -250,6 +260,7 @@ fn void test_roots_preserve_light_and_receiver_data() @test {
         viewport: { 800, 600 },
         info: {},
         frame_index: 3,
+        sky_fog:     (gpu::GpuAddress)0,
         lights: (gpu::GpuAddress)4096,
         light_count: 2,
         ambient: { 0.1f, 0.2f, 0.3f, 0 },
@@ -268,6 +279,7 @@ fn void test_roots_preserve_light_and_receiver_data() @test {
         viewport: { 800, 600 },
         info: {},
         frame_index: 3,
+        sky_fog:     (gpu::GpuAddress)0,
         lights: (gpu::GpuAddress)4096,
         light_count: 2,
         ambient: { 0.1f, 0.2f, 0.3f, 0 },
@@ -314,6 +326,8 @@ fn void test_light_receiver_mask_is_not_restricted_to_camera_bits() @test {
             view_layers: 1,
             capacity: 1,
             counts: &counts,
+            atmosphere: null,
+            altitude: 0,
         );
         LightGpu[] packed = extraction.lights;
         assert(packed.len == 1 && packed[0].layers == 2);
@@ -356,6 +370,8 @@ fn void test_include_light_packs_the_flag_and_skips_the_atlas() @test {
             view_layers: 1,
             capacity:    4,
             counts:      &counts,
+            atmosphere:  null,
+            altitude:    0,
             ray_tracing: { .shadows = true },
         );
         assert(extraction.lights.len == 2);
@@ -369,6 +385,8 @@ fn void test_include_light_packs_the_flag_and_skips_the_atlas() @test {
             view_layers: 1,
             capacity:    4,
             counts:      &counts,
+            atmosphere:  null,
+            altitude:    0,
         );
         assert(extraction.shadows.len == 2);
         assert(extraction.lights[0].flags == 0 && extraction.lights[1].flags == 0);

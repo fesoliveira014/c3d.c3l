@@ -8,6 +8,7 @@
 #include "ibl.glsl"
 #include "lights.glsl"
 #include "material_alpha.glsl"
+#include "fog.glsl"
 #include "material_maps.glsl"
 #include "physical.glsl"
 #include "shadows.glsl"
@@ -257,7 +258,14 @@ void main() {
         vec3 refracted = refract(-material_sample.view_direction, material_sample.normal, 1.0 / material.ior);
         surface.transmission_ray = transmission_ray(refracted, thickness, draw.model);
         vec3 radiance = volume_attenuation(
-            transmitted_radiance(frame, v_world_pos, surface.transmission_ray, refracted, material_sample.roughness),
+            transmitted_radiance(
+                frame,
+                v_world_pos,
+                surface.transmission_ray,
+                refracted,
+                material_sample.roughness,
+                (material.standard.flags & MATERIAL_ALPHA_BLEND) == 0u
+            ),
             length(surface.transmission_ray),
             surface.attenuation_color,
             surface.attenuation_distance
@@ -319,6 +327,9 @@ void main() {
             draw.sheen_sampler
         );
     }
+    // A transmissive draw sits in the scene-read list, before the fog pass, which fogs it at what lies behind it.
+    bool blended = (material.standard.flags & MATERIAL_ALPHA_BLEND) != 0u && material.transmission == 0.0;
+    if (blended) color = apply_fog(frame, v_world_pos, color);
     out_color = material_output(
         color,
         material_sample.base_color.a,

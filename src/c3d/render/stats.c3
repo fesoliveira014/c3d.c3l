@@ -16,6 +16,8 @@ enum Pass : int {
     LIGHT_CULL,
     ACCELERATION_BUILD,
     PATH_TRACE,
+    SKY_VIEW,
+    AERIAL_PERSPECTIVE,
     DEPTH_PREPASS,
     GBUFFER,
     AMBIENT_OCCLUSION,
@@ -26,6 +28,7 @@ enum Pass : int {
     SKY,
     SCENE_SNAPSHOT,
     SCENE_READ,
+    FOG,
     FORWARD_TRANSPARENT,
     SSGI_COLOR_COPY,
     DEBUG_LINES,
@@ -50,6 +53,9 @@ enum EnvironmentStage : int (String label) {
     PREFILTER { "environment.prefilter" },
     SHEEN { "environment.sheen" },
     LUTS { "environment.luts" },
+    SKY_TRANSMITTANCE { "environment.sky_transmittance" },
+    SKY_MULTI_SCATTERING { "environment.sky_multi_scattering" },
+    SKY { "environment.sky" },
 }
 
 <*
@@ -89,6 +95,10 @@ struct Stats {
     uint  probe_volumes_dropped; // this frame, per failed acquisition: two views of one scene count a volume twice
     uint  probe_rays;            // this frame: primary probe rays; shadow rays are not counted
     uint  probe_updates;         // this frame: scene updates of probe volumes
+    uint  atmospheres_ignored;   // per resolution: extra, invalid or sunless atmospheres of a scene
+    uint  atmospheres_dropped;   // per resolution: atmospheres drawn as absent for want of a mirror slot
+    uint  fogs_ignored;          // per view: extra or invalid height fogs the view's layers see
+    uint  sky_regenerations;     // this frame: atmosphere lighting marked for regeneration
     ViewId cluster_view;
     uint  cluster_count;
     uint  cluster_overflows;

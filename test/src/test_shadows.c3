@@ -196,6 +196,8 @@ fn void test_shadow_requests_preserve_selected_light_identity_and_kind_cost() @t
             view_layers: 1,
             capacity: 3,
             counts: &counts,
+            atmosphere: null,
+            altitude: 0,
         );
         assert(extraction.lights.len == 3 && extraction.shadows.len == 3);
         assert(extraction.shadows[0].light.index == sun.id.index && extraction.shadows[0].layer_count == 4);
@@ -213,6 +215,8 @@ fn void test_shadow_requests_preserve_selected_light_identity_and_kind_cost() @t
             view_layers: 1,
             capacity: 1,
             counts: &counts,
+            atmosphere: null,
+            altitude: 0,
         );
         assert(budgeted.lights.len == 1 && budgeted.shadows.len == 1 && counts.dropped == 2);
         bulb.visible = false;
@@ -225,6 +229,8 @@ fn void test_shadow_requests_preserve_selected_light_identity_and_kind_cost() @t
             view_layers: 1,
             capacity: 3,
             counts: &counts,
+            atmosphere: null,
+            altitude: 0,
         );
         assert(filtered.lights.len == 2 && filtered.shadows.len == 1);
         assert(filtered.shadows[0].light.index == sun.id.index);

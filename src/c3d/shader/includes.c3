@@ -6,6 +6,7 @@ import c3d::asset;
 const char[*] C3D_GENERATED_C3D_ABI_TEXT @private = $embed("../../../shaders/generated/c3d_abi.glsl");
 const char[*] C3D_COMMON_AMBIENT_OCCLUSION_TEXT @private = $embed("../../../shaders/common/ambient_occlusion.glsl");
 const char[*] C3D_COMMON_AO_ESTIMATE_TEXT @private = $embed("../../../shaders/common/ao_estimate.glsl");
+const char[*] C3D_COMMON_ATMOSPHERE_TEXT @private = $embed("../../../shaders/common/atmosphere.glsl");
 const char[*] C3D_COMMON_BRDF_TEXT @private = $embed("../../../shaders/common/brdf.glsl");
 const char[*] C3D_COMMON_CLUSTERS_TEXT @private = $embed("../../../shaders/common/clusters.glsl");
 const char[*] C3D_COMMON_CONSTANTS_TEXT @private = $embed("../../../shaders/common/constants.glsl");
@@ -14,6 +15,7 @@ const char[*] C3D_COMMON_CUSTOM_MATERIAL_TEXT @private = $embed("../../../shader
 const char[*] C3D_COMMON_DEFORM_TEXT @private = $embed("../../../shaders/common/deform.glsl");
 const char[*] C3D_COMMON_DOF_TEXT @private = $embed("../../../shaders/common/dof.glsl");
 const char[*] C3D_COMMON_ENVIRONMENT_SAMPLING_TEXT @private = $embed("../../../shaders/common/environment_sampling.glsl");
+const char[*] C3D_COMMON_FOG_TEXT @private = $embed("../../../shaders/common/fog.glsl");
 const char[*] C3D_COMMON_FXAA_TEXT @private = $embed("../../../shaders/common/fxaa.glsl");
 const char[*] C3D_COMMON_GBUFFER_TEXT @private = $embed("../../../shaders/common/gbuffer.glsl");
 const char[*] C3D_COMMON_GBUFFER_OUTPUT_TEXT @private = $embed("../../../shaders/common/gbuffer_output.glsl");
@@ -57,10 +59,11 @@ const char[*] GPU_RAY_TRACING_TEXT @private = $embed("../../../lib/gpu.c3l/inclu
 <*
  Every include a custom stage may resolve, in table order.
 *>
-const asset::ShaderInclude[50] SHADER_INCLUDES = {
+const asset::ShaderInclude[52] SHADER_INCLUDES = {
     { .name = "c3d_abi.glsl", .text = (String)C3D_GENERATED_C3D_ABI_TEXT[..] },
     { .name = "ambient_occlusion.glsl", .text = (String)C3D_COMMON_AMBIENT_OCCLUSION_TEXT[..] },
     { .name = "ao_estimate.glsl", .text = (String)C3D_COMMON_AO_ESTIMATE_TEXT[..] },
+    { .name = "atmosphere.glsl", .text = (String)C3D_COMMON_ATMOSPHERE_TEXT[..] },
     { .name = "brdf.glsl", .text = (String)C3D_COMMON_BRDF_TEXT[..] },
     { .name = "clusters.glsl", .text = (String)C3D_COMMON_CLUSTERS_TEXT[..] },
     { .name = "constants.glsl", .text = (String)C3D_COMMON_CONSTANTS_TEXT[..] },
@@ -69,6 +72,7 @@ const asset::ShaderInclude[50] SHADER_INCLUDES = {
     { .name = "deform.glsl", .text = (String)C3D_COMMON_DEFORM_TEXT[..] },
     { .name = "dof.glsl", .text = (String)C3D_COMMON_DOF_TEXT[..] },
     { .name = "environment_sampling.glsl", .text = (String)C3D_COMMON_ENVIRONMENT_SAMPLING_TEXT[..] },
+    { .name = "fog.glsl", .text = (String)C3D_COMMON_FOG_TEXT[..] },
     { .name = "fxaa.glsl", .text = (String)C3D_COMMON_FXAA_TEXT[..] },
     { .name = "gbuffer.glsl", .text = (String)C3D_COMMON_GBUFFER_TEXT[..] },
     { .name = "gbuffer_output.glsl", .text = (String)C3D_COMMON_GBUFFER_OUTPUT_TEXT[..] },

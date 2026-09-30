@@ -46,21 +46,34 @@ fn void? record_environment_preparations(Renderer* renderer, gpu::CommandList* c
                 pending.source_recorded = true;
             }
             if (pending.write_lighting && !pending.lighting_recorded) {
+                gpu::TextureState previous = pending.new_lighting ? (gpu::TextureState){} : renderer.sampled_state;
                 @profile_stage(renderer, EnvironmentStage.PREFILTER) {
-                    record_environment_prefilter(renderer, commands, pending)!;
+                    record_environment_prefilter(
+                        renderer: renderer,
+                        commands: commands,
+                        result:   &pending.result,
+                        previous: previous,
+                    )!;
                 }!;
                 @profile_stage(renderer, EnvironmentStage.IRRADIANCE) {
-                    record_environment_irradiance(renderer, commands, pending)!;
+                    record_environment_irradiance(renderer, commands, &pending.result)!;
                 }!;
                 pending.lighting_recorded = true;
             }
             if (pending.write_sheen && !pending.sheen_recorded) {
+                gpu::TextureState previous = pending.new_sheen ? (gpu::TextureState){} : renderer.sampled_state;
                 @profile_stage(renderer, EnvironmentStage.SHEEN) {
-                    record_environment_sheen(renderer, commands, pending)!;
+                    record_environment_sheen(
+                        renderer: renderer,
+                        commands: commands,
+                        result:   &pending.result,
+                        previous: previous,
+                    )!;
                 }!;
                 pending.sheen_recorded = true;
             }
         }
+        record_atmosphere_preparations(renderer, commands)!;
         if (environment_luts_unrecorded(renderer)) {
             @profile_stage(renderer, EnvironmentStage.LUTS) {
                 record_environment_luts(renderer, commands)!;
@@ -76,7 +89,7 @@ fn bool environment_work_unrecorded(Renderer* renderer) @local {
         if (pending.write_lighting && !pending.lighting_recorded) return true;
         if (pending.write_sheen && !pending.sheen_recorded) return true;
     }
-    return false;
+    return atmosphere_work_unrecorded(renderer);
 }
 
 fn bool environment_luts_unrecorded(Renderer* renderer) @local {
@@ -174,10 +187,10 @@ fn void? record_environment_source(
 fn void? record_environment_prefilter(
     Renderer* renderer,
     gpu::CommandList* commands,
-    PendingEnvironment* pending,
-) @local {
+    EnvironmentRes* result,
+    gpu::TextureState previous,
+) @private {
     acquire_environment_pipeline(renderer, &renderer.environment_state.pipelines.prefilter, ENVIRONMENT_PREFILTER)!;
-    EnvironmentRes* result = &pending.result;
     record_cube_prefilter(
         renderer: renderer,
         commands: commands,
@@ -185,7 +198,7 @@ fn void? record_environment_prefilter(
         source_view: result.source_view,
         output: result.specular_cube,
         faces: result.specular_faces[..],
-        previous: pending.new_lighting ? (gpu::TextureState){} : renderer.sampled_state,
+        previous: previous,
         base_size: result.specular_size,
     )!;
 }
@@ -193,11 +206,10 @@ fn void? record_environment_prefilter(
 fn void? record_environment_irradiance(
     Renderer* renderer,
     gpu::CommandList* commands,
-    PendingEnvironment* pending,
-) @local {
+    EnvironmentRes* result,
+) @private {
     acquire_environment_pipeline(renderer, &renderer.environment_state.pipelines.project, IRRADIANCE_PROJECT)!;
     acquire_environment_pipeline(renderer, &renderer.environment_state.pipelines.reduce, IRRADIANCE_REDUCE)!;
-    EnvironmentRes* result = &pending.result;
     Frame* slot = recording_frame(renderer, commands);
     // Orders the rewrite of the SH and partials after their earlier readers on this queue.
     gpu::Barrier earlier_reads = { .before = renderer.consumer_stages, .after = { .compute } };

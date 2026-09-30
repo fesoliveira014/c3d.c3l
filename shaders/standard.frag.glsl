@@ -4,6 +4,7 @@
 #include "descriptor_heap.glsl"
 #include "vertex_pull.glsl"
 #include "material_alpha.glsl"
+#include "fog.glsl"
 #include "standard_shading.glsl"
 
 layout(location = 0) in vec3 v_world_pos;
@@ -43,5 +44,6 @@ void main() {
         && material_sample.base_color.a < material.alpha_cutoff) discard;
 
     vec3 color = shade_standard_surface(frame, draw, material_sample, 1.0, v_world_pos, ivec2(gl_FragCoord.xy));
+    if ((material.flags & MATERIAL_ALPHA_BLEND) != 0u) color = apply_fog(frame, v_world_pos, color);
     out_color = material_output(color, material_sample.base_color.a, material.flags);
 }

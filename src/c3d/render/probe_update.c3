@@ -162,6 +162,7 @@ fn void? record_probe_updates(Renderer* renderer, ProbeFillRecording* recording,
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     acquire_probe_update_pipelines(renderer)!;
 
+    AtmosphereSelection* atmosphere = &recording.environments.atmosphere_selection;
     LightCounts light_counts;
     LightExtraction extraction = extract_lights(
         allocator:     tmem,
@@ -170,6 +171,8 @@ fn void? record_probe_updates(Renderer* renderer, ProbeFillRecording* recording,
         view_layers:   uint::max,
         capacity:      renderer.max_lights,
         counts:        &light_counts,
+        atmosphere:    atmosphere,
+        altitude:      atmosphere.atmosphere ? atmosphere.atmosphere.observer_altitude : 0,
         trace_shadows: true,
     );
     renderer.stats.lights_dropped += light_counts.dropped;
@@ -179,8 +182,8 @@ fn void? record_probe_updates(Renderer* renderer, ProbeFillRecording* recording,
         recording.environment = pack_lighting_environment(
             renderer:    renderer,
             environment: recording.lighting,
-            intensity:   scene.environment_intensity,
-            rotation:    scene.environment_rotation,
+            intensity:   recording.environments.lighting_intensity,
+            rotation:    recording.environments.lighting_rotation,
             sheen:       false,
         )!;
         recording.environment_ready = true;
