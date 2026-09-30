@@ -48,6 +48,18 @@ const float FOG_RELATIVE_TOLERANCE @private = 3e-3f; // RGBA16F rounds to 2^-11;
 const float FOG_ABSOLUTE_TOLERANCE @private = 2e-4f;
 const float TABLE_TOLERANCE @private = 0.0035f; // the interview's bound on the 64-step CPU integral
 const float TABLE_CHANNEL_FLOOR @private = 1e-3f; // below it RGBA16F holds too few bits for a relative bound
+const uint FROXEL_UPPER_ROW @private = 5;           // froxel centres of the 3 x 3 grid over 33 px: pixels 5, 16, 27
+const float VOLUME_END @private = 50;               // metres the test volume covers
+const float FOG_ANISOTROPY @private = 0.3f;
+const float VOLUME_SUN_INTENSITY @private = 3;
+const float VOLUME_SUN_DEGREES @private = 20;       // ahead of the camera, strongly forward-scattered
+const float CLIP_DISTANCE @private = 10;
+const float ROOF_HEIGHT @private = 10;
+const float ROOF_LENGTH @private = 60;              // shadows the first 60 m of the level ray under a sun overhead
+const float SHORT_SHADOW_DISTANCE @private = 30;
+const float SHADOWED_SHARE_MIN @private = 0.1f;     // computed 0.19 for 60 of 80 m shadowed
+const float SHADOWED_SHARE_MAX @private = 0.3f;
+const float SHORT_SHARE_MIN @private = 0.4f;        // computed 0.54 when the atlas ends at 30 m
 
 struct FogScene @private {
     Scene      scene;
@@ -129,7 +141,12 @@ fn void aim_node(Node* sun, float elevation) @private {
     sun.local.rotation = maths::look_rotation(-to_sun, { 0, 1, 0 });
 }
 
-fn FogView? create_fog_view(Fixture* fixture, ShadingPath shading, Plane clip_plane = {}) @private {
+fn FogView? create_fog_view(
+    Fixture* fixture,
+    ShadingPath shading,
+    Plane clip_plane = {},
+    bool volumetric_fog = false,
+) @private {
     FogView result;
     result.target = render::create_render_target(
         renderer: &fixture.renderer,
@@ -139,6 +156,7 @@ fn FogView? create_fog_view(Fixture* fixture, ShadingPath shading, Plane clip_pl
     desc.shading = shading;
     desc.post.anti_aliasing = AntiAliasing.NONE;
     desc.clip_plane = clip_plane;
+    desc.volumetric_fog = volumetric_fog;
     result.view = render::create_view(&fixture.renderer, desc)!;
     return result;
 }
@@ -250,6 +268,69 @@ fn MaterialId? add_blended_pane(Fixture* fixture) @private {
     params.standard.roughness = 0.2f;
     params.transmission = 1;
     return fixture.assets.add_material(material::physical(params, common));
+}
+
+fn HeightFog volume_fog() @private {
+    HeightFog fog = TEST_FOG;
+    fog.max_distance = VOLUME_END;
+    fog.anisotropy = FOG_ANISOTROPY;
+    return fog;
+}
+
+fn Node*? add_plain_sun(FogScene* target, Vec3 to_sun, bool shadow) @private {
+    Light sun = light::directional({ 1, 1, 1 }, VOLUME_SUN_INTENSITY, shadow);
+    Node* node = target.scene.add_light(sun, name: "sun")!;
+    Vec3 up = math::abs(to_sun.y) > 0.99f ? (Vec3){ 0, 0, -1 } : (Vec3){ 0, 1, 0 };
+    node.local.rotation = maths::look_rotation(-to_sun, up);
+    target.scene.update_world();
+    target.sun = node;
+    return node;
+}
+
+// In-scatter per unit extinction of the volume: the ambient plus the sun through the phase.
+fn Vec3 volume_color(
+    HeightFog* fog,
+    Vec3 direction,
+    Vec3 to_sun,
+    float sun_intensity,
+) @private {
+    float squared = fog.anisotropy * fog.anisotropy;
+    float denominator = 1 + squared - 2 * fog.anisotropy * direction.dot(to_sun);
+    float phase = (1 - squared) / (4 * (float)math::PI * denominator * math::sqrt(denominator));
+    return fog.albedo * (FOG_AMBIENT + (Vec3){ 1, 1, 1 } * phase * sun_intensity);
+}
+
+// A surface's radiance through the volume, with the analytic fog past the volume's end.
+fn Vec3 volume_fogged(HeightFog* fog, FogRay ray, Vec3 radiance, Vec3 color) @private {
+    float inside = math::min(ray.distance, fog.max_distance);
+    float transmittance = light::height_fog_transmittance(
+        fog:         fog,
+        base_height: 0,
+        origin:      ray.origin,
+        direction:   ray.direction,
+        distance:    inside,
+    );
+    Vec3 behind = ray.distance > fog.max_distance ? fogged(fog, ray_beyond(ray, fog.max_distance), radiance) : radiance;
+    return behind * transmittance + color * (1 - transmittance);
+}
+
+fn Vec3 volume_fogged_background(HeightFog* fog, FogRay ray, Vec3 radiance, Vec3 color) @private {
+    float transmittance = light::height_fog_transmittance(
+        fog:         fog,
+        base_height: 0,
+        origin:      ray.origin,
+        direction:   ray.direction,
+        distance:    fog.max_distance,
+    );
+    Vec3 behind = fogged_to_infinity(fog, ray_beyond(ray, fog.max_distance), radiance);
+    return behind * transmittance + color * (1 - transmittance);
+}
+
+// The sun's in-scatter that survives the shadow: 0 fully shadowed, 1 unshadowed.
+fn float kept_share(Vec4 shadowed, Vec4 unlit, Vec4 lit) @private {
+    Vec3 kept = shadowed.xyz - unlit.xyz;
+    Vec3 full = lit.xyz - unlit.xyz;
+    return (kept.x + kept.y + kept.z) / (full.x + full.y + full.z);
 }
 
 fn void test_transmittance_table_matches_the_cpu_integral() @test {
@@ -664,4 +745,184 @@ fn void test_mirror_view_fogs_behind_its_plane() @test {
     Vec3 background = fogged_to_infinity(&fog, ray_beyond(to_bed, entry), SKY_BACKGROUND.xyz);
     check_rgb_close(pixel_at(open, SKY_CENTRE, SKY_CENTRE), background, "background behind the plane");
     check_validation(&fixture.renderer);
+}
+
+fn void test_fog_volume_without_a_sun_equals_the_analytic_fog() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    FogScene target = create_fog_scene(&fixture)!!;
+    defer scene::destroy_scene(&target.scene);
+    Node* bed = add_facing_plane(&target, add_unlit(&fixture, BED_COLOR)!!, 30)!!;
+    HeightFog fog = volume_fog();
+    add_fog(&target, fog)!!;
+    FogView fog_view = create_fog_view(&fixture, ShadingPath.FORWARD, volumetric_fog: true)!!;
+    defer destroy_fog_view(&fixture, &fog_view);
+    uint[2] rows = { SKY_CENTRE, FROXEL_UPPER_ROW };
+
+    float[2] distances = { 30, BED_DISTANCE };
+    foreach (distance : distances) {
+        bed.local.position.z = -distance;
+        Vec4[] pixels = render_fog_pixels(&fixture, &target, &fog_view)!!;
+        defer free(pixels);
+        foreach (row : rows) {
+            Vec3 expected = fogged(&fog, pixel_ray(&target, row, distance), BED_COLOR.xyz);
+            check_rgb_close(pixel_at(pixels, SKY_CENTRE, row), expected, distance < VOLUME_END ? "inside" : "beyond");
+        }
+    }
+
+    FogView clipped = create_fog_view(
+        fixture:        &fixture,
+        shading:        ShadingPath.FORWARD,
+        clip_plane:     { .normal = { 0, 0, -1 }, .d = -CLIP_DISTANCE },
+        volumetric_fog: true,
+    )!!;
+    defer destroy_fog_view(&fixture, &clipped);
+    bed.local.position.z = -30;
+    Vec4[] clipped_pixels = render_fog_pixels(&fixture, &target, &clipped)!!;
+    defer free(clipped_pixels);
+    foreach (row : rows) {
+        FogRay ray = pixel_ray(&target, row, 30);
+        Vec3 expected = fogged(&fog, ray_beyond(ray, CLIP_DISTANCE / -ray.direction.z), BED_COLOR.xyz);
+        check_rgb_close(pixel_at(clipped_pixels, SKY_CENTRE, row), expected, "clipped");
+    }
+
+    target.scene.remove(bed);
+    Vec4[] background = render_fog_pixels(&fixture, &target, &fog_view)!!;
+    defer free(background);
+    Vec3 expected = fogged_to_infinity(&fog, pixel_ray(&target, FROXEL_UPPER_ROW), SKY_BACKGROUND.xyz);
+    check_rgb_close(pixel_at(background, SKY_CENTRE, FROXEL_UPPER_ROW), expected, "background");
+    check_validation(&fixture.renderer);
+}
+
+fn void test_fog_volume_scatters_the_sun_and_continues_past_its_end() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    FogScene target = create_fog_scene(&fixture)!!;
+    defer scene::destroy_scene(&target.scene);
+    Node* bed = add_facing_plane(&target, add_unlit(&fixture, BED_COLOR)!!, VOLUME_END)!!;
+    HeightFog fog = volume_fog();
+    add_fog(&target, fog)!!;
+    float elevation = VOLUME_SUN_DEGREES * DEGREE;
+    Vec3 to_sun = { 0, math::sin(elevation), -math::cos(elevation) };
+    add_plain_sun(&target, to_sun, false)!!;
+    FogView fog_view = create_fog_view(&fixture, ShadingPath.FORWARD, volumetric_fog: true)!!;
+    defer destroy_fog_view(&fixture, &fog_view);
+    uint[2] rows = { SKY_CENTRE, FROXEL_UPPER_ROW };
+
+    float[2] distances = { VOLUME_END - 1, VOLUME_END + 1 };
+    foreach (distance : distances) {
+        bed.local.position.z = -distance;
+        Vec4[] pixels = render_fog_pixels(&fixture, &target, &fog_view)!!;
+        defer free(pixels);
+        foreach (row : rows) {
+            FogRay ray = pixel_ray(&target, row, distance);
+            Vec3 color = volume_color(&fog, ray.direction, to_sun, VOLUME_SUN_INTENSITY);
+            Vec3 expected = volume_fogged(&fog, ray, BED_COLOR.xyz, color);
+            check_rgb_close(pixel_at(pixels, SKY_CENTRE, row), expected, distance < VOLUME_END ? "inside" : "outside");
+        }
+    }
+
+    target.scene.remove(bed);
+    Vec4[] background = render_fog_pixels(&fixture, &target, &fog_view)!!;
+    defer free(background);
+    FogRay above = pixel_ray(&target, FROXEL_UPPER_ROW);
+    Vec3 color = volume_color(&fog, above.direction, to_sun, VOLUME_SUN_INTENSITY);
+    Vec3 expected = volume_fogged_background(&fog, above, SKY_BACKGROUND.xyz, color);
+    check_rgb_close(pixel_at(background, SKY_CENTRE, FROXEL_UPPER_ROW), expected, "background");
+    check_validation(&fixture.renderer);
+}
+
+// Centre pixel of a view that sees the bed at 80 m under a roof shading the first 60 m of the ray.
+fn Vec4? roof_pixel(Fixture* fixture, FogScene* target, FogView* fog_view) @private {
+    Vec4[] pixels = render_fog_pixels(fixture, target, fog_view)!;
+    defer free(pixels);
+    return pixel_at(pixels, SKY_CENTRE, SKY_CENTRE);
+}
+
+fn void check_volume_shadow(bool traced, bool ray_queries) @private {
+    Fixture fixture;
+    create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    FogScene target = create_fog_scene(&fixture)!!;
+    defer scene::destroy_scene(&target.scene);
+    add_facing_plane(&target, add_unlit(&fixture, BED_COLOR)!!, BED_DISTANCE)!!;
+    GeometryId roof_plane;
+    @pool() {
+        Geometry plane = geometry::plane(tmem, ROOF_LENGTH, ROOF_LENGTH);
+        roof_plane = fixture.assets.add_geometry(&plane)!!;
+    };
+    Node* roof = target.scene.add_mesh(roof_plane, add_unlit(&fixture, BED_COLOR)!!)!!;
+    roof.local.position = { 0, ROOF_HEIGHT, -ROOF_LENGTH / 2 };
+    add_fog(&target, TEST_FOG)!!;
+    Node* sun = add_plain_sun(&target, { 0, 1, 0 }, true)!!;
+    Light* light = target.scene.get(sun, Light);
+    light.shadow.cascades = 1; // the fixture's atlas holds one layer
+    light.shadow.ray_traced = traced;
+    FogView fog_view = create_fog_view(&fixture, ShadingPath.FORWARD, volumetric_fog: true)!!;
+    defer destroy_fog_view(&fixture, &fog_view);
+    ViewDesc desc = renderer.views.get(fog_view.view).desc;
+    desc.ray_tracing.shadows = traced;
+    render::configure_view(renderer, fog_view.view, desc)!!;
+
+    Vec4 shadowed = roof_pixel(&fixture, &target, &fog_view)!!;
+    target.scene.get(roof, Mesh).cast_shadow = false;
+    Vec4 lit = roof_pixel(&fixture, &target, &fog_view)!!;
+    light.intensity = 0;
+    Vec4 unlit = roof_pixel(&fixture, &target, &fog_view)!!;
+    float share = kept_share(shadowed, unlit, lit);
+    assert(share > SHADOWED_SHARE_MIN && share < SHADOWED_SHARE_MAX, "traced %s: kept %f", traced, share);
+
+    if (!traced) {
+        light.intensity = VOLUME_SUN_INTENSITY;
+        target.scene.get(roof, Mesh).cast_shadow = true;
+        light.shadow.max_distance = SHORT_SHADOW_DISTANCE;
+        Vec4 short_atlas = roof_pixel(&fixture, &target, &fog_view)!!;
+        float short_share = kept_share(short_atlas, unlit, lit);
+        assert(short_share > SHORT_SHARE_MIN, "short atlas: kept %f", short_share);
+    }
+    check_validation(renderer);
+}
+
+fn void test_fog_volume_shadows_the_sun_by_atlas_and_by_rays() @test {
+    check_volume_shadow(false, false);
+    foreach (ray_queries : TRACE_KINDS) check_volume_shadow(true, ray_queries);
+}
+
+fn void test_volumetric_fog_follows_the_view_switch() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    FogScene target = create_fog_scene(&fixture)!!;
+    defer scene::destroy_scene(&target.scene);
+    add_facing_plane(&target, add_unlit(&fixture, BED_COLOR)!!, BED_DISTANCE)!!;
+    FogView plain = create_fog_view(&fixture, ShadingPath.FORWARD)!!;
+    defer destroy_fog_view(&fixture, &plain);
+    FogView volume = create_fog_view(&fixture, ShadingPath.FORWARD, volumetric_fog: true)!!;
+    defer destroy_fog_view(&fixture, &volume);
+    ViewRecord* record = renderer.views.get(volume.view);
+    assert(record.fog_volume.texture.is_valid() && record.fog_volume.width == 3);
+    assert(record.fog_volume.depth == shader::FOG_VOLUME_SLICES);
+
+    render_fog_frames(&fixture, &target, &plain)!!;
+    uint unfogged = renderer.stats.post_dispatches;
+    render_fog_frames(&fixture, &target, &volume)!!;
+    assert(renderer.stats.post_dispatches == unfogged && !renderer.sky_pipelines.fog_integration.is_valid());
+
+    add_fog(&target, TEST_FOG)!!;
+    render_fog_frames(&fixture, &target, &plain)!!;
+    uint fogged_plain = renderer.stats.post_dispatches;
+    render_fog_frames(&fixture, &target, &volume)!!;
+    assert(renderer.stats.post_dispatches == fogged_plain + 2);
+
+    ViewDesc desc = record.desc;
+    desc.volumetric_fog = false;
+    render::configure_view(renderer, volume.view, desc)!!;
+    assert(!record.fog_volume.texture.is_valid());
+    render_fog_frames(&fixture, &target, &volume)!!;
+    assert(renderer.stats.post_dispatches == fogged_plain);
+    check_validation(renderer);
 }
