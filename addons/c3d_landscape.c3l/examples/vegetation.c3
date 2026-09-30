@@ -22,7 +22,6 @@ import imgui;
 import landscape_ground;
 
 const uint FOLIAGE_LAYER @local = 1 << 2; // beside the terrain's bit, so picks can leave either out
-const float GROUND_TEXEL_METRES @local = 1; // mirrored from CELL_SIZE in landscape_ground.c3; sizes budgets up front
 const uint FIXED_NODES @local = 16; // root, terrain, sun, camera and two layer nodes, with room to spare
 const uint TRACE_INSTANCE_CAPACITY @local = 16384; // traced trees at every map size; 3.4 MiB of trace table
 const float CAMERA_FOV_DEGREES @local = 60;
@@ -143,7 +142,7 @@ const Vec2 STATS_PANEL_POSITION @local = { 16, 362 };
 const Vec2 STATS_PANEL_SIZE @local = { 440, 300 };
 const String[Segment::len] SEGMENT_NAMES @local = { "still", "spin", "gust", "walk", "far", "edit" };
 
-const Pass[8] REPORTED_PASSES @local = {
+const Pass[7] REPORTED_PASSES @local = {
     Pass.DEPTH_PREPASS,
     Pass.GBUFFER,
     Pass.SHADOW_ATLAS,
@@ -151,7 +150,6 @@ const Pass[8] REPORTED_PASSES @local = {
     Pass.LIGHTING,
     Pass.VELOCITY,
     Pass.INSTANCE_CULL,
-    Pass.UPLOADS,
 };
 
 enum Segment @local {
@@ -695,7 +693,7 @@ fn uint scene_node_budget(Options options, float extent) @local {
 }
 
 fn RendererDesc renderer_desc(Options options, bool validation, ZString application_name) @local {
-    float extent = (float)(options.size - 1) * GROUND_TEXEL_METRES;
+    float extent = (float)(options.size - 1) * landscape_ground::CELL_SIZE;
     return {
         .validation           = validation,
         .gpu_timings          = options.gpu_timings,
@@ -707,7 +705,7 @@ fn RendererDesc renderer_desc(Options options, bool validation, ZString applicat
 }
 
 fn Scene create_demo_scene(Options options) @local {
-    float extent = (float)(options.size - 1) * GROUND_TEXEL_METRES;
+    float extent = (float)(options.size - 1) * landscape_ground::CELL_SIZE;
     return scene::create_scene(mem, { .max_nodes = scene_node_budget(options, extent) });
 }
 
