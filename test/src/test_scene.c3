@@ -390,3 +390,134 @@ fn void test_add_camera_attaches_component() @test {
     assert(attached.layers == camera::ALL_LAYERS);
     assert(scene.count(Camera) == 1);
 }
+
+fn void test_world_child_ignores_ancestors_and_parents_its_descendants() @test {
+    Scene scene = make_scene(5);
+    defer scene::destroy_scene(&scene);
+    Node* holder = scene.add_node()!!;
+    Node* independent = scene.add_node(holder)!!;
+    Node* descendant = scene.add_node(independent)!!;
+    holder.local.position = { 7, -3, 5 };
+    holder.local.rotation = quarter_turn_y();
+    holder.local.scale = { 2, 3, 0.5f };
+    independent.transform_space = TransformSpace.WORLD;
+    independent.local.position = { 1, 2, 3 };
+    independent.local.rotation = quarter_turn_y();
+    descendant.local.position = { 2, 0, 0 };
+    scene.update_world();
+    assert(close_vec3(independent.world_position(), { 1, 2, 3 }));
+    assert(close_vec3(descendant.world_position(), { 1, 2, 1 }));
+
+    Mat4 independent_before = independent.world;
+    Mat4 descendant_before = descendant.world;
+    holder.local.position = { -4, 8, -6 };
+    holder.local.rotation = quaternion::from_axis_angle{float}({ 1, 0, 0 }, 0.4f);
+    holder.local.scale = { 4, 0.5f, 2 };
+    scene.update_world();
+    assert(close_mat4(independent.world, independent_before));
+    assert(close_mat4(descendant.world, descendant_before));
+}
+
+fn void test_transform_space_reinterprets_the_authored_pose_on_update() @test {
+    Scene scene = make_scene(3);
+    defer scene::destroy_scene(&scene);
+    Node* parent = scene.add_node()!!;
+    Node* child = scene.add_node(parent)!!;
+    parent.local.position = { 5, 0, 0 };
+    child.local.position = { 1, 2, 3 };
+    scene.update_world();
+    assert(close_vec3(child.world_position(), { 6, 2, 3 }));
+
+    child.transform_space = TransformSpace.WORLD;
+    assert(close_vec3(child.world_position(), { 6, 2, 3 }));
+    scene.update_world();
+    assert(close_vec3(child.world_position(), { 1, 2, 3 }));
+    child.transform_space = TransformSpace.PARENT;
+    scene.update_world();
+    assert(close_vec3(child.world_position(), { 6, 2, 3 }));
+}
+
+fn void test_world_child_keeps_hierarchy_visibility_and_removal() @test {
+    Scene scene = make_scene(5);
+    defer scene::destroy_scene(&scene);
+    HookRecord record;
+    scene.set_remove_hook(Tag, &record_removal, &record);
+    Node* parent = scene.add_node()!!;
+    Node* child = scene.add_node(parent)!!;
+    Node* grandchild = scene.add_node(child)!!;
+    Node* survivor = scene.add_node()!!;
+    child.transform_space = TransformSpace.WORLD;
+    scene.add(child, (Tag){ .label = 1 });
+    scene.add(grandchild, (Tag){ .label = 2 });
+    Entity child_id = child.id;
+    Entity grandchild_id = grandchild.id;
+    parent.visible = false;
+    scene.update_world();
+    assert(!child.visible_effective && !grandchild.visible_effective);
+    assert(child.visible && grandchild.visible);
+    parent.visible = true;
+    scene.update_world();
+    assert(child.visible_effective && grandchild.visible_effective);
+    scene.remove(parent);
+    assert(!scene.world.is_alive(child_id) && !scene.world.is_alive(grandchild_id));
+    assert(scene.world.is_alive(survivor.id));
+    assert(record.calls == 2);
+}
+
+fn void test_world_setters_ignore_a_sheared_ancestor_basis() @test {
+    Scene scene = make_scene(4);
+    defer scene::destroy_scene(&scene);
+    Node* ancestor = scene.add_node()!!;
+    Node* parent = scene.add_node(ancestor)!!;
+    Node* child = scene.add_node(parent)!!;
+    ancestor.local.rotation = quarter_turn_y();
+    ancestor.local.scale = { 2, 3, 0.5f };
+    parent.local.position = { 5, 1, -2 };
+    parent.local.rotation = quaternion::from_axis_angle{float}({ 1, 0, 0 }, 0.4f);
+    child.transform_space = TransformSpace.WORLD;
+    child.local.scale = { 2, 3, 4 };
+    scene.update_world();
+
+    child.set_world_position({ -1, 4, 2 });
+    scene.update_world();
+    assert(close_vec3(child.world_position(), { -1, 4, 2 }));
+    assert(close_vec3(child.local.scale, { 2, 3, 4 }));
+
+    Quat rotation = quaternion::from_axis_angle{float}({ 1, 0, 0 }, 0.7f);
+    child.set_world_pose({ 3, -2, 1 }, rotation);
+    scene.update_world();
+    assert(close_vec3(child.world_position(), { 3, -2, 1 }));
+    assert(math::abs(child.local.rotation.v.dot(rotation.v)) > 1 - TOLERANCE);
+    assert(close_vec3(child.local.scale, { 2, 3, 4 }));
+
+    Vec3 target = { 6, 0, -1 };
+    child.look_at(target);
+    scene.update_world();
+    Vec3 forward = maths::transform_dir(child.world, { 0, 0, -1 }).normalize();
+    assert(close_vec3(forward, (target - child.world_position()).normalize()));
+}
+
+fn void test_world_reparent_retains_pose_for_both_keep_world_settings() @test {
+    Scene scene = make_scene(4);
+    defer scene::destroy_scene(&scene);
+    Node* first = scene.add_node()!!;
+    Node* second = scene.add_node()!!;
+    Node* child = scene.add_node(first)!!;
+    first.local.position = { 5, 1, -2 };
+    first.local.scale = { 2, 3, 0.5f };
+    second.local.position = { -4, 2, 7 };
+    second.local.rotation = quarter_turn_y();
+    child.transform_space = TransformSpace.WORLD;
+    child.local.position = { 1, 2, 3 };
+    child.local.rotation = quarter_turn_y();
+    scene.update_world();
+    Mat4 before = child.world;
+
+    scene.reparent(child, second);
+    scene.update_world();
+    assert(child.parent == second && close_mat4(child.world, before));
+    scene.reparent(child, first, keep_world: true);
+    scene.update_world();
+    assert(child.parent == first && close_mat4(child.world, before));
+    assert(child.transform_space == TransformSpace.WORLD);
+}

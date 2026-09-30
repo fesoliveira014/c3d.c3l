@@ -116,13 +116,12 @@ fn float lower_pelvis(Node* pelvis, FootIk*[] feet) {
         if (foot.grounded) drop = math::max(drop, -foot.ground_offset * foot.leg.weight);
     }
     if (drop > 0) {
-        Mat4 parent_inverse = maths::inverse_affine(pelvis.parent.world);
-        pelvis.local.position += maths::transform_dir(parent_inverse, WORLD_UP * -drop);
+        Mat4 basis_inverse = maths::inverse_affine(pelvis.transform_basis());
+        pelvis.local.position += maths::transform_dir(basis_inverse, WORLD_UP * -drop);
     }
     return drop;
 }
 
 fn void move_target(IkChain* chain, Vec3 world_position) @local {
-    Node* target = chain.target;
-    target.local.position = maths::transform_point(maths::inverse_affine(target.parent.world), world_position);
+    chain.target.set_world_position(world_position);
 }

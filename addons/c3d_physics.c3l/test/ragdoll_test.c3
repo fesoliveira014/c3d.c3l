@@ -641,3 +641,20 @@ fn void test_recover_counts_a_turn_made_before_the_fall_once() @test {
     assert(fall_rotated(&fixture, &rig, ragdoll, fall) == FACE_DOWN);
     assert(close_vec(character_forward(&rig), { 1, 0, 0 }));
 }
+
+fn void test_ragdoll_animation_uses_a_world_joint_basis() @test {
+    Fixture fixture;
+    setup(&fixture, weightless_desc());
+    defer teardown(&fixture);
+    Rig rig = add_chain(&fixture);
+    rig.joints[0].transform_space = TransformSpace.WORLD;
+    rig.character.local.position = { 5, 2, -3 };
+    rig.character.local.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, 0.7f);
+    fixture.scene.update_world();
+    Ragdoll* ragdoll = build_two_bones(&fixture, &rig);
+    fixture.physics.update(0);
+    rig.joints[0].local.position += { 1, 0, 0 };
+    fixture.scene.update_world();
+    fixture.physics.update(physics::DEFAULT_FIXED_DT);
+    assert(close_vec(fixture.scene.get(ragdoll.bone_nodes[1], RigidBody).current.position, { 1, 1.5f, 0 }));
+}

@@ -10,19 +10,39 @@ import std::math;
 const uint DEFAULT_LAYERS = 1;
 
 <*
+ Reference frame of a node's authored transform.
+*>
+enum TransformSpace {
+    PARENT,
+    WORLD,
+}
+
+<*
  Scene entity with a stable address and a place in the hierarchy.
 *>
 struct Node {
-    Entity    id;
-    String    name;
-    Transform local;
-    Mat4      world;
-    uint      layers;
-    bool      visible;
-    bool      visible_effective;
-    Node*     parent;
-    Node*     first_child;
-    Node*     next_sibling;
+    Entity         id;
+    String         name;
+    TransformSpace transform_space;
+    Transform      local;
+    Mat4           world;
+    uint           layers;
+    bool           visible;
+    bool           visible_effective;
+    Node*          parent;
+    Node*          first_child;
+    Node*          next_sibling;
+}
+
+<*
+ World frame containing the node's authored pose.
+ @param [&in] self : "Live scene node."
+ @return "Identity or the parent's last published world matrix."
+ @pure
+*>
+fn Mat4 Node.transform_basis(&self) {
+    if (self.transform_space == TransformSpace.WORLD || !self.parent) return matrix::IDENTITY4;
+    return self.parent.world;
 }
 
 <*
@@ -34,34 +54,35 @@ fn Vec3 Node.world_position(&self) {
 
 <*
  Point the local -Z axis at a world-space target.
- Reads the parent's world matrix as left by the last update.
+ @param [&inout] self : "Required world matrices are current."
  @param target : "World space."
  @param up : "World space."
  @require self.parent != null, (target - self.world_position()).length_sq() > 0
 *>
 fn void Node.look_at(&self, Vec3 target, Vec3 up = { 0, 1, 0 }) {
-    Mat4 parent_inverse = maths::inverse_affine(self.parent.world);
-    Vec3 forward = maths::transform_dir(parent_inverse, target - self.world_position());
-    Vec3 up_local = maths::transform_dir(parent_inverse, up);
+    Mat4 basis_inverse = maths::inverse_affine(self.transform_basis());
+    Vec3 forward = maths::transform_dir(basis_inverse, target - self.world_position());
+    Vec3 up_local = maths::transform_dir(basis_inverse, up);
     self.local.rotation = maths::look_rotation(forward, up_local);
 }
 
 <*
- Move the node so its world position is the point; rotation and scale stay.
- Reads the parent's world matrix as left by the last update.
+ Set world position, preserving authored rotation and scale.
+ @param [&inout] self : "Required world matrices are current."
  @require self.parent != null
 *>
 fn void Node.set_world_position(&self, Vec3 position) {
-    self.local.position = maths::transform_point(maths::inverse_affine(self.parent.world), position);
+    self.local.position = maths::transform_point(maths::inverse_affine(self.transform_basis()), position);
 }
 
 <*
- Place the node at a world position and rotation; scale is left untouched.
- Reads the parent's world matrix as left by the last update.
+ Set world position and rotation, preserving authored scale.
+ @param [&inout] self : "Required world matrices are current."
  @require self.parent != null
 *>
 fn void Node.set_world_pose(&self, Vec3 position, Quaternionf rotation) {
-    Quaternionf parent_rotation = maths::transform_from_mat4(self.parent.world).rotation;
-    self.local.position = maths::transform_point(maths::inverse_affine(self.parent.world), position);
-    self.local.rotation = parent_rotation.conjugate().mul(rotation).normalize();
+    Mat4 basis = self.transform_basis();
+    Quaternionf basis_rotation = maths::transform_from_mat4(basis).rotation;
+    self.local.position = maths::transform_point(maths::inverse_affine(basis), position);
+    self.local.rotation = basis_rotation.conjugate().mul(rotation).normalize();
 }

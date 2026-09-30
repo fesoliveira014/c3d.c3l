@@ -460,3 +460,71 @@ fn void test_lower_pelvis_drops_by_the_lowest_foot() @test {
     rig.scene.update_world();
     assert(close_vec3(pelvis.world_position(), dropped, 0));
 }
+
+fn void test_ik_and_look_at_use_a_world_root_basis() @test {
+    ChainRig rig = make_chain();
+    defer scene::destroy_scene(&rig.scene);
+    Node* holder = rig.scene.add_node()!!;
+    holder.local.position = { 5, -3, 4 };
+    holder.local.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, 0.7f);
+    holder.local.scale = { 2, 2, 2 };
+    rig.scene.reparent(rig.root, holder);
+    rig.root.transform_space = TransformSpace.WORLD;
+    solve_at(&rig, { 1, 1, 0 });
+    assert(close_vec3(rig.end.world_position(), rig.target.world_position()));
+
+    rig.root.local.rotation = quaternion::IDENTITY;
+    rig.middle.local.rotation = quaternion::IDENTITY;
+    rig.middle.local.position = { 0, 0, -0.5f };
+    rig.end.local.position = { 0, 0, -0.5f };
+    rig.target.local.position = { 3, 0, -1 };
+    rig.scene.update_world();
+    Node*[3] spine = { rig.root, rig.middle, rig.end };
+    LookAt aim = ik::look_at(spine[..], rig.target, { 0, 0, -1 });
+    aim.solve();
+    rig.scene.update_world();
+    assert(aim_error(rig.end, rig.target) <= AIM_TOLERANCE);
+
+    rig.middle.transform_space = TransformSpace.WORLD;
+    assert(!ik::ik_chain_valid(&rig.chain));
+    assert(!ik::look_at_valid(&aim));
+}
+
+fn void test_foot_placement_uses_a_world_target_basis() @test {
+    ChainRig rig = make_chain();
+    defer scene::destroy_scene(&rig.scene);
+    Node* holder = rig.scene.add_node()!!;
+    holder.local.position = { 4, 1, -3 };
+    holder.local.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, 0.7f);
+    rig.scene.reparent(rig.target, holder);
+    rig.target.transform_space = TransformSpace.WORLD;
+    rig.scene.update_world();
+    FootIk foot = rig_foot(&rig);
+    foot.place({ .point = { 0, -0.3f, 0 }, .normal = { 0, 1, 0 } }, 0);
+    Vec3 expected = rig.end.world_position() + (Vec3){ 0, foot.ground_offset, 0 };
+    rig.scene.update_world();
+    assert(close_vec3(rig.target.world_position(), expected));
+}
+
+fn void test_lower_pelvis_uses_a_world_basis_for_incremental_drops() @test {
+    ChainRig rig = make_chain();
+    defer scene::destroy_scene(&rig.scene);
+    Node* holder = rig.scene.add_node()!!;
+    holder.local.position = { 4, 2, -3 };
+    holder.local.rotation = quaternion::from_axis_angle{float}({ 0, 0, 1 }, 0.7f);
+    holder.local.scale = { 2, 2, 2 };
+    Node* pelvis = rig.scene.add_node(holder)!!;
+    pelvis.transform_space = TransformSpace.WORLD;
+    pelvis.local.position = { 1, 3, 2 };
+    rig.scene.update_world();
+    FootIk foot = rig_foot(&rig);
+    foot.grounded = true;
+    foot.ground_offset = -0.2f;
+    FootIk*[1] feet = { &foot };
+
+    assert(close(ik::lower_pelvis(pelvis, feet[..]), 0.2f));
+    assert(close(ik::lower_pelvis(pelvis, feet[..]), 0.2f));
+    assert(close_vec3(pelvis.world_position(), { 1, 3, 2 }));
+    rig.scene.update_world();
+    assert(close_vec3(pelvis.world_position(), { 1, 2.6f, 2 }));
+}
