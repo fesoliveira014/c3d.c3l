@@ -268,6 +268,8 @@ struct RigidBody {
     maths::Transform previous;
     maths::Transform current;
     Collider[]       colliders;
+    maths::Aabb      solid_bounds; // body space: union of the colliders with density; dynamic bodies only
+    float            solid_volume; // cubic metres: their mass over density; dynamic bodies only
 }
 
 <*
@@ -367,6 +369,8 @@ struct PhysicsWorld {
     BuildFailure[] failure_storage;
     uint           failure_count;
     MoverPass      mover_pass;
+    FluidSurfaceFn fluid_surface;  // null: no fluid, buoyancy applies nothing
+    void*          fluid_context;
     b3::record::Recording* recording; // null when idle
 }
 

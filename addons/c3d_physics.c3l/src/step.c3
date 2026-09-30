@@ -29,7 +29,7 @@ fn void PhysicsWorld.update(&self, float dt) {
     self.accumulator += dt;
     uint steps;
     while (self.accumulator >= fixed_dt && steps < self.desc.tuning.max_steps_per_frame) {
-        begin_step(self, fixed_dt);
+        begin_step(self, fixed_dt, (float)steps * fixed_dt);
         if (self.mover_pass.step) self.mover_pass.step(self.mover_pass.context, self, fixed_dt);
         b3::world_step(self.world, fixed_dt, (int)self.desc.tuning.sub_steps);
         end_step(self);
@@ -61,8 +61,8 @@ fn maths::Transform interpolate_pose(maths::Transform previous, maths::Transform
     };
 }
 
-fn void begin_step(PhysicsWorld* world, float fixed_dt) @local {
-    apply_step_forces(world);
+fn void begin_step(PhysicsWorld* world, float fixed_dt, float step_offset) @local {
+    apply_step_forces(world, step_offset);
     world.scene.@each(RigidBody; entity, body) {
         body.previous = body.current;
         if (body.kind == KINEMATIC) {
@@ -254,14 +254,20 @@ fn void? build_body(PhysicsWorld* world, Node* node, PhysicsBody* physics_body) 
     @pool() {
         foreach (index, &collider : physics_body.colliders) records[index] = create_shape(world, body_id, collider)!;
     };
-    if (desc.kind == DYNAMIC) b3::body_apply_mass_from_shapes(body_id);
+    SolidMeasure solid;
+    if (desc.kind == DYNAMIC) {
+        b3::body_apply_mass_from_shapes(body_id);
+        solid = measure_solids(records);
+    }
 
     world.scene.add(node, (RigidBody){
-        .body      = body_id,
-        .kind      = desc.kind,
-        .previous  = pose,
-        .current   = pose,
-        .colliders = records,
+        .body         = body_id,
+        .kind         = desc.kind,
+        .previous     = pose,
+        .current      = pose,
+        .colliders    = records,
+        .solid_bounds = solid.bounds,
+        .solid_volume = solid.volume,
     });
     physics_body.status = LIVE;
 }
