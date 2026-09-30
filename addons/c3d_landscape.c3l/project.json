@@ -60,7 +60,7 @@
     },
     "vegetation": {
       "type": "executable",
-      "sources": [ "examples/vegetation.c3", "examples/landscape_ground.c3" ]
+      "sources": [ "examples/vegetation.c3", "examples/landscape_ground.c3", "examples/landscape_foliage.c3" ]
     }
   }
 }
