@@ -193,8 +193,6 @@ fn void test_prepare_units_stay_done_when_the_frame_staged_nothing() @test {
     PrepareRecord* record = renderer.prepares.get(id);
     record.units[0].kind = PrepareUnitKind.PIPELINES;
     record.units[1].kind = PrepareUnitKind.FINISH;
-    renderer.environment_state.temporaries.init(mem);
-    defer renderer.environment_state.temporaries.free();
 
     render::mark_unit_done(&renderer, id, 0);
     render::mark_unit_done(&renderer, id, 1);

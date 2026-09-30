@@ -337,7 +337,6 @@ fn void? open_closed_frame_slot(Renderer* renderer) @private {
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     if (slot.done.is_valid()) gpu::wait_completion(slot.done)!;
     collect_gpu_profile(renderer, (uint)(renderer.frame_index % FRAMES_IN_FLIGHT))!;
-    drain_retired(&renderer.device, &slot.environment_temporaries);
     drain_retired(&renderer.device, &slot.retire);
     return reset_upload_ring(renderer, slot);
 }
@@ -363,8 +362,7 @@ fn void? submit_pending(Renderer* renderer, TextureReadback* readback = null) @p
     slot.done = gpu::submit(renderer.graphics, &submit)!;
     commit_uploads(renderer, slot);
     gpu::wait_completion(slot.done)!;
-    // This graphics submission also covers every earlier slot's temporary views.
-    foreach (&completed : renderer.frames) drain_retired(&renderer.device, &completed.environment_temporaries);
+    // This graphics submission also covers every earlier slot's retired objects.
     foreach (&completed : renderer.frames) drain_retired(&renderer.device, &completed.retire);
 }
 

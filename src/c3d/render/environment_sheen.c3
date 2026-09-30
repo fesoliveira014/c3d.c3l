@@ -40,8 +40,8 @@ fn void? acquire_sheen_lut(Renderer* renderer) @private {
 
 fn void? create_environment_sheen(Renderer* renderer, EnvironmentRes* result) @private {
     gpu::TextureDesc description = {
-        .width = result.description.settings.specular_size,
-        .height = result.description.settings.specular_size,
+        .width = result.sheen_size,
+        .height = result.sheen_size,
         .mip_levels = shader::ENVIRONMENT_SPECULAR_MIPS,
         .array_layers = shader::ENVIRONMENT_FACE_COUNT,
         .cube_compatible = true,
@@ -54,17 +54,21 @@ fn void? create_environment_sheen(Renderer* renderer, EnvironmentRes* result) @p
     defer catch (void)gpu::destroy_texture(&renderer.device, texture);
     gpu::TextureViewDesc view_desc = { .cube = true };
     gpu::TextureView view = gpu::create_texture_view(&renderer.device, texture, &view_desc)!;
+    defer catch (void)gpu::destroy_texture_view(&renderer.device, view);
+    create_environment_faces(renderer, texture, result.sheen_faces[..])!;
     result.sheen_cube = texture;
     result.sheen_view = view;
 }
 
 fn void release_environment_sheen(gpu::Device* device, EnvironmentRes* result) @private {
+    release_environment_faces(device, result.sheen_faces[..]);
     if (result.sheen_view.is_valid()) (void)gpu::destroy_texture_view(device, result.sheen_view);
     if (result.sheen_cube.is_valid()) (void)gpu::destroy_texture(device, result.sheen_cube);
 }
 
 fn void retire_environment_sheen(RetireList* retire, EnvironmentRes* result) @private {
     if (!result.sheen_cube.is_valid()) return;
+    retire_environment_faces(retire, result.sheen_faces[..]);
     retire.push({ .kind = RetiredKind.TEXTURE_VIEW, .texture_view = result.sheen_view });
     retire.push({ .kind = RetiredKind.TEXTURE, .texture = result.sheen_cube });
 }
@@ -93,6 +97,8 @@ fn void? record_environment_sheen(
         pipeline: renderer.environment_state.pipelines.sheen_prefilter,
         source_view: result.source_view,
         output: result.sheen_cube,
-        base_size: result.description.settings.specular_size,
+        faces: result.sheen_faces[..],
+        previous: pending.new_sheen ? (gpu::TextureState){} : renderer.sampled_state,
+        base_size: result.sheen_size,
     )!;
 }
