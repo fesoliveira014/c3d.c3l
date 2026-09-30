@@ -288,8 +288,9 @@ fail:
 Switches: `--gpu-timings` (build with `python3 scripts/build.py --target vegetation --opt O3 --define
 C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL --lib c3d_profile`), `--shading forward|deferred`,
 `--shadows atlas|traced`, `--size`, `--foliage both|grass|none`, `--tree-fade-end METRES`,
-`--width W --height H` (2560 × 1440 by default in benchmark mode) and `--validation`. Interactive runs always
-validate; benchmark runs validate only with `--validation`. The tree layer's prepass and shadow-atlas cost is
+`--width W --height H` (2560 × 1440 by default in benchmark mode), `--validation` and `--sky` (an
+[atmosphere](sky.md) on the sun and a haze pooling in the valleys, off by default; with `--gpu-timings` the pass
+lines add `SKY_VIEW`, `AERIAL_PERSPECTIVE` and `FOG`). Interactive runs always validate; benchmark runs validate only with `--validation`. The tree layer's prepass and shadow-atlas cost is
 the `both` against `grass` difference; the grass layer's is `grass` against `none`.
 
 ## Measured cost

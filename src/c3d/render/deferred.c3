@@ -99,6 +99,7 @@ fn void? record_deferred_shading(
     DrawItem[] transparent,
     gpu::GpuAddress sky_root,
     bool sky,
+    bool atmosphere,
     Vec4 clear_color,
     bool ssgi_history_valid,
 ) @private {
@@ -114,6 +115,7 @@ fn void? record_deferred_shading(
         transparent:   transparent,
         sky_root:      sky_root,
         sky:           sky,
+        atmosphere:    atmosphere,
         clear_color:   clear_color,
         color_loaded:  true,
         depth_matched: true,

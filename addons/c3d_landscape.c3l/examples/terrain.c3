@@ -79,6 +79,8 @@ const Pass[8] REPORTED_PASSES @local = {
     Pass.UPLOADS,
 };
 
+const Pass[3] SKY_PASSES @local = { Pass.SKY_VIEW, Pass.AERIAL_PERSPECTIVE, Pass.FOG };
+
 enum Segment @local {
     STILL,
     SWEEP,
@@ -100,6 +102,7 @@ struct Options @local {
     bool        validation;
     ShadingPath shading;
     bool        traced_shadows;
+    bool        sky;
     uint        size;
     uint        layers;
     float       lod_threshold;
@@ -187,7 +190,7 @@ fn Demo? build_demo(
     crate_params.roughness = 0.7f;
     demo.crate_material = assets.add_material(material::standard(crate_params), "terrain/crate_material")!;
 
-    landscape_ground::add_sun_and_sky(scene, options.traced_shadows)!;
+    landscape_ground::add_sun_and_sky(scene, options.traced_shadows, options.sky)!;
 
     demo.camera_node = scene.add_camera(
         camera::perspective_deg(CAMERA_FOV_DEGREES, CAMERA_NEAR, CAMERA_FAR),
@@ -312,6 +315,7 @@ fn Options? parse_options(String[] args) @local {
             case "--lod-threshold":
                 options.lod_threshold = option_value(args, &index)!.to_float()!;
                 if (!(options.lod_threshold >= 0)) return c3d::INVALID_ARGUMENT~;
+            case "--sky": options.sky = true;
             case "--width": options.width = option_value(args, &index)!.to_uint()!;
             case "--height": options.height = option_value(args, &index)!.to_uint()!;
             default: return c3d::INVALID_ARGUMENT~;
@@ -809,6 +813,12 @@ fn bool print_results(Options options, BenchmarkResult* result) @local {
                 double median = percentile(gather_pass(records, pass, result.scratch), 0.5f);
                 io::printfn("gpu_ms segment=%s pass=%s median=%.4f", name, pass, median);
             }
+            if (options.sky) {
+                foreach (pass : SKY_PASSES) {
+                    double median = percentile(gather_pass(records, pass, result.scratch), 0.5f);
+                    io::printfn("gpu_ms segment=%s pass=%s median=%.4f", name, pass, median);
+                }
+            }
         }
         double[] frame_ms = gather(records, FRAME_MS, result.scratch);
         io::printfn(
@@ -898,7 +908,7 @@ fn bool? run_benchmark(Options options) @local {
 
     io::printfn(
         "# terrain size=%d layers=%d shading=%s shadows=%s lod_threshold=%g hysteresis=%g extent=%dx%d frames=%d "
-          "terrain=%s",
+          "terrain=%s sky=%s",
         options.size,
         options.layers,
         options.shading == ShadingPath.DEFERRED ? "deferred" : "forward",
@@ -909,6 +919,7 @@ fn bool? run_benchmark(Options options) @local {
         options.height,
         options.segment_frames,
         options.hide_terrain ? "hidden" : "visible",
+        options.sky ? "on" : "off",
     );
     run_segments(
         demo:     &demo,
@@ -928,7 +939,7 @@ fn int main(String[] args) {
             io::eprintfn("Invalid options: %s", excuse);
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
               "[--shadows atlas|traced] [--size 1025|2049|4097] [--layers 1|4] [--lod-threshold PIXELS] "
-              "[--width W] [--height H] [--hide-terrain].");
+              "[--width W] [--height H] [--hide-terrain] [--sky].");
         }
         return 1;
     }

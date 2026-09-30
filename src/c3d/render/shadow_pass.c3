@@ -176,6 +176,7 @@ fn void? record_shadow_layer(
         viewport: { (float)resolution, (float)resolution },
         info: renderer.info,
         frame_index: renderer.frame_index,
+        sky_fog: (gpu::GpuAddress)0,
     );
     gpu::DepthTargetDesc depth = {
         .view = renderer.shadow_atlas.layers[layer].attachment,

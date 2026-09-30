@@ -82,6 +82,16 @@ const uint PROBE_VISIBILITY_CELL = 16;
 const uint PROBE_ATLAS_COLUMNS = 256;
 const uint PROBE_ATLAS_IRRADIANCE = 0;
 const uint PROBE_ATLAS_VISIBILITY = 1;
+const uint SKY_FOG_ATMOSPHERE = 1;
+const uint SKY_FOG_HEIGHT_FOG = 2;
+const uint SKY_TRANSMITTANCE_WIDTH = 256;
+const uint SKY_TRANSMITTANCE_HEIGHT = 64;
+const uint SKY_MULTI_SCATTERING_SIZE = 32;
+const uint SKY_VIEW_WIDTH = 192;
+const uint SKY_VIEW_HEIGHT = 108;
+const uint AERIAL_PERSPECTIVE_SIZE = 32;
+const uint SKY_TABLE_GROUP_SIZE = 8;
+const uint AERIAL_PERSPECTIVE_GROUP_DEPTH = 4;
 const uint PHYSICAL_MAP_CLEARCOAT = 1;
 const uint PHYSICAL_MAP_CLEARCOAT_ROUGHNESS = 2;
 const uint PHYSICAL_MAP_CLEARCOAT_NORMAL = 4;
@@ -339,8 +349,11 @@ struct FrameRoot {
     float        previous_time;
     uint         _pad2;
     Vec4f        clip_plane;
+    GpuAddress   sky_fog;
+    uint         _pad3;
+    uint         _pad4;
 }
-$assert FrameRoot::size == 496;
+$assert FrameRoot::size == 512;
 $assert $reflect(FrameRoot.view).offset == 0;
 $assert $reflect(FrameRoot.proj).offset == 64;
 $assert $reflect(FrameRoot.view_proj).offset == 128;
@@ -369,6 +382,9 @@ $assert $reflect(FrameRoot.scene_depth).offset == 468;
 $assert $reflect(FrameRoot.previous_time).offset == 472;
 $assert $reflect(FrameRoot._pad2).offset == 476;
 $assert $reflect(FrameRoot.clip_plane).offset == 480;
+$assert $reflect(FrameRoot.sky_fog).offset == 496;
+$assert $reflect(FrameRoot._pad3).offset == 504;
+$assert $reflect(FrameRoot._pad4).offset == 508;
 
 struct DrawRoot {
     Mat4f        model;
@@ -1335,6 +1351,90 @@ $assert $reflect(BrdfLutRoot.output_texture).offset == 0;
 $assert $reflect(BrdfLutRoot.size).offset == 4;
 $assert $reflect(BrdfLutRoot._pad0).offset == 8;
 $assert $reflect(BrdfLutRoot._pad1).offset == 12;
+
+struct SkyFogGpu {
+    Vec4f        sun_direction_cos_radius;
+    Vec4f        sun_illuminance;
+    Vec4f        rayleigh_scattering_height;
+    Vec4f        mie;
+    Vec4f        ozone_absorption_center;
+    Vec4f        ground_albedo_ozone_width;
+    Vec4f        fog_albedo_density;
+    float        planet_radius;
+    float        top_radius;
+    float        camera_altitude;
+    float        fog_base_height;
+    float        fog_falloff;
+    float        fog_max_distance;
+    float        aerial_perspective_distance;
+    uint         flags;
+    TextureIndex transmittance_lut;
+    TextureIndex multi_scattering_lut;
+    TextureIndex sky_view_lut;
+    TextureIndex aerial_perspective_lut;
+    SamplerIndex lut_sampler;
+    TextureIndex fog_volume;
+    uint         _pad0;
+    uint         _pad1;
+}
+$assert SkyFogGpu::size == 176;
+$assert $reflect(SkyFogGpu.sun_direction_cos_radius).offset == 0;
+$assert $reflect(SkyFogGpu.sun_illuminance).offset == 16;
+$assert $reflect(SkyFogGpu.rayleigh_scattering_height).offset == 32;
+$assert $reflect(SkyFogGpu.mie).offset == 48;
+$assert $reflect(SkyFogGpu.ozone_absorption_center).offset == 64;
+$assert $reflect(SkyFogGpu.ground_albedo_ozone_width).offset == 80;
+$assert $reflect(SkyFogGpu.fog_albedo_density).offset == 96;
+$assert $reflect(SkyFogGpu.planet_radius).offset == 112;
+$assert $reflect(SkyFogGpu.top_radius).offset == 116;
+$assert $reflect(SkyFogGpu.camera_altitude).offset == 120;
+$assert $reflect(SkyFogGpu.fog_base_height).offset == 124;
+$assert $reflect(SkyFogGpu.fog_falloff).offset == 128;
+$assert $reflect(SkyFogGpu.fog_max_distance).offset == 132;
+$assert $reflect(SkyFogGpu.aerial_perspective_distance).offset == 136;
+$assert $reflect(SkyFogGpu.flags).offset == 140;
+$assert $reflect(SkyFogGpu.transmittance_lut).offset == 144;
+$assert $reflect(SkyFogGpu.multi_scattering_lut).offset == 148;
+$assert $reflect(SkyFogGpu.sky_view_lut).offset == 152;
+$assert $reflect(SkyFogGpu.aerial_perspective_lut).offset == 156;
+$assert $reflect(SkyFogGpu.lut_sampler).offset == 160;
+$assert $reflect(SkyFogGpu.fog_volume).offset == 164;
+$assert $reflect(SkyFogGpu._pad0).offset == 168;
+$assert $reflect(SkyFogGpu._pad1).offset == 172;
+
+struct SkyTableRoot {
+    GpuAddress   sky_fog;
+    GpuAddress   frame;
+    TextureIndex output_texture;
+    uint         width;
+    uint         height;
+    uint         face;
+}
+$assert SkyTableRoot::size == 32;
+$assert $reflect(SkyTableRoot.sky_fog).offset == 0;
+$assert $reflect(SkyTableRoot.frame).offset == 8;
+$assert $reflect(SkyTableRoot.output_texture).offset == 16;
+$assert $reflect(SkyTableRoot.width).offset == 20;
+$assert $reflect(SkyTableRoot.height).offset == 24;
+$assert $reflect(SkyTableRoot.face).offset == 28;
+
+struct FogPassRoot {
+    GpuAddress   frame;
+    TextureIndex color;
+    TextureIndex depth;
+    uint         width;
+    uint         height;
+    uint         _pad0;
+    uint         _pad1;
+}
+$assert FogPassRoot::size == 32;
+$assert $reflect(FogPassRoot.frame).offset == 0;
+$assert $reflect(FogPassRoot.color).offset == 8;
+$assert $reflect(FogPassRoot.depth).offset == 12;
+$assert $reflect(FogPassRoot.width).offset == 16;
+$assert $reflect(FogPassRoot.height).offset == 20;
+$assert $reflect(FogPassRoot._pad0).offset == 24;
+$assert $reflect(FogPassRoot._pad1).offset == 28;
 
 struct StandardMaterialRoot {
     StandardMaterialGpu material;

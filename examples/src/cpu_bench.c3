@@ -165,6 +165,8 @@ fn double run_iteration(
                     view_layers: camera::ALL_LAYERS,
                     capacity: scene.count(Light),
                     counts: &counts,
+                    atmosphere: null,
+                    altitude: 0,
                 );
                 return (double)counts.packed + counts.culled
                     + (extracted.lights.len ? (double)extracted.lights[0].position_range.x : 0);

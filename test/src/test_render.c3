@@ -328,6 +328,7 @@ fn void test_frame_root_packs_camera() @test {
         viewport:    { 1600, 900 },
         info:        { .time = 12.5, .delta = 0.25f },
         frame_index: 42,
+        sky_fog:     (gpu::GpuAddress)0,
     );
     assert(root.view[3] == (Vec4){ 0, 0, -5, 1 });
     assert(root.camera_position == (Vec4){ 0, 0, 5, 2 });
@@ -351,6 +352,7 @@ fn void test_frame_root_carries_previous_time() @test {
         viewport:      { 800, 600 },
         info:          { .time = 12.5, .delta = 0.25f },
         frame_index:   1,
+        sky_fog:       (gpu::GpuAddress)0,
         previous_time: &previous,
     );
     assert(root.previous_time == 12.25f && root.jitter_time.z == 12.5f);
@@ -362,6 +364,7 @@ fn void test_frame_root_carries_previous_time() @test {
         viewport:    { 800, 600 },
         info:        { .time = 12.5, .delta = 0.25f },
         frame_index: 1,
+        sky_fog:     (gpu::GpuAddress)0,
     );
     assert(root.previous_time == root.jitter_time.z);
 }
@@ -379,6 +382,7 @@ fn void test_frame_root_marks_clip_plane() @test {
         viewport:    { 800, 600 },
         info:        {},
         frame_index: 1,
+        sky_fog:     (gpu::GpuAddress)0,
         clip_plane:  water,
     );
     assert((root.flags & shader::FRAME_CLIP_PLANE) != 0 && root.clip_plane == (Vec4f){ 0, 1, 0, 1.2f });
@@ -390,6 +394,7 @@ fn void test_frame_root_marks_clip_plane() @test {
         viewport:    { 800, 600 },
         info:        {},
         frame_index: 1,
+        sky_fog:     (gpu::GpuAddress)0,
         trace:       (gpu::GpuAddress)0x1000,
         clip_plane:  water,
     );
@@ -402,6 +407,7 @@ fn void test_frame_root_marks_clip_plane() @test {
         viewport:    { 800, 600 },
         info:        {},
         frame_index: 1,
+        sky_fog:     (gpu::GpuAddress)0,
     );
     assert((root.flags & shader::FRAME_CLIP_PLANE) == 0 && root.clip_plane == (Vec4f){});
 }
@@ -1040,6 +1046,7 @@ fn void test_frame_root_marks_trace_presence() @test {
         viewport:    { 800, 600 },
         info:        {},
         frame_index: 1,
+        sky_fog:     (gpu::GpuAddress)0,
         trace:       (gpu::GpuAddress)0x1000,
     );
     assert(root.trace == (gpu::GpuAddress)0x1000 && (root.flags & shader::FRAME_TRACE_PRESENT) != 0);
@@ -1051,6 +1058,7 @@ fn void test_frame_root_marks_trace_presence() @test {
         viewport:    { 800, 600 },
         info:        {},
         frame_index: 1,
+        sky_fog:     (gpu::GpuAddress)0,
     );
     assert(root.trace == (gpu::GpuAddress)0 && (root.flags & shader::FRAME_TRACE_PRESENT) == 0);
 
@@ -1061,6 +1069,7 @@ fn void test_frame_root_marks_trace_presence() @test {
         viewport:    { 800, 600 },
         info:        {},
         frame_index: 1,
+        sky_fog:     (gpu::GpuAddress)0,
         clusters:    (gpu::GpuAddress)0x2000,
         trace:       (gpu::GpuAddress)0x1000,
     );
@@ -1079,6 +1088,7 @@ fn void test_frame_root_marks_ambient_occlusion() @test {
         viewport:    { 800, 600 },
         info:        {},
         frame_index: 1,
+        sky_fog:     (gpu::GpuAddress)0,
         ao_texture:  (gpu::TextureIndex)7,
     );
     assert(root.ao_texture == (gpu::TextureIndex)7 && (root.flags & shader::FRAME_AO_PRESENT) != 0);
@@ -1091,6 +1101,7 @@ fn void test_frame_root_marks_ambient_occlusion() @test {
         viewport:    { 800, 600 },
         info:        {},
         frame_index: 1,
+        sky_fog:     (gpu::GpuAddress)0,
         trace:       (gpu::GpuAddress)0x1000,
         ao_texture:  (gpu::TextureIndex)7,
     );
@@ -1103,6 +1114,7 @@ fn void test_frame_root_marks_ambient_occlusion() @test {
         viewport:    { 800, 600 },
         info:        {},
         frame_index: 1,
+        sky_fog:     (gpu::GpuAddress)0,
     );
     assert(root.ao_texture == (gpu::TextureIndex)0 && (root.flags & shader::FRAME_AO_PRESENT) == 0);
 }

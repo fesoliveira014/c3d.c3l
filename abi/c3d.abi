@@ -157,6 +157,9 @@ root FrameRoot {
     float      previous_time;
     uint       _pad2;
     vec4       clip_plane;
+    GpuAddress sky_fog;
+    uint       _pad3;
+    uint       _pad4;
 }
 
 root DrawRoot {
@@ -760,6 +763,66 @@ root BrdfLutRoot {
     uint size;
     uint _pad0;
     uint _pad1;
+}
+
+const uint SKY_FOG_ATMOSPHERE = 1;
+const uint SKY_FOG_HEIGHT_FOG = 2;
+// 128 KiB at RGBA16F; smooth under the horizon-dense mapping, within 0.35 % of the 64-step CPU integral.
+const uint SKY_TRANSMITTANCE_WIDTH = 256;
+const uint SKY_TRANSMITTANCE_HEIGHT = 64;
+// 8 KiB; 64 directions of 20 steps per texel, recomputed with the transmittance table only.
+const uint SKY_MULTI_SCATTERING_SIZE = 32;
+// 162 KiB per view, recomputed every frame; the elevation mapping is horizon-dense.
+const uint SKY_VIEW_WIDTH = 192;
+const uint SKY_VIEW_HEIGHT = 108;
+// 256 KiB per view, recomputed every frame; slices squared toward the camera over 128 km.
+const uint AERIAL_PERSPECTIVE_SIZE = 32;
+const uint SKY_TABLE_GROUP_SIZE = 8;
+const uint AERIAL_PERSPECTIVE_GROUP_DEPTH = 4;
+
+root SkyFogGpu {
+    vec4         sun_direction_cos_radius;
+    vec4         sun_illuminance;
+    vec4         rayleigh_scattering_height;
+    vec4         mie;
+    vec4         ozone_absorption_center;
+    vec4         ground_albedo_ozone_width;
+    vec4         fog_albedo_density;
+    float        planet_radius;
+    float        top_radius;
+    float        camera_altitude;
+    float        fog_base_height;
+    float        fog_falloff;
+    float        fog_max_distance;
+    float        aerial_perspective_distance;
+    uint         flags;
+    TextureIndex transmittance_lut;
+    TextureIndex multi_scattering_lut;
+    TextureIndex sky_view_lut;
+    TextureIndex aerial_perspective_lut;
+    SamplerIndex lut_sampler;
+    TextureIndex fog_volume;
+    uint         _pad0;
+    uint         _pad1;
+}
+
+root SkyTableRoot {
+    GpuAddress   sky_fog;
+    GpuAddress   frame;
+    TextureIndex output_texture;
+    uint         width;
+    uint         height;
+    uint         face;
+}
+
+root FogPassRoot {
+    GpuAddress   frame;
+    TextureIndex color;
+    TextureIndex depth;
+    uint         width;
+    uint         height;
+    uint         _pad0;
+    uint         _pad1;
 }
 
 const uint PHYSICAL_MAP_CLEARCOAT = 1;

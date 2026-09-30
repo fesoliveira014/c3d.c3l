@@ -69,6 +69,7 @@ struct Target {
     gpu::Format               format;
     uint                      width;
     uint                      height;
+    uint                      depth; // zero for a 2D image
 }
 
 <*
@@ -318,10 +319,12 @@ fn Target? allocate_storage_target(
     uint height,
     gpu::Format format,
     ZString debug_name,
+    uint depth = 0,
 ) @private {
     gpu::TextureDesc texture_desc = {
         .width      = width,
         .height     = height,
+        .depth      = depth,
         .format     = format,
         .usage      = { .sampled, .storage },
         .access     = { .graphics },
@@ -337,6 +340,7 @@ fn Target? allocate_storage_target(
         .format  = format,
         .width   = width,
         .height  = height,
+        .depth   = depth,
     };
 }
 

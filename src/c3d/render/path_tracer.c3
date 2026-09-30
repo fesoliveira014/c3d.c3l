@@ -229,6 +229,8 @@ fn void? record_path_traced_view(
                 view_layers:   camera.layers,
                 capacity:      renderer.max_lights,
                 counts:        &light_counts,
+                atmosphere:    &environments.atmosphere_selection,
+                altitude:      matrices.position.y,
                 trace_shadows: true,
             );
             light_address = upload_lights(renderer, extraction.lights)!;
@@ -246,8 +248,8 @@ fn void? record_path_traced_view(
                 environment_address = pack_lighting_environment(
                     renderer: renderer,
                     environment: environments.lighting,
-                    intensity: scene.environment_intensity,
-                    rotation: scene.environment_rotation,
+                    intensity: environments.lighting_intensity,
+                    rotation: environments.lighting_rotation,
                     sheen: false,
                 )!;
             }
@@ -261,6 +263,7 @@ fn void? record_path_traced_view(
                 viewport:    { (float)record.hdr_color.width, (float)record.hdr_color.height },
                 info:        renderer.info,
                 frame_index: renderer.frame_index,
+                sky_fog:     (gpu::GpuAddress)0,
                 lights:      light_address,
                 light_count: light_counts.packed,
                 ambient:     { ambient.r, ambient.g, ambient.b, 0 },
@@ -272,8 +275,8 @@ fn void? record_path_traced_view(
                     renderer: renderer,
                     environment: environments.sky,
                     frame: frame_span.address,
-                    intensity: scene.background.intensity,
-                    rotation: scene.background.rotation,
+                    intensity: environments.sky_intensity,
+                    rotation: environments.sky_rotation,
                 )!;
             }
         };

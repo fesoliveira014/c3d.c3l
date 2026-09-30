@@ -85,6 +85,16 @@ const uint PROBE_VISIBILITY_CELL = 16u;
 const uint PROBE_ATLAS_COLUMNS = 256u;
 const uint PROBE_ATLAS_IRRADIANCE = 0u;
 const uint PROBE_ATLAS_VISIBILITY = 1u;
+const uint SKY_FOG_ATMOSPHERE = 1u;
+const uint SKY_FOG_HEIGHT_FOG = 2u;
+const uint SKY_TRANSMITTANCE_WIDTH = 256u;
+const uint SKY_TRANSMITTANCE_HEIGHT = 64u;
+const uint SKY_MULTI_SCATTERING_SIZE = 32u;
+const uint SKY_VIEW_WIDTH = 192u;
+const uint SKY_VIEW_HEIGHT = 108u;
+const uint AERIAL_PERSPECTIVE_SIZE = 32u;
+const uint SKY_TABLE_GROUP_SIZE = 8u;
+const uint AERIAL_PERSPECTIVE_GROUP_DEPTH = 4u;
 const uint PHYSICAL_MAP_CLEARCOAT = 1u;
 const uint PHYSICAL_MAP_CLEARCOAT_ROUGHNESS = 2u;
 const uint PHYSICAL_MAP_CLEARCOAT_NORMAL = 4u;
@@ -259,6 +269,9 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer FrameRoot {
     float previous_time;
     uint _pad2;
     vec4 clip_plane;
+    uint64_t sky_fog;
+    uint _pad3;
+    uint _pad4;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer DrawRoot {
@@ -787,6 +800,51 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer IrradianceRe
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer BrdfLutRoot {
     uint output_texture;
     uint size;
+    uint _pad0;
+    uint _pad1;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer SkyFogGpu {
+    vec4 sun_direction_cos_radius;
+    vec4 sun_illuminance;
+    vec4 rayleigh_scattering_height;
+    vec4 mie;
+    vec4 ozone_absorption_center;
+    vec4 ground_albedo_ozone_width;
+    vec4 fog_albedo_density;
+    float planet_radius;
+    float top_radius;
+    float camera_altitude;
+    float fog_base_height;
+    float fog_falloff;
+    float fog_max_distance;
+    float aerial_perspective_distance;
+    uint flags;
+    uint transmittance_lut;
+    uint multi_scattering_lut;
+    uint sky_view_lut;
+    uint aerial_perspective_lut;
+    uint lut_sampler;
+    uint fog_volume;
+    uint _pad0;
+    uint _pad1;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer SkyTableRoot {
+    uint64_t sky_fog;
+    uint64_t frame;
+    uint output_texture;
+    uint width;
+    uint height;
+    uint face;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer FogPassRoot {
+    uint64_t frame;
+    uint color;
+    uint depth;
+    uint width;
+    uint height;
     uint _pad0;
     uint _pad1;
 };

@@ -199,11 +199,17 @@ volumes filled from the environment refill in the frame its lighting regenerates
 A source change keeps the filtered cubes of an environment that is not lit this frame;
 they are rewritten when lighting or sheen next needs them.
 
+An [atmosphere](sky.md) replaces `scene.environment` and the background while it resolves. Its lighting cubes
+are renderer-owned, not assets: they regenerate in place when the sun turns more than 0.5°, the observer
+moves more than 500 m or the air changes, and each regeneration refills probe volumes filled from the
+environment like any other lighting regeneration.
+
 `Pass.ENVIRONMENT` times environment work recorded inside a frame. Its stage scopes
 split it by `EnvironmentStage`: `environment.source` (conversion of an equirectangular
 or solid source), `environment.prefilter` (GGX), `environment.irradiance` (SH
 projection), `environment.sheen` (Charlie) and `environment.luts` (the shared lookup
-tables, once). `Stats.gpu_environment_stage_ms` holds their completed times.
+tables, once); an atmosphere adds `environment.sky_transmittance`,
+`environment.sky_multi_scattering` and `environment.sky` (its tables and the march of its cube). `Stats.gpu_environment_stage_ms` holds their completed times.
 Preparation outside a frame is not timed. `gltf_viewer --benchmark
 --environment-refresh on` regenerates its environment every frame; see
 [benchmarking](benchmarking.md#scene-benchmark).

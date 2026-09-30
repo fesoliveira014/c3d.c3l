@@ -361,16 +361,27 @@ fn void? record_raster_view(
             frustum:    &record.frustum,
             depth_axis: view_depth_axis(matrices.view),
         );
-        SceneReads view_reads = scene_read_reads | transparent_reads;
         ViewEnvironments environments;
+        FogSelection fog;
+        bool fog_pass;
+        SceneReads view_reads;
         instrumentation::@scope("view.uploads") {
-            acquire_scene_snapshots(renderer, record, view_reads)!;
             environments = resolve_view_environments(renderer, scene, sheen)!;
+            fog = select_height_fog(scene, camera.layers);
+            renderer.stats.fogs_ignored += fog.ignored;
+            fog_pass = environments.atmosphere || fog.fog;
+            if (fog_pass) {
+                // Refracted samples are fogged to their own depth.
+                scene_read_reads.depth |= scene_read_reads.color;
+                transparent_reads.depth |= transparent_reads.color;
+            }
+            view_reads = scene_read_reads | transparent_reads;
+            acquire_scene_snapshots(renderer, record, view_reads)!;
             if (record.desc.ray_tracing.reflections) acquire_environment_lut(renderer)!;
             prepare_cull_stage(renderer, view_culls, record.desc.instance_culling)!;
             gpu::GpuAddress probe_trace = prepare_probe_updates(renderer, scene)!;
             record_pending_copies(renderer, &renderer.commands)!;
-            record_probe_volumes(renderer, scene, environments.lighting, probe_trace)!;
+            record_probe_volumes(renderer, scene, &environments, probe_trace)!;
             record_instance_cull(renderer, view_culls)!;
             record_instance_sort(renderer, view_culls)!;
             prepare_sampled_targets(renderer, record)!;
@@ -398,6 +409,8 @@ fn void? record_raster_view(
                 view_layers: camera.layers,
                 capacity: renderer.max_lights,
                 counts: &light_counts,
+                atmosphere: &environments.atmosphere_selection,
+                altitude: matrices.position.y,
                 ray_tracing: record.desc.ray_tracing,
             );
             shadows = record_shadows(
@@ -439,17 +452,26 @@ fn void? record_raster_view(
         };
 
         gpu::GpuAddress environment_address;
+        gpu::GpuAddress sky_fog;
         gpu::MappedGpuSpan frame_span;
         instrumentation::@scope("view.roots") {
             if (environments.lighting) {
                 environment_address = pack_lighting_environment(
                     renderer: renderer,
                     environment: environments.lighting,
-                    intensity: scene.environment_intensity,
-                    rotation: scene.environment_rotation,
+                    intensity: environments.lighting_intensity,
+                    rotation: environments.lighting_rotation,
                     sheen: sheen,
                 )!;
             }
+            sky_fog = pack_view_sky_fog(
+                renderer:        renderer,
+                record:          record,
+                atmosphere:      environments.atmosphere,
+                selection:       &environments.atmosphere_selection,
+                fog:             &fog,
+                camera_position: matrices.position,
+            )!;
             Vec3 ambient = environments.lighting && !scene.ambient_add
               ? (Vec3){} : scene.ambient_color * scene.ambient_intensity;
             gpu::GpuAddress probe_volumes = pack_probe_volumes(renderer, scene, camera.layers)!;
@@ -461,6 +483,7 @@ fn void? record_raster_view(
                 viewport:    viewport,
                 info:        renderer.info,
                 frame_index: renderer.frame_index,
+                sky_fog:     sky_fog,
                 lights:      light_address,
                 light_count: light_counts.packed,
                 ambient:     { ambient.r, ambient.g, ambient.b, 0 },
@@ -555,8 +578,16 @@ fn void? record_raster_view(
             }
         };
 
-        bool transparent_after_snapshots = scene_read_items.len > 0 || transparent_reads != (SceneReads){};
+        bool transparent_after_split = scene_read_items.len > 0 || transparent_reads != (SceneReads){} || fog_pass;
         instrumentation::@scope("view.record") {
+            if (environments.atmosphere) {
+                record_sky_view_tables(
+                    renderer: renderer,
+                    record:   record,
+                    sky_fog:  sky_fog,
+                    frame:    frame_span.address,
+                )!;
+            }
             record.hdr_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
             record.depth.transition(&renderer.commands, DEPTH_ATTACHMENT_STATE)!;
             gpu::GpuAddress sky_root;
@@ -565,8 +596,8 @@ fn void? record_raster_view(
                     renderer: renderer,
                     environment: environments.sky,
                     frame: frame_span.address,
-                    intensity: scene.background.intensity,
-                    rotation: scene.background.rotation,
+                    intensity: environments.sky_intensity,
+                    rotation: environments.sky_rotation,
                 )!;
             }
             switch (shading) {
@@ -603,9 +634,10 @@ fn void? record_raster_view(
                         renderer:      renderer,
                         record:        record,
                         opaque:        opaque_items,
-                        transparent:   transparent_after_snapshots ? (DrawItem[]){} : transparent_items,
+                        transparent:   transparent_after_split ? (DrawItem[]){} : transparent_items,
                         sky_root:      sky_root,
                         sky:           environments.sky != null,
+                        atmosphere:    environments.atmosphere != null,
                         clear_color:   environments.clear_color,
                         color_loaded:  false,
                         depth_matched: forward_prepass,
@@ -635,9 +667,10 @@ fn void? record_raster_view(
                         record:             record,
                         frame:              frame_span.address,
                         opaque:             opaque_items,
-                        transparent:        transparent_after_snapshots ? (DrawItem[]){} : transparent_items,
+                        transparent:        transparent_after_split ? (DrawItem[]){} : transparent_items,
                         sky_root:           sky_root,
                         sky:                environments.sky != null,
+                        atmosphere:         environments.atmosphere != null,
                         clear_color:        environments.clear_color,
                         ssgi_history_valid: ssgi_history_valid,
                     )!;
@@ -650,14 +683,21 @@ fn void? record_raster_view(
                     record_loaded_pass(renderer, record, scene_read_items)!;
                 }!;
             }
-            if (transparent_after_snapshots && transparent_items.len) {
+            if (fog_pass) {
+                // The fog split: snapshots and the bounce source stay unfogged; blended draws fog themselves.
                 if (transparent_reads != (SceneReads){}) record_scene_snapshots(renderer, record, transparent_reads)!;
+                if (screen_space_gi) record_ssgi_color_copy(renderer, record)!;
+                record_fog_pass(renderer, record, frame_span.address)!;
+            } else if (transparent_after_split && transparent_items.len && transparent_reads != (SceneReads){}) {
+                record_scene_snapshots(renderer, record, transparent_reads)!;
+            }
+            if (transparent_after_split && transparent_items.len) {
                 @profile_pass(renderer, Pass.FORWARD_TRANSPARENT) {
                     record_loaded_pass(renderer, record, transparent_items)!;
                 }!;
             }
 
-            if (screen_space_gi) record_ssgi_color_copy(renderer, record)!;
+            if (screen_space_gi && !fog_pass) record_ssgi_color_copy(renderer, record)!;
             if (debug && debug.vertices.len()) {
                 record_debug_lines(renderer, record, raster.view_proj, debug)!;
             }
@@ -991,6 +1031,7 @@ fn bool velocity_before_lighting(ViewDesc* desc) @private {
  @param [&in] matrices : "Rendered matrices, jittered on a TAA view."
  @param [&in] camera : "Supplies near, far and exposure."
  @param viewport : "Pixels."
+ @param sky_fog : "SkyFogGpu of the view; zero draws no sky tables and no fog."
  @param scene_depth : "Depth snapshot sampled view; zero when the view reads none."
  @param [in] prev_view_proj : "Unjittered; null repeats the current view-projection."
  @param [in] previous_time : "Time of the view's last rendering; null repeats info.time."
@@ -1010,6 +1051,7 @@ fn void write_frame_root(
     Vec2 viewport,
     FrameInfo info,
     ulong frame_index,
+    gpu::GpuAddress sky_fog,
     gpu::GpuAddress lights = (gpu::GpuAddress)0,
     uint light_count = 0,
     Vec4 ambient = {},
@@ -1062,6 +1104,7 @@ fn void write_frame_root(
         .scene_depth     = scene_depth,
         .previous_time   = (float)(previous_time ? *previous_time : info.time),
         .clip_plane      = { clip_plane.normal.x, clip_plane.normal.y, clip_plane.normal.z, clip_plane.d },
+        .sky_fog         = sky_fog,
     };
 }
 
@@ -1273,6 +1316,7 @@ fn void? record_forward_pass(
     DrawItem[] transparent,
     gpu::GpuAddress sky_root,
     bool sky,
+    bool atmosphere,
     Vec4 clear_color,
     bool color_loaded,
     bool depth_matched,
@@ -1324,7 +1368,12 @@ fn void? record_forward_pass(
     }!;
     if (sky) {
         @profile_pass(renderer, Pass.SKY) {
-            bound = record_sky_draw(renderer, record, sky_root)!;
+            bound = record_sky_draw(
+                renderer:   renderer,
+                record:     record,
+                root:       sky_root,
+                atmosphere: atmosphere,
+            )!;
         }!;
     }
     if (transparent.len) {

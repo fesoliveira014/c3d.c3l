@@ -52,7 +52,9 @@ after the scene passes as before. Scene-read items draw after the velocity on th
 velocity. The velocity image then uses the four-channel format whose third channel
 holds the expected previous depth, and the view keeps a full motion history like a view with TAA or motion
 blur. The previous colour is a copy of the lit image taken after the transparent pass and before debug
-lines, TAA and post-processing.
+lines, TAA and post-processing. On a view with [fog or an atmosphere](sky.md#where-fog-applies) the copy is
+taken at the fog split instead, before the fog pass and the transparent draws: the bounce source is unfogged
+and holds no blended draws.
 
 Pass order of a view with the effect:
 

@@ -66,6 +66,12 @@ const float SHADOW_DISTANCE @local = 1500; // metres; the cascades spread over i
 const float SHADOW_NORMAL_BIAS @local = 0.5f; // metres; cascade texels 0.1 to 1.8 m; smaller biases band gentle ground
 const float AMBIENT_INTENSITY @local = 0.25f;
 const Vec4 SKY_COLOR @local = { 0.55f, 0.7f, 0.9f, 1 };
+const HeightFog LANDSCAPE_FOG @local = { // a haze that pools below 100 m of the 300 m relief
+    .density      = 0.0015f,
+    .falloff      = 0.01f,
+    .albedo       = { 1, 1, 1 },
+    .max_distance = 400,
+};
 
 const LayerLook[LAYER_COUNT] LAYER_LOOKS @local = {
     { // grass
@@ -403,9 +409,10 @@ fn Ground? add_ground(
 <*
  Add the sun, the sky colour and the ambient light of the landscape.
  @param [&inout] scene
+ @param sky : "An atmosphere on the sun and a height fog, which replace the sky colour."
  @return? c3d::CAPACITY_EXCEEDED
 *>
-fn void? add_sun_and_sky(Scene* scene, bool traced_shadows) {
+fn void? add_sun_and_sky(Scene* scene, bool traced_shadows, bool sky) {
     Light sun = light::directional({ 1, 0.95f, 0.85f }, SUN_INTENSITY);
     sun.shadow.max_distance = SHADOW_DISTANCE;
     sun.shadow.normal_bias = SHADOW_NORMAL_BIAS;
@@ -415,6 +422,10 @@ fn void? add_sun_and_sky(Scene* scene, bool traced_shadows) {
     scene.background = { .kind = COLOR, .color = SKY_COLOR };
     scene.ambient_color = SKY_COLOR.xyz;
     scene.ambient_intensity = AMBIENT_INTENSITY;
+    if (!sky) return;
+    scene.add(sun_node, light::ATMOSPHERE_EARTH);
+    Node* fog_node = scene.add_node(name: "fog")!;
+    scene.add(fog_node, LANDSCAPE_FOG);
 }
 
 <*
