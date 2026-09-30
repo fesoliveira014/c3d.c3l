@@ -30,13 +30,15 @@ $assert (uint)MaterialKind.CUSTOM.ordinal == shader::MATERIAL_KIND_CUSTOM;
  Common material options packed into shader flags.
 *>
 bitstruct MaterialFlags : uint {
-    bool alpha_mask   : 0;
-    bool double_sided : 1;
-    bool alpha_blend  : 2;
+    bool alpha_mask     : 0;
+    bool double_sided   : 1;
+    bool alpha_blend    : 2;
+    bool blend_additive : 3;
 }
 $assert shader::MATERIAL_ALPHA_MASK == 1 << 0;
 $assert shader::MATERIAL_DOUBLE_SIDED == 1 << 1;
 $assert shader::MATERIAL_ALPHA_BLEND == 1 << 2;
+$assert shader::MATERIAL_BLEND_ADDITIVE == 1 << 3;
 
 <*
  Renderer-owned heap slot of one material record.
@@ -99,6 +101,8 @@ fn void write_material_block(
         .alpha_mask = material.common.alpha_mode == AlphaMode.MASK,
         .double_sided = material.common.double_sided,
         .alpha_blend = material.common.alpha_mode == AlphaMode.BLEND,
+        .blend_additive = material.common.alpha_mode == AlphaMode.BLEND
+          && material.common.blend_mode == BlendMode.ADDITIVE,
     };
 
     switch (material.kind) {
@@ -312,6 +316,7 @@ fn StandardMaterialGpu pack_standard_material(
         .alpha_mask = common.alpha_mode == AlphaMode.MASK,
         .double_sided = common.double_sided,
         .alpha_blend = common.alpha_mode == AlphaMode.BLEND,
+        .blend_additive = common.alpha_mode == AlphaMode.BLEND && common.blend_mode == BlendMode.ADDITIVE,
     };
     uint map_flags = texture_map_flags(
         slot: params.base_color_map,

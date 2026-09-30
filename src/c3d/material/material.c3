@@ -7,6 +7,7 @@ import std::math;
 *>
 const MaterialCommon MATERIAL_COMMON_DEFAULT = {
     .alpha_mode   = AlphaMode.OPAQUE,
+    .blend_mode   = BlendMode.PREMULTIPLIED_ALPHA,
     .alpha_cutoff = 0.5f,
     .depth_write  = true,
     .depth_test   = true,
@@ -58,10 +59,19 @@ enum AlphaMode {
 }
 
 <*
- Raster and depth state shared by every material kind.
+ Composition of a blended material's premultiplied output.
+*>
+enum BlendMode {
+    PREMULTIPLIED_ALPHA,
+    ADDITIVE,
+}
+
+<*
+ Surface classification, blending and raster state.
 *>
 struct MaterialCommon {
     AlphaMode alpha_mode;
+    BlendMode blend_mode;
     float     alpha_cutoff;
     bool      double_sided;
     bool      depth_write;

@@ -64,6 +64,8 @@ void main() {
         color += base_color.rgb / PI * response * light_sample.radiance * visibility;
     }
     color += toon_rim(material, normal, view_direction);
-    if ((material.flags & MATERIAL_ALPHA_BLEND) != 0u) color = apply_fog(frame, v_world_pos, color);
+    if ((material.flags & MATERIAL_ALPHA_BLEND) != 0u) {
+        color = apply_material_fog(frame, v_world_pos, color, material.flags);
+    }
     out_color = material_output(color, base_color.a, material.flags);
 }
