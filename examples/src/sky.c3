@@ -1208,7 +1208,8 @@ fn bool print_results(Demo* demo, BenchmarkResult* result) @local {
 
 fn void print_header(Options options) @local {
     io::printfn(
-        "# sky shading=%s shadows=%s ssgi=%s path_traced=%s fog=%s atmosphere=%s volumetric_fog=%s taa=%s extent=%dx%d frames=%d",
+        "# sky shading=%s shadows=%s ssgi=%s path_traced=%s fog=%s atmosphere=%s "
+          "volumetric_fog=%s taa=%s extent=%dx%d frames=%d",
         options.shading == ShadingPath.DEFERRED ? "deferred" : "forward",
         options.traced_shadows ? "traced" : "atlas",
         options.ssgi ? "on" : "off",
@@ -1287,7 +1288,8 @@ fn int main(String[] args) {
         if (excuse != c3d::UNSUPPORTED) {
             io::eprintfn("Invalid options: %s", excuse);
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
-              "[--shadows atlas|traced] [--ssgi] [--path-traced] [--volumetric-fog] [--taa] [--fog on|off] [--atmosphere on|off] "
+              "[--shadows atlas|traced] [--ssgi] [--path-traced] [--volumetric-fog] [--taa] "
+              "[--fog on|off] [--atmosphere on|off] "
               "[--preset noon|twilight|valley|pan|time-lapse] [--width W] [--height H].");
         }
         return 1;

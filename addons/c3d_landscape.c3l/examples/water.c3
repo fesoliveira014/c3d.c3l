@@ -1632,7 +1632,8 @@ fn int main(String[] args) {
             io::eprintfn("Invalid options: %s", excuse);
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
               "[--size 1025|2049|4097] [--reflection planar|march|env] [--mirror-scale 0.5|1] [--crates 16|256] "
-              "[--ssgi] [--traced] [--capture] [--ripples on|off] [--width W] [--height H] [--sky] [--volumetric-fog].");
+              "[--ssgi] [--traced] [--capture] [--ripples on|off] [--width W] [--height H] [--sky] "
+              "[--volumetric-fog].");
         }
         return 1;
     }

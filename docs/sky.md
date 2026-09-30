@@ -203,6 +203,10 @@ combination) records nothing extra.
 - Custom stages need no change: `fog_terms`, `fog_background_terms`, `apply_fog`, `fog_behind` and
   `apply_fog_refracted` include the volume when the view has one.
 - The volume is recomputed every frame from one shadow sample per froxel and is not reprojected or jittered.
+- The volume changes the haze's colour, not only its shadows. Inside `max_distance` the in-scatter is lit by the
+  sun and the ambient, while the analytic fog takes the sky's colour, so the same fog looks brighter and warmer
+  with the switch: the upper sky at noon at the default density goes from (31, 60, 100) to (76, 91, 117). Views of
+  one scene with and without the switch show two haze colours.
 
 ## Custom stages
 
@@ -276,6 +280,8 @@ sky example does under `--path-traced`.
   (0.85 MiB and 83 with sheen); four atmospheres at once.
 - Volumetric fog has no temporal reprojection or jitter, scatters only the sun, is unshadowed past the shadow
   atlas, changes its in-scatter slope at `max_distance` and does not exist on path-traced views.
+- The analytic fog has no direct-sun phase term, so a view with volumetric fog and a view without it show
+  different haze colours.
 - No clouds, no observers above the atmosphere.
 
 ## Example
@@ -358,6 +364,49 @@ peaks seen directly.
 
 A refresh (0.84 ms) is far under the 4.2 ms at which refreshes would be time-sliced; a second view's
 tables (0.035 ms) do not call for a per-view switch; the −4° twilight does not call for pre-exposure.
+
+### Volumetric fog, RTX 4090, 2560 × 1440
+
+Same build and method; the fog's density raised to 0.01 for the judgements below.
+
+| Volume passes, `FOG_SCATTERING` + `FOG_INTEGRATION`, ms | Main | Mirror |
+| --- | ---: | ---: |
+| forward, noon | 0.0266 + 0.0164 = 0.043 | 0.0181 + 0.0205 = 0.039 |
+| deferred, noon | 0.0276 + 0.0174 = 0.045 | 0.0174 + 0.0205 = 0.038 |
+| `--shadows traced`, noon | 0.0266 + 0.0141 = 0.041 | 0.0133 + 0.0209 = 0.034 |
+| forward, pan / valley / twilight (no sun) | 0.048 / 0.044 / 0.027 | 0.040 / 0.039 / 0.029 |
+
+At 160 × 90 × 64 with a four-cascade sun the passes cost 0.043 ms, about a tenth of a 0.5 ms budget; traced
+shadows cost 0.95 times the atlas. The fog pass reads the volume's lookup even without the switch: `FOG` goes
+from 0.0369 to 0.0410 ms on the main view and from 0.0123 to 0.0133 ms on the mirror; with the switch it is
+0.0430 ms.
+
+| `sky` frame, forward, ms | Before | Without the switch | With it |
+| --- | ---: | ---: | ---: |
+| noon | 0.501 | 0.506 | 0.586 |
+| twilight | 0.360 | 0.369 | 0.432 |
+| valley | 0.429 | 0.436 | 0.522 |
+| time-lapse | 0.504 | 0.512 | 0.597 |
+| pan | | 0.513 | 0.597 |
+
+With the switch at noon: deferred 0.654, `--shadows traced` 0.487, `--taa` 0.707. The environment refresh stays
+at 0.842 ms and `sun_radiance` at 0.90 µs. Sponza without fog: `cpu_record_ms` 0.1444 (0.1429 to 0.1638) before
+and 0.1518 (0.1424 to 0.1661) after, with its six largest passes overlapping.
+
+| Landscape `still` frame, ms | `--sky` | `--sky --volumetric-fog` | Volume passes |
+| --- | ---: | ---: | --- |
+| `terrain` | 1.464 | 1.488 | 0.0307 + 0.0154 |
+| `vegetation` | 1.377 | 1.407 | 0.0314 + 0.0154 |
+| `water` | 2.369 | 2.489 | main 0.0297 + 0.0152, mirror 0.0184 + 0.0205 |
+
+Memory: 7.03 MiB per 2560 × 1440 view.
+
+Judged on the 4090: across 12 frames of a slow pan, with and without `--taa`, the haze near the horizon changes
+by at most 2 levels a frame and the shadowed fog behind the boxes moves with them, so the volume needs no
+reprojection; at `max_distance` 200 and 500 m a ground column steps at most 2 levels a row (1 in the valley at
+500 m), so 64 slices suffice; shadowed-fog edges are soft at 16 px, the only stair-step being the atlas's own;
+no ring shows at `max_distance`; twilight shows no banding; the water's reflections are no hazier than the peaks
+seen directly and no veil sits in front of the mirror plane.
 
 ### WSL, llvmpipe
 
