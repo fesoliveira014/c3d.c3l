@@ -46,7 +46,6 @@ const uint SAMPLE_BATCHES @local = 10;
 const uint SAMPLES_PER_BATCH @local = 10_000; // 100,000 surface samples before the segments
 const double NANOSECONDS_PER_MICROSECOND @local = 1_000;
 const double NANOSECONDS_PER_MILLISECOND @local = 1_000_000;
-const double MILLISECONDS_PER_SECOND @local = 1_000;
 const float PERCENT @local = 100;
 const uint RGBA8_BYTES @local = 4;
 const uint RGBA_CHANNELS @local = 4;
@@ -247,7 +246,12 @@ struct BenchmarkResult @local {
     bool          timestamps;
 }
 
-fn float? lake_height(void* context, float x, float z, float step_offset) @local {
+fn float? lake_height(
+    void* context,
+    float x,
+    float z,
+    float step_offset,
+) @local {
     LakeSurface* lake = context;
     return water::sample_surface(
         view:    &lake.view,
@@ -274,7 +278,6 @@ fn float tile_angle(TileTerm term, float u, float v) @local {
     return 2 * (float)math::PI * ((float)term.cycles_u * u + (float)term.cycles_v * v) + term.phase;
 }
 
-// A sum of sines in [0, 1].
 fn float tile_value(TileTerm[] terms, float u, float v) @local {
     float value;
     float total;
@@ -599,13 +602,23 @@ fn Mirror? create_mirror(
     mirror_desc.post.anti_aliasing = AntiAliasing.NONE;
     mirror_desc.clip_plane = scene.get(lake, WaterRuntime).clip_plane;
     ViewId mirror_view = render::create_view(renderer, mirror_desc)!;
-    water::set_reflection_target(scene, assets, lake, mirror_target);
+    water::set_reflection_target(
+        scene:  scene,
+        assets: assets,
+        node:   lake,
+        target: mirror_target,
+    );
     return { .target = mirror_target, .view = mirror_view, .width = output_size.x, .height = output_size.y };
 }
 
 // docs/water.md's per-frame lines, after water::update and before begin_frame: set_desc and a moved lake move
 // the plane.
-fn void? follow_clip_plane(Renderer* renderer, Scene* scene, Node* lake, ViewId mirror_view) @local {
+fn void? follow_clip_plane(
+    Renderer* renderer,
+    Scene* scene,
+    Node* lake,
+    ViewId mirror_view,
+) @local {
     Plane clip_plane = scene.get(lake, WaterRuntime).clip_plane;
     ViewDesc current = renderer.views.get(mirror_view).desc;
     if (clip_plane.normal != current.clip_plane.normal || clip_plane.d != current.clip_plane.d) {
@@ -615,7 +628,12 @@ fn void? follow_clip_plane(Renderer* renderer, Scene* scene, Node* lake, ViewId 
 }
 
 // docs/water.md's frame: the mirror before the view that shows the water.
-fn void? render_mirror(Renderer* renderer, Scene* scene, Node* lake, ViewId mirror_view) @local {
+fn void? render_mirror(
+    Renderer* renderer,
+    Scene* scene,
+    Node* lake,
+    ViewId mirror_view,
+) @local {
     Node* mirror = scene.node(scene.get(lake, WaterRuntime).mirror);
     renderer.render_view(scene, mirror, mirror_view)!;
     renderer.finish_view(mirror_view)!;
@@ -624,7 +642,12 @@ fn void? render_mirror(Renderer* renderer, Scene* scene, Node* lake, ViewId mirr
 // Without a planar target the stage marches the snapshot; the environment source also turns the march off.
 fn void? apply_reflection(Demo* demo, Reflection reflection) @local {
     RenderTargetId target = reflection == Reflection.PLANAR ? demo.mirror.target : (RenderTargetId){};
-    water::set_reflection_target(demo.scene, demo.assets, demo.lake, target);
+    water::set_reflection_target(
+        scene:  demo.scene,
+        assets: demo.assets,
+        node:   demo.lake,
+        target: target,
+    );
     bool march = reflection != Reflection.ENV;
     if (march != demo.water_desc.march_reflections) {
         demo.water_desc.march_reflections = march;
@@ -815,7 +838,12 @@ fn double? step_scene(
         wind_velocity:  wind,
         time:           time,
     )!;
-    follow_clip_plane(renderer, scene, demo.lake, demo.mirror.view)!;
+    follow_clip_plane(
+        renderer:    renderer,
+        scene:       scene,
+        lake:        demo.lake,
+        mirror_view: demo.mirror.view,
+    )!;
     demo.surface = { .view = water::surface_view(scene, demo.assets, demo.lake.id)!, .time = time };
     time::Clock started = clock::now();
     demo.physics.update(delta);
@@ -825,7 +853,14 @@ fn double? step_scene(
 }
 
 fn void? render_views(Demo* demo, Renderer* renderer, ViewId main_view) @local {
-    if (demo.reflection == Reflection.PLANAR) render_mirror(renderer, demo.scene, demo.lake, demo.mirror.view)!;
+    if (demo.reflection == Reflection.PLANAR) {
+        render_mirror(
+            renderer:    renderer,
+            scene:       demo.scene,
+            lake:        demo.lake,
+            mirror_view: demo.mirror.view,
+        )!;
+    }
     if (demo.options.capture) {
         renderer.render_view(demo.scene, demo.capture.camera_node, demo.capture.view)!;
         renderer.finish_view(demo.capture.view)!;
@@ -1007,7 +1042,12 @@ fn void? follow_output_size(Demo* demo, Renderer* renderer) @local {
     uint width = renderer.output_width;
     uint height = renderer.output_height;
     if (!width || !height || (width == demo.mirror.width && height == demo.mirror.height)) return;
-    render::resize_render_target(renderer, demo.mirror.target, width, height)!;
+    render::resize_render_target(
+        renderer: renderer,
+        target:   demo.mirror.target,
+        width:    width,
+        height:   height,
+    )!;
     demo.mirror.width = width;
     demo.mirror.height = height;
 }
@@ -1133,7 +1173,12 @@ fn void? run_interactive(Options options) @local {
         imgui::set_next_window_pos(STATS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(STATS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
         gui::stats_panel(&renderer)!;
-        gui::targets_panel(&renderer, renderer.default_view, &targets, scene.environment)!;
+        gui::targets_panel(
+            renderer:    &renderer,
+            view:        renderer.default_view,
+            state:       &targets,
+            environment: scene.environment,
+        )!;
         gui_renderer.finish_frame();
 
         platform::sync_window(&window, &renderer);
@@ -1227,7 +1272,12 @@ fn double? time_samples(Demo* demo) @local {
             float share = (float)sample / (float)SAMPLES_PER_BATCH;
             float x = demo.lake_centre.x + reach * math::sin(share * 97);
             float z = demo.lake_centre.z + reach * math::cos(share * 61);
-            sum += water::sample_surface(view: &view, world_x: x, world_z: z, time: (double)batch + share)!;
+            sum += water::sample_surface(
+                view:    &view,
+                world_x: x,
+                world_z: z,
+                time:    (double)batch + share,
+            )!;
         }
         *nanoseconds = (double)(long)started.to_now() / (double)SAMPLES_PER_BATCH;
     }

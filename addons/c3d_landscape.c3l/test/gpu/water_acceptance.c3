@@ -50,7 +50,7 @@ const float VELOCITY_TOLERANCE @local = 0.01f; // encoded units, about two and a
 const float MIN_VELOCITY_ENCODED @local = 0.03f; // every sample moves well above the tolerance
 const uint BISECTION_STEPS @local = 60;
 
-const Wave[2] EXAMPLE_WAVES @local = { // kept identical by hand with examples/water.c3
+const Wave[2] EXAMPLE_WAVES @local = { // kept identical by hand with default_water_desc, the example's waves
     { .amplitude = 0.12f, .wavelength = 6, .speed = 1.2f, .direction = { 1, 0 }, .steepness = 0.5f },
     { .amplitude = 0.07f, .wavelength = 3.5f, .speed = 0.9f, .direction = { 0.6f, 0.8f }, .steepness = 0.5f },
 };

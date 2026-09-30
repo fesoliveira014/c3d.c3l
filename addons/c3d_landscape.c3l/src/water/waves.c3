@@ -85,7 +85,12 @@ fn SurfaceView? surface_view(Scene* scene, AssetStore* assets, Entity node) {
  @param time : "Seconds; the FrameInfo.time the surface is drawn at."
  @return? NOT_FOUND
 *>
-fn float? sample_surface(SurfaceView* view, float world_x, float world_z, double time) {
+fn float? sample_surface(
+    SurfaceView* view,
+    float world_x,
+    float world_z,
+    double time,
+) {
     Vec3 local = maths::transform_point(view.local_from_world, { world_x, 0, world_z });
     float drawn_time = shader_time(time);
     WaveGpu[] waves = view.waves[:view.wave_count];

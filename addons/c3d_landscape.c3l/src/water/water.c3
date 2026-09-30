@@ -81,10 +81,10 @@ struct Water {
 }
 
 <*
- Derived material, grid, mirror camera and clip plane of a water body, written by the library.
+ Checked desc, material, grid, mirror camera and clip plane of a water body, written by the library.
 *>
 struct WaterRuntime {
-    WaterDesc      desc;              // the last checked desc; update reads it, never the live Water.desc
+    WaterDesc      desc;              // as add_water or set_desc checked it; later Water edits never reach it
     MaterialId     material;          // owned; removed with the runtime
     GeometryId     grid;              // the built grid, shared per store key, or the desc's geometry
     Entity         mirror;            // root camera node; removed by update once the water is gone

@@ -131,7 +131,12 @@ The waves are node-local: node scale scales wavelengths and amplitudes, node rot
 
 ```c3
 SurfaceView view = water::surface_view(&scene, &assets, lake.id)!;
-float height = water::sample_surface(view: &view, world_x: x, world_z: z, time: now)!;
+float height = water::sample_surface(
+    view:    &view,
+    world_x: x,
+    world_z: z,
+    time:    now,
+)!;
 ```
 
 `surface_view` copies the packed waves the stage reads, bit for bit, and the node's pose; it faults
@@ -232,7 +237,12 @@ mirror_desc.render_scale = render_scale;
 mirror_desc.post.anti_aliasing = AntiAliasing.NONE;
 mirror_desc.clip_plane = scene.get(lake, WaterRuntime).clip_plane;
 ViewId mirror_view = render::create_view(renderer, mirror_desc)!;
-water::set_reflection_target(scene, assets, lake, mirror_target);
+water::set_reflection_target(
+    scene:  scene,
+    assets: assets,
+    node:   lake,
+    target: mirror_target,
+);
 
 // Every frame, after water::update and before begin_frame: set_desc and a moved lake move the plane.
 Plane clip_plane = scene.get(lake, WaterRuntime).clip_plane;
@@ -260,8 +270,8 @@ renderer.finish_view(mirror_view)!;
 ## Buoyancy
 
 The physics add-on's `Buoyancy` component samples a fluid surface the application installs per world
-([buoyancy](buoyancy.md)). The adapter over one water body, kept identical by hand in the example and the
-device test:
+([buoyancy](buoyancy.md)). The adapter over one water body, kept identical by hand in the example; the device
+test runs the same function over its own context struct:
 
 ```c3
 struct LakeSurface {
@@ -269,7 +279,12 @@ struct LakeSurface {
     double      time; // the FrameInfo.time of the physics update's first step
 }
 
-fn float? lake_height(void* context, float x, float z, float step_offset) {
+fn float? lake_height(
+    void* context,
+    float x,
+    float z,
+    float step_offset,
+) {
     LakeSurface* lake = context;
     return water::sample_surface(
         view:    &lake.view,

@@ -38,7 +38,8 @@ fn void? check_desc(AssetStore* assets, WaterDesc* desc) @private {
         Aabb bounds = assets.geometries.get(desc.geometry).data.bounds;
         if (bounds.min.y != 0 || bounds.max.y != 0) return c3d::INVALID_ARGUMENT~;
     } else {
-        if (!(desc.extent > 0) || !(desc.cell_size > 0) || !math::is_finite(desc.extent)) return c3d::INVALID_ARGUMENT~;
+        if (!(desc.extent > 0) || !math::is_finite(desc.extent)) return c3d::INVALID_ARGUMENT~;
+        if (!(desc.cell_size > 0) || !math::is_finite(desc.cell_size)) return c3d::INVALID_ARGUMENT~;
         if (!(desc.extent / desc.cell_size <= MAX_GRID_CELLS)) return c3d::INVALID_ARGUMENT~;
         if (desc.wave_count && !(shortest >= NYQUIST_CELLS * desc.cell_size)) return c3d::INVALID_ARGUMENT~;
     }

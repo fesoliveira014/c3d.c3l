@@ -11,7 +11,12 @@ add-on's water through the adapter in [water](water.md#buoyancy). Neither packag
 ```c3
 alias FluidSurfaceFn = fn float? (void* context, float x, float z, float step_offset);
 
-fn float? pond_level(void* context, float x, float z, float step_offset) {
+fn float? pond_level(
+    void* context,
+    float x,
+    float z,
+    float step_offset,
+) {
     Pond* pond = context;
     if (x * x + z * z > pond.radius * pond.radius) return NOT_FOUND~;
     return pond.level;
