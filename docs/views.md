@@ -67,8 +67,9 @@ unit length or a `d` that is not finite, and any non-zero `clip_plane` on a `PAT
 `AoKind.RAY_TRACED` faults `UNSUPPORTED`; a full pool faults `CAPACITY_EXCEEDED` (`VIEW_CAPACITY` is 8).
 `destroy_view` on the default view faults `INVALID_ARGUMENT`.
 
-The view owns its working images (`hdr_color`, `depth`, the scene color and depth snapshots, post and effect
-images) at the working extent `working_extent(viewport, output, render_scale)`, at least one pixel
+The view owns its working images (`hdr_color`, `depth`, the scene color and depth snapshots, the
+[sky](sky.md)'s 192 × 108 sky-view table and 32³ aerial perspective volume (418 KiB) on raster views, post and
+effect images) at the working extent `working_extent(viewport, output, render_scale)`, at least one pixel
 per dimension. Reconfiguring with a different extent or output waits for outstanding frames and
 reallocates them; every configuration resets the view's history, which is otherwise keyed by scene
 identity and needs no reset when a scene is replaced (`reset_view_history` remains the camera cut).
@@ -269,6 +270,9 @@ scene.get(mirror_node, Camera).aspect = main_aspect;
   the mirror view projects a point on the plane where the main view does.
 - Render the mirror view before the view that shows the surface.
 - Water from the landscape add-on places its mirror camera and clip plane for you; see [water](water.md#the-mirror).
+- Under [fog or an atmosphere](sky.md#where-fog-applies) a mirror view fogs only the path behind its plane,
+  from the plane to the reflected surface; the view that shows the surface fogs the path to it, so the
+  reflection carries the reflected path's fog once. The mirror view owns its own sky tables.
 
 Every mesh vertex stage declares `ClipDistance`, so the device must support `shaderClipDistance`;
 `create_renderer` faults `UNSUPPORTED` without it. Adapter selection prefers a discrete adapter
@@ -418,7 +422,10 @@ occlusion, `LIGHTING` (a fullscreen fragment pass that clears
 `hdr_color`, discards where no geometry was drawn and lights every G-buffer pixel from `FrameRoot`),
 `FORWARD_OPAQUE` (depth `EQUAL`, no write), sky, `SCENE_SNAPSHOT` and `SCENE_READ` when the view
 draws scene readers, `SCENE_SNAPSHOT` again when a blended draw reads the scene, transparency,
-velocity and the post chain. `Stats.gpu_pass_ms` carries the three new passes. Dielectric F0 in the resolve is
+velocity and the post chain. `Stats.gpu_pass_ms` carries the three new passes. A view with
+[fog or an atmosphere](sky.md#where-fog-applies) records `SKY_VIEW` and `AERIAL_PERSPECTIVE` before the
+depth prepass when its scene has an atmosphere, and splits before the transparent draws: the snapshot for
+blended readers, the SSGI colour copy, then `FOG`, then transparency. Dielectric F0 in the resolve is
 `0.04 · specular` for IOR 1.5, which is why other IORs and tinted specular colors route forward.
 
 Light selection follows `lights` on both paths: the resolve calls the same clustered or flat

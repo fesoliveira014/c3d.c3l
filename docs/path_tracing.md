@@ -49,7 +49,8 @@ written to `hdr_color`. The image restarts automatically when:
 - any traced record changes: a node moves, a mesh appears or disappears, its visibility or
   material assignment changes, or its geometry is edited.
 
-Material factor, light and environment edits do not restart it. Call
+Material factor, light, environment and sky edits do not restart it: a moving sun under an
+[atmosphere](sky.md#path-tracing) keeps its old samples. Call
 `render::reset_view_history(&renderer, view)` after such an edit. `configure_view` and a resize
 also restart it. `Renderer.view_stats(view).accumulated_samples` reports the samples in the image;
 `Stats.path_trace_samples` counts the samples traced in the frame.
@@ -113,6 +114,8 @@ button, and the post panel's "Path tracing" header edits bounces, samples per fr
   are not sampled; `BLEND` surfaces, skinned and morphed meshes are not traced; custom shader code
   does not run at hits.
 - Light layers and camera layers are not applied.
+- An [atmosphere](sky.md) lights the view through its cubes and shows its source cube as the background,
+  without the sun's disc; path-traced views have no fog and no aerial perspective.
 - Camera and bounce rays pass the back of a single-sided surface, as raster culls it, and shadow
   rays keep the faces the light sees ([facing](scene_trace.md#facing)).
 

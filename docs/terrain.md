@@ -270,7 +270,9 @@ frames. It prints one line per metric and two gates, and exits 1 when a gate fai
 Switches: `--gpu-timings` (build with `python3 scripts/build.py --target terrain --opt O3 --define
 C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL --lib c3d_profile`), `--shading forward|deferred`,
 `--shadows atlas|traced`, `--size 1025|2049|4097`, `--layers 1|4`, `--lod-threshold PIXELS`,
-`--width W --height H` (2560 × 1440 by default in benchmark mode), `--hide-terrain` and `--validation`.
+`--width W --height H` (2560 × 1440 by default in benchmark mode), `--hide-terrain`, `--validation` and `--sky`
+(an [atmosphere](sky.md) on the sun and a haze pooling in the valleys, off by default; with `--gpu-timings` the
+pass lines add `SKY_VIEW`, `AERIAL_PERSPECTIVE` and `FOG`).
 Interactive runs always validate; benchmark runs validate only with `--validation`.
 
 ## Measured cost

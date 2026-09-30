@@ -206,7 +206,7 @@ windowed rows only with other windowed rows.
 | `end_ms` | `end_frame` submission, including presentation in windowed runs |
 | `gui_ms` | Profiler panel draw and overlay recording; zero without `--panel` |
 | `cpu_record_ms` | Existing renderer statistic; excludes the beginning wait/readback/sweep work |
-| `gpu_*_ms` | Completed per-pass timestamps for shadow atlas, light culling, depth prepass, G-buffer, ambient occlusion, ray-traced reflections, path tracing, lighting resolve, forward opaque, post chain, composite, velocity, temporal resolve, probe update, acceleration builds, screen-space GI, its colour copy, instance culling (`gpu_instance_cull_ms`), environment preparation (`gpu_environment_ms`) and its stages (`gpu_environment_source_ms`, `gpu_environment_irradiance_ms`, `gpu_environment_prefilter_ms`, `gpu_environment_sheen_ms`, `gpu_environment_luts_ms`, last; parts of `gpu_environment_ms`, not added to it); `-1` when unavailable, zero for an omitted pass |
+| `gpu_*_ms` | Completed per-pass timestamps for shadow atlas, light culling, depth prepass, G-buffer, ambient occlusion, ray-traced reflections, path tracing, lighting resolve, forward opaque, post chain, composite, velocity, temporal resolve, probe update, acceleration builds, screen-space GI, its colour copy, instance culling (`gpu_instance_cull_ms`), environment preparation (`gpu_environment_ms`) and its stages (`gpu_environment_source_ms`, `gpu_environment_irradiance_ms`, `gpu_environment_prefilter_ms`, `gpu_environment_sheen_ms`, `gpu_environment_luts_ms`, and an atmosphere's `gpu_environment_sky_transmittance_ms`, `gpu_environment_sky_multi_scattering_ms`, `gpu_environment_sky_ms`, last; parts of `gpu_environment_ms`, not added to it); `-1` when unavailable, zero for an omitted pass |
 | `draws`, `lights`, `dropped` | Current-frame renderer counters |
 | `batches_faded` | Current-frame `Stats.batches_faded`: view batches inside the frustum wholly past their fade band |
 | `overflows` | Completed cluster overflow count attributed to its submitted frame |
@@ -282,6 +282,33 @@ The upload's CPU mip generation and staging land in `cpu_record_ms`, and its cop
 Any glTF file can replace Sponza through the positional path or
 `benchmark.py scene --model`; the light and camera placement derive from the
 model bounds.
+
+## Sky benchmark
+
+```bash
+python3 scripts/build.py --target sky --opt O3 --define C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL --lib c3d_profile
+./examples/build/sky --benchmark --gpu-timings
+```
+
+`sky --benchmark [frames]` renders the [sky example](sky.md#example) offscreen at 2560 × 1440 after 60
+warm-up frames: noon, twilight (the sun at −4°), valley (the camera 300 m up, looking 30° down into the fog)
+and a time-lapse four segments long (the sun rising 0.0045° a frame from 10°). Lines:
+
+```
+# sky shading=forward shadows=atlas ssgi=off path_traced=off fog=on atmosphere=on extent=2560x1440 frames=300
+sun_extract_us median=<>
+gpu_ms view=<main|mirror> segment=<s> pass=<pass> median=<> p99=<>
+frame_ms segment=<s> median=<> p99=<>
+refresh_ms segment=time-lapse stage=<environment.sky|environment.prefilter|environment.irradiance|total> median=<> max=<> count=<n>
+refreshes_per_minute segment=time-lapse value=<>
+gate time_lapse_regenerations expected=<n> found=<n> <pass|fail>
+gate steady_sky <pass|fail>
+```
+
+`refresh_ms` reads the frames that regenerated the sky; `total` is the whole `ENVIRONMENT` pass. The
+time-lapse gate expects `floor(sweep / period)` regenerations after its first frame, with
+`period = (floor(0.5° / step) + 1) · step`, and none without an atmosphere; `steady_sky` expects none after
+the noon segment's first frame. A failed gate exits 1. `--fog off --atmosphere off` is the fog-off baseline.
 
 ## Instancing benchmark
 

@@ -28,6 +28,9 @@ transforms before rendering after changing node transforms.
 Pass `false` as the third argument to `light::directional` to start without
 shadows, or set the component's `shadow.enabled` to false.
 
+An `Atmosphere` on the sun's node ([sky](sky.md#the-sun)) attenuates its light by the air it crosses;
+below the horizon the sun packs no light and casts no shadow.
+
 ## Add punctual shadows
 
 Point shadows consume six contiguous atlas layers, one for each cube face. Spot

@@ -36,7 +36,8 @@ volume lights anything.
   when the renderer first sees the volume, when `counts` changes, and when the environment, its
   lighting (a regenerated source included), its intensity or its rotation changes; a changed
   `max_distance` refills the visibility atlas only. Without a live scene environment the volume
-  holds no fill and lights nothing.
+  holds no fill and lights nothing. Under an [atmosphere](sky.md) the fill reads the atmosphere's SH, with
+the sun's intensity, and refills on every regeneration of its lighting.
 - `SCENE` traces the scene from every probe each update and blends the result into the atlases (see
   [Scene updates](#scene-updates)).
 - `NONE` never fills. A volume that was filled keeps its texels, so switching `ENVIRONMENT` to

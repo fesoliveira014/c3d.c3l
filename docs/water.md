@@ -399,8 +399,12 @@ C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL --lib c3d_profile`), `--validation
 forward|deferred`, `--size 1025|2049|4097`, `--reflection planar|march|env` (march: no target; env: no target
 and the march off), `--mirror-scale 0.5|1`, `--crates 16|256`, `--ssgi` (SSGI on the main view),
 `--traced` (the main view path-traced: the water is absent), `--capture` (a second view on a 384² target whose
-camera leaves out the water's layer), `--ripples on|off` and `--width W --height H` (2560 × 1440 by default in
-benchmark mode). Interactive runs always validate.
+camera leaves out the water's layer), `--ripples on|off`, `--width W --height H` (2560 × 1440 by default in
+benchmark mode) and `--sky` (an [atmosphere](sky.md) on the sun, which replaces the generated sky, and a haze
+pooling in the valleys, off by default; with `--gpu-timings` the main and mirror views print `SKY_VIEW`,
+`AERIAL_PERSPECTIVE` and `FOG`). Interactive runs always validate. Under `--sky` the water needs no fog code:
+the view's fog pass fogs its surface at its depth, its absorption covers the path to the bed, and the mirror
+view fogs only the path behind its clip plane ([sky](sky.md#where-fog-applies)).
 
 ## Measured cost
 
