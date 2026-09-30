@@ -37,6 +37,8 @@ enum ShaderName : int {
     AERIAL_PERSPECTIVE,
     SKY_ENVIRONMENT,
     FOG,
+    FOG_SCATTERING,
+    FOG_INTEGRATION,
     DEPTH_ONLY,
     GRADE,
     FXAA,
@@ -157,6 +159,10 @@ const char[*] SKY_VIEW_SPIRV @private = $embed("../../../shaders/spv/sky_view.sp
 const char[*] AERIAL_PERSPECTIVE_SPIRV @private = $embed("../../../shaders/spv/aerial_perspective.spv");
 const char[*] SKY_ENVIRONMENT_SPIRV @private = $embed("../../../shaders/spv/sky_environment.spv");
 const char[*] FOG_SPIRV @private = $embed("../../../shaders/spv/fog.spv");
+const char[*] FOG_SCATTERING_SPIRV @private = $embed("../../../shaders/spv/fog_scattering.spv");
+const char[*] FOG_SCATTERING_RT_SHADOWS_SPIRV @private = $embed("../../../shaders/spv/fog_scattering_rt_shadows.spv");
+const char[*] FOG_SCATTERING_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV @private = $embed("../../../shaders/spv/fog_scattering_rt_shadows_scene_trace_bvh.spv");
+const char[*] FOG_INTEGRATION_SPIRV @private = $embed("../../../shaders/spv/fog_integration.spv");
 const char[*] MESH_DEPTH_ONLY_SPIRV @private = $embed("../../../shaders/spv/mesh_depth_only.spv");
 const char[*] DEPTH_ONLY_SPIRV @private = $embed("../../../shaders/spv/depth_only.spv");
 const char[*] DEPTH_ONLY_VERTEX_COLOR_SPIRV @private = $embed("../../../shaders/spv/depth_only_vertex_color.spv");
@@ -237,7 +243,7 @@ const char[*] LIGHTING_RESOLVE_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV @private = $embe
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[114] SHADER_ENTRIES = {
+const ShaderEntry[118] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -276,6 +282,10 @@ const ShaderEntry[114] SHADER_ENTRIES = {
     { .variant = { .shader = AERIAL_PERSPECTIVE }, .spirv = AERIAL_PERSPECTIVE_SPIRV[..] },
     { .variant = { .shader = SKY_ENVIRONMENT }, .spirv = SKY_ENVIRONMENT_SPIRV[..] },
     { .variant = { .shader = FOG }, .spirv = FOG_SPIRV[..] },
+    { .variant = { .shader = FOG_SCATTERING }, .spirv = FOG_SCATTERING_SPIRV[..] },
+    { .variant = { .shader = FOG_SCATTERING, .flags = SHADER_FLAG_RT_SHADOWS }, .spirv = FOG_SCATTERING_RT_SHADOWS_SPIRV[..] },
+    { .variant = { .shader = FOG_SCATTERING, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_SCENE_TRACE_BVH }, .spirv = FOG_SCATTERING_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV[..] },
+    { .variant = { .shader = FOG_INTEGRATION }, .spirv = FOG_INTEGRATION_SPIRV[..] },
     { .variant = { .shader = MESH, .flags = SHADER_FLAG_DEPTH_ONLY }, .spirv = MESH_DEPTH_ONLY_SPIRV[..] },
     { .variant = { .shader = DEPTH_ONLY }, .spirv = DEPTH_ONLY_SPIRV[..] },
     { .variant = { .shader = DEPTH_ONLY, .flags = SHADER_FLAG_VERTEX_COLOR }, .spirv = DEPTH_ONLY_VERTEX_COLOR_SPIRV[..] },

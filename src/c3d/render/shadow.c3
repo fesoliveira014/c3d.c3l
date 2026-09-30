@@ -29,6 +29,7 @@ struct ShadowRequest {
 struct LightExtraction {
     LightGpu[] lights;
     ShadowRequest[] shadows;
+    uint sun_light; // packed index plus one of the atmosphere's sun; zero when it packed nothing
 }
 
 <* Accepted request prefix and atlas budget results. *>

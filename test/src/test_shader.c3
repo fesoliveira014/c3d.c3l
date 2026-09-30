@@ -143,7 +143,7 @@ fn void test_software_trace_variants_declare_no_ray_capability() @test {
         assert(!features.ray_capability && !features.ray_extension);
         software_count++;
     }
-    assert(software_count == 7);
+    assert(software_count == 8);
 }
 
 // glslang names a function by its signature, so the name up to the parenthesis is the function.

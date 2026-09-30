@@ -92,6 +92,7 @@ const uint SKY_VIEW_HEIGHT = 108;
 const uint AERIAL_PERSPECTIVE_SIZE = 32;
 const uint SKY_TABLE_GROUP_SIZE = 8;
 const uint AERIAL_PERSPECTIVE_GROUP_DEPTH = 4;
+const uint FOG_VOLUME_SLICES = 64;
 const uint PHYSICAL_MAP_CLEARCOAT = 1;
 const uint PHYSICAL_MAP_CLEARCOAT_ROUGHNESS = 2;
 const uint PHYSICAL_MAP_CLEARCOAT_NORMAL = 4;
@@ -1374,7 +1375,7 @@ struct SkyFogGpu {
     TextureIndex aerial_perspective_lut;
     SamplerIndex lut_sampler;
     TextureIndex fog_volume;
-    uint         _pad0;
+    float        fog_anisotropy;
     uint         _pad1;
 }
 $assert SkyFogGpu::size == 176;
@@ -1399,7 +1400,7 @@ $assert $reflect(SkyFogGpu.sky_view_lut).offset == 152;
 $assert $reflect(SkyFogGpu.aerial_perspective_lut).offset == 156;
 $assert $reflect(SkyFogGpu.lut_sampler).offset == 160;
 $assert $reflect(SkyFogGpu.fog_volume).offset == 164;
-$assert $reflect(SkyFogGpu._pad0).offset == 168;
+$assert $reflect(SkyFogGpu.fog_anisotropy).offset == 168;
 $assert $reflect(SkyFogGpu._pad1).offset == 172;
 
 struct SkyTableRoot {
@@ -1435,6 +1436,24 @@ $assert $reflect(FogPassRoot.width).offset == 16;
 $assert $reflect(FogPassRoot.height).offset == 20;
 $assert $reflect(FogPassRoot._pad0).offset == 24;
 $assert $reflect(FogPassRoot._pad1).offset == 28;
+
+struct FogVolumeRoot {
+    GpuAddress   frame;
+    TextureIndex volume;
+    uint         width;
+    uint         height;
+    uint         sun_light;
+    uint         _pad0;
+    uint         _pad1;
+}
+$assert FogVolumeRoot::size == 32;
+$assert $reflect(FogVolumeRoot.frame).offset == 0;
+$assert $reflect(FogVolumeRoot.volume).offset == 8;
+$assert $reflect(FogVolumeRoot.width).offset == 12;
+$assert $reflect(FogVolumeRoot.height).offset == 16;
+$assert $reflect(FogVolumeRoot.sun_light).offset == 20;
+$assert $reflect(FogVolumeRoot._pad0).offset == 24;
+$assert $reflect(FogVolumeRoot._pad1).offset == 28;
 
 struct StandardMaterialRoot {
     StandardMaterialGpu material;

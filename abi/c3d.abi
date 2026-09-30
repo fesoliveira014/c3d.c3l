@@ -802,7 +802,7 @@ root SkyFogGpu {
     TextureIndex aerial_perspective_lut;
     SamplerIndex lut_sampler;
     TextureIndex fog_volume;
-    uint         _pad0;
+    float        fog_anisotropy;
     uint         _pad1;
 }
 
@@ -821,6 +821,19 @@ root FogPassRoot {
     TextureIndex depth;
     uint         width;
     uint         height;
+    uint         _pad0;
+    uint         _pad1;
+}
+
+// Slices of a view's fog volume, squared toward the camera; 128 halves the slice depth and doubles the memory.
+const uint FOG_VOLUME_SLICES = 64;
+
+root FogVolumeRoot {
+    GpuAddress   frame;
+    TextureIndex volume;
+    uint         width;
+    uint         height;
+    uint         sun_light;
     uint         _pad0;
     uint         _pad1;
 }

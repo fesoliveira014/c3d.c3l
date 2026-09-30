@@ -364,12 +364,14 @@ fn void? record_raster_view(
         ViewEnvironments environments;
         FogSelection fog;
         bool fog_pass;
+        bool fog_volume;
         SceneReads view_reads;
         instrumentation::@scope("view.uploads") {
             environments = resolve_view_environments(renderer, scene, sheen)!;
             fog = select_height_fog(scene, camera.layers);
             renderer.stats.fogs_ignored += fog.ignored;
             fog_pass = environments.atmosphere || fog.fog;
+            fog_volume = fog.fog && record.desc.volumetric_fog;
             if (fog_pass) {
                 // Refracted samples are fogged to their own depth.
                 scene_read_reads.depth |= scene_read_reads.color;
@@ -397,6 +399,7 @@ fn void? record_raster_view(
         }
 
         LightCounts light_counts;
+        uint fog_sun;
         ShadowGpu[] shadows;
         gpu::GpuAddress shadow_address;
         gpu::GpuAddress light_address;
@@ -413,6 +416,7 @@ fn void? record_raster_view(
                 altitude: matrices.position.y,
                 ray_tracing: record.desc.ray_tracing,
             );
+            fog_sun = fog_sun_light(&extraction, environments.atmosphere != null);
             shadows = record_shadows(
                 renderer: renderer,
                 scene: scene,
@@ -471,6 +475,7 @@ fn void? record_raster_view(
                 selection:       &environments.atmosphere_selection,
                 fog:             &fog,
                 camera_position: matrices.position,
+                fog_volume:      fog_volume ? record.fog_volume.view.index : (gpu::TextureIndex)0,
             )!;
             Vec3 ambient = environments.lighting && !scene.ambient_add
               ? (Vec3){} : scene.ambient_color * scene.ambient_intensity;
@@ -586,6 +591,15 @@ fn void? record_raster_view(
                     record:   record,
                     sky_fog:  sky_fog,
                     frame:    frame_span.address,
+                )!;
+            }
+            if (fog_volume) {
+                record_fog_volume(
+                    renderer:      renderer,
+                    record:        record,
+                    frame:         frame_span.address,
+                    sun_light:     fog_sun,
+                    atlas_shadows: shadows.len > 0,
                 )!;
             }
             record.hdr_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;
