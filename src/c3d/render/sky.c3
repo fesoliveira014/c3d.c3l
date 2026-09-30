@@ -775,5 +775,4 @@ fn void? record_sky_view_tables(
         gpu::cmd_dispatch(&renderer.commands, root.address, { groups, groups, slices })!;
         record.aerial_perspective.transition(&renderer.commands, renderer.sampled_state)!;
     }!;
-    renderer.stats.post_dispatches += 2;
 }

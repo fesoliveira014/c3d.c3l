@@ -47,6 +47,8 @@ const Vec3 SUN_COLOR @local = { 1, 1, 1 }; // the atmosphere colours the sun; a 
 const float SUN_INTENSITY @local = 3;
 const float SHADOW_DISTANCE @local = 400; // metres; four cascades over the near objects
 const uint SHADOW_CASCADES @local = 4;
+// Metres; the cascades' texels are about 2.6, 5.3, 12 and 48 cm at 2048 texels, and the 2 cm default rings the ground.
+const float SHADOW_NORMAL_BIAS @local = 0.15f;
 
 // Exposure from the zenith sky luminance at intensity 3: exposure = 0.045 / luminance, log-linear between entries.
 // The table stops at -4 degrees, the last elevation whose zenith stays above RGBA16F subnormals.
@@ -76,6 +78,7 @@ const float OBJECT_ROUGHNESS @local = 0.6f;
 
 const Vec3 BLENDED_QUAD_POSITION @local = { -2, 1.5f, -12 };
 const Vec4 BLENDED_QUAD_COLOR @local = { 0.9f, 0.6f, 0.1f, 0.5f };
+const float BLENDED_QUAD_ROUGHNESS @local = 0.5f;
 const Vec3 GLASS_PANE_POSITION @local = { 2.5f, 1.5f, -15 };
 const Vec3 BLEND_PANE_POSITION @local = { -5, 1.5f, -18 };
 const Vec3 SPHERE_POSITION @local = { 5, 1, -20 };
@@ -355,9 +358,11 @@ fn void? add_readers(
     MaterialCommon blended = material::MATERIAL_COMMON_DEFAULT;
     blended.double_sided = true;
     blended.alpha_mode = AlphaMode.BLEND;
-    BasicParams quad_params = material::BASIC_PARAMS_DEFAULT;
-    quad_params.color = BLENDED_QUAD_COLOR;
-    MaterialId quad = assets.add_material(material::basic(quad_params, blended))!;
+    StandardParams quad_params = material::STANDARD_PARAMS_DEFAULT;
+    quad_params.base_color = BLENDED_QUAD_COLOR;
+    quad_params.metallic = 0;
+    quad_params.roughness = BLENDED_QUAD_ROUGHNESS;
+    MaterialId quad = assets.add_material(material::standard(quad_params, blended))!;
     MaterialId glass = add_glass(assets, 0, AlphaMode.OPAQUE)!;
     MaterialId blended_glass = add_glass(assets, 0, AlphaMode.BLEND)!;
     add_upright(
@@ -454,6 +459,7 @@ fn void? build_demo(Demo* demo) @local {
     Light sun = light::directional(SUN_COLOR, SUN_INTENSITY);
     sun.shadow.cascades = SHADOW_CASCADES;
     sun.shadow.max_distance = SHADOW_DISTANCE;
+    sun.shadow.normal_bias = SHADOW_NORMAL_BIAS;
     sun.shadow.ray_traced = demo.options.traced_shadows;
     demo.sun = scene.add_light(sun, name: "sun")!;
     if (demo.options.atmosphere) scene.add(demo.sun, light::ATMOSPHERE_EARTH);
