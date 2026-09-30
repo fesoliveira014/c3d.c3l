@@ -16,6 +16,9 @@ const uint[3] MAP_SIZES = { 1025, 2049, 4097 }; // four, five and six levels
 <* Height-map size when none is chosen, in texels per side. *>
 const uint DEFAULT_MAP_SIZE = 2049; // 2 km across at 1 m cells: 256 finest chunks
 
+<* Metres between height-map texels of the ground. *>
+const float CELL_SIZE = 1;
+
 <* Material layers of the ground: grass, dirt, rock and snow. *>
 const uint LAYER_COUNT = 4;
 
@@ -25,7 +28,6 @@ const uint TERRAIN_LAYER = 1 << 1;
 <* Rise of one scripted brush stamp, in height texel units at the centre. *>
 const float BRUSH_RISE = 600; // 2.7 m at this height scale
 
-const float CELL_SIZE @local = 1; // metres between texels
 const float HEIGHT_SCALE @local = 300; // metres at texel 65535; ridges reach about two thirds of it
 const uint HEIGHT_SEED @local = 0x7e11a1;
 const uint HEIGHT_OCTAVES @local = 7; // 512 m ridges down to 8 m bumps; each octave is one noise pass per texel

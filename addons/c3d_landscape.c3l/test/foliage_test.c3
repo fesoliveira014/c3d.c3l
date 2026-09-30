@@ -54,6 +54,9 @@ const float FULL_DENSITY_BELOW @local = 0.37f; // of the extent: two red texels 
 const float NO_DENSITY_ABOVE @local = 0.63f;
 const Vec3 HALF_BEND_WIND @local = { 3, 0, 4 }; // 5 m/s against a full bend at 10
 const Vec3 GALE_WIND @local = { 30, 0, 40 };
+const float EDITED_SPACING @local = SPACING * 0.5f; // four times the candidates a cell has room for
+const uint EDITED_SEED @local = SEED + 1;
+const float EDITED_LEAN @local = 1.5f; // outside [0, 1]: validate_effects rejects it
 
 const SwayTemplate TEST_SWAY @local = {
     .amplitude       = 0.2f,
@@ -874,6 +877,35 @@ fn void test_wind_scales_the_sway_template() @test {
 
     update_landscape(&fixture, {});
     assert_layer_sway(&fixture, layer, { .weight = TEST_SWAY.weight });
+}
+
+fn void test_desc_edits_after_add_do_not_reach_the_cells() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Node* ground = add_ground(&fixture, RANDOM);
+    FoliageDesc desc = layer_desc(&fixture, ground);
+    desc.sway = TEST_SWAY;
+    Node* edited = add_layer(&fixture, desc);
+    Node* twin = add_layer(&fixture, desc);
+    FoliageDesc* authored = &fixture.scene.get(edited, Foliage).desc;
+    authored.rules.spacing = EDITED_SPACING;
+    authored.rules.seed = EDITED_SEED;
+    authored.sway.lean = EDITED_LEAN;
+
+    stamp(&fixture, ground, { .x = CELL_EDGE_TEXEL, .z = CELL_EDGE_TEXEL, .columns = EDIT_SIDE, .rows = EDIT_SIDE });
+    update_landscape(&fixture, GALE_WIND);
+    assert_same_layers(&fixture, edited, twin);
+    InstanceSway full = {
+        .direction  = GALE_WIND.normalize(),
+        .amplitude  = TEST_SWAY.amplitude,
+        .frequency  = TEST_SWAY.frequency,
+        .lean       = TEST_SWAY.lean,
+        .wavelength = TEST_SWAY.wavelength,
+        .variation  = TEST_SWAY.variation,
+        .weight     = TEST_SWAY.weight,
+    };
+    assert_layer_sway(&fixture, edited, full);
 }
 
 fn void test_moved_ground_rescatters_like_a_fresh_layer() @test {

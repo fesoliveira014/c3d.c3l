@@ -91,10 +91,11 @@ struct Foliage {
 }
 
 <*
- Derived cells, placement identity and wind state of a layer, written by the library.
+ Checked desc, cells, placement identity and wind state of a layer, written by the library.
 *>
 struct FoliageRuntime {
     Allocator     allocator;
+    FoliageDesc   desc;                // as add_foliage checked it; later Foliage edits never reach the cells
     uint          cells_per_side;
     Entity[]      cells;               // row-major, x fastest; zero where a cell has no node
     ScatterInputs placed;              // of the cells
@@ -152,7 +153,7 @@ fn void? register_foliage(Scene* scene) {
  Attach a layer to the node and scatter its cells over the ground.
  @param [&inout] scene : "Registered with register_foliage; world matrices current."
  @param [&in] assets
- @param [&in] node : "Places the grid; its cells become children with its layers."
+ @param [&inout] node : "Places the grid; its cells become children with its layers."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED
  @require scene.world.is_registered(FoliageRuntime), !scene.has(node, Foliage)
  @require terrain::upright_rigid(node.world) : "Translation and rotation about Y."
@@ -184,6 +185,7 @@ fn void? add_foliage(
     )!;
     FoliageRuntime runtime = create_runtime(scene.allocator, cells_per_side)!;
     defer catch free_runtime(&runtime);
+    runtime.desc = desc;
     runtime.sway = layer_sway(desc.sway, {});
     rescatter(
         scene:   scene,
@@ -212,7 +214,7 @@ fn void? update(Scene* scene, AssetStore* assets, Vec3 wind_velocity) {
     fault failure;
     scene.@each(FoliageRuntime; entity, runtime) {
         Node* node = scene.node(entity);
-        FoliageDesc* desc = &scene.get(node, Foliage).desc;
+        FoliageDesc* desc = &runtime.desc;
         runtime.placed_cells = 0;
         if (catch excuse = refresh_layer(
             scene:   scene,
