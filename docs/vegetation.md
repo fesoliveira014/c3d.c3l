@@ -290,7 +290,8 @@ C3D_PROFILE_GPU --define C3D_PROFILE_INTERNAL --lib c3d_profile`), `--shading fo
 `--shadows atlas|traced`, `--size`, `--foliage both|grass|none`, `--tree-fade-end METRES`,
 `--width W --height H` (2560 × 1440 by default in benchmark mode), `--validation` and `--sky` (an
 [atmosphere](sky.md) on the sun and a haze pooling in the valleys, off by default; with `--gpu-timings` the pass
-lines add `SKY_VIEW`, `AERIAL_PERSPECTIVE` and `FOG`). Interactive runs always validate; benchmark runs validate only with `--validation`. The tree layer's prepass and shadow-atlas cost is
+lines add `SKY_VIEW`, `AERIAL_PERSPECTIVE` and `FOG`) and, with `--sky`, `--volumetric-fog` (a
+[froxel volume](sky.md#volumetric-fog) for the haze; the pass lines add `FOG_SCATTERING` and `FOG_INTEGRATION`). Interactive runs always validate; benchmark runs validate only with `--validation`. The tree layer's prepass and shadow-atlas cost is
 the `both` against `grass` difference; the grass layer's is `grass` against `none`.
 
 ## Measured cost
