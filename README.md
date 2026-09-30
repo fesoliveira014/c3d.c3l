@@ -397,7 +397,8 @@ is rebuilt after `mark_changed`, and leaves with the component; `add_body` autho
 one call. Colliders are sphere, capsule, box, hull, mesh, height field and static compound, with
 surface materials (friction, restitution, rolling resistance, conveyor tangent velocity, an
 application surface id) per shape or per face. The world steps at a fixed rate with interpolated
-write-back, applies `Wind` and `Force` components every step, takes runtime tuning through
+write-back, applies `Wind`, `Force` and `Buoyancy` components every step (buoyancy against a fluid surface the
+application installs, see [buoyancy](docs/buoyancy.md)), takes runtime tuning through
 `set_tuning`, and reports contact, hit, sensor and build-failure events, `raycast`,
 `overlap_sphere`, `explode`, and collider wireframes into the CPU debug sink. Applications select
 the library explicitly; core carries no physics dependency. Examples:
@@ -421,6 +422,11 @@ with slope and altitude rules, one instanced batch per cell drawn with core's sw
 application's wind mapped onto each layer's sway. Terrain edits re-place only the cells they touch. See
 [vegetation](docs/vegetation.md); `python3 scripts/build.py --example vegetation` runs its example and scripted
 benchmark.
+
+It also draws water bodies: Gerstner waves over the scene's colour and depth snapshots, planar mirror or
+screen-space reflections with an environment fallback, lit foam and wind-scrolled ripples, and CPU heights that
+match the drawn surface, which the application hands to the physics add-on's buoyancy. See
+[water](docs/water.md); `python3 scripts/build.py --example water` runs its example and scripted benchmark.
 
 Add c3d and its dependencies to your `project.json`. A C3 library manifest cannot declare features,
 so every consumer enables them itself. Select `C3D_SHADER_COMPILER` for in-process GLSL; every other
