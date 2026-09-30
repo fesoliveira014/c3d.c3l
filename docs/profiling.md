@@ -54,7 +54,7 @@ manifest does not require it. These are consumer-selected features:
 | `C3D_PROFILE_CPU` | Application scopes and CPU capture/export. |
 | `C3D_PROFILE_CPU`, `C3D_PROFILE_INTERNAL` | Application scopes plus the library scopes listed under Library scopes. |
 | `C3D_PROFILE_GPU` | Explicit application GPU scopes and completed capture history. |
-| `C3D_PROFILE_GPU`, `C3D_PROFILE_INTERNAL` | Automatic frame/view/pass/shadow-layer/custom-dispatch intervals and Stats. |
+| `C3D_PROFILE_GPU`, `C3D_PROFILE_INTERNAL` | Automatic frame/view/pass/pass-stage/shadow-layer/custom-dispatch intervals and Stats. |
 | CPU + GPU + INTERNAL | Both domains in one application capture; independent clocks. |
 
 Application source that imports `c3d::profile` keeps the package selected even
@@ -247,7 +247,7 @@ overlap and must not be summed as total time. CPU summaries retain call counts,
 self-time completeness and upper bounds after truncation.
 
 GPU details preserve exact source and renderer-frame ids plus captured view,
-pass, light, layer and shader revision identity. The panel does not infer context
+pass, stage, light, layer and shader revision identity. The panel does not infer context
 from duration containment. Export remains `profile::capture_json`; the panel
 does not perform file I/O.
 
@@ -358,7 +358,7 @@ entries. Disabled or unsupported instances allocate no recording arrays. This
 excludes retained capture history and the renderer's copied shadow summary.
 
 Each GPU sample has a source id, renderer frame, parent, origin, label and copied
-view/pass/light/shader identity where relevant. GPU nanoseconds are floating
+view/pass/stage/light/shader identity where relevant. GPU nanoseconds are floating
 point, relative to the first accepted begin in that `(source, renderer_frame)`.
 They are broad command intervals, not exclusive shader execution times. They
 are neither calibrated to CPU time nor aligned between renderers. Do not sum
@@ -368,7 +368,9 @@ nested parents and children as a total.
 
 `Stats.gpu_pass_ms` sums every measured instance of each pass in the completed
 `gpu_frame_index`: two views taking 2 ms and 3 ms contribute 5 ms. Frame, view,
-application and shadow-layer parents/children do not inflate those buckets.
+application, pass-stage and shadow-layer parents/children do not inflate those
+buckets. `gpu_environment_stage_ms` sums the `PASS_STAGE` scopes inside
+`Pass.ENVIRONMENT` per `EnvironmentStage`; they are parts of that pass's bucket.
 Custom dispatches each have their own interval and keep the active successful
 shader revision, including fallback after a rejected replacement. `POST_CHAIN`
 is split into contiguous render/finish segments under its single pass bucket.
@@ -381,7 +383,9 @@ may therefore describe an older frame than the current CPU counters.
 `shadow_timings` retains every measured layer instance with its original ViewId.
 
 GPU-enabled JSON extends schema version 1 with GPU feature availability, state,
-counts and completed samples. GPU-only captures have unavailable, empty CPU
+counts and completed samples. A sample's `pass_ordinal` and `stage_ordinal` are
+ordinals of the producing build's `render::Pass` and `render::EnvironmentStage`;
+match them across builds by `label`. GPU-only captures have unavailable, empty CPU
 lanes. CPU-only output remains unchanged. Export owns its text, so subsequent
 GPU publication does not mutate an earlier export.
 

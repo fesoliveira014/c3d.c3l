@@ -206,7 +206,7 @@ windowed rows only with other windowed rows.
 | `end_ms` | `end_frame` submission, including presentation in windowed runs |
 | `gui_ms` | Profiler panel draw and overlay recording; zero without `--panel` |
 | `cpu_record_ms` | Existing renderer statistic; excludes the beginning wait/readback/sweep work |
-| `gpu_*_ms` | Completed per-pass timestamps for shadow atlas, light culling, depth prepass, G-buffer, ambient occlusion, ray-traced reflections, path tracing, lighting resolve, forward opaque, post chain, composite, velocity, temporal resolve, probe update, acceleration builds, screen-space GI, its colour copy and instance culling (`gpu_instance_cull_ms`, last); `-1` when unavailable, zero for an omitted pass |
+| `gpu_*_ms` | Completed per-pass timestamps for shadow atlas, light culling, depth prepass, G-buffer, ambient occlusion, ray-traced reflections, path tracing, lighting resolve, forward opaque, post chain, composite, velocity, temporal resolve, probe update, acceleration builds, screen-space GI, its colour copy, instance culling (`gpu_instance_cull_ms`), environment preparation (`gpu_environment_ms`) and its stages (`gpu_environment_source_ms`, `gpu_environment_irradiance_ms`, `gpu_environment_prefilter_ms`, `gpu_environment_sheen_ms`, `gpu_environment_luts_ms`, last; parts of `gpu_environment_ms`, not added to it); `-1` when unavailable, zero for an omitted pass |
 | `draws`, `lights`, `dropped` | Current-frame renderer counters |
 | `batches_faded` | Current-frame `Stats.batches_faded`: view batches inside the frustum wholly past their fade band |
 | `overflows` | Completed cluster overflow count attributed to its submitted frame |
@@ -271,6 +271,13 @@ without.
 `--point-shadows on` enables shadows on the point lights; `--probe-rays N` sets rays per probe (32 to
 256, default 128). The banner prints them and the CSV has `gpu_probe_update_ms`. The kind of the probe
 trace follows `--trace`. See [probe volumes](probe_volumes.md).
+
+`--environment-refresh on` marks the studio source texture dirty before every frame, so every frame
+uploads it again and regenerates the environment in place at the default processing sizes: conversion,
+GGX filtering and SH projection. The CSV reports that work as `gpu_environment_ms` and splits it into the
+stage columns; the LUTs record only in the first prepared frame, and sheen only for a model with sheen.
+The upload's CPU mip generation and staging land in `cpu_record_ms`, and its copy is not timed. See
+[environments](environments.md#preparation-and-edits).
 
 Any glTF file can replace Sponza through the positional path or
 `benchmark.py scene --model`; the light and camera placement derive from the

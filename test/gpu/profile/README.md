@@ -19,6 +19,8 @@ and reads back that pixel plus a compute-written counter. It checks interleaved
 view finishes, frame-wide Stats, original shadow/view identities, successful and
 rejected shader replacement, aborts, empty recordings, tiny query/label budgets,
 history pressure, capture toggling, slot reuse, resize, preparation and teardown.
+A frame that prepares an environment records one `ENVIRONMENT` pass with its
+stage scopes; the next frame records none.
 The rejected shader deliberately violates the unsigned compute-root header ABI.
 
 The automated manual cases are headless. A real presentation failure after
