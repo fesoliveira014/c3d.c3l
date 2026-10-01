@@ -290,6 +290,30 @@ fn void test_refresh_faults_past_capacity() @test {
         Ray ray = { .origin = { 0, 0, 0 }, .direction = { 0, 0, -1 } };
         assert(index.pick(tmem, &fixture.assets, ray).len == 0);
     };
+
+    Scene billboard_scene = scene::create_scene(mem, { .max_nodes = 2 });
+    defer scene::destroy_scene(&billboard_scene);
+    MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
+    common.alpha_mode = AlphaMode.BLEND;
+    MaterialId material = fixture.assets.add_material(material::basic(common: common))!!;
+    Billboard[2] values = { scene::BILLBOARD_DEFAULT, scene::BILLBOARD_DEFAULT };
+    Node* batch = billboard_scene.add_billboards(material, 2, values[:1])!!;
+    billboard_scene.update_world();
+    SceneIndex small = spatial::create_scene_index(mem, 1);
+    defer spatial::destroy_scene_index(&small);
+    small.refresh(&fixture.assets, &billboard_scene)!!;
+    assert(small.count == 1);
+    billboard_scene.set_billboards(batch, values[..])!!;
+    if (catch excuse = small.refresh(&fixture.assets, &billboard_scene)) {
+        assert(excuse == c3d::CAPACITY_EXCEEDED);
+    } else {
+        assert(false);
+    }
+    assert(small.count == 0);
+    SceneIndex sufficient = spatial::create_scene_index(mem, 2);
+    defer spatial::destroy_scene_index(&sufficient);
+    sufficient.refresh(&fixture.assets, &billboard_scene)!!;
+    assert(sufficient.count == 2);
 }
 
 fn void test_pick_builds_the_tree_once_per_revision() @test {

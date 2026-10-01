@@ -1,5 +1,9 @@
 # Custom shaders
 
+Fragment-only custom materials with `AlphaMode.BLEND` can also shade core
+[billboard batches](billboards.md). Core supplies their view-facing vertex stage;
+custom vertex forms are not compatible with that primitive.
+
 A custom material draws a mesh with user SPIR-V. The store owns the stages as a `ShaderAsset`, the material carries a parameter payload and up to eight ordinary texture slots, and the renderer builds the pipelines like any built-in family: keyed by the shader id and revision, replaced atomically when the revision moves, retired after their last submitted frame.
 
 ## Shader asset

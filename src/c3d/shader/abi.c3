@@ -29,6 +29,10 @@ const uint INSTANCE_SORT_BLOCKS = 1;
 const uint INSTANCE_SORT_GLOBAL = 2;
 const uint INSTANCE_SORT_MERGE = 4;
 const uint INSTANCE_SORT_WRITE_LIST = 8;
+const uint INSTANCE_KIND_MESH = 0;
+const uint INSTANCE_KIND_BILLBOARD = 1;
+const uint BILLBOARD_CAMERA = 0;
+const uint BILLBOARD_DIRECTIONAL = 1;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8;
 const uint DRAW_RECEIVE_SHADOW = 1;
 const uint DRAW_ALPHA_MASK = 2;
@@ -456,7 +460,7 @@ struct InstanceCullRoot {
     uint       count;
     GpuAddress keys;
     GpuAddress instance_effects;
-    uint       _pad2;
+    uint       kind;
     uint       _pad3;
     Vec4f      depth_axis;
 }
@@ -472,7 +476,7 @@ $assert $reflect(InstanceCullRoot.first).offset == 160;
 $assert $reflect(InstanceCullRoot.count).offset == 164;
 $assert $reflect(InstanceCullRoot.keys).offset == 168;
 $assert $reflect(InstanceCullRoot.instance_effects).offset == 176;
-$assert $reflect(InstanceCullRoot._pad2).offset == 184;
+$assert $reflect(InstanceCullRoot.kind).offset == 184;
 $assert $reflect(InstanceCullRoot._pad3).offset == 188;
 $assert $reflect(InstanceCullRoot.depth_axis).offset == 192;
 
@@ -507,6 +511,24 @@ $assert $reflect(InstanceGpu.normal_0).offset == 64;
 $assert $reflect(InstanceGpu.normal_1).offset == 80;
 $assert $reflect(InstanceGpu.normal_2).offset == 96;
 $assert $reflect(InstanceGpu.color).offset == 112;
+
+struct BillboardGpu {
+    Vec4f position_width;
+    Vec4f direction_height;
+    Vec4f color;
+    float rotation;
+    uint  facing;
+    uint  _pad0;
+    uint  _pad1;
+}
+$assert BillboardGpu::size == 64;
+$assert $reflect(BillboardGpu.position_width).offset == 0;
+$assert $reflect(BillboardGpu.direction_height).offset == 16;
+$assert $reflect(BillboardGpu.color).offset == 32;
+$assert $reflect(BillboardGpu.rotation).offset == 48;
+$assert $reflect(BillboardGpu.facing).offset == 52;
+$assert $reflect(BillboardGpu._pad0).offset == 56;
+$assert $reflect(BillboardGpu._pad1).offset == 60;
 
 struct SwayGpu {
     Vec4f direction_amplitude;

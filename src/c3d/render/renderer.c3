@@ -134,6 +134,8 @@ struct Renderer {
     uint                    max_trace_instances;
     ShadowAtlas             shadow_atlas;
     GpuGeometry[]           geometries;
+    GpuGeometry             billboard_geometry;
+    bool                    billboard_geometry_pending;
     List{gpu::BufferCopyDesc} pending_copies;
     bool                    pending_overwrite;
     bool                    uploads_recorded;
@@ -872,6 +874,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         free_textures(&renderer);
         free_rt(&renderer);
         free_geometries(&renderer);
+        free_billboard_geometry(&renderer);
         free_instance_buffers(&renderer);
         free_instance_culling(&renderer);
         free_prepares(&renderer);
@@ -914,6 +917,7 @@ fn void destroy_renderer(Renderer* renderer) {
     free_textures(renderer);
     free_rt(renderer);
     free_geometries(renderer);
+    free_billboard_geometry(renderer);
     free_instance_buffers(renderer);
     free_instance_culling(renderer);
     free_prepares(renderer);

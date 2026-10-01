@@ -875,6 +875,24 @@ fn void test_instance_table_faults_when_every_slot_is_occupied() @test {
     assert(table.acquire(table_key(3), returned)!! == first);
 }
 
+fn void test_instance_keys_separate_primitive_kinds_on_one_node() @test {
+    InstanceTable table = render::create_instance_table(mem, 2);
+    defer render::destroy_instance_table(&table);
+    RetireList retire;
+    retire.init(mem);
+    defer retire.free();
+    InstanceKey mesh = table_key(1);
+    InstanceKey billboard = mesh;
+    billboard.kind = shader::INSTANCE_KIND_BILLBOARD;
+    uint mesh_slot = table.acquire(mesh, 1)!!;
+    uint billboard_slot = table.acquire(billboard, 1)!!;
+    assert(mesh_slot != billboard_slot);
+    ulong next = 2 + render::INSTANCE_ABSENCE_FRAMES;
+    table.acquire(billboard, next)!!;
+    table.sweep(next, &retire);
+    assert(!table.lookup.has_key(mesh) && table.lookup.has_key(billboard));
+}
+
 fn void test_instance_table_retires_slots_after_absence() @test {
     InstanceTable table = render::create_instance_table(mem, 4);
     defer render::destroy_instance_table(&table);

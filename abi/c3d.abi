@@ -201,6 +201,11 @@ const uint INSTANCE_SORT_GLOBAL = 2;
 const uint INSTANCE_SORT_MERGE = 4;
 const uint INSTANCE_SORT_WRITE_LIST = 8;
 
+const uint INSTANCE_KIND_MESH = 0;
+const uint INSTANCE_KIND_BILLBOARD = 1;
+const uint BILLBOARD_CAMERA = 0;
+const uint BILLBOARD_DIRECTIONAL = 1;
+
 root InstanceCullRoot {
     GpuAddress instances;
     GpuAddress visible;
@@ -213,7 +218,7 @@ root InstanceCullRoot {
     uint       count;
     GpuAddress keys;
     GpuAddress instance_effects;
-    uint       _pad2;
+    uint       kind;
     uint       _pad3;
     vec4       depth_axis;
 }
@@ -234,6 +239,16 @@ struct InstanceGpu {
     vec4 normal_1;
     vec4 normal_2;
     vec4 color;
+}
+
+struct BillboardGpu {
+    vec4 position_width;
+    vec4 direction_height;
+    vec4 color;
+    float rotation;
+    uint facing;
+    uint _pad0;
+    uint _pad1;
 }
 
 struct SwayGpu {

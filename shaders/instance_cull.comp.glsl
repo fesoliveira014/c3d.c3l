@@ -11,6 +11,7 @@ layout(push_constant) uniform Push {
 } pc;
 
 GPU_DECLARE_READONLY_ARRAY_REF(CullInstances, InstanceGpu);
+GPU_DECLARE_READONLY_ARRAY_REF(CullBillboards, BillboardGpu);
 GPU_DECLARE_WRITEONLY_ARRAY_REF(VisibleOutput, uint);
 
 // instance_count sits at offset 4 in both indirect command layouts.
@@ -64,22 +65,34 @@ void main() {
     uint slot = gl_GlobalInvocationID.x;
     if (slot >= root.count) return;
     uint source = root.first + slot;
-    mat4 model = CullInstances(root.instances).values[source].model;
-    float margin = 0.0;
-    if (root.instance_effects != 0ul) {
-        InstanceEffectsGpu effects = InstanceEffectsGpu(root.instance_effects);
-        margin = effects.sway.direction_amplitude.w;
-        // Only a complete collapse is dropped, the same scale the vertex stage draws with.
-        if (effects.fade_end > 0.0) {
-            float seed = CullInstances(root.instances).values[source].normal_0.w;
-            if (instance_fade_scale(effects, instance_anchor(effects, model), seed) == 0.0) return;
+    vec3 center;
+    if (root.kind == INSTANCE_KIND_BILLBOARD) {
+        BillboardGpu billboard = CullBillboards(root.instances).values[source];
+        if (billboard.position_width.w == 0.0 || billboard.direction_height.w == 0.0) return;
+        center = billboard.position_width.xyz;
+        float radius = 0.5 * length(vec2(billboard.position_width.w, billboard.direction_height.w));
+        for (uint plane = 0u; plane < 6u; plane++) {
+            vec4 coefficients = root.planes[plane];
+            if (dot(coefficients.xyz, center) + coefficients.w < -radius) return;
         }
+    } else {
+        mat4 model = CullInstances(root.instances).values[source].model;
+        float margin = 0.0;
+        if (root.instance_effects != 0ul) {
+            InstanceEffectsGpu effects = InstanceEffectsGpu(root.instance_effects);
+            margin = effects.sway.direction_amplitude.w;
+            // Only a complete collapse is dropped, the same scale the vertex stage draws with.
+            if (effects.fade_end > 0.0) {
+                float seed = CullInstances(root.instances).values[source].normal_0.w;
+                if (instance_fade_scale(effects, instance_anchor(effects, model), seed) == 0.0) return;
+            }
+        }
+        if (!box_visible(root, model, margin)) return;
+        center = (model * vec4((root.bounds_min.xyz + root.bounds_max.xyz) * 0.5, 1.0)).xyz;
     }
-    if (!box_visible(root, model, margin)) return;
     uint index = atomicAdd(CullArgs(root.args).instance_count, 1u);
     VisibleOutput(root.visible).values[index] = source;
     if (root.keys != 0ul) {
-        vec3 center = (model * vec4((root.bounds_min.xyz + root.bounds_max.xyz) * 0.5, 1.0)).xyz;
         float depth = dot(root.depth_axis.xyz, center) + root.depth_axis.w;
         SortKeys(root.keys).values[index] = sort_key(depth, source);
     }

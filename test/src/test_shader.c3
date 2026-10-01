@@ -104,14 +104,14 @@ fn bool spirv_declares_capability(char[] spirv, uint capability) @private {
     return false;
 }
 
-fn void test_mesh_vertex_forms_declare_clip_distance() @test {
-    usz mesh_count;
+fn void test_surface_vertex_forms_declare_clip_distance() @test {
+    usz surface_count;
     foreach (&entry : shader::SHADER_ENTRIES) {
-        bool mesh = entry.variant.shader == MESH;
-        assert(spirv_declares_capability(entry.spirv, SPIRV_CAPABILITY_CLIP_DISTANCE) == mesh);
-        if (mesh) mesh_count++;
+        bool surface = entry.variant.shader == MESH || entry.variant.shader == BILLBOARD_VERTEX;
+        assert(spirv_declares_capability(entry.spirv, SPIRV_CAPABILITY_CLIP_DISTANCE) == surface);
+        if (surface) surface_count++;
     }
-    assert(mesh_count > 0);
+    assert(surface_count > 0);
 }
 
 fn void test_registry_holds_the_software_trace_variants() @test {

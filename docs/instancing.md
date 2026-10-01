@@ -1,5 +1,9 @@
 # Explicit instancing
 
+For camera-facing or direction-aligned quads, use core
+[billboard batches](billboards.md). They share instance culling/sorting and GPU
+record lifetime while keeping their own typed scene data.
+
 Module `c3d::scene` owns the component; `c3d::render` draws it. An `InstancedMesh` draws many copies of one geometry and one material with one draw call per pass. Each copy has its own transform and color. There is no automatic batching: a batch exists because the application made one.
 
 ## Batches
@@ -160,6 +164,15 @@ them past a 60–90 m band:
 | `batches_faded` | — | 926 |
 
 Without the field every pass is within noise (`cpu_record` 0.092 before, 0.082 after; the GPU passes within 1 %).
+
+The shared mesh/billboard kind branch adds about 1–2 microseconds to mesh
+`INSTANCE_CULL` on an RTX 4090 (driver 610.88), at 2560 × 1440. The
+[billboard review measurements](https://github.com/fesoliveira014/c3d.c3l/pull/189#discussion_r4151646830)
+compare `69e060d` with `726bca4`, using medians of three runs:
+`instancing --benchmark` rose from 0.0449 to 0.0457 ms, `--fade-field` from
+0.0544 to 0.0557 ms, and stationary vegetation from 0.0750 to 0.0761 ms.
+Other passes were unchanged within the measured spread. This cost does not
+justify a separate mesh culling variant.
 
 ## Custom vertex stages
 

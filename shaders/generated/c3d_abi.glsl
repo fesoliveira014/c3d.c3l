@@ -32,6 +32,10 @@ const uint INSTANCE_SORT_BLOCKS = 1u;
 const uint INSTANCE_SORT_GLOBAL = 2u;
 const uint INSTANCE_SORT_MERGE = 4u;
 const uint INSTANCE_SORT_WRITE_LIST = 8u;
+const uint INSTANCE_KIND_MESH = 0u;
+const uint INSTANCE_KIND_BILLBOARD = 1u;
+const uint BILLBOARD_CAMERA = 0u;
+const uint BILLBOARD_DIRECTIONAL = 1u;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8u;
 const uint DRAW_RECEIVE_SHADOW = 1u;
 const uint DRAW_ALPHA_MASK = 2u;
@@ -318,7 +322,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer InstanceCul
     uint count;
     uint64_t keys;
     uint64_t instance_effects;
-    uint _pad2;
+    uint kind;
     uint _pad3;
     vec4 depth_axis;
 };
@@ -339,6 +343,16 @@ struct InstanceGpu {
     vec4 normal_1;
     vec4 normal_2;
     vec4 color;
+};
+
+struct BillboardGpu {
+    vec4 position_width;
+    vec4 direction_height;
+    vec4 color;
+    float rotation;
+    uint facing;
+    uint _pad0;
+    uint _pad1;
 };
 
 struct SwayGpu {
