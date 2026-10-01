@@ -502,6 +502,7 @@ fn void test_nested_pieces_keep_exact_world_poses_under_motion() @test {
     Node* root = fixture.scene.add_node(null, "wall")!!;
     Node* outer = add_piece(&fixture, root, {});
     Node* inner = add_piece(&fixture, outer, { 0, 1, 0 });
+    outer.local.scale.x = 1.000001f;
     fixture.scene.update_world();
 
     BreakableDesc desc = physics::default_breakable_desc();
@@ -515,6 +516,8 @@ fn void test_nested_pieces_keep_exact_world_poses_under_motion() @test {
     assert(breakable.welds.len == 1);
     assert(outer.transform_space == TransformSpace.WORLD);
     assert(inner.transform_space == TransformSpace.WORLD);
+    assert(outer.local.scale.x == 1);
+    assert(inner.local.scale.x == 1);
 
     fixture.physics.apply_impulse(outer, { 5, 0, 0 }, outer.world_position());
     for (uint update = 0; update < 20; update++) {

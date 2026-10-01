@@ -68,8 +68,6 @@ struct BreakEvent {
     Vec3 point;
 }
 
-
-
 struct BreakableWake @private {
     b3::BodyId visitor;
     Vec3 point;
@@ -125,7 +123,7 @@ fn void? PhysicsWorld.add_breakable(&self, Node* root, BreakableDesc desc) {
 
         foreach (piece_index, entity : pieces) {
             Node* node = self.scene.node(entity);
-            poses[piece_index] = maths::transform_from_mat4(node.world);
+            poses[piece_index] = breakable_pose(node)!;
             geometries[piece_index] = self.scene.get(node, scene::Mesh).geometry;
             held[piece_index] = acquire_hull(self, geometries[piece_index])!;
             held_count++;
@@ -397,7 +395,7 @@ fn void? author_breakable_assembly(
     maths::Transform pose,
 ) @local {
     ColliderDesc[] colliders = alloc::new_array(tmem, ColliderDesc, state.pieces.len);
-    foreach (uint index, entity : state.pieces) {
+    for (uint index = 0; index < state.pieces.len; index++) {
         colliders[index] = breakable_collider(state, index, true);
         state.runtime.assembly_pieces[index] = index;
     }
