@@ -13,7 +13,7 @@ import std::math;
 <*
  Batch slots when RendererDesc.max_instance_batches is 0.
 *>
-const uint DEFAULT_MAX_INSTANCE_BATCHES = 1024; // fixed CPU table for live and recently unresolved batch records
+const uint DEFAULT_MAX_INSTANCE_BATCHES = 1024; // 128 B CPU per slot; live plus recently unresolved batches
 
 <*
  Frames a batch may go unresolved before its records retire.

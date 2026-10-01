@@ -134,6 +134,24 @@ fn void test_camera_billboard_faces_two_views() @test {
     check_validation(&fixture.renderer);
 }
 
+fn void test_billboard_draws_in_a_reflected_view() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Billboard[1] values = { scene::BILLBOARD_DEFAULT };
+    values[0].size = { 2, 1 };
+    BillboardScene target = create_billboard_scene(&fixture, values[..])!!;
+    defer destroy_billboard_scene(&fixture, &target);
+    target.cameras[0].local.scale = { -1, 1, 1 };
+    render_billboard_frames(&fixture, &target)!!;
+    Vec4[] pixels = read_float_target(&fixture, target.targets[0])!!;
+    defer free(pixels);
+    check_billboard_pixel(billboard_pixel(pixels), BILLBOARD_WHITE);
+    check_billboard_pixel(billboard_pixel(pixels, { 0.75f, 0 }), BILLBOARD_WHITE);
+    check_billboard_pixel(billboard_pixel(pixels, { 0, 0.75f }), {});
+    check_validation(&fixture.renderer);
+}
+
 fn void test_directional_billboard_projection_and_fallback() @test {
     Fixture fixture;
     create_fixture(mem, &fixture)!!;

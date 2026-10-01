@@ -338,7 +338,8 @@ fn void? record_instance_cull(Renderer* renderer, CullItem[] items) @private {
                 .count            = range.count,
                 .keys             = item.keys_address,
                 .instance_effects = item.effects,
-                .kind             = item.candidate.billboards ? shader::INSTANCE_KIND_BILLBOARD : shader::INSTANCE_KIND_MESH,
+                .kind             = item.candidate.billboards
+                    ? shader::INSTANCE_KIND_BILLBOARD : shader::INSTANCE_KIND_MESH,
                 .depth_axis       = item.depth_axis,
             };
             write_cull_planes(root, item.bounded ? item.frustum : &open_frustum);

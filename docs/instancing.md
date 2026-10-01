@@ -165,6 +165,15 @@ them past a 60–90 m band:
 
 Without the field every pass is within noise (`cpu_record` 0.092 before, 0.082 after; the GPU passes within 1 %).
 
+The shared mesh/billboard kind branch adds about 1–2 microseconds to mesh
+`INSTANCE_CULL` on an RTX 4090 (driver 610.88), at 2560 × 1440. The
+[billboard review measurements](https://github.com/fesoliveira014/c3d.c3l/pull/189#discussion_r4151646830)
+compare `69e060d` with `726bca4`, using medians of three runs:
+`instancing --benchmark` rose from 0.0449 to 0.0457 ms, `--fade-field` from
+0.0544 to 0.0557 ms, and stationary vegetation from 0.0750 to 0.0761 ms.
+Other passes were unchanged within the measured spread. This cost does not
+justify a separate mesh culling variant.
+
 ## Custom vertex stages
 
 A custom material whose shader has a vertex stage draws a batch only when the shader also supplies the instanced pair, `CustomVertex.instanced_shaded` and `instanced_depth`: the same source compiled with `INSTANCED`, and with `DEPTH_ONLY` and `INSTANCED`. A stage that ends in `write_mesh_outputs` needs no source change, and it inherits the batch's sway and fade; instanced SPIR-V built against an older `mesh_vertex.glsl` draws without them until it is rebuilt. Without the pair the batch is skipped and counted in `Stats.dangling_refs`. The published revision's pair draws; a batch whose pair exists only in a rejected replacement is skipped without a count (see [Reload](custom_shaders.md#reload)). `CustomVertex.instanced_velocity`, the same source compiled with `VELOCITY` and `INSTANCED`, is optional and needs the instanced pair and `velocity` (see [Velocity form](custom_shaders.md#velocity-form)); without it a batch's velocity uses the built-in instanced variant and sees the undisplaced instances. Fragment-only custom materials draw batches unchanged.
