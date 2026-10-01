@@ -6,6 +6,8 @@ for one.
 
 See [Scene nodes](docs/scene.md) for hierarchy ownership, transform spaces,
 visibility and explicit transform updates.
+Core [billboard batches](docs/billboards.md) provide camera-facing and directional
+quads through the transparent material pipeline.
 
 Target platforms are linux-x64 and windows-x64. C3 0.8.3 exactly. The Vulkan device must support
 `shaderClipDistance`; `create_renderer` faults `UNSUPPORTED` without it.

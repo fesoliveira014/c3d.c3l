@@ -1,5 +1,9 @@
 # Explicit instancing
 
+For camera-facing or direction-aligned quads, use core
+[billboard batches](billboards.md). They share instance culling/sorting and GPU
+record lifetime while keeping their own typed scene data.
+
 Module `c3d::scene` owns the component; `c3d::render` draws it. An `InstancedMesh` draws many copies of one geometry and one material with one draw call per pass. Each copy has its own transform and color. There is no automatic batching: a batch exists because the application made one.
 
 ## Batches

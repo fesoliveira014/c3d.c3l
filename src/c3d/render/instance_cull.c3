@@ -87,6 +87,7 @@ fn bool instance_visible(
 }
 
 fn Aabb? cull_bound(MeshCandidate* candidate, GpuGeometry* geometry) @private {
+    if (candidate.billboards) return candidate.world_bounds;
     if (candidate.crowd) return candidate.crowd.pose_bounds;
     if (candidate.batch.has_bounds_override) return NO_INSTANCE_BOUND~;
     return geometry.bounds;
@@ -131,6 +132,7 @@ fn BatchAddresses batch_addresses(
         .instance_indices = range.culled ? range.visible : (gpu::GpuAddress)0,
     };
     if (candidate.batch) addresses.instance_data = offset_by_instances(records, offset, InstanceGpu::size);
+    if (candidate.billboards) addresses.instance_data = offset_by_instances(records, offset, BillboardGpu::size);
     if (candidate.crowd) {
         addresses.skin = offset_by_instances(skin, offset, (usz)candidate.crowd.joint_count * Mat4f::size);
         addresses.morph = offset_by_instances(morph, offset, MorphWeightsGpu::size);
@@ -182,12 +184,12 @@ fn CullItem[] batch_cull_items(
 ) @private {
     usz count;
     foreach (group : groups) foreach (&item : group) {
-        if (item.candidate.batch) count++;
+        if (item.candidate.batch || item.candidate.billboards) count++;
     }
     CullItem[] culls = alloc::new_array(tmem, CullItem, (sz)count);
     usz filled;
     foreach (group : groups) foreach (&item : group) {
-        if (!item.candidate.batch) continue;
+        if (!item.candidate.batch && !item.candidate.billboards) continue;
         culls[filled++] = {
             .candidate  = item.candidate,
             .geometry   = item.geometry,
@@ -336,6 +338,7 @@ fn void? record_instance_cull(Renderer* renderer, CullItem[] items) @private {
                 .count            = range.count,
                 .keys             = item.keys_address,
                 .instance_effects = item.effects,
+                .kind             = item.candidate.billboards ? shader::INSTANCE_KIND_BILLBOARD : shader::INSTANCE_KIND_MESH,
                 .depth_axis       = item.depth_axis,
             };
             write_cull_planes(root, item.bounded ? item.frustum : &open_frustum);

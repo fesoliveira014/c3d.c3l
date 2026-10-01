@@ -45,6 +45,7 @@ struct MeshCandidate {
     float          view_depth;
     bool           receive_shadow;
     InstancedMesh* batch;
+    BillboardBatch* billboards;
     ulong          scene_identity;
     AnimatedCrowd* crowd;
     uint           crowd_part;
@@ -113,6 +114,21 @@ fn MeshCandidate[] extract_candidates(
                 camera:       camera,
                 clip_frustum: &clip_frustum,
                 counts:       counts,
+            );
+        }
+    };
+    scene.@each(BillboardBatch; Entity entity, BillboardBatch* batch) {
+        Node* node = scene.node(entity);
+        if (batch.count && node.visible_effective && (layers & node.layers)) {
+            include_billboards(
+                candidates: candidates,
+                scene: scene,
+                node: node,
+                batch: batch,
+                assets: assets,
+                camera: camera,
+                clip_frustum: &clip_frustum,
+                counts: counts,
             );
         }
     };
@@ -275,6 +291,38 @@ fn void include_mesh(
     counts.visible++;
 }
 
+fn void include_billboards(
+    MeshCandidate[] candidates,
+    Scene* scene,
+    Node* node,
+    BillboardBatch* batch,
+    AssetStore* assets,
+    CameraMatrices* camera,
+    Frustum* clip_frustum,
+    ExtractCounts* counts,
+) @local {
+    if (!spatial::billboard_batch_is_live(assets, batch)) {
+        counts.dangling++;
+        return;
+    }
+    Aabb world = spatial::billboard_world_bounds(node, batch);
+    if (!maths::frustum_intersects_aabb(&camera.frustum, world)
+        || !maths::frustum_intersects_aabb(clip_frustum, world)) {
+        counts.culled++;
+        return;
+    }
+    candidates[counts.visible++] = {
+        .node = node,
+        .material = batch.material,
+        .world_bounds = world,
+        .ndc_depth = center_depth(camera, world),
+        .view_depth = center_view_depth(camera, world),
+        .billboards = batch,
+        .scene_identity = scene.identity,
+        .instance_count = batch.count,
+    };
+}
+
 fn void include_batch(
     MeshCandidate[] candidates,
     Scene* scene,
@@ -361,7 +409,7 @@ fn void emit_batch_candidates(MeshCandidate[] candidates, ExtractCounts* counts,
 }
 
 fn sz candidate_capacity(Scene* scene) @local {
-    return (sz)scene.count(Mesh) + 2 * (sz)scene.count(InstancedMesh);
+    return (sz)scene.count(Mesh) + 2 * (sz)scene.count(InstancedMesh) + (sz)scene.count(BillboardBatch);
 }
 
 fn float[] morph_weights_of(AssetStore* assets, Mesh* mesh) @local {

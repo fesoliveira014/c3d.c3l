@@ -16,6 +16,7 @@ bitstruct SceneEntryFlags : uint {
     bool instanced        : 0;   // instance_index names the batch instance
     bool static_triangles : 1;   // triangle precision may apply
     bool skinned          : 2;
+    bool billboard        : 3;
 }
 
 <*
@@ -134,6 +135,22 @@ fn void? SceneIndex.refresh(&self, AssetStore* assets, Scene* scene) {
                     node:   node,
                     batch:  batch,
                     first:  needed,
+                );
+                needed += batch.count;
+            } else {
+                dangling++;
+            }
+        }
+    };
+    scene.@each(BillboardBatch; Entity entity, BillboardBatch* batch) {
+        Node* node = scene.node(entity);
+        if (node.visible_effective && batch.count) {
+            if (billboard_batch_is_live(assets, batch)) {
+                changed |= store_billboard_batch(
+                    index: self,
+                    node: node,
+                    batch: batch,
+                    first: needed,
                 );
                 needed += batch.count;
             } else {
@@ -271,6 +288,47 @@ fn bool store_batch(
         slot++;
     }
     return changed;
+}
+
+fn bool store_billboard_batch(
+    SceneIndex* index,
+    Node* node,
+    BillboardBatch* batch,
+    usz first,
+) @local {
+    bool fits = first + batch.count <= index.entries.len;
+    BatchKey key = {
+        .world = node.world,
+        .entity = node.id,
+        .batch_revision = batch.revision,
+        .count = batch.count,
+        .flags = { .instanced, .billboard },
+        .refresh = index.refreshes - 1,
+    };
+    if (fits && mem::equals(&index.batch_keys[first], &key, (sz)BatchKey::size)) {
+        index.batch_keys[first].refresh = index.refreshes;
+        return false;
+    }
+    if (fits) {
+        key.refresh = index.refreshes;
+        index.batch_keys[first] = key;
+    }
+    bool changed;
+    foreach (uint instance, billboard : batch.billboards[:batch.count]) {
+        usz slot = first + instance;
+        if (slot >= index.entries.len) break;
+        changed |= store_entry(&index.entries[slot], billboard_entry(node, instance, billboard));
+    }
+    return changed;
+}
+
+fn SceneEntry billboard_entry(Node* node, uint index, Billboard billboard) @private {
+    return {
+        .node = node,
+        .instance_index = index,
+        .flags = { .instanced, .billboard },
+        .bounds = billboard_bounds(node.world, billboard),
+    };
 }
 
 fn void build_tree(SceneIndex* index) @local {

@@ -9,6 +9,7 @@ enum ShaderName : int {
     GRADIENT,
     COMPOSITE,
     MESH,
+    BILLBOARD_VERTEX,
     BASIC,
     IMGUI_VERTEX,
     IMGUI_FRAGMENT,
@@ -125,6 +126,7 @@ const char[*] FULLSCREEN_SPIRV @private = $embed("../../../shaders/spv/fullscree
 const char[*] GRADIENT_SPIRV @private = $embed("../../../shaders/spv/gradient.spv");
 const char[*] COMPOSITE_SPIRV @private = $embed("../../../shaders/spv/composite.spv");
 const char[*] MESH_SPIRV @private = $embed("../../../shaders/spv/mesh.spv");
+const char[*] BILLBOARD_VERTEX_SPIRV @private = $embed("../../../shaders/spv/billboard_vertex.spv");
 const char[*] BASIC_SPIRV @private = $embed("../../../shaders/spv/basic.spv");
 const char[*] IMGUI_VERTEX_SPIRV @private = $embed("../../../shaders/spv/imgui_vertex.spv");
 const char[*] IMGUI_FRAGMENT_SPIRV @private = $embed("../../../shaders/spv/imgui_fragment.spv");
@@ -243,11 +245,12 @@ const char[*] LIGHTING_RESOLVE_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV @private = $embe
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[118] SHADER_ENTRIES = {
+const ShaderEntry[119] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
     { .variant = { .shader = MESH }, .spirv = MESH_SPIRV[..] },
+    { .variant = { .shader = BILLBOARD_VERTEX }, .spirv = BILLBOARD_VERTEX_SPIRV[..] },
     { .variant = { .shader = BASIC }, .spirv = BASIC_SPIRV[..] },
     { .variant = { .shader = IMGUI_VERTEX }, .spirv = IMGUI_VERTEX_SPIRV[..] },
     { .variant = { .shader = IMGUI_FRAGMENT }, .spirv = IMGUI_FRAGMENT_SPIRV[..] },

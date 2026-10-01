@@ -265,7 +265,8 @@ fn void? record_raster_view(
             scene_read_start = candidates.len - scene_read_count - transparent_count;
             transparent_start = candidates.len - transparent_count;
             foreach (&candidate : candidates) {
-                GpuGeometry* geometry = resolve_geometry(renderer, candidate.geometry)!;
+                GpuGeometry* geometry = candidate.billboards
+                  ? acquire_billboard_geometry(renderer)! : resolve_geometry(renderer, candidate.geometry)!;
                 Material* material_description = &renderer.assets.material(candidate.material).data;
                 MaterialRes*? resolved = resolve_material(renderer, candidate.material);
                 if (catch excuse = resolved) {
@@ -334,9 +335,10 @@ fn void? record_raster_view(
                     .pipeline  = pipeline,
                     .skin      = resolve_candidate_skin(renderer, candidate)!,
                     .morph     = resolve_candidate_morph(renderer, candidate, vertex)!,
-                    .instance_data  = candidate.batch ? resolve_instances(renderer, candidate)! : (gpu::GpuAddress)0,
+                    .instance_data  = candidate.batch || candidate.billboards
+                      ? resolve_instances(renderer, candidate)! : (gpu::GpuAddress)0,
                     .effects   = effects,
-                    .front_face = model_reflected != view_reflected
+                    .front_face = !candidate.billboards && model_reflected != view_reflected
                       ? gpu::FrontFace.CLOCKWISE : gpu::FrontFace.COUNTER_CLOCKWISE,
                     .custom_velocity = custom_velocity_stage(renderer, material_description, candidate.batch != null)!,
                 };
@@ -559,7 +561,7 @@ fn void? record_raster_view(
                 gpu::MappedGpuSpan draw_span = slot.upload.take(&renderer.device, DrawRoot::size, STREAM_ALIGNMENT)!;
                 write_draw_root(
                     root:          (DrawRoot*)draw_span.bytes.ptr,
-                    world:         node.world,
+                    world:         item.candidate.billboards ? matrix::IDENTITY4 : node.world,
                     prev_world:    prev_world,
                     frame:         frame_span.address,
                     geometry:      item.geometry.root,
@@ -892,6 +894,13 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
             sheen |= prepared.sheen;
             scene_reads |= prepared.scene_reads;
         };
+        scene.@each(BillboardBatch; Entity entity, BillboardBatch* batch) {
+            if (batch.count) {
+                MeshPreparation prepared = prepare_billboards(self, batch)!;
+                sheen |= prepared.sheen;
+                scene_reads |= prepared.scene_reads;
+            }
+        };
         prepare_finish(self, scene_reads)!;
         (void)resolve_view_environments(self, scene, sheen)!;
         if (!has_environment_preparations(self) && !self.pending_copies.len()
@@ -1006,6 +1015,36 @@ fn MeshPreparation? prepare_mesh(
     }
     return {
         .sheen       = material_uses_sheen(data),
+        .scene_reads = material_scene_reads(data, custom_scene_reads(renderer, data)!),
+    };
+}
+
+fn MeshPreparation? prepare_billboards(Renderer* renderer, BillboardBatch* batch) @private {
+    if (!spatial::billboard_batch_is_live(renderer.assets, batch)) {
+        renderer.stats.dangling_refs++;
+        return {};
+    }
+    GpuGeometry* geometry = acquire_billboard_geometry(renderer)!;
+    Material* data = &renderer.assets.material(batch.material).data;
+    MaterialRes*? resolved = resolve_material(renderer, batch.material);
+    if (catch excuse = resolved) {
+        if (!custom_material_unavailable(data, excuse)) return excuse~;
+        renderer.stats.dangling_refs++;
+        return {};
+    }
+    MaterialRes* material = resolved;
+    validate_normal_geometry(
+        geometry: geometry,
+        material: data,
+        bindings: &material.bindings,
+        line_polygon_mode: renderer.caps.line_polygon_mode,
+    )!;
+    if (catch excuse = pipeline_for(renderer, data, { .shader = BILLBOARD_VERTEX })) {
+        if (!custom_pipeline_rejected(renderer, data, excuse)) return excuse~;
+        return {};
+    }
+    return {
+        .sheen = material_uses_sheen(data),
         .scene_reads = material_scene_reads(data, custom_scene_reads(renderer, data)!),
     };
 }
@@ -1653,7 +1692,7 @@ fn void? record_draws(
         }
         bound = wanted;
 
-        if (item.candidate.batch) {
+        if (item.candidate.batch || item.candidate.billboards) {
             record_batch_draw(
                 renderer: renderer,
                 root:     item.root,
@@ -1765,6 +1804,7 @@ fn gpu::PipelineHandle? pipeline_for(
     if (material.kind != MaterialKind.CUSTOM) return renderer.pipelines.get(&renderer.device, key);
 
     ShaderRes* published = resolve_shader(renderer, material.custom.shader)!;
+    if (vertex.shader == BILLBOARD_VERTEX && published.desc.vertex.shaded.len) return PIPELINE_REJECTED~;
     key.custom = { .vertex = published.desc.vertex.shaded.len > 0, .fragment = true };
     key.fragment = custom_fragment_variant(&published.desc, shadow_flags);
     if (key.custom.vertex) key.vertex = { .shader = MESH, .flags = vertex.flags & shader::SHADER_FLAG_INSTANCED };

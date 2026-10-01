@@ -52,6 +52,7 @@ struct PickOptions {
 struct PickHit {
     Node* node;
     bool  instanced;
+    bool  billboard;
     uint  instance_index;
     float distance;
     Vec3  position;
@@ -76,6 +77,9 @@ fn PickHit[] pick(
 ) {
     usz capacity = scene.count(Mesh);
     scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
+        capacity += batch.count;
+    };
+    scene.@each(BillboardBatch; Entity entity, BillboardBatch* batch) {
         capacity += batch.count;
     };
     PickHit[] hits = alloc::new_array(allocator, PickHit, (sz)capacity);
@@ -136,6 +140,23 @@ fn PickHit[] pick(
             }
         }
     };
+    scene.@each(BillboardBatch; Entity entity, BillboardBatch* batch) {
+        Node* node = scene.node(entity);
+        if (batch.count && node.visible_effective && (options.layers & node.layers)
+            && billboard_batch_is_live(assets, batch)) {
+            foreach (uint index, billboard : batch.billboards[:batch.count]) {
+                SceneEntry entry = billboard_entry(node, index, billboard);
+                if (hit_entry(
+                    assets: assets,
+                    scene: scene,
+                    entry: &entry,
+                    ray: ray,
+                    options: options,
+                    hit: &hits[count],
+                )) count++;
+            }
+        }
+    };
     sort::quicksort(hits[:count], &by_distance);
     return hits[:count];
 }
@@ -151,6 +172,17 @@ fn bool hit_entry(
     float distance;
     if (!maths::ray_intersects_aabb(ray, entry.bounds, &distance)) return false;
     Node* node = entry.node;
+    if (entry.flags.billboard) {
+        *hit = {
+            .node = node,
+            .instanced = true,
+            .billboard = true,
+            .instance_index = entry.instance_index,
+            .distance = distance,
+            .position = ray.origin + ray.direction * distance,
+        };
+        return true;
+    }
     Mat4 world = node.world;
     GeometryId geometry;
     MaterialId material;

@@ -13,7 +13,7 @@ import std::math;
 <*
  Batch slots when RendererDesc.max_instance_batches is 0.
 *>
-const uint DEFAULT_MAX_INSTANCE_BATCHES = 1024; // 120 B CPU per slot; live plus recently unresolved batch nodes
+const uint DEFAULT_MAX_INSTANCE_BATCHES = 1024; // fixed CPU table for live and recently unresolved batch records
 
 <*
  Frames a batch may go unresolved before its records retire.
@@ -26,8 +26,9 @@ const ulong INSTANCE_ABSENCE_FRAMES = FRAMES_IN_FLIGHT + 1; // longer holds hidd
 struct InstanceKey {
     ulong  scene;
     Entity node;
+    ulong  kind;
 }
-$assert InstanceKey::size == ulong::size + Entity::size;
+$assert InstanceKey::size == 2 * ulong::size + Entity::size;
 
 <*
  Persistent instance records of one batch node.
@@ -73,7 +74,7 @@ fn uint InstanceKey.hash(self) => fnv32a::hash(@as_char_view(self));
  @pure
 *>
 fn bool InstanceKey.equals(self, InstanceKey other) @operator(==) {
-    return self.scene == other.scene && c3d::same_id(self.node, other.node);
+    return self.scene == other.scene && c3d::same_id(self.node, other.node) && self.kind == other.kind;
 }
 
 <*
@@ -292,9 +293,25 @@ fn void? record_batch_draw(
 }
 
 fn gpu::GpuAddress? resolve_instances(Renderer* renderer, MeshCandidate* candidate) @private {
-    InstanceKey key = { .scene = candidate.scene_identity, .node = candidate.node.id };
+    InstanceKey key = {
+        .scene = candidate.scene_identity,
+        .node = candidate.node.id,
+        .kind = candidate.billboards ? shader::INSTANCE_KIND_BILLBOARD : shader::INSTANCE_KIND_MESH,
+    };
     uint index = renderer.instances.acquire(key, renderer.frame_index)!;
     GpuInstances* slot = &renderer.instances.slots[index];
+    if (BillboardBatch* billboards = candidate.billboards) {
+        if (slot.capacity < billboards.billboards.len || slot.revision != billboards.revision
+            || slot.world != candidate.node.world) {
+            upload_billboard_records(
+                renderer: renderer,
+                index: index,
+                batch: billboards,
+                world: candidate.node.world,
+            )!;
+        }
+        return slot.records;
+    }
     if (needs_upload(slot, key, candidate.batch, candidate.node.world)) {
         upload_instance_records(
             renderer: renderer,
@@ -306,17 +323,15 @@ fn gpu::GpuAddress? resolve_instances(Renderer* renderer, MeshCandidate* candida
     return slot.records;
 }
 
-fn void? upload_instance_records(
+fn void? acquire_instance_records(
     Renderer* renderer,
-    uint index,
-    InstancedMesh* batch,
-    Mat4 world,
+    GpuInstances* slot,
+    uint capacity,
+    usz record_size,
 ) @private {
-    GpuInstances* slot = &renderer.instances.slots[index];
-    uint capacity = (uint)batch.transforms.len;
     if (slot.capacity < capacity) {
         gpu::AllocationDesc records_desc = {
-            .size         = (usz)capacity * InstanceGpu::size,
+            .size         = (usz)capacity * record_size,
             .alignment    = STREAM_ALIGNMENT,
             .memory_class = gpu::MemoryClass.GPU_PRIVATE,
             .access       = { .graphics },
@@ -336,6 +351,22 @@ fn void? upload_instance_records(
     } else {
         renderer.pending_overwrite = true;
     }
+}
+
+fn void? upload_instance_records(
+    Renderer* renderer,
+    uint index,
+    InstancedMesh* batch,
+    Mat4 world,
+) @private {
+    GpuInstances* slot = &renderer.instances.slots[index];
+    uint capacity = (uint)batch.transforms.len;
+    acquire_instance_records(
+        renderer: renderer,
+        slot: slot,
+        capacity: capacity,
+        record_size: InstanceGpu::size,
+    )!;
 
     usz bytes = (usz)batch.count * InstanceGpu::size;
     Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
