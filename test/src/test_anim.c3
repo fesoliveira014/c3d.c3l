@@ -1096,12 +1096,29 @@ fn void test_masks_references_and_action_pool_release_with_animator() @test {
 
         ClipId clip = layer_translation(&fixture, { 0, 2, 0 });
         fixture.animator.play(&fixture.assets, clip, { .additive = true })!!;
+
+        Node* second = model::instantiate(&fixture.assets, &fixture.scene, fixture.model)!!;
+        Animator* second_animator = anim::add_animator(&fixture.scene, second);
+        AnimationActionId action = second_animator.play(&fixture.assets, clip)!!;
+        AnimationActionId additive = second_animator.play(&fixture.assets, clip, { .additive = true })!!;
+
         sz allocations = tracker.total_allocation_count();
         for (uint frame = 0; frame < 100; frame++) anim::update(&fixture.assets, &fixture.scene, 0.01f);
         assert(tracker.total_allocation_count() == allocations);
+
         sz bytes = tracker.allocated();
         fixture.scene.remove_component(fixture.root, Animator);
         assert(tracker.allocated() < bytes);
+
+        second_animator = fixture.scene.get(second, Animator);
+        assert(second_animator.action_count == 2);
+        assert(c3d::same_id(second_animator.order[0], action));
+        assert(c3d::same_id(second_animator.order[1], additive));
+        second_animator.stop(additive)!!;
+        second_animator.action(action).weight = 0.5f;
+        anim::update(&fixture.assets, &fixture.scene, 0);
+        assert(approx(fixture.scene.get(second, ModelInstance).nodes[3].local.position.y, 1.5f));
+
         fixture.animator = anim::add_animator(&fixture.scene, fixture.root);
         fixture.animator.play(&fixture.assets, clip)!!;
         anim::update(&fixture.assets, &fixture.scene, 0);

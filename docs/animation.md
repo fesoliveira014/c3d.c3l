@@ -22,6 +22,8 @@ update and the final `update_world` ([Inverse kinematics](#inverse-kinematics)).
 
 An `Animator` is a component on the synthetic root that `model::instantiate`
 returns. It owns a fixed pool of 16 actions, addressed by `AnimationActionId`.
+The pool header, live-ID order and model-sized mask rows live in a per-animator
+heap block, so scenes without animators reserve only the small component header.
 
 ```c3
 Node* left = model::instantiate(&assets, &scene, model)!;

@@ -39,8 +39,8 @@ struct Action {
 struct Animator {
     Scene* scene;
     Node*[] nodes;
-    Pool{Action, AnimationActionId} actions;
-    AnimationActionId[MAX_ACTIONS] order;
+    Pool{Action, AnimationActionId}* actions;
+    AnimationActionId[] order;
     uint action_count;
     bool[] mask_storage;
 }
@@ -52,6 +52,13 @@ struct PlayDesc {
     bool additive;
     JointMask* mask;
 }
+
+struct ActionStorage @local {
+    Pool{Action, AnimationActionId} actions;
+    AnimationActionId[MAX_ACTIONS] order;
+}
+
+$assert $reflect(ActionStorage.actions).offset == 0;
 
 <*
  Start a clip and return its stable playback identity.
@@ -191,9 +198,17 @@ fn void? Animator.cross_fade(
 *>
 fn Animator* add_animator(Scene* scene, Node* instance_root) {
     ModelInstance* instance = scene.get(instance_root, ModelInstance);
-    Animator animator = { .scene = scene, .nodes = instance.nodes };
-    animator.actions = pool::create_pool{Action, AnimationActionId}(scene.allocator, MAX_ACTIONS);
-    animator.mask_storage = alloc::new_array(scene.allocator, bool, (sz)(MAX_ACTIONS * instance.nodes.len));
+    usz mask_count = MAX_ACTIONS * instance.nodes.len;
+    ActionStorage* storage = (ActionStorage*)alloc::malloc(scene.allocator, (sz)(ActionStorage::size + mask_count));
+    storage.actions = pool::create_pool{Action, AnimationActionId}(scene.allocator, MAX_ACTIONS);
+
+    Animator animator = {
+        .scene = scene,
+        .nodes = instance.nodes,
+        .actions = &storage.actions,
+        .order = storage.order[..],
+        .mask_storage = ((bool*)(storage + 1))[:mask_count],
+    };
     return scene.add(instance_root, animator);
 }
 
@@ -230,8 +245,8 @@ fn void free_animator(Entity entity, void* component, void* user) {
         alloc::free(allocator, action.reference.ptr);
     }
 
-    pool::destroy_pool{Action, AnimationActionId}(&animator.actions);
-    alloc::free(allocator, animator.mask_storage.ptr);
+    pool::destroy_pool{Action, AnimationActionId}(animator.actions);
+    alloc::free(allocator, animator.actions);
 }
 
 fn void remove_action(Animator* animator, uint index) @local {
