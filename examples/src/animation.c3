@@ -100,17 +100,24 @@ fn void handle_keys(Input* input, AssetStore* assets, Scene* scene, Node* left, 
     Animator* left_animator = scene.get(left, Animator);
     for (usz digit = 0; digit < clips.len && digit < CLIP_KEY_COUNT; digit++) {
         if (!input.key_pressed((platform::Scancode)((usz)platform::Scancode.CODE_1 + digit))) continue;
-        left_animator.play(assets, clips[digit], CROSS_FADE_SECONDS)!!;
-        sz last = left_animator.actions.len() - 1;
-        left_animator.cross_fade(&left_animator.actions[last - 1], &left_animator.actions[last], CROSS_FADE_SECONDS);
+        left_animator.play(assets, clips[digit], { .fade_in = CROSS_FADE_SECONDS })!!;
+        uint last = left_animator.action_count - 1;
+        left_animator.cross_fade(left_animator.order[last - 1], left_animator.order[last], CROSS_FADE_SECONDS)!!;
     }
-    if (input.key_pressed(platform::Scancode.Q) && left_animator.actions.len()) {
-        Action* action = &left_animator.actions[left_animator.actions.len() - 1];
+    if (input.key_pressed(platform::Scancode.Q) && left_animator.action_count) {
+        Action* action = left_animator.action(left_animator.order[left_animator.action_count - 1]);
         action.weight = action.weight == 1 ? QUARTER_WEIGHT : 1;
     }
     if (input.key_pressed(platform::Scancode.SPACE)) {
-        foreach (&action : left_animator.actions) action.playing = !action.playing;
-        foreach (&action : scene.get(right, Animator).actions) action.playing = !action.playing;
+        foreach (id : left_animator.order[:left_animator.action_count]) {
+            Action* action = left_animator.action(id);
+            action.playing = !action.playing;
+        }
+        Animator* right_animator = scene.get(right, Animator);
+        foreach (id : right_animator.order[:right_animator.action_count]) {
+            Action* action = right_animator.action(id);
+            action.playing = !action.playing;
+        }
     }
 }
 
@@ -121,9 +128,15 @@ fn String example_path(String relative) @local {
 
 fn int main(String[] args) {
     bool gpu_timings;
+    uint frame_limit;
+    bool acceptance;
     String model_path;
     foreach (argument : args[1..]) {
-        if (argument == "--gpu-timings") {
+        if (argument.starts_with("--frames=")) {
+            frame_limit = argument[9..].to_uint()!!;
+        } else if (argument == "--acceptance") {
+            acceptance = true;
+        } else if (argument == "--gpu-timings") {
             $if $feat(C3D_PROFILE_GPU):
                 gpu_timings = true;
             $else
@@ -197,7 +210,9 @@ fn int main(String[] args) {
     anim::add_animator(&scene, right);
     if (clips.len) {
         scene.get(left, Animator).play(&assets, clips[clips.len > 1 ? 1 : 0])!!;
-        Action* second = scene.get(right, Animator).play(&assets, clips[clips.len - 1])!!;
+        Animator* right_animator = scene.get(right, Animator);
+        AnimationActionId second_id = right_animator.play(&assets, clips[clips.len - 1])!!;
+        Action* second = right_animator.action(second_id);
         second.speed = clips.len > 1 ? SECOND_SPEED_MANY_CLIPS : SECOND_SPEED_ONE_CLIP;
     } else {
         io::printn("no clips in this model; both instances hold their authored pose");
@@ -222,17 +237,33 @@ fn int main(String[] args) {
 
     io::printn("1-9 cross-fade clip, Q quarter weight, SPACE pause, drag to orbit, wheel to zoom, Escape quits");
     double last_print;
+    uint frame;
     while (window.poll()) {
+        if (frame_limit && frame >= frame_limit) break;
         Input* input = &window.input;
         if (input.key_released(platform::Scancode.ESCAPE)) break;
 
         handle_keys(input, &assets, &scene, left, right, clips);
-        anim::update(&assets, &scene, (float)window.clock.delta);
+        if (acceptance && frame == 20 && clips.len) {
+            Animator* animator = scene.get(left, Animator);
+            AnimationActionId previous = animator.order[animator.action_count - 1];
+            AnimationActionId next = animator.play(&assets, clips[0], { .fade_in = CROSS_FADE_SECONDS })!!;
+            animator.cross_fade(previous, next, CROSS_FADE_SECONDS)!!;
+        }
+        if (acceptance && (frame == 60 || frame == 80) && clips.len) {
+            Animator* animator = scene.get(left, Animator);
+            Action* action = animator.action(animator.order[animator.action_count - 1]);
+            action.playing = !action.playing;
+            action.weight = QUARTER_WEIGHT;
+        }
+
+        anim::update(&assets, &scene, acceptance ? 1.0f / 60 : window.clock.delta);
         apply_orbit(&orbit, input, camera_node);
         scene.update_world();
 
         platform::sync_window(&window, &renderer);
         renderer.render(&scene, camera_node, { .time = window.clock.total, .delta = window.clock.delta })!!;
+        frame++;
 
         if (window.clock.total - last_print >= STATS_PERIOD_SECONDS) {
             last_print = window.clock.total;
@@ -241,6 +272,7 @@ fn int main(String[] args) {
         }
     }
 
+    renderer.log.check_validation()!!;
     io::printfn("closed after %d frames, %.2fs", window.clock.frame, window.clock.total);
     return 0;
 }

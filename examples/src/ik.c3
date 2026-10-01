@@ -272,9 +272,9 @@ fn void handle_keys(
     if (input.key_pressed(platform::Scancode.W)) {
         controls.walking = !controls.walking;
         Animator* animator = scene.get(character.root, Animator);
-        animator.play(assets, controls.walking ? character.walk : character.idle, CROSS_FADE_SECONDS)!!;
-        sz last = animator.actions.len() - 1;
-        animator.cross_fade(&animator.actions[last - 1], &animator.actions[last], CROSS_FADE_SECONDS);
+        animator.play(assets, controls.walking ? character.walk : character.idle, { .fade_in = CROSS_FADE_SECONDS })!!;
+        uint last = animator.action_count - 1;
+        animator.cross_fade(animator.order[last - 1], animator.order[last], CROSS_FADE_SECONDS)!!;
     }
     float step;
     if (input.key_pressed(platform::Scancode.LEFTBRACKET)) step = -WEIGHT_STEP;
@@ -422,6 +422,8 @@ fn void? run(
     render::Renderer* renderer,
     AssetStore* assets,
     Scene* scene,
+    uint frame_limit,
+    bool acceptance,
 ) @local {
     build_level(assets, scene)!;
     Character character = build_character(assets, scene)!;
@@ -443,10 +445,12 @@ fn void? run(
     renderer.prepare_scene(scene)!;
 
     float drop;
+    uint frame;
     while (window.poll()) {
+        if (frame_limit && frame >= frame_limit) break;
         Input* input = &window.input;
         if (input.key_released(platform::Scancode.ESCAPE) && !input.keyboard_captured_by_gui) break;
-        float delta = window.clock.delta;
+        float delta = acceptance ? 1.0f / 60 : window.clock.delta;
         gui_renderer.new_frame();
         defer {
             if (gui_renderer.frame_open) gui_renderer.finish_frame();
@@ -466,6 +470,19 @@ fn void? run(
             scene:     scene,
             character: &character,
         );
+
+        if (acceptance && (frame == 20 || frame == 60)) {
+            controls.walking = !controls.walking;
+            Animator* animator = scene.get(character.root, Animator);
+            AnimationActionId previous = animator.order[animator.action_count - 1];
+            AnimationActionId next = animator.play(
+                assets: assets,
+                clip: controls.walking ? character.walk : character.idle,
+                desc: { .fade_in = CROSS_FADE_SECONDS },
+            )!!;
+            animator.cross_fade(previous, next, CROSS_FADE_SECONDS)!!;
+        }
+
         move_character(&character, &controls, delta);
         apply_orbit(&orbit, input, camera_node, character.root.world_position() + ORBIT_TARGET_OFFSET);
         anim::update(assets, scene, delta);
@@ -485,10 +502,25 @@ fn void? run(
             debug:        &debug,
             info:         { .time = window.clock.total, .delta = window.clock.delta },
         )!;
+        frame++;
     }
+    return renderer.log.check_validation();
 }
 
-fn int main() {
+fn int main(String[] args) {
+    uint frame_limit;
+    bool acceptance;
+    foreach (argument : args[1..]) {
+        if (argument.starts_with("--frames=")) {
+            frame_limit = argument[9..].to_uint()!!;
+        } else if (argument == "--acceptance") {
+            acceptance = true;
+        } else {
+            io::eprintfn("Unknown option: %s", argument);
+            return 1;
+        }
+    }
+
     platform::Window window = platform::create_window(platform::default_window_desc("c3d ik", 1280, 720))!!;
     defer platform::destroy_window(&window);
 
@@ -511,6 +543,8 @@ fn int main() {
         renderer: &renderer,
         assets:   &assets,
         scene:    &scene,
+        frame_limit: frame_limit,
+        acceptance: acceptance,
     )) {
         io::eprintfn("ik example failed: %s", excuse);
         return 1;

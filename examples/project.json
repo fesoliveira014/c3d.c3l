@@ -265,7 +265,9 @@
     "mixamo": {
       "type": "executable",
       "sources": [
-        "src/mixamo.c3"
+        "src/mixamo.c3",
+        "src/mixamo_wave.c3",
+        "src/mixamo_bench.c3"
       ]
     },
     "retarget": {

@@ -87,8 +87,8 @@ fn usz mapped_joints(AssetStore* assets, ClipId clip) @local {
 fn void play(AssetStore* assets, Scene* scene, Showcase* showcase) @local {
     Animator* source = scene.get(showcase.source, Animator);
     Animator* target = scene.get(showcase.target, Animator);
-    source.actions.clear();
-    target.actions.clear();
+    while (source.action_count) source.stop(source.order[0])!!;
+    while (target.action_count) target.stop(target.order[0])!!;
     if (showcase.resting) return;
     source.play(assets, showcase.source_clip)!!;
     target.play(assets, showcase.corrected ? showcase.corrected_clip : showcase.copied_clip)!!;

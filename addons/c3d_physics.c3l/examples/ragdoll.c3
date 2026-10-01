@@ -201,9 +201,9 @@ fn Character? build_character(AssetStore* assets, Scene* scene) @local {
 }
 
 fn void cross_fade_to(Animator* animator, AssetStore* assets, ClipId clip) @local {
-    animator.play(assets, clip, CROSS_FADE_SECONDS)!!;
-    sz last = animator.actions.len() - 1;
-    if (last > 0) animator.cross_fade(&animator.actions[last - 1], &animator.actions[last], CROSS_FADE_SECONDS);
+    animator.play(assets, clip, { .fade_in = CROSS_FADE_SECONDS })!!;
+    uint last = animator.action_count - 1;
+    if (last > 0) animator.cross_fade(animator.order[last - 1], animator.order[last], CROSS_FADE_SECONDS)!!;
 }
 
 fn bool is_bone(Node* node, Character* character) @local => node.parent == character.skin;

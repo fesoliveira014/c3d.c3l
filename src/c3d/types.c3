@@ -10,6 +10,9 @@ typedef ShaderId       = Id;
 typedef ComputeShaderId = Id;
 typedef ModelId        = Id;
 typedef ClipId         = Id;
+
+<* One animator's generational playback identity. *>
+typedef AnimationActionId = Id;
 typedef SkeletonId     = Id;
 typedef ViewId         = Id;
 typedef RenderTargetId = Id;
