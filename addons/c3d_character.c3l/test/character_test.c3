@@ -3,6 +3,7 @@ module c3d_character_test;
 import std::math;
 import std::math::quaternion;
 import c3d;
+import c3d::anim;
 import c3d::asset;
 import c3d::character;
 import c3d::ecs;
@@ -51,6 +52,37 @@ struct Fixture @private {
     Scene           scene;
     PhysicsWorld    physics;
     CharacterSystem system;
+}
+
+fn void test_root_motion_sets_world_intent_and_turn_without_teleport() @test {
+    Scene scene = scene::create_scene(mem, { .max_nodes = 4 });
+    defer scene::destroy_scene(&scene);
+    character::register_character(&scene)!!;
+    Node* parent = scene.add_node()!!;
+    parent.local.rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, (float)math::PI / 2);
+    Node* node = scene.add_node(parent)!!;
+    scene.update_world();
+    CharacterDesc desc = character::default_character_desc();
+    desc.push_bodies = false;
+    scene.add_character(node, desc)!!;
+    RootMotionDelta delta = {
+        .translation = { 1, 0, 0 },
+        .rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, (float)math::PI / 18),
+    };
+
+    scene.move_character_root_motion(node, delta, 0.5f);
+    assert(close_vec(scene.get(node, Character).desired, { 0, 0, -2 }));
+    assert(node.local.position == (Vec3){});
+    scene.update_world();
+    Vec3 facing = c3d::maths::transform_dir(node.world, { 1, 0, 0 });
+    assert(close_vec(facing, { -0.1736482f, 0, -0.9848077f }));
+
+    node.transform_space = TransformSpace.WORLD;
+    node.local.rotation = parent.local.rotation;
+    scene.update_world();
+    scene.move_character_root_motion(node, delta, 0.5f);
+    assert(close_vec(scene.get(node, Character).desired, { 0, 0, -2 }));
+    assert(node.local.position == (Vec3){});
 }
 
 fn void setup(Fixture* fixture) @private {

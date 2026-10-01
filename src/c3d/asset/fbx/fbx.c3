@@ -1,6 +1,7 @@
 module c3d::asset::fbx;
 
 import c3d;
+import c3d::anim;
 import c3d::anim::retarget;
 import c3d::asset;
 import std::io::path;

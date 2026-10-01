@@ -594,7 +594,7 @@ fn void test_root_translation_scale_scales_hip_keys() @test {
 fn void test_default_fields_at_zero_keep_copy_output() @test {
     Rig rig = make_rig();
     defer destroy_rig(&rig);
-    RetargetOptions literal = { .root_motion = RootMotion.STRIP_XZ, .root_node = retarget::NO_ROOT_NODE };
+    RetargetOptions literal = { .root_motion = RootMotion.STRIP_XZ, .root_node = anim::NO_ROOT_NODE };
     RetargetOptions defaults = retarget::RETARGET_OPTIONS_DEFAULT;
     defaults.root_motion = RootMotion.STRIP_XZ;
     AnimationClip first = retarget::retarget_by_name(mem, &rig.clip, rig.source_nodes, &rig.target, literal)!!;

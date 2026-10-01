@@ -33,6 +33,22 @@ struct Action {
     bool additive;
     bool loop;
     bool playing;
+
+    RootMotion root_motion;
+    bool root_yaw;
+    uint translation_track;
+    uint rotation_track;
+    Vec3 root_position;
+    Quat root_rotation;
+    Mat4 motion_basis;
+    Vec3 cycle_translation;
+    float cycle_yaw;
+
+    double previous_time;
+    double clock_delta;
+    double clock_time;
+    float published_time;
+    uint blend_space;
 }
 
 <* Fixed playback slots and masks owned by one model instance. *>
@@ -43,6 +59,16 @@ struct Animator {
     AnimationActionId[] order;
     uint action_count;
     bool[] mask_storage;
+
+    Node* instance_root;
+    uint root_node;
+    RootMotionDelta root_motion;
+
+    FiredEvent[] events;
+    uint event_count;
+    uint events_dropped;
+
+    BlendSpace1D[] blend_spaces;
 }
 
 <* Captured configuration of a newly played action. *>
@@ -51,11 +77,15 @@ struct PlayDesc {
     uint layer;
     bool additive;
     JointMask* mask;
+    RootMotion root_motion;
+    bool root_yaw;
 }
 
 struct ActionStorage @local {
     Pool{Action, AnimationActionId} actions;
     AnimationActionId[MAX_ACTIONS] order;
+    FiredEvent[MAX_FIRED_EVENTS] events;
+    BlendSpace1D[MAX_BLEND_SPACES] blend_spaces;
 }
 
 $assert $reflect(ActionStorage.actions).offset == 0;
@@ -90,6 +120,14 @@ fn AnimationActionId? Animator.play(
     }
     if (!self.actions.free_count) return c3d::CAPACITY_EXCEEDED~;
 
+    Action state;
+    configure_motion(
+        animator: self,
+        action: &state,
+        clip: data,
+        desc: desc,
+    )!;
+
     Allocator allocator = self.scene.allocator;
     uint[] cursors = alloc::new_array(allocator, uint, data.tracks.len);
     defer catch alloc::free(allocator, cursors.ptr);
@@ -112,19 +150,18 @@ fn AnimationActionId? Animator.play(
         }
     }
 
-    AnimationActionId id = self.actions.add({
-        .clip = clip,
-        .cursors = cursors,
-        .reference = reference,
-        .speed = 1,
-        .weight = desc.fade_in > 0 ? 0 : 1,
-        .fade_target = 1,
-        .fade_rate = desc.fade_in > 0 ? 1 / desc.fade_in : 0,
-        .layer = desc.layer,
-        .additive = desc.additive,
-        .loop = true,
-        .playing = true,
-    })!;
+    state.clip = clip;
+    state.cursors = cursors;
+    state.reference = reference;
+    state.speed = 1;
+    state.weight = desc.fade_in > 0 ? 0 : 1;
+    state.fade_target = 1;
+    state.fade_rate = desc.fade_in > 0 ? 1 / desc.fade_in : 0;
+    state.layer = desc.layer;
+    state.additive = desc.additive;
+    state.loop = true;
+    state.playing = true;
+    AnimationActionId id = self.actions.add(state)!;
     Action* action = self.actions.get(id);
     action.mask = self.mask_storage[(usz)id.index * self.nodes.len:self.nodes.len];
     if (desc.mask) {
@@ -156,6 +193,7 @@ fn Action*? Animator.try_action(&self, AnimationActionId action) => self.actions
 *>
 fn void? Animator.stop(&self, AnimationActionId action, float fade_out = 0) {
     Action* state = self.actions.try_get(action)!;
+    if (state.blend_space) return c3d::INVALID_ARGUMENT~;
     if (!math::is_finite(fade_out) || fade_out < 0) return c3d::INVALID_ARGUMENT~;
 
     if (fade_out == 0) {
@@ -182,6 +220,7 @@ fn void? Animator.cross_fade(
 ) {
     Action* source = self.actions.try_get(from)!;
     Action* target = self.actions.try_get(to)!;
+    if (source.blend_space || target.blend_space) return c3d::INVALID_ARGUMENT~;
     if (!math::is_finite(duration) || duration <= 0 || c3d::same_id(from, to)) return c3d::INVALID_ARGUMENT~;
 
     source.fade_target = 0;
@@ -200,6 +239,7 @@ fn Animator* add_animator(Scene* scene, Node* instance_root) {
     ModelInstance* instance = scene.get(instance_root, ModelInstance);
     usz mask_count = MAX_ACTIONS * instance.nodes.len;
     ActionStorage* storage = (ActionStorage*)alloc::malloc(scene.allocator, (sz)(ActionStorage::size + mask_count));
+    *storage = {};
     storage.actions = pool::create_pool{Action, AnimationActionId}(scene.allocator, MAX_ACTIONS);
 
     Animator animator = {
@@ -208,7 +248,12 @@ fn Animator* add_animator(Scene* scene, Node* instance_root) {
         .actions = &storage.actions,
         .order = storage.order[..],
         .mask_storage = ((bool*)(storage + 1))[:mask_count],
+        .instance_root = instance_root,
+        .root_motion = { .rotation = quaternion::IDENTITY },
+        .events = storage.events[..],
+        .blend_spaces = storage.blend_spaces[..],
     };
+    animator.root_node = find_root_node(&animator);
     return scene.add(instance_root, animator);
 }
 
@@ -216,15 +261,22 @@ fn Animator* add_animator(Scene* scene, Node* instance_root) {
  Advance every animator and write instance node locals and morph weights.
  @param [&in] assets : "Resolves clips."
  @param [&inout] scene : "Pose is written; structure unchanged."
- @param dt : "Seconds."
+ @param dt : "Finite nonnegative seconds."
+ @require math::is_finite(dt) && dt >= 0
 *>
 fn void update(AssetStore* assets, Scene* scene, float dt) {
     instrumentation::@scope("anim.update") {
         scene.@each(Animator; Entity entity, Animator* animator) {
             ModelInstance* instance = scene.get(scene.node(entity), ModelInstance);
-            advance(animator, assets, dt);
             @pool() {
+                animator.root_motion = { .rotation = quaternion::IDENTITY };
+                animator.event_count = 0;
+                animator.events_dropped = 0;
+                advance(animator, assets, dt);
+                advance_blend_spaces(animator, assets, dt);
                 blend_instance(animator, assets, instance);
+                publish_root_motion(animator, assets);
+                publish_events(animator, assets);
             };
         };
     };
@@ -264,18 +316,10 @@ fn void remove_action(Animator* animator, uint index) @local {
 fn void advance(Animator* animator, AssetStore* assets, float dt) @local {
     for (uint index = animator.action_count; index > 0; index--) {
         Action* action = animator.actions.get(animator.order[index - 1]);
-        if (action.playing) {
-            float duration = assets.clip(action.clip).data.duration;
-            action.time += dt * action.speed;
-            if (duration == 0) {
-                action.time = 0;
-            } else if (action.loop) {
-                action.time -= math::floor(action.time / duration) * duration;
-            } else if (action.time <= 0 || action.time >= duration) {
-                action.time = math::clamp(action.time, 0.0f, duration);
-                action.playing = false;
-            }
-        }
+        action.previous_time = action.time;
+        action.clock_delta = 0;
+        if (action.blend_space) continue;
+        if (action.playing) advance_clock(action, assets.clip(action.clip).data.duration, (double)dt * action.speed);
 
         if (action.fade_rate > 0) {
             float step = action.fade_rate * dt;

@@ -32,7 +32,10 @@ const float INSTANCE_GAP_SCALE @local = 0.25f; // gap between instances in model
 const float CROSS_FADE_SECONDS @local = 0.3f;
 const float QUARTER_WEIGHT @local = 0.25f;
 const usz CLIP_KEY_COUNT @local = 9; // keys 1 to 9
-const float SECOND_SPEED @local = 0.5f;
+const float SPACE_PARAMETER_STEP @local = 0.01f; // keyboard adjustment per frame
+const float GROUND_WIDTH @local = 40;
+const uint LEFT_FOOT_EVENT @local = 1;
+const uint RIGHT_FOOT_EVENT @local = 2;
 const float LIGHT_INTENSITY @local = 2.5f;
 const float ENVIRONMENT_INTENSITY @local = 0.6f;
 const float BACKGROUND_INTENSITY @local = 0.3f;
@@ -105,19 +108,12 @@ fn usz skeleton_count(ModelTemplate* template) @local {
 }
 
 struct Playback @local {
-    ClipId[] stripped;
-    ClipId[] kept;
-    bool     keep_root_motion;
-    usz      left_clip;
-    usz      right_clip;
-    AnimationActionId[2] base_actions;
+    ClipId[] clips;
+    bool apply_motion;
+    AnimationActionId base_action;
     AnimationActionId[2] overlays;
     Wave wave;
     JointMask mask;
-}
-
-fn ClipId[] Playback.clips(&self) {
-    return self.keep_root_motion ? self.kept : self.stripped;
 }
 
 fn void cross_fade_to(
@@ -126,7 +122,7 @@ fn void cross_fade_to(
     ClipId clip,
     AnimationActionId* current,
 ) @local {
-    AnimationActionId? started = animator.play(assets, clip, { .fade_in = CROSS_FADE_SECONDS });
+    AnimationActionId? started = animator.play(assets, clip, { .fade_in = CROSS_FADE_SECONDS, .root_motion = RootMotion.STRIP_XZ });
     if (catch excuse = started) {
         io::printfn("Cannot start animation: %s", excuse);
         return;
@@ -171,42 +167,28 @@ fn void handle_keys(
     Playback* playback,
 ) @local {
     Animator* left_animator = scene.get(left, Animator);
-    ClipId[] clips = playback.clips();
+    Animator* right_animator = scene.get(right, Animator);
+    BlendSpace1D* space = &left_animator.blend_spaces[0];
+    ClipId[] clips = playback.clips;
     for (usz digit = 0; digit < clips.len && digit < CLIP_KEY_COUNT; digit++) {
         if (!input.key_pressed((platform::Scancode)((usz)platform::Scancode.CODE_1 + digit))) continue;
-        playback.left_clip = digit;
-        cross_fade_to(
-            animator: left_animator,
-            assets: assets,
-            clip: clips[digit],
-            current: &playback.base_actions[0],
-        );
-    }
-    if (input.key_pressed(platform::Scancode.R) && playback.kept.len) {
-        playback.keep_root_motion = !playback.keep_root_motion;
-        ClipId[] variant = playback.clips();
-        cross_fade_to(
-            animator: left_animator,
-            assets: assets,
-            clip: variant[playback.left_clip],
-            current: &playback.base_actions[0],
-        );
-        Animator* right_animator = scene.get(right, Animator);
-        float speed = 1;
-        if (try action = right_animator.try_action(playback.base_actions[1])) speed = action.speed;
         cross_fade_to(
             animator: right_animator,
             assets: assets,
-            clip: variant[playback.right_clip],
-            current: &playback.base_actions[1],
+            clip: clips[digit],
+            current: &playback.base_action,
         );
-        if (try action = right_animator.try_action(playback.base_actions[1])) action.speed = speed;
-        io::printfn("root motion %s", playback.keep_root_motion ? "kept" : "stripped");
     }
-    if (input.key_pressed(platform::Scancode.Q)) {
-        if (try action = left_animator.try_action(playback.base_actions[0])) {
-            action.weight = action.weight == 1 ? QUARTER_WEIGHT : 1;
-        }
+
+    if (space.count) {
+        if (input.key_down(platform::Scancode.W)) space.parameter += SPACE_PARAMETER_STEP;
+        if (input.key_down(platform::Scancode.S)) space.parameter -= SPACE_PARAMETER_STEP;
+        space.parameter = math::clamp(space.parameter, space.positions[0], space.positions[space.count - 1]);
+        if (input.key_pressed(platform::Scancode.Q)) space.weight = space.weight == 1 ? QUARTER_WEIGHT : 1;
+    }
+    if (input.key_pressed(platform::Scancode.R)) {
+        playback.apply_motion = !playback.apply_motion;
+        io::printfn("Apply root motion: %s", playback.apply_motion ? "yes" : "no");
     }
 
     if (input.key_pressed(platform::Scancode.G)) {
@@ -226,52 +208,62 @@ fn void handle_keys(
         );
     }
     if (input.key_pressed(platform::Scancode.SPACE)) {
+        if (space.count) space.playing = !space.playing;
         foreach (id : left_animator.order[:left_animator.action_count]) {
             Action* action = left_animator.action(id);
-            action.playing = !action.playing;
+            if (!action.blend_space) action.playing = !action.playing;
         }
-        Animator* right_animator = scene.get(right, Animator);
         foreach (id : right_animator.order[:right_animator.action_count]) {
             Action* action = right_animator.action(id);
-            action.playing = !action.playing;
+            if (!action.blend_space) action.playing = !action.playing;
         }
     }
 }
 
 fn Playback load_animations(AssetStore* assets, ModelId model, String[] paths) @local {
-    List{ClipId} stripped;
-    List{ClipId} kept;
-    stripped.init(mem);
-    kept.init(mem);
+    List{ClipId} clips;
+    clips.init(mem);
     foreach (path : paths) {
         RetargetOptions options = retarget::RETARGET_OPTIONS_DEFAULT;
-        options.root_motion = RootMotion.STRIP_XZ;
-        ClipId[]? in_place = fbx::load_animations(
+        options.root_motion = RootMotion.KEEP;
+        ClipId[]? loaded = fbx::load_animations(
             allocator: mem,
             assets: assets,
             path: path,
             target: model,
             options: options,
         );
-        if (catch excuse = in_place) {
+        if (catch excuse = loaded) {
             io::printfn("Loading %s failed: %s", path, excuse);
             continue;
         }
-        options.root_motion = RootMotion.KEEP;
-        ClipId[] moving = fbx::load_animations(
-            allocator: mem,
-            assets: assets,
-            path: path,
-            target: model,
-            options: options,
-        )!!;
-        io::printfn("%s: %d clips", path, in_place.len);
-        foreach (clip : in_place) stripped.push(clip);
-        foreach (clip : moving) kept.push(clip);
-        alloc::free(mem, in_place.ptr);
-        alloc::free(mem, moving.ptr);
+
+        io::printfn("%s: %d clips", path, loaded.len);
+        foreach (clip : loaded) {
+            ClipEvent[2] footsteps = {
+                { .time = 0, .id = LEFT_FOOT_EVENT },
+                { .time = assets.clip(clip).data.duration * 0.5f, .id = RIGHT_FOOT_EVENT },
+            };
+            assets.set_clip_events(clip, footsteps[..])!!;
+            clips.push(clip);
+        }
+        alloc::free(mem, loaded.ptr);
     }
-    return { .stripped = stripped.array_view(), .kept = kept.array_view() };
+    return { .clips = clips.array_view(), .apply_motion = true };
+}
+
+fn void print_footsteps(Animator* animator) @local {
+    BlendSpace1D* space = &animator.blend_spaces[0];
+    if (!space.count) return;
+    AnimationActionId dominant = space.actions[0];
+    foreach (id : space.actions[1:space.count - 1]) {
+        if (animator.action(id).weight > animator.action(dominant).weight) dominant = id;
+    }
+    foreach (event : animator.events[:animator.event_count]) {
+        if (c3d::same_id(event.action, dominant)) {
+            io::printfn("Footstep %d at %.3fs, parameter %.2f", event.id, event.time, space.parameter);
+        }
+    }
 }
 
 fn String example_path(String relative) @local {
@@ -330,7 +322,7 @@ fn int main(String[] args) {
     if (benchmark) {
         $if $feat(C3D_PROFILE_CPU) && $feat(C3D_PROFILE_INTERNAL):
             if (!animation_count) return 1;
-            if (catch excuse = run_animation_benchmark(model_path, animation_paths[0])) {
+            if (catch excuse = run_animation_benchmark(model_path, animation_paths[0], animation_paths[animation_count > 1 ? 1 : 0])) {
                 io::eprintfn("Animation benchmark failed: %s", excuse);
                 return 1;
             }
@@ -395,20 +387,43 @@ fn int main(String[] args) {
         skeleton_count(template), template.skins.len, template.clips.len);
 
     Playback playback = load_animations(&assets, model, animation_paths[:animation_count]);
-    defer free(playback.stripped);
-    defer free(playback.kept);
-    ClipId[] clips = playback.stripped.len ? playback.stripped : scene.get(left, ModelInstance).clips;
+    defer free(playback.clips);
+    ClipId[] clips = playback.clips.len ? playback.clips : scene.get(left, ModelInstance).clips;
     anim::add_animator(&scene, left);
     anim::add_animator(&scene, right);
     if (clips.len) {
-        playback.base_actions[0] = scene.get(left, Animator).play(&assets, clips[0])!!;
-        Animator* right_animator = scene.get(right, Animator);
-        playback.base_actions[1] = right_animator.play(&assets, clips[0])!!;
-        Action* second = right_animator.action(playback.base_actions[1]);
-        second.speed = SECOND_SPEED;
+        if (clips.len >= 2) {
+            float[2] positions = { 0, 1 };
+            scene.get(left, Animator).add_blend_space(
+                assets: &assets,
+                clips: clips[:2],
+                positions: positions[..],
+                desc: { .root_motion = RootMotion.EXTRACT },
+            )!!;
+        } else {
+            scene.get(left, Animator).play(&assets, clips[0], { .root_motion = RootMotion.EXTRACT })!!;
+        }
+        playback.base_action = scene.get(right, Animator).play(
+            assets: &assets,
+            clip: clips[0],
+            desc: { .root_motion = RootMotion.STRIP_XZ },
+        )!!;
     } else {
-        io::printn("no clips in this model; both instances hold their authored pose");
+        io::printn("No clips in this model; both instances hold their authored pose.");
     }
+
+    GeometryId ground_id;
+    @pool() {
+        Geometry ground = geometry::plane(tmem, GROUND_WIDTH, GROUND_WIDTH);
+        ground_id = assets.add_geometry(&ground)!!;
+    };
+    MaterialId ground_material = assets.add_material(material::standard({
+        .base_color = { 0.25f, 0.28f, 0.3f, 1 },
+        .roughness = 0.9f,
+    }))!!;
+    Node* floor = scene.add_mesh(ground_id, ground_material, name: "ground")!!;
+    floor.local.position.y = bounds.min.y;
+    scene.get(floor, Mesh).cast_shadow = false;
 
     String[1] mask_names;
     usz mask_name_count;
@@ -466,7 +481,8 @@ fn int main(String[] args) {
         capture_view = render::create_view(&renderer, capture_desc)!!;
     }
 
-    io::printn("1-9 cross-fade clip, R toggle root motion, Q quarter weight, SPACE pause");
+    io::printn("W/S walk-run blend, R apply root motion, Q quarter weight, SPACE pause");
+    io::printn("1-9 cross-fade the in-place comparison clip");
     io::printn("G toggle masked wave, A toggle additive wave; Scene panel edits each action");
     io::printn("drag to orbit, wheel to zoom, Escape quits");
     double last_print;
@@ -503,7 +519,14 @@ fn int main(String[] args) {
         }
 
         float delta = acceptance ? 1.0f / 60 : window.clock.delta;
+        Animator* moving = scene.get(left, Animator);
+        if (acceptance && moving.blend_spaces[0].count) {
+            moving.blend_spaces[0].parameter = (float)frame / math::max(1.0f, (float)frame_limit);
+        }
         anim::update(&assets, &scene, delta);
+        if (playback.apply_motion) anim::apply_root_motion(left, moving.root_motion);
+        print_footsteps(moving);
+        orbit.target = center + (left.local.position + right.local.position) * 0.5f;
         elapsed += delta;
         apply_orbit(&orbit, input, camera_node);
         scene.update_world();

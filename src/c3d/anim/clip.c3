@@ -3,6 +3,16 @@ module c3d::anim;
 import c3d::maths;
 import std::math;
 
+<* Model-local index meaning no root joint. *>
+const uint NO_ROOT_NODE = uint::max;
+
+<* Keep, pin or extract horizontal root motion. *>
+enum RootMotion {
+    KEEP,
+    STRIP_XZ,
+    EXTRACT,
+}
+
 <*
  Node property a track animates.
 *>
@@ -34,14 +44,19 @@ struct Track {
     float[]       values;
 }
 
-<*
- Clip over model-local node indices.
-*>
+<* Authored clip instant with application-defined meaning. *>
+struct ClipEvent {
+    float time;
+    uint id;
+}
+
+<* Clip over model-local nodes, with time-ordered events. *>
 struct AnimationClip {
     String  name;
     float   duration;
     Track[] tracks;
     uint[]  targets;
+    ClipEvent[] events;
 }
 
 <*

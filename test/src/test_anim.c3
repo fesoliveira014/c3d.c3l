@@ -10,7 +10,7 @@ import c3d::scene;
 import std::io::path;
 import std::math;
 
-struct LayerFixture @local {
+struct LayerFixture @private {
     AssetStore assets;
     Scene scene;
     ModelId model;
@@ -42,7 +42,7 @@ fn Track make_track(
     float[] times,
     float[] values,
     uint target = 0,
-) @local {
+) @private {
     Track track = { .target = target, .path = path, .interpolation = interpolation };
     track.times = alloc::new_array(mem, float, times.len);
     track.times[..] = times[..];
@@ -62,7 +62,7 @@ fn ClipId add_clip(
     Track[] tracks,
     uint[] targets,
     float duration,
-) @local {
+) @private {
     AnimationClip clip = { .name = key.copy(mem), .duration = duration };
     clip.tracks = alloc::new_array(mem, Track, tracks.len);
     clip.tracks[..] = tracks[..];
@@ -104,9 +104,9 @@ fn Track linear_translation() @local {
     );
 }
 
-fn bool approx(float a, float b) @local => math::abs(a - b) < 1e-4f;
+fn bool approx(float a, float b) @private => math::abs(a - b) < 1e-4f;
 
-fn bool rotates_x_to(Quat rotation, Vec3 expected) @local {
+fn bool rotates_x_to(Quat rotation, Vec3 expected) @private {
     Vec3 rotated = rotation.rotate_vec3({ 1, 0, 0 });
     return approx(rotated.x, expected.x) && approx(rotated.y, expected.y) && approx(rotated.z, expected.z);
 }
@@ -577,7 +577,7 @@ fn void test_find_joint_returns_index_or_not_found() @test {
     assert(@catch(skeleton.find_joint("tail")) == NOT_FOUND);
 }
 
-fn void create_layer_fixture(LayerFixture* fixture, Allocator allocator = mem) @local {
+fn void create_layer_fixture(LayerFixture* fixture, Allocator allocator = mem) @private {
     fixture.assets = create_store();
     fixture.scene = scene::create_scene(allocator, { .max_nodes = 16 });
     fixture.model = gltf::load_model(&fixture.assets, fixture_path("skin.gltf"))!!;
@@ -585,12 +585,12 @@ fn void create_layer_fixture(LayerFixture* fixture, Allocator allocator = mem) @
     fixture.animator = anim::add_animator(&fixture.scene, fixture.root);
 }
 
-fn void destroy_layer_fixture(LayerFixture* fixture) @local {
+fn void destroy_layer_fixture(LayerFixture* fixture) @private {
     scene::destroy_scene(&fixture.scene);
     asset::destroy_asset_store(&fixture.assets);
 }
 
-fn ClipId layer_translation(LayerFixture* fixture, Vec3 value, uint target = 3) @local {
+fn ClipId layer_translation(LayerFixture* fixture, Vec3 value, uint target = 3) @private {
     Track[1] tracks = { constant_translation(value) };
     uint[1] targets = { target };
     return add_clip(

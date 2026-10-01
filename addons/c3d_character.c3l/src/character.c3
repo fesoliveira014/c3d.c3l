@@ -2,6 +2,8 @@ module c3d::character;
 
 import std::math;
 import c3d;
+import c3d::anim;
+import c3d::maths;
 import c3d::ecs;
 import c3d::physics;
 import c3d::scene;
@@ -133,6 +135,26 @@ fn void Scene.remove_character(&self, Node* node) {
 *>
 fn void Scene.move_character(&self, Node* node, Vec3 desired_velocity) {
     self.get(node, Character).desired = desired_velocity;
+}
+
+<*
+ Apply a root-motion turn and set horizontal mover intent.
+ @param [&inout] node : "Current world matrix; authored facing changes now."
+ @param delta : "Motion in this character node's local frame."
+ @param dt : "Finite positive animation-update seconds."
+ @require self.has(node, Character), dt > 0 && math::is_finite(dt)
+*>
+fn void Scene.move_character_root_motion(
+    &self,
+    Node* node,
+    RootMotionDelta delta,
+    float dt,
+) {
+    Vec3 velocity = maths::transform_dir(node.world, delta.translation) / dt;
+    velocity.y = 0;
+    self.move_character(node, velocity);
+
+    node.local.rotation = node.local.rotation.mul(delta.rotation).normalize();
 }
 
 <*

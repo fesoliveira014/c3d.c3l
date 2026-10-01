@@ -60,6 +60,7 @@ fn void blend_instance(Animator* animator, AssetStore* assets, ModelInstance* in
                     cursor: &action.cursors[track_index],
                     out: sample,
                 );
+                pin_root_sample(action, (uint)track_index, sample);
 
                 switch (track.path) {
                     case TRANSLATION:

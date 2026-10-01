@@ -8,23 +8,9 @@ import std::collections::map;
 import std::math;
 
 <*
- Destination index meaning no root track.
-*>
-const uint NO_ROOT_NODE = uint::max;
-
-<*
  Keys per second of a corrected clip.
 *>
 const float BAKE_RATE_DEFAULT = 30; // the Mixamo export rate; a 10 s clip is 301 keys per track
-
-<*
- Keep, strip or move the horizontal motion of root source nodes.
-*>
-enum RootMotion {
-    KEEP,
-    STRIP_XZ,
-    EXTRACT,
-}
 
 <*
  How source rotation keys reach the destination rig.
@@ -62,7 +48,7 @@ struct RetargetOptions {
 *>
 const RetargetOptions RETARGET_OPTIONS_DEFAULT = {
     .root_motion            = RootMotion.KEEP,
-    .root_node              = NO_ROOT_NODE,
+    .root_node              = anim::NO_ROOT_NODE,
     .rest_pose              = RestPose.COPY,
     .bake_rate              = BAKE_RATE_DEFAULT,
     .root_translation_scale = 1,
@@ -86,7 +72,7 @@ struct Binding @private {
  @param source_nodes : "Names and parents of the source file's nodes."
  @param [&in] target : "Destination template."
  @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ARGUMENT
- @require options.root_node == NO_ROOT_NODE || options.root_node < target.nodes.len
+ @require options.root_node == anim::NO_ROOT_NODE || options.root_node < target.nodes.len
  @require options.bake_rate >= 0 && options.root_translation_scale >= 0
 *>
 fn AnimationClip? retarget_by_name(
@@ -97,7 +83,7 @@ fn AnimationClip? retarget_by_name(
     RetargetOptions options = RETARGET_OPTIONS_DEFAULT,
 ) {
     bool extract = options.root_motion == RootMotion.EXTRACT;
-    if (extract && options.root_node == NO_ROOT_NODE) return c3d::INVALID_ARGUMENT~;
+    if (extract && options.root_node == anim::NO_ROOT_NODE) return c3d::INVALID_ARGUMENT~;
     // A literal that omits these fields leaves them zero; zero selects the default.
     if (options.bake_rate == 0) options.bake_rate = BAKE_RATE_DEFAULT;
     if (options.root_translation_scale == 0) options.root_translation_scale = 1;
@@ -141,6 +127,7 @@ fn AnimationClip? retarget_by_name(
             .duration = source.duration,
             .tracks   = alloc::new_array(allocator, Track, (sz)slot_count),
             .targets  = alloc::new_array(allocator, uint, (sz)slot_count),
+            .events   = copy_events(allocator, source.events),
         };
         usz track_slot;
         usz target_count;
@@ -312,4 +299,10 @@ fn float[] translation_key(Track* track, usz key, uint slot) @private {
       ? (key * anim::CUBIC_SLOTS_PER_KEY + slot) * VEC3_COMPONENTS
       : key * VEC3_COMPONENTS;
     return track.values[offset:VEC3_COMPONENTS];
+}
+
+fn ClipEvent[] copy_events(Allocator allocator, ClipEvent[] events) @private {
+    ClipEvent[] copy = alloc::new_array(allocator, ClipEvent, events.len);
+    copy[..] = events[..];
+    return copy;
 }
