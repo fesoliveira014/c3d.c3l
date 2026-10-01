@@ -41,6 +41,7 @@ CHARACTER = ROOT / "addons" / "c3d_character.c3l"
 PHYSICS_GUI = ROOT / "addons" / "c3d_physics_gui.c3l"
 JOB = ROOT / "addons" / "c3d_job.c3l"
 LANDSCAPE = ROOT / "addons" / "c3d_landscape.c3l"
+PARTICLE = ROOT / "addons" / "c3d_particle.c3l"
 ADDON_EXAMPLES = {
     "capture": PROFILE,
     "physics": PHYSICS,
@@ -60,6 +61,7 @@ ADDON_EXAMPLES = {
     "terrain": LANDSCAPE,
     "vegetation": LANDSCAPE,
     "water": LANDSCAPE,
+    "particles": PARTICLE,
 }
 PROFILE_TEST_TARGETS = (
     "profile_off", "profile_cpu", "profile_internal", "profile_gpu",
@@ -74,6 +76,7 @@ CHARACTER_TEST_TARGETS = ("character_test", "character_nav_test")
 PHYSICS_GUI_TEST_TARGETS = ("physics_panel_off", "physics_panel", "physics_panel_character")
 JOB_TEST_TARGETS = ("job_test",)
 LANDSCAPE_TEST_TARGETS = ("landscape_test",)
+PARTICLE_TEST_TARGETS = ("particle_test",)
 
 REQUIRED_C3C_VERSION = "0.8.3"
 C3IMGUI_RELEASE_TAG = "v0.1.3"
@@ -272,6 +275,7 @@ def step_build(options: Options) -> None:
     copy_windows_runtimes(PHYSICS_GUI / "build")
     copy_windows_runtimes(JOB / "build")
     copy_windows_runtimes(LANDSCAPE / "build")
+    copy_windows_runtimes(PARTICLE / "build")
     if not options.target or options.target == "profile_gpu":
         copy_windows_runtimes(ROOT / "build" / "profile_gpu")
 
@@ -322,6 +326,9 @@ def step_test(options: Options) -> None:
         run([options.c3c, "test", target, "--path", str(JOB)], ROOT, options.verbose)
     for target in LANDSCAPE_TEST_TARGETS:
         run([options.c3c, "test", target, "--path", str(LANDSCAPE)], ROOT, options.verbose)
+    copy_windows_runtimes(PARTICLE / "build")
+    for target in PARTICLE_TEST_TARGETS:
+        run([options.c3c, "test", target, "--path", str(PARTICLE)], ROOT, options.verbose)
 
 
 def step_run(options: Options) -> None:
@@ -334,7 +341,7 @@ def step_run(options: Options) -> None:
 
 
 def step_clean(options: Options) -> None:
-    for project_dir in (EXAMPLES, TEST, PROFILE, PROFILE_GUI, PHYSICS, NAV, CHARACTER, PHYSICS_GUI, JOB, LANDSCAPE):
+    for project_dir in (EXAMPLES, TEST, PROFILE, PROFILE_GUI, PHYSICS, NAV, CHARACTER, PHYSICS_GUI, JOB, LANDSCAPE, PARTICLE):
         if (project_dir / "project.json").exists():
             run([options.c3c, "clean", "--path", str(project_dir)], ROOT, options.verbose)
 
