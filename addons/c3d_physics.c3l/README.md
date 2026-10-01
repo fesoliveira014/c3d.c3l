@@ -1,0 +1,174 @@
+# Physics add-on
+
+`c3d::physics` owns scene-bound rigid bodies, collision queries, joints, ragdolls,
+fluid forces and pre-fractured breakables. Applications select `c3d_physics` and
+its native dependencies; core does not import the package. Register physics on
+the scene, create its world, and destroy the world before the scene/assets.
+
+## Breakables
+
+A `Breakable` uses authored Mesh pieces below a root. It builds a hull-distance
+graph and one native weld per connected pair. When a weld reaches its reaction
+force threshold, the constraint is removed and a `BreakEvent` is reported. One
+broken edge does not necessarily disconnect a piece from the remaining graph.
+
+```c3
+physics::register_physics(&scene)!;
+PhysicsWorld world = physics::create_physics_world(
+    allocator: mem,
+    assets: &assets,
+    scene: &scene,
+    desc: physics::default_physics_desc(),
+)!;
+defer physics::destroy_physics_world(&world);
+
+scene.update_world();
+world.add_breakable(root, physics::default_breakable_desc())!;
+```
+
+The root must be a live node other than the scene root and cannot have a Mesh.
+At least two Mesh nodes must occur below it. Each is an independent convex,
+volume-spanning piece with positive unit scale and no skin/morph deformation.
+Root and piece world matrices must be current, finite and rigid. Bake scale
+into the asset. The initial ASSEMBLY form requires PARENT paths below its root;
+the root itself may use either transform space.
+
+A glTF primitive becomes a Mesh node, so export one solid primitive per intended
+physical piece. Multiple material primitives are separate pieces and may not
+span a volume individually. This feature does not merge them or perform runtime
+fracture. The supplied `examples/assets/fractured_wall.gltf` exercises the
+standard loader with 64 separate mesh placements and narrow seams.
+
+Distance at or below `contact_distance` connects two hulls. Edge/corner contacts
+also count; the rule does not measure shared face area. Overlap is accepted. The
+example uses 0.5 m cubes on a 0.508 m pitch: face gaps are below the default
+0.01 m threshold, diagonal gaps are above it, producing 112 welds.
+
+## Forms, ownership and faults
+
+`default_breakable_desc()` selects ASSEMBLY: one enabled kinematic root body
+with a hull per piece. Pieces remain parent-relative and follow the root. A
+qualifying dynamic-body hit changes it to PIECES: one dynamic hull body per
+surviving piece, with its node committed to WORLD. Setting `sleep_until_hit`
+false creates PIECES directly. `wake_breakable(root)` performs the transition
+explicitly; a live PIECES call is a no-op.
+
+`break_force` is finite nonnegative newtons, `contact_distance` finite
+nonnegative meters, and density finite positive kg/m³. Surface coefficients
+are finite/nonnegative and tangent velocity finite. The descriptor, geometry
+identities and fracture layout are captured. Recreate to change them. Read
+state through `scene.get(root, Breakable).state`; retain the root ID and
+reacquire the component after structural changes. The state and its arrays are
+library-owned. The component is 8 bytes on x64; its state/arrays are allocated
+only for real breakables in one scene-allocator block.
+
+Creation rejects overlapping breakables, existing bodies or conflicting
+joint/ragdoll roles in the subtree, invalid geometry and unsupported transforms.
+`BREAKABLE_EXISTS`, `BODY_EXISTS`, `INVALID_ARGUMENT`, `INVALID_ID` and
+`UNSUPPORTED` identify those cases. Missing uncached hull source reports
+`SOURCE_UNAVAILABLE`; snapshot exhaustion reports `CAPACITY_EXCEEDED`; native
+constructor/hull faults propagate. No component-store capacity fault is invented.
+
+Creation and wake are transactional for surviving pieces. Explicit wake first
+prunes externally removed pieces; that cleanup remains even if transition
+construction fails. Failed wake retains the remaining assembly and
+visitor velocity, releases staged objects/holds and permits another request.
+Automatic failures enter `build_failures()`. A failed or pending representation
+cannot be explicitly awakened and reports `NO_BODY` until ready. On a new
+world, pending piece bodies remain disabled until all surviving unbroken
+edges can bind; terminal binding failure is recorded as FAILED. Source failures
+follow the existing revision retry policy. Other failures require recreation.
+
+Remove pieces through normal scene removal. The next physics update prunes
+incident edges without a break report and removes their assembly collision
+shapes and authored collider entries. World replacement cannot resurrect them.
+Removing all pieces leaves an empty valid component. Use
+`world.remove_breakable(root)` to remove owned bodies/welds while keeping nodes
+and meshes; WORLD piece transforms stay WORLD. Removing only the raw component
+releases graph state/welds but leaves authored bodies for application takeover.
+Removing the root subtree releases everything through normal hooks.
+
+## Update and event order
+
+```c3
+scene.update_world();
+world.update(dt);
+foreach (event : world.breaks()) {
+    handle_break(event.root, event.piece_a, event.piece_b, event.point);
+}
+scene.flush_removals();
+scene.update_world();
+```
+
+`handle_break` is application code in this function-body example. Consume node
+borrows before removals. Reports reset once per update and accumulate across
+its fixed steps. Capacity overflow increments the shared `dropped_events`
+counter; a full or zero-capacity report buffer still allows wake and fracture.
+The point is the authored weld anchor through the piece's current physics pose,
+not a guaranteed impact point or seam centre. A single weld reports once.
+
+Intact wake uses `mass * approach_speed >= break_force * fixed_dt`, plus the
+world's hit-speed threshold. This is a wake heuristic. Weld fracture itself uses
+the native solver's force threshold. Native event streams are consumed before
+structural mutation, and only one qualifying hit is replayed per assembly/step.
+Automatic wake uses the native assembly pose; manual wake uses its current
+authored root pose. Fragments inherit assembly linear/angular motion. Staged
+bodies are enabled before their captured velocities are restored, since the
+native backend drops velocity writes on disabled bodies.
+
+The visitor's relative normal point speed is restored after successful wake;
+tangential and angular motion remain. This approximates first contact one step
+later. It is not an exact collision-history reconstruction and imposes no
+universal fracture latency. Both forms remain available. There are no static
+anchors: an unanchored remainder may tip under a strong impact. Native
+record/replay includes the body/joint mutations, but does not recreate scene
+components or re-dispatch BreakEvent values.
+
+## Example and checks
+
+```powershell
+python scripts/build.py --example breakable
+addons/c3d_physics.c3l/build/breakable.exe --pieces
+addons/c3d_physics.c3l/build/breakable.exe --model addons/c3d_physics.c3l/examples/assets/fractured_wall.gltf
+addons/c3d_physics.c3l/build/breakable.exe --frames=120 --acceptance --capture=fracture.rgba
+c3c build breakable --path addons/c3d_physics.c3l -O3
+addons/c3d_physics.c3l/build/breakable.exe --benchmark
+```
+
+Left click launches a box; right drag orbits and the wheel zooms. Rebuild applies
+the strength/form controls and clears projectiles. The demonstration uses a
+40,000 N weld threshold and a dense 1,000 kg projectile at 15 m/s, independently
+of the library's 2,000 N default. `--walls 32` shows the multi-wall case.
+Capture files are 1280×720 RGBA8 scene pixels. The GPU example always enables
+Vulkan validation. WSL is restricted to builds and CPU tests.
+
+The CPU benchmark reports authoring cost for one 64-piece wall, 32-wall update
+cost, native body/joint/awake counts, observed wake/break step indices, and
+native replay verification. It uses three runs, 300 warm-up and 600 measured
+60 Hz updates. Idle uses maximum strength to retain the complete graph; no
+claim is made that PIECES has actually entered native sleep. A separate impact
+check verifies that the demonstration strength survives warm-up before a hit.
+On Windows x64, i9-14900K, C3 0.8.3 `-O3`, the median of three run means was:
+
+| Form | Author one 64-piece wall | Update 32 walls | Bodies | Weld joints | Awake bodies |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| ASSEMBLY | 0.2359 ms | 0.004760 ms | 33 | 0 | 0 |
+| PIECES | 0.2409 ms | 0.084900 ms | 2049 | 3584 | 0 |
+
+Body counts include the ground. Geometry/node creation and world-transform
+publication are outside the timed regions. The complete 112-edge graph stayed
+intact during warm-up and measurement. These numbers describe this workload,
+not a general scene budget.
+
+The impact probe first hit at step 10. ASSEMBLY woke at step 10 and reported its
+first break at step 11; PIECES reported its first break at step 10. Both native
+recordings replayed all 600 frames with matching hashes. The component measured
+8 bytes and each BreakEvent 40 bytes. The rendering example was validated
+separately on the Windows RTX 4090 host.
+
+![An impact opens the authored wall](images/breakable.png)
+
+Run `python scripts/build.py --test` for the full CPU matrix, or
+`c3c test physics_test --path addons/c3d_physics.c3l` for the package. The fracture
+cases cover ownership, rollback, native thresholds, removed assembly shapes,
+world replacement, overflow, publication and motion inheritance.

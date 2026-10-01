@@ -38,7 +38,7 @@ const uint  DEFAULT_MAX_STEPS = 4; // a longer backlog is dropped, not simulated
 <* Approach speed above which hits are reported, meters per second. *>
 const float DEFAULT_HIT_SPEED_THRESHOLD = 1;
 <* Entries per event list. *>
-const uint  DEFAULT_EVENT_CAPACITY = 4096; // seven lists, 160 bytes per index across them: 640 KiB per world; the contact burst lever
+const uint  DEFAULT_EVENT_CAPACITY = 4096; // eight lists, 200 bytes per index across them: 800 KiB per world; the contact burst lever
 <* Collision snapshot slots per world. *>
 const uint  DEFAULT_SNAPSHOT_CAPACITY = 256; // one slot per distinct cooked key; the level variety lever
 <* Serial step; 0 means the same. *>
@@ -366,6 +366,8 @@ struct PhysicsWorld {
     uint           sensor_end_count;
     JointEvent[]   joint_event_storage;
     uint           joint_event_count;
+    BreakEvent[]   break_storage;
+    uint           break_count;
     BuildFailure[] failure_storage;
     uint           failure_count;
     MoverPass      mover_pass;
@@ -692,6 +694,7 @@ fn PhysicsWorld? create_physics_world(
         .sensor_begin_storage  = alloc::new_array(allocator, SensorEvent, desc.event_capacity),
         .sensor_end_storage    = alloc::new_array(allocator, SensorEvent, desc.event_capacity),
         .joint_event_storage   = alloc::new_array(allocator, JointEvent, desc.event_capacity),
+        .break_storage         = alloc::new_array(allocator, BreakEvent, desc.event_capacity),
         .failure_storage       = alloc::new_array(allocator, BuildFailure, desc.event_capacity),
     };
 }
@@ -701,6 +704,7 @@ fn PhysicsWorld? create_physics_world(
  @param [&inout] world : "Destroyed before its scene and asset store."
 *>
 fn void destroy_physics_world(PhysicsWorld* world) {
+    suspend_breakables(world);
     Scene* scene = world.scene;
     usz count;
     scene.@each(Joint; entity, joint) {
@@ -735,6 +739,7 @@ fn void destroy_physics_world(PhysicsWorld* world) {
     alloc::free(world.allocator, world.sensor_end_storage.ptr);
     alloc::free(world.allocator, world.joint_event_storage.ptr);
     alloc::free(world.allocator, world.failure_storage.ptr);
+    alloc::free(world.allocator, world.break_storage.ptr);
     *world = {};
 }
 

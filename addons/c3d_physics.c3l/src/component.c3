@@ -98,8 +98,8 @@ fn uint Scene.add_static_mesh_bodies(&self, Node* root, CollisionFilter filter =
 }
 
 <*
- Register the physics components and the PhysicsBody removal hook.
- @param [&inout] scene : "Gains the PhysicsBody, Wind, Force and Buoyancy stores."
+ Register physics components and their resource removal hooks.
+ @param [&inout] scene : "Gains body, joint, force, ragdoll and fracture stores."
  @return? c3d::CAPACITY_EXCEEDED
 *>
 fn void? register_physics(Scene* scene) {
@@ -109,6 +109,8 @@ fn void? register_physics(Scene* scene) {
     scene.register(Buoyancy)!;
     scene.register(PhysicsJoint)!;
     scene.set_remove_hook(PhysicsBody, &free_physics_body, scene.hook_allocator);
+    scene.register(Breakable)!;
+    scene.set_remove_hook(Breakable, &free_breakable, scene.hook_allocator);
     scene.register(Ragdoll)!;
     scene.set_remove_hook(Ragdoll, &free_ragdoll, scene.hook_allocator);
 }
