@@ -104,6 +104,7 @@ struct Frame {
 struct Renderer {
     Allocator               allocator;
     gpu::Runtime            runtime;
+    String                  adapter_name;
     gpu::Surface            surface;
     gpu::Device             device;
     gpu::DeviceCaps         caps;
@@ -699,6 +700,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .enable_ray_tracing_pipelines = desc.ray_tracing_pipelines,
     };
     gpu::Adapter adapter = select_adapter(&runtime, &device_desc)!;
+    String adapter_name = gpu::get_adapter_info(&adapter)!.name;
     gpu::Device device = gpu::create_device(&adapter, &device_desc)!;
     defer catch (void)gpu::destroy_device(&device);
 
@@ -806,6 +808,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
 
     Renderer renderer = {
         .allocator            = allocator,
+        .adapter_name         = adapter_name,
         .assets               = assets,
         .max_lights           = desc.max_lights ? desc.max_lights : DEFAULT_MAX_LIGHTS,
         .shadow_resolution    = desc.shadow_resolution ? desc.shadow_resolution : DEFAULT_SHADOW_RESOLUTION,

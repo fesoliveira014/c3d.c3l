@@ -1,0 +1,8 @@
+{
+  "provides": "c3d_particle",
+  "sources": ["src/**"],
+  "targets": {
+    "linux-x64": {"dependencies": ["c3d"], "linked-libraries": []},
+    "windows-x64": {"wincrt": "static", "dependencies": ["c3d"], "linked-libraries": []}
+  }
+}

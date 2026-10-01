@@ -1,0 +1,8 @@
+{
+  "module": "c3d::particle",
+  "output": "src/shaders.c3",
+  "flags": [],
+  "entries": [
+    {"shader": "particle_fragment", "source": "particle.frag.glsl", "stage": "frag", "defines": []}
+  ]
+}

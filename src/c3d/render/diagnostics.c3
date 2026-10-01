@@ -74,6 +74,21 @@ fn void DebugLog.record(&self, gpu::DebugMessage* message) {
     copy_debug_text(entry.text[..], message.backend_text ? message.backend_text : message.invariant);
 }
 
+<*
+ Fail for backend validation errors retained in the diagnostic ring.
+ @param [&in] self : "Read after backend calls complete."
+ @return? gpu::BACKEND_ERROR
+*>
+fn void? DebugLog.check_validation(&self) {
+    DebugEntry[DEBUG_LOG_ENTRIES] entries;
+    usz count = self.recent(entries[..]);
+    foreach (entry : entries[:count]) {
+        if (entry.category.backend && entry.category.validation && entry.severity == gpu::DebugMessageSeverity.ERROR) {
+            return gpu::BACKEND_ERROR~;
+        }
+    }
+}
+
 fn void record_debug_message(gpu::DebugMessage* message, void* user) @private {
     ((DebugLog*)user).record(message);
     if (!is_routine_fault(message)) print_debug_message(message);

@@ -133,6 +133,31 @@ fn void test_routine_faults_are_still_recorded_in_the_log() @test {
     assert(recent[0].public_fault == gpu::SWAPCHAIN_OUT_OF_DATE);
 }
 
+fn void test_validation_check_filters_severity_and_ring_history() @test {
+    render::DebugLog log;
+    log.check_validation()!!;
+    gpu::DebugMessage message = diagnostic("submit", "backend error");
+    log.record(&message);
+    log.check_validation()!!;
+    message.category = { .backend = true };
+    log.record(&message);
+    log.check_validation()!!;
+    message.category.validation = true;
+    message.severity = gpu::DebugMessageSeverity.WARNING;
+    log.record(&message);
+    log.check_validation()!!;
+    message.severity = gpu::DebugMessageSeverity.ERROR;
+    log.record(&message);
+    if (catch excuse = log.check_validation()) {
+        assert(excuse == gpu::BACKEND_ERROR);
+    } else {
+        assert(false);
+    }
+    message.severity = gpu::DebugMessageSeverity.WARNING;
+    for (usz index = 0; index < render::DEBUG_LOG_ENTRIES; index++) log.record(&message);
+    log.check_validation()!!;
+}
+
 fn void test_flipped_viewport_covers_the_area_upside_down() @test {
     gpu::Viewport viewport = render::flipped_viewport(1280, 720);
     assert(viewport.x == 0.0f);
