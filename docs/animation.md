@@ -26,6 +26,11 @@ The pool header, live-ID order, events, blend spaces and model-sized mask rows
 live in one per-animator heap block. The scene component contains only pointers,
 counts and the last motion delta (152 bytes on x64).
 
+The fixed component store reserves a slot for every possible scene node,
+including unused slots. At the default 16,385 slots (16,384 nodes plus the scene
+root), Animator values occupy 2,490,520 bytes, about 2.375 MiB per scene. ECS
+index arrays and allocations for live animators are additional.
+
 ```c3
 Node* left = model::instantiate(&assets, &scene, model)!;
 Node* right = model::instantiate(&assets, &scene, model)!;
@@ -288,6 +293,13 @@ examples/build/mixamo.exe --benchmark
 The CPU-only benchmark reads the existing `anim.update` capture scope for one
 Mixamo instance. It warms 300 updates and measures 5,000 at a fixed 60 Hz step;
 loading, mask creation and reference sampling are outside the measured interval.
+
+The benchmark also prints `animator,component_bytes,152`: about 2.375 MiB of
+Animator values at the default scene capacity, compared with 1.125 MiB for the
+72-byte component before runtime motion. The inline motion value and output
+slices are retained for direct access; event and blend-space arrays remain in
+the per-animator heap block.
+
 Windows x64, i9-14900K, C3 0.8.3 `-O3`, CPU+INTERNAL profiling; medians of three
 run means:
 
