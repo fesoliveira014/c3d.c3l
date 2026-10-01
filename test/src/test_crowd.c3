@@ -298,7 +298,8 @@ fn void test_crowd_update_matches_animator_for_every_part() @test {
         Node* animated = model::instantiate(&fixture.assets, scene, fixture.model, parent: holder)!!;
         animated.local = placement;
         Animator* animator = anim::add_animator(scene, animated);
-        animator.play(&fixture.assets, fixture.swing)!!.time = times[instance];
+        AnimationActionId action = animator.play(&fixture.assets, fixture.swing)!!;
+        animator.action(action).time = times[instance];
         anim::update(&fixture.assets, scene, 0);
         scene.update_world();
 

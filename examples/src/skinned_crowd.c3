@@ -224,7 +224,8 @@ fn int main(String[] args) {
         Node* animated = model::instantiate(&assets, &scene, model, name: "baseline")!!;
         animated.local = instance.placement;
         Animator* animator = anim::add_animator(&scene, animated);
-        Action* action = animator.play(&assets, clip)!!;
+        AnimationActionId action_id = animator.play(&assets, clip)!!;
+        Action* action = animator.action(action_id);
         action.time = instance.pose.time;
         action.speed = instance.pose.speed;
         showcase.animated[index] = animated;

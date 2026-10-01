@@ -21,7 +21,7 @@ update and the final `update_world` ([Inverse kinematics](#inverse-kinematics)).
 ## Animator and actions
 
 An `Animator` is a component on the synthetic root that `model::instantiate`
-returns. It holds a list of actions, one per playing clip.
+returns. It owns a fixed pool of 16 actions, addressed by `AnimationActionId`.
 
 ```c3
 Node* left = model::instantiate(&assets, &scene, model)!;
@@ -32,25 +32,37 @@ Animator* left_animator = anim::add_animator(&scene, left);
 left_animator.play(&assets, clips[0])!;
 
 Animator* right_animator = anim::add_animator(&scene, right);
-Action* run = right_animator.play(&assets, clips[1])!;
-run.speed = 1.5f;
+AnimationActionId run = right_animator.play(&assets, clips[1])!;
+right_animator.action(run).speed = 1.5f;
 ```
 
 `play` binds the clip's model-local targets through the instance's node table
-once and returns the new action at time zero, weight one, looping. It faults
+once and returns its ID at time zero, weight one, looping. It faults
 `INVALID_ID` for a dead clip and `INVALID_ARGUMENT` for a clip that does not
 fit the instance (a target beyond the node table, or a morph track whose node
-has no mesh or a different morph count). `stop(action)` removes the action;
+has no mesh or a different morph count), or an invalid layer, fade or mask.
+`CAPACITY_EXCEEDED` means all 16 action slots are live. `stop(action)` removes the action;
 `stop(action, seconds)` fades it out first. `cross_fade(from, to, seconds)`
-fades one action out while the other fades to full weight. `play(clip, seconds)`
-starts an action at weight zero and fades it in.
+fades one action out while the other fades to full weight. Use
+`play(&assets, clip, { .fade_in = seconds })` to start at zero and fade in.
+Both stop and cross_fade return optionals: stale IDs fault `INVALID_ID`, invalid
+durations or a cross-fade to the same ID fault `INVALID_ARGUMENT`. They validate
+before changing either action. This includes IDs whose fade-out already ended.
 
-Action and animator pointers are borrows. `play` may move the action list and
-removal shifts it; `add_animator` on another node may move the component
-store. Reacquire through `scene.get(root, Animator)` and the action index after
-either. `Action.time`, `speed`, `weight`, `loop` and `playing` are plain fields
-the application may set at any time; `playing` gates only the clock, so a
-paused action keeps contributing its pose.
+IDs survive other plays/removals and are meaningful only with the animator that
+issued them. A removed generation never resolves to its replacement while that
+animator lives. Destroying/recreating the animator starts a new owner; discard
+its old IDs.
+`try_action(id)` faults `INVALID_ID`; `action(id)` borrows a known-live action.
+Retain IDs and reacquire action pointers after structural action operations;
+reacquire Animator pointers after component-store changes. Iterate
+`order[:action_count]` for live IDs in play order.
+
+`Action.time`, `speed`, `weight`, `loop` and `playing` are runtime controls;
+numeric values must be finite and weight nonnegative. `playing` gates only the
+clock, so paused actions still pose. Clip, layer, additive mode, masks and
+reference arrays are captured/library-owned. Recreate an action to change them.
+Clip tracks and target mappings must remain unchanged and live during playback.
 
 While an animator exists it owns the pose of its instance: every update writes
 every instance node's local transform and every instance mesh's morph weights.
@@ -59,22 +71,115 @@ so moving or spinning an instance as a whole is unaffected. Removing the root
 removes the animator and its arrays through the ordinary component hook; the
 shared clips stay in the store.
 
-## Blending
+## Layers and masks
+
+`PlayDesc.layer` selects one of four layers, folded in ascending index. Layer 0
+starts from the authored baseline; upper layers start from the result below.
+Play order does not change the order of layers. A channel with no contribution
+on a layer retains its lower result.
+
+Masks address model-local nodes, including morph-bearing mesh nodes. Their
+storage is sized once from the model; there is no 512-node limit. The caller
+owns a `JointMask`, and play copies it into one of the animator's preallocated
+mask rows. A null mask selects all nodes; an all-false mask selects none.
+
+Inside a fallible function, after adding the animator, with a live model and
+an overlay clip targeting that model:
+
+```c3
+String[1] names = { "mixamorig:Spine1" };
+JointMask upper = anim::create_joint_mask(mem, &assets.model(model).data, names[..])!;
+defer anim::destroy_joint_mask(&upper);
+
+AnimationActionId overlay = animator.play(&assets, overlay_clip, {
+    .fade_in = 0.2f,
+    .layer = 1,
+    .mask = &upper,
+})!;
+animator.action(overlay).weight = 0.5f;
+```
+
+Use the model's actual names. Every exact match is selected; descendants are
+included by default. Pass `include_descendants: false` for only matching nodes.
+A missing name faults `NOT_FOUND` before allocation. Repeated requested names
+are harmless and an empty name list produces empty membership. Play rejects a
+mask with a different node count. Reuse a mask only with instances of the model
+whose indices it describes. Destroying/editing the input mask after play does
+not alter existing actions.
+
+### Regular blending
 
 Each channel (translation, rotation, scale, and each morph weight array) is
-blended separately from the authored baseline copied at instantiation:
+blended separately against the lower layer's value (the authored baseline on
+layer zero):
 
 ```plain text
 total    = sum of weights of the actions whose clip animates this channel
 residual = max(0, 1 - total)
-value    = (sum of weight * sample + residual * baseline) / max(1, total)
+value    = (sum of weight * sample + residual * below) / max(1, total)
 ```
 
 A lone action at weight 0.25 sampling translation 8 over baseline 0 yields 2.
 A rotation-only clip leaves translation and scale at their authored values. Two
-actions at weight 1 average. Rotations are sign-aligned to the baseline
-hemisphere before summing and normalized afterwards. Weighted averaging is the
-only blend mode.
+actions at weight 1 average. Rotations are sign-aligned to the lower pose's
+hemisphere before summing and normalized afterwards.
+
+## Additive actions
+
+Set `PlayDesc.additive = true`. Play captures each track's sample at time zero
+once, including the value rather than tangent fields of cubic keys. Each layer
+first folds regular actions, then applies its additive actions in play order.
+
+Translation, scale and morphs add `weight * (sample - reference)`. Rotation uses
+`reference.conjugate() * sample`, aligns that delta to identity, interpolates
+from identity by weight, then postmultiplies the current rotation and normalizes.
+Additive order matters for noncommuting rotations. A time-zero action adds
+nothing; a half-weight 45-degree delta applies 22.5 degrees. Scale is additive,
+not multiplicative. Masks apply to every channel.
+
+Animation owns the final pose until later physics/IK writers run. Layers add no
+root-motion extraction, clip events, blend-space clock or scheduler. Per-frame
+scratch remains in the existing temporary allocator; captured masks, reference
+samples and cursors retain their resource lifetimes.
+
+## Layered example and CPU measurements
+
+`mixamo` shows a regular masked wave on the left and an additive wave on the
+right, both over locomotion. The wave is authored at setup from the loaded
+model's rest pose and `Spine1`/`LeftArm`/`LeftForeArm` names; missing joints disable
+that demonstration with a message. No extra animation download is required.
+`G` and `A` toggle the waves, `1`–`9` cross-fade base clips, `Q` changes base weight
+and Space pauses. The Scene panel's animator inspector shows clip IDs, layer,
+mode, mask count and playback controls; stop is applied after traversal.
+
+The animation, IK and Mixamo examples accept `--frames=100 --acceptance` for a
+bounded validation run that exercises playback changes. Mixamo additionally
+accepts `--capture=path` for a 1440x900 RGBA8 scene capture.
+
+```powershell
+c3c build mixamo --path examples -O3 --lib c3d_profile -D C3D_PROFILE_CPU -D C3D_PROFILE_INTERNAL
+examples/build/mixamo.exe --benchmark
+```
+
+The CPU-only benchmark reads the existing `anim.update` capture scope for one
+Mixamo instance. It warms 300 updates and measures 5,000 at a fixed 60 Hz step;
+loading, mask creation and reference sampling are outside the measured interval.
+Windows x64, i9-14900K, C3 0.8.3 `-O3`, CPU+INTERNAL profiling; medians of three
+run means:
+
+| Case | Nodes | Tracks | Actions | CPU mean |
+| --- | ---: | ---: | ---: | ---: |
+| Previous single-action implementation | 69 | 105 | 1 | 0.001005 ms |
+| Single regular action | 69 | 105 | 1 | 0.001282 ms |
+| Base plus masked regular wave | 69 | 312 | 2 | 0.002714 ms |
+| Base, masked regular and additive waves | 69 | 519 | 3 | 0.006030 ms |
+
+Single-action run means ranged from 0.000986–0.001058 ms before and
+0.001151–0.001411 ms after. The extra single-action work is about 0.3 microseconds
+on this rig. These measurements do not justify an executor; they are not a
+general rig-count performance guarantee. WSL verification is build/CPU only.
+
+![Regular masked wave on the left, additive wave on the right](images/animation_layers.png)
 
 ## Sampling
 

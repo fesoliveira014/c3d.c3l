@@ -227,6 +227,42 @@ fn bool ik_chain_inspector(void* component) @local {
     return chain_widgets((IkChain*)component);
 }
 
+fn bool animator_inspector(void* component) @local {
+    Animator* animator = (Animator*)component;
+    bool changed;
+    AnimationActionId stopped;
+    foreach (id : animator.order[:animator.action_count]) {
+        Action* action = animator.action(id);
+        imgui::push_id_int((int)id.index);
+        defer imgui::pop_id();
+
+        imgui::separator();
+        imgui::text("Clip: %u:%u", action.clip.index, action.clip.generation);
+        imgui::text("Layer: %u (%s)", action.layer, action.additive ? "additive" : "regular");
+        usz selected;
+        foreach (member : action.mask) if (member) selected++;
+        imgui::text("Mask: %llu / %llu nodes", selected, action.mask.len);
+
+        changed = imgui::slider_float(
+            label: "Weight",
+            v: &action.weight,
+            v_min: 0,
+            v_max: 1,
+        ) || changed;
+        changed = imgui::drag_float("Time", &action.time) || changed;
+        changed = imgui::drag_float("Speed", &action.speed) || changed;
+        changed = imgui::checkbox("Loop", &action.loop) || changed;
+        changed = imgui::checkbox("Playing", &action.playing) || changed;
+        if (imgui::button("Stop")) stopped = id;
+    }
+
+    if (stopped.generation) {
+        animator.stop(stopped)!!;
+        changed = true;
+    }
+    return changed;
+}
+
 fn bool foot_ik_inspector(void* component) @local {
     FootIk* foot = (FootIk*)component;
     bool changed = chain_widgets(&foot.leg);
@@ -378,7 +414,7 @@ fn void expose_builtin_components() @private {
     expose(Light, &light_inspector);
     expose(ModelInstance);
     expose(SkinBinding);
-    expose(Animator);
+    expose(Animator, &animator_inspector);
     expose(IkChain, &ik_chain_inspector);
     expose(FootIk, &foot_ik_inspector);
     expose(LookAt, &look_at_inspector);
