@@ -22,8 +22,9 @@ update and the final `update_world` ([Inverse kinematics](#inverse-kinematics)).
 
 An `Animator` is a component on the synthetic root that `model::instantiate`
 returns. It owns a fixed pool of 16 actions, addressed by `AnimationActionId`.
-The pool header, live-ID order and model-sized mask rows live in a per-animator
-heap block, so scenes without animators reserve only the small component header.
+The pool header, live-ID order, events, blend spaces and model-sized mask rows
+live in one per-animator heap block. The scene component contains only pointers,
+counts and the last motion delta (152 bytes on x64).
 
 ```c3
 Node* left = model::instantiate(&assets, &scene, model)!;
@@ -64,7 +65,9 @@ reacquire Animator pointers after component-store changes. Iterate
 numeric values must be finite and weight nonnegative. `playing` gates only the
 clock, so paused actions still pose. Clip, layer, additive mode, masks and
 reference arrays are captured/library-owned. Recreate an action to change them.
-Clip tracks and target mappings must remain unchanged and live during playback.
+Clip tracks, duration and target mappings must remain unchanged and live during
+playback. Root mode/yaw and sampling data are captured too. Blend-space members
+are read-only; their space controls playback.
 
 While an animator exists it owns the pose of its instance: every update writes
 every instance node's local transform and every instance mesh's morph weights.
@@ -139,10 +142,127 @@ Additive order matters for noncommuting rotations. A time-zero action adds
 nothing; a half-weight 45-degree delta applies 22.5 degrees. Scale is additive,
 not multiplicative. Masks apply to every channel.
 
-Animation owns the final pose until later physics/IK writers run. Layers add no
-root-motion extraction, clip events, blend-space clock or scheduler. Per-frame
+Animation owns the final pose until later physics/IK writers run. There is no
+scheduler or automatic motion consumption. Root motion and events are outputs for
+the application to consume. Per-frame
 scratch remains in the existing temporary allocator; captured masks, reference
 samples and cursors retain their resource lifetimes.
+
+## Root motion
+
+`PlayDesc.root_motion` defaults to `RootMotion.KEEP`. Runtime `STRIP_XZ` pins
+root X/Z at the clip's first sample and retains vertical motion. `EXTRACT` pins
+the same channels and publishes `Animator.root_motion`; animation never moves
+the instance root. Import clips with `RootMotion.KEEP` to retain this data.
+The enum and `NO_ROOT_NODE` now belong to `c3d::anim`, including when used in
+`RetargetOptions`.
+
+```c3
+animator.play(&assets, walk, { .root_motion = RootMotion.EXTRACT })!;
+anim::update(&assets, &scene, dt);
+anim::apply_root_motion(instance_root, animator.root_motion);
+scene.update_world();
+```
+
+The selected root is the first skin's first joint whose parent is outside that
+skin. An unskinned model defaults to `NO_ROOT_NODE`; set `animator.root_node` to
+a model-local index before playing to override it. Keep the selection fixed
+while actions live. Root and intermediate ancestors use `PARENT` transform
+space. Ancestors between the joint and instance root must retain their authored
+transforms; their basis is captured at play. The instance root itself may use
+either transform space.
+
+`root_yaw = true` additionally removes the root rotation's Y twist and emits
+the turn; tilt remains in the pose. Extraction requires upright, positive,
+uniform scale through the captured basis and instance root, retained throughout
+playback. Arbitrary-up motion and animated root ancestors are unsupported.
+Missing root configuration, unsupported yaw basis, yaw with KEEP, and non-KEEP
+additive actions fault `INVALID_ARGUMENT` before allocating an action.
+
+Deltas are planar transforms in the instance root's frame. The helper applies
+translation through the node's authored rotation/scale, then postmultiplies the
+turn. Apply each delta once; it resets to zero translation and identity rotation
+every update. Reverse and multi-loop updates compose cycle transforms. A single
+action's consumed path is invariant under subdivision within sampling tolerance.
+Masks and regular layer weights apply to motion as to pose; KEEP/STRIP root
+channels contribute zero motion with their weight. A half-weight extractor
+therefore emits half displacement. Yaw contributions use signed shortest turns;
+mixing actions does not promise subdivision-invariant blended trajectories.
+
+`Action.time` edits seek to a new starting sample. The seek itself emits no
+motion or events; the subsequent clock step does. Internal double clocks retain
+subframe precision independently of the public float sampling time. `dt` is
+finite and nonnegative, speed may be negative, and clocks must remain finite
+and representable. Paused, zero-step and zero-duration actions emit no movement.
+
+## Clip events
+
+```c3
+ClipEvent[2] footsteps = {
+    { .time = 0, .id = 1 },
+    { .time = assets.clip(walk).data.duration * 0.5f, .id = 2 },
+};
+assets.set_clip_events(walk, footsteps[..])!;
+```
+
+The setter copies and stably sorts events by time. IDs are application-defined;
+no callback or importer event parser is installed. Invalid times (nonfinite or
+outside `[0,duration]`) fault `INVALID_ARGUMENT`; a dead clip faults `INVALID_ID`.
+Failure leaves the old table intact. Replacing a table between updates is valid.
+`add_clip_owned` instead takes ownership of an already sorted valid table.
+Retargeting copies events into independent owned arrays.
+
+After update, read `animator.events[:animator.event_count]`. Each `FiredEvent`
+contains action ID, clip ID, authored ID and time. Every retained advancing
+action reports, including zero-weight blend-space members. Fully faded actions
+are removed before publication. Delivery follows action play order, then time
+crossing order within each action; equal-time markers keep their authored order.
+Applications can filter by current action weight, as the Mixamo example does.
+
+Forward intervals include the starting instant and exclude the ending instant;
+reverse intervals do the opposite. Terminal endpoints are included when a
+non-looping action stops. At a loop seam, the closing marker (duration forward,
+zero backward) fires on arrival; the opening marker fires on continuing into
+the next cycle. A step spanning both delivers closing before opening. Reverse
+playback from zero starts at the equivalent duration boundary. Pauses and seeks
+alone fire nothing. The fixed buffer retains the first 16 crossings per update;
+`events_dropped` counts the rest, saturating at `uint::max`. Both counts reset
+every update. Large time steps count crossings without iterating elapsed loops.
+
+## One-dimensional blend spaces
+
+```c3
+ClipId[2] locomotion = { walk, run };
+float[2] positions = { 0, 1 };
+BlendSpace1D* space = animator.add_blend_space(
+    assets: &assets,
+    clips: locomotion[..],
+    positions: positions[..],
+    desc: { .root_motion = RootMotion.EXTRACT },
+)!;
+space.parameter = 0.5f;
+```
+
+An animator owns two fixed space slots, each with 2–8 actions. Positions must be
+finite and strictly ascending, and clip durations finite and positive. Dead
+clips fault `INVALID_ID`, invalid inputs/configuration fault `INVALID_ARGUMENT`,
+and exhausted space/action slots fault `CAPACITY_EXCEEDED`. Creation rolls back
+all new actions on failure.
+
+The parameter clamps to the authored range. Only its two neighbors receive
+weights, summing to `space.weight`. All members share a normalized double phase
+advanced by `dt * speed / weighted_duration`; group weight does not affect speed.
+Set `playing = false` to pause the phase while still adjusting the blend. Keep
+parameter/speed/phase finite, phase in `[0,1)`, and weight in `[0,1]`.
+
+The space owns member time, weight, loop, playing and fade fields. Members are
+looping with `playing = false`; root motion and events use their shared clock.
+Independent stop/cross_fade faults `INVALID_ARGUMENT`. Use
+`stop_blend_space(space, fade_out)` or
+`fade_blend_space(space, target_weight, duration)` instead. Fade-to-zero removes
+every member. Pointers are short-lived borrows: reacquire through
+`animator.blend_spaces[slot]` after animator-store changes and discard after
+removal/reuse. The inspector exposes group controls and displays member state.
 
 ## Layered example and CPU measurements
 
@@ -150,8 +270,10 @@ samples and cursors retain their resource lifetimes.
 right, both over locomotion. The wave is authored at setup from the loaded
 model's rest pose and `Spine1`/`LeftArm`/`LeftForeArm` names; missing joints disable
 that demonstration with a message. No extra animation download is required.
-`G` and `A` toggle the waves, `1`–`9` cross-fade base clips, `Q` changes base weight
-and Space pauses. The Scene panel's animator inspector shows clip IDs, layer,
+`W`/`S` adjust the left walk/run blend; `R` toggles applying its extracted motion.
+`G` and `A` toggle the waves, `1`–`9` cross-fade the right in-place clip, `Q` changes
+the space weight and Space pauses. Authored footsteps from the dominant member
+print to the console. The Scene panel's animator inspector shows clip IDs, layer,
 mode, mask count and playback controls; stop is applied after traversal.
 
 The animation, IK and Mixamo examples accept `--frames=100 --acceptance` for a
@@ -171,17 +293,32 @@ run means:
 
 | Case | Nodes | Tracks | Actions | CPU mean |
 | --- | ---: | ---: | ---: | ---: |
-| Previous single-action implementation | 69 | 105 | 1 | 0.001005 ms |
-| Single regular action | 69 | 105 | 1 | 0.001282 ms |
-| Base plus masked regular wave | 69 | 312 | 2 | 0.002714 ms |
-| Base, masked regular and additive waves | 69 | 519 | 3 | 0.006030 ms |
+| Single action before runtime motion | 69 | 105 | 1 | 0.001157 ms |
+| Single action with runtime support | 69 | 105 | 1 | 0.001191 ms |
+| Base plus masked regular wave | 69 | 312 | 2 | 0.002727 ms |
+| Base, masked regular and additive waves | 69 | 519 | 3 | 0.006146 ms |
+| Two-clip space with extracted motion | 69 | 210 | 2 | 0.002320 ms |
+| Equivalent three base actions plus masked layer, before | 69 | 522 | 4 | 0.003476 ms |
+| Three-clip space with motion plus masked layer | 69 | 522 | 4 | 0.003745 ms |
 
-Single-action run means ranged from 0.000986–0.001058 ms before and
-0.001151–0.001411 ms after. The extra single-action work is about 0.3 microseconds
-on this rig. These measurements do not justify an executor; they are not a
-general rig-count performance guarantee. WSL verification is build/CPU only.
+The comparison baseline is `b103615`. The three-clip workload uses walk, run and
+a repeated walk slot, parameter 0.5: neighbor weights 0.5/0.5 and an inactive
+third neighbor, plus the masked wave. The baseline uses the same clips/weights
+with independent clocks; it has no space or runtime extraction. This compares
+the equivalent pose workload before and after adding phase and motion work.
+Single-action run means ranged 0.001150–0.001180 ms before and
+0.001186–0.001346 ms after; four-action means ranged 0.003421–0.003558 ms before
+and 0.003631–0.003759 ms after. These measurements do not justify an executor.
+They do not establish performance at crowd scale. WSL verification is build/CPU
+only.
 
-![Regular masked wave on the left, additive wave on the right](images/animation_layers.png)
+The benchmark also consumes ten walk loops at 60 Hz (a shortened final step),
+then compares displacement with ten clip cycles. This rig travels 17.695213 m
+with 0.000017166 m drift, below the 0.001 m limit. This is a CPU motion check;
+no GPU timing is included. The default example separately runs with Vulkan
+validation on Windows.
+
+![Extracted walk/run motion on the left and the in-place comparison on the right](images/animation_motion.png)
 
 ## Sampling
 

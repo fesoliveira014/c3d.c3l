@@ -40,6 +40,28 @@ physics.update(delta);         // builds bodies, runs the fixed steps and the ch
 scene.update_world();          // world matrices of the moved nodes
 ```
 
+## Animation-driven motion
+
+`Scene.move_character_root_motion(node, delta, dt)` converts an animation delta
+into horizontal world velocity and authored facing. It leaves position to the
+physics mover. The node must carry `Character`, world transforms must be current,
+and `dt` must be finite and positive. The delta must be expressed in this node's
+frame; if the animator belongs to a model child with a different orientation or
+scale, convert the delta to the character frame first.
+
+```c3
+anim::update(&assets, &scene, dt);
+scene.update_world();
+if (dt > 0) scene.move_character_root_motion(character_node, animator.root_motion, dt);
+physics.update(dt);
+scene.update_world();
+```
+
+Consume each delta once. Parent-relative and world-space character nodes are
+supported. Turning assumes upright positive uniform scale, as runtime yaw
+extraction does. A nav-driven character instead uses its velocity to choose a
+blend-space parameter; choose one velocity writer per character per frame.
+
 ## Crowd-driven characters
 
 With the `C3D_CHARACTER_NAV` feature, `src/nav/` binds a character to a crowd agent of the nav

@@ -85,6 +85,7 @@ fn AnimationClip? bake_corrected(
             .duration = source.duration,
             .tracks   = alloc::new_array(allocator, Track, (sz)slot_count),
             .targets  = alloc::new_array(allocator, uint, (sz)slot_count),
+            .events   = copy_events(allocator, source.events),
         };
         usz track_slot;
         usz target_count;

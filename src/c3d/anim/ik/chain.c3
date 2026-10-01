@@ -199,15 +199,6 @@ fn float hinge_angle(Quat rotation, Vec3 axis) @local {
     return angle;
 }
 
-// The part of the rotation about the axis; a half-turn swing leaves no twist to measure.
-fn Quat bone_twist(Quat rotation, Vec3 axis) @local {
-    Vec3 imaginary = { rotation.v.x, rotation.v.y, rotation.v.z };
-    Vec3 along = axis * imaginary.dot(axis);
-    float length = math::sqrt(along.dot(along) + rotation.v.w * rotation.v.w);
-    if (length < IK_EPSILON) return quaternion::IDENTITY;
-    return { .v = { along.x / length, along.y / length, along.z / length, rotation.v.w / length } };
-}
-
 fn Quat apply_limit(IkLimit* limit, Quat local) @private {
     Quat relative = limit.reference.conjugate() * local;
     switch (limit.kind) {
@@ -219,7 +210,7 @@ fn Quat apply_limit(IkLimit* limit, Quat local) @private {
                 angle = math::clamp(angle, limit.min_angle, limit.max_angle);
                 return limit.reference * quaternion::from_axis_angle{float}(limit.axis, angle);
             }
-            Quat twist = bone_twist(relative, limit.twist_axis);
+            Quat twist = maths::twist_about(relative, limit.twist_axis);
             float angle = hinge_angle(relative * twist.conjugate(), limit.axis);
             angle = math::clamp(angle, limit.min_angle, limit.max_angle);
             return limit.reference * quaternion::from_axis_angle{float}(limit.axis, angle) * twist;

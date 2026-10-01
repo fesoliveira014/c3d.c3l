@@ -231,6 +231,42 @@ fn bool animator_inspector(void* component) @local {
     Animator* animator = (Animator*)component;
     bool changed;
     AnimationActionId stopped;
+    BlendSpace1D* stopped_space;
+
+    Vec3 motion = animator.root_motion.translation;
+    imgui::text("Root delta: %.3f, %.3f, %.3f", motion.x, motion.y, motion.z);
+    imgui::text("Root turn: %.3f, %.3f, %.3f, %.3f",
+        animator.root_motion.rotation.v.x, animator.root_motion.rotation.v.y,
+        animator.root_motion.rotation.v.z, animator.root_motion.rotation.v.w);
+    imgui::text("Events: %u (%u dropped)", animator.event_count, animator.events_dropped);
+    foreach (event : animator.events[:animator.event_count]) {
+        imgui::text("  %u at %.3fs (action %u:%u)", event.id, event.time, event.action.index, event.action.generation);
+    }
+
+    foreach (index, &space : animator.blend_spaces) {
+        if (!space.count) continue;
+        imgui::push_id_int((int)index + (int)anim::MAX_ACTIONS);
+        defer imgui::pop_id();
+
+        imgui::separator();
+        imgui::text("Blend space %u: %u clips, phase %.3f", (uint)index, space.count, space.phase);
+        changed = imgui::slider_float(
+            label: "Parameter",
+            v: &space.parameter,
+            v_min: space.positions[0],
+            v_max: space.positions[space.count - 1],
+        ) || changed;
+        changed = imgui::slider_float(
+            label: "Weight",
+            v: &space.weight,
+            v_min: 0,
+            v_max: 1,
+        ) || changed;
+        changed = imgui::drag_float("Speed", &space.speed) || changed;
+        changed = imgui::checkbox("Playing", &space.playing) || changed;
+        if (imgui::button("Stop space")) stopped_space = space;
+    }
+
     foreach (id : animator.order[:animator.action_count]) {
         Action* action = animator.action(id);
         imgui::push_id_int((int)id.index);
@@ -239,9 +275,18 @@ fn bool animator_inspector(void* component) @local {
         imgui::separator();
         imgui::text("Clip: %u:%u", action.clip.index, action.clip.generation);
         imgui::text("Layer: %u (%s)", action.layer, action.additive ? "additive" : "regular");
+        ZString mode = action.root_motion == RootMotion.KEEP ? "keep"
+            : action.root_motion == RootMotion.STRIP_XZ ? "strip XZ" : "extract";
+        imgui::text("Root: %s, yaw %s", mode, action.root_yaw ? "yes" : "no");
         usz selected;
         foreach (member : action.mask) if (member) selected++;
         imgui::text("Mask: %llu / %llu nodes", selected, action.mask.len);
+
+        if (action.blend_space) {
+            imgui::text("Space %u owns playback: time %.3f, weight %.3f",
+                action.blend_space - 1, action.time, action.weight);
+            continue;
+        }
 
         changed = imgui::slider_float(
             label: "Weight",
@@ -258,6 +303,10 @@ fn bool animator_inspector(void* component) @local {
 
     if (stopped.generation) {
         animator.stop(stopped)!!;
+        changed = true;
+    }
+    if (stopped_space) {
+        animator.stop_blend_space(stopped_space)!!;
         changed = true;
     }
     return changed;

@@ -3,6 +3,8 @@ module c3d::maths;
 import c3d;
 import std::math;
 
+const float TWIST_EPSILON @private = 1e-5f; // unit-vector tolerance; matches the IK half-turn guard
+
 const float AFFINE_AXIS_TOLERANCE @private = 0.0001f; // cosine between decomposed axes above this is shear, not TRS
 const float PERPENDICULAR_HELPER_LIMIT @private = 0.9f; // an axis this close to X takes Y as its cross-product partner
 const float ANTIPARALLEL_EPSILON @private = 1e-5f; // dot products this close to -1 take the half-turn branch
@@ -277,4 +279,18 @@ fn Quat quat_from_axes(Vec3 axis_x, Vec3 axis_y, Vec3 axis_z) @private {
         0.25f * scale,
         (axis_x.y - axis_y.x) / scale,
     } };
+}
+
+<*
+ Extract rotation about a unit axis, ignoring half-turn swing.
+ @param axis : "Unit twist axis."
+ @require math::abs(axis.length() - 1) < TWIST_EPSILON
+ @pure
+*>
+fn Quat twist_about(Quat rotation, Vec3 axis) {
+    Vec3 imaginary = { rotation.v.x, rotation.v.y, rotation.v.z };
+    Vec3 along = axis * imaginary.dot(axis);
+    float length = math::sqrt(along.dot(along) + rotation.v.w * rotation.v.w);
+    if (length < TWIST_EPSILON) return quaternion::IDENTITY;
+    return { .v = { along.x / length, along.y / length, along.z / length, rotation.v.w / length } };
 }

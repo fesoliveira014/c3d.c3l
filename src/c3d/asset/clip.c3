@@ -3,6 +3,7 @@ module c3d::asset;
 import c3d;
 import c3d::anim;
 import c3d::pool;
+import std::math;
 
 <*
  Animation clip record.
@@ -24,6 +25,10 @@ alias ClipPool = Pool{ClipAsset, ClipId};
 *>
 fn ClipId? AssetStore.add_clip_owned(&self, AnimationClip* clip, String key = "") {
     check_key(self, key)!;
+    validate_clip_events(clip.duration, clip.events)!;
+    for (usz index = 1; index < clip.events.len; index++) {
+        if (clip.events[index].time < clip.events[index - 1].time) return c3d::INVALID_ARGUMENT~;
+    }
     ClipId id = self.clips.add({})!;
     *self.clips.get(id) = {
         .header = { .key = copy_string(self.allocator, key), .revision = 1 },
@@ -39,6 +44,32 @@ fn ClipId? AssetStore.add_clip_owned(&self, AnimationClip* clip, String key = ""
 *>
 fn ClipAsset* AssetStore.clip(&self, ClipId clip) {
     return self.clips.get(clip);
+}
+
+<*
+ Replace authored events with a stable time-sorted copy.
+ @param events : "Copied before replacing the previous table."
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT
+*>
+fn void? AssetStore.set_clip_events(&self, ClipId clip, ClipEvent[] events) {
+    ClipAsset* record = self.clips.try_get(clip)!;
+    validate_clip_events(record.data.duration, events)!;
+    ClipEvent[] copy = alloc::new_array(self.allocator, ClipEvent, events.len);
+    copy[..] = events[..];
+
+    for (usz index = 1; index < copy.len; index++) {
+        ClipEvent value = copy[index];
+        usz position = index;
+        while (position && copy[position - 1].time > value.time) {
+            copy[position] = copy[position - 1];
+            position--;
+        }
+        copy[position] = value;
+    }
+
+    alloc::free(self.allocator, record.data.events.ptr);
+    record.data.events = copy;
+    record.header.revision++;
 }
 
 <*
@@ -75,6 +106,14 @@ fn void free_clip(Allocator allocator, AnimationClip* clip) {
     }
     alloc::free(allocator, clip.tracks.ptr);
     alloc::free(allocator, clip.targets.ptr);
+    alloc::free(allocator, clip.events.ptr);
     alloc::free(allocator, clip.name.ptr);
     *clip = {};
+}
+
+fn void? validate_clip_events(float duration, ClipEvent[] events) @private {
+    foreach (event : events) {
+        if (!math::is_finite(event.time) || !math::is_finite(duration)
+            || event.time < 0 || event.time > duration) return c3d::INVALID_ARGUMENT~;
+    }
 }
