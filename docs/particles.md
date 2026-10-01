@@ -103,9 +103,11 @@ the same build. There is no cross-compiler/version bitwise guarantee.
 The seed is encoded as four little-endian bytes for Sfc32Random. Unit samples
 use the high 24 bits of its integer output. Shape draws precede lifetime, speed,
 size, rotation, spin and the particle's colour seed. Equal scalar endpoints still
-consume a draw. Colour is reconstructed from the stored seed with fixed integer
-hashes, then multiplied by the eight-sample colour table. Scalar and colour
-tables linearly interpolate normalized age/lifetime.
+consume a draw. One fixed integer hash of the stored seed supplies a single
+fraction for the RGBA lerp between `color_min` and `color_max`, then the result
+is multiplied by the eight-sample colour table. Colour endpoints may descend
+in any channel; each endpoint still requires nonnegative finite RGB and alpha
+in [0,1]. Scalar and colour tables linearly interpolate normalized age/lifetime.
 
 ## Draw modes and materials
 
@@ -145,6 +147,7 @@ delivery. Core billboard material restrictions are documented separately.
 python scripts/build.py --example particles
 python scripts/build.py --target particles --opt O3
 addons/c3d_particle.c3l/build/particles.exe --benchmark --frames 300
+addons/c3d_particle.c3l/build/particles.exe --stress --frames 300
 ```
 
 Linux uses `build/particles` without `.exe`. The window shows smoke, additive
@@ -152,13 +155,28 @@ stretched sparks and mesh debris, with emitting/burst controls, wind, smoke
 lighting/soft distance, spark blending and a second camera. Validation is always
 enabled. `--frames N` closes an interactive smoke test after N frames.
 
+The example reads `Renderer.adapter_name`, borrowed until renderer destruction,
+and calls `renderer.log.check_validation()` through core. The latter reports a
+backend validation error retained in the recent diagnostic ring; overwritten
+entries are no longer checked. Neither operation requires importing gpu.c3l.
+
+`--stress` runs only CPU work: one seeded system with 100,000 stretched
+billboards, emitted before timing, 60 warm-up updates and the requested number
+of measured updates. It reports simulation/publication, uncached
+`billboard_world_bounds` and `pack_billboard_records` separately. Every update
+advances the batch revision, so the bounds measurement rebuilds it. Packing
+writes a preallocated CPU array; upload and GPU execution are excluded. The
+printed checksum consumes bounds and packed output. `--stress` and
+`--benchmark` are separate modes.
+
 The headless benchmark uses one 1920x1080 display-output view without AA, 60
 rendered warm-up frames and 300 measured frames per segment. Active simulation
 is prewarmed for twenty simulated seconds. It reports actual live counts and
 matches delayed GPU results to the measured frame range. `--capture-rgba path`
 saves the last display-encoded RGBA8 image for inspection.
 
-Measured on September 30, 2026: Windows x64, NVIDIA GeForce RTX 4090, C3 0.8.3
+Baseline measured before the palette interpolation correction on September 30,
+2026: Windows x64, NVIDIA GeForce RTX 4090, C3 0.8.3
 `-O3`, Vulkan validation on, GPU+INTERNAL profiling, inline simulation. Means over
 300 frames; GPU measurements also contain 300 matched samples.
 
@@ -176,9 +194,27 @@ These are this scene's measurements, not a general performance guarantee. The
 measured CPU update is below the 1 ms executor follow-up threshold; parallel
 execution was not implemented or measured.
 
-Windows acceptance passed all 16 particle CPU tests and six Vulkan cases, with
-validation. Native Linux compilation and all 16 CPU tests also passed in WSL.
-WSL GPU acceptance remains unverified: both the test run and independent
-`vulkaninfo --summary` probes stalled in the local Vulkan environment.
+The 100,000-particle CPU stress baseline at `0e9cd0d` on an Intel Core i9-14900K, Windows x64,
+C3 0.8.3 `-O3`, produced the following medians of three runs. Each run measured
+300 updates after 60 warm-up updates, with 100,000 live and published particles
+throughout. Emission and allocation occur before timing.
+
+| CPU operation | Median | Range of run means |
+| --- | ---: | ---: |
+| Simulation and draw publication | 0.776409 ms | 0.767330–0.780976 ms |
+| Uncached billboard bounds | 0.267105 ms | 0.264326–0.272588 ms |
+| Billboard record packing | 0.600191 ms | 0.592434–0.604158 ms |
+
+Bounds and packing together cost about 0.867 ms in this stress case. Both
+convert every record to world space after a revision change; unchanged bounds
+are cached. This records the cost of that shared conversion without adding a
+second representation or an executor. It excludes emission, upload, sorting
+and rendering, and does not replace the default-scene measurement above.
+
+Windows acceptance passed all 17 particle CPU tests and six Vulkan cases, with
+validation. Native Linux compilation and the earlier 16 CPU tests passed in WSL
+before the palette regression test was added.
+WSL verification is limited to builds and CPU tests. GPU acceptance runs on
+Windows.
 
 ![Smoke, stretched sparks and mesh debris](images/particles.png)

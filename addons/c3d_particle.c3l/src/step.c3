@@ -7,7 +7,6 @@ import std::math::random;
 const float RANDOM_UNIT_SCALE @private = 1.0f / 16777216.0f; // high 24 bits fit a float mantissa exactly
 const uint RANDOM_UNIT_SHIFT @private = 8;
 const float FULL_TURN @private = 2 * (float)math::PI;
-const uint COLOR_SEED_STEP @private = 0x9e3779b9;
 const uint HASH_MULTIPLIER @private = 747796405;
 const uint HASH_INCREMENT @private = 2891336453;
 const uint HASH_OUTPUT_MULTIPLIER @private = 277803737;
@@ -146,11 +145,8 @@ fn uint color_hash(uint value) @private {
 }
 
 fn Vec4 particle_color(ParticleSystem* system, uint index, float life) @private {
-    Vec4 color;
-    for (uint channel = 0; channel < 4; channel++) {
-        uint sample = color_hash(system.seed[index] + channel * COLOR_SEED_STEP);
-        float fraction = (float)(sample >> RANDOM_UNIT_SHIFT) * RANDOM_UNIT_SCALE;
-        color[channel] = system.desc.color_min[channel] * (1 - fraction) + system.desc.color_max[channel] * fraction;
-    }
+    uint sample = color_hash(system.seed[index]);
+    float fraction = (float)(sample >> RANDOM_UNIT_SHIFT) * RANDOM_UNIT_SCALE;
+    Vec4 color = system.desc.color_min * (1 - fraction) + system.desc.color_max * fraction;
     return color * system.desc.color_over_life.sample(life);
 }

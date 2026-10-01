@@ -22,6 +22,40 @@ fn ParticleSystemDesc quiet_desc(uint capacity = 16) @local {
     return desc;
 }
 
+fn void test_initial_colors_share_one_fraction_between_palette_endpoints() @test {
+    Vec4[2] first = { { 1, 0, 0, 1 }, { 1, 0.2f, 0, 0.25f } };
+    Vec4[2] last = { { 0, 0, 1, 1 }, { 0.1f, 0.8f, 1, 0.9f } };
+    ParticleRenderMode[2] modes = { ParticleRenderMode.BILLBOARD, ParticleRenderMode.MESH };
+    foreach (mode : modes) {
+        for (usz palette = 0; palette < first.len; palette++) {
+            Scene scene = make_scene();
+            defer scene::destroy_scene(&scene);
+            ParticleSystemDesc desc = quiet_desc(64);
+            desc.render_mode = mode;
+            desc.color_min = first[palette];
+            desc.color_max = last[palette];
+            Node* emitter = scene.add_particle_system(desc)!!;
+            ParticleSystem* system = scene.get(emitter, ParticleSystem);
+            system.emit_burst(desc.capacity);
+            scene.update_world();
+            particle::update(&scene, 0);
+            Node* draw = scene.node(system.draw_node);
+            assert(system.alive == desc.capacity);
+            for (uint index = 0; index < system.alive; index++) {
+                Vec4 color = mode == ParticleRenderMode.MESH
+                    ? scene.get(draw, InstancedMesh).colors[index]
+                    : scene.get(draw, BillboardBatch).billboards[index].color;
+                float fraction = color.b;
+                assert(fraction >= 0 && fraction <= 1);
+                Vec4 expected = first[palette] * (1 - fraction) + last[palette] * fraction;
+                for (uint channel = 0; channel < 4; channel++) {
+                    assert(math::abs(color[channel] - expected[channel]) <= 1e-6f);
+                }
+            }
+        }
+    }
+}
+
 fn void test_rate_and_burst_counts_with_fractional_credit() @test {
     Scene scene = make_scene();
     defer scene::destroy_scene(&scene);

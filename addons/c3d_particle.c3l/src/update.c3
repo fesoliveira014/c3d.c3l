@@ -20,7 +20,7 @@ fn void update(Scene* scene, float dt, Vec3 wind = {}) {
         Node* emitter = scene.node(entity);
         Node* child = scene.node(system.draw_node);
         child.layers = emitter.layers;
-        step(
+        particle::step(
             system: system,
             emitter_world: emitter.world,
             dt: dt,

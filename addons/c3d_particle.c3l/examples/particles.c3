@@ -10,9 +10,9 @@ import c3d::material;
 import c3d::maths;
 import c3d::particle;
 import c3d::platform;
-import c3d::render @public;
+import c3d::render;
 import c3d::scene;
-import gpu;
+import c3d::spatial;
 import imgui;
 import std::io;
 import std::io::file;
@@ -26,6 +26,7 @@ const uint SPRITE_SIZE @local = 64;
 const uint SMOKE_CAPACITY @local = 8192; // about 1 MiB of simulation and scene draw data
 const uint SPARK_CAPACITY @local = 4096;
 const uint DEBRIS_CAPACITY @local = 1024;
+const uint STRESS_CAPACITY @local = 100_000; // about 17 MiB of pool, draw and packed records
 const uint DEFAULT_BENCHMARK_FRAMES @local = 300;
 const uint WARMUP_FRAMES @local = 60; // warm pipelines, uploads and delayed timestamp readback
 const uint PREWARM_STEPS @local = 1200; // twenty simulated seconds mix the ages before steady-state measurements
@@ -36,6 +37,7 @@ const ZString[3] EFFECT_NAMES @local = { "Smoke", "Sparks", "Debris" };
 
 struct Options @local {
     bool benchmark;
+    bool stress;
     bool limit_frames;
     uint frames;
     String capture_rgba;
@@ -221,16 +223,6 @@ fn void set_emission(Demo* demo, bool active) @local {
     }
 }
 
-fn void? check_validation(Renderer* renderer) @local {
-    DebugEntry[render::DEBUG_LOG_ENTRIES] entries;
-    usz count = renderer.log.recent(entries[..]);
-    foreach (entry : entries[:count]) {
-        if (entry.category.backend && entry.category.validation && entry.severity == gpu::DebugMessageSeverity.ERROR) {
-            return gpu::BACKEND_ERROR~;
-        }
-    }
-}
-
 fn void report_metrics(String segment, Metrics totals, uint frames) @local {
     io::printfn("%s,update_ms,%.6f", segment, totals.update_ms / frames);
     io::printfn("%s,frame_cpu_ms,%.6f", segment, totals.frame_ms / frames);
@@ -267,10 +259,7 @@ fn void? run_benchmark(Options options) @local {
     ViewDesc desc = render::texture_view_desc(target, OutputMode.DISPLAY_LDR);
     desc.post.anti_aliasing = AntiAliasing.NONE;
     ViewId view = render::create_view(&renderer, desc)!;
-    gpu::DeviceDesc device_desc;
-    gpu::Adapter adapter = render::select_adapter(&renderer.runtime, &device_desc)!;
-    gpu::AdapterInfo adapter_info = gpu::get_adapter_info(&adapter)!;
-    io::printfn("adapter,%s", adapter_info.name);
+    io::printfn("adapter,%s", renderer.adapter_name);
     io::printfn("resolution,%dx%d", WIDTH, HEIGHT);
     io::printfn("frames,%d", options.frames);
     io::printn("validation,on");
@@ -324,7 +313,66 @@ fn void? run_benchmark(Options options) @local {
         renderer.read_render_target(target, pixels)!;
         file::save(options.capture_rgba, pixels)!;
     }
-    return check_validation(&renderer);
+    return renderer.log.check_validation();
+}
+
+fn void? run_stress(uint frames) @local {
+    Scene scene = scene::create_scene(mem, { .max_nodes = 2 });
+    defer scene::destroy_scene(&scene);
+    particle::register_particles(&scene)!;
+    ParticleSystemDesc desc = particle::default_particle_system_desc();
+    desc.capacity = STRESS_CAPACITY;
+    desc.rate = 0;
+    desc.render_mode = STRETCHED;
+    desc.shape = CONE;
+    desc.radius = 1;
+    desc.cone_angle = 0.5f;
+    desc.lifetime.min = (float)(((double)frames + WARMUP_FRAMES + 1) * STEP_SECONDS + 1);
+    desc.lifetime.max = desc.lifetime.min;
+    desc.speed = { .min = 1, .max = 3 };
+    desc.size = { .min = 0.1f, .max = 0.2f };
+    desc.spin = { .min = -1, .max = 1 };
+    desc.gravity_scale = 0.1f;
+    desc.drag = 0.2f;
+    desc.stretch = 0.1f;
+    desc.size_over_life.values = { 1, 1.1f, 1.2f, 1.3f, 1.4f, 1.5f, 1.6f, 1.7f };
+    Node* emitter = scene.add_particle_system(desc)!;
+    ParticleSystem* system = scene.get(emitter, ParticleSystem);
+    system.emit_burst(STRESS_CAPACITY);
+    scene.update_world();
+    particle::update(&scene, 0);
+    Node* child = scene.node(system.draw_node);
+    BillboardBatch* batch = scene.get(child, BillboardBatch);
+    BillboardGpu[] records = mem::new_array(BillboardGpu, STRESS_CAPACITY);
+    defer free(records);
+    double update_ms;
+    double bounds_ms;
+    double pack_ms;
+    double checksum;
+    for (ulong frame = 0; frame < (ulong)WARMUP_FRAMES + frames; frame++) {
+        time::Clock started = clock::now();
+        particle::update(&scene, STEP_SECONDS, { 0.4f, 0, 0 });
+        double updated = elapsed_ms(started);
+        started = clock::now();
+        Aabb bounds = spatial::billboard_world_bounds(child, batch);
+        double bounded = elapsed_ms(started);
+        started = clock::now();
+        render::pack_billboard_records(records, child.world, batch);
+        double packed = elapsed_ms(started);
+        checksum += (double)(bounds.max.x + records[frame % STRESS_CAPACITY].position_width.x);
+        if (frame >= WARMUP_FRAMES) {
+            update_ms += updated;
+            bounds_ms += bounded;
+            pack_ms += packed;
+        }
+    }
+    io::printfn("stress,frames,%d", frames);
+    io::printfn("stress,alive,%d", system.alive);
+    io::printfn("stress,draw_count,%d", batch.count);
+    io::printfn("stress,update_ms,%.6f", update_ms / frames);
+    io::printfn("stress,billboard_bounds_ms,%.6f", bounds_ms / frames);
+    io::printfn("stress,billboard_pack_ms,%.6f", pack_ms / frames);
+    io::printfn("stress,checksum,%.6f", checksum);
 }
 
 fn void? configure_split(Renderer* renderer, ViewId second, bool split) @local {
@@ -452,7 +500,7 @@ fn void? run_interactive(Options options) @local {
             renderer.end_frame()!;
         };
     }
-    return check_validation(&renderer);
+    return renderer.log.check_validation();
 }
 
 fn String? option_value(String[] args, usz* index) @local {
@@ -466,6 +514,7 @@ fn Options? parse_options(String[] args) @local {
     for (usz index = 1; index < args.len; index++) {
         switch (args[index]) {
             case "--benchmark": options.benchmark = true;
+            case "--stress": options.stress = true;
             case "--frames":
                 options.frames = option_value(args, &index)!.to_uint()!;
                 options.limit_frames = true;
@@ -473,7 +522,8 @@ fn Options? parse_options(String[] args) @local {
             default: return c3d::INVALID_ARGUMENT~;
         }
     }
-    if (!options.frames || (options.capture_rgba.len && !options.benchmark)) return c3d::INVALID_ARGUMENT~;
+    if (!options.frames || (options.stress && options.benchmark)
+        || (options.capture_rgba.len && !options.benchmark)) return c3d::INVALID_ARGUMENT~;
     return options;
 }
 
@@ -484,11 +534,12 @@ fn int main(String[] args) {
     Options? parsed = parse_options(args);
     if (catch excuse = parsed) {
         io::eprintfn("Invalid options: %s", excuse);
-        io::eprintn("Use [--benchmark] [--frames count] [--capture-rgba path].");
+        io::eprintn("Use [--benchmark | --stress] [--frames count] [--capture-rgba path].");
         return 1;
     }
     Options options = parsed;
-    if (catch excuse = (options.benchmark ? run_benchmark(options) : run_interactive(options))) {
+    if (catch excuse = (options.stress ? run_stress(options.frames)
+        : options.benchmark ? run_benchmark(options) : run_interactive(options))) {
         io::eprintfn("Particles failed: %s", excuse);
         return 1;
     }

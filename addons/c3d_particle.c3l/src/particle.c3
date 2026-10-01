@@ -149,14 +149,14 @@ fn Node*? Scene.add_particle_system(
     system.block = alloc::malloc(self.allocator, (sz)particle_pool_bytes(desc.capacity));
     defer catch alloc::free(self.allocator, system.block);
     usz cursor;
-    system.position = @pool_slice(Vec3, &system, &cursor);
-    system.velocity = @pool_slice(Vec3, &system, &cursor);
-    system.age = @pool_slice(float, &system, &cursor);
-    system.lifetime = @pool_slice(float, &system, &cursor);
-    system.size = @pool_slice(float, &system, &cursor);
-    system.rotation = @pool_slice(float, &system, &cursor);
-    system.spin = @pool_slice(float, &system, &cursor);
-    system.seed = @pool_slice(uint, &system, &cursor);
+    system.position = @carve_stream(Vec3, &system, &cursor);
+    system.velocity = @carve_stream(Vec3, &system, &cursor);
+    system.age = @carve_stream(float, &system, &cursor);
+    system.lifetime = @carve_stream(float, &system, &cursor);
+    system.size = @carve_stream(float, &system, &cursor);
+    system.rotation = @carve_stream(float, &system, &cursor);
+    system.spin = @carve_stream(float, &system, &cursor);
+    system.seed = @carve_stream(uint, &system, &cursor);
     char[uint::size] seed_bytes;
     foreach (index, &value : seed_bytes) *value = (char)(desc.seed >> (index * SEED_BYTE_BITS));
     system.random.set_seed(seed_bytes[..]);
@@ -232,7 +232,7 @@ fn usz particle_pool_bytes(uint capacity) @private {
     return particle_align(cursor, uint::alignment) + (usz)capacity * uint::size;
 }
 
-macro @pool_slice($Type, ParticleSystem* system, usz* cursor) @private {
+macro @carve_stream($Type, ParticleSystem* system, usz* cursor) @private {
     $assert $Type::alignment <= mem::DEFAULT_MEM_ALIGNMENT;
     usz offset = particle_align(*cursor, $Type::alignment);
     *cursor = offset + (usz)system.desc.capacity * $Type::size;
@@ -268,9 +268,6 @@ fn void? check_particle_desc(ParticleSystemDesc* desc) @private {
         if (!math::is_finite(desc.half_extents[axis]) || desc.half_extents[axis] < 0) return c3d::INVALID_ARGUMENT~;
     }
     if (!valid_particle_color(desc.color_min) || !valid_particle_color(desc.color_max)) return c3d::INVALID_ARGUMENT~;
-    for (usz channel = 0; channel < 4; channel++) {
-        if (desc.color_min[channel] > desc.color_max[channel]) return c3d::INVALID_ARGUMENT~;
-    }
     foreach (value : desc.size_over_life.values) {
         if (!math::is_finite(value) || value < 0) return c3d::INVALID_ARGUMENT~;
     }
