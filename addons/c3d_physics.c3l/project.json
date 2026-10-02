@@ -23,6 +23,10 @@
       "type": "test",
       "sources": [ "test/**" ]
     },
+    "breakable": {
+      "type": "executable",
+      "sources": [ "examples/breakable.c3", "examples/breakable_bench.c3" ]
+    },
     "physics": {
       "type": "executable",
       "sources": [ "examples/physics.c3" ]

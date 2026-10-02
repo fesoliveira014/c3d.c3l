@@ -741,7 +741,7 @@ fn void remove_joint_component(Entity entity, void* component, void* user) @priv
     if (joint.joint.is_valid()) b3::destroy_joint(joint.joint, true);
 }
 
-fn b3::Transform body_frame(maths::Transform frame) @local => { .p = frame.position, .q = frame.rotation };
+fn b3::Transform body_frame(maths::Transform frame) @private => { .p = frame.position, .q = frame.rotation };
 
 // WELD, MOTOR and PARALLEL have no enable flag: hertz 0 is their off switch.
 fn float spring_hertz(JointSpring spring) @local => spring.enabled ? spring.hertz : 0;

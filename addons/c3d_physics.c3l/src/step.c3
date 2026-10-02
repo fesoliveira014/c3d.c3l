@@ -19,11 +19,14 @@ fn void PhysicsWorld.update(&self, float dt) {
     self.sensor_begin_count = 0;
     self.sensor_end_count = 0;
     self.joint_event_count = 0;
+    self.break_count = 0;
     self.failure_count = 0;
     self.dropped_events = 0;
     drive_ragdolls(self);
+    prune_breakables(self);
     sync_bodies(self);
     sync_joints(self);
+    sync_breakables(self);
 
     float fixed_dt = self.desc.tuning.fixed_dt;
     self.accumulator += dt;
@@ -98,6 +101,7 @@ fn void end_step(PhysicsWorld* world) @local {
     }
     foreach (event : world.world.contact_hit_events()) {
         push_hit(world, event);
+        collect_breakable_hit(world, event);
     }
     foreach (event : world.world.sensor_begin_touch_events()) {
         push_sensor(
@@ -118,14 +122,16 @@ fn void end_step(PhysicsWorld* world) @local {
         );
     }
     foreach (event : world.world.joint_events()) {
+        Node* node = world.scene.node(unpack_entity(event.user_data));
+        if (breakable_joint_event(world, node, event.joint_id)) continue;
         if (world.joint_event_count == world.joint_event_storage.len) {
             world.dropped_events++;
             continue;
         }
-        Node* node = world.scene.node(unpack_entity(event.user_data));
         Entity other = world.scene.get(node, Joint).other;
         world.joint_event_storage[world.joint_event_count++] = { .node = node, .other = world.scene.node(other) };
     }
+    finish_breakable_step(world);
 }
 
 fn void push_contact(
@@ -226,12 +232,26 @@ fn void push_failure(PhysicsWorld* world, Node* node, fault excuse) @private {
 
 // Replaces any body still on the node: a rebuild, or an orphan whose PhysicsBody left this frame.
 fn void? build_body(PhysicsWorld* world, Node* node, PhysicsBody* physics_body) @private {
+    maths::Transform pose = maths::transform_from_mat4(node.world);
+    pose.scale = { 1, 1, 1 };
+    build_body_at(
+        world: world,
+        node: node,
+        physics_body: physics_body,
+        pose: pose,
+    )!;
+}
+
+fn void? build_body_at(
+    PhysicsWorld* world,
+    Node* node,
+    PhysicsBody* physics_body,
+    maths::Transform pose,
+) @private {
     if (world.scene.has(node, RigidBody)) world.scene.remove_component(node, RigidBody);
     BodyDesc desc = physics_body.body;
     foreach (&collider : physics_body.colliders) check_collider(world, collider, desc.kind)!;
 
-    maths::Transform pose = maths::transform_from_mat4(node.world);
-    pose.scale = { 1, 1, 1 };
     b3::BodyDef def = b3::default_body_def();
     def.type = body_type(desc.kind);
     def.position = (b3::Pos)pose.position;

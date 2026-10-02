@@ -45,6 +45,7 @@ PARTICLE = ROOT / "addons" / "c3d_particle.c3l"
 ADDON_EXAMPLES = {
     "capture": PROFILE,
     "physics": PHYSICS,
+    "breakable": PHYSICS,
     "physics_instanced": PHYSICS,
     "physics_components": PHYSICS,
     "vehicle": PHYSICS,
