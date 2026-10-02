@@ -34,6 +34,11 @@ const uint INSTANCE_SORT_MERGE = 4u;
 const uint INSTANCE_SORT_WRITE_LIST = 8u;
 const uint INSTANCE_KIND_MESH = 0u;
 const uint INSTANCE_KIND_BILLBOARD = 1u;
+const uint INSTANCE_KIND_LOD = 2u;
+const uint LOD_SELECT = 1u;
+const uint LOD_CULL = 2u;
+const uint LOD_FINALIZE = 3u;
+const uint LOD_LEVEL_COUNT = 5u;
 const uint BILLBOARD_CAMERA = 0u;
 const uint BILLBOARD_DIRECTIONAL = 1u;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8u;
@@ -301,6 +306,37 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer DrawRoot {
     uint skin_stride;
     uint64_t instance_indices;
     uint64_t instance_effects;
+    uint64_t lod_part;
+    uint _pad0;
+    uint _pad1;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer LodPartGpu {
+    mat4 local;
+    vec4 normal_0;
+    vec4 normal_1;
+    vec4 normal_2;
+    uint64_t current;
+    uint64_t previous;
+    uint reject_history;
+    float seed;
+    uint _pad1;
+    uint _pad2;
+};
+
+struct LodMetadataGpu {
+    uint generation;
+    uint parity;
+    uint _pad0;
+    uint _pad1;
+};
+
+struct LodHistoryGpu {
+    mat4 model;
+    uint level;
+    uint generation;
+    uint reject_history;
+    uint _pad0;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer PreviousPoseGpu {
@@ -325,6 +361,23 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer InstanceCul
     uint kind;
     uint _pad3;
     vec4 depth_axis;
+    uint64_t lod_current;
+    uint64_t lod_previous;
+    uint64_t lod_metadata;
+    uint _pad7;
+    uint _pad8;
+    vec4 lod_thresholds[2];
+    vec4 lod_camera_bias;
+    vec4 lod_projection;
+    vec4 lod_reach;
+    uint lod_mode;
+    uint lod_level;
+    uint lod_parity;
+    uint lod_history_valid;
+    uint lod_level_count;
+    uint _pad4;
+    uint _pad5;
+    uint _pad6;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer InstanceSortRoot {

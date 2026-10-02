@@ -11,7 +11,7 @@ import c3d::scene;
  @param [&inout] scene : "Owns the new nodes and instance arrays."
  @param [in] parent : "Null means the scene root."
  @param name : "Copied into the scene allocator."
- @return? c3d::INVALID_ID, c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ID, c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED
 *>
 fn Node*? instantiate(
     AssetStore* assets,
@@ -40,7 +40,24 @@ fn Node*? instantiate(
 
     foreach (index, &node_template : template.nodes) {
         Node* node_parent = node_template.parent < 0 ? root : nodes[node_template.parent];
-        Node* node = scene.add_node(node_parent, node_template.name)!;
+        ModelLodGroup* group;
+        foreach (&candidate : template.lod_groups) {
+            if (candidate.node == index) {
+                group = candidate;
+                break;
+            }
+        }
+        Node* node;
+        if (group) {
+            node = scene.add_lod_group(
+                assets: assets,
+                desc: group.desc,
+                parent: node_parent,
+                name: node_template.name,
+            )!;
+        } else {
+            node = scene.add_node(node_parent, node_template.name)!;
+        }
         node.local = node_template.local;
         node.layers = node_template.layers;
         node.visible = node_template.visible;

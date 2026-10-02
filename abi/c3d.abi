@@ -183,6 +183,37 @@ root DrawRoot {
     uint       skin_stride;
     GpuAddress instance_indices;
     GpuAddress instance_effects;
+    GpuAddress lod_part;
+    uint       _pad0;
+    uint       _pad1;
+}
+
+root LodPartGpu {
+    mat4 local;
+    vec4 normal_0;
+    vec4 normal_1;
+    vec4 normal_2;
+    GpuAddress current;
+    GpuAddress previous;
+    uint reject_history;
+    float seed;
+    uint _pad1;
+    uint _pad2;
+}
+
+struct LodMetadataGpu {
+    uint generation;
+    uint parity;
+    uint _pad0;
+    uint _pad1;
+}
+
+struct LodHistoryGpu {
+    mat4 model;
+    uint level;
+    uint generation;
+    uint reject_history;
+    uint _pad0;
 }
 
 root PreviousPoseGpu {
@@ -203,6 +234,11 @@ const uint INSTANCE_SORT_WRITE_LIST = 8;
 
 const uint INSTANCE_KIND_MESH = 0;
 const uint INSTANCE_KIND_BILLBOARD = 1;
+const uint INSTANCE_KIND_LOD = 2;
+const uint LOD_SELECT = 1;
+const uint LOD_CULL = 2;
+const uint LOD_FINALIZE = 3;
+const uint LOD_LEVEL_COUNT = 5;
 const uint BILLBOARD_CAMERA = 0;
 const uint BILLBOARD_DIRECTIONAL = 1;
 
@@ -221,6 +257,23 @@ root InstanceCullRoot {
     uint       kind;
     uint       _pad3;
     vec4       depth_axis;
+    GpuAddress lod_current;
+    GpuAddress lod_previous;
+    GpuAddress lod_metadata;
+    uint       _pad7;
+    uint       _pad8;
+    vec4[2]    lod_thresholds;
+    vec4       lod_camera_bias;
+    vec4       lod_projection;
+    vec4       lod_reach;
+    uint       lod_mode;
+    uint       lod_level;
+    uint       lod_parity;
+    uint       lod_history_valid;
+    uint       lod_level_count;
+    uint       _pad4;
+    uint       _pad5;
+    uint       _pad6;
 }
 
 root InstanceSortRoot {

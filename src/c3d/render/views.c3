@@ -62,6 +62,7 @@ struct ViewDesc {
     RenderTargetId       target;
     PixelRect            viewport;
     float                render_scale;
+    float                lod_bias;
     OutputMode           color;
     PostStack            post;
     ShadingPath          shading;
@@ -395,6 +396,7 @@ struct ViewRecord {
     ProjectionTerms                      projection_terms;
     float                                exposure;
     ViewHistory                          history;
+    LodHistoryEntry[]                    lod_history;
     gpu::TextureState[VIEW_TARGET_COUNT] frame_states;
     ClusterBuffers                       clusters;
     gpu::GpuAddress                      cluster_root;
@@ -733,9 +735,11 @@ fn void? reset_view_history(Renderer* renderer, ViewId view) {
     ViewRecord* record = renderer.views.try_get(view)!;
     record.history.valid = false;
     record.history.pending = false;
+    reset_lod_history(record.lod_history);
 }
 
 fn void? validate_view_desc(Renderer* renderer, ViewDesc* desc) @private {
+    if (!math::is_finite(desc.lod_bias)) return c3d::INVALID_ARGUMENT~;
     if (!clip_plane_valid(desc.clip_plane)) return c3d::INVALID_ARGUMENT~;
     if (!ambient_occlusion_desc_valid(&desc.ambient_occlusion)) return c3d::INVALID_ARGUMENT~;
     if (!screen_space_gi_desc_valid(&desc.screen_space_gi)) return c3d::INVALID_ARGUMENT~;
@@ -858,6 +862,8 @@ fn void release_view_images(Renderer* renderer, ViewRecord* record) @private {
     post::release_post_targets(&renderer.device, record);
     post::release_effect_targets(&renderer.device, record);
     free_view_history(renderer.allocator, &record.history);
+    free_lod_history(renderer, record.lod_history);
+    record.lod_history = {};
 }
 
 fn void? resize_view(Renderer* renderer, ViewRecord* record) @private {

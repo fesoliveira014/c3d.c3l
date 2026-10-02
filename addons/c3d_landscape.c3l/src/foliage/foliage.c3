@@ -63,6 +63,7 @@ struct ScatterRules {
 struct FoliageDesc {
     GeometryId   geometry;
     MaterialId   material;
+    LodDesc*     lod;       // copied when set; replaces the geometry/material pair
     Entity       ground;    // node carrying the Terrain the layer grows on
     float        cell_size; // metres along a cell edge; the grid covers the ground's extent
     ScatterRules rules;
@@ -165,7 +166,9 @@ fn void? add_foliage(
     FoliageDesc desc,
 ) {
     check_desc(&desc)!;
-    if (!assets.geometries.is_live(desc.geometry) || !assets.materials.is_live(desc.material)) {
+    if (desc.lod) {
+        scene::validate_lod_desc(assets, *desc.lod, LodMode.INSTANCED)!;
+    } else if (!assets.geometries.is_live(desc.geometry) || !assets.materials.is_live(desc.material)) {
         return c3d::INVALID_ID~;
     }
     ScatterFrame frame = scatter_frame(
@@ -183,12 +186,12 @@ fn void? add_foliage(
         node:   node,
         desc:   &desc,
     )!;
-    FoliageRuntime runtime = create_runtime(scene.allocator, cells_per_side)!;
+    FoliageRuntime runtime = create_runtime(scene.allocator, cells_per_side, desc)!;
     defer catch free_runtime(&runtime);
-    runtime.desc = desc;
     runtime.sway = layer_sway(desc.sway, {});
     rescatter(
         scene:   scene,
+        assets:  assets,
         node:    node,
         desc:    &desc,
         frame:   &frame,
@@ -196,7 +199,7 @@ fn void? add_foliage(
     )!;
     runtime.placed = inputs;
 
-    scene.add(node, (Foliage){ .desc = desc });
+    scene.add(node, (Foliage){ .desc = runtime.desc });
     scene.add(node, runtime);
 }
 
@@ -354,6 +357,7 @@ fn void? rescatter_from(
     )!;
     return rescatter(
         scene:   scene,
+        assets:  assets,
         node:    node,
         desc:    desc,
         frame:   &frame,
@@ -410,7 +414,15 @@ fn void apply_wind(
     runtime.wind_velocity = wind_velocity;
     runtime.sway = layer_sway(template, wind_velocity);
     foreach (cell : runtime.cells) {
-        if (cell.generation) scene.world.get(cell, InstancedMesh).sway = runtime.sway;
+        if (!cell.generation) continue;
+        if (runtime.desc.lod) {
+            LodGroupState* state = scene.world.get(cell, LodGroup).state;
+            LodEffects effects = state.effects;
+            effects.sway = runtime.sway;
+            scene.set_lod_effects(scene.node(cell), effects);
+        } else {
+            scene.world.get(cell, InstancedMesh).sway = runtime.sway;
+        }
     }
 }
 

@@ -958,3 +958,121 @@ fn void test_removed_foliage_releases_its_cells() @test {
     update_landscape(&fixture);
     assert(!fixture.scene.world.is_alive(second_cell));
 }
+
+fn void test_foliage_lod_preserves_scatter_and_owns_descriptors() @test {
+    TrackingAllocator tracking;
+    tracking.init(mem);
+    defer tracking.free();
+    Fixture fixture;
+    setup(&fixture, allocator: &tracking);
+    Node* ground = add_ground(&fixture, RANDOM);
+    FoliageDesc desc = layer_desc(&fixture, ground);
+    desc.sway = TEST_SWAY;
+    desc.trace = true;
+    Node* plain = add_layer(&fixture, desc);
+    LodLevel[2] levels = {
+        { .part_count = 2, .min_screen_size = 0.2f },
+        { .first_part = 2, .part_count = 1 },
+    };
+    LodPart[3] parts;
+    parts[..] = { .geometry = fixture.geometry, .material = fixture.material, .local = maths::TRANSFORM_IDENTITY.to_mat4() };
+    LodDesc lod = { .levels = levels[..], .parts = parts[..] };
+    desc.lod = &lod;
+    Node* grouped = add_layer(&fixture, desc);
+    levels[..] = {};
+    parts[..] = {};
+    lod = {};
+
+    FoliageRuntime* runtime = runtime_of(&fixture, grouped);
+    assert(runtime.desc.lod != &lod && runtime.desc.lod.levels[0].part_count == 2);
+    LodGroupState* first = fixture.scene.world.get(runtime.cells[0], LodGroup).state;
+    ulong identity = first.identity;
+    ulong epoch = first.instance_epoch;
+    assert(first.desc.parts.ptr != runtime.desc.lod.parts.ptr);
+    update_landscape(&fixture, GALE_WIND);
+    assert(first.identity == identity && first.instance_epoch == epoch);
+    assert(first.effects.sway.amplitude == TEST_SWAY.amplitude && first.effects.trace);
+    assert(first.effects.fade.end == desc.fade.end);
+    assert_plain_and_lod_scatter(&fixture, plain, grouped);
+
+    stamp(&fixture, ground, { .x = 0, .z = 0, .columns = EDIT_SIDE, .rows = EDIT_SIDE });
+    update_landscape(&fixture, GALE_WIND);
+    assert(first.instance_epoch != epoch);
+    assert_plain_and_lod_scatter(&fixture, plain, grouped);
+    Entity cell = runtime_of(&fixture, grouped).cells[0];
+    fixture.scene.remove_component(grouped, Foliage);
+    update_landscape(&fixture);
+    assert(!fixture.scene.world.is_alive(cell) && !fixture.scene.has(grouped, FoliageRuntime));
+    teardown(&fixture);
+    assert(tracking.allocation_count() == 0);
+}
+
+fn void test_foliage_lod_allocation_failure_is_atomic() @test {
+    TrackingAllocator tracking;
+    tracking.init(mem);
+    defer tracking.free();
+    FailingAllocator failing = { .backing = &tracking };
+    Fixture fixture;
+    setup(&fixture, allocator: &failing);
+    Node* ground = add_ground(&fixture, FLAT);
+    LodLevel[1] levels = { { .part_count = 1 } };
+    LodPart[1] parts = { {
+        .geometry = fixture.geometry,
+        .material = fixture.material,
+        .local = maths::TRANSFORM_IDENTITY.to_mat4(),
+    } };
+    LodDesc lod = { .levels = levels[..], .parts = parts[..] };
+    char[4] partial = { 64, 0, 0, 0 };
+    TextureId density = add_density_map(&fixture, 1, partial[..]);
+    FoliageDesc desc = layer_desc(&fixture, ground, density);
+    desc.lod = &lod;
+    desc.cell_size = EXTENT * 0.5f;
+    Node* layer = fixture.scene.add_node()!!;
+    fixture.scene.update_world();
+    for (uint fail_at = 1; ; fail_at++) {
+        sz allocations = tracking.allocation_count();
+        uint free_nodes = fixture.scene.world.entities.free_count;
+        failing.sized = 0;
+        failing.fail_at = fail_at;
+        fault excuse = @catch(try_add_layer(&fixture, layer, desc));
+        failing.fail_at = 0;
+        if (!excuse) break;
+        assert(excuse == c3d::CAPACITY_EXCEEDED);
+        assert(tracking.allocation_count() == allocations);
+        assert(fixture.scene.world.entities.free_count == free_nodes && !layer.first_child);
+    }
+    LodGroupState* first = fixture.scene.world.get(runtime_of(&fixture, layer).cells[0], LodGroup).state;
+    ulong identity = first.identity;
+    uint count = first.count;
+    char[4] full = { 255, 0, 0, 0 };
+    write_density(&fixture, density, full[..]);
+    failing.sized = 0;
+    failing.fail_at = 2;
+    sz allocations = tracking.allocation_count();
+    assert(@catch(try_update(&fixture)) == c3d::CAPACITY_EXCEEDED);
+    failing.fail_at = 0;
+    assert(tracking.allocation_count() == allocations);
+    assert(first.identity == identity && first.count == count);
+    fixture.assets.mark_texture_dirty(density);
+    update_landscape(&fixture);
+    first = fixture.scene.world.get(runtime_of(&fixture, layer).cells[0], LodGroup).state;
+    assert(first.identity != identity && first.count > count);
+    teardown(&fixture);
+    assert(tracking.allocation_count() == 0);
+}
+
+fn void assert_plain_and_lod_scatter(Fixture* fixture, Node* plain, Node* grouped) @local {
+    FoliageRuntime* runtime = runtime_of(fixture, grouped);
+    assert(runtime.instances == runtime_of(fixture, plain).instances);
+    foreach (usz index, cell : runtime.cells) {
+        InstancedMesh* batch = cell_batch(fixture, plain, index);
+        assert((batch != null) == (cell.generation != 0));
+        if (!batch) continue;
+        LodGroupState* state = fixture.scene.world.get(cell, LodGroup).state;
+        assert(state.count == batch.count);
+        for (uint slot = 0; slot < batch.count; slot++) {
+            assert(state.transforms[slot].to_mat4() == batch.transforms[slot].to_mat4());
+            assert(state.colors[slot] == batch.colors[slot]);
+        }
+    }
+}

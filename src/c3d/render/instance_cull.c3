@@ -13,7 +13,8 @@ import std::math;
 const usz INSTANCE_CULL_ARENA_BYTES = 16 << 20; // per slot on the device; instances x culling passes; 100k: 6 x 400 KB culled, 1.45 MB sorted
 
 const usz CULL_ARGS_STRIDE @private = 32; // one indirect command at STREAM_ALIGNMENT
-const usz CULL_COUNTER_BYTES @private = 16; // the frame's visible counter, first in the arena, at STREAM_ALIGNMENT
+const usz CULL_COUNTER_BYTES @private = 48; // one batch counter and five selected/visible LOD counters, aligned for copies
+$assert scene::MAX_LOD_LEVELS == shader::LOD_LEVEL_COUNT;
 
 struct CullArena @private {
     gpu::GpuAllocation allocation;
@@ -27,6 +28,9 @@ struct CullReadback @private {
     gpu::MappedGpuSpan mapped;
     uint               tested;
     bool               pending;
+    uint               lod_tested;
+    uint               lod_fallbacks;
+    ulong              frame_index;
 }
 
 struct BatchAddresses @private {
@@ -49,6 +53,9 @@ struct CullItem @private {
     gpu::GpuAddress args_address;
     gpu::GpuAddress keys_address;
     gpu::GpuAddress effects;
+    gpu::GpuAddress lod_count;
+    bool main_view;
+    bool lod_reuse;
 }
 
 <*
@@ -87,6 +94,7 @@ fn bool instance_visible(
 }
 
 fn Aabb? cull_bound(MeshCandidate* candidate, GpuGeometry* geometry) @private {
+    if (candidate.lod) return candidate.lod.state.object_bounds;
     if (candidate.billboards) return candidate.world_bounds;
     if (candidate.crowd) return candidate.crowd.pose_bounds;
     if (candidate.batch.has_bounds_override) return NO_INSTANCE_BOUND~;
@@ -111,7 +119,7 @@ fn usz? arena_place(CullArena* arena, usz bytes) @private {
     return offset;
 }
 
-fn uint instance_offset(CullRange* range) @private => range.culled ? 0 : range.first;
+fn uint instance_offset(CullRange* range) @private => range.culled || range.indexed ? 0 : range.first;
 
 fn gpu::GpuAddress offset_by_instances(gpu::GpuAddress base, uint instances, usz stride) @private {
     if (base == (gpu::GpuAddress)0) return base;
@@ -129,9 +137,9 @@ fn BatchAddresses batch_addresses(
     BatchAddresses addresses = {
         .skin             = skin,
         .morph            = morph,
-        .instance_indices = range.culled ? range.visible : (gpu::GpuAddress)0,
+        .instance_indices = range.culled || range.indexed ? range.visible : (gpu::GpuAddress)0,
     };
-    if (candidate.batch) addresses.instance_data = offset_by_instances(records, offset, InstanceGpu::size);
+    if (candidate.batch || candidate.lod) addresses.instance_data = offset_by_instances(records, offset, InstanceGpu::size);
     if (candidate.billboards) addresses.instance_data = offset_by_instances(records, offset, BillboardGpu::size);
     if (candidate.crowd) {
         addresses.skin = offset_by_instances(skin, offset, (usz)candidate.crowd.joint_count * Mat4f::size);
@@ -174,6 +182,8 @@ fn void reset_instance_culling(Renderer* renderer, uint slot_index) @private {
     renderer.cull_arenas[slot_index].head = CULL_COUNTER_BYTES;
     renderer.cull_counter_cleared = false;
     renderer.cull_tested = 0;
+    renderer.cull_lod_tested = 0;
+    renderer.cull_lod_fallbacks = 0;
 }
 
 fn CullItem[] batch_cull_items(
@@ -184,12 +194,12 @@ fn CullItem[] batch_cull_items(
 ) @private {
     usz count;
     foreach (group : groups) foreach (&item : group) {
-        if (item.candidate.batch || item.candidate.billboards) count++;
+        if (candidate_instanced(item.candidate)) count++;
     }
     CullItem[] culls = alloc::new_array(tmem, CullItem, (sz)count);
     usz filled;
     foreach (group : groups) foreach (&item : group) {
-        if (!item.candidate.batch && !item.candidate.billboards) continue;
+        if (!candidate_instanced(item.candidate)) continue;
         culls[filled++] = {
             .candidate  = item.candidate,
             .geometry   = item.geometry,
@@ -199,6 +209,7 @@ fn CullItem[] batch_cull_items(
             .sorted     = assets.material(item.material.asset).data.common.alpha_mode == AlphaMode.BLEND,
             .depth_axis = depth_axis,
             .effects    = item.effects,
+            .main_view = true,
         };
     }
     return culls;
@@ -207,12 +218,12 @@ fn CullItem[] batch_cull_items(
 fn CullItem[] shadow_cull_items(ShadowDraw[] draws, CullRange[] ranges, Frustum* frustum) @private {
     usz count;
     foreach (&draw : draws) {
-        if (draw.candidate.batch) count++;
+        if (candidate_instanced(draw.candidate)) count++;
     }
     CullItem[] culls = alloc::new_array(tmem, CullItem, (sz)count);
     usz filled;
     foreach (index, &draw : draws) {
-        if (!draw.candidate.batch) continue;
+        if (!candidate_instanced(draw.candidate)) continue;
         culls[filled++] = {
             .candidate = draw.candidate,
             .geometry  = draw.geometry,
@@ -229,6 +240,10 @@ fn void? prepare_cull_stage(Renderer* renderer, CullItem[] items, bool culling) 
     uint slot_index = (uint)(renderer.frame_index % FRAMES_IN_FLIGHT);
     uint eligible;
     foreach (&item : items) {
+        if (item.candidate.lod) {
+            prepare_lod_cull(renderer, item, culling)!;
+            continue;
+        }
         Aabb? bound = cull_bound(item.candidate, item.geometry);
         item.bounded = culling && @ok(bound);
         item.bound = bound ?? item.geometry.bounds;
@@ -249,6 +264,7 @@ fn void? prepare_cull_stage(Renderer* renderer, CullItem[] items, bool culling) 
     uint culled;
     uint sorted;
     foreach (&item : items) {
+        if (item.candidate.lod) continue;
         if (item.bounded || item.sorted) {
             uint slot = args_index++;
             if (try block = args_offset) {
@@ -294,10 +310,7 @@ fn void? prepare_cull_stage(Renderer* renderer, CullItem[] items, bool culling) 
             debug_name: "instance_sort",
         )!;
     }
-    if (!renderer.cull_counter_cleared) {
-        gpu::cmd_fill_buffer(&renderer.commands, arena.span.checked_subspan(0, CULL_COUNTER_BYTES)!, 0)!;
-        renderer.cull_counter_cleared = true;
-    }
+    clear_cull_counters(renderer)!;
     renderer.pending_copies.push({
         .src = staging.span,
         .dst = arena.span.checked_subspan(args_offset!!, eligible * CULL_ARGS_STRIDE)!,
@@ -320,7 +333,7 @@ fn void? record_instance_cull(Renderer* renderer, CullItem[] items) @private {
         gpu::cmd_bind_pipeline(&renderer.commands, renderer.instance_cull_pipeline)!;
         foreach (&item : items) {
             CullRange* range = item.range;
-            if (!range.culled) continue;
+            if (!range.culled || item.lod_reuse || item.lod_count != (gpu::GpuAddress)0) continue;
             gpu::MappedGpuSpan root_span = slot.upload.take(
                 &renderer.device,
                 InstanceCullRoot::size,
@@ -342,11 +355,32 @@ fn void? record_instance_cull(Renderer* renderer, CullItem[] items) @private {
                     ? shader::INSTANCE_KIND_BILLBOARD : shader::INSTANCE_KIND_MESH,
                 .depth_axis       = item.depth_axis,
             };
+            if (item.candidate.lod) {
+                root.lod_mode = shader::LOD_CULL;
+                root.lod_current = item.candidate.lod.current;
+                root.lod_metadata = item.candidate.lod.instances.lod_metadata;
+                root.lod_level = item.candidate.lod_level;
+                root.lod_parity = item.candidate.mirrored ? 1 : 0;
+                root.lod_history_valid = item.main_view ? 1 : 0;
+            }
             write_cull_planes(root, item.bounded ? item.frustum : &open_frustum);
             uint groups = (range.count + shader::INSTANCE_CULL_GROUP_SIZE - 1) / shader::INSTANCE_CULL_GROUP_SIZE;
             gpu::cmd_dispatch(&renderer.commands, root_span.address, { groups, 1, 1 })!;
             renderer.stats.cull_dispatches++;
             renderer.cull_tested += range.count;
+        }
+        gpu::Barrier counted = { .before = { .compute }, .after = { .compute } };
+        gpu::cmd_barrier(&renderer.commands, &counted)!;
+        foreach (&item : items) {
+            if (item.lod_count == (gpu::GpuAddress)0) continue;
+            gpu::MappedGpuSpan block = slot.upload.take(&renderer.device, InstanceCullRoot::size, STREAM_ALIGNMENT)!;
+            *(InstanceCullRoot*)block.bytes.ptr = {
+                .lod_mode = shader::LOD_FINALIZE,
+                .lod_previous = item.lod_count,
+                .args = item.args_address,
+            };
+            gpu::cmd_dispatch(&renderer.commands, block.address, { 1, 1, 1 })!;
+            renderer.stats.cull_dispatches++;
         }
         gpu::Barrier culled_stage = { .before = { .compute }, .after = { .vertex_shader, .indirect } };
         culled_stage.after.compute = sorted;
@@ -354,7 +388,7 @@ fn void? record_instance_cull(Renderer* renderer, CullItem[] items) @private {
     }!;
 }
 
-fn void? record_cull_readback(Renderer* renderer, uint slot_index) @private {
+fn void? record_cull_readback(Renderer* renderer, uint slot_index, ulong frame_index) @private {
     if (!renderer.cull_counter_cleared) return;
     CullReadback* readback = &renderer.cull_readbacks[slot_index];
     gpu::Barrier counted = { .before = { .compute }, .after = { .transfer } };
@@ -367,6 +401,9 @@ fn void? record_cull_readback(Renderer* renderer, uint slot_index) @private {
     gpu::Barrier completed = { .before = { .transfer }, .after = { .host } };
     gpu::cmd_barrier(&renderer.commands, &completed)!;
     readback.tested = renderer.cull_tested;
+    readback.lod_tested = renderer.cull_lod_tested;
+    readback.lod_fallbacks = renderer.cull_lod_fallbacks;
+    readback.frame_index = frame_index;
     readback.pending = true;
 }
 
@@ -380,6 +417,12 @@ fn void? read_cull_stats(Renderer* renderer, uint slot_index) @private {
 fn void pair_cull_stats(CullReadback* readback, Stats* stats) @private {
     stats.instances_visible = *(uint*)readback.mapped.bytes.ptr;
     stats.instances_tested = readback.tested;
+    stats.lod_instances_tested = readback.lod_tested;
+    stats.lod_fallbacks = readback.lod_fallbacks;
+    stats.lod_frame_index = readback.frame_index;
+    stats.lod_counts_valid = true;
+    foreach (index, &count : stats.lod_visible) *count = ((uint*)readback.mapped.bytes.ptr)[1 + index];
+    foreach (index, &count : stats.lod_selected) *count = ((uint*)readback.mapped.bytes.ptr)[1 + scene::MAX_LOD_LEVELS + index];
     readback.pending = false;
 }
 

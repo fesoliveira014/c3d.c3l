@@ -116,6 +116,7 @@ fn void? create_fixture(
     bool ray_queries = false,
     bool ray_tracing_pipelines = false,
     usz instance_cull_bytes = 0,
+    uint shadow_resolution = 64,
 ) @private {
     fixture.allocator = allocator;
     fixture.assets = asset::create_asset_store(allocator, asset::default_asset_store_desc());
@@ -188,7 +189,7 @@ fn void? create_fixture(
         assets: &fixture.assets,
         desc: {
             .validation = true,
-            .shadow_resolution = 64,
+            .shadow_resolution = shadow_resolution,
             .max_shadow_layers = 1,
             .upload_ring_bytes = upload_ring_bytes,
             .application_name = "render_acceptance",

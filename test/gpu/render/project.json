@@ -36,6 +36,7 @@
         "test_cascade_blend.c3",
         "test_crowd_variants.c3",
         "test_instance_cull.c3",
+        "test_lod.c3",
         "test_instance_sort.c3",
         "test_billboards.c3",
         "test_probe_volume.c3",

@@ -217,7 +217,7 @@ fn void? record_geometry_velocity(
         }
 
         GeometryLayout* layout = &item.geometry.layout;
-        if (item.candidate.batch) {
+        if (render::candidate_instanced(item.candidate)) {
             render::issue_batch_draw(
                 renderer: renderer,
                 root:     item.root,

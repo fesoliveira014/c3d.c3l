@@ -136,7 +136,8 @@ void main() {
 
     vec4 motion = sample_texture_2d(root.velocity_texture, root.sampler_index, nearest_uv);
     vec2 velocity = motion.xy;
-    vec2 center_velocity = sample_texture_2d(root.velocity_texture, root.sampler_index, uv).xy;
+    vec4 center_motion = sample_texture_2d(root.velocity_texture, root.sampler_index, uv);
+    vec2 center_velocity = center_motion.xy;
     vec2 history_uv = uv - velocity;
     bool inside = all(greaterThanEqual(history_uv, vec2(0.0))) && all(lessThanEqual(history_uv, vec2(1.0)));
 
@@ -150,7 +151,8 @@ void main() {
         vec2 previous_velocity = load_storage_texture(root.history_velocity, history_texel).xy;
         float difference = length((velocity - previous_velocity) * size);
         velocity_rejection = smoothstep(root.velocity_threshold, 2.0 * root.velocity_threshold, difference);
-        confidence = (1.0 - depth_rejection) * (1.0 - velocity_rejection);
+        confidence = (1.0 - depth_rejection) * (1.0 - velocity_rejection)
+            * (1.0 - clamp(max(motion.a, center_motion.a), 0.0, 1.0));
         vec3 clipped = clip_to_box(to_ycocg(sample_history(root, history_uv)), mean, root.clip_gamma * deviation);
         history = from_ycocg(clipped);
     }

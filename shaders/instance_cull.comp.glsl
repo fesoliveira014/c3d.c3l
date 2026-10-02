@@ -13,6 +13,10 @@ layout(push_constant) uniform Push {
 GPU_DECLARE_READONLY_ARRAY_REF(CullInstances, InstanceGpu);
 GPU_DECLARE_READONLY_ARRAY_REF(CullBillboards, BillboardGpu);
 GPU_DECLARE_WRITEONLY_ARRAY_REF(VisibleOutput, uint);
+GPU_DECLARE_READONLY_ARRAY_REF(LodMetadata, LodMetadataGpu);
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer LodHistory {
+    LodHistoryGpu values[];
+};
 
 // instance_count sits at offset 4 in both indirect command layouts.
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer CullArgs {
@@ -22,6 +26,8 @@ layout(buffer_reference, std430, buffer_reference_align = 4) buffer CullArgs {
 
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer CullCounter {
     uint visible;
+    uint lod_visible[LOD_LEVEL_COUNT];
+    uint lod_selected[LOD_LEVEL_COUNT];
 };
 
 // Keys follow the list at an 8-byte boundary, below the 16-byte default of the array macros.
@@ -60,11 +66,61 @@ uint64_t sort_key(float view_depth, uint source) {
     return (uint64_t(bits) << 32) | uint64_t(~source);
 }
 
+void select_lod(InstanceCullRoot root, uint source) {
+    mat4 model = CullInstances(root.instances).values[source].model;
+    vec3 center = (model * vec4((root.bounds_min.xyz + root.bounds_max.xyz) * 0.5, 1.0)).xyz;
+    mat3 axes = mat3(model);
+    mat3 reach = mat3(abs(axes[0]), abs(axes[1]), abs(axes[2]));
+    float radius = length(reach * ((root.bounds_max.xyz - root.bounds_min.xyz) * 0.5) + root.lod_reach.xyz);
+    float size = radius == 0.0 ? 0.0 : (root.lod_projection.z != 0.0
+        ? 2.0 * radius / root.lod_projection.y
+        : radius * root.lod_projection.x / distance(center, root.lod_camera_bias.xyz));
+    if (size > 0.0 && !isinf(size)) size = exp2(log2(size) + root.lod_camera_bias.w);
+    uint generation = LodMetadata(root.lod_metadata).values[source].generation;
+    bool valid = root.lod_history_valid != 0u;
+    uint previous = 0u;
+    if (valid) {
+        LodHistoryGpu history = LodHistory(root.lod_previous).values[source];
+        valid = history.generation == generation;
+        previous = history.level;
+    }
+    uint level = valid ? previous : 0u;
+    if (isinf(size)) {
+        level = 0u;
+    } else {
+        while (level + 1u < root.lod_level_count && size < root.lod_thresholds[level / 4u][level % 4u]) level++;
+        while (valid && level > 0u && size > root.lod_thresholds[(level - 1u) / 4u][(level - 1u) % 4u] * (1.0 + root.lod_projection.w)) level--;
+    }
+    LodHistory(root.lod_current).values[source] = LodHistoryGpu(model, level, generation, (!valid || previous != level) ? 1u : 0u, 0u);
+    atomicAdd(CullCounter(root.counter).lod_selected[level], 1u);
+}
+
 void main() {
     InstanceCullRoot root = InstanceCullRoot(pc.root_gpu);
     uint slot = gl_GlobalInvocationID.x;
+    if (root.lod_mode == LOD_FINALIZE) {
+        if (slot != 0u) return;
+        if (root.args == 0ul) {
+            atomicAdd(CullCounter(root.counter).lod_selected[0], root.count);
+            if (root.lod_history_valid != 0u) {
+                atomicAdd(CullCounter(root.counter).visible, root.count);
+                atomicAdd(CullCounter(root.counter).lod_visible[0], root.count);
+            }
+        } else {
+            CullArgs(root.args).instance_count = CullArgs(root.lod_previous).instance_count;
+        }
+        return;
+    }
     if (slot >= root.count) return;
     uint source = root.first + slot;
+    if (root.lod_mode == LOD_SELECT) {
+        select_lod(root, source);
+        return;
+    }
+    if (root.lod_mode == LOD_CULL) {
+        if (LodHistory(root.lod_current).values[source].level != root.lod_level
+            || LodMetadata(root.lod_metadata).values[source].parity != root.lod_parity) return;
+    }
     vec3 center;
     if (root.kind == INSTANCE_KIND_BILLBOARD) {
         BillboardGpu billboard = CullBillboards(root.instances).values[source];
@@ -97,4 +153,7 @@ void main() {
         SortKeys(root.keys).values[index] = sort_key(depth, source);
     }
     atomicAdd(CullCounter(root.counter).visible, 1u);
+    if (root.lod_mode == LOD_CULL && root.lod_history_valid != 0u) {
+        atomicAdd(CullCounter(root.counter).lod_visible[root.lod_level], 1u);
+    }
 }

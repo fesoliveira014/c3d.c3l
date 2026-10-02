@@ -21,6 +21,7 @@ const String[] SUPPORTED_EXTENSIONS @private = {
     "KHR_texture_transform",
     "KHR_lights_punctual",
     "KHR_mesh_quantization",
+    "MSFT_lod",
 };
 
 struct Importer @private {
@@ -217,6 +218,7 @@ fn void? convert_model(Importer* importer) @private {
     convert_materials(importer)!;
     convert_geometries(importer)!;
     build_template(importer)!;
+    convert_lod_groups(importer)!;
     convert_skins(importer)!;
     if (importer.options.animations) convert_animations(importer)!;
     importer.document.template = importer.template;

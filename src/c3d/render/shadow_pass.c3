@@ -112,10 +112,10 @@ fn ShadowDraw[]? prepare_shadow_draws(
             .skin = resolve_candidate_skin(renderer, candidate)!,
             .morph = resolve_candidate_morph(renderer, candidate, vertex)!,
             .alpha = custom_header,
-            .instance_data = candidate.batch ? resolve_instances(renderer, candidate)! : (gpu::GpuAddress)0,
+            .instance_data = candidate_instanced(candidate) ? resolve_instances(renderer, candidate)! : (gpu::GpuAddress)0,
             .masked = material.common.alpha_mode == AlphaMode.MASK,
             .wireframe = material.common.wireframe && renderer.caps.line_polygon_mode,
-            .reflected = (candidate.node.world.determinant() < 0) != candidate.mirrored,
+            .reflected = (candidate_world(candidate).determinant() < 0) != candidate.mirrored,
             .cull = material.common.double_sided ? gpu::CullMode.NONE : gpu::CullMode.BACK,
         };
         gpu::PipelineHandle? pipeline = shadow_pipeline_for(
@@ -123,7 +123,7 @@ fn ShadowDraw[]? prepare_shadow_draws(
             wireframe:    draw.wireframe,
             vertex:       vertex,
             material:     material,
-            vertex_color: draw.masked && (geometry.layout.flags.has_colors || candidate.batch != null),
+            vertex_color: draw.masked && (geometry.layout.flags.has_colors || candidate_instanced(candidate)),
         );
         if (catch excuse = pipeline) {
             if (material.kind != MaterialKind.CUSTOM || !pipeline_rejected(renderer, material.custom.shader, excuse)) {
@@ -282,7 +282,8 @@ fn void? record_depth_draws(
                 instance_effects: draw.effects,
             );
         }
-        if (draw.candidate.batch) {
+        ((DrawRoot*)root.bytes.ptr).lod_part = resolve_lod_part(renderer, draw.candidate)!;
+        if (candidate_instanced(draw.candidate)) {
             record_batch_draw(
                 renderer: renderer,
                 root:     root.address,
@@ -323,6 +324,7 @@ fn ShadowGpu[]? record_shadows(
         assets: renderer.assets,
         fade_origin: effects_view.fade_origin,
         counts: &counts,
+        lod: effects_view.lod,
     );
     renderer.stats.dangling_refs += counts.dangling;
     CameraMatrices[] shadow_matrices = alloc::new_array(tmem, CameraMatrices, allocation.layer_count);

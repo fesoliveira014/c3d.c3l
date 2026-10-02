@@ -174,50 +174,73 @@ fn void? Renderer.end_prepare(&self, PrepareId id) {
 }
 
 fn PrepareUnit[] enumerate_prepare_units(Renderer* renderer, ModelTemplate* template) @private {
-    AssetStore* assets = renderer.assets;
     PrepareUnit[] units;
     @pool() {
         List{PrepareUnit} listed;
         listed.init(tmem);
-        foreach (&mesh : template.meshes) {
-            bool geometry_live = assets.geometries.is_live(mesh.geometry);
-            bool material_live = assets.materials.is_live(mesh.material);
-            if (!geometry_live || !material_live) {
-                renderer.stats.dangling_refs++;
-                continue;
-            }
-            Material* data = &assets.material(mesh.material).data;
-            material::@each_texture_reference(data; TextureId* texture, SamplerId* sampler) {
-                if (texture_needed(renderer, listed.array_view(), *texture)) {
-                    listed.push({
-                        .kind    = PrepareUnitKind.TEXTURE,
-                        .texture = *texture,
-                        .bytes   = prepare_texture_bytes(assets.texture(*texture)),
-                    });
-                }
-            };
-            if (geometry_needed(renderer, listed.array_view(), mesh.geometry)) {
-                listed.push({
-                    .kind     = PrepareUnitKind.GEOMETRY,
-                    .geometry = mesh.geometry,
-                    .bytes    = geometry_layout(&assets.geometry(mesh.geometry).data).total_bytes,
-                });
-            }
-            if (!lists_unit(listed.array_view(), PrepareUnitKind.MATERIAL, (Id)mesh.material)) {
-                listed.push({ .kind = PrepareUnitKind.MATERIAL, .material = mesh.material, .bytes = MATERIAL_STRIDE });
-            }
-            listed.push({
-                .kind     = PrepareUnitKind.PIPELINES,
-                .geometry = mesh.geometry,
-                .material = mesh.material,
-                .morphed  = mesh.default_morph_weights.len > 0,
-            });
+        foreach (mesh : template.meshes) append_prepare_mesh(
+            renderer: renderer,
+            listed: &listed,
+            geometry: mesh.geometry,
+            material: mesh.material,
+            morphed: mesh.default_morph_weights.len > 0,
+        );
+        foreach (group : template.lod_groups) {
+            foreach (part : group.desc.parts) append_prepare_mesh(
+                renderer: renderer,
+                listed: &listed,
+                geometry: part.geometry,
+                material: part.material,
+                morphed: false,
+            );
         }
         listed.push({ .kind = PrepareUnitKind.FINISH });
         units = alloc::new_array(renderer.allocator, PrepareUnit, (sz)listed.len());
         units[..] = listed.array_view()[..];
     };
     return units;
+}
+
+fn void append_prepare_mesh(
+    Renderer* renderer,
+    List{PrepareUnit}* listed,
+    GeometryId geometry,
+    MaterialId material,
+    bool morphed,
+) @local {
+    AssetStore* assets = renderer.assets;
+    bool geometry_live = assets.geometries.is_live(geometry);
+    bool material_live = assets.materials.is_live(material);
+    if (!geometry_live || !material_live) {
+        renderer.stats.dangling_refs++;
+        return;
+    }
+    Material* data = &assets.material(material).data;
+    material::@each_texture_reference(data; TextureId* texture, SamplerId* sampler) {
+        if (texture_needed(renderer, listed.array_view(), *texture)) {
+            listed.push({
+                .kind    = PrepareUnitKind.TEXTURE,
+                .texture = *texture,
+                .bytes   = prepare_texture_bytes(assets.texture(*texture)),
+            });
+        }
+    };
+    if (geometry_needed(renderer, listed.array_view(), geometry)) {
+        listed.push({
+            .kind     = PrepareUnitKind.GEOMETRY,
+            .geometry = geometry,
+            .bytes    = geometry_layout(&assets.geometry(geometry).data).total_bytes,
+        });
+    }
+    if (!lists_unit(listed.array_view(), PrepareUnitKind.MATERIAL, (Id)material)) {
+        listed.push({ .kind = PrepareUnitKind.MATERIAL, .material = material, .bytes = MATERIAL_STRIDE });
+    }
+    listed.push({
+        .kind     = PrepareUnitKind.PIPELINES,
+        .geometry = geometry,
+        .material = material,
+        .morphed  = morphed,
+    });
 }
 
 fn bool texture_needed(Renderer* renderer, PrepareUnit[] listed, TextureId texture) @private {

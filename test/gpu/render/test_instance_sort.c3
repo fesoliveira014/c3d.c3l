@@ -12,7 +12,7 @@ const uint SORTED_STRIDE @private = 7919; // prime, so storage order is a scramb
 const float SORTED_SPACING @private = 0.001f; // the farthest box, 8 units out, still covers the sampled pixels
 const uint SORTED_STEPS @private = 10; // capacity 8192: one block step, then stages of 2, 3 and 4 steps
 const uint LINE_SORT_STEPS @private = 2; // two parity ranges of one step each
-const usz SORT_OVERFLOW_ARENA_BYTES @private = 128; // counter, two indirect commands, the mirrored range's list and keys; the unmirrored range's 176 bytes do not fit
+const usz SORT_OVERFLOW_ARENA_BYTES @private = render::CULL_COUNTER_BYTES + 112; // two commands and the mirrored list and keys; the unmirrored range's 176 bytes do not fit
 const String SORT_ORDER_VERTEX @private = "sort_order.vert.glsl";
 const String SORT_ORDER_FRAGMENT @private = "sort_order.frag.glsl";
 

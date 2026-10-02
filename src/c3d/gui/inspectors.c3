@@ -440,6 +440,35 @@ fn bool degrees_slider(ZString label, float* radians, float minimum_degrees) @lo
     return true;
 }
 
+fn bool lod_group_inspector(void* component) @local {
+    LodGroupState* state = ((LodGroup*)component).state;
+    imgui::text("Placement: %s", state.mode == LodMode.SINGLE ? "Single object" : "Instanced");
+    imgui::text("Live placements: %u", state.count);
+    if (state.mode == LodMode.INSTANCED) imgui::text("Capacity: %llu", (ulong)state.transforms.len);
+    imgui::text("Bounds override: %s", state.desc.has_bounds_override ? "Yes" : "No");
+    imgui::text("Sway amplitude: %.3f", (double)state.effects.sway.amplitude);
+    imgui::text("Fade: %.3f to %.3f", (double)state.effects.fade.start, (double)state.effects.fade.end);
+    foreach (uint index, level : state.desc.levels) {
+        imgui::text(
+            "Level %u: %u parts, minimum height %.4f",
+            index,
+            level.part_count,
+            (double)level.min_screen_size,
+        );
+        foreach (uint part_index, part : state.desc.parts[level.first_part:level.part_count]) {
+            imgui::text(
+                "  Part %u: geometry %u:%u, material %u:%u",
+                part_index,
+                part.geometry.index,
+                part.geometry.generation,
+                part.material.index,
+                part.material.generation,
+            );
+        }
+    }
+    return false;
+}
+
 fn void node_name_text(ZString label, Node* node) @local {
     ZString name = !node ? "(none)" : node.name.len ? node.name.zstr_tcopy() : "(unnamed)";
     imgui::text("%s: %s", label, name);
@@ -459,6 +488,7 @@ fn bool nonnegative_drag(ZString label, float* value) @local {
 
 fn void expose_builtin_components() @private {
     expose(Mesh);
+    expose(LodGroup, &lod_group_inspector);
     expose(Camera, &camera_inspector);
     expose(Light, &light_inspector);
     expose(ModelInstance);

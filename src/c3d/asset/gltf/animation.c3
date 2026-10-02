@@ -117,6 +117,7 @@ fn AnimationClip? convert_clip(Importer* importer, gltf::Animation* animation) @
     usz track_count;
     foreach (&channel : animation.channels) {
         if (!channel.target_node) continue;
+        if (importer.node_remap[gltf::node_index(data, channel.target_node)] == usz::max) continue;
         track_count += channel.target_path == gltf::AnimationPathType.WEIGHTS
             ? primitive_count_of(channel.target_node)
             : 1;
@@ -134,7 +135,7 @@ fn AnimationClip? convert_clip(Importer* importer, gltf::Animation* animation) @
     foreach (&channel : animation.channels) {
         if (!channel.target_node) continue;
         usz template_index = importer.node_remap[gltf::node_index(data, channel.target_node)];
-        if (template_index == usz::max) return c3d::ASSET_FORMAT_ERROR~;
+        if (template_index == usz::max) continue;
         TargetPath path = target_path(channel.target_path)!;
         Interpolation interpolation = interpolation_of(channel.sampler.interpolation);
 

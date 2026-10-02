@@ -3,7 +3,7 @@
 A model is loaded once into shared assets plus a reusable template, then
 instantiated any number of times without reparsing. `c3d::asset::gltf` reads
 glTF 2.0 and GLB files through cgltf and `c3d::asset::fbx` reads FBX files through ufbx; `c3d::model::instantiate` turns a stored
-template into live scene nodes. The renderer sees ordinary meshes, cameras and
+template into live scene nodes. The renderer sees meshes, LOD groups, cameras and
 lights afterwards and needs no model-specific path. Skeletons and animation
 clips are shared assets; `c3d::anim` plays clips onto instances
 ([Animation](animation.md)). Asset kinds the store does not define are
@@ -79,6 +79,28 @@ its children. `NodeTemplate.parent` is the model-local index of the parent, or
 gains one generated child per primitive, named `<node name>/primitive/<j>`,
 placed before the node's authored children. Matrix nodes are decomposed into
 position, rotation and scale; shear is dropped.
+
+## Node-level LOD
+
+Rigid node-level `MSFT_lod` becomes one [LodGroup](lod.md). Alternate subtrees
+flatten into group-relative parts while preserving the alternate root transform
+in the owner's parent space. Part counts and materials may differ. Absorbed
+primitive nodes remain named template nodes without duplicate Mesh components;
+unrelated cameras and lights remain. Each instantiation owns its descriptor copy.
+Eager and budgeted renderer preparation visit every level's dependencies.
+
+Whole-owner animation is retained. Skin/morph deformation or animation within
+member subtrees is unsupported: optional LOD falls back to the ordinary highest
+detail subtree; required LOD faults `UNSUPPORTED`. Required material-level LOD
+also faults `UNSUPPORTED`. Bad node IDs, cycles, conflicting ownership and
+malformed hints fault `ASSET_FORMAT_ERROR`.
+
+For N levels, `extras.MSFT_screencoverage` must contain N finite numeric values.
+The first N-1 are positive descending projected-height fractions; the final
+nonnegative cull hint is ignored. Missing hints use transitions
+`{0.2, 0.1, 0.05, 0.025}`. Five levels are supported. This projected-height
+interpretation is c3d's import policy. `ModelDocument` validates references before
+publication, then remaps all part geometry/material IDs atomically with the model.
 
 ## Material mapping
 

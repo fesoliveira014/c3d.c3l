@@ -383,6 +383,7 @@ fn Scene create_scene(Allocator allocator, SceneDesc desc) {
     scene.world.register(SkinBinding)!!;
     scene.world.register(Animator)!!;
     scene.world.register(InstancedMesh)!!;
+    scene.world.register(LodGroup)!!;
     scene.world.register(BillboardBatch)!!;
     scene.world.register(IkChain)!!;
     scene.world.register(FootIk)!!;
@@ -397,6 +398,7 @@ fn Scene create_scene(Allocator allocator, SceneDesc desc) {
     scene.world.set_remove_hook(SkinBinding, &free_skin_binding, scene.hook_allocator);
     scene.world.set_remove_hook(Animator, &anim::free_animator, scene.hook_allocator);
     scene.world.set_remove_hook(InstancedMesh, &free_instanced_mesh, scene.hook_allocator);
+    scene.world.set_remove_hook(LodGroup, &free_lod_group, scene.hook_allocator);
     scene.world.set_remove_hook(BillboardBatch, &free_billboards, scene.hook_allocator);
     scene.world.set_remove_hook(AnimatedCrowd, &free_crowd, scene.hook_allocator);
     return scene;

@@ -21,6 +21,7 @@ struct InstanceEffectsView @private {
     Scene*               scene;
     ViewHistory*         history; // null on a view that keeps no history
     Vec3                 fade_origin;
+    LodSelection[]       lod;
 }
 
 <*
@@ -102,6 +103,7 @@ fn float instance_fade_scale(InstanceFade fade, float seed, float distance) {
 }
 
 fn uint batch_effect_flags(MeshCandidate* candidate) @private {
+    if (candidate.lod) return instance_effect_flags(candidate.lod.state.effects.sway, candidate.lod.state.effects.fade);
     if (!candidate.batch) return 0;
     return instance_effect_flags(candidate.batch.sway, candidate.batch.fade);
 }
@@ -118,15 +120,25 @@ fn gpu::GpuAddress? resolve_instance_effects(
     ulong key = (ulong)(uptr)candidate.node;
     if (try existing = effects_view.blocks.get(key)) return existing;
     InstancedMesh* batch = candidate.batch;
+    InstancedMesh logical;
+    if (candidate.lod) {
+        logical.sway = candidate.lod.state.effects.sway;
+        logical.fade = candidate.lod.state.effects.fade;
+        batch = &logical;
+    }
     double time = renderer.info.time;
     ViewHistory* history = effects_view.history;
     bool has_previous = history && history.has_previous(effects_view.scene, candidate.node);
     SwayGpu previous_sway = has_previous
       ? pack_sway(history.previous_pose(effects_view.scene, candidate.node).sway, history.time)
       : pack_sway(batch.sway, time);
+    if (candidate.lod) {
+        bool valid = candidate.lod.state.mode == LodMode.INSTANCED ? candidate.lod.history_valid : !candidate.lod.reject_history;
+        previous_sway = valid ? candidate.lod.history.sway : pack_sway(batch.sway, time);
+    }
     InstanceEffectsGpu block = pack_instance_effects(
         batch:         batch,
-        local_bounds:  candidate.crowd ? candidate.crowd.pose_bounds : geometry.bounds,
+        local_bounds:  candidate.lod ? candidate.lod.state.object_bounds : (candidate.crowd ? candidate.crowd.pose_bounds : geometry.bounds),
         fade_origin:   effects_view.fade_origin,
         previous_sway: previous_sway,
         time:          time,
