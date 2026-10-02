@@ -54,6 +54,10 @@ struct LodEffects {
 <* Scene-owned group data; only placement elements are directly writable. *>
 struct LodGroupState {
     LodDesc desc;
+    Impostor impostor;
+    float impostor_min_screen_size;
+    uint descriptor_revision;
+    bool has_impostor;
     LodMode mode;
     LodEffects effects;
     Transform[] transforms;
@@ -206,6 +210,7 @@ fn void Scene.mark_lod_instances_dirty(&self, Node* node) {
  Apply common wind, fade and render participation.
  @param [&in] node : "Carries a group."
  @require self.has(node, LodGroup)
+ @require !self.get(node, LodGroup).state.has_impostor || effects.sway.amplitude == 0 || effects.sway.weight == SwayWeight.HEIGHT
 *>
 fn void Scene.set_lod_effects(&self, Node* node, LodEffects effects) {
     InstancedMesh validation = { .sway = effects.sway, .fade = effects.fade };
@@ -233,6 +238,13 @@ fn Aabb LodGroupState.local_bounds(&self, AssetStore* assets) {
             Aabb bounds = maths::aabb_transform(assets.geometry(part.geometry).data.bounds, part.local);
             self.object_bounds = index ? maths::aabb_merge(self.object_bounds, bounds) : bounds;
         }
+    }
+    if (self.has_impostor) {
+        Vec3 radius = { self.impostor.bounds.radius, self.impostor.bounds.radius, self.impostor.bounds.radius };
+        self.object_bounds = maths::aabb_merge(self.object_bounds, {
+            .min = self.impostor.bounds.center - radius,
+            .max = self.impostor.bounds.center + radius,
+        });
     }
     self.bounds_revision++;
     if (!self.bounds_revision) self.bounds_revision = 1;
@@ -442,6 +454,7 @@ fn LodGroupState* carve_lod_group(LodBlockCursor* cursor, LodDesc desc, uint cap
             .colors = colors,
             .slot_generations = generations,
             .revision = 1,
+            .descriptor_revision = 1,
             .instance_epoch = 1,
             .geometry_revisions = geometry_revisions,
         };

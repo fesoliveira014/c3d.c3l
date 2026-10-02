@@ -55,6 +55,7 @@ struct MeshCandidate {
     LodSelection*  lod;
     uint           lod_level;
     uint           lod_part;
+    bool           impostor;
 }
 
 <*
@@ -65,7 +66,7 @@ struct ExtractCounts {
     uint culled;
     uint dangling;
     uint batches_faded; // bound wholly past the batch's fade band from the view camera
-    uint[scene::MAX_LOD_LEVELS] lod_objects_visible;
+    uint[scene::MAX_LOD_CHOICES] lod_objects_visible;
 }
 
 <*
@@ -438,7 +439,7 @@ fn void emit_batch_candidates(MeshCandidate[] candidates, ExtractCounts* counts,
 
 fn sz candidate_capacity(Scene* scene) @local {
     sz capacity = (sz)scene.count(Mesh) + 2 * (sz)scene.count(InstancedMesh) + (sz)scene.count(BillboardBatch);
-    scene.@each(LodGroup; entity, group) { capacity += 2 * group.state.desc.parts.len; };
+    scene.@each(LodGroup; entity, group) { capacity += 2 * (group.state.desc.parts.len + 1); };
     return capacity;
 }
 
@@ -453,11 +454,13 @@ fn void emit_lod_candidates(
     LodGroupState* state = selection.state;
     bool instanced = state.mode == LodMode.INSTANCED;
     uint first = instanced ? 0 : selection.level;
-    uint end = instanced && !selection.fallback ? (uint)state.desc.levels.len : first + 1;
+    uint end = instanced && !selection.fallback ? (uint)state.desc.levels.len + (selection.impostor ? 1 : 0) : first + 1;
     for (uint selected = first; selected < end; selected++) {
-        LodLevel level = state.desc.levels[selected];
-        foreach (uint index, part : state.desc.parts[level.first_part:level.part_count]) {
-            if (shadow && assets.material(part.material).data.common.alpha_mode == AlphaMode.BLEND) continue;
+        LodLevel level = selected_lod_level(selection, selected);
+        bool impostor = selected == state.desc.levels.len;
+        for (uint index = 0; index < level.part_count; index++) {
+            LodPart part = state.desc.parts[impostor ? 0 : level.first_part + index];
+            if (!impostor && shadow && assets.material(part.material).data.common.alpha_mode == AlphaMode.BLEND) continue;
             uint parities = instanced ? 2 : 1;
             for (uint parity = 0; parity < parities; parity++) {
                 uint count = instanced ? (parity == 0 ? selection.instances.lod_unmirrored_count : state.count - selection.instances.lod_unmirrored_count) : 1;
@@ -476,6 +479,7 @@ fn void emit_lod_candidates(
                     .lod = selection,
                     .lod_level = selected,
                     .lod_part = level.first_part + index,
+                    .impostor = impostor,
                 };
             }
         }

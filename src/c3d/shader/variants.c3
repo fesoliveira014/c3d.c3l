@@ -10,6 +10,11 @@ enum ShaderName : int {
     COMPOSITE,
     MESH,
     BILLBOARD_VERTEX,
+    IMPOSTOR_VERTEX,
+    IMPOSTOR_FORWARD,
+    IMPOSTOR_GBUFFER,
+    IMPOSTOR_DEPTH,
+    IMPOSTOR_VELOCITY,
     BASIC,
     IMGUI_VERTEX,
     IMGUI_FRAGMENT,
@@ -127,6 +132,13 @@ const char[*] GRADIENT_SPIRV @private = $embed("../../../shaders/spv/gradient.sp
 const char[*] COMPOSITE_SPIRV @private = $embed("../../../shaders/spv/composite.spv");
 const char[*] MESH_SPIRV @private = $embed("../../../shaders/spv/mesh.spv");
 const char[*] BILLBOARD_VERTEX_SPIRV @private = $embed("../../../shaders/spv/billboard_vertex.spv");
+const char[*] IMPOSTOR_VERTEX_SPIRV @private = $embed("../../../shaders/spv/impostor_vertex.spv");
+const char[*] IMPOSTOR_FORWARD_SPIRV @private = $embed("../../../shaders/spv/impostor_forward.spv");
+const char[*] IMPOSTOR_FORWARD_RT_SHADOWS_SPIRV @private = $embed("../../../shaders/spv/impostor_forward_rt_shadows.spv");
+const char[*] IMPOSTOR_FORWARD_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV @private = $embed("../../../shaders/spv/impostor_forward_rt_shadows_scene_trace_bvh.spv");
+const char[*] IMPOSTOR_GBUFFER_SPIRV @private = $embed("../../../shaders/spv/impostor_gbuffer.spv");
+const char[*] IMPOSTOR_DEPTH_SPIRV @private = $embed("../../../shaders/spv/impostor_depth.spv");
+const char[*] IMPOSTOR_VELOCITY_SPIRV @private = $embed("../../../shaders/spv/impostor_velocity.spv");
 const char[*] BASIC_SPIRV @private = $embed("../../../shaders/spv/basic.spv");
 const char[*] IMGUI_VERTEX_SPIRV @private = $embed("../../../shaders/spv/imgui_vertex.spv");
 const char[*] IMGUI_FRAGMENT_SPIRV @private = $embed("../../../shaders/spv/imgui_fragment.spv");
@@ -245,12 +257,19 @@ const char[*] LIGHTING_RESOLVE_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV @private = $embe
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[119] SHADER_ENTRIES = {
+const ShaderEntry[126] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
     { .variant = { .shader = MESH }, .spirv = MESH_SPIRV[..] },
     { .variant = { .shader = BILLBOARD_VERTEX }, .spirv = BILLBOARD_VERTEX_SPIRV[..] },
+    { .variant = { .shader = IMPOSTOR_VERTEX }, .spirv = IMPOSTOR_VERTEX_SPIRV[..] },
+    { .variant = { .shader = IMPOSTOR_FORWARD }, .spirv = IMPOSTOR_FORWARD_SPIRV[..] },
+    { .variant = { .shader = IMPOSTOR_FORWARD, .flags = SHADER_FLAG_RT_SHADOWS }, .spirv = IMPOSTOR_FORWARD_RT_SHADOWS_SPIRV[..] },
+    { .variant = { .shader = IMPOSTOR_FORWARD, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_SCENE_TRACE_BVH }, .spirv = IMPOSTOR_FORWARD_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV[..] },
+    { .variant = { .shader = IMPOSTOR_GBUFFER }, .spirv = IMPOSTOR_GBUFFER_SPIRV[..] },
+    { .variant = { .shader = IMPOSTOR_DEPTH }, .spirv = IMPOSTOR_DEPTH_SPIRV[..] },
+    { .variant = { .shader = IMPOSTOR_VELOCITY }, .spirv = IMPOSTOR_VELOCITY_SPIRV[..] },
     { .variant = { .shader = BASIC }, .spirv = BASIC_SPIRV[..] },
     { .variant = { .shader = IMGUI_VERTEX }, .spirv = IMGUI_VERTEX_SPIRV[..] },
     { .variant = { .shader = IMGUI_FRAGMENT }, .spirv = IMGUI_FRAGMENT_SPIRV[..] },

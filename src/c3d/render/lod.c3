@@ -4,6 +4,7 @@ import c3d;
 import c3d::asset;
 import c3d::camera;
 import c3d::maths;
+import c3d::material;
 import c3d::scene;
 import c3d::spatial;
 import c3d::shader;
@@ -15,8 +16,12 @@ struct LodHistoryValue @private {
     Entity owner;
     ulong identity;
     uint bounds_revision;
+    uint descriptor_revision;
+    bool impostor;
     uint level;
     bool valid;
+    Vec4 camera;
+    Vec4 direction;
 }
 
 struct LodHistoryEntry @private {
@@ -62,6 +67,7 @@ struct LodSelection @private {
     float bias;
     gpu::GpuAddress[] parts;
     bool main_visible;
+    bool impostor;
 }
 
 fn float lod_screen_size(
@@ -96,9 +102,12 @@ fn LodSelection select_lod_group(
     LodHistoryValue previous = history.committed;
     bool valid = previous.valid && previous.scene == scene.identity
       && c3d::same_id(previous.owner, node.id) && previous.identity == state.identity
-      && previous.bounds_revision == state.bounds_revision;
-    float[scene::MAX_LOD_LEVELS] thresholds;
-    foreach (index, level : state.desc.levels) thresholds[index] = level.min_screen_size;
+      && previous.bounds_revision == state.bounds_revision
+      && previous.descriptor_revision == state.descriptor_revision;
+    bool impostor = lod_impostor_live(assets, state);
+    valid &= previous.impostor == impostor;
+    float[scene::MAX_LOD_CHOICES] thresholds;
+    uint choices = fill_lod_thresholds(state, impostor, thresholds[..]);
     uint level = scene::select_lod_level(
         screen_size: lod_screen_size(
             camera: camera,
@@ -106,7 +115,7 @@ fn LodSelection select_lod_group(
             bounds: maths::aabb_sphere(world),
             bias: bias,
         ),
-        min_screen_sizes: thresholds[:state.desc.levels.len],
+        min_screen_sizes: thresholds[:choices],
         previous: previous.level,
         history_valid: valid,
     );
@@ -115,6 +124,8 @@ fn LodSelection select_lod_group(
         .owner = node.id,
         .identity = state.identity,
         .bounds_revision = state.bounds_revision,
+        .descriptor_revision = state.descriptor_revision,
+        .impostor = impostor,
         .level = level,
         .valid = true,
     };
@@ -126,6 +137,7 @@ fn LodSelection select_lod_group(
         .world_bounds = world,
         .level = level,
         .reject_history = !valid || level != previous.level,
+        .impostor = impostor,
     };
 }
 
@@ -161,6 +173,7 @@ fn LodSelection[]? prepare_lod_view(
             if (!spatial::lod_group_is_live(renderer.assets, group)) {
                 renderer.stats.dangling_refs++;
             } else {
+                if (group.state.has_impostor && !lod_impostor_live(renderer.assets, group.state)) renderer.stats.impostor_fallbacks++;
                 LodHistoryEntry* history = &histories.entries[entity.index];
                 if (!history.listed) {
                     history.next = histories.first;
@@ -179,6 +192,7 @@ fn LodSelection[]? prepare_lod_view(
                         .camera = camera,
                         .camera_position = matrices.position,
                         .bias = record.desc.lod_bias,
+                        .impostor = lod_impostor_live(renderer.assets, group.state),
                     };
                     prepare_lod_instances(renderer, selection)!;
                 } else {
@@ -202,7 +216,14 @@ fn LodSelection[]? prepare_lod_view(
                     renderer.stats.lod_objects_selected[selection.level]++;
                 }
                 history.pending_sway = pack_sway(group.state.effects.sway, renderer.info.time);
-                selection.parts = alloc::new_array(tmem, gpu::GpuAddress, group.state.desc.parts.len);
+                history.pending.camera = {
+                    matrices.position.x, matrices.position.y, matrices.position.z,
+                    camera.projection == Projection.ORTHOGRAPHIC ? 1 : 0,
+                };
+                history.pending.direction = {
+                    matrices.view.m20, matrices.view.m21, matrices.view.m22, 0,
+                };
+                selection.parts = alloc::new_array(tmem, gpu::GpuAddress, group.state.desc.parts.len + 1);
             }
         }
     };
@@ -236,7 +257,7 @@ fn void reset_lod_history(LodHistory* history) @private {
 }
 
 fn Mat4 candidate_world(MeshCandidate* candidate) @private {
-    if (!candidate.lod) return candidate.node.world;
+    if (!candidate.lod || candidate.impostor) return candidate.node.world;
     return candidate.node.world.mul(candidate.lod.state.desc.parts[candidate.lod_part].local);
 }
 
@@ -267,7 +288,7 @@ fn gpu::GpuAddress? resolve_lod_part(Renderer* renderer, MeshCandidate* candidat
     LodSelection* selection = candidate.lod;
     gpu::GpuAddress* address = &selection.parts[candidate.lod_part];
     if (*address != (gpu::GpuAddress)0) return *address;
-    Mat4 local = selection.state.desc.parts[candidate.lod_part].local;
+    Mat4 local = candidate.impostor ? matrix::IDENTITY4 : selection.state.desc.parts[candidate.lod_part].local;
     Mat3 normal = maths::normal_matrix(local);
     LodPartGpu part = {
         .local = bitcast(local, Mat4f),
@@ -278,7 +299,31 @@ fn gpu::GpuAddress? resolve_lod_part(Renderer* renderer, MeshCandidate* candidat
         .previous = selection.previous,
         .reject_history = selection.reject_history ? 1 : 0,
         .seed = instance_seed({}),
+        .impostor = candidate.impostor ? resolve_impostor(renderer, selection)! : (gpu::GpuAddress)0,
     };
     *address = upload_bytes(renderer, &part, LodPartGpu::size)!;
     return *address;
+}
+
+fn bool lod_impostor_live(AssetStore* assets, LodGroupState* state) @private {
+    if (!state.has_impostor || !assets.textures.is_live(state.impostor.atlas)) return false;
+    material::TextureDesc* desc = &assets.texture(state.impostor.atlas).desc;
+    uint width = state.impostor.frames_per_side * state.impostor.cell_size;
+    return desc.format == material::PixelFormat.RGBA8_UNORM && desc.width == width && desc.height == width * 2
+      && desc.layers == 1 && desc.depth <= 1 && !desc.is_cube && desc.mip_levels == 1 && !desc.generate_mips;
+}
+
+fn uint fill_lod_thresholds(LodGroupState* state, bool impostor, float[] thresholds) @private {
+    uint count = (uint)state.desc.levels.len;
+    foreach (index, level : state.desc.levels) thresholds[index] = level.min_screen_size;
+    if (impostor) {
+        thresholds[count - 1] = state.impostor_min_screen_size;
+        thresholds[count++] = 0;
+    }
+    return count;
+}
+
+fn LodLevel selected_lod_level(LodSelection* selection, uint index) @private {
+    if (index < selection.state.desc.levels.len) return selection.state.desc.levels[index];
+    return { .first_part = (uint)selection.state.desc.parts.len, .part_count = 1 };
 }

@@ -8,7 +8,10 @@ Module `c3d::scene` owns the component; `c3d::render` draws it. An `InstancedMes
 
 For whole-object alternatives with different geometry, materials and part counts,
 use [LOD groups](lod.md). They retain original placement indices across parity
-changes and select one level for all parts.
+changes and select one level for all parts. A group can also borrow a
+[static impostor atlas](lod.md#static-impostors) as its terminal choice. Its
+placements retain their colors, transforms and HEIGHT sway/fade; vertex-alpha
+sway is unavailable while the atlas is installed.
 
 ## Batches
 

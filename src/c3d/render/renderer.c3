@@ -103,6 +103,7 @@ struct Frame {
 *>
 struct Renderer {
     Allocator               allocator;
+    ImpostorBakeStats        last_impostor_bake;
     gpu::Runtime            runtime;
     String                  adapter_name;
     gpu::Surface            surface;
@@ -138,6 +139,9 @@ struct Renderer {
     ShadowAtlas             shadow_atlas;
     GpuGeometry[]           geometries;
     GpuGeometry             billboard_geometry;
+    GpuGeometry             impostor_geometry;
+    Material                impostor_material;
+    MaterialRes             impostor_material_resource;
     bool                    billboard_geometry_pending;
     List{gpu::BufferCopyDesc} pending_copies;
     bool                    pending_overwrite;
@@ -275,72 +279,7 @@ macro void? Renderer.upload(&self, id) {
  @require !self.frame_open
 *>
 fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
-    instrumentation::@scope("renderer.begin_frame") {
-        instrumentation::@scope("renderer.present") {
-            finish_pending_output(self)!;
-        };
-
-        Frame* slot = &self.frames[self.frame_index % FRAMES_IN_FLIGHT];
-        instrumentation::@scope("renderer.wait_slot") {
-            if (slot.done.is_valid()) gpu::wait_completion(slot.done)!;
-        };
-
-        reset_frame_stats(&self.stats);
-        instrumentation::@scope("renderer.readback") {
-            collect_gpu_profile(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
-            read_cluster_stats(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
-            read_cull_stats(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
-        };
-        instrumentation::@scope("renderer.retire") {
-            drain_retired(&self.device, &slot.retire);
-            sweep_geometries(self);
-            self.instances.sweep(self.frame_index, &self.pending_upload_retire);
-            sweep_environments(self);
-            sweep_textures(self);
-            sweep_samplers(self);
-            sweep_materials(self);
-            sweep_shaders(self);
-            sweep_compute_shaders(self);
-        };
-        reset_upload_ring(self, slot)!;
-        reset_deformation_cache(&self.deformation);
-        reset_instance_culling(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT));
-        self.frame_started = clock::now();
-
-        self.has_output = false;
-        self.frame_recorded = false;
-        self.work_recorded = false;
-        self.sampled_target_bits = 0;
-        if (self.swapchain.is_valid()) {
-            instrumentation::@scope("renderer.acquire_output") {
-                if (self.output_dirty) recover_window_output(self)!;
-                if (!self.output_suppressed) acquire_window_output(self)!;
-            };
-        }
-
-        self.frame_shadow_state = self.shadow_atlas.state;
-        foreach (index, target : self.targets.items) self.frame_target_states[index] = target.target.state;
-        foreach (index, &preview : self.previews) self.frame_preview_states[index] = preview.image.state;
-        snapshot_probe_states(self);
-        foreach (&record : self.views.items) {
-            record.snapshot_states();
-            record.cluster_root = (gpu::GpuAddress)0;
-            record.scene_input = &record.hdr_color;
-            record.post_chain_open = false;
-            record.bloom_recorded = false;
-        }
-        self.frame_submitted = false;
-        self.recording_slot = (uint)(self.frame_index % FRAMES_IN_FLIGHT);
-        self.commands = {};
-        defer catch abort_frame(self);
-
-        self.commands = gpu::begin_commands(&slot.allocator)!;
-        begin_gpu_profile(self)!;
-        if (self.has_output) self.window_target.transition(&self.commands, COLOR_ATTACHMENT_STATE)!;
-
-        self.info = info;
-        self.frame_open = true;
-    };
+    return begin_renderer_frame(self, info, true);
 }
 
 <*
@@ -497,6 +436,75 @@ fn void? Renderer.composite(&self, RenderTargetId target) {
         output:   &self.window_target,
         rect:     {},
     );
+}
+
+fn void? begin_renderer_frame(Renderer* self, FrameInfo info, bool acquire_output) @private {
+    instrumentation::@scope("renderer.begin_frame") {
+        instrumentation::@scope("renderer.present") {
+            finish_pending_output(self)!;
+        };
+
+        Frame* slot = &self.frames[self.frame_index % FRAMES_IN_FLIGHT];
+        instrumentation::@scope("renderer.wait_slot") {
+            if (slot.done.is_valid()) gpu::wait_completion(slot.done)!;
+        };
+
+        reset_frame_stats(&self.stats);
+        instrumentation::@scope("renderer.readback") {
+            collect_gpu_profile(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
+            read_cluster_stats(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
+            read_cull_stats(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
+        };
+        instrumentation::@scope("renderer.retire") {
+            drain_retired(&self.device, &slot.retire);
+            sweep_geometries(self);
+            self.instances.sweep(self.frame_index, &self.pending_upload_retire);
+            sweep_environments(self);
+            sweep_textures(self);
+            sweep_samplers(self);
+            sweep_materials(self);
+            sweep_shaders(self);
+            sweep_compute_shaders(self);
+        };
+        reset_upload_ring(self, slot)!;
+        reset_deformation_cache(&self.deformation);
+        reset_instance_culling(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT));
+        self.frame_started = clock::now();
+
+        self.has_output = false;
+        self.frame_recorded = false;
+        self.work_recorded = false;
+        self.sampled_target_bits = 0;
+        if (acquire_output && self.swapchain.is_valid()) {
+            instrumentation::@scope("renderer.acquire_output") {
+                if (self.output_dirty) recover_window_output(self)!;
+                if (!self.output_suppressed) acquire_window_output(self)!;
+            };
+        }
+
+        self.frame_shadow_state = self.shadow_atlas.state;
+        foreach (index, target : self.targets.items) self.frame_target_states[index] = target.target.state;
+        foreach (index, &preview : self.previews) self.frame_preview_states[index] = preview.image.state;
+        snapshot_probe_states(self);
+        foreach (&record : self.views.items) {
+            record.snapshot_states();
+            record.cluster_root = (gpu::GpuAddress)0;
+            record.scene_input = &record.hdr_color;
+            record.post_chain_open = false;
+            record.bloom_recorded = false;
+        }
+        self.frame_submitted = false;
+        self.recording_slot = (uint)(self.frame_index % FRAMES_IN_FLIGHT);
+        self.commands = {};
+        defer catch abort_frame(self);
+
+        self.commands = gpu::begin_commands(&slot.allocator)!;
+        begin_gpu_profile(self)!;
+        if (self.has_output) self.window_target.transition(&self.commands, COLOR_ATTACHMENT_STATE)!;
+
+        self.info = info;
+        self.frame_open = true;
+    };
 }
 
 fn void? composite_target(

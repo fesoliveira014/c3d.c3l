@@ -448,6 +448,16 @@ fn bool lod_group_inspector(void* component) @local {
     imgui::text("Bounds override: %s", state.desc.has_bounds_override ? "Yes" : "No");
     imgui::text("Sway amplitude: %.3f", (double)state.effects.sway.amplitude);
     imgui::text("Fade: %.3f to %.3f", (double)state.effects.fade.start, (double)state.effects.fade.end);
+    if (state.has_impostor) {
+        Impostor* impostor = &state.impostor;
+        imgui::text("Impostor atlas: %u:%u", impostor.atlas.index, impostor.atlas.generation);
+        imgui::text(
+            "Impostor: %u x %u frames, %u texels per cell",
+            impostor.frames_per_side, impostor.frames_per_side, impostor.cell_size,
+        );
+        imgui::text("Final mesh minimum height: %.4f", (double)state.impostor_min_screen_size);
+        imgui::text("Capture radius: %.3f", (double)impostor.bounds.radius);
+    }
     foreach (uint index, level : state.desc.levels) {
         imgui::text(
             "Level %u: %u parts, minimum height %.4f",

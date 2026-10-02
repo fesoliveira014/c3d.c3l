@@ -13,6 +13,12 @@ const uint SHADOW_FACE_NEGATIVE_Y = 3u;
 const uint SHADOW_FACE_POSITIVE_Z = 4u;
 const uint SHADOW_FACE_NEGATIVE_Z = 5u;
 const uint SHADOW_POINT_FACE_COUNT = 6u;
+const uint IMPOSTOR_GUTTER = 1u;
+const uint IMPOSTOR_TETRA_SIDE = 2u;
+const uint IMPOSTOR_TETRA_X_BITS = 6u;
+const uint IMPOSTOR_TETRA_Y_BITS = 10u;
+const uint IMPOSTOR_TETRA_Z_BITS = 12u;
+const float IMPOSTOR_POLE_LIMIT = 0.99;
 const uint MAX_DISPATCH_TEXTURES = 8u;
 const uint BVH_STACK_DEPTH = 32u;
 const uint TRACE_INSTANCE_ALPHA_MASK = 1u;
@@ -38,7 +44,7 @@ const uint INSTANCE_KIND_LOD = 2u;
 const uint LOD_SELECT = 1u;
 const uint LOD_CULL = 2u;
 const uint LOD_FINALIZE = 3u;
-const uint LOD_LEVEL_COUNT = 5u;
+const uint LOD_LEVEL_COUNT = 6u;
 const uint BILLBOARD_CAMERA = 0u;
 const uint BILLBOARD_DIRECTIONAL = 1u;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8u;
@@ -320,8 +326,17 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer LodPartGpu 
     uint64_t previous;
     uint reject_history;
     float seed;
-    uint _pad1;
-    uint _pad2;
+    uint64_t impostor;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer ImpostorGpu {
+    vec4 bounds;
+    vec4 previous_camera;
+    vec4 previous_direction;
+    uint atlas;
+    uint sampler_index;
+    uint frames_per_side;
+    uint cell_size;
 };
 
 struct LodMetadataGpu {
