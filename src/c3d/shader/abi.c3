@@ -538,9 +538,8 @@ struct InstanceCullRoot {
     uint       lod_parity;
     uint       lod_history_valid;
     uint       lod_level_count;
-    uint       _pad4;
-    uint       _pad5;
-    uint       _pad6;
+    uint       lod_count_visible;
+    GpuAddress lod_source_args;
 }
 $assert InstanceCullRoot::size == 352;
 $assert $reflect(InstanceCullRoot.instances).offset == 0;
@@ -571,9 +570,8 @@ $assert $reflect(InstanceCullRoot.lod_level).offset == 324;
 $assert $reflect(InstanceCullRoot.lod_parity).offset == 328;
 $assert $reflect(InstanceCullRoot.lod_history_valid).offset == 332;
 $assert $reflect(InstanceCullRoot.lod_level_count).offset == 336;
-$assert $reflect(InstanceCullRoot._pad4).offset == 340;
-$assert $reflect(InstanceCullRoot._pad5).offset == 344;
-$assert $reflect(InstanceCullRoot._pad6).offset == 348;
+$assert $reflect(InstanceCullRoot.lod_count_visible).offset == 340;
+$assert $reflect(InstanceCullRoot.lod_source_args).offset == 344;
 
 struct InstanceSortRoot {
     GpuAddress keys;

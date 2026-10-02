@@ -27,7 +27,11 @@ fn void test_lod_view_history_commits_only_submitted_selections() @test {
     Node* node = fixture.scene.add_lod_group(&fixture.assets, { .parts = parts[..], .levels = levels[..] })!!;
     fixture.scene.update_world();
     LodGroupState* state = fixture.scene.get(node, LodGroup).state;
-    LodHistoryEntry[1] history;
+    LodHistoryEntry[3] history;
+    LodHistory histories = { .entries = history[..], .first = 1 };
+    history[0].listed = true;
+    history[2].dirty = true;
+    history[2].committed.valid = true;
     Camera camera = camera::perspective_deg(60, 0.1f);
     float diameter = 2 * maths::aabb_sphere(state.local_bounds(&fixture.assets)).radius;
     float projection_scale = diameter / (2 * math::tan(camera.fov_y * 0.5f));
@@ -40,7 +44,8 @@ fn void test_lod_view_history_commits_only_submitted_selections() @test {
         distance: projection_scale / (threshold * 0.9f),
     );
     assert(selected.level == 1 && selected.reject_history && !history[0].committed.valid);
-    render::publish_lod_history(history[..]);
+    render::publish_lod_history(&histories);
+    assert(history[2].dirty && history[2].committed.valid);
     selected = select_fixture_lod(
         fixture: &fixture,
         node: node,
@@ -57,7 +62,8 @@ fn void test_lod_view_history_commits_only_submitted_selections() @test {
         distance: projection_scale / (threshold * 1.5f),
     );
     assert(selected.level == 0 && selected.reject_history);
-    render::discard_lod_history(history[..]);
+    render::discard_lod_history(&histories);
+    assert(history[2].dirty);
     selected = select_fixture_lod(
         fixture: &fixture,
         node: node,
@@ -77,9 +83,10 @@ fn void test_lod_view_history_commits_only_submitted_selections() @test {
         distance: projection_scale / (threshold * 1.05f),
     );
     assert(selected.level == 0 && selected.reject_history);
-    render::publish_lod_history(history[..]);
-    render::reset_lod_history(history[..]);
+    render::publish_lod_history(&histories);
+    render::reset_lod_history(&histories);
     assert(!history[0].committed.valid && !history[0].dirty);
+    assert(history[2].dirty && history[2].committed.valid);
 }
 
 fn void test_lod_bias_uses_normalized_existing_projection() @test {
@@ -284,6 +291,24 @@ fn void test_lod_copies_descriptors_and_placements() @test {
         assert(false);
     }
     assert(state.count == 3);
+    epoch = state.instance_epoch;
+    revision = state.revision;
+    Aabb bounds = state.placement_bounds(&fixture.assets);
+    uint aggregate_revision = state.aggregate_revision;
+    for (uint step = 0; step < 10; step++) {
+        LodEffects effects = state.effects;
+        effects.sway.direction = { 1, 0, 0 };
+        effects.sway.amplitude = (float)step * 0.1f;
+        fixture.scene.set_lod_effects(node, effects);
+        assert(state.instance_epoch == epoch && state.revision == revision);
+        assert(state.aggregate_revision == aggregate_revision);
+        Aabb current = state.placement_bounds(&fixture.assets);
+        assert(current.min == bounds.min && current.max == bounds.max);
+    }
+    state.transforms[0].position.x = 40;
+    fixture.scene.publish_lod_instances(node, 1);
+    assert(state.count == 1 && state.instance_epoch != epoch && state.revision != revision);
+    assert(state.placement_bounds(&fixture.assets).max.x > bounds.max.x);
 }
 
 fn void test_lod_gpu_records_keep_logical_indices_after_parity_changes() @test {

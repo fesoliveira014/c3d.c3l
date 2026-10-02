@@ -430,7 +430,7 @@ fn void? Renderer.end_frame(&self) {
             commit_uploads(self, slot);
             foreach (&record : self.views.items) {
                 record.history.publish();
-                publish_lod_history(record.lod_history);
+                publish_lod_history(&record.lod_history);
             }
             submitted = true;
         };
@@ -1069,7 +1069,7 @@ fn void abort_frame(Renderer* renderer) {
         foreach (&record : renderer.views.items) {
             record.restore_states();
             record.history.discard();
-            discard_lod_history(record.lod_history);
+            discard_lod_history(&record.lod_history);
         }
     }
     foreach (&record : renderer.views.items) {

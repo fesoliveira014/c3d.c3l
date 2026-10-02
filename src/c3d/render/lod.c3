@@ -32,6 +32,13 @@ struct LodHistoryEntry @private {
     ulong last_seen;
     SwayGpu sway;
     SwayGpu pending_sway;
+    uint next;
+    bool listed;
+}
+
+struct LodHistory @private {
+    LodHistoryEntry[] entries;
+    uint first;
 }
 
 struct LodSelection @private {
@@ -129,43 +136,59 @@ fn LodSelection[]? prepare_lod_view(
     Camera camera,
     CameraMatrices* matrices,
 ) @private {
-    if (scene.count(LodGroup) && record.lod_history.len != scene.nodes.len) {
-        retire_lod_history(renderer, record.lod_history);
-        record.lod_history = alloc::new_array(renderer.allocator, LodHistoryEntry, scene.nodes.len);
+    LodHistory* histories = &record.lod_history;
+    if (scene.count(LodGroup) && histories.entries.len != scene.nodes.len) {
+        retire_lod_history(renderer, histories);
+        histories.entries = alloc::new_array(renderer.allocator, LodHistoryEntry, scene.nodes.len);
     }
-    foreach (&entry : record.lod_history) {
-        if (entry.allocation.is_valid() && renderer.frame_index - entry.last_seen > INSTANCE_ABSENCE_FRAMES) {
-            renderer.pending_upload_retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = entry.allocation });
+    uint* cursor = &histories.first;
+    while (*cursor) {
+        LodHistoryEntry* entry = &histories.entries[*cursor - 1];
+        if (renderer.frame_index - entry.last_seen > INSTANCE_ABSENCE_FRAMES) {
+            if (entry.allocation.is_valid()) renderer.pending_upload_retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = entry.allocation });
+            *cursor = entry.next;
             *entry = {};
+        } else {
+            cursor = &entry.next;
         }
     }
     if (!scene.count(LodGroup)) return {};
-    LodSelection[] selections = alloc::new_array(tmem, LodSelection, scene.nodes.len);
+    LodSelection[] selections = alloc::new_array(tmem, LodSelection, scene.count(LodGroup));
+    usz count;
     scene.@each(LodGroup; Entity entity, LodGroup* group) {
         Node* node = scene.node(entity);
         if (node.visible_effective && group.state.count) {
             if (!spatial::lod_group_is_live(renderer.assets, group)) {
                 renderer.stats.dangling_refs++;
             } else {
-                LodHistoryEntry* history = &record.lod_history[entity.index];
+                LodHistoryEntry* history = &histories.entries[entity.index];
+                if (!history.listed) {
+                    history.next = histories.first;
+                    history.listed = true;
+                    histories.first = entity.index + 1;
+                }
+                history.last_seen = renderer.frame_index;
+                LodSelection* selection = &selections[count++];
                 if (group.state.mode == LodMode.INSTANCED) {
-                    selections[entity.index] = {
+                    *selection = {
                         .scene_identity = scene.identity,
                         .node = node,
                         .state = group.state,
                         .world_bounds = spatial::lod_world_bounds(renderer.assets, node, group),
-                        .history = &record.lod_history[entity.index],
+                        .history = history,
                         .camera = camera,
                         .camera_position = matrices.position,
                         .bias = record.desc.lod_bias,
                     };
-                    prepare_lod_instances(renderer, &selections[entity.index])!;
+                    prepare_lod_instances(renderer, selection)!;
                 } else {
                     if (history.allocation.is_valid()) {
                         renderer.pending_upload_retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = history.allocation });
-                        *history = {};
+                        history.allocation = {};
+                        history.capacity = 0;
+                        history.committed.valid = false;
                     }
-                    selections[entity.index] = select_lod_group(
+                    *selection = select_lod_group(
                         history: history,
                         scene: scene,
                         assets: renderer.assets,
@@ -175,19 +198,20 @@ fn LodSelection[]? prepare_lod_view(
                         camera_position: matrices.position,
                         bias: record.desc.lod_bias,
                     );
-                    selections[entity.index].history = &record.lod_history[entity.index];
-                    renderer.stats.lod_objects_selected[selections[entity.index].level]++;
+                    selection.history = history;
+                    renderer.stats.lod_objects_selected[selection.level]++;
                 }
-                record.lod_history[entity.index].pending_sway = pack_sway(group.state.effects.sway, renderer.info.time);
-                selections[entity.index].parts = alloc::new_array(tmem, gpu::GpuAddress, group.state.desc.parts.len);
+                history.pending_sway = pack_sway(group.state.effects.sway, renderer.info.time);
+                selection.parts = alloc::new_array(tmem, gpu::GpuAddress, group.state.desc.parts.len);
             }
         }
     };
-    return selections;
+    return selections[:count];
 }
 
-fn void publish_lod_history(LodHistoryEntry[] history) @private {
-    foreach (&entry : history) {
+fn void publish_lod_history(LodHistory* history) @private {
+    for (uint cursor = history.first; cursor; cursor = history.entries[cursor - 1].next) {
+        LodHistoryEntry* entry = &history.entries[cursor - 1];
         if (!entry.dirty) continue;
         entry.committed = entry.pending;
         entry.instance_epoch = entry.pending_epoch;
@@ -197,12 +221,15 @@ fn void publish_lod_history(LodHistoryEntry[] history) @private {
     }
 }
 
-fn void discard_lod_history(LodHistoryEntry[] history) @private {
-    foreach (&entry : history) entry.dirty = false;
+fn void discard_lod_history(LodHistory* history) @private {
+    for (uint cursor = history.first; cursor; cursor = history.entries[cursor - 1].next) {
+        history.entries[cursor - 1].dirty = false;
+    }
 }
 
-fn void reset_lod_history(LodHistoryEntry[] history) @private {
-    foreach (&entry : history) {
+fn void reset_lod_history(LodHistory* history) @private {
+    for (uint cursor = history.first; cursor; cursor = history.entries[cursor - 1].next) {
+        LodHistoryEntry* entry = &history.entries[cursor - 1];
         entry.committed.valid = false;
         entry.dirty = false;
     }
@@ -217,18 +244,22 @@ fn bool candidate_instanced(MeshCandidate* candidate) @private {
     return candidate.batch || candidate.billboards || (candidate.lod && candidate.lod.state.mode == LodMode.INSTANCED);
 }
 
-fn void retire_lod_history(Renderer* renderer, LodHistoryEntry[] history) @private {
-    foreach (&entry : history) {
+fn void retire_lod_history(Renderer* renderer, LodHistory* history) @private {
+    for (uint cursor = history.first; cursor; cursor = history.entries[cursor - 1].next) {
+        LodHistoryEntry* entry = &history.entries[cursor - 1];
         if (entry.allocation.is_valid()) renderer.pending_upload_retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = entry.allocation });
     }
-    alloc::free(renderer.allocator, history.ptr);
+    alloc::free(renderer.allocator, history.entries.ptr);
+    *history = {};
 }
 
-fn void free_lod_history(Renderer* renderer, LodHistoryEntry[] history) @private {
-    foreach (&entry : history) {
+fn void free_lod_history(Renderer* renderer, LodHistory* history) @private {
+    for (uint cursor = history.first; cursor; cursor = history.entries[cursor - 1].next) {
+        LodHistoryEntry* entry = &history.entries[cursor - 1];
         if (entry.allocation.is_valid()) (void)gpu::free_allocation(&renderer.device, &entry.allocation);
     }
-    alloc::free(renderer.allocator, history.ptr);
+    alloc::free(renderer.allocator, history.entries.ptr);
+    *history = {};
 }
 
 fn gpu::GpuAddress? resolve_lod_part(Renderer* renderer, MeshCandidate* candidate) @private {

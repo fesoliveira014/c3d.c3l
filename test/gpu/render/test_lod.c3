@@ -114,6 +114,7 @@ fn void check_lod_bin_lists(Fixture* fixture, DeformedScene* target, bool sorted
             camera: camera,
             matrices: &matrices,
         )!!;
+        assert(selections.len == 1 && selections[0].node == target.mesh);
         ExtractCounts counts;
         MeshCandidate[] candidates = render::extract_candidates(
             allocator: tmem,
@@ -159,7 +160,7 @@ fn void check_lod_bin_lists(Fixture* fixture, DeformedScene* target, bool sorted
         render::wait_frames(renderer)!!;
         gpu::invalidate_mapped_span(&renderer.device, readback.span)!!;
         uint[LOD_PLACEMENTS] seen;
-        render::LodSelection* selected = &selections[target.mesh.id.index];
+        render::LodSelection* selected = &selections[0];
         foreach (bin : selected.bins[:selected.bin_count]) {
             usz args_offset = (usz)((ulong)bin.args - (ulong)arena.address);
             uint count = ((uint*)(readback.bytes.ptr + args_offset))[1];
@@ -186,6 +187,30 @@ fn void check_lod_bin_lists(Fixture* fixture, DeformedScene* target, bool sorted
         }
         foreach (count : seen) assert(count == 1);
     };
+}
+
+fn void test_lod_effect_edits_reuse_placement_uploads() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    DeformedScene target = create_lod_scene(&fixture)!!;
+    defer scene::destroy_scene(&target.scene);
+    gpu::MappedGpuSpan readback = create_lod_readback(&fixture.renderer)!!;
+    defer free_lod_readback(&fixture.renderer, readback);
+    LodGroupState* state = target.scene.get(target.mesh, LodGroup).state;
+    for (uint frame = 0; frame < 10; frame++) {
+        LodEffects effects = state.effects;
+        effects.sway.direction = { 1, 0, 0 };
+        effects.sway.amplitude = (float)frame * 0.01f;
+        target.scene.set_lod_effects(target.mesh, effects);
+        render_lod_frame(
+            fixture: &fixture,
+            target: &target,
+            view: fixture.view,
+            readback: readback,
+        )!!;
+        if (frame > render::FRAMES_IN_FLIGHT) assert(fixture.renderer.stats.upload_bytes == 0);
+    }
 }
 
 fn void test_lod_blended_parts_share_sorted_indices() @test {
@@ -221,7 +246,7 @@ fn uint? render_lod_frame(
     renderer.begin_frame()!;
     defer catch render::abort_frame(renderer);
     renderer.render_view(&target.scene, target.camera, view)!;
-    render::LodHistoryEntry* history = &renderer.views.get(view).lod_history[target.mesh.id.index];
+    render::LodHistoryEntry* history = &renderer.views.get(view).lod_history.entries[target.mesh.id.index];
     if (history.allocation.is_valid() && history.pending.valid) {
         usz offset = (usz)(history.committed_slot ^ 1) * history.capacity * LodHistoryGpu::size;
         gpu::GpuSpan source = gpu::get_allocation_span(&renderer.device, history.allocation)!;
@@ -409,8 +434,9 @@ fn void test_lod_history_releases_replaced_and_absent_groups() @test {
         view: fixture.view,
         readback: readback,
     )!!;
-    render::LodHistoryEntry* history = &fixture.renderer.views.get(fixture.view).lod_history[target.mesh.id.index];
+    render::LodHistoryEntry* history = &fixture.renderer.views.get(fixture.view).lod_history.entries[target.mesh.id.index];
     assert(history.allocation.is_valid());
+    assert(history.listed && fixture.renderer.views.get(fixture.view).lod_history.first == target.mesh.id.index + 1);
     LodGroup replacement = scene::create_lod_group(mem, &fixture.assets, target.scene.get(target.mesh, LodGroup).state.desc)!!;
     target.scene.remove_component(target.mesh, LodGroup);
     target.scene.add(target.mesh, replacement);
@@ -759,7 +785,7 @@ fn void test_lod_views_and_shadows_select_independently() @test {
                     uv: uv,
                 )!!;
             }
-            uint selected = single ? fixture.renderer.views.get(view).lod_history[target.mesh.id.index].committed.level
+            uint selected = single ? fixture.renderer.views.get(view).lod_history.entries[target.mesh.id.index].committed.level
               : ((LodHistoryGpu*)readback.bytes.ptr)[0].level;
             assert(selected == view_index);
             assert(fixture.renderer.stats.shadow_layers == 1 && fixture.renderer.stats.lod_visible[0] == 0 && fixture.renderer.stats.lod_visible[1] == 0);

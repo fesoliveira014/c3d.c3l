@@ -170,8 +170,11 @@ channel becomes one track per primitive child of the node, with the mesh's
 morph count as the value stride. Interpolation maps to `STEP`, `LINEAR` or
 `CUBIC_SPLINE`; cubic keys keep their in-tangent, value and out-tangent
 triples. `duration` is the largest key time. The template lists its clip ids
-and every instance copies them. A channel on a node outside the imported node
-set is `ASSET_FORMAT_ERROR`; `options.animations = false` skips clips.
+and every instance copies them. Channels whose target nodes are outside the
+imported node set are omitted. This applies to every glTF import, including
+unselected scenes and alternate subtrees skipped during optional LOD fallback.
+Other imported channels remain intact; a clip with no imported channels has no
+tracks. `options.animations = false` skips clips.
 
 `c3d::anim` samples clips onto instance nodes and morph weights; the renderer
 builds joint palettes from `SkinBinding` and selects the skinned and morphed
@@ -198,7 +201,7 @@ variants and GPU instancing import as if absent.
 | Fault | Meaning |
 | --- | --- |
 | `ASSET_IO_ERROR` | The file, an external buffer or an external image could not be read. |
-| `ASSET_FORMAT_ERROR` | The document failed to parse or validate, an image failed to decode, an accessor could not be read, a joint or animation target lies outside the imported nodes, or a numeric value lies outside the constructor domains. |
+| `ASSET_FORMAT_ERROR` | The document failed to parse or validate, an image failed to decode, an accessor could not be read, a joint lies outside the imported nodes, or a numeric value lies outside the constructor domains. |
 | `UNSUPPORTED` | A required extension or a compressed primitive the importer does not implement. |
 | `CAPACITY_EXCEEDED` | A store pool has fewer free slots than the model needs. |
 | `INVALID_ARGUMENT` | The model key or a content key is already present, an image file is empty, a skin stream has invalid influences, or a storage texture has a non-storage format. |

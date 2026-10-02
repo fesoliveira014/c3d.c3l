@@ -102,12 +102,12 @@ void main() {
         if (slot != 0u) return;
         if (root.args == 0ul) {
             atomicAdd(CullCounter(root.counter).lod_selected[0], root.count);
-            if (root.lod_history_valid != 0u) {
+            if (root.lod_count_visible != 0u) {
                 atomicAdd(CullCounter(root.counter).visible, root.count);
                 atomicAdd(CullCounter(root.counter).lod_visible[0], root.count);
             }
         } else {
-            CullArgs(root.args).instance_count = CullArgs(root.lod_previous).instance_count;
+            CullArgs(root.args).instance_count = CullArgs(root.lod_source_args).instance_count;
         }
         return;
     }
@@ -153,7 +153,7 @@ void main() {
         SortKeys(root.keys).values[index] = sort_key(depth, source);
     }
     atomicAdd(CullCounter(root.counter).visible, 1u);
-    if (root.lod_mode == LOD_CULL && root.lod_history_valid != 0u) {
+    if (root.lod_mode == LOD_CULL && root.lod_count_visible != 0u) {
         atomicAdd(CullCounter(root.counter).lod_visible[root.lod_level], 1u);
     }
 }

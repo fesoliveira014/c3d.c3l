@@ -375,9 +375,8 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer InstanceCul
     uint lod_parity;
     uint lod_history_valid;
     uint lod_level_count;
-    uint _pad4;
-    uint _pad5;
-    uint _pad6;
+    uint lod_count_visible;
+    uint64_t lod_source_args;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer InstanceSortRoot {

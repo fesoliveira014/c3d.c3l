@@ -988,9 +988,10 @@ fn void test_foliage_lod_preserves_scatter_and_owns_descriptors() @test {
     LodGroupState* first = fixture.scene.world.get(runtime.cells[0], LodGroup).state;
     ulong identity = first.identity;
     ulong epoch = first.instance_epoch;
+    uint revision = first.revision;
     assert(first.desc.parts.ptr != runtime.desc.lod.parts.ptr);
     update_landscape(&fixture, GALE_WIND);
-    assert(first.identity == identity && first.instance_epoch == epoch);
+    assert(first.identity == identity && first.instance_epoch == epoch && first.revision == revision);
     assert(first.effects.sway.amplitude == TEST_SWAY.amplitude && first.effects.trace);
     assert(first.effects.fade.end == desc.fade.end);
     assert_plain_and_lod_scatter(&fixture, plain, grouped);

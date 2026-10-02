@@ -109,7 +109,7 @@ fn void place_cells(
                     transforms: state.transforms,
                     colors:     state.colors,
                 );
-                scene.set_lod_instances(node, state.transforms[:count], state.colors[:count])!!;
+                scene.publish_lod_instances(node, count);
                 runtime.instances += count;
                 runtime.placed_cells++;
                 continue;

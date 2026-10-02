@@ -271,9 +271,8 @@ root InstanceCullRoot {
     uint       lod_parity;
     uint       lod_history_valid;
     uint       lod_level_count;
-    uint       _pad4;
-    uint       _pad5;
-    uint       _pad6;
+    uint       lod_count_visible;
+    GpuAddress lod_source_args;
 }
 
 root InstanceSortRoot {

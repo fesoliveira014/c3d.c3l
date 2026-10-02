@@ -1,6 +1,7 @@
 module c3d::test::gltf_lod;
 
 import c3d;
+import c3d::anim;
 import c3d::asset;
 import c3d::asset::gltf;
 import c3d::camera;
@@ -129,6 +130,28 @@ fn void test_msft_lod_preserves_owner_animation_and_falls_back_for_deformation()
             defer asset::destroy_asset_store(&required);
             String strict = source.treplace(`"extensionsUsed":["MSFT_lod"]`, `"extensionsRequired":["MSFT_lod"]`);
             assert(@catch(load(&required, strict)) == c3d::UNSUPPORTED);
+        }
+    };
+}
+
+fn void test_animation_channels_skip_unselected_scene_nodes() @test {
+    @pool() {
+        String source = ANIMATED_DOCUMENT.treplace(`"extensionsUsed":["MSFT_lod"],`, "");
+        source = source.treplace(`,"extensions":{"MSFT_lod":{"ids":[1,2]}}`, "");
+        source = source.treplace(`"scenes":[{"nodes":[0,8]}]`, `"scenes":[{"nodes":[0,8]},{"nodes":[1,2]}]`);
+        String channel = `{"sampler":0,"target":{"node":0,"path":"translation"}}`;
+        String omitted = `{"sampler":0,"target":{"node":1,"path":"translation"}}`;
+        foreach (bool retain_imported : { true, false }) {
+            AssetStore assets = create_store(mem);
+            defer asset::destroy_asset_store(&assets);
+            String channels = retain_imported ? string::tformat("%s,%s", channel, omitted) : omitted;
+            ModelId model = load(&assets, source.treplace(channel, channels))!!;
+            ModelTemplate* template = &assets.model(model).data;
+            assert(template.lod_groups.len == 0 && template.clips.len == 1);
+            AnimationClip* clip = &assets.clip(template.clips[0]).data;
+            assert(clip.tracks.len == (retain_imported ? 1 : 0));
+            assert(clip.targets.len == clip.tracks.len);
+            if (retain_imported) assert(clip.targets[0] == 0 && clip.duration == 2);
         }
     };
 }

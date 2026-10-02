@@ -69,8 +69,14 @@ fresh history, including regrown slots. Both fault `CAPACITY_EXCEEDED` above
 capacity. The setter rejects malformed transforms and excess colors with
 `INVALID_ARGUMENT`. Capacity never grows.
 
+An in-place producer can fill the owned transform/color arrays and call
+`publish_lod_instances(node, count)`. The caller must supply valid data within
+capacity. Publication resets placement identities and invalidates placement
+bounds and GPU records without validating or copying the arrays again.
+
 `set_lod_effects` copies sway, fade and shadow/trace flags without replacing
-placement identities. Copy `state.effects`, edit it, then call the setter.
+placement identities or invalidating placement bounds and GPU records. Copy
+`state.effects`, edit it, then call the setter.
 Shadow and trace flags start enabled. Sway/fade follow the existing
 [instancing contracts](instancing.md#sway-and-distance-fade).
 
@@ -97,7 +103,10 @@ bounds revision and logical slot. Movement and reflection retain it. Replacement
 regrowth, identity reuse and incompatible bounds changes select fresh. Pending
 values publish only after submission. `reset_view_history` resets LOD for a
 camera cut. Ordinary reconfiguration retains hysteresis unless it recreates
-storage; explicitly reset when fresh selection is required.
+storage; explicitly reset when fresh selection is required. Groups absent from
+view preparation beyond the renderer's instance absence grace period lose their
+history. Per-frame selection and history processing visit active groups, while
+the persistent CPU history array remains indexed by entity slot.
 
 ## GPU drawing
 
@@ -119,10 +128,11 @@ also reserves two 80-byte history records per instance of capacity. Deferred
 retirement protects submissions. Previous matrices are written by classification,
 without separate per-view uploads.
 
-The existing cull arena preflights both parities for every level across the main
-view plus `max_shadow_layers` passes. Each pass reserves 32 bytes per part/parity
-command plus an aligned four-byte index per placement/level/parity. A main bin
-with blended parts adds `8 * pow2(count)` bytes of sort keys. Depth and color
+The existing cull arena preflights nonempty parities for every level across the
+main view plus `max_shadow_layers` passes. Each pass reserves 32 bytes per
+part/parity command plus an aligned four-byte index per placement/level, using
+the actual count in each parity. A main bin with blended parts adds
+`8 * pow2(parity_count)` bytes of sort keys. Depth and color
 reuse the main bin. This conservative reservation can exceed actual frame usage.
 
 A group that cannot fit uses level zero in every pass. Persistent parity lists

@@ -156,6 +156,19 @@ fn void? Scene.set_lod_instances(
     if (transforms.len > state.transforms.len) return c3d::CAPACITY_EXCEEDED~;
     validate_lod_instances(transforms, colors)!;
     fill_lod_instances(state, transforms, colors);
+    self.publish_lod_instances(node, (uint)transforms.len);
+}
+
+<*
+ Publish replacement placements, resetting their logical identities.
+ @param [&in] node : "Carries valid transforms and colors through count."
+ @require self.has(node, LodGroup)
+ @require self.get(node, LodGroup).state.mode == LodMode.INSTANCED
+ @require count <= self.get(node, LodGroup).state.transforms.len
+*>
+fn void Scene.publish_lod_instances(&self, Node* node, uint count) {
+    LodGroupState* state = self.get(node, LodGroup).state;
+    state.count = count;
     state.instance_epoch++;
     advance_lod_revision(state);
 }
@@ -199,7 +212,6 @@ fn void Scene.set_lod_effects(&self, Node* node, LodEffects effects) {
     validation.validate_effects();
     LodGroupState* state = self.get(node, LodGroup).state;
     state.effects = effects;
-    advance_lod_revision(state);
 }
 
 <*

@@ -35,12 +35,14 @@ fn void? reserve_lod_bins(Renderer* renderer, LodSelection* selection) @private 
     foreach (uint index, level : state.desc.levels) {
         for (uint pass = 0; pass < passes; pass++) {
             for (uint parity = 0; parity < 2; parity++) {
+                uint count = parity ? state.count - selection.instances.lod_unmirrored_count : selection.instances.lod_unmirrored_count;
+                if (!count) continue;
                 arena_place(&reserved, (usz)level.part_count * CULL_ARGS_STRIDE)!;
                 if (pass == 0 && lod_level_blended(renderer.assets, state, index)) {
-                    if (state.count > MAX_SORTED_INSTANCES) return c3d::CAPACITY_EXCEEDED~;
-                    arena_place(&reserved, align_up(sorted_list_bytes(state.count) + (usz)sort_capacity(state.count) * ulong::size, STREAM_ALIGNMENT))!;
+                    if (count > MAX_SORTED_INSTANCES) return c3d::CAPACITY_EXCEEDED~;
+                    arena_place(&reserved, align_up(sorted_list_bytes(count) + (usz)sort_capacity(count) * ulong::size, STREAM_ALIGNMENT))!;
                 } else {
-                    arena_place(&reserved, align_up((usz)state.count * uint::size, STREAM_ALIGNMENT))!;
+                    arena_place(&reserved, align_up((usz)count * uint::size, STREAM_ALIGNMENT))!;
                 }
             }
         }
@@ -129,7 +131,7 @@ fn void? record_lod_selection(Renderer* renderer, LodSelection[] selections) @pr
                     .lod_mode = shader::LOD_FINALIZE,
                     .counter = renderer.cull_arenas[renderer.frame_index % FRAMES_IN_FLIGHT].address,
                     .count = state.count,
-                    .lod_history_valid = selection.main_visible ? 1 : 0,
+                    .lod_count_visible = selection.main_visible ? 1 : 0,
                 };
                 gpu::cmd_dispatch(&renderer.commands, block.address, { 1, 1, 1 })!;
                 renderer.stats.cull_dispatches++;
@@ -205,8 +207,8 @@ fn void? prepare_lod_cull(Renderer* renderer, CullItem* item, bool culling) @pri
     item.args_address = (gpu::GpuAddress)((ulong)selection.arena.address + args_at);
     if (!bin) {
         bin = &selection.bins[selection.bin_count++];
-        usz visible_at = item.sorted ? arena_place_sorted(&selection.arena, selection.state.count)!
-          : arena_place(&selection.arena, (usz)selection.state.count * uint::size)!;
+        usz visible_at = item.sorted ? arena_place_sorted(&selection.arena, candidate.instance_count)!
+          : arena_place(&selection.arena, (usz)candidate.instance_count * uint::size)!;
         *bin = {
             .frustum = item.frustum,
             .level = candidate.lod_level,
@@ -216,7 +218,7 @@ fn void? prepare_lod_cull(Renderer* renderer, CullItem* item, bool culling) @pri
             .parts = alloc::new_array(tmem, gpu::GpuAddress, level.part_count),
         };
         if (item.sorted) {
-            item.keys_address = (gpu::GpuAddress)((ulong)bin.visible + sorted_list_bytes(selection.state.count));
+            item.keys_address = (gpu::GpuAddress)((ulong)bin.visible + sorted_list_bytes(candidate.instance_count));
             acquire_compute_pipeline(
                 renderer: renderer,
                 pipeline: &renderer.instance_sort_pipeline,

@@ -396,7 +396,7 @@ struct ViewRecord {
     ProjectionTerms                      projection_terms;
     float                                exposure;
     ViewHistory                          history;
-    LodHistoryEntry[]                    lod_history;
+    LodHistory                          lod_history;
     gpu::TextureState[VIEW_TARGET_COUNT] frame_states;
     ClusterBuffers                       clusters;
     gpu::GpuAddress                      cluster_root;
@@ -735,7 +735,7 @@ fn void? reset_view_history(Renderer* renderer, ViewId view) {
     ViewRecord* record = renderer.views.try_get(view)!;
     record.history.valid = false;
     record.history.pending = false;
-    reset_lod_history(record.lod_history);
+    reset_lod_history(&record.lod_history);
 }
 
 fn void? validate_view_desc(Renderer* renderer, ViewDesc* desc) @private {
@@ -862,7 +862,7 @@ fn void release_view_images(Renderer* renderer, ViewRecord* record) @private {
     post::release_post_targets(&renderer.device, record);
     post::release_effect_targets(&renderer.device, record);
     free_view_history(renderer.allocator, &record.history);
-    free_lod_history(renderer, record.lod_history);
+    free_lod_history(renderer, &record.lod_history);
     record.lod_history = {};
 }
 

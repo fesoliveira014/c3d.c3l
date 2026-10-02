@@ -320,9 +320,11 @@ fn void? prepare_cull_stage(Renderer* renderer, CullItem[] items, bool culling) 
 fn void? record_instance_cull(Renderer* renderer, CullItem[] items) @private {
     uint culled;
     bool sorted;
+    bool finalize;
     foreach (&item : items) {
         if (item.range.culled) culled++;
         if (item.keys_address != (gpu::GpuAddress)0) sorted = true;
+        finalize |= item.lod_count != (gpu::GpuAddress)0;
     }
     if (!culled) return;
     uint slot_index = (uint)(renderer.frame_index % FRAMES_IN_FLIGHT);
@@ -361,7 +363,7 @@ fn void? record_instance_cull(Renderer* renderer, CullItem[] items) @private {
                 root.lod_metadata = item.candidate.lod.instances.lod_metadata;
                 root.lod_level = item.candidate.lod_level;
                 root.lod_parity = item.candidate.mirrored ? 1 : 0;
-                root.lod_history_valid = item.main_view ? 1 : 0;
+                root.lod_count_visible = item.main_view ? 1 : 0;
             }
             write_cull_planes(root, item.bounded ? item.frustum : &open_frustum);
             uint groups = (range.count + shader::INSTANCE_CULL_GROUP_SIZE - 1) / shader::INSTANCE_CULL_GROUP_SIZE;
@@ -369,14 +371,16 @@ fn void? record_instance_cull(Renderer* renderer, CullItem[] items) @private {
             renderer.stats.cull_dispatches++;
             renderer.cull_tested += range.count;
         }
-        gpu::Barrier counted = { .before = { .compute }, .after = { .compute } };
-        gpu::cmd_barrier(&renderer.commands, &counted)!;
+        if (finalize) {
+            gpu::Barrier counted = { .before = { .compute }, .after = { .compute } };
+            gpu::cmd_barrier(&renderer.commands, &counted)!;
+        }
         foreach (&item : items) {
             if (item.lod_count == (gpu::GpuAddress)0) continue;
             gpu::MappedGpuSpan block = slot.upload.take(&renderer.device, InstanceCullRoot::size, STREAM_ALIGNMENT)!;
             *(InstanceCullRoot*)block.bytes.ptr = {
                 .lod_mode = shader::LOD_FINALIZE,
-                .lod_previous = item.lod_count,
+                .lod_source_args = item.lod_count,
                 .args = item.args_address,
             };
             gpu::cmd_dispatch(&renderer.commands, block.address, { 1, 1, 1 })!;
