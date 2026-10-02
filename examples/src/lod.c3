@@ -2,6 +2,7 @@ module lod_example;
 
 import c3d;
 import c3d::asset;
+import c3d::asset::image;
 import c3d::camera;
 import c3d::geometry;
 import c3d::gui;
@@ -27,15 +28,18 @@ const uint MEASURED_FRAMES @local = 60;
 const uint FRAME_DELAY @local = render::FRAMES_IN_FLIGHT + 1; // drains every measured GPU submission
 const uint RUN_FRAMES @local = WARMUP_FRAMES + MEASURED_FRAMES + FRAME_DELAY;
 const float BASE_BIAS @local = 20; // all five thousand placements exceed the finest threshold
+const float IMPOSTOR_THRESHOLD @local = 0.02f; // confines atlas rendering to small projected trees
+const float MESH_ONLY_THRESHOLD @local = 1e-6f; // below every tree's projected size inside the far plane
 const double NANOSECONDS_PER_MILLISECOND @local = 1000000;
 const String[3] WAYPOINT_NAMES @local = { "near", "middle", "far" };
-const Vec3[3] WAYPOINTS @local = { { 0, 5, 8 }, { 0, 40, 90 }, { 0, 140, 280 } };
+const Vec3[3] WAYPOINTS @local = { { 0, 5, 8 }, { 0, 40, 90 }, { 0, 240, 600 } };
 const Vec3[3] LOOK_AT @local = { { 0, 2, -25 }, { 0, 1, -75 }, { 0, 1, -75 } };
 
 struct Field @local {
     Node* group;
     Node* camera;
-    uint[3] triangles;
+    uint[4] triangles;
+    Impostor impostor;
 }
 
 struct Sample @local {
@@ -45,8 +49,9 @@ struct Sample @local {
     double cull_ms;
     uint draws;
     uint direct_triangles;
-    uint[3] selected;
-    uint[3] visible;
+    uint[4] selected;
+    uint[4] visible;
+    float[render::PASS_COUNT] passes;
     uint fallbacks;
     bool counts_ready;
     bool timings_ready;
@@ -56,6 +61,7 @@ struct Controls @local {
     uint waypoint;
     float bias;
     bool forced_base;
+    bool mesh_only;
 }
 
 fn void set_waypoint(Node* camera, uint waypoint) @local {
@@ -106,6 +112,7 @@ fn Field? build_field(AssetStore* assets, Scene* scene) @local {
             (uint)(geometry[0].indices.len + geometry[1].indices.len) / 3,
             (uint)(geometry[2].indices.len + geometry[3].indices.len) / 3,
             (uint)geometry[4].indices.len / 3,
+            2,
         };
         StandardParams params = material::STANDARD_PARAMS_DEFAULT;
         params.metallic = 0;
@@ -180,6 +187,27 @@ fn ViewDesc view_desc(RenderTargetId target, Controls controls, bool window) @lo
     return desc;
 }
 
+fn void? bake_field(Renderer* renderer, Scene* scene, Field* field) @local {
+    LodGroupState* state = scene.get(field.group, LodGroup).state;
+    Node* prototype = scene.add_lod_group(renderer.assets, state.desc, name: "tree prototype")!;
+    defer scene.remove(prototype);
+    scene.update_world();
+    field.impostor = renderer.bake_impostor(scene, prototype)!;
+    scene.set_lod_impostor(
+        assets: renderer.assets,
+        node: field.group,
+        impostor: field.impostor,
+        min_screen_size: IMPOSTOR_THRESHOLD,
+    )!;
+    ImpostorBakeStats measured = renderer.last_impostor_bake;
+    io::printfn(
+        "bake_ms=%.3f atlas_bytes=%d capture_texel_bytes=%d readback_bytes=%d capture_scene_host_peak=%d frames=%dx%d cell=%d",
+        measured.elapsed_ms, measured.atlas_bytes, measured.capture_texel_bytes,
+        measured.readback_bytes, measured.scene_host_peak,
+        field.impostor.frames_per_side, field.impostor.frames_per_side, field.impostor.cell_size,
+    );
+}
+
 fn void? draw_frame(
     Renderer* renderer,
     Scene* scene,
@@ -245,7 +273,7 @@ fn void? measure_waypoint(
         Stats* stats = &renderer.stats;
         if (stats.lod_counts_valid && stats.lod_frame_index >= first && stats.lod_frame_index < first + samples.len) {
             Sample* completed = &samples[stats.lod_frame_index - first];
-            foreach (uint level : { 0u, 1u, 2u }) {
+            foreach (uint level : { 0u, 1u, 2u, 3u }) {
                 completed.selected[level] = stats.lod_selected[level];
                 completed.visible[level] = stats.lod_visible[level];
             }
@@ -257,6 +285,7 @@ fn void? measure_waypoint(
             completed.gpu_ms = 0;
             foreach (timing : stats.gpu_pass_ms) completed.gpu_ms += timing;
             completed.cull_ms = stats.gpu_pass_ms[Pass.INSTANCE_CULL.ordinal];
+            completed.passes = stats.gpu_pass_ms;
             completed.timings_ready = true;
         }
     }
@@ -264,6 +293,7 @@ fn void? measure_waypoint(
     double extract;
     double gpu_time;
     double cull;
+    double[render::PASS_COUNT] passes;
     ulong geometry_work;
     uint fallback_frames;
     foreach (sample : samples[WARMUP_FRAMES:MEASURED_FRAMES]) {
@@ -272,23 +302,26 @@ fn void? measure_waypoint(
         extract += sample.extract_ms;
         gpu_time += sample.gpu_ms;
         cull += sample.cull_ms;
+        foreach (index, value : sample.passes) passes[index] += value;
         foreach (index, visible : sample.visible) geometry_work += (ulong)visible * field.triangles[index];
         fallback_frames += sample.fallbacks != 0 ? 1 : 0;
-        if (sample.selected[0] + sample.selected[1] + sample.selected[2] != PLACEMENT_COUNT) return c3d::INVALID_ARGUMENT~;
+        if (sample.selected[0] + sample.selected[1] + sample.selected[2] + sample.selected[3] != PLACEMENT_COUNT) return c3d::INVALID_ARGUMENT~;
     }
     Sample last = samples[WARMUP_FRAMES + MEASURED_FRAMES - 1];
     io::printfn(
-        "waypoint=%s mode=%s frames=%d..%d selected=%d,%d,%d visible=%d,%d,%d fallback_frames=%d",
+        "waypoint=%s mode=%s frames=%d..%d selected=%d,%d,%d,%d visible=%d,%d,%d,%d fallback_frames=%d",
         WAYPOINT_NAMES[controls.waypoint],
-        controls.forced_base ? "base" : "lod",
+        controls.forced_base ? "base" : controls.mesh_only ? "mesh" : "impostor",
         first + WARMUP_FRAMES,
         first + WARMUP_FRAMES + MEASURED_FRAMES - 1,
         last.selected[0],
         last.selected[1],
         last.selected[2],
+        last.selected[3],
         last.visible[0],
         last.visible[1],
         last.visible[2],
+        last.visible[3],
         fallback_frames,
     );
     io::printfn(
@@ -301,6 +334,9 @@ fn void? measure_waypoint(
         gpu_time / MEASURED_FRAMES,
         cull / MEASURED_FRAMES,
     );
+    $foreach $index, $name : Pass::names:
+        if (passes[$index] > 0) io::printfn("gpu_pass=%s ms=%.4f", $name, passes[$index] / MEASURED_FRAMES);
+    $endforeach
     if (fallback_frames || !validation_clean(renderer)) return c3d::INVALID_ARGUMENT~;
 }
 
@@ -320,6 +356,7 @@ fn void? run_benchmark() @local {
         .shadow_resolution = 1024, .application_name = "c3d_lod",
     })!;
     defer render::destroy_renderer(&renderer);
+    bake_field(&renderer, &scene, &field)!;
     RenderTargetId target = render::create_render_target(
         &renderer, render::render_target_desc(OUTPUT_WIDTH, OUTPUT_HEIGHT, PixelFormat.RGBA8_UNORM),
     )!;
@@ -340,21 +377,28 @@ fn void? run_benchmark() @local {
         );
     }
     io::printfn(
-        "output=%dx%d placements=%d triangles_per_level=%d,%d,%d validation=on",
+        "output=%dx%d placements=%d triangles_per_level=%d,%d,%d,%d validation=on",
         OUTPUT_WIDTH,
         OUTPUT_HEIGHT,
         PLACEMENT_COUNT,
         field.triangles[0],
         field.triangles[1],
         field.triangles[2],
+        field.triangles[3],
     );
     Sample[] samples = mem::new_array(Sample, RUN_FRAMES);
     defer free(samples);
     for (uint waypoint = 0; waypoint < 3; waypoint++) {
         set_waypoint(field.camera, waypoint);
         scene.update_world();
-        foreach (bool forced : { false, true }) {
-            Controls controls = { .waypoint = waypoint, .forced_base = forced };
+        for (uint mode = 0; mode < 3; mode++) {
+            Controls controls = { .waypoint = waypoint, .forced_base = mode == 2, .mesh_only = mode == 1 };
+            scene.set_lod_impostor(
+                assets: &assets,
+                node: field.group,
+                impostor: field.impostor,
+                min_screen_size: controls.mesh_only ? MESH_ONLY_THRESHOLD : IMPOSTOR_THRESHOLD,
+            )!;
             render::configure_view(&renderer, view, view_desc(target, controls, false))!;
             render::reset_view_history(&renderer, view)!;
             measure_waypoint(
@@ -366,6 +410,17 @@ fn void? run_benchmark() @local {
                 controls: controls,
                 samples: samples,
             )!;
+            if (waypoint == 2) {
+                char[] pixels = mem::new_array(char, OUTPUT_WIDTH * OUTPUT_HEIGHT * 4);
+                defer free(pixels);
+                renderer.read_render_target(target, pixels)!;
+                image::write_png(
+                    path: string::tformat("lod-far-%s.png", mode == 0 ? "impostor" : mode == 1 ? "mesh" : "base"),
+                    width: OUTPUT_WIDTH,
+                    height: OUTPUT_HEIGHT,
+                    pixels: pixels,
+                )!;
+            }
         }
     }
 }
@@ -385,6 +440,7 @@ fn void? run_window(uint frame_limit) @local {
         desc: { .validation = true, .gpu_timings = true, .shadow_resolution = 1024, .application_name = "c3d_lod" },
     )!;
     defer render::destroy_renderer(&renderer);
+    bake_field(&renderer, &scene, &field)!;
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, &renderer, &window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
     render::configure_view(&renderer, renderer.default_view, view_desc({}, {}, true))!;
@@ -400,7 +456,8 @@ fn void? run_window(uint frame_limit) @local {
         imgui::set_next_window_pos({ 10, 10 }, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size({ 330, 255 }, imgui::COND_FIRST_USE_EVER);
         if (imgui::begin("Whole-object LOD", null, {})) {
-            imgui::text_unformatted("5,000 trees, three whole-object mesh levels");
+            imgui::text_unformatted("5,000 trees, three mesh levels and an impostor");
+            imgui::text("Bake: %.1f ms, atlas %.1f MiB", renderer.last_impostor_bake.elapsed_ms, (double)renderer.last_impostor_bake.atlas_bytes / (1024 * 1024));
             foreach (uint index, name : WAYPOINT_NAMES) {
                 if (index) imgui::same_line();
                 if (imgui::button(name.zstr_tcopy())) {
@@ -416,9 +473,10 @@ fn void? run_window(uint frame_limit) @local {
                 v_max: 3,
             );
             changed |= imgui::checkbox("Force full-detail meshes", &controls.forced_base);
+            changed |= imgui::checkbox("Mesh levels only", &controls.mesh_only);
             if (renderer.stats.lod_counts_valid) {
                 imgui::text("Completed frame: %llu", renderer.stats.lod_frame_index);
-                foreach (uint index, count : renderer.stats.lod_visible[:3]) {
+                foreach (uint index, count : renderer.stats.lod_visible[:4]) {
                     imgui::text("Level %u: %u visible placements", index, count);
                 }
                 imgui::text("Fallback groups: %u", renderer.stats.lod_fallbacks);
@@ -430,7 +488,15 @@ fn void? run_window(uint frame_limit) @local {
         gui_renderer.finish_frame();
         scene.update_world();
         platform::sync_window(&window, &renderer);
-        if (changed) render::configure_view(&renderer, renderer.default_view, view_desc({}, controls, true))!;
+        if (changed) {
+            scene.set_lod_impostor(
+                assets: &assets,
+                node: field.group,
+                impostor: field.impostor,
+                min_screen_size: controls.mesh_only ? MESH_ONLY_THRESHOLD : IMPOSTOR_THRESHOLD,
+            )!;
+            render::configure_view(&renderer, renderer.default_view, view_desc({}, controls, true))!;
+        }
         if (renderer.output_width && renderer.output_height) draw_frame(
             renderer: &renderer,
             scene: &scene,

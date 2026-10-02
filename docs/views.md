@@ -58,6 +58,12 @@ defer (void)render::destroy_view(&renderer, capture_view);
 | `clip_plane` | World-space `maths::Plane`; geometry on its negative side is not drawn (see [Clip plane](#clip-plane)); the zero plane clips nothing and both constructors produce it |
 | `volumetric_fog` | A froxel volume for the view's `HeightFog`, allocated with the view (see [volumetric fog](sky.md#volumetric-fog)); faults `INVALID_ARGUMENT` on a `PATH_TRACED` view |
 
+An installed [static impostor](lod.md#static-impostors) participates in the same
+per-view LOD selection and hysteresis. Forward and deferred views share its
+reconstructed surface depth. Shadow passes retain the main choice and select
+atlas directions from the light. LOD or direction-triplet changes reject the
+affected temporal pixels; stable placements retain velocity.
+
 `default_view_desc()` is a full-window `DISPLAY_LDR` view with neutral grading and a depth
 prepass and `ray_tracing.max_reflection_roughness` at `RT_REFLECTION_ROUGHNESS_DEFAULT`;
 `texture_view_desc(target, color = LINEAR_HDR)` covers a target with the same defaults. `create_view` and `configure_view`

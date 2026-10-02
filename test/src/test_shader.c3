@@ -107,7 +107,8 @@ fn bool spirv_declares_capability(char[] spirv, uint capability) @private {
 fn void test_surface_vertex_forms_declare_clip_distance() @test {
     usz surface_count;
     foreach (&entry : shader::SHADER_ENTRIES) {
-        bool surface = entry.variant.shader == MESH || entry.variant.shader == BILLBOARD_VERTEX;
+        bool surface = entry.variant.shader == MESH || entry.variant.shader == BILLBOARD_VERTEX
+          || entry.variant.shader == IMPOSTOR_VERTEX;
         assert(spirv_declares_capability(entry.spirv, SPIRV_CAPABILITY_CLIP_DISTANCE) == surface);
         if (surface) surface_count++;
     }
@@ -116,7 +117,8 @@ fn void test_surface_vertex_forms_declare_clip_distance() @test {
 
 fn void test_registry_holds_the_software_trace_variants() @test {
     uint shadow_flags = shader::SHADER_FLAG_RT_SHADOWS | shader::SHADER_FLAG_SCENE_TRACE_BVH;
-    ShaderVariant[6] variants = {
+    ShaderVariant[7] variants = {
+        { .shader = IMPOSTOR_FORWARD, .flags = shadow_flags },
         { .shader = STANDARD, .flags = shadow_flags },
         { .shader = PHYSICAL, .flags = shadow_flags },
         { .shader = TOON, .flags = shadow_flags },
@@ -143,7 +145,7 @@ fn void test_software_trace_variants_declare_no_ray_capability() @test {
         assert(!features.ray_capability && !features.ray_extension);
         software_count++;
     }
-    assert(software_count == 8);
+    assert(software_count == 9);
 }
 
 // glslang names a function by its signature, so the name up to the parenthesis is the function.

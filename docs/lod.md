@@ -169,6 +169,7 @@ Foliage accepts a copied [LOD descriptor](vegetation.md#whole-object-lod).
 | `lod_visible` | Same completed frame | Main-view placements, counted once across parts |
 | `lod_instances_tested` | Same completed frame | Placements submitted for classification/fallback |
 | `lod_fallbacks` | Same completed frame | Group/view reservations using level zero |
+| `impostor_fallbacks` | Current CPU frame | Installed atlases unavailable to a group/view |
 | `lod_counts_valid` | Current publication | Completed counters are available |
 
 Views add to the same frame totals. Fallback visible counts describe submitted
@@ -188,3 +189,119 @@ and far waypoints; bias and forced-base controls compare detail. `--frames 30`
 bounds an interactive smoke run. The benchmark joins CPU, GPU and LOD counters
 by submission frame and keeps native validation enabled. See
 [recorded acceptance](lod_acceptance.md) for measurements and limitations.
+
+## Static impostors
+
+An optional `Impostor` adds one terminal raster choice after the mesh levels.
+It borrows an ordinary texture asset and stores its subject-local bounding
+sphere and atlas dimensions. Core scene types do not depend on the renderer.
+
+```c3
+scene.update_world();
+Impostor baked = renderer.bake_impostor(&scene, prototype)!;
+scene.set_lod_impostor(
+    assets: &assets,
+    node: forest,
+    impostor: baked,
+    min_screen_size: 0.02f,
+)!;
+```
+
+Call `bake_impostor` outside a frame, with current world transforms. It captures
+the visible subject subtree in subject-local coordinates, using level-zero
+parts of LOD groups and the current placements of instanced meshes/groups.
+Bake a single prototype when the atlas will represent each forest placement.
+The capture freezes wind and fade at rest, uses an isolated unlit scene, and
+does not alter source components or public views. It submits and waits for each
+direction; frame indices and renderer statistics advance. Authoring is
+synchronous and is unsuitable for the frame loop.
+Source asset edits do not update an existing atlas; rebake explicitly after
+changing the captured geometry or material.
+
+Supported sources are rigid Standard meshes with opaque or masked coverage,
+zero metallic factor, no emissive contribution, and no active occlusion map.
+Base color, normal and metallic/roughness asset textures are supported.
+Geometry CPU positions must remain available. Blending, wireframe, disabled
+depth writes/tests, Basic/Physical/custom materials, render-target texture
+references, skinning and morph targets return `UNSUPPORTED`. Released CPU
+positions return `ASSET_DATA_UNAVAILABLE`; dead references return `INVALID_ID`.
+Invalid dimensions, an empty subject or duplicate asset key return
+`INVALID_ARGUMENT`. Exhausted asset/view/target slots return
+`CAPACITY_EXCEEDED`; device allocation, format and submission faults propagate.
+Validation precedes capture, and atlas insertion happens only after every
+direction succeeds. Temporary ownership is released on failure.
+
+Installation validates a live atlas, an enclosing finite positive sphere and
+a finite positive threshold below the preceding mesh threshold. The effective
+last mesh threshold becomes this value; the terminal threshold is zero. The
+mesh descriptors remain unchanged. The sphere must enclose every authored
+level, including any bounds override. It participates in common bounds, so
+installing a larger sphere can change projected size and the sway/fade anchor.
+Nonzero vertex-alpha sway returns `UNSUPPORTED`; use HEIGHT sway while an atlas
+is installed. Later effect edits retain that programming contract.
+
+`clear_lod_impostor` removes metadata and restores the final mesh threshold to
+zero. Clearing or removing the group never deletes the texture. Retiring or
+changing the atlas to an incompatible shape falls back to the last mesh in
+main and shadow passes and increments `impostor_fallbacks`. Cull-arena overflow
+continues to use the separate level-zero fallback. Changes to terminal metadata
+invalidate temporal correspondence. `prepare_scene` prepares installed live
+atlases; model preparation has no scene-installed terminal metadata.
+
+### Atlas contract
+
+`IMPOSTOR_DESC_DEFAULT` is an 8×8 direction grid with 128×128 texels per cell,
+including a one-texel duplicated gutter on each side. The usable capture is
+126×126. The resulting 1024×2048 RGBA8_UNORM texture occupies 8 MiB, has one mip,
+and uses linear clamped sampling. Do not generate mipmaps or convert it to sRGB.
+Accepted grid sides are 2, 4, 8, 16 and 32; cells must contain at least four
+texels. Device limits still apply.
+
+The upper square stores linear RGB and coverage. The lower square stores
+subject-local octahedral normal XY, roughness and normalized linear capture
+depth. Coverage comes from the captured depth, never from metallic alpha.
+Depth spans the sphere diameter, with a maximum quantization step of
+`2 * radius / 255`. Normals and other channels also have eight-bit precision.
+The capture near/far planes include a margin so valid surfaces cannot equal
+the reverse-Z clear value. Sampling remains inside each cell's texel centers.
+
+For sides of four or more, directions decode the inclusive octahedral lattice
+`2 * (x,y) / (side - 1) - 1`; selection uses the containing grid triangle.
+Duplicate seam/pole directions use the deterministic triangle tie. A 2×2
+atlas uses four tetrahedral directions instead, since four octahedral corners
+would all decode to the same pole. CPU and GLSL share the direction constants
+and basis convention through the generated ABI.
+
+### Drawing and limitations
+
+Each placement emits two triangles with no geometry-buffer read. The fragment
+stages reconstruct three direction samples, blend attributes by coverage,
+and write reverse-Z surface depth. Forward, deferred, depth and velocity use
+the same reconstruction. Shadow passes use light-relative directions while
+retaining the parent view's selected level, including offscreen casters.
+Reflections and nonuniform scales use the placement transform and inverse
+transpose. HEIGHT sway and fade use the shared object anchor.
+
+Stable velocity reconstructs the same local point under the previous
+placement and wind time. LOD and frame-triplet changes mark affected pixels
+for temporal rejection. Histories remain independent per view and instance.
+Picking, tracing, physics and spatial indexing continue to use their existing
+base-mesh or explicit-collider contracts.
+
+The surface search currently uses 32 brackets and eight refinements per
+contributing direction. Thin features, occluded surfaces and hard-normal edges
+remain atlas approximations. Filtering smooths hard-normal boundaries, and
+continuous HEIGHT sway need not match interpolation across a coarse mesh's
+triangles exactly. This representation reduces submitted triangles; it does
+not guarantee lower GPU time. The 5,000-tree benchmark is slower than both the
+coarse mesh and forced base at its far waypoint. See
+[impostor acceptance](impostor_acceptance.md) for the tests and measured costs.
+The benchmark also saves `lod-far-impostor.png`, `lod-far-mesh.png` and
+`lod-far-base.png` in its working directory after the timed runs, for comparison.
+
+`Renderer.last_impostor_bake` reports elapsed milliseconds, atlas texel bytes,
+capture attachment texel bytes, mapped readback bytes and the capture scene's
+peak tracked host allocation. These are explicit allocations, not process or
+driver memory measurements. GPU padding, driver caches, upload rings, retained
+renderer mirrors and tracking metadata are excluded. The prospective atlas
+buffer transfers to the asset store on success.

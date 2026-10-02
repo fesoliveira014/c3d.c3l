@@ -34,6 +34,7 @@ fn void? stats_panel(Renderer* renderer) {
     imgui::text("Sort overflows: %u", renderer.stats.sort_overflows);
     imgui::text("Culled: %u", renderer.stats.culled);
     imgui::text("Faded batches: %u", renderer.stats.batches_faded);
+    imgui::text("Unavailable impostor atlases: %u", renderer.stats.impostor_fallbacks);
     if (renderer.stats.lod_counts_valid) {
         imgui::text("Completed LOD frame: %llu", renderer.stats.lod_frame_index);
         imgui::text("LOD placements tested: %u, fallback groups: %u", renderer.stats.lod_instances_tested, renderer.stats.lod_fallbacks);

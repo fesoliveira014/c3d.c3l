@@ -258,7 +258,7 @@ fn void? record_raster_view(
             usz scene_read_count;
             usz transparent_count;
             foreach (&candidate : candidates) {
-                Material* material_data = &renderer.assets.material(candidate.material).data;
+                Material* material_data = candidate_material(renderer, candidate);
                 DrawList counted = view_draw_list(
                     material:       material_data,
                     shading:        shading,
@@ -275,16 +275,17 @@ fn void? record_raster_view(
             scene_read_start = candidates.len - scene_read_count - transparent_count;
             transparent_start = candidates.len - transparent_count;
             foreach (&candidate : candidates) {
-                GpuGeometry* geometry = candidate.billboards
+                GpuGeometry* geometry = candidate.impostor ? acquire_impostor_geometry(renderer) : candidate.billboards
                   ? acquire_billboard_geometry(renderer)! : resolve_geometry(renderer, candidate.geometry)!;
-                Material* material_description = &renderer.assets.material(candidate.material).data;
-                MaterialRes*? resolved = resolve_material(renderer, candidate.material);
+                Material* material_description = candidate_material(renderer, candidate);
+                MaterialRes*? resolved = candidate.impostor ? &renderer.impostor_material_resource : resolve_material(renderer, candidate.material);
                 if (catch excuse = resolved) {
                     if (!custom_material_unavailable(material_description, excuse)) return excuse~;
                     renderer.stats.dangling_refs++;
                     continue;
                 }
                 MaterialRes* material = resolved;
+                if (candidate.impostor) resolve_lod_part(renderer, candidate)!;
                 sheen |= material_uses_sheen(material_description);
                 validate_normal_geometry(
                     geometry: geometry,
@@ -921,6 +922,14 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
                     )!;
                     sheen |= prepared.sheen;
                     scene_reads |= prepared.scene_reads;
+                }
+                if (lod_impostor_live(self.assets, group.state)) {
+                    prepare_impostor(
+                        renderer: self,
+                        impostor: &group.state.impostor,
+                        depth: casts || prepass,
+                        gbuffer: deferred,
+                    )!;
                 }
             } else {
                 self.stats.dangling_refs++;
@@ -1814,7 +1823,8 @@ fn void? validate_normal_geometry(
     }
 }
 
-fn Material* material_data(Renderer* renderer, MaterialRes* material) @local {
+fn Material* material_data(Renderer* renderer, MaterialRes* material) @private {
+    if (material == &renderer.impostor_material_resource) return &renderer.impostor_material;
     return &renderer.assets.material(material.asset).data;
 }
 
@@ -1839,7 +1849,7 @@ fn gpu::PipelineHandle? pipeline_for(
     uint shadow_flags = rt_shadow_flags(renderer, rt_shadows);
     PipelineKey key = {
         .vertex        = vertex,
-        .fragment      = material_fragment(material, shadow_flags),
+        .fragment      = vertex.shader == IMPOSTOR_VERTEX ? (ShaderVariant){ .shader = IMPOSTOR_FORWARD, .flags = shadow_flags } : material_fragment(material, shadow_flags),
         .color_formats = { [0] = HDR_FORMAT },
         .color_count   = 1,
         .depth_format  = DEPTH_FORMAT,

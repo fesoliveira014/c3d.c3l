@@ -43,6 +43,7 @@ fn ShaderVariant mesh_vertex_variant(
 }
 
 fn ShaderVariant candidate_vertex_variant(GeometryFlags flags, MeshCandidate* candidate, uint base_flags = 0) @private {
+    if (candidate.impostor) return { .shader = IMPOSTOR_VERTEX };
     if (candidate.billboards) return { .shader = BILLBOARD_VERTEX };
     if (candidate_instanced(candidate)) {
         AnimatedCrowd* crowd = candidate.crowd;

@@ -13,8 +13,8 @@ import std::math;
 const usz INSTANCE_CULL_ARENA_BYTES = 16 << 20; // per slot on the device; instances x culling passes; 100k: 6 x 400 KB culled, 1.45 MB sorted
 
 const usz CULL_ARGS_STRIDE @private = 32; // one indirect command at STREAM_ALIGNMENT
-const usz CULL_COUNTER_BYTES @private = 48; // one batch counter and five selected/visible LOD counters, aligned for copies
-$assert scene::MAX_LOD_LEVELS == shader::LOD_LEVEL_COUNT;
+const usz CULL_COUNTER_BYTES @private = 64; // one batch counter and six selected/visible LOD counters, aligned for copies
+$assert scene::MAX_LOD_CHOICES == shader::LOD_LEVEL_COUNT;
 
 struct CullArena @private {
     gpu::GpuAllocation allocation;
@@ -206,7 +206,7 @@ fn CullItem[] batch_cull_items(
             .records    = item.instance_data,
             .frustum    = frustum,
             .range      = &item.range,
-            .sorted     = assets.material(item.material.asset).data.common.alpha_mode == AlphaMode.BLEND,
+            .sorted     = !item.candidate.impostor && assets.material(item.material.asset).data.common.alpha_mode == AlphaMode.BLEND,
             .depth_axis = depth_axis,
             .effects    = item.effects,
             .main_view = true,
@@ -426,7 +426,7 @@ fn void pair_cull_stats(CullReadback* readback, Stats* stats) @private {
     stats.lod_frame_index = readback.frame_index;
     stats.lod_counts_valid = true;
     foreach (index, &count : stats.lod_visible) *count = ((uint*)readback.mapped.bytes.ptr)[1 + index];
-    foreach (index, &count : stats.lod_selected) *count = ((uint*)readback.mapped.bytes.ptr)[1 + scene::MAX_LOD_LEVELS + index];
+    foreach (index, &count : stats.lod_selected) *count = ((uint*)readback.mapped.bytes.ptr)[1 + scene::MAX_LOD_CHOICES + index];
     readback.pending = false;
 }
 

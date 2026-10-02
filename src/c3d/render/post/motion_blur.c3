@@ -200,7 +200,7 @@ fn void? record_geometry_velocity(
     foreach (group : groups) foreach (&item : group) {
         if (!item.velocity_pipeline.is_valid()) continue;
 
-        Material* material = &renderer.assets.material(item.material.asset).data;
+        Material* material = render::material_data(renderer, item.material);
         if (item.velocity_pipeline.index != bound.index) {
             gpu::cmd_bind_pipeline(&renderer.commands, item.velocity_pipeline)!;
             bound = item.velocity_pipeline;
@@ -270,16 +270,16 @@ fn gpu::PipelineHandle? resolve_velocity_pipelines(
 
 fn bool velocity_redrawn(Renderer* renderer, DrawItem* item, bool after_opaque) @private {
     if (!item.moved) return false;
-    return !after_opaque || render::writes_own_depth(&renderer.assets.material(item.material.asset).data);
+    return !after_opaque || render::writes_own_depth(render::material_data(renderer, item.material));
 }
 
 fn bool velocity_form_rejected(Renderer* renderer, DrawItem* item, fault excuse) @private {
     if (!item.custom_velocity) return false;
-    return render::custom_pipeline_rejected(renderer, &renderer.assets.material(item.material.asset).data, excuse);
+    return render::custom_pipeline_rejected(renderer, render::material_data(renderer, item.material), excuse);
 }
 
 fn gpu::PipelineHandle? velocity_pipeline_for(Renderer* renderer, DrawItem* item, gpu::Format format) @private {
-    Material* material = &renderer.assets.material(item.material.asset).data;
+    Material* material = render::material_data(renderer, item.material);
     bool wireframe = material.common.wireframe && renderer.caps.line_polygon_mode;
     PipelineKey key = {
         .vertex        = { .shader = MESH, .flags = item.vertex.flags | shader::SHADER_FLAG_VELOCITY },
@@ -290,6 +290,10 @@ fn gpu::PipelineHandle? velocity_pipeline_for(Renderer* renderer, DrawItem* item
         .samples       = gpu::SampleCount.ONE,
         .polygon       = wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL,
     };
+    if (item.candidate.impostor) {
+        key.vertex = { .shader = IMPOSTOR_VERTEX };
+        key.fragment = { .shader = IMPOSTOR_VELOCITY };
+    }
     if (!item.custom_velocity) return renderer.pipelines.get(&renderer.device, key);
 
     ShaderRes* published = render::resolve_shader(renderer, material.custom.shader)!;

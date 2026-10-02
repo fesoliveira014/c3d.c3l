@@ -19,9 +19,13 @@ color; it advances the asset revision only after a change.
 ## LOD inspection
 
 The built-in `LodGroup` inspector displays placement mode/count, thresholds,
-part geometry/material IDs, bounds mode, sway and fade. Descriptors are read-only.
+part geometry/material IDs, bounds mode, sway and fade. Installed impostors show
+the atlas ID, frame/cell dimensions, radius and terminal threshold. Descriptors
+are read-only.
 The Stats panel labels ordinary object counts as current CPU values and displays
 GPU selected/visible placement counts and fallbacks with their completed frame ID.
+The six count slots include a terminal impostor when installed; its index follows
+that group's mesh levels. Missing-atlas fallback is a separate current CPU count.
 See [whole-object LOD](lod.md).
 
 ## Profiler panel

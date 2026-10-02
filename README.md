@@ -7,7 +7,9 @@ for one.
 See [Scene nodes](docs/scene.md) for hierarchy ownership, transform spaces,
 visibility and explicit transform updates.
 Core [whole-object LOD](docs/lod.md) selects rigid multipart alternatives per view,
-with GPU selection for instanced placements and a 5,000-tree example.
+with GPU selection for instanced placements, optional static impostors and a
+5,000-tree example. Impostors reduce triangles but can increase GPU time; see
+the [measured acceptance](docs/impostor_acceptance.md).
 Core [billboard batches](docs/billboards.md) provide camera-facing and directional
 quads through the transparent material pipeline.
 The optional [particle add-on](docs/particles.md) supplies CPU simulation, effect
@@ -396,6 +398,14 @@ orbit and wheel zoom. Both enable full validation. See
 [cube loading](docs/textures.md#load-six-cube-faces) and
 [supplied mip data](docs/textures.md#supply-mip-levels) for source ownership and
 the remaining unsupported texture forms.
+
+The `lod` example bakes one prototype at startup and draws 5,000 placements
+with three mesh levels and a terminal impostor. Its near/middle/far buttons,
+mesh-only switch and forced-base switch compare the representations. Run
+`python scripts/build.py --example lod`, or use
+`examples/build/lod.exe --benchmark` for deterministic completed-frame counters
+and per-pass timings. `--frames 30` bounds a windowed smoke run. See
+[LOD usage](docs/lod.md) and [impostor acceptance](docs/impostor_acceptance.md).
 
 ## Using c3d from your own project
 

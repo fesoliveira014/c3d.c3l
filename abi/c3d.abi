@@ -8,6 +8,13 @@ const uint SHADOW_FACE_POSITIVE_Z = 4;
 const uint SHADOW_FACE_NEGATIVE_Z = 5;
 const uint SHADOW_POINT_FACE_COUNT = 6;
 
+const uint IMPOSTOR_GUTTER = 1;
+const uint IMPOSTOR_TETRA_SIDE = 2;
+const uint IMPOSTOR_TETRA_X_BITS = 6;
+const uint IMPOSTOR_TETRA_Y_BITS = 10;
+const uint IMPOSTOR_TETRA_Z_BITS = 12;
+const float IMPOSTOR_POLE_LIMIT = 0.99;
+
 root CompositeRoot {
     TextureIndex source_texture;
     SamplerIndex source_sampler;
@@ -197,8 +204,17 @@ root LodPartGpu {
     GpuAddress previous;
     uint reject_history;
     float seed;
-    uint _pad1;
-    uint _pad2;
+    GpuAddress impostor;
+}
+
+root ImpostorGpu {
+    vec4 bounds;
+    vec4 previous_camera;
+    vec4 previous_direction;
+    TextureIndex atlas;
+    SamplerIndex sampler_index;
+    uint frames_per_side;
+    uint cell_size;
 }
 
 struct LodMetadataGpu {
@@ -238,7 +254,7 @@ const uint INSTANCE_KIND_LOD = 2;
 const uint LOD_SELECT = 1;
 const uint LOD_CULL = 2;
 const uint LOD_FINALIZE = 3;
-const uint LOD_LEVEL_COUNT = 5;
+const uint LOD_LEVEL_COUNT = 6;
 const uint BILLBOARD_CAMERA = 0;
 const uint BILLBOARD_DIRECTIONAL = 1;
 

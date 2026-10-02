@@ -91,12 +91,13 @@ struct Stats {
     uint  sort_overflows;    // this frame: blended ranges drawn unsorted and unculled because they did not fit
     uint  instances_tested;  // the read-back frame, FRAMES_IN_FLIGHT frames late
     uint  instances_visible; // the read-back frame; never above instances_tested
-    uint[scene::MAX_LOD_LEVELS] lod_visible;
-    uint[scene::MAX_LOD_LEVELS] lod_selected;
-    uint[scene::MAX_LOD_LEVELS] lod_objects_selected;
-    uint[scene::MAX_LOD_LEVELS] lod_objects_visible;
+    uint[scene::MAX_LOD_CHOICES] lod_visible;
+    uint[scene::MAX_LOD_CHOICES] lod_selected;
+    uint[scene::MAX_LOD_CHOICES] lod_objects_selected;
+    uint[scene::MAX_LOD_CHOICES] lod_objects_visible;
     uint  lod_instances_tested;
     uint  lod_fallbacks;
+    uint  impostor_fallbacks; // current CPU frame: groups whose installed atlas is unavailable
     ulong lod_frame_index;
     bool  lod_counts_valid;
     uint  culled;

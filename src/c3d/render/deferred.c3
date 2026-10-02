@@ -37,7 +37,7 @@ fn gpu::PipelineHandle? gbuffer_pipeline_for(Renderer* renderer, Material* mater
     bool wireframe = material.common.wireframe && renderer.caps.line_polygon_mode;
     PipelineKey key = gbuffer_pipeline_key(
         vertex:   vertex,
-        fragment: gbuffer_fragment(material),
+        fragment: vertex.shader == IMPOSTOR_VERTEX ? (ShaderVariant){ .shader = IMPOSTOR_GBUFFER } : gbuffer_fragment(material),
         polygon:  wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL,
     );
     if (material.kind != MaterialKind.CUSTOM) return renderer.pipelines.get(&renderer.device, key);

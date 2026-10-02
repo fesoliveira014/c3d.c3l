@@ -19,6 +19,7 @@ struct LodCullBin @private {
 }
 
 fn bool lod_level_blended(AssetStore* assets, LodGroupState* state, uint index) @private {
+    if (index == state.desc.levels.len) return false;
     LodLevel level = state.desc.levels[index];
     foreach (part : state.desc.parts[level.first_part:level.part_count]) {
         if (assets.material(part.material).data.common.alpha_mode == AlphaMode.BLEND) return true;
@@ -32,7 +33,9 @@ fn void? reserve_lod_bins(Renderer* renderer, LodSelection* selection) @private 
     CullArena reserved = *shared;
     LodGroupState* state = selection.state;
     uint passes = 1 + renderer.max_shadow_layers;
-    foreach (uint index, level : state.desc.levels) {
+    uint choices = (uint)state.desc.levels.len + (selection.impostor ? 1 : 0);
+    for (uint index = 0; index < choices; index++) {
+        LodLevel level = selected_lod_level(selection, index);
         for (uint pass = 0; pass < passes; pass++) {
             for (uint parity = 0; parity < 2; parity++) {
                 uint count = parity ? state.count - selection.instances.lod_unmirrored_count : selection.instances.lod_unmirrored_count;
@@ -50,7 +53,7 @@ fn void? reserve_lod_bins(Renderer* renderer, LodSelection* selection) @private 
     selection.arena = *shared;
     selection.arena.capacity = reserved.head;
     shared.head = reserved.head;
-    selection.bins = alloc::new_array(tmem, LodCullBin, 2 * (sz)passes * state.desc.levels.len);
+    selection.bins = alloc::new_array(tmem, LodCullBin, 2 * (sz)passes * choices);
 }
 
 fn void? prepare_lod_instances(Renderer* renderer, LodSelection* selection) @private {
@@ -66,12 +69,15 @@ fn void? prepare_lod_instances(Renderer* renderer, LodSelection* selection) @pri
     LodHistoryValue previous = history.committed;
     selection.history_valid = previous.valid && previous.scene == selection.scene_identity
       && c3d::same_id(previous.owner, selection.node.id) && previous.identity == state.identity
-      && previous.bounds_revision == state.bounds_revision && history.instance_epoch == state.instance_epoch;
+      && previous.bounds_revision == state.bounds_revision && history.instance_epoch == state.instance_epoch
+      && previous.descriptor_revision == state.descriptor_revision && previous.impostor == selection.impostor;
     history.pending = {
         .scene = selection.scene_identity,
         .owner = selection.node.id,
         .identity = state.identity,
         .bounds_revision = state.bounds_revision,
+        .descriptor_revision = state.descriptor_revision,
+        .impostor = selection.impostor,
         .valid = !selection.fallback,
     };
     history.pending_epoch = state.instance_epoch;
@@ -154,10 +160,10 @@ fn void? record_lod_selection(Renderer* renderer, LodSelection[] selections) @pr
                 .lod_reach = { reach.x, reach.y, reach.z, 0 },
                 .lod_mode = shader::LOD_SELECT,
                 .lod_history_valid = selection.history_valid ? 1 : 0,
-                .lod_level_count = (uint)state.desc.levels.len,
+                .lod_level_count = (uint)state.desc.levels.len + (selection.impostor ? 1 : 0),
             };
             InstanceCullRoot* root = (InstanceCullRoot*)block.bytes.ptr;
-            foreach (index, level : state.desc.levels) ((float*)&root.lod_thresholds)[index] = level.min_screen_size;
+            fill_lod_thresholds(state, selection.impostor, ((float*)&root.lod_thresholds)[:scene::MAX_LOD_CHOICES]);
             uint groups = (state.count + shader::INSTANCE_CULL_GROUP_SIZE - 1) / shader::INSTANCE_CULL_GROUP_SIZE;
             gpu::cmd_dispatch(&renderer.commands, block.address, { groups, 1, 1 })!;
             renderer.stats.cull_dispatches++;
@@ -189,7 +195,7 @@ fn void? prepare_lod_cull(Renderer* renderer, CullItem* item, bool culling) @pri
             break;
         }
     }
-    LodLevel level = selection.state.desc.levels[candidate.lod_level];
+    LodLevel level = selected_lod_level(selection, candidate.lod_level);
     uint part_index = candidate.lod_part - level.first_part;
     if (bin && bin.parts[part_index] != (gpu::GpuAddress)0) {
         item.args_address = bin.parts[part_index];

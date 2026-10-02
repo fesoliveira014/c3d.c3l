@@ -51,6 +51,7 @@ fn gpu::PipelineHandle? shadow_pipeline_for(
         .samples = gpu::SampleCount.ONE,
         .polygon = wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL,
     };
+    if (vertex.shader == IMPOSTOR_VERTEX) key.fragment = { .shader = IMPOSTOR_DEPTH };
     if (material && material.kind == MaterialKind.CUSTOM) {
         ShaderRes* published = resolve_shader(renderer, material.custom.shader)!;
         if (published.desc.vertex.depth.len) {
@@ -87,7 +88,7 @@ fn ShadowDraw[]? prepare_shadow_draws(
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     usz count;
     foreach (&candidate : candidates) {
-        Material* material = &renderer.assets.material(candidate.material).data;
+        Material* material = candidate_material(renderer, candidate);
         gpu::GpuAddress custom_header;
         if (material.kind == MaterialKind.CUSTOM) {
             MaterialRes*? resolved = resolve_material(renderer, candidate.material);
@@ -99,7 +100,8 @@ fn ShadowDraw[]? prepare_shadow_draws(
             custom_header = resolved.address;
         }
         ShadowDraw* draw = &draws[count];
-        GpuGeometry* geometry = resolve_geometry(renderer, candidate.geometry)!;
+        GpuGeometry* geometry = candidate.impostor ? acquire_impostor_geometry(renderer) : resolve_geometry(renderer, candidate.geometry)!;
+        if (candidate.impostor) resolve_lod_part(renderer, candidate)!;
         ShaderVariant vertex = candidate_vertex_variant(
             flags:      geometry.layout.flags,
             candidate:  candidate,
@@ -168,7 +170,8 @@ fn void? record_shadow_layer(
     uint resolution = renderer.shadow_atlas.resolution;
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan frame = slot.upload.take(&renderer.device, FrameRoot::size, STREAM_ALIGNMENT)!;
-    Camera camera; // Depth-only stages consume only the fitted matrices.
+    Camera camera;
+    camera.projection = matrices.proj.m33 == 1 ? Projection.ORTHOGRAPHIC : Projection.PERSPECTIVE;
     write_frame_root(
         root: (FrameRoot*)frame.bytes.ptr,
         matrices: matrices,

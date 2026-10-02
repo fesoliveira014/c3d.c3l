@@ -10,6 +10,12 @@ const uint SHADOW_FACE_NEGATIVE_Y = 3;
 const uint SHADOW_FACE_POSITIVE_Z = 4;
 const uint SHADOW_FACE_NEGATIVE_Z = 5;
 const uint SHADOW_POINT_FACE_COUNT = 6;
+const uint IMPOSTOR_GUTTER = 1;
+const uint IMPOSTOR_TETRA_SIDE = 2;
+const uint IMPOSTOR_TETRA_X_BITS = 6;
+const uint IMPOSTOR_TETRA_Y_BITS = 10;
+const uint IMPOSTOR_TETRA_Z_BITS = 12;
+const float IMPOSTOR_POLE_LIMIT = 0.99;
 const uint MAX_DISPATCH_TEXTURES = 8;
 const uint BVH_STACK_DEPTH = 32;
 const uint TRACE_INSTANCE_ALPHA_MASK = 1;
@@ -35,7 +41,7 @@ const uint INSTANCE_KIND_LOD = 2;
 const uint LOD_SELECT = 1;
 const uint LOD_CULL = 2;
 const uint LOD_FINALIZE = 3;
-const uint LOD_LEVEL_COUNT = 5;
+const uint LOD_LEVEL_COUNT = 6;
 const uint BILLBOARD_CAMERA = 0;
 const uint BILLBOARD_DIRECTIONAL = 1;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8;
@@ -456,8 +462,7 @@ struct LodPartGpu {
     GpuAddress previous;
     uint       reject_history;
     float      seed;
-    uint       _pad1;
-    uint       _pad2;
+    GpuAddress impostor;
 }
 $assert LodPartGpu::size == 144;
 $assert $reflect(LodPartGpu.local).offset == 0;
@@ -468,8 +473,25 @@ $assert $reflect(LodPartGpu.current).offset == 112;
 $assert $reflect(LodPartGpu.previous).offset == 120;
 $assert $reflect(LodPartGpu.reject_history).offset == 128;
 $assert $reflect(LodPartGpu.seed).offset == 132;
-$assert $reflect(LodPartGpu._pad1).offset == 136;
-$assert $reflect(LodPartGpu._pad2).offset == 140;
+$assert $reflect(LodPartGpu.impostor).offset == 136;
+
+struct ImpostorGpu {
+    Vec4f        bounds;
+    Vec4f        previous_camera;
+    Vec4f        previous_direction;
+    TextureIndex atlas;
+    SamplerIndex sampler_index;
+    uint         frames_per_side;
+    uint         cell_size;
+}
+$assert ImpostorGpu::size == 64;
+$assert $reflect(ImpostorGpu.bounds).offset == 0;
+$assert $reflect(ImpostorGpu.previous_camera).offset == 16;
+$assert $reflect(ImpostorGpu.previous_direction).offset == 32;
+$assert $reflect(ImpostorGpu.atlas).offset == 48;
+$assert $reflect(ImpostorGpu.sampler_index).offset == 52;
+$assert $reflect(ImpostorGpu.frames_per_side).offset == 56;
+$assert $reflect(ImpostorGpu.cell_size).offset == 60;
 
 struct LodMetadataGpu {
     uint generation;
