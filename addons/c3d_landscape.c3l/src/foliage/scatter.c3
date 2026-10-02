@@ -185,7 +185,8 @@ fn uint place_cell(
     ScatterFrame* frame,
     uint column,
     uint row,
-    InstancedMesh* batch,
+    Transform[] transforms,
+    Vec4[] colors,
 ) @private {
     ScatterRules* rules = frame.rules;
     uint count;
@@ -207,14 +208,13 @@ fn uint place_cell(
         float scale = blend(rules.min_scale, rules.max_scale, channel_unit(at.key, SCALE));
         float yaw = channel_unit(at.key, YAW) * 2 * (float)math::PI;
         Vec3 tint = rules.min_tint + (rules.max_tint - rules.min_tint) * channel_unit(at.key, TINT);
-        batch.transforms[count] = {
+        transforms[count] = {
             .position = { at.local_x, height - frame.layer_height, at.local_z },
             .rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, yaw),
             .scale    = { scale, scale, scale },
         };
-        batch.colors[count] = { tint.x, tint.y, tint.z, 1 };
+        colors[count] = { tint.x, tint.y, tint.z, 1 };
         count++;
     }
-    batch.count = count;
     return count;
 }

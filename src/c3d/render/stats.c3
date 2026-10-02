@@ -1,6 +1,7 @@
 module c3d::render;
 
 import c3d;
+import c3d::scene;
 
 <*
  Recorded work the renderer times separately.
@@ -90,6 +91,14 @@ struct Stats {
     uint  sort_overflows;    // this frame: blended ranges drawn unsorted and unculled because they did not fit
     uint  instances_tested;  // the read-back frame, FRAMES_IN_FLIGHT frames late
     uint  instances_visible; // the read-back frame; never above instances_tested
+    uint[scene::MAX_LOD_LEVELS] lod_visible;
+    uint[scene::MAX_LOD_LEVELS] lod_selected;
+    uint[scene::MAX_LOD_LEVELS] lod_objects_selected;
+    uint[scene::MAX_LOD_LEVELS] lod_objects_visible;
+    uint  lod_instances_tested;
+    uint  lod_fallbacks;
+    ulong lod_frame_index;
+    bool  lod_counts_valid;
     uint  culled;
     uint  batches_faded;     // this frame: view batches inside the frustum and wholly past their fade band
     uint  lights;

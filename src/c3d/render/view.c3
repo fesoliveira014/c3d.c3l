@@ -207,6 +207,13 @@ fn void? record_raster_view(
     bool view_reflected = matrices.view.determinant() < 0;
 
     @pool() {
+        LodSelection[] lod = prepare_lod_view(
+            renderer: renderer,
+            record: record,
+            scene: scene,
+            camera: *camera,
+            matrices: matrices,
+        )!;
         MeshCandidate[] candidates;
         instrumentation::@scope("view.extract") {
             ExtractCounts counts;
@@ -218,16 +225,19 @@ fn void? record_raster_view(
                 layers:     camera.layers,
                 counts:     &counts,
                 clip_plane: record.desc.clip_plane,
+                lod: lod,
             );
             renderer.stats.culled += counts.culled;
             renderer.stats.batches_faded += counts.batches_faded;
             renderer.stats.dangling_refs += counts.dangling;
+            foreach (index, count : counts.lod_objects_visible) renderer.stats.lod_objects_visible[index] += count;
         };
 
         InstanceEffectsView effects_view = {
             .scene       = scene,
             .history     = temporal ? &record.history : null,
             .fade_origin = matrices.position,
+            .lod = lod,
         };
         effects_view.blocks.init(tmem);
 
@@ -314,7 +324,7 @@ fn void? record_raster_view(
                         index = transparent_start + transparent_filled++;
                         transparent_reads |= material_scene_reads(material_description, custom_reads);
                 }
-                bool model_reflected = (candidate.node.world.determinant() < 0) != candidate.mirrored;
+                bool model_reflected = (candidate_world(candidate).determinant() < 0) != candidate.mirrored;
                 ShaderVariant fragment = list == DrawList.GBUFFER
                   ? gbuffer_fragment(material_description)
                   : material_fragment(material_description, rt_shadow_flags(renderer, record.desc.ray_tracing.shadows));
@@ -335,12 +345,12 @@ fn void? record_raster_view(
                     .pipeline  = pipeline,
                     .skin      = resolve_candidate_skin(renderer, candidate)!,
                     .morph     = resolve_candidate_morph(renderer, candidate, vertex)!,
-                    .instance_data  = candidate.batch || candidate.billboards
+                    .instance_data  = candidate_instanced(candidate)
                       ? resolve_instances(renderer, candidate)! : (gpu::GpuAddress)0,
                     .effects   = effects,
                     .front_face = !candidate.billboards && model_reflected != view_reflected
                       ? gpu::FrontFace.CLOCKWISE : gpu::FrontFace.COUNTER_CLOCKWISE,
-                    .custom_velocity = custom_velocity_stage(renderer, material_description, candidate.batch != null)!,
+                    .custom_velocity = custom_velocity_stage(renderer, material_description, candidate_instanced(candidate))!,
                 };
             }
         };
@@ -386,6 +396,7 @@ fn void? record_raster_view(
             prepare_cull_stage(renderer, view_culls, record.desc.instance_culling)!;
             gpu::GpuAddress probe_trace = prepare_probe_updates(renderer, scene)!;
             record_pending_copies(renderer, &renderer.commands)!;
+            record_lod_selection(renderer, lod)!;
             record_probe_volumes(renderer, scene, &environments, probe_trace)!;
             record_instance_cull(renderer, view_culls)!;
             record_instance_sort(renderer, view_culls)!;
@@ -532,7 +543,7 @@ fn void? record_raster_view(
                 if (has_previous) prev_world = record.history.previous_model(scene, node);
                 bool posed = item.skin != (gpu::GpuAddress)0 || item.morph != (gpu::GpuAddress)0
                   || item.candidate.batch;
-                item.moved = has_previous && (posed || item.custom_velocity || !(prev_world == node.world));
+                item.moved = (temporal && item.candidate.lod) || (has_previous && (posed || item.custom_velocity || !(prev_world == node.world)));
                 bool redrawn_by_velocity = group_index == 0
                   || (group_index == 1 && late_velocity && writes_own_depth(material_data(renderer, item.material)));
                 gpu::GpuAddress previous_pose;
@@ -561,7 +572,7 @@ fn void? record_raster_view(
                 gpu::MappedGpuSpan draw_span = slot.upload.take(&renderer.device, DrawRoot::size, STREAM_ALIGNMENT)!;
                 write_draw_root(
                     root:          (DrawRoot*)draw_span.bytes.ptr,
-                    world:         item.candidate.billboards ? matrix::IDENTITY4 : node.world,
+                    world:         item.candidate.billboards ? matrix::IDENTITY4 : item.candidate.node.world,
                     prev_world:    prev_world,
                     frame:         frame_span.address,
                     geometry:      item.geometry.root,
@@ -582,6 +593,7 @@ fn void? record_raster_view(
                     instance_indices: addresses.instance_indices,
                     instance_effects: item.effects,
                 );
+                ((DrawRoot*)draw_span.bytes.ptr).lod_part = resolve_lod_part(renderer, item.candidate)!;
                 item.root = draw_span.address;
             }
         };
@@ -894,6 +906,26 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
             sheen |= prepared.sheen;
             scene_reads |= prepared.scene_reads;
         };
+        scene.@each(LodGroup; Entity entity, LodGroup* group) {
+            if (spatial::lod_group_is_live(self.assets, group)) {
+                bool casts = shadows_enabled && group.state.effects.cast_shadow && scene.node(entity).visible_effective;
+                foreach (part : group.state.desc.parts) {
+                    MeshPreparation prepared = prepare_mesh(
+                        renderer: self,
+                        geometry_id: part.geometry,
+                        material_id: part.material,
+                        morphed: false,
+                        depth: casts || prepass,
+                        gbuffer: deferred,
+                        instanced: group.state.mode == LodMode.INSTANCED,
+                    )!;
+                    sheen |= prepared.sheen;
+                    scene_reads |= prepared.scene_reads;
+                }
+            } else {
+                self.stats.dangling_refs++;
+            }
+        };
         scene.@each(BillboardBatch; Entity entity, BillboardBatch* batch) {
             if (batch.count) {
                 MeshPreparation prepared = prepare_billboards(self, batch)!;
@@ -941,6 +973,19 @@ fn void? Renderer.prepare_model(&self, ModelId model) {
                 gbuffer:     deferred,
             )!;
             scene_reads |= prepared.scene_reads;
+        }
+        foreach (group : record.data.lod_groups) {
+            foreach (part : group.desc.parts) {
+                MeshPreparation prepared = prepare_mesh(
+                    renderer: self,
+                    geometry_id: part.geometry,
+                    material_id: part.material,
+                    morphed: false,
+                    depth: true,
+                    gbuffer: deferred,
+                )!;
+                scene_reads |= prepared.scene_reads;
+            }
         }
         prepare_finish(self, scene_reads)!;
         if (!self.pending_copies.len() && !self.pending_texture_uploads.len() && !self.pending_upload_retire.len()) {
@@ -1692,7 +1737,7 @@ fn void? record_draws(
         }
         bound = wanted;
 
-        if (item.candidate.batch || item.candidate.billboards) {
+        if (candidate_instanced(item.candidate)) {
             record_batch_draw(
                 renderer: renderer,
                 root:     item.root,

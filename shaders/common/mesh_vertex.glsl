@@ -10,8 +10,9 @@
 #include "normal_mapping.glsl"
 #endif
 
-#ifdef INSTANCED
 #include "instance_effects.glsl"
+GPU_DECLARE_READONLY_ARRAY_REF(LodPreviousArray, LodHistoryGpu);
+#ifdef INSTANCED
 GPU_DECLARE_READONLY_ARRAY_REF(InstanceArray, InstanceGpu);
 GPU_DECLARE_READONLY_ARRAY_REF(VisibleArray, uint);
 #ifdef VELOCITY
@@ -120,7 +121,6 @@ vec3 previous_mesh_position(DrawRoot draw, GeometryRoot geometry, uint index) {
 }
 #endif
 
-#ifdef INSTANCED
 // The effects block is read only under DRAW_SWAY or DRAW_DISTANCE_FADE; DRAW_SWAY_VERTEX_ALPHA alone reads vertex colour only.
 float instance_bend_weight(DrawRoot draw, vec3 local_position, vec4 color) {
     if ((draw.flags & DRAW_SWAY) == 0u) return 0.0;
@@ -168,7 +168,6 @@ vec3 apply_previous_instance_effects(
     return position;
 }
 #endif
-#endif
 
 // Non-velocity forms ignore previous_position.
 void write_mesh_outputs(
@@ -181,40 +180,49 @@ void write_mesh_outputs(
 #ifdef INSTANCED
     uint source = instance_source(draw);
     InstanceGpu instance = InstanceArray(draw.instance_data).values[source];
+#else
+    InstanceGpu instance;
+    instance.model = draw.model;
+    instance.normal_0 = draw.normal_0;
+    instance.normal_0.w = draw.lod_part != 0ul ? LodPartGpu(draw.lod_part).seed : 0.0;
+    instance.normal_1 = draw.normal_1;
+    instance.normal_2 = draw.normal_2;
+    instance.color = vec4(1.0);
+#endif
     mat4 model = instance.model;
     mat3 normal_matrix = mat3(instance.normal_0.xyz, instance.normal_1.xyz, instance.normal_2.xyz);
-#else
-    mat4 model = draw.model;
-    mat3 normal_matrix = mat3(draw.normal_0.xyz, draw.normal_1.xyz, draw.normal_2.xyz);
-#endif
+    vec3 effect_position = vertex.position;
+    if (draw.lod_part != 0ul) {
+        LodPartGpu part = LodPartGpu(draw.lod_part);
+        model *= part.local;
+        normal_matrix *= mat3(part.normal_0.xyz, part.normal_1.xyz, part.normal_2.xyz);
+        effect_position = (part.local * vec4(vertex.position, 1.0)).xyz;
+    }
     vec4 world = model * vec4(vertex.position, 1.0);
-#ifdef INSTANCED
-    world.xyz = apply_instance_effects(draw, instance, world.xyz, instance_bend_weight(draw, vertex.position, vertex.color));
-#endif
+    world.xyz = apply_instance_effects(draw, instance, world.xyz, instance_bend_weight(draw, effect_position, vertex.color));
 #ifdef VELOCITY
     vec4 previous = vec4(previous_position, 1.0);
+    mat4 previous_instance = draw.prev_model;
+    float reject_history = draw.lod_part != 0ul ? float(LodPartGpu(draw.lod_part).reject_history) : 0.0;
 #ifdef INSTANCED
-    // Without previous instance matrices, prev_model is the batch node's motion after the current instance matrix.
-    uint64_t previous_instances = PreviousPoseGpu(draw.previous_pose).instances;
-    vec4 previous_world = previous_instances != 0ul
-        ? PreviousInstanceArray(previous_instances).values[source] * previous
-        : draw.prev_model * (model * previous);
-    if ((draw.flags & (DRAW_SWAY | DRAW_DISTANCE_FADE)) != 0u) {
-        mat4 previous_model = previous_instances != 0ul
-            ? PreviousInstanceArray(previous_instances).values[source]
-            : draw.prev_model * model;
-        previous_world.xyz = apply_previous_instance_effects(
-            draw,
-            instance,
-            previous_model,
-            previous_world.xyz,
-            instance_bend_weight(draw, previous_position, vertex.color)
-        );
+    if (draw.lod_part != 0ul) {
+        LodPartGpu part = LodPartGpu(draw.lod_part);
+        if (part.current != 0ul) reject_history = float(LodPreviousArray(part.current).values[source].reject_history);
+        previous_instance = reject_history != 0.0 ? instance.model : LodPreviousArray(part.previous).values[source].model;
+    } else {
+        // Without previous instance matrices, prev_model carries only the batch node's motion.
+        uint64_t previous_instances = PreviousPoseGpu(draw.previous_pose).instances;
+        previous_instance = previous_instances != 0ul
+            ? PreviousInstanceArray(previous_instances).values[source] : draw.prev_model * model;
     }
-    v_prev_clip_pos = frame.prev_view_proj * previous_world;
-#else
-    v_prev_clip_pos = frame.prev_view_proj * (draw.prev_model * previous);
 #endif
+    if (draw.lod_part != 0ul) previous = LodPartGpu(draw.lod_part).local * previous;
+    vec4 previous_world = previous_instance * previous;
+    previous_world.xyz = apply_previous_instance_effects(
+        draw, instance, previous_instance, previous_world.xyz,
+        instance_bend_weight(draw, previous.xyz, vertex.color)
+    );
+    v_prev_clip_pos = frame.prev_view_proj * previous_world;
 #endif
 #if !defined(DEPTH_ONLY) && !defined(VELOCITY)
     v_world_pos = world.xyz;
@@ -226,16 +234,15 @@ void write_mesh_outputs(
     v_uv0 = vertex.uv0;
     v_uv1 = vertex.uv1;
     v_color = vertex.color;
-#ifdef INSTANCED
     if ((draw.flags & DRAW_SWAY_VERTEX_ALPHA) != 0u) v_color.a = 1.0;
     v_color *= instance.color;
-#endif
     vec4 clip = frame.view_proj * world;
     gl_Position = clip;
     gl_ClipDistance[0] = view_clip_distance(frame, world.xyz);
 #ifdef VELOCITY
     // Velocity is unjittered: remove the view's jitter from the rasterized position.
     clip.xy -= frame.jitter_time.xy * clip.w;
+    if (draw.lod_part != 0ul) clip.z = reject_history;
 #endif
     v_clip_pos = clip;
 }

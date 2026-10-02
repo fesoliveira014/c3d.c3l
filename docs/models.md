@@ -3,7 +3,7 @@
 A model is loaded once into shared assets plus a reusable template, then
 instantiated any number of times without reparsing. `c3d::asset::gltf` reads
 glTF 2.0 and GLB files through cgltf and `c3d::asset::fbx` reads FBX files through ufbx; `c3d::model::instantiate` turns a stored
-template into live scene nodes. The renderer sees ordinary meshes, cameras and
+template into live scene nodes. The renderer sees meshes, LOD groups, cameras and
 lights afterwards and needs no model-specific path. Skeletons and animation
 clips are shared assets; `c3d::anim` plays clips onto instances
 ([Animation](animation.md)). Asset kinds the store does not define are
@@ -80,6 +80,28 @@ gains one generated child per primitive, named `<node name>/primitive/<j>`,
 placed before the node's authored children. Matrix nodes are decomposed into
 position, rotation and scale; shear is dropped.
 
+## Node-level LOD
+
+Rigid node-level `MSFT_lod` becomes one [LodGroup](lod.md). Alternate subtrees
+flatten into group-relative parts while preserving the alternate root transform
+in the owner's parent space. Part counts and materials may differ. Absorbed
+primitive nodes remain named template nodes without duplicate Mesh components;
+unrelated cameras and lights remain. Each instantiation owns its descriptor copy.
+Eager and budgeted renderer preparation visit every level's dependencies.
+
+Whole-owner animation is retained. Skin/morph deformation or animation within
+member subtrees is unsupported: optional LOD falls back to the ordinary highest
+detail subtree; required LOD faults `UNSUPPORTED`. Required material-level LOD
+also faults `UNSUPPORTED`. Bad node IDs, cycles, conflicting ownership and
+malformed hints fault `ASSET_FORMAT_ERROR`.
+
+For N levels, `extras.MSFT_screencoverage` must contain N finite numeric values.
+The first N-1 are positive descending projected-height fractions; the final
+nonnegative cull hint is ignored. Missing hints use transitions
+`{0.2, 0.1, 0.05, 0.025}`. Five levels are supported. This projected-height
+interpretation is c3d's import policy. `ModelDocument` validates references before
+publication, then remaps all part geometry/material IDs atomically with the model.
+
 ## Material mapping
 
 | glTF | c3d |
@@ -148,8 +170,11 @@ channel becomes one track per primitive child of the node, with the mesh's
 morph count as the value stride. Interpolation maps to `STEP`, `LINEAR` or
 `CUBIC_SPLINE`; cubic keys keep their in-tangent, value and out-tangent
 triples. `duration` is the largest key time. The template lists its clip ids
-and every instance copies them. A channel on a node outside the imported node
-set is `ASSET_FORMAT_ERROR`; `options.animations = false` skips clips.
+and every instance copies them. Channels whose target nodes are outside the
+imported node set are omitted. This applies to every glTF import, including
+unselected scenes and alternate subtrees skipped during optional LOD fallback.
+Other imported channels remain intact; a clip with no imported channels has no
+tracks. `options.animations = false` skips clips.
 
 `c3d::anim` samples clips onto instance nodes and morph weights; the renderer
 builds joint palettes from `SkinBinding` and selects the skinned and morphed
@@ -176,7 +201,7 @@ variants and GPU instancing import as if absent.
 | Fault | Meaning |
 | --- | --- |
 | `ASSET_IO_ERROR` | The file, an external buffer or an external image could not be read. |
-| `ASSET_FORMAT_ERROR` | The document failed to parse or validate, an image failed to decode, an accessor could not be read, a joint or animation target lies outside the imported nodes, or a numeric value lies outside the constructor domains. |
+| `ASSET_FORMAT_ERROR` | The document failed to parse or validate, an image failed to decode, an accessor could not be read, a joint lies outside the imported nodes, or a numeric value lies outside the constructor domains. |
 | `UNSUPPORTED` | A required extension or a compressed primitive the importer does not implement. |
 | `CAPACITY_EXCEEDED` | A store pool has fewer free slots than the model needs. |
 | `INVALID_ARGUMENT` | The model key or a content key is already present, an image file is empty, a skin stream has invalid influences, or a storage texture has a non-storage format. |

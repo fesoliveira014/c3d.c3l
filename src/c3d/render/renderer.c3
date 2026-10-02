@@ -125,6 +125,8 @@ struct Renderer {
     usz                     instance_cull_bytes;
     bool                    cull_counter_cleared;
     uint                    cull_tested;
+    uint                    cull_lod_tested;
+    uint                    cull_lod_fallbacks;
     SceneTrace              scene_trace;
     RtContext               rt;
 
@@ -398,7 +400,7 @@ fn void? Renderer.end_frame(&self) {
             if (record.live && record.rendered) return c3d::INVALID_ARGUMENT~;
         }
         record_pending_copies(self, &self.commands)!;
-        record_cull_readback(self, (uint)(frame % FRAMES_IN_FLIGHT))!;
+        record_cull_readback(self, (uint)(frame % FRAMES_IN_FLIGHT), frame)!;
         if (!self.work_recorded) {
             abort_frame(self);
             self.stats.frame_ms = elapsed_ms(self.frame_started);
@@ -426,7 +428,10 @@ fn void? Renderer.end_frame(&self) {
             if (present) self.output_submission = slot.done;
             self.frame_submitted = true;
             commit_uploads(self, slot);
-            foreach (&record : self.views.items) record.history.publish();
+            foreach (&record : self.views.items) {
+                record.history.publish();
+                publish_lod_history(&record.lod_history);
+            }
             submitted = true;
         };
         self.stats.cpu_record_ms = elapsed_ms(self.frame_started);
@@ -1064,6 +1069,7 @@ fn void abort_frame(Renderer* renderer) {
         foreach (&record : renderer.views.items) {
             record.restore_states();
             record.history.discard();
+            discard_lod_history(&record.lod_history);
         }
     }
     foreach (&record : renderer.views.items) {

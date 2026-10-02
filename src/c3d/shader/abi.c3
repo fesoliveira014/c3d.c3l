@@ -31,6 +31,11 @@ const uint INSTANCE_SORT_MERGE = 4;
 const uint INSTANCE_SORT_WRITE_LIST = 8;
 const uint INSTANCE_KIND_MESH = 0;
 const uint INSTANCE_KIND_BILLBOARD = 1;
+const uint INSTANCE_KIND_LOD = 2;
+const uint LOD_SELECT = 1;
+const uint LOD_CULL = 2;
+const uint LOD_FINALIZE = 3;
+const uint LOD_LEVEL_COUNT = 5;
 const uint BILLBOARD_CAMERA = 0;
 const uint BILLBOARD_DIRECTIONAL = 1;
 const uint MAX_ACTIVE_MORPH_TARGETS = 8;
@@ -413,8 +418,11 @@ struct DrawRoot {
     uint         skin_stride;
     GpuAddress   instance_indices;
     GpuAddress   instance_effects;
+    GpuAddress   lod_part;
+    uint         _pad0;
+    uint         _pad1;
 }
-$assert DrawRoot::size == 272;
+$assert DrawRoot::size == 288;
 $assert $reflect(DrawRoot.model).offset == 0;
 $assert $reflect(DrawRoot.prev_model).offset == 64;
 $assert $reflect(DrawRoot.normal_0).offset == 128;
@@ -435,6 +443,59 @@ $assert $reflect(DrawRoot.sheen_sampler).offset == 248;
 $assert $reflect(DrawRoot.skin_stride).offset == 252;
 $assert $reflect(DrawRoot.instance_indices).offset == 256;
 $assert $reflect(DrawRoot.instance_effects).offset == 264;
+$assert $reflect(DrawRoot.lod_part).offset == 272;
+$assert $reflect(DrawRoot._pad0).offset == 280;
+$assert $reflect(DrawRoot._pad1).offset == 284;
+
+struct LodPartGpu {
+    Mat4f      local;
+    Vec4f      normal_0;
+    Vec4f      normal_1;
+    Vec4f      normal_2;
+    GpuAddress current;
+    GpuAddress previous;
+    uint       reject_history;
+    float      seed;
+    uint       _pad1;
+    uint       _pad2;
+}
+$assert LodPartGpu::size == 144;
+$assert $reflect(LodPartGpu.local).offset == 0;
+$assert $reflect(LodPartGpu.normal_0).offset == 64;
+$assert $reflect(LodPartGpu.normal_1).offset == 80;
+$assert $reflect(LodPartGpu.normal_2).offset == 96;
+$assert $reflect(LodPartGpu.current).offset == 112;
+$assert $reflect(LodPartGpu.previous).offset == 120;
+$assert $reflect(LodPartGpu.reject_history).offset == 128;
+$assert $reflect(LodPartGpu.seed).offset == 132;
+$assert $reflect(LodPartGpu._pad1).offset == 136;
+$assert $reflect(LodPartGpu._pad2).offset == 140;
+
+struct LodMetadataGpu {
+    uint generation;
+    uint parity;
+    uint _pad0;
+    uint _pad1;
+}
+$assert LodMetadataGpu::size == 16;
+$assert $reflect(LodMetadataGpu.generation).offset == 0;
+$assert $reflect(LodMetadataGpu.parity).offset == 4;
+$assert $reflect(LodMetadataGpu._pad0).offset == 8;
+$assert $reflect(LodMetadataGpu._pad1).offset == 12;
+
+struct LodHistoryGpu {
+    Mat4f model;
+    uint  level;
+    uint  generation;
+    uint  reject_history;
+    uint  _pad0;
+}
+$assert LodHistoryGpu::size == 80;
+$assert $reflect(LodHistoryGpu.model).offset == 0;
+$assert $reflect(LodHistoryGpu.level).offset == 64;
+$assert $reflect(LodHistoryGpu.generation).offset == 68;
+$assert $reflect(LodHistoryGpu.reject_history).offset == 72;
+$assert $reflect(LodHistoryGpu._pad0).offset == 76;
 
 struct PreviousPoseGpu {
     GpuAddress skin;
@@ -463,8 +524,24 @@ struct InstanceCullRoot {
     uint       kind;
     uint       _pad3;
     Vec4f      depth_axis;
+    GpuAddress lod_current;
+    GpuAddress lod_previous;
+    GpuAddress lod_metadata;
+    uint       _pad7;
+    uint       _pad8;
+    Vec4f[2]   lod_thresholds;
+    Vec4f      lod_camera_bias;
+    Vec4f      lod_projection;
+    Vec4f      lod_reach;
+    uint       lod_mode;
+    uint       lod_level;
+    uint       lod_parity;
+    uint       lod_history_valid;
+    uint       lod_level_count;
+    uint       lod_count_visible;
+    GpuAddress lod_source_args;
 }
-$assert InstanceCullRoot::size == 208;
+$assert InstanceCullRoot::size == 352;
 $assert $reflect(InstanceCullRoot.instances).offset == 0;
 $assert $reflect(InstanceCullRoot.visible).offset == 8;
 $assert $reflect(InstanceCullRoot.args).offset == 16;
@@ -479,6 +556,22 @@ $assert $reflect(InstanceCullRoot.instance_effects).offset == 176;
 $assert $reflect(InstanceCullRoot.kind).offset == 184;
 $assert $reflect(InstanceCullRoot._pad3).offset == 188;
 $assert $reflect(InstanceCullRoot.depth_axis).offset == 192;
+$assert $reflect(InstanceCullRoot.lod_current).offset == 208;
+$assert $reflect(InstanceCullRoot.lod_previous).offset == 216;
+$assert $reflect(InstanceCullRoot.lod_metadata).offset == 224;
+$assert $reflect(InstanceCullRoot._pad7).offset == 232;
+$assert $reflect(InstanceCullRoot._pad8).offset == 236;
+$assert $reflect(InstanceCullRoot.lod_thresholds).offset == 240;
+$assert $reflect(InstanceCullRoot.lod_camera_bias).offset == 272;
+$assert $reflect(InstanceCullRoot.lod_projection).offset == 288;
+$assert $reflect(InstanceCullRoot.lod_reach).offset == 304;
+$assert $reflect(InstanceCullRoot.lod_mode).offset == 320;
+$assert $reflect(InstanceCullRoot.lod_level).offset == 324;
+$assert $reflect(InstanceCullRoot.lod_parity).offset == 328;
+$assert $reflect(InstanceCullRoot.lod_history_valid).offset == 332;
+$assert $reflect(InstanceCullRoot.lod_level_count).offset == 336;
+$assert $reflect(InstanceCullRoot.lod_count_visible).offset == 340;
+$assert $reflect(InstanceCullRoot.lod_source_args).offset == 344;
 
 struct InstanceSortRoot {
     GpuAddress keys;

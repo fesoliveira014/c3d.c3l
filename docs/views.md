@@ -43,6 +43,7 @@ defer (void)render::destroy_view(&renderer, capture_view);
 | `target` | The `RenderTargetId` a `TEXTURE` view writes; ignored for `WINDOW` |
 | `viewport` | `PixelRect` in output pixels; a zero extent covers the whole output |
 | `render_scale` | Working resolution relative to the viewport, in `(0, MAX_RENDER_SCALE]` |
+| `lod_bias` | Finite log2 bias for [whole-object LOD](lod.md); zero by default, positive adds detail |
 | `color` | `DISPLAY_LDR` runs the display route; `LINEAR_HDR` keeps scene-linear color |
 | `post` | The view's `PostStack` (see [display processing](post.md)) |
 | `shading` | `FORWARD`, `DEFERRED` (see [Shading path](#shading-path)) or `PATH_TRACED` (see [path tracing](path_tracing.md)) |

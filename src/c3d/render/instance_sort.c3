@@ -75,7 +75,7 @@ fn void? record_instance_sort(Renderer* renderer, CullItem[] items) @private {
     usz rounds;
     foreach (index, &item : items) {
         if (item.keys_address == (gpu::GpuAddress)0) continue;
-        plans[index] = sort_plan(tmem, sort_capacity(item.range.count));
+        plans[index] = sort_plan(tmem, sort_capacity(item.candidate.instance_count));
         if (plans[index].len > rounds) rounds = plans[index].len;
     }
     if (!rounds) return;
@@ -87,7 +87,7 @@ fn void? record_instance_sort(Renderer* renderer, CullItem[] items) @private {
             foreach (index, &item : items) {
                 if (round >= plans[index].len) continue;
                 SortStep step = plans[index][round];
-                uint capacity = sort_capacity(item.range.count);
+                uint capacity = sort_capacity(item.candidate.instance_count);
                 gpu::MappedGpuSpan root_span = slot.upload.take(
                     &renderer.device,
                     InstanceSortRoot::size,

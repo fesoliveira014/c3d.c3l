@@ -57,6 +57,9 @@ struct TraceInstance @private {
     uint            material_kind;
     GeometryId      geometry;
     MaterialId      material;
+    ulong           lod_identity;
+    uint            part_index;
+    uint            geometry_revision;
     Mat4            world;
     gpu::AccelerationStructureHandle bottom_level;
     uint            mask;
@@ -67,7 +70,7 @@ struct TraceInstance @private {
     gpu::GpuAddress primitives;
 }
 // The dirty tests compare records bytewise, so the record carries no padding.
-$assert TraceInstance::size == 152;
+$assert TraceInstance::size == 168;
 
 struct SceneTrace @private {
     ulong              scene;
@@ -265,6 +268,9 @@ fn TraceInstance[] collect_trace_instances(
     uint* dangling,
 ) @private {
     usz capacity = scene.count(Mesh);
+    scene.@each(LodGroup; Entity entity, LodGroup* group) {
+        capacity += (usz)group.state.count * group.state.desc.levels[0].part_count;
+    };
     scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
         capacity += batch.count;
     };
@@ -317,6 +323,49 @@ fn TraceInstance[] collect_trace_instances(
                         cast_shadow:    batch.cast_shadow,
                         instance_index: index,
                     );
+                }
+            }
+        }
+    };
+    scene.@each(LodGroup; Entity entity, LodGroup* group) {
+        Node* node = scene.node(entity);
+        LodGroupState* state = group.state;
+        if (node.visible_effective && state.count && state.effects.trace) {
+            bool live = spatial::lod_group_is_live(assets, group);
+            if (live) {
+                foreach (part : state.desc.parts) live &= material_dependencies_live(assets, part.material);
+            }
+            if (!live) {
+                (*dangling)++;
+            } else {
+                for (uint part = 0; part < state.desc.levels[0].part_count; part++) {
+                    LodPart source = state.desc.parts[part];
+                    if (!traceable(
+                        assets: assets,
+                        geometry: source.geometry,
+                        material: source.material,
+                        skinned: false,
+                        has_bounds_override: state.desc.has_bounds_override || state.effects.sway.amplitude != 0,
+                    )) continue;
+                    for (uint instance = 0; instance < state.count; instance++) {
+                        TraceInstance record = trace_record(
+                            assets: assets,
+                            entity: entity,
+                            geometry: source.geometry,
+                            material: source.material,
+                            world: spatial::lod_part_world(
+                                node: node,
+                                state: state,
+                                instance: instance,
+                                part: part,
+                            ),
+                            cast_shadow: state.effects.cast_shadow,
+                            instance_index: instance,
+                        );
+                        record.lod_identity = state.identity;
+                        record.part_index = part;
+                        records[count++] = record;
+                    }
                 }
             }
         }
@@ -810,6 +859,7 @@ fn TraceInstance trace_record(
         .material_kind = (uint)data.kind.ordinal,
         .geometry      = geometry,
         .material      = material,
+        .geometry_revision = assets.geometry(geometry).header.revision,
         .world         = world,
         .mask           = shader::TRACE_MASK_ALL | (cast_shadow ? shader::TRACE_MASK_SHADOW_CASTER : 0),
         .instance_index = instance_index,

@@ -38,6 +38,12 @@ fn Aabb aabb_merge(Aabb first, Aabb second) {
     };
 }
 
+<* Smallest sphere enclosing every corner of the box. *>
+fn Sphere aabb_sphere(Aabb bounds) {
+    Vec3 extent = (bounds.max - bounds.min) * 0.5f;
+    return { .center = (bounds.min + bounds.max) * 0.5f, .radius = extent.length() };
+}
+
 <*
  Smallest box containing the transformed input, from its center and extents.
  @param model : "Affine."

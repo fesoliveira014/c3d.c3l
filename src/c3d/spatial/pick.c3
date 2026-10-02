@@ -53,7 +53,10 @@ struct PickHit {
     Node* node;
     bool  instanced;
     bool  billboard;
+    bool  lod_group;
     uint  instance_index;
+    uint  part_index;
+    GeometryId geometry;
     float distance;
     Vec3  position;
     bool  triangle_hit;
@@ -76,6 +79,9 @@ fn PickHit[] pick(
     PickOptions options = PICK_OPTIONS_DEFAULT,
 ) {
     usz capacity = scene.count(Mesh);
+    scene.@each(LodGroup; Entity entity, LodGroup* group) {
+        capacity += (usz)group.state.count * group.state.desc.levels[0].part_count;
+    };
     scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
         capacity += batch.count;
     };
@@ -127,6 +133,7 @@ fn PickHit[] pick(
                     flags:     flags,
                     local:     local,
                     transform: transform,
+                    geometry:  batch.geometry,
                 );
                 bool hit = hit_entry(
                     assets:  assets,
@@ -154,6 +161,34 @@ fn PickHit[] pick(
                     options: options,
                     hit: &hits[count],
                 )) count++;
+            }
+        }
+    };
+    scene.@each(LodGroup; Entity entity, LodGroup* group) {
+        Node* node = scene.node(entity);
+        LodGroupState* state = group.state;
+        float distance;
+        if (state.count && node.visible_effective && (options.layers & node.layers)
+            && lod_group_is_live(assets, group)
+            && maths::ray_intersects_aabb(ray, lod_world_bounds(assets, node, group), &distance)) {
+            for (uint instance = 0; instance < state.count; instance++) {
+                for (uint part = 0; part < state.desc.levels[0].part_count; part++) {
+                    SceneEntry entry = lod_entry(
+                        assets: assets,
+                        node: node,
+                        state: state,
+                        instance: instance,
+                        part: part,
+                    );
+                    if (hit_entry(
+                        assets: assets,
+                        scene: scene,
+                        entry: &entry,
+                        ray: ray,
+                        options: options,
+                        hit: &hits[count],
+                    )) count++;
+                }
             }
         }
     };
@@ -186,7 +221,17 @@ fn bool hit_entry(
     Mat4 world = node.world;
     GeometryId geometry;
     MaterialId material;
-    if (entry.flags.instanced) {
+    if (entry.flags.lod_group) {
+        LodGroupState* state = scene.get(node, LodGroup).state;
+        world = lod_part_world(
+            node: node,
+            state: state,
+            instance: entry.instance_index,
+            part: entry.part_index,
+        );
+        geometry = state.desc.parts[entry.part_index].geometry;
+        material = state.desc.parts[entry.part_index].material;
+    } else if (entry.flags.instanced) {
         InstancedMesh* batch = scene.get(node, InstancedMesh);
         float batch_distance;
         // An override bounds the whole batch, which the scan tests before any instance.
@@ -204,7 +249,10 @@ fn bool hit_entry(
     *hit = {
         .node           = node,
         .instanced      = entry.flags.instanced,
+        .lod_group      = entry.flags.lod_group,
         .instance_index = entry.instance_index,
+        .part_index     = entry.part_index,
+        .geometry       = geometry,
         .distance       = distance,
         .position       = ray.origin + ray.direction * distance,
     };
@@ -274,5 +322,7 @@ fn int by_distance(PickHit first, PickHit second) @private {
     if (first.node.id.index < second.node.id.index) return -1;
     if (first.node.id.index > second.node.id.index) return 1;
     if (first.instance_index < second.instance_index) return -1;
-    return first.instance_index > second.instance_index ? 1 : 0;
+    if (first.instance_index > second.instance_index) return 1;
+    if (first.part_index < second.part_index) return -1;
+    return first.part_index > second.part_index ? 1 : 0;
 }

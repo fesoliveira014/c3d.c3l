@@ -255,7 +255,7 @@ fn void test_cull_bound_follows_the_batch_kind() @test {
 fn void test_cull_readback_pairs_tested_and_visible() @test {
     Renderer* renderer = mem::new(Renderer);
     defer free(renderer);
-    uint[4] counter @align(16) = { 40, 0, 0, 0 };
+    uint[12] counter @align(16) = { 40, 4, 5, 6, 0, 0, 8, 10, 12, 0, 0, 0 };
     renderer.cull_readbacks[0] = {
         .mapped  = { .bytes = ((char*)&counter)[:render::CULL_COUNTER_BYTES] },
         .tested  = 100,
@@ -263,6 +263,7 @@ fn void test_cull_readback_pairs_tested_and_visible() @test {
     };
     render::pair_cull_stats(&renderer.cull_readbacks[0], &renderer.stats);
     assert(renderer.stats.instances_tested == 100 && renderer.stats.instances_visible == 40);
+    assert(renderer.stats.lod_visible[0] == 4 && renderer.stats.lod_selected[2] == 12);
     assert(!renderer.cull_readbacks[0].pending);
 
     renderer.stats = {};

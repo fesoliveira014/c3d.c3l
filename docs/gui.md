@@ -16,6 +16,14 @@ that pose for editing. Select a node in the scene tree to edit its local positio
 nonzero scale, visibility and layer mask. The material panel edits the selected mesh's RGB
 color; it advances the asset revision only after a change.
 
+## LOD inspection
+
+The built-in `LodGroup` inspector displays placement mode/count, thresholds,
+part geometry/material IDs, bounds mode, sway and fade. Descriptors are read-only.
+The Stats panel labels ordinary object counts as current CPU values and displays
+GPU selected/visible placement counts and fallbacks with their completed frame ID.
+See [whole-object LOD](lod.md).
+
 ## Profiler panel
 
 The optional `c3d_profile_gui` add-on extends `c3d::gui` with an owned

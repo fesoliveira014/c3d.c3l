@@ -5,6 +5,7 @@ import c3d::camera;
 import c3d::light;
 import c3d::maths;
 import c3d::pool;
+import c3d::scene;
 
 <*
  Every switch on.
@@ -32,6 +33,12 @@ struct ModelMesh {
     GeometryId geometry;
     MaterialId material;
     float[]    default_morph_weights;
+}
+
+<* Whole-object alternatives attached to a template node. *>
+struct ModelLodGroup {
+    uint node;
+    LodDesc desc;
 }
 
 <*
@@ -65,6 +72,7 @@ struct ModelCamera {
 struct ModelTemplate {
     NodeTemplate[] nodes;
     ModelMesh[]    meshes;
+    ModelLodGroup[] lod_groups;
     ModelSkin[]    skins;
     ModelLight[]   lights;
     ModelCamera[]  cameras;
@@ -149,6 +157,11 @@ fn void free_model_template(Allocator allocator, ModelTemplate* template) {
     foreach (&node : template.nodes) alloc::free(allocator, node.name.ptr);
     foreach (&mesh : template.meshes) alloc::free(allocator, mesh.default_morph_weights.ptr);
     foreach (&skin : template.skins) alloc::free(allocator, skin.joint_nodes.ptr);
+    foreach (&group : template.lod_groups) {
+        alloc::free(allocator, group.desc.levels.ptr);
+        alloc::free(allocator, group.desc.parts.ptr);
+    }
+    alloc::free(allocator, template.lod_groups.ptr);
     alloc::free(allocator, template.nodes.ptr);
     alloc::free(allocator, template.meshes.ptr);
     alloc::free(allocator, template.skins.ptr);

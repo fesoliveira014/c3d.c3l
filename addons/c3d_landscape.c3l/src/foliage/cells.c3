@@ -1,6 +1,7 @@
 module c3d::landscape::foliage;
 
 import c3d;
+import c3d::asset;
 import c3d::ecs;
 import c3d::landscape::terrain;
 import c3d::maths;
@@ -17,15 +18,36 @@ struct CellRange @private {
 }
 
 struct StagedCell @private {
+    LodGroup    lod;
     Transform[] transforms;
     Vec4[]      colors;
     Node*       created; // null when the cell already has a node
 }
 
-fn FoliageRuntime? create_runtime(Allocator allocator, uint cells_per_side) @private {
-    Entity[]? cells = alloc::new_array_try(allocator, Entity, (sz)cells_per_side * cells_per_side);
-    if (catch cells) return c3d::CAPACITY_EXCEEDED~;
-    return { .allocator = allocator, .cells_per_side = cells_per_side, .cells = cells };
+fn FoliageRuntime? create_runtime(Allocator allocator, uint cells_per_side, FoliageDesc desc) @private {
+    sz count = (sz)cells_per_side * cells_per_side;
+    sz bytes = count * Entity::size;
+    sz desc_offset, levels_offset, parts_offset;
+    if (desc.lod) {
+        desc_offset = mem::aligned_offset(bytes, LodDesc::alignment);
+        levels_offset = mem::aligned_offset(desc_offset + LodDesc::size, LodLevel::alignment);
+        parts_offset = mem::aligned_offset(levels_offset + (sz)desc.lod.levels.len * LodLevel::size, LodPart::alignment);
+        bytes = parts_offset + (sz)desc.lod.parts.len * LodPart::size;
+    }
+    char*? allocation = alloc::malloc_try(allocator, bytes);
+    if (catch allocation) return c3d::CAPACITY_EXCEEDED~;
+    Entity[] cells = ((Entity*)allocation)[:count];
+    cells[..] = {};
+    if (desc.lod) {
+        LodDesc* copy = (LodDesc*)(allocation + desc_offset);
+        *copy = *desc.lod;
+        copy.levels = ((LodLevel*)(allocation + levels_offset))[:desc.lod.levels.len];
+        copy.parts = ((LodPart*)(allocation + parts_offset))[:desc.lod.parts.len];
+        copy.levels[..] = desc.lod.levels[..];
+        copy.parts[..] = desc.lod.parts[..];
+        desc.lod = copy;
+    }
+    return { .allocator = allocator, .desc = desc, .cells_per_side = cells_per_side, .cells = cells };
 }
 
 fn void free_runtime(FoliageRuntime* runtime) @private {
@@ -77,14 +99,31 @@ fn void place_cells(
             Entity cell = runtime.cells[row * runtime.cells_per_side + column];
             if (!cell.generation) continue;
             Node* node = scene.node(cell);
+            if (runtime.desc.lod) {
+                LodGroupState* state = scene.get(node, LodGroup).state;
+                runtime.instances -= state.count;
+                uint count = place_cell(
+                    frame:      frame,
+                    column:     column,
+                    row:        row,
+                    transforms: state.transforms,
+                    colors:     state.colors,
+                );
+                scene.publish_lod_instances(node, count);
+                runtime.instances += count;
+                runtime.placed_cells++;
+                continue;
+            }
             InstancedMesh* batch = scene.get(node, InstancedMesh);
             runtime.instances -= batch.count;
-            runtime.instances += place_cell(
-                frame:  frame,
-                column: column,
-                row:    row,
-                batch:  batch,
+            batch.count = place_cell(
+                frame:      frame,
+                column:     column,
+                row:        row,
+                transforms: batch.transforms,
+                colors:     batch.colors,
             );
+            runtime.instances += batch.count;
             scene.mark_instances_dirty(node);
             runtime.placed_cells++;
         }
@@ -94,6 +133,7 @@ fn void place_cells(
 // All or nothing: counts, then the node budget, then every allocation, before any cell changes.
 fn void? rescatter(
     Scene* scene,
+    AssetStore* assets,
     Node* node,
     FoliageDesc* desc,
     ScatterFrame* frame,
@@ -115,6 +155,7 @@ fn void? rescatter(
         StagedCell[] staged = alloc::new_array(tmem, StagedCell, (sz)runtime.cells.len);
         stage_cells(
             scene:   scene,
+            assets:  assets,
             node:    node,
             runtime: runtime,
             counts:  counts,
@@ -138,11 +179,13 @@ fn void? rescatter(
 
 fn uint capacity_of(Scene* scene, Entity cell) @private {
     if (!cell.generation) return 0;
+    if (scene.world.has(cell, LodGroup)) return (uint)scene.world.get(cell, LodGroup).state.transforms.len;
     return (uint)scene.world.get(cell, InstancedMesh).transforms.len;
 }
 
 fn void? stage_cells(
     Scene* scene,
+    AssetStore* assets,
     Node* node,
     FoliageRuntime* runtime,
     uint[] counts,
@@ -151,12 +194,23 @@ fn void? stage_cells(
     defer catch release_staged(scene, staged);
     foreach (index, count : counts) {
         if (count <= capacity_of(scene, runtime.cells[index])) continue;
-        Transform[]? transforms = alloc::new_array_try(scene.allocator, Transform, (sz)count);
-        if (catch transforms) return c3d::CAPACITY_EXCEEDED~;
-        staged[index].transforms = transforms;
-        Vec4[]? colors = alloc::new_array_try(scene.allocator, Vec4, (sz)count);
-        if (catch colors) return c3d::CAPACITY_EXCEEDED~;
-        staged[index].colors = colors;
+        if (runtime.desc.lod) {
+            staged[index].lod = scene::create_lod_group(
+                allocator: scene.allocator,
+                assets:    assets,
+                desc:      *runtime.desc.lod,
+                capacity:  count,
+            )!;
+            staged[index].transforms = staged[index].lod.state.transforms;
+            staged[index].colors = staged[index].lod.state.colors;
+        } else {
+            Transform[]? transforms = alloc::new_array_try(scene.allocator, Transform, (sz)count);
+            if (catch transforms) return c3d::CAPACITY_EXCEEDED~;
+            staged[index].transforms = transforms;
+            Vec4[]? colors = alloc::new_array_try(scene.allocator, Vec4, (sz)count);
+            if (catch colors) return c3d::CAPACITY_EXCEEDED~;
+            staged[index].colors = colors;
+        }
         if (runtime.cells[index].generation) continue;
         staged[index].created = scene.add_node(parent: node)!;
         staged[index].created.layers = node.layers;
@@ -165,8 +219,12 @@ fn void? stage_cells(
 
 fn void release_staged(Scene* scene, StagedCell[] staged) @private {
     foreach (&cell : staged) {
-        alloc::free(scene.allocator, cell.transforms.ptr);
-        alloc::free(scene.allocator, cell.colors.ptr);
+        if (cell.lod.state) {
+            scene::destroy_lod_group(scene.allocator, &cell.lod);
+        } else {
+            alloc::free(scene.allocator, cell.transforms.ptr);
+            alloc::free(scene.allocator, cell.colors.ptr);
+        }
         if (cell.created) scene.remove(cell.created);
     }
 }
@@ -185,13 +243,32 @@ fn void commit_cells(
         if (!count) {
             if (!cell.generation) continue;
             Node* emptied = scene.node(cell);
-            runtime.instances -= scene.get(emptied, InstancedMesh).count;
+            runtime.instances -= desc.lod ? scene.get(emptied, LodGroup).state.count : scene.get(emptied, InstancedMesh).count;
             scene.remove(emptied);
             runtime.cells[index] = {};
             runtime.cell_nodes--;
             continue;
         }
         if (!grown.transforms.len) continue;
+        if (desc.lod) {
+            Node* target = grown.created ? grown.created : scene.node(cell);
+            if (grown.created) {
+                runtime.cells[index] = target.id;
+                runtime.cell_nodes++;
+            } else {
+                runtime.instances -= scene.get(target, LodGroup).state.count;
+                scene.remove_component(target, LodGroup);
+            }
+            scene.add(target, grown.lod);
+            scene.set_lod_effects(target, {
+                .cast_shadow = desc.cast_shadow,
+                .receive_shadow = desc.receive_shadow,
+                .trace = desc.trace,
+                .sway = runtime.sway,
+                .fade = desc.fade,
+            });
+            continue;
+        }
         if (grown.created) {
             scene.add(grown.created, (InstancedMesh){
                 .geometry       = desc.geometry,

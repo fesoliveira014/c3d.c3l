@@ -3,6 +3,9 @@ module c3d::asset;
 import c3d;
 import c3d::anim;
 import c3d::material;
+import c3d::maths;
+import c3d::scene;
+import std::math;
 
 <*
  Entry capacities of a model document, fixed before conversion.
@@ -318,6 +321,50 @@ fn void? check_document(AssetStore* store, ModelDocument* document) @local {
     }
     foreach (&entry : document.geometries) check_influences(&entry.data)!;
     foreach (&entry : document.textures) check_format_use(entry.desc)!;
+    foreach (index, &group : document.template.lod_groups) {
+        if (group.node >= document.template.nodes.len) return c3d::INVALID_ARGUMENT~;
+        scene::validate_lod_layout(group.desc)!;
+        foreach (previous : document.template.lod_groups[:index]) {
+            if (previous.node == group.node) return c3d::INVALID_ARGUMENT~;
+        }
+        foreach (mesh : document.template.meshes) {
+            if (mesh.node == group.node) return c3d::INVALID_ARGUMENT~;
+        }
+        foreach (skin : document.template.skins) {
+            if (skin.mesh_node == group.node) return c3d::INVALID_ARGUMENT~;
+        }
+        foreach (part : group.desc.parts) {
+            Aabb bounds;
+            if (part.geometry.generation) {
+                if (!store.geometries.is_live(part.geometry)) return c3d::INVALID_ARGUMENT~;
+                GeometryAsset* geometry = store.geometry(part.geometry);
+                if (geometry.target_count || geometry.skin_bounds.joints.len || geometry.data.joints.len) return c3d::INVALID_ARGUMENT~;
+                bounds = geometry.data.bounds;
+            } else {
+                if (!part.geometry.index || part.geometry.index > document.geometries.len) return c3d::INVALID_ARGUMENT~;
+                Geometry* geometry = &document.geometries[document_index(part.geometry)].data;
+                if (geometry.targets.len || geometry.joints.len) return c3d::INVALID_ARGUMENT~;
+                bounds = geometry.bounds;
+            }
+            bounds = maths::aabb_transform(bounds, part.local);
+            for (uint axis = 0; axis < 3; axis++) {
+                if (!math::is_finite(bounds.min[axis]) || !math::is_finite(bounds.max[axis])
+                  || bounds.min[axis] > bounds.max[axis]) return c3d::INVALID_ARGUMENT~;
+            }
+            if (part.material.generation) {
+                if (!store.materials.is_live(part.material)) return c3d::INVALID_ARGUMENT~;
+                Material* material = &store.material(part.material).data;
+                if (material.kind == MaterialKind.CUSTOM) {
+                    if (!store.shaders.is_live(material.custom.shader)) return c3d::INVALID_ARGUMENT~;
+                    if (store.shader(material.custom.shader).desc.vertex.shaded.len && !group.desc.has_bounds_override) {
+                        return c3d::INVALID_ARGUMENT~;
+                    }
+                }
+            } else if (!part.material.index || part.material.index > document.materials.len) {
+                return c3d::INVALID_ARGUMENT~;
+            }
+        }
+    }
     return;
 }
 
@@ -337,6 +384,12 @@ fn String[] document_keys(ModelDocument* document) @local {
 }
 
 fn void remap_template(ModelTemplate* template, PublishedIds* ids) @local {
+    foreach (&group : template.lod_groups) {
+        foreach (&part : group.desc.parts) {
+            part.geometry = @remapped(part.geometry, ids.geometries);
+            part.material = @remapped(part.material, ids.materials);
+        }
+    }
     foreach (&mesh : template.meshes) {
         mesh.geometry = @remapped(mesh.geometry, ids.geometries);
         mesh.material = @remapped(mesh.material, ids.materials);

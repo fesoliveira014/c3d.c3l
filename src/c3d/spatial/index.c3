@@ -17,6 +17,7 @@ bitstruct SceneEntryFlags : uint {
     bool static_triangles : 1;   // triangle precision may apply
     bool skinned          : 2;
     bool billboard        : 3;
+    bool lod_group        : 4;
 }
 
 <*
@@ -25,11 +26,11 @@ bitstruct SceneEntryFlags : uint {
 struct SceneEntry {
     Node*           node;
     uint            instance_index;
+    uint            part_index;
+    GeometryId      geometry;
     SceneEntryFlags flags;
     Aabb            bounds;         // world
 }
-// Refresh compares entries bytewise, so the entry holds no padding.
-$assert SceneEntry::size == 40;
 
 struct BatchKey @private {
     Mat4            world;
@@ -158,6 +159,32 @@ fn void? SceneIndex.refresh(&self, AssetStore* assets, Scene* scene) {
             }
         }
     };
+    scene.@each(LodGroup; Entity entity, LodGroup* group) {
+        Node* node = scene.node(entity);
+        LodGroupState* state = group.state;
+        if (node.visible_effective && state.count) {
+            if (lod_group_is_live(assets, group)) {
+                uint parts = state.desc.levels[0].part_count;
+                for (uint instance = 0; instance < state.count; instance++) {
+                    for (uint part = 0; part < parts; part++) {
+                        if (needed < self.entries.len) {
+                            SceneEntry entry = lod_entry(
+                                assets: assets,
+                                node: node,
+                                state: state,
+                                instance: instance,
+                                part: part,
+                            );
+                            changed |= store_entry(&self.entries[needed], entry);
+                        }
+                        needed++;
+                    }
+                }
+            } else {
+                dangling++;
+            }
+        }
+    };
     self.dangling = dangling;
     if (needed > self.entries.len) {
         self.count = 0;
@@ -211,6 +238,16 @@ fn PickHit[] SceneIndex.pick(
  @param [&in] scene : "Every mesh and batch, hidden or on any layer."
 *>
 fn void prepare_triangle_picks(AssetStore* assets, Scene* scene) {
+    scene.@each(LodGroup; Entity entity, LodGroup* group) {
+        LodGroupState* state = group.state;
+        if (lod_group_is_live(assets, group) && !state.desc.has_bounds_override && state.effects.sway.amplitude == 0) {
+            foreach (part : state.desc.parts[:state.desc.levels[0].part_count]) {
+                if (triangles_are_static(assets.geometry(part.geometry), false, false)) {
+                    prepare_triangle_tree(assets, part.geometry);
+                }
+            }
+        }
+    };
     scene.@each(Mesh; Entity entity, Mesh* mesh) {
         SkinBinding* skin = scene.get(scene.node(entity), SkinBinding);
         if (mesh_is_live(assets, mesh, skin)) {
@@ -233,7 +270,9 @@ fn usz tree_node_capacity(uint capacity) @local {
 }
 
 fn bool store_entry(SceneEntry* slot, SceneEntry entry) @local {
-    if (mem::equals(slot, &entry, (sz)SceneEntry::size)) return false;
+    if (slot.node == entry.node && slot.instance_index == entry.instance_index && slot.part_index == entry.part_index
+        && c3d::same_id(slot.geometry, entry.geometry) && slot.flags == entry.flags
+        && slot.bounds.min == entry.bounds.min && slot.bounds.max == entry.bounds.max) return false;
     *slot = entry;
     return true;
 }
@@ -283,6 +322,7 @@ fn bool store_batch(
             flags:     flags,
             local:     record.data.bounds,
             transform: transform,
+            geometry:  batch.geometry,
         );
         changed |= store_entry(&index.entries[slot], entry);
         slot++;
@@ -359,6 +399,7 @@ fn SceneEntry mesh_entry(
     GeometryAsset* record = assets.geometry(mesh.geometry);
     return {
         .node   = node,
+        .geometry = mesh.geometry,
         .flags  = {
             .static_triangles = triangles_are_static(record, skin != null, mesh.has_bounds_override)
               && record.data.positions.len > 0,
@@ -394,10 +435,12 @@ fn SceneEntry instance_entry(
     SceneEntryFlags flags,
     Aabb local,
     Transform transform,
+    GeometryId geometry,
 ) @private {
     return {
         .node           = node,
         .instance_index = index,
+        .geometry       = geometry,
         .flags          = flags,
         .bounds         = maths::aabb_transform(local, node.world.mul(transform.to_mat4())),
     };

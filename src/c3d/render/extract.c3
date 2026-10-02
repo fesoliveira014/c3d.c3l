@@ -52,6 +52,9 @@ struct MeshCandidate {
     uint           instance_first;
     uint           instance_count;
     bool           mirrored;
+    LodSelection*  lod;
+    uint           lod_level;
+    uint           lod_part;
 }
 
 <*
@@ -62,6 +65,7 @@ struct ExtractCounts {
     uint culled;
     uint dangling;
     uint batches_faded; // bound wholly past the batch's fade band from the view camera
+    uint[scene::MAX_LOD_LEVELS] lod_objects_visible;
 }
 
 <*
@@ -73,6 +77,7 @@ struct ExtractCounts {
  @param layers : "Camera layer mask."
  @param [&inout] counts : "Zeroed first, then accumulated."
  @param clip_plane : "Culls bounds wholly on its negative side; zero culls nothing."
+ @param lod : "View selections indexed by scene node slot."
 *>
 fn MeshCandidate[] extract_candidates(
     Allocator allocator,
@@ -82,6 +87,7 @@ fn MeshCandidate[] extract_candidates(
     uint layers,
     ExtractCounts* counts,
     Plane clip_plane = {},
+    LodSelection[] lod = {},
 ) {
     *counts = {};
     // Every emitted candidate is written whole before the slice is returned, so the array needs no zeroing.
@@ -132,6 +138,28 @@ fn MeshCandidate[] extract_candidates(
             );
         }
     };
+    foreach (&selection : lod) {
+        if (!selection.state) continue;
+        if (!(layers & selection.node.layers)) continue;
+        if (!maths::frustum_intersects_aabb(&camera.frustum, selection.world_bounds)
+          || !maths::frustum_intersects_aabb(&clip_frustum, selection.world_bounds)) {
+            counts.culled++;
+            continue;
+        }
+        if (past_fade_band(selection.state.effects.fade, selection.world_bounds, camera.position)) {
+            counts.batches_faded++;
+            continue;
+        }
+        emit_lod_candidates(
+            candidates: candidates,
+            selection: selection,
+            assets: assets,
+            camera: camera,
+            counts: counts,
+            shadow: false,
+        );
+        if (selection.state.mode == LodMode.SINGLE) counts.lod_objects_visible[selection.level]++;
+    }
     return candidates[:counts.visible];
 }
 
@@ -409,7 +437,49 @@ fn void emit_batch_candidates(MeshCandidate[] candidates, ExtractCounts* counts,
 }
 
 fn sz candidate_capacity(Scene* scene) @local {
-    return (sz)scene.count(Mesh) + 2 * (sz)scene.count(InstancedMesh) + (sz)scene.count(BillboardBatch);
+    sz capacity = (sz)scene.count(Mesh) + 2 * (sz)scene.count(InstancedMesh) + (sz)scene.count(BillboardBatch);
+    scene.@each(LodGroup; entity, group) { capacity += 2 * group.state.desc.parts.len; };
+    return capacity;
+}
+
+fn void emit_lod_candidates(
+    MeshCandidate[] candidates,
+    LodSelection* selection,
+    AssetStore* assets,
+    CameraMatrices* camera,
+    ExtractCounts* counts,
+    bool shadow,
+) @local {
+    LodGroupState* state = selection.state;
+    bool instanced = state.mode == LodMode.INSTANCED;
+    uint first = instanced ? 0 : selection.level;
+    uint end = instanced && !selection.fallback ? (uint)state.desc.levels.len : first + 1;
+    for (uint selected = first; selected < end; selected++) {
+        LodLevel level = state.desc.levels[selected];
+        foreach (uint index, part : state.desc.parts[level.first_part:level.part_count]) {
+            if (shadow && assets.material(part.material).data.common.alpha_mode == AlphaMode.BLEND) continue;
+            uint parities = instanced ? 2 : 1;
+            for (uint parity = 0; parity < parities; parity++) {
+                uint count = instanced ? (parity == 0 ? selection.instances.lod_unmirrored_count : state.count - selection.instances.lod_unmirrored_count) : 1;
+                if (!count) continue;
+                candidates[counts.visible++] = {
+                    .node = selection.node,
+                    .geometry = part.geometry,
+                    .material = part.material,
+                    .world_bounds = selection.world_bounds,
+                    .ndc_depth = camera ? center_depth(camera, selection.world_bounds) : 0,
+                    .view_depth = camera ? center_view_depth(camera, selection.world_bounds) : 0,
+                    .receive_shadow = state.effects.receive_shadow,
+                    .instance_count = count,
+                    .mirrored = parity != 0,
+                    .scene_identity = selection.scene_identity,
+                    .lod = selection,
+                    .lod_level = selected,
+                    .lod_part = level.first_part + index,
+                };
+            }
+        }
+    }
 }
 
 fn float[] morph_weights_of(AssetStore* assets, Mesh* mesh) @local {
@@ -453,6 +523,7 @@ fn float center_depth(CameraMatrices* camera, Aabb world) @local {
  @param [&in] assets : "Supplies live ids and retained geometry bounds."
  @param fade_origin : "View camera position batch fades are measured from."
  @param [&inout] counts : "Reset, then populated for broad caster inclusion."
+ @param lod : "Parent view selections indexed by scene node slot."
 *>
 fn MeshCandidate[] extract_shadow_candidates(
     Allocator allocator,
@@ -460,6 +531,7 @@ fn MeshCandidate[] extract_shadow_candidates(
     AssetStore* assets,
     Vec3 fade_origin,
     ExtractCounts* counts,
+    LodSelection[] lod = {},
 ) {
     *counts = {};
     MeshCandidate[] candidates = alloc::alloc_array(allocator, MeshCandidate, candidate_capacity(scene));
@@ -520,5 +592,17 @@ fn MeshCandidate[] extract_shadow_candidates(
         }
     };
 
+    foreach (&selection : lod) {
+        if (!selection.state || !selection.state.effects.cast_shadow) continue;
+        if (past_fade_band(selection.state.effects.fade, selection.world_bounds, fade_origin)) continue;
+        emit_lod_candidates(
+            candidates: candidates,
+            selection: selection,
+            assets: assets,
+            camera: null,
+            counts: counts,
+            shadow: true,
+        );
+    }
     return candidates[:counts.visible];
 }

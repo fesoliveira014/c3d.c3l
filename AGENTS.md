@@ -50,6 +50,14 @@ The `addons/c3d_landscape.c3l` package owns height-field terrain: the `Terrain` 
 
 The `addons/c3d_particle.c3l` package owns fixed-pool CPU particle simulation, emitters, lifetime tables and depth-reading effect materials. Its `c3d::particle` module imports the standard library and core, never `gpu`, `sdl`, `imgui`, physics or the render/shader-compiler modules. Core supplies generic billboard and mesh batches and never imports the particle package. The package owns `particle_test`, the `particles` example and a separate manual `test/gpu` acceptance target. The example selects the profiler collector explicitly for GPU timing; the simulation package does not depend on it.
 
+Core `c3d::scene` also owns pointer-sized `LodGroup` components: copied rigid
+whole-object alternatives with ordinary or fixed-capacity instanced placement.
+Renderer-owned per-view histories select ordinary groups on the CPU and instanced
+groups on the GPU. Picking, spatial indexing and tracing use level-zero parts.
+The landscape foliage package may own a copied descriptor and create LOD cells;
+core does not import landscape. The `lod` example explicitly selects the profiler
+add-on and its CPU/GPU/internal features. See `docs/lod.md` for the contract.
+
 # 2. Where truth lives
 
 - Project root: [C3 Rendering Project](https://app.notion.com/p/3cfcb7903a5880fbba9bcdadb3bb61c3)

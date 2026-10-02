@@ -23,6 +23,12 @@
   "wincrt": "static",
   "output": "build",
   "targets": {
+    "lod": {
+      "type": "executable",
+      "dependencies": ["c3d_profile"],
+      "features": ["C3D_PROFILE_CPU", "C3D_PROFILE_GPU", "C3D_PROFILE_INTERNAL"],
+      "sources": ["src/lod.c3"]
+    },
     "cpu_bench": {
       "type": "executable",
       "sources": [ "src/cpu_bench.c3" ]

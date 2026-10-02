@@ -41,6 +41,11 @@ struct GpuInstances {
     Mat4               world; // records bake the node world, so a moved node re-uploads
     gpu::GpuAllocation allocation;
     gpu::GpuAddress    records;
+    ulong              lod_identity;
+    gpu::GpuAddress    lod_metadata;
+    gpu::GpuAddress    lod_unmirrored_indices;
+    gpu::GpuAddress    lod_mirrored_indices;
+    uint               lod_unmirrored_count;
 }
 
 <*
@@ -62,6 +67,7 @@ struct CullRange {
     uint            first;
     gpu::GpuAddress visible;
     bool            culled;
+    bool            indexed;
 }
 
 <*
@@ -293,6 +299,7 @@ fn void? record_batch_draw(
 }
 
 fn gpu::GpuAddress? resolve_instances(Renderer* renderer, MeshCandidate* candidate) @private {
+    if (candidate.lod) return resolve_lod_instances(renderer, candidate.lod);
     InstanceKey key = {
         .scene = candidate.scene_identity,
         .node = candidate.node.id,

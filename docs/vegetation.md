@@ -15,6 +15,20 @@ The module imports the standard library, core (`c3d`) and `c3d::landscape::terra
 python3 scripts/build.py --example vegetation
 ```
 
+## Whole-object LOD
+
+Set `FoliageDesc.lod` to a borrowed `LodDesc*` to scatter [whole-object groups](lod.md).
+`add_foliage` copies the descriptor into runtime-owned storage. Each occupied cell
+owns one instanced group with shared placements, tint, sway and fade across every
+part. The descriptor supplies geometry/material assets; plain `geometry` and
+`material` fields are used only when `lod` is null.
+
+Seed, scatter rules and terrain produce the same placements as the single-mesh
+path. Effect changes preserve slot identity; rescattering replaces placements.
+Cell capacity growth stages replacement ownership before changing the cell.
+Removing the foliage node releases its children and copied descriptor. Null `lod`
+retains the existing single-mesh grass path and storage.
+
 ## Select the package
 
 Select `c3d_landscape` as for [terrain](terrain.md#select-the-package); foliage needs nothing else.

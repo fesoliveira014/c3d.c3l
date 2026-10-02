@@ -34,6 +34,26 @@ fn void? stats_panel(Renderer* renderer) {
     imgui::text("Sort overflows: %u", renderer.stats.sort_overflows);
     imgui::text("Culled: %u", renderer.stats.culled);
     imgui::text("Faded batches: %u", renderer.stats.batches_faded);
+    if (renderer.stats.lod_counts_valid) {
+        imgui::text("Completed LOD frame: %llu", renderer.stats.lod_frame_index);
+        imgui::text("LOD placements tested: %u, fallback groups: %u", renderer.stats.lod_instances_tested, renderer.stats.lod_fallbacks);
+        foreach (uint level, count : renderer.stats.lod_visible) {
+            imgui::text(
+                "LOD %u placements: %u selected, %u visible",
+                level,
+                renderer.stats.lod_selected[level],
+                count,
+            );
+        }
+    }
+    foreach (uint level, count : renderer.stats.lod_objects_selected) {
+        if (count) imgui::text(
+            "LOD %u ordinary objects, current CPU frame: %u selected, %u visible",
+            level,
+            count,
+            renderer.stats.lod_objects_visible[level],
+        );
+    }
     imgui::text("Lights: %u", renderer.stats.lights);
     imgui::text("Lights dropped: %u", renderer.stats.lights_dropped);
     imgui::text("Probe rays: %u", renderer.stats.probe_rays);

@@ -1,5 +1,11 @@
 # Manual GPU submission acceptance
 
+The LOD cases in `test_lod.c3` verify shared logical source indices, part/parity
+transforms, independent view/shadow selection, whole-group arena fallback,
+submission-owned history, temporal rejection, transparency sorting and common
+sway/fade anchors. Image comparisons use 512×512 reference color/depth/shadows.
+See [LOD acceptance](../../../docs/lod_acceptance.md) for the separate example run.
+
 Build the repository once so `shaders/spv/` exists, then invoke this project
 separately:
 

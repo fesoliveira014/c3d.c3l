@@ -6,6 +6,8 @@ for one.
 
 See [Scene nodes](docs/scene.md) for hierarchy ownership, transform spaces,
 visibility and explicit transform updates.
+Core [whole-object LOD](docs/lod.md) selects rigid multipart alternatives per view,
+with GPU selection for instanced placements and a 5,000-tree example.
 Core [billboard batches](docs/billboards.md) provide camera-facing and directional
 quads through the transparent material pipeline.
 The optional [particle add-on](docs/particles.md) supplies CPU simulation, effect
