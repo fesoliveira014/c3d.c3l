@@ -172,6 +172,8 @@ fn Impostor? Renderer.bake_impostor(
     gpu::GpuSpan span = gpu::get_allocation_span(&self.device, allocation)!;
     char[] atlas = alloc::new_array(self.assets.allocator, char, (sz)layout.bytes);
     defer catch alloc::free(self.assets.allocator, atlas.ptr);
+    usz[] dilation = alloc::new_array(self.allocator, usz, (sz)desc.cell_size * desc.cell_size * 2);
+    defer alloc::free(self.allocator, dilation.ptr);
     for (uint frame = 0; frame < desc.frames_per_side * desc.frames_per_side; frame++) {
         Vec3 direction = impostor_frame_direction(frame, desc.frames_per_side);
         camera_node.world = impostor_camera(sphere, direction, margin);
@@ -196,6 +198,12 @@ fn Impostor? Renderer.bake_impostor(
             color: mapped[:color_bytes],
             normal: ((ushort*)(mapped.ptr + color_bytes))[:texels * 4],
             depth: ((float*)(mapped.ptr + depth_offset))[:texels],
+        );
+        dilate_impostor_frame(
+            atlas: atlas,
+            desc: desc,
+            frame: frame,
+            scratch: dilation,
         );
     }
     material::TextureDesc texture_desc = material::texture_2d_desc(layout.width, layout.height, PixelFormat.RGBA8_UNORM);
@@ -322,6 +330,47 @@ fn void pack_impostor_frame(
             usz destination = ((usz)(first_y + y) * width + first_x + x) * IMPOSTOR_TEXEL_BYTES;
             atlas[destination:4] = packed.color[..];
             atlas[destination + (usz)width * width * IMPOSTOR_TEXEL_BYTES:4] = packed.surface[..];
+        }
+    }
+}
+
+fn void dilate_impostor_frame(
+    char[] atlas,
+    ImpostorDesc desc,
+    uint frame,
+    usz[] scratch,
+) @private {
+    usz width = (usz)desc.frames_per_side * desc.cell_size;
+    usz count = (usz)desc.cell_size * desc.cell_size;
+    usz first = ((usz)(frame / desc.frames_per_side) * desc.cell_size * width
+      + (usz)(frame % desc.frames_per_side) * desc.cell_size) * IMPOSTOR_TEXEL_BYTES;
+    usz surface_offset = width * width * IMPOSTOR_TEXEL_BYTES;
+    usz[] nearest = scratch[:count];
+    usz[] queue = scratch[count:count];
+    usz queued;
+    for (usz index = 0; index < count; index++) {
+        usz pixel = first + (index / desc.cell_size * width + index % desc.cell_size) * IMPOSTOR_TEXEL_BYTES;
+        nearest[index] = atlas[pixel + 3] ? index : usz::max;
+        if (atlas[pixel + 3]) queue[queued++] = index;
+    }
+    for (usz cursor = 0; cursor < queued; cursor++) {
+        usz index = queue[cursor];
+        uint column = (uint)(index % desc.cell_size);
+        uint row = (uint)(index / desc.cell_size);
+        foreach (int[2] step : { { -1, 0 }, { 1, 0 }, { 0, -1 }, { 0, 1 } }) {
+            int next_column = (int)column + step[0];
+            int next_row = (int)row + step[1];
+            if (next_column < 0 || next_row < 0
+              || (uint)next_column >= desc.cell_size || (uint)next_row >= desc.cell_size) continue;
+            usz next = (usz)next_row * desc.cell_size + (usz)next_column;
+            if (nearest[next] != usz::max) continue;
+            nearest[next] = nearest[index];
+            queue[queued++] = next;
+            usz source = first + surface_offset
+              + (nearest[next] / desc.cell_size * width + nearest[next] % desc.cell_size) * IMPOSTOR_TEXEL_BYTES;
+            usz destination = first + surface_offset
+              + ((usz)next_row * width + (usz)next_column) * IMPOSTOR_TEXEL_BYTES;
+            atlas[destination:4] = atlas[source:4];
         }
     }
 }

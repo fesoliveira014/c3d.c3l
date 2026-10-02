@@ -95,11 +95,12 @@ vec3 impostor_local(DrawRoot draw, InstanceGpu instance, mat4 inverse_model, vec
         float scale = instance_fade_scale(effects, anchor, instance.normal_0.w);
         world = anchor + (world - anchor) / max(scale, 1e-6);
     }
-    vec3 local = (inverse_model * vec4(world, 1.0)).xyz;
+    vec3 unbent = (inverse_model * vec4(world, 1.0)).xyz;
+    vec3 local = unbent;
     if ((draw.flags & DRAW_SWAY) != 0u) {
+        vec3 bend = mat3(inverse_model) * sway_offset(effects.sway, anchor, instance.normal_0.w, 1.0);
         for (uint iteration = 0u; iteration < 5u; iteration++) {
-            vec3 offset = sway_offset(effects.sway, anchor, instance.normal_0.w, impostor_bend(effects, local));
-            local = (inverse_model * vec4(world - offset, 1.0)).xyz;
+            local = unbent - bend * impostor_bend(effects, local);
         }
     }
     return local;

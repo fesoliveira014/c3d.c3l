@@ -8,16 +8,15 @@
 layout(location = 0) flat in uint v_source;
 layout(push_constant) uniform Push { uint64_t vertex_root_gpu; uint64_t fragment_root_gpu; } pc;
 
-// The march brackets discontinuous cutout edges before refining continuous surface depth.
-const uint IMPOSTOR_MARCH_STEPS = 32u;
-const uint IMPOSTOR_REFINE_STEPS = 8u;
+const uint IMPOSTOR_REFINE_STEPS = 2u; // Two corrections per seed bound reconstruction independently of empty space.
+const float IMPOSTOR_SLOPE_LIMIT = 0.1; // Flat sampled gradients use capture-plane depth to bound corrections.
+const float IMPOSTOR_DEPTH_RESIDUAL = 0.04; // Reject cutout crossings behind their sampled depth sheet.
 
 struct ImpostorSample {
     vec4 color;
     vec3 normal;
     float roughness;
     float distance;
-    vec3 local;
     bool hit;
 };
 
@@ -34,47 +33,43 @@ ImpostorSample impostor_sample(ImpostorGpu impostor, uint index, mat3 basis, vec
     result.color = sample_texture_2d(impostor.atlas, impostor.sampler_index, uv);
     vec4 surface = sample_texture_2d(impostor.atlas, impostor.sampler_index, uv + vec2(0.0, 0.5));
     result.hit = result.hit && result.color.a >= 0.5;
-    // Empty texels store zeros, so linear filtering weights every attribute by coverage.
-    surface /= max(result.color.a, 1e-6);
+    // Color remains coverage weighted; dilated surface attributes seed transparent pixels.
     result.color.rgb /= max(result.color.a, 1e-6);
     result.normal = decode_octahedral(surface.xy * 2.0 - 1.0);
     result.roughness = surface.z;
     result.distance = (point.z - (1.0 - 2.0 * surface.w)) * impostor.bounds.w;
-    result.local = local;
+    return result;
+}
+
+ImpostorSample impostor_project(
+    ImpostorGpu impostor, uint index, vec3 origin, vec3 direction, float first, float last, float plane
+) {
+    mat3 basis = impostor_basis(impostor_direction(index, impostor.frames_per_side));
+    float slope = dot(direction, basis[2]);
+    ImpostorSample result;
+    result.hit = false;
+    if (abs(slope) < 1e-6 * length(direction)) return result;
+    float distance = clamp((dot(impostor.bounds.xyz - origin, basis[2]) + plane) / slope, first, last);
+    float probe_step = 2.0 * impostor.bounds.w / (float(impostor.cell_size - 2u * IMPOSTOR_GUTTER) * length(direction));
+    for (uint refinement = 0u; refinement <= IMPOSTOR_REFINE_STEPS; refinement++) {
+        result = impostor_sample(impostor, index, basis, origin + direction * distance);
+        if (refinement == IMPOSTOR_REFINE_STEPS) break;
+        ImpostorSample probe = impostor_sample(impostor, index, basis, origin + direction * (distance + probe_step));
+        float gradient = (probe.distance - result.distance) / probe_step;
+        float correction = result.distance / (abs(gradient) > abs(slope) * IMPOSTOR_SLOPE_LIMIT ? gradient : slope);
+        distance = clamp(distance - correction, first, last);
+    }
+    // A cutout edge is not a surface if the ray entered behind its depth sheet.
+    result.hit = result.hit && abs(result.distance) < impostor.bounds.w * IMPOSTOR_DEPTH_RESIDUAL;
+    result.distance = distance;
     return result;
 }
 
 ImpostorSample impostor_trace(
-    DrawRoot draw, ImpostorGpu impostor, InstanceGpu instance, mat4 inverse_model,
-    uint index, vec3 origin, vec3 direction, float first, float last
+    ImpostorGpu impostor, uint index, vec3 origin, vec3 direction, float first, float last
 ) {
-    mat3 basis = impostor_basis(impostor_direction(index, impostor.frames_per_side));
-    float step_size = (last - first) / float(IMPOSTOR_MARCH_STEPS);
-    float before = first;
-    ImpostorSample result;
-    result.hit = false;
-    for (uint step_index = 0u; step_index <= IMPOSTOR_MARCH_STEPS; step_index++) {
-        float distance = first + step_size * float(step_index);
-        vec3 local = impostor_local(draw, instance, inverse_model, origin + direction * distance);
-        ImpostorSample sample_value = impostor_sample(impostor, index, basis, local);
-        if (sample_value.hit && sample_value.distance <= 0.0) {
-            float after = distance;
-            for (uint refinement = 0u; refinement < IMPOSTOR_REFINE_STEPS; refinement++) {
-                float middle = (before + after) * 0.5;
-                vec3 refined = impostor_local(draw, instance, inverse_model, origin + direction * middle);
-                ImpostorSample probe = impostor_sample(impostor, index, basis, refined);
-                if (probe.hit && probe.distance <= 0.0) after = middle;
-                else before = middle;
-            }
-            vec3 refined = impostor_local(draw, instance, inverse_model, origin + direction * after);
-            result = impostor_sample(impostor, index, basis, refined);
-            // A cutout edge is not a surface if the ray entered behind its depth sheet.
-            result.hit = result.hit && abs(result.distance) < impostor.bounds.w * 0.04;
-            if (result.hit) { result.distance = after; return result; }
-        }
-        before = distance;
-    }
-    result.hit = false;
+    ImpostorSample result = impostor_project(impostor, index, origin, direction, first, last, impostor.bounds.w);
+    if (!result.hit) result = impostor_project(impostor, index, origin, direction, first, last, 0.0);
     return result;
 }
 
@@ -109,6 +104,23 @@ StandardMaterialSample impostor_surface(out vec3 world, out vec3 local, out uvec
     float root = sqrt(discriminant);
     float first = max(-projected - root, 0.0);
     float last = -projected + root;
+    if (last <= first) discard;
+    float reference_distance = clamp(-projected, first, last);
+    vec3 reference_world = origin + direction * reference_distance;
+    vec3 reference_local = impostor_local(draw, instance, inverse_model, reference_world);
+    vec3 local_direction = mat3(inverse_model) * direction;
+    if ((draw.flags & DRAW_DISTANCE_FADE) != 0u) {
+        InstanceEffectsGpu effects = InstanceEffectsGpu(draw.instance_effects);
+        local_direction /= max(instance_fade_scale(effects, instance_anchor(effects, instance.model), instance.normal_0.w), 1e-6);
+    }
+    if ((draw.flags & DRAW_SWAY) != 0u) {
+        InstanceEffectsGpu effects = InstanceEffectsGpu(draw.instance_effects);
+        vec3 bend = mat3(inverse_model) * sway_offset(effects.sway, instance_anchor(effects, instance.model), instance.normal_0.w, 1.0);
+        float height = clamp((reference_local.y - effects.anchor.y) * effects.anchor.w, 0.0, 1.0);
+        float derivative = 2.0 * height * effects.anchor.w;
+        local_direction -= bend * (derivative * local_direction.y / (1.0 + derivative * bend.y));
+    }
+    vec3 local_origin = reference_local - local_direction * reference_distance;
     float coverage = 0.0;
     float distance = 0.0;
     vec3 color = vec3(0.0);
@@ -116,7 +128,7 @@ StandardMaterialSample impostor_surface(out vec3 world, out vec3 local, out uvec
     float roughness = 0.0;
     for (uint index = 0u; index < 3u; index++) {
         if (weights[index] == 0.0) continue;
-        ImpostorSample sample_value = impostor_trace(draw, impostor, instance, inverse_model, frames[index], origin, direction, first, last);
+        ImpostorSample sample_value = impostor_trace(impostor, frames[index], local_origin, local_direction, first, last);
         if (!sample_value.hit) continue;
         float weight = weights[index] * sample_value.color.a;
         coverage += weight;

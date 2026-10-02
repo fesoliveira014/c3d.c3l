@@ -30,10 +30,11 @@ const uint RUN_FRAMES @local = WARMUP_FRAMES + MEASURED_FRAMES + FRAME_DELAY;
 const float BASE_BIAS @local = 20; // all five thousand placements exceed the finest threshold
 const float IMPOSTOR_THRESHOLD @local = 0.02f; // confines atlas rendering to small projected trees
 const float MESH_ONLY_THRESHOLD @local = 1e-6f; // below every tree's projected size inside the far plane
+const float DETAIL_IMPOSTOR_THRESHOLD @local = 0.08f; // terminal replacement at a larger projected size
 const double NANOSECONDS_PER_MILLISECOND @local = 1000000;
-const String[3] WAYPOINT_NAMES @local = { "near", "middle", "far" };
-const Vec3[3] WAYPOINTS @local = { { 0, 5, 8 }, { 0, 40, 90 }, { 0, 240, 600 } };
-const Vec3[3] LOOK_AT @local = { { 0, 2, -25 }, { 0, 1, -75 }, { 0, 1, -75 } };
+const String[4] WAYPOINT_NAMES @local = { "near", "middle", "far", "high_detail" };
+const Vec3[4] WAYPOINTS @local = { { 0, 5, 8 }, { 0, 40, 90 }, { 0, 240, 600 }, { 0, 90, 200 } };
+const Vec3[4] LOOK_AT @local = { { 0, 2, -25 }, { 0, 1, -75 }, { 0, 1, -75 }, { 0, 1, -75 } };
 
 struct Field @local {
     Node* group;
@@ -69,7 +70,7 @@ fn void set_waypoint(Node* camera, uint waypoint) @local {
     camera.local.rotation = maths::look_rotation((LOOK_AT[waypoint] - WAYPOINTS[waypoint]).normalize(), { 0, 1, 0 });
 }
 
-fn Field? build_field(AssetStore* assets, Scene* scene) @local {
+fn Field? build_field(AssetStore* assets, Scene* scene, bool high_detail = false) @local {
     Field field;
     @pool() {
         Geometry[5] geometry = {
@@ -78,13 +79,13 @@ fn Field? build_field(AssetStore* assets, Scene* scene) @local {
                 radius_top: 0.1f,
                 radius_bottom: 0.15f,
                 height: 2,
-                slices: 24,
+                slices: high_detail ? 96 : 24,
             ),
             geometry::sphere(
                 allocator: tmem,
                 radius: 1.2f,
-                slices: 24,
-                stacks: 12,
+                slices: high_detail ? 96 : 24,
+                stacks: high_detail ? 48 : 12,
             ),
             geometry::cylinder(
                 allocator: tmem,
@@ -133,9 +134,14 @@ fn Field? build_field(AssetStore* assets, Scene* scene) @local {
             if (index == 1) local.scale.y = 1.4f;
             *part = { .geometry = ids[index], .material = index == 0 || index == 2 ? bark : leaves, .local = local.to_mat4() };
         }
+        if (high_detail) {
+            levels[0].min_screen_size = 0;
+            field.triangles[1] = 2;
+            field.triangles[2] = field.triangles[3] = 0;
+        }
         field.group = scene.add_instanced_lod_group(
             assets: assets,
-            desc: { .levels = levels[..], .parts = parts[..] },
+            desc: { .levels = levels[:high_detail ? 1 : 3], .parts = parts[:high_detail ? 2 : 5] },
             capacity: PLACEMENT_COUNT,
             name: "trees",
         )!;
@@ -423,6 +429,43 @@ fn void? run_benchmark() @local {
             }
         }
     }
+    Scene detail_scene = scene::create_scene(mem, scene::default_scene_desc());
+    defer scene::destroy_scene(&detail_scene);
+    Field detail_field = build_field(&assets, &detail_scene, true)!;
+    bake_field(&renderer, &detail_scene, &detail_field)!;
+    detail_scene.set_lod_impostor(
+        assets: &assets,
+        node: detail_field.group,
+        impostor: detail_field.impostor,
+        min_screen_size: DETAIL_IMPOSTOR_THRESHOLD,
+    )!;
+    set_waypoint(detail_field.camera, 3);
+    detail_scene.update_world();
+    renderer.prepare_scene(&detail_scene)!;
+    io::printfn("high_detail_triangles_per_placement=%d terminal_triangles=2", detail_field.triangles[0]);
+    foreach (bool forced_base : { false, true }) {
+        Controls controls = { .waypoint = 3, .forced_base = forced_base };
+        render::configure_view(&renderer, view, view_desc(target, controls, false))!;
+        render::reset_view_history(&renderer, view)!;
+        measure_waypoint(
+            renderer: &renderer,
+            scene: &detail_scene,
+            field: &detail_field,
+            view: view,
+            recorder: &recorder,
+            controls: controls,
+            samples: samples,
+        )!;
+        char[] pixels = mem::new_array(char, OUTPUT_WIDTH * OUTPUT_HEIGHT * 4);
+        defer free(pixels);
+        renderer.read_render_target(target, pixels)!;
+        image::write_png(
+            path: string::tformat("lod-high-detail-%s.png", forced_base ? "base" : "impostor"),
+            width: OUTPUT_WIDTH,
+            height: OUTPUT_HEIGHT,
+            pixels: pixels,
+        )!;
+    }
 }
 
 fn void? run_window(uint frame_limit) @local {
@@ -458,7 +501,7 @@ fn void? run_window(uint frame_limit) @local {
         if (imgui::begin("Whole-object LOD", null, {})) {
             imgui::text_unformatted("5,000 trees, three mesh levels and an impostor");
             imgui::text("Bake: %.1f ms, atlas %.1f MiB", renderer.last_impostor_bake.elapsed_ms, (double)renderer.last_impostor_bake.atlas_bytes / (1024 * 1024));
-            foreach (uint index, name : WAYPOINT_NAMES) {
+            foreach (uint index, name : WAYPOINT_NAMES[:3]) {
                 if (index) imgui::same_line();
                 if (imgui::button(name.zstr_tcopy())) {
                     controls.waypoint = index;

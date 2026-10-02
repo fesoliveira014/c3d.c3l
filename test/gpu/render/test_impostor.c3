@@ -17,7 +17,7 @@ import std::io;
 
 const uint IMPOSTOR_IMAGE_SIZE @private = 512;
 
-fn DeformedScene? create_impostor_scene(Fixture* fixture, bool instanced = false) @private {
+fn DeformedScene? create_impostor_scene(Fixture* fixture, bool instanced = false, bool tilted_normal = false) @private {
     DeformedScene target;
     target.scene = scene::create_scene(fixture.allocator, scene::default_scene_desc());
     defer catch scene::destroy_scene(&target.scene);
@@ -25,6 +25,12 @@ fn DeformedScene? create_impostor_scene(Fixture* fixture, bool instanced = false
     StandardParams surface = material::STANDARD_PARAMS_DEFAULT;
     surface.metallic = 0;
     surface.base_color = { 0.2f, 0.4f, 0.8f, 1 };
+    if (tilted_normal) {
+        char[4] normal_texel = { 245, 160, 145, 255 };
+        material::TextureDesc texture_desc = material::texture_2d_desc(1, 1, PixelFormat.RGBA8_UNORM);
+        texture_desc.generate_mips = false;
+        surface.normal_map = material::texture_slot(fixture.assets.add_texture(texture_desc, normal_texel[..])!);
+    }
     MaterialId material = fixture.assets.add_material(material::standard(surface))!;
     LodLevel[1] levels = {{ .part_count = 1 }};
     LodPart[1] parts = {{ .geometry = fixture.box, .material = material, .local = matrix::IDENTITY4 }};
@@ -83,11 +89,11 @@ fn void save_impostor_difference(Vec4[] actual, Vec4[] reference, uint direction
     };
 }
 
-fn void test_baked_box_matches_mesh() @test {
+fn void check_baked_box_matches_mesh(bool tilted_normal) @private {
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
     defer destroy_fixture(&fixture);
-    DeformedScene target = create_impostor_scene(&fixture)!!;
+    DeformedScene target = create_impostor_scene(&fixture, tilted_normal: tilted_normal)!!;
     defer scene::destroy_scene(&target.scene);
     target.scene.ambient_intensity = 0.25f;
     Light sunlight = light::directional({ 1, 1, 1 }, 2);
@@ -199,6 +205,14 @@ fn void test_baked_box_matches_mesh() @test {
     assert(accepted);
 }
 
+fn void test_baked_box_matches_mesh() @test {
+    check_baked_box_matches_mesh(false);
+}
+
+fn void test_baked_normal_map_preserves_geometry() @test {
+    check_baked_box_matches_mesh(true);
+}
+
 fn void test_impostor_depth_occludes_consistently() @test {
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
@@ -225,8 +239,10 @@ fn void test_impostor_depth_occludes_consistently() @test {
         view.depth_prepass = path % 2 != 0;
         view.post.anti_aliasing = AntiAliasing.NONE;
         render::configure_view(&fixture.renderer, fixture.view, view)!!;
-        foreach (float camera_x : { -0.2f, 0.2f }) {
-            target.camera.local.position.x = camera_x;
+        foreach (Vec3 camera_position : { { -0.2f, 0, 32 }, { 0.2f, 0, 32 }, { 0, 0, 1.2f } }) {
+            view.lod_bias = camera_position.z < 2 ? -4 : 0;
+            render::configure_view(&fixture.renderer, fixture.view, view)!!;
+            target.camera.local.position = camera_position;
             target.camera.local.rotation = maths::look_rotation(-target.camera.local.position.normalize(), { 0, 1, 0 });
             foreach (bool front : { false, true }) {
                 plane.local.position.z = front ? 0.6f : 0.3f;
@@ -240,7 +256,7 @@ fn void test_impostor_depth_occludes_consistently() @test {
                 )!!;
                 Vec4 pixel = color[center];
                 assert(front ? pixel.x > 0.95f && pixel.z < 0.01f : pixel.z > 0.7f && pixel.x < 0.3f);
-                float surface = 32 - 0.1f / depth[center].x;
+                float surface = camera_position.z - 0.1f / depth[center].x;
                 assert(math::abs(surface - (front ? 0.6025f : 0.5f)) < 0.02f);
                 assert(fixture.renderer.stats.lod_visible[1] == 1);
             }

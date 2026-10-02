@@ -260,6 +260,11 @@ texels. Device limits still apply.
 The upper square stores linear RGB and coverage. The lower square stores
 subject-local octahedral normal XY, roughness and normalized linear capture
 depth. Coverage comes from the captured depth, never from metallic alpha.
+Bake-time nearest-surface padding fills the lower square's transparent texels
+within each cell. Captured surface values and the upper coverage/color region
+remain unchanged. Empty cells stay empty. This supplies a depth estimate before
+projected refinement reaches coverage, without making transparent pixels opaque.
+Lower attributes are sampled directly; only upper RGB is divided by coverage.
 Depth spans the sphere diameter, with a maximum quantization step of
 `2 * radius / 255`. Normals and other channels also have eight-bit precision.
 The capture near/far planes include a margin so valid surfaces cannot equal
@@ -288,20 +293,28 @@ for temporal rejection. Histories remain independent per view and instance.
 Picking, tracing, physics and spatial indexing continue to use their existing
 base-mesh or explicit-collider contracts.
 
-The surface search currently uses 32 brackets and eight refinements per
-contributing direction. Thin features, occluded surfaces and hard-normal edges
-remain atlas approximations. Filtering smooths hard-normal boundaries, and
-continuous HEIGHT sway need not match interpolation across a coarse mesh's
-triangles exactly. This representation reduces submitted triangles; it does
-not guarantee lower GPU time. The 5,000-tree benchmark is slower than both the
-coarse mesh and forced base at its far waypoint. See
-[impostor acceptance](impostor_acceptance.md) for the tests and measured costs.
-The benchmark also saves `lod-far-impostor.png`, `lod-far-mesh.png` and
-`lod-far-base.png` in its working directory after the timed runs, for comparison.
+Reconstruction starts on the front capture plane and performs two corrections
+using the sampled depth gradient. If coverage or depth consistency fails, it
+tries the center plane with the same two-correction limit. Shading normals do
+not drive geometry reconstruction. The rest-local ray is derived once per
+fragment from inverse sway/fade and its local tangent, outside the sample loop.
+Thin features, occluded surfaces and hard-normal edges remain atlas
+approximations. Strong nonlinear sway need not match coarse-mesh interpolation.
+
+The 5,000-tree benchmark retains the original coarse/base comparisons and adds
+a separate high-detail source-mesh replacement case. Impostors improve the
+measured detailed-mesh case but remain slower than its original 12-triangle
+coarse mesh comparison. See [impostor acceptance](impostor_acceptance.md) for
+geometry limits, timings and the measured conservative-depth experiment.
+The benchmark saves three `lod-far-*.png` comparisons and two
+`lod-high-detail-*.png` comparisons after the timed rows.
 
 `Renderer.last_impostor_bake` reports elapsed milliseconds, atlas texel bytes,
 capture attachment texel bytes, mapped readback bytes and the capture scene's
 peak tracked host allocation. These are explicit allocations, not process or
 driver memory measurements. GPU padding, driver caches, upload rings, retained
 renderer mirrors and tracking metadata are excluded. The prospective atlas
-buffer transfers to the asset store on success.
+buffer transfers to the asset store on success. Padding additionally uses one
+reusable `2 * cell_size * cell_size * usz::size` scratch allocation for the bake,
+262,144 bytes at the default cell size on a 64-bit host; it is freed afterward
+and is not included in the existing bake-stat categories.

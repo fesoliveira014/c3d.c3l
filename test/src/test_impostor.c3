@@ -52,6 +52,48 @@ fn void test_impostor_gutters_preserve_cell_ownership() @test {
     }
 }
 
+fn void test_impostor_padding_preserves_coverage_and_cell_bounds() @test {
+    render::ImpostorDesc desc = { .frames_per_side = 2, .cell_size = 4 };
+    char[8 * 16 * 4] atlas;
+    usz color_offset = (1 * 8 + 1) * 4;
+    usz surface_offset = color_offset + 8 * 8 * 4;
+    char[4] color = { 20, 40, 80, 255 };
+    atlas[color_offset:4] = color[..];
+    render::PackedImpostorSurface surface = render::pack_impostor_surface({
+        .normal = render::impostor_frame_direction(0, 2), .roughness = 0.4f, .depth = 0.5f, .covered = true,
+    });
+    atlas[surface_offset:4] = surface.surface[..];
+    char[8 * 8 * 4] coverage;
+    coverage[..] = atlas[:coverage.len];
+    usz[4 * 4 * 2] scratch;
+    render::dilate_impostor_frame(
+        atlas: atlas[..],
+        desc: desc,
+        frame: 0,
+        scratch: scratch[..],
+    );
+    assert(mem::equals((char*)&atlas, (char*)&coverage, coverage.len));
+    assert(atlas[surface_offset:4] == surface.surface[..]);
+    for (uint y = 0; y < 8; y++) {
+        for (uint x = 0; x < 8; x++) {
+            usz index = (usz)(8 * 8 + y * 8 + x) * 4;
+            if (x < 4 && y < 4) {
+                assert(atlas[index] == surface.surface[0] && atlas[index + 1] == surface.surface[1]);
+                assert(atlas[index + 2] == surface.surface[2]);
+            } else {
+                assert(atlas[index:4] == (char[4]){});
+            }
+        }
+    }
+    render::dilate_impostor_frame(
+        atlas: atlas[..],
+        desc: desc,
+        frame: 1,
+        scratch: scratch[..],
+    );
+    assert(atlas[(8 * 8 + 1 * 8 + 5) * 4:4] == (char[4]){});
+}
+
 fn void test_impostor_installation_is_atomic() @test {
     TrackingAllocator tracker;
     tracker.init(mem);
