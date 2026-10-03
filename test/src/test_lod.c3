@@ -504,7 +504,8 @@ fn void test_lod_base_queries_match_index_and_trace_parts() @test {
         foreach (record : records) {
             assert(record.lod_identity == fixture.scene.get(node, LodGroup).state.identity);
             Mat4 expected = node.world.mul(placements[record.instance_index].to_mat4()).mul(parts[record.part_index].local);
-            assert(mem::equals(&record.world, &expected, Mat4::size));
+            Mat4 actual = render::trace_instance_world(&record);
+            assert(mem::equals(&actual, &expected, Mat4::size));
         }
         fixture.assets.geometry(parts[2].geometry).data.bounds.max.x += 1;
         fixture.assets.mark_geometry_dirty(parts[2].geometry);

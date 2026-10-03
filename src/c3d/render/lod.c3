@@ -8,6 +8,7 @@ import c3d::material;
 import c3d::scene;
 import c3d::spatial;
 import c3d::shader;
+import c3d::render::post;
 import gpu;
 import std::math;
 
@@ -22,6 +23,7 @@ struct LodHistoryValue @private {
     bool valid;
     Vec4 camera;
     Vec4 direction;
+    Vec3 origin;
 }
 
 struct LodHistoryEntry @private {
@@ -68,6 +70,8 @@ struct LodSelection @private {
     gpu::GpuAddress[] parts;
     bool main_visible;
     bool impostor;
+    Vec3 previous_view_origin;
+    bool view_history_valid;
 }
 
 fn float lod_screen_size(
@@ -96,9 +100,15 @@ fn LodSelection select_lod_group(
     Camera camera,
     Vec3 camera_position,
     float bias,
+    Vec3 origin = {},
 ) @private {
     LodGroup group = { .state = state };
-    Aabb world = spatial::lod_world_bounds(assets, node, &group);
+    Aabb world = spatial::lod_world_bounds(
+        assets: assets,
+        node: node,
+        group: &group,
+        origin: origin,
+    );
     LodHistoryValue previous = history.committed;
     bool valid = previous.valid && previous.scene == scene.identity
       && c3d::same_id(previous.owner, node.id) && previous.identity == state.identity
@@ -187,7 +197,12 @@ fn LodSelection[]? prepare_lod_view(
                         .scene_identity = scene.identity,
                         .node = node,
                         .state = group.state,
-                        .world_bounds = spatial::lod_world_bounds(renderer.assets, node, group),
+                        .world_bounds = spatial::lod_world_bounds(
+                            assets: renderer.assets,
+                            node: node,
+                            group: group,
+                            origin: renderer.frame_origin,
+                        ),
                         .history = history,
                         .camera = camera,
                         .camera_position = matrices.position,
@@ -211,11 +226,18 @@ fn LodSelection[]? prepare_lod_view(
                         camera: camera,
                         camera_position: matrices.position,
                         bias: record.desc.lod_bias,
+                        origin: renderer.frame_origin,
                     );
                     selection.history = history;
                     renderer.stats.lod_objects_selected[selection.level]++;
                 }
-                history.pending_sway = pack_sway(group.state.effects.sway, renderer.info.time);
+                bool temporal = record.desc.post.anti_aliasing == AntiAliasing.TAA
+                  || record.desc.post.motion_blur || record.desc.screen_space_gi.enabled;
+                selection.view_history_valid = temporal && record.history.has_previous(scene, node);
+                selection.previous_view_origin = temporal && record.history.valid
+                  ? record.history.origin : renderer.frame_origin;
+                history.pending.origin = renderer.frame_origin;
+                history.pending_sway = pack_sway(group.state.effects.sway, renderer.info.time, renderer.frame_origin);
                 history.pending.camera = {
                     matrices.position.x, matrices.position.y, matrices.position.z,
                     camera.projection == Projection.ORTHOGRAPHIC ? 1 : 0,
@@ -290,6 +312,8 @@ fn gpu::GpuAddress? resolve_lod_part(Renderer* renderer, MeshCandidate* candidat
     if (*address != (gpu::GpuAddress)0) return *address;
     Mat4 local = candidate.impostor ? matrix::IDENTITY4 : selection.state.desc.parts[candidate.lod_part].local;
     Mat3 normal = maths::normal_matrix(local);
+    Vec3 history_delta = selection.history.committed.origin - selection.previous_view_origin;
+    Vec3 current_delta = renderer.frame_origin - selection.previous_view_origin;
     LodPartGpu part = {
         .local = bitcast(local, Mat4f),
         .normal_0 = { normal.m00, normal.m10, normal.m20, 0 },
@@ -297,9 +321,11 @@ fn gpu::GpuAddress? resolve_lod_part(Renderer* renderer, MeshCandidate* candidat
         .normal_2 = { normal.m02, normal.m12, normal.m22, 0 },
         .current = selection.current,
         .previous = selection.previous,
-        .reject_history = selection.reject_history ? 1 : 0,
+        .reject_history = selection.reject_history || !selection.view_history_valid ? 1 : 0,
         .seed = instance_seed({}),
         .impostor = candidate.impostor ? resolve_impostor(renderer, selection)! : (gpu::GpuAddress)0,
+        .history_origin_delta = { history_delta.x, history_delta.y, history_delta.z, 0 },
+        .current_origin_delta = { current_delta.x, current_delta.y, current_delta.z, 0 },
     };
     *address = upload_bytes(renderer, &part, LodPartGpu::size)!;
     return *address;

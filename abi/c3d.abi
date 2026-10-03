@@ -167,6 +167,7 @@ root FrameRoot {
     GpuAddress sky_fog;
     uint       _pad3;
     uint       _pad4;
+    vec4       origin;
 }
 
 root DrawRoot {
@@ -205,6 +206,8 @@ root LodPartGpu {
     uint reject_history;
     float seed;
     GpuAddress impostor;
+    vec4 history_origin_delta;
+    vec4 current_origin_delta;
 }
 
 root ImpostorGpu {
@@ -1111,11 +1114,10 @@ root VelocityRoot {
     TextureIndex depth_texture;
     SamplerIndex sampler_index;
     uint orthographic;
-    uint _pad0;
+    float background_near_ratio;
     vec2 jitter_uv;
     vec2 _pad1;
-    mat4 inv_view_proj;
-    mat4 prev_view_proj;
+    mat4 clip_to_previous;
 }
 
 root TaaRoot {

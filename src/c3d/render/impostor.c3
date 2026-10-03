@@ -177,7 +177,7 @@ fn Impostor? Renderer.bake_impostor(
     for (uint frame = 0; frame < desc.frames_per_side * desc.frames_per_side; frame++) {
         Vec3 direction = impostor_frame_direction(frame, desc.frames_per_side);
         camera_node.world = impostor_camera(sphere, direction, margin);
-        begin_renderer_frame(self, {}, false)!;
+        begin_renderer_frame(self, { .reference_position = sphere.center }, false)!;
         defer catch { if (self.frame_open) abort_frame(self); }
         self.render_view(&capture, camera_node, view)!;
         self.finish_view(view)!;
@@ -484,6 +484,12 @@ fn gpu::GpuAddress? resolve_impostor(Renderer* renderer, LodSelection* selection
         .frames_per_side = impostor.frames_per_side,
         .cell_size = impostor.cell_size,
     };
+    if (selection.state.mode == LodMode.SINGLE) {
+        Vec3 delta = selection.history.committed.origin - selection.previous_view_origin;
+        block.previous_camera.x += delta.x;
+        block.previous_camera.y += delta.y;
+        block.previous_camera.z += delta.z;
+    }
     return upload_bytes(renderer, &block, ImpostorGpu::size);
 }
 

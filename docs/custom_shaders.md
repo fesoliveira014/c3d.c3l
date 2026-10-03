@@ -48,6 +48,15 @@ Parameter and texture edits repack the material and re-upload the payload. They 
 
 ## Fragment contract
 
+World-position shader values use [camera-relative coordinates](large_world.md).
+`FrameRoot.origin.xyz` gives the absolute offset. Core draw models, camera and
+light positions, clip planes, scene reconstruction and tracing already use the
+same relative space. Convert application-supplied absolute payload positions
+before combining them with those values. Local geometry, palettes and directions
+keep their existing spaces. Rebuild consumer SPIR-V against the appended frame
+root layout; do not hand-copy the ABI. `write_mesh_outputs` also handles previous
+origins and LOD history for published velocity stages.
+
 A custom fragment stage declares the 16-byte graphics push block, reads `DrawRoot` through `pc.fragment_root_gpu`, and finds its header and payload through `DrawRoot.material`:
 
 ```glsl

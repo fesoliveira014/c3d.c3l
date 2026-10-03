@@ -791,6 +791,29 @@ fn void test_needs_upload_follows_key_capacity_revision_and_world() @test {
     GpuInstances larger = uploaded;
     larger.capacity = 8;
     assert(!render::needs_upload(slot: &larger, key: key, batch: batch, world: node.world));
+    Vec3 origin = { 49920, 0, 49920 };
+    assert(render::needs_upload(
+        slot: &uploaded,
+        key: key,
+        batch: batch,
+        world: node.world,
+        origin: origin,
+    ));
+    uploaded.origin = origin;
+    assert(!render::needs_upload(
+        slot: &uploaded,
+        key: key,
+        batch: batch,
+        world: node.world,
+        origin: origin,
+    ));
+    assert(render::needs_upload(
+        slot: &uploaded,
+        key: key,
+        batch: batch,
+        world: node.world,
+    ));
+    uploaded.origin = {};
     Mat4 moved = at({ 0, 1, 0 }).to_mat4().mul(node.world);
     assert(render::needs_upload(slot: &uploaded, key: key, batch: batch, world: moved));
     fixture.scene.mark_instances_dirty(node);

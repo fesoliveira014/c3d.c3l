@@ -21,6 +21,13 @@ Every instance traces its rest pose. A mesh a custom vertex stage deforms needs 
 
 ## Preparing
 
+Trace rows, bounds and ray origins use the [frame's relative space](large_world.md).
+Supply the current absolute reference to `begin_frame` before preparation.
+Closed-frame preparation uses the most recently selected origin, initially zero;
+the next frame refreshes the data if its origin changes. A cell change rebuilds
+the top level while retaining local BLAS data. The stable root address does not
+make its contents or coordinate space immutable.
+
 ```c3
 renderer.begin_frame()!;
 gpu::GpuAddress scene_trace = renderer.prepare_scene_trace(&scene)!;

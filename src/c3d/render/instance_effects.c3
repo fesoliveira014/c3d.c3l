@@ -45,17 +45,21 @@ fn float instance_seed(Vec3 local_position) {
 <*
  Sway state at one time: unit direction, amplitude and phase in [0, 1].
  @param time : "Seconds of FrameInfo.time."
+ @param origin : "Absolute origin of the shader's anchor coordinates."
  @require sway.amplitude == 0 || sway.direction.length() > 0
 *>
-fn SwayGpu pack_sway(InstanceSway sway, double time) {
+fn SwayGpu pack_sway(InstanceSway sway, double time, Vec3 origin = {}) {
     if (sway.amplitude == 0) return {};
     Vec3 direction = sway.direction.normalize();
-    double cycles = time * (double)sway.frequency;
+    float waves_per_unit = sway.wavelength > 0 ? 1.0f / sway.wavelength : 0;
+    double origin_phase = ((double)origin.x * (double)direction.x
+      + (double)origin.y * (double)direction.y + (double)origin.z * (double)direction.z) * (double)waves_per_unit;
+    double cycles = time * (double)sway.frequency - origin_phase;
     return {
         .direction_amplitude = { direction.x, direction.y, direction.z, sway.amplitude },
         .phase               = (float)(cycles - math::floor(cycles)),
         .lean                = sway.lean,
-        .waves_per_unit      = sway.wavelength > 0 ? 1.0f / sway.wavelength : 0,
+        .waves_per_unit      = waves_per_unit,
         .variation           = sway.variation,
     };
 }
@@ -64,9 +68,10 @@ fn SwayGpu pack_sway(InstanceSway sway, double time) {
  Sway and fade block one view's draws of a batch read.
  @param [&in] batch : "Live batch with sway or fade on."
  @param local_bounds : "Instance-local bound: the geometry's, or a crowd part's pose bound."
- @param fade_origin : "World position of the view's camera."
+ @param fade_origin : "Relative position of the view's camera."
  @param previous_sway : "Sway the view last drew the batch with; the current one without history."
  @param time : "Seconds of FrameInfo.time."
+ @param origin : "Absolute origin shared by anchors and camera."
 *>
 fn InstanceEffectsGpu pack_instance_effects(
     InstancedMesh* batch,
@@ -74,11 +79,12 @@ fn InstanceEffectsGpu pack_instance_effects(
     Vec3 fade_origin,
     SwayGpu previous_sway,
     double time,
+    Vec3 origin = {},
 ) {
     float height = local_bounds.max.y - local_bounds.min.y;
     Vec3 center = (local_bounds.min + local_bounds.max) * 0.5f;
     return {
-        .sway            = pack_sway(batch.sway, time),
+        .sway            = pack_sway(batch.sway, time, origin),
         .previous_sway   = previous_sway,
         .anchor          = { center.x, local_bounds.min.y, center.z, height > 0 ? 1.0f / height : 0 },
         .fade_origin     = { fade_origin.x, fade_origin.y, fade_origin.z, 0 },
@@ -130,11 +136,11 @@ fn gpu::GpuAddress? resolve_instance_effects(
     ViewHistory* history = effects_view.history;
     bool has_previous = history && history.has_previous(effects_view.scene, candidate.node);
     SwayGpu previous_sway = has_previous
-      ? pack_sway(history.previous_pose(effects_view.scene, candidate.node).sway, history.time)
-      : pack_sway(batch.sway, time);
+      ? pack_sway(history.previous_pose(effects_view.scene, candidate.node).sway, history.time, history.origin)
+      : pack_sway(batch.sway, time, renderer.frame_origin);
     if (candidate.lod) {
         bool valid = candidate.lod.state.mode == LodMode.INSTANCED ? candidate.lod.history_valid : !candidate.lod.reject_history;
-        previous_sway = valid ? candidate.lod.history.sway : pack_sway(batch.sway, time);
+        previous_sway = valid ? candidate.lod.history.sway : pack_sway(batch.sway, time, renderer.frame_origin);
     }
     InstanceEffectsGpu block = pack_instance_effects(
         batch:         batch,
@@ -142,6 +148,7 @@ fn gpu::GpuAddress? resolve_instance_effects(
         fade_origin:   effects_view.fade_origin,
         previous_sway: previous_sway,
         time:          time,
+        origin:        renderer.frame_origin,
     );
     gpu::GpuAddress address = upload_bytes(renderer, &block, InstanceEffectsGpu::size)!;
     effects_view.blocks.set(key, address);

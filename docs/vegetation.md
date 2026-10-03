@@ -1,5 +1,9 @@
 # Vegetation
 
+Foliage cells use core [camera-relative instance packing](large_world.md), with
+origin-compensated sway phase and camera-relative fade distances. Scattering,
+seeds and retained local placements keep their existing coordinates.
+
 The `c3d_landscape` add-on's `c3d::landscape::foliage` module scatters one geometry and material per layer
 over a terrain node. A `Foliage` component on a node covers the ground terrain's extent with a fixed grid of
 cells; each non-empty cell is a child node with its own `InstancedMesh`. Placement is deterministic: a

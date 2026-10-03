@@ -18,6 +18,7 @@ const float DEBUG_OVERLAY_ALPHA = 0.25f;
 struct ShadowFrustum {
     Mat4      inv_view_proj;
     LightKind kind;
+    Vec3      origin;
 }
 
 $assert DebugVertexGpu::size == DebugVertex::size;
@@ -31,7 +32,7 @@ $assert $reflect(DebugVertexGpu.rgba).offset == $reflect(DebugVertex.rgba).offse
 *>
 fn void Renderer.draw_shadow_frusta(&self, DebugDraw* draw, uint rgba) {
     foreach (frustum : self.shadow_frusta[:self.shadow_frustum_count]) {
-        draw.frustum(frustum.inv_view_proj, rgba);
+        draw.frustum(matrix::IDENTITY4.translate(frustum.origin).mul(frustum.inv_view_proj), rgba);
     }
 }
 
@@ -48,7 +49,11 @@ fn void? record_debug_lines(
         size:      vertices.len * DebugVertexGpu::size,
         alignment: STREAM_ALIGNMENT,
     )!;
-    mem::copy(vertex_span.bytes.ptr, vertices.ptr, vertices.len * DebugVertexGpu::size);
+    DebugVertex[] relative = ((DebugVertex*)vertex_span.bytes.ptr)[:vertices.len];
+    foreach (index, vertex : vertices) {
+        relative[index] = vertex;
+        relative[index].position -= renderer.frame_origin;
+    }
 
     gpu::MappedGpuSpan solid_root = slot.upload.take(&renderer.device, DebugLinesRoot::size)!;
     *(DebugLinesRoot*)solid_root.bytes.ptr = {

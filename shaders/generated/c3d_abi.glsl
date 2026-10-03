@@ -289,6 +289,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer FrameRoot {
     uint64_t sky_fog;
     uint _pad3;
     uint _pad4;
+    vec4 origin;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer DrawRoot {
@@ -327,6 +328,8 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer LodPartGpu 
     uint reject_history;
     float seed;
     uint64_t impostor;
+    vec4 history_origin_delta;
+    vec4 current_origin_delta;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer ImpostorGpu {
@@ -1088,11 +1091,10 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer VelocityRoo
     uint depth_texture;
     uint sampler_index;
     uint orthographic;
-    uint _pad0;
+    float background_near_ratio;
     vec2 jitter_uv;
     vec2 _pad1;
-    mat4 inv_view_proj;
-    mat4 prev_view_proj;
+    mat4 clip_to_previous;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer TaaRoot {

@@ -18,6 +18,16 @@ struct Frustum {
     uint     plane_count;
 }
 
+<*
+ Express a world plane relative to an origin.
+ @pure
+*>
+fn Plane rebase_plane(Plane plane, Vec3 origin) {
+    plane.d = (float)((double)plane.d + (double)plane.normal.x * (double)origin.x
+      + (double)plane.normal.y * (double)origin.y + (double)plane.normal.z * (double)origin.z);
+    return plane;
+}
+
 fn Plane normalized_plane(Vec4 coefficients) @private {
     Vec3 normal = { coefficients.x, coefficients.y, coefficients.z };
     float length = normal.length();

@@ -143,17 +143,21 @@ fn void? trace_grid(
     TraceKind kind = TraceKind.SOFTWARE,
     uint instance_mask = shader::TRACE_MASK_ALL,
     uint entry = TRACE_ENTRY_CULLING,
+    FrameInfo info = {},
+    Vec3 world_offset = {},
 ) @private {
     Renderer* renderer = &fixture.renderer;
-    renderer.begin_frame()!;
+    renderer.begin_frame(info)!;
     defer catch render::abort_frame(renderer);
+    Vec3 ray_offset = world_offset - renderer.frame_origin;
+    Vec3 ray_origin = TRACE_ORIGIN + ray_offset;
     TraceGridRoot root = {
         .scene          = renderer.prepare_scene_trace(&trace.scene, kind)!,
         .instance_mask  = instance_mask,
         .output_address = renderer.buffer_address(trace.output),
-        .origin         = { TRACE_ORIGIN.x, TRACE_ORIGIN.y, TRACE_ORIGIN.z, 1 },
-        .rectangle      = TRACE_RECTANGLE,
-        .plane_z        = TRACE_PLANE_Z,
+        .origin         = { ray_origin.x, ray_origin.y, ray_origin.z, 1 },
+        .rectangle      = TRACE_RECTANGLE + (Vec4){ ray_offset.x, ray_offset.y, ray_offset.x, ray_offset.y },
+        .plane_z        = TRACE_PLANE_Z + ray_offset.z,
         .grid_size      = TRACE_GRID_SIZE,
         .entry          = entry,
     };

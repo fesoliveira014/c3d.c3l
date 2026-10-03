@@ -138,6 +138,7 @@ fn float cascade_blend_depth(CascadeSplits splits, uint index, float blend) {
  @param casters : "Scene candidates before camera or light-space culling."
  @param resolution : "Square shadow-map width in texels."
  @param normal_bias : "Maximum receiver displacement in world units."
+ @param origin : "Absolute origin of the camera and caster coordinates."
  @require far_depth > near_depth
  @require resolution > 2 * SHADOW_GUARD_TEXELS
  @require normal_bias >= 0 && math::is_finite(normal_bias)
@@ -151,6 +152,7 @@ fn ShadowCascade fit_directional_cascade(
     MeshCandidate[] casters,
     uint resolution,
     float normal_bias,
+    Vec3 origin = {},
 ) {
     Mat4 inverse_projection = view.proj.inverse()!!;
     Mat4 camera_world = maths::inverse_affine(view.view);
@@ -186,6 +188,14 @@ fn ShadowCascade fit_directional_cascade(
     Vec3 light_center = maths::transform_point(light_view, center);
     light_view.m03 = -math::round(light_center.x / texel_size) * texel_size;
     light_view.m13 = -math::round(light_center.y / texel_size) * texel_size;
+    if (origin != (Vec3){}) {
+        // Keep the texel lattice fixed when only the render origin changes.
+        double origin_x = (double)basis.right.x * origin.x
+          + (double)basis.right.y * origin.y + (double)basis.right.z * origin.z;
+        double origin_y = (double)basis.up.x * origin.x + (double)basis.up.y * origin.y + (double)basis.up.z * origin.z;
+        light_view.m03 = (float)(origin_x - math::round((origin_x + light_center.x) / texel_size) * texel_size);
+        light_view.m13 = (float)(origin_y - math::round((origin_y + light_center.y) / texel_size) * texel_size);
+    }
 
     float minimum = float::max;
     float maximum = -float::max;

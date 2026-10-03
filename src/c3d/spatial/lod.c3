@@ -29,14 +29,20 @@ fn bool lod_group_is_live(AssetStore* assets, LodGroup* group) {
 }
 
 <*
- World bound of every placement and level, including sway.
+ Relative bound of every placement and level, including sway.
  @param [&in] assets : "Resolves every referenced geometry."
  @param [&in] node : "World matrix follows the last update_world."
  @param [&inout] group : "Live group with at least one placement."
+ @param origin : "Absolute origin of the returned bounds; zero preserves world."
  @require group.state.count > 0
 *>
-fn Aabb lod_world_bounds(AssetStore* assets, Node* node, LodGroup* group) {
-    Aabb bounds = maths::aabb_transform(group.state.placement_bounds(assets), node.world);
+fn Aabb lod_world_bounds(
+    AssetStore* assets,
+    Node* node,
+    LodGroup* group,
+    Vec3 origin = {},
+) {
+    Aabb bounds = maths::aabb_transform(group.state.placement_bounds(assets), maths::rebase(node.world, origin));
     Vec3 reach = group.state.effects.sway.reach();
     return { .min = bounds.min - reach, .max = bounds.max + reach };
 }

@@ -142,7 +142,11 @@ fn void? Renderer.render_view(
         record.exposure = camera.exposure;
 
         Vec2 viewport = { (float)record.hdr_color.width, (float)record.hdr_color.height };
-        CameraMatrices matrices = camera::derive_matrices(*camera, camera_node.world, viewport);
+        CameraMatrices matrices = camera::derive_matrices(
+            camera: *camera,
+            camera_world: maths::rebase(camera_node.world, self.frame_origin),
+            viewport: viewport,
+        );
         record.projection_terms = {
             .m22          = matrices.proj.m22,
             .m23          = matrices.proj.m23,
@@ -224,8 +228,9 @@ fn void? record_raster_view(
                 camera:     matrices,
                 layers:     camera.layers,
                 counts:     &counts,
-                clip_plane: record.desc.clip_plane,
+                clip_plane: maths::rebase_plane(record.desc.clip_plane, renderer.frame_origin),
                 lod: lod,
+                origin: renderer.frame_origin,
             );
             renderer.stats.culled += counts.culled;
             renderer.stats.batches_faded += counts.batches_faded;
@@ -428,8 +433,9 @@ fn void? record_raster_view(
                 capacity: renderer.max_lights,
                 counts: &light_counts,
                 atmosphere: &environments.atmosphere_selection,
-                altitude: matrices.position.y,
+                altitude: matrices.position.y + renderer.frame_origin.y,
                 ray_tracing: record.desc.ray_tracing,
+                origin: renderer.frame_origin,
             );
             fog_sun = fog_sun_light(&extraction, environments.atmosphere != null);
             shadows = record_shadows(
@@ -522,7 +528,8 @@ fn void? record_raster_view(
                 ao_texture: ambient_occlusion ? record.ao.view.index : (gpu::TextureIndex)0,
                 probe_volumes: probe_volumes,
                 ssgi_texture: screen_space_gi ? record.ssgi.view.index : (gpu::TextureIndex)0,
-                clip_plane: record.desc.clip_plane,
+                clip_plane: maths::rebase_plane(record.desc.clip_plane, renderer.frame_origin),
+                origin: renderer.frame_origin,
             );
             if (record.desc.lights == LightSelection.CLUSTERED) {
                 record_clusters(
@@ -545,6 +552,8 @@ fn void? record_raster_view(
                 bool posed = item.skin != (gpu::GpuAddress)0 || item.morph != (gpu::GpuAddress)0
                   || item.candidate.batch;
                 item.moved = (temporal && item.candidate.lod) || (has_previous && (posed || item.custom_velocity || !(prev_world == node.world)));
+                Vec3 previous_origin = temporal && record.history.valid ? record.history.origin : renderer.frame_origin;
+                prev_world = maths::rebase(prev_world, previous_origin);
                 bool redrawn_by_velocity = group_index == 0
                   || (group_index == 1 && late_velocity && writes_own_depth(material_data(renderer, item.material)));
                 gpu::GpuAddress previous_pose;
@@ -562,7 +571,9 @@ fn void? record_raster_view(
                         previous_world: prev_world,
                     )!;
                 }
-                if (item.candidate.batch) prev_world = batch_prev_model(prev_world, node.world);
+                if (item.candidate.batch) {
+                    prev_world = batch_prev_model(prev_world, maths::rebase(node.world, renderer.frame_origin));
+                }
                 BatchAddresses addresses = batch_addresses(
                     candidate: item.candidate,
                     range:     &item.range,
@@ -573,7 +584,8 @@ fn void? record_raster_view(
                 gpu::MappedGpuSpan draw_span = slot.upload.take(&renderer.device, DrawRoot::size, STREAM_ALIGNMENT)!;
                 write_draw_root(
                     root:          (DrawRoot*)draw_span.bytes.ptr,
-                    world:         item.candidate.billboards ? matrix::IDENTITY4 : item.candidate.node.world,
+                    world:         item.candidate.billboards ? matrix::IDENTITY4
+                      : maths::rebase(item.candidate.node.world, renderer.frame_origin),
                     prev_world:    prev_world,
                     frame:         frame_span.address,
                     geometry:      item.geometry.root,
@@ -762,6 +774,7 @@ fn void? record_raster_view(
                     candidates: candidates,
                     view_proj:  matrices.view_proj,
                     time:       renderer.info.time,
+                    origin:     renderer.frame_origin,
                 );
             }
         };
@@ -1150,7 +1163,8 @@ fn bool velocity_before_lighting(ViewDesc* desc) @private {
  @param ao_texture : "AO sampled view; zero when the view has none."
  @param probe_volumes : "ProbeVolumeSetGpu of the view; zero when no volume applies."
  @param ssgi_texture : "Screen-space GI sampled view; zero when the view has none."
- @param clip_plane : "World plane whose positive side stays; zero clips nothing."
+ @param clip_plane : "Relative plane whose positive side stays; zero clips nothing."
+ @param origin : "Absolute origin of the supplied matrices and positions."
 *>
 fn void write_frame_root(
     FrameRoot* root,
@@ -1179,6 +1193,7 @@ fn void write_frame_root(
     gpu::GpuAddress probe_volumes = (gpu::GpuAddress)0,
     gpu::TextureIndex ssgi_texture = (gpu::TextureIndex)0,
     Plane clip_plane = {},
+    Vec3 origin = {},
 ) {
     *root = {
         .view            = bitcast(matrices.view, Mat4f),
@@ -1213,6 +1228,7 @@ fn void write_frame_root(
         .previous_time   = (float)(previous_time ? *previous_time : info.time),
         .clip_plane      = { clip_plane.normal.x, clip_plane.normal.y, clip_plane.normal.z, clip_plane.d },
         .sky_fog         = sky_fog,
+        .origin          = { origin.x, origin.y, origin.z, 0 },
     };
 }
 

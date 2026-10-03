@@ -279,10 +279,11 @@ fn Vec4[]? render_and_read(
     double time,
     int[<2>][] pixels,
     bool depth,
+    Vec3 reference = {},
 ) @local {
     Renderer* renderer = &fixture.renderer;
     update_water(fixture, viewing, time)!;
-    renderer.begin_frame({ .time = time, .delta = (float)VELOCITY_STEP })!;
+    renderer.begin_frame({ .time = time, .delta = (float)VELOCITY_STEP, .reference_position = reference })!;
     defer catch render::abort_frame(renderer);
     renderer.render_view(&fixture.scene, viewing, view)!;
     record_readback(fixture, depth ? render::read_view_depth(view) : render::read_view_color(view), pixels)!;
@@ -477,7 +478,76 @@ fn void test_mirror_view_reflects_what_is_above_the_water() @test {
     assert(luminance(colors[0]) >= box_minimum, "box image %f", luminance(colors[0]));
     assert(luminance(colors[1]) <= DARK_LIMIT, "buried image %f", luminance(colors[1]));
     assert(luminance(colors[2]) <= DARK_LIMIT, "open water %f", luminance(colors[2]));
+    Vec4[3] reference = { colors[0], colors[1], colors[2] };
+    Vec3 offset = { 65536, 0, 65536 };
+    foreach (&node : fixture.scene.nodes) {
+        if (node.parent == fixture.scene.root) node.local.position += offset;
+    }
+    for (uint crossing = 0; crossing < 2; crossing++) {
+        update_water(&fixture, camera_node, 0)!!;
+        mirror_desc.clip_plane = runtime.clip_plane;
+        render::configure_view(renderer, mirror_view, mirror_desc)!!;
+        renderer.begin_frame({ .reference_position = offset + (crossing ? (Vec3){ 256, 0, -256 } : (Vec3){}) })!!;
+        renderer.render_view(&fixture.scene, mirror_node, mirror_view)!!;
+        renderer.finish_view(mirror_view)!!;
+        renderer.render_view(&fixture.scene, camera_node, main_view)!!;
+        record_readback(&fixture, render::read_view_color(main_view), pixels[..])!!;
+        renderer.finish_view(main_view)!!;
+        renderer.end_frame()!!;
+        Vec4[] translated = read_texels(&fixture, pixels.len);
+        foreach (index, expected : reference) {
+            for (uint channel = 0; channel < 3; channel++) {
+                assert(math::abs(translated[index][channel] - expected[channel]) < 0.002f);
+            }
+        }
+    }
     check_validation(renderer);
+}
+
+fn void test_relative_water_wave_depth_survives_reference_changes() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+    add_water_node(&fixture, surface_desc(EXAMPLE_WAVES[..], TWIN_EXTENT, TWIN_CELL_SIZE));
+    Node* camera_node = add_camera_node(
+        fixture: &fixture,
+        fov_degrees: TWIN_FOV_DEGREES,
+        position: TWIN_CAMERA_POSITION,
+        forward: { 0, -1, 0 },
+        up: { 0, 0, -1 },
+    );
+    ViewId view = add_view(&fixture, TWIN_SIZE);
+    int[<2>][3] pixels = {
+        { TWIN_SIZE / 2, TWIN_SIZE / 2 },
+        { TWIN_SIZE / 3, TWIN_SIZE / 3 },
+        { 2 * TWIN_SIZE / 3, 2 * TWIN_SIZE / 3 },
+    };
+    Vec4[] near = render_and_read(
+        fixture: &fixture,
+        viewing: camera_node,
+        view: view,
+        time: 1.25,
+        pixels: pixels[..],
+        depth: true,
+    )!!;
+    Vec4[3] reference = { near[0], near[1], near[2] };
+    Vec3 offset = { 65536, 0, 65536 };
+    foreach (&node : fixture.scene.nodes) {
+        if (node.parent == fixture.scene.root) node.local.position += offset;
+    }
+    for (uint crossing = 0; crossing < 2; crossing++) {
+        Vec4[] found = render_and_read(
+            fixture: &fixture,
+            viewing: camera_node,
+            view: view,
+            time: 1.25,
+            pixels: pixels[..],
+            depth: true,
+            reference: offset + (crossing ? (Vec3){ 256, 0, -256 } : (Vec3){}),
+        )!!;
+        foreach (index, expected : reference) assert(math::abs(found[index].x - expected.x) < 0.00001f);
+    }
+    check_validation(&fixture.renderer);
 }
 
 fn void test_march_reflects_the_snapshot_and_misses_to_ambient() @test {
@@ -529,6 +599,27 @@ fn void test_march_reflects_the_snapshot_and_misses_to_ambient() @test {
     for (uint channel = 0; channel < 3; channel++) {
         float tolerance = MISS_TOLERANCE * expected[channel] + HALF_FLOAT_STEP;
         assert(math::abs(colors[1][channel] - expected[channel]) <= tolerance, "miss channel %d", channel);
+    }
+    Vec4[2] reference = { colors[0], colors[1] };
+    Vec3 offset = { 65536, 0, 65536 };
+    foreach (&node : fixture.scene.nodes) {
+        if (node.parent == fixture.scene.root) node.local.position += offset;
+    }
+    for (uint crossing = 0; crossing < 2; crossing++) {
+        Vec4[] translated = render_and_read(
+            fixture: &fixture,
+            viewing: camera_node,
+            view: view,
+            time: 0,
+            pixels: pixels[..],
+            depth: false,
+            reference: offset + (crossing ? (Vec3){ 256, 0, -256 } : (Vec3){}),
+        )!!;
+        foreach (index, value : reference) {
+            for (uint channel = 0; channel < 3; channel++) {
+                assert(math::abs(translated[index][channel] - value[channel]) < 0.002f);
+            }
+        }
     }
     check_validation(&fixture.renderer);
 }

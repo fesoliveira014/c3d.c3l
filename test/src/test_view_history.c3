@@ -655,3 +655,46 @@ fn void test_view_history_keeps_the_sway_of_the_last_commit() @test {
     fixture.history.publish();
     assert(fixture.history.previous_pose(&fixture.scene, node).sway.amplitude == 0);
 }
+
+fn void test_view_history_publishes_origin_with_the_pose_and_matrix() @test {
+    BatchHistory fixture = create_batch_history();
+    defer destroy_batch_history(&fixture);
+    Node* node = add_pair_batch(&fixture, 0.125f);
+    node.local.position = { 50000, 0, 50000 };
+    fixture.scene.update_world();
+    InstancedMesh* batch = fixture.scene.get(node, InstancedMesh);
+    MeshCandidate[1] candidates = { { .node = node, .batch = batch } };
+    Vec3[3] origins = { { 49920, 0, 49920 }, { 50176, 0, 49920 }, { 49920, 0, 50176 } };
+    Mat4f* storage;
+    foreach (index, origin : origins) {
+        Mat4 projection = matrix::IDENTITY4.translate(-origin);
+        fixture.history.commit(
+            allocator: mem,
+            assets: &fixture.assets,
+            scene: &fixture.scene,
+            candidates: candidates[..],
+            view_proj: projection,
+            time: (double)index,
+            origin: origin,
+        );
+        assert(fixture.history.pending && fixture.history.origin == origin);
+        if (index == 1) {
+            fixture.history.discard();
+            assert(!fixture.history.valid && !fixture.history.pending);
+            assert(!fixture.history.has_previous(&fixture.scene, node));
+            continue;
+        }
+        fixture.history.publish();
+        assert(fixture.history.valid && fixture.history.origin == origin);
+        assert(fixture.history.view_proj == projection);
+        assert(fixture.history.previous_model(&fixture.scene, node) == node.world);
+        PoseRecord* pose = fixture.history.previous_pose(&fixture.scene, node);
+        assert(same_matrix(pose.instances[0], batch.transforms[0].to_mat4()));
+        assert(same_matrix(pose.instances[1], batch.transforms[1].to_mat4()));
+        if (index == 0) {
+            storage = pose.instances.ptr;
+        } else {
+            assert(pose.instances.ptr == storage);
+        }
+    }
+}

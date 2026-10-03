@@ -180,6 +180,7 @@ fn void? record_shadow_layer(
         info: renderer.info,
         frame_index: renderer.frame_index,
         sky_fog: (gpu::GpuAddress)0,
+        origin: renderer.frame_origin,
     );
     gpu::DepthTargetDesc depth = {
         .view = renderer.shadow_atlas.layers[layer].attachment,
@@ -254,8 +255,8 @@ fn void? record_depth_draws(
         if (draw.material.kind == MaterialKind.CUSTOM) {
             write_draw_root(
                 root: (DrawRoot*)root.bytes.ptr,
-                world: draw.candidate.node.world,
-                prev_world: draw.candidate.node.world,
+                world: maths::rebase(draw.candidate.node.world, renderer.frame_origin),
+                prev_world: maths::rebase(draw.candidate.node.world, renderer.frame_origin),
                 frame: frame,
                 geometry: draw.geometry.root,
                 material: draw.alpha,
@@ -271,7 +272,7 @@ fn void? record_depth_draws(
         } else {
             write_depth_draw_root(
                 root: (DrawRoot*)root.bytes.ptr,
-                world: draw.candidate.node.world,
+                world: maths::rebase(draw.candidate.node.world, renderer.frame_origin),
                 frame: frame,
                 geometry: draw.geometry.root,
                 material: draw.alpha,
@@ -328,6 +329,7 @@ fn ShadowGpu[]? record_shadows(
         fade_origin: effects_view.fade_origin,
         counts: &counts,
         lod: effects_view.lod,
+        origin: renderer.frame_origin,
     );
     renderer.stats.dangling_refs += counts.dangling;
     CameraMatrices[] shadow_matrices = alloc::new_array(tmem, CameraMatrices, allocation.layer_count);
@@ -360,6 +362,7 @@ fn ShadowGpu[]? record_shadows(
                         casters: candidates,
                         resolution: renderer.shadow_resolution,
                         normal_bias: light.shadow.normal_bias,
+                        origin: renderer.frame_origin,
                     );
                     shadow_matrices[layer] = cascade.camera;
                     split_depth = cascade.split_depth;
@@ -382,6 +385,7 @@ fn ShadowGpu[]? record_shadows(
             renderer.shadow_frusta[layer] = {
                 .inv_view_proj = shadow_matrices[layer].inv_view_proj,
                 .kind          = light.kind,
+                .origin        = renderer.frame_origin,
             };
             renderer.shadow_frustum_count = math::max(renderer.shadow_frustum_count, layer + 1);
             shadows[layer] = {
