@@ -1,5 +1,9 @@
 # Billboards
 
+Billboard centers are packed relative to the shared [frame origin](large_world.md).
+Changing the reference preserves sizes, directions, rotations, colors and source
+indices, and uploads an unchanged consumed batch once across all views.
+
 `c3d::scene::BillboardBatch` draws fixed-capacity arrays of view-facing quads.
 Billboards use the existing transparent material, culling, sorting and view
 pipeline. The renderer never advances the application data that populates them.

@@ -128,14 +128,22 @@ fn void? record_camera_velocity(
 
     Frame* slot = &renderer.frames[renderer.frame_index % render::FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, VelocityRoot::size)!;
-    Mat4 prev_view_proj = record.history.valid ? record.history.view_proj : view_proj;
+    Mat4 reprojection = render::camera_clip_reprojection(
+        current_view_proj: view_proj,
+        previous_view_proj: record.history.valid ? record.history.view_proj : view_proj,
+        previous_origin: record.history.valid ? record.history.origin : renderer.frame_origin,
+        current_origin: renderer.frame_origin,
+        jitter: jitter,
+    );
+    Mat4 inverse_projection = raster.proj.inverse()!!;
+    float background_near_ratio = inverse_projection.m33 / (inverse_projection.m32 + inverse_projection.m33);
     *(VelocityRoot*)root.bytes.ptr = {
         .depth_texture  = record.depth.view.index,
         .sampler_index  = renderer.linear_clamp_sampler,
         .orthographic   = record.projection_terms.orthographic ? 1 : 0,
         .jitter_uv      = jitter_uv(jitter),
-        .inv_view_proj  = bitcast(raster.inv_view_proj, Mat4f),
-        .prev_view_proj = bitcast(prev_view_proj, Mat4f),
+        .background_near_ratio = background_near_ratio,
+        .clip_to_previous = bitcast(reprojection, Mat4f),
     };
     gpu::PipelineHandle pipeline = renderer.pipelines.get(
         &renderer.device,

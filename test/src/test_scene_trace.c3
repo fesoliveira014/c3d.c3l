@@ -142,7 +142,7 @@ fn void test_trace_instances_follow_eligibility() @test {
         foreach (index, transform : transforms) {
             render::TraceInstance* record = &records[2 + index];
             assert(same_entity(record.entity, batch.id));
-            assert(record.world == batch.world.mul(transform.to_mat4()));
+            assert(render::trace_instance_world(record) == batch.world.mul(transform.to_mat4()));
         }
     };
 }
@@ -261,6 +261,7 @@ fn void test_blas_desc_follows_the_geometry_layout() @test {
 fn void test_tlas_instance_follows_the_row() @test {
     render::TraceInstance record = {
         .world        = matrix::IDENTITY4.translate({ 1, 2, 3 }).scale({ 2, 2, 2 }),
+        .local        = matrix::IDENTITY4,
         .mask         = 3,
         .bottom_level = { .owner = 1, .index = 5, .generation = 1 },
     };

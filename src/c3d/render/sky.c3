@@ -734,10 +734,11 @@ fn gpu::GpuAddress? pack_view_sky_fog(
         atmosphere:      atmosphere ? selection.atmosphere : null,
         to_sun:          to_sun,
         sun_illuminance: illuminance,
-        altitude:        camera_position.y,
+        altitude:        camera_position.y + renderer.frame_origin.y,
         fog:             fog,
         tables:          tables,
     );
+    if (fog.fog) ((SkyFogGpu*)span.bytes.ptr).fog_base_height -= renderer.frame_origin.y;
     return span.address;
 }
 

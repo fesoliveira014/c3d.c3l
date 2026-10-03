@@ -1,5 +1,10 @@
 # Terrain
 
+Terrain chunks use core [camera-relative instance packing](large_world.md).
+Supply the camera's absolute position in `FrameInfo.reference_position`; height
+queries and terrain selection retain their existing CPU coordinate contracts.
+Reference changes preserve temporal motion for unchanged chunks.
+
 The `c3d_landscape` add-on (`addons/c3d_landscape.c3l`, module `c3d::landscape::terrain`) draws a
 height-mapped ground from an `R16_UINT` height map. A `Terrain` component on a node selects, once per frame,
 the level of each chunk of a quadtree for one camera. The selected chunks are the instances of the node's own

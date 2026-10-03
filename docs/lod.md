@@ -9,6 +9,12 @@ Ordinary groups select on the CPU; instanced groups select on the GPU. Core owns
 both paths. Existing `Mesh` and `InstancedMesh` behavior stays unchanged. Skins,
 morphs, animated crowds and automatic simplification are outside this API.
 
+Placement uploads and per-view LOD history record their [render origin](large_world.md).
+Reference changes preserve selection/hysteresis and map previous placements to
+the previous projection's space. Rejected history retains its rejection flag
+while using the current placement as its fallback. Impostor baking selects its
+own capture reference; a preceding distant scene does not affect the capture.
+
 ## Creation and ownership
 
 ```c3

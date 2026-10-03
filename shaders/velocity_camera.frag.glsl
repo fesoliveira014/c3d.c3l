@@ -13,7 +13,7 @@ layout(push_constant) uniform Push {
 
 // Camera motion of every pixel from stored depth; no geometry (depth 0) reprojects as a direction,
 // which has no finite image under an orthographic projection, so that background stays still.
-// The depth was rasterized jittered: the inverse is jittered and the current position unjittered.
+// The depth was rasterized jittered; the clip mapping removes that jitter.
 void main() {
     VelocityRoot root = VelocityRoot(pc.fragment_root_gpu);
     float depth = sample_texture_2d(root.depth_texture, root.sampler_index, v_uv).r;
@@ -22,15 +22,11 @@ void main() {
         return;
     }
     vec2 ndc = (v_uv * 2.0 - 1.0) * vec2(1.0, -1.0);
-    vec4 world = root.inv_view_proj * vec4(ndc, depth, 1.0);
-    vec4 previous;
-    if (depth > 0.0) {
-        previous = root.prev_view_proj * vec4(world.xyz / world.w, 1.0);
-    } else {
-        // A finite far plane unprojects depth 0 to a point; the ray from the near plane to it is the direction.
-        vec4 near_point = root.inv_view_proj * vec4(ndc, 1.0, 1.0);
-        vec3 direction = world.xyz - near_point.xyz * (world.w / near_point.w);
-        previous = root.prev_view_proj * vec4(direction, 0.0);
+    vec4 previous = root.clip_to_previous * vec4(ndc, depth, 1.0);
+    if (depth == 0.0) {
+        // Subtract homogeneous near-point weight so finite-far backgrounds remain directions.
+        vec4 near_point = root.clip_to_previous * vec4(ndc, 1.0, 1.0);
+        previous -= near_point * root.background_near_ratio;
     }
     vec2 previous_uv = (previous.xy / previous.w) * vec2(0.5, -0.5) + 0.5;
     // A direction keeps -m22 as its depth under a finite far plane; the stored depth of no geometry is 0.

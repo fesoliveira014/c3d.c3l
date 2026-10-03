@@ -26,6 +26,7 @@ struct LightCounts {
  @param altitude : "Metres above world y = 0 the sun is seen from."
  @param ray_tracing : "Flagged lights trace instead of requesting atlas layers."
  @param trace_shadows : "Every shadowing light traces, whatever its own flag says."
+ @param origin : "Absolute origin shared by frustum and packed positions."
  @require capacity > 0
 *>
 fn LightExtraction extract_lights(
@@ -39,6 +40,7 @@ fn LightExtraction extract_lights(
     float altitude,
     RayTracingDesc ray_tracing = {},
     bool trace_shadows = false,
+    Vec3 origin = {},
 ) {
     LightGpu[] packed = alloc::new_array(allocator, LightGpu, math::min(scene.count(Light), capacity));
     uint sun_light;
@@ -55,6 +57,7 @@ fn LightExtraction extract_lights(
         ray_tracing: ray_tracing,
         trace_shadows: trace_shadows,
         sun_light: &sun_light,
+        origin: origin,
     );
     return { .lights = packed[:counts.packed], .shadows = requests, .sun_light = sun_light };
 }
@@ -72,6 +75,7 @@ fn ShadowRequest[] collect_shadow_requests(
     RayTracingDesc ray_tracing = {},
     bool trace_shadows = false,
     uint* sun_light = null,
+    Vec3 origin = {},
 ) @private {
     *counts = {};
     ShadowRequest[] requests = alloc::new_array(allocator, ShadowRequest, capacity);
@@ -109,6 +113,7 @@ fn ShadowRequest[] collect_shadow_requests(
                 capacity: capacity,
                 counts: counts,
                 ray_traced: ray_traced,
+                origin: origin,
             );
             if (sun_light && atmosphere_sun && counts.packed != packed_index) *sun_light = packed_index + 1;
 
@@ -142,8 +147,9 @@ fn void include_light(
     uint capacity,
     LightCounts* counts,
     bool ray_traced,
+    Vec3 origin,
 ) @local {
-    Vec3 position = node.world_position();
+    Vec3 position = node.world_position() - origin;
     if (frustum && light.kind != DIRECTIONAL && light.range > 0
         && !maths::frustum_intersects_sphere(frustum, { .center = position, .radius = light.range })) {
         counts.culled++;

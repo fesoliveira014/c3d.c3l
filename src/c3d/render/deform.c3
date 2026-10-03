@@ -196,6 +196,7 @@ fn gpu::GpuAddress? resolve_palette(Renderer* renderer, Node* mesh_node, SkinBin
         mesh_node:    mesh_node,
         binding:      binding,
         inverse_bind: renderer.assets.skeleton(binding.skeleton).data.inverse_bind,
+        origin:       renderer.frame_origin,
     );
     renderer.deformation.palettes.set((ulong)(uptr)mesh_node, span.address);
     return span.address;
@@ -206,16 +207,18 @@ fn gpu::GpuAddress? resolve_palette(Renderer* renderer, Node* mesh_node, SkinBin
  @param [out] palette : "One entry per joint; written only."
  @param [&in] mesh_node : "World matrix as left by the last update."
  @param [&in] binding : "Live joints."
+ @param origin : "Shared absolute origin before mesh-local composition."
 *>
 fn void evaluate_palette(
     Mat4f[] palette,
     Node* mesh_node,
     SkinBinding* binding,
     Mat4[] inverse_bind,
+    Vec3 origin = {},
 ) {
-    Mat4 inverse_mesh = maths::inverse_affine(mesh_node.world);
+    Mat4 inverse_mesh = maths::inverse_affine(maths::rebase(mesh_node.world, origin));
     foreach (index, joint : binding.joints) {
-        palette[index] = bitcast(inverse_mesh.mul(joint.world).mul(inverse_bind[index]), Mat4f);
+        palette[index] = bitcast(inverse_mesh.mul(maths::rebase(joint.world, origin)).mul(inverse_bind[index]), Mat4f);
     }
 }
 

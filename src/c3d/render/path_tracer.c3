@@ -78,9 +78,10 @@ fn bool accumulation_reset_needed(
     ulong scene,
     ulong trace_revision,
     Mat4 view_proj,
+    Vec3 origin = {},
 ) @private {
     return !history.valid || history.scene != scene || history.trace_revision != trace_revision
-        || !(history.view_proj == view_proj);
+        || !(history.view_proj == view_proj) || history.origin != origin;
 }
 
 fn void? acquire_path_tracer(Renderer* renderer) @private {
@@ -230,8 +231,9 @@ fn void? record_path_traced_view(
                 capacity:      renderer.max_lights,
                 counts:        &light_counts,
                 atmosphere:    &environments.atmosphere_selection,
-                altitude:      matrices.position.y,
+                altitude:      matrices.position.y + renderer.frame_origin.y,
                 trace_shadows: true,
+                origin:        renderer.frame_origin,
             );
             light_address = upload_lights(renderer, extraction.lights)!;
             renderer.stats.lights += light_counts.packed;
@@ -269,6 +271,7 @@ fn void? record_path_traced_view(
                 ambient:     { ambient.r, ambient.g, ambient.b, 0 },
                 environment: environment_address,
                 trace:       trace_root,
+                origin:      renderer.frame_origin,
             );
             if (environments.sky) {
                 sky_root = pack_sky(
@@ -289,6 +292,7 @@ fn void? record_path_traced_view(
                 scene:          scene.identity,
                 trace_revision: revision,
                 view_proj:      matrices.view_proj,
+                origin:         renderer.frame_origin,
             );
             uint held = reset ? 0 : record.history.accumulated_samples;
             uint count = settings.samples_per_frame;
@@ -328,6 +332,7 @@ fn void? record_path_traced_view(
                 trace_revision: revision,
                 view_proj:      matrices.view_proj,
                 samples:        held + count,
+                origin:         renderer.frame_origin,
             );
             renderer.stats.path_trace_samples += count;
             record.stats.accumulated_samples = held + count;

@@ -34,18 +34,20 @@ fn Aabb billboard_bounds(Mat4 world, Billboard billboard) {
 }
 
 <*
- Conservative world bounds of a nonempty billboard batch.
+ Conservative relative bounds of a nonempty billboard batch.
  @param [&in] node : "Published node transform."
  @param [&inout] batch : "Valid records; cached bounds may be refreshed."
+ @param origin : "Absolute origin of the returned bounds; zero preserves world."
  @require batch.count > 0
 *>
-fn Aabb billboard_world_bounds(Node* node, BillboardBatch* batch) {
+fn Aabb billboard_world_bounds(Node* node, BillboardBatch* batch, Vec3 origin = {}) {
     BillboardAggregate* aggregate = &batch.aggregate;
-    if (aggregate.revision == batch.revision && aggregate.world == node.world) return aggregate.bounds;
-    Aabb bounds = billboard_bounds(node.world, batch.billboards[0]);
+    Mat4 world = maths::rebase(node.world, origin);
+    if (aggregate.revision == batch.revision && aggregate.world == world) return aggregate.bounds;
+    Aabb bounds = billboard_bounds(world, batch.billboards[0]);
     foreach (billboard : batch.billboards[1:batch.count - 1]) {
-        bounds = maths::aabb_merge(bounds, billboard_bounds(node.world, billboard));
+        bounds = maths::aabb_merge(bounds, billboard_bounds(world, billboard));
     }
-    *aggregate = { .world = node.world, .bounds = bounds, .revision = batch.revision };
+    *aggregate = { .world = world, .bounds = bounds, .revision = batch.revision };
     return bounds;
 }

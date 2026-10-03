@@ -61,6 +61,7 @@ struct TraceInstance @private {
     uint            part_index;
     uint            geometry_revision;
     Mat4            world;
+    Mat4            local;
     gpu::AccelerationStructureHandle bottom_level;
     uint            mask;
     uint            instance_index;   // batch instance the row came from; 0 for a mesh
@@ -70,10 +71,11 @@ struct TraceInstance @private {
     gpu::GpuAddress primitives;
 }
 // The dirty tests compare records bytewise, so the record carries no padding.
-$assert TraceInstance::size == 168;
+$assert TraceInstance::size == 232;
 
 struct SceneTrace @private {
     ulong              scene;
+    Vec3               origin;
     TraceInstance[]    baseline;
     uint               baseline_count;
     uint               top_node_count;
@@ -136,7 +138,8 @@ fn gpu::GpuAddress? Renderer.prepare_scene_trace(&self, Scene* scene, TraceKind 
     bool hardware = resolve_trace_kind(kind, self.caps.ray_queries.enabled)! == TraceKind.HARDWARE;
     SceneTrace* trace = &self.scene_trace;
     if (self.frame_open) {
-        bool same_frame = trace.prepared_frame == self.frame_index + 1 && trace.scene == scene.identity;
+        bool same_frame = trace.prepared_frame == self.frame_index + 1 && trace.scene == scene.identity
+          && trace.origin == self.frame_origin;
         if (!same_frame) {
             trace.software_requested = false;
             trace.hardware_requested = false;
@@ -240,8 +243,16 @@ fn gpu::AccelerationStructureGeometryDesc blas_geometry_desc(GeometryLayout* lay
     };
 }
 
-fn gpu::AccelerationStructureInstanceDesc tlas_instance_desc(TraceInstance* record, uint row) @private {
-    Mat4 world = record.world;
+fn Mat4 trace_instance_world(TraceInstance* record, Vec3 origin = {}) @private {
+    return maths::rebase(record.world, origin).mul(record.local);
+}
+
+fn gpu::AccelerationStructureInstanceDesc tlas_instance_desc(
+    TraceInstance* record,
+    uint row,
+    Vec3 origin = {},
+) @private {
+    Mat4 world = trace_instance_world(record, origin);
     bool masked = (record.flags & shader::TRACE_INSTANCE_ALPHA_MASK) != 0;
     bool double_sided = (record.flags & shader::TRACE_INSTANCE_DOUBLE_SIDED) != 0;
     return {
@@ -319,9 +330,10 @@ fn TraceInstance[] collect_trace_instances(
                         entity:         entity,
                         geometry:       batch.geometry,
                         material:       batch.material,
-                        world:          node.world.mul(transform.to_mat4()),
+                        world:          node.world,
                         cast_shadow:    batch.cast_shadow,
                         instance_index: index,
+                        local:          transform.to_mat4(),
                     );
                 }
             }
@@ -353,14 +365,11 @@ fn TraceInstance[] collect_trace_instances(
                             entity: entity,
                             geometry: source.geometry,
                             material: source.material,
-                            world: spatial::lod_part_world(
-                                node: node,
-                                state: state,
-                                instance: instance,
-                                part: part,
-                            ),
+                            world: node.world,
                             cast_shadow: state.effects.cast_shadow,
                             instance_index: instance,
+                            local: state.mode == LodMode.INSTANCED
+                              ? state.transforms[instance].to_mat4().mul(source.local) : source.local,
                         );
                         record.lod_identity = state.identity;
                         record.part_index = part;
@@ -424,7 +433,8 @@ fn void? record_scene_trace(Renderer* renderer, Scene* scene) @local {
 
     SceneTrace* trace = &renderer.scene_trace;
     RtContext* rt = &renderer.rt;
-    bool same_set = trace.scene == scene.identity && trace.baseline_count == records.len;
+    bool same_set = trace.scene == scene.identity && trace.baseline_count == records.len
+      && trace.origin == renderer.frame_origin;
     bool rows_unchanged = same_set && records_equal(trace.baseline[:records.len], records, TraceInstance::size);
     bool top_level_unchanged = same_set && rt.current_holds_set
         && records_equal(trace.baseline[:records.len], records, TOP_LEVEL_PREFIX_BYTES);
@@ -675,7 +685,11 @@ fn void? record_top_level_build(Renderer* renderer, gpu::CommandList* commands, 
     gpu::MappedGpuSpan instances = slot.upload.take(&renderer.device, bytes, STREAM_ALIGNMENT)!;
     gpu::AccelerationStructureInstance* packed = (gpu::AccelerationStructureInstance*)instances.bytes.ptr;
     for (uint row = 0; row < trace.baseline_count; row++) {
-        gpu::AccelerationStructureInstanceDesc desc = tlas_instance_desc(&trace.baseline[trace.row_records[row]], row);
+        gpu::AccelerationStructureInstanceDesc desc = tlas_instance_desc(
+            record: &trace.baseline[trace.row_records[row]],
+            row: row,
+            origin: trace.origin,
+        );
         packed[row] = gpu::make_acceleration_structure_instance(&renderer.device, &desc)!;
     }
     gpu::AccelerationStructureBuildDesc build = {
@@ -732,7 +746,10 @@ fn void? write_top_level(Renderer* renderer, Scene* scene, TraceInstance[] recor
     if (records.len) {
         Aabb[] boxes = alloc::alloc_array(tmem, Aabb, (sz)records.len);
         foreach (index, &record : records) {
-            boxes[index] = maths::aabb_transform(renderer.assets.geometry(record.geometry).data.bounds, record.world);
+            boxes[index] = maths::aabb_transform(
+                renderer.assets.geometry(record.geometry).data.bounds,
+                trace_instance_world(record, renderer.frame_origin),
+            );
         }
         top = bvh::build_box_bvh(tmem, boxes, TOP_LEVEL_BUILD)!;
     }
@@ -755,7 +772,7 @@ fn void? write_top_level(Renderer* renderer, Scene* scene, TraceInstance[] recor
     mem::copy(staging.bytes.ptr + SceneTraceRoot::size, top.nodes.ptr, (sz)node_bytes);
     TraceInstanceGpu* rows = (TraceInstanceGpu*)(staging.bytes.ptr + SceneTraceRoot::size + node_bytes);
     foreach (row, primitive : top.primitives) {
-        write_trace_instance(&rows[row], &records[primitive]);
+        write_trace_instance(&rows[row], &records[primitive], renderer.frame_origin);
         trace.row_records[row] = primitive;
     }
 
@@ -781,6 +798,7 @@ fn void? write_top_level(Renderer* renderer, Scene* scene, TraceInstance[] recor
     trace.top_node_count = (uint)top.nodes.len;
     trace.tlas_index = tlas_index;
     trace.scene = scene.identity;
+    trace.origin = renderer.frame_origin;
     trace.revision++;
 }
 
@@ -804,8 +822,8 @@ fn void? write_trace_root(Renderer* renderer, uint tlas_index) @local {
     trace.tlas_index = tlas_index;
 }
 
-fn void write_trace_instance(TraceInstanceGpu* row, TraceInstance* record) @local {
-    Mat4 world = record.world;
+fn void write_trace_instance(TraceInstanceGpu* row, TraceInstance* record, Vec3 origin = {}) @local {
+    Mat4 world = trace_instance_world(record, origin);
     Mat4 inverse = maths::inverse_affine(world);
     *row = {
         .geometry         = record.geometry_root,
@@ -849,6 +867,7 @@ fn TraceInstance trace_record(
     Mat4 world,
     bool cast_shadow,
     uint instance_index = 0,
+    Mat4 local = matrix::IDENTITY4,
 ) @local {
     Material* data = &assets.material(material).data;
     uint flags = data.common.alpha_mode == AlphaMode.MASK ? shader::TRACE_INSTANCE_ALPHA_MASK : 0;
@@ -861,6 +880,7 @@ fn TraceInstance trace_record(
         .material      = material,
         .geometry_revision = assets.geometry(geometry).header.revision,
         .world         = world,
+        .local         = local,
         .mask           = shader::TRACE_MASK_ALL | (cast_shadow ? shader::TRACE_MASK_SHADOW_CASTER : 0),
         .instance_index = instance_index,
     };

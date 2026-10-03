@@ -24,10 +24,17 @@
   ],
   "output": "../../../build/render_acceptance",
   "targets": {
+    "origin_bench": {
+      "type": "executable",
+      "sources": [ "bench_origin.c3" ],
+      "dependencies": [ "c3d", "c3d_profile", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "b3", "cgltf", "ufbx", "shaderc" ],
+      "features": [ "C3D_SHADER_COMPILER", "C3D_PROFILE_GPU", "C3D_PROFILE_INTERNAL" ]
+    },
     "acceptance": {
       "type": "test",
       "sources": [
         "test_submission.c3",
+        "test_large_world.c3",
         "test_scene_trace.c3",
         "test_ray_tracing.c3",
         "test_ambient_occlusion.c3",

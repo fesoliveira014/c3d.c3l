@@ -37,6 +37,7 @@ const Vec2 CONTROLS_PANEL_POSITION @local = { 16, 16 }; // leaves the center of 
 const Vec2 CONTROLS_PANEL_SIZE @local = { 420, 680 }; // contains each preset's controls at 900px high
 const Vec2 STATS_PANEL_POSITION @local = { 1010, 16 }; // aligns the panel against the default window edge
 const Vec2 STATS_PANEL_SIZE @local = { 414, 460 }; // holds six delayed layer timings without clipping
+const float WORLD_OFFSET_MAX @local = 50000; // exposes float precision at fifty kilometres
 
 enum ShadowPreset @local {
     SUN,
@@ -377,6 +378,11 @@ fn void? run_gui(
     Mesh* masked_mesh = scene.get(masked_plane, Mesh);
     Mesh* ground_mesh = scene.get(ground, Mesh);
     Mesh* off_camera_mesh = scene.get(off_camera_box, Mesh);
+    float world_offset;
+    float previous_world_offset;
+    Vec2 previous_shadow_position;
+    float shadow_texel_motion;
+    bool shadow_position_valid;
 
     while (window.poll()) {
         bool keyboard_was_captured = window.input.keyboard_captured_by_gui;
@@ -401,6 +407,10 @@ fn void? run_gui(
         if (controls_visible) {
             imgui::text_unformatted("Drag outside this panel to orbit; wheel to zoom.");
             imgui::text_unformatted("Release Escape outside text controls to close.");
+            imgui::slider_float("World offset (m)", &world_offset, 0, WORLD_OFFSET_MAX);
+            imgui::text("Frame origin: %.0f, %.0f, %.0f m",
+                (double)renderer.frame_origin.x, (double)renderer.frame_origin.y, (double)renderer.frame_origin.z);
+            imgui::text("Cascade movement: %.4f texels/frame", (double)shadow_texel_motion);
 
             imgui::separator_text("Preset");
             if (imgui::radio_button("Sun", preset == SUN)) {
@@ -455,6 +465,7 @@ fn void? run_gui(
         imgui::end();
 
         apply_orbit(orbit, input, camera_node);
+        scene.root.local.position = { world_offset, 0, world_offset };
         scene.update_world();
         shadow_stats(renderer);
         gui_renderer.finish_frame();
@@ -464,8 +475,27 @@ fn void? run_gui(
             scene: scene,
             camera_node: camera_node,
             gui_renderer: &gui_renderer,
-            info: { .time = window.clock.total, .delta = window.clock.delta },
+            info: {
+                .time = window.clock.total,
+                .delta = window.clock.delta,
+                .reference_position = camera_node.world_position(),
+            },
         )!;
+        if (renderer.shadow_frustum_count && preset == SUN) {
+            ShadowFrustum first = renderer.shadow_frusta[0];
+            Mat4 projection = first.inv_view_proj.inverse()!!;
+            Vec3 point = solid_box.world_position() - first.origin;
+            Vec4 clip = projection.apply({ point.x, point.y, point.z, 1 });
+            Vec2 position = clip.xy / clip.w;
+            shadow_texel_motion = shadow_position_valid && previous_world_offset == world_offset
+              ? (position - previous_shadow_position).length() * 0.5f * (float)renderer.shadow_resolution : 0;
+            previous_shadow_position = position;
+            shadow_position_valid = true;
+        } else {
+            shadow_position_valid = false;
+            shadow_texel_motion = 0;
+        }
+        previous_world_offset = world_offset;
     }
 }
 

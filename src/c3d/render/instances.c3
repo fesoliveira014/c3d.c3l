@@ -39,6 +39,7 @@ struct GpuInstances {
     uint               capacity;
     ulong              last_seen;
     Mat4               world; // records bake the node world, so a moved node re-uploads
+    Vec3               origin;
     gpu::GpuAllocation allocation;
     gpu::GpuAddress    records;
     ulong              lod_identity;
@@ -212,15 +213,17 @@ fn void destroy_instance_table(InstanceTable* table) {
  @param [&in] slot
  @param [&in] batch
  @param world : "Batch node world matrix."
+ @param origin : "Absolute origin used to pack the records."
 *>
 fn bool needs_upload(
     GpuInstances* slot,
     InstanceKey key,
     InstancedMesh* batch,
     Mat4 world,
+    Vec3 origin = {},
 ) {
     return slot.key != key || slot.capacity < batch.transforms.len || slot.revision != batch.revision
-        || slot.world != world;
+        || slot.world != world || slot.origin != origin;
 }
 
 <*
@@ -309,7 +312,7 @@ fn gpu::GpuAddress? resolve_instances(Renderer* renderer, MeshCandidate* candida
     GpuInstances* slot = &renderer.instances.slots[index];
     if (BillboardBatch* billboards = candidate.billboards) {
         if (slot.capacity < billboards.billboards.len || slot.revision != billboards.revision
-            || slot.world != candidate.node.world) {
+            || slot.world != candidate.node.world || slot.origin != renderer.frame_origin) {
             upload_billboard_records(
                 renderer: renderer,
                 index: index,
@@ -319,7 +322,13 @@ fn gpu::GpuAddress? resolve_instances(Renderer* renderer, MeshCandidate* candida
         }
         return slot.records;
     }
-    if (needs_upload(slot, key, candidate.batch, candidate.node.world)) {
+    if (needs_upload(
+        slot: slot,
+        key: key,
+        batch: candidate.batch,
+        world: candidate.node.world,
+        origin: renderer.frame_origin,
+    )) {
         upload_instance_records(
             renderer: renderer,
             index:    index,
@@ -378,13 +387,15 @@ fn void? upload_instance_records(
     usz bytes = (usz)batch.count * InstanceGpu::size;
     Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan staging = frame.upload.take(&renderer.device, bytes, STREAM_ALIGNMENT)!;
-    pack_instance_records(((InstanceGpu*)staging.bytes.ptr)[:batch.count], world, batch);
+    InstanceGpu[] records = ((InstanceGpu*)staging.bytes.ptr)[:batch.count];
+    pack_instance_records(records, maths::rebase(world, renderer.frame_origin), batch);
     gpu::GpuSpan destination = gpu::get_allocation_span(&renderer.device, slot.allocation)!;
     renderer.pending_copies.push({ .src = staging.span, .dst = destination.checked_subspan(0, bytes)! });
 
     renderer.pending_instance_uploads.push(index);
     slot.revision = batch.revision;
     slot.world = world;
+    slot.origin = renderer.frame_origin;
     renderer.stats.uploads++;
     renderer.stats.upload_bytes += (uint)bytes;
 }

@@ -1,5 +1,11 @@
 # Water
 
+Water uses the shared [frame origin](large_world.md), including mirror cameras,
+scene-depth reconstruction, reflection marching and velocity. Supply the viewing
+camera's absolute position in `FrameInfo.reference_position` before rendering
+the mirror and main views. Wave evaluation and CPU surface queries keep their
+existing local/absolute contracts; no simulation coordinates are shifted.
+
 The `c3d_landscape` add-on's `c3d::landscape::water` module draws water bodies. A `Water` component on a node
 is a Gerstner surface of up to four waves in the node's local XZ, drawn by the package's shader through a
 custom material the library owns. The vertex stage displaces a grid and supplies the depth and velocity forms;

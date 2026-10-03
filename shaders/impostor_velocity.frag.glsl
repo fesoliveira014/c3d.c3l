@@ -18,7 +18,7 @@ void main() {
     bool reject = part.reject_history != 0u;
     mat4 previous_model = draw.prev_model;
     if (draw.instance_data != 0ul && part.current != 0ul) {
-        reject = ImpostorHistory(part.current).values[v_source].reject_history != 0u;
+        reject = reject || ImpostorHistory(part.current).values[v_source].reject_history != 0u;
         previous_model = reject ? instance.model : ImpostorHistory(part.previous).values[v_source].model;
     }
     vec3 previous_center = (previous_model * vec4(impostor.bounds.xyz, 1.0)).xyz;
@@ -29,6 +29,11 @@ void main() {
     impostor_frames(normalize(mat3(inverse(previous_model)) * previous_direction), impostor.frames_per_side, previous_frames, previous_weights);
     reject = reject || any(notEqual(frames, previous_frames));
     vec3 previous_world = impostor_world(draw, instance, previous_model, local, true);
+    if (reject) {
+        previous_world = world + part.current_origin_delta.xyz;
+    } else if (draw.instance_data != 0ul) {
+        previous_world += part.history_origin_delta.xyz;
+    }
     vec4 current_clip = frame.view_proj * vec4(world, 1.0);
     vec4 previous_clip = frame.prev_view_proj * vec4(previous_world, 1.0);
     vec2 current = current_clip.xy / current_clip.w - frame.jitter_time.xy;

@@ -369,8 +369,9 @@ struct FrameRoot {
     GpuAddress   sky_fog;
     uint         _pad3;
     uint         _pad4;
+    Vec4f        origin;
 }
-$assert FrameRoot::size == 512;
+$assert FrameRoot::size == 528;
 $assert $reflect(FrameRoot.view).offset == 0;
 $assert $reflect(FrameRoot.proj).offset == 64;
 $assert $reflect(FrameRoot.view_proj).offset == 128;
@@ -402,6 +403,7 @@ $assert $reflect(FrameRoot.clip_plane).offset == 480;
 $assert $reflect(FrameRoot.sky_fog).offset == 496;
 $assert $reflect(FrameRoot._pad3).offset == 504;
 $assert $reflect(FrameRoot._pad4).offset == 508;
+$assert $reflect(FrameRoot.origin).offset == 512;
 
 struct DrawRoot {
     Mat4f        model;
@@ -463,8 +465,10 @@ struct LodPartGpu {
     uint       reject_history;
     float      seed;
     GpuAddress impostor;
+    Vec4f      history_origin_delta;
+    Vec4f      current_origin_delta;
 }
-$assert LodPartGpu::size == 144;
+$assert LodPartGpu::size == 176;
 $assert $reflect(LodPartGpu.local).offset == 0;
 $assert $reflect(LodPartGpu.normal_0).offset == 64;
 $assert $reflect(LodPartGpu.normal_1).offset == 80;
@@ -474,6 +478,8 @@ $assert $reflect(LodPartGpu.previous).offset == 120;
 $assert $reflect(LodPartGpu.reject_history).offset == 128;
 $assert $reflect(LodPartGpu.seed).offset == 132;
 $assert $reflect(LodPartGpu.impostor).offset == 136;
+$assert $reflect(LodPartGpu.history_origin_delta).offset == 144;
+$assert $reflect(LodPartGpu.current_origin_delta).offset == 160;
 
 struct ImpostorGpu {
     Vec4f        bounds;
@@ -1861,21 +1867,19 @@ struct VelocityRoot {
     TextureIndex depth_texture;
     SamplerIndex sampler_index;
     uint         orthographic;
-    uint         _pad0;
+    float        background_near_ratio;
     Vec2f        jitter_uv;
     Vec2f        _pad1;
-    Mat4f        inv_view_proj;
-    Mat4f        prev_view_proj;
+    Mat4f        clip_to_previous;
 }
-$assert VelocityRoot::size == 160;
+$assert VelocityRoot::size == 96;
 $assert $reflect(VelocityRoot.depth_texture).offset == 0;
 $assert $reflect(VelocityRoot.sampler_index).offset == 4;
 $assert $reflect(VelocityRoot.orthographic).offset == 8;
-$assert $reflect(VelocityRoot._pad0).offset == 12;
+$assert $reflect(VelocityRoot.background_near_ratio).offset == 12;
 $assert $reflect(VelocityRoot.jitter_uv).offset == 16;
 $assert $reflect(VelocityRoot._pad1).offset == 24;
-$assert $reflect(VelocityRoot.inv_view_proj).offset == 32;
-$assert $reflect(VelocityRoot.prev_view_proj).offset == 96;
+$assert $reflect(VelocityRoot.clip_to_previous).offset == 32;
 
 struct TaaRoot {
     TextureIndex color_texture;

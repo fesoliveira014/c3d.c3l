@@ -95,10 +95,15 @@ fn void burst(Fixture* fixture, Node* emitter, uint count = 1) @private {
     particle::update(&fixture.scene, 0);
 }
 
-fn void render_frames(Fixture* fixture, bool both_views = false, uint frames = render::FRAMES_IN_FLIGHT + 1) @private {
+fn void render_frames(
+    Fixture* fixture,
+    bool both_views = false,
+    uint frames = render::FRAMES_IN_FLIGHT + 1,
+    Vec3 reference = {},
+) @private {
     fixture.scene.update_world();
     for (uint frame = 0; frame < frames; frame++) {
-        fixture.renderer.begin_frame()!!;
+        fixture.renderer.begin_frame({ .reference_position = reference })!!;
         for (uint view = 0; view < (both_views ? 2u : 1u); view++) {
             fixture.renderer.render_view(&fixture.scene, fixture.cameras[view], fixture.views[view])!!;
             fixture.renderer.finish_view(fixture.views[view])!!;
@@ -168,6 +173,45 @@ fn void test_particle_billboard_mesh_and_two_view_output() @test {
     render_frames(&fixture, true);
     assert(system.age[0] == age && system.seed[0] == particle_seed && system.alive == 1);
     assert(system.position[0] == (Vec3){ -1, 0, 0 });
+}
+
+fn void test_relative_particle_records_preserve_world_simulation_and_pixels() @test {
+    for (uint mode = 0; mode < 2; mode++) {
+        Fixture fixture;
+        create_fixture(&fixture)!!;
+        defer destroy_fixture(&fixture);
+        Vec3 offset = { 65536, 0, 65536 };
+        fixture.scene.root.local.position = offset;
+        ParticleSystemDesc desc = quiet_desc();
+        if (mode) {
+            desc.render_mode = ParticleRenderMode.MESH;
+            @pool() {
+                Geometry box = geometry::box(
+                    allocator: tmem,
+                    width: 1,
+                    height: 1,
+                    depth: 1,
+                );
+                desc.geometry = fixture.assets.add_geometry(&box)!!;
+            };
+            desc.material = fixture.assets.add_material(material::basic({ .color = WHITE }))!!;
+        }
+        Node* emitter = add_emitter(&fixture, desc);
+        burst(&fixture, emitter);
+        ParticleSystem* system = fixture.scene.get(emitter, ParticleSystem);
+        Vec3 position = system.position[0];
+        uint seed = system.seed[0];
+        render_frames(fixture: &fixture, both_views: true, reference: offset);
+        Vec4[] reference = read_pixels(&fixture);
+        defer free(reference);
+        check_pixel(pixel_at(reference), WHITE);
+        render_frames(fixture: &fixture, both_views: true, reference: offset + (Vec3){ 256, 0, -256 });
+        Vec4[] found = read_pixels(&fixture);
+        defer free(found);
+        foreach (index, expected : reference) check_pixel(found[index], expected);
+        assert(system.position[0] == position && position == offset);
+        assert(system.seed[0] == seed && system.age[0] == 0);
+    }
 }
 
 fn void test_particle_soft_depth_fade_and_hard_depth() @test {

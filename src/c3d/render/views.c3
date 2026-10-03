@@ -118,6 +118,7 @@ struct ViewHistory {
     ulong        scene;
     ulong        serial;
     Mat4         view_proj;
+    Vec3         origin;
     double       time;
     Mat4[]       models;
     Entity[]     owners;
@@ -167,6 +168,7 @@ fn PoseRecord* ViewHistory.previous_pose(&self, Scene* scene, Node* node) {
  @param [&in] scene : "Sizes the tables to its node capacity and identifies the history."
  @param candidates : "Every mesh this rendering drew."
  @param time : "FrameInfo.time of this rendering."
+ @param origin : "Absolute origin of the supplied view projection."
 *>
 fn void ViewHistory.commit(
     &self,
@@ -176,6 +178,7 @@ fn void ViewHistory.commit(
     MeshCandidate[] candidates,
     Mat4 view_proj,
     double time,
+    Vec3 origin = {},
 ) {
     if (self.models.len != scene.nodes.len) {
         uint sample_index = self.sample_index;
@@ -204,6 +207,7 @@ fn void ViewHistory.commit(
             assets:    assets,
             pose:      &self.poses[index],
             candidate: candidate,
+            origin:    origin,
         );
         if (!candidate.crowd) continue;
         Node* crowd_node = candidate.node.parent;
@@ -215,6 +219,7 @@ fn void ViewHistory.commit(
         commit_crowd_pose(allocator, &self.poses[crowd_index], candidate.crowd);
     }
     self.view_proj = view_proj;
+    self.origin = origin;
     self.time = time;
     self.pending = true;
 }
@@ -223,6 +228,7 @@ fn void ViewHistory.commit(
  Remember the camera, scene and sample count a path-traced image holds, pending publication.
  @param scene : "Identity of the traced scene."
  @param samples : "Samples the image holds after this rendering."
+ @param origin : "Absolute origin of the supplied view projection."
 *>
 fn void ViewHistory.commit_accumulation(
     &self,
@@ -230,10 +236,12 @@ fn void ViewHistory.commit_accumulation(
     ulong trace_revision,
     Mat4 view_proj,
     uint samples,
+    Vec3 origin = {},
 ) {
     self.scene = scene;
     self.trace_revision = trace_revision;
     self.view_proj = view_proj;
+    self.origin = origin;
     self.pending_samples = samples;
     self.pending = true;
 }
@@ -283,6 +291,7 @@ fn void commit_pose(
     AssetStore* assets,
     PoseRecord* pose,
     MeshCandidate* candidate,
+    Vec3 origin,
 ) @local {
     Node* node = candidate.node;
     pose.sway = candidate.batch ? candidate.batch.sway : (InstanceSway){};
@@ -297,6 +306,7 @@ fn void commit_pose(
             mesh_node:    node,
             binding:      binding,
             inverse_bind: assets.skeleton(binding.skeleton).data.inverse_bind,
+            origin:       origin,
         );
     }
     pose.morphed = candidate.morph_weights.len > 0;

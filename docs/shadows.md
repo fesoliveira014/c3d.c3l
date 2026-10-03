@@ -6,6 +6,13 @@ after construction to enable them. All three kinds use the same layered atlas.
 Standard materials receive them through their direct lighting. Basic materials
 remain unlit and can cast shadows onto Standard surfaces.
 
+Shadow fitting uses the frame's [render origin](large_world.md). Camera/caster
+bounds and punctual light positions share relative coordinates. Directional
+cascade snapping keeps its texel lattice fixed in absolute world space across
+reference changes. `draw_shadow_frusta` still emits absolute debug endpoints.
+The `shadows` example includes a 0–50 km offset control and a cascade movement
+readout in texels per frame.
+
 ## Add a sun
 
 Given a live `Scene scene`, import `std::math`, `c3d::light`, `c3d::scene` and

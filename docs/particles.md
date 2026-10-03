@@ -1,5 +1,10 @@
 # CPU particles
 
+Particle rendering shares the [frame origin](large_world.md) selected through
+`FrameInfo.reference_position`. Billboard/mesh packing, soft depth and fog use
+relative shader coordinates. Simulation positions, seeds and emitter state keep
+their existing spaces; changing the reference does not move the simulation.
+
 The optional `c3d_particle` package supplies fixed-pool CPU simulation and particle
 effect materials. It publishes ordinary core [billboard batches](billboards.md)
 or [mesh instances](instancing.md). Core owns rendering, culling and sorting.

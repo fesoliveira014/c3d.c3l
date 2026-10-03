@@ -31,7 +31,7 @@ enum DrawList {
 }
 
 <*
- Mesh or batch range that passed inclusion for one view, with its bounds in world space.
+ Mesh or batch range with bounds in the view's coordinate space.
 *>
 struct MeshCandidate {
     Node*          node;
@@ -79,6 +79,7 @@ struct ExtractCounts {
  @param [&inout] counts : "Zeroed first, then accumulated."
  @param clip_plane : "Culls bounds wholly on its negative side; zero culls nothing."
  @param lod : "View selections indexed by scene node slot."
+ @param origin : "Absolute origin shared by camera and clip plane."
 *>
 fn MeshCandidate[] extract_candidates(
     Allocator allocator,
@@ -89,6 +90,7 @@ fn MeshCandidate[] extract_candidates(
     ExtractCounts* counts,
     Plane clip_plane = {},
     LodSelection[] lod = {},
+    Vec3 origin = {},
 ) {
     *counts = {};
     // Every emitted candidate is written whole before the slice is returned, so the array needs no zeroing.
@@ -106,6 +108,7 @@ fn MeshCandidate[] extract_candidates(
                 camera:       camera,
                 clip_frustum: &clip_frustum,
                 counts:       counts,
+                origin:       origin,
             );
         }
     };
@@ -121,6 +124,7 @@ fn MeshCandidate[] extract_candidates(
                 camera:       camera,
                 clip_frustum: &clip_frustum,
                 counts:       counts,
+                origin:       origin,
             );
         }
     };
@@ -136,6 +140,7 @@ fn MeshCandidate[] extract_candidates(
                 camera: camera,
                 clip_frustum: &clip_frustum,
                 counts: counts,
+                origin: origin,
             );
         }
     };
@@ -287,6 +292,7 @@ fn void include_mesh(
     CameraMatrices* camera,
     Frustum* clip_frustum,
     ExtractCounts* counts,
+    Vec3 origin,
 ) @local {
     SkinBinding* skin = scene.get(node, SkinBinding);
     if (!spatial::mesh_is_live(assets, mesh, skin)) {
@@ -298,6 +304,7 @@ fn void include_mesh(
         node:   node,
         mesh:   mesh,
         skin:   skin,
+        origin: origin,
     );
     if (!maths::frustum_intersects_aabb(&camera.frustum, world)
         || !maths::frustum_intersects_aabb(clip_frustum, world)) {
@@ -329,12 +336,13 @@ fn void include_billboards(
     CameraMatrices* camera,
     Frustum* clip_frustum,
     ExtractCounts* counts,
+    Vec3 origin,
 ) @local {
     if (!spatial::billboard_batch_is_live(assets, batch)) {
         counts.dangling++;
         return;
     }
-    Aabb world = spatial::billboard_world_bounds(node, batch);
+    Aabb world = spatial::billboard_world_bounds(node, batch, origin);
     if (!maths::frustum_intersects_aabb(&camera.frustum, world)
         || !maths::frustum_intersects_aabb(clip_frustum, world)) {
         counts.culled++;
@@ -361,13 +369,19 @@ fn void include_batch(
     CameraMatrices* camera,
     Frustum* clip_frustum,
     ExtractCounts* counts,
+    Vec3 origin,
 ) @local {
     if (!batch_is_drawable(assets, batch)) {
         counts.dangling++;
         return;
     }
     batch.validate_effects();
-    Aabb world = spatial::instanced_world_bounds(assets, node, batch);
+    Aabb world = spatial::instanced_world_bounds(
+        assets: assets,
+        node: node,
+        batch: batch,
+        origin: origin,
+    );
     if (!maths::frustum_intersects_aabb(&camera.frustum, world)
         || !maths::frustum_intersects_aabb(clip_frustum, world)) {
         counts.culled++;
@@ -528,6 +542,7 @@ fn float center_depth(CameraMatrices* camera, Aabb world) @local {
  @param fade_origin : "View camera position batch fades are measured from."
  @param [&inout] counts : "Reset, then populated for broad caster inclusion."
  @param lod : "Parent view selections indexed by scene node slot."
+ @param origin : "Absolute origin of bounds and fade coordinates."
 *>
 fn MeshCandidate[] extract_shadow_candidates(
     Allocator allocator,
@@ -536,6 +551,7 @@ fn MeshCandidate[] extract_shadow_candidates(
     Vec3 fade_origin,
     ExtractCounts* counts,
     LodSelection[] lod = {},
+    Vec3 origin = {},
 ) {
     *counts = {};
     MeshCandidate[] candidates = alloc::alloc_array(allocator, MeshCandidate, candidate_capacity(scene));
@@ -561,6 +577,7 @@ fn MeshCandidate[] extract_shadow_candidates(
                             node:   node,
                             mesh:   mesh,
                             skin:   skin,
+                            origin: origin,
                         ),
                         .receive_shadow = mesh.receive_shadow,
                         .instance_count = 1,
@@ -576,7 +593,12 @@ fn MeshCandidate[] extract_shadow_candidates(
                 counts.dangling++;
             } else if (assets.material(batch.material).data.common.alpha_mode != AlphaMode.BLEND) {
                 batch.validate_effects();
-                Aabb world = spatial::instanced_world_bounds(assets, node, batch);
+                Aabb world = spatial::instanced_world_bounds(
+                    assets: assets,
+                    node: node,
+                    batch: batch,
+                    origin: origin,
+                );
                 if (past_fade_band(batch.fade, world, fade_origin)) {
                     counts.batches_faded++;
                 } else {

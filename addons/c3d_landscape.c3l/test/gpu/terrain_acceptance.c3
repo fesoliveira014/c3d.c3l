@@ -184,9 +184,18 @@ fn void? update_terrain(Fixture* fixture) @local {
     );
 }
 
-fn void? render_frame(Fixture* fixture, uint frame, bool read) @local {
+fn void? render_frame(
+    Fixture* fixture,
+    uint frame,
+    bool read,
+    Vec3 reference = {},
+) @local {
     Renderer* renderer = &fixture.renderer;
-    renderer.begin_frame({ .time = (double)frame * TIME_STEP, .delta = (float)TIME_STEP })!;
+    renderer.begin_frame({
+        .time = (double)frame * TIME_STEP,
+        .delta = (float)TIME_STEP,
+        .reference_position = reference,
+    })!;
     defer catch render::abort_frame(renderer);
     renderer.render_view(&fixture.scene, fixture.camera_node, fixture.view)!;
     if (read) record_readback(fixture)!;
@@ -245,5 +254,28 @@ fn void test_reselected_chunks_keep_background_velocity() @test {
     uint[READBACK_POINTS] pixels = read_pixels(&fixture);
     assert(near_pixel(pixels[1], NEUTRAL_VELOCITY), "The still background shows velocity %08x.", pixels[1]);
     assert(near_pixel(pixels[0], pixels[1]), "Terrain velocity %08x against background %08x.", pixels[0], pixels[1]);
+    check_validation(&fixture.renderer);
+}
+
+fn void test_relative_terrain_has_no_velocity_when_only_reference_changes() @test {
+    Fixture fixture;
+    create_fixture(&fixture)!!;
+    defer destroy_fixture(&fixture);
+    Vec3 offset = { 65536, 0, 65536 };
+    fixture.scene.root.local.position = offset;
+    for (uint frame = 0; frame < SETTLE_FRAMES + 2; frame++) {
+        update_terrain(&fixture)!!;
+        Vec3 reference = offset + (frame >= SETTLE_FRAMES ? (Vec3){ 256, 0, -256 } : (Vec3){});
+        render_frame(
+            fixture: &fixture,
+            frame: frame,
+            read: true,
+            reference: reference,
+        )!!;
+        if (frame < SETTLE_FRAMES) continue;
+        uint[READBACK_POINTS] pixels = read_pixels(&fixture);
+        assert(near_pixel(pixels[1], NEUTRAL_VELOCITY));
+        assert(near_pixel(pixels[0], pixels[1]));
+    }
     check_validation(&fixture.renderer);
 }

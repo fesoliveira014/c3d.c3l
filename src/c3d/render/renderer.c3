@@ -81,11 +81,12 @@ struct RendererDesc {
 }
 
 <*
- Application time for the frame being recorded.
+ Application time and world reference for one rendered frame.
 *>
 struct FrameInfo {
     double time;
     float  delta;
+    Vec3   reference_position;
 }
 
 <*
@@ -103,6 +104,7 @@ struct Frame {
 *>
 struct Renderer {
     Allocator               allocator;
+    Vec3                    frame_origin;
     ImpostorBakeStats        last_impostor_bake;
     gpu::Runtime            runtime;
     String                  adapter_name;
@@ -270,6 +272,7 @@ macro void? Renderer.upload(&self, id) {
  Open a frame slot and acquire the window image when one is available.
  Environment descriptions and source data remain stable until frame closure.
  @param [&inout] self : "Reuses the slot whose completion point has been waited."
+ @param info : "Time and finite absolute render reference."
  @return? gpu::DEVICE_BUSY, gpu::INVALID_HANDLE, gpu::INVALID_ARGUMENT
  @return? gpu::INVALID_RESOURCE_STATE, gpu::COMMAND_RECORDING_ERROR, gpu::RESOURCE_IN_USE
  @return? gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY, gpu::UNSUPPORTED_FEATURE
@@ -439,6 +442,8 @@ fn void? Renderer.composite(&self, RenderTargetId target) {
 }
 
 fn void? begin_renderer_frame(Renderer* self, FrameInfo info, bool acquire_output) @private {
+    if (!math::is_finite(info.reference_position.x) || !math::is_finite(info.reference_position.y)
+      || !math::is_finite(info.reference_position.z)) return c3d::INVALID_ARGUMENT~;
     instrumentation::@scope("renderer.begin_frame") {
         instrumentation::@scope("renderer.present") {
             finish_pending_output(self)!;
@@ -498,6 +503,7 @@ fn void? begin_renderer_frame(Renderer* self, FrameInfo info, bool acquire_outpu
         self.commands = {};
         defer catch abort_frame(self);
 
+        self.frame_origin = frame_origin_for(info.reference_position);
         self.commands = gpu::begin_commands(&slot.allocator)!;
         begin_gpu_profile(self)!;
         if (self.has_output) self.window_target.transition(&self.commands, COLOR_ATTACHMENT_STATE)!;
