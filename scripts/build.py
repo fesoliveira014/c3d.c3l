@@ -42,6 +42,7 @@ PHYSICS_GUI = ROOT / "addons" / "c3d_physics_gui.c3l"
 JOB = ROOT / "addons" / "c3d_job.c3l"
 LANDSCAPE = ROOT / "addons" / "c3d_landscape.c3l"
 PARTICLE = ROOT / "addons" / "c3d_particle.c3l"
+SERIAL = ROOT / "addons" / "c3d_serial.c3l"
 ADDON_EXAMPLES = {
     "capture": PROFILE,
     "physics": PHYSICS,
@@ -78,6 +79,7 @@ PHYSICS_GUI_TEST_TARGETS = ("physics_panel_off", "physics_panel", "physics_panel
 JOB_TEST_TARGETS = ("job_test",)
 LANDSCAPE_TEST_TARGETS = ("landscape_test",)
 PARTICLE_TEST_TARGETS = ("particle_test",)
+SERIAL_TEST_TARGETS = ("serial_test", "serial_order_forward", "serial_order_reverse")
 
 REQUIRED_C3C_VERSION = "0.8.3"
 C3IMGUI_RELEASE_TAG = "v0.1.3"
@@ -330,6 +332,9 @@ def step_test(options: Options) -> None:
     copy_windows_runtimes(PARTICLE / "build")
     for target in PARTICLE_TEST_TARGETS:
         run([options.c3c, "test", target, "--path", str(PARTICLE)], ROOT, options.verbose)
+    copy_windows_runtimes(SERIAL / "build")
+    for target in SERIAL_TEST_TARGETS:
+        run([options.c3c, "test", target, "--path", str(SERIAL)], ROOT, options.verbose)
 
 
 def step_run(options: Options) -> None:
@@ -342,7 +347,7 @@ def step_run(options: Options) -> None:
 
 
 def step_clean(options: Options) -> None:
-    for project_dir in (EXAMPLES, TEST, PROFILE, PROFILE_GUI, PHYSICS, NAV, CHARACTER, PHYSICS_GUI, JOB, LANDSCAPE, PARTICLE):
+    for project_dir in (EXAMPLES, TEST, PROFILE, PROFILE_GUI, PHYSICS, NAV, CHARACTER, PHYSICS_GUI, JOB, LANDSCAPE, PARTICLE, SERIAL):
         if (project_dir / "project.json").exists():
             run([options.c3c, "clean", "--path", str(project_dir)], ROOT, options.verbose)
 

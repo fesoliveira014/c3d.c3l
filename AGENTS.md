@@ -29,6 +29,7 @@ Entry point for every agent session in this repository. Read it fully before rea
 | c3d_job.c3l | `c3d::job` | Applications select it explicitly; it imports the standard library and `c3d` |
 | c3d_landscape.c3l | `c3d::landscape`, `c3d::landscape::terrain`, `c3d::landscape::foliage`, `c3d::landscape::water` | Applications select it explicitly; it imports the standard library and `c3d` |
 | c3d_particle.c3l | `c3d::particle` | Applications select it explicitly; it imports the standard library and `c3d` |
+| c3d_serial.c3l | `c3d::serial` | Applications select it explicitly; it imports the standard library and core, never renderer or platform dependencies directly |
 
 Boundaries are checked at review. No dependency is added without updating this table.
 
@@ -49,6 +50,8 @@ The `addons/c3d_job.c3l` package owns the fork-join job pool: a fixed set of wor
 The `addons/c3d_landscape.c3l` package owns height-field terrain: the `Terrain` component over an `R16_UINT` height map, drawn as the node's own instanced batch of quadtree chunks through a custom material, with CPU height queries on the physics height-field convention. Its root module `c3d::landscape` holds only the generated constants of its shader package; `c3d::landscape::terrain` imports the standard library and core (`c3d`), never `gpu`, `sdl`, `imgui`, `b3`, `c3d::shader`, `c3d::render` or another add-on. It also owns vegetation: `c3d::landscape::foliage` scatters one geometry and material per `Foliage` layer over a terrain node into per-cell instanced batches drawn with core sway and fade, and imports the standard library, core and `c3d::landscape::terrain`, never `gpu`, `sdl`, `imgui`, `b3`, `c3d::shader`, `c3d::render` or another add-on. It also owns water: `c3d::landscape::water` draws a Gerstner surface through an owned custom material with scene reads, places a mirror camera per water body for the application's mirror view, and answers CPU height queries; it imports the standard library, core and `c3d::landscape::terrain`, never `c3d::physics`. Core never imports it and carries no terrain feature flag; selecting the library is the gate. The package owns its `project.json`, `landscape_test` target (which selects `c3d_physics` for the height equality test), the manual `test/gpu` acceptance project with its `terrain_acceptance` and `water_acceptance` targets, and the `terrain`, `vegetation` and `water` examples.
 
 The `addons/c3d_particle.c3l` package owns fixed-pool CPU particle simulation, emitters, lifetime tables and depth-reading effect materials. Its `c3d::particle` module imports the standard library and core, never `gpu`, `sdl`, `imgui`, physics or the render/shader-compiler modules. Core supplies generic billboard and mesh batches and never imports the particle package. The package owns `particle_test`, the `particles` example and a separate manual `test/gpu` acceptance target. The example selects the profiler collector explicitly for GPU timing; the simulation package does not depend on it.
+
+The `addons/c3d_serial.c3l` package owns the portable subtree container and explicit component codec registry. It imports the standard library and core and never creates GPU resources or native systems. Core never imports it. The package owns `serial_test`, `serial_order_forward` and `serial_order_reverse`; `scripts/build.py --test` runs them. See `docs/serialization.md` for the wire format, ownership, rollback and current codec coverage.
 
 Core `c3d::scene` also owns pointer-sized `LodGroup` components: copied rigid
 whole-object alternatives with ordinary or fixed-capacity instanced placement.
@@ -215,12 +218,13 @@ c3d.c3l/
 ├── addons/c3d_job.c3l/     fork-join job pool over index ranges; owns its tests and benchmark example
 ├── addons/c3d_landscape.c3l/ height-field terrain, vegetation and water, its shader package, tests and examples
 ├── addons/c3d_particle.c3l/ fixed-pool CPU particles, effect materials, tests and example
+├── addons/c3d_serial.c3l/ portable subtree format, explicit codecs and CPU tests
 │                           an add-on that ships GLSL keeps shaders/shaders.json, its sources and shaders/include/<name>/ under its own shaders/, and a generated, committed src/shaders.c3
 ├── abi/c3d.abi             shared C3 and GLSL layouts
 ├── docs/style.md           mandatory style baseline
 ├── lib/                    gpu.c3l · sdl3.c3l · c3imgui.c3l · c3cg.c3l · box3d.c3l · cgltf.c3l · ufbx.c3l · shaderc.c3l (submodules)
 │                           plus c3d.c3l, a symlink to the root, so consumers resolve c3d here
-│                           plus c3d_profile.c3l, c3d_profile_gui.c3l, c3d_physics.c3l, c3d_nav.c3l, c3d_character.c3l, c3d_physics_gui.c3l, c3d_job.c3l, c3d_landscape.c3l and c3d_particle.c3l symlinks to the add-ons
+│                           plus c3d_profile.c3l, c3d_profile_gui.c3l, c3d_physics.c3l, c3d_nav.c3l, c3d_character.c3l, c3d_physics_gui.c3l, c3d_job.c3l, c3d_landscape.c3l, c3d_particle.c3l and c3d_serial.c3l symlinks to the add-ons
 ├── linked-libs/            empty; every dependency ships its own native artifacts
 ├── csrc/                   stb_image
 ├── src/c3d/

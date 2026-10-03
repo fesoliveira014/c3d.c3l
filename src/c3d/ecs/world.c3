@@ -90,12 +90,7 @@ fn void World.destroy_entity(&self, Entity entity) {
  @return? c3d::CAPACITY_EXCEEDED
 *>
 macro void? World.register(&self, $Type) {
-    if (!store::slot{$Type}) {
-        if (registered_type_count == MAX_COMPONENT_TYPES) return c3d::CAPACITY_EXCEEDED~;
-        registered_type_count++;
-        store::slot{$Type} = registered_type_count;
-    }
-    uint index = store::slot{$Type} - 1;
+    uint index = slot_of($Type)!;
     if (self.stores[index]) return;
     self.stores[index] = store::create_store{$Type}(self.allocator, self.capacity);
     self.removers[index] = &store::erased_remove{$Type};
@@ -219,6 +214,28 @@ fn World create_world(Allocator allocator, uint capacity) {
         .capacity  = capacity,
         .entities  = pool::create_pool{ulong, Entity}(allocator, capacity),
     };
+}
+
+<*
+ Query a component slot without assigning one.
+ @return? NOT_FOUND
+*>
+macro uint? assigned_slot($Type) {
+    if (!store::slot{$Type}) return NOT_FOUND~;
+    return store::slot{$Type} - 1;
+}
+
+<*
+ Locate the process-wide component slot without allocating a store.
+ @return? c3d::CAPACITY_EXCEEDED
+*>
+macro uint? slot_of($Type) {
+    if (!store::slot{$Type}) {
+        if (registered_type_count == MAX_COMPONENT_TYPES) return c3d::CAPACITY_EXCEEDED~;
+        registered_type_count++;
+        store::slot{$Type} = registered_type_count;
+    }
+    return store::slot{$Type} - 1;
 }
 
 <*
