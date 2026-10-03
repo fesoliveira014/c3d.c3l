@@ -195,35 +195,6 @@ fn void test_palette_stays_mesh_local_across_origin_changes() @test {
     assert(bitcast(second[0], Mat4) == expected);
 }
 
-fn void test_history_reprojection_maps_each_origin_to_previous_clip_space() @test {
-    Vec3 previous_origin = ORIGIN;
-    Vec3 current_origin = ORIGIN + (Vec3){ 256, 0, -256 };
-    Mat4 camera_world = matrix::IDENTITY4.translate({ 80, 3, 88 });
-    CameraMatrices camera = camera::derive_matrices(
-        camera: camera::perspective_deg(60, 0.1f, 1000),
-        camera_world: camera_world,
-        viewport: { 512, 512 },
-    );
-    Mat4 reprojection = render::history_reprojection(camera.view_proj, previous_origin, current_origin);
-    assert(render::history_reprojection(camera.view_proj, previous_origin, previous_origin) == camera.view_proj);
-    Vec3[3] points = { { 50000, 3, 50000 }, { 50001, 4, 50001 }, { 49999, 2, 49999 } };
-    foreach (point : points) {
-        Vec3 old_point = point - previous_origin;
-        Vec3 new_point = point - current_origin;
-        Vec4 expected = camera.view_proj.apply({ old_point.x, old_point.y, old_point.z, 1 });
-        Vec4 actual = reprojection.apply({ new_point.x, new_point.y, new_point.z, 1 });
-        assert(ndc_error(actual, { expected.x, expected.y, expected.z, expected.w }) < NDC_TOLERANCE);
-    }
-    Transform source = { .position = { 50000, 3, 50000 }, .rotation = quaternion::IDENTITY, .scale = { -2, 4, 0.5f } };
-    Mat4 previous_model = maths::rebase(source.to_mat4(), previous_origin);
-    Mat4 current_model = maths::rebase(source.to_mat4(), current_origin);
-    Mat4 mapping = previous_model.mul(maths::inverse_affine(current_model));
-    Vec4 vertex = { 0.125f, 0.25f, -0.5f, 1 };
-    assert(mapping.apply(current_model.apply(vertex)) == previous_model.apply(vertex));
-    Vec4 moved_vertex = vertex + (Vec4){ 0.125f, 0, 0, 0 };
-    assert(mapping.apply(current_model.apply(moved_vertex)) != previous_model.apply(vertex));
-}
-
 fn void test_camera_clip_mapping_cancels_static_projection_translation() @test {
     Transform pose = maths::TRANSFORM_IDENTITY;
     pose.position = { -256, 1, 258 };

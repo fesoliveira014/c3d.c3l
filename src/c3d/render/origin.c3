@@ -19,24 +19,6 @@ fn Vec3 frame_origin_for(Vec3 reference_position) {
     };
 }
 
-<*
- Map current relative positions into the previous clip space.
- @pure
-*>
-fn Mat4 history_reprojection(Mat4 previous_view_proj, Vec3 previous_origin, Vec3 current_origin) {
-    if (previous_origin == current_origin) return previous_view_proj;
-    Vec3 delta = current_origin - previous_origin;
-    previous_view_proj.m03 += previous_view_proj.m00 * delta.x
-      + previous_view_proj.m01 * delta.y + previous_view_proj.m02 * delta.z;
-    previous_view_proj.m13 += previous_view_proj.m10 * delta.x
-      + previous_view_proj.m11 * delta.y + previous_view_proj.m12 * delta.z;
-    previous_view_proj.m23 += previous_view_proj.m20 * delta.x
-      + previous_view_proj.m21 * delta.y + previous_view_proj.m22 * delta.z;
-    previous_view_proj.m33 += previous_view_proj.m30 * delta.x
-      + previous_view_proj.m31 * delta.y + previous_view_proj.m32 * delta.z;
-    return previous_view_proj;
-}
-
 fn Mat4 camera_clip_reprojection(
     Mat4 current_view_proj,
     Mat4 previous_view_proj,
