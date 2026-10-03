@@ -173,8 +173,10 @@ fn Entity? ReadContext.read_entity(&self, Reader* reader) {
  @require self.scene.world.is_alive(self.node.id)
 *>
 macro bool ReadContext.has_component(&self, $Type) {
-    uint slot = ecs::store::slot{$Type};
-    return slot && (self.component_masks[self.record] & (1ul << (slot - 1))) != 0;
+    if (try slot = ecs::assigned_slot($Type)) {
+        return (self.component_masks[self.record] & (1ul << slot)) != 0;
+    }
+    return false;
 }
 
 <*

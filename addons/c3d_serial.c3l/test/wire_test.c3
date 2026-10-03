@@ -60,24 +60,7 @@ fn void test_unknown_chunk_is_skipped() @test {
             assets: &fixture.assets,
             root: root,
         )!!;
-        const usz TABLE_END = 72;
-        const usz ENTRY_BYTES = 12;
-        char[] extended = alloc::new_array(tmem, char, original.len + ENTRY_BYTES);
-        extended[:TABLE_END] = original[:TABLE_END];
-        extended[TABLE_END + ENTRY_BYTES..] = original[TABLE_END..];
-        patch_uint(extended, 8, (uint)extended.len);
-        patch_uint(extended, 20, 5);
-        for (uint index = 0; index < 4; index++) {
-            Reader entry = serial::reader_over(original);
-            usz field = 24 + index * ENTRY_BYTES + 4;
-            entry.offset = field;
-            uint shifted = entry.read_uint()!! + (uint)ENTRY_BYTES;
-            patch_uint(extended, field, shifted);
-        }
-        Writer added = serial::writer_over(extended[TABLE_END:ENTRY_BYTES]);
-        added.write_uint(42);
-        added.write_uint((uint)extended.len);
-        added.write_uint(0);
+        char[] extended = extend_chunk_table(original, 1);
         Node* restored = serial::read_subtree(&fixture.destination, &fixture.assets, extended)!!;
         assert(restored.name == "root" && fixture.destination.count(Value) == 1);
     };
@@ -258,4 +241,55 @@ fn void test_missing_custom_pool_is_invalid_id() @test {
         assert(@catch(serial::read_subtree(&fixture.destination, &other, bytes)) == c3d::INVALID_ID);
         assert(fixture.destination.root.first_child == null);
     };
+}
+
+fn void test_chunk_count_bound_accepts_limit_and_rejects_excess() @test {
+    @pool() {
+        Fixture fixture;
+        init_fixture(&fixture);
+        defer free_fixture(&fixture);
+        Node* source = value_tree(&fixture);
+        char[] original = serial::write_subtree(
+            allocator: tmem,
+            scene: &fixture.source,
+            assets: &fixture.assets,
+            root: source,
+        )!!;
+        char[] at_limit = extend_chunk_table(original, serial::MAX_CHUNKS - 4);
+        Node* restored = serial::read_subtree(&fixture.destination, &fixture.assets, at_limit)!!;
+        assert(restored.name == "root" && fixture.destination.count(Value) == 1);
+        uint free_before = fixture.destination.world.entities.free_count;
+        foreach (count : (uint[]){ serial::MAX_CHUNKS + 1, 40_000 }) {
+            char[] excess = extend_chunk_table(original, count - 4);
+            assert(@catch(serial::read_header(excess)) == c3d::ASSET_FORMAT_ERROR);
+            assert(@catch(serial::read_subtree(&fixture.destination, &fixture.assets, excess))
+              == c3d::ASSET_FORMAT_ERROR);
+            assert(fixture.destination.world.entities.free_count == free_before);
+        }
+    };
+}
+
+fn char[] extend_chunk_table(char[] original, uint unknown_count) @private {
+    const usz TABLE_END = 72;
+    const usz ENTRY_BYTES = 12;
+    usz added_size = (usz)unknown_count * ENTRY_BYTES;
+    char[] extended = alloc::new_array(tmem, char, (sz)((usz)original.len + added_size));
+    extended[:TABLE_END] = original[:TABLE_END];
+    extended[TABLE_END + added_size..] = original[TABLE_END..];
+    patch_uint(extended, 8, (uint)extended.len);
+    patch_uint(extended, 20, 4 + unknown_count);
+    for (uint index = 0; index < 4; index++) {
+        Reader entry = serial::reader_over(original);
+        usz field = 24 + index * ENTRY_BYTES + 4;
+        entry.offset = field;
+        uint shifted = entry.read_uint()!! + (uint)added_size;
+        patch_uint(extended, field, shifted);
+    }
+    Writer added = serial::writer_over(extended[TABLE_END:added_size]);
+    for (uint index = 0; index < unknown_count; index++) {
+        added.write_uint(42);
+        added.write_uint((uint)extended.len);
+        added.write_uint(0);
+    }
+    return extended;
 }

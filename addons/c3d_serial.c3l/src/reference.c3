@@ -9,12 +9,12 @@ import c3d::asset;
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
 *>
 fn void? WriteContext.write_geometry(&self, Writer* writer, GeometryId id) {
-    if (!id.index && !id.generation) {
-        writer.write_uint(INDEX_NONE);
-        return;
-    }
-    String key = self.assets.geometries.try_get(id)!.header.key;
-    write_key(self, writer, key)!;
+    return write_asset_key(
+        context: self,
+        writer: writer,
+        id: id,
+        pool: &self.assets.geometries,
+    );
 }
 
 <*
@@ -23,10 +23,12 @@ fn void? WriteContext.write_geometry(&self, Writer* writer, GeometryId id) {
  @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID
 *>
 fn GeometryId? ReadContext.read_geometry(&self, Reader* reader) {
-    uint index = reader.read_uint()!;
-    if (index == INDEX_NONE) return (GeometryId){};
-    if (index >= self.keys.len) return c3d::ASSET_FORMAT_ERROR~;
-    return self.assets.find_geometry(self.keys[index]) ?? c3d::INVALID_ID~;
+    return read_asset_key(
+        context: self,
+        reader: reader,
+        $Type: GeometryId,
+        find: &AssetStore.find_geometry,
+    );
 }
 
 <*
@@ -35,12 +37,12 @@ fn GeometryId? ReadContext.read_geometry(&self, Reader* reader) {
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
 *>
 fn void? WriteContext.write_material(&self, Writer* writer, MaterialId id) {
-    if (!id.index && !id.generation) {
-        writer.write_uint(INDEX_NONE);
-        return;
-    }
-    String key = self.assets.materials.try_get(id)!.header.key;
-    write_key(self, writer, key)!;
+    return write_asset_key(
+        context: self,
+        writer: writer,
+        id: id,
+        pool: &self.assets.materials,
+    );
 }
 
 <*
@@ -49,10 +51,12 @@ fn void? WriteContext.write_material(&self, Writer* writer, MaterialId id) {
  @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID
 *>
 fn MaterialId? ReadContext.read_material(&self, Reader* reader) {
-    uint index = reader.read_uint()!;
-    if (index == INDEX_NONE) return (MaterialId){};
-    if (index >= self.keys.len) return c3d::ASSET_FORMAT_ERROR~;
-    return self.assets.find_material(self.keys[index]) ?? c3d::INVALID_ID~;
+    return read_asset_key(
+        context: self,
+        reader: reader,
+        $Type: MaterialId,
+        find: &AssetStore.find_material,
+    );
 }
 
 <*
@@ -61,12 +65,12 @@ fn MaterialId? ReadContext.read_material(&self, Reader* reader) {
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
 *>
 fn void? WriteContext.write_texture(&self, Writer* writer, TextureId id) {
-    if (!id.index && !id.generation) {
-        writer.write_uint(INDEX_NONE);
-        return;
-    }
-    String key = self.assets.textures.try_get(id)!.header.key;
-    write_key(self, writer, key)!;
+    return write_asset_key(
+        context: self,
+        writer: writer,
+        id: id,
+        pool: &self.assets.textures,
+    );
 }
 
 <*
@@ -75,10 +79,12 @@ fn void? WriteContext.write_texture(&self, Writer* writer, TextureId id) {
  @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID
 *>
 fn TextureId? ReadContext.read_texture(&self, Reader* reader) {
-    uint index = reader.read_uint()!;
-    if (index == INDEX_NONE) return (TextureId){};
-    if (index >= self.keys.len) return c3d::ASSET_FORMAT_ERROR~;
-    return self.assets.find_texture(self.keys[index]) ?? c3d::INVALID_ID~;
+    return read_asset_key(
+        context: self,
+        reader: reader,
+        $Type: TextureId,
+        find: &AssetStore.find_texture,
+    );
 }
 
 <*
@@ -87,12 +93,12 @@ fn TextureId? ReadContext.read_texture(&self, Reader* reader) {
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
 *>
 fn void? WriteContext.write_sampler(&self, Writer* writer, SamplerId id) {
-    if (!id.index && !id.generation) {
-        writer.write_uint(INDEX_NONE);
-        return;
-    }
-    String key = self.assets.samplers.try_get(id)!.header.key;
-    write_key(self, writer, key)!;
+    return write_asset_key(
+        context: self,
+        writer: writer,
+        id: id,
+        pool: &self.assets.samplers,
+    );
 }
 
 <*
@@ -101,10 +107,12 @@ fn void? WriteContext.write_sampler(&self, Writer* writer, SamplerId id) {
  @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID
 *>
 fn SamplerId? ReadContext.read_sampler(&self, Reader* reader) {
-    uint index = reader.read_uint()!;
-    if (index == INDEX_NONE) return (SamplerId){};
-    if (index >= self.keys.len) return c3d::ASSET_FORMAT_ERROR~;
-    return self.assets.find_sampler(self.keys[index]) ?? c3d::INVALID_ID~;
+    return read_asset_key(
+        context: self,
+        reader: reader,
+        $Type: SamplerId,
+        find: &AssetStore.find_sampler,
+    );
 }
 
 <*
@@ -113,12 +121,12 @@ fn SamplerId? ReadContext.read_sampler(&self, Reader* reader) {
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
 *>
 fn void? WriteContext.write_model(&self, Writer* writer, ModelId id) {
-    if (!id.index && !id.generation) {
-        writer.write_uint(INDEX_NONE);
-        return;
-    }
-    String key = self.assets.models.try_get(id)!.header.key;
-    write_key(self, writer, key)!;
+    return write_asset_key(
+        context: self,
+        writer: writer,
+        id: id,
+        pool: &self.assets.models,
+    );
 }
 
 <*
@@ -127,10 +135,12 @@ fn void? WriteContext.write_model(&self, Writer* writer, ModelId id) {
  @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID
 *>
 fn ModelId? ReadContext.read_model(&self, Reader* reader) {
-    uint index = reader.read_uint()!;
-    if (index == INDEX_NONE) return (ModelId){};
-    if (index >= self.keys.len) return c3d::ASSET_FORMAT_ERROR~;
-    return self.assets.find_model(self.keys[index]) ?? c3d::INVALID_ID~;
+    return read_asset_key(
+        context: self,
+        reader: reader,
+        $Type: ModelId,
+        find: &AssetStore.find_model,
+    );
 }
 
 <*
@@ -139,12 +149,12 @@ fn ModelId? ReadContext.read_model(&self, Reader* reader) {
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
 *>
 fn void? WriteContext.write_clip(&self, Writer* writer, ClipId id) {
-    if (!id.index && !id.generation) {
-        writer.write_uint(INDEX_NONE);
-        return;
-    }
-    String key = self.assets.clips.try_get(id)!.header.key;
-    write_key(self, writer, key)!;
+    return write_asset_key(
+        context: self,
+        writer: writer,
+        id: id,
+        pool: &self.assets.clips,
+    );
 }
 
 <*
@@ -153,10 +163,12 @@ fn void? WriteContext.write_clip(&self, Writer* writer, ClipId id) {
  @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID
 *>
 fn ClipId? ReadContext.read_clip(&self, Reader* reader) {
-    uint index = reader.read_uint()!;
-    if (index == INDEX_NONE) return (ClipId){};
-    if (index >= self.keys.len) return c3d::ASSET_FORMAT_ERROR~;
-    return self.assets.find_clip(self.keys[index]) ?? c3d::INVALID_ID~;
+    return read_asset_key(
+        context: self,
+        reader: reader,
+        $Type: ClipId,
+        find: &AssetStore.find_clip,
+    );
 }
 
 <*
@@ -165,12 +177,12 @@ fn ClipId? ReadContext.read_clip(&self, Reader* reader) {
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
 *>
 fn void? WriteContext.write_skeleton(&self, Writer* writer, SkeletonId id) {
-    if (!id.index && !id.generation) {
-        writer.write_uint(INDEX_NONE);
-        return;
-    }
-    String key = self.assets.skeletons.try_get(id)!.header.key;
-    write_key(self, writer, key)!;
+    return write_asset_key(
+        context: self,
+        writer: writer,
+        id: id,
+        pool: &self.assets.skeletons,
+    );
 }
 
 <*
@@ -179,10 +191,12 @@ fn void? WriteContext.write_skeleton(&self, Writer* writer, SkeletonId id) {
  @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID
 *>
 fn SkeletonId? ReadContext.read_skeleton(&self, Reader* reader) {
-    uint index = reader.read_uint()!;
-    if (index == INDEX_NONE) return (SkeletonId){};
-    if (index >= self.keys.len) return c3d::ASSET_FORMAT_ERROR~;
-    return self.assets.find_skeleton(self.keys[index]) ?? c3d::INVALID_ID~;
+    return read_asset_key(
+        context: self,
+        reader: reader,
+        $Type: SkeletonId,
+        find: &AssetStore.find_skeleton,
+    );
 }
 
 <*
@@ -191,12 +205,12 @@ fn SkeletonId? ReadContext.read_skeleton(&self, Reader* reader) {
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
 *>
 fn void? WriteContext.write_environment(&self, Writer* writer, EnvironmentId id) {
-    if (!id.index && !id.generation) {
-        writer.write_uint(INDEX_NONE);
-        return;
-    }
-    String key = self.assets.environments.try_get(id)!.header.key;
-    write_key(self, writer, key)!;
+    return write_asset_key(
+        context: self,
+        writer: writer,
+        id: id,
+        pool: &self.assets.environments,
+    );
 }
 
 <*
@@ -205,10 +219,12 @@ fn void? WriteContext.write_environment(&self, Writer* writer, EnvironmentId id)
  @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID
 *>
 fn EnvironmentId? ReadContext.read_environment(&self, Reader* reader) {
-    uint index = reader.read_uint()!;
-    if (index == INDEX_NONE) return (EnvironmentId){};
-    if (index >= self.keys.len) return c3d::ASSET_FORMAT_ERROR~;
-    return self.assets.find_environment(self.keys[index]) ?? c3d::INVALID_ID~;
+    return read_asset_key(
+        context: self,
+        reader: reader,
+        $Type: EnvironmentId,
+        find: &AssetStore.find_environment,
+    );
 }
 
 <*
@@ -217,12 +233,12 @@ fn EnvironmentId? ReadContext.read_environment(&self, Reader* reader) {
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
 *>
 fn void? WriteContext.write_shader(&self, Writer* writer, ShaderId id) {
-    if (!id.index && !id.generation) {
-        writer.write_uint(INDEX_NONE);
-        return;
-    }
-    String key = self.assets.shaders.try_get(id)!.header.key;
-    write_key(self, writer, key)!;
+    return write_asset_key(
+        context: self,
+        writer: writer,
+        id: id,
+        pool: &self.assets.shaders,
+    );
 }
 
 <*
@@ -231,10 +247,12 @@ fn void? WriteContext.write_shader(&self, Writer* writer, ShaderId id) {
  @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID
 *>
 fn ShaderId? ReadContext.read_shader(&self, Reader* reader) {
-    uint index = reader.read_uint()!;
-    if (index == INDEX_NONE) return (ShaderId){};
-    if (index >= self.keys.len) return c3d::ASSET_FORMAT_ERROR~;
-    return self.assets.find_shader(self.keys[index]) ?? c3d::INVALID_ID~;
+    return read_asset_key(
+        context: self,
+        reader: reader,
+        $Type: ShaderId,
+        find: &AssetStore.find_shader,
+    );
 }
 
 <*
@@ -243,12 +261,12 @@ fn ShaderId? ReadContext.read_shader(&self, Reader* reader) {
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
 *>
 fn void? WriteContext.write_compute_shader(&self, Writer* writer, ComputeShaderId id) {
-    if (!id.index && !id.generation) {
-        writer.write_uint(INDEX_NONE);
-        return;
-    }
-    String key = self.assets.compute_shaders.try_get(id)!.header.key;
-    write_key(self, writer, key)!;
+    return write_asset_key(
+        context: self,
+        writer: writer,
+        id: id,
+        pool: &self.assets.compute_shaders,
+    );
 }
 
 <*
@@ -257,8 +275,36 @@ fn void? WriteContext.write_compute_shader(&self, Writer* writer, ComputeShaderI
  @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID
 *>
 fn ComputeShaderId? ReadContext.read_compute_shader(&self, Reader* reader) {
+    return read_asset_key(
+        context: self,
+        reader: reader,
+        $Type: ComputeShaderId,
+        find: &AssetStore.find_compute_shader,
+    );
+}
+
+macro void? write_asset_key(
+    WriteContext* context,
+    Writer* writer,
+    id,
+    pool,
+) @local {
+    if (!id.index && !id.generation) {
+        writer.write_uint(INDEX_NONE);
+        return;
+    }
+    String key = pool.try_get(id)!.header.key;
+    write_key(context, writer, key)!;
+}
+
+macro read_asset_key(
+    ReadContext* context,
+    Reader* reader,
+    $Type,
+    find,
+) @local {
     uint index = reader.read_uint()!;
-    if (index == INDEX_NONE) return (ComputeShaderId){};
-    if (index >= self.keys.len) return c3d::ASSET_FORMAT_ERROR~;
-    return self.assets.find_compute_shader(self.keys[index]) ?? c3d::INVALID_ID~;
+    if (index == INDEX_NONE) return ($Type){};
+    if (index >= context.keys.len) return c3d::ASSET_FORMAT_ERROR~;
+    return find(context.assets, context.keys[index]) ?? c3d::INVALID_ID~;
 }

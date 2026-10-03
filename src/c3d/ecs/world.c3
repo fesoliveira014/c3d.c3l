@@ -217,6 +217,15 @@ fn World create_world(Allocator allocator, uint capacity) {
 }
 
 <*
+ Query a component slot without assigning one.
+ @return? NOT_FOUND
+*>
+macro uint? assigned_slot($Type) {
+    if (!store::slot{$Type}) return NOT_FOUND~;
+    return store::slot{$Type} - 1;
+}
+
+<*
  Locate the process-wide component slot without allocating a store.
  @return? c3d::CAPACITY_EXCEEDED
 *>

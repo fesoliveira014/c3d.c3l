@@ -6,13 +6,15 @@ c3d_serial is a consumer-selected add-on. It imports core scene/asset APIs and t
 
 The container handles ordinary nodes and application-registered component codecs. Node name, local transform, transform space, layers, visibility, hierarchy and insertion order are portable. World matrices and effective visibility are derived during load, relative to a parent whose world matrix is current.
 
+Node transform values pass through unchanged, matching direct `node.local` assignment. The container does not reject non-finite position/rotation/scale values or a zero quaternion; those values can propagate into the derived world matrix. Component codecs define and validate their own numeric constraints before invoking owner APIs. `ASSET_FORMAT_ERROR` covers invalid wire representations and violations of those declared codec constraints, not an additional universal float-validity rule.
+
 Built-in component codecs and ModelInstance reconstruction are not included in this first delivery. ModelInstance and other components without a registered policy return UNSUPPORTED. Existing plain-core consumers remain independent of the package.
 
 Asset payloads, scene-wide ambient/background/environment settings and cross-subtree references are outside this format. Saving Scene.root creates an ordinary new node on read; it does not overwrite destination scene settings.
 
 ## Registration and callbacks
 
-Register the destination's component stores and removal hooks through its owner APIs before reading. Then call serial::register_codec(Type, codec) or register_transient(Type) during single-threaded setup. Codec registration assigns a process slot without allocating any Scene store. The shared ECS limit remains 64 component types.
+Register the destination's component stores and removal hooks through its owner APIs before reading. Then call serial::register_codec(Type, codec) or register_transient(Type) during single-threaded setup. Codec registration assigns a process slot without allocating any Scene store. `ecs::assigned_slot(Type)` queries that zero-based slot without assigning one and returns `NOT_FOUND` when absent. The shared ECS limit remains 64 component types.
 
 ComponentCodec contains a static-lifetime name, positive version, RestorePhase and collect/write/read callbacks. Names must be unique across types. Registering a type again replaces its policy; a conflicting name fails without replacing the existing entry. Neither registration order nor C3 module/type names enter the stream.
 
@@ -52,7 +54,7 @@ All fields below are written separately; native struct padding/endian layout is 
 
 Header: six u32 values: magic 0x53443343 (C3DS bytes), version, byte_count, node_count, key_count, chunk_count. Header size is 24 bytes.
 
-Each chunk-table entry is three u32 values: kind, offset from blob start, size. Entries are 12 bytes. Required kinds are KEYS=0, TYPES=1, NODES=2 and COMPONENTS=3. Each appears exactly once. Chunks must fit the blob, start after the table and not overlap. Bounded unknown kinds are skipped. Empty chunks can share an offset.
+Each chunk-table entry is three u32 values: kind, offset from blob start, size. Entries are 12 bytes. `MAX_CHUNKS` limits the table to 64 entries; larger counts return `ASSET_FORMAT_ERROR` before scanning the table. This bounds pairwise overlap validation to 2,016 comparisons without allocation. Required kinds are KEYS=0, TYPES=1, NODES=2 and COMPONENTS=3. Each appears exactly once. Chunks must fit the blob, start after the table and not overlap. Bounded unknown kinds are skipped. Empty chunks can share an offset.
 
 KEYS contains key_count unique, nonempty strings. TYPES contains a u32 count followed by (name string, version u32) pairs. Component names are sorted lexicographically by the writer.
 

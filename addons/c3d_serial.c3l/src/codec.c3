@@ -2,7 +2,6 @@ module c3d::serial;
 
 import c3d;
 import c3d::ecs;
-import c3d::ecs::store;
 import c3d::scene;
 
 <*
@@ -62,9 +61,10 @@ CodecEntry[ecs::MAX_COMPONENT_TYPES] codecs @private;
  @require codec.write != null && codec.read != null
 *>
 macro void? register_codec($Type, ComponentCodec codec) {
-    uint previous = store::slot{$Type};
     foreach (index, &entry : codecs) {
-        if (entry.codec.name == codec.name && index + 1 != previous) return c3d::INVALID_ARGUMENT~;
+        if (entry.codec.name != codec.name) continue;
+        uint previous = ecs::assigned_slot($Type) ?? c3d::INVALID_ARGUMENT~!;
+        if (index != previous) return c3d::INVALID_ARGUMENT~;
     }
     uint slot = ecs::slot_of($Type)!;
     codecs[slot] = { .codec = codec };
@@ -81,8 +81,10 @@ macro void? register_transient($Type) {
 
 <* Whether a component has an explicit serialization policy. *>
 macro bool is_serializable($Type) {
-    uint slot = store::slot{$Type};
-    return slot && (codecs[slot - 1].transient || codecs[slot - 1].codec.name.len != 0);
+    if (try slot = ecs::assigned_slot($Type)) {
+        return codecs[slot].transient || codecs[slot].codec.name.len != 0;
+    }
+    return false;
 }
 
 fn uint? codec_slot(String name) @private {

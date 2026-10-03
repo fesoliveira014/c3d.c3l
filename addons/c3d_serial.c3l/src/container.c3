@@ -12,6 +12,9 @@ const uint SUBTREE_MAGIC = 0x53443343;
 <* Supported subtree container layout. *>
 const uint SUBTREE_VERSION = 1;
 
+<* Maximum entries in a portable chunk table. *>
+const uint MAX_CHUNKS = 64; // four required kinds plus extensions; at most 2016 overlap comparisons
+
 const usz HEADER_BYTES @private = 24;
 const usz CHUNK_ENTRY_BYTES @private = 12;
 const uint REQUIRED_CHUNKS @private = 4;
@@ -81,7 +84,8 @@ fn SubtreeHeader? read_header(char[] bytes) {
         return c3d::ASSET_FORMAT_ERROR~;
     }
     if (header.version != SUBTREE_VERSION) return c3d::UNSUPPORTED~;
-    if (header.chunk_count < REQUIRED_CHUNKS || header.chunk_count > reader.remaining() / CHUNK_ENTRY_BYTES) {
+    if (header.chunk_count < REQUIRED_CHUNKS || header.chunk_count > MAX_CHUNKS
+        || header.chunk_count > reader.remaining() / CHUNK_ENTRY_BYTES) {
         return c3d::ASSET_FORMAT_ERROR~;
     }
     usz table_end = HEADER_BYTES + (usz)header.chunk_count * CHUNK_ENTRY_BYTES;

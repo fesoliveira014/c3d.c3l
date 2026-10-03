@@ -142,6 +142,7 @@ fn void? write_value(void* component, Writer* writer, WriteContext* context) @pr
 }
 
 fn void? read_value(Reader* reader, ReadContext* context) @private {
+    assert(context.has_component(Value));
     Value value;
     value.number = reader.read_uint()!;
     value.enabled = reader.read_bool()!;
