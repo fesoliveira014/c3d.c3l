@@ -105,6 +105,7 @@ fn void write_probe_frame_root(
     Vec4 ambient,
     gpu::GpuAddress probe_volumes,
     ulong frame_index,
+    Vec3 origin,
 ) @private {
     Mat4 identity_matrix = matrix::IDENTITY4;
     Mat4f identity = bitcast(identity_matrix, Mat4f);
@@ -122,6 +123,7 @@ fn void write_probe_frame_root(
         .probe_volumes   = probe_volumes,
         .frame_index     = (uint)frame_index,
         .flags           = shader::FRAME_TRACE_PRESENT,
+        .origin          = { origin.x, origin.y, origin.z, 0 },
     };
 }
 
@@ -174,6 +176,7 @@ fn void? record_probe_updates(Renderer* renderer, ProbeFillRecording* recording,
         atmosphere:    atmosphere,
         altitude:      atmosphere.atmosphere ? atmosphere.atmosphere.observer_altitude : 0,
         trace_shadows: true,
+        origin:        renderer.frame_origin,
     );
     renderer.stats.lights_dropped += light_counts.dropped;
     gpu::GpuAddress lights = upload_lights(renderer, extraction.lights)!;
@@ -205,6 +208,7 @@ fn void? record_probe_updates(Renderer* renderer, ProbeFillRecording* recording,
         ambient:       { ambient.r, ambient.g, ambient.b, 0 },
         probe_volumes: hit_set,
         frame_index:   renderer.frame_index,
+        origin:        renderer.frame_origin,
     );
 
     Quat rotation = maths::random_rotation({

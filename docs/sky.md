@@ -6,6 +6,11 @@ the sun's disc, attenuates the sun's light by the air it crosses, lights the sce
 adds aerial perspective to distant surfaces. A `HeightFog` on any node adds exponential height fog.
 Either works without the other.
 
+[Frame origins](large_world.md) change packed coordinates, not physical altitude.
+Height fog's base and view camera move together. Atmosphere lighting cache keys
+retain absolute physical inputs, and an origin change alone does not regenerate
+the sky or restart a probe sweep.
+
 ```c3
 Light sunlight = light::directional({ 1, 1, 1 }, 3);
 Node* sun = scene.add_light(sunlight, name: "sun")!;

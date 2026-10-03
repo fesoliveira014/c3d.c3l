@@ -88,3 +88,31 @@ fn void test_publish_carries_the_accumulated_samples() @test {
     assert(!history.valid);
     assert(history.accumulated_samples == 5);
 }
+
+fn void test_accumulation_resets_when_only_the_packing_origin_changes() @test {
+    ViewHistory history;
+    Vec3 origin = { 49920, 0, 49920 };
+    Mat4 projection = test_view_proj();
+    history.commit_accumulation(
+        scene: 7,
+        trace_revision: 3,
+        view_proj: projection,
+        samples: 5,
+        origin: origin,
+    );
+    history.publish();
+    assert(!render::accumulation_reset_needed(
+        history: &history,
+        scene: 7,
+        trace_revision: 3,
+        view_proj: projection,
+        origin: origin,
+    ));
+    assert(render::accumulation_reset_needed(
+        history: &history,
+        scene: 7,
+        trace_revision: 3,
+        view_proj: projection,
+        origin: origin + (Vec3){ 256, 0, 0 },
+    ));
+}

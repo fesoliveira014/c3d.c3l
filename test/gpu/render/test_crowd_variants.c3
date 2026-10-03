@@ -129,5 +129,18 @@ fn void test_crowd_variants_draw_with_validation() @test {
         renderer.end_frame()!!;
     }
     assert(renderer.deformation.crowd_palettes.len() == 1);
+    Vec3 offset = { 65536, 0, 65536 };
+    scene.root.local.position = offset;
+    scene.update_world();
+    for (uint frame = 0; frame < 3; frame++) {
+        Vec3 reference = offset + (frame ? (Vec3){ 256, 0, -256 } : (Vec3){});
+        renderer.begin_frame({ .time = 1.25, .reference_position = reference })!!;
+        renderer.render_view(&scene, camera_node, fixture.view)!!;
+        renderer.finish_view(fixture.view)!!;
+        renderer.render_view(&scene, camera_node, fixture.second_view)!!;
+        renderer.finish_view(fixture.second_view)!!;
+        renderer.end_frame()!!;
+        assert(renderer.deformation.crowd_palettes.len() == 1);
+    }
     check_validation(renderer);
 }

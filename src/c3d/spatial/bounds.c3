@@ -19,21 +19,24 @@ fn bool mesh_is_live(AssetStore* assets, Mesh* mesh, SkinBinding* skin) {
 }
 
 <*
- World bound of the mesh from its override, its geometry or its joints.
+ Relative bound of the mesh, including overrides and joint deformation.
  @param [&in] assets : "Resolves the live geometry record."
  @param [&in] node : "World matrix as left by the last update_world."
  @param [&in] mesh : "Live geometry id."
  @param [in] skin : "Null for an unskinned mesh; joints with current world matrices otherwise."
+ @param origin : "Absolute origin of the returned bounds; zero preserves world."
 *>
 fn Aabb mesh_world_bounds(
     AssetStore* assets,
     Node* node,
     Mesh* mesh,
     SkinBinding* skin,
+    Vec3 origin = {},
 ) {
-    if (mesh.has_bounds_override) return maths::aabb_transform(mesh.local_bounds, node.world);
+    Mat4 world = maths::rebase(node.world, origin);
+    if (mesh.has_bounds_override) return maths::aabb_transform(mesh.local_bounds, world);
     GeometryAsset* record = assets.geometry(mesh.geometry);
-    Aabb rest = maths::aabb_transform(record.data.bounds, node.world);
+    Aabb rest = maths::aabb_transform(record.data.bounds, world);
     if (!skin || !record.skin_bounds.joints.len) return rest;
     MorphSelection selection = geometry::select_morph_targets(record.data.channels, mesh.morph_weights);
     return skinned_world_bounds(
@@ -42,6 +45,7 @@ fn Aabb mesh_world_bounds(
         inverse_bind: assets.skeleton(skin.skeleton).data.inverse_bind,
         selection:    &selection,
         rest:         rest,
+        origin:       origin,
     );
 }
 
@@ -55,15 +59,20 @@ fn bool instanced_mesh_is_live(AssetStore* assets, InstancedMesh* batch) {
 }
 
 <*
- World bound of the batch's live instances, grown by the sway reach.
- Writes the kept node-local batch.aggregate when its identity is stale; observable scene state does not change.
+ Relative bound of the live instances, including their sway reach.
  @param [&in] assets : "Resolves the live geometry record."
  @param [&in] node : "World matrix as left by the last update_world."
  @param [&inout] batch : "Live geometry id and live count above zero."
+ @param origin : "Absolute origin of the returned bounds; zero preserves world."
 *>
-fn Aabb instanced_world_bounds(AssetStore* assets, Node* node, InstancedMesh* batch) {
+fn Aabb instanced_world_bounds(
+    AssetStore* assets,
+    Node* node,
+    InstancedMesh* batch,
+    Vec3 origin = {},
+) {
     Aabb local = batch.has_bounds_override ? batch.local_bounds : kept_instance_bounds(assets, batch);
-    Aabb world = maths::aabb_transform(local, node.world);
+    Aabb world = maths::aabb_transform(local, maths::rebase(node.world, origin));
     Vec3 reach = batch.sway.reach();
     return { .min = world.min - reach, .max = world.max + reach };
 }
@@ -86,12 +95,13 @@ fn Aabb kept_instance_bounds(AssetStore* assets, InstancedMesh* batch) @local {
 }
 
 <*
- World bound of the skinned vertices: each joint's retained bound under its current pose, merged.
+ Relative bound of retained joint bounds under the current pose.
  @param [&in] bounds : "Retained per-joint bounds of the geometry."
  @param [&in] binding : "Joints with current world matrices."
  @param inverse_bind : "One matrix per skeleton joint."
  @param [&in] selection : "Active morph targets of the mesh."
- @param rest : "Returned when no bound joint is addressed by the binding."
+ @param rest : "Relative fallback when no joint bound applies."
+ @param origin : "Absolute origin shared by rest and returned bounds."
 *>
 fn Aabb skinned_world_bounds(
     SkinBounds* bounds,
@@ -99,6 +109,7 @@ fn Aabb skinned_world_bounds(
     Mat4[] inverse_bind,
     MorphSelection* selection,
     Aabb rest,
+    Vec3 origin = {},
 ) {
     usz joint_count = math::min((usz)bounds.joints.len, math::min((usz)binding.joints.len, (usz)inverse_bind.len));
     Aabb result;
@@ -106,7 +117,7 @@ fn Aabb skinned_world_bounds(
     for (uint joint = 0; joint < joint_count; joint++) {
         if (!bounds.used[joint]) continue;
         Aabb local = geometry::joint_morph_bounds(bounds, joint, selection);
-        Mat4 transform = binding.joints[joint].world.mul(inverse_bind[joint]);
+        Mat4 transform = maths::rebase(binding.joints[joint].world, origin).mul(inverse_bind[joint]);
         Aabb world = maths::aabb_transform(local, transform);
         result = first ? world : maths::aabb_merge(result, world);
         first = false;

@@ -5,6 +5,11 @@ ray-tracing pipeline dispatch per frame. It accumulates while the camera and sce
 feeds the ordinary display route, so tone mapping, exposure, bloom, grading and FXAA apply as on
 any view.
 
+Path-traced views use the shared [frame origin](large_world.md). An origin change
+resets accumulation even when the absolute scene and camera are unchanged.
+Supply `FrameInfo.reference_position` near the camera; the 256 m cell avoids
+resetting accumulation for every small reference movement.
+
 ```c3
 Renderer renderer = render::create_renderer(mem, &assets, { .ray_tracing_pipelines = true })!;
 

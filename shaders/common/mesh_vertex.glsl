@@ -207,7 +207,7 @@ void write_mesh_outputs(
 #ifdef INSTANCED
     if (draw.lod_part != 0ul) {
         LodPartGpu part = LodPartGpu(draw.lod_part);
-        if (part.current != 0ul) reject_history = float(LodPreviousArray(part.current).values[source].reject_history);
+        if (part.current != 0ul) reject_history = max(reject_history, float(LodPreviousArray(part.current).values[source].reject_history));
         previous_instance = reject_history != 0.0 ? instance.model : LodPreviousArray(part.previous).values[source].model;
     } else {
         // Without previous instance matrices, prev_model carries only the batch node's motion.
@@ -222,6 +222,18 @@ void write_mesh_outputs(
         draw, instance, previous_instance, previous_world.xyz,
         instance_bend_weight(draw, previous.xyz, vertex.color)
     );
+    if (draw.lod_part != 0ul) {
+        LodPartGpu part = LodPartGpu(draw.lod_part);
+        if (reject_history != 0.0) {
+            previous_world = world;
+            previous_world.xyz += part.current_origin_delta.xyz;
+        }
+#ifdef INSTANCED
+        else {
+            previous_world.xyz += part.history_origin_delta.xyz;
+        }
+#endif
+    }
     v_prev_clip_pos = frame.prev_view_proj * previous_world;
 #endif
 #if !defined(DEPTH_ONLY) && !defined(VELOCITY)

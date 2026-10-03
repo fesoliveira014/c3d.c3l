@@ -5,6 +5,12 @@ window or an application-owned render target. The default view (`renderer.defaul
 the window; further views are created by the application. One frame renders any number of views
 in application order and submits them together.
 
+Set `FrameInfo.reference_position` to the current absolute camera position when
+rendering far from the origin. `begin_frame` selects one shared origin before
+any view or trace work; producer and mirror views use it too. The default
+reference is zero. Clip planes stay absolute at the API boundary. See
+[camera-relative rendering](large_world.md) for coordinate and history rules.
+
 ```bash
 python3 scripts/build.py --example views
 c3c build views --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL

@@ -36,6 +36,18 @@ fn Mat4 Transform.to_mat4(self) {
     return rotated.scale(self.scale);
 }
 
+<*
+ Express an affine world matrix relative to an origin.
+ @require world.m30 == 0 && world.m31 == 0 && world.m32 == 0 && world.m33 == 1
+ @pure
+*>
+fn Mat4 rebase(Mat4 world, Vec3 origin) {
+    world.m03 -= origin.x;
+    world.m13 -= origin.y;
+    world.m23 -= origin.z;
+    return world;
+}
+
 fn Mat3 inverse_upper3(Mat4 model) @private {
     Vec3 column_x = { model.m00, model.m10, model.m20 };
     Vec3 column_y = { model.m01, model.m11, model.m21 };

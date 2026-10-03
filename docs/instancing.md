@@ -1,5 +1,10 @@
 # Explicit instancing
 
+GPU instance models use the shared [frame origin](large_world.md). The renderer
+subtracts it from the node matrix before composing local placements. CPU source
+transforms stay local; previous placements use their recorded history origin.
+An origin change rewrites consumed resident records without reallocating them.
+
 For camera-facing or direction-aligned quads, use core
 [billboard batches](billboards.md). They share instance culling/sorting and GPU
 record lifetime while keeping their own typed scene data.

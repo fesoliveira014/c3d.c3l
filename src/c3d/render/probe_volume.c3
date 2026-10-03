@@ -454,7 +454,7 @@ fn gpu::GpuAddress? pack_probe_set(
     foreach (index, slot_index : order[:count]) {
         ProbeVolumeRes* mirror = &renderer.probe_volumes[slot_index];
         ProbeVolume* volume = scene.world.get(mirror.entity, ProbeVolume);
-        Vec3 origin = scene.node(mirror.entity).world_position() - volume.half_extents;
+        Vec3 origin = (scene.node(mirror.entity).world_position() - renderer.frame_origin) - volume.half_extents;
         Vec3 spacing = volume.spacing();
         set.volumes[index] = {
             .origin_energy        = { origin.x, origin.y, origin.z, unit_energy ? 1 : volume.energy },
