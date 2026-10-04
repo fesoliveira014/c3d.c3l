@@ -28,7 +28,7 @@ struct PhysicsBody {
 }
 
 <*
- Air flow applied to every shape of the body in each fixed step.
+ Air flow on body shapes and cloth each fixed step; cloth ignores lift.
 *>
 struct Wind {
     Vec3  velocity;
