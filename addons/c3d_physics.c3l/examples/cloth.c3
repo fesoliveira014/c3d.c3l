@@ -451,10 +451,12 @@ fn void panel(
 ) @local {
     if (imgui::begin("Cloth", null, {})) {
         ClothStats stats = demo.physics.cloth_stats;
+        uint upload_bytes = renderer.stats.upload_bytes;
+        uint history_bytes = renderer.stats.vertex_history_bytes;
         imgui::text("Scene: %s", SCENARIO_NAMES[demo.scenario.ordinal]);
         imgui::text("Solve %.3f ms, publish %.3f ms", stats.solve_seconds * 1000, stats.publish_seconds * 1000);
         imgui::text("Particles %u, constraints %u", stats.particles, stats.constraints);
-        imgui::text("Geometry upload %u bytes, history %u bytes", renderer.stats.upload_bytes, renderer.stats.vertex_history_bytes);
+        imgui::text("Geometry upload %u bytes, history %u bytes", upload_bytes, history_bytes);
         imgui::text("Frame %.2f ms", frame_ms);
         imgui::slider_float(
             label: "Wind speed",
@@ -531,7 +533,11 @@ fn void? run_interactive(Options options) @local {
             step_demo(&demo, window.clock.delta, elapsed);
             guides.clear();
             if (controls.colliders) demo.physics.debug_draw(&guides, { .colliders = true });
-            renderer.begin_frame({ .time = elapsed, .delta = window.clock.delta, .reference_position = demo.camera.world_position() })!;
+            renderer.begin_frame({
+                .time = elapsed,
+                .delta = window.clock.delta,
+                .reference_position = demo.camera.world_position(),
+            })!;
             defer catch render::abort_frame(&renderer);
             if (renderer.has_output) {
                 renderer.render_view(

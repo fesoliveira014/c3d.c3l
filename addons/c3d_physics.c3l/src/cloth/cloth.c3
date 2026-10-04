@@ -15,13 +15,13 @@ const uint DEFAULT_CLOTH_SUBSTEPS = 4; // solve cost grows linearly; fewer subst
 <* Constraint passes per substep. *>
 const uint DEFAULT_CLOTH_ITERATIONS = 8; // edge and bend passes per substep; the stiffness lever
 <* Requested substep relaxation of triangle edges. *>
-const float DEFAULT_STRETCH_STIFFNESS = 1;
+const float DEFAULT_STRETCH_STIFFNESS = 1; // edges hold their rest length; lower values let the fabric stretch
 <* Requested substep relaxation of bend distances. *>
-const float DEFAULT_BEND_STIFFNESS = 0.5f;
+const float DEFAULT_BEND_STIFFNESS = 0.5f; // soft folds; 1 makes the sheet behave like card
 <* Linear velocity damping, per second. *>
-const float DEFAULT_CLOTH_DAMPING = 0.5f;
+const float DEFAULT_CLOTH_DAMPING = 0.5f; // about 40% of velocity lost per second; higher values look submerged
 <* Contact offset of free particles, in metres. *>
-const float DEFAULT_CLOTH_THICKNESS = 0.01f;
+const float DEFAULT_CLOTH_THICKNESS = 0.01f; // keeps particles off contact surfaces; larger values show a visible gap
 <* Maximum listed bodies and primitive shapes one cloth tests. *>
 const uint MAX_CLOTH_COLLIDERS = 32; // bounds particle-by-shape work; the cape's bone capsules fit
 
@@ -217,8 +217,8 @@ fn void PhysicsWorld.update_cloths(&self) {
         }
         time::Clock published = clock::now();
         publish_cloth(state, node.world);
-        self.cloth_stats.solve_seconds += (double)(published - started) / NANOSECONDS_PER_SECOND;
-        self.cloth_stats.publish_seconds += (double)(clock::now() - published) / NANOSECONDS_PER_SECOND;
+        self.cloth_stats.solve_seconds += (published - started).to_sec();
+        self.cloth_stats.publish_seconds += (clock::now() - published).to_sec();
         self.cloth_stats.particles += (uint)state.positions.len;
         self.cloth_stats.constraints += (uint)(state.edges.len + state.bends.len);
     };

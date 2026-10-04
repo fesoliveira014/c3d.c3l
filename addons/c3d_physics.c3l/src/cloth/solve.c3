@@ -6,7 +6,6 @@ import c3d::maths;
 import c3d::physics @public;
 import std::math;
 
-const double NANOSECONDS_PER_SECOND @private = 1e9;
 const float MIN_CONSTRAINT_LENGTH @private = 1e-7f; // metres; a shorter pair separates along its rest direction
 
 fn void solve_cloth(

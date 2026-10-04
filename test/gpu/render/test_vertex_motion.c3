@@ -124,7 +124,11 @@ fn Vec4? render_vertex_frame(VertexScene* target, LodVelocityProbe* probe, ViewI
 
 fn Vec2 vertex_step_velocity(VertexScene* target, float step) @private {
     Camera* camera = target.target.scene.get(target.target.camera, Camera);
-    CameraMatrices matrices = camera::derive_matrices(*camera, target.target.camera.world, { TARGET_SIZE, TARGET_SIZE });
+    CameraMatrices matrices = camera::derive_matrices(
+        camera: *camera,
+        camera_world: target.target.camera.world,
+        viewport: { TARGET_SIZE, TARGET_SIZE },
+    );
     return projected_uv(&matrices, {}) - projected_uv(&matrices, { -step, 0, 0 });
 }
 
