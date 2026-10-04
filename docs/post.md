@@ -208,8 +208,8 @@ positions were released; its published history stays as it was.
 
 Every pose slot grows by 32 bytes (176 to 208), 512 KiB per temporal view at the default
 16,384-node scene. Geometry still uploads whole on each revision, counted in `Stats.upload_bytes`;
-previous positions travel through the frame ring and are not counted there. Blended surfaces keep
-the velocity of the surface behind them.
+previous positions travel through the frame ring, counted per frame in
+`Stats.vertex_history_bytes`. Blended surfaces keep the velocity of the surface behind them.
 
 ## GUI
 

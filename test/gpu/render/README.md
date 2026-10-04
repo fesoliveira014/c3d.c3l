@@ -11,8 +11,9 @@ positions and compare the centre velocity with the CPU projection (2e-3 UV) on
 forward and deferred views, without TAA, across two views with different
 cadence, across a render-origin crossing and under a static skin and morph. They
 also check zero motion with rejection for first observation, replaced geometry,
-a count change, reset, re-enabling and an aborted frame, and the
-`ASSET_DATA_UNAVAILABLE` fault for released positions.
+a count change, reset, re-enabling and an aborted frame, the
+`ASSET_DATA_UNAVAILABLE` fault for released positions, and the per-frame
+`Stats.vertex_history_bytes` count.
 
 Build the repository once so `shaders/spv/` exists, then invoke this project
 separately:

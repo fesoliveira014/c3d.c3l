@@ -16,6 +16,15 @@ struct ClothTopology @private {
     ClothConstraint[] bends;
 }
 
+struct ClothCounts @local {
+    uint vertices;
+    uint pins;
+    uint edges;
+    uint bends;
+    uint bodies;
+    uint shapes;
+}
+
 struct EdgeRecord @local {
     uint low;
     uint high;
@@ -132,36 +141,45 @@ fn ClothState*? allocate_cloth_state(
     uint pin_count,
     uint edge_count,
     uint bend_count,
+    uint body_count,
+    uint shape_count,
 ) @private {
+    ClothCounts counts = {
+        .vertices = vertex_count,
+        .pins     = pin_count,
+        .edges    = edge_count,
+        .bends    = bend_count,
+        .bodies   = body_count,
+        .shapes   = shape_count,
+    };
     BlockCursor measure;
-    carve_cloth_state(&measure, vertex_count, pin_count, edge_count, bend_count);
+    carve_cloth_state(&measure, counts);
     char*? allocation = alloc::malloc_try(allocator, (sz)measure.offset);
     if (catch allocation) return c3d::CAPACITY_EXCEEDED~;
     BlockCursor fill = { .base = allocation };
-    return carve_cloth_state(&fill, vertex_count, pin_count, edge_count, bend_count);
+    return carve_cloth_state(&fill, counts);
 }
 
-fn ClothState* carve_cloth_state(
-    BlockCursor* cursor,
-    uint vertex_count,
-    uint pin_count,
-    uint edge_count,
-    uint bend_count,
-) @local {
+fn ClothState* carve_cloth_state(BlockCursor* cursor, ClothCounts counts) @local {
     ClothState[] states = physics::carve(cursor, ClothState, 1);
     ClothState state = {
-        .rest           = physics::carve(cursor, Vec3, vertex_count),
-        .positions      = physics::carve(cursor, Vec3, vertex_count),
-        .velocities     = physics::carve(cursor, Vec3, vertex_count),
-        .predicted      = physics::carve(cursor, Vec3, vertex_count),
-        .accelerations  = physics::carve(cursor, Vec3, vertex_count),
-        .published      = physics::carve(cursor, Vec3, vertex_count),
-        .inverse_masses = physics::carve(cursor, float, vertex_count),
-        .pins           = physics::carve(cursor, uint, pin_count),
-        .pin_anchors    = physics::carve(cursor, Vec3, pin_count),
-        .pin_targets    = physics::carve(cursor, Vec3, pin_count),
-        .edges          = physics::carve(cursor, ClothConstraint, edge_count),
-        .bends          = physics::carve(cursor, ClothConstraint, bend_count),
+        .rest           = physics::carve(cursor, Vec3, counts.vertices),
+        .positions      = physics::carve(cursor, Vec3, counts.vertices),
+        .velocities     = physics::carve(cursor, Vec3, counts.vertices),
+        .predicted      = physics::carve(cursor, Vec3, counts.vertices),
+        .accelerations  = physics::carve(cursor, Vec3, counts.vertices),
+        .published      = physics::carve(cursor, Vec3, counts.vertices),
+        .inverse_masses = physics::carve(cursor, float, counts.vertices),
+        .pins           = physics::carve(cursor, uint, counts.pins),
+        .pin_anchors    = physics::carve(cursor, Vec3, counts.pins),
+        .pin_targets    = physics::carve(cursor, Vec3, counts.pins),
+        .edges          = physics::carve(cursor, ClothConstraint, counts.edges),
+        .bends          = physics::carve(cursor, ClothConstraint, counts.bends),
+        .colliders      = physics::carve(cursor, Entity, counts.bodies),
+        .bodies         = physics::carve(cursor, ClothBody, counts.bodies),
+        .shapes         = physics::carve(cursor, ClothShape, counts.shapes),
+        .shape_starts   = physics::carve(cursor, Vec3, counts.shapes),
+        .shape_ends     = physics::carve(cursor, Vec3, counts.shapes),
     };
     if (!cursor.base) return null;
     states[0] = state;

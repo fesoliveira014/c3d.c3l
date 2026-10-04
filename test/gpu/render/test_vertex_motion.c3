@@ -277,6 +277,8 @@ fn void test_vertex_motion_follows_each_view_and_reference() @test {
     record_lod_target(&fixture, &second_probe, &renderer.views.get(fixture.second_view).velocity)!!;
     renderer.finish_view(fixture.second_view)!!;
     renderer.end_frame()!!;
+    usz vertex_count = fixture.assets.geometry(target.geometry).data.positions.len;
+    assert(renderer.stats.vertex_history_bytes == 2 * vertex_count * Vec3::size);
     render::wait_frames(renderer)!!;
     gpu::invalidate_mapped_span(&renderer.device, probe.readback.span)!!;
     gpu::invalidate_mapped_span(&renderer.device, second_probe.readback.span)!!;

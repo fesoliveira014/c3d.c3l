@@ -3,7 +3,9 @@ module c3d_physics_cloth_test;
 import std::math;
 import std::math::quaternion;
 import c3d;
+import c3d::anim;
 import c3d::asset;
+import c3d::ecs;
 import c3d::geometry;
 import c3d::material;
 import c3d::maths;
@@ -17,6 +19,10 @@ const float MAX_SETTLED_STRETCH @private = 0.05f;
 const uint SETTLE_STEPS @private = 600;
 const uint GRID_CELLS @private = 8;
 const uint FIXTURE_GEOMETRIES @private = 16;
+const float PROBE_THICKNESS @private = 0.02f;
+const float PROBE_REACH @private = 4; // metres from the free vertex to each pinned corner, outside every probed shape
+const uint CONTACT_UPDATES @private = 120;
+const float BONE_RADIUS @private = 0.1f;
 
 struct Fixture @private {
     AssetStore   assets;
@@ -94,14 +100,14 @@ fn GeometryId add_grid(Fixture* fixture, uint cells, float size = 1) @private {
     return id;
 }
 
-fn GeometryId add_triangle(Fixture* fixture, Vec3 offset = {}) @private {
+fn GeometryId add_triangle(Fixture* fixture, Vec3 offset = {}, float size = 1) @private {
     GeometryId id;
     @pool() {
         Geometry triangle = {
             .positions = alloc::new_array(tmem, Vec3, 3),
             .indices   = alloc::new_array(tmem, uint, 3),
         };
-        triangle.positions[..] = ((Vec3[3]){ offset, offset + (Vec3){ 1, 0, 0 }, offset + (Vec3){ 0, 0, 1 } })[..];
+        triangle.positions[..] = ((Vec3[3]){ offset, offset + (Vec3){ size, 0, 0 }, offset + (Vec3){ 0, 0, size } })[..];
         triangle.indices[..] = { 0, 2, 1 }[..];
         triangle.finalize();
         id = fixture.assets.add_geometry(&triangle)!!;
@@ -574,4 +580,481 @@ fn void test_cloth_color_pins() @test {
         Geometry empty;
         assert(cloth::pins_from_colors(tmem, &empty).len == 0);
     };
+}
+
+struct CapeRig @private {
+    Node*    skin;
+    Node*[]  joints;
+    Node*    cape;
+    Ragdoll* ragdoll;
+}
+
+fn Node* add_body_node(
+    Fixture* fixture,
+    ColliderDesc[] colliders,
+    Vec3 position = {},
+    BodyKind kind = KINEMATIC,
+) @private {
+    Node* node = fixture.scene.add_node(name: "body")!!;
+    node.local.position = position;
+    fixture.scene.update_world();
+    fixture.physics.add_body(node, physics::default_body_desc(kind), colliders)!!;
+    return node;
+}
+
+fn ColliderDesc sphere(float radius, Vec3 centre = {}) @private {
+    ColliderDesc desc = physics::default_collider_desc(SPHERE);
+    desc.radius = radius;
+    desc.local.position = centre;
+    return desc;
+}
+
+fn ColliderDesc capsule(float radius, float half_height, maths::Transform local = maths::TRANSFORM_IDENTITY) @private {
+    ColliderDesc desc = physics::default_collider_desc(CAPSULE);
+    desc.radius = radius;
+    desc.half_height = half_height;
+    desc.local = local;
+    return desc;
+}
+
+// Vertex 0 is the only free particle; loose constraints leave it to the contacts.
+fn Node* add_probe(Fixture* fixture, Vec3 point, Entity[] colliders) @private {
+    Node* node = add_cloth_node(fixture, add_triangle(fixture, point, PROBE_REACH));
+    uint[2] pins = { 1, 2 };
+    ClothDesc desc = pinned_desc(pins[..]);
+    desc.stretch_stiffness = 0;
+    desc.bend_stiffness = 0;
+    desc.thickness = PROBE_THICKNESS;
+    desc.colliders = colliders;
+    fixture.scene.add_cloth(&fixture.assets, node, desc)!!;
+    return node;
+}
+
+fn void publish(Fixture* fixture) @private {
+    fixture.physics.update(0);
+    fixture.scene.update_world();
+    fixture.physics.update_cloths();
+}
+
+fn Vec3 closest_on_segment(Vec3 point, Vec3 start, Vec3 end) @private {
+    Vec3 axis = end - start;
+    float length_squared = axis.dot(axis);
+    if (length_squared == 0) return start;
+    return start + axis * math::clamp((point - start).dot(axis) / length_squared, 0.0f, 1.0f);
+}
+
+fn float segment_distance(Vec3 point, Vec3 start, Vec3 end) @private => (point - closest_on_segment(point, start, end)).length();
+
+fn void check_projection(
+    ColliderDesc collider,
+    Vec3 start,
+    Vec3 end,
+    Vec3[] points,
+) @private {
+    Fixture fixture;
+    setup(&fixture, weightless());
+    defer teardown(&fixture);
+    Node* body = add_body_node(&fixture, (&collider)[:1], kind: STATIC);
+    Entity[1] colliders = { body.id };
+    float expanded = collider.radius + PROBE_THICKNESS;
+    Node*[8] probes;
+    foreach (index, point : points) probes[index] = add_probe(&fixture, point, colliders[..]);
+
+    publish(&fixture);
+    foreach (index, point : points) {
+        Vec3 published = published_world(&fixture, probes[index], 0);
+        Vec3 closest = closest_on_segment(point, start, end);
+        float distance = (point - closest).length();
+        assert(finite(published));
+        if (distance >= expanded) {
+            assert(near(published, point));
+        } else if (distance > CONTACT_TOLERANCE) {
+            assert(near(published, closest + (point - closest) / distance * expanded, CONTACT_TOLERANCE));
+        } else {
+            assert(near(closest_on_segment(published, start, end), closest, CONTACT_TOLERANCE));
+            assert(math::abs(segment_distance(published, start, end) - expanded) <= CONTACT_TOLERANCE);
+        }
+    }
+
+    step(&fixture, physics::DEFAULT_FIXED_DT);
+    foreach (index, point : points) {
+        ClothState* state = state_of(&fixture, probes[index]);
+        assert(finite(state.positions[0]));
+        if (segment_distance(point, start, end) >= expanded) {
+            assert(state.positions[0] == point);
+        } else {
+            assert(segment_distance(state.positions[0], start, end) >= expanded - CONTACT_TOLERANCE);
+        }
+        foreach (pin : state.pins) assert(state.positions[pin] == maths::transform_point(probes[index].world, state.rest[pin]));
+    }
+}
+
+fn void test_cloth_sphere_and_capsule_projection() @test {
+    Vec3[4] sphere_points = { { 0.3f, 0.4f, 0 }, { 0, 0, 0 }, { 1, 0, 0 }, { 0, 0, 2 } };
+    check_projection(
+        collider: sphere(1),
+        start:    { 0, 0, 0 },
+        end:      { 0, 0, 0 },
+        points:   sphere_points[..],
+    );
+    Vec3[5] capsule_points = { { 0.2f, 0.5f, 0.1f }, { 0, 0.3f, 0 }, { 0.1f, 1.2f, 0.1f }, { 0.5f, 0, 0 }, { 2, 0, 0 } };
+    check_projection(
+        collider: capsule(0.5f, 1),
+        start:    { 0, -1, 0 },
+        end:      { 0, 1, 0 },
+        points:   capsule_points[..],
+    );
+}
+
+fn void test_cloth_contact_uses_final_body_pose() @test {
+    Fixture fixture;
+    setup(&fixture, weightless());
+    defer teardown(&fixture);
+    ColliderDesc collider = capsule(0.5f, 1);
+    Node* body = add_body_node(&fixture, (&collider)[:1]);
+    Entity[1] colliders = { body.id };
+    Node* probe = add_probe(&fixture, { 1, 0, 0 }, colliders[..]);
+    ClothState* state = state_of(&fixture, probe);
+    float expanded = collider.radius + PROBE_THICKNESS;
+    step(&fixture, physics::DEFAULT_FIXED_DT);
+    assert(state.positions[0] == (Vec3){ 1, 0, 0 });
+
+    fixture.physics.update(physics::DEFAULT_FIXED_DT);
+    body.local.position = { 0.9f, 0, 0 };
+    body.local.rotation = quaternion::from_axis_angle{float}({ 1, 0, 0 }, (float)math::PI / 2);
+    fixture.scene.update_world();
+    cloth::sample_bodies(&fixture.scene, state);
+    for (float progress = 0.25f; progress < 1; progress += 0.25f) {
+        cloth::place_shapes(state, progress);
+        float length = (state.shape_ends[0] - state.shape_starts[0]).length();
+        assert(math::abs(length - 2 * collider.half_height) <= POSITION_TOLERANCE);
+    }
+    fixture.physics.update_cloths();
+    Vec3 start = maths::transform_point(body.world, { 0, -1, 0 });
+    Vec3 end = maths::transform_point(body.world, { 0, 1, 0 });
+    assert(near(state.shape_starts[0], start) && near(state.shape_ends[0], end));
+    assert(segment_distance(state.positions[0], start, end) >= expanded - CONTACT_TOLERANCE);
+    assert(segment_distance(published_world(&fixture, probe, 0), start, end) >= expanded - CONTACT_TOLERANCE);
+
+    Vec3 position = state.positions[0];
+    Vec3 velocity = state.velocities[0];
+    maths::Transform solved = state.bodies[0].solved;
+    uint revision = geometry_of(&fixture, probe).header.revision;
+    fixture.physics.update(0);
+    body.local.position = position - (Vec3){ 0.2f, 0, 0 };
+    fixture.scene.update_world();
+    start = maths::transform_point(body.world, { 0, -1, 0 });
+    end = maths::transform_point(body.world, { 0, 1, 0 });
+    assert(segment_distance(position, start, end) < expanded);
+    fixture.physics.update_cloths();
+    assert(segment_distance(published_world(&fixture, probe, 0), start, end) >= expanded - CONTACT_TOLERANCE);
+    assert(geometry_of(&fixture, probe).header.revision == revision + 1);
+    assert(state.positions[0] == position && state.velocities[0] == velocity);
+    assert(state.bodies[0].solved.position == solved.position && state.bodies[0].solved.rotation.v == solved.rotation.v);
+}
+
+fn void test_cloth_collider_scale_applied_once() @test {
+    Fixture fixture;
+    setup(&fixture, weightless());
+    defer teardown(&fixture);
+    maths::Transform offset_left = maths::TRANSFORM_IDENTITY;
+    offset_left.position = { -0.5f, 0, 0 };
+    ColliderDesc[2] shapes = { sphere(0.25f, { 0.5f, 0, 0 }), capsule(0.25f, 0.5f, offset_left) };
+    Node* body = fixture.scene.add_node(name: "scaled")!!;
+    body.local = {
+        .position = { 0, 1, 0 },
+        .rotation = quaternion::from_axis_angle{float}({ 0, 1, 0 }, 0.5f),
+        .scale    = { 2, 2, 2 },
+    };
+    fixture.scene.update_world();
+    fixture.physics.add_body(body, physics::default_body_desc(KINEMATIC), shapes[..])!!;
+    RigidBody* rigid = fixture.scene.get(body, RigidBody);
+    maths::Transform pose = rigid.current;
+    Entity[1] colliders = { body.id };
+
+    Vec3 centre = pose.position + pose.rotation.rotate_vec3(rigid.colliders[0].local.position);
+    Vec3 half = pose.rotation.rotate_vec3({ 0, rigid.colliders[1].half_height, 0 });
+    Vec3 middle = pose.position + pose.rotation.rotate_vec3(rigid.colliders[1].local.position);
+    Vec3 above = { 0, 0.1f, 0 };
+    Vec3 side = pose.rotation.rotate_vec3({ 0, 0, 0.1f });
+    Node* sphere_probe = add_probe(&fixture, centre + above, colliders[..]);
+    Node* capsule_probe = add_probe(&fixture, middle + side, colliders[..]);
+    publish(&fixture);
+
+    float sphere_reach = rigid.colliders[0].radius + PROBE_THICKNESS;
+    float capsule_reach = rigid.colliders[1].radius + PROBE_THICKNESS;
+    assert(near(published_world(&fixture, sphere_probe, 0), centre + above.normalize() * sphere_reach, CONTACT_TOLERANCE));
+    assert(near(published_world(&fixture, capsule_probe, 0), middle + side.normalize() * capsule_reach, CONTACT_TOLERANCE));
+    ClothState* state = state_of(&fixture, capsule_probe);
+    assert(near(state.shape_starts[0], centre) && near(state.shape_ends[0], centre));
+    assert(near(state.shape_starts[1], middle - half) && near(state.shape_ends[1], middle + half));
+}
+
+fn void test_cloth_collider_capacity_is_shape_count() @test {
+    Fixture fixture;
+    setup(&fixture, weightless());
+    defer teardown(&fixture);
+    ColliderDesc[cloth::MAX_CLOTH_COLLIDERS + 1] spheres;
+    foreach (index, &shape : spheres) *shape = sphere(0.1f, { (float)index, 0, 0 });
+    ColliderDesc block = physics::default_collider_desc(BOX);
+    block.half_extents = { 0.1f, 0.1f, 0.1f };
+    ColliderDesc[cloth::MAX_CLOTH_COLLIDERS + 1] mixed;
+    mixed[:cloth::MAX_CLOTH_COLLIDERS] = spheres[:cloth::MAX_CLOTH_COLLIDERS];
+    mixed[cloth::MAX_CLOTH_COLLIDERS] = block;
+    Node* full = add_body_node(&fixture, mixed[..]);
+    Node* over = add_body_node(&fixture, spheres[..]);
+    ColliderDesc single = capsule(0.1f, 0.2f);
+    Node* extra = add_body_node(&fixture, (&single)[:1]);
+    Entity[cloth::MAX_CLOTH_COLLIDERS + 1] boxes;
+    foreach (&entry : boxes) *entry = add_body_node(&fixture, (&block)[:1]).id;
+    GeometryId source = add_grid(&fixture, 1);
+
+    ClothDesc desc = cloth::default_cloth_desc();
+    Entity[1] listed = { full.id };
+    desc.colliders = listed[..];
+    Node* accepted = add_cloth_node(&fixture, source);
+    fixture.scene.add_cloth(&fixture.assets, accepted, desc)!!;
+    assert(state_of(&fixture, accepted).shapes.len == cloth::MAX_CLOTH_COLLIDERS);
+
+    Node* plain = add_cloth_node(&fixture, source);
+    listed[0] = over.id;
+    check_rejected(&fixture, plain, desc, c3d::CAPACITY_EXCEEDED);
+    Entity[2] pair = { full.id, extra.id };
+    desc.colliders = pair[..];
+    check_rejected(&fixture, plain, desc, c3d::CAPACITY_EXCEEDED);
+    desc.colliders = boxes[..];
+    check_rejected(&fixture, plain, desc, c3d::CAPACITY_EXCEEDED);
+    boxes[cloth::MAX_CLOTH_COLLIDERS - 1] = extra.id;
+    desc.colliders = boxes[:cloth::MAX_CLOTH_COLLIDERS];
+    fixture.scene.add_cloth(&fixture.assets, plain, desc)!!;
+    ClothState* state = state_of(&fixture, plain);
+    assert(state.bodies.len == cloth::MAX_CLOTH_COLLIDERS && state.shapes.len == 1);
+}
+
+fn void test_cloth_collider_bindings_are_owned_and_generational() @test {
+    Fixture fixture;
+    setup(&fixture, weightless());
+    defer teardown(&fixture);
+    ColliderDesc collider = sphere(0.5f);
+    Node* body = add_body_node(&fixture, (&collider)[:1]);
+    Entity owner = body.id;
+    Entity[1] colliders = { owner };
+    Vec3 inside = { 0.1f, 0.2f, 0 };
+    Node* probe = add_probe(&fixture, inside, colliders[..]);
+    colliders[0] = {};
+    float expanded = collider.radius + PROBE_THICKNESS;
+    publish(&fixture);
+    assert(math::abs(published_world(&fixture, probe, 0).length() - expanded) <= CONTACT_TOLERANCE);
+
+    fixture.physics.remove_body(body);
+    publish(&fixture);
+    assert(near(published_world(&fixture, probe, 0), inside));
+
+    fixture.physics.add_body(body, physics::default_body_desc(KINEMATIC), (&collider)[:1])!!;
+    body.local.position = { 0.2f, 0, 0 };
+    publish(&fixture);
+    assert(math::abs((published_world(&fixture, probe, 0) - body.local.position).length() - expanded) <= CONTACT_TOLERANCE);
+
+    fixture.scene.remove(body);
+    Node* replacement = add_body_node(&fixture, (&collider)[:1]);
+    assert(replacement.id.index == owner.index && replacement.id.generation != owner.generation);
+    publish(&fixture);
+    assert(near(published_world(&fixture, probe, 0), inside));
+
+    Node* plain = add_cloth_node(&fixture, add_grid(&fixture, 1));
+    ClothDesc desc = cloth::default_cloth_desc();
+    Entity[1] dead = { owner };
+    desc.colliders = dead[..];
+    check_rejected(&fixture, plain, desc, c3d::INVALID_ID);
+    Node* unbuilt = fixture.scene.add_node(name: "unbuilt")!!;
+    fixture.scene.add_physics_body(unbuilt, physics::default_body_desc(KINEMATIC), (&collider)[:1])!!;
+    Entity[1] missing = { unbuilt.id };
+    desc.colliders = missing[..];
+    check_rejected(&fixture, plain, desc, physics::NO_BODY);
+    Entity[2] twice = { replacement.id, replacement.id };
+    desc.colliders = twice[..];
+    check_rejected(&fixture, plain, desc, c3d::INVALID_ARGUMENT);
+}
+
+fn void test_cloth_contacts_preserve_allocation_and_pins() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    Fixture fixture;
+    setup(&fixture, allocator: &tracker);
+    defer teardown(&fixture);
+    maths::Transform across = maths::TRANSFORM_IDENTITY;
+    across.rotation = quaternion::from_axis_angle{float}({ 0, 0, 1 }, (float)math::PI / 2);
+    ColliderDesc bar = capsule(0.15f, 0.3f, across);
+    Node* sweeping = add_body_node(&fixture, (&bar)[:1], { 0.5f, -0.5f, 0 });
+    Node* crossing = add_body_node(&fixture, (&bar)[:1], { 0.5f, -0.8f, 0 });
+    ColliderDesc ball = sphere(0.3f);
+    Node* lone = add_body_node(&fixture, (&ball)[:1], { 5.5f, -0.5f, 0.1f });
+
+    Node* draped = add_cloth_node(&fixture, add_grid(&fixture, GRID_CELLS));
+    Entity[2] pair = { sweeping.id, crossing.id };
+    ClothDesc desc = pinned_desc(top_row(GRID_CELLS));
+    desc.colliders = pair[..];
+    desc.collide_ground = true;
+    desc.ground_height = -0.9f;
+    fixture.scene.add_cloth(&fixture.assets, draped, desc)!!;
+    Node* isolated = add_cloth_node(&fixture, add_grid(&fixture, GRID_CELLS));
+    isolated.local.position = { 5, 0, 0 };
+    fixture.scene.update_world();
+    Entity[1] single = { lone.id };
+    ClothDesc isolated_desc = pinned_desc(top_row(GRID_CELLS));
+    isolated_desc.colliders = single[..];
+    fixture.scene.add_cloth(&fixture.assets, isolated, isolated_desc)!!;
+    float reach = ball.radius + isolated_desc.thickness;
+    Node*[2] cloths = { draped, isolated };
+
+    for (uint update = 0; update < CONTACT_UPDATES; update++) {
+        float phase = (float)update * 0.1f;
+        sweeping.local.position.z = 0.3f * math::sin(phase);
+        crossing.local.position.x = 0.5f + 0.4f * math::cos(phase);
+        lone.local.position.z = 0.2f * math::sin(phase);
+        float dt = update % 3 == 0 ? 0 : (update % 3 == 1 ? physics::DEFAULT_FIXED_DT : 2 * physics::DEFAULT_FIXED_DT);
+        fixture.physics.update(dt);
+        fixture.scene.update_world();
+        sz allocations = tracker.total_allocation_count();
+        fixture.physics.update_cloths();
+        assert(tracker.total_allocation_count() == allocations);
+        bool stepped = fixture.physics.steps_last_update > 0;
+        foreach (node : cloths) {
+            ClothState* state = state_of(&fixture, node);
+            foreach (pin : state.pins) {
+                Vec3 target = maths::transform_point(node.world, state.rest[pin]);
+                assert(near(published_world(&fixture, node, pin), target));
+                if (stepped) assert(state.positions[pin] == target);
+            }
+            foreach (position : state.positions) assert(finite(position));
+        }
+        ClothState* state = state_of(&fixture, isolated);
+        Vec3 centre = maths::translation(lone.world);
+        foreach (index, position : state.positions) {
+            if (state.inverse_masses[index] == 0) continue;
+            if (stepped) assert((position - centre).length() >= reach - CONTACT_TOLERANCE);
+            assert((published_world(&fixture, isolated, (uint)index) - centre).length() >= reach - CONTACT_TOLERANCE);
+        }
+    }
+}
+
+// Two ragdoll bones along +Y with an unskinned cape parented to the spine joint.
+fn CapeRig add_cape_rig(Fixture* fixture) @private {
+    Vec3[3] positions = { { 0, 0, 0 }, { 0, 1, 0 }, { 0, 2, 0 } };
+    int[3] parents = { -1, 0, 1 };
+    Skeleton skeleton = {
+        .joint_names  = alloc::new_array(mem, String, 3),
+        .parents      = alloc::new_array(mem, int, 3),
+        .rest_pose    = alloc::new_array(mem, maths::Transform, 3),
+        .inverse_bind = alloc::new_array(mem, Mat4, 3),
+    };
+    skeleton.parents[..] = parents[..];
+    foreach (index, position : positions) {
+        maths::Transform unbind = maths::TRANSFORM_IDENTITY;
+        unbind.position = -position;
+        skeleton.inverse_bind[index] = unbind.to_mat4();
+        skeleton.rest_pose[index] = maths::TRANSFORM_IDENTITY;
+    }
+    SkeletonId skeleton_id = fixture.assets.add_skeleton_owned(&skeleton)!!;
+
+    CapeRig rig = { .joints = alloc::new_array(fixture.scene.allocator, Node*, 3) };
+    Node* character = fixture.scene.add_node(name: "character")!!;
+    rig.skin = fixture.scene.add_node(character, "skin")!!;
+    foreach (index, position : positions) {
+        int parent = parents[index];
+        Node* joint = fixture.scene.add_node(parent < 0 ? character : rig.joints[parent], "joint")!!;
+        joint.local.position = parent < 0 ? position : position - positions[parent];
+        rig.joints[index] = joint;
+    }
+    fixture.scene.add(rig.skin, (SkinBinding){ .skeleton = skeleton_id, .joints = rig.joints });
+    fixture.scene.update_world();
+
+    RagdollBone[2] bones = { physics::default_ragdoll_bone(0), physics::default_ragdoll_bone(1) };
+    foreach (&bone : bones) bone.radius = BONE_RADIUS;
+    bones[1].length = 1;
+    RagdollDesc ragdoll = physics::default_ragdoll_desc();
+    ragdoll.bones = bones[..];
+    fixture.scene.build_ragdoll(&fixture.assets, rig.skin, ragdoll)!!;
+    rig.ragdoll = fixture.scene.get(rig.skin, Ragdoll);
+    fixture.physics.update(0);
+
+    rig.cape = fixture.scene.add_mesh(
+        geometry: add_grid(fixture, 2, 0.6f),
+        material: fixture.material,
+        parent:   rig.joints[1],
+        name:     "cape",
+    )!!;
+    rig.cape.local.position = { -0.3f, 0.5f, -0.2f };
+    fixture.scene.update_world();
+    Entity[2] colliders = { rig.ragdoll.bone_nodes[0].id, rig.ragdoll.bone_nodes[1].id };
+    ClothDesc desc = pinned_desc(top_row(2));
+    desc.colliders = colliders[..];
+    fixture.scene.add_cloth(&fixture.assets, rig.cape, desc)!!;
+    return rig;
+}
+
+fn void late_update(Fixture* fixture, float dt) @private {
+    fixture.physics.update(dt);
+    fixture.physics.update_ragdolls();
+    fixture.scene.update_world();
+    fixture.physics.update_cloths();
+}
+
+fn void check_cape(Fixture* fixture, CapeRig* rig) @private {
+    ClothState* state = state_of(fixture, rig.cape);
+    Mat4 final_world = rig.joints[1].world.mul(rig.cape.local.to_mat4());
+    foreach (pin : state.pins) {
+        Vec3 target = maths::transform_point(final_world, state.rest[pin]);
+        assert(near(published_world(fixture, rig.cape, pin), target));
+        if (fixture.physics.steps_last_update) assert(near(state.positions[pin], target));
+    }
+    foreach (index, shape : state.shapes) {
+        Node* bone = rig.ragdoll.bone_nodes[shape.body];
+        Collider* collider = &fixture.scene.get(bone, RigidBody).colliders[0];
+        Vec3 half = collider.local.rotation.rotate_vec3({ 0, collider.half_height, 0 });
+        Vec3 start = maths::transform_point(bone.world, collider.local.position - half);
+        Vec3 end = maths::transform_point(bone.world, collider.local.position + half);
+        assert(near(state.shape_starts[index], start, CONTACT_TOLERANCE));
+        assert(near(state.shape_ends[index], end, CONTACT_TOLERANCE));
+    }
+}
+
+fn void test_cloth_cape_uses_final_joint_pose() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    CapeRig rig = add_cape_rig(&fixture);
+    ClothState* state = state_of(&fixture, rig.cape);
+    assert(state.bodies.len == 2 && state.shapes.len == 2);
+
+    fixture.physics.update(0);
+    fixture.physics.update_cloths();
+    rig.joints[0].local.position = { 0.5f, 0, 0 };
+    rig.joints[1].local.rotation = quaternion::from_axis_angle{float}({ 0, 0, 1 }, 0.3f);
+    fixture.scene.update_world();
+    late_update(&fixture, physics::DEFAULT_FIXED_DT);
+    check_cape(&fixture, &rig);
+
+    fixture.physics.set_ragdoll_mode(rig.skin, SIMULATED);
+    rig.ragdoll.weight = 1;
+    Node* spine = rig.ragdoll.bone_nodes[1];
+    RigidBody* spine_body = fixture.scene.get(spine, RigidBody);
+    fixture.physics.teleport(spine, spine_body.current.position + (Vec3){ 0, 0, 1 }, spine_body.current.rotation);
+    Vec3 animated = maths::transform_point(rig.cape.world, state.rest[0]);
+    late_update(&fixture, physics::DEFAULT_FIXED_DT);
+    check_cape(&fixture, &rig);
+    assert((maths::transform_point(rig.cape.world, state.rest[0]) - animated).length() > 0.5f);
+
+    rig.ragdoll.weight = 0.5f;
+    late_update(&fixture, physics::DEFAULT_FIXED_DT);
+    check_cape(&fixture, &rig);
+
+    Vec3[9] solved;
+    solved[..] = state.positions[..];
+    rig.joints[0].local.position = { -0.5f, 0, 0 };
+    late_update(&fixture, 0);
+    assert(fixture.physics.steps_last_update == 0);
+    check_cape(&fixture, &rig);
+    foreach (index, position : solved) assert(state.positions[index] == position);
 }

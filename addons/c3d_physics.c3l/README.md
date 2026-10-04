@@ -8,10 +8,13 @@ the scene, create its world, and destroy the world before the scene/assets.
 ## Cloth
 
 `c3d::physics::cloth` simulates a mesh over an owned geometry copy with pinned vertices, node
-`Wind` drag and an optional ground. Attach with `scene.add_cloth(&assets, node, desc)` and call
-`physics.update_cloths()` once after `physics.update`, after final ragdoll/IK poses and
+`Wind` drag, an optional ground and one-way contacts with the sphere and capsule colliders of the
+bodies listed in `ClothDesc.colliders`. Attach with `scene.add_cloth(&assets, node, desc)` and
+call `physics.update_cloths()` once after `physics.update`, after final ragdoll/IK poses and
 `scene.update_world()`, before rendering. See [Cloth](../../docs/cloth.md) for the contract,
-faults, frame order and measurements; the `cloth` example shows a flag.
+faults, frame order and measurements; the `cloth` example shows a flag and a cape on the ragdoll
+character (`--scene flag|cape|both`). The manual Vulkan acceptance runs with
+`c3c test cloth_acceptance --path addons/c3d_physics.c3l/test/gpu`.
 
 ## Breakables
 

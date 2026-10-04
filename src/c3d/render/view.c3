@@ -1378,7 +1378,11 @@ fn gpu::GpuAddress? upload_previous_pose(
         }
         previous.instances = offset_by_instances(base, offset, Mat4f::size);
     }
-    if (positions) previous.positions = upload_bytes(renderer, pose.vertices.ptr, pose.vertices.len * Vec3::size)!;
+    if (positions) {
+        usz history_bytes = pose.vertices.len * Vec3::size;
+        previous.positions = upload_bytes(renderer, pose.vertices.ptr, history_bytes)!;
+        renderer.stats.vertex_history_bytes += (uint)history_bytes;
+    }
     return upload_bytes(renderer, &previous, PreviousPoseGpu::size);
 }
 

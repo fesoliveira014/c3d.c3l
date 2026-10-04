@@ -38,10 +38,11 @@ fn void solve_cloth(
               ? state.pin_targets[slot]
               : state.pin_anchors[slot] + (state.pin_targets[slot] - state.pin_anchors[slot]) * progress;
         }
+        place_shapes(state, progress);
         for (uint iteration = 0; iteration < desc.iterations; iteration++) {
             project_constraints(state, state.edges, stretch);
             project_constraints(state, state.bends, bend);
-            if (desc.collide_ground) project_ground(state, state.predicted);
+            project_contacts(state, state.predicted);
         }
         foreach (index, &position : state.positions) {
             state.velocities[index] = (state.predicted[index] - *position) / dt;
@@ -49,12 +50,14 @@ fn void solve_cloth(
         }
     }
     state.pin_anchors[..] = state.pin_targets[..];
+    finish_body_poses(state);
 }
 
 fn void publish_cloth(ClothState* state, Mat4 world) @private {
     state.published[..] = state.positions[..];
     foreach (slot, pin : state.pins) state.published[pin] = state.pin_targets[slot];
-    if (state.desc.collide_ground) project_ground(state, state.published);
+    place_shapes(state, 1);
+    project_contacts(state, state.published);
     Mat4 to_local = maths::inverse_affine(world);
     GeometryAsset* geometry = state.assets.geometry(state.geometry);
     bool changed;
@@ -105,6 +108,11 @@ fn void project_constraints(ClothState* state, ClothConstraint[] constraints, fl
         state.predicted[constraint.first] += correction * first_weight;
         state.predicted[constraint.second] -= correction * second_weight;
     }
+}
+
+fn void project_contacts(ClothState* state, Vec3[] positions) @local {
+    if (state.desc.collide_ground) project_ground(state, positions);
+    project_shapes(state, positions);
 }
 
 fn void project_ground(ClothState* state, Vec3[] positions) @private {

@@ -2,8 +2,9 @@
 
 `c3d::physics::cloth`, in the physics add-on, simulates a triangle mesh with position-based
 dynamics: unit-mass particles, one distance constraint per unique triangle edge, one bend
-distance per edge shared by exactly two triangles, gravity, node `Wind` drag, damping, hard pins
-and an optional ground plane. It imports the standard library, core and `c3d::physics`; it never
+distance per edge shared by exactly two triangles, gravity, node `Wind` drag, damping, hard pins,
+an optional ground plane and one-way contacts with the sphere and capsule colliders of listed
+rigid bodies. It imports the standard library, core and `c3d::physics`; it never
 creates GPU resources. Core supplies only editable geometry and
 [vertex motion history](post.md#edited-vertices).
 
@@ -19,21 +20,23 @@ scene.add_cloth(&assets, flag_node, desc)!;
 color streams, computed normals, no tangents), builds the constraints from the current world
 positions, and replaces `Mesh.geometry` with the copy and enables `Mesh.vertex_motion`. The
 source geometry is never written; two cloths on one source own separate copies. The node needs a
-current, invertible world matrix. Pins are copied, deduplicated and sorted.
+current, invertible world matrix. Pins are copied, deduplicated and sorted; collider ids and
+their shapes are copied (see [Collisions](#collisions)).
 
 | Fault | Cause |
 | --- | --- |
 | `NO_MESH` | The node has no Mesh. |
 | `CLOTH_EXISTS` | The node already carries a Cloth. |
-| `c3d::INVALID_ID` | The Mesh geometry is dead. |
+| `c3d::INVALID_ID` | The Mesh geometry or a listed collider entity is dead. |
 | `physics::SOURCE_UNAVAILABLE` | The source's CPU positions were released. |
+| `physics::NO_BODY` | A listed collider node has no built RigidBody. |
 | `c3d::UNSUPPORTED` | SkinBinding, morph weights or targets, joints, custom data, a bounds override, or a non-indexed or non-triangle topology. |
-| `c3d::INVALID_ARGUMENT` | Zero substeps or iterations, a stiffness outside `[0, 1]`, negative or non-finite damping or thickness, non-finite gravity scale or ground height, a pin or index out of range, non-finite positions, a degenerate triangle or an edge shared by more than two triangles. |
-| `c3d::CAPACITY_EXCEEDED` | The geometry pool is full or the state block cannot be allocated. |
+| `c3d::INVALID_ARGUMENT` | Zero substeps or iterations, a stiffness outside `[0, 1]`, negative or non-finite damping or thickness, non-finite gravity scale or ground height, a pin or index out of range, non-finite positions, a degenerate triangle, an edge shared by more than two triangles, or a collider listed twice. |
+| `c3d::CAPACITY_EXCEEDED` | More than 32 listed colliders or captured shapes, a full geometry pool, or a state block that cannot be allocated. |
 
 Every fault leaves the Mesh, the component store and the asset counts as they were. Defaults: 4
 substeps, 8 iterations, stretch stiffness 1, bend stiffness 0.5, damping 0.5 per second,
-thickness 0.01 m, gravity scale 1, no pins, no ground.
+thickness 0.01 m, gravity scale 1, no pins, no ground, no colliders.
 
 `Scene.remove_cloth` restores the source geometry and the previous `vertex_motion`, then removes
 the component, whose hook removes the private geometry and frees the state block. Removing the
@@ -45,6 +48,39 @@ To change pins, settings or the source, remove and attach again.
 Use two-sided materials without tangent-space normal maps or vertex displacement; the copy
 carries no tangents and recomputed normals follow the simulated surface. `Mesh.trace` is the
 application's choice.
+
+## Collisions
+
+```c3
+ClothDesc desc = cloth::default_cloth_desc();
+desc.pins = cape_pins;
+desc.colliders = bone_entities;
+scene.add_cloth(&assets, cape_node, desc)!;
+```
+
+`ClothDesc.colliders` lists up to `MAX_CLOTH_COLLIDERS` (32) entities whose RigidBody is already
+built. At attachment the cloth copies the ids and captures each body's SPHERE and CAPSULE
+colliders from `RigidBody.colliders` as body-local segments and radii (a sphere is a zero-length
+capsule; a capsule runs along its local Y over `±half_height`); other kinds are skipped. At most 32
+shapes are captured in total, so a body with several shapes takes several slots. The cloth keeps
+no pointer into physics storage. To change the list or a body's shapes, remove the cloth and
+attach again; rebuilding a body with the same primitives keeps working.
+
+Each update reads every listed body's final published node pose (translation and rotation; sphere
+and capsule dimensions already ignore node scale) and interpolates from the pose of its last
+solved substep with shortest-path rotation, so a capsule keeps its length while it turns. A first
+observation, or one after the body was missing, uses the current pose on both sides. A dead
+entity or a node without a RigidBody contributes nothing; a new entity in the same slot is never
+bound. In each pass, after the constraints, free particles are pushed outside every shape expanded
+by `thickness`; a particle on a segment's centreline leaves along a fixed perpendicular, one at a
+sphere's centre along +Y. A zero-step update projects the publication against the current poses
+and keeps the solved positions, velocities and body poses. Pins are never projected.
+
+Contacts are one-way: cloth applies no impulse to bodies. Projection is discrete, so a fast
+collider can tunnel through the sheet, and conflicting shapes or the ground can leave residual
+penetration. Shapes follow the published bodies, not the rendered skin: a partially blended
+ragdoll, IK or a skin wider than its capsules can show the mesh through the cloth; the example
+raises the cape's thickness for that.
 
 ## Frame order
 
@@ -74,8 +110,8 @@ Per substep: wind accelerations from each triangle's area, unit normal and relat
 (`Wind.velocity` minus the mean corner velocity, clamped to `max_speed` when it is positive), as
 `drag * area * dot(relative, normal) * normal`, one third per corner; semi-implicit integration
 of gravity and wind; damping `max(0, 1 - damping * dt)`; prediction; pins; then `iterations`
-passes over edges, bends and the ground (free particles kept at `ground_height + thickness`);
-velocities from the corrected displacement. A stiffness `s` is applied per pass as
+passes over edges, bends, the ground (free particles kept at `ground_height + thickness`) and
+the collider shapes; velocities from the corrected displacement. A stiffness `s` is applied per pass as
 `1 - (1 - s)^(1 / iterations)`, which normalizes one isolated constraint, not a coupled mesh. A
 pair that collapses onto one point separates along its rest direction. `Wind.lift` is unused.
 
@@ -90,24 +126,62 @@ after attachment (the CPU triangle tree rebuilds only when a query asks for it).
 and constraint count.
 
 Geometry uploads whole on each revision: 47,264 bytes for the 33×33 benchmark flag (positions,
-normals, UV and indices). Each temporal view additionally carries 12 bytes per vertex of previous
-positions, 13,068 bytes for that flag.
+normals, UV and 16-bit indices, counted in `Stats.upload_bytes`). Each temporal view additionally
+writes 12 bytes per vertex of previous positions through the frame ring, 13,068 bytes for that
+flag, counted in `Stats.vertex_history_bytes`.
 
 ## Example and measurements
 
 ```text
 python scripts/build.py --example cloth
-addons/c3d_physics.c3l/build/cloth.exe --frames 300
+addons/c3d_physics.c3l/build/cloth.exe [--scene flag|cape|both] [--still] [--frames 300]
 c3c build cloth --path addons/c3d_physics.c3l -O3
-addons/c3d_physics.c3l/build/cloth.exe --benchmark
+addons/c3d_physics.c3l/build/cloth.exe --benchmark --scene flag|cape|both [--still] [--ragdoll]
 ```
 
-The interactive flag is 24×16 cells with a pinned edge, gusting wind, and TAA and motion blur
-toggles. The benchmark renders the 33×33-vertex flag (32×32 cells, 6,144 constraints) at the
-default 4×8 settings to a 1280×720 TAA and motion-blur view, with 120 warm-up and 600 measured 60 Hz
-frames and Vulkan validation on. On Windows, RTX 4090, C3 0.8.3 `-O3`, three runs: solve 1.34-1.53 ms
-mean (p95 1.85-2.19 ms, frames that took two physics steps), publication 0.013-0.015 ms, GPU frame
-0.165-0.167 ms median, 47,264 uploaded geometry bytes per frame.
+Run from `addons/c3d_physics.c3l`, which locates the character model. The interactive scenes are a
+24×16-cell flag with a pinned edge and gusting wind, a 12×22-cell cape (0.5 × 0.95 m, top row
+pinned) parented to the `DEF-spine.003` joint of the walking quaternius character with all twelve
+ragdoll bone capsules listed as colliders and the ground on, or both. The panel toggles the
+ragdoll (bones go limp; turning it off freezes the pose and blends back to the walk over 0.8 s),
+collider guides drawn at the published body poses, TAA and motion blur. The cape uses
+`thickness` 0.02 m so the skin outside the bone capsules stays under it. `--still` keeps the same
+meshes without attaching cloth.
 
-No self-collision, tearing, soft pins, dihedral bending, skinned base pose, tangents, GPU or crowd
-simulation, or simulation-origin rebasing. Parallel solving waits for a measured consumer need.
+The benchmark renders one scene (the flag at 32×32 cells) at the default 4×8 settings to a
+1280×720 TAA and motion-blur view with 120 warm-up and 600 measured 60 Hz frames and Vulkan
+validation on; `--ragdoll` drops the character at the end of the warm-up. Windows, RTX 4090,
+C3 0.8.3 `-O3`, collisions on top of 3be1ef0, three runs each:
+
+| Scene | Particles / constraints | Solve mean (p95), ms | Publication mean, ms | Geometry + history bytes per frame |
+| --- | --- | --- | --- | --- |
+| Flag 33×33 | 1,089 / 6,144 | 1.27-1.43 (1.47-2.17) | 0.012-0.013 | 47,264 + 13,068 |
+| Cape 13×23, 12 capsules | 299 / 1,584 | 0.58-0.59 (0.76-0.82) | 0.011-0.012 | 12,880 + 3,588 |
+| Both | 1,388 / 7,728 | 1.81-1.82 (2.05-2.15) | 0.022-0.023 | 60,144 + 16,656 |
+| Cape during ragdoll, one run | 299 / 1,584 | 0.57 (0.76) | 0.011 | 12,880 + 3,588 |
+
+The p95 frames took two physics steps. GPU frame medians, cloth on and `--still` interleaved per
+scene, fall into two clusters set by the adapter's clock state, not by the cloth: 0.16-0.19 ms and
+0.30-0.38 ms (flag on 0.169, 0.170, 0.336; off 0.161, 0.300, 0.319; cape on 0.186, 0.348, 0.378; off
+0.335-0.349; both on 0.347-0.369; off 0.174, 0.315, 0.326). Within the lower cluster the flag
+costs under 0.01 ms; the on/off difference is below the run-to-run variability. Serial solving
+of both cloths stays under 2.2 ms per frame, so no parallel executor is proposed.
+
+The manual Vulkan acceptance renders real cloth through the TAA velocity debug output, on forward
+and deferred views: deformation velocity of a free-falling sheet under a still node matches the
+CPU projection within 2e-3 UV; fully pinned sheets move with their node in the same frame while
+free particles keep zero velocity and stay drawn; two views of different cadence each measure
+motion since their own last rendering; a re-attached cloth and the rendering after an aborted
+frame carry zero motion. On Windows, copy `SDL3.dll` and `shaderc_shared.dll` from
+`examples/build` into `build/cloth_acceptance` first:
+
+```text
+c3c test cloth_acceptance --path addons/c3d_physics.c3l/test/gpu
+```
+
+The secondary WSL llvmpipe correctness run is unrun for this change.
+
+No self-collision, collision against the rendered skin, box, hull, mesh, height-field or compound
+contacts, continuous collision, tearing, soft pins, dihedral bending, skinned base pose, tangents,
+GPU or crowd simulation, or simulation-origin rebasing. Parallel solving waits for a measured
+consumer need.
