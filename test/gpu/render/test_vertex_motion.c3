@@ -19,14 +19,16 @@ const float QUAD_SIZE @private = 2;
 const uint VERTEX_SETTLE_FRAMES @private = 3;
 
 struct VertexScene @private {
+    Fixture*      fixture;
     DeformedScene target;
     GeometryId    geometry;
     GeometryId    spare;
     MaterialId    material;
+    Vec3          reference;
 }
 
 fn VertexScene? create_vertex_scene(Fixture* fixture, bool deformed = false) @private {
-    VertexScene result;
+    VertexScene result = { .fixture = fixture };
     MaterialCommon two_sided = material::MATERIAL_COMMON_DEFAULT;
     two_sided.double_sided = true;
     result.material = fixture.assets.add_material(material::basic({ .color = { 1, 1, 1, 1 } }, two_sided))!;
@@ -92,7 +94,12 @@ fn LodVelocityProbe? create_velocity_probe(Fixture* fixture) @private {
     };
 }
 
-fn void? configure_vertex_view(Fixture* fixture, ViewId view, ShadingPath path, bool taa = true) @private {
+fn void? configure_vertex_view(
+    Fixture* fixture,
+    ViewId view,
+    ShadingPath path,
+    bool taa = true,
+) @private {
     ViewDesc desc = fixture.renderer.views.get(view).desc;
     desc.shading = path;
     desc.post.anti_aliasing = taa ? AntiAliasing.TAA : AntiAliasing.NONE;
@@ -100,16 +107,11 @@ fn void? configure_vertex_view(Fixture* fixture, ViewId view, ShadingPath path, 
     return render::configure_view(&fixture.renderer, view, desc);
 }
 
-fn Vec4? render_vertex_frame(
-    Fixture* fixture,
-    VertexScene* target,
-    LodVelocityProbe* probe,
-    ViewId view,
-    Vec3 reference = {},
-) @private {
+fn Vec4? render_vertex_frame(VertexScene* target, LodVelocityProbe* probe, ViewId view) @private {
+    Fixture* fixture = target.fixture;
     Renderer* renderer = &fixture.renderer;
     target.target.scene.update_world();
-    renderer.begin_frame({ .time = 1, .delta = 1.0f / 60, .reference_position = reference })!;
+    renderer.begin_frame({ .time = 1, .delta = 1.0f / 60, .reference_position = target.reference })!;
     defer catch render::abort_frame(renderer);
     renderer.render_view(&target.target.scene, target.target.camera, view)!;
     record_lod_target(fixture, probe, &renderer.views.get(view).velocity)!;
@@ -140,9 +142,9 @@ fn void check_step(Vec4 velocity, Vec2 expected) @private {
     assert(math::abs(velocity.y - expected.y) < VERTEX_VELOCITY_TOLERANCE);
 }
 
-fn void? settle_vertex_view(Fixture* fixture, VertexScene* target, LodVelocityProbe* probe, ViewId view) @private {
-    check_rejected(render_vertex_frame(fixture, target, probe, view)!);
-    for (uint frame = 1; frame < VERTEX_SETTLE_FRAMES; frame++) check_still(render_vertex_frame(fixture, target, probe, view)!);
+fn void? settle_vertex_view(VertexScene* target, LodVelocityProbe* probe, ViewId view) @private {
+    check_rejected(render_vertex_frame(target, probe, view)!);
+    for (uint frame = 1; frame < VERTEX_SETTLE_FRAMES; frame++) check_still(render_vertex_frame(target, probe, view)!);
 }
 
 fn void test_vertex_motion_moves_a_still_mesh() @test {
@@ -157,10 +159,10 @@ fn void test_vertex_motion_moves_a_still_mesh() @test {
         defer scene::destroy_scene(&target.target.scene);
         configure_vertex_view(&fixture, fixture.view, path)!!;
 
-        settle_vertex_view(&fixture, &target, &probe, fixture.view)!!;
+        settle_vertex_view(&target, &probe, fixture.view)!!;
         move_quad(&fixture, target.geometry, VERTEX_STEP);
-        check_step(render_vertex_frame(&fixture, &target, &probe, fixture.view)!!, vertex_step_velocity(&target, VERTEX_STEP));
-        check_still(render_vertex_frame(&fixture, &target, &probe, fixture.view)!!);
+        check_step(render_vertex_frame(&target, &probe, fixture.view)!!, vertex_step_velocity(&target, VERTEX_STEP));
+        check_still(render_vertex_frame(&target, &probe, fixture.view)!!);
         check_validation(&fixture.renderer);
     }
 }
@@ -173,11 +175,16 @@ fn void test_vertex_motion_without_taa_keeps_motion_blur_velocity() @test {
     defer free_lod_readback(&fixture.renderer, probe.readback);
     VertexScene target = create_vertex_scene(&fixture)!!;
     defer scene::destroy_scene(&target.target.scene);
-    configure_vertex_view(&fixture, fixture.view, ShadingPath.FORWARD, taa: false)!!;
+    configure_vertex_view(
+        fixture: &fixture,
+        view:    fixture.view,
+        path:    ShadingPath.FORWARD,
+        taa:     false,
+    )!!;
 
-    for (uint frame = 0; frame < VERTEX_SETTLE_FRAMES; frame++) render_vertex_frame(&fixture, &target, &probe, fixture.view)!!;
+    for (uint frame = 0; frame < VERTEX_SETTLE_FRAMES; frame++) render_vertex_frame(&target, &probe, fixture.view)!!;
     move_quad(&fixture, target.geometry, VERTEX_STEP);
-    Vec4 moved = render_vertex_frame(&fixture, &target, &probe, fixture.view)!!;
+    Vec4 moved = render_vertex_frame(&target, &probe, fixture.view)!!;
     Vec2 expected = vertex_step_velocity(&target, VERTEX_STEP);
     assert(math::abs(moved.x - expected.x) < VERTEX_VELOCITY_TOLERANCE && math::abs(moved.y - expected.y) < VERTEX_VELOCITY_TOLERANCE);
     check_validation(&fixture.renderer);
@@ -195,29 +202,34 @@ fn void test_vertex_motion_rejects_unmatched_history() @test {
     configure_vertex_view(&fixture, fixture.view, ShadingPath.FORWARD)!!;
     Mesh* mesh = target.target.scene.get(target.target.mesh, Mesh);
 
-    settle_vertex_view(&fixture, &target, &probe, fixture.view)!!;
+    settle_vertex_view(&target, &probe, fixture.view)!!;
     mesh.geometry = target.spare;
-    settle_vertex_view(&fixture, &target, &probe, fixture.view)!!;
+    settle_vertex_view(&target, &probe, fixture.view)!!;
 
     render::reset_view_history(renderer, fixture.view)!!;
-    settle_vertex_view(&fixture, &target, &probe, fixture.view)!!;
+    settle_vertex_view(&target, &probe, fixture.view)!!;
 
     GeometryAsset* spare = fixture.assets.geometry(target.spare);
     fixture.assets.release_geometry_cpu(target.spare);
-    spare.data = geometry::plane(fixture.assets.allocator, QUAD_SIZE, QUAD_SIZE, 2, 1);
+    spare.data = geometry::plane(
+        allocator:  fixture.assets.allocator,
+        width:      QUAD_SIZE,
+        depth:      QUAD_SIZE,
+        segments_x: 2,
+    );
     fixture.assets.mark_geometry_dirty(target.spare);
-    settle_vertex_view(&fixture, &target, &probe, fixture.view)!!;
+    settle_vertex_view(&target, &probe, fixture.view)!!;
 
     mesh.vertex_motion = false;
-    render_vertex_frame(&fixture, &target, &probe, fixture.view)!!;
+    render_vertex_frame(&target, &probe, fixture.view)!!;
     mesh.vertex_motion = true;
-    settle_vertex_view(&fixture, &target, &probe, fixture.view)!!;
+    settle_vertex_view(&target, &probe, fixture.view)!!;
 
     target.target.scene.update_world();
     renderer.begin_frame({ .time = 1, .delta = 1.0f / 60 })!!;
     renderer.render_view(&target.target.scene, target.target.camera, fixture.view)!!;
     render::abort_frame(renderer);
-    settle_vertex_view(&fixture, &target, &probe, fixture.view)!!;
+    settle_vertex_view(&target, &probe, fixture.view)!!;
     check_validation(renderer);
 }
 
@@ -231,7 +243,7 @@ fn void test_vertex_motion_released_positions_fault_and_recover() @test {
     VertexScene target = create_vertex_scene(&fixture)!!;
     defer scene::destroy_scene(&target.target.scene);
     configure_vertex_view(&fixture, fixture.view, ShadingPath.FORWARD)!!;
-    settle_vertex_view(&fixture, &target, &probe, fixture.view)!!;
+    settle_vertex_view(&target, &probe, fixture.view)!!;
 
     GeometryAsset* source = fixture.assets.geometry(target.geometry);
     fixture.assets.release_geometry_cpu(target.geometry);
@@ -243,7 +255,7 @@ fn void test_vertex_motion_released_positions_fault_and_recover() @test {
 
     source.data = geometry::plane(fixture.assets.allocator, QUAD_SIZE, QUAD_SIZE);
     fixture.assets.mark_geometry_dirty(target.geometry);
-    check_still(render_vertex_frame(&fixture, &target, &probe, fixture.view)!!);
+    check_still(render_vertex_frame(&target, &probe, fixture.view)!!);
     check_validation(renderer);
 }
 
@@ -263,10 +275,10 @@ fn void test_vertex_motion_follows_each_view_and_reference() @test {
     Vec2 single = vertex_step_velocity(&target, VERTEX_STEP);
     Vec2 double_step = vertex_step_velocity(&target, 2 * VERTEX_STEP);
 
-    settle_vertex_view(&fixture, &target, &probe, fixture.view)!!;
-    settle_vertex_view(&fixture, &target, &second_probe, fixture.second_view)!!;
+    settle_vertex_view(&target, &probe, fixture.view)!!;
+    settle_vertex_view(&target, &second_probe, fixture.second_view)!!;
     move_quad(&fixture, target.geometry, VERTEX_STEP);
-    check_step(render_vertex_frame(&fixture, &target, &probe, fixture.view)!!, single);
+    check_step(render_vertex_frame(&target, &probe, fixture.view)!!, single);
     move_quad(&fixture, target.geometry, VERTEX_STEP);
     target.target.scene.update_world();
     renderer.begin_frame({ .time = 1, .delta = 1.0f / 60 })!!;
@@ -286,12 +298,13 @@ fn void test_vertex_motion_follows_each_view_and_reference() @test {
     check_step(lod_velocity_pixel(second_probe.readback, CENTER_UV), double_step);
 
     target.target.scene.root.local.position = DISTANT_OFFSET;
-    check_still(render_vertex_frame(&fixture, &target, &probe, fixture.view, DISTANT_OFFSET)!!);
-    check_still(render_vertex_frame(&fixture, &target, &probe, fixture.view, DISTANT_OFFSET)!!);
+    target.reference = DISTANT_OFFSET;
+    check_still(render_vertex_frame(&target, &probe, fixture.view)!!);
+    check_still(render_vertex_frame(&target, &probe, fixture.view)!!);
     move_quad(&fixture, target.geometry, VERTEX_STEP);
-    Vec3 crossed = DISTANT_OFFSET + REFERENCE_CROSSING;
-    check_step(render_vertex_frame(&fixture, &target, &probe, fixture.view, crossed)!!, single);
-    check_still(render_vertex_frame(&fixture, &target, &probe, fixture.view, crossed)!!);
+    target.reference = DISTANT_OFFSET + REFERENCE_CROSSING;
+    check_step(render_vertex_frame(&target, &probe, fixture.view)!!, single);
+    check_still(render_vertex_frame(&target, &probe, fixture.view)!!);
     check_validation(renderer);
 }
 
@@ -305,9 +318,9 @@ fn void test_vertex_motion_composes_with_previous_skin_and_morph() @test {
     defer scene::destroy_scene(&target.target.scene);
     configure_vertex_view(&fixture, fixture.view, ShadingPath.FORWARD)!!;
 
-    settle_vertex_view(&fixture, &target, &probe, fixture.view)!!;
+    settle_vertex_view(&target, &probe, fixture.view)!!;
     move_quad(&fixture, target.geometry, VERTEX_STEP);
-    check_step(render_vertex_frame(&fixture, &target, &probe, fixture.view)!!, vertex_step_velocity(&target, VERTEX_STEP));
-    check_still(render_vertex_frame(&fixture, &target, &probe, fixture.view)!!);
+    check_step(render_vertex_frame(&target, &probe, fixture.view)!!, vertex_step_velocity(&target, VERTEX_STEP));
+    check_still(render_vertex_frame(&target, &probe, fixture.view)!!);
     check_validation(&fixture.renderer);
 }

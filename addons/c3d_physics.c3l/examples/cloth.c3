@@ -183,7 +183,12 @@ fn void? build_flag(Demo* demo) @local {
             height:    FLAG_HEIGHT,
         );
         flag_geometry = demo.assets.add_geometry(&flag, "cloth/flag")!;
-        Geometry pole = geometry::cylinder(tmem, POLE_RADIUS, POLE_RADIUS, POLE_HEIGHT);
+        Geometry pole = geometry::cylinder(
+            allocator:     tmem,
+            radius_top:    POLE_RADIUS,
+            radius_bottom: POLE_RADIUS,
+            height:        POLE_HEIGHT,
+        );
         pole_geometry = demo.assets.add_geometry(&pole, "cloth/pole")!;
     };
     Node* pole = demo.scene.add_mesh(pole_geometry, pole_material, name: "pole")!;
@@ -236,12 +241,17 @@ fn void? build_character(Demo* demo) @local {
     scene.update_world();
 
     RagdollBone[ragdoll_bones::RIGIFY_BONE_COUNT] bones;
-    ragdoll_bones::rigify_bones(skeleton, bones[..], DRIVE_HERTZ, DRIVE_DAMPING)!;
+    ragdoll_bones::rigify_bones(
+        skeleton:      skeleton,
+        bones:         bones[..],
+        drive_hertz:   DRIVE_HERTZ,
+        drive_damping: DRIVE_DAMPING,
+    )!;
     RagdollDesc desc = physics::default_ragdoll_desc();
     desc.bones = bones[..];
     desc.filter.group = RAGDOLL_GROUP;
     scene.build_ragdoll(assets, character.skin, desc)!;
-    demo.physics.update(0);
+    demo.physics.update(0); // builds the bone bodies whose capsules the cape captures
 
     MaterialId cape_material = cloth_material(assets, { 0.12f, 0.2f, 0.55f, 1 })!;
     GeometryId cape_geometry;
@@ -503,7 +513,12 @@ fn void? run_interactive(Options options) @local {
         @pool() {
             gui_renderer.new_frame();
             defer if (gui_renderer.frame_open) gui_renderer.finish_frame();
-            panel(&demo, &controls, &renderer, frame_ms);
+            panel(
+                demo:     &demo,
+                controls: &controls,
+                renderer: &renderer,
+                frame_ms: frame_ms,
+            );
             gui_renderer.finish_frame();
             platform::sync_window(&window, &renderer);
             if (controls.taa != applied.taa || controls.motion_blur != applied.motion_blur || !frame) {
@@ -519,7 +534,12 @@ fn void? run_interactive(Options options) @local {
             renderer.begin_frame({ .time = elapsed, .delta = window.clock.delta, .reference_position = demo.camera.world_position() })!;
             defer catch render::abort_frame(&renderer);
             if (renderer.has_output) {
-                renderer.render_view(&demo.scene, demo.camera, renderer.default_view, &guides)!;
+                renderer.render_view(
+                    scene:       &demo.scene,
+                    camera_node: demo.camera,
+                    view:        renderer.default_view,
+                    debug:       &guides,
+                )!;
                 renderer.finish_view(renderer.default_view)!;
                 OverlayContext overlay = renderer.begin_overlay()!;
                 gui_renderer.record(&overlay)!;

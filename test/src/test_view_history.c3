@@ -838,7 +838,12 @@ fn void test_vertex_history_rejects_changed_source() @test {
     assert(c3d::same_id(pose.vertex_geometry, fixture.other) && holds(pose, other.data.positions));
 
     fixture.assets.release_geometry_cpu(fixture.other);
-    other.data = geometry::plane(fixture.assets.allocator, 1, 1, 2, 1);
+    other.data = geometry::plane(
+        allocator:  fixture.assets.allocator,
+        width:      1,
+        depth:      1,
+        segments_x: 2,
+    );
     fixture.assets.mark_geometry_dirty(fixture.other);
     assert(pose.vertices.len == 4 && other.data.positions.len == 6);
     commit_vertices(&fixture, &fixture.first, fixture.other);

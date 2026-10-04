@@ -213,7 +213,12 @@ fn void check_velocity(Vec2 found, Vec2 expected) @private {
     assert(math::abs(found.y - expected.y) <= VELOCITY_TOLERANCE);
 }
 
-fn void check_motion(Fixture* fixture, uint view, Vec3 current, Vec3 previous) @private {
+fn void check_motion(
+    Fixture* fixture,
+    uint view,
+    Vec3 current,
+    Vec3 previous,
+) @private {
     Vec2 expected = projected_uv(fixture, current) - projected_uv(fixture, previous);
     assert(expected.length() > 10 * VELOCITY_TOLERANCE);
     check_velocity(velocity_at(fixture, view, current), expected);
@@ -238,7 +243,12 @@ fn void test_cloth_deformation_moves_a_still_node() @test {
             step(&fixture, physics::DEFAULT_FIXED_DT);
             render_views(&fixture, views[..]);
             assert(sheet.world.m == still.m);
-            check_motion(&fixture, 0, published(&fixture, sheet, SHEET_CENTER), before);
+            check_motion(
+                fixture:  &fixture,
+                view:     0,
+                current:  published(&fixture, sheet, SHEET_CENTER),
+                previous: before,
+            );
         }
         check_validation(&fixture);
     }
@@ -275,7 +285,12 @@ fn void test_cloth_pins_follow_the_node_and_free_particles_stay() @test {
         render_views(&fixture, views[..]);
         Vec3 after = published(&fixture, attached, SHEET_CENTER);
         assert(math::abs(after.y - before.y - NODE_STEP) <= 1e-5f);
-        check_motion(&fixture, 0, after, before);
+        check_motion(
+            fixture:  &fixture,
+            view:     0,
+            current:  after,
+            previous: before,
+        );
         check_velocity(velocity_at(&fixture, 0, loose_centre), {});
         assert(pixel_at(&fixture, 1, loose_centre).x > COVERED);
         assert(pixel_at(&fixture, 1, after).x > COVERED);
@@ -298,14 +313,29 @@ fn void test_cloth_views_keep_their_own_history() @test {
     Vec3 before = second_seen;
     step(&fixture, physics::DEFAULT_FIXED_DT);
     render_views(&fixture, first[..]);
-    check_motion(&fixture, 0, published(&fixture, sheet, SHEET_CENTER), before);
+    check_motion(
+        fixture:  &fixture,
+        view:     0,
+        current:  published(&fixture, sheet, SHEET_CENTER),
+        previous: before,
+    );
 
     before = published(&fixture, sheet, SHEET_CENTER);
     step(&fixture, physics::DEFAULT_FIXED_DT);
     render_views(&fixture, both[..]);
     Vec3 current = published(&fixture, sheet, SHEET_CENTER);
-    check_motion(&fixture, 0, current, before);
-    check_motion(&fixture, 1, current, second_seen);
+    check_motion(
+        fixture:  &fixture,
+        view:     0,
+        current:  current,
+        previous: before,
+    );
+    check_motion(
+        fixture:  &fixture,
+        view:     1,
+        current:  current,
+        previous: second_seen,
+    );
 
     fixture.scene.remove_cloth(sheet);
     attach(&fixture, sheet, pinned: false);
@@ -334,5 +364,10 @@ fn void test_cloth_abort_drops_motion_for_one_rendering() @test {
     check_velocity(velocity_at(&fixture, 0, before), {});
     step(&fixture, physics::DEFAULT_FIXED_DT);
     render_views(&fixture, views[..]);
-    check_motion(&fixture, 0, published(&fixture, sheet, SHEET_CENTER), before);
+    check_motion(
+        fixture:  &fixture,
+        view:     0,
+        current:  published(&fixture, sheet, SHEET_CENTER),
+        previous: before,
+    );
 }

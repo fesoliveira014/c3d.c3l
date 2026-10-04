@@ -39,7 +39,12 @@ fn void? check_cloth_desc(ClothDesc desc) @private {
     if (!math::is_finite(desc.gravity_scale) || !math::is_finite(desc.ground_height)) return c3d::INVALID_ARGUMENT~;
 }
 
-fn void? check_cloth_source(Scene* scene, Node* node, scene::Mesh* mesh, GeometryAsset* source) @private {
+fn void? check_cloth_source(
+    Scene* scene,
+    Node* node,
+    scene::Mesh* mesh,
+    GeometryAsset* source,
+) @private {
     if (scene.has(node, SkinBinding) || mesh.morph_weights.len || mesh.has_bounds_override) return c3d::UNSUPPORTED~;
     Geometry* data = &source.data;
     if (!data.positions.len) return physics::SOURCE_UNAVAILABLE~;

@@ -105,7 +105,12 @@ fn maths::Transform interpolate_body(maths::Transform solved, maths::Transform c
     };
 }
 
-fn Vec3 outside_capsule(Vec3 point, Vec3 start, Vec3 end, float radius) @private {
+fn Vec3 outside_capsule(
+    Vec3 point,
+    Vec3 start,
+    Vec3 end,
+    float radius,
+) @private {
     Vec3 axis = end - start;
     float length_squared = axis.dot(axis);
     float along = length_squared > 0 ? math::clamp((point - start).dot(axis) / length_squared, 0.0f, 1.0f) : 0;

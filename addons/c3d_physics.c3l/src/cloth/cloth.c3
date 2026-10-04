@@ -70,7 +70,7 @@ struct ClothBody {
     maths::Transform solved;   // pose of the last solved substep
     maths::Transform current;  // pose sampled by the current update
     bool             live;     // owner alive with a built body this update
-    bool             observed; // solved holds a sampled pose
+    bool             observed; // solved holds a pose sampled since the owner was last live
 }
 
 <* Library-owned simulation state; its arrays are borrowed by readers. *>
@@ -125,7 +125,12 @@ fn void? Scene.add_cloth(
     check_cloth_desc(desc)!;
     if (!assets.geometries.is_live(mesh.geometry)) return c3d::INVALID_ID~;
     GeometryAsset* source = assets.geometry(mesh.geometry);
-    check_cloth_source(self, node, mesh, source)!;
+    check_cloth_source(
+        scene:  self,
+        node:   node,
+        mesh:   mesh,
+        source: source,
+    )!;
     @pool() {
         uint vertex_count = (uint)source.data.positions.len;
         uint[] pins = unique_pins(desc.pins, vertex_count)!;

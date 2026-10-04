@@ -191,15 +191,17 @@ fn void test_cloth_constraints_and_source_isolation() @test {
     }
 }
 
-fn void check_rejected(Fixture* fixture, Node* node, ClothDesc desc, fault expected) @private {
+// Asserts that the attempt left the Mesh, the asset counts and the component store untouched.
+fn fault rejection(Fixture* fixture, Node* node, ClothDesc desc) @private {
     scene::Mesh* mesh = fixture.scene.get(node, scene::Mesh);
     GeometryId geometry = mesh ? mesh.geometry : (GeometryId){};
     bool motion = mesh ? mesh.vertex_motion : false;
     usz free_geometries = fixture.assets.geometries.free_count;
     usz cloths = fixture.scene.count(Cloth);
-    assert(@catch(fixture.scene.add_cloth(&fixture.assets, node, desc)) == expected);
+    fault excuse = @catch(fixture.scene.add_cloth(&fixture.assets, node, desc));
     assert(fixture.assets.geometries.free_count == free_geometries && fixture.scene.count(Cloth) == cloths);
     if (mesh) assert(c3d::same_id(fixture.scene.get(node, scene::Mesh).geometry, geometry) && mesh.vertex_motion == motion);
+    return excuse;
 }
 
 fn void test_cloth_rejects_invalid_input_atomically() @test {
@@ -209,31 +211,31 @@ fn void test_cloth_rejects_invalid_input_atomically() @test {
     ClothDesc desc = cloth::default_cloth_desc();
 
     Node* bare = fixture.scene.add_node(name: "bare")!!;
-    check_rejected(&fixture, bare, desc, cloth::NO_MESH);
+    assert(rejection(&fixture, bare, desc) == cloth::NO_MESH);
 
     Node* attached = add_cloth_node(&fixture, add_grid(&fixture, 1));
     fixture.scene.add_cloth(&fixture.assets, attached, desc)!!;
-    check_rejected(&fixture, attached, desc, cloth::CLOTH_EXISTS);
+    assert(rejection(&fixture, attached, desc) == cloth::CLOTH_EXISTS);
 
     GeometryId stale_id = add_grid(&fixture, 1);
     Node* stale = add_cloth_node(&fixture, stale_id);
     fixture.assets.remove_geometry(stale_id);
-    check_rejected(&fixture, stale, desc, c3d::INVALID_ID);
+    assert(rejection(&fixture, stale, desc) == c3d::INVALID_ID);
 
     GeometryId released_id = add_grid(&fixture, 1);
     Node* released = add_cloth_node(&fixture, released_id);
     fixture.assets.release_geometry_cpu(released_id);
-    check_rejected(&fixture, released, desc, physics::SOURCE_UNAVAILABLE);
+    assert(rejection(&fixture, released, desc) == physics::SOURCE_UNAVAILABLE);
 
     GeometryId unindexed_id = add_grid(&fixture, 1);
     Node* unindexed = add_cloth_node(&fixture, unindexed_id);
     GeometryAsset* unindexed_record = fixture.assets.geometry(unindexed_id);
     uint[] kept_indices = unindexed_record.data.indices;
     unindexed_record.data.indices = {};
-    check_rejected(&fixture, unindexed, desc, c3d::UNSUPPORTED);
+    assert(rejection(&fixture, unindexed, desc) == c3d::UNSUPPORTED);
     unindexed_record.data.indices = kept_indices;
     unindexed_record.data.topology = Topology.LINES;
-    check_rejected(&fixture, unindexed, desc, c3d::UNSUPPORTED);
+    assert(rejection(&fixture, unindexed, desc) == c3d::UNSUPPORTED);
     unindexed_record.data.topology = Topology.TRIANGLES;
 
     GeometryId shared_id = add_grid(&fixture, 1);
@@ -241,28 +243,28 @@ fn void test_cloth_rejects_invalid_input_atomically() @test {
     Node*[] joints = alloc::new_array(fixture.scene.allocator, Node*, 1);
     joints[0] = skinned;
     fixture.scene.add(skinned, (SkinBinding){ .joints = joints });
-    check_rejected(&fixture, skinned, desc, c3d::UNSUPPORTED);
+    assert(rejection(&fixture, skinned, desc) == c3d::UNSUPPORTED);
 
     Node* morphed = add_cloth_node(&fixture, shared_id);
     scene::Mesh* morphed_mesh = fixture.scene.get(morphed, scene::Mesh);
     morphed_mesh.morph_weights = alloc::new_array(fixture.scene.allocator, float, 1);
-    check_rejected(&fixture, morphed, desc, c3d::UNSUPPORTED);
+    assert(rejection(&fixture, morphed, desc) == c3d::UNSUPPORTED);
 
     Node* overridden = add_cloth_node(&fixture, shared_id);
     fixture.scene.get(overridden, scene::Mesh).has_bounds_override = true;
-    check_rejected(&fixture, overridden, desc, c3d::UNSUPPORTED);
+    assert(rejection(&fixture, overridden, desc) == c3d::UNSUPPORTED);
 
     GeometryId custom_id = add_grid(&fixture, 1);
     Node* custom = add_cloth_node(&fixture, custom_id);
     GeometryAsset* custom_record = fixture.assets.geometry(custom_id);
     char[4] custom_bytes;
     custom_record.data.custom_data = custom_bytes[..];
-    check_rejected(&fixture, custom, desc, c3d::UNSUPPORTED);
+    assert(rejection(&fixture, custom, desc) == c3d::UNSUPPORTED);
     custom_record.data.custom_data = {};
 
     Node* plain = add_cloth_node(&fixture, shared_id);
     uint[1] bad_pin = { 4 };
-    check_rejected(&fixture, plain, pinned_desc(bad_pin[..]), c3d::INVALID_ARGUMENT);
+    assert(rejection(&fixture, plain, pinned_desc(bad_pin[..])) == c3d::INVALID_ARGUMENT);
     ClothDesc[7] invalid;
     foreach (&entry : invalid) *entry = desc;
     invalid[0].substeps = 0;
@@ -272,18 +274,18 @@ fn void test_cloth_rejects_invalid_input_atomically() @test {
     invalid[4].damping = -1;
     invalid[5].thickness = bitcast(0x7f800000u, float);
     invalid[6].gravity_scale = bitcast(0x7fc00000u, float);
-    foreach (entry : invalid) check_rejected(&fixture, plain, entry, c3d::INVALID_ARGUMENT);
+    foreach (entry : invalid) assert(rejection(&fixture, plain, entry) == c3d::INVALID_ARGUMENT);
 
     GeometryId indexed_id = add_grid(&fixture, 1);
     Node* bad_index = add_cloth_node(&fixture, indexed_id);
     fixture.assets.geometry(indexed_id).data.indices[0] = 9;
-    check_rejected(&fixture, bad_index, desc, c3d::INVALID_ARGUMENT);
+    assert(rejection(&fixture, bad_index, desc) == c3d::INVALID_ARGUMENT);
 
     GeometryId degenerate_id = add_grid(&fixture, 1);
     Node* degenerate = add_cloth_node(&fixture, degenerate_id);
     GeometryAsset* degenerate_record = fixture.assets.geometry(degenerate_id);
     degenerate_record.data.positions[1] = degenerate_record.data.positions[0];
-    check_rejected(&fixture, degenerate, desc, c3d::INVALID_ARGUMENT);
+    assert(rejection(&fixture, degenerate, desc) == c3d::INVALID_ARGUMENT);
 
     GeometryId fan_id;
     @pool() {
@@ -296,10 +298,10 @@ fn void test_cloth_rejects_invalid_input_atomically() @test {
         fan.finalize();
         fan_id = fixture.assets.add_geometry(&fan)!!;
     };
-    check_rejected(&fixture, add_cloth_node(&fixture, fan_id), desc, c3d::INVALID_ARGUMENT);
+    assert(rejection(&fixture, add_cloth_node(&fixture, fan_id), desc) == c3d::INVALID_ARGUMENT);
 
     while (fixture.assets.geometries.free_count) add_grid(&fixture, 1);
-    check_rejected(&fixture, plain, desc, c3d::CAPACITY_EXCEEDED);
+    assert(rejection(&fixture, plain, desc) == c3d::CAPACITY_EXCEEDED);
 }
 
 fn void test_cloth_pins_follow_final_pose_without_steps() @test {
@@ -818,12 +820,12 @@ fn void test_cloth_collider_capacity_is_shape_count() @test {
 
     Node* plain = add_cloth_node(&fixture, source);
     listed[0] = over.id;
-    check_rejected(&fixture, plain, desc, c3d::CAPACITY_EXCEEDED);
+    assert(rejection(&fixture, plain, desc) == c3d::CAPACITY_EXCEEDED);
     Entity[2] pair = { full.id, extra.id };
     desc.colliders = pair[..];
-    check_rejected(&fixture, plain, desc, c3d::CAPACITY_EXCEEDED);
+    assert(rejection(&fixture, plain, desc) == c3d::CAPACITY_EXCEEDED);
     desc.colliders = boxes[..];
-    check_rejected(&fixture, plain, desc, c3d::CAPACITY_EXCEEDED);
+    assert(rejection(&fixture, plain, desc) == c3d::CAPACITY_EXCEEDED);
     boxes[cloth::MAX_CLOTH_COLLIDERS - 1] = extra.id;
     desc.colliders = boxes[:cloth::MAX_CLOTH_COLLIDERS];
     fixture.scene.add_cloth(&fixture.assets, plain, desc)!!;
@@ -865,15 +867,15 @@ fn void test_cloth_collider_bindings_are_owned_and_generational() @test {
     ClothDesc desc = cloth::default_cloth_desc();
     Entity[1] dead = { owner };
     desc.colliders = dead[..];
-    check_rejected(&fixture, plain, desc, c3d::INVALID_ID);
+    assert(rejection(&fixture, plain, desc) == c3d::INVALID_ID);
     Node* unbuilt = fixture.scene.add_node(name: "unbuilt")!!;
     fixture.scene.add_physics_body(unbuilt, physics::default_body_desc(KINEMATIC), (&collider)[:1])!!;
     Entity[1] missing = { unbuilt.id };
     desc.colliders = missing[..];
-    check_rejected(&fixture, plain, desc, physics::NO_BODY);
+    assert(rejection(&fixture, plain, desc) == physics::NO_BODY);
     Entity[2] twice = { replacement.id, replacement.id };
     desc.colliders = twice[..];
-    check_rejected(&fixture, plain, desc, c3d::INVALID_ARGUMENT);
+    assert(rejection(&fixture, plain, desc) == c3d::INVALID_ARGUMENT);
 }
 
 fn void test_cloth_contacts_preserve_allocation_and_pins() @test {

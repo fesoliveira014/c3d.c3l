@@ -301,7 +301,12 @@ fn void commit_pose(
     Node* node = candidate.node;
     pose.sway = candidate.batch ? candidate.batch.sway : (InstanceSway){};
     if (candidate.vertex_motion) {
-        capture_vertices(allocator, assets, pose, candidate.geometry);
+        capture_vertices(
+            allocator:   allocator,
+            assets:      assets,
+            pose:        pose,
+            geometry_id: candidate.geometry,
+        );
     } else {
         pose.vertex_geometry = {};
         pose.vertex_revision = 0;
