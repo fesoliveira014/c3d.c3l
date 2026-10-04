@@ -158,7 +158,7 @@ along screen motion before depth of field. Velocity is `current_uv - previous_uv
 UV (top-left origin) in an RG16_FLOAT `velocity` image: `velocity_camera.frag` first reprojects
 every pixel through the view's previous view-projection from stored depth (no geometry reprojects
 as a direction), then a geometry pass with the `VELOCITY` vertex variant redraws the opaque items
-that moved, are skinned or morphed, or are instanced batches, with depth test EQUAL and no depth
+that moved, are skinned or morphed, have [edited vertices](#edited-vertices), or are instanced batches, with depth test EQUAL and no depth
 write. Items whose custom shader supplies a [velocity form](custom_shaders.md#velocity-form) for the
 draw are redrawn through that form on every rendering with history, and on views that record velocity
 after the scene the pass also redraws the moved depth-writing items of the scene-read list. Skinned
@@ -185,6 +185,31 @@ direction has no finite reprojection there. Enabling allocates the velocity imag
 output and the shared tile images; disabling retires them. `configure_view` faults
 `INVALID_ARGUMENT` when motion blur is on with `samples` outside `[1, 32]`, a non-positive
 `max_velocity` or a negative `shutter`.
+
+### Edited vertices
+
+`Mesh.vertex_motion = true` gives an ordinary mesh (not a batch, crowd or LOD group) velocity
+for CPU-edited positions. Edit `assets.geometry(id).data.positions` in place, recompute normals
+when needed and call `AssetStore.mark_geometry_dirty` before recording the frame. Vertex indices
+must keep naming the same vertices: a new correspondence needs a new `GeometryId`, and a changed
+vertex count starts over.
+
+Each temporal view copies the base positions of the flagged meshes it drew into its pose history
+(12 bytes per vertex, allocated on first use or a count change, reused afterwards and freed with
+the history). When the geometry revision differs from the copy, the velocity pass uploads the copy
+through the frame ring into `PreviousPoseGpu.positions` and composes it with the previous morph,
+skin and model, so a stationary node shows its deformation. An unchanged revision keeps the
+ordinary rule. A first observation, another geometry or count, re-enabling after an untracked
+rendering, a reset, a missing previous rendering or an aborted capture writes zero motion and sets
+the rejection channel (`DRAW_VERTEX_HISTORY_INVALID`), so TAA and screen-space GI drop history for
+those pixels only; an RG16 velocity image keeps the zero motion. A temporal view faults
+`c3d::ASSET_DATA_UNAVAILABLE` from `render_view` before recording when a flagged mesh's CPU
+positions were released; its published history stays as it was.
+
+Every pose slot grows by 32 bytes (176 to 208), 512 KiB per temporal view at the default
+16,384-node scene. Geometry still uploads whole on each revision, counted in `Stats.upload_bytes`;
+previous positions travel through the frame ring and are not counted there. Blended surfaces keep
+the velocity of the surface behind them.
 
 ## GUI
 

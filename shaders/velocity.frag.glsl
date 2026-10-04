@@ -16,6 +16,8 @@ layout(push_constant) uniform Push {
 void main() {
     vec2 current = v_clip_pos.xy / v_clip_pos.w;
     vec2 previous = v_prev_clip_pos.xy / v_prev_clip_pos.w;
-    float rejection = DrawRoot(pc.vertex_root_gpu).lod_part != 0ul && v_clip_pos.z > 0.5 ? 1.0 : 0.0;
+    DrawRoot draw = DrawRoot(pc.vertex_root_gpu);
+    bool rejected = (draw.lod_part != 0ul && v_clip_pos.z > 0.5) || (draw.flags & DRAW_VERTEX_HISTORY_INVALID) != 0u;
+    float rejection = rejected ? 1.0 : 0.0;
     out_velocity = vec4((current - previous) * vec2(0.5, -0.5), v_prev_clip_pos.z / v_prev_clip_pos.w, rejection);
 }

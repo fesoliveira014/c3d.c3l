@@ -15,4 +15,5 @@ struct Mesh {
     float[]    morph_weights;
     bool       has_bounds_override;
     Aabb       local_bounds;
+    bool       vertex_motion;
 }

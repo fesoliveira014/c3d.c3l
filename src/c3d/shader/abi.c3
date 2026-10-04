@@ -51,6 +51,7 @@ const uint DRAW_SCREEN_SPACE_TERMS = 4;
 const uint DRAW_SWAY = 8;
 const uint DRAW_DISTANCE_FADE = 16;
 const uint DRAW_SWAY_VERTEX_ALPHA = 32;
+const uint DRAW_VERTEX_HISTORY_INVALID = 64;
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1;
 const uint SSGI_FLAG_GBUFFER_NORMALS = 1;
 const uint SSGI_FLAG_HISTORY_VALID = 2;
@@ -529,13 +530,13 @@ struct PreviousPoseGpu {
     GpuAddress skin;
     GpuAddress morph;
     GpuAddress instances;
-    GpuAddress _pad0;
+    GpuAddress positions;
 }
 $assert PreviousPoseGpu::size == 32;
 $assert $reflect(PreviousPoseGpu.skin).offset == 0;
 $assert $reflect(PreviousPoseGpu.morph).offset == 8;
 $assert $reflect(PreviousPoseGpu.instances).offset == 16;
-$assert $reflect(PreviousPoseGpu._pad0).offset == 24;
+$assert $reflect(PreviousPoseGpu.positions).offset == 24;
 
 struct InstanceCullRoot {
     GpuAddress instances;

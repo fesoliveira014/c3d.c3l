@@ -106,9 +106,14 @@ void apply_mesh_deformation(inout MeshVertexInput vertex, DrawRoot draw, Geometr
 }
 
 #ifdef VELOCITY
-// Object-space position under the skin and morph the view drew last time.
+// Object-space position under the base positions, skin and morph the view drew last time.
 vec3 previous_mesh_position(DrawRoot draw, GeometryRoot geometry, uint index) {
     vec3 position = pull_vec3(geometry.positions, index);
+    if ((draw.flags & DRAW_VERTEX_HISTORY_INVALID) != 0u) return position;
+    if (draw.previous_pose != 0ul) {
+        uint64_t positions = PreviousPoseGpu(draw.previous_pose).positions;
+        if (positions != 0ul) position = pull_vec3(positions, index);
+    }
 #ifdef MORPH
     MorphWeightsGpu morph = MorphWeightsGpu(instance_morph(draw, PreviousPoseGpu(draw.previous_pose).morph));
     position += morph_delta(geometry, morph, index, MORPH_STREAM_POSITION);
@@ -255,6 +260,7 @@ void write_mesh_outputs(
     // Velocity is unjittered: remove the view's jitter from the rasterized position.
     clip.xy -= frame.jitter_time.xy * clip.w;
     if (draw.lod_part != 0ul) clip.z = reject_history;
+    if ((draw.flags & DRAW_VERTEX_HISTORY_INVALID) != 0u) v_prev_clip_pos = clip;
 #endif
     v_clip_pos = clip;
 }

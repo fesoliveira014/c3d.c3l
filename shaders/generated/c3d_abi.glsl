@@ -54,6 +54,7 @@ const uint DRAW_SCREEN_SPACE_TERMS = 4u;
 const uint DRAW_SWAY = 8u;
 const uint DRAW_DISTANCE_FADE = 16u;
 const uint DRAW_SWAY_VERTEX_ALPHA = 32u;
+const uint DRAW_VERTEX_HISTORY_INVALID = 64u;
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1u;
 const uint SSGI_FLAG_GBUFFER_NORMALS = 1u;
 const uint SSGI_FLAG_HISTORY_VALID = 2u;
@@ -361,7 +362,7 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer PreviousPose
     uint64_t skin;
     uint64_t morph;
     uint64_t instances;
-    uint64_t _pad0;
+    uint64_t positions;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer InstanceCullRoot {

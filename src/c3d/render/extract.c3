@@ -56,6 +56,7 @@ struct MeshCandidate {
     uint           lod_level;
     uint           lod_part;
     bool           impostor;
+    bool           vertex_motion;
 }
 
 <*
@@ -323,6 +324,7 @@ fn void include_mesh(
         .view_depth     = center_view_depth(camera, world),
         .receive_shadow = mesh.receive_shadow,
         .instance_count = 1,
+        .vertex_motion  = mesh.vertex_motion,
     };
     counts.visible++;
 }
