@@ -239,7 +239,7 @@ root PreviousPoseGpu {
     GpuAddress skin;
     GpuAddress morph;
     GpuAddress instances;
-    GpuAddress _pad0;
+    GpuAddress positions;
 }
 
 const uint INSTANCE_CULL_GROUP_SIZE = 64;
@@ -359,6 +359,8 @@ const uint DRAW_SCREEN_SPACE_TERMS = 4;
 const uint DRAW_SWAY = 8;
 const uint DRAW_DISTANCE_FADE = 16;
 const uint DRAW_SWAY_VERTEX_ALPHA = 32;
+// Vertex history of a tracked mesh does not correspond: zero object motion, rejected history.
+const uint DRAW_VERTEX_HISTORY_INVALID = 64;
 
 const uint GBUFFER_FLAG_RECEIVE_SHADOW = 1;
 

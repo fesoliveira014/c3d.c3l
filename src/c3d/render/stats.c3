@@ -122,6 +122,7 @@ struct Stats {
     uint  environment_prepares;
     uint  uploads;
     uint  upload_bytes;
+    uint  vertex_history_bytes;  // this frame: previous vertex positions written for temporal views
     uint  prepare_units;
     usz   prepare_bytes;
     uint  material_resolutions;

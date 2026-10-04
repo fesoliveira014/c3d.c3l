@@ -7,6 +7,7 @@ import c3d::asset;
 import c3d::ecs;
 import c3d::maths;
 import c3d::scene;
+import c3d::physics::cloth;
 import b3;
 import b3::record;
 
@@ -374,6 +375,9 @@ struct PhysicsWorld {
     FluidSurfaceFn fluid_surface;  // null: no fluid, buoyancy applies nothing
     void*          fluid_context;
     b3::record::Recording* recording; // null when idle
+    ClothStats     cloth_stats;
+    ulong          update_serial;       // advanced by every update, zero-step ones included
+    ulong          cloth_update_serial; // update_serial of the last update_cloths
 }
 
 <*

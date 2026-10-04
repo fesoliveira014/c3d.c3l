@@ -5,6 +5,7 @@ import c3d;
 import c3d::ecs;
 import c3d::maths;
 import c3d::scene;
+import c3d::physics::cloth @public;
 
 <*
  Build state of an authored body, written by the world.
@@ -99,7 +100,7 @@ fn uint Scene.add_static_mesh_bodies(&self, Node* root, CollisionFilter filter =
 
 <*
  Register physics components and their resource removal hooks.
- @param [&inout] scene : "Gains body, joint, force, ragdoll and fracture stores."
+ @param [&inout] scene : "Gains body, joint, force, ragdoll, fracture and cloth stores."
  @return? c3d::CAPACITY_EXCEEDED
 *>
 fn void? register_physics(Scene* scene) {
@@ -113,6 +114,8 @@ fn void? register_physics(Scene* scene) {
     scene.set_remove_hook(Breakable, &free_breakable, scene.hook_allocator);
     scene.register(Ragdoll)!;
     scene.set_remove_hook(Ragdoll, &free_ragdoll, scene.hook_allocator);
+    scene.register(Cloth)!;
+    scene.set_remove_hook(Cloth, &cloth::free_cloth, scene.hook_allocator);
 }
 
 fn PhysicsBody copy_physics_body(Allocator allocator, BodyDesc body, ColliderDesc[] colliders) @private {

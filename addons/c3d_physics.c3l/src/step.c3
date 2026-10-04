@@ -13,6 +13,7 @@ import b3;
  Event node pointers are valid until the scene flushes removals.
 *>
 fn void PhysicsWorld.update(&self, float dt) {
+    self.update_serial++;
     self.contact_begin_count = 0;
     self.contact_end_count = 0;
     self.hit_count = 0;

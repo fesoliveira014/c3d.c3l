@@ -32,6 +32,13 @@ const gpu::Format DEPTH_FORMAT = gpu::Format.D32_FLOAT;
 const float DEPTH_CLEAR @private = 0; // reverse-Z far
 const gpu::Format SCENE_DEPTH_FORMAT @private = gpu::Format.R32_FLOAT; // holds D32 depth bit for bit in a sampled color image
 
+enum VertexHistory @private {
+    UNTRACKED,
+    UNCHANGED,
+    CHANGED,
+    INVALID,
+}
+
 struct DrawItem @private {
     ulong           sort_key;
     MeshCandidate*  candidate;
@@ -237,6 +244,7 @@ fn void? record_raster_view(
             renderer.stats.dangling_refs += counts.dangling;
             foreach (index, count : counts.lod_objects_visible) renderer.stats.lod_objects_visible[index] += count;
         };
+        if (temporal) check_vertex_sources(renderer.assets, candidates)!;
 
         InstanceEffectsView effects_view = {
             .scene       = scene,
@@ -549,9 +557,18 @@ fn void? record_raster_view(
                 Mat4 prev_world = node.world;
                 bool has_previous = temporal && record.history.has_previous(scene, node);
                 if (has_previous) prev_world = record.history.previous_model(scene, node);
+                VertexHistory vertices = VertexHistory.UNTRACKED;
+                if (temporal && item.candidate.vertex_motion) {
+                    vertices = vertex_history_of(
+                        assets:    renderer.assets,
+                        candidate: item.candidate,
+                        pose:      has_previous ? record.history.previous_pose(scene, node) : null,
+                    );
+                }
                 bool posed = item.skin != (gpu::GpuAddress)0 || item.morph != (gpu::GpuAddress)0
-                  || item.candidate.batch;
-                item.moved = (temporal && item.candidate.lod) || (has_previous && (posed || item.custom_velocity || !(prev_world == node.world)));
+                  || item.candidate.batch || vertices == VertexHistory.CHANGED;
+                item.moved = (temporal && item.candidate.lod) || vertices == VertexHistory.INVALID
+                  || (has_previous && (posed || item.custom_velocity || !(prev_world == node.world)));
                 Vec3 previous_origin = temporal && record.history.valid ? record.history.origin : renderer.frame_origin;
                 prev_world = maths::rebase(prev_world, previous_origin);
                 bool redrawn_by_velocity = group_index == 0
@@ -569,6 +586,7 @@ fn void? record_raster_view(
                         crowd_pose:     crowd_pose,
                         instances:      &previous_instances,
                         previous_world: prev_world,
+                        positions:      vertices == VertexHistory.CHANGED,
                     )!;
                 }
                 if (item.candidate.batch) {
@@ -595,7 +613,8 @@ fn void? record_raster_view(
                     flags:         (item.candidate.receive_shadow ? shader::DRAW_RECEIVE_SHADOW : 0)
                       | ((ambient_occlusion || screen_space_gi) && group_index == 0
                         ? shader::DRAW_SCREEN_SPACE_TERMS : 0)
-                      | batch_effect_flags(item.candidate),
+                      | batch_effect_flags(item.candidate)
+                      | (vertices == VertexHistory.INVALID ? shader::DRAW_VERTEX_HISTORY_INVALID : 0),
                     sheen_lut:     sheen ? renderer.environment_state.sheen_lut.view.index : (gpu::TextureIndex)0,
                     sheen_sampler: sheen ? renderer.environment_state.sheen_sampler : (gpu::SamplerIndex)0,
                     skin:          addresses.skin,
@@ -1252,7 +1271,7 @@ fn gpu::GpuAddress? upload_lights(Renderer* renderer, LightGpu[] lights) @privat
  @param skin : "Joint palette address; zero when unskinned."
  @param morph : "Morph block address; zero when unmorphed."
  @param instance_data : "First instance record; zero for a mesh."
- @param previous_pose : "PreviousPoseGpu of a deformed or instanced velocity draw; zero otherwise."
+ @param previous_pose : "PreviousPoseGpu of a deformed, vertex-edited or instanced velocity draw; zero otherwise."
  @param skin_stride : "Joints per crowd instance; zero for a shared palette."
  @param instance_indices : "Visible list of a culled or sorted batch range; zero otherwise."
  @param instance_effects : "InstanceEffectsGpu of a batch with sway or fade; zero otherwise."
@@ -1309,6 +1328,7 @@ fn gpu::GpuAddress? upload_previous_pose(
     PoseRecord* crowd_pose,
     PreviousInstanceCache* instances,
     Mat4 previous_world,
+    bool positions,
 ) @private {
     MeshCandidate* candidate = item.candidate;
     uint offset = instance_offset(&item.range);
@@ -1358,7 +1378,29 @@ fn gpu::GpuAddress? upload_previous_pose(
         }
         previous.instances = offset_by_instances(base, offset, Mat4f::size);
     }
+    if (positions) {
+        usz history_bytes = pose.vertices.len * Vec3::size;
+        previous.positions = upload_bytes(renderer, pose.vertices.ptr, history_bytes)!;
+        renderer.stats.vertex_history_bytes += (uint)history_bytes;
+    }
     return upload_bytes(renderer, &previous, PreviousPoseGpu::size);
+}
+
+fn VertexHistory vertex_history_of(AssetStore* assets, MeshCandidate* candidate, PoseRecord* pose) @local {
+    if (!pose) return VertexHistory.INVALID;
+    GeometryAsset* geometry = assets.geometry(candidate.geometry);
+    if (!c3d::same_id(pose.vertex_geometry, candidate.geometry) || pose.vertices.len != geometry.data.positions.len) {
+        return VertexHistory.INVALID;
+    }
+    return pose.vertex_revision == geometry.header.revision ? VertexHistory.UNCHANGED : VertexHistory.CHANGED;
+}
+
+fn void? check_vertex_sources(AssetStore* assets, MeshCandidate[] candidates) @local {
+    foreach (&candidate : candidates) {
+        if (candidate.vertex_motion && !assets.geometry(candidate.geometry).data.positions.len) {
+            return c3d::ASSET_DATA_UNAVAILABLE~;
+        }
+    }
 }
 
 fn Mat4 batch_prev_model(Mat4 prev_world, Mat4 world) @private {

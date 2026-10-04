@@ -698,3 +698,252 @@ fn void test_view_history_publishes_origin_with_the_pose_and_matrix() @test {
         }
     }
 }
+
+struct VertexFixture @local {
+    Scene       scene;
+    AssetStore  assets;
+    GeometryId  quad;
+    GeometryId  other;
+    Node*       node;
+    Node*       plain;
+    ViewHistory first;
+    ViewHistory second;
+}
+
+fn VertexFixture create_vertex_fixture() @local {
+    VertexFixture fixture = {
+        .scene  = scene::create_scene(mem, { .max_nodes = NODE_CAPACITY }),
+        .assets = asset::create_asset_store(mem, {
+            .max_geometries = 2,
+            .max_textures   = asset::BUILTIN_TEXTURE_COUNT,
+            .max_materials  = 1,
+            .max_samplers   = asset::BUILTIN_SAMPLER_COUNT,
+            .max_skeletons  = 1,
+        }),
+    };
+    @pool() {
+        Geometry quad = geometry::plane(tmem, 1, 1);
+        fixture.quad = fixture.assets.add_geometry(&quad, "quad")!!;
+        fixture.other = fixture.assets.add_geometry(&quad, "other")!!;
+    };
+    fixture.node = fixture.scene.add_node(name: "edited")!!;
+    fixture.plain = fixture.scene.add_node(name: "plain")!!;
+    fixture.scene.update_world();
+    return fixture;
+}
+
+fn void destroy_vertex_fixture(VertexFixture* fixture, Allocator allocator = mem) @local {
+    render::free_view_history(allocator, &fixture.first);
+    render::free_view_history(allocator, &fixture.second);
+    asset::destroy_asset_store(&fixture.assets);
+    scene::destroy_scene(&fixture.scene);
+}
+
+fn void commit_vertices(
+    VertexFixture* fixture,
+    ViewHistory* history,
+    GeometryId geometry,
+    bool tracked = true,
+    Allocator allocator = mem,
+) @local {
+    MeshCandidate[2] candidates = {
+        { .node = fixture.node, .geometry = geometry, .vertex_motion = tracked },
+        { .node = fixture.plain, .geometry = fixture.other },
+    };
+    history.commit(
+        allocator:  allocator,
+        assets:     &fixture.assets,
+        scene:      &fixture.scene,
+        candidates: candidates[..],
+        view_proj:  matrix::IDENTITY4,
+        time:       0,
+    );
+}
+
+fn void move_vertices(VertexFixture* fixture, GeometryId geometry, Vec3 offset) @local {
+    foreach (&position : fixture.assets.geometry(geometry).data.positions) *position += offset;
+    fixture.assets.mark_geometry_dirty(geometry);
+}
+
+fn bool holds(PoseRecord* pose, Vec3[] expected) @local {
+    if (pose.vertices.len != expected.len) return false;
+    foreach (index, position : expected) {
+        if (pose.vertices[index] != position) return false;
+    }
+    return true;
+}
+
+fn void test_vertex_history_owns_last_published_positions() @test {
+    VertexFixture fixture = create_vertex_fixture();
+    defer destroy_vertex_fixture(&fixture);
+    Vec3[] source = fixture.assets.geometry(fixture.quad).data.positions;
+    Vec3[4] original;
+    original[..] = source[..];
+
+    commit_vertices(&fixture, &fixture.first, fixture.quad);
+    fixture.first.publish();
+    PoseRecord* pose = fixture.first.previous_pose(&fixture.scene, fixture.node);
+    assert(holds(pose, original[..]) && pose.vertices.ptr != source.ptr);
+    assert(c3d::same_id(pose.vertex_geometry, fixture.quad));
+    Vec3* storage = pose.vertices.ptr;
+
+    move_vertices(&fixture, fixture.quad, { 0.25f, 0, 0 });
+    assert(holds(pose, original[..]));
+    commit_vertices(&fixture, &fixture.first, fixture.quad);
+    fixture.first.publish();
+    assert(holds(pose, source) && pose.vertices.ptr == storage);
+    assert(pose.vertex_revision == fixture.assets.geometry(fixture.quad).header.revision);
+}
+
+fn void test_vertex_history_is_per_view() @test {
+    VertexFixture fixture = create_vertex_fixture();
+    defer destroy_vertex_fixture(&fixture);
+    Vec3[4] original;
+    Vec3[4] first_edit;
+    original[..] = fixture.assets.geometry(fixture.quad).data.positions[..];
+    commit_vertices(&fixture, &fixture.first, fixture.quad);
+    fixture.first.publish();
+    commit_vertices(&fixture, &fixture.second, fixture.quad);
+    fixture.second.publish();
+
+    move_vertices(&fixture, fixture.quad, { 0, 0.5f, 0 });
+    first_edit[..] = fixture.assets.geometry(fixture.quad).data.positions[..];
+    commit_vertices(&fixture, &fixture.first, fixture.quad);
+    fixture.first.publish();
+    move_vertices(&fixture, fixture.quad, { 0, 0.5f, 0 });
+
+    PoseRecord* first = fixture.first.previous_pose(&fixture.scene, fixture.node);
+    PoseRecord* second = fixture.second.previous_pose(&fixture.scene, fixture.node);
+    assert(holds(first, first_edit[..]) && holds(second, original[..]));
+    Vec3[] latest = fixture.assets.geometry(fixture.quad).data.positions;
+    commit_vertices(&fixture, &fixture.first, fixture.quad);
+    fixture.first.publish();
+    commit_vertices(&fixture, &fixture.second, fixture.quad);
+    fixture.second.publish();
+    assert(holds(first, latest) && holds(second, latest));
+}
+
+fn void test_vertex_history_rejects_changed_source() @test {
+    VertexFixture fixture = create_vertex_fixture();
+    defer destroy_vertex_fixture(&fixture);
+    commit_vertices(&fixture, &fixture.first, fixture.quad);
+    fixture.first.publish();
+    PoseRecord* pose = fixture.first.previous_pose(&fixture.scene, fixture.node);
+    GeometryAsset* other = fixture.assets.geometry(fixture.other);
+    assert(other.header.revision == fixture.assets.geometry(fixture.quad).header.revision);
+    assert(other.data.positions.len == pose.vertices.len && !c3d::same_id(pose.vertex_geometry, fixture.other));
+
+    commit_vertices(&fixture, &fixture.first, fixture.other);
+    fixture.first.publish();
+    assert(c3d::same_id(pose.vertex_geometry, fixture.other) && holds(pose, other.data.positions));
+
+    fixture.assets.release_geometry_cpu(fixture.other);
+    other.data = geometry::plane(
+        allocator:  fixture.assets.allocator,
+        width:      1,
+        depth:      1,
+        segments_x: 2,
+    );
+    fixture.assets.mark_geometry_dirty(fixture.other);
+    assert(pose.vertices.len == 4 && other.data.positions.len == 6);
+    commit_vertices(&fixture, &fixture.first, fixture.other);
+    fixture.first.publish();
+    assert(holds(pose, other.data.positions));
+
+    commit_vertices(&fixture, &fixture.first, fixture.quad);
+    fixture.first.publish();
+    GeometryId removed = fixture.quad;
+    fixture.assets.remove_geometry(removed);
+    @pool() {
+        Geometry quad = geometry::plane(tmem, 1, 1);
+        fixture.quad = fixture.assets.add_geometry(&quad, "quad")!!;
+    };
+    assert(fixture.quad.index == removed.index && fixture.quad.generation != removed.generation);
+    assert(!c3d::same_id(pose.vertex_geometry, fixture.quad));
+}
+
+fn void test_vertex_history_resets_tracking_and_owner() @test {
+    const Vec3 POISON = { 99, 99, 99 };
+    VertexFixture fixture = create_vertex_fixture();
+    defer destroy_vertex_fixture(&fixture);
+    commit_vertices(&fixture, &fixture.first, fixture.quad);
+    fixture.first.publish();
+    PoseRecord* pose = fixture.first.previous_pose(&fixture.scene, fixture.node);
+    commit_vertices(&fixture, &fixture.first, fixture.quad, tracked: false);
+    fixture.first.publish();
+    assert(pose.vertices.len == 4 && !pose.vertex_geometry.generation && !pose.vertex_revision);
+
+    Vec3[] source = fixture.assets.geometry(fixture.quad).data.positions;
+    commit_vertices(&fixture, &fixture.first, fixture.quad);
+    fixture.first.publish();
+    assert(holds(pose, source));
+
+    pose.vertices[0] = POISON;
+    Entity old = fixture.node.id;
+    fixture.scene.remove(fixture.node);
+    fixture.node = fixture.scene.add_node(name: "reused")!!;
+    assert(fixture.node.id.index == old.index && fixture.node.id.generation != old.generation);
+    commit_vertices(&fixture, &fixture.first, fixture.quad);
+    fixture.first.publish();
+    assert(holds(pose, source));
+
+    Scene stranger = scene::create_scene(mem, { .max_nodes = NODE_CAPACITY });
+    defer scene::destroy_scene(&stranger);
+    Node* twin = stranger.add_node(name: "twin")!!;
+    assert(twin.id.index == fixture.node.id.index);
+    pose.vertices[0] = POISON;
+    MeshCandidate[1] candidates = { { .node = twin, .geometry = fixture.quad, .vertex_motion = true } };
+    fixture.first.commit(
+        allocator:  mem,
+        assets:     &fixture.assets,
+        scene:      &stranger,
+        candidates: candidates[..],
+        view_proj:  matrix::IDENTITY4,
+        time:       0,
+    );
+    assert(holds(pose, source));
+}
+
+fn void test_vertex_history_discards_pending_capture() @test {
+    VertexFixture fixture = create_vertex_fixture();
+    defer destroy_vertex_fixture(&fixture);
+    commit_vertices(&fixture, &fixture.first, fixture.quad);
+    fixture.first.publish();
+    uint sample = fixture.first.sample_index;
+
+    move_vertices(&fixture, fixture.quad, { 1, 0, 0 });
+    commit_vertices(&fixture, &fixture.first, fixture.quad);
+    fixture.first.discard();
+    assert(!fixture.first.valid && !fixture.first.has_previous(&fixture.scene, fixture.node));
+    assert(fixture.first.sample_index == sample);
+
+    move_vertices(&fixture, fixture.quad, { 1, 0, 0 });
+    Vec3[] source = fixture.assets.geometry(fixture.quad).data.positions;
+    commit_vertices(&fixture, &fixture.first, fixture.quad);
+    fixture.first.publish();
+    PoseRecord* pose = fixture.first.previous_pose(&fixture.scene, fixture.node);
+    assert(holds(pose, source));
+    fixture.first.publish();
+    assert(fixture.first.has_previous(&fixture.scene, fixture.node) && holds(pose, source));
+}
+
+fn void test_vertex_history_reuses_and_frees_storage() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    VertexFixture fixture = create_vertex_fixture();
+    commit_vertices(&fixture, &fixture.first, fixture.quad, allocator: &tracker);
+    fixture.first.publish();
+    sz allocations = tracker.total_allocation_count();
+    for (uint frame = 0; frame < 100; frame++) {
+        move_vertices(&fixture, fixture.quad, { 0.01f, 0, 0 });
+        commit_vertices(&fixture, &fixture.first, fixture.quad, allocator: &tracker);
+        fixture.first.publish();
+    }
+    assert(tracker.total_allocation_count() == allocations);
+    assert(!fixture.first.previous_pose(&fixture.scene, fixture.plain).vertices.len);
+    PoseRecord* pose = fixture.first.previous_pose(&fixture.scene, fixture.node);
+    assert(holds(pose, fixture.assets.geometry(fixture.quad).data.positions));
+    destroy_vertex_fixture(&fixture, &tracker);
+    assert(!tracker.has_leaks());
+}
