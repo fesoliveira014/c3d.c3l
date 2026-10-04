@@ -47,6 +47,7 @@ ADDON_EXAMPLES = {
     "capture": PROFILE,
     "physics": PHYSICS,
     "breakable": PHYSICS,
+    "cloth": PHYSICS,
     "physics_instanced": PHYSICS,
     "physics_components": PHYSICS,
     "vehicle": PHYSICS,
