@@ -151,7 +151,7 @@ meshes without attaching cloth.
 The benchmark renders one scene (the flag at 32×32 cells) at the default 4×8 settings to a
 1280×720 TAA and motion-blur view with 120 warm-up and 600 measured 60 Hz frames and Vulkan
 validation on; `--ragdoll` drops the character at the end of the warm-up. Windows, RTX 4090,
-C3 0.8.3 `-O3`, collisions on top of 3be1ef0, three runs each:
+C3 0.8.3 `-O3`, three runs each:
 
 | Scene | Particles / constraints | Solve mean (p95), ms | Publication mean, ms | Geometry + history bytes per frame |
 | --- | --- | --- | --- | --- |
