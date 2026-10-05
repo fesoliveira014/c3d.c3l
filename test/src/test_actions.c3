@@ -15,6 +15,16 @@ fn void hold_pad_button(Input* input, GamepadButton button, bool down, usz slot 
     input.gamepads[slot].buttons[(usz)button] = down;
 }
 
+fn void press_key(Input* input, Scancode key) @local {
+    input.keys[(usz)key] = true;
+    input.keys_pressed[(usz)key] = true;
+}
+
+fn void press_pad_button(Input* input, GamepadButton button, usz slot = 0) @local {
+    hold_pad_button(input, button, true, slot);
+    input.gamepads[slot].pressed[(usz)button] = true;
+}
+
 fn void set_pad_axis(Input* input, GamepadAxis axis, float value, usz slot = 0) @local {
     input.gamepads[slot].connected = true;
     input.gamepads[slot].axes[(usz)axis] = value;
@@ -224,4 +234,145 @@ fn void test_begin_frame_clears_gamepad_transitions() @test {
     assert(!input.gamepad_pressed(GamepadButton.EAST, 2));
     assert(!input.gamepad_released(GamepadButton.WEST, 2));
     assert(input.gamepad_down(GamepadButton.EAST, 2));
+}
+
+fn void test_settle_keeps_held_button_down_without_press() @test {
+    ActionMap actions = platform::default_action_map();
+    ActionId jump = actions.add("jump", ActionKind.BUTTON)!!;
+    actions.bind(jump, platform::key_binding(Scancode.SPACE))!!;
+    Input neutral;
+    Input input;
+    actions.update(&neutral);
+
+    hold_key(&input, Scancode.SPACE, true);
+    actions.update(&input);
+    actions.settle_edges(&input);
+    assert(actions.down(jump) && !actions.pressed(jump) && !actions.released(jump));
+
+    actions.update(&input);
+    assert(actions.down(jump) && !actions.pressed(jump));
+}
+
+fn void test_release_after_settle_reports_released_once() @test {
+    ActionMap actions = platform::default_action_map();
+    ActionId jump = actions.add("jump", ActionKind.BUTTON)!!;
+    actions.bind(jump, platform::key_binding(Scancode.SPACE))!!;
+    Input neutral;
+    Input input;
+    actions.update(&neutral);
+    hold_key(&input, Scancode.SPACE, true);
+    actions.update(&input);
+    actions.settle_edges(&input);
+
+    hold_key(&input, Scancode.SPACE, false);
+    actions.update(&input);
+    assert(actions.released(jump) && !actions.down(jump));
+
+    actions.update(&input);
+    assert(!actions.released(jump));
+}
+
+fn void test_press_after_settle_reports_pressed_once() @test {
+    ActionMap actions = platform::default_action_map();
+    ActionId jump = actions.add("jump", ActionKind.BUTTON)!!;
+    actions.bind(jump, platform::key_binding(Scancode.SPACE))!!;
+    Input neutral;
+    Input input;
+    actions.update(&neutral);
+    actions.update(&input);
+    actions.settle_edges(&input);
+
+    press_key(&input, Scancode.SPACE);
+    actions.update(&input);
+    assert(actions.pressed(jump));
+
+    input.begin_frame();
+    actions.update(&input);
+    assert(actions.down(jump) && !actions.pressed(jump));
+}
+
+fn void test_settle_keeps_axis_values() @test {
+    ActionMap actions = platform::default_action_map();
+    ActionId sprint = actions.add("sprint", ActionKind.AXIS_1D)!!;
+    ActionId move = actions.add("move", ActionKind.AXIS_2D)!!;
+    actions.bind(sprint, platform::gamepad_axis_binding(GamepadAxis.RIGHT_TRIGGER))!!;
+    actions.bind(move, platform::gamepad_stick_binding(GamepadStick.LEFT))!!;
+    Input neutral;
+    Input input;
+    actions.update(&neutral);
+    set_pad_axis(&input, GamepadAxis.RIGHT_TRIGGER, 0.4f);
+    set_pad_axis(&input, GamepadAxis.LEFTX, 0.575f);
+    actions.update(&input);
+
+    actions.settle_edges(&input);
+
+    assert(near(actions.value(sprint), 0.4f) && actions.down(sprint) && !actions.pressed(sprint));
+    assert(near(actions.vector(move).x, 0.5f) && actions.down(move) && !actions.pressed(move));
+}
+
+fn void test_zero_input_releases_every_action() @test {
+    ActionMap actions = platform::default_action_map();
+    ActionId key_action = actions.add("key", ActionKind.BUTTON)!!;
+    ActionId mouse_action = actions.add("mouse", ActionKind.BUTTON)!!;
+    ActionId pad_action = actions.add("pad", ActionKind.BUTTON)!!;
+    actions.bind(key_action, platform::key_binding(Scancode.E))!!;
+    actions.bind(mouse_action, platform::mouse_binding(MouseButton.LEFT))!!;
+    actions.bind(pad_action, platform::gamepad_button_binding(GamepadButton.SOUTH))!!;
+    Input input;
+    hold_key(&input, Scancode.E, true);
+    input.mouse_buttons[(usz)MouseButton.LEFT] = true;
+    hold_pad_button(&input, GamepadButton.SOUTH, true);
+    actions.update(&input);
+    Input neutral;
+
+    actions.update(&neutral);
+    assert(actions.released(key_action) && actions.released(mouse_action) && actions.released(pad_action));
+    assert(!actions.down(key_action) && !actions.down(mouse_action) && !actions.down(pad_action));
+
+    actions.update(&neutral);
+    assert(!actions.released(key_action) && !actions.released(mouse_action) && !actions.released(pad_action));
+}
+
+fn void test_settle_keeps_a_press_made_this_frame() @test {
+    ActionMap actions = platform::default_action_map();
+    ActionId jump = actions.add("jump", ActionKind.BUTTON)!!;
+    ActionId move = actions.add("move", ActionKind.AXIS_2D)!!;
+    ActionId fire = actions.add("fire", ActionKind.BUTTON)!!;
+    ActionId interact = actions.add("interact", ActionKind.BUTTON)!!;
+    actions.bind(jump, platform::key_binding(Scancode.SPACE))!!;
+    actions.bind(jump, platform::gamepad_button_binding(GamepadButton.SOUTH))!!;
+    actions.bind(move, platform::key_binding(Scancode.W, { 0, 1 }))!!;
+    actions.bind(fire, platform::mouse_binding(MouseButton.LEFT))!!;
+    actions.bind(interact, platform::gamepad_button_binding(GamepadButton.WEST, slot: 1))!!;
+    Input neutral;
+    Input input;
+    actions.update(&neutral);
+
+    press_key(&input, Scancode.SPACE);
+    press_key(&input, Scancode.W);
+    input.mouse_buttons[(usz)MouseButton.LEFT] = true;
+    input.mouse_pressed[(usz)MouseButton.LEFT] = true;
+    press_pad_button(&input, GamepadButton.WEST, slot: 1);
+    actions.update(&input);
+    actions.settle_edges(&input);
+
+    assert(actions.pressed(jump) && actions.pressed(move));
+    assert(actions.pressed(fire) && actions.pressed(interact));
+}
+
+fn void test_settle_drops_a_press_while_another_source_is_held() @test {
+    ActionMap actions = platform::default_action_map();
+    ActionId jump = actions.add("jump", ActionKind.BUTTON)!!;
+    actions.bind(jump, platform::key_binding(Scancode.SPACE))!!;
+    actions.bind(jump, platform::gamepad_button_binding(GamepadButton.SOUTH))!!;
+    Input neutral;
+    Input input;
+    actions.update(&neutral);
+
+    hold_pad_button(&input, GamepadButton.SOUTH, true);
+    press_key(&input, Scancode.SPACE);
+    actions.update(&input);
+    actions.settle_edges(&input);
+
+    assert(actions.down(jump) && !actions.pressed(jump));
 }
