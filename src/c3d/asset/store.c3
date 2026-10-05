@@ -28,6 +28,7 @@ const uint DEFAULT_MAX_SKELETONS @local    = 256; // one record each; joint arra
 const uint DEFAULT_MAX_CLIPS @local        = 1024; // one record each; key arrays are sized by the loader
 const uint DEFAULT_MAX_SHADERS @local      = 64; // one ShaderRes each in the renderer; a scene has a handful of user shaders
 const uint DEFAULT_MAX_COMPUTE_SHADERS @local = 16; // one ComputeShaderRes each in the renderer; a scene has a few compute stages
+const uint DEFAULT_MAX_FONTS @local        = 16; // one record and renderer mirror each; a UI uses a few faces
 
 uint registered_kind_count @local;
 
@@ -60,6 +61,7 @@ struct AssetStoreDesc {
     uint max_clips;
     uint max_shaders;
     uint max_compute_shaders;
+    uint max_fonts;
 }
 
 <*
@@ -77,6 +79,7 @@ struct AssetStore {
     ClipPool                  clips;
     ShaderPool                shaders;
     ComputeShaderPool         compute_shaders;
+    FontPool                  fonts;
     HashMap{String, AssetRef} keys;
     CustomSlot[MAX_CUSTOM_ASSET_TYPES] custom;
 }
@@ -211,6 +214,7 @@ fn AssetStoreDesc default_asset_store_desc() {
         .max_clips        = DEFAULT_MAX_CLIPS,
         .max_shaders      = DEFAULT_MAX_SHADERS,
         .max_compute_shaders = DEFAULT_MAX_COMPUTE_SHADERS,
+        .max_fonts        = DEFAULT_MAX_FONTS,
     };
 }
 
@@ -228,6 +232,7 @@ fn AssetStore create_asset_store(Allocator allocator, AssetStoreDesc desc) {
     if (!desc.max_clips) desc.max_clips = DEFAULT_MAX_CLIPS;
     if (!desc.max_shaders) desc.max_shaders = DEFAULT_MAX_SHADERS;
     if (!desc.max_compute_shaders) desc.max_compute_shaders = DEFAULT_MAX_COMPUTE_SHADERS;
+    if (!desc.max_fonts) desc.max_fonts = DEFAULT_MAX_FONTS;
     AssetStore store = {
         .allocator    = allocator,
         .geometries   = pool::create_pool{GeometryAsset, GeometryId}(allocator, desc.max_geometries),
@@ -240,6 +245,7 @@ fn AssetStore create_asset_store(Allocator allocator, AssetStoreDesc desc) {
         .clips        = pool::create_pool{ClipAsset, ClipId}(allocator, desc.max_clips),
         .shaders      = pool::create_pool{ShaderAsset, ShaderId}(allocator, desc.max_shaders),
         .compute_shaders = pool::create_pool{ComputeShaderAsset, ComputeShaderId}(allocator, desc.max_compute_shaders),
+        .fonts        = pool::create_pool{FontAsset, FontId}(allocator, desc.max_fonts),
     };
     store.keys.init(allocator);
     add_builtins(&store);
@@ -301,6 +307,11 @@ fn void destroy_asset_store(AssetStore* store) {
         free_string(store.allocator, record.header.key);
         alloc::free(store.allocator, record.desc.compute.ptr);
     }
+    foreach (&record : store.fonts.items) {
+        if (!record.header.revision) continue;
+        free_string(store.allocator, record.header.key);
+        free_font(store.allocator, record);
+    }
     foreach (&slot : store.custom) {
         if (slot.pool) slot.destroy(slot.pool, store.allocator, slot.on_destroy, slot.user);
     }
@@ -315,6 +326,7 @@ fn void destroy_asset_store(AssetStore* store) {
     pool::destroy_pool{ClipAsset, ClipId}(&store.clips);
     pool::destroy_pool{ShaderAsset, ShaderId}(&store.shaders);
     pool::destroy_pool{ComputeShaderAsset, ComputeShaderId}(&store.compute_shaders);
+    pool::destroy_pool{FontAsset, FontId}(&store.fonts);
     *store = {};
 }
 
