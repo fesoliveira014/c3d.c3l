@@ -165,6 +165,35 @@ fn void test_field_focus_edit_change_and_submit() @test {
     assert(fixture::has_line(&fixture, "ab"));
 }
 
+fn void test_edits_of_a_full_field_stay_in_bounds() @test {
+    UiDesc desc = ui::default_ui_desc();
+    desc.field_bytes = 8;
+    Fixture fixture;
+    fixture::create_fixture(&fixture, desc);
+    defer fixture::destroy_fixture(&fixture);
+    Field field = { .text = "abcdefgh" };
+    fixture.ui.bind(
+        name:   "field.text",
+        kind:   TEXT,
+        getter: &field_text,
+        user:   &field,
+    )!!;
+    fixture.ui.on("field.change", &fixture::record_action, &field.change)!!;
+    fixture.ui.on("field.submit", &fixture::record_action, &field.submit)!!;
+    fixture.ui.load_document(FIELD)!!;
+    fixture::frame(&fixture);
+
+    fixture::click(&fixture, { 10, 10 });
+    fixture::frame(&fixture, { fixture::key(Scancode.BACKSPACE) });
+    assert(field.change.text() == "abcdefg");
+    fixture::frame(&fixture, { fixture::typed("h") });
+    assert(field.change.text() == "abcdefgh");
+    fixture::frame(&fixture, { fixture::typed("i") });
+    assert(field.change.calls == 2);
+    fixture::frame(&fixture, { fixture::key(Scancode.HOME), fixture::key(Scancode.DELETE) });
+    assert(field.change.text() == "bcdefgh");
+}
+
 fn void test_escape_blurs_without_submit() @test {
     Fixture fixture;
     fixture::create_fixture(&fixture);

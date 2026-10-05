@@ -10,7 +10,7 @@ import std::math;
 const uint UI_CACHE_SEGMENTS_PER_LINE @private = 4;
 const uint UI_CACHE_BYTES_PER_LINE @private = 32; // HUD lines average well below; long lines borrow from short ones
 const uint UI_FLOAT_DECIMALS @private = 2;
-const usz UI_NUMBER_BYTES @private = 320; // "%.6f" of -double::max is 316 characters
+const usz UI_NUMBER_BYTES @private = 320; // "%.6f" of -double::max is 317 characters
 const String[UI_MAX_TEMPLATE_DECIMALS + 1] UI_FIXED_FORMATS @private = {
     "%.0f",
     "%.1f",

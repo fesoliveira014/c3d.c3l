@@ -257,14 +257,14 @@ fn void insert_text(Ui* ui, String text) @private {
     usz length = text.len < room ? text.len : room;
     while (length > 0 && length < text.len && (text[length] & 0xC0) == 0x80) length--;
     if (!length) return;
-    mem::move(&ui.field[ui.caret + length], &ui.field[ui.caret], (sz)(ui.field_length - ui.caret));
+    mem::move(ui.field.ptr + ui.caret + length, ui.field.ptr + ui.caret, (sz)(ui.field_length - ui.caret));
     ui.field[ui.caret : length] = text[:length];
     ui.field_length += (uint)length;
     ui.caret += (uint)length;
 }
 
 fn void remove_bytes(Ui* ui, uint start, uint end) @private {
-    mem::move(&ui.field[start], &ui.field[end], (sz)(ui.field_length - end));
+    mem::move(ui.field.ptr + start, ui.field.ptr + end, (sz)(ui.field_length - end));
     ui.field_length -= end - start;
     ui.caret = start;
 }
