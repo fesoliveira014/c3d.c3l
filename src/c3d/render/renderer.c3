@@ -158,6 +158,8 @@ struct Renderer {
     gpu::SamplerIndex       toon_gradient_sampler;
     SamplerRes[]            samplers;
     List{PendingTextureUpload} pending_texture_uploads;
+    FontRes[]               fonts;
+    List{PendingFontUpload} pending_font_uploads;
     List{TextureStateUndo}  texture_state_undo;
     RetireList              pending_upload_retire;
     MaterialRes[]           materials;
@@ -466,6 +468,7 @@ fn void? begin_renderer_frame(Renderer* self, FrameInfo info, bool acquire_outpu
             self.instances.sweep(self.frame_index, &self.pending_upload_retire);
             sweep_environments(self);
             sweep_textures(self);
+            sweep_fonts(self);
             sweep_samplers(self);
             sweep_materials(self);
             sweep_shaders(self);
@@ -841,6 +844,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .shaders              = alloc::new_array(allocator, ShaderRes, assets.shaders.items.len),
         .compute_shaders      = alloc::new_array(allocator, ComputeShaderRes, assets.compute_shaders.items.len),
         .textures             = alloc::new_array(allocator, TextureRes, assets.textures.items.len),
+        .fonts                = alloc::new_array(allocator, FontRes, assets.fonts.items.len),
         .environment_state    = {
             .mirrors = alloc::new_array(allocator, EnvironmentRes, assets.environments.items.len),
             .pending = alloc::new_array(allocator, PendingEnvironment, assets.environments.items.len),
@@ -883,6 +887,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     renderer.pending_instance_uploads.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_prepare_marks.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_texture_uploads.init(allocator, RETIRE_INITIAL_CAPACITY);
+    renderer.pending_font_uploads.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.texture_state_undo.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_upload_retire.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.scene_trace.pending_builds.init(allocator, RETIRE_INITIAL_CAPACITY);
@@ -894,6 +899,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         free_environments(&renderer);
         free_pending_uploads(&renderer);
         free_textures(&renderer);
+        free_fonts(&renderer);
         free_rt(&renderer);
         free_geometries(&renderer);
         free_billboard_geometry(&renderer);
@@ -937,6 +943,7 @@ fn void destroy_renderer(Renderer* renderer) {
     free_probe_update(renderer);
     free_pending_uploads(renderer);
     free_textures(renderer);
+    free_fonts(renderer);
     free_rt(renderer);
     free_geometries(renderer);
     free_billboard_geometry(renderer);

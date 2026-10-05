@@ -567,6 +567,12 @@ root GuiFragmentRoot {
 
 // Items of one overlay list, tagged by kind.
 const uint OVERLAY_KIND_RECT = 0;
+const uint OVERLAY_KIND_GLYPH = 1;
+// Kind bits of sampler_kind_flags after OVERLAY_KIND_SHIFT.
+const uint OVERLAY_KIND_MASK = 255;
+// Texels per row of the font curve and band textures.
+const uint FONT_TEXTURE_WIDTH = 4096;
+const uint FONT_TEXTURE_WIDTH_SHIFT = 12;
 const uint OVERLAY_KIND_SHIFT = 16;
 const uint OVERLAY_FLAGS_SHIFT = 24;
 // Sampler index bits of sampler_kind_flags; the sampler heap holds 256 by default.
@@ -593,6 +599,10 @@ struct OverlayItemGpu {
     uint         border_color;
     TextureIndex texture;
     uint         sampler_kind_flags;
+    uint         glyph_location;
+    uint         glyph_band_max;
+    TextureIndex band_texture;
+    uint         _pad0;
 }
 
 root OverlayRoot {

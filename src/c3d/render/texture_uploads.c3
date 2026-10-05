@@ -91,6 +91,7 @@ fn void commit_uploads(Renderer* renderer, Frame* slot) @private {
     }
     renderer.pending_texture_uploads.clear();
     renderer.texture_state_undo.clear();
+    commit_font_uploads(renderer);
     renderer.pending_geometry_uploads.clear();
     renderer.pending_instance_uploads.clear();
     renderer.pending_prepare_marks.clear();
@@ -111,6 +112,7 @@ fn void discard_uploads(Renderer* renderer) @private {
     discard_probe_fills(renderer);
     discard_environment_preparations(renderer);
     restore_texture_states(&renderer.texture_state_undo, renderer.textures);
+    discard_font_uploads(renderer);
     if (!renderer.uploads_recorded && !renderer.pending_copies.len()
         && !renderer.pending_texture_uploads.len() && !renderer.pending_geometry_uploads.len()
         && !renderer.pending_instance_uploads.len()) {
@@ -139,6 +141,7 @@ fn void free_pending_uploads(Renderer* renderer) @private {
     renderer.pending_upload_retire.free();
     renderer.pending_texture_uploads.free();
     renderer.texture_state_undo.free();
+    renderer.pending_font_uploads.free();
     renderer.pending_geometry_uploads.free();
     renderer.pending_instance_uploads.free();
 }

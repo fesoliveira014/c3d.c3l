@@ -70,6 +70,10 @@ const uint MATERIAL_ALPHA_BLEND = 4u;
 const uint MATERIAL_BLEND_ADDITIVE = 8u;
 const uint TOON_MAP_GRADIENT = 1024u;
 const uint OVERLAY_KIND_RECT = 0u;
+const uint OVERLAY_KIND_GLYPH = 1u;
+const uint OVERLAY_KIND_MASK = 255u;
+const uint FONT_TEXTURE_WIDTH = 4096u;
+const uint FONT_TEXTURE_WIDTH_SHIFT = 12u;
 const uint OVERLAY_KIND_SHIFT = 16u;
 const uint OVERLAY_FLAGS_SHIFT = 24u;
 const uint OVERLAY_SAMPLER_MASK = 65535u;
@@ -663,6 +667,10 @@ struct OverlayItemGpu {
     uint border_color;
     uint texture;
     uint sampler_kind_flags;
+    uint glyph_location;
+    uint glyph_band_max;
+    uint band_texture;
+    uint _pad0;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer OverlayRoot {

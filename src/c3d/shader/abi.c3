@@ -67,6 +67,10 @@ const uint MATERIAL_ALPHA_BLEND = 4;
 const uint MATERIAL_BLEND_ADDITIVE = 8;
 const uint TOON_MAP_GRADIENT = 1024;
 const uint OVERLAY_KIND_RECT = 0;
+const uint OVERLAY_KIND_GLYPH = 1;
+const uint OVERLAY_KIND_MASK = 255;
+const uint FONT_TEXTURE_WIDTH = 4096;
+const uint FONT_TEXTURE_WIDTH_SHIFT = 12;
 const uint OVERLAY_KIND_SHIFT = 16;
 const uint OVERLAY_FLAGS_SHIFT = 24;
 const uint OVERLAY_SAMPLER_MASK = 65535;
@@ -1066,8 +1070,12 @@ struct OverlayItemGpu {
     uint         border_color;
     TextureIndex texture;
     uint         sampler_kind_flags;
+    uint         glyph_location;
+    uint         glyph_band_max;
+    TextureIndex band_texture;
+    uint         _pad0;
 }
-$assert OverlayItemGpu::size == 80;
+$assert OverlayItemGpu::size == 96;
 $assert $reflect(OverlayItemGpu.bounds).offset == 0;
 $assert $reflect(OverlayItemGpu.uv_rect).offset == 16;
 $assert $reflect(OverlayItemGpu.radii_top).offset == 32;
@@ -1082,6 +1090,10 @@ $assert $reflect(OverlayItemGpu.fill).offset == 64;
 $assert $reflect(OverlayItemGpu.border_color).offset == 68;
 $assert $reflect(OverlayItemGpu.texture).offset == 72;
 $assert $reflect(OverlayItemGpu.sampler_kind_flags).offset == 76;
+$assert $reflect(OverlayItemGpu.glyph_location).offset == 80;
+$assert $reflect(OverlayItemGpu.glyph_band_max).offset == 84;
+$assert $reflect(OverlayItemGpu.band_texture).offset == 88;
+$assert $reflect(OverlayItemGpu._pad0).offset == 92;
 
 struct OverlayRoot {
     GpuAddress items;
