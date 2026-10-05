@@ -178,6 +178,26 @@ fn void ActionMap.update(&self, Input* input) {
 }
 
 <*
+ Drop every edge except this frame's presses; held actions stay down.
+ A resume in the frame of the uncovering press repeats that press.
+ @param [&in] input : "Input of the update just run."
+*>
+fn void ActionMap.settle_edges(&self, Input* input) {
+    bool[ACTION_COUNT] held_before;
+    for (uint index = 0; index < self.binding_count; index++) {
+        Binding* binding = &self.bindings[index];
+        if (pressed_this_frame(binding, input)) continue;
+        if (contribution_of(binding, input, self.deadzone) == { 0, 0 }) continue;
+        held_before[(usz)self.binding_actions[index]] = true;
+    }
+
+    for (uint index = 0; index < self.action_count; index++) {
+        ActionState* action = &self.actions[index];
+        action.was_down = action.down && held_before[index];
+    }
+}
+
+<*
  Whether the action is held.
  @require (uint)action < self.action_count
 *>
@@ -292,6 +312,16 @@ fn Vec2 contribution_of(Binding* binding, Input* input, float deadzone) @local {
             if (!input.gamepads[binding.gamepad_slot].connected) return { 0, 0 };
             Vec2 stick = input.gamepad_stick(binding.gamepad_stick, binding.gamepad_slot);
             return apply_deadzone(stick, deadzone) * binding.scale;
+    }
+}
+
+fn bool pressed_this_frame(Binding* binding, Input* input) @local {
+    switch (binding.source) {
+        case KEY: return input.key_pressed(binding.key);
+        case MOUSE_BUTTON: return input.button_pressed(binding.mouse_button);
+        case GAMEPAD_BUTTON: return input.gamepad_pressed(binding.gamepad_button, binding.gamepad_slot);
+        case GAMEPAD_AXIS:
+        case GAMEPAD_STICK: return false; // no transitions; a moved axis counts as held
     }
 }
 

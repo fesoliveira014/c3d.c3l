@@ -59,6 +59,26 @@ while (window.poll()) {
 - Sticks apply the map's radial `deadzone` (`DEFAULT_STICK_DEADZONE`, 0.15) and rescale to the full range; triggers apply none.
 - Keys and mouse buttons contribute nothing while the GUI captures the keyboard or the mouse; pad bindings are never gated. A binding on a slot that is not connected contributes nothing.
 - `bind`, `unbind(action)` and `clear` change the map at runtime; the change applies at the next `update`. `clear` invalidates every `ActionId`.
+- A zero-initialized `Input` releases every action: the first `update` with it reports `released` for held actions, later ones report nothing. A state stack feeds one to a map it covers.
+- `settle_edges(&input)` resumes such a map. Call it right after the resume frame's `update`, with the same `Input`. An action held from before that frame stays down and reports no `pressed`. An action whose every contributing source is a key, mouse button or pad button pressed this frame keeps its `pressed`; axes and sticks have no transitions and count as held. `released` reads false, and values do not change. Later updates report edges normally.
+- Resume on a later frame than the press that uncovered the map. That press is still in `Input` on its own frame, so the resumed map would report it again.
 - Capacities are fixed: `ACTION_COUNT` (64) actions and `BINDING_COUNT` (256) bindings; `add` and `bind` fault `CAPACITY_EXCEEDED` past them, `add` faults `INVALID_ARGUMENT` for a taken name, and `find` faults `NOT_FOUND`. Action names are borrowed and must outlive the map. The map allocates nothing.
+
+Resuming a covered map:
+
+```c3
+Input neutral;
+bool was_open;
+while (window.poll()) {
+    if (menu_open) {
+        world_actions.update(&neutral);
+    } else {
+        world_actions.update(&window.input);
+        if (was_open) world_actions.settle_edges(&window.input);
+    }
+    was_open = menu_open;
+    // menu input runs after this and may close the menu
+}
+```
 
 The `actions` example moves a box with `move`, hops on `jump` and runs with `sprint`, each bound to the keyboard and a pad at once, and lists every action, its bindings and the connected pads.
