@@ -313,11 +313,13 @@ fn GpuGeometry*? resolve_geometry(Renderer* renderer, GeometryId geometry) @priv
 }
 
 fn void? record_pending_copies(Renderer* renderer, gpu::CommandList* commands) @private {
-    if (renderer.pending_copies.len() || renderer.pending_texture_uploads.len()) {
+    if (renderer.pending_copies.len() || renderer.pending_texture_uploads.len()
+        || renderer.pending_font_uploads.len()) {
         renderer.uploads_recorded = true;
         renderer.work_recorded = true;
     }
     record_texture_uploads(renderer, commands)!;
+    record_font_uploads(renderer, commands)!;
     if (renderer.pending_copies.len()) {
         if (renderer.pending_overwrite) {
             gpu::Barrier before_overwrite = { .before = renderer.consumer_stages, .after = { .transfer } };

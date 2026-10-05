@@ -3,6 +3,7 @@
 #include "c3d_abi.glsl"
 #include "descriptor_heap.glsl"
 #include "grade.glsl"
+#include "overlay_glyph.glsl"
 
 layout(buffer_reference, std430, buffer_reference_align = 16) readonly buffer OverlayItems {
     OverlayItemGpu values[];
@@ -70,9 +71,34 @@ vec4 sample_texture_2d_grad(
         uv_dy);
 }
 
+vec4 overlay_glyph_color(OverlayItemGpu item, vec2 position) {
+    vec2 em_per_pixel = (item.uv_rect.zw - item.uv_rect.xy) / (item.bounds.zw - item.bounds.xy);
+    vec2 em = item.uv_rect.xy + (position - item.bounds.xy) * em_per_pixel;
+    vec2 em_low = min(item.uv_rect.xy, item.uv_rect.zw);
+    vec2 em_high = max(item.uv_rect.xy, item.uv_rect.zw);
+    uvec2 band_max = uvec2(item.glyph_band_max & 0xFFFFu, item.glyph_band_max >> 16u);
+    vec2 band_scale = vec2(band_max + 1u) / max(em_high - em_low, vec2(1.0 / 65536.0));
+    ivec4 glyph = ivec4(int(item.glyph_location & 0xFFFFu), int(item.glyph_location >> 16u), ivec2(band_max));
+    float coverage = glyph_coverage(
+        item.texture,
+        item.band_texture,
+        em,
+        1.0 / abs(em_per_pixel),
+        vec4(band_scale, -em_low * band_scale),
+        glyph);
+    vec4 fill = unpackUnorm4x8(item.fill);
+    return vec4(srgb_to_linear(fill.rgb), fill.a * coverage);
+}
+
 void main() {
     OverlayRoot root = OverlayRoot(pc.fragment_root_gpu);
     OverlayItemGpu item = OverlayItems(root.items).values[v_item];
+    uint kind = (item.sampler_kind_flags >> OVERLAY_KIND_SHIFT) & OVERLAY_KIND_MASK;
+    if (kind == OVERLAY_KIND_GLYPH) {
+        out_color = overlay_glyph_color(item, gl_FragCoord.xy);
+        return;
+    }
+
     uint flags = item.sampler_kind_flags >> OVERLAY_FLAGS_SHIFT;
     vec2 position = gl_FragCoord.xy;
 

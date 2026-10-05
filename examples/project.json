@@ -35,6 +35,12 @@
       "features": ["C3D_PROFILE_CPU", "C3D_PROFILE_GPU", "C3D_PROFILE_INTERNAL"],
       "sources": ["src/overlay.c3"]
     },
+    "text": {
+      "type": "executable",
+      "dependencies": ["c3d_profile"],
+      "features": ["C3D_PROFILE_CPU", "C3D_PROFILE_GPU", "C3D_PROFILE_INTERNAL"],
+      "sources": ["src/text.c3"]
+    },
     "cpu_bench": {
       "type": "executable",
       "sources": [ "src/cpu_bench.c3" ]

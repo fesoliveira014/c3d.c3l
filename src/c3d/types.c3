@@ -8,6 +8,7 @@ typedef EnvironmentId  = Id;
 typedef SkinId         = Id;
 typedef ShaderId       = Id;
 typedef ComputeShaderId = Id;
+typedef FontId         = Id;
 typedef ModelId        = Id;
 typedef ClipId         = Id;
 
@@ -36,6 +37,7 @@ enum AssetKind {
     COMPUTE_SHADER,
     ENVIRONMENT,
     CUSTOM,
+    FONT,
 }
 
 <*

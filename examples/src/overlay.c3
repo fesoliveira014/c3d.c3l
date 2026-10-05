@@ -355,7 +355,7 @@ fn void? run_interactive(Demo* demo, Options* options) @local {
         imgui::set_next_window_size(STATS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
         if (imgui::begin("Overlay", null, {})) {
             imgui::checkbox("Stress rects", &options.stress_enabled);
-            imgui::text("Items: %u of %u", demo.list.item_count, (uint)demo.list.rects.len);
+            imgui::text("Items: %u of %u", demo.list.item_count, (uint)demo.list.entries.len);
         }
         imgui::end();
         imgui::set_next_window_pos(RENDERER_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);

@@ -11,6 +11,10 @@ import std::math;
 
 const uint OUTPUT_WIDTH @local = 100;
 const uint OUTPUT_HEIGHT @local = 80;
+const uint FONT_GLYPH_SPACE @local = 1;
+const uint FONT_GLYPH_A @local = 34;
+const uint FONT_GLYPH_V @local = 55;
+const uint FONT_GLYPH_COUNT @local = 106;
 
 fn OverlayRect rect_at(Vec2 min, Vec2 size) @local {
     OverlayRect rect = render::OVERLAY_RECT_DEFAULT;
@@ -22,10 +26,19 @@ fn OverlayRect rect_at(Vec2 min, Vec2 size) @local {
 fn uint pack_all(OverlayList* list, OverlayItemGpu[] items) @local {
     return render::pack_overlay_items(
         list:        list,
+        assets:      null,
         width:       OUTPUT_WIDTH,
         height:      OUTPUT_HEIGHT,
         destination: items,
     );
+}
+
+fn FontDesc test_font_desc() @local {
+    return {
+        .max_glyphs   = 16,
+        .curve_texels = asset::FONT_TEXTURE_WIDTH,
+        .band_texels  = asset::FONT_TEXTURE_WIDTH,
+    };
 }
 
 fn void test_full_list_faults_and_keeps_items() @test {
@@ -35,7 +48,7 @@ fn void test_full_list_faults_and_keeps_items() @test {
     list.add_rect(rect_at({ 0, 0 }, { 10, 10 }))!!;
     list.add_rect(rect_at({ 5, 5 }, { 10, 10 }))!!;
     assert(@catch(list.add_rect(rect_at({ 9, 9 }, { 1, 1 }))) == c3d::CAPACITY_EXCEEDED);
-    assert(list.item_count == 2 && list.rects[1].min == (Vec2){ 5, 5 });
+    assert(list.item_count == 2 && list.entries[1].rect.min == (Vec2){ 5, 5 });
 
     list.push_clip({ 0, 0 }, { 50, 50 })!!;
     assert(@catch(list.push_clip({ 1, 1 }, { 2, 2 })) == c3d::CAPACITY_EXCEEDED);
@@ -77,7 +90,7 @@ fn void test_add_rect_rejects_each_invalid_class() @test {
     list.add_rect(rect_at({ 1, 2 }, { 3, 4 }))!!;
     foreach (rect : cases) {
         assert(@catch(list.add_rect(rect)) == c3d::INVALID_ARGUMENT);
-        assert(list.item_count == 1 && list.rects[0].min == (Vec2){ 1, 2 });
+        assert(list.item_count == 1 && list.entries[0].rect.min == (Vec2){ 1, 2 });
     }
 
     OverlayRect edge = rect_at({ 0, 0 }, { 10, 10 });
@@ -117,10 +130,10 @@ fn void test_clips_intersect_and_restore() @test {
     list.pop_clip();
 
     assert(list.clip_depth == 0);
-    assert(list.rect_clips[0].x == -float::max && list.rect_clips[0].w == float::max);
-    assert(list.rect_clips[1] == (Vec4){ 10, 10, 60, 40 });
-    assert(list.rect_clips[2] == (Vec4){ 30, 10, 60, 20 });
-    assert(list.rect_clips[3] == (Vec4){ 10, 10, 60, 40 });
+    assert(list.entries[0].clip.x == -float::max && list.entries[0].clip.w == float::max);
+    assert(list.entries[1].clip == (Vec4){ 10, 10, 60, 40 });
+    assert(list.entries[2].clip == (Vec4){ 30, 10, 60, 20 });
+    assert(list.entries[3].clip == (Vec4){ 10, 10, 60, 40 });
 }
 
 fn void test_scissor_rounds_outward_and_clamps() @test {
@@ -261,7 +274,7 @@ fn void test_references_resolve_or_fault() @test {
     targets.remove(removed_target);
 
     list.add_rect(rect_at({ 0, 0 }, { 4, 4 }))!!;
-    OverlayRect* rect = &list.rects[0];
+    OverlayRect* rect = &list.entries[0].rect;
     render::check_overlay_refs(&assets, &targets, &list)!!;
     rect.texture = { .kind = ASSET, .asset = color };
     render::check_overlay_refs(&assets, &targets, &list)!!;
@@ -284,4 +297,162 @@ fn void test_references_resolve_or_fault() @test {
     assert(@catch(render::check_overlay_refs(&assets, &targets, &list)) == c3d::INVALID_ID);
     rect.sampler = compare;
     assert(@catch(render::check_overlay_refs(&assets, &targets, &list)) == c3d::INVALID_ARGUMENT);
+}
+
+fn void test_add_glyphs_faults_and_keeps_list() @test {
+    OverlayList list = render::create_overlay_list(mem, { .max_items = 2, .max_clips = 1, .max_glyphs = 3 });
+    defer render::destroy_overlay_list(&list);
+    GlyphPlacement[4] glyphs = { { .glyph = 1 }, { .glyph = 2 }, { .glyph = 3 }, { .glyph = 4 } };
+    OverlayGlyphRun run = { .glyphs = glyphs[:2], .size_pixels = 16, .color = { 1, 1, 1, 1 } };
+
+    list.add_glyphs(run)!!;
+    assert(@catch(list.add_glyphs(run)) == c3d::CAPACITY_EXCEEDED);
+    assert(list.item_count == 1 && list.glyph_count == 2 && list.glyphs[1].glyph == 2);
+
+    float nan = float::nan;
+    OverlayGlyphRun[] invalid = {
+        { .glyphs = glyphs[:1], .size_pixels = 0, .color = { 1, 1, 1, 1 } },
+        { .glyphs = glyphs[:1], .size_pixels = float::inf, .color = { 1, 1, 1, 1 } },
+        { .glyphs = glyphs[:1], .origin = { nan, 0 }, .size_pixels = 16, .color = { 1, 1, 1, 1 } },
+        { .glyphs = glyphs[:1], .size_pixels = 16, .color = { 1, nan, 1, 1 } },
+    };
+    foreach (candidate : invalid) assert(@catch(list.add_glyphs(candidate)) == c3d::INVALID_ARGUMENT);
+    GlyphPlacement[1] bad_position = { { .glyph = 1, .position = { nan, 0 } } };
+    run.glyphs = bad_position[..];
+    assert(@catch(list.add_glyphs(run)) == c3d::INVALID_ARGUMENT);
+    assert(list.item_count == 1 && list.glyph_count == 2);
+
+    list.add_rect(rect_at({ 0, 0 }, { 1, 1 }))!!;
+    run.glyphs = glyphs[:1];
+    assert(@catch(list.add_glyphs(run)) == c3d::CAPACITY_EXCEEDED);
+
+    list.clear();
+    assert(list.item_count == 0 && list.glyph_count == 0);
+    run.glyphs = {};
+    list.add_glyphs(run)!!;
+}
+
+fn void test_glyph_items_map_em_bounds_to_pixels() @test {
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+    FontId font = assets.add_font($embed("../fixtures/fonts/latin.ttf"), test_font_desc())!!;
+    GlyphPlacement[2] placements;
+    usz count = assets.place_text(font, "AV", placements[..])!!;
+    OverlayList list = render::create_overlay_list(mem, { .max_items = 2, .max_clips = 1, .max_glyphs = 2 });
+    defer render::destroy_overlay_list(&list);
+
+    list.add_glyphs({
+        .font        = font,
+        .glyphs      = placements[:count],
+        .origin      = { 10, 50 },
+        .size_pixels = 20,
+        .color       = { 1, 0, 0, 1 },
+    })!!;
+    list.bindings[0] = { .texture = (gpu::TextureIndex)7u, .bands = (gpu::TextureIndex)9u };
+
+    OverlayItemGpu[2] items;
+    uint emitted = render::pack_overlay_items(
+        list:        &list,
+        assets:      &assets,
+        width:       OUTPUT_WIDTH,
+        height:      OUTPUT_HEIGHT,
+        destination: items[..],
+    );
+    assert(emitted == 2 && list.prepared.run_count == 1);
+
+    FontAsset* record = assets.font(font);
+    foreach (index, item : items) {
+        FontGlyph* glyph = &record.glyphs[record.glyph_slots[placements[index].glyph] - 1];
+        Vec4 em = glyph.bounds;
+        Vec2 pen = (Vec2){ 10, 50 } + placements[index].position * 20.0f;
+        assert(item.bounds == (Vec4){ pen.x + em.x * 20, pen.y - em.w * 20, pen.x + em.z * 20, pen.y - em.y * 20 });
+        assert(item.uv_rect == (Vec4){ em.x, em.w, em.z, em.y });
+        assert(item.glyph_location == glyph.band_location && item.glyph_band_max == glyph.band_max);
+        assert((uint)item.texture == 7 && (uint)item.band_texture == 9);
+        assert(item.fill == 0xff00_00ff);
+        assert(item.sampler_kind_flags == shader::OVERLAY_KIND_GLYPH << shader::OVERLAY_KIND_SHIFT);
+        assert(item.radii_top == 0 && item.borders_left_top == 0 && item.slice_uv_left_top == 0);
+    }
+}
+
+fn void test_glyphs_and_rects_share_scissor_runs() @test {
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+    FontId font = assets.add_font($embed("../fixtures/fonts/latin.ttf"), test_font_desc())!!;
+    GlyphPlacement[2] placements;
+    usz count = assets.place_text(font, "AV", placements[..])!!;
+    OverlayList list = render::create_overlay_list(mem, { .max_items = 6, .max_clips = 1, .max_glyphs = 4 });
+    defer render::destroy_overlay_list(&list);
+    OverlayGlyphRun run = {
+        .font        = font,
+        .glyphs      = placements[:count],
+        .origin      = { 10, 50 },
+        .size_pixels = 20,
+        .color       = { 1, 1, 1, 1 },
+    };
+
+    list.add_rect(rect_at({ 0, 0 }, { 5, 5 }))!!;
+    list.add_glyphs(run)!!;
+    list.add_rect(rect_at({ 60, 0 }, { 5, 5 }))!!;
+    list.push_clip({ 0, 0 }, { 20, 80 })!!;
+    list.add_glyphs(run)!!;
+    list.pop_clip();
+
+    OverlayItemGpu[8] items;
+    uint emitted = render::pack_overlay_items(
+        list:        &list,
+        assets:      &assets,
+        width:       OUTPUT_WIDTH,
+        height:      OUTPUT_HEIGHT,
+        destination: items[..],
+    );
+    assert(emitted == 5 && list.prepared.run_count == 2);
+    assert(list.runs[0].first == 0 && list.runs[0].count == 4);
+    assert(list.runs[1].first == 4 && list.runs[1].count == 1);
+
+    uint[5] kinds = {
+        shader::OVERLAY_KIND_RECT,
+        shader::OVERLAY_KIND_GLYPH,
+        shader::OVERLAY_KIND_GLYPH,
+        shader::OVERLAY_KIND_RECT,
+        shader::OVERLAY_KIND_GLYPH,
+    };
+    foreach (index, kind : kinds) {
+        assert(((items[index].sampler_kind_flags >> shader::OVERLAY_KIND_SHIFT) & shader::OVERLAY_KIND_MASK) == kind);
+    }
+    assert(items[4].glyph_location == items[1].glyph_location && items[4].bounds == items[1].bounds);
+}
+
+fn void test_glyph_references_resolve_or_fault() @test {
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+    TargetPool targets = pool::create_pool{TargetRecord, RenderTargetId}(mem, 1);
+    defer pool::destroy_pool{TargetRecord, RenderTargetId}(&targets);
+    char[] latin = $embed("../fixtures/fonts/latin.ttf");
+    FontId font = assets.add_font(latin, test_font_desc())!!;
+    FontId removed = assets.add_font(latin, test_font_desc())!!;
+    assets.remove_font(removed);
+    GlyphPlacement[1] placements;
+    assets.place_text(font, "A ", placements[..])!!;
+    OverlayList list = render::create_overlay_list(mem, { .max_items = 1, .max_clips = 1, .max_glyphs = 1 });
+    defer render::destroy_overlay_list(&list);
+
+    list.add_glyphs({ .font = font, .glyphs = placements[..], .size_pixels = 16, .color = { 1, 1, 1, 1 } })!!;
+    render::check_overlay_refs(&assets, &targets, &list)!!;
+
+    OverlayText* text = &list.entries[0].text;
+    text.font = removed;
+    assert(@catch(render::check_overlay_refs(&assets, &targets, &list)) == c3d::INVALID_ID);
+    text.font = {};
+    assert(@catch(render::check_overlay_refs(&assets, &targets, &list)) == c3d::INVALID_ID);
+
+    text.font = font;
+    list.glyphs[0].glyph = FONT_GLYPH_COUNT;
+    assert(@catch(render::check_overlay_refs(&assets, &targets, &list)) == c3d::INVALID_ARGUMENT);
+    list.glyphs[0].glyph = FONT_GLYPH_V;
+    assert(@catch(render::check_overlay_refs(&assets, &targets, &list)) == c3d::INVALID_ARGUMENT);
+    list.glyphs[0].glyph = FONT_GLYPH_SPACE;
+    assert(@catch(render::check_overlay_refs(&assets, &targets, &list)) == c3d::INVALID_ARGUMENT);
+    list.glyphs[0].glyph = FONT_GLYPH_A;
+    render::check_overlay_refs(&assets, &targets, &list)!!;
 }

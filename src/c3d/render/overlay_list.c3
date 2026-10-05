@@ -10,12 +10,17 @@ import std::math;
 <*
  Items an overlay list holds by default.
 *>
-const uint OVERLAY_LIST_DEFAULT_ITEMS = 4096; // 320 KiB of instances per prepared list, 1% of the upload ring
+const uint OVERLAY_LIST_DEFAULT_ITEMS = 4096; // 384 KiB of instances per prepared list, about 1% of the upload ring
 
 <*
  Nested clip regions an overlay list tracks by default.
 *>
 const uint OVERLAY_LIST_DEFAULT_CLIPS = 16; // UI nesting of panels and scroll areas stays well below this
+
+<*
+ Glyph placements an overlay list holds by default.
+*>
+const uint OVERLAY_LIST_DEFAULT_GLYPHS = 16384; // 1.5 MiB of instances per prepared list, under 5% of the ring
 
 <*
  White, unbordered rectangle sampling the whole texture region.
@@ -29,12 +34,18 @@ const float HALF_MAX @local = 65504; // largest finite f16; radii, borders and s
 const float UNORM16_MAX @local = 65535;
 const Vec4 UNBOUNDED_CLIP @local = { -float::max, -float::max, float::max, float::max };
 
+enum OverlayEntryKind @private {
+    RECT,
+    GLYPHS,
+}
+
 <*
  Capacities of an overlay list.
 *>
 struct OverlayListDesc {
     uint max_items;
     uint max_clips;
+    uint max_glyphs; // zero holds no text
 }
 
 <*
@@ -54,9 +65,39 @@ struct OverlayRect {
     Vec4       slice_pixels;  // the same margins on screen; all zero disables nine-slice
 }
 
+<*
+ Glyphs of one font drawn at one pixel size.
+*>
+struct OverlayGlyphRun {
+    FontId           font;
+    GlyphPlacement[] glyphs;      // copied into the list
+    Vec2             origin;      // output pixels of the baseline start
+    float            size_pixels; // em size on screen
+    Vec4             color;       // sRGB, straight alpha
+}
+
+struct OverlayText @private {
+    FontId font;
+    uint   first;       // index of the run's first placement in OverlayList.glyphs
+    uint   count;
+    Vec2   origin;
+    float  size_pixels;
+    Vec4   color;
+}
+
+struct OverlayEntry @private {
+    OverlayEntryKind kind;
+    Vec4             clip; // min x, min y, max x, max y
+    union {
+        OverlayRect rect;
+        OverlayText text;
+    }
+}
+
 struct OverlayBinding @private {
-    gpu::TextureIndex texture;
+    gpu::TextureIndex texture; // rect texture or glyph curves
     gpu::SamplerIndex sampler;
+    gpu::TextureIndex bands;   // glyph bands
 }
 
 struct OverlayRun @private {
@@ -71,18 +112,26 @@ struct OverlayPrepared @private {
     ulong           frame; // renderer frame index plus one; zero before the first preparation
 }
 
+struct OverlayPacker @local {
+    OverlayList*     list;
+    OverlayItemGpu[] destination;
+    uint             emitted;
+    uint             run_count;
+}
+
 <*
  Application-owned 2D items for one overlay, in drawing order.
 *>
 struct OverlayList {
     Allocator        allocator;
-    char[]           storage;    // one allocation behind every slice below
-    OverlayRect[]    rects;
-    Vec4[]           rect_clips; // clip box of each rect: min x, min y, max x, max y
-    OverlayBinding[] bindings;
-    Vec4[]           clips;      // the clip stack
+    char[]           storage;     // one allocation behind every slice below
+    OverlayEntry[]   entries;     // rects and glyph runs with their clips
+    GlyphPlacement[] glyphs;      // placements of every glyph run
+    OverlayBinding[] bindings;    // per entry
+    Vec4[]           clips;       // the clip stack
     OverlayRun[]     runs;
-    uint             item_count;
+    uint             item_count;  // entries in use
+    uint             glyph_count;
     uint             clip_depth;
     OverlayPrepared  prepared;
 }
@@ -92,6 +141,7 @@ struct OverlayList {
 *>
 fn void OverlayList.clear(&self) {
     self.item_count = 0;
+    self.glyph_count = 0;
     self.clip_depth = 0;
 }
 
@@ -100,11 +150,40 @@ fn void OverlayList.clear(&self) {
  @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
 *>
 fn void? OverlayList.add_rect(&self, OverlayRect rect) {
-    if (self.item_count == self.rects.len) return c3d::CAPACITY_EXCEEDED~;
+    if (self.item_count == self.entries.len) return c3d::CAPACITY_EXCEEDED~;
     if (!overlay_rect_valid(&rect)) return c3d::INVALID_ARGUMENT~;
 
-    self.rects[self.item_count] = rect;
-    self.rect_clips[self.item_count] = current_overlay_clip(self);
+    self.entries[self.item_count] = { .kind = RECT, .clip = current_overlay_clip(self), .rect = rect };
+    self.item_count++;
+}
+
+<*
+ Append a glyph run under the current clip.
+ @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
+*>
+fn void? OverlayList.add_glyphs(&self, OverlayGlyphRun run) {
+    if (self.item_count == self.entries.len) return c3d::CAPACITY_EXCEEDED~;
+    if (run.glyphs.len > self.glyphs.len - self.glyph_count) return c3d::CAPACITY_EXCEEDED~;
+    if (!finite_vec2(run.origin) || !finite_vec4(run.color)) return c3d::INVALID_ARGUMENT~;
+    if (!math::is_finite(run.size_pixels) || run.size_pixels <= 0) return c3d::INVALID_ARGUMENT~;
+    foreach (placement : run.glyphs) {
+        if (!finite_vec2(placement.position)) return c3d::INVALID_ARGUMENT~;
+    }
+
+    self.glyphs[self.glyph_count : run.glyphs.len] = run.glyphs[..];
+    self.entries[self.item_count] = {
+        .kind = GLYPHS,
+        .clip = current_overlay_clip(self),
+        .text = {
+            .font        = run.font,
+            .first       = self.glyph_count,
+            .count       = (uint)run.glyphs.len,
+            .origin      = run.origin,
+            .size_pixels = run.size_pixels,
+            .color       = run.color,
+        },
+    };
+    self.glyph_count += (uint)run.glyphs.len;
     self.item_count++;
 }
 
@@ -138,7 +217,11 @@ fn void OverlayList.pop_clip(&self) {
  Default overlay list capacities.
 *>
 fn OverlayListDesc default_overlay_list_desc() {
-    return { .max_items = OVERLAY_LIST_DEFAULT_ITEMS, .max_clips = OVERLAY_LIST_DEFAULT_CLIPS };
+    return {
+        .max_items  = OVERLAY_LIST_DEFAULT_ITEMS,
+        .max_clips  = OVERLAY_LIST_DEFAULT_CLIPS,
+        .max_glyphs = OVERLAY_LIST_DEFAULT_GLYPHS,
+    };
 }
 
 <*
@@ -146,11 +229,11 @@ fn OverlayListDesc default_overlay_list_desc() {
  @require desc.max_items > 0, desc.max_clips > 0
 *>
 fn OverlayList create_overlay_list(Allocator allocator, OverlayListDesc desc) {
-    usz rect_clips_offset = align_up(desc.max_items * OverlayRect::size, Vec4::size);
-    usz bindings_offset = rect_clips_offset + desc.max_items * Vec4::size;
-    usz clips_offset = align_up(bindings_offset + desc.max_items * OverlayBinding::size, Vec4::size);
-    usz runs_offset = clips_offset + desc.max_clips * Vec4::size;
-    usz total_bytes = align_up(runs_offset + desc.max_items * OverlayRun::size, Vec4::size);
+    usz glyphs_offset = (usz)desc.max_items * OverlayEntry::size;
+    usz bindings_offset = glyphs_offset + (usz)desc.max_glyphs * GlyphPlacement::size;
+    usz clips_offset = align_up(bindings_offset + (usz)desc.max_items * OverlayBinding::size, Vec4::size);
+    usz runs_offset = clips_offset + (usz)desc.max_clips * Vec4::size;
+    usz total_bytes = align_up(runs_offset + (usz)desc.max_items * OverlayRun::size, Vec4::size);
 
     // Allocated as Vec4 so every allocator aligns the block for the Vec4 members of the carved slices.
     Vec4[] block = alloc::new_array(allocator, Vec4, (sz)(total_bytes / Vec4::size));
@@ -159,8 +242,8 @@ fn OverlayList create_overlay_list(Allocator allocator, OverlayListDesc desc) {
     return {
         .allocator  = allocator,
         .storage    = storage,
-        .rects      = ((OverlayRect*)storage.ptr)[:desc.max_items],
-        .rect_clips = ((Vec4*)&storage[rect_clips_offset])[:desc.max_items],
+        .entries    = ((OverlayEntry*)storage.ptr)[:desc.max_items],
+        .glyphs     = ((GlyphPlacement*)&storage[glyphs_offset])[:desc.max_glyphs],
         .bindings   = ((OverlayBinding*)&storage[bindings_offset])[:desc.max_items],
         .clips      = ((Vec4*)&storage[clips_offset])[:desc.max_clips],
         .runs       = ((OverlayRun*)&storage[runs_offset])[:desc.max_items],
@@ -225,26 +308,42 @@ fn bool overlay_ref_solid(TextureRef texture) @private {
 }
 
 fn void? check_overlay_refs(AssetStore* assets, TargetPool* targets, OverlayList* list) @private {
-    for (uint index = 0; index < list.item_count; index++) {
-        OverlayRect* rect = &list.rects[index];
-
-        if (!c3d::same_id(rect.sampler, (SamplerId){})) {
-            if (!assets.samplers.is_live(rect.sampler)) return c3d::INVALID_ID~;
-            if (assets.sampler(rect.sampler).desc.compare_enable) return c3d::INVALID_ARGUMENT~;
+    foreach (&entry : list.entries[:list.item_count]) {
+        switch (entry.kind) {
+            case RECT: check_rect_refs(assets, targets, &entry.rect)!;
+            case GLYPHS: check_text_refs(assets, list, &entry.text)!;
         }
+    }
+}
 
-        if (overlay_ref_solid(rect.texture)) continue;
+fn void? check_rect_refs(AssetStore* assets, TargetPool* targets, OverlayRect* rect) @local {
+    if (!c3d::same_id(rect.sampler, (SamplerId){})) {
+        if (!assets.samplers.is_live(rect.sampler)) return c3d::INVALID_ID~;
+        if (assets.sampler(rect.sampler).desc.compare_enable) return c3d::INVALID_ARGUMENT~;
+    }
 
-        switch (rect.texture.kind) {
-            case ASSET:
-                if (!assets.textures.is_live(rect.texture.asset)) return c3d::INVALID_ID~;
-                material::TextureDesc desc = assets.texture(rect.texture.asset).desc;
-                if (desc.is_cube || desc.depth != 0 || desc.layers != 1 || desc.format == R16_UINT) {
-                    return c3d::UNSUPPORTED~;
-                }
-            case RENDER_TARGET:
-                if (!targets.is_live(rect.texture.target)) return c3d::INVALID_ID~;
-        }
+    if (overlay_ref_solid(rect.texture)) return;
+
+    switch (rect.texture.kind) {
+        case ASSET:
+            if (!assets.textures.is_live(rect.texture.asset)) return c3d::INVALID_ID~;
+            material::TextureDesc desc = assets.texture(rect.texture.asset).desc;
+            if (desc.is_cube || desc.depth != 0 || desc.layers != 1 || desc.format == R16_UINT) {
+                return c3d::UNSUPPORTED~;
+            }
+        case RENDER_TARGET:
+            if (!targets.is_live(rect.texture.target)) return c3d::INVALID_ID~;
+    }
+}
+
+fn void? check_text_refs(AssetStore* assets, OverlayList* list, OverlayText* text) @local {
+    if (!assets.fonts.is_live(text.font)) return c3d::INVALID_ID~;
+
+    FontAsset* font = assets.font(text.font);
+    foreach (placement : list.glyphs[text.first : text.count]) {
+        if (placement.glyph >= font.glyph_slots.len) return c3d::INVALID_ARGUMENT~;
+        uint slot = font.glyph_slots[placement.glyph];
+        if (!slot || slot == asset::FONT_GLYPH_EMPTY) return c3d::INVALID_ARGUMENT~;
     }
 }
 
@@ -270,14 +369,14 @@ fn bool same_scissor(gpu::ScissorRect first, gpu::ScissorRect second) @local {
     return first.x == second.x && first.y == second.y && first.width == second.width && first.height == second.height;
 }
 
-fn bool overlay_rect_reaches(OverlayRect* rect, gpu::ScissorRect scissor) @local {
-    if (!scissor.width || rect.max.x <= rect.min.x || rect.max.y <= rect.min.y) return false;
+fn bool overlay_bounds_reach(Vec4 bounds, gpu::ScissorRect scissor) @local {
+    if (!scissor.width || bounds.z <= bounds.x || bounds.w <= bounds.y) return false;
 
     float edge = shader::OVERLAY_EDGE_PIXELS;
-    return rect.min.x - edge < (float)(scissor.x + scissor.width)
-        && rect.max.x + edge > (float)scissor.x
-        && rect.min.y - edge < (float)(scissor.y + scissor.height)
-        && rect.max.y + edge > (float)scissor.y;
+    return bounds.x - edge < (float)(scissor.x + scissor.width)
+        && bounds.z + edge > (float)scissor.x
+        && bounds.y - edge < (float)(scissor.y + scissor.height)
+        && bounds.w + edge > (float)scissor.y;
 }
 
 fn uint pack_half2(float low, float high) @local {
@@ -334,29 +433,72 @@ fn OverlayItemGpu pack_overlay_rect(OverlayRect* rect, OverlayBinding binding) @
     };
 }
 
+fn OverlayItemGpu pack_overlay_glyph(
+    OverlayText* text,
+    GlyphPlacement placement,
+    FontGlyph* glyph,
+    OverlayBinding binding,
+) @private {
+    Vec2 pen = text.origin + placement.position * text.size_pixels;
+    Vec4 em = glyph.bounds;
+    float size = text.size_pixels;
+    return {
+        .bounds             = { pen.x + em.x * size, pen.y - em.w * size, pen.x + em.z * size, pen.y - em.y * size },
+        .uv_rect            = { em.x, em.w, em.z, em.y },
+        .fill               = pack_rgba8(text.color),
+        .texture            = binding.texture,
+        .sampler_kind_flags = shader::OVERLAY_KIND_GLYPH << shader::OVERLAY_KIND_SHIFT,
+        .glyph_location     = glyph.band_location,
+        .glyph_band_max     = glyph.band_max,
+        .band_texture       = binding.bands,
+    };
+}
+
+fn void emit_overlay_item(OverlayPacker* packer, gpu::ScissorRect scissor, OverlayItemGpu item) @local {
+    OverlayRun[] runs = packer.list.runs;
+    if (!packer.run_count || !same_scissor(runs[packer.run_count - 1].scissor, scissor)) {
+        runs[packer.run_count] = { .first = packer.emitted, .scissor = scissor };
+        packer.run_count++;
+    }
+    runs[packer.run_count - 1].count++;
+    packer.destination[packer.emitted] = item;
+    packer.emitted++;
+}
+
+// Every emitted item stays in submission order; a run splits only where the scissor changes, whatever the kinds.
 fn uint pack_overlay_items(
     OverlayList* list,
+    AssetStore* assets,
     uint width,
     uint height,
     OverlayItemGpu[] destination,
 ) @private {
-    uint emitted;
-    uint run_count;
+    OverlayPacker packer = { .list = list, .destination = destination };
 
-    for (uint index = 0; index < list.item_count; index++) {
-        OverlayRect* rect = &list.rects[index];
-        gpu::ScissorRect scissor = overlay_scissor(list.rect_clips[index], width, height);
-        if (!overlay_rect_reaches(rect, scissor)) continue;
-
-        if (!run_count || !same_scissor(list.runs[run_count - 1].scissor, scissor)) {
-            list.runs[run_count] = { .first = emitted, .scissor = scissor };
-            run_count++;
+    foreach (index, &entry : list.entries[:list.item_count]) {
+        gpu::ScissorRect scissor = overlay_scissor(entry.clip, width, height);
+        switch (entry.kind) {
+            case RECT:
+                OverlayRect* rect = &entry.rect;
+                if (!overlay_bounds_reach({ rect.min.x, rect.min.y, rect.max.x, rect.max.y }, scissor)) continue;
+                emit_overlay_item(&packer, scissor, pack_overlay_rect(rect, list.bindings[index]));
+            case GLYPHS:
+                OverlayText* text = &entry.text;
+                FontAsset* font = assets.font(text.font);
+                foreach (placement : list.glyphs[text.first : text.count]) {
+                    FontGlyph* glyph = &font.glyphs[font.glyph_slots[placement.glyph] - 1];
+                    OverlayItemGpu item = pack_overlay_glyph(
+                        text:      text,
+                        placement: placement,
+                        glyph:     glyph,
+                        binding:   list.bindings[index],
+                    );
+                    if (!overlay_bounds_reach(item.bounds, scissor)) continue;
+                    emit_overlay_item(&packer, scissor, item);
+                }
         }
-        list.runs[run_count - 1].count++;
-        destination[emitted] = pack_overlay_rect(rect, list.bindings[index]);
-        emitted++;
     }
 
-    list.prepared.run_count = run_count;
-    return emitted;
+    list.prepared.run_count = packer.run_count;
+    return packer.emitted;
 }

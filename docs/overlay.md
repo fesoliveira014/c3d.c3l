@@ -1,7 +1,7 @@
 # Overlay list
 
-Module `c3d::render` draws application-owned 2D rectangles over the composed window: rounded corners,
-borders, textures and nine-slice fields, each under a clip. The list holds plain values; it names no `gpu` type.
+Module `c3d::render` draws application-owned 2D items over the composed window: rectangles with rounded corners,
+borders, textures and nine-slice fields, and glyph runs of placed text ([Text](text.md)), each under a clip. The list holds plain values; it names no `gpu` type.
 Dear ImGui stays the tool for debug panels and inspectors ([GUI overlay](gui.md)). The list serves interfaces the
 application draws itself.
 
@@ -27,10 +27,11 @@ renderer.end_frame()!;
 ```
 
 - `create_overlay_list` allocates every slice once, from the allocator it is given. Nothing allocates per frame.
-- `clear()`, `add_rect`, `push_clip` and `pop_clip` run any time before `prepare_overlay_list`. Items stay unchanged
-  from preparation until `draw_list` records them.
+- `clear()`, `add_rect`, `add_glyphs`, `push_clip` and `pop_clip` run any time before `prepare_overlay_list`. Items
+  stay unchanged from preparation until `draw_list` records them.
 - `prepare_overlay_list` runs after the frame's last `finish_view`, with output and no overlay open. It resolves
-  textures, readies the render targets the list samples and uploads one instance per visible item. A render target
+  textures and fonts, uploads the outline rows fonts gained, readies the render targets the list samples and
+  uploads one instance per visible rectangle or glyph. A render target
   the list samples must not be rendered again that frame.
 - `draw_list` runs inside the overlay, before `GuiRenderer.record`. The ImGui backend binds its own pipeline and state.
 - A list is prepared and drawn at most once per frame. Preparing a later frame without `clear()` draws the same items.
@@ -66,6 +67,14 @@ The list samples a texture as stored and converts nothing. For a render target s
   All-zero `slice_pixels` disables nine-slice. Corners keep their size, edges stretch along one axis and the centre
   along both. The margins on opposite sides must fit the box (`slice_pixels`) and the region (`slice_uv`).
 
+## Glyph runs
+
+`add_glyphs(OverlayGlyphRun run)` copies a run's placements into the list: one font, one pixel size, one color, the
+baseline origin in output pixels. Each placement becomes one instance, drawn in submission order among the
+rectangles under the run's clip. A glyph that does not reach its clip emits nothing. `OverlayListDesc.max_glyphs`
+bounds the placements of all runs; zero holds no text. See [Text](text.md) for placing text and rounding the
+origin.
+
 ## Clipping
 
 `push_clip(min, max)` intersects the current clip with a box in output pixels; `pop_clip` restores the previous one.
@@ -79,9 +88,10 @@ submission order.
 | Call | Faults |
 | --- | --- |
 | `add_rect` | `CAPACITY_EXCEEDED` (list full); `INVALID_ARGUMENT` (non-finite or negative values, `max` below `min`, nine-slice margins larger than the box or region) |
+| `add_glyphs` | `CAPACITY_EXCEEDED` (list full, or not enough glyph room); `INVALID_ARGUMENT` (non-finite origin, color or placement position; size not above zero) |
 | `push_clip` | `CAPACITY_EXCEEDED` (stack full); `INVALID_ARGUMENT` (non-finite, `max` below `min`) |
 | `pop_clip` | Contract: the stack is not empty |
-| `Renderer.prepare_overlay_list` | `INVALID_ID` (dead texture, sampler or render target); `INVALID_ARGUMENT` (comparison sampler); `UNSUPPORTED` (texture kind above); `ASSET_DATA_UNAVAILABLE`; `gpu` faults from upload and state transitions |
+| `Renderer.prepare_overlay_list` | `INVALID_ID` (dead texture, sampler, render target or font); `INVALID_ARGUMENT` (comparison sampler; glyph past its font or without a built outline); `UNSUPPORTED` (texture kind above); `ASSET_DATA_UNAVAILABLE`; `gpu` faults from upload and state transitions |
 | `OverlayContext.draw_list` | `gpu` and shader faults from pipeline creation and recording; contract: prepared this frame |
 
 A reference fault in `prepare_overlay_list` (`INVALID_ID`, `INVALID_ARGUMENT`, `UNSUPPORTED`) records nothing and
@@ -91,8 +101,9 @@ like other renderer faults.
 ## Capacities and costs
 
 - `OVERLAY_LIST_DEFAULT_ITEMS` is 4,096 items. `OVERLAY_LIST_DEFAULT_CLIPS` is 16 nested clips.
-- One item is 80 bytes of instance data in the frame upload ring.
-  4,096 items cost 320 KiB of the ring per prepared list.
+  `OVERLAY_LIST_DEFAULT_GLYPHS` is 16,384 placements.
+- One rectangle or glyph is 96 bytes of instance data in the frame upload ring.
+  4,096 items cost 384 KiB of the ring per prepared list; 16,384 glyphs cost 1.5 MiB.
 - One run costs one 24-byte root and one draw. Rects with alternating clips cost one run each.
 - `Pass.OVERLAY` times `draw_list` when GPU timings are on.
 
@@ -110,6 +121,10 @@ Measured on Windows, Intel i9-14900K, NVIDIA RTX 4090 (driver 32.0.16.1088), c3c
 | 10,000 | 1920 x 1080 | 0.2424 | 0.2932 | 0.0467 | 1 |
 | 1,000 | 3840 x 2160 | 0.0248 | 0.0302 | 0.0079 | 1 |
 | 10,000 | 3840 x 2160 | 0.2435 | 0.3089 | 0.0468 | 1 |
+
+These numbers were taken with 80-byte items. With 96-byte items (glyph fields added), 10,000 rects measure
+`fill_ms` 0.2379 / 0.2404, `prepare_ms` 0.3087 / 0.3064 and `overlay_gpu_ms` 0.0532 / 0.0534 at 1920 x 1080 /
+3840 x 2160: GPU time +14%, CPU time unchanged. Glyph-run costs are in [Text](text.md).
 
 CPU time scales with the item count. GPU time is the same at both output sizes; the stress rects stay 6 × 6 px at
 either size. The default unoptimized build measured `fill_ms` 0.17 / 1.66 and `prepare_ms`

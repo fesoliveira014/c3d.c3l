@@ -18,6 +18,7 @@ Entry point for every agent session in this repository. Read it fully before rea
 | box3d.c3l | `b3` | `c3d::physics` and its submodule `c3d::physics::collide`, which live in `addons/c3d_physics.c3l`; core never imports it |
 | cgltf.c3l | `gltf` | `c3d::asset::gltf` |
 | stb_image (C source) | `c3d::asset::image` bindings | `c3d::asset::image` |
+| stb_truetype (C source) | `c3d::asset::truetype` bindings | `c3d::asset` |
 | ufbx.c3l | `ufbx` | `c3d::asset::fbx` |
 | shaderc.c3l | `shaderc` | `c3d::shader::compile` (`src/c3d/shader/compile.c3`), compiled only under the `C3D_SHADER_COMPILER` feature |
 | c3d_profile.c3l | `c3d::profile`, private `c3d::render::profile_gpu` | Applications select it explicitly; core imports it only through the gated CPU and GPU bridges |
@@ -77,7 +78,7 @@ Load before reading or writing a line of code. A review or change made without t
 
 - `c3-expert`: any C3 reading, writing, or reasoning; `project.json`, `manifest.json`, build configuration; any `c3c` diagnostic. Threshold: more than about five lines of C3 read or written without it this session means stop and load it.
 - `c3-style`: any `.c3` or `.c3i` file written or reviewed.
-- `c3-bindings`: anything that crosses into gpu.c3l, sdl3.c3l, c3imgui.c3l, c3cg.c3l, box3d.c3l, cgltf.c3l, ufbx.c3l, shaderc.c3l, or the `extern fn` declarations for stb_image.
+- `c3-bindings`: anything that crosses into gpu.c3l, sdl3.c3l, c3imgui.c3l, c3cg.c3l, box3d.c3l, cgltf.c3l, ufbx.c3l, shaderc.c3l, or the `extern fn` declarations for stb_image and stb_truetype.
 - `shader-dev`, when installed: GLSL technique (BRDF, shadows, post effects). Dispatch shape, barriers, and the binding contract stay with the style guide and gpu.c3l's `docs/shader_abi.md` and `docs/cookbook.md`.
 
 The skills live in `.claude/skills/`, which is gitignored. A session that cannot list them is not a working session.
@@ -226,7 +227,7 @@ c3d.c3l/
 │                           plus c3d.c3l, a symlink to the root, so consumers resolve c3d here
 │                           plus c3d_profile.c3l, c3d_profile_gui.c3l, c3d_physics.c3l, c3d_nav.c3l, c3d_character.c3l, c3d_physics_gui.c3l, c3d_job.c3l, c3d_landscape.c3l, c3d_particle.c3l and c3d_serial.c3l symlinks to the add-ons
 ├── linked-libs/            empty; every dependency ships its own native artifacts
-├── csrc/                   stb_image
+├── csrc/                   stb_image, stb_truetype
 ├── src/c3d/
 │   ├── types.c3            ids
 │   ├── faults.c3           root-module faults

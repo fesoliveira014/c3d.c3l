@@ -33,6 +33,7 @@ const char[*] C3D_COMMON_MATERIAL_UV_TEXT @private = $embed("../../../shaders/co
 const char[*] C3D_COMMON_MESH_VERTEX_TEXT @private = $embed("../../../shaders/common/mesh_vertex.glsl");
 const char[*] C3D_COMMON_NOISE_TEXT @private = $embed("../../../shaders/common/noise.glsl");
 const char[*] C3D_COMMON_NORMAL_MAPPING_TEXT @private = $embed("../../../shaders/common/normal_mapping.glsl");
+const char[*] C3D_COMMON_OVERLAY_GLYPH_TEXT @private = $embed("../../../shaders/common/overlay_glyph.glsl");
 const char[*] C3D_COMMON_PATH_TRACE_TEXT @private = $embed("../../../shaders/common/path_trace.glsl");
 const char[*] C3D_COMMON_PHYSICAL_TEXT @private = $embed("../../../shaders/common/physical.glsl");
 const char[*] C3D_COMMON_PROBE_ATLAS_TEXT @private = $embed("../../../shaders/common/probe_atlas.glsl");
@@ -61,7 +62,7 @@ const char[*] GPU_RAY_TRACING_TEXT @private = $embed("../../../lib/gpu.c3l/inclu
 <*
  Every include a custom stage may resolve, in table order.
 *>
-const asset::ShaderInclude[54] SHADER_INCLUDES = {
+const asset::ShaderInclude[55] SHADER_INCLUDES = {
     { .name = "c3d_abi.glsl", .text = (String)C3D_GENERATED_C3D_ABI_TEXT[..] },
     { .name = "ambient_occlusion.glsl", .text = (String)C3D_COMMON_AMBIENT_OCCLUSION_TEXT[..] },
     { .name = "ao_estimate.glsl", .text = (String)C3D_COMMON_AO_ESTIMATE_TEXT[..] },
@@ -92,6 +93,7 @@ const asset::ShaderInclude[54] SHADER_INCLUDES = {
     { .name = "mesh_vertex.glsl", .text = (String)C3D_COMMON_MESH_VERTEX_TEXT[..] },
     { .name = "noise.glsl", .text = (String)C3D_COMMON_NOISE_TEXT[..] },
     { .name = "normal_mapping.glsl", .text = (String)C3D_COMMON_NORMAL_MAPPING_TEXT[..] },
+    { .name = "overlay_glyph.glsl", .text = (String)C3D_COMMON_OVERLAY_GLYPH_TEXT[..] },
     { .name = "path_trace.glsl", .text = (String)C3D_COMMON_PATH_TRACE_TEXT[..] },
     { .name = "physical.glsl", .text = (String)C3D_COMMON_PHYSICAL_TEXT[..] },
     { .name = "probe_atlas.glsl", .text = (String)C3D_COMMON_PROBE_ATLAS_TEXT[..] },

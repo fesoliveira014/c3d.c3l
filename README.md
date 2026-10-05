@@ -71,7 +71,7 @@ python3 scripts/build.py --init-deps --skip-abi --skip-shaders --skip-build
 
 That installs the ImGui archives under `lib/c3imgui.c3l/linked-libs/` and leaves `libbox3d.a`
 in `lib/box3d.c3l/linked-libs/linux-x64/`. Ordinary builds do not download archives.
-They compile the vendored `csrc/stb_image.c` with c3c's selected C compiler.
+They compile the vendored `csrc/stb_image.c` and `csrc/stb_truetype.c` with c3c's selected C compiler.
 
 The released Linux ImGui archive references `__isoc23_sscanf`, unavailable on the verified
 Ubuntu 22.04/glibc 2.35 host. On that host, build the matching native package from source
@@ -95,7 +95,7 @@ without extra link arguments; a private prefix needs a `-L` in `examples/project
 
 Prerequisites: Visual Studio 2022 with the C++ desktop workload, CMake, Ninja, Git for Windows,
 the Vulkan SDK (`glslangValidator` and the loader), Python 3.10 or newer, and c3c 0.8.3 on PATH.
-c3c compiles `csrc/stb_image.c` itself; no separate C compiler setting is needed.
+c3c compiles `csrc/stb_image.c` and `csrc/stb_truetype.c` itself; no separate C compiler setting is needed.
 
 Clone under a short path with symlinks enabled. `lib/c3d.c3l` is a symlink the projects resolve
 through, and Git only creates it as a real link when Developer Mode is on or the shell is elevated:

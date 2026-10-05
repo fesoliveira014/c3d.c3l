@@ -89,7 +89,7 @@ fn gpu::MappedGpuSpan? OverlayContext.alloc(&self, usz bytes, usz alignment = 16
 }
 
 <*
- Resolve the list's textures, ready its render targets and upload its instances.
+ Resolve the list's textures and fonts, ready its render targets and upload its instances.
  Render targets it samples must not be rendered again this frame.
  @param [&inout] self : "Frame open with output; overlay not yet open."
  @param [&inout] list : "Items must stay unchanged until draw_list records them."
@@ -105,9 +105,15 @@ fn void? Renderer.prepare_overlay_list(&self, OverlayList* list) {
     defer catch abort_frame(self);
 
     uint target_bits;
-    for (uint index = 0; index < list.item_count; index++) {
-        OverlayRect* rect = &list.rects[index];
+    foreach (index, &entry : list.entries[:list.item_count]) {
         OverlayBinding* binding = &list.bindings[index];
+        if (entry.kind == GLYPHS) {
+            FontRes* font_mirror = resolve_font(self, entry.text.font)!;
+            *binding = { .texture = font_mirror.curve_view.index, .bands = font_mirror.band_view.index };
+            continue;
+        }
+
+        OverlayRect* rect = &entry.rect;
         SamplerId sampler = c3d::same_id(rect.sampler, (SamplerId){}) ? asset::SAMPLER_LINEAR_CLAMP : rect.sampler;
         SamplerRes* sampler_mirror = resolve_sampler(self, sampler)!;
         *binding = { .sampler = sampler_mirror.index };
@@ -130,13 +136,16 @@ fn void? Renderer.prepare_overlay_list(&self, OverlayList* list) {
 
     list.prepared.run_count = 0;
     if (list.item_count) {
+        // A glyph entry emits one item per placement, so entries plus placements bound the emitted items.
+        uint capacity = list.item_count + list.glyph_count;
         Frame* slot = &self.frames[self.frame_index % FRAMES_IN_FLIGHT];
-        gpu::MappedGpuSpan items = slot.upload.take(&self.device, list.item_count * OverlayItemGpu::size)!;
+        gpu::MappedGpuSpan items = slot.upload.take(&self.device, (usz)capacity * OverlayItemGpu::size)!;
         pack_overlay_items(
             list:        list,
+            assets:      self.assets,
             width:       self.window_target.width,
             height:      self.window_target.height,
-            destination: ((OverlayItemGpu*)items.bytes.ptr)[:list.item_count],
+            destination: ((OverlayItemGpu*)items.bytes.ptr)[:capacity],
         );
         list.prepared.items = items.address;
     }
