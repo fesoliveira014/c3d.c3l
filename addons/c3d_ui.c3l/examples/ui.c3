@@ -597,18 +597,21 @@ fn void reload_from_disk(Demo* demo) @local {
             report_reload_fault(ui, "hud.styles.jsonc", excuse);
             return;
         }
+        bool reloaded = true;
         foreach (&source : demo.documents) {
             String path = string::tformat("%s%s", directory, source.file);
             char[]? text = file::load_temp(path);
             if (catch excuse = text) {
                 io::eprintfn("Cannot read %s: %s", path, excuse);
+                reloaded = false;
                 continue;
             }
             if (catch excuse = ui.reload_document(source.id, (String)text)) {
                 report_reload_fault(ui, source.file, excuse);
+                reloaded = false;
             }
         }
-        io::printfn("Reloaded the documents and styles from %s", directory);
+        if (reloaded) io::printfn("Reloaded the documents and styles from %s", directory);
     };
 }
 

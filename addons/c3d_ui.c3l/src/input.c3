@@ -36,11 +36,16 @@ fn void route_pointer(Ui* ui, Input* input, Event[] events) @private {
 
     uint hover = UI_NONE;
     bool over_ui;
+    ui.tooltip_host_count = 0;
     foreach (element_id : over) {
         uint index = lookup_instance(ui, element_id.id);
         if (index == UI_NONE || !ui.instances[index].hit) continue;
         over_ui = true;
         if (ui.instances[index].interactive) hover = index;
+        if (ui.instances[index].element.has_tooltip && ui.tooltip_host_count < UI_TOOLTIP_HOSTS) {
+            ui.tooltip_hosts[ui.tooltip_host_count] = ui.instances[index].key;
+            ui.tooltip_host_count++;
+        }
     }
     ui.hover = hover == UI_NONE ? (UiElementKey){} : ui.instances[hover].key;
 
@@ -85,6 +90,7 @@ fn void press(
     Vec2 pointer,
 ) @private {
     if (button != LEFT && button != RIGHT) return;
+    if (ui.drag.active) return;
     UiInstance* target = hover == UI_NONE || blocked ? null : &ui.instances[hover];
     if (!target || !same_key(&target.key, &ui.focus)) ui.focus = {};
     if (!target) return;
@@ -251,14 +257,14 @@ fn void insert_text(Ui* ui, String text) @private {
     usz length = text.len < room ? text.len : room;
     while (length > 0 && length < text.len && (text[length] & 0xC0) == 0x80) length--;
     if (!length) return;
-    ui.field[ui.caret + length : ui.field_length - ui.caret] = ui.field[ui.caret : ui.field_length - ui.caret];
+    mem::move(&ui.field[ui.caret + length], &ui.field[ui.caret], (sz)(ui.field_length - ui.caret));
     ui.field[ui.caret : length] = text[:length];
     ui.field_length += (uint)length;
     ui.caret += (uint)length;
 }
 
 fn void remove_bytes(Ui* ui, uint start, uint end) @private {
-    ui.field[start : ui.field_length - end] = ui.field[end : ui.field_length - end];
+    mem::move(&ui.field[start], &ui.field[end], (sz)(ui.field_length - end));
     ui.field_length -= end - start;
     ui.caret = start;
 }

@@ -151,7 +151,9 @@ macro void? @expose_fields($Type, $fields; @body($field, String exposed)) @priva
         $foreach $member : $Type::members:
             $if $member.has_tag("ui"):
                 $if $Typeof($member.get_tag("ui"))::typeid == bool::typeid:
-                    @body($member.name, $member.name);
+                    $if $member.get_tag("ui"):
+                        @body($member.name, $member.name);
+                    $endif
                 $else
                     @body($member.name, $member.get_tag("ui"));
                 $endif

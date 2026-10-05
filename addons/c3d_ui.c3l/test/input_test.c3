@@ -218,6 +218,52 @@ fn void test_wheel_scrolls_the_hovered_scroll_area() @test {
     assert(fixture.list.entries[0].rect.min.y == 60, "the wheel scrolls only the hovered area");
 }
 
+fn void test_drag_cancels_when_its_item_disappears() @test {
+    Fixture fixture;
+    fixture::create_fixture(&fixture);
+    defer fixture::destroy_fixture(&fixture);
+    Item[2] stash_items = { { .cell = 0, .width = 1, .height = 1 }, { .cell = 2, .width = 1, .height = 1 } };
+    Item[] stash = stash_items[..];
+    Item[] bag;
+    fixture.ui.@bind_list(name: "stash.items", item: "stash_item", $Type: Item, items: &stash)!!;
+    fixture.ui.@bind_list(name: "bag.items", item: "bag_item", $Type: Item, items: &bag)!!;
+    fixture.ui.on("bag.drop", &fixture::record_action, &fixture.recorder)!!;
+    fixture.ui.load_document(GRIDS)!!;
+    fixture::frame(&fixture);
+
+    fixture::point(&fixture, { 50, 10 }, held: true);
+    fixture::frame(&fixture, { fixture::button_down({ 50, 10 }) });
+    fixture::point(&fixture, { 30, 50 }, held: true);
+    fixture::frame(&fixture, { fixture::motion({ 30, 50 }) });
+    stash = stash_items[:1];
+    fixture::frame(&fixture, { fixture::button_down({ 30, 50 }, RIGHT), fixture::button_up({ 30, 50 }, RIGHT) });
+    fixture::point(&fixture, { 30, 50 });
+    fixture::frame(&fixture, { fixture::button_up({ 30, 50 }) });
+    assert(fixture.recorder.calls == 0);
+}
+
+fn void test_hovering_an_empty_cell_shows_no_item_tooltip() @test {
+    Fixture fixture;
+    fixture::create_fixture(&fixture);
+    defer fixture::destroy_fixture(&fixture);
+    Item[1] stash_items = { { .cell = 2, .width = 1, .height = 1 } };
+    Item[] stash = stash_items[..];
+    fixture.ui.@bind_list(name: "stash.items", item: "stash_item", $Type: Item, items: &stash)!!;
+    fixture.ui.on("bag.drop", &fixture::record_action, &fixture.recorder)!!;
+    fixture.ui.load_document(`{ "root": { "kind": "grid", "items": "{stash.items}", "columns": 4, "rows": 1,
+        "cell_size": [20, 20], "item_cell": "{stash_item.cell}", "on_drop": "bag.drop",
+        "template": { "kind": "panel", "fill": "#808080ff", "children": [
+            { "kind": "tooltip", "children": [ { "kind": "label", "style": "text", "text": "tip" } ] } ] } } }`)!!;
+    fixture::frame(&fixture);
+
+    fixture::point(&fixture, { 10, 10 });
+    fixture::frame(&fixture);
+    assert(!fixture::has_line(&fixture, "tip"));
+    fixture::point(&fixture, { 50, 10 });
+    fixture::frame(&fixture);
+    assert(fixture::has_line(&fixture, "tip"));
+}
+
 fn void test_drop_reports_source_scope_list_and_cell() @test {
     Fixture fixture;
     fixture::create_fixture(&fixture);

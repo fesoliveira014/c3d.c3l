@@ -96,14 +96,17 @@ Every element takes `kind`, `style`, `visible` and `enabled` (a literal or `{BOO
 `on_secondary_click` and `on_drop`, and every style property inline.
 
 - `list` lays its items out like a panel, one template copy per item.
-- A `tooltip` shows while its parent is hovered, floating below it above everything, and never takes the pointer.
+- A `tooltip` shows while the pointer is over its parent, interactive or not, floating below it above everything,
+  and never takes the pointer.
 - A `grid` places each item's template at `item_cell` (row-major) with the size `item_span * cell_size`; items that
-  do not fit the grid are skipped. Grid items are drag sources.
+  do not fit the grid are skipped. Grid items are drag sources. A drag ends without a drop when its item is no longer
+  laid out (the application removed it), and other buttons are ignored while a drag is active.
 - An image sizes to its asset texture in texels when `width` or `height` is `fit`; a render-target image needs both.
 - `visible: false` collapses a subtree: no layout and no getter calls. `enabled: false` gives the disabled state to
   the element and its descendants, and they fire no actions.
 - Interactive elements are buttons, text fields, grid items and any element with an action. Hover, press and
-  disabled states apply to the interactive element and its descendants; focus applies to the focused field.
+  disabled states apply to the interactive element and its descendants, except that an interactive descendant takes
+  its own hover and press; focus applies to the focused field.
 
 ### Text templates
 
@@ -267,6 +270,10 @@ Measured on an Intel i9-14900K under WSL, c3c 0.8.3, `--opt O3`, `--frames 200`:
 | --- | --- | --- | --- | --- | --- | --- |
 | HUD | 0.0187 | 0.2019 | 0.0061 | 485 | 544 | 250 / 0 |
 | HUD and 1,000 labels | 0.0678 | 0.7765 | 0.0083 | 1,486 | 898 | 302 / 0 |
+
+The same benchmark natively on Windows (i9-14900K, c3c 0.8.3, `--opt O3`, MSVC `cl` 19.44 for Clay, median of three
+runs): HUD route 0.0203, update 0.2695, draw 0.0059 ms; HUD and 1,000 labels route 0.0726, update 1.0399, draw
+0.0079 ms. `update` runs about a third slower there; routing and drawing match.
 
 `update` dominates: binding evaluation, template expansion, Clay declaration and layout. Text placement is cached,
 so `draw` stays near 6 µs. `update` costs about 0.4 µs per laid-out element for the HUD and 0.5 µs with the extra

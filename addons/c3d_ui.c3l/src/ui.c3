@@ -61,6 +61,7 @@ const short UI_Z_BAND @private = 4;              // per visible document: its ro
 const short UI_Z_TOOLTIP @private = short::max - 1;
 const short UI_Z_GHOST @private = short::max;
 const usz UI_ERROR_PATH_BYTES @private = 256;
+const uint UI_TOOLTIP_HOSTS @private = 8;          // nested elements with tooltips under one pointer
 const uint UI_ID_PROBE @private = 0x9E37_79B9;   // golden-ratio step; odd, so probing visits every 32-bit id
 
 <*
@@ -293,6 +294,8 @@ struct Ui {
     uint                      field_length;
     uint                      caret;        // byte offset in field
     UiElementKey              hover;
+    UiElementKey[UI_TOOLTIP_HOSTS] tooltip_hosts;  // elements with a tooltip under the pointer
+    uint                      tooltip_host_count;
     UiElementKey              press;
     MouseButton               press_button;
     UiElementKey              focus;
@@ -423,6 +426,7 @@ fn void invalidate_frame(Ui* ui) @private {
     ui.frame_ready = false;
     ui.instance_count = 0;
     ui.hover = {};
+    ui.tooltip_host_count = 0;
     ui.press = {};
     ui.drag = {};
 }

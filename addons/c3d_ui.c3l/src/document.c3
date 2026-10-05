@@ -73,6 +73,7 @@ struct UiElement @private {
     uint           columns;
     uint           rows;
     Vec2           cell_size;
+    bool           has_tooltip;    // a tooltip child shows while the pointer is over this element
     uint[UiEventKind::len] actions; // indices in Ui.actions, UI_NONE without one
 }
 
@@ -123,7 +124,7 @@ fn UiDocumentId? Ui.load_document(&self, String jsonc) {
 
 <*
  Replace a document's tree; on a fault the old tree stays.
- Resets the document's focus, press, drag and scroll state.
+ Resets the document's focus, press and drag state; scroll offsets stay.
  @return? c3d::INVALID_ID, Ui.load_document!
 *>
 fn void? Ui.reload_document(&self, UiDocumentId document, String jsonc) {
@@ -429,6 +430,7 @@ fn uint? load_element(
                         parent:      index,
                         is_template: false,
                     )!;
+                    if (load.elements[child].kind == TOOLTIP) load.elements[index].has_tooltip = true;
                     if (last_child == UI_NONE) {
                         load.elements[index].first_child = child;
                     } else {

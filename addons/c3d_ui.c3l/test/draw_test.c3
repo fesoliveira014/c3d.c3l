@@ -171,7 +171,7 @@ fn void test_tooltip_shows_only_while_its_parent_is_hovered() @test {
     Fixture fixture;
     fixture::create_fixture(&fixture);
     defer fixture::destroy_fixture(&fixture);
-    fixture.ui.load_document(`{ "root": { "kind": "button", "size": [100, 20], "children": [
+    fixture.ui.load_document(`{ "root": { "kind": "panel", "size": [100, 20], "children": [
         { "kind": "tooltip", "children": [ { "kind": "label", "style": "text", "text": "tip" } ] } ] } }`)!!;
 
     fixture::frame(&fixture);

@@ -12,7 +12,8 @@ const float UI_MAX_PADDING @private = 65535; // Clay stores padding and gaps as 
 struct UiDeclare @private {
     Ui*   ui;
     fault failure;
-    short band;     // z of the document being declared
+    short band;              // z of the document being declared
+    bool  drag_source_found; // the dragged item is still declared this frame
 }
 
 struct UiPlacement @private {
@@ -80,6 +81,7 @@ fn void? Ui.update(
             placement: &placement,
         );
     }
+    if (self.drag.active && !declare.drag_source_found) self.drag = {};
     declare_ghost(&declare);
     clay::RenderCommandArray commands = clay::end_layout(0);
     self.stats.instances = self.instance_count;
@@ -190,6 +192,13 @@ fn bool is_interactive(UiElement* element) @private {
     if (element.kind == BUTTON || element.kind == TEXT_FIELD) return true;
     foreach (action : element.actions) {
         if (action != UI_NONE) return true;
+    }
+    return false;
+}
+
+fn bool pointer_over(Ui* ui, UiElementKey* key) @private {
+    for (uint index = 0; index < ui.tooltip_host_count; index++) {
+        if (same_key(&ui.tooltip_hosts[index], key)) return true;
     }
     return false;
 }
@@ -324,7 +333,14 @@ fn void declare_element(
     if (!ref_bool(ui, &element.visible, scope)) return;
 
     UiElementKey key = { .document = document.id, .element = index, .scope = *scope };
+    bool interactive = is_interactive(element) || placement.list != UI_NONE;
+    if (placement.hit && ui.drag.active && same_key(&key, &ui.drag.source)) declare.drag_source_found = true;
     UiStateFlags state = inherited;
+    // An interactive element takes its own hover and press, not its ancestor's.
+    if (interactive) {
+        state.hovered = false;
+        state.pressed = false;
+    }
     state.focused = same_key(&key, &ui.focus);
     if (same_key(&key, &ui.hover)) state.hovered = true;
     if (same_key(&key, &ui.press)) state.pressed = true;
@@ -344,7 +360,7 @@ fn void declare_element(
         .list        = placement.list,
         .span_width  = placement.span_width,
         .span_height = placement.span_height,
-        .interactive = is_interactive(element) || placement.list != UI_NONE,
+        .interactive = interactive,
         .hit         = placement.hit,
         .enabled     = !state.disabled,
     };
@@ -489,7 +505,7 @@ fn void declare_contents(
             for (uint child = element.first_child; child != UI_NONE; child = document.elements[child].next_sibling) {
                 UiPlacement placement = { .hit = true, .grid = UI_NONE, .list = UI_NONE };
                 if (document.elements[child].kind == TOOLTIP) {
-                    if (!instance.state.hovered) continue;
+                    if (!pointer_over(ui, &instance.key)) continue;
                     placement.hit = false;
                     placement.floating = {
                         .z_index              = UI_Z_TOOLTIP,

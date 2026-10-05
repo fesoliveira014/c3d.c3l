@@ -10,6 +10,7 @@ struct Cargo @local {
     int   gold @tag("ui", "coins");
     float weight @tag("ui", true);
     int   hidden;
+    int   withheld @tag("ui", false);
 }
 
 struct Foreign @local {
@@ -99,6 +100,12 @@ fn void test_tags_expose_fields_under_document_names() @test {
     fixture::expect_load_fault(
         fixture:  &fixture,
         document: `{ "root": { "kind": "label", "style": "text", "text": "{cargo.gold}" } }`,
+        expected: ui::UNKNOWN_BINDING,
+        path:     "/root/text",
+    );
+    fixture::expect_load_fault(
+        fixture:  &fixture,
+        document: `{ "root": { "kind": "label", "style": "text", "text": "{cargo.withheld}" } }`,
         expected: ui::UNKNOWN_BINDING,
         path:     "/root/text",
     );
