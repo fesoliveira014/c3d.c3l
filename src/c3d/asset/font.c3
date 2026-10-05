@@ -29,12 +29,12 @@ const uint FONT_DEFAULT_MAX_GLYPHS = 5120; // one 32 B table entry each; the com
 <*
  Curve texels a font reserves by default.
 *>
-const uint FONT_DEFAULT_CURVE_TEXELS = 128 * FONT_TEXTURE_WIDTH; // 8 MiB stored, 4 MiB on the GPU; ~90 per CJK glyph
+const uint FONT_DEFAULT_CURVE_TEXELS = 96 * FONT_TEXTURE_WIDTH; // 6 MiB stored, 3 MiB on GPU; CJK subset: 70 rows
 
 <*
  Band texels a font reserves by default.
 *>
-const uint FONT_DEFAULT_BAND_TEXELS = 512 * FONT_TEXTURE_WIDTH; // 8 MiB in the store and on the GPU; ~324 per CJK glyph
+const uint FONT_DEFAULT_BAND_TEXELS = 384 * FONT_TEXTURE_WIDTH; // 6 MiB stored and on GPU; CJK subset: 278 rows
 
 <*
  glyph_slots value of a glyph known to have no outline.
