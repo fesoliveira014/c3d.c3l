@@ -58,6 +58,7 @@ struct Input {
     float                    wheel;
     bool                     mouse_captured_by_gui;
     bool                     keyboard_captured_by_gui;
+    bool                     text_input_wanted_by_gui; // GUI layers OR their want; GuiRenderer.finish_frame applies it
     Keymod                   modifiers;
     Gamepad[GAMEPAD_COUNT]   gamepads;
 }
@@ -144,6 +145,15 @@ fn void Input.begin_frame(&self) {
         gamepad.pressed = {};
         gamepad.released = {};
     }
+}
+
+<*
+ Clear the GUI capture and text input flags for a frame without ImGui.
+*>
+fn void Input.clear_gui_flags(&self) {
+    self.mouse_captured_by_gui = false;
+    self.keyboard_captured_by_gui = false;
+    self.text_input_wanted_by_gui = false;
 }
 
 <*

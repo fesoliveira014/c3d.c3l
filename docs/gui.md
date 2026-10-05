@@ -80,9 +80,12 @@ preserves ownership for the caller to retry. Finish any open GUI frame before de
 
 The adapter owns its ImGui platform side. `new_frame()` reads the window's translated event
 list (`window.events()`), size, pixel density and clock, and feeds ImGui keys, modifiers, text,
-mouse and focus from them; nothing is forwarded by the application. It starts and stops OS text
-input through `Window.set_text_input` as widgets ask for it, and ImGui copy and paste go through
-the platform clipboard wrappers. The platform helper does not import or own GUI.
+mouse and focus from them; nothing is forwarded by the application. `new_frame()` writes ImGui's
+text input want to `window.input.text_input_wanted_by_gui`; other GUI layers, such as the game UI
+add-on, OR their own want into it after `new_frame()`, and `finish_frame()` applies the combined
+want once through `Window.set_text_input`, so OS text input toggles only when the combined want
+changes. ImGui copy and paste go through the platform clipboard wrappers. The platform helper does
+not import or own GUI.
 
 Call `new_frame()` after polling. It sets `window.input.mouse_captured_by_gui` and
 `keyboard_captured_by_gui` independently. Apply these gates before application controls:
