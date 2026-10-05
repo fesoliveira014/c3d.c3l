@@ -82,7 +82,7 @@ Load before reading or writing a line of code. A review or change made without t
 
 - `c3-expert`: any C3 reading, writing, or reasoning; `project.json`, `manifest.json`, build configuration; any `c3c` diagnostic. Threshold: more than about five lines of C3 read or written without it this session means stop and load it.
 - `c3-style`: any `.c3` or `.c3i` file written or reviewed.
-- `c3-bindings`: anything that crosses into gpu.c3l, sdl3.c3l, c3imgui.c3l, c3cg.c3l, box3d.c3l, cgltf.c3l, ufbx.c3l, shaderc.c3l, or the `extern fn` declarations for stb_image and stb_truetype.
+- `c3-bindings`: anything that crosses into gpu.c3l, sdl3.c3l, c3imgui.c3l, c3cg.c3l, box3d.c3l, cgltf.c3l, ufbx.c3l, shaderc.c3l, clay.c3l, or the `extern fn` declarations for stb_image and stb_truetype.
 - `shader-dev`, when installed: GLSL technique (BRDF, shadows, post effects). Dispatch shape, barriers, and the binding contract stay with the style guide and gpu.c3l's `docs/shader_abi.md` and `docs/cookbook.md`.
 
 The skills live in `.claude/skills/`, which is gitignored. A session that cannot list them is not a working session.
