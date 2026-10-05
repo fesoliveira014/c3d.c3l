@@ -1,0 +1,67 @@
+{
+  "anchor": "bottom_right",
+  "offset": [-16, -16],
+  "root": {
+    "kind": "panel",
+    "style": "panel",
+    "children": [
+      { "kind": "label", "style": "title", "text": "Squad stash" },
+      {
+        "kind": "grid",
+        "style": "grid",
+        "items": "{stash.items}",
+        "columns": 6,
+        "rows": 4,
+        "cell_size": [44, 44],
+        "item_cell": "{stash_item.cell}",
+        "item_span": ["{stash_item.width}", "{stash_item.height}"],
+        "on_drop": "inventory.drop_stash",
+        "template": {
+          "kind": "panel",
+          "style": "item",
+          "on_secondary_click": "inventory.use_stash",
+          "children": [
+            { "kind": "image", "image": "{stash_item.icon}", "width": "grow", "height": "grow" },
+            { "kind": "label", "style": "item_label", "text": "{stash_item.name}" },
+            {
+              "kind": "tooltip",
+              "style": "tooltip",
+              "children": [
+                { "kind": "label", "style": "text", "text": "{stash_item.name}: {stash_item.tip}" }
+              ]
+            }
+          ]
+        }
+      },
+      { "kind": "label", "style": "title", "text": "Bag of {hud.selected}" },
+      {
+        "kind": "grid",
+        "style": "grid",
+        "items": "{bag.items}",
+        "columns": 6,
+        "rows": 4,
+        "cell_size": [44, 44],
+        "item_cell": "{bag_item.cell}",
+        "item_span": ["{bag_item.width}", "{bag_item.height}"],
+        "on_drop": "inventory.drop_bag",
+        "template": {
+          "kind": "panel",
+          "style": "item",
+          "on_secondary_click": "inventory.use_bag",
+          "children": [
+            { "kind": "image", "image": "{bag_item.icon}", "width": "grow", "height": "grow" },
+            { "kind": "label", "style": "item_label", "text": "{bag_item.name}" },
+            {
+              "kind": "tooltip",
+              "style": "tooltip",
+              "children": [
+                { "kind": "label", "style": "text", "text": "{bag_item.name}: {bag_item.tip}" }
+              ]
+            }
+          ]
+        }
+      },
+      { "kind": "label", "style": "caption", "text": "Drag items between grids. Right click uses an item." }
+    ]
+  }
+}

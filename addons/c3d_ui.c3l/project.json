@@ -1,0 +1,14 @@
+{
+  "langrev": "1",
+  "dependency-search-paths": ["../../lib", "../../lib/gpu.c3l/lib"],
+  "dependencies": ["c3d_ui", "clay", "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "cgltf", "ufbx", "shaderc"],
+  "wincrt": "static",
+  "output": "build",
+  "targets": {
+    "ui_test": {
+      "type": "test",
+      "sources": ["test/ui_fixture.c3", "test/document_test.c3", "test/style_test.c3", "test/binding_test.c3", "test/input_test.c3", "test/draw_test.c3"]
+    },
+    "ui": {"type": "executable", "sources": ["examples/ui.c3"]}
+  }
+}

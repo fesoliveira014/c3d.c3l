@@ -43,6 +43,7 @@ JOB = ROOT / "addons" / "c3d_job.c3l"
 LANDSCAPE = ROOT / "addons" / "c3d_landscape.c3l"
 PARTICLE = ROOT / "addons" / "c3d_particle.c3l"
 SERIAL = ROOT / "addons" / "c3d_serial.c3l"
+UI = ROOT / "addons" / "c3d_ui.c3l"
 ADDON_EXAMPLES = {
     "capture": PROFILE,
     "physics": PHYSICS,
@@ -65,6 +66,7 @@ ADDON_EXAMPLES = {
     "vegetation": LANDSCAPE,
     "water": LANDSCAPE,
     "particles": PARTICLE,
+    "ui": UI,
 }
 PROFILE_TEST_TARGETS = (
     "profile_off", "profile_cpu", "profile_internal", "profile_gpu",
@@ -81,10 +83,11 @@ JOB_TEST_TARGETS = ("job_test",)
 LANDSCAPE_TEST_TARGETS = ("landscape_test",)
 PARTICLE_TEST_TARGETS = ("particle_test",)
 SERIAL_TEST_TARGETS = ("serial_test", "serial_order_forward", "serial_order_reverse")
+UI_TEST_TARGETS = ("ui_test",)
 
 REQUIRED_C3C_VERSION = "0.8.3"
 C3IMGUI_RELEASE_TAG = "v0.1.3"
-SUBMODULES = ("gpu.c3l", "sdl3.c3l", "c3imgui.c3l", "c3cg.c3l", "box3d.c3l", "cgltf.c3l", "ufbx.c3l", "shaderc.c3l")
+SUBMODULES = ("gpu.c3l", "sdl3.c3l", "c3imgui.c3l", "c3cg.c3l", "box3d.c3l", "cgltf.c3l", "ufbx.c3l", "shaderc.c3l", "clay.c3l")
 NATIVE_BUILD_SCRIPTS = ("scripts/build-box3d.sh",)
 
 EXIT_BUILD_FAILED = 1
@@ -280,6 +283,7 @@ def step_build(options: Options) -> None:
     copy_windows_runtimes(JOB / "build")
     copy_windows_runtimes(LANDSCAPE / "build")
     copy_windows_runtimes(PARTICLE / "build")
+    copy_windows_runtimes(UI / "build")
     if not options.target or options.target == "profile_gpu":
         copy_windows_runtimes(ROOT / "build" / "profile_gpu")
 
@@ -336,6 +340,9 @@ def step_test(options: Options) -> None:
     copy_windows_runtimes(SERIAL / "build")
     for target in SERIAL_TEST_TARGETS:
         run([options.c3c, "test", target, "--path", str(SERIAL)], ROOT, options.verbose)
+    copy_windows_runtimes(UI / "build")
+    for target in UI_TEST_TARGETS:
+        run([options.c3c, "test", target, "--path", str(UI)], ROOT, options.verbose)
 
 
 def step_run(options: Options) -> None:
@@ -348,7 +355,7 @@ def step_run(options: Options) -> None:
 
 
 def step_clean(options: Options) -> None:
-    for project_dir in (EXAMPLES, TEST, PROFILE, PROFILE_GUI, PHYSICS, NAV, CHARACTER, PHYSICS_GUI, JOB, LANDSCAPE, PARTICLE, SERIAL):
+    for project_dir in (EXAMPLES, TEST, PROFILE, PROFILE_GUI, PHYSICS, NAV, CHARACTER, PHYSICS_GUI, JOB, LANDSCAPE, PARTICLE, SERIAL, UI):
         if (project_dir / "project.json").exists():
             run([options.c3c, "clean", "--path", str(project_dir)], ROOT, options.verbose)
 

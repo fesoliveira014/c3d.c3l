@@ -1,0 +1,88 @@
+{
+  "text": {
+    "font": ["ui/latin", "ui/cjk"],
+    "font_size": 16,
+    "text_color": "#e6dfc8ff"
+  },
+  "title": { "extends": "text", "font_size": 20, "text_color": "#f2c96bff" },
+  "caption": { "extends": "text", "font_size": 13, "text_color": "#a89f88ff" },
+  "item_label": { "extends": "text", "font_size": 11, "text_color": "#ffffffff" },
+
+  "panel": {
+    "fill": "#14161cdd",
+    "radius": 6,
+    "padding": 10,
+    "gap": 8,
+    "direction": "column",
+    "border": { "width": 1, "color": "#4a4030ff" }
+  },
+  "row": { "direction": "row", "gap": 8 },
+
+  "member_row": {
+    "fill": "#1f222bff",
+    "radius": 4,
+    "padding": 4,
+    "gap": 8,
+    "width": "grow",
+    "align": ["left", "center"],
+    "hover": { "fill": "#2c313dff" },
+    "pressed": { "fill": "#383f4fff" }
+  },
+  "marker": { "fill": "#f2c96bff", "radius": 2, "size": [4, 40] },
+  "portrait": {
+    "size": [40, 40],
+    "radius": 4,
+    "border": { "width": 1, "color": "#4a4030ff" }
+  },
+  "health_bar": {
+    "fill": "#3a1010ff",
+    "bar_fill": "#4cc45aff",
+    "radius": 3,
+    "size": [140, 10]
+  },
+
+  "button": {
+    "extends": "text",
+    "fill": "#2b2b2bff",
+    "radius": 4,
+    "padding": [10, 5],
+    "align": ["center", "center"],
+    "border": { "width": 1, "color": "#5a4a30ff" },
+    "hover": { "fill": "#3a3a3aff" },
+    "pressed": { "fill": "#4a4a4aff" },
+    "disabled": { "fill": "#1c1c1cff", "text_color": "#7a7466ff" }
+  },
+  "field": {
+    "extends": "text",
+    "fill": "#0d0f14ff",
+    "radius": 4,
+    "padding": [8, 5],
+    "width": "grow",
+    "height": 28,
+    "border": { "width": 1, "color": "#4a4030ff" },
+    "focused": { "border": { "width": 2, "color": "#f2c96bff" } }
+  },
+
+  "grid": {
+    "fill": "#0d0f14ff",
+    "radius": 4,
+    "padding": 4,
+    "highlight": "#f2c96b66",
+    "border": { "width": 1, "color": "#4a4030ff" }
+  },
+  "item": {
+    "fill": "#2d3b52ff",
+    "radius": 3,
+    "padding": 2,
+    "direction": "column",
+    "align": ["center", "center"],
+    "border": { "width": 1, "color": "#7a8aa8ff" },
+    "hover": { "fill": "#3d4f6eff" }
+  },
+  "tooltip": {
+    "fill": "#0b0c10f2",
+    "radius": 4,
+    "padding": 6,
+    "border": { "width": 1, "color": "#f2c96bff" }
+  }
+}
