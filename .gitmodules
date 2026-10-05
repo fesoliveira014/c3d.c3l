@@ -22,3 +22,6 @@
 [submodule "lib/shaderc.c3l"]
 	path = lib/shaderc.c3l
 	url = https://github.com/fesoliveira014/shaderc.c3l
+[submodule "lib/clay.c3l"]
+	path = lib/clay.c3l
+	url = https://github.com/fesoliveira014/clay.c3l
