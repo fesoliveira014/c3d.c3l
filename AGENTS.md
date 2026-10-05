@@ -31,6 +31,8 @@ Entry point for every agent session in this repository. Read it fully before rea
 | c3d_landscape.c3l | `c3d::landscape`, `c3d::landscape::terrain`, `c3d::landscape::foliage`, `c3d::landscape::water` | Applications select it explicitly; it imports the standard library and `c3d` |
 | c3d_particle.c3l | `c3d::particle` | Applications select it explicitly; it imports the standard library and `c3d` |
 | c3d_serial.c3l | `c3d::serial` | Applications select it explicitly; it imports the standard library and core, never renderer or platform dependencies directly |
+| clay.c3l | `clay` | `c3d::ui`, in `addons/c3d_ui.c3l`; core never imports it |
+| c3d_ui.c3l | `c3d::ui` | Applications select it explicitly; it imports the standard library, `c3d` and `clay` |
 
 Boundaries are checked at review. No dependency is added without updating this table.
 
@@ -53,6 +55,8 @@ The `addons/c3d_landscape.c3l` package owns height-field terrain: the `Terrain` 
 The `addons/c3d_particle.c3l` package owns fixed-pool CPU particle simulation, emitters, lifetime tables and depth-reading effect materials. Its `c3d::particle` module imports the standard library and core, never `gpu`, `sdl`, `imgui`, physics or the render/shader-compiler modules. Core supplies generic billboard and mesh batches and never imports the particle package. The package owns `particle_test`, the `particles` example and a separate manual `test/gpu` acceptance target. The example selects the profiler collector explicitly for GPU timing; the simulation package does not depend on it.
 
 The `addons/c3d_serial.c3l` package owns the portable subtree container and explicit component codec registry. It imports the standard library and core and never creates GPU resources or native systems. Core never imports it. The package owns `serial_test`, `serial_order_forward` and `serial_order_reverse`; `scripts/build.py --test` runs them. See `docs/serialization.md` for the wire format, ownership, rollback and current codec coverage.
+
+The `addons/c3d_ui.c3l` package owns game UI: retained JSONC documents with styles (single inheritance, state blocks, ordered sheets), data bindings that code registers (getters, member tags, list scopes) and named actions, laid out with Clay every frame, routed against the previous frame's layout, and drawn into an `OverlayList` as rectangles and glyph runs. Its `c3d::ui` module imports the standard library, core (`c3d`, including `c3d::render` for the overlay list and `c3d::platform` for input and events) and `clay`, never `gpu`, `sdl`, `imgui` or another add-on. ImGui and the UI share the GUI capture flags and `Input.text_input_wanted_by_gui`; a frame without ImGui calls `Input.clear_gui_flags()` first. Core never imports it and carries no UI feature flag; selecting the library is the gate. The package owns its `project.json`, `ui_test` target, the manual `test/gpu` acceptance project with its `ui_acceptance` target, and the `ui` example. See `addons/c3d_ui.c3l/README.md` for the document schema and frame order.
 
 Core `c3d::scene` also owns pointer-sized `LodGroup` components: copied rigid
 whole-object alternatives with ordinary or fixed-capacity instanced placement.
@@ -110,7 +114,7 @@ Steps run in this order and stop at the first failure: tools (c3c 0.8.3, glslang
 
 Before every commit: `scripts/build.py --test`. Broken builds are never committed. GPU examples run manually; CI runs `--test`. Every development run of a GPU example enables Vulkan validation through gpu.c3l.
 
-The default build also builds the collector's `capture` example, the physics package's `physics`, `physics_instanced`, `physics_components`, `vehicle`, `ragdoll`, `collision_math`, `breakable` and `cloth` examples, the nav package's `navmesh`, `crowd` and `grid` examples, the character package's `character` and `character_nav` examples, the physics GUI package's `physics_inspector` and `physics_inspector_character` examples, the job package's `job_bench` example, the landscape package's `terrain`, `vegetation` and `water` examples, the particle package's `particles` example, the root `profile_gpu` example and all four `profile_gui` feature targets; `--target` and `--example` resolve add-on examples to their package project. `--test` runs the collector's off, CPU, internal CPU, GPU, internal GPU, CPU+GPU and full CPU+GPU+INTERNAL targets, the presentation add-on's off, CPU, GPU and combined data targets, the physics package's `physics_test` target, the nav package's `nav_test` target, the character package's `character_test` and `character_nav_test` targets, the physics GUI package's `physics_panel_off`, `physics_panel` and `physics_panel_character` targets, the job package's `job_test` target, the landscape package's `landscape_test` target, the particle package's `particle_test` target, and the root integration targets. These tests never create a GPU device. Direct `c3c test profile_cpu --path addons/c3d_profile.c3l` exercises only the standalone collector package. Real Vulkan acceptance lives in the separately invoked `test/gpu/profile` project and the manually run profiler GUI examples; neither runs in CI.
+The default build also builds the collector's `capture` example, the physics package's `physics`, `physics_instanced`, `physics_components`, `vehicle`, `ragdoll`, `collision_math`, `breakable` and `cloth` examples, the nav package's `navmesh`, `crowd` and `grid` examples, the character package's `character` and `character_nav` examples, the physics GUI package's `physics_inspector` and `physics_inspector_character` examples, the job package's `job_bench` example, the landscape package's `terrain`, `vegetation` and `water` examples, the particle package's `particles` example, the UI package's `ui` example, the root `profile_gpu` example and all four `profile_gui` feature targets; `--target` and `--example` resolve add-on examples to their package project. `--test` runs the collector's off, CPU, internal CPU, GPU, internal GPU, CPU+GPU and full CPU+GPU+INTERNAL targets, the presentation add-on's off, CPU, GPU and combined data targets, the physics package's `physics_test` target, the nav package's `nav_test` target, the character package's `character_test` and `character_nav_test` targets, the physics GUI package's `physics_panel_off`, `physics_panel` and `physics_panel_character` targets, the job package's `job_test` target, the landscape package's `landscape_test` target, the particle package's `particle_test` target, the UI package's `ui_test` target, and the root integration targets. These tests never create a GPU device. Direct `c3c test profile_cpu --path addons/c3d_profile.c3l` exercises only the standalone collector package. Real Vulkan acceptance lives in the separately invoked `test/gpu/profile` project and the manually run profiler GUI examples; neither runs in CI.
 
 # 6. Style
 
@@ -197,7 +201,7 @@ Counter-example, rejected on review:
 
 # 10. Architecture rules
 
-- Two layers. Scene-layer modules (`c3d`, `c3d::maths`, `c3d::ecs`, `c3d::asset`, `c3d::scene`, `c3d::geometry`, `c3d::camera`, `c3d::material`, `c3d::light`, `c3d::anim`, `c3d::model`, `c3d::spatial`, `c3d::physics`, `c3d::nav`, `c3d::character`, `c3d::job`, `c3d::landscape`, `c3d::particle`) never import `gpu`. The render layer (`c3d::render`, `c3d::shader`, `c3d::render::post`, `c3d::gui`) owns every GPU object. `c3d::platform` imports `gpu::surface` alone, to hand native window handles to gpu.c3l; a bare `import gpu` there is a violation.
+- Two layers, plus the UI add-on above the render layer. Scene-layer modules (`c3d`, `c3d::maths`, `c3d::ecs`, `c3d::asset`, `c3d::scene`, `c3d::geometry`, `c3d::camera`, `c3d::material`, `c3d::light`, `c3d::anim`, `c3d::model`, `c3d::spatial`, `c3d::physics`, `c3d::nav`, `c3d::character`, `c3d::job`, `c3d::landscape`, `c3d::particle`) never import `gpu`. The render layer (`c3d::render`, `c3d::shader`, `c3d::render::post`, `c3d::gui`) owns every GPU object. `c3d::platform` imports `gpu::surface` alone, to hand native window handles to gpu.c3l; a bare `import gpu` there is a violation. `c3d::ui` fills `c3d::render`'s overlay list and creates no GPU object; it never imports `gpu`.
 - The renderer reads the scene; the scene never calls the renderer. Loaders write the asset store and the scene; they never touch the renderer.
 - All shader-visible data is std430 behind root pointers and defined once in `abi/c3d.abi`. Per-draw push data is exactly two root addresses.
 - Depth is reverse-Z; the Vulkan Y flip is one negative-height viewport; shaders use GL conventions and never flip.
@@ -220,12 +224,13 @@ c3d.c3l/
 ├── addons/c3d_landscape.c3l/ height-field terrain, vegetation and water, its shader package, tests and examples
 ├── addons/c3d_particle.c3l/ fixed-pool CPU particles, effect materials, tests and example
 ├── addons/c3d_serial.c3l/ portable subtree format, explicit codecs and CPU tests
+├── addons/c3d_ui.c3l/      game UI: JSONC documents, styles, bindings and actions over Clay; owns its tests, acceptance project and example
 │                           an add-on that ships GLSL keeps shaders/shaders.json, its sources and shaders/include/<name>/ under its own shaders/, and a generated, committed src/shaders.c3
 ├── abi/c3d.abi             shared C3 and GLSL layouts
 ├── docs/style.md           mandatory style baseline
-├── lib/                    gpu.c3l · sdl3.c3l · c3imgui.c3l · c3cg.c3l · box3d.c3l · cgltf.c3l · ufbx.c3l · shaderc.c3l (submodules)
+├── lib/                    gpu.c3l · sdl3.c3l · c3imgui.c3l · c3cg.c3l · box3d.c3l · cgltf.c3l · ufbx.c3l · shaderc.c3l · clay.c3l (submodules)
 │                           plus c3d.c3l, a symlink to the root, so consumers resolve c3d here
-│                           plus c3d_profile.c3l, c3d_profile_gui.c3l, c3d_physics.c3l, c3d_nav.c3l, c3d_character.c3l, c3d_physics_gui.c3l, c3d_job.c3l, c3d_landscape.c3l, c3d_particle.c3l and c3d_serial.c3l symlinks to the add-ons
+│                           plus c3d_profile.c3l, c3d_profile_gui.c3l, c3d_physics.c3l, c3d_nav.c3l, c3d_character.c3l, c3d_physics_gui.c3l, c3d_job.c3l, c3d_landscape.c3l, c3d_particle.c3l, c3d_serial.c3l and c3d_ui.c3l symlinks to the add-ons
 ├── linked-libs/            empty; every dependency ships its own native artifacts
 ├── csrc/                   stb_image, stb_truetype
 ├── src/c3d/
