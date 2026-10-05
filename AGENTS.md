@@ -280,7 +280,7 @@ python3 scripts/build.py --init-deps
 Every milestone task, or a tightly coupled group of tasks from one milestone, runs as one OpenSpec change through these steps in order:
 
 1. **Brainstorm.** The agent reads the milestone page, the architecture sections it names, and the relevant code, then interviews the human one question at a time while the human shapes the design. Open decisions end as two or three options with tradeoffs, never a lone recommendation. No proposal is drafted before the shape is agreed.
-2. **Propose.** Two documents. `proposal.md`: the design and its contracts: signatures, structs, invariants, faults, and where each lives. `tasks.md`: ordered tasks with implementation guidance: file placements, declarations, commands to run, and for every API the change touches what it expects, what it returns, which faults it can produce and what each means, and any precondition or ordering it imposes. Guidance, not prescription: the human may take a different shape or decomposition where they see a better one, and the close-out records where they did. Exception: tests are specified in full; test design and coverage are the agent's job, within the section 9 limits.
+2. **Propose.** Two documents. `proposal.md`: the design and its contracts: signatures, structs, invariants, faults, and where each lives. `tasks.md`: ordered tasks with implementation guidance: file placements, declarations, commands to run, and for every API the change touches what it expects, what it returns, which faults it can produce and what each means, and any precondition or ordering it imposes. Guidance, not prescription: the human may take a different shape or decomposition where they see a better one, and the close-out records where they did. Exception: tests are specified in full; test design and coverage are the agent's job, within the section 9 limits. For a change larger than about 1,000 lines of code, `tasks.md` also plans its pull request slices (see Authoring).
 3. **Apply.** The human implements `tasks.md`. The agent advises (API lookups, math checks, fault diagnosis) and edits files only on explicit delegation of a named chunk. Tests are delegated to the agent by default.
 4. **Review.** The agent diffs the work against `proposal.md` and `tasks.md` with `docs/style.md` and the section 3 skills loaded. Findings are `file:line:fix`, focused on divergences and discoveries; style was settled at proposal time. The review also checks the milestone's exit criteria and sections 6 to 9 of this file.
 5. **Sync.** `proposal.md`, `tasks.md`, and a close-out (what changed, where reality diverged from the proposal, and why) are mirrored to Notion under Development, Changes, as one child page named after the change id. Then propagate: every divergence and every carried-forward item in the close-out is written as an "As built" note, citing the change id, on the architecture section it contradicts or extends and on the handoff of each downstream milestone it affects. Pages are corrected in place, not rewritten; a later brainstorm must be able to trust the architecture section it is told to read.
@@ -300,6 +300,7 @@ Steps 1 and 2 are one working session, 3 is the human's time, 4 to 6 are minutes
 - Tests ship in the same change, written against the milestone's exit criteria.
 - No drive-by refactors. A refactor is its own change, made on the second pain, with behavior unchanged.
 - Read your own diff once, top to bottom, before committing. `scripts/build.py --test` is green.
+- Pull requests stay reviewable. A change larger than about 1,000 lines of code lands as a group of stacked pull requests of about 500 lines each, cut at natural seams (bindings or core changes, data and loading, runtime, drawing, example, docs). Each one builds and passes `scripts/build.py --test` on its own and names its place in the stack; they are reviewed and merged in stack order. The change is still designed and implemented as one unit; only its pull requests are sliced. Advisory, not mandatory: one large pull request is fine when the features are tightly coupled or the code demands it.
 
 ## Reviewing
 
@@ -322,7 +323,8 @@ Paste into `openspec/config.yaml` under `context` after `openspec init`:
   change touches what it expects, what it returns, which faults it can
   produce and what each means, plus preconditions and ordering.
   Guidance, not prescription. Tests are specified in full, within the
-  AGENTS.md section 9 limits: no over-testing.
+  AGENTS.md section 9 limits: no over-testing. A change over about
+  1,000 lines plans stacked pull requests of about 500 lines each.
 - The human implements. Do not edit source files unless a named chunk
   is explicitly delegated. Tests are delegated to you by default.
 - All code anywhere, including skeletons in tasks.md, follows the
