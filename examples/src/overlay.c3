@@ -417,12 +417,13 @@ fn void? run_benchmark(Demo* demo, Options* options) @local {
     );
 }
 
-fn bool parse_size(String text, uint* width, uint* height) @local {
+fn uint[2]? parse_size(String text) @local {
     String[] parts = text.split(tmem, "x");
-    if (parts.len != 2) return false;
-    *width = parts[0].to_uint() ?? 0;
-    *height = parts[1].to_uint() ?? 0;
-    return *width > 0 && *height > 0;
+    if (parts.len != 2) return c3d::INVALID_ARGUMENT~;
+    uint width = parts[0].to_uint() ?? 0;
+    uint height = parts[1].to_uint() ?? 0;
+    if (!width || !height) return c3d::INVALID_ARGUMENT~;
+    return { width, height };
 }
 
 fn int main(String[] args) {
@@ -455,7 +456,10 @@ fn int main(String[] args) {
             if (!options.frames) return 1;
         } else if (argument == "--size" && has_value) {
             size_given = true;
-            if (!parse_size(args[++index], &options.width, &options.height)) return 1;
+            uint[2]? size = parse_size(args[++index]);
+            if (catch size) return 1;
+            options.width = size[0];
+            options.height = size[1];
         } else {
             io::eprintn("Use overlay [--stress [N]] [--frames N] [--benchmark --rects N --frames F --size WxH].");
             return 1;
@@ -493,7 +497,10 @@ fn int main(String[] args) {
         ball = assets.add_geometry(&ball_geometry, "overlay/sphere")!!;
     };
     MaterialId cube_material = assets.add_material(material::basic({ .color = CUBE_COLOR }), "overlay/cube")!!;
-    MaterialId backdrop_material = assets.add_material(material::basic({ .color = BACKDROP_COLOR }), "overlay/backdrop")!!;
+    MaterialId backdrop_material = assets.add_material(
+        material::basic({ .color = BACKDROP_COLOR }),
+        "overlay/backdrop",
+    )!!;
 
     char[SKIN_SIZE * SKIN_SIZE * 4] skin_pixels;
     fill_skin(skin_pixels[..]);
@@ -516,8 +523,20 @@ fn int main(String[] args) {
     scene.update_world();
 
     uint capacity = (options.benchmark ? options.rects : options.stress_count) + SCENE_ITEM_RESERVE;
-    OverlayList list = render::create_overlay_list(mem, { .max_items = capacity, .max_clips = render::OVERLAY_LIST_DEFAULT_CLIPS });
+    OverlayListDesc list_desc = { .max_items = capacity, .max_clips = render::OVERLAY_LIST_DEFAULT_CLIPS };
+    OverlayList list = render::create_overlay_list(mem, list_desc);
     defer render::destroy_overlay_list(&list);
+
+    RenderTargetId portrait = render::create_render_target(
+        &renderer,
+        render::render_target_desc(PORTRAIT_SIZE, PORTRAIT_SIZE, material::PixelFormat.RGBA8_SRGB),
+    )!!;
+    defer (void)render::destroy_render_target(&renderer, portrait);
+    ViewId portrait_view = render::create_view(
+        &renderer,
+        render::texture_view_desc(portrait, OutputMode.DISPLAY_LDR),
+    )!!;
+    defer (void)render::destroy_view(&renderer, portrait_view);
 
     Demo demo = {
         .window          = &window,
@@ -526,23 +545,17 @@ fn int main(String[] args) {
         .camera_node     = camera_node,
         .portrait_camera = portrait_camera,
         .cube            = cube,
+        .portrait        = portrait,
+        .portrait_view   = portrait_view,
         .skin            = skin,
         .list            = &list,
         .with_portrait   = !options.benchmark,
     };
-    if (!options.benchmark) {
-        demo.portrait = render::create_render_target(
-            &renderer,
-            render::render_target_desc(PORTRAIT_SIZE, PORTRAIT_SIZE, material::PixelFormat.RGBA8_SRGB),
-        )!!;
-        demo.portrait_view = render::create_view(
-            &renderer,
-            render::texture_view_desc(demo.portrait, OutputMode.DISPLAY_LDR),
-        )!!;
-    }
     renderer.prepare_scene(&scene)!!;
 
-    fault excuse = options.benchmark ? @catch(run_benchmark(&demo, &options)) : @catch(run_interactive(&demo, &options));
+    fault excuse = options.benchmark
+        ? @catch(run_benchmark(&demo, &options))
+        : @catch(run_interactive(&demo, &options));
     if (excuse) {
         io::eprintfn("Overlay example failed: %s", excuse);
         return 1;

@@ -313,7 +313,8 @@ fn OverlayItemGpu pack_overlay_rect(OverlayRect* rect, OverlayBinding binding) @
     if (textured) flags |= shader::OVERLAY_FLAG_TEXTURED;
     if (textured && any_positive_vec4(rect.slice_pixels)) flags |= shader::OVERLAY_FLAG_NINE_SLICE;
     if (any_positive_vec4(borders)) flags |= shader::OVERLAY_FLAG_BORDER;
-    uint kind_flags = (shader::OVERLAY_KIND_RECT << shader::OVERLAY_KIND_SHIFT) | (flags << shader::OVERLAY_FLAGS_SHIFT);
+    uint kind = shader::OVERLAY_KIND_RECT << shader::OVERLAY_KIND_SHIFT;
+    uint kind_flags = kind | (flags << shader::OVERLAY_FLAGS_SHIFT);
 
     return {
         .bounds                    = { rect.min.x, rect.min.y, rect.max.x, rect.max.y },

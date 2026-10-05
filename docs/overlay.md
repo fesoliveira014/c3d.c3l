@@ -53,7 +53,8 @@ The list samples a texture as stored and converts nothing. For a render target s
 
 - A `DISPLAY_LDR` view into an `RGBA8_SRGB` or float target shows the finished picture.
 - A `LINEAR_HDR` view shows radiance clipped at 1.
-- An `RGBA8_UNORM` display target stores encoded values that the list then reads as linear; dark tones band.
+- A `DISPLAY_LDR` view into an `RGBA8_UNORM` target stores linear display values at 8 bits; the list shows them
+  correctly, but dark tones band.
 
 ## Rounding, borders, nine-slice
 
@@ -83,7 +84,9 @@ submission order.
 | `Renderer.prepare_overlay_list` | `INVALID_ID` (dead texture, sampler or render target); `INVALID_ARGUMENT` (comparison sampler); `UNSUPPORTED` (texture kind above); `ASSET_DATA_UNAVAILABLE`; `gpu` faults from upload and state transitions |
 | `OverlayContext.draw_list` | `gpu` and shader faults from pipeline creation and recording; contract: prepared this frame |
 
-A fault in `prepare_overlay_list` aborts the frame like any other renderer fault.
+A reference fault in `prepare_overlay_list` (`INVALID_ID`, `INVALID_ARGUMENT`, `UNSUPPORTED`) records nothing and
+leaves the frame open, so the application can skip that list and still present. Any later fault aborts the frame,
+like other renderer faults.
 
 ## Capacities and costs
 
