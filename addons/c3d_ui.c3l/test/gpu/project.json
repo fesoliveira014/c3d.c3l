@@ -1,0 +1,10 @@
+{
+  "langrev": "1",
+  "dependency-search-paths": ["../../../../lib", "../../../../lib/gpu.c3l/lib"],
+  "dependencies": ["c3d_ui", "clay", "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "cgltf", "ufbx", "shaderc"],
+  "wincrt": "static",
+  "output": "../../../../build/ui_acceptance",
+  "targets": {
+    "ui_acceptance": {"type": "test", "sources": ["ui_acceptance.c3"]}
+  }
+}

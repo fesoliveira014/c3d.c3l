@@ -39,7 +39,7 @@ fn void GuiRenderer.new_frame(&self) {
 
     window.input.mouse_captured_by_gui = imgui::io_get_want_capture_mouse();
     window.input.keyboard_captured_by_gui = imgui::io_get_want_capture_keyboard();
-    window.set_text_input(imgui::io_get_want_text_input());
+    window.input.text_input_wanted_by_gui = imgui::io_get_want_text_input();
 
     self.frame_open = true;
     self.draw_ready = false;
@@ -52,6 +52,7 @@ fn void GuiRenderer.new_frame(&self) {
 *>
 fn void GuiRenderer.finish_frame(&self) {
     imgui::set_current_context(self.context);
+    self.window.set_text_input(self.window.input.text_input_wanted_by_gui);
     imgui::render();
 
     self.frame_open = false;

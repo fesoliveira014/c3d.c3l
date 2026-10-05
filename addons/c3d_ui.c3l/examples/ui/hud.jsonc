@@ -1,0 +1,67 @@
+{
+  "anchor": "top_left",
+  "offset": [16, 16],
+  "root": {
+    "kind": "panel",
+    "style": "panel",
+    "width": 320,
+    "children": [
+      { "kind": "label", "style": "title", "text": "Squad ({hud.member_count})" },
+      {
+        "kind": "list",
+        "items": "{squad.members}",
+        "direction": "column",
+        "gap": 4,
+        "width": "grow",
+        "template": {
+          "kind": "button",
+          "style": "member_row",
+          "on_click": "squad.select",
+          "children": [
+            { "kind": "panel", "style": "marker", "visible": "{member.selected}" },
+            { "kind": "image", "style": "portrait", "image": "{member.portrait}" },
+            {
+              "kind": "panel",
+              "direction": "column",
+              "gap": 3,
+              "children": [
+                { "kind": "label", "style": "text", "text": "{member.name}" },
+                { "kind": "bar", "style": "health_bar", "value": "{member.health}" },
+                { "kind": "label", "style": "caption", "text": "{member.hp} / {member.max_hp}" }
+              ]
+            }
+          ]
+        }
+      },
+      {
+        "kind": "panel",
+        "style": "row",
+        "children": [
+          {
+            "kind": "button",
+            "style": "button",
+            "on_click": "squad.heal",
+            "enabled": "{hud.can_heal}",
+            "children": [ { "kind": "label", "text": "Heal", "style": "text" } ]
+          },
+          {
+            "kind": "button",
+            "style": "button",
+            "on_click": "squad.damage",
+            "enabled": "{hud.can_damage}",
+            "children": [ { "kind": "label", "text": "Damage", "style": "text" } ]
+          }
+        ]
+      },
+      { "kind": "label", "style": "caption", "text": "Rename the selected member" },
+      {
+        "kind": "text_field",
+        "style": "field",
+        "value": "{hud.selected}",
+        "placeholder": "Name",
+        "on_submit": "squad.rename"
+      },
+      { "kind": "label", "style": "caption", "text": "{hud.status}" }
+    ]
+  }
+}
