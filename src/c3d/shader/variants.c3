@@ -18,6 +18,8 @@ enum ShaderName : int {
     BASIC,
     IMGUI_VERTEX,
     IMGUI_FRAGMENT,
+    OVERLAY_VERTEX,
+    OVERLAY_FRAGMENT,
     LINES_VERTEX,
     LINES_FRAGMENT,
     PREVIEW,
@@ -142,6 +144,8 @@ const char[*] IMPOSTOR_VELOCITY_SPIRV @private = $embed("../../../shaders/spv/im
 const char[*] BASIC_SPIRV @private = $embed("../../../shaders/spv/basic.spv");
 const char[*] IMGUI_VERTEX_SPIRV @private = $embed("../../../shaders/spv/imgui_vertex.spv");
 const char[*] IMGUI_FRAGMENT_SPIRV @private = $embed("../../../shaders/spv/imgui_fragment.spv");
+const char[*] OVERLAY_VERTEX_SPIRV @private = $embed("../../../shaders/spv/overlay_vertex.spv");
+const char[*] OVERLAY_FRAGMENT_SPIRV @private = $embed("../../../shaders/spv/overlay_fragment.spv");
 const char[*] LINES_VERTEX_SPIRV @private = $embed("../../../shaders/spv/lines_vertex.spv");
 const char[*] LINES_FRAGMENT_SPIRV @private = $embed("../../../shaders/spv/lines_fragment.spv");
 const char[*] PREVIEW_SPIRV @private = $embed("../../../shaders/spv/preview.spv");
@@ -257,7 +261,7 @@ const char[*] LIGHTING_RESOLVE_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV @private = $embe
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[126] SHADER_ENTRIES = {
+const ShaderEntry[128] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -273,6 +277,8 @@ const ShaderEntry[126] SHADER_ENTRIES = {
     { .variant = { .shader = BASIC }, .spirv = BASIC_SPIRV[..] },
     { .variant = { .shader = IMGUI_VERTEX }, .spirv = IMGUI_VERTEX_SPIRV[..] },
     { .variant = { .shader = IMGUI_FRAGMENT }, .spirv = IMGUI_FRAGMENT_SPIRV[..] },
+    { .variant = { .shader = OVERLAY_VERTEX }, .spirv = OVERLAY_VERTEX_SPIRV[..] },
+    { .variant = { .shader = OVERLAY_FRAGMENT }, .spirv = OVERLAY_FRAGMENT_SPIRV[..] },
     { .variant = { .shader = LINES_VERTEX }, .spirv = LINES_VERTEX_SPIRV[..] },
     { .variant = { .shader = LINES_FRAGMENT }, .spirv = LINES_FRAGMENT_SPIRV[..] },
     { .variant = { .shader = PREVIEW }, .spirv = PREVIEW_SPIRV[..] },

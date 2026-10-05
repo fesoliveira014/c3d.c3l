@@ -69,6 +69,15 @@ const uint MATERIAL_DOUBLE_SIDED = 2u;
 const uint MATERIAL_ALPHA_BLEND = 4u;
 const uint MATERIAL_BLEND_ADDITIVE = 8u;
 const uint TOON_MAP_GRADIENT = 1024u;
+const uint OVERLAY_KIND_RECT = 0u;
+const uint OVERLAY_KIND_SHIFT = 16u;
+const uint OVERLAY_FLAGS_SHIFT = 24u;
+const uint OVERLAY_SAMPLER_MASK = 65535u;
+const uint OVERLAY_FLAG_TEXTURED = 1u;
+const uint OVERLAY_FLAG_NINE_SLICE = 2u;
+const uint OVERLAY_FLAG_BORDER = 4u;
+const uint OVERLAY_QUAD_VERTICES = 6u;
+const float OVERLAY_EDGE_PIXELS = 1.0;
 const uint PREVIEW_MODE_COLOR = 0u;
 const uint PREVIEW_MODE_DEPTH_VIEW = 1u;
 const uint PREVIEW_MODE_DEPTH_RAW = 2u;
@@ -637,6 +646,29 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer GuiVertexRoo
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer GuiFragmentRoot {
     uint source_texture;
     uint source_sampler;
+};
+
+struct OverlayItemGpu {
+    vec4 bounds;
+    vec4 uv_rect;
+    uint radii_top;
+    uint radii_bottom;
+    uint borders_left_top;
+    uint borders_right_bottom;
+    uint slice_uv_left_top;
+    uint slice_uv_right_bottom;
+    uint slice_pixels_left_top;
+    uint slice_pixels_right_bottom;
+    uint fill;
+    uint border_color;
+    uint texture;
+    uint sampler_kind_flags;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer OverlayRoot {
+    uint64_t items;
+    vec2 scale;
+    vec2 translate;
 };
 
 struct DebugVertexGpu {

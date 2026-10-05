@@ -565,6 +565,42 @@ root GuiFragmentRoot {
     SamplerIndex source_sampler;
 }
 
+// Items of one overlay list, tagged by kind.
+const uint OVERLAY_KIND_RECT = 0;
+const uint OVERLAY_KIND_SHIFT = 16;
+const uint OVERLAY_FLAGS_SHIFT = 24;
+// Sampler index bits of sampler_kind_flags; the sampler heap holds 256 by default.
+const uint OVERLAY_SAMPLER_MASK = 65535;
+const uint OVERLAY_FLAG_TEXTURED = 1;
+const uint OVERLAY_FLAG_NINE_SLICE = 2;
+const uint OVERLAY_FLAG_BORDER = 4;
+const uint OVERLAY_QUAD_VERTICES = 6;
+// Quad margin past an item's bounds; the antialiased edge fades out half a pixel past them.
+const float OVERLAY_EDGE_PIXELS = 1.0;
+
+struct OverlayItemGpu {
+    vec4         bounds;
+    vec4         uv_rect;
+    uint         radii_top;
+    uint         radii_bottom;
+    uint         borders_left_top;
+    uint         borders_right_bottom;
+    uint         slice_uv_left_top;
+    uint         slice_uv_right_bottom;
+    uint         slice_pixels_left_top;
+    uint         slice_pixels_right_bottom;
+    uint         fill;
+    uint         border_color;
+    TextureIndex texture;
+    uint         sampler_kind_flags;
+}
+
+root OverlayRoot {
+    GpuAddress items;
+    vec2       scale;
+    vec2       translate;
+}
+
 struct DebugVertexGpu {
     float x;
     float y;

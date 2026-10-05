@@ -305,7 +305,7 @@ fn float half_to_float(ushort bits) @local {
     return bitcast(sign | ((exponent + HALF_TO_FLOAT_BIAS) << 23) | (mantissa << 13), float);
 }
 
-fn ushort float_to_half(float value) @local {
+fn ushort float_to_half(float value) @private {
     uint bits = bitcast(value, uint);
     uint sign = (bits >> 16) & HALF_SIGN_MASK;
     uint magnitude = bits & ~FLOAT_SIGN_MASK;
