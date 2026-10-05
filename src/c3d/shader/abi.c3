@@ -66,6 +66,15 @@ const uint MATERIAL_DOUBLE_SIDED = 2;
 const uint MATERIAL_ALPHA_BLEND = 4;
 const uint MATERIAL_BLEND_ADDITIVE = 8;
 const uint TOON_MAP_GRADIENT = 1024;
+const uint OVERLAY_KIND_RECT = 0;
+const uint OVERLAY_KIND_SHIFT = 16;
+const uint OVERLAY_FLAGS_SHIFT = 24;
+const uint OVERLAY_SAMPLER_MASK = 65535;
+const uint OVERLAY_FLAG_TEXTURED = 1;
+const uint OVERLAY_FLAG_NINE_SLICE = 2;
+const uint OVERLAY_FLAG_BORDER = 4;
+const uint OVERLAY_QUAD_VERTICES = 6;
+const float OVERLAY_EDGE_PIXELS = 1.0;
 const uint PREVIEW_MODE_COLOR = 0;
 const uint PREVIEW_MODE_DEPTH_VIEW = 1;
 const uint PREVIEW_MODE_DEPTH_RAW = 2;
@@ -1041,6 +1050,48 @@ struct GuiFragmentRoot {
 $assert GuiFragmentRoot::size == 8;
 $assert $reflect(GuiFragmentRoot.source_texture).offset == 0;
 $assert $reflect(GuiFragmentRoot.source_sampler).offset == 4;
+
+struct OverlayItemGpu {
+    Vec4f        bounds;
+    Vec4f        uv_rect;
+    uint         radii_top;
+    uint         radii_bottom;
+    uint         borders_left_top;
+    uint         borders_right_bottom;
+    uint         slice_uv_left_top;
+    uint         slice_uv_right_bottom;
+    uint         slice_pixels_left_top;
+    uint         slice_pixels_right_bottom;
+    uint         fill;
+    uint         border_color;
+    TextureIndex texture;
+    uint         sampler_kind_flags;
+}
+$assert OverlayItemGpu::size == 80;
+$assert $reflect(OverlayItemGpu.bounds).offset == 0;
+$assert $reflect(OverlayItemGpu.uv_rect).offset == 16;
+$assert $reflect(OverlayItemGpu.radii_top).offset == 32;
+$assert $reflect(OverlayItemGpu.radii_bottom).offset == 36;
+$assert $reflect(OverlayItemGpu.borders_left_top).offset == 40;
+$assert $reflect(OverlayItemGpu.borders_right_bottom).offset == 44;
+$assert $reflect(OverlayItemGpu.slice_uv_left_top).offset == 48;
+$assert $reflect(OverlayItemGpu.slice_uv_right_bottom).offset == 52;
+$assert $reflect(OverlayItemGpu.slice_pixels_left_top).offset == 56;
+$assert $reflect(OverlayItemGpu.slice_pixels_right_bottom).offset == 60;
+$assert $reflect(OverlayItemGpu.fill).offset == 64;
+$assert $reflect(OverlayItemGpu.border_color).offset == 68;
+$assert $reflect(OverlayItemGpu.texture).offset == 72;
+$assert $reflect(OverlayItemGpu.sampler_kind_flags).offset == 76;
+
+struct OverlayRoot {
+    GpuAddress items;
+    Vec2f      scale;
+    Vec2f      translate;
+}
+$assert OverlayRoot::size == 24;
+$assert $reflect(OverlayRoot.items).offset == 0;
+$assert $reflect(OverlayRoot.scale).offset == 8;
+$assert $reflect(OverlayRoot.translate).offset == 16;
 
 struct DebugVertexGpu {
     float x;

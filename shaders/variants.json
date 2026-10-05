@@ -16,6 +16,8 @@
     { "shader": "basic", "source": "basic.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "imgui_vertex", "source": "imgui.vert.glsl", "stage": "vert", "defines": [] },
     { "shader": "imgui_fragment", "source": "imgui.frag.glsl", "stage": "frag", "defines": [] },
+    { "shader": "overlay_vertex", "source": "overlay.vert.glsl", "stage": "vert", "defines": [] },
+    { "shader": "overlay_fragment", "source": "overlay.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "lines_vertex", "source": "lines.vert.glsl", "stage": "vert", "defines": [] },
     { "shader": "lines_fragment", "source": "lines.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "preview", "source": "preview.comp.glsl", "stage": "comp", "defines": [] },

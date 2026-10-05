@@ -112,6 +112,10 @@ borrows commands and frame allocation access until `end_overlay()`. Storage obta
 `overlay.alloc()` survives until GPU completion. The adapter must not free those slices,
 reset the frame arena, submit or present.
 
+[Overlay lists](overlay.md) record in the same overlay before the GUI. Call `OverlayContext.draw_list` first and
+`GuiRenderer.record` after it, so ImGui draws on top; the ImGui backend rebinds its own pipeline and state, so the
+list leaves nothing for it to restore.
+
 ## Drawing contract
 
 The backend copies ImGui's 20-byte vertices and native-width indices into frame storage.
