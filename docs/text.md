@@ -14,7 +14,7 @@ FontId font = assets.add_font(file_bytes, asset::default_font_desc(), "ui/regula
 - `add_font` copies the bytes; `add_font_owned` takes bytes allocated with the store allocator on success.
 - `FontDesc.face_index` selects a face of a collection; zero for a single-face file.
 - `max_glyphs`, `curve_texels` and `band_texels` are fixed capacities, allocated once. Texel counts round up to rows
-  of 4,096 texels and stop at 4,096 rows. The defaults hold the whole committed CJK subset (4,184 glyphs) with room
+  of 4,096 texels and stop at 4,096 rows. The defaults hold the whole committed CJK subset (4,197 glyphs) with room
   to spare; a Latin UI font fits in far less. See [Capacities and costs](#capacities-and-costs).
 - `remove_font` frees the file and outlines. The renderer retires the font's textures on its next frame.
 
@@ -100,18 +100,38 @@ Measured with `text --stats` (CPU; any machine):
 | Font | Glyphs | Curve texels per glyph | Band texels per glyph | Store bytes per glyph | GPU bytes per glyph |
 | --- | --- | --- | --- | --- | --- |
 | Noto Sans, U+0020 to U+017F, Greek and Cyrillic | 695 | 25.8 | 113.3 | 865 | 659 |
-| Noto Sans CJK SC subset, every glyph | 4,181 | 67.9 | 271.9 | 2,174 | 1,631 |
+| Noto Sans CJK SC subset, every glyph | 4,195 | 67.7 | 271.0 | 2,168 | 1,626 |
 
 The store holds curve texels as f32 (16 bytes) and band texels as two u16 values (4 bytes); the GPU holds curves as
 f16 (8 bytes) and bands as `R32_UINT` (4 bytes). The CJK subset fills 70 curve rows and 278 band rows. Defaults:
 5,120 glyphs, 96 curve rows (6 MiB stored, 3 MiB on the GPU) and 384 band rows (6 MiB each), about 1.37 times the
 subset. A font whose glyphs need more faults `CAPACITY_EXCEEDED` from `place_text`; give it a larger `FontDesc`.
 
-Building outlines for a first-seen paragraph of 100 distinct hanzi takes 3.3 ms in `place_text` at `--opt O3`
-(27 ms unoptimized), measured with `text --stats` on an Intel i9-14900K under WSL. Placing text whose glyphs exist
-already decodes, looks up and kerns only.
+Building outlines for a first-seen paragraph of 100 distinct hanzi takes 3.5 ms in `place_text` at `--opt O3`
+(27 ms unoptimized), measured with `text --stats` on an Intel i9-14900K under WSL.
 
-GPU time and preparation cost of glyph runs: recorded after the RTX 4090 runs of `text --benchmark`.
+Placing text whose glyphs exist decodes, looks up and kerns only. Per code point at `--opt O3` on the i9-14900K:
+`place_text` 234 ns and `measure_text` 183 ns, of which stb_truetype's GPOS kerning lookup is 141 ns, the cmap
+lookup 31 ns and the advance 3 ns. A UI that re-places unchanged strings every frame pays this each time; caching
+placements per string, or a fixed-size kerning cache per font, removes most of it.
+
+`text --benchmark --glyphs 10000 --frames 200` measures 10,000 glyphs at 14 px in Latin lines plus one 100-hanzi
+line, all under one clip: `fill_ms` (clear, `place_text`, `add_glyphs`), `prepare_ms` (CPU time of
+`prepare_overlay_list`), `first_prepare_ms` (the first frame, which uploads the fonts' rows), `overlay_gpu_ms`
+(`Pass.OVERLAY`) and `draws`. Measured on Windows, Intel i9-14900K, NVIDIA RTX 4090 (driver 32.0.16.1088), c3c
+0.8.3, `--opt O3`, 200 frames after 200 warm-up frames:
+
+| Output | fill_ms | prepare_ms | first_prepare_ms | overlay_gpu_ms | draws |
+| --- | --- | --- | --- | --- | --- |
+| 1920 x 1080 | 5.4469 | 0.0584 | 0.4672 | 0.0666 | 1 |
+| 3840 x 2160 | 5.4511 | 0.0588 | 0.3041 | 0.0665 | 1 |
+
+`fill_ms` is the layout cost above: about 10,000 code points re-placed every frame. GPU time does not depend on the
+output size; the glyphs stay 14 px at both sizes.
+
+At 11 to 14 px, `text --compare` shows Slug and stb_truetype bitmaps as equivalent on the RTX 4090: mean absolute
+difference 4.6 to 12.5 of 255, ink within 3% (11 px Latin +11%, where the label likely reaches the measured band),
+no dropouts or seams. Unhinted Slug is adequate for small UI text.
 
 ## Credits
 

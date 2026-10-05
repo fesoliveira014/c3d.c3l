@@ -24,7 +24,7 @@ const uint FONT_MAX_ROWS = 4096; // Vulkan guarantees 2D images of 4096 texels p
 <*
  Glyph outlines a font keeps by default.
 *>
-const uint FONT_DEFAULT_MAX_GLYPHS = 5120; // one 32 B table entry each; the committed CJK subset has 4,184 glyphs
+const uint FONT_DEFAULT_MAX_GLYPHS = 5120; // one 32 B table entry each; the committed CJK subset has 4,197 glyphs
 
 <*
  Curve texels a font reserves by default.

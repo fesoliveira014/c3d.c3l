@@ -224,8 +224,7 @@ fn void commit_font_uploads(Renderer* renderer) @private {
 
 // Reverse order leaves each mirror with the state its first upload of the frame found.
 fn void discard_font_uploads(Renderer* renderer) @private {
-    for (sz index = renderer.pending_font_uploads.len() - 1; index >= 0; index--) {
-        PendingFontUpload* pending = &renderer.pending_font_uploads[index];
+    foreach_r (&pending : renderer.pending_font_uploads) {
         FontRes* mirror = &renderer.fonts[pending.asset.index];
         if (!c3d::same_id(mirror.asset, pending.asset)) continue;
 

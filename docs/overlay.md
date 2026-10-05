@@ -122,6 +122,10 @@ Measured on Windows, Intel i9-14900K, NVIDIA RTX 4090 (driver 32.0.16.1088), c3c
 | 1,000 | 3840 x 2160 | 0.0248 | 0.0302 | 0.0079 | 1 |
 | 10,000 | 3840 x 2160 | 0.2435 | 0.3089 | 0.0468 | 1 |
 
+These numbers were taken with 80-byte items. With 96-byte items (glyph fields added), 10,000 rects measure
+`fill_ms` 0.2379 / 0.2404, `prepare_ms` 0.3087 / 0.3064 and `overlay_gpu_ms` 0.0532 / 0.0534 at 1920 x 1080 /
+3840 x 2160: GPU time +14%, CPU time unchanged. Glyph-run costs are in [Text](text.md).
+
 CPU time scales with the item count. GPU time is the same at both output sizes; the stress rects stay 6 × 6 px at
 either size. The default unoptimized build measured `fill_ms` 0.17 / 1.66 and `prepare_ms`
 0.17 / 1.69 for 1,000 / 10,000 rects, with the same GPU times.
