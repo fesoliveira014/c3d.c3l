@@ -52,7 +52,7 @@ fn FontRes*? resolve_font(Renderer* renderer, FontId font) @private {
     FontRes* mirror = &renderer.fonts[font.index];
     if (font_current(renderer, font)) return mirror;
     FontAsset* record = renderer.assets.font(font);
-    if (!c3d::same_id(mirror.asset, font)) create_font_textures(renderer, mirror, font, record)!;
+    if (!c3d::same_id(mirror.asset, font)) create_font_textures(renderer, mirror, font)!;
 
     uint curve_base = mirror.curve_texels;
     uint band_base = mirror.band_texels;
@@ -120,7 +120,8 @@ fn FontRes*? resolve_font(Renderer* renderer, FontId font) @private {
     return mirror;
 }
 
-fn void? create_font_textures(Renderer* renderer, FontRes* mirror, FontId font, FontAsset* record) @local {
+fn void? create_font_textures(Renderer* renderer, FontRes* mirror, FontId font) @local {
+    FontAsset* record = renderer.assets.font(font);
     uint width = asset::FONT_TEXTURE_WIDTH;
     gpu::TextureDesc curve_desc = {
         .width      = width,
@@ -163,10 +164,20 @@ fn void? record_font_uploads(Renderer* renderer, gpu::CommandList* commands) @pr
 
         FontRes* mirror = &renderer.fonts[pending.asset.index];
         if (pending.curve_copy.height) {
-            record_font_copy(renderer, commands, &pending.curve_copy, &mirror.curve_state)!;
+            record_font_copy(
+                renderer: renderer,
+                commands: commands,
+                copy:     &pending.curve_copy,
+                state:    &mirror.curve_state,
+            )!;
         }
         if (pending.band_copy.height) {
-            record_font_copy(renderer, commands, &pending.band_copy, &mirror.band_state)!;
+            record_font_copy(
+                renderer: renderer,
+                commands: commands,
+                copy:     &pending.band_copy,
+                state:    &mirror.band_state,
+            )!;
         }
         pending.recorded = true;
     }

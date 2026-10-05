@@ -157,11 +157,11 @@ fn Vec2 curve_extent(GlyphCurve* curve, int axis) @private {
     };
 }
 
-fn Vec2 band_span(float low, float high, uint count, uint band) @private {
-    float thickness = (high - low) / (float)count;
+fn Vec2 band_span(Vec2 range, uint count, uint band) @private {
+    float thickness = (math::max(range.y, range.x) - range.x) / (float)count;
     return {
-        low + (float)band * thickness - FONT_BAND_OVERLAP,
-        low + (float)(band + 1) * thickness + FONT_BAND_OVERLAP,
+        range.x + (float)band * thickness - FONT_BAND_OVERLAP,
+        range.x + (float)(band + 1) * thickness + FONT_BAND_OVERLAP,
     };
 }
 
@@ -171,13 +171,13 @@ fn bool curve_in_band(GlyphCurve* curve, int axis, Vec2 span) @private {
     return extent.x <= span.y && extent.y >= span.x;
 }
 
-fn BandChoice choose_bands(GlyphCurve[] curves, int axis, float low, float high) @private {
+fn BandChoice choose_bands(GlyphCurve[] curves, int axis, Vec2 range) @private {
     BandChoice best = { .largest = uint::max };
-    uint max_count = high > low ? FONT_MAX_BANDS : 1;
+    uint max_count = range.y > range.x ? FONT_MAX_BANDS : 1;
     for (uint count = 1; count <= max_count; count++) {
         uint largest;
         for (uint band = 0; band < count; band++) {
-            Vec2 span = band_span(low, math::max(high, low), count, band);
+            Vec2 span = band_span(range, count, band);
             uint size;
             foreach (&curve : curves) {
                 if (curve_in_band(curve, axis, span)) size++;
@@ -216,8 +216,8 @@ fn void? build_glyph(FontAsset* font, uint glyph) @private {
         GlyphCurve[] curves = curve_list.array_view();
         Vec4 bounds = curve_bounds(curves);
 
-        BandChoice horizontal = choose_bands(curves, 1, bounds.y, bounds.w);
-        BandChoice vertical = choose_bands(curves, 0, bounds.x, bounds.z);
+        BandChoice horizontal = choose_bands(curves, 1, bounds.yw);
+        BandChoice vertical = choose_bands(curves, 0, bounds.xz);
         BandList[] horizontal_lists = alloc::new_array(tmem, BandList, (sz)horizontal.count);
         BandList[] vertical_lists = alloc::new_array(tmem, BandList, (sz)vertical.count);
         List{uint} entries;
@@ -225,16 +225,14 @@ fn void? build_glyph(FontAsset* font, uint glyph) @private {
         collect_bands(
             curves:  curves,
             axis:    1,
-            low:     bounds.y,
-            high:    bounds.w,
+            range:   bounds.yw,
             bands:   horizontal_lists,
             entries: &entries,
         );
         collect_bands(
             curves:  curves,
             axis:    0,
-            low:     bounds.x,
-            high:    bounds.z,
+            range:   bounds.xz,
             bands:   vertical_lists,
             entries: &entries,
         );
@@ -258,8 +256,22 @@ fn void? build_glyph(FontAsset* font, uint glyph) @private {
             font.curves[texel] = { curve.start.x, curve.start.y, curve.control.x, curve.control.y };
             font.curves[texel + 1] = { curve.end.x, curve.end.y, 0, 0 };
         }
-        write_bands(font, block_start, 0, horizontal_lists, entries.array_view(), locations);
-        write_bands(font, block_start, horizontal.count, vertical_lists, entries.array_view(), locations);
+        write_bands(
+            font:         font,
+            block_start:  block_start,
+            first_header: 0,
+            lists:        horizontal_lists,
+            entries:      entries.array_view(),
+            locations:    locations,
+        );
+        write_bands(
+            font:         font,
+            block_start:  block_start,
+            first_header: horizontal.count,
+            lists:        vertical_lists,
+            entries:      entries.array_view(),
+            locations:    locations,
+        );
 
         font.glyphs[font.glyph_count] = {
             .bounds        = bounds,
@@ -333,14 +345,13 @@ fn Vec4 curve_bounds(GlyphCurve[] curves) @local {
 fn void collect_bands(
     GlyphCurve[] curves,
     int axis,
-    float low,
-    float high,
+    Vec2 range,
     BandList[] bands,
     List{uint}* entries,
 ) @local {
     int other_axis = 1 - axis;
     foreach (uint band, &list : bands) {
-        Vec2 span = band_span(low, math::max(high, low), (uint)bands.len, band);
+        Vec2 span = band_span(range, (uint)bands.len, band);
         list.first = (uint)entries.len();
         foreach (uint index, &curve : curves) {
             if (!curve_in_band(curve, axis, span)) continue;

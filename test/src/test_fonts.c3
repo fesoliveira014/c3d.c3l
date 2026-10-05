@@ -386,7 +386,7 @@ fn void test_band_search_prefers_fewest_bands_at_minimum() @test {
         { .start = { 1, 1 }, .control = { 0, 1 }, .end = { 0, 1 } },
         { .start = { 0, 1 }, .control = { 0, 0 }, .end = { 0, 0 } },
     };
-    BandChoice square_bands = asset::choose_bands(square[..], 1, 0, 1);
+    BandChoice square_bands = asset::choose_bands(square[..], 1, { 0, 1 });
     assert(square_bands.count == 1 && square_bands.largest == 2);
 
     GlyphCurve[4] edges;
@@ -395,9 +395,9 @@ fn void test_band_search_prefers_fewest_bands_at_minimum() @test {
         Vec2 top = { (float)edge, (float)(edge + 1) / 4 - 0.05f };
         edges[edge] = { .start = bottom, .control = top, .end = top };
     }
-    BandChoice horizontal = asset::choose_bands(edges[..], 1, 0, 1);
+    BandChoice horizontal = asset::choose_bands(edges[..], 1, { 0, 1 });
     assert(horizontal.count == 4 && horizontal.largest == 1);
-    BandChoice vertical = asset::choose_bands(edges[..], 0, 0, 3);
+    BandChoice vertical = asset::choose_bands(edges[..], 0, { 0, 3 });
     assert(vertical.count == 1 && vertical.largest == 0);
 }
 

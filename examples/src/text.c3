@@ -70,6 +70,13 @@ struct Fonts @local {
     FontId      cjk;
 }
 
+struct TextLine @local {
+    String text;
+    Vec2   origin; // baseline start in output pixels; y is rounded
+    float  size;
+    Vec4   color;
+}
+
 // One RGBA8 image of a line rasterized by stb_truetype at whole-pixel pen positions.
 struct BitmapLine @local {
     TextureId texture;
@@ -105,15 +112,9 @@ fn Fonts? load_fonts(AssetStore* assets) @local {
 }
 
 // Splits the line where the Latin font lacks a glyph, so CJK runs fall back to the CJK font.
-fn float? add_line(
-    Fonts* fonts,
-    OverlayList* list,
-    String text,
-    Vec2 origin,
-    float size,
-    Vec4 color,
-) @local {
-    float pen = origin.x;
+fn float? add_line(Fonts* fonts, OverlayList* list, TextLine line) @local {
+    String text = line.text;
+    float pen = line.origin.x;
     usz start;
     while (start < text.len) {
         bool latin = covers(fonts, text, start);
@@ -127,14 +128,14 @@ fn float? add_line(
         list.add_glyphs({
             .font        = font,
             .glyphs      = placements[:count],
-            .origin      = { pen, math::round(origin.y) },
-            .size_pixels = size,
-            .color       = color,
+            .origin      = { pen, math::round(line.origin.y) },
+            .size_pixels = line.size,
+            .color       = line.color,
         })!;
-        pen += fonts.assets.measure_text(font, segment, size)!.width;
+        pen += fonts.assets.measure_text(font, segment, line.size)!.width;
         start = end;
     }
-    return pen - origin.x;
+    return pen - line.origin.x;
 }
 
 fn bool covers(Fonts* fonts, String text, usz offset) @local {
@@ -155,20 +156,30 @@ fn void? fill_page(Demo* demo, float width) @local {
     float y = MARGIN;
     foreach (size : SAMPLE_SIZES) {
         y += size * LINE_GAP;
-        add_line(&demo.fonts, list, LATIN_SAMPLE, { MARGIN, y }, size, TEXT_COLOR)!;
+        add_line(&demo.fonts, list, {
+            .text   = LATIN_SAMPLE,
+            .origin = { MARGIN, y },
+            .size   = size,
+            .color  = TEXT_COLOR,
+        })!;
     }
 
     y += 36 * LINE_GAP;
-    add_line(&demo.fonts, list, MIXED_SAMPLE, { MARGIN, y }, 36, LABEL_COLOR)!;
+    add_line(&demo.fonts, list, { .text = MIXED_SAMPLE, .origin = { MARGIN, y }, .size = 36, .color = LABEL_COLOR })!;
     foreach (sample : SCRIPT_SAMPLES) {
         y += 24 * LINE_GAP;
-        add_line(&demo.fonts, list, sample, { MARGIN, y }, 24, TEXT_COLOR)!;
+        add_line(&demo.fonts, list, { .text = sample, .origin = { MARGIN, y }, .size = 24, .color = TEXT_COLOR })!;
     }
 
     float wave = 0.5f - 0.5f * math::cos(demo.zoom_time * ZOOM_RADIANS_PER_SECOND);
     float zoom_size = ZOOM_MIN + (ZOOM_MAX - ZOOM_MIN) * wave;
     list.push_clip({ 0, y + 8 }, { width, (float)demo.renderer.output_height })!;
-    add_line(&demo.fonts, list, ZOOM_SAMPLE, { MARGIN, y + 8 + zoom_size }, zoom_size, TEXT_COLOR)!;
+    add_line(&demo.fonts, list, {
+        .text   = ZOOM_SAMPLE,
+        .origin = { MARGIN, y + 8 + zoom_size },
+        .size   = zoom_size,
+        .color  = TEXT_COLOR,
+    })!;
     list.pop_clip();
 }
 
@@ -179,12 +190,17 @@ fn void? fill_compare_page(Demo* demo) @local {
     foreach (row, size : COMPARE_SIZES) {
         y += 18 * LINE_GAP;
         String label = string::tformat("%d px: Slug, then stb_truetype bitmaps", (int)size);
-        add_line(&demo.fonts, list, label, { MARGIN, y }, 14, LABEL_COLOR)!;
+        add_line(&demo.fonts, list, { .text = label, .origin = { MARGIN, y }, .size = 14, .color = LABEL_COLOR })!;
         String[2] samples = { LATIN_SAMPLE, SCRIPT_SAMPLES[2] };
         foreach (index, sample : samples) {
             float column = MARGIN + (float)index * COMPARE_COLUMN;
             float baseline = y + size * LINE_GAP;
-            add_line(&demo.fonts, list, sample, { column, baseline }, size, TEXT_COLOR)!;
+            add_line(&demo.fonts, list, {
+                .text   = sample,
+                .origin = { column, baseline },
+                .size   = size,
+                .color  = TEXT_COLOR,
+            })!;
 
             BitmapLine* bitmap = &demo.bitmaps[row * 2 + index];
             Vec2 top_left = { column, math::round(baseline + size * LINE_GAP) - bitmap.ascent };
@@ -201,7 +217,7 @@ fn void? fill_compare_page(Demo* demo) @local {
 }
 
 // Rasterizes the line once with stb_truetype at pixel-snapped pen positions, white with coverage in alpha.
-fn BitmapLine? rasterize_line(Fonts* fonts, String text, FontId font, float size) @local {
+fn BitmapLine? rasterize_line(Fonts* fonts, FontId font, String text, float size) @local {
     AssetStore* assets = fonts.assets;
     GlyphPlacement[MAX_LINE_GLYPHS] placements;
     usz count = assets.place_text(font, text, placements[..])!;
@@ -223,13 +239,24 @@ fn BitmapLine? rasterize_line(Fonts* fonts, String text, FontId font, float size
             float pen = placement.position.x * size;
             float whole = math::floor(pen);
             Vec2 subpixel = { pen - whole, 0 };
-            GlyphBitmapBox box = assets.glyph_bitmap_box(font, placement.glyph, size, subpixel);
+            GlyphBitmapBox box = assets.glyph_bitmap_box(
+                font:        font,
+                glyph:       placement.glyph,
+                size_pixels: size,
+                subpixel:    subpixel,
+            );
             uint box_width = (uint)(box.max_x - box.min_x);
             uint box_height = (uint)(box.max_y - box.min_y);
             if (!box_width || !box_height) continue;
 
             char[] coverage = alloc::new_array(tmem, char, (sz)box_width * box_height);
-            assets.rasterize_glyph(font, placement.glyph, size, subpixel, coverage);
+            assets.rasterize_glyph(
+                font:        font,
+                glyph:       placement.glyph,
+                size_pixels: size,
+                subpixel:    subpixel,
+                coverage:    coverage,
+            );
             for (uint row = 0; row < box_height; row++) {
                 for (uint column = 0; column < box_width; column++) {
                     int x = (int)whole + box.min_x + (int)column;
@@ -250,8 +277,18 @@ fn BitmapLine? rasterize_line(Fonts* fonts, String text, FontId font, float size
 
 fn void? build_bitmaps(Demo* demo) @local {
     foreach (row, size : COMPARE_SIZES) {
-        demo.bitmaps[row * 2] = rasterize_line(&demo.fonts, LATIN_SAMPLE, demo.fonts.latin, size)!;
-        demo.bitmaps[row * 2 + 1] = rasterize_line(&demo.fonts, SCRIPT_SAMPLES[2], demo.fonts.cjk, size)!;
+        demo.bitmaps[row * 2] = rasterize_line(
+            fonts: &demo.fonts,
+            font:  demo.fonts.latin,
+            text:  LATIN_SAMPLE,
+            size:  size,
+        )!;
+        demo.bitmaps[row * 2 + 1] = rasterize_line(
+            fonts: &demo.fonts,
+            font:  demo.fonts.cjk,
+            text:  SCRIPT_SAMPLES[2],
+            size:  size,
+        )!;
     }
 }
 
@@ -329,11 +366,21 @@ fn void? fill_benchmark(Demo* demo, uint glyphs) @local {
     OverlayList* list = demo.list;
     list.clear();
     float y = MARGIN + BENCHMARK_SIZE;
-    add_line(&demo.fonts, list, CJK_PARAGRAPH, { MARGIN, y }, BENCHMARK_SIZE, TEXT_COLOR)!;
+    add_line(&demo.fonts, list, {
+        .text   = CJK_PARAGRAPH,
+        .origin = { MARGIN, y },
+        .size   = BENCHMARK_SIZE,
+        .color  = TEXT_COLOR,
+    })!;
     while (list.glyph_count < glyphs) {
         y += BENCHMARK_SIZE * LINE_GAP;
         if (y > (float)demo.renderer.output_height) y = MARGIN + BENCHMARK_SIZE;
-        add_line(&demo.fonts, list, LATIN_SAMPLE, { MARGIN, y }, BENCHMARK_SIZE, TEXT_COLOR)!;
+        add_line(&demo.fonts, list, {
+            .text   = LATIN_SAMPLE,
+            .origin = { MARGIN, y },
+            .size   = BENCHMARK_SIZE,
+            .color  = TEXT_COLOR,
+        })!;
     }
 }
 

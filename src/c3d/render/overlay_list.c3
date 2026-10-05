@@ -487,7 +487,12 @@ fn uint pack_overlay_items(
                 FontAsset* font = assets.font(text.font);
                 foreach (placement : list.glyphs[text.first : text.count]) {
                     FontGlyph* glyph = &font.glyphs[font.glyph_slots[placement.glyph] - 1];
-                    OverlayItemGpu item = pack_overlay_glyph(text, placement, glyph, list.bindings[index]);
+                    OverlayItemGpu item = pack_overlay_glyph(
+                        text:      text,
+                        placement: placement,
+                        glyph:     glyph,
+                        binding:   list.bindings[index],
+                    );
                     if (!overlay_bounds_reach(item.bounds, scissor)) continue;
                     emit_overlay_item(&packer, scissor, item);
                 }
