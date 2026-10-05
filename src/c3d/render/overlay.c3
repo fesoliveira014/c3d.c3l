@@ -148,9 +148,9 @@ fn void? Renderer.prepare_overlay_list(&self, OverlayList* list) {
  @param [&inout] self : "Active overlay of the renderer that prepared the list."
  @param [&in] list : "Prepared this frame and unchanged since."
  @return? c3d::SHADER_NOT_FOUND, PIPELINE_REJECTED, gpu::SHADER_INVALID, gpu::PIPELINE_CREATE_FAILED
- @return? gpu::SLOT_TABLE_FULL, gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::COMMAND_RECORDING_ERROR
- @return? gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY, gpu::UNSUPPORTED_FEATURE
- @return? gpu::DEVICE_BUSY, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+ @return? gpu::SLOT_TABLE_FULL, gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
+ @return? gpu::COMMAND_RECORDING_ERROR, gpu::RESOURCE_IN_USE, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
+ @return? gpu::UNSUPPORTED_FEATURE, gpu::DEVICE_BUSY, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
  @require self.renderer.overlay_open, list.prepared.frame == self.renderer.frame_index + 1
 *>
 fn void? OverlayContext.draw_list(&self, OverlayList* list) {

@@ -108,6 +108,7 @@ struct Demo @local {
     OverlayList*      list;
     bool              with_portrait;
     double            prepare_ms;
+    uint              overlay_draws;
 }
 
 fn void fill_skin(char[] pixels) @local {
@@ -117,8 +118,14 @@ fn void fill_skin(char[] pixels) @local {
                 || y < SKIN_FRAME_PIXELS
                 || x >= SKIN_SIZE - SKIN_FRAME_PIXELS
                 || y >= SKIN_SIZE - SKIN_FRAME_PIXELS;
-            bool highlight = !frame && (x == SKIN_FRAME_PIXELS || y == SKIN_FRAME_PIXELS);
-            char[4] color = frame ? SKIN_FRAME_COLOR : (highlight ? SKIN_HIGHLIGHT_COLOR : SKIN_CENTER_COLOR);
+            // Inside the corner and edge margins the highlight keeps its one-pixel width; the centre stretches.
+            bool inner_edge = x == SKIN_FRAME_PIXELS - 1 || y == SKIN_FRAME_PIXELS - 1;
+            bool highlight = inner_edge
+                && x >= SKIN_FRAME_PIXELS - 1
+                && y >= SKIN_FRAME_PIXELS - 1
+                && x <= SKIN_SIZE - SKIN_FRAME_PIXELS
+                && y <= SKIN_SIZE - SKIN_FRAME_PIXELS;
+            char[4] color = highlight ? SKIN_HIGHLIGHT_COLOR : (frame ? SKIN_FRAME_COLOR : SKIN_CENTER_COLOR);
             foreach (channel, value : color) pixels[(y * SKIN_SIZE + x) * 4 + (uint)channel] = value;
         }
     }
@@ -313,7 +320,9 @@ fn void? draw_frame(Demo* demo, GuiRenderer* gui_renderer, FrameInfo info) @loca
         demo.prepare_ms = (double)started.to_now() / NANOSECONDS_PER_MILLISECOND;
 
         OverlayContext overlay = renderer.begin_overlay()!;
+        uint draws_before = renderer.stats.draws;
         overlay.draw_list(demo.list)!;
+        demo.overlay_draws = renderer.stats.draws - draws_before;
         if (gui_renderer) gui_renderer.record(&overlay)!;
         renderer.end_overlay(&overlay)!;
     }
@@ -395,7 +404,7 @@ fn void? run_benchmark(Demo* demo, Options* options) @local {
         if (frame >= options.frames) {
             fill_ms += elapsed_fill_ms;
             prepare_ms += demo.prepare_ms;
-            draws = renderer.stats.draws;
+            draws = demo.overlay_draws;
             if (renderer.stats.gpu_pass_valid[Pass.OVERLAY.ordinal]) {
                 overlay_gpu_ms += renderer.stats.gpu_pass_ms[Pass.OVERLAY.ordinal];
                 gpu_samples++;
@@ -514,6 +523,7 @@ fn int main(String[] args) {
     defer scene::destroy_scene(&scene);
     Node* camera_node = scene.add_camera(camera::perspective_deg(50, 0.1f), name: "camera")!!;
     camera_node.local.position = { 0, 0, CAMERA_DISTANCE };
+    scene.get(camera_node, camera::Camera).layers = camera::ALL_LAYERS & ~PORTRAIT_LAYER;
     Node* portrait_camera = scene.add_camera(camera::perspective_deg(40, 0.1f), name: "portrait")!!;
     portrait_camera.local.position = { 0, 0, CAMERA_DISTANCE };
     scene.get(portrait_camera, camera::Camera).layers = PORTRAIT_LAYER;

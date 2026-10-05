@@ -99,14 +99,20 @@ like other renderer faults.
 ## Measured costs
 
 `overlay --benchmark --rects N --frames F --size WxH` prints `fill_ms` (clear plus `add_rect` calls),
-`prepare_ms` (CPU time of `prepare_overlay_list`) and `overlay_gpu_ms` (`Pass.OVERLAY`), averaged over `F` frames after
-`F` warm-up frames.
+`prepare_ms` (CPU time of `prepare_overlay_list`), `overlay_gpu_ms` (`Pass.OVERLAY`) and `draws` (the overlay's own
+draws), averaged over `F` frames after `F` warm-up frames. The benchmark pushes no clip, so every rect falls in one run.
+
+Measured on Windows, Intel i9-14900K, NVIDIA RTX 4090 (driver 32.0.16.1088), c3c 0.8.3, `--opt O3`, `--frames 200`:
 
 | Rects | Output | fill_ms | prepare_ms | overlay_gpu_ms | draws |
 | --- | --- | --- | --- | --- | --- |
-| 1,000 | 1920 x 1080 | pending | pending | pending | pending |
-| 10,000 | 1920 x 1080 | pending | pending | pending | pending |
-| 1,000 | 3840 x 2160 | pending | pending | pending | pending |
-| 10,000 | 3840 x 2160 | pending | pending | pending | pending |
+| 1,000 | 1920 x 1080 | 0.0243 | 0.0286 | 0.0079 | 1 |
+| 10,000 | 1920 x 1080 | 0.2424 | 0.2932 | 0.0467 | 1 |
+| 1,000 | 3840 x 2160 | 0.0248 | 0.0302 | 0.0079 | 1 |
+| 10,000 | 3840 x 2160 | 0.2435 | 0.3089 | 0.0468 | 1 |
+
+CPU time scales with the item count. GPU time is the same at both output sizes; the stress rects stay 6 × 6 px at
+either size. The default unoptimized build measured `fill_ms` 0.17 / 1.66 and `prepare_ms`
+0.17 / 1.69 for 1,000 / 10,000 rects, with the same GPU times.
 
 The `overlay` example shows every feature; `--stress N` adds N small rects under one clip.
