@@ -487,8 +487,8 @@ fn void? record_scene_trace(Renderer* renderer, Scene* scene) @local {
     );
     renderer.stats.dangling_refs += collection.dangling;
     renderer.stats.trace_sway_at_rest = collection.sway_at_rest;
-    if (collection.records.len > renderer.max_trace_instances) return c3d::CAPACITY_EXCEEDED~;
     TraceInstance[] records = resolve_trace_instances(renderer, &collection)!;
+    if (records.len > renderer.max_trace_instances) return c3d::CAPACITY_EXCEEDED~;
 
     SceneTrace* trace = &renderer.scene_trace;
     RtContext* rt = &renderer.rt;

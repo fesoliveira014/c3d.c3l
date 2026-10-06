@@ -82,7 +82,7 @@ Methods are for operations on an existing receiver that are not lifecycle operat
 Inside the renderer, two verbs name idempotent first-use work; neither validates anything:
 
 - `resolve_x` returns the current GPU record for an asset id, uploading on first sight or when the asset revision moved: `resolve_geometry`, `resolve_texture`, `resolve_palette`.
-- `acquire_x` creates a renderer- or view-owned resource once and returns silently when it already exists; its counterpart is `retire_x`, `release_x` or `destroy_x`: `acquire_post_targets` / `retire_post_targets`, `acquire_shadow_atlas` / `destroy_shadow_atlas`.
+- `acquire_x` creates a renderer- or view-owned resource once and returns silently when it already exists; its counterpart is `retire_x`, `release_x` or `destroy_x`: `acquire_ao_images` / `release_ao_images`, `acquire_shadow_atlas` / `destroy_shadow_atlas`.
 
 # 6. Allocation and memory
 
