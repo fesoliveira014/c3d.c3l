@@ -289,7 +289,8 @@ then read `Stats` and `ViewStats`; `ViewStats.images` is current every frame:
 
 - `Stats.textures` and `texture_views` count live table entries and heap slots at frame start, and `texture_capacity`
   and `texture_heap_capacity` the resolved sizes. They are read every `TEXTURE_STATS_INTERVAL` (16) frames, because a
-  reading walks the texture table: 0.3 µs at 22 entries, 1.5 µs at 982 and 5.3 to 6.0 µs at about 4,020 on llvmpipe.
+  reading walks the texture table: on an RTX 4090, 0.13 to 0.24 µs at 21 to 27 entries and 5.26 to 5.59 µs at 4,019
+  (about 0.33 µs a frame over the interval).
   Images created inside a frame show at the next reading.
 - `ViewStats.images` counts one view's live images at frame start, every frame.
 - `gui::stats_panel` shows the four `Stats` fields, `gui::view_stats_table` the images per view.
@@ -306,8 +307,8 @@ can hold several heap slots, so size `texture_heap_capacity` from `Stats.texture
 The views need `max_views = 5` and the targets `max_render_targets = 67` or more.
 
 Per-frame cost grows with `max_render_targets`: `begin_frame` and each view's preparation visit every target slot, and
-`begin_frame` also visits every view slot to snapshot and count its images. An empty frame took 25 µs at 8 slots, 33 µs at 1,000 and 47 to 64 µs at 4,000 on
-llvmpipe.
+`begin_frame` also visits every view slot to snapshot and count its images. On an RTX 4090 an empty frame took a median
+of 44 µs at 8 target slots and 54 µs at 4,000 (three runs; 49 µs at both with the pool full).
 
 ## Clip plane
 
