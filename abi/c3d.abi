@@ -141,7 +141,7 @@ root FrameRoot {
     mat4       view_proj;
     mat4       inv_view_proj;
     mat4       prev_view_proj;
-    vec4       camera_position;
+    vec4       camera_position; // w: Camera.exposure, the manual factor; auto exposure lives in ExposureGpu
     vec4       camera_params;
     vec4       jitter_time;
     GpuAddress lights;
@@ -1065,6 +1065,9 @@ struct GradeGpu {
     SamplerIndex bloom_sampler;
     float bloom_intensity;
     uint _pad_bloom;
+    GpuAddress auto_exposure; // ExposureGpu the view's rendering wrote; zero in manual mode
+    uint _pad_exposure0;
+    uint _pad_exposure1;
 }
 
 root GradeRoot {
@@ -1108,7 +1111,57 @@ root BloomRoot {
     float threshold;
     float knee;
     vec2 input_texel;
-    vec2 _pad0;
+    GpuAddress auto_exposure; // read by the prefilter dispatch only; zero in manual mode
+}
+
+// 1 KiB per view; 1/8 stop per bin, so a 16x light step shifts the histogram by exactly 32 bins.
+// The adapt pass runs one thread per bin.
+const uint EXPOSURE_HISTOGRAM_BINS = 256;
+// 32 stops of luminance around mid-grey (log2 0.18 = -2.47); validation keeps every accepted target inside.
+// -18 is four stops under RGBA16F's smallest normal; values above 2^14 clamp into the top bin.
+const float EXPOSURE_LOG2_MIN = -18.0;
+const float EXPOSURE_LOG2_MAX = 14.0;
+// The smallest positive half float; a darker pixel is cleared or unlit and carries no exposure information.
+const float EXPOSURE_LUMINANCE_EPSILON = 0.000000059604645;
+// Pixels per metered sample along each axis; at 2560 x 1440 on an RTX 4090 stride 1 costs <a> ms, stride 2 <b> ms.
+const uint EXPOSURE_METER_STRIDE = 1;
+// Metering threads per group side; 16 x 16 threads flush one group bin each.
+const uint EXPOSURE_GROUP_SIZE = 16;
+
+// Adapted exposure one rendering of a view wrote; grade and the bloom prefilter multiply by scale.
+root ExposureGpu {
+    float ev;
+    float scale;
+    float metered_log2;
+    uint  samples; // of the last rendering that metered any; zero since a snap makes the next rendering snap
+}
+
+root ExposureHistogramGpu {
+    uint[256] bins;
+}
+
+root ExposureMeterRoot {
+    GpuAddress   histogram;
+    TextureIndex input_texture;
+    uint         width;
+    uint         height;
+    uint         _pad0;
+}
+
+root ExposureAdaptRoot {
+    GpuAddress histogram;
+    GpuAddress previous;
+    GpuAddress current;
+    float      elapsed;
+    uint       snap;
+    float      compensation_ev;
+    float      min_ev;
+    float      max_ev;
+    float      brightening_time;
+    float      darkening_time;
+    float      low_percentile;
+    float      high_percentile;
+    uint       _pad0;
 }
 
 const uint POST_TILE_SIZE = 16;

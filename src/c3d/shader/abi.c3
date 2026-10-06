@@ -150,6 +150,12 @@ const uint TONEMAP_ACES = 1;
 const uint TONEMAP_AGX = 2;
 const uint TONEMAP_REINHARD = 3;
 const uint POST_GROUP_SIZE = 8;
+const uint EXPOSURE_HISTOGRAM_BINS = 256;
+const float EXPOSURE_LOG2_MIN = -18.0;
+const float EXPOSURE_LOG2_MAX = 14.0;
+const float EXPOSURE_LUMINANCE_EPSILON = 0.000000059604645;
+const uint EXPOSURE_METER_STRIDE = 1;
+const uint EXPOSURE_GROUP_SIZE = 16;
 const uint POST_TILE_SIZE = 16;
 const uint TILE_MODE_ALPHA = 0;
 const uint TILE_MODE_VELOCITY = 1;
@@ -1764,8 +1770,11 @@ struct GradeGpu {
     SamplerIndex bloom_sampler;
     float        bloom_intensity;
     uint         _pad_bloom;
+    GpuAddress   auto_exposure;
+    uint         _pad_exposure0;
+    uint         _pad_exposure1;
 }
-$assert GradeGpu::size == 112;
+$assert GradeGpu::size == 128;
 $assert $reflect(GradeGpu.exposure).offset == 0;
 $assert $reflect(GradeGpu.contrast).offset == 4;
 $assert $reflect(GradeGpu.saturation).offset == 8;
@@ -1782,6 +1791,9 @@ $assert $reflect(GradeGpu.bloom_texture).offset == 96;
 $assert $reflect(GradeGpu.bloom_sampler).offset == 100;
 $assert $reflect(GradeGpu.bloom_intensity).offset == 104;
 $assert $reflect(GradeGpu._pad_bloom).offset == 108;
+$assert $reflect(GradeGpu.auto_exposure).offset == 112;
+$assert $reflect(GradeGpu._pad_exposure0).offset == 120;
+$assert $reflect(GradeGpu._pad_exposure1).offset == 124;
 
 struct GradeRoot {
     TextureIndex input_texture;
@@ -1794,7 +1806,7 @@ struct GradeRoot {
     uint         _pad2;
     GradeGpu     grade;
 }
-$assert GradeRoot::size == 144;
+$assert GradeRoot::size == 160;
 $assert $reflect(GradeRoot.input_texture).offset == 0;
 $assert $reflect(GradeRoot.sampler_index).offset == 4;
 $assert $reflect(GradeRoot.output_texture).offset == 8;
@@ -1832,7 +1844,7 @@ struct DisplayRoot {
     uint         _pad1;
     GradeGpu     grade;
 }
-$assert DisplayRoot::size == 128;
+$assert DisplayRoot::size == 144;
 $assert $reflect(DisplayRoot.source_texture).offset == 0;
 $assert $reflect(DisplayRoot.source_sampler).offset == 4;
 $assert $reflect(DisplayRoot._pad0).offset == 8;
@@ -1849,7 +1861,7 @@ struct BloomRoot {
     float        threshold;
     float        knee;
     Vec2f        input_texel;
-    Vec2f        _pad0;
+    GpuAddress   auto_exposure;
 }
 $assert BloomRoot::size == 48;
 $assert $reflect(BloomRoot.input_texture).offset == 0;
@@ -1861,7 +1873,69 @@ $assert $reflect(BloomRoot.prefilter).offset == 20;
 $assert $reflect(BloomRoot.threshold).offset == 24;
 $assert $reflect(BloomRoot.knee).offset == 28;
 $assert $reflect(BloomRoot.input_texel).offset == 32;
-$assert $reflect(BloomRoot._pad0).offset == 40;
+$assert $reflect(BloomRoot.auto_exposure).offset == 40;
+
+struct ExposureGpu {
+    float ev;
+    float scale;
+    float metered_log2;
+    uint  samples;
+}
+$assert ExposureGpu::size == 16;
+$assert $reflect(ExposureGpu.ev).offset == 0;
+$assert $reflect(ExposureGpu.scale).offset == 4;
+$assert $reflect(ExposureGpu.metered_log2).offset == 8;
+$assert $reflect(ExposureGpu.samples).offset == 12;
+
+struct ExposureHistogramGpu {
+    uint[256] bins;
+}
+$assert ExposureHistogramGpu::size == 1024;
+$assert $reflect(ExposureHistogramGpu.bins).offset == 0;
+
+struct ExposureMeterRoot {
+    GpuAddress   histogram;
+    TextureIndex input_texture;
+    uint         width;
+    uint         height;
+    uint         _pad0;
+}
+$assert ExposureMeterRoot::size == 24;
+$assert $reflect(ExposureMeterRoot.histogram).offset == 0;
+$assert $reflect(ExposureMeterRoot.input_texture).offset == 8;
+$assert $reflect(ExposureMeterRoot.width).offset == 12;
+$assert $reflect(ExposureMeterRoot.height).offset == 16;
+$assert $reflect(ExposureMeterRoot._pad0).offset == 20;
+
+struct ExposureAdaptRoot {
+    GpuAddress histogram;
+    GpuAddress previous;
+    GpuAddress current;
+    float      elapsed;
+    uint       snap;
+    float      compensation_ev;
+    float      min_ev;
+    float      max_ev;
+    float      brightening_time;
+    float      darkening_time;
+    float      low_percentile;
+    float      high_percentile;
+    uint       _pad0;
+}
+$assert ExposureAdaptRoot::size == 64;
+$assert $reflect(ExposureAdaptRoot.histogram).offset == 0;
+$assert $reflect(ExposureAdaptRoot.previous).offset == 8;
+$assert $reflect(ExposureAdaptRoot.current).offset == 16;
+$assert $reflect(ExposureAdaptRoot.elapsed).offset == 24;
+$assert $reflect(ExposureAdaptRoot.snap).offset == 28;
+$assert $reflect(ExposureAdaptRoot.compensation_ev).offset == 32;
+$assert $reflect(ExposureAdaptRoot.min_ev).offset == 36;
+$assert $reflect(ExposureAdaptRoot.max_ev).offset == 40;
+$assert $reflect(ExposureAdaptRoot.brightening_time).offset == 44;
+$assert $reflect(ExposureAdaptRoot.darkening_time).offset == 48;
+$assert $reflect(ExposureAdaptRoot.low_percentile).offset == 52;
+$assert $reflect(ExposureAdaptRoot.high_percentile).offset == 56;
+$assert $reflect(ExposureAdaptRoot._pad0).offset == 60;
 
 struct TileRoot {
     TextureIndex input_texture;

@@ -153,6 +153,12 @@ const uint TONEMAP_ACES = 1u;
 const uint TONEMAP_AGX = 2u;
 const uint TONEMAP_REINHARD = 3u;
 const uint POST_GROUP_SIZE = 8u;
+const uint EXPOSURE_HISTOGRAM_BINS = 256u;
+const float EXPOSURE_LOG2_MIN = -18.0;
+const float EXPOSURE_LOG2_MAX = 14.0;
+const float EXPOSURE_LUMINANCE_EPSILON = 0.000000059604645;
+const uint EXPOSURE_METER_STRIDE = 1u;
+const uint EXPOSURE_GROUP_SIZE = 16u;
 const uint POST_TILE_SIZE = 16u;
 const uint TILE_MODE_ALPHA = 0u;
 const uint TILE_MODE_VELOCITY = 1u;
@@ -1048,6 +1054,9 @@ struct GradeGpu {
     uint bloom_sampler;
     float bloom_intensity;
     uint _pad_bloom;
+    uint64_t auto_exposure;
+    uint _pad_exposure0;
+    uint _pad_exposure1;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer GradeRoot {
@@ -1091,7 +1100,42 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer BloomRoot {
     float threshold;
     float knee;
     vec2 input_texel;
-    vec2 _pad0;
+    uint64_t auto_exposure;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer ExposureGpu {
+    float ev;
+    float scale;
+    float metered_log2;
+    uint samples;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 4) buffer ExposureHistogramGpu {
+    uint bins[256];
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer ExposureMeterRoot {
+    uint64_t histogram;
+    uint input_texture;
+    uint width;
+    uint height;
+    uint _pad0;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer ExposureAdaptRoot {
+    uint64_t histogram;
+    uint64_t previous;
+    uint64_t current;
+    float elapsed;
+    uint snap;
+    float compensation_ev;
+    float min_ev;
+    float max_ev;
+    float brightening_time;
+    float darkening_time;
+    float low_percentile;
+    float high_percentile;
+    uint _pad0;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer TileRoot {
