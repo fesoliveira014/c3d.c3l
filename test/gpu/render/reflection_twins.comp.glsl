@@ -48,7 +48,8 @@ void main() {
                 reflection_twin_direction(index)
             );
         vec3 shares = vec3(selection.first_weight, selection.second_weight, selection.global_weight);
-        results.values[index * REFLECTION_TWIN_VALUES] = vec4(float(selection.count), float(selection.first), float(selection.second), 0.0);
+        vec3 ids = vec3(float(selection.count), float(selection.first), float(selection.second));
+        results.values[index * REFLECTION_TWIN_VALUES] = vec4(ids, 0.0);
         results.values[index * REFLECTION_TWIN_VALUES + 1u] = vec4(shares, 0.0);
         results.values[index * REFLECTION_TWIN_VALUES + 2u] = vec4(aimed, 0.0);
     }
