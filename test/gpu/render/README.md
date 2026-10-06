@@ -57,6 +57,12 @@ What the four cases establish:
   when the slot is reused and grows the ring without losing its old
   allocation.
 
+- Texture containers (`test_texture_containers.c3`, `sample_lod.comp.glsl`): an RGBA8 chain with a marker at
+  texel 0 of each level, loaded from DDS, KTX1 and KTX2, samples level by level like the same texels supplied
+  through `add_texture_mips`, with each marker at v = 0; `bc1_mips.dds` and four real-tool BC files match their
+  hand-built chains, and each level of the example chain reads its solid color. A device without BC sampling
+  prints `skipped: BC unsupported on <adapter>` and still runs the RGBA8 case.
+
 - A skinned geometry drawn by a node without a skin binding renders with the
   unskinned vertex stage and shows its material.
 
@@ -85,7 +91,38 @@ What the four cases establish:
   directional split: with `cascade_blend = 0` the two cascades meet in one
   luminance step; with 0.1 the image before the band is unchanged pixel for
   pixel, the band differs, and no step along the column is as large as the
-  unblended seam (`line.comp.glsl` reads the column).
+  unblended seam (`line.comp.glsl` reads the column). The case sets no normal
+  offset: an offset would shift the thin rod's shadow across the seam it
+  measures.
+
+- Own shadow sets render unchanged (`test_shadow_sets.c3`): one scene with casters over the first two cascades' blend
+  bands renders forward, deferred, through a custom stage that calls `evaluate_standard_lights`
+  (`standard_lights.frag.glsl`) and with volumetric fog. Each image is identical across two frames and every band
+  probe is shadowed. The test prints an FNV-1a hash per image (`--test-show-output`) for comparing two commits on one
+  machine.
+
+- Shadow sets shared between views (`test_shadow_sets.c3`): a mirror fitted to the main camera records the set and
+  main binds it, bit for bit as its own set (forward, deferred, the `evaluate_standard_lights` stage, volumetric fog,
+  a batch the mirror's distance fades); two views of one camera share one set unless either opts out, and the
+  opted-out frame renders the same image; a sun no cascade covers leaves an empty set and no layers for the own-set
+  and the borrowing view, and both render the same image.
+
+- Mirror shadow sets (`test_shadow_sets.c3`): the mirror records the frame's only atlas; its reflected wall matches
+  its own-set image within tolerance with and without volumetric fog; a borrowed set shadows a receiver its selected
+  cascade misses through a coarser cascade and leaves one outside every cascade lit; a spot outside the mirror's
+  frustum and a batch past the mirror's fade distance shadow main; a LodGroup caster's shadow stays within 6 % in
+  pixels; a light only the mirror sees draws unshadowed and counts in `shadow_lights_unshared`; a recording between
+  mirror and main makes main record.
+
+- Directional normal offsets at the default two texels of a 2048-texel atlas,
+  in their own fixture (`test_shadow_bias.c3`): flat ground stays lit
+  (visibility at least 0.99) in all four cascades at sun elevations of 10°,
+  20°, 46.5° and 60°, forward and deferred; a 1 m box keeps its contact shadow
+  in the first and third cascades; a slab 1.5 offsets thick still darkens the
+  ground beyond its edge to 0.5 or less; a deferred view reads the same
+  visibility with and without a 20° normal map (within 0.02, a flat 16 × 16
+  block's variance at most 1e-3) and matches a forward view within 0.05 across
+  a box's silhouettes and creases in the third and fourth cascades.
 
 - A box casts a dark shadow on a plane under both the atlas and ray-traced
   shadows; a fully transparent masked box and a box with `cast_shadow` off

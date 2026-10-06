@@ -90,23 +90,23 @@ fn WriteState? prepare_export(Scene* scene, AssetStore* assets, Node* root) @loc
     state.collecting = true;
     WriteContext context = { .scene = scene, .assets = assets, .state = &state };
     foreach (node : state.ordered[:state.count]) {
-        ulong mask = scene.world.mask(node.id);
         context.node = node;
-        for (uint slot = 0; slot < ecs::MAX_COMPONENT_TYPES; slot++) {
-            if (!(mask & (1ul << slot)) || !codecs[slot].codec.collect) continue;
-            context.slot = slot;
-            codecs[slot].codec.collect(scene.world.component(node.id, slot), &context)!;
-        }
+        scene.world.@each_slot(node.id; uint slot) {
+            if (codecs[slot].codec.collect) {
+                context.slot = slot;
+                codecs[slot].codec.collect(scene.world.component(node.id, slot), &context)!;
+            }
+        };
     }
     state.collecting = false;
     if (state.projection[root.id.index].node_owner) return c3d::INVALID_ARGUMENT~;
-    ulong transient_mask;
-    foreach (slot, entry : codecs) if (entry.transient) transient_mask |= 1ul << slot;
-    ulong used;
+    ComponentMask transient_mask;
+    foreach (slot, entry : codecs) if (entry.transient) transient_mask |= ecs::slot_bit((uint)slot);
+    ComponentMask used;
     uint retained;
     foreach (node : state.ordered[:state.count]) {
         NodeProjection* projected = &state.projection[node.id.index];
-        ulong mask = scene.world.mask(node.id);
+        ComponentMask mask = scene.world.mask(node.id);
         if (projected.node_owner) {
             if (mask & ~(projected.omitted_components | transient_mask)) return c3d::INVALID_ARGUMENT~;
             continue;
@@ -114,16 +114,16 @@ fn WriteState? prepare_export(Scene* scene, AssetStore* assets, Node* root) @loc
         if (node != root && state.projection[node.parent.id.index].node_owner) return c3d::INVALID_ARGUMENT~;
         if (scene.has(node, ModelInstance)) return c3d::UNSUPPORTED~;
         mask &= ~(projected.omitted_components | transient_mask);
-        for (uint slot = 0; slot < ecs::MAX_COMPONENT_TYPES; slot++) {
-            if ((mask & (1ul << slot)) && !codecs[slot].codec.name.len) return c3d::UNSUPPORTED~;
-        }
+        scene.world.@each_slot(node.id; uint slot) {
+            if ((mask & ecs::slot_bit(slot)) && !codecs[slot].codec.name.len) return c3d::UNSUPPORTED~;
+        };
         used |= mask;
         projected.record = retained;
         state.ordered[retained++] = node;
     }
     state.count = retained;
     for (uint slot = 0; slot < ecs::MAX_COMPONENT_TYPES; slot++) {
-        if (!(used & (1ul << slot))) continue;
+        if (!(used & ecs::slot_bit(slot))) continue;
         uint position = state.type_count++;
         while (position && codecs[state.slots[position - 1]].codec.name.compare_to(codecs[slot].codec.name) > 0) {
             state.slots[position] = state.slots[position - 1];
@@ -156,7 +156,7 @@ fn void? write_components(WriteContext* context, Writer* writer) @local {
     writer.write_uint(state.type_count);
     uint payload_index;
     foreach (type_index, slot : state.slots[:state.type_count]) {
-        ulong bit = 1ul << slot;
+        ComponentMask bit = ecs::slot_bit(slot);
         uint count;
         foreach (node : state.ordered[:state.count]) {
             if ((context.scene.world.mask(node.id) & bit)

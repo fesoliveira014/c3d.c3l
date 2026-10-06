@@ -126,6 +126,7 @@ fn void? Renderer.render(
  @param [&inout] scene : "Pose as left by the last update_world; only batch aggregates are written."
  @param [&in] camera_node : "Carries a Camera component."
  @param [in] debug : "Null draws nothing; lines drawn after transparency; not cleared."
+ @param [in] shadow_camera : "Camera the view's shadow set is fitted to; null is camera_node."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::SHADER_NOT_FOUND
  @return? gpu::SHADER_INVALID, gpu::UNSUPPORTED_FEATURE, gpu::PIPELINE_CREATE_FAILED, gpu::SLOT_TABLE_FULL
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::INVALID_RESOURCE_STATE
@@ -143,6 +144,7 @@ fn void? Renderer.render_view(
     Node* camera_node,
     ViewId view,
     DebugDraw* debug = null,
+    Node* shadow_camera = null,
 ) {
     ViewRecord* record = self.views.try_get(view)!;
     if (record.desc.output == ViewOutput.WINDOW && !self.has_output) return;
@@ -150,16 +152,28 @@ fn void? Renderer.render_view(
     Camera* camera = scene.get(camera_node, Camera);
     if (!camera) return c3d::INVALID_ARGUMENT~;
     ViewCamera view_camera = { .camera = *camera, .world = camera_node.world };
+    ShadowCamera shadow_view;
+    if (shadow_camera) {
+        shadow_view = shadow_camera_of(
+            scene:         scene,
+            camera_node:   camera_node,
+            shadow_camera: shadow_camera,
+            viewport:      { (float)record.hdr_color.width, (float)record.hdr_color.height },
+            origin:        self.frame_origin,
+        )!;
+    }
     return record_camera_view(
         renderer:    self,
         scene:       scene,
         view_camera: &view_camera,
         view:        view,
         debug:       debug,
+        shadow_view: shadow_camera ? &shadow_view : null,
     );
 }
 
 <*
+ @param [in] shadow_view : "Null fits the view's shadow set to its own camera."
  @require renderer.frame_open, !renderer.overlay_open, renderer.views.is_live(view)
 *>
 fn void? record_camera_view(
@@ -168,6 +182,7 @@ fn void? record_camera_view(
     ViewCamera* view_camera,
     ViewId view,
     DebugDraw* debug,
+    ShadowCamera* shadow_view,
 ) @private {
     ViewRecord* record = renderer.views.get(view);
     begin_material_scope(renderer);
@@ -188,6 +203,8 @@ fn void? record_camera_view(
             .m23          = matrices.proj.m23,
             .orthographic = camera.projection == Projection.ORTHOGRAPHIC,
         };
+        ShadowCamera own_shadow_view = { .lens = *camera, .matrices = matrices };
+        if (!shadow_view) shadow_view = &own_shadow_view;
 
         switch (record.desc.shading) {
             case FORWARD:
@@ -199,6 +216,7 @@ fn void? record_camera_view(
                     scene:       scene,
                     view_camera: view_camera,
                     matrices:    &matrices,
+                    shadow_view: shadow_view,
                     debug:       debug,
                 )!;
             case PATH_TRACED:
@@ -228,6 +246,7 @@ fn void? record_raster_view(
     Scene* scene,
     ViewCamera* view_camera,
     CameraMatrices* matrices,
+    ShadowCamera* shadow_view,
     DebugDraw* debug,
 ) @private {
     Camera* camera = &view_camera.camera;
@@ -467,8 +486,7 @@ fn void? record_raster_view(
 
         LightCounts light_counts;
         uint fog_sun;
-        ShadowGpu[] shadows;
-        gpu::GpuAddress shadow_address;
+        ShadowSet* shadow_set = &renderer.shadow_set;
         gpu::GpuAddress light_address;
         ClusterFrame cluster_frame;
         instrumentation::@scope("view.lights") {
@@ -485,24 +503,17 @@ fn void? record_raster_view(
                 origin: renderer.frame_origin,
             );
             fog_sun = fog_sun_light(&extraction, environments.atmosphere != null);
-            shadows = record_shadows(
-                renderer: renderer,
-                scene: scene,
-                camera: camera,
-                matrices: matrices,
-                extraction: &extraction,
-                culling: record.desc.instance_culling,
+            ShadowCamera own_view = { .lens = *camera, .matrices = *matrices };
+            resolve_shadow_set(
+                renderer:     renderer,
+                record:       record,
+                scene:        scene,
+                own_view:     &own_view,
+                shadow_view:  shadow_view,
+                view_lights:  &extraction,
+                atmosphere:   &environments.atmosphere_selection,
                 effects_view: &effects_view,
             )!;
-            if (shadows.len) {
-                gpu::MappedGpuSpan shadow_span = slot.upload.take(
-                    device: &renderer.device,
-                    size: shadows.len * ShadowGpu::size,
-                    alignment: STREAM_ALIGNMENT,
-                )!;
-                mem::copy(shadow_span.bytes.ptr, shadows.ptr, shadows.len * ShadowGpu::size);
-                shadow_address = shadow_span.address;
-            }
             LightGpu[] lights = extraction.lights;
             reset_cluster_recording(renderer, record);
             if (record.desc.lights == LightSelection.CLUSTERED) {
@@ -565,8 +576,8 @@ fn void? record_raster_view(
                 lights:      light_address,
                 light_count: light_counts.packed,
                 ambient:     { ambient.r, ambient.g, ambient.b, 0 },
-                shadows:     shadow_address,
-                shadow_count: (uint)shadows.len,
+                shadows:     shadow_set.shadows,
+                shadow_count: shadow_set.layer_count,
                 environment: environment_address,
                 scene_color: view_reads.color ? record.scene_color.view.index : (gpu::TextureIndex)0,
                 scene_sampler: view_reads.color ? renderer.linear_clamp_sampler : (gpu::SamplerIndex)0,
@@ -691,7 +702,7 @@ fn void? record_raster_view(
                     record:        record,
                     frame:         frame_span.address,
                     sun_light:     fog_sun,
-                    atlas_shadows: shadows.len > 0,
+                    atlas_shadows: shadow_set.layer_count > 0,
                 )!;
             }
             record.hdr_color.transition(&renderer.commands, COLOR_ATTACHMENT_STATE)!;

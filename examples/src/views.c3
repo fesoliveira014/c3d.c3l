@@ -158,6 +158,7 @@ fn void? place_mirror(
     Mat4 mirrored = maths::reflection_matrix(GROUND_PLANE).mul(camera_node.local.to_mat4());
     mirror_node.local = maths::transform_from_affine(mirrored)!;
     scene.get(mirror_node, camera::Camera).aspect = aspect;
+    scene.get(camera_node, camera::Camera).aspect = aspect;
 }
 
 fn void? create_mirror(render::Renderer* renderer, AssetStore* assets, Mirror* mirror) @local {
@@ -215,7 +216,12 @@ fn void? draw_gui_frame(
     renderer.render_view(scene, producer_node, capture_view)!;
     renderer.finish_view(capture_view)!;
     if (renderer.has_output) {
-        renderer.render_view(scene, mirror_node, mirror_view)!;
+        renderer.render_view(
+            scene:         scene,
+            camera_node:   mirror_node,
+            view:          mirror_view,
+            shadow_camera: camera_node,
+        )!;
         renderer.finish_view(mirror_view)!;
         renderer.render_view(scene, camera_node, renderer.default_view)!;
         renderer.finish_view(renderer.default_view)!;

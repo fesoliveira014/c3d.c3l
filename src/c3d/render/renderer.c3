@@ -139,6 +139,7 @@ struct Renderer {
     uint                    max_shadow_layers;
     uint                    max_trace_instances;
     ShadowAtlas             shadow_atlas;
+    ShadowSet               shadow_set;
     GpuGeometry[]           geometries;
     GpuGeometry             billboard_geometry;
     GpuGeometry             impostor_geometry;
@@ -491,6 +492,8 @@ fn void? begin_renderer_frame(Renderer* self, FrameInfo info, bool acquire_outpu
         }
 
         self.frame_shadow_state = self.shadow_atlas.state;
+        // An aborted frame keeps frame_index, so its set must not match a view of the retried frame.
+        self.shadow_set.published = false;
         foreach (index, target : self.targets.items) self.frame_target_states[index] = target.target.state;
         foreach (index, &preview : self.previews) self.frame_preview_states[index] = preview.image.state;
         snapshot_probe_states(self);
@@ -838,6 +841,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .max_trace_instances  = max_trace_instances,
         .shadow_timing_results = shadow_timing_results,
         .shadow_frusta        = alloc::new_array(allocator, ShadowFrustum, max_shadow_layers),
+        .shadow_set           = { .lights = alloc::new_array(allocator, ShadowSetLight, max_shadow_layers) },
         .validation           = desc.validation,
         .geometries           = alloc::new_array(allocator, GpuGeometry, assets.geometries.items.len),
         .materials            = alloc::new_array(allocator, MaterialRes, assets.materials.items.len),
@@ -907,6 +911,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         free_instance_culling(&renderer);
         free_prepares(&renderer);
         alloc::free(allocator, renderer.materials.ptr);
+        alloc::free(allocator, renderer.shadow_set.lights.ptr);
         free_shaders(&renderer);
         free_compute_shaders(&renderer);
         free_buffers(&renderer);
@@ -958,6 +963,7 @@ fn void destroy_renderer(Renderer* renderer) {
     destroy_shadow_atlas(&renderer.device, &renderer.shadow_atlas);
     if (renderer.shadow_timing_results.len) alloc::free(renderer.allocator, renderer.shadow_timing_results.ptr);
     alloc::free(renderer.allocator, renderer.shadow_frusta.ptr);
+    alloc::free(renderer.allocator, renderer.shadow_set.lights.ptr);
     release_previews(renderer);
     release_cluster_resources(renderer);
     foreach (&record : renderer.views.items) release_view_images(renderer, record);

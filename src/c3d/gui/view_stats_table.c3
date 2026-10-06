@@ -31,6 +31,9 @@ fn void view_stats_table(Renderer* renderer, ViewId[] views, ZString[] labels) {
     @row("Accumulated samples", views; ViewId view) {
         imgui::text("%u", renderer.views.get(view).stats.accumulated_samples);
     };
+    @row("Shadow set", views; ViewId view) {
+        imgui::text_unformatted(renderer.views.get(view).stats.shadow_set_shared ? "shared" : "recorded");
+    };
     @row("Lights dropped", views; ViewId view) {
         imgui::text("%u", renderer.views.get(view).stats.lights_dropped);
     };

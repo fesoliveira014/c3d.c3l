@@ -299,7 +299,7 @@ fn void test_relative_light_position_matches_relative_geometry() @test {
     };
 }
 
-fn void test_shadow_texel_lattice_stays_fixed_across_origin_changes() @test {
+fn Vec4[2] origin_shifted_clips(float normal_bias_texels) @local {
     Vec3[2] origins = { ORIGIN, ORIGIN + (Vec3){ 256, 0, -256 } };
     Vec4[2] clips;
     foreach (index, origin : origins) {
@@ -312,12 +312,22 @@ fn void test_shadow_texel_lattice_stays_fixed_across_origin_changes() @test {
             light_direction: (Vec3){ -1, -2, -1 }.normalize(),
             casters: {},
             resolution: 1024,
-            normal_bias: 0,
+            normal_bias_texels: normal_bias_texels,
             origin: origin,
         );
         Vec3 point = (Vec3){ 50000, 0, 49990 } - origin;
         clips[index] = cascade.camera.view_proj.apply({ point.x, point.y, point.z, 1 });
     }
+    return clips;
+}
+
+fn void test_shadow_texel_lattice_stays_fixed_across_origin_changes() @test {
+    Vec4[2] clips = origin_shifted_clips(0);
     assert(math::abs(clips[0].x - clips[1].x) < 0.000001f);
     assert(math::abs(clips[0].y - clips[1].y) < 0.000001f);
+
+    // The offset's wider fit rounds this 340 m relative point to about 1.5e-6 in float clip space.
+    clips = origin_shifted_clips(light::DEFAULT_DIRECTIONAL_NORMAL_BIAS_TEXELS);
+    assert(math::abs(clips[0].x - clips[1].x) < NDC_TOLERANCE);
+    assert(math::abs(clips[0].y - clips[1].y) < NDC_TOLERANCE);
 }

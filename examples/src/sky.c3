@@ -50,8 +50,6 @@ const Vec3 SUN_COLOR @local = { 1, 1, 1 }; // the atmosphere colours the sun; a 
 const float SUN_INTENSITY @local = 3;
 const float SHADOW_DISTANCE @local = 400; // metres; four cascades over the near objects
 const uint SHADOW_CASCADES @local = 4;
-// Metres; the cascades' texels are about 2.6, 5.3, 12 and 48 cm at 2048 texels, and the 2 cm default rings the ground.
-const float SHADOW_NORMAL_BIAS @local = 0.15f;
 
 // Exposure from the zenith sky luminance at intensity 3: exposure = 0.045 / luminance, log-linear between entries.
 // The table stops at -4 degrees, the last elevation whose zenith stays above RGBA16F subnormals.
@@ -471,7 +469,6 @@ fn void? build_demo(Demo* demo) @local {
     Light sun = light::directional(SUN_COLOR, SUN_INTENSITY);
     sun.shadow.cascades = SHADOW_CASCADES;
     sun.shadow.max_distance = SHADOW_DISTANCE;
-    sun.shadow.normal_bias = SHADOW_NORMAL_BIAS;
     sun.shadow.ray_traced = demo.options.traced_shadows;
     demo.sun = scene.add_light(sun, name: "sun")!;
     if (demo.options.atmosphere) scene.add(demo.sun, light::ATMOSPHERE_EARTH);
@@ -553,6 +550,7 @@ fn void? place_mirror_camera(Demo* demo, float aspect) @local {
     Mat4 mirrored = maths::reflection_matrix(MIRROR_PLANE).mul(demo.camera_node.local.to_mat4());
     demo.mirror.camera_node.local = maths::transform_from_affine(mirrored)!;
     demo.scene.get(demo.mirror.camera_node, Camera).aspect = aspect;
+    demo.scene.get(demo.camera_node, Camera).aspect = aspect;
 }
 
 // The frame order: pose the camera and the sun, then update the world once.
@@ -578,7 +576,12 @@ fn void? apply_pose(
 }
 
 fn void? render_views(Demo* demo, Renderer* renderer, ViewId main_view) @local {
-    renderer.render_view(demo.scene, demo.mirror.camera_node, demo.mirror.view)!;
+    renderer.render_view(
+        scene:         demo.scene,
+        camera_node:   demo.mirror.camera_node,
+        view:          demo.mirror.view,
+        shadow_camera: demo.camera_node,
+    )!;
     renderer.finish_view(demo.mirror.view)!;
     renderer.render_view(demo.scene, demo.camera_node, main_view)!;
     return renderer.finish_view(main_view);

@@ -121,6 +121,9 @@ struct Stats {
     uint  debug_dropped;         // segments a sink drawn this frame refused; the largest count
     uint  shadow_layers;
     uint  shadow_requests_dropped;
+    uint  shadow_sets_recorded;   // this frame: raster views that built a shadow set, empty sets included
+    uint  shadow_sets_shared;     // this frame: raster views that bound a set an earlier view recorded
+    uint  shadow_lights_unshared; // this frame: lights drawn unshadowed because the bound set lacks them, in views whose shadow camera is not their own
     ShadowTiming[] shadow_timings;
     uint  environment_prepares;
     uint  uploads;
