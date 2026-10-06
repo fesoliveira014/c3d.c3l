@@ -31,7 +31,6 @@ const float SHADOW_DISTANCE_MAX @local = 200; // covers the fixture without an u
 const float SHADOW_BIAS_MAX @local = 4; // retains a useful slope-factor range before separation dominates
 const float DIRECTIONAL_NORMAL_BIAS_TEXELS_MAX @local = 8; // four times the default; thin casters lose their shadow
 const float PUNCTUAL_NORMAL_BIAS_MAX @local = 0.25f; // metres; exposes offset tradeoffs at this scene scale
-const float EXAMPLE_NORMAL_BIAS @local = 0.16f; // clears the ground bands at the cost of contact separation
 const float SPOT_CONE_GAP_DEGREES @local = 0.5f; // preserves a visible inner-to-outer ordering while editing
 const float SPOT_CONE_MAX_DEGREES @local = 89.5f; // stays strictly below the shadow projection limit
 const Vec2 CONTROLS_PANEL_POSITION @local = { 16, 16 }; // leaves the center of the default view unobscured
@@ -148,7 +147,7 @@ fn void sun_shadow_controls(ZString title, Light* sunlight, bool orthographic) @
 
     common_shadow_controls(sunlight);
     edit_float(
-        label: "Normal bias (texels)",
+        label: "Normal bias (tx)",
         value: &sunlight.shadow.directional_normal_bias_texels,
         minimum: 0,
         maximum: DIRECTIONAL_NORMAL_BIAS_TEXELS_MAX,
@@ -661,7 +660,6 @@ fn int main(String[] args) {
     spot.layers = 1;
     spot.shadow.enabled = true;
     spot.shadow.priority = 10;
-    spot.shadow.punctual_normal_bias = EXAMPLE_NORMAL_BIAS;
     Node* spot_node = scene.add_light(spot, name: "spot_shadow_light")!!;
     spot_node.layers = 1;
     spot_node.visible = false;
@@ -672,7 +670,6 @@ fn int main(String[] args) {
     point.layers = 1;
     point.shadow.enabled = true;
     point.shadow.priority = 10;
-    point.shadow.punctual_normal_bias = 0.06f;
     Node* point_node = scene.add_light(point, name: "point_shadow_light")!!;
     point_node.layers = 1;
     point_node.visible = false;

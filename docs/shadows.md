@@ -290,8 +290,8 @@ uses six 2048-square layers. The GUI restricts controls to the active light kind
 Drag outside the GUI to orbit, scroll to zoom, and release Escape outside keyboard
 capture to close.
 
-The example's suns use the default two-texel offset; its spot uses 0.16 m and its point
-0.06 m. The normal-offset control reads texels for the suns and metres for the spot and point.
+The example's suns use the default two-texel offset; its spot and point use the 0.02 m default.
+The normal-offset control reads texels for the suns and metres for the spot and point.
 The settings table above describes the library defaults. Its depth-bias control
 spans 0..4 so the slope-factor tradeoff is visible at this scene scale.
 
@@ -311,3 +311,18 @@ shadows does not erase an earlier view's layers. The renderer owns the slice and
 replaces it when a newer completed summary publishes. Destruction also invalidates
 it. Without timestamp support the slice is empty; truncated timing is partial.
 See [profiling](profiling.md) for the build flags required by `--gpu-timings`.
+
+## Measured cost
+
+### RTX 4090, driver 610.88, 2560 × 1440
+
+`LIGHTING` pass of deferred views, `--opt O3` with GPU profiling, median of three runs of per-run medians, in ms.
+Before: main `3f297f5`. After: this change, whose resolve reads up to eight more depth texels a pixel.
+
+| Scene | Before | After |
+| --- | ---: | ---: |
+| Sponza, `gltf_viewer --benchmark --shading deferred --shadows on` (`gpu_lighting_ms`) | 0.211 | 0.281 |
+| `sky --benchmark --shading deferred`, noon (`pass=LIGHTING`) | 0.072 | 0.100 |
+
+Per-run medians were 0.211/0.209/0.213 against 0.280/0.281/0.405 for Sponza, and 0.075/0.072/0.071 against
+0.099/0.100/0.100 for sky. Sponza grows by 0.070 ms.
