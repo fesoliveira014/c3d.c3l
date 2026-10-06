@@ -7,6 +7,7 @@ import c3d::asset;
 import c3d::camera;
 import c3d::geometry;
 import c3d::gui;
+import c3d::job;
 import c3d::material;
 import c3d::platform;
 import c3d::profile;
@@ -20,8 +21,24 @@ const uint PROFILE_CPU_SCOPES_PER_FRAME @local = 128; // Covers the hierarchy; r
 const uint PROFILE_MAX_DEPTH @local = 16; // Exceeds the hierarchy; reserves 16 stack indices.
 const uint PROFILE_GPU_SCOPES_PER_FRAME @local = 512; // Covers this renderer; reserves 512 samples per frame.
 const uint PROFILE_LABEL_BYTES_PER_FRAME @local = 8192; // Covers repeated labels; reserves 8 KiB per frame.
+const uint PROFILE_WORKER_SAMPLES_PER_FRAME @local = 64; // Four times a frame's job ranges; reserves 64 samples.
+const uint WAVE_ITEMS @local = 65536; // One frame's job run: sixteen ranges spread over the worker lanes.
+const uint WAVE_BATCH @local = 4096; // Sixteen ranges a frame; fewer would leave worker lanes empty.
+const float WAVE_FREQUENCY @local = 0.01f; // Radians per item; about 100 periods a frame, so each range draws a visible wave.
 const Vec2 CONTROLS_PANEL_POSITION @local = { 1120, 16 }; // Clears the first-use profiler placement.
 const Vec2 CONTROLS_PANEL_SIZE @local = { 144, 70 }; // Fits the visibility control at 1280 width.
+
+struct Wave @local {
+    float[] heights;
+    float   time;
+}
+
+fn void wave_range(void* data, uint first, uint count) @local {
+    Wave* wave = data;
+    for (uint item = first; item < first + count; item++) {
+        wave.heights[item] = math::sin((float)item * WAVE_FREQUENCY + wave.time);
+    }
+}
 
 fn void update_scene(
     Node* cube,
@@ -81,6 +98,14 @@ fn void? run_gui(
     gui::ProfilerPanel profiler_panel = gui::create_profiler_panel(mem, recorder)!;
     defer gui::destroy_profiler_panel(&profiler_panel);
 
+    JobPool pool = job::create_job_pool(mem, job::default_job_pool_desc())!;
+    defer job::destroy_job_pool(&pool);
+    Wave wave = { .heights = mem::new_array(float, WAVE_ITEMS) };
+    defer free(wave.heights);
+    $if $feat(C3D_PROFILE_CPU):
+        pool.set_recording(true);
+    $endif
+
     bool profiler_visible = true;
 
     while (window.poll()) {
@@ -106,6 +131,19 @@ fn void? run_gui(
                     delta: window.clock.delta,
                 );
             };
+            profile::@scope("application.jobs") {
+                wave.time = (float)window.clock.total;
+                pool.wait(pool.run(
+                    range: &wave_range,
+                    data:  &wave,
+                    count: WAVE_ITEMS,
+                    batch: WAVE_BATCH,
+                    name:  "example.wave",
+                ));
+            };
+            $if $feat(C3D_PROFILE_CPU):
+                pool.forward_records(recorder);
+            $endif
 
             gui_renderer.finish_frame();
             platform::sync_window(window, renderer);
@@ -139,6 +177,7 @@ fn int main() {
     $if $feat(C3D_PROFILE_CPU):
         recorder_desc.cpu_scopes_per_frame = PROFILE_CPU_SCOPES_PER_FRAME;
         recorder_desc.max_depth = PROFILE_MAX_DEPTH;
+        recorder_desc.worker_samples_per_frame = PROFILE_WORKER_SAMPLES_PER_FRAME;
     $endif
     $if $feat(C3D_PROFILE_GPU):
         recorder_desc.gpu_scopes_per_frame = PROFILE_GPU_SCOPES_PER_FRAME;

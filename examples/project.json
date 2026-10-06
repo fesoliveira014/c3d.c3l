@@ -139,7 +139,8 @@
       "type": "executable",
       "dependencies": [
         "c3d_profile_gui",
-        "c3d_profile"
+        "c3d_profile",
+        "c3d_job"
       ],
       "features": [
         "C3D_PROFILE_GUI",
@@ -153,7 +154,8 @@
       "type": "executable",
       "dependencies": [
         "c3d_profile_gui",
-        "c3d_profile"
+        "c3d_profile",
+        "c3d_job"
       ],
       "features": [
         "C3D_PROFILE_GUI",
@@ -168,7 +170,8 @@
       "type": "executable",
       "dependencies": [
         "c3d_profile_gui",
-        "c3d_profile"
+        "c3d_profile",
+        "c3d_job"
       ],
       "features": [
         "C3D_PROFILE_GUI",
@@ -183,7 +186,8 @@
       "type": "executable",
       "dependencies": [
         "c3d_profile_gui",
-        "c3d_profile"
+        "c3d_profile",
+        "c3d_job"
       ],
       "features": [
         "C3D_PROFILE_GUI",

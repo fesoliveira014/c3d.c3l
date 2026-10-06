@@ -183,6 +183,26 @@ count if both occurred. A fault caught inside the capture does not abort it.
 inside a capture does not cut off that capture. Disabled captures do not evict
 retained history.
 
+## Worker ranges
+
+Worker threads have no recorder of their own. A producer such as the job pool keeps its own records and the
+owning thread hands them over with `Recorder.add_worker_interval(lane, label, start_ns, end_ns)`, which takes
+`clock::now()` values and stores a `WorkerSample` in the open capture: the label, the lane (the worker index),
+a signed start offset from the capture origin and the duration. A range that began before the capture keeps a
+negative offset. `Recorder.add_dropped_worker_intervals(count)` adds intervals the producer lost.
+`FrameCaptureView.workers` holds the samples in arrival order and `dropped_worker_samples` counts what did not
+fit. Outside a recording capture both calls do nothing.
+
+`RecorderDesc.worker_samples_per_frame` bounds the samples of one capture. Zero keeps none and counts every interval
+as dropped, unlike the renderer's descriptors, where zero selects a default. Worker labels are copied into the same
+`label_bytes_per_frame` storage as scope labels; an interval whose label does not fit is dropped and counted, and
+does not truncate the CPU capture. Labels forwarded early use storage that later scope labels need: a burst of
+worker labels at the start of a capture can leave no room, and the scopes that follow are truncated like any scope
+that finds the storage full. Forward worker records late in the frame. Worker samples are not CPU scopes: they have
+no parent, self time or origin and do not count toward `cpu_scopes_per_frame`.
+
+The job pool's `JobPool.forward_records(&recorder)` makes these calls; see [the job pool](jobs.md#profiling).
+
 ## Export and storage
 
 `profile::capture_json(allocator, frame)` returns an owned String; release it
@@ -195,7 +215,9 @@ The JSON envelope uses schema `c3d.profile`, version `1`, compiled `cpu` and
 `internal` feature availability, and a `frames` array containing the selected
 frame. Each frame preserves CPU state, truncation, omitted count and its `cpu`
 sample array. All sample fields, including `self_complete`, are retained.
-Output is deterministic for an unchanged capture. Integer text retains all
+A frame with worker samples or dropped worker intervals also carries `dropped_worker_samples` and a `workers`
+array of `label`, `lane`, `start_ns` and `duration_ns` after its other fields; a frame without either has neither
+key, so CPU-only output is unchanged. Output is deterministic for an unchanged capture. Integer text retains all
 64 bits; consumers that need exact values beyond 2^53 must use an
 integer-preserving JSON parser.
 
@@ -240,7 +262,9 @@ keeps the frozen copy and reports the eviction. Resume follows the latest settle
 capture again.
 
 CPU and GPU axes fit the measured scope span from the earliest recorded begin to
-the latest recorded end. They are not application wall-frame totals. CPU and GPU
+the latest recorded end. The CPU axis also spans the capture's worker samples, drawn one row per lane below
+the scopes; hovering a range shows its label, lane, duration and offset, and the CPU status counts omitted
+worker ranges. They are not application wall-frame totals. CPU and GPU
 clocks are independent, and each GPU source/renderer-frame group has its own
 axis. A measured zero remains zero; absent data is N/A. Nested inclusive values
 overlap and must not be summed as total time. CPU summaries retain call counts,
