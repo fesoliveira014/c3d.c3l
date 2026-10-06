@@ -145,6 +145,12 @@ What the four cases establish:
   depth prepass (opaque, masked, cut-out and transparent surfaces), so the
   prepass and `EQUAL` shading lose nothing.
 
+- Open ground under every pixel of a forward view, seen straight down, keeps
+  its normal on the image border: the mean SSAO of each edge matches the
+  opposite edge within 0.01 (half and full resolution), ray-traced AO keeps
+  every border pixel above 97 % (software walk and ray queries), and SSGI
+  changes no border pixel by 1 % or more.
+
 - Probe volumes filled from the environment record four dispatches when first seen, none on a
   frame where nothing changed and two when only the environment rotation or `max_distance` moved,
   once per scene when two views render it; a surface inside a volume matches the SH render within

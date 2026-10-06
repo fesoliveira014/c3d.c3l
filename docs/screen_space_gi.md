@@ -28,8 +28,9 @@ view with ambient occlusion does.
 ## How it works
 
 Every frame, at half resolution, each texel casts `rays` cosine-distributed rays about its normal (the
-G-buffer normal on deferred views, reconstructed from depth on forward views) and marches them against the
-current depth. A hit reads the previous frame's lit colour at the hit's previous screen position (through
+G-buffer normal on deferred views, rebuilt from depth on forward views as for the deferred
+[normal offset](shadows.md#normal-offset)) and marches them against the current depth. A hit reads the
+previous frame's lit colour at the hit's previous screen position (through
 the view's velocity) when the previous depth stored there matches the depth the velocity expects. The
 texel stores the premultiplied bounce `PI x sum of hit radiance / rays` and the hit share `hits / rays`. A
 temporal pass blends this with the texel's reprojected history (rejected on a depth mismatch or fast
