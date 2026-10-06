@@ -474,6 +474,7 @@ forward (prepass, G-buffer and resolve 0.483 ms against 1.161 ms of forward opaq
 the low-overdraw `many_lights` hall costs 6 to 8 % more deferred than forward. Deferred pays
 for overdraw and light count and charges the G-buffer round trip without them.
 
-Known difference: the resolve offsets shadow lookups along the stored shading normal, while the
-forward shaders use the geometric normal; normal-mapped receivers can differ by a small bias. No
-MSAA on deferred views; no screen-space effect consumes the G-buffer.
+Known difference: the resolve offsets shadow lookups along a face normal rebuilt from depth, the
+forward shaders along the face-corrected vertex normal; neither reads the normal map, and on curved
+surfaces the two directions differ slightly. No MSAA on deferred views; no screen-space effect
+consumes the G-buffer.
