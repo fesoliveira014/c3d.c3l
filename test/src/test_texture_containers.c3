@@ -11,7 +11,27 @@ const char[*] DX10_FORMAT16 @local = $embed("../fixtures/texture/dx10_format16.d
 const char[*] LEGACY_DXT1 @local = $embed("../fixtures/texture/legacy_dxt1_6x6.dds");
 const char[*] LEGACY_RGBA16F @local = $embed("../fixtures/texture/legacy_rgba16f_4x4.dds");
 const char[*] LEGACY_RGBA8 @local = $embed("../fixtures/texture/legacy_rgba8_2x2.dds");
+const char[*] KTX1_R16 @local = $embed("../fixtures/texture/ktx1_r16_5x3.ktx");
+const char[*] KTX1_BC1_SRGB @local = $embed("../fixtures/texture/ktx1_bc1_srgb_8x8.ktx");
+const char[*] KTX1_GENERATE @local = $embed("../fixtures/texture/ktx1_rgba8_generate_2x2.ktx");
+const char[*] KTX1_FORMAT16 @local = $embed("../fixtures/texture/ktx1_format16.ktx");
+const char[*] KTX2_RGBA8_SRGB @local = $embed("../fixtures/texture/ktx2_rgba8_srgb_5x3.ktx2");
+const char[*] KTX2_BC7_SRGB @local = $embed("../fixtures/texture/ktx2_bc7_srgb_5x3.ktx2");
+const char[*] KTX2_BC5 @local = $embed("../fixtures/texture/ktx2_bc5_8x4.ktx2");
+const char[*] KTX2_BC1_RGB_CLEAN @local = $embed("../fixtures/texture/ktx2_bc1_rgb_clean_4x4.ktx2");
+const char[*] KTX2_BC1_RGB_PUNCH @local = $embed("../fixtures/texture/ktx2_bc1_rgb_punch_4x4.ktx2");
+const char[*] KTX2_FORMAT16 @local = $embed("../fixtures/texture/ktx2_format16.ktx2");
+const char[*] ORIENTATION_DDS @local = $embed("../fixtures/texture/orientation_4x4.dds");
+const char[*] ORIENTATION_KTX1 @local = $embed("../fixtures/texture/orientation_4x4.ktx");
+const char[*] ORIENTATION_KTX2 @local = $embed("../fixtures/texture/orientation_4x4.ktx2");
 const uint MAXIMUM_EXTENT @local = uint::max;
+const usz KTX2_LEVEL_INDEX @local = 80;
+const usz KTX2_LEVEL_ENTRY_BYTES @local = 24;
+const usz KTX2_DFD_OFFSET_FIELD @local = 48;
+const usz KTX1_KEY_VALUE_BYTES_FIELD @local = 60;
+const usz KTX1_HEADER_END @local = 64;
+const uint R16_MIP_STEP @local = 1000; // the fixture writer's texel value: 1000 * mip + row-major index
+
 enum Field @local {
     DDS_FLAGS,
     DDS_HEIGHT,
@@ -33,6 +53,39 @@ enum Field @local {
     DX10_MISC_FLAG,
     DX10_ARRAY_SIZE,
     DX10_MISC_FLAGS2,
+    KTX1_ENDIANNESS,
+    KTX1_GL_TYPE,
+    KTX1_GL_FORMAT,
+    KTX1_INTERNAL_FORMAT,
+    KTX1_WIDTH,
+    KTX1_HEIGHT,
+    KTX1_DEPTH,
+    KTX1_ARRAY_ELEMENTS,
+    KTX1_FACES,
+    KTX1_MIP_COUNT,
+    KTX1_KEY_VALUE_BYTES,
+    KTX2_VK_FORMAT,
+    KTX2_TYPE_SIZE,
+    KTX2_WIDTH,
+    KTX2_HEIGHT,
+    KTX2_DEPTH,
+    KTX2_LAYERS,
+    KTX2_FACES,
+    KTX2_LEVEL_COUNT,
+    KTX2_SCHEME,
+    KTX2_DFD_LENGTH,
+    KTX2_SGD_LENGTH,
+}
+
+enum LevelField @local {
+    BYTE_OFFSET,
+    BYTE_LENGTH,
+    UNCOMPRESSED_LENGTH,
+}
+
+enum DescriptorField @local {
+    TRANSFER,
+    FLAGS,
 }
 
 struct FormatRow @local {
@@ -68,6 +121,28 @@ fn usz field_offset(Field field) @local {
         case DX10_MISC_FLAG: return 136;
         case DX10_ARRAY_SIZE: return 140;
         case DX10_MISC_FLAGS2: return 144;
+        case KTX1_ENDIANNESS: return 12;
+        case KTX1_GL_TYPE: return 16;
+        case KTX1_GL_FORMAT: return 24;
+        case KTX1_INTERNAL_FORMAT: return 28;
+        case KTX1_WIDTH: return 36;
+        case KTX1_HEIGHT: return 40;
+        case KTX1_DEPTH: return 44;
+        case KTX1_ARRAY_ELEMENTS: return 48;
+        case KTX1_FACES: return 52;
+        case KTX1_MIP_COUNT: return 56;
+        case KTX1_KEY_VALUE_BYTES: return 60;
+        case KTX2_VK_FORMAT: return 12;
+        case KTX2_TYPE_SIZE: return 16;
+        case KTX2_WIDTH: return 20;
+        case KTX2_HEIGHT: return 24;
+        case KTX2_DEPTH: return 28;
+        case KTX2_LAYERS: return 32;
+        case KTX2_FACES: return 36;
+        case KTX2_LEVEL_COUNT: return 40;
+        case KTX2_SCHEME: return 44;
+        case KTX2_DFD_LENGTH: return 52;
+        case KTX2_SGD_LENGTH: return 72;
     }
 }
 
@@ -86,6 +161,62 @@ fn char[] with_field(char[] fixture, Field field, uint value) @local {
 fn char[] with_four_cc(char[] fixture, String code) @local {
     char[] patched = copied(fixture);
     patched[field_offset(DDS_FOUR_CC):code.len] = code[..];
+    return patched;
+}
+
+fn char[] with_level_field(
+    char[] fixture,
+    uint level,
+    LevelField field,
+    ulong value,
+) @local {
+    char[] patched = copied(fixture);
+    usz offset = KTX2_LEVEL_INDEX + level * KTX2_LEVEL_ENTRY_BYTES + (usz)field.ordinal * ulong::size;
+    bitorder::write(value, patched[offset:ulong::size], ULongLE);
+    return patched;
+}
+
+fn ulong level_field(char[] fixture, uint level, LevelField field) @local {
+    usz offset = KTX2_LEVEL_INDEX + level * KTX2_LEVEL_ENTRY_BYTES + (usz)field.ordinal * ulong::size;
+    return bitorder::read(fixture[offset:ulong::size], ULongLE);
+}
+
+fn char[] with_descriptor_byte(char[] fixture, DescriptorField field, char value) @local {
+    const usz TRANSFER_BYTE = 14; // dfdTotalSize, two block header words, then model and primaries
+    char[] patched = copied(fixture);
+    usz descriptor = bitorder::read(fixture[KTX2_DFD_OFFSET_FIELD:uint::size], UIntLE);
+    patched[descriptor + TRANSFER_BYTE + (usz)field.ordinal] = value;
+    return patched;
+}
+
+fn char[] with_key_value(char[] fixture, String key, String value) @local {
+    char[] patched = copied(fixture);
+    sz key_start = ((String)fixture).index_of(key)!!;
+    usz value_start = (usz)key_start + key.len + 1;
+    patched[value_start:value.len] = value[..];
+    return patched;
+}
+
+fn char[] with_first_image_size(char[] fixture, uint image_size) @local {
+    char[] patched = copied(fixture);
+    usz key_value_bytes = bitorder::read(fixture[KTX1_KEY_VALUE_BYTES_FIELD:uint::size], UIntLE);
+    bitorder::write(image_size, patched[KTX1_HEADER_END + key_value_bytes:uint::size], UIntLE);
+    return patched;
+}
+
+fn char[] with_bc1_block(
+    char[] fixture,
+    usz offset,
+    ushort color0,
+    ushort color1,
+    uint indices,
+) @local {
+    const usz COLOR1_FIELD = 2;
+    const usz INDICES_FIELD = 4;
+    char[] patched = copied(fixture);
+    bitorder::write(color0, patched[offset:ushort::size], UShortLE);
+    bitorder::write(color1, patched[offset + COLOR1_FIELD:ushort::size], UShortLE);
+    bitorder::write(indices, patched[offset + INDICES_FIELD:uint::size], UIntLE);
     return patched;
 }
 
@@ -124,6 +255,30 @@ fn void check_plain_2d(
 ) @local {
     assert(desc.width == width && desc.height == height && desc.format == format);
     assert(desc.depth == 0 && desc.layers == 1 && !desc.is_cube && !desc.storage);
+}
+
+fn AssetStore create_container_store(Allocator allocator, uint max_textures = 64) @local {
+    return asset::create_asset_store(allocator, {
+        .max_geometries = 1,
+        .max_textures = max_textures,
+        .max_materials = 1,
+        .max_samplers = asset::BUILTIN_SAMPLER_COUNT,
+    });
+}
+
+fn ushort[] r16_texels(
+    Allocator allocator,
+    uint mip,
+    uint width,
+    uint height,
+) @local {
+    ushort[] texels = alloc::new_array(allocator, ushort, (sz)width * height);
+    foreach (usz index, &texel : texels) *texel = (ushort)((usz)R16_MIP_STEP * mip + index);
+    return texels;
+}
+
+fn char[] as_bytes(ushort[] texels) @local {
+    return ((char*)texels.ptr)[:texels.len * ushort::size];
 }
 
 fn void test_dx10_levels_borrow_the_file_largest_first() @test {
@@ -298,6 +453,9 @@ fn void test_level_count_beyond_capacity_is_a_format_error() @test {
         assert(parse_fault(with_field(maximal, DDS_MIP_COUNT, capacity)) == c3d::ASSET_FORMAT_ERROR);
         assert(parse_fault(with_field(maximal, DDS_FOUR_CC, 116)) == c3d::ASSET_FORMAT_ERROR);
         assert(parse_fault(with_field(LEGACY_DXT1[..], DDS_MIP_COUNT, 40)) == c3d::ASSET_FORMAT_ERROR);
+
+        assert(parse_fault($embed("../fixtures/texture/ktx1_level_capacity.ktx")) == c3d::ASSET_FORMAT_ERROR);
+        assert(parse_fault($embed("../fixtures/texture/ktx2_level_capacity.ktx2")) == c3d::ASSET_FORMAT_ERROR);
     };
 }
 
@@ -362,7 +520,360 @@ fn void test_failed_parse_allocates_nothing() @test {
 
     @pool() {
         char[] short_dds = truncated(LEGACY_DXT1[..], 150);
+        char[] short_ktx1 = truncated(KTX1_R16[..], KTX1_R16.len - 1);
+        char[] deep_ktx1 = with_field(KTX1_R16[..], KTX1_MIP_COUNT, 4);
         assert(@catch(image::parse_texture_container(&scratch, short_dds)) == c3d::ASSET_FORMAT_ERROR);
+        assert(@catch(image::parse_texture_container(&scratch, KTX1_R16[..], SRGB)) == c3d::INVALID_ARGUMENT);
+        assert(@catch(image::parse_texture_container(&scratch, short_ktx1)) == c3d::ASSET_FORMAT_ERROR);
+        assert(@catch(image::parse_texture_container(&scratch, deep_ktx1)) == c3d::ASSET_FORMAT_ERROR);
     };
     assert(scratch.total_allocation_count() == 0);
+}
+
+fn void test_ktx2_levels_follow_the_level_index() @test {
+    TrackingAllocator scratch;
+    scratch.init(mem);
+    defer scratch.free();
+
+    char[] rgba_file = KTX2_RGBA8_SRGB[..];
+    TextureContainerView rgba = image::parse_texture_container(&scratch, rgba_file)!!;
+    check_plain_2d(rgba.desc, 5, 3, RGBA8_SRGB);
+    check_borrowed_levels(&rgba, rgba_file, { { 256, 60 }, { 248, 8 }, { 244, 4 } });
+
+    char[] blocks_file = KTX2_BC7_SRGB[..];
+    TextureContainerView blocks = image::parse_texture_container(&scratch, blocks_file)!!;
+    check_plain_2d(blocks.desc, 5, 3, BC7_SRGB);
+    check_borrowed_levels(&blocks, blocks_file, { { 272, 32 }, { 256, 16 }, { 240, 16 } });
+
+    char[] two_channel_file = KTX2_BC5[..];
+    TextureContainerView two_channel = image::parse_texture_container(&scratch, two_channel_file)!!;
+    check_plain_2d(two_channel.desc, 8, 4, BC5_UNORM);
+    check_borrowed_levels(&two_channel, two_channel_file, { { 208, 32 }, { 192, 16 } });
+    assert(scratch.total_allocation_count() == 0);
+}
+
+fn void test_ktx1_levels_follow_image_sizes() @test {
+    TrackingAllocator scratch;
+    scratch.init(mem);
+    defer scratch.free();
+
+    char[] fixture = KTX1_BC1_SRGB[..];
+    TextureContainerView view = image::parse_texture_container(&scratch, fixture)!!;
+    check_plain_2d(view.desc, 8, 8, BC1_RGBA_SRGB);
+    check_borrowed_levels(&view, fixture, { { 116, 32 }, { 152, 8 }, { 164, 8 }, { 176, 8 } });
+    @pool() {
+        char[] extended = with_trailing_zeros(KTX1_BC1_SRGB[..], 1);
+        TextureContainerView trailing = image::parse_texture_container(&scratch, extended)!!;
+        check_borrowed_levels(&trailing, extended, { { 116, 32 }, { 152, 8 }, { 164, 8 }, { 176, 8 } });
+    };
+    assert(scratch.total_allocation_count() == 0);
+}
+
+fn void test_padded_ktx1_rows_are_copied_into_scratch_only() @test {
+    @pool() {
+        TrackingAllocator scratch;
+        scratch.init(tmem);
+        defer scratch.free();
+
+        char[] fixture = KTX1_R16[..];
+        TextureContainerView view = image::parse_texture_container(&scratch, fixture)!!;
+        check_plain_2d(view.desc, 5, 3, R16_UINT);
+        assert(view.level_count == 3 && scratch.total_allocation_count() == 1);
+        assert(view.levels[1].bytes.ptr == fixture.ptr + 108 && view.levels[1].bytes.len == 4);
+        foreach (mip : (uint[2]){ 0, 2 }) {
+            char* start = view.levels[mip].bytes.ptr;
+            assert(start < fixture.ptr || start >= fixture.ptr + fixture.len, "mip %d", mip);
+        }
+        uint[3] widths = { 5, 2, 1 };
+        uint[3] heights = { 3, 1, 1 };
+        foreach (uint mip, width : widths) {
+            assert(view.levels[mip].bytes == as_bytes(r16_texels(tmem, mip, width, heights[mip])), "mip %d", mip);
+        }
+    };
+}
+
+fn void test_padded_ktx1_matches_texels_supplied_by_hand() @test {
+    AssetStore assets = create_container_store(mem);
+    defer asset::destroy_asset_store(&assets);
+
+    @pool() {
+        TextureContainerView view = image::parse_texture_container(tmem, KTX1_R16[..])!!;
+        TextureId loaded = assets.add_texture_mips(view.desc, view.levels[:view.level_count])!!;
+
+        TextureMipData[3] levels = {
+            { .mip = 0, .bytes = as_bytes(r16_texels(tmem, 0, 5, 3)) },
+            { .mip = 1, .bytes = as_bytes(r16_texels(tmem, 1, 2, 1)) },
+            { .mip = 2, .bytes = as_bytes(r16_texels(tmem, 2, 1, 1)) },
+        };
+        TextureDesc desc = material::texture_2d_desc(5, 3, R16_UINT);
+        desc.generate_mips = false;
+        desc.mip_levels = 3;
+        TextureId supplied = assets.add_texture_mips(desc, levels[..])!!;
+
+        TextureAsset* container = assets.texture(loaded);
+        TextureAsset* hand = assets.texture(supplied);
+        assert(container.desc.mip_levels == hand.desc.mip_levels && container.desc.format == hand.desc.format);
+        foreach (usz mip, level : hand.supplied_mips) assert(container.supplied_mips[mip].bytes == level.bytes);
+    };
+}
+
+fn void test_ktx1_internal_formats_map_to_pixel_formats() @test {
+    const uint GL_RGBA = 0x1908;
+    const uint GL_RED_INTEGER = 0x8D94;
+    FormatRow[16] rows = {
+        { .code = 0x8058, .gl_type = 0x1401, .gl_format = GL_RGBA, .width = 2, .height = 2, .format = RGBA8_UNORM },
+        { .code = 0x8C43, .gl_type = 0x1401, .gl_format = GL_RGBA, .width = 2, .height = 2, .format = RGBA8_SRGB },
+        { .code = 0x881A, .gl_type = 0x140B, .gl_format = GL_RGBA, .width = 2, .height = 1, .format = RGBA16_FLOAT },
+        { .code = 0x8814, .gl_type = 0x1406, .gl_format = GL_RGBA, .width = 1, .height = 1, .format = RGBA32_FLOAT },
+        { .code = 0x8234, .gl_type = 0x1403, .gl_format = GL_RED_INTEGER, .width = 8, .height = 1, .format = R16_UINT },
+        { .code = 0x83F0, .width = 8, .height = 4, .format = BC1_RGBA_UNORM },
+        { .code = 0x8C4C, .width = 8, .height = 4, .format = BC1_RGBA_SRGB },
+        { .code = 0x83F1, .width = 8, .height = 4, .format = BC1_RGBA_UNORM },
+        { .code = 0x8C4D, .width = 8, .height = 4, .format = BC1_RGBA_SRGB },
+        { .code = 0x83F3, .width = 4, .height = 4, .format = BC3_UNORM },
+        { .code = 0x8C4F, .width = 4, .height = 4, .format = BC3_SRGB },
+        { .code = 0x8DBB, .width = 8, .height = 4, .format = BC4_UNORM },
+        { .code = 0x8DBD, .width = 4, .height = 4, .format = BC5_UNORM },
+        { .code = 0x8E8F, .width = 4, .height = 4, .format = BC6H_UFLOAT },
+        { .code = 0x8E8C, .width = 4, .height = 4, .format = BC7_UNORM },
+        { .code = 0x8E8D, .width = 4, .height = 4, .format = BC7_SRGB },
+    };
+    @pool() {
+        foreach (row : rows) {
+            char[] patched = with_field(KTX1_FORMAT16[..], KTX1_INTERNAL_FORMAT, row.code);
+            patched = with_field(with_field(patched, KTX1_GL_TYPE, row.gl_type), KTX1_GL_FORMAT, row.gl_format);
+            patched = with_field(with_field(patched, KTX1_WIDTH, row.width), KTX1_HEIGHT, row.height);
+            TextureContainerView view = image::parse_texture_container(tmem, patched)!!;
+            assert(view.desc.format == row.format, "internal format %x", row.code);
+            check_borrowed_levels(&view, patched, { { 68, 16 } });
+        }
+    };
+}
+
+fn void test_ktx2_vk_formats_map_to_pixel_formats() @test {
+    const char LINEAR_TRANSFER = 1;
+    const char SRGB_TRANSFER = 2;
+    FormatRow[16] rows = {
+        { .code = 37, .type_size = 1, .transfer = LINEAR_TRANSFER, .width = 2, .height = 2, .format = RGBA8_UNORM },
+        { .code = 43, .type_size = 1, .transfer = SRGB_TRANSFER, .width = 2, .height = 2, .format = RGBA8_SRGB },
+        { .code = 97, .type_size = 2, .transfer = LINEAR_TRANSFER, .width = 2, .height = 1, .format = RGBA16_FLOAT },
+        { .code = 109, .type_size = 4, .transfer = LINEAR_TRANSFER, .width = 1, .height = 1, .format = RGBA32_FLOAT },
+        { .code = 74, .type_size = 2, .transfer = LINEAR_TRANSFER, .width = 8, .height = 1, .format = R16_UINT },
+        { .code = 131, .type_size = 1, .transfer = LINEAR_TRANSFER, .width = 8, .height = 4, .format = BC1_RGBA_UNORM },
+        { .code = 132, .type_size = 1, .transfer = SRGB_TRANSFER, .width = 8, .height = 4, .format = BC1_RGBA_SRGB },
+        { .code = 133, .type_size = 1, .transfer = LINEAR_TRANSFER, .width = 8, .height = 4, .format = BC1_RGBA_UNORM },
+        { .code = 134, .type_size = 1, .transfer = SRGB_TRANSFER, .width = 8, .height = 4, .format = BC1_RGBA_SRGB },
+        { .code = 137, .type_size = 1, .transfer = LINEAR_TRANSFER, .width = 4, .height = 4, .format = BC3_UNORM },
+        { .code = 138, .type_size = 1, .transfer = SRGB_TRANSFER, .width = 4, .height = 4, .format = BC3_SRGB },
+        { .code = 139, .type_size = 1, .transfer = LINEAR_TRANSFER, .width = 8, .height = 4, .format = BC4_UNORM },
+        { .code = 141, .type_size = 1, .transfer = LINEAR_TRANSFER, .width = 4, .height = 4, .format = BC5_UNORM },
+        { .code = 143, .type_size = 1, .transfer = LINEAR_TRANSFER, .width = 4, .height = 4, .format = BC6H_UFLOAT },
+        { .code = 145, .type_size = 1, .transfer = LINEAR_TRANSFER, .width = 4, .height = 4, .format = BC7_UNORM },
+        { .code = 146, .type_size = 1, .transfer = SRGB_TRANSFER, .width = 4, .height = 4, .format = BC7_SRGB },
+    };
+    @pool() {
+        foreach (row : rows) {
+            char[] patched = with_field(KTX2_FORMAT16[..], KTX2_VK_FORMAT, row.code);
+            patched = with_field(with_field(patched, KTX2_TYPE_SIZE, row.type_size), KTX2_WIDTH, row.width);
+            patched = with_descriptor_byte(with_field(patched, KTX2_HEIGHT, row.height), TRANSFER, row.transfer);
+            TextureContainerView view = image::parse_texture_container(tmem, patched)!!;
+            assert(view.desc.format == row.format, "vkFormat %d", row.code);
+            check_borrowed_levels(&view, patched, { { 208, 16 } });
+        }
+    };
+}
+
+fn void test_ktx_variants_outside_the_subset_are_unsupported() @test {
+    const uint BIG_ENDIAN = 0x01020304;
+    const uint CUBE_FACES = 6;
+    const char PREMULTIPLIED = 1;
+    @pool() {
+        assert(parse_fault(with_field(KTX1_BC1_SRGB[..], KTX1_ENDIANNESS, BIG_ENDIAN)) == c3d::UNSUPPORTED);
+        // unsized RGBA, RGB8, DXT3, signed RGTC1, signed BC6H
+        uint[5] gl_outside = { 0x1908, 0x8051, 0x83F2, 0x8DBC, 0x8E8E };
+        foreach (code : gl_outside) {
+            char[] patched = with_field(KTX1_BC1_SRGB[..], KTX1_INTERNAL_FORMAT, code);
+            assert(parse_fault(patched) == c3d::UNSUPPORTED, "%x", code);
+        }
+        assert(parse_fault(with_field(KTX1_BC1_SRGB[..], KTX1_HEIGHT, 0)) == c3d::UNSUPPORTED);
+        assert(parse_fault(with_field(KTX1_BC1_SRGB[..], KTX1_DEPTH, 1)) == c3d::UNSUPPORTED);
+        assert(parse_fault(with_field(KTX1_BC1_SRGB[..], KTX1_ARRAY_ELEMENTS, 2)) == c3d::UNSUPPORTED);
+        assert(parse_fault(with_field(KTX1_BC1_SRGB[..], KTX1_FACES, CUBE_FACES)) == c3d::UNSUPPORTED);
+
+        foreach (scheme : (uint[3]){ 1, 2, 3 }) {
+            assert(parse_fault(with_field(KTX2_BC7_SRGB[..], KTX2_SCHEME, scheme)) == c3d::UNSUPPORTED, "%d", scheme);
+        }
+        uint[6] vk_outside = { 0, 135, 136, 140, 142, 144 }; // undefined, BC2, SNORM BC4 and BC5, signed BC6H
+        foreach (code : vk_outside) {
+            assert(parse_fault(with_field(KTX2_BC7_SRGB[..], KTX2_VK_FORMAT, code)) == c3d::UNSUPPORTED, "%d", code);
+        }
+        assert(parse_fault(with_field(KTX2_BC7_SRGB[..], KTX2_HEIGHT, 0)) == c3d::UNSUPPORTED);
+        assert(parse_fault(with_field(KTX2_BC7_SRGB[..], KTX2_DEPTH, 1)) == c3d::UNSUPPORTED);
+        assert(parse_fault(with_field(KTX2_BC7_SRGB[..], KTX2_LAYERS, 2)) == c3d::UNSUPPORTED);
+        assert(parse_fault(with_field(KTX2_BC7_SRGB[..], KTX2_FACES, CUBE_FACES)) == c3d::UNSUPPORTED);
+        assert(parse_fault(with_descriptor_byte(KTX2_BC7_SRGB[..], FLAGS, PREMULTIPLIED)) == c3d::UNSUPPORTED);
+    };
+}
+
+fn void test_malformed_ktx_is_a_format_error() @test {
+    const uint GL_FLOAT = 0x1406;
+    const uint GL_UNSIGNED_BYTE = 0x1401;
+    @pool() {
+        assert(parse_fault(truncated(KTX1_BC1_SRGB[..], 63)) == c3d::ASSET_FORMAT_ERROR);
+        assert(parse_fault(with_field(KTX1_BC1_SRGB[..], KTX1_ENDIANNESS, 0)) == c3d::ASSET_FORMAT_ERROR);
+        assert(parse_fault(with_field(KTX1_FORMAT16[..], KTX1_GL_TYPE, GL_FLOAT)) == c3d::ASSET_FORMAT_ERROR);
+        assert(parse_fault(with_field(KTX1_BC1_SRGB[..], KTX1_GL_TYPE, GL_UNSIGNED_BYTE)) == c3d::ASSET_FORMAT_ERROR);
+        assert(parse_fault(with_field(KTX1_BC1_SRGB[..], KTX1_FACES, 0)) == c3d::ASSET_FORMAT_ERROR);
+        assert(parse_fault(with_field(KTX1_BC1_SRGB[..], KTX1_KEY_VALUE_BYTES, 1000)) == c3d::ASSET_FORMAT_ERROR);
+        assert(parse_fault(with_field(KTX1_BC1_SRGB[..], KTX1_MIP_COUNT, 5)) == c3d::ASSET_FORMAT_ERROR);
+        assert(parse_fault(with_first_image_size(KTX1_BC1_SRGB[..], 24)) == c3d::ASSET_FORMAT_ERROR);
+        assert(parse_fault(with_first_image_size(KTX1_R16[..], 30)) == c3d::ASSET_FORMAT_ERROR);
+        assert(parse_fault(truncated(KTX1_BC1_SRGB[..], KTX1_BC1_SRGB.len - 1)) == c3d::ASSET_FORMAT_ERROR);
+
+        assert(parse_fault(truncated(KTX2_BC7_SRGB[..], 79)) == c3d::ASSET_FORMAT_ERROR);
+        assert(parse_fault(truncated(KTX2_BC7_SRGB[..], 100)) == c3d::ASSET_FORMAT_ERROR);
+        assert(parse_fault(with_field(KTX2_BC7_SRGB[..], KTX2_FACES, 0)) == c3d::ASSET_FORMAT_ERROR);
+        assert(parse_fault(with_field(KTX2_BC7_SRGB[..], KTX2_LEVEL_COUNT, 4)) == c3d::ASSET_FORMAT_ERROR);
+        assert(parse_fault(with_field(KTX2_BC7_SRGB[..], KTX2_LEVEL_COUNT, 40)) == c3d::ASSET_FORMAT_ERROR);
+        assert(parse_fault(with_level_field(KTX2_BC7_SRGB[..], 0, BYTE_OFFSET, 1 << 20)) == c3d::ASSET_FORMAT_ERROR);
+        assert(parse_fault(with_level_field(KTX2_BC7_SRGB[..], 0, BYTE_LENGTH, 16)) == c3d::ASSET_FORMAT_ERROR);
+    };
+}
+
+fn void test_ktx2_strictness_rejects_index_inconsistencies() @test {
+    @pool() {
+        ulong smallest = level_field(KTX2_BC7_SRGB[..], 2, BYTE_OFFSET);
+        ulong base = level_field(KTX2_BC7_SRGB[..], 0, BYTE_OFFSET);
+        char[] misaligned = with_level_field(KTX2_BC7_SRGB[..], 2, BYTE_OFFSET, smallest - 4);
+        assert(parse_fault(misaligned) == c3d::ASSET_FORMAT_ERROR);
+        assert(parse_fault(with_level_field(KTX2_BC7_SRGB[..], 1, BYTE_OFFSET, base)) == c3d::ASSET_FORMAT_ERROR);
+        assert(parse_fault(with_level_field(KTX2_BC7_SRGB[..], 0, UNCOMPRESSED_LENGTH, 48)) == c3d::ASSET_FORMAT_ERROR);
+        assert(parse_fault(with_field(KTX2_BC7_SRGB[..], KTX2_DFD_LENGTH, 0)) == c3d::ASSET_FORMAT_ERROR);
+        assert(parse_fault(with_field(KTX2_BC7_SRGB[..], KTX2_TYPE_SIZE, 4)) == c3d::ASSET_FORMAT_ERROR);
+        assert(parse_fault(with_field(KTX2_BC7_SRGB[..], KTX2_SGD_LENGTH, 8)) == c3d::ASSET_FORMAT_ERROR);
+        assert(parse_fault(with_trailing_zeros(KTX2_BC7_SRGB[..], 1)) == c3d::ASSET_FORMAT_ERROR);
+    };
+}
+
+fn void test_ktx2_transfer_function_must_match_the_format() @test {
+    const char UNSPECIFIED_TRANSFER = 0;
+    const char LINEAR_TRANSFER = 1;
+    const char SRGB_TRANSFER = 2;
+    @pool() {
+        char[] linear_srgb_format = with_descriptor_byte(KTX2_RGBA8_SRGB[..], TRANSFER, LINEAR_TRANSFER);
+        char[] srgb_unorm_format = with_descriptor_byte(KTX2_FORMAT16[..], TRANSFER, SRGB_TRANSFER);
+        assert(parse_fault(linear_srgb_format) == c3d::ASSET_FORMAT_ERROR);
+        assert(parse_fault(srgb_unorm_format) == c3d::ASSET_FORMAT_ERROR);
+        assert(parsed_format(with_descriptor_byte(KTX2_FORMAT16[..], TRANSFER, UNSPECIFIED_TRANSFER)) == RGBA8_UNORM);
+    };
+}
+
+fn void test_ktx2_orientation_accepts_absent_and_rd_only() @test {
+    @pool() {
+        assert(parsed_format(KTX2_RGBA8_SRGB[..]) == RGBA8_SRGB);
+        assert(parsed_format(KTX2_BC7_SRGB[..]) == BC7_SRGB);
+        String[4] rejected = { "ru", "ld", "lu", "dr" };
+        foreach (value : rejected) {
+            char[] patched = with_key_value(KTX2_BC7_SRGB[..], "KTXorientation", value);
+            assert(parse_fault(patched) == c3d::UNSUPPORTED, "%s", value);
+        }
+    };
+}
+
+fn void test_ktx1_orientation_accepts_absent_and_s_r_t_d_only() @test {
+    @pool() {
+        assert(parsed_format(KTX1_R16[..]) == R16_UINT);
+        assert(parsed_format(KTX1_BC1_SRGB[..]) == BC1_RGBA_SRGB);
+        String[4] rejected = { "S=r,T=u", "S=l,T=d", "T=d,S=r", "S=r;T=d" };
+        foreach (value : rejected) {
+            char[] patched = with_key_value(KTX1_BC1_SRGB[..], "KTXorientation", value);
+            assert(parse_fault(patched) == c3d::UNSUPPORTED, "%s", value);
+        }
+    };
+}
+
+fn void test_swizzle_other_than_rgba_is_unsupported() @test {
+    @pool() {
+        assert(parse_fault(with_key_value(KTX2_BC7_SRGB[..], "KTXswizzle", "bgra")) == c3d::UNSUPPORTED);
+        assert(parse_fault(with_key_value(KTX1_BC1_SRGB[..], "KTXswizzle", "rrr1")) == c3d::UNSUPPORTED);
+    };
+}
+
+fn void test_generate_requests_map_to_generated_mips() @test {
+    @pool() {
+        char[] generate_file = KTX1_GENERATE[..];
+        TextureContainerView ktx1 = image::parse_texture_container(tmem, generate_file)!!;
+        check_plain_2d(ktx1.desc, 2, 2, RGBA8_UNORM);
+        assert(ktx1.desc.generate_mips && ktx1.desc.mip_levels == 1 && ktx1.level_count == 1);
+        assert(ktx1.levels[0].bytes.ptr == generate_file.ptr + 68 && ktx1.levels[0].bytes.len == 16);
+
+        char[] base_only = with_field(KTX2_RGBA8_SRGB[..], KTX2_LEVEL_COUNT, 0);
+        TextureContainerView ktx2 = image::parse_texture_container(tmem, base_only)!!;
+        assert(ktx2.desc.generate_mips && ktx2.desc.mip_levels == 1 && ktx2.level_count == 1);
+        assert(ktx2.levels[0].bytes.ptr == base_only.ptr + 256 && ktx2.levels[0].bytes.len == 60);
+    };
+}
+
+fn void test_generate_requests_without_a_mip_filter_are_rejected() @test {
+    @pool() {
+        assert(parse_fault(with_field(KTX2_BC7_SRGB[..], KTX2_LEVEL_COUNT, 0)) == c3d::ASSET_FORMAT_ERROR);
+        assert(parse_fault(with_field(KTX1_BC1_SRGB[..], KTX1_MIP_COUNT, 0)) == c3d::UNSUPPORTED);
+        assert(parse_fault(with_field(KTX1_R16[..], KTX1_MIP_COUNT, 0)) == c3d::UNSUPPORTED);
+        char[] r16 = with_field(with_field(KTX2_FORMAT16[..], KTX2_VK_FORMAT, 74), KTX2_TYPE_SIZE, 2);
+        r16 = with_field(with_field(r16, KTX2_WIDTH, 8), KTX2_HEIGHT, 1);
+        assert(parsed_format(r16) == R16_UINT);
+        assert(parse_fault(with_field(r16, KTX2_LEVEL_COUNT, 0)) == c3d::UNSUPPORTED);
+    };
+}
+
+fn void test_bc1_rgb_loads_only_without_three_color_alpha() @test {
+    const uint GL_COMPRESSED_RGB_S3TC_DXT1 = 0x83F0;
+    const uint GL_COMPRESSED_SRGB_S3TC_DXT1 = 0x8C4C;
+    @pool() {
+        char[] clean_file = KTX2_BC1_RGB_CLEAN[..];
+        TextureContainerView clean = image::parse_texture_container(tmem, clean_file)!!;
+        check_plain_2d(clean.desc, 4, 4, BC1_RGBA_UNORM);
+        check_borrowed_levels(&clean, clean_file, { { 152, 8 } });
+        assert(parse_fault(KTX2_BC1_RGB_PUNCH[..]) == c3d::UNSUPPORTED);
+        char[] rgb = with_field(KTX1_BC1_SRGB[..], KTX1_INTERNAL_FORMAT, GL_COMPRESSED_RGB_S3TC_DXT1);
+        char[] srgb = with_field(KTX1_BC1_SRGB[..], KTX1_INTERNAL_FORMAT, GL_COMPRESSED_SRGB_S3TC_DXT1);
+        assert(parsed_format(rgb) == BC1_RGBA_UNORM);
+        assert(parsed_format(srgb) == BC1_RGBA_SRGB);
+    };
+}
+
+fn void test_bc1_rgb_scan_covers_the_last_level() @test {
+    const uint GL_COMPRESSED_SRGB_S3TC_DXT1 = 0x8C4C;
+    const usz BLOCK_BYTES = 8;
+    const ushort THREE_COLOR_COLOR0 = 0x001F;
+    const ushort THREE_COLOR_COLOR1 = 0xF800;
+    const uint INDEX_THREE_AT_TEXEL_THREE = 0x000000C0;
+    @pool() {
+        char[] rgb = with_field(KTX1_BC1_SRGB[..], KTX1_INTERNAL_FORMAT, GL_COMPRESSED_SRGB_S3TC_DXT1);
+        assert(parsed_format(rgb) == BC1_RGBA_SRGB);
+        char[] punched = with_bc1_block(
+            fixture: rgb,
+            offset:  rgb.len - BLOCK_BYTES,
+            color0:  THREE_COLOR_COLOR0,
+            color1:  THREE_COLOR_COLOR1,
+            indices: INDEX_THREE_AT_TEXEL_THREE,
+        );
+        assert(parse_fault(punched) == c3d::UNSUPPORTED);
+    };
+}
+
+fn void test_orientation_fixture_matches_across_containers() @test {
+    @pool() {
+        TextureContainerView dds = image::parse_texture_container(tmem, ORIENTATION_DDS[..])!!;
+        TextureContainerView ktx1 = image::parse_texture_container(tmem, ORIENTATION_KTX1[..])!!;
+        TextureContainerView ktx2 = image::parse_texture_container(tmem, ORIENTATION_KTX2[..])!!;
+        check_plain_2d(dds.desc, 4, 4, RGBA8_UNORM);
+        check_plain_2d(ktx1.desc, 4, 4, RGBA8_UNORM);
+        check_plain_2d(ktx2.desc, 4, 4, RGBA8_UNORM);
+        char[4][3] markers = { { 255, 0, 0, 255 }, { 0, 255, 0, 255 }, { 0, 0, 255, 255 } };
+        for (uint mip = 0; mip < 3; mip++) {
+            assert(dds.levels[mip].bytes == ktx1.levels[mip].bytes && dds.levels[mip].bytes == ktx2.levels[mip].bytes);
+            assert(dds.levels[mip].bytes[:4] == markers[mip][..], "mip %d", mip);
+        }
+    };
 }
