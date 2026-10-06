@@ -665,12 +665,14 @@ fn void test_reflection_glsl_matches_the_c3_twins() @test {
     defer destroy_fixture(&fixture);
     Renderer* renderer = &fixture.renderer;
 
+    // Every lattice point lies at least 0.02 off every box face and blend edge: GPU rounding at an exact face
+    // differs from the CPU's and would flip the selected ids.
     ReflectionProbe upright = light::reflection_probe({ 1.5f, 1, 1.2f }, {});
     upright.blend_distance = 0.4f;
     upright.capture_offset = { 0.3f, -0.2f, 0.1f };
     ReflectionProbe turned = light::reflection_probe({ 1, 0.8f, 1 }, {});
     turned.blend_distance = 0.3f;
-    ReflectionProbe infinite = light::reflection_probe({ 1.8f, 0.8f, 1.4f }, {});
+    ReflectionProbe infinite = light::reflection_probe({ 1.8f, 0.8f, 1.45f }, {});
     infinite.blend_distance = 1;
     infinite.projection = ReflectionProjection.INFINITE;
     Quat turn = quaternion::from_axis_angle{float}({ 0, 1, 0 }, math::deg_to_rad(REFLECTION_TWIN_TURN_DEGREES));
