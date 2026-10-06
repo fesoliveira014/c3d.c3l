@@ -34,11 +34,12 @@ fn Type* ComponentStore.add(&self, Entity entity, Type value) {
 }
 
 <*
- Short-lived address of the entity's component.
- @require self.sparse[entity.index] != 0
+ Short-lived address of the entity's component, null when absent.
+ @require entity.index < self.sparse.len
 *>
-fn Type* ComponentStore.get(&self, Entity entity) {
-    return &self.dense[self.sparse[entity.index] - 1];
+fn Type* ComponentStore.find(&self, Entity entity) @inline { // Without it O3 builds call this once per query candidate.
+    uint position = self.sparse[entity.index];
+    return position ? &self.dense[position - 1] : null;
 }
 
 <*
@@ -73,7 +74,7 @@ fn void erased_remove(void* raw, Entity entity) {
  @require ((ComponentStore*)raw).sparse[entity.index] != 0
 *>
 fn void* erased_get(void* raw, Entity entity) {
-    return ((ComponentStore*)raw).get(entity);
+    return ((ComponentStore*)raw).find(entity);
 }
 
 <*
