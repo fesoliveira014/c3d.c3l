@@ -32,6 +32,7 @@ const float CONE_MAX_DEGREES @local = 90;
 const float IK_ANGLE_MAX_DEGREES @local = 180;
 const float CAMERA_MIN_NEAR @local = 0.0001f;
 const float MIN_POSITIVE @local = 0.0001f;
+const float DIRECTIONAL_NORMAL_BIAS_TEXELS_LIMIT @local = 8; // the drag's range; well inside the fit's resolution contract at any practical atlas size
 const float PROBE_HYSTERESIS_MAX @local = 0.999f; // hysteresis must stay below 1 or the texels never change
 
 Inspector[ecs::MAX_COMPONENT_TYPES] inspectors @local;
@@ -210,14 +211,28 @@ fn bool light_inspector(void* component) @local {
     changed = imgui::checkbox("Enabled", &light.shadow.enabled) || changed;
     changed = imgui::input_scalar("Priority", imgui::DATA_TYPE_S32, &light.shadow.priority) || changed;
     changed = nonnegative_drag("Bias", &light.shadow.bias) || changed;
-    changed = nonnegative_drag("Normal bias", &light.shadow.normal_bias) || changed;
     if (light.kind == LightKind.DIRECTIONAL) {
+        if (imgui::slider_float(
+            "Normal bias (texels)",
+            &light.shadow.directional_normal_bias_texels,
+            0,
+            DIRECTIONAL_NORMAL_BIAS_TEXELS_LIMIT,
+        )) {
+            light.shadow.directional_normal_bias_texels = math::clamp(
+                light.shadow.directional_normal_bias_texels,
+                0.0f,
+                DIRECTIONAL_NORMAL_BIAS_TEXELS_LIMIT,
+            );
+            changed = true;
+        }
         int cascades = (int)light.shadow.cascades;
         if (imgui::slider_int("Cascades", &cascades, 1, (int)light::MAX_SHADOW_CASCADES)) {
             light.shadow.cascades = (uint)cascades;
             changed = true;
         }
         changed = imgui::slider_float("Cascade lambda", &light.shadow.cascade_lambda, 0, 1) || changed;
+    } else {
+        changed = nonnegative_drag("Normal bias (m)", &light.shadow.punctual_normal_bias) || changed;
     }
     changed = nonnegative_drag("Max distance", &light.shadow.max_distance) || changed;
     return changed;

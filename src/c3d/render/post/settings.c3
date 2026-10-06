@@ -40,6 +40,19 @@ const float TAA_MIP_BIAS_MIN = -2.0f; // past two levels textures alias faster t
 const float SENSOR_HEIGHT @private = 0.024f; // 35 mm frame; focal_length and aperture read as camera settings
 
 <*
+ Mid-grey metering over twenty stops, brightening fast and darkening slowly.
+*>
+const AutoExposureParams AUTO_EXPOSURE_DEFAULT = {
+    .compensation_ev  = 0,
+    .min_ev           = -10,  // twenty stops in all; the sky example's twilight table entry is 7.3 stops up
+    .max_ev           = 10,
+    .brightening_time = 0.5f, // 95 % in about 1.5 s: a sunlit doorway reads at once
+    .darkening_time   = 2,    // 95 % in about 6 s: dark adaptation is the slow direction
+    .low_percentile   = 0.1f, // the darkest tenth (deep shadow, black borders) does not raise exposure
+    .high_percentile  = 0.9f, // the brightest tenth (fireflies, the sun, lamps) does not lower it
+};
+
+<*
  Display tone mapping operator.
 *>
 enum Tonemap {
@@ -135,22 +148,37 @@ struct TaaParams {
 }
 
 <*
- Display processing of one view; a zeroed value is not neutral.
+ Automatic exposure: stops for compensation and bounds, seconds to adapt, the metered fraction window.
 *>
-struct PostStack {
-    GradeParams      grade;
-    AntiAliasing     anti_aliasing;
-    TaaParams        taa_params;
-    bool             bloom;
-    BloomParams      bloom_params;
-    bool             depth_of_field;
-    DofParams        dof_params;
-    bool             motion_blur;
-    MotionBlurParams motion_blur_params;
+struct AutoExposureParams {
+    float compensation_ev;
+    float min_ev;
+    float max_ev;
+    float brightening_time; // the scene grew brighter, so exposure falls
+    float darkening_time;   // the scene grew darker, so exposure rises
+    float low_percentile;
+    float high_percentile;
 }
 
 <*
- Neutral grading with ACES and FXAA enabled and every effect off.
+ Display processing of one view; a zeroed value is not neutral.
+*>
+struct PostStack {
+    GradeParams        grade;
+    AntiAliasing       anti_aliasing;
+    TaaParams          taa_params;
+    bool               bloom;
+    BloomParams        bloom_params;
+    bool               depth_of_field;
+    DofParams          dof_params;
+    bool               motion_blur;
+    MotionBlurParams   motion_blur_params;
+    bool               auto_exposure;
+    AutoExposureParams auto_exposure_params;
+}
+
+<*
+ Neutral grading with ACES and FXAA enabled, every effect and auto exposure off.
 *>
 fn PostStack default_post_stack() {
     return {
@@ -172,6 +200,7 @@ fn PostStack default_post_stack() {
         .bloom_params = { .threshold = 1, .knee = 0.5f, .intensity = 0.05f, .levels = 5 },
         .dof_params   = { .focus_distance = 5, .focal_length = 0.05f, .aperture = 2.8f, .max_coc = 16 },
         .motion_blur_params = { .shutter = 0.5f, .samples = 12, .max_velocity = 32 },
+        .auto_exposure_params = AUTO_EXPOSURE_DEFAULT,
     };
 }
 
@@ -185,6 +214,7 @@ fn bool post_stack_valid(PostStack* stack) {
     if (stack.depth_of_field && !dof_params_valid(&stack.dof_params)) return false;
     if (stack.motion_blur && !motion_blur_params_valid(&stack.motion_blur_params)) return false;
     if (stack.anti_aliasing == AntiAliasing.TAA && !taa_params_valid(&stack.taa_params)) return false;
+    if (stack.auto_exposure && !auto_exposure_params_valid(&stack.auto_exposure_params)) return false;
     return true;
 }
 
@@ -267,6 +297,7 @@ fn float lut_offset(uint size) {
  @param lut_texture : "Zero without a LUT."
  @param lut_size : "Edge texel count of the LUT; ignored without one."
  @param bloom_texture : "Zero without bloom."
+ @param auto_exposure : "Adapted ExposureGpu of this rendering; zero in manual mode."
 *>
 fn void write_grade_gpu(
     GradeGpu* gpu_grade,
@@ -278,6 +309,7 @@ fn void write_grade_gpu(
     gpu::TextureIndex bloom_texture = (gpu::TextureIndex)0,
     gpu::SamplerIndex bloom_sampler = (gpu::SamplerIndex)0,
     float bloom_intensity = 0,
+    gpu::GpuAddress auto_exposure = (gpu::GpuAddress)0,
 ) {
     Vec3 balance = white_balance_coefficients(params.temperature, params.tint);
     bool lut = lut_texture != (gpu::TextureIndex)0;
@@ -297,6 +329,7 @@ fn void write_grade_gpu(
         .bloom_texture   = bloom_texture,
         .bloom_sampler   = bloom_texture ? bloom_sampler : (gpu::SamplerIndex)0,
         .bloom_intensity = bloom_texture ? bloom_intensity : 0,
+        .auto_exposure   = auto_exposure,
     };
 }
 
@@ -323,6 +356,25 @@ fn bool taa_params_valid(TaaParams* params) @private {
     return params.current_weight > 0 && params.current_weight <= 1 && params.clip_gamma > 0
       && params.depth_tolerance > 0 && params.velocity_threshold > 0
       && params.mip_bias >= TAA_MIP_BIAS_MIN && params.mip_bias <= 0;
+}
+
+<*
+ @pure
+*>
+fn bool auto_exposure_params_valid(AutoExposureParams* params) @private {
+    float[*] values = {
+        params.compensation_ev, params.min_ev, params.max_ev, params.brightening_time, params.darkening_time,
+        params.low_percentile, params.high_percentile,
+    };
+    foreach (value : values) {
+        if (!math::is_finite(value)) return false;
+    }
+    float metered_floor = math::log2(MID_GRAY) + params.compensation_ev - params.max_ev;
+    float metered_ceiling = math::log2(MID_GRAY) + params.compensation_ev - params.min_ev;
+    return params.min_ev <= params.max_ev
+      && metered_floor >= shader::EXPOSURE_LOG2_MIN && metered_ceiling <= shader::EXPOSURE_LOG2_MAX
+      && params.brightening_time >= 0 && params.darkening_time >= 0
+      && params.low_percentile >= 0 && params.low_percentile < params.high_percentile && params.high_percentile <= 1;
 }
 
 <*

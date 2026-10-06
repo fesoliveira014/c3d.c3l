@@ -305,6 +305,7 @@ fn void? render_reflection_faces(
             view_camera: &view_camera,
             view:        view,
             debug:       null,
+            shadow_view: null,
         )!;
         renderer.finish_view(view)!;
         TextureReadback face_readback = {

@@ -74,3 +74,22 @@ Every later articulated joint must use `PARENT`; see
 
 [Billboard batches](billboards.md) are scene-owned components with the same
 transform-space, visibility and subtree lifetime rules as other draw components.
+
+## Components
+
+One process registers at most 128 component types, built-in and add-on types
+included (`ecs::MAX_COMPONENT_TYPES`); one more returns `CAPACITY_EXCEEDED`. A type
+takes a process-wide slot on first registration, and each world allocates a store
+for the types it registers. Every entity of a world's capacity carries a 16-byte
+mask, one bit per slot.
+
+Presence comes from each type's store: `has`, `get` and `@each2` read its sparse
+array, never the mask. A component is absent from the moment its store removes it,
+so `has` and `get` agree at every point of a removal, removal hooks included.
+`destroy_entity` removes components in ascending slot order and clears each type's
+mask bit after its hook: a hook sees lower slots already gone and its own and higher
+slots still present.
+
+`World.mask` and `World.@each_slot(entity; slot)` enumerate an entity's types for
+inspection and serialization. `@each_slot` visits set slots in ascending order over a
+copy of the mask taken at entry; its body may remove only the visited component.

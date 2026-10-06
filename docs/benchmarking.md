@@ -114,6 +114,58 @@ Readings on an Intel Core i9-14900K at O3 (medians; Windows host, WSL in parenth
 | `triangle_warmup` 128 (32,768 triangles, 655,328 bytes) | 3,231 (3,210) |
 | `triangle_warmup` 362 (262,088 triangles, 5,601,280 bytes) | 31,818 (32,278) |
 
+### ECS queries
+
+```bash
+./examples/build/cpu_bench ecs_each2 16384 1 300
+./examples/build/cpu_bench ecs_each2_shuffled 2097152 1 30
+```
+
+Build with `--opt O3` for readings. Each case builds a standalone `World` with two
+four-byte component types and no scene; `nodes` is the entity count, at most 2,097,152.
+Every second entity carries the walked type, added once. Before each batch, outside the
+timed region, the queried type is removed and placed again:
+
+| Case | Queried type on | Work inside each timed iteration |
+| --- | --- | --- |
+| `ecs_each` | no entity | `@each` over the walked type |
+| `ecs_each2` | a fresh seeded random half of all entities (half the candidates hit) | `@each2` over both types |
+| `ecs_each2_dense` | every candidate | `@each2` over both types |
+| `ecs_get` | as `ecs_each2` | `@each` over the walked type and `get` of the queried type per candidate |
+| `ecs_get_absent` | every entity without the walked type (no candidate hits) | as `ecs_get` |
+| `ecs_has` | as `ecs_each2` | `@each` over the walked type and `has` of the queried type per candidate |
+
+Without a suffix both types are added in entity order. The `_shuffled` suffix adds them in
+a seeded random order, so the walk reads the other arrays at random positions. The seed is
+fixed and printed before the CSV header; re-runs reproduce every layout. A fixed random half
+repeated pass after pass trains the branch predictor on small worlds, so each batch draws a new
+half and times one pass (`iterations` 1). The checksum sums the visited values; a change that
+keeps the visit set keeps it.
+
+Readings use 16,384 entities, whose arrays (about 1 MiB with the re-placement) stay in the
+2 MiB L2 of one i9-14900K P-core, and 2,097,152 entities, whose arrays exceed its 36 MB L3.
+
+Readings on an Intel Core i9-14900K, Windows 11, c3c 0.8.3 with MSVC 19.44, `--opt O3`, process
+pinned to a P-core. Each cell is the median of three runs' medians, in µs per pass. Before is the
+64-type mask test; after is presence read from the stores with a 128-type mask.
+
+| Case | 16,384 before | 16,384 after | 2,097,152 before | 2,097,152 after |
+| --- | ---: | ---: | ---: | ---: |
+| `ecs_each` | 0.6 | 0.6 | 186.1 | 199.6 |
+| `ecs_each_shuffled` | 0.6 | 0.6 | 191.4 | 200.4 |
+| `ecs_each2` | 23.3 | 23.0 | 4,032 | 3,510 |
+| `ecs_each2_shuffled` | 24.8 | 24.1 | 9,316 | 5,559 |
+| `ecs_each2_dense` | 4.9 | 3.7 | 1,377 | 758.0 |
+| `ecs_each2_dense_shuffled` | 5.8 | 4.1 | 8,503 | 3,490 |
+| `ecs_get` | 27.6 | 28.2 | 4,403 | 4,232 |
+| `ecs_get_shuffled` | 29.2 | 30.7 | 10,064 | 6,196 |
+| `ecs_get_absent` | 2.8 | 3.0 | 993.2 | 658.9 |
+| `ecs_get_absent_shuffled` | 3.1 | 3.0 | 3,845 | 2,659 |
+| `ecs_has` | 26.0 | 27.8 | 4,234 | 4,329 |
+| `ecs_has_shuffled` | 27.3 | 29.1 | 7,094 | 5,895 |
+
+A seven-run repeat put `ecs_each` at 2,097,152 within noise: 181.2 before, 182.9 after.
+
 ### Traced effects in software and on ray queries
 
 ```bash
@@ -187,6 +239,7 @@ lacks it, so an excluded mode never silently reports zero timings.
 | `--anti-aliasing none\|fxaa\|taa` | nothing | Selects the measured view's anti-aliasing filter (`benchmark.py --anti-aliasing`); FXAA by default. |
 | `--depth-prepass on\|off` | nothing | Selects the forward measured view's depth prepass (`benchmark.py --depth-prepass`); on by default, as in the view constructors. Deferred views always run it. |
 | `--ambient-occlusion none\|half\|full\|ray-traced` | `ray-traced`: a ray-query adapter | Selects the measured view's AO: screen space at half or full resolution, or ray traced at half resolution with 4 rays (`benchmark.py --ambient-occlusion`); none by default. The CSV reports it as `gpu_ambient_occlusion_ms`. |
+| `--auto-exposure on\|off` | nothing | Turns automatic exposure on for the measured view (`benchmark.py --auto-exposure`); off by default. The CSV reports it as `gpu_exposure_ms`. |
 | `--reflections on\|off` | a ray-query adapter and `--shading deferred` | Ray-traced reflections on the measured view (`benchmark.py --reflections`); off by default. A forward view faults `UNSUPPORTED`. The CSV reports it as `gpu_rt_reflections_ms`. |
 | `--screen-space-gi on\|off` | nothing | [Screen-space GI](screen_space_gi.md) at the defaults on the measured view; off by default. The CSV reports it as `gpu_screen_space_gi_ms` and the colour copy as `gpu_ssgi_copy_ms`; a view with it records velocity every frame. |
 | `--trace software\|hardware` | `hardware`: a ray-query adapter | Creates the renderer with (`hardware`) or without (`software`) ray queries; every trace consumer of the run, probe updates included, follows. The default is `hardware` exactly when `--reflections on` or `--ambient-occlusion ray-traced` is given; `software` runs those effects on the software walk. `software` with `--shading path-traced` (whose ray-tracing pipelines imply ray queries) is rejected as an invalid argument. The banner prints `trace=none\|software\|hardware` (`none`: the run traces nothing). With a traced effect on the command line the probe update of a `--probe-fill scene` row now runs on ray queries; earlier rows ran it in software beside a hardware view. |

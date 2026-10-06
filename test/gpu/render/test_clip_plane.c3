@@ -25,7 +25,8 @@ const Vec3 BATCH_CLIPPED_POINT @private = { 1.5f, -0.25f, 0.5f };
 const Vec3 BURIED_POINT @private = { 0, -2, 0.5f };
 const int DOMINANT_CHANNEL_MINIMUM @private = 64; // a lit face; the background and the other channels stay far below
 const float CASTER_OFFSET @private = -1.5f; // the caster spans x -2 to -1, wholly behind the plane keeping x >= 0
-const float CASTER_HEIGHT @private = 1;
+const float CASTER_CENTRE_HEIGHT @private = 2;
+const float CASTER_VERTICAL_SIZE @private = 3; // its shadow still crosses the plane past the default 0.68 m offset
 const float CASTER_DEPTH @private = 3; // about ten texels of the fixture's 64-texel cascade
 const Vec3 CASTER_SHADOW_POINT @private = { 0.8f, 0, 0 }; // in the caster's shadow; the sun falls 1 in 2 toward +x
 const Vec3 CASTER_CAMERA_POSITION @private = { 1.5f, 3, 4 };
@@ -252,7 +253,7 @@ fn CasterScene? create_caster_scene(Fixture* fixture) @private {
         Geometry caster = geometry::box(
             allocator: tmem,
             width:     1,
-            height:    1,
+            height:    CASTER_VERTICAL_SIZE,
             depth:     CASTER_DEPTH,
         );
         slab = fixture.assets.add_geometry(&caster)!;
@@ -260,7 +261,7 @@ fn CasterScene? create_caster_scene(Fixture* fixture) @private {
     MaterialId grey = add_matte_material(fixture, { LIT_ALBEDO, LIT_ALBEDO, LIT_ALBEDO, 1 })!;
     result.scene.add_mesh(floor, grey, name: "floor")!;
     result.caster = result.scene.add_mesh(slab, grey, name: "caster")!;
-    result.caster.local.position = { CASTER_OFFSET, CASTER_HEIGHT, 0 };
+    result.caster.local.position = { CASTER_OFFSET, CASTER_CENTRE_HEIGHT, 0 };
 
     Light sunlight = light::directional({ 1, 1, 1 }, 2);
     sunlight.shadow.cascades = 1;

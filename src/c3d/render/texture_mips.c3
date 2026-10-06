@@ -4,11 +4,6 @@ import c3d;
 import c3d::material;
 import std::math;
 
-<*
- Maximum mip count for an unsigned 32-bit image extent.
-*>
-const uint TEXTURE_MIP_CAPACITY = 32;
-
 const uint RGBA_CHANNELS @local = 4;
 const uint RGB_CHANNELS @local = 3;
 const double UNORM_MAX @local = char::max;
@@ -44,20 +39,8 @@ struct TextureMipChain {
     Allocator allocator;
     uint mip_count;
     uint layer_count;
-    usz[TEXTURE_MIP_CAPACITY] offsets;
+    usz[material::TEXTURE_MIP_CAPACITY] offsets;
     char[] pixels;
-}
-
-<*
- Count mip levels down to one texel.
- @require width > 0, height > 0
- @pure
-*>
-fn uint texture_mip_count(uint width, uint height) {
-    uint count = 1;
-    for (uint extent = math::max(width, height); extent > 1; extent >>= 1) count++;
-
-    return count;
 }
 
 <*
@@ -202,7 +185,7 @@ macro TextureMipChain? create_typed_texture_mips(
 
     TextureMipChain chain = {
         .allocator = allocator,
-        .mip_count = desc.generate_mips ? texture_mip_count(desc.width, desc.height) : 1,
+        .mip_count = desc.generate_mips ? material::texture_mip_count(desc.width, desc.height) : 1,
         .layer_count = desc.layers,
     };
     usz total_bytes;

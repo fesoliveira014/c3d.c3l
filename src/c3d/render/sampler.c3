@@ -42,7 +42,7 @@ fn SamplerRes*? resolve_sampler(Renderer* renderer, SamplerId sampler) @private 
         .address_u = (gpu::AddressMode)record.desc.address_u.ordinal,
         .address_v = (gpu::AddressMode)record.desc.address_v.ordinal,
         .address_w = (gpu::AddressMode)record.desc.address_w.ordinal,
-        .max_lod = (float)(TEXTURE_MIP_CAPACITY - 1),
+        .max_lod = (float)(material::TEXTURE_MIP_CAPACITY - 1),
         .anisotropy_enable = anisotropic,
         .max_anisotropy = anisotropy,
         .compare_enable = record.desc.compare_enable,

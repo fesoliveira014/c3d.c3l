@@ -46,10 +46,11 @@ struct CascadeSplits {
     uint count;
 }
 
-<* Fitted directional camera and its receiver depth endpoint. *>
+<* Fitted directional camera, its receiver depth endpoint and normal offset. *>
 struct ShadowCascade {
     CameraMatrices camera;
     float split_depth;
+    float normal_bias; // metres: the requested texels times this cascade's texel
 }
 
 struct LightBasis @private {
@@ -137,11 +138,11 @@ fn float cascade_blend_depth(CascadeSplits splits, uint index, float blend) {
  @param light_direction : "Unit world direction of emitted light."
  @param casters : "Scene candidates before camera or light-space culling."
  @param resolution : "Square shadow-map width in texels."
- @param normal_bias : "Maximum receiver displacement in world units."
+ @param normal_bias_texels : "Receiver normal offset in texels of this cascade."
  @param origin : "Absolute origin of the camera and caster coordinates."
  @require far_depth > near_depth
- @require resolution > 2 * SHADOW_GUARD_TEXELS
- @require normal_bias >= 0 && math::is_finite(normal_bias)
+ @require normal_bias_texels >= 0 && math::is_finite(normal_bias_texels)
+ @require (float)resolution > 2 * ((float)SHADOW_GUARD_TEXELS + normal_bias_texels)
  @require math::abs(light_direction.length() - 1) < 0.0001f
 *>
 fn ShadowCascade fit_directional_cascade(
@@ -151,7 +152,7 @@ fn ShadowCascade fit_directional_cascade(
     Vec3 light_direction,
     MeshCandidate[] casters,
     uint resolution,
-    float normal_bias,
+    float normal_bias_texels,
     Vec3 origin = {},
 ) {
     Mat4 inverse_projection = view.proj.inverse()!!;
@@ -183,8 +184,11 @@ fn ShadowCascade fit_directional_cascade(
         .m33 = 1,
     };
 
-    float half_width = (radius + normal_bias) / (1 - (float)(2 * SHADOW_GUARD_TEXELS) / (float)resolution);
+    // Fixed point: half_width = radius + margin_texels * texel_size, where texel_size = 2 * half_width / resolution.
+    float margin_texels = (float)SHADOW_GUARD_TEXELS + normal_bias_texels;
+    float half_width = radius / (1 - 2 * margin_texels / (float)resolution);
     float texel_size = 2 * half_width / (float)resolution;
+    float normal_bias = normal_bias_texels * texel_size;
     Vec3 light_center = maths::transform_point(light_view, center);
     light_view.m03 = -math::round(light_center.x / texel_size) * texel_size;
     light_view.m13 = -math::round(light_center.y / texel_size) * texel_size;
@@ -239,6 +243,7 @@ fn ShadowCascade fit_directional_cascade(
             .frustum = maths::frustum_from_view_proj(view_projection, false),
         },
         .split_depth = far_depth,
+        .normal_bias = normal_bias,
     };
 }
 

@@ -29,8 +29,8 @@ const int SHADOW_PRIORITY_MAX @local = 100; // keeps competing request order eas
 const float SHADOW_DISTANCE_MIN @local = 1; // keeps enabled settings within their positive-distance contract
 const float SHADOW_DISTANCE_MAX @local = 200; // covers the fixture without an unwieldy slider range
 const float SHADOW_BIAS_MAX @local = 4; // retains a useful slope-factor range before separation dominates
-const float SHADOW_NORMAL_BIAS_MAX @local = 0.25f; // exposes offset tradeoffs at this scene scale
-const float EXAMPLE_NORMAL_BIAS @local = 0.16f; // clears the ground bands at the cost of contact separation
+const float DIRECTIONAL_NORMAL_BIAS_TEXELS_MAX @local = 8; // four times the default; thin casters lose their shadow
+const float PUNCTUAL_NORMAL_BIAS_MAX @local = 0.25f; // metres; exposes offset tradeoffs at this scene scale
 const float SPOT_CONE_GAP_DEGREES @local = 0.5f; // preserves a visible inner-to-outer ordering while editing
 const float SPOT_CONE_MAX_DEGREES @local = 89.5f; // stays strictly below the shadow projection limit
 const Vec2 CONTROLS_PANEL_POSITION @local = { 16, 16 }; // leaves the center of the default view unobscured
@@ -138,12 +138,6 @@ fn void common_shadow_controls(Light* light) @local {
         minimum: 0,
         maximum: SHADOW_BIAS_MAX,
     );
-    edit_float(
-        label: "Normal bias",
-        value: &light.shadow.normal_bias,
-        minimum: 0,
-        maximum: SHADOW_NORMAL_BIAS_MAX,
-    );
 }
 
 fn void sun_shadow_controls(ZString title, Light* sunlight, bool orthographic) @local {
@@ -152,6 +146,12 @@ fn void sun_shadow_controls(ZString title, Light* sunlight, bool orthographic) @
     defer imgui::pop_id();
 
     common_shadow_controls(sunlight);
+    edit_float(
+        label: "Normal bias (tx)",
+        value: &sunlight.shadow.directional_normal_bias_texels,
+        minimum: 0,
+        maximum: DIRECTIONAL_NORMAL_BIAS_TEXELS_MAX,
+    );
 
     int cascades = (int)sunlight.shadow.cascades;
     if (imgui::drag_int_ex(
@@ -198,6 +198,12 @@ fn void punctual_shadow_controls(
     defer imgui::pop_id();
 
     common_shadow_controls(light);
+    edit_float(
+        label: "Normal bias (m)",
+        value: &light.shadow.punctual_normal_bias,
+        minimum: 0,
+        maximum: PUNCTUAL_NORMAL_BIAS_MAX,
+    );
     bool unbounded = controls.unbounded;
     if (imgui::checkbox("Unbounded illumination", &unbounded)) {
         controls.unbounded = unbounded;
@@ -634,14 +640,12 @@ fn int main(String[] args) {
     Light primary = light::directional({ 1, 0.95f, 0.85f }, 3);
     primary.layers = 1;
     primary.shadow.priority = 10;
-    primary.shadow.normal_bias = EXAMPLE_NORMAL_BIAS;
     Node* primary_sun = scene.add_light(primary, name: "primary_sun")!!;
     primary_sun.layers = 1;
     primary_sun.local.rotation = maths::look_rotation((Vec3){ -0.5f, -1, -0.3f }.normalize(), { 0, 1, 0 });
     Light secondary = light::directional({ 0.35f, 0.45f, 0.8f }, 0.25f);
     secondary.layers = 1;
     secondary.shadow.priority = 0;
-    secondary.shadow.normal_bias = EXAMPLE_NORMAL_BIAS;
     Node* secondary_sun = scene.add_light(secondary, name: "secondary_sun")!!;
     secondary_sun.layers = 1;
     secondary_sun.local.rotation = maths::look_rotation((Vec3){ 0.4f, -1, 0.2f }.normalize(), { 0, 1, 0 });
@@ -656,7 +660,6 @@ fn int main(String[] args) {
     spot.layers = 1;
     spot.shadow.enabled = true;
     spot.shadow.priority = 10;
-    spot.shadow.normal_bias = EXAMPLE_NORMAL_BIAS;
     Node* spot_node = scene.add_light(spot, name: "spot_shadow_light")!!;
     spot_node.layers = 1;
     spot_node.visible = false;
@@ -667,7 +670,6 @@ fn int main(String[] args) {
     point.layers = 1;
     point.shadow.enabled = true;
     point.shadow.priority = 10;
-    point.shadow.normal_bias = 0.06f;
     Node* point_node = scene.add_light(point, name: "point_shadow_light")!!;
     point_node.layers = 1;
     point_node.visible = false;

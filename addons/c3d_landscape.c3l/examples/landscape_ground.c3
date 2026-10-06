@@ -63,7 +63,6 @@ const float LOOK_RADIANS_PER_PIXEL @local = 0.003f;
 const float PITCH_LIMIT @local = 1.5f; // avoids the poles, where the up vector degenerates
 const float SUN_INTENSITY @local = 3;
 const float SHADOW_DISTANCE @local = 1500; // metres; the cascades spread over it, the atlas cost is fixed
-const float SHADOW_NORMAL_BIAS @local = 0.5f; // metres; cascade texels 0.1 to 1.8 m; smaller biases band gentle ground
 const float AMBIENT_INTENSITY @local = 0.25f;
 const Vec4 SKY_COLOR @local = { 0.55f, 0.7f, 0.9f, 1 };
 const HeightFog LANDSCAPE_FOG @local = { // a haze that pools below 100 m of the 300 m relief
@@ -416,7 +415,6 @@ fn Ground? add_ground(
 fn void? add_sun_and_sky(Scene* scene, bool traced_shadows, bool sky) {
     Light sun = light::directional({ 1, 0.95f, 0.85f }, SUN_INTENSITY);
     sun.shadow.max_distance = SHADOW_DISTANCE;
-    sun.shadow.normal_bias = SHADOW_NORMAL_BIAS;
     sun.shadow.ray_traced = traced_shadows;
     Node* sun_node = scene.add_light(sun, name: "sun")!;
     sun_node.local.rotation = maths::look_rotation(SUN_DIRECTION.normalize(), { 0, 1, 0 });

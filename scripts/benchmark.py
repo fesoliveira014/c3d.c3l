@@ -88,6 +88,8 @@ def parse_arguments():
                         help="ray-traced reflections of a deferred measured view")
     render.add_argument("--depth-prepass", choices=["on", "off"], default="on",
                         help="depth prepass of a forward measured view; deferred views always run it")
+    render.add_argument("--auto-exposure", choices=["on", "off"], default="off",
+                        help="automatic exposure of the measured view")
     render.add_argument("--gpu-timings", action="store_true", help="enable renderer timestamps")
     render.add_argument("--validation", action="store_true", help="enable Vulkan validation")
 
@@ -247,7 +249,7 @@ def workload_arguments(args, mode, lights, shading):
             "--warmup", str(args.warmup), "--width", str(args.width), "--height", str(args.height),
             "--capacity", str(args.capacity), "--range", str(args.range), "--anti-aliasing", args.anti_aliasing,
             "--ambient-occlusion", args.ambient_occlusion, "--depth-prepass", args.depth_prepass,
-            "--reflections", args.reflections, *common_switches(args)]
+            "--reflections", args.reflections, "--auto-exposure", args.auto_exposure, *common_switches(args)]
 
 
 def render_jobs(args):
@@ -265,7 +267,7 @@ def instancing_jobs(args):
     common = ["--benchmark", "--frames", str(args.frames), "--warmup", str(args.warmup), "--width", str(args.width),
               "--height", str(args.height), "--anti-aliasing", args.anti_aliasing,
               "--ambient-occlusion", args.ambient_occlusion, "--depth-prepass", args.depth_prepass,
-              *common_switches(args)]
+              "--auto-exposure", args.auto_exposure, *common_switches(args)]
     return [(f"fade-field-{field}", [*(["--fade-field"] if field == "on" else []), *common])
             for field in args.fade_fields]
 
