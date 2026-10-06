@@ -30,7 +30,8 @@ defer (void)render::destroy_render_target(&renderer, capture);
 attachment and sampled. `resize_render_target` keeps the id, recreates the image after outstanding
 frames complete, increments the target revision, and resizes every view that writes the target.
 `destroy_render_target` faults `RESOURCE_IN_USE` while a live view selects the target: destroy the
-views first. Renderer teardown releases remaining views, then targets.
+views first. A full pool faults `CAPACITY_EXCEEDED` (`RendererDesc.max_render_targets`, 8 by default; see
+[Capacities](#capacities)). Renderer teardown releases remaining views, then targets.
 
 ## Views
 
@@ -270,10 +271,11 @@ Images a view allocates at creation, by setting:
 | `volumetric_fog` | +1 |
 | `PATH_TRACED`: accumulation, no sky images | 3 in all |
 
-`texture_view_desc` and `default_view_desc` hold 5 images. A raster view with every row but the debug image,
-reflections and path tracing holds 41. Three images are allocated during a frame: the scene color and depth snapshots
-inside `render_view` when a material reads the scene, and the FXAA fallback output inside `finish_view` when FXAA
-cannot write the output rectangle directly. A headless renderer's window views hold none.
+`texture_view_desc` and `default_view_desc` hold 5 images. A raster view with `TAA`, eight bloom levels and every
+other row except the debug image, reflections and path tracing holds 41. Up to three images are allocated during a
+frame: the scene color and depth snapshots inside `render_view` when a material reads the scene, and the FXAA fallback
+output inside `finish_view` when FXAA cannot write the output rectangle directly. A headless renderer's default view
+holds none.
 
 Exhaustion faults come unchanged from gpu.c3l: a full texture table or attachment table faults `gpu::SLOT_TABLE_FULL`,
 a full heap `gpu::DESCRIPTOR_HEAP_FULL`. Creation faults leave no partial resource: `create_view`,
@@ -282,7 +284,8 @@ a full heap `gpu::DESCRIPTOR_HEAP_FULL`. Creation faults leave no partial resour
 `resize_render_target` leaves the target live without an image, and a failed `configure_view` can leave the view with
 part of its images; destroy and recreate either.
 
-To size the four fields, render a representative frame, then read `Stats` and `ViewStats`:
+To size the four fields, render representative frames until the next reading, at most `TEXTURE_STATS_INTERVAL` frames,
+then read `Stats` and `ViewStats`; `ViewStats.images` is current every frame:
 
 - `Stats.textures` and `texture_views` count live table entries and heap slots at frame start, and `texture_capacity`
   and `texture_heap_capacity` the resolved sizes. They are read every `TEXTURE_STATS_INTERVAL` (16) frames, because a
@@ -295,14 +298,16 @@ Worked example, from the image table: a game view with `DEFERRED`, `TAA`, five b
 holds 23 images (4 + 6 + 1 + 5 + 5 + 2). The window view holds 5. Two editor viewports from `texture_view_desc` hold 5
 each. A `render_to` thumbnail holds 5 while it renders. The game view, the viewports and 64 thumbnails write 67
 targets. That is 110 entries and 110 heap slots. Add the uploaded asset textures, and the renderer's own images: the
-shadow atlas, environment maps, built-in textures, probe volumes, reflection probes and the swapchain images.
+shadow atlas, environment maps, atmosphere tables, built-in textures, probe volumes, reflection probes and the
+swapchain images.
 `Stats.textures` minus the views' and targets' share is that last amount, measured. With 2,000 asset textures the
 table needs about 2,150 entries, so `texture_capacity = 2560` leaves headroom. A mipmapped or storage asset texture
 can hold several heap slots, so size `texture_heap_capacity` from `Stats.texture_views`, not from the texture count.
 The views need `max_views = 5` and the targets `max_render_targets = 67` or more.
 
-Per-frame cost grows with `max_render_targets`: `begin_frame` and each view's preparation visit every target slot. An
-empty frame took 25 µs at 8 slots, 33 µs at 1,000 and 47 to 64 µs at 4,000 on llvmpipe.
+Per-frame cost grows with `max_render_targets`: `begin_frame` and each view's preparation visit every target slot, and
+`begin_frame` also visits every view slot to snapshot and count its images. An empty frame took 25 µs at 8 slots, 33 µs at 1,000 and 47 to 64 µs at 4,000 on
+llvmpipe.
 
 ## Clip plane
 
@@ -558,12 +563,11 @@ Custom materials take part through their shader: a `ShaderDesc` with a `gbuffer`
 like `STANDARD` on a deferred view, one without stays forward; see
 [custom shaders](custom_shaders.md#g-buffer-stage).
 
-Per-view numbers live on the view: `Renderer.view_stats(view)` returns `ViewStats` with the
-view's live working images at frame start (`images`), its selected and dropped light counts, whether it bound another view's shadow set
-(`shadow_set_shared`, the table's "Shadow set" row), its cluster count and overflow count, its completed
-GPU pass timings (`C3D_PROFILE_GPU`) and its applied exposure (`exposure`, delayed under auto exposure), while
-`Stats` keeps the renderer-wide sums.
-`gui::view_stats_table(renderer, views, labels)` prints several views side by side.
+Per-view numbers live on the view: `Renderer.view_stats(view)` returns `ViewStats` with the view's live working images
+at frame start (`images`), its selected and dropped light counts, whether it bound another view's shadow set
+(`shadow_set_shared`, the table's "Shadow set" row), its cluster count and overflow count, its completed GPU pass
+timings (`C3D_PROFILE_GPU`) and its applied exposure (`exposure`, delayed under auto exposure), while `Stats` keeps
+the renderer-wide sums. `gui::view_stats_table(renderer, views, labels)` prints several views side by side.
 
 ```bash
 python3 scripts/build.py --example shading_paths

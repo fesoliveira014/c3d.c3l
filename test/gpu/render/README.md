@@ -265,8 +265,8 @@ What the four cases establish:
   store capacity faults with the specific fault before any frame, texture, environment or view is created.
 
 - Renderer capacities (`test_capacities.c3`): a renderer with 32 views and 64 render targets
-  creates, renders, samples and destroys all of them without per-frame allocation or leaks, and
-  the next view or target faults `c3d::CAPACITY_EXCEEDED`; a zeroed `RendererDesc` holds 8 views
+  creates and destroys all of them, renders every view and samples the last view's output without
+  per-frame allocation or leaks, and the next view or target faults `c3d::CAPACITY_EXCEEDED`; a zeroed `RendererDesc` holds 8 views
   (the default view among them) and 8 targets over gpu.c3l's default table and heap; with
   `max_views = 1` `create_view` and `render_to` fault and leave nothing behind. A target at index
   32 is sampled, after a compute write, by two views in one frame through a Basic material and
