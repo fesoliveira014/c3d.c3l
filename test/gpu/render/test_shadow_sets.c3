@@ -40,6 +40,10 @@ const Vec3 SHADOW_SET_WALL_CENTER @private = { 0, 3, -15 };
 const Vec3 SHADOW_SET_WALL_SIZE @private = { 20, 6, 0.5f };
 const Vec3 SHADOW_SET_BOARD_CENTER @private = { -7.5f, 2.5f, -11 }; // its wall shadow clears its own occlusion
 const Vec3 SHADOW_SET_BOARD_SIZE @private = { 2, 5, 0.3f };
+const float SHADOW_SET_NO_SHADOW_DISTANCE @private = 0.05f; // under the camera's near plane: no cascade covers anything
+const InstanceFade SHADOW_SET_BATCH_FADE @private = { .start = 7.5f, .end = 8.5f };
+const Vec3 SHADOW_SET_BATCH_POSITION @private = { 0, 8, 4 }; // 6 m above the main camera, 10 m above the mirror
+const float SHADOW_SET_BATCH_SPACING @private = 0.6f; // instances touch, so the batch shades one bar
 
 enum ShadowSetCase : int (String name) @private {
     FORWARD { "forward" },
@@ -330,4 +334,138 @@ fn void test_own_shadow_sets_render_unchanged() @test {
         ulong hash = fnv64a::hash(((char*)first.ptr)[:first.len * Vec4::size]);
         io::eprintfn("own_set_hash case=%s fnv1a64=%016x", own_case.name, hash);
     }
+}
+
+fn void? shadow_set_render_pair(ShadowSetFixture* fixture, bool shared = true) @private {
+    Renderer* renderer = &fixture.renderer;
+    renderer.begin_frame(SHADOW_SET_FRAME_INFO)!;
+    defer catch render::abort_frame(renderer);
+    renderer.render_view(
+        scene:         &fixture.scene,
+        camera_node:   fixture.mirror,
+        view:          fixture.mirror_view,
+        shadow_camera: shared ? fixture.main : null,
+    )!;
+    renderer.finish_view(fixture.mirror_view)!;
+    renderer.render_view(&fixture.scene, fixture.main, fixture.main_view)!;
+    renderer.finish_view(fixture.main_view)!;
+    return renderer.end_frame();
+}
+
+fn ViewId? shadow_set_add_view(ShadowSetFixture* fixture, uint[<2>] extent, RenderTargetId* target) @private {
+    *target = render::create_render_target(
+        renderer: &fixture.renderer,
+        desc:     render::render_target_desc(extent.x, extent.y, PixelFormat.RGBA32_FLOAT),
+    )!;
+    ViewDesc desc = render::texture_view_desc(*target);
+    desc.post.anti_aliasing = AntiAliasing.NONE;
+    return render::create_view(&fixture.renderer, desc);
+}
+
+fn void? shadow_set_share(ShadowSetFixture* fixture, ViewId view, bool share) @private {
+    ViewDesc desc = fixture.renderer.views.get(view).desc;
+    desc.share_shadows = share;
+    return render::configure_view(&fixture.renderer, view, desc);
+}
+
+fn Node*? shadow_set_add_faded_batch(ShadowSetFixture* fixture) @private {
+    Transform[4] transforms;
+    foreach (uint index, &transform : transforms) {
+        *transform = maths::TRANSFORM_IDENTITY;
+        transform.position = { ((float)index - 1.5f) * SHADOW_SET_BATCH_SPACING, 0, 0 };
+        transform.scale = { SHADOW_SET_BATCH_SPACING, SHADOW_SET_BATCH_SPACING, SHADOW_SET_BATCH_SPACING };
+    }
+    Node* node = fixture.scene.add_instanced_mesh(
+        geometry:   fixture.box,
+        material:   fixture.matte,
+        capacity:   transforms.len,
+        transforms: transforms[..],
+    )!;
+    node.local.position = SHADOW_SET_BATCH_POSITION;
+    fixture.scene.get(node, InstancedMesh).fade = SHADOW_SET_BATCH_FADE;
+    fixture.scene.update_world();
+    return node;
+}
+
+fn void test_main_view_binding_the_mirror_set_matches_its_own_set_bitwise() @test {
+    ShadowSetFixture fixture;
+    shadow_set_create_fixture(&fixture)!!;
+    defer shadow_set_destroy_fixture(&fixture);
+    // No LodGroup casters: a set the mirror records casts with the mirror's LOD levels.
+    shadow_set_add_fog(&fixture)!!;
+    float[2] depths = shadow_set_blend_band_middles(&fixture);
+    foreach (depth : depths) shadow_set_add_caster_over(&fixture, shadow_set_ground_point(fixture.main, depth))!!;
+    shadow_set_add_faded_batch(&fixture)!!;
+    Vec4[] own = mem::new_array(Vec4, SHADOW_SET_WIDTH * SHADOW_SET_HEIGHT);
+    defer free(own);
+    Vec4[] borrowed = mem::new_array(Vec4, SHADOW_SET_WIDTH * SHADOW_SET_HEIGHT);
+    defer free(borrowed);
+
+    for (uint index = 0; index < ShadowSetCase::len; index++) {
+        ShadowSetCase own_case = ShadowSetCase::from_ordinal(index);
+        shadow_set_configure_view(&fixture, fixture.main_view, own_case)!!;
+        shadow_set_configure_view(&fixture, fixture.mirror_view, own_case)!!;
+        shadow_set_render_pair(fixture: &fixture, shared: false)!!;
+        shadow_set_read_image(&fixture, fixture.main_target, own)!!;
+        shadow_set_render_pair(&fixture)!!;
+        assert(fixture.renderer.stats.shadow_sets_shared == 1);
+        shadow_set_read_image(&fixture, fixture.main_target, borrowed)!!;
+        assert(mem::equals(own, borrowed));
+    }
+}
+
+fn void test_a_sun_without_layers_binds_none_in_own_and_borrowing_views() @test {
+    ShadowSetFixture fixture;
+    shadow_set_create_fixture(&fixture)!!;
+    defer shadow_set_destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    fixture.scene.get(fixture.sun, Light).shadow.max_distance = SHADOW_SET_NO_SHADOW_DISTANCE;
+    Vec4[] own = mem::new_array(Vec4, SHADOW_SET_WIDTH * SHADOW_SET_HEIGHT);
+    defer free(own);
+    Vec4[] borrowed = mem::new_array(Vec4, SHADOW_SET_WIDTH * SHADOW_SET_HEIGHT);
+    defer free(borrowed);
+
+    bool[2] borrowing = { false, true };
+    foreach (borrows : borrowing) {
+        shadow_set_render_pair(fixture: &fixture, shared: borrows)!!;
+        // The mirror lights the sun but its set, fitted to main, holds no layers for it.
+        assert(renderer.stats.shadow_layers == 0);
+        assert(renderer.stats.shadow_lights_unshared == (borrows ? 1 : 0));
+        assert(renderer.shadow_set.layer_count == 0 && renderer.shadow_set.light_count == 0);
+        assert((ulong)renderer.shadow_set.shadows == 0);
+        assert(renderer.stats.shadow_sets_shared == (borrows ? 1 : 0));
+        shadow_set_read_image(&fixture, fixture.main_target, borrows ? borrowed : own)!!;
+    }
+    assert(mem::equals(own, borrowed));
+}
+
+fn void test_same_camera_views_share_unless_one_opts_out() @test {
+    ShadowSetFixture fixture;
+    shadow_set_create_fixture(&fixture)!!;
+    defer shadow_set_destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    RenderTargetId target;
+    ViewId twin = shadow_set_add_view(&fixture, SHADOW_SET_HALF_EXTENT, &target)!!;
+    Vec4[] borrowed = mem::new_array(Vec4, SHADOW_SET_WIDTH * SHADOW_SET_HEIGHT / 4);
+    defer free(borrowed);
+    Vec4[] own = mem::new_array(Vec4, SHADOW_SET_WIDTH * SHADOW_SET_HEIGHT / 4);
+    defer free(own);
+    ViewId[2] views = { fixture.main_view, twin };
+    bool[2][3] shares = { { true, true }, { true, false }, { false, true } };
+
+    foreach (frame, share : shares) {
+        foreach (index, view : views) shadow_set_share(&fixture, view, share[index])!!;
+        renderer.begin_frame(SHADOW_SET_FRAME_INFO)!!;
+        foreach (view : views) {
+            renderer.render_view(&fixture.scene, fixture.main, view)!!;
+            renderer.finish_view(view)!!;
+        }
+        renderer.end_frame()!!;
+        bool shared = share[0] && share[1];
+        assert(renderer.stats.shadow_sets_recorded == (shared ? 1 : 2));
+        assert(renderer.stats.shadow_sets_shared == (shared ? 1 : 0));
+        assert(renderer.view_stats(twin)!!.shadow_set_shared == shared);
+        if (frame < 2) shadow_set_read_image(&fixture, target, frame ? own : borrowed)!!;
+    }
+    assert(mem::equals(borrowed, own));
 }

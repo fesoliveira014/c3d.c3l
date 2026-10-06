@@ -95,6 +95,12 @@ What the four cases establish:
   probe is shadowed. The test prints an FNV-1a hash per image (`--test-show-output`) for comparing two commits on one
   machine.
 
+- Shadow sets shared between views (`test_shadow_sets.c3`): a mirror fitted to the main camera records the set and
+  main binds it, bit for bit as its own set (forward, deferred, the `evaluate_standard_lights` stage, volumetric fog,
+  a batch the mirror's distance fades); two views of one camera share one set unless either opts out, and the
+  opted-out frame renders the same image; a sun no cascade covers leaves an empty set and no layers for the own-set
+  and the borrowing view, and both render the same image.
+
 - Directional normal offsets at the default two texels of a 2048-texel atlas,
   in their own fixture (`test_shadow_bias.c3`): flat ground stays lit
   (visibility at least 0.99) in all four cascades at sun elevations of 10°,
