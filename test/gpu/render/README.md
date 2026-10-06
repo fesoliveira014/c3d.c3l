@@ -97,8 +97,8 @@ What the four cases establish:
   traces identically after every other geometry's CPU arrays are released.
 
 - The instance cap counts the rows that trace: with more candidates than
-  `max_trace_instances` but fewer kept rows, preparation succeeds, and one more
-  kept row faults `c3d::CAPACITY_EXCEEDED`.
+  `max_trace_instances`, some left out for want of a posed slot, preparation
+  succeeds, and one more kept row faults `c3d::CAPACITY_EXCEEDED`.
 
 - On a renderer with ray queries, the software walk and ray queries report
   the same instance, triangle, distance and barycentrics over the same grid,
