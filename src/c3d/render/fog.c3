@@ -56,15 +56,6 @@ fn void? acquire_fog_volume(Renderer* renderer, ViewRecord* record) @private {
     )!;
 }
 
-fn void retire_fog_volume(Renderer* renderer, ViewRecord* record) @private {
-    if (!record.fog_volume.texture.is_valid()) return;
-    retire_storage_target(last_submitted_retire(renderer), &record.fog_volume);
-}
-
-fn void release_fog_volume(gpu::Device* device, ViewRecord* record) @private {
-    if (record.fog_volume.texture.is_valid()) release_storage_target(device, &record.fog_volume);
-}
-
 <*
  Packed index plus one of the light the volumetric fog scatters; zero for none.
  @param [&in] extraction

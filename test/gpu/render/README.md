@@ -285,6 +285,15 @@ What the four cases establish:
   fault at creation; `Stats` counts a new view's images and target at the next reading. The
   overlay case opens a window: without one it prints a skip line.
 
+- Resize faults (`test_resize_faults.c3`): at a full texture table a target resize, one whose second view cannot get
+  its images, and a `configure_view` that changes the render scale fault `gpu::SLOT_TABLE_FULL`; at a full heap an
+  in-place `configure_view` that adds bloom beside kept TAA images and drops ambient occlusion faults
+  `gpu::DESCRIPTOR_HEAP_FULL`. Each leaves the target, the views, their images and the live counts as they were and
+  renders the same pixel; the failed target and configure resizes keep the TAA history. Each call succeeds once the
+  fillers are destroyed. The window case grows its window over a full table: `begin_frame` faults with the window view
+  unchanged and the next one succeeds at the swapchain's extent; without a window, or when the window keeps its size,
+  it prints a skip line.
+
 What they cannot establish: window clear-only and GUI-only frames need a
 window (run the `clear` and `cube_gui` examples with validation), and a
 presentation failure after submission needs a hardware observation.

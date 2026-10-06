@@ -2099,11 +2099,6 @@ fn void? acquire_scene_snapshots(Renderer* renderer, ViewRecord* record, SceneRe
     }
 }
 
-fn void release_scene_snapshots(gpu::Device* device, ViewRecord* record) @private {
-    if (record.scene_color.texture.is_valid()) release_target(device, &record.scene_color);
-    if (record.scene_depth.texture.is_valid()) release_target(device, &record.scene_depth);
-}
-
 fn bool environment_view_valid(AssetStore* assets, Scene* scene) @private {
     bool lighting_valid = !assets.environments.is_live(scene.environment)
       || (scene.environment_intensity >= 0 && math::is_finite(scene.environment_intensity)

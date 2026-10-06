@@ -450,6 +450,12 @@ struct ViewRecord {
     ViewStats                            stats;
 }
 
+struct StagedView @private {
+    ViewRecord* live;
+    ViewRecord  images; // the configuration and image handles live adopts; nothing else is filled
+    uint[<2>]   output_extent;
+}
+
 <*
  Remember every working image's state at the start of a frame.
 *>
@@ -670,12 +676,14 @@ fn ViewId? create_view(Renderer* renderer, ViewDesc desc) {
     }
     post::acquire_view_exposure(renderer, record)!;
     defer catch post::release_view_exposure(&renderer.device, record);
-    acquire_view_images(renderer, record)!;
+    defer catch release_view_images(&renderer.device, record);
+    acquire_view_images(renderer, record, view_output_extent(renderer, &desc))!;
     return view;
 }
 
 <*
- Replace the view's configuration; resizes or retires its working images and forgets its history except the adapted exposure.
+ Replace the view's configuration, resizing or retiring its working images.
+ Needs room for every new image before an old one goes; a fault changes nothing.
  @param [&inout] renderer : "No open frame."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT
  @return? c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
@@ -688,82 +696,38 @@ fn ViewId? create_view(Renderer* renderer, ViewDesc desc) {
 fn void? configure_view(Renderer* renderer, ViewId view, ViewDesc desc) {
     ViewRecord* record = renderer.views.try_get(view)!;
     validate_view_desc(renderer, &desc)!;
-    record.auto_exposure.reconfigure(&record.desc, &desc);
 
-    ViewRecord wanted = { .live = true, .desc = desc };
-    uint[<2>] current_extent = view_working_extent(renderer, record);
-    uint[<2>] wanted_extent = view_working_extent(renderer, &wanted);
-    bool same_output = record.desc.output == desc.output && c3d::same_id(record.desc.target, desc.target);
-    if (!same_output || current_extent != wanted_extent) {
-        wait_frames(renderer)!;
-        record.cluster_root = (gpu::GpuAddress)0;
-        record.cluster_depth = {};
+    @pool() {
+        StagedView[] staged = alloc::new_array(tmem, StagedView, 1);
+        staged[0] = {
+            .live          = record,
+            .images        = { .desc = desc },
+            .output_extent = view_output_extent(renderer, &desc),
+        };
+        ViewRecord* images = &staged[0].images;
+        uint[<2>] current_extent = view_working_extent(renderer, record);
+        uint[<2>] wanted_extent = view_working_extent(renderer, images);
+        bool same_output = record.desc.output == desc.output && c3d::same_id(record.desc.target, desc.target);
+        if (!same_output || current_extent != wanted_extent) {
+            wait_frames(renderer)!;
+            stage_views(renderer, staged)!;
+            commit_resized_views(renderer, staged);
+            return;
+        }
+
+        copy_view_images(images, record);
+        drop_unwanted_images(images, &record.desc);
+        stage_views(renderer, staged)!;
+        record.auto_exposure.reconfigure(&record.desc, &desc);
+        adopt_view_images(record, images);
+        retire_view_images(renderer, images);
         record.desc = desc;
-        return resize_view(renderer, record);
-    }
-
-    if (desc.post.anti_aliasing == AntiAliasing.FXAA) {
-        post::acquire_post_targets(renderer, record)!;
-    } else {
-        post::retire_post_targets(renderer, record);
-    }
-    if (desc.shading == ShadingPath.DEFERRED) {
-        acquire_gbuffer(renderer, record)!;
-    } else {
-        retire_gbuffer(renderer, record);
-    }
-    ClusterBuffers replacement;
-    bool replace_clusters = desc.lights == LightSelection.CLUSTERED && record.hdr_color.texture.is_valid()
-      && (!record.clusters.allocation.is_valid()
-        || record.desc.clusters.tiles_x != desc.clusters.tiles_x
-        || record.desc.clusters.tiles_y != desc.clusters.tiles_y
-        || record.desc.clusters.depth_slices != desc.clusters.depth_slices
-        || record.desc.clusters.lights_per_cluster != desc.clusters.lights_per_cluster);
-    if (replace_clusters) {
-        ClusterLayout layout = cluster_layout(
-            desc: desc.clusters,
-            max_lights: renderer.max_lights,
-            max_groups: {
-                renderer.caps.max_compute_work_group_count.x,
-                renderer.caps.max_compute_work_group_count.y,
-                renderer.caps.max_compute_work_group_count.z,
-            },
-        )!;
-        replacement = create_cluster_buffers(renderer, layout)!;
-    }
-    if (replace_clusters || desc.lights == LightSelection.FLAT) {
-        retire_cluster_buffers(renderer, &record.clusters);
-        record.clusters = replacement;
-        record.cluster_root = (gpu::GpuAddress)0;
-    }
-    if (record.desc.lights != desc.lights
-        || record.desc.clusters.depth_slices != desc.clusters.depth_slices
-        || record.desc.clusters.far_distance != desc.clusters.far_distance) {
         record.cluster_root = (gpu::GpuAddress)0;
         record.cluster_depth = {};
-    }
-    AmbientOcclusionDesc* ambient_occlusion = &desc.ambient_occlusion;
-    if (ambient_occlusion.kind == AoKind.NONE
-        || ambient_occlusion.full_resolution != record.desc.ambient_occlusion.full_resolution) {
-        retire_ao_images(renderer, record);
-    }
-    if (!desc.screen_space_gi.enabled) retire_ssgi_images(renderer, record);
-    if (!desc.ray_tracing.reflections) retire_reflection_images(renderer, record);
-    if (desc.shading != ShadingPath.PATH_TRACED) retire_accumulation(renderer, record);
-    if (desc.shading == ShadingPath.PATH_TRACED) retire_sky_view_images(renderer, record);
-    if (!desc.volumetric_fog || desc.shading == ShadingPath.PATH_TRACED) retire_fog_volume(renderer, record);
-    record.desc = desc;
-    record.history.valid = false;
-    record.history.pending = false;
-    record.stats.accumulated_samples = 0;
-    post::retire_effect_targets(renderer, record);
-    post::acquire_effect_targets(renderer, record)!;
-    acquire_ao_images(renderer, record)!;
-    acquire_ssgi_images(renderer, record)!;
-    acquire_reflection_images(renderer, record)!;
-    acquire_accumulation(renderer, record)!;
-    acquire_sky_view_images(renderer, record)!;
-    acquire_fog_volume(renderer, record)!;
+        record.history.valid = false;
+        record.history.pending = false;
+        record.stats.accumulated_samples = 0;
+    };
 }
 
 <*
@@ -778,8 +742,7 @@ fn void? destroy_view(Renderer* renderer, ViewId view) {
     ViewRecord* record = renderer.views.try_get(view)!;
     if (view.index == renderer.default_view.index) return c3d::INVALID_ARGUMENT~;
     wait_frames(renderer)!;
-    release_view_images(renderer, record);
-    post::release_view_exposure(&renderer.device, record);
+    release_view(renderer, record);
     *record = {};
     renderer.views.remove(view);
 }
@@ -877,11 +840,22 @@ fn uint[<2>] view_working_extent(Renderer* renderer, ViewRecord* record) @privat
     return working_extent(record.desc.viewport, output.x, output.y, record.desc.render_scale);
 }
 
-fn void? acquire_view_images(Renderer* renderer, ViewRecord* record) @private {
-    uint[<2>] extent = view_working_extent(renderer, record);
-    if (extent.x == 0 || extent.y == 0) return;
-    defer catch release_view_images(renderer, record);
-    acquire_view_targets(renderer, record, extent.x, extent.y)!;
+fn void? acquire_view_images(Renderer* renderer, ViewRecord* record, uint[<2>] output) @private {
+    if (!record.hdr_color.texture.is_valid()) {
+        if (output.x == 0 || output.y == 0) return;
+        uint[<2>] extent = working_extent(
+            viewport:      record.desc.viewport,
+            output_width:  output.x,
+            output_height: output.y,
+            render_scale:  record.desc.render_scale,
+        );
+        acquire_view_targets(
+            renderer: renderer,
+            record:   record,
+            width:    extent.x,
+            height:   extent.y,
+        )!;
+    }
     if (record.desc.post.anti_aliasing == AntiAliasing.FXAA) post::acquire_post_targets(renderer, record)!;
     post::acquire_effect_targets(renderer, record)!;
     if (record.desc.shading == ShadingPath.DEFERRED) acquire_gbuffer(renderer, record)!;
@@ -891,7 +865,7 @@ fn void? acquire_view_images(Renderer* renderer, ViewRecord* record) @private {
     acquire_accumulation(renderer, record)!;
     acquire_sky_view_images(renderer, record)!;
     acquire_fog_volume(renderer, record)!;
-    if (record.desc.lights == LightSelection.CLUSTERED) {
+    if (record.desc.lights == LightSelection.CLUSTERED && !record.clusters.allocation.is_valid()) {
         ClusterLayout layout = cluster_layout(
             desc: record.desc.clusters,
             max_lights: renderer.max_lights,
@@ -905,33 +879,166 @@ fn void? acquire_view_images(Renderer* renderer, ViewRecord* record) @private {
     }
 }
 
-fn void release_view_images(Renderer* renderer, ViewRecord* record) @private {
-    destroy_cluster_buffers(&renderer.device, &record.clusters);
-    release_cluster_readback(&renderer.device, record);
-    record.cluster_root = (gpu::GpuAddress)0;
-    record.cluster_depth = {};
-    release_scene_snapshots(&renderer.device, record);
-    release_gbuffer(&renderer.device, record);
-    release_ao_images(&renderer.device, record);
-    release_ssgi_images(&renderer.device, record);
-    release_reflection_images(&renderer.device, record);
-    release_accumulation(&renderer.device, record);
-    release_sky_view_images(&renderer.device, record);
-    release_fog_volume(&renderer.device, record);
-    release_view_targets(&renderer.device, record);
-    post::release_post_targets(&renderer.device, record);
-    post::release_effect_targets(&renderer.device, record);
-    free_view_history(renderer.allocator, &record.history);
-    free_lod_history(renderer, &record.lod_history);
-    record.lod_history = {};
+fn void release_view_images(gpu::Device* device, ViewRecord* record) @private {
+    foreach (image : view_targets(record)) {
+        if (!image.texture.is_valid()) continue;
+        if (image.attachment.is_valid()) (void)gpu::destroy_attachment_view(device, image.attachment);
+        release_storage_target(device, image);
+    }
+    record.bloom_levels = 0;
+    destroy_cluster_buffers(device, &record.clusters);
 }
 
-fn void? resize_view(Renderer* renderer, ViewRecord* record) @private {
-    release_view_images(renderer, record);
-    record.history.valid = false;
-    record.history.pending = false;
-    record.stats.accumulated_samples = 0;
-    return acquire_view_images(renderer, record);
+fn void retire_view_images(Renderer* renderer, ViewRecord* record) @private {
+    RetireList* retire = last_submitted_retire(renderer);
+    foreach (image : view_targets(record)) {
+        if (!image.texture.is_valid()) continue;
+        if (image.attachment.is_valid()) {
+            retire.push({ .kind = RetiredKind.ATTACHMENT_VIEW, .attachment_view = image.attachment });
+        }
+        retire_storage_target(retire, image);
+    }
+    record.bloom_levels = 0;
+    retire_cluster_buffers(renderer, &record.clusters);
+}
+
+fn void forget_view_history(Renderer* renderer, ViewRecord* record) @private {
+    free_view_history(renderer.allocator, &record.history);
+    free_lod_history(renderer, &record.lod_history);
+}
+
+fn void release_view(Renderer* renderer, ViewRecord* record) @private {
+    release_view_images(&renderer.device, record);
+    release_cluster_readback(&renderer.device, record);
+    forget_view_history(renderer, record);
+    post::release_view_exposure(&renderer.device, record);
+}
+
+fn void copy_view_images(ViewRecord* staged, ViewRecord* live) @private {
+    Target*[VIEW_TARGET_COUNT] staged_images = view_targets(staged);
+    foreach (index, image : view_targets(live)) *staged_images[index] = *image;
+    staged.bloom_levels = live.bloom_levels;
+    staged.clusters = live.clusters;
+}
+
+fn void drop_unwanted_images(ViewRecord* staged, ViewDesc* previous) @private {
+    ViewDesc* desc = &staged.desc;
+    if (desc.post.anti_aliasing != AntiAliasing.FXAA) {
+        staged.post_a = {};
+        staged.post_b = {};
+    }
+    if (desc.shading != ShadingPath.DEFERRED) staged.gbuffer = {};
+    if (desc.lights == LightSelection.FLAT
+        || previous.clusters.tiles_x != desc.clusters.tiles_x
+        || previous.clusters.tiles_y != desc.clusters.tiles_y
+        || previous.clusters.depth_slices != desc.clusters.depth_slices
+        || previous.clusters.lights_per_cluster != desc.clusters.lights_per_cluster) {
+        staged.clusters = {};
+    }
+    AmbientOcclusionDesc* ambient_occlusion = &desc.ambient_occlusion;
+    if (ambient_occlusion.kind == AoKind.NONE
+        || ambient_occlusion.full_resolution != previous.ambient_occlusion.full_resolution) {
+        staged.ao_raw = {};
+        staged.ao = {};
+    }
+    if (!desc.screen_space_gi.enabled) {
+        staged.ssgi_raw = {};
+        staged.ssgi_history = {};
+        staged.ssgi_depth = {};
+        staged.ssgi_color = {};
+        staged.ssgi = {};
+    }
+    if (!desc.ray_tracing.reflections) {
+        staged.reflection = {};
+        staged.reflection_blur = {};
+    }
+    if (desc.shading != ShadingPath.PATH_TRACED) staged.accumulation = {};
+    if (desc.shading == ShadingPath.PATH_TRACED) {
+        staged.sky_view = {};
+        staged.aerial_perspective = {};
+    }
+    if (!desc.volumetric_fog || desc.shading == ShadingPath.PATH_TRACED) staged.fog_volume = {};
+    post::drop_stale_effect_targets(staged);
+}
+
+fn bool view_writes(ViewRecord* record, ViewOutput output, RenderTargetId target) @private {
+    if (!record.live || record.desc.output != output) return false;
+    return output == ViewOutput.WINDOW || c3d::same_id(record.desc.target, target);
+}
+
+fn void? stage_views(Renderer* renderer, StagedView[] views) @private {
+    foreach (index, &view : views) {
+        if (catch excuse = acquire_view_images(renderer, &view.images, view.output_extent)) {
+            foreach_r (&staged : views[:index + 1]) release_staged_images(renderer, staged);
+            return excuse~;
+        }
+    }
+}
+
+fn void release_staged_images(Renderer* renderer, StagedView* view) @private {
+    Target*[VIEW_TARGET_COUNT] live_images = view_targets(view.live);
+    foreach (index, image : view_targets(&view.images)) {
+        if (image.texture == live_images[index].texture) *image = {};
+    }
+    if (view.images.clusters.allocation == view.live.clusters.allocation) view.images.clusters = {};
+    release_view_images(&renderer.device, &view.images);
+}
+
+// Afterwards staged holds exactly the images live gave up.
+fn void adopt_view_images(ViewRecord* live, ViewRecord* staged) @private {
+    Target*[VIEW_TARGET_COUNT] staged_images = view_targets(staged);
+    foreach (index, image : view_targets(live)) {
+        Target* replacement = staged_images[index];
+        if (image.texture == replacement.texture) {
+            *replacement = {};
+        } else {
+            @swap(*image, *replacement);
+        }
+    }
+    @swap(live.bloom_levels, staged.bloom_levels);
+    if (live.clusters.allocation == staged.clusters.allocation) {
+        staged.clusters = {};
+    } else {
+        @swap(live.clusters, staged.clusters);
+    }
+}
+
+fn void commit_resized_views(Renderer* renderer, StagedView[] views) @private {
+    foreach (&view : views) {
+        ViewRecord* record = view.live;
+        record.auto_exposure.reconfigure(&record.desc, &view.images.desc);
+        adopt_view_images(record, &view.images);
+        release_view_images(&renderer.device, &view.images);
+        release_cluster_readback(&renderer.device, record);
+        forget_view_history(renderer, record);
+        record.desc = view.images.desc;
+        record.cluster_root = (gpu::GpuAddress)0;
+        record.cluster_depth = {};
+        record.stats.accumulated_samples = 0;
+    }
+}
+
+fn void? resize_views(
+    Renderer* renderer,
+    ViewOutput output,
+    uint[<2>] extent,
+    RenderTargetId target = {},
+) @private {
+    uint count;
+    foreach (&record : renderer.views.items) {
+        if (view_writes(record, output, target)) count++;
+    }
+    @pool() {
+        StagedView[] views = alloc::new_array(tmem, StagedView, count);
+        uint next;
+        foreach (&record : renderer.views.items) {
+            if (!view_writes(record, output, target)) continue;
+            views[next] = { .live = record, .images = { .desc = record.desc }, .output_extent = extent };
+            next++;
+        }
+        stage_views(renderer, views)!;
+        commit_resized_views(renderer, views);
+    };
 }
 
 fn bool lut_desc_valid(material::TextureDesc* desc) @private {
