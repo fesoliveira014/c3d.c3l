@@ -79,7 +79,8 @@ RGBA8 target, a viewport outside the output, a render scale outside its range an
 stack fault `INVALID_ARGUMENT`; a `clip_plane` other than the zero plane with a normal that is not
 unit length or a `d` that is not finite, and any non-zero `clip_plane` on a `PATH_TRACED` view, fault
 `INVALID_ARGUMENT`; `volumetric_fog` on a `PATH_TRACED` view faults `INVALID_ARGUMENT`; invalid ambient occlusion settings fault `INVALID_ARGUMENT` and
-`AoKind.RAY_TRACED` faults `UNSUPPORTED`; a full pool faults `CAPACITY_EXCEEDED` (`VIEW_CAPACITY` is 8).
+`AoKind.RAY_TRACED` faults `UNSUPPORTED`; a full pool faults `CAPACITY_EXCEEDED` (`RendererDesc.max_views`, 8 by
+default; see [Capacities](#capacities)).
 `destroy_view` on the default view faults `INVALID_ARGUMENT`.
 
 The view owns its working images (`hdr_color`, `depth`, the scene color and depth snapshots, the
@@ -223,6 +224,85 @@ are tight and top row first, and the bytes come back as stored: sRGB-encoded for
 half floats for `RGBA16_FLOAT`. A `DISPLAY_LDR` view writes linear values and relies on an sRGB
 format to encode them, so capture display output for an image file on an `RGBA8_SRGB` target and
 write it with `image::write_png`. Every render target carries transfer-source usage for this.
+
+## Capacities
+
+| `RendererDesc` field | Zero selects | Bound |
+| --- | --- | --- |
+| `max_views` | `DEFAULT_MAX_VIEWS`, 8 | none beyond memory: a view record is 5.5 KiB |
+| `max_render_targets` | `DEFAULT_MAX_RENDER_TARGETS`, 8 | at most the resolved `texture_capacity`, else `create_renderer` faults `c3d::INVALID_ARGUMENT` |
+| `texture_capacity` | `gpu::DEFAULT_TEXTURE_CAPACITY`, 1,024 | 65,536 (`gpu::MAX_SHADER_HEAP_CAPACITY`), else `gpu::INVALID_ARGUMENT` |
+| `texture_heap_capacity` | `gpu::DEFAULT_TEXTURE_HEAP_CAPACITY`, 4,096 | 65,536, else `gpu::INVALID_ARGUMENT`; past the device's descriptor limits no adapter qualifies and `create_renderer` faults `c3d::UNSUPPORTED` |
+
+The pools are fixed at creation. A full pool faults `c3d::CAPACITY_EXCEEDED`. These take a view slot:
+
+- the default view, from creation to teardown;
+- every `create_view`;
+- `render_to`, for the length of the call;
+- `bake_impostor`, `capture_reflection_probe` and `recapture_reflection_probe`, for the length of the call. Each also
+  takes one render-target slot.
+
+An editor with a game view, two viewports and live thumbnails drawn through `render_to` needs `max_views` of at least
+1 + 1 + 2 + 1.
+
+Every working image of a view and every render target holds one texture-table entry and one heap slot. A render target
+also holds one attachment view. So do a view's `hdr_color`, `depth`, scene snapshots, velocity, G-buffer and SSGI
+color, at most 11 per view. gpu.c3l's attachment table holds 4,096 views and cannot be configured: a renderer with
+three plain views holds at most 4,090 render targets, whatever `texture_capacity` allows. Asset textures share the
+table and the heap with the renderer. `default_asset_store_desc()` holds 4,096 textures and the table 1,024 by
+default, so a store filled past about 1,000 uploaded textures faults on upload unless `texture_capacity` is raised.
+
+Images a view allocates at creation, by setting:
+
+| Setting | Images |
+| --- | --- |
+| Raster view: `hdr_color`, `depth`, sky-view table, aerial perspective volume | 4 |
+| `FXAA` | +1 |
+| `TAA` | +6 history, +1 debug image with `TaaDebug` |
+| `bloom` | +`bloom_params.levels` (5 by default, 8 at most) |
+| `depth_of_field` | +4, plus the 2 tile images |
+| `motion_blur` | +1, plus the 2 tile images |
+| Velocity, under `TAA`, `motion_blur` or `screen_space_gi` | +1 |
+| `DEFERRED` G-buffer | +5 |
+| `ambient_occlusion` | +2 |
+| `screen_space_gi` | +7 |
+| `ray_tracing.reflections` | +2 |
+| `volumetric_fog` | +1 |
+| `PATH_TRACED`: accumulation, no sky images | 3 in all |
+
+`texture_view_desc` and `default_view_desc` hold 5 images. A raster view with every row but the debug image,
+reflections and path tracing holds 41. Three images are allocated during a frame: the scene color and depth snapshots
+inside `render_view` when a material reads the scene, and the FXAA fallback output inside `finish_view` when FXAA
+cannot write the output rectangle directly. A headless renderer's window views hold none.
+
+Exhaustion faults come unchanged from gpu.c3l: a full texture table or attachment table faults `gpu::SLOT_TABLE_FULL`,
+a full heap `gpu::DESCRIPTOR_HEAP_FULL`. Creation faults leave no partial resource: `create_view`,
+`create_render_target`, `render_to`, `bake_impostor` and the captures release what they acquired. `render_view` and
+`finish_view` can fault for the images they allocate; the frame aborts like any other fault. A failed
+`resize_render_target` leaves the target live without an image, and a failed `configure_view` can leave the view with
+part of its images; destroy and recreate either.
+
+To size the four fields, render a representative frame, then read `Stats` and `ViewStats`:
+
+- `Stats.textures` and `texture_views` count live table entries and heap slots at frame start, and `texture_capacity`
+  and `texture_heap_capacity` the resolved sizes. They are read every `TEXTURE_STATS_INTERVAL` (16) frames, because a
+  reading walks the texture table: 0.3 µs at 22 entries, 1.5 µs at 982 and 5.3 to 6.0 µs at about 4,020 on llvmpipe.
+  Images created inside a frame show at the next reading.
+- `ViewStats.images` counts one view's live images at frame start, every frame.
+- `gui::stats_panel` shows the four `Stats` fields, `gui::view_stats_table` the images per view.
+
+Worked example, from the image table: a game view with `DEFERRED`, `TAA`, five bloom levels and `ambient_occlusion`
+holds 23 images (4 + 6 + 1 + 5 + 5 + 2). The window view holds 5. Two editor viewports from `texture_view_desc` hold 5
+each. A `render_to` thumbnail holds 5 while it renders. The game view, the viewports and 64 thumbnails write 67
+targets. That is 110 entries and 110 heap slots. Add the uploaded asset textures, and the renderer's own images: the
+shadow atlas, environment maps, built-in textures, probe volumes, reflection probes and the swapchain images.
+`Stats.textures` minus the views' and targets' share is that last amount, measured. With 2,000 asset textures the
+table needs about 2,150 entries, so `texture_capacity = 2560` leaves headroom. A mipmapped or storage asset texture
+can hold several heap slots, so size `texture_heap_capacity` from `Stats.texture_views`, not from the texture count.
+The views need `max_views = 5` and the targets `max_render_targets = 67` or more.
+
+Per-frame cost grows with `max_render_targets`: `begin_frame` and each view's preparation visit every target slot. An
+empty frame took 25 µs at 8 slots, 33 µs at 1,000 and 47 to 64 µs at 4,000 on llvmpipe.
 
 ## Clip plane
 
@@ -479,7 +559,7 @@ like `STANDARD` on a deferred view, one without stays forward; see
 [custom shaders](custom_shaders.md#g-buffer-stage).
 
 Per-view numbers live on the view: `Renderer.view_stats(view)` returns `ViewStats` with the
-view's selected and dropped light counts, whether it bound another view's shadow set
+view's live working images at frame start (`images`), its selected and dropped light counts, whether it bound another view's shadow set
 (`shadow_set_shared`, the table's "Shadow set" row), its cluster count and overflow count, its completed
 GPU pass timings (`C3D_PROFILE_GPU`) and its applied exposure (`exposure`, delayed under auto exposure), while
 `Stats` keeps the renderer-wide sums.
