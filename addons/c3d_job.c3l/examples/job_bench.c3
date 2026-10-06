@@ -25,6 +25,8 @@ const uint LOADED_ITEMS @local = 65536; // the frame kernel timed beside backgro
 const uint LOADED_BATCH @local = 1024; // about 64 ranges: scheduling stays a small share of the timed kernel
 const uint BACKGROUND_RANGES @local = 16384; // about 0.25 s of serial work, so it outlasts the timed frame passes
 const uint BACKGROUND_RANGE_ITEMS @local = 256; // about 15 us of chain multiplies a range
+const uint PINNED_ITEMS @local = 262144; // the largest kernel, where placement shows most
+const uint PINNED_BATCH @local = 1024;
 
 struct Load @local {
     Mat4[] chain;
@@ -120,6 +122,70 @@ fn JobPool create_bench_pool(uint workers) @local {
     desc.worker_count = workers;
     desc.background_workers = job::default_background_workers(workers);
     return job::create_job_pool(mem, desc)!!;
+}
+
+fn void print_cpu_ranges(String prefix, CpuSet cpus) @local {
+    io::print(prefix);
+    String separator = "";
+    sz first = -1;
+    for (sz cpu = 0; cpu <= cpus.len(); cpu++) {
+        bool member = cpu < cpus.len() && cpus.get(cpu);
+        if (member && first < 0) first = cpu;
+        if (member || first < 0) continue;
+        if (cpu - 1 == first) {
+            io::printf("%s%d", separator, first);
+        } else {
+            io::printf("%s%d-%d", separator, first, cpu - 1);
+        }
+        separator = ",";
+        first = -1;
+    }
+    io::printn();
+}
+
+fn void report_pinned_kernel(Mat4[] chain) @local {
+    CoreTypes types = job::core_types();
+    print_cpu_ranges("# performance_cpus=", types.performance);
+    print_cpu_ranges("# efficiency_cpus=", types.efficiency);
+    if (!types.efficiency.cardinality()) return;
+
+    JobPoolDesc desc = job::default_job_pool_desc();
+    desc.worker_count = (uint)types.performance.cardinality() - 1;
+    desc.background_workers = job::default_background_workers(desc.worker_count);
+    JobPool unpinned = job::create_job_pool(mem, desc)!!;
+    defer job::destroy_job_pool(&unpinned);
+    desc.worker_cpus = types.performance;
+    JobPool pinned = job::create_job_pool(mem, desc)!!;
+    defer job::destroy_job_pool(&pinned);
+    print_cpu_ranges("# pinned_worker_cpus=", pinned.worker_cpus(0));
+
+    Mat4[] output = mem::new_array(Mat4, PINNED_ITEMS);
+    defer free(output);
+    Kernel kernel = { .chain = chain, .output = output };
+    double unpinned_microseconds = time_run(
+        pool:  &unpinned,
+        range: &kernel_range,
+        data:  &kernel,
+        count: PINNED_ITEMS,
+        batch: PINNED_BATCH,
+    );
+    double pinned_microseconds = time_run(
+        pool:  &pinned,
+        range: &kernel_range,
+        data:  &kernel,
+        count: PINNED_ITEMS,
+        batch: PINNED_BATCH,
+    );
+    io::printn("# pinned,workers,items,batch,unpinned_us,pinned_us,ratio");
+    io::printfn(
+        "pinned,%d,%d,%d,%.1f,%.1f,%.2f",
+        desc.worker_count,
+        PINNED_ITEMS,
+        PINNED_BATCH,
+        unpinned_microseconds,
+        pinned_microseconds,
+        pinned_microseconds / unpinned_microseconds,
+    );
 }
 
 fn void report_loaded_kernel(
@@ -218,9 +284,10 @@ fn bool report_kernel(
 fn int main() {
     JobPoolDesc defaults = job::default_job_pool_desc();
     io::printfn(
-        "# job_bench logical_cpus=%d default_workers=%d background_workers=%d runs=%d background_runs=%d "
-        "worker_temp_bytes=%d",
+        "# job_bench logical_cpus=%d available_cpus=%d default_workers=%d background_workers=%d runs=%d "
+        "background_runs=%d worker_temp_bytes=%d",
         cpu::native_cpu(),
+        job::available_cpus().cardinality(),
         defaults.worker_count,
         defaults.background_workers,
         defaults.run_capacity,
@@ -328,5 +395,7 @@ fn int main() {
             idle_microseconds: idle_microseconds,
         );
     }
+
+    report_pinned_kernel(&chain);
     return all_equal ? 0 : 1;
 }

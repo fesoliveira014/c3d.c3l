@@ -789,6 +789,40 @@ fn void test_nested_try_run_queues_on_the_pool() @test {
     assert_covered_once(&spawner.coverage, SPAWN_COUNT);
 }
 
+fn void test_background_only_workers_run_background_outside_the_cap() @test {
+    foreach (workers : WORKER_COUNTS) {
+        JobPoolDesc desc = job::default_job_pool_desc();
+        desc.worker_count = workers;
+        desc.background_workers = 0;
+        desc.background_only_workers = 1;
+        JobPool pool = job::create_job_pool(mem, desc)!!;
+        defer job::destroy_job_pool(&pool);
+        Coverage background_coverage = create_coverage(PARTITION_COUNT);
+        defer destroy_coverage(&background_coverage);
+        JobId background = pool.try_run(
+            job_class: BACKGROUND,
+            range:     &cover_range,
+            data:      &background_coverage,
+            count:     PARTITION_COUNT,
+            batch:     1,
+        )!!;
+        spin_until_finished(&pool, background);
+        assert_covered_once(&background_coverage, PARTITION_COUNT);
+
+        Coverage frame_coverage = create_coverage(PARTITION_COUNT);
+        defer destroy_coverage(&frame_coverage);
+        JobId frame = pool.run(
+            range: &cover_range,
+            data:  &frame_coverage,
+            count: PARTITION_COUNT,
+            batch: 1,
+        );
+        assert((frame.generation == 0) == (workers == 0));
+        pool.wait(frame);
+        assert_covered_once(&frame_coverage, PARTITION_COUNT);
+    }
+}
+
 fn void test_pool_survives_a_move_of_its_handle() @test {
     Holder holder = { .pool = create_test_pool(TEST_WORKERS) };
     Coverage coverage = create_coverage(LARGE_COUNT);
