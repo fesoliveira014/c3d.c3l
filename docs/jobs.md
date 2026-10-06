@@ -269,9 +269,46 @@ The pool does not check these; a range that breaks them races.
 
 ## Profiling
 
-The pool records no profiler scopes. The profiler's recorder is per thread, so ranges on workers are never
-recorded; only the caller's thread records. Wrap `run` and `wait` in application scopes to see submission
-and waiting, including the ranges the caller runs while it waits. `job_bench` measures with its own timer.
+Ranges that run on workers appear in a `c3d_profile` capture under the name given at submission. The support
+is compiled only under `C3D_PROFILE_CPU`; a consumer that enables the feature also selects `c3d_profile`
+([Profiling](profiling.md#worker-ranges)).
+
+```c3
+pool.set_recording(true);
+profile::@capture(&recorder, frame_id) {
+    pool.forward_records(&recorder);
+    pool.wait(pool.run(
+        range: &integrate_range,
+        data:  &particles,
+        count: (uint)particles.positions.len,
+        batch: 256,
+        name:  "integrate",
+    ));
+};
+```
+
+- **Names.** `run` and `try_run` take a `name`. The pool keeps the `String` until its records are drained, so it
+  must outlive the drain; string literals and static strings do.
+- **Recording.** `set_recording(true)` makes each worker time every range it claims from then on: two
+  `clock::now()` reads around the range and one record written under the lock it already takes at completion.
+  Ranges the calling thread runs (inline, in `wait`, `wait_all` or `pump`) are not recorded; wrap those calls
+  in application scopes.
+- **Ring.** Records wait in a ring of `record_capacity` entries (default 4096, 160 KiB at 40 bytes). A full
+  ring drops new records and counts them; the next drain reports the count.
+- **Drain.** `take_records(records)` moves the oldest records out, on any thread, with the drop count since the
+  previous drain. `forward_records(&recorder)` drains the records held at the call into the recorder's open
+  capture through `Recorder.add_worker_interval` and forwards the drop count; records that workers add while
+  it runs wait for the next call, and records drained outside a recording capture are discarded. Both clocks
+  are the same `clock::now`. A record is in the ring before its run reports finished, so forwarding after
+  `wait` or a true `is_finished` includes the whole run.
+- **Frame attribution.** A record belongs to the capture open when it is drained. A range that began before
+  that capture's origin keeps a negative start offset: forwarded at the start of frame N + 1, as above, the
+  ranges of frame N's last run appear left of the axis origin.
+- **Cost.** Without `C3D_PROFILE_CPU` the pool compiles no clock read, no ring and no branch. With the feature
+  and recording off, each claim tests one flag under the lock. With recording on, see
+  [Measured cost](#measured-cost).
+- **Tests.** `python3 scripts/build.py --test` also runs `job_profile_test`, the package's tests built with
+  `C3D_PROFILE_CPU` and `c3d_profile`; alone, `c3c test job_profile_test --path addons/c3d_job.c3l`.
 
 ## Measured cost
 
