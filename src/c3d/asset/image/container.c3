@@ -4,6 +4,7 @@ import c3d;
 import c3d::asset;
 import c3d::material;
 import std::core::bitorder;
+import std::io::file;
 
 const char[4] DDS_MAGIC @local = { 'D', 'D', 'S', ' ' };
 const char[12] KTX1_IDENTIFIER @local = { 0xAB, 'K', 'T', 'X', ' ', '1', '1', 0xBB, 0x0D, 0x0A, 0x1A, 0x0A };
@@ -63,6 +64,62 @@ fn TextureContainerView? parse_texture_container(Allocator scratch, char[] bytes
         bytes:       bytes,
         layout:      &layout,
         color_space: color_space,
+    );
+}
+
+<*
+ Add a DDS, KTX1 or KTX2 texture from memory, copying its levels.
+ @param [&inout] assets : "Owns one source allocation on success."
+ @param [in] bytes : "Borrowed for the call."
+ @param color_space : "An explicit choice overrides the file."
+ @return? c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @require assets.allocator != tmem
+*>
+fn TextureId? add_texture_container(
+    AssetStore* assets,
+    char[] bytes,
+    ColorSpace color_space = FROM_FILE,
+    String key = "",
+) {
+    TextureId texture;
+    @pool() {
+        TextureContainerView container = parse_texture_container(tmem, bytes, color_space)!;
+        if (container.desc.generate_mips) {
+            texture = assets.add_texture(container.desc, container.levels[0].bytes, key)!;
+        } else {
+            texture = assets.add_texture_mips(container.desc, container.levels[:container.level_count], key)!;
+        }
+    };
+    return texture;
+}
+
+<*
+ Read a DDS, KTX1 or KTX2 file into the store's texture pool.
+ @param [&inout] assets : "Owns one source allocation on success."
+ @param color_space : "An explicit choice overrides the file."
+ @return? c3d::ASSET_IO_ERROR, c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED, c3d::INVALID_ARGUMENT
+ @return? c3d::CAPACITY_EXCEEDED
+ @require path.len > 0, assets.allocator != tmem
+*>
+fn TextureId? load_texture_container(
+    AssetStore* assets,
+    String path,
+    ColorSpace color_space = FROM_FILE,
+    String key = "",
+) {
+    char[] bytes;
+    if (try loaded = file::load(mem, path)) {
+        bytes = loaded;
+    } else {
+        return c3d::ASSET_IO_ERROR~;
+    }
+    defer free(bytes.ptr);
+
+    return add_texture_container(
+        assets:      assets,
+        bytes:       bytes,
+        color_space: color_space,
+        key:         key,
     );
 }
 

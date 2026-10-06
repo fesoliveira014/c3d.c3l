@@ -271,10 +271,122 @@ blocks at small tails: a 1×1 BC1 level still occupies eight bytes, and BC7 uses
 sixteen. Odd extents round up to complete 4×4 blocks.
 
 Bytes stay compressed in both the asset store and upload staging. No decoder,
-transcoder, mip generator, DDS parser or KTX parser runs on them. Unsupported
+transcoder or mip generator runs on them; [container loaders](#load-dds-and-ktx-containers)
+slice files without changing a byte. Unsupported
 device format support propagates the backend fault, including
 `gpu::UNSUPPORTED_FEATURE`; there is no automatic uncompressed fallback.
 Compressed cubes, cube arrays, non-cube arrays and volumes are unsupported.
+
+## Load DDS and KTX containers
+
+Import `c3d::asset::image`. `load_texture_container` reads a DDS, KTX 1.1 or KTX 2.0 file and inserts its levels
+unchanged; `add_texture_container` does the same for bytes already in memory, such as an `$embed`:
+
+```c3
+TextureId albedo = image::load_texture_container(
+    assets:      &assets,
+    path:        "albedo_bc7.ktx2",
+    color_space: SRGB,
+    key:         "example/albedo",
+)!;
+renderer.upload(albedo)!;
+```
+
+The container sets the format, extent and level count. Every level is copied byte for byte into one store
+allocation, the same `SUPPLIED_MIPS` source that `add_texture_mips` makes; nothing is decoded, re-encoded, flipped or
+regenerated. A KTX file that asks for generated mips (a level count of 0) of an uncompressed format other than
+`R16_UINT` loads as a `MIP_ZERO` texture with `generate_mips` set. `load_texture_container` frees the file buffer
+before it returns, and a fault leaves the store unchanged.
+
+`color_space` is `FROM_FILE` (the default), `SRGB` or `LINEAR`. `FROM_FILE` keeps the container's format; legacy DDS
+headers carry no color space and load as UNORM. `SRGB` and `LINEAR` pick the sRGB or UNORM twin of RGBA8, BC1, BC3
+and BC7 without touching the bytes; an explicit choice overrides the file. `LINEAR` leaves the other formats as they
+are; `SRGB` on them faults `c3d::INVALID_ARGUMENT`.
+
+To inspect a container first, parse it into a borrowed view:
+
+```c3
+@pool() {
+    image::TextureContainerView container = image::parse_texture_container(tmem, bytes)!;
+    io::printfn("%s, %d levels", container.desc.format, container.level_count);
+};
+```
+
+The view's level slices point into `bytes`. The exception is KTX1 `R16_UINT` with an odd width, whose padded rows are
+copied tight into the `scratch` allocator. The view is invalid once `bytes` or `scratch` is freed. The store helpers
+parse inside their own `@pool`, so the store's allocator must not be `tmem`.
+
+### Supported formats
+
+| `PixelFormat` | DDS legacy | DXGI | KTX1 `glInternalFormat` (`glType` / `glFormat`) | KTX2 vkFormat |
+| --- | --- | --- | --- | --- |
+| RGBA8_UNORM | `DDPF_RGB`, 32 bit, masks R `0xFF` G `0xFF00` B `0xFF0000` A `0xFF000000` | 28 | `GL_RGBA8` 0x8058 (`GL_UNSIGNED_BYTE` 0x1401 / `GL_RGBA` 0x1908) | 37 |
+| RGBA8_SRGB | none | 29 | `GL_SRGB8_ALPHA8` 0x8C43 (0x1401 / 0x1908) | 43 |
+| RGBA16_FLOAT | FourCC 113 | 10 | `GL_RGBA16F` 0x881A (`GL_HALF_FLOAT` 0x140B / 0x1908) | 97 |
+| RGBA32_FLOAT | FourCC 116 | 2 | `GL_RGBA32F` 0x8814 (`GL_FLOAT` 0x1406 / 0x1908) | 109 |
+| R16_UINT | none | 57 | `GL_R16UI` 0x8234 (`GL_UNSIGNED_SHORT` 0x1403 / `GL_RED_INTEGER` 0x8D94) | 74 |
+| BC1_RGBA_UNORM | `DXT1` | 71 | 0x83F1; 0x83F0 after the scan | 133; 131 after the scan |
+| BC1_RGBA_SRGB | none | 72 | 0x8C4D; 0x8C4C after the scan | 134; 132 after the scan |
+| BC3_UNORM | `DXT5` | 77 | 0x83F3 | 137 |
+| BC3_SRGB | none | 78 | 0x8C4F | 138 |
+| BC4_UNORM | `ATI1`, `BC4U` | 80 | 0x8DBB | 139 |
+| BC5_UNORM | `ATI2`, `BC5U` | 83 | 0x8DBD | 141 |
+| BC6H_UFLOAT | none | 95 | 0x8E8F | 143 |
+| BC7_UNORM | none | 98 | 0x8E8C | 145 |
+| BC7_SRGB | none | 99 | 0x8E8D | 146 |
+
+Each container holds one 2D image with one layer. Uncompressed KTX1 formats need the listed `glType` and `glFormat`,
+compressed ones 0 for both. The legacy DDS FourCCs, `ATI1` and `ATI2` included, are those DirectXTex reads
+([`g_LegacyDDSMap`](https://github.com/microsoft/DirectXTex/blob/20f7316f1b55dcab3479636015e643c9559fa193/DirectXTex/DirectXTexDDS.cpp#L61-L167)).
+Legacy `DXT1` loads as `BC1_RGBA_UNORM`, which decodes a BC1 file without alpha to the same RGB. BC1 without alpha in KTX (`0x83F0`, `0x8C4C`, vkFormat 131 and 132) loads as the `BC1_RGBA` twin when no
+three-color block uses index 3, the only texels the two forms decode differently; otherwise it is unsupported.
+
+Rows are never flipped. DDS rows are taken as stored. A KTX file loads when `KTXorientation` is absent or says
+top-left (`S=r,T=d` in KTX1, `rd` in KTX2): both specifications put the first stored texel at the texture-coordinate
+origin, and c3d samples the first stored row at v = 0. Tools that wrote GL-style bottom-up rows without the key load
+upside down under glTF UVs; re-export them top row first.
+
+### Rejected variants
+
+| Container | Variant | Fault | Offline route |
+| --- | --- | --- | --- |
+| DDS | `DXT3` (BC2) | `UNSUPPORTED` | `texconv -f BC3_UNORM` |
+| DDS | `DXT2`, `DXT4` (premultiplied BC2, BC3) | `UNSUPPORTED` | `texconv -alpha -f BC3_UNORM` |
+| DDS | BGRA or BGRX masks; DXGI B8G8R8A8, B8G8R8X8 (87, 88, 91, 93) | `UNSUPPORTED` | `texconv -f R8G8B8A8_UNORM` (or `R8G8B8A8_UNORM_SRGB`) |
+| DDS | X8B8G8R8 (no alpha mask) | `UNSUPPORTED` | `texconv -f R8G8B8A8_UNORM` |
+| DDS | luminance, alpha-only, YUV, bump, 16- or 24-bit RGB, any other FourCC (`BC4S`, `BC5S`, 36) | `UNSUPPORTED` | `texconv -f` one of the supported DXGI formats |
+| DDS DX10 | typeless formats (27, 70, 73, 76, 79, 82, 94, 97) | `UNSUPPORTED` | `texconv -tu -f <format>_UNORM` (or `_UNORM_SRGB`); `-tu` treats TYPELESS as UNORM ([texconv](https://github.com/microsoft/DirectXTex/wiki/Texconv)) |
+| DDS DX10 | BC2 (74, 75), BC4 and BC5 SNORM (81, 84), BC6H SF16 (96), any other DXGI format | `UNSUPPORTED` | `texconv -f BC3_UNORM`, `BC4_UNORM`, `BC5_UNORM` or `BC6H_UF16` |
+| DDS DX10 | premultiplied alpha mode | `UNSUPPORTED` | `texconv -alpha` |
+| DDS | cube, volume, array, 1D | `UNSUPPORTED` | export each 2D image; load cube faces with `load_cube` |
+| KTX1 | big-endian | `UNSUPPORTED` | `ktx convert` (legacy `ktx2ktx2`), then load the KTX2 file |
+| KTX1 | `glInternalFormat` outside the table (unsized `GL_RGBA`, `GL_RGB8`, DXT3, signed RGTC, signed BC6H) | `UNSUPPORTED` | re-export in a supported format |
+| KTX1, KTX2 | 1D, 3D, arrays, cubes | `UNSUPPORTED` | export each 2D image |
+| KTX1, KTX2 | generated mips requested for a block format or `R16_UINT` | `UNSUPPORTED` (`ASSET_FORMAT_ERROR` for KTX2 block formats, which the specification forbids) | write every level |
+| KTX1, KTX2 | `KTXorientation` other than top-left | `UNSUPPORTED` | re-export top row first: `ktx create` from the source images (its default origin is top-left) or `texconv -vflip` for DDS |
+| KTX1, KTX2 | `KTXswizzle` other than `rgba` | `UNSUPPORTED` | re-create with `ktx create --input-swizzle`, which moves the channels, instead of `--swizzle` metadata |
+| KTX1, KTX2 | BC1 without alpha with a three-color block that uses index 3 | `UNSUPPORTED` | re-encode as BC1 with alpha, for example `texconv -f BC1_UNORM` (writes DDS) |
+| KTX2 | BasisLZ or UASTC payloads, Zstandard or ZLIB supercompression | `UNSUPPORTED` | `ktx transcode --target bc7` (or `bc1`, `bc3`, `bc4`, `bc5`, `rgba8`); other supercompressed files: re-create without `--zstd` or `--zlib` |
+| KTX2 | `VK_FORMAT_UNDEFINED` or a vkFormat outside the table | `UNSUPPORTED` | re-export in a supported format, for example `ktx create --format R8G8B8A8_SRGB` |
+| KTX2 | premultiplied DFD flag | `UNSUPPORTED` | re-export with straight alpha |
+
+### Container faults
+
+Container loaders split the faults that image decoders report together:
+
+- `c3d::ASSET_IO_ERROR`: the file cannot be read.
+- `c3d::ASSET_FORMAT_ERROR`: empty input, an unknown magic, a truncated header, index or payload, a level whose
+  offset, length or alignment is wrong, overlapping KTX2 levels, bytes after the last KTX2 level, a level count the
+  extent cannot have, or fields that contradict each other (KTX1 `glType` and `glFormat`, KTX2 `typeSize`,
+  `uncompressedByteLength` and the data format descriptor's transfer function).
+- `c3d::UNSUPPORTED`: a well-formed container outside the supported set.
+- `c3d::INVALID_ARGUMENT`: `SRGB` for a format without an sRGB twin, or a key the store rejects.
+- `c3d::CAPACITY_EXCEEDED`: the texture pool is full.
+
+DDS and KTX1 readers ignore advisory fields (DDS flags, pitch and caps other than the cube and volume bits; KTX1
+`glTypeSize` and `glBaseInternalFormat`) and bytes after the last level. KTX2 is read strictly. Device support for a
+format is still checked at upload, which reports the backend fault, such as `gpu::UNSUPPORTED_FEATURE`. Fixture
+provenance: [texture container fixtures](../csrc/README.md#texture-container-fixtures).
 
 ## Select and transform UVs
 
@@ -367,7 +479,8 @@ mirrors remain usable after explicit release, just like ordinary 2D textures.
 
 Paths must be nonempty. File access failures produce `c3d::ASSET_IO_ERROR`;
 malformed, unsupported, or wrong-loader image formats produce
-`c3d::ASSET_FORMAT_ERROR`. Empty encoded data or data exceeding the native
+`c3d::ASSET_FORMAT_ERROR`. DDS and KTX containers separate malformed from unsupported files
+instead; see [container faults](#container-faults). Empty encoded data or data exceeding the native
 integer length limit produces `c3d::INVALID_ARGUMENT`. Store insertion can also
 produce `c3d::INVALID_ARGUMENT` for a duplicate key or
 `c3d::CAPACITY_EXCEEDED` for a full texture pool. GPU upload faults propagate
@@ -461,7 +574,8 @@ Their colors are red, green, blue, yellow, magenta, cyan and white. A static
 repeated surface extends into the distance so its oblique view selects different
 mips. N/L/A select nearest/trilinear/anisotropic filtering; left drag orbits,
 wheel zooms, and Escape release quits. It prints format, mip count and the
-2744-byte compressed payload size. A device without support reports its backend
+2744-byte compressed payload size. C switches the material between the hand-built records and the same chain loaded from
+`bc1_mips.dds` through `add_texture_container`; both show the same mips. A device without support reports its backend
 fault rather than displaying a converted replacement.
 
 Both examples retain CPU sources and use full validation. Their committed
