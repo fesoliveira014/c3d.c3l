@@ -2,8 +2,10 @@
 
 The `c3d_job` add-on (`addons/c3d_job.c3l`, module `c3d::job`) runs a function over index ranges on a fixed
 pool of worker threads. It is fork-join: `run` splits `[0, count)` into ranges and queues them, `wait`
-returns once every range of that run has finished. With zero workers every range runs on the calling thread.
-The package imports only the standard library and `c3d`; core never imports it and has no job feature flag.
+returns once every range of that run has finished, and `is_finished` reports it without blocking. A run is
+either frame work or background work; frame ranges are taken first, and a cap bounds how many workers run
+background ranges at once. With zero workers every frame range runs on the calling thread. The package imports
+only the standard library and `c3d`; core never imports it and has no job feature flag.
 
 ```bash
 python3 scripts/build.py --example job_bench
@@ -27,11 +29,10 @@ JobPool pool = job::create_job_pool(mem, job::default_job_pool_desc())!;
 defer job::destroy_job_pool(&pool);
 ```
 
-`create_job_pool` allocates the pool state, the worker array, the range ring and the run table once, then
-starts the workers. It faults `c3d::CAPACITY_EXCEEDED` when an allocation fails and passes on
-`thread::INIT_FAILED` when the system refuses the mutex, a condition variable or a thread; either way
-everything created so far is released. The allocator is called from the worker threads, so it must be
-thread-safe and must not be `tmem`.
+`create_job_pool` allocates the pool state, the worker array and the run table once, then starts the workers.
+It faults `c3d::CAPACITY_EXCEEDED` when an allocation fails and passes on `thread::INIT_FAILED` when the system
+refuses the mutex, a condition variable or a thread; either way everything created so far is released. The
+allocator is called from the worker threads, so it must be thread-safe and must not be `tmem`.
 
 `destroy_job_pool` waits for every outstanding run, stops and joins the workers, frees everything and zeroes
 the handle. A `defer` on an error path is safe while runs are in flight. `JobPool` is a value handle over
@@ -39,12 +40,17 @@ heap state: moving the handle keeps the pool running, and copies share one pool,
 
 | `JobPoolDesc` field | Default | Meaning |
 | --- | --- | --- |
-| `worker_count` | logical processors minus one, at least 1 | Worker threads; 0 runs every range on the calling thread. |
+| `worker_count` | logical processors minus one, at least 1 | Shared worker threads; 0 runs every frame range on the calling thread. |
 | `worker_temp_bytes` | 256 KiB | Initial temp allocator of each worker. |
-| `ring_capacity` | 4096 | Ranges queued at once across every run. |
-| `run_capacity` | 64 | Runs with queued or running ranges at once. |
+| `run_capacity` | 64 | Frame runs with unfinished ranges at once. |
+| `background_run_capacity` | 64 | Background runs with unfinished ranges at once; 0 refuses every background run. |
+| `background_workers` | `default_background_workers(worker_count)` | Shared workers that may run background ranges at once. |
 
-`default_job_pool_desc()` fills these. The worker count has four caveats:
+`default_job_pool_desc()` fills these. A cap at or above `worker_count` does not limit, so a descriptor that
+lowers `worker_count` also sets `background_workers`, usually to `job::default_background_workers(count)`:
+a quarter of the workers, at least one, and none without workers. That is 1 at 4 workers, 2 at 8, 4 at 16 and 7
+at 31. A quarter keeps three quarters of the workers on frame work while background ranges run. The worker
+count has four caveats:
 
 1. On Linux, `native_cpu()` is `get_nprocs_conf()`: it ignores CPU affinity and cgroup quotas, so a container
    over-reports. Set `worker_count` from the container's quota there.
@@ -82,33 +88,81 @@ pool.wait(id);
 - **Split.** A run of `count` items at `batch = b` has `ceil(count / b)` ranges, `[i * b, min((i + 1) * b,
   count))`; only the last one is short. `batch = 0` lets the pool choose about four ranges per pool thread,
   the caller included. `count = 0` runs nothing.
-- **`run`** queues the ranges and returns at once with a `JobId`. `data` is handed to every range and must
-  outlive the wait; it may be null.
+- **`run`** queues the ranges as a frame run and returns at once with a `JobId`. `data` is handed to every
+  range and must outlive the run; it may be null.
 - **`wait(id)`** returns once every range of the run has finished. Meanwhile the waiting thread runs that run's
-  queued ranges itself. Everything the ranges wrote is visible to the caller after `wait` returns.
+  unclaimed ranges itself, whatever its class. Everything the ranges wrote is visible to the caller after
+  `wait` returns.
+- **`is_finished(id)`** reports whether every range of the run has finished, without blocking. Once it returns
+  true, everything the ranges wrote is visible to the caller. A run's slot is released when its last range
+  finishes, whether or not anyone waits on it or asks.
 - **Zero and stale ids.** `run` returns the zero id when every range ran inside the call. An id goes stale when
   its run finishes; its slot is reused only after that. `wait` on a zero or stale id returns at once and never
-  waits on a later run in the same slot.
-- **`wait_all`** returns once nothing is queued or running, running any queued range meanwhile.
+  waits on a later run in the same slot, and `is_finished` reports both as finished. A slot's generation wraps
+  after 2^32 - 1 runs, so an id that old may name a later run.
+- **`wait_all`** returns once no run of either class is unfinished, running any unclaimed range meanwhile.
 - **Inline mode.** With `worker_count = 0`, `run` runs every range on the calling thread, in ascending order,
   and returns the zero id. Results equal the pooled results when ranges follow the rules below.
 - **Nesting.** A range may call `run` on its own pool. The nested run executes inline on the range's thread,
   so nesting never deadlocks, and returns the zero id; `wait` on it returns at once. This holds for ranges on
-  a worker and for ranges the caller runs while it waits.
+  a worker and for ranges the caller runs while it waits. A nested `try_run` queues instead; the range never
+  waits on that run.
 
-Order between ranges and between runs is not a guarantee.
+Workers claim ranges in this order: the oldest frame run first, then the oldest background run while the cap
+allows, and within a run in ascending index order. Completion order between ranges and between runs is not a
+guarantee.
 
-## Queue sizing
+## Background runs
 
-Each queued range takes one ring entry; the entry is released when a thread takes the range. A run takes
-`ceil(count / batch)` entries, so a large `count` with a small `batch` is the practical way to fill the ring:
-the defaults hold 262 144 items in batches of 64. Each run with queued or running ranges holds one run slot.
+```c3
+JobId streaming = pool.try_run(
+    job_class: BACKGROUND,
+    range:     &decode_range,
+    data:      &decode,
+    count:     (uint)decode.blocks.len,
+    batch:     1,
+)!; // c3d::CAPACITY_EXCEEDED when every background slot is held
 
-`run` never faults and never blocks. Ranges that find no ring entry run inline on the caller before `run`
-returns; a run that finds no run slot, or no ring entry at all, runs inline entirely and `run` returns the
-zero id. `JobPool.inline_ranges()` counts those ranges since the pool was created. A count that grows is the
-sign that `ring_capacity` or `run_capacity` is too small. Nested runs are inline by design and are not
-counted.
+// a later frame, on the submitting thread
+if (pool.is_finished(streaming)) publish(&decode);
+```
+
+- **`try_run(job_class, ...)`** queues a run of either class, or faults `c3d::CAPACITY_EXCEEDED` when that
+  class's partition of the run table is full. A refused run queues nothing and runs nothing, and
+  `inline_ranges` does not move. It never runs a range inside the call, with one exception: on a pool without
+  workers, frame work runs on the caller as `run` does. Background runs are submitted only through `try_run`.
+- **Cap.** At most `background_workers` shared workers run background ranges at once; the others take only
+  frame ranges, and a worker takes a frame range before a background one. Background work therefore runs in
+  frame idle time: a pool that is never idle of frame work starves it, by design. A range that has started is
+  never interrupted, so a long background range delays frame work only by holding its own worker.
+- **`pump(max_ranges)`** runs background ranges on the calling thread, in submission order, up to
+  `max_ranges`, and returns how many ran. It runs only ranges queued before the call: a background run that a
+  pumped range submits waits for the next `pump`. It ignores the cap, which limits workers and not the calling
+  thread, and it never takes frame ranges.
+- **Without background workers.** With zero workers or `background_workers = 0`, a background run progresses
+  only through `pump`, `wait` on that run, `wait_all` or `destroy_job_pool`. A consumer that only polls
+  `is_finished` on such a pool never sees the run finish.
+- **Capacity.** `background_run_capacity` slots hold background runs and `run_capacity` slots hold frame runs,
+  in one table. Each class fills only its own slots, so background runs that span frames never push frame runs
+  inline, and a full frame partition never refuses a background run. A background slot holds its run until
+  the last range finishes, across frames.
+
+## Run capacity
+
+Each run with unfinished ranges holds one slot of its class, whatever its range count; a slot keeps the
+request and the index of the next unclaimed range, so the number of ranges queued at once has no limit of its
+own.
+
+`run` never faults and never blocks. A frame run that finds no free frame slot runs inline entirely on the
+caller before `run` returns, and `run` returns the zero id; no run is split between the pool and the caller.
+`JobPool.inline_ranges()` counts those ranges since the pool was created. A count that grows is the sign that
+`run_capacity` is too small. Nested runs and inline mode are inline by design and are not counted. `try_run`
+refuses instead of running inline.
+
+### Changes from v0.1.0
+
+`JobPoolDesc.ring_capacity` and `DEFAULT_RING_CAPACITY` are gone: the pool queues runs, not ranges. Remove both
+from descriptors.
 
 ## Temp memory
 
@@ -138,10 +192,11 @@ The pool does not check these; a range that breaks them races.
   `@pool()`.
 - A thread other than the main thread that calls `run`, `wait` or `wait_all` has its own temp allocator
   (`@pool_init`), because ranges it runs open `@pool()`.
-- A range may call `run` on its own pool (it runs inline) and `wait` on the zero id it gets. A range never
-  calls `wait_all` or `destroy_job_pool` on its own pool, and never waits on any other run of its own pool
-  (its own run, an outer run, or a run that waits on it): all three are contracts, so the deadlock fires as a
-  contract failure instead of hanging. Waiting on another pool's run is not detected.
+- A range may call `run` on its own pool (it runs inline) and `wait` on the zero id it gets. It may call
+  `try_run` (the run queues) and `is_finished`. A range never calls `wait_all`, `pump` or `destroy_job_pool`
+  on its own pool, and never waits on any other run of its own pool (its own run, an outer run, a run it
+  queued with `try_run`, or a run that waits on it): these are contracts, so the deadlock fires as a contract
+  failure instead of hanging. Waiting on another pool's run is not detected.
 
 ## Profiling
 
