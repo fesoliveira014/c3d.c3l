@@ -48,6 +48,10 @@ fn void test_relative_first_frame_and_view_order_preserve_raster_output() @test 
     defer destroy_fixture(&fixture);
     print_adapter(&fixture);
     Renderer* renderer = &fixture.renderer;
+    // Each view records its own shadow set, so reversing the order still compares two recordings.
+    ViewDesc second = renderer.views.get(fixture.second_view).desc;
+    second.share_shadows = false;
+    render::configure_view(renderer, fixture.second_view, second)!!;
     StandardParams params = material::STANDARD_PARAMS_DEFAULT;
     params.base_color = { 0.25f, 0.5f, 0.75f, 1 };
     MaterialId matte = fixture.assets.add_material(material::standard(params))!!;

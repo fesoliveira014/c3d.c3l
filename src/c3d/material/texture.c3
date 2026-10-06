@@ -1,7 +1,16 @@
 module c3d::material;
 
+import c3d;
+
 <* Faces in one native color cube. *>
 const uint CUBE_FACE_COUNT = 6;
+
+<*
+ Maximum mip count for an unsigned 32-bit image extent.
+*>
+const uint TEXTURE_MIP_CAPACITY = 32;
+
+const uint BLOCK_EXTENT @local = 4;
 
 <* Native cube face order for image paths and layers. *>
 enum CubeFace {
@@ -104,4 +113,90 @@ fn TextureDesc texture_3d_desc(
         .mip_levels = 1,
         .debug_name = debug_name,
     };
+}
+
+<*
+ Whether texels are stored as 4x4 blocks.
+ @pure
+*>
+fn bool texture_is_compressed(PixelFormat format) {
+    switch (format) {
+        case RGBA8_UNORM:
+        case RGBA8_SRGB:
+        case RGBA16_FLOAT:
+        case RGBA32_FLOAT:
+        case R16_UINT:
+            return false;
+        case BC1_RGBA_UNORM:
+        case BC1_RGBA_SRGB:
+        case BC3_UNORM:
+        case BC3_SRGB:
+        case BC4_UNORM:
+        case BC5_UNORM:
+        case BC6H_UFLOAT:
+        case BC7_UNORM:
+        case BC7_SRGB:
+            return true;
+    }
+}
+
+<*
+ Bytes of one block, or of one texel for uncompressed formats.
+ @pure
+*>
+fn usz texture_block_bytes(PixelFormat format) {
+    switch (format) {
+        case R16_UINT: return 2;
+        case RGBA8_UNORM:
+        case RGBA8_SRGB: return 4;
+        case RGBA16_FLOAT:
+        case BC1_RGBA_UNORM:
+        case BC1_RGBA_SRGB:
+        case BC4_UNORM: return 8;
+        case RGBA32_FLOAT:
+        case BC3_UNORM:
+        case BC3_SRGB:
+        case BC5_UNORM:
+        case BC6H_UFLOAT:
+        case BC7_UNORM:
+        case BC7_SRGB: return 16;
+    }
+}
+
+<*
+ Count mip levels down to one texel.
+ @require width > 0, height > 0
+ @pure
+*>
+fn uint texture_mip_count(uint width, uint height) {
+    uint count = 1;
+    for (uint extent = width > height ? width : height; extent > 1; extent >>= 1) count++;
+
+    return count;
+}
+
+<*
+ Extent of one axis at a mip level, never below one.
+ @require mip < TEXTURE_MIP_CAPACITY
+ @pure
+*>
+fn uint texture_mip_extent(uint extent, uint mip) {
+    uint reduced = extent >> mip;
+    return reduced > 0 ? reduced : 1;
+}
+
+<*
+ Tight bytes of one layer of a mip, counted in whole blocks.
+ @return? c3d::INVALID_ARGUMENT
+ @require mip < TEXTURE_MIP_CAPACITY
+*>
+fn usz? texture_mip_bytes(TextureDesc desc, uint mip) {
+    usz block_extent = texture_is_compressed(desc.format) ? BLOCK_EXTENT : 1;
+    usz row_blocks = ((usz)texture_mip_extent(desc.width, mip) + block_extent - 1) / block_extent;
+    usz block_rows = ((usz)texture_mip_extent(desc.height, mip) + block_extent - 1) / block_extent;
+    usz slices = texture_mip_extent(desc.depth > 0 ? desc.depth : 1, mip);
+    usz block_bytes = texture_block_bytes(desc.format);
+    if (row_blocks > (usz)sz::max / block_rows / slices / block_bytes) return c3d::INVALID_ARGUMENT~;
+
+    return row_blocks * block_rows * slices * block_bytes;
 }

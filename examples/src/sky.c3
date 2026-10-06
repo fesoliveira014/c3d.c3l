@@ -50,8 +50,6 @@ const Vec3 SUN_COLOR @local = { 1, 1, 1 }; // the atmosphere colours the sun; a 
 const float SUN_INTENSITY @local = 3;
 const float SHADOW_DISTANCE @local = 400; // metres; four cascades over the near objects
 const uint SHADOW_CASCADES @local = 4;
-// Metres; the cascades' texels are about 2.6, 5.3, 12 and 48 cm at 2048 texels, and the 2 cm default rings the ground.
-const float SHADOW_NORMAL_BIAS @local = 0.15f;
 
 // Exposure from the zenith sky luminance at intensity 3: exposure = 0.045 / luminance, log-linear between entries.
 // The table stops at -4 degrees, the last elevation whose zenith stays above RGBA16F subnormals.
@@ -177,6 +175,7 @@ struct Options @local {
     bool        atmosphere;
     bool        volumetric_fog;
     bool        taa;
+    bool        auto_exposure;
     Preset      preset;
     uint        width;
     uint        height;
@@ -471,7 +470,6 @@ fn void? build_demo(Demo* demo) @local {
     Light sun = light::directional(SUN_COLOR, SUN_INTENSITY);
     sun.shadow.cascades = SHADOW_CASCADES;
     sun.shadow.max_distance = SHADOW_DISTANCE;
-    sun.shadow.normal_bias = SHADOW_NORMAL_BIAS;
     sun.shadow.ray_traced = demo.options.traced_shadows;
     demo.sun = scene.add_light(sun, name: "sun")!;
     if (demo.options.atmosphere) scene.add(demo.sun, light::ATMOSPHERE_EARTH);
@@ -510,6 +508,7 @@ fn ViewDesc main_view_desc(ViewDesc desc, Options options) @local {
     desc.ray_tracing.shadows = options.traced_shadows;
     desc.volumetric_fog = options.volumetric_fog && !options.path_traced;
     if (options.taa && !options.path_traced) desc.post.anti_aliasing = AntiAliasing.TAA;
+    desc.post.auto_exposure = options.auto_exposure;
     if (options.ssgi) {
         desc.post.anti_aliasing = AntiAliasing.TAA;
         desc.screen_space_gi = render::SCREEN_SPACE_GI_DEFAULT;
@@ -553,6 +552,7 @@ fn void? place_mirror_camera(Demo* demo, float aspect) @local {
     Mat4 mirrored = maths::reflection_matrix(MIRROR_PLANE).mul(demo.camera_node.local.to_mat4());
     demo.mirror.camera_node.local = maths::transform_from_affine(mirrored)!;
     demo.scene.get(demo.mirror.camera_node, Camera).aspect = aspect;
+    demo.scene.get(demo.camera_node, Camera).aspect = aspect;
 }
 
 // The frame order: pose the camera and the sun, then update the world once.
@@ -578,7 +578,12 @@ fn void? apply_pose(
 }
 
 fn void? render_views(Demo* demo, Renderer* renderer, ViewId main_view) @local {
-    renderer.render_view(demo.scene, demo.mirror.camera_node, demo.mirror.view)!;
+    renderer.render_view(
+        scene:         demo.scene,
+        camera_node:   demo.mirror.camera_node,
+        view:          demo.mirror.view,
+        shadow_camera: demo.camera_node,
+    )!;
     renderer.finish_view(demo.mirror.view)!;
     renderer.render_view(demo.scene, demo.camera_node, main_view)!;
     return renderer.finish_view(main_view);
@@ -660,6 +665,7 @@ fn Options? parse_options(String[] args) @local {
             case "--path-traced": options.path_traced = true;
             case "--volumetric-fog": options.volumetric_fog = true;
             case "--taa": options.taa = true;
+            case "--auto-exposure": options.auto_exposure = true;
             case "--fog": options.fog = on_off(option_value(args, &index)!)!;
             case "--atmosphere": options.atmosphere = on_off(option_value(args, &index)!)!;
             case "--preset":
@@ -783,6 +789,14 @@ fn void sky_panel(
         imgui::separator_text("Frame");
         float exposure = demo.scene.get(demo.camera_node, Camera).exposure;
         imgui::text("Sun elevation %.2f, exposure %.2f", controls.elevation_degrees, exposure);
+        if (demo.options.auto_exposure) {
+            float table = exposure_for(controls.elevation_degrees);
+            if (try stats = renderer.view_stats(renderer.default_view)) {
+                if (stats.exposure > 0) {
+                    imgui::text("Table %.2f EV, adapted %.2f EV", math::log2(table), math::log2(stats.exposure));
+                }
+            }
+        }
         imgui::text("Sky regenerations %u", controls.regenerations);
         imgui::text(
             "Ignored: atmospheres %u, fogs %u; dropped atmospheres %u",
@@ -851,7 +865,7 @@ fn void? run_interactive(Options options) @local {
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, &renderer, &window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
 
-    Controls controls = { .azimuth_degrees = SUN_AZIMUTH_DEGREES, .exposure_table = true };
+    Controls controls = { .azimuth_degrees = SUN_AZIMUTH_DEGREES, .exposure_table = !options.auto_exposure };
     FlyCamera fly_camera;
     apply_preset(&controls, &fly_camera, options.preset);
     renderer.prepare_scene(&scene)!;
@@ -1020,7 +1034,7 @@ fn void? run_segments(
             pose:            pose,
             azimuth_degrees: SUN_AZIMUTH_DEGREES,
             aspect:          aspect,
-            exposure_table:  true,
+            exposure_table:  !options.auto_exposure,
         )!;
         if (options.path_traced && pose.elevation_degrees != last_pose.elevation_degrees) {
             render::reset_view_history(renderer, main_view)!;
@@ -1267,7 +1281,7 @@ fn bool? run_benchmark(Options options) @local {
         pose:            segment_pose(Segment.NOON, 0),
         azimuth_degrees: SUN_AZIMUTH_DEGREES,
         aspect:          (float)options.width / (float)options.height,
-        exposure_table:  true,
+        exposure_table:  !options.auto_exposure,
     )!;
     renderer.prepare_scene(&scene)!;
 
@@ -1288,7 +1302,7 @@ fn int main(String[] args) {
         if (excuse != c3d::UNSUPPORTED) {
             io::eprintfn("Invalid options: %s", excuse);
             io::eprintn("Use [--benchmark [frames]] [--gpu-timings] [--validation] [--shading forward|deferred] "
-              "[--shadows atlas|traced] [--ssgi] [--path-traced] [--volumetric-fog] [--taa] "
+              "[--shadows atlas|traced] [--ssgi] [--path-traced] [--volumetric-fog] [--taa] [--auto-exposure] "
               "[--fog on|off] [--atmosphere on|off] "
               "[--preset noon|twilight|valley|pan|time-lapse] [--width W] [--height H].");
         }

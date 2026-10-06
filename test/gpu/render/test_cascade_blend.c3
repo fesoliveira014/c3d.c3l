@@ -31,6 +31,7 @@ const float TEST_BLEND @private = 0.1f;
 const float LINE_LEAD @private = 1; // meters of depth before the band the line starts at
 const float LINE_TRAIL @private = 2; // meters of depth after the split the line ends at
 const float MINIMUM_SPLIT_STEP @private = 0.01f; // below it the scene shows no seam to smooth
+const float BLEND_NORMAL_BIAS_TEXELS @private = 0; // an offset shifts the rod's shadow across the measured seam
 
 struct LineRoot @private {
     gpu::GpuAddress output_address;
@@ -79,6 +80,7 @@ fn void? create_blend_fixture(BlendFixture* fixture) @private {
     sunlight.shadow.cascades = 2;
     sunlight.shadow.cascade_lambda = 0.5f;
     sunlight.shadow.max_distance = SHADOW_DISTANCE;
+    sunlight.shadow.directional_normal_bias_texels = BLEND_NORMAL_BIAS_TEXELS;
     fixture.sun = fixture.scene.add_light(sunlight)!;
     fixture.sun.local.rotation = maths::rotation_between({ 0, 0, -1 }, (Vec3){ 1, -1, 0 }.normalize());
     fixture.camera_node = fixture.scene.add_camera(camera::perspective_deg(BLEND_FOV_DEGREES, 0.1f))!;

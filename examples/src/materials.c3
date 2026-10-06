@@ -1626,7 +1626,6 @@ fn int main(String[] args) {
     ExampleNodes nodes = create_fixtures(&scene, &assets, materials);
 
     Light directional = light::directional({ 1, 0.3f, 0.12f }, 2.8f);
-    directional.shadow.normal_bias = 0.08f;
     Node* directional_node = scene.add_light(directional, name: "warm_directional")!!;
     directional_node.local.rotation = maths::look_rotation(
         (Vec3){ -0.6f, -1, -0.4f }.normalize(),

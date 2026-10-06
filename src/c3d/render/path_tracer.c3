@@ -336,6 +336,7 @@ fn void? record_path_traced_view(
             );
             renderer.stats.path_trace_samples += count;
             record.stats.accumulated_samples = held + count;
+            post::record_exposure(renderer, record, scene.identity)!;
         };
     };
 }

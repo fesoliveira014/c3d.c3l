@@ -15,6 +15,13 @@ import std::math;
 import gpu;
 
 const Vec2 VIEWPORT @local = { 800, 600 };
+const float[3] FIT_OFFSETS_TEXELS @local = { 0, 1.5f, 2 };
+const uint FIT_RESOLUTION @local = 2048;
+const double FIT_GUARD_TEXELS @local = 2; // mirrored as SHADOW_GUARD_TEXELS in render/shadow.c3
+const double FIT_TOLERANCE @local = 0.000001;
+const double FIT_LATTICE_TOLERANCE @local = 0.001; // texels; the float snap carries about 1e-4 here
+const float FIT_HALF_EXTENT @local = 4;
+const float FIT_HALF_DEPTH @local = 10;
 
 fn void test_shadow_budget_keeps_requests_whole_and_admits_later_fit() @test {
     ShadowRequest[4] requests = {
@@ -335,7 +342,7 @@ fn void test_next_cascade_fit_covers_the_blend_band() @test {
         light_direction: { 0, 0, -1 },
         casters: {},
         resolution: 1024,
-        normal_bias: 0.02f,
+        normal_bias_texels: 0,
     );
 
     float[2] depths = { band_start, splits.far_depths[0] };
@@ -388,7 +395,7 @@ fn void test_cascade_fit_preserves_receiver_guard_band_and_off_camera_depth() @t
         light_direction: { 0, 0, -1 },
         casters: casters[..],
         resolution: 1024,
-        normal_bias: 0.02f,
+        normal_bias_texels: 0,
     );
     assert(cascade.split_depth == 12);
     assert(math::is_finite(cascade.camera.view_proj.m22));
@@ -416,52 +423,112 @@ fn void test_cascade_fit_preserves_receiver_guard_band_and_off_camera_depth() @t
     assert(closer.z / closer.w > farther.z / farther.w);
 }
 
+fn void test_cascade_fit_reserves_the_normal_offset_in_texels() @test {
+    Camera camera = camera::orthographic(2 * FIT_HALF_EXTENT, 1, 1 + 2 * FIT_HALF_DEPTH);
+    CameraMatrices matrices = camera::derive_matrices(camera, matrix::IDENTITY4, { 512, 512 });
+    double radius = math::sqrt((double)(2 * FIT_HALF_EXTENT * FIT_HALF_EXTENT + FIT_HALF_DEPTH * FIT_HALF_DEPTH));
+    foreach (texels : FIT_OFFSETS_TEXELS) {
+        ShadowCascade cascade = render::fit_directional_cascade(
+            view: &matrices,
+            near_depth: 1,
+            far_depth: 1 + 2 * FIT_HALF_DEPTH,
+            light_direction: ((Vec3){ -0.3f, -1, -0.2f }).normalize(),
+            casters: {},
+            resolution: FIT_RESOLUTION,
+            normal_bias_texels: texels,
+        );
+
+        double expected_half_width = radius / (1 - (2 * FIT_GUARD_TEXELS + 2 * (double)texels) / FIT_RESOLUTION);
+        double half_width = 1 / (double)cascade.camera.proj.m00;
+        assert(math::abs(half_width / expected_half_width - 1) < FIT_TOLERANCE);
+        double expected_bias = (double)texels * 2 * expected_half_width / FIT_RESOLUTION;
+        assert(math::abs(cascade.normal_bias - expected_bias) <= FIT_TOLERANCE * expected_bias);
+
+        double texel_size = 2 * half_width / FIT_RESOLUTION;
+        double right_steps = cascade.camera.view.m03 / texel_size;
+        double up_steps = cascade.camera.view.m13 / texel_size;
+        assert(math::abs(right_steps - math::round(right_steps)) < FIT_LATTICE_TOLERANCE);
+        assert(math::abs(up_steps - math::round(up_steps)) < FIT_LATTICE_TOLERANCE);
+    }
+}
+
+fn void test_each_cascade_offsets_by_its_own_texels() @test {
+    Camera camera = camera::perspective_deg(60, 0.1f);
+    CameraMatrices matrices = camera::derive_matrices(camera, matrix::IDENTITY4, VIEWPORT);
+    ShadowSettings settings = light::SHADOW_SETTINGS_DEFAULT;
+    settings.max_distance = 400;
+    CascadeSplits splits = render::directional_cascade_splits(camera, settings);
+    assert(splits.count == light::MAX_SHADOW_CASCADES);
+
+    float previous_bias;
+    for (uint index = 0; index < splits.count; index++) {
+        float near_depth = index
+          ? render::cascade_blend_depth(splits, index - 1, settings.cascade_blend) : splits.near_depth;
+        ShadowCascade cascade = render::fit_directional_cascade(
+            view: &matrices,
+            near_depth: near_depth,
+            far_depth: splits.far_depths[index],
+            light_direction: ((Vec3){ -0.3f, -1, -0.2f }).normalize(),
+            casters: {},
+            resolution: FIT_RESOLUTION,
+            normal_bias_texels: settings.directional_normal_bias_texels,
+        );
+        double texel_size = 2 / (double)cascade.camera.proj.m00 / FIT_RESOLUTION;
+        double expected = (double)settings.directional_normal_bias_texels * texel_size;
+        assert(math::abs(cascade.normal_bias - expected) <= FIT_TOLERANCE * expected);
+        assert(cascade.normal_bias > previous_bias);
+        previous_bias = cascade.normal_bias;
+    }
+}
+
 fn void test_cascade_grid_stays_stable_under_subtexel_translation_and_camera_rotation() @test {
     Camera camera = camera::perspective_deg(60, 1, 30);
-    CameraMatrices matrices = camera::derive_matrices(camera, matrix::IDENTITY4, VIEWPORT);
-    ShadowCascade first = render::fit_directional_cascade(
-        view: &matrices,
-        near_depth: 1,
-        far_depth: 20,
-        light_direction: { 0, 0, -1 },
-        casters: {},
-        resolution: 1024,
-        normal_bias: 0,
-    );
+    foreach (texels : FIT_OFFSETS_TEXELS) {
+        CameraMatrices matrices = camera::derive_matrices(camera, matrix::IDENTITY4, VIEWPORT);
+        ShadowCascade first = render::fit_directional_cascade(
+            view: &matrices,
+            near_depth: 1,
+            far_depth: 20,
+            light_direction: { 0, 0, -1 },
+            casters: {},
+            resolution: 1024,
+            normal_bias_texels: texels,
+        );
 
-    float texel_size = 2 / first.camera.proj.m00 / 1024;
-    Mat4 moved = matrix::IDENTITY4;
-    moved.m03 = texel_size * 0.2f;
-    matrices = camera::derive_matrices(camera, moved, VIEWPORT);
-    ShadowCascade translated = render::fit_directional_cascade(
-        view: &matrices,
-        near_depth: 1,
-        far_depth: 20,
-        light_direction: { 0, 0, -1 },
-        casters: {},
-        resolution: 1024,
-        normal_bias: 0,
-    );
-    assert(math::abs(first.camera.view_proj.m03 - translated.camera.view_proj.m03) < 0.000001f);
-    assert(math::abs(first.camera.view_proj.m00 - translated.camera.view_proj.m00) < 0.000001f);
+        float texel_size = 2 / first.camera.proj.m00 / 1024;
+        Mat4 moved = matrix::IDENTITY4;
+        moved.m03 = texel_size * 0.2f;
+        matrices = camera::derive_matrices(camera, moved, VIEWPORT);
+        ShadowCascade translated = render::fit_directional_cascade(
+            view: &matrices,
+            near_depth: 1,
+            far_depth: 20,
+            light_direction: { 0, 0, -1 },
+            casters: {},
+            resolution: 1024,
+            normal_bias_texels: texels,
+        );
+        assert(math::abs(first.camera.view_proj.m03 - translated.camera.view_proj.m03) < 0.000001f);
+        assert(math::abs(first.camera.view_proj.m00 - translated.camera.view_proj.m00) < 0.000001f);
 
-    Mat4 rotated = {
-        .m00 = 0, .m02 = 1,
-        .m11 = 1,
-        .m20 = -1, .m22 = 0,
-        .m33 = 1,
-    };
-    matrices = camera::derive_matrices(camera, rotated, VIEWPORT);
-    ShadowCascade turned = render::fit_directional_cascade(
-        view: &matrices,
-        near_depth: 1,
-        far_depth: 20,
-        light_direction: { 0, 0, -1 },
-        casters: {},
-        resolution: 1024,
-        normal_bias: 0,
-    );
-    assert(math::abs(first.camera.proj.m00 - turned.camera.proj.m00) < 0.000001f);
+        Mat4 rotated = {
+            .m00 = 0, .m02 = 1,
+            .m11 = 1,
+            .m20 = -1, .m22 = 0,
+            .m33 = 1,
+        };
+        matrices = camera::derive_matrices(camera, rotated, VIEWPORT);
+        ShadowCascade turned = render::fit_directional_cascade(
+            view: &matrices,
+            near_depth: 1,
+            far_depth: 20,
+            light_direction: { 0, 0, -1 },
+            casters: {},
+            resolution: 1024,
+            normal_bias_texels: texels,
+        );
+        assert(math::abs(first.camera.proj.m00 - turned.camera.proj.m00) < 0.000001f);
+    }
 }
 
 fn void test_caster_extraction_ignores_layers_and_keeps_authored_bounds() @test {
@@ -536,7 +603,7 @@ fn void test_cascade_fit_keeps_flat_casters_inside_depth_clip() @test {
         light_direction: { 0, 0, -1 },
         casters: casters[..],
         resolution: 2048,
-        normal_bias: 0,
+        normal_bias_texels: 0,
     );
 
     Vec4 clip = cascade.camera.view_proj.apply({ 0, 0, 8, 1 });
@@ -604,7 +671,7 @@ fn ShadowCascade fit_line_caster(Aabb caster_bounds) @local {
         light_direction: ((Vec3){ -0.3f, -1, -0.2f }).normalize(),
         casters: casters[..],
         resolution: 1024,
-        normal_bias: 0.02f,
+        normal_bias_texels: 0,
     );
 }
 

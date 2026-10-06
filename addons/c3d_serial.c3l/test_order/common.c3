@@ -49,6 +49,26 @@ fn void test_component_registration_order_is_portable() @test {
     };
 }
 
+fn void test_committed_subtree_loads_unchanged() @test {
+    @pool() {
+        AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+        defer asset::destroy_asset_store(&assets);
+        Scene scene = scene::create_scene(mem, { .max_nodes = 4 });
+        defer scene::destroy_scene(&scene);
+        register_types(&scene);
+        Node* root = serial::read_subtree(&scene, &assets, EXPECTED[..])!!;
+        assert(root.name == "root");
+        assert(scene.get(root, First).value == 7 && scene.get(root, Second).value == 11);
+        char[] bytes = serial::write_subtree(
+            allocator: tmem,
+            scene: &scene,
+            assets: &assets,
+            root: root,
+        )!!;
+        assert(bytes == EXPECTED[..]);
+    };
+}
+
 fn void register_first(Scene* scene) @private {
     serial::register_codec(First, {
         .name = "alpha",

@@ -212,12 +212,12 @@ leave it out of `PickOptions.layers`, as the example does; the scene index sees 
 
 ## Shadows
 
-At landscape shadow distances a cascade texel spans decimetres to metres, so the 2 cm default
-`ShadowSettings.normal_bias` bands flat and gentle ground under atlas shadows; set the sun's normal bias to about
-a cascade texel. The example uses 0.5 m at a 1500 m shadow distance, where its four cascades have texels of
-about 0.1, 0.2, 0.46 and 1.8 m. The bias lifts the shadow lookup along the receiver's normal, so a 1 m crate's
-contact shadow stays attached but shortens: at the example's 46° sun it reaches about 0.5 m past the crate's
-base instead of 0.95 m. Traced shadows need no such bias.
+The sun keeps the default normal offset of two texels of each cascade ([normal offset](shadows.md#normal-offset)),
+which clears flat and gentle ground at landscape distances without tuning. At the example's 1500 m shadow distance
+the four cascades have texels of about 0.1, 0.2, 0.46 and 1.8 m, so the offset is about 0.2, 0.4, 0.9 and 3.6 m. A 1 m
+crate keeps its contact shadow in the first two cascades; at the example's 46° sun the shadow reaches about 0.76 and
+0.57 m past its base instead of 0.95 m. From the third cascade on the offset nears or passes the crate's height and
+the crate casts little or no shadow. Traced shadows apply no offset.
 
 ## Faults
 

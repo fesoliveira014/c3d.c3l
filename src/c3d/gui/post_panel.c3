@@ -46,6 +46,12 @@ const float SSGI_HISTORY_WEIGHT_MAX @local = 0.99f; // the weight must stay belo
 const float REFLECTION_ROUGHNESS_MIN @local = 0.05f;
 const float REFLECTION_ROUGHNESS_MAX @local = 1;
 const uint PATH_TRACE_MAX_SAMPLES_LIMIT @local = 65536; // a float mean gains nothing visible beyond it
+// Slider limits that keep every combination valid: the metered window stays inside the histogram range.
+const float COMPENSATION_LIMIT @local = 4;
+const float EXPOSURE_BOUND_LIMIT @local = 10;
+const float ADAPTATION_TIME_MAX @local = 10;
+const float LOW_PERCENTILE_MAX @local = 0.45f;
+const float HIGH_PERCENTILE_MIN @local = 0.55f;
 const ZString[Tonemap::len] TONEMAP_LABELS @local = { "None", "ACES", "AgX", "Reinhard" };
 const ZString[AntiAliasing::len] ANTI_ALIASING_LABELS @local = { "None", "FXAA", "TAA" };
 const ZString[TaaDebug::len] TAA_DEBUG_LABELS @local = { "None", "Velocity", "Rejection", "History weight" };
@@ -55,9 +61,10 @@ const ZString[AoKind::len] AO_KIND_LABELS @local = { "None", "SSAO", "Ray traced
  Edit the view's post settings; the caller applies them with configure_view.
  @param [&inout] desc : "Edited in place."
  @param lut : "Offered by a checkbox when live; zero hides it."
+ @param [in] stats : "The view's stats; shows its delayed exposure, null hides it."
  @return "Whether any setting changed."
 *>
-fn bool post_panel(ViewDesc* desc, TextureId lut) {
+fn bool post_panel(ViewDesc* desc, TextureId lut, ViewStats* stats = null) {
     bool visible = imgui::begin("Post", null, {});
     defer imgui::end();
     if (!visible) return false;
@@ -98,6 +105,9 @@ fn bool post_panel(ViewDesc* desc, TextureId lut) {
         changed |= edit_grade_factor("Knee", &bloom.knee, 0, BLOOM_KNEE_MAX);
         changed |= edit_grade_factor("Intensity", &bloom.intensity, 0, BLOOM_INTENSITY_MAX);
         changed |= edit_level_count("Levels", &bloom.levels, 1, post::BLOOM_MAX_LEVELS);
+    }
+    if (imgui::collapsing_header("Auto exposure", {})) {
+        changed |= edit_auto_exposure(&desc.post, stats, post::auto_exposure_active(desc));
     }
     if (imgui::collapsing_header("Depth of field", {})) {
         DofParams* dof = &desc.post.dof_params;
@@ -176,6 +186,61 @@ fn bool post_panel(ViewDesc* desc, TextureId lut) {
         changed |= edit_path_trace(&desc.path_trace);
     }
 
+    return changed;
+}
+
+fn bool edit_auto_exposure(PostStack* post, ViewStats* stats, bool active) @local {
+    AutoExposureParams* params = &post.auto_exposure_params;
+    bool changed = imgui::checkbox("Enable auto exposure", &post.auto_exposure);
+    changed |= edit_grade_factor(
+        label:   "Compensation (EV)",
+        value:   &params.compensation_ev,
+        minimum: -COMPENSATION_LIMIT,
+        maximum: COMPENSATION_LIMIT,
+    );
+    changed |= edit_grade_factor(
+        label:   "Min (EV)",
+        value:   &params.min_ev,
+        minimum: -EXPOSURE_BOUND_LIMIT,
+        maximum: 0,
+    );
+    changed |= edit_grade_factor(
+        label:   "Max (EV)",
+        value:   &params.max_ev,
+        minimum: 0,
+        maximum: EXPOSURE_BOUND_LIMIT,
+    );
+    changed |= edit_grade_factor(
+        label:   "Brightening (s)",
+        value:   &params.brightening_time,
+        minimum: 0,
+        maximum: ADAPTATION_TIME_MAX,
+    );
+    changed |= edit_grade_factor(
+        label:   "Darkening (s)",
+        value:   &params.darkening_time,
+        minimum: 0,
+        maximum: ADAPTATION_TIME_MAX,
+    );
+    changed |= edit_grade_factor(
+        label:   "Low percentile",
+        value:   &params.low_percentile,
+        minimum: 0,
+        maximum: LOW_PERCENTILE_MAX,
+    );
+    changed |= edit_grade_factor(
+        label:   "High percentile",
+        value:   &params.high_percentile,
+        minimum: HIGH_PERCENTILE_MIN,
+        maximum: 1,
+    );
+    if (stats && stats.exposure > 0) {
+        if (active) {
+            imgui::text("Exposure %.2f EV, %u frames old", math::log2(stats.exposure), render::FRAMES_IN_FLIGHT);
+        } else {
+            imgui::text("Exposure %.2f EV", math::log2(stats.exposure));
+        }
+    }
     return changed;
 }
 

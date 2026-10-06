@@ -63,6 +63,7 @@ defer (void)render::destroy_view(&renderer, capture_view);
 | `path_trace` | `PathTraceDesc`: bounces, samples per frame and sample cap of a `PATH_TRACED` view (see [path tracing](path_tracing.md)) |
 | `clip_plane` | World-space `maths::Plane`; geometry on its negative side is not drawn (see [Clip plane](#clip-plane)); the zero plane clips nothing and both constructors produce it |
 | `volumetric_fog` | A froxel volume for the view's `HeightFog`, allocated with the view (see [volumetric fog](sky.md#volumetric-fog)); faults `INVALID_ARGUMENT` on a `PATH_TRACED` view |
+| `share_shadows` | Binds an earlier view's [shadow set](shadows.md#shadow-sets) when the keys match and publishes its own; on in both constructors |
 
 An installed [static impostor](lod.md#static-impostors) participates in the same
 per-view LOD selection and hysteresis. Forward and deferred views share its
@@ -86,8 +87,9 @@ The view owns its working images (`hdr_color`, `depth`, the scene color and dept
 [fog volume](sky.md#volumetric-fog) when `volumetric_fog` is on (7.03 MiB at 2560 × 1440), post and
 effect images) at the working extent `working_extent(viewport, output, render_scale)`, at least one pixel
 per dimension. Reconfiguring with a different extent or output waits for outstanding frames and
-reallocates them; every configuration resets the view's history, which is otherwise keyed by scene
-identity and needs no reset when a scene is replaced (`reset_view_history` remains the camera cut).
+reallocates them; every configuration resets the view's history except its
+[adapted exposure](post.md#auto-exposure), which a resize or parameter edit keeps. The history is otherwise keyed
+by scene identity and needs no reset when a scene is replaced (`reset_view_history` remains the camera cut).
 Window resize resizes every window view; target resize resizes every view on that target. A headless renderer's window views
 hold no images and record nothing.
 
@@ -169,6 +171,11 @@ the window is dormant (`has_output` false); a texture view always records. `end_
 pending uploads and environment preparations, then submits when the frame recorded a clear, draw,
 dispatch, upload or preparation, presents only when a window image was acquired, and discards a
 frame that recorded none. Neither call advances animation or flushes scene removals.
+
+`render_view(scene, camera_node, view, debug = null, shadow_camera = null)`: `shadow_camera` is the camera the view's
+shadow set is fitted to; null uses `camera_node`. A view binds an earlier view's set instead of recording one when
+their keys match ([shadow sets](shadows.md#shadow-sets)). A `shadow_camera` without a `Camera` faults
+`INVALID_ARGUMENT` and aborts the frame.
 
 `Renderer.render(scene, camera)` is the default-view convenience. `render_to(scene, camera, target,
 color = LINEAR_HDR, info = {})` renders and finishes one frame into a target through a view it
@@ -268,6 +275,16 @@ Plane floor_plane = { .normal = { 0, 1, 0 }, .d = -floor_level };
 Mat4 mirrored = maths::reflection_matrix(floor_plane).mul(camera_node.local.to_mat4());
 mirror_node.local = maths::transform_from_affine(mirrored)!;
 scene.get(mirror_node, Camera).aspect = main_aspect;
+scene.get(camera_node, Camera).aspect = main_aspect;
+// In the frame: the mirror first, fitted to the main camera, then the main view.
+renderer.render_view(
+    scene:         &scene,
+    camera_node:   mirror_node,
+    view:          mirror_view,
+    shadow_camera: camera_node,
+)!;
+renderer.finish_view(mirror_view)!;
+renderer.render_view(&scene, camera_node, main_view)!;
 ```
 
 - `reflection_matrix(plane)` maps `p` to `p - 2 (n·p + d) n`; `transform_from_affine` stores the
@@ -279,11 +296,15 @@ scene.get(mirror_node, Camera).aspect = main_aspect;
   and express the result relative to the mirror node's parent.
 - Exclude the reflective surface's layer from the mirror camera's `Camera.layers`, so the view
   never draws the surface that samples its target (see [Sampling a target](#sampling-a-target)).
-- Set the mirror camera's `Camera.aspect` to the main view's when the target's aspect can differ,
-  for example a target of fixed size under a resizable window.
+- Set both cameras' `Camera.aspect` to the main view's. The mirror records the main camera's
+  [shadow set](shadows.md#shadow-sets) at its own working extent; with an explicit aspect the projections match at
+  any mirror size, and the main view binds that set instead of recording one.
 - The surface's fragment stage samples the target at `gl_FragCoord.xy / frame.camera_params.zw`:
   the mirror view projects a point on the plane where the main view does.
-- Render the mirror view before the view that shows the surface.
+- Render the mirror view first and the view that shows the surface right after it. The renderer holds one shadow
+  set at a time: a view with another camera between them records over the mirror's set.
+- A mirror view stays `LINEAR_HDR`, so it ignores auto exposure; the view that shows the surface meters the
+  composited reflection as part of its image.
 - Water from the landscape add-on places its mirror camera and clip plane for you; see [water](water.md#the-mirror).
 - Under [fog or an atmosphere](sky.md#where-fog-applies) a mirror view fogs only the path behind its plane,
   from the plane to the reflected surface; the view that shows the surface fogs the path to it, so the
@@ -310,6 +331,11 @@ At 1920 × 1080 the frames run under 1 ms and the differences are inside the noi
 render scale 0.5 and 1.0, with and without the plane, about 0.045 ms of it the shadow atlas; on that
 small scene neither the plane nor the render scale moves the time beyond the run-to-run spread. The
 plane culls the buried crate (`Stats.culled` 1 with it, 0 without).
+
+With the mirror fitted to the main camera the frame records one shadow atlas, the mirror's, and the window view binds
+it. In the `views` example's View stats window (single-frame readings) the mirror's visible passes sum to about
+0.10 ms (depth 0.010, shadow atlas 0.073, forward 0.014); its atlas went from 0.068 to 0.073 ms because it now fits
+the main camera. The window's atlas is the one that is gone.
 
 ## Preparation
 
@@ -453,8 +479,10 @@ like `STANDARD` on a deferred view, one without stays forward; see
 [custom shaders](custom_shaders.md#g-buffer-stage).
 
 Per-view numbers live on the view: `Renderer.view_stats(view)` returns `ViewStats` with the
-view's selected and dropped light counts, its cluster count and overflow count, and its completed
-GPU pass timings (`C3D_PROFILE_GPU`), while `Stats` keeps the renderer-wide sums.
+view's selected and dropped light counts, whether it bound another view's shadow set
+(`shadow_set_shared`, the table's "Shadow set" row), its cluster count and overflow count, its completed
+GPU pass timings (`C3D_PROFILE_GPU`) and its applied exposure (`exposure`, delayed under auto exposure), while
+`Stats` keeps the renderer-wide sums.
 `gui::view_stats_table(renderer, views, labels)` prints several views side by side.
 
 ```bash
@@ -474,6 +502,7 @@ forward (prepass, G-buffer and resolve 0.483 ms against 1.161 ms of forward opaq
 the low-overdraw `many_lights` hall costs 6 to 8 % more deferred than forward. Deferred pays
 for overdraw and light count and charges the G-buffer round trip without them.
 
-Known difference: the resolve offsets shadow lookups along the stored shading normal, while the
-forward shaders use the geometric normal; normal-mapped receivers can differ by a small bias. No
-MSAA on deferred views; no screen-space effect consumes the G-buffer.
+Known difference: the resolve offsets shadow lookups along a face normal rebuilt from depth, the
+forward shaders along the face-corrected vertex normal; neither reads the normal map, and on curved
+surfaces the two directions differ slightly. No MSAA on deferred views; no screen-space effect
+consumes the G-buffer.

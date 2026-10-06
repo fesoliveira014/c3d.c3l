@@ -81,6 +81,8 @@
     { "shader": "velocity", "source": "velocity.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "motion_blur", "source": "motion_blur.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "taa_resolve", "source": "taa_resolve.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "exposure_histogram", "source": "exposure_histogram.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "exposure_adapt", "source": "exposure_adapt.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "ssao", "source": "ssao.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "ao_blur", "source": "ao_blur.comp.glsl", "stage": "comp", "defines": [] },
     { "shader": "probe_fill_environment", "source": "probe_fill_environment.comp.glsl", "stage": "comp", "defines": [] },

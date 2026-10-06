@@ -6,6 +6,7 @@ import c3d::asset::custom;
 import c3d::ecs;
 import c3d::scene;
 import c3d::serial;
+import c3d::serial::test::filler @public;
 
 fn void test_corrupt_container_ranges_and_records() @test {
     @pool() {
@@ -266,6 +267,51 @@ fn void test_chunk_count_bound_accepts_limit_and_rejects_excess() @test {
               == c3d::ASSET_FORMAT_ERROR);
             assert(fixture.destination.world.entities.free_count == free_before);
         }
+    };
+}
+
+fn void test_type_table_above_sixty_four_types_round_trips() @test {
+    @pool() {
+        Fixture fixture;
+        init_fixture(&fixture);
+        defer free_fixture(&fixture);
+        Node* root = fixture.source.add_node(name: "wide")!!;
+        $for var $index = 0; $index < SERIAL_FILLER_TYPES; $index++:
+            fixture.source.add(root, (filler::SerialFiller{$index}){ .value = $index });
+        $endfor
+        fixture.source.add(root, (Value){ .number = 5 });
+        fixture.source.add(root, (Versioned){ .first = 1, .second = 2 });
+        fixture.source.add(root, (Composite){});
+        char[] bytes = serial::write_subtree(
+            allocator: tmem,
+            scene: &fixture.source,
+            assets: &fixture.assets,
+            root: root,
+        )!!;
+
+        Node* restored = serial::read_subtree(&fixture.destination, &fixture.assets, bytes)!!;
+        $for var $index = 0; $index < SERIAL_FILLER_TYPES; $index++:
+            assert(fixture.destination.get(restored, filler::SerialFiller{$index}).value == $index);
+        $endfor
+        assert(fixture.destination.get(restored, Value).number == 5);
+        assert(fixture.destination.get(restored, Versioned).second == 2);
+        assert(fixture.destination.has(restored, Composite));
+        char[] rewritten = serial::write_subtree(
+            allocator: tmem,
+            scene: &fixture.destination,
+            assets: &fixture.assets,
+            root: restored,
+        )!!;
+        assert(bytes == rewritten);
+
+        // An unknown first type name alone is unsupported, so the format error below comes from the type count.
+        usz types = chunk_offset(bytes, ChunkKind.TYPES);
+        char[] excess = alloc::clone_slice(tmem, bytes);
+        excess[types + 2 * uint::size] = 'X';
+        assert(@catch(serial::read_subtree(&fixture.destination, &fixture.assets, excess)) == c3d::UNSUPPORTED);
+        patch_uint(excess, types, ecs::MAX_COMPONENT_TYPES + 1);
+        assert(@catch(serial::read_subtree(&fixture.destination, &fixture.assets, excess))
+          == c3d::ASSET_FORMAT_ERROR);
     };
 }
 
