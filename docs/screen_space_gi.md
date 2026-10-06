@@ -107,9 +107,8 @@ Measured on an RTX 4090 over Sponza (`gltf_viewer --benchmark --screen-space-gi 
 
 Forward views pay more because the trace and the filter reconstruct normals from depth. The two-texel face rule
 (up to eight depth loads per normal) costs 4.5 % at 1920 x 1080 and 3.1 % at 3840 x 2160 over the earlier
-four-load rule. A view without TAA or motion blur
-also pays the velocity pass and the per-candidate history commit: `cpu_record` rose from 0.15 to 0.19 ms at
-1080p on Sponza.
+four-load rule. A view without TAA or motion blur also pays the velocity pass and the per-candidate history commit:
+`cpu_record` rose from 0.15 to 0.19 ms at 1080p on Sponza.
 
 Noise, read on the acceptance scene (a red emitter on a grey floor, 8-bit red readings of three floor pixels
 beside it over 64 frames at rest, bounces of 6 to 72 levels): a standard deviation of 5.8 to 15.7 levels with
