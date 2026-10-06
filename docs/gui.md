@@ -28,6 +28,15 @@ The six count slots include a terminal impostor when installed; its index follow
 that group's mesh levels. Missing-atlas fallback is a separate current CPU count.
 See [whole-object LOD](lod.md).
 
+## Decal inspection
+
+The built-in `Decal` inspector displays the borrowed material id and edits
+`DecalWeights` through Albedo, Normal, Roughness and Metallic sliders in [0, 1].
+It also edits Fade angle in [0, 90] degrees, Receiver layers (`receiver_layers`)
+and Order. Transform, visibility and camera-layer edits remain on the node.
+These component edits need no material dirty call; shared source material edits
+use the ordinary asset revision rule. See [decals](materials.md#decals).
+
 ## Profiler panel
 
 The optional `c3d_profile_gui` add-on extends `c3d::gui` with an owned
@@ -148,6 +157,13 @@ each copy is also one draw.
 Ring usage reports the previous frame slot's head/capacity and overflow allocation count separately;
 a dormant frame can also be the previous slot.
 
+Decals and Decals dropped sum current CPU selection counts across recorded views.
+Completed decal overflows counts cells that exceeded their decal list capacity;
+those cells use the complete ordered list, so overflow does not discard decals.
+It follows the completed cluster view, not a sum across views. The view statistics
+table includes Decals, Decals dropped and Decal overflows separately for each view.
+Counts and overflow can refer to different frames because GPU readback is delayed.
+
 GPU timings are disabled by default and enabled at renderer creation with
 `RendererDesc.gpu_timings`, or by the `cube_gui` example's `--gpu-timings` flag. Values come
 from completed frame slots and may lag CPU counters. Build with the
@@ -160,9 +176,8 @@ allocation and block sizes.
 
 ## Cluster diagnostics
 
-Call `gui::targets_panel` before `begin_frame`: its Forward and Flat/Clustered controls
-apply changes through `configure_view`. Deferred is visibly disabled because the API
-rejects it with `UNSUPPORTED`. Configuration can propagate invalid-argument, unsupported,
+Call `gui::targets_panel` before `begin_frame`: its Forward/Deferred and Flat/Clustered controls
+apply changes through `configure_view`. Configuration can propagate invalid-argument, unsupported,
 allocation, recording and wait faults; do not treat the panel as an infallible display.
 The [view contract](views.md#light-selection) describes the editable cluster settings.
 
@@ -188,6 +203,9 @@ CPU counters, and work with GPU timestamps disabled. With multiple views they fo
 the [last-recorded-view policy](views.md#frames), not an aggregate. Timestamp-enabled
 runs also show completed `LIGHT_CULL` and opaque GPU times. Cull time includes private
 light upload/reset, assignment and counter copy; opaque time alone is not total cost.
+The dispatch also assigns decals; sampling is timed in the receiver's draw pass,
+including `FORWARD_OPAQUE` and `GBUFFER`. The occupancy heatmap still displays
+finite-light counts, not decal counts.
 Opening a preview adds work, so close it for the main timing comparison.
 
 The [many-lights example](many_lights.md) combines these panels with fixed workload

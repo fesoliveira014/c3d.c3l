@@ -501,6 +501,99 @@ light.layers = 2;
 Here cameras seeing layer 1 or 2 can include the bulb, but it illuminates only
 meshes carrying layer 2. Ambient and emissive do not use direct-light masks.
 
+## Decals
+
+A `Decal` projects a borrowed Standard material onto opaque or masked Standard
+and Physical receivers. The forward and G-buffer material stages apply the same
+decal blend before lighting. Basic, Toon, alpha-blended and impostor receivers
+do not receive decals. Traced-hit shading used by reflections, GI and path
+tracing does not apply decals. Terrain and custom shaders require explicit
+receiver integration.
+
+With a live Standard `material_id` and a scene:
+
+```c3
+DecalDesc desc = scene::default_decal_desc(material_id);
+desc.size = { 2, 1, 0.5f };
+desc.decal.weights = { .base_color = 1 };
+Node* decal_node = scene.add_decal(desc, name: "paint")!;
+decal_node.local.position = { 0, 0, 1 };
+scene.update_world();
+```
+
+`default_decal_desc` uses unit size, full channel weights, every receiver layer,
+order zero and `DEFAULT_DECAL_FADE_ANGLE` (80 degrees, stored in radians).
+`Scene.add_decal` copies `size` to the new node's local scale. Size components
+must be finite and positive, weights finite in [0, 1], and `fade_angle` finite
+in [0, PI/2]. Invalid descriptions return `c3d::INVALID_ARGUMENT` before creating
+a node; full node capacity returns `c3d::CAPACITY_EXCEEDED`. Neither fault adds a
+node or component. `Scene.add(node, decal)` can attach the component to an existing
+node; direct component edits must preserve the same weight and angle ranges.
+
+The volume is the node's unit cube, from -0.5 to +0.5 on each axis, mapped by its
+world transform. Finite affine transforms support non-uniform scale, inherited
+shear and reflection. A collapsed volume draws nothing and consumes no packed
+decal slot. Extraction also skips a non-finite determinant or inverse; non-finite
+world transforms are not supported input. Call `scene.update_world()` after moving
+or scaling a node. Decals follow their hierarchy's visibility. Node `layers`
+select cameras; `Decal.receiver_layers` independently selects receiver-node
+layers, with zero disabling the decal.
+
+The projected UV is `(local.x + 0.5, 0.5 - local.y)`. Each projected map applies its
+own UV transform and sampler to that projection; UV0/UV1 selection does not select
+a receiver UV stream. The source base factor and map provide RGB and opacity;
+the metallic-roughness map supplies G roughness and B metallic.
+
+| `DecalWeights` field | Blended receiver value |
+| --- | --- |
+| `base_color` | Base RGB |
+| `normal` | Shading normal |
+| `roughness` | Roughness |
+| `metallic` | Metallic |
+
+Each blend weight is the channel weight times source base alpha times angular
+opacity. Receiver alpha, emissive, occlusion and geometric `offset_normal` remain
+unchanged; decals do not change alpha masking or shadow coverage. Physical
+extension parameters, including clearcoat and sheen, remain unchanged. Overlaps
+apply in ascending `(order, entity.index, entity.generation)`, so later entries blend
+over earlier ones. Each view retains at most 256 eligible decals after culling
+and ordering. This base-first budget keeps the lowest-order entries and drops
+higher-order overlays first; dropped entries count as `decals_dropped`.
+
+Angular fading compares the receiver's geometric normal with the normalized
+world image of local +Z, including under shear. For `c = cos(fade_angle)`, the
+cosine band is `min(DECAL_FADE_BAND, 1 - c)`, where the generated ABI constant is
+0.1. A nonzero band gives `clamp((facing - c) / band, 0, 1)`: zero at the cutoff,
+full weight at facing 1. When the band is zero, including at zero degrees, the
+rule is `facing >= 1 ? 1 : 0`. This hard limit requires exact alignment; useful
+narrow fades start around one degree. Extraction computes the cosine and reciprocal
+band once per decal; the shader subtracts, multiplies and clamps.
+
+Normal maps follow the material convention: +X follows increasing U and +Y
+increasing V, which is local -Y for this projection. The packed tangent follows
+world local +X and has handedness `-sign(determinant)`, so reflections reverse it.
+The shared `tangent_normal` frame orthogonalizes against the current receiver
+normal. Under shear, U follows that projected tangent and V is the orthogonal
+approximation. RGB XYZ decoding, normal scale and degenerate-frame behavior match
+mesh normal maps; scale zero disables perturbation.
+
+The scene owns the component, not its material or textures. `Scene.add_decal`
+does not validate material liveness or kind. Preparation and rendering skip dead
+or non-Standard source materials and count them in `dangling_refs`. Keep shared
+assets alive while used. Edit a source material through its asset record and call
+`assets.mark_material_dirty(material_id)`; direct decal edits need no dirty call.
+`Renderer.prepare_scene` resolves decal materials, and view extraction resolves
+their current revisions before packing.
+
+Custom receivers may include public `decals.glsl` and call `apply_decals` before
+lighting or writing their G-buffer. Supply a fully initialized
+`StandardMaterialSample`, the receiver's material flags and `DrawRoot.layers`,
+frame-relative position and matching view depth. Compute position derivatives
+in uniform flow before any discard or divergent decal branch, then pass them to
+the helper. It applies map UV transforms and frame mip bias to those gradients.
+Terrain and other custom shaders opt in explicitly. The serialization add-on
+has no built-in `Decal` codec.
+
 ## Ambient and light capacity
 
 Scenes start with white `ambient_color` and zero `ambient_intensity`. Both must

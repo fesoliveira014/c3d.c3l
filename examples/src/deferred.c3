@@ -39,14 +39,42 @@ const float ROW_SPACING @local = 1.9f;
 const float GROUND_SIZE @local = 16;
 const float GROUND_LEVEL @local = -0.7f;
 const uint COLUMNS @local = 5;
+const uint DEFAULT_BULLET_COUNT @local = 64;
+const uint DENSE_BULLET_COUNT @local = 255; // Leaves one slot for the moving road stripe.
+const uint DECAL_TEXTURE_SIZE @local = 64; // 16 KiB per RGBA image before generated mips.
+const uint RGBA_BYTES @local = 4;
+const float TEXEL_MAX @local = 255;
+const float BULLET_FADE_WIDTH @local = 0.16f;
+const float BULLET_DENT_STRENGTH @local = 2;
+const float BULLET_CORE_COLOR @local = 0.08f;
+const float BULLET_RIM_COLOR @local = 0.35f;
+const float BULLET_ROUGHNESS @local = 0.9f;
+const uint BOX_RECEIVERS @local = 2;
+const uint BOX_DECAL_COLUMNS @local = 4;
+const uint BOX_DECAL_ROWS @local = 2;
+const float BOX_DECAL_SPACING @local = 0.25f;
+const float BOX_DECAL_SIZE @local = 0.22f;
+const uint FLOOR_DECAL_COLUMNS @local = 8;
+const Vec2 FLOOR_DECAL_SPAN @local = { 8, 7.5f };
+const float FLOOR_DECAL_SIZE @local = 0.4f;
+const float DECAL_DEPTH @local = 0.2f;
+const Vec2 ROAD_PAINT_SIZE @local = { 0.65f, 3 };
+const Vec2 ROAD_PAINT_EXTENT @local = { 0.65f, 0.9f };
 const Vec2 CONTROLS_PANEL_POSITION @local = { 16, 16 };
-const Vec2 CONTROLS_PANEL_SIZE @local = { 340, 180 };
-const Vec2 POST_PANEL_POSITION @local = { 16, 212 };
+const Vec2 CONTROLS_PANEL_SIZE @local = { 340, 250 };
+const Vec2 POST_PANEL_POSITION @local = { 16, 282 };
 const Vec2 POST_PANEL_SIZE @local = { 340, 300 };
 const Vec2 TARGETS_PANEL_POSITION @local = { 920, 16 };
 const Vec2 TARGETS_PANEL_SIZE @local = { 344, 690 };
 const Vec2 STATS_PANEL_POSITION @local = { 372, 16 };
 const Vec2 STATS_PANEL_SIZE @local = { 300, 700 };
+const double NANOSECONDS_PER_MILLISECOND @local = 1000000;
+
+struct DecalTimings @local @feat(C3D_PROFILE_CPU & C3D_PROFILE_INTERNAL) {
+    double[2] milliseconds;
+    ulong capture_id;
+    bool ready;
+}
 
 struct Orbit @local {
     Vec3  target;
@@ -68,6 +96,8 @@ struct Options @local {
     bool gpu_timings;
     bool effects;
     bool clustered;
+    bool decals;
+    bool dense_decals;
 }
 
 struct Materials @local {
@@ -81,6 +111,8 @@ struct Materials @local {
     MaterialId basic;
     MaterialId glass;
     MaterialId transmissive;
+    MaterialId bullet_hole;
+    MaterialId road_paint;
 }
 
 fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
@@ -174,6 +206,18 @@ fn void? run_gui(
     GuiRenderer gui_renderer = gui::create_gui_renderer(mem, renderer, window)!;
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
 
+    $if $feat(C3D_PROFILE_CPU) && $feat(C3D_PROFILE_INTERNAL):
+        profile::Recorder recorder = profile::create_recorder(mem, {
+            .frame_capacity = 2,
+            .cpu_scopes_per_frame = 256,
+            .max_depth = 16,
+            .label_bytes_per_frame = 8192,
+        })!;
+        defer profile::destroy_recorder(&recorder);
+        DecalTimings decal_timings;
+        ulong capture_id;
+    $endif
+
     Views views = {
         .left       = renderer.default_view,
         .left_desc  = render::default_view_desc(),
@@ -196,7 +240,7 @@ fn void? run_gui(
     configure_views(renderer, &views)!;
     renderer.prepare_scene(scene)!;
 
-    Orbit orbit = { .target = { 0, 0.2f, 0 }, .distance = 11, .pitch = 0.35f };
+    Orbit orbit = { .target = { 0, 0.2f, 0 }, .distance = 16, .pitch = 0.35f };
     TargetsPanelState targets = gui::default_targets_panel_state();
     float lamp_angle;
     bool orbit_lamp = true;
@@ -228,6 +272,12 @@ fn void? run_gui(
             views_changed |= shading_radios("Left", &views.left_desc);
             views_changed |= shading_radios("Right", &views.right_desc);
             imgui::checkbox("Orbit lamp", &orbit_lamp);
+            imgui::same_line();
+            if (imgui::checkbox("Decals", &options.decals)) {
+                scene.@each(Decal; Entity entity, Decal* decal) {
+                    scene.node(entity).visible = options.decals;
+                };
+            }
             if (imgui::radio_button("Flat lights", views.right_desc.lights == FLAT)) {
                 views.right_desc.lights = FLAT;
                 views_changed = true;
@@ -237,6 +287,35 @@ fn void? run_gui(
                 views.right_desc.lights = CLUSTERED;
                 views_changed = true;
             }
+            ViewStats left_stats = renderer.view_stats(views.left)!;
+            ViewStats right_stats = renderer.view_stats(views.right)!;
+            imgui::text(
+                "Left: %u decals, %u dropped, %u overflows",
+                left_stats.decals,
+                left_stats.decals_dropped,
+                left_stats.decal_overflows,
+            );
+            imgui::text(
+                "Right: %u decals, %u dropped, %u overflows",
+                right_stats.decals,
+                right_stats.decals_dropped,
+                right_stats.decal_overflows,
+            );
+            imgui::text("Output: %u x %u", views.width, views.height);
+            $if $feat(C3D_PROFILE_CPU) && $feat(C3D_PROFILE_INTERNAL):
+                if (decal_timings.ready) {
+                    imgui::text(
+                        "CPU view.decals: left %.4f ms, right %.4f ms",
+                        decal_timings.milliseconds[0],
+                        decal_timings.milliseconds[1],
+                    );
+                    imgui::text("CPU capture: %llu", decal_timings.capture_id);
+                } else {
+                    imgui::text_unformatted("CPU view.decals: N/A (capture incomplete)");
+                }
+            $else
+                imgui::text_unformatted("CPU view.decals: profiling excluded");
+            $endif
         }
         imgui::end();
 
@@ -265,15 +344,42 @@ fn void? run_gui(
         platform::sync_window(window, renderer);
         bool resized = renderer.swapchain_info.width != views.width || renderer.swapchain_info.height != views.height;
         if (views_changed || resized) configure_views(renderer, &views)!;
-        draw_frame(
-            renderer:     renderer,
-            scene:        scene,
-            camera_node:  camera_node,
-            views:        &views,
-            gui_renderer: &gui_renderer,
-            info:         { .time = window.clock.total, .delta = window.clock.delta },
-        )!;
+        @capture_decal_times(&recorder, capture_id++, &decal_timings) {
+            draw_frame(
+                renderer:     renderer,
+                scene:        scene,
+                camera_node:  camera_node,
+                views:        &views,
+                gui_renderer: &gui_renderer,
+                info:         { .time = window.clock.total, .delta = window.clock.delta },
+            )!;
+        }!;
     }
+}
+
+macro void? @capture_decal_times(#recorder, #capture_id, #timings; @body()) @local {
+    $if $feat(C3D_PROFILE_CPU) && $feat(C3D_PROFILE_INTERNAL):
+        profile::Recorder* recorder = #recorder;
+        DecalTimings* timings = #timings;
+        ulong capture_id = #capture_id;
+        *timings = { .capture_id = capture_id };
+        profile::@capture(recorder, capture_id) {
+            @body();
+        };
+        profile::FrameCaptureView capture = recorder.frame(capture_id)!;
+        uint view_index;
+        // draw_frame records exactly the left view followed by the right view.
+        foreach (scope : capture.cpu) {
+            if (scope.label != "view.decals") continue;
+            if (view_index < timings.milliseconds.len) {
+                timings.milliseconds[view_index] = (double)scope.duration_ns / NANOSECONDS_PER_MILLISECOND;
+            }
+            view_index++;
+        }
+        timings.ready = capture.cpu_state == profile::CaptureState.READY && view_index == timings.milliseconds.len;
+    $else
+        @body();
+    $endif
 }
 
 fn Materials? create_materials(AssetStore* assets, TextureId base_color, TextureId material_data, TextureId normal) @local {
@@ -341,20 +447,153 @@ fn void? place_row(Scene* scene, GeometryId geometry, MaterialId[] materials, fl
     }
 }
 
+fn void? add_decal_materials(AssetStore* assets, Materials* materials) @local {
+    char[DECAL_TEXTURE_SIZE * DECAL_TEXTURE_SIZE * RGBA_BYTES] albedo_pixels;
+    char[DECAL_TEXTURE_SIZE * DECAL_TEXTURE_SIZE * RGBA_BYTES] normal_pixels;
+    char[DECAL_TEXTURE_SIZE * DECAL_TEXTURE_SIZE * RGBA_BYTES] paint_pixels;
+    for (uint y = 0; y < DECAL_TEXTURE_SIZE; y++) {
+        for (uint x = 0; x < DECAL_TEXTURE_SIZE; x++) {
+            Vec2 offset = {
+                ((float)x + 0.5f) * 2 / DECAL_TEXTURE_SIZE - 1,
+                ((float)y + 0.5f) * 2 / DECAL_TEXTURE_SIZE - 1,
+            };
+            float radius = offset.length();
+            float opacity = math::clamp((1 - radius) / BULLET_FADE_WIDTH, 0.0f, 1.0f);
+            float shade = BULLET_CORE_COLOR
+              + (BULLET_RIM_COLOR - BULLET_CORE_COLOR) * math::min(radius, 1.0f);
+            float dent = BULLET_DENT_STRENGTH * math::max(1 - radius, 0.0f);
+            Vec3 normal = { -offset.x * dent, -offset.y * dent, 1 };
+            normal = normal.normalize() * 0.5f + (Vec3){ 0.5f, 0.5f, 0.5f };
+            usz pixel = (usz)(y * DECAL_TEXTURE_SIZE + x) * RGBA_BYTES;
+            for (uint channel = 0; channel < 3; channel++) {
+                albedo_pixels[pixel + channel] = (char)(shade * TEXEL_MAX);
+                normal_pixels[pixel + channel] = (char)(normal[channel] * TEXEL_MAX);
+                paint_pixels[pixel + channel] = (char)TEXEL_MAX;
+            }
+            albedo_pixels[pixel + 3] = (char)(opacity * TEXEL_MAX);
+            normal_pixels[pixel + 3] = (char)TEXEL_MAX;
+            paint_pixels[pixel + 3] = math::abs(offset.x) < ROAD_PAINT_EXTENT.x
+              && math::abs(offset.y) < ROAD_PAINT_EXTENT.y
+              ? (char)TEXEL_MAX : 0;
+        }
+    }
+
+    TextureId albedo = add_decal_texture(
+        assets: assets,
+        pixels: albedo_pixels[..],
+        format: RGBA8_SRGB,
+        name: "bullet_albedo",
+    )!;
+    TextureId normal = add_decal_texture(
+        assets: assets,
+        pixels: normal_pixels[..],
+        format: RGBA8_UNORM,
+        name: "bullet_normal",
+    )!;
+    TextureId paint = add_decal_texture(
+        assets: assets,
+        pixels: paint_pixels[..],
+        format: RGBA8_SRGB,
+        name: "road_paint",
+    )!;
+    materials.bullet_hole = assets.add_material(material::standard({
+        .base_color = { 1, 1, 1, 1 },
+        .roughness = BULLET_ROUGHNESS,
+        .normal_scale = 1,
+        .base_color_map = material::texture_slot(albedo),
+        .normal_map = material::texture_slot(normal),
+    }), "deferred/bullet_hole")!;
+    materials.road_paint = assets.add_material(material::standard({
+        .base_color = { 1, 0.8f, 0.1f, 1 },
+        .roughness = 1,
+        .base_color_map = material::texture_slot(paint),
+    }), "deferred/road_paint")!;
+}
+
+fn TextureId? add_decal_texture(
+    AssetStore* assets,
+    char[] pixels,
+    PixelFormat format,
+    ZString name,
+) @local {
+    return assets.add_texture(material::texture_2d_desc(
+        width: DECAL_TEXTURE_SIZE,
+        height: DECAL_TEXTURE_SIZE,
+        format: format,
+        debug_name: name,
+    ), pixels);
+}
+
+fn void? place_decals(
+    Scene* scene,
+    GeometryId box,
+    Materials* materials,
+    Node* lamp,
+    uint bullet_count,
+) @local {
+    DecalDesc bullet = scene::default_decal_desc(materials.bullet_hole);
+    bullet.size = { BOX_DECAL_SIZE, BOX_DECAL_SIZE, DECAL_DEPTH };
+    bullet.decal.order = 1;
+    for (uint receiver = 0; receiver < BOX_RECEIVERS; receiver++) {
+        MaterialId material = receiver ? materials.physical_plain : materials.dielectric;
+        Node* node = scene.add_mesh(box, material, name: "decal_receiver")!;
+        node.local.position = {
+            (receiver ? 1.0f : -1.0f) * (COLUMNS + 1) * 0.5f * COLUMN_SPACING,
+            0,
+            ROW_SPACING * 0.5f,
+        };
+        for (uint row = 0; row < BOX_DECAL_ROWS; row++) {
+            for (uint column = 0; column < BOX_DECAL_COLUMNS; column++) {
+                Node* decal = scene.add_decal(bullet, node, "bullet_hole")!;
+                decal.local.position = {
+                    ((float)column - (BOX_DECAL_COLUMNS - 1) * 0.5f) * BOX_DECAL_SPACING,
+                    ((float)row - (BOX_DECAL_ROWS - 1) * 0.5f) * BOX_DECAL_SPACING,
+                    CUBE_SIZE * 0.5f,
+                };
+            }
+        }
+    }
+
+    uint floor_count = bullet_count - BOX_RECEIVERS * BOX_DECAL_COLUMNS * BOX_DECAL_ROWS;
+    uint columns = bullet_count > DEFAULT_BULLET_COUNT ? FLOOR_DECAL_COLUMNS * 2 : FLOOR_DECAL_COLUMNS;
+    uint rows = (floor_count + columns - 1) / columns;
+    Quat floor_rotation = quaternion::from_axis_angle{float}({ 1, 0, 0 }, -(float)math::PI / 2);
+    bullet.size = { FLOOR_DECAL_SIZE, FLOOR_DECAL_SIZE, DECAL_DEPTH };
+    for (uint index = 0; index < floor_count; index++) {
+        Node* decal = scene.add_decal(bullet, name: "bullet_hole")!;
+        decal.local.position = {
+            (((float)(index % columns) + 0.5f) / columns - 0.5f) * FLOOR_DECAL_SPAN.x,
+            GROUND_LEVEL,
+            (((float)(index / columns) + 0.5f) / rows - 0.5f) * FLOOR_DECAL_SPAN.y,
+        };
+        decal.local.rotation = floor_rotation;
+    }
+
+    DecalDesc paint = scene::default_decal_desc(materials.road_paint);
+    paint.size = { ROAD_PAINT_SIZE.x, ROAD_PAINT_SIZE.y, DECAL_DEPTH };
+    paint.decal.weights = { .base_color = 1, .normal = 0, .roughness = 0, .metallic = 0 };
+    paint.decal.order = 0;
+    Node* stripe = scene.add_decal(paint, lamp, "road_paint")!;
+    stripe.local.position = { 0, GROUND_LEVEL - LAMP_HEIGHT, 0 };
+    stripe.local.rotation = floor_rotation;
+}
+
 fn int main(String[] args) {
-    Options options;
+    Options options = { .decals = true };
     foreach (argument : args[1..]) {
         if (argument == "--gpu-timings") {
             $if $feat(C3D_PROFILE_GPU):
                 options.gpu_timings = true;
             $else
-                io::eprintfn("--gpu-timings needs GPU profiling: c3c build deferred --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL");
+                io::eprintfn("--gpu-timings needs c3d_profile and C3D_PROFILE_GPU; see docs/views.md for the build command.");
                 return 1;
             $endif
         } else if (argument == "--effects") {
             options.effects = true;
         } else if (argument == "--clustered") {
             options.clustered = true;
+        } else if (argument == "--dense-decals") {
+            options.dense_decals = true;
         } else {
             io::printfn("Unknown argument: %s", argument);
             return 1;
@@ -414,6 +653,7 @@ fn int main(String[] args) {
         ground = assets.add_geometry(&ground_geometry, "deferred/ground")!!;
     };
     Materials materials = create_materials(&assets, base_color, material_data, normal)!!;
+    add_decal_materials(&assets, &materials)!!;
 
     Scene scene = scene::create_scene(mem, scene::default_scene_desc());
     defer scene::destroy_scene(&scene);
@@ -440,6 +680,13 @@ fn int main(String[] args) {
     Node* sun = scene.add_light(light::directional({ 1, 0.98f, 0.92f }, SUN_INTENSITY), name: "sun")!!;
     sun.local.rotation = maths::look_rotation((Vec3){ 0.35f, -0.8f, -0.45f }.normalize(), { 0, 1, 0 });
     Node* lamp = scene.add_light(light::point({ 1, 0.7f, 0.4f }, LAMP_INTENSITY, LAMP_RANGE), name: "lamp")!!;
+    place_decals(
+        scene: &scene,
+        box: box,
+        materials: &materials,
+        lamp: lamp,
+        bullet_count: options.dense_decals ? DENSE_BULLET_COUNT : DEFAULT_BULLET_COUNT,
+    )!!;
     Node* camera_node = scene.add_camera(camera::perspective_deg(50, 0.1f), name: "camera")!!;
 
     if (catch excuse = run_gui(

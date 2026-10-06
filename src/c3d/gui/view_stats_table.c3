@@ -43,6 +43,15 @@ fn void view_stats_table(Renderer* renderer, ViewId[] views, ZString[] labels) {
     @row("Lights dropped", views; ViewId view) {
         imgui::text("%u", renderer.views.get(view).stats.lights_dropped);
     };
+    @row("Decals", views; ViewId view) {
+        imgui::text("%u", renderer.views.get(view).stats.decals);
+    };
+    @row("Decals dropped", views; ViewId view) {
+        imgui::text("%u", renderer.views.get(view).stats.decals_dropped);
+    };
+    @row("Decal overflows", views; ViewId view) {
+        imgui::text("%u", renderer.views.get(view).stats.decal_overflows);
+    };
     @row("Cluster count", views; ViewId view) {
         imgui::text("%u", renderer.views.get(view).stats.cluster_count);
     };

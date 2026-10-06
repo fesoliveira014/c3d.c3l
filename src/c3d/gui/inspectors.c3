@@ -29,6 +29,7 @@ struct Inspector {
 const float CAMERA_FOV_MIN_DEGREES @local = 1;
 const float CAMERA_FOV_MAX_DEGREES @local = 179;
 const float CONE_MAX_DEGREES @local = 90;
+const float DECAL_FADE_MAX_DEGREES @local = 90;
 const float IK_ANGLE_MAX_DEGREES @local = 180;
 const float CAMERA_MIN_NEAR @local = 0.0001f;
 const float MIN_POSITIVE @local = 0.0001f;
@@ -235,6 +236,43 @@ fn bool light_inspector(void* component) @local {
         changed = nonnegative_drag("Normal bias (m)", &light.shadow.punctual_normal_bias) || changed;
     }
     changed = nonnegative_drag("Max distance", &light.shadow.max_distance) || changed;
+    return changed;
+}
+
+fn bool decal_inspector(void* component) @local {
+    Decal* decal = (Decal*)component;
+    imgui::text("Material: %u:%u", decal.material.index, decal.material.generation);
+    bool changed;
+    ZString[4] labels = { "Albedo", "Normal", "Roughness", "Metallic" };
+    float*[4] weights = {
+        &decal.weights.base_color,
+        &decal.weights.normal,
+        &decal.weights.roughness,
+        &decal.weights.metallic,
+    };
+    foreach (channel, label : labels) {
+        if (imgui::slider_float(
+            label: label,
+            v: weights[channel],
+            v_min: 0,
+            v_max: 1,
+        )) {
+            *weights[channel] = math::clamp(*weights[channel], 0.0f, 1.0f);
+            changed = true;
+        }
+    }
+    float fade_degrees = math::rad_to_deg(decal.fade_angle);
+    if (imgui::slider_float(
+        label: "Fade angle (deg)",
+        v: &fade_degrees,
+        v_min: 0,
+        v_max: DECAL_FADE_MAX_DEGREES,
+    )) {
+        decal.fade_angle = math::deg_to_rad(math::clamp(fade_degrees, 0.0f, DECAL_FADE_MAX_DEGREES));
+        changed = true;
+    }
+    changed = imgui::input_scalar("Receiver layers", imgui::DATA_TYPE_U32, &decal.receiver_layers) || changed;
+    changed = imgui::input_scalar("Order", imgui::DATA_TYPE_S32, &decal.order) || changed;
     return changed;
 }
 
@@ -545,6 +583,7 @@ fn void expose_builtin_components() @private {
     expose(LodGroup, &lod_group_inspector);
     expose(Camera, &camera_inspector);
     expose(Light, &light_inspector);
+    expose(Decal, &decal_inspector);
     expose(ModelInstance);
     expose(SkinBinding);
     expose(Animator, &animator_inspector);

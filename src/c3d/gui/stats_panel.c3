@@ -57,6 +57,8 @@ fn void? stats_panel(Renderer* renderer) {
     }
     imgui::text("Lights: %u", renderer.stats.lights);
     imgui::text("Lights dropped: %u", renderer.stats.lights_dropped);
+    imgui::text("Decals: %u", renderer.stats.decals);
+    imgui::text("Decals dropped: %u", renderer.stats.decals_dropped);
     imgui::text("Probe rays: %u", renderer.stats.probe_rays);
     imgui::text("Probe updates: %u", renderer.stats.probe_updates);
     imgui::text("Probe volumes dropped: %u", renderer.stats.probe_volumes_dropped);
@@ -84,6 +86,7 @@ fn void? stats_panel(Renderer* renderer) {
         renderer.stats.cluster_view.index, renderer.stats.cluster_view.generation);
     imgui::text("Completed cluster count: %u", renderer.stats.cluster_count);
     imgui::text("Completed cluster overflows: %u", renderer.stats.cluster_overflows);
+    imgui::text("Completed decal overflows: %u", renderer.stats.decal_overflows);
 
     if (renderer.frame_index) {
         render::Frame* previous = &renderer.frames[(renderer.frame_index - 1) % render::FRAMES_IN_FLIGHT];
