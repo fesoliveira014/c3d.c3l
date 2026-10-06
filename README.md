@@ -409,6 +409,11 @@ and per-pass timings. `--frames 30` bounds a windowed smoke run. See
 
 ## Using c3d from your own project
 
+Each release publishes core as `c3d_core-v<version>.c3l` and every add-on as its own packed library; the
+release notes name the dependency versions to download beside them. See [releases](docs/release.md) for the files,
+the libraries each package needs in `project.json`, and the shader tools for your own shader packages. A checkout
+with submodules works as before.
+
 The optional `c3d_profile` add-on bundles CPU and GPU capture with JSON export.
 CPU-only use needs no renderer or native dependencies; GPU profiling selects its
 backend module explicitly. Core does not require the package in ordinary builds.

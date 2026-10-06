@@ -1,0 +1,68 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+env:
+  C3C_VERSION: "0.8.3"
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: ci
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install c3c
+        run: |
+          mkdir -p ~/tools
+          curl -fsSL -o /tmp/c3.tar.gz \
+            "https://github.com/c3lang/c3c/releases/download/v${C3C_VERSION}/c3-linux.tar.gz"
+          tar -xzf /tmp/c3.tar.gz -C ~/tools
+          echo "$HOME/tools/c3" >> "$GITHUB_PATH"
+
+      - name: Install glslang
+        run: |
+          c3d_apt_options=(
+            -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/ubuntu.sources
+            -o Dir::Etc::sourceparts=-
+          )
+          sudo apt-get "${c3d_apt_options[@]}" update -q
+          sudo apt-get "${c3d_apt_options[@]}" install -y glslang-tools
+
+      # The artifacts embed SPIR-V, which is build output; --check also verifies every committed
+      # table, so a stale generated file stops the release here.
+      - name: Compile SPIR-V
+        run: python3 scripts/build_shaders.py --check
+
+      - name: Pack
+        run: |
+          python3 scripts/package_release.py \
+            --version "${GITHUB_REF_NAME#v}" \
+            --out dist \
+            --pins-table "$RUNNER_TEMP/pins.md"
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          {
+            echo "Built and tested against these dependency releases. Download each one for your platform into your project's \`lib/\` and list every library in \`project.json\`; see [docs/release.md](https://github.com/${GITHUB_REPOSITORY}/blob/${GITHUB_REF_NAME}/docs/release.md)."
+            echo
+            cat "$RUNNER_TEMP/pins.md"
+          } > "$RUNNER_TEMP/notes.md"
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --title "c3d $GITHUB_REF_NAME" \
+            --notes-file "$RUNNER_TEMP/notes.md"
