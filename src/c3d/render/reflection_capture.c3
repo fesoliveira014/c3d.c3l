@@ -71,7 +71,7 @@ fn EnvironmentId? Renderer.capture_reflection_probe(
 ) {
     time::Clock started = clock::now();
     self.last_reflection_capture = {};
-    capture_probe(scene, probe_node, desc)!;
+    validated_capture_probe(scene, probe_node, desc)!;
     asset::check_key(self.assets, key)!;
     if (!self.assets.textures.free_count || !self.assets.environments.free_count) return c3d::CAPACITY_EXCEEDED~;
     if (!self.views.free_count || !self.targets.free_count) return c3d::CAPACITY_EXCEEDED~;
@@ -128,7 +128,7 @@ fn void? Renderer.recapture_reflection_probe(
 ) {
     time::Clock started = clock::now();
     self.last_reflection_capture = {};
-    ReflectionProbe* probe = capture_probe(scene, probe_node, desc)!;
+    ReflectionProbe* probe = validated_capture_probe(scene, probe_node, desc)!;
     EnvironmentAsset* environment = self.assets.environments.try_get(probe.environment)!;
     if (environment.desc.kind != EnvironmentSourceKind.TEXTURE) return c3d::INVALID_ARGUMENT~;
     TextureId texture_id = environment.desc.source;
@@ -243,7 +243,7 @@ fn usz reflection_cube_bytes(uint size) @local {
     return (usz)size * size * REFLECTION_CAPTURE_TEXEL_BYTES * material::CUBE_FACE_COUNT;
 }
 
-fn ReflectionProbe*? capture_probe(Scene* scene, Node* probe_node, ReflectionCaptureDesc desc) @local {
+fn ReflectionProbe*? validated_capture_probe(Scene* scene, Node* probe_node, ReflectionCaptureDesc desc) @local {
     if (!scene.world.is_alive(probe_node.id) || scene.node(probe_node.id) != probe_node) return c3d::INVALID_ID~;
     ReflectionProbe* probe = scene.get(probe_node, ReflectionProbe);
     if (!probe || !light::reflection_probe_valid(probe) || !reflection_capture_desc_valid(desc)) {
