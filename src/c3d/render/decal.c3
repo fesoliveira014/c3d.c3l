@@ -12,13 +12,12 @@ import std::math;
 import std::sort;
 
 $assert DecalGpu::size == 160;
-$assert shader::MAX_DECALS % 32 == 0;
 
 <* Unit volume transformed by each decal node. *>
 const Aabb DECAL_LOCAL_BOUNDS = {
-    .min = { -0.5f, -0.5f, -0.5f },
-    .max = { 0.5f, 0.5f, 0.5f },
-}; // mirrored as DECAL_HALF_EXTENT in decals.glsl
+    .min = { -shader::DECAL_HALF_EXTENT, -shader::DECAL_HALF_EXTENT, -shader::DECAL_HALF_EXTENT },
+    .max = { shader::DECAL_HALF_EXTENT, shader::DECAL_HALF_EXTENT, shader::DECAL_HALF_EXTENT },
+};
 
 <* Borrowed decal and placement selected for a view. *>
 struct DecalCandidate {
@@ -146,6 +145,7 @@ fn float decal_angle_weight(float facing_cosine, float fade_cosine, float invers
     return math::clamp((facing_cosine - fade_cosine) * inverse_band, 0.0f, 1.0f);
 }
 
+// mirrored as decal_intersects in light_cull.comp.glsl
 <*
  Whether the transformed decal box intersects every clipping half-space.
  @param [&in] decal : "Packed frame-relative affine volume."
@@ -154,9 +154,12 @@ fn float decal_angle_weight(float facing_cosine, float fade_cosine, float invers
 *>
 fn bool decal_intersects_planes(DecalGpu* decal, Plane[] planes) {
     Vec3 center = { decal.local_to_world_0.w, decal.local_to_world_1.w, decal.local_to_world_2.w };
-    Vec3 half_x = (Vec3){ decal.local_to_world_0.x, decal.local_to_world_1.x, decal.local_to_world_2.x } * 0.5f;
-    Vec3 half_y = (Vec3){ decal.local_to_world_0.y, decal.local_to_world_1.y, decal.local_to_world_2.y } * 0.5f;
-    Vec3 half_z = (Vec3){ decal.local_to_world_0.z, decal.local_to_world_1.z, decal.local_to_world_2.z } * 0.5f;
+    Vec3 half_x = (Vec3){ decal.local_to_world_0.x, decal.local_to_world_1.x, decal.local_to_world_2.x }
+      * shader::DECAL_HALF_EXTENT;
+    Vec3 half_y = (Vec3){ decal.local_to_world_0.y, decal.local_to_world_1.y, decal.local_to_world_2.y }
+      * shader::DECAL_HALF_EXTENT;
+    Vec3 half_z = (Vec3){ decal.local_to_world_0.z, decal.local_to_world_1.z, decal.local_to_world_2.z }
+      * shader::DECAL_HALF_EXTENT;
     foreach (plane : planes) {
         float radius = math::abs(plane.normal.dot(half_x)) + math::abs(plane.normal.dot(half_y))
           + math::abs(plane.normal.dot(half_z));

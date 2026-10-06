@@ -9,8 +9,6 @@
 
 GPU_DECLARE_READONLY_ARRAY_REF(DecalArray, DecalGpu);
 
-const float DECAL_HALF_EXTENT = 0.5; // mirrored as DECAL_LOCAL_BOUNDS in render/decal.c3
-
 struct DecalList {
     uint count;
     uint first;
