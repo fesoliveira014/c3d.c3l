@@ -53,6 +53,7 @@ const Vec3[4] CORNER_POINTS @private = {
 const uint FEEDBACK_FIRST @private = 250;
 const uint FEEDBACK_SECOND @private = 300;
 const float FEEDBACK_TOLERANCE @private = 0.02f;   // relative change of the region mean over 50 frames
+const float BORDER_SSGI_CHANGE_MAXIMUM @private = 0.01f; // relative; rays about the ground's normal hit nothing
 
 struct GiScene @private {
     Scene scene;
@@ -396,4 +397,25 @@ fn void test_ssgi_feedback_stays_bounded() @test {
         assert(math::abs(second - first) <= FEEDBACK_TOLERANCE * first);
         check_validation(&fixture.renderer);
     }
+}
+
+fn void test_ssgi_adds_no_bounce_to_open_ground_at_the_image_border() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    BorderScene border = border_create_scene(&fixture)!!;
+    defer border_destroy_scene(&fixture, &border);
+
+    float[BORDER_TEXEL_COUNT] without;
+    float[BORDER_TEXEL_COUNT] with;
+    border_read_luminance(&fixture, &border, without[..])!!;
+    ViewDesc desc = fixture.renderer.views.get(border.ao_view.view).desc;
+    desc.screen_space_gi = render::SCREEN_SPACE_GI_DEFAULT;
+    render::configure_view(&fixture.renderer, border.ao_view.view, desc)!!;
+    for (uint frame = 0; frame < SSGI_SETTLE_FRAMES; frame++) border_read_luminance(&fixture, &border, with[..])!!;
+    float largest = 0;
+    foreach (index, value : with) largest = math::max(largest, math::abs(value - without[index]) / without[index]);
+    io::eprintfn("ssgi: largest relative border change %.4f", largest);
+    assert(largest < BORDER_SSGI_CHANGE_MAXIMUM);
+    check_validation(&fixture.renderer);
 }

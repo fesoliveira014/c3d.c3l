@@ -29,7 +29,7 @@ vec3 filter_normal(SsgiFilterRoot root, FrameRoot frame, ivec2 texel, ivec2 exte
     }
     bool orthographic = frame.proj[3][3] != 0.0;
     vec3 view_vector = orthographic ? vec3(0.0, 0.0, 1.0) : normalize(-position);
-    return ao_reconstructed_normal(frame, root.depth, texel, extent, position, view_vector);
+    return ao_reconstructed_normal(frame, root.depth, texel, depth, view_vector);
 }
 
 void main() {

@@ -43,8 +43,7 @@ void main() {
         vec3 view_position = (frame.view * vec4(position, 1.0)).xyz;
         bool orthographic = frame.proj[3][3] != 0.0;
         vec3 view_vector = orthographic ? vec3(0.0, 0.0, 1.0) : normalize(-view_position);
-        vec3 view_normal = ao_reconstructed_normal(frame, root.depth, texel, extent, view_position, view_vector);
-        normal = normalize(transpose(mat3(frame.view)) * view_normal);
+        normal = depth_face_normal(frame, root.depth, texel, depth, transpose(mat3(frame.view)) * view_vector);
     }
 
     mat3 basis = tangent_frame(normal);
