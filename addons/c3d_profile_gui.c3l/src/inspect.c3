@@ -9,6 +9,12 @@ struct CpuIntervalSpan @private {
     bool available;
 }
 
+struct CpuAxisSpan @private {
+    long origin_ns;
+    long end_ns;
+    bool available;
+}
+
 <* @require rows.len >= samples.len *>
 fn usz aggregate_cpu(profile::CpuSample[] samples, ScopeAggregate[] rows) @private {
     usz row_count;
@@ -48,6 +54,20 @@ fn void cpu_scope_depths(profile::CpuSample[] samples, uint[] depths) @private {
     foreach (sample_index, sample : samples) {
         depths[sample_index] = sample.has_parent ? depths[sample.parent_index] + 1 : 0;
     }
+}
+
+fn void widen_cpu_axis(CpuAxisSpan* span, long start_ns, ulong duration_ns) @private {
+    long end_ns = start_ns + (long)duration_ns;
+    if (!span.available || start_ns < span.origin_ns) span.origin_ns = start_ns;
+    if (!span.available || end_ns > span.end_ns) span.end_ns = end_ns;
+    span.available = true;
+}
+
+fn CpuAxisSpan cpu_axis_span(profile::CpuSample[] samples, profile::WorkerSample[] workers) @private {
+    CpuAxisSpan span;
+    foreach (sample : samples) widen_cpu_axis(&span, (long)sample.start_ns, sample.duration_ns);
+    foreach (worker : workers) widen_cpu_axis(&span, worker.start_ns, worker.duration_ns);
+    return span;
 }
 
 fn CpuIntervalSpan cpu_interval_span(profile::CpuSample[] samples) @private {

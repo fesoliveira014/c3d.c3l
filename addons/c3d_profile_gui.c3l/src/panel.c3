@@ -20,6 +20,7 @@ struct PanelStorageLayout @private {
     usz frame_ids;
     usz history;
     usz cpu;
+    usz workers @if($feat(C3D_PROFILE_CPU));
     usz gpu @if($feat(C3D_PROFILE_GPU));
     usz labels;
     usz depths;
@@ -36,6 +37,7 @@ struct ProfilerPanel {
     profile::FrameCaptureView[] history;
     usz frame_count;
     profile::CpuSample[] cpu;
+    profile::WorkerSample[] workers @if($feat(C3D_PROFILE_CPU));
     profile::GpuSample[] gpu @if($feat(C3D_PROFILE_GPU));
     char[] labels;
     uint[] depths;
@@ -108,6 +110,12 @@ fn PanelStorageLayout? panel_storage_layout(profile::RecorderDesc desc) @private
             stride: profile::CpuSample::size,
             alignment: profile::CpuSample::alignment,
         )!;
+        layout.workers = panel_reserve_span(
+            size: &layout.size,
+            count: desc.worker_samples_per_frame,
+            stride: profile::WorkerSample::size,
+            alignment: profile::WorkerSample::alignment,
+        )!;
     $endif
     $if $feat(C3D_PROFILE_GPU):
         if (desc.gpu_scopes_per_frame > layout.scope_capacity) layout.scope_capacity = desc.gpu_scopes_per_frame;
@@ -155,6 +163,9 @@ fn ProfilerPanel? create_profiler_panel(Allocator allocator, profile::Recorder* 
     $assert profile::CpuSample::alignment <= mem::DEFAULT_MEM_ALIGNMENT;
     $assert uint::alignment <= mem::DEFAULT_MEM_ALIGNMENT;
     $assert ScopeAggregate::alignment <= mem::DEFAULT_MEM_ALIGNMENT;
+    $if $feat(C3D_PROFILE_CPU):
+        $assert profile::WorkerSample::alignment <= mem::DEFAULT_MEM_ALIGNMENT;
+    $endif
     $if $feat(C3D_PROFILE_GPU):
         $assert profile::GpuSample::alignment <= mem::DEFAULT_MEM_ALIGNMENT;
     $endif
@@ -173,6 +184,7 @@ fn ProfilerPanel? create_profiler_panel(Allocator allocator, profile::Recorder* 
     };
     $if $feat(C3D_PROFILE_CPU):
         panel.cpu = ((profile::CpuSample*)(storage.ptr + layout.cpu))[:recorder.desc.cpu_scopes_per_frame];
+        panel.workers = ((profile::WorkerSample*)(storage.ptr + layout.workers))[:recorder.desc.worker_samples_per_frame];
     $endif
     $if $feat(C3D_PROFILE_GPU):
         panel.gpu = ((profile::GpuSample*)(storage.ptr + layout.gpu))[:recorder.desc.gpu_scopes_per_frame];
