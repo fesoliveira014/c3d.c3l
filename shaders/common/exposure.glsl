@@ -2,7 +2,8 @@
 #define C3D_EXPOSURE_GLSL
 
 // Twins of post::exposure_metered, post::exposure_bin and post::exposure_bin_log2 in exposure.c3.
-const float EXPOSURE_BINS_PER_STOP = float(EXPOSURE_HISTOGRAM_BINS) / (EXPOSURE_LOG2_MAX - EXPOSURE_LOG2_MIN); // mirrored as EXPOSURE_BINS_PER_STOP in exposure.c3
+// mirrored as EXPOSURE_BINS_PER_STOP in exposure.c3
+const float EXPOSURE_BINS_PER_STOP = float(EXPOSURE_HISTOGRAM_BINS) / (EXPOSURE_LOG2_MAX - EXPOSURE_LOG2_MIN);
 
 bool exposure_metered(float luminance) {
     return !isnan(luminance) && !isinf(luminance) && luminance >= EXPOSURE_LUMINANCE_EPSILON;
