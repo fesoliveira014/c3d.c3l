@@ -44,6 +44,33 @@ const float SHADOW_SET_NO_SHADOW_DISTANCE @private = 0.05f; // under the camera'
 const InstanceFade SHADOW_SET_BATCH_FADE @private = { .start = 7.5f, .end = 8.5f };
 const Vec3 SHADOW_SET_BATCH_POSITION @private = { 0, 8, 4 }; // 6 m above the main camera, 10 m above the mirror
 const float SHADOW_SET_BATCH_SPACING @private = 0.6f; // instances touch, so the batch shades one bar
+const uint SHADOW_SET_WALL_COLUMNS @private = 24;
+const uint SHADOW_SET_WALL_ROWS @private = 8;
+const uint SHADOW_SET_OCCLUSION_MARGIN @private = 2; // pixels kept clear of the board's projection
+const float SHADOW_SET_AGREEING_SHARE @private = 0.95f; // of the samples, within SHADOW_SET_REFLECTED_TOLERANCE
+const float SHADOW_SET_REFLECTED_TOLERANCE @private = 0.1f; // share of the lit level
+const float SHADOW_SET_REFLECTED_MEAN_TOLERANCE @private = 0.03f; // share of the lit level
+const float SHADOW_SET_REFLECTED_SHADOWED_SHARE @private = 0.05f; // the board shades at least this share of the samples
+const Vec3 SHADOW_SET_BORROWER_OFFSET @private = { 40, 0, 0 }; // inside the shadow camera's last cascade only
+const Vec3 SHADOW_SET_FAR_BORROWER_OFFSET @private = { 120, 0, 0 }; // outside every cascade of the shadow camera
+const float SHADOW_SET_BORROWER_PROBE_DEPTH @private = 5; // selects the second cascade of the shadow camera's set
+const Vec3 SHADOW_SET_BATCH_HALF_EXTENT @private = { 1.2f, 0.3f, 0.3f };
+const float SHADOW_SET_LOD_RADIUS @private = 0.6f;
+const float SHADOW_SET_LOD_COARSE_BIAS @private = -4; // the mirror selects the coarse sphere; main keeps the fine one
+const float SHADOW_SET_LOD_DEPTH @private = 6;
+const float SHADOW_SET_LOD_SWITCH_SIZE @private = 0.05f;
+const float SHADOW_SET_LOD_COUNT_TOLERANCE @private = 0.06f; // 12 against 32 segments: areas differ by about 4 %
+const uint SHADOW_SET_LOD_MINIMUM_SHADOWED @private = 50;
+const Vec3 SHADOW_SET_SPOT_POSITION @private = { 0, 3.2f, 0 }; // in the main frustum, its reflection outside it
+const float SHADOW_SET_SPOT_RANGE @private = 1;
+const float SHADOW_SET_SPOT_INTENSITY @private = 50; // outshines the sun on the panel
+const Vec3 SHADOW_SET_PANEL_CENTER @private = { 0, 3.2f, -0.7f };
+const Vec3 SHADOW_SET_PANEL_SIZE @private = { 2, 2, 0.2f };
+const Vec3 SHADOW_SET_SPOT_CASTER_CENTER @private = { 0, 3.2f, -0.3f };
+const float SHADOW_SET_SPOT_CASTER_SIZE @private = 0.2f;
+const float SHADOW_SET_SPOT_LIT_OFFSET @private = 0.45f;
+const Vec3 SHADOW_SET_CAPTURE_POSITION @private = { 20, 5, 0 };
+const Vec3 SHADOW_SET_MIRROR_ONLY_SPOT_POSITION @private = { 0, 19, -30 }; // inside the mirror frustum, above main's
 
 enum ShadowSetCase : int (String name) @private {
     FORWARD { "forward" },
@@ -468,4 +495,453 @@ fn void test_same_camera_views_share_unless_one_opts_out() @test {
         if (frame < 2) shadow_set_read_image(&fixture, target, frame ? own : borrowed)!!;
     }
     assert(mem::equals(borrowed, own));
+}
+
+fn Node*? shadow_set_add_lod_sphere(ShadowSetFixture* fixture, Vec3 position) @private {
+    GeometryId[2] spheres;
+    @pool() {
+        Geometry fine = geometry::sphere(
+            allocator: tmem,
+            radius:    SHADOW_SET_LOD_RADIUS,
+            slices:    32,
+            stacks:    16,
+        );
+        spheres[0] = fixture.assets.add_geometry(&fine)!;
+        Geometry coarse = geometry::sphere(
+            allocator: tmem,
+            radius:    SHADOW_SET_LOD_RADIUS,
+            slices:    12,
+            stacks:    6,
+        );
+        spheres[1] = fixture.assets.add_geometry(&coarse)!;
+    };
+    LodLevel[2] levels = {
+        { .first_part = 0, .part_count = 1, .min_screen_size = SHADOW_SET_LOD_SWITCH_SIZE },
+        { .first_part = 1, .part_count = 1, .min_screen_size = 0 },
+    };
+    LodPart[2] parts = {
+        { .geometry = spheres[0], .material = fixture.matte, .local = matrix::IDENTITY4 },
+        { .geometry = spheres[1], .material = fixture.matte, .local = matrix::IDENTITY4 },
+    };
+    Node* node = fixture.scene.add_lod_group(&fixture.assets, { .levels = levels[..], .parts = parts[..] })!;
+    node.local.position = position;
+    fixture.scene.update_world();
+    return node;
+}
+
+// Whether the cascade's map holds the point; depth coverage is not checked.
+fn bool shadow_set_cascade_holds(ShadowCascade* cascade, Vec3 point) @private {
+    Vec4 clip = cascade.camera.view_proj.apply({ point.x, point.y, point.z, 1 });
+    Vec2 uv = { (clip.x / clip.w + 1) * 0.5f, (1 - clip.y / clip.w) * 0.5f };
+    return uv.x >= 0 && uv.x <= 1 && uv.y >= 0 && uv.y <= 1;
+}
+
+fn uint shadow_set_darkened_pixels(Vec4[] image, Vec4[] reference) @private {
+    uint count;
+    foreach (index, pixel : image) {
+        if (shadow_set_luminance(pixel) < SHADOW_SET_SHADOWED_RATIO * shadow_set_luminance(reference[index])) count++;
+    }
+    return count;
+}
+
+fn void test_mirror_records_the_main_cameras_set_once_per_frame() @test {
+    ShadowSetFixture fixture;
+    shadow_set_create_fixture(&fixture)!!;
+    defer shadow_set_destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+
+    shadow_set_render_pair(&fixture)!!;
+    assert(renderer.stats.shadow_sets_recorded == 1 && renderer.stats.shadow_sets_shared == 1);
+    assert(renderer.stats.shadow_layers == SHADOW_SET_SUN_CASCADES && renderer.stats.shadow_lights_unshared == 0);
+    assert(renderer.view_stats(fixture.main_view)!!.shadow_set_shared);
+    assert(!renderer.view_stats(fixture.mirror_view)!!.shadow_set_shared);
+
+    shadow_set_render_pair(fixture: &fixture, shared: false)!!;
+    assert(renderer.stats.shadow_sets_recorded == 2 && renderer.stats.shadow_sets_shared == 0);
+    assert(renderer.stats.shadow_layers == 2 * SHADOW_SET_SUN_CASCADES);
+    assert(!renderer.view_stats(fixture.main_view)!!.shadow_set_shared);
+}
+
+fn void test_reflected_receivers_inside_the_main_cascades_match_the_own_set() @test {
+    ShadowSetFixture fixture;
+    shadow_set_create_fixture(&fixture)!!;
+    defer shadow_set_destroy_fixture(&fixture);
+    shadow_set_add_fog(&fixture)!!;
+    uint width = SHADOW_SET_WIDTH / 2;
+    uint height = SHADOW_SET_HEIGHT / 2;
+    Vec4[] own = mem::new_array(Vec4, (sz)(width * height));
+    defer free(own);
+    Vec4[] borrowed = mem::new_array(Vec4, (sz)(width * height));
+    defer free(borrowed);
+    CameraMatrices matrices = shadow_set_matrices(&fixture, fixture.mirror, SHADOW_SET_HALF_EXTENT);
+    uint[<2>] board_min = { width, height };
+    uint[<2>] board_max;
+    for (uint corner = 0; corner < 8; corner++) {
+        Vec3 sign = { corner & 1 ? 1 : -1, corner & 2 ? 1 : -1, corner & 4 ? 1 : -1 };
+        uint[<2>] pixel;
+        if (!shadow_set_pixel_of(
+            matrices: &matrices,
+            world:    SHADOW_SET_BOARD_CENTER + sign * SHADOW_SET_BOARD_SIZE * 0.5f,
+            width:    width,
+            height:   height,
+            pixel:    &pixel,
+        )) continue;
+        board_min = math::min(board_min, pixel);
+        board_max = math::max(board_max, pixel);
+    }
+    bool[2] fogged = { false, true };
+
+    foreach (fog : fogged) {
+        ViewDesc desc = fixture.renderer.views.get(fixture.mirror_view).desc;
+        desc.volumetric_fog = fog;
+        render::configure_view(&fixture.renderer, fixture.mirror_view, desc)!!;
+        shadow_set_render_pair(fixture: &fixture, shared: false)!!;
+        shadow_set_read_image(&fixture, fixture.mirror_target, own)!!;
+        shadow_set_render_pair(&fixture)!!;
+        shadow_set_read_image(&fixture, fixture.mirror_target, borrowed)!!;
+
+        float lit;
+        float[SHADOW_SET_WALL_COLUMNS * SHADOW_SET_WALL_ROWS] own_samples;
+        float[SHADOW_SET_WALL_COLUMNS * SHADOW_SET_WALL_ROWS] borrowed_samples;
+        uint count;
+        for (uint row = 0; row < SHADOW_SET_WALL_ROWS; row++) {
+            for (uint column = 0; column < SHADOW_SET_WALL_COLUMNS; column++) {
+                float across = ((float)column + 0.5f) / SHADOW_SET_WALL_COLUMNS - 0.5f;
+                Vec3 point = {
+                    SHADOW_SET_WALL_CENTER.x + SHADOW_SET_WALL_SIZE.x * across * 0.9f,
+                    SHADOW_SET_WALL_SIZE.y * ((float)row + 0.5f) / SHADOW_SET_WALL_ROWS,
+                    SHADOW_SET_WALL_CENTER.z + SHADOW_SET_WALL_SIZE.z * 0.5f,
+                };
+                uint[<2>] pixel;
+                if (!shadow_set_pixel_of(
+                    matrices: &matrices,
+                    world:    point,
+                    width:    width,
+                    height:   height,
+                    pixel:    &pixel,
+                )) continue;
+                uint margin = SHADOW_SET_OCCLUSION_MARGIN;
+                if (pixel.x + margin >= board_min.x && pixel.x <= board_max.x + margin
+                    && pixel.y + margin >= board_min.y && pixel.y <= board_max.y + margin) {
+                    continue;
+                }
+                own_samples[count] = shadow_set_luminance(own[pixel.y * width + pixel.x]);
+                borrowed_samples[count] = shadow_set_luminance(borrowed[pixel.y * width + pixel.x]);
+                lit = math::max(lit, own_samples[count]);
+                count++;
+            }
+        }
+        uint shadowed;
+        uint agreeing;
+        float difference;
+        for (uint index = 0; index < count; index++) {
+            if (own_samples[index] < SHADOW_SET_SHADOWED_RATIO * lit) shadowed++;
+            float delta = math::abs(own_samples[index] - borrowed_samples[index]);
+            if (delta <= SHADOW_SET_REFLECTED_TOLERANCE * lit) agreeing++;
+            difference += delta;
+        }
+        io::eprintfn(
+            "reflected fog=%s samples=%d shadowed=%d agreeing=%d mean=%.5f lit=%.5f",
+            fog,
+            count,
+            shadowed,
+            agreeing,
+            difference / count,
+            lit,
+        );
+        assert((float)shadowed >= SHADOW_SET_REFLECTED_SHADOWED_SHARE * count);
+        assert((float)agreeing >= SHADOW_SET_AGREEING_SHARE * count);
+        assert(difference / count <= SHADOW_SET_REFLECTED_MEAN_TOLERANCE * lit);
+    }
+}
+
+fn void test_borrowed_set_shadows_a_receiver_its_selected_cascade_misses() @test {
+    ShadowSetFixture fixture;
+    shadow_set_create_fixture(&fixture)!!;
+    defer shadow_set_destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    Node* borrower = fixture.scene.add_camera(*fixture.scene.get(fixture.main, Camera), name: "borrower")!!;
+    borrower.local.rotation = fixture.main.local.rotation;
+    RenderTargetId target;
+    ViewId view = shadow_set_add_view(&fixture, SHADOW_SET_EXTENT, &target)!!;
+    Vec4[] image = mem::new_array(Vec4, SHADOW_SET_WIDTH * SHADOW_SET_HEIGHT);
+    defer free(image);
+    Vec3[2] offsets = { SHADOW_SET_BORROWER_OFFSET, SHADOW_SET_FAR_BORROWER_OFFSET };
+    Vec3[2] shaded;
+    foreach (index, offset : offsets) {
+        borrower.local.position = SHADOW_SET_CAMERA_POSITION + offset;
+        fixture.scene.update_world();
+        shaded[index] = shadow_set_ground_point(borrower, SHADOW_SET_BORROWER_PROBE_DEPTH);
+        shadow_set_add_caster_over(&fixture, shaded[index])!!;
+    }
+
+    Camera lens = *fixture.scene.get(fixture.main, Camera);
+    ShadowSettings settings = fixture.scene.get(fixture.sun, Light).shadow;
+    CascadeSplits splits = render::directional_cascade_splits(lens, settings);
+    assert(SHADOW_SET_BORROWER_PROBE_DEPTH > splits.far_depths[0]);
+    assert(SHADOW_SET_BORROWER_PROBE_DEPTH <= splits.far_depths[1]);
+    CameraMatrices main_matrices = shadow_set_matrices(&fixture, fixture.main, SHADOW_SET_EXTENT);
+    ShadowCascade[SHADOW_SET_SUN_CASCADES] cascades;
+    foreach (uint index, &cascade : cascades) {
+        float near_depth = index
+          ? render::cascade_blend_depth(splits, index - 1, settings.cascade_blend) : splits.near_depth;
+        *cascade = render::fit_directional_cascade(
+            view:               &main_matrices,
+            near_depth:         near_depth,
+            far_depth:          splits.far_depths[index],
+            light_direction:    SHADOW_SET_SUN_TRAVEL.normalize(),
+            casters:            {},
+            resolution:         SHADOW_SET_SHADOW_RESOLUTION,
+            normal_bias_texels: settings.directional_normal_bias_texels,
+        );
+    }
+    assert(!shadow_set_cascade_holds(&cascades[0], shaded[0]));
+    assert(!shadow_set_cascade_holds(&cascades[1], shaded[0]) && !shadow_set_cascade_holds(&cascades[2], shaded[0]));
+    assert(shadow_set_cascade_holds(&cascades[3], shaded[0]));
+    foreach (&cascade : cascades) assert(!shadow_set_cascade_holds(cascade, shaded[1]));
+
+    foreach (index, offset : offsets) {
+        borrower.local.position = SHADOW_SET_CAMERA_POSITION + offset;
+        fixture.scene.update_world();
+        CameraMatrices matrices = shadow_set_matrices(&fixture, borrower, SHADOW_SET_EXTENT);
+        Vec3 lit_point = shadow_set_ground_point(borrower, SHADOW_SET_BORROWER_PROBE_DEPTH, SHADOW_SET_LIT_OFFSET);
+        bool[2] borrowing = { true, false };
+        foreach (borrows : borrowing) {
+            renderer.begin_frame(SHADOW_SET_FRAME_INFO)!!;
+            renderer.render_view(&fixture.scene, fixture.main, fixture.main_view)!!;
+            renderer.finish_view(fixture.main_view)!!;
+            renderer.render_view(
+                scene:         &fixture.scene,
+                camera_node:   borrower,
+                view:          view,
+                shadow_camera: borrows ? fixture.main : null,
+            )!!;
+            renderer.finish_view(view)!!;
+            renderer.end_frame()!!;
+            assert(renderer.stats.shadow_sets_shared == (borrows ? 1 : 0));
+            shadow_set_read_image(&fixture, target, image)!!;
+            float shadowed = shadow_set_probe(
+                image:    image,
+                matrices: &matrices,
+                world:    shaded[index],
+                width:    SHADOW_SET_WIDTH,
+                height:   SHADOW_SET_HEIGHT,
+            );
+            float lit = shadow_set_probe(
+                image:    image,
+                matrices: &matrices,
+                world:    lit_point,
+                width:    SHADOW_SET_WIDTH,
+                height:   SHADOW_SET_HEIGHT,
+            );
+            io::eprintfn(
+                "borrower index=%d borrows=%s shadowed=%.5f lit=%.5f",
+                index,
+                borrows,
+                shadowed,
+                lit,
+            );
+            // The near probe falls through to the last cascade; the far one misses every cascade and reads lit.
+            assert((shadowed <= SHADOW_SET_SHADOWED_RATIO * lit) == (!borrows || index == 0));
+        }
+    }
+}
+
+fn void test_spot_outside_the_mirror_frustum_shadows_the_main_view() @test {
+    ShadowSetFixture fixture;
+    shadow_set_create_fixture(&fixture)!!;
+    defer shadow_set_destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    Light spot = light::spot(
+        color:     { 1, 1, 1 },
+        intensity: SHADOW_SET_SPOT_INTENSITY,
+        inner:     0.7f,
+        outer:     0.8f,
+        range:     SHADOW_SET_SPOT_RANGE,
+    );
+    spot.shadow.enabled = true;
+    Node* spot_node = fixture.scene.add_light(spot)!!;
+    spot_node.local.position = SHADOW_SET_SPOT_POSITION;
+    shadow_set_add_box(&fixture, SHADOW_SET_PANEL_CENTER, SHADOW_SET_PANEL_SIZE)!!;
+    Vec3 caster_size = { SHADOW_SET_SPOT_CASTER_SIZE, SHADOW_SET_SPOT_CASTER_SIZE, SHADOW_SET_SPOT_CASTER_SIZE };
+    shadow_set_add_box(&fixture, SHADOW_SET_SPOT_CASTER_CENTER, caster_size)!!;
+    CameraMatrices main_matrices = shadow_set_matrices(&fixture, fixture.main, SHADOW_SET_EXTENT);
+    CameraMatrices mirror_matrices = shadow_set_matrices(&fixture, fixture.mirror, SHADOW_SET_HALF_EXTENT);
+    Sphere reach = { .center = SHADOW_SET_SPOT_POSITION, .radius = SHADOW_SET_SPOT_RANGE };
+    assert(maths::frustum_intersects_sphere(&main_matrices.frustum, reach));
+    assert(!maths::frustum_intersects_sphere(&mirror_matrices.frustum, reach));
+    Vec4[] image = mem::new_array(Vec4, SHADOW_SET_WIDTH * SHADOW_SET_HEIGHT);
+    defer free(image);
+    Vec3 face = SHADOW_SET_PANEL_CENTER + (Vec3){ 0, 0, SHADOW_SET_PANEL_SIZE.z * 0.5f };
+
+    shadow_set_render_pair(&fixture)!!;
+    assert(renderer.stats.shadow_sets_shared == 1);
+    assert(renderer.stats.shadow_layers == SHADOW_SET_SUN_CASCADES + 1 && renderer.stats.shadow_lights_unshared == 0);
+    shadow_set_read_image(&fixture, fixture.main_target, image)!!;
+    float shadowed = shadow_set_probe(
+        image:    image,
+        matrices: &main_matrices,
+        world:    face,
+        width:    SHADOW_SET_WIDTH,
+        height:   SHADOW_SET_HEIGHT,
+    );
+    float lit = shadow_set_probe(
+        image:    image,
+        matrices: &main_matrices,
+        world:    face + (Vec3){ SHADOW_SET_SPOT_LIT_OFFSET, 0, 0 },
+        width:    SHADOW_SET_WIDTH,
+        height:   SHADOW_SET_HEIGHT,
+    );
+    assert(shadowed <= SHADOW_SET_SHADOWED_RATIO * lit);
+}
+
+fn void test_light_only_the_mirror_sees_draws_unshadowed_and_counts() @test {
+    ShadowSetFixture fixture;
+    shadow_set_create_fixture(&fixture)!!;
+    defer shadow_set_destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    Light spot = light::spot(
+        color:     { 1, 1, 1 },
+        intensity: SHADOW_SET_SPOT_INTENSITY,
+        inner:     0.7f,
+        outer:     0.8f,
+        range:     SHADOW_SET_SPOT_RANGE,
+    );
+    spot.shadow.enabled = true;
+    Node* spot_node = fixture.scene.add_light(spot)!!;
+    spot_node.local.position = SHADOW_SET_MIRROR_ONLY_SPOT_POSITION;
+    fixture.scene.update_world();
+    CameraMatrices main_matrices = shadow_set_matrices(&fixture, fixture.main, SHADOW_SET_EXTENT);
+    CameraMatrices mirror_matrices = shadow_set_matrices(&fixture, fixture.mirror, SHADOW_SET_HALF_EXTENT);
+    Sphere reach = { .center = SHADOW_SET_MIRROR_ONLY_SPOT_POSITION, .radius = SHADOW_SET_SPOT_RANGE };
+    assert(!maths::frustum_intersects_sphere(&main_matrices.frustum, reach));
+    assert(maths::frustum_intersects_sphere(&mirror_matrices.frustum, reach));
+
+    shadow_set_render_pair(&fixture)!!;
+    assert(renderer.stats.shadow_sets_recorded == 1 && renderer.stats.shadow_sets_shared == 1);
+    assert(renderer.stats.shadow_layers == SHADOW_SET_SUN_CASCADES);
+    assert(renderer.stats.shadow_lights_unshared == 1);
+}
+
+fn void test_faded_batch_beyond_the_mirror_fade_shadows_the_main_view() @test {
+    ShadowSetFixture fixture;
+    shadow_set_create_fixture(&fixture)!!;
+    defer shadow_set_destroy_fixture(&fixture);
+    Node* batch = shadow_set_add_faded_batch(&fixture)!!;
+    Vec3 anchor = maths::translation(batch.world);
+    Vec3 mirror_position = maths::translation(fixture.mirror.world);
+    Vec3 half = SHADOW_SET_BATCH_HALF_EXTENT;
+    Vec3 nearest = math::clamp(mirror_position, anchor - half, anchor + half);
+    assert(nearest.distance(mirror_position) > SHADOW_SET_BATCH_FADE.end);
+    float main_reach = anchor.distance(maths::translation(fixture.main.world)) + SHADOW_SET_BATCH_HALF_EXTENT.length();
+    assert(main_reach < SHADOW_SET_BATCH_FADE.start);
+    Vec3 travel = SHADOW_SET_SUN_TRAVEL.normalize();
+    Vec3 shaded = anchor + travel * (anchor.y / -travel.y);
+    CameraMatrices matrices = shadow_set_matrices(&fixture, fixture.main, SHADOW_SET_EXTENT);
+    Vec4[] image = mem::new_array(Vec4, SHADOW_SET_WIDTH * SHADOW_SET_HEIGHT);
+    defer free(image);
+
+    shadow_set_render_pair(&fixture)!!;
+    assert(fixture.renderer.stats.shadow_sets_shared == 1);
+    shadow_set_read_image(&fixture, fixture.main_target, image)!!;
+    float shadowed = shadow_set_probe(
+        image:    image,
+        matrices: &matrices,
+        world:    shaded,
+        width:    SHADOW_SET_WIDTH,
+        height:   SHADOW_SET_HEIGHT,
+    );
+    float lit = shadow_set_probe(
+        image:    image,
+        matrices: &matrices,
+        world:    shaded + (Vec3){ SHADOW_SET_LIT_OFFSET, 0, 0 },
+        width:    SHADOW_SET_WIDTH,
+        height:   SHADOW_SET_HEIGHT,
+    );
+    assert(shadowed <= SHADOW_SET_SHADOWED_RATIO * lit);
+}
+
+fn void test_lod_caster_shadow_in_a_shared_set_stays_within_tolerance() @test {
+    ShadowSetFixture fixture;
+    shadow_set_create_fixture(&fixture)!!;
+    defer shadow_set_destroy_fixture(&fixture);
+    ViewDesc desc = fixture.renderer.views.get(fixture.mirror_view).desc;
+    desc.lod_bias = SHADOW_SET_LOD_COARSE_BIAS;
+    render::configure_view(&fixture.renderer, fixture.mirror_view, desc)!!;
+    Vec3 receiver = shadow_set_ground_point(fixture.main, SHADOW_SET_LOD_DEPTH);
+    Vec3 travel = SHADOW_SET_SUN_TRAVEL.normalize();
+    Node* sphere = shadow_set_add_lod_sphere(&fixture, receiver - travel * (SHADOW_SET_CASTER_HEIGHT / -travel.y))!!;
+    Vec4[] reference = mem::new_array(Vec4, SHADOW_SET_WIDTH * SHADOW_SET_HEIGHT);
+    defer free(reference);
+    Vec4[] own = mem::new_array(Vec4, SHADOW_SET_WIDTH * SHADOW_SET_HEIGHT);
+    defer free(own);
+    Vec4[] borrowed = mem::new_array(Vec4, SHADOW_SET_WIDTH * SHADOW_SET_HEIGHT);
+    defer free(borrowed);
+
+    sphere.visible = false;
+    fixture.scene.update_world();
+    shadow_set_render_pair(&fixture)!!;
+    shadow_set_read_image(&fixture, fixture.main_target, reference)!!;
+    sphere.visible = true;
+    fixture.scene.update_world();
+    shadow_set_render_pair(fixture: &fixture, shared: false)!!;
+    shadow_set_read_image(&fixture, fixture.main_target, own)!!;
+    shadow_set_render_pair(&fixture)!!;
+    shadow_set_read_image(&fixture, fixture.main_target, borrowed)!!;
+
+    uint own_count = shadow_set_darkened_pixels(own, reference);
+    uint borrowed_count = shadow_set_darkened_pixels(borrowed, reference);
+    io::eprintfn("lod shadow pixels own=%d borrowed=%d", own_count, borrowed_count);
+    assert(!mem::equals(own, borrowed));
+    assert(own_count >= SHADOW_SET_LOD_MINIMUM_SHADOWED);
+    assert(math::abs((float)borrowed_count - (float)own_count) <= SHADOW_SET_LOD_COUNT_TOLERANCE * own_count);
+}
+
+fn void test_a_recording_between_mirror_and_main_makes_main_record() @test {
+    ShadowSetFixture fixture;
+    shadow_set_create_fixture(&fixture)!!;
+    defer shadow_set_destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    Node* capture = fixture.scene.add_camera(*fixture.scene.get(fixture.main, Camera), name: "capture")!!;
+    capture.local.position = SHADOW_SET_CAPTURE_POSITION;
+    capture.local.rotation = maths::look_rotation(SHADOW_SET_WALL_CENTER - SHADOW_SET_CAPTURE_POSITION, { 0, 1, 0 });
+    fixture.scene.update_world();
+    RenderTargetId target;
+    ViewId capture_view = shadow_set_add_view(&fixture, SHADOW_SET_HALF_EXTENT, &target)!!;
+    Vec4[] borrowed = mem::new_array(Vec4, SHADOW_SET_WIDTH * SHADOW_SET_HEIGHT);
+    defer free(borrowed);
+    Vec4[] recorded = mem::new_array(Vec4, SHADOW_SET_WIDTH * SHADOW_SET_HEIGHT);
+    defer free(recorded);
+
+    shadow_set_render_pair(&fixture)!!;
+    shadow_set_read_image(&fixture, fixture.main_target, borrowed)!!;
+    bool[2] capture_first = { true, false };
+    foreach (first : capture_first) {
+        renderer.begin_frame(SHADOW_SET_FRAME_INFO)!!;
+        renderer.render_view(
+            scene:         &fixture.scene,
+            camera_node:   fixture.mirror,
+            view:          fixture.mirror_view,
+            shadow_camera: fixture.main,
+        )!!;
+        renderer.finish_view(fixture.mirror_view)!!;
+        if (first) {
+            renderer.render_view(&fixture.scene, capture, capture_view)!!;
+            renderer.finish_view(capture_view)!!;
+        }
+        renderer.render_view(&fixture.scene, fixture.main, fixture.main_view)!!;
+        renderer.finish_view(fixture.main_view)!!;
+        if (!first) {
+            renderer.render_view(&fixture.scene, capture, capture_view)!!;
+            renderer.finish_view(capture_view)!!;
+        }
+        renderer.end_frame()!!;
+        assert(renderer.stats.shadow_sets_recorded == (first ? 3 : 2));
+        assert(renderer.stats.shadow_sets_shared == (first ? 0 : 1));
+        assert(renderer.view_stats(fixture.main_view)!!.shadow_set_shared == !first);
+        if (first) {
+            shadow_set_read_image(&fixture, fixture.main_target, recorded)!!;
+            assert(mem::equals(borrowed, recorded));
+        }
+    }
 }

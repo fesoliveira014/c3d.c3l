@@ -260,10 +260,19 @@ if (clip_plane.normal != current.clip_plane.normal || clip_plane.d != current.cl
     render::configure_view(renderer, mirror_view, current)!;
 }
 
-// In the frame: the mirror before the view that shows the water.
+// Once, and again when the output size changes: the mirror's projection at its scaled extent equals the main view's.
+scene.get(viewing_camera, Camera).aspect = (float)output_size.x / (float)output_size.y;
+
+// In the frame: the mirror, fitted to the viewing camera, then the main view.
 Node* mirror = scene.node(scene.get(lake, WaterRuntime).mirror);
-renderer.render_view(scene, mirror, mirror_view)!;
+renderer.render_view(
+    scene:         scene,
+    camera_node:   mirror,
+    view:          mirror_view,
+    shadow_camera: viewing_camera,
+)!;
 renderer.finish_view(mirror_view)!;
+renderer.render_view(scene, viewing_camera, main_view)!;
 ```
 
 - The clip plane changes when the lake node moves or `set_desc` changes the amplitude; `configure_view` resets
@@ -273,7 +282,12 @@ renderer.finish_view(mirror_view)!;
 - One mirror view per water plane and viewing camera; lakes at two levels need two mirrors, and the cost scales
   with them.
 - A second view that sees the water reflects the mirror camera of the first. Leave the water node's layer out
-  of that view's camera layers (the example's `--capture`).
+  of that view's camera layers and render it after the main view (the example's `--capture`). Mirror, then main,
+  then any other view: the renderer holds one shadow set at a time, so a view with another camera between mirror
+  and main records over the mirror's set, and main records its own.
+- The mirror records the frame's shadow set fitted to the viewing camera, and the main view binds it and records no
+  atlas ([shadow sets](shadows.md#shadow-sets)). Set the viewing camera's `Camera.aspect` to the output's (the
+  example's `set_view_aspect`), so the mirror's projection at its scaled extent equals the main view's.
 
 ## Buoyancy
 
@@ -333,8 +347,9 @@ body on the same node. Destroy the scene before the store.
   water work.
 - **One mirror per plane and viewing camera**; the viewing camera is a root node. A second view that sees the
   water reflects the mirror camera of the first; leave the water node's layer out of that view's camera layers.
-  The mirror view renders its own shadow atlas: 0.48 ms on an RTX 4090 at 2560 × 1440, 21 to 22 % of the frame's
-  GPU time, until core offers per-view shadow control.
+  The mirror records the frame's only shadow atlas, fitted to the viewing camera, and the main view binds it
+  ([shadow sets](shadows.md#shadow-sets)). Reflected receivers outside the viewing camera's cascades read
+  unshadowed.
 - **Clip plane at the deepest trough**: geometry between a trough and the local surface can appear in the
   reflection; the amplitude bounds the error.
 - **Screen-space march**: opaque, masked and sky from this view only; no blends, nothing off-screen or behind
@@ -392,7 +407,8 @@ the crates' bob needs to decay.
 
 It prints the header, `sample_ns` (100,000 `sample_surface` calls before the segments), and per segment the
 mirror view's summed passes, shadow atlas and shadow share of the frame (planar, still and orbit), the main
-view's passes with `--gpu-timings`, the frame time, `buoyancy_us` (the physics step time per fixed step in
+view's passes with `--gpu-timings`, the frame time, `shadow_sets segment=<name> recorded=<n> shared=<n>` (the
+last frame's shadow sets), `buoyancy_us` (the physics step time per fixed step in
 `waves`, at the crate count) and the still segment's upload bytes. Two gates exit 1 when they fail:
 
 - `gate steady_uploads`: the still segment uploads nothing after its first frame (water, foliage and crates
@@ -440,6 +456,11 @@ and `--capture` are validation-clean with both gates.
   GPU time in the still segment and 21.6 % in orbit, 21 to 22 % in every planar case and 14.8 % with `--ssgi`,
   whose frame is longer. The half-resolution mirror saves 0.09 ms (still, 0.815 to 0.721) to 0.13 ms (orbit,
   0.922 to 0.796) of mirror time and 0.095 ms of frame (2.331 to 2.236) against a full-resolution one.
+- **Shadow sets, after:** the mirror records the frame's only atlas and the main view binds it. Planar, still and
+  orbit, same-session runs with the before re-measured (ms): mirror total 0.733 and 0.812, mirror `SHADOW_ATLAS`
+  0.479, main `SHADOW_ATLAS` none, `frame_ms` 1.784 and 1.953 against 2.327 and 2.507 before. The benchmark prints
+  main passes only: main `FORWARD_OPAQUE` 0.396 before and 0.418 after, `SCENE_READ` 0.142 before and 0.141 after.
+  `shadow_sets` reads recorded 1, shared 1; with `--capture` recorded 2, shared 1.
 - **Buoyancy:** `buoyancy_us` 25.4 µs (25.1 to 25.5) at 16 crates and 304.8 µs (302.6 to 323.3) at 256 per
   fixed step; `sample_ns` 98.8, so 2,048 samples cost about 0.2 ms of the 256-crate step.
 - **SSGI:** with `--ssgi` and a still camera the ripples stay as crisp as without it; readers' camera-only

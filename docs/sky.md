@@ -300,7 +300,8 @@ transmissive sphere, a blended transmissive pane, a blended quad, a water pond (
 planar mirror beside it. The panel sets the sun's elevation and azimuth, plays a time-lapse at 0.27° a
 second, edits the fog, switches the exposure table and shows the sky's passes and stages and the
 regeneration count; the presets noon, twilight, valley (300 m up, looking down into the fog) and
-time-lapse pose the camera and the sun.
+time-lapse pose the camera and the sun. The mirror pad renders with the main camera as its shadow camera, so the
+frame records one shadow atlas, the mirror's, and the main view binds it ([shadow sets](shadows.md#shadow-sets)).
 
 `--benchmark [frames]` renders offscreen at 2560 × 1440 through four segments (noon, twilight,
 valley and a time-lapse four segments long, the sun rising 0.0045° a frame from 10°) and prints the
@@ -412,6 +413,24 @@ reprojection; at `max_distance` 200 and 500 m a ground column steps at most 2 le
 500 m), so 64 slices suffice; shadowed-fog edges are soft at 16 px, the only stair-step being the atlas's own;
 no ring shows at `max_distance`; twilight shows no banding; the water's reflections are no hazier than the peaks
 seen directly and no veil sits in front of the mirror plane.
+
+### Shared mirror shadow set, RTX 4090, 2560 × 1440
+
+Same build and method. Before: the mirror and the main view each record an atlas. After: the mirror records the
+main camera's set and the main view binds it.
+
+| `sky` frame, forward, ms | Before | After |
+| --- | ---: | ---: |
+| noon | 0.513 | 0.462 |
+| twilight | 0.373 | 0.389 |
+| valley | 0.434 | 0.389 |
+| time-lapse | 0.519 | 0.469 |
+| noon, `--volumetric-fog` | 0.596 | 0.542 |
+
+Before and after were measured in one session. Twilight records no atlas in either build (the sun is below the
+horizon), so its sets are empty and nothing is shared. It is slower by 0.014 ms of `FORWARD_OPAQUE` because the
+forward shader's coarser-cascade lookup compiles larger for every view; see the
+[lookup cost](shadows.md#lookup-cost).
 
 ### WSL, llvmpipe
 
