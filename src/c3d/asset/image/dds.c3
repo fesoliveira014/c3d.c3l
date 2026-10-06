@@ -85,6 +85,7 @@ fn ContainerLayout? parse_dds_layout(char[] bytes) @private {
         .level_count = level_count,
         .contiguous = true,
         .data_offset = data_offset,
+        .row_alignment = 1,
     };
 }
 

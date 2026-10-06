@@ -142,9 +142,17 @@ no compressor, transcoder or image encoder runs during the build.
 
 # Texture container fixtures
 
-`test/fixtures/texture/` holds DDS files for the container tests. They are project-authored and were
-written once by the script below; no generator runs during builds or tests. Level bytes come from
-`payload(seed, length)` and BC1 blocks keep `color0 > color1`. Each file stays within 3 KB. Run the script from
+`test/fixtures/texture/` holds DDS, KTX 1.1 and KTX 2.0 files for the container tests. Files directly in that
+directory are project-authored and were written once by the script below; no generator runs during builds or tests.
+Level bytes come from `payload(seed, length)`, BC1 blocks keep `color0 > color1` unless a file is named otherwise, and
+`R16_UINT` texels hold `1000 * mip + index` in row-major order. `ktx1_level_capacity.ktx` and
+`ktx2_level_capacity.ktx2` are malformed on purpose: they claim 33 levels. `orientation_4x4.*` holds the same three
+RGBA8 levels in each container, with a red, green and blue marker at texel 0 of levels 0, 1 and 2.
+Each project-authored file stays
+within 3 KB; they total 4,960 bytes. The script's
+data format descriptors are byte-identical to `ktx create` and `ktx transcode` v4.3.1 output in KTX2-Samples
+`471931bbe05c5a5443da3ea7be37f44680664ac6` (`2d_rgba8`, `2d_rgba8_linear`, `2d_bc7`, `2d_bc5`); the BC1_RGB
+descriptor matches `2d_bc1` except the transfer byte, linear for vkFormat 131 and sRGB for 132. Run the script from
 the repository root:
 
 ```python
@@ -168,6 +176,30 @@ def rgba16f_texels(count):
     return b"".join(struct.pack("<4e", *(((t + c) % 16) / 16 for c in range(4))) for t in range(count))
 
 
+def r16_image(mip, width, height):
+    rows = []
+    for y in range(height):
+        row = b"".join(struct.pack("<H", 1000 * mip + y * width + x) for x in range(width))
+        rows.append(row + b"\0" * (-len(row) % 4))
+    return b"".join(rows)
+
+
+def orientation_level(mip):
+    size = 4 >> mip
+    markers = [(255, 0, 0, 255), (0, 255, 0, 255), (0, 0, 255, 255)]
+    texels = []
+    for y in range(size):
+        for x in range(size):
+            if x == 0 and y == 0:
+                texels.append(markers[mip])
+            else:
+                texels.append((16 + 48 * x, 16 + 48 * y, 64 * mip + 32, 255))
+    return bytes(channel for texel in texels for channel in texel)
+
+
+ORIENTATION_LEVELS = [orientation_level(mip) for mip in range(3)]
+
+
 # DDS: magic, DDS_HEADER (124 bytes), optional DDS_HEADER_DXT10 (20 bytes), levels largest first.
 def dds_pixel_format(flags, four_cc=b"\0\0\0\0", bits=0, masks=(0, 0, 0, 0)):
     return struct.pack("<II4sI4I", 32, flags, four_cc, bits, *masks)
@@ -189,12 +221,101 @@ dds(fixtures / "dx10_rgba8_srgb_5x3.dds", 5, 3, [payload(0x10, 60), payload(0x20
     DX10, 29, False)
 dds(fixtures / "dx10_bc7_srgb_5x3.dds", 5, 3, [payload(0x40, 32), payload(0x50, 16), payload(0x60, 16)], DX10, 99)
 dds(fixtures / "dx10_format16.dds", 2, 2, [clean_bc1(9, 2)], DX10, 28, False)
+dds(fixtures / "orientation_4x4.dds", 4, 4, ORIENTATION_LEVELS, DX10, 28, False)
 dds(fixtures / "legacy_dxt1_6x6.dds", 6, 6, [clean_bc1(1, 4), clean_bc1(5, 1), clean_bc1(6, 1)],
     dds_pixel_format(0x4, b"DXT1"))
 dds(fixtures / "legacy_rgba16f_4x4.dds", 4, 4, [rgba16f_texels(16)],
     dds_pixel_format(0x4, struct.pack("<I", 113)), compressed=False)
 dds(fixtures / "legacy_rgba8_2x2.dds", 2, 2, [payload(0x70, 16), payload(0x80, 4)],
     dds_pixel_format(0x41, bits=32, masks=(0xFF, 0xFF00, 0xFF0000, 0xFF000000)), compressed=False)
+
+
+# KTX 1.1, little-endian: identifier, 13 header words, key/value data, then imageSize and image per level.
+def key_values(entries):
+    data = b""
+    for key, value in entries:
+        entry = key.encode() + b"\0" + value.encode() + b"\0"
+        data += struct.pack("<I", len(entry)) + entry + b"\0" * (-len(entry) % 4)
+    return data
+
+
+def ktx1(path, gl_type, type_size, gl_format, internal, base, width, height, mip_count, images, entries=()):
+    kv = key_values(entries)
+    header = (b"\xabKTX 11\xbb\r\n\x1a\n"
+              + struct.pack("<13I", 0x04030201, gl_type, type_size, gl_format, internal, base, width, height,
+                            0, 0, 1, mip_count, len(kv)))
+    body = b"".join(struct.pack("<I", len(image)) + image + b"\0" * (-len(image) % 4) for image in images)
+    path.write_bytes(header + kv + body)
+
+
+RGBA8_GL = (0x1401, 1, 0x1908, 0x8058, 0x1908)
+ktx1(fixtures / "ktx1_r16_5x3.ktx", 0x1403, 2, 0x8D94, 0x8234, 0x1903, 5, 3, 3,
+     [r16_image(0, 5, 3), r16_image(1, 2, 1), r16_image(2, 1, 1)])
+ktx1(fixtures / "ktx1_bc1_srgb_8x8.ktx", 0, 1, 0, 0x8C4D, 0x1908, 8, 8, 4,
+     [clean_bc1(11, 4), clean_bc1(15, 1), clean_bc1(16, 1), clean_bc1(17, 1)],
+     [("KTXorientation", "S=r,T=d"), ("KTXswizzle", "rgba")])
+ktx1(fixtures / "ktx1_rgba8_generate_2x2.ktx", *RGBA8_GL, 2, 2, 0, [payload(0x90, 16)])
+ktx1(fixtures / "ktx1_format16.ktx", *RGBA8_GL, 2, 2, 1, [clean_bc1(9, 2)])
+ktx1(fixtures / "orientation_4x4.ktx", *RGBA8_GL, 4, 4, 3, ORIENTATION_LEVELS,
+     [("KTXorientation", "S=r,T=d")])
+# Malformed on purpose: 33 empty levels on the largest extent; only the level-count rule rejects them.
+ktx1(fixtures / "ktx1_level_capacity.ktx", *RGBA8_GL, 0xFFFFFFFF, 0xFFFFFFFF, 33, [b""] * 33)
+
+
+# KTX 2.0, supercompression 0: header, level index, data format descriptor, key/value data, then levels
+# smallest first, each aligned to lcm(texel block bytes, 4).
+def dfd(model, transfer, block_extent, plane_bytes, samples):
+    block_size = 24 + 16 * len(samples)
+    words = struct.pack("<II4B4B8B", 0, 2 | block_size << 16, model, 1, transfer, 0,
+                        block_extent - 1, block_extent - 1, 0, 0, plane_bytes, 0, 0, 0, 0, 0, 0, 0)
+    for bit_offset, bit_length, channel, upper in samples:
+        words += struct.pack("<HBBIII", bit_offset, bit_length - 1, channel, 0, 0, upper)
+    return struct.pack("<I", 4 + len(words)) + words
+
+
+def rgba8_dfd(srgb):
+    alpha = 15 | (0x10 if srgb else 0)
+    return dfd(1, 2 if srgb else 1, 1, 4, [(0, 8, 0, 255), (8, 8, 1, 255), (16, 8, 2, 255), (24, 8, alpha, 255)])
+
+
+BC7_SRGB_DFD = dfd(134, 2, 4, 16, [(0, 128, 0, 0xFFFFFFFF)])
+BC5_DFD = dfd(132, 1, 4, 16, [(0, 64, 0, 0xFFFFFFFF), (64, 64, 1, 0xFFFFFFFF)])
+BC1_RGB_DFD = dfd(128, 1, 4, 8, [(0, 64, 0, 0xFFFFFFFF)])
+
+
+def ktx2(path, vk_format, type_size, width, height, levels, descriptor, alignment, entries=()):
+    kv = key_values(entries)
+    dfd_offset = 80 + 24 * len(levels)
+    kv_offset = dfd_offset + len(descriptor) if kv else 0
+    position = dfd_offset + len(descriptor) + len(kv)
+    offsets = [0] * len(levels)
+    data = b""
+    for mip in reversed(range(len(levels))):
+        padding = -position % alignment
+        data += b"\0" * padding + levels[mip]
+        offsets[mip] = position + padding
+        position = offsets[mip] + len(levels[mip])
+    header = (b"\xabKTX 20\xbb\r\n\x1a\n"
+              + struct.pack("<9I", vk_format, type_size, width, height, 0, 0, 1, len(levels), 0)
+              + struct.pack("<4I", dfd_offset, len(descriptor), kv_offset, len(kv)) + struct.pack("<2Q", 0, 0))
+    index = b"".join(struct.pack("<3Q", offsets[mip], len(level), len(level)) for mip, level in enumerate(levels))
+    path.write_bytes(header + index + descriptor + kv + data)
+
+
+ktx2(fixtures / "ktx2_rgba8_srgb_5x3.ktx2", 43, 1, 5, 3,
+     [payload(0x10, 60), payload(0x20, 8), payload(0x30, 4)], rgba8_dfd(True), 4)
+ktx2(fixtures / "ktx2_bc7_srgb_5x3.ktx2", 146, 1, 5, 3,
+     [payload(0x40, 32), payload(0x50, 16), payload(0x60, 16)], BC7_SRGB_DFD, 16,
+     [("KTXorientation", "rd"), ("KTXswizzle", "rgba")])
+ktx2(fixtures / "ktx2_bc5_8x4.ktx2", 141, 1, 8, 4, [payload(0xA0, 32), payload(0xB0, 16)], BC5_DFD, 16)
+ktx2(fixtures / "ktx2_bc1_rgb_clean_4x4.ktx2", 131, 1, 4, 4, [clean_bc1(21, 1)], BC1_RGB_DFD, 8)
+# color0 <= color1 is a three-color block; texel 3 selects index 3, transparent in BC1_RGBA
+ktx2(fixtures / "ktx2_bc1_rgb_punch_4x4.ktx2", 131, 1, 4, 4,
+     [struct.pack("<HHI", 0x001F, 0xF800, 0x000000C0)], BC1_RGB_DFD, 8)
+ktx2(fixtures / "ktx2_format16.ktx2", 37, 1, 2, 2, [clean_bc1(9, 2)], rgba8_dfd(False), 16)
+ktx2(fixtures / "orientation_4x4.ktx2", 37, 1, 4, 4, ORIENTATION_LEVELS, rgba8_dfd(False), 4)
+ktx2(fixtures / "ktx2_level_capacity.ktx2", 37, 1, 0xFFFFFFFF, 0xFFFFFFFF, [b""] * 33,
+     rgba8_dfd(False), 4)
 ```
 
 # Standard material fixtures
