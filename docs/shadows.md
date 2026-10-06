@@ -226,6 +226,22 @@ exactly one of them. `ViewStats.shadow_set_shared` tells whether the view's last
 set, and `gui::view_stats_table` shows it. `shadow_layers` and `shadow_timings` count recordings: a shared atlas is
 timed once, under the recording view's id. `draw_shadow_frusta` shows the last recorded set.
 
+### Lookup cost
+
+The coarser-cascade lookup costs every forward view, borrowing or not, because the fall-through changes the compiled
+shader. RTX 4090, `sky --benchmark`, main view `FORWARD_OPAQUE`, ms, interleaved runs, three each:
+
+| Segment | Before | With the lookup | With the old lookup |
+| --- | ---: | ---: | ---: |
+| twilight | 0.0461 | 0.0604 | 0.0461 |
+| noon | 0.0686 | 0.0707 | 0.0666 |
+| valley | 0.0942 | 0.1024 | 0.0911 |
+
+Reverting only `shadows.glsl` returns twilight to its earlier time, so the growth is the lookup's code, not the shadow
+data: twilight binds no layers in either build. The growth is +0.004 to +0.014 ms, under the 0.05 ms bar the change
+set, and is accepted. A variant without the fall-through for views that never borrow is not built; it would be built
+when the lookup costs more than 0.05 ms of `FORWARD_OPAQUE` in a forward-heavy scene on the 4090.
+
 ## Normal offset
 
 A receiver looks up its shadow from a point moved along its normal. A directional
