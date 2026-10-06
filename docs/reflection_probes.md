@@ -192,6 +192,6 @@ are in [benchmarking](benchmarking.md) and the example section above.
 
 The profiler sums stage times over a frame, so the environment rows cover both probes.
 
-Selection tests every packed box in order until one holds the point, loading only each box's centre, axes and blend
-distance. Sixteen boxes that hold no point are the worst case: 0.128 ms forward and 0.103 ms deferred over one
+Selection tests the packed boxes in order until a box holds the point at full weight, or two boxes hold it, loading
+only each box's centre, axes and blend distance. Sixteen boxes that hold no point are the worst case: 0.128 ms forward and 0.103 ms deferred over one
 probe. Sixteen boxes that hold the points cost 0.02 ms over one.
