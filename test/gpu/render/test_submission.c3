@@ -583,6 +583,23 @@ fn void test_render_to_failure_closes_the_frame_and_frees_the_view() @test {
     check_validation(renderer);
 }
 
+fn void test_failed_creation_frees_every_allocation() @test {
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+    // The last builtin texture faults its upload after the renderer's arrays and the default view exist.
+    assets.release_texture_cpu(asset::TEXTURE_CHECKER);
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+
+    if (catch excuse = render::create_renderer(&tracker, &assets, { .validation = true })) {
+        assert(excuse == c3d::ASSET_DATA_UNAVAILABLE);
+    } else {
+        assert(false);
+    }
+    assert(tracker.allocated() == 0);
+}
+
 fn void test_warm_standalone_frames_submit_and_empty_frames_do_not() @test {
     Fixture fixture;
     create_fixture(mem, &fixture)!!;

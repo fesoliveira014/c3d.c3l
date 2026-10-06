@@ -373,3 +373,25 @@ fn void test_reflections_show_a_mirrored_emitter_like_its_twin() @test {
         check_validation(&fixture.renderer);
     }
 }
+
+fn void test_ray_traced_ao_leaves_open_ground_unoccluded_at_the_image_border() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        BorderScene border = border_create_scene(&fixture)!!;
+        defer border_destroy_scene(&fixture, &border);
+
+        float[BORDER_TEXEL_COUNT] without;
+        float[BORDER_TEXEL_COUNT] with;
+        border_read_luminance(&fixture, &border, without[..])!!;
+        AmbientOcclusionDesc ray_traced = render::AMBIENT_OCCLUSION_DEFAULT;
+        ray_traced.kind = AoKind.RAY_TRACED;
+        set_ambient_occlusion(&fixture, border.ao_view.view, ray_traced)!!;
+        border_read_luminance(&fixture, &border, with[..])!!;
+        float ratio = border_minimum_ratio(without[..], with[..]);
+        io::eprintfn("%s, ray traced: border ratio at least %.4f", trace_name(ray_queries), ratio);
+        assert(ratio > OPEN_RATIO_MINIMUM);
+        check_validation(&fixture.renderer);
+    }
+}

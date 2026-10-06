@@ -145,6 +145,27 @@ keeps the visit set keeps it.
 Readings use 16,384 entities, whose arrays (about 1 MiB with the re-placement) stay in the
 2 MiB L2 of one i9-14900K P-core, and 2,097,152 entities, whose arrays exceed its 36 MB L3.
 
+Readings on an Intel Core i9-14900K, Windows 11, c3c 0.8.3 with MSVC 19.44, `--opt O3`, process
+pinned to a P-core. Each cell is the median of three runs' medians, in µs per pass. Before is the
+64-type mask test; after is presence read from the stores with a 128-type mask.
+
+| Case | 16,384 before | 16,384 after | 2,097,152 before | 2,097,152 after |
+| --- | ---: | ---: | ---: | ---: |
+| `ecs_each` | 0.6 | 0.6 | 186.1 | 199.6 |
+| `ecs_each_shuffled` | 0.6 | 0.6 | 191.4 | 200.4 |
+| `ecs_each2` | 23.3 | 23.0 | 4,032 | 3,510 |
+| `ecs_each2_shuffled` | 24.8 | 24.1 | 9,316 | 5,559 |
+| `ecs_each2_dense` | 4.9 | 3.7 | 1,377 | 758.0 |
+| `ecs_each2_dense_shuffled` | 5.8 | 4.1 | 8,503 | 3,490 |
+| `ecs_get` | 27.6 | 28.2 | 4,403 | 4,232 |
+| `ecs_get_shuffled` | 29.2 | 30.7 | 10,064 | 6,196 |
+| `ecs_get_absent` | 2.8 | 3.0 | 993.2 | 658.9 |
+| `ecs_get_absent_shuffled` | 3.1 | 3.0 | 3,845 | 2,659 |
+| `ecs_has` | 26.0 | 27.8 | 4,234 | 4,329 |
+| `ecs_has_shuffled` | 27.3 | 29.1 | 7,094 | 5,895 |
+
+A seven-run repeat put `ecs_each` at 2,097,152 within noise: 181.2 before, 182.9 after.
+
 ### Traced effects in software and on ray queries
 
 ```bash
