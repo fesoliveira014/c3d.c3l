@@ -17,30 +17,41 @@ alias RangeFn = fn void(void* data, uint first, uint count);
 <*
  Initial temp allocator of each worker, allocated once per worker.
 *>
-const usz DEFAULT_WORKER_TEMP_BYTES = 256 * 1024; // std's main-thread size; a range whose scratch exceeds it allocates and frees a page each time it runs
+const usz DEFAULT_WORKER_TEMP_BYTES = 256 * 1024; // std's main-thread size; larger scratch allocates a page a run
 
 <*
- Ranges queued at once across every run.
+ Frame runs with unfinished ranges at once.
 *>
-const uint DEFAULT_RING_CAPACITY = 4096; // 128 KiB at 32 bytes a range; a run takes ceil(count / batch) entries, so 262 144 items in batches of 64 fit
+const uint DEFAULT_RUN_CAPACITY = 64; // 3.5 KiB at 56 bytes a slot; a fork-join caller holds one run
 
 <*
- Runs with queued or running ranges at once.
+ Background runs with unfinished ranges at once.
 *>
-const uint DEFAULT_RUN_CAPACITY = 64; // 512 bytes; a fork-join caller holds one run at a time
+const uint DEFAULT_BACKGROUND_RUN_CAPACITY = 64; // 3.5 KiB at 56 bytes a slot; held until its last range finishes
 
-const uint RANGES_PER_THREAD @private = 4; // batch 0 splits a run into this many ranges per pool thread; each range costs one queue round trip
+const uint BACKGROUND_WORKER_SHARE @private = 4; // the default cap leaves three quarters of the workers to frame work
+const uint RANGES_PER_THREAD @private = 4; // batch 0 gives this many ranges per thread; each costs one lock round trip
+const uint NO_RUN @private = uint::max; // end of a class queue
 
 tlocal JobPoolState* active_pool @private;
 
 <*
- Worker threads, temp memory and queue capacities of a job pool.
+ Scheduling class of a run.
+*>
+enum JobClass {
+    FRAME,
+    BACKGROUND,
+}
+
+<*
+ Worker threads, temp memory and run capacities of a job pool.
 *>
 struct JobPoolDesc {
-    uint worker_count;      // 0 runs every range on the calling thread
-    usz  worker_temp_bytes; // initial temp allocator of each worker
-    uint ring_capacity;     // ranges queued at once; a range that does not fit runs inline
-    uint run_capacity;      // runs in flight at once; a run that does not fit runs inline
+    uint worker_count;            // shared workers; 0 runs frame ranges on the calling thread
+    usz  worker_temp_bytes;       // initial temp allocator of each worker
+    uint run_capacity;            // frame runs in flight at once; a frame run that does not fit runs inline
+    uint background_run_capacity; // background runs in flight at once; 0 refuses every background run
+    uint background_workers;      // shared workers that may run background ranges at once
 }
 
 struct JobRange @private {
@@ -48,33 +59,42 @@ struct JobRange @private {
     void*   data;
     uint    first;
     uint    count;
-    uint    run_slot;
 }
 
 struct RunSlot @private {
-    uint generation;
-    uint pending; // queued or running ranges; the slot is free at 0
-}
-
-struct RunRequest @private {
     RangeFn range;
     void*   data;
     uint    count;
     uint    batch;
+    uint    range_count;
+    uint    next_range;      // ranges below it are claimed
+    uint    pending;         // unclaimed or running ranges; the slot is free at 0
+    uint    generation;
+    uint    previous_queued; // class queue links, valid while ranges remain unclaimed
+    uint    next_queued;
+    ulong   sequence;        // submission order of the run
+}
+
+struct RunQueue @private {
+    uint first;
+    uint last;
 }
 
 struct JobPoolState @private {
     Allocator         allocator;
     usz               worker_temp_bytes;
     Thread[]          workers; // Thread.create writes an entry its worker may already read, so the array never moves
-    JobRange[]        ring;
-    RunSlot[]         runs;
-    Mutex             lock; // guards every field below
+    RunSlot[]         runs;    // frame slots first, then background slots
+    uint              frame_slots;
+    uint              background_workers;
+    Mutex             lock;    // guards every field below
     ConditionVariable work_available;
     ConditionVariable run_finished;
-    uint              head;
-    uint              queued;
+    RunQueue          frame_queue;
+    RunQueue          background_queue;
     uint              running;
+    uint              running_background; // background ranges on shared workers, bounded by background_workers
+    ulong             next_sequence;
     ulong             inline_ranges;
     bool              stopping;
 }
@@ -87,9 +107,9 @@ struct JobPool {
 }
 
 <*
- Split [0, count) into ranges and queue them for the pool's threads.
- Ranges the ring or the run table cannot hold run inline before the return.
- @param [inout] data : "Handed to every range; outlives the wait."
+ Split [0, count) into ranges and queue them as a frame run.
+ A run the frame partition cannot hold runs inline before the return.
+ @param [inout] data : "Handed to every range; outlives the run."
  @param batch : "Items per range, the last one short; 0 lets the pool choose."
  @return "Zero when every range ran inside the call."
 *>
@@ -102,52 +122,113 @@ fn JobId JobPool.run(
 ) {
     JobPoolState* state = self.state;
     if (!count) return {};
-    RunRequest request = {
-        .range = range,
-        .data  = data,
-        .count = count,
-        .batch = batch ? batch : auto_batch(state, count),
-    };
-    uint range_count = (count - 1) / request.batch + 1;
+    RunSlot request = run_request(
+        state: state,
+        range: range,
+        data:  data,
+        count: count,
+        batch: batch,
+    );
     if (!state.workers.len || active_pool == state) {
-        run_inline(state, request, 0);
+        run_inline(state, request);
         return {};
     }
 
     state.lock.lock();
-    JobId id;
-    uint queued_ranges = min(range_count, (uint)state.ring.len - state.queued);
-    if (queued_ranges) {
-        if (try run_slot = free_run_slot(state)) {
-            id = queue_ranges(
-                state:       state,
-                request:     request,
-                run_slot:    run_slot,
-                range_count: queued_ranges,
-            );
-        } else {
-            queued_ranges = 0;
-        }
+    JobId? id = queue_run(state, JobClass.FRAME, request);
+    if (catch id) {
+        state.inline_ranges += request.range_count;
+        state.lock.unlock();
+        run_inline(state, request);
+        return {};
     }
-    state.inline_ranges += (ulong)(range_count - queued_ranges);
     state.lock.unlock();
-
-    if (queued_ranges) state.work_available.broadcast();
-    run_inline(state, request, queued_ranges);
+    state.work_available.broadcast();
     return id;
 }
 
 <*
- Block until the run has finished, running its queued ranges meanwhile.
+ Queue a run of a class, or refuse it when the class partition is full.
+ Runs no range inside the call, except frame work on a pool without workers.
+ @param [inout] data : "Handed to every range; outlives the run."
+ @param batch : "Items per range, the last one short; 0 lets the pool choose."
+ @return "Zero when every range ran inside the call."
+ @return? c3d::CAPACITY_EXCEEDED
+*>
+fn JobId? JobPool.try_run(
+    &self,
+    JobClass job_class,
+    RangeFn range,
+    void* data,
+    uint count,
+    uint batch,
+) {
+    JobPoolState* state = self.state;
+    if (!count) return {};
+    RunSlot request = run_request(
+        state: state,
+        range: range,
+        data:  data,
+        count: count,
+        batch: batch,
+    );
+    if (job_class == FRAME && !state.workers.len) {
+        run_inline(state, request);
+        return {};
+    }
+
+    state.lock.lock();
+    JobId? id = queue_run(state, job_class, request);
+    state.lock.unlock();
+    if (catch excuse = id) return excuse~;
+    state.work_available.broadcast();
+    return id;
+}
+
+<*
+ Whether every range of the run has finished, without blocking.
+ Range writes are visible to the caller once it returns true.
+ @require id.index < self.state.runs.len : "The id came from this pool."
+*>
+fn bool JobPool.is_finished(&self, JobId id) {
+    JobPoolState* state = self.state;
+    state.lock.lock();
+    defer state.lock.unlock();
+    return state.runs[id.index].generation != id.generation;
+}
+
+<*
+ Run background ranges queued before the call on this thread, oldest first.
+ @param max_ranges : "Most ranges this call runs."
+ @return "Ranges run."
+ @require active_pool != self.state : "Not called from a range of this pool."
+*>
+fn uint JobPool.pump(&self, uint max_ranges = uint::max) {
+    JobPoolState* state = self.state;
+    state.lock.lock();
+    ulong queued_before = state.next_sequence;
+    uint ran;
+    for (; ran < max_ranges; ran++) {
+        uint run_slot = state.background_queue.first;
+        if (run_slot == NO_RUN || state.runs[run_slot].sequence >= queued_before) break;
+        run_claimed(state, run_slot, false);
+    }
+    state.lock.unlock();
+    return ran;
+}
+
+<*
+ Block until the run has finished, running its unclaimed ranges meanwhile.
  @require id.index < self.state.runs.len : "The id came from this pool."
  @require active_pool != self.state || id.generation == 0 : "From a range of this pool, only a nested run's zero id."
 *>
 fn void JobPool.wait(&self, JobId id) {
     JobPoolState* state = self.state;
     state.lock.lock();
-    while (state.runs[id.index].generation == id.generation) {
-        if (try position = queued_position(state, id.index)) {
-            run_taken(state, position);
+    RunSlot* slot = &state.runs[id.index];
+    while (slot.generation == id.generation) {
+        if (slot.next_range < slot.range_count) {
+            run_claimed(state, id.index, false);
             continue;
         }
         state.run_finished.wait(&state.lock);
@@ -156,24 +237,29 @@ fn void JobPool.wait(&self, JobId id) {
 }
 
 <*
- Block until nothing is queued or running, running any queued range meanwhile.
+ Block until no run of either class is unfinished, running unclaimed ranges meanwhile.
  @require active_pool != self.state : "Not called from a range of this pool."
 *>
 fn void JobPool.wait_all(&self) {
     JobPoolState* state = self.state;
     state.lock.lock();
-    while (state.queued || state.running) {
-        if (state.queued) {
-            run_taken(state, state.head);
+    while (true) {
+        if (state.frame_queue.first != NO_RUN) {
+            run_claimed(state, state.frame_queue.first, false);
             continue;
         }
+        if (state.background_queue.first != NO_RUN) {
+            run_claimed(state, state.background_queue.first, false);
+            continue;
+        }
+        if (!state.running) break;
         state.run_finished.wait(&state.lock);
     }
     state.lock.unlock();
 }
 
 <*
- Cumulative ranges run inline because the ring or the run table was full.
+ Cumulative ranges `run` executed inline because the frame partition was full.
 *>
 fn ulong JobPool.inline_ranges(&self) {
     JobPoolState* state = self.state;
@@ -183,27 +269,41 @@ fn ulong JobPool.inline_ranges(&self) {
 }
 
 <*
- One worker per logical processor but one, and the default capacities.
+ Background cap for a worker count: a quarter, at least one, none without workers.
+*>
+fn uint default_background_workers(uint worker_count) {
+    if (!worker_count) return 0;
+    return max(worker_count / BACKGROUND_WORKER_SHARE, 1u);
+}
+
+<*
+ One worker per logical processor but one, the default cap and capacities.
 *>
 fn JobPoolDesc default_job_pool_desc() {
+    uint worker_count = (uint)max(cpu::native_cpu() - 1, 1);
     return {
-        .worker_count      = (uint)max(cpu::native_cpu() - 1, 1),
-        .worker_temp_bytes = DEFAULT_WORKER_TEMP_BYTES,
-        .ring_capacity     = DEFAULT_RING_CAPACITY,
-        .run_capacity      = DEFAULT_RUN_CAPACITY,
+        .worker_count            = worker_count,
+        .worker_temp_bytes       = DEFAULT_WORKER_TEMP_BYTES,
+        .run_capacity            = DEFAULT_RUN_CAPACITY,
+        .background_run_capacity = DEFAULT_BACKGROUND_RUN_CAPACITY,
+        .background_workers      = default_background_workers(worker_count),
     };
 }
 
 <*
- Start the workers over a fixed range ring and run table.
+ Start the workers over a fixed run table.
  The allocator is called from worker threads.
  @return? c3d::CAPACITY_EXCEEDED, thread::INIT_FAILED
- @require allocator != tmem, desc.ring_capacity > 0, desc.run_capacity > 0
+ @require allocator != tmem, desc.run_capacity > 0
 *>
 fn JobPool? create_job_pool(Allocator allocator, JobPoolDesc desc) {
     JobPoolState*? state = alloc::new_try(allocator, JobPoolState, {
-        .allocator         = allocator,
-        .worker_temp_bytes = desc.worker_temp_bytes,
+        .allocator          = allocator,
+        .worker_temp_bytes  = desc.worker_temp_bytes,
+        .frame_slots        = desc.run_capacity,
+        .background_workers = desc.background_workers,
+        .frame_queue        = { .first = NO_RUN, .last = NO_RUN },
+        .background_queue   = { .first = NO_RUN, .last = NO_RUN },
     });
     if (catch state) return c3d::CAPACITY_EXCEEDED~;
     defer catch alloc::free(allocator, state);
@@ -211,15 +311,11 @@ fn JobPool? create_job_pool(Allocator allocator, JobPoolDesc desc) {
     Thread[]? workers = alloc::new_array_try(allocator, Thread, desc.worker_count);
     if (catch workers) return c3d::CAPACITY_EXCEEDED~;
     defer catch alloc::free(allocator, workers.ptr);
-    JobRange[]? ring = alloc::new_array_try(allocator, JobRange, desc.ring_capacity);
-    if (catch ring) return c3d::CAPACITY_EXCEEDED~;
-    defer catch alloc::free(allocator, ring.ptr);
-    RunSlot[]? runs = alloc::new_array_try(allocator, RunSlot, desc.run_capacity);
+    RunSlot[]? runs = alloc::new_array_try(allocator, RunSlot, (usz)desc.run_capacity + desc.background_run_capacity);
     if (catch runs) return c3d::CAPACITY_EXCEEDED~;
     defer catch alloc::free(allocator, runs.ptr);
     foreach (&slot : runs) slot.generation = 1;
     state.workers = workers;
-    state.ring = ring;
     state.runs = runs;
 
     state.lock.init()!;
@@ -239,7 +335,7 @@ fn JobPool? create_job_pool(Allocator allocator, JobPoolDesc desc) {
 
 <*
  Stop the workers and free the pool.
- Waits for every outstanding run.
+ Waits for every outstanding run of either class.
  @param [&inout] pool : "Left zeroed."
  @require active_pool != pool.state : "Not called from a range of this pool."
 *>
@@ -252,7 +348,6 @@ fn void destroy_job_pool(JobPool* pool) {
     state.lock.destroy();
 
     Allocator allocator = state.allocator;
-    alloc::free(allocator, state.ring.ptr);
     alloc::free(allocator, state.runs.ptr);
     alloc::free(allocator, state.workers.ptr);
     alloc::free(allocator, state);
@@ -264,14 +359,30 @@ fn uint auto_batch(JobPoolState* state, uint count) @private {
     return (count - 1) / ranges + 1;
 }
 
-fn JobRange range_at(RunRequest request, uint index, uint run_slot = 0) @private {
+fn RunSlot run_request(
+    JobPoolState* state,
+    RangeFn range,
+    void* data,
+    uint count,
+    uint batch,
+) @private {
+    uint batch_size = batch ? batch : auto_batch(state, count);
+    return {
+        .range       = range,
+        .data        = data,
+        .count       = count,
+        .batch       = batch_size,
+        .range_count = (count - 1) / batch_size + 1,
+    };
+}
+
+fn JobRange range_at(RunSlot* request, uint index) @private {
     uint first = index * request.batch;
     return {
-        .range    = request.range,
-        .data     = request.data,
-        .first    = first,
-        .count    = min(request.batch, request.count - first),
-        .run_slot = run_slot,
+        .range = request.range,
+        .data  = request.data,
+        .first = first,
+        .count = min(request.batch, request.count - first),
     };
 }
 
@@ -284,62 +395,88 @@ fn void run_range(JobPoolState* state, JobRange range) @private {
     active_pool = enclosing;
 }
 
-fn void run_inline(JobPoolState* state, RunRequest request, uint first_range) @private {
-    uint range_count = (request.count - 1) / request.batch + 1;
-    for (uint index = first_range; index < range_count; index++) run_range(state, range_at(request, index));
+fn void run_inline(JobPoolState* state, RunSlot request) @private {
+    for (uint index = 0; index < request.range_count; index++) run_range(state, range_at(&request, index));
 }
 
-fn uint? free_run_slot(JobPoolState* state) @private {
-    foreach (uint index, slot : state.runs) {
-        if (!slot.pending) return index;
-    }
-    return NOT_FOUND~;
+fn bool is_background_slot(JobPoolState* state, uint run_slot) @private => run_slot >= state.frame_slots;
+
+fn RunQueue* queue_of(JobPoolState* state, uint run_slot) @private {
+    return is_background_slot(state, run_slot) ? &state.background_queue : &state.frame_queue;
 }
 
-fn JobId queue_ranges(
-    JobPoolState* state,
-    RunRequest request,
-    uint run_slot,
-    uint range_count,
-) @private {
-    uint capacity = (uint)state.ring.len;
-    for (uint index = 0; index < range_count; index++) {
-        state.ring[(state.head + state.queued + index) % capacity] = range_at(request, index, run_slot);
+fn uint? free_run_slot(JobPoolState* state, JobClass job_class) @private {
+    uint first = job_class == FRAME ? 0 : state.frame_slots;
+    uint end = job_class == FRAME ? state.frame_slots : (uint)state.runs.len;
+    for (uint index = first; index < end; index++) {
+        if (!state.runs[index].pending) return index;
     }
-    state.queued += range_count;
+    return c3d::CAPACITY_EXCEEDED~;
+}
+
+fn JobId? queue_run(JobPoolState* state, JobClass job_class, RunSlot request) @private {
+    uint run_slot = free_run_slot(state, job_class)!;
     RunSlot* slot = &state.runs[run_slot];
-    slot.pending = range_count;
+    request.generation = slot.generation;
+    request.pending = request.range_count;
+    request.sequence = state.next_sequence++;
+    *slot = request;
+
+    RunQueue* queue = queue_of(state, run_slot);
+    slot.previous_queued = queue.last;
+    slot.next_queued = NO_RUN;
+    if (queue.last == NO_RUN) {
+        queue.first = run_slot;
+    } else {
+        state.runs[queue.last].next_queued = run_slot;
+    }
+    queue.last = run_slot;
     return { .index = run_slot, .generation = slot.generation };
 }
 
-fn uint? queued_position(JobPoolState* state, uint run_slot) @private {
-    uint capacity = (uint)state.ring.len;
-    for (uint offset = 0; offset < state.queued; offset++) {
-        uint position = (state.head + offset) % capacity;
-        if (state.ring[position].run_slot == run_slot) return position;
+fn void unlink_run(JobPoolState* state, uint run_slot) @private {
+    RunSlot* slot = &state.runs[run_slot];
+    RunQueue* queue = queue_of(state, run_slot);
+    if (slot.previous_queued == NO_RUN) {
+        queue.first = slot.next_queued;
+    } else {
+        state.runs[slot.previous_queued].next_queued = slot.next_queued;
     }
-    return NOT_FOUND~;
+    if (slot.next_queued == NO_RUN) {
+        queue.last = slot.previous_queued;
+    } else {
+        state.runs[slot.next_queued].previous_queued = slot.previous_queued;
+    }
 }
 
-// Called with the lock held; the lock is released while the range runs.
-fn void run_taken(JobPoolState* state, uint position) @private {
-    JobRange range = state.ring[position];
-    state.ring[position] = state.ring[state.head];
-    state.head = (state.head + 1) % (uint)state.ring.len;
-    state.queued--;
+// Called with the lock held on a run with an unclaimed range; the lock is released while the range runs.
+fn void run_claimed(JobPoolState* state, uint run_slot, bool capped) @private {
+    RunSlot* slot = &state.runs[run_slot];
+    JobRange range = range_at(slot, slot.next_range++);
+    if (slot.next_range == slot.range_count) unlink_run(state, run_slot);
     state.running++;
+    if (capped) state.running_background++;
     state.lock.unlock();
 
     run_range(state, range);
 
     state.lock.lock();
     state.running--;
-    RunSlot* slot = &state.runs[range.run_slot];
+    // Sleepers saw no frame run and no free place; later frame work woke them, else this thread takes the freed place.
+    if (capped) state.running_background--;
     slot.pending--;
     if (slot.pending) return;
     // Generation 0 belongs to the zero id, which never names a run.
     slot.generation = slot.generation == uint::max ? 1 : slot.generation + 1;
     state.run_finished.broadcast();
+}
+
+fn uint? shared_worker_run(JobPoolState* state) @private {
+    if (state.frame_queue.first != NO_RUN) return state.frame_queue.first;
+    if (state.background_queue.first != NO_RUN && state.running_background < state.background_workers) {
+        return state.background_queue.first;
+    }
+    return NOT_FOUND~;
 }
 
 fn void stop_workers(JobPoolState* state, uint count) @private {
@@ -354,11 +491,12 @@ fn int run_worker(void* argument) @private {
     JobPoolState* state = argument;
     @pool_init(state.allocator, (sz)state.worker_temp_bytes) {
         state.lock.lock();
-        while (state.queued || !state.stopping) {
-            if (state.queued) {
-                run_taken(state, state.head);
+        while (true) {
+            if (try run_slot = shared_worker_run(state)) {
+                run_claimed(state, run_slot, is_background_slot(state, run_slot));
                 continue;
             }
+            if (state.stopping) break;
             state.work_available.wait(&state.lock);
         }
         state.lock.unlock();
