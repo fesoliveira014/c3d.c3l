@@ -285,16 +285,55 @@ the frame kernel there.
 
 ### Windows host, 32 logical processors (default 31 workers)
 
-Pending: the overhead, kernel, background and loaded tables of this pool on the Windows host, medians of three
-runs with the range of the three, and for 31 workers the minimum, median and maximum.
+Nine interleaved runs of `job_bench` at O3, against main 95206f3; each value is the median, with [min–max]
+where the runs gave a range.
+
+| Workers | µs per empty range, main | µs per empty range, this change |
+| ---: | ---: | ---: |
+| 0 | 0.0061 [0.0055–0.0097] | 0.0062 [0.0053–0.0097] |
+| 1 | 0.0305 [0.0210–0.0410] | 0.0247 |
+| 3 | 0.0569 [0.0446–0.0741] | 0.0442 |
+| 31 | 0.2839 [0.1985–0.3215] | 0.2354 [0.1959–0.2853] |
+
+Every median of this change lies inside main's range, and is lower at 1, 3 and 31 workers.
+
+| Workers | Background cap | µs per empty background range |
+| ---: | ---: | ---: |
+| 1 | 1 | 0.031 |
+| 3 | 1 | 0.034 |
+| 31 | 7 | 0.157 |
+
+Kernel overhead share at batch 64, main and this change:
+
+| Workers | Items | Main | This change |
+| ---: | ---: | ---: | ---: |
+| 1 | 16384 | 0.011 | 0.009 |
+| 3 | 16384 | 0.021 | 0.017 |
+| 31 | 16384 | 0.105 | 0.092 |
+| 31 | 65536 | 0.101 | 0.085 |
+| 31 | 262144 | 0.095 | 0.081 |
+
+Kernel time with and without a background run holding the cap (the ratio is the ratio of the two medians):
+
+| Workers | Background cap | Idle µs | Loaded µs | Ratio |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 1 | 1373.9 | 1424.2 | 1.04 |
+| 3 | 1 | 705.6 | 752.9 | 1.07 |
+| 31 | 7 | 331.5 | 309.4 | 0.93 |
+
+The loaded kernel stays within 7 % of idle at 1 and 3 workers on both hosts (WSL 0.97 and 0.97, Windows 1.04
+and 1.07). At 31 workers it is 1.10 on WSL and 0.93 on Windows; the two hosts differ in direction and the runs
+are noisy (the 31-worker idle runs on Windows span 256–415 µs), so no consistent slowdown from a background run
+is established.
 
 ### Revisit threshold
 
-The single lock is kept while no median exceeds 2 µs per empty range. Each range is one claim and one completion under the pool lock; `wait` claims its own
-run's ranges directly. On WSL the time per range stays under 0.2 µs and the kernel median overhead share at 31
-workers and batch 64 is 0.0523, 0.0465 and 0.0486 for 16 384, 65 536 and 262 144 items. The lock-free design is
-carried forward with this measurement as its trigger: it is taken up when the share at 31 workers and batch 64
-rises above this change's recorded value (0.0523 on WSL; the Windows value is pending the reviewer's run) on
-either host. The design is a per-run atomic claim cursor and completion count, with the lock kept for queue
-membership and sleep. With many workers, use batches of about 512 items or more: at 1024 the share is
-0.003 on WSL.
+The single lock is kept while no median exceeds 2 µs per empty range. Each range is one claim and one
+completion under the pool lock; `wait` claims its own run's ranges directly. The kernel median overhead share at
+31 workers and batch 64 was already over 0.05 on both hosts before this change (Windows main 0.105). With this
+change it is 0.0523, 0.0465 and 0.0486 on WSL and 0.092, 0.085 and 0.081 on Windows, for 16 384, 65 536 and
+262 144 items. The lock-free design is carried forward with these measurements as its trigger: it is taken up
+when the share at 31 workers and batch 64 rises above this change's recorded values, 0.0523 on WSL and 0.092 on
+Windows (16 384 items). The design is a per-run atomic claim cursor and completion count, with the lock kept
+for queue membership and sleep. With many workers, use batches of about 512 items or more: at 1024 the share
+is 0.003 on WSL.
