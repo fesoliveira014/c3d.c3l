@@ -423,7 +423,7 @@ fn void test_two_tracing_views_pose_once_per_frame() @test {
             renderer.end_frame()!!;
             assert(renderer.stats.trace_poses == 1);
             assert(ray_queries ? renderer.stats.trace_refits == 0 : renderer.stats.trace_refits == 1);
-            assert(ray_queries ? renderer.stats.blas_updates + renderer.stats.blas_builds >= 1 : true);
+            if (ray_queries) assert(renderer.stats.blas_updates + renderer.stats.blas_builds == 1);
         }
         check_validation(renderer);
     }
@@ -929,11 +929,16 @@ fn void test_strong_pose_refit_encloses_every_posed_triangle() @test {
     check_validation(renderer);
 }
 
-const Vec3 POSED_OCCLUDER_NEAR @private = { 0, 0.5f, -1 };       // cube resting on the floor, its front face at z = -0.5
-const Vec3 POSED_OCCLUDER_AWAY @private = { 3, 0.5f, -1 };       // the same cube 3 m to the side
-const Vec3 POSED_CREASE_POINT @private = { 0, 0, -0.45f };       // on the floor 5 cm from the cube's front face
+const Vec3 POSED_OCCLUDER_NEAR @private = { 0, 0.5f, -1 }; // cube resting on the floor, its front face at z = -0.5
+const Vec3 POSED_OCCLUDER_AWAY @private = { 3, 0.5f, -1 }; // the same cube 3 m to the side
+const Vec3 POSED_CREASE_POINT @private = { 0, 0, -0.45f }; // on the floor 5 cm from the cube's front face
 
-fn Node* posed_attach_joint(Fixture* fixture, Scene* scene, GeometryId geometry, MaterialId material) @private {
+fn Node* posed_attach_joint(
+    Fixture* fixture,
+    Scene* scene,
+    GeometryId geometry,
+    MaterialId material,
+) @private {
     Node* joint = scene.add_node(name: "posed_joint")!!;
     Node* mesh = scene.add_mesh(geometry, material, name: "posed_mesh")!!;
     Node*[] joints = alloc::new_array(scene.allocator, Node*, 1);

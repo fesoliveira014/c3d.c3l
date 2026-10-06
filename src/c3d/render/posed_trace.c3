@@ -469,8 +469,8 @@ fn void? acquire_posed_blas(Renderer* renderer, uint index, GpuGeometry* mirror)
     gpu::AccelerationStructureGeometryDesc[1] geometries = { blas_geometry_desc(&mirror.layout) };
     gpu::AccelerationStructureTriangleGeometryDesc* wanted = &geometries[0].triangles;
     bool same_layout = slot.blas_layout.max_vertex_count == wanted.max_vertex_count
-        && slot.blas_layout.max_primitive_count == wanted.max_primitive_count
-        && slot.blas_layout.index_type == wanted.index_type;
+      && slot.blas_layout.max_primitive_count == wanted.max_primitive_count
+      && slot.blas_layout.index_type == wanted.index_type;
     if (slot.blas.is_valid() && same_layout) return;
     if (slot.blas.is_valid()) {
         renderer.pending_upload_retire.push({
@@ -478,6 +478,7 @@ fn void? acquire_posed_blas(Renderer* renderer, uint index, GpuGeometry* mirror)
             .acceleration_structure = slot.blas,
         });
         table.bytes -= slot.blas_bytes;
+        slot.blas_bytes = 0;
         slot.blas = {};
     }
 
