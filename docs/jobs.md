@@ -29,10 +29,12 @@ JobPool pool = job::create_job_pool(mem, job::default_job_pool_desc())!;
 defer job::destroy_job_pool(&pool);
 ```
 
-`create_job_pool` allocates the pool state, the worker array and the run table once, then starts the workers.
-It faults `c3d::CAPACITY_EXCEEDED` when an allocation fails and passes on `thread::INIT_FAILED` when the system
-refuses the mutex, a condition variable or a thread; either way everything created so far is released. The
-allocator is called from the worker threads, so it must be thread-safe and must not be `tmem`.
+`create_job_pool` allocates the pool state, the worker array and the run table once, then starts the workers
+and returns once each has bound itself to its processors. It faults `c3d::CAPACITY_EXCEEDED` when an allocation
+fails, `c3d::INVALID_ARGUMENT` or `c3d::UNSUPPORTED` for a processor set it cannot apply
+([Processors](#processors)), and passes on `thread::INIT_FAILED` when the system refuses the mutex, a condition
+variable or a thread; either way everything created so far is released. The allocator is called from the
+worker threads, so it must be thread-safe and must not be `tmem`.
 
 `destroy_job_pool` waits for every outstanding run, stops and joins the workers, frees everything and zeroes
 the handle. A `defer` on an error path is safe while runs are in flight. `JobPool` is a value handle over
@@ -45,18 +47,32 @@ heap state: moving the handle keeps the pool running, and copies share one pool,
 | `run_capacity` | 64 | Frame runs with unfinished ranges at once. |
 | `background_run_capacity` | 64 | Background runs with unfinished ranges at once; 0 refuses every background run. |
 | `background_workers` | `default_background_workers(worker_count)` | Shared workers that may run background ranges at once. |
+| `background_only_workers` | 0 | Further workers that take only background ranges, outside the cap. |
+| `worker_cpus` | empty | Processors of the shared workers; empty leaves the system's choice. |
+| `background_cpus` | empty | Processors of the background-only workers; empty leaves the system's choice. |
 
 `default_job_pool_desc()` fills these. A cap at or above `worker_count` does not limit, so a descriptor that
 lowers `worker_count` also sets `background_workers`, usually to `job::default_background_workers(count)`:
 a quarter of the workers, at least one, and none without workers. That is 1 at 4 workers, 2 at 8, 4 at 16 and 7
-at 31. A quarter keeps three quarters of the workers on frame work while background ranges run. The worker
-count has four caveats:
+at 31. A quarter keeps three quarters of the workers on frame work while background ranges run.
 
-1. On Linux, `native_cpu()` is `get_nprocs_conf()`: it ignores CPU affinity and cgroup quotas, so a container
-   over-reports. Set `worker_count` from the container's quota there.
-2. On Windows it counts the current processor group only.
-3. box3d's workers run only inside `PhysicsWorld.step`. The two pools oversubscribe the machine only when an
+The default `worker_count` is one less than the processors the pool may use, and at least one:
+`max(min(available, quota) - 1, 1)`, where `available` counts `job::available_cpus()` and `quota` is
+`job::cpu_quota()` when it returns one.
+
+| Host | `available` | `quota` | Default workers |
+| --- | ---: | ---: | ---: |
+| 32 logical processors, unrestricted | 32 | none | 31 |
+| the same under `taskset -c 0-3` | 4 | none | 3 |
+| the same in a container with a 2.5-processor quota (`cpu.max` `250000 100000`) | 32 | 3 | 2 |
+
+The count has four caveats:
+
+1. On Windows `available_cpus()` covers the calling thread's processor group only, and `cpu_quota()` never
+   returns a quota: job-object rate limits are not read.
+2. box3d's workers run only inside `PhysicsWorld.step`. The two pools oversubscribe the machine only when an
    application runs jobs during a physics step; such an application lowers `worker_count`.
+3. Processors numbered 1024 and up are not represented.
 4. There is no upper limit; none has been measured to be needed.
 
 ## Run and wait
@@ -140,9 +156,12 @@ if (pool.is_finished(streaming)) publish(&decode);
   `max_ranges`, and returns how many ran. It runs only ranges queued before the call: a background run that a
   pumped range submits waits for the next `pump`. It ignores the cap, which limits workers and not the calling
   thread, and it never takes frame ranges.
-- **Without background workers.** With zero workers or `background_workers = 0`, a background run progresses
-  only through `pump`, `wait` on that run, `wait_all` or `destroy_job_pool`. A consumer that polls
-  `is_finished` alone on such a pool never sees the run finish.
+- **Background-only workers.** `background_only_workers` adds workers that take only background ranges, in the
+  same order, and do not count against the cap. They never take frame ranges, so a pool with zero shared
+  workers and some background-only workers runs frame work inline and background work on its workers.
+- **Without background workers.** With no background-only worker and either zero workers or
+  `background_workers = 0`, a background run progresses only through `pump`, `wait` on that run, `wait_all` or
+  `destroy_job_pool`. A consumer that polls `is_finished` alone on such a pool never sees the run finish.
 - **Capacity.** `background_run_capacity` slots hold background runs and `run_capacity` slots hold frame runs,
   in one table. Each class fills only its own slots, so background runs that span frames never push frame runs
   inline, and a full frame partition never refuses a background run. A background slot holds its run until
@@ -164,6 +183,54 @@ refuses instead of running inline.
 
 `JobPoolDesc.ring_capacity` and `DEFAULT_RING_CAPACITY` are gone: the pool queues runs, not ranges. Remove both
 from descriptors.
+
+## Processors
+
+`job::CpuSet` is the standard library's `BitSet{1024}`, indexed by logical processor. On Windows the index
+numbers processor groups consecutively: group 1 starts after the active processors of group 0.
+
+- **`available_cpus()`** returns the processors the calling thread may run on: on Linux its affinity mask,
+  which `taskset` and cgroup cpusets narrow; on Windows its affinity within its processor group. Linux has no
+  process-wide mask, so `default_job_pool_desc` and `create_job_pool` read it on the creating thread: create
+  the pool before binding that thread.
+- **`cpu_quota()`** returns the Linux cgroup CPU quota in whole processors, rounded up: cgroup v2 `cpu.max`
+  under `/sys/fs/cgroup`, cgroup v1 `cpu.cfs_quota_us` and `cpu.cfs_period_us` under `/sys/fs/cgroup/cpu`,
+  for the process's cgroup and every ancestor, the tightest one winning. An unlimited, missing or malformed
+  quota returns `NOT_FOUND`, as Windows always does. Other mount points are not searched.
+- **`core_types()`** splits `available_cpus()` into the fastest core type (`performance`) and the rest
+  (`efficiency`): Windows ranks cores by `EfficiencyClass`; Linux reads `/sys/devices/cpu_core/cpus` on Intel
+  hybrid processors, otherwise each processor's `cpu_capacity`. Where neither exists, or every core ranks the
+  same, `performance` holds every available processor and `efficiency` is empty.
+
+`worker_cpus` binds the shared workers and `background_cpus` the background-only workers. A requested set is
+first intersected with the creating thread's `available_cpus()`, so a worker never widens its own mask; a
+worker binds itself when it starts, reads its mask back, and `create_job_pool` returns once every worker has
+reported. `JobPool.worker_cpus(worker)` returns what each one read back, shared workers first.
+
+| Request | Result |
+| --- | --- |
+| empty | the worker keeps the system's choice: on Linux the creating thread's mask, on Windows the process's affinity |
+| partly outside `available_cpus()` | bound to the intersection |
+| entirely outside `available_cpus()` | `c3d::INVALID_ARGUMENT` |
+| spanning two Windows processor groups | `c3d::UNSUPPORTED` |
+| refused by the system, or read back as another set | `c3d::UNSUPPORTED` |
+
+On a hybrid processor, keep frame work on the performance cores and background work on the efficiency cores:
+
+```c3
+CoreTypes types = job::core_types();
+JobPoolDesc desc = job::default_job_pool_desc();
+desc.worker_count = (uint)types.performance.cardinality() - 1;
+desc.background_workers = 0;
+desc.background_only_workers = (uint)types.efficiency.cardinality();
+desc.worker_cpus = types.performance;
+desc.background_cpus = types.efficiency;
+JobPool pool = job::create_job_pool(mem, desc)!;
+```
+
+On an i9-14900K under Windows, `performance` is processors 0-15 (eight cores with two threads each) and
+`efficiency` 16-31. The pool does not bind the calling thread. An application that binds it, for the ranges it
+runs in `wait`, does so after `create_job_pool`; bound first, it would narrow every worker's set to its own.
 
 ## Temp memory
 

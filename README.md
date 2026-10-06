@@ -417,8 +417,9 @@ drawn from one instanced batch; `physics_components` builds its level and bodies
 The optional `c3d_job` add-on runs a function over index ranges on a fixed pool of worker threads:
 `run` splits the work into ranges, `wait` returns once they have finished, `is_finished` polls a run, and at
 zero workers every frame range runs on the calling thread. Background runs share the workers under a cap and
-frame ranges go first. Core never depends on it. See [the job pool](docs/jobs.md) for the rules a range
-follows, the classes, run capacity and temp-memory sizing and the measured cost;
+frame ranges go first; workers can be bound to processor sets, such as the performance cores of a hybrid
+processor. Core never depends on it. See [the job pool](docs/jobs.md) for the rules a range follows, the
+classes, processors, run capacity and temp-memory sizing and the measured cost;
 `python3 scripts/build.py --example job_bench` runs its benchmark.
 
 The optional `c3d_landscape` add-on draws height-field terrain from an `R16_UINT` height map: quadtree
