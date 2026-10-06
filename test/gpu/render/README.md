@@ -327,7 +327,9 @@ Mannequins and `crowd <count> <software|hardware>` a traced crowd, with a 1920 x
 The columns are the `TRACE_POSE`, `ACCELERATION_BUILD` and custom-compute GPU times, `trace_build_ms`,
 `trace_posed_bytes` and the pose, refit, update and build counts; hardware runs also print the bottom-level storage with
 and without `allow_update`. `fresh` aborts every other frame so each sampled frame builds every posed bottom level in
-full. Numbers from a software rasterizer measure the harness only.
+full. Validation is on; a trailing `novalidation` argument turns it off for timing runs (validation-on and -off GPU
+times read the same, with 1 to 5 % more CPU `trace_build_ms` under validation). Numbers from a software rasterizer measure
+the harness only.
 
 What they cannot establish: window clear-only and GUI-only frames need a
 window (run the `clear` and `cube_gui` examples with validation), and a

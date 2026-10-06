@@ -121,8 +121,8 @@ button, and the post panel's "Path tracing" header edits bounces, samples per fr
   emitters and bright environment texels converge slowly and show as isolated bright pixels at low
   sample counts. No denoiser.
 - Physical lobes beyond the Standard prefix (clearcoat, sheen, specular, anisotropy, transmission)
-  are not sampled; `BLEND` surfaces and custom vertex stages are not traced, and skinned and morphed meshes trace at their raster pose; custom shader code
-  does not run at hits.
+  are not sampled; `BLEND` surfaces and custom vertex stages are not traced, and skinned and morphed meshes trace at their raster pose; crowd placements trace only through
+  `add_crowd(trace: true)`; custom shader code does not run at hits.
 - Light layers and camera layers are not applied.
 - An [atmosphere](sky.md) lights the view through its cubes and shows its source cube as the background,
   without the sun's disc; path-traced views have no fog and no aerial perspective.

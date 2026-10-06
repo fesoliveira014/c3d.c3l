@@ -52,6 +52,48 @@ A skinned mesh, a morphed mesh or both traces at the pose raster draws in the sa
 - **Stats.** `trace_posed_instances`, `trace_posed_overflow`, `trace_posed_bytes`, `trace_poses`, `trace_refits` and `blas_updates` (this frame). Posing and refits run under `Pass.TRACE_POSE`.
 - **Hardware.** Each slot owns one bottom level created with `allow_update` and `prefer_fast_trace`: a full build when the slot is new, rebuilt or its source geometry changed, and an in-place update each frame the pose changes. Static bottom levels keep `prefer_fast_trace` alone. A pose change rebuilds the top level too. Update scratch is part of the per-frame scratch, which grows to the largest build or update. `Stats.blas_updates` counts the updates; a full posed build counts in `blas_builds`. Both kinds refit rather than rebuild, so a strong pose traces slower than rest. A geometry whose vertex or primitive counts change replaces the slot's bottom level.
 
+### Animated crowds
+
+A posed hardware instance costs a bottom-level update every frame its pose changes: about 0.073 ms of `ACCELERATION_BUILD` per posed instance per frame on the RTX 4090. A 512-placement crowd traced on the hardware kind spends 75 ms a frame in acceleration builds and holds 558 MB. The same crowd on the software kind costs 1.3 ms of posing and refit plus 0.6 ms of tracing. Prefer the software kind, or few traced placements, for animated crowds.
+
+### Measured cost
+
+RTX 4090 (driver 610.88), Windows 11, 1920 x 1080, validation off. Each value is the median over three runs of the 128-frame medians, with a run-to-run range under 5 %. Dance_Loop or Walk_Loop on the Quaternius mannequin, two posed meshes each. `posed_trace_bench` forces validation on, so a scratch build with `.validation = false` was timed; validation-on runs of `mannequin 16 hardware animate` and `crowd 64 software` read the same GPU times and 1 to 5 % more CPU `trace_build_ms`.
+
+Trace pass (`gpu_trace_ms`, ms), at rest and at a strong pose:
+
+| Kind | Rest | Strong | Ratio |
+| --- | ---: | ---: | ---: |
+| software | 0.104 | 0.144 | 1.38 |
+| hardware | 0.039 | 0.039 | 1.00 |
+
+The software refit stays under the 2x rebuild trigger.
+
+Animated mannequins (GPU ms; CPU `trace_build_ms`):
+
+| N (posed instances) | HW `TRACE_POSE` | HW `ACCELERATION_BUILD` | HW trace | SW `TRACE_POSE` (pose + refit) | SW trace | CPU `trace_build_ms` HW / SW |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 (2) | 0.007 | 0.171 | 0.039 | 0.109 | 0.132 | 0.020 / 0.020 |
+| 16 (32) | 0.013 | 2.115 | 0.039 | 0.119 | 0.210 | 0.269 / 0.257 |
+| 64 (128) | 0.033 | 9.326 | 0.041 | 0.162 | 0.293 | 1.075 / 1.032 |
+
+Update against full build, one mannequin on the hardware kind: `ACCELERATION_BUILD` is 0.171 ms for the update and 0.526 ms for a full build (`fresh`), so the update is about 3.1x cheaper. The driver reports 406,016 B of bottom-level storage without `allow_update` and 369,664 B with it, and 25,984 B of update scratch.
+
+Crowds (`Walk_Loop`, `add_crowd(trace: true)`, two posed meshes per placement):
+
+| Crowd | `trace_posed_bytes` | `TRACE_POSE` | Dispatches (poses + refits) | `ACCELERATION_BUILD` | Trace | CPU `trace_build_ms` |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| 64 hardware | 69.7 MB | 0.033 | 128 + 0 | 9.41 | 0.042 | 0.222 |
+| 512 hardware | 557.5 MB | 0.227 | 1,024 + 0 | 75.49 | 0.070 | 3.357 |
+| 64 software | 30.9 MB | 0.160 | 128 + 128 | 0 | 0.344 | 0.181 |
+| 512 software | 247.3 MB | 1.269 | 1,024 + 1,024 | 0 | 0.579 | 1.871 |
+
+### Carried forward
+
+| Item | Trigger |
+| --- | --- |
+| Shared or bucketed bottom levels for crowd placements, for example one bottom level per distinct pose sample | An application traces an animated crowd above 64 placements on the hardware kind |
+
 ## Preparing
 
 Trace rows, bounds and ray origins use the [frame's relative space](large_world.md).

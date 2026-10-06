@@ -19,6 +19,7 @@ import std::time::clock;
 const String MODEL_PATH @local = "examples/assets/quaternius/AnimationLibrary_Godot.glb";
 const String STRONG_CLIP @local = "Dance_Loop";
 const String CROWD_CLIP @local = "Walk_Loop";
+const String NO_VALIDATION @local = "novalidation";
 const char[*] BENCH_SOURCE @local = $embed("bench_posed_trace.comp.glsl");
 const uint GROUP_SIZE @local = 8;           // mirrored as local_size_x and _y in bench_posed_trace.comp.glsl
 const uint WARMUP_FRAMES @local = 32;
@@ -103,14 +104,16 @@ fn void print_storage_sizes(Renderer* renderer, GeometryId geometry) @local {
 }
 
 <*
- Usage: posed_trace_bench mannequin <count> <software|hardware> <rest|strong|animate> [fresh]
-        posed_trace_bench crowd <count> <software|hardware>
- Run from the repository root; prints one CSV row per sampled frame.
+ Usage: posed_trace_bench mannequin <count> <software|hardware> <rest|strong|animate> [fresh] [novalidation]
+        posed_trace_bench crowd <count> <software|hardware> [novalidation]
+ Run from the repository root; prints one CSV row per sampled frame, with validation on unless novalidation is last.
 *>
 fn int main(String[] args) {
+    bool validation = args.len == 0 || args[^1] != NO_VALIDATION;
+    if (!validation) args = args[:args.len - 1];
     if (args.len < 4) {
-        io::eprintn("usage: posed_trace_bench mannequin <count> <software|hardware> <rest|strong|animate> [fresh]");
-        io::eprintn("       posed_trace_bench crowd <count> <software|hardware>");
+        io::eprintn("usage: posed_trace_bench mannequin <count> <software|hardware> <rest|strong|animate> [fresh] [novalidation]");
+        io::eprintn("       posed_trace_bench crowd <count> <software|hardware> [novalidation]");
         return 1;
     }
     bool crowd = args[1] == "crowd";
@@ -197,7 +200,7 @@ fn int main(String[] args) {
         allocator: mem,
         assets:    &assets,
         desc:      {
-            .validation                = true,
+            .validation                = validation,
             .gpu_timings               = true,
             .ray_queries               = hardware,
             .application_name          = "posed_trace_benchmark",
@@ -280,7 +283,10 @@ fn int main(String[] args) {
         "trace_build_ms,posed_bytes,poses,refits,blas_updates,blas_builds");
     for (uint frame = WARMUP_FRAMES; frame < WARMUP_FRAMES + SAMPLE_FRAMES; frame++) {
         Sample sample = samples[frame];
-        if (!sample.completed) return 2;
+        if (!sample.completed) {
+            io::eprintfn("frame %d has no GPU timing", frame);
+            return 2;
+        }
         io::printfn(
             "%s,%d,%s,%s,%d,%.6f,%.6f,%.6f,%.6f,%d,%d,%d,%d,%d",
             crowd ? "crowd" : "mannequin",
