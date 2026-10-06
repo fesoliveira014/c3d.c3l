@@ -15,6 +15,19 @@ a count change, reset, re-enabling and an aborted frame, the
 `ASSET_DATA_UNAVAILABLE` fault for released positions, and the per-frame
 `Stats.vertex_history_bytes` count.
 
+The auto-exposure cases in `test_auto_exposure.c3` render constant-luminance backgrounds into float targets and
+read each rendering's adapted value from the view's readback. They check the GLSL adaptation against its C3 twin
+within 1e-4 relative over a sequence of 0, 1/144 to 0.5 s steps and luminance changes, and the delayed
+`ViewStats.exposure` two frames late; a lit scene with bloom renders the same image under sixteen times the light;
+a path-traced view settles within 0.01 stops of its converged image's target and steps, without a snap, after its
+accumulation restarts; a `LINEAR_HDR` view records no exposure dispatch; auto exposure at unit scale equals manual
+output with bloom bit for bit; a narrowed `max_ev` bounds the next rendering; two views of one camera adapt
+independently at different cadences; an aborted frame changes nothing; a black frame holds and isolated 60,000-unit
+pixels leave the metered mean unchanged; a cut into a black frame lands the first lit frame on its target; the state
+is allocated with the view, not on toggle, and freed with it.
+`test_manual_exposure.c3` prints the digest of a manual image with bloom; it compiles on any revision, so running it
+before and after a change shows whether manual output moved.
+
 Build the repository once so `shaders/spv/` exists, then invoke this project
 separately:
 
