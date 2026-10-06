@@ -37,6 +37,8 @@ What the four cases establish:
 
 - `render_to` completes for `LINEAR_HDR` and `DISPLAY_LDR` and writes the
   target; a `render_to` that faults closes the frame and frees its view.
+  A `create_renderer` that faults after its arrays exist (a builtin texture
+  without pixels) frees every allocation it made.
 - A warm frame with only a fullscreen draw or only a compute dispatch submits;
   a frame with no recorded work is discarded without a fault.
 - A storage texture uploaded, written and sampled in one frame, written twice
