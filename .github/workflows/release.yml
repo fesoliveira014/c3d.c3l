@@ -7,9 +7,6 @@ on:
 permissions:
   contents: read
 
-env:
-  C3C_VERSION: "0.8.3"
-
 jobs:
   ci:
     uses: ./.github/workflows/ci.yml
@@ -24,14 +21,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: recursive
-
-      - name: Install c3c
-        run: |
-          mkdir -p ~/tools
-          curl -fsSL -o /tmp/c3.tar.gz \
-            "https://github.com/c3lang/c3c/releases/download/v${C3C_VERSION}/c3-linux.tar.gz"
-          tar -xzf /tmp/c3.tar.gz -C ~/tools
-          echo "$HOME/tools/c3" >> "$GITHUB_PATH"
 
       - name: Install glslang
         run: |

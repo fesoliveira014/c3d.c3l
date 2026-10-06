@@ -58,38 +58,19 @@ git submodule update --init --recursive
 
 ## Native dependencies
 
-VMA native archives are fetched for its pinned release; spvreflect.c3l carries prebuilt
-artifacts. c3imgui.c3l v0.1.2 downloads its
-Linux/Windows archives from release assets and verifies their checksums. box3d is built from
-its vendored sources, and SDL3 comes from source because Ubuntu 24.04 does not package it.
-
-Initialize native dependencies:
+Native libraries come from each dependency's release at the submodule's pinned tag: SDL3 and Dear
+ImGui (static), box3d, VMA, spvreflect's Windows library and shaderc. Each is built in its own
+repository's CI, the Linux ones on Ubuntu 22.04 (glibc 2.35). Fetch them once after cloning:
 
 ```bash
 python3 scripts/build.py --init-deps --skip-abi --skip-shaders --skip-build
 ```
 
-That installs the ImGui archives under `lib/c3imgui.c3l/linked-libs/` and leaves `libbox3d.a`
-in `lib/box3d.c3l/linked-libs/linux-x64/`. Ordinary builds do not download archives.
-They compile the vendored `csrc/stb_image.c` and `csrc/stb_truetype.c` with c3c's selected C compiler.
-
-The released Linux ImGui archive references `__isoc23_sscanf`, unavailable on the verified
-Ubuntu 22.04/glibc 2.35 host. On that host, build the matching native package from source
-after initialization as described in [GUI native builds](docs/gui_native_build.md). Re-running
-`--init-deps` downloads the release archive again.
-
-SDL3, pinned at `release-3.4.16`:
-
-```bash
-git clone --depth 1 --branch release-3.4.16 https://github.com/libsdl-org/SDL .deps/SDL
-cmake -S .deps/SDL -B .deps/SDL/build -DCMAKE_BUILD_TYPE=Release
-cmake --build .deps/SDL/build
-sudo cmake --install .deps/SDL/build
-sudo ldconfig
-```
-
-`.deps/` is gitignored. Installing into the default prefix is what lets the linker find `SDL3`
-without extra link arguments; a private prefix needs a `-L` in `examples/project.json`.
+That downloads the `<name>-<tag>-<platform>.c3l` artifact of each, checks it against the
+release's `SHA256SUMS`, and extracts its native directory into the submodule. Ordinary builds do
+not download anything. They compile the vendored `csrc/stb_image.c` and `csrc/stb_truetype.c` with
+c3c's selected C compiler. Executables load the shaderc shared library from their own directory;
+the build copies it there.
 
 ### Windows
 
@@ -105,8 +86,7 @@ git clone -c core.symlinks=true --recurse-submodules https://github.com/fesolive
 cd C:\repos\c3d.c3l
 ```
 
-Dependency initialization locates Git Bash beside the Git installation on PATH and loads
-its Unix tools. The Box3D build locates MSVC through `vswhere`:
+Dependency initialization downloads each dependency's Windows artifact:
 
 ```powershell
 python scripts\build.py --init-deps --skip-abi --skip-shaders --skip-build
@@ -114,13 +94,11 @@ python scripts\build.py --test
 c3c run cube --path examples
 ```
 
-`--init-deps` fetches the VMA and ImGui archives with checksums and builds
-`lib/box3d.c3l/linked-libs/windows-x64/box3d.lib` with MSVC. Every Windows archive is built
-against the static CRT, and the c3d manifest and bundled projects declare `"wincrt": "static"`
+Every Windows native library is built against the static CRT, and the c3d manifest and bundled projects declare `"wincrt": "static"`
 to match; a consumer on the dynamic CRT fails at link with
 `lld-link: error: /failifmismatch: mismatch detected for 'RuntimeLibrary'`.
 
-No `SDL3.dll` is deployed: the static SDL3 inside the ImGui package is what the linker resolves.
+SDL3 links statically, so no `SDL3.dll` is deployed; the build copies `shaderc_shared.dll` next to executables.
 The Vulkan loader `vulkan-1.dll`, installed by GPU drivers and the SDK, is required at process
 start by every example and by the test binary. Third-party Vulkan layers with broken manifests
 print `loader_get_json` errors at startup; they are harmless.

@@ -20,13 +20,19 @@ Each step is a function; failures raise BuildError and stop the run.
 from __future__ import annotations
 
 import argparse
+import hashlib
+import io
 import json
 import re
 import shutil
 import subprocess
 import sys
 import time
+import urllib.request
+import zipfile
 from pathlib import Path
+
+import package_release
 
 ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
@@ -86,9 +92,11 @@ SERIAL_TEST_TARGETS = ("serial_test", "serial_order_forward", "serial_order_reve
 UI_TEST_TARGETS = ("ui_test",)
 
 REQUIRED_C3C_VERSION = "0.8.3"
-C3IMGUI_RELEASE_TAG = "v0.1.3"
 SUBMODULES = ("gpu.c3l", "sdl3.c3l", "c3imgui.c3l", "c3cg.c3l", "box3d.c3l", "cgltf.c3l", "ufbx.c3l", "shaderc.c3l", "clay.c3l")
-NATIVE_BUILD_SCRIPTS = ("scripts/build-box3d.sh",)
+# Submodules whose native libraries are built in their repository's CI and published only in its releases.
+RELEASE_NATIVES = ("sdl3.c3l", "c3imgui.c3l", "box3d.c3l", "shaderc.c3l", "vma.c3l", "spvreflect.c3l")
+NATIVE_DIRECTORIES = ("linked-libs/", "linux/", "windows/")
+SUBMODULE_PARENTS = (ROOT, LIB / "gpu.c3l")
 
 EXIT_BUILD_FAILED = 1
 EXIT_USAGE = 2
@@ -203,17 +211,53 @@ def step_tools(options: Options) -> None:
         log(f"glslang at {glslang}")
 
 
+def host_platform() -> str:
+    return "windows-x64" if sys.platform == "win32" else "linux-x64"
+
+
+def download(url: str) -> bytes:
+    try:
+        with urllib.request.urlopen(url) as response:
+            return response.read()
+    except OSError as error:
+        raise BuildError(f"cannot download {url}: {error}") from error
+
+
+def fetch_release_natives(directory: Path, url: str, tag: str) -> None:
+    """Extract one submodule's native libraries from its release artifact for this platform."""
+    asset = f"{package_release.provides_of(directory)}-{tag}-{host_platform()}.c3l"
+    base = f"{url.removesuffix('.git')}/releases/download/{tag}"
+    data = download(f"{base}/{asset}")
+    sums = download(f"{base}/SHA256SUMS").decode("utf-8").splitlines()
+    expected = next((line.split()[0] for line in sums if line.split()[-1:] == [asset]), None)
+    if expected != hashlib.sha256(data).hexdigest():
+        raise BuildError(f"{asset}: checksum does not match {base}/SHA256SUMS")
+    with zipfile.ZipFile(io.BytesIO(data)) as archive:
+        for member in archive.namelist():
+            if member.startswith(NATIVE_DIRECTORIES) and not member.endswith("/"):
+                target = directory / member
+                target.parent.mkdir(parents=True, exist_ok=True)
+                target.write_bytes(archive.read(member))
+    log(f"{asset}: native libraries extracted")
+
+
+def fetch_all_release_natives() -> None:
+    for parent in SUBMODULE_PARENTS:
+        for path, url in package_release.submodules(parent):
+            directory = parent / path
+            if directory.name not in RELEASE_NATIVES:
+                continue
+            try:
+                tag = package_release.release_tag(parent, path, url, package_release.run_git)
+            except package_release.PackagingError as error:
+                raise BuildError(str(error)) from error
+            fetch_release_natives(directory, url, tag)
+
+
 def step_deps(options: Options) -> None:
     if options.init_deps:
         run(["git", "submodule", "update", "--init", "--recursive"], ROOT, options.verbose)
-        run([sys.executable, str(LIB / "gpu.c3l" / "scripts" / "fetch_vma_libs.py")], ROOT, options.verbose)
-        fetch = LIB / "c3imgui.c3l" / "fetch_linked_libs.sh"
-        run([*shell("bash"), fetch.name, C3IMGUI_RELEASE_TAG], fetch.parent, options.verbose)
-        for name in SUBMODULES:
-            for script_name in NATIVE_BUILD_SCRIPTS:
-                script = LIB / name / script_name
-                if script.exists():
-                    run([*shell("sh"), script.name], script.parent, options.verbose)
+        fetch_all_release_natives()
 
     missing = [name for name in SUBMODULES if not (LIB / name / "manifest.json").exists()]
     if missing:
@@ -275,17 +319,17 @@ def step_build(options: Options) -> None:
         for lib in options.libs:
             command += ["--lib", lib]
         run(command, ROOT, options.verbose)
-    copy_windows_runtimes(EXAMPLES / "build")
-    copy_windows_runtimes(PHYSICS / "build")
-    copy_windows_runtimes(NAV / "build")
-    copy_windows_runtimes(CHARACTER / "build")
-    copy_windows_runtimes(PHYSICS_GUI / "build")
-    copy_windows_runtimes(JOB / "build")
-    copy_windows_runtimes(LANDSCAPE / "build")
-    copy_windows_runtimes(PARTICLE / "build")
-    copy_windows_runtimes(UI / "build")
+    copy_runtimes(EXAMPLES / "build")
+    copy_runtimes(PHYSICS / "build")
+    copy_runtimes(NAV / "build")
+    copy_runtimes(CHARACTER / "build")
+    copy_runtimes(PHYSICS_GUI / "build")
+    copy_runtimes(JOB / "build")
+    copy_runtimes(LANDSCAPE / "build")
+    copy_runtimes(PARTICLE / "build")
+    copy_runtimes(UI / "build")
     if not options.target or options.target == "profile_gpu":
-        copy_windows_runtimes(ROOT / "build" / "profile_gpu")
+        copy_runtimes(ROOT / "build" / "profile_gpu")
 
 
 def example_project(target: str) -> Path:
@@ -293,19 +337,16 @@ def example_project(target: str) -> Path:
     return ADDON_EXAMPLES.get(target, EXAMPLES)
 
 
-def copy_windows_runtimes(output: Path) -> None:
-    """Place imported Windows runtimes next to executables."""
-    if sys.platform != "win32":
-        return
+def copy_runtimes(output: Path) -> None:
+    """Place the shaderc shared library next to executables; its Linux runpath is $ORIGIN."""
+    if sys.platform == "win32":
+        library = LIB / "shaderc.c3l" / "windows" / "shaderc_shared.dll"
+    else:
+        library = LIB / "shaderc.c3l" / "linux" / "libshaderc_shared.so.1"
     output.mkdir(parents=True, exist_ok=True)
-    libraries = (
-        LIB / "shaderc.c3l" / "windows" / "shaderc_shared.dll",
-        LIB / "sdl3.c3l" / "linked-libs" / "windows-x64" / "SDL3.dll",
-    )
-    for library in libraries:
-        destination = output / library.name
-        if not destination.exists() or destination.stat().st_mtime < library.stat().st_mtime:
-            shutil.copy2(library, destination)
+    destination = output / library.name
+    if not destination.exists() or destination.stat().st_mtime < library.stat().st_mtime:
+        shutil.copy2(library, destination)
 
 
 def step_test(options: Options) -> None:
@@ -313,7 +354,7 @@ def step_test(options: Options) -> None:
         return
     run([sys.executable, "-m", "unittest", "discover", "-s", str(SCRIPTS), "-p", "test_*.py"], ROOT, options.verbose)
     targets = project_targets(TEST)
-    copy_windows_runtimes(TEST / "build")
+    copy_runtimes(TEST / "build")
     if not targets:
         run([options.c3c, "test", "--path", str(TEST)], ROOT, options.verbose)
         return
@@ -335,13 +376,13 @@ def step_test(options: Options) -> None:
         run([options.c3c, "test", target, "--path", str(JOB)], ROOT, options.verbose)
     for target in LANDSCAPE_TEST_TARGETS:
         run([options.c3c, "test", target, "--path", str(LANDSCAPE)], ROOT, options.verbose)
-    copy_windows_runtimes(PARTICLE / "build")
+    copy_runtimes(PARTICLE / "build")
     for target in PARTICLE_TEST_TARGETS:
         run([options.c3c, "test", target, "--path", str(PARTICLE)], ROOT, options.verbose)
-    copy_windows_runtimes(SERIAL / "build")
+    copy_runtimes(SERIAL / "build")
     for target in SERIAL_TEST_TARGETS:
         run([options.c3c, "test", target, "--path", str(SERIAL)], ROOT, options.verbose)
-    copy_windows_runtimes(UI / "build")
+    copy_runtimes(UI / "build")
     for target in UI_TEST_TARGETS:
         run([options.c3c, "test", target, "--path", str(UI)], ROOT, options.verbose)
 

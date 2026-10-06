@@ -81,6 +81,20 @@ class PackReleaseTest(unittest.TestCase):
         with self.assertRaisesRegex(package_release.PackagingError, "lib/sdl3.c3l is at 2222222"):
             package_release.release_tag(ROOT, "lib/sdl3.c3l", "https://example.invalid/sdl3.c3l", untagged)
 
+    def test_annotated_version_tag_resolves_through_its_peeled_commit(self) -> None:
+        def annotated(arguments: list[str], cwd: Path) -> str:
+            if arguments[0] == "rev-parse":
+                return "3" * 40 + "\n"
+            return (
+                f"{'3' * 40}\trefs/tags/nightly\n"
+                f"{'4' * 40}\trefs/tags/v0.2.0\n"
+                f"{'3' * 40}\trefs/tags/v0.2.0^{{}}\n"
+            )
+
+        tag = package_release.release_tag(ROOT, "lib/sdl3.c3l", "https://example.invalid/sdl3.c3l", annotated)
+
+        self.assertEqual(tag, "v0.2.0")
+
     def test_pins_include_the_gpu_backends(self) -> None:
         pins = package_release.resolve_pins(ROOT, tagged_everywhere)
 

@@ -88,6 +88,6 @@ python3 c3d_shader_tools/scripts/build_shaders.py --package path/to/package
 3. Push a tag `v<version>`. `.github/workflows/release.yml` runs CI on Linux and Windows, compiles SPIR-V,
    runs `scripts/package_release.py` and publishes the files above with the pin table as release notes.
 
-`scripts/package_release.py --version <version> --out dist` refuses to pack when the tree has tracked modifications,
+`scripts/package_release.py --version <version> --out dist` refuses to pack when the tree has tracked modifications, `LICENSE` is empty,
 a submodule is off a tag, SPIR-V has not been compiled, or a packed source embeds a file its artifact lacks. Equal
 inputs give equal bytes: entries are sorted and dated 1980-01-01.
