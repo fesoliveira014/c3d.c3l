@@ -323,3 +323,95 @@ fn void test_add_geometry_rejects_malformed_influences() @test {
         }
     };
 }
+
+fn GeometryId add_morph_only_box(Fixture* fixture, Vec3[] target_offsets) @local {
+    GeometryId morphed;
+    @pool() {
+        Geometry box = geometry::box(tmem, 1, 1, 1);
+        box.targets = alloc::new_array(tmem, MorphTarget, target_offsets.len);
+        foreach (target, &shape : box.targets) {
+            *shape = {
+                .position_deltas = alloc::new_array(tmem, Vec3, box.positions.len),
+                .normal_deltas   = alloc::new_array(tmem, Vec3, box.positions.len),
+            };
+            foreach (vertex, &delta : shape.position_deltas) {
+                *delta = box.positions[vertex].x > 0 ? target_offsets[target] : (Vec3){};
+            }
+        }
+        morphed = fixture.assets.add_geometry(&box)!!;
+    };
+    return morphed;
+}
+
+fn Aabb morph_only_bounds(Fixture* fixture, GeometryId geometry, float[] weights) @local {
+    Node* node = fixture.scene.add_mesh(geometry, fixture.material, name: "morphed")!!;
+    Mesh* mesh = fixture.scene.get(node, Mesh);
+    mesh.morph_weights = alloc::new_array(fixture.scene.allocator, float, weights.len);
+    mesh.morph_weights[..] = weights[..];
+    fixture.scene.update_world();
+    return spatial::mesh_world_bounds(
+        assets: &fixture.assets,
+        node: node,
+        mesh: mesh,
+        skin: null,
+    );
+}
+
+fn void test_morph_only_bounds_follow_signed_weights() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    GeometryId morphed = add_morph_only_box(&fixture, { { 1, 0, 0 } });
+    Aabb rest = fixture.assets.geometry(morphed).data.bounds;
+
+    Aabb grown = morph_only_bounds(&fixture, morphed, { 1 });
+    assert(grown.max == rest.max + (Vec3){ 1, 0, 0 } && grown.min == rest.min);
+    Aabb shrunk = morph_only_bounds(&fixture, morphed, { -1 });
+    assert(shrunk.min == rest.min - (Vec3){ 1, 0, 0 } && shrunk.max == rest.max);
+}
+
+fn void test_morph_only_bounds_accumulate_targets() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    GeometryId morphed = add_morph_only_box(&fixture, { { 1, 0, 0 }, { 0, 2, 0 } });
+    Aabb rest = fixture.assets.geometry(morphed).data.bounds;
+
+    Aabb both = morph_only_bounds(&fixture, morphed, { 1, 0.5f });
+    assert(both.max == rest.max + (Vec3){ 1, 1, 0 } && both.min == rest.min);
+}
+
+fn void test_morph_only_bounds_cover_every_vertex_and_rest_at_zero() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    GeometryId morphed = add_morph_only_box(&fixture, { { 0.3f, 0, 0 }, { 0, -0.6f, 0.2f }, { -0.1f, 0.4f, 0 } });
+    Geometry* data = &fixture.assets.geometry(morphed).data;
+    float[3] weights = { 0.7f, -0.4f, 0.2f };
+    Aabb bounds = morph_only_bounds(&fixture, morphed, weights[..]);
+    foreach (vertex, position : data.positions) {
+        Vec3 posed = position;
+        foreach (target, weight : weights) posed += data.targets[target].position_deltas[vertex] * weight;
+        assert(contains(bounds, { .min = posed, .max = posed }));
+    }
+
+    Aabb still = morph_only_bounds(&fixture, morphed, { 0, 0, 0 });
+    assert(still.min == data.bounds.min && still.max == data.bounds.max);
+    Aabb unweighted = morph_only_bounds(&fixture, morphed, {});
+    assert(unweighted.min == data.bounds.min && unweighted.max == data.bounds.max);
+}
+
+fn void test_morph_bounds_survive_release_and_refresh_on_dirty() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    GeometryId morphed = add_morph_only_box(&fixture, { { 1, 0, 0 } });
+    GeometryAsset* record = fixture.assets.geometry(morphed);
+    assert(record.morph_bounds.len == 1 && record.morph_bounds[0].max == (Vec3){ 1, 0, 0 });
+
+    foreach (&delta : record.data.targets[0].position_deltas) {
+        if (delta.x > 0) *delta = { 2, 0, 0 };
+    }
+    fixture.assets.mark_geometry_dirty(morphed);
+    assert(record.morph_bounds[0].max == (Vec3){ 2, 0, 0 } && record.morph_bounds[0].min == (Vec3){});
+
+    fixture.assets.release_geometry_cpu(morphed);
+    fixture.assets.mark_geometry_dirty(morphed);
+    assert(record.morph_bounds.len == 1 && record.morph_bounds[0].max == (Vec3){ 2, 0, 0 });
+}

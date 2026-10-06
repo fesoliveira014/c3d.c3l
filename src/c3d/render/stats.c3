@@ -143,6 +143,7 @@ struct Stats {
     uint  trace_instances;
     uint  trace_nodes;
     uint  trace_skipped;
+    uint  trace_sway_at_rest;    // this frame: swaying batches and LOD groups traced at rest
     float trace_build_ms;
     uint  blas_builds;
     uint  tlas_builds;

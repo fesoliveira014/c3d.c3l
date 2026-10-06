@@ -493,14 +493,8 @@ fn void test_lod_base_queries_match_index_and_trace_parts() @test {
             options: { .precision = PickPrecision.TRIANGLES, .faces = PickFaces.BOTH, .layers = uint::max },
         );
         assert(centre.len == 0);
-        uint dangling;
-        render::TraceInstance[] records = render::collect_trace_instances(
-            allocator: tmem,
-            scene: &fixture.scene,
-            assets: &fixture.assets,
-            dangling: &dangling,
-        );
-        assert(records.len == 6 && dangling == 0);
+        render::TraceInstance[] records = trace_records(&fixture);
+        assert(records.len == 6);
         foreach (record : records) {
             assert(record.lod_identity == fixture.scene.get(node, LodGroup).state.identity);
             Mat4 expected = node.world.mul(placements[record.instance_index].to_mat4()).mul(parts[record.part_index].local);
@@ -509,29 +503,14 @@ fn void test_lod_base_queries_match_index_and_trace_parts() @test {
         }
         fixture.assets.geometry(parts[2].geometry).data.bounds.max.x += 1;
         fixture.assets.mark_geometry_dirty(parts[2].geometry);
-        render::TraceInstance[] unchanged = render::collect_trace_instances(
-            allocator: tmem,
-            scene: &fixture.scene,
-            assets: &fixture.assets,
-            dangling: &dangling,
-        );
+        render::TraceInstance[] unchanged = trace_records(&fixture);
         assert(unchanged.len == records.len);
         assert(mem::equals(records.ptr, unchanged.ptr, records.len * render::TraceInstance::size));
         fixture.assets.mark_geometry_dirty(fixture.geometry);
-        render::TraceInstance[] changed = render::collect_trace_instances(
-            allocator: tmem,
-            scene: &fixture.scene,
-            assets: &fixture.assets,
-            dangling: &dangling,
-        );
+        render::TraceInstance[] changed = trace_records(&fixture);
         assert(changed.len == records.len && changed[0].geometry_revision != records[0].geometry_revision);
         fixture.scene.get(node, LodGroup).state.effects.trace = false;
-        records = render::collect_trace_instances(
-            allocator: tmem,
-            scene: &fixture.scene,
-            assets: &fixture.assets,
-            dangling: &dangling,
-        );
+        records = trace_records(&fixture);
         assert(records.len == 0);
     };
     fixture.assets.remove_geometry(fixture.geometry);
@@ -609,6 +588,37 @@ fn void test_lod_asset_edits_invalidate_the_whole_group() @test {
     assert(!spatial::lod_group_is_live(&fixture.assets, group));
 }
 
+fn void test_swaying_lod_group_traces_at_rest_and_is_counted() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    LodPart[3] parts = fixture_parts(&fixture);
+    LodLevel[2] levels = fixture_levels();
+    Node* node = fixture.scene.add_lod_group(&fixture.assets, { .parts = parts[..], .levels = levels[..] })!!;
+    fixture.scene.update_world();
+    LodGroupState* state = fixture.scene.get(node, LodGroup).state;
+    LodEffects effects = state.effects;
+    effects.sway = { .direction = { 1, 0, 0 }, .amplitude = 0.2f, .frequency = 1 };
+    fixture.scene.set_lod_effects(node, effects);
+
+    @pool() {
+        render::TraceCollection swaying = render::collect_trace_instances(tmem, &fixture.scene, &fixture.assets);
+        assert(swaying.records.len == (usz)levels[0].part_count * state.count && swaying.sway_at_rest == 1);
+        foreach (&record : swaying.records) {
+            Aabb local = fixture.assets.geometry(record.geometry).data.bounds;
+            Aabb rest = maths::aabb_transform(local, render::trace_instance_world(record));
+            assert(record.bounds.min == rest.min && record.bounds.max == rest.max);
+        }
+        effects.sway.amplitude = 0;
+        fixture.scene.set_lod_effects(node, effects);
+        assert(render::collect_trace_instances(tmem, &fixture.scene, &fixture.assets).sway_at_rest == 0);
+        effects.sway.amplitude = 0.2f;
+        effects.trace = false;
+        fixture.scene.set_lod_effects(node, effects);
+        render::TraceCollection untraced = render::collect_trace_instances(tmem, &fixture.scene, &fixture.assets);
+        assert(untraced.records.len == 0 && untraced.sway_at_rest == 0);
+    };
+}
+
 fn LodPart[3] fixture_parts(Fixture* fixture) @local {
     return {
         { .geometry = fixture.geometry, .material = fixture.material, .local = matrix::IDENTITY4.translate({ -2, 0, 0 }) },
@@ -645,6 +655,12 @@ fn Fixture make_fixture() @private {
     fixture.material = fixture.assets.add_material(material::basic({ .color = { 1, 1, 1, 1 } }))!!;
     fixture.scene = scene::create_scene(mem, { .max_nodes = 8 });
     return fixture;
+}
+
+fn render::TraceInstance[] trace_records(Fixture* fixture) @local {
+    render::TraceCollection collection = render::collect_trace_instances(tmem, &fixture.scene, &fixture.assets);
+    assert(collection.dangling == 0);
+    return collection.records;
 }
 
 fn void destroy_fixture(Fixture* fixture) @private {

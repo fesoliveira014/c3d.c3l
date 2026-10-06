@@ -134,19 +134,55 @@ fn void free_skin_bounds(Allocator allocator, SkinBounds* bounds) {
  @pure
 *>
 fn Aabb joint_morph_bounds(SkinBounds* bounds, uint joint, MorphSelection* selection) {
-    Aabb local = bounds.joints[joint];
+    usz first = (usz)joint * bounds.target_count;
+    return widen_by_morphs(bounds.joints[joint], bounds.morph_deltas[first:bounds.target_count], selection);
+}
+
+<*
+ Bound widened by the selected targets' signed delta bounds.
+ @param deltas : "One delta bound per target."
+ @param [&in] selection : "Targets below deltas.len."
+ @pure
+*>
+fn Aabb widen_by_morphs(Aabb bounds, Aabb[] deltas, MorphSelection* selection) {
+    Aabb widened = bounds;
     for (uint active = 0; active < selection.count; active++) {
-        Aabb delta = bounds.morph_deltas[(usz)joint * bounds.target_count + selection.targets[active]];
+        Aabb delta = deltas[selection.targets[active]];
         float weight = selection.weights[active];
         if (weight >= 0) {
-            local.min += delta.min * weight;
-            local.max += delta.max * weight;
+            widened.min += delta.min * weight;
+            widened.max += delta.max * weight;
         } else {
-            local.min += delta.max * weight;
-            local.max += delta.min * weight;
+            widened.min += delta.max * weight;
+            widened.max += delta.min * weight;
         }
     }
-    return local;
+    return widened;
+}
+
+<*
+ Bound of each morph target's position deltas over every vertex.
+ @param [&in] geometry : "Targets carry one delta per position."
+ @return "One entry per target, empty without targets; free with free_morph_bounds."
+*>
+fn Aabb[] build_morph_bounds(Allocator allocator, Geometry* geometry) {
+    if (!geometry.targets.len) return {};
+    Aabb[] bounds = alloc::new_array(allocator, Aabb, geometry.targets.len);
+    foreach (target, &deltas : geometry.targets) {
+        if (!deltas.position_deltas.len) continue;
+        bounds[target] = { .min = deltas.position_deltas[0], .max = deltas.position_deltas[0] };
+        foreach (delta : deltas.position_deltas[1..]) bounds[target] = extend(bounds[target], delta);
+    }
+    return bounds;
+}
+
+<*
+ Free the per-target bounds.
+ @param [&inout] bounds : "Left empty."
+*>
+fn void free_morph_bounds(Allocator allocator, Aabb[]* bounds) {
+    if (bounds.len) alloc::free(allocator, bounds.ptr);
+    *bounds = {};
 }
 
 <*

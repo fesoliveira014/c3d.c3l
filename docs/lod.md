@@ -84,7 +84,8 @@ bounds and GPU records without validating or copying the arrays again.
 placement identities or invalidating placement bounds and GPU records. Copy
 `state.effects`, edit it, then call the setter.
 Shadow and trace flags start enabled. Sway/fade follow the existing
-[instancing contracts](instancing.md#sway-and-distance-fade).
+[instancing contracts](instancing.md#sway-and-distance-fade). A swaying group still traces, at its rest
+pose ([scene trace](scene_trace.md#what-traces)).
 
 Selection uses projected sphere diameter divided by viewport height, multiplied
 by `exp2(ViewDesc.lod_bias)`. Bias defaults to zero; positive bias adds detail.

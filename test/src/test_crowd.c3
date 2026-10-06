@@ -490,13 +490,17 @@ fn void test_view_history_keeps_crowd_palettes_per_instance() @test {
     assert(pose.instance_count != fixture.scene.get(node, AnimatedCrowd).count);
 }
 
-fn void test_crowd_batches_never_reach_trace_instances() @test {
+fn void test_crowd_batches_collect_posed_placements_with_pose_bounds() @test {
     Fixture fixture = make_fixture();
     defer destroy_fixture(&fixture);
-    CrowdInstance[2] instances = { walker(&fixture, placed({ 0, 0, 0 })), walker(&fixture, placed({ 3, 0, 0 })) };
+    CrowdInstance[3] instances = {
+        walker(&fixture, placed({ 0, 0, 0 })),
+        walker(&fixture, placed({ 3, 0, 0 }, 0, { -1, 1, 1 })),
+        walker(&fixture, placed({ 6, 0, 0 })),
+    };
     Node* node = add_crowd(&fixture, instances[..]);
     AnimatedCrowd* crowd = fixture.scene.get(node, AnimatedCrowd);
-    foreach (usz part : (usz[2]){ 0, 1 }) part_batch(&fixture, crowd, part).trace = true;
+    part_batch(&fixture, crowd, 1).trace = true;
     Node* plain = fixture.scene.add_instanced_mesh(
         geometry: fixture.assets.model(fixture.model).data.meshes[0].geometry,
         material: fixture.material,
@@ -506,16 +510,48 @@ fn void test_crowd_batches_never_reach_trace_instances() @test {
     fixture.scene.update_world();
 
     @pool() {
-        uint dangling;
-        render::TraceInstance[] records = render::collect_trace_instances(
-            allocator: tmem,
-            scene:     &fixture.scene,
-            assets:    &fixture.assets,
-            dangling:  &dangling,
-        );
-        foreach (&record : records) assert(!c3d::same_id(record.entity, crowd.parts[0].batch));
-        foreach (&record : records) assert(!c3d::same_id(record.entity, crowd.parts[1].batch));
+        render::TraceCollection collection = render::collect_trace_instances(tmem, &fixture.scene, &fixture.assets);
+        uint[3] expected_slots = { 0, 2, 1 };
+        usz crowd_rows;
+        foreach (index, &record : collection.records) {
+            assert(!c3d::same_id(record.entity, crowd.parts[0].batch));
+            render::TracePoseSource* source = &collection.poses[index];
+            if (!c3d::same_id(record.entity, crowd.parts[1].batch)) {
+                assert(source.kind == render::TracePose.REST);
+                continue;
+            }
+            assert(source.kind == render::TracePose.CROWD && source.crowd == crowd && source.part == 1);
+            assert(source.palette_index == expected_slots[record.instance_index]);
+            Aabb placed_bounds = maths::aabb_transform(crowd.pose_bounds, render::trace_instance_world(record));
+            assert(record.bounds.min == placed_bounds.min && record.bounds.max == placed_bounds.max);
+            crowd_rows++;
+        }
+        assert(crowd_rows == 3);
     };
+}
+
+fn void test_packed_order_finds_each_placement_palette() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    CrowdInstance[4] instances = {
+        walker(&fixture, placed({ 0, 0, 0 }, 0, { -1, 1, 1 }), 0.1f),
+        walker(&fixture, placed({ 3, 0, 0 }), 0.4f),
+        walker(&fixture, placed({ 6, 0, 0 }, 0, { 1, -1, 1 }), 0.6f),
+        walker(&fixture, placed({ 9, 0, 0 }), 0.9f),
+    };
+    Node* node = add_crowd(&fixture, instances[..]);
+    AnimatedCrowd* crowd = fixture.scene.get(node, AnimatedCrowd);
+    anim::crowd_update(&fixture.assets, &fixture.scene, 0);
+    Mat4f[8] packed;
+    render::pack_crowd_palettes(packed[..], crowd);
+    uint[4] slots;
+    render::crowd_packed_order(slots[..], crowd.placements[:crowd.count]);
+
+    foreach (usz instance, slot : slots) {
+        for (usz joint = 0; joint < 2; joint++) {
+            assert(packed[(usz)slot * 2 + joint] == bitcast(crowd.palettes[instance * 2 + joint], Mat4f));
+        }
+    }
 }
 
 fn void test_removing_the_crowd_node_removes_its_parts() @test {

@@ -401,3 +401,50 @@ fn void test_skinned_candidate_bounds_follow_joints() @test {
         assert(casters.len == 2 && counts.dangling == 1);
     };
 }
+
+fn void test_morphed_mesh_posed_outside_its_rest_box_is_not_culled() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    GeometryId morphed;
+    @pool() {
+        Geometry box = geometry::box(tmem, 1, 1, 1);
+        box.targets = alloc::new_array(tmem, MorphTarget, 1);
+        box.targets[0] = {
+            .position_deltas = alloc::new_array(tmem, Vec3, box.positions.len),
+            .normal_deltas   = alloc::new_array(tmem, Vec3, box.positions.len),
+        };
+        foreach (&delta : box.targets[0].position_deltas) *delta = { 20, 0, 0 };
+        morphed = fixture.assets.add_geometry(&box)!!;
+    };
+    Node* node = fixture.scene.add_mesh(morphed, fixture.red, name: "posed_away")!!;
+    node.local.position = { -20, 0, 0 };
+    Mesh* mesh = fixture.scene.get(node, Mesh);
+    mesh.morph_weights = alloc::new_array(fixture.scene.allocator, float, 1);
+    mesh.morph_weights[0] = 1;
+    fixture.scene.update_world();
+    CameraMatrices matrices = matrices_of(&fixture);
+
+    @pool() {
+        render::ExtractCounts counts;
+        render::MeshCandidate[] candidates = render::extract_candidates(
+            allocator: tmem,
+            scene:     &fixture.scene,
+            assets:    &fixture.assets,
+            camera:    &matrices,
+            layers:    scene::DEFAULT_LAYERS,
+            counts:    &counts,
+        );
+        assert(has_candidate(candidates, node));
+
+        mesh.morph_weights[0] = 0;
+        candidates = render::extract_candidates(
+            allocator: tmem,
+            scene:     &fixture.scene,
+            assets:    &fixture.assets,
+            camera:    &matrices,
+            layers:    scene::DEFAULT_LAYERS,
+            counts:    &counts,
+        );
+        assert(!has_candidate(candidates, node));
+    };
+}

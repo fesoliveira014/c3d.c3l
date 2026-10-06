@@ -1,6 +1,8 @@
 # Scene tracing
 
-`Renderer.prepare_scene_trace` builds trace data over the static scene and hands shaders a `SceneTraceRoot` address. Shaders trace rays against it with `trace_scene` and `trace_scene_any` from `scene_trace.glsl`. Two kinds of trace data serve the same rows and the same shader functions:
+`Renderer.prepare_scene_trace` builds trace data over the scene and hands shaders a `SceneTraceRoot` address. Shaders
+trace rays against it with `trace_scene` and `trace_scene_any` from `scene_trace.glsl`. Two kinds of trace data serve
+the same rows and the same shader functions:
 
 - **Software**: a two-level bounding volume hierarchy the renderer builds on the CPU. The traversal is plain shader code and runs on any Vulkan 1.3 device.
 - **Hardware**: one bottom-level acceleration structure per geometry and a top-level structure over the rows, traversed with ray queries. It needs `RendererDesc.ray_queries`.
@@ -12,12 +14,29 @@ An instance enters the trace when all of these hold:
 - its node is effectively visible;
 - `Mesh.trace` (or `InstancedMesh.trace`) is set. `Scene.add_mesh`, `Scene.add_instanced_mesh` and `model::instantiate` set it; clear it to keep a mesh out of every trace without touching raster, shadows or picking;
 - its geometry, material and, for a skinned mesh, skeleton ids are live, and a custom material's shader is live;
-- the geometry is static triangles: `TRIANGLES` topology, no morph targets, no skin binding, no bounds override;
-- the material's alpha mode is `OPAQUE` or `MASK`.
+- the geometry has `TRIANGLES` topology;
+- the material's alpha mode is `OPAQUE` or `MASK`;
+- the material has no custom vertex stage.
 
 A mesh contributes one instance at its node's world matrix. An instanced batch contributes one instance per live transform, at `node.world * transforms[i]`. Camera layers and frusta play no part: an object behind the camera traces like any other.
 
-Every instance traces its rest pose. A mesh a custom vertex stage deforms needs `trace = false` or a bounds override, which excludes it.
+| Instance | Traces |
+| --- | --- |
+| Mesh with no skin binding over joints and no selected morph target | At its rest pose |
+| Mesh with a skin binding over joints or a selected morph target, and a crowd part batch | Not traced |
+| `InstancedMesh` or `LodGroup` with sway | At its rest pose, counted in `Stats.trace_sway_at_rest`; the error is bounded by the sway reach |
+| Material with a custom vertex stage, water included | Never |
+
+A custom vertex stage can move vertices anywhere, and the renderer sees the stage, not the displacement, so a material
+with one never traces, whatever `trace` says. A stage that displaces nothing and should trace draws through the built-in
+vertex stage.
+
+A bounds override (`has_bounds_override`) is a bound for culling and shadow fitting only; it does not keep a mesh out of
+the trace.
+
+A swaying batch or LOD group traces at its rest pose: a traced shadow of a swaying tree stays still while atlas shadows
+sway, and a shadow ray from a swayed leaf can meet the tree's own rest geometry. `Stats.trace_sway_at_rest` counts the
+swaying batches and LOD groups traced this way this frame. Clear `trace` to keep one out.
 
 ## Preparing
 

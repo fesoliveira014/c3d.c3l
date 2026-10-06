@@ -26,12 +26,12 @@ struct Fixture @local {
 fn Fixture make_fixture() @local {
     Fixture fixture;
     fixture.assets = asset::create_asset_store(mem, {
-        .max_geometries = 4,
+        .max_geometries = 6,
         .max_textures   = asset::BUILTIN_TEXTURE_COUNT,
-        .max_materials  = 5,
+        .max_materials  = 8,
         .max_samplers   = asset::BUILTIN_SAMPLER_COUNT,
-        .max_skeletons  = 1,
-        .max_shaders    = 1,
+        .max_skeletons  = 2,
+        .max_shaders    = 2,
     });
     @pool() {
         Geometry box = geometry::box(tmem, 1, 1, 1);
@@ -63,14 +63,14 @@ fn Node* add_skinned_box(Fixture* fixture) @local {
     skeleton.parents[0] = -1;
     skeleton.rest_pose[0] = maths::TRANSFORM_IDENTITY;
     skeleton.inverse_bind[0] = matrix::IDENTITY4;
-    SkeletonId skeleton_id = fixture.assets.add_skeleton_owned(&skeleton, "skeleton")!!;
+    SkeletonId skeleton_id = fixture.assets.add_skeleton_owned(&skeleton)!!;
     GeometryId skinned_box;
     @pool() {
         Geometry box = geometry::box(tmem, 1, 1, 1);
         box.joints = alloc::new_array(tmem, ushort[<4>], box.positions.len);
         box.weights = alloc::new_array(tmem, Vec4, box.positions.len);
         foreach (&weight : box.weights) *weight = { 1, 0, 0, 0 };
-        skinned_box = fixture.assets.add_geometry(&box, "skinned_box")!!;
+        skinned_box = fixture.assets.add_geometry(&box)!!;
     };
     Node* joint = fixture.scene.add_node(name: "joint")!!;
     Node* skinned = fixture.scene.add_mesh(skinned_box, fixture.opaque, name: "skinned")!!;
@@ -80,7 +80,7 @@ fn Node* add_skinned_box(Fixture* fixture) @local {
     return skinned;
 }
 
-fn Node* add_morphed_box(Fixture* fixture) @local {
+fn Node* add_morphed_box(Fixture* fixture, float[] weights = {}) @local {
     GeometryId morphed;
     @pool() {
         Geometry box = geometry::box(tmem, 1, 1, 1);
@@ -89,26 +89,40 @@ fn Node* add_morphed_box(Fixture* fixture) @local {
             .position_deltas = alloc::new_array(tmem, Vec3, box.positions.len),
             .normal_deltas   = alloc::new_array(tmem, Vec3, box.positions.len),
         };
-        morphed = fixture.assets.add_geometry(&box, "morphed_box")!!;
+        morphed = fixture.assets.add_geometry(&box)!!;
     };
-    return fixture.scene.add_mesh(morphed, fixture.opaque, name: "morphed")!!;
+    Node* node = fixture.scene.add_mesh(morphed, fixture.opaque, name: "morphed")!!;
+    Mesh* mesh = fixture.scene.get(node, Mesh);
+    mesh.morph_weights = alloc::new_array(fixture.scene.allocator, float, weights.len);
+    mesh.morph_weights[..] = weights[..];
+    return node;
 }
 
 fn bool same_entity(Entity first, Entity second) @local {
     return first.index == second.index && first.generation == second.generation;
 }
 
-fn render::TraceInstance[] collect(Fixture* fixture) @local {
-    uint dangling;
-    render::TraceInstance[] records = render::collect_trace_instances(
-        allocator: tmem,
-        scene:     &fixture.scene,
-        assets:    &fixture.assets,
-        dangling:  &dangling,
-    );
-    assert(dangling == 0);
-    return records;
+fn render::TraceCollection collect_all(Fixture* fixture) @local {
+    render::TraceCollection collection = render::collect_trace_instances(tmem, &fixture.scene, &fixture.assets);
+    assert(collection.dangling == 0);
+    return collection;
 }
+
+fn render::TraceInstance[] collect(Fixture* fixture) @local => collect_all(fixture).records;
+
+fn ShaderId add_custom_shader(Fixture* fixture, bool vertex_stage) @local {
+    char[4] stage = { 1, 2, 3, 4 };
+    asset::ShaderDesc desc = { .fragment = stage[..] };
+    if (vertex_stage) desc.vertex = { .shaded = stage[..], .depth = stage[..] };
+    return fixture.assets.add_shader(&desc)!!;
+}
+
+fn Aabb rest_bounds(Fixture* fixture, render::TraceInstance* record) @local {
+    Aabb local = fixture.assets.geometry(record.geometry).data.bounds;
+    return maths::aabb_transform(local, render::trace_instance_world(record));
+}
+
+fn bool same_box(Aabb first, Aabb second) @local => first.min == second.min && first.max == second.max;
 
 fn void test_trace_instances_follow_eligibility() @test {
     Fixture fixture = make_fixture();
@@ -120,12 +134,8 @@ fn void test_trace_instances_follow_eligibility() @test {
     Node* untraced = scene.add_mesh(fixture.box, fixture.opaque, name: "untraced")!!;
     scene.get(untraced, Mesh).trace = false;
     scene.add_mesh(fixture.box, fixture.blended, name: "blended")!!;
-    add_skinned_box(&fixture);
-    add_morphed_box(&fixture);
-    Node* overridden = scene.add_mesh(fixture.box, fixture.opaque, name: "overridden")!!;
-    Mesh* override_mesh = scene.get(overridden, Mesh);
-    override_mesh.has_bounds_override = true;
-    override_mesh.local_bounds = { .min = { -1, -1, -1 }, .max = { 1, 1, 1 } };
+    Node* skinned = add_skinned_box(&fixture);
+    Node* morphed = add_morphed_box(&fixture);
     Node* masked = scene.add_mesh(fixture.box, fixture.masked, name: "masked")!!;
     Transform[3] transforms = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
     foreach (index, &transform : transforms) transform.position = { (float)index + 1, 0, 0 };
@@ -134,17 +144,183 @@ fn void test_trace_instances_follow_eligibility() @test {
     scene.update_world();
 
     @pool() {
-        render::TraceInstance[] records = collect(&fixture);
-        assert(records.len == 5);
+        render::TraceCollection collection = collect_all(&fixture);
+        render::TraceInstance[] records = collection.records;
+        assert(records.len == 7);
         assert(same_entity(records[0].entity, plain.id) && records[0].flags == 0);
-        assert(same_entity(records[1].entity, masked.id));
-        assert(records[1].flags == shader::TRACE_INSTANCE_ALPHA_MASK);
+        assert(same_entity(records[1].entity, skinned.id) && collection.poses[1].kind == render::TracePose.MESH);
+        assert(same_entity(records[2].entity, morphed.id) && collection.poses[2].kind == render::TracePose.REST);
+        assert(same_entity(records[3].entity, masked.id));
+        assert(records[3].flags == shader::TRACE_INSTANCE_ALPHA_MASK);
         foreach (index, transform : transforms) {
-            render::TraceInstance* record = &records[2 + index];
-            assert(same_entity(record.entity, batch.id));
+            render::TraceInstance* record = &records[4 + index];
+            assert(same_entity(record.entity, batch.id) && collection.poses[4 + index].kind == render::TracePose.REST);
             assert(render::trace_instance_world(record) == batch.world.mul(transform.to_mat4()));
+            assert(same_box(record.bounds, rest_bounds(&fixture, record)) && record.pose_serial == 0);
         }
     };
+}
+
+fn void test_deformed_meshes_collect_posed_only_away_from_rest() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Scene* scene = &fixture.scene;
+    Node* skinned = add_skinned_box(&fixture);
+    Node* weighted = add_morphed_box(&fixture, { 0.5f });
+    Node* zero = add_morphed_box(&fixture, { 0 });
+    Node* unweighted = add_morphed_box(&fixture);
+    Node* unbound = scene.add_mesh(scene.get(skinned, Mesh).geometry, fixture.opaque, name: "unbound")!!;
+    Node* rigid = scene.add_mesh(fixture.box, fixture.opaque, name: "rigid")!!;
+    Node* bound_morph = add_morphed_box(&fixture, { 0.5f });
+    SkinBinding* binding = scene.get(skinned, SkinBinding);
+    foreach (target : (Node*[2]){ rigid, bound_morph }) {
+        Node*[] joints = alloc::new_array(scene.allocator, Node*, 1);
+        joints[0] = binding.joints[0];
+        scene.add(target, (SkinBinding){ .skeleton = binding.skeleton, .joints = joints });
+    }
+    scene.update_world();
+
+    @pool() {
+        render::TraceCollection collection = collect_all(&fixture);
+        assert(collection.records.len == 7);
+        render::TracePose[7] expected = { MESH, MESH, REST, REST, REST, REST, MESH };
+        Node*[7] nodes = { skinned, weighted, zero, unweighted, unbound, rigid, bound_morph };
+        foreach (index, pose : expected) {
+            assert(same_entity(collection.records[index].entity, nodes[index].id));
+            assert(collection.poses[index].kind == pose && collection.poses[index].node == nodes[index]);
+        }
+        assert(collection.poses[0].skin == scene.get(skinned, SkinBinding));
+        assert(collection.poses[1].skin == null && collection.poses[1].mesh == scene.get(weighted, Mesh));
+        assert(collection.poses[5].skin == null && collection.poses[6].skin == null);
+    };
+}
+
+fn void test_custom_vertex_stage_keeps_meshes_out_whatever_trace_says() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Scene* scene = &fixture.scene;
+    MaterialId displaced = fixture.assets.add_material(material::custom(add_custom_shader(&fixture, true)))!!;
+    MaterialId shaded = fixture.assets.add_material(material::custom(add_custom_shader(&fixture, false)))!!;
+    Node* traced = scene.add_mesh(fixture.box, displaced, name: "traced")!!;
+    scene.get(traced, Mesh).trace = true;
+    Node* water = scene.add_mesh(fixture.box, displaced, name: "water")!!;
+    Mesh* water_mesh = scene.get(water, Mesh);
+    water_mesh.has_bounds_override = true;
+    water_mesh.local_bounds = { .min = { -2, -1, -2 }, .max = { 2, 1, 2 } };
+    Node* fragment_only = scene.add_mesh(fixture.box, shaded, name: "fragment_only")!!;
+    Transform[2] transforms = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
+    scene.add_instanced_mesh(
+        geometry: fixture.box,
+        material: displaced,
+        capacity: 2,
+        transforms: transforms[..],
+        name: "displaced_batch",
+    )!!;
+    scene.update_world();
+
+    @pool() {
+        render::TraceInstance[] records = collect(&fixture);
+        assert(records.len == 1 && same_entity(records[0].entity, fragment_only.id));
+    };
+}
+
+fn void test_bounds_override_bounds_without_excluding() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Scene* scene = &fixture.scene;
+    Node* still = scene.add_mesh(fixture.box, fixture.opaque, name: "still")!!;
+    still.local.position = { 3, 0, 0 };
+    Mesh* still_mesh = scene.get(still, Mesh);
+    still_mesh.has_bounds_override = true;
+    still_mesh.local_bounds = { .min = { -3, -3, -3 }, .max = { 3, 3, 3 } };
+    Node* skinned = add_skinned_box(&fixture);
+    Mesh* skinned_mesh = scene.get(skinned, Mesh);
+    skinned_mesh.has_bounds_override = true;
+    skinned_mesh.local_bounds = { .min = { -2, -2, -2 }, .max = { 2, 2, 2 } };
+    scene.update_world();
+
+    @pool() {
+        render::TraceCollection collection = collect_all(&fixture);
+        assert(collection.records.len == 2);
+        assert(collection.poses[0].kind == render::TracePose.REST);
+        assert(same_box(collection.records[0].bounds, rest_bounds(&fixture, &collection.records[0])));
+        assert(collection.poses[1].kind == render::TracePose.MESH);
+        Aabb widened = maths::aabb_transform(skinned_mesh.local_bounds, skinned.world);
+        assert(same_box(collection.records[1].bounds, widened));
+    };
+}
+
+fn void test_sway_traces_at_rest_and_is_counted() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Scene* scene = &fixture.scene;
+    Transform[2] transforms = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
+    transforms[1].position = { 2, 0, 0 };
+    InstanceSway wind = { .direction = { 1, 0, 0 }, .amplitude = 0.2f, .frequency = 1 };
+    Node* swaying = scene.add_instanced_mesh(fixture.box, fixture.opaque, 2, transforms[..], name: "swaying")!!;
+    scene.get(swaying, InstancedMesh).sway = wind;
+    scene.add_instanced_mesh(fixture.box, fixture.opaque, 2, transforms[..], name: "still")!!;
+    Node* hidden = scene.add_instanced_mesh(fixture.box, fixture.opaque, 2, transforms[..], name: "untraced")!!;
+    scene.get(hidden, InstancedMesh).sway = wind;
+    scene.get(hidden, InstancedMesh).trace = false;
+    scene.update_world();
+
+    @pool() {
+        render::TraceCollection collection = collect_all(&fixture);
+        assert(collection.records.len == 4 && collection.sway_at_rest == 1);
+        foreach (index, &record : collection.records) {
+            assert(!same_entity(record.entity, hidden.id));
+            assert(same_box(record.bounds, rest_bounds(&fixture, record)));
+            assert(collection.poses[index].kind == render::TracePose.REST);
+        }
+    };
+}
+
+fn TraceInstance posed_row(uint index, ulong pose_serial = 0) @local {
+    return {
+        .entity      = { .index = index, .generation = 1 },
+        .world       = matrix::IDENTITY4,
+        .local       = matrix::IDENTITY4,
+        .mask        = shader::TRACE_MASK_ALL,
+        .pose_serial = pose_serial,
+    };
+}
+
+fn bool reusable(
+    render::SceneTrace* trace,
+    render::RtContext* rt,
+    TraceInstance[] records,
+    Vec3 origin = {},
+) @local {
+    return render::top_level_reusable(
+        trace:   trace,
+        rt:      rt,
+        records: records,
+        scene:   9,
+        origin:  origin,
+    );
+}
+
+fn void test_top_level_reuse_needs_unchanged_rows() @test {
+    TraceInstance[2] baseline = { posed_row(0), posed_row(1, 4) };
+    render::SceneTrace trace = { .scene = 9, .baseline = baseline[..], .baseline_count = 2 };
+    render::RtContext rt = { .current_holds_set = true };
+    TraceInstance[2] records = baseline;
+    assert(reusable(&trace, &rt, records[..]));
+    assert(!reusable(&trace, &rt, records[..], origin: { 256, 0, 0 }));
+    records[1].nodes = (gpu::GpuAddress)0x400;
+    records[1].primitives = (gpu::GpuAddress)0x800;
+    assert(reusable(&trace, &rt, records[..]));
+    records[1].pose_serial = 5;
+    assert(!reusable(&trace, &rt, records[..]));
+    records[1].pose_serial = 4;
+    records[1].bounds.max.x += 1;
+    assert(!reusable(&trace, &rt, records[..]));
+    records[1].bounds = baseline[1].bounds;
+    records[1].bottom_level = { .owner = 1, .index = 2, .generation = 1 };
+    assert(!reusable(&trace, &rt, records[..]));
+    rt.current_holds_set = false;
+    assert(!reusable(&trace, &rt, baseline[..]));
 }
 
 fn void test_trace_collection_changes_with_the_scene() @test {
@@ -403,13 +579,7 @@ fn void test_trace_collection_counts_invalid_material_references_as_dangling() @
     @pool() {
         assert(collect(&fixture).len == 1);
         fixture.assets.remove_material(layer);
-        uint dangling;
-        render::TraceInstance[] records = render::collect_trace_instances(
-            allocator: tmem,
-            scene:     &fixture.scene,
-            assets:    &fixture.assets,
-            dangling:  &dangling,
-        );
-        assert(records.len == 0 && dangling == 1);
+        render::TraceCollection collection = render::collect_trace_instances(tmem, &fixture.scene, &fixture.assets);
+        assert(collection.records.len == 0 && collection.dangling == 1);
     };
 }
