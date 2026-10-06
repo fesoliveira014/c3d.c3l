@@ -245,8 +245,8 @@ and bounds whose targets leave the histogram's luminance range (log2 -18 to 14).
 - History: per view, so two views of one camera adapt independently. Kept across parameter edits and resizes;
   `reset_view_history`, a scene change, turning auto exposure on and switching a view with auto exposure from
   `LINEAR_HDR` to `DISPLAY_LDR` or hiding a TAA debug image restart it, and the first rendering that meters anything
-  snaps to its target. An aborted frame changes
-  nothing; a skipped or dormant view folds the elapsed time into its next step.
+  snaps to its target. An aborted frame changes nothing; a skipped or dormant view folds the elapsed time into its
+  next step.
 - Cost: one 1,056-byte GPU allocation and a 32-byte readback per view, allocated with the view; two dispatches timed
   under `EXPOSURE` and counted in `Stats.post_dispatches`. Manual mode records nothing and binds nothing.
 - `Renderer.view_stats(view).exposure` reports the applied multiplier, `FRAMES_IN_FLIGHT` frames old under auto
@@ -254,13 +254,15 @@ and bounds whose targets leave the histogram's luminance range (log2 -18 to 14).
 
 ### Measured cost
 
-Pending the RTX 4090 timings of the `EXPOSURE` pass: the post example at 1920 x 1080 and 2560 x 1440, and
-Sponza through the benchmark at 2560 x 1440 with the meter stride at 1 and 2.
+On an RTX 4090 with Sponza through the benchmark at 2560 x 1440, the `EXPOSURE` pass costs 0.034 ms at meter
+stride 1 and 0.020 ms at stride 2; the stride stays 1. Auto exposure adds 0.035 ms of GPU time per frame (the median
+per-case delta). In the post example's light scene the pass reads 0.029 ms at 1920 x 1080 and 0.049 ms at
+2560 x 1440, with the GPU at low clocks.
 
 ## GUI
 
 `gui::post_panel(&view_desc, lut, &stats)` edits every setting, auto exposure included, and, given the view's
-`ViewStats`, shows its exposure in stops, `FRAMES_IN_FLIGHT` frames old. It returns whether something changed; the
+`ViewStats`, shows its exposure in stops, `FRAMES_IN_FLIGHT` frames old under auto exposure. It returns whether something changed; the
 example calls `configure_view` before its next frame when it did. The post example's key `L` (and the "Lights at
 1/16" box) scales the sun, the ambient term, the lamp's emission and the textured material by 1/16, a four-stop
 step that auto exposure undoes. The ray-traced controls are enabled on

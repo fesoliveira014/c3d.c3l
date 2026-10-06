@@ -178,7 +178,8 @@ fn void? run_gui(
             lights_changed = imgui::checkbox("Lights at 1/16 (L)", &dimmed);
             if (stats.exposure > 0) {
                 if (post::auto_exposure_active(&view_desc)) {
-                    imgui::text("Exposure %.2f EV, %u frames old", math::log2(stats.exposure), render::FRAMES_IN_FLIGHT);
+                    imgui::text("Exposure %.2f EV, %u frames old", math::log2(stats.exposure),
+                        render::FRAMES_IN_FLIGHT);
                 } else {
                     imgui::text("Exposure %.2f EV", math::log2(stats.exposure));
                 }

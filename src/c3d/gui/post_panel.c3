@@ -46,7 +46,7 @@ const float SSGI_HISTORY_WEIGHT_MAX @local = 0.99f; // the weight must stay belo
 const float REFLECTION_ROUGHNESS_MIN @local = 0.05f;
 const float REFLECTION_ROUGHNESS_MAX @local = 1;
 const uint PATH_TRACE_MAX_SAMPLES_LIMIT @local = 65536; // a float mean gains nothing visible beyond it
-// Slider limits that keep every combination valid: the metered window stays inside the histogram range.
+// Any combination of values inside these slider limits is valid: the metered window stays inside the histogram range.
 const float COMPENSATION_LIMIT @local = 4;
 const float EXPOSURE_BOUND_LIMIT @local = 10;
 const float ADAPTATION_TIME_MAX @local = 10;
