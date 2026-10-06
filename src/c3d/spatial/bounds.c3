@@ -19,7 +19,7 @@ fn bool mesh_is_live(AssetStore* assets, Mesh* mesh, SkinBinding* skin) {
 }
 
 <*
- Relative bound of the mesh, including overrides and joint deformation.
+ Relative bound of the mesh, including overrides, joint deformation and morph targets.
  @param [&in] assets : "Resolves the live geometry record."
  @param [&in] node : "World matrix as left by the last update_world."
  @param [&in] mesh : "Live geometry id."
@@ -36,9 +36,15 @@ fn Aabb mesh_world_bounds(
     Mat4 world = maths::rebase(node.world, origin);
     if (mesh.has_bounds_override) return maths::aabb_transform(mesh.local_bounds, world);
     GeometryAsset* record = assets.geometry(mesh.geometry);
+    MorphSelection selection;
+    if (record.target_count && mesh.morph_weights.len) {
+        selection = geometry::select_morph_targets(record.data.channels, mesh.morph_weights);
+    }
+    if (!skin || !record.skin_bounds.joints.len) {
+        Aabb local = geometry::widen_by_morphs(record.data.bounds, record.morph_bounds, &selection);
+        return maths::aabb_transform(local, world);
+    }
     Aabb rest = maths::aabb_transform(record.data.bounds, world);
-    if (!skin || !record.skin_bounds.joints.len) return rest;
-    MorphSelection selection = geometry::select_morph_targets(record.data.channels, mesh.morph_weights);
     return skinned_world_bounds(
         bounds:       &record.skin_bounds,
         binding:      skin,

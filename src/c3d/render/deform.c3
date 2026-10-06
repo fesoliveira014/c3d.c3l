@@ -97,6 +97,23 @@ fn void reset_deformation_cache(DeformationCache* cache) @private {
 }
 
 <*
+ Palette slot of each placement in the parity-packed draw order: unmirrored instances first.
+ @param [out] packed : "One entry per placement."
+ @require packed.len == placements.len
+*>
+fn void crowd_packed_order(uint[] packed, Transform[] placements) {
+    uint unmirrored;
+    foreach (placement : placements) {
+        if (!scene::transform_mirrored(placement)) unmirrored++;
+    }
+    uint[2] next = { 0, unmirrored };
+    foreach (uint instance, placement : placements) {
+        usz parity = scene::transform_mirrored(placement) ? 1 : 0;
+        packed[instance] = next[parity]++;
+    }
+}
+
+<*
  Write a crowd's palettes in the batch's packed draw order: unmirrored instances first.
  @param [out] palettes : "joint_count * crowd.count entries."
  @param [&in] crowd : "Palettes written by crowd_update."

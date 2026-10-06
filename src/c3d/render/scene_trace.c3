@@ -51,6 +51,12 @@ enum TraceSource @private {
     SKIP,
 }
 
+enum TracePose @private {
+    REST,  // the shared geometry, as raster draws it
+    MESH,  // a mesh skinned through its binding, morphed by nonzero weights, or both
+    CROWD, // one placement of a crowd part batch
+}
+
 struct TraceInstance @private {
     Entity          entity;
     uint            flags;
@@ -65,13 +71,32 @@ struct TraceInstance @private {
     gpu::AccelerationStructureHandle bottom_level;
     uint            mask;
     uint            instance_index;   // batch instance the row came from; 0 for a mesh
+    Aabb            bounds;           // relative box of the traced triangles in the software top level
+    ulong           pose_serial;      // pose of the row's posed slot; 0 on the shared rest path
     gpu::GpuAddress geometry_root;
     gpu::GpuAddress material_address;
     gpu::GpuAddress nodes;
     gpu::GpuAddress primitives;
 }
 // The dirty tests compare records bytewise, so the record carries no padding.
-$assert TraceInstance::size == 232;
+$assert TraceInstance::size == 264;
+
+struct TracePoseSource @private {
+    TracePose      kind;
+    Node*          node;          // the mesh node, or the part batch node
+    Mesh*          mesh;          // MESH
+    SkinBinding*   skin;          // MESH; null for a morph-only mesh
+    AnimatedCrowd* crowd;         // CROWD
+    uint           part;          // CROWD: index into crowd.parts
+    uint           palette_index; // CROWD: the placement's slot in the parity-packed palettes
+}
+
+struct TraceCollection @private {
+    TraceInstance[]   records;
+    TracePoseSource[] poses;        // one per record
+    uint              dangling;
+    uint              sway_at_rest; // swaying batches and LOD groups collected at rest
+}
 
 struct SceneTrace @private {
     ulong              scene;
@@ -272,11 +297,11 @@ fn gpu::AccelerationStructureInstanceDesc tlas_instance_desc(
     };
 }
 
-fn TraceInstance[] collect_trace_instances(
+fn TraceCollection collect_trace_instances(
     Allocator allocator,
     Scene* scene,
     AssetStore* assets,
-    uint* dangling,
+    Vec3 origin = {},
 ) @private {
     usz capacity = scene.count(Mesh);
     scene.@each(LodGroup; Entity entity, LodGroup* group) {
@@ -285,29 +310,41 @@ fn TraceInstance[] collect_trace_instances(
     scene.@each(InstancedMesh; Entity entity, InstancedMesh* batch) {
         capacity += batch.count;
     };
-    TraceInstance[] records = alloc::new_array(allocator, TraceInstance, (sz)capacity);
+    TraceCollection collection = {
+        .records = alloc::new_array(allocator, TraceInstance, (sz)capacity),
+        .poses   = alloc::new_array(allocator, TracePoseSource, (sz)capacity),
+    };
     usz count;
     scene.@each(Mesh; Entity entity, Mesh* mesh) {
         Node* node = scene.node(entity);
         if (node.visible_effective && mesh.trace) {
             SkinBinding* skin = scene.get(node, SkinBinding);
             if (!spatial::mesh_is_live(assets, mesh, skin) || !material_dependencies_live(assets, mesh.material)) {
-                (*dangling)++;
-            } else if (traceable(
-                assets:              assets,
-                geometry:            mesh.geometry,
-                material:            mesh.material,
-                skinned:             skin != null,
-                has_bounds_override: mesh.has_bounds_override,
-            )) {
-                records[count++] = trace_record(
+                collection.dangling++;
+            } else if (traceable(assets, mesh.geometry, mesh.material)) {
+                TraceInstance record = trace_record(
                     assets:      assets,
                     entity:      entity,
                     geometry:    mesh.geometry,
                     material:    mesh.material,
                     world:       node.world,
                     cast_shadow: mesh.cast_shadow,
+                    origin:      origin,
                 );
+                // Raster skins only a geometry with joints; a binding over another draws morphs alone.
+                SkinBinding* posed_skin = skin && geometry_has_joints(assets.geometry(mesh.geometry)) ? skin : null;
+                TracePose pose = mesh_trace_pose(assets, mesh, posed_skin);
+                if (pose == TracePose.MESH) {
+                    record.bounds = spatial::mesh_world_bounds(
+                        assets: assets,
+                        node:   node,
+                        mesh:   mesh,
+                        skin:   posed_skin,
+                        origin: origin,
+                    );
+                }
+                collection.records[count] = record;
+                collection.poses[count++] = { .kind = pose, .node = node, .mesh = mesh, .skin = posed_skin };
             }
         }
     };
@@ -316,16 +353,24 @@ fn TraceInstance[] collect_trace_instances(
         if (node.visible_effective && batch.trace && batch.count) {
             if (!spatial::instanced_mesh_is_live(assets, batch)
                 || !material_dependencies_live(assets, batch.material)) {
-                (*dangling)++;
-            } else if (traceable(
-                assets:              assets,
-                geometry:            batch.geometry,
-                material:            batch.material,
-                skinned:             scene.has(node.parent, AnimatedCrowd),
-                has_bounds_override: batch.has_bounds_override,
-            )) {
+                collection.dangling++;
+            } else if (traceable(assets, batch.geometry, batch.material)) {
+                if (batch.sway.amplitude != 0) collection.sway_at_rest++;
+                TracePoseSource source = { .node = node };
+                AnimatedCrowd* crowd = scene.get(node.parent, AnimatedCrowd);
+                if (crowd) {
+                    foreach (uint part, &crowd_part : crowd.parts) {
+                        if (!c3d::same_id(crowd_part.batch, entity)) continue;
+                        source = { .kind = TracePose.CROWD, .node = node, .crowd = crowd, .part = part };
+                    }
+                }
+                uint[] palette_order;
+                if (source.kind == TracePose.CROWD) {
+                    palette_order = alloc::new_array(tmem, uint, batch.count);
+                    crowd_packed_order(palette_order, batch.transforms[:batch.count]);
+                }
                 foreach (uint index, transform : batch.transforms[:batch.count]) {
-                    records[count++] = trace_record(
+                    TraceInstance record = trace_record(
                         assets:         assets,
                         entity:         entity,
                         geometry:       batch.geometry,
@@ -334,7 +379,15 @@ fn TraceInstance[] collect_trace_instances(
                         cast_shadow:    batch.cast_shadow,
                         instance_index: index,
                         local:          transform.to_mat4(),
+                        origin:         origin,
                     );
+                    TracePoseSource instance = source;
+                    if (source.kind == TracePose.CROWD) {
+                        record.bounds = maths::aabb_transform(crowd.pose_bounds, trace_instance_world(&record, origin));
+                        instance.palette_index = palette_order[index];
+                    }
+                    collection.records[count] = record;
+                    collection.poses[count++] = instance;
                 }
             }
         }
@@ -348,17 +401,13 @@ fn TraceInstance[] collect_trace_instances(
                 foreach (part : state.desc.parts) live &= material_dependencies_live(assets, part.material);
             }
             if (!live) {
-                (*dangling)++;
+                collection.dangling++;
             } else {
+                bool collected;
                 for (uint part = 0; part < state.desc.levels[0].part_count; part++) {
                     LodPart source = state.desc.parts[part];
-                    if (!traceable(
-                        assets: assets,
-                        geometry: source.geometry,
-                        material: source.material,
-                        skinned: false,
-                        has_bounds_override: state.desc.has_bounds_override || state.effects.sway.amplitude != 0,
-                    )) continue;
+                    if (!traceable(assets, source.geometry, source.material)) continue;
+                    collected = true;
                     for (uint instance = 0; instance < state.count; instance++) {
                         TraceInstance record = trace_record(
                             assets: assets,
@@ -370,16 +419,21 @@ fn TraceInstance[] collect_trace_instances(
                             instance_index: instance,
                             local: state.mode == LodMode.INSTANCED
                               ? state.transforms[instance].to_mat4().mul(source.local) : source.local,
+                            origin: origin,
                         );
                         record.lod_identity = state.identity;
                         record.part_index = part;
-                        records[count++] = record;
+                        collection.records[count] = record;
+                        collection.poses[count++] = { .node = node };
                     }
                 }
+                if (collected && state.effects.sway.amplitude != 0) collection.sway_at_rest++;
             }
         }
     };
-    return records[:count];
+    collection.records = collection.records[:count];
+    collection.poses = collection.poses[:count];
+    return collection;
 }
 
 fn void discard_scene_trace(Renderer* renderer) @private {
@@ -425,19 +479,24 @@ fn void? record_scene_trace(Renderer* renderer, Scene* scene) @local {
     defer renderer.stats.trace_build_ms += elapsed_ms(started);
     acquire_scene_trace(renderer)!;
 
-    uint dangling;
-    TraceInstance[] records = collect_trace_instances(tmem, scene, renderer.assets, &dangling);
-    renderer.stats.dangling_refs += dangling;
-    if (records.len > renderer.max_trace_instances) return c3d::CAPACITY_EXCEEDED~;
-    records = resolve_trace_instances(renderer, records)!;
+    TraceCollection collection = collect_trace_instances(tmem, scene, renderer.assets, renderer.frame_origin);
+    renderer.stats.dangling_refs += collection.dangling;
+    renderer.stats.trace_sway_at_rest = collection.sway_at_rest;
+    if (collection.records.len > renderer.max_trace_instances) return c3d::CAPACITY_EXCEEDED~;
+    TraceInstance[] records = resolve_trace_instances(renderer, &collection)!;
 
     SceneTrace* trace = &renderer.scene_trace;
     RtContext* rt = &renderer.rt;
     bool same_set = trace.scene == scene.identity && trace.baseline_count == records.len
       && trace.origin == renderer.frame_origin;
     bool rows_unchanged = same_set && records_equal(trace.baseline[:records.len], records, TraceInstance::size);
-    bool top_level_unchanged = same_set && rt.current_holds_set
-        && records_equal(trace.baseline[:records.len], records, TOP_LEVEL_PREFIX_BYTES);
+    bool top_level_unchanged = top_level_reusable(
+        trace:   trace,
+        rt:      rt,
+        records: records,
+        scene:   scene.identity,
+        origin:  renderer.frame_origin,
+    );
 
     uint tlas_index;
     if (trace.hardware_requested && records.len) {
@@ -462,6 +521,19 @@ fn void? record_scene_trace(Renderer* renderer, Scene* scene) @local {
     }
     renderer.stats.trace_instances = trace.baseline_count;
     renderer.stats.trace_nodes = trace.top_node_count;
+}
+
+// A posed bottom level updated in place keeps its handle; its row's pose_serial in the prefix dirties the top level.
+fn bool top_level_reusable(
+    SceneTrace* trace,
+    RtContext* rt,
+    TraceInstance[] records,
+    ulong scene,
+    Vec3 origin,
+) @private {
+    if (!rt.current_holds_set) return false;
+    if (trace.scene != scene || trace.baseline_count != records.len || trace.origin != origin) return false;
+    return records_equal(trace.baseline[:records.len], records, TOP_LEVEL_PREFIX_BYTES);
 }
 
 fn bool records_equal(TraceInstance[] baseline, TraceInstance[] records, usz prefix_bytes) @local {
@@ -498,13 +570,15 @@ fn void? acquire_scene_trace(Renderer* renderer) @local {
     trace.row_records = alloc::alloc_array(renderer.allocator, uint, (sz)capacity);
 }
 
-fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceInstance[] records) @local {
+fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection* collection) @local {
     begin_material_scope(renderer);
     defer end_material_scope(renderer);
     bool software = renderer.scene_trace.software_requested;
     bool hardware = renderer.scene_trace.hardware_requested;
+    TraceInstance[] records = collection.records;
     usz kept;
-    foreach (&record : records) {
+    foreach (index, &record : records) {
+        if (collection.poses[index].kind != TracePose.REST) continue;
         GeometryAsset* asset_record = renderer.assets.geometry(record.geometry);
         GpuGeometry* mirror = &renderer.geometries[record.geometry.index];
         uint revision = asset_record.header.revision;
@@ -527,6 +601,7 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceInstance[] 
 
         mirror = resolve_geometry(renderer, record.geometry)!;
         MaterialRes* material = resolve_material(renderer, record.material)!;
+        if (!published_without_vertex_stage(renderer, record.material)) continue;
         if (hardware && hardware_source == TraceSource.BUILD) resolve_blas(renderer, mirror, asset_record)!;
         if (software && source == TraceSource.BUILD) {
             // Proven with the arrays present, so the store's build cannot fault.
@@ -745,12 +820,7 @@ fn void? write_top_level(Renderer* renderer, Scene* scene, TraceInstance[] recor
     Bvh top;
     if (records.len) {
         Aabb[] boxes = alloc::alloc_array(tmem, Aabb, (sz)records.len);
-        foreach (index, &record : records) {
-            boxes[index] = maths::aabb_transform(
-                renderer.assets.geometry(record.geometry).data.bounds,
-                trace_instance_world(record, renderer.frame_origin),
-            );
-        }
+        foreach (index, &record : records) boxes[index] = record.bounds;
         top = bvh::build_box_bvh(tmem, boxes, TOP_LEVEL_BUILD)!;
     }
 
@@ -842,21 +912,44 @@ fn void write_trace_instance(TraceInstanceGpu* row, TraceInstance* record, Vec3 
     };
 }
 
+// Raster draws the published revision, which may still hold a vertex stage the store's newest revision dropped.
+fn bool published_without_vertex_stage(Renderer* renderer, MaterialId material) @local {
+    Material* data = &renderer.assets.material(material).data;
+    if (data.kind != MaterialKind.CUSTOM) return true;
+    ShaderRes* published = &renderer.shaders[data.custom.shader.index];
+    return published.revision != 0 && !published.desc.vertex.shaded.len;
+}
+
 fn bool material_dependencies_live(AssetStore* assets, MaterialId material) @local {
     Material* data = &assets.material(material).data;
     if (data.kind != MaterialKind.CUSTOM) return true;
     return assets.shaders.is_live(data.custom.shader) && @ok(check_custom_references(assets, &data.custom));
 }
 
-fn bool traceable(
-    AssetStore* assets,
-    GeometryId geometry,
-    MaterialId material,
-    bool skinned,
-    bool has_bounds_override,
-) @local {
-    return spatial::triangles_are_static(assets.geometry(geometry), skinned, has_bounds_override)
-        && assets.material(material).data.common.alpha_mode != AlphaMode.BLEND;
+fn bool traceable(AssetStore* assets, GeometryId geometry, MaterialId material) @local {
+    Material* data = &assets.material(material).data;
+    return assets.geometry(geometry).data.topology == Topology.TRIANGLES
+        && data.common.alpha_mode != AlphaMode.BLEND
+        && !custom_vertex_stage(assets, data);
+}
+
+// The renderer sees a custom stage, not what it displaces, so any custom vertex stage keeps the mesh out.
+fn bool custom_vertex_stage(AssetStore* assets, Material* material) @local {
+    if (material.kind != MaterialKind.CUSTOM) return false;
+    return assets.shader(material.custom.shader).desc.vertex.shaded.len > 0;
+}
+
+fn bool geometry_has_joints(GeometryAsset* record) @local {
+    return record.skin_bounds.joints.len || record.data.joints.len;
+}
+
+// skin: a binding over a geometry with joints, else null.
+fn TracePose mesh_trace_pose(AssetStore* assets, Mesh* mesh, SkinBinding* skin) @local {
+    GeometryAsset* record = assets.geometry(mesh.geometry);
+    if (skin) return TracePose.MESH;
+    if (!record.target_count || !mesh.morph_weights.len) return TracePose.REST;
+    MorphSelection selection = geometry::select_morph_targets(record.data.channels, mesh.morph_weights);
+    return selection.count ? TracePose.MESH : TracePose.REST;
 }
 
 fn TraceInstance trace_record(
@@ -868,11 +961,12 @@ fn TraceInstance trace_record(
     bool cast_shadow,
     uint instance_index = 0,
     Mat4 local = matrix::IDENTITY4,
+    Vec3 origin = {},
 ) @local {
     Material* data = &assets.material(material).data;
     uint flags = data.common.alpha_mode == AlphaMode.MASK ? shader::TRACE_INSTANCE_ALPHA_MASK : 0;
     if (data.common.double_sided) flags |= shader::TRACE_INSTANCE_DOUBLE_SIDED;
-    return {
+    TraceInstance record = {
         .entity        = entity,
         .flags         = flags,
         .material_kind = (uint)data.kind.ordinal,
@@ -884,4 +978,6 @@ fn TraceInstance trace_record(
         .mask           = shader::TRACE_MASK_ALL | (cast_shadow ? shader::TRACE_MASK_SHADOW_CASTER : 0),
         .instance_index = instance_index,
     };
+    record.bounds = maths::aabb_transform(assets.geometry(geometry).data.bounds, trace_instance_world(&record, origin));
+    return record;
 }

@@ -13,6 +13,7 @@ struct GeometryAsset {
     AssetHeader header;
     Geometry    data;
     SkinBounds  skin_bounds;
+    Aabb[]      morph_bounds;        // per target, over every vertex; kept through release_geometry_cpu
     uint        vertex_count;
     uint        index_count;
     uint        target_count;
@@ -40,6 +41,7 @@ fn GeometryId? AssetStore.add_geometry(&self, Geometry* geometry, String key = "
         .header       = { .key = copy_string(self.allocator, key), .revision = 1 },
         .data         = copy_geometry(self.allocator, geometry),
         .skin_bounds  = geometry::build_skin_bounds(self.allocator, geometry),
+        .morph_bounds = geometry::build_morph_bounds(self.allocator, geometry),
         .vertex_count = (uint)geometry.positions.len,
         .index_count  = (uint)geometry.indices.len,
         .target_count = (uint)geometry.targets.len,
@@ -61,6 +63,7 @@ fn GeometryId? AssetStore.add_geometry_owned(&self, Geometry* geometry, String k
         .header       = { .key = copy_string(self.allocator, key), .revision = 1 },
         .data         = *geometry,
         .skin_bounds  = geometry::build_skin_bounds(self.allocator, geometry),
+        .morph_bounds = geometry::build_morph_bounds(self.allocator, geometry),
         .vertex_count = (uint)geometry.positions.len,
         .index_count  = (uint)geometry.indices.len,
         .target_count = (uint)geometry.targets.len,
@@ -78,7 +81,7 @@ fn GeometryAsset* AssetStore.geometry(&self, GeometryId geometry) {
 }
 
 <*
- Advance the content revision after an edit; rebuilds the retained skin bounds while the streams are present.
+ Advance the content revision after an edit; rebuilds the retained skin and morph bounds while the streams are present.
  @require self.geometries.is_live(geometry)
 *>
 fn void AssetStore.mark_geometry_dirty(&self, GeometryId geometry) {
@@ -87,6 +90,8 @@ fn void AssetStore.mark_geometry_dirty(&self, GeometryId geometry) {
     if (!record.data.positions.len) return;
     geometry::free_skin_bounds(self.allocator, &record.skin_bounds);
     record.skin_bounds = geometry::build_skin_bounds(self.allocator, &record.data);
+    geometry::free_morph_bounds(self.allocator, &record.morph_bounds);
+    record.morph_bounds = geometry::build_morph_bounds(self.allocator, &record.data);
 }
 
 <*
@@ -148,6 +153,7 @@ fn void AssetStore.remove_geometry(&self, GeometryId geometry) {
     free_string(self.allocator, record.header.key);
     free_geometry(self.allocator, &record.data);
     geometry::free_skin_bounds(self.allocator, &record.skin_bounds);
+    geometry::free_morph_bounds(self.allocator, &record.morph_bounds);
     free_triangle_tree(self.allocator, record);
     *record = {};
     self.geometries.remove(geometry);

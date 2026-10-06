@@ -117,8 +117,8 @@ Application geometry rests at y = 0; its topology and UVs are its own, and it fo
 the rest position in metres.
 
 `Mesh.local_bounds` is the rest bounds grown by the total amplitude in y and by the sum of the waves'
-horizontal crest shifts in x and z, always as a bounds override, which also keeps the water out of every trace
-([scene trace](scene_trace.md)). The mesh casts no shadow and receives shadows.
+horizontal crest shifts in x and z, always as a bounds override. The water's custom vertex stage keeps it out of every trace
+([scene trace](scene_trace.md)), whatever `trace` says. The mesh casts no shadow and receives shadows.
 
 ## Waves
 
@@ -341,7 +341,7 @@ body on the same node. Destroy the scene before the store.
 
 ## Limits
 
-- **Not traced.** The bounds override keeps water out of every trace: under ray-traced reflections and in
+- **Not traced.** Its custom vertex stage keeps water out of every trace: under ray-traced reflections and in
   path-traced views the water surface is absent, not merely unreflected (the lake bed shows through, reflections
   show no water); probe updates see through it; traced shadows ignore it (it casts none). Traced shadows on the
   water work.
