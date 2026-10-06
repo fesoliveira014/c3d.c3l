@@ -159,6 +159,7 @@
     { "include": "fog.glsl", "stage": "frag", "defines": [] },
     { "include": "fog.glsl", "stage": "comp", "defines": [] },
     { "include": "standard_surface.glsl", "stage": "frag", "defines": [] },
+    { "include": "decals.glsl", "stage": "frag", "defines": [] },
     { "include": "standard_shading.glsl", "stage": "frag", "defines": [] },
     { "include": "standard_shading.glsl", "stage": "frag", "defines": ["RT_SHADOWS"] },
     { "include": "standard_shading.glsl", "stage": "frag", "defines": ["RT_SHADOWS", "SCENE_TRACE_BVH"] },
