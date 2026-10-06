@@ -377,7 +377,7 @@ fn void capture_vertices(
 }
 
 <*
- Previous-frame counters and completed GPU timings of one view.
+ Counters, frame-start images and completed GPU timings of one view.
 *>
 struct ViewStats {
     uint              images; // at frame start: live working images, scene snapshots included

@@ -14,7 +14,7 @@ import std::math;
 
 const uint CAPACITY_RAISED_VIEWS @private = 32;
 const uint CAPACITY_RAISED_TARGETS @private = 64;
-const uint CAPACITY_HIGH_INDEX @private = 32; // the first target index a uint mask could not hold
+const uint CAPACITY_HIGH_INDEX @private = 32;
 const uint CAPACITY_HIGH_TARGETS @private = 40;
 const uint CAPACITY_SMALL_TABLE @private = 96; // the fixture holds 22 entries, so about 70 targets fill it
 const uint CAPACITY_SMALL_HEAP @private = 96;
@@ -97,7 +97,9 @@ fn void capacity_expect_creation_fault(RendererDesc desc, fault expected) @priva
     defer asset::destroy_asset_store(&assets);
     desc.validation = true;
     desc.application_name = "render_acceptance";
-    assert(@catch(render::create_renderer(mem, &assets, desc)) == expected);
+    Renderer? renderer = render::create_renderer(mem, &assets, desc);
+    if (try created = renderer) render::destroy_renderer(&created);
+    assert(@catch(renderer) == expected);
 }
 
 fn CapacitySampling? capacity_sampling(Fixture* fixture) @private {
@@ -354,7 +356,12 @@ fn void test_overlay_and_material_sample_one_target_past_index_thirty_two() @tes
 
     GeometryId box;
     @pool() {
-        Geometry box_geometry = geometry::box(tmem, 1, 1, 1);
+        Geometry box_geometry = geometry::box(
+            allocator: tmem,
+            width: 1,
+            height: 1,
+            depth: 1,
+        );
         box = assets.add_geometry(&box_geometry)!!;
     };
     MaterialId plain = assets.add_material(material::basic({ .color = RED }))!!;

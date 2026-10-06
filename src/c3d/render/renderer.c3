@@ -54,11 +54,11 @@ const uint DEFAULT_SHADOW_RESOLUTION = 2048; // four D32 layers occupy 64 MiB
 <* Default fixed atlas layer budget. *>
 const uint DEFAULT_MAX_SHADOW_LAYERS = 4; // admits one full directional request
 
-<* Default view pool size, the default view included. *>
-const uint DEFAULT_MAX_VIEWS = 8; // 5.5 KiB of record each; a view's images follow its desc
+<* View pool size when `RendererDesc.max_views` is 0, the default view included. *>
+const uint DEFAULT_MAX_VIEWS = 8; // admits the default view and a few viewports; 5.5 KiB of record each
 
-<* Default render-target pool size. *>
-const uint DEFAULT_MAX_RENDER_TARGETS = 8; // each target holds one texture, one heap slot and one attachment view
+<* Render-target pool size when `RendererDesc.max_render_targets` is 0. *>
+const uint DEFAULT_MAX_RENDER_TARGETS = 8; // admits a few viewports; one texture, heap slot and attachment view each
 
 <*
  How a renderer is created. A null surface factory selects headless.

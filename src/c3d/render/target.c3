@@ -67,7 +67,7 @@ struct Target {
 }
 
 <*
- A pooled render target and the revision of its backing image.
+ A pooled render target, its backing revision and frame state.
 *>
 struct TargetRecord {
     Target            target;
