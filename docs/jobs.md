@@ -5,7 +5,8 @@ pool of worker threads. It is fork-join: `run` splits `[0, count)` into ranges a
 returns once every range of that run has finished, and `is_finished` reports it without blocking. A run is
 either frame work or background work; frame ranges are taken first, and a cap bounds how many workers run
 background ranges at once. With zero workers every frame range runs on the calling thread. The package imports
-only the standard library and `c3d`; core never imports it and has no job feature flag.
+only the standard library and `c3d`, and `c3d::profile` under `C3D_PROFILE_CPU`; core never imports it and has
+no job feature flag.
 
 ```bash
 python3 scripts/build.py --example job_bench
@@ -272,9 +273,47 @@ The pool does not check these; a range that breaks them races.
 
 ## Profiling
 
-The pool records no profiler scopes. The profiler's recorder is per thread, so ranges on workers are never
-recorded; only the caller's thread records. Wrap `run` and `wait` in application scopes to see submission
-and waiting, including the ranges the caller runs while it waits. `job_bench` measures with its own timer.
+Ranges that run on workers appear in a `c3d_profile` capture under the name given at submission. The support
+is compiled only under `C3D_PROFILE_CPU`; a consumer that enables the feature also selects `c3d_profile`
+([Profiling](profiling.md#worker-ranges)).
+
+```c3
+pool.set_recording(true);
+profile::@capture(&recorder, frame_id) {
+    pool.wait(pool.run(
+        range: &integrate_range,
+        data:  &particles,
+        count: (uint)particles.positions.len,
+        batch: 256,
+        name:  "integrate",
+    ));
+    pool.forward_records(&recorder);
+};
+```
+
+- **Names.** `run` and `try_run` take a `name`. The pool keeps the `String` until its records are drained, so it
+  must outlive the drain; string literals and static strings do.
+- **Recording.** `set_recording(true)` makes each worker time every range it claims from then on: two
+  `clock::now()` reads around the range and one record written under the lock it already takes at completion.
+  Ranges the calling thread runs (inline, in `wait`, `wait_all` or `pump`) are not recorded; wrap those calls
+  in application scopes.
+- **Ring.** Records wait in a ring of `record_capacity` entries (default 4096, 160 KiB at 40 bytes). A full
+  ring drops new records and counts them; the next drain reports the count.
+- **Drain.** `take_records(records)` moves the oldest records out, on any thread, with the drop count since the
+  previous drain. `forward_records(&recorder)` drains the records held at the call into the recorder's open
+  capture through `Recorder.add_worker_interval` and forwards the drop count; records that workers add while
+  it runs wait for the next call, and records drained outside a recording capture are discarded. Both clocks
+  are the same `clock::now`. A record is in the ring before its run reports finished, so forwarding after
+  `wait` or a true `is_finished` includes the whole run.
+- **Frame attribution.** A record belongs to the capture open when it is drained. A range that began before
+  that capture's origin keeps a negative start offset: a range still running when the capture opened and
+  forwarded into it appears left of the axis origin. Forward after the run, as above; records forwarded at the
+  start of a capture can fill its label storage, see [Worker ranges](profiling.md#worker-ranges).
+- **Cost.** Without `C3D_PROFILE_CPU` the pool compiles no clock read, no ring and no branch. With the feature
+  and recording off, each claim tests one flag under the lock. With recording on, see
+  [Measured cost](#measured-cost).
+- **Tests.** `python3 scripts/build.py --test` also runs `job_profile_test`, the package's tests built with
+  `C3D_PROFILE_CPU` and `c3d_profile`; alone, `c3c test job_profile_test --path addons/c3d_job.c3l`.
 
 ## Measured cost
 
@@ -289,7 +328,9 @@ Background lines time one background run of 1024 empty ranges at batch 1, from `
 has run, on the capped workers alone; the caller only polls. Loaded lines time the 65 536-item kernel at batch
 1024 once idle and once while a background run of 16 384 ranges of about 15 µs keeps the default cap of
 workers busy; the ratio is the median loaded time over the median idle time, and every run's background
-work outlasted the timing.
+work outlasted the timing. Built with `--define C3D_PROFILE_CPU --lib c3d_profile`, `job_bench` adds
+recording lines: the overhead workload with `set_recording(true)`, its records drained after each pass, outside
+the timing. Ranges the caller runs in `wait` are not recorded.
 
 ### WSL, 32 logical processors (default 31 workers)
 
@@ -354,6 +395,18 @@ With one and three workers the loaded kernel stays within 3 % of idle. At 31 wor
 above idle; the per-run ratios are 0.95, 0.99 and 1.22, so a background run holding the cap of 7 workers can slow
 the frame kernel there.
 
+Recording against the overhead lines of the same build, in µs per empty range, with the minimum and maximum of
+the three runs for 31 workers:
+
+| Workers | Off median | Off min | Off max | On median | On min | On max |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 | 0.0078 | | | 0.0081 | | |
+| 1 | 0.0514 | | | 0.0660 | | |
+| 3 | 0.0613 | | | 0.1055 | | |
+| 31 | 0.1831 | 0.1810 | 0.1895 | 0.2021 | 0.1999 | 0.2049 |
+
+Without the feature the overhead lines equal the build before worker recording within noise.
+
 ### Windows host, 32 logical processors (default 31 workers)
 
 Nine interleaved runs of `job_bench` at O3, against main 95206f3; each value is the median, with [min–max]
@@ -408,6 +461,22 @@ batch 1024:
 
 Pinned is slower: the 15 workers share the eight hyperthreaded performance cores, while unbound they also use
 the efficiency cores.
+
+Recording on Windows, same build, off and on, in µs per empty range:
+
+| Workers | Off | On | Change |
+| ---: | ---: | ---: | ---: |
+| 0 | 0.0061 | 0.0066 | +8 % |
+| 1 | 0.0243 | 0.0383 | +58 % |
+| 3 | 0.0509 | 0.0998 | +96 % |
+| 31 | 0.2391 [0.1896–0.2598] | 0.3812 [0.3324–0.4113] | +59 % |
+
+The cost is heavier than on WSL. At one worker the two clock reads and the record write add about 0.014 µs per
+range. With the feature compiled in and recording off, the overhead is within noise of the plain build.
+`job_profile_test` passes 32 of 32 tests. In the `profile_gui_cpu` and `profile_gui` examples, with validation
+clean, the CPU axis shows one row per worker lane (28 to 31 across frames); the 16 `example.wave` ranges lie
+inside `application.jobs`, before `application.render`, live and paused; the tooltip shows the label, worker,
+duration and offset ("Worker 9, 0.106200 ms, offset 182500 ns").
 
 ### Revisit threshold
 

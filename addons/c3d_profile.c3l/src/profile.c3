@@ -36,6 +36,7 @@ struct RecorderDesc {
     uint frame_capacity;
     uint cpu_scopes_per_frame @if($feat(C3D_PROFILE_CPU));
     uint max_depth @if($feat(C3D_PROFILE_CPU));
+    uint worker_samples_per_frame @if($feat(C3D_PROFILE_CPU)); // 0 keeps none, unlike the renderer's zero-means-default
     uint gpu_scopes_per_frame @if($feat(C3D_PROFILE_GPU));
     uint label_bytes_per_frame;
 }
@@ -50,6 +51,14 @@ struct CpuSample {
     ulong duration_ns;
     ulong self_ns;
     bool self_complete;
+}
+
+<* Timed range of a worker thread in a capture. *>
+struct WorkerSample @feat(C3D_PROFILE_CPU) {
+    String label;
+    uint lane;         // worker index
+    long start_ns;     // from the capture origin; negative for a range that began before the capture
+    ulong duration_ns;
 }
 
 <* Copied identity of one GPU scope. *>
@@ -89,6 +98,8 @@ struct FrameCaptureView {
     bool truncated;
     CpuSample[] cpu;
     uint dropped_cpu_scopes;
+    WorkerSample[] workers @if($feat(C3D_PROFILE_CPU));
+    uint dropped_worker_samples @if($feat(C3D_PROFILE_CPU));
     CaptureState gpu_state @if($feat(C3D_PROFILE_GPU));
     bool gpu_truncated @if($feat(C3D_PROFILE_GPU));
     GpuSample[] gpu @if($feat(C3D_PROFILE_GPU));
@@ -108,6 +119,9 @@ struct CaptureSlot @private {
     bool occupied;
     bool truncated;
     uint dropped_cpu_scopes;
+    WorkerSample[] workers @if($feat(C3D_PROFILE_CPU));
+    uint worker_count @if($feat(C3D_PROFILE_CPU));
+    uint dropped_worker_samples @if($feat(C3D_PROFILE_CPU));
     GpuSample[] gpu @if($feat(C3D_PROFILE_GPU));
     uint gpu_sample_count @if($feat(C3D_PROFILE_GPU));
     uint generation @if($feat(C3D_PROFILE_GPU));
@@ -171,6 +185,7 @@ struct Recorder {
     bool recording;
     bool enabled;
     bool admitted;
+    WorkerSample[] worker_samples @if($feat(C3D_PROFILE_CPU));
     GpuSample[] gpu_samples @if($feat(C3D_PROFILE_GPU));
     ulong dropped_frames @if($feat(C3D_PROFILE_GPU));
     ulong live_gpu_sources @if($feat(C3D_PROFILE_GPU));
@@ -328,11 +343,14 @@ fn Recorder? create_recorder(Allocator allocator, RecorderDesc desc) {
     usz label_bytes = multiply_size(label_count, char::size)!;
     usz allocated_bytes = add_size(slot_bytes, label_bytes)!;
     usz cpu_scope_count;
+    usz worker_sample_count;
     usz gpu_scope_count;
     $if $feat(C3D_PROFILE_CPU):
         cpu_scope_count = multiply_size(frame_count, desc.cpu_scopes_per_frame)!;
         allocated_bytes = add_size(allocated_bytes, multiply_size(cpu_scope_count, CpuSample::size)!)!;
         allocated_bytes = add_size(allocated_bytes, multiply_size(desc.max_depth, uint::size)!)!;
+        worker_sample_count = multiply_size(frame_count, desc.worker_samples_per_frame)!;
+        allocated_bytes = add_size(allocated_bytes, multiply_size(worker_sample_count, WorkerSample::size)!)!;
     $endif
     $if $feat(C3D_PROFILE_GPU):
         gpu_scope_count = multiply_size(frame_count, desc.gpu_scopes_per_frame)!;
@@ -343,9 +361,11 @@ fn Recorder? create_recorder(Allocator allocator, RecorderDesc desc) {
     char[] labels = alloc::new_array(allocator, char, (sz)label_count);
     CpuSample[] samples;
     uint[] stack;
+    WorkerSample[] worker_samples @if($feat(C3D_PROFILE_CPU));
     $if $feat(C3D_PROFILE_CPU):
         samples = alloc::new_array(allocator, CpuSample, (sz)cpu_scope_count);
         stack = alloc::new_array(allocator, uint, (sz)desc.max_depth);
+        if (worker_sample_count) worker_samples = alloc::new_array(allocator, WorkerSample, (sz)worker_sample_count);
     $endif
     GpuSample[] gpu_samples @if($feat(C3D_PROFILE_GPU));
     $if $feat(C3D_PROFILE_GPU):
@@ -357,6 +377,8 @@ fn Recorder? create_recorder(Allocator allocator, RecorderDesc desc) {
         $if $feat(C3D_PROFILE_CPU):
             sz sample_offset = index * (sz)desc.cpu_scopes_per_frame;
             slot.cpu = samples[sample_offset : desc.cpu_scopes_per_frame];
+            sz worker_offset = index * (sz)desc.worker_samples_per_frame;
+            slot.workers = worker_samples[worker_offset : desc.worker_samples_per_frame];
         $endif
         $if $feat(C3D_PROFILE_GPU):
             sz gpu_offset = index * (sz)desc.gpu_scopes_per_frame;
@@ -373,6 +395,9 @@ fn Recorder? create_recorder(Allocator allocator, RecorderDesc desc) {
         .allocated_bytes = allocated_bytes,
         .enabled = true,
     };
+    $if $feat(C3D_PROFILE_CPU):
+        recorder.worker_samples = worker_samples;
+    $endif
     $if $feat(C3D_PROFILE_GPU):
         recorder.gpu_samples = gpu_samples;
     $endif
@@ -384,6 +409,7 @@ fn void release_recorder_storage(Recorder* recorder) @private {
         if (recorder.gpu_samples.ptr) alloc::free(recorder.allocator, recorder.gpu_samples.ptr);
     $endif
     $if $feat(C3D_PROFILE_CPU):
+        if (recorder.worker_samples.ptr) alloc::free(recorder.allocator, recorder.worker_samples.ptr);
         alloc::free(recorder.allocator, recorder.stack.ptr);
         alloc::free(recorder.allocator, recorder.samples.ptr);
     $endif
