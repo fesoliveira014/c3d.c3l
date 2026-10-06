@@ -764,7 +764,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     uint max_instance_batches = desc.max_instance_batches ? desc.max_instance_batches : DEFAULT_MAX_INSTANCE_BATCHES;
     uint max_posed_trace_instances = desc.max_posed_trace_instances
       ? desc.max_posed_trace_instances : DEFAULT_MAX_POSED_TRACE_INSTANCES;
-    // A device without ray-tracing pipelines may reject the stage, so it is named only when enabled.
+    // A device without ray queries or ray-tracing pipelines may reject their stages, so each is named only when enabled.
     bool pipelines = caps.ray_tracing_pipelines.enabled;
     gpu::StageMask consumer_stages = CONSUMER_STAGES;
     consumer_stages.acceleration_structure_build = caps.ray_queries.enabled;
@@ -772,7 +772,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     gpu::StageMask trace_stages = {
         .fragment_shader,
         .compute,
-        .acceleration_structure_build,
+        .acceleration_structure_build = caps.ray_queries.enabled,
         .ray_tracing = pipelines,
     };
     gpu::TextureState sampled_state = gpu::sampled_at({ .fragment_shader, .compute, .ray_tracing = pipelines });
