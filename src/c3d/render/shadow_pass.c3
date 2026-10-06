@@ -300,26 +300,26 @@ fn void? record_depth_draws(
     }
 }
 
-fn ShadowGpu[]? record_shadows(
+fn void? record_shadows(
     Renderer* renderer,
     Scene* scene,
-    Camera* camera,
-    CameraMatrices* matrices,
+    ShadowCamera* shadow_view,
     LightExtraction* extraction,
     bool culling,
     InstanceEffectsView* effects_view,
 ) @private {
     renderer.shadow_frustum_count = 0;
+    ShadowRequest[] requests = alloc::clone_slice(tmem, extraction.shadows);
     uint covered;
-    foreach (request : extraction.shadows) {
+    foreach (request : requests) {
         Light* light = scene.get(scene.node(request.light), Light);
-        if (light.kind != LightKind.DIRECTIONAL || directional_cascade_splits(*camera, light.shadow).count) {
-            extraction.shadows[covered++] = request;
+        if (light.kind != LightKind.DIRECTIONAL || directional_cascade_splits(shadow_view.lens, light.shadow).count) {
+            requests[covered++] = request;
         }
     }
-    ShadowAllocation allocation = assign_shadow_layers(extraction.shadows[:covered], renderer.max_shadow_layers);
+    ShadowAllocation allocation = assign_shadow_layers(requests[:covered], renderer.max_shadow_layers);
     renderer.stats.shadow_requests_dropped += allocation.dropped;
-    if (!allocation.layer_count) return (ShadowGpu[]){};
+    if (!allocation.layer_count) return;
     acquire_shadow_atlas(renderer)!;
     ExtractCounts counts;
     MeshCandidate[] candidates = extract_shadow_candidates(
@@ -335,15 +335,19 @@ fn ShadowGpu[]? record_shadows(
     CameraMatrices[] shadow_matrices = alloc::new_array(tmem, CameraMatrices, allocation.layer_count);
     bool[] participating = alloc::new_array(tmem, bool, candidates.len);
     ShadowGpu[] shadows = alloc::new_array(tmem, ShadowGpu, allocation.layer_count);
+    ShadowSet* set = &renderer.shadow_set;
     foreach (request : allocation.requests) {
         Light* light = scene.get(scene.node(request.light), Light);
         LightGpu* packed = &extraction.lights[request.light_index];
-        packed.shadow_first = request.first_layer;
-        packed.shadow_count = request.layer_count;
+        set.lights[set.light_count++] = {
+            .light       = request.light,
+            .first_layer = request.first_layer,
+            .layer_count = request.layer_count,
+        };
         CascadeSplits splits;
         float shadow_range = 0;
         if (light.kind == LightKind.DIRECTIONAL) {
-            splits = directional_cascade_splits(*camera, light.shadow);
+            splits = directional_cascade_splits(shadow_view.lens, light.shadow);
         } else {
             shadow_range = light.range > 0 ? light.range : light.shadow.max_distance;
         }
@@ -356,7 +360,7 @@ fn ShadowGpu[]? record_shadows(
                 case DIRECTIONAL:
                     float blend = light.shadow.cascade_blend;
                     ShadowCascade cascade = fit_directional_cascade(
-                        view: matrices,
+                        view: &shadow_view.matrices,
                         near_depth: index ? cascade_blend_depth(splits, index - 1, blend) : splits.near_depth,
                         far_depth: splits.far_depths[index],
                         light_direction: packed.direction_cos_outer.xyz,
@@ -462,5 +466,13 @@ fn ShadowGpu[]? record_shadows(
         commands: &renderer.commands,
         next: gpu::sampled_at({ .fragment_shader }),
     )!;
-    return shadows;
+    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan shadow_span = slot.upload.take(
+        device: &renderer.device,
+        size: shadows.len * ShadowGpu::size,
+        alignment: STREAM_ALIGNMENT,
+    )!;
+    mem::copy(shadow_span.bytes.ptr, shadows.ptr, shadows.len * ShadowGpu::size);
+    set.shadows = shadow_span.address;
+    set.layer_count = allocation.layer_count;
 }

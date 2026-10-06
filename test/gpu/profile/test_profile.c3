@@ -133,7 +133,10 @@ fn void? create_fixture(Allocator allocator, Fixture* fixture, FixtureLimits lim
             renderer: &fixture.renderer,
             desc: render::render_target_desc(TARGET_SIZE, TARGET_SIZE),
         )!;
-        fixture.views[index] = render::create_view(&fixture.renderer, render::texture_view_desc(*target))!;
+        ViewDesc desc = render::texture_view_desc(*target);
+        // The checks read per-view shadow timings, so each view records its own set.
+        desc.share_shadows = false;
+        fixture.views[index] = render::create_view(&fixture.renderer, desc)!;
     }
     fixture.output = fixture.renderer.create_buffer({ .size = CounterOutput::size, .debug_name = "profile_output" })!;
     gpu::AllocationDesc readback_desc = {
@@ -317,6 +320,7 @@ fn void test_hdr_composite_follows_closed_post_chain_per_view() @test {
     foreach (index, view : fixture.views) {
         ViewDesc desc = render::texture_view_desc(fixture.targets[index], OutputMode.LINEAR_HDR);
         desc.post.depth_of_field = true;
+        desc.share_shadows = false; // the shared checks read per-view shadow timings
         render::configure_view(&fixture.renderer, view, desc)!!;
     }
     record_frame(&fixture, 0, 43)!!;
