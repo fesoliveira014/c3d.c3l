@@ -106,6 +106,7 @@ struct Renderer {
     Allocator               allocator;
     Vec3                    frame_origin;
     ImpostorBakeStats        last_impostor_bake;
+    ReflectionCaptureStats   last_reflection_capture;
     gpu::Runtime            runtime;
     String                  adapter_name;
     gpu::Surface            surface;

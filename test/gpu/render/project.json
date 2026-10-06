@@ -61,7 +61,8 @@
         "test_material_references.c3",
         "test_material_blend.c3",
         "test_sky.c3",
-        "test_reflection_probe.c3"
+        "test_reflection_probe.c3",
+        "test_reflection_capture.c3"
       ]
     }
   }

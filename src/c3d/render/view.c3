@@ -85,6 +85,7 @@ struct ViewCamera @private {
     Camera camera;
     Mat4   world;          // absolute; rebased on the frame origin when the view records
     Entity excluded_probe; // the reflection probe being captured; never selected
+    bool   height_fog;     // captures render without height fog
 }
 
 <*
@@ -149,7 +150,7 @@ fn void? Renderer.render_view(
     defer catch abort_frame(self);
     Camera* camera = scene.get(camera_node, Camera);
     if (!camera) return c3d::INVALID_ARGUMENT~;
-    ViewCamera view_camera = { .camera = *camera, .world = camera_node.world };
+    ViewCamera view_camera = { .camera = *camera, .world = camera_node.world, .height_fog = true };
     return record_camera_view(
         renderer:    self,
         scene:       scene,
@@ -434,7 +435,7 @@ fn void? record_raster_view(
                 sheen:       sheen,
                 picks:       &reflection_picks,
             )!;
-            fog = select_height_fog(scene, camera.layers);
+            fog = view_camera.height_fog ? select_height_fog(scene, camera.layers) : (FogSelection){};
             renderer.stats.fogs_ignored += fog.ignored;
             fog_pass = environments.atmosphere || fog.fog;
             fog_volume = fog.fog && record.desc.volumetric_fog;

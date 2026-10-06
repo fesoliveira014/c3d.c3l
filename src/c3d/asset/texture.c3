@@ -190,6 +190,19 @@ fn void AssetStore.release_texture_cpu(&self, TextureId texture) {
 }
 
 <*
+ Give a texture whose CPU source was released its mip-zero pixels again; takes ownership.
+ @param [&inout] self : "Owns the pixels afterwards."
+ @param pixels : "Every mip-zero layer, allocated with the store allocator."
+ @require self.textures.is_live(texture)
+ @require self.texture(texture).source_kind == MIP_ZERO, !self.texture(texture).pixels.len
+ @require pixels.len > 0, pixels.len % self.texture(texture).desc.layers == 0
+ @require pixels.len % ((usz)self.texture(texture).desc.width * self.texture(texture).desc.height) == 0
+*>
+fn void AssetStore.restore_texture_cpu(&self, TextureId texture, char[] pixels) {
+    self.textures.get(texture).pixels = pixels;
+}
+
+<*
  Free the record and make its id stale.
  @param [&inout] self : "Store whose texture and source are removed."
  @require self.textures.is_live(texture), texture.index >= BUILTIN_TEXTURE_COUNT
