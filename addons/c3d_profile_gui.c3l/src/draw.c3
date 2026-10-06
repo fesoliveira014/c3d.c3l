@@ -291,7 +291,11 @@ fn void draw_cpu_axis(ProfilerPanel* panel) @private @feat(C3D_PROFILE_CPU) {
         return;
     }
     double span_ns = (double)(span.end_ns - span.origin_ns);
-    imgui::text("CPU axis: 0 .. %.6f ms (measured scope and worker range extent)", span_ns / NS_PER_MS);
+    if (workers.len > 0) {
+        imgui::text("CPU axis: 0 .. %.6f ms (measured scope and worker range extent)", span_ns / NS_PER_MS);
+    } else {
+        imgui::text("CPU axis: 0 .. %.6f ms (measured scope extent)", span_ns / NS_PER_MS);
+    }
     uint lanes;
     foreach (worker : workers) lanes = math::max(lanes, worker.lane + 1);
     if (lanes) imgui::text("Worker lanes: %u, one row each below the scopes", lanes);

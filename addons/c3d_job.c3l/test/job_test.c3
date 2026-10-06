@@ -157,12 +157,11 @@ fn void spin_until_finished(JobPool* pool, JobId id) @local {
 }
 
 macro void @assert_refused(#submission) @local {
-    bool refused;
     if (catch excuse = #submission) {
         assert(excuse == c3d::CAPACITY_EXCEEDED);
-        refused = true;
+    } else {
+        unreachable("expected CAPACITY_EXCEEDED");
     }
-    assert(refused, "Submission was accepted.");
 }
 
 fn void gate_range(void* data, uint first, uint count) @local {
