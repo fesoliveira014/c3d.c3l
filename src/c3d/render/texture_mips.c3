@@ -276,7 +276,7 @@ fn double encode_srgb(double linear) @local {
 }
 
 // c3c 0.8.3 ships no half-precision compiler-rt builtins on windows-x64, so no float16 cast may reach the linker.
-fn float half_to_float(ushort bits) @local {
+fn float half_to_float(ushort bits) @private {
     uint sign = (uint)(bits & HALF_SIGN_MASK) << 16;
     uint exponent = (bits >> HALF_MANTISSA_BITS) & HALF_EXPONENT_MASK;
     uint mantissa = bits & HALF_MANTISSA_MASK;

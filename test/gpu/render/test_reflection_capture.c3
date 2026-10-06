@@ -165,9 +165,9 @@ fn Vec3 capture_room_texel(char[] pixels, CubeFace face, uint[<2>] texel) @priva
     usz first = (((usz)face.ordinal * CAPTURE_ROOM_SIZE + texel.y) * CAPTURE_ROOM_SIZE + texel.x) * 4;
     ushort[] halves = ((ushort*)pixels.ptr)[:pixels.len / ushort::size];
     return {
-        (float)bitcast(halves[first], float16),
-        (float)bitcast(halves[first + 1], float16),
-        (float)bitcast(halves[first + 2], float16),
+        render::half_to_float(halves[first]),
+        render::half_to_float(halves[first + 1]),
+        render::half_to_float(halves[first + 2]),
     };
 }
 
@@ -267,8 +267,8 @@ fn void test_recapture_keeps_ids_and_repeats_its_bytes() @test {
         ushort[] before = ((ushort*)first.ptr)[:first.len / ushort::size];
         ushort[] after = ((ushort*)second.ptr)[:second.len / ushort::size];
         foreach (index, bits : before) {
-            float expected = (float)bitcast(bits, float16);
-            float found = (float)bitcast(after[index], float16);
+            float expected = render::half_to_float(bits);
+            float found = render::half_to_float(after[index]);
             float tolerance = CAPTURE_ROOM_REPEAT_TOLERANCE * math::max(1.0f, math::abs(expected));
             assert(math::abs(found - expected) <= tolerance);
         }
