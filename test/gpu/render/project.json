@@ -62,7 +62,8 @@
         "test_texture_containers.c3",
         "test_material_references.c3",
         "test_material_blend.c3",
-        "test_sky.c3"
+        "test_sky.c3",
+        "test_shadow_sets.c3"
       ]
     }
   }

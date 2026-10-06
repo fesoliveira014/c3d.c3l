@@ -63,6 +63,7 @@ defer (void)render::destroy_view(&renderer, capture_view);
 | `path_trace` | `PathTraceDesc`: bounces, samples per frame and sample cap of a `PATH_TRACED` view (see [path tracing](path_tracing.md)) |
 | `clip_plane` | World-space `maths::Plane`; geometry on its negative side is not drawn (see [Clip plane](#clip-plane)); the zero plane clips nothing and both constructors produce it |
 | `volumetric_fog` | A froxel volume for the view's `HeightFog`, allocated with the view (see [volumetric fog](sky.md#volumetric-fog)); faults `INVALID_ARGUMENT` on a `PATH_TRACED` view |
+| `share_shadows` | Binds an earlier view's [shadow set](shadows.md#shadow-sets) when the keys match and publishes its own; on in both constructors |
 
 An installed [static impostor](lod.md#static-impostors) participates in the same
 per-view LOD selection and hysteresis. Forward and deferred views share its
@@ -169,6 +170,11 @@ the window is dormant (`has_output` false); a texture view always records. `end_
 pending uploads and environment preparations, then submits when the frame recorded a clear, draw,
 dispatch, upload or preparation, presents only when a window image was acquired, and discards a
 frame that recorded none. Neither call advances animation or flushes scene removals.
+
+`render_view(scene, camera_node, view, debug = null, shadow_camera = null)`: `shadow_camera` is the camera the view's
+shadow set is fitted to; null uses `camera_node`. A view binds an earlier view's set instead of recording one when
+their keys match ([shadow sets](shadows.md#shadow-sets)). A `shadow_camera` without a `Camera` faults
+`INVALID_ARGUMENT` and aborts the frame.
 
 `Renderer.render(scene, camera)` is the default-view convenience. `render_to(scene, camera, target,
 color = LINEAR_HDR, info = {})` renders and finishes one frame into a target through a view it
@@ -453,7 +459,8 @@ like `STANDARD` on a deferred view, one without stays forward; see
 [custom shaders](custom_shaders.md#g-buffer-stage).
 
 Per-view numbers live on the view: `Renderer.view_stats(view)` returns `ViewStats` with the
-view's selected and dropped light counts, its cluster count and overflow count, and its completed
+view's selected and dropped light counts, whether it bound another view's shadow set
+(`shadow_set_shared`, the table's "Shadow set" row), its cluster count and overflow count, and its completed
 GPU pass timings (`C3D_PROFILE_GPU`), while `Stats` keeps the renderer-wide sums.
 `gui::view_stats_table(renderer, views, labels)` prints several views side by side.
 

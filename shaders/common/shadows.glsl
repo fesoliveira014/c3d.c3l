@@ -13,24 +13,34 @@
 
 GPU_DECLARE_READONLY_ARRAY_REF(ShadowArray, ShadowGpu);
 
-float sample_shadow_visibility(ShadowGpu shadow, vec3 sample_position) {
+// Atlas UV and depth of the point; false where the layer's map or depth range does not hold it.
+bool shadow_layer_coordinates(ShadowGpu shadow, vec3 sample_position, out vec3 coordinates) {
     vec4 projected = shadow.view_proj * vec4(sample_position, 1.0);
-    if (projected.w <= 0.0) return 1.0;
+    if (projected.w <= 0.0) return false;
 
     vec3 ndc = projected.xyz / projected.w;
     // The atlas uses a negative-height viewport, so NDC +Y maps to texture V=0.
     vec2 uv = vec2(ndc.x + 1.0, 1.0 - ndc.y) * 0.5;
-    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))
-        || ndc.z < 0.0 || ndc.z > 1.0) return 1.0;
+    coordinates = vec3(uv, ndc.z);
+    return !(any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))
+        || ndc.z < 0.0 || ndc.z > 1.0);
+}
 
+float filter_shadow_visibility(ShadowGpu shadow, vec3 coordinates) {
     float visibility = 0.0;
     for (int y = -1; y <= 1; y++) {
         for (int x = -1; x <= 1; x++) {
             visibility += sample_shadow_2d(shadow.texture_index, shadow.sampler_index,
-                vec3(uv + vec2(x, y) * shadow.texel_size, ndc.z));
+                vec3(coordinates.xy + vec2(x, y) * shadow.texel_size, coordinates.z));
         }
     }
     return visibility / 9.0;
+}
+
+float sample_shadow_visibility(ShadowGpu shadow, vec3 sample_position) {
+    vec3 coordinates;
+    if (!shadow_layer_coordinates(shadow, sample_position, coordinates)) return 1.0;
+    return filter_shadow_visibility(shadow, coordinates);
 }
 
 uint point_shadow_face(vec3 direction) {
@@ -77,13 +87,24 @@ float shadow_visibility(FrameRoot frame, LightGpu light, vec3 world_position, ve
     if (light.shadow_count == 0u) return 1.0;
 
     if (light.kind == LIGHT_DIRECTIONAL) {
+        // A set fitted to another camera can miss a receiver in its selected cascade; coarser ones may hold it.
+        bool fell_through = false;
         for (uint cascade = 0u; cascade < light.shadow_count; cascade++) {
             ShadowGpu shadow = ShadowArray(frame.shadows).values[light.shadow_first + cascade];
             if (view_depth > shadow.split_depth) continue;
-            float visibility = sample_shadow_visibility(shadow, world_position + normal * shadow.normal_bias);
-            if (view_depth <= shadow.blend_depth) return visibility;
+            vec3 coordinates;
+            if (!shadow_layer_coordinates(shadow, world_position + normal * shadow.normal_bias, coordinates)) {
+                fell_through = true;
+                continue;
+            }
+            float visibility = filter_shadow_visibility(shadow, coordinates);
+            if (fell_through || view_depth <= shadow.blend_depth) return visibility;
             ShadowGpu next = ShadowArray(frame.shadows).values[light.shadow_first + cascade + 1u];
-            float next_visibility = sample_shadow_visibility(next, world_position + normal * next.normal_bias);
+            vec3 next_coordinates;
+            if (!shadow_layer_coordinates(next, world_position + normal * next.normal_bias, next_coordinates)) {
+                return visibility;
+            }
+            float next_visibility = filter_shadow_visibility(next, next_coordinates);
             // Positive here: blend_depth < view_depth <= split_depth.
             float weight = (view_depth - shadow.blend_depth) / (shadow.split_depth - shadow.blend_depth);
             return mix(visibility, next_visibility, weight);

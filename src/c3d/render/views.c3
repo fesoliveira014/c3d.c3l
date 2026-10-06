@@ -76,6 +76,7 @@ struct ViewDesc {
     bool                 instance_culling;
     Plane                clip_plane; // world space; the zero plane clips nothing
     bool                 volumetric_fog; // a froxel volume for the view's HeightFog; allocated with the view
+    bool                 share_shadows;  // binds an earlier view's matching shadow set and publishes its own
 }
 
 <*
@@ -389,6 +390,7 @@ struct ViewStats {
     uint              cluster_count;
     uint              cluster_overflows;
     uint              accumulated_samples;
+    bool              shadow_set_shared; // the last raster rendering bound a set an earlier view recorded
     float[PASS_COUNT] gpu_pass_ms;
     bool[PASS_COUNT]  gpu_pass_valid @if($feat(C3D_PROFILE_GPU));
 }
@@ -537,6 +539,7 @@ fn ViewDesc default_view_desc() {
         .ray_tracing      = { .max_reflection_roughness = RT_REFLECTION_ROUGHNESS_DEFAULT },
         .path_trace       = PATH_TRACE_DEFAULT,
         .instance_culling = true,
+        .share_shadows    = true,
     };
 }
 
@@ -557,6 +560,7 @@ fn ViewDesc texture_view_desc(RenderTargetId target, OutputMode color = OutputMo
         .ray_tracing      = { .max_reflection_roughness = RT_REFLECTION_ROUGHNESS_DEFAULT },
         .path_trace       = PATH_TRACE_DEFAULT,
         .instance_culling = true,
+        .share_shadows    = true,
     };
 }
 

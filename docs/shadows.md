@@ -172,6 +172,76 @@ receiver in a band takes eighteen comparisons instead of nine. `cascade_blend = 
 selects one cascade exactly as without the band. There is no fade at the end of
 shadow coverage.
 
+A receiver whose selected cascade does not hold it reads the next coarser cascade that does, and reads lit when none
+does. With a view's own set this never happens inside its frustum; a set fitted to another camera
+([shadow sets](#shadow-sets)) can rely on it.
+
+## Shadow sets
+
+Every forward or deferred view binds one shadow set: the atlas layers it samples, their `ShadowGpu` array and the
+layers of each shadowing light. A view records a set, or binds the one an earlier view of the frame recorded.
+
+```c3
+renderer.render_view(
+    scene:         &scene,
+    camera_node:   mirror_node,
+    view:          mirror_view,
+    shadow_camera: camera_node,
+)!;
+renderer.finish_view(mirror_view)!;
+renderer.render_view(&scene, camera_node, renderer.default_view)!;
+```
+
+- `render_view`'s `shadow_camera` is the camera the view's set is fitted to; null is the view's own camera. A node
+  without a `Camera` faults `INVALID_ARGUMENT`.
+- A set is a function of its key: the scene, the frame, the shadow camera's view matrix and its projection at the
+  recording view's working extent, its `Camera.layers` and the view's
+  `ray_tracing.shadows`. Keys compare bit for bit. Two camera nodes with equal values share a set; a camera moved
+  between two views records twice.
+- Light selection, the atmosphere sun's radiance and the distance fade of batches and LOD groups follow the shadow
+  camera. Casters are every visible caster, as for any set. LOD groups cast with the levels the recording view
+  selected; impostors keep light-relative frames.
+- A view binds the published set when the keys match and its `ViewDesc.share_shadows` is on (both constructors set
+  it). It records no atlas, and its lights take their layers from the set by light entity. A light the view lights
+  that the set holds no layers for draws unshadowed and, when the set's camera is not the view's own, counts in
+  `Stats.shadow_lights_unshared`.
+- The renderer holds one set at a time. A view with another key records over it, so render views that share next to
+  each other. With `share_shadows` off a view always records, never binds a set and leaves nothing for later views.
+- Two views of one camera share automatically when their aspects match, for example a capture of the window view. The
+  second view's `lod_bias` then does not change the casters' levels; turn `share_shadows` off to give it its own set.
+- A camera whose `Camera.aspect` is zero takes its aspect from each view's working extent. A view at another render
+  scale can round to another aspect, and then records its own set without notice; `shadow_sets_shared` and
+  `ViewStats.shadow_set_shared` show it. Set `Camera.aspect` on cameras whose views should share.
+
+A borrowed cascade fits the shadow camera's frustum, not the reading view's. A receiver outside every cascade reads lit,
+so a borrowed shadow can end at a straight edge. For planar mirrors:
+
+- Horizontal mirrors (water, floors) are valid. Modelled for a lake, the main camera's cascades hold every receiver
+  from 1 to 1000 m in every pose except a steep look-down, 90.5 % at 300 m height; the coarser cascades hold the rest.
+- Wall mirrors are valid only while the reflected receivers lie inside the shadow camera's shadow range. Under a
+  vertical or side sun their shadows end beyond about 65 m.
+
+`Stats.shadow_sets_recorded` and `shadow_sets_shared` count the frame's raster views by what they did; each adds one to
+exactly one of them. `ViewStats.shadow_set_shared` tells whether the view's last raster rendering bound another view's
+set, and `gui::view_stats_table` shows it. `shadow_layers` and `shadow_timings` count recordings: a shared atlas is
+timed once, under the recording view's id. `draw_shadow_frusta` shows the last recorded set.
+
+### Lookup cost
+
+The coarser-cascade lookup costs every forward view, borrowing or not, because the fall-through changes the compiled
+shader. RTX 4090, `sky --benchmark`, main view `FORWARD_OPAQUE`, ms, interleaved runs, three each:
+
+| Segment | Before | With the lookup | With the old lookup |
+| --- | ---: | ---: | ---: |
+| twilight | 0.0461 | 0.0604 | 0.0461 |
+| noon | 0.0686 | 0.0707 | 0.0666 |
+| valley | 0.0942 | 0.1024 | 0.0911 |
+
+Reverting only `shadows.glsl` returns twilight to its earlier time, so the growth is the lookup's code, not the shadow
+data: twilight binds no layers in either build. The growth is +0.004 to +0.014 ms, under the 0.05 ms bar the change
+set, and is accepted. A variant without the fall-through for views that never borrow is not built; it would be built
+when the lookup costs more than 0.05 ms of `FORWARD_OPAQUE` in a forward-heavy scene on the 4090.
+
 ## Normal offset
 
 A receiver looks up its shadow from a point moved along its normal. A directional
@@ -296,8 +366,10 @@ The settings table above describes the library defaults. Its depth-bias control
 spans 0..4 so the slope-factor tradeoff is visible at this scene scale.
 
 `Stats.shadow_layers` counts recorded layer passes and `shadow_requests_dropped`
-counts complete requests rejected by capacity. Draw/triangle counts include the
-depth passes. When GPU timestamps are enabled and supported, `shadow_timings`
+counts complete requests rejected by capacity. `shadow_sets_recorded`,
+`shadow_sets_shared` and `shadow_lights_unshared` count the frame's
+[shadow sets](#shadow-sets). Draw/triangle counts include the depth passes.
+When GPU timestamps are enabled and supported, `shadow_timings`
 exposes a delayed result for each layer, including its original view id and light entity,
 `kind`, zero-based local `layer_index` and milliseconds. Directional indices are
 cascades, spot index zero identifies its sole projection, and point indices follow
