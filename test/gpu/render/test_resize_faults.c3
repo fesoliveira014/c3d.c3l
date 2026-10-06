@@ -4,6 +4,8 @@ import c3d;
 import c3d::asset;
 import c3d::platform;
 import c3d::render @public;
+import c3d::render::post @public;
+import c3d::scene;
 import gpu;
 import sdl;
 import std::io;
@@ -276,7 +278,7 @@ fn void test_in_place_configure_at_a_full_heap_keeps_the_configuration() @test {
     if (catch excuse = render::configure_view(renderer, fixture.view, bloomed)) {
         assert(excuse == gpu::DESCRIPTOR_HEAP_FULL);
     } else {
-        assert(false, "a five-level bloom chain fit two free heap slots");
+        assert(false, "the bloom chain fit two free heap slots");
     }
     capacity_check_counts(capacity_counts(renderer), before);
     assert(record.desc.ambient_occlusion.kind == AoKind.SSAO && !record.desc.post.bloom);
@@ -289,6 +291,53 @@ fn void test_in_place_configure_at_a_full_heap_keeps_the_configuration() @test {
     assert(record.bloom_levels == bloomed.post.bloom_params.levels && !record.ao.texture.is_valid());
     assert(record.taa_color[0].texture == taa && record.hdr_color.texture == view.color);
     resize_render(&fixture, views[..], fixture.hdr_target)!!;
+    check_validation(renderer);
+}
+
+fn void test_faulting_configure_keeps_the_exposure_state() @test {
+    Fixture fixture;
+    create_fixture(
+        allocator:             mem,
+        fixture:               &fixture,
+        max_render_targets:    RESIZE_HEAP,
+        texture_heap_capacity: RESIZE_HEAP,
+    )!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    ExposureScene scene = exposure_create_scene(&fixture, EXPOSURE_DIM_LUMINANCE)!!;
+    defer scene::destroy_scene(&scene.scene);
+    ViewId view = exposure_create_view(&fixture, post::AUTO_EXPOSURE_DEFAULT)!!;
+    exposure_render_frames(&scene, view, 0, RESIZE_HISTORY_FRAMES)!!;
+    ViewRecord* record = renderer.views.get(view);
+    ViewExposure* exposure = &record.auto_exposure;
+    ExposureHistory history = exposure.history;
+    bool[render::FRAMES_IN_FLIGHT] pending = exposure.readback_pending;
+    bool any_pending;
+    foreach (flag : pending) any_pending = any_pending || flag;
+    assert(history.valid && any_pending);
+    ViewDesc manual = record.desc;
+    manual.post.auto_exposure = false;
+    manual.post.bloom = true;
+
+    RenderTargetId[RESIZE_HEAP] fillers;
+    uint filled = resize_fill(renderer, fillers[..], gpu::DESCRIPTOR_HEAP_FULL);
+    filled = resize_destroy_fillers(renderer, fillers[:filled], RESIZE_FREE_HEAP_SLOTS);
+    if (catch excuse = render::configure_view(renderer, view, manual)) {
+        assert(excuse == gpu::DESCRIPTOR_HEAP_FULL);
+    } else {
+        assert(false, "the bloom chain fit two free heap slots");
+    }
+    assert(record.desc.post.auto_exposure && !record.desc.post.bloom);
+    assert(exposure.readback_pending == pending);
+    assert(exposure.history.valid == history.valid && exposure.history.pending == history.pending);
+    assert(exposure.history.slot == history.slot && exposure.history.time == history.time);
+    exposure_render_frame(&scene, view, EXPOSURE_FRAME_SECONDS * RESIZE_HISTORY_FRAMES)!!;
+
+    resize_destroy_fillers(renderer, fillers[:filled], filled);
+    render::configure_view(renderer, view, manual)!!;
+    assert(!record.desc.post.auto_exposure && record.desc.post.bloom);
+    bool[render::FRAMES_IN_FLIGHT] none;
+    assert(exposure.readback_pending == none);
     check_validation(renderer);
 }
 
@@ -343,6 +392,8 @@ fn void test_window_resize_at_a_full_table_keeps_the_window_view() @test {
     assert(!renderer.frame_open && renderer.output_dirty);
     resize_check_view(&renderer, renderer.default_view, view);
     uint[<2>] rebuilt = { renderer.swapchain_info.width, renderer.swapchain_info.height };
+    assert(!renderer.swapchain_info.dormant);
+    assert(rebuilt == (uint[<2>]){ renderer.output_width, renderer.output_height });
     assert(rebuilt != view.extent);
 
     resize_destroy_fillers(&renderer, fillers[:filled], filled);

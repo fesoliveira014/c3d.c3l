@@ -453,7 +453,7 @@ struct ViewRecord {
 struct StagedView @private {
     ViewRecord* live;
     ViewRecord  images; // the configuration and image handles live adopts; nothing else is filled
-    uint[<2>]   output; // output extent the images are sized for
+    uint[<2>]   output_extent;
 }
 
 <*
@@ -699,7 +699,11 @@ fn void? configure_view(Renderer* renderer, ViewId view, ViewDesc desc) {
 
     @pool() {
         StagedView[] staged = alloc::new_array(tmem, StagedView, 1);
-        staged[0] = { .live = record, .images = { .desc = desc }, .output = view_output_extent(renderer, &desc) };
+        staged[0] = {
+            .live          = record,
+            .images        = { .desc = desc },
+            .output_extent = view_output_extent(renderer, &desc),
+        };
         ViewRecord* images = &staged[0].images;
         uint[<2>] current_extent = view_working_extent(renderer, record);
         uint[<2>] wanted_extent = view_working_extent(renderer, images);
@@ -964,7 +968,7 @@ fn bool view_writes(ViewRecord* record, ViewOutput output, RenderTargetId target
 
 fn void? stage_views(Renderer* renderer, StagedView[] views) @private {
     foreach (index, &view : views) {
-        if (catch excuse = acquire_view_images(renderer, &view.images, view.output)) {
+        if (catch excuse = acquire_view_images(renderer, &view.images, view.output_extent)) {
             foreach_r (&staged : views[:index + 1]) release_staged_images(renderer, staged);
             return excuse~;
         }
@@ -1029,7 +1033,7 @@ fn void? resize_views(
         uint next;
         foreach (&record : renderer.views.items) {
             if (!view_writes(record, output, target)) continue;
-            views[next] = { .live = record, .images = { .desc = record.desc }, .output = extent };
+            views[next] = { .live = record, .images = { .desc = record.desc }, .output_extent = extent };
             next++;
         }
         stage_views(renderer, views)!;

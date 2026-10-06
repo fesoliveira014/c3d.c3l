@@ -189,11 +189,12 @@ fn RenderTargetId? create_render_target(Renderer* renderer, RenderTargetDesc des
 <*
  Recreate the target's backing at a new size after every submitted use completes.
  Needs room for the old and new images of the target and its views; a fault changes nothing.
- @require !renderer.frame_open
- @require width > 0 && height > 0
+ @param [&inout] renderer : "No open frame."
  @return? c3d::INVALID_ID, gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::UNSUPPORTED_FEATURE
  @return? gpu::SLOT_TABLE_FULL, gpu::DESCRIPTOR_HEAP_FULL, gpu::OUT_OF_HOST_MEMORY
  @return? gpu::OUT_OF_DEVICE_MEMORY, gpu::DEVICE_BUSY, gpu::WAIT_TIMEOUT, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+ @require !renderer.frame_open
+ @require width > 0 && height > 0
 *>
 fn void? resize_render_target(
     Renderer* renderer,

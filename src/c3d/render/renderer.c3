@@ -1062,18 +1062,13 @@ fn void? recover_window_output(Renderer* renderer) @private {
     }
     if (!renderer.output_width || !renderer.output_height) return;
 
-    bool current = renderer.swapchain_info.width == renderer.output_width
-        && renderer.swapchain_info.height == renderer.output_height
-        && !renderer.swapchain_info.dormant;
-    if (!current) {
-        gpu::resize_swapchain(
-            device:    &renderer.device,
-            swapchain: renderer.swapchain,
-            width:     renderer.output_width,
-            height:    renderer.output_height,
-        )!;
-        renderer.swapchain_info = gpu::get_swapchain_info(&renderer.device, renderer.swapchain)!;
-    }
+    gpu::resize_swapchain(
+        device:    &renderer.device,
+        swapchain: renderer.swapchain,
+        width:     renderer.output_width,
+        height:    renderer.output_height,
+    )!;
+    renderer.swapchain_info = gpu::get_swapchain_info(&renderer.device, renderer.swapchain)!;
     if (!renderer.swapchain_info.dormant) {
         uint[<2>] extent = { renderer.swapchain_info.width, renderer.swapchain_info.height };
         resize_views(renderer, ViewOutput.WINDOW, extent)!;

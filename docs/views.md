@@ -318,7 +318,8 @@ The views need `max_views = 5` and the targets `max_render_targets = 67` or more
 Leave room for the largest single resize on top of that count, in the table, the heap and the attachment table: a target
 plus the images of every view on it for `resize_render_target`, the images of every window view for a window resize,
 or one view's full image set for `configure_view`. In the example the game target and its view take 24 more entries
-and heap slots while they resize, which 2,560 covers.
+and heap slots while they resize, which `texture_capacity = 2560` covers for the table; size
+`texture_heap_capacity` the same way.
 
 Per-frame cost grows with `max_render_targets`: `begin_frame` and each view's preparation visit every target slot, and
 `begin_frame` also visits every view slot to snapshot and count its images. On an RTX 4090 an empty frame took a median
