@@ -57,6 +57,12 @@ What the four cases establish:
   when the slot is reused and grows the ring without losing its old
   allocation.
 
+- Texture containers (`test_texture_containers.c3`, `sample_lod.comp.glsl`): an RGBA8 chain with a marker at
+  texel 0 of each level, loaded from DDS, KTX1 and KTX2, samples level by level like the same texels supplied
+  through `add_texture_mips`, with each marker at v = 0; `bc1_mips.dds` and four real-tool BC files match their
+  hand-built chains, and each level of the example chain reads its solid color. A device without BC sampling
+  prints `skipped: BC unsupported on <adapter>` and still runs the RGBA8 case.
+
 - A skinned geometry drawn by a node without a skin binding renders with the
   unskinned vertex stage and shows its material.
 
