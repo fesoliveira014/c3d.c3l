@@ -16,6 +16,7 @@ import std::math;
 
 const char[*] REFLECTION_TWINS_SOURCE @private = $embed("reflection_twins.comp.glsl");
 const uint REFLECTION_TWIN_POINTS @private = 64; // mirrored as REFLECTION_TWIN_POINTS in reflection_twins.comp.glsl
+// Mirrored as REFLECTION_TWIN_VALUES in reflection_twins.comp.glsl.
 const uint REFLECTION_TWIN_VALUES @private = 3;  // vec4 results per point
 const float REFLECTION_TWIN_WEIGHT_TOLERANCE @private = 1e-5f;
 const float REFLECTION_TWIN_DIRECTION_TOLERANCE @private = 1e-4f;

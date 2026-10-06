@@ -21,7 +21,8 @@ const Vec3 CAPTURE_ROOM_PROBE_HALF_EXTENTS @private = { 1.9f, 1.9f, 1.9f };
 const float CAPTURE_ROOM_SPHERE_RADIUS @private = 0.5f;
 const float CAPTURE_ROOM_FLOOR_HEIGHT @private = -1.2f;  // inside the probe box past its fade: the probe would light it
 const uint CAPTURE_ROOM_SPHERE_LAYER @private = 2;       // captures render layer 1 only
-const uint CAPTURE_ROOM_SCREEN_LAYER @private = 4;       // a black screen before the +X wall that a layer-1 capture must not see
+// A black screen before the +X wall that a layer-1 capture must not see.
+const uint CAPTURE_ROOM_SCREEN_LAYER @private = 4;
 const float CAPTURE_ROOM_SCREEN_DISTANCE @private = 1;
 const uint CAPTURE_ROOM_SIZE @private = 32;              // the default size exceeds 30 s on software devices
 const uint[<2>][4] CAPTURE_ROOM_TEXELS @private = { { 8, 8 }, { 23, 8 }, { 8, 23 }, { 23, 23 } }; // quadrant centres
