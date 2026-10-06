@@ -22,7 +22,7 @@ A mesh contributes one instance at its node's world matrix. An instanced batch c
 | --- | --- |
 | Mesh with no skin binding and no morph weights | At its rest pose |
 | Mesh with a skin binding over a geometry with joints, or morph weights that select a target | At its raster pose, in both kinds (see [Posed instances](#posed-instances)) |
-| Crowd part batch | Not traced |
+| Crowd part batch | Only with `add_crowd(trace: true)`: one slot per placement and part, at the placement's raster pose, boxed by the crowd's `pose_bounds` |
 | `InstancedMesh` or `LodGroup` with sway | At its rest pose, counted in `Stats.trace_sway_at_rest`; the error is bounded by the sway reach |
 | Material with a custom vertex stage, water included | Never |
 

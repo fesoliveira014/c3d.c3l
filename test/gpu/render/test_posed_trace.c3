@@ -891,6 +891,175 @@ fn void test_strong_pose_refit_encloses_every_posed_triangle() @test {
     check_validation(renderer);
 }
 
+const Vec3 POSED_BONE_OFFSET @private = { 0, 1, 0 };
+const Vec3 POSED_CROWD_CAMERA @private = { 0, 0.65f, 2.6f };
+
+fn Geometry posed_crowd_part(Allocator allocator, ushort joint, Vec3 offset) @private {
+    Geometry box = geometry::box(allocator, 0.6f, 0.6f, 0.6f);
+    box.joints = alloc::new_array(allocator, ushort[<4>], box.positions.len);
+    box.weights = alloc::new_array(allocator, Vec4, box.positions.len);
+    foreach (index, &position : box.positions) {
+        *position += offset;
+        box.joints[index] = { joint, 0, 0, 0 };
+        box.weights[index] = { 1, 0, 0, 0 };
+    }
+    box.bounds = { .min = box.bounds.min + offset, .max = box.bounds.max + offset };
+    return box;
+}
+
+fn NodeTemplate posed_template_node(String name, int parent, Vec3 position) @private {
+    return {
+        .parent  = parent,
+        .name    = name.copy(mem),
+        .local   = { .position = position, .rotation = maths::TRANSFORM_IDENTITY.rotation, .scale = { 1, 1, 1 } },
+        .layers  = scene::DEFAULT_LAYERS,
+        .visible = true,
+    };
+}
+
+fn ModelId? posed_crowd_model(Fixture* fixture, MaterialId material, ClipId* swing) @private {
+    AssetStore* assets = &fixture.assets;
+    GeometryId[2] parts;
+    @pool() {
+        Geometry lower = posed_crowd_part(tmem, 0, {});
+        parts[0] = assets.add_geometry(&lower)!;
+        Geometry upper = posed_crowd_part(tmem, 1, { 0, 1.3f, 0 });
+        parts[1] = assets.add_geometry(&upper)!;
+    };
+    Skeleton skeleton = {
+        .joint_names  = alloc::new_array(mem, String, 2),
+        .parents      = alloc::new_array(mem, int, 2),
+        .rest_pose    = alloc::new_array(mem, Transform, 2),
+        .inverse_bind = alloc::new_array(mem, Mat4, 2),
+    };
+    skeleton.parents[0] = -1;
+    skeleton.parents[1] = 0;
+    skeleton.rest_pose[..] = maths::TRANSFORM_IDENTITY;
+    skeleton.inverse_bind[0] = matrix::IDENTITY4;
+    skeleton.inverse_bind[1] = matrix::IDENTITY4.translate(-POSED_BONE_OFFSET);
+    SkeletonId skeleton_id = assets.add_skeleton_owned(&skeleton)!;
+
+    Quat bent = quaternion::from_axis_angle{float}({ 0, 0, 1 }, (float)math::PI / 2);
+    AnimationClip clip = {
+        .name     = "swing".copy(mem),
+        .duration = 1,
+        .tracks   = alloc::new_array(mem, Track, 1),
+        .targets  = alloc::new_array(mem, uint, 1),
+    };
+    clip.targets[0] = 2;
+    clip.tracks[0] = {
+        .target        = 0,
+        .path          = TargetPath.ROTATION,
+        .interpolation = Interpolation.LINEAR,
+        .times         = alloc::new_array(mem, float, 2),
+        .values        = alloc::new_array(mem, float, 8),
+    };
+    float[2] times = { 0, 1 };
+    float[8] values = { 0, 0, 0, 1, bent.i, bent.j, bent.k, bent.l };
+    clip.tracks[0].times[..] = times[..];
+    clip.tracks[0].values[..] = values[..];
+    *swing = assets.add_clip_owned(&clip)!;
+
+    ModelTemplate template = {
+        .nodes  = alloc::new_array(mem, NodeTemplate, 5),
+        .meshes = alloc::new_array(mem, ModelMesh, 2),
+        .skins  = alloc::new_array(mem, ModelSkin, 2),
+        .clips  = alloc::new_array(mem, ClipId, 1),
+    };
+    template.nodes[0] = posed_template_node("root", -1, {});
+    template.nodes[1] = posed_template_node("bone0", 0, {});
+    template.nodes[2] = posed_template_node("bone1", 1, POSED_BONE_OFFSET);
+    template.nodes[3] = posed_template_node("lower", 0, {});
+    template.nodes[4] = posed_template_node("upper", 1, {});
+    foreach (index, &skin : template.skins) {
+        template.meshes[index] = { .node = (uint)index + 3, .geometry = parts[index], .material = material };
+        skin.mesh_node = (uint)index + 3;
+        skin.skeleton = skeleton_id;
+        skin.joint_nodes = alloc::new_array(mem, uint, 2);
+        skin.joint_nodes[0] = 1;
+        skin.joint_nodes[1] = 2;
+    }
+    template.clips[0] = *swing;
+    return assets.add_model_owned(&template);
+}
+
+fn void test_traced_crowd_instances_match_raster() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        PosedHarness harness;
+        posed_create_harness(&fixture, &harness)!!;
+        defer posed_destroy_harness(&fixture, &harness);
+        harness.camera.local.position = POSED_CROWD_CAMERA;
+        ClipId swing;
+        ModelId model = posed_crowd_model(&fixture, fixture.plain, &swing)!!;
+        Transform mirrored = maths::TRANSFORM_IDENTITY;
+        mirrored.position = { 0.6f, 0, 0 };
+        mirrored.scale = { -1, 1, 1 };
+        Transform plain = maths::TRANSFORM_IDENTITY;
+        plain.position = { -0.6f, 0, 0 };
+        CrowdInstance[2] instances = {
+            { .placement = mirrored, .pose = { .clip = swing, .time = 0.5f, .speed = 1 }, .color = { 1, 1, 1, 1 } },
+            { .placement = plain, .pose = { .clip = swing, .time = 0.25f, .speed = 1 }, .color = { 1, 1, 1, 1 } },
+        };
+        model::add_crowd(
+            assets:      &fixture.assets,
+            scene:       &harness.scene,
+            model:       model,
+            capacity:    2,
+            pose_bounds: { .min = { -1, -1, -1 }, .max = { 1, 2.5f, 1 } },
+            instances:   instances[..],
+            trace:       true,
+        )!!;
+        anim::crowd_update(&fixture.assets, &harness.scene, 0);
+        harness.scene.update_world();
+
+        posed_render(&fixture, &harness, ray_queries ? TraceKind.HARDWARE : TraceKind.SOFTWARE)!!;
+        assert_posed_agreement(harness.results, "crowd");
+        assert(fixture.renderer.stats.trace_posed_instances == 4 && fixture.renderer.stats.trace_poses == 4);
+        check_validation(&fixture.renderer);
+    }
+}
+
+fn void test_traced_crowd_pose_outside_its_rest_geometry_is_hit() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    PosedHarness harness;
+    posed_create_harness(&fixture, &harness)!!;
+    defer posed_destroy_harness(&fixture, &harness);
+    harness.camera.local.position = POSED_CROWD_CAMERA;
+    ClipId swing;
+    ModelId model = posed_crowd_model(&fixture, fixture.plain, &swing)!!;
+    CrowdInstance[1] instances = {{
+        .placement = maths::TRANSFORM_IDENTITY,
+        .pose      = { .clip = swing, .time = 1, .speed = 0 },
+        .color     = { 1, 1, 1, 1 },
+    }};
+    model::add_crowd(
+        assets:      &fixture.assets,
+        scene:       &harness.scene,
+        model:       model,
+        capacity:    1,
+        pose_bounds: { .min = { -1.5f, -1, -1 }, .max = { 1, 2.5f, 1 } },
+        instances:   instances[..],
+        trace:       true,
+    )!!;
+    anim::crowd_update(&fixture.assets, &harness.scene, 0);
+    harness.scene.update_world();
+
+    posed_render(&fixture, &harness, TraceKind.SOFTWARE)!!;
+    assert_posed_agreement(harness.results, "crowd outside its rest geometry");
+    usz beside;
+    foreach (index, &result : harness.results) {
+        uint column = (uint)index % TARGET_SIZE;
+        if ((result.flags & POSED_TRACE_HIT) && column < TARGET_SIZE / 3) beside++;
+    }
+    assert(beside > 0);
+    check_validation(&fixture.renderer);
+}
+
 const Vec3 POSED_OCCLUDER_NEAR @private = { 0, 0.5f, -1 };       // cube resting on the floor, its front face at z = -0.5
 const Vec3 POSED_OCCLUDER_AWAY @private = { 3, 0.5f, -1 };       // the same cube 3 m to the side
 const Vec3 POSED_CREASE_POINT @private = { 0, 0, -0.45f };       // on the floor 5 cm from the cube's front face

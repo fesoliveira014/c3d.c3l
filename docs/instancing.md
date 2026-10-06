@@ -241,9 +241,13 @@ while (window.poll()) {
 - The renderer uploads one palette array per crowd per frame (`joints * 64` bytes per instance) and
   reuses it for every part, view and shadow layer. Above `OVERSIZED_UPLOAD_BYTES` (8 MiB, about 2470
   instances of a 53-joint character) the upload takes dedicated overflow memory every frame.
-- Crowds never enter the ray tracing paths (shadows, ambient occlusion, reflections, path tracing),
-  whatever `InstancedMesh.trace` says; raster shadows and temporal views work. This is the limit plain
-  skinned meshes have.
+- Crowds enter the ray tracing paths (shadows, ambient occlusion, reflections, probes, path tracing) only through
+  `add_crowd(trace: true)`, which sets `trace` on every part batch; a part batch's `trace` can be edited afterwards
+  like any other. Each traced placement of each part takes one posed trace slot at the placement's pose, so a crowd of
+  N placements and P parts holds N x P slots: raise `RendererDesc.max_posed_trace_instances` past that (placements
+  beyond it are left out of the trace, counted in `Stats.trace_posed_overflow`). A slot costs the posed streams, a
+  refit copy and a bottom level of its part ([scene trace](scene_trace.md#posed-instances)). Raster shadows and
+  temporal views work either way. The default is untraced.
 - Custom materials: a fragment-only custom material draws with the built-in skinned instanced stage. A
   custom instanced vertex pair skins a crowd when compiled with the deformation defines
   ([Custom shaders](custom_shaders.md)).

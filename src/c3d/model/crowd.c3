@@ -23,6 +23,7 @@ struct CrowdInstance {
  @param pose_bounds : "Instance-local box covering every pose of one instance."
  @param [in] parent : "Null means the scene root."
  @param name : "Copied into the scene allocator."
+ @param trace : "Every part batch's trace flag; traced placements take posed trace slots."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
  @require capacity > 0
 *>
@@ -35,6 +36,7 @@ fn Node*? add_crowd(
     CrowdInstance[] instances = {},
     Node* parent = null,
     String name = "",
+    bool trace = false,
 ) {
     ModelTemplate* template = &assets.models.try_get(model)!.data;
     if (!template.skins.len) return c3d::INVALID_ARGUMENT~;
@@ -90,7 +92,7 @@ fn Node*? add_crowd(
             name:     template.nodes[skin.mesh_node].name,
         )!;
         InstancedMesh* batch = scene.get(part, InstancedMesh);
-        batch.trace = false;
+        batch.trace = trace;
         batch.has_bounds_override = true;
         scene.get(root, AnimatedCrowd).parts[index].batch = part.id;
     }
