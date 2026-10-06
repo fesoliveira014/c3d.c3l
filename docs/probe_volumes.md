@@ -2,7 +2,8 @@
 
 A probe volume stores diffuse indirect light on a grid of probes and lights every surface inside
 its box from that grid instead of the environment's spherical harmonics. The component is
-`light::ProbeVolume`; the renderer owns its atlases. Specular light stays with the environment.
+`light::ProbeVolume`; the renderer owns its atlases. Specular light stays with the environment; local specular reflections come from
+[reflection probes](reflection_probes.md).
 
 ```c3
 Node* volume_node = scene.add_node(name: "probe_volume")!;

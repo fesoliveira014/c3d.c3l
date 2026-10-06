@@ -235,6 +235,10 @@ channel remains linear. Missing or stale layer textures retain factor-only
 behavior. Clearcoat maps are ignored when clearcoat is zero, and sheen maps are
 ignored when every sheen-color component is zero.
 
+Clearcoat, sheen and the transmission fallback read the same [reflection probes](reflection_probes.md)
+as the base layer: each lobe aims its own direction through the selected probes and the global
+environment.
+
 The Standard `normal_map` orients the base and sheen response. The clearcoat
 normal map creates a separate tangent-space normal and falls back to the geometry
 normal when absent; it never inherits the mapped base normal. Both paths follow

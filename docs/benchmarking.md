@@ -272,6 +272,15 @@ without.
 256, default 128). The banner prints them and the CSV has `gpu_probe_update_ms`. The kind of the probe
 trace follows `--trace`. See [probe volumes](probe_volumes.md).
 
+`--reflection-probes 0|1|2|16` adds reflection probes, each with a distinct solid-colour environment: one over
+the model bounds with a hard edge, two over the bounds (the second 1.01 times larger, blend equal to the smallest
+half extent, so every pixel reads both probes and the global environment), or a 4 x 2 x 2 grid tiling the bounds.
+`--reflection-probe-placement inside|outside` (default `inside`); `outside` moves every box below the model by twice the
+model's height, so each pixel tests every packed box and lies in none. The asset store is created with 32 environments
+when probes are on, and the banner prints `reflection_probes=N reflection_probe_placement=inside|outside`. The
+probe-sampling cost is `gpu_forward_opaque_ms` forward and `gpu_lighting_ms` deferred. See
+[reflection probes](reflection_probes.md).
+
 `--environment-refresh on` marks the studio source texture dirty before every frame, so every frame
 uploads it again and regenerates the environment in place at the default processing sizes: conversion,
 GGX filtering and SH projection. The CSV reports that work as `gpu_environment_ms` and splits it into the

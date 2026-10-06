@@ -293,6 +293,14 @@ mirror, with a time-of-day slider and a scripted benchmark. See [Sky, atmosphere
 python3 scripts/build.py --example sky
 ```
 
+`reflection_probes` shows two rooms lit by captured reflection probes, with metal spheres from mirror to
+rough, a clearcoat and a sheen sphere, box lines, re-capture and a headless benchmark. See
+[Reflection probes](docs/reflection_probes.md):
+
+```bash
+python3 scripts/build.py --example reflection_probes
+```
+
 `shadows` demonstrates sun cascades, spot projection and all six point faces with
 solid, masked and off-camera casters. Its small GUI adjusts kind-specific coverage,
 bias and whole-light atlas priority:
