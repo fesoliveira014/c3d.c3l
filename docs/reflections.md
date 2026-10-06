@@ -103,7 +103,7 @@ python3 scripts/build.py --example rt_effects
 
 - Deferred views only; forward views always apply reflection probes.
 - One ray per pixel and a spatial blur; no temporal accumulation beyond what TAA provides.
-- Hits see the static traced scene: skinned, morphed and `BLEND` meshes are absent.
+- Hits see the traced scene: skinned and morphed meshes appear at their raster pose; crowd instances, custom vertex stages and `BLEND` meshes are absent.
 - Hits use the view's light list, which drops finite lights outside the camera frustum, and
   apply no light layers. Every hit loops the whole list (no clustering) with a shadow ray per
   shadowing light in reach, so hit cost grows with the light count.

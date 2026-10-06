@@ -59,7 +59,7 @@ only on a TAA view, where TAA integrates it; without TAA a still camera shows a 
 
 ## Ray traced
 
-`RAY_TRACED` replaces the screen-space estimate with rays against the traced static scene
+`RAY_TRACED` replaces the screen-space estimate with rays against the traced scene
 ([scene tracing](scene_trace.md)); everything after the estimate is shared.
 
 ```c3
@@ -83,7 +83,7 @@ render::configure_view(&renderer, renderer.default_view, desc)!;
   image, so the blur, the receivers and everything under [What it darkens](#what-it-darkens)
   are unchanged.
 - The rays find occluders the screen cannot see: off-screen geometry and surfaces hidden behind
-  nearer ones. Only the traced scene occludes: skinned, morphed and `BLEND` meshes do not.
+  nearer ones. Only the traced scene occludes: skinned and morphed meshes occlude at their raster pose, while crowd instances, custom vertex stages and `BLEND` meshes do not.
 - The ray directions rotate per pixel with interleaved gradient noise, per frame only on a TAA
   view. More rays cost proportionally more: 16 rays at half resolution trace 8.3 M rays a
   frame at 1080p.
@@ -110,6 +110,6 @@ The rendering benchmarks take `--ambient-occlusion none|half|full|ray-traced`
 ## Limits
 
 - `SSAO` is screen space only: occluders outside the view or hidden behind nearer surfaces are
-  absent. `RAY_TRACED` sees them, for the static traced scene.
+  absent. `RAY_TRACED` sees them, for the traced scene.
 - With `SSAO`, thin objects occlude as if they were solid to the depth behind them.
 - `LINEAR_HDR` views apply AO as part of lighting, so captures include it.

@@ -91,7 +91,7 @@ rotates its ray set by a rotation drawn from the frame index.
 - **Hidden volumes** are not updated; they keep their texels and resume from them when shown.
 - **Energy** scales what views see; the bounce between probes always uses the texels at unit energy, so a
   high `energy` cannot make the feedback diverge.
-- **Static geometry only.** Skinned and morphed meshes, and batches or meshes with `trace = false`, are not
+- **Traced geometry only.** Skinned and morphed meshes are hit at their raster pose; crowd instances, custom vertex stages and batches or meshes with `trace = false` are not
   hit. A scene with a `SCENE` volume prepares the scene trace every frame it renders, which walks every
   traceable mesh and batch instance and rewrites the software top level and rows when they change, on
   either kind. On a ray-query renderer the first due update also builds one bottom level per traceable

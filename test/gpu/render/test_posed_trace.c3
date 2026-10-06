@@ -218,32 +218,34 @@ fn void posed_assert_agreement(PosedDepthResult[] results, ZString name) @privat
 }
 
 fn void test_posed_meshes_trace_at_the_raster_pose() @test {
-    Fixture fixture;
-    create_fixture(mem, &fixture)!!;
-    defer destroy_fixture(&fixture);
-    print_adapter(&fixture);
-    TraceKind kind = TraceKind.SOFTWARE;
-    GeometryId skinned = posed_box(&fixture, true)!!;
-    GeometryId morphed = posed_box(&fixture, false, { 0, 0.5f, 0 })!!;
-    GeometryId[3] shapes = { skinned, morphed, fixture.deformed_box };
-    ZString[3] names = { "skinned", "morphed", "combined" };
-    foreach (index, shape : shapes) {
-        PosedHarness harness;
-        posed_create_harness(&fixture, &harness)!!;
-        defer posed_destroy_harness(&fixture, &harness);
-        PosedRig rig = posed_add_rig(&fixture, &harness, shape)!!;
-        for (uint frame = 0; frame < POSED_FRAMES; frame++) {
-            posed_set_frame(&harness, &rig, frame);
-            posed_render(&fixture, &harness, kind)!!;
-            posed_assert_agreement(harness.results, names[index]);
-            assert(fixture.renderer.stats.trace_posed_instances == 1 && fixture.renderer.stats.trace_poses == 1);
-            uint low = posed_root_low(&fixture, &harness, rig.mesh);
-            foreach (&result : harness.results) {
-                if (result.flags & POSED_TRACE_HIT) assert(result.geometry_low == low);
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        print_adapter(&fixture);
+        TraceKind kind = ray_queries ? TraceKind.HARDWARE : TraceKind.SOFTWARE;
+        GeometryId skinned = posed_box(&fixture, true)!!;
+        GeometryId morphed = posed_box(&fixture, false, { 0, 0.5f, 0 })!!;
+        GeometryId[3] shapes = { skinned, morphed, fixture.deformed_box };
+        ZString[3] names = { "skinned", "morphed", "combined" };
+        foreach (index, shape : shapes) {
+            PosedHarness harness;
+            posed_create_harness(&fixture, &harness)!!;
+            defer posed_destroy_harness(&fixture, &harness);
+            PosedRig rig = posed_add_rig(&fixture, &harness, shape)!!;
+            for (uint frame = 0; frame < POSED_FRAMES; frame++) {
+                posed_set_frame(&harness, &rig, frame);
+                posed_render(&fixture, &harness, kind)!!;
+                posed_assert_agreement(harness.results, names[index]);
+                assert(fixture.renderer.stats.trace_posed_instances == 1 && fixture.renderer.stats.trace_poses == 1);
+                uint low = posed_root_low(&fixture, &harness, rig.mesh);
+                foreach (&result : harness.results) {
+                    if (result.flags & POSED_TRACE_HIT) assert(result.geometry_low == low);
+                }
             }
         }
+        check_validation(&fixture.renderer);
     }
-    check_validation(&fixture.renderer);
 }
 
 fn void test_posed_instances_sharing_a_geometry_stay_independent() @test {
@@ -346,21 +348,85 @@ fn void test_untraced_frames_record_no_posed_work() @test {
     check_validation(renderer);
 }
 
-fn void test_morphed_mesh_outside_its_rest_box_is_hit() @test {
+fn void test_posed_capacity_leaves_later_meshes_out() @test {
     Fixture fixture;
-    create_fixture(mem, &fixture)!!;
+    create_fixture(mem, &fixture, max_posed_trace_instances: 1)!!;
     defer destroy_fixture(&fixture);
     PosedHarness harness;
     posed_create_harness(&fixture, &harness)!!;
     defer posed_destroy_harness(&fixture, &harness);
-    PosedRig rig = posed_add_rig(&fixture, &harness, posed_box(&fixture, false, { 3, 0, 0 })!!)!!;
-    rig.mesh.local.position = { -3, 0, 0 };
-    harness.scene.get(rig.mesh, Mesh).morph_weights[0] = 1;
+    GeometryId skinned = posed_box(&fixture, true)!!;
+    PosedRig first = posed_add_rig(&fixture, &harness, skinned)!!;
+    PosedRig second = posed_add_rig(&fixture, &harness, skinned)!!;
+    first.joint.local.position = { -0.8f, 0, 0 };
+    second.joint.local.position = { 0.8f, 0, 0 };
     harness.scene.update_world();
+    Renderer* renderer = &fixture.renderer;
 
-    posed_render(&fixture, &harness, TraceKind.SOFTWARE)!!;
-    posed_assert_agreement(harness.results, "morph outside the rest box");
-    check_validation(&fixture.renderer);
+    for (uint frame = 0; frame < 2; frame++) {
+        posed_trace_frame(&fixture, &harness.scene)!!;
+        assert(renderer.stats.trace_posed_instances == 1 && renderer.stats.trace_posed_overflow == 1);
+        assert(renderer.scene_trace.baseline_count == 1);
+        assert(c3d::same_id(renderer.scene_trace.baseline[0].entity, first.mesh.id));
+    }
+    harness.scene.remove(first.mesh);
+    posed_trace_frame(&fixture, &harness.scene)!!;
+    assert(renderer.stats.trace_posed_instances == 1 && renderer.stats.trace_posed_overflow == 0);
+    assert(c3d::same_id(renderer.scene_trace.baseline[0].entity, second.mesh.id));
+    check_validation(renderer);
+}
+
+fn void test_morphed_mesh_outside_its_rest_box_is_hit() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        PosedHarness harness;
+        posed_create_harness(&fixture, &harness)!!;
+        defer posed_destroy_harness(&fixture, &harness);
+        PosedRig rig = posed_add_rig(&fixture, &harness, posed_box(&fixture, false, { 3, 0, 0 })!!)!!;
+        rig.mesh.local.position = { -3, 0, 0 };
+        harness.scene.get(rig.mesh, Mesh).morph_weights[0] = 1;
+        harness.scene.update_world();
+
+        posed_render(&fixture, &harness, ray_queries ? TraceKind.HARDWARE : TraceKind.SOFTWARE)!!;
+        posed_assert_agreement(harness.results, "morph outside the rest box");
+        check_validation(&fixture.renderer);
+    }
+}
+
+fn void test_two_tracing_views_pose_once_per_frame() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        PosedHarness harness;
+        posed_create_harness(&fixture, &harness)!!;
+        defer posed_destroy_harness(&fixture, &harness);
+        PosedRig rig = posed_add_rig(&fixture, &harness, fixture.deformed_box)!!;
+        Light sun = light::directional({ 1, 1, 1 }, 3);
+        sun.shadow.ray_traced = true;
+        harness.scene.add_light(sun, name: "sun")!!;
+        Renderer* renderer = &fixture.renderer;
+        foreach (view : (ViewId[2]){ fixture.view, fixture.second_view }) {
+            ViewDesc desc = renderer.views.get(view).desc;
+            desc.ray_tracing.shadows = true;
+            render::configure_view(renderer, view, desc)!!;
+        }
+        for (uint frame = 0; frame < 2; frame++) {
+            posed_set_frame(&harness, &rig, frame);
+            renderer.begin_frame()!!;
+            foreach (view : (ViewId[2]){ fixture.view, fixture.second_view }) {
+                renderer.render_view(&harness.scene, harness.camera, view)!!;
+                renderer.finish_view(view)!!;
+            }
+            renderer.end_frame()!!;
+            assert(renderer.stats.trace_poses == 1);
+            assert(ray_queries ? renderer.stats.trace_refits == 0 : renderer.stats.trace_refits == 1);
+            if (ray_queries) assert(renderer.stats.blas_updates + renderer.stats.blas_builds == 1);
+        }
+        check_validation(renderer);
+    }
 }
 
 fn PosedTraceRes* posed_slot_of(Fixture* fixture, PosedHarness* harness, Node* mesh) @private {
@@ -372,6 +438,159 @@ fn PosedTraceRes* posed_slot_of(Fixture* fixture, PosedHarness* harness, Node* m
 
 fn uint posed_root_low(Fixture* fixture, PosedHarness* harness, Node* mesh) @private {
     return (uint)(ulong)posed_slot_of(fixture, harness, mesh).root;
+}
+
+fn void test_posed_bottom_level_updates_in_place() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture, ray_queries: true)!!;
+    defer destroy_fixture(&fixture);
+    PosedHarness harness;
+    posed_create_harness(&fixture, &harness)!!;
+    defer posed_destroy_harness(&fixture, &harness);
+    PosedRig rig = posed_add_rig(&fixture, &harness, fixture.deformed_box)!!;
+    harness.scene.add_mesh(fixture.box, fixture.plain, name: "still")!!.local.position = { 0, -2, 0 };
+    posed_set_frame(&harness, &rig, 0);
+    Renderer* renderer = &fixture.renderer;
+
+    posed_trace_frame(&fixture, &harness.scene, TraceKind.HARDWARE)!!;
+    assert(renderer.stats.blas_builds == 2 && renderer.stats.blas_updates == 0 && renderer.stats.tlas_builds == 1);
+    gpu::AccelerationStructureHandle blas = posed_slot_of(&fixture, &harness, rig.mesh).blas;
+    posed_set_frame(&harness, &rig, 1);
+    posed_trace_frame(&fixture, &harness.scene, TraceKind.HARDWARE)!!;
+    assert(renderer.stats.blas_builds == 0 && renderer.stats.blas_updates == 1 && renderer.stats.tlas_builds == 1);
+    assert(posed_slot_of(&fixture, &harness, rig.mesh).blas == blas);
+    posed_trace_frame(&fixture, &harness.scene, TraceKind.HARDWARE)!!;
+    assert(renderer.stats.blas_builds == 0 && renderer.stats.blas_updates == 0 && renderer.stats.tlas_builds == 0);
+
+    posed_set_frame(&harness, &rig, 2);
+    renderer.begin_frame()!!;
+    renderer.prepare_scene_trace(&harness.scene, TraceKind.HARDWARE)!!;
+    render::abort_frame(renderer);
+    posed_trace_frame(&fixture, &harness.scene, TraceKind.HARDWARE)!!;
+    assert(renderer.stats.blas_builds == 1 && renderer.stats.blas_updates == 0 && renderer.stats.tlas_builds == 1);
+    posed_render(&fixture, &harness, TraceKind.HARDWARE)!!;
+    posed_assert_agreement(harness.results, "after an aborted update");
+    check_validation(renderer);
+}
+
+fn void test_posed_hardware_and_software_hits_agree() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture, ray_queries: true)!!;
+    defer destroy_fixture(&fixture);
+    PosedHarness harness;
+    posed_create_harness(&fixture, &harness)!!;
+    defer posed_destroy_harness(&fixture, &harness);
+    PosedRig combined = posed_add_rig(&fixture, &harness, fixture.deformed_box)!!;
+    PosedRig morphed = posed_add_rig(&fixture, &harness, posed_box(&fixture, false, { 0, 0.4f, 0 })!!)!!;
+    posed_set_frame(&harness, &combined, 3);
+    harness.scene.get(morphed.mesh, Mesh).morph_weights[0] = 0.8f;
+    morphed.mesh.local.position = { -1, -0.6f, -0.5f };
+    harness.scene.update_world();
+    PosedDepthResult[] walked = alloc::new_array(mem, PosedDepthResult, POSED_PIXELS);
+    defer alloc::free(mem, walked.ptr);
+
+    posed_render(&fixture, &harness, TraceKind.SOFTWARE)!!;
+    walked[..] = harness.results[..];
+    posed_render(&fixture, &harness, TraceKind.HARDWARE)!!;
+    assert(fixture.renderer.stats.trace_poses == 0);
+    usz edges;
+    foreach (index, &walk : walked) {
+        PosedDepthResult* query = &harness.results[index];
+        bool walk_hit = (walk.flags & POSED_TRACE_HIT) != 0;
+        bool agree = walk_hit == ((query.flags & POSED_TRACE_HIT) != 0);
+        if (agree && walk_hit) {
+            agree = walk.geometry_low == query.geometry_low && walk.primitive == query.primitive
+                && math::abs(walk.traced - query.traced) <= TRACE_DISTANCE_TOLERANCE * math::max(1.0f, walk.traced)
+                && (walk.barycentrics - query.barycentrics).length() <= PARITY_BARYCENTRIC_TOLERANCE;
+        }
+        if (agree) continue;
+        Vec3 weights = { 1 - walk.barycentrics.x - walk.barycentrics.y, walk.barycentrics.x, walk.barycentrics.y };
+        assert(min_weight(weights) < TRACE_EDGE_WEIGHT);
+        edges++;
+    }
+    io::eprintfn("Posed parity: %d edge mismatches", edges);
+    assert(edges <= POSED_PIXELS / 100);
+    check_validation(&fixture.renderer);
+}
+
+fn void test_source_revision_rebuilds_the_posed_slot() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        PosedHarness harness;
+        posed_create_harness(&fixture, &harness)!!;
+        defer posed_destroy_harness(&fixture, &harness);
+        GeometryId skinned = posed_box(&fixture, true)!!;
+        PosedRig rig = posed_add_rig(&fixture, &harness, skinned)!!;
+        posed_set_frame(&harness, &rig, 1);
+        TraceKind kind = ray_queries ? TraceKind.HARDWARE : TraceKind.SOFTWARE;
+        posed_render(&fixture, &harness, kind)!!;
+
+        foreach (&position : fixture.assets.geometry(skinned).data.positions) *position *= 1.5f;
+        fixture.assets.mark_geometry_dirty(skinned);
+        posed_render(&fixture, &harness, kind)!!;
+        posed_assert_agreement(harness.results, "after a revision");
+        assert(fixture.renderer.stats.trace_poses == 1);
+        if (ray_queries) assert(fixture.renderer.stats.blas_builds == 1 && fixture.renderer.stats.blas_updates == 0);
+
+        if (ray_queries) {
+            Renderer* renderer = &fixture.renderer;
+            posed_set_frame(&harness, &rig, 2);
+            renderer.begin_frame()!!;
+            renderer.prepare_scene_trace(&harness.scene, TraceKind.SOFTWARE)!!;
+            foreach (&position : fixture.assets.geometry(skinned).data.positions) *position *= 0.8f;
+            fixture.assets.mark_geometry_dirty(skinned);
+            renderer.prepare_scene_trace(&harness.scene, TraceKind.HARDWARE)!!;
+            renderer.end_frame()!!;
+            assert(renderer.stats.trace_poses == 2);
+            posed_render(&fixture, &harness, kind)!!;
+            posed_assert_agreement(harness.results, "after a revision between two preparations");
+        }
+        check_validation(&fixture.renderer);
+    }
+}
+
+fn GeometryId? posed_sphere(Fixture* fixture) @private {
+    GeometryId sphere;
+    @pool() {
+        Geometry shape = geometry::sphere(tmem, 0.8f);
+        shape.joints = alloc::new_array(tmem, ushort[<4>], shape.positions.len);
+        shape.weights = alloc::new_array(tmem, Vec4, shape.positions.len);
+        foreach (&weight : shape.weights) *weight = { 1, 0, 0, 0 };
+        sphere = fixture.assets.add_geometry(&shape)!;
+    };
+    return sphere;
+}
+
+fn void test_posed_slot_follows_a_new_geometry() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        PosedHarness harness;
+        posed_create_harness(&fixture, &harness)!!;
+        defer posed_destroy_harness(&fixture, &harness);
+        PosedRig rig = posed_add_rig(&fixture, &harness, posed_box(&fixture, true)!!)!!;
+        posed_set_frame(&harness, &rig, 1);
+        TraceKind kind = ray_queries ? TraceKind.HARDWARE : TraceKind.SOFTWARE;
+        posed_render(&fixture, &harness, kind)!!;
+        PosedTraceRes* slot = posed_slot_of(&fixture, &harness, rig.mesh);
+        gpu::AccelerationStructureHandle blas = slot.blas;
+        uint nodes = slot.node_count;
+
+        harness.scene.get(rig.mesh, Mesh).geometry = posed_sphere(&fixture)!!;
+        posed_set_frame(&harness, &rig, 2);
+        posed_render(&fixture, &harness, kind)!!;
+        posed_assert_agreement(harness.results, "after a geometry swap");
+        slot = posed_slot_of(&fixture, &harness, rig.mesh);
+        if (ray_queries) {
+            assert(slot.blas != blas && fixture.renderer.stats.blas_builds == 1);
+        } else {
+            assert(slot.node_count != nodes);
+        }
+        check_validation(&fixture.renderer);
+    }
 }
 
 fn void test_closed_frame_trace_reads_the_current_pose() @test {
@@ -397,6 +616,34 @@ fn void test_closed_frame_trace_reads_the_current_pose() @test {
     posed_render(&fixture, &harness, TraceKind.SOFTWARE)!!;
     assert(renderer.stats.trace_poses == 0);
     posed_assert_agreement(harness.results, "after closed preparations");
+    check_validation(renderer);
+}
+
+fn void test_absent_posed_slots_retire_and_return_fresh() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    PosedHarness harness;
+    posed_create_harness(&fixture, &harness)!!;
+    defer posed_destroy_harness(&fixture, &harness);
+    GeometryId skinned = posed_box(&fixture, true)!!;
+    PosedRig first = posed_add_rig(&fixture, &harness, skinned)!!;
+    posed_set_frame(&harness, &first, 1);
+    Renderer* renderer = &fixture.renderer;
+    posed_trace_frame(&fixture, &harness.scene)!!;
+    assert(renderer.posed_trace.bytes > 0);
+
+    harness.scene.remove(first.mesh);
+    for (uint frame = 0; frame < render::INSTANCE_ABSENCE_FRAMES + 2; frame++) {
+        posed_trace_frame(&fixture, &harness.scene)!!;
+    }
+    assert(renderer.posed_trace.bytes == 0);
+    foreach (&slot : renderer.posed_trace.slots) assert(slot.key.scene == 0);
+
+    PosedRig second = posed_add_rig(&fixture, &harness, skinned)!!;
+    posed_set_frame(&harness, &second, 2);
+    posed_render(&fixture, &harness, TraceKind.SOFTWARE)!!;
+    posed_assert_agreement(harness.results, "a fresh slot");
     check_validation(renderer);
 }
 
@@ -506,6 +753,91 @@ fn void test_rest_refit_reproduces_the_rest_tree() @test {
     check_validation(renderer);
 }
 
+fn void test_deferred_bottom_level_update_rebuilds_the_top_level() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture, ray_queries: true)!!;
+    defer destroy_fixture(&fixture);
+    PosedHarness harness;
+    posed_create_harness(&fixture, &harness)!!;
+    defer posed_destroy_harness(&fixture, &harness);
+    PosedRig rig = posed_add_rig(&fixture, &harness, posed_box(&fixture, true)!!)!!;
+    posed_set_frame(&harness, &rig, 0);
+    Renderer* renderer = &fixture.renderer;
+    posed_trace_frame(&fixture, &harness.scene, TraceKind.HARDWARE)!!;
+
+    posed_set_frame(&harness, &rig, 3);
+    posed_trace_frame(&fixture, &harness.scene, TraceKind.SOFTWARE)!!;
+    assert(renderer.stats.trace_poses == 1 && renderer.stats.blas_updates == 0);
+    posed_render(&fixture, &harness, TraceKind.HARDWARE)!!;
+    assert(renderer.stats.trace_poses == 0 && renderer.stats.blas_updates == 1 && renderer.stats.tlas_builds == 1);
+    posed_assert_agreement(harness.results, "deferred bottom-level update");
+    check_validation(renderer);
+}
+
+const Vec3 POSED_SHADOWED_AT_REST @private = { 0.9f, 0, 0 };  // in the posed box's traced shadow at joint x = 0
+const Vec3 POSED_SHADOWED_MOVED @private = { -1.6f, 0, 0 };   // in its shadow at joint x = -2.5, in the camera's sight
+
+fn void test_posed_caster_casts_traced_shadows_at_its_pose() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        ShadowScene shadow = create_shadow_scene(&fixture)!!;
+        defer scene::destroy_scene(&shadow.scene);
+        shadow.scene.remove(shadow.box);
+        Node* joint = shadow.scene.add_node(name: "posed_joint")!!;
+        Node* caster = shadow.scene.add_mesh(posed_box(&fixture, true)!!, shadow.opaque, name: "posed_caster")!!;
+        Node*[] joints = alloc::new_array(shadow.scene.allocator, Node*, 1);
+        joints[0] = joint;
+        shadow.scene.add(caster, (SkinBinding){ .skeleton = fixture.skeleton, .joints = joints });
+        set_ray_traced_shadows(&fixture, true)!!;
+
+        joint.local.position = { 0, 0.5f, 0 };
+        shadow.scene.update_world();
+        assert(shade(render_and_sample(&fixture, &shadow, POSED_SHADOWED_AT_REST)!!) == 0);
+        assert(shade(render_and_sample(&fixture, &shadow, POSED_SHADOWED_MOVED)!!) > 0);
+        joint.local.position = { -2.5f, 0.5f, 0 };
+        shadow.scene.update_world();
+        assert(shade(render_and_sample(&fixture, &shadow, POSED_SHADOWED_AT_REST)!!) > 0);
+        assert(shade(render_and_sample(&fixture, &shadow, POSED_SHADOWED_MOVED)!!) == 0);
+        check_validation(&fixture.renderer);
+    }
+}
+
+fn void test_path_tracer_accumulates_on_a_still_pose() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture, ray_tracing_pipelines: true)!!;
+    defer destroy_fixture(&fixture);
+    PathScene room = create_lit_room(&fixture)!!;
+    defer scene::destroy_scene(&room.scene);
+    Node* joint = room.scene.add_node(name: "posed_joint")!!;
+    MaterialId material = room.scene.get(room.subject, Mesh).material;
+    Node* posed = room.scene.add_mesh(fixture.deformed_box, material, name: "posed")!!;
+    Node*[] joints = alloc::new_array(room.scene.allocator, Node*, 1);
+    joints[0] = joint;
+    room.scene.add(posed, (SkinBinding){ .skeleton = fixture.skeleton, .joints = joints });
+    Mesh* mesh = room.scene.get(posed, Mesh);
+    mesh.morph_weights = alloc::new_array(room.scene.allocator, float, 1);
+    mesh.morph_weights[0] = 0.5f;
+    joint.local.position = { 0.8f, 0.5f, -2 };
+    room.scene.update_world();
+
+    RenderTargetId target = float_target(&fixture)!!;
+    ViewId view = create_path_view(&fixture, target, { .max_bounces = 2, .samples_per_frame = 2 })!!;
+    PathRun run = { .fixture = &fixture, .path_scene = &room, .view = view };
+    expect_accumulation(&run, 2, 2)!!;
+    expect_accumulation(&run, 4, 2)!!;
+    expect_accumulation(&run, 6, 2)!!;
+    joint.local.position.y += 0.1f;
+    room.scene.update_world();
+    expect_accumulation(&run, 2, 2)!!;
+    mesh.morph_weights[0] = 0.75f;
+    expect_accumulation(&run, 2, 2)!!;
+    expect_accumulation(&run, 4, 2)!!;
+    assert(fixture.renderer.stats.trace_posed_instances == 1);
+    check_validation(&fixture.renderer);
+}
+
 fn void test_strong_pose_refit_encloses_every_posed_triangle() @test {
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
@@ -595,4 +927,123 @@ fn void test_strong_pose_refit_encloses_every_posed_triangle() @test {
     }
     assert(tree[0].max_y - tree[0].min_y > 3.9f && tree[0].max_x - tree[0].min_x < 1.1f);
     check_validation(renderer);
+}
+
+const Vec3 POSED_OCCLUDER_NEAR @private = { 0, 0.5f, -1 }; // cube resting on the floor, its front face at z = -0.5
+const Vec3 POSED_OCCLUDER_AWAY @private = { 3, 0.5f, -1 }; // the same cube 3 m to the side
+const Vec3 POSED_CREASE_POINT @private = { 0, 0, -0.45f }; // on the floor 5 cm from the cube's front face
+
+fn Node* posed_attach_joint(
+    Fixture* fixture,
+    Scene* scene,
+    GeometryId geometry,
+    MaterialId material,
+) @private {
+    Node* joint = scene.add_node(name: "posed_joint")!!;
+    Node* mesh = scene.add_mesh(geometry, material, name: "posed_mesh")!!;
+    Node*[] joints = alloc::new_array(scene.allocator, Node*, 1);
+    joints[0] = joint;
+    scene.add(mesh, (SkinBinding){ .skeleton = fixture.skeleton, .joints = joints });
+    return joint;
+}
+
+fn void test_posed_occluder_darkens_ray_traced_ao() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        print_adapter(&fixture);
+        CreaseScene crease = create_crease_scene(&fixture)!!;
+        defer scene::destroy_scene(&crease.scene);
+        MaterialId surface = crease.scene.get(crease.floor, Mesh).material;
+        Node* joint = posed_attach_joint(&fixture, &crease.scene, posed_box(&fixture, true)!!, surface);
+        AoView ao_view = create_ao_view(&fixture, ShadingPath.FORWARD)!!;
+        defer destroy_ao_view(&fixture, &ao_view);
+        crease.view = ao_view.view;
+        AmbientOcclusionDesc ray_traced = render::AMBIENT_OCCLUSION_DEFAULT;
+        ray_traced.kind = AoKind.RAY_TRACED;
+
+        joint.local.position = POSED_OCCLUDER_NEAR;
+        crease.scene.update_world();
+        int floor_none = red(render_and_read(&fixture, &crease, POSED_CREASE_POINT)!!);
+        set_ambient_occlusion(&fixture, ao_view.view, ray_traced)!!;
+        int near_ao = red(render_and_read(&fixture, &crease, POSED_CREASE_POINT)!!);
+        assert(fixture.renderer.stats.trace_posed_instances == 1);
+        joint.local.position = POSED_OCCLUDER_AWAY;
+        crease.scene.update_world();
+        int away_ao = red(render_and_read(&fixture, &crease, POSED_CREASE_POINT)!!);
+        io::eprintfn(
+            "%s, posed occluder: floor %d, occluded %d, away %d",
+            trace_name(ray_queries),
+            floor_none,
+            near_ao,
+            away_ao,
+        );
+
+        assert((float)near_ao < CREASE_RATIO_MAXIMUM * (float)floor_none);
+        assert(math::abs(away_ao - floor_none) <= UNOCCLUDED_TOLERANCE);
+        check_validation(&fixture.renderer);
+    }
+}
+
+fn void test_posed_emitter_shows_in_reflections() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        print_adapter(&fixture);
+        MirrorScene mirror = create_mirror_scene(&fixture, false)!!;
+        defer scene::destroy_scene(&mirror.scene);
+        mirror.emitter.visible = false;
+        MaterialId glow = fixture.assets.add_material(material::standard(mirror.glow))!!;
+        Node* joint = posed_attach_joint(&fixture, &mirror.scene, posed_box(&fixture, true)!!, glow);
+        AoView mirror_view = create_ao_view(&fixture, ShadingPath.DEFERRED)!!;
+        defer destroy_ao_view(&fixture, &mirror_view);
+        set_reflections(&fixture, mirror_view.view, true)!!;
+
+        joint.local.position = EMITTER_POSITION;
+        mirror.scene.update_world();
+        uint held = render_mirror(&fixture, &mirror, mirror_view.view, EMITTER_IMAGE_POINT)!!;
+        assert(fixture.renderer.stats.trace_posed_instances == 1);
+        joint.local.position = EMITTER_POSITION + (Vec3){ 3, 0, 0 };
+        mirror.scene.update_world();
+        uint moved = render_mirror(&fixture, &mirror, mirror_view.view, EMITTER_IMAGE_POINT)!!;
+        io::eprintfn("%s, posed emitter image: held %06x, moved %06x", trace_name(ray_queries), held, moved);
+
+        assert(red(held) > EMITTER_MINIMUM && green(held) < DARK_MAXIMUM);
+        assert(red(moved) < DARK_MAXIMUM);
+        check_validation(&fixture.renderer);
+    }
+}
+
+fn void test_probe_update_sees_a_posed_wall() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        print_adapter(&fixture);
+        ProbeRoom room = create_probe_room(&fixture)!!;
+        defer scene::destroy_scene(&room.scene);
+        room.roof.visible = false;
+        MaterialId surface = room.scene.get(room.roof, Mesh).material;
+        Node* joint = posed_attach_joint(&fixture, &room.scene, posed_box(&fixture, true)!!, surface);
+        joint.local.position = room.roof.local.position;
+        joint.local.scale = room.roof.local.scale;
+        room.scene.update_world();
+        ProbeView probe_view = create_probe_view(&fixture, ShadingPath.FORWARD)!!;
+        defer destroy_probe_view(&fixture, &probe_view);
+
+        render_room_frames(&fixture, &room, probe_view.view, OPEN_ROOM_UPDATES)!!;
+        float closed = interior_irradiance(&fixture, &room);
+        assert(fixture.renderer.posed_trace.bytes > 0);
+        joint.local.position.y += 10;
+        room.scene.update_world();
+        render_room_frames(&fixture, &room, probe_view.view, OPEN_ROOM_UPDATES)!!;
+        float open = interior_irradiance(&fixture, &room);
+        io::eprintfn("%s: posed roof closed %f, posed away %f", trace_name(ray_queries), closed, open);
+
+        assert(open > LIT_IRRADIANCE);
+        assert(closed < DARK_SHARE * open);
+        check_validation(&fixture.renderer);
+    }
 }
