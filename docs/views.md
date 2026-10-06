@@ -240,7 +240,7 @@ write it with `image::write_png`. Every render target carries transfer-source us
 | --- | --- | --- |
 | `max_views` | `DEFAULT_MAX_VIEWS`, 8 | none beyond memory: a view record is 5.5 KiB |
 | `max_render_targets` | `DEFAULT_MAX_RENDER_TARGETS`, 8 | at most the resolved `texture_capacity`, else `create_renderer` faults `c3d::INVALID_ARGUMENT` |
-| `max_posed_trace_instances` | `DEFAULT_MAX_POSED_TRACE_INSTANCES`, 64 | none beyond memory: a slot holds a mesh's posed streams, a node copy and a bottom level; the example Mannequin's two parts hold 205 KB of streams, and the bench's llvmpipe shape run reports 483 KB in software and 1.63 MB with bottom levels |
+| `max_posed_trace_instances` | `DEFAULT_MAX_POSED_TRACE_INSTANCES`, 64 | none beyond memory: a slot holds a mesh's posed streams, a node copy and a bottom level; the example Mannequin's two parts hold 205 KB of streams; on the RTX 4090 one mannequin of two posed meshes holds 483,032 B of posed data in software and 1,088,920 B in hardware, about 242 KB and 544 KB per slot, and bottom-level sizes are driver-specific |
 | `texture_capacity` | `gpu::DEFAULT_TEXTURE_CAPACITY`, 1,024 | 65,536 (`gpu::MAX_SHADER_HEAP_CAPACITY`), else `gpu::INVALID_ARGUMENT` |
 | `texture_heap_capacity` | `gpu::DEFAULT_TEXTURE_HEAP_CAPACITY`, 4,096 | 65,536, else `gpu::INVALID_ARGUMENT`; past the device's descriptor limits no adapter qualifies and `create_renderer` faults `c3d::UNSUPPORTED` |
 
