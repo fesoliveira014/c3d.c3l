@@ -128,6 +128,7 @@ const uint CLUSTER_GROUP_SIZE = 64;
 const uint MAX_DECALS = 256; // 40 KiB of 160-byte records per view per frame-slot upload; bounds the flat loop.
 const uint MAX_CLUSTER_DECALS = 8; // 32 bytes of indices per cell; overflow selects the complete flat loop.
 const float DECAL_FADE_BAND = 0.1; // About six degrees at the default angle; narrower angles retain full facing opacity.
+const float DECAL_HALF_EXTENT = 0.5;
 
 struct DecalGpu {
     vec4 world_to_local_0;
