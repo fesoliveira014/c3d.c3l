@@ -675,7 +675,7 @@ fn ViewId? create_view(Renderer* renderer, ViewDesc desc) {
 }
 
 <*
- Replace the view's configuration; resizes or retires its working images and forgets its history.
+ Replace the view's configuration; resizes or retires its working images and forgets its history except the adapted exposure.
  @param [&inout] renderer : "No open frame."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT
  @return? c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE

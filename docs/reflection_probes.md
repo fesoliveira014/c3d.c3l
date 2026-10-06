@@ -176,13 +176,14 @@ c3c build reflection_probes --path examples --lib c3d_profile -D C3D_PROFILE_GPU
 
 ## Measured cost
 
-Measured on an RTX 4090, three runs each. Sampling runs Sponza at 2560 by 1440; capture runs the example. The
-commands are in [benchmarking](benchmarking.md) and the example section above.
+Measured on an RTX 4090, medians of per-run medians. Sampling runs Sponza at 2560 by 1440 (seven interleaved runs
+for one probe and for 16 with none inside, three for the rest); capture runs the example, three runs. The commands
+are in [benchmarking](benchmarking.md) and the example section above.
 
 | Measurement | Result |
 | --- | --- |
-| Sampling, `gpu_opaque_ms` with 0, 1, 2 and 16 probes, and 16 probes with none inside | not yet recorded |
-| Sampling, `gpu_lighting_ms` with the same placements, deferred | not yet recorded |
+| Sampling, `gpu_opaque_ms` with 0, 1, 2 and 16 probes, and 16 probes with none inside | 0.348, 0.376, 0.441, 0.395 and 0.504 ms |
+| Sampling, `gpu_lighting_ms` with the same placements, deferred | 0.338, 0.360, 0.413, 0.371 and 0.463 ms |
 | Capture time per probe, steady (the second probe) | 4.6 to 5.8 ms at 128; 17 to 19 ms at 256 |
 | Capture time of the first probe in a run, with first-use pipeline creation | 59 to 61 ms at 128 (839 ms on a cold first run); 56 to 64 ms at 256 |
 | First-frame `environment.prefilter`, two probes | 1.00 to 1.07 ms at 128; 4.0 to 4.4 ms at 256 |
@@ -190,3 +191,7 @@ commands are in [benchmarking](benchmarking.md) and the example section above.
 | The example's forward opaque pass | 0.17 to 0.20 ms at both sizes |
 
 The profiler sums stage times over a frame, so the environment rows cover both probes.
+
+Selection tests the packed boxes in order until a box holds the point at full weight, or two boxes hold it, loading
+only each box's centre, axes and blend distance. Sixteen boxes that hold no point are the worst case: 0.128 ms forward and 0.103 ms deferred over one
+probe. Sixteen boxes that hold the points cost 0.02 ms over one.

@@ -932,6 +932,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         free_instance_culling(&renderer);
         free_prepares(&renderer);
         alloc::free(allocator, renderer.materials.ptr);
+        alloc::free(allocator, renderer.shadow_frusta.ptr);
         alloc::free(allocator, renderer.shadow_set.lights.ptr);
         free_shaders(&renderer);
         free_compute_shaders(&renderer);
