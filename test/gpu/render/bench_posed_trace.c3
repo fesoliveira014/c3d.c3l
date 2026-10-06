@@ -30,6 +30,10 @@ const float STRONG_TIME @local = 0.5f;      // seconds into the strong clip held
 const float GRID_SPACING @local = 2;
 const float FRAME_DELTA @local = 1.0f / 60;
 const uint PARTS_PER_CHARACTER @local = 2;  // the example Mannequin draws two skinned parts
+const uint NODES_PER_CHARACTER @local = 160; // joints, mesh nodes and spare room of one instantiated character
+const uint SCENE_NODE_RESERVE @local = 64;   // the sun, the camera and spare nodes
+const uint CAPACITY_HEADROOM @local = 2;     // trace rows and slots at twice the parts, so no capacity limits a sample
+const uint TRACE_ROW_RESERVE @local = 64;    // rows beyond the characters' parts
 
 struct BenchRoot @local {
     Mat4f           inv_view_proj;
@@ -56,12 +60,11 @@ struct Sample @local {
     bool  completed;
 }
 
-fn ClipId find_clip(AssetStore* assets, ModelId model, String name) @local {
+fn ClipId? find_clip(AssetStore* assets, ModelId model, String name) @local {
     foreach (clip : assets.model(model).data.clips) {
         if (assets.clip(clip).data.name == name) return clip;
     }
-    io::eprintfn("no clip named %s in %s", name, MODEL_PATH);
-    unreachable("the benchmark model lacks a clip");
+    return c3d::ASSET_FORMAT_ERROR~;
 }
 
 fn void print_storage_sizes(Renderer* renderer, GeometryId geometry) @local {
@@ -120,14 +123,19 @@ fn int main(String[] args) {
     AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
     defer asset::destroy_asset_store(&assets);
     ModelId model = gltf::load_model(&assets, MODEL_PATH)!!;
-    Scene scene = scene::create_scene(mem, { .max_nodes = count * 160 + 64 });
+    Scene scene = scene::create_scene(mem, { .max_nodes = count * NODES_PER_CHARACTER + SCENE_NODE_RESERVE });
     defer scene::destroy_scene(&scene);
 
     uint columns = (uint)math::ceil(math::sqrt((float)count));
     if (crowd) {
         CrowdInstance[] instances = mem::new_array(CrowdInstance, count);
         defer free(instances);
-        ClipId walk = find_clip(&assets, model, CROWD_CLIP);
+        ClipId? found_walk = find_clip(&assets, model, CROWD_CLIP);
+        if (catch found_walk) {
+            io::eprintfn("no clip named %s in %s", CROWD_CLIP, MODEL_PATH);
+            return 1;
+        }
+        ClipId walk = found_walk;
         foreach (index, &instance : instances) {
             Transform placement = maths::TRANSFORM_IDENTITY;
             placement.position = {
@@ -151,7 +159,12 @@ fn int main(String[] args) {
             trace:       true,
         )!!;
     } else {
-        ClipId strong = find_clip(&assets, model, STRONG_CLIP);
+        ClipId? found_strong = find_clip(&assets, model, STRONG_CLIP);
+        if (catch found_strong) {
+            io::eprintfn("no clip named %s in %s", STRONG_CLIP, MODEL_PATH);
+            return 1;
+        }
+        ClipId strong = found_strong;
         for (uint index = 0; index < count; index++) {
             Node* node = model::instantiate(&assets, &scene, model, name: "mannequin")!!;
             node.local.position = {
@@ -188,8 +201,8 @@ fn int main(String[] args) {
             .gpu_timings               = true,
             .ray_queries               = hardware,
             .application_name          = "posed_trace_benchmark",
-            .max_trace_instances       = count * PARTS_PER_CHARACTER * 2 + 64,
-            .max_posed_trace_instances = count * PARTS_PER_CHARACTER * 2,
+            .max_trace_instances       = count * PARTS_PER_CHARACTER * CAPACITY_HEADROOM + TRACE_ROW_RESERVE,
+            .max_posed_trace_instances = count * PARTS_PER_CHARACTER * CAPACITY_HEADROOM,
         },
     )!!;
     defer render::destroy_renderer(&renderer);

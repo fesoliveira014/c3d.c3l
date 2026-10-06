@@ -257,10 +257,28 @@ fn void test_sway_traces_at_rest_and_is_counted() @test {
     Transform[2] transforms = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
     transforms[1].position = { 2, 0, 0 };
     InstanceSway wind = { .direction = { 1, 0, 0 }, .amplitude = 0.2f, .frequency = 1 };
-    Node* swaying = scene.add_instanced_mesh(fixture.box, fixture.opaque, 2, transforms[..], name: "swaying")!!;
+    Node* swaying = scene.add_instanced_mesh(
+        geometry:   fixture.box,
+        material:   fixture.opaque,
+        capacity:   2,
+        transforms: transforms[..],
+        name:       "swaying",
+    )!!;
     scene.get(swaying, InstancedMesh).sway = wind;
-    scene.add_instanced_mesh(fixture.box, fixture.opaque, 2, transforms[..], name: "still")!!;
-    Node* hidden = scene.add_instanced_mesh(fixture.box, fixture.opaque, 2, transforms[..], name: "untraced")!!;
+    scene.add_instanced_mesh(
+        geometry:   fixture.box,
+        material:   fixture.opaque,
+        capacity:   2,
+        transforms: transforms[..],
+        name:       "still",
+    )!!;
+    Node* hidden = scene.add_instanced_mesh(
+        geometry:   fixture.box,
+        material:   fixture.opaque,
+        capacity:   2,
+        transforms: transforms[..],
+        name:       "untraced",
+    )!!;
     scene.get(hidden, InstancedMesh).sway = wind;
     scene.get(hidden, InstancedMesh).trace = false;
     scene.update_world();
@@ -527,7 +545,13 @@ fn void test_trace_record_mask_follows_cast_shadow() @test {
     scene.get(receiver, Mesh).cast_shadow = false;
     Transform[2] transforms = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
     transforms[1].position = { 2, 0, 0 };
-    Node* batch = scene.add_instanced_mesh(fixture.box, fixture.opaque, 2, transforms[..], name: "batch")!!;
+    Node* batch = scene.add_instanced_mesh(
+        geometry:   fixture.box,
+        material:   fixture.opaque,
+        capacity:   2,
+        transforms: transforms[..],
+        name:       "batch",
+    )!!;
     scene.get(batch, InstancedMesh).cast_shadow = false;
     scene.update_world();
 

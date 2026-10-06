@@ -287,7 +287,7 @@ What the four cases establish:
 
 - Posed trace instances (`test_posed_trace.c3`, both kinds where noted): a skinned, a morphed and a combined mesh trace at the raster
   pose over four frames (traced hit distance against the raster depth of the same pixels, hits on the slot's geometry
-  root), two instances of one geometry stay independent beside a static mesh, a still pose records no posing and keeps the
+  root, and each hit's shading normal against the normal of its posed triangle), two instances of one geometry stay independent beside a static mesh, a still pose records no posing and keeps the
   trace revision while a joint or weight change advances it once (an aborted frame re-poses once), frames without a
   traced consumer allocate and record nothing, a morph target that leaves the rest box is hit, a closed-frame preparation
   reads the current pose and does not re-pose when repeated, the refit at rest reproduces the rest tree component for
@@ -303,8 +303,9 @@ What the four cases establish:
   probe room's light only in place.
 
   Crowds (`add_crowd(trace: true)`, both kinds): a mirrored and an unmirrored placement of a two-part crowd trace at their
-  raster poses with their own palettes and front faces (four posed slots), and a placement posed outside its rest
-  geometry but inside `pose_bounds` is hit.
+  raster poses with their own palettes and front faces (four posed slots), a part with a `MASK` material that discards
+  every pixel leaves no trace hits where raster shows none, and a placement posed outside its rest geometry but inside
+  `pose_bounds` is hit.
 
 `posed_trace_bench` (`c3c build posed_trace_bench --path test/gpu/render`, run from the repository root) prints one CSV
 row per sampled frame: `mannequin <count> <software|hardware> <rest|strong|animate> [fresh]` traces `count` animated

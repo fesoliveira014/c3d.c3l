@@ -29,6 +29,8 @@ struct PosedDepthResult {
     uint primitive;
     uint padding;
     vec2 barycentrics;
+    vec4 normal;
+    vec4 geometric_normal;
 };
 
 GPU_DECLARE_WRITEONLY_ARRAY_REF(PosedDepthOutput, PosedDepthResult);
@@ -37,7 +39,7 @@ const float POSED_TRACE_FAR = 1.0e30;
 const uint POSED_RASTER_HIT = 1u; // mirrored as POSED_RASTER_HIT in test_posed_trace.c3
 const uint POSED_TRACE_HIT = 2u;  // mirrored as POSED_TRACE_HIT in test_posed_trace.c3
 
-// Raster distance from the view's reverse-Z depth and traced distance along the same pixel-centre ray.
+// Raster distance from the view's reverse-Z depth; traced distance and normals along the same pixel-centre ray.
 void main() {
     DispatchRoot dispatch = DispatchRoot(pc.root_gpu);
     PosedDepthRoot root = PosedDepthRoot(dispatch.parameters);
@@ -51,7 +53,7 @@ void main() {
     vec4 far_point = root.inv_view_proj * vec4(ndc, 0.5, 1.0);
     vec3 direction = normalize(far_point.xyz / far_point.w - root.camera.xyz);
 
-    PosedDepthResult result = PosedDepthResult(0.0, 0.0, 0u, 0u, 0u, 0u, vec2(0.0));
+    PosedDepthResult result = PosedDepthResult(0.0, 0.0, 0u, 0u, 0u, 0u, vec2(0.0), vec4(0.0), vec4(0.0));
     if (depth > 0.0) {
         vec4 surface = root.inv_view_proj * vec4(ndc, depth, 1.0);
         result.raster = length(surface.xyz / surface.w - root.camera.xyz);
@@ -64,6 +66,9 @@ void main() {
         result.geometry_low = uint(TraceInstanceArray(scene.instances).values[hit.instance].geometry);
         result.primitive = hit.primitive;
         result.barycentrics = hit.barycentrics;
+        TraceSurface surface = surface_from_hit(scene, hit, direction, 0.0);
+        result.normal = vec4(normalize(surface.normal), 0.0);
+        result.geometric_normal = vec4(normalize(surface.geometric_normal), 0.0);
         result.flags |= POSED_TRACE_HIT;
     }
     PosedDepthOutput(root.output_address).values[pixel.y * root.size + pixel.x] = result;

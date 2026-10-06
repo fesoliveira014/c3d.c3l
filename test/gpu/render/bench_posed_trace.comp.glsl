@@ -38,6 +38,7 @@ void main() {
     vec3 direction = normalize(far_point.xyz / far_point.w - root.camera.xyz);
     SceneHit hit;
     SceneTraceRoot scene = SceneTraceRoot(root.scene);
-    float distance = trace_scene(scene, root.camera.xyz, direction, BENCH_TRACE_FAR, TRACE_MASK_ALL, hit) ? hit.t : -1.0;
+    bool hit_found = trace_scene(scene, root.camera.xyz, direction, BENCH_TRACE_FAR, TRACE_MASK_ALL, hit);
+    float distance = hit_found ? hit.t : -1.0;
     BenchOutput(root.output_address).values[pixel.y * root.width + pixel.x] = distance;
 }
