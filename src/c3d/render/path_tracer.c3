@@ -186,15 +186,6 @@ fn void? acquire_accumulation(Renderer* renderer, ViewRecord* record) @private {
     )!;
 }
 
-fn void retire_accumulation(Renderer* renderer, ViewRecord* record) @private {
-    if (!record.accumulation.texture.is_valid()) return;
-    retire_storage_target(last_submitted_retire(renderer), &record.accumulation);
-}
-
-fn void release_accumulation(gpu::Device* device, ViewRecord* record) @private {
-    if (record.accumulation.texture.is_valid()) release_storage_target(device, &record.accumulation);
-}
-
 <*
  @require record.desc.shading == ShadingPath.PATH_TRACED
  @require record.accumulation.texture.is_valid()
