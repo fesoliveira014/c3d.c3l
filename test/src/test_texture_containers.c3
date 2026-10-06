@@ -5,6 +5,8 @@ import c3d::asset;
 import c3d::asset::image;
 import c3d::material;
 import std::core::bitorder;
+import std::io::path;
+
 const char[*] DX10_RGBA8_SRGB @local = $embed("../fixtures/texture/dx10_rgba8_srgb_5x3.dds");
 const char[*] DX10_BC7_SRGB @local = $embed("../fixtures/texture/dx10_bc7_srgb_5x3.dds");
 const char[*] DX10_FORMAT16 @local = $embed("../fixtures/texture/dx10_format16.dds");
@@ -30,6 +32,8 @@ const usz KTX2_LEVEL_ENTRY_BYTES @local = 24;
 const usz KTX2_DFD_OFFSET_FIELD @local = 48;
 const usz KTX1_KEY_VALUE_BYTES_FIELD @local = 60;
 const usz KTX1_HEADER_END @local = 64;
+const char[*] REAL_SUPERCOMPRESSED @local =
+  $embed("../fixtures/texture/gltf_sample_assets/FlightHelmet_Materials_LensesMat_Normal.ktx2");
 const uint R16_MIP_STEP @local = 1000; // the fixture writer's texel value: 1000 * mip + row-major index
 
 enum Field @local {
@@ -97,6 +101,14 @@ struct FormatRow @local {
     uint width;
     uint height;
     PixelFormat format;
+}
+
+struct RealToolRow @local {
+    char[] bytes;
+    PixelFormat format;
+    uint width;
+    uint height;
+    usz[2][] spans; // offset and length of each level, base first
 }
 
 fn usz field_offset(Field field) @local {
@@ -264,6 +276,11 @@ fn AssetStore create_container_store(Allocator allocator, uint max_textures = 64
         .max_materials = 1,
         .max_samplers = asset::BUILTIN_SAMPLER_COUNT,
     });
+}
+
+fn String fixture_path(String name) @local {
+    Path source = path::tnew($$FILEPATH)!!;
+    return (String)source.parent()!!.tappend("../fixtures/texture", name)!!;
 }
 
 fn ushort[] r16_texels(
@@ -875,5 +892,265 @@ fn void test_orientation_fixture_matches_across_containers() @test {
             assert(dds.levels[mip].bytes == ktx1.levels[mip].bytes && dds.levels[mip].bytes == ktx2.levels[mip].bytes);
             assert(dds.levels[mip].bytes[:4] == markers[mip][..], "mip %d", mip);
         }
+    };
+}
+
+fn void check_real_tool(AssetStore* assets, RealToolRow* row) @local {
+    TextureId loaded = image::add_texture_container(assets, row.bytes)!!;
+    TextureMipData[material::TEXTURE_MIP_CAPACITY] levels;
+    foreach (uint mip, span : row.spans) levels[mip] = { .mip = mip, .bytes = row.bytes[span[0]:span[1]] };
+    TextureDesc desc = material::texture_2d_desc(row.width, row.height, row.format);
+    desc.generate_mips = false;
+    desc.mip_levels = (uint)row.spans.len;
+    TextureId supplied = assets.add_texture_mips(desc, levels[:row.spans.len])!!;
+
+    TextureAsset* container = assets.texture(loaded);
+    TextureAsset* hand = assets.texture(supplied);
+    check_plain_2d(container.desc, row.width, row.height, row.format);
+    assert(container.desc.mip_levels == row.spans.len && !container.desc.generate_mips);
+    foreach (usz mip, level : hand.supplied_mips) assert(container.supplied_mips[mip].bytes == level.bytes);
+}
+
+fn void test_store_helpers_insert_one_owned_copy() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+
+    {
+        AssetStore assets = create_container_store(&tracker);
+        defer asset::destroy_asset_store(&assets);
+
+        @pool() {
+            char[] bytes = copied(KTX1_R16[..]);
+            sz before = tracker.allocation_count();
+            TextureId padded = image::add_texture_container(&assets, bytes)!!;
+            assert(tracker.allocation_count() == before + 1);
+            bytes[..] = 0;
+            TextureAsset* record = assets.texture(padded);
+            assert(record.source_kind == SUPPLIED_MIPS && record.supplied_mips.len == 3);
+            assert(record.supplied_mips[0].bytes == as_bytes(r16_texels(tmem, 0, 5, 3)));
+
+            TextureId generated = image::add_texture_container(
+                assets: &assets,
+                bytes:  KTX1_GENERATE[..],
+                key:    "container/generated",
+            )!!;
+            TextureAsset* base = assets.texture(generated);
+            assert(base.source_kind == MIP_ZERO && base.desc.generate_mips && base.pixels.len == 16);
+            assert(base.pixels == KTX1_GENERATE[68:16]);
+            TextureId found = assets.find_texture("container/generated")!!;
+            assert(found.index == generated.index && found.generation == generated.generation);
+        };
+    }
+    assert(!tracker.has_leaks());
+}
+
+fn void test_store_helper_faults_leave_the_store_unchanged() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+
+    {
+        AssetStore full = create_container_store(&tracker, asset::BUILTIN_TEXTURE_COUNT);
+        defer asset::destroy_asset_store(&full);
+        AssetStore assets = create_container_store(&tracker);
+        defer asset::destroy_asset_store(&assets);
+        image::add_texture_container(&assets, LEGACY_DXT1[..], key: "taken")!!;
+
+        @pool() {
+            sz allocated = tracker.allocated();
+            uint full_slots = full.textures.free_count;
+            uint free_slots = assets.textures.free_count;
+            assert(@catch(image::add_texture_container(&full, KTX1_R16[..], key: "full")) == c3d::CAPACITY_EXCEEDED);
+            assert(@catch(full.find_texture("full")) == NOT_FOUND);
+            assert(@catch(image::add_texture_container(&assets, KTX2_BC5[..], key: "taken")) == c3d::INVALID_ARGUMENT);
+            assert(@catch(image::add_texture_container(&assets, KTX2_BC5[..], SRGB)) == c3d::INVALID_ARGUMENT);
+            char[] short_ktx2 = truncated(KTX2_BC5[..], 200);
+            assert(@catch(image::add_texture_container(&assets, short_ktx2)) == c3d::ASSET_FORMAT_ERROR);
+            assert(@catch(image::add_texture_container(&assets, KTX2_BC1_RGB_PUNCH[..])) == c3d::UNSUPPORTED);
+            assert(tracker.allocated() == allocated);
+            assert(full.textures.free_count == full_slots && assets.textures.free_count == free_slots);
+        };
+    }
+    assert(!tracker.has_leaks());
+}
+
+fn void test_load_texture_container_reads_files() @test {
+    AssetStore assets = create_container_store(mem);
+    defer asset::destroy_asset_store(&assets);
+
+    @pool() {
+        TextureId texture = image::load_texture_container(&assets, fixture_path("ktx1_r16_5x3.ktx"), key: "heights")!!;
+        assert(assets.texture(texture).desc.format == R16_UINT && assets.texture(texture).supplied_mips.len == 3);
+        assert(@catch(image::load_texture_container(&assets, fixture_path("missing.ktx2"))) == c3d::ASSET_IO_ERROR);
+        String malformed = fixture_path("../truncated.png");
+        assert(@catch(image::load_texture_container(&assets, malformed)) == c3d::ASSET_FORMAT_ERROR);
+    };
+}
+
+fn void test_real_tool_files_match_supplied_mips() @test {
+    RealToolRow[24] rows = {
+        {
+            .bytes = $embed("../fixtures/texture/imagemagick/dxt1_8x8.dds"),
+            .format = BC1_RGBA_UNORM, .width = 8, .height = 8,
+            .spans = { { 128, 32 }, { 160, 8 }, { 168, 8 }, { 176, 8 } },
+        },
+        {
+            .bytes = $embed("../fixtures/texture/imagemagick/dxt5_16x8.dds"),
+            .format = BC3_UNORM, .width = 16, .height = 8,
+            .spans = { { 128, 128 }, { 256, 32 }, { 288, 16 }, { 304, 16 }, { 320, 16 } },
+        },
+        {
+            .bytes = $embed("../fixtures/texture/bcnencoder/test_decompress_bc1a.dds"),
+            .format = BC1_RGBA_UNORM, .width = 48, .height = 48,
+            .spans = { { 128, 1152 } },
+        },
+        {
+            .bytes = $embed("../fixtures/texture/bcnencoder/decoding_dds_bc5.dds"),
+            .format = BC5_UNORM, .width = 64, .height = 64,
+            .spans = {
+                { 148, 4096 }, { 4244, 1024 }, { 5268, 256 }, { 5524, 64 },
+                { 5588, 16 }, { 5604, 16 }, { 5620, 16 },
+            },
+        },
+        {
+            .bytes = $embed("../fixtures/texture/openimageio/dds_dxgi_rgba8_srgb.dds"),
+            .format = RGBA8_SRGB, .width = 16, .height = 8,
+            .spans = { { 148, 512 } },
+        },
+        {
+            .bytes = $embed("../fixtures/texture/openimageio/dds_dxgi_bc7_srgb.dds"),
+            .format = BC7_SRGB, .width = 16, .height = 8,
+            .spans = { { 148, 128 } },
+        },
+        {
+            .bytes = $embed("../fixtures/texture/openimageio/dds_npot_bc3_mips.dds"),
+            .format = BC3_UNORM, .width = 13, .height = 7,
+            .spans = { { 128, 128 }, { 256, 32 }, { 288, 16 }, { 304, 16 } },
+        },
+        {
+            .bytes = $embed("../fixtures/texture/bcnencoder/test_decompress_bc1a.ktx"),
+            .format = BC1_RGBA_UNORM, .width = 48, .height = 48,
+            .spans = { { 68, 1152 }, { 1224, 288 }, { 1516, 72 }, { 1592, 32 }, { 1628, 8 }, { 1640, 8 } },
+        },
+        {
+            .bytes = $embed("../fixtures/texture/ktxtest/format_bc1_rgba_unorm.ktx"),
+            .format = BC1_RGBA_UNORM, .width = 64, .height = 64,
+            .spans = {
+                { 68, 2048 }, { 2120, 512 }, { 2636, 128 }, { 2768, 32 },
+                { 2804, 8 }, { 2816, 8 }, { 2828, 8 },
+            },
+        },
+        {
+            // BC1_RGB; no three-color block reads index 3
+            .bytes = $embed("../fixtures/texture/ktxtest/format_bc1_rgb_unorm.ktx"),
+            .format = BC1_RGBA_UNORM, .width = 64, .height = 64,
+            .spans = {
+                { 68, 2048 }, { 2120, 512 }, { 2636, 128 }, { 2768, 32 },
+                { 2804, 8 }, { 2816, 8 }, { 2828, 8 },
+            },
+        },
+        {
+            .bytes = $embed("../fixtures/texture/ktxtest/format_bc3_unorm.ktx"),
+            .format = BC3_UNORM, .width = 64, .height = 64,
+            .spans = {
+                { 68, 4096 }, { 4168, 1024 }, { 5196, 256 }, { 5456, 64 },
+                { 5524, 16 }, { 5544, 16 }, { 5564, 16 },
+            },
+        },
+        {
+            .bytes = $embed("../fixtures/texture/ktxtest/format_bc4_unorm.ktx"),
+            .format = BC4_UNORM, .width = 64, .height = 64,
+            .spans = {
+                { 68, 2048 }, { 2120, 512 }, { 2636, 128 }, { 2768, 32 },
+                { 2804, 8 }, { 2816, 8 }, { 2828, 8 },
+            },
+        },
+        {
+            .bytes = $embed("../fixtures/texture/ktxtest/format_bc5_unorm.ktx"),
+            .format = BC5_UNORM, .width = 64, .height = 64,
+            .spans = {
+                { 68, 4096 }, { 4168, 1024 }, { 5196, 256 }, { 5456, 64 },
+                { 5524, 16 }, { 5544, 16 }, { 5564, 16 },
+            },
+        },
+        {
+            .bytes = $embed("../fixtures/texture/ktxtest/format_bc7_unorm.ktx"),
+            .format = BC7_UNORM, .width = 64, .height = 64,
+            .spans = {
+                { 68, 4096 }, { 4168, 1024 }, { 5196, 256 }, { 5456, 64 },
+                { 5524, 16 }, { 5544, 16 }, { 5564, 16 },
+            },
+        },
+        {
+            .bytes = $embed("../fixtures/texture/ktx2_samples/2d_rgba8.ktx2"),
+            .format = RGBA8_SRGB, .width = 40, .height = 40,
+            .spans = { { 2488, 6400 }, { 888, 1600 }, { 488, 400 }, { 388, 100 }, { 372, 16 }, { 368, 4 } },
+        },
+        {
+            .bytes = $embed("../fixtures/texture/ktx2_samples/2d_rgba8_linear.ktx2"),
+            .format = RGBA8_UNORM, .width = 40, .height = 40,
+            .spans = { { 2488, 6400 }, { 888, 1600 }, { 488, 400 }, { 388, 100 }, { 372, 16 }, { 368, 4 } },
+        },
+        {
+            .bytes = $embed("../fixtures/texture/ktx2_samples/2d_rgba16_linear.ktx2"),
+            .format = RGBA16_FLOAT, .width = 40, .height = 40,
+            .spans = { { 4608, 12800 }, { 1408, 3200 }, { 608, 800 }, { 408, 200 }, { 376, 32 }, { 368, 8 } },
+        },
+        {
+            .bytes = $embed("../fixtures/texture/ktx2_samples/2d_rgba32_linear.ktx2"),
+            .format = RGBA32_FLOAT, .width = 40, .height = 40,
+            .spans = { { 8848, 25600 }, { 2448, 6400 }, { 848, 1600 }, { 448, 400 }, { 384, 64 }, { 368, 16 } },
+        },
+        {
+            // BC1_RGB_SRGB; no three-color block reads index 3
+            .bytes = $embed("../fixtures/texture/ktx2_samples/2d_bc1.ktx2"),
+            .format = BC1_RGBA_SRGB, .width = 40, .height = 40,
+            .spans = { { 648, 800 }, { 448, 200 }, { 376, 72 }, { 344, 32 }, { 336, 8 }, { 328, 8 } },
+        },
+        {
+            .bytes = $embed("../fixtures/texture/ktx2_samples/2d_bc3.ktx2"),
+            .format = BC3_SRGB, .width = 40, .height = 40,
+            .spans = { { 992, 1600 }, { 592, 400 }, { 448, 144 }, { 384, 64 }, { 368, 16 }, { 352, 16 } },
+        },
+        {
+            .bytes = $embed("../fixtures/texture/ktx2_samples/2d_bc4.ktx2"),
+            .format = BC4_UNORM, .width = 40, .height = 40,
+            .spans = { { 648, 800 }, { 448, 200 }, { 376, 72 }, { 344, 32 }, { 336, 8 }, { 328, 8 } },
+        },
+        {
+            .bytes = $embed("../fixtures/texture/ktx2_samples/2d_bc5.ktx2"),
+            .format = BC5_UNORM, .width = 40, .height = 40,
+            .spans = { { 992, 1600 }, { 592, 400 }, { 448, 144 }, { 384, 64 }, { 368, 16 }, { 352, 16 } },
+        },
+        {
+            .bytes = $embed("../fixtures/texture/ktx2_samples/2d_bc7.ktx2"),
+            .format = BC7_SRGB, .width = 40, .height = 40,
+            .spans = { { 976, 1600 }, { 576, 400 }, { 432, 144 }, { 368, 64 }, { 352, 16 }, { 336, 16 } },
+        },
+        {
+            .bytes = $embed("../fixtures/texture/openimageio/rgba8_unorm_bc7.ktx2"),
+            .format = BC7_UNORM, .width = 40, .height = 40,
+            .spans = { { 224, 1600 } },
+        },
+    };
+    AssetStore assets = create_container_store(mem);
+    defer asset::destroy_asset_store(&assets);
+
+    foreach (&row : rows) check_real_tool(&assets, row);
+}
+
+fn void test_real_tool_files_outside_the_subset_are_unsupported() @test {
+    const uint GL_RGBA8 = 0x8058;
+    const uint GL_RGBA = 0x1908;
+    @pool() {
+        assert(parse_fault($embed("../fixtures/texture/openimageio/dds_npot_rgba8_mips.dds")) == c3d::UNSUPPORTED);
+        assert(parse_fault($embed("../fixtures/texture/ktxtest/endian_big_type_ubyte_r8g8.ktx")) == c3d::UNSUPPORTED);
+        char[] array = $embed("../fixtures/texture/ktxtest/array_2_elements_2d.ktx");
+        assert(parse_fault(array) == c3d::UNSUPPORTED);
+        char[] array_rgba8 = with_field(with_field(array, KTX1_INTERNAL_FORMAT, GL_RGBA8), KTX1_GL_FORMAT, GL_RGBA);
+        assert(parse_fault(array_rgba8) == c3d::UNSUPPORTED);
+        assert(parse_fault(with_field(array_rgba8, KTX1_ARRAY_ELEMENTS, 0)) == c3d::ASSET_FORMAT_ERROR);
+        assert(parse_fault(REAL_SUPERCOMPRESSED[..]) == c3d::UNSUPPORTED);
     };
 }

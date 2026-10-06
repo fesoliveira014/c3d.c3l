@@ -140,6 +140,9 @@ Levels are red, green, blue, yellow, magenta, cyan and white at offsets
 one full eight-byte block. These commands describe one-time fixture authoring;
 no compressor, transcoder or image encoder runs during the build.
 
+`examples/assets/bc1_mips.dds` holds the same 2744 bytes behind a DX10 header (`BC1_UNORM_SRGB`, 64×64, 7 levels);
+the container fixture script below writes it.
+
 # Texture container fixtures
 
 `test/fixtures/texture/` holds DDS, KTX 1.1 and KTX 2.0 files for the container tests. Files directly in that
@@ -148,8 +151,8 @@ Level bytes come from `payload(seed, length)`, BC1 blocks keep `color0 > color1`
 `R16_UINT` texels hold `1000 * mip + index` in row-major order. `ktx1_level_capacity.ktx` and
 `ktx2_level_capacity.ktx2` are malformed on purpose: they claim 33 levels. `orientation_4x4.*` holds the same three
 RGBA8 levels in each container, with a red, green and blue marker at texel 0 of levels 0, 1 and 2.
-Each project-authored file stays
-within 3 KB; they total 4,960 bytes. The script's
+`examples/assets/bc1_mips.dds` wraps `bc1_mips.bin` in a DX10 header (DXGI 72). Each project-authored file stays
+within 3 KB; they total 7,852 bytes: 4,960 under `test/fixtures/texture/` and 2,892 for the example. The script's
 data format descriptors are byte-identical to `ktx create` and `ktx transcode` v4.3.1 output in KTX2-Samples
 `471931bbe05c5a5443da3ea7be37f44680664ac6` (`2d_rgba8`, `2d_rgba8_linear`, `2d_bc7`, `2d_bc5`); the BC1_RGB
 descriptor matches `2d_bc1` except the transfer byte, linear for vkFormat 131 and sRGB for 132. Run the script from
@@ -316,7 +319,73 @@ ktx2(fixtures / "ktx2_format16.ktx2", 37, 1, 2, 2, [clean_bc1(9, 2)], rgba8_dfd(
 ktx2(fixtures / "orientation_4x4.ktx2", 37, 1, 4, 4, ORIENTATION_LEVELS, rgba8_dfd(False), 4)
 ktx2(fixtures / "ktx2_level_capacity.ktx2", 37, 1, 0xFFFFFFFF, 0xFFFFFFFF, [b""] * 33,
      rgba8_dfd(False), 4)
+
+# The example chain of examples/assets/bc1_mips.bin wrapped in a DX10 header as BC1_RGBA_SRGB.
+chain = Path("examples/assets/bc1_mips.bin").read_bytes()
+sizes = [2048, 512, 128, 32, 8, 8, 8]
+starts = [sum(sizes[:mip]) for mip in range(len(sizes))]
+dds_levels = [chain[start:start + size] for start, size in zip(starts, sizes)]
+dds(Path("examples/assets/bc1_mips.dds"), 64, 64, dds_levels, DX10, 72)
+
 ```
+
+Real-tool files sit in one subdirectory per source and are committed unmodified; tests mutate in-memory copies only.
+Licenses are listed in [test/fixtures/LICENSES.md](../test/fixtures/LICENSES.md). Offsets in the tests were read from
+each file's header.
+
+| Directory | Source, commit | License | Writer | Files |
+| --- | --- | --- | --- | --- |
+| `imagemagick/` | this project, WSL host (Ubuntu 22.04) | project-authored | ImageMagick 6.9.11-60 Q16 | `dxt1_8x8.dds`, `dxt5_16x8.dds` |
+| `ktxtest/` | [sevmeyer/ktxtest](https://github.com/sevmeyer/ktxtest) `e1181e40de001d0d073161f3758d3262f3cd507b`, `ktx/valid/{compression,format,composition}/` | CC0 1.0 | containers ktxjuggle; BC payloads CompressonatorCLI 3.1.307 | `format_bc1_rgba_unorm.ktx`, `format_bc1_rgb_unorm.ktx`, `format_bc3_unorm.ktx`, `format_bc4_unorm.ktx`, `format_bc5_unorm.ktx`, `format_bc7_unorm.ktx`, `endian_big_type_ubyte_r8g8.ktx`, `array_2_elements_2d.ktx` |
+| `gltf_sample_assets/` | [KhronosGroup/glTF-Sample-Assets](https://github.com/KhronosGroup/glTF-Sample-Assets) `edc7c9e67c639d230715049ee31f9a96a6babbbe`, `Models/FlightHelmet/glTF-KTX-BasisU/` | CC0 1.0 | `ktx create v4.4.2` (its `KTXwriter` key) | `FlightHelmet_Materials_LensesMat_Normal.ktx2` |
+| `bcnencoder/` | [Nominom/BCnEncoder.NET](https://github.com/Nominom/BCnEncoder.NET) `51d3199b3bc374e0bdda3947d9f347cb6235a9a0`, `BCnEncTests/testImages/` | public domain (that directory's `NOTICE`) | not recorded (no header tag) | `test_decompress_bc1a.dds`, `test_decompress_bc1a.ktx`, `decoding_dds_bc5.dds` |
+| `openimageio/` | [AcademySoftwareFoundation/OpenImageIO-images](https://github.com/AcademySoftwareFoundation/OpenImageIO-images) `d13e98f92b4e75ae7cd949cc5aa1df219560fb93`, `dds/` and `ktx2/` | Apache-2.0 | `dds_dxgi_rgba8_srgb.dds`, `dds_dxgi_bc7_srgb.dds`: not recorded (no header tag); `dds_npot_bc3_mips.dds`, `dds_npot_rgba8_mips.dds`: GIMP DDS plug-in (header tag); `rgba8_unorm_bc7.ktx2`: `ktx transcode v5.0` (`KTXwriter` key), attributed by the repository's `THIRD-PARTY.md` to KhronosGroup/KTX-Software `16059fa93d834242a0aaed9bb54952d76b143fac` `tests/resources/ktx2`, where no file of that name exists | `dds_dxgi_rgba8_srgb.dds`, `dds_dxgi_bc7_srgb.dds`, `dds_npot_bc3_mips.dds`, `dds_npot_rgba8_mips.dds`, `rgba8_unorm_bc7.ktx2` |
+| `ktx2_samples/` | [donmccurdy/KTX2-Samples](https://github.com/donmccurdy/KTX2-Samples) `471931bbe05c5a5443da3ea7be37f44680664ac6`, `ktx2/` | CC BY-SA 4.0 | `ktx create` and `ktx transcode` v4.3.1 (`KTXwriter` keys) | `2d_rgba8.ktx2`, `2d_rgba8_linear.ktx2`, `2d_rgba16_linear.ktx2`, `2d_rgba32_linear.ktx2`, `2d_bc1.ktx2`, `2d_bc3.ktx2`, `2d_bc4.ktx2`, `2d_bc5.ktx2`, `2d_bc7.ktx2` |
+
+Each real-tool file stays within 64 KB (largest 34,448 bytes); they total 142,009 bytes. The DDS writer column
+comes from the `dwReserved1` tag at offset 32 (`GIMP-DDS\`, `IMAGEMAGICK`). SHA-256, relative to
+`test/fixtures/texture/`:
+
+```text
+2e87df1a4db0766ec552e3be0dcb2da3c7c1b9cfbd74eaadf80855ed01e3bf6e  imagemagick/dxt1_8x8.dds
+49e2f82ce96f878ef89129f13e0ec6f71415d8b1808e43f58d5cccfe698b610d  imagemagick/dxt5_16x8.dds
+ce2b4099dedac9a66546969a247a2d4d5ef00e5ad44d055a158f16dd3474c20a  ktxtest/array_2_elements_2d.ktx
+ea6c6df70d04799acd087faf0aca3684c98db8423f4cf10d89e0cc9abb43ee07  ktxtest/endian_big_type_ubyte_r8g8.ktx
+08d5d538bfa7bd4643285a615dd5baf6c136adfc211d63bbd996d074a5e85428  ktxtest/format_bc1_rgb_unorm.ktx
+6118c7ee97850b11fcf08da3b2d7c4b3d605559a2470e28e77c0bba4048ec6c1  ktxtest/format_bc1_rgba_unorm.ktx
+d271a5bab6d8e22fae09b0906635dca435948751f15ac8733cb241387539f60b  ktxtest/format_bc3_unorm.ktx
+be09bc04d57209890e25382418ce59609283064d1ebe0d78dac9da4c78313ea9  ktxtest/format_bc4_unorm.ktx
+e25ffe304cd21da54973470870f16e7ed46ef905e8a5ea083edc62a0b91e3e7d  ktxtest/format_bc5_unorm.ktx
+46562bcb4bd8e4df85cdc9ba3b2935e4fbf32c7f75b000fb24d3a1ce291727cf  ktxtest/format_bc7_unorm.ktx
+b240ec01ac1507a1310d765a277055d731ba9cd432cc905715cfba026f6e7fb8  gltf_sample_assets/FlightHelmet_Materials_LensesMat_Normal.ktx2
+b73a865bf7c8abcc6262abdb5906312865a3ca6d46329886770e31fb02e52c4c  bcnencoder/decoding_dds_bc5.dds
+616c5c4ab167c76e412c0b5590a8dd5b62544f0564c51bc2f9d2b63f09d268f7  bcnencoder/test_decompress_bc1a.dds
+ac49918975cd30f5e9977748aa92f7b794d64cf39934d9ba94ccdff9264eac7c  bcnencoder/test_decompress_bc1a.ktx
+6350c9ec42ded1919ff228d9bff452264712ee46ff52c7904fa9385e12a18029  openimageio/dds_dxgi_bc7_srgb.dds
+0389c6ac9a8703b6b8067f7f568adf73bc023d993b5d5db8d1e0296ecb84fb88  openimageio/dds_dxgi_rgba8_srgb.dds
+e91c03a4f18b645b87c811bdaf9f509863cc17c97744ee667dcd97d7fbe12fbe  openimageio/dds_npot_bc3_mips.dds
+b3d4627f103eebb50114767d160a245d75f12a3ae6bf91ddd5570eda9c0f82e5  openimageio/dds_npot_rgba8_mips.dds
+50c6be6bfdc9bd8f9f4b3e36c706c8fa4d44e986b3e697267510a076cc6dbe3d  openimageio/rgba8_unorm_bc7.ktx2
+0db6a87f438a041c82e66d1f28253300d02c1fbdbe19482c572a8bc05a280f02  ktx2_samples/2d_bc1.ktx2
+d648816901d6b8837196db36532e4d5f18358bdcf9fef46b68b2a1724ffea35e  ktx2_samples/2d_bc3.ktx2
+06852ffdb83f8ff795816ebb7c989b5e386452b2df2dc526bfe86af5395eb6c7  ktx2_samples/2d_bc4.ktx2
+525541387e7c44f9301be18ca95bae742ec3f5cf9d4b97421cdf23291905eb35  ktx2_samples/2d_bc5.ktx2
+2dd67c154866013ee94af54cafc8a2c0f0ba68422088b20534232eed2bd8e9cd  ktx2_samples/2d_bc7.ktx2
+e62b6b2f7da518f44963380775be74c4ce3ac09b575c0e7823a50f9eea1b2a27  ktx2_samples/2d_rgba16_linear.ktx2
+0362d7db179ccfbfca0e94be8a118e9ad3637b4defa2c62b85dbd8dab357174c  ktx2_samples/2d_rgba32_linear.ktx2
+0da48bf53ad1720122514895c1106c95593d27528cf7feb65c4daba9f9111a73  ktx2_samples/2d_rgba8.ktx2
+41b8a0d3a481bb26fad0a2fd27507ecbe030b72fb5811f9e4dd18ca5e8b1193f  ktx2_samples/2d_rgba8_linear.ktx2
+```
+
+The ImageMagick files were written once with:
+
+```bash
+convert -size 8x8 gradient:red-blue -define dds:compression=dxt1 test/fixtures/texture/imagemagick/dxt1_8x8.dds
+convert -size 16x8 gradient:red-blue -alpha set -channel A -evaluate set 50% +channel \
+    -define dds:compression=dxt5 test/fixtures/texture/imagemagick/dxt5_16x8.dds
+```
+
+ImageMagick 6 writes the full mip chain for power-of-two extents only.
 
 # Standard material fixtures
 
