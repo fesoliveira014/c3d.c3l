@@ -25,6 +25,9 @@ fn void view_stats_table(Renderer* renderer, ViewId[] views, ZString[] labels) {
     @row("Lights", views; ViewId view) {
         imgui::text_unformatted(@enum_name(LightSelection, renderer.views.get(view).desc.lights));
     };
+    @row("Images", views; ViewId view) {
+        imgui::text("%u", renderer.views.get(view).stats.images);
+    };
     @row("Light count", views; ViewId view) {
         imgui::text("%u", renderer.views.get(view).stats.lights);
     };

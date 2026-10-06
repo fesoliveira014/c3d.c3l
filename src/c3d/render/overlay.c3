@@ -104,7 +104,6 @@ fn void? Renderer.prepare_overlay_list(&self, OverlayList* list) {
     check_overlay_refs(self.assets, &self.targets, list)!;
     defer catch abort_frame(self);
 
-    uint target_bits;
     foreach (index, &entry : list.entries[:list.item_count]) {
         OverlayBinding* binding = &list.bindings[index];
         if (entry.kind == GLYPHS) {
@@ -124,14 +123,17 @@ fn void? Renderer.prepare_overlay_list(&self, OverlayList* list) {
                 TextureRes* texture_mirror = resolve_texture(self, rect.texture.asset)!;
                 binding.texture = texture_mirror.view.index;
             case RENDER_TARGET:
-                target_bits |= 1u << rect.texture.target.index;
                 binding.texture = self.targets.get(rect.texture.target).target.view.index;
         }
     }
 
     record_pending_copies(self, &self.commands)!;
-    foreach (index, &record : self.targets.items) {
-        if (target_bits & (1u << index)) record.target.transition(&self.commands, self.sampled_state)!;
+    foreach (&entry : list.entries[:list.item_count]) {
+        if (entry.kind != RECT || entry.rect.texture.kind != RENDER_TARGET) continue;
+        Target* target = &self.targets.get(entry.rect.texture.target).target;
+        // Read after read needs no barrier: a target a view or an earlier rect already readied keeps its state.
+        if (same_texture_state(target.state, self.sampled_state)) continue;
+        target.transition(&self.commands, self.sampled_state)!;
     }
 
     list.prepared.run_count = 0;

@@ -62,9 +62,8 @@ fn TextureBinding? resolve_texture_slot(Renderer* renderer, TextureSlot slot, bo
     if (renderer.assets.sampler(sampler).desc.compare_enable) return c3d::INVALID_ARGUMENT~;
     SamplerRes* sampler_mirror = resolve_sampler(renderer, sampler)!;
 
-    if (slot.texture.kind == TextureRefKind.RENDER_TARGET && renderer.targets.is_live(slot.texture.target)) {
+    if (slot.texture.kind == TextureRefKind.RENDER_TARGET && mark_sampled_target(renderer, slot.texture.target)) {
         TargetRecord* target = renderer.targets.get(slot.texture.target);
-        renderer.sampled_target_bits |= 1u << slot.texture.target.index;
         return {
             .target = slot.texture.target,
             .sampler = sampler,
@@ -93,6 +92,12 @@ fn TextureBinding? resolve_texture_slot(Renderer* renderer, TextureSlot slot, bo
         .sampler_index = sampler_mirror.index,
         .present = present,
     };
+}
+
+fn bool mark_sampled_target(Renderer* renderer, RenderTargetId target) @private {
+    if (!renderer.targets.is_live(target)) return false;
+    renderer.targets.get(target).sample_pending = true;
+    return true;
 }
 
 fn TextureBinding? resolve_gradient_map(Renderer* renderer, TextureId texture) @private {

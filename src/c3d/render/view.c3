@@ -1744,12 +1744,13 @@ fn void? record_view_output(Renderer* renderer, ViewRecord* record) @private {
 
 fn void? prepare_sampled_targets(Renderer* renderer, ViewRecord* record) @private {
     foreach (index, &target : renderer.targets.items) {
-        if (!(renderer.sampled_target_bits & (1u << index)) || !target.target.texture.is_valid()) continue;
+        if (!target.sample_pending) continue;
+        target.sample_pending = false;
+        if (!target.target.texture.is_valid()) continue;
         // A producer never samples its own output; the barrier would only pair with the output stage's.
         if (record.desc.output == ViewOutput.TEXTURE && record.desc.target.index == index) continue;
         target.target.transition(&renderer.commands, renderer.sampled_state)!;
     }
-    renderer.sampled_target_bits = 0;
 }
 
 fn PixelRect clip_rect(PixelRect rect, uint width, uint height) @local {

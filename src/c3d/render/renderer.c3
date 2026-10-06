@@ -54,6 +54,12 @@ const uint DEFAULT_SHADOW_RESOLUTION = 2048; // four D32 layers occupy 64 MiB
 <* Default fixed atlas layer budget. *>
 const uint DEFAULT_MAX_SHADOW_LAYERS = 4; // admits one full directional request
 
+<* Default view pool size, the default view included. *>
+const uint DEFAULT_MAX_VIEWS = 8; // 5.5 KiB of record each; a view's images follow its desc
+
+<* Default render-target pool size. *>
+const uint DEFAULT_MAX_RENDER_TARGETS = 8; // each target holds one texture, one heap slot and one attachment view
+
 <*
  How a renderer is created. A null surface factory selects headless.
 *>
@@ -76,6 +82,10 @@ struct RendererDesc {
     uint             max_trace_instances;
     uint             max_instance_batches;
     usz              instance_cull_bytes;
+    uint             max_views;             // default view, render_to, impostor bakes and reflection captures included
+    uint             max_render_targets;    // at most texture_capacity; each bake or capture takes one
+    uint             texture_capacity;      // assets, view images and targets; zero: gpu::DEFAULT_TEXTURE_CAPACITY
+    uint             texture_heap_capacity; // texture views; zero: gpu::DEFAULT_TEXTURE_HEAP_CAPACITY
     bool             ray_queries;
     bool             ray_tracing_pipelines;
 }
@@ -209,7 +219,6 @@ struct Renderer {
     gpu::AcquiredImage      acquired;
     gpu::CompletionPoint    output_submission;
     gpu::TextureState       frame_shadow_state;
-    gpu::TextureState[RENDER_TARGET_CAPACITY] frame_target_states;
     bool                    frame_submitted;
     uint                    recording_slot;
     Target                  window_target;
@@ -221,7 +230,6 @@ struct Renderer {
     bool                    frame_recorded;
     bool                    work_recorded;
     bool                    output_suppressed;
-    uint                    sampled_target_bits;
     ulong                   material_epoch;
     bool                    material_scope_active;
 }
@@ -479,6 +487,7 @@ fn void? begin_renderer_frame(Renderer* self, FrameInfo info, bool acquire_outpu
             sweep_shaders(self);
             sweep_compute_shaders(self);
         };
+        if (self.frame_index % TEXTURE_STATS_INTERVAL == 0) read_texture_stats(self)!;
         reset_upload_ring(self, slot)!;
         reset_deformation_cache(&self.deformation);
         reset_instance_culling(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT));
@@ -487,7 +496,6 @@ fn void? begin_renderer_frame(Renderer* self, FrameInfo info, bool acquire_outpu
         self.has_output = false;
         self.frame_recorded = false;
         self.work_recorded = false;
-        self.sampled_target_bits = 0;
         if (acquire_output && self.swapchain.is_valid()) {
             instrumentation::@scope("renderer.acquire_output") {
                 if (self.output_dirty) recover_window_output(self)!;
@@ -498,11 +506,15 @@ fn void? begin_renderer_frame(Renderer* self, FrameInfo info, bool acquire_outpu
         self.frame_shadow_state = self.shadow_atlas.state;
         // An aborted frame keeps frame_index, so its set must not match a view of the retried frame.
         self.shadow_set.published = false;
-        foreach (index, target : self.targets.items) self.frame_target_states[index] = target.target.state;
+        foreach (&record : self.targets.items) {
+            record.frame_state = record.target.state;
+            record.sample_pending = false;
+        }
         foreach (index, &preview : self.previews) self.frame_preview_states[index] = preview.image.state;
         snapshot_probe_states(self);
         foreach (&record : self.views.items) {
             record.snapshot_states();
+            record.stats.images = live_view_images(record);
             record.cluster_root = (gpu::GpuAddress)0;
             record.scene_input = &record.hdr_color;
             record.post_chain_open = false;
@@ -711,6 +723,8 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     runtime_desc.debug_callback = &record_debug_message;
     runtime_desc.debug_user_data = log;
     runtime_desc.enable_debug_names = true;
+    runtime_desc.texture_capacity = desc.texture_capacity;
+    runtime_desc.texture_heap_capacity = desc.texture_heap_capacity;
     bool ray_queries = desc.ray_queries || desc.ray_tracing_pipelines;
     if (ray_queries) runtime_desc.acceleration_structure_heap_capacity = FRAMES_IN_FLIGHT;
 
@@ -737,6 +751,9 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     gpu::DeviceCaps caps = gpu::get_device_caps(&device)!;
     // Every mesh vertex stage declares ClipDistance, which the backend rejects without the feature.
     if (!caps.clip_distance) return c3d::UNSUPPORTED~;
+    uint max_views = desc.max_views ? desc.max_views : DEFAULT_MAX_VIEWS;
+    uint max_render_targets = desc.max_render_targets ? desc.max_render_targets : DEFAULT_MAX_RENDER_TARGETS;
+    if (max_render_targets > gpu::get_memory_stats(&device)!.texture_capacity) return c3d::INVALID_ARGUMENT~;
     uint max_trace_instances = desc.max_trace_instances ? desc.max_trace_instances : DEFAULT_MAX_TRACE_INSTANCES;
     if (ray_queries && max_trace_instances > caps.acceleration_structures.max_instance_count) {
         return c3d::UNSUPPORTED~;
@@ -872,9 +889,9 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .swapchain            = swapchain,
         .swapchain_info       = swapchain_info,
         .frames               = frames,
-        .targets              = pool::create_pool{TargetRecord, RenderTargetId}(allocator, RENDER_TARGET_CAPACITY),
+        .targets              = pool::create_pool{TargetRecord, RenderTargetId}(allocator, max_render_targets),
         .buffers              = pool::create_pool{BufferRecord, BufferId}(allocator, BUFFER_CAPACITY),
-        .views                = pool::create_pool{ViewRecord, ViewId}(allocator, VIEW_CAPACITY),
+        .views                = pool::create_pool{ViewRecord, ViewId}(allocator, max_views),
         .pipelines            = create_pipeline_cache(allocator, shader::BUILTIN_REGISTRY),
         .deformation          = create_deformation_cache(allocator),
         .instances            = create_instance_table(allocator, max_instance_batches),
@@ -1102,7 +1119,7 @@ fn void abort_frame(Renderer* renderer) {
         post::clear_exposure_readback(renderer, renderer.recording_slot);
         renderer.cull_readbacks[renderer.recording_slot].pending = false;
         renderer.shadow_atlas.state = renderer.frame_shadow_state;
-        foreach (index, &target : renderer.targets.items) target.target.state = renderer.frame_target_states[index];
+        foreach (&record : renderer.targets.items) record.target.state = record.frame_state;
         foreach (index, &preview : renderer.previews) preview.image.state = renderer.frame_preview_states[index];
         restore_probe_states(renderer);
         foreach (&record : renderer.views.items) {
@@ -1120,6 +1137,14 @@ fn void abort_frame(Renderer* renderer) {
     renderer.frame_recorded = false;
     renderer.work_recorded = false;
     discard_uploads(renderer);
+}
+
+fn void? read_texture_stats(Renderer* renderer) @private {
+    gpu::MemoryStats memory = gpu::get_memory_stats(&renderer.device)!;
+    renderer.stats.textures = (uint)memory.texture_count;
+    renderer.stats.texture_capacity = memory.texture_capacity;
+    renderer.stats.texture_views = (uint)memory.texture_view_count;
+    renderer.stats.texture_heap_capacity = renderer.caps.texture_heap_capacity;
 }
 
 fn float elapsed_ms(time::Clock started) @private {

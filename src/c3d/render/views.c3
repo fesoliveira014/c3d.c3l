@@ -10,11 +10,6 @@ import gpu;
 import std::math;
 
 <*
- Pooled views a renderer holds at once.
-*>
-const uint VIEW_CAPACITY = 8; // each view owns its working images; a 1080p view is about 16 MiB before effects
-
-<*
  Largest render scale a view accepts.
 *>
 const float MAX_RENDER_SCALE = 2.0f; // four times the viewport's pixels; the supersampling ceiling
@@ -385,6 +380,7 @@ fn void capture_vertices(
  Previous-frame counters and completed GPU timings of one view.
 *>
 struct ViewStats {
+    uint              images; // at frame start: live working images, scene snapshots included
     uint              lights;
     uint              lights_dropped;
     uint              cluster_count;
@@ -518,6 +514,14 @@ fn Target*[VIEW_TARGET_COUNT] view_targets(ViewRecord* record) {
     targets[next + 5 + 2 * SSGI_HISTORY_SLOTS] = &record.aerial_perspective;
     targets[next + 6 + 2 * SSGI_HISTORY_SLOTS] = &record.fog_volume;
     return targets;
+}
+
+fn uint live_view_images(ViewRecord* record) @private {
+    uint images;
+    foreach (target : view_targets(record)) {
+        if (target.texture.is_valid()) images++;
+    }
+    return images;
 }
 
 <*
