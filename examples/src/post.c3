@@ -32,13 +32,20 @@ const float EMISSIVE_STRENGTH @local = 4;
 const float AMBIENT_INTENSITY @local = 0.1f;
 const float EXPOSURE_MIN @local = 0.05f;
 const float EXPOSURE_MAX @local = 8;
+const float DIM_LIGHT_SCALE @local = 1.0f / 16; // four stops down, the step auto exposure undoes
 const uint LUT_SIZE @local = 32;
 const Vec2 CONTROLS_PANEL_POSITION @local = { 16, 16 };
-const Vec2 CONTROLS_PANEL_SIZE @local = { 360, 110 };
-const Vec2 POST_PANEL_POSITION @local = { 16, 142 };
+const Vec2 CONTROLS_PANEL_SIZE @local = { 360, 150 };
+const Vec2 POST_PANEL_POSITION @local = { 16, 182 };
 const Vec2 POST_PANEL_SIZE @local = { 360, 330 };
 const Vec2 STATS_PANEL_POSITION @local = { 900, 16 };
 const Vec2 STATS_PANEL_SIZE @local = { 360, 660 };
+
+struct LightRig @local {
+    Node*      sun;
+    MaterialId lamp;
+    MaterialId textured;
+}
 
 struct Orbit @local {
     Vec3  target;
@@ -70,6 +77,20 @@ fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
     camera_node.local.rotation = maths::look_rotation(-offset, { 0, 1, 0 });
 }
 
+fn void scale_lights(
+    Scene* scene,
+    AssetStore* assets,
+    LightRig* rig,
+    float scale,
+) @local {
+    scene.get(rig.sun, Light).intensity = SUN_INTENSITY * scale;
+    scene.ambient_intensity = AMBIENT_INTENSITY * scale;
+    assets.material(rig.lamp).data.standard.emissive_strength = EMISSIVE_STRENGTH * scale;
+    assets.material(rig.textured).data.basic.color = { scale, scale, scale, 1 };
+    assets.mark_material_dirty(rig.lamp);
+    assets.mark_material_dirty(rig.textured);
+}
+
 fn void? draw_gui_frame(
     render::Renderer* renderer,
     Scene* scene,
@@ -96,6 +117,8 @@ fn void? run_gui(
     platform::Window* window,
     render::Renderer* renderer,
     Scene* scene,
+    AssetStore* assets,
+    LightRig* rig,
     Node* cube,
     Node* camera_node,
     TextureId lut,
@@ -111,6 +134,7 @@ fn void? run_gui(
     bool spin = true;
     bool orthographic;
     bool escape_captured;
+    bool dimmed;
 
     while (window.poll()) {
         bool keyboard_was_captured = window.input.keyboard_captured_by_gui;
@@ -132,6 +156,8 @@ fn void? run_gui(
         }
 
         camera::Camera* camera = scene.get(camera_node, camera::Camera);
+        ViewStats stats = renderer.view_stats(renderer.default_view)!;
+        bool lights_changed;
         imgui::set_next_window_pos(CONTROLS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(CONTROLS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
         if (imgui::begin("Controls", null, {})) {
@@ -149,12 +175,33 @@ fn void? run_gui(
                 format: "%.2f",
                 flags:  imgui::SLIDER_FLAGS_ALWAYS_CLAMP,
             );
+            lights_changed = imgui::checkbox("Lights at 1/16 (L)", &dimmed);
+            if (stats.exposure > 0) {
+                if (post::auto_exposure_active(&view_desc)) {
+                    imgui::text("Exposure %.2f EV, %u frames old", math::log2(stats.exposure),
+                        render::FRAMES_IN_FLIGHT);
+                } else {
+                    imgui::text("Exposure %.2f EV", math::log2(stats.exposure));
+                }
+            }
         }
         imgui::end();
+        if (input.key_pressed(platform::Scancode.L) && !input.keyboard_captured_by_gui) {
+            dimmed = !dimmed;
+            lights_changed = true;
+        }
+        if (lights_changed) {
+            scale_lights(
+                scene:  scene,
+                assets: assets,
+                rig:    rig,
+                scale:  dimmed ? DIM_LIGHT_SCALE : 1,
+            );
+        }
 
         imgui::set_next_window_pos(POST_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(POST_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
-        bool changed = gui::post_panel(&view_desc, lut);
+        bool changed = gui::post_panel(&view_desc, lut, &stats);
 
         imgui::set_next_window_pos(STATS_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(STATS_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
@@ -266,6 +313,7 @@ fn int main(String[] args) {
     Node* sun = scene.add_light(light::directional({ 1, 1, 1 }, SUN_INTENSITY), name: "sun")!!;
     sun.local.rotation = maths::look_rotation((Vec3){ 0.4f, -0.7f, -0.6f }.normalize(), { 0, 1, 0 });
     Node* camera_node = scene.add_camera(camera::perspective_deg(60, 0.1f), name: "camera")!!;
+    LightRig rig = { .sun = sun, .lamp = lamp, .textured = textured };
 
     renderer.prepare_scene(&scene)!!;
 
@@ -273,6 +321,8 @@ fn int main(String[] args) {
         window: &window,
         renderer: &renderer,
         scene: &scene,
+        assets: &assets,
+        rig: &rig,
         cube: cube,
         camera_node: camera_node,
         lut: lut,

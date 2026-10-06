@@ -256,6 +256,20 @@ band after exposure. The table stops at −4°, above civil twilight, where the 
 half-float range. On an RTX 4090 the −4° sky shows no banding: a zenith-to-horizon column holds 270
 distinct values over 430 rows, with no run longer than 5 rows and no step above 2 levels.
 
+`--auto-exposure` sets `Camera.exposure` to 1 and turns on [auto exposure](post.md#auto-exposure) on the main view
+instead of the table; the panel shows the table's value beside the adapted one. Converged on the RTX 4090, ten
+seconds after setting the elevation:
+
+| Sun elevation | Table stops | Adapted stops | Difference |
+| --- | --- | --- | --- |
+| 60° | 0.00 | −0.20 | −0.20 |
+| 5° | 2.00 | 2.22 | +0.22 |
+| −4° | 7.28 | 8.24 | +0.96 |
+
+At −4° the main view applies 301.5 while its `LINEAR_HDR` mirror stays at 1.000.
+
+The table stays the manual default.
+
 ## Path tracing
 
 A path-traced view lights with the atmosphere's cubes and shows its source cube as the background
@@ -302,6 +316,8 @@ second, edits the fog, switches the exposure table and shows the sky's passes an
 regeneration count; the presets noon, twilight, valley (300 m up, looking down into the fog) and
 time-lapse pose the camera and the sun. The mirror pad renders with the main camera as its shadow camera, so the
 frame records one shadow atlas, the mirror's, and the main view binds it ([shadow sets](shadows.md#shadow-sets)).
+
+`--auto-exposure` replaces the exposure table with auto exposure on the main view.
 
 `--benchmark [frames]` renders offscreen at 2560 × 1440 through four segments (noon, twilight,
 valley and a time-lapse four segments long, the sun rising 0.0045° a frame from 10°) and prints the

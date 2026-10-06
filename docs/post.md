@@ -2,7 +2,9 @@
 
 `c3d::render::post` turns the scene-linear `hdr_color` of a `DISPLAY_LDR` view into display-ready
 linear color for the view's output. The `BGRA8_SRGB` swapchain or an sRGB target encodes; no shader
-encodes for output. `LINEAR_HDR` views skip this module.
+encodes for output. `LINEAR_HDR` views skip this module. They also ignore `auto_exposure`, as does a view
+while it shows a TAA debug image: a linear output keeps scene-linear values, and `ViewStats.exposure` reports
+`Camera.exposure`, which it does not apply.
 
 ```bash
 python3 scripts/build.py --example post
@@ -23,8 +25,8 @@ or retires the two working images FXAA needs. `LINEAR_HDR` faults `INVALID_ARGUM
 view; a dead view or LUT faults `INVALID_ID`; a LUT that is not a single-mip RGBA8 3D texture faults
 `INVALID_ARGUMENT`.
 
-Exposure is `Camera.exposure` (05 Cameras). `GradeParams` carries no exposure of its own; the
-renderer packs the scene view's camera exposure into the display root each frame.
+Exposure is `Camera.exposure` (05 Cameras) times, under [auto exposure](#auto-exposure), the view's adapted
+multiplier. `GradeParams` carries no exposure of its own.
 
 ## Routes
 
@@ -126,6 +128,9 @@ that add each coarser level into the finer one in place. Both display routes sam
 never rewritten. `2 * levels - 1` dispatches are counted and timed under `POST_CHAIN`. Disabling
 bloom or changing `levels` retires the chain through the frame lifecycle; resize recreates it.
 `configure_view` faults `INVALID_ARGUMENT` when bloom is on with `levels` outside `[1, 8]`.
+Under auto exposure the prefilter multiplies its input by the adapted multiplier, so `threshold` is in
+auto-exposed units (1.0 is about 2.5 stops above mid-grey after adaptation) and a scene's bloom is the same
+at any absolute radiance. In manual mode `threshold` is in scene units. `Camera.exposure` never changes bloom.
 
 ## Depth of field
 
@@ -211,10 +216,56 @@ Every pose slot grows by 32 bytes (176 to 208), 512 KiB per temporal view at the
 previous positions travel through the frame ring, counted per frame in
 `Stats.vertex_history_bytes`. Blended surfaces keep the velocity of the surface behind them.
 
+## Auto exposure
+
+`PostStack.auto_exposure` with `AutoExposureParams { compensation_ev; min_ev; max_ev; brightening_time;
+darkening_time; low_percentile; high_percentile; }` adapts a `DISPLAY_LDR` view's exposure to its scene. It is off by
+default; `post::AUTO_EXPOSURE_DEFAULT` holds compensation 0, bounds -10 to +10 stops, 0.5 s brightening, 2 s
+darkening and the 10th to 90th percentile window. `configure_view` faults `INVALID_ARGUMENT` while it is on for a
+non-finite field, `min_ev > max_ev`, a negative time, percentiles outside `0 <= low < high <= 1`, or a compensation
+and bounds whose targets leave the histogram's luminance range (log2 -18 to 14).
+
+- Metering: each rendering builds a 256-bin histogram of log2 luminance (Rec.709 weights, 1/8 stop per bin) of the
+  scene image after transparency, fog and the SSGI copy and before debug lines, TAA, motion blur,
+  application dispatches between `render_view` and `finish_view`, depth of field and bloom. Overlays and the GUI are
+  never metered. Jitter and the blurs barely move the mean, and bloom is not in the metered image. NaN, infinite and
+  black pixels (below the smallest half float) are not counted; brighter or darker values clamp into the edge bins.
+  The metered value is the mean log2 luminance between the two percentiles. The meter reads the image before
+  exposure, so the result depends on the scene alone.
+- Target: `clamp(log2(0.18) - metered + compensation_ev, min_ev, max_ev)` stops; the final exposure is
+  `Camera.exposure * 2^ev`. Leave `Camera.exposure` at 1 under auto exposure unless one camera needs a fixed
+  offset; `compensation_ev` biases one view in stops.
+- Adaptation: exponential in stops from the view's own clock, `FrameInfo.time` minus the time of its last committed
+  value: a brighter scene lowers exposure over `brightening_time`, a darker one raises it over `darkening_time`
+  (95 % after three time constants). The result is the same at any frame rate and never passes the target; zero
+  times always land on the target. Every step clamps into the current bounds, so narrowing them takes effect at the
+  next rendering. A frame with nothing metered holds the exposure. After a cut or a fresh history, the first
+  rendering that meters anything snaps. Pass a finite `FrameInfo.time`: with the default 0 every rendering snaps to
+  its own target, without smoothing.
+- History: per view, so two views of one camera adapt independently. Kept across parameter edits and resizes;
+  `reset_view_history`, a scene change, turning auto exposure on and switching a view with auto exposure from
+  `LINEAR_HDR` to `DISPLAY_LDR` or hiding a TAA debug image restart it, and the first rendering that meters anything
+  snaps to its target. An aborted frame changes nothing; a skipped or dormant view folds the elapsed time into its
+  next step.
+- Cost: one 1,056-byte GPU allocation and a 32-byte readback per view, allocated with the view; two dispatches timed
+  under `EXPOSURE` and counted in `Stats.post_dispatches`. Manual mode records nothing and binds nothing.
+- `Renderer.view_stats(view).exposure` reports the applied multiplier, `FRAMES_IN_FLIGHT` frames old under auto
+  exposure. On a view created with auto exposure on it is zero until the first readback.
+
+### Measured cost
+
+On an RTX 4090 with Sponza through the benchmark at 2560 x 1440, the `EXPOSURE` pass costs 0.034 ms at meter
+stride 1 and 0.020 ms at stride 2; the stride stays 1. Auto exposure adds 0.035 ms of GPU time per frame (the median
+per-case delta). In the post example's light scene the pass reads 0.029 ms at 1920 x 1080 and 0.049 ms at
+2560 x 1440, with the GPU at low clocks.
+
 ## GUI
 
-`gui::post_panel(&view_desc, lut)` edits every setting and returns whether something changed; the
-example calls `configure_view` before its next frame when it did. The ray-traced controls are enabled on
+`gui::post_panel(&view_desc, lut, &stats)` edits every setting, auto exposure included, and, given the view's
+`ViewStats`, shows its exposure in stops, `FRAMES_IN_FLIGHT` frames old under auto exposure. It returns whether something changed; the
+example calls `configure_view` before its next frame when it did. The post example's key `L` (and the "Lights at
+1/16" box) scales the sun, the ambient term, the lamp's emission and the textured material by 1/16, a four-stop
+step that auto exposure undoes. The ray-traced controls are enabled on
 every renderer, since traced effects run without ray queries too; reflections stay disabled on a
 `FORWARD` view. `gui::anti_aliasing_combo`
 selects one view's filter on its own. `gui::stats_panel` reports post
@@ -223,7 +274,8 @@ dispatches and the completed velocity and post-chain timings.
 ## Limits
 
 Pass timings describe the last recorded view of the frame; counters accumulate across views.
-Auto-exposure is not implemented.
+Auto exposure has one metering method (a whole-image percentile histogram), no local exposure, and meters the
+image before TAA, motion blur, depth of field and application dispatches.
 
 Bloom records only when its intensity is positive or a bloom preview waits for the view; a bloom preview
 requested after its view finished stays pending until a frame records the chain. Opaque, sky and

@@ -60,6 +60,11 @@ Material factor, light, environment and sky edits do not restart it: a moving su
 also restart it. `Renderer.view_stats(view).accumulated_samples` reports the samples in the image;
 `Stats.path_trace_samples` counts the samples traced in the frame.
 
+Accumulation resets leave [auto exposure](post.md#auto-exposure) alone; `reset_view_history` restarts both, so after a
+light or sky edit the exposure snaps to the next 1-spp image. While the camera moves, the 1-spp exposure differs
+slightly from the converged one; once it stops, exposure drifts to the converged value at the adaptation rate. A
+headless still at constant time snaps on every rendering and ends on the target of its last image.
+
 ## What the integrator models
 
 - **Materials.** Standard, and Physical through its Standard prefix, scatter with Lambert plus
