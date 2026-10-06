@@ -329,10 +329,10 @@ render scale 0.5 and 1.0, with and without the plane, about 0.045 ms of it the s
 small scene neither the plane nor the render scale moves the time beyond the run-to-run spread. The
 plane culls the buried crate (`Stats.culled` 1 with it, 0 without).
 
-With the mirror fitted to the main camera the frame records one shadow atlas, the mirror's, and the main view binds
-it. In the `views` example's View stats window (single-frame readings) the mirror's visible passes summed to about
-0.10 ms before (depth 0.010, shadow atlas about 0.07, forward 0.014); after, the mirror's atlas is no longer in that
-list.
+With the mirror fitted to the main camera the frame records one shadow atlas, the mirror's, and the window view binds
+it. In the `views` example's View stats window (single-frame readings) the mirror's visible passes sum to about
+0.10 ms (depth 0.010, shadow atlas 0.073, forward 0.014); its atlas went from 0.068 to 0.073 ms because it now fits
+the main camera. The window's atlas is the one that is gone.
 
 ## Preparation
 
