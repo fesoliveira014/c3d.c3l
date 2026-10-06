@@ -24,6 +24,10 @@ fn FrameCaptureView? Recorder.frame(&self, ulong frame_id) {
             .cpu = slot.cpu[:slot.sample_count],
             .dropped_cpu_scopes = slot.dropped_cpu_scopes,
         };
+        $if $feat(C3D_PROFILE_CPU):
+            frame.workers = slot.workers[:slot.worker_count];
+            frame.dropped_worker_samples = slot.dropped_worker_samples;
+        $endif
         $if $feat(C3D_PROFILE_GPU):
             frame.gpu_state = slot.gpu_state;
             frame.gpu_truncated = slot.gpu_truncated;
@@ -55,6 +59,49 @@ fn usz Recorder.frame_ids(&self, ulong[] frame_ids) {
     return frame_count;
 }
 
+<*
+ Add a worker thread's interval to the open capture; outside one it is ignored.
+ @param [&inout] self : "Recorder on its owning thread."
+ @param lane : "Worker index; one row per lane."
+ @param label : "Copied into the capture's label storage."
+ @param start_ns : "Value of clock::now() when the range began."
+ @param end_ns : "Value of clock::now() when the range ended."
+ @require end_ns >= start_ns
+*>
+fn void Recorder.add_worker_interval(
+    &self,
+    uint lane,
+    String label,
+    ulong start_ns,
+    ulong end_ns,
+) @feat(C3D_PROFILE_CPU) {
+    if (!self.recording) return;
+    CaptureSlot* slot = current_slot(self);
+    if (slot.worker_count == slot.workers.len || label.len > (sz)(slot.labels.len - slot.label_used)) {
+        slot.dropped_worker_samples++;
+        return;
+    }
+    uint label_offset = slot.label_used;
+    if (label.len) mem::copy(&slot.labels[label_offset], label.ptr, label.len);
+    slot.label_used += (uint)label.len;
+    slot.workers[slot.worker_count++] = {
+        .label = (String)slot.labels[label_offset : label.len],
+        .lane = lane,
+        .start_ns = (long)start_ns - (long)self.origin_ns,
+        .duration_ns = end_ns - start_ns,
+    };
+}
+
+<*
+ Count worker intervals lost before they reached the recorder.
+ @param [&inout] self : "Recorder on its owning thread."
+*>
+fn void Recorder.add_dropped_worker_intervals(&self, ulong count) @feat(C3D_PROFILE_CPU) {
+    if (!self.recording) return;
+    CaptureSlot* slot = current_slot(self);
+    slot.dropped_worker_samples = (uint)min((ulong)slot.dropped_worker_samples + count, (ulong)uint::max);
+}
+
 fn CaptureSlot* current_slot(Recorder* recorder) @private => &recorder.slots[recorder.active_slot];
 
 fn bool select_capture_slot(Recorder* recorder) @private {
@@ -84,6 +131,8 @@ fn void reset_capture_slot(Recorder* recorder, ulong frame_id) @private {
     slot.dropped_cpu_scopes = 0;
     $if $feat(C3D_PROFILE_CPU):
         slot.state = CaptureState.PENDING;
+        slot.worker_count = 0;
+        slot.dropped_worker_samples = 0;
     $else
         slot.state = CaptureState.UNAVAILABLE;
     $endif

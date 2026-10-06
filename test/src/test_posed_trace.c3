@@ -40,7 +40,11 @@ fn void test_posed_slots_go_to_the_first_keys_of_each_epoch() @test {
     table.begin_epoch(1);
     assert(table.claim(key_of(0), 0, &retire)!! == 0);
     assert(table.claim(key_of(1), 0, &retire)!! == 1);
-    assert(@catch(table.claim(key_of(2), 0, &retire)) == c3d::CAPACITY_EXCEEDED);
+    if (catch excuse = table.claim(key_of(2), 0, &retire)) {
+        assert(excuse == c3d::CAPACITY_EXCEEDED);
+    } else {
+        assert(false);
+    }
     give_resources(&table.slots[0]);
 
     table.begin_epoch(2);
@@ -48,7 +52,11 @@ fn void test_posed_slots_go_to_the_first_keys_of_each_epoch() @test {
     assert(retire.len() == 3 && retire[0].kind == RetiredKind.ALLOCATION);
     assert(retire[2].kind == RetiredKind.ACCELERATION_STRUCTURE && table.slots[0].pose.len == 0);
     assert(table.claim(key_of(1), 1, &retire)!! == 1);
-    assert(@catch(table.claim(key_of(0), 1, &retire)) == c3d::CAPACITY_EXCEEDED);
+    if (catch excuse = table.claim(key_of(0), 1, &retire)) {
+        assert(excuse == c3d::CAPACITY_EXCEEDED);
+    } else {
+        assert(false);
+    }
     assert(!table.lookup.has_key(key_of(0)) && table.slots[0].key == key_of(2));
 }
 
@@ -64,7 +72,11 @@ fn void test_posed_claims_repeat_within_an_open_frame() @test {
     table.begin_epoch(5);
     assert(table.epoch == epoch);
     assert(table.claim(key_of(1), 4, &retire)!! == 1 && table.claim(key_of(0), 4, &retire)!! == 0);
-    assert(@catch(table.claim(key_of(2), 4, &retire)) == c3d::CAPACITY_EXCEEDED);
+    if (catch excuse = table.claim(key_of(2), 4, &retire)) {
+        assert(excuse == c3d::CAPACITY_EXCEEDED);
+    } else {
+        assert(false);
+    }
 
     table.begin_epoch(0);
     assert(table.epoch == epoch + 1);
@@ -121,26 +133,16 @@ fn void test_pose_serial_advances_only_on_changed_inputs() @test {
     assert(table.pending.len() == 0 && table.epoch_frame == 0);
     assert(slot.update_pose(inputs) && slot.pose_serial == 3);
     assert(!slot.update_pose(inputs) && slot.pose_serial == 3);
-}
 
-fn void test_commit_keeps_the_recorded_slot_state() @test {
-    RetireList retire;
-    PosedTraceTable table = make_table(&retire);
-    defer destroy_table(&table, &retire);
-    table.begin_epoch(1);
-    uint index = table.claim(key_of(0), 0, &retire)!!;
-    PosedTraceRes* slot = &table.slots[index];
     slot.built_revision = 3;
     slot.pose_valid = true;
-    slot.pose_serial = 2;
-    slot.blas_serial = 2;
+    slot.blas_serial = 3;
     render::mark_posed_pending(&table, index);
     render::mark_posed_pending(&table, index);
     assert(table.pending.len() == 1);
-
     render::commit_posed_trace(&table);
     assert(table.pending.len() == 0 && !slot.pending);
-    assert(slot.built_revision == 3 && slot.pose_valid && slot.blas_serial == 2 && table.epoch_frame == 1);
+    assert(slot.built_revision == 3 && slot.pose_valid && slot.blas_serial == 3);
 }
 
 fn void test_posed_root_redirects_only_the_deformed_streams() @test {

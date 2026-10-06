@@ -22,6 +22,26 @@
       "type": "test",
       "sources": [ "test/**" ]
     },
+    "job_profile_test": {
+      "type": "test",
+      "sources": [ "test/**" ],
+      "features": [ "C3D_PROFILE_CPU" ],
+      "dependencies": [
+        "c3d_job",
+        "c3d_profile",
+        "c3d",
+        "gpu",
+        "vk",
+        "vma",
+        "spvreflect",
+        "sdl3",
+        "c3imgui",
+        "c3cg",
+        "cgltf",
+        "ufbx",
+        "shaderc"
+      ]
+    },
     "job_bench": {
       "type": "executable",
       "sources": [ "examples/job_bench.c3" ]

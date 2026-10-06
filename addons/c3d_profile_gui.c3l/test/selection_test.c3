@@ -384,7 +384,8 @@ fn void test_snapshot_fits_full_recorder_budgets() @test {
     $if $feat(C3D_PROFILE_CPU):
         desc.cpu_scopes_per_frame = 2;
         desc.max_depth = 2;
-        desc.label_bytes_per_frame += 8;
+        desc.worker_samples_per_frame = 2;
+        desc.label_bytes_per_frame += 16;
     $endif
     $if $feat(C3D_PROFILE_GPU):
         desc.gpu_scopes_per_frame = 3;
@@ -414,6 +415,14 @@ fn void test_snapshot_fits_full_recorder_budgets() @test {
                 );
                 profile::end_cpu_scope_at(&recorder, scope, 1_010);
             }
+            for (uint i = 0; i < desc.worker_samples_per_frame; i++) {
+                recorder.add_worker_interval(
+                    lane: i,
+                    label: "lane",
+                    start_ns: 990,
+                    end_ns: 1_020,
+                );
+            }
         $endif
         $if $feat(C3D_PROFILE_GPU):
             assert((uptr)panel.gpu.ptr % GpuSample::alignment == 0);
@@ -440,6 +449,13 @@ fn void test_snapshot_fits_full_recorder_budgets() @test {
             assert(panel.snapshot.cpu.len == desc.cpu_scopes_per_frame);
             foreach (sample : panel.snapshot.cpu) {
                 assert(sample.label == "same" && sample.duration_ns == 10);
+                assert((uptr)sample.label.ptr >= (uptr)panel.labels.ptr);
+                assert((uptr)sample.label.ptr + sample.label.len <= (uptr)panel.labels.ptr + panel.labels.len);
+            }
+            assert(panel.snapshot.workers.len == desc.worker_samples_per_frame);
+            assert((uptr)panel.workers.ptr % WorkerSample::alignment == 0);
+            foreach (lane, sample : panel.snapshot.workers) {
+                assert(sample.label == "lane" && sample.lane == lane && sample.start_ns == -10);
                 assert((uptr)sample.label.ptr >= (uptr)panel.labels.ptr);
                 assert((uptr)sample.label.ptr + sample.label.len <= (uptr)panel.labels.ptr + panel.labels.len);
             }
