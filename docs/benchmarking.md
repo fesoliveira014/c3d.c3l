@@ -164,6 +164,8 @@ pinned to a P-core. Each cell is the median of three runs' medians, in µs per p
 | `ecs_has` | 26.0 | 27.8 | 4,234 | 4,329 |
 | `ecs_has_shuffled` | 27.3 | 29.1 | 7,094 | 5,895 |
 
+A seven-run repeat put `ecs_each` at 2,097,152 within noise: 181.2 before, 182.9 after.
+
 ### Traced effects in software and on ray queries
 
 ```bash
