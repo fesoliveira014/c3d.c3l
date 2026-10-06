@@ -43,7 +43,8 @@ fn void scene_panel(Scene* scene, GuiPanelState* state) {
 
 <*
  Capture buttons for the Scene panel's selected reflection probe.
- Call after scene_panel and outside a renderer frame; "Capture new" leaves the previous environment and texture in the store.
+ Call after scene_panel and outside a renderer frame.
+ "Capture new" leaves the previous environment and texture in the store.
  @param [&inout] renderer : "Not inside a frame."
  @param [&inout] scene : "The selected probe's environment may be written."
  @param [&in] state : "Selection of the Scene panel."

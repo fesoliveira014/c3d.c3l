@@ -503,9 +503,11 @@ fn bool reflection_probe_inspector(void* component) @local {
         changed = true;
     }
     if (imgui::drag_float3("Capture offset", (float*)&probe.capture_offset)) changed = true;
-    foreach (axis, extent : probe.half_extents) {
-        float limit = extent - MIN_POSITIVE;
-        probe.capture_offset[axis] = math::clamp(probe.capture_offset[axis], -limit, limit);
+    if (changed) {
+        foreach (axis, extent : probe.half_extents) {
+            float limit = extent - MIN_POSITIVE;
+            probe.capture_offset[axis] = math::clamp(probe.capture_offset[axis], -limit, limit);
+        }
     }
     changed = nonnegative_drag("Blend distance", &probe.blend_distance) || changed;
     changed = nonnegative_drag("Intensity", &probe.intensity) || changed;

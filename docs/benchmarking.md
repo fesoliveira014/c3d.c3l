@@ -331,7 +331,7 @@ half extent, so every pixel reads both probes and the global environment), or a 
 `--reflection-probe-placement inside|outside` (default `inside`); `outside` moves every box below the model by twice the
 model's height, so each pixel tests every packed box and lies in none. The asset store is created with 32 environments
 when probes are on, and the banner prints `reflection_probes=N reflection_probe_placement=inside|outside`. The
-probe-sampling cost is `gpu_forward_opaque_ms` forward and `gpu_lighting_ms` deferred. See
+probe-sampling cost is `gpu_opaque_ms` forward and `gpu_lighting_ms` deferred. See
 [reflection probes](reflection_probes.md).
 
 `--environment-refresh on` marks the studio source texture dirty before every frame, so every frame

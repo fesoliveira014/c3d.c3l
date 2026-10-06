@@ -21,7 +21,8 @@ const Vec3 CAPTURE_ROOM_PROBE_HALF_EXTENTS @private = { 1.9f, 1.9f, 1.9f };
 const float CAPTURE_ROOM_SPHERE_RADIUS @private = 0.5f;
 const float CAPTURE_ROOM_FLOOR_HEIGHT @private = -1.2f;  // inside the probe box past its fade: the probe would light it
 const uint CAPTURE_ROOM_SPHERE_LAYER @private = 2;       // captures render layer 1 only
-const uint CAPTURE_ROOM_SCREEN_LAYER @private = 4;       // a black screen before the +X wall that a layer-1 capture must not see
+// A black screen before the +X wall that a layer-1 capture must not see.
+const uint CAPTURE_ROOM_SCREEN_LAYER @private = 4;
 const float CAPTURE_ROOM_SCREEN_DISTANCE @private = 1;
 const uint CAPTURE_ROOM_SIZE @private = 32;              // the default size exceeds 30 s on software devices
 const uint[<2>][4] CAPTURE_ROOM_TEXELS @private = { { 8, 8 }, { 23, 8 }, { 8, 23 }, { 23, 23 } }; // quadrant centres
@@ -165,9 +166,9 @@ fn Vec3 capture_room_texel(char[] pixels, CubeFace face, uint[<2>] texel) @priva
     usz first = (((usz)face.ordinal * CAPTURE_ROOM_SIZE + texel.y) * CAPTURE_ROOM_SIZE + texel.x) * 4;
     ushort[] halves = ((ushort*)pixels.ptr)[:pixels.len / ushort::size];
     return {
-        (float)bitcast(halves[first], float16),
-        (float)bitcast(halves[first + 1], float16),
-        (float)bitcast(halves[first + 2], float16),
+        render::half_to_float(halves[first]),
+        render::half_to_float(halves[first + 1]),
+        render::half_to_float(halves[first + 2]),
     };
 }
 
@@ -267,8 +268,8 @@ fn void test_recapture_keeps_ids_and_repeats_its_bytes() @test {
         ushort[] before = ((ushort*)first.ptr)[:first.len / ushort::size];
         ushort[] after = ((ushort*)second.ptr)[:second.len / ushort::size];
         foreach (index, bits : before) {
-            float expected = (float)bitcast(bits, float16);
-            float found = (float)bitcast(after[index], float16);
+            float expected = render::half_to_float(bits);
+            float found = render::half_to_float(after[index]);
             float tolerance = CAPTURE_ROOM_REPEAT_TOLERANCE * math::max(1.0f, math::abs(expected));
             assert(math::abs(found - expected) <= tolerance);
         }
