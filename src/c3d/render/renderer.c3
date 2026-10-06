@@ -283,6 +283,7 @@ macro void? Renderer.upload(&self, id) {
  @return? gpu::WAIT_TIMEOUT, gpu::SLOT_TABLE_FULL
  @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED
  @require !self.frame_open
+ @require math::is_finite(info.time)
 *>
 fn void? Renderer.begin_frame(&self, FrameInfo info = {}) {
     return begin_renderer_frame(self, info, true);
@@ -375,6 +376,7 @@ fn void? Renderer.end_frame(&self) {
             commit_uploads(self, slot);
             foreach (&record : self.views.items) {
                 record.history.publish();
+                record.auto_exposure.history.publish();
                 publish_lod_history(&record.lod_history);
             }
             submitted = true;
@@ -461,6 +463,7 @@ fn void? begin_renderer_frame(Renderer* self, FrameInfo info, bool acquire_outpu
         instrumentation::@scope("renderer.readback") {
             collect_gpu_profile(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
             read_cluster_stats(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
+            post::read_exposure_stats(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
             read_cull_stats(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT))!;
         };
         instrumentation::@scope("renderer.retire") {
@@ -920,7 +923,10 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         destroy_pipeline_cache(&renderer.device, &renderer.pipelines);
         destroy_deformation_cache(&renderer.deformation);
         pool::destroy_pool{TargetRecord, RenderTargetId}(&renderer.targets);
-        foreach (&record : renderer.views.items) release_view_images(&renderer, record);
+        foreach (&record : renderer.views.items) {
+            release_view_images(&renderer, record);
+            post::release_view_exposure(&renderer.device, record);
+        }
         pool::destroy_pool{ViewRecord, ViewId}(&renderer.views);
         // Preparation updates completion points and may replace copied ring storage.
         frames = renderer.frames;
@@ -928,6 +934,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
 
     renderer.default_view = renderer.views.add({ .live = true, .desc = default_view_desc() })!;
     acquire_view_images(&renderer, renderer.views.get(renderer.default_view))!;
+    post::acquire_view_exposure(&renderer, renderer.views.get(renderer.default_view))!;
     prepare_builtin_textures(&renderer)!;
     return renderer;
 }
@@ -967,7 +974,10 @@ fn void destroy_renderer(Renderer* renderer) {
     alloc::free(renderer.allocator, renderer.shadow_set.lights.ptr);
     release_previews(renderer);
     release_cluster_resources(renderer);
-    foreach (&record : renderer.views.items) release_view_images(renderer, record);
+    foreach (&record : renderer.views.items) {
+        release_view_images(renderer, record);
+        post::release_view_exposure(&renderer.device, record);
+    }
     pool::destroy_pool{ViewRecord, ViewId}(&renderer.views);
     post::destroy_post_pipelines(&renderer.device, &renderer.post_pipelines);
     destroy_ambient_occlusion_pipelines(&renderer.device, &renderer.ambient_occlusion_pipelines);
@@ -1089,6 +1099,7 @@ fn void abort_frame(Renderer* renderer) {
 
     if (!renderer.frame_submitted) {
         clear_cluster_readback(renderer, renderer.recording_slot);
+        post::clear_exposure_readback(renderer, renderer.recording_slot);
         renderer.cull_readbacks[renderer.recording_slot].pending = false;
         renderer.shadow_atlas.state = renderer.frame_shadow_state;
         foreach (index, &target : renderer.targets.items) target.target.state = renderer.frame_target_states[index];
@@ -1097,6 +1108,7 @@ fn void abort_frame(Renderer* renderer) {
         foreach (&record : renderer.views.items) {
             record.restore_states();
             record.history.discard();
+            record.auto_exposure.history.discard();
             discard_lod_history(&record.lod_history);
         }
     }

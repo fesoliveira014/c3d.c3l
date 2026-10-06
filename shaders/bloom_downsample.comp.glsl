@@ -31,6 +31,13 @@ float karis_weight(vec3 color) {
 // Average of a 2x2 group; the prefilter weights each sample by inverse luma to suppress fireflies.
 vec3 group_average(BloomRoot root, vec3 a, vec3 b, vec3 c, vec3 d) {
     if (root.prefilter == 0u) return (a + b + c + d) * 0.25;
+    if (root.auto_exposure != 0ul) {
+        float scale = ExposureGpu(root.auto_exposure).scale;
+        a *= scale;
+        b *= scale;
+        c *= scale;
+        d *= scale;
+    }
     a = soft_threshold(root, a);
     b = soft_threshold(root, b);
     c = soft_threshold(root, c);

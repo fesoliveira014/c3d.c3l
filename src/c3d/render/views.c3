@@ -391,6 +391,7 @@ struct ViewStats {
     uint              cluster_overflows;
     uint              accumulated_samples;
     bool              shadow_set_shared; // the last raster rendering bound a set an earlier view recorded
+    float             exposure; // applied multiplier, FRAMES_IN_FLIGHT frames late under auto; LINEAR_HDR applies none
     float[PASS_COUNT] gpu_pass_ms;
     bool[PASS_COUNT]  gpu_pass_valid @if($feat(C3D_PROFILE_GPU));
 }
@@ -443,6 +444,7 @@ struct ViewRecord {
     ProjectionTerms                      projection_terms;
     float                                exposure;
     ViewHistory                          history;
+    post::ViewExposure                   auto_exposure;
     LodHistory                          lod_history;
     gpu::TextureState[VIEW_TARGET_COUNT] frame_states;
     ClusterBuffers                       clusters;
@@ -662,12 +664,14 @@ fn ViewId? create_view(Renderer* renderer, ViewDesc desc) {
         *record = {};
         renderer.views.remove(view);
     }
+    post::acquire_view_exposure(renderer, record)!;
+    defer catch post::release_view_exposure(&renderer.device, record);
     acquire_view_images(renderer, record)!;
     return view;
 }
 
 <*
- Replace the view's configuration; resizes or retires its working images and forgets its history.
+ Replace the view's configuration; resizes or retires its working images and forgets its history except the adapted exposure.
  @param [&inout] renderer : "No open frame."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT
  @return? c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
@@ -680,6 +684,7 @@ fn ViewId? create_view(Renderer* renderer, ViewDesc desc) {
 fn void? configure_view(Renderer* renderer, ViewId view, ViewDesc desc) {
     ViewRecord* record = renderer.views.try_get(view)!;
     validate_view_desc(renderer, &desc)!;
+    record.auto_exposure.reconfigure(&record.desc, &desc);
 
     ViewRecord wanted = { .live = true, .desc = desc };
     uint[<2>] current_extent = view_working_extent(renderer, record);
@@ -770,12 +775,13 @@ fn void? destroy_view(Renderer* renderer, ViewId view) {
     if (view.index == renderer.default_view.index) return c3d::INVALID_ARGUMENT~;
     wait_frames(renderer)!;
     release_view_images(renderer, record);
+    post::release_view_exposure(&renderer.device, record);
     *record = {};
     renderer.views.remove(view);
 }
 
 <*
- Forget the view's previous pose so the next rendering carries no motion; a camera cut.
+ Forget the view's previous pose and adapted exposure; a camera cut.
  @param [&inout] renderer : "No open frame."
  @return? c3d::INVALID_ID
  @require !renderer.frame_open
@@ -784,6 +790,7 @@ fn void? reset_view_history(Renderer* renderer, ViewId view) {
     ViewRecord* record = renderer.views.try_get(view)!;
     record.history.valid = false;
     record.history.pending = false;
+    record.auto_exposure.history.invalidate();
     reset_lod_history(&record.lod_history);
 }
 

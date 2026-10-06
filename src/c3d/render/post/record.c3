@@ -20,6 +20,8 @@ struct PostPipelines {
     gpu::PipelineHandle dof_composite;
     gpu::PipelineHandle motion_blur;
     gpu::PipelineHandle taa_resolve;
+    gpu::PipelineHandle exposure_histogram;
+    gpu::PipelineHandle exposure_adapt;
 }
 
 struct LutBinding @private {
@@ -176,6 +178,7 @@ fn void? prepare_display(Renderer* renderer, ViewRecord* record) {
     if (record.desc.post.motion_blur) acquire_motion_blur_pipelines(renderer)!;
     if (uses_velocity(&record.desc)) acquire_velocity_pipelines(renderer, velocity_format(&record.desc))!;
     if (record.desc.post.anti_aliasing == AntiAliasing.TAA) acquire_taa_pipeline(renderer)!;
+    if (auto_exposure_active(&record.desc)) acquire_exposure_pipelines(renderer)!;
     if (!record.hdr_color.texture.is_valid()) return;
     gpu::Format output_format = render::view_output_format(renderer, &record.desc);
     if (record.desc.post.anti_aliasing == AntiAliasing.FXAA) {
@@ -192,10 +195,11 @@ fn void? prepare_display(Renderer* renderer, ViewRecord* record) {
  @param [&inout] pipelines : "Cleared."
 *>
 fn void destroy_post_pipelines(gpu::Device* device, PostPipelines* pipelines) {
-    gpu::PipelineHandle*[11] handles = {
+    gpu::PipelineHandle*[13] handles = {
         &pipelines.grade, &pipelines.fxaa, &pipelines.bloom_downsample, &pipelines.bloom_upsample,
         &pipelines.tile_max, &pipelines.tile_neighbor, &pipelines.dof_coc, &pipelines.dof_gather,
-        &pipelines.dof_composite, &pipelines.motion_blur, &pipelines.taa_resolve,
+        &pipelines.dof_composite, &pipelines.motion_blur, &pipelines.taa_resolve, &pipelines.exposure_histogram,
+        &pipelines.exposure_adapt,
     };
     foreach (handle : handles) {
         if (handle.is_valid()) (void)gpu::destroy_pipeline(device, *handle);
@@ -241,6 +245,7 @@ fn void? record_fused_display(
         bloom_texture:   bloom.texture,
         bloom_sampler:   renderer.linear_clamp_sampler,
         bloom_intensity: bloom.intensity,
+        auto_exposure:   adapted_exposure(record),
     );
     gpu::PipelineHandle pipeline = renderer.pipelines.get(&renderer.device, display_pipeline_key(output.format))!;
 
@@ -286,6 +291,7 @@ fn void? record_grade(
         bloom_texture:   bloom.texture,
         bloom_sampler:   renderer.linear_clamp_sampler,
         bloom_intensity: bloom.intensity,
+        auto_exposure:   adapted_exposure(record),
     );
     gpu::cmd_bind_pipeline(&renderer.commands, renderer.post_pipelines.grade)!;
     render::dispatch_over(renderer, root.address, &record.post_a)!;
