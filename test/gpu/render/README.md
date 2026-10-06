@@ -101,6 +101,13 @@ What the four cases establish:
   opted-out frame renders the same image; a sun no cascade covers leaves an empty set and no layers for the own-set
   and the borrowing view, and both render the same image.
 
+- Mirror shadow sets (`test_shadow_sets.c3`): the mirror records the frame's only atlas; its reflected wall matches
+  its own-set image within tolerance with and without volumetric fog; a borrowed set shadows a receiver its selected
+  cascade misses through a coarser cascade and leaves one outside every cascade lit; a spot outside the mirror's
+  frustum and a batch past the mirror's fade distance shadow main; a LodGroup caster's shadow stays within 6 % in
+  pixels; a light only the mirror sees draws unshadowed and counts in `shadow_lights_unshared`; a recording between
+  mirror and main makes main record.
+
 - Directional normal offsets at the default two texels of a 2048-texel atlas,
   in their own fixture (`test_shadow_bias.c3`): flat ground stays lit
   (visibility at least 0.99) in all four cascades at sun elevations of 10°,
