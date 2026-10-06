@@ -3,7 +3,7 @@ module c3d::test::texture;
 import c3d;
 import c3d::material;
 import c3d::asset;
-import c3d::render;
+import c3d::render @public;
 import c3d::render::post;
 import std::math;
 import c3d::shader;
@@ -43,7 +43,7 @@ fn void test_mips_include_odd_edge_and_single_axis() @test {
 
     char[4] expected = { 85, 85, 85, 255 };
     assert(chain.mip_count == 2 && chain.pixels[12..] == expected[..]);
-    assert(render::texture_mip_count(1, 7) == 3);
+    assert(material::texture_mip_count(1, 7) == 3);
 }
 
 fn void test_float_mips_keep_values_above_one() @test {
@@ -264,4 +264,27 @@ fn void test_texture_mips_reject_volumes_with_mips_or_other_formats() @test {
     } else {
         assert(false);
     }
+}
+
+fn void test_mip_bytes_match_the_backend_footprint() @test {
+    const uint WIDTH = 13;
+    const uint HEIGHT = 5;
+    foreach (format : PixelFormat::values) {
+        material::TextureDesc desc = material::texture_2d_desc(WIDTH, HEIGHT, format);
+        desc.generate_mips = false;
+        desc.mip_levels = material::texture_mip_count(WIDTH, HEIGHT);
+        gpu::TextureDesc device = {
+            .width = WIDTH,
+            .height = HEIGHT,
+            .mip_levels = desc.mip_levels,
+            .array_layers = 1,
+            .format = render::texture_format(format),
+        };
+        for (uint mip = 0; mip < desc.mip_levels; mip++) {
+            usz bytes = material::texture_mip_bytes(desc, mip)!!;
+            assert(bytes == gpu::texture_mip_bytes(&device, mip)!!, "%s mip %d", format, mip);
+        }
+    }
+    material::TextureDesc huge = material::texture_2d_desc(uint::max, uint::max, RGBA32_FLOAT);
+    assert(@catch(material::texture_mip_bytes(huge, 0)) == c3d::INVALID_ARGUMENT);
 }

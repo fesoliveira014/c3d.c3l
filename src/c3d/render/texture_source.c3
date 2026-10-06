@@ -5,8 +5,6 @@ import c3d::asset;
 import c3d::material;
 import gpu;
 
-const usz BC_BLOCK_EXTENT @local = 4;
-
 <*
  Byte layout of a packed mip chain: one offset per mip, layers consecutive within a mip.
 *>
@@ -14,14 +12,13 @@ struct TextureMipLayout {
     usz total_bytes;
     uint mip_count;
     uint layer_count;
-    usz[TEXTURE_MIP_CAPACITY] offsets;
+    usz[material::TEXTURE_MIP_CAPACITY] offsets;
 }
 
 <*
  Pack complete supplied mip layers without filtering or conversion.
  @param levels : "Complete slices ordered mip-major, then layer."
  @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
- @return? gpu::INVALID_ARGUMENT
 *>
 fn TextureMipChain? create_supplied_texture_mips(
     Allocator allocator,
@@ -44,48 +41,26 @@ fn TextureMipChain? create_supplied_texture_mips(
  Validate supplied mip layers and compute where each mip lands in one packed staging span.
  @param levels : "Complete slices ordered mip-major, then layer."
  @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
- @return? gpu::INVALID_ARGUMENT
 *>
 fn TextureMipLayout? supplied_texture_mip_layout(material::TextureDesc desc, TextureMipData[] levels) {
     if (!desc.width || !desc.height || !desc.mip_levels || desc.generate_mips) return c3d::INVALID_ARGUMENT~;
-    if (desc.mip_levels > texture_mip_count(desc.width, desc.height)) return c3d::INVALID_ARGUMENT~;
+    if (desc.mip_levels > material::texture_mip_count(desc.width, desc.height)) return c3d::INVALID_ARGUMENT~;
     if (desc.depth) return c3d::UNSUPPORTED~;
     if (desc.is_cube) {
         if (desc.layers != material::CUBE_FACE_COUNT || desc.width != desc.height) return c3d::INVALID_ARGUMENT~;
-        if (texture_is_compressed(desc.format)) return c3d::UNSUPPORTED~;
+        if (material::texture_is_compressed(desc.format)) return c3d::UNSUPPORTED~;
     } else if (desc.layers != 1) {
         return c3d::UNSUPPORTED~;
     }
     if (!levels.len) return c3d::ASSET_DATA_UNAVAILABLE~;
     if (levels.len != (usz)desc.mip_levels * desc.layers) return c3d::INVALID_ARGUMENT~;
 
-    gpu::TextureDesc description = {
-        .width = desc.width,
-        .height = desc.height,
-        .mip_levels = desc.mip_levels,
-        .array_layers = desc.layers,
-        .format = texture_format(desc.format),
-    };
-    gpu::TextureDesc unit_description = {
-        .width = 1,
-        .height = 1,
-        .mip_levels = 1,
-        .array_layers = 1,
-        .format = description.format,
-    };
-    usz unit_bytes = gpu::texture_mip_bytes(&unit_description, 0)!;
-    usz unit_extent = texture_is_compressed(desc.format) ? BC_BLOCK_EXTENT : 1;
-    usz row_units = ((usz)desc.width - 1) / unit_extent + 1;
-    usz block_rows = ((usz)desc.height - 1) / unit_extent + 1;
-    // The backend footprint helper multiplies without overflow checks.
-    if (row_units > (usz)sz::max / block_rows / unit_bytes / desc.layers) return c3d::INVALID_ARGUMENT~;
-
     TextureMipLayout layout = {
         .mip_count = desc.mip_levels,
         .layer_count = desc.layers,
     };
     for (uint mip = 0; mip < desc.mip_levels; mip++) {
-        usz layer_bytes = gpu::texture_mip_bytes(&description, mip)!;
+        usz layer_bytes = material::texture_mip_bytes(desc, mip)!;
         if (layer_bytes > ((usz)sz::max - layout.total_bytes) / desc.layers) return c3d::INVALID_ARGUMENT~;
         layout.offsets[mip] = layout.total_bytes;
         for (uint layer = 0; layer < desc.layers; layer++) {
@@ -109,27 +84,6 @@ fn void copy_supplied_texture_mips(char[] destination, TextureMipData[] levels) 
     foreach (level : levels) {
         mem::copy(destination.ptr + offset, level.bytes.ptr, level.bytes.len);
         offset += level.bytes.len;
-    }
-}
-
-fn bool texture_is_compressed(PixelFormat format) @private {
-    switch (format) {
-        case RGBA8_UNORM:
-        case RGBA8_SRGB:
-        case RGBA16_FLOAT:
-        case RGBA32_FLOAT:
-        case R16_UINT:
-            return false;
-        case BC1_RGBA_UNORM:
-        case BC1_RGBA_SRGB:
-        case BC3_UNORM:
-        case BC3_SRGB:
-        case BC4_UNORM:
-        case BC5_UNORM:
-        case BC6H_UFLOAT:
-        case BC7_UNORM:
-        case BC7_SRGB:
-            return true;
     }
 }
 
