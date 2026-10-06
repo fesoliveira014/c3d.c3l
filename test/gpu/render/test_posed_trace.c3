@@ -22,6 +22,7 @@ const float POSED_DEPTH_TOLERANCE @private = 1e-3f;    // relative; every pose h
 const usz POSED_PIXELS @private = TARGET_SIZE * TARGET_SIZE;
 const usz POSED_EDGE_BUDGET @private = POSED_PIXELS / 50; // silhouette pixels where coverage and the centre ray part
 const usz POSED_COVERAGE_MINIMUM @private = POSED_PIXELS / 10;
+const float POSED_NORMAL_AGREEMENT @private = 0.999f; // flat faces: every corner normal is the face normal
 const uint POSED_FRAMES @private = 4;
 const usz POSED_POSITION_BYTES @private = 12; // a packed vec3 position
 const usz POSED_RESULT_BYTES @private = POSED_PIXELS * PosedDepthResult::size;
@@ -39,15 +40,17 @@ struct PosedDepthRoot @private {
 $assert PosedDepthRoot::size == 112;
 
 struct PosedDepthResult @private {
-    float raster;
-    float traced;
-    uint  geometry_low;
-    uint  flags;
-    uint  primitive;
-    uint  padding;
-    Vec2  barycentrics;
+    float    raster;
+    float    traced;
+    uint     geometry_low;
+    uint     flags;
+    uint     primitive;
+    uint     padding;
+    Vec2     barycentrics;
+    float[4] normal;           // shading normal of the hit, from the posed normal stream
+    float[4] geometric_normal; // normal of the hit triangle's posed corners
 }
-$assert PosedDepthResult::size == 32;
+$assert PosedDepthResult::size == 64;
 
 struct PosedHarness @private {
     Scene              scene;
@@ -65,9 +68,10 @@ struct PosedRig @private {
 }
 
 struct PosedAgreement @private {
-    usz   covered;    // pixels where raster and trace both hit
-    usz   mismatched; // pixels where one hit alone, or the distances differ past the tolerance
-    float worst;      // largest relative distance error over covered pixels
+    usz   covered;     // pixels where raster and trace both hit
+    usz   mismatched;  // pixels where one hit alone, or the distances differ past the tolerance
+    float worst;       // largest relative distance error over covered pixels
+    usz   normals_off; // traced pixels whose shading normal leaves the posed triangle's plane normal
 }
 
 fn void? posed_create_harness(Fixture* fixture, PosedHarness* harness) @private {
@@ -187,12 +191,19 @@ fn void? posed_render(Fixture* fixture, PosedHarness* harness, TraceKind kind) @
     mem::copy(harness.results.ptr, harness.readback.bytes.ptr, (sz)POSED_RESULT_BYTES);
 }
 
+fn bool normals_agree(PosedDepthResult* result) @local {
+    Vec3 shading = { result.normal[0], result.normal[1], result.normal[2] };
+    Vec3 geometric = { result.geometric_normal[0], result.geometric_normal[1], result.geometric_normal[2] };
+    return shading.dot(geometric) >= POSED_NORMAL_AGREEMENT; // false for a zero or NaN normal
+}
+
 fn PosedAgreement posed_agreement(PosedDepthResult[] results) @private {
     PosedAgreement agreement;
     foreach (&result : results) {
         bool raster = (result.flags & POSED_RASTER_HIT) != 0;
         bool traced = (result.flags & POSED_TRACE_HIT) != 0;
         if (!raster && !traced) continue;
+        if (traced && !normals_agree(result)) agreement.normals_off++;
         if (raster != traced) {
             agreement.mismatched++;
             continue;
@@ -205,16 +216,18 @@ fn PosedAgreement posed_agreement(PosedDepthResult[] results) @private {
     return agreement;
 }
 
-fn void posed_assert_agreement(PosedDepthResult[] results, ZString name) @private {
+fn void posed_assert_agreement(PosedDepthResult[] results, ZString name, bool flat_faces = true) @private {
     PosedAgreement agreement = posed_agreement(results);
     io::eprintfn(
-        "%s: %d covered, %d mismatched, worst %f",
+        "%s: %d covered, %d mismatched, worst %f, %d normals off",
         name,
         agreement.covered,
         agreement.mismatched,
         agreement.worst,
+        agreement.normals_off,
     );
     assert(agreement.covered >= POSED_COVERAGE_MINIMUM && agreement.mismatched <= POSED_EDGE_BUDGET);
+    if (flat_faces) assert(agreement.normals_off == 0);
 }
 
 fn void test_posed_meshes_trace_at_the_raster_pose() @test {
@@ -582,7 +595,7 @@ fn void test_posed_slot_follows_a_new_geometry() @test {
         harness.scene.get(rig.mesh, Mesh).geometry = posed_sphere(&fixture)!!;
         posed_set_frame(&harness, &rig, 2);
         posed_render(&fixture, &harness, kind)!!;
-        posed_assert_agreement(harness.results, "after a geometry swap");
+        posed_assert_agreement(harness.results, "after a geometry swap", flat_faces: false);
         slot = posed_slot_of(&fixture, &harness, rig.mesh);
         if (ray_queries) {
             assert(slot.blas != blas && fixture.renderer.stats.blas_builds == 1);
@@ -929,6 +942,202 @@ fn void test_strong_pose_refit_encloses_every_posed_triangle() @test {
     check_validation(renderer);
 }
 
+const Vec3 POSED_BONE_OFFSET @private = { 0, 1, 0 };
+const Vec3 POSED_CROWD_CAMERA @private = { 0, 0.65f, 2.6f };
+
+fn Geometry posed_crowd_part(Allocator allocator, ushort joint, Vec3 offset) @private {
+    Geometry box = geometry::box(allocator, 0.6f, 0.6f, 0.6f);
+    box.joints = alloc::new_array(allocator, ushort[<4>], box.positions.len);
+    box.weights = alloc::new_array(allocator, Vec4, box.positions.len);
+    foreach (index, &position : box.positions) {
+        *position += offset;
+        box.joints[index] = { joint, 0, 0, 0 };
+        box.weights[index] = { 1, 0, 0, 0 };
+    }
+    box.bounds = { .min = box.bounds.min + offset, .max = box.bounds.max + offset };
+    return box;
+}
+
+fn NodeTemplate posed_template_node(String name, int parent, Vec3 position) @private {
+    return {
+        .parent  = parent,
+        .name    = name.copy(mem),
+        .local   = { .position = position, .rotation = maths::TRANSFORM_IDENTITY.rotation, .scale = { 1, 1, 1 } },
+        .layers  = scene::DEFAULT_LAYERS,
+        .visible = true,
+    };
+}
+
+fn ModelId? posed_crowd_model(Fixture* fixture, MaterialId[2] materials, ClipId* swing) @private {
+    AssetStore* assets = &fixture.assets;
+    GeometryId[2] parts;
+    @pool() {
+        Geometry lower = posed_crowd_part(tmem, 0, {});
+        parts[0] = assets.add_geometry(&lower)!;
+        Geometry upper = posed_crowd_part(tmem, 1, { 0, 1.3f, 0 });
+        parts[1] = assets.add_geometry(&upper)!;
+    };
+    Skeleton skeleton = {
+        .joint_names  = alloc::new_array(mem, String, 2),
+        .parents      = alloc::new_array(mem, int, 2),
+        .rest_pose    = alloc::new_array(mem, Transform, 2),
+        .inverse_bind = alloc::new_array(mem, Mat4, 2),
+    };
+    skeleton.parents[0] = -1;
+    skeleton.parents[1] = 0;
+    skeleton.rest_pose[..] = maths::TRANSFORM_IDENTITY;
+    skeleton.inverse_bind[0] = matrix::IDENTITY4;
+    skeleton.inverse_bind[1] = matrix::IDENTITY4.translate(-POSED_BONE_OFFSET);
+    SkeletonId skeleton_id = assets.add_skeleton_owned(&skeleton)!;
+
+    Quat bent = quaternion::from_axis_angle{float}({ 0, 0, 1 }, (float)math::PI / 2);
+    AnimationClip clip = {
+        .name     = "swing".copy(mem),
+        .duration = 1,
+        .tracks   = alloc::new_array(mem, Track, 1),
+        .targets  = alloc::new_array(mem, uint, 1),
+    };
+    clip.targets[0] = 2;
+    clip.tracks[0] = {
+        .target        = 0,
+        .path          = TargetPath.ROTATION,
+        .interpolation = Interpolation.LINEAR,
+        .times         = alloc::new_array(mem, float, 2),
+        .values        = alloc::new_array(mem, float, 8),
+    };
+    float[2] times = { 0, 1 };
+    float[8] values = { 0, 0, 0, 1, bent.i, bent.j, bent.k, bent.l };
+    clip.tracks[0].times[..] = times[..];
+    clip.tracks[0].values[..] = values[..];
+    *swing = assets.add_clip_owned(&clip)!;
+
+    ModelTemplate template = {
+        .nodes  = alloc::new_array(mem, NodeTemplate, 5),
+        .meshes = alloc::new_array(mem, ModelMesh, 2),
+        .skins  = alloc::new_array(mem, ModelSkin, 2),
+        .clips  = alloc::new_array(mem, ClipId, 1),
+    };
+    template.nodes[0] = posed_template_node("root", -1, {});
+    template.nodes[1] = posed_template_node("bone0", 0, {});
+    template.nodes[2] = posed_template_node("bone1", 1, POSED_BONE_OFFSET);
+    template.nodes[3] = posed_template_node("lower", 0, {});
+    template.nodes[4] = posed_template_node("upper", 1, {});
+    foreach (index, &skin : template.skins) {
+        template.meshes[index] = { .node = (uint)index + 3, .geometry = parts[index], .material = materials[index] };
+        skin.mesh_node = (uint)index + 3;
+        skin.skeleton = skeleton_id;
+        skin.joint_nodes = alloc::new_array(mem, uint, 2);
+        skin.joint_nodes[0] = 1;
+        skin.joint_nodes[1] = 2;
+    }
+    template.clips[0] = *swing;
+    return assets.add_model_owned(&template);
+}
+
+fn MaterialId? posed_cutout(Fixture* fixture, float alpha) @private {
+    MaterialCommon cutout = material::MATERIAL_COMMON_DEFAULT;
+    cutout.alpha_mode = AlphaMode.MASK;
+    return fixture.assets.add_material(material::basic(params: { .color = { 1, 1, 1, alpha } }, common: cutout));
+}
+
+fn void? posed_add_crowd_pair(Fixture* fixture, PosedHarness* harness, MaterialId lower) @private {
+    harness.camera.local.position = POSED_CROWD_CAMERA;
+    ClipId swing;
+    ModelId model = posed_crowd_model(fixture, { lower, fixture.plain }, &swing)!;
+    Transform mirrored = maths::TRANSFORM_IDENTITY;
+    mirrored.position = { 0.6f, 0, 0 };
+    mirrored.scale = { -1, 1, 1 };
+    Transform plain = maths::TRANSFORM_IDENTITY;
+    plain.position = { -0.6f, 0, 0 };
+    CrowdInstance[2] instances = {
+        { .placement = mirrored, .pose = { .clip = swing, .time = 0.5f, .speed = 1 }, .color = { 1, 1, 1, 1 } },
+        { .placement = plain, .pose = { .clip = swing, .time = 0.25f, .speed = 1 }, .color = { 1, 1, 1, 1 } },
+    };
+    model::add_crowd(
+        assets:      &fixture.assets,
+        scene:       &harness.scene,
+        model:       model,
+        capacity:    2,
+        pose_bounds: { .min = { -1, -1, -1 }, .max = { 1, 2.5f, 1 } },
+        instances:   instances[..],
+        trace:       true,
+    )!;
+    anim::crowd_update(&fixture.assets, &harness.scene, 0);
+    harness.scene.update_world();
+}
+
+fn void test_traced_crowd_instances_match_raster() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        PosedHarness harness;
+        posed_create_harness(&fixture, &harness)!!;
+        defer posed_destroy_harness(&fixture, &harness);
+        posed_add_crowd_pair(&fixture, &harness, posed_cutout(&fixture, 1)!!)!!;
+
+        posed_render(&fixture, &harness, ray_queries ? TraceKind.HARDWARE : TraceKind.SOFTWARE)!!;
+        posed_assert_agreement(harness.results, "crowd");
+        assert(fixture.renderer.stats.trace_posed_instances == 4 && fixture.renderer.stats.trace_poses == 4);
+        check_validation(&fixture.renderer);
+    }
+}
+
+fn void test_traced_crowd_alpha_test_discards_like_raster() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        PosedHarness harness;
+        posed_create_harness(&fixture, &harness)!!;
+        defer posed_destroy_harness(&fixture, &harness);
+        posed_add_crowd_pair(&fixture, &harness, posed_cutout(&fixture, 0)!!)!!;
+
+        posed_render(&fixture, &harness, ray_queries ? TraceKind.HARDWARE : TraceKind.SOFTWARE)!!;
+        posed_assert_agreement(harness.results, "crowd with a discarded part");
+        assert(fixture.renderer.stats.trace_posed_instances == 4);
+        check_validation(&fixture.renderer);
+    }
+}
+
+fn void test_traced_crowd_pose_outside_its_rest_geometry_is_hit() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    PosedHarness harness;
+    posed_create_harness(&fixture, &harness)!!;
+    defer posed_destroy_harness(&fixture, &harness);
+    harness.camera.local.position = POSED_CROWD_CAMERA;
+    ClipId swing;
+    ModelId model = posed_crowd_model(&fixture, { fixture.plain, fixture.plain }, &swing)!!;
+    CrowdInstance[1] instances = {{
+        .placement = maths::TRANSFORM_IDENTITY,
+        .pose      = { .clip = swing, .time = 1, .speed = 0 },
+        .color     = { 1, 1, 1, 1 },
+    }};
+    model::add_crowd(
+        assets:      &fixture.assets,
+        scene:       &harness.scene,
+        model:       model,
+        capacity:    1,
+        pose_bounds: { .min = { -1.5f, -1, -1 }, .max = { 1, 2.5f, 1 } },
+        instances:   instances[..],
+        trace:       true,
+    )!!;
+    anim::crowd_update(&fixture.assets, &harness.scene, 0);
+    harness.scene.update_world();
+
+    posed_render(&fixture, &harness, TraceKind.SOFTWARE)!!;
+    posed_assert_agreement(harness.results, "crowd outside its rest geometry");
+    usz beside;
+    foreach (index, &result : harness.results) {
+        uint column = (uint)index % TARGET_SIZE;
+        if ((result.flags & POSED_TRACE_HIT) && column < TARGET_SIZE / 3) beside++;
+    }
+    assert(beside > 0);
+    check_validation(&fixture.renderer);
+}
+
 const Vec3 POSED_OCCLUDER_NEAR @private = { 0, 0.5f, -1 }; // cube resting on the floor, its front face at z = -0.5
 const Vec3 POSED_OCCLUDER_AWAY @private = { 3, 0.5f, -1 }; // the same cube 3 m to the side
 const Vec3 POSED_CREASE_POINT @private = { 0, 0, -0.45f }; // on the floor 5 cm from the cube's front face
@@ -956,7 +1165,12 @@ fn void test_posed_occluder_darkens_ray_traced_ao() @test {
         CreaseScene crease = create_crease_scene(&fixture)!!;
         defer scene::destroy_scene(&crease.scene);
         MaterialId surface = crease.scene.get(crease.floor, Mesh).material;
-        Node* joint = posed_attach_joint(&fixture, &crease.scene, posed_box(&fixture, true)!!, surface);
+        Node* joint = posed_attach_joint(
+            fixture:  &fixture,
+            scene:    &crease.scene,
+            geometry: posed_box(&fixture, true)!!,
+            material: surface,
+        );
         AoView ao_view = create_ao_view(&fixture, ShadingPath.FORWARD)!!;
         defer destroy_ao_view(&fixture, &ao_view);
         crease.view = ao_view.view;
@@ -996,18 +1210,33 @@ fn void test_posed_emitter_shows_in_reflections() @test {
         defer scene::destroy_scene(&mirror.scene);
         mirror.emitter.visible = false;
         MaterialId glow = fixture.assets.add_material(material::standard(mirror.glow))!!;
-        Node* joint = posed_attach_joint(&fixture, &mirror.scene, posed_box(&fixture, true)!!, glow);
+        Node* joint = posed_attach_joint(
+            fixture:  &fixture,
+            scene:    &mirror.scene,
+            geometry: posed_box(&fixture, true)!!,
+            material: glow,
+        );
         AoView mirror_view = create_ao_view(&fixture, ShadingPath.DEFERRED)!!;
         defer destroy_ao_view(&fixture, &mirror_view);
         set_reflections(&fixture, mirror_view.view, true)!!;
 
         joint.local.position = EMITTER_POSITION;
         mirror.scene.update_world();
-        uint held = render_mirror(&fixture, &mirror, mirror_view.view, EMITTER_IMAGE_POINT)!!;
+        uint held = render_mirror(
+            fixture: &fixture,
+            mirror:  &mirror,
+            view:    mirror_view.view,
+            point:   EMITTER_IMAGE_POINT,
+        )!!;
         assert(fixture.renderer.stats.trace_posed_instances == 1);
         joint.local.position = EMITTER_POSITION + (Vec3){ 3, 0, 0 };
         mirror.scene.update_world();
-        uint moved = render_mirror(&fixture, &mirror, mirror_view.view, EMITTER_IMAGE_POINT)!!;
+        uint moved = render_mirror(
+            fixture: &fixture,
+            mirror:  &mirror,
+            view:    mirror_view.view,
+            point:   EMITTER_IMAGE_POINT,
+        )!!;
         io::eprintfn("%s, posed emitter image: held %06x, moved %06x", trace_name(ray_queries), held, moved);
 
         assert(red(held) > EMITTER_MINIMUM && green(held) < DARK_MAXIMUM);
@@ -1026,19 +1255,34 @@ fn void test_probe_update_sees_a_posed_wall() @test {
         defer scene::destroy_scene(&room.scene);
         room.roof.visible = false;
         MaterialId surface = room.scene.get(room.roof, Mesh).material;
-        Node* joint = posed_attach_joint(&fixture, &room.scene, posed_box(&fixture, true)!!, surface);
+        Node* joint = posed_attach_joint(
+            fixture:  &fixture,
+            scene:    &room.scene,
+            geometry: posed_box(&fixture, true)!!,
+            material: surface,
+        );
         joint.local.position = room.roof.local.position;
         joint.local.scale = room.roof.local.scale;
         room.scene.update_world();
         ProbeView probe_view = create_probe_view(&fixture, ShadingPath.FORWARD)!!;
         defer destroy_probe_view(&fixture, &probe_view);
 
-        render_room_frames(&fixture, &room, probe_view.view, OPEN_ROOM_UPDATES)!!;
+        render_room_frames(
+            fixture: &fixture,
+            room:    &room,
+            view:    probe_view.view,
+            frames:  OPEN_ROOM_UPDATES,
+        )!!;
         float closed = interior_irradiance(&fixture, &room);
         assert(fixture.renderer.posed_trace.bytes > 0);
         joint.local.position.y += 10;
         room.scene.update_world();
-        render_room_frames(&fixture, &room, probe_view.view, OPEN_ROOM_UPDATES)!!;
+        render_room_frames(
+            fixture: &fixture,
+            room:    &room,
+            view:    probe_view.view,
+            frames:  OPEN_ROOM_UPDATES,
+        )!!;
         float open = interior_irradiance(&fixture, &room);
         io::eprintfn("%s: posed roof closed %f, posed away %f", trace_name(ray_queries), closed, open);
 

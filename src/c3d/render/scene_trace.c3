@@ -591,7 +591,6 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
     foreach (index, &record : records) {
         TracePoseSource* pose = &collection.poses[index];
         bool posed_row = pose.kind != TracePose.REST;
-        if (pose.kind == TracePose.CROWD) continue;
         GeometryAsset* asset_record = renderer.assets.geometry(record.geometry);
         GpuGeometry* mirror = &renderer.geometries[record.geometry.index];
         uint revision = asset_record.header.revision;

@@ -83,7 +83,7 @@ render::configure_view(&renderer, renderer.default_view, desc)!;
   image, so the blur, the receivers and everything under [What it darkens](#what-it-darkens)
   are unchanged.
 - The rays find occluders the screen cannot see: off-screen geometry and surfaces hidden behind
-  nearer ones. Only the traced scene occludes: skinned and morphed meshes occlude at their raster pose, while crowd instances, custom vertex stages and `BLEND` meshes do not.
+  nearer ones. Only the traced scene occludes: skinned and morphed meshes occlude at their raster pose, while crowd placements occlude only through `add_crowd(trace: true)`, and custom vertex stages and `BLEND` meshes do not.
 - The ray directions rotate per pixel with interleaved gradient noise, per frame only on a TAA
   view. More rays cost proportionally more: 16 rays at half resolution trace 8.3 M rays a
   frame at 1080p.

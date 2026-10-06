@@ -291,7 +291,7 @@ What the four cases establish:
 
 - Posed trace instances (`test_posed_trace.c3`, both kinds where noted): a skinned, a morphed and a combined mesh trace at the raster
   pose over four frames (traced hit distance against the raster depth of the same pixels, hits on the slot's geometry
-  root), two instances of one geometry stay independent beside a static mesh, a still pose records no posing and keeps the
+  root, and each hit's shading normal against the normal of its posed triangle), two instances of one geometry stay independent beside a static mesh, a still pose records no posing and keeps the
   trace revision while a joint or weight change advances it once (an aborted frame re-poses once), frames without a
   traced consumer allocate and record nothing, a morph target that leaves the rest box is hit, a closed-frame preparation
   reads the current pose and does not re-pose when repeated, the refit at rest reproduces the rest tree component for
@@ -307,6 +307,11 @@ What the four cases establish:
   only at its pose, a posed emissive cube shows in ray-traced reflections only at its pose, and a posed roof slab closes the
   probe room's light only in place.
 
+  Crowds (`add_crowd(trace: true)`, both kinds): a mirrored and an unmirrored placement of a two-part crowd trace at their
+  raster poses with their own palettes and front faces (four posed slots), a part with a `MASK` material that discards
+  every pixel leaves no trace hits where raster shows none, and a placement posed outside its rest geometry but inside
+  `pose_bounds` is hit.
+
 - Resize faults (`test_resize_faults.c3`): at a full texture table a target resize, one whose second view cannot get
   its images, and a `configure_view` that changes the render scale fault `gpu::SLOT_TABLE_FULL`; at a full heap an
   in-place `configure_view` that adds bloom beside kept TAA images and drops ambient occlusion faults
@@ -315,6 +320,16 @@ What the four cases establish:
   fillers are destroyed. The window case grows its window over a full table: `begin_frame` faults with the window view
   unchanged and the next one succeeds at the swapchain's extent; without a window, or when the window keeps its size,
   it prints a skip line.
+
+`posed_trace_bench` (`c3c build posed_trace_bench --path test/gpu/render`, run from the repository root) prints one CSV
+row per sampled frame: `mannequin <count> <software|hardware> <rest|strong|animate> [fresh]` traces `count` animated
+Mannequins and `crowd <count> <software|hardware>` a traced crowd, with a 1920 x 1080 primary-ray dispatch per frame.
+The columns are the `TRACE_POSE`, `ACCELERATION_BUILD` and custom-compute GPU times, `trace_build_ms`,
+`trace_posed_bytes` and the pose, refit, update and build counts; hardware runs also print the bottom-level storage with
+and without `allow_update`. `fresh` aborts every other frame so each sampled frame builds every posed bottom level in
+full. Validation is on; a trailing `novalidation` argument turns it off for timing runs (validation-on and -off GPU
+times read the same, with 1 to 5 % more CPU `trace_build_ms` under validation). Numbers from a software rasterizer measure
+the harness only.
 
 What they cannot establish: window clear-only and GUI-only frames need a
 window (run the `clear` and `cube_gui` examples with validation), and a
