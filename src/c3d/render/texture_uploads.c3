@@ -13,7 +13,7 @@ struct PendingTextureUpload {
     gpu::TextureHandle texture;
     gpu::TextureState before;
     uint mip_count;
-    gpu::BufferTextureCopyDesc[TEXTURE_MIP_CAPACITY] copies;
+    gpu::BufferTextureCopyDesc[material::TEXTURE_MIP_CAPACITY] copies;
     bool recorded;
 }
 

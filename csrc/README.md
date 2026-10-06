@@ -140,6 +140,63 @@ Levels are red, green, blue, yellow, magenta, cyan and white at offsets
 one full eight-byte block. These commands describe one-time fixture authoring;
 no compressor, transcoder or image encoder runs during the build.
 
+# Texture container fixtures
+
+`test/fixtures/texture/` holds DDS files for the container tests. They are project-authored and were
+written once by the script below; no generator runs during builds or tests. Level bytes come from
+`payload(seed, length)` and BC1 blocks keep `color0 > color1`. Each file stays within 3 KB. Run the script from
+the repository root:
+
+```python
+from pathlib import Path
+import struct
+
+fixtures = Path("test/fixtures/texture")
+fixtures.mkdir(parents=True, exist_ok=True)
+
+
+def payload(seed, length):
+    return bytes((seed + 7 * k) & 0xFF for k in range(length))
+
+
+def clean_bc1(seed, blocks):
+    # color0 > color1 selects four-color blocks, which BC1 RGB and RGBA decode alike
+    return b"".join(struct.pack("<HHI", 0xFFFF - seed - b, seed + b, 0xE4E4E4E4) for b in range(blocks))
+
+
+def rgba16f_texels(count):
+    return b"".join(struct.pack("<4e", *(((t + c) % 16) / 16 for c in range(4))) for t in range(count))
+
+
+# DDS: magic, DDS_HEADER (124 bytes), optional DDS_HEADER_DXT10 (20 bytes), levels largest first.
+def dds_pixel_format(flags, four_cc=b"\0\0\0\0", bits=0, masks=(0, 0, 0, 0)):
+    return struct.pack("<II4sI4I", 32, flags, four_cc, bits, *masks)
+
+
+def dds(path, width, height, levels, pixel_format, dxgi_format=None, compressed=True):
+    flags = 0x1 | 0x2 | 0x4 | 0x1000 | 0x20000 | (0x80000 if compressed else 0x8)
+    pitch = len(levels[0]) if compressed else len(levels[0]) // height
+    caps = 0x1000 | (0x400008 if len(levels) > 1 else 0)
+    header = (b"DDS " + struct.pack("<7I", 124, flags, height, width, pitch, 0, len(levels)) + b"\0" * 44
+              + pixel_format + struct.pack("<5I", caps, 0, 0, 0, 0))
+    if dxgi_format is not None:
+        header += struct.pack("<5I", dxgi_format, 3, 0, 1, 0)
+    path.write_bytes(header + b"".join(levels))
+
+
+DX10 = dds_pixel_format(0x4, b"DX10")
+dds(fixtures / "dx10_rgba8_srgb_5x3.dds", 5, 3, [payload(0x10, 60), payload(0x20, 8), payload(0x30, 4)],
+    DX10, 29, False)
+dds(fixtures / "dx10_bc7_srgb_5x3.dds", 5, 3, [payload(0x40, 32), payload(0x50, 16), payload(0x60, 16)], DX10, 99)
+dds(fixtures / "dx10_format16.dds", 2, 2, [clean_bc1(9, 2)], DX10, 28, False)
+dds(fixtures / "legacy_dxt1_6x6.dds", 6, 6, [clean_bc1(1, 4), clean_bc1(5, 1), clean_bc1(6, 1)],
+    dds_pixel_format(0x4, b"DXT1"))
+dds(fixtures / "legacy_rgba16f_4x4.dds", 4, 4, [rgba16f_texels(16)],
+    dds_pixel_format(0x4, struct.pack("<I", 113)), compressed=False)
+dds(fixtures / "legacy_rgba8_2x2.dds", 2, 2, [payload(0x70, 16), payload(0x80, 4)],
+    dds_pixel_format(0x41, bits=32, masks=(0xFF, 0xFF00, 0xFF0000, 0xFF000000)), compressed=False)
+```
+
 # Standard material fixtures
 
 `examples/assets/pbr/` contains four project-authored 64×64 RGBA PNGs.

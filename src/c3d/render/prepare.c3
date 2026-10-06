@@ -284,7 +284,7 @@ fn usz mip_chain_bytes(material::TextureDesc desc, usz base_bytes) @private {
     if (desc.depth || !desc.generate_mips) return base_bytes;
     usz texel_bytes = base_bytes / ((usz)desc.width * desc.height * desc.layers);
     usz total;
-    for (uint mip = 0; mip < texture_mip_count(desc.width, desc.height); mip++) {
+    for (uint mip = 0; mip < material::texture_mip_count(desc.width, desc.height); mip++) {
         total += (usz)math::max(1u, desc.width >> mip) * math::max(1u, desc.height >> mip) * texel_bytes * desc.layers;
     }
     return total;
