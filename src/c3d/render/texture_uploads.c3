@@ -98,6 +98,7 @@ fn void commit_uploads(Renderer* renderer, Frame* slot) @private {
     renderer.scene_trace.pending_builds.clear();
     renderer.rt.pending_blas.clear();
     renderer.rt.recorded_blas = 0;
+    commit_posed_trace(&renderer.posed_trace);
     renderer.uploads_recorded = false;
 
     foreach (retired : renderer.pending_upload_retire) slot.retire.push(retired);
@@ -113,6 +114,7 @@ fn void discard_uploads(Renderer* renderer) @private {
     discard_environment_preparations(renderer);
     restore_texture_states(&renderer.texture_state_undo, renderer.textures);
     discard_font_uploads(renderer);
+    discard_posed_trace(&renderer.posed_trace);
     if (!renderer.uploads_recorded && !renderer.pending_copies.len()
         && !renderer.pending_texture_uploads.len() && !renderer.pending_geometry_uploads.len()
         && !renderer.pending_instance_uploads.len()) {

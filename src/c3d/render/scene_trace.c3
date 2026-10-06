@@ -779,7 +779,12 @@ fn void? record_top_level_build(Renderer* renderer, gpu::CommandList* commands, 
 fn void? upload_trace_geometry(Renderer* renderer, GpuGeometry* mirror, Bvh* tree) @local {
     usz node_bytes = tree.nodes.len * BvhNodeGpu::size;
     usz primitives_offset = align_up(node_bytes, STREAM_ALIGNMENT);
-    usz total_bytes = primitives_offset + tree.primitives.len * uint::size;
+    usz primitive_end = primitives_offset + tree.primitives.len * uint::size;
+    // Only a skinned or morphed geometry can be posed and refit.
+    bool deformable = mirror.layout.flags.skinned || mirror.layout.flags.has_morphs;
+    usz depth_starts_offset = deformable ? align_up(primitive_end, STREAM_ALIGNMENT) : 0;
+    usz depth_order_offset = depth_starts_offset + (bvh::BVH_MAX_DEPTH + 1) * uint::size;
+    usz total_bytes = deformable ? depth_order_offset + tree.nodes.len * uint::size : primitive_end;
 
     gpu::AllocationDesc desc = {
         .size         = total_bytes,
@@ -797,6 +802,13 @@ fn void? upload_trace_geometry(Renderer* renderer, GpuGeometry* mirror, Bvh* tre
     gpu::MappedGpuSpan staging = slot.upload.take(&renderer.device, total_bytes, STREAM_ALIGNMENT)!;
     mem::copy(staging.bytes.ptr, tree.nodes.ptr, (sz)node_bytes);
     mem::copy(&staging.bytes[primitives_offset], tree.primitives.ptr, (sz)(tree.primitives.len * uint::size));
+    if (deformable) {
+        bvh::bvh_depth_order(
+            tree:         tree,
+            order:        ((uint*)&staging.bytes[depth_order_offset])[:tree.nodes.len],
+            depth_starts: ((uint*)&staging.bytes[depth_starts_offset])[:bvh::BVH_MAX_DEPTH + 1],
+        );
+    }
     renderer.pending_copies.push({ .src = staging.span, .dst = block.checked_subspan(0, total_bytes)! });
 
     if (mirror.trace.allocation.is_valid()) {
@@ -806,9 +818,12 @@ fn void? upload_trace_geometry(Renderer* renderer, GpuGeometry* mirror, Bvh* tre
         });
     }
     mirror.trace = {
-        .allocation = allocation,
-        .nodes      = address,
-        .primitives = address + (gpu::GpuAddress)primitives_offset,
+        .allocation   = allocation,
+        .nodes        = address,
+        .primitives   = address + (gpu::GpuAddress)primitives_offset,
+        .depth_starts = deformable ? address + (gpu::GpuAddress)depth_starts_offset : (gpu::GpuAddress)0,
+        .depth_order  = deformable ? address + (gpu::GpuAddress)depth_order_offset : (gpu::GpuAddress)0,
+        .node_count   = (uint)tree.nodes.len,
     };
     renderer.scene_trace.pending_builds.push(mirror.asset);
     renderer.stats.uploads++;

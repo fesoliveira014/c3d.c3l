@@ -80,6 +80,7 @@ struct RendererDesc {
     uint             shadow_resolution;
     uint             max_shadow_layers;
     uint             max_trace_instances;
+    uint             max_posed_trace_instances; // zero: DEFAULT_MAX_POSED_TRACE_INSTANCES
     uint             max_instance_batches;
     usz              instance_cull_bytes;
     uint             max_views;             // default view, render_to, impostor bakes and reflection captures included
@@ -143,6 +144,7 @@ struct Renderer {
     uint                    cull_lod_fallbacks;
     SceneTrace              scene_trace;
     RtContext               rt;
+    PosedTraceTable         posed_trace;
 
     AssetStore*             assets;
     uint                    max_lights;
@@ -479,6 +481,7 @@ fn void? begin_renderer_frame(Renderer* self, FrameInfo info, bool acquire_outpu
             drain_retired(&self.device, &slot.retire);
             sweep_geometries(self);
             self.instances.sweep(self.frame_index, &self.pending_upload_retire);
+            self.posed_trace.sweep(self.frame_index, &self.pending_upload_retire);
             sweep_environments(self);
             sweep_textures(self);
             sweep_fonts(self);
@@ -759,6 +762,8 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         return c3d::UNSUPPORTED~;
     }
     uint max_instance_batches = desc.max_instance_batches ? desc.max_instance_batches : DEFAULT_MAX_INSTANCE_BATCHES;
+    uint max_posed_trace_instances = desc.max_posed_trace_instances
+      ? desc.max_posed_trace_instances : DEFAULT_MAX_POSED_TRACE_INSTANCES;
     // A device without ray-tracing pipelines may reject the stage, so it is named only when enabled.
     bool pipelines = caps.ray_tracing_pipelines.enabled;
     gpu::StageMask consumer_stages = CONSUMER_STAGES;
@@ -895,6 +900,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .pipelines            = create_pipeline_cache(allocator, shader::BUILTIN_REGISTRY),
         .deformation          = create_deformation_cache(allocator),
         .instances            = create_instance_table(allocator, max_instance_batches),
+        .posed_trace          = create_posed_trace_table(allocator, max_posed_trace_instances),
         .instance_cull_bytes  = desc.instance_cull_bytes ? desc.instance_cull_bytes : INSTANCE_CULL_ARENA_BYTES,
         .prepares             = pool::create_pool{PrepareRecord, PrepareId}(allocator, PREPARE_CAPACITY),
         .linear_clamp_sampler = linear_clamp_sampler,
@@ -938,6 +944,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         free_compute_shaders(&renderer);
         free_buffers(&renderer);
         free_scene_trace(&renderer);
+        free_posed_trace(&renderer);
         destroy_pipeline_cache(&renderer.device, &renderer.pipelines);
         destroy_deformation_cache(&renderer.deformation);
         pool::destroy_pool{TargetRecord, RenderTargetId}(&renderer.targets);
@@ -986,6 +993,7 @@ fn void destroy_renderer(Renderer* renderer) {
     free_compute_shaders(renderer);
     free_buffers(renderer);
     free_scene_trace(renderer);
+    free_posed_trace(renderer);
     destroy_shadow_atlas(&renderer.device, &renderer.shadow_atlas);
     if (renderer.shadow_timing_results.len) alloc::free(renderer.allocator, renderer.shadow_timing_results.ptr);
     alloc::free(renderer.allocator, renderer.shadow_frusta.ptr);
