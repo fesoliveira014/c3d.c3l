@@ -6,12 +6,6 @@ import c3d::pool;
 import gpu;
 
 <*
- Pooled render-target records a renderer can hold at once.
-*>
-const uint RENDER_TARGET_CAPACITY = 8; // one texture and two views each; sampled-target bookkeeping is a uint mask
-$assert(RENDER_TARGET_CAPACITY <= 32);
-
-<*
  State a color attachment is written in.
 *>
 const gpu::TextureState COLOR_ATTACHMENT_STATE = {
@@ -73,12 +67,14 @@ struct Target {
 }
 
 <*
- A pooled render target and the revision of its backing image.
+ A pooled render target, its backing revision and frame state.
 *>
 struct TargetRecord {
-    Target      target;
-    PixelFormat format;
-    uint        revision;
+    Target            target;
+    PixelFormat       format;
+    uint              revision;
+    gpu::TextureState frame_state;    // at frame start, or at creation inside the frame; an abort restores it
+    bool              sample_pending; // a resolved binding samples it; the next view's preparation readies it
 }
 
 <*
@@ -182,7 +178,12 @@ fn RenderTargetId? create_render_target(Renderer* renderer, RenderTargetDesc des
     gpu::Format format = render_target_format(desc.format)!;
     Target target = allocate_render_target(renderer, desc.width, desc.height, format)!;
     defer catch release_target(&renderer.device, &target);
-    return renderer.targets.add({ .target = target, .format = desc.format, .revision = 1 });
+    return renderer.targets.add({
+        .target      = target,
+        .format      = desc.format,
+        .revision    = 1,
+        .frame_state = target.state,
+    });
 }
 
 <*
@@ -227,6 +228,10 @@ fn void? destroy_render_target(Renderer* renderer, RenderTargetId target) {
     release_target(&renderer.device, &record.target);
     *record = {};
     renderer.targets.remove(target);
+}
+
+fn bool same_texture_state(gpu::TextureState first, gpu::TextureState second) @private {
+    return first.layout == second.layout && first.stages == second.stages && first.access == second.access;
 }
 
 fn bool view_selects_target(ViewRecord* view, RenderTargetId target) @private {

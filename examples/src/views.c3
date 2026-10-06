@@ -43,6 +43,8 @@ const float AMBIENT_INTENSITY @local = 0.1f;
 const float RENDER_SCALE_MIN @local = 0.25f;
 const uint MONITOR_LAYER @local = 2; // the producer camera renders layer 1 only, so it never sees its own output
 const uint MIRROR_LAYER @local = 4; // the mirror camera never draws the surface that samples its target
+const uint MAX_VIEWS @local = 32; // room for an editor's viewports and thumbnails; the example uses three of them
+const uint MAX_RENDER_TARGETS @local = 64; // one texture each; the example uses two
 const Plane GROUND_PLANE @local = { .normal = { 0, 1, 0 }, .d = -GROUND_LEVEL };
 const Vec4 CONCRETE_COLOR @local = { 0.5f, 0.5f, 0.52f, 1 };
 const float CONCRETE_ROUGHNESS @local = 0.9f;
@@ -430,7 +432,13 @@ fn int main(String[] args) {
         allocator: mem,
         window:    &window,
         assets:    &assets,
-        desc:      { .gpu_timings = gpu_timings, .validation = true, .application_name = "c3d_views" },
+        desc:      {
+            .gpu_timings        = gpu_timings,
+            .validation         = true,
+            .application_name   = "c3d_views",
+            .max_views          = MAX_VIEWS,
+            .max_render_targets = MAX_RENDER_TARGETS,
+        },
     )!!;
     defer render::destroy_renderer(&renderer);
 

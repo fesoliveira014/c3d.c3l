@@ -64,7 +64,7 @@ fn TextureBinding? resolve_texture_slot(Renderer* renderer, TextureSlot slot, bo
 
     if (slot.texture.kind == TextureRefKind.RENDER_TARGET && renderer.targets.is_live(slot.texture.target)) {
         TargetRecord* target = renderer.targets.get(slot.texture.target);
-        renderer.sampled_target_bits |= 1u << slot.texture.target.index;
+        target.sample_pending = true;
         return {
             .target = slot.texture.target,
             .sampler = sampler,

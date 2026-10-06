@@ -118,6 +118,10 @@ fn void? create_fixture(
     usz instance_cull_bytes = 0,
     uint shadow_resolution = 64,
     uint max_shadow_layers = 1,
+    uint max_views = 0,
+    uint max_render_targets = 0,
+    uint texture_capacity = 0,
+    uint texture_heap_capacity = 0,
 ) @private {
     fixture.allocator = allocator;
     fixture.assets = asset::create_asset_store(allocator, asset::default_asset_store_desc());
@@ -197,6 +201,10 @@ fn void? create_fixture(
             .ray_queries = ray_queries,
             .ray_tracing_pipelines = ray_tracing_pipelines,
             .instance_cull_bytes = instance_cull_bytes,
+            .max_views = max_views,
+            .max_render_targets = max_render_targets,
+            .texture_capacity = texture_capacity,
+            .texture_heap_capacity = texture_heap_capacity,
         },
     )!;
     defer catch render::destroy_renderer(&fixture.renderer);
@@ -570,7 +578,7 @@ fn void test_render_to_failure_closes_the_frame_and_frees_the_view() @test {
     Renderer* renderer = &fixture.renderer;
     Node* empty = fixture.scene.add_node()!!;
 
-    for (uint attempt = 0; attempt <= render::VIEW_CAPACITY; attempt++) {
+    for (uint attempt = 0; attempt <= render::DEFAULT_MAX_VIEWS; attempt++) {
         if (catch excuse = renderer.render_to(&fixture.scene, empty, fixture.hdr_target)) {
             assert(excuse == c3d::INVALID_ARGUMENT);
         } else {

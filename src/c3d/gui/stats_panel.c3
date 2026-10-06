@@ -77,6 +77,8 @@ fn void? stats_panel(Renderer* renderer) {
     imgui::text("TLAS builds: %u", renderer.stats.tlas_builds);
     imgui::text("Path trace samples: %u", renderer.stats.path_trace_samples);
     imgui::text("Shader rejections: %u", renderer.stats.shader_rejections);
+    imgui::text("Textures: %u of %u", renderer.stats.textures, renderer.stats.texture_capacity);
+    imgui::text("Texture views: %u of %u", renderer.stats.texture_views, renderer.stats.texture_heap_capacity);
 
     imgui::text("Completed cluster view: %u:%u",
         renderer.stats.cluster_view.index, renderer.stats.cluster_view.generation);

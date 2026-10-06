@@ -15,6 +15,7 @@ import gpu::surface::x11;
  @return? gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY, gpu::SLOT_TABLE_FULL
  @return? gpu::DESCRIPTOR_HEAP_FULL, gpu::COMMAND_ALLOCATOR_CAPACITY_EXCEEDED
  @return? gpu::DEVICE_LOST, gpu::DEVICE_BUSY, gpu::SURFACE_LOST, gpu::BACKEND_ERROR
+ @return? c3d::INVALID_ARGUMENT
 *>
 fn render::Renderer? create_window_renderer(Allocator allocator, Window* window, AssetStore* assets,
   render::RendererDesc desc = {}) {

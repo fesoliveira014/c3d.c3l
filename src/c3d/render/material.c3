@@ -51,7 +51,6 @@ struct MaterialRes {
     ShaderId           shader;
     uint               shader_revision;
     ulong              resolved_epoch;
-    uint               sampled_target_bits;
     gpu::GpuAllocation payload;
     gpu::GpuAddress    payload_address;
     usz                payload_size;
@@ -469,16 +468,12 @@ fn void end_material_scope(Renderer* renderer) @private {
 fn MaterialRes*? resolve_material(Renderer* renderer, MaterialId material) @private {
     MaterialRes* mirror = &renderer.materials[material.index];
     bool same_asset = c3d::same_id(mirror.asset, material);
+    // A hit occurs only within the scope that resolved the material; that resolution marked its targets.
     if (renderer.material_scope_active && same_asset && mirror.resolved_epoch == renderer.material_epoch) {
-        renderer.sampled_target_bits |= mirror.sampled_target_bits;
         return mirror;
     }
 
-    uint outer_target_bits = renderer.sampled_target_bits;
-    renderer.sampled_target_bits = 0;
-    defer renderer.sampled_target_bits |= outer_target_bits;
     resolve_material_dependencies(renderer, material)!;
-    mirror.sampled_target_bits = renderer.sampled_target_bits;
     mirror.resolved_epoch = renderer.material_scope_active ? renderer.material_epoch : 0;
     renderer.stats.material_resolutions++;
     return mirror;
