@@ -494,6 +494,35 @@ fn bool lod_group_inspector(void* component) @local {
     return false;
 }
 
+fn bool reflection_probe_inspector(void* component) @local {
+    ReflectionProbe* probe = (ReflectionProbe*)component;
+    bool changed;
+
+    if (imgui::drag_float3("Half extents", (float*)&probe.half_extents)) {
+        foreach (&axis : probe.half_extents) *axis = math::max(*axis, MIN_POSITIVE);
+        changed = true;
+    }
+    if (imgui::drag_float3("Capture offset", (float*)&probe.capture_offset)) changed = true;
+    if (changed) {
+        foreach (axis, extent : probe.half_extents) {
+            float limit = extent - MIN_POSITIVE;
+            probe.capture_offset[axis] = math::clamp(probe.capture_offset[axis], -limit, limit);
+        }
+    }
+    changed = nonnegative_drag("Blend distance", &probe.blend_distance) || changed;
+    changed = nonnegative_drag("Intensity", &probe.intensity) || changed;
+    changed = imgui::input_scalar("Priority", imgui::DATA_TYPE_S32, &probe.priority) || changed;
+
+    int projection = probe.projection.ordinal;
+    ZString[ReflectionProjection::len] projections = { "Box", "Infinite" };
+    if (imgui::combo_char("Projection", &projection, &projections, ReflectionProjection::len)) {
+        probe.projection = ReflectionProjection::from_ordinal((usz)projection);
+        changed = true;
+    }
+    id_text("Environment", *(c3d::Id*)&probe.environment);
+    return changed;
+}
+
 fn void node_name_text(ZString label, Node* node) @local {
     ZString name = !node ? "(none)" : node.name.len ? node.name.zstr_tcopy() : "(unnamed)";
     imgui::text("%s: %s", label, name);
@@ -523,4 +552,5 @@ fn void expose_builtin_components() @private {
     expose(FootIk, &foot_ik_inspector);
     expose(LookAt, &look_at_inspector);
     expose(ProbeVolume, &probe_volume_inspector);
+    expose(ReflectionProbe, &reflection_probe_inspector);
 }

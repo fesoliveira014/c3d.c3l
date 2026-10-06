@@ -2,7 +2,7 @@
 
 `debug::DebugDraw` is the line list an application fills each frame and hands to a view through
 `render_view(..., debug: &sink)`. Every helper (`aabb`, `box`, `circle`, `capsule`, `axes`, `frustum`, the
-light, joint and probe helpers, and the physics and character packages' `debug_draw`) writes through
+light, joint, probe and reflection probe helpers, and the physics and character packages' `debug_draw`) writes through
 `DebugDraw.line`, one segment at a time.
 
 ## Capacity and dropped segments

@@ -116,7 +116,7 @@ vec3 standard_ambient_fill(FrameRoot frame, vec3 base_color, float metallic, flo
                            float ambient_occlusion, vec4 screen_indirect);
 ```
 
-`shade_standard_surface` returns linear radiance without alpha: the ambient fill, the emissive term, the environment (when `frame_has_indirect(frame)`; the frame and the world position select a [probe volume](probe_volumes.md) where one covers the surface) and every selected light with its shadow. Pass it to `material_output`. `evaluate_standard_lights` and `standard_ambient_fill` are its parts, for a stage that composes its own environment term. Call `evaluate_standard_lights` from `main`: with software-traced shadows its light loop costs about twice as much when it runs two calls below `main`, which is why `shade_standard_surface` expands the same loop in place instead of calling it. The caller fills the sample:
+`shade_standard_surface` returns linear radiance without alpha: the ambient fill, the emissive term, the environment (when `frame_has_indirect(frame)`; the frame and the world position select a [probe volume](probe_volumes.md) where one covers the surface and up to two [reflection probes](reflection_probes.md) for the specular term) and every selected light with its shadow. Pass it to `material_output`. `evaluate_standard_lights` and `standard_ambient_fill` are its parts, for a stage that composes its own environment term. Call `evaluate_standard_lights` from `main`: with software-traced shadows its light loop costs about twice as much when it runs two calls below `main`, which is why `shade_standard_surface` expands the same loop in place instead of calling it. The caller fills the sample:
 
 | Field | Contents |
 | --- | --- |
@@ -208,7 +208,8 @@ A custom or package stage starts with the prelude, `generated/shader_abi.glsl` (
 | `brdf.glsl` | `StandardSurface`, `prepare_surface`, `prepare_standard_surface`, `apply_anisotropy`, `evaluate_standard_lobes`, `evaluate_standard_brdf`, `fresnel_schlick` |
 | `lights.glsl` | `LightArray`, `LightList`, `LightSample`, `select_lights`, `flat_lights`, `selected_light_index`, `sample_light`, `light_casts_shadow`, `standard_view_direction`, `evaluate_standard_light` |
 | `shadows.glsl` | `shadow_visibility` |
-| `ibl.glsl` | `frame_has_indirect`, `indirect_diffuse_irradiance`, `evaluate_environment` (both), `evaluate_environment_lobes` (both) |
+| `ibl.glsl` | `frame_has_indirect`, `indirect_diffuse_irradiance`, `evaluate_environment` (both), `evaluate_environment_lobes` (both; one takes a `ReflectionSelection`), `environment_lobe_radiance`, `environment_tables` |
+| `reflection_probe.glsl` | `ReflectionSelection`, `reflection_probe_select`, `reflection_probe_weight`, `reflection_box_direction`, `reflection_probe_radiance`, `ENVIRONMENT_GGX_CUBE`, `ENVIRONMENT_CHARLIE_CUBE`; compiled in fragment and compute stages |
 | `ambient_occlusion.glsl` | `draw_ambient_occlusion`, `frame_ambient_occlusion`, `specular_occlusion` |
 | `screen_space_gi.glsl` | `draw_screen_space_indirect`, `frame_screen_space_indirect`, `screen_space_base_share` |
 | `fog.glsl` | `FogTerms`, `fog_terms`, `fog_background_terms`, `apply_fog`, `fog_behind`, `apply_fog_refracted`; the helpers include the view's [fog volume](sky.md#volumetric-fog) ([sky](sky.md#custom-stages)) |

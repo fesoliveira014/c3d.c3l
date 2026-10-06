@@ -59,6 +59,12 @@ const float BENCHMARK_TARGET_HEIGHT @local = 0.1f;
 const float BENCHMARK_FOV_DEGREES @local = 60;
 const float BENCHMARK_NEAR_SCALE @local = 0.005f; // near plane as a fraction of the largest extent
 const uint PROBE_SPLIT_VOLUMES @local = 8; // one volume per octant of the model bounds
+const uint REFLECTION_PROBES_TILED @local = 16; // a 4 x 2 x 2 grid over the model bounds
+const uint[<3>] REFLECTION_PROBE_TILES @local = { 4, 2, 2 };
+const float REFLECTION_PROBE_OVERLAP_SCALE @local = 1.01f; // the second probe of a pair covers the first
+const float REFLECTION_PROBE_SINK @local = 2;      // outside placement: bounds heights below the model
+const uint REFLECTION_BENCHMARK_ENVIRONMENTS @local = 32; // one environment per probe beside the global one
+const float REFLECTION_COLOR_STEP @local = 0.618f; // golden-ratio hop keeps neighbouring probes' colours apart
 
 struct BenchmarkOptions @local {
     BenchmarkFlags flags;
@@ -77,6 +83,8 @@ struct BenchmarkOptions @local {
     uint probe_rays;
     bool point_shadows;
     bool environment_refresh;
+    uint reflection_probes;
+    bool reflection_probes_outside;
 }
 
 struct Orbit @local {
@@ -283,6 +291,13 @@ fn BenchmarkOptions? parse_options(String[] args) @local {
                     case "off": options.environment_refresh = false;
                     default: return c3d::INVALID_ARGUMENT~;
                 }
+            case "--reflection-probes": options.reflection_probes = value.to_uint()!;
+            case "--reflection-probe-placement":
+                switch (value) {
+                    case "inside": options.reflection_probes_outside = false;
+                    case "outside": options.reflection_probes_outside = true;
+                    default: return c3d::INVALID_ARGUMENT~;
+                }
             case "--probe-counts":
                 String[] counts = value.tsplit(",");
                 if (counts.len != 3) return c3d::INVALID_ARGUMENT~;
@@ -298,6 +313,10 @@ fn BenchmarkOptions? parse_options(String[] args) @local {
     if (options.probe_volumes != 0 && options.probe_volumes != 1 && options.probe_volumes != PROBE_SPLIT_VOLUMES) {
         return c3d::INVALID_ARGUMENT~;
     }
+    uint[4] reflection_counts = { 0, 1, 2, REFLECTION_PROBES_TILED };
+    bool reflection_valid;
+    foreach (count : reflection_counts) reflection_valid = reflection_valid || options.reflection_probes == count;
+    if (!reflection_valid) return c3d::INVALID_ARGUMENT~;
     foreach (count : options.probe_counts) {
         if (count < light::PROBE_COUNT_MIN || count > light::PROBE_COUNT_MAX) return c3d::INVALID_ARGUMENT~;
     }
@@ -356,6 +375,78 @@ fn void? place_probe_volumes(Scene* scene, Aabb bounds, BenchmarkOptions options
     }
 }
 
+fn Vec3 reflection_probe_color(uint index) @local {
+    float hue = (float)index * REFLECTION_COLOR_STEP;
+    return {
+        0.2f + 0.8f * (hue - math::floor(hue)),
+        0.2f + 0.8f * (hue * 2 - math::floor(hue * 2)),
+        0.2f + 0.8f * (hue * 3 - math::floor(hue * 3)),
+    };
+}
+
+fn void? add_reflection_probe(
+    AssetStore* assets,
+    Scene* scene,
+    Vec3 center,
+    Vec3 half_extents,
+    float blend_distance,
+    uint index,
+) @local {
+    EnvironmentSettings settings = light::ENVIRONMENT_SETTINGS_DEFAULT;
+    settings.specular_size = render::DEFAULT_REFLECTION_CAPTURE_SIZE;
+    EnvironmentId environment = assets.add_environment(
+        light::solid_environment(reflection_probe_color(index), settings))!;
+    Node* node = scene.add_node(name: "reflection_probe")!;
+    node.local.position = center;
+    ReflectionProbe probe = light::reflection_probe(half_extents, environment);
+    probe.blend_distance = blend_distance;
+    scene.add(node, probe);
+}
+
+fn void? place_reflection_probes(
+    AssetStore* assets,
+    Scene* scene,
+    Aabb bounds,
+    BenchmarkOptions options,
+) @local {
+    uint count = options.reflection_probes;
+    if (!count) return;
+    Vec3 extent = bounds.max - bounds.min;
+    Vec3 center = (bounds.min + bounds.max) * 0.5f;
+    Vec3 shift = options.reflection_probes_outside ? (Vec3){ 0, -REFLECTION_PROBE_SINK * extent.y, 0 } : (Vec3){};
+    if (count == REFLECTION_PROBES_TILED) {
+        Vec3 half_extents = extent / (Vec3)(REFLECTION_PROBE_TILES * 2);
+        for (uint index = 0; index < count; index++) {
+            uint[<3>] tile = {
+                index % REFLECTION_PROBE_TILES.x,
+                (index / REFLECTION_PROBE_TILES.x) % REFLECTION_PROBE_TILES.y,
+                index / (REFLECTION_PROBE_TILES.x * REFLECTION_PROBE_TILES.y),
+            };
+            add_reflection_probe(
+                assets:         assets,
+                scene:          scene,
+                center:         bounds.min + half_extents * (Vec3)(tile * 2 + 1) + shift,
+                half_extents:   half_extents,
+                blend_distance: 0,
+                index:          index,
+            )!;
+        }
+        return;
+    }
+    Vec3 half_extents = extent * 0.5f;
+    float blend = count == 1 ? 0 : math::min(half_extents.x, half_extents.y, half_extents.z);
+    for (uint index = 0; index < count; index++) {
+        add_reflection_probe(
+            assets:         assets,
+            scene:          scene,
+            center:         center + shift,
+            half_extents:   index == 0 ? half_extents : half_extents * REFLECTION_PROBE_OVERLAP_SCALE,
+            blend_distance: blend,
+            index:          index,
+        )!;
+    }
+}
+
 fn Node*? place_camera(Scene* scene, Aabb bounds) @local {
     Vec3 extent = bounds.max - bounds.min;
     Vec3 center = (bounds.min + bounds.max) * 0.5f;
@@ -406,6 +497,7 @@ fn Node*? populate_benchmark_scene(
         shadows: options.point_shadows,
     )!;
     place_probe_volumes(scene, bounds, options)!;
+    place_reflection_probes(assets, scene, bounds, options)!;
     io::eprintfn("model=%s nodes=%d meshes=%d", options.model_path, template.nodes.len, template.meshes.len);
     return place_camera(scene, bounds);
 }
@@ -435,7 +527,7 @@ fn void print_banner(BenchmarkOptions options, bool timestamps_active) @local {
     BenchmarkFlags flags = options.flags;
     bool scene_probes = options.probe_volumes != 0 && options.probe_fill == ProbeFill.SCENE;
     bool path_traced = options.shading == ShadingPath.PATH_TRACED;
-    io::eprintfn("mode=%s shading=%s lights=%d shadows=%s range=%.3f capacity=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s depth_prepass=%s ambient_occlusion=%s reflections=%s screen_space_gi=%s auto_exposure=%s probe_volumes=%d probe_counts=%dx%dx%d probe_fill=%s probe_window=%d probe_rays=%d point_shadows=%s environment_refresh=%s trace=%s",
+    io::eprintfn("mode=%s shading=%s lights=%d shadows=%s range=%.3f capacity=%d extent=%dx%d warmup=%d frames=%d validation=%s timestamps_requested=%s timestamps_active=%s capture=%s presentation=%s panel=%s depth_prepass=%s ambient_occlusion=%s reflections=%s screen_space_gi=%s auto_exposure=%s probe_volumes=%d probe_counts=%dx%dx%d probe_fill=%s probe_window=%d probe_rays=%d point_shadows=%s environment_refresh=%s trace=%s reflection_probes=%d reflection_probe_placement=%s",
         options.selection == LightSelection.FLAT || options.shading == ShadingPath.PATH_TRACED ? "flat" : "clustered",
         bench_loop::shading_name(options.shading), options.lights,
         options.traced_shadows ? "traced" : options.shadows ? "on" : "off",
@@ -450,12 +542,14 @@ fn void print_banner(BenchmarkOptions options, bool timestamps_active) @local {
         options.point_shadows, options.environment_refresh, bench_loop::trace_name(
             traces:      scene_probes || bench_loop::needs_ray_queries(flags) || options.traced_shadows || path_traced,
             ray_queries: requests_ray_queries(options) || path_traced,
-        ));
+        ), options.reflection_probes, options.reflection_probes_outside ? "outside" : "inside");
 }
 
 fn void? run_benchmark(BenchmarkOptions options) @local {
     BenchmarkFlags flags = options.flags;
-    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    AssetStoreDesc store_desc = asset::default_asset_store_desc();
+    if (options.reflection_probes) store_desc.max_environments = REFLECTION_BENCHMARK_ENVIRONMENTS;
+    AssetStore assets = asset::create_asset_store(mem, store_desc);
     defer asset::destroy_asset_store(&assets);
     Scene scene = scene::create_scene(mem, scene::default_scene_desc());
     defer scene::destroy_scene(&scene);
@@ -535,7 +629,7 @@ fn int main(String[] args) {
     if (catch excuse = parsed) {
         if (excuse != c3d::UNSUPPORTED) {
             io::eprintfn("Invalid options: %s", excuse);
-            io::eprintn("Use [model.gltf] [--gpu-timings] or --benchmark [model.gltf] --mode flat|clustered [--shading forward|deferred|path-traced] --lights N --shadows on|off|traced --range R --capacity N --frames N --warmup N --width N --height N [--anti-aliasing none|fxaa|taa] [--ambient-occlusion none|half|full] [--depth-prepass on|off] [--environment-refresh on|off] [--gpu-timings] [--validation] [--capture] [--window] [--panel] [--print-features].");
+            io::eprintn("Use [model.gltf] [--gpu-timings] or --benchmark [model.gltf] --mode flat|clustered [--shading forward|deferred|path-traced] --lights N --shadows on|off|traced --range R --capacity N --frames N --warmup N --width N --height N [--anti-aliasing none|fxaa|taa] [--ambient-occlusion none|half|full] [--depth-prepass on|off] [--environment-refresh on|off] [--reflection-probes 0|1|2|16] [--reflection-probe-placement inside|outside] [--gpu-timings] [--validation] [--capture] [--window] [--panel] [--print-features].");
         }
         return 1;
     }

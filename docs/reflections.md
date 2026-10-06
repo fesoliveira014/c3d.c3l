@@ -58,7 +58,9 @@ grain on rougher surfaces.
   and reflects what lies behind; double-sided materials shade both sides
   ([facing](scene_trace.md#facing)).
 - **Miss.** A ray that leaves the scene reads the lighting environment at its sharpest level
-  (`scene.environment`, not the background), or the ambient colour without an environment.
+  (`scene.environment`, not the background), or the ambient colour without an environment. A miss
+  never reads a reflection probe: indoor misses happen only through openings or excluded geometry
+  (`RT_REFLECTION_FAR` is 1e4), and a ray through excluded geometry reads the global environment.
 
 A spatial blur then averages each traced pixel with neighbours of similar depth, normal and
 roughness over a 5x5 footprint that widens with roughness; mirror-like pixels are not blurred.
@@ -69,7 +71,7 @@ clipped view of its own (see [clip plane](views.md#clip-plane)).
 ## Lighting
 
 The lighting resolve uses the traced radiance in place of the prefiltered environment
-reflection and weights it with the same split-sum term, so a surface's reflection is counted
+reflection, which includes the specular of [reflection probes](reflection_probes.md), and weights it with the same split-sum term, so a surface's reflection is counted
 once. Near the threshold the two blend over the top fifth of `max_reflection_roughness`
 (`RT_REFLECTION_FADE`), which hides the seam between traced and environment reflections. The
 traced term carries its own occlusion, so it skips the ambient occlusion specular term the
@@ -99,7 +101,7 @@ python3 scripts/build.py --example rt_effects
 
 ## Limits
 
-- Deferred views only.
+- Deferred views only; forward views always apply reflection probes.
 - One ray per pixel and a spatial blur; no temporal accumulation beyond what TAA provides.
 - Hits see the static traced scene: skinned, morphed and `BLEND` meshes are absent.
 - Hits use the view's light list, which drops finite lights outside the camera frustum, and

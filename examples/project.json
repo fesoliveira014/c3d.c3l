@@ -336,6 +336,12 @@
         "src/sky.c3"
       ]
     },
+    "reflection_probes": {
+      "type": "executable",
+      "sources": [
+        "src/reflection_probes.c3"
+      ]
+    },
     "shading_paths": {
       "type": "executable",
       "sources": [
