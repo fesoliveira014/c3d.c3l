@@ -32,6 +32,7 @@ ROOT = Path(__file__).resolve().parent.parent
 ADDONS = ROOT / "addons"
 ZIP_DATE = (1980, 1, 1, 0, 0, 0)
 VERSION_PATTERN = re.compile(r"\d+\.\d+\.\d+")
+VERSION_TAG_PATTERN = re.compile(r"v\d+\.\d+\.\d+")
 EMBED_PATTERN = re.compile(r'\$embed\("([^"]+)"\)')
 PROVIDES_PATTERN = re.compile(r'"provides"\s*:\s*"([^"]+)"')
 SUBMODULE_PATTERN = re.compile(r"^\s*path\s*=\s*(\S+)\s*$|^\s*url\s*=\s*(\S+)\s*$", re.MULTILINE)
@@ -120,7 +121,7 @@ def release_tag(parent: Path, path: str, url: str, git: Runner) -> str:
     for line in git(["ls-remote", "--tags", url], parent).splitlines():
         sha, reference = line.split("\t")
         tag = reference.removeprefix("refs/tags/").removesuffix("^{}")
-        if sha == commit:
+        if sha == commit and VERSION_TAG_PATTERN.fullmatch(tag):
             return tag
     raise PackagingError(f"{parent.name}/{path} is at {commit[:7]}, which no release tag of {url} names")
 
@@ -206,6 +207,8 @@ def tools_artifact(root: Path, version: str) -> Artifact:
 
 
 def artifacts(root: Path, version: str, pins: dict[str, str]) -> list[Artifact]:
+    if not (root / "LICENSE").read_text(encoding="utf-8").strip():
+        raise PackagingError("LICENSE is empty")
     packed = [core_artifact(root, version, pins)]
     packed += [addon_artifact(root, addon, version, pins) for addon in sorted(ADDONS.glob("*.c3l"))]
     for artifact in packed:
