@@ -550,6 +550,7 @@ fn void? place_mirror_camera(Demo* demo, float aspect) @local {
     Mat4 mirrored = maths::reflection_matrix(MIRROR_PLANE).mul(demo.camera_node.local.to_mat4());
     demo.mirror.camera_node.local = maths::transform_from_affine(mirrored)!;
     demo.scene.get(demo.mirror.camera_node, Camera).aspect = aspect;
+    demo.scene.get(demo.camera_node, Camera).aspect = aspect;
 }
 
 // The frame order: pose the camera and the sun, then update the world once.
@@ -575,7 +576,12 @@ fn void? apply_pose(
 }
 
 fn void? render_views(Demo* demo, Renderer* renderer, ViewId main_view) @local {
-    renderer.render_view(demo.scene, demo.mirror.camera_node, demo.mirror.view)!;
+    renderer.render_view(
+        scene:         demo.scene,
+        camera_node:   demo.mirror.camera_node,
+        view:          demo.mirror.view,
+        shadow_camera: demo.camera_node,
+    )!;
     renderer.finish_view(demo.mirror.view)!;
     renderer.render_view(demo.scene, demo.camera_node, main_view)!;
     return renderer.finish_view(main_view);

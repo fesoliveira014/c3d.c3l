@@ -245,6 +245,8 @@ struct FrameRecord @local {
     double                    physics_us;
     uint                      steps;
     uint                      upload_bytes;
+    uint                      shadow_sets_recorded;
+    uint                      shadow_sets_shared;
     float[render::PASS_COUNT] frame_gpu_ms;
     float[render::PASS_COUNT] main_gpu_ms;
     float[render::PASS_COUNT] mirror_gpu_ms;
@@ -627,6 +629,11 @@ fn Mirror? create_mirror(
     return { .target = mirror_target, .view = mirror_view, .width = output_size.x, .height = output_size.y };
 }
 
+// The lens carries the output aspect, so the mirror's projection at its scaled extent equals the main view's.
+fn void set_view_aspect(Demo* demo, uint[<2>] output_size) @local {
+    demo.scene.get(demo.camera_node, Camera).aspect = (float)output_size.x / (float)output_size.y;
+}
+
 // docs/water.md's per-frame lines, after water::update and before begin_frame: set_desc and a moved lake move
 // the plane.
 fn void? follow_clip_plane(
@@ -643,15 +650,21 @@ fn void? follow_clip_plane(
     }
 }
 
-// docs/water.md's frame: the mirror before the view that shows the water.
+// docs/water.md's frame: the mirror before the view that shows the water, fitted to that view's camera.
 fn void? render_mirror(
     Renderer* renderer,
     Scene* scene,
     Node* lake,
     ViewId mirror_view,
+    Node* viewing_camera,
 ) @local {
     Node* mirror = scene.node(scene.get(lake, WaterRuntime).mirror);
-    renderer.render_view(scene, mirror, mirror_view)!;
+    renderer.render_view(
+        scene:         scene,
+        camera_node:   mirror,
+        view:          mirror_view,
+        shadow_camera: viewing_camera,
+    )!;
     renderer.finish_view(mirror_view)!;
 }
 
@@ -810,6 +823,7 @@ fn void? build_demo(Demo* demo) @local {
 
 // The mirror's first placement needs the camera where the frames will put it.
 fn void? prepare_views(Demo* demo, Renderer* renderer, uint[<2>] output_size) @local {
+    set_view_aspect(demo, output_size);
     demo.scene.update_world();
     water::update(
         scene:          demo.scene,
@@ -870,21 +884,22 @@ fn double? step_scene(
     return physics_us;
 }
 
+// The capture renders last: a view with another shadow key between mirror and main would make main re-record.
 fn void? render_views(Demo* demo, Renderer* renderer, ViewId main_view) @local {
     if (demo.reflection == Reflection.PLANAR) {
         render_mirror(
-            renderer:    renderer,
-            scene:       demo.scene,
-            lake:        demo.lake,
-            mirror_view: demo.mirror.view,
+            renderer:       renderer,
+            scene:          demo.scene,
+            lake:           demo.lake,
+            mirror_view:    demo.mirror.view,
+            viewing_camera: demo.camera_node,
         )!;
     }
-    if (demo.options.capture) {
-        renderer.render_view(demo.scene, demo.capture.camera_node, demo.capture.view)!;
-        renderer.finish_view(demo.capture.view)!;
-    }
     renderer.render_view(demo.scene, demo.camera_node, main_view)!;
-    return renderer.finish_view(main_view);
+    renderer.finish_view(main_view)!;
+    if (!demo.options.capture) return;
+    renderer.render_view(demo.scene, demo.capture.camera_node, demo.capture.view)!;
+    return renderer.finish_view(demo.capture.view);
 }
 
 // ----------------------------------------------------------------------------- options
@@ -1063,6 +1078,7 @@ fn void? follow_output_size(Demo* demo, Renderer* renderer) @local {
     uint width = renderer.output_width;
     uint height = renderer.output_height;
     if (!width || !height || (width == demo.mirror.width && height == demo.mirror.height)) return;
+    set_view_aspect(demo, { width, height });
     render::resize_render_target(
         renderer: renderer,
         target:   demo.mirror.target,
@@ -1363,10 +1379,12 @@ fn void? run_segments(
 
         if (timed) {
             result.records[step] = {
-                .frame_ms     = frame_ms,
-                .physics_us   = physics_us,
-                .steps        = demo.physics.steps_last_update,
-                .upload_bytes = renderer.stats.upload_bytes,
+                .frame_ms             = frame_ms,
+                .physics_us           = physics_us,
+                .steps                = demo.physics.steps_last_update,
+                .upload_bytes         = renderer.stats.upload_bytes,
+                .shadow_sets_recorded = renderer.stats.shadow_sets_recorded,
+                .shadow_sets_shared   = renderer.stats.shadow_sets_shared,
             };
             if (segment == Segment.SETTLE && segment_step >= settle_frames - GATE_FRAMES) track_settle(demo, result);
         }
@@ -1486,6 +1504,13 @@ fn bool print_results(Demo* demo, BenchmarkResult* result) @local {
             }
         }
         print_median_p99("frame_ms", name, gather(records, FRAME_MS, result.scratch));
+        FrameRecord last = records[^1];
+        io::printfn(
+            "shadow_sets segment=%s recorded=%d shared=%d",
+            name,
+            last.shadow_sets_recorded,
+            last.shadow_sets_shared,
+        );
         if (segment == Segment.WAVES) {
             double[] step_us = gather_step_us(records, result.scratch);
             io::printfn(
