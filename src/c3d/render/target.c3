@@ -188,12 +188,13 @@ fn RenderTargetId? create_render_target(Renderer* renderer, RenderTargetDesc des
 
 <*
  Recreate the target's backing at a new size after every submitted use completes.
- Keeps the id; bumps the revision; views on the target resize and forget their history.
- @require !renderer.frame_open
- @require width > 0 && height > 0
+ Needs room for the old and new images of the target and its views; a fault changes nothing.
+ @param [&inout] renderer : "No open frame."
  @return? c3d::INVALID_ID, gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::UNSUPPORTED_FEATURE
  @return? gpu::SLOT_TABLE_FULL, gpu::DESCRIPTOR_HEAP_FULL, gpu::OUT_OF_HOST_MEMORY
  @return? gpu::OUT_OF_DEVICE_MEMORY, gpu::DEVICE_BUSY, gpu::WAIT_TIMEOUT, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+ @require !renderer.frame_open
+ @require width > 0 && height > 0
 *>
 fn void? resize_render_target(
     Renderer* renderer,
@@ -203,14 +204,23 @@ fn void? resize_render_target(
 ) {
     TargetRecord* record = renderer.targets.try_get(target)!;
     wait_frames(renderer)!;
-    gpu::Format format = record.target.format;
-    release_target(&renderer.device, &record.target);
-    record.target = allocate_render_target(renderer, width, height, format)!;
-    record.revision++;
+    Target replacement = allocate_render_target(
+        renderer: renderer,
+        width:    width,
+        height:   height,
+        format:   record.target.format,
+    )!;
+    defer catch release_target(&renderer.device, &replacement);
+    resize_views(
+        renderer: renderer,
+        output:   ViewOutput.TEXTURE,
+        extent:   { width, height },
+        target:   target,
+    )!;
 
-    foreach (&view : renderer.views.items) {
-        if (view.live && view_selects_target(view, target)) resize_view(renderer, view)!;
-    }
+    release_target(&renderer.device, &record.target);
+    record.target = replacement;
+    record.revision++;
 }
 
 <*

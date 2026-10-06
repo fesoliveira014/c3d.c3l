@@ -94,17 +94,6 @@ fn void? acquire_gbuffer(Renderer* renderer, ViewRecord* record) @private {
     }
 }
 
-fn void retire_gbuffer(Renderer* renderer, ViewRecord* record) @private {
-    if (!record.gbuffer[0].texture.is_valid()) return;
-    RetireList* retire = last_submitted_retire(renderer);
-    foreach (&target : record.gbuffer) {
-        retire.push({ .kind = RetiredKind.ATTACHMENT_VIEW, .attachment_view = target.attachment });
-        retire.push({ .kind = RetiredKind.TEXTURE_VIEW, .texture_view = target.view });
-        retire.push({ .kind = RetiredKind.TEXTURE, .texture = target.texture });
-        *target = {};
-    }
-}
-
 fn void release_gbuffer(gpu::Device* device, ViewRecord* record) @private {
     foreach (&target : record.gbuffer) {
         if (target.texture.is_valid()) release_target(device, target);

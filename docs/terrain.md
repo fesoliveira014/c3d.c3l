@@ -238,7 +238,8 @@ the crate casts little or no shadow. Traced shadows apply no offset.
 
 - One selection per frame, for the camera given to `update`: a view far from it (a shadow cascade, a capture
   or mirror view) draws that camera's levels.
-- The batch never traces (`trace = false`, and its custom vertex stage keeps it out whatever `trace` says). Under traced shadows ridges do not shadow valleys, though other
+- The batch never traces (`trace = false`, and its custom vertex stage keeps it out whatever `trace` says). Under traced
+  shadows ridges do not shadow valleys, though other
   objects still cast onto the terrain; ray-traced ambient occlusion, reflections, probes and path tracing do
   not see it.
 - Level changes pop and carry no motion vector; temporal history rejection handles them. The velocity forms
