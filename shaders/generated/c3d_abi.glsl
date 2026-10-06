@@ -33,6 +33,9 @@ const uint FRAME_AO_PRESENT = 4u;
 const uint FRAME_SSGI_PRESENT = 8u;
 const uint FRAME_CLIP_PLANE = 16u;
 const uint CLUSTER_GROUP_SIZE = 64u;
+const uint MAX_DECALS = 256u;
+const uint MAX_CLUSTER_DECALS = 8u;
+const float DECAL_FADE_BAND = 0.1;
 const uint INSTANCE_CULL_GROUP_SIZE = 64u;
 const uint INSTANCE_SORT_GROUP_SIZE = 128u;
 const uint INSTANCE_SORT_BLOCK = 1024u;
@@ -267,6 +270,21 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer TraceRefitRo
     uint64_t primitives;
     uint64_t depth_starts;
     uint64_t depth_order;
+};
+
+struct DecalGpu {
+    vec4 world_to_local_0;
+    vec4 world_to_local_1;
+    vec4 world_to_local_2;
+    vec4 local_to_world_0;
+    vec4 local_to_world_1;
+    vec4 local_to_world_2;
+    vec4 projection_fade;
+    vec4 tangent;
+    vec4 weights;
+    uint64_t material;
+    uint receiver_layers;
+    float fade_cosine;
 };
 
 struct ClusterRange {

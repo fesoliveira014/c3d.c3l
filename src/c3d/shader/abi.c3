@@ -30,6 +30,9 @@ const uint FRAME_AO_PRESENT = 4;
 const uint FRAME_SSGI_PRESENT = 8;
 const uint FRAME_CLIP_PLANE = 16;
 const uint CLUSTER_GROUP_SIZE = 64;
+const uint MAX_DECALS = 256;
+const uint MAX_CLUSTER_DECALS = 8;
+const float DECAL_FADE_BAND = 0.1;
 const uint INSTANCE_CULL_GROUP_SIZE = 64;
 const uint INSTANCE_SORT_GROUP_SIZE = 128;
 const uint INSTANCE_SORT_BLOCK = 1024;
@@ -337,6 +340,34 @@ $assert $reflect(TraceRefitRoot.nodes).offset == 16;
 $assert $reflect(TraceRefitRoot.primitives).offset == 24;
 $assert $reflect(TraceRefitRoot.depth_starts).offset == 32;
 $assert $reflect(TraceRefitRoot.depth_order).offset == 40;
+
+struct DecalGpu {
+    Vec4f      world_to_local_0;
+    Vec4f      world_to_local_1;
+    Vec4f      world_to_local_2;
+    Vec4f      local_to_world_0;
+    Vec4f      local_to_world_1;
+    Vec4f      local_to_world_2;
+    Vec4f      projection_fade;
+    Vec4f      tangent;
+    Vec4f      weights;
+    GpuAddress material;
+    uint       receiver_layers;
+    float      fade_cosine;
+}
+$assert DecalGpu::size == 160;
+$assert $reflect(DecalGpu.world_to_local_0).offset == 0;
+$assert $reflect(DecalGpu.world_to_local_1).offset == 16;
+$assert $reflect(DecalGpu.world_to_local_2).offset == 32;
+$assert $reflect(DecalGpu.local_to_world_0).offset == 48;
+$assert $reflect(DecalGpu.local_to_world_1).offset == 64;
+$assert $reflect(DecalGpu.local_to_world_2).offset == 80;
+$assert $reflect(DecalGpu.projection_fade).offset == 96;
+$assert $reflect(DecalGpu.tangent).offset == 112;
+$assert $reflect(DecalGpu.weights).offset == 128;
+$assert $reflect(DecalGpu.material).offset == 144;
+$assert $reflect(DecalGpu.receiver_layers).offset == 152;
+$assert $reflect(DecalGpu.fade_cosine).offset == 156;
 
 struct ClusterRange {
     uint count;
