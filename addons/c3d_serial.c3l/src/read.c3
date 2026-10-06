@@ -31,7 +31,7 @@ fn Node*? read_subtree(
     if (header.node_count > node_reader.remaining() / NODE_MIN_BYTES) return c3d::ASSET_FORMAT_ERROR~;
     if (header.node_count > scene.world.entities.free_count) return c3d::CAPACITY_EXCEEDED~;
     NodeRecord[] records = read_nodes(&node_reader, header.node_count)!;
-    ulong[] masks = alloc::new_array_try(tmem, ulong, header.node_count) ?? c3d::CAPACITY_EXCEEDED~!;
+    ComponentMask[] masks = alloc::new_array_try(tmem, ComponentMask, header.node_count) ?? c3d::CAPACITY_EXCEEDED~!;
     Reader component_reader = reader_over(chunk_bytes(bytes, header.chunk_count, ChunkKind.COMPONENTS));
     List{PayloadView} payloads = read_payloads(&component_reader, types, masks)!;
     Node*[] nodes = alloc::new_array_try(tmem, Node*, header.node_count) ?? c3d::CAPACITY_EXCEEDED~!;
@@ -95,15 +95,15 @@ fn TypeRecord[]? read_types(Scene* scene, Reader* reader) @local {
         return c3d::ASSET_FORMAT_ERROR~;
     }
     TypeRecord[] types = alloc::new_array_try(tmem, TypeRecord, count) ?? c3d::CAPACITY_EXCEEDED~!;
-    ulong found;
+    ComponentMask found;
     foreach (&type : types) {
         String name = reader.read_string()!;
         if (!name.len) return c3d::ASSET_FORMAT_ERROR~;
         uint version = reader.read_uint()!;
         if (!version) return c3d::ASSET_FORMAT_ERROR~;
         uint slot = codec_slot(name)!;
-        if (found & (1ul << slot)) return c3d::ASSET_FORMAT_ERROR~;
-        found |= 1ul << slot;
+        if (found & ecs::slot_bit(slot)) return c3d::ASSET_FORMAT_ERROR~;
+        found |= ecs::slot_bit(slot);
         if (version > codecs[slot].codec.version || !scene.world.stores[slot]) return c3d::UNSUPPORTED~;
         *type = { .slot = slot, .version = version };
     }
@@ -135,10 +135,10 @@ fn NodeRecord[]? read_nodes(Reader* reader, uint count) @local {
     return records;
 }
 
-fn List{PayloadView}? read_payloads(Reader* reader, TypeRecord[] types, ulong[] masks) @local {
+fn List{PayloadView}? read_payloads(Reader* reader, TypeRecord[] types, ComponentMask[] masks) @local {
     uint groups = reader.read_uint()!;
     if (groups != types.len) return c3d::ASSET_FORMAT_ERROR~;
-    ulong found;
+    ComponentMask found;
     List{PayloadView} payloads;
     payloads.tinit();
     for (uint group = 0; group < groups; group++) {
@@ -147,9 +147,9 @@ fn List{PayloadView}? read_payloads(Reader* reader, TypeRecord[] types, ulong[] 
         if (type >= types.len || !count || count > masks.len || count > reader.remaining() / (2 * uint::size)) {
             return c3d::ASSET_FORMAT_ERROR~;
         }
-        if (found & (1ul << type)) return c3d::ASSET_FORMAT_ERROR~;
-        found |= 1ul << type;
-        ulong bit = 1ul << types[type].slot;
+        if (found & ((ComponentMask)1 << type)) return c3d::ASSET_FORMAT_ERROR~;
+        found |= (ComponentMask)1 << type;
+        ComponentMask bit = ecs::slot_bit(types[type].slot);
         for (uint entry = 0; entry < count; entry++) {
             uint record = reader.read_uint()!;
             uint size = reader.read_uint()!;

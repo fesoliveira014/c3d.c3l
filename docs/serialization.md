@@ -14,7 +14,7 @@ Asset payloads, scene-wide ambient/background/environment settings and cross-sub
 
 ## Registration and callbacks
 
-Register the destination's component stores and removal hooks through its owner APIs before reading. Then call serial::register_codec(Type, codec) or register_transient(Type) during single-threaded setup. Codec registration assigns a process slot without allocating any Scene store. `ecs::assigned_slot(Type)` queries that zero-based slot without assigning one and returns `NOT_FOUND` when absent. The shared ECS limit remains 64 component types.
+Register the destination's component stores and removal hooks through its owner APIs before reading. Then call serial::register_codec(Type, codec) or register_transient(Type) during single-threaded setup. Codec registration assigns a process slot without allocating any Scene store. `ecs::assigned_slot(Type)` queries that zero-based slot without assigning one and returns `NOT_FOUND` when absent. The shared ECS limit is 128 component types ([components](scene.md#components)); a file naming more fails `ASSET_FORMAT_ERROR`.
 
 ComponentCodec contains a static-lifetime name, positive version, RestorePhase and collect/write/read callbacks. Names must be unique across types. Registering a type again replaces its policy; a conflicting name fails without replacing the existing entry. Neither registration order nor C3 module/type names enter the stream.
 

@@ -90,7 +90,7 @@ fn void test_remove_clears_the_mask_bit() @test {
     assert(!world.has(entity, Health));
     assert(world.get(entity, Health) == null);
     assert(world.count(Health) == 0);
-    assert((world.entities.items[entity.index] & (1ul << (store::slot{Health} - 1))) == 0);
+    assert((world.entities.items[entity.index] & ecs::slot_bit(store::slot{Health} - 1)) == 0);
     assert(world.has(entity, Tag));
 }
 
@@ -337,5 +337,5 @@ fn void test_ecs_component_by_slot_matches_typed_get() @test {
     uint slot = store::slot{Health} - 1;
 
     assert(world.component(entity, slot) == typed);
-    assert(world.mask(entity) == 1ul << slot);
+    assert(world.mask(entity) == ecs::slot_bit(slot));
 }

@@ -9,7 +9,10 @@ import c3d::material;
 import c3d::maths;
 import c3d::scene;
 import c3d::serial;
+import c3d::serial::test::filler @public;
 import std::math;
+
+const uint SERIAL_FILLER_TYPES @private = 64;
 
 struct Value @private {
     uint number;
@@ -75,6 +78,9 @@ fn void init_fixture(Fixture* fixture, uint capacity = 32) @private {
     });
     fixture.source = scene::create_scene(mem, { .max_nodes = 32 });
     fixture.destination = scene::create_scene(mem, { .max_nodes = capacity });
+    // Core types below 64, test types above, so both mask words are exercised.
+    register_fillers(&fixture.source);
+    register_fillers(&fixture.destination);
     register_scene(&fixture.source, &fixture.removed);
     register_scene(&fixture.destination, &fixture.removed);
     register_codecs();
@@ -95,6 +101,12 @@ fn void register_scene(Scene* scene, uint* removed) @private {
     scene.register(Composite)!!;
     scene.register(CustomValue)!!;
     scene.set_remove_hook(Owned, &free_owned, removed);
+}
+
+fn void register_fillers(Scene* scene) @private {
+    $for var $index = 0; $index < SERIAL_FILLER_TYPES; $index++:
+        scene.register(filler::SerialFiller{$index})!!;
+    $endfor
 }
 
 fn void register_codecs() @private {
@@ -130,6 +142,14 @@ fn void register_codecs() @private {
         .write = &write_custom,
         .read = &read_custom,
     })!!;
+    $for var $index = 0; $index < SERIAL_FILLER_TYPES; $index++:
+        serial::register_codec(filler::SerialFiller{$index}, {
+            .name = filler::SerialFiller{$index}::name,
+            .version = 1,
+            .write = &filler::write_filler{$index},
+            .read = &filler::read_filler{$index},
+        })!!;
+    $endfor
 }
 
 fn void? write_value(void* component, Writer* writer, WriteContext* context) @private {

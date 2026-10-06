@@ -40,16 +40,16 @@ fn void scene_panel(Scene* scene, GuiPanelState* state) {
 }
 
 fn void inspect_components(Scene* scene, Entity entity) @local {
-    ulong mask = scene.world.mask(entity);
-    for (uint slot = 0; slot < ecs::MAX_COMPONENT_TYPES; slot++) {
+    scene.world.@each_slot(entity; uint slot) {
         Inspector inspector = inspector_of(slot);
-        if ((mask & (1ul << slot)) == 0 || !inspector.inspect) continue;
-        imgui::push_id_int((int)slot);
-        defer imgui::pop_id();
-        if (imgui::collapsing_header(inspector.name, {})) {
-            (void)inspector.inspect(scene.world.component(entity, slot));
+        if (inspector.inspect) {
+            imgui::push_id_int((int)slot);
+            defer imgui::pop_id();
+            if (imgui::collapsing_header(inspector.name, {})) {
+                (void)inspector.inspect(scene.world.component(entity, slot));
+            }
         }
-    }
+    };
 }
 
 fn void node_tree(Node* node, GuiPanelState* state) @local {
