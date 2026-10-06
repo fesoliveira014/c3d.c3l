@@ -87,8 +87,9 @@ The view owns its working images (`hdr_color`, `depth`, the scene color and dept
 [fog volume](sky.md#volumetric-fog) when `volumetric_fog` is on (7.03 MiB at 2560 × 1440), post and
 effect images) at the working extent `working_extent(viewport, output, render_scale)`, at least one pixel
 per dimension. Reconfiguring with a different extent or output waits for outstanding frames and
-reallocates them; every configuration resets the view's history, which is otherwise keyed by scene
-identity and needs no reset when a scene is replaced (`reset_view_history` remains the camera cut).
+reallocates them; every configuration resets the view's history except its
+[adapted exposure](post.md#auto-exposure), which a resize or parameter edit keeps. The history is otherwise keyed
+by scene identity and needs no reset when a scene is replaced (`reset_view_history` remains the camera cut).
 Window resize resizes every window view; target resize resizes every view on that target. A headless renderer's window views
 hold no images and record nothing.
 
@@ -302,6 +303,8 @@ renderer.render_view(&scene, camera_node, main_view)!;
   the mirror view projects a point on the plane where the main view does.
 - Render the mirror view first and the view that shows the surface right after it. The renderer holds one shadow
   set at a time: a view with another camera between them records over the mirror's set.
+- A mirror view stays `LINEAR_HDR`, so it ignores auto exposure; the view that shows the surface meters the
+  composited reflection as part of its image.
 - Water from the landscape add-on places its mirror camera and clip plane for you; see [water](water.md#the-mirror).
 - Under [fog or an atmosphere](sky.md#where-fog-applies) a mirror view fogs only the path behind its plane,
   from the plane to the reflected surface; the view that shows the surface fogs the path to it, so the
@@ -477,8 +480,9 @@ like `STANDARD` on a deferred view, one without stays forward; see
 
 Per-view numbers live on the view: `Renderer.view_stats(view)` returns `ViewStats` with the
 view's selected and dropped light counts, whether it bound another view's shadow set
-(`shadow_set_shared`, the table's "Shadow set" row), its cluster count and overflow count, and its completed
-GPU pass timings (`C3D_PROFILE_GPU`), while `Stats` keeps the renderer-wide sums.
+(`shadow_set_shared`, the table's "Shadow set" row), its cluster count and overflow count, its completed
+GPU pass timings (`C3D_PROFILE_GPU`) and its applied exposure (`exposure`, delayed under auto exposure), while
+`Stats` keeps the renderer-wide sums.
 `gui::view_stats_table(renderer, views, labels)` prints several views side by side.
 
 ```bash

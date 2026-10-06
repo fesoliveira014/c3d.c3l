@@ -559,6 +559,7 @@ fn ViewDesc benchmark_view_desc(ViewDesc base, BenchmarkFlags flags) @local {
     base.post.anti_aliasing = flags.anti_aliasing;
     base.ambient_occlusion = flags.ambient_occlusion;
     base.depth_prepass = flags.depth_prepass;
+    base.post.auto_exposure = flags.auto_exposure;
     base.ray_tracing.reflections = flags.reflections;
     if (flags.screen_space_gi) base.screen_space_gi = render::SCREEN_SPACE_GI_DEFAULT;
     base.instance_culling = true;

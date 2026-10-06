@@ -2,7 +2,7 @@
 #define C3D_GRADE_GLSL
 
 const vec3 REC709_LUMA = vec3(0.2126, 0.7152, 0.0722);
-const float MID_GRAY = 0.18;
+const float MID_GRAY = 0.18; // mirrored as MID_GRAY in exposure.c3
 const float SRGB_ENCODED_THRESHOLD = 0.04045;
 const float SRGB_LINEAR_THRESHOLD = 0.0031308;
 const float SRGB_LINEAR_SCALE = 12.92;
@@ -101,7 +101,9 @@ vec3 tonemap(vec3 color, uint operator_index) {
 
 // Scene-linear in, display-linear [0, 1] out; the attachment encodes.
 vec3 grade_color(vec3 color, vec2 uv, GradeGpu grade) {
-    color *= grade.exposure;
+    float exposure = grade.exposure;
+    if (grade.auto_exposure != 0ul) exposure *= ExposureGpu(grade.auto_exposure).scale;
+    color *= exposure;
     if (grade.bloom_texture != 0u) {
         color += grade.bloom_intensity * sample_texture_2d(grade.bloom_texture, grade.bloom_sampler, uv).rgb;
     }
