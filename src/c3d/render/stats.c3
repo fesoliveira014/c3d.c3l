@@ -72,7 +72,7 @@ const usz ENVIRONMENT_STAGE_COUNT = EnvironmentStage::len;
 <*
  Frames between the texture readings in Stats.
 *>
-const uint TEXTURE_STATS_INTERVAL = 16; // a reading walks the texture table: about 5.5 us at 4,020 entries on llvmpipe
+const uint TEXTURE_STATS_INTERVAL = 16; // a table walk: 0.2 us at 27 entries, 5.4 us at 4,019 on an RTX 4090
 
 <* Availability of the latest completed GPU summary. *>
 enum GpuTimingState {
