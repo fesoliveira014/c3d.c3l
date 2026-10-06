@@ -28,6 +28,9 @@ fn void view_stats_table(Renderer* renderer, ViewId[] views, ZString[] labels) {
     @row("Light count", views; ViewId view) {
         imgui::text("%u", renderer.views.get(view).stats.lights);
     };
+    @row("Exposure", views; ViewId view) {
+        imgui::text("%.3f", renderer.views.get(view).stats.exposure);
+    };
     @row("Accumulated samples", views; ViewId view) {
         imgui::text("%u", renderer.views.get(view).stats.accumulated_samples);
     };
