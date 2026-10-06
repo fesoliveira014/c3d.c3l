@@ -13,6 +13,14 @@ fn RecorderDesc test_desc() @private => {
     .label_bytes_per_frame = 128,
 };
 
+fn RecorderDesc worker_desc() @private => {
+    .frame_capacity = 2,
+    .cpu_scopes_per_frame = 8,
+    .max_depth = 4,
+    .worker_samples_per_frame = 2,
+    .label_bytes_per_frame = 128,
+};
+
 fn Recorder create_test_recorder() @private => profile::create_recorder(mem, test_desc())!!;
 
 fn String counted_label(uint* count, String label) @private {
@@ -49,6 +57,21 @@ fn ScopeToken start_scope(
 
 fn void finish_scope(Recorder* recorder, ScopeToken token, ulong relative_ns) @private {
     profile::end_cpu_scope_at(recorder, token, 1_000 + relative_ns);
+}
+
+fn void add_two_worker_intervals(Recorder* recorder) @private {
+    recorder.add_worker_interval(
+        lane: 1,
+        label: "decode",
+        start_ns: 900,
+        end_ns: 950,
+    );
+    recorder.add_worker_interval(
+        lane: 0,
+        label: "integrate",
+        start_ns: 1_010,
+        end_ns: 1_040,
+    );
 }
 
 fn void assert_not_found(Recorder* recorder, ulong frame_id) @private {
@@ -599,4 +622,77 @@ fn void test_export_preserves_truncation_abort_and_empty_state() @test {
     defer alloc::free(mem, empty.ptr);
     assert(empty.contains("\"cpu_state\":\"READY\""));
     assert(empty.contains("\"cpu\":[]"));
+}
+
+fn void test_worker_intervals_keep_their_offset_from_the_capture_origin() @test {
+    Recorder recorder = profile::create_recorder(mem, worker_desc())!!;
+    defer profile::destroy_recorder(&recorder);
+    CaptureBinding binding = start_frame(&recorder, 0);
+    add_two_worker_intervals(&recorder);
+    profile::end_capture(&recorder, binding, false);
+    add_two_worker_intervals(&recorder);
+
+    FrameCaptureView frame = recorder.frame(0)!!;
+    assert(frame.cpu.len == 0 && frame.workers.len == 2 && frame.dropped_worker_samples == 0);
+    assert(frame.workers[0].label == "decode" && frame.workers[0].lane == 1);
+    assert(frame.workers[0].start_ns == -100 && frame.workers[0].duration_ns == 50);
+    assert(frame.workers[1].label == "integrate" && frame.workers[1].lane == 0);
+    assert(frame.workers[1].start_ns == 10 && frame.workers[1].duration_ns == 30);
+}
+
+fn void test_worker_sample_overflow_drops_and_counts() @test {
+    RecorderDesc desc = worker_desc();
+    Recorder full = profile::create_recorder(mem, desc)!!;
+    defer profile::destroy_recorder(&full);
+    CaptureBinding binding = start_frame(&full, 0);
+    add_two_worker_intervals(&full);
+    add_two_worker_intervals(&full);
+    full.add_dropped_worker_intervals(3);
+    profile::end_capture(&full, binding, false);
+    FrameCaptureView frame = full.frame(0)!!;
+    assert(frame.workers.len == 2 && frame.dropped_worker_samples == 5);
+
+    desc.label_bytes_per_frame = 6;
+    Recorder short_labels = profile::create_recorder(mem, desc)!!;
+    defer profile::destroy_recorder(&short_labels);
+    binding = start_frame(&short_labels, 0);
+    add_two_worker_intervals(&short_labels);
+    profile::end_capture(&short_labels, binding, false);
+    frame = short_labels.frame(0)!!;
+    assert(frame.workers.len == 1 && frame.workers[0].label == "decode" && frame.dropped_worker_samples == 1);
+
+    Recorder no_workers = create_test_recorder();
+    defer profile::destroy_recorder(&no_workers);
+    binding = start_frame(&no_workers, 0);
+    add_two_worker_intervals(&no_workers);
+    profile::end_capture(&no_workers, binding, false);
+    frame = no_workers.frame(0)!!;
+    assert(frame.workers.len == 0 && frame.dropped_worker_samples == 2);
+}
+
+fn void test_export_adds_workers_only_when_present() @test {
+    Recorder recorder = profile::create_recorder(mem, worker_desc())!!;
+    defer profile::destroy_recorder(&recorder);
+    CaptureBinding binding = start_frame(&recorder, 0);
+    add_two_worker_intervals(&recorder);
+    profile::end_capture(&recorder, binding, false);
+    binding = start_frame(&recorder, 1);
+    profile::end_capture(&recorder, binding, false);
+
+    String with_workers = profile::capture_json(mem, recorder.frame(0)!!);
+    defer alloc::free(mem, with_workers.ptr);
+    String without_workers = profile::capture_json(mem, recorder.frame(1)!!);
+    defer alloc::free(mem, without_workers.ptr);
+    String workers = "\"dropped_worker_samples\":0,\"workers\":[{\"label\":\"decode\",\"lane\":1,\"start_ns\":-100,\"duration_ns\":50},{\"label\":\"integrate\",\"lane\":0,\"start_ns\":10,\"duration_ns\":30}]";
+    $if $feat(C3D_PROFILE_GPU):
+        assert(with_workers.contains(workers) && with_workers.contains("\"gpu\":[]"));
+    $else
+        $if $feat(C3D_PROFILE_INTERNAL):
+            String expected = "{\"schema\":\"c3d.profile\",\"version\":1,\"features\":{\"cpu\":true,\"internal\":true},\"frames\":[{\"frame_id\":0,\"cpu_state\":\"READY\",\"truncated\":false,\"dropped_cpu_scopes\":0,\"cpu\":[],\"dropped_worker_samples\":0,\"workers\":[{\"label\":\"decode\",\"lane\":1,\"start_ns\":-100,\"duration_ns\":50},{\"label\":\"integrate\",\"lane\":0,\"start_ns\":10,\"duration_ns\":30}]}]}";
+        $else
+            String expected = "{\"schema\":\"c3d.profile\",\"version\":1,\"features\":{\"cpu\":true,\"internal\":false},\"frames\":[{\"frame_id\":0,\"cpu_state\":\"READY\",\"truncated\":false,\"dropped_cpu_scopes\":0,\"cpu\":[],\"dropped_worker_samples\":0,\"workers\":[{\"label\":\"decode\",\"lane\":1,\"start_ns\":-100,\"duration_ns\":50},{\"label\":\"integrate\",\"lane\":0,\"start_ns\":10,\"duration_ns\":30}]}]}";
+        $endif
+        assert(with_workers == expected);
+    $endif
+    assert(!without_workers.contains("workers"));
 }

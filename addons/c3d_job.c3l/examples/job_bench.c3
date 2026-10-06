@@ -5,6 +5,7 @@ import std::math;
 import std::sort;
 import std::time;
 import std::time::clock;
+import std::thread;
 import std::thread::cpu;
 import std::atomic::types;
 import c3d::job;
@@ -20,6 +21,17 @@ const uint WARMUP_SAMPLES @local = 2; // wakes the workers and fills the temp pa
 const uint SAMPLES @local = 11; // the median of eleven timed passes
 const uint PASSES @local = WARMUP_SAMPLES + SAMPLES;
 const double NANOSECONDS_PER_MICROSECOND @local = 1000;
+const uint LOADED_ITEMS @local = 65536; // the frame kernel timed beside background work
+const uint LOADED_BATCH @local = 1024; // about 64 ranges: scheduling stays a small share of the timed kernel
+const uint BACKGROUND_RANGES @local = 16384; // about 0.25 s of serial work, so it outlasts the timed frame passes
+const uint BACKGROUND_RANGE_ITEMS @local = 256; // about 15 us of chain multiplies a range
+const uint PINNED_ITEMS @local = 262144; // the largest kernel, where placement shows most
+const uint PINNED_BATCH @local = 1024; // about 256 ranges: a coarse grain, so placement and not scheduling is measured
+
+struct Load @local {
+    Mat4[] chain;
+    Mat4[] products; // one per range
+}
 
 struct Kernel @local {
     Mat4[]       chain;
@@ -42,6 +54,15 @@ fn void kernel_range(void* data, uint first, uint count) @local {
     kernel.output[first : count] = products[..];
     kernel.ranges.add(1);
     kernel.peak_scratch_bytes.max(count * Mat4::size);
+}
+
+fn void load_range(void* data, uint first, uint count) @local {
+    Load* load = data;
+    Mat4 product = matrix::IDENTITY4;
+    for (uint offset = 0; offset < count; offset++) {
+        foreach (link : load.chain) product = product.mul(link);
+    }
+    load.products[first / BACKGROUND_RANGE_ITEMS] = product;
 }
 
 fn double median(double[] samples) @local {
@@ -71,10 +92,161 @@ fn double time_run(
     return median(&samples);
 }
 
+fn void count_range(void* data, uint first, uint count) @local {
+    Atomic{uint}* ranges = data;
+    ranges.add(1);
+}
+
+fn double time_background_run(JobPool* pool) @local {
+    double[SAMPLES] samples;
+    for (uint pass = 0; pass < PASSES; pass++) {
+        Atomic{uint} ranges;
+        time::Clock started = clock::now();
+        JobId id = pool.try_run(
+            job_class: BACKGROUND,
+            range:     &count_range,
+            data:      &ranges,
+            count:     OVERHEAD_RANGES,
+            batch:     1,
+        )!!;
+        while (ranges.load() < OVERHEAD_RANGES) thread::yield();
+        while (!pool.is_finished(id)) thread::yield();
+        double elapsed = (double)(clock::now() - started) / NANOSECONDS_PER_MICROSECOND;
+        if (pass >= WARMUP_SAMPLES) samples[pass - WARMUP_SAMPLES] = elapsed;
+    }
+    return median(&samples);
+}
+
+fn double time_recorded_run(JobPool* pool, JobRangeRecord[] records) @local @feat(C3D_PROFILE_CPU) {
+    double[SAMPLES] samples;
+    pool.set_recording(true);
+    for (uint pass = 0; pass < PASSES; pass++) {
+        time::Clock started = clock::now();
+        pool.wait(pool.run(
+            range: &empty_range,
+            data:  null,
+            count: OVERHEAD_RANGES,
+            batch: 1,
+            name:  "empty",
+        ));
+        double elapsed = (double)(clock::now() - started) / NANOSECONDS_PER_MICROSECOND;
+        if (pass >= WARMUP_SAMPLES) samples[pass - WARMUP_SAMPLES] = elapsed;
+        pool.take_records(records);
+    }
+    pool.set_recording(false);
+    return median(&samples);
+}
+
 fn JobPool create_bench_pool(uint workers) @local {
     JobPoolDesc desc = job::default_job_pool_desc();
     desc.worker_count = workers;
+    desc.background_workers = job::default_background_workers(workers);
     return job::create_job_pool(mem, desc)!!;
+}
+
+fn void print_cpu_ranges(String prefix, CpuSet cpus) @local {
+    io::print(prefix);
+    String separator = "";
+    sz first = -1;
+    for (sz cpu = 0; cpu <= cpus.len(); cpu++) {
+        bool member = cpu < cpus.len() && cpus.get(cpu);
+        if (member && first < 0) first = cpu;
+        if (member || first < 0) continue;
+        if (cpu - 1 == first) {
+            io::printf("%s%d", separator, first);
+        } else {
+            io::printf("%s%d-%d", separator, first, cpu - 1);
+        }
+        separator = ",";
+        first = -1;
+    }
+    io::printn();
+}
+
+fn void report_pinned_kernel(Mat4[] chain) @local {
+    CoreTypes types = job::core_types();
+    print_cpu_ranges("# performance_cpus=", types.performance);
+    print_cpu_ranges("# efficiency_cpus=", types.efficiency);
+    if (!types.efficiency.cardinality()) return;
+
+    JobPoolDesc desc = job::default_job_pool_desc();
+    desc.worker_count = (uint)types.performance.cardinality() - 1;
+    desc.background_workers = job::default_background_workers(desc.worker_count);
+    JobPool unpinned = job::create_job_pool(mem, desc)!!;
+    defer job::destroy_job_pool(&unpinned);
+    desc.worker_cpus = types.performance;
+    JobPool pinned = job::create_job_pool(mem, desc)!!;
+    defer job::destroy_job_pool(&pinned);
+    print_cpu_ranges("# pinned_worker_cpus=", pinned.worker_cpus(0));
+
+    Mat4[] output = mem::new_array(Mat4, PINNED_ITEMS);
+    defer free(output);
+    Kernel kernel = { .chain = chain, .output = output };
+    double unpinned_microseconds = time_run(
+        pool:  &unpinned,
+        range: &kernel_range,
+        data:  &kernel,
+        count: PINNED_ITEMS,
+        batch: PINNED_BATCH,
+    );
+    double pinned_microseconds = time_run(
+        pool:  &pinned,
+        range: &kernel_range,
+        data:  &kernel,
+        count: PINNED_ITEMS,
+        batch: PINNED_BATCH,
+    );
+    io::printn("# pinned,workers,items,batch,unpinned_us,pinned_us,ratio");
+    io::printfn(
+        "pinned,%d,%d,%d,%.1f,%.1f,%.2f",
+        desc.worker_count,
+        PINNED_ITEMS,
+        PINNED_BATCH,
+        unpinned_microseconds,
+        pinned_microseconds,
+        pinned_microseconds / unpinned_microseconds,
+    );
+}
+
+fn void report_loaded_kernel(
+    JobPool* pool,
+    Mat4[] chain,
+    uint workers,
+    double idle_microseconds,
+) @local {
+    Mat4[] output = mem::new_array(Mat4, LOADED_ITEMS);
+    defer free(output);
+    Kernel kernel = { .chain = chain, .output = output };
+    Mat4[] products = mem::new_array(Mat4, BACKGROUND_RANGES);
+    defer free(products);
+    Load load = { .chain = chain, .products = products };
+    JobId background = pool.try_run(
+        job_class: BACKGROUND,
+        range:     &load_range,
+        data:      &load,
+        count:     BACKGROUND_RANGES * BACKGROUND_RANGE_ITEMS,
+        batch:     BACKGROUND_RANGE_ITEMS,
+    )!!;
+    double loaded_microseconds = time_run(
+        pool:  pool,
+        range: &kernel_range,
+        data:  &kernel,
+        count: LOADED_ITEMS,
+        batch: LOADED_BATCH,
+    );
+    bool still_loaded = !pool.is_finished(background);
+    pool.wait(background);
+    io::printfn(
+        "loaded,%d,%d,%d,%d,%.1f,%.1f,%.2f,%d",
+        workers,
+        job::default_background_workers(workers),
+        LOADED_ITEMS,
+        LOADED_BATCH,
+        idle_microseconds,
+        loaded_microseconds,
+        loaded_microseconds / idle_microseconds,
+        still_loaded ? 1 : 0,
+    );
 }
 
 fn bool report_kernel(
@@ -132,11 +304,14 @@ fn bool report_kernel(
 fn int main() {
     JobPoolDesc defaults = job::default_job_pool_desc();
     io::printfn(
-        "# job_bench logical_cpus=%d default_workers=%d ring=%d runs=%d worker_temp_bytes=%d",
+        "# job_bench logical_cpus=%d available_cpus=%d default_workers=%d background_workers=%d runs=%d "
+        "background_runs=%d worker_temp_bytes=%d",
         cpu::native_cpu(),
+        job::available_cpus().cardinality(),
         defaults.worker_count,
-        defaults.ring_capacity,
+        defaults.background_workers,
         defaults.run_capacity,
+        defaults.background_run_capacity,
         defaults.worker_temp_bytes,
     );
 
@@ -166,6 +341,36 @@ fn int main() {
             OVERHEAD_RANGES,
             microseconds_per_range[index],
             pool.inline_ranges(),
+        );
+    }
+
+    $if $feat(C3D_PROFILE_CPU):
+        JobRangeRecord[] records = mem::new_array(JobRangeRecord, OVERHEAD_RANGES);
+        defer free(records);
+        io::printn("# recording,workers,ranges,us_per_range");
+        foreach (workers : worker_counts[:worker_kinds]) {
+            JobPool pool = create_bench_pool(workers);
+            defer job::destroy_job_pool(&pool);
+            io::printfn(
+                "recording,%d,%d,%.4f",
+                workers,
+                OVERHEAD_RANGES,
+                time_recorded_run(&pool, records) / OVERHEAD_RANGES,
+            );
+        }
+    $endif
+
+    io::printn("# background,workers,background_workers,ranges,us_per_range");
+    foreach (workers : worker_counts[:worker_kinds]) {
+        if (!workers) continue;
+        JobPool pool = create_bench_pool(workers);
+        defer job::destroy_job_pool(&pool);
+        io::printfn(
+            "background,%d,%d,%d,%.4f",
+            workers,
+            job::default_background_workers(workers),
+            OVERHEAD_RANGES,
+            time_background_run(&pool) / OVERHEAD_RANGES,
         );
     }
 
@@ -203,5 +408,30 @@ fn int main() {
             }
         }
     }
+
+    io::printn("# loaded,workers,background_workers,items,batch,idle_us,loaded_us,ratio,background_outlasted");
+    foreach (workers : worker_counts[:worker_kinds]) {
+        if (!workers) continue;
+        JobPool pool = create_bench_pool(workers);
+        defer job::destroy_job_pool(&pool);
+        Mat4[] idle_output = mem::new_array(Mat4, LOADED_ITEMS);
+        defer free(idle_output);
+        Kernel idle = { .chain = &chain, .output = idle_output };
+        double idle_microseconds = time_run(
+            pool:  &pool,
+            range: &kernel_range,
+            data:  &idle,
+            count: LOADED_ITEMS,
+            batch: LOADED_BATCH,
+        );
+        report_loaded_kernel(
+            pool:              &pool,
+            chain:             &chain,
+            workers:           workers,
+            idle_microseconds: idle_microseconds,
+        );
+    }
+
+    report_pinned_kernel(&chain);
     return all_equal ? 0 : 1;
 }

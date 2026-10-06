@@ -23,6 +23,7 @@ const usz POSED_PIXELS @private = TARGET_SIZE * TARGET_SIZE;
 const usz POSED_EDGE_BUDGET @private = POSED_PIXELS / 50; // silhouette pixels where coverage and the centre ray part
 const usz POSED_COVERAGE_MINIMUM @private = POSED_PIXELS / 10;
 const uint POSED_FRAMES @private = 4;
+const usz POSED_POSITION_BYTES @private = 12; // a packed vec3 position
 const usz POSED_RESULT_BYTES @private = POSED_PIXELS * PosedDepthResult::size;
 
 struct PosedDepthRoot @private {
@@ -204,7 +205,7 @@ fn PosedAgreement posed_agreement(PosedDepthResult[] results) @private {
     return agreement;
 }
 
-fn void assert_posed_agreement(PosedDepthResult[] results, ZString name) @private {
+fn void posed_assert_agreement(PosedDepthResult[] results, ZString name) @private {
     PosedAgreement agreement = posed_agreement(results);
     io::eprintfn(
         "%s: %d covered, %d mismatched, worst %f",
@@ -214,16 +215,6 @@ fn void assert_posed_agreement(PosedDepthResult[] results, ZString name) @privat
         agreement.worst,
     );
     assert(agreement.covered >= POSED_COVERAGE_MINIMUM && agreement.mismatched <= POSED_EDGE_BUDGET);
-}
-
-fn uint posed_root_low(Fixture* fixture, PosedHarness* harness, Node* mesh) @private {
-    PosedTraceTable* table = &fixture.renderer.posed_trace;
-    foreach (&slot : table.slots) {
-        if (slot.key.scene == harness.scene.identity && c3d::same_id(slot.key.node, mesh.id)) {
-            return (uint)(ulong)slot.root;
-        }
-    }
-    unreachable("the mesh holds no posed slot");
 }
 
 fn void test_posed_meshes_trace_at_the_raster_pose() @test {
@@ -245,7 +236,7 @@ fn void test_posed_meshes_trace_at_the_raster_pose() @test {
             for (uint frame = 0; frame < POSED_FRAMES; frame++) {
                 posed_set_frame(&harness, &rig, frame);
                 posed_render(&fixture, &harness, kind)!!;
-                assert_posed_agreement(harness.results, names[index]);
+                posed_assert_agreement(harness.results, names[index]);
                 assert(fixture.renderer.stats.trace_posed_instances == 1 && fixture.renderer.stats.trace_poses == 1);
                 uint low = posed_root_low(&fixture, &harness, rig.mesh);
                 foreach (&result : harness.results) {
@@ -276,7 +267,7 @@ fn void test_posed_instances_sharing_a_geometry_stay_independent() @test {
     harness.scene.update_world();
 
     posed_render(&fixture, &harness, TraceKind.SOFTWARE)!!;
-    assert_posed_agreement(harness.results, "independent");
+    posed_assert_agreement(harness.results, "independent");
     uint left_low = posed_root_low(&fixture, &harness, left.mesh);
     uint right_low = posed_root_low(&fixture, &harness, right.mesh);
     uint still_low = (uint)(ulong)fixture.renderer.geometries[fixture.box.index].root;
@@ -399,7 +390,7 @@ fn void test_morphed_mesh_outside_its_rest_box_is_hit() @test {
         harness.scene.update_world();
 
         posed_render(&fixture, &harness, ray_queries ? TraceKind.HARDWARE : TraceKind.SOFTWARE)!!;
-        assert_posed_agreement(harness.results, "morph outside the rest box");
+        posed_assert_agreement(harness.results, "morph outside the rest box");
         check_validation(&fixture.renderer);
     }
 }
@@ -432,7 +423,7 @@ fn void test_two_tracing_views_pose_once_per_frame() @test {
             renderer.end_frame()!!;
             assert(renderer.stats.trace_poses == 1);
             assert(ray_queries ? renderer.stats.trace_refits == 0 : renderer.stats.trace_refits == 1);
-            assert(ray_queries ? renderer.stats.blas_updates + renderer.stats.blas_builds >= 1 : true);
+            if (ray_queries) assert(renderer.stats.blas_updates + renderer.stats.blas_builds == 1);
         }
         check_validation(renderer);
     }
@@ -442,7 +433,11 @@ fn PosedTraceRes* posed_slot_of(Fixture* fixture, PosedHarness* harness, Node* m
     foreach (&slot : fixture.renderer.posed_trace.slots) {
         if (slot.key.scene == harness.scene.identity && c3d::same_id(slot.key.node, mesh.id)) return slot;
     }
-    unreachable("the mesh holds no posed slot");
+    unreachable("expected a posed slot for the mesh");
+}
+
+fn uint posed_root_low(Fixture* fixture, PosedHarness* harness, Node* mesh) @private {
+    return (uint)(ulong)posed_slot_of(fixture, harness, mesh).root;
 }
 
 fn void test_posed_bottom_level_updates_in_place() @test {
@@ -474,7 +469,7 @@ fn void test_posed_bottom_level_updates_in_place() @test {
     posed_trace_frame(&fixture, &harness.scene, TraceKind.HARDWARE)!!;
     assert(renderer.stats.blas_builds == 1 && renderer.stats.blas_updates == 0 && renderer.stats.tlas_builds == 1);
     posed_render(&fixture, &harness, TraceKind.HARDWARE)!!;
-    assert_posed_agreement(harness.results, "after an aborted update");
+    posed_assert_agreement(harness.results, "after an aborted update");
     check_validation(renderer);
 }
 
@@ -535,7 +530,7 @@ fn void test_source_revision_rebuilds_the_posed_slot() @test {
         foreach (&position : fixture.assets.geometry(skinned).data.positions) *position *= 1.5f;
         fixture.assets.mark_geometry_dirty(skinned);
         posed_render(&fixture, &harness, kind)!!;
-        assert_posed_agreement(harness.results, "after a revision");
+        posed_assert_agreement(harness.results, "after a revision");
         assert(fixture.renderer.stats.trace_poses == 1);
         if (ray_queries) assert(fixture.renderer.stats.blas_builds == 1 && fixture.renderer.stats.blas_updates == 0);
 
@@ -550,7 +545,7 @@ fn void test_source_revision_rebuilds_the_posed_slot() @test {
             renderer.end_frame()!!;
             assert(renderer.stats.trace_poses == 2);
             posed_render(&fixture, &harness, kind)!!;
-            assert_posed_agreement(harness.results, "after a revision between two preparations");
+            posed_assert_agreement(harness.results, "after a revision between two preparations");
         }
         check_validation(&fixture.renderer);
     }
@@ -587,7 +582,7 @@ fn void test_posed_slot_follows_a_new_geometry() @test {
         harness.scene.get(rig.mesh, Mesh).geometry = posed_sphere(&fixture)!!;
         posed_set_frame(&harness, &rig, 2);
         posed_render(&fixture, &harness, kind)!!;
-        assert_posed_agreement(harness.results, "after a geometry swap");
+        posed_assert_agreement(harness.results, "after a geometry swap");
         slot = posed_slot_of(&fixture, &harness, rig.mesh);
         if (ray_queries) {
             assert(slot.blas != blas && fixture.renderer.stats.blas_builds == 1);
@@ -620,7 +615,7 @@ fn void test_closed_frame_trace_reads_the_current_pose() @test {
     assert(renderer.stats.trace_poses == poses + 1 && renderer.scene_trace.revision == revision + 1);
     posed_render(&fixture, &harness, TraceKind.SOFTWARE)!!;
     assert(renderer.stats.trace_poses == 0);
-    assert_posed_agreement(harness.results, "after closed preparations");
+    posed_assert_agreement(harness.results, "after closed preparations");
     check_validation(renderer);
 }
 
@@ -648,8 +643,51 @@ fn void test_absent_posed_slots_retire_and_return_fresh() @test {
     PosedRig second = posed_add_rig(&fixture, &harness, skinned)!!;
     posed_set_frame(&harness, &second, 2);
     posed_render(&fixture, &harness, TraceKind.SOFTWARE)!!;
-    assert_posed_agreement(harness.results, "a fresh slot");
+    posed_assert_agreement(harness.results, "a fresh slot");
     check_validation(renderer);
+}
+
+fn void posed_double_vertices_without_normals(Fixture* fixture, GeometryId geometry) @private {
+    @pool() {
+        Geometry shape = geometry::box(tmem, 1, 1, 1);
+        sz doubled = (sz)shape.positions.len * 2;
+        Allocator allocator = fixture.assets.allocator;
+        GeometryAsset* record = fixture.assets.geometry(geometry);
+        fixture.assets.release_geometry_cpu(geometry);
+        record.data.positions = alloc::new_array(allocator, Vec3, doubled);
+        record.data.joints = alloc::new_array(allocator, ushort[<4>], doubled);
+        record.data.weights = alloc::new_array(allocator, Vec4, doubled);
+        foreach (index, &position : record.data.positions) *position = shape.positions[index % shape.positions.len];
+        foreach (&weight : record.data.weights) *weight = { 1, 0, 0, 0 };
+        record.data.indices = alloc::new_array(allocator, uint, shape.indices.len);
+        record.data.indices[..] = shape.indices[..];
+        record.vertex_count = (uint)doubled;
+    };
+    fixture.assets.mark_geometry_dirty(geometry);
+}
+
+fn void test_posed_stream_reuse_follows_a_new_vertex_count() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    PosedHarness harness;
+    posed_create_harness(&fixture, &harness)!!;
+    defer posed_destroy_harness(&fixture, &harness);
+    GeometryId geometry = posed_box(&fixture, true)!!;
+    PosedRig rig = posed_add_rig(&fixture, &harness, geometry)!!;
+    posed_set_frame(&harness, &rig, 1);
+    posed_trace_frame(&fixture, &harness.scene)!!;
+    PosedTraceRes* slot = posed_slot_of(&fixture, &harness, rig.mesh);
+    gpu::GpuAllocation allocation = slot.allocation;
+    usz stream_bytes = slot.stream_bytes;
+    usz vertex_count = fixture.assets.geometry(geometry).data.positions.len;
+    assert(slot.positions.size == POSED_POSITION_BYTES * vertex_count);
+
+    posed_double_vertices_without_normals(&fixture, geometry);
+    posed_trace_frame(&fixture, &harness.scene)!!;
+    assert(slot.stream_bytes == stream_bytes && mem::equals(&slot.allocation, &allocation, gpu::GpuAllocation::size));
+    assert(slot.positions.size == POSED_POSITION_BYTES * 2 * vertex_count);
+    check_validation(&fixture.renderer);
 }
 
 fn void test_rest_refit_reproduces_the_rest_tree() @test {
@@ -732,7 +770,7 @@ fn void test_deferred_bottom_level_update_rebuilds_the_top_level() @test {
     assert(renderer.stats.trace_poses == 1 && renderer.stats.blas_updates == 0);
     posed_render(&fixture, &harness, TraceKind.HARDWARE)!!;
     assert(renderer.stats.trace_poses == 0 && renderer.stats.blas_updates == 1 && renderer.stats.tlas_builds == 1);
-    assert_posed_agreement(harness.results, "deferred bottom-level update");
+    posed_assert_agreement(harness.results, "deferred bottom-level update");
     check_validation(renderer);
 }
 
@@ -1060,11 +1098,16 @@ fn void test_traced_crowd_pose_outside_its_rest_geometry_is_hit() @test {
     check_validation(&fixture.renderer);
 }
 
-const Vec3 POSED_OCCLUDER_NEAR @private = { 0, 0.5f, -1 };       // cube resting on the floor, its front face at z = -0.5
-const Vec3 POSED_OCCLUDER_AWAY @private = { 3, 0.5f, -1 };       // the same cube 3 m to the side
-const Vec3 POSED_CREASE_POINT @private = { 0, 0, -0.45f };       // on the floor 5 cm from the cube's front face
+const Vec3 POSED_OCCLUDER_NEAR @private = { 0, 0.5f, -1 }; // cube resting on the floor, its front face at z = -0.5
+const Vec3 POSED_OCCLUDER_AWAY @private = { 3, 0.5f, -1 }; // the same cube 3 m to the side
+const Vec3 POSED_CREASE_POINT @private = { 0, 0, -0.45f }; // on the floor 5 cm from the cube's front face
 
-fn Node* posed_attach_joint(Fixture* fixture, Scene* scene, GeometryId geometry, MaterialId material) @private {
+fn Node* posed_attach_joint(
+    Fixture* fixture,
+    Scene* scene,
+    GeometryId geometry,
+    MaterialId material,
+) @private {
     Node* joint = scene.add_node(name: "posed_joint")!!;
     Node* mesh = scene.add_mesh(geometry, material, name: "posed_mesh")!!;
     Node*[] joints = alloc::new_array(scene.allocator, Node*, 1);

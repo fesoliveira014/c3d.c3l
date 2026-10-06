@@ -209,7 +209,13 @@ fn void test_custom_vertex_stage_keeps_meshes_out_whatever_trace_says() @test {
     water_mesh.local_bounds = { .min = { -2, -1, -2 }, .max = { 2, 1, 2 } };
     Node* fragment_only = scene.add_mesh(fixture.box, shaded, name: "fragment_only")!!;
     Transform[2] transforms = { maths::TRANSFORM_IDENTITY, maths::TRANSFORM_IDENTITY };
-    scene.add_instanced_mesh(fixture.box, displaced, 2, transforms[..], name: "displaced_batch")!!;
+    scene.add_instanced_mesh(
+        geometry: fixture.box,
+        material: displaced,
+        capacity: 2,
+        transforms: transforms[..],
+        name: "displaced_batch",
+    )!!;
     scene.update_world();
 
     @pool() {
