@@ -4,6 +4,7 @@ import std::io;
 import std::math;
 import c3d;
 import c3d::asset;
+import c3d::asset::image;
 import c3d::camera;
 import c3d::geometry;
 import c3d::material;
@@ -73,6 +74,25 @@ fn void select_sampler(AssetStore* assets, MaterialId material_id, Input* input)
     assets.mark_material_dirty(material_id);
 }
 
+fn void select_source(
+    AssetStore* assets,
+    MaterialId material_id,
+    Input* input,
+    TextureId[2] sources,
+) @local {
+    if (!input.key_pressed(platform::Scancode.C)) return;
+
+    TextureRef* map = &assets.material(material_id).data.basic.map.texture;
+    bool container = c3d::same_id(map.asset, sources[0]);
+    map.asset = sources[container ? 1 : 0];
+    assets.mark_material_dirty(material_id);
+    if (container) {
+        io::printn("source: bc1_mips.dds through add_texture_container");
+    } else {
+        io::printn("source: hand-built records through add_texture_mips");
+    }
+}
+
 fn TextureId? add_compressed_texture(AssetStore* assets) @local {
     char[] bytes = $embed("../assets/bc1_mips.bin");
     TextureMipData[MIP_COUNT] levels;
@@ -90,13 +110,21 @@ fn TextureId? add_compressed_texture(AssetStore* assets) @local {
     return assets.add_texture_mips(desc, levels[..], "compressed_map");
 }
 
+fn TextureId? add_container_texture(AssetStore* assets) @local {
+    return image::add_texture_container(
+        assets: assets,
+        bytes:  $embed("../assets/bc1_mips.dds"),
+        key:    "compressed_map_container",
+    );
+}
+
 fn void? run() @local {
     AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
     defer asset::destroy_asset_store(&assets);
-    TextureId texture = add_compressed_texture(&assets)!;
+    TextureId[2] sources = { add_compressed_texture(&assets)!, add_container_texture(&assets)! };
     MaterialId material_id = assets.add_material(material::basic({
         .color = { 1, 1, 1, 1 },
-        .map = material::texture_slot(texture),
+        .map = material::texture_slot(sources[0]),
     }))!;
 
     GeometryId surface_geometry;
@@ -127,16 +155,19 @@ fn void? run() @local {
     )!;
     defer render::destroy_renderer(&renderer);
     renderer.prepare_scene(&scene)!;
+    renderer.upload_texture(sources[1])!;
 
     io::printn("BC1_RGBA_SRGB, 64x64, seven supplied mips, 2744 compressed bytes");
     io::printn("mips 0..6: red, green, blue, yellow, magenta, cyan, white");
-    io::printn("N nearest, L trilinear, A anisotropic; drag to orbit, wheel to zoom; Escape release quits");
+    io::printn("N nearest, L trilinear, A anisotropic; C hand-built or DDS container source");
+    io::printn("drag to orbit, wheel to zoom; Escape release quits");
 
     while (window.poll()) {
         Input* input = &window.input;
         if (input.key_released(platform::Scancode.ESCAPE)) break;
 
         select_sampler(&assets, material_id, input);
+        select_source(&assets, material_id, input, sources);
         apply_orbit(&orbit, input, camera_node);
         scene.update_world();
 
