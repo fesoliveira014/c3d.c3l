@@ -1,6 +1,8 @@
 # Scene tracing
 
-`Renderer.prepare_scene_trace` builds trace data over the scene and hands shaders a `SceneTraceRoot` address. Shaders trace rays against it with `trace_scene` and `trace_scene_any` from `scene_trace.glsl`. Two kinds of trace data serve the same rows and the same shader functions:
+`Renderer.prepare_scene_trace` builds trace data over the scene and hands shaders a `SceneTraceRoot` address. Shaders
+trace rays against it with `trace_scene` and `trace_scene_any` from `scene_trace.glsl`. Two kinds of trace data serve
+the same rows and the same shader functions:
 
 - **Software**: a two-level bounding volume hierarchy the renderer builds on the CPU. The traversal is plain shader code and runs on any Vulkan 1.3 device.
 - **Hardware**: one bottom-level acceleration structure per geometry and a top-level structure over the rows, traversed with ray queries. It needs `RendererDesc.ray_queries`.
@@ -26,11 +28,16 @@ A mesh contributes one instance at its node's world matrix. An instanced batch c
 | `InstancedMesh` or `LodGroup` with sway | At its rest pose, counted in `Stats.trace_sway_at_rest`; the error is bounded by the sway reach |
 | Material with a custom vertex stage, water included | Never |
 
-A custom vertex stage can move vertices anywhere, and the renderer sees the stage, not the displacement, so a material with one never traces, whatever `trace` says. A stage that displaces nothing and should trace draws through the built-in vertex stage.
+A custom vertex stage can move vertices anywhere, and the renderer sees the stage, not the displacement, so a material
+with one never traces, whatever `trace` says. A stage that displaces nothing and should trace draws through the built-in
+vertex stage.
 
-A bounds override (`has_bounds_override`) is a bound for culling and shadow fitting only; it does not keep a mesh out of the trace.
+A bounds override (`has_bounds_override`) is a bound for culling and shadow fitting only; it does not keep a mesh out of
+the trace.
 
-A swaying batch or LOD group traces at its rest pose: a traced shadow of a swaying tree stays still while atlas shadows sway, and a shadow ray from a swayed leaf can meet the tree's own rest geometry. `Stats.trace_sway_at_rest` counts the swaying batches and LOD groups traced this way this frame. Clear `trace` to keep one out.
+A swaying batch or LOD group traces at its rest pose: a traced shadow of a swaying tree stays still while atlas shadows
+sway, and a shadow ray from a swayed leaf can meet the tree's own rest geometry. `Stats.trace_sway_at_rest` counts the
+swaying batches and LOD groups traced this way this frame. Clear `trace` to keep one out.
 
 ## Posed instances
 

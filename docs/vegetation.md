@@ -239,7 +239,8 @@ node and their `InstancedMesh` components are derived. Loading calls `add_foliag
 - Traced views see a layer only with `trace` set, and then in its rest pose, counted in `Stats.trace_sway_at_rest`
   ([scene trace](scene_trace.md#what-traces)): under a ray-traced sun a swaying
   tree casts a still shadow while atlas shadows sway, and ray-traced ambient occlusion, reflections, probes and
-  path tracing see the rest pose too. A swaying `LodGroup` with `trace` set traces at rest the same way. Grass stays untraced by default, so it casts no traced shadow. A traced
+  path tracing see the rest pose too. A swaying `LodGroup` with `trace` set traces at rest the same way. Grass stays
+  untraced by default, so it casts no traced shadow. A traced
   layer's cells walk every instance each frame in a view that traces.
 - One material per layer: merge bark and leaves into one masked atlas with bark alpha at 1.
 - One terrain node per layer; a tiled world needs one layer per tile. Candidates outside the ground's extent

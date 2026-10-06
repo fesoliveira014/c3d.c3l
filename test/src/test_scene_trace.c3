@@ -314,6 +314,9 @@ fn void test_top_level_reuse_needs_unchanged_rows() @test {
     records[1].pose_serial = 5;
     assert(!reusable(&trace, &rt, records[..]));
     records[1].pose_serial = 4;
+    records[1].bounds.max.x += 1;
+    assert(!reusable(&trace, &rt, records[..]));
+    records[1].bounds = baseline[1].bounds;
     records[1].bottom_level = { .owner = 1, .index = 2, .generation = 1 };
     assert(!reusable(&trace, &rt, records[..]));
     rt.current_holds_set = false;

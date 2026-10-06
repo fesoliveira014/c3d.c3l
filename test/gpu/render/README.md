@@ -96,6 +96,10 @@ What the four cases establish:
   first preparation and one whose index count is not a multiple of three, and
   traces identically after every other geometry's CPU arrays are released.
 
+- The instance cap counts the rows that trace: with more candidates than
+  `max_trace_instances` but fewer kept rows, preparation succeeds, and one more
+  kept row faults `c3d::CAPACITY_EXCEEDED`.
+
 - On a renderer with ray queries, the software walk and ray queries report
   the same instance, triangle, distance and barycentrics over the same grid,
   with a masked checker box and a box that casts no shadow added; rays
@@ -292,6 +296,15 @@ What the four cases establish:
   traced consumer allocate and record nothing, a morph target that leaves the rest box is hit, a closed-frame preparation
   reads the current pose and does not re-pose when repeated, the refit at rest reproduces the rest tree component for
   component, and a strong pose's refit tree encloses every posed triangle and child.
+
+- Resize faults (`test_resize_faults.c3`): at a full texture table a target resize, one whose second view cannot get
+  its images, and a `configure_view` that changes the render scale fault `gpu::SLOT_TABLE_FULL`; at a full heap an
+  in-place `configure_view` that adds bloom beside kept TAA images and drops ambient occlusion faults
+  `gpu::DESCRIPTOR_HEAP_FULL`. Each leaves the target, the views, their images and the live counts as they were and
+  renders the same pixel; the failed target and configure resizes keep the TAA history. Each call succeeds once the
+  fillers are destroyed. The window case grows its window over a full table: `begin_frame` faults with the window view
+  unchanged and the next one succeeds at the swapchain's extent; without a window, or when the window keeps its size,
+  it prints a skip line.
 
 What they cannot establish: window clear-only and GUI-only frames need a
 window (run the `clear` and `cube_gui` examples with validation), and a

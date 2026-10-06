@@ -690,13 +690,6 @@ fn void? acquire_sky_view_images(Renderer* renderer, ViewRecord* record) @privat
     )!;
 }
 
-fn void retire_sky_view_images(Renderer* renderer, ViewRecord* record) @private {
-    if (!record.sky_view.texture.is_valid()) return;
-    RetireList* retire = last_submitted_retire(renderer);
-    retire_storage_target(retire, &record.sky_view);
-    retire_storage_target(retire, &record.aerial_perspective);
-}
-
 fn void release_sky_view_images(gpu::Device* device, ViewRecord* record) @private {
     if (record.sky_view.texture.is_valid()) release_storage_target(device, &record.sky_view);
     if (record.aerial_perspective.texture.is_valid()) release_storage_target(device, &record.aerial_perspective);
