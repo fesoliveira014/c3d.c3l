@@ -18,6 +18,8 @@ const float DIRECTION_TOLERANCE @local = 1e-5f;
 const float TURN_DEGREES @local = 30;
 const uint AHEAD_PROBES @local = 17;
 const float AHEAD_SPACING @local = 3;
+const uint FACE_SIZE @local = 8;
+const Vec3 CAPTURE_ORIGIN @local = { 3, -2, 5 };
 
 fn ReflectionProbeGpu placed_record(ReflectionProbe* probe, Vec3 center, Quat rotation) @local {
     Transform placement = maths::TRANSFORM_IDENTITY;
@@ -333,4 +335,60 @@ fn void test_box_projection_twins() @test {
     offset.projection = ReflectionProjection.INFINITE;
     ReflectionProbeGpu infinite = placed_record(&offset, { 1, 2, 3 }, turn);
     assert(render::reflection_box_direction(&infinite, local_position, direction) == direction);
+}
+
+fn void test_capture_faces_match_the_cube_convention() @test {
+    ulong[FACE_SIZE * FACE_SIZE] rendered;
+    foreach (index, &texel : rendered) *texel = (ulong)index;
+    ulong[FACE_SIZE * FACE_SIZE] assembled;
+    render::mirror_capture_face(
+        face:     ((char*)&assembled)[:assembled.len * ulong::size],
+        rendered: ((char*)&rendered)[:rendered.len * ulong::size],
+        size:     FACE_SIZE,
+    );
+    Camera face_camera = render::reflection_capture_camera(render::REFLECTION_CAPTURE_DESC_DEFAULT);
+    Vec2 viewport = { FACE_SIZE, FACE_SIZE };
+    foreach (face : CubeFace::values) {
+        Mat4 world = render::reflection_capture_face_world(face, CAPTURE_ORIGIN);
+        CameraMatrices matrices = camera::derive_matrices(face_camera, world, viewport);
+        for (uint y = 0; y < FACE_SIZE; y++) {
+            for (uint x = 0; x < FACE_SIZE; x++) {
+                ulong source = assembled[y * FACE_SIZE + x];
+                Vec2 pixel = { (float)(source % FACE_SIZE) + 0.5f, (float)(source / FACE_SIZE) + 0.5f };
+                Vec3 seen = camera::screen_to_ray(&matrices, pixel, viewport).direction;
+                Vec2 uv = { ((float)x + 0.5f) / FACE_SIZE, ((float)y + 0.5f) / FACE_SIZE };
+                Vec3 expected = render::preview_face_direction(face, uv).normalize();
+                assert(seen.distance(expected) <= DIRECTION_TOLERANCE);
+            }
+        }
+    }
+}
+
+fn void test_capture_desc_validation() @test {
+    assert(render::reflection_capture_desc_valid(render::REFLECTION_CAPTURE_DESC_DEFAULT));
+    ReflectionCaptureDesc desc = render::REFLECTION_CAPTURE_DESC_DEFAULT;
+    desc.size = 32;
+    desc.far = 50;
+    assert(render::reflection_capture_desc_valid(desc));
+    desc.size = render::MAX_REFLECTION_CAPTURE_SIZE;
+    assert(render::reflection_capture_desc_valid(desc));
+
+    uint[4] sizes = { 0, 16, 48, render::MAX_REFLECTION_CAPTURE_SIZE * 2 };
+    foreach (size : sizes) {
+        ReflectionCaptureDesc sized = render::REFLECTION_CAPTURE_DESC_DEFAULT;
+        sized.size = size;
+        assert(!render::reflection_capture_desc_valid(sized));
+    }
+    float[3] nears = { 0, -1, float::nan };
+    foreach (value : nears) {
+        ReflectionCaptureDesc clipped = render::REFLECTION_CAPTURE_DESC_DEFAULT;
+        clipped.near = value;
+        assert(!render::reflection_capture_desc_valid(clipped));
+    }
+    float[3] fars = { render::DEFAULT_REFLECTION_CAPTURE_NEAR, 0.01f, float::inf };
+    foreach (value : fars) {
+        ReflectionCaptureDesc clipped = render::REFLECTION_CAPTURE_DESC_DEFAULT;
+        clipped.far = value;
+        assert(!render::reflection_capture_desc_valid(clipped));
+    }
 }

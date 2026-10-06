@@ -261,6 +261,17 @@ What the four cases establish:
 
 - The selection, shares and box projection in GLSL match the C3 twins on 64 points (`reflection_twins.comp.glsl`).
 
+- A reflection capture renders six faces from a probe's capture point: each face's quadrant texels hold the wall
+  tile its direction points at, a mirror sphere seen along each axis shows that wall's hue, nodes outside the
+  capture layers are absent, and a capture frame records no exposure or other post compute work.
+
+- A re-capture keeps the texture and environment ids, advances the texture revision, repeats its bytes (the probe
+  never sees itself), shows an edited wall on the next frame with one environment preparation, and removing the
+  captured assets records no validation errors.
+
+- A capture with a dead probe node, a missing component, an invalid description, a key already in use or exhausted
+  store capacity faults with the specific fault before any frame, texture, environment or view is created.
+
 What they cannot establish: window clear-only and GUI-only frames need a
 window (run the `clear` and `cube_gui` examples with validation), and a
 presentation failure after submission needs a hardware observation.
