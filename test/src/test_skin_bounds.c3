@@ -349,7 +349,12 @@ fn Aabb morph_only_bounds(Fixture* fixture, GeometryId geometry, float[] weights
     mesh.morph_weights = alloc::new_array(fixture.scene.allocator, float, weights.len);
     mesh.morph_weights[..] = weights[..];
     fixture.scene.update_world();
-    return spatial::mesh_world_bounds(assets: &fixture.assets, node: node, mesh: mesh, skin: null);
+    return spatial::mesh_world_bounds(
+        assets: &fixture.assets,
+        node: node,
+        mesh: mesh,
+        skin: null,
+    );
 }
 
 fn void test_morph_only_bounds_follow_signed_weights() @test {

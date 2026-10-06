@@ -108,6 +108,9 @@ fn void draw_origin(profile::ScopeOrigin origin) @private {
 fn void draw_cpu_status(profile::FrameCaptureView frame) @private {
     draw_state(frame.cpu_state);
     imgui::text("Omitted scopes: %u", frame.dropped_cpu_scopes);
+    $if $feat(C3D_PROFILE_CPU):
+        if (frame.dropped_worker_samples) imgui::text("Omitted worker ranges: %u", frame.dropped_worker_samples);
+    $endif
     if (frame.truncated) imgui::text_unformatted("Partial counts (truncated)");
 }
 
@@ -236,6 +239,13 @@ fn void draw_cpu_inspection(profile::CpuSample sample) @private @feat(C3D_PROFIL
     }
 }
 
+fn void draw_worker_inspection(profile::WorkerSample sample) @private @feat(C3D_PROFILE_CPU) {
+    draw_label(sample.label);
+    imgui::text("Worker %u", sample.lane);
+    imgui::text("Duration: %.6f ms", (double)sample.duration_ns / NS_PER_MS);
+    imgui::text("Capture offset: %lld ns", sample.start_ns);
+}
+
 fn IntervalInteraction draw_interval(
     double offset_ns,
     double duration_ns,
@@ -274,12 +284,21 @@ fn IntervalInteraction draw_interval(
 
 fn void draw_cpu_axis(ProfilerPanel* panel) @private @feat(C3D_PROFILE_CPU) {
     profile::CpuSample[] samples = panel.snapshot.cpu;
-    CpuIntervalSpan span = cpu_interval_span(samples);
+    profile::WorkerSample[] workers = panel.snapshot.workers;
+    CpuAxisSpan span = cpu_axis_span(samples, workers);
     if (!span.available) {
         imgui::text_unformatted("CPU measured scope span: N/A");
         return;
     }
-    imgui::text("CPU axis: 0 .. %.6f ms (measured scope extent)", span.duration_ns / NS_PER_MS);
+    double span_ns = (double)(span.end_ns - span.origin_ns);
+    if (workers.len > 0) {
+        imgui::text("CPU axis: 0 .. %.6f ms (measured scope and worker range extent)", span_ns / NS_PER_MS);
+    } else {
+        imgui::text("CPU axis: 0 .. %.6f ms (measured scope extent)", span_ns / NS_PER_MS);
+    }
+    uint lanes;
+    foreach (worker : workers) lanes = math::max(lanes, worker.lane + 1);
+    if (lanes) imgui::text("Worker lanes: %u, one row each below the scopes", lanes);
     cpu_scope_depths(samples, panel.depths);
     imgui::Vec2 origin = imgui::get_cursor_screen_pos();
     float width = math::max(imgui::get_content_region_avail().x, 1.0f);
@@ -290,9 +309,9 @@ fn void draw_cpu_axis(ProfilerPanel* panel) @private @feat(C3D_PROFILE_CPU) {
         imgui::push_id_int((int)index);
         defer imgui::pop_id();
         IntervalInteraction interaction = draw_interval(
-            offset_ns: (double)(sample.start_ns - span.origin_ns),
+            offset_ns: (double)((long)sample.start_ns - span.origin_ns),
             duration_ns: (double)sample.duration_ns,
-            span_ns: span.duration_ns,
+            span_ns: span_ns,
             depth: depth,
             origin: origin,
             width: width,
@@ -306,8 +325,28 @@ fn void draw_cpu_axis(ProfilerPanel* panel) @private @feat(C3D_PROFILE_CPU) {
             imgui::end_tooltip();
         }
     }
+    uint scope_rows = samples.len ? maximum_depth + 1 : 0;
+    foreach (index, worker : workers) {
+        imgui::push_id_int((int)(samples.len + index));
+        defer imgui::pop_id();
+        IntervalInteraction interaction = draw_interval(
+            offset_ns: (double)(worker.start_ns - span.origin_ns),
+            duration_ns: (double)worker.duration_ns,
+            span_ns: span_ns,
+            depth: scope_rows + worker.lane,
+            origin: origin,
+            width: width,
+            selected: false,
+            gpu: false,
+            label: worker.label,
+        );
+        if (interaction.hovered && imgui::begin_tooltip()) {
+            draw_worker_inspection(worker);
+            imgui::end_tooltip();
+        }
+    }
     imgui::set_cursor_screen_pos(origin);
-    imgui::dummy({.x = width, .y = (float)(maximum_depth + 1) * imgui::get_text_line_height_with_spacing()});
+    imgui::dummy({.x = width, .y = (float)(scope_rows + lanes) * imgui::get_text_line_height_with_spacing()});
 }
 
 fn bool cpu_row_visible(profile::CpuSample[] samples, sz index) @private @feat(C3D_PROFILE_CPU) {

@@ -16,7 +16,7 @@ import std::math;
  Posed trace slots a renderer holds when RendererDesc leaves the count at zero.
  Zero never disables posing; Mesh.trace = false keeps a mesh out.
 *>
-const uint DEFAULT_MAX_POSED_TRACE_INSTANCES = 64; // one per traced deformed part: 24-40 B/vertex, 32 B/node, a BLAS
+const uint DEFAULT_MAX_POSED_TRACE_INSTANCES = 64; // 32 two-part characters; a slot: 24-40 B/vertex, 32 B/node, a BLAS
 
 <*
  Identity of one posed trace instance across the scenes a renderer serves.
@@ -402,8 +402,6 @@ fn void? acquire_posed_streams(
         defer catch (void)gpu::free_allocation(&renderer.device, &allocation);
         gpu::GpuSpan block = gpu::get_allocation_span(&renderer.device, allocation)!;
         gpu::GpuAddress address = gpu::get_span_address(&renderer.device, block)!;
-        usz position_bytes = PACKED_VEC3_BYTES * mirror.layout.vertex_count;
-        gpu::GpuSpan positions = block.checked_subspan(layout.positions, position_bytes)!;
         if (slot.allocation.is_valid()) {
             renderer.pending_upload_retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = slot.allocation });
         }
@@ -411,7 +409,6 @@ fn void? acquire_posed_streams(
         table.bytes -= slot.stream_bytes;
         slot.allocation = allocation;
         slot.root = address;
-        slot.positions = positions;
         slot.stream_bytes = layout.total_bytes;
     } else {
         renderer.pending_overwrite = true;
@@ -425,6 +422,7 @@ fn void? acquire_posed_streams(
     gpu::MappedGpuSpan staging = frame.upload.take(&renderer.device, GeometryRoot::size, STREAM_ALIGNMENT)!;
     *(GeometryRoot*)staging.bytes.ptr = posed_geometry_root(&mirror.layout, mirror.root, slot.root);
     gpu::GpuSpan destination = gpu::get_allocation_span(&renderer.device, slot.allocation)!;
+    slot.positions = destination.checked_subspan(layout.positions, PACKED_VEC3_BYTES * mirror.layout.vertex_count)!;
     renderer.pending_copies.push({ .src = staging.span, .dst = destination.checked_subspan(0, GeometryRoot::size)! });
 
     slot.geometry = mirror.asset;

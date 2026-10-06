@@ -48,6 +48,16 @@ fn void copy_snapshot(ProfilerPanel* panel, profile::FrameCaptureView frame) @pr
         sample.label = (String)label;
         label_used += label.len;
     }
+    $if $feat(C3D_PROFILE_CPU):
+        panel.snapshot.workers = panel.workers[:frame.workers.len];
+        panel.snapshot.workers[..] = frame.workers[..];
+        foreach (&sample : panel.snapshot.workers) {
+            char[] label = panel.labels[label_used : sample.label.len];
+            label[..] = ((char[])sample.label)[..];
+            sample.label = (String)label;
+            label_used += label.len;
+        }
+    $endif
     $if $feat(C3D_PROFILE_GPU):
         panel.snapshot.gpu = panel.gpu[:frame.gpu.len];
         panel.snapshot.gpu[..] = frame.gpu[..];

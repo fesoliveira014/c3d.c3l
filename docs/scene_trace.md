@@ -1,6 +1,6 @@
 # Scene tracing
 
-`Renderer.prepare_scene_trace` builds trace data over the static scene and hands shaders a `SceneTraceRoot` address. Shaders trace rays against it with `trace_scene` and `trace_scene_any` from `scene_trace.glsl`. Two kinds of trace data serve the same rows and the same shader functions:
+`Renderer.prepare_scene_trace` builds trace data over the scene and hands shaders a `SceneTraceRoot` address. Shaders trace rays against it with `trace_scene` and `trace_scene_any` from `scene_trace.glsl`. Two kinds of trace data serve the same rows and the same shader functions:
 
 - **Software**: a two-level bounding volume hierarchy the renderer builds on the CPU. The traversal is plain shader code and runs on any Vulkan 1.3 device.
 - **Hardware**: one bottom-level acceleration structure per geometry and a top-level structure over the rows, traversed with ray queries. It needs `RendererDesc.ray_queries`.
@@ -20,7 +20,7 @@ A mesh contributes one instance at its node's world matrix. An instanced batch c
 
 | Instance | Traces |
 | --- | --- |
-| Mesh with no skin binding and no morph weights | At its rest pose |
+| Mesh with no skin binding over joints and no selected morph target | At its rest pose |
 | Mesh with a skin binding over a geometry with joints, or morph weights that select a target | At its raster pose, in both kinds (see [Posed instances](#posed-instances)) |
 | Crowd part batch | Not traced |
 | `InstancedMesh` or `LodGroup` with sway | At its rest pose, counted in `Stats.trace_sway_at_rest`; the error is bounded by the sway reach |
@@ -28,9 +28,9 @@ A mesh contributes one instance at its node's world matrix. An instanced batch c
 
 A custom vertex stage can move vertices anywhere, and the renderer sees the stage, not the displacement, so a material with one never traces, whatever `trace` says. A stage that displaces nothing and should trace draws through the built-in vertex stage.
 
-A bounds override (`has_bounds_override`) is a bound for culling and shadow fitting only. It no longer keeps a mesh out of the trace.
+A bounds override (`has_bounds_override`) is a bound for culling and shadow fitting only; it does not keep a mesh out of the trace.
 
-A swaying batch or LOD group traces at its rest pose: a traced shadow of a swaying tree stays still while atlas shadows sway, and a shadow ray from a swayed leaf can meet the tree's own rest geometry. `Stats.trace_sway_at_rest` counts the swaying batches and LOD groups the last preparation traced this way. Clear `trace` to keep one out.
+A swaying batch or LOD group traces at its rest pose: a traced shadow of a swaying tree stays still while atlas shadows sway, and a shadow ray from a swayed leaf can meet the tree's own rest geometry. `Stats.trace_sway_at_rest` counts the swaying batches and LOD groups traced this way this frame. Clear `trace` to keep one out.
 
 ## Posed instances
 
@@ -38,11 +38,11 @@ A skinned mesh, a morphed mesh or both traces at the pose raster draws in the sa
 
 - **Software.** One workgroup per instance refits a copy of the rest tree: each leaf takes the bounds of its posed triangles and each interior node the union of its children, level by level. Topology and leaf primitives stay those of the rest tree. At rest the copy equals the rest tree exactly; a strong pose widens the boxes, so a posed instance traces slower than at rest.
 - **Bounds.** A posed row's box in the top level is `mesh_world_bounds`: the rest bound widened by the selected morph targets and, for a skinned mesh, by the joints. A `Mesh.local_bounds` override replaces it.
-- **Once per frame.** The pose is compared with the last recorded one and the pass runs only when the palette or morph block changed. Several views and several preparations in one frame pose a slot once. A still pose keeps `Stats` poses at zero and the trace revision unchanged, so the path tracer keeps accumulating; a changed joint or weight advances the revision once.
+- **Once per frame.** The pose is compared with the last recorded one and the pass runs only when the palette or morph block changed. Several views and several preparations in one frame pose a slot once, so a node holds one pose per frame; a pose moved between two views of one frame stays unseen by the trace until it moves again. A still pose keeps `Stats` poses at zero and the trace revision unchanged, so the path tracer keeps accumulating; a changed joint or weight advances the revision once.
 - **Capacity.** `RendererDesc.max_posed_trace_instances` bounds the slots (64 when zero; zero never disables posing). Posed instances are admitted in collection order; past the capacity an instance is left out of the trace, never traced at rest, and counted in `Stats.trace_posed_overflow`. `Mesh.trace = false` keeps a mesh out. A slot unclaimed for more than `INSTANCE_ABSENCE_FRAMES` frames is released; an off-screen posed mesh still traces, because it can cast, so it keeps its slot.
-- **Cost.** A slot holds 24 bytes per vertex (40 with tangents) of posed streams, a 112-byte root, 32 bytes per node of refit copy, and on the CPU 64 bytes per joint plus 80 bytes with morph targets. The example Mannequin holds 205 KB of streams over its two parts. A skinned mesh in bind pose still takes a slot. With no traced consumer in a frame nothing is allocated or recorded.
+- **Cost.** A slot holds 24 bytes per vertex (40 with tangents) of posed streams, a 112-byte root, 32 bytes per node of refit copy, and on the CPU 64 bytes per joint plus 80 bytes with morph targets. A geometry that can deform adds a depth table to its rest trace allocation: 4 bytes per node plus 132 bytes. The example Mannequin holds 205 KB of streams over its two parts. A skinned mesh in bind pose still takes a slot. With no traced consumer in a frame nothing is allocated or recorded.
 - **Closed frames.** A preparation outside a frame poses and refits in its own submission and reads the current pose.
-- **Stats.** `trace_posed_instances`, `trace_posed_overflow`, `trace_posed_bytes` (after the last preparation), `trace_poses`, `trace_refits` and `blas_updates` (this frame). Posing and refits run under `Pass.TRACE_POSE`.
+- **Stats.** `trace_posed_instances`, `trace_posed_overflow`, `trace_posed_bytes`, `trace_poses`, `trace_refits` and `blas_updates` (this frame). Posing and refits run under `Pass.TRACE_POSE`.
 - **Hardware.** Each slot owns one bottom level created with `allow_update` and `prefer_fast_trace`: a full build when the slot is new, rebuilt or its source geometry changed, and an in-place update each frame the pose changes. Static bottom levels keep `prefer_fast_trace` alone. A pose change rebuilds the top level too. Update scratch is part of the per-frame scratch, which grows to the largest build or update. `Stats.blas_updates` counts the updates; a full posed build counts in `blas_builds`. Both kinds refit rather than rebuild, so a strong pose traces slower than rest. A geometry whose vertex or primitive counts change replaces the slot's bottom level.
 
 ## Preparing
