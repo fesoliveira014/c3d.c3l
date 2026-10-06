@@ -128,7 +128,7 @@ Per probe:
 
 | Face size | Source cube (GPU) | GGX cube | SH buffers | Charlie cube (sheen only) | CPU copy | Capture readback (temporary) |
 | --- | --- | --- | --- | --- | --- | --- |
-| 128 | 768 KiB | 1,023.75 KiB | 9 KiB + 9 KiB | 1,023.75 KiB | 768 KiB | 768 KiB |
+| 128 | 768 KiB | 1,023.75 KiB | 18 KiB | 1,023.75 KiB | 768 KiB | 768 KiB |
 | 256 | 3 MiB | 4.0 MiB | 18 KiB | 4.0 MiB | 3 MiB | 3 MiB |
 | 1024 | 48 MiB | 64.0 MiB | 18 KiB | 64.0 MiB | 48 MiB | 48 MiB |
 
@@ -176,12 +176,17 @@ c3c build reflection_probes --path examples --lib c3d_profile -D C3D_PROFILE_GPU
 
 ## Measured cost
 
-Measured on an RTX 4090 at 2560 by 1440. The commands are in [benchmarking](benchmarking.md) and the example
-section above; the table is filled from the posted numbers.
+Measured on an RTX 4090, three runs each. Sampling runs Sponza at 2560 by 1440; capture runs the example. The
+commands are in [benchmarking](benchmarking.md) and the example section above.
 
 | Measurement | Result |
 | --- | --- |
-| Sampling, `gpu_forward_opaque_ms` with 0, 1, 2 and 16 probes, and 16 probes with none inside | not yet recorded |
+| Sampling, `gpu_opaque_ms` with 0, 1, 2 and 16 probes, and 16 probes with none inside | not yet recorded |
 | Sampling, `gpu_lighting_ms` with the same placements, deferred | not yet recorded |
-| Capture time per probe at 128 and 256 | not yet recorded |
-| First-frame `environment.prefilter` and `environment.irradiance` at 128 and 256 | not yet recorded |
+| Capture time per probe, steady (the second probe) | 4.6 to 5.8 ms at 128; 17 to 19 ms at 256 |
+| Capture time of the first probe in a run, with first-use pipeline creation | 59 to 61 ms at 128 (839 ms on a cold first run); 56 to 64 ms at 256 |
+| First-frame `environment.prefilter`, two probes | 1.00 to 1.07 ms at 128; 4.0 to 4.4 ms at 256 |
+| First-frame `environment.irradiance`, two probes | 0.017 ms at 128; 0.045 to 0.047 ms at 256 |
+| The example's forward opaque pass | 0.17 to 0.20 ms at both sizes |
+
+The profiler sums stage times over a frame, so the environment rows cover both probes.

@@ -138,32 +138,68 @@ fn void? build_room(
     float depth = ROOM_HALF_DEPTH * 2;
     float middle = side * ROOM_HALF_WIDTH;
     float outer = side * width;
-    add_slab(demo, { middle, ROOM_HEIGHT + WALL_THICKNESS * 0.5f, 0 }, { width, WALL_THICKNESS, depth }, wall)!;
+    add_slab(
+        demo:     demo,
+        center:   { middle, ROOM_HEIGHT + WALL_THICKNESS * 0.5f, 0 },
+        size:     { width, WALL_THICKNESS, depth },
+        material: wall,
+    )!;
     foreach (end : ENDS) {
-        add_slab(demo, { middle, ROOM_HEIGHT * 0.5f, end * (ROOM_HALF_DEPTH + WALL_THICKNESS * 0.5f) },
-            { width, ROOM_HEIGHT, WALL_THICKNESS }, wall)!;
+        add_slab(
+            demo:     demo,
+            center:   { middle, ROOM_HEIGHT * 0.5f, end * (ROOM_HALF_DEPTH + WALL_THICKNESS * 0.5f) },
+            size:     { width, ROOM_HEIGHT, WALL_THICKNESS },
+            material: wall,
+        )!;
     }
     float above = ROOM_HEIGHT - DOORWAY_HEIGHT;
     float flank = ROOM_HALF_DEPTH - DOORWAY_HALF_WIDTH;
     if (side < 0) {
         foreach (end : ENDS) {
-            add_slab(demo, { 0, ROOM_HEIGHT * 0.5f, end * (DOORWAY_HALF_WIDTH + flank * 0.5f) },
-                { WALL_THICKNESS, ROOM_HEIGHT, flank }, wall)!;
+            add_slab(
+                demo:     demo,
+                center:   { 0, ROOM_HEIGHT * 0.5f, end * (DOORWAY_HALF_WIDTH + flank * 0.5f) },
+                size:     { WALL_THICKNESS, ROOM_HEIGHT, flank },
+                material: wall,
+            )!;
         }
-        add_slab(demo, { 0, DOORWAY_HEIGHT + above * 0.5f, 0 },
-            { WALL_THICKNESS, above, DOORWAY_HALF_WIDTH * 2 }, wall)!;
+        add_slab(
+            demo:     demo,
+            center:   { 0, DOORWAY_HEIGHT + above * 0.5f, 0 },
+            size:     { WALL_THICKNESS, above, DOORWAY_HALF_WIDTH * 2 },
+            material: wall,
+        )!;
     }
     if (!window) {
-        add_slab(demo, { outer, ROOM_HEIGHT * 0.5f, 0 }, { WALL_THICKNESS, ROOM_HEIGHT, depth }, wall)!;
+        add_slab(
+            demo:     demo,
+            center:   { outer, ROOM_HEIGHT * 0.5f, 0 },
+            size:     { WALL_THICKNESS, ROOM_HEIGHT, depth },
+            material: wall,
+        )!;
         return;
     }
     float beside = ROOM_HALF_DEPTH - WINDOW_HALF_WIDTH;
     foreach (end : ENDS) {
-        add_slab(demo, { outer, ROOM_HEIGHT * 0.5f, end * (WINDOW_HALF_WIDTH + beside * 0.5f) },
-            { WALL_THICKNESS, ROOM_HEIGHT, beside }, wall)!;
+        add_slab(
+            demo:     demo,
+            center:   { outer, ROOM_HEIGHT * 0.5f, end * (WINDOW_HALF_WIDTH + beside * 0.5f) },
+            size:     { WALL_THICKNESS, ROOM_HEIGHT, beside },
+            material: wall,
+        )!;
     }
-    add_slab(demo, { outer, WINDOW_SILL * 0.5f, 0 }, { WALL_THICKNESS, WINDOW_SILL, WINDOW_HALF_WIDTH * 2 }, wall)!;
-    add_slab(demo, { outer, DOORWAY_HEIGHT + above * 0.5f, 0 }, { WALL_THICKNESS, above, WINDOW_HALF_WIDTH * 2 }, wall)!;
+    add_slab(
+        demo:     demo,
+        center:   { outer, WINDOW_SILL * 0.5f, 0 },
+        size:     { WALL_THICKNESS, WINDOW_SILL, WINDOW_HALF_WIDTH * 2 },
+        material: wall,
+    )!;
+    add_slab(
+        demo:     demo,
+        center:   { outer, DOORWAY_HEIGHT + above * 0.5f, 0 },
+        size:     { WALL_THICKNESS, above, WINDOW_HALF_WIDTH * 2 },
+        material: wall,
+    )!;
 }
 
 fn void? add_sphere_row(Demo* demo, float side, MaterialId[] materials) @local {
@@ -194,7 +230,7 @@ fn void? build_scene(Demo* demo) @local {
     AssetStore* assets = demo.assets;
     Scene* scene = demo.scene;
     @pool() {
-        Geometry box = geometry::box(tmem, 1, 1, 1);
+        Geometry box = geometry::box(tmem, width: 1, height: 1, depth: 1);
         demo.box = assets.add_geometry(&box)!;
         Geometry sphere = geometry::sphere(tmem, SPHERE_RADIUS);
         demo.sphere = assets.add_geometry(&sphere)!;
@@ -209,7 +245,12 @@ fn void? build_scene(Demo* demo) @local {
         .metallic   = 0,
         .roughness  = FLOOR_ROUGHNESS,
     }))!;
-    add_slab(demo, { 0, -WALL_THICKNESS * 0.5f, 0 }, { ROOM_HALF_WIDTH * 4, WALL_THICKNESS, ROOM_HALF_DEPTH * 2 }, floor)!;
+    add_slab(
+        demo:     demo,
+        center:   { 0, -WALL_THICKNESS * 0.5f, 0 },
+        size:     { ROOM_HALF_WIDTH * 4, WALL_THICKNESS, ROOM_HALF_DEPTH * 2 },
+        material: floor,
+    )!;
 
     MaterialId[SPHERE_ROW_COUNT] row;
     foreach (index, &slot : row) *slot = metal(assets, (float)index * 0.25f)!;
@@ -225,21 +266,26 @@ fn void? build_scene(Demo* demo) @local {
     sheen.standard.base_color = { 0.1f, 0.1f, 0.3f, 1 };
     sheen.sheen_color = { 1, 1, 1 };
     sheen.sheen_roughness = 0.4f;
-    Node* coat_sphere = scene.add_mesh(demo.sphere, assets.add_material(material::physical(coat))!, name: "coat")!;
+    MaterialId coat_material = assets.add_material(material::physical(coat))!;
+    Node* coat_sphere = scene.add_mesh(demo.sphere, coat_material, name: "coat")!;
     coat_sphere.local.position = { -ROOM_HALF_WIDTH - 1, SPHERE_RADIUS, SPHERE_ROW_DEPTH };
-    Node* sheen_sphere = scene.add_mesh(demo.sphere, assets.add_material(material::physical(sheen))!, name: "sheen")!;
+    MaterialId sheen_material = assets.add_material(material::physical(sheen))!;
+    Node* sheen_sphere = scene.add_mesh(demo.sphere, sheen_material, name: "sheen")!;
     sheen_sphere.local.position = { -ROOM_HALF_WIDTH + 1, SPHERE_RADIUS, SPHERE_ROW_DEPTH };
 
-    Node* warm_lamp = scene.add_light(light::point({ 1, 0.65f, 0.35f }, LAMP_INTENSITY, LAMP_RANGE), name: "warm_lamp")!;
+    Light warm_light = light::point({ 1, 0.65f, 0.35f }, LAMP_INTENSITY, LAMP_RANGE);
+    Node* warm_lamp = scene.add_light(warm_light, name: "warm_lamp")!;
     warm_lamp.local.position = { -ROOM_HALF_WIDTH, LAMP_HEIGHT, 0 };
-    Node* cool_lamp = scene.add_light(light::point({ 0.4f, 0.65f, 1 }, LAMP_INTENSITY, LAMP_RANGE), name: "cool_lamp")!;
+    Light cool_light = light::point({ 0.4f, 0.65f, 1 }, LAMP_INTENSITY, LAMP_RANGE);
+    Node* cool_lamp = scene.add_light(cool_light, name: "cool_lamp")!;
     cool_lamp.local.position = { ROOM_HALF_WIDTH, LAMP_HEIGHT, 0 };
 
     foreach (index, &probe : demo.probes) {
         float side = index == 0 ? -1.0f : 1.0f;
         *probe = scene.add_node(name: "reflection_probe")!;
         probe.local.position = { side * ROOM_HALF_WIDTH, ROOM_HEIGHT * 0.5f, 0 };
-        ReflectionProbe component = light::reflection_probe({ ROOM_HALF_WIDTH, ROOM_HEIGHT * 0.5f, ROOM_HALF_DEPTH }, {});
+        Vec3 half_extents = { ROOM_HALF_WIDTH, ROOM_HEIGHT * 0.5f, ROOM_HALF_DEPTH };
+        ReflectionProbe component = light::reflection_probe(half_extents, {});
         component.capture_offset = PROBE_CAPTURE_OFFSET;
         component.blend_distance = PROBE_BLEND_DISTANCE;
         scene.add(*probe, component);
@@ -455,7 +501,11 @@ fn void? run_benchmark(Demo* demo, Renderer* renderer, Options options) @local {
             irradiance_ms = renderer.stats.gpu_environment_stage_ms[EnvironmentStage.IRRADIANCE.ordinal];
         }
     $endif
-    io::printfn("first_frame environment.prefilter_ms=%.4f environment.irradiance_ms=%.4f", prefilter_ms, irradiance_ms);
+    io::printfn(
+        "first_frame probes=2 environment.prefilter_ms=%.4f environment.irradiance_ms=%.4f",
+        prefilter_ms,
+        irradiance_ms,
+    );
 
     bool deferred_pass = options.deferred || options.reflections;
     Pass pass = deferred_pass ? Pass.LIGHTING : Pass.FORWARD_OPAQUE;
@@ -490,7 +540,8 @@ fn Options? parse_options(String[] args) @local {
                 $if $feat(C3D_PROFILE_GPU):
                     options.gpu_timings = true;
                 $else
-                    io::eprintn("--gpu-timings needs GPU profiling: c3c build reflection_probes --path examples --lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL");
+                    io::eprintn("--gpu-timings needs GPU profiling: c3c build reflection_probes --path examples "
+                        "--lib c3d_profile -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL");
                     return c3d::UNSUPPORTED~;
                 $endif
             case "--benchmark": options.benchmark = true;
@@ -514,7 +565,8 @@ fn int main(String[] args) {
     if (catch excuse = parsed) {
         if (excuse != c3d::UNSUPPORTED) {
             io::eprintfn("Invalid options: %s", excuse);
-            io::eprintn("Use [--deferred] [--reflections] [--gpu-timings] [--validation] [--capture-size N] [--benchmark [--frames N]].");
+            io::eprintn("Use [--deferred] [--reflections] [--gpu-timings] [--validation] [--capture-size N] "
+                "[--benchmark [--frames N]].");
         }
         return 1;
     }

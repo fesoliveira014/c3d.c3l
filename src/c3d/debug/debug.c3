@@ -31,7 +31,7 @@ const float JOINT_AXES_SIZE @local = 0.05f;
 const float IK_TARGET_RADIUS @local = 0.05f; // metres; visible at character scale without hiding the hand
 const float BASIS_PARALLEL_THRESHOLD @local = 0.99f; // a normal this close to Y takes X as its reference
 const float PROBE_MARKER_SCALE @local = 0.1f;        // of the smallest spacing; small enough to keep neighbours apart
-const float REFLECTION_CAPTURE_MARKER @local = 0.1f; // world units; half the length of each capture point line
+const float REFLECTION_CAPTURE_MARKER @local = 0.1f; // half line length in world units; visible at room scale
 
 <*
  Line endpoint with a packed color, red in the low byte.
