@@ -117,7 +117,8 @@ Application geometry rests at y = 0; its topology and UVs are its own, and it fo
 the rest position in metres.
 
 `Mesh.local_bounds` is the rest bounds grown by the total amplitude in y and by the sum of the waves'
-horizontal crest shifts in x and z, always as a bounds override. The water's custom vertex stage keeps it out of every trace
+horizontal crest shifts in x and z, always as a bounds override. The water's custom vertex stage keeps it out of every
+trace
 ([scene trace](scene_trace.md)), whatever `trace` says. The mesh casts no shadow and receives shadows.
 
 ## Waves

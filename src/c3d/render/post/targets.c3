@@ -73,62 +73,33 @@ fn void? acquire_effect_targets(Renderer* renderer, ViewRecord* record) {
 }
 
 <*
- Hand the images of every disabled or resized effect to the last submitted frame's retirement.
- @param [&inout] renderer : "No open frame."
- @param [&inout] record : "Retired images are cleared."
+ Clear the images of every disabled or resized effect without releasing them.
+ @param [&inout] record : "Its desc selects the effects; cleared images stay owned elsewhere."
 *>
-fn void retire_effect_targets(Renderer* renderer, ViewRecord* record) {
+fn void drop_stale_effect_targets(ViewRecord* record) {
     PostStack* stack = &record.desc.post;
-    RetireList* retire = render::last_submitted_retire(renderer);
-    bool bloom_stale = record.bloom_levels != stack.bloom_params.levels;
-    if (record.bloom_levels && (!stack.bloom || bloom_stale)) {
-        for (uint level = 0; level < record.bloom_levels; level++) {
-            render::retire_storage_target(retire, &record.bloom[level]);
-        }
+    if (!stack.bloom || record.bloom_levels != stack.bloom_params.levels) {
+        record.bloom = {};
         record.bloom_levels = 0;
     }
-    if (!stack.depth_of_field && record.dof_near.texture.is_valid()) {
-        render::retire_storage_target(retire, &record.dof_near);
-        render::retire_storage_target(retire, &record.dof_far);
-        render::retire_storage_target(retire, &record.dof_near_blur);
-        render::retire_storage_target(retire, &record.dof_far_blur);
+    if (!stack.depth_of_field) {
+        record.dof_near = {};
+        record.dof_far = {};
+        record.dof_near_blur = {};
+        record.dof_far_blur = {};
     }
-    if (!uses_tiles(stack) && record.tile_max.texture.is_valid()) {
-        render::retire_storage_target(retire, &record.tile_max);
-        render::retire_storage_target(retire, &record.tile_neighbor);
+    if (!uses_tiles(stack)) {
+        record.tile_max = {};
+        record.tile_neighbor = {};
     }
-    bool velocity_stale = !uses_velocity(&record.desc) || record.velocity.format != velocity_format(&record.desc);
-    if (record.velocity.texture.is_valid() && velocity_stale) {
-        retire.push({ .kind = RetiredKind.ATTACHMENT_VIEW, .attachment_view = record.velocity.attachment });
-        render::retire_storage_target(retire, &record.velocity);
+    if (!uses_velocity(&record.desc) || record.velocity.format != velocity_format(&record.desc)) record.velocity = {};
+    if (!stack.motion_blur) record.motion_blur_out = {};
+    if (stack.anti_aliasing != AntiAliasing.TAA) {
+        record.taa_color = {};
+        record.taa_depth = {};
+        record.taa_velocity = {};
     }
-    if (!stack.motion_blur && record.motion_blur_out.texture.is_valid()) {
-        render::retire_storage_target(retire, &record.motion_blur_out);
-    }
-    if (stack.anti_aliasing != AntiAliasing.TAA && record.taa_color[0].texture.is_valid()) {
-        foreach (&image : record.taa_color) render::retire_storage_target(retire, image);
-        foreach (&image : record.taa_depth) render::retire_storage_target(retire, image);
-        foreach (&image : record.taa_velocity) render::retire_storage_target(retire, image);
-    }
-    if (!taa_debug_enabled(stack) && record.taa_debug.texture.is_valid()) {
-        render::retire_storage_target(retire, &record.taa_debug);
-    }
-}
-
-<*
- Destroy every effect image now.
- @param [&inout] device : "Owner of the images."
- @param [&inout] record : "Effect images are cleared."
-*>
-fn void release_effect_targets(gpu::Device* device, ViewRecord* record) {
-    for (uint level = 0; level < record.bloom_levels; level++) {
-        render::release_storage_target(device, &record.bloom[level]);
-    }
-    record.bloom_levels = 0;
-    release_dof_layers(device, record);
-    release_tiles(device, record);
-    release_motion_blur_images(device, record);
-    release_taa_images(device, record);
+    if (!taa_debug_enabled(stack)) record.taa_debug = {};
 }
 
 fn bool uses_tiles(PostStack* stack) @private {
@@ -164,11 +135,6 @@ fn void? acquire_motion_blur_output(Renderer* renderer, ViewRecord* record) @pri
         format:     render::HDR_FORMAT,
         debug_name: "motion_blur_out",
     )!;
-}
-
-fn void release_motion_blur_images(gpu::Device* device, ViewRecord* record) @private {
-    if (record.velocity.texture.is_valid()) render::release_target(device, &record.velocity);
-    if (record.motion_blur_out.texture.is_valid()) render::release_storage_target(device, &record.motion_blur_out);
 }
 
 fn void? acquire_dof_layers(Renderer* renderer, ViewRecord* record) @private {
@@ -222,7 +188,7 @@ fn void release_tiles(gpu::Device* device, ViewRecord* record) @private {
 
 fn void? acquire_bloom_chain(Renderer* renderer, ViewRecord* record) @private {
     uint levels = record.desc.post.bloom_params.levels;
-    defer catch release_effect_targets(&renderer.device, record);
+    defer catch release_bloom_chain(&renderer.device, record);
     for (uint level = 0; level < levels; level++) {
         record.bloom[level] = render::allocate_storage_target(
             device:     &renderer.device,
@@ -235,27 +201,9 @@ fn void? acquire_bloom_chain(Renderer* renderer, ViewRecord* record) @private {
     }
 }
 
-<*
- Hand the view's images to the last submitted frame's retirement.
- @param [&inout] renderer : "No open frame."
- @param [&inout] record : "post_a and post_b are cleared."
-*>
-fn void retire_post_targets(Renderer* renderer, ViewRecord* record) {
-    if (!record.post_a.texture.is_valid()) return;
-
-    RetireList* retire = render::last_submitted_retire(renderer);
-    render::retire_storage_target(retire, &record.post_a);
-    if (record.post_b.texture.is_valid()) render::retire_storage_target(retire, &record.post_b);
-}
-
-<*
- Destroy the view's images now.
- @param [&inout] device : "Owner of the images."
- @param [&inout] record : "post_a and post_b are cleared."
-*>
-fn void release_post_targets(gpu::Device* device, ViewRecord* record) {
-    if (!record.post_a.texture.is_valid()) return;
-
-    render::release_storage_target(device, &record.post_a);
-    if (record.post_b.texture.is_valid()) render::release_storage_target(device, &record.post_b);
+fn void release_bloom_chain(gpu::Device* device, ViewRecord* record) @private {
+    for (uint level = 0; level < record.bloom_levels; level++) {
+        render::release_storage_target(device, &record.bloom[level]);
+    }
+    record.bloom_levels = 0;
 }

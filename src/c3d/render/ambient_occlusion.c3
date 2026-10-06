@@ -133,14 +133,6 @@ fn void? acquire_ao_images(Renderer* renderer, ViewRecord* record) @private {
     )!;
 }
 
-fn void retire_ao_images(Renderer* renderer, ViewRecord* record) @private {
-    if (!record.ao.texture.is_valid()) return;
-
-    RetireList* retire = last_submitted_retire(renderer);
-    retire_storage_target(retire, &record.ao_raw);
-    retire_storage_target(retire, &record.ao);
-}
-
 fn void release_ao_images(gpu::Device* device, ViewRecord* record) @private {
     if (record.ao_raw.texture.is_valid()) release_storage_target(device, &record.ao_raw);
     if (record.ao.texture.is_valid()) release_storage_target(device, &record.ao);

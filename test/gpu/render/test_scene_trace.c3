@@ -548,3 +548,47 @@ fn void test_single_sided_back_faces_are_invisible_to_rays() @test {
     }
     check_validation(&fixture.renderer);
 }
+
+const uint TRACE_CAPACITY_CAP @private = 3;
+const uint TRACE_CAPACITY_SLOTS @private = 2; // posed rows that fit; the cap holds these and one rest row
+const uint TRACE_CAPACITY_POSED @private = 4; // posed candidates, two of which the slot table leaves out
+
+fn void test_trace_capacity_counts_kept_rows_only() @test {
+    Fixture fixture;
+    create_fixture(
+        allocator:                 mem,
+        fixture:                   &fixture,
+        max_posed_trace_instances: TRACE_CAPACITY_SLOTS,
+        max_trace_instances:       TRACE_CAPACITY_CAP,
+    )!!;
+    defer destroy_fixture(&fixture);
+    print_adapter(&fixture);
+    Scene scene = scene::create_scene(fixture.allocator, scene::default_scene_desc());
+    defer scene::destroy_scene(&scene);
+
+    Node* joint = scene.add_node(name: "joint")!!;
+    scene.add_mesh(fixture.box, fixture.plain, name: "rest")!!;
+    for (uint index = 0; index < TRACE_CAPACITY_POSED; index++) {
+        Node* posed = scene.add_mesh(fixture.deformed_box, fixture.plain, name: "posed")!!;
+        posed.local.position = { (float)index * 2, 3, 0 };
+        Node*[] joints = alloc::new_array(scene.allocator, Node*, 1);
+        joints[0] = joint;
+        scene.add(posed, (SkinBinding){ .skeleton = fixture.skeleton, .joints = joints });
+    }
+    scene.update_world();
+
+    fixture.renderer.prepare_scene_trace(&scene, TraceKind.SOFTWARE)!!;
+    assert(fixture.renderer.stats.trace_instances == TRACE_CAPACITY_CAP);
+    assert(fixture.renderer.stats.trace_posed_overflow == TRACE_CAPACITY_POSED - TRACE_CAPACITY_SLOTS);
+
+    Node* extra = scene.add_mesh(fixture.box, fixture.plain, name: "extra")!!;
+    extra.local.position = { 0, -3, 0 };
+    scene.update_world();
+    if (catch err = fixture.renderer.prepare_scene_trace(&scene, TraceKind.SOFTWARE)) {
+        assert(err == c3d::CAPACITY_EXCEEDED);
+    } else {
+        assert(false);
+    }
+    render::wait_frames(&fixture.renderer)!!;
+    check_validation(&fixture.renderer);
+}
