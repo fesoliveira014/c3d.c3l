@@ -117,6 +117,26 @@ fn double time_background_run(JobPool* pool) @local {
     return median(&samples);
 }
 
+fn double time_recorded_run(JobPool* pool, JobRangeRecord[] records) @local @feat(C3D_PROFILE_CPU) {
+    double[SAMPLES] samples;
+    pool.set_recording(true);
+    for (uint pass = 0; pass < PASSES; pass++) {
+        time::Clock started = clock::now();
+        pool.wait(pool.run(
+            range: &empty_range,
+            data:  null,
+            count: OVERHEAD_RANGES,
+            batch: 1,
+            name:  "empty",
+        ));
+        double elapsed = (double)(clock::now() - started) / NANOSECONDS_PER_MICROSECOND;
+        if (pass >= WARMUP_SAMPLES) samples[pass - WARMUP_SAMPLES] = elapsed;
+        pool.take_records(records);
+    }
+    pool.set_recording(false);
+    return median(&samples);
+}
+
 fn JobPool create_bench_pool(uint workers) @local {
     JobPoolDesc desc = job::default_job_pool_desc();
     desc.worker_count = workers;
@@ -323,6 +343,22 @@ fn int main() {
             pool.inline_ranges(),
         );
     }
+
+    $if $feat(C3D_PROFILE_CPU):
+        JobRangeRecord[] records = mem::new_array(JobRangeRecord, OVERHEAD_RANGES);
+        defer free(records);
+        io::printn("# recording,workers,ranges,us_per_range");
+        foreach (workers : worker_counts[:worker_kinds]) {
+            JobPool pool = create_bench_pool(workers);
+            defer job::destroy_job_pool(&pool);
+            io::printfn(
+                "recording,%d,%d,%.4f",
+                workers,
+                OVERHEAD_RANGES,
+                time_recorded_run(&pool, records) / OVERHEAD_RANGES,
+            );
+        }
+    $endif
 
     io::printn("# background,workers,background_workers,ranges,us_per_range");
     foreach (workers : worker_counts[:worker_kinds]) {

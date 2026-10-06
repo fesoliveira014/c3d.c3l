@@ -54,6 +54,7 @@ struct JobPoolDesc {
     uint   background_only_workers; // workers that take only background ranges, outside the cap
     CpuSet worker_cpus;             // processors of the shared workers; empty leaves the system's choice
     CpuSet background_cpus;         // processors of the background-only workers; empty leaves the system's choice
+    uint   record_capacity @if($feat(C3D_PROFILE_CPU)); // worker range records held between drains; a full ring drops and counts
 }
 
 struct JobRange @private {
@@ -61,6 +62,7 @@ struct JobRange @private {
     void*   data;
     uint    first;
     uint    count;
+    String  name @if($feat(C3D_PROFILE_CPU));
 }
 
 struct RunSlot @private {
@@ -75,6 +77,7 @@ struct RunSlot @private {
     uint    previous_queued; // class queue links, valid while ranges remain unclaimed
     uint    next_queued;
     ulong   sequence;        // submission order of the run
+    String  name @if($feat(C3D_PROFILE_CPU));
 }
 
 struct Worker @private {
@@ -109,6 +112,11 @@ struct JobPoolState @private {
     ulong             inline_ranges;
     uint              reported_workers; // workers that bound and read back their processors
     bool              stopping;
+    JobRangeRecord[]  records @if($feat(C3D_PROFILE_CPU));
+    uint              record_head @if($feat(C3D_PROFILE_CPU));
+    uint              record_count @if($feat(C3D_PROFILE_CPU));
+    ulong             dropped_records @if($feat(C3D_PROFILE_CPU));
+    bool              recording @if($feat(C3D_PROFILE_CPU));
 }
 
 <*
@@ -123,6 +131,7 @@ struct JobPool {
  A run the frame partition cannot hold runs inline before the return.
  @param [inout] data : "Handed to every range; outlives the run."
  @param batch : "Items per range, the last one short; 0 lets the pool choose."
+ @param name : "Profiler label of its worker ranges; outlives their drain."
  @return "Zero when every range ran inside the call."
 *>
 fn JobId JobPool.run(
@@ -131,6 +140,7 @@ fn JobId JobPool.run(
     void* data,
     uint count,
     uint batch,
+    String name = "",
 ) {
     JobPoolState* state = self.state;
     if (!count) return {};
@@ -140,6 +150,7 @@ fn JobId JobPool.run(
         data:  data,
         count: count,
         batch: batch,
+        name:  name,
     );
     if (!state.shared_workers || active_pool == state) {
         run_inline(state, request);
@@ -164,6 +175,7 @@ fn JobId JobPool.run(
  Runs no range inside the call, except frame work on a pool without shared workers.
  @param [inout] data : "Handed to every range; outlives the run."
  @param batch : "Items per range, the last one short; 0 lets the pool choose."
+ @param name : "Profiler label of its worker ranges; outlives their drain."
  @return "Zero when every range ran inside the call."
  @return? c3d::CAPACITY_EXCEEDED
 *>
@@ -174,6 +186,7 @@ fn JobId? JobPool.try_run(
     void* data,
     uint count,
     uint batch,
+    String name = "",
 ) {
     JobPoolState* state = self.state;
     if (!count) return {};
@@ -183,6 +196,7 @@ fn JobId? JobPool.try_run(
         data:  data,
         count: count,
         batch: batch,
+        name:  name,
     );
     if (job_class == FRAME && !state.shared_workers) {
         run_inline(state, request);
@@ -300,13 +314,17 @@ fn uint default_background_workers(uint worker_count) {
 *>
 fn JobPoolDesc default_job_pool_desc() {
     uint worker_count = worker_count_for(available_cpus().cardinality(), cpu_quota() ?? uint::max);
-    return {
+    JobPoolDesc desc = {
         .worker_count            = worker_count,
         .worker_temp_bytes       = DEFAULT_WORKER_TEMP_BYTES,
         .run_capacity            = DEFAULT_RUN_CAPACITY,
         .background_run_capacity = DEFAULT_BACKGROUND_RUN_CAPACITY,
         .background_workers      = default_background_workers(worker_count),
     };
+    $if $feat(C3D_PROFILE_CPU):
+        desc.record_capacity = DEFAULT_RECORD_CAPACITY;
+    $endif
+    return desc;
 }
 
 <*
@@ -347,6 +365,12 @@ fn JobPool? create_job_pool(Allocator allocator, JobPoolDesc desc) {
     foreach (&slot : runs) slot.generation = 1;
     state.workers = workers;
     state.runs = runs;
+    $if $feat(C3D_PROFILE_CPU):
+        JobRangeRecord[]? records = alloc::new_array_try(allocator, JobRangeRecord, desc.record_capacity);
+        if (catch records) return c3d::CAPACITY_EXCEEDED~;
+        defer catch alloc::free(allocator, records.ptr);
+        state.records = records;
+    $endif
 
     state.lock.init()!;
     defer catch state.lock.destroy();
@@ -379,6 +403,9 @@ fn void destroy_job_pool(JobPool* pool) {
     state.lock.destroy();
 
     Allocator allocator = state.allocator;
+    $if $feat(C3D_PROFILE_CPU):
+        alloc::free(allocator, state.records.ptr);
+    $endif
     alloc::free(allocator, state.runs.ptr);
     alloc::free(allocator, state.workers.ptr);
     alloc::free(allocator, state);
@@ -396,25 +423,34 @@ fn RunSlot run_request(
     void* data,
     uint count,
     uint batch,
+    String name,
 ) @private {
     uint batch_size = batch ? batch : auto_batch(state, count);
-    return {
+    RunSlot request = {
         .range       = range,
         .data        = data,
         .count       = count,
         .batch       = batch_size,
         .range_count = (count - 1) / batch_size + 1,
     };
+    $if $feat(C3D_PROFILE_CPU):
+        request.name = name;
+    $endif
+    return request;
 }
 
 fn JobRange range_at(RunSlot* request, uint index) @private {
     uint first = index * request.batch;
-    return {
+    JobRange range = {
         .range = request.range,
         .data  = request.data,
         .first = first,
         .count = min(request.batch, request.count - first),
     };
+    $if $feat(C3D_PROFILE_CPU):
+        range.name = request.name;
+    $endif
+    return range;
 }
 
 fn void run_range(JobPoolState* state, JobRange range) @private {
@@ -488,11 +524,27 @@ fn void run_claimed(JobPoolState* state, uint run_slot, Worker* worker = null) @
     if (slot.next_range == slot.range_count) unlink_run(state, run_slot);
     state.running++;
     if (capped) state.running_background++;
+    $if $feat(C3D_PROFILE_CPU):
+        bool recorded = worker && state.recording;
+    $endif
     state.lock.unlock();
 
+    $if $feat(C3D_PROFILE_CPU):
+        JobRangeRecord record = { .name = range.name };
+        if (recorded) record.start_ns = range_clock();
+    $endif
     run_range(state, range);
+    $if $feat(C3D_PROFILE_CPU):
+        if (recorded) record.end_ns = range_clock();
+    $endif
 
     state.lock.lock();
+    $if $feat(C3D_PROFILE_CPU):
+        if (recorded) {
+            record.worker = (uint)(worker - state.workers.ptr);
+            push_record(state, record);
+        }
+    $endif
     state.running--;
     // Sleepers saw no frame run and no free place; later frame work woke them, else this thread takes the freed place.
     if (capped) state.running_background--;
