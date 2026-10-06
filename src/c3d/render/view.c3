@@ -80,6 +80,13 @@ struct DrawPassState @private {
     bool                    depth_write;
 }
 
+// What a camera-value view renders: a camera and its absolute world matrix.
+struct ViewCamera @private {
+    Camera camera;
+    Mat4   world;          // absolute; rebased on the frame origin when the view records
+    Entity excluded_probe; // the reflection probe being captured; never selected
+}
+
 <*
  Render one frame of the scene from the camera to the window.
  Material, environment and source descriptions remain stable for the call.
@@ -142,19 +149,54 @@ fn void? Renderer.render_view(
     ViewRecord* record = self.views.try_get(view)!;
     if (record.desc.output == ViewOutput.WINDOW && !self.has_output) return;
     defer catch abort_frame(self);
-    begin_material_scope(self);
-    defer end_material_scope(self);
+    Camera* camera = scene.get(camera_node, Camera);
+    if (!camera) return c3d::INVALID_ARGUMENT~;
+    ViewCamera view_camera = { .camera = *camera, .world = camera_node.world };
+    ShadowCamera shadow_view;
+    if (shadow_camera) {
+        shadow_view = shadow_camera_of(
+            scene:         scene,
+            camera_node:   camera_node,
+            shadow_camera: shadow_camera,
+            viewport:      { (float)record.hdr_color.width, (float)record.hdr_color.height },
+            origin:        self.frame_origin,
+        )!;
+    }
+    return record_camera_view(
+        renderer:    self,
+        scene:       scene,
+        view_camera: &view_camera,
+        view:        view,
+        debug:       debug,
+        shadow_view: shadow_camera ? &shadow_view : null,
+    );
+}
+
+<*
+ @param [in] shadow_view : "Null fits the view's shadow set to its own camera."
+ @require renderer.frame_open, !renderer.overlay_open, renderer.views.is_live(view)
+*>
+fn void? record_camera_view(
+    Renderer* renderer,
+    Scene* scene,
+    ViewCamera* view_camera,
+    ViewId view,
+    DebugDraw* debug,
+    ShadowCamera* shadow_view,
+) @private {
+    ViewRecord* record = renderer.views.get(view);
+    begin_material_scope(renderer);
+    defer end_material_scope(renderer);
     instrumentation::@scope("renderer.render_view") {
-        begin_profile_view(self, view, "view.render")!;
-        Camera* camera = scene.get(camera_node, Camera);
-        if (!camera) return c3d::INVALID_ARGUMENT~;
+        begin_profile_view(renderer, view, "view.render")!;
+        Camera* camera = &view_camera.camera;
         record.exposure = camera.exposure;
         if (!post::auto_exposure_active(&record.desc)) record.stats.exposure = camera.exposure;
 
         Vec2 viewport = { (float)record.hdr_color.width, (float)record.hdr_color.height };
         CameraMatrices matrices = camera::derive_matrices(
             camera: *camera,
-            camera_world: maths::rebase(camera_node.world, self.frame_origin),
+            camera_world: maths::rebase(view_camera.world, renderer.frame_origin),
             viewport: viewport,
         );
         record.projection_terms = {
@@ -162,40 +204,35 @@ fn void? Renderer.render_view(
             .m23          = matrices.proj.m23,
             .orthographic = camera.projection == Projection.ORTHOGRAPHIC,
         };
-        ShadowCamera shadow_view = shadow_camera_of(
-            scene:         scene,
-            camera_node:   camera_node,
-            shadow_camera: shadow_camera,
-            viewport:      viewport,
-            origin:        self.frame_origin,
-        )!;
+        ShadowCamera own_shadow_view = { .lens = *camera, .matrices = matrices };
+        if (!shadow_view) shadow_view = &own_shadow_view;
 
         switch (record.desc.shading) {
             case FORWARD:
             case DEFERRED:
                 record_raster_view(
-                    renderer:    self,
+                    renderer:    renderer,
                     view:        view,
                     record:      record,
                     scene:       scene,
-                    camera:      camera,
+                    view_camera: view_camera,
                     matrices:    &matrices,
-                    shadow_view: &shadow_view,
+                    shadow_view: shadow_view,
                     debug:       debug,
                 )!;
             case PATH_TRACED:
                 record_path_traced_view(
-                    renderer: self,
+                    renderer: renderer,
                     record:   record,
                     scene:    scene,
                     camera:   camera,
                     matrices: &matrices,
                 )!;
         }
-        post::close_post_chain(self, record)!;
-        end_profile_view(self)!;
-        self.frame_recorded = true;
-        self.work_recorded = true;
+        post::close_post_chain(renderer, record)!;
+        end_profile_view(renderer)!;
+        renderer.frame_recorded = true;
+        renderer.work_recorded = true;
         record.rendered = true;
     };
 }
@@ -208,11 +245,12 @@ fn void? record_raster_view(
     ViewId view,
     ViewRecord* record,
     Scene* scene,
-    Camera* camera,
+    ViewCamera* view_camera,
     CameraMatrices* matrices,
     ShadowCamera* shadow_view,
     DebugDraw* debug,
 ) @private {
+    Camera* camera = &view_camera.camera;
     Vec2 viewport = { (float)record.hdr_color.width, (float)record.hdr_color.height };
     bool taa = record.desc.post.anti_aliasing == AntiAliasing.TAA;
     bool screen_space_gi = record.desc.screen_space_gi.enabled;
@@ -401,12 +439,21 @@ fn void? record_raster_view(
             depth_axis: view_depth_axis(matrices.view),
         );
         ViewEnvironments environments;
+        ReflectionCandidate[shader::REFLECTION_PROBE_CAPACITY] reflection_picks;
+        usz reflection_count;
         FogSelection fog;
         bool fog_pass;
         bool fog_volume;
         SceneReads view_reads;
         instrumentation::@scope("view.uploads") {
             environments = resolve_view_environments(renderer, scene, sheen)!;
+            reflection_count = select_view_reflection_probes(
+                renderer:    renderer,
+                scene:       scene,
+                view_camera: view_camera,
+                sheen:       sheen,
+                picks:       &reflection_picks,
+            )!;
             fog = select_height_fog(scene, camera.layers);
             renderer.stats.fogs_ignored += fog.ignored;
             fog_pass = environments.atmosphere || fog.fog;
@@ -513,6 +560,11 @@ fn void? record_raster_view(
             Vec3 ambient = environments.lighting && !scene.ambient_add
               ? (Vec3){} : scene.ambient_color * scene.ambient_intensity;
             gpu::GpuAddress probe_volumes = pack_probe_volumes(renderer, scene, camera.layers)!;
+            gpu::GpuAddress reflection_probes = pack_reflection_probes(
+                renderer,
+                reflection_picks[:reflection_count],
+                sheen,
+            )!;
             frame_span = slot.upload.take(&renderer.device, FrameRoot::size, STREAM_ALIGNMENT)!;
             write_frame_root(
                 root:        (FrameRoot*)frame_span.bytes.ptr,
@@ -539,6 +591,7 @@ fn void? record_raster_view(
                 mip_bias: taa ? record.desc.post.taa_params.mip_bias : 0,
                 ao_texture: ambient_occlusion ? record.ao.view.index : (gpu::TextureIndex)0,
                 probe_volumes: probe_volumes,
+                reflection_probes: reflection_probes,
                 ssgi_texture: screen_space_gi ? record.ssgi.view.index : (gpu::TextureIndex)0,
                 clip_plane: maths::rebase_plane(record.desc.clip_plane, renderer.frame_origin),
                 origin: renderer.frame_origin,
@@ -873,7 +926,7 @@ fn void? Renderer.render_to(
 }
 
 <*
- Prepare the scene's referenced assets and pipelines, then wait.
+ Prepare the scene's referenced assets, reflection probe environments and pipelines, then wait.
  Material, environment and source descriptions remain stable for the call.
  @param [&inout] self : "Completes preparation outside an open frame."
  @param [&in] scene : "Read only."
@@ -981,6 +1034,7 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
         };
         prepare_finish(self, scene_reads)!;
         (void)resolve_view_environments(self, scene, sheen)!;
+        prepare_reflection_probes(self, scene, sheen)!;
         if (!has_environment_preparations(self) && !self.pending_copies.len()
             && !self.pending_texture_uploads.len() && !self.pending_upload_retire.len()) return;
         submit_pending(self)!;
@@ -1186,6 +1240,7 @@ fn bool velocity_before_lighting(ViewDesc* desc) @private {
  @param mip_bias : "Added to material texture level of detail."
  @param ao_texture : "AO sampled view; zero when the view has none."
  @param probe_volumes : "ProbeVolumeSetGpu of the view; zero when no volume applies."
+ @param reflection_probes : "ReflectionProbeSetGpu of the view; zero when no probe applies."
  @param ssgi_texture : "Screen-space GI sampled view; zero when the view has none."
  @param clip_plane : "Relative plane whose positive side stays; zero clips nothing."
  @param origin : "Absolute origin of the supplied matrices and positions."
@@ -1215,6 +1270,7 @@ fn void write_frame_root(
     float mip_bias = 0,
     gpu::TextureIndex ao_texture = (gpu::TextureIndex)0,
     gpu::GpuAddress probe_volumes = (gpu::GpuAddress)0,
+    gpu::GpuAddress reflection_probes = (gpu::GpuAddress)0,
     gpu::TextureIndex ssgi_texture = (gpu::TextureIndex)0,
     Plane clip_plane = {},
     Vec3 origin = {},
@@ -1247,6 +1303,7 @@ fn void write_frame_root(
         .mip_bias        = mip_bias,
         .ao_texture      = ao_texture,
         .probe_volumes   = probe_volumes,
+        .reflection_probes = reflection_probes,
         .ssgi_texture    = ssgi_texture,
         .scene_depth     = scene_depth,
         .previous_time   = (float)(previous_time ? *previous_time : info.time),

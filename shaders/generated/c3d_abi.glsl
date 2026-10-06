@@ -115,6 +115,9 @@ const uint PROBE_VISIBILITY_CELL = 16u;
 const uint PROBE_ATLAS_COLUMNS = 256u;
 const uint PROBE_ATLAS_IRRADIANCE = 0u;
 const uint PROBE_ATLAS_VISIBILITY = 1u;
+const uint REFLECTION_PROBE_CAPACITY = 16u;
+const uint REFLECTION_PROJECTION_BOX = 0u;
+const uint REFLECTION_PROJECTION_INFINITE = 1u;
 const uint SKY_FOG_ATMOSPHERE = 1u;
 const uint SKY_FOG_HEIGHT_FOG = 2u;
 const uint SKY_TRANSMITTANCE_WIDTH = 256u;
@@ -307,8 +310,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer FrameRoot {
     uint _pad2;
     vec4 clip_plane;
     uint64_t sky_fog;
-    uint _pad3;
-    uint _pad4;
+    uint64_t reflection_probes;
     vec4 origin;
 };
 
@@ -816,6 +818,26 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer ProbeVolume
     uint _pad1;
     uint _pad2;
     ProbeVolumeGpu volumes[8];
+};
+
+struct ReflectionProbeGpu {
+    vec4 center_intensity;
+    vec4 axis_x_extent;
+    vec4 axis_y_extent;
+    vec4 axis_z_extent;
+    vec4 capture_blend;
+    uint specular_cube;
+    uint sheen_cube;
+    uint projection;
+    uint _pad0;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 16) buffer ReflectionProbeSetGpu {
+    uint count;
+    uint brdf_lut;
+    uint sampler_index;
+    uint _pad0;
+    ReflectionProbeGpu probes[16];
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 8) buffer ProbeFillRoot {

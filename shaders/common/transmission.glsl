@@ -28,6 +28,7 @@ vec3 volume_attenuation(
 // segment behind the surface.
 vec3 transmitted_radiance(
     FrameRoot frame,
+    ReflectionSelection selection,
     vec3 position,
     vec3 ray,
     vec3 refracted,
@@ -45,16 +46,12 @@ vec3 transmitted_radiance(
             return fog_behind(frame, position, behind, scene_depth_at(frame, uv));
         }
     }
-    if (frame.environment == 0ul) return writes_depth ? fog_behind(frame, position, vec3(0.0), 0.0) : vec3(0.0);
+    if (frame.environment == 0ul && selection.count == 0u) {
+        return writes_depth ? fog_behind(frame, position, vec3(0.0), 0.0) : vec3(0.0);
+    }
 
-    EnvironmentGpu environment = EnvironmentGpu(frame.environment);
     float lod = max(roughness, MIN_PERCEPTUAL_ROUGHNESS) * float(ENVIRONMENT_SPECULAR_MIPS - 1u);
-    vec3 surroundings = sample_texture_cube_lod(
-        environment.specular_cube,
-        environment.sampler_index,
-        environment_rotate(environment.rotation, normalize(refracted)),
-        lod
-    ).rgb * environment.intensity;
+    vec3 surroundings = environment_lobe_radiance(frame, selection, normalize(refracted), lod, ENVIRONMENT_GGX_CUBE);
     return writes_depth ? fog_behind(frame, position, surroundings, 0.0) : surroundings;
 }
 

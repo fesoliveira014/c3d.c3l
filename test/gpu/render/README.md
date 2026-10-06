@@ -239,6 +239,28 @@ What the four cases establish:
   additive fog output is attenuated without another in-scatter contribution;
   zero opacity leaves the background unchanged.
 
+- Two reflection-probe rooms light their own spheres per lobe: smooth and rough base, clearcoat, sheen and the
+  transmission fallback read the room's probe on forward and deferred views, a point outside both boxes reads the
+  global environment, metals agree across paths, and a sphere with `specular = 0` is bitwise equal without probes.
+
+- A glossy floor across the wall shared by two probe boxes follows the CPU shares, sums them to one, steps by less
+  than a tenth between neighbouring pixels, and a zero blend distance switches probes within one texel.
+
+- Traced reflections compose with probes through the roughness fade band: traced only on smooth strips, probe only
+  above the threshold, the half-and-half mix inside the band, on hardware and software traces.
+
+- The path tracer never reads a reflection probe: its image is bitwise equal with and without probes.
+
+- The probe-volume update never reads a reflection probe: its result is bitwise equal with and without probes.
+
+- A probe lights specular without a global environment, and spheres outside every box are bitwise equal without the
+  probe.
+
+- Removing a probe's environment, component or node falls back to the global environment, counts the dangling
+  reference and records no validation errors.
+
+- The selection, shares and box projection in GLSL match the C3 twins on 64 points (`reflection_twins.comp.glsl`).
+
 What they cannot establish: window clear-only and GUI-only frames need a
 window (run the `clear` and `cube_gui` examples with validation), and a
 presentation failure after submission needs a hardware observation.

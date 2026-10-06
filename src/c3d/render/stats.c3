@@ -107,6 +107,8 @@ struct Stats {
     uint  lights;
     uint  lights_dropped;
     uint  probe_volumes_dropped; // this frame, per failed acquisition: two views of one scene count a volume twice
+    uint  reflection_probes_dropped;     // this frame, per view: past the nearest 16
+    uint  reflection_probes_unavailable; // this frame, per view: CPU copy released before this renderer uploaded it
     uint  probe_rays;            // this frame: primary probe rays; shadow rays are not counted
     uint  probe_updates;         // this frame: scene updates of probe volumes
     uint  atmospheres_ignored;   // per resolution: extra, invalid or sunless atmospheres of a scene
