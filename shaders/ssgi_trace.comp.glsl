@@ -20,7 +20,13 @@ layout(push_constant) uniform Push {
 const uint SSGI_SECOND_SEQUENCE = 7u;  // offsets the second noise stream so the two coordinates decorrelate
 const uint SSGI_STEP_SEQUENCE = 13u;   // offsets the step jitter stream
 
-vec3 surface_normal(SsgiTraceRoot root, FrameRoot frame, ivec2 texel, ivec2 extent, vec3 position) {
+vec3 surface_normal(
+    SsgiTraceRoot root,
+    FrameRoot frame,
+    ivec2 texel,
+    float depth,
+    vec3 position
+) {
     bool orthographic = frame.proj[3][3] != 0.0;
     vec3 view_vector = orthographic ? vec3(0.0, 0.0, 1.0) : normalize(-position);
     if ((root.flags & SSGI_FLAG_GBUFFER_NORMALS) != 0u) {
@@ -29,7 +35,7 @@ vec3 surface_normal(SsgiTraceRoot root, FrameRoot frame, ivec2 texel, ivec2 exte
             return normalize(mat3(frame.view) * decode_octahedral(gbuffer_normal.rg));
         }
     }
-    return ao_reconstructed_normal(frame, root.depth, texel, extent, position, view_vector);
+    return ao_reconstructed_normal(frame, root.depth, texel, depth, view_vector);
 }
 
 void main() {
@@ -48,7 +54,7 @@ void main() {
     }
 
     vec3 position = ao_view_position(frame, texel, extent, depth);
-    vec3 normal = surface_normal(root, frame, texel, extent, position);
+    vec3 normal = surface_normal(root, frame, texel, depth, position);
     mat3 basis = tangent_frame(normal);
     float step_length = root.max_distance / float(root.max_steps);
     vec3 sum = vec3(0.0);
@@ -77,7 +83,7 @@ void main() {
             vec4 velocity = fetch_texture_2d(root.velocity, hit_texel);
             vec2 previous_uv = ssgi_previous_uv(frame, hit_uv, velocity);
             vec3 hit_position = ao_view_position(frame, hit_texel, extent, stored_depth);
-            bool faces = dot(surface_normal(root, frame, hit_texel, extent, hit_position), -direction) > 0.0;
+            bool faces = dot(surface_normal(root, frame, hit_texel, stored_depth, hit_position), -direction) > 0.0;
             if (faces && ssgi_uv_inside(previous_uv)
                 && ssgi_depth_matches(frame, root.previous_depth, previous_uv, velocity.z, root.depth_tolerance)) {
                 sum += sample_texture_2d(root.previous_color, root.sampler_index, previous_uv).rgb;

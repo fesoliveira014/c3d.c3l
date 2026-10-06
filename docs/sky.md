@@ -262,9 +262,11 @@ seconds after setting the elevation:
 
 | Sun elevation | Table stops | Adapted stops | Difference |
 | --- | --- | --- | --- |
-| 60° | pending | pending | pending |
-| 5° | pending | pending | pending |
-| −4° | pending | pending | pending |
+| 60° | 0.00 | −0.20 | −0.20 |
+| 5° | 2.00 | 2.22 | +0.22 |
+| −4° | 7.28 | 8.24 | +0.96 |
+
+At −4° the main view applies 301.5 while its `LINEAR_HDR` mirror stays at 1.000.
 
 The table stays the manual default.
 
