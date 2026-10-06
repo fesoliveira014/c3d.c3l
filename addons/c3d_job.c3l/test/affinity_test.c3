@@ -42,12 +42,11 @@ fn JobPoolDesc bound_desc(CpuSet worker_cpus, CpuSet background_cpus) @local {
 }
 
 macro void @assert_faults(#expression, expected) @local {
-    bool faulted;
     if (catch excuse = #expression) {
         assert(excuse == expected);
-        faulted = true;
+    } else {
+        unreachable("expected a fault");
     }
-    assert(faulted, "Expression did not fault.");
 }
 
 macro void @assert_no_quota(#quota) @local {
