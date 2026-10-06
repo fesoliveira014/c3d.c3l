@@ -122,8 +122,8 @@ macro World.add(&self, Entity entity, value) {
  @require self.is_alive(entity)
 *>
 macro World.get(&self, Entity entity, $Type) {
-    if (!self.has(entity, $Type)) return ($Type*)null;
-    return store_of(self, $Type).get(entity);
+    if (!self.is_registered($Type)) return ($Type*)null;
+    return store_of(self, $Type).find(entity);
 }
 
 <*
@@ -131,7 +131,7 @@ macro World.get(&self, Entity entity, $Type) {
  @require self.is_alive(entity)
 *>
 macro bool World.has(&self, Entity entity, $Type) {
-    return store::slot{$Type} != 0 && (self.entities.items[entity.index] & bit_of($Type)) != 0;
+    return self.get(entity, $Type) != null;
 }
 
 <*
@@ -185,20 +185,16 @@ macro World.@each2(&self, $TypeA, $TypeB; @body(entity, a, b)) {
         store::ComponentStore{$TypeA}* store_a = store_of(self, $TypeA);
         store::ComponentStore{$TypeB}* store_b = store_of(self, $TypeB);
         if (store_a.count <= store_b.count) {
-            ulong bit = bit_of($TypeB);
             for (uint position = 0; position < store_a.count; position++) {
                 Entity entity = store_a.owners[position];
-                if (self.entities.items[entity.index] & bit) {
-                    @body(entity, &store_a.dense[position], store_b.get(entity));
-                }
+                $TypeB* component_b = store_b.find(entity);
+                if (component_b) @body(entity, &store_a.dense[position], component_b);
             }
         } else {
-            ulong bit = bit_of($TypeA);
             for (uint position = 0; position < store_b.count; position++) {
                 Entity entity = store_b.owners[position];
-                if (self.entities.items[entity.index] & bit) {
-                    @body(entity, store_a.get(entity), &store_b.dense[position]);
-                }
+                $TypeA* component_a = store_a.find(entity);
+                if (component_a) @body(entity, component_a, &store_b.dense[position]);
             }
         }
     }

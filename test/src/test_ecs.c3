@@ -19,9 +19,28 @@ struct HookRecord @local {
     uint   calls;
 }
 
+struct PresenceView @local {
+    World* world;
+    bool   health_present;
+    bool   health_found;
+    bool   tag_present;
+    bool   tag_found;
+    uint   calls;
+}
+
 fn void record_removal(Entity entity, void* component, void* user) @local {
     HookRecord* record = (HookRecord*)user;
     *record = { .entity = entity, .component = component, .user = user, .calls = record.calls + 1 };
+}
+
+fn void record_presence(Entity entity, void* component, void* user) @local {
+    PresenceView* view = (PresenceView*)user;
+    World* world = view.world;
+    view.health_present = world.has(entity, Health);
+    view.health_found = world.get(entity, Health) != null;
+    view.tag_present = world.has(entity, Tag);
+    view.tag_found = world.get(entity, Tag) != null;
+    view.calls++;
 }
 
 fn bool same_entity(Entity left, Entity right) @local {
@@ -200,6 +219,28 @@ fn void test_destroy_entity_removes_every_component() @test {
     assert(world.count(Health) == 1);
     assert(world.count(Tag) == 1);
     assert(world.get(keeper, Health).value == 1);
+}
+
+fn void test_remove_hooks_read_presence_from_the_stores() @test {
+    World world = make_world(4);
+    defer ecs::destroy_world(&world);
+
+    PresenceView health_view = { .world = &world };
+    PresenceView tag_view = { .world = &world };
+    world.set_remove_hook(Health, &record_presence, &health_view);
+    world.set_remove_hook(Tag, &record_presence, &tag_view);
+    Entity entity = world.create_entity()!!;
+    world.add(entity, (Health){ .value = 1 });
+    world.add(entity, (Tag){ .label = 1 });
+    world.destroy_entity(entity);
+
+    // Destruction removes in slot order, so only the later hook sees the other type gone.
+    bool health_first = store::slot{Health} < store::slot{Tag};
+    assert(health_view.calls == 1 && tag_view.calls == 1);
+    assert(health_view.health_present && health_view.health_found);
+    assert(tag_view.tag_present && tag_view.tag_found);
+    assert(health_view.tag_present == health_first && health_view.tag_found == health_first);
+    assert(tag_view.health_present == !health_first && tag_view.health_found == !health_first);
 }
 
 fn void test_stale_entity_is_not_alive_after_reuse() @test {
