@@ -143,7 +143,7 @@ struct Stats {
     uint  trace_instances;
     uint  trace_nodes;
     uint  trace_skipped;
-    uint  trace_sway_at_rest;    // swaying batches and LOD groups the last preparation traced at rest
+    uint  trace_sway_at_rest;    // this frame: swaying batches and LOD groups traced at rest
     uint  trace_posed_instances; // posed rows of the last preparation
     uint  trace_posed_overflow;  // posed candidates the last preparation left out past the slot capacity
     usz   trace_posed_bytes;     // GPU bytes the posed slots hold after the last preparation

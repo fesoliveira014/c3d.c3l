@@ -479,7 +479,12 @@ fn void? record_scene_trace(Renderer* renderer, Scene* scene) @local {
     defer renderer.stats.trace_build_ms += elapsed_ms(started);
     acquire_scene_trace(renderer)!;
 
-    TraceCollection collection = collect_trace_instances(tmem, scene, renderer.assets, renderer.frame_origin);
+    TraceCollection collection = collect_trace_instances(
+        allocator: tmem,
+        scene: scene,
+        assets: renderer.assets,
+        origin: renderer.frame_origin,
+    );
     renderer.stats.dangling_refs += collection.dangling;
     renderer.stats.trace_sway_at_rest = collection.sway_at_rest;
     if (collection.records.len > renderer.max_trace_instances) return c3d::CAPACITY_EXCEEDED~;
@@ -958,10 +963,9 @@ fn bool geometry_has_joints(GeometryAsset* record) @local {
     return record.skin_bounds.joints.len || record.data.joints.len;
 }
 
-// skin: a binding over a geometry with joints, else null.
-fn TracePose mesh_trace_pose(AssetStore* assets, Mesh* mesh, SkinBinding* skin) @local {
+fn TracePose mesh_trace_pose(AssetStore* assets, Mesh* mesh, SkinBinding* posed_skin) @local {
     GeometryAsset* record = assets.geometry(mesh.geometry);
-    if (skin) return TracePose.MESH;
+    if (posed_skin) return TracePose.MESH;
     if (!record.target_count || !mesh.morph_weights.len) return TracePose.REST;
     MorphSelection selection = geometry::select_morph_targets(record.data.channels, mesh.morph_weights);
     return selection.count ? TracePose.MESH : TracePose.REST;
