@@ -34,6 +34,7 @@ enum Pass : int {
     FOG,
     FORWARD_TRANSPARENT,
     SSGI_COLOR_COPY,
+    EXPOSURE,
     DEBUG_LINES,
     VELOCITY,
     TEMPORAL_AA,

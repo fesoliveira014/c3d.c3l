@@ -149,6 +149,7 @@ fn void? Renderer.render_view(
         Camera* camera = scene.get(camera_node, Camera);
         if (!camera) return c3d::INVALID_ARGUMENT~;
         record.exposure = camera.exposure;
+        if (!post::auto_exposure_active(&record.desc)) record.stats.exposure = camera.exposure;
 
         Vec2 viewport = { (float)record.hdr_color.width, (float)record.hdr_color.height };
         CameraMatrices matrices = camera::derive_matrices(
@@ -762,6 +763,7 @@ fn void? record_raster_view(
             }
 
             if (screen_space_gi && !fog_pass) record_ssgi_color_copy(renderer, record)!;
+            post::record_exposure(renderer, record, scene.identity)!;
             if (debug && debug.vertices.len()) {
                 record_debug_lines(renderer, record, raster.view_proj, debug)!;
             }

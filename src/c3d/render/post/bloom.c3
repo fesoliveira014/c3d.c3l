@@ -28,6 +28,7 @@ fn BloomBinding? record_bloom(Renderer* renderer, ViewRecord* record) {
     open_post_chain(renderer, record)!;
     BloomParams* params = &record.desc.post.bloom_params;
     uint levels = record.bloom_levels;
+    gpu::GpuAddress auto_exposure = adapted_exposure(record);
 
     gpu::cmd_bind_pipeline(&renderer.commands, renderer.post_pipelines.bloom_downsample)!;
     Target* input = record.scene_input;
@@ -36,11 +37,12 @@ fn BloomBinding? record_bloom(Renderer* renderer, ViewRecord* record) {
         input.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
         output.transition(&renderer.commands, gpu::storage_at({ .compute }, { .write }))!;
         record_bloom_dispatch(
-            renderer:  renderer,
-            input:     input,
-            output:    output,
-            prefilter: level == 0,
-            params:    params,
+            renderer:      renderer,
+            input:         input,
+            output:        output,
+            prefilter:     level == 0,
+            params:        params,
+            auto_exposure: level == 0 ? auto_exposure : (gpu::GpuAddress)0,
         )!;
         input = output;
     }
@@ -52,11 +54,12 @@ fn BloomBinding? record_bloom(Renderer* renderer, ViewRecord* record) {
         coarse.transition(&renderer.commands, gpu::sampled_at({ .compute }))!;
         fine.transition(&renderer.commands, gpu::storage_at({ .compute }, { .read, .write }))!;
         record_bloom_dispatch(
-            renderer:  renderer,
-            input:     coarse,
-            output:    fine,
-            prefilter: false,
-            params:    params,
+            renderer:      renderer,
+            input:         coarse,
+            output:        fine,
+            prefilter:     false,
+            params:        params,
+            auto_exposure: (gpu::GpuAddress)0,
         )!;
     }
 
@@ -87,6 +90,7 @@ fn void? record_bloom_dispatch(
     Target* output,
     bool prefilter,
     BloomParams* params,
+    gpu::GpuAddress auto_exposure,
 ) @private {
     Frame* slot = &renderer.frames[renderer.frame_index % render::FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan root = slot.upload.take(&renderer.device, BloomRoot::size)!;
@@ -100,6 +104,7 @@ fn void? record_bloom_dispatch(
         .threshold      = params.threshold,
         .knee           = params.knee,
         .input_texel    = { 1.0f / (float)input.width, 1.0f / (float)input.height },
+        .auto_exposure  = auto_exposure,
     };
     return render::dispatch_over(renderer, root.address, output);
 }
