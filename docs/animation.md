@@ -378,8 +378,9 @@ turns them into deformed draws:
   rest bound, and a skinned geometry drawn without a live binding draws
   unskinned.
 
-Compute skinning, previous deformed poses for temporal effects and skinned
-instanced meshes are not part of this.
+Compute skinning for drawing and skinned instanced meshes are not part of this. Traced effects see the raster
+pose of a skinned or morphed mesh through a posing pass ([scene trace](scene_trace.md#posed-instances)); the
+velocity pass reads the view's previous palettes.
 
 ## Retargeting
 

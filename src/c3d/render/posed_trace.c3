@@ -1,6 +1,10 @@
 module c3d::render;
 
 import c3d;
+import c3d::asset;
+import c3d::geometry;
+import c3d::maths;
+import c3d::scene;
 import c3d::shader;
 import gpu;
 import std::collections::list;
@@ -31,10 +35,15 @@ struct PosedTraceRes {
     ulong                            last_seen;           // frame_index of the last claim
     ulong                            claimed_epoch;       // epoch of the last claim
     ulong                            compared_epoch;      // epoch of the last pose compare
+    GeometryId                       geometry;            // rest geometry the copy follows
     uint                             built_revision;      // header.revision of the root and BLAS; 0 rebuilds both
+    gpu::GpuAddress                  source_root;         // rest block the root points into
     gpu::GpuAllocation               allocation;          // posed root, then positions, normals and tangents
+    gpu::GpuAddress                  root;
+    gpu::GpuSpan                     positions;
     usz                              stream_bytes;
     gpu::GpuAllocation               node_allocation;
+    gpu::GpuAddress                  nodes;               // 0 before the first software preparation
     uint                             node_count;
     gpu::AccelerationStructureHandle blas;                // invalid before the first hardware preparation
     usz                              blas_bytes;
@@ -58,6 +67,17 @@ struct PosedTraceTable {
     ulong                        epoch;       // one per recording: an open frame, or a closed preparation
     ulong                        epoch_frame; // frame_index + 1 of the epoch's open frame; 0 when closed
     usz                          bytes;       // GPU bytes of every live slot
+    List{PosedDispatch}          dispatches;  // posing and refit work the current preparation queued
+    gpu::PipelineHandle          pose_pipeline;
+    gpu::PipelineHandle          pose_u16_pipeline;
+    gpu::PipelineHandle          refit_pipeline;
+}
+
+struct PosedDispatch @private {
+    gpu::GpuAddress pose_root;  // TracePoseRoot in the frame ring; 0 when the pose is current
+    gpu::GpuAddress refit_root; // TraceRefitRoot in the frame ring; 0 without a software refit
+    uint            vertex_count;
+    bool            joints_u16;
 }
 
 <*
@@ -147,6 +167,7 @@ fn void PosedTraceTable.sweep(&self, ulong frame_index, RetireList* retire) {
 fn PosedTraceTable create_posed_trace_table(Allocator allocator, uint capacity) @private {
     PosedTraceTable table = { .allocator = allocator, .capacity = capacity };
     table.pending.init(allocator);
+    table.dispatches.init(allocator);
     return table;
 }
 
@@ -157,6 +178,9 @@ fn void free_posed_trace(Renderer* renderer) @private {
         if (slot.node_allocation.is_valid()) (void)gpu::free_allocation(&renderer.device, &slot.node_allocation);
         if (slot.blas.is_valid()) (void)gpu::destroy_acceleration_structure(&renderer.device, slot.blas);
     }
+    if (table.pose_pipeline.is_valid()) (void)gpu::destroy_pipeline(&renderer.device, table.pose_pipeline);
+    if (table.pose_u16_pipeline.is_valid()) (void)gpu::destroy_pipeline(&renderer.device, table.pose_u16_pipeline);
+    if (table.refit_pipeline.is_valid()) (void)gpu::destroy_pipeline(&renderer.device, table.refit_pipeline);
     free_posed_trace_storage(table);
 }
 
@@ -167,6 +191,7 @@ fn void free_posed_trace_storage(PosedTraceTable* table) @private {
     if (table.slots.len) alloc::free(table.allocator, table.slots.ptr);
     table.lookup.free();
     table.pending.free();
+    table.dispatches.free();
     *table = {};
 }
 
@@ -216,5 +241,328 @@ fn void discard_posed_trace(PosedTraceTable* table) @private {
         slot.pending = false;
     }
     table.pending.clear();
+    table.dispatches.clear();
     table.epoch_frame = 0;
+}
+
+fn uint pose_input_bytes(TracePoseSource* source, AssetStore* assets) @private {
+    switch (source.kind) {
+        case REST:
+            return 0;
+        case MESH:
+            uint palette = source.skin ? (uint)(source.skin.joints.len * Mat4f::size) : 0;
+            return palette + (mesh_morphs(assets, source.mesh) ? (uint)MorphWeightsGpu::size : 0);
+        case CROWD:
+            uint palette = source.crowd.joint_count * (uint)Mat4f::size;
+            return palette + (source.crowd.parts[source.part].target_count ? (uint)MorphWeightsGpu::size : 0);
+    }
+}
+
+fn bool mesh_morphs(AssetStore* assets, Mesh* mesh) @local {
+    return assets.geometry(mesh.geometry).target_count > 0 && mesh.morph_weights.len > 0;
+}
+
+// The bytes the posing pass consumes: the palette resolve_palette uploads, then the packed morph block.
+fn char[] pose_inputs(Renderer* renderer, TracePoseSource* source, TraceInstance* record) @private {
+    char[] inputs = alloc::new_array(tmem, char, pose_input_bytes(source, renderer.assets));
+    usz palette_bytes;
+    MorphWeightsGpu block;
+    bool morphs;
+    switch (source.kind) {
+        case REST:
+            return inputs;
+        case MESH:
+            if (source.skin) {
+                palette_bytes = source.skin.joints.len * Mat4f::size;
+                evaluate_palette(
+                    palette:      ((Mat4f*)inputs.ptr)[:source.skin.joints.len],
+                    mesh_node:    source.node,
+                    binding:      source.skin,
+                    inverse_bind: renderer.assets.skeleton(source.skin.skeleton).data.inverse_bind,
+                    origin:       renderer.frame_origin,
+                );
+            }
+            morphs = mesh_morphs(renderer.assets, source.mesh);
+            if (morphs) {
+                Geometry* data = &renderer.assets.geometry(record.geometry).data;
+                block = pack_morph_selection(geometry::select_morph_targets(data.channels, source.mesh.morph_weights));
+            }
+        case CROWD:
+            AnimatedCrowd* crowd = source.crowd;
+            palette_bytes = (usz)crowd.joint_count * Mat4f::size;
+            mem::copy(inputs.ptr, &crowd.palettes[(usz)record.instance_index * crowd.joint_count], (sz)palette_bytes);
+            CrowdPart* part = &crowd.parts[source.part];
+            morphs = part.target_count > 0;
+            if (morphs) {
+                usz first = (usz)record.instance_index * crowd.morph_stride + part.target_offset;
+                MorphChannel[] channels = renderer.assets.geometry(record.geometry).data.channels;
+                block = pack_morph_selection(
+                    geometry::select_morph_targets(channels, crowd.morph_weights[first:part.target_count]),
+                );
+            }
+    }
+    if (morphs) *(MorphWeightsGpu*)(inputs.ptr + palette_bytes) = block;
+    return inputs;
+}
+
+fn void? acquire_trace_pose_pipelines(Renderer* renderer) @private {
+    PosedTraceTable* table = &renderer.posed_trace;
+    acquire_compute_pipeline(
+        renderer:   renderer,
+        pipeline:   &table.pose_pipeline,
+        shader:     TRACE_POSE,
+        debug_name: "trace_pose",
+    )!;
+    acquire_compute_pipeline(
+        renderer:   renderer,
+        pipeline:   &table.pose_u16_pipeline,
+        shader:     TRACE_POSE,
+        debug_name: "trace_pose_u16",
+        flags:      shader::SHADER_FLAG_SKINNED_U16,
+    )!;
+    acquire_compute_pipeline(
+        renderer:   renderer,
+        pipeline:   &table.refit_pipeline,
+        shader:     TRACE_REFIT,
+        debug_name: "trace_refit",
+    )!;
+}
+
+// Every posing dispatch, then every refit, so three barriers serve any number of slots.
+fn void? record_trace_poses(Renderer* renderer, gpu::CommandList* commands) @private {
+    PosedTraceTable* table = &renderer.posed_trace;
+    if (!table.dispatches.len()) return;
+    acquire_trace_pose_pipelines(renderer)!;
+    bool profiled = renderer.frame_open;
+    if (profiled) begin_profile_pass(renderer, Pass.TRACE_POSE)!;
+
+    // Trace readers of this frame and of the frame in flight still read the streams and node copies;
+    // consumer_stages names the acceleration-structure stage only on renderers with ray queries.
+    gpu::Barrier readers_done = { .before = renderer.consumer_stages, .after = { .compute } };
+    gpu::cmd_barrier(commands, &readers_done)!;
+    foreach (&dispatch : table.dispatches) {
+        if (!dispatch.pose_root) continue;
+        gpu::cmd_bind_pipeline(commands, dispatch.joints_u16 ? table.pose_u16_pipeline : table.pose_pipeline)!;
+        uint groups = (dispatch.vertex_count + shader::TRACE_POSE_GROUP_SIZE - 1) / shader::TRACE_POSE_GROUP_SIZE;
+        gpu::cmd_dispatch(commands, dispatch.pose_root, { groups, 1, 1 })!;
+        renderer.stats.trace_poses++;
+    }
+    gpu::Barrier posed = { .before = { .compute }, .after = { .compute } };
+    gpu::cmd_barrier(commands, &posed)!;
+    gpu::cmd_bind_pipeline(commands, table.refit_pipeline)!;
+    foreach (&dispatch : table.dispatches) {
+        if (!dispatch.refit_root) continue;
+        gpu::cmd_dispatch(commands, dispatch.refit_root, { 1, 1, 1 })!;
+        renderer.stats.trace_refits++;
+    }
+    gpu::Barrier written = { .before = { .compute }, .after = renderer.consumer_stages };
+    gpu::cmd_barrier(commands, &written)!;
+    table.dispatches.clear();
+    renderer.work_recorded = true;
+    if (profiled) end_profile_pass(renderer, Pass.TRACE_POSE)!;
+}
+
+// A slot follows one geometry revision: a new revision, a moved rest block or another geometry rebuild it.
+fn void? acquire_posed_streams(
+    Renderer* renderer,
+    uint index,
+    GpuGeometry* mirror,
+    usz pose_bytes,
+) @private {
+    PosedTraceTable* table = &renderer.posed_trace;
+    PosedTraceRes* slot = &table.slots[index];
+    bool same_geometry = c3d::same_id(slot.geometry, mirror.asset);
+    if (same_geometry && slot.built_revision == mirror.revision && slot.source_root == mirror.root
+        && slot.pose.len == pose_bytes) return;
+
+    PosedLayout layout = posed_layout(&mirror.layout);
+    bool reuse = same_geometry && slot.allocation.is_valid() && slot.stream_bytes == layout.total_bytes;
+    if (!reuse) {
+        gpu::AllocationDesc desc = {
+            .size         = layout.total_bytes,
+            .alignment    = STREAM_ALIGNMENT,
+            .memory_class = gpu::MemoryClass.GPU_PRIVATE,
+            .access       = { .graphics },
+            .debug_name   = "posed_geometry",
+        };
+        gpu::GpuAllocation allocation = gpu::allocate_memory(&renderer.device, &desc)!;
+        defer catch (void)gpu::free_allocation(&renderer.device, &allocation);
+        gpu::GpuSpan block = gpu::get_allocation_span(&renderer.device, allocation)!;
+        gpu::GpuAddress address = gpu::get_span_address(&renderer.device, block)!;
+        usz position_bytes = PACKED_VEC3_BYTES * mirror.layout.vertex_count;
+        gpu::GpuSpan positions = block.checked_subspan(layout.positions, position_bytes)!;
+        if (slot.allocation.is_valid()) {
+            renderer.pending_upload_retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = slot.allocation });
+        }
+        table.bytes += layout.total_bytes;
+        table.bytes -= slot.stream_bytes;
+        slot.allocation = allocation;
+        slot.root = address;
+        slot.positions = positions;
+        slot.stream_bytes = layout.total_bytes;
+    } else {
+        renderer.pending_overwrite = true;
+    }
+    if (slot.pose.len != pose_bytes) {
+        if (slot.pose.len) alloc::free(table.allocator, slot.pose.ptr);
+        slot.pose = alloc::new_array(table.allocator, char, (sz)pose_bytes);
+    }
+
+    Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan staging = frame.upload.take(&renderer.device, GeometryRoot::size, STREAM_ALIGNMENT)!;
+    *(GeometryRoot*)staging.bytes.ptr = posed_geometry_root(&mirror.layout, mirror.root, slot.root);
+    gpu::GpuSpan destination = gpu::get_allocation_span(&renderer.device, slot.allocation)!;
+    renderer.pending_copies.push({ .src = staging.span, .dst = destination.checked_subspan(0, GeometryRoot::size)! });
+
+    slot.geometry = mirror.asset;
+    slot.built_revision = mirror.revision;
+    slot.source_root = mirror.root;
+    slot.pose_valid = false;
+    slot.compared_epoch = 0;
+    slot.refit_serial = 0;
+    slot.blas_serial = 0;
+    mark_posed_pending(table, index);
+}
+
+fn void? acquire_posed_nodes(Renderer* renderer, uint index, GpuGeometry* mirror) @private {
+    PosedTraceTable* table = &renderer.posed_trace;
+    PosedTraceRes* slot = &table.slots[index];
+    if (slot.node_allocation.is_valid() && slot.node_count == mirror.trace.node_count) return;
+
+    gpu::AllocationDesc desc = {
+        .size         = (usz)mirror.trace.node_count * BvhNodeGpu::size,
+        .alignment    = STREAM_ALIGNMENT,
+        .memory_class = gpu::MemoryClass.GPU_PRIVATE,
+        .access       = { .graphics },
+        .debug_name   = "posed_trace_nodes",
+    };
+    gpu::GpuAllocation allocation = gpu::allocate_memory(&renderer.device, &desc)!;
+    defer catch (void)gpu::free_allocation(&renderer.device, &allocation);
+    gpu::GpuSpan span = gpu::get_allocation_span(&renderer.device, allocation)!;
+    gpu::GpuAddress address = gpu::get_span_address(&renderer.device, span)!;
+    if (slot.node_allocation.is_valid()) {
+        renderer.pending_upload_retire.push({ .kind = RetiredKind.ALLOCATION, .allocation = slot.node_allocation });
+    }
+    table.bytes += desc.size;
+    table.bytes -= (usz)slot.node_count * BvhNodeGpu::size;
+    slot.node_allocation = allocation;
+    slot.nodes = address;
+    slot.node_count = mirror.trace.node_count;
+    slot.refit_serial = 0;
+}
+
+<*
+ Bring the row's posed slot to the current pose and point the row at it.
+ @require source.kind != TracePose.REST
+*>
+fn void? resolve_posed_instance(
+    Renderer* renderer,
+    uint index,
+    TraceInstance* record,
+    TracePoseSource* source,
+    GpuGeometry* mirror,
+) @private {
+    PosedTraceTable* table = &renderer.posed_trace;
+    bool software = renderer.scene_trace.software_requested;
+    acquire_posed_streams(
+        renderer:   renderer,
+        index:      index,
+        mirror:     mirror,
+        pose_bytes: pose_input_bytes(source, renderer.assets),
+    )!;
+    if (software) acquire_posed_nodes(renderer, index, mirror)!;
+    PosedTraceRes* slot = &table.slots[index];
+
+    PosedDispatch dispatch = {
+        .vertex_count = mirror.layout.vertex_count,
+        .joints_u16   = mirror.layout.flags.joints_u16,
+    };
+    if (slot.compared_epoch != table.epoch) {
+        slot.compared_epoch = table.epoch;
+        if (slot.update_pose(pose_inputs(renderer, source, record))) {
+            dispatch.pose_root = write_pose_root(
+                renderer: renderer,
+                source:   source,
+                record:   record,
+                mirror:   mirror,
+                slot:     slot,
+            )!;
+        }
+    }
+    if (software && slot.refit_serial != slot.pose_serial) {
+        dispatch.refit_root = write_refit_root(renderer, mirror, slot)!;
+        slot.refit_serial = slot.pose_serial;
+    }
+    if (dispatch.pose_root || dispatch.refit_root) {
+        table.dispatches.push(dispatch);
+        mark_posed_pending(table, index);
+    }
+
+    record.geometry_root = slot.root;
+    record.bottom_level = slot.blas;
+    record.nodes = slot.nodes;
+    record.primitives = mirror.trace.primitives;
+    record.pose_serial = slot.pose_serial;
+}
+
+fn gpu::GpuAddress? write_pose_root(
+    Renderer* renderer,
+    TracePoseSource* source,
+    TraceInstance* record,
+    GpuGeometry* mirror,
+    PosedTraceRes* slot,
+) @local {
+    gpu::GpuAddress palette;
+    gpu::GpuAddress morph;
+    switch (source.kind) {
+        case REST:
+            unreachable("a rest row has no posed slot");
+        case MESH:
+            if (source.skin) palette = resolve_palette(renderer, source.node, source.skin)!;
+            if (mesh_morphs(renderer.assets, source.mesh)) {
+                morph = resolve_morph_block(
+                    renderer:  renderer,
+                    mesh_node: source.node,
+                    channels:  renderer.assets.geometry(record.geometry).data.channels,
+                    weights:   source.mesh.morph_weights,
+                )!;
+            }
+        case CROWD:
+            AnimatedCrowd* crowd = source.crowd;
+            usz slot_index = source.palette_index;
+            palette = resolve_crowd_palettes(renderer, source.node.parent, crowd)!
+              + (gpu::GpuAddress)(slot_index * crowd.joint_count * Mat4f::size);
+            if (crowd.parts[source.part].target_count) {
+                morph = resolve_crowd_morphs(
+                    renderer:   renderer,
+                    batch_node: source.node,
+                    crowd:      crowd,
+                    part:       source.part,
+                    channels:   renderer.assets.geometry(record.geometry).data.channels,
+                )! + (gpu::GpuAddress)(slot_index * MorphWeightsGpu::size);
+            }
+    }
+    Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan root = frame.upload.take(&renderer.device, TracePoseRoot::size, STREAM_ALIGNMENT)!;
+    *(TracePoseRoot*)root.bytes.ptr = {
+        .source  = mirror.root,
+        .posed   = slot.root,
+        .palette = palette,
+        .morph   = morph,
+    };
+    return root.address;
+}
+
+fn gpu::GpuAddress? write_refit_root(Renderer* renderer, GpuGeometry* mirror, PosedTraceRes* slot) @local {
+    Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan root = frame.upload.take(&renderer.device, TraceRefitRoot::size, STREAM_ALIGNMENT)!;
+    *(TraceRefitRoot*)root.bytes.ptr = {
+        .geometry     = slot.root,
+        .source_nodes = mirror.trace.nodes,
+        .nodes        = slot.nodes,
+        .primitives   = mirror.trace.primitives,
+        .depth_starts = mirror.trace.depth_starts,
+        .depth_order  = mirror.trace.depth_order,
+    };
+    return root.address;
 }

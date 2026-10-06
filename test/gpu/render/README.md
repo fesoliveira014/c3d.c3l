@@ -285,6 +285,14 @@ What the four cases establish:
   new view's images and target at the next reading. The overlay case opens a window: without one
   it prints a skip line.
 
+- Posed trace instances (`test_posed_trace.c3`, software): a skinned, a morphed and a combined mesh trace at the raster
+  pose over four frames (traced hit distance against the raster depth of the same pixels, hits on the slot's geometry
+  root), two instances of one geometry stay independent beside a static mesh, a still pose records no posing and keeps the
+  trace revision while a joint or weight change advances it once (an aborted frame re-poses once), frames without a
+  traced consumer allocate and record nothing, a morph target that leaves the rest box is hit, a closed-frame preparation
+  reads the current pose and does not re-pose when repeated, the refit at rest reproduces the rest tree component for
+  component, and a strong pose's refit tree encloses every posed triangle and child.
+
 What they cannot establish: window clear-only and GUI-only frames need a
 window (run the `clear` and `cube_gui` examples with validation), and a
 presentation failure after submission needs a hardware observation.

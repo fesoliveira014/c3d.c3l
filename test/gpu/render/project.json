@@ -68,7 +68,8 @@
         "test_reflection_probe.c3",
         "test_reflection_capture.c3",
         "test_manual_exposure.c3",
-        "test_auto_exposure.c3"
+        "test_auto_exposure.c3",
+        "test_posed_trace.c3"
       ]
     }
   }

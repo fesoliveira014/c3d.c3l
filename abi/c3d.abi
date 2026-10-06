@@ -99,6 +99,26 @@ root SceneTraceRoot {
     uint       _pad1;
 }
 
+const uint TRACE_POSE_GROUP_SIZE = 64;
+// 128 lanes is the Vulkan 1.3 core minimum; one group walks a whole tree, level by level.
+const uint TRACE_REFIT_GROUP_SIZE = 128;
+
+root TracePoseRoot {
+    GpuAddress source;
+    GpuAddress posed;
+    GpuAddress palette;
+    GpuAddress morph;
+}
+
+root TraceRefitRoot {
+    GpuAddress geometry;
+    GpuAddress source_nodes;
+    GpuAddress nodes;
+    GpuAddress primitives;
+    GpuAddress depth_starts;
+    GpuAddress depth_order;
+}
+
 const uint FRAME_LIGHTS_CLUSTERED = 1;
 const uint FRAME_TRACE_PRESENT = 2;
 const uint FRAME_AO_PRESENT = 4;

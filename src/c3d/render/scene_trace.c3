@@ -181,10 +181,11 @@ fn gpu::GpuAddress? Renderer.prepare_scene_trace(&self, Scene* scene, TraceKind 
             record_scene_trace(self, scene)!;
         };
         trace.prepared_frame = self.frame_index + 1;
-        if (trace.hardware_requested) {
+        if (trace.hardware_requested || self.posed_trace.dispatches.len()) {
             record_pending_copies(self, &self.commands)!;
-            record_acceleration_builds(self, &self.commands)!;
+            record_trace_poses(self, &self.commands)!;
         }
+        if (trace.hardware_requested) record_acceleration_builds(self, &self.commands)!;
         return trace.root;
     }
 
@@ -478,12 +479,13 @@ fn void? record_scene_trace(Renderer* renderer, Scene* scene) @local {
     time::Clock started = clock::now();
     defer renderer.stats.trace_build_ms += elapsed_ms(started);
     acquire_scene_trace(renderer)!;
+    renderer.posed_trace.begin_epoch(renderer.frame_open ? renderer.frame_index + 1 : 0);
 
     TraceCollection collection = collect_trace_instances(tmem, scene, renderer.assets, renderer.frame_origin);
     renderer.stats.dangling_refs += collection.dangling;
     renderer.stats.trace_sway_at_rest = collection.sway_at_rest;
     if (collection.records.len > renderer.max_trace_instances) return c3d::CAPACITY_EXCEEDED~;
-    TraceInstance[] records = resolve_trace_instances(renderer, &collection)!;
+    TraceInstance[] records = resolve_trace_instances(renderer, &collection, scene.identity)!;
 
     SceneTrace* trace = &renderer.scene_trace;
     RtContext* rt = &renderer.rt;
@@ -521,6 +523,7 @@ fn void? record_scene_trace(Renderer* renderer, Scene* scene) @local {
     }
     renderer.stats.trace_instances = trace.baseline_count;
     renderer.stats.trace_nodes = trace.top_node_count;
+    renderer.stats.trace_posed_bytes = renderer.posed_trace.bytes;
 }
 
 // A posed bottom level updated in place keeps its handle; its row's pose_serial in the prefix dirties the top level.
@@ -570,15 +573,20 @@ fn void? acquire_scene_trace(Renderer* renderer) @local {
     trace.row_records = alloc::alloc_array(renderer.allocator, uint, (sz)capacity);
 }
 
-fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection* collection) @local {
+fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection* collection, ulong scene) @local {
     begin_material_scope(renderer);
     defer end_material_scope(renderer);
     bool software = renderer.scene_trace.software_requested;
     bool hardware = renderer.scene_trace.hardware_requested;
     TraceInstance[] records = collection.records;
+    PosedTraceTable* posed = &renderer.posed_trace;
+    renderer.stats.trace_posed_instances = 0;
+    renderer.stats.trace_posed_overflow = 0;
     usz kept;
     foreach (index, &record : records) {
-        if (collection.poses[index].kind != TracePose.REST) continue;
+        TracePoseSource* pose = &collection.poses[index];
+        bool posed_row = pose.kind != TracePose.REST;
+        if (pose.kind == TracePose.CROWD || (posed_row && hardware)) continue;
         GeometryAsset* asset_record = renderer.assets.geometry(record.geometry);
         GpuGeometry* mirror = &renderer.geometries[record.geometry.index];
         uint revision = asset_record.header.revision;
@@ -602,17 +610,38 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
         mirror = resolve_geometry(renderer, record.geometry)!;
         MaterialRes* material = resolve_material(renderer, record.material)!;
         if (!published_without_vertex_stage(renderer, record.material)) continue;
+        uint slot;
+        if (posed_row) {
+            PosedTraceKey key = { .scene = scene, .node = pose.node.id, .instance = record.instance_index };
+            uint? claimed = posed.claim(key, renderer.frame_index, &renderer.pending_upload_retire);
+            if (catch claimed) {
+                renderer.stats.trace_posed_overflow++;
+                continue;
+            }
+            slot = claimed;
+        }
         if (hardware && hardware_source == TraceSource.BUILD) resolve_blas(renderer, mirror, asset_record)!;
         if (software && source == TraceSource.BUILD) {
             // Proven with the arrays present, so the store's build cannot fault.
             upload_trace_geometry(renderer, mirror, renderer.assets.triangle_bvh(record.geometry)!!)!;
             mirror.trace.revision = revision;
         }
-        record.geometry_root = mirror.root;
         record.material_address = material.address;
-        record.bottom_level = mirror.blas.handle;
-        record.nodes = mirror.trace.nodes;
-        record.primitives = mirror.trace.primitives;
+        if (!posed_row) {
+            record.geometry_root = mirror.root;
+            record.bottom_level = mirror.blas.handle;
+            record.nodes = mirror.trace.nodes;
+            record.primitives = mirror.trace.primitives;
+        } else {
+            resolve_posed_instance(
+                renderer: renderer,
+                index:    slot,
+                record:   record,
+                source:   pose,
+                mirror:   mirror,
+            )!;
+            renderer.stats.trace_posed_instances++;
+        }
         records[kept++] = *record;
     }
     return records[:kept];

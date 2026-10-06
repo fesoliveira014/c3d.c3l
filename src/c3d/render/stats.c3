@@ -15,6 +15,7 @@ enum Pass : int {
     INSTANCE_SORT,
     SHADOW_ATLAS,
     LIGHT_CULL,
+    TRACE_POSE,
     ACCELERATION_BUILD,
     PATH_TRACE,
     SKY_VIEW,

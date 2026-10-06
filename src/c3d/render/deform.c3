@@ -155,9 +155,8 @@ fn void pack_crowd_morphs(
     }
 }
 
-fn gpu::GpuAddress? resolve_crowd_palettes(Renderer* renderer, MeshCandidate* candidate) @private {
-    AnimatedCrowd* crowd = candidate.crowd;
-    ulong key = (ulong)(uptr)candidate.node.parent;
+fn gpu::GpuAddress? resolve_crowd_palettes(Renderer* renderer, Node* crowd_node, AnimatedCrowd* crowd) @private {
+    ulong key = (ulong)(uptr)crowd_node;
     gpu::GpuAddress base;
     if (try existing = renderer.deformation.crowd_palettes.get(key)) {
         base = existing;
@@ -172,9 +171,14 @@ fn gpu::GpuAddress? resolve_crowd_palettes(Renderer* renderer, MeshCandidate* ca
     return base;
 }
 
-fn gpu::GpuAddress? resolve_crowd_morphs(Renderer* renderer, MeshCandidate* candidate) @private {
-    AnimatedCrowd* crowd = candidate.crowd;
-    ulong key = (ulong)(uptr)candidate.node;
+fn gpu::GpuAddress? resolve_crowd_morphs(
+    Renderer* renderer,
+    Node* batch_node,
+    AnimatedCrowd* crowd,
+    uint part,
+    MorphChannel[] channels,
+) @private {
+    ulong key = (ulong)(uptr)batch_node;
     gpu::GpuAddress base;
     if (try existing = renderer.deformation.crowd_morphs.get(key)) {
         base = existing;
@@ -188,8 +192,8 @@ fn gpu::GpuAddress? resolve_crowd_morphs(Renderer* renderer, MeshCandidate* cand
         pack_crowd_morphs(
             blocks:   ((MorphWeightsGpu*)span.bytes.ptr)[:crowd.count],
             crowd:    crowd,
-            part:     candidate.crowd_part,
-            channels: renderer.assets.geometry(candidate.geometry).data.channels,
+            part:     part,
+            channels: channels,
         );
         renderer.deformation.crowd_morphs.set(key, span.address);
         base = span.address;
@@ -240,26 +244,29 @@ fn void evaluate_palette(
 }
 
 <*
- Morph block of the candidate's mesh for this frame, uploaded on first use.
- @param [&in] candidate : "Channels and live weights as extracted."
+ Morph block of the mesh node for this frame, uploaded on first use.
+ @param [&in] mesh_node : "Stable mesh node the block is cached under."
+ @param weights : "Live weights of the mesh, one per channel or target."
  @return? gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE, gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY
  @return? gpu::UNSUPPORTED_FEATURE, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
 *>
-fn gpu::GpuAddress? resolve_morph_block(Renderer* renderer, MeshCandidate* candidate) @private {
-    Node* mesh_node = candidate.node;
+fn gpu::GpuAddress? resolve_morph_block(
+    Renderer* renderer,
+    Node* mesh_node,
+    MorphChannel[] channels,
+    float[] weights,
+) @private {
     if (try existing = renderer.deformation.morph_blocks.get((ulong)(uptr)mesh_node)) return existing;
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan span = slot.upload.take(&renderer.device, MorphWeightsGpu::size, STREAM_ALIGNMENT)!;
-    *(MorphWeightsGpu*)span.bytes.ptr = pack_morph_selection(
-        geometry::select_morph_targets(candidate.morph_channels, candidate.morph_weights),
-    );
+    *(MorphWeightsGpu*)span.bytes.ptr = pack_morph_selection(geometry::select_morph_targets(channels, weights));
     renderer.deformation.morph_blocks.set((ulong)(uptr)mesh_node, span.address);
     return span.address;
 }
 
 fn gpu::GpuAddress? resolve_candidate_skin(Renderer* renderer, MeshCandidate* candidate) @private {
     if (candidate.skin) return resolve_palette(renderer, candidate.node, candidate.skin);
-    if (candidate.crowd) return resolve_crowd_palettes(renderer, candidate);
+    if (candidate.crowd) return resolve_crowd_palettes(renderer, candidate.node.parent, candidate.crowd);
     return (gpu::GpuAddress)0;
 }
 
@@ -269,8 +276,21 @@ fn gpu::GpuAddress? resolve_candidate_morph(
     ShaderVariant vertex,
 ) @private {
     if (!(vertex.flags & shader::SHADER_FLAG_MORPH)) return (gpu::GpuAddress)0;
-    if (candidate.crowd) return resolve_crowd_morphs(renderer, candidate);
-    return resolve_morph_block(renderer, candidate);
+    if (candidate.crowd) {
+        return resolve_crowd_morphs(
+            renderer:   renderer,
+            batch_node: candidate.node,
+            crowd:      candidate.crowd,
+            part:       candidate.crowd_part,
+            channels:   renderer.assets.geometry(candidate.geometry).data.channels,
+        );
+    }
+    return resolve_morph_block(
+        renderer:  renderer,
+        mesh_node: candidate.node,
+        channels:  candidate.morph_channels,
+        weights:   candidate.morph_weights,
+    );
 }
 
 fn uint candidate_skin_stride(MeshCandidate* candidate) @private {
