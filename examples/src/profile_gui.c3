@@ -24,7 +24,7 @@ const uint PROFILE_LABEL_BYTES_PER_FRAME @local = 8192; // Covers repeated label
 const uint PROFILE_WORKER_SAMPLES_PER_FRAME @local = 64; // Four times a frame's job ranges; reserves 64 samples.
 const uint WAVE_ITEMS @local = 65536; // One frame's job run: sixteen ranges spread over the worker lanes.
 const uint WAVE_BATCH @local = 4096; // Sixteen ranges a frame; fewer would leave worker lanes empty.
-const float WAVE_FREQUENCY @local = 0.01f; // Radians per item; about 100 periods a frame; costs one sin per item.
+const float WAVE_FREQUENCY @local = 0.01f; // Radians per item; about 100 periods a frame, so each range draws a visible wave.
 const Vec2 CONTROLS_PANEL_POSITION @local = { 1120, 16 }; // Clears the first-use profiler placement.
 const Vec2 CONTROLS_PANEL_SIZE @local = { 144, 70 }; // Fits the visibility control at 1280 width.
 
