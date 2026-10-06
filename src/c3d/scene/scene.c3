@@ -116,6 +116,27 @@ fn Node*? Scene.add_light(
 }
 
 <*
+ Add a decal node scaled to the described size.
+ @param [&inout] self : "Owns the new node and component."
+ @param [in] parent : "Null means the root."
+ @param name : "Copied into the scene allocator."
+ @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+*>
+fn Node*? Scene.add_decal(
+    &self,
+    DecalDesc desc,
+    Node* parent = null,
+    String name = "",
+) {
+    if (!decal_desc_valid(&desc)) return c3d::INVALID_ARGUMENT~;
+
+    Node* node = self.add_node(parent, name)!;
+    node.local.scale = desc.size;
+    self.world.add(node.id, desc.decal);
+    return node;
+}
+
+<*
  Add a node carrying a batch with scene-owned arrays of the capacity.
  @param transforms : "Copied; the live count."
  @param colors : "Copied; slots past its end are white."
@@ -348,7 +369,7 @@ fn SceneDesc default_scene_desc() {
 }
 
 <*
- Create a scene with the built-in components registered, probes, atmospheres and fog included.
+ Create a scene with its built-in component stores, including decals.
  @require desc.max_nodes > 0
 *>
 fn Scene create_scene(Allocator allocator, SceneDesc desc) {
@@ -379,6 +400,7 @@ fn Scene create_scene(Allocator allocator, SceneDesc desc) {
     scene.world.register(Mesh)!!;
     scene.world.register(Camera)!!;
     scene.world.register(Light)!!;
+    scene.world.register(Decal)!!;
     scene.world.register(ModelInstance)!!;
     scene.world.register(SkinBinding)!!;
     scene.world.register(Animator)!!;
