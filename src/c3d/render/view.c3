@@ -431,6 +431,36 @@ fn void? record_raster_view(
             sort::quicksort(transparent_items, &by_transparent_depth);
         };
 
+        DecalCounts decal_counts;
+        DecalGpu[] decals;
+        instrumentation::@scope("view.decals") {
+            DecalCandidate[] selected = extract_decals(
+                allocator: tmem,
+                scene: scene,
+                assets: renderer.assets,
+                frustum: &matrices.frustum,
+                view_layers: camera.layers,
+                capacity: shader::MAX_DECALS,
+                counts: &decal_counts,
+                origin: renderer.frame_origin,
+            );
+            decals = alloc::new_array(tmem, DecalGpu, selected.len);
+            foreach (index, candidate : selected) {
+                MaterialRes* material = resolve_material(renderer, candidate.decal.material)!;
+                decals[index] = pack_decal(
+                    node: candidate.node,
+                    decal: candidate.decal,
+                    material: material.address,
+                    origin: renderer.frame_origin,
+                );
+            }
+            renderer.stats.decals += decal_counts.packed;
+            renderer.stats.decals_dropped += decal_counts.dropped;
+            renderer.stats.dangling_refs += decal_counts.dangling;
+            record.stats.decals = decal_counts.packed;
+            record.stats.decals_dropped = decal_counts.dropped;
+        };
+
         record.frustum = matrices.frustum;
         DrawItem[][3] cull_groups = { depth_items, scene_read_items, transparent_items };
         CullItem[] view_culls = batch_cull_items(
@@ -490,6 +520,7 @@ fn void? record_raster_view(
         uint fog_sun;
         ShadowSet* shadow_set = &renderer.shadow_set;
         gpu::GpuAddress light_address;
+        gpu::GpuAddress decal_address;
         ClusterFrame cluster_frame;
         instrumentation::@scope("view.lights") {
             LightExtraction extraction = extract_lights(
@@ -525,10 +556,13 @@ fn void? record_raster_view(
                     camera: camera,
                     matrices: matrices,
                     lights: lights,
+                    decals: decals,
                 )!;
                 light_address = cluster_frame.lights;
+                decal_address = cluster_frame.decals;
             } else {
                 light_address = upload_lights(renderer, lights)!;
+                decal_address = upload_decals(renderer, decals)!;
             }
             renderer.stats.lights += light_counts.packed;
             renderer.stats.lights_dropped += light_counts.dropped;
@@ -596,6 +630,8 @@ fn void? record_raster_view(
                 ssgi_texture: screen_space_gi ? record.ssgi.view.index : (gpu::TextureIndex)0,
                 clip_plane: maths::rebase_plane(record.desc.clip_plane, renderer.frame_origin),
                 origin: renderer.frame_origin,
+                decals: decal_address,
+                decal_count: decal_counts.packed,
             );
             if (record.desc.lights == LightSelection.CLUSTERED) {
                 record_clusters(
@@ -1033,6 +1069,14 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
                 scene_reads |= prepared.scene_reads;
             }
         };
+        scene.@each(Decal; Entity entity, Decal* decal) {
+            if (self.assets.materials.is_live(decal.material)
+              && self.assets.material(decal.material).data.kind == MaterialKind.STANDARD) {
+                resolve_material(self, decal.material)!;
+            } else {
+                self.stats.dangling_refs++;
+            }
+        };
         prepare_finish(self, scene_reads)!;
         (void)resolve_view_environments(self, scene, sheen)!;
         prepare_reflection_probes(self, scene, sheen)!;
@@ -1245,6 +1289,7 @@ fn bool velocity_before_lighting(ViewDesc* desc) @private {
  @param ssgi_texture : "Screen-space GI sampled view; zero when the view has none."
  @param clip_plane : "Relative plane whose positive side stays; zero clips nothing."
  @param origin : "Absolute origin of the supplied matrices and positions."
+ @param decals : "Ordered decal records; zero when no decal applies."
 *>
 fn void write_frame_root(
     FrameRoot* root,
@@ -1275,6 +1320,8 @@ fn void write_frame_root(
     gpu::TextureIndex ssgi_texture = (gpu::TextureIndex)0,
     Plane clip_plane = {},
     Vec3 origin = {},
+    gpu::GpuAddress decals = (gpu::GpuAddress)0,
+    uint decal_count = 0,
 ) {
     *root = {
         .view            = bitcast(matrices.view, Mat4f),
@@ -1311,6 +1358,8 @@ fn void write_frame_root(
         .clip_plane      = { clip_plane.normal.x, clip_plane.normal.y, clip_plane.normal.z, clip_plane.d },
         .sky_fog         = sky_fog,
         .origin          = { origin.x, origin.y, origin.z, 0 },
+        .decals          = decals,
+        .decal_count     = decal_count,
     };
 }
 
@@ -1323,6 +1372,18 @@ fn gpu::GpuAddress? upload_lights(Renderer* renderer, LightGpu[] lights) @privat
         alignment: STREAM_ALIGNMENT,
     )!;
     mem::copy(span.bytes.ptr, lights.ptr, lights.len * LightGpu::size);
+    return span.address;
+}
+
+fn gpu::GpuAddress? upload_decals(Renderer* renderer, DecalGpu[] decals) @private {
+    if (!decals.len) return (gpu::GpuAddress)0;
+    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan span = slot.upload.take(
+        device: &renderer.device,
+        size: decals.len * DecalGpu::size,
+        alignment: STREAM_ALIGNMENT,
+    )!;
+    mem::copy(span.bytes.ptr, decals.ptr, decals.len * DecalGpu::size);
     return span.address;
 }
 

@@ -266,8 +266,11 @@ fn void test_roots_preserve_light_and_receiver_data() @test {
         ambient: { 0.1f, 0.2f, 0.3f, 0 },
         shadows: (gpu::GpuAddress)8192,
         shadow_count: 3,
+        decals: (gpu::GpuAddress)16384,
+        decal_count: 5,
     );
     assert(frame.lights == (gpu::GpuAddress)4096 && frame.light_count == 2);
+    assert(frame.decals == (gpu::GpuAddress)16384 && frame.decal_count == 5);
     assert(frame.ambient == (Vec4){ 0.1f, 0.2f, 0.3f, 0 });
     assert(frame.shadows == (gpu::GpuAddress)8192 && frame.shadow_count == 3);
     assert(frame.clusters == (gpu::GpuAddress)0 && (frame.flags & shader::FRAME_LIGHTS_CLUSTERED) == 0);
@@ -288,6 +291,7 @@ fn void test_roots_preserve_light_and_receiver_data() @test {
         clusters: (gpu::GpuAddress)12288,
     );
     assert(frame.clusters == (gpu::GpuAddress)12288 && (frame.flags & shader::FRAME_LIGHTS_CLUSTERED) != 0);
+    assert(frame.decals == (gpu::GpuAddress)0 && frame.decal_count == 0);
     assert(frame.lights == (gpu::GpuAddress)4096 && frame.light_count == 2);
     assert(frame.ambient == (Vec4){ 0.1f, 0.2f, 0.3f, 0 });
     assert(frame.shadows == (gpu::GpuAddress)8192 && frame.shadow_count == 3);

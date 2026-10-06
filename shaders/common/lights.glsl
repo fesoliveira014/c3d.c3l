@@ -41,23 +41,14 @@ LightList select_lights(FrameRoot frame, vec3 world_position, float view_depth) 
     if ((frame.flags & FRAME_LIGHTS_CLUSTERED) == 0u || frame.clusters == 0ul) return flat_lights(frame);
 
     ClusterGpu clusters = ClusterGpu(frame.clusters);
-    if (clusters.depth.x >= clusters.depth.y
-        || view_depth < clusters.depth.x || view_depth >= clusters.depth.y) return flat_lights(frame);
+    uint cell;
+    if (!cluster_cell_of(
+        clusters,
+        world_position,
+        view_depth,
+        cell
+    )) return flat_lights(frame);
 
-    vec4 projected = clusters.view_proj * vec4(world_position, 1.0);
-    if (projected.w <= 0.0) return flat_lights(frame);
-
-    vec2 uv = projected.xy / projected.w * vec2(0.5, -0.5) + 0.5;
-    if (any(lessThan(uv, vec2(0.0))) || any(greaterThanEqual(uv, vec2(1.0)))) return flat_lights(frame);
-
-    float slice = floor((clusters.orthographic != 0u ? view_depth : log(view_depth))
-        * clusters.depth.z + clusters.depth.w);
-    if (slice < 0.0 || slice >= float(clusters.depth_slices)) return flat_lights(frame);
-
-    uvec2 tile = uvec2(uv * vec2(clusters.tiles_x, clusters.tiles_y));
-    if (tile.x >= clusters.tiles_x || tile.y >= clusters.tiles_y) return flat_lights(frame);
-
-    uint cell = cluster_index(clusters, uvec3(tile, uint(slice)));
     ClusterRange range = ClusterRanges(clusters.ranges).values[cell];
     if (range.overflow != 0u) return flat_lights(frame);
 

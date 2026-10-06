@@ -294,7 +294,7 @@ struct ClusterRange {
 
 layout(buffer_reference, std430, buffer_reference_align = 4) buffer ClusterCounterGpu {
     uint overflows;
-    uint _pad0;
+    uint decal_overflows;
     uint _pad1;
     uint _pad2;
 };
@@ -314,6 +314,8 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer ClusterGpu 
     uint _pad0;
     uint _pad1;
     mat4 view_proj;
+    uint64_t decal_ranges;
+    uint64_t decal_indices;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer FrameRoot {
@@ -348,6 +350,9 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer FrameRoot {
     uint64_t sky_fog;
     uint64_t reflection_probes;
     vec4 origin;
+    uint64_t decals;
+    uint decal_count;
+    uint _pad3;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer DrawRoot {

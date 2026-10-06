@@ -151,7 +151,7 @@ struct ClusterRange {
 
 root ClusterCounterGpu {
     uint overflows;
-    uint _pad0;
+    uint decal_overflows;
     uint _pad1;
     uint _pad2;
 }
@@ -171,6 +171,8 @@ root ClusterGpu {
     uint _pad0;
     uint _pad1;
     mat4 view_proj;
+    GpuAddress decal_ranges;
+    GpuAddress decal_indices;
 }
 
 root FrameRoot {
@@ -205,6 +207,9 @@ root FrameRoot {
     GpuAddress sky_fog;
     GpuAddress reflection_probes;
     vec4       origin;
+    GpuAddress decals;
+    uint       decal_count;
+    uint       _pad3;
 }
 
 root DrawRoot {

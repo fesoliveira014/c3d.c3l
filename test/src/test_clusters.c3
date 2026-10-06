@@ -5,7 +5,9 @@ import c3d::camera;
 import c3d::light;
 import c3d::maths;
 import c3d::render;
+import c3d::scene;
 import c3d::shader;
+import gpu;
 import std::math;
 
 const float TOLERANCE @local = 0.0001f;
@@ -58,23 +60,35 @@ fn void test_cluster_layout_aligns_regions() @test {
     ClusterLayout layout = render::cluster_layout(desc, 7, { 64, 64, 64 })!!;
     assert(layout.cluster_count == 24 && layout.index_count == 120);
     assert(layout.ranges_offset == 560 && layout.indices_offset == 752);
-    assert(layout.counter_offset == 1232 && layout.size == 1248);
+    assert(layout.decals_offset == 1232 && layout.decal_ranges_offset == 42192);
+    assert(layout.decal_indices_offset == 42384 && layout.decal_index_count == 192);
+    assert(layout.counter_offset == 43152 && layout.size == 43168);
 
     desc = { .tiles_x = 1, .tiles_y = 1, .depth_slices = 1, .lights_per_cluster = 1, .far_distance = 100 };
     ClusterLayout padded = render::cluster_layout(desc, 1, { 64, 64, 64 })!!;
     assert(padded.cluster_count == 1 && padded.index_count == 1);
     assert(padded.ranges_offset == 80 && padded.indices_offset == 96);
-    assert(padded.counter_offset == 112 && padded.size == 128);
+    assert(padded.decals_offset == 112 && padded.decal_ranges_offset == 41072);
+    assert(padded.decal_indices_offset == 41088 && padded.decal_index_count == 8);
+    assert(padded.counter_offset == 41120 && padded.size == 41136);
     ClusterLayout[2] layouts = { layout, padded };
     uint[2] capacities = { 7, 1 };
     foreach (index, region : layouts) {
         assert(region.ranges_offset % render::STREAM_ALIGNMENT == 0);
         assert(region.indices_offset % render::STREAM_ALIGNMENT == 0);
+        assert(region.decals_offset % render::STREAM_ALIGNMENT == 0);
+        assert(region.decal_ranges_offset % render::STREAM_ALIGNMENT == 0);
+        assert(region.decal_indices_offset % render::STREAM_ALIGNMENT == 0);
         assert(region.counter_offset % render::STREAM_ALIGNMENT == 0);
         assert(region.size % render::STREAM_ALIGNMENT == 0);
         assert((usz)capacities[index] * LightGpu::size <= region.ranges_offset);
         assert(region.ranges_offset + (usz)region.cluster_count * ClusterRange::size <= region.indices_offset);
-        assert(region.indices_offset + (usz)region.index_count * uint::size <= region.counter_offset);
+        assert(region.indices_offset + (usz)region.index_count * uint::size <= region.decals_offset);
+        assert(region.decals_offset + (usz)shader::MAX_DECALS * DecalGpu::size <= region.decal_ranges_offset);
+        assert(region.decal_ranges_offset + (usz)region.cluster_count * ClusterRange::size
+          <= region.decal_indices_offset);
+        assert(region.decal_indices_offset + (usz)region.decal_index_count * uint::size <= region.counter_offset);
+        assert(region.decal_index_count == region.cluster_count * shader::MAX_CLUSTER_DECALS);
         assert(region.counter_offset + ClusterCounterGpu::size <= region.size);
     }
 }
@@ -110,9 +124,13 @@ fn void test_cluster_layout_rejects_invalid_numeric_configuration() @test {
             assert(false, "Invalid clustering distance accepted");
         }
     }
-    ClusterDesc[2] overflowing = {
+    ClusterDesc[3] overflowing = {
         { .tiles_x = uint::max, .tiles_y = 2, .depth_slices = 1, .lights_per_cluster = 1, .far_distance = 100 },
         { .tiles_x = 65536, .tiles_y = 1, .depth_slices = 1, .lights_per_cluster = 65536, .far_distance = 100 },
+        {
+            .tiles_x = uint::max / shader::MAX_CLUSTER_DECALS + 1,
+            .tiles_y = 1, .depth_slices = 1, .lights_per_cluster = 1, .far_distance = 100,
+        },
     };
     foreach (desc : overflowing) {
         if (catch excuse = render::cluster_layout(desc, 1, { uint::max, uint::max, uint::max })) {
@@ -277,4 +295,112 @@ fn void test_cluster_cell_rejects_offscreen_and_behind() @test {
     Vec3 aside = CELL_CAMERA_POSITION + fixture.forward * 5 + right * 100;
     ClusterCell offscreen = cell_of(&fixture, aside, view_depth_of(&fixture, aside));
     assert(!offscreen.clustered);
+}
+
+fn void test_decal_cell_planes_contain_center_and_exclude_neighbors() @test {
+    Camera[2] cameras = { camera::perspective_deg(60, 1), camera::orthographic(10, 1, 16) };
+    Transform pose = {
+        .position = CELL_CAMERA_POSITION,
+        .rotation = maths::look_rotation(CELL_CAMERA_FORWARD.normalize(), { 0, 1, 0 }),
+        .scale = { 1, 1, 1 },
+    };
+    ClusterDesc desc = {
+        .tiles_x = 4, .tiles_y = 3, .depth_slices = 4,
+        .lights_per_cluster = 8, .far_distance = 16,
+    };
+    uint[<3>] cell = { 1, 1, 1 };
+    foreach (camera : cameras) {
+        ClusterDepth depth = render::cluster_depth(&camera, desc);
+        CameraMatrices matrices = camera::derive_matrices(camera, pose.to_mat4(), CELL_VIEWPORT);
+        Vec2 slice = render::cluster_slice_bounds(depth, cell.z);
+        float middle = (slice.x + slice.y) * 0.5f;
+        float clip_depth = (-middle * matrices.proj.m22 + matrices.proj.m23)
+          / (-middle * matrices.proj.m32 + matrices.proj.m33);
+        Vec4 homogeneous = matrices.inv_view_proj.apply({
+            2 * ((float)cell.x + 0.5f) / (float)desc.tiles_x - 1,
+            1 - 2 * ((float)cell.y + 0.5f) / (float)desc.tiles_y,
+            clip_depth,
+            1,
+        });
+        Vec3 center = homogeneous.xyz / homogeneous.w;
+        Plane[6] planes = render::cluster_cell_planes(
+            desc: desc,
+            depth: depth,
+            matrices: &matrices,
+            cell: cell,
+        );
+        foreach (plane : planes) assert(plane.normal.dot(center) + plane.d > TOLERANCE);
+        ClusterCell selected = render::cluster_cell(
+            desc: desc,
+            depth: depth,
+            view_proj: matrices.view_proj,
+            world_position: center,
+            view_depth: middle,
+        );
+        assert(selected.clustered && selected.cell == cell);
+        for (uint axis = 0; axis < 3; axis++) {
+            for (int direction = -1; direction <= 1; direction += 2) {
+                uint[<3>] neighbor = cell;
+                neighbor[axis] = (uint)((int)neighbor[axis] + direction);
+                planes = render::cluster_cell_planes(
+                    desc: desc,
+                    depth: depth,
+                    matrices: &matrices,
+                    cell: neighbor,
+                );
+                bool excluded;
+                foreach (plane : planes) {
+                    excluded = excluded || plane.normal.dot(center) + plane.d < -TOLERANCE;
+                }
+                assert(excluded);
+            }
+        }
+    }
+}
+
+fn void test_decal_cell_assignment_keeps_corners_and_rejects_separated_slices() @test {
+    CellFixture fixture = make_cell_fixture();
+    Transform transform = {
+        .position = CELL_CAMERA_POSITION + fixture.forward * 5,
+        .rotation = quaternion::from_euler{float}(0.1f, 0.3f, 0.2f),
+        .scale = { 1, 1, 1 },
+    };
+    Node node = { .world = transform.to_mat4() };
+    Decal decal = scene::default_decal_desc({}).decal;
+    DecalGpu packed = render::pack_decal(&node, &decal, (gpu::GpuAddress)0);
+    float nearest = math::FLOAT_MAX;
+    float farthest;
+    for (uint index = 0; index <= 8; index++) {
+        Vec3 local = index == 8 ? (Vec3){} : (Vec3){
+            index & 1 ? 0.5f : -0.5f,
+            index & 2 ? 0.5f : -0.5f,
+            index & 4 ? 0.5f : -0.5f,
+        };
+        Vec3 world = maths::transform_point(node.world, local);
+        float view_depth = view_depth_of(&fixture, world);
+        nearest = math::min(nearest, view_depth);
+        farthest = math::max(farthest, view_depth);
+        ClusterCell selected = cell_of(&fixture, world, view_depth);
+        assert(selected.clustered);
+        Plane[6] planes = render::cluster_cell_planes(
+            desc: fixture.desc,
+            depth: fixture.depth,
+            matrices: &fixture.matrices,
+            cell: selected.cell,
+        );
+        assert(render::decal_intersects_planes(&packed, planes[..]));
+    }
+    ClusterCell center = cell_of(&fixture, transform.position, 5);
+    for (uint slice = 0; slice < fixture.depth.slices; slice++) {
+        Vec2 bounds = render::cluster_slice_bounds(fixture.depth, slice);
+        if (bounds.y >= nearest - TOLERANCE && bounds.x <= farthest + TOLERANCE) continue;
+        uint[<3>] cell = { center.cell.x, center.cell.y, slice };
+        Plane[6] planes = render::cluster_cell_planes(
+            desc: fixture.desc,
+            depth: fixture.depth,
+            matrices: &fixture.matrices,
+            cell: cell,
+        );
+        assert(!render::decal_intersects_planes(&packed, planes[..]));
+    }
 }
