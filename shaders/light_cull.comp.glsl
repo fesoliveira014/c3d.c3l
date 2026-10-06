@@ -20,9 +20,12 @@ shared uint decal_mask[MAX_DECALS / DECAL_MASK_WORD_BITS];
 
 bool decal_intersects(DecalGpu decal) {
     vec3 center = vec3(decal.local_to_world_0.w, decal.local_to_world_1.w, decal.local_to_world_2.w);
-    vec3 half_edge_x = 0.5 * vec3(decal.local_to_world_0.x, decal.local_to_world_1.x, decal.local_to_world_2.x);
-    vec3 half_edge_y = 0.5 * vec3(decal.local_to_world_0.y, decal.local_to_world_1.y, decal.local_to_world_2.y);
-    vec3 half_edge_z = 0.5 * vec3(decal.local_to_world_0.z, decal.local_to_world_1.z, decal.local_to_world_2.z);
+    vec3 half_edge_x = DECAL_HALF_EXTENT * vec3(
+        decal.local_to_world_0.x, decal.local_to_world_1.x, decal.local_to_world_2.x);
+    vec3 half_edge_y = DECAL_HALF_EXTENT * vec3(
+        decal.local_to_world_0.y, decal.local_to_world_1.y, decal.local_to_world_2.y);
+    vec3 half_edge_z = DECAL_HALF_EXTENT * vec3(
+        decal.local_to_world_0.z, decal.local_to_world_1.z, decal.local_to_world_2.z);
     for (uint plane = 0u; plane < 6u; plane++) {
         vec3 normal = planes[plane].xyz;
         float radius = abs(dot(normal, half_edge_x)) + abs(dot(normal, half_edge_y))

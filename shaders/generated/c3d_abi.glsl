@@ -36,6 +36,7 @@ const uint CLUSTER_GROUP_SIZE = 64u;
 const uint MAX_DECALS = 256u;
 const uint MAX_CLUSTER_DECALS = 8u;
 const float DECAL_FADE_BAND = 0.1;
+const float DECAL_HALF_EXTENT = 0.5;
 const uint INSTANCE_CULL_GROUP_SIZE = 64u;
 const uint INSTANCE_SORT_GROUP_SIZE = 128u;
 const uint INSTANCE_SORT_BLOCK = 1024u;

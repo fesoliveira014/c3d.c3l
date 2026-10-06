@@ -6,6 +6,9 @@ import c3d::shader;
 import gpu;
 import std::math;
 
+$assert shader::MAX_DECALS % 32 == 0
+  : "light_cull.comp.glsl selects decals with complete 32-bit mask words.";
+
 <* Owned allocation containing one view's lighting and cluster lists. *>
 struct ClusterBuffers {
     gpu::GpuAllocation allocation;
