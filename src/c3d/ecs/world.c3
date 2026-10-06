@@ -9,6 +9,11 @@ import c3d::pool;
 typedef Entity = Id;
 
 <*
+ One bit per component type slot.
+*>
+typedef ComponentMask = inline uint128;
+
+<*
  Called with the departing component before its storage is reused.
 *>
 alias RemoveFn = fn void (Entity entity, void* component, void* user);
@@ -20,12 +25,12 @@ alias ErasedDestroy @local = fn void (void* store);
 <*
  Entity pool whose item is the entity's component mask.
 *>
-alias EntityPool = Pool{ulong, Entity};
+alias EntityPool = Pool{ComponentMask, Entity};
 
 <*
  Registered component types one process supports.
 *>
-const uint MAX_COMPONENT_TYPES = 64; // one ulong mask per entity; one and-test per @each2 candidate
+const uint MAX_COMPONENT_TYPES = 128; // a 16 B mask per entity of capacity; queries read each store, never the mask
 
 uint registered_type_count @local;
 
@@ -53,7 +58,7 @@ fn bool World.is_alive(&self, Entity entity) {
  Component bits of the entity, one per registered type slot.
  @require self.is_alive(entity)
 *>
-fn ulong World.mask(&self, Entity entity) {
+fn ComponentMask World.mask(&self, Entity entity) {
     return self.entities.items[entity.index];
 }
 
@@ -61,7 +66,7 @@ fn ulong World.mask(&self, Entity entity) {
  Short-lived address of the component in a type slot.
  Invalidated by a remove on the same store.
  @require self.is_alive(entity), slot < MAX_COMPONENT_TYPES
- @require (self.mask(entity) & (1ul << slot)) != 0
+ @require (self.mask(entity) & slot_bit(slot)) != 0
 *>
 fn void* World.component(&self, Entity entity, uint slot) {
     return self.getters[slot](self.stores[slot], entity);
@@ -72,7 +77,7 @@ fn void* World.component(&self, Entity entity, uint slot) {
  @return? c3d::CAPACITY_EXCEEDED
 *>
 fn Entity? World.create_entity(&self) {
-    return self.entities.add(0);
+    return self.entities.add((ComponentMask)0);
 }
 
 <*
@@ -122,8 +127,8 @@ macro World.add(&self, Entity entity, value) {
  @require self.is_alive(entity)
 *>
 macro World.get(&self, Entity entity, $Type) {
-    if (!self.has(entity, $Type)) return ($Type*)null;
-    return store_of(self, $Type).get(entity);
+    if (!self.is_registered($Type)) return ($Type*)null;
+    return store_of(self, $Type).find(entity);
 }
 
 <*
@@ -131,7 +136,7 @@ macro World.get(&self, Entity entity, $Type) {
  @require self.is_alive(entity)
 *>
 macro bool World.has(&self, Entity entity, $Type) {
-    return store::slot{$Type} != 0 && (self.entities.items[entity.index] & bit_of($Type)) != 0;
+    return self.get(entity, $Type) != null;
 }
 
 <*
@@ -185,22 +190,32 @@ macro World.@each2(&self, $TypeA, $TypeB; @body(entity, a, b)) {
         store::ComponentStore{$TypeA}* store_a = store_of(self, $TypeA);
         store::ComponentStore{$TypeB}* store_b = store_of(self, $TypeB);
         if (store_a.count <= store_b.count) {
-            ulong bit = bit_of($TypeB);
             for (uint position = 0; position < store_a.count; position++) {
                 Entity entity = store_a.owners[position];
-                if (self.entities.items[entity.index] & bit) {
-                    @body(entity, &store_a.dense[position], store_b.get(entity));
-                }
+                $TypeB* component_b = store_b.find(entity);
+                if (component_b) @body(entity, &store_a.dense[position], component_b);
             }
         } else {
-            ulong bit = bit_of($TypeA);
             for (uint position = 0; position < store_b.count; position++) {
                 Entity entity = store_b.owners[position];
-                if (self.entities.items[entity.index] & bit) {
-                    @body(entity, store_a.get(entity), &store_b.dense[position]);
-                }
+                $TypeA* component_a = store_a.find(entity);
+                if (component_a) @body(entity, component_a, &store_b.dense[position]);
             }
         }
+    }
+}
+
+<*
+ Visit the slot of each component on the entity, in ascending order.
+ Walks a copy taken at entry; the body may remove only the visited component.
+ @require self.is_alive(entity)
+*>
+macro World.@each_slot(&self, Entity entity; @body(slot)) {
+    ComponentMask remaining = self.entities.items[entity.index];
+    while (remaining) {
+        uint slot = (uint)remaining.ctz();
+        remaining &= remaining - 1;
+        @body(slot);
     }
 }
 
@@ -212,9 +227,15 @@ fn World create_world(Allocator allocator, uint capacity) {
     return {
         .allocator = allocator,
         .capacity  = capacity,
-        .entities  = pool::create_pool{ulong, Entity}(allocator, capacity),
+        .entities  = pool::create_pool{ComponentMask, Entity}(allocator, capacity),
     };
 }
+
+<*
+ Mask bit of a component type slot.
+ @require slot < MAX_COMPONENT_TYPES
+*>
+macro ComponentMask slot_bit(uint slot) => (ComponentMask)1 << slot;
 
 <*
  Query a component slot without assigning one.
@@ -251,24 +272,21 @@ fn void destroy_world(World* world) {
     foreach (slot, store : world.stores) {
         if (store) world.destroyers[slot](store);
     }
-    pool::destroy_pool{ulong, Entity}(&world.entities);
+    pool::destroy_pool{ComponentMask, Entity}(&world.entities);
     *world = {};
 }
 
 fn void remove_all(World* world, Entity entity) @local {
-    ulong mask = world.entities.items[entity.index];
-    while (mask) {
-        uint slot = (uint)mask.ctz();
+    world.@each_slot(entity; uint slot) {
         world.removers[slot](world.stores[slot], entity);
-        mask &= mask - 1;
-    }
-    world.entities.items[entity.index] = 0;
+        world.entities.items[entity.index] &= ~slot_bit(slot);
+    };
 }
 
 macro store_of(World* world, $Type) @local {
     return (store::ComponentStore{$Type}*)world.stores[store::slot{$Type} - 1];
 }
 
-macro ulong bit_of($Type) @local {
-    return 1ul << (store::slot{$Type} - 1);
+macro ComponentMask bit_of($Type) @local {
+    return slot_bit(store::slot{$Type} - 1);
 }
