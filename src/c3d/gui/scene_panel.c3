@@ -1,6 +1,8 @@
 module c3d::gui;
 
 import c3d::ecs;
+import c3d::light;
+import c3d::render;
 import c3d::scene;
 import imgui;
 import std::math;
@@ -37,6 +39,46 @@ fn void scene_panel(Scene* scene, GuiPanelState* state) {
             inspect_components(scene, state.selected);
         }
     };
+}
+
+<*
+ Capture buttons for the Scene panel's selected reflection probe.
+ Call after scene_panel and outside a renderer frame; "Capture new" leaves the previous environment and texture in the store.
+ @param [&inout] renderer : "Not inside a frame."
+ @param [&inout] scene : "The selected probe's environment may be written."
+ @param [&in] state : "Selection of the Scene panel."
+ @return "Whether a capture ran."
+ @return? c3d::render::Renderer.capture_reflection_probe!, c3d::render::Renderer.recapture_reflection_probe!
+ @require !renderer.frame_open
+*>
+fn bool? reflection_capture_buttons(
+    Renderer* renderer,
+    Scene* scene,
+    GuiPanelState* state,
+    ReflectionCaptureDesc desc = render::REFLECTION_CAPTURE_DESC_DEFAULT,
+) {
+    if (!scene.world.is_alive(state.selected)) return false;
+    Node* node = scene.node(state.selected);
+    ReflectionProbe* probe = scene.get(node, ReflectionProbe);
+    if (!probe) return false;
+
+    bool visible = imgui::begin("Scene", null, {});
+    defer imgui::end();
+    if (!visible) return false;
+
+    imgui::separator_text("Reflection capture");
+    bool captured;
+    if (imgui::button("Capture new")) {
+        probe.environment = renderer.capture_reflection_probe(scene, node, desc)!;
+        captured = true;
+    }
+    if (renderer.assets.environments.is_live(probe.environment)) {
+        if (imgui::button("Re-capture")) {
+            renderer.recapture_reflection_probe(scene, node, desc)!;
+            captured = true;
+        }
+    }
+    return captured;
 }
 
 fn void inspect_components(Scene* scene, Entity entity) @local {

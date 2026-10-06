@@ -31,6 +31,7 @@ const float JOINT_AXES_SIZE @local = 0.05f;
 const float IK_TARGET_RADIUS @local = 0.05f; // metres; visible at character scale without hiding the hand
 const float BASIS_PARALLEL_THRESHOLD @local = 0.99f; // a normal this close to Y takes X as its reference
 const float PROBE_MARKER_SCALE @local = 0.1f;        // of the smallest spacing; small enough to keep neighbours apart
+const float REFLECTION_CAPTURE_MARKER @local = 0.1f; // world units; half the length of each capture point line
 
 <*
  Line endpoint with a packed color, red in the low byte.
@@ -227,6 +228,17 @@ fn void DebugDraw.probe_volumes(&self, Scene* scene, uint rgba) {
 }
 
 <*
+ Append each visible reflection probe's oriented box and a cross at its capture point.
+ @param [&in] scene : "Pose as left by the last update_world."
+*>
+fn void DebugDraw.reflection_probes(&self, Scene* scene, uint rgba) {
+    scene.world.@each(ReflectionProbe; entity, probe) {
+        Node* node = scene.node(entity);
+        if (node.visible_effective) reflection_probe_lines(self, node.world, probe, rgba);
+    };
+}
+
+<*
  Append the bone segments and joint axes of every skin binding.
  @param [&in] scene : "Pose as left by the last update_world."
 *>
@@ -312,6 +324,36 @@ fn void probe_volume_lines(DebugDraw* draw, Vec3 center, ProbeVolume* volume, ui
             }
         }
     }
+}
+
+fn void reflection_probe_lines(
+    DebugDraw* draw,
+    Mat4 world,
+    ReflectionProbe* probe,
+    uint rgba,
+) @local {
+    Vec3 axis_x = (Vec3){ world.m00, world.m10, world.m20 }.normalize();
+    Vec3 axis_y = (Vec3){ world.m01, world.m11, world.m21 }.normalize();
+    Vec3 axis_z = (Vec3){ world.m02, world.m12, world.m22 }.normalize();
+    Mat4 placement = matrix::IDENTITY4;
+    placement.m00 = axis_x.x;
+    placement.m10 = axis_x.y;
+    placement.m20 = axis_x.z;
+    placement.m01 = axis_y.x;
+    placement.m11 = axis_y.y;
+    placement.m21 = axis_y.z;
+    placement.m02 = axis_z.x;
+    placement.m12 = axis_z.y;
+    placement.m22 = axis_z.z;
+    Vec3 center = maths::translation(world);
+    placement.m03 = center.x;
+    placement.m13 = center.y;
+    placement.m23 = center.z;
+    draw.box(placement, { .min = -probe.half_extents, .max = probe.half_extents }, rgba);
+    Vec3 capture = maths::transform_point(placement, probe.capture_offset);
+    draw.line(capture - axis_x * REFLECTION_CAPTURE_MARKER, capture + axis_x * REFLECTION_CAPTURE_MARKER, rgba);
+    draw.line(capture - axis_y * REFLECTION_CAPTURE_MARKER, capture + axis_y * REFLECTION_CAPTURE_MARKER, rgba);
+    draw.line(capture - axis_z * REFLECTION_CAPTURE_MARKER, capture + axis_z * REFLECTION_CAPTURE_MARKER, rgba);
 }
 
 fn void box_edges(DebugDraw* draw, Vec3[8] corners, uint rgba) @local {
