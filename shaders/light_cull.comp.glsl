@@ -18,6 +18,7 @@ shared vec4 planes[6];
 shared uint candidate_count;
 shared uint decal_mask[MAX_DECALS / DECAL_MASK_WORD_BITS];
 
+// mirrored as decal_intersects_planes in render/decal.c3
 bool decal_intersects(DecalGpu decal) {
     vec3 center = vec3(decal.local_to_world_0.w, decal.local_to_world_1.w, decal.local_to_world_2.w);
     vec3 half_edge_x = DECAL_HALF_EXTENT * vec3(
@@ -45,6 +46,7 @@ void main() {
         decal_mask[word] = 0u;
     }
     if (lane == 0u) {
+        // mirrored as cluster_cell_planes in render/clusters.c3
         vec2 minimum = vec2(cell.xy) / vec2(clusters.tiles_x, clusters.tiles_y);
         vec2 maximum = vec2(cell.xy + 1u) / vec2(clusters.tiles_x, clusters.tiles_y);
         float left = 2.0 * minimum.x - 1.0;
