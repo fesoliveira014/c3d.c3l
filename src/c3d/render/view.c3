@@ -80,6 +80,12 @@ struct DrawPassState @private {
     bool                    depth_write;
 }
 
+// What a camera-value view renders: a camera and its absolute world matrix.
+struct ViewCamera @private {
+    Camera camera;
+    Mat4   world;          // absolute; rebased on the frame origin when the view records
+}
+
 <*
  Render one frame of the scene from the camera to the window.
  Material, environment and source descriptions remain stable for the call.
@@ -140,18 +146,40 @@ fn void? Renderer.render_view(
     ViewRecord* record = self.views.try_get(view)!;
     if (record.desc.output == ViewOutput.WINDOW && !self.has_output) return;
     defer catch abort_frame(self);
-    begin_material_scope(self);
-    defer end_material_scope(self);
+    Camera* camera = scene.get(camera_node, Camera);
+    if (!camera) return c3d::INVALID_ARGUMENT~;
+    ViewCamera view_camera = { .camera = *camera, .world = camera_node.world };
+    return record_camera_view(
+        renderer:    self,
+        scene:       scene,
+        view_camera: &view_camera,
+        view:        view,
+        debug:       debug,
+    );
+}
+
+<*
+ @require renderer.frame_open, !renderer.overlay_open, renderer.views.is_live(view)
+*>
+fn void? record_camera_view(
+    Renderer* renderer,
+    Scene* scene,
+    ViewCamera* view_camera,
+    ViewId view,
+    DebugDraw* debug,
+) @private {
+    ViewRecord* record = renderer.views.get(view);
+    begin_material_scope(renderer);
+    defer end_material_scope(renderer);
     instrumentation::@scope("renderer.render_view") {
-        begin_profile_view(self, view, "view.render")!;
-        Camera* camera = scene.get(camera_node, Camera);
-        if (!camera) return c3d::INVALID_ARGUMENT~;
+        begin_profile_view(renderer, view, "view.render")!;
+        Camera* camera = &view_camera.camera;
         record.exposure = camera.exposure;
 
         Vec2 viewport = { (float)record.hdr_color.width, (float)record.hdr_color.height };
         CameraMatrices matrices = camera::derive_matrices(
             camera: *camera,
-            camera_world: maths::rebase(camera_node.world, self.frame_origin),
+            camera_world: maths::rebase(view_camera.world, renderer.frame_origin),
             viewport: viewport,
         );
         record.projection_terms = {
@@ -164,27 +192,27 @@ fn void? Renderer.render_view(
             case FORWARD:
             case DEFERRED:
                 record_raster_view(
-                    renderer: self,
-                    view:     view,
-                    record:   record,
-                    scene:    scene,
-                    camera:   camera,
-                    matrices: &matrices,
-                    debug:    debug,
+                    renderer:    renderer,
+                    view:        view,
+                    record:      record,
+                    scene:       scene,
+                    view_camera: view_camera,
+                    matrices:    &matrices,
+                    debug:       debug,
                 )!;
             case PATH_TRACED:
                 record_path_traced_view(
-                    renderer: self,
+                    renderer: renderer,
                     record:   record,
                     scene:    scene,
                     camera:   camera,
                     matrices: &matrices,
                 )!;
         }
-        post::close_post_chain(self, record)!;
-        end_profile_view(self)!;
-        self.frame_recorded = true;
-        self.work_recorded = true;
+        post::close_post_chain(renderer, record)!;
+        end_profile_view(renderer)!;
+        renderer.frame_recorded = true;
+        renderer.work_recorded = true;
         record.rendered = true;
     };
 }
@@ -197,10 +225,11 @@ fn void? record_raster_view(
     ViewId view,
     ViewRecord* record,
     Scene* scene,
-    Camera* camera,
+    ViewCamera* view_camera,
     CameraMatrices* matrices,
     DebugDraw* debug,
 ) @private {
+    Camera* camera = &view_camera.camera;
     Vec2 viewport = { (float)record.hdr_color.width, (float)record.hdr_color.height };
     bool taa = record.desc.post.anti_aliasing == AntiAliasing.TAA;
     bool screen_space_gi = record.desc.screen_space_gi.enabled;
