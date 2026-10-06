@@ -165,8 +165,7 @@ root FrameRoot {
     uint       _pad2;
     vec4       clip_plane;
     GpuAddress sky_fog;
-    uint       _pad3;
-    uint       _pad4;
+    GpuAddress reflection_probes;
     vec4       origin;
 }
 
@@ -779,6 +778,30 @@ root ProbeVolumeSetGpu {
     uint              _pad1;
     uint              _pad2;
     ProbeVolumeGpu[8] volumes;
+}
+
+const uint REFLECTION_PROBE_CAPACITY = 16;
+const uint REFLECTION_PROJECTION_BOX = 0;
+const uint REFLECTION_PROJECTION_INFINITE = 1;
+
+struct ReflectionProbeGpu {
+    vec4         center_intensity;
+    vec4         axis_x_extent;
+    vec4         axis_y_extent;
+    vec4         axis_z_extent;
+    vec4         capture_blend;
+    TextureIndex specular_cube;
+    TextureIndex sheen_cube;
+    uint         projection;
+    uint         _pad0;
+}
+
+root ReflectionProbeSetGpu {
+    uint                   count;
+    TextureIndex           brdf_lut;
+    SamplerIndex           sampler_index;
+    uint                   _pad0;
+    ReflectionProbeGpu[16] probes;
 }
 
 root ProbeFillRoot {

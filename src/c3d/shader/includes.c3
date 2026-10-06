@@ -38,6 +38,7 @@ const char[*] C3D_COMMON_PATH_TRACE_TEXT @private = $embed("../../../shaders/com
 const char[*] C3D_COMMON_PHYSICAL_TEXT @private = $embed("../../../shaders/common/physical.glsl");
 const char[*] C3D_COMMON_PROBE_ATLAS_TEXT @private = $embed("../../../shaders/common/probe_atlas.glsl");
 const char[*] C3D_COMMON_PROBE_VOLUME_TEXT @private = $embed("../../../shaders/common/probe_volume.glsl");
+const char[*] C3D_COMMON_REFLECTION_PROBE_TEXT @private = $embed("../../../shaders/common/reflection_probe.glsl");
 const char[*] C3D_COMMON_SAMPLING_TEXT @private = $embed("../../../shaders/common/sampling.glsl");
 const char[*] C3D_COMMON_SCENE_SNAPSHOT_TEXT @private = $embed("../../../shaders/common/scene_snapshot.glsl");
 const char[*] C3D_COMMON_SCENE_TRACE_TEXT @private = $embed("../../../shaders/common/scene_trace.glsl");
@@ -62,7 +63,7 @@ const char[*] GPU_RAY_TRACING_TEXT @private = $embed("../../../shaders/gpu/ray_t
 <*
  Every include a custom stage may resolve, in table order.
 *>
-const asset::ShaderInclude[55] SHADER_INCLUDES = {
+const asset::ShaderInclude[56] SHADER_INCLUDES = {
     { .name = "c3d_abi.glsl", .text = (String)C3D_GENERATED_C3D_ABI_TEXT[..] },
     { .name = "ambient_occlusion.glsl", .text = (String)C3D_COMMON_AMBIENT_OCCLUSION_TEXT[..] },
     { .name = "ao_estimate.glsl", .text = (String)C3D_COMMON_AO_ESTIMATE_TEXT[..] },
@@ -98,6 +99,7 @@ const asset::ShaderInclude[55] SHADER_INCLUDES = {
     { .name = "physical.glsl", .text = (String)C3D_COMMON_PHYSICAL_TEXT[..] },
     { .name = "probe_atlas.glsl", .text = (String)C3D_COMMON_PROBE_ATLAS_TEXT[..] },
     { .name = "probe_volume.glsl", .text = (String)C3D_COMMON_PROBE_VOLUME_TEXT[..] },
+    { .name = "reflection_probe.glsl", .text = (String)C3D_COMMON_REFLECTION_PROBE_TEXT[..] },
     { .name = "sampling.glsl", .text = (String)C3D_COMMON_SAMPLING_TEXT[..] },
     { .name = "scene_snapshot.glsl", .text = (String)C3D_COMMON_SCENE_SNAPSHOT_TEXT[..] },
     { .name = "scene_trace.glsl", .text = (String)C3D_COMMON_SCENE_TRACE_TEXT[..] },

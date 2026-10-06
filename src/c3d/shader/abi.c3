@@ -112,6 +112,9 @@ const uint PROBE_VISIBILITY_CELL = 16;
 const uint PROBE_ATLAS_COLUMNS = 256;
 const uint PROBE_ATLAS_IRRADIANCE = 0;
 const uint PROBE_ATLAS_VISIBILITY = 1;
+const uint REFLECTION_PROBE_CAPACITY = 16;
+const uint REFLECTION_PROJECTION_BOX = 0;
+const uint REFLECTION_PROJECTION_INFINITE = 1;
 const uint SKY_FOG_ATMOSPHERE = 1;
 const uint SKY_FOG_HEIGHT_FOG = 2;
 const uint SKY_TRANSMITTANCE_WIDTH = 256;
@@ -381,8 +384,7 @@ struct FrameRoot {
     uint         _pad2;
     Vec4f        clip_plane;
     GpuAddress   sky_fog;
-    uint         _pad3;
-    uint         _pad4;
+    GpuAddress   reflection_probes;
     Vec4f        origin;
 }
 $assert FrameRoot::size == 528;
@@ -415,8 +417,7 @@ $assert $reflect(FrameRoot.previous_time).offset == 472;
 $assert $reflect(FrameRoot._pad2).offset == 476;
 $assert $reflect(FrameRoot.clip_plane).offset == 480;
 $assert $reflect(FrameRoot.sky_fog).offset == 496;
-$assert $reflect(FrameRoot._pad3).offset == 504;
-$assert $reflect(FrameRoot._pad4).offset == 508;
+$assert $reflect(FrameRoot.reflection_probes).offset == 504;
 $assert $reflect(FrameRoot.origin).offset == 512;
 
 struct DrawRoot {
@@ -1346,6 +1347,42 @@ $assert $reflect(ProbeVolumeSetGpu._pad0).offset == 4;
 $assert $reflect(ProbeVolumeSetGpu._pad1).offset == 8;
 $assert $reflect(ProbeVolumeSetGpu._pad2).offset == 12;
 $assert $reflect(ProbeVolumeSetGpu.volumes).offset == 16;
+
+struct ReflectionProbeGpu {
+    Vec4f        center_intensity;
+    Vec4f        axis_x_extent;
+    Vec4f        axis_y_extent;
+    Vec4f        axis_z_extent;
+    Vec4f        capture_blend;
+    TextureIndex specular_cube;
+    TextureIndex sheen_cube;
+    uint         projection;
+    uint         _pad0;
+}
+$assert ReflectionProbeGpu::size == 96;
+$assert $reflect(ReflectionProbeGpu.center_intensity).offset == 0;
+$assert $reflect(ReflectionProbeGpu.axis_x_extent).offset == 16;
+$assert $reflect(ReflectionProbeGpu.axis_y_extent).offset == 32;
+$assert $reflect(ReflectionProbeGpu.axis_z_extent).offset == 48;
+$assert $reflect(ReflectionProbeGpu.capture_blend).offset == 64;
+$assert $reflect(ReflectionProbeGpu.specular_cube).offset == 80;
+$assert $reflect(ReflectionProbeGpu.sheen_cube).offset == 84;
+$assert $reflect(ReflectionProbeGpu.projection).offset == 88;
+$assert $reflect(ReflectionProbeGpu._pad0).offset == 92;
+
+struct ReflectionProbeSetGpu {
+    uint                   count;
+    TextureIndex           brdf_lut;
+    SamplerIndex           sampler_index;
+    uint                   _pad0;
+    ReflectionProbeGpu[16] probes;
+}
+$assert ReflectionProbeSetGpu::size == 1552;
+$assert $reflect(ReflectionProbeSetGpu.count).offset == 0;
+$assert $reflect(ReflectionProbeSetGpu.brdf_lut).offset == 4;
+$assert $reflect(ReflectionProbeSetGpu.sampler_index).offset == 8;
+$assert $reflect(ReflectionProbeSetGpu._pad0).offset == 12;
+$assert $reflect(ReflectionProbeSetGpu.probes).offset == 16;
 
 struct ProbeFillRoot {
     GpuAddress   environment;

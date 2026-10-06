@@ -84,6 +84,7 @@ struct DrawPassState @private {
 struct ViewCamera @private {
     Camera camera;
     Mat4   world;          // absolute; rebased on the frame origin when the view records
+    Entity excluded_probe; // the reflection probe being captured; never selected
 }
 
 <*
@@ -418,12 +419,21 @@ fn void? record_raster_view(
             depth_axis: view_depth_axis(matrices.view),
         );
         ViewEnvironments environments;
+        ReflectionCandidate[shader::REFLECTION_PROBE_CAPACITY] reflection_picks;
+        usz reflection_count;
         FogSelection fog;
         bool fog_pass;
         bool fog_volume;
         SceneReads view_reads;
         instrumentation::@scope("view.uploads") {
             environments = resolve_view_environments(renderer, scene, sheen)!;
+            reflection_count = select_view_reflection_probes(
+                renderer:    renderer,
+                scene:       scene,
+                view_camera: view_camera,
+                sheen:       sheen,
+                picks:       &reflection_picks,
+            )!;
             fog = select_height_fog(scene, camera.layers);
             renderer.stats.fogs_ignored += fog.ignored;
             fog_pass = environments.atmosphere || fog.fog;
@@ -538,6 +548,11 @@ fn void? record_raster_view(
             Vec3 ambient = environments.lighting && !scene.ambient_add
               ? (Vec3){} : scene.ambient_color * scene.ambient_intensity;
             gpu::GpuAddress probe_volumes = pack_probe_volumes(renderer, scene, camera.layers)!;
+            gpu::GpuAddress reflection_probes = pack_reflection_probes(
+                renderer,
+                reflection_picks[:reflection_count],
+                sheen,
+            )!;
             frame_span = slot.upload.take(&renderer.device, FrameRoot::size, STREAM_ALIGNMENT)!;
             write_frame_root(
                 root:        (FrameRoot*)frame_span.bytes.ptr,
@@ -564,6 +579,7 @@ fn void? record_raster_view(
                 mip_bias: taa ? record.desc.post.taa_params.mip_bias : 0,
                 ao_texture: ambient_occlusion ? record.ao.view.index : (gpu::TextureIndex)0,
                 probe_volumes: probe_volumes,
+                reflection_probes: reflection_probes,
                 ssgi_texture: screen_space_gi ? record.ssgi.view.index : (gpu::TextureIndex)0,
                 clip_plane: maths::rebase_plane(record.desc.clip_plane, renderer.frame_origin),
                 origin: renderer.frame_origin,
@@ -897,7 +913,7 @@ fn void? Renderer.render_to(
 }
 
 <*
- Prepare the scene's referenced assets and pipelines, then wait.
+ Prepare the scene's referenced assets, reflection probe environments and pipelines, then wait.
  Material, environment and source descriptions remain stable for the call.
  @param [&inout] self : "Completes preparation outside an open frame."
  @param [&in] scene : "Read only."
@@ -1005,6 +1021,7 @@ fn void? Renderer.prepare_scene(&self, Scene* scene) {
         };
         prepare_finish(self, scene_reads)!;
         (void)resolve_view_environments(self, scene, sheen)!;
+        prepare_reflection_probes(self, scene, sheen)!;
         if (!has_environment_preparations(self) && !self.pending_copies.len()
             && !self.pending_texture_uploads.len() && !self.pending_upload_retire.len()) return;
         submit_pending(self)!;
@@ -1210,6 +1227,7 @@ fn bool velocity_before_lighting(ViewDesc* desc) @private {
  @param mip_bias : "Added to material texture level of detail."
  @param ao_texture : "AO sampled view; zero when the view has none."
  @param probe_volumes : "ProbeVolumeSetGpu of the view; zero when no volume applies."
+ @param reflection_probes : "ReflectionProbeSetGpu of the view; zero when no probe applies."
  @param ssgi_texture : "Screen-space GI sampled view; zero when the view has none."
  @param clip_plane : "Relative plane whose positive side stays; zero clips nothing."
  @param origin : "Absolute origin of the supplied matrices and positions."
@@ -1239,6 +1257,7 @@ fn void write_frame_root(
     float mip_bias = 0,
     gpu::TextureIndex ao_texture = (gpu::TextureIndex)0,
     gpu::GpuAddress probe_volumes = (gpu::GpuAddress)0,
+    gpu::GpuAddress reflection_probes = (gpu::GpuAddress)0,
     gpu::TextureIndex ssgi_texture = (gpu::TextureIndex)0,
     Plane clip_plane = {},
     Vec3 origin = {},
@@ -1271,6 +1290,7 @@ fn void write_frame_root(
         .mip_bias        = mip_bias,
         .ao_texture      = ao_texture,
         .probe_volumes   = probe_volumes,
+        .reflection_probes = reflection_probes,
         .ssgi_texture    = ssgi_texture,
         .scene_depth     = scene_depth,
         .previous_time   = (float)(previous_time ? *previous_time : info.time),

@@ -253,6 +253,7 @@ void main() {
     surface.attenuation_color = material.attenuation_color_distance.rgb;
     surface.attenuation_distance = material.attenuation_color_distance.w;
     surface.transmission_ray = vec3(0.0);
+    ReflectionSelection reflections = reflection_probe_select(frame, v_world_pos);
     vec3 transmitted = vec3(0.0);
     if (transmission > 0.0) {
         vec3 refracted = refract(-material_sample.view_direction, material_sample.normal, 1.0 / material.ior);
@@ -260,6 +261,7 @@ void main() {
         vec3 radiance = volume_attenuation(
             transmitted_radiance(
                 frame,
+                reflections,
                 v_world_pos,
                 surface.transmission_ray,
                 refracted,
@@ -294,6 +296,7 @@ void main() {
     if (frame_has_indirect(frame)) {
         color += evaluate_physical_environment(
             frame,
+            reflections,
             v_world_pos,
             surface,
             material_sample.roughness,

@@ -7,6 +7,7 @@
 #include "ambient_occlusion.glsl"
 #include "probe_volume.glsl"
 #include "screen_space_gi.glsl"
+#include "reflection_probe.glsl"
 
 vec3 environment_rotate(EnvironmentRotationGpu rotation, vec3 direction) {
     return vec3(
@@ -60,7 +61,8 @@ vec3 trace_miss_radiance(FrameRoot frame, vec3 direction) {
 }
 
 bool frame_has_indirect(FrameRoot frame) {
-    return frame.environment != 0ul || frame.probe_volumes != 0ul || (frame.flags & FRAME_SSGI_PRESENT) != 0u;
+    return frame.environment != 0ul || frame.probe_volumes != 0ul || frame.reflection_probes != 0ul
+        || (frame.flags & FRAME_SSGI_PRESENT) != 0u;
 }
 
 // Irradiance E from the first probe volume containing the position, else the environment SH, else zero.
@@ -78,9 +80,54 @@ vec3 indirect_diffuse_irradiance(FrameRoot frame, vec3 position, vec3 normal, ve
         * environment.intensity;
 }
 
+// The split-sum table and filtered sampler are renderer-wide; a frame without an environment carries them in its
+// probe set. Read only when the frame has one or the other.
+void environment_tables(FrameRoot frame, out uint brdf_lut, out uint sampler_index) {
+    if (frame.environment != 0ul) {
+        EnvironmentGpu environment = EnvironmentGpu(frame.environment);
+        brdf_lut = environment.brdf_lut;
+        sampler_index = environment.sampler_index;
+        return;
+    }
+    ReflectionProbeSetGpu set = ReflectionProbeSetGpu(frame.reflection_probes);
+    brdf_lut = set.brdf_lut;
+    sampler_index = set.sampler_index;
+}
+
+// Prefiltered radiance along a world direction: the selected probes and the global environment by their shares.
+vec3 environment_lobe_radiance(
+    FrameRoot frame,
+    ReflectionSelection selection,
+    vec3 direction,
+    float lod,
+    uint cube
+) {
+    vec3 radiance = vec3(0.0);
+    if (selection.global_weight > 0.0 && frame.environment != 0ul) {
+        EnvironmentGpu environment = EnvironmentGpu(frame.environment);
+        radiance = sample_texture_cube_lod(
+            cube == ENVIRONMENT_CHARLIE_CUBE ? environment.sheen_cube : environment.specular_cube,
+            environment.sampler_index,
+            environment_rotate(environment.rotation, direction),
+            lod
+        ).rgb * (environment.intensity * selection.global_weight);
+    }
+    if (selection.count == 0u) return radiance;
+
+    ReflectionProbeSetGpu set = ReflectionProbeSetGpu(frame.reflection_probes);
+    radiance += reflection_probe_radiance(set, selection.first, selection.first_position, direction, lod, cube)
+        * selection.first_weight;
+    if (selection.count == 2u) {
+        radiance += reflection_probe_radiance(set, selection.second, selection.second_position, direction, lod, cube)
+            * selection.second_weight;
+    }
+    return radiance;
+}
+
 // screen_indirect: the pixel's premultiplied screen-space bounce and hit share, zero where there is none.
 void evaluate_environment_lobes(
     FrameRoot frame,
+    ReflectionSelection selection,
     vec3 world_position,
     StandardSurface surface,
     float roughness,
@@ -96,25 +143,42 @@ void evaluate_environment_lobes(
         + screen_indirect.rgb * occlusion;
     diffuse = irradiance * surface.diffuse_color * (1.0 - fresnel);
     specular = vec3(0.0);
-    if (frame.environment == 0ul) return;
+    if (frame.environment == 0ul && selection.count == 0u) return;
 
-    EnvironmentGpu environment = EnvironmentGpu(frame.environment);
     float perceptual_roughness = max(roughness, MIN_PERCEPTUAL_ROUGHNESS);
-    vec3 reflection = environment_rotate(
-        environment.rotation,
-        reflect(-surface.view_direction, anisotropic_reflection_normal(surface, perceptual_roughness))
-    );
+    vec3 reflection = reflect(-surface.view_direction, anisotropic_reflection_normal(surface, perceptual_roughness));
     float lod = perceptual_roughness * float(ENVIRONMENT_SPECULAR_MIPS - 1u);
-    vec3 prefiltered = sample_texture_cube_lod(
-        environment.specular_cube,
-        environment.sampler_index,
-        reflection,
-        lod
-    ).rgb;
-    specular = prefiltered
-        * environment_brdf_weight(environment.brdf_lut, environment.sampler_index, surface, perceptual_roughness)
-        * environment.intensity
+    uint brdf_lut;
+    uint sampler_index;
+    environment_tables(frame, brdf_lut, sampler_index);
+    specular = environment_lobe_radiance(frame, selection, reflection, lod, ENVIRONMENT_GGX_CUBE)
+        * environment_brdf_weight(brdf_lut, sampler_index, surface, perceptual_roughness)
         * specular_occlusion(surface.normal_view, ambient_occlusion, perceptual_roughness);
+}
+
+void evaluate_environment_lobes(
+    FrameRoot frame,
+    vec3 world_position,
+    StandardSurface surface,
+    float roughness,
+    float occlusion,
+    float ambient_occlusion,
+    vec4 screen_indirect,
+    out vec3 diffuse,
+    out vec3 specular
+) {
+    evaluate_environment_lobes(
+        frame,
+        reflection_probe_select(frame, world_position),
+        world_position,
+        surface,
+        roughness,
+        occlusion,
+        ambient_occlusion,
+        screen_indirect,
+        diffuse,
+        specular
+    );
 }
 
 void evaluate_environment_lobes(

@@ -151,6 +151,7 @@ vec3 evaluate_physical_light(
 
 vec3 evaluate_physical_environment(
     FrameRoot frame,
+    ReflectionSelection selection,
     vec3 world_position,
     PhysicalSurface surface,
     float base_roughness,
@@ -162,6 +163,7 @@ vec3 evaluate_physical_environment(
     vec3 specular;
     evaluate_environment_lobes(
         frame,
+        selection,
         world_position,
         surface.standard,
         base_roughness,
@@ -175,25 +177,15 @@ vec3 evaluate_physical_environment(
     if (surface.coat_weight == 0.0 && surface.sheen_strength == 0.0) return standard;
 
     standard *= physical_sheen_attenuation(surface);
-    if (frame.environment == 0ul) return (1.0 - surface.coat_weight) * standard;
+    if (frame.environment == 0ul && selection.count == 0u) return (1.0 - surface.coat_weight) * standard;
 
-    EnvironmentGpu environment = EnvironmentGpu(frame.environment);
     vec3 sheen = vec3(0.0);
     if (surface.sheen_strength != 0.0) {
-        vec3 reflection = environment_rotate(
-            environment.rotation,
-            reflect(-surface.standard.view_direction, surface.standard.normal)
-        );
         float perceptual = max(surface.sheen_roughness, MIN_PERCEPTUAL_ROUGHNESS);
         float lod = perceptual * float(ENVIRONMENT_SPECULAR_MIPS - 1u);
-        vec3 prefiltered = sample_texture_cube_lod(
-            environment.sheen_cube,
-            environment.sampler_index,
-            reflection,
-            lod
-        ).rgb;
-        sheen = prefiltered * surface.sheen_color * surface.sheen_view_albedo
-            * environment.intensity
+        vec3 reflection = reflect(-surface.standard.view_direction, surface.standard.normal);
+        sheen = environment_lobe_radiance(frame, selection, reflection, lod, ENVIRONMENT_CHARLIE_CUBE)
+            * surface.sheen_color * surface.sheen_view_albedo
             * specular_occlusion(surface.standard.normal_view, ambient_occlusion, perceptual);
     }
 
@@ -204,24 +196,15 @@ vec3 evaluate_physical_environment(
             0.0,
             1.0
         );
-        vec3 reflection = environment_rotate(
-            environment.rotation,
-            reflect(-surface.standard.view_direction, surface.coat_normal)
-        );
         float perceptual = max(surface.coat_roughness, MIN_PERCEPTUAL_ROUGHNESS);
         float lod = perceptual * float(ENVIRONMENT_SPECULAR_MIPS - 1u);
-        vec3 prefiltered = sample_texture_cube_lod(
-            environment.specular_cube,
-            environment.sampler_index,
-            reflection,
-            lod
-        ).rgb;
-        vec2 response = sample_texture_2d(
-            environment.brdf_lut,
-            environment.sampler_index,
-            vec2(normal_view, perceptual)
-        ).rg;
-        coat = prefiltered * (response.x + response.y) * environment.intensity
+        uint brdf_lut;
+        uint sampler_index;
+        environment_tables(frame, brdf_lut, sampler_index);
+        vec2 response = sample_texture_2d(brdf_lut, sampler_index, vec2(normal_view, perceptual)).rg;
+        vec3 reflection = reflect(-surface.standard.view_direction, surface.coat_normal);
+        coat = environment_lobe_radiance(frame, selection, reflection, lod, ENVIRONMENT_GGX_CUBE)
+            * (response.x + response.y)
             * specular_occlusion(normal_view, ambient_occlusion, perceptual);
     }
     return (1.0 - surface.coat_weight) * (standard + sheen)
@@ -230,6 +213,7 @@ vec3 evaluate_physical_environment(
 
 vec3 evaluate_physical_environment(
     FrameRoot frame,
+    ReflectionSelection selection,
     vec3 world_position,
     PhysicalSurface surface,
     float base_roughness,
@@ -238,6 +222,7 @@ vec3 evaluate_physical_environment(
 ) {
     return evaluate_physical_environment(
         frame,
+        selection,
         world_position,
         surface,
         base_roughness,
