@@ -28,8 +28,9 @@ view with ambient occlusion does.
 ## How it works
 
 Every frame, at half resolution, each texel casts `rays` cosine-distributed rays about its normal (the
-G-buffer normal on deferred views, reconstructed from depth on forward views) and marches them against the
-current depth. A hit reads the previous frame's lit colour at the hit's previous screen position (through
+G-buffer normal on deferred views, rebuilt from depth on forward views as for the deferred
+[normal offset](shadows.md#normal-offset)) and marches them against the current depth. A hit reads the
+previous frame's lit colour at the hit's previous screen position (through
 the view's velocity) when the previous depth stored there matches the depth the velocity expects. The
 texel stores the premultiplied bounce `PI x sum of hit radiance / rays` and the hit share `hits / rays`. A
 temporal pass blends this with the texel's reprojected history (rejected on a depth mismatch or fast
@@ -100,13 +101,14 @@ Measured on an RTX 4090 over Sponza (`gltf_viewer --benchmark --screen-space-gi 
 | Path | Extent | `SCREEN_SPACE_GI` | `SSGI_COLOR_COPY` | `VELOCITY` |
 | --- | --- | --- | --- | --- |
 | deferred | 1920 x 1080 | 0.62 ms | 0.01 ms | 0.01 ms |
-| forward | 1920 x 1080 | 0.76 ms | 0.01 ms | 0.01 ms |
+| forward | 1920 x 1080 | 0.79 ms | 0.01 ms | 0.01 ms |
 | deferred | 3840 x 2160 | 2.44 ms | 0.05 ms | 0.05 ms |
-| forward | 3840 x 2160 | 3.06 ms | 0.05 ms | 0.04 ms |
+| forward | 3840 x 2160 | 3.17 ms | 0.05 ms | 0.04 ms |
 
-Forward views pay more because the filter reconstructs normals from depth. A view without TAA or motion blur
-also pays the velocity pass and the per-candidate history commit: `cpu_record` rose from 0.15 to 0.19 ms at
-1080p on Sponza.
+Forward views pay more because the trace and the filter reconstruct normals from depth. The two-texel face rule
+(up to eight depth loads per normal) costs 4.5 % at 1920 x 1080 and 3.1 % at 3840 x 2160 over the earlier
+four-load rule. A view without TAA or motion blur also pays the velocity pass and the per-candidate history commit:
+`cpu_record` rose from 0.15 to 0.19 ms at 1080p on Sponza.
 
 Noise, read on the acceptance scene (a red emitter on a grey floor, 8-bit red readings of three floor pixels
 beside it over 64 frames at rest, bounces of 6 to 72 levels): a standard deviation of 5.8 to 15.7 levels with

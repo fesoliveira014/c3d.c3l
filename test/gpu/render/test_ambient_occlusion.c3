@@ -27,6 +27,11 @@ const float CREASE_RATIO_MAXIMUM @private = 0.9f;
 const float OPEN_RATIO_MINIMUM @private = 0.97f;
 const int UNOCCLUDED_TOLERANCE @private = 2;
 const int SHADING_PATH_TOLERANCE @private = 3;
+// Straight down: every view ray meets the ground at 46 degrees or steeper.
+const Vec3 BORDER_CAMERA_POSITION @private = { 0, 1.5f, 0 };
+const float BORDER_GROUND_SIZE @private = 100;        // reaches past every edge of the image
+const uint BORDER_TEXEL_COUNT @private = 2 * (AO_TARGET_WIDTH + AO_TARGET_HEIGHT);
+const float BORDER_MIRROR_TOLERANCE @private = 0.01f; // noise leaves 0.001 between mirrored edges
 
 struct CreaseScene @private {
     Scene  scene;
@@ -42,6 +47,15 @@ struct CreaseScene @private {
 struct AoView @private {
     RenderTargetId target;
     ViewId         view;
+}
+
+struct BorderScene @private {
+    Scene              scene;
+    Node*              camera;
+    AoView             ao_view;
+    ComputeShaderId    line_shader;
+    BufferId           output;
+    gpu::MappedGpuSpan readback;
 }
 
 fn CreaseScene? create_crease_scene(Fixture* fixture) @private {
@@ -158,6 +172,118 @@ fn uint? render_and_read(Fixture* fixture, CreaseScene* crease, Vec3 point) @pri
 
 fn int red(uint pixel) @private {
     return (int)(pixel & 0xff);
+}
+
+// Ambient light alone, so a pixel's luminance ratio with and without an effect is the effect's term.
+fn BorderScene? border_create_scene(Fixture* fixture) @private {
+    BorderScene result;
+    result.scene = scene::create_scene(fixture.allocator, scene::default_scene_desc());
+    defer catch scene::destroy_scene(&result.scene);
+    result.scene.ambient_color = { 1, 1, 1 };
+    result.scene.ambient_intensity = 1;
+
+    GeometryId ground;
+    @pool() {
+        Geometry plane = geometry::plane(tmem, BORDER_GROUND_SIZE, BORDER_GROUND_SIZE);
+        ground = fixture.assets.add_geometry(&plane)!;
+    };
+    StandardParams grey = { .base_color = { LIT_ALBEDO, LIT_ALBEDO, LIT_ALBEDO, 1 }, .roughness = 1 };
+    MaterialId surface = fixture.assets.add_material(material::standard(grey))!;
+    result.scene.add_mesh(ground, surface, name: "ground")!;
+    result.camera = result.scene.add_camera(camera::perspective_deg(60, 0.1f), name: "camera")!;
+    result.camera.local.position = BORDER_CAMERA_POSITION;
+    result.camera.local.rotation = maths::look_rotation({ 0, -1, 0 }, { 0, 0, -1 });
+    result.scene.update_world();
+
+    result.ao_view = create_ao_view(fixture, ShadingPath.FORWARD)!;
+    result.line_shader = add_compute_shader(fixture, (String)LINE_SOURCE[..])!;
+    usz bytes = BORDER_TEXEL_COUNT * float::size;
+    result.output = fixture.renderer.create_buffer({ .size = bytes, .debug_name = "border_line" })!;
+    gpu::AllocationDesc readback_desc = {
+        .size = bytes,
+        .alignment = 16,
+        .memory_class = gpu::MemoryClass.CPU_READ,
+        .access = { .graphics },
+        .debug_name = "border_line_readback",
+    };
+    result.readback = gpu::allocate_mapped_memory(&fixture.renderer.device, &readback_desc)!;
+    return result;
+}
+
+fn void border_destroy_scene(Fixture* fixture, BorderScene* border) @private {
+    render::wait_frames(&fixture.renderer)!!;
+    gpu::GpuAllocation allocation = border.readback.span.allocation();
+    gpu::free_allocation(&fixture.renderer.device, &allocation)!!;
+    destroy_ao_view(fixture, &border.ao_view);
+    scene::destroy_scene(&border.scene);
+}
+
+// Top row, bottom row, left column and right column, each from its first texel.
+fn void? border_read_luminance(Fixture* fixture, BorderScene* border, float[] luminance) @private {
+    Renderer* renderer = &fixture.renderer;
+    renderer.begin_frame()!;
+    defer catch render::abort_frame(renderer);
+    renderer.render_view(&border.scene, border.camera, border.ao_view.view)!;
+    Vec2 first = { 0.5f / AO_TARGET_WIDTH, 0.5f / AO_TARGET_HEIGHT };
+    Vec2 last = 1 - first;
+    Vec2 texel_size = first * 2;
+    LineRoot[4] lines = {
+        { .uv_start = first, .uv_step = { texel_size.x, 0 }, .count = AO_TARGET_WIDTH },
+        { .uv_start = { first.x, last.y }, .uv_step = { texel_size.x, 0 }, .count = AO_TARGET_WIDTH },
+        { .uv_start = first, .uv_step = { 0, texel_size.y }, .count = AO_TARGET_HEIGHT },
+        { .uv_start = { last.x, first.y }, .uv_step = { 0, texel_size.y }, .count = AO_TARGET_HEIGHT },
+    };
+    BufferId[1] writes = { border.output };
+    DispatchTexture[1] textures = { render::read_view_color(border.ao_view.view) };
+    ulong offset = (ulong)renderer.buffer_address(border.output);
+    foreach (&line : lines) {
+        line.output_address = (gpu::GpuAddress)offset;
+        offset += (ulong)line.count * float::size;
+        renderer.dispatch({
+            .shader = border.line_shader,
+            .root = ((char*)line)[:LineRoot::size],
+            .groups = { (line.count + LINE_GROUP_SIZE - 1) / LINE_GROUP_SIZE, 1, 1 },
+            .writes = writes[..],
+            .textures = textures[..],
+        })!;
+    }
+    gpu::Barrier copied_writes = { .before = { .all }, .after = { .transfer } };
+    gpu::cmd_barrier(&renderer.commands, &copied_writes)!;
+    gpu::BufferCopyDesc buffer_copy = {
+        .src = gpu::get_allocation_span(&renderer.device, renderer.buffers.get(border.output).allocation)!,
+        .dst = border.readback.span,
+    };
+    gpu::cmd_copy_buffer(&renderer.commands, &buffer_copy)!;
+    gpu::Barrier host_read = { .before = { .transfer }, .after = { .host } };
+    gpu::cmd_barrier(&renderer.commands, &host_read)!;
+    renderer.finish_view(border.ao_view.view)!;
+    renderer.end_frame()!;
+
+    render::wait_frames(renderer)!;
+    gpu::invalidate_mapped_span(&renderer.device, border.readback.span)!;
+    luminance[..] = ((float*)border.readback.bytes.ptr)[:luminance.len];
+}
+
+fn float border_minimum_ratio(float[] without, float[] with) @private {
+    float minimum = float::max;
+    foreach (index, value : with) minimum = math::min(minimum, value / without[index]);
+    return minimum;
+}
+
+fn float[4] border_line_ratios(float[] without, float[] with) @private {
+    usz[5] starts = {
+        0,
+        AO_TARGET_WIDTH,
+        2 * AO_TARGET_WIDTH,
+        2 * AO_TARGET_WIDTH + AO_TARGET_HEIGHT,
+        BORDER_TEXEL_COUNT,
+    };
+    float[4] means;
+    foreach (line, &mean : means) {
+        for (usz index = starts[line]; index < starts[line + 1]; index++) *mean += with[index] / without[index];
+        *mean /= (float)(starts[line + 1] - starts[line]);
+    }
+    return means;
 }
 
 fn void test_ambient_occlusion_images_follow_the_settings() @test {
@@ -306,6 +432,31 @@ fn void test_forward_depth_prepass_matches_the_single_pass() @test {
             int after = (int)((prepassed >> (8 * channel)) & 0xff);
             assert(math::abs(before - after) <= CHANNEL_TOLERANCE);
         }
+    }
+    check_validation(&fixture.renderer);
+}
+
+fn void test_ssao_reads_open_ground_alike_on_opposite_image_borders() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    BorderScene border = border_create_scene(&fixture)!!;
+    defer border_destroy_scene(&fixture, &border);
+
+    float[BORDER_TEXEL_COUNT] without;
+    float[BORDER_TEXEL_COUNT] with;
+    border_read_luminance(&fixture, &border, without[..])!!;
+    bool[2] resolutions = { false, true };
+    foreach (full_resolution : resolutions) {
+        AmbientOcclusionDesc ambient_occlusion = render::AMBIENT_OCCLUSION_DEFAULT;
+        ambient_occlusion.full_resolution = full_resolution;
+        set_ambient_occlusion(&fixture, border.ao_view.view, ambient_occlusion)!!;
+        border_read_luminance(&fixture, &border, with[..])!!;
+        float[4] edge_ratios = border_line_ratios(without[..], with[..]);
+        io::eprintfn("ssao, full resolution %s: top, bottom, left, right %s", full_resolution, edge_ratios);
+        // The view is symmetric about both image axes, so each edge reads like the opposite one.
+        assert(math::abs(edge_ratios[0] - edge_ratios[1]) <= BORDER_MIRROR_TOLERANCE);
+        assert(math::abs(edge_ratios[2] - edge_ratios[3]) <= BORDER_MIRROR_TOLERANCE);
     }
     check_validation(&fixture.renderer);
 }

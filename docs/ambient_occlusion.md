@@ -48,7 +48,8 @@ lighting:
 
 1. The estimate: GTAO (Jimenez et al. 2016), two slice directions per texel with four steps on
    each side, writing `ao_raw` at half or full resolution. Deferred views read the G-buffer
-   normal; forward views reconstruct the normal from depth.
+   normal; forward views rebuild it from depth by the rule of the deferred
+   [normal offset](shadows.md#normal-offset).
 2. A depth-aware blur that also upsamples: every pixel of the working extent weights a 4x4
    neighbourhood of `ao_raw` by a tent and by depth similarity, writing `ao`. Surfaces never pick
    up AO across a silhouette, and consumers read one `ao` texel per pixel.
@@ -75,7 +76,8 @@ render::configure_view(&renderer, renderer.default_view, desc)!;
 - A ray sees what a viewer at its origin would: the front of a single-sided surface, both faces of a
   double-sided one ([facing](scene_trace.md#facing)).
 - Every estimate texel casts `ray_count` cosine-weighted rays over the hemisphere of its normal
-  (G-buffer on deferred views, reconstructed from depth on forward views), each up to `radius`.
+  (G-buffer on deferred views, rebuilt from depth on forward views by the rule of the deferred
+  [normal offset](shadows.md#normal-offset)), each up to `radius`.
   A ray's nearest hit counts with the same distance falloff as the screen-space estimate: fully
   within 0.4 `radius`, fading to nothing at `radius`. The result lands in the same `ao_raw`
   image, so the blur, the receivers and everything under [What it darkens](#what-it-darkens)
