@@ -289,7 +289,7 @@ macro void? Renderer.upload(&self, id) {
  @return? gpu::INVALID_RESOURCE_STATE, gpu::COMMAND_RECORDING_ERROR, gpu::RESOURCE_IN_USE
  @return? gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY, gpu::UNSUPPORTED_FEATURE
  @return? gpu::SURFACE_LOST, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
- @return? gpu::WAIT_TIMEOUT, gpu::SLOT_TABLE_FULL
+ @return? gpu::WAIT_TIMEOUT, gpu::SLOT_TABLE_FULL, gpu::DESCRIPTOR_HEAP_FULL
  @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED
  @require !self.frame_open
  @require math::is_finite(info.time)
@@ -941,18 +941,16 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         destroy_pipeline_cache(&renderer.device, &renderer.pipelines);
         destroy_deformation_cache(&renderer.deformation);
         pool::destroy_pool{TargetRecord, RenderTargetId}(&renderer.targets);
-        foreach (&record : renderer.views.items) {
-            release_view_images(&renderer, record);
-            post::release_view_exposure(&renderer.device, record);
-        }
+        foreach (&record : renderer.views.items) release_view(&renderer, record);
         pool::destroy_pool{ViewRecord, ViewId}(&renderer.views);
         // Preparation updates completion points and may replace copied ring storage.
         frames = renderer.frames;
     }
 
     renderer.default_view = renderer.views.add({ .live = true, .desc = default_view_desc() })!;
-    acquire_view_images(&renderer, renderer.views.get(renderer.default_view))!;
-    post::acquire_view_exposure(&renderer, renderer.views.get(renderer.default_view))!;
+    ViewRecord* default_record = renderer.views.get(renderer.default_view);
+    acquire_view_images(&renderer, default_record, view_output_extent(&renderer, &default_record.desc))!;
+    post::acquire_view_exposure(&renderer, default_record)!;
     prepare_builtin_textures(&renderer)!;
     return renderer;
 }
@@ -992,10 +990,7 @@ fn void destroy_renderer(Renderer* renderer) {
     alloc::free(renderer.allocator, renderer.shadow_set.lights.ptr);
     release_previews(renderer);
     release_cluster_resources(renderer);
-    foreach (&record : renderer.views.items) {
-        release_view_images(renderer, record);
-        post::release_view_exposure(&renderer.device, record);
-    }
+    foreach (&record : renderer.views.items) release_view(renderer, record);
     pool::destroy_pool{ViewRecord, ViewId}(&renderer.views);
     post::destroy_post_pipelines(&renderer.device, &renderer.post_pipelines);
     destroy_ambient_occlusion_pipelines(&renderer.device, &renderer.ambient_occlusion_pipelines);
@@ -1067,15 +1062,21 @@ fn void? recover_window_output(Renderer* renderer) @private {
     }
     if (!renderer.output_width || !renderer.output_height) return;
 
-    gpu::resize_swapchain(
-        device:    &renderer.device,
-        swapchain: renderer.swapchain,
-        width:     renderer.output_width,
-        height:    renderer.output_height,
-    )!;
-    renderer.swapchain_info = gpu::get_swapchain_info(&renderer.device, renderer.swapchain)!;
-    foreach (&record : renderer.views.items) {
-        if (record.live && record.desc.output == ViewOutput.WINDOW) resize_view(renderer, record)!;
+    bool current = renderer.swapchain_info.width == renderer.output_width
+        && renderer.swapchain_info.height == renderer.output_height
+        && !renderer.swapchain_info.dormant;
+    if (!current) {
+        gpu::resize_swapchain(
+            device:    &renderer.device,
+            swapchain: renderer.swapchain,
+            width:     renderer.output_width,
+            height:    renderer.output_height,
+        )!;
+        renderer.swapchain_info = gpu::get_swapchain_info(&renderer.device, renderer.swapchain)!;
+    }
+    if (!renderer.swapchain_info.dormant) {
+        uint[<2>] extent = { renderer.swapchain_info.width, renderer.swapchain_info.height };
+        resize_views(renderer, ViewOutput.WINDOW, extent)!;
     }
     renderer.output_dirty = false;
 }

@@ -56,14 +56,6 @@ fn void? acquire_reflection_images(Renderer* renderer, ViewRecord* record) @priv
     )!;
 }
 
-fn void retire_reflection_images(Renderer* renderer, ViewRecord* record) @private {
-    if (!record.reflection.texture.is_valid()) return;
-
-    RetireList* retire = last_submitted_retire(renderer);
-    retire_storage_target(retire, &record.reflection);
-    retire_storage_target(retire, &record.reflection_blur);
-}
-
 fn void release_reflection_images(gpu::Device* device, ViewRecord* record) @private {
     if (record.reflection.texture.is_valid()) release_storage_target(device, &record.reflection);
     if (record.reflection_blur.texture.is_valid()) release_storage_target(device, &record.reflection_blur);

@@ -28,7 +28,9 @@ defer (void)render::destroy_render_target(&renderer, capture);
 `render_target_desc(width, height, format = RGBA16_FLOAT)` accepts `RGBA16_FLOAT`, `RGBA32_FLOAT`,
 `RGBA8_UNORM` and `RGBA8_SRGB`; other formats fault `UNSUPPORTED`. Every target is a color
 attachment and sampled. `resize_render_target` keeps the id, recreates the image after outstanding
-frames complete, increments the target revision, and resizes every view that writes the target.
+frames complete, increments the target revision, and resizes every view that writes the target. It
+allocates the new image and every view's new images before it releases an old one, so a fault leaves
+the target, its revision and its views as they were.
 `destroy_render_target` faults `RESOURCE_IN_USE` while a live view selects the target: destroy the
 views first. A full pool faults `CAPACITY_EXCEEDED` (`RendererDesc.max_render_targets`, 8 by default; see
 [Capacities](#capacities)). Renderer teardown releases remaining views, then targets.
@@ -93,7 +95,8 @@ reallocates them; every configuration resets the view's history except its
 [adapted exposure](post.md#auto-exposure), which a resize or parameter edit keeps. The history is otherwise keyed
 by scene identity and needs no reset when a scene is replaced (`reset_view_history` remains the camera cut).
 Window resize resizes every window view; target resize resizes every view on that target. A headless renderer's window views
-hold no images and record nothing.
+hold no images and record nothing. `configure_view` and both resizes allocate the new images before they release the old
+ones: a fault leaves every affected view with its configuration, images and history.
 
 ## Light selection
 
@@ -169,7 +172,12 @@ maps and optionally anti-aliases into the output rectangle; `LINEAR_HDR` copies 
 image into the target. Between the two calls a compute dispatch may read the view's depth and read
 or write its scene image (see [custom shaders](custom_shaders.md#views)); `end_frame` faults
 `INVALID_ARGUMENT` when a rendered view was not finished. A window view records nothing while
-the window is dormant (`has_output` false); a texture view always records. `end_frame` records
+the window is dormant (`has_output` false); a texture view always records. When the window output
+changed, `begin_frame` resizes the swapchain and then every window view. If the views' new images
+fault, `begin_frame` returns the fault, the window views keep their previous size, and the next
+`begin_frame` retries; render nothing until a `begin_frame` succeeds. A swapchain rebuilt at a zero
+extent (a minimized window) leaves the window views as they are, so their images stay in memory
+while the window is minimized. `end_frame` records
 pending uploads and environment preparations, then submits when the frame recorded a clear, draw,
 dispatch, upload or preparation, presents only when a window image was acquired, and discards a
 frame that recorded none. Neither call advances animation or flushes scene removals.
@@ -280,9 +288,10 @@ holds none.
 Exhaustion faults come unchanged from gpu.c3l: a full texture table or attachment table faults `gpu::SLOT_TABLE_FULL`,
 a full heap `gpu::DESCRIPTOR_HEAP_FULL`. Creation faults leave no partial resource: `create_view`,
 `create_render_target`, `render_to`, `bake_impostor` and the captures release what they acquired. `render_view` and
-`finish_view` can fault for the images they allocate; the frame aborts like any other fault. A failed
-`resize_render_target` leaves the target live without an image, and a failed `configure_view` can leave the view with
-part of its images; destroy and recreate either.
+`finish_view` can fault for the images they allocate; the frame aborts like any other fault. `resize_render_target`,
+`configure_view` and the window resize in `begin_frame` allocate every new image before they release an old one, so a
+fault changes nothing. They need room for the old and the new images at once: near capacity they fault where releasing
+first would have fit.
 
 To size the four fields, render representative frames until the next reading, at most `TEXTURE_STATS_INTERVAL` frames,
 then read `Stats` and `ViewStats`; `ViewStats.images` is current every frame:
@@ -305,6 +314,11 @@ swapchain images.
 table needs about 2,150 entries, so `texture_capacity = 2560` leaves headroom. A mipmapped or storage asset texture
 can hold several heap slots, so size `texture_heap_capacity` from `Stats.texture_views`, not from the texture count.
 The views need `max_views = 5` and the targets `max_render_targets = 67` or more.
+
+Leave room for the largest single resize on top of that count, in the table, the heap and the attachment table: a target
+plus the images of every view on it for `resize_render_target`, the images of every window view for a window resize,
+or one view's full image set for `configure_view`. In the example the game target and its view take 24 more entries
+and heap slots while they resize, which 2,560 covers.
 
 Per-frame cost grows with `max_render_targets`: `begin_frame` and each view's preparation visit every target slot, and
 `begin_frame` also visits every view slot to snapshot and count its images. On an RTX 4090 an empty frame took a median

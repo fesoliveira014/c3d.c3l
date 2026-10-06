@@ -433,7 +433,7 @@ fn void test_parameter_changes_keep_exposure_history() @test {
 fn void test_resize_keeps_exposure_history() @test {
     ExposureViews views = create_exposure_views();
     defer destroy_exposure_views(&views);
-    render::resize_view(views.renderer, views.renderer.views.get(views.window))!!;
+    render::resize_views(views.renderer, ViewOutput.WINDOW, { 0, 0 })!!;
     assert(kept(history_of(&views, views.window)));
 }
 

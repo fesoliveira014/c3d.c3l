@@ -178,18 +178,6 @@ fn void? acquire_ssgi_images(Renderer* renderer, ViewRecord* record) @private {
     )!;
 }
 
-fn void retire_ssgi_images(Renderer* renderer, ViewRecord* record) @private {
-    if (!record.ssgi.texture.is_valid()) return;
-
-    RetireList* retire = last_submitted_retire(renderer);
-    retire_storage_target(retire, &record.ssgi_raw);
-    foreach (&image : record.ssgi_history) retire_storage_target(retire, image);
-    foreach (&image : record.ssgi_depth) retire_storage_target(retire, image);
-    retire.push({ .kind = RetiredKind.ATTACHMENT_VIEW, .attachment_view = record.ssgi_color.attachment });
-    retire_storage_target(retire, &record.ssgi_color);
-    retire_storage_target(retire, &record.ssgi);
-}
-
 fn void release_ssgi_images(gpu::Device* device, ViewRecord* record) @private {
     if (record.ssgi_raw.texture.is_valid()) release_storage_target(device, &record.ssgi_raw);
     foreach (&image : record.ssgi_history) {
