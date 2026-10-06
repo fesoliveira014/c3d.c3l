@@ -388,7 +388,9 @@ fn void? open_closed_frame_slot(Renderer* renderer) @private {
     if (slot.done.is_valid()) gpu::wait_completion(slot.done)!;
     collect_gpu_profile(renderer, (uint)(renderer.frame_index % FRAMES_IN_FLIGHT))!;
     drain_retired(&renderer.device, &slot.retire);
-    return reset_upload_ring(renderer, slot);
+    reset_upload_ring(renderer, slot)!;
+    // The cache holds the last open frame's palettes, which a closed preparation must not reuse.
+    reset_deformation_cache(&renderer.deformation);
 }
 
 struct TextureReadback @private {
@@ -402,6 +404,7 @@ fn void? submit_pending(Renderer* renderer, TextureReadback* readback = null) @p
     gpu::CommandList commands = gpu::begin_commands(&slot.allocator)!;
     defer catch (void)gpu::discard_commands(&commands);
     record_pending_copies(renderer, &commands)!;
+    record_trace_poses(renderer, &commands)!;
     record_acceleration_builds(renderer, &commands)!;
     if (readback) record_texture_readback(&commands, readback)!;
     slot.upload.flush(&renderer.device)!;

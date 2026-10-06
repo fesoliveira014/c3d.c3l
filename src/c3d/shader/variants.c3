@@ -84,6 +84,8 @@ enum ShaderName : int {
     STANDARD_GBUFFER,
     PHYSICAL_GBUFFER,
     LIGHTING_RESOLVE,
+    TRACE_POSE,
+    TRACE_REFIT,
 }
 
 <*
@@ -261,11 +263,14 @@ const char[*] PHYSICAL_GBUFFER_SPIRV @private = $embed("../../../shaders/spv/phy
 const char[*] LIGHTING_RESOLVE_SPIRV @private = $embed("../../../shaders/spv/lighting_resolve.spv");
 const char[*] LIGHTING_RESOLVE_RT_SHADOWS_SPIRV @private = $embed("../../../shaders/spv/lighting_resolve_rt_shadows.spv");
 const char[*] LIGHTING_RESOLVE_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV @private = $embed("../../../shaders/spv/lighting_resolve_rt_shadows_scene_trace_bvh.spv");
+const char[*] TRACE_POSE_SPIRV @private = $embed("../../../shaders/spv/trace_pose.spv");
+const char[*] TRACE_POSE_SKINNED_U16_SPIRV @private = $embed("../../../shaders/spv/trace_pose_skinned_u16.spv");
+const char[*] TRACE_REFIT_SPIRV @private = $embed("../../../shaders/spv/trace_refit.spv");
 
 <*
  Every compiled stage, in manifest order.
 *>
-const ShaderEntry[130] SHADER_ENTRIES = {
+const ShaderEntry[133] SHADER_ENTRIES = {
     { .variant = { .shader = FULLSCREEN }, .spirv = FULLSCREEN_SPIRV[..] },
     { .variant = { .shader = GRADIENT }, .spirv = GRADIENT_SPIRV[..] },
     { .variant = { .shader = COMPOSITE }, .spirv = COMPOSITE_SPIRV[..] },
@@ -396,4 +401,7 @@ const ShaderEntry[130] SHADER_ENTRIES = {
     { .variant = { .shader = LIGHTING_RESOLVE }, .spirv = LIGHTING_RESOLVE_SPIRV[..] },
     { .variant = { .shader = LIGHTING_RESOLVE, .flags = SHADER_FLAG_RT_SHADOWS }, .spirv = LIGHTING_RESOLVE_RT_SHADOWS_SPIRV[..] },
     { .variant = { .shader = LIGHTING_RESOLVE, .flags = SHADER_FLAG_RT_SHADOWS | SHADER_FLAG_SCENE_TRACE_BVH }, .spirv = LIGHTING_RESOLVE_RT_SHADOWS_SCENE_TRACE_BVH_SPIRV[..] },
+    { .variant = { .shader = TRACE_POSE }, .spirv = TRACE_POSE_SPIRV[..] },
+    { .variant = { .shader = TRACE_POSE, .flags = SHADER_FLAG_SKINNED_U16 }, .spirv = TRACE_POSE_SKINNED_U16_SPIRV[..] },
+    { .variant = { .shader = TRACE_REFIT }, .spirv = TRACE_REFIT_SPIRV[..] },
 };

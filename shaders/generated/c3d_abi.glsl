@@ -25,6 +25,8 @@ const uint TRACE_INSTANCE_ALPHA_MASK = 1u;
 const uint TRACE_INSTANCE_DOUBLE_SIDED = 2u;
 const uint TRACE_MASK_ALL = 1u;
 const uint TRACE_MASK_SHADOW_CASTER = 2u;
+const uint TRACE_POSE_GROUP_SIZE = 64u;
+const uint TRACE_REFIT_GROUP_SIZE = 128u;
 const uint FRAME_LIGHTS_CLUSTERED = 1u;
 const uint FRAME_TRACE_PRESENT = 2u;
 const uint FRAME_AO_PRESENT = 4u;
@@ -249,6 +251,22 @@ layout(buffer_reference, std430, buffer_reference_align = 8) buffer SceneTraceRo
     uint top_node_count;
     uint tlas_index;
     uint _pad1;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer TracePoseRoot {
+    uint64_t source;
+    uint64_t posed;
+    uint64_t palette;
+    uint64_t morph;
+};
+
+layout(buffer_reference, std430, buffer_reference_align = 8) buffer TraceRefitRoot {
+    uint64_t geometry;
+    uint64_t source_nodes;
+    uint64_t nodes;
+    uint64_t primitives;
+    uint64_t depth_starts;
+    uint64_t depth_order;
 };
 
 struct ClusterRange {

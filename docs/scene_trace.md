@@ -23,7 +23,8 @@ A mesh contributes one instance at its node's world matrix. An instanced batch c
 | Instance | Traces |
 | --- | --- |
 | Mesh with no skin binding over joints and no selected morph target | At its rest pose |
-| Mesh with a skin binding over joints or a selected morph target, and a crowd part batch | Not traced |
+| Mesh with a skin binding over a geometry with joints, or morph weights that select a target | At its raster pose in software traces (see [Posed instances](#posed-instances)); left out of hardware traces |
+| Crowd part batch | Not traced |
 | `InstancedMesh` or `LodGroup` with sway | At its rest pose, counted in `Stats.trace_sway_at_rest`; the error is bounded by the sway reach |
 | Material with a custom vertex stage, water included | Never |
 
@@ -37,6 +38,19 @@ the trace.
 A swaying batch or LOD group traces at its rest pose: a traced shadow of a swaying tree stays still while atlas shadows
 sway, and a shadow ray from a swayed leaf can meet the tree's own rest geometry. `Stats.trace_sway_at_rest` counts the
 swaying batches and LOD groups traced this way this frame. Clear `trace` to keep one out.
+
+## Posed instances
+
+A skinned mesh, a morphed mesh or both traces at the pose raster draws in the same frame. A compute pass applies the raster deformation functions (morph targets, then skin) to the frame's palette and morph block and writes the posed positions, normals and tangents into a renderer-owned slot behind its own geometry root. Every trace consumer reads hits through the row's geometry root, so traced shadows, ambient occlusion, reflections, probe updates and path tracing see the pose with no shader change.
+
+- **Software.** One workgroup per instance refits a copy of the rest tree: each leaf takes the bounds of its posed triangles and each interior node the union of its children, level by level. Topology and leaf primitives stay those of the rest tree. At rest the copy equals the rest tree exactly; a strong pose widens the boxes, so a posed instance traces slower than at rest.
+- **Bounds.** A posed row's box in the top level is `mesh_world_bounds`: the rest bound widened by the selected morph targets and, for a skinned mesh, by the joints. A `Mesh.local_bounds` override replaces it.
+- **Once per frame.** The pose is compared with the last recorded one and the pass runs only when the palette or morph block changed. Several views and several preparations in one frame pose a slot once, so a node holds one pose per frame; a pose moved between two views of one frame stays unseen until the next frame's preparation, like raster, which draws one palette per node per frame. A still pose keeps `Stats` poses at zero and the trace revision unchanged, so the path tracer keeps accumulating; a changed joint or weight advances the revision once.
+- **Capacity.** `RendererDesc.max_posed_trace_instances` bounds the slots (64 when zero; zero never disables posing). Posed instances are admitted in collection order; past the capacity an instance is left out of the trace, never traced at rest, and counted in `Stats.trace_posed_overflow`. `Mesh.trace = false` keeps a mesh out. A slot unclaimed for more than `INSTANCE_ABSENCE_FRAMES` frames is released; an off-screen posed mesh still traces, because it can cast, so it keeps its slot.
+- **Cost.** A slot holds 24 bytes per vertex (40 with tangents) of posed streams, a 112-byte root, 32 bytes per node of refit copy, and on the CPU 64 bytes per joint plus 80 bytes with morph targets. A geometry that can deform adds a depth table to its rest trace allocation: 4 bytes per node plus 132 bytes. The example Mannequin holds 205 KB of streams over its two parts. A skinned mesh in bind pose still takes a slot. With no traced consumer in a frame nothing is allocated or recorded.
+- **Closed frames.** A preparation outside a frame poses and refits in its own submission and reads the current pose.
+- **Stats.** `trace_posed_instances`, `trace_posed_overflow`, `trace_posed_bytes`, `trace_poses` and `trace_refits` (this frame). Posing and refits run under `Pass.TRACE_POSE`.
+- **Hardware.** Hardware preparations leave posed instances out.
 
 ## Preparing
 
@@ -61,7 +75,7 @@ gpu::GpuAddress scene_trace = renderer.prepare_scene_trace(&scene)!;
 
 A shader reads only the kind it asked for. Asking for both kinds in the same frame keeps one set of rows: the second call fills in the other half.
 
-The call collects the eligible instances and builds each geometry's bottom level the first time the geometry traces, and again after its revision moves. It rebuilds the top level only when the eligible set, an instance's world matrix, geometry or material changed. A second call in the same frame for the same scene and kind returns at once. The returned address is the same for the renderer's life. Copies it queues are recorded by the frame's next dispatch or view, or by `end_frame`.
+The call collects the eligible instances, poses the deformed ones, and builds each geometry's bottom level the first time the geometry traces, and again after its revision moves. It rebuilds the top level only when the eligible set, an instance's world matrix, geometry, material or pose changed. A second call in the same frame for the same scene and kind returns at once. The returned address is the same for the renderer's life. Copies it queues are recorded by the frame's next dispatch or view, or by `end_frame`.
 
 The renderer holds one top level. Prepare one scene per frame: preparing a second scene in the same frame rewrites the same buffer, which is ordered only after a dispatch or view has recorded the first scene's copies and consumed them.
 

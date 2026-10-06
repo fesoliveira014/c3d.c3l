@@ -122,6 +122,7 @@ fn void? create_fixture(
     uint max_render_targets = 0,
     uint texture_capacity = 0,
     uint texture_heap_capacity = 0,
+    uint max_posed_trace_instances = 0,
     uint max_trace_instances = 0,
 ) @private {
     fixture.allocator = allocator;
@@ -206,6 +207,7 @@ fn void? create_fixture(
             .max_render_targets = max_render_targets,
             .texture_capacity = texture_capacity,
             .texture_heap_capacity = texture_heap_capacity,
+            .max_posed_trace_instances = max_posed_trace_instances,
             .max_trace_instances = max_trace_instances,
         },
     )!;

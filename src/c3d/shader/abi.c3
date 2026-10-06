@@ -22,6 +22,8 @@ const uint TRACE_INSTANCE_ALPHA_MASK = 1;
 const uint TRACE_INSTANCE_DOUBLE_SIDED = 2;
 const uint TRACE_MASK_ALL = 1;
 const uint TRACE_MASK_SHADOW_CASTER = 2;
+const uint TRACE_POSE_GROUP_SIZE = 64;
+const uint TRACE_REFIT_GROUP_SIZE = 128;
 const uint FRAME_LIGHTS_CLUSTERED = 1;
 const uint FRAME_TRACE_PRESENT = 2;
 const uint FRAME_AO_PRESENT = 4;
@@ -307,6 +309,34 @@ $assert $reflect(SceneTraceRoot.instance_count).offset == 16;
 $assert $reflect(SceneTraceRoot.top_node_count).offset == 20;
 $assert $reflect(SceneTraceRoot.tlas_index).offset == 24;
 $assert $reflect(SceneTraceRoot._pad1).offset == 28;
+
+struct TracePoseRoot {
+    GpuAddress source;
+    GpuAddress posed;
+    GpuAddress palette;
+    GpuAddress morph;
+}
+$assert TracePoseRoot::size == 32;
+$assert $reflect(TracePoseRoot.source).offset == 0;
+$assert $reflect(TracePoseRoot.posed).offset == 8;
+$assert $reflect(TracePoseRoot.palette).offset == 16;
+$assert $reflect(TracePoseRoot.morph).offset == 24;
+
+struct TraceRefitRoot {
+    GpuAddress geometry;
+    GpuAddress source_nodes;
+    GpuAddress nodes;
+    GpuAddress primitives;
+    GpuAddress depth_starts;
+    GpuAddress depth_order;
+}
+$assert TraceRefitRoot::size == 48;
+$assert $reflect(TraceRefitRoot.geometry).offset == 0;
+$assert $reflect(TraceRefitRoot.source_nodes).offset == 8;
+$assert $reflect(TraceRefitRoot.nodes).offset == 16;
+$assert $reflect(TraceRefitRoot.primitives).offset == 24;
+$assert $reflect(TraceRefitRoot.depth_starts).offset == 32;
+$assert $reflect(TraceRefitRoot.depth_order).offset == 40;
 
 struct ClusterRange {
     uint count;

@@ -97,8 +97,8 @@ What the four cases establish:
   traces identically after every other geometry's CPU arrays are released.
 
 - The instance cap counts the rows that trace: with more candidates than
-  `max_trace_instances` but fewer kept rows, preparation succeeds, and one more
-  kept row faults `c3d::CAPACITY_EXCEEDED`.
+  `max_trace_instances`, some left out for want of a posed slot, preparation
+  succeeds, and one more kept row faults `c3d::CAPACITY_EXCEEDED`.
 
 - On a renderer with ray queries, the software walk and ray queries report
   the same instance, triangle, distance and barycentrics over the same grid,
@@ -288,6 +288,16 @@ What the four cases establish:
   unchanged live counts; capacities over 65,536 and `max_render_targets` over the texture table
   fault at creation; `Stats` counts a new view's images and target at the next reading. The
   overlay case opens a window: without one it prints a skip line.
+
+- Posed trace instances (`test_posed_trace.c3`, software): a skinned, a morphed and a combined mesh trace at
+  the raster pose over four frames (traced hit distance against the raster depth of the same pixels, hits on
+  the slot's geometry root), two instances of one geometry stay independent beside a static mesh, a still pose
+  records no posing and keeps the trace revision while a joint or weight change advances it once (an aborted
+  frame re-poses once), frames without a traced consumer allocate and record nothing, a morph target that
+  leaves the rest box is hit, a closed-frame preparation reads the current pose and does not re-pose when
+  repeated, the refit at rest reproduces the rest tree component for component, and a strong pose's refit tree
+  encloses every posed triangle and child, and a posed stream reused for a geometry with a new vertex count
+  follows the new count.
 
 - Resize faults (`test_resize_faults.c3`): at a full texture table a target resize, one whose second view cannot get
   its images, and a `configure_view` that changes the render scale fault `gpu::SLOT_TABLE_FULL`; at a full heap an

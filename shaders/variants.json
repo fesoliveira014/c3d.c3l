@@ -130,7 +130,10 @@
     { "shader": "physical_gbuffer", "source": "physical_gbuffer.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "lighting_resolve", "source": "lighting_resolve.frag.glsl", "stage": "frag", "defines": [] },
     { "shader": "lighting_resolve", "source": "lighting_resolve.frag.glsl", "stage": "frag", "defines": ["RT_SHADOWS"] },
-    { "shader": "lighting_resolve", "source": "lighting_resolve.frag.glsl", "stage": "frag", "defines": ["RT_SHADOWS", "SCENE_TRACE_BVH"] }
+    { "shader": "lighting_resolve", "source": "lighting_resolve.frag.glsl", "stage": "frag", "defines": ["RT_SHADOWS", "SCENE_TRACE_BVH"] },
+    { "shader": "trace_pose", "source": "trace_pose.comp.glsl", "stage": "comp", "defines": [] },
+    { "shader": "trace_pose", "source": "trace_pose.comp.glsl", "stage": "comp", "defines": ["SKINNED_U16"] },
+    { "shader": "trace_refit", "source": "trace_refit.comp.glsl", "stage": "comp", "defines": [] }
   ],
   "public_includes": [
     { "include": "constants.glsl", "stage": "frag", "defines": [] },
