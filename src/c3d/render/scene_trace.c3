@@ -586,7 +586,7 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
     foreach (index, &record : records) {
         TracePoseSource* pose = &collection.poses[index];
         bool posed_row = pose.kind != TracePose.REST;
-        if (pose.kind == TracePose.CROWD || (posed_row && hardware)) continue;
+        if (pose.kind == TracePose.CROWD) continue;
         GeometryAsset* asset_record = renderer.assets.geometry(record.geometry);
         GpuGeometry* mirror = &renderer.geometries[record.geometry.index];
         uint revision = asset_record.header.revision;
@@ -601,6 +601,11 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
             proven:         proven,
             streams:        cpu_present || geometry_current(renderer, record.geometry),
         );
+        // A posed row builds its own bottom level from the posed streams; it needs the rest streams only.
+        if (posed_row && hardware_source == TraceSource.REUSE) {
+            hardware_source = proven && (cpu_present || geometry_current(renderer, record.geometry))
+              ? TraceSource.BUILD : TraceSource.SKIP;
+        }
         bool unavailable = (software && source == TraceSource.SKIP) || (hardware && hardware_source == TraceSource.SKIP);
         if (unavailable) {
             renderer.stats.trace_skipped++;
@@ -620,7 +625,9 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
             }
             slot = claimed;
         }
-        if (hardware && hardware_source == TraceSource.BUILD) resolve_blas(renderer, mirror, asset_record)!;
+        if (hardware && hardware_source == TraceSource.BUILD && !posed_row) {
+            resolve_blas(renderer, mirror, asset_record)!;
+        }
         if (software && source == TraceSource.BUILD) {
             // Proven with the arrays present, so the store's build cannot fault.
             upload_trace_geometry(renderer, mirror, renderer.assets.triangle_bvh(record.geometry)!!)!;
@@ -723,7 +730,7 @@ fn void? acquire_rt_scratch(Renderer* renderer, RtScratch* scratch, usz size) @l
 fn void? record_acceleration_builds(Renderer* renderer, gpu::CommandList* commands) @private {
     RtContext* rt = &renderer.rt;
     GeometryId[] pending = rt.pending_blas.array_view()[rt.recorded_blas..];
-    if (!pending.len && !rt.build_pending) return;
+    if (!pending.len && !renderer.posed_trace.builds.len() && !rt.build_pending) return;
 
     bool profiled = renderer.frame_open;
     if (profiled) begin_profile_pass(renderer, Pass.ACCELERATION_BUILD)!;
@@ -731,6 +738,7 @@ fn void? record_acceleration_builds(Renderer* renderer, gpu::CommandList* comman
     foreach (geometry : pending) {
         scratch_size = math::max(scratch_size, renderer.geometries[geometry.index].blas.scratch_size);
     }
+    scratch_size = math::max(scratch_size, posed_scratch_size(&renderer.posed_trace));
     RtScratch* scratch = &rt.scratch[renderer.frame_index % FRAMES_IN_FLIGHT];
     acquire_rt_scratch(renderer, scratch, scratch_size)!;
 
@@ -756,6 +764,12 @@ fn void? record_acceleration_builds(Renderer* renderer, gpu::CommandList* comman
         gpu::cmd_barrier(commands, &builds_ordered)!;
     }
     rt.recorded_blas = (usz)rt.pending_blas.len();
+    record_posed_builds(
+        renderer:       renderer,
+        commands:       commands,
+        scratch:        scratch.span,
+        builds_ordered: &builds_ordered,
+    )!;
 
     if (rt.build_pending) {
         if (rt.build_after_reads) {

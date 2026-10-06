@@ -21,7 +21,7 @@ A mesh contributes one instance at its node's world matrix. An instanced batch c
 | Instance | Traces |
 | --- | --- |
 | Mesh with no skin binding and no morph weights | At its rest pose |
-| Mesh with a skin binding over a geometry with joints, or morph weights that select a target | At its raster pose in software traces (see [Posed instances](#posed-instances)); left out of hardware traces |
+| Mesh with a skin binding over a geometry with joints, or morph weights that select a target | At its raster pose, in both kinds (see [Posed instances](#posed-instances)) |
 | Crowd part batch | Not traced |
 | `InstancedMesh` or `LodGroup` with sway | At its rest pose, counted in `Stats.trace_sway_at_rest`; the error is bounded by the sway reach |
 | Material with a custom vertex stage, water included | Never |
@@ -42,8 +42,8 @@ A skinned mesh, a morphed mesh or both traces at the pose raster draws in the sa
 - **Capacity.** `RendererDesc.max_posed_trace_instances` bounds the slots (64 when zero; zero never disables posing). Posed instances are admitted in collection order; past the capacity an instance is left out of the trace, never traced at rest, and counted in `Stats.trace_posed_overflow`. `Mesh.trace = false` keeps a mesh out. A slot unclaimed for more than `INSTANCE_ABSENCE_FRAMES` frames is released; an off-screen posed mesh still traces, because it can cast, so it keeps its slot.
 - **Cost.** A slot holds 24 bytes per vertex (40 with tangents) of posed streams, a 112-byte root, 32 bytes per node of refit copy, and on the CPU 64 bytes per joint plus 80 bytes with morph targets. The example Mannequin holds 205 KB of streams over its two parts. A skinned mesh in bind pose still takes a slot. With no traced consumer in a frame nothing is allocated or recorded.
 - **Closed frames.** A preparation outside a frame poses and refits in its own submission and reads the current pose.
-- **Stats.** `trace_posed_instances`, `trace_posed_overflow`, `trace_posed_bytes` (after the last preparation), `trace_poses` and `trace_refits` (this frame). Posing and refits run under `Pass.TRACE_POSE`.
-- **Hardware.** Hardware preparations leave posed instances out.
+- **Stats.** `trace_posed_instances`, `trace_posed_overflow`, `trace_posed_bytes` (after the last preparation), `trace_poses`, `trace_refits` and `blas_updates` (this frame). Posing and refits run under `Pass.TRACE_POSE`.
+- **Hardware.** Each slot owns one bottom level created with `allow_update` and `prefer_fast_trace`: a full build when the slot is new, rebuilt or its source geometry changed, and an in-place update each frame the pose changes. Static bottom levels keep `prefer_fast_trace` alone. A pose change rebuilds the top level too. Update scratch is part of the per-frame scratch, which grows to the largest build or update. `Stats.blas_updates` counts the updates; a full posed build counts in `blas_builds`. Both kinds refit rather than rebuild, so a strong pose traces slower than rest. A geometry whose vertex or primitive counts change replaces the slot's bottom level.
 
 ## Preparing
 
@@ -89,7 +89,7 @@ Triangle geometry whose arrays form no triangle list (fewer than three positions
 
 ### Hardware lifetime
 
-A geometry's bottom-level structure is created the first time a hardware preparation traces the geometry and again after its revision moves; the old one is destroyed after every frame that could trace it completed. The renderer keeps two top-level structures and rebuilds one only when the rows, their world matrices, geometry or material change. A frame reads at most one of them. A rebuild in a later frame targets the other, whose readers have completed; a rebuild in the same frame reuses the one the frame already reads, ordered after those reads. Build scratch is per frame slot and grows to the largest build. `SceneTraceRoot.tlas_index` names the top level the frame reads, or 0 without hardware data.
+A geometry's bottom-level structure is created the first time a hardware preparation traces the geometry and again after its revision moves; the old one is destroyed after every frame that could trace it completed. A posed instance's bottom level is updated in place while its slot lives; barriers order the update after every earlier read of that structure. The renderer keeps two top-level structures and rebuilds one only when the rows, their world matrices, geometry or material change. A frame reads at most one of them. A rebuild in a later frame targets the other, whose readers have completed; a rebuild in the same frame reuses the one the frame already reads, ordered after those reads. Build scratch is per frame slot and grows to the largest build. `SceneTraceRoot.tlas_index` names the top level the frame reads, or 0 without hardware data.
 
 ## Tracing in a shader
 

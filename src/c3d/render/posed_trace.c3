@@ -10,6 +10,7 @@ import gpu;
 import std::collections::list;
 import std::collections::map;
 import std::hash::fnv32a;
+import std::math;
 
 <*
  Posed trace slots a renderer holds when RendererDesc leaves the count at zero.
@@ -46,6 +47,9 @@ struct PosedTraceRes {
     gpu::GpuAddress                  nodes;               // 0 before the first software preparation
     uint                             node_count;
     gpu::AccelerationStructureHandle blas;                // invalid before the first hardware preparation
+    gpu::AccelerationStructureTriangleGeometryDesc blas_layout; // counts and index type the BLAS was created for
+    usz                              build_scratch_size;
+    usz                              update_scratch_size;
     usz                              blas_bytes;
     char[]                           pose;                // inputs of the last recorded posing
     bool                             pose_valid;
@@ -68,9 +72,15 @@ struct PosedTraceTable {
     ulong                        epoch_frame; // frame_index + 1 of the epoch's open frame; 0 when closed
     usz                          bytes;       // GPU bytes of every live slot
     List{PosedDispatch}          dispatches;  // posing and refit work the current preparation queued
+    List{PosedBuild}             builds;      // BLAS builds and updates the current preparation queued
     gpu::PipelineHandle          pose_pipeline;
     gpu::PipelineHandle          pose_u16_pipeline;
     gpu::PipelineHandle          refit_pipeline;
+}
+
+struct PosedBuild @private {
+    uint slot;
+    bool update;
 }
 
 struct PosedDispatch @private {
@@ -168,6 +178,7 @@ fn PosedTraceTable create_posed_trace_table(Allocator allocator, uint capacity) 
     PosedTraceTable table = { .allocator = allocator, .capacity = capacity };
     table.pending.init(allocator);
     table.dispatches.init(allocator);
+    table.builds.init(allocator);
     return table;
 }
 
@@ -192,6 +203,7 @@ fn void free_posed_trace_storage(PosedTraceTable* table) @private {
     table.lookup.free();
     table.pending.free();
     table.dispatches.free();
+    table.builds.free();
     *table = {};
 }
 
@@ -242,6 +254,7 @@ fn void discard_posed_trace(PosedTraceTable* table) @private {
     }
     table.pending.clear();
     table.dispatches.clear();
+    table.builds.clear();
     table.epoch_frame = 0;
 }
 
@@ -451,6 +464,44 @@ fn void? acquire_posed_nodes(Renderer* renderer, uint index, GpuGeometry* mirror
     slot.refit_serial = 0;
 }
 
+// A BLAS is sized by its creation counts, so another geometry or another revision's counts replace it.
+fn void? acquire_posed_blas(Renderer* renderer, uint index, GpuGeometry* mirror) @private {
+    PosedTraceTable* table = &renderer.posed_trace;
+    PosedTraceRes* slot = &table.slots[index];
+    gpu::AccelerationStructureGeometryDesc[1] geometries = { blas_geometry_desc(&mirror.layout) };
+    gpu::AccelerationStructureTriangleGeometryDesc* wanted = &geometries[0].triangles;
+    bool same_layout = slot.blas_layout.max_vertex_count == wanted.max_vertex_count
+        && slot.blas_layout.max_primitive_count == wanted.max_primitive_count
+        && slot.blas_layout.index_type == wanted.index_type;
+    if (slot.blas.is_valid() && same_layout) return;
+    if (slot.blas.is_valid()) {
+        renderer.pending_upload_retire.push({
+            .kind                   = RetiredKind.ACCELERATION_STRUCTURE,
+            .acceleration_structure = slot.blas,
+        });
+        table.bytes -= slot.blas_bytes;
+        slot.blas = {};
+    }
+
+    gpu::AccelerationStructureDesc desc = {
+        .kind       = gpu::AccelerationStructureKind.BOTTOM_LEVEL,
+        .geometries = geometries[..],
+        .flags      = { .allow_update, .prefer_fast_trace },
+        .debug_name = "posed_blas",
+    };
+    gpu::AccelerationStructureRequirements requirements = gpu::get_acceleration_structure_requirements(
+        &renderer.device,
+        &desc,
+    )!;
+    slot.blas = gpu::create_acceleration_structure(&renderer.device, &desc)!;
+    slot.blas_layout = *wanted;
+    slot.build_scratch_size = requirements.build_scratch_size;
+    slot.update_scratch_size = requirements.update_scratch_size;
+    slot.blas_bytes = requirements.storage_size;
+    slot.blas_serial = 0;
+    table.bytes += requirements.storage_size;
+}
+
 <*
  Bring the row's posed slot to the current pose and point the row at it.
  @require source.kind != TracePose.REST
@@ -464,6 +515,7 @@ fn void? resolve_posed_instance(
 ) @private {
     PosedTraceTable* table = &renderer.posed_trace;
     bool software = renderer.scene_trace.software_requested;
+    bool hardware = renderer.scene_trace.hardware_requested;
     acquire_posed_streams(
         renderer:   renderer,
         index:      index,
@@ -471,6 +523,7 @@ fn void? resolve_posed_instance(
         pose_bytes: pose_input_bytes(source, renderer.assets),
     )!;
     if (software) acquire_posed_nodes(renderer, index, mirror)!;
+    if (hardware) acquire_posed_blas(renderer, index, mirror)!;
     PosedTraceRes* slot = &table.slots[index];
 
     PosedDispatch dispatch = {
@@ -495,6 +548,12 @@ fn void? resolve_posed_instance(
     }
     if (dispatch.pose_root || dispatch.refit_root) {
         table.dispatches.push(dispatch);
+        mark_posed_pending(table, index);
+    }
+
+    if (hardware && slot.blas_serial != slot.pose_serial) {
+        table.builds.push({ .slot = index, .update = slot.blas_serial != 0 });
+        slot.blas_serial = slot.pose_serial;
         mark_posed_pending(table, index);
     }
 
@@ -565,4 +624,54 @@ fn gpu::GpuAddress? write_refit_root(Renderer* renderer, GpuGeometry* mirror, Po
         .depth_order  = mirror.trace.depth_order,
     };
     return root.address;
+}
+
+fn void? record_posed_builds(
+    Renderer* renderer,
+    gpu::CommandList* commands,
+    gpu::GpuSpan scratch,
+    gpu::Barrier* builds_ordered,
+) @private {
+    PosedTraceTable* table = &renderer.posed_trace;
+    if (!table.builds.len()) return;
+    // Ray queries and top-level builds of earlier frames still read the bottom levels updated in place.
+    gpu::Barrier readers_done = { .before = renderer.trace_stages, .after = { .acceleration_structure_build } };
+    gpu::cmd_barrier(commands, &readers_done)!;
+    foreach (&build : table.builds) {
+        PosedTraceRes* slot = &table.slots[build.slot];
+        GpuGeometry* mirror = &renderer.geometries[slot.geometry.index];
+        gpu::AccelerationStructureGeometryBuildDesc[1] geometries = {{
+            .kind      = gpu::AccelerationStructureGeometryKind.TRIANGLES,
+            .triangles = {
+                .vertices        = slot.positions,
+                .vertex_stride   = PACKED_VEC3_BYTES,
+                .vertex_count    = mirror.layout.vertex_count,
+                .indices         = mirror.indices,
+                .primitive_count = blas_primitive_count(&mirror.layout),
+            },
+        }};
+        gpu::AccelerationStructureBuildDesc desc = {
+            .destination = slot.blas,
+            .geometries  = geometries[..],
+            .scratch     = scratch,
+        };
+        if (build.update) {
+            gpu::cmd_update_acceleration_structure(commands, &desc)!;
+            renderer.stats.blas_updates++;
+        } else {
+            gpu::cmd_build_acceleration_structure(commands, &desc)!;
+            renderer.stats.blas_builds++;
+        }
+        gpu::cmd_barrier(commands, builds_ordered)!;
+    }
+    table.builds.clear();
+}
+
+fn usz posed_scratch_size(PosedTraceTable* table) @private {
+    usz size;
+    foreach (&build : table.builds) {
+        PosedTraceRes* slot = &table.slots[build.slot];
+        size = math::max(size, build.update ? slot.update_scratch_size : slot.build_scratch_size);
+    }
+    return size;
 }
