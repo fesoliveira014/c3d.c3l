@@ -22,7 +22,7 @@ const uint SAMPLES @local = 11; // the median of eleven timed passes
 const uint PASSES @local = WARMUP_SAMPLES + SAMPLES;
 const double NANOSECONDS_PER_MICROSECOND @local = 1000;
 const uint LOADED_ITEMS @local = 65536; // the frame kernel timed beside background work
-const uint LOADED_BATCH @local = 1024;
+const uint LOADED_BATCH @local = 1024; // about 64 ranges: scheduling stays a small share of the timed kernel
 const uint BACKGROUND_RANGES @local = 16384; // about 0.25 s of serial work, so it outlasts the timed frame passes
 const uint BACKGROUND_RANGE_ITEMS @local = 256; // about 15 us of chain multiplies a range
 
@@ -218,7 +218,8 @@ fn bool report_kernel(
 fn int main() {
     JobPoolDesc defaults = job::default_job_pool_desc();
     io::printfn(
-        "# job_bench logical_cpus=%d default_workers=%d background_workers=%d runs=%d background_runs=%d worker_temp_bytes=%d",
+        "# job_bench logical_cpus=%d default_workers=%d background_workers=%d runs=%d background_runs=%d "
+        "worker_temp_bytes=%d",
         cpu::native_cpu(),
         defaults.worker_count,
         defaults.background_workers,

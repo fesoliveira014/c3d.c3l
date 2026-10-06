@@ -95,7 +95,8 @@ pool.wait(id);
   `wait` returns.
 - **`is_finished(id)`** reports whether every range of the run has finished, without blocking. Once it returns
   true, everything the ranges wrote is visible to the caller. A run's slot is released when its last range
-  finishes, whether or not anyone waits on it or asks.
+  finishes, whether or not anyone waits on it or asks. Polling alone never finishes a background run on a pool
+  without background workers; see [Background runs](#background-runs).
 - **Zero and stale ids.** `run` returns the zero id when every range ran inside the call. An id goes stale when
   its run finishes; its slot is reused only after that. `wait` on a zero or stale id returns at once and never
   waits on a later run in the same slot, and `is_finished` reports both as finished. A slot's generation wraps
@@ -140,8 +141,8 @@ if (pool.is_finished(streaming)) publish(&decode);
   pumped range submits waits for the next `pump`. It ignores the cap, which limits workers and not the calling
   thread, and it never takes frame ranges.
 - **Without background workers.** With zero workers or `background_workers = 0`, a background run progresses
-  only through `pump`, `wait` on that run, `wait_all` or `destroy_job_pool`. A consumer that only polls
-  `is_finished` on such a pool never sees the run finish.
+  only through `pump`, `wait` on that run, `wait_all` or `destroy_job_pool`. A consumer that polls
+  `is_finished` alone on such a pool never sees the run finish.
 - **Capacity.** `background_run_capacity` slots hold background runs and `run_capacity` slots hold frame runs,
   in one table. Each class fills only its own slots, so background runs that span frames never push frame runs
   inline, and a full frame partition never refuses a background run. A background slot holds its run until
@@ -180,18 +181,18 @@ to 2 MiB at its coarsest batch (32 768 items), which exceeds the default and all
 
 The pool does not check these; a range that breaks them races.
 
-- A range runs on a worker or on the thread that called `run`, `wait` or `wait_all`. It never calls the
-  renderer, gpu.c3l submission or command recording, SDL or ImGui; never changes scene or ECS structure
-  (adding or removing nodes or components, registering component types); never writes a store another range
-  reads.
+- A range runs on a worker or on the thread that called `run`, `try_run`, `wait`, `wait_all`, `pump` or
+  `destroy_job_pool`. It never calls the renderer, gpu.c3l submission or command recording, SDL or ImGui;
+  never changes scene or ECS structure (adding or removing nodes or components, registering component types);
+  never writes a store another range reads.
 - Outputs are disjoint per item. Any reduction is gathered in index order after the wait. A consumer's result
   must not depend on how the work is split.
 - A range allocates scratch only through `tmem`, which is its own thread's and reset after the range; it must
   not keep `tmem` memory beyond the range, and must not use an allocator passed in from the caller, such as a
   caller's `tmem` stored in `data`. Inline ranges on the caller follow the same rule under their own
   `@pool()`.
-- A thread other than the main thread that calls `run`, `wait` or `wait_all` has its own temp allocator
-  (`@pool_init`), because ranges it runs open `@pool()`.
+- A thread other than the main thread that calls `run`, `try_run`, `wait`, `wait_all`, `pump` or
+  `destroy_job_pool` has its own temp allocator (`@pool_init`), because ranges it runs open `@pool()`.
 - A range may call `run` on its own pool (it runs inline) and `wait` on the zero id it gets. It may call
   `try_run` (the run queues) and `is_finished`. A range never calls `wait_all`, `pump` or `destroy_job_pool`
   on its own pool, and never waits on any other run of its own pool (its own run, an outer run, a run it
@@ -213,83 +214,84 @@ serial is the same run on a zero-worker pool (the same split, on the caller), an
 `ranges * us_per_range / serial_us` with the overhead line of the same worker count. Every pooled output
 equals its serial output bit for bit. The tables hold the median of three process runs per line.
 
+Background lines time one background run of 1024 empty ranges at batch 1, from `try_run` until its last range
+has run, on the capped workers alone; the caller only polls. Loaded lines time the 65 536-item kernel at batch
+1024 once idle and once while a background run of 16 384 ranges of about 15 µs keeps the default cap of
+workers busy; the ratio is the median of the three runs' loaded over idle times, and every run's background
+work outlasted the timing.
+
 ### WSL, 32 logical processors (default 31 workers)
 
 | Workers | µs per empty range | Inline ranges |
 | ---: | ---: | ---: |
-| 0 | 0.0076 | 0 |
-| 1 | 0.0432 | 0 |
-| 3 | 0.0592 | 0 |
-| 31 | 0.1768 | 0 |
+| 0 | 0.0078 | 0 |
+| 1 | 0.0488 | 0 |
+| 3 | 0.0581 | 0 |
+| 31 | 0.1907 | 0 |
 
 | Workers | Items | Batch | Ranges | Serial µs | Pooled µs | Speedup | Overhead share | Peak scratch |
 | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 1 | 16384 | 64 | 256 | 899.5 | 467.7 | 1.93 | 0.0128 | 4 KiB |
-| 1 | 16384 | 1024 | 16 | 905.6 | 473.2 | 1.99 | 0.0008 | 64 KiB |
-| 1 | 16384 | 2048 | 8 | 892.6 | 461.3 | 1.94 | 0.0004 | 128 KiB |
-| 1 | 65536 | 64 | 1024 | 3662.6 | 1881.9 | 1.94 | 0.0125 | 4 KiB |
-| 1 | 65536 | 1024 | 64 | 3655.9 | 1815.1 | 2.00 | 0.0008 | 64 KiB |
-| 1 | 65536 | 8192 | 8 | 3658.8 | 1855.1 | 1.97 | 0.0001 | 512 KiB |
-| 1 | 262144 | 64 | 4096 | 15091.3 | 7586.9 | 1.99 | 0.0120 | 4 KiB |
-| 1 | 262144 | 1024 | 256 | 14893.3 | 7309.3 | 2.03 | 0.0008 | 64 KiB |
-| 1 | 262144 | 32768 | 8 | 14780.6 | 7390.6 | 2.00 | 0.0000 | 2 MiB |
-| 3 | 16384 | 64 | 256 | 899.3 | 259.3 | 3.47 | 0.0140 | 4 KiB |
-| 3 | 16384 | 1024 | 16 | 895.7 | 242.9 | 3.69 | 0.0011 | 64 KiB |
-| 3 | 65536 | 64 | 1024 | 3622.2 | 1009.9 | 3.62 | 0.0169 | 4 KiB |
-| 3 | 65536 | 1024 | 64 | 3623.2 | 994.4 | 3.60 | 0.0011 | 64 KiB |
-| 3 | 65536 | 4096 | 16 | 3654.1 | 939.3 | 3.83 | 0.0003 | 256 KiB |
-| 3 | 262144 | 64 | 4096 | 15219.9 | 3845.7 | 3.96 | 0.0163 | 4 KiB |
-| 3 | 262144 | 1024 | 256 | 14884.7 | 3650.7 | 4.08 | 0.0010 | 64 KiB |
-| 3 | 262144 | 16384 | 16 | 15018.2 | 3762.8 | 3.97 | 0.0001 | 1 MiB |
-| 31 | 16384 | 64 | 256 | 888.5 | 305.1 | 2.83 | 0.0524 | 4 KiB |
-| 31 | 16384 | 1024 | 16 | 893.4 | 264.2 | 3.35 | 0.0032 | 64 KiB |
-| 31 | 16384 | 128 | 128 | 884.7 | 250.1 | 3.55 | 0.0263 | 8 KiB |
-| 31 | 65536 | 64 | 1024 | 3654.8 | 739.3 | 4.97 | 0.0514 | 4 KiB |
-| 31 | 65536 | 1024 | 64 | 3608.3 | 740.0 | 4.83 | 0.0032 | 64 KiB |
-| 31 | 65536 | 512 | 128 | 3619.6 | 697.7 | 5.02 | 0.0065 | 32 KiB |
-| 31 | 262144 | 64 | 4096 | 15169.6 | 1898.0 | 8.01 | 0.0491 | 4 KiB |
-| 31 | 262144 | 1024 | 256 | 14834.5 | 1491.1 | 10.01 | 0.0031 | 64 KiB |
-| 31 | 262144 | 2048 | 128 | 14912.2 | 1556.5 | 9.45 | 0.0015 | 128 KiB |
+| 1 | 16384 | 64 | 256 | 971.3 | 514.1 | 1.88 | 0.0130 | 4 KiB |
+| 1 | 16384 | 1024 | 16 | 974.9 | 493.1 | 1.97 | 0.0008 | 64 KiB |
+| 1 | 16384 | 2048 | 8 | 941.4 | 465.7 | 2.00 | 0.0004 | 128 KiB |
+| 1 | 65536 | 64 | 1024 | 3980.9 | 1988.8 | 2.01 | 0.0114 | 4 KiB |
+| 1 | 65536 | 1024 | 64 | 3792.7 | 1900.4 | 2.00 | 0.0008 | 64 KiB |
+| 1 | 65536 | 8192 | 8 | 3858.7 | 1857.8 | 2.06 | 0.0001 | 512 KiB |
+| 1 | 262144 | 64 | 4096 | 15619.3 | 8053.7 | 1.91 | 0.0129 | 4 KiB |
+| 1 | 262144 | 1024 | 256 | 15701.6 | 8753.3 | 1.81 | 0.0008 | 64 KiB |
+| 1 | 262144 | 32768 | 8 | 15790.5 | 8146.9 | 1.96 | 0.0000 | 2 MiB |
+| 3 | 16384 | 64 | 256 | 920.9 | 299.6 | 3.07 | 0.0167 | 4 KiB |
+| 3 | 16384 | 1024 | 16 | 929.8 | 264.4 | 3.58 | 0.0010 | 64 KiB |
+| 3 | 65536 | 64 | 1024 | 3807.2 | 1149.3 | 3.35 | 0.0159 | 4 KiB |
+| 3 | 65536 | 1024 | 64 | 3785.8 | 985.8 | 3.84 | 0.0010 | 64 KiB |
+| 3 | 65536 | 4096 | 16 | 3763.5 | 978.7 | 3.82 | 0.0003 | 256 KiB |
+| 3 | 262144 | 64 | 4096 | 15717.7 | 4738.2 | 3.32 | 0.0154 | 4 KiB |
+| 3 | 262144 | 1024 | 256 | 17799.9 | 5498.3 | 3.32 | 0.0009 | 64 KiB |
+| 3 | 262144 | 16384 | 16 | 18407.0 | 4610.4 | 3.59 | 0.0001 | 1 MiB |
+| 31 | 16384 | 64 | 256 | 934.3 | 327.3 | 2.85 | 0.0523 | 4 KiB |
+| 31 | 16384 | 1024 | 16 | 934.7 | 338.4 | 2.79 | 0.0032 | 64 KiB |
+| 31 | 16384 | 128 | 128 | 931.2 | 305.2 | 3.05 | 0.0264 | 8 KiB |
+| 31 | 65536 | 64 | 1024 | 4198.5 | 728.7 | 5.54 | 0.0465 | 4 KiB |
+| 31 | 65536 | 1024 | 64 | 3853.0 | 574.5 | 6.71 | 0.0032 | 64 KiB |
+| 31 | 65536 | 512 | 128 | 3811.7 | 541.6 | 7.04 | 0.0064 | 32 KiB |
+| 31 | 262144 | 64 | 4096 | 16076.0 | 2216.5 | 7.25 | 0.0486 | 4 KiB |
+| 31 | 262144 | 1024 | 256 | 15685.0 | 1626.1 | 9.69 | 0.0031 | 64 KiB |
+| 31 | 262144 | 2048 | 128 | 15628.1 | 1502.5 | 10.46 | 0.0015 | 128 KiB |
 
 With one worker the caller doubles the throughput by running ranges while it waits. The time per empty range
-grows with the worker count, since every range takes and returns one lock. At 31 workers, batch 64 costs 5 %
-of the serial time; batches of 128 items or more stay under 3 %.
+grows with the worker count, since every range is one claim and one completion under the pool lock. At 31
+workers, batch 64 costs 5 % of the serial time; batches of 128 items or more stay under 3 %.
+
+Background runs, capped workers only:
+
+| Workers | Background cap | µs per empty background range |
+| ---: | ---: | ---: |
+| 1 | 1 | 0.0325 |
+| 3 | 1 | 0.0337 |
+| 31 | 7 | 0.1911 |
+
+Kernel time with and without a background run holding the cap:
+
+| Workers | Background cap | Idle µs | Loaded µs | Ratio |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 1 | 1982.6 | 1930.2 | 0.98 |
+| 3 | 1 | 968.1 | 943.0 | 0.99 |
+| 31 | 7 | 587.6 | 645.0 | 0.99 |
+
+A background run that holds the cap does not slow the frame kernel: the ratio stays within 2 % of 1.
 
 ### Windows host, 32 logical processors (default 31 workers)
 
-Medians of three runs, with the range of the three in parentheses; every pooled output equals its serial
-output and no overhead run ran a range inline.
-
-| Workers | µs per empty range |
-| ---: | ---: |
-| 0 | 0.0059 (0.0052–0.0062) |
-| 1 | 0.0284 (0.0266–0.0292) |
-| 3 | 0.0480 (0.0431–0.0568) |
-| 31 | 0.1430 (0.1121–0.2395) |
-
-| Workers | Items | Batch | Speedup | Overhead share |
-| ---: | ---: | ---: | ---: | ---: |
-| 31 | 16384 | 64 | 5.30 | 0.0545 (0.0439–0.0942) |
-| 31 | 65536 | 64 | 6.69 | 0.0540 (0.0432–0.0929) |
-| 31 | 262144 | 64 | 7.24 | 0.0514 (0.0416–0.0875) |
-| 31 | 16384 | 1024 | 6.18 | 0.0033–0.0035 |
-| 31 | 65536 | 1024 | 6.66 | 0.0033–0.0035 |
-| 31 | 262144 | 1024 | 10.07 | 0.0033–0.0035 |
-| 31 | 16384 | 128 | 6.41 | |
-| 31 | 65536 | 512 | 7.44 | |
-| 31 | 262144 | 2048 | 8.80 | |
-
-At 3 workers the speedup is 3.5 to 4.1 with every overhead share below 0.019; at 1 worker it is 1.9 to 2.0,
-apart from the runs split into 8 ranges. Peak scratch per range is 4 KiB at batch 64 and up to 2 MiB at batch
-32 768 with one worker, as on WSL.
+Pending: the overhead, kernel, background and loaded tables of this pool on the Windows host, medians of three
+runs with the range of the three, and for 31 workers the minimum, median and maximum.
 
 ### Revisit threshold
 
 The single-lock queue is revisited when a median exceeds 2 µs per empty range, or a kernel median overhead
-share exceeds 0.05. On WSL the time per range stays under 0.18 µs, and the overhead share crosses 0.05 at 31
-workers and batch 64 with 16 384 items (0.0524) and 65 536 items (0.0514). On the Windows host the time per
-range stays under 0.24 µs, and the share crosses 0.05 at 31 workers and batch 64 on all three item counts
-(0.051 to 0.055). Both machines therefore cross the threshold narrowly, at the finest batch with every
-worker; the queue is kept, and a per-run atomic claim cursor (and `wait`'s scan of the ring for its run's
-ranges) are the remedies to measure when a consumer needs that grain. With many workers, use batches of about
-512 items or more: at 1024 the share is 0.003 on both machines.
+share exceeds 0.05. Each range is one claim and one completion under the pool lock, as before; `wait` claims
+its own run's ranges directly. On WSL the time per range stays under 0.2 µs and the
+share at 31 workers and batch 64 is 0.0523, 0.0465 and 0.0486 for 16 384, 65 536 and 262 144 items,
+narrowly over the threshold at 16 384; the queue is kept. The Windows host is pending. A per-run atomic claim
+cursor and completion count, with the lock kept for queue membership and sleep, is the remedy to measure when
+a consumer needs that grain. With many workers, use batches of about 512 items or more: at 1024 the share is
+0.003 on WSL.
