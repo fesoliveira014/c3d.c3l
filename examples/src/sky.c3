@@ -50,8 +50,6 @@ const Vec3 SUN_COLOR @local = { 1, 1, 1 }; // the atmosphere colours the sun; a 
 const float SUN_INTENSITY @local = 3;
 const float SHADOW_DISTANCE @local = 400; // metres; four cascades over the near objects
 const uint SHADOW_CASCADES @local = 4;
-// Metres; the cascades' texels are about 2.6, 5.3, 12 and 48 cm at 2048 texels, and the 2 cm default rings the ground.
-const float SHADOW_NORMAL_BIAS @local = 0.15f;
 
 // Exposure from the zenith sky luminance at intensity 3: exposure = 0.045 / luminance, log-linear between entries.
 // The table stops at -4 degrees, the last elevation whose zenith stays above RGBA16F subnormals.
@@ -471,7 +469,6 @@ fn void? build_demo(Demo* demo) @local {
     Light sun = light::directional(SUN_COLOR, SUN_INTENSITY);
     sun.shadow.cascades = SHADOW_CASCADES;
     sun.shadow.max_distance = SHADOW_DISTANCE;
-    sun.shadow.normal_bias = SHADOW_NORMAL_BIAS;
     sun.shadow.ray_traced = demo.options.traced_shadows;
     demo.sun = scene.add_light(sun, name: "sun")!;
     if (demo.options.atmosphere) scene.add(demo.sun, light::ATMOSPHERE_EARTH);

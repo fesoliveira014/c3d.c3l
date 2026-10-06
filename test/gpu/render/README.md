@@ -85,7 +85,19 @@ What the four cases establish:
   directional split: with `cascade_blend = 0` the two cascades meet in one
   luminance step; with 0.1 the image before the band is unchanged pixel for
   pixel, the band differs, and no step along the column is as large as the
-  unblended seam (`line.comp.glsl` reads the column).
+  unblended seam (`line.comp.glsl` reads the column). The case sets no normal
+  offset: an offset would shift the thin rod's shadow across the seam it
+  measures.
+
+- Directional normal offsets at the default two texels of a 2048-texel atlas,
+  in their own fixture (`test_shadow_bias.c3`): flat ground stays lit
+  (visibility at least 0.99) in all four cascades at sun elevations of 10°,
+  20°, 46.5° and 60°, forward and deferred; a 1 m box keeps its contact shadow
+  in the first and third cascades; a slab 1.5 offsets thick still darkens the
+  ground beyond its edge to 0.5 or less; a deferred view reads the same
+  visibility with and without a 20° normal map (within 0.02, a flat 16 × 16
+  block's variance at most 1e-3) and matches a forward view within 0.05 across
+  a box's silhouettes and creases in the third and fourth cascades.
 
 - A box casts a dark shadow on a plane under both the atlas and ray-traced
   shadows; a fully transparent masked box and a box with `cast_shadow` off

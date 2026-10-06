@@ -85,22 +85,26 @@ without shadows retain the constructor's inclusive 90-degree limit.
 | `cascade_blend` | 0.1 | Blend band before each split, as a fraction of the cascade's depth span; 0 selects one cascade |
 | `max_distance` | 100 | Directional depth endpoint or unbounded punctual fallback |
 | `bias` | 0.0005 | Nonnegative slope-scaled depth-bias magnitude |
-| `normal_bias` | 0.02 | Nonnegative receiver displacement in world units |
+| `directional_normal_bias_texels` | 2 | Directional receiver offset along its normal, in texels of each cascade |
+| `punctual_normal_bias` | 0.02 | Spot and point receiver offset along its normal, in metres |
 
 Use `light::SHADOW_SETTINGS_DEFAULT` when constructing settings independently.
 A zero-initialized settings record is disabled and does not contain those defaults.
 Call `Light.validate_shadow()` after authored edits to check these programming
 contracts in checked builds. Contract checks may be absent from optimized unchecked
 builds, so applications must not rely on them as runtime validation. Enabled
-directional settings require a finite positive `max_distance`, finite nonnegative
-biases, cascades in 1..4, split weight in 0..1 and blend band in 0..0.5. Enabled
-punctual settings require a finite nonnegative range, a positive finite fallback when
-range is zero, and the spot cone rule above.
+directional settings require a finite positive `max_distance`, a finite nonnegative
+`bias` and `directional_normal_bias_texels`, cascades in 1..4, split weight in 0..1
+and blend band in 0..0.5. Enabled punctual settings require a finite nonnegative
+`bias` and `punctual_normal_bias`, a finite nonnegative range, a positive finite
+fallback when range is zero, and the spot cone rule above. Each kind ignores the
+other kind's normal offset.
 
 `RendererDesc.shadow_resolution` and `max_shadow_layers` set the atlas dimensions
 at renderer creation. Zero selects 2048 and 4, respectively. A nonzero resolution
-must exceed four texels. The device must support the requested dimensions and
-allocation. Four 2048-square D32 layers contain **64 MiB of depth texels**; driver
+must exceed four texels. A directional light's normal offset must stay below half
+the resolution less two texels. The device must support the requested dimensions
+and allocation. Four 2048-square D32 layers contain **64 MiB of depth texels**; driver
 allocation overhead is additional. The atlas is allocated when the first complete
 request is accepted and retained until renderer destruction. Disabling shadows
 after use keeps that allocation available for reuse. Window resizing does not
@@ -168,10 +172,39 @@ receiver in a band takes eighteen comparisons instead of nine. `cascade_blend = 
 selects one cascade exactly as without the band. There is no fade at the end of
 shadow coverage.
 
-Bias reduces self-shadowing artifacts but can separate a shadow from its caster.
-Normal offset moves the receiver along its unperturbed, face-corrected surface
-normal. Tune both values for the scene scale, slopes and shadow resolution. No
-single setting guarantees artifact-free contact at every scale.
+## Normal offset
+
+A receiver looks up its shadow from a point moved along its normal. A directional
+light moves the point by `directional_normal_bias_texels` texels of the cascade that
+shades it. The renderer writes that offset in metres for each cascade, so it grows
+with the cascade's coverage, and widens each cascade's fit to hold it. The default,
+two texels, is the reach of the 3x3 filter and clears self-shadowing at any slope
+and sun elevation. Four cascades over 400 m at 2048 texels with the sky example's
+camera (60° vertical, 16:9) have texels of about 2.6, 5.3, 12 and 48 cm, so offsets
+of about 5, 11, 24 and 96 cm.
+
+The offset costs two things, and both grow with the cascade:
+
+- A caster thinner than the offset casts no shadow on the surface it rests on: with
+  the cascades above, a 4 cm board on the ground in the first, a 90 cm crate in the
+  last.
+- A shadow's tip moves toward its caster by the offset divided by the tangent of the
+  sun's elevation.
+
+A box standing on the ground keeps its contact shadow. Where either loss shows, use
+[ray-traced shadows](#ray-traced-shadows), which apply no offset.
+
+Forward shading moves the point along the face-corrected vertex normal. Deferred
+shading moves it along a face normal rebuilt from depth: on each image axis, the
+neighbour on the side whose two texels continue the centre's depth in a straight
+line, turned toward the camera. Neither reads the normal map. A forward impostor
+moves along its baked normal, a deferred one along the face of the depth it writes.
+
+A spot or point light moves the point by `punctual_normal_bias` metres. The 0.02 m
+default is about two texels of a 2048-texel spot with a 45° outer cone at 10 m;
+longer ranges and wider cones need a larger value, set by hand.
+
+`bias` scales the depth pass's slope-scaled depth bias.
 
 ## Punctual projection and filtering
 
@@ -233,7 +266,7 @@ render::configure_view(&renderer, renderer.default_view, desc)!;
 - `RendererDesc.ray_queries` requests ray queries. With no adapter that supports them, `create_renderer` faults `c3d::UNSUPPORTED`. A renderer created without them traces shadows through the software walk ([scene tracing](scene_trace.md)). On an RTX 4090, tracing Sponza's sun shadow at 2160p adds 5.8 ms to the deferred lighting pass in software against 0.33 ms on ray queries, about 18 times, measured against the atlas (GPU frames 6.8 and 1.3 ms; [benchmarking](benchmarking.md#traced-effects-in-software-and-on-ray-queries)).
 - A light traces when `shadow.enabled`, `shadow.ray_traced` and the view's `ray_tracing.shadows` are all set. Every other light keeps the atlas, so a view can mix both.
 - A traced light holds no atlas layer in that view.
-- The ray starts `TRACE_SURFACE_OFFSET` (0.02 world units, shared with every traced effect) along the receiver's normal. The offset hides self-intersection at the cost of a small gap where a caster meets its receiver. `bias`, `normal_bias` and `max_distance` do not apply; directional rays stop at `RT_SHADOW_FAR` (10000 world units), punctual rays at the light.
+- The ray starts `TRACE_SURFACE_OFFSET` (0.02 world units, shared with every traced effect) along the receiver's normal. The offset hides self-intersection at the cost of a small gap where a caster meets its receiver. `bias`, the normal offsets and `max_distance` do not apply; directional rays stop at `RT_SHADOW_FAR` (10000 world units), punctual rays at the light.
 - A single-sided caster casts where its front faces the light, as in the atlas; a double-sided one casts from both faces ([facing](scene_trace.md#facing)).
 - Casters are the traced static scene (see [scene tracing](scene_trace.md#what-traces)): `cast_shadow = false` keeps a mesh out of shadow rays, `MASK` materials cast their alpha-tested coverage, and off-camera objects cast like any other. Skinned, morphed and `BLEND` meshes do not cast traced shadows.
 - Shadows are hard; the sun has no angular size.
@@ -257,7 +290,8 @@ uses six 2048-square layers. The GUI restricts controls to the active light kind
 Drag outside the GUI to orbit, scroll to zoom, and release Escape outside keyboard
 capture to close.
 
-The example uses a 0.16-world-unit normal offset for its 28-unit ground plane.
+The example's suns use the default two-texel offset; its spot and point use the 0.02 m default.
+The normal-offset control reads texels for the suns and metres for the spot and point.
 The settings table above describes the library defaults. Its depth-bias control
 spans 0..4 so the slope-factor tradeoff is visible at this scene scale.
 
@@ -277,3 +311,18 @@ shadows does not erase an earlier view's layers. The renderer owns the slice and
 replaces it when a newer completed summary publishes. Destruction also invalidates
 it. Without timestamp support the slice is empty; truncated timing is partial.
 See [profiling](profiling.md) for the build flags required by `--gpu-timings`.
+
+## Measured cost
+
+### RTX 4090, driver 610.88, 2560 × 1440
+
+`LIGHTING` pass of deferred views, `--opt O3` with GPU profiling, median of three runs of per-run medians, in ms.
+Before: main `3f297f5`. After: this change, whose resolve reads up to eight more depth texels a pixel.
+
+| Scene | Before | After |
+| --- | ---: | ---: |
+| Sponza, `gltf_viewer --benchmark --shading deferred --shadows on` (`gpu_lighting_ms`) | 0.211 | 0.281 |
+| `sky --benchmark --shading deferred`, noon (`pass=LIGHTING`) | 0.072 | 0.100 |
+
+Per-run medians were 0.211/0.209/0.213 against 0.280/0.281/0.405 for Sponza, and 0.075/0.072/0.071 against
+0.099/0.100/0.100 for sky. Sponza grows by 0.070 ms.

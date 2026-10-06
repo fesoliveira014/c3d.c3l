@@ -351,6 +351,7 @@ fn ShadowGpu[]? record_shadows(
             uint layer = request.first_layer + index;
             float split_depth;
             float blend_depth;
+            float normal_bias = light.shadow.punctual_normal_bias;
             switch (light.kind) {
                 case DIRECTIONAL:
                     float blend = light.shadow.cascade_blend;
@@ -361,12 +362,13 @@ fn ShadowGpu[]? record_shadows(
                         light_direction: packed.direction_cos_outer.xyz,
                         casters: candidates,
                         resolution: renderer.shadow_resolution,
-                        normal_bias: light.shadow.normal_bias,
+                        normal_bias_texels: light.shadow.directional_normal_bias_texels,
                         origin: renderer.frame_origin,
                     );
                     shadow_matrices[layer] = cascade.camera;
                     split_depth = cascade.split_depth;
                     blend_depth = cascade_blend_depth(splits, index, blend);
+                    normal_bias = cascade.normal_bias;
                 case SPOT:
                     shadow_matrices[layer] = spot_shadow_camera(
                         position: packed.position_range.xyz,
@@ -392,7 +394,7 @@ fn ShadowGpu[]? record_shadows(
                 .view_proj = bitcast(shadow_matrices[layer].view_proj, Mat4f),
                 .texture_index = renderer.shadow_atlas.layers[layer].view.index,
                 .sampler_index = renderer.shadow_atlas.sampler,
-                .normal_bias = light.shadow.normal_bias,
+                .normal_bias = normal_bias,
                 .split_depth = split_depth,
                 .blend_depth = blend_depth,
                 .texel_size = 1.0f / (float)renderer.shadow_resolution,
