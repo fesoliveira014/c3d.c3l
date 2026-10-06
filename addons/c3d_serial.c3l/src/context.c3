@@ -16,7 +16,7 @@ const uint OWNER_SLOT_SHIFT @local = 32;
 
 struct NodeProjection @private {
     uint record;
-    ulong omitted_components;
+    ComponentMask omitted_components;
     ulong node_owner;
     ulong local_owner;
     bool selected;
@@ -58,7 +58,7 @@ struct ReadContext {
     AssetStore* assets;
     Node*[] nodes;
     String[] keys;
-    ulong[] component_masks;
+    ComponentMask[] component_masks;
     Node* node;
     uint record;
     uint version;
@@ -93,7 +93,7 @@ fn void? WriteContext.omit_component(&self, Node* node, uint slot) {
         }
     }
     self.state.claims.push({ .node = node.id.index, .slot = slot, .owner = owner });
-    projected.omitted_components |= 1ul << slot;
+    projected.omitted_components |= ecs::slot_bit(slot);
 }
 
 <*
@@ -174,7 +174,7 @@ fn Entity? ReadContext.read_entity(&self, Reader* reader) {
 *>
 macro bool ReadContext.has_component(&self, $Type) {
     if (try slot = ecs::assigned_slot($Type)) {
-        return (self.component_masks[self.record] & (1ul << slot)) != 0;
+        return (self.component_masks[self.record] & ecs::slot_bit(slot)) != 0;
     }
     return false;
 }

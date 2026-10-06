@@ -3,6 +3,7 @@ module cpu_bench_example;
 import c3d;
 import c3d::asset;
 import c3d::camera;
+import c3d::ecs;
 import c3d::geometry;
 import c3d::light;
 import c3d::material;
@@ -37,6 +38,10 @@ const uint PICK_RAYS @local = 64;
 const uint PICK_SEED @local = 0x2545f491;
 const float RAY_FIELD @local = 60; // rays start this far out on x and z and aim within the grid
 const float RAY_HEIGHT @local = 25;
+const uint MAX_ECS_ENTITIES @local = 2_097_152; // the large reading: its arrays exceed the 36 MB L3 of an i9-14900K
+const uint ECS_SEED @local = 0x6d2b79f5;
+const String ECS_PREFIX @local = "ecs_";
+const String SHUFFLED_SUFFIX @local = "_shuffled";
 
 enum Work @local {
     WORLD,
@@ -59,6 +64,15 @@ enum Work @local {
     INDEX_PICK_TRIANGLES,
     SCAN_PICK_TRIANGLES,
     TRIANGLE_WARMUP,
+}
+
+enum EcsWork @local {
+    EACH,
+    EACH2,
+    EACH2_DENSE,
+    GET,
+    GET_ABSENT,
+    HAS,
 }
 
 enum IndexScene @local {
@@ -85,6 +99,26 @@ struct Sample @local {
     double checksum;
 }
 
+struct EcsCase @local {
+    EcsWork work;
+    bool shuffled;
+}
+
+struct EcsCandidate @local {
+    uint value;
+}
+
+struct EcsQueried @local {
+    uint value;
+}
+
+struct EcsLayout @local {
+    Entity[] insertion;
+    Entity[] chosen;
+    bool[]   in_half;
+    uint     state;
+}
+
 fn Work? parse_work(String name) @local {
     switch (name) {
         case "world": return WORLD;
@@ -107,6 +141,19 @@ fn Work? parse_work(String name) @local {
         case "index_pick_triangles": return INDEX_PICK_TRIANGLES;
         case "scan_pick_triangles": return SCAN_PICK_TRIANGLES;
         case "triangle_warmup": return TRIANGLE_WARMUP;
+        default: return c3d::INVALID_ARGUMENT~;
+    }
+}
+
+fn EcsCase? parse_ecs_case(String name) @local {
+    bool shuffled = name.ends_with(SHUFFLED_SUFFIX);
+    switch (name.strip_suffix(SHUFFLED_SUFFIX)) {
+        case "ecs_each": return { .work = EACH, .shuffled = shuffled };
+        case "ecs_each2": return { .work = EACH2, .shuffled = shuffled };
+        case "ecs_each2_dense": return { .work = EACH2_DENSE, .shuffled = shuffled };
+        case "ecs_get": return { .work = GET, .shuffled = shuffled };
+        case "ecs_get_absent": return { .work = GET_ABSENT, .shuffled = shuffled };
+        case "ecs_has": return { .work = HAS, .shuffled = shuffled };
         default: return c3d::INVALID_ARGUMENT~;
     }
 }
@@ -207,6 +254,32 @@ fn double run_iteration(
             spatial::prepare_triangle_picks(assets, scene);
             return (double)assets.geometry(index_input.plane).triangles.nodes.len;
     }
+}
+
+fn double run_ecs_iteration(World* world, EcsWork work) @local @noinline {
+    ulong checksum;
+    switch (work) {
+        case EACH:
+            world.@each(EcsCandidate; Entity entity, EcsCandidate* candidate) {
+                checksum += candidate.value;
+            };
+        case EACH2:
+        case EACH2_DENSE:
+            world.@each2(EcsCandidate, EcsQueried; Entity entity, EcsCandidate* candidate, EcsQueried* queried) {
+                checksum += (ulong)candidate.value + queried.value;
+            };
+        case GET:
+        case GET_ABSENT:
+            world.@each(EcsCandidate; Entity entity, EcsCandidate* candidate) {
+                EcsQueried* queried = world.get(entity, EcsQueried);
+                if (queried) checksum += queried.value;
+            };
+        case HAS:
+            world.@each(EcsCandidate; Entity entity, EcsCandidate* candidate) {
+                if (world.has(entity, EcsQueried)) checksum += candidate.value;
+            };
+    }
+    return (double)checksum;
 }
 
 fn double pick_checksum(
@@ -319,6 +392,69 @@ fn float next_unit(uint* state) @local {
     *state ^= *state >> 17;
     *state ^= *state << 5;
     return (float)(*state >> 8) / (float)(1u << 24);
+}
+
+fn uint next_random(uint* state) @local {
+    *state ^= *state << 13;
+    *state ^= *state >> 17;
+    *state ^= *state << 5;
+    return *state;
+}
+
+fn void shuffle_entities(Entity[] entities, uint* state) @local {
+    for (usz index = entities.len; index > 1; index--) {
+        usz other = next_random(state) % index;
+        @swap(entities[index - 1], entities[other]);
+    }
+}
+
+fn bool queried_by(EcsWork work, uint index, bool in_half) @local {
+    switch (work) {
+        case EACH: return false;
+        case EACH2:
+        case GET:
+        case HAS: return in_half;
+        case EACH2_DENSE: return index % 2 == 0;
+        case GET_ABSENT: return index % 2 == 1;
+    }
+}
+
+fn EcsLayout? create_ecs_layout(World* world, uint entities, bool shuffled) @local {
+    EcsLayout layout = {
+        .insertion = alloc::new_array(mem, Entity, entities),
+        .chosen    = alloc::new_array(mem, Entity, entities),
+        .in_half   = alloc::new_array(mem, bool, entities),
+        .state     = ECS_SEED,
+    };
+    defer catch destroy_ecs_layout(&layout);
+    foreach (&entity : layout.insertion) *entity = world.create_entity()!;
+    layout.chosen[..] = layout.insertion[..];
+    if (shuffled) shuffle_entities(layout.insertion, &layout.state);
+    foreach (entity : layout.insertion) {
+        if (entity.index % 2 == 0) world.add(entity, (EcsCandidate){ .value = entity.index });
+    }
+    return layout;
+}
+
+fn void destroy_ecs_layout(EcsLayout* layout) @local {
+    alloc::free(mem, layout.insertion.ptr);
+    alloc::free(mem, layout.chosen.ptr);
+    alloc::free(mem, layout.in_half.ptr);
+}
+
+// A fixed random half repeated pass after pass trains the branch predictor; each batch draws a new one.
+fn void place_queried(World* world, EcsLayout* layout, EcsWork work) @local {
+    foreach (entity : layout.insertion) {
+        if (world.has(entity, EcsQueried)) world.remove(entity, EcsQueried);
+    }
+    shuffle_entities(layout.chosen, &layout.state);
+    layout.in_half[..] = false;
+    foreach (entity : layout.chosen[:layout.chosen.len / 2]) layout.in_half[entity.index] = true;
+    foreach (entity : layout.insertion) {
+        if (queried_by(work, entity.index, layout.in_half[entity.index])) {
+            world.add(entity, (EcsQueried){ .value = entity.index });
+        }
+    }
 }
 
 fn Ray[] pick_rays(Allocator allocator) @local {
@@ -456,6 +592,41 @@ fn void? benchmark(
     }
 }
 
+fn void? benchmark_ecs(
+    String name,
+    uint entities,
+    uint iterations,
+    uint sample_count,
+) @local {
+    EcsCase ecs_case = parse_ecs_case(name)!;
+    World world = ecs::create_world(mem, entities);
+    defer ecs::destroy_world(&world);
+    world.register(EcsCandidate)!;
+    world.register(EcsQueried)!;
+    EcsLayout layout = create_ecs_layout(&world, entities, ecs_case.shuffled)!;
+    defer destroy_ecs_layout(&layout);
+
+    Sample[] samples = alloc::new_array(mem, Sample, sample_count);
+    defer alloc::free(mem, samples.ptr);
+    double checksum;
+    for (uint batch = 0; batch < WARMUP_BATCHES + sample_count; batch++) {
+        place_queried(&world, &layout, ecs_case.work);
+        time::Clock started = clock::now();
+        for (uint iteration = 0; iteration < iterations; iteration++) {
+            checksum += run_ecs_iteration(&world, ecs_case.work);
+        }
+        double elapsed = (double)(clock::now() - started) / NANOSECONDS_PER_MICROSECOND / iterations;
+        if (batch >= WARMUP_BATCHES) {
+            samples[batch - WARMUP_BATCHES] = { .microseconds = elapsed, .checksum = checksum };
+        }
+    }
+    io::printfn("# seed: 0x%08x", ECS_SEED);
+    io::printn("case,nodes,batch,iterations,us_per_iteration,checksum");
+    foreach (index, sample : samples) {
+        io::printfn("%s,%d,%d,%d,%.6f,%.3f", name, entities, index, iterations, sample.microseconds, sample.checksum);
+    }
+}
+
 <* Measure scene traversal and CPU extraction without creating a GPU device. *>
 fn int main(String[] args) {
     if (args.len < 2 || args.len > 5) {
@@ -466,19 +637,35 @@ fn int main(String[] args) {
         io::eprintn("       index_refresh_crowd index_refresh_batch index_build_crowd index_build_batch");
         io::eprintn("       index_pick_crowd scan_pick_crowd index_pick_triangles scan_pick_triangles (nodes ignored)");
         io::eprintn("       triangle_warmup (nodes = plane segments per side, as bvh_triangles)");
+        io::eprintn("       ecs_each ecs_each2 ecs_each2_dense ecs_get ecs_get_absent ecs_has, each also with");
+        io::eprintn("       a _shuffled suffix (nodes = entities, at most 2,097,152)");
         return 1;
     }
     bool plane_case = args[1] == "bvh_triangles" || args[1] == "triangle_warmup";
+    bool ecs_case = args[1].starts_with(ECS_PREFIX);
     uint nodes = args.len > 2 ? (args[2].to_uint() ?? 0) : (plane_case ? DEFAULT_PLANE_SEGMENTS : DEFAULT_NODES);
     uint iterations = args.len > 3 ? (args[3].to_uint() ?? 0) : 100;
     uint samples = args.len > 4 ? (args[4].to_uint() ?? 0) : 30;
-    if (!nodes || nodes > MAX_NODES || !iterations || iterations > 100000 || !samples || samples > 10000) {
-        io::eprintn("Expected nodes 1..65536, iterations 1..100000, samples 1..10000.");
+    uint max_nodes = ecs_case ? MAX_ECS_ENTITIES : MAX_NODES;
+    if (!nodes || nodes > max_nodes || !iterations || iterations > 100000 || !samples || samples > 10000) {
+        io::eprintfn("Expected nodes 1..%d, iterations 1..100000, samples 1..10000.", max_nodes);
         return 1;
     }
     if (plane_case && nodes > MAX_PLANE_SEGMENTS) {
         io::eprintn("bvh_triangles and triangle_warmup take 1..1024 plane segments per side.");
         return 1;
+    }
+    if (ecs_case) {
+        if (catch excuse = benchmark_ecs(
+            name: args[1],
+            entities: nodes,
+            iterations: iterations,
+            sample_count: samples,
+        )) {
+            io::eprintfn("ECS benchmark failed: %s", excuse);
+            return 1;
+        }
+        return 0;
     }
     if (catch excuse = benchmark(
         name: args[1],
