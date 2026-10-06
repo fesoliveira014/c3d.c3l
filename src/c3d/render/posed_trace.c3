@@ -11,7 +11,7 @@ import std::hash::fnv32a;
  Posed trace slots a renderer holds when RendererDesc leaves the count at zero.
  Zero never disables posing; Mesh.trace = false keeps a mesh out.
 *>
-const uint DEFAULT_MAX_POSED_TRACE_INSTANCES = 64; // 32 two-part characters; a slot is 24-40 B/vertex, 32 B/node and a BLAS
+const uint DEFAULT_MAX_POSED_TRACE_INSTANCES = 64; // 32 two-part characters; a slot: 24-40 B/vertex, 32 B/node, a BLAS
 
 <*
  Identity of one posed trace instance across the scenes a renderer serves.
