@@ -230,7 +230,10 @@ JobPool pool = job::create_job_pool(mem, desc)!;
 ```
 
 On an i9-14900K under Windows, `performance` is processors 0-15 (eight cores with two threads each) and
-`efficiency` 16-31. The pool does not bind the calling thread. An application that binds it, for the ranges it
+`efficiency` 16-31. Binding the frame workers to the performance cores buys isolation from background work, not
+throughput: in the pinned row of [Measured cost](#measured-cost) the pinned pool is slower. Size the frame
+worker count from the physical performance cores. Fifteen workers on 16 logical processors share eight
+hyperthreaded cores, and unbound they also use the efficiency cores. The pool does not bind the calling thread. An application that binds it, for the ranges it
 runs in `wait`, does so after `create_job_pool`; bound first, it would narrow every worker's set to its own.
 
 ## Temp memory
@@ -393,6 +396,18 @@ The loaded kernel stays within 7 % of idle at 1 and 3 workers on both hosts (WSL
 and 1.07). At 31 workers it is 1.10 on WSL and 0.93 on Windows; the two hosts differ in direction and the runs
 are noisy (the 31-worker idle runs on Windows span 256–415 µs), so no consistent slowdown from a background run
 is established.
+
+Binding on this host, from `job_bench`: `performance_cpus=0-15`, `efficiency_cpus=16-31` and
+`pinned_worker_cpus=0-15`; `job_test` passes 29 of 29 tests, including
+`test_workers_report_the_requested_cpu_set` on the real binding. The pinned row, 15 workers, 262 144 items,
+batch 1024:
+
+| Unpinned µs | Pinned µs | Ratio |
+| ---: | ---: | ---: |
+| 1070.4 [993–1153] | 1355.5 [1208–1388] | 1.27 |
+
+Pinned is slower: the 15 workers share the eight hyperthreaded performance cores, while unbound they also use
+the efficiency cores.
 
 ### Revisit threshold
 
