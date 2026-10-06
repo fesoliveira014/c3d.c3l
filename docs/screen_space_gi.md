@@ -101,11 +101,13 @@ Measured on an RTX 4090 over Sponza (`gltf_viewer --benchmark --screen-space-gi 
 | Path | Extent | `SCREEN_SPACE_GI` | `SSGI_COLOR_COPY` | `VELOCITY` |
 | --- | --- | --- | --- | --- |
 | deferred | 1920 x 1080 | 0.62 ms | 0.01 ms | 0.01 ms |
-| forward | 1920 x 1080 | 0.76 ms | 0.01 ms | 0.01 ms |
+| forward | 1920 x 1080 | 0.79 ms | 0.01 ms | 0.01 ms |
 | deferred | 3840 x 2160 | 2.44 ms | 0.05 ms | 0.05 ms |
-| forward | 3840 x 2160 | 3.06 ms | 0.05 ms | 0.04 ms |
+| forward | 3840 x 2160 | 3.17 ms | 0.05 ms | 0.04 ms |
 
-Forward views pay more because the filter reconstructs normals from depth. A view without TAA or motion blur
+Forward views pay more because the trace and the filter reconstruct normals from depth. The two-texel face rule
+(up to eight depth loads per normal) costs 4.5 % at 1920 x 1080 and 3.1 % at 3840 x 2160 over the earlier
+four-load rule. A view without TAA or motion blur
 also pays the velocity pass and the per-candidate history commit: `cpu_record` rose from 0.15 to 0.19 ms at
 1080p on Sponza.
 
