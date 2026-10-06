@@ -42,7 +42,7 @@ heap state: moving the handle keeps the pool running, and copies share one pool,
 
 | `JobPoolDesc` field | Default | Meaning |
 | --- | --- | --- |
-| `worker_count` | logical processors minus one, at least 1 | Shared worker threads; 0 runs every frame range on the calling thread. |
+| `worker_count` | available processors within the quota, minus one, at least 1 | Shared worker threads; 0 runs every frame range on the calling thread. |
 | `worker_temp_bytes` | 256 KiB | Initial temp allocator of each worker. |
 | `run_capacity` | 64 | Frame runs with unfinished ranges at once. |
 | `background_run_capacity` | 64 | Background runs with unfinished ranges at once; 0 refuses every background run. |
@@ -102,8 +102,8 @@ pool.wait(id);
 ```
 
 - **Split.** A run of `count` items at `batch = b` has `ceil(count / b)` ranges, `[i * b, min((i + 1) * b,
-  count))`; only the last one is short. `batch = 0` lets the pool choose about four ranges per pool thread,
-  the caller included. `count = 0` runs nothing.
+  count))`; only the last one is short. `batch = 0` lets the pool choose about four ranges per shared worker,
+  the caller included; background-only workers do not count. `count = 0` runs nothing.
 - **`run`** queues the ranges as a frame run and returns at once with a `JobId`. `data` is handed to every
   range and must outlive the run; it may be null.
 - **`wait(id)`** returns once every range of the run has finished. Meanwhile the waiting thread runs that run's
@@ -112,7 +112,7 @@ pool.wait(id);
 - **`is_finished(id)`** reports whether every range of the run has finished, without blocking. Once it returns
   true, everything the ranges wrote is visible to the caller. A run's slot is released when its last range
   finishes, whether or not anyone waits on it or asks. Polling alone never finishes a background run on a pool
-  without background workers; see [Background runs](#background-runs).
+  with no worker that takes background ranges; see [Background runs](#background-runs).
 - **Zero and stale ids.** `run` returns the zero id when every range ran inside the call. An id goes stale when
   its run finishes; its slot is reused only after that. `wait` on a zero or stale id returns at once and never
   waits on a later run in the same slot, and `is_finished` reports both as finished. A slot's generation wraps
@@ -147,7 +147,8 @@ if (pool.is_finished(streaming)) publish(&decode);
 - **`try_run(job_class, ...)`** queues a run of either class, or faults `c3d::CAPACITY_EXCEEDED` when that
   class's partition of the run table is full. A refused run queues nothing and runs nothing, and
   `inline_ranges` does not move. It never runs a range inside the call, with one exception: on a pool without
-  workers, frame work runs on the caller as `run` does. Background runs are submitted only through `try_run`.
+  shared workers, frame work runs on the caller as `run` does. Background runs are submitted only through
+  `try_run`.
 - **Cap.** At most `background_workers` shared workers run background ranges at once; the others take only
   frame ranges, and a worker takes a frame range before a background one. Background work therefore runs in
   frame idle time: a pool that is never idle of frame work starves it, by design. A range that has started is

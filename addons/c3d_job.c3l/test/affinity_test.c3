@@ -41,12 +41,17 @@ fn JobPoolDesc bound_desc(CpuSet worker_cpus, CpuSet background_cpus) @local {
     return desc;
 }
 
-macro void @assert_no_quota(#quota) @local {
-    if (catch excuse = #quota) {
-        assert(excuse == NOT_FOUND);
-        return;
+macro void @assert_faults(#expression, expected) @local {
+    bool faulted;
+    if (catch excuse = #expression) {
+        assert(excuse == expected);
+        faulted = true;
     }
-    unreachable("expected no quota");
+    assert(faulted, "Expression did not fault.");
+}
+
+macro void @assert_no_quota(#quota) @local {
+    @assert_faults(#quota, NOT_FOUND);
 }
 
 fn void test_workers_report_the_requested_cpu_set() @test {
@@ -80,11 +85,7 @@ fn void test_request_outside_the_available_cpus_is_invalid() @test {
     requested.set(outside);
     JobPoolDesc[2] descs = { bound_desc(requested, {}), bound_desc({}, requested) };
     foreach (desc : descs) {
-        if (catch excuse = job::create_job_pool(mem, desc)) {
-            assert(excuse == c3d::INVALID_ARGUMENT);
-            continue;
-        }
-        unreachable("expected INVALID_ARGUMENT");
+        @assert_faults(job::create_job_pool(mem, desc), c3d::INVALID_ARGUMENT);
     }
 }
 
@@ -133,18 +134,10 @@ fn void test_cgroup_paths_walk_up_from_proc_self_cgroup() @test {
     String hybrid = "5:cpuacct:/elsewhere\n12:cpu,cpuacct:/docker/abc\n4:memory:/other\n0::/\n";
     assert(job::cgroup_path(hybrid, "cpu")!! == "/docker/abc");
     assert(job::cgroup_path(hybrid, "")!! == "");
-    if (catch excuse = job::cgroup_path("4:memory:/other\n", "cpu")) {
-        assert(excuse == NOT_FOUND);
-    } else {
-        unreachable("expected NOT_FOUND");
-    }
+    @assert_faults(job::cgroup_path("4:memory:/other\n", "cpu"), NOT_FOUND);
     assert(job::parent_cgroup("/docker/abc")!! == "/docker");
     assert(job::parent_cgroup("/docker")!! == "");
-    if (catch excuse = job::parent_cgroup("")) {
-        assert(excuse == NOT_FOUND);
-    } else {
-        unreachable("expected NOT_FOUND");
-    }
+    @assert_faults(job::parent_cgroup(""), NOT_FOUND);
 }
 
 fn void test_cpu_lists_parse_ranges_and_single_processors() @test {
@@ -153,11 +146,7 @@ fn void test_cpu_lists_parse_ranges_and_single_processors() @test {
     assert(parsed.data == expected.data);
     String[4] malformed = { "", "3-1", "a", "2-x" };
     foreach (contents : malformed) {
-        if (catch excuse = job::parse_cpu_list(contents)) {
-            assert(excuse == c3d::INVALID_ARGUMENT);
-            continue;
-        }
-        unreachable("expected INVALID_ARGUMENT");
+        @assert_faults(job::parse_cpu_list(contents), c3d::INVALID_ARGUMENT);
     }
 }
 
@@ -192,11 +181,7 @@ fn void test_group_masks_stay_within_one_group() @test {
     assert(full.group == 0 && full.mask == ulong::max);
     CpuSet[2] refused = { cpu_range(63, 65), cpu_range(128, 129) };
     foreach (cpus : refused) {
-        if (catch excuse = job::group_mask_of(cpus, &TWO_FULL_GROUPS)) {
-            assert(excuse == c3d::UNSUPPORTED);
-            continue;
-        }
-        unreachable("expected UNSUPPORTED");
+        @assert_faults(job::group_mask_of(cpus, &TWO_FULL_GROUPS), c3d::UNSUPPORTED);
     }
 
     GroupMask second = job::group_mask_of(cpu_range(20, 21), &UNEVEN_GROUPS)!!;

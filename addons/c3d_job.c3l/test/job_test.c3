@@ -823,6 +823,44 @@ fn void test_background_only_workers_run_background_outside_the_cap() @test {
     }
 }
 
+fn void test_background_only_workers_do_not_count_against_the_cap() @test {
+    JobPoolDesc desc = job::default_job_pool_desc();
+    desc.worker_count = 1;
+    desc.background_workers = 1;
+    desc.background_only_workers = 1;
+    JobPool pool = job::create_job_pool(mem, desc)!!;
+    defer job::destroy_job_pool(&pool);
+    Gate frame_gate;
+    Gate background_gate;
+    defer {
+        frame_gate.open.store(1);
+        background_gate.open.store(1);
+    }
+
+    JobId frame = pool.run(
+        range: &gate_range,
+        data:  &frame_gate,
+        count: 1,
+        batch: 1,
+    );
+    spin_until(&frame_gate.started, 1);
+    JobId background = pool.try_run(
+        job_class: BACKGROUND,
+        range:     &gate_range,
+        data:      &background_gate,
+        count:     2,
+        batch:     1,
+    )!!;
+    spin_until(&background_gate.started, 1);
+    assert(background_gate.started.load() == 1);
+
+    frame_gate.open.store(1);
+    spin_until(&background_gate.started, 2);
+    background_gate.open.store(1);
+    spin_until_finished(&pool, frame);
+    spin_until_finished(&pool, background);
+}
+
 fn void test_pool_survives_a_move_of_its_handle() @test {
     Holder holder = { .pool = create_test_pool(TEST_WORKERS) };
     Coverage coverage = create_coverage(LARGE_COUNT);

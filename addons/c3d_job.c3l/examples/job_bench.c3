@@ -26,7 +26,7 @@ const uint LOADED_BATCH @local = 1024; // about 64 ranges: scheduling stays a sm
 const uint BACKGROUND_RANGES @local = 16384; // about 0.25 s of serial work, so it outlasts the timed frame passes
 const uint BACKGROUND_RANGE_ITEMS @local = 256; // about 15 us of chain multiplies a range
 const uint PINNED_ITEMS @local = 262144; // the largest kernel, where placement shows most
-const uint PINNED_BATCH @local = 1024;
+const uint PINNED_BATCH @local = 1024; // about 256 ranges: a coarse grain, so placement and not scheduling is measured
 
 struct Load @local {
     Mat4[] chain;

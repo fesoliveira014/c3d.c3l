@@ -3,7 +3,7 @@ module c3d::job @feat(WIN32);
 import c3d;
 import std::os::win32;
 
-const usz MAX_PROCESSOR_GROUPS @private = CPU_SET_BITS / GROUP_MASK_BITS; // groups the dense index can hold when each is full
+const usz MAX_PROCESSOR_GROUPS @private = CPU_SET_BITS / GROUP_MASK_BITS; // groups a dense index holds if each is full
 const CInt RELATION_PROCESSOR_CORE @private = 0; // LOGICAL_PROCESSOR_RELATIONSHIP.RelationProcessorCore
 
 struct GroupAffinity @private {
@@ -36,7 +36,10 @@ extern fn Win32_BOOL set_thread_group_affinity(
     GroupAffinity* affinity,
     GroupAffinity* previous,
 ) @cname("SetThreadGroupAffinity") @private;
-extern fn Win32_BOOL get_thread_group_affinity(Win32_HANDLE thread, GroupAffinity* affinity) @cname("GetThreadGroupAffinity") @private;
+extern fn Win32_BOOL get_thread_group_affinity(
+    Win32_HANDLE thread,
+    GroupAffinity* affinity,
+) @cname("GetThreadGroupAffinity") @private;
 extern fn Win32_DWORD get_active_processor_count(Win32_WORD group) @cname("GetActiveProcessorCount") @private;
 extern fn Win32_WORD get_active_processor_group_count() @cname("GetActiveProcessorGroupCount") @private;
 extern fn Win32_BOOL get_logical_processor_information_ex(
@@ -52,10 +55,15 @@ fn usz processor_group_sizes(uint[] sizes) @private {
 }
 
 fn CpuSet native_thread_cpus() @private {
-    GroupAffinity affinity;
-    get_thread_group_affinity(win32::getCurrentThread(), &affinity);
     uint[MAX_PROCESSOR_GROUPS] sizes;
     usz groups = processor_group_sizes(&sizes);
+    GroupAffinity affinity;
+    if (!get_thread_group_affinity(win32::getCurrentThread(), &affinity)) {
+        // An unreadable mask must not leave the available set empty; fall back to the first group, as Linux does.
+        CpuSet first_group;
+        for (sz index = 0; index < min((sz)sizes[0], CPU_SET_BITS); index++) first_group.set(index);
+        return first_group;
+    }
     if (affinity.group >= groups) return {};
     return cpus_of_group_mask({ .group = affinity.group, .mask = affinity.mask }, sizes[:groups]);
 }

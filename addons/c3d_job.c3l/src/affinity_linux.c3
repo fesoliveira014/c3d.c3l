@@ -15,7 +15,7 @@ const String CGROUP_V1_CPU_CONTROLLER @private = "cpu";
 const String PERFORMANCE_CORE_CPUS @private = "/sys/devices/cpu_core/cpus";
 const String CPU_CAPACITY_FORMAT @private = "/sys/devices/system/cpu/cpu%d/cpu_capacity";
 
-$assert CpuSet::size == 128 : "CpuSet is passed as glibc's cpu_set_t.";
+$assert CpuSet::size == 128 && !env::BIG_ENDIAN : "CpuSet is passed byte for byte as glibc's cpu_set_t.";
 
 extern fn CInt sched_getaffinity(CInt pid, usz set_bytes, void* set) @cname("sched_getaffinity") @private;
 extern fn CInt sched_setaffinity(CInt pid, usz set_bytes, void* set) @cname("sched_setaffinity") @private;
@@ -62,8 +62,8 @@ fn CoreTypes native_core_types(CpuSet available) @private {
     return core_types_from_ranks(&ranks, available);
 }
 
-// The contents live in tmem; callers open the pool.
 <*
+ Read a small system file into tmem; callers open the pool.
  @return? NOT_FOUND
 *>
 fn String? read_system_file(String path) @private {

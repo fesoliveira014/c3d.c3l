@@ -93,7 +93,7 @@ struct RunQueue @private {
 struct JobPoolState @private {
     Allocator         allocator;
     usz               worker_temp_bytes;
-    Worker[]          workers; // shared workers first; Thread.create writes an entry its worker may already read, so the array never moves
+    Worker[]          workers; // shared workers first; Thread.create writes an entry its worker may read; never moves
     RunSlot[]         runs;    // frame slots first, then background slots
     uint              shared_workers;
     uint              frame_slots;
@@ -161,7 +161,7 @@ fn JobId JobPool.run(
 
 <*
  Queue a run of a class, or refuse it when the class partition is full.
- Runs no range inside the call, except frame work on a pool without workers.
+ Runs no range inside the call, except frame work on a pool without shared workers.
  @param [inout] data : "Handed to every range; outlives the run."
  @param batch : "Items per range, the last one short; 0 lets the pool choose."
  @return "Zero when every range ran inside the call."

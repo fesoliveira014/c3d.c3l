@@ -15,7 +15,7 @@ const String CGROUP_UNLIMITED @private = "max";
 alias CpuSet = BitSet{CPU_SET_BITS};
 
 <*
- Available processors split into the fastest core type and the rest.
+ Processors of the fastest core type and of every other type.
 *>
 struct CoreTypes {
     CpuSet performance; // the fastest class; every available processor when types are uniform or unknown
