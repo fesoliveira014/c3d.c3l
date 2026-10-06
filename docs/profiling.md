@@ -193,11 +193,13 @@ negative offset. `Recorder.add_dropped_worker_intervals(count)` adds intervals t
 `FrameCaptureView.workers` holds the samples in arrival order and `dropped_worker_samples` counts what did not
 fit. Outside a recording capture both calls do nothing.
 
-`RecorderDesc.worker_samples_per_frame` bounds the samples of one capture. Zero keeps none and counts every
-interval as dropped, unlike the renderer's descriptors, where zero selects a default. Worker labels are copied
-into the same `label_bytes_per_frame` storage as scope labels; an interval whose label does not fit is dropped
-and counted, and does not truncate the CPU capture. Worker samples are not CPU scopes: they have no parent,
-self time or origin and do not count toward `cpu_scopes_per_frame`.
+`RecorderDesc.worker_samples_per_frame` bounds the samples of one capture. Zero keeps none and counts every interval
+as dropped, unlike the renderer's descriptors, where zero selects a default. Worker labels are copied into the same
+`label_bytes_per_frame` storage as scope labels; an interval whose label does not fit is dropped and counted, and
+does not truncate the CPU capture. Labels forwarded early use storage that later scope labels need: a burst of
+worker labels at the start of a capture can leave no room, and the scopes that follow are truncated like any scope
+that finds the storage full. Forward worker records late in the frame. Worker samples are not CPU scopes: they have
+no parent, self time or origin and do not count toward `cpu_scopes_per_frame`.
 
 The job pool's `JobPool.forward_records(&recorder)` makes these calls; see [the job pool](jobs.md#profiling).
 

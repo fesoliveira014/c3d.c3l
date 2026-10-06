@@ -23,6 +23,7 @@ struct ExportFrame @private {
     GpuSample[] gpu @if($feat(C3D_PROFILE_GPU));
 }
 
+// Field-for-field twin of ExportFrame plus the worker fields; a field added to one is added to the other.
 struct ExportWorkerFrame @private @feat(C3D_PROFILE_CPU) {
     ulong frame_id;
     CaptureState cpu_state;

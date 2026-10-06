@@ -5,7 +5,8 @@ pool of worker threads. It is fork-join: `run` splits `[0, count)` into ranges a
 returns once every range of that run has finished, and `is_finished` reports it without blocking. A run is
 either frame work or background work; frame ranges are taken first, and a cap bounds how many workers run
 background ranges at once. With zero workers every frame range runs on the calling thread. The package imports
-only the standard library and `c3d`; core never imports it and has no job feature flag.
+only the standard library and `c3d`, and `c3d::profile` under `C3D_PROFILE_CPU`; core never imports it and has
+no job feature flag.
 
 ```bash
 python3 scripts/build.py --example job_bench
@@ -276,7 +277,6 @@ is compiled only under `C3D_PROFILE_CPU`; a consumer that enables the feature al
 ```c3
 pool.set_recording(true);
 profile::@capture(&recorder, frame_id) {
-    pool.forward_records(&recorder);
     pool.wait(pool.run(
         range: &integrate_range,
         data:  &particles,
@@ -284,6 +284,7 @@ profile::@capture(&recorder, frame_id) {
         batch: 256,
         name:  "integrate",
     ));
+    pool.forward_records(&recorder);
 };
 ```
 
@@ -302,8 +303,9 @@ profile::@capture(&recorder, frame_id) {
   are the same `clock::now`. A record is in the ring before its run reports finished, so forwarding after
   `wait` or a true `is_finished` includes the whole run.
 - **Frame attribution.** A record belongs to the capture open when it is drained. A range that began before
-  that capture's origin keeps a negative start offset: forwarded at the start of frame N + 1, as above, the
-  ranges of frame N's last run appear left of the axis origin.
+  that capture's origin keeps a negative start offset: a range still running when the capture opened and
+  forwarded into it appears left of the axis origin. Forward after the run, as above; records forwarded at the
+  start of a capture can fill its label storage, see [Worker ranges](profiling.md#worker-ranges).
 - **Cost.** Without `C3D_PROFILE_CPU` the pool compiles no clock read, no ring and no branch. With the feature
   and recording off, each claim tests one flag under the lock. With recording on, see
   [Measured cost](#measured-cost).
@@ -323,7 +325,9 @@ Background lines time one background run of 1024 empty ranges at batch 1, from `
 has run, on the capped workers alone; the caller only polls. Loaded lines time the 65 536-item kernel at batch
 1024 once idle and once while a background run of 16 384 ranges of about 15 µs keeps the default cap of
 workers busy; the ratio is the median of the three runs' loaded over idle times, and every run's background
-work outlasted the timing.
+work outlasted the timing. Built with `--define C3D_PROFILE_CPU --lib c3d_profile`, `job_bench` adds
+recording lines: the overhead workload with `set_recording(true)`, its records drained after each pass, outside
+the timing. Ranges the caller runs in `wait` are not recorded.
 
 ### WSL, 32 logical processors (default 31 workers)
 
@@ -385,10 +389,22 @@ Kernel time with and without a background run holding the cap:
 
 A background run that holds the cap does not slow the frame kernel: the ratio stays within 2 % of 1.
 
+Recording against the overhead lines of the same build, in µs per empty range, with the minimum and maximum of
+the three runs for 31 workers:
+
+| Workers | Off median | Off min | Off max | On median | On min | On max |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 | 0.0078 | | | 0.0081 | | |
+| 1 | 0.0514 | | | 0.0660 | | |
+| 3 | 0.0613 | | | 0.1055 | | |
+| 31 | 0.1831 | 0.1810 | 0.1895 | 0.2021 | 0.1999 | 0.2049 |
+
+Without the feature the overhead lines equal the build before worker recording within noise.
+
 ### Windows host, 32 logical processors (default 31 workers)
 
-Pending: the overhead, kernel, background and loaded tables of this pool on the Windows host, medians of three
-runs with the range of the three, and for 31 workers the minimum, median and maximum.
+Pending: the overhead, kernel, background, loaded and recording tables of this pool on the Windows host, medians
+of three runs with the range of the three, and for 31 workers the minimum, median and maximum.
 
 ### Revisit threshold
 

@@ -184,7 +184,9 @@ fn ProfilerPanel? create_profiler_panel(Allocator allocator, profile::Recorder* 
     };
     $if $feat(C3D_PROFILE_CPU):
         panel.cpu = ((profile::CpuSample*)(storage.ptr + layout.cpu))[:recorder.desc.cpu_scopes_per_frame];
-        panel.workers = ((profile::WorkerSample*)(storage.ptr + layout.workers))[:recorder.desc.worker_samples_per_frame];
+        panel.workers = (
+            (profile::WorkerSample*)(storage.ptr + layout.workers)
+        )[:recorder.desc.worker_samples_per_frame];
     $endif
     $if $feat(C3D_PROFILE_GPU):
         panel.gpu = ((profile::GpuSample*)(storage.ptr + layout.gpu))[:recorder.desc.gpu_scopes_per_frame];

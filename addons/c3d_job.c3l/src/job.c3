@@ -21,12 +21,12 @@ const usz DEFAULT_WORKER_TEMP_BYTES = 256 * 1024; // std's main-thread size; lar
 <*
  Frame runs with unfinished ranges at once.
 *>
-const uint DEFAULT_RUN_CAPACITY = 64; // 3.5 KiB at 56 bytes a slot; a fork-join caller holds one run
+const uint DEFAULT_RUN_CAPACITY = 64; // 3.5 KiB at 56 bytes a slot, 4.5 KiB at 72 with C3D_PROFILE_CPU
 
 <*
  Background runs with unfinished ranges at once.
 *>
-const uint DEFAULT_BACKGROUND_RUN_CAPACITY = 64; // 3.5 KiB at 56 bytes a slot; held until its last range finishes
+const uint DEFAULT_BACKGROUND_RUN_CAPACITY = 64; // 3.5 KiB at 56 bytes a slot, 4.5 KiB at 72 with C3D_PROFILE_CPU
 
 const uint BACKGROUND_WORKER_SHARE @private = 4; // the default cap leaves three quarters of the workers to frame work
 const uint RANGES_PER_THREAD @private = 4; // batch 0 gives this many ranges per thread; each costs one lock round trip
@@ -54,7 +54,7 @@ struct JobPoolDesc {
     uint   background_only_workers; // workers that take only background ranges, outside the cap
     CpuSet worker_cpus;             // processors of the shared workers; empty leaves the system's choice
     CpuSet background_cpus;         // processors of the background-only workers; empty leaves the system's choice
-    uint   record_capacity @if($feat(C3D_PROFILE_CPU)); // worker range records held between drains; a full ring drops and counts
+    uint   record_capacity @if($feat(C3D_PROFILE_CPU)); // records held between drains; a full ring drops; 0 drops all
 }
 
 struct JobRange @private {

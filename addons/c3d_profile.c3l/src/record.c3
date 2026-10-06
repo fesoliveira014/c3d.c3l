@@ -64,8 +64,8 @@ fn usz Recorder.frame_ids(&self, ulong[] frame_ids) {
  @param [&inout] self : "Recorder on its owning thread."
  @param lane : "Worker index; one row per lane."
  @param label : "Copied into the capture's label storage."
- @param start_ns : "clock::now() when the range began."
- @param end_ns : "clock::now() when the range ended."
+ @param start_ns : "Value of clock::now() when the range began."
+ @param end_ns : "Value of clock::now() when the range ended."
  @require end_ns >= start_ns
 *>
 fn void Recorder.add_worker_interval(

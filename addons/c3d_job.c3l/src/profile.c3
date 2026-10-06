@@ -6,7 +6,7 @@ import std::time::clock;
 <*
  Worker range records a pool holds between drains.
 *>
-const uint DEFAULT_RECORD_CAPACITY = 4096; // 160 KiB at 40 bytes a record; four runs of 1024 worker ranges between drains
+const uint DEFAULT_RECORD_CAPACITY = 4096; // 160 KiB at 40 bytes a record; four 1024-range runs between drains
 
 const usz FORWARD_BATCH @private = 64; // records copied per lock hold; 2.5 KiB of stack
 
