@@ -17,9 +17,10 @@ fn void test_add_decal_scales_node_and_rejects_partial_add() @test {
     Decal* decal = scene.get(node, Decal);
     assert(decal != null);
     assert(c3d::same_id(decal.material, material));
-    assert(decal.weights == (Vec4){ 1, 1, 1, 1 });
+    assert(decal.weights.base_color == 1 && decal.weights.normal == 1);
+    assert(decal.weights.roughness == 1 && decal.weights.metallic == 1);
     assert(math::abs(decal.fade_angle - (float)math::PI * 4 / 9) < 1e-6f);
-    assert(decal.layers == uint::max && decal.order == 0);
+    assert(decal.receiver_layers == uint::max && decal.order == 0);
 
     if (catch excuse = scene.add_decal(desc)) {
         assert(excuse == c3d::CAPACITY_EXCEEDED);
@@ -52,7 +53,12 @@ fn void test_invalid_decal_descriptions_preserve_scene() @test {
     for (uint channel = 0; channel < 4; channel++) {
         foreach (float weight : bad_weights) {
             DecalDesc desc = valid;
-            desc.decal.weights[channel] = weight;
+            switch (channel) {
+                case 0: desc.decal.weights.base_color = weight;
+                case 1: desc.decal.weights.normal = weight;
+                case 2: desc.decal.weights.roughness = weight;
+                case 3: desc.decal.weights.metallic = weight;
+            }
             reject_decal_without_mutation(&scene, desc);
         }
     }
@@ -64,7 +70,7 @@ fn void test_invalid_decal_descriptions_preserve_scene() @test {
         reject_decal_without_mutation(&scene, desc);
     }
 
-    valid.decal.weights = { 0, 1, 0, 1 };
+    valid.decal.weights = { .base_color = 0, .normal = 1, .roughness = 0, .metallic = 1 };
     valid.decal.fade_angle = 0;
     Node* node = scene.add_decal(valid)!!;
     scene.remove(node);

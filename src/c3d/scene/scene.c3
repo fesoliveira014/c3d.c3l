@@ -400,7 +400,6 @@ fn Scene create_scene(Allocator allocator, SceneDesc desc) {
     scene.world.register(Mesh)!!;
     scene.world.register(Camera)!!;
     scene.world.register(Light)!!;
-    scene.world.register(Decal)!!;
     scene.world.register(ModelInstance)!!;
     scene.world.register(SkinBinding)!!;
     scene.world.register(Animator)!!;
@@ -415,6 +414,7 @@ fn Scene create_scene(Allocator allocator, SceneDesc desc) {
     scene.world.register(Atmosphere)!!;
     scene.world.register(HeightFog)!!;
     scene.world.register(ReflectionProbe)!!;
+    scene.world.register(Decal)!!;
     scene.ambient_color = { 1, 1, 1 };
     scene.world.set_remove_hook(Mesh, &free_morph_weights, scene.hook_allocator);
     scene.world.set_remove_hook(ModelInstance, &free_model_instance, scene.hook_allocator);
