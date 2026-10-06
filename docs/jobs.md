@@ -285,7 +285,7 @@ equals its serial output bit for bit. The tables hold the median of three proces
 Background lines time one background run of 1024 empty ranges at batch 1, from `try_run` until its last range
 has run, on the capped workers alone; the caller only polls. Loaded lines time the 65 536-item kernel at batch
 1024 once idle and once while a background run of 16 384 ranges of about 15 µs keeps the default cap of
-workers busy; the ratio is the median of the three runs' loaded over idle times, and every run's background
+workers busy; the ratio is the median loaded time over the median idle time, and every run's background
 work outlasted the timing.
 
 ### WSL, 32 logical processors (default 31 workers)
@@ -338,15 +338,18 @@ Background runs, capped workers only:
 | 3 | 1 | 0.0337 |
 | 31 | 7 | 0.1911 |
 
-Kernel time with and without a background run holding the cap:
+Kernel time with and without a background run holding the cap (medians of three runs; the ratio is the
+ratio of the two medians):
 
 | Workers | Background cap | Idle µs | Loaded µs | Ratio |
 | ---: | ---: | ---: | ---: | ---: |
-| 1 | 1 | 1982.6 | 1930.2 | 0.98 |
-| 3 | 1 | 968.1 | 943.0 | 0.99 |
-| 31 | 7 | 587.6 | 645.0 | 0.99 |
+| 1 | 1 | 1982.6 | 1930.2 | 0.97 |
+| 3 | 1 | 968.1 | 943.0 | 0.97 |
+| 31 | 7 | 587.6 | 645.0 | 1.10 |
 
-A background run that holds the cap does not slow the frame kernel: the ratio stays within 2 % of 1.
+With one and three workers the loaded kernel stays within 3 % of idle. At 31 workers the loaded median is 10 %
+above idle; the per-run ratios are 0.95, 0.99 and 1.22, so a background run holding the cap of 7 workers can slow
+the frame kernel there.
 
 ### Windows host, 32 logical processors (default 31 workers)
 
@@ -355,11 +358,11 @@ runs with the range of the three, and for 31 workers the minimum, median and max
 
 ### Revisit threshold
 
-The single-lock queue is revisited when a median exceeds 2 µs per empty range, or a kernel median overhead
-share exceeds 0.05. Each range is one claim and one completion under the pool lock, as before; `wait` claims
-its own run's ranges directly. On WSL the time per range stays under 0.2 µs and the
-share at 31 workers and batch 64 is 0.0523, 0.0465 and 0.0486 for 16 384, 65 536 and 262 144 items,
-narrowly over the threshold at 16 384; the queue is kept. The Windows host is pending. A per-run atomic claim
-cursor and completion count, with the lock kept for queue membership and sleep, is the remedy to measure when
-a consumer needs that grain. With many workers, use batches of about 512 items or more: at 1024 the share is
+The single lock is kept while no median exceeds 2 µs per empty range. Each range is one claim and one completion under the pool lock; `wait` claims its own
+run's ranges directly. On WSL the time per range stays under 0.2 µs and the kernel median overhead share at 31
+workers and batch 64 is 0.0523, 0.0465 and 0.0486 for 16 384, 65 536 and 262 144 items. The lock-free design is
+carried forward with this measurement as its trigger: it is taken up when the share at 31 workers and batch 64
+rises above this change's recorded value (0.0523 on WSL; the Windows value is pending the reviewer's run) on
+either host. The design is a per-run atomic claim cursor and completion count, with the lock kept for queue
+membership and sleep. With many workers, use batches of about 512 items or more: at 1024 the share is
 0.003 on WSL.
