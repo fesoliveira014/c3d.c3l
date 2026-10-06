@@ -14,7 +14,7 @@ import std::math;
 
 const uint CAPACITY_RAISED_VIEWS @private = 32;
 const uint CAPACITY_RAISED_TARGETS @private = 64;
-const uint CAPACITY_HIGH_INDEX @private = 32;
+const uint CAPACITY_HIGH_INDEX @private = 32; // the first target index past one 32-bit word of flags
 const uint CAPACITY_HIGH_TARGETS @private = 40;
 const uint CAPACITY_SMALL_TABLE @private = 96; // the fixture holds 22 entries, so about 70 targets fill it
 const uint CAPACITY_SMALL_HEAP @private = 96;
@@ -358,9 +358,9 @@ fn void test_overlay_and_material_sample_one_target_past_index_thirty_two() @tes
     @pool() {
         Geometry box_geometry = geometry::box(
             allocator: tmem,
-            width: 1,
-            height: 1,
-            depth: 1,
+            width:     1,
+            height:    1,
+            depth:     1,
         );
         box = assets.add_geometry(&box_geometry)!!;
     };
