@@ -6,9 +6,11 @@ stage, and the defines it is compiled with. SPIR-V goes to shaders/spv/<name>.sp
 and is not committed; src/c3d/shader/variants.c3, with the ShaderName enum, flag constants, and
 the embedded table, is committed.
 
-The GLSL include set (shaders/common, shaders/generated and gpu.c3l's include/shaders) is
-embedded as src/c3d/shader/includes.c3 so the in-process compiler resolves #include without
-a filesystem; it is committed and checked like the registry table.
+The GLSL include set (shaders/common, shaders/generated and shaders/gpu) is embedded as
+src/c3d/shader/includes.c3 so the in-process compiler resolves #include without a filesystem;
+it is committed and checked like the registry table. shaders/gpu is a committed copy of
+gpu.c3l's include/shaders, so a packed core library carries every file it embeds; it is
+refreshed and checked the same way.
 
 Each public_includes row of shaders/variants.json is compiled as a probe under
 shaders/spv/probes/: the two ABI headers, the include and an empty main, with the row's stage
@@ -17,16 +19,20 @@ and glslang's output.
 
 A shader package is a directory with shaders/shaders.json (module, output, flags, entries), whose
 entries follow variants.json with sources under the package's shaders/. Packages are discovered
-under addons/*/ and test/; --package adds one from outside the repository. A package compiles
+under addons/*/ and test/. A package compiles
 against core's include roots plus its own shaders/include/, whose files live under
 shaders/include/<name>/ for the last component <name> of its module; another package's includes
 are never visible. Its SPIR-V goes to its shaders/spv/, and its output C3 file, committed and
 checked like the core tables, holds the SPIR-V as @private $embed constants and, when it has
 includes, a public <NAME>_SHADER_INCLUDES table for the in-process compiler.
 
+--package DIR compiles only the packages named (repeatable) against the include roots and writes
+only their outputs. It reads neither shaders/variants.json nor lib/, so it runs from the shader
+tools archive of a release as well as from a checkout.
+
   scripts/build_shaders.py                  compile everything and write every table
   scripts/build_shaders.py --check          compile everything; fail if a committed table is out of date
-  scripts/build_shaders.py --package DIR    also compile the shader package at DIR (repeatable)
+  scripts/build_shaders.py --package DIR    compile only the shader package at DIR (repeatable)
 """
 
 from __future__ import annotations
@@ -47,10 +53,12 @@ SPIRV = SHADERS / "spv"
 PROBES = SPIRV / "probes"
 GENERATED_C3 = ROOT / "src" / "c3d" / "shader" / "variants.c3"
 GENERATED_INCLUDES_C3 = ROOT / "src" / "c3d" / "shader" / "includes.c3"
+GPU_INCLUDE_SOURCE = ROOT / "lib" / "gpu.c3l" / "include" / "shaders"
+GPU_INCLUDE_COPY = SHADERS / "gpu"
 INCLUDE_DIRS = (
     SHADERS / "generated",
     SHADERS / "common",
-    ROOT / "lib" / "gpu.c3l" / "include" / "shaders",
+    GPU_INCLUDE_COPY,
 )
 INCLUDE_ROOT_PREFIXES = ("C3D_GENERATED", "C3D_COMMON", "GPU")
 PROBE_PRELUDE = ("generated/shader_abi.glsl", "c3d_abi.glsl")
@@ -349,11 +357,16 @@ def emit_includes_c3(includes: list[Include]) -> str:
     return "\n".join(lines) + "\n"
 
 
-def discover_packages(extra: list[Path]) -> list[Path]:
+def discover_packages() -> list[Path]:
     roots: list[Path] = []
     for pattern in IN_REPO_PACKAGE_PATTERNS:
         roots += sorted(path for path in ROOT.glob(pattern) if (path / PACKAGE_MANIFEST).exists())
-    for directory in extra:
+    return roots
+
+
+def named_packages(directories: list[Path]) -> list[Path]:
+    roots: list[Path] = []
+    for directory in directories:
         root = directory.resolve()
         if not (root / PACKAGE_MANIFEST).exists():
             raise ManifestError(f"--package {directory}: no {PACKAGE_MANIFEST.as_posix()}")
@@ -455,32 +468,66 @@ def is_current(path: Path, expected: str) -> bool:
     return path.exists() and path.read_text(encoding="utf-8") == expected
 
 
-def stale_tables(
-    flags: list[str],
-    entries: list[Entry],
-    includes: list[Include],
-    packages: list[Package],
-) -> list[str]:
-    expected = [
+def gpu_include_tables() -> list[tuple[Path, str]]:
+    if not GPU_INCLUDE_SOURCE.exists():
+        raise ManifestError(f"no gpu.c3l include tree at {display(GPU_INCLUDE_SOURCE)}")
+    return [
+        (GPU_INCLUDE_COPY / source.relative_to(GPU_INCLUDE_SOURCE), source.read_text(encoding="utf-8"))
+        for source in sorted(GPU_INCLUDE_SOURCE.rglob("*.glsl"))
+    ]
+
+
+def orphan_gpu_includes(tables: list[tuple[Path, str]]) -> list[Path]:
+    expected = {path for path, _ in tables}
+    return [path for path in sorted(GPU_INCLUDE_COPY.rglob("*.glsl")) if path not in expected]
+
+
+def core_tables(flags: list[str], entries: list[Entry], includes: list[Include]) -> list[tuple[Path, str]]:
+    return [
         (GENERATED_C3, emit_variants_c3(flags, entries)),
         (GENERATED_INCLUDES_C3, emit_includes_c3(includes)),
     ]
-    expected += [(package.output, emit_package_c3(package)) for package in packages]
-    return [display(path) for path, text in expected if not is_current(path, text)]
 
 
-def write_tables(
-    flags: list[str],
-    entries: list[Entry],
-    includes: list[Include],
-    packages: list[Package],
-) -> None:
-    GENERATED_C3.parent.mkdir(parents=True, exist_ok=True)
-    GENERATED_C3.write_text(emit_variants_c3(flags, entries), encoding="utf-8", newline="\n")
-    GENERATED_INCLUDES_C3.write_text(emit_includes_c3(includes), encoding="utf-8", newline="\n")
+def package_tables(packages: list[Package]) -> list[tuple[Path, str]]:
+    return [(package.output, emit_package_c3(package)) for package in packages]
+
+
+def stale_tables(tables: list[tuple[Path, str]]) -> list[str]:
+    return [display(path) for path, text in tables if not is_current(path, text)]
+
+
+def write_tables(tables: list[tuple[Path, str]]) -> None:
+    for path, text in tables:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8", newline="\n")
+
+
+def report_or_write(tables: list[tuple[Path, str]], orphans: list[Path], check: bool) -> bool:
+    if check:
+        stale = stale_tables(tables) + [display(path) for path in orphans]
+        if stale:
+            log(f"stale: {', '.join(stale)} (run scripts/build.py --regen, or build_shaders.py without --check)")
+            return False
+        return True
+    write_tables(tables)
+    for path in orphans:
+        path.unlink()
+    return True
+
+
+def run_packages(glslang: str, directories: list[Path], check: bool, verbose: bool) -> int:
+    includes = collect_includes()
+    packages = [load_package(root) for root in named_packages(directories)]
+    check_package_names(packages, includes)
     for package in packages:
-        package.output.parent.mkdir(parents=True, exist_ok=True)
-        package.output.write_text(emit_package_c3(package), encoding="utf-8", newline="\n")
+        compile_package(glslang, package, verbose)
+    if not report_or_write(package_tables(packages), [], check):
+        return EXIT_FAILED
+    package_stages = sum(len(package.entries) for package in packages)
+    log(f"compiled {package_stages} stage(s) in {len(packages)} package(s), "
+        f"tables {'checked' if check else 'written'}")
+    return 0
 
 
 def main() -> int:
@@ -493,12 +540,12 @@ def main() -> int:
         default=[],
         type=Path,
         metavar="DIR",
-        help="also compile the shader package at DIR (repeatable)",
+        help="compile only the shader package at DIR (repeatable)",
     )
     parser.add_argument("--verbose", action="store_true", help="print every command")
     arguments = parser.parse_args()
 
-    if not MANIFEST.exists():
+    if not arguments.package and not MANIFEST.exists():
         log(f"no manifest at {MANIFEST.relative_to(ROOT).as_posix()}")
         return 0
 
@@ -508,21 +555,26 @@ def main() -> int:
         return EXIT_FAILED
 
     try:
+        if arguments.package:
+            return run_packages(glslang, arguments.package, arguments.check, arguments.verbose)
+        gpu_includes = gpu_include_tables()
+        orphans = orphan_gpu_includes(gpu_includes)
+        if not arguments.check:
+            report_or_write(gpu_includes, orphans, check=False)
+            orphans = []
         includes = collect_includes()
         flags, entries, probes = load_manifest({include.name for include in includes})
-        packages = [load_package(root) for root in discover_packages(arguments.package)]
+        packages = [load_package(root) for root in discover_packages()]
         check_package_names(packages, includes)
         compile_all(glslang, entries, arguments.verbose)
         compile_probes(glslang, probes, arguments.verbose)
         for package in packages:
             compile_package(glslang, package, arguments.verbose)
+        tables = core_tables(flags, entries, includes) + package_tables(packages)
         if arguments.check:
-            stale = stale_tables(flags, entries, includes, packages)
-            if stale:
-                log(f"stale: {', '.join(stale)} (run scripts/build.py --regen, or build_shaders.py without --check)")
-                return EXIT_FAILED
-        else:
-            write_tables(flags, entries, includes, packages)
+            tables = gpu_includes + tables
+        if not report_or_write(tables, orphans, arguments.check):
+            return EXIT_FAILED
     except ManifestError as error:
         log(f"manifest error: {error}")
         return EXIT_FAILED

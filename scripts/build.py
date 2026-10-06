@@ -311,6 +311,7 @@ def copy_windows_runtimes(output: Path) -> None:
 def step_test(options: Options) -> None:
     if not options.test:
         return
+    run([sys.executable, "-m", "unittest", "discover", "-s", str(SCRIPTS), "-p", "test_*.py"], ROOT, options.verbose)
     targets = project_targets(TEST)
     copy_windows_runtimes(TEST / "build")
     if not targets:

@@ -52,12 +52,12 @@ const char[*] C3D_COMMON_TRACE_SURFACE_TEXT @private = $embed("../../../shaders/
 const char[*] C3D_COMMON_TRANSMISSION_TEXT @private = $embed("../../../shaders/common/transmission.glsl");
 const char[*] C3D_COMMON_VERTEX_PULL_TEXT @private = $embed("../../../shaders/common/vertex_pull.glsl");
 const char[*] C3D_COMMON_VIEW_CLIP_TEXT @private = $embed("../../../shaders/common/view_clip.glsl");
-const char[*] GPU_BUFFER_REFERENCE_TEXT @private = $embed("../../../lib/gpu.c3l/include/shaders/buffer_reference.glsl");
-const char[*] GPU_DESCRIPTOR_HEAP_TEXT @private = $embed("../../../lib/gpu.c3l/include/shaders/descriptor_heap.glsl");
-const char[*] GPU_GENERATED_SHADER_ABI_TEXT @private = $embed("../../../lib/gpu.c3l/include/shaders/generated/shader_abi.glsl");
-const char[*] GPU_INTERNAL_ACCELERATION_STRUCTURE_HEAP_TEXT @private = $embed("../../../lib/gpu.c3l/include/shaders/internal/acceleration_structure_heap.glsl");
-const char[*] GPU_RAY_QUERY_TEXT @private = $embed("../../../lib/gpu.c3l/include/shaders/ray_query.glsl");
-const char[*] GPU_RAY_TRACING_TEXT @private = $embed("../../../lib/gpu.c3l/include/shaders/ray_tracing.glsl");
+const char[*] GPU_BUFFER_REFERENCE_TEXT @private = $embed("../../../shaders/gpu/buffer_reference.glsl");
+const char[*] GPU_DESCRIPTOR_HEAP_TEXT @private = $embed("../../../shaders/gpu/descriptor_heap.glsl");
+const char[*] GPU_GENERATED_SHADER_ABI_TEXT @private = $embed("../../../shaders/gpu/generated/shader_abi.glsl");
+const char[*] GPU_INTERNAL_ACCELERATION_STRUCTURE_HEAP_TEXT @private = $embed("../../../shaders/gpu/internal/acceleration_structure_heap.glsl");
+const char[*] GPU_RAY_QUERY_TEXT @private = $embed("../../../shaders/gpu/ray_query.glsl");
+const char[*] GPU_RAY_TRACING_TEXT @private = $embed("../../../shaders/gpu/ray_tracing.glsl");
 
 <*
  Every include a custom stage may resolve, in table order.
