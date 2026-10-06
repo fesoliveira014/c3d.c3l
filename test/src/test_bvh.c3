@@ -434,3 +434,34 @@ fn void test_trace_ties_take_the_lowest_primitive() @test {
         assert(hits > 0);
     };
 }
+
+fn void test_depth_order_lists_children_deeper_than_their_parent() @test {
+    @pool() {
+        Geometry sphere = geometry::sphere(tmem, 1);
+        Bvh tree = bvh::build_triangle_bvh(tmem, sphere.positions, sphere.indices)!!;
+        uint[] order = alloc::new_array(tmem, uint, tree.nodes.len);
+        uint[bvh::BVH_MAX_DEPTH + 1] starts;
+        bvh::bvh_depth_order(&tree, order, starts[..]);
+
+        assert(starts[0] == 0 && starts[1] == 1 && order[0] == 0 && starts[bvh::BVH_MAX_DEPTH] == tree.nodes.len);
+        uint[] depth_of = alloc::new_array(tmem, uint, tree.nodes.len);
+        bool[] seen = alloc::new_array(tmem, bool, tree.nodes.len);
+        for (uint depth = 0; depth < bvh::BVH_MAX_DEPTH; depth++) {
+            assert(starts[depth] <= starts[depth + 1]);
+            foreach (node : order[starts[depth]..starts[depth + 1] - 1]) {
+                assert(!seen[node]);
+                seen[node] = true;
+                depth_of[node] = depth;
+            }
+        }
+        usz interior;
+        foreach (uint index, &node : tree.nodes) {
+            assert(seen[index]);
+            if (node.count) continue;
+            interior++;
+            assert(depth_of[node.left_or_first] == depth_of[index] + 1);
+            assert(depth_of[node.left_or_first + 1] == depth_of[index] + 1);
+        }
+        assert(interior > 8);
+    };
+}

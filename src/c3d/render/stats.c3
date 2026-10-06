@@ -144,8 +144,14 @@ struct Stats {
     uint  trace_nodes;
     uint  trace_skipped;
     uint  trace_sway_at_rest;    // this frame: swaying batches and LOD groups traced at rest
+    uint  trace_posed_instances; // this frame: posed rows
+    uint  trace_posed_overflow;  // this frame: posed candidates left out past the slot capacity
+    usz   trace_posed_bytes;     // this frame: GPU bytes the posed slots hold
+    uint  trace_poses;           // this frame: posing dispatches
+    uint  trace_refits;          // this frame: node refit dispatches
     float trace_build_ms;
     uint  blas_builds;
+    uint  blas_updates;          // this frame: in-place updates of posed bottom levels
     uint  tlas_builds;
     uint  path_trace_samples;
     uint  shader_rejections;

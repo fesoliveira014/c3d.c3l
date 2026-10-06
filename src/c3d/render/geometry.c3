@@ -64,10 +64,13 @@ struct GeometryLayout {
  Bottom-level trace data of one geometry mirror.
 *>
 struct TraceGeometry {
-    gpu::GpuAllocation allocation; // nodes, then primitive ids at STREAM_ALIGNMENT
+    gpu::GpuAllocation allocation;   // nodes, primitive ids, then the depth order of a deformable geometry
     gpu::GpuAddress    nodes;
     gpu::GpuAddress    primitives;
-    uint               revision;          // header.revision it was built from; 0 when absent
+    gpu::GpuAddress    depth_starts; // BVH_MAX_DEPTH + 1 starts; 0 for a geometry no pose can move
+    gpu::GpuAddress    depth_order;
+    uint               node_count;
+    uint               revision;     // header.revision it was built from; 0 when absent
 }
 
 <*
@@ -77,6 +80,16 @@ struct RtBlas {
     gpu::AccelerationStructureHandle handle;
     uint                             revision; // header.revision it was built from; 0 when absent
     usz                              scratch_size;
+}
+
+<*
+ Byte offsets of a posed copy's streams after its root.
+*>
+struct PosedLayout {
+    usz positions;
+    usz normals;     // 0 without source normals
+    usz tangents;    // 0 without source tangents
+    usz total_bytes;
 }
 
 <*
@@ -173,24 +186,7 @@ fn GeometryLayout geometry_layout(Geometry* geometry) {
  @param base : "GPU address of the block's first byte."
 *>
 fn void write_geometry_block(char[] block, Geometry* geometry, GeometryLayout* layout, gpu::GpuAddress base) {
-    GeometryRoot* root = (GeometryRoot*)block.ptr;
-    *root = {
-        .positions          = address_of(base, layout.positions),
-        .normals            = address_of(base, layout.normals),
-        .tangents           = address_of(base, layout.tangents),
-        .uv0                = address_of(base, layout.uv0),
-        .uv1                = address_of(base, layout.uv1),
-        .colors             = address_of(base, layout.colors),
-        .joints             = address_of(base, layout.joints),
-        .weights            = address_of(base, layout.weights),
-        .morph_deltas       = address_of(base, layout.morph_deltas),
-        .custom_data        = address_of(base, layout.custom_data),
-        .custom_stride      = layout.custom_stride,
-        .vertex_count       = layout.vertex_count,
-        .morph_target_count = layout.morph_count,
-        .flags              = (uint)layout.flags,
-        .indices            = address_of(base, layout.indices),
-    };
+    *(GeometryRoot*)block.ptr = geometry_root(layout, base);
     copy_stream(block, layout.positions, geometry.positions);
     copy_stream(block, layout.normals, geometry.normals);
     copy_stream(block, layout.tangents, geometry.tangents);
@@ -229,6 +225,58 @@ fn void write_geometry_block(char[] block, Geometry* geometry, GeometryLayout* l
     } else if (layout.index_count) {
         copy_stream(block, layout.indices, geometry.indices);
     }
+}
+
+<*
+ Root of the geometry block at base.
+ @param [&in] layout : "Layout the block was written with."
+*>
+fn GeometryRoot geometry_root(GeometryLayout* layout, gpu::GpuAddress base) {
+    return {
+        .positions          = address_of(base, layout.positions),
+        .normals            = address_of(base, layout.normals),
+        .tangents           = address_of(base, layout.tangents),
+        .uv0                = address_of(base, layout.uv0),
+        .uv1                = address_of(base, layout.uv1),
+        .colors             = address_of(base, layout.colors),
+        .joints             = address_of(base, layout.joints),
+        .weights            = address_of(base, layout.weights),
+        .morph_deltas       = address_of(base, layout.morph_deltas),
+        .custom_data        = address_of(base, layout.custom_data),
+        .custom_stride      = layout.custom_stride,
+        .vertex_count       = layout.vertex_count,
+        .morph_target_count = layout.morph_count,
+        .flags              = (uint)layout.flags,
+        .indices            = address_of(base, layout.indices),
+    };
+}
+
+<*
+ Layout of a geometry's posed copy: positions, normals and tangents at the source strides.
+ @param [&in] source : "Layout of the rest geometry."
+*>
+fn PosedLayout posed_layout(GeometryLayout* source) {
+    usz cursor = align_up(GeometryRoot::size, STREAM_ALIGNMENT);
+    PosedLayout layout = { .positions = place(&cursor, PACKED_VEC3_BYTES * source.vertex_count) };
+    if (source.flags.has_normals) layout.normals = place(&cursor, PACKED_VEC3_BYTES * source.vertex_count);
+    if (source.flags.has_tangents) layout.tangents = place(&cursor, Vec4::size * source.vertex_count);
+    layout.total_bytes = cursor;
+    return layout;
+}
+
+<*
+ Root of a posed copy: the source root with its position, normal and tangent streams redirected.
+ @param [&in] source : "Layout of the rest geometry."
+ @param base : "GPU address of the rest block."
+ @param posed : "GPU address of the posed block."
+*>
+fn GeometryRoot posed_geometry_root(GeometryLayout* source, gpu::GpuAddress base, gpu::GpuAddress posed) {
+    PosedLayout layout = posed_layout(source);
+    GeometryRoot root = geometry_root(source, base);
+    root.positions = address_of(posed, layout.positions);
+    root.normals = address_of(posed, layout.normals);
+    root.tangents = address_of(posed, layout.tangents);
+    return root;
 }
 
 fn bool geometry_current(Renderer* renderer, GeometryId geometry) @private {

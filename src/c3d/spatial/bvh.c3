@@ -231,6 +231,29 @@ fn void? build_box_bvh_into(Bvh* storage, Aabb[] boxes, BvhBuildDesc desc = BVH_
 }
 
 <*
+ Node indices grouped by depth, root first, and where each depth starts.
+ Scratch lives in the temp allocator.
+ @param [&in] tree : "Children follow their parent, as every build here lays them out."
+ @param [out] order : "One entry per node."
+ @param [out] depth_starts : "BVH_MAX_DEPTH + 1 entries; the last holds the node count."
+ @require order.len == tree.nodes.len && depth_starts.len == BVH_MAX_DEPTH + 1
+*>
+fn void bvh_depth_order(Bvh* tree, uint[] order, uint[] depth_starts) {
+    uint[] depths = alloc::new_array(tmem, uint, tree.nodes.len);
+    uint[BVH_MAX_DEPTH] counts;
+    foreach (uint index, &node : tree.nodes) {
+        counts[depths[index]]++;
+        if (node.count) continue;
+        depths[node.left_or_first] = depths[index] + 1;
+        depths[node.left_or_first + 1] = depths[index] + 1;
+    }
+    uint[BVH_MAX_DEPTH + 1] starts;
+    foreach (depth, count : counts) starts[depth + 1] = starts[depth] + count;
+    depth_starts[..] = starts[..];
+    foreach (uint index, depth : depths) order[starts[depth]++] = index;
+}
+
+<*
  Release a BVH with the allocator that built it.
  @param [&inout] bvh : "Left zeroed."
 *>
