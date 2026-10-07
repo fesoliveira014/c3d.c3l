@@ -196,8 +196,8 @@ fn int? float_orientation(ExactScratch* scratch, Vec3[HOMOGENEOUS_COMPONENTS] po
         scratch.filtered_count++;
         return filtered;
     }
-    Clock started = clock::now();
-    defer scratch.exact_nanoseconds += (ulong)started.to_now();
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     return exact_float_orientation(scratch, points);
 }
 
@@ -211,8 +211,8 @@ fn int? vertex_orientation(
         scratch.filtered_count++;
         return filtered;
     }
-    Clock started = clock::now();
-    defer scratch.exact_nanoseconds += (ulong)started.to_now();
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     return exact_vertex_orientation(scratch, planes);
 }
 
@@ -227,7 +227,7 @@ fn bool? same_vertex(
         scratch.filtered_count++;
         return filtered == 1;
     }
-    Clock started = clock::now();
-    defer scratch.exact_nanoseconds += (ulong)started.to_now();
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     return exact_same_vertex(scratch, first, second);
 }

@@ -1,5 +1,6 @@
 module c3d::physics::fracture;
 
+import std::time;
 import std::math;
 
 const uint RAW_EDGE_NORMAL_BITS @private = 278;
@@ -32,6 +33,8 @@ fn void? edge_support_plane(
     uint owner_corner,
     ExactPlane* owner_plane,
 ) @private {
+    std::time::Clock started = begin_exact_measurement(surface.exact);
+    defer finish_exact_measurement(surface.exact, started);
     uint saved = surface.exact.count;
     defer surface.exact.count = saved;
     WideInteger*[HOMOGENEOUS_COMPONENTS] coefficients;
