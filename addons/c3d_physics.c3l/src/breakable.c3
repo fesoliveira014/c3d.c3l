@@ -505,7 +505,7 @@ fn void? check_captured_pieces(
     Node* root,
     BreakablePieceView[] pieces,
     BreakableDesc desc,
-) @local {
+) @private {
     if (pieces.len < 2 || pieces.len > uint::max) return c3d::INVALID_ARGUMENT~;
     foreach (index, piece : pieces) {
         if (!scene.world.is_alive(piece.node)) return c3d::INVALID_ID~;
@@ -541,7 +541,7 @@ fn void? check_breakable_roles(Scene* scene, Node* node, Node* owner = null) @lo
     for (Node* child = node.first_child; child; child = child.next_sibling) check_breakable_roles(scene, child, owner)!;
 }
 
-fn void? check_breakable_desc(BreakableDesc desc) @local {
+fn void? check_breakable_desc(BreakableDesc desc) @private {
     if (!math::is_finite(desc.break_force) || desc.break_force < 0
         || !math::is_finite(desc.contact_distance) || desc.contact_distance < 0
         || !math::is_finite(desc.density) || desc.density <= 0) return c3d::INVALID_ARGUMENT~;

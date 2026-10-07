@@ -74,6 +74,7 @@ fn void? register_serial_codecs() {
     serial::register_transient(Joint)!;
     register_cloth_codec()!;
     register_ragdoll_codec()!;
+    register_breakable_codec()!;
 }
 
 fn void defaults_body_authoring(void* value) @private {

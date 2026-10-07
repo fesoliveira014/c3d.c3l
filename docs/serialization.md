@@ -205,7 +205,8 @@ only its selected variant. Wind and Force persist their complete values; Buoyanc
 persists density and drag and resets submerged fraction. RigidBody and Joint are
 explicitly transient. Ordinary physics synchronization creates the native state.
 The package inventory discovers every physics slot through normal registration;
-Breakable remains an explicit unsupported entry until its adapter.
+All ten normally registered physics component types have explicit policies;
+new unclassified physics components fail the package inventory.
 
 ## Navigation adapter
 
@@ -248,3 +249,17 @@ are recomputed, frozen recovery poses start at loaded skin-joint locals, and
 scratch/counters/recovery result reset. Bone-body velocities restart at zero.
 Ragdoll collection projects only its listed bodies; ordinary body velocities
 persist and source values are unchanged. Normal physics sync creates native state.
+
+## Breakable adapter
+
+Breakable restores in OWNER as a pending copied recipe with no bodies, welds or
+cooked runtime resources. A prepared export retains ordered surviving pieces and
+hulls, captures current root-relative frames, and projects WORLD piece transforms
+to PARENT while preserving world placement and authored render descendants.
+Fewer than two prepared survivors returns UNSUPPORTED with root/type diagnostics.
+A pending export preserves its exact recipe and saved placements, including a
+mismatch that explicit preparation must still report. Normal world preparation
+rebuilds the graph from current contacts; touching survivors can weld again.
+Only verified owned body components are omitted; modified or unrelated bodies,
+conflicting owners and joints are rejected. Source nodes and assets are unchanged.
+`WriteContext.set_transform` projects transform and coordinate space together.
