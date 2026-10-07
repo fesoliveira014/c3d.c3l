@@ -411,3 +411,78 @@ fn void test_emitter_scale_changes_volume_without_changing_world_speed() @test {
     BillboardBatch* batch = scene.get(scene.node(system.draw_node), BillboardBatch);
     assert(batch.billboards[0].size == (Vec2){ 1, 1 });
 }
+
+fn void test_pending_particles_skip_updates_and_prepare_independently() @test {
+    TrackingAllocator tracking;
+    tracking.init(mem);
+    defer tracking.free();
+    {
+        Scene scene = make_scene(6, &tracking);
+        defer scene::destroy_scene(&scene);
+        Node* group = scene.add_node()!!;
+        Node* first = scene.add_node(group)!!;
+        Node* second = scene.add_node(group)!!;
+        Node* outside = scene.add_node()!!;
+        Node* blocker = scene.add_node()!!;
+        ParticleSystemDesc desc = quiet_desc(8);
+        desc.rate = 10;
+        uint free_nodes = scene.world.entities.free_count;
+        sz bytes = tracking.allocated();
+        scene.attach_particle_system(first, desc)!!;
+        scene.attach_particle_system(second, desc)!!;
+        scene.attach_particle_system(outside, desc)!!;
+        assert(scene.world.entities.free_count == free_nodes && tracking.allocated() == bytes);
+        assert(scene.count(BillboardBatch) == 0 && scene.count(InstancedMesh) == 0);
+        ParticleSystem* pending = scene.get(second, ParticleSystem);
+        pending.emitting = false;
+        pending.emit_burst(3);
+        scene.update_world();
+        particle::update(&scene, 0.1f);
+        assert(!pending.is_prepared() && pending.pending_burst == 3 && pending.alive == 0);
+        assert(pending.desc.capacity == desc.capacity && pending.desc.rate == desc.rate);
+
+        assert(@catch(particle::prepare_subtree(&scene, group)) == c3d::CAPACITY_EXCEEDED);
+        ParticleSystem* ready = scene.get(first, ParticleSystem);
+        assert(ready.is_prepared() && !pending.is_prepared());
+        assert(!scene.get(outside, ParticleSystem).is_prepared());
+        Entity draw = ready.draw_node;
+        bytes = tracking.allocated();
+        assert(@catch(particle::prepare(&scene, second)) == c3d::CAPACITY_EXCEEDED);
+        assert(tracking.allocated() == bytes && !second.first_child);
+        particle::update(&scene, 0.1f);
+        assert(ready.alive == 1 && scene.get(scene.node(draw), BillboardBatch).count == 1);
+        assert(pending.pending_burst == 3 && pending.alive == 0);
+
+        scene.remove(blocker);
+        particle::prepare(&scene, second)!!;
+        assert(pending.is_prepared() && !pending.emitting && c3d::same_id(ready.draw_node, draw));
+        sz allocations = tracking.total_allocation_count();
+        particle::prepare_subtree(&scene, group)!!;
+        particle::prepare(&scene, second)!!;
+        assert(tracking.total_allocation_count() == allocations);
+        assert(!scene.get(outside, ParticleSystem).is_prepared());
+        particle::update(&scene, 0);
+        assert(pending.alive == 3);
+    }
+    assert(!tracking.has_leaks());
+}
+
+fn void test_removing_pending_particles_leaves_no_owned_allocations() @test {
+    TrackingAllocator tracking;
+    tracking.init(mem);
+    defer tracking.free();
+    {
+        Scene scene = make_scene(4, &tracking);
+        defer scene::destroy_scene(&scene);
+        Node* emitter = scene.add_node()!!;
+        sz bytes = tracking.allocated();
+        scene.attach_particle_system(emitter, quiet_desc())!!;
+        assert(!scene.get(emitter, ParticleSystem).is_prepared() && !emitter.first_child);
+        assert(tracking.allocated() == bytes);
+        scene.remove_component(emitter, ParticleSystem);
+        assert(!scene.has(emitter, ParticleSystem) && !emitter.first_child);
+        assert(scene.count(BillboardBatch) == 0 && scene.count(InstancedMesh) == 0);
+        assert(tracking.allocated() == bytes);
+    }
+    assert(!tracking.has_leaks());
+}

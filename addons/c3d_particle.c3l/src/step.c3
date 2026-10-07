@@ -20,6 +20,7 @@ const uint HASH_OUTPUT_SHIFT @private = 22;
  @param emitter_world : "Published affine emitter matrix."
  @param dt : "Finite nonnegative seconds; capped at the maximum step."
  @param wind : "Finite world-space air velocity in metres per second."
+ @require system.is_prepared()
  @require dt >= 0 && math::is_finite(dt)
  @require math::is_finite(wind.x) && math::is_finite(wind.y) && math::is_finite(wind.z)
 *>

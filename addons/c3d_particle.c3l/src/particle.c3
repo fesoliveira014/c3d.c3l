@@ -96,7 +96,7 @@ struct ParticleSystemDesc {
 }
 
 <*
- Dense particle pool and its owned child draw node.
+ Authored particle system with an optional pool and owned draw child.
 *>
 struct ParticleSystem {
     ParticleSystemDesc desc;
@@ -145,9 +145,43 @@ fn Node*? Scene.add_particle_system(
     check_particle_desc(&desc)!;
     Node* emitter = self.add_node(parent, name)!;
     defer catch self.remove(emitter);
-    ParticleSystem system = { .desc = desc, .emitting = true };
-    system.block = alloc::malloc(self.allocator, (sz)particle_pool_bytes(desc.capacity));
-    defer catch alloc::free(self.allocator, system.block);
+    self.attach_particle_system(emitter, desc)!;
+    prepare(self, emitter)!;
+    return emitter;
+}
+
+<*
+ Attach particle authoring without allocating its pool or draw child.
+ @param [&in] node : "Receives the pending system."
+ @return? c3d::INVALID_ARGUMENT
+ @require self.world.is_registered(ParticleSystem), !self.has(node, ParticleSystem)
+*>
+fn void? Scene.attach_particle_system(&self, Node* node, ParticleSystemDesc desc) {
+    check_particle_desc(&desc)!;
+    self.add(node, (ParticleSystem){ .desc = desc, .emitting = true });
+}
+
+<*
+ Whether the particle system has its pool and draw child.
+*>
+fn bool ParticleSystem.is_prepared(&self) => self.block != null;
+
+<*
+ Prepare a pending particle system atomically; prepared systems are unchanged.
+ @param [&inout] scene : "Registered; owns the pool and draw child."
+ @param [&in] emitter : "Carries ParticleSystem."
+ @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @require scene.has(emitter, ParticleSystem)
+*>
+fn void? prepare(Scene* scene, Node* emitter) {
+    ParticleSystem system = *scene.get(emitter, ParticleSystem);
+    if (system.is_prepared()) return;
+    ParticleSystemDesc desc = system.desc;
+    check_particle_desc(&desc)!;
+    void*? block = alloc::malloc_try(scene.allocator, (sz)particle_pool_bytes(desc.capacity));
+    if (catch block) return c3d::CAPACITY_EXCEEDED~;
+    system.block = block;
+    defer catch alloc::free(scene.allocator, system.block);
     usz cursor;
     system.position = @carve_stream(Vec3, &system, &cursor);
     system.velocity = @carve_stream(Vec3, &system, &cursor);
@@ -162,17 +196,17 @@ fn Node*? Scene.add_particle_system(
     system.random.set_seed(seed_bytes[..]);
     Node* child;
     if (desc.render_mode == ParticleRenderMode.MESH) {
-        child = self.add_instanced_mesh(
+        child = scene.add_instanced_mesh(
             geometry: desc.geometry,
             material: desc.material,
             capacity: desc.capacity,
             parent: emitter,
         )!;
-        InstancedMesh* batch = self.get(child, InstancedMesh);
+        InstancedMesh* batch = scene.get(child, InstancedMesh);
         batch.cast_shadow = false;
         batch.trace = false;
     } else {
-        child = self.add_billboards(
+        child = scene.add_billboards(
             material: desc.material,
             capacity: desc.capacity,
             facing: desc.render_mode == ParticleRenderMode.STRETCHED
@@ -183,9 +217,30 @@ fn Node*? Scene.add_particle_system(
     child.transform_space = TransformSpace.WORLD;
     child.layers = emitter.layers;
     system.draw_node = child.id;
-    self.add(child, (ParticleDrawOwner){ .emitter = emitter.id });
-    self.add(emitter, system);
-    return emitter;
+    scene.add(child, (ParticleDrawOwner){ .emitter = emitter.id });
+    *scene.get(emitter, ParticleSystem) = system;
+}
+
+<*
+ Prepare pending particle systems in a subtree, retaining successful owners.
+ @param [&inout] scene : "Registered; prepared owners remain unchanged."
+ @param [in] root : "Null selects the scene root; root is included."
+ @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+*>
+fn void? prepare_subtree(Scene* scene, Node* root = null) {
+    if (!root) root = scene.root;
+    fault failure;
+    scene.@each(ParticleSystem; entity, owner) {
+        Node* node = scene.node(entity);
+        Node* ancestor = node;
+        while (ancestor && ancestor != root) ancestor = ancestor.parent;
+        if (ancestor) {
+            if (catch excuse = prepare(scene, node)) {
+                if (!failure) failure = excuse;
+            }
+        }
+    };
+    if (failure) return failure~;
 }
 
 <*
