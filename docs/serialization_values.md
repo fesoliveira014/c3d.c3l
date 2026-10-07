@@ -49,3 +49,33 @@ reader; other versions fail with `UNSUPPORTED`. Current payloads require their
 complete pinned layout and never fill truncated fields from defaults. The tests
 pin a version-1 manual-codec container captured before generated binding.
 Manual `ComponentCodec` registration remains supported.
+
+## JSON field values
+
+The field reader initializes semantic defaults, copies default strings and slices
+into reader-owned storage, then overlays fields present in the input. Absent
+nested values retain parent overrides. New slice elements receive their own type
+defaults. READ completion hooks run only for entered values, with child hooks
+before their parent; cloning defaults and writing never invoke them.
+
+Writers emit every described field, including values equal to defaults. Fixed
+arrays, vectors, quaternions and matrices require their exact element counts.
+Unknown fields are format errors unless skipping is explicitly enabled; parsing
+still validates the complete JSONC input. Field failures retain JSON Pointer and
+text position. The caller releases the acquisition chain after success or failure.
+These visitors support the later public text-subtree and schema entry points.
+
+## Schema export
+
+`write_schema(allocator, limits)` writes the explicit process registry as owned
+JSON. Component entries are sorted by portable name and identify their version
+and described type. Manual codecs carry `binary_only: true` and `fields: null`.
+The type list is sorted by qualified name and includes versions, layout pins,
+field kinds and sizes, nested fields, array extents, enum labels, asset kinds,
+display names, units, numeric ranges and complete semantic defaults.
+
+Defaults come from the same registered callbacks as JSON reading. Schema export
+does not invoke READ completion hooks. Output is deterministic for the same
+registry and callbacks, obeys the text limits, and reports failed output
+allocation as `CAPACITY_EXCEEDED`. The caller frees the returned String through
+the supplied allocator.
