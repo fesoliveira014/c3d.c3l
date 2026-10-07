@@ -239,3 +239,77 @@ fn double generated_piece_volume(FracturePieceView piece) @private {
     }
     return volume / 6;
 }
+
+fn void test_voronoi_generation_preserves_untouched_triangles_and_exact_output_count() @test {
+    FractureWorkspace workspace = create_fracture_workspace(mem, publish_limits())!!;
+    defer destroy_fracture_workspace(&workspace);
+    ContainmentFixture source;
+    partition_fixture(&source, 0);
+    foreach (uint triangle, &material : source.mesh.triangle_materials) *material = triangle + 10;
+
+    FractureResult result = create_voronoi_fracture(
+        allocator: mem,
+        workspace: &workspace,
+        source: source.mesh,
+        sites: { { -1, 0, 0 }, { 1, 0, 0 } },
+        cut: { .material_slot = 77, .uv_repeats_per_meter = 1 },
+    )!!;
+    defer destroy_fracture_result(&result);
+    assert(result.pieces.len == 2);
+
+    uint total_triangles;
+    uint output_end_faces;
+    uint[36] preserved;
+    foreach (piece : result.pieces) {
+        uint[] indices = piece.mesh.geometry.indices;
+        total_triangles += (uint)indices.len / TRIANGLE_CORNERS;
+        for (uint triangle = 0; triangle < indices.len / TRIANGLE_CORNERS; triangle++) {
+            Vec3[TRIANGLE_CORNERS] positions;
+            for (uint corner = 0; corner < TRIANGLE_CORNERS; corner++) {
+                positions[corner] = piece.origin + piece.mesh.geometry.positions[indices[triangle * TRIANGLE_CORNERS + corner]];
+            }
+            if (positions[0].x != positions[1].x || positions[0].x != positions[2].x
+                || math::abs(positions[0].x) != 3) continue;
+
+            uint matches;
+            for (uint original = 0; original < source.triangle_count; original++) {
+                Vec3[TRIANGLE_CORNERS] expected;
+                for (uint corner = 0; corner < TRIANGLE_CORNERS; corner++) {
+                    expected[corner] = source.positions[source.indices[original * TRIANGLE_CORNERS + corner]];
+                }
+                if (!same_generated_triangle_positions(positions, expected)) continue;
+                assert(piece.mesh.triangle_materials[triangle] == source.materials[original]);
+                preserved[original]++;
+                matches++;
+            }
+            assert(matches == 1);
+            output_end_faces++;
+        }
+    }
+
+    for (uint triangle = 0; triangle < source.triangle_count; triangle++) {
+        Vec3 first = source.positions[source.indices[triangle * TRIANGLE_CORNERS]];
+        Vec3 second = source.positions[source.indices[triangle * TRIANGLE_CORNERS + 1]];
+        Vec3 third = source.positions[source.indices[triangle * TRIANGLE_CORNERS + 2]];
+        bool end_face = first.x == second.x && first.x == third.x && math::abs(first.x) == 3;
+        assert(preserved[triangle] == (end_face ? 1 : 0));
+    }
+
+    assert(output_end_faces == 4);
+    assert(total_triangles == 40);
+    SolidScratch scratch = begin_solid_scratch(&workspace);
+    assert_published_valid(&scratch, result);
+}
+
+fn bool same_generated_triangle_positions(Vec3[TRIANGLE_CORNERS] first, Vec3[TRIANGLE_CORNERS] second) @local {
+    for (uint rotation = 0; rotation < TRIANGLE_CORNERS; rotation++) {
+        bool equal = true;
+        for (uint corner = 0; corner < TRIANGLE_CORNERS; corner++) {
+            for (uint axis = 0; axis < SPACE_AXES; axis++) {
+                equal &= bitcast(first[corner][axis], uint) == bitcast(second[(corner + rotation) % TRIANGLE_CORNERS][axis], uint);
+            }
+        }
+        if (equal) return true;
+    }
+    return false;
+}

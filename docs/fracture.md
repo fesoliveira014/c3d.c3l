@@ -687,6 +687,13 @@ orientation. Generated coplanar fragments are merged before triangulation, so
 second-source triangle subdivisions do not become artificial cut boundaries.
 Signed planar subtraction preserves holes in partially coincident patches.
 
+Boolean publication has no single source-volume reference: the selected volume
+can differ from either operand. Exact selected cells and conforming oriented
+patches establish the target boundary; final topology validation and the bounded
+correspondence from each exact vertex to its published position supply the
+same derived volume-error bound. The Boolean fixtures independently check volume
+identities against analytic solids instead of comparing output with one operand.
+
 Selected cells are grouped by positive-area face connectivity. Boundary patches
 from both sources are reconciled globally and then passed through the same owned
 surface publisher as Voronoi results. Boolean pieces use canonical geometry order
