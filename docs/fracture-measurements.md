@@ -1,6 +1,6 @@
 # Fracture kernel measurements
 
-Measured on 2026-10-07. Every configured call succeeded: 105 cases, one warmup and three measured repetitions per case. This is cost and capacity evidence; performance acceptance remains open. Native collision cooking, serialization, asset installation and GPU work are outside these timings.
+Measured on 2026-10-07 with generated-point omission enabled. Every configured call succeeded: 105 cases, one warmup and three measured repetitions per case. [The historical report](fracture-measurements-before-omission.md) retains the earlier geometry, its cost measurements and the separate convexity-deduplication comparison. This is cost and capacity evidence; performance acceptance remains open. Native collision cooking, serialization, asset installation and GPU work are outside these timings.
 
 ## Reproduce
 
@@ -47,14 +47,14 @@ Rotation sample i uses a double-precision quaternion about normalized (1, 2+i, 3
 
 | Fixture | Phase | Median ms | Peak MiB | Splits | Final leaves | Predicates | Filtered % | Exact ms | Wide peak | Partition % |
 | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| wall | generation | 213.216 | 15.546 | 2,484 | 64 | 572,470 | 35.06 | 76.184 | 23 | 0.00 |
-| wall | decomposition | 162.483 | 2.728 | 0 | 64 | 278,472 | 42.76 | 73.531 | 21 | 63.89 |
-| concave | generation | 33.399 | 0.491 | 32 | 6 | 98,886 | 35.81 | 12.644 | 23 | 0.00 |
-| concave | decomposition | 21.922 | 0.391 | 0 | 6 | 40,092 | 44.17 | 9.639 | 21 | 72.78 |
-| hollow | generation | 66.063 | 0.993 | 141 | 24 | 184,540 | 40.24 | 23.371 | 23 | 0.00 |
-| hollow | decomposition | 71.959 | 1.115 | 32 | 40 | 146,514 | 36.75 | 31.760 | 21 | 68.84 |
-| impact_local | generation | 282.527 | 9.675 | 1,599 | 64 | 720,013 | 40.37 | 104.538 | 23 | 0.00 |
-| impact_local | decomposition | 258.349 | 3.774 | 0 | 64 | 431,772 | 46.45 | 114.498 | 21 | 65.33 |
+| wall | generation | 216.932 | 15.546 | 2,484 | 64 | 572,470 | 35.06 | 79.074 | 23 | 0.00 |
+| wall | decomposition | 165.254 | 2.703 | 0 | 64 | 278,472 | 42.76 | 77.595 | 21 | 63.70 |
+| concave | generation | 36.052 | 0.491 | 32 | 6 | 98,886 | 35.81 | 13.941 | 23 | 0.00 |
+| concave | decomposition | 23.153 | 0.388 | 0 | 6 | 40,092 | 44.17 | 10.652 | 21 | 71.96 |
+| hollow | generation | 66.867 | 0.993 | 141 | 24 | 184,540 | 40.24 | 24.151 | 23 | 0.00 |
+| hollow | decomposition | 73.553 | 1.109 | 32 | 40 | 146,514 | 36.75 | 33.602 | 21 | 67.55 |
+| impact_local | generation | 292.716 | 9.675 | 1,599 | 64 | 720,013 | 40.37 | 109.561 | 23 | 0.00 |
+| impact_local | decomposition | 272.213 | 3.737 | 0 | 64 | 431,772 | 46.45 | 121.848 | 21 | 64.61 |
 
 Splits count actual cell splits across a call. Final leaves count material cells before publication; pieces count connected published fragments. The hollow case therefore has 24 generation leaves and eight pieces. Decomposition reports no output render triangles because it produces hull point sets.
 
@@ -69,65 +69,88 @@ The CSV retains hull and point counts for every piece in piece-index order. All 
 
 | Fixture / phase | Max planar segments | Max planar points | Max patch vertices | Max patch predicates | Median of maximum patch ms |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| wall / generation | 4 | 4 | 4 | 6 | 0.013 |
+| wall / generation | 4 | 4 | 4 | 6 | 0.010 |
 | wall / decomposition | 3 | 3 | 0 | 0 | 0.000 |
-| concave / generation | 11 | 6 | 6 | 35 | 0.035 |
+| concave / generation | 11 | 6 | 6 | 35 | 0.036 |
 | concave / decomposition | 3 | 3 | 0 | 0 | 0.000 |
 | hollow / generation | 12 | 8 | 6 | 58 | 0.052 |
 | hollow / decomposition | 6 | 6 | 0 | 0 | 0.000 |
-| impact_local / generation | 7 | 7 | 7 | 105 | 0.169 |
+| impact_local / generation | 7 | 7 | 7 | 105 | 0.131 |
 | impact_local / decomposition | 3 | 3 | 0 | 0 | 0.000 |
 
 Zero patch-triangulation counters mean that path was not used by the phase.
 
-## Staircase scaling and convexity deduplication
+## Staircase scaling
 
-Temporary phase timing of the original 64-step case measured 6.343 s in convexity checks and 2.355 s in the reflex-split helper. The latter included 1.330 s of candidate selection and 0.070 s of actual splitting. The remaining search work was about 0.955 s. This identified repeated convexity checks as the larger measured cost.
+Current costs include point-retention certification. The earlier convexity optimization and its original paired timing remain in the historical report; those timings describe the geometry before omission.
 
-Convexity now tests each distinct canonical plane with its effective orientation against each distinct exact point. Exact coordinate comparisons merge points with equivalent constructions. Opposite orientations remain separate. The same side and resolution checks run after deduplication, and query storage is rewound. Cut selection and output reconstruction are unchanged.
+| Steps | Triangles | Median ms | Peak MiB | Splits / leaves / hulls | Hull points | Predicates | Exact ms | Partition % |
+| ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: |
+| 4 | 36 | 8.857 | 0.202 | 3 / 4 / 4 | 32 | 26,786 | 3.338 | 76.58 |
+| 8 | 68 | 20.464 | 0.401 | 7 / 8 / 8 | 64 | 76,979 | 7.859 | 79.42 |
+| 16 | 132 | 67.242 | 0.882 | 15 / 16 / 16 | 128 | 264,539 | 22.810 | 85.10 |
+| 32 | 260 | 300.352 | 2.170 | 31 / 32 / 32 | 256 | 1,112,869 | 83.551 | 93.68 |
+| 64 | 516 | 1740.343 | 6.059 | 63 / 64 / 64 | 512 | 5,691,529 | 379.442 | 97.93 |
 
-The following paired runs used logical processor 0, one warmup and three repetitions for each implementation. [Baseline measurements](measurements/fracture-staircase-before.csv) retain all 20 original phase rows. The earlier unpinned exploratory run overlapped other work and is excluded from these medians.
-
-| Steps | Triangles | Before ms | After ms | Speedup | Peak MiB | Splits / leaves / hulls | Predicates after | Partition % after |
-| ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: |
-| 4 | 36 | 9.620 | 8.054 | 1.19× | 0.202 | 3 / 4 / 4 | 26,786 | 73.92 |
-| 8 | 68 | 30.268 | 20.019 | 1.51× | 0.401 | 7 / 8 / 8 | 76,979 | 79.58 |
-| 16 | 132 | 134.719 | 65.406 | 2.06× | 0.882 | 15 / 16 / 16 | 264,539 | 87.01 |
-| 32 | 260 | 827.993 | 279.936 | 2.96× | 2.170 | 31 / 32 / 32 | 1,112,869 | 94.11 |
-| 64 | 516 | 5818.959 | 1687.207 | 3.45× | 6.059 | 63 / 64 / 64 | 5,691,529 | 97.97 |
-
-At 64 steps the predicate count fell from 13,366,997 to 5,691,529. Split, leaf and hull counts and peak scratch were unchanged. Smaller fixtures can perform more predicates because exact deduplication adds sorting comparisons; the measured total time is reported above.
+Staircase split, leaf, hull and point counts are unchanged by omission. The CSV retains every measured phase and the corresponding scratch, predicate and timing counters.
 
 ## Rotated collision surfaces
 
-Each row covers 12 rotations. The time median is the median of each case's three-run median; the maximum is the largest case median. Every case uses one supplied physical piece, including the nested-shell fixture. Hull and point counts are ranges across rotations.
+Each row covers 12 rotations. The time median is the median of each case's three-run median; the maximum is the largest case median. Every case supplies one piece record, including the nested-shell fixture. Hull and point counts are ranges across rotations.
 
 | Surface | Hull limit | Median ms | Maximum ms | Peak MiB | Splits | Final leaves | Hulls per piece | Points per piece |
 | --- | ---: | ---: | ---: | ---: | --- | --- | --- | --- |
-| rotation_box | 128 | 2.266 | 2.562 | 0.074 | 0 | 1 | 1 | 8 |
-| rotation_box | 4 | 2.288 | 2.489 | 0.074 | 0 | 1 | 12 | 48 |
-| rotation_l_prism | 128 | 5.196 | 5.750 | 0.142 | 1 | 2 | 2 | 18–21 |
-| rotation_l_prism | 4 | 5.229 | 6.291 | 0.142 | 1 | 2 | 26–30 | 104–120 |
-| rotation_hollow | 128 | 219.168 | 286.262 | 2.678 | 27–48 | 28–49 | 28–49 | 227–434 |
-| rotation_hollow | 4 | 220.409 | 287.582 | 2.678 | 27–48 | 28–49 | 303–629 | 1212–2516 |
-| rotation_nested | 128 | 324.512 | 486.684 | 4.310 | 41–81 | 43–83 | 43–83 | 383–785 |
-| rotation_nested | 4 | 334.157 | 497.237 | 4.310 | 41–81 | 43–83 | 531–1147 | 2124–4588 |
+| rotation_box | 128 | 2.364 | 2.430 | 0.074 | 0 | 1 | 1 | 8 |
+| rotation_box | 4 | 2.396 | 2.482 | 0.074 | 0 | 1 | 12 | 48 |
+| rotation_l_prism | 128 | 5.257 | 5.543 | 0.142 | 1 | 2 | 2 | 16 |
+| rotation_l_prism | 4 | 5.415 | 6.114 | 0.142 | 1 | 2 | 24 | 96 |
+| rotation_hollow | 128 | 216.735 | 283.262 | 2.678 | 27–48 | 28–49 | 28–49 | 160–269 |
+| rotation_hollow | 4 | 216.610 | 283.878 | 2.678 | 27–48 | 28–49 | 190–303 | 760–1212 |
+| rotation_nested | 128 | 326.765 | 501.237 | 4.310 | 41–81 | 43–83 | 43–83 | 266–507 |
+| rotation_nested | 4 | 333.058 | 498.882 | 4.310 | 41–81 | 43–83 | 338–649 | 1352–2596 |
 
-The largest four-point output has 1,147 hulls and 4,588 point entries for one nested-shell piece. The maximum measured arithmetic demand is 23 of 24 wide temporaries across generation and 21 during decomposition. The largest measured arena demand is 15.546 MiB for wall generation; the configured 256 MiB is a caller limit, not a measured requirement.
+The largest current four-point output has 649 hulls and 2,596 point entries for one nested-shell piece. The maximum measured arithmetic demand is 23 of 24 wide temporaries during generation and 24 during decomposition. The largest measured arena demand is 15.546 MiB for wall generation; the configured 256 MiB is a caller limit, not a measured requirement.
+
+## Before and after omission
+
+The comparison uses identical fixture positions, site layouts, resolution, output limits and piece ordering. Generated-point omission changes collision hull contents. The four generation fixtures and all staircases retain their prior hull and point counts. Counts change in all 72 non-box rotation cases; none of the 243 supplied pieces increases its hull or point count.
+
+[Per-piece comparison](measurements/fracture-omission-per-piece.csv) records every case and piece. [Earlier raw measurements](measurements/fracture-kernel-before-omission-windows-o3.csv) preserve the complete pre-omission snapshot. The ranges below combine pieces and rotations within each row.
+
+| Fixture | Hull limit | Hulls per piece before | Hulls per piece after | Points per piece before | Points per piece after |
+| --- | ---: | --- | --- | --- | --- |
+| wall | 64 | 1 | 1 | 8 | 8 |
+| concave | 64 | 1 | 1 | 10–11 | 10–11 |
+| hollow | 64 | 5 | 5 | 32 | 32 |
+| impact_local | 64 | 1 | 1 | 8–15 | 8–15 |
+| staircase | 64 | 4–64 | 4–64 | 32–512 | 32–512 |
+| rotation_box | 128 | 1 | 1 | 8 | 8 |
+| rotation_box | 4 | 12 | 12 | 48 | 48 |
+| rotation_l_prism | 128 | 2 | 2 | 18–21 | 16 |
+| rotation_l_prism | 4 | 26–30 | 24 | 104–120 | 96 |
+| rotation_hollow | 128 | 28–49 | 28–49 | 227–434 | 160–269 |
+| rotation_hollow | 4 | 303–629 | 190–303 | 1212–2516 | 760–1212 |
+| rotation_nested | 128 | 43–83 | 43–83 | 383–785 | 266–507 |
+| rotation_nested | 4 | 531–1147 | 338–649 | 2124–4588 | 1352–2596 |
+
+For nested-shell rotation 10 at the four-point limit, the prior maximum falls from **1,147 to 649 hulls** and **4,588 to 2,596 point entries**, a 43.4% reduction in both counts. At the 128-point limit, the same case keeps 83 hulls and reduces point entries from 785 to 507. Each point count sums hull-array entries; a position shared by multiple hulls is counted in each hull.
 
 ## Verification and source identity
 
-The separate collision exporter produced byte-identical source and hull meshes for all 96 cases before and after deduplication, with no exporter failures. Both files have SHA-256 `5dc676d2bed3967d18e08d71014dd2de8c6139ebdbb584d518e25e5e9b0c4351`. This checks output preservation for that corpus; the independent geometric and native-cooking acceptance results are recorded separately.
+The current omission snapshot completed the manual 105-case benchmark through one warmup and three measured repetitions. The convexity invariant passed under both `-O4` with the target's strict math setting and `-O4 --fp-math=fast`, using `c3c test fracture_test --path addons/c3d_physics.c3l --test-filter test_collision_chunk_convexity_`; each invocation ran one test and skipped 188. These tests cover equivalent point constructions, opposing constraints, scratch exhaustion and reuse. Wider collision and native-cooking acceptance belongs to the integrating change.
 
-The focused invariant test covers equivalent point constructions, opposing constraints, scratch exhaustion and reuse. Existing chunk coverage checks rotated reflex edges, nested islands and triangle permutations. The filtered command `c3c test fracture_test --path addons/c3d_physics.c3l --test-filter collision_` passed 39 tests in each of `-O0 --safe=yes`, `-O0 --safe=no`, `-O3 --safe=yes` and `-O3 --safe=no`; each run skipped the other 159 tests. Local validation stayed within the affected collision area.
+The historical report's byte-identical export comparison applies only to the convexity-deduplication change before omission. It does not describe current collision output. The per-piece comparison above records the current output changes explicitly.
 
-The source baseline was `ae4c956cbac905ee2fa60e208c8357bf1afb770b`, plus the integration dependencies and convexity change listed below. SHA-256 values use UTF-8 source text with LF line endings, independent of checkout newline conversion.
+The source baseline was `5f0c528e02bd27b5ddc77d5cf757dd194908ea0b`, plus the omission integration snapshot below. Legacy `collision_cells.c3` and `collision_surface.c3` were absent. SHA-256 values use the measured UTF-8 source text with LF line endings, independent of checkout newline conversion. The witness helper subsequently gained compile-time bit-bound constants and assertions; its executable function bodies were unchanged.
 
-| File under `addons/c3d_physics.c3l/` | SHA-256 |
+| File under `addons/c3d_physics.c3l/` | SHA-256 as measured |
 | --- | --- |
-| `src/fracture/collision.c3` | `34307385656aad047f127b66f608ab01739ce976cea7a85ccb8f8036d5c4f953` |
+| `src/fracture/collision.c3` | `6f924e9f8a1aaba038343a696ffb69ba8d54c8bbb2e6b79b0fc193dc8d46ca93` |
 | `src/fracture/collision_cover.c3` | `3410024bdc8d9efcd4801631ce6c2fb2503c5c1486c08c333fd9ec3806cd4eaa` |
-| `src/fracture/collision_reconstruction.c3` | `794f509e314e43babfedc24400ed80dacd9b45bfbe2871bc4ebccb315b8644ec` |
+| `src/fracture/collision_reconstruction.c3` | `10c786cce601797f5cbcc131abf15cd3edb9f16ce30f34f0ce777ca58839fbb5` |
+| `src/fracture/collision_retained.c3` | `66b7795faecdaff2003fbe18de5126e91dead94866258eb09304b1766313ddaf` |
+| `src/fracture/collision_validation.c3` | `249114f1bd646da0d285339d8d0bd056e79e77c5d2bedc1ba3b2ae2dcc2bc96c` |
+| `src/fracture/collision_witness.c3` | `6e99a34426bf4b06a36e084182d477256a4ea91e9a3d6a7302673c9ac6b7efa6` |
 | `src/fracture/collision_chunks.c3` | `f1ee88bfd3475fd114e765c055efcd22b1323c43f5112261abb6e4b42aecc122` |
 | `src/fracture/exact.c3` | `1082c1df2dd80893203aa53631e34e8f62963499b0bde8a02664d32963a30dc3` |
 | `src/fracture/workspace.c3` | `6de7486da13d40e67bbfedb9e04c162ad06ec0ce28ac2b63bfa49ae24aadace9` |
