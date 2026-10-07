@@ -128,6 +128,7 @@ fn Vec4[]? decal_render_pixels(
     DecalView* shot,
     uint frames = 1,
     Vec3 reference = {},
+    bool raw_hdr = false,
 ) @private {
     target.scene.update_world();
     Renderer* renderer = &fixture.renderer;
@@ -136,6 +137,14 @@ fn Vec4[]? decal_render_pixels(
         defer catch render::abort_frame(renderer);
         renderer.render_view(&target.scene, target.camera, shot.view)!;
         renderer.finish_view(shot.view)!;
+        if (raw_hdr) {
+            render::composite_target(
+                renderer: renderer,
+                source: &renderer.views.get(shot.view).hdr_color,
+                output: &renderer.targets.get(shot.target).target,
+                rect: {},
+            )!;
+        }
         renderer.end_frame()!;
     }
     return read_float_target(fixture, shot.target);
@@ -163,6 +172,17 @@ fn float decal_check_images(Vec4[] actual, Vec4[] expected) @private {
     float maximum;
     foreach (index, pixel : actual) maximum = math::max(maximum, decal_check_pixel(pixel, expected[index]));
     return maximum;
+}
+
+fn void decal_check_mip_edges(Vec4[] pixels, Vec4 expected) @private {
+    uint[2] inside_columns = { DECAL_TARGET_SIZE / 4 + 1, 3 * DECAL_TARGET_SIZE / 4 };
+    uint[2] outside_columns = { DECAL_TARGET_SIZE / 4, 3 * DECAL_TARGET_SIZE / 4 + 1 };
+    for (uint row = DECAL_TARGET_SIZE / 2; row < DECAL_TARGET_SIZE / 2 + 2; row++) {
+        foreach (edge, column : inside_columns) {
+            decal_check_pixel(pixels[row * DECAL_TARGET_SIZE + column], expected);
+            decal_check_pixel(pixels[row * DECAL_TARGET_SIZE + outside_columns[edge]], DECAL_RECEIVER_COLOR);
+        }
+    }
 }
 
 fn void test_decal_coverage_order_and_overflow_match_both_paths() @test {
@@ -396,7 +416,45 @@ fn void test_decal_normals_match_derived_material_frames() @test {
         defer free(opposite);
         maximum = math::max(maximum, decal_check_pixel(opposite[center], baseline[center]));
     }
-    io::printfn("Decal normal-frame maximum channel difference: %f", maximum);
+    sun.local.rotation = quaternion::IDENTITY;
+    fixture.assets.material(target.source).data.standard.metallic = 1;
+    fixture.assets.material(target.source).data.standard.roughness = 0.2f;
+    fixture.assets.mark_material_dirty(target.source);
+    for (uint kind = 0; kind < target.receivers.len; kind++) {
+        for (uint mode = 0; mode < 3; mode++) {
+            bool roughness = mode != 2;
+            bool metallic = mode != 1;
+            StandardParams params = material::STANDARD_PARAMS_DEFAULT;
+            params.base_color = DECAL_RECEIVER_COLOR;
+            params.metallic = metallic ? 1 : 0;
+            params.roughness = roughness ? 0.2f : 1;
+            MaterialId direct = decal_add_material(&fixture, params, kind != 0)!!;
+            target.scene.get(target.projector, Decal).weights = {
+                .base_color = 0,
+                .normal = 0,
+                .roughness = roughness ? 1 : 0,
+                .metallic = metallic ? 1 : 0,
+            };
+            foreach (shading : DECAL_PATHS) {
+                decal_configure_view(&fixture, &shot, shading)!!;
+                target.projector.visible = false;
+                target.scene.get(target.receiver, Mesh).material = target.receivers[kind];
+                Vec4[] baseline = decal_render_pixels(&fixture, &target, &shot)!!;
+                defer free(baseline);
+                target.scene.get(target.receiver, Mesh).material = direct;
+                Vec4[] reference = decal_render_pixels(&fixture, &target, &shot)!!;
+                defer free(reference);
+                assert(math::abs(reference[center].r - baseline[center].r) > 0.05f);
+
+                target.projector.visible = true;
+                target.scene.get(target.receiver, Mesh).material = target.receivers[kind];
+                Vec4[] projected = decal_render_pixels(&fixture, &target, &shot)!!;
+                defer free(projected);
+                maximum = math::max(maximum, decal_check_pixel(projected[center], reference[center]));
+            }
+        }
+    }
+    io::printfn("Decal normal/material-channel maximum channel difference: %f", maximum);
     check_validation(&fixture.renderer);
 }
 
@@ -475,7 +533,8 @@ fn void test_decal_gradients_preserve_uv_scale_and_mip_bias() @test {
     source.base_color = { 1, 1, 1, 1 };
     source.base_color_map = material::texture_slot(texture, asset::SAMPLER_NEAREST);
     fixture.assets.mark_material_dirty(target.source);
-    target.projector.local.position.x = 0.02f;
+    // One pixel of translation makes both vertical edges split 2x2 fragment quads.
+    target.projector.local.position.x = DECAL_VIEW_HEIGHT / (float)DECAL_TARGET_SIZE;
     uint center = decal_pixel_at({});
     foreach (shading : DECAL_PATHS) {
         ViewDesc desc = fixture.renderer.views.get(shot.view).desc;
@@ -490,17 +549,29 @@ fn void test_decal_gradients_preserve_uv_scale_and_mip_bias() @test {
 
         source.base_color_map.transform.scale = { 4, 4 };
         fixture.assets.mark_material_dirty(target.source);
-        Vec4[] scaled = decal_render_pixels(&fixture, &target, &shot)!!;
+        Vec4[] scaled = decal_render_pixels(
+            fixture: &fixture,
+            target: &target,
+            shot: &shot,
+            raw_hdr: true,
+        )!!;
         defer free(scaled);
         decal_check_pixel(scaled[center], { 1, 1, 0, 1 });
+        decal_check_mip_edges(scaled, { 1, 1, 0, 1 });
 
         desc.post.anti_aliasing = AntiAliasing.TAA;
         desc.post.taa_params.current_weight = 1;
         desc.post.taa_params.mip_bias = -1;
         render::configure_view(&fixture.renderer, shot.view, desc)!!;
-        Vec4[] biased = decal_render_pixels(&fixture, &target, &shot)!!;
+        Vec4[] biased = decal_render_pixels(
+            fixture: &fixture,
+            target: &target,
+            shot: &shot,
+            raw_hdr: true,
+        )!!;
         defer free(biased);
         decal_check_pixel(biased[center], { 0, 0, 1, 1 });
+        decal_check_mip_edges(biased, { 0, 0, 1, 1 });
     }
     check_validation(&fixture.renderer);
 }
