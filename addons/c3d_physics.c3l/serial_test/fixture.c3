@@ -127,3 +127,36 @@ fn Node* add_sphere(
     scene.add_physics_body(node, physics::default_body_desc(kind), (&collider)[:1])!!;
     return node;
 }
+
+struct RejectSize (Allocator) @private {
+    Allocator backing;
+    sz size;
+    uint failures;
+    bool enabled;
+}
+
+fn void*? RejectSize.acquire(
+    &self,
+    sz size,
+    AllocInitType init_type,
+    sz alignment,
+) @dynamic {
+    if (self.enabled && size == self.size) {
+        self.failures++;
+        return mem::OUT_OF_MEMORY~;
+    }
+    return self.backing.acquire(size, init_type, alignment);
+}
+
+fn void*? RejectSize.resize(
+    &self,
+    void* pointer,
+    sz size,
+    sz alignment,
+) @dynamic {
+    return self.backing.resize(pointer, size, alignment);
+}
+
+fn void RejectSize.release(&self, void* pointer, bool aligned) @dynamic {
+    self.backing.release(pointer, aligned);
+}

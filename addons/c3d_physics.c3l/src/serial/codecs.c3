@@ -73,6 +73,7 @@ fn void? register_serial_codecs() {
     serial::register_transient(RigidBody)!;
     serial::register_transient(Joint)!;
     register_cloth_codec()!;
+    register_ragdoll_codec()!;
 }
 
 fn void defaults_body_authoring(void* value) @private {
@@ -95,23 +96,11 @@ fn void defaults_buoyancy_authoring(void* value) @private {
     *(BuoyancyAuthoring*)value = { .fluid_density = DEFAULT_FLUID_DENSITY };
 }
 
-fn bool ragdoll_owns_node(Scene* scene, Node* node) @private {
-    bool owned;
-    scene.@each(Ragdoll; entity, ragdoll) {
-        foreach (bone : ragdoll.bone_nodes) owned |= bone == node;
-    };
-    return owned;
-}
-
 fn void? project_body(void* component, void* value, serial::WriteContext* context) @private {
     PhysicsBody* body = component;
     if (!body.colliders.len) return c3d::INVALID_ARGUMENT~;
     BodyAuthoring* authoring = value;
     *authoring = { .body = body.body, .colliders = body.colliders };
-    if (ragdoll_owns_node(context.scene, context.node)) {
-        authoring.body.linear_velocity = {};
-        authoring.body.angular_velocity = {};
-    }
 }
 
 fn void? validate_body(void* value, serial::ReadContext* context) @private {
