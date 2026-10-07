@@ -18,6 +18,18 @@
   "wincrt": "static",
   "output": "build",
   "targets": {
+    "landscape_serial_test": {
+      "type": "test",
+      "sources": ["serial_test/**"],
+      "features": ["C3D_LANDSCAPE_SERIAL"],
+      "dependencies": ["c3d_landscape", "c3d_serial", "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "cgltf", "ufbx", "shaderc"]
+    },
+    "landscape_serial_policy_test": {
+      "type": "test",
+      "sources": ["serial_policy_test/**"],
+      "features": ["C3D_LANDSCAPE_SERIAL"],
+      "dependencies": ["c3d_landscape", "c3d_serial", "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "cgltf", "ufbx", "shaderc"]
+    },
     "landscape_test": {
       "type": "test",
       "sources": [ "test/terrain_test.c3", "test/foliage_test.c3", "test/water_test.c3" ],

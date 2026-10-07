@@ -49,3 +49,7 @@ The copied foliage LOD data belongs to the component; do not replace or free its
 pointer or slices. Prepared foliage also owns a separate frozen runtime copy.
 Removing authored foliage frees its authoring copy immediately. Existing runtime
 and cells remain valid until the next foliage update removes the orphans.
+
+## Serialization
+
+Select `c3d_serial` and enable `C3D_LANDSCAPE_SERIAL` to register terrain, foliage and water authoring codecs. Reads restore pending owners without generated assets or nodes. See [the serialization contract](src/serial/README.md) for ownership, preparation order and the feature-on test targets.
