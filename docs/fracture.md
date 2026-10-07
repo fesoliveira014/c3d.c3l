@@ -16,7 +16,7 @@ workspaces share no mutable state.
 
 `MIN_FRACTURE_SCRATCH_BYTES` reserves all fixed arithmetic storage. Smaller
 limits return `INVALID_ARGUMENT` at creation. On the supported C3 0.8.3 targets,
-the block is 24,800 bytes: 24 values of 1032 bytes plus counters. Each value has
+the block is 24,880 bytes: 24 values of 1032 bytes plus counters. Each value has
 8192 magnitude bits and sign/used-length metadata. Byte-size overflow or an
 allocator failure returns `CAPACITY_EXCEEDED`, with no owner. Geometry scratch
 will need space beyond this arithmetic minimum and remains bounded by the same
@@ -564,7 +564,7 @@ With at most `uint::max` triangles, edge components need 278 bits, Q at most
 existing 896-bit packed integer. The common grid exponent is accounted for when
 the complete operation compares its source and published volumes.
 
-The numeric routines add no arena allocation and use the existing 24,800-byte
+The numeric routines add no arena allocation and use the fixed arithmetic
 arithmetic block. Ratio rounding peaks at five wide values, frame conversion at
 nine, volume-bound evaluation at ten, and centroid accumulation at nineteen of
 the reserved twenty-four. First moments fit 1145 bits; squared centroid error

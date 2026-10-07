@@ -53,6 +53,7 @@ fn PlanarPoint*? add_planar_point(SolidScratch* scratch, PlanarPointList* points
     *point = { .vertex = vertex, .next = points.first };
     points.first = point;
     points.count++;
+    scratch.exact.statistics.max_planar_points = math::max(scratch.exact.statistics.max_planar_points, (usz)points.count);
     return point;
 }
 
@@ -183,6 +184,7 @@ fn PlanarEdges? normalize_planar_edges(
     usz saved = scratch.used;
     defer catch scratch.used = saved;
     if (segments.len > uint::max) return c3d::CAPACITY_EXCEEDED~;
+    scratch.exact.statistics.max_planar_segments = math::max(scratch.exact.statistics.max_planar_segments, (usz)segments.len);
     uint dropped_axis;
     while (!plane.coefficients[dropped_axis].used) dropped_axis++;
     PlanarInput[] inputs = reserve_elements(scratch, PlanarInput, segments.len)!;
