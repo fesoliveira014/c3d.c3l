@@ -41,12 +41,13 @@ uint selected_decal_index(FrameRoot frame, DecalList list, uint index) {
     return ClusterIndices(clusters.decal_indices).values[list.first + index];
 }
 
+// mirrored as decal_angle_weight in render/decal.c3
 float decal_angle_weight(float facing_cosine, float fade_cosine, float inverse_band) {
     if (inverse_band == 0.0) return facing_cosine >= 1.0 ? 1.0 : 0.0;
     return clamp((facing_cosine - fade_cosine) * inverse_band, 0.0, 1.0);
 }
 
-vec4 sample_map_grad(
+vec4 decal_sample_map(
     TextureMapGpu map,
     vec2 uv,
     vec2 uv_dx,
@@ -106,7 +107,7 @@ void apply_decals(
         StandardMaterialGpu material = StandardMaterialRoot(decal.material).material;
         vec4 base_color = material.base_color;
         if ((material.map_flags & MATERIAL_MAP_BASE_COLOR) != 0u) {
-            base_color *= sample_map_grad(
+            base_color *= decal_sample_map(
                 material.base_color_map,
                 uv,
                 uv_dx,
@@ -115,7 +116,7 @@ void apply_decals(
         float metallic = material.metallic;
         float roughness = material.roughness;
         if ((material.map_flags & MATERIAL_MAP_METALLIC_ROUGHNESS) != 0u) {
-            vec4 factors = sample_map_grad(
+            vec4 factors = decal_sample_map(
                 material.metallic_roughness_map,
                 uv,
                 uv_dx,
@@ -131,7 +132,7 @@ void apply_decals(
         if (opacity.y > 0.0 && (material.map_flags & MATERIAL_MAP_NORMAL) != 0u
             && material.normal_scale != 0.0) {
             vec3 mapped = decode_normal(
-                sample_map_grad(
+                decal_sample_map(
                     material.normal_map,
                     uv,
                     uv_dx,
