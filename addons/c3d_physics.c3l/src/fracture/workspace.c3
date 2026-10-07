@@ -4,7 +4,7 @@ import c3d;
 import std::math;
 
 <* Fixed exact-arithmetic block; generation storage is additional. *>
-const usz MIN_FRACTURE_SCRATCH_BYTES = ExactScratch::size; // 24,880 bytes, 1032 per 8192-bit value; reserves arithmetic once
+const usz MIN_FRACTURE_SCRATCH_BYTES = ExactScratch::size; // 24,888 bytes, 1032 per 8192-bit value; reserves arithmetic once
 
 <* Bound working storage, output size and geometric resolution. *>
 struct FractureLimits {

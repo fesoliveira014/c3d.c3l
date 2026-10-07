@@ -16,7 +16,7 @@ workspaces share no mutable state.
 
 `MIN_FRACTURE_SCRATCH_BYTES` reserves all fixed arithmetic storage. Smaller
 limits return `INVALID_ARGUMENT` at creation. On the supported C3 0.8.3 targets,
-the block is 24,880 bytes: 24 values of 1032 bytes plus counters. Each value has
+the block is 24,888 bytes: 24 values of 1032 bytes plus counters. Each value has
 8192 magnitude bits and sign/used-length metadata. Byte-size overflow or an
 allocator failure returns `CAPACITY_EXCEEDED`, with no owner. Geometry scratch
 will need space beyond this arithmetic minimum and remains bounded by the same
@@ -732,45 +732,76 @@ or an exact point of the reference partition rounded once. Original surface
 and interior split membership is certified in the partition; the exact
 Euclidean distance between a split point and its rounded copy must be at most
 epsilon. Therefore every output point lies in the original piece or within
-epsilon of its surface. Points are not moved, welded or removed to meet a hull
-limit. A hull exceeding the limit is partitioned using its existing vertices.
+epsilon of its surface. Original piece vertices are always retained bit for bit.
+Generated cut vertices may be omitted in exact geometric order before applying
+the hull point limit. After all omissions, every exact reference vertex must
+lie inside the retained hull or have an exact squared Euclidean distance of at
+most epsilon squared to a retained point, segment or triangle. This final
+certificate prevents successive omissions from accumulating unbounded error.
+No point is moved. Omission does not depend on the requested hull point limit.
+A hull exceeding that limit is partitioned using an interior anchor and its
+existing boundary vertices.
 
-Shared reference faces have one triangulation emitted with opposite winding.
-Every rounded reference chunk and the combined exterior must pass the raw
-closure, orientation, self-intersection, nesting and positive-volume checks.
-Their exact volume sum equals the rounded exterior's volume. Internal face
-cancellation makes their winding-number sum equal the exterior's winding
-number. Since each valid chunk contributes an indicator of its material region,
-the chunks have disjoint interiors and cover that exterior.
+Exact half-space clipping partitions the original material region `S` into
+reference regions `R_i` with disjoint interiors. Original patches and shared
+caps retain exact plane-triple vertices. Let `H_i` be the convex hull of the
+retained once-rounded vertices of `R_i`. Every exact reference vertex has a
+certified witness in `H_i` within Euclidean distance epsilon, and therefore
+within epsilon in each coordinate. Since a bounded polyhedron
+lies in the convex hull of its vertices, `R_i` is contained in
+`H_i + [-epsilon,epsilon]^3`. This argument does not require a rounded reference
+surface to remain valid; the final hull itself must be valid and convex.
 
-Let `S` be the original piece and `R` the rounded reference partition. Let `H_i`
-be the convex hull containing all vertices of reference chunk `R_i`. Define
-`C = sum(volume(H_i) - volume(R_i))`. Containment follows from convexity: every
-triangle, and hence the bounded material region, lies in the hull of its
-vertices. The signed volumes of `H_i` and `R_i` are computed exactly from their
-binary32 surfaces; each excess is nonnegative, and the operation requires
-`C <= B`, where `B` is the preceding resolution-derived bound evaluated on the
-rounded exterior.
-
-The same `B` bounds the volume swept by the exterior's vertex deformation.
-Integrating absolute normal velocity over each moving triangle gives the
-same three terms as the preceding derivation. Winding can change only in that
-swept region, so `volume(S symmetric_difference R) <= B`. Consequently:
+For each final convex hull, let `Q_i` be the sum of L1 triangle cross products
+and `W_i` the sum of its three axis widths. Its expansion by that cube has
+excess volume
 
 ```text
-uncovered original volume <= B
-sum(hull volumes) - original volume <= C + B <= 2*B
-positive overlap, counted with multiplicity <= C <= B
+E_i = epsilon*Q_i/2 + 4*epsilon^2*W_i + 8*epsilon^3
+E = sum(E_i)
 ```
 
-The overlap bound follows because each `R_i` is contained in its `H_i` and the
-reference interiors are disjoint; all additional multiplicity consumes convex
-excess `C`. Subdividing one convex hull into positive tetrahedra preserves its
-volume and introduces no further overlap. The implementation checks exact
-volume sums and these bounds before publishing. A total signed-volume match
-does not replace the reference coverage and containment proofs. Invalid
-rounding, a lost cavity/component, an unresolved feature or an unproved bound
-returns `NUMERICAL_FAILURE`.
+This is the exact convex Minkowski-sum formula. Extruding along the three axes
+successively adds twice epsilon times the three projection areas, four times
+epsilon squared times the axis widths, and the cube volume. The sum `Q_i` is
+four times the sum of the projection areas. Therefore
+`volume(R_i outside H_i) <= E_i`, independently of convexification. Since the
+exact reference regions partition `S`, uncovered original volume is at most
+`E`. All widths, triangle cross products and the expression for `E` are
+evaluated with exact dyadic arithmetic.
+
+Let `D = sum(volume(H_i)) - volume(S)` and let `B` be the preceding
+resolution-derived bound evaluated on the original piece. Require
+`-E <= D <= B`, checked with exact volume sums. Define `U` as uncovered original
+volume, `X` as the volume outside `S` covered by one or more hulls, and `O` as
+the integral of hull multiplicity minus one wherever hulls overlap. Then
+`O + X = D + U <= B + E`. Thus the separate bounds are
+
+```text
+uncovered original volume U <= E
+sum(hull volumes) - original volume D <= B
+exterior excess X <= B + E
+positive overlap, counted with multiplicity O <= B + E
+```
+
+The missing-coverage certificate is independent of the signed volume sum, so
+cancellation cannot hide arbitrary missing material or hull overlap. A
+subdivision of one convex hull into positive tetrahedra preserves its volume
+and introduces no further overlap. The implementation sums `E_i` over the
+actual published tetrahedra. Their expanded union equals the expansion of the
+coarse hull, so their summed expansion excess is at least the coarse hull's
+expansion excess. This preserves the reference-region coverage bound.
+The implementation certifies every reference
+vertex's correspondence, validates every final hull and checks the exact volume
+inequalities before publishing. Invalid rounding, a lost cavity/component, an
+unresolved feature or an unproved bound returns `NUMERICAL_FAILURE`.
+
+For a hull exceeding the point limit, its exact volume centroid is rounded once
+to provide the tetrahedral anchor. Exact predicates require the rounded anchor
+to lie strictly inside the hull and in the original piece's material region.
+Every outward boundary triangle then forms a positive-volume tetrahedron with
+that anchor. This avoids using nearly coplanar face corners as a tetrahedron;
+no boundary point is moved.
 
 The sorted hull set depends on geometric coordinates and piece index, not
 source triangle order. All non-capacity validation faults on a published

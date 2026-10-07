@@ -34,6 +34,7 @@ struct FractureStatistics @private {
     ulong cell_split_count;
     ulong final_leaf_count;
     ulong occupied_leaf_count;
+    ulong partition_nanoseconds;
     usz max_planar_segments;
     usz max_planar_points;
     usz max_patch_vertices;

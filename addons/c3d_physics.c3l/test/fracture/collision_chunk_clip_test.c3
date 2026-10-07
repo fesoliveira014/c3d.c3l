@@ -3,6 +3,42 @@ module c3d::physics::fracture;
 import c3d;
 import std::math;
 
+fn void? validate_collision_chunk_topology(
+    SolidScratch* scratch,
+    CollisionChunk* chunk,
+    BoundaryPatch[] patches,
+    SurfacePointMap* points,
+    uint first_patch,
+) @private {
+    usz saved = scratch.used;
+    defer scratch.used = saved;
+
+    PatchTriangles[] triangles = reserve_elements(scratch, PatchTriangles, patches.len)!;
+    usz count;
+    foreach (index, &patch : patches) {
+        triangles[index] = triangulate_boundary_patch(scratch, patch)!;
+        count += triangles[index].triangles.len * TRIANGLE_CORNERS;
+    }
+
+    uint[] indices = reserve_elements(scratch, uint, count)!;
+    uint written;
+    foreach (uint patch, &faces : triangles) {
+        OrientedPatchTriangles oriented = {
+            .shared = faces, .reversed = patches[patch].reversed != chunk.patches[patch].flip,
+        };
+
+        for (uint triangle = 0; triangle < faces.triangles.len; triangle++) {
+            foreach (corner : oriented_patch_triangle(oriented, triangle)) {
+                indices[written++] = points.vertices[points.patch_offsets[first_patch + patch] + corner];
+            }
+        }
+    }
+
+    SolidMeshView mesh = collision_indexed_mesh(scratch, points.positions, indices)!;
+    (void)build_solid_topology(scratch, mesh)!;
+    return;
+}
+
 fn void assert_collision_chunk_planes(ExactScratch* scratch, CollisionChunk* chunk, float resolution) @local {
     foreach (face : chunk.patches) {
         foreach (other : chunk.patches) {
