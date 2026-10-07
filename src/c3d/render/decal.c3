@@ -134,6 +134,7 @@ fn DecalGpu pack_decal(
     };
 }
 
+// mirrored as decal_angle_weight in decals.glsl
 <*
  Angular opacity from the packed fade parameters.
  @param facing_cosine : "Geometric normal dotted with projection direction."
