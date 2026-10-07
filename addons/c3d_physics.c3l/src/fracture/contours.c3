@@ -183,14 +183,26 @@ fn BoundaryPatch? create_boundary_patch(
 fn void? reconcile_patch_boundaries(SolidScratch* scratch, BoundaryPatch[] patches) @private {
     usz saved = scratch.used;
     defer catch scratch.used = saved;
-    usz count;
-    foreach (patch : patches) count += patch.boundary.vertices.len;
-    PlaneTriple[] points = reserve_elements(scratch, PlaneTriple, count)!;
-    count = 0;
-    foreach (patch : patches) foreach (point : patch.boundary.vertices) points[count++] = point;
+    BoundaryPointIndex index = index_boundary_points(scratch, patches)!;
+    PlaneTriple[] candidates = reserve_elements(scratch, PlaneTriple, index.points.len)!;
+    uint first;
     BoundaryPatch[] staged = reserve_elements(scratch, BoundaryPatch, patches.len)!;
     staged[..] = patches[..];
     foreach (&patch : staged) {
+        if (!patch.boundary.vertices.len) continue;
+        BoundaryPointBounds bounds = boundary_point_bounds(
+            scratch: scratch.exact,
+            points: index.points,
+            first: first,
+            count: (uint)patch.boundary.vertices.len,
+        )!;
+        first += (uint)patch.boundary.vertices.len;
+        PlaneTriple[] points = query_boundary_points(
+            scratch: scratch.exact,
+            index: &index,
+            bounds: bounds,
+            output: candidates,
+        )!;
         PlanarSegment[] segments = patch_segments(scratch, patch, false)!;
         patch.boundary = normalize_planar_edges(
             scratch: scratch,

@@ -402,14 +402,67 @@ hollow box, nested shell/cavity/island and disconnected fixtures reproduce the
 same triangles, corner identities, provenance and count in both domains. Oblique
 cut fixtures also preserve ordered patches under source-face permutations.
 
-Boundary reconstruction alone peaks at 16 of the existing 24 wide values. Total
-scratch peaks, including retained validation, source and partition records, are
-78,324 bytes for the box, 122,748 for the concave prism, 136,692 for disconnected
-boxes, 162,420 for the hollow box and 228,284 for nested shells. Both domains have
-the same measured storage. No reservation grew. These are private reconstruction
-measurements; complete generation and validated float publication
-remain separate acceptance work.
+Boundary reconstruction alone peaks at 16 of the existing 24 wide values. No
+reservation grew. The measurements below cover private boundary reconstruction;
+complete generation and validated float publication remain separate acceptance
+work.
 
+### Gathering and local reconciliation
+
+Occupied-cell faces are sorted once by canonical geometric plane coefficients.
+Each source triangle and cut plane visits only its matching range. The private
+source/cap helpers accept that same borrowed index for one reconstruction. Known
+source and cut planes need no separate provenance normalization; only unrecognized
+planes are normalized to prove that their internal faces cancel completely.
+
+Reconciliation caches each retained point's exact homogeneous coordinates in the
+workspace, sorts point indices lexicographically, and builds a balanced bounds
+tree. A patch queries its closed axis-aligned bounds before planar noding. Any
+point that can subdivide an edge must lie within those bounds. Bounds compare
+positive-denominator integer cross-products, preserving rational contacts,
+subnormals and extreme finite values without approximate coordinates or assumptions
+about which planes define an edge. Raw products need at most 3627 bits. Cache
+construction peaks at seven live wide values; a bounds comparison needs two.
+Patch publication remains staged, with cursor and arithmetic restoration on failure.
+
+The manual fixture uses boxes with 1, 2, 4 and 8 subdivisions per face edge and
+retains the negative side of `3x + 2y + z = 0`. Validation, source construction and
+partitioning run before timing. Timing includes face-index construction, source
+patches, the cap and their final reconciliation. Each row is the median of three
+runs after one warm-up at `-O3`, on Windows with an Intel Core i9-14900K and C3
+0.8.3 (`1d155ee`, LLVM 22.1.8), measured on 2026-10-07. The baseline is
+`e020882bd13031f5c1e15bfd19c0314125e4dd63`, before the indexes; both versions use
+the same geometry, cut and reconstruction passes.
+
+| Source triangles | Baseline ms | Indexed ms | Baseline predicates | Indexed predicates | Indexed peak bytes |
+|---:|---:|---:|---:|---:|---:|
+| 12 | 3.856 | 3.475 | 3,740 | 8,514 | 111,440 |
+| 48 | 25.654 | 12.314 | 31,498 | 38,554 | 303,936 |
+| 192 | 292.355 | 46.032 | 389,844 | 162,662 | 966,712 |
+| 768 | 6,369.744 | 183.127 | 8,943,580 | 697,319 | 3,565,464 |
+
+The [independent review measurement](https://github.com/fesoliveira014/c3d.c3l/pull/323#pullrequestreview-5445911922)
+at `6a2b3cdf` confirmed the predicate and scratch counts on the same CPU:
+
+| Source triangles | Reviewer median ms | Predicates | Peak scratch bytes |
+|---:|---:|---:|---:|
+| 12 | 3.31 | 8,514 | 111,440 |
+| 48 | 13.24 | 38,554 | 303,936 |
+| 192 | 45.94 | 162,662 | 966,712 |
+| 768 | 184.69 | 697,319 | 3,565,464 |
+
+The indexed time grows 3.54, 3.74 and 3.98 times per fourfold triangle increase;
+the equivalent per-doubling ratios are 1.88, 1.93 and 1.99. Predicate ratios per
+doubling are 2.13, 2.05 and 2.07. All are below the requested 2.5 limit. Small
+cases pay additional bounds predicates; the largest case is 34.8 times faster.
+These results establish scaling for this fixture, not a universal complexity
+bound for arbitrary partitions or overlapping patch bounds.
+
+Run the fixture separately; it is excluded from `scripts/build.py --test`:
+
+```sh
+c3c test boundary_scaling --path addons/c3d_physics.c3l/test/bench -O3 --test-show-output
+```
 
 ## Constrained triangulation
 
@@ -445,12 +498,13 @@ holes, without an approximate area comparison. The corpus covers seven contour
 families, both domains, all three projection axes, rational coordinate transforms,
 source-face permutations, original triangles, collinear constraints, occluded
 bridges, repeated bridge endpoints and shared-cut winding. Exhaustion preserves
-the input and permits reuse. The full fracture target has 67 passing CPU tests
+the input and permits reuse. The triangulation change passed 67 CPU tests
 in O0, O3, O4 and O4 fast-math modes; eight semantic mutations are detected.
 
 The measured triangulation cases peak at 26,084–27,756 total scratch bytes,
 including the arithmetic block and retained fixture boundary graphs. They borrow
 their plane records. A three-hole contour produces 17 triangles with 1,268
 predicates, uses 16 wide values and retains 27,512 bytes. No reservation grew.
-These measurements exclude solid validation and public generation. The separate
-boundary-gathering scaling requirement still precedes full-kernel benchmarks.
+These measurements exclude solid validation and public generation. The boundary
+gathering measurements above cover its separate scaling requirement; full-kernel
+benchmarks remain acceptance work.
