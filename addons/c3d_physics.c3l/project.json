@@ -19,6 +19,10 @@
   "wincrt": "static",
   "output": "build",
   "targets": {
+    "fracture_test": {
+      "type": "test",
+      "sources": [ "test/fracture/*" ]
+    },
     "physics_test": {
       "type": "test",
       "sources": [ "test/*" ]
