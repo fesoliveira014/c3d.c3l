@@ -154,3 +154,12 @@ nodes/components. Application children and ordinary transform overrides remain.
 A selected template node requires its model owner in the selected subtree.
 Template disagreement returns INCOMPATIBLE_TEMPLATE with the model key and first
 differing template index. The binary NODES model fields remain reserved.
+SkinBinding, IkChain, FootIk and LookAt restore in REFERENCES. Their required
+joints and targets are resolved before any component attaches. NodeReference
+stores an ordinary document node or a model owner plus template index; removed
+model slots cannot bind to a reused scene slot. Skin joint arrays are copied into
+the destination allocator. Foot ground contact and alignment state restart.
+The shared NodeReference layout is registered by register_core_value_types;
+SkinAuthoring exposes the decoded skeleton and required joint references to
+other owner preflight callbacks. Missing binary asset keys retain the key in
+SerialDiagnostic, matching JSONC diagnostics.
