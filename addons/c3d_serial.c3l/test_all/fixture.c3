@@ -63,15 +63,15 @@ fn void register_scene(Scene* scene, AssetStore* assets) @private {
     particle::register_particles(scene)!!;
 }
 
-fn void create_fixture(Fixture* fixture) @private {
+fn void create_fixture(Fixture* fixture, uint node_capacity = 256, uint asset_capacity = 64) @private {
     register_codecs();
     fixture.assets = asset::create_asset_store(mem, {
-        .max_geometries = 64, .max_textures = 32, .max_materials = 64,
+        .max_geometries = asset_capacity, .max_textures = 32, .max_materials = asset_capacity,
         .max_samplers = 16, .max_models = 8, .max_skeletons = 8,
         .max_clips = 16, .max_shaders = 8,
     });
-    fixture.source = scene::create_scene(mem, { .max_nodes = 256 });
-    fixture.destination = scene::create_scene(mem, { .max_nodes = 256 });
+    fixture.source = scene::create_scene(mem, { .max_nodes = node_capacity });
+    fixture.destination = scene::create_scene(mem, { .max_nodes = node_capacity });
     register_scene(&fixture.source, &fixture.assets);
     register_scene(&fixture.destination, &fixture.assets);
     Geometry box = geometry::box(
@@ -345,7 +345,12 @@ fn void add_landscape(Fixture* fixture) @private {
     scene.get(emitter, ParticleSystem).emitting = false;
 }
 
-fn void create_systems(Systems* systems, Scene* scene, AssetStore* assets) @private {
+fn void create_systems(
+    Systems* systems,
+    Scene* scene,
+    AssetStore* assets,
+    uint max_agents = 4,
+) @private {
     PhysicsDesc physics = physics::default_physics_desc();
     physics.tuning.gravity = {};
     physics.tuning.interpolate = false;
@@ -362,7 +367,7 @@ fn void create_systems(Systems* systems, Scene* scene, AssetStore* assets) @priv
     systems.mesh = nav::create_nav_mesh_for(mem, &systems.builder)!!;
     systems.crowd = nav::create_crowd(
         allocator: mem,
-        desc: { .max_agents = 4, .max_agent_radius = 1 },
+        desc: { .max_agents = max_agents, .max_agent_radius = 1 },
         mesh: &systems.mesh,
         scene: scene,
     )!!;

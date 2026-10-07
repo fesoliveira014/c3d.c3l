@@ -102,6 +102,14 @@ fn WriteState? prepare_export(
     Node* root,
     SerialDiagnostic* diagnostic = null,
 ) @private {
+    WriteState state = select_export(scene, root)!;
+    WriteContext context = { .scene = scene, .assets = assets, .state = &state, .diagnostic = diagnostic };
+    collect_export(&context)!;
+    finish_export(&context, root)!;
+    return state;
+}
+
+fn WriteState? select_export(Scene* scene, Node* root) @private {
     if (root.id.index >= scene.nodes.len || &scene.nodes[root.id.index] != root) return c3d::INVALID_ARGUMENT~;
     WriteState state;
     state.projection = alloc::new_array_try(tmem, NodeProjection, scene.nodes.len) ?? c3d::CAPACITY_EXCEEDED~!;
@@ -122,19 +130,24 @@ fn WriteState? prepare_export(
         for (Node* child = node.first_child; child; child = child.next_sibling) stack[pending++] = child;
     }
 
+    return state;
+}
+
+fn void? collect_export(WriteContext* context) @private {
+    WriteState* state = context.state;
+    Scene* scene = context.scene;
     state.collecting = true;
-    WriteContext context = { .scene = scene, .assets = assets, .state = &state, .diagnostic = diagnostic };
-    index_export_owners(&context);
-    validate_model_selection(&context)!;
-    validate_crowd_selection(&context)!;
+    index_export_owners(context);
+    validate_model_selection(context)!;
+    validate_crowd_selection(context)!;
     foreach (record, node : state.ordered[:state.count]) {
         context.node = node;
         scene.world.@each_slot(node.id; uint slot) {
             if (codecs[slot].codec.collect) {
                 context.slot = slot;
-                if (catch excuse = codecs[slot].codec.collect(scene.world.component(node.id, slot), &context)) {
+                if (catch excuse = codecs[slot].codec.collect(scene.world.component(node.id, slot), context)) {
                     return component_diagnostic(
-                        diagnostic: diagnostic,
+                        diagnostic: context.diagnostic,
                         record: (uint)record,
                         type_name: codecs[slot].transient ? codecs[slot].diagnostic_name : codecs[slot].codec.name,
                         cause: excuse,
@@ -143,6 +156,11 @@ fn WriteState? prepare_export(
             }
         };
     }
+}
+
+fn void? finish_export(WriteContext* context, Node* root) @private {
+    WriteState* state = context.state;
+    Scene* scene = context.scene;
     state.collecting = false;
     if (state.projection[root.id.index].node_owner) return c3d::INVALID_ARGUMENT~;
     ComponentMask transient_mask;
@@ -175,7 +193,6 @@ fn WriteState? prepare_export(
         }
         state.slots[position] = slot;
     }
-    return state;
 }
 
 fn void? write_nodes(WriteContext* context, Writer* writer) @local {
@@ -195,7 +212,7 @@ fn void? write_nodes(WriteContext* context, Writer* writer) @local {
     }
 }
 
-fn void? write_components(WriteContext* context, Writer* writer) @local {
+fn void? write_components(WriteContext* context, Writer* writer) @private {
     WriteState* state = context.state;
     writer.write_uint(state.type_count);
     uint payload_index;

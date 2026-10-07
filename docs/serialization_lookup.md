@@ -181,3 +181,112 @@ Reproduce with `c3c build serialize --path examples -O3`, then run
 `serialize --cpu-only --models=<count>` three times for each row. This measurement
 stays outside the regular CI test targets; the untimed correctness regression
 runs in `serial_described_test`.
+
+
+## Component claim lookup
+
+The [independent combined-scene measurement](https://github.com/fesoliveira014/c3d.c3l/issues/315#issuecomment-6042658293)
+confirmed 105/1,050 claim searches for 1/10 fixture copies. Adjusted search costs
+were approximately 0.0003/0.0530 ms, or 0.5%/10.7% of binary export; the smaller
+case was at the timer floor. This met the agreed measurement gate for a per-node
+claim chain.
+
+Each existing `NodeProjection` now holds a one-based claim head. Each claim holds
+a next index instead of a node index. Indices survive claim-list growth; zero is
+the empty chain. Projection, omission and component writing search only that
+node's claims. There is no new allocation or public API, and no wire-format or
+ownership-policy change. The interleaved regression claims two component types
+on each of 100 nodes, grows the backing list, and checks both encodings, repeated
+omission, source immutability and canonical output. Existing conflict and fault
+checks remain unchanged.
+
+### Reproducible target
+
+`serial_claims_bench` is a permanent CPU-only measurement executable outside
+`build.py --test`. It reuses the combined fixture with all 37 authored and 13
+transient policies. Source preparation and snapshot replication occur before
+measurement; the destination uses normal owner preparation and physics/nav sync.
+All sizes use 8,192 node slots, 512 geometry/material slots and 128 nav agents.
+The earlier confirmed 1/10-copy probe used 64 agent slots; the larger fixed limit
+allows the 100-copy case. No GPU device is created.
+
+```powershell
+c3c build serial_claims_bench --path addons/c3d_serial.c3l -O3
+foreach ($copies in 1,10,100) {
+    foreach ($run in 1,2,3) {
+        & ./addons/c3d_serial.c3l/build/serial_claims_bench.exe "--copies=$copies" "--run=$run"
+    }
+}
+```
+
+CSV columns: copies, run, live nodes, live components, retained nodes, serialized
+records, claims, bytes, preparation ms, collection ms, component-write ms, total
+binary-export ms. The process first warms a canonical export. Preparation covers
+selection, owner collection and final projection; collection is its measured
+subset. Component time sums sizing and filling, excluding output allocation.
+Those phases are timed directly through private helpers. A separate ordinary
+`write_subtree` call measures the complete export and must equal the warm output;
+the separately written component chunk must also match. There are no timers in
+production export paths and no performance assertions in CI.
+
+### Local before/after results
+
+Windows/MSVC, i9-14900K, C3 0.8.3, `-O3`, 2026-10-07; medians of three fresh
+processes per row. Both versions use the permanent target, identical capacities
+and the same asset-key paths. The baseline uses the pre-chain `context.c3` from
+`0f547a5`; all other measured code is identical. Thus these totals are distinct
+from the earlier confirmed probe, which timed phases inside one export.
+
+| Copies | Live nodes | Live components | Retained nodes | Records | Claims | Bytes |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 35 | 74 | 31 | 46 | 13 | 12,741 |
+| 10 | 341 | 740 | 301 | 460 | 130 | 113,109 |
+| 100 | 3,401 | 7,400 | 3,001 | 4,600 | 1,300 | 1,116,789 |
+
+Asset keys contain checkout paths, so byte counts can differ across machines.
+
+| Copies | Preparation before / after (ms) | Collection before / after (ms) | Component writes before / after (ms) | Binary export before / after (ms) |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 0.0092 / 0.0097 | 0.0020 / 0.0020 | 0.0469 / 0.0447 | 0.0757 / 0.0800 |
+| 10 | 0.0337 / 0.0306 | 0.0133 / 0.0104 | 0.4141 / 0.3367 | 0.6262 / 0.4714 |
+| 100 | 0.4471 / 0.2563 | 0.3143 / 0.1407 | 9.1391 / 3.6811 | 10.4506 / 4.6484 |
+
+At 100 copies the local binary-export median is 2.25 times faster. Increasing
+copies from 10 to 100 increases indexed export 9.86 times. The 1-copy totals are
+noisy; no improvement is claimed there.
+
+A separate instrumented executable times only the three claim-search loops.
+Its totals are not used as the primary export measurement. Per-run estimates
+subtract that run's measured empty clock-pair cost (17.1–20.7 ns) for every
+search and clamp negative estimates to zero. The table divides median adjusted
+search time by the corresponding uninstrumented export median.
+
+| Copies | Search calls | Raw search before / after (ms) | Adjusted before / after (ms) | Estimated export share before / after |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 105 | 0.0023 / 0.0020 | 0.000428 / 0.000193 | 0.57% / 0.24% |
+| 10 | 1,050 | 0.0723 / 0.0202 | 0.054045 / 0.002124 | 8.63% / 0.45% |
+| 100 | 10,500 | 5.0792 / 0.2055 | 4.877401 / 0.017970 | 46.67% / 0.39% |
+
+Indexed scan estimates are below 0.5% and close to clock overhead. They establish
+no precise per-search cost or speedup at that scale. These are local results;
+independent phase measurements follow.
+
+
+### Independently confirmed claim-chain measurements
+
+The [claim-chain review](https://github.com/fesoliveira014/c3d.c3l/pull/322#pullrequestreview-5445826352)
+confirmed head `e6672b0e` using `serial_claims_bench` on the same Windows/MSVC,
+i9-14900K machine, C3 0.8.3 O3 and three fresh processes per size. Every canonical
+comparison passed. These are reviewer-reported medians in milliseconds.
+
+| Copies | Nodes | Claims | Preparation | Collection | Component writes | Binary export |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 35 | 13 | 0.0081 | 0.0018 | 0.0440 | 0.0717 |
+| 10 | 341 | 130 | 0.0341 | 0.0135 | 0.3374 | 0.4500 |
+| 100 | 3,401 | 1,300 | 0.2712 | 0.1369 | 3.4804 | 4.3939 |
+
+The independently confirmed 10-to-100-copy export increase is 9.76 times.
+The reviewer also passed all 72 shared and both combined tests at default and
+O3, plus the 23 legacy serialization tests. The search-overhead table above
+remains local profiling evidence; these independently confirmed timings do not
+claim a separately measured per-search cost.
