@@ -57,3 +57,37 @@ fn fault asset_diagnostic(SerialDiagnostic* diagnostic, String key, fault cause)
     diagnostic.cause = c3d::CAPACITY_EXCEEDED;
     return c3d::CAPACITY_EXCEEDED;
 }
+
+fn fault enrich_text_error(
+    TextDocument* document,
+    uint token,
+    fault cause,
+    SerialDiagnostic* diagnostic,
+) @private {
+    String model_key = diagnostic.model_key;
+    String asset_key = diagnostic.asset_key;
+    uint template_index = diagnostic.template_index;
+    uint bone_index = diagnostic.bone_index;
+    bool has_template_index = diagnostic.has_template_index;
+    bool has_bone_index = diagnostic.has_bone_index;
+    diagnostic.model_key = {};
+    diagnostic.asset_key = {};
+    cause = text_error(
+        document: document,
+        value: token,
+        cause: cause,
+        diagnostic: diagnostic,
+    );
+    if (diagnostic.has_text_position) {
+        diagnostic.model_key = model_key;
+        diagnostic.asset_key = asset_key;
+        diagnostic.template_index = template_index;
+        diagnostic.bone_index = bone_index;
+        diagnostic.has_template_index = has_template_index;
+        diagnostic.has_bone_index = has_bone_index;
+    } else {
+        alloc::free(diagnostic.allocator, model_key.ptr);
+        alloc::free(diagnostic.allocator, asset_key.ptr);
+    }
+    return cause;
+}
