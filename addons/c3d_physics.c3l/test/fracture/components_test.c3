@@ -1,7 +1,6 @@
 module c3d::physics::fracture;
 
 import c3d;
-import std::io;
 import std::math;
 
 fn void test_material_components_keep_cavities_islands_and_concavity() @test {
@@ -34,8 +33,6 @@ fn void test_material_components_keep_cavities_islands_and_concavity() @test {
             }
             foreach (usz index, byte : preserved) assert(byte == scratch.storage[MIN_FRACTURE_SCRATCH_BYTES + index]);
             assert(scratch.exact.count == 0 && scratch.exact.peak <= PROJECTED_ORIENTATION_TEMPORARIES);
-            io::printfn("components shape=%s domain=%s cells=%s components=%s scratch=%s added=%s wide=%s",
-                shape, domain, partition.occupied_count, components.len, scratch.peak, scratch.peak - saved, scratch.exact.peak);
             usz retained = scratch.used;
             SolidPartition[] repeated = partition_material_components(&scratch, &partition)!!;
             assert(repeated.len == components.len);

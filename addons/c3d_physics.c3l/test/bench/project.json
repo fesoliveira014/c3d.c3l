@@ -5,6 +5,11 @@
   "wincrt": "static",
   "output": "build",
   "targets": {
+    "components_scaling": {
+      "type": "test",
+      "fp-math": "strict",
+      "sources": [ "../../src/fracture/*", "components_scaling.c3" ]
+    },
     "boundary_scaling": {
       "type": "test",
       "fp-math": "strict",

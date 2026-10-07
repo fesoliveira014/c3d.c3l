@@ -28,7 +28,7 @@ struct BoundaryPointIndex @private {
     BoundaryPointNode[] nodes;
 }
 
-fn BoundaryPoint? cache_boundary_point(SolidScratch* scratch, PlaneTriple vertex) @local {
+fn BoundaryPoint? cache_boundary_point(SolidScratch* scratch, PlaneTriple vertex) @private {
     uint saved = scratch.exact.count;
     defer scratch.exact.count = saved;
     HomogeneousPoint coordinates;
@@ -108,7 +108,7 @@ fn BoundaryPointBounds? join_boundary_point_bounds(
     BoundaryPoint[] points,
     BoundaryPointBounds first,
     BoundaryPointBounds second,
-) @local {
+) @private {
     for (uint axis = 0; axis < SPACE_AXES; axis++) {
         if (compare_boundary_coordinate(
             scratch: scratch,
