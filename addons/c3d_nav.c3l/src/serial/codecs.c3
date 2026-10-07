@@ -299,7 +299,7 @@ fn void? project_agent(void* component, void* value, serial::WriteContext* conte
         .target = source.target,
         .driven = source.driven,
     };
-    check_nav_agent_params(source.params)!;
+    check_nav_agent(source)!;
 }
 
 fn void? attach_agent(void* value, serial::ReadContext* context) @private {
@@ -332,5 +332,9 @@ fn void? validate_obstacle(void* value, serial::ReadContext* context) @private {
 }
 
 fn void? validate_agent(void* value, serial::ReadContext* context) @private {
-    check_nav_agent_params(params_value(((NavAgentAuthoring*)value).params))!;
+    NavAgentAuthoring* source = value;
+    NavAgent agent = {
+        .params = params_value(source.params), .target_kind = source.target_kind, .target = source.target,
+    };
+    check_nav_agent(&agent)!;
 }

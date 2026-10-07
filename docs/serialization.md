@@ -204,6 +204,16 @@ contracts. Existing shared runtime validators also govern serialization.
 | Animator | Action and blend-space `weight` | Finite and nonnegative; no upper cap |
 | AnimatedCrowd | Pose `speed`, captured start time | Finite; negative values allowed |
 | Ragdoll | Aggregate `weight`, each `bone_weights` value, `drive_strength` | Finite and nonnegative; no upper cap |
+| NavVolume | BOX `box`; CONVEX `verts[:vert_count]`, `min_y`, `max_y`; CYLINDER `base`, `radius`, `height` | Finite active fields; `min_y <= max_y`; cylinder radius and height positive |
+| NavLink | `start`, `end`, `radius` | Finite; positive radius and distinct endpoints |
+| NavObstacle | CYLINDER `position`, `radius`, `height`; BOX `box`; ORIENTED_BOX `position`, `half_extents` | Finite active fields; positive cylinder dimensions and oriented half-extents; nonnegative box extents |
+| NavAgent | Params `radius`, `height`, `max_acceleration`, `max_speed`, `collision_query_range`, `path_optimization_range`, `separation_weight` | Finite; radius and max speed nonnegative; height positive |
+| NavAgent | `target` when `target_kind == POSITION` | Finite; NONE and VELOCITY retain IEEE fidelity |
+
+Navigation's shared predicates govern runtime `add_nav_*` calls and both
+serialization paths. The void target setters retain their existing contracts;
+serialization validates POSITION targets before writing or attaching authoring.
+Inactive shape fields and unused convex vertices retain IEEE fidelity.
 
 See the [serialization example](serialization_example.md) for binary/JSONC reloads,
 schema export and reproducible CPU-only or Vulkan runs.
