@@ -234,7 +234,7 @@ fn void destroy_character_system(CharacterSystem* system) {
 
 fn Vec3 center_offset(CharacterDesc desc) @private => { 0, desc.half_height + desc.radius, 0 };
 
-fn ColliderDesc push_collider(CharacterDesc desc) @local {
+fn ColliderDesc push_collider(CharacterDesc desc) @private {
     ColliderDesc collider = physics::default_collider_desc(CAPSULE);
     collider.local.position = center_offset(desc);
     collider.radius = desc.radius;

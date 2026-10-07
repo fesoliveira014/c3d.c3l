@@ -116,7 +116,7 @@ fn WriteState? prepare_export(
     while (pending) {
         Node* node = stack[--pending];
         state.projection[node.id.index] = {
-            .selected = true, .local = node.local, .record = INDEX_NONE,
+            .selected = true, .local = node.local, .transform_space = node.transform_space, .record = INDEX_NONE,
         };
         state.ordered[state.count++] = node;
         for (Node* child = node.first_child; child; child = child.next_sibling) stack[pending++] = child;
@@ -189,7 +189,7 @@ fn void? write_nodes(WriteContext* context, Writer* writer) @local {
         writer.write_uint(0);
         writer.write_string(node.name);
         writer.write_transform(state.projection[node.id.index].local);
-        writer.write_enum(node.transform_space);
+        writer.write_enum(state.projection[node.id.index].transform_space);
         writer.write_uint(node.layers);
         writer.write_bool(node.visible);
     }
@@ -219,7 +219,7 @@ fn void? write_components(WriteContext* context, Writer* writer) @local {
             usz before = writer.written();
             context.node = node;
             context.slot = slot;
-            if (catch excuse = codecs[slot].codec.write(context.scene.world.component(node.id, slot), writer, context)) {
+            if (catch excuse = codecs[slot].codec.write(projected_component(context, node, slot), writer, context)) {
                 return component_diagnostic(
                     diagnostic: context.diagnostic,
                     record: (uint)record,

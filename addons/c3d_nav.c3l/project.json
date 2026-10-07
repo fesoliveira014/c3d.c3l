@@ -18,6 +18,18 @@
   "wincrt": "static",
   "output": "build",
   "targets": {
+    "nav_serial_test": {
+      "type": "test",
+      "sources": [ "serial_test/**", "test/domains_fixture.c3" ],
+      "features": [ "C3D_NAV_SERIAL" ],
+      "dependencies": [ "c3d_nav", "c3d_serial", "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "cgltf", "ufbx", "shaderc" ]
+    },
+    "nav_serial_policy_test": {
+      "type": "test",
+      "sources": [ "serial_policy_test/**" ],
+      "features": [ "C3D_NAV_SERIAL" ],
+      "dependencies": [ "c3d_nav", "c3d_serial", "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "cgltf", "ufbx", "shaderc" ]
+    },
     "nav_test": {
       "type": "test",
       "sources": [ "test/**" ]

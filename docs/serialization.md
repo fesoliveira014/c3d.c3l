@@ -23,9 +23,11 @@ and terminal impostor configuration. Unused transforms restart at identity,
 unused colors at white and unused billboards at `BILLBOARD_DEFAULT`. Bounds caches,
 revisions and logical LOD identities restart under normal owner rules.
 
-ModelInstance and the remaining owners have no policy in this delivery and return
-UNSUPPORTED. Animated Mesh baseline projection arrives with the Animator adapter;
-ordinary Mesh values currently preserve their explicit weights.
+ModelInstance, SkinBinding, IkChain, FootIk and LookAt restore in REFERENCES.
+Animator and AnimatedCrowd restore in OWNER. Their captured authoring, reference
+and restart contracts are detailed in the built-in policy inventory below.
+Animator export projects owned transforms and Mesh morph weights to captured
+baselines; ordinary Mesh values preserve their explicit weights.
 
 Asset payloads, scene-wide ambient/background/environment settings and cross-subtree references are outside this format. Saving Scene.root creates an ordinary new node on read; it does not overwrite destination scene settings.
 
@@ -182,11 +184,124 @@ Generated batches are omitted only after checking the retained owner association
 Exporting a generated part without its owner, or adding authored components to an
 omitted part, returns INVALID_ARGUMENT. Pending and prepared owners write the same
 authoring; sampled clocks, palettes and cursors are not persisted.
-Animator action speed/weight and space parameter/speed/weight must be finite;
-action and space weights must also be nonnegative, with no upper cap. Both export
-and import enforce this owner domain, including binary IEEE values and JSONC
-f32 bit tokens. Negative finite speeds remain supported. Other field domains,
-including IEEE-preserving node transforms, are unchanged.
+
+## Authored numeric domains
+
+Each owner validates its authored numeric domain on export and import, for both
+binary IEEE values and JSONC float-bit tokens. Invalid values return
+`INVALID_ARGUMENT` with the component type and node path. These are owner rules;
+generic described floats, node transforms, crowd placements and colours retain
+IEEE fidelity, including non-finite values. Runtime APIs retain their existing
+contracts. Existing shared runtime validators also govern serialization.
+
+| Owner | Fields | Domain |
+| --- | --- | --- |
+| Wind | `velocity` components, `drag`, `lift`, `max_speed` | Finite; no added range restriction |
+| Force | `force` and `local_point` components | Finite; no added range restriction |
+| Buoyancy | `fluid_density`, `linear_drag` | Finite; no added range restriction |
+| PhysicsBody | BodyDesc `linear_velocity` and `angular_velocity` components, `linear_damping`, `angular_damping`, `gravity_scale` | Finite; no added range restriction |
+| Animator | Action `speed`; blend-space `parameter`, `speed` | Finite; negative speeds allowed |
+| Animator | Action and blend-space `weight` | Finite and nonnegative; no upper cap |
+| AnimatedCrowd | Pose `speed`, captured start time | Finite; negative values allowed |
+| Ragdoll | Aggregate `weight`, each `bone_weights` value, `drive_strength` | Finite and nonnegative; no upper cap |
+| NavVolume | BOX `box`; CONVEX `verts[:vert_count]`, `min_y`, `max_y`; CYLINDER `base`, `radius`, `height` | Finite active fields; `min_y <= max_y`; cylinder radius and height positive |
+| NavLink | `start`, `end`, `radius` | Finite; positive radius and distinct endpoints |
+| NavObstacle | CYLINDER `position`, `radius`, `height`; BOX `box`; ORIENTED_BOX `position`, `half_extents` | Finite active fields; positive cylinder dimensions and oriented half-extents; nonnegative box extents |
+| NavAgent | Params `radius`, `height`, `max_acceleration`, `max_speed`, `collision_query_range`, `path_optimization_range`, `separation_weight` | Finite; radius and max speed nonnegative; height positive |
+| NavAgent | `target` when `target_kind == POSITION` | Finite; NONE and VELOCITY retain IEEE fidelity |
+
+Navigation's shared predicates govern runtime `add_nav_*` calls and both
+serialization paths. The void target setters retain their existing contracts;
+serialization validates POSITION targets before writing or attaching authoring.
+Inactive shape fields and unused convex vertices retain IEEE fidelity.
 
 See the [serialization example](serialization_example.md) for binary/JSONC reloads,
 schema export and reproducible CPU-only or Vulkan runs.
+
+## Physics adapter
+
+Select `c3d_serial`, enable `C3D_PHYSICS_SERIAL`, and call
+`physics::register_serial_codecs()` alongside `physics::register_physics(scene)`.
+The plain physics manifest has no serialization dependency. PhysicsBody persists
+BodyDesc and all nested collider authoring with copied arrays and strings. It
+restores PENDING with cleared failure/revision state; no native body is created.
+PhysicsJoint restores in REFERENCES with a required model-aware endpoint and
+only its selected variant. Wind and Force persist their complete values; Buoyancy
+persists density and drag and resets submerged fraction. RigidBody and Joint are
+explicitly transient. Ordinary physics synchronization creates the native state.
+The package inventory discovers every physics slot through normal registration;
+All ten normally registered physics component types have explicit policies;
+new unclassified physics components fail the package inventory.
+
+## Navigation adapter
+
+Select `c3d_serial`, enable `C3D_NAV_SERIAL`, and call
+`nav::register_serial_codecs()` alongside `nav::register_nav(scene)`. The plain
+navigation manifest has no serialization dependency. NavSource, NavVolume,
+NavLink, NavObstacle and NavAgent restore in REFERENCES with their complete
+settings, target kind/value and driven flag. Changed flags restart false. A
+NavSource with no explicit geometry requires the node's restored Mesh. The
+five runtime mirrors are explicitly transient; no builder, crowd or navmesh is
+created during read. Ordinary nav_sync and crowd_update rebuild those mirrors.
+The independent package inventory checks all ten normally registered types.
+
+## Cloth adapter
+
+Physics registration also installs the Cloth OWNER policy. Export projects its
+ordinary Mesh record to retained source geometry and vertex-motion, preserving
+all other Mesh fields and leaving the source scene untouched. The Cloth payload
+retains complete settings, requested pin order/duplicates and required collider
+references. Reads retain that Mesh and attach pending Cloth without private
+geometry or solve state. Synchronize physics bodies before cloth preparation.
+The explicit navigation composition test proves a NavSource with no geometry
+can use the restored Mesh before ordinary navigation synchronization.
+
+Owner collection may call `WriteContext.project_component(node, value)` to
+project an existing component through its ordinary codec. Borrowed dynamic data
+must outlive the synchronous export. Duplicate projections, competing owners,
+projection/omission conflicts and transient ownership claims are rejected.
+
+## Ragdoll adapter
+
+Ragdoll restores in OWNER after model/skin and body/joint authoring. Bone mappings,
+parents, bind frames, modes, per-bone weights and captured drives, aggregate weight,
+drive strength and current node placements persist. Weights and drive strength
+must be finite and nonnegative, with no upper cap, on both export and import.
+Preflight checks required references and mode/body/joint consistency before any
+component attaches; diagnostics include the bone index and model details when
+applicable. Restored owner arrays are independent copies. Joint order/ownership
+are recomputed, frozen recovery poses start at loaded skin-joint locals, and
+scratch/counters/recovery result reset. Bone-body velocities restart at zero.
+Ragdoll collection projects only its listed bodies; ordinary body velocities
+persist and source values are unchanged. Normal physics sync creates native state.
+
+## Breakable adapter
+
+Breakable restores in OWNER as a pending copied recipe with no bodies, welds or
+cooked runtime resources. A prepared export retains ordered surviving pieces and
+hulls, captures current root-relative frames, and projects WORLD piece transforms
+to PARENT while preserving world placement and authored render descendants.
+Fewer than two prepared survivors returns UNSUPPORTED with root/type diagnostics.
+A pending export preserves its exact recipe and saved placements, including a
+mismatch that explicit preparation must still report. Normal world preparation
+rebuilds the graph from current contacts; touching survivors can weld again.
+Only verified owned body components are omitted; modified or unrelated bodies,
+conflicting owners and joints are rejected. Source nodes and assets are unchanged.
+`WriteContext.set_transform` projects transform and coordinate space together.
+
+## Character adapter
+
+Select `c3d_serial`, enable `C3D_CHARACTER_SERIAL` and `C3D_PHYSICS_SERIAL`,
+and call `character::register_serial_codecs()`. The adapter reuses physics value
+registrations. Register ordinary physics and character stores before reading.
+Character restores in REFERENCES with its full descriptor and capsule state at
+the saved node pose. Velocity, movement intent, contact, jump and plane state
+restart. Optional push-body authoring is copied fallibly and remains pending
+until normal physics synchronization; only the verified generated body is omitted.
+The plain character manifest has no serialization dependency.
+
+With `C3D_CHARACTER_NAV`, also select `c3d_nav` and enable `C3D_NAV_SERIAL`.
+Character codec registration includes navigation codecs and the NavDriven OWNER
+marker. It requires Character and NavAgent, resets traversal and applies normal
+add_nav_driven behavior after both components restore. Independent policy targets
+check ordinary registration with and without navigation.

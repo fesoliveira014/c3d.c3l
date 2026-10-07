@@ -7,6 +7,7 @@ import c3d::ecs;
 import c3d::maths;
 import c3d::model;
 import c3d::scene;
+import std::math;
 
 const ulong CROWD_POSE_LAYOUT @local = 0x7ffc763d1a2c701e;
 const ulong CROWD_INSTANCE_LAYOUT @local = 0xfbef1798330b2174;
@@ -55,14 +56,24 @@ fn void? project_crowd(void* component, void* value, WriteContext* context) @loc
         *instance = { .placement = crowd.placements[index], .pose = crowd.poses[index], .color = crowd.colors[index] };
         instance.pose.time = crowd.start_times[index];
     }
+    check_crowd_scalars(instances)!;
     *(CrowdAuthoring*)value = {
         .model = crowd.model, .capacity = (uint)crowd.placements.len,
         .pose_bounds = crowd.pose_bounds, .trace = crowd.trace, .instances = instances,
     };
 }
 
+fn void? check_crowd_scalars(CrowdInstance[] instances) @local {
+    foreach (instance : instances) {
+        if (!math::is_finite(instance.pose.speed) || !math::is_finite(instance.pose.time)) {
+            return c3d::INVALID_ARGUMENT~;
+        }
+    }
+}
+
 fn void? attach_crowd(void* value, ReadContext* context) @local {
     CrowdAuthoring* source = value;
+    check_crowd_scalars(source.instances)!;
     model::attach_crowd(
         assets: context.assets,
         scene: context.scene,

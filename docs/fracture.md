@@ -1,9 +1,9 @@
-# Fracture workspace and surface validation
+# Fracture workspace and solid construction
 
 `c3d::physics::fracture` provides bounded workspaces, exact arithmetic, filtered
-geometric predicates, centered quantization and private topology/intersection
-validation. Complete solid validation, Boolean construction, Voronoi partitioning and
-collision reconstruction remain separate implementation layers.
+geometric predicates, centered quantization, complete private solid validation
+and exact source construction records, convex-cell clipping and local face-driven
+partitioning with material occupancy. Public Boolean/Voronoi construction and collision reconstruction remain separate layers.
 
 ## Workspace contract
 
@@ -67,6 +67,8 @@ Constructed vertices are implicit plane triples with homogeneous coordinates.
 | Input coordinate | 30 | 277 |
 | Plane normal | 63 | 557 |
 | Plane offset | 95 | 836 |
+| Source-edge support normal | 31 | 278 |
+| Source-edge support offset | 62 | 557 |
 | Homogeneous denominator | 192 | 1674 |
 | Homogeneous numerator | 224 | 1953 |
 | Four-vertex orientation | 869 | 7538 |
@@ -75,8 +77,9 @@ Constructed vertices are implicit plane triples with homogeneous coordinates.
 The orientation bound follows from a four-by-four determinant's 24 terms:
 `3*1953 + 1674 + 5 = 7538` bits. Interior classification uses the mean of four
 affinely independent cell vertices and tests it against existing integer planes.
-New planes come from source triangles, shared site bisectors or bounded axis
-splits. There is no repeated construction from growing rational expressions.
+Partition planes come from source triangles, shared site bisectors or bounded
+axis splits. Source-edge support planes are used only for constructions, never
+for BSP partition decisions or cell boundaries. There is no repeated construction from growing rational expressions.
 Exact volume sums over at most `uint::max` float triangles need at most 866 bits;
 their centroid moments need at most 1145 bits.
 
@@ -90,6 +93,9 @@ including caller-held operands and outputs:
 | Operation | Maximum live values |
 |---|---:|
 | Triangle-plane construction | 21 |
+| Source-edge support-plane construction | 10 |
+| Constructed vertex against a plane | 7 |
+| Plane-normal independence | 4 |
 | Four-vertex homogeneous orientation | 20 |
 | Four-vertex interior representative | 23 |
 | Volume and centroid accumulation | 20 |
@@ -101,7 +107,9 @@ Measured peaks must confirm these bounds when those layers are implemented.
 The required fixture measurements also record predicate count, filter fraction
 and exact-arithmetic time separately for generation and reconstruction.
 Tests verify the implemented peaks: 21 for planes, 20 for orientation,
-11 for identity and 9 for quantization.
+11 for identity, 9 for quantization and 14 for exact shell-volume accumulation.
+Source construction records peak at 21 on raw floats and 10 on grid inputs;
+no accepted reservation grows.
 
 ## Surface input and topology
 
@@ -200,3 +208,123 @@ islands, reordered shell inputs, disjoint boxes, reversed winding, subnormals
 and extreme float coordinates. Fixed-ray cases hit a triangulation edge, an
 octahedron apex, a parallel exterior face and a supporting-plane extension.
 Quantization cases cover collapse, cross-shell contact and orientation reversal.
+
+
+## Exact source construction records
+
+Private construction records preserve each source face's canonical integer
+plane and original winding. Each undirected topological edge owns one support
+plane. Its owner is the lowest incident face index; the dropped projection axis
+is that face normal's first nonzero exact integer component. Lifting the exact
+projected edge line through that axis gives a plane whose intersection with the
+owner face is exactly the source edge. These coefficient bounds are included
+above and remain below the existing general-plane bounds.
+
+At a crease, the edge support plane can coincide with the other incident face.
+The defining pair therefore always uses the owner face and the edge support
+plane. An original vertex uses the two edges meeting at its corner in its
+lowest-index incident triangle. Those two lines are non-collinear; an exact
+determinant selects an independent third plane from the second line's defining
+pair. The private helper requires a validated non-degenerate source triangle.
+Representations selected from different incident faces compare geometrically
+equal, including when those faces use different projection axes.
+
+Plane-side queries use outward interval filters and exact homogeneous fallback,
+with exact-only behavior at O4/O5. A strict edge crossing yields the owner face,
+edge support and cut as its plane triple. A cut through one endpoint reuses the
+original vertex representation. A cut containing the edge reports coplanarity
+without creating a clipped vertex; a separated edge reports no intersection.
+
+All records borrow the workspace. Construction restores the incoming cursor on
+failure and leaves source arrays unchanged. Unreferenced topological identities
+have no constructed point. Tests cover flat-face interior vertices, subdivided
+collinear boundaries, creases, rational crossings, endpoint and coplanar cuts,
+extreme floats, subnormals, grid limits and partial reservation failure.
+Construction planes are stored separately from source face planes. The cell
+partition test verifies that their presence changes neither cells nor partition planes.
+
+
+## Convex-cell splitting
+
+Private convex cells store plane-triple vertices, outward polygon faces and
+paired edge corners. Bounds use exact source-coordinate minima and maxima,
+including raw float subnormals and extremes or the actual quantized coordinates.
+An edge's incident face planes define its line. Vertex triples do not encode
+every incident plane at non-simple vertices and are never used to infer edge
+adjacency.
+
+A split classifies every original vertex exactly or through the strict interval
+filter. A tangent or separated cut borrows the unchanged cell and returns no
+zero-volume child. A proper split creates one plane triple per strictly crossed
+undirected edge, using its two incident face planes and the cut. Vertices on the
+cut retain their original triples. Each original polygon is clipped in its
+existing order; lower-dimensional remnants are omitted. Boundary half-edges
+form one cap cycle, which is emitted once per child in opposite order with the
+same plane and opposite orientation. Sorting endpoint identities pairs twins.
+
+Only explicit partition planes enter this layer. Source-edge construction
+records are neither inputs to the splitter nor eligible cell boundaries.
+The invariance fixture creates the same eight cells with and without those
+records, checks identical vertices, faces and paired corners, and confirms
+source supporting planes leave that partition unchanged.
+
+Cells and intermediate arrays borrow the fixed workspace. Proper splits retain
+their parent and both children; temporary pairing and cap-order arrays release
+their scratch tail. A capacity failure restores the incoming cursor and leaves
+the parent unchanged. No heap allocation or wider arithmetic reservation is
+introduced. Split predicates peak at seven live wide values. The broader
+partition fixture also constructs raw source planes, which retains the existing
+21-value construction peak. Public generation operations remain a separate
+implementation layer.
+
+Tests verify edge incidence, outward winding, exact half-space membership,
+nonzero volume, cap identity and orientation, rational volume conservation,
+cuts through original vertices and edges, tangency, four-plane vertices of an
+octahedron followed by another cut, deterministic partition records, and
+capacity failures throughout bounds construction and splitting.
+
+
+## Local face partition and occupancy
+
+The private partition starts with the source bounds and inserts source triangles
+in ascending input index order. Each triangle visits the current leaf cells in
+stable order. Its supporting plane is eligible only when the cell has vertices
+on both sides and the actual triangle intersects the cell with nonzero area.
+Clipping the triangle against every cell face determines this overlap exactly;
+support extensions and point or edge contacts alone do not split a cell.
+
+Clipped polygon vertices retain independent line-plane construction records.
+An original edge uses its designated owner face and edge-support plane, even
+when the current triangle is the other incident face. A newly clipped edge uses
+the source face and cell boundary planes. Source-edge support planes never
+partition space or become cell boundaries.
+
+A proper split replaces its leaf with negative then positive children. Later
+triangles visit those children. Fixed input order reproduces the same ordered
+cells; reordering source faces may change the partition but preserves the exact
+occupied region. Leaf records and retained parent/intermediate cells borrow the
+fixed arena. Capacity failure restores the incoming cursor without changing the
+source surface or its construction records.
+
+Occupancy samples the exact mean of four affinely independent cell vertices.
+The sample lies strictly inside every cell half-space. Positive homogeneous
+denominators keep all comparisons exact. A +Z ray with symbolic X then Y
+perturbations counts source-triangle crossings; the source BVH prunes exact
+homogeneous comparisons against original coordinate bounds. Odd parity is
+material, including nested cavities, islands and disconnected components.
+
+The mean retains four output values and sixteen constructed coordinates, with
+three construction temporaries: 23 live wide values at peak. Occupancy reuses
+this storage and does not retain a wide value per cell. The fixed 24-value
+reservation is unchanged. Small local fixtures peak at 46,456 bytes for a box,
+63,744 for a concave prism, 69,432 for two separated boxes, 80,392 for a hollow
+box and 114,000 for an outer shell, cavity and island. These totals include
+surface validation and source constructions; grid fixture coordinates are
+borrowed. They do not represent complete fracture-generation budgets.
+
+Tests cover raw and grid domains, exact region equality across face permutations,
+stable repeated records, positive cell volume and volume conservation, oblique
+nested shells checked against inverse-transformed bounds, raw subnormals and
+extremes, crease-edge construction, support-extension rejection, strict rational
+interior samples, and capacity rollback. Public Boolean/Voronoi output and
+collision reconstruction remain unimplemented.

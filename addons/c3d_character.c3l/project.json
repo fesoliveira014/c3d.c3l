@@ -20,6 +20,30 @@
   "wincrt": "static",
   "output": "build",
   "targets": {
+    "character_serial_test": {
+      "type": "test",
+      "sources": [ "serial_test/**" ],
+      "features": [ "C3D_CHARACTER_SERIAL", "C3D_PHYSICS_SERIAL" ],
+      "dependencies": [ "c3d_character", "c3d_physics", "c3d_serial", "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "b3", "cgltf", "ufbx", "shaderc" ]
+    },
+    "character_nav_serial_test": {
+      "type": "test",
+      "sources": [ "serial_test/**" ],
+      "features": [ "C3D_CHARACTER_SERIAL", "C3D_PHYSICS_SERIAL", "C3D_CHARACTER_NAV", "C3D_NAV_SERIAL" ],
+      "dependencies": [ "c3d_character", "c3d_physics", "c3d_nav", "c3d_serial", "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "b3", "cgltf", "ufbx", "shaderc" ]
+    },
+    "character_serial_policy_test": {
+      "type": "test",
+      "sources": [ "serial_policy_test/**" ],
+      "features": [ "C3D_CHARACTER_SERIAL", "C3D_PHYSICS_SERIAL" ],
+      "dependencies": [ "c3d_character", "c3d_physics", "c3d_serial", "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "b3", "cgltf", "ufbx", "shaderc" ]
+    },
+    "character_nav_serial_policy_test": {
+      "type": "test",
+      "sources": [ "serial_policy_test/**" ],
+      "features": [ "C3D_CHARACTER_SERIAL", "C3D_PHYSICS_SERIAL", "C3D_CHARACTER_NAV", "C3D_NAV_SERIAL" ],
+      "dependencies": [ "c3d_character", "c3d_physics", "c3d_nav", "c3d_serial", "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "b3", "cgltf", "ufbx", "shaderc" ]
+    },
     "character_test": {
       "type": "test",
       "sources": [ "test/**" ]

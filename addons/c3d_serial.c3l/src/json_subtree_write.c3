@@ -121,7 +121,7 @@ fn void? emit_subtree_json(WriteContext* context, JsonOutput* output, TextWriteO
         output.lanes(name: "rotation", values: (uint*)&projection.local.rotation, count: 4)!;
         output.lanes(name: "scale", values: (uint*)&projection.local.scale, count: 3)!;
         output.end()!;
-        output.string("transform_space", TransformSpace::names[node.transform_space.ordinal])!;
+        output.string("transform_space", TransformSpace::names[projection.transform_space.ordinal])!;
         output.unsigned("layers", node.layers)!;
         output.boolean("visible", node.visible)!;
         output.begin("components", true)!;
@@ -153,7 +153,7 @@ fn void? emit_component_json(WriteContext* context, JsonOutput* output, Describe
     Acquisitions owned = { .allocator = tmem };
     defer owned.release();
     void* value = owned.acquire(1, binding.type.descriptor.size, binding.type.descriptor.alignment)!;
-    binding.codec.project(context.scene.world.component(context.node.id, context.slot), value, context)!;
+    binding.codec.project(projected_component(context, context.node, context.slot), value, context)!;
     write_described_json(type: binding.type, output: output, context: context, value: value)!;
     output.end()!;
 }
