@@ -11,7 +11,7 @@ fn usz? clip_face_polygon(
     FaceClipVertex[] output,
     ExactPlane* source,
     CellFace boundary,
-) @local {
+) @private {
     usz count;
     FaceClipVertex previous = input[^1];
     int previous_side = plane_side(scratch, boundary.plane, previous.point)! * (boundary.reversed ? -1 : 1);
