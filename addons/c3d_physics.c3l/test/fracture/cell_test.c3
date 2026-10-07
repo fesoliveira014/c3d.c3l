@@ -229,7 +229,7 @@ fn void test_cell_capacity_failures_restore_cursor_and_input() @test {
     assert_cell_split(&scratch, &parent, &recovered, &cut);
 }
 
-fn FractureWorkspace cell_workspace() @local {
+fn FractureWorkspace cell_workspace() @private {
     FractureLimits limits = solid_limits();
     limits.scratch_bytes = 1048576;
     return create_fracture_workspace(mem, limits)!!;
@@ -245,7 +245,7 @@ fn ConvexCell box_cell(SolidScratch* scratch, ContainmentFixture* fixture, bool 
     return create_bounds_cell(scratch, &surface)!!;
 }
 
-fn void assert_cell(SolidScratch* scratch, ConvexCell* cell) @local {
+fn void assert_cell(SolidScratch* scratch, ConvexCell* cell) @private {
     assert(cell.vertices.len >= 4 && cell.faces.len >= 4);
     assert(cell.vertices.len + cell.faces.len == cell.corners.len / 2 + 2);
     foreach (uint vertex, point : cell.vertices) {
@@ -301,7 +301,7 @@ fn void assert_cell_split(SolidScratch* scratch, ConvexCell* parent, CellSplit* 
     }
 }
 
-fn double cell_volume(ExactScratch* scratch, ConvexCell* cell) @local {
+fn double cell_volume(ExactScratch* scratch, ConvexCell* cell) @private {
     double volume;
     foreach (face : cell.faces) {
         for (uint index = face.first + 1; index + 1 < face.first + face.count; index++) {
@@ -343,7 +343,7 @@ fn void partition_box(SolidScratch* scratch, SolidSurface* surface, ExactPlane[]
     assert(count == cells.len);
 }
 
-fn void assert_same_cell(ExactScratch* scratch, ConvexCell* first, ConvexCell* second) @local {
+fn void assert_same_cell(ExactScratch* scratch, ConvexCell* first, ConvexCell* second) @private {
     assert(first.vertices.len == second.vertices.len && first.faces.len == second.faces.len && first.corners.len == second.corners.len);
     foreach (index, point : first.vertices) assert(same_vertex(scratch, point, second.vertices[index])!!);
     foreach (index, face : first.faces) {

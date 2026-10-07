@@ -2,8 +2,8 @@
 
 `c3d::physics::fracture` provides bounded workspaces, exact arithmetic, filtered
 geometric predicates, centered quantization, complete private solid validation
-and exact source construction records and convex-cell clipping. Local BSP, public
-Boolean/Voronoi construction and collision reconstruction remain separate layers.
+and exact source construction records, convex-cell clipping and local face-driven
+partitioning with material occupancy. Public Boolean/Voronoi construction and collision reconstruction remain separate layers.
 
 ## Workspace contract
 
@@ -274,11 +274,57 @@ their scratch tail. A capacity failure restores the incoming cursor and leaves
 the parent unchanged. No heap allocation or wider arithmetic reservation is
 introduced. Split predicates peak at seven live wide values. The broader
 partition fixture also constructs raw source planes, which retains the existing
-21-value construction peak. The local BSP and public generation operations
-remain separate implementation layers.
+21-value construction peak. Public generation operations remain a separate
+implementation layer.
 
 Tests verify edge incidence, outward winding, exact half-space membership,
 nonzero volume, cap identity and orientation, rational volume conservation,
 cuts through original vertices and edges, tangency, four-plane vertices of an
 octahedron followed by another cut, deterministic partition records, and
 capacity failures throughout bounds construction and splitting.
+
+
+## Local face partition and occupancy
+
+The private partition starts with the source bounds and inserts source triangles
+in ascending input index order. Each triangle visits the current leaf cells in
+stable order. Its supporting plane is eligible only when the cell has vertices
+on both sides and the actual triangle intersects the cell with nonzero area.
+Clipping the triangle against every cell face determines this overlap exactly;
+support extensions and point or edge contacts alone do not split a cell.
+
+Clipped polygon vertices retain independent line-plane construction records.
+An original edge uses its designated owner face and edge-support plane, even
+when the current triangle is the other incident face. A newly clipped edge uses
+the source face and cell boundary planes. Source-edge support planes never
+partition space or become cell boundaries.
+
+A proper split replaces its leaf with negative then positive children. Later
+triangles visit those children. Fixed input order reproduces the same ordered
+cells; reordering source faces may change the partition but preserves the exact
+occupied region. Leaf records and retained parent/intermediate cells borrow the
+fixed arena. Capacity failure restores the incoming cursor without changing the
+source surface or its construction records.
+
+Occupancy samples the exact mean of four affinely independent cell vertices.
+The sample lies strictly inside every cell half-space. Positive homogeneous
+denominators keep all comparisons exact. A +Z ray with symbolic X then Y
+perturbations counts source-triangle crossings; the source BVH prunes exact
+homogeneous comparisons against original coordinate bounds. Odd parity is
+material, including nested cavities, islands and disconnected components.
+
+The mean retains four output values and sixteen constructed coordinates, with
+three construction temporaries: 23 live wide values at peak. Occupancy reuses
+this storage and does not retain a wide value per cell. The fixed 24-value
+reservation is unchanged. Small local fixtures peak at 46,456 bytes for a box,
+63,744 for a concave prism, 69,432 for two separated boxes, 80,392 for a hollow
+box and 114,000 for an outer shell, cavity and island. These totals include
+surface validation and source constructions; grid fixture coordinates are
+borrowed. They do not represent complete fracture-generation budgets.
+
+Tests cover raw and grid domains, exact region equality across face permutations,
+stable repeated records, positive cell volume and volume conservation, oblique
+nested shells checked against inverse-transformed bounds, raw subnormals and
+extremes, crease-edge construction, support-extension rejection, strict rational
+interior samples, and capacity rollback. Public Boolean/Voronoi output and
+collision reconstruction remain unimplemented.
