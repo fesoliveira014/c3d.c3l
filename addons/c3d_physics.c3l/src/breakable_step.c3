@@ -14,6 +14,7 @@ fn void prune_breakables(PhysicsWorld* world) @private {
 }
 
 fn void prune_breakable(PhysicsWorld* world, Node* root, BreakableState* state) @private {
+    if (!state.runtime.prepared) return;
     Scene* scene = world.scene;
     uint alive;
     foreach (entity : state.pieces) if (scene.world.is_alive(entity)) alive++;
@@ -58,13 +59,15 @@ fn void prune_breakable(PhysicsWorld* world, Node* root, BreakableState* state) 
 fn void suspend_breakables(PhysicsWorld* world) @private {
     world.scene.@each(Breakable; Entity entity, Breakable* component) {
         BreakableState* state = component.state;
-        destroy_breakable_welds(state);
-        state.runtime.wake = {};
-        state.status = PENDING;
-        if (state.form == PIECES) {
-            foreach (piece : state.pieces) {
-                if (!world.scene.world.is_alive(piece)) continue;
-                world.scene.get(world.scene.node(piece), PhysicsBody).body.disabled = true;
+        if (state.runtime.prepared) {
+            destroy_breakable_welds(state);
+            state.runtime.wake = {};
+            state.status = PENDING;
+            if (state.form == PIECES) {
+                foreach (piece : state.pieces) {
+                    if (!world.scene.world.is_alive(piece)) continue;
+                    world.scene.get(world.scene.node(piece), PhysicsBody).body.disabled = true;
+                }
             }
         }
     };
@@ -77,7 +80,7 @@ fn void sync_breakables(PhysicsWorld* world) @private {
 }
 
 fn void sync_breakable(PhysicsWorld* world, Node* root, BreakableState* state) @local {
-    if (state.status != PENDING) return;
+    if (!state.runtime.prepared || state.status != PENDING) return;
     if (!state.alive_pieces) {
         state.status = LIVE;
         return;
@@ -229,7 +232,7 @@ fn void? swap_breakable_to_pieces(
 
     @pool() {
         maths::Transform[] poses = alloc::new_array(tmem, maths::Transform, state.pieces.len);
-        foreach (index, frame : state.runtime.frames) {
+        foreach (index, frame : state.runtime.assembly_frames) {
             poses[index] = {
                 .position = pose.position + pose.rotation.rotate_vec3(frame.position),
                 .rotation = pose.rotation.mul(frame.rotation).normalize(),
