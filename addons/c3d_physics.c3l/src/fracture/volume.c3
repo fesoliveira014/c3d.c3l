@@ -27,6 +27,8 @@ fn void? triangle_volume(
     WideInteger* output,
     uint face,
 ) @private {
+    std::time::Clock started = begin_exact_measurement(surface.exact);
+    defer finish_exact_measurement(surface.exact, started);
     uint saved = surface.exact.count;
     defer surface.exact.count = saved;
     uint[TRIANGLE_CORNERS] triangle = surface_triangle(surface, face);
@@ -52,8 +54,6 @@ fn void? triangle_volume(
 }
 
 fn void? measure_shell_volumes(SolidSurface* surface, SolidNesting* nesting, SolidDiagnostic* diagnostic) @private {
-    Clock started = clock::now();
-    defer surface.exact.exact_nanoseconds += (ulong)started.to_now();
     uint saved = surface.exact.count;
     defer surface.exact.count = saved;
     WideInteger* sum = surface.exact.take()!;
@@ -69,6 +69,8 @@ fn void? measure_shell_volumes(SolidSurface* surface, SolidNesting* nesting, Sol
     foreach (uint face, root : surface.topology.shell_roots) {
         SolidShell* shell = &nesting.shells[nesting.root_to_shell[root]];
         shell.bounds = joined_solid_bounds(shell.bounds, surface.bounds[face]);
+        std::time::Clock started = begin_exact_measurement(surface.exact);
+        defer finish_exact_measurement(surface.exact, started);
         triangle_volume(surface, term, face)!;
         add_integer(sum, shell.six_volume.view(), term.view())!;
         shell.six_volume.used = sum.used;

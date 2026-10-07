@@ -1,5 +1,6 @@
 module c3d::physics::fracture;
 
+import std::time;
 import std::math;
 import std::sort;
 
@@ -63,6 +64,8 @@ fn void? bounds_axis_plane(
     long bound,
     bool quantized,
 ) @private {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     uint saved = scratch.count;
     defer scratch.count = saved;
     WideInteger*[HOMOGENEOUS_COMPONENTS] coefficients;
