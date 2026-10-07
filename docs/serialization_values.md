@@ -64,3 +64,18 @@ Unknown fields are format errors unless skipping is explicitly enabled; parsing
 still validates the complete JSONC input. Field failures retain JSON Pointer and
 text position. The caller releases the acquisition chain after success or failure.
 These visitors support the later public text-subtree and schema entry points.
+
+## Schema export
+
+`write_schema(allocator, limits)` writes the explicit process registry as owned
+JSON. Component entries are sorted by portable name and identify their version
+and described type. Manual codecs carry `binary_only: true` and `fields: null`.
+The type list is sorted by qualified name and includes versions, layout pins,
+field kinds and sizes, nested fields, array extents, enum labels, asset kinds,
+display names, units, numeric ranges and complete semantic defaults.
+
+Defaults come from the same registered callbacks as JSON reading. Schema export
+does not invoke READ completion hooks. Output is deterministic for the same
+registry and callbacks, obeys the text limits, and reports failed output
+allocation as `CAPACITY_EXCEEDED`. The caller frees the returned String through
+the supplied allocator.
