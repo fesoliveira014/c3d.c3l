@@ -1,9 +1,9 @@
-# Fracture workspace and surface validation
+# Fracture workspace and solid construction
 
 `c3d::physics::fracture` provides bounded workspaces, exact arithmetic, filtered
-geometric predicates, centered quantization and private topology/intersection
-validation. Complete solid validation, Boolean construction, Voronoi partitioning and
-collision reconstruction remain separate implementation layers.
+geometric predicates, centered quantization, complete private solid validation
+and exact source construction records. Convex-cell clipping, local BSP, public
+Boolean/Voronoi construction and collision reconstruction remain separate layers.
 
 ## Workspace contract
 
@@ -67,6 +67,8 @@ Constructed vertices are implicit plane triples with homogeneous coordinates.
 | Input coordinate | 30 | 277 |
 | Plane normal | 63 | 557 |
 | Plane offset | 95 | 836 |
+| Source-edge support normal | 31 | 278 |
+| Source-edge support offset | 62 | 557 |
 | Homogeneous denominator | 192 | 1674 |
 | Homogeneous numerator | 224 | 1953 |
 | Four-vertex orientation | 869 | 7538 |
@@ -75,8 +77,9 @@ Constructed vertices are implicit plane triples with homogeneous coordinates.
 The orientation bound follows from a four-by-four determinant's 24 terms:
 `3*1953 + 1674 + 5 = 7538` bits. Interior classification uses the mean of four
 affinely independent cell vertices and tests it against existing integer planes.
-New planes come from source triangles, shared site bisectors or bounded axis
-splits. There is no repeated construction from growing rational expressions.
+Partition planes come from source triangles, shared site bisectors or bounded
+axis splits. Source-edge support planes are used only for constructions, never
+for BSP partition decisions or cell boundaries. There is no repeated construction from growing rational expressions.
 Exact volume sums over at most `uint::max` float triangles need at most 866 bits;
 their centroid moments need at most 1145 bits.
 
@@ -90,6 +93,9 @@ including caller-held operands and outputs:
 | Operation | Maximum live values |
 |---|---:|
 | Triangle-plane construction | 21 |
+| Source-edge support-plane construction | 10 |
+| Constructed vertex against a plane | 7 |
+| Plane-normal independence | 4 |
 | Four-vertex homogeneous orientation | 20 |
 | Four-vertex interior representative | 23 |
 | Volume and centroid accumulation | 20 |
@@ -101,7 +107,9 @@ Measured peaks must confirm these bounds when those layers are implemented.
 The required fixture measurements also record predicate count, filter fraction
 and exact-arithmetic time separately for generation and reconstruction.
 Tests verify the implemented peaks: 21 for planes, 20 for orientation,
-11 for identity and 9 for quantization.
+11 for identity, 9 for quantization and 14 for exact shell-volume accumulation.
+Source construction records peak at 21 on raw floats and 10 on grid inputs;
+no accepted reservation grows.
 
 ## Surface input and topology
 
@@ -200,3 +208,37 @@ islands, reordered shell inputs, disjoint boxes, reversed winding, subnormals
 and extreme float coordinates. Fixed-ray cases hit a triangulation edge, an
 octahedron apex, a parallel exterior face and a supporting-plane extension.
 Quantization cases cover collapse, cross-shell contact and orientation reversal.
+
+
+## Exact source construction records
+
+Private construction records preserve each source face's canonical integer
+plane and original winding. Each undirected topological edge owns one support
+plane. Its owner is the lowest incident face index; the dropped projection axis
+is that face normal's first nonzero exact integer component. Lifting the exact
+projected edge line through that axis gives a plane whose intersection with the
+owner face is exactly the source edge. These coefficient bounds are included
+above and remain below the existing general-plane bounds.
+
+At a crease, the edge support plane can coincide with the other incident face.
+The defining pair therefore always uses the owner face and the edge support
+plane. An original vertex uses the two edges meeting at its corner in its
+lowest-index incident triangle. Those two lines are non-collinear; an exact
+determinant selects an independent third plane from the second line's defining
+pair. The private helper requires a validated non-degenerate source triangle.
+Representations selected from different incident faces compare geometrically
+equal, including when those faces use different projection axes.
+
+Plane-side queries use outward interval filters and exact homogeneous fallback,
+with exact-only behavior at O4/O5. A strict edge crossing yields the owner face,
+edge support and cut as its plane triple. A cut through one endpoint reuses the
+original vertex representation. A cut containing the edge reports coplanarity
+without creating a clipped vertex; a separated edge reports no intersection.
+
+All records borrow the workspace. Construction restores the incoming cursor on
+failure and leaves source arrays unchanged. Unreferenced topological identities
+have no constructed point. Tests cover flat-face interior vertices, subdivided
+collinear boundaries, creases, rational crossings, endpoint and coplanar cuts,
+extreme floats, subnormals, grid limits and partial reservation failure.
+Construction planes are stored separately from source face planes; the cell
+layer must verify that their presence changes neither cells nor partition planes.
