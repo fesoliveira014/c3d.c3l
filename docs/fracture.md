@@ -580,46 +580,70 @@ remain separate integration work.
 
 ## Collision reconstruction
 
-`create_fracture_collision` consumes a live `FractureResult` alone. It rebuilds
-cells from the exact binary32 coordinates of each published piece, without a
-second quantization or access to the generation workspace. Hull points remain
+`create_fracture_collision` consumes a live `FractureResult` alone. It reconstructs
+from the exact binary32 surface of each published piece, without a second
+quantization, retained provenance or access to the generation workspace. Hull points remain
 in the piece's local frame; the piece origin is not added. The result has one
 independent aligned allocation containing its hull views and point arrays.
 `destroy_fracture_collision` clears it. Empty input produces an empty owning
 result. No operation creates an asset, scene node or native physics object.
 
-Occupied cells are ordered by their exact geometric keys. The first adjacent
-pair whose union is convex and fits `max_hull_vertices` is merged, and the
-ordered search repeats. All remaining boundary constraints must contain both
-cells; a partial contact cannot join a concave union. Coplanar boundaries are
-reconstructed and redundant collinear corners removed. A convex piece that fits
-the limit produces one hull.
+Collision accepts approximation only under the bounds below, with epsilon equal
+to `resolution_m`. A rounded convex piece within the point limit produces one
+hull using its own vertices. Concave and hollow surfaces are partitioned into
+closed reference chunks before convex hull construction. Meaningful splits use
+exact planes and original surface patches; small exterior-plane deviations do
+not first become separate volume cells. Cut contours retain their existing
+plane pairs until all splits and boundary reconciliation are complete.
 
-Every remaining contact patch is constructed once and triangulated once. Both
-cells reference those triangles with opposite winding. Partial contacts and
-crossed subdivisions share reconciled vertices. One exact point atlas rounds
-each unique point directly to binary32, and every point must satisfy the
-Euclidean `resolution_m` bound. Hulls are ordered by piece index and then their
-lexicographically ordered point coordinates.
+Each point published by a hull is either an original piece vertex, bit for bit,
+or an exact point of the reference partition rounded once. Original surface
+and interior split membership is certified in the partition; the exact
+Euclidean distance between a split point and its rounded copy must be at most
+epsilon. Therefore every output point lies in the original piece or within
+epsilon of its surface. Points are not moved, welded or removed to meet a hull
+limit. A hull exceeding the limit is partitioned using its existing vertices.
 
-Each rounded cell and the combined exterior pass the raw solid validators:
-closure, orientation, triangle intersections, shell nesting and positive
-volume. Cones from the smallest existing vertex retain their exact orientation,
-including zero cones. If rounding invalidates that cone decomposition, the
-rounded cell's exact volume centroid supplies an interior binary32 anchor.
-Every boundary triangle must then form a strictly positive-volume tetrahedron
-with that anchor. This fallback adds only an interior collision point; exterior
-and shared triangle positions remain unchanged. A failed test produces
-`NUMERICAL_FAILURE`.
+Shared reference faces have one triangulation emitted with opposite winding.
+Every rounded reference chunk and the combined exterior must pass the raw
+closure, orientation, self-intersection, nesting and positive-volume checks.
+Their exact volume sum equals the rounded exterior's volume. Internal face
+cancellation makes their winding-number sum equal the exterior's winding
+number. Since each valid chunk contributes an indicator of its material region,
+the chunks have disjoint interiors and cover that exterior.
 
-A convex rounded cell within the vertex limit publishes one point set.
-Otherwise it publishes the validated tetrahedra, each containing four points.
-Shared internal triangles cancel exactly. Positive cone tetrahedra and the
-validated exterior establish a partition without positive-volume overlap.
-The exact sum of cell six-volumes must equal the rounded exterior six-volume.
-The exterior's difference from the input piece volume must fit the derived
-rounding bound above, evaluated on the rounded exterior with epsilon equal to
-`resolution_m`. No hull inflation or geometry simplification is used.
+Let `S` be the original piece and `R` the rounded reference partition. Let `H_i`
+be the convex hull containing all vertices of reference chunk `R_i`. Define
+`C = sum(volume(H_i) - volume(R_i))`. Containment follows from convexity: every
+triangle, and hence the bounded material region, lies in the hull of its
+vertices. The signed volumes of `H_i` and `R_i` are computed exactly from their
+binary32 surfaces; each excess is nonnegative, and the operation requires
+`C <= B`, where `B` is the preceding resolution-derived bound evaluated on the
+rounded exterior.
+
+The same `B` bounds the volume swept by the exterior's vertex deformation.
+Integrating absolute normal velocity over each moving triangle gives the
+same three terms as the preceding derivation. Winding can change only in that
+swept region, so `volume(S symmetric_difference R) <= B`. Consequently:
+
+```text
+uncovered original volume <= B
+sum(hull volumes) - original volume <= C + B <= 2*B
+positive overlap, counted with multiplicity <= C <= B
+```
+
+The overlap bound follows because each `R_i` is contained in its `H_i` and the
+reference interiors are disjoint; all additional multiplicity consumes convex
+excess `C`. Subdividing one convex hull into positive tetrahedra preserves its
+volume and introduces no further overlap. The implementation checks exact
+volume sums and these bounds before publishing. A total signed-volume match
+does not replace the reference coverage and containment proofs. Invalid
+rounding, a lost cavity/component, an unresolved feature or an unproved bound
+returns `NUMERICAL_FAILURE`.
+
+The sorted hull set depends on geometric coordinates and piece index, not
+source triangle order. All non-capacity validation faults on a published
+piece, including an invalid input surface, map to `NUMERICAL_FAILURE`.
 
 `max_hull_vertices` must be at least four; smaller values return
 `INVALID_ARGUMENT`. `max_hulls` applies across every input piece. The workspace's
