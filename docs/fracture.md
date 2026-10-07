@@ -33,12 +33,13 @@ count; the block remains immediately reusable.
 
 ## Representation bounds
 
-Builds including this module require strict floating point; relaxed and fast
-math are unsupported. `fracture_test` sets `fp-math: strict` explicitly. A
-compile-time guard rejects the maximum optimizer level used by CLI `O4`/`O5`;
-use `O0`–`O3` with strict math. C3 0.8.3 cannot expose the FP mode to source, so
-explicit relaxed/fast settings at lower optimization levels remain undetectable
-and unsupported. Tests compare filtered and exact results at `O0` and `O3`.
+Fracture filters require strict floating point at CLI `O0`–`O3`.
+`fracture_test` sets `fp-math: strict` explicitly. At `O4`/`O5`, C3 0.8.3
+exposes optimizer level `O3`; floating filters are compiled out and every
+predicate uses the exact path. This also applies to explicit strict builds at
+those levels and loses the filter speed-up. Unrelated physics builds remain
+available at every level. Explicit relaxed/fast overrides at `O0`–`O3` remain
+undetectable and unsupported. Tests cover `O0`, `O3` and exact-only `O4`.
 
 Generation uses centered integer coordinates with `abs(q) < 2^30`. Its grid
 step is the largest power of two at or below `resolution_m / 16`, using
@@ -99,6 +100,5 @@ iterative and never retains arithmetic temporaries across child processing.
 Measured peaks must confirm these bounds when those layers are implemented.
 The required fixture measurements also record predicate count, filter fraction
 and exact-arithmetic time separately for generation and reconstruction.
-Tests verify peaks of 21 for plane construction, 20 for constructed orientation,
-11 for vertex identity and 9 for quantization. Interior representatives and
-volume accumulation remain separate layers.
+Tests verify the implemented peaks: 21 for planes, 20 for orientation,
+11 for identity and 9 for quantization.

@@ -188,7 +188,11 @@ fn void test_filtered_orientations_agree_with_exact_near_degenerate_sweep() @tes
     }
     assert(float_orientation(scratch, { {}, { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } })!! == 1);
     assert(grid_orientation(scratch, { {}, { 1, 1, 1 }, { 2, 2, 2 }, { 3, 3, 3 } }) == 0);
+    $if env::COMPILER_OPT_LEVEL == O3:
+    assert(uncertain == FILTER_SWEEP_COUNT && scratch.filtered_count == 0);
+    $else
     assert(uncertain > 0 && scratch.filtered_count > 0);
+    $endif
     assert(scratch.predicate_count == 2 * FILTER_SWEEP_COUNT + VERTEX_FILTER_SWEEP_COUNT + 2);
     assert(scratch.filtered_count < scratch.predicate_count && scratch.exact_nanoseconds > 0);
     assert(scratch.count == 0 && scratch.peak <= EXACT_TEMPORARIES);

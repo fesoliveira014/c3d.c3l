@@ -158,6 +158,7 @@ fn bool? bisector_plane(
 
 fn int grid_orientation(ExactScratch* scratch, GridPoint[HOMOGENEOUS_COMPONENTS] points) @private {
     scratch.predicate_count++;
+    $if env::COMPILER_OPT_LEVEL != O3:
     Interval[SPACE_AXES * SPACE_AXES] matrix;
     for (uint row = 0; row < SPACE_AXES; row++) {
         for (uint axis = 0; axis < SPACE_AXES; axis++) {
@@ -174,6 +175,7 @@ fn int grid_orientation(ExactScratch* scratch, GridPoint[HOMOGENEOUS_COMPONENTS]
         scratch.filtered_count++;
         return filtered;
     }
+    $endif
     Clock started = clock::now();
     defer scratch.exact_nanoseconds += (ulong)started.to_now();
     return exact_grid_orientation(points);

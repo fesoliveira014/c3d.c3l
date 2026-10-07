@@ -3,10 +3,6 @@ module c3d::physics::fracture;
 import std::math;
 import std::time;
 
-// CLI O4/O5 expose the maximum optimizer level as O3.
-$assert env::COMPILER_OPT_LEVEL != O3 :
-  "Outward-rounded fracture filters require strict floating point; build at O0-O3 with fp-math: strict.";
-
 const int FILTER_UNCERTAIN @private = 2;
 const ulong DOUBLE_SIGN_MASK @private = 0x8000000000000000;
 
@@ -104,6 +100,9 @@ fn Interval interval_determinant(Interval[] matrix, uint order) @private {
 }
 
 fn int filter_float_orientation(Vec3[HOMOGENEOUS_COMPONENTS] points) @private {
+    $if env::COMPILER_OPT_LEVEL == O3:
+    return FILTER_UNCERTAIN;
+    $else
     Interval[SPACE_AXES * SPACE_AXES] matrix;
     for (uint row = 0; row < SPACE_AXES; row++) {
         for (uint axis = 0; axis < SPACE_AXES; axis++) {
@@ -116,6 +115,7 @@ fn int filter_float_orientation(Vec3[HOMOGENEOUS_COMPONENTS] points) @private {
         }
     }
     return interval_sign(interval_determinant(matrix[..], SPACE_AXES));
+    $endif
 }
 
 fn bool interval_point(ExactPlane*[SPACE_AXES] planes, Interval[HOMOGENEOUS_COMPONENTS]* output) @private {
@@ -154,6 +154,9 @@ fn bool interval_point(ExactPlane*[SPACE_AXES] planes, Interval[HOMOGENEOUS_COMP
 }
 
 fn int filter_vertex_orientation(ExactPlane*[SPACE_AXES][HOMOGENEOUS_COMPONENTS] planes) @private {
+    $if env::COMPILER_OPT_LEVEL == O3:
+    return FILTER_UNCERTAIN;
+    $else
     Interval[HOMOGENEOUS_COMPONENTS * HOMOGENEOUS_COMPONENTS] matrix;
     foreach (uint index, vertex : planes) {
         Interval[HOMOGENEOUS_COMPONENTS] point;
@@ -162,9 +165,13 @@ fn int filter_vertex_orientation(ExactPlane*[SPACE_AXES][HOMOGENEOUS_COMPONENTS]
         for (uint axis = 0; axis < SPACE_AXES; axis++) matrix[index * HOMOGENEOUS_COMPONENTS + axis + 1] = point[axis];
     }
     return interval_sign(interval_determinant(matrix[..], HOMOGENEOUS_COMPONENTS));
+    $endif
 }
 
 fn int filter_same_vertex(ExactPlane*[SPACE_AXES] first, ExactPlane*[SPACE_AXES] second) @private {
+    $if env::COMPILER_OPT_LEVEL == O3:
+    return FILTER_UNCERTAIN;
+    $else
     Interval[HOMOGENEOUS_COMPONENTS] left;
     Interval[HOMOGENEOUS_COMPONENTS] right;
     if (!interval_point(first, &left) || !interval_point(second, &right)) return FILTER_UNCERTAIN;
@@ -179,6 +186,7 @@ fn int filter_same_vertex(ExactPlane*[SPACE_AXES] first, ExactPlane*[SPACE_AXES]
         uncertain |= sign == FILTER_UNCERTAIN;
     }
     return uncertain ? FILTER_UNCERTAIN : 1;
+    $endif
 }
 
 fn int? float_orientation(ExactScratch* scratch, Vec3[HOMOGENEOUS_COMPONENTS] points) @private {
