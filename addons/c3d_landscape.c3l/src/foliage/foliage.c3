@@ -91,6 +91,11 @@ struct Foliage {
     FoliageDesc desc;
 }
 
+struct FoliageCellOwner @private {
+    Entity layer;
+    uint cell_index;
+}
+
 <*
  Checked desc, cells, placement identity and wind state of a layer, written by the library.
 *>
@@ -147,6 +152,7 @@ fn FoliageDesc default_foliage_desc() {
 fn void? register_foliage(Scene* scene) {
     scene.register(Foliage)!;
     scene.register(FoliageRuntime)!;
+    scene.register(FoliageCellOwner)!;
     scene.set_remove_hook(Foliage, &remove_authoring, scene.hook_allocator);
     scene.set_remove_hook(FoliageRuntime, &remove_runtime, null);
 }
