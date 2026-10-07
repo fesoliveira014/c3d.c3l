@@ -240,7 +240,7 @@ fn void? run_gui(
             imgui::text_unformatted("Hiding the volume node shows the SH term.");
             imgui::checkbox("Volume visible", &volume_node.visible);
             imgui::checkbox("Draw probes", &draw_probes);
-            imgui::text_unformatted("Gray: provisional  Green: eligible  Red: excluded");
+            imgui::text_wrapped("Gray: provisional  Green: eligible  Red: excluded");
             imgui::checkbox("Move sun", &move_sun);
             imgui::checkbox("Bright object", &bright_object.visible);
             if (imgui::checkbox("Screen-space GI", &screen_space_gi)) {

@@ -131,6 +131,21 @@ atlas), and a ray buffer of 16 bytes per ray at the largest window seen (64 MiB 
 blend and uses its unused alpha channel; it adds no allocation or dispatch. Excluded probes retain their
 tracing cost so moving geometry can uncover them. `Pass.PROBE_UPDATE` times fills and updates.
 
+Matched classification measurements on an RTX 4090 (driver 610.88), Sponza at 3840 x 2160,
+fixed camera, sun only and 128 rays per probe. Both builds used O3, GPU profiling and validation off,
+with 64 warm-up and 256 measured frames per run. The table reports the median of three interleaved
+runs; [the review](https://github.com/fesoliveira014/c3d.c3l/pull/254#pullrequestreview-5436918402)
+records the run ranges and exact commands.
+
+| Volume | Trace | Before classification | With classification |
+| --- | --- | ---: | ---: |
+| 8 x 4 x 8 probes, full window | Ray queries | 0.0796 ms | 0.0848 ms |
+| 8 x 4 x 8 probes, full window | Software | 0.7857 ms | 0.7986 ms |
+| 16 x 16 x 16 probes, window 512 | Ray queries | 0.1058 ms | 0.1096 ms |
+| 16 x 16 x 16 probes, window 512 | Software | 0.7232 ms | 0.7557 ms |
+
+All four configurations passed the added-cost bound of `max(10% of baseline, 0.02 ms)`.
+
 Historical measurements before classification, on an RTX 4090 over Sponza at 3840 x 2160,
 `Pass.PROBE_UPDATE` median per frame:
 
