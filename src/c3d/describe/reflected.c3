@@ -24,6 +24,12 @@ fn bool? fields(Visitor* visitor, void* raw) {
                     metadata.display_name = $member.get_tag("display");
                 $endif
                 $if $member.has_tag("range"):
+                    describe::@check_range(
+                        $Type: $Typefrom($member.type),
+                        $name: Type::qname +++ "." +++ $member.name,
+                        $minimum: $member.get_tag("range")[0],
+                        $maximum: $member.get_tag("range")[1],
+                    );
                     metadata.range = {
                         .enabled = true,
                         .min = $member.get_tag("range")[0],

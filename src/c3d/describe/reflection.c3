@@ -29,6 +29,16 @@ macro void @check_field(
     $endif
 }
 
+macro void @check_range(
+    $Type,
+    $name,
+    $minimum,
+    $maximum,
+) @private {
+    $assert @range_valid($Type, (double)$minimum, (double)$maximum)
+        : "Invalid numeric range on described field: " +++ $name;
+}
+
 macro void @check_recursive($Type, $parents, $name) @private {
     $switch $Type::kind:
         $case STRUCT:

@@ -43,6 +43,11 @@ struct ExplicitAsset @private {
     Id asset @tag("asset", AssetKind.GEOMETRY);
 }
 
+struct NumericRanges @private {
+    int count @tag("range", {-3.0, 8.0});
+    float weight @tag("range", {0.1, 0.9});
+}
+
 fn bool? conflict_fields(Visitor* visitor, void* raw) @private {
     ConflictValue* value = raw;
     return describe::@field(visitor, "value", value.value);
@@ -190,4 +195,48 @@ fn void test_explicit_asset_metadata_preserves_actual_untyped_id_storage() @test
     assert(value.asset.index == 7 && value.asset.generation == 2);
     visitor.mode = SCHEMA;
     assert(!describe::walk(ExplicitAsset, &visitor, null)!!);
+}
+
+fn bool? numeric_range_field(Visitor* visitor, Info* info, void* value) @private {
+    Record* record = visitor.user;
+    assert(info.metadata.range.enabled);
+    if (info.kind == INT) {
+        assert(info.metadata.range.min == -3.0 && info.metadata.range.max == 8.0);
+    } else {
+        assert(info.kind == FLOAT);
+        assert(info.metadata.range.min == 0.1 && info.metadata.range.max == 0.9);
+    }
+    record.fields++;
+    return false;
+}
+
+fn bool? numeric_range_fields(Visitor* visitor, void* raw) @private {
+    NumericRanges* value = raw;
+    bool changed = describe::@field(
+        visitor: visitor,
+        name: "count",
+        #field: value.count,
+        metadata: { .range = { .enabled = true, .min = -3.0, .max = 8.0 } },
+    )!;
+    return describe::@field(
+        visitor: visitor,
+        name: "weight",
+        #field: value.weight,
+        metadata: { .range = { .enabled = true, .min = 0.1, .max = 0.9 } },
+    )! || changed;
+}
+
+fn void test_numeric_ranges_accept_integral_and_floating_endpoints() @test {
+    describe::register_reflected(NumericRanges)!!;
+    Record record;
+    Visitor visitor = make_visitor(SCHEMA, &record);
+    visitor.field = &numeric_range_field;
+    describe::walk(NumericRanges, &visitor, null)!!;
+    assert(record.fields == 2);
+
+    Descriptor authored = *describe::get(NumericRanges)!!;
+    authored.fields = &numeric_range_fields;
+    record = {};
+    describe::walk_descriptor(&authored, &visitor, null)!!;
+    assert(record.fields == 2);
 }
