@@ -6,7 +6,7 @@ steps and remove their attempted attachment if preparation fails.
 
 | Owner | State after attachment | Drawing while pending | Completion call | Required order |
 | --- | --- | --- | --- | --- |
-| Animated crowd | Pending; copied placements, poses, start times and colors | No generated part batches | `model::prepare_crowd(assets, scene, node)` or `model::prepare_crowd_subtree(assets, scene, root)` | Source model, skeleton and clips remain live |
+| Animated crowd | Pending; copied placements, poses, start times and colors | No generated part batches | `model::prepare_crowd(assets, scene, node)` or `model::prepare_crowd_subtree(assets, scene, root)` | Source model, skeleton, clips, geometry and materials must be live; a dead source returns `INVALID_ID` and leaves the crowd pending |
 | Particle system | Pending; validated descriptor and application emission control | No generated draw child | `particle::prepare(scene, node)` or `particle::prepare_subtree(scene, root)` | Register particles before attachment; restore authored `emitting` after attachment |
 
 `is_prepared` reports whether the owner's complete runtime is installed. Preparing
