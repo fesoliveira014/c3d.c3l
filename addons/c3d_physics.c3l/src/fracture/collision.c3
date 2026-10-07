@@ -5,7 +5,6 @@ import std::math;
 import std::sort;
 
 const uint COLLISION_TETRAHEDRON_VERTICES @private = 4;
-const uint COLLISION_TETRAHEDRON_TRIANGLES @private = 4;
 const uint COLLISION_FLOAT_MAGNITUDE_MASK @local = uint::max >> 1;
 
 <* Borrow one convex point set in its piece frame. *>
@@ -32,7 +31,6 @@ struct CollisionBuild @private {
     CollisionHullLink* last;
     uint hull_count;
     uint vertex_count;
-    uint triangle_count;
 }
 
 $assert FractureHullView::alignment >= Vec3::alignment;
@@ -55,10 +53,6 @@ fn FractureCollision? create_fracture_collision(
     SolidScratch scratch = begin_solid_scratch(workspace);
     CollisionBuild build = { .limits = workspace.limits };
     foreach (uint piece, source : fragments.pieces) {
-        if (source.mesh.geometry.positions.len > workspace.limits.max_vertices
-            || source.mesh.geometry.indices.len / TRIANGLE_CORNERS > workspace.limits.max_triangles) {
-            return c3d::CAPACITY_EXCEEDED~;
-        }
         if (catch failure = build_collision_piece(
             scratch: &scratch, build: &build, piece: piece,
             source: source.mesh, max_hull_vertices: max_hull_vertices,
@@ -130,11 +124,9 @@ fn void? append_collision_hull(
     CollisionBuild* build,
     uint piece,
     Vec3[] points,
-    uint triangles,
 ) @private {
     if (build.hull_count == build.limits.max_hulls
-        || points.len > (usz)(build.limits.max_vertices - build.vertex_count)
-        || triangles > build.limits.max_triangles - build.triangle_count) return c3d::CAPACITY_EXCEEDED~;
+        || points.len > (usz)(build.limits.max_vertices - build.vertex_count)) return c3d::CAPACITY_EXCEEDED~;
     CollisionHullLink* link = &reserve_elements(scratch, CollisionHullLink, 1)![0];
     sort::quicksort(points, &compare_collision_positions);
     *link = { .hull = { .piece_index = piece, .points = points } };
@@ -146,7 +138,6 @@ fn void? append_collision_hull(
     build.last = link;
     build.hull_count++;
     build.vertex_count += (uint)points.len;
-    build.triangle_count += triangles;
     return;
 }
 
@@ -267,7 +258,6 @@ fn void? publish_collision_cell(
     if (checked.convex && vertices.len <= max_hull_vertices) {
         return append_collision_hull(
             scratch: scratch, build: build, piece: piece, points: vertices,
-            triangles: (uint)indices.len / TRIANGLE_CORNERS,
         );
     }
     if (existing) {
@@ -280,7 +270,6 @@ fn void? publish_collision_cell(
             }
             append_collision_hull(
                 scratch: scratch, build: build, piece: piece, points: tetrahedron_points,
-                triangles: COLLISION_TETRAHEDRON_TRIANGLES,
             )!;
         }
         return;
@@ -295,7 +284,6 @@ fn void? publish_collision_cell(
         tetrahedron_points[..] = tetrahedron[..];
         append_collision_hull(
             scratch: scratch, build: build, piece: piece, points: tetrahedron_points,
-            triangles: COLLISION_TETRAHEDRON_TRIANGLES,
         )!;
     }
     return;

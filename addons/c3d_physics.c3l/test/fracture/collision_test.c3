@@ -111,11 +111,6 @@ fn void test_fracture_collision_global_limits_fault_without_publishing_and_allow
         allocator: &tracker, workspace: &workspace, fragments: &fragments, max_hull_vertices: 8,
     )) == c3d::CAPACITY_EXCEEDED);
     workspace.limits.max_vertices = 4096;
-    workspace.limits.max_triangles = 23;
-    assert(@catch(create_fracture_collision(
-        allocator: &tracker, workspace: &workspace, fragments: &fragments, max_hull_vertices: 8,
-    )) == c3d::CAPACITY_EXCEEDED);
-    workspace.limits.max_triangles = 8192;
     assert(tracker.allocation_count() == 0 && tracker.total_allocation_count() == 0);
     FractureCollision recovered = create_fracture_collision(
         allocator: &tracker, workspace: &workspace, fragments: &fragments, max_hull_vertices: 8,
@@ -123,6 +118,39 @@ fn void test_fracture_collision_global_limits_fault_without_publishing_and_allow
     assert(recovered.hulls.len == 2 && recovered.hulls[0].piece_index == 0 && recovered.hulls[1].piece_index == 1);
     destroy_fracture_collision(&recovered);
     assert(tracker.allocation_count() == 0 && tracker.total_allocation_count() == 1);
+}
+
+fn void test_fracture_collision_limits_count_emitted_points_without_limiting_source_seams() @test {
+    FractureWorkspace workspace = collision_test_workspace();
+    defer destroy_fracture_workspace(&workspace);
+    ContainmentFixture fixture;
+    partition_fixture(&fixture, 0);
+    Vec3[36] positions;
+    uint[36] identities;
+    uint[36] indices;
+    foreach (uint index, source : fixture.mesh.geometry.indices) {
+        positions[index] = fixture.mesh.geometry.positions[source];
+        identities[index] = source;
+        indices[index] = index;
+    }
+    FracturePieceView piece = { .mesh = {
+        .geometry = { .positions = positions[..], .indices = indices[..] },
+        .topology_vertices = identities[..], .triangle_materials = fixture.mesh.triangle_materials,
+    } };
+    FractureResult fragments = copy_fracture_result(mem, (&piece)[:1])!!;
+    defer destroy_fracture_result(&fragments);
+    workspace.limits.max_vertices = 8;
+    workspace.limits.max_triangles = 1;
+    workspace.limits.max_hulls = 1;
+    FractureCollision collision = create_fracture_collision(
+        allocator: mem, workspace: &workspace, fragments: &fragments, max_hull_vertices: 8,
+    )!!;
+    defer destroy_fracture_collision(&collision);
+    assert(collision.hulls.len == 1 && collision.hulls[0].points.len == 8);
+    workspace.limits.max_vertices = 7;
+    assert(@catch(create_fracture_collision(
+        allocator: mem, workspace: &workspace, fragments: &fragments, max_hull_vertices: 8,
+    )) == c3d::CAPACITY_EXCEEDED);
 }
 
 fn void test_fracture_collision_empty_and_allocation_failure_preserve_inputs() @test {

@@ -624,9 +624,9 @@ rounding bound above, evaluated on the rounded exterior with epsilon equal to
 `max_hull_vertices` must be at least four; smaller values return
 `INVALID_ARGUMENT`. `max_hulls` applies across every input piece. The workspace's
 `max_vertices` counts the sum of published hull points, including a point again
-when separate hulls contain it. `max_triangles` counts the corresponding
-triangulated hull surfaces, including four triangles for each tetrahedron.
-Each input piece must also fit those vertex and triangle limits. Count, arena,
+when separate hulls contain it. `max_triangles` bounds emitted render triangles
+and does not limit collision reconstruction, which emits point sets. Source
+seams and intermediate topology are bounded by `scratch_bytes`. Count, arena,
 layout and result-allocation exhaustion return `CAPACITY_EXCEEDED`. Failures
 publish no owner, preserve the input result and allow immediate workspace reuse.
 The existing 24-value arithmetic reservation is unchanged.
