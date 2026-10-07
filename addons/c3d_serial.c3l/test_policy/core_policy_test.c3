@@ -9,7 +9,7 @@ import c3d::scene;
 import c3d::serial @public;
 
 const typeid[*] PENDING_CORE_POLICIES @private = {
-    ModelInstance::typeid, SkinBinding::typeid, Animator::typeid, IkChain::typeid,
+    SkinBinding::typeid, Animator::typeid, IkChain::typeid,
     FootIk::typeid, LookAt::typeid, AnimatedCrowd::typeid,
 };
 
@@ -18,12 +18,13 @@ struct ExpectedPolicy @private {
     String name;
     typeid identity;
     bool component_description;
+    RestorePhase phase;
 }
 
 fn void test_every_registered_core_component_has_one_expected_policy() @test {
     assert(ecs::registered_type_count == 0);
     serial::register_core_codecs()!!;
-    ExpectedPolicy[11] expected = {
+    ExpectedPolicy[12] expected = {
         { .slot = ecs::assigned_slot(Mesh)!!, .name = "c3d.Mesh",
             .identity = Mesh::typeid, .component_description = true },
         { .slot = ecs::assigned_slot(Camera)!!, .name = "c3d.Camera",
@@ -45,6 +46,8 @@ fn void test_every_registered_core_component_has_one_expected_policy() @test {
         { .slot = ecs::assigned_slot(BillboardBatch)!!, .name = "c3d.BillboardBatch",
             .identity = BillboardAuthoring::typeid },
         { .slot = ecs::assigned_slot(LodGroup)!!, .name = "c3d.LodGroup", .identity = LodAuthoring::typeid },
+        { .slot = ecs::assigned_slot(ModelInstance)!!, .name = "c3d.ModelInstance",
+            .identity = ModelAuthoring::typeid, .phase = REFERENCES },
     };
     assert(ecs::registered_type_count == expected.len);
     serial::register_core_codecs()!!;
@@ -74,7 +77,7 @@ fn void assert_policy_inventory(ExpectedPolicy[] expected, bool include_pending)
             matches++;
             assert(policies == 1);
             assert(entry.described && !entry.transient && entry.codec.name == policy.name);
-            assert(entry.codec.phase == VALUE && entry.codec.version == 1);
+            assert(entry.codec.phase == policy.phase && entry.codec.version == 1);
             assert(entry.described.type.descriptor.identity == policy.identity);
             if (policy.component_description) assert(describe::component(slot)!!.identity == policy.identity);
         }

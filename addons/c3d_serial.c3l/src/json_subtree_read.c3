@@ -250,7 +250,22 @@ fn Node*? restore_subtree_json(
         };
     }
     index_read_authoring(&context)!;
+    if (catch excuse = prepare_json_models(&context, components, &owned)) {
+        foreach (&component : components) {
+            if (component.node == context.record && model_codec_slot(component.slot)) {
+                return json_component_diagnostic(
+                    document: &document,
+                    records: records,
+                    component: component,
+                    diagnostic: diagnostic,
+                    cause: excuse,
+                )~;
+            }
+        }
+        return excuse~;
+    }
     foreach (component : components) {
+        if (model_codec_slot(component.slot)) continue;
         ValidateFn validate = codecs[component.slot].described.codec.validate;
         if (!validate) continue;
         select_json_component(&context, &component);

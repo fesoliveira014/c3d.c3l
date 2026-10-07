@@ -51,6 +51,7 @@ fn void? register_core_codecs() {
     })!;
     register_described(Decal, { .name = "c3d.Decal" })!;
     register_core_batch_codecs()!;
+    register_model_codec()!;
 }
 
 fn void defaults_shadow(void* value) @local {
