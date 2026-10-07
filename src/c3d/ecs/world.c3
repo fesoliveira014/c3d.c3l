@@ -32,7 +32,7 @@ alias EntityPool = Pool{ComponentMask, Entity};
 *>
 const uint MAX_COMPONENT_TYPES = 128; // a 16 B mask per entity of capacity; queries read each store, never the mask
 
-uint registered_type_count @local;
+uint registered_type_count @private;
 
 <*
  Entities and one component store per registered type.
