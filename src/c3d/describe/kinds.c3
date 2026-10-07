@@ -6,6 +6,10 @@ import c3d::ecs;
 macro Kind @kind($Type, $name = "") @private {
     $switch $Type::typeid:
         $case bool::typeid: return BOOL;
+        $case ichar::typeid: return ICHAR;
+        $case char::typeid: return CHAR;
+        $case short::typeid: return SHORT;
+        $case ushort::typeid: return USHORT;
         $case int::typeid: return INT;
         $case uint::typeid: return UINT;
         $case long::typeid: return LONG;
@@ -15,6 +19,8 @@ macro Kind @kind($Type, $name = "") @private {
         $case Vec2::typeid: return VEC2;
         $case Vec3::typeid: return VEC3;
         $case Vec4::typeid: return VEC4;
+        $case uint[<3>]::typeid: return UVEC3;
+        $case Mat4::typeid: return MAT4;
         $case Quat::typeid: return QUAT;
         $case String::typeid: return STRING;
         $case Entity::typeid: return ENTITY;
@@ -72,11 +78,17 @@ macro bool @range_valid($Type, #minimum, #maximum) @private {
         $case ARRAY:
         $case SLICE:
             return @range_valid($Typefrom($Type::inner), #minimum, #maximum);
+        $case ICHAR:
+        $case CHAR:
+        $case SHORT:
+        $case USHORT:
         $case INT:
         $case UINT:
             return #minimum <= #maximum
                 && #minimum >= (double)$Type::min && #maximum <= (double)$Type::max
                 && #minimum == (double)(int128)#minimum && #maximum == (double)(int128)#maximum;
+        $case UVEC3:
+            return @range_valid(uint, #minimum, #maximum);
         $case LONG:
         $case ULONG:
             // Double rounds 64-bit maxima beyond their valid integer range.

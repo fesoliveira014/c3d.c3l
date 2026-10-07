@@ -38,7 +38,12 @@ fn ulong? BinaryReader.integer(&self, usz width) {
 
 fn usz minimum_encoded_size(describe::Kind kind) {
     switch (kind) {
-        case BOOL: return 1;
+        case BOOL:
+        case ICHAR:
+        case CHAR: return 1;
+        case SHORT:
+        case USHORT: return ushort::size;
+        case UVEC3: return 3 * uint::size;
         case INT:
         case UINT:
         case FLOAT: return uint::size;
@@ -49,7 +54,8 @@ fn usz minimum_encoded_size(describe::Kind kind) {
         case VEC2:
         case VEC3:
         case VEC4:
-        case QUAT: return vector_size(kind) * float::size;
+        case QUAT:
+        case MAT4: return component_count(kind) * float::size;
         case STRING:
         case ENTITY:
         case ASSET:
@@ -82,6 +88,10 @@ fn bool? binary_write_field(describe::Visitor* visitor, describe::Info* info, vo
     BinaryWriter* writer = (BinaryWriter*)visitor.user;
     switch (info.kind) {
         case BOOL: writer.integer(*(bool*)value ? 1 : 0, 1)!;
+        case ICHAR: writer.integer(bitcast(*(ichar*)value, char), ichar::size)!;
+        case CHAR: writer.integer(*(char*)value, char::size)!;
+        case SHORT: writer.integer(bitcast(*(short*)value, ushort), short::size)!;
+        case USHORT: writer.integer(*(ushort*)value, ushort::size)!;
         case INT: writer.integer(bitcast(*(int*)value, uint), int::size)!;
         case UINT: writer.integer(*(uint*)value, uint::size)!;
         case LONG: writer.integer(bitcast(*(long*)value, ulong), long::size)!;
@@ -92,9 +102,12 @@ fn bool? binary_write_field(describe::Visitor* visitor, describe::Info* info, vo
         case VEC3:
         case VEC4:
         case QUAT:
-            for (usz index = 0; index < vector_size(info.kind); index++) {
+        case MAT4:
+            for (usz index = 0; index < component_count(info.kind); index++) {
                 writer.integer(bitcast(((float*)value)[index], uint), float::size)!;
             }
+        case UVEC3:
+            for (usz index = 0; index < 3; index++) writer.integer(((uint*)value)[index], uint::size)!;
         case STRING:
             String string = *(String*)value;
             writer.integer((ulong)string.len, uint::size)!;
@@ -148,6 +161,10 @@ fn bool? binary_read_field(describe::Visitor* visitor, describe::Info* info, voi
             ulong encoded = reader.integer(1)!;
             if (encoded > 1) return INVALID_FIXTURE~;
             *(bool*)value = encoded != 0;
+        case ICHAR: *(ichar*)value = bitcast((char)reader.integer(ichar::size)!, ichar);
+        case CHAR: *(char*)value = (char)reader.integer(char::size)!;
+        case SHORT: *(short*)value = bitcast((ushort)reader.integer(short::size)!, short);
+        case USHORT: *(ushort*)value = (ushort)reader.integer(ushort::size)!;
         case INT: *(int*)value = bitcast((uint)reader.integer(int::size)!, int);
         case UINT: *(uint*)value = (uint)reader.integer(uint::size)!;
         case LONG: *(long*)value = bitcast(reader.integer(long::size)!, long);
@@ -158,9 +175,12 @@ fn bool? binary_read_field(describe::Visitor* visitor, describe::Info* info, voi
         case VEC3:
         case VEC4:
         case QUAT:
-            for (usz index = 0; index < vector_size(info.kind); index++) {
+        case MAT4:
+            for (usz index = 0; index < component_count(info.kind); index++) {
                 ((float*)value)[index] = bitcast((uint)reader.integer(float::size)!, float);
             }
+        case UVEC3:
+            for (usz index = 0; index < 3; index++) ((uint*)value)[index] = (uint)reader.integer(uint::size)!;
         case STRING:
             ulong length = reader.integer(uint::size)!;
             usz limit = reader.depth ? reader.limits[reader.depth - 1] : (usz)reader.bytes.len;

@@ -48,6 +48,15 @@ struct Fixture {
     uint derived @tag("transient", true);
 }
 
+struct NumericFixture {
+    ichar signed_byte @tag("range", { -128.0, 127.0 });
+    char unsigned_byte @tag("range", { 0.0, 255.0 });
+    short signed_short @tag("range", { -32768.0, 32767.0 });
+    ushort unsigned_short @tag("range", { 0.0, 65535.0 });
+    uint[<3>] counts @tag("range", { 0.0, 4294967295.0 });
+    Mat4 affine;
+}
+
 struct FixtureSource {
     uint[2] top_values;
     uint[3] weights;
@@ -92,13 +101,19 @@ fn void Acquisitions.release_all(&self) {
     self.bytes = 0;
 }
 
-fn usz vector_size(describe::Kind kind) {
+fn usz component_count(describe::Kind kind) {
     switch (kind) {
         case VEC2: return 2;
-        case VEC3: return 3;
+        case VEC3:
+        case UVEC3: return 3;
         case VEC4:
         case QUAT: return 4;
+        case MAT4: return 16;
         case BOOL:
+        case ICHAR:
+        case CHAR:
+        case SHORT:
+        case USHORT:
         case INT:
         case UINT:
         case LONG:
@@ -201,4 +216,29 @@ fn DescribedComponent demo_fixture() {
         .geometry = { .index = 23, .generation = 7 },
         .speed_squared = -1,
     };
+}
+
+fn NumericFixture numeric_fixture() {
+    return {
+        .signed_byte = ichar::min,
+        .unsigned_byte = char::max,
+        .signed_short = short::min,
+        .unsigned_short = ushort::max,
+        .counts = { 0, uint::max, 2147483648u },
+        .affine = { .m = {
+            -2, 0, 0, -0.0f,
+            0.375f, 3, 0, 0,
+            0.125f, -0.5f, 4, 0,
+            7, -9, 11, 1,
+        } },
+    };
+}
+
+fn void assert_numeric_fixture_equal(NumericFixture* first, NumericFixture* second) {
+    assert(first.signed_byte == second.signed_byte && first.unsigned_byte == second.unsigned_byte);
+    assert(first.signed_short == second.signed_short && first.unsigned_short == second.unsigned_short);
+    assert(first.counts == second.counts);
+    for (usz index = 0; index < 16; index++) {
+        assert(bitcast(first.affine.m[index], uint) == bitcast(second.affine.m[index], uint));
+    }
 }
