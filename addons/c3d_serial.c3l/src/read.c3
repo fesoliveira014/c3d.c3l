@@ -21,7 +21,30 @@ fn Node*? read_subtree(
     AssetStore* assets,
     char[] bytes,
     Node* parent = null,
+    ReadOptions options = READ_OPTIONS_DEFAULT,
 ) {
+    if (options.diagnostic) clear_serial_diagnostic(options.diagnostic);
+    Node*? restored = read_subtree_binary(
+        scene: scene,
+        assets: assets,
+        bytes: bytes,
+        parent: parent,
+        options: options,
+    );
+    if (catch excuse = restored) {
+        if (options.diagnostic && !options.diagnostic.cause) options.diagnostic.cause = excuse;
+        return excuse~;
+    }
+    return restored;
+}
+
+fn Node*? read_subtree_binary(
+    Scene* scene,
+    AssetStore* assets,
+    char[] bytes,
+    Node* parent,
+    ReadOptions options,
+) @local {
     SubtreeHeader header = read_header(bytes)!;
     Reader key_reader = reader_over(chunk_bytes(bytes, header.chunk_count, ChunkKind.KEYS));
     String[] keys = read_keys(assets, &key_reader, header.key_count)!;
@@ -54,6 +77,8 @@ fn Node*? read_subtree(
     ReadContext context = {
         .scene = scene,
         .assets = assets,
+        .allocator = options.allocator.ptr ? options.allocator : scene.allocator,
+        .diagnostic = options.diagnostic,
         .nodes = nodes,
         .keys = keys,
         .component_masks = masks,
@@ -67,8 +92,20 @@ fn Node*? read_subtree(
             context.record = payload.record;
             context.version = type.version;
             Reader bounded = reader_over(payload.bytes);
-            codec.read(&bounded, &context)!;
-            if (bounded.remaining()) return c3d::ASSET_FORMAT_ERROR~;
+            if (catch excuse = codec.read(&bounded, &context)) {
+                return component_diagnostic(
+                    diagnostic: context.diagnostic,
+                    record: payload.record,
+                    type_name: codec.name,
+                    cause: excuse,
+                )~;
+            }
+            if (bounded.remaining()) return component_diagnostic(
+                diagnostic: context.diagnostic,
+                record: payload.record,
+                type_name: codec.name,
+                cause: c3d::ASSET_FORMAT_ERROR,
+            )~;
         }
     }
     return root;

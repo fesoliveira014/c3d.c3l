@@ -91,3 +91,19 @@ Operational faults from owner codecs propagate according to their declared contr
 The [owner readiness table](owner_readiness.md) defines application preparation
 order after authoring attachment. Codec availability remains as listed in this
 document's coverage section.
+
+## Per-call options and diagnostics
+
+Binary `write_subtree` and `read_subtree` accept trailing defaulted
+`WriteOptions` and `ReadOptions`. Their existing calls remain valid. A reader
+allocator defaults to the destination Scene allocator and is supplied to codec
+callbacks through `ReadContext`. Existing Scene and owner constructors retain
+their allocation contracts.
+
+Create a reusable diagnostic with `create_serial_diagnostic(allocator)` and pass
+its pointer in the options. Each call clears previous details. Collection and
+component faults retain the component type and `/nodes/<record>` path, alongside
+owner-supplied details such as an asset key. Reader details survive subtree
+rollback. Binary diagnostics have no text position. Failed diagnostic allocation
+returns `CAPACITY_EXCEEDED` and clears incomplete details. Release retained strings
+with `destroy_serial_diagnostic` after use.
