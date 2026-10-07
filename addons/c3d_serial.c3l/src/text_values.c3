@@ -28,6 +28,11 @@ fn bool text_integer_spelling(String value, bool signed) @local {
     return true;
 }
 
+fn bool text_wide_integer_spelling(String value, bool signed) @local {
+    if (!text_integer_spelling(value, signed)) return false;
+    if (value == "0") return true;
+    return value[value[0] == '-' ? 1 : 0] != '0';
+}
 fn float? text_read_float(TextDocument* document, uint value, SerialDiagnostic* diagnostic) @private {
     TextValue* token = &document.values[value];
     if (token.kind == TextKind.STRING) {
@@ -191,7 +196,7 @@ fn ulong? text_read_unsigned(
 
 fn long? text_read_long(TextDocument* document, uint value, SerialDiagnostic* diagnostic) @private {
     TextValue* token = &document.values[value];
-    if (token.kind != TextKind.STRING || !text_integer_spelling(token.string, true)) {
+    if (token.kind != TextKind.STRING || !text_wide_integer_spelling(token.string, true)) {
         return text_error(
             document: document,
             value: value,
@@ -211,7 +216,7 @@ fn long? text_read_long(TextDocument* document, uint value, SerialDiagnostic* di
 
 fn ulong? text_read_ulong(TextDocument* document, uint value, SerialDiagnostic* diagnostic) @private {
     TextValue* token = &document.values[value];
-    if (token.kind != TextKind.STRING || !text_integer_spelling(token.string, false)) {
+    if (token.kind != TextKind.STRING || !text_wide_integer_spelling(token.string, false)) {
         return text_error(
             document: document,
             value: value,

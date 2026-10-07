@@ -15,4 +15,5 @@ Non-finite values use only quoted `f32:` plus eight lowercase hexadecimal digits
 or `f64:` plus sixteen; finite-bit tokens and mismatched widths are rejected.
 Parse finite values directly from their original lexemes into the destination
 width. Wide signed/unsigned integers use quoted decimal strings; narrower
-integers require numeric tokens without a fraction or exponent.
+integers require numeric tokens without a fraction or exponent. Quoted integers
+have no leading zeros or negative-zero spelling; zero is exactly `"0"`.
