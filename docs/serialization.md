@@ -15,6 +15,14 @@ The other value components use fixed-size copying attachment. ProbeVolume,
 Atmosphere, HeightFog and ReflectionProbe use their existing owner validity
 predicates on both export and decoded authoring before attachment.
 
+InstancedMesh, BillboardBatch and LodGroup also restore in the VALUE phase through
+private authoring descriptions. They retain capacity and live entries in copied
+storage. Instanced batches preserve flags, sway, fade and bounds overrides; LOD
+retains ordered parts with full affine matrices, level thresholds, common effects
+and terminal impostor configuration. Unused transforms restart at identity,
+unused colors at white and unused billboards at `BILLBOARD_DEFAULT`. Bounds caches,
+revisions and logical LOD identities restart under normal owner rules.
+
 ModelInstance and the remaining owners have no policy in this delivery and return
 UNSUPPORTED. Animated Mesh baseline projection arrives with the Animator adapter;
 ordinary Mesh values currently preserve their explicit weights.

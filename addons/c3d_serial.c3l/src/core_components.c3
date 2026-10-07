@@ -50,6 +50,7 @@ fn void? register_core_codecs() {
         .name = "c3d.ReflectionProbe", .project = &project_reflection, .validate = &validate_reflection,
     })!;
     register_described(Decal, { .name = "c3d.Decal" })!;
+    register_core_batch_codecs()!;
 }
 
 fn void defaults_shadow(void* value) @local {
