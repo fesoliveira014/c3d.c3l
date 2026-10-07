@@ -4,6 +4,16 @@ Navigation meshes and crowds for c3d: module `c3d::nav`, an add-on package that 
 `c3d` only.
 Applications select it explicitly; core never imports it.
 
+Authored shape fields selected by their kind, link endpoints and radius, and
+the seven numeric agent parameters must be finite. `add_nav_*` and serialization
+share their validators and retain the existing range rules. These entry points
+now reject NaN and infinities previously accepted even though those inputs could
+not be used by navigation's grid conversion and motion calculations.
+Serialization also requires a finite POSITION target; the void target setters
+retain their existing contracts. NONE/VELOCITY targets, inactive shape fields
+and node transforms preserve their IEEE values. The complete field/domain table
+is in [serialization](../../docs/serialization.md#authored-numeric-domains).
+
 ## Port notice
 
 This package is an altered C3 port of [recastnavigation](https://github.com/recastnavigation/recastnavigation)

@@ -112,18 +112,21 @@ fn char[]? encode(
     AssetStore* assets,
     Node* root,
     bool text_mode,
+    serial::SerialDiagnostic* diagnostic = null,
 ) @private {
     if (text_mode) return (char[])serial::write_subtree_text(
         allocator: tmem,
         scene: scene,
         assets: assets,
         root: root,
+        options: { .limits = serial::TEXT_LIMITS_DEFAULT, .diagnostic = diagnostic },
     )!;
     return serial::write_subtree(
         allocator: tmem,
         scene: scene,
         assets: assets,
         root: root,
+        options: { .diagnostic = diagnostic },
     );
 }
 
