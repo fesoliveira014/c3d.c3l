@@ -81,7 +81,7 @@ PROFILE_TEST_TARGETS = (
 PROFILE_GUI_TEST_TARGETS = (
     "panel_off", "panel_cpu", "panel_gpu", "panel_combined",
 )
-PHYSICS_TEST_TARGETS = ("physics_test", "fracture_test", "physics_serial_test", "physics_serial_policy_test")
+PHYSICS_TEST_TARGETS = ("physics_test", "physics_serial_test", "physics_serial_policy_test")
 NAV_TEST_TARGETS = ("nav_test", "nav_serial_test", "nav_serial_policy_test")
 CHARACTER_TEST_TARGETS = ("character_test", "character_nav_test", "character_serial_test", "character_nav_serial_test", "character_serial_policy_test", "character_nav_serial_policy_test")
 PHYSICS_GUI_TEST_TARGETS = ("physics_panel_off", "physics_panel", "physics_panel_character")

@@ -31,11 +31,6 @@
       "features": [ "C3D_PHYSICS_SERIAL" ],
       "dependencies": [ "c3d_physics", "c3d_serial", "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "b3", "cgltf", "ufbx", "shaderc" ]
     },
-    "fracture_test": {
-      "type": "test",
-      "fp-math": "strict",
-      "sources": [ "test/fracture/*" ]
-    },
     "physics_test": {
       "type": "test",
       "sources": [ "test/*" ]

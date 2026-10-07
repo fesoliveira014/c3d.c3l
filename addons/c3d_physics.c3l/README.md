@@ -71,15 +71,14 @@ Edge/corner contacts also count; the rule does not measure shared face area. Ove
 example uses 0.5 m cubes on a 0.508 m pitch: face gaps are below the default
 0.01 m threshold, diagonal gaps are above it, producing 112 welds.
 
-## CPU fracture geometry
+## Fracture generation
 
-`c3d::physics::fracture` provides `create_voronoi_fracture` and `create_boolean`
-over explicit indexed solid meshes. A reusable bounded workspace holds temporary
-geometry; each returned `FractureResult` independently owns its fragment arrays.
-Pieces carry translated local meshes and application material labels. The module
-creates no scene nodes, GPU resources or native physics objects. See
-[Fracture geometry](../../docs/fracture.md#owned-surface-generation) for input,
-quantization, material, ownership and capacity contracts.
+Fracture generation is maintained in the standalone
+[c3d_fracture.c3l](https://github.com/fesoliveira014/c3d_fracture.c3l) project under
+the `fracture` namespace, with c3d as a dependency. This package accepts
+authored hulls through `add_breakable_pieces` and retains captured recipes,
+preparation, welds and break events. See [Fracture generation](../../docs/fracture.md)
+for the project boundary.
 
 ## Pending fracture preparation
 
@@ -273,6 +272,6 @@ separately on the Windows RTX 4090 host.
 ![An impact opens the authored wall](images/breakable.png)
 
 Run `python scripts/build.py --test` for the full CPU matrix, or
-`c3c test physics_test --path addons/c3d_physics.c3l` for the package. The fracture
+`c3c test physics_test --path addons/c3d_physics.c3l` for the package. The breakable
 cases cover ownership, rollback, native thresholds, removed assembly shapes,
 world replacement, overflow, publication and motion inheritance.
