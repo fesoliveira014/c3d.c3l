@@ -86,6 +86,7 @@ fn void test_text_invalid_limits_fail_before_allocation() @test {
         )) == c3d::INVALID_ARGUMENT);
         assert(allocator.calls == 0 && allocator.live == 0);
         assert(diagnostic.cause == c3d::INVALID_ARGUMENT && !diagnostic.has_text_position);
+        assert(!diagnostic.pointer.len && !diagnostic.byte_offset && !diagnostic.line && !diagnostic.byte_column);
     }
 }
 

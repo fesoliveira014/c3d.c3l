@@ -101,3 +101,35 @@ fn void? JsonOutput.unsigned(&self, String name, ulong value) {
     String token = (String)(io::bprintf(scratch[..], "%s", value) ?? c3d::CAPACITY_EXCEEDED~!);
     self.number(name, token)!;
 }
+
+fn void? JsonOutput.float_bits(&self, String name, uint bits) {
+    char[TEXT_NUMBER_FORMAT_BYTES] scratch;
+    self.number(name, text_format_f32(bits, scratch[..])!)!;
+}
+
+fn void? JsonOutput.double_bits(&self, String name, ulong bits) {
+    char[TEXT_NUMBER_FORMAT_BYTES] scratch;
+    self.number(name, text_format_f64(bits, scratch[..])!)!;
+}
+
+fn void? JsonOutput.boolean(&self, String name, bool value) {
+    self.literal(name, value ? "true" : "false")!;
+}
+
+fn void? JsonOutput.lanes(
+    &self,
+    String name,
+    uint* values,
+    uint count,
+    bool integer = false,
+) {
+    self.begin(name, false)!;
+    for (uint index = 0; index < count; index++) {
+        if (integer) {
+            self.unsigned("", values[index])!;
+        } else {
+            self.float_bits("", values[index])!;
+        }
+    }
+    self.end()!;
+}
