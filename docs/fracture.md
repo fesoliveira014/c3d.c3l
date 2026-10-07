@@ -3,7 +3,7 @@
 `c3d::physics::fracture` provides bounded workspaces, exact arithmetic, filtered
 geometric predicates, centered quantization, complete private solid validation
 and exact source construction records, convex-cell clipping and local face-driven
-partitioning with material occupancy and exact planar boundary reconstruction and triangulation. Public Boolean/Voronoi construction and collision reconstruction remain separate layers.
+partitioning with material occupancy and exact planar boundary reconstruction, triangulation and float publication arithmetic. Public Boolean/Voronoi construction and collision reconstruction remain separate layers.
 
 ## Workspace contract
 
@@ -508,3 +508,72 @@ predicates, uses 16 wide values and retains 27,512 bytes. No reservation grew.
 These measurements exclude solid validation and public generation. The boundary
 gathering measurements above cover its separate scaling requirement; full-kernel
 benchmarks remain acceptance work.
+
+
+## Exact float publication arithmetic
+
+All exact-to-binary32 conversions round the rational value directly to nearest,
+with ties to even. There is no binary64 intermediate. The ratio converter handles
+normal/subnormal boundaries, signed underflow, finite overflow and full 8192-bit
+operands; bounded remainder-bit extraction avoids an overflowing scaling shift.
+Overflow returns NUMERICAL_FAILURE. Its denominator is positive by contract.
+
+Shared source-frame points are rounded once. Grid conversion evaluates
+`anchor + (center + point) * 2^step_exponent` as an exact rational, including grid
+steps below the smallest binary32 exponent. Piece centroids use exact signed
+volume and first moments from the common float surface: with triangle determinant
+`d = det(a,b,c)`, `D = 4*sum(d)` and `N = sum(d*(a+b+c))`, the centroid is `N/D`
+in binary32 integer units. The raw surface and positive total volume are private
+contracts. Origins and local differences also round directly to nearest-even.
+
+Frame errors compare squared Euclidean distances exactly. Each reconstructed
+`origin + local` must be within `resolution_m` of its exact source-frame target,
+each rounded centroid within that resolution of `N/D`, and both copies of a
+shared cut point within the resolution of each other. These comparisons use
+integer products with positive common denominators, never float subtraction.
+Failure is NUMERICAL_FAILURE. This allows the last-bit frame difference in an
+ordinary box split while enforcing the caller's requested accuracy.
+
+### Volume-error bound
+
+Let the final local float surface have `T` oriented triangles. For each triangle,
+let `u=b-a` and `v=c-a`. Let the corresponding exact target vertex differ from
+each final vertex by Euclidean distance at most epsilon. Translation by the
+piece origin does not change its volume or these edge vectors. Define
+
+```text
+Q = sum(||u cross v||_1)
+L = sum(||u||_1 + ||v||_1)
+B = epsilon*Q/2 + epsilon^2*L/2 + (2/3)*T*epsilon^3
+|6*delta_volume| <= 3*epsilon*Q + 3*epsilon^2*L + 4*T*epsilon^3
+```
+
+This follows by integrating the volume derivative along the linear vertex
+deformation. The derivative is one sixth of the sum of the three vertex
+displacements dotted with the evolving triangle cross product. Each displacement
+has length at most epsilon; each edge displacement has length at most
+`2*epsilon`. Integrating its constant, linear and quadratic terms gives the
+three terms above. Euclidean vector lengths are bounded by their L1 lengths;
+thus `Q/2` conservatively bounds surface area without introducing square roots.
+The complete expression is rational and contains no free relative epsilon.
+
+Binary32 coordinates and epsilon are integers in units `2^-149`. The returned
+bound is six times B in units `2^-447`, matching the exact six-volume sum.
+With at most `uint::max` triangles, edge components need 278 bits, Q at most
+591 bits, L at most 313 bits, and the final bound at most 872 bits. It fits the
+existing 896-bit packed integer. The common grid exponent is accounted for when
+the complete operation compares its source and published volumes.
+
+The numeric routines add no arena allocation and use the existing 24,800-byte
+arithmetic block. Ratio rounding peaks at five wide values, frame conversion at
+nine, volume-bound evaluation at ten, and centroid accumulation at nineteen of
+the reserved twenty-four. First moments fit 1145 bits; squared centroid error
+fits 2294 bits; the conservative frame-error bound is 3918 bits. Compile-time
+assertions and exhaustion/reuse cases cover these schedules. No reservation grew.
+
+Sixteen focused tests cover seeded finite float bit patterns, exact and near ties,
+subnormals, extreme coordinates, signed underflow, overflow, full-width ratios,
+centroids with cavities and disconnected shells, source-face ordering, grid
+affine conversion, exact error thresholds, and volume changes of forty deformed
+solid fixtures. Complete owning-result publication and final raw validation
+remain separate integration work.
