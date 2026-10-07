@@ -21,9 +21,37 @@ fn char[]? write_subtree(
     Scene* scene,
     AssetStore* assets,
     Node* root,
+    WriteOptions options = {},
 ) {
-    WriteState state = prepare_export(scene, assets, root)!;
-    WriteContext context = { .scene = scene, .assets = assets, .state = &state };
+    if (options.diagnostic) clear_serial_diagnostic(options.diagnostic);
+    char[]? bytes = write_subtree_binary(
+        allocator: allocator,
+        scene: scene,
+        assets: assets,
+        root: root,
+        options: options,
+    );
+    if (catch excuse = bytes) {
+        if (options.diagnostic && !options.diagnostic.cause) options.diagnostic.cause = excuse;
+        return excuse~;
+    }
+    return bytes;
+}
+
+fn char[]? write_subtree_binary(
+    Allocator allocator,
+    Scene* scene,
+    AssetStore* assets,
+    Node* root,
+    WriteOptions options,
+) @local {
+    WriteState state = prepare_export(
+        scene: scene,
+        assets: assets,
+        root: root,
+        diagnostic: options.diagnostic,
+    )!;
+    WriteContext context = { .scene = scene, .assets = assets, .state = &state, .diagnostic = options.diagnostic };
     Writer node_measure = measuring_writer();
     write_nodes(&context, &node_measure)!;
     node_measure.finish()!;
@@ -68,7 +96,12 @@ fn char[]? write_subtree(
     return bytes;
 }
 
-fn WriteState? prepare_export(Scene* scene, AssetStore* assets, Node* root) @local {
+fn WriteState? prepare_export(
+    Scene* scene,
+    AssetStore* assets,
+    Node* root,
+    SerialDiagnostic* diagnostic = null,
+) @private {
     if (root.id.index >= scene.nodes.len || &scene.nodes[root.id.index] != root) return c3d::INVALID_ARGUMENT~;
     WriteState state;
     state.projection = alloc::new_array_try(tmem, NodeProjection, scene.nodes.len) ?? c3d::CAPACITY_EXCEEDED~!;
@@ -82,19 +115,28 @@ fn WriteState? prepare_export(Scene* scene, AssetStore* assets, Node* root) @loc
     stack[0] = root;
     while (pending) {
         Node* node = stack[--pending];
-        state.projection[node.id.index] = { .selected = true, .local = node.local, .record = INDEX_NONE };
+        state.projection[node.id.index] = {
+            .selected = true, .local = node.local, .record = INDEX_NONE,
+        };
         state.ordered[state.count++] = node;
         for (Node* child = node.first_child; child; child = child.next_sibling) stack[pending++] = child;
     }
 
     state.collecting = true;
-    WriteContext context = { .scene = scene, .assets = assets, .state = &state };
-    foreach (node : state.ordered[:state.count]) {
+    WriteContext context = { .scene = scene, .assets = assets, .state = &state, .diagnostic = diagnostic };
+    foreach (record, node : state.ordered[:state.count]) {
         context.node = node;
         scene.world.@each_slot(node.id; uint slot) {
             if (codecs[slot].codec.collect) {
                 context.slot = slot;
-                codecs[slot].codec.collect(scene.world.component(node.id, slot), &context)!;
+                if (catch excuse = codecs[slot].codec.collect(scene.world.component(node.id, slot), &context)) {
+                    return component_diagnostic(
+                        diagnostic: diagnostic,
+                        record: (uint)record,
+                        type_name: codecs[slot].codec.name,
+                        cause: excuse,
+                    )~;
+                }
             }
         };
     }
@@ -175,7 +217,14 @@ fn void? write_components(WriteContext* context, Writer* writer) @local {
             usz before = writer.written();
             context.node = node;
             context.slot = slot;
-            codecs[slot].codec.write(context.scene.world.component(node.id, slot), writer, context)!;
+            if (catch excuse = codecs[slot].codec.write(context.scene.world.component(node.id, slot), writer, context)) {
+                return component_diagnostic(
+                    diagnostic: context.diagnostic,
+                    record: (uint)record,
+                    type_name: codecs[slot].codec.name,
+                    cause: excuse,
+                )~;
+            }
             writer.finish()!;
             uint size = (uint)(writer.written() - before);
             if (state.filling) {
