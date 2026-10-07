@@ -109,12 +109,15 @@ fn void? project_skin(void* component, void* value, WriteContext* context) @loca
     *(SkinAuthoring*)value = { .skeleton = skin.skeleton, .joints = joints };
 }
 
+<*
+ @require node == null || (usz)node >= (usz)context.scene.nodes.ptr
+ @require node == null || (usz)node - (usz)context.scene.nodes.ptr < context.scene.nodes.len * Node::size
+ @require node == null || ((usz)node - (usz)context.scene.nodes.ptr) % Node::size == 0
+*>
 fn NodeReference? make_skin_reference(WriteContext* context, Node* node) @local {
     if (!node) return c3d::INVALID_ID~;
     usz address = (usz)node;
     usz first = (usz)context.scene.nodes.ptr;
-    if (address < first || address - first >= context.scene.nodes.len * Node::size
-        || (address - first) % Node::size != 0) return c3d::INVALID_ARGUMENT~;
     // Removed slots have cleared IDs, but skin references retain their addresses.
     usz index = (address - first) / Node::size;
     ExportNodeOwners* owners = &context.state.projection[index].owners;
