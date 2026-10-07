@@ -23,9 +23,11 @@ and terminal impostor configuration. Unused transforms restart at identity,
 unused colors at white and unused billboards at `BILLBOARD_DEFAULT`. Bounds caches,
 revisions and logical LOD identities restart under normal owner rules.
 
-ModelInstance and the remaining owners have no policy in this delivery and return
-UNSUPPORTED. Animated Mesh baseline projection arrives with the Animator adapter;
-ordinary Mesh values currently preserve their explicit weights.
+ModelInstance, SkinBinding, IkChain, FootIk and LookAt restore in REFERENCES.
+Animator and AnimatedCrowd restore in OWNER. Their captured authoring, reference
+and restart contracts are detailed in the built-in policy inventory below.
+Animator export projects owned transforms and Mesh morph weights to captured
+baselines; ordinary Mesh values preserve their explicit weights.
 
 Asset payloads, scene-wide ambient/background/environment settings and cross-subtree references are outside this format. Saving Scene.root creates an ordinary new node on read; it does not overwrite destination scene settings.
 
@@ -190,3 +192,17 @@ including IEEE-preserving node transforms, are unchanged.
 
 See the [serialization example](serialization_example.md) for binary/JSONC reloads,
 schema export and reproducible CPU-only or Vulkan runs.
+
+## Physics adapter
+
+Select `c3d_serial`, enable `C3D_PHYSICS_SERIAL`, and call
+`physics::register_serial_codecs()` alongside `physics::register_physics(scene)`.
+The plain physics manifest has no serialization dependency. PhysicsBody persists
+BodyDesc and all nested collider authoring with copied arrays and strings. It
+restores PENDING with cleared failure/revision state; no native body is created.
+PhysicsJoint restores in REFERENCES with a required model-aware endpoint and
+only its selected variant. Wind and Force persist their complete values; Buoyancy
+persists density and drag and resets submerged fraction. RigidBody and Joint are
+explicitly transient. Ordinary physics synchronization creates the native state.
+The package inventory discovers every physics slot through normal registration;
+Cloth, Ragdoll and Breakable are explicit unsupported entries until their adapters.
