@@ -38,6 +38,11 @@ struct CollisionReflexCuts @local {
     uint[] face_components;
 }
 
+struct CollisionChunkConstraint @local {
+    ExactPlane* plane;
+    bool reversed;
+}
+
 struct CollisionChunkCut @local {
     ExactPlane* plane;
     CollisionChunkCut* next;
@@ -258,23 +263,61 @@ fn CollisionChunk*? split_collision_chunk(
     return next;
 }
 
-fn bool? collision_chunk_convex(SolidScratch* scratch, CollisionChunk* chunk, float resolution) @local {
-    foreach (face : chunk.patches) {
-        foreach (other : chunk.patches) {
-            foreach (point : other.boundary.boundary.vertices) {
-                int side = plane_side(scratch.exact, face.boundary.plane, point)!;
-                if (!side || (side > 0) == (face.boundary.reversed != face.flip)) continue;
+fn int compare_collision_chunk_constraints(CollisionChunkConstraint first, CollisionChunkConstraint second) @local {
+    int order = compare_exact_planes(first.plane, second.plane);
+    if (order) return order;
+    return first.reversed == second.reversed ? 0 : first.reversed ? 1 : -1;
+}
 
-                if (!within_collision_plane_distance(
-                    scratch: scratch.exact,
-                    plane: face.boundary.plane,
-                    vertex: point,
-                    resolution: resolution,
-                )!) return false;
-            }
+fn bool? collision_chunk_convex(SolidScratch* scratch, CollisionChunk* chunk, float resolution) @private {
+    usz saved = scratch.used;
+    defer scratch.used = saved;
+    CollisionChunkConstraint[] constraints = reserve_elements(scratch, CollisionChunkConstraint, chunk.patches.len)!;
+    BoundaryPatch[] patches = reserve_elements(scratch, BoundaryPatch, chunk.patches.len)!;
+    foreach (uint index, patch : chunk.patches) {
+        constraints[index] = { .plane = patch.boundary.plane, .reversed = patch.boundary.reversed != patch.flip };
+        patches[index] = patch.boundary;
+    }
+    sort::quicksort(constraints, &compare_collision_chunk_constraints);
+    uint constraint_count;
+    foreach (constraint : constraints) {
+        if (!constraint_count || compare_collision_chunk_constraints(constraints[constraint_count - 1], constraint)) {
+            constraints[constraint_count++] = constraint;
         }
     }
 
+    BoundaryPointIndex points = index_boundary_points(scratch, patches)!;
+    uint point_count;
+    foreach (point : points.order) {
+        bool same = point_count != 0;
+        if (same) for (uint axis = 0; axis < SPACE_AXES; axis++) {
+            if (compare_boundary_coordinate(
+                scratch: scratch.exact,
+                first: &points.points[points.order[point_count - 1]],
+                second: &points.points[point],
+                axis: axis,
+            )!) {
+                same = false;
+                break;
+            }
+        }
+        if (!same) points.order[point_count++] = point;
+    }
+
+    foreach (constraint : constraints[:constraint_count]) {
+        foreach (point : points.order[:point_count]) {
+            PlaneTriple vertex = points.points[point].vertex;
+            int side = plane_side(scratch.exact, constraint.plane, vertex)!;
+            if (!side || (side > 0) == constraint.reversed) continue;
+
+            if (!within_collision_plane_distance(
+                scratch: scratch.exact,
+                plane: constraint.plane,
+                vertex: vertex,
+                resolution: resolution,
+            )!) return false;
+        }
+    }
     return true;
 }
 
