@@ -57,6 +57,7 @@
         "test_billboards.c3",
         "test_probe_volume.c3",
         "test_probe_update.c3",
+        "test_probe_classification_lifetime.c3",
         "test_probe_classification.c3",
         "test_probe_sampling.c3",
         "test_screen_space_gi.c3",
