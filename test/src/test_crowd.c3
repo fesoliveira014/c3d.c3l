@@ -700,3 +700,43 @@ fn void test_removing_pending_crowd_releases_copied_authoring() @test {
     destroy_fixture(&fixture);
     assert(!tracking.has_leaks());
 }
+
+fn void test_pending_crowd_rejects_retired_sources_before_runtime_allocation() @test {
+    for (uint source = 0; source < 4; source++) {
+        TrackingAllocator tracking;
+        tracking.init(mem);
+        defer tracking.free();
+        Fixture fixture = make_fixture();
+        scene::destroy_scene(&fixture.scene);
+        fixture.scene = scene::create_scene(&tracking, { .max_nodes = 8 });
+        Node* node = fixture.scene.add_node()!!;
+        CrowdInstance[1] instances = { walker(&fixture, placed({ 1, 2, 3 }), 0.25f) };
+        model::attach_crowd(
+            assets: &fixture.assets,
+            scene: &fixture.scene,
+            node: node,
+            model: fixture.model,
+            capacity: 3,
+            pose_bounds: unit_bounds(),
+            instances: instances[..],
+        )!!;
+        ModelTemplate* template = &fixture.assets.model(fixture.model).data;
+        switch (source) {
+            case 0: fixture.assets.remove_clip(template.clips[0]);
+            case 1: fixture.assets.remove_skeleton(template.skins[0].skeleton);
+            case 2: fixture.assets.remove_geometry(template.meshes[1].geometry);
+            default: fixture.assets.remove_material(template.meshes[1].material);
+        }
+        sz bytes = tracking.allocated();
+        sz allocations = tracking.total_allocation_count();
+        uint free_nodes = fixture.scene.world.entities.free_count;
+        assert(@catch(model::prepare_crowd(&fixture.assets, &fixture.scene, node)) == c3d::INVALID_ID);
+        AnimatedCrowd* crowd = fixture.scene.get(node, AnimatedCrowd);
+        assert(!crowd.is_prepared() && !node.first_child && !crowd.parts.len && !crowd.palettes.len);
+        assert(crowd.count == 1 && crowd.poses[0].time == 0.25f && crowd.start_times[0] == 0.25f);
+        assert(fixture.scene.count(InstancedMesh) == 0 && fixture.scene.world.entities.free_count == free_nodes);
+        assert(tracking.allocated() == bytes && tracking.total_allocation_count() == allocations);
+        destroy_fixture(&fixture);
+        assert(!tracking.has_leaks());
+    }
+}
