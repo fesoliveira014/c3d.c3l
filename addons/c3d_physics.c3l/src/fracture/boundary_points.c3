@@ -50,8 +50,8 @@ fn int? compare_boundary_coordinate(
     uint axis,
 ) @private {
     scratch.predicate_count++;
-    std::time::Clock started = clock::now();
-    defer scratch.exact_nanoseconds += (ulong)started.to_now();
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     uint saved = scratch.count;
     defer scratch.count = saved;
     WideInteger* left = scratch.take()!;

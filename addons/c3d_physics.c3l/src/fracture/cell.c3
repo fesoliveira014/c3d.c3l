@@ -1,5 +1,6 @@
 module c3d::physics::fracture;
 
+import std::time;
 import std::math;
 import std::sort;
 
@@ -63,6 +64,8 @@ fn void? bounds_axis_plane(
     long bound,
     bool quantized,
 ) @private {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     uint saved = scratch.count;
     defer scratch.count = saved;
     WideInteger*[HOMOGENEOUS_COMPONENTS] coefficients;
@@ -79,11 +82,15 @@ fn void? bounds_axis_plane(
     return;
 }
 
-fn ConvexCell? create_bounds_cell(SolidScratch* scratch, SolidSurface* surface) @private {
+fn ConvexCell? create_bounds_cell(
+    SolidScratch* scratch,
+    SolidSurface* surface,
+    SolidBounds* bounds_override = null,
+) @private {
     usz saved = scratch.used;
     defer catch scratch.used = saved;
     ExactPlane[] planes = reserve_elements(scratch, ExactPlane, BOX_PLANES)!;
-    SolidBounds bounds = surface.nodes[0].bounds;
+    SolidBounds bounds = bounds_override ? *bounds_override : surface.nodes[0].bounds;
     for (uint axis = 0; axis < SPACE_AXES; axis++) {
         for (uint end = 0; end < 2; end++) {
             bounds_axis_plane(

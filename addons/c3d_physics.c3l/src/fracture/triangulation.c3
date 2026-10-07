@@ -3,6 +3,7 @@ module c3d::physics::fracture;
 import c3d;
 import std::math;
 import std::sort;
+import std::time;
 
 struct PatchTriangle @private {
     uint[TRIANGLE_CORNERS] vertices;
@@ -142,6 +143,14 @@ fn int compare_patch_triangles(PatchTriangle first, PatchTriangle second) @local
 }
 
 fn PatchTriangles? triangulate_boundary_patch(SolidScratch* scratch, BoundaryPatch* patch) @private {
+    ulong predicates_before = scratch.exact.predicate_count;
+    std::time::Clock started = clock::now();
+    defer {
+        FractureStatistics* statistics = &scratch.exact.statistics;
+        statistics.max_patch_vertices = math::max(statistics.max_patch_vertices, (usz)patch.boundary.vertices.len);
+        statistics.max_patch_predicates = math::max(statistics.max_patch_predicates, scratch.exact.predicate_count - predicates_before);
+        statistics.max_patch_nanoseconds = math::max(statistics.max_patch_nanoseconds, (ulong)started.to_now());
+    }
     usz saved = scratch.used;
     defer catch scratch.used = saved;
     if (!patch.corners.len) return {};

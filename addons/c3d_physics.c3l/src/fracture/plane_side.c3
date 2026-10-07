@@ -6,6 +6,8 @@ import std::time;
 alias PlaneTriple @private = ExactPlane*[SPACE_AXES];
 
 fn bool? independent_plane_normals(ExactScratch* scratch, PlaneTriple planes) @private {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     uint saved = scratch.count;
     defer scratch.count = saved;
     WideInteger* result = scratch.take()!;
@@ -23,6 +25,8 @@ fn bool? independent_plane_normals(ExactScratch* scratch, PlaneTriple planes) @p
 }
 
 fn int? exact_plane_side(ExactScratch* scratch, ExactPlane* plane, PlaneTriple vertex) @private {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     uint saved = scratch.count;
     defer scratch.count = saved;
     WideInteger*[HOMOGENEOUS_COMPONENTS] point;
@@ -62,7 +66,7 @@ fn int? plane_side(ExactScratch* scratch, ExactPlane* plane, PlaneTriple vertex)
         scratch.filtered_count++;
         return filtered;
     }
-    Clock started = clock::now();
-    defer scratch.exact_nanoseconds += (ulong)started.to_now();
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     return exact_plane_side(scratch, plane, vertex);
 }

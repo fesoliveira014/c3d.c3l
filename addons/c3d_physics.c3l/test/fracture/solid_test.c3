@@ -216,7 +216,7 @@ fn void test_solid_scratch_capacity_failure_restores_cursor_and_reuses_workspace
     assert(scratch.used == MIN_FRACTURE_SCRATCH_BYTES);
     char[128] alignment_storage;
     for (usz offset = 0; offset < 8; offset++) {
-        SolidScratch alignment_scratch = { .storage = alignment_storage[offset..] };
+        SolidScratch alignment_scratch = { .storage = alignment_storage[offset..], .exact = scratch.exact };
         void* reserved = alignment_scratch.reserve(3, ulong::size, 32)!!;
         assert((uptr)reserved % 32 == 0);
         assert(alignment_scratch.peak == alignment_scratch.used && alignment_scratch.used <= alignment_storage.len - offset);

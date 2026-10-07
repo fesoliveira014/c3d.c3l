@@ -170,5 +170,6 @@ fn CellSplit? split_convex_cell(SolidScratch* scratch, ConvexCell* parent, Exact
     positive.trim();
     pair_cell_corners(scratch, &negative.cell)!;
     pair_cell_corners(scratch, &positive.cell)!;
+    scratch.exact.statistics.cell_split_count++;
     return { .negative = negative.cell, .positive = positive.cell };
 }

@@ -4,6 +4,8 @@ import std::time;
 import std::math;
 
 fn int? exact_projected_orientation(ExactScratch* scratch, Vec3[TRIANGLE_CORNERS] points, uint dropped_axis) @private {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     uint saved = scratch.count;
     defer scratch.count = saved;
     WideInteger* one = scratch.take()!;
@@ -51,15 +53,15 @@ fn int? projected_orientation(ExactScratch* scratch, Vec3[TRIANGLE_CORNERS] poin
         return sign;
     }
     $endif
-    Clock started = clock::now();
-    defer scratch.exact_nanoseconds += (ulong)started.to_now();
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     return exact_projected_orientation(scratch, points, dropped_axis);
 }
 
 fn int projected_grid_orientation(ExactScratch* scratch, GridPoint[TRIANGLE_CORNERS] points, uint dropped_axis) @private {
     scratch.predicate_count++;
-    Clock started = clock::now();
-    defer scratch.exact_nanoseconds += (ulong)started.to_now();
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     uint first = (dropped_axis + 1) % SPACE_AXES;
     uint second = (dropped_axis + 2) % SPACE_AXES;
     int128 area = ((int128)points[1][first] - points[0][first]) * ((int128)points[2][second] - points[0][second])

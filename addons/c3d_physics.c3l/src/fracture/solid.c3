@@ -55,6 +55,7 @@ fn void*? SolidScratch.reserve(
     usz start = self.used + padding;
     self.used = start + count * stride;
     self.peak = math::max(self.peak, self.used);
+    self.exact.statistics.scratch_peak = math::max(self.exact.statistics.scratch_peak, self.used);
     return self.storage.ptr + start;
 }
 
@@ -69,6 +70,8 @@ fn SolidScratch begin_solid_scratch(FractureWorkspace* workspace) @private {
     exact.predicate_count = 0;
     exact.filtered_count = 0;
     exact.exact_nanoseconds = 0;
+    exact.measurement_depth = 0;
+    exact.statistics = { .scratch_peak = MIN_FRACTURE_SCRATCH_BYTES };
     return {
         .storage = workspace.storage,
         .used = MIN_FRACTURE_SCRATCH_BYTES,
