@@ -107,6 +107,32 @@ fn void test_voronoi_generation_oblique_sites_and_disconnected_cell_are_repeatab
     }
 }
 
+fn void test_voronoi_generation_rotated_sources_publish_closed_fragments() @test {
+    FractureLimits limits = publish_limits();
+    limits.scratch_bytes = 33554432;
+    FractureWorkspace workspace = create_fracture_workspace(mem, limits)!!;
+    defer destroy_fracture_workspace(&workspace);
+    for (uint sample = 0; sample < 12; sample++) {
+        ContainmentFixture source;
+        partition_fixture(&source, 0);
+        double[<3>] axis = { 1, 2 + (double)sample, 3 };
+        Quaternion rotation = quaternion::from_axis_angle{double}(axis.normalize(), 0.1 + 0.37 * sample);
+        foreach (&point : source.positions[:source.vertex_count]) *point = (Vec3)(rotation * ((double[<3>])*point / 6.0));
+        FractureResult result = create_voronoi_fracture(
+            allocator: mem, workspace: &workspace, source: source.mesh,
+            sites: { { -0.2, 0, 0 }, { 0.2, 0, 0 } },
+            cut: { .material_slot = 77, .uv_repeats_per_meter = 1 },
+        )!!;
+        defer destroy_fracture_result(&result);
+        assert(result.pieces.len == 2);
+        SolidScratch scratch = begin_solid_scratch(&workspace);
+        assert_published_valid(&scratch, result);
+        double volume;
+        foreach (piece : result.pieces) volume += generated_piece_volume(piece);
+        assert(math::abs(volume - 1) < limits.resolution_m);
+    }
+}
+
 fn void test_voronoi_generation_faults_distinguish_inputs_topology_and_quantization() @test {
     FractureWorkspace workspace = create_fracture_workspace(mem, publish_limits())!!;
     defer destroy_fracture_workspace(&workspace);

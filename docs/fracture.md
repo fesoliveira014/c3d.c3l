@@ -670,3 +670,34 @@ requires each triangle exactly twice on distinct pieces with opposite winding.
 The public operation also records final and occupied leaf counts in the workspace
 measurement block. Complete-kernel timing and scaling acceptance remain separate
 from these correctness tests.
+
+
+### Regularized Boolean surfaces
+
+UNION selects material occupied by either operand; INTERSECTION selects material
+occupied by both; DIFFERENCE selects material in the first operand outside the
+second. Boundary-only contacts have no volume. Coincident exterior coverage uses
+the first source's provenance and material, including partial overlaps and
+unequal coplanar triangulations.
+
+Retained first-source surfaces always keep their authored attributes. UNION also
+keeps surviving second-source authored surfaces. INTERSECTION and DIFFERENCE use
+`CutSurface` for exposed second-source surfaces; DIFFERENCE reverses their outward
+orientation. Generated coplanar fragments are merged before triangulation, so
+second-source triangle subdivisions do not become artificial cut boundaries.
+Signed planar subtraction preserves holes in partially coincident patches.
+
+Selected cells are grouped by positive-area face connectivity. Boundary patches
+from both sources are reconciled globally and then passed through the same owned
+surface publisher as Voronoi results. Boolean pieces use canonical geometry order
+without a site key. Source-face permutations retain output bytes. Identical-source
+DIFFERENCE and disjoint INTERSECTION return successful empty owned results.
+
+The focused integration cases run at O0, O3, O4 and explicit O4 fast math. They
+cover source/site preparation, exact surface-point identity, authored/cut streams,
+shared triangle selections, final common/local validation, independent ownership,
+output/scratch/allocation limits and immediate reuse. Public fixtures include
+2/4/8-site boxes, oblique cuts, cavities, nested islands, concavity, disconnected
+components, twelve rotated unit cubes and all three Boolean operations over
+overlapping, contained, identical, touching and disjoint solids. Full-kernel
+measurements and scene/native integration have separate acceptance gates.
