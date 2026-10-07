@@ -801,6 +801,10 @@ const uint PROBE_VISIBILITY_CELL = 16;
 const uint PROBE_ATLAS_COLUMNS = 256;
 const uint PROBE_ATLAS_IRRADIANCE = 0;
 const uint PROBE_ATLAS_VISIBILITY = 1;
+const uint PROBE_CLASS_EXCLUDED = 0;
+const uint PROBE_CLASS_PROVISIONAL = 1;
+const uint PROBE_CLASS_ELIGIBLE = 2;
+const uint PROBE_VOLUME_UNSWEPT = 1;
 
 struct ProbeVolumeGpu {
     vec4         origin_energy;
@@ -809,7 +813,7 @@ struct ProbeVolumeGpu {
     uint         count_x;
     uint         count_y;
     uint         count_z;
-    uint         _pad0;
+    uint         flags;
     TextureIndex irradiance;
     TextureIndex visibility;
     SamplerIndex sampler_index;

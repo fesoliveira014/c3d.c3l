@@ -18,6 +18,8 @@ GPU_DECLARE_READONLY_ARRAY_REF(RayResultReadonly, RayResultGpu);
 
 const float PROBE_DISTANCE_SHARPNESS = 50.0; // cosine power of the visibility filter; narrow keeps edges of occluders
 const float PROBE_MIN_WEIGHT_SUM = 1e-4;     // a texel no ray reached keeps a finite estimate
+const float PROBE_EXCLUSION_THRESHOLD = 0.25; // Measured margins: 0.25 open/front, 0.1875 behind at 32 rays.
+const uint PROBE_CLASS_FRESH_ELIGIBLE = 3u; // carries the visibility reset until the next irradiance visit
 
 void main() {
     ProbeBlendRoot root = ProbeBlendRoot(pc.root_gpu);
@@ -40,12 +42,14 @@ void main() {
     float max_distance = volume.spacing_max_distance.w;
     vec3 sum = vec3(0.0);
     float weight_sum = 0.0;
+    uint back_faces = 0u;
     uint first_ray = (probe - root.first_probe) * root.rays_per_probe;
     for (uint ray = 0u; ray < root.rays_per_probe; ray++) {
         vec4 result = RayResultReadonly(root.rays).values[first_ray + ray].radiance_distance;
         vec3 direction = quaternion_rotate(root.rotation, spherical_fibonacci(ray, root.rays_per_probe));
         float cosine = max(dot(texel_direction, direction), 0.0);
         if (irradiance) {
+            if (result.w < 0.0) back_faces++;
             // Back-face rays carry zero radiance and keep their weight, so a probe inside geometry goes dark
             // instead of taking its estimate from the few grazing rays that reach lit faces.
             sum += cosine * result.rgb;
@@ -61,6 +65,21 @@ void main() {
     vec3 estimate = sum / max(weight_sum, PROBE_MIN_WEIGHT_SUM) * (irradiance ? PI : 1.0);
     uint atlas = irradiance ? volume.irradiance : volume.visibility;
     vec4 previous = load_storage_texture(atlas, texel);
-    vec3 blended = mix(estimate, previous.rgb, root.hysteresis);
-    store_storage_texture(atlas, texel, vec4(blended, 1.0));
+    float hysteresis = root.hysteresis;
+    uint classification = PROBE_CLASS_ELIGIBLE;
+    if (irradiance) {
+        bool excluded = float(back_faces) > PROBE_EXCLUSION_THRESHOLD * float(root.rays_per_probe);
+        classification = excluded ? PROBE_CLASS_EXCLUDED : PROBE_CLASS_ELIGIBLE;
+        if (!excluded && uint(previous.a) == PROBE_CLASS_EXCLUDED) {
+            classification = PROBE_CLASS_FRESH_ELIGIBLE;
+            hysteresis = 0.0;
+        }
+    } else {
+        ivec2 state_texel = ivec2(atlas_cell * PROBE_IRRADIANCE_CELL + 1u);
+        float stored = texelFetch(
+            gpu_texture_heap[nonuniformEXT(GPU_HEAP_SLOT(volume.irradiance))], state_texel, 0).a;
+        if (uint(stored) == PROBE_CLASS_FRESH_ELIGIBLE) hysteresis = 0.0;
+    }
+    vec3 blended = mix(estimate, previous.rgb, hysteresis);
+    store_storage_texture(atlas, texel, vec4(blended, float(classification)));
 }

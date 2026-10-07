@@ -151,6 +151,8 @@
     { "include": "shadows.glsl", "stage": "frag", "defines": ["RT_SHADOWS"] },
     { "include": "shadows.glsl", "stage": "frag", "defines": ["RT_SHADOWS", "SCENE_TRACE_BVH"] },
     { "include": "ibl.glsl", "stage": "frag", "defines": [] },
+    { "include": "probe_classification.glsl", "stage": "frag", "defines": [] },
+    { "include": "probe_classification.glsl", "stage": "comp", "defines": [] },
     { "include": "reflection_probe.glsl", "stage": "frag", "defines": [] },
     { "include": "reflection_probe.glsl", "stage": "comp", "defines": [] },
     { "include": "ambient_occlusion.glsl", "stage": "frag", "defines": [] },

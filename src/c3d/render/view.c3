@@ -1284,7 +1284,7 @@ fn bool velocity_before_lighting(ViewDesc* desc) @private {
  @param jitter : "NDC offset already applied to the rendered matrices."
  @param mip_bias : "Added to material texture level of detail."
  @param ao_texture : "AO sampled view; zero when the view has none."
- @param probe_volumes : "ProbeVolumeSetGpu of the view; zero when no volume applies."
+ @param probe_volumes : "Defined visible ProbeVolumeSetGpu; zero when none exist."
  @param reflection_probes : "ReflectionProbeSetGpu of the view; zero when no probe applies."
  @param ssgi_texture : "Screen-space GI sampled view; zero when the view has none."
  @param clip_plane : "Relative plane whose positive side stays; zero clips nothing."
