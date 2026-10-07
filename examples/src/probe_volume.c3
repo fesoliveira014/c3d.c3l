@@ -18,6 +18,7 @@ import c3d::model;
 import c3d::platform;
 import c3d::render;
 import c3d::scene;
+import c3d::shader::compile;
 import imgui;
 
 const String MODEL_FILE @local = "../assets/benchmark/sponza/glTF/Sponza.gltf";
@@ -36,13 +37,17 @@ const float NEAR_PLANE_SCALE @local = 0.002f;
 const uint WINDOW_WIDTH @local = 1280;
 const uint WINDOW_HEIGHT @local = 720;
 const uint PROBE_COLOR @local = 0xFF40C0FF;
+const uint PROBE_MARKER_CAPACITY @local =
+  light::PROBE_COUNT_MAX * light::PROBE_COUNT_MAX * light::PROBE_COUNT_MAX; // no growth on inspector edits
+const float PROBE_MARKER_SIZE @local = 0.08f; // of the smallest spacing; marker circles remain separate
+const char[*] PROBE_MARKER_SOURCE @local = $embed("../shaders/custom/probe_marker.frag.glsl");
 const float SUN_RADIANS_PER_SECOND @local = 0.2f;
 const Vec3 SUN_DIRECTION @local = { -0.3f, -1, -0.2f };
 const Vec3 BRIGHT_OBJECT_SIZE @local = { 0.4f, 0.4f, 0.4f };   // a contact bounce the width of a floor tile
 const Vec3 BRIGHT_OBJECT_EMISSION @local = { 1, 0.15f, 0.05f };
 const float BRIGHT_OBJECT_STRENGTH @local = 8;
 const Vec2 CONTROLS_PANEL_POSITION @local = { 16, 16 };
-const Vec2 CONTROLS_PANEL_SIZE @local = { 320, 200 };
+const Vec2 CONTROLS_PANEL_SIZE @local = { 320, 225 };
 const Vec2 SCENE_PANEL_POSITION @local = { 16, 230 };
 const Vec2 SCENE_PANEL_SIZE @local = { 320, 470 };
 const Vec2 TARGETS_PANEL_POSITION @local = { 920, 16 };
@@ -64,6 +69,66 @@ struct Options @local {
     bool      deferred;
     bool      ray_queries;
     ProbeFill fill;
+}
+
+struct ProbeMarkers @local {
+    Node* node;
+    Vec3 center;
+    Vec3 half_extents;
+    uint[<3>] counts;
+}
+
+fn ProbeMarkers? create_probe_markers(AssetStore* assets, Scene* scene) @local {
+    ShaderId shader;
+    @pool() {
+        ShaderDesc desc = {
+            .fragment = compile::compile_glsl(
+                allocator: tmem,
+                source: (String)PROBE_MARKER_SOURCE[..],
+                stage: ShaderStage.FRAGMENT,
+                debug_name: "probe_marker.frag",
+            )!,
+        };
+        shader = assets.add_shader(&desc, "probe_volume/markers")!;
+    };
+    MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
+    common.alpha_mode = AlphaMode.BLEND;
+    common.depth_write = false;
+    common.depth_test = false;
+    MaterialId material = assets.add_material(material::custom(shader: shader, common: common))!;
+    Node* node = scene.add_billboards(
+        material: material,
+        capacity: PROBE_MARKER_CAPACITY,
+        name: "probe_markers",
+    )!;
+    return { .node = node };
+}
+
+fn void? update_probe_markers(ProbeMarkers* markers, Scene* scene, Node* volume_node) @local {
+    ProbeVolume* volume = scene.get(volume_node, ProbeVolume);
+    Vec3 center = volume_node.world_position();
+    if (markers.counts == volume.counts && markers.half_extents == volume.half_extents && markers.center == center) return;
+
+    scene.resize_billboards(markers.node, volume.probe_count())!;
+    BillboardBatch* batch = scene.get(markers.node, BillboardBatch);
+    Vec3 spacing = volume.spacing();
+    float size = math::min(spacing.x, spacing.y, spacing.z) * PROBE_MARKER_SIZE;
+    for (uint index = 0; index < batch.count; index++) {
+        uint[<3>] cell = {
+            index % volume.counts.x,
+            (index / volume.counts.x) % volume.counts.y,
+            index / (volume.counts.x * volume.counts.y),
+        };
+        batch.billboards[index] = {
+            .position = center - volume.half_extents + (Vec3)cell * spacing,
+            .size = { size, size },
+            .color = { (float)cell.x, (float)cell.y, (float)cell.z, 1 },
+        };
+    }
+    scene.mark_billboards_dirty(markers.node);
+    markers.center = center;
+    markers.half_extents = volume.half_extents;
+    markers.counts = volume.counts;
 }
 
 fn void apply_orbit(Orbit* orbit, Input* input, Node* camera_node) @local {
@@ -147,6 +212,7 @@ fn void? run_gui(
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
     DebugDraw debug = debug::create_debug_draw(mem);
     defer debug::destroy_debug_draw(&debug);
+    ProbeMarkers markers = create_probe_markers(renderer.assets, scene)!;
 
     ViewDesc view_desc = render::default_view_desc();
     if (options.deferred) view_desc.shading = ShadingPath.DEFERRED;
@@ -174,6 +240,7 @@ fn void? run_gui(
             imgui::text_unformatted("Hiding the volume node shows the SH term.");
             imgui::checkbox("Volume visible", &volume_node.visible);
             imgui::checkbox("Draw probes", &draw_probes);
+            imgui::text_unformatted("Gray: provisional  Green: eligible  Red: excluded");
             imgui::checkbox("Move sun", &move_sun);
             imgui::checkbox("Bright object", &bright_object.visible);
             if (imgui::checkbox("Screen-space GI", &screen_space_gi)) {
@@ -200,9 +267,16 @@ fn void? run_gui(
         Quat turn = quaternion::from_axis_angle{float}({ 0, 1, 0 }, sun_angle);
         sun.local.rotation = maths::look_rotation(turn.rotate_vec3(SUN_DIRECTION.normalize()), { 0, 1, 0 });
         apply_orbit(orbit, input, camera_node);
+        markers.node.visible = draw_probes && volume_node.visible;
+        markers.node.layers = volume_node.layers;
         scene.update_world();
+        update_probe_markers(&markers, scene, volume_node)!;
         debug.clear();
-        if (draw_probes) debug.probe_volumes(scene, PROBE_COLOR);
+        if (draw_probes && volume_node.visible_effective) {
+            ProbeVolume* volume = scene.get(volume_node, ProbeVolume);
+            Vec3 center = volume_node.world_position();
+            debug.aabb({ .min = center - volume.half_extents, .max = center + volume.half_extents }, PROBE_COLOR);
+        }
         gui_renderer.finish_frame();
 
         platform::sync_window(window, renderer);
