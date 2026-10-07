@@ -2,7 +2,7 @@ module c3d::test::describe_core;
 
 import std::math;
 import c3d;
-import c3d::describe;
+import c3d::describe @public;
 
 struct SchemaValue @private {
     int amount;
@@ -239,4 +239,13 @@ fn void test_numeric_ranges_accept_integral_and_floating_endpoints() @test {
     record = {};
     describe::walk_descriptor(&authored, &visitor, null)!!;
     assert(record.fields == 2);
+}
+
+fn void test_numeric_ranges_reject_unrepresentable_narrow_and_unsigned_lane_bounds() @test {
+    assert(!describe::@range_valid(ichar, -129.0, 127.0));
+    assert(!describe::@range_valid(char, 0.0, 300.0));
+    assert(!describe::@range_valid(short, -32768.0, 32768.0));
+    assert(!describe::@range_valid(ushort, -1.0, 65535.0));
+    assert(!describe::@range_valid(uint[<3>], 0.0, 4294967296.0));
+    assert(!describe::@range_valid(char, 0.5, 255.0));
 }

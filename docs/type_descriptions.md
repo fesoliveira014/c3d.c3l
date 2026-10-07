@@ -49,10 +49,21 @@ serialization consumer; see [serialization.md](serialization.md).
 
 ## Fields and metadata
 
-The supported leaf kinds are `bool`, `int`, `uint`, `long`, `ulong`, `float`,
-`double`, `Vec2`, `Vec3`, `Vec4`, `Quat`, `String`, ordinary enums, entities and
-explicitly typed asset references. Nested structs, fixed arrays and slices are
-scopes. Vectors and quaternions remain leaf values.
+The supported leaf kinds are `bool`, `ichar`, `char`, `short`, `ushort`, `int`,
+`uint`, `long`, `ulong`, `float`, `double`, `Vec2`, `Vec3`, `Vec4`, `uint[<3>]`,
+`Mat4`, `Quat`, `String`, ordinary enums, entities and explicitly typed asset
+references. Nested structs, fixed arrays and slices are scopes. Vectors,
+matrices and quaternions remain leaf values.
+
+`ICHAR`, `CHAR`, `SHORT` and `USHORT` preserve their signedness and 8-bit or
+16-bit storage. Both 8-bit kinds are numbers, never characters. `UVEC3` carries exactly three unsigned 32-bit lanes; any vector
+storage padding is outside its value. `MAT4` carries all sixteen float
+coefficients in column-major order: element `4 * column + row` follows the
+column-vector convention, so translation occupies elements 12, 13 and 14.
+Each coefficient follows the consumer's FLOAT rules, including exceptional
+values. This includes shear and reflection. Consumers
+must not decompose a matrix into translation, rotation and scale or normalize
+its coefficients.
 
 Reflection rejects unsupported fields at compile time and names the field.
 Pointers, unions, `constdef`, flags and recursive type shapes are unsupported.
@@ -86,10 +97,12 @@ through `@field` and obey the same asset-kind preconditions.
 Numeric ranges are ordered, finite and representable by the field's scalar type.
 Integer endpoints must be integral. Reflection rejects invalid tags at compilation
 with the field name; handwritten fields enforce the same rules through their
-metadata contract. Ranges apply to numeric scalars, floating-point vectors and
-sequences of those values, excluding quaternions. Range metadata uses `double`, so
-it cannot express every 64-bit integer endpoint exactly. An absent range leaves
-the native typed widget unbounded.
+metadata contract. Ranges apply to numeric scalars, supported floating-point
+and unsigned vectors, and sequences of those values, excluding matrices and
+quaternions. Range metadata uses `double`, so it cannot express every 64-bit
+integer endpoint exactly. An absent range leaves the native typed widget
+bounded only by the scalar type's representable limits for narrow integers
+and unsigned vector lanes.
 
 Field metadata, enum-name arrays and field addresses are borrowed for the
 synchronous callback. A consumer that retains metadata must copy it. The walker

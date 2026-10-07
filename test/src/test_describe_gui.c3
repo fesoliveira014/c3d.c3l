@@ -29,6 +29,10 @@ struct InspectorChild @private {
 
 struct InspectorFields @private {
     InspectorChild child;
+    ichar signed_byte;
+    char unsigned_byte;
+    short signed_short;
+    ushort unsigned_short;
     int signed_value;
     uint unsigned_value;
     long signed_wide;
@@ -38,6 +42,8 @@ struct InspectorFields @private {
     Vec2 planar;
     Vec3 position;
     Vec4 color;
+    uint[<3>] counts @tag("range", { 0.0, 4294967295.0 });
+    Mat4 affine;
     Quat rotation;
     InspectorChoice choice;
     int[2] fixed_values @tag("range", { 0.0, 4.0 });
@@ -46,6 +52,12 @@ struct InspectorFields @private {
     GeometryId geometry;
     String title;
     int hidden_value @tag("transient", true);
+}
+
+struct InspectorIntegerLimits @private {
+    char bounded @tag("range", { 10.0, 20.0 });
+    char unbounded;
+    uint[<3>] lanes @tag("range", { 2.0, 4.0 });
 }
 
 struct DescriptionOnly @private {
@@ -265,12 +277,18 @@ fn void test_description_inspector_metadata_and_traversal_use_no_c3_allocations(
     describe::register_reflected(InspectorFields)!!;
     float[2] elements = { 0.25f, 0.75f };
     InspectorFields value = {
+        .signed_byte = ichar::min,
+        .unsigned_byte = char::max,
+        .signed_short = short::min,
+        .unsigned_short = ushort::max,
         .signed_value = int::min,
         .unsigned_value = uint::max,
         .signed_wide = long::max,
         .unsigned_wide = ulong::max,
         .bounded = 0.5f,
         .precise = 1.25,
+        .counts = { 1, 2147483648u, uint::max },
+        .affine = { .m = { -2, 0, 0, 0, 0.375f, 3, 0, 0, 0.125f, -0.5f, 4, 0, 7, -9, 11, 1 } },
         .rotation = quaternion::IDENTITY,
         .choice = SECOND,
         .fixed_values = { 3, 4 },
@@ -304,6 +322,10 @@ fn void test_description_inspector_metadata_and_traversal_use_no_c3_allocations(
     assert(output.contains("GEOMETRY 9:3"));
     assert(output.contains("Read-only text"));
     assert(!output.contains("hidden_value"));
+    assert(value.signed_byte == ichar::min && value.unsigned_byte == char::max);
+    assert(value.signed_short == short::min && value.unsigned_short == ushort::max);
+    assert(value.counts == (uint[<3>]){ 1, 2147483648u, uint::max });
+    assert(value.affine.m00 == -2 && value.affine.m01 == 0.375f && value.affine.m12 == -0.5f);
     assert(value.unsigned_value == uint::max);
     assert(value.signed_wide == long::max);
     assert(value.unsigned_wide == ulong::max);
@@ -505,4 +527,27 @@ fn void test_description_inspector_selects_declared_enum_values_and_normalizes_q
     (void)value_frame(descriptor, &value)!!;
     assert(value.rotation.v != (Vec4){ 0, 0, 0, 1 });
     assert(math::abs(value.rotation.length() - 1) < 0.00001f);
+}
+
+fn void test_description_inspector_clamps_narrow_and_unsigned_lanes_to_declared_and_type_limits() @test {
+    describe::register_reflected(InspectorIntegerLimits)!!;
+    InspectorIntegerLimits value = { .bounded = 10, .unbounded = 250, .lanes = { 2, 3, 4 } };
+    describe::Descriptor* descriptor = describe::get(InspectorIntegerLimits)!!;
+    imgui::Context context = create_context();
+    defer imgui::destroy_context(context);
+    void*[3] fields = { &value.bounded, &value.unbounded, &value.lanes };
+    foreach (field : fields) {
+        CaptureState capture = { .watched = field };
+        (void)value_frame(descriptor, &value, &capture)!!;
+        mouse_input(capture.position, false);
+        (void)value_frame(descriptor, &value)!!;
+        mouse_input(capture.position, true);
+        (void)value_frame(descriptor, &value)!!;
+        mouse_input(capture.position + (imgui::Vec2){ 10000, 0 }, true);
+        assert(value_frame(descriptor, &value)!!);
+        mouse_input(capture.position + (imgui::Vec2){ 10000, 0 }, false);
+        (void)value_frame(descriptor, &value)!!;
+    }
+    assert(value.bounded == 20 && value.unbounded == char::max);
+    assert(value.lanes == (uint[<3>]){ 4, 3, 4 });
 }

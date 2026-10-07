@@ -64,6 +64,34 @@ fn bool? description_field(describe::Visitor* visitor, describe::Info* info, voi
     switch (info.kind) {
         case BOOL:
             changed = imgui::checkbox("##value", (bool*)value);
+        case ICHAR:
+            changed = @description_numeric(
+                $Type: ichar,
+                info: info,
+                value: value,
+                data_type: imgui::DATA_TYPE_S8,
+            );
+        case CHAR:
+            changed = @description_numeric(
+                $Type: char,
+                info: info,
+                value: value,
+                data_type: imgui::DATA_TYPE_U8,
+            );
+        case SHORT:
+            changed = @description_numeric(
+                $Type: short,
+                info: info,
+                value: value,
+                data_type: imgui::DATA_TYPE_S16,
+            );
+        case USHORT:
+            changed = @description_numeric(
+                $Type: ushort,
+                info: info,
+                value: value,
+                data_type: imgui::DATA_TYPE_U16,
+            );
         case INT:
             changed = @description_numeric(
                 $Type: int,
@@ -130,6 +158,28 @@ fn bool? description_field(describe::Visitor* visitor, describe::Info* info, voi
                 data_type: imgui::DATA_TYPE_FLOAT,
                 components: 4,
             );
+        case UVEC3:
+            changed = @description_numeric(
+                $Type: uint,
+                info: info,
+                value: value,
+                data_type: imgui::DATA_TYPE_U32,
+                components: 3,
+            );
+        case MAT4:
+            imgui::begin_group();
+            for (int column = 0; column < 4; column++) {
+                imgui::push_id_int(column);
+                changed = @description_numeric(
+                    $Type: float,
+                    info: info,
+                    value: (float*)value + column * 4,
+                    data_type: imgui::DATA_TYPE_FLOAT,
+                    components: 4,
+                ) || changed;
+                imgui::pop_id();
+            }
+            imgui::end_group();
         case QUAT:
             changed = quat_widget("##value", (Quat*)value);
         case ENUM:
@@ -167,11 +217,22 @@ macro bool @description_numeric(
     $Type maximum;
     void* minimum_pointer;
     void* maximum_pointer;
+    bool bounded;
+    $if $Type::typeid == ichar::typeid || $Type::typeid == char::typeid
+        || $Type::typeid == short::typeid || $Type::typeid == ushort::typeid
+        || $Type::typeid == uint::typeid:
+        minimum = $Type::min;
+        maximum = $Type::max;
+        minimum_pointer = &minimum;
+        maximum_pointer = &maximum;
+        bounded = true;
+    $endif
     if (info.metadata.range.enabled) {
         minimum = ($Type)info.metadata.range.min;
         maximum = ($Type)info.metadata.range.max;
         minimum_pointer = &minimum;
         maximum_pointer = &maximum;
+        bounded = true;
     }
     bool changed = imgui::drag_scalar_n_ex(
         label: "##value",
@@ -184,7 +245,7 @@ macro bool @description_numeric(
         format: null,
         flags: imgui::SLIDER_FLAGS_ALWAYS_CLAMP,
     );
-    if (changed && info.metadata.range.enabled) {
+    if (changed && bounded) {
         $Type* elements = ($Type*)value;
         for (int index = 0; index < components; index++) {
             elements[index] = math::clamp(elements[index], minimum, maximum);

@@ -135,3 +135,20 @@ fn void test_binary_destination_out_of_memory_propagates_unchanged() @test @publ
     }
     assert(reader.owned.attempts == 1 && reader.owned.count == 0);
 }
+
+fn void test_binary_numeric_leaves_preserve_width_unsigned_lanes_and_affine_coefficients() @test @public {
+    describe::register_reflected(NumericFixture)!!;
+    describe::Descriptor* descriptor = describe::get(NumericFixture)!!;
+    NumericFixture original = numeric_fixture();
+    BinaryWriter writer;
+    binary_write(descriptor, &writer, &original)!!;
+    assert(writer.position == uint::size + 2 * char::size + 2 * ushort::size + 3 * uint::size + 16 * float::size);
+    char[6] narrow_bytes = { 0x80, 0xFF, 0, 0x80, 0xFF, 0xFF };
+    assert(writer.bytes[uint::size:6] == narrow_bytes[..]);
+    BinaryReader reader = { .bytes = writer.bytes[:writer.position], .owned = { .allocator = mem } };
+    defer reader.owned.release_all();
+    NumericFixture result;
+    binary_read(descriptor, &reader, &result)!!;
+    assert_numeric_fixture_equal(&original, &result);
+    assert(reader.owned.attempts == 0);
+}

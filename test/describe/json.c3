@@ -62,12 +62,26 @@ fn void? json_write_end(describe::Visitor* visitor, describe::Info* info, void* 
 }
 
 fn void? json_write_number(DString* text, double number) {
-    if (!math::is_finite(number)) return INVALID_FIXTURE~;
+    ulong bits = bitcast(number, ulong);
+    if ((bits & 0x7ff0000000000000UL) == 0x7ff0000000000000UL) {
+        io::fprintf(text, "\"f64:%016x\"", bits)!;
+        return;
+    }
     if (bitcast(number, ulong) == 0x8000000000000000) {
         text.append("-0.0");
         return;
     }
     io::fprintf(text, "%.17g", number)!;
+}
+
+fn void? json_write_float(DString* text, uint bits) {
+    if ((bits & 0x7f800000U) == 0x7f800000U) {
+        io::fprintf(text, "\"f32:%08x\"", bits)!;
+    } else if (bits == 0x80000000U) {
+        text.append("-0.0");
+    } else {
+        io::fprintf(text, "%.9g", bitcast(bits, float))!;
+    }
 }
 
 fn void? json_write_token(DString* text, ulong token) {
@@ -81,20 +95,32 @@ fn bool? json_write_field(describe::Visitor* visitor, describe::Info* info, void
     writer.prefix(info.name)!;
     switch (info.kind) {
         case BOOL: json::marshal_to(&writer.text, *(bool*)value)!;
+        case ICHAR: json::marshal_to(&writer.text, (int)*(ichar*)value)!;
+        case CHAR: json::marshal_to(&writer.text, (uint)*(char*)value)!;
+        case SHORT: json::marshal_to(&writer.text, (int)*(short*)value)!;
+        case USHORT: json::marshal_to(&writer.text, (uint)*(ushort*)value)!;
         case INT: json::marshal_to(&writer.text, *(int*)value)!;
         case UINT: json::marshal_to(&writer.text, *(uint*)value)!;
         case LONG: json::marshal_to(&writer.text, *(long*)value)!;
         case ULONG: json_write_token(&writer.text, *(ulong*)value)!;
-        case FLOAT: json_write_number(&writer.text, *(float*)value)!;
+        case FLOAT: json_write_float(&writer.text, *(uint*)value)!;
         case DOUBLE: json_write_number(&writer.text, *(double*)value)!;
         case VEC2:
         case VEC3:
         case VEC4:
         case QUAT:
+        case MAT4:
             writer.text.append('[');
-            for (usz index = 0; index < vector_size(info.kind); index++) {
+            for (usz index = 0; index < component_count(info.kind); index++) {
                 if (index) writer.text.append(',');
-                json_write_number(&writer.text, ((float*)value)[index])!;
+                json_write_float(&writer.text, ((uint*)value)[index])!;
+            }
+            writer.text.append(']');
+        case UVEC3:
+            writer.text.append('[');
+            for (usz index = 0; index < 3; index++) {
+                if (index) writer.text.append(',');
+                json::marshal_to(&writer.text, ((uint*)value)[index])!;
             }
             writer.text.append(']');
         case STRING: json::marshal_to(&writer.text, *(String*)value)!;
@@ -147,6 +173,53 @@ fn double? json_number(Object* node) {
     return node.f;
 }
 
+fn ulong? json_exceptional_bits(
+    Object* node,
+    String prefix,
+    usz digits,
+    ulong exponent,
+) {
+    if (!node.is_string() || node.s.len != digits + 4 || node.s[:4] != prefix) return INVALID_FIXTURE~;
+    ulong bits;
+    foreach (char digit : node.s[4..]) {
+        if (digit >= '0' && digit <= '9') {
+            bits = (bits << 4) | (ulong)(digit - '0');
+        } else if (digit >= 'a' && digit <= 'f') {
+            bits = (bits << 4) | (ulong)(digit - 'a' + 10);
+        } else {
+            return INVALID_FIXTURE~;
+        }
+    }
+    if ((bits & exponent) != exponent) return INVALID_FIXTURE~;
+    return bits;
+}
+
+fn float? json_float(Object* node) {
+    if (node.is_string()) {
+        return bitcast((uint)json_exceptional_bits(
+            node: node,
+            prefix: "f32:",
+            digits: 8,
+            exponent: 0x7f800000U,
+        )!, float);
+    }
+    double number = json_number(node)!;
+    if (number < -float::max || number > float::max) return INVALID_FIXTURE~;
+    return (float)number;
+}
+
+fn double? json_double(Object* node) {
+    if (node.is_string()) {
+        return bitcast(json_exceptional_bits(
+            node: node,
+            prefix: "f64:",
+            digits: 16,
+            exponent: 0x7ff0000000000000UL,
+        )!, double);
+    }
+    return json_number(node);
+}
+
 fn ulong? json_token(Object* node) {
     if (!node.is_string()) return INVALID_FIXTURE~;
     if (try token = node.s.to_ulong()) return token;
@@ -161,25 +234,30 @@ fn bool? json_read_field(describe::Visitor* visitor, describe::Info* info, void*
         case BOOL:
             if (!node.is_bool()) return INVALID_FIXTURE~;
             *(bool*)value = node.b;
+        case ICHAR: *(ichar*)value = (ichar)json_integer(node, ichar::min, ichar::max)!;
+        case CHAR: *(char*)value = (char)json_integer(node, char::min, char::max)!;
+        case SHORT: *(short*)value = (short)json_integer(node, short::min, short::max)!;
+        case USHORT: *(ushort*)value = (ushort)json_integer(node, ushort::min, ushort::max)!;
         case INT: *(int*)value = (int)json_integer(node, int::min, int::max)!;
         case UINT: *(uint*)value = (uint)json_integer(node, 0, uint::max)!;
         case LONG: *(long*)value = (long)json_integer(node, long::min, long::max)!;
         case ULONG: *(ulong*)value = json_token(node)!;
-        case FLOAT:
-            double number = json_number(node)!;
-            if (number < -float::max || number > float::max) return INVALID_FIXTURE~;
-            *(float*)value = (float)number;
-        case DOUBLE: *(double*)value = json_number(node)!;
+        case FLOAT: *(float*)value = json_float(node)!;
+        case DOUBLE: *(double*)value = json_double(node)!;
         case VEC2:
         case VEC3:
         case VEC4:
         case QUAT:
-            usz count = vector_size(info.kind);
+        case MAT4:
+            usz count = component_count(info.kind);
             if (!node.is_array() || (usz)node.len() != count) return INVALID_FIXTURE~;
             for (usz index = 0; index < count; index++) {
-                double number = json_number(node.get_at((sz)index))!;
-                if (number < -float::max || number > float::max) return INVALID_FIXTURE~;
-                ((float*)value)[index] = (float)number;
+                ((float*)value)[index] = json_float(node.get_at((sz)index))!;
+            }
+        case UVEC3:
+            if (!node.is_array() || node.len() != 3) return INVALID_FIXTURE~;
+            for (usz index = 0; index < 3; index++) {
+                ((uint*)value)[index] = (uint)json_integer(node.get_at((sz)index), 0, uint::max)!;
             }
         case STRING:
             if (!node.is_string()) return INVALID_FIXTURE~;

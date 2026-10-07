@@ -71,6 +71,14 @@ enum Mode {
 <* Supported leaves and scopes in a description. *>
 enum Kind {
     BOOL,
+    <* Signed 8-bit integer; never a character. *>
+    ICHAR,
+    <* Unsigned 8-bit integer; never a character. *>
+    CHAR,
+    <* Signed 16-bit integer. *>
+    SHORT,
+    <* Unsigned 16-bit integer. *>
+    USHORT,
     INT,
     UINT,
     LONG,
@@ -80,6 +88,10 @@ enum Kind {
     VEC2,
     VEC3,
     VEC4,
+    <* Three unsigned 32-bit numeric lanes. *>
+    UVEC3,
+    <* Sixteen float coefficients, indexed by four times column plus row. *>
+    MAT4,
     QUAT,
     STRING,
     ENUM,
