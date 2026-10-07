@@ -96,7 +96,7 @@ fn Node*? read_subtree_binary(
         payloads: payloads.array_view(),
         types: types,
         owned: &authoring_owned,
-    );
+    )!;
     foreach (payload : payloads.array_view()) {
         TypeRecord type = types[payload.type];
         DescribedBinding* binding = codecs[type.slot].described;

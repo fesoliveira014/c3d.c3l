@@ -46,12 +46,14 @@ struct FailingAllocator (Allocator) @private {
     uint attempts;
     uint failure;
     uint outstanding;
+    sz acquired_bytes;
 }
 
 fn void*? FailingAllocator.acquire(&self, sz size, AllocInitType init_type, sz alignment) @dynamic {
     if (++self.attempts == self.failure) return mem::OUT_OF_MEMORY~;
     void* pointer = mem.acquire(size, init_type, alignment)!;
     self.outstanding++;
+    self.acquired_bytes += size;
     return pointer;
 }
 
