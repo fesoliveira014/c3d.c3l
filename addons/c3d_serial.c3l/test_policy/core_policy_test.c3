@@ -8,10 +8,6 @@ import c3d::light;
 import c3d::scene;
 import c3d::serial @public;
 
-const typeid[*] PENDING_CORE_POLICIES @private = {
-    AnimatedCrowd::typeid,
-};
-
 struct ExpectedPolicy @private {
     uint slot;
     String name;
@@ -23,7 +19,7 @@ struct ExpectedPolicy @private {
 fn void test_every_registered_core_component_has_one_expected_policy() @test {
     assert(ecs::registered_type_count == 0);
     serial::register_core_codecs()!!;
-    ExpectedPolicy[17] expected = {
+    ExpectedPolicy[18] expected = {
         { .slot = ecs::assigned_slot(Mesh)!!, .name = "c3d.Mesh",
             .identity = Mesh::typeid, .component_description = true },
         { .slot = ecs::assigned_slot(Camera)!!, .name = "c3d.Camera",
@@ -57,29 +53,25 @@ fn void test_every_registered_core_component_has_one_expected_policy() @test {
             .identity = LookAuthoring::typeid, .phase = REFERENCES },
         { .slot = ecs::assigned_slot(Animator)!!, .name = "c3d.Animator",
             .identity = AnimatorAuthoring::typeid, .phase = OWNER },
+        { .slot = ecs::assigned_slot(AnimatedCrowd)!!, .name = "c3d.AnimatedCrowd",
+            .identity = CrowdAuthoring::typeid, .phase = OWNER },
     };
     assert(ecs::registered_type_count == expected.len);
     serial::register_core_codecs()!!;
     describe::register_core_components()!!;
     assert(ecs::registered_type_count == expected.len);
-    assert_policy_inventory(expected[..], false);
+    assert_policy_inventory(expected[..]);
     Scene scene = scene::create_scene(mem, { .max_nodes = 1 });
     defer scene::destroy_scene(&scene);
-    assert(ecs::registered_type_count == expected.len + PENDING_CORE_POLICIES.len);
-    assert_policy_inventory(expected[..], true);
+    assert(ecs::registered_type_count == expected.len);
+    assert_policy_inventory(expected[..]);
 }
 
-fn void assert_policy_inventory(ExpectedPolicy[] expected, bool include_pending) @private {
+fn void assert_policy_inventory(ExpectedPolicy[] expected) @private {
     for (uint slot = 0; slot < ecs::registered_type_count; slot++) {
         serial::CodecEntry* entry = &serial::codecs[slot];
         uint policies = (uint)(entry.described != null)
           + (uint)(entry.codec.name.len != 0 && entry.described == null) + (uint)entry.transient;
-        uint pending;
-        if (include_pending) {
-            $foreach $identity : PENDING_CORE_POLICIES:
-                pending += (uint)(slot == ecs::assigned_slot($Typefrom($identity))!!);
-            $endforeach
-        }
         uint matches;
         foreach (policy : expected) {
             if (policy.slot != slot) continue;
@@ -90,7 +82,6 @@ fn void assert_policy_inventory(ExpectedPolicy[] expected, bool include_pending)
             assert(entry.described.type.descriptor.identity == policy.identity);
             if (policy.component_description) assert(describe::component(slot)!!.identity == policy.identity);
         }
-        assert(matches + pending == 1);
-        if (pending) assert(policies == 0);
+        assert(matches == 1);
     }
 }

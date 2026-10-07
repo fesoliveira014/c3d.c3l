@@ -55,6 +55,7 @@ fn void? register_core_codecs() {
     register_model_codec()!;
     register_rig_codecs()!;
     register_animator_codec()!;
+    register_crowd_codec()!;
 }
 
 fn void defaults_shadow(void* value) @local {

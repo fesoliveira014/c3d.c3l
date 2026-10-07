@@ -134,16 +134,11 @@ with `destroy_serial_diagnostic` after use.
 ## Built-in policy inventory
 
 `serial_core_policy_test` runs separately from application fixture tests and is
-included in `scripts/build.py --test`. It registers the currently supported core
-set without constructing a Scene and verifies automatic prerequisites and repeated
-registration. It then creates a Scene and walks every assigned ECS slot. Every slot
-must have exactly one described, custom-codec or transient policy matching the
-expected table, or no policy and one explicit `PENDING_CORE_POLICIES` entry.
-Any unclassified core component fails immediately.
-
-Each adapter addition moves its types from pending to expected in the same change.
-The pending list becomes empty when all core policies are implemented and is then
-removed. Unimplemented types are never marked transient to satisfy the test.
+included in `scripts/build.py --test`. It registers all 18 core policies without
+constructing a Scene and verifies automatic prerequisites and repeated registration.
+It then creates a Scene and walks every assigned ECS slot. Every slot must have
+exactly one described, custom-codec or transient policy matching the expected table.
+There is no pending list. A new core component without an expected policy fails.
 
 ModelInstance uses the REFERENCES phase. Its payload retains the model key,
 per-template-node signature and mapping, explicit absent slots, base poses,
@@ -180,6 +175,18 @@ Ordinary pointer references capture the current live entity, including explicit
 LookAt/IK retargeting after slot reuse. Skin joints alone retain captured template
 identity: deleting a required template joint rejects export even if its address
 was reused, rather than silently rebinding the original skin.
+AnimatedCrowd restores in OWNER with its model, capacity, live placements/colors,
+clip/speed/loop settings, captured start times, bounds and trace flag. Loads remain
+pending with no generated part nodes; prepare_crowd builds runtime explicitly.
+Generated batches are omitted only after checking the retained owner association.
+Exporting a generated part without its owner, or adding authored components to an
+omitted part, returns INVALID_ARGUMENT. Pending and prepared owners write the same
+authoring; sampled clocks, palettes and cursors are not persisted.
+Animator action speed/weight and space parameter/speed/weight must be finite;
+action and space weights must also be nonnegative, with no upper cap. Both export
+and import enforce this owner domain, including binary IEEE values and JSONC
+f32 bit tokens. Negative finite speeds remain supported. Other field domains,
+including IEEE-preserving node transforms, are unchanged.
 
 See the [serialization example](serialization_example.md) for binary/JSONC reloads,
 schema export and reproducible CPU-only or Vulkan runs.
