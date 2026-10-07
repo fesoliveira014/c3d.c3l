@@ -30,6 +30,12 @@
         "shaders/shader_package.c3"
       ]
     },
+    "describe": {
+      "type": "executable",
+      "sources": [
+        "src/test_describe_authored.c3"
+      ]
+    },
     "ecs_cap": {
       "type": "executable",
       "sources": [

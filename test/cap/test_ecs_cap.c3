@@ -2,6 +2,7 @@ module c3d::test::ecs_cap;
 
 import c3d;
 import c3d::ecs;
+import c3d::describe;
 
 struct Filler <INDEX> @local {
     int value;
@@ -14,6 +15,14 @@ struct BoundaryView @local {
     bool   boundary_present;
     bool   boundary_found;
     bool   boundary_in_mask;
+}
+
+struct ExistingDescription @local {
+    int value;
+}
+
+struct UnpublishedDescription @local {
+    int value;
 }
 
 fn void record_boundary(Entity entity, void* component, void* user) @local {
@@ -167,4 +176,50 @@ fn void test_each_slot_visits_set_slots_in_ascending_order() @test {
         visits++;
     };
     assert(visits == expected.len);
+}
+
+fn bool? empty_description(Visitor* visitor, void* value) @local {
+    return false;
+}
+
+fn bool? other_description(Visitor* visitor, void* value) @local {
+    return false;
+}
+
+fn void test_description_capacity_failure_does_not_publish_or_assign_a_slot() @test {
+    describe::register_type(ExistingDescription, &empty_description)!!;
+    if (catch excuse = ecs::assigned_slot(ExistingDescription)) {
+        assert(excuse == NOT_FOUND);
+    } else {
+        assert(false);
+    }
+    World world = filled_world(1);
+    defer ecs::destroy_world(&world);
+
+    if (catch excuse = describe::register_component(ExistingDescription, &other_description)) {
+        assert(excuse == describe::DESCRIPTION_CONFLICT);
+    } else {
+        assert(false);
+    }
+    assert((describe::get(ExistingDescription)!!).fields == &empty_description);
+    if (catch excuse = describe::register_component(UnpublishedDescription, &empty_description)) {
+        assert(excuse == c3d::CAPACITY_EXCEEDED);
+    } else {
+        assert(false);
+    }
+    if (catch excuse = describe::get(UnpublishedDescription)) {
+        assert(excuse == describe::MISSING_DESCRIPTION);
+    } else {
+        assert(false);
+    }
+    if (catch excuse = ecs::assigned_slot(UnpublishedDescription)) {
+        assert(excuse == NOT_FOUND);
+    } else {
+        assert(false);
+    }
+
+    describe::register_type(UnpublishedDescription, &empty_description)!!;
+    String missing;
+    describe::validate_descriptions(&missing)!!;
+    assert(missing == "");
 }
