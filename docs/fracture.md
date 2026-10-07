@@ -441,6 +441,16 @@ the same geometry, cut and reconstruction passes.
 | 192 | 292.355 | 46.032 | 389,844 | 162,662 | 966,712 |
 | 768 | 6,369.744 | 183.127 | 8,943,580 | 697,319 | 3,565,464 |
 
+The [independent review measurement](https://github.com/fesoliveira014/c3d.c3l/pull/323#pullrequestreview-5445911922)
+at `6a2b3cdf` confirmed the predicate and scratch counts on the same CPU:
+
+| Source triangles | Reviewer median ms | Predicates | Peak scratch bytes |
+|---:|---:|---:|---:|
+| 12 | 3.31 | 8,514 | 111,440 |
+| 48 | 13.24 | 38,554 | 303,936 |
+| 192 | 45.94 | 162,662 | 966,712 |
+| 768 | 184.69 | 697,319 | 3,565,464 |
+
 The indexed time grows 3.54, 3.74 and 3.98 times per fourfold triangle increase;
 the equivalent per-doubling ratios are 1.88, 1.93 and 1.99. Predicate ratios per
 doubling are 2.13, 2.05 and 2.07. All are below the requested 2.5 limit. Small
