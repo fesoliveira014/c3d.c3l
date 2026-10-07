@@ -55,7 +55,7 @@ A `SCENE` volume casts `update.rays_per_probe` rays from each probe of a window 
 
 **Trace kind.** A renderer created with `RendererDesc.ray_queries` traces probe rays through ray queries;
 any other renderer uses the software walk. There is no setting: comparing the two means two renderers. Both
-kinds hit the same triangles, report back faces the same way (a probe inside a wall reads dark on both: the probe
+kinds hit the same triangles, report back faces the same way (a probe inside a wall is excluded on both: the probe
 ray keeps both faces through `trace_scene_with_back_faces`, while its hits' shadow rays follow the atlas) and
 use the same default of 128 rays per probe; on the RTX 4090 every ray result of the acceptance room agrees
 between them. A hit that lands exactly on a volume's box face takes the probes or the SH term by the last
@@ -99,13 +99,22 @@ rotates its ray set by a rotation drawn from the frame index.
   only trace consumer is a probe volume pays those builds in the first frame it renders. They record in the
   frame's uploads, before `Pass.PROBE_UPDATE`, and a traced view of the same scene reuses them.
 - **Two scenes in one frame** both update; the trace is rebuilt for each.
-- **Probes inside or behind geometry.** A probe inside a wall sees mostly back faces and reads dark, so it
-  carries no light into a closed room. Points near such probes weight them low through the visibility term,
-  not to zero, so a surface close to a wall or floor with probes in or behind it can read darker than the
-  SH. Probes are not moved out of geometry or switched off. Place the grid so floors and walls lie just
-  under the next probe layer rather than just over a buried one: from the sampling weights, a floor 0.1 of
-  a spacing above a buried layer gives the buried probes about 0.31 of a floor point's weight, 0.9 of a
-  spacing above about 0.006.
+- **Probes inside or behind geometry.** Each scheduled visit excludes a probe when more than 25 percent
+  of all its rays hit the back of the nearest accepted single-sided surface. Misses remain in the
+  denominator; alpha-rejected intersections and double-sided surfaces do not count as burial. A probe
+  behind a single-sided wall can be excluded even when the wall is not a closed solid. Probes in front
+  remain eligible in the covered thin-wall placement. The same rule uses current posed geometry on both
+  trace kinds; the probe ray must continue accepting both faces.
+- **Classification refresh.** Excluded probes still trace on every scheduled visit. A geometry change is
+  reflected by the next visit, within one rendered, visible update sweep. Exclusion takes effect on that
+  visit; reactivation replaces both irradiance and visibility with fresh estimates, regardless of
+  hysteresis. Neither a trace revision nor a pure frame-origin rebase restarts classification. There is
+  no relocation or temporal classification filter.
+- **Classification history.** Fill, restart and recreation make probes provisionally eligible until a
+  SCENE visit measures them. ENVIRONMENT to SCENE retains eligibility until each visit; SCENE to NONE
+  and hiding a SCENE volume freeze estimates and classification. Counts changes recreate both with the
+  atlases; removal/reuse retires them together. Discarded frames publish no new classification. The
+  first-sweep view gate remains unchanged, even though debug shaders can inspect provisional probes.
 - **Faults.** A scene with a due `SCENE` volume can make `render_view` fault as a ray-traced view does:
   `c3d::CAPACITY_EXCEEDED` when the scene has more traceable instances than
   `RendererDesc.max_trace_instances`, `c3d::ASSET_DATA_UNAVAILABLE` when a traceable geometry's CPU arrays
@@ -118,9 +127,27 @@ rotates its ray set by a rotation drawn from the frame index.
 Cost per update: `window x rays_per_probe` primary rays (`Stats.probe_rays`; shadow rays are not counted, at
 most one per hit and shadowing light), five dispatches (trace, two blends, two border copies over the whole
 atlas), and a ray buffer of 16 bytes per ray at the largest window seen (64 MiB for 32 x 32 x 32 probes at
-128 rays), kept until `destroy_renderer`. `Pass.PROBE_UPDATE` times fills and updates.
+128 rays), kept until `destroy_renderer`. Classification adds a back-face count to the existing irradiance
+blend and uses its unused alpha channel; it adds no allocation or dispatch. Excluded probes retain their
+tracing cost so moving geometry can uncover them. `Pass.PROBE_UPDATE` times fills and updates.
 
-Measured on an RTX 4090 over Sponza at 3840 x 2160, `Pass.PROBE_UPDATE` median per frame:
+Matched classification measurements on an RTX 4090 (driver 610.88), Sponza at 3840 x 2160,
+fixed camera, sun only and 128 rays per probe. Both builds used O3, GPU profiling and validation off,
+with 64 warm-up and 256 measured frames per run. The table reports the median of three interleaved
+runs; [the review](https://github.com/fesoliveira014/c3d.c3l/pull/254#pullrequestreview-5436918402)
+records the run ranges and exact commands.
+
+| Volume | Trace | Before classification | With classification |
+| --- | --- | ---: | ---: |
+| 8 x 4 x 8 probes, full window | Ray queries | 0.0796 ms | 0.0848 ms |
+| 8 x 4 x 8 probes, full window | Software | 0.7857 ms | 0.7986 ms |
+| 16 x 16 x 16 probes, window 512 | Ray queries | 0.1058 ms | 0.1096 ms |
+| 16 x 16 x 16 probes, window 512 | Software | 0.7232 ms | 0.7557 ms |
+
+All four configurations passed the added-cost bound of `max(10% of baseline, 0.02 ms)`.
+
+Historical measurements before classification, on an RTX 4090 over Sponza at 3840 x 2160,
+`Pass.PROBE_UPDATE` median per frame:
 
 | Volume | Trace | Sun only | 64 shadowing point lights |
 | --- | --- | --- | --- |
@@ -141,7 +168,8 @@ and 0.18 ms without one.
 
 ## Which volume lights a surface
 
-Each view packs every filled volume it sees, smallest box first. A surface takes its diffuse
+Each view packs every defined volume it sees, smallest box first, with a flag preserving first-sweep
+sampling eligibility. A surface takes its diffuse
 irradiance from the first volume whose box contains its position; outside every box it keeps the
 SH term. There is no blending between volumes or between a volume and the SH, so a box face can
 show a seam. Two overlapping boxes of equal size resolve by renderer slot order, which the
@@ -158,6 +186,16 @@ offsets itself by the two biases, finds the eight surrounding probes and weights
 trilinear factor, a backface term that fades probes behind the surface, and a Chebyshev visibility
 term that drops probes whose view of the point is blocked. Under an `ENVIRONMENT` fill every
 visibility texel reads `max_distance`, so the result equals the SH up to the atlas resolution.
+
+Excluded probes receive exactly zero weight before any positive weight floor. The remaining weights
+are normalized over eligible probes. If all eight are excluded, the result is exactly the diffuse
+fallback outside all volumes: environment SH when available, otherwise zero probe irradiance. Ordinary
+ambient remains separate; no other overlapping volume is searched. Receiver shading and probe-hit
+bounces use the same shared sampling and fallback.
+
+The closed-room guarantee requires a cell with usable local probes. An enclosure smaller than the grid
+spacing can have all eight probes buried and show global diffuse. Use a finer grid or different probe
+placement in that case. A seam can appear between an all-excluded cell and an eligible neighbor.
 
 ## Capacity and memory
 
@@ -178,7 +216,7 @@ retires the old ones on every changed value.
 The fill runs two compute dispatches per atlas (fill and border copy) on the frames listed above,
 timed as `Pass.PROBE_UPDATE`, and none otherwise. Shading tests up to 8 boxes per shaded fragment
 and per shaded reflection hit and, inside a volume, reads 8 probes with one irradiance and one
-visibility sample each.
+visibility sample each; excluded probes skip the visibility sample.
 
 ## Debugging
 
@@ -187,11 +225,20 @@ visibility sample each.
 - The targets panel lists `probe irradiance N` and `probe visibility N` for every live atlas;
   visibility previews show the mean distance over the panel's depth range.
 - The scene panel's inspector edits every field.
+- Public `probe_classification.glsl` provides
+  `uint probe_classification(ProbeVolumeGpu volume, uvec3 probe)` for an in-range grid coordinate.
+  It reads the live atlas and returns `PROBE_CLASS_PROVISIONAL`, `PROBE_CLASS_ELIGIBLE` or
+  `PROBE_CLASS_EXCLUDED`. Provisional probes remain eligible but have no geometric measurement since
+  their last fill, restart or recreation. View rows flagged `PROBE_VOLUME_UNSWEPT` are available for
+  inspection while ordinary lighting retains the first-sweep gate. A volume without defined atlases
+  has no packed row; debug displays may show it as provisional without an atlas read.
+- Custom shaders using `ibl.glsl` apply exclusion automatically. There is no CPU per-probe snapshot or
+  excluded-count field: flat probe views have no existing frame-slot readback resource for that counter.
 
 ## Example
 
 `examples/probe_volume` lights Sponza from one environment-filled volume. Its controls hide the
-volume node (the SH term returns) and toggle the probe crosses; the targets panel shows both
+volume node (the SH term returns) and toggle the live probe markers; the targets panel shows both
 atlases. `--deferred` uses the deferred shading path.
 
 ```bash
@@ -203,6 +250,11 @@ python3 scripts/build.py --example probe_volume
 volume shows its update converge; the stats panel lists probe rays and updates. `--trace hardware` creates
 the renderer with ray queries (the example exits with the reason on a device without them); the controls
 panel names the kind in use.
+
+Markers are gray for provisional probes, green for measured eligible probes and red for measured
+excluded probes. They read the same live classification as the view and remain visible through geometry.
+One fixed-capacity billboard batch holds the grid coordinates; only placement changes update those
+records. The markers never participate in tracing. ENVIRONMENT and unfilled NONE volumes appear gray.
 
 `gltf_viewer --benchmark` takes `--probe-volumes 0|1|8`, `--probe-counts X,Y,Z` (default 16,8,8),
 `--probe-fill environment|scene` and `--probe-window N` to measure the shading and update costs: 1 places
