@@ -27,13 +27,20 @@ placing a model is always `model::instantiate`, and the caller sets the root
 transform.
 
 Instantiation creates one synthetic root under the parent and one live node per
-template node, parents before children, so `ModelInstance.nodes[i]` is the live
-node of template node `i`. Meshes, cameras and lights become the usual
-components. The root carries a `ModelInstance` component holding the node table,
-the authored local transforms and the authored morph weights of every mesh. The
-scene owns every node and every array; removing the root frees them through the
-component hook and leaves the shared assets untouched. Removing the model
-template afterwards leaves existing instances intact.
+template node, parents before children. `ModelInstance.present_node(i)` resolves
+the original node of template index `i`, or null after its removal. The node
+table captures entity identities, so reusing a removed node's slot does not
+retarget the instance. Reparenting a live node keeps its template membership.
+Indices and authored arrays retain their original extents after node removal.
+
+Meshes, cameras and lights become the usual components. The root carries a
+`ModelInstance` component holding the node table, captured identities, authored
+local transforms and authored morph weights. The scene owns every node and
+array. Removing the root removes its remaining subtree and frees the component
+arrays through the removal hook; shared assets remain untouched. Removing the
+model template afterwards leaves existing instances intact. See the
+[animation lifetime rules](animation.md#removed-instance-nodes) for identity
+lifetimes, missing tracks and required skin joints.
 
 ## Keys
 

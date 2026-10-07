@@ -44,11 +44,12 @@ AnimationActionId run = right_animator.play(&assets, clips[1])!;
 right_animator.action(run).speed = 1.5f;
 ```
 
-`play` binds the clip's model-local targets through the instance's node table
-once and returns its ID at time zero, weight one, looping. It faults
+`play` validates the clip's model-local targets and returns its ID at time zero,
+weight one, looping. It faults
 `INVALID_ID` for a dead clip and `INVALID_ARGUMENT` for a clip that does not
-fit the instance (a target beyond the node table, or a morph track whose node
-has no mesh or a different morph count), or an invalid layer, fade or mask.
+fit the instance (a target beyond the node table, a morph target outside its
+mesh table, or a present mesh with a different morph count), or an invalid
+layer, fade or mask.
 `CAPACITY_EXCEEDED` means all 16 action slots are live. `stop(action)` removes the action;
 `stop(action, seconds)` fades it out first. `cross_fade(from, to, seconds)`
 fades one action out while the other fades to full weight. Use
@@ -75,11 +76,34 @@ playback. Root mode/yaw and sampling data are captured too. Blend-space members
 are read-only; their space controls playback.
 
 While an animator exists it owns the pose of its instance: every update writes
-every instance node's local transform and every instance mesh's morph weights.
+every present instance node's local transform and every present instance mesh's
+morph weights.
 The synthetic root is not an instance node and stays under application control,
 so moving or spinning an instance as a whole is unaffected. Removing the root
 removes the animator and its arrays through the ordinary component hook; the
 shared clips stay in the store.
+
+## Removed instance nodes
+
+`ModelInstance.present_node(template_index)` borrows the original node or returns
+null after removal. Each pointer has a captured `Entity` identity; slot reuse
+cannot bind a template index to the replacement node. The captured identities,
+node table, authored baselines and mesh indices retain their original extents.
+They are library-owned and must not be rebound. Use the accessor before reading
+a template node; `Animator.nodes` is only a borrowed alias of the pointer table.
+The identity check follows the scene's generational-ID lifetime assumption:
+a stale identity must not survive generation wrap and become equal again.
+
+Animation skips tracks for absent nodes and morph tracks for removed `Mesh`
+components. A missing root-motion target contributes no motion. Actions retain
+their clips, modes, masks and playback state, and surviving tracks continue.
+Reparenting a live template node outside the instance subtree preserves its
+identity and animation membership.
+
+`SkinBinding.joints` remains a borrowed array of live joint nodes. Every joint
+must stay live while its binding is used for skinning, bounds or joint search.
+Remove dependent bindings before removing their joints; the model accessor
+does not make dead skin joints recoverable.
 
 ## Layers and masks
 

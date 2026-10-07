@@ -123,7 +123,7 @@ fn void test_animator_scope_nests_under_application_scope() @test {
         };
     };
 
-    assert(instance.nodes[3].local.position.y == 9);
+    assert(instance.present_node(3).local.position.y == 9);
     FrameCaptureView frame = recorder.frame(0)!!;
     assert(frame.cpu_state == CaptureState.READY);
     assert(!frame.truncated && frame.dropped_cpu_scopes == 0);
@@ -164,7 +164,7 @@ fn void test_animator_scope_follows_disabled_capture() @test {
         anim::update(&assets, &scene, 0);
     };
 
-    assert(instance.nodes[3].local.position.y == 9);
+    assert(instance.present_node(3).local.position.y == 9);
     if (catch excuse = recorder.frame(0)) {
         assert(excuse == profile::NOT_FOUND);
     } else {

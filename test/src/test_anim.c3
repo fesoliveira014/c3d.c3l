@@ -267,7 +267,7 @@ fn void test_quarter_weight_blends_toward_baseline() @test {
     action.weight = 0.25f;
     anim::update(&assets, &scene, 0);
 
-    Node* tip = instance.nodes[3];
+    Node* tip = instance.present_node(3);
     assert(approx(tip.local.position.y, 3) && tip.local.position.x == 0);
     assert(tip.local.rotation.v == instance.base_pose[3].rotation.v);
     assert(tip.local.scale == instance.base_pose[3].scale);
@@ -286,10 +286,10 @@ fn void test_missing_channel_keeps_baseline_and_writes_morphs() @test {
     animator.play(&assets, instance.clips[0])!!;
     anim::update(&assets, &scene, 0.5f);
 
-    Node* tip = instance.nodes[3];
+    Node* tip = instance.present_node(3);
     assert(tip.local.position == (Vec3){ 0, 1, 0 } && tip.local.scale == (Vec3){ 1, 1, 1 });
     assert(rotates_x_to(tip.local.rotation, { 0.7071068f, 0, -0.7071068f }));
-    Mesh* mesh = scene.get(instance.nodes[1], Mesh);
+    Mesh* mesh = scene.get(instance.present_node(1), Mesh);
     assert(mesh.morph_weights[0] == 0);
 }
 
@@ -324,7 +324,7 @@ fn void test_two_actions_over_unit_weight_normalize() @test {
     animator.play(&assets, high_clip)!!;
     anim::update(&assets, &scene, 0);
 
-    assert(approx(instance.nodes[3].local.position.y, 3));
+    assert(approx(instance.present_node(3).local.position.y, 3));
 }
 
 fn void test_two_instances_animate_independently() @test {
@@ -343,11 +343,11 @@ fn void test_two_instances_animate_independently() @test {
     paused.playing = false;
     anim::update(&assets, &scene, 0.5f);
 
-    Node* first_tip = scene.get(first, ModelInstance).nodes[3];
-    Node* second_tip = scene.get(second, ModelInstance).nodes[3];
+    Node* first_tip = scene.get(first, ModelInstance).present_node(3);
+    Node* second_tip = scene.get(second, ModelInstance).present_node(3);
     assert(rotates_x_to(first_tip.local.rotation, { 0.7071068f, 0, -0.7071068f }));
     assert(rotates_x_to(second_tip.local.rotation, { 1, 0, 0 }));
-    assert(scene.get(scene.get(second, ModelInstance).nodes[1], Mesh).morph_weights[0] == 0);
+    assert(scene.get(scene.get(second, ModelInstance).present_node(1), Mesh).morph_weights[0] == 0);
 }
 
 fn void test_fade_out_removes_action_and_returns_to_baseline() @test {
@@ -357,7 +357,7 @@ fn void test_fade_out_removes_action_and_returns_to_baseline() @test {
     defer scene::destroy_scene(&scene);
     ModelId model = gltf::load_model(&assets, fixture_path("skin.gltf"))!!;
     Node* root = model::instantiate(&assets, &scene, model)!!;
-    Node* tip = scene.get(root, ModelInstance).nodes[3];
+    Node* tip = scene.get(root, ModelInstance).present_node(3);
     Track[1] tracks = { constant_translation({ 0, 9, 0 }) };
     uint[1] targets = { 3 };
     ClipId clip = add_clip(
@@ -387,7 +387,7 @@ fn void test_cross_fade_hands_weight_over() @test {
     defer scene::destroy_scene(&scene);
     ModelId model = gltf::load_model(&assets, fixture_path("skin.gltf"))!!;
     Node* root = model::instantiate(&assets, &scene, model)!!;
-    Node* tip = scene.get(root, ModelInstance).nodes[3];
+    Node* tip = scene.get(root, ModelInstance).present_node(3);
     uint[1] targets = { 3 };
     Track[1] high = { constant_translation({ 0, 9, 0 }) };
     Track[1] low = { constant_translation({ 0, 5, 0 }) };
@@ -493,7 +493,7 @@ fn void test_looping_wraps_and_non_looping_clamps() @test {
     defer scene::destroy_scene(&scene);
     ModelId model = gltf::load_model(&assets, fixture_path("skin.gltf"))!!;
     Node* root = model::instantiate(&assets, &scene, model)!!;
-    Node* tip = scene.get(root, ModelInstance).nodes[3];
+    Node* tip = scene.get(root, ModelInstance).present_node(3);
     float[2] times = { 0, 1 };
     float[6] values = { 0, 0, 0, 0, 9, 0 };
     Track[1] tracks = { make_track(
@@ -725,12 +725,12 @@ fn void test_layers_fold_in_index_order_and_keep_missing_channels() @test {
         fixture.animator.action(overlay).weight = 0.5f;
         anim::update(&fixture.assets, &fixture.scene, 0);
         ModelInstance* instance = fixture.scene.get(fixture.root, ModelInstance);
-        assert(approx(instance.nodes[3].local.position.y, 3.625f));
-        assert(instance.nodes[3].local.scale == instance.base_pose[3].scale);
-        assert(instance.nodes[3].local.rotation.v == instance.base_pose[3].rotation.v);
+        assert(approx(instance.present_node(3).local.position.y, 3.625f));
+        assert(instance.present_node(3).local.scale == instance.base_pose[3].scale);
+        assert(instance.present_node(3).local.rotation.v == instance.base_pose[3].rotation.v);
         fixture.animator.action(overlay).weight = 0;
         anim::update(&fixture.assets, &fixture.scene, 0);
-        assert(approx(instance.nodes[3].local.position.y, 1.25f));
+        assert(approx(instance.present_node(3).local.position.y, 1.25f));
     }
 }
 
@@ -805,7 +805,7 @@ fn void test_upper_rotation_uses_lower_pose_hemisphere() @test {
     AnimationActionId overlay = fixture.animator.play(&fixture.assets, upper, { .layer = 1 })!!;
     fixture.animator.action(overlay).weight = 0.5f;
     anim::update(&fixture.assets, &fixture.scene, 0);
-    Node* tip = fixture.scene.get(fixture.root, ModelInstance).nodes[3];
+    Node* tip = fixture.scene.get(fixture.root, ModelInstance).present_node(3);
     assert(rotates_x_to(tip.local.rotation, { -1, 0, 0 }));
 }
 
@@ -834,8 +834,8 @@ fn void test_play_copies_masks_and_rejects_wrong_node_count() @test {
     }
     anim::update(&fixture.assets, &fixture.scene, 0);
     ModelInstance* instance = fixture.scene.get(fixture.root, ModelInstance);
-    assert(instance.nodes[2].local.position == instance.base_pose[2].position);
-    assert(approx(instance.nodes[3].local.position.y, 6));
+    assert(instance.present_node(2).local.position == instance.base_pose[2].position);
+    assert(approx(instance.present_node(3).local.position.y, 6));
     NodeTemplate[1] nodes = { { .parent = -1, .name = "only" } };
     ModelTemplate small = { .nodes = nodes[..] };
     JointMask wrong = anim::create_joint_mask(mem, &small, {})!!;
@@ -850,14 +850,14 @@ fn void test_play_copies_masks_and_rejects_wrong_node_count() @test {
     fixture.animator.stop(masked)!!;
     AnimationActionId unmasked = fixture.animator.play(&fixture.assets, clip)!!;
     anim::update(&fixture.assets, &fixture.scene, 0);
-    assert(approx(instance.nodes[2].local.position.x, 5));
+    assert(approx(instance.present_node(2).local.position.x, 5));
     fixture.animator.stop(unmasked)!!;
     JointMask empty = anim::create_joint_mask(mem, &fixture.assets.model(fixture.model).data, {})!!;
     defer anim::destroy_joint_mask(&empty);
     fixture.animator.play(&fixture.assets, clip, { .mask = &empty })!!;
     anim::update(&fixture.assets, &fixture.scene, 0);
-    assert(instance.nodes[2].local.position == instance.base_pose[2].position);
-    assert(instance.nodes[3].local.position == instance.base_pose[3].position);
+    assert(instance.present_node(2).local.position == instance.base_pose[2].position);
+    assert(instance.present_node(3).local.position == instance.base_pose[3].position);
 }
 
 fn void test_masks_and_playback_support_nodes_past_512() @test {
@@ -893,8 +893,8 @@ fn void test_masks_and_playback_support_nodes_past_512() @test {
     animator.play(&assets, clip, { .mask = &mask, .layer = 1 })!!;
     anim::update(&assets, &scene, 0);
     ModelInstance* instance = scene.get(root, ModelInstance);
-    assert(approx(instance.nodes[519].local.position.y, 7));
-    assert(instance.nodes[511].local.position == (Vec3){});
+    assert(approx(instance.present_node(519).local.position.y, 7));
+    assert(instance.present_node(511).local.position == (Vec3){});
 }
 
 fn void test_base_cross_fade_preserves_upper_layer() @test {
@@ -911,11 +911,11 @@ fn void test_base_cross_fade_preserves_upper_layer() @test {
     fixture.animator.cross_fade(from, to, 1)!!;
     anim::update(&fixture.assets, &fixture.scene, 0.5f);
     ModelInstance* instance = fixture.scene.get(fixture.root, ModelInstance);
-    assert(approx(instance.nodes[3].local.position.y, 7));
-    assert(approx(instance.nodes[2].local.position.x, 5));
+    assert(approx(instance.present_node(3).local.position.y, 7));
+    assert(approx(instance.present_node(2).local.position.x, 5));
     anim::update(&fixture.assets, &fixture.scene, 0.6f);
-    assert(approx(instance.nodes[3].local.position.y, 5));
-    assert(approx(instance.nodes[2].local.position.x, 5));
+    assert(approx(instance.present_node(3).local.position.y, 5));
+    assert(approx(instance.present_node(2).local.position.x, 5));
     assert(fixture.animator.action_count == 2);
 }
 
@@ -987,8 +987,8 @@ fn void test_additive_reference_preserves_base_and_applies_all_channels() @test 
     fixture.animator.action(action).weight = 0.5f;
     anim::update(&fixture.assets, &fixture.scene, 0);
     ModelInstance* instance = fixture.scene.get(fixture.root, ModelInstance);
-    Node* tip = instance.nodes[3];
-    Mesh* mesh = fixture.scene.get(instance.nodes[1], Mesh);
+    Node* tip = instance.present_node(3);
+    Mesh* mesh = fixture.scene.get(instance.present_node(1), Mesh);
     assert(approx(tip.local.position.y, 2));
     assert(rotates_x_to(tip.local.rotation, { 1, 0, 0 }));
     assert(tip.local.scale == (Vec3){ 1, 1, 1 });
@@ -1023,7 +1023,7 @@ fn void test_additive_cubic_reference_reads_key_value_not_tangents() @test {
     );
     fixture.animator.play(&fixture.assets, clip, { .additive = true })!!;
     anim::update(&fixture.assets, &fixture.scene, 0);
-    Node* tip = fixture.scene.get(fixture.root, ModelInstance).nodes[3];
+    Node* tip = fixture.scene.get(fixture.root, ModelInstance).present_node(3);
     assert(approx(tip.local.position.y, 1));
     anim::update(&fixture.assets, &fixture.scene, 0.5f);
     assert(approx(tip.local.position.y, 3));
@@ -1080,7 +1080,7 @@ fn void test_additive_rotations_follow_play_order_and_shortest_hemisphere() @tes
         fixture.animator.action(first).playing = false;
         fixture.animator.action(second).playing = false;
         anim::update(&fixture.assets, &fixture.scene, 0);
-        Node* tip = fixture.scene.get(fixture.root, ModelInstance).nodes[3];
+        Node* tip = fixture.scene.get(fixture.root, ModelInstance).present_node(3);
         assert(rotates_x_to(tip.local.rotation, reverse ? (Vec3){ 0, 1, 0 } : (Vec3){ 0, 0, -1 }));
     }
 }
@@ -1117,11 +1117,148 @@ fn void test_masks_references_and_action_pool_release_with_animator() @test {
         second_animator.stop(additive)!!;
         second_animator.action(action).weight = 0.5f;
         anim::update(&fixture.assets, &fixture.scene, 0);
-        assert(approx(fixture.scene.get(second, ModelInstance).nodes[3].local.position.y, 1.5f));
+        assert(approx(fixture.scene.get(second, ModelInstance).present_node(3).local.position.y, 1.5f));
 
         fixture.animator = anim::add_animator(&fixture.scene, fixture.root);
         fixture.animator.play(&fixture.assets, clip)!!;
         anim::update(&fixture.assets, &fixture.scene, 0);
     }
     assert(!tracker.has_leaks());
+}
+
+fn void test_absent_model_targets_keep_surviving_animation() @test {
+    for (uint removal = 0; removal < 2; removal++) {
+        LayerFixture fixture;
+        create_layer_fixture(&fixture);
+        defer destroy_layer_fixture(&fixture);
+        ModelInstance* instance = fixture.scene.get(fixture.root, ModelInstance);
+        Node* target = instance.present_node(1);
+        Node* survivor = instance.present_node(3);
+        float[2] times = { 0, 1 };
+        float[2] morphs = { 0.1f, 0.9f };
+        float[6] positions = { 0, 2, 0, 0, 6, 0 };
+        Track[3] tracks = {
+            make_track(
+                path: TargetPath.MORPH_WEIGHTS,
+                interpolation: Interpolation.LINEAR,
+                times: times[..],
+                values: morphs[..],
+            ),
+            constant_translation({ 8, 9, 10 }),
+            make_track(
+                path: TargetPath.TRANSLATION,
+                interpolation: Interpolation.LINEAR,
+                times: times[..],
+                values: positions[..],
+                target: 1,
+            ),
+        };
+        uint[2] targets = { 1, 3 };
+        ClipId clip = add_clip(
+            assets: &fixture.assets,
+            key: "",
+            tracks: tracks[..],
+            targets: targets[..],
+            duration: 1,
+        );
+        bool[4] membership = { false, true, false, true };
+        JointMask mask = { .nodes = membership[..] };
+        AnimationActionId regular = fixture.animator.play(&fixture.assets, clip, { .mask = &mask })!!;
+        AnimationActionId additive = fixture.animator.play(&fixture.assets, clip, {
+            .layer = 1,
+            .additive = true,
+            .mask = &mask,
+        })!!;
+        fixture.animator.action(additive).weight = 0.5f;
+        anim::update(&fixture.assets, &fixture.scene, 0.25f);
+        assert(approx(survivor.local.position.y, 3.5f));
+
+        Node* replacement;
+        if (removal) {
+            fixture.scene.remove(target);
+            replacement = fixture.scene.add_node(fixture.root, "replacement")!!;
+            assert(replacement == target);
+            replacement.local.position = { 20, 30, 40 };
+            float[] weights = alloc::new_array(fixture.scene.allocator, float, 1);
+            weights[0] = 42;
+            fixture.scene.add(replacement, (Mesh){ .morph_weights = weights });
+        } else {
+            fixture.scene.remove_component(target, Mesh);
+        }
+        AnimationActionId later = fixture.animator.play(&fixture.assets, clip)!!;
+        fixture.animator.action(later).weight = 0;
+        anim::update(&fixture.assets, &fixture.scene, 0.25f);
+        assert(approx(survivor.local.position.y, 5));
+        assert(instance.nodes.len == 4 && instance.base_pose.len == 4 && instance.base_morph_weights.len == 1);
+        assert(fixture.animator.action(regular).mask.len == 4);
+        assert(!fixture.animator.action(regular).mask[0] && fixture.animator.action(regular).mask[1]);
+        assert(fixture.animator.action(additive).additive && fixture.animator.action(additive).layer == 1);
+        assert(c3d::same_id(fixture.animator.action(regular).clip, clip));
+        if (removal) {
+            assert(instance.present_node(1) == null);
+            assert(replacement.local.position == (Vec3){ 20, 30, 40 });
+            assert(fixture.scene.get(replacement, Mesh).morph_weights[0] == 42);
+        } else {
+            assert(instance.present_node(1) == target);
+            assert(!fixture.scene.has(target, Mesh));
+            assert(target.local.position == (Vec3){ 8, 9, 10 });
+        }
+    }
+}
+
+fn void test_absent_morph_target_keeps_other_mesh_animation() @test {
+    AssetStore assets = create_store();
+    defer asset::destroy_asset_store(&assets);
+    Scene scene = scene::create_scene(mem, { .max_nodes = 16 });
+    defer scene::destroy_scene(&scene);
+    ModelId model = gltf::load_model(&assets, fixture_path("skin.gltf"))!!;
+    ModelTemplate* template = &assets.model(model).data;
+    ModelMesh[] meshes = alloc::new_array(assets.allocator, ModelMesh, 2);
+    meshes[0] = template.meshes[0];
+    meshes[1] = {
+        .node = 3,
+        .geometry = meshes[0].geometry,
+        .material = meshes[0].material,
+        .default_morph_weights = alloc::clone_slice(assets.allocator, meshes[0].default_morph_weights),
+    };
+    alloc::free(assets.allocator, template.meshes.ptr);
+    template.meshes = meshes;
+    Node* root = model::instantiate(&assets, &scene, model)!!;
+    ModelInstance* instance = scene.get(root, ModelInstance);
+    Node* target = instance.present_node(1);
+    Node* survivor = instance.present_node(3);
+    Animator* animator = anim::add_animator(&scene, root);
+    float[2] times = { 0, 1 };
+    float[2] values = { 0, 1 };
+    Track[2] tracks = {
+        make_track(
+            path: TargetPath.MORPH_WEIGHTS,
+            interpolation: Interpolation.LINEAR,
+            times: times[..],
+            values: values[..],
+        ),
+        make_track(
+            path: TargetPath.MORPH_WEIGHTS,
+            interpolation: Interpolation.LINEAR,
+            times: times[..],
+            values: values[..],
+            target: 1,
+        ),
+    };
+    uint[2] targets = { 1, 3 };
+    ClipId clip = add_clip(
+        assets: &assets,
+        key: "",
+        tracks: tracks[..],
+        targets: targets[..],
+        duration: 1,
+    );
+    animator.play(&assets, clip)!!;
+    anim::update(&assets, &scene, 0.25f);
+    assert(approx(scene.get(target, Mesh).morph_weights[0], 0.25f));
+    assert(approx(scene.get(survivor, Mesh).morph_weights[0], 0.25f));
+    scene.remove(target);
+    anim::update(&assets, &scene, 0.25f);
+    assert(instance.present_node(1) == null && scene.count(Mesh) == 1);
+    assert(approx(scene.get(survivor, Mesh).morph_weights[0], 0.5f));
 }

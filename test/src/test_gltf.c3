@@ -260,7 +260,7 @@ fn void test_omitted_morph_weights_default_to_zero_per_target_and_animate() @tes
     Animator* animator = anim::add_animator(&scene, root);
     animator.play(&assets, template.clips[0])!!;
     anim::update(&assets, &scene, 0.5f);
-    Mesh* mesh = scene.get(scene.get(root, ModelInstance).nodes[template.meshes[0].node], Mesh);
+    Mesh* mesh = scene.get(scene.get(root, ModelInstance).present_node(template.meshes[0].node), Mesh);
     assert(mesh.morph_weights.len == 2);
     assert(math::abs(mesh.morph_weights[0] - 0.5f) < 0.01f && math::abs(mesh.morph_weights[1] - 0.25f) < 0.01f);
 }

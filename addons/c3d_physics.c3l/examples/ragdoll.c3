@@ -178,7 +178,9 @@ fn Character? build_character(AssetStore* assets, Scene* scene) @local {
     ModelId model = gltf::load_model(assets, MODEL_PATH)!;
     Character character = { .root = model::instantiate(assets, scene, model, name: "character")! };
     ModelInstance* instance = scene.get(character.root, ModelInstance);
-    foreach (node : instance.nodes) {
+    for (usz node_index = 0; node_index < instance.nodes.len; node_index++) {
+        Node* node = instance.present_node(node_index);
+        if (!node) continue;
         if (scene.has(node, SkinBinding)) character.skin = node;
     }
     if (!character.skin) return NOT_FOUND~;

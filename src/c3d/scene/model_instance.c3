@@ -9,7 +9,9 @@ import c3d::maths;
 *>
 struct ModelInstance {
     ModelId     source;
+    <* Borrowed pointer table; read nodes through present_node. *>
     Node*[]     nodes;
+    Entity[]    node_entities;
     Transform[] base_pose;
     uint[]      mesh_nodes;
     float[][]   base_morph_weights;
@@ -24,12 +26,23 @@ struct SkinBinding {
     Node*[]    joints;
 }
 
+<*
+ Borrow the original template node, or null after its removal.
+ @require template_index < self.nodes.len, self.node_entities.len == self.nodes.len
+*>
+fn Node* ModelInstance.present_node(&self, usz template_index) {
+    Node* node = self.nodes[template_index];
+    if (!node || !c3d::same_id(node.id, self.node_entities[template_index])) return null;
+    return node;
+}
+
 fn void free_model_instance(Entity entity, void* component, void* user) @private {
     ModelInstance* instance = (ModelInstance*)component;
     Allocator allocator = *(Allocator*)user;
     foreach (weights : instance.base_morph_weights) alloc::free(allocator, weights.ptr);
     alloc::free(allocator, instance.base_morph_weights.ptr);
     alloc::free(allocator, instance.nodes.ptr);
+    alloc::free(allocator, instance.node_entities.ptr);
     alloc::free(allocator, instance.base_pose.ptr);
     alloc::free(allocator, instance.mesh_nodes.ptr);
     alloc::free(allocator, instance.clips.ptr);
