@@ -3,7 +3,7 @@
 `c3d::physics::fracture` provides bounded workspaces, exact arithmetic, filtered
 geometric predicates, centered quantization, complete private solid validation
 and exact source construction records, convex-cell clipping and local face-driven
-partitioning with material occupancy and exact planar boundary reconstruction, triangulation and float publication arithmetic. It also owns independent fracture results and public collision reconstruction. Public Boolean/Voronoi construction remains separate integration work.
+partitioning with material occupancy, exact planar boundary reconstruction, constrained triangulation and owned float fragment surfaces. `create_voronoi_fracture` partitions one solid by ordered sites; `create_boolean` constructs regularized union, intersection or difference. `create_fracture_collision` reconstructs bounded convex collision hulls from published fragment surfaces.
 
 ## Workspace contract
 
@@ -591,7 +591,7 @@ existing 896-bit packed integer. The common grid exponent is accounted for when
 the complete operation compares its source and published volumes.
 
 The numeric routines add no arena allocation and use the fixed arithmetic
-arithmetic block. Ratio rounding peaks at five wide values, frame conversion at
+block. Ratio rounding peaks at five wide values, frame conversion at
 nine, volume-bound evaluation at ten, and centroid accumulation at nineteen of
 the reserved twenty-four. First moments fit 1145 bits; squared centroid error
 fits 2294 bits; the conservative frame-error bound is 3918 bits. Compile-time
@@ -601,8 +601,106 @@ Sixteen focused tests cover seeded finite float bit patterns, exact and near tie
 subnormals, extreme coordinates, signed underflow, overflow, full-width ratios,
 centroids with cavities and disconnected shells, source-face ordering, grid
 affine conversion, exact error thresholds, and volume changes of forty deformed
-solid fixtures. Complete owning-result publication and final raw validation
-remain separate integration work.
+solid fixtures. Owning-result publication below applies these routines before
+publishing any output allocation.
+
+
+## Owned surface generation
+
+`create_voronoi_fracture` and `create_boolean` borrow a live workspace exclusively
+and leave input arrays unchanged. They validate raw input solids before selecting
+one grid for all operands, then validate the quantized topology and shell nesting.
+Invalid raw solids return `INVALID_SOLID`; quantization or final float publication
+that cannot preserve the required geometry returns `NUMERICAL_FAILURE`.
+Unsupported streams retain the existing `UNSUPPORTED` contract.
+
+`CutSurface.material_slot` is an application material label.
+`uv_repeats_per_meter` must be finite and positive. Source labels survive on
+retained authored surfaces. Source normals, both UV streams and colors are
+interpolated using exact barycentric weights; original corners retain their
+attribute bits. Missing normals are generated from the outward source plane.
+Generated cuts use the canonical plane basis, planar UVs in the source frame and
+white color where that stream exists. Opposite cut copies share UVs and have
+opposite normals. Tangents are regenerated from UV0 in canonical triangle order.
+A later material-aware adapter must account for materials using another UV set.
+
+The publisher rounds each distinct exact point once in a common atlas, validates
+exact edge incidence, validates common and local float surfaces, and checks
+centroid, point and shared-copy error against `resolution_m`. Each piece contains
+one material-connected component; cavities remain part of their surrounding
+piece, while islands and disconnected volumes become separate pieces. Source
+triangle/material provenance determines render seams without splitting physical
+pieces. Optional output streams are the union needed by that piece; generated
+cuts require UV0 and tangents. Geometry contains no scene or native handles.
+
+`FractureResult` owns one aligned allocation containing its piece table and all
+surface arrays. Each `FracturePieceView.origin` is a rounded source-frame centroid;
+its mesh positions are local to that translated frame. The result remains valid
+after workspace reuse or destruction and after source arrays are released.
+`destroy_fracture_result` clears the owner; destroying an empty owner is valid.
+Empty Boolean results are successful owned results with no pieces.
+
+Limits are global across the operation. `max_vertices` counts emitted render
+vertices, including seam duplication, and `max_triangles` counts emitted render
+triangles. Source arrays, candidate topology and intermediate triangulations may
+exceed those counts while they fit `scratch_bytes`. Piece/site limits and output
+allocation failures return `CAPACITY_EXCEEDED`; no partial result is published.
+The workspace remains immediately reusable after every failure.
+
+### Ordered Voronoi pieces
+
+Sites must be finite, nonempty and distinct in the source frame. Original
+coincident sites return `INVALID_ARGUMENT`; distinct sites that quantize together
+return `NUMERICAL_FAILURE`. A single finite site preserves the source components
+without quantizing that site's irrelevant location. Sites outside the source are
+valid, and sites with no positive-volume region emit no piece.
+
+Each site pair constructs one exact bisector. Positive material components are
+extracted per site. Original exterior triangles keep source provenance; existing
+exterior faces coincident with a bisector do not receive generated cut material.
+All patch boundaries are reconciled before triangulation. Each shared cut is
+triangulated once and borrowed with opposite winding; a cut adjoining several
+components uses disjoint triangle selections into that same array. Output pieces
+are ordered by site and then canonical surface geometry. Triangle permutations
+of an otherwise identical source produce identical owned output bytes.
+
+The sum of final signed piece volumes is compared exactly with the quantized
+source volume using the derived rounding bound above. Shared-cut validation
+requires each triangle exactly twice on distinct pieces with opposite winding.
+The public operation also records final and occupied leaf counts in the workspace
+measurement block. Complete-kernel timing and scaling acceptance remain separate
+from these correctness tests.
+
+
+### Regularized Boolean surfaces
+
+UNION selects material occupied by either operand; INTERSECTION selects material
+occupied by both; DIFFERENCE selects material in the first operand outside the
+second. Boundary-only contacts have no volume. Coincident exterior coverage uses
+the first source's provenance and material, including partial overlaps and
+unequal coplanar triangulations.
+
+Retained first-source surfaces always keep their authored attributes. UNION also
+keeps surviving second-source authored surfaces. INTERSECTION and DIFFERENCE use
+`CutSurface` for exposed second-source surfaces; DIFFERENCE reverses their outward
+orientation. Generated coplanar fragments are merged before triangulation, so
+second-source triangle subdivisions do not become artificial cut boundaries.
+Signed planar subtraction preserves holes in partially coincident patches.
+
+Selected cells are grouped by positive-area face connectivity. Boundary patches
+from both sources are reconciled globally and then passed through the same owned
+surface publisher as Voronoi results. Boolean pieces use canonical geometry order
+without a site key. Source-face permutations retain output bytes. Identical-source
+DIFFERENCE and disjoint INTERSECTION return successful empty owned results.
+
+The focused integration cases run at O0, O3, O4 and explicit O4 fast math. They
+cover source/site preparation, exact surface-point identity, authored/cut streams,
+shared triangle selections, final common/local validation, independent ownership,
+output/scratch/allocation limits and immediate reuse. Public fixtures include
+2/4/8-site boxes, oblique cuts, cavities, nested islands, concavity, disconnected
+components, twelve rotated unit cubes and all three Boolean operations over
+overlapping, contained, identical, touching and disjoint solids. Full-kernel
+measurements and scene/native integration have separate acceptance gates.
 
 ## Collision reconstruction
 

@@ -71,6 +71,16 @@ Edge/corner contacts also count; the rule does not measure shared face area. Ove
 example uses 0.5 m cubes on a 0.508 m pitch: face gaps are below the default
 0.01 m threshold, diagonal gaps are above it, producing 112 welds.
 
+## CPU fracture geometry
+
+`c3d::physics::fracture` provides `create_voronoi_fracture` and `create_boolean`
+over explicit indexed solid meshes. A reusable bounded workspace holds temporary
+geometry; each returned `FractureResult` independently owns its fragment arrays.
+Pieces carry translated local meshes and application material labels. The module
+creates no scene nodes, GPU resources or native physics objects. See
+[Fracture geometry](../../docs/fracture.md#owned-surface-generation) for input,
+quantization, material, ownership and capacity contracts.
+
 ## Pending fracture preparation
 
 `scene.attach_breakable_pieces(&assets, root, pieces, desc)` copies a captured
