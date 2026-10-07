@@ -226,6 +226,22 @@ while (window.poll()) {
   are left out.
 - Each `CrowdInstance` has a placement, a `CrowdPose` (`clip`, `time`, `speed`, `loop`) and a tint.
   `set_crowd` replaces them and the live count for every part at once.
+- Shared preparation and removal rules are in the [owner readiness table](owner_readiness.md).
+- `model::attach_crowd` attaches authoring to an existing node. It copies capacity-sized placements,
+  poses, authored start times and colors, and retains the pose bounds and initial part trace flag.
+  It creates no part nodes, palettes or assets. `AnimatedCrowd.is_prepared()` reports readiness;
+  pending crowds produce no generated draw and `crowd_update` skips them unchanged.
+- `model::prepare_crowd(assets, scene, node)` installs all runtime arrays and part batches atomically.
+  `model::prepare_crowd_subtree(assets, scene, root = null)` attempts every pending crowd under the
+  selected root, including the root. Null selects the whole scene. It returns the first fault and
+  retains owners that prepared successfully. A failed owner retains its authoring for retry;
+  preparing an already-prepared crowd is a no-op. `add_crowd` combines attachment and preparation.
+- `attach_crowd` and `set_crowd` capture each input `pose.time` in `AnimatedCrowd.start_times`.
+  `poses.clip`, `poses.speed` and `poses.loop` remain the current authored playback configuration;
+  `poses.time` is the advancing runtime clock. Direct time edits seek runtime playback without
+  changing the authored start; `set_crowd` defines a new authored start. Retained `colors` supply
+  the initial tint to every generated part. Unused initial slots have identity placement, white
+  color, zero clip/time, speed 1 and looping enabled; only the first `count` slots are live.
 - `crowd_update` advances every pose (loop wraps, otherwise the time clamps), samples its clip into one
   model-space palette per instance, writes the placements into every part batch and bounds each batch
   by `pose_bounds` under every placement. Poses are independent: no blending, fading or retargeting per

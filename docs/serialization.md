@@ -85,3 +85,9 @@ The container currently supports version 1. A codec receives its stored version 
 | CAPACITY_EXCEEDED | Authored nodes do not fit, output/count cannot fit the bounded format, or a fallible owner/output allocation fails |
 
 Operational faults from owner codecs propagate according to their declared contracts. A codec should classify invalid stored descriptors before calling an owner API with programming preconditions. Registering transient state explicitly is required; unknown components are never silently dropped.
+
+## Owner readiness
+
+The [owner readiness table](owner_readiness.md) defines application preparation
+order after authoring attachment. Codec availability remains as listed in this
+document's coverage section.
