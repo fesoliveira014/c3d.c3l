@@ -8,7 +8,7 @@ const Vec3[4] TETRA_POSITIONS @local = { {}, { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1
 const uint[12] TETRA_CORNERS @local = { 0, 2, 1, 0, 1, 3, 0, 3, 2, 1, 2, 3 };
 const usz SOLID_TEST_BYTES @local = MIN_FRACTURE_SCRATCH_BYTES + 8192;
 
-struct SolidFixture @local {
+struct SolidFixture @private {
     Vec3[12] positions;
     uint[24] indices;
     uint[12] identities;
@@ -231,7 +231,7 @@ fn void test_solid_scratch_capacity_failure_restores_cursor_and_reuses_workspace
     assert(build_solid_topology(&scratch, fixture.mesh)!!.shell_count == 1);
 }
 
-fn void tetra_fixture(SolidFixture* fixture) @local {
+fn void tetra_fixture(SolidFixture* fixture) @private {
     *fixture = {};
     fixture.positions[:4] = TETRA_POSITIONS[..];
     fixture.indices[:12] = TETRA_CORNERS[..];
@@ -243,11 +243,11 @@ fn void tetra_fixture(SolidFixture* fixture) @local {
     };
 }
 
-fn FractureWorkspace solid_workspace() @local {
+fn FractureWorkspace solid_workspace() @private {
     return create_fracture_workspace(mem, solid_limits())!!;
 }
 
-fn FractureLimits solid_limits() @local {
+fn FractureLimits solid_limits() @private {
     return {
         .scratch_bytes = SOLID_TEST_BYTES,
         .max_vertices = 64,

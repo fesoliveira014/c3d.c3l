@@ -6,8 +6,9 @@ import std::math;
 import std::sort;
 
 const uint NO_SOLID_INDEX @private = uint::max;
+const uint TRIANGLE_CORNERS @private = 3;
 
-<* Borrow surface arrays and explicit topological vertex identities. *>
+<* Borrowed surface arrays with explicit topological vertex identities. *>
 struct SolidMeshView {
     Geometry geometry;
     uint[] topology_vertices;
@@ -101,8 +102,8 @@ fn void? check_solid_streams(SolidMeshView mesh) @private {
     }
     usz vertices = geometry.positions.len;
     usz corners = geometry.indices.len;
-    if (!vertices || !corners || corners % SPACE_AXES || mesh.topology_vertices.len != vertices
-        || mesh.triangle_materials.len != corners / SPACE_AXES) return c3d::INVALID_ARGUMENT~;
+    if (!vertices || !corners || corners % TRIANGLE_CORNERS || mesh.topology_vertices.len != vertices
+        || mesh.triangle_materials.len != corners / TRIANGLE_CORNERS) return c3d::INVALID_ARGUMENT~;
     if (vertices > uint::max || corners > uint::max) return c3d::CAPACITY_EXCEEDED~;
     usz[5] lengths = {
         geometry.normals.len, geometry.tangents.len, geometry.uv0.len, geometry.uv1.len, geometry.colors.len,
@@ -120,7 +121,7 @@ fn void? check_solid_streams(SolidMeshView mesh) @private {
 }
 
 fn uint next_solid_corner(uint corner) @private {
-    return corner - corner % SPACE_AXES + (corner + 1) % SPACE_AXES;
+    return corner - corner % TRIANGLE_CORNERS + (corner + 1) % TRIANGLE_CORNERS;
 }
 
 fn uint solid_shell_root(uint[] parents, uint face) @private {
@@ -188,8 +189,8 @@ fn SolidTopology? build_solid_topology(SolidScratch* scratch, SolidMeshView mesh
         uint second = edges[start + 1].corner;
         topology.twins[first] = second;
         topology.twins[second] = first;
-        uint first_shell = solid_shell_root(topology.shell_roots, first / SPACE_AXES);
-        uint second_shell = solid_shell_root(topology.shell_roots, second / SPACE_AXES);
+        uint first_shell = solid_shell_root(topology.shell_roots, first / TRIANGLE_CORNERS);
+        uint second_shell = solid_shell_root(topology.shell_roots, second / TRIANGLE_CORNERS);
         topology.shell_roots[math::max(first_shell, second_shell)] = math::min(first_shell, second_shell);
         start = end;
     }
