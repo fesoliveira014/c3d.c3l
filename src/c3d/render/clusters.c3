@@ -212,6 +212,7 @@ fn ClusterCell cluster_cell(
     return { .cell = cell, .clustered = true };
 }
 
+// mirrored by the lane-zero cell-plane setup in light_cull.comp.glsl
 <*
  Inward clipping planes of a cell in the view's frame space.
  @param [&in] matrices : "Unjittered matrices used by cluster selection."
