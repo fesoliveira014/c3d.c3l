@@ -9,8 +9,7 @@ import c3d::scene;
 import c3d::serial @public;
 
 const typeid[*] PENDING_CORE_POLICIES @private = {
-    SkinBinding::typeid, Animator::typeid, IkChain::typeid,
-    FootIk::typeid, LookAt::typeid, AnimatedCrowd::typeid,
+    Animator::typeid, AnimatedCrowd::typeid,
 };
 
 struct ExpectedPolicy @private {
@@ -24,7 +23,7 @@ struct ExpectedPolicy @private {
 fn void test_every_registered_core_component_has_one_expected_policy() @test {
     assert(ecs::registered_type_count == 0);
     serial::register_core_codecs()!!;
-    ExpectedPolicy[12] expected = {
+    ExpectedPolicy[16] expected = {
         { .slot = ecs::assigned_slot(Mesh)!!, .name = "c3d.Mesh",
             .identity = Mesh::typeid, .component_description = true },
         { .slot = ecs::assigned_slot(Camera)!!, .name = "c3d.Camera",
@@ -48,6 +47,14 @@ fn void test_every_registered_core_component_has_one_expected_policy() @test {
         { .slot = ecs::assigned_slot(LodGroup)!!, .name = "c3d.LodGroup", .identity = LodAuthoring::typeid },
         { .slot = ecs::assigned_slot(ModelInstance)!!, .name = "c3d.ModelInstance",
             .identity = ModelAuthoring::typeid, .phase = REFERENCES },
+        { .slot = ecs::assigned_slot(SkinBinding)!!, .name = "c3d.SkinBinding",
+            .identity = SkinAuthoring::typeid, .phase = REFERENCES },
+        { .slot = ecs::assigned_slot(IkChain)!!, .name = "c3d.IkChain",
+            .identity = IkAuthoring::typeid, .phase = REFERENCES },
+        { .slot = ecs::assigned_slot(FootIk)!!, .name = "c3d.FootIk",
+            .identity = FootAuthoring::typeid, .phase = REFERENCES },
+        { .slot = ecs::assigned_slot(LookAt)!!, .name = "c3d.LookAt",
+            .identity = LookAuthoring::typeid, .phase = REFERENCES },
     };
     assert(ecs::registered_type_count == expected.len);
     serial::register_core_codecs()!!;

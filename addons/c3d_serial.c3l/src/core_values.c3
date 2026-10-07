@@ -37,6 +37,7 @@ fn void? register_core_value_types() {
     register_core_value(LodEffects, LOD_EFFECTS_LAYOUT, &defaults_lod_effects)!;
     register_core_value(Billboard, BILLBOARD_LAYOUT, &defaults_billboard)!;
     register_core_value(Mesh, MESH_LAYOUT, &defaults_mesh)!;
+    register_node_reference_type()!;
 }
 
 macro void? register_core_value($Type, ulong layout, DefaultsFn defaults) @private {
