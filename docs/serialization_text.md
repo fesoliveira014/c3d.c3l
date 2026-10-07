@@ -31,3 +31,18 @@ entries belong to its allocator and are released by `destroy_omission_report`.
 Diagnostics and reports are cleared before each call, including failed calls.
 Partial reports are released if report allocation fails. This export shares the
 binary collector/projection path; component collection faults retain their details.
+
+## Text subtree import
+
+`read_subtree_text` reads one complete JSONC document. Nodes have contiguous
+zero-based document IDs and may appear in any record order; names may be empty
+or repeated. The reader requires one root, live in-document parent references
+and an acyclic connected graph before creating nodes. It restores local/world
+transform mode, layers and authored visibility under the requested live parent.
+
+Described components decode before validation, then attach in the existing
+restore phases. Validators can borrow another component's decoded authoring
+through `ReadContext.authored`. Reader-owned strings, arrays and scratch storage
+are released after attachment or failure; attachments copy retained values.
+A failed import removes the newly created subtree. A supplied diagnostic retains
+the JSON Pointer, source position, node record path and component name.
