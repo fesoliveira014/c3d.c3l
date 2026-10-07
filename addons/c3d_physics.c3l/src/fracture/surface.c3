@@ -7,12 +7,15 @@ enum SolidFailure @private {
     NONE,
     DEGENERATE_TRIANGLE,
     TRIANGLE_INTERSECTION,
+    DEGENERATE_SHELL,
+    WRONG_ORIENTATION,
 }
 
 struct SolidDiagnostic @private {
     SolidFailure reason;
     uint first_face;
     uint second_face;
+    uint shell_index;
 }
 
 struct SolidBounds @private {
@@ -102,7 +105,7 @@ fn void build_surface_tree(SolidSurface* surface) @private {
 }
 
 fn void? check_surface_geometry(SolidSurface* surface, SolidDiagnostic* diagnostic) @private {
-    *diagnostic = { .first_face = NO_SOLID_INDEX, .second_face = NO_SOLID_INDEX };
+    *diagnostic = { .first_face = NO_SOLID_INDEX, .second_face = NO_SOLID_INDEX, .shell_index = NO_SOLID_INDEX };
     surface.validated = false;
     surface.candidate_pairs = 0;
     foreach (uint face, &bounds : surface.bounds) {
@@ -110,7 +113,7 @@ fn void? check_surface_geometry(SolidSurface* surface, SolidDiagnostic* diagnost
         uint projection;
         while (projection < SPACE_AXES && surface_projection(surface, triangle, projection)! == 0) projection++;
         if (projection == SPACE_AXES) {
-            *diagnostic = { .reason = SolidFailure.DEGENERATE_TRIANGLE, .first_face = face, .second_face = face };
+            *diagnostic = { .reason = SolidFailure.DEGENERATE_TRIANGLE, .first_face = face, .second_face = face, .shell_index = NO_SOLID_INDEX };
             return INVALID_SOLID~;
         }
         surface.projections[face] = projection;
@@ -140,7 +143,7 @@ fn void? check_surface_geometry(SolidSurface* surface, SolidDiagnostic* diagnost
                 if (other > face) {
                     surface.candidate_pairs++;
                     if (triangles_conflict(surface, face, other)!) {
-                        *diagnostic = { .reason = SolidFailure.TRIANGLE_INTERSECTION, .first_face = face, .second_face = other };
+                        *diagnostic = { .reason = SolidFailure.TRIANGLE_INTERSECTION, .first_face = face, .second_face = other, .shell_index = NO_SOLID_INDEX };
                         return INVALID_SOLID~;
                     }
                 }
@@ -157,7 +160,7 @@ fn SolidSurface? build_solid_surface(
     SolidMeshView source,
     SolidDiagnostic* diagnostic,
 ) @private {
-    *diagnostic = { .first_face = NO_SOLID_INDEX, .second_face = NO_SOLID_INDEX };
+    *diagnostic = { .first_face = NO_SOLID_INDEX, .second_face = NO_SOLID_INDEX, .shell_index = NO_SOLID_INDEX };
     usz saved = scratch.used;
     defer catch scratch.used = saved;
     SolidSurface surface = {

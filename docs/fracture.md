@@ -157,5 +157,46 @@ and grid domains, including extreme floats and subnormals. The separated-shell
 fixture has 32 tetrahedra and 128 triangles: the hierarchy tests 192 candidate
 pairs out of 8,128 possible pairs, including valid adjacent-face contacts.
 It reproduces the same face order and first diagnostic across repeated runs.
-Containment, shell orientation and validity after quantization remain required
-before any public solid-generation operation is exposed.
+## Shell nesting and quantized validity
+
+Complete private input validation measures each shell's signed volume exactly.
+Raw float coordinates use their integer units of `2^-149`; summing at most
+`uint::max` triangle determinants needs at most 866 bits. The existing 896-bit
+packed integer holds each shell total. Two shared arithmetic values and nine
+coordinates plus three determinant temporaries give a measured peak of 14 live
+wide values for this pass. Grid inputs use the same exact accumulation. A zero
+sum produces `INVALID_SOLID` with a private degenerate-shell diagnostic.
+
+Containment uses the first vertex of each shell's lowest-index face. Prior
+intersection validation excludes every contact between distinct shells, so this
+query is strictly inside or outside another shell. A fixed positive-Z ray uses
+one symbolic query perturbation `(epsilon, epsilon^2, 0)`. Projected edge signs
+resolve a zero constant by `-dy`, then `dx`; no numeric epsilon, retries or
+constructed intersection positions are used. Parallel projected faces do not
+cross the ray. Exact tetrahedral signs select forward intersections.
+
+Shell bounds come from existing face bounds. Non-enclosing shell pairs are
+pruned; ray queries reuse the existing hierarchy. Each shell's parent is its
+containing shell with the smallest absolute exact volume. Even nesting depths
+must have outward positive volume; odd depths bound cavities and must have
+negative volume. Depth-two islands and disconnected outer shells are supported.
+Wrong winding produces `INVALID_SOLID` and a stable private shell index.
+Counters retain candidate triangle pairs, shell pairs, containment queries and
+candidate containment faces separately for raw and grid validation.
+
+The private validator accepts an optional caller-supplied common grid. It first
+validates the original float solid, then quantizes its used topological vertices
+and repeats geometric validity, nesting and orientation on the actual grid
+coordinates. It reuses the topology and hierarchy arrays. Unreferenced vertices
+are not quantized. A valid source that collapses, touches another shell, changes
+winding or otherwise becomes invalid produces `NUMERICAL_FAILURE`; malformed
+original solids retain `INVALID_SOLID`. Any rejection restores the incoming
+scratch cursor and publishes no result. All input arrays remain borrowed and
+unchanged. Public Boolean, Voronoi and collision-generation operations remain
+unimplemented.
+
+Tests validate a lone 12-triangle box in both domains, then nested boxes and
+islands, reordered shell inputs, disjoint boxes, reversed winding, subnormals
+and extreme float coordinates. Fixed-ray cases hit a triangulation edge, an
+octahedron apex, a parallel exterior face and a supporting-plane extension.
+Quantization cases cover collapse, cross-shell contact and orientation reversal.
