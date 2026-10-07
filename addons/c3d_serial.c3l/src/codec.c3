@@ -50,6 +50,7 @@ struct CodecEntry @private {
     ComponentCodec codec;
     bool transient;
     DescribedBinding* described;
+    String diagnostic_name;
 }
 
 CodecEntry[ecs::MAX_COMPONENT_TYPES] codecs @private;
@@ -73,11 +74,16 @@ macro void? register_codec($Type, ComponentCodec codec) {
 
 <*
  Mark runtime component data as intentionally omitted.
- @return? c3d::CAPACITY_EXCEEDED
+ @param collect : "Read-only check; claims nothing and may only reject."
+ @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
 *>
-macro void? register_transient($Type) {
+macro void? register_transient($Type, CollectFn collect = null) {
     uint slot = ecs::slot_of($Type)!;
-    codecs[slot] = { .transient = true };
+    if (codecs[slot].transient) {
+        if (codecs[slot].codec.collect != collect) return c3d::INVALID_ARGUMENT~;
+        return;
+    }
+    codecs[slot] = { .codec = { .collect = collect }, .transient = true, .diagnostic_name = $Type::qname };
 }
 
 <* Whether a component has an explicit serialization policy. *>
