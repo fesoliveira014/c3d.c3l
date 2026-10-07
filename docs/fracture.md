@@ -1,8 +1,8 @@
 # Fracture workspace and surface validation
 
 `c3d::physics::fracture` provides bounded workspaces, exact arithmetic, filtered
-geometric predicates, centered quantization and private input/topology validation.
-Geometric solid validation, Boolean construction, Voronoi partitioning and
+geometric predicates, centered quantization and private topology/intersection
+validation. Complete solid validation, Boolean construction, Voronoi partitioning and
 collision reconstruction remain separate implementation layers.
 
 ## Workspace contract
@@ -119,9 +119,9 @@ Sorted edge records require two oppositely directed faces per edge. Every used
 vertex has one connected face fan; pinched connections fault even when each
 edge has two faces. These topology defects produce `INVALID_SOLID`.
 Disconnected closed shells are retained with their lowest source face as a
-stable shell key. These checks alone do not establish valid geometric solids:
-triangle intersections, zero geometric area, nesting and orientation still
-require the subsequent validation layers.
+stable shell key. Topology alone does not establish a valid geometric solid.
+The surface layer below adds zero-area and intersection checks; nesting and
+orientation remain a separate validation layer.
 
 Topology arrays and temporary edge records use the existing workspace, without
 another allocation. Reservations align absolute addresses and check byte/count
@@ -130,3 +130,32 @@ failure after earlier successful reservations. The recorded peak includes
 temporary edge storage; successful construction releases that temporary range.
 All validators remain private. Tests exercise `O0`, `O3` and `O4`, including
 bit-based finite checks that remain effective under fast floating-point math.
+
+## Surface geometry and diagnostics
+
+Private surface validation rejects zero-area triangles and intersections beyond
+shared topological vertices or edges. It covers coplanar overlaps, edge/face
+piercing and unshared vertex contacts. Every contact between distinct shells is
+invalid, including a lone touching vertex. The checks use exact projected and
+tetrahedral orientation predicates; strict filters may certify raw-float signs,
+while uncertain cases and O4/O5 builds use exact arithmetic. Projected grid
+orientation fits native `int128`. No intersection coordinate is approximated.
+
+An AABB hierarchy accelerates candidate selection. Quantized bounds use integer
+coordinates. Raw bounds use signed monotonic float-bit keys, preserving
+subnormal ordering without floating arithmetic. Construction splits the widest
+key range (axis order breaks ties), sorts by summed bound keys then source face
+index, and divides the range in half. Queries visit source faces in ascending
+order and traverse left children first; each unordered pair is checked once.
+The first offending pair therefore has a deterministic order. Private diagnostic
+data reports its source face indices and defect kind. A degenerate face names
+itself twice; success and failures before geometry checking leave sentinel IDs.
+
+Hierarchy and surface arrays remain in the workspace. Failure restores the
+incoming cursor. Tests compare contacts under exact affine transforms, in raw
+and grid domains, including extreme floats and subnormals. The separated-shell
+fixture has 32 tetrahedra and 128 triangles: the hierarchy tests 192 candidate
+pairs out of 8,128 possible pairs, including valid adjacent-face contacts.
+It reproduces the same face order and first diagnostic across repeated runs.
+Containment, shell orientation and validity after quantization remain required
+before any public solid-generation operation is exposed.
