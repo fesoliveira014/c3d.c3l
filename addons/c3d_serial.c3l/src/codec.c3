@@ -49,6 +49,7 @@ struct ComponentCodec {
 struct CodecEntry @private {
     ComponentCodec codec;
     bool transient;
+    DescribedBinding* described;
 }
 
 CodecEntry[ecs::MAX_COMPONENT_TYPES] codecs @private;

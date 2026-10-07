@@ -62,9 +62,12 @@ struct ReadContext {
     Node*[] nodes;
     String[] keys;
     ComponentMask[] component_masks;
+    ReadAuthoring[] authoring;
+    Acquisitions* read_owned;
     Node* node;
     uint record;
     uint version;
+    uint slot;
 }
 
 <*

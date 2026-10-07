@@ -83,6 +83,41 @@ fn Node*? read_subtree_binary(
         .keys = keys,
         .component_masks = masks,
     };
+    Acquisitions authoring_owned = { .allocator = context.allocator };
+    defer authoring_owned.release();
+    ReadAuthoring* authoring_storage = authoring_owned.acquire(
+        count: (usz)payloads.len(),
+        element_size: ReadAuthoring::size,
+        alignment: ReadAuthoring::alignment,
+    )!;
+    initialize_binary_authoring(
+        context: &context,
+        entries: authoring_storage[:payloads.len()],
+        payloads: payloads.array_view(),
+        types: types,
+        owned: &authoring_owned,
+    );
+    foreach (payload : payloads.array_view()) {
+        TypeRecord type = types[payload.type];
+        DescribedBinding* binding = codecs[type.slot].described;
+        if (!binding || !binding.codec.validate || type.version != binding.type.version) continue;
+        context.node = nodes[payload.record];
+        context.record = payload.record;
+        context.version = type.version;
+        context.slot = type.slot;
+        Reader bounded = reader_over(payload.bytes);
+        if (catch excuse = validate_described_payload(binding, &bounded, &context)) {
+            return component_diagnostic(
+                diagnostic: context.diagnostic,
+                record: payload.record,
+                type_name: codecs[type.slot].codec.name,
+                cause: excuse,
+            )~;
+        }
+    }
+    foreach (key : keys) {
+        if (catch assets.find(key)) return asset_diagnostic(context.diagnostic, key, c3d::INVALID_ID)~;
+    }
     foreach (phase : RestorePhase::values) {
         foreach (payload : payloads.array_view()) {
             TypeRecord type = types[payload.type];
@@ -91,6 +126,7 @@ fn Node*? read_subtree_binary(
             context.node = nodes[payload.record];
             context.record = payload.record;
             context.version = type.version;
+            context.slot = type.slot;
             Reader bounded = reader_over(payload.bytes);
             if (catch excuse = codec.read(&bounded, &context)) {
                 return component_diagnostic(
@@ -120,7 +156,6 @@ fn String[]? read_keys(AssetStore* assets, Reader* reader, uint count) @local {
         *key = reader.read_string()!;
         if (!key.len || found.has_key(*key)) return c3d::ASSET_FORMAT_ERROR~;
         found.set(*key, true);
-        if (catch assets.find(*key)) return c3d::INVALID_ID~;
     }
     if (reader.remaining()) return c3d::ASSET_FORMAT_ERROR~;
     return keys;
