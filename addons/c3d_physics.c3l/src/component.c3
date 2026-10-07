@@ -118,6 +118,15 @@ fn void? register_physics(Scene* scene) {
     scene.set_remove_hook(Cloth, &cloth::free_cloth, scene.hook_allocator);
 }
 
+fn PhysicsBody? try_copy_physics_body(Allocator allocator, BodyDesc body, ColliderDesc[] colliders) @private {
+    BlockCursor measure;
+    carve_physics_body(&measure, body, colliders);
+    char*? block = alloc::malloc_try(allocator, (sz)measure.offset);
+    if (catch block) return c3d::CAPACITY_EXCEEDED~;
+    BlockCursor fill = { .base = block };
+    return carve_physics_body(&fill, body, colliders);
+}
+
 fn PhysicsBody copy_physics_body(Allocator allocator, BodyDesc body, ColliderDesc[] colliders) @private {
     BlockCursor measure;
     carve_physics_body(&measure, body, colliders);
