@@ -80,9 +80,20 @@ struct ReadContext {
 *>
 fn void? WriteContext.omit_node(&self, Node* node) {
     NodeProjection* projected = projection_of(self, node)!;
-    ulong owner = owner_of(self);
+    ulong owner = owner_of(self)!;
     if (projected.node_owner && projected.node_owner != owner) return c3d::INVALID_ARGUMENT~;
     projected.node_owner = owner;
+}
+
+<*
+ Inspect selection before omissions during the synchronous export callback.
+ @param [&in] node : "Live node owned by the source scene."
+ @require self.state.collecting
+ @require self.scene.world.is_alive(node.id)
+ @require &self.scene.nodes[node.id.index] == node
+*>
+fn bool WriteContext.contains_node(&self, Node* node) {
+    return self.state.projection[node.id.index].selected;
 }
 
 <*
@@ -93,7 +104,7 @@ fn void? WriteContext.omit_node(&self, Node* node) {
 *>
 fn void? WriteContext.omit_component(&self, Node* node, uint slot) {
     NodeProjection* projected = projection_of(self, node)!;
-    ulong owner = owner_of(self);
+    ulong owner = owner_of(self)!;
     foreach (claim : self.state.claims.array_view()) {
         if (claim.node == node.id.index && claim.slot == slot) {
             if (claim.owner != owner) return c3d::INVALID_ARGUMENT~;
@@ -112,7 +123,7 @@ fn void? WriteContext.omit_component(&self, Node* node, uint slot) {
 *>
 fn void? WriteContext.set_local(&self, Node* node, Transform local) {
     NodeProjection* projected = projection_of(self, node)!;
-    ulong owner = owner_of(self);
+    ulong owner = owner_of(self)!;
     if (projected.local_owner && projected.local_owner != owner) return c3d::INVALID_ARGUMENT~;
     if (projected.local_owner && (projected.local.position != local.position
         || projected.local.rotation.v != local.rotation.v || projected.local.scale != local.scale)) {
@@ -229,7 +240,8 @@ fn NodeProjection*? projection_of(WriteContext* context, Node* node) @private {
     return projected;
 }
 
-fn ulong owner_of(WriteContext* context) @local {
+fn ulong? owner_of(WriteContext* context) @local {
+    if (codecs[context.slot].transient) return c3d::INVALID_ARGUMENT~;
     return ((ulong)(context.node.id.index + 1) << OWNER_SLOT_SHIFT) | (ulong)(context.slot + 1);
 }
 
