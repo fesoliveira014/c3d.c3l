@@ -16,7 +16,7 @@ struct NodeReference {
 }
 
 <*
- Capture a node reference without rebinding absent template slots.
+ Capture a live node using its current entity identity.
  @param [in] node : "Null or storage belonging to the source scene."
  @param missing : "Owner fault for a missing required node."
  @return "Portable reference or the unchanged owner fault."
@@ -32,20 +32,6 @@ fn NodeReference? WriteContext.make_node_reference(
         if (required) return missing~;
         return (NodeReference){ .template_index = INDEX_NONE };
     }
-    self.scene.@each(ModelInstance; entity, instance) {
-        foreach (usz index, captured : instance.node_entities) {
-            if (!captured.generation || &self.scene.nodes[captured.index] != node) continue;
-            if (!instance.present_node(index)) {
-                return model_diagnostic(
-                    diagnostic: self.diagnostic,
-                    assets: self.assets,
-                    model: instance.source,
-                    index: (uint)index,
-                    cause: missing,
-                )~;
-            }
-        }
-    };
     return self.make_entity_reference(node.id, required, missing);
 }
 

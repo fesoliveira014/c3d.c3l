@@ -163,3 +163,20 @@ The shared NodeReference layout is registered by register_core_value_types;
 SkinAuthoring exposes the decoded skeleton and required joint references to
 other owner preflight callbacks. Missing binary asset keys retain the key in
 SerialDiagnostic, matching JSONC diagnostics.
+Animator restores in OWNER after ModelInstance and reference components. Export
+projects its template nodes and Mesh morph weights to the captured baselines
+without changing the source scene. The instance root retains its current placement.
+Action masks, layers, clips, speed, loop/playing flags, root-motion mode and blend
+space configuration persist; action times, space phases, events and fades restart.
+Active fades settle at their targets; fading-out actions and spaces are omitted,
+while settled zero-weight actions remain. Handles are newly allocated. An absent
+configured root slot retains its mode and contributes zero root motion.
+Model signatures compare every ordered mesh and skin slot per template node.
+The unreleased ModelInstance layout pins change with this complete signature;
+ordinary binary container fixtures remain compatible. Asset storage accepts
+repeated slots, while eager instantiation retains its existing one-component-per-
+node contract. The serializer can reconstruct an explicitly authored saved graph.
+Ordinary pointer references capture the current live entity, including explicit
+LookAt/IK retargeting after slot reuse. Skin joints alone retain captured template
+identity: deleting a required template joint rejects export even if its address
+was reused, rather than silently rebinding the original skin.
