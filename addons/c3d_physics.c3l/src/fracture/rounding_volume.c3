@@ -1,5 +1,7 @@
 module c3d::physics::fracture;
 
+import std::time;
+
 const uint ROUNDING_VOLUME_BITS @private = 872;
 const uint ROUNDING_VOLUME_TEMPORARIES @private = 2 + 2 * SPACE_AXES + 2;
 $assert ROUNDING_VOLUME_BITS <= PLANE_LIMBS * INTEGER_LIMB_BITS;
@@ -7,6 +9,8 @@ $assert ROUNDING_VOLUME_TEMPORARIES <= EXACT_TEMPORARIES;
 
 <* @require surface.validated && !surface.grid.len *>
 fn PlaneInteger? float_rounding_volume_bound(SolidSurface* surface, float resolution) @private {
+    std::time::Clock started = begin_exact_measurement(surface.exact);
+    defer finish_exact_measurement(surface.exact, started);
     ExactScratch* scratch = surface.exact;
     uint saved = scratch.count;
     defer scratch.count = saved;

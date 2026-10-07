@@ -1,5 +1,6 @@
 module c3d::physics::fracture;
 
+import std::time;
 import std::math;
 
 const uint FLOAT_ROUND_TEMPORARIES @private = 5;
@@ -14,6 +15,8 @@ fn float? round_float_ratio(
     IntegerView denominator,
     int unit_exponent,
 ) @private {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     uint saved = scratch.count;
     defer scratch.count = saved;
     uint sign = numerator.negative ? (uint)1 << FLOAT_SIGN_BIT : 0;

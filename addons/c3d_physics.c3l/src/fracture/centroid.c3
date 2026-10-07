@@ -1,5 +1,6 @@
 module c3d::physics::fracture;
 
+import std::time;
 import std::math;
 
 const uint RAW_CENTROID_MOMENT_BITS @private = 1145;
@@ -14,6 +15,8 @@ fn void require_centroid_volume(IntegerView value) @local {}
 
 <* @require surface.validated && !surface.grid.len *>
 fn Vec3? rounded_surface_centroid(SolidSurface* surface, float resolution) @private {
+    std::time::Clock started = begin_exact_measurement(surface.exact);
+    defer finish_exact_measurement(surface.exact, started);
     ExactScratch* scratch = surface.exact;
     uint saved = scratch.count;
     defer scratch.count = saved;

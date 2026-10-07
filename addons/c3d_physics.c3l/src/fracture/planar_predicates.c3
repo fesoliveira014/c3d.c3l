@@ -24,6 +24,8 @@ fn int compare_exact_planes(ExactPlane* first, ExactPlane* second) @private {
 }
 
 fn bool? independent_plane_pair(ExactScratch* scratch, ExactPlane* first, ExactPlane* second) @private {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     uint saved = scratch.count;
     defer scratch.count = saved;
     WideInteger* left = scratch.take()!;
@@ -42,6 +44,8 @@ fn int? exact_planar_orientation(
     PlaneTriple[TRIANGLE_CORNERS] vertices,
     uint dropped_axis,
 ) @private {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     uint saved = scratch.count;
     defer scratch.count = saved;
     HomogeneousPoint[TRIANGLE_CORNERS] points;
@@ -92,8 +96,8 @@ fn int? planar_orientation(
         scratch.filtered_count++;
         return filtered;
     }
-    Clock started = clock::now();
-    defer scratch.exact_nanoseconds += (ulong)started.to_now();
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     return exact_planar_orientation(scratch, vertices, dropped_axis);
 }
 
@@ -103,6 +107,8 @@ fn int? exact_compare_planar_points(
     PlaneTriple second,
     uint dropped_axis,
 ) @private {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     uint saved = scratch.count;
     defer scratch.count = saved;
     HomogeneousPoint left;
@@ -155,8 +161,8 @@ fn int? compare_planar_points(
         scratch.filtered_count++;
         return filtered;
     }
-    Clock started = clock::now();
-    defer scratch.exact_nanoseconds += (ulong)started.to_now();
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     return exact_compare_planar_points(
         scratch: scratch,
         first: first,

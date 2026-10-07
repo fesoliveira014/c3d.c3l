@@ -1,5 +1,6 @@
 module c3d::physics::fracture;
 
+import std::time;
 import std::math;
 
 const uint SPACE_AXES @private = 3;
@@ -45,6 +46,8 @@ fn void? determinant(
     IntegerView[] matrix,
     uint order,
 ) @private {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     uint saved = scratch.count;
     defer scratch.count = saved;
     WideInteger* first = scratch.take()!;
@@ -77,6 +80,8 @@ fn bool? normalize_plane(
     ExactPlane* output,
     WideInteger*[HOMOGENEOUS_COMPONENTS] coefficients,
 ) @private {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     uint saved = scratch.count;
     defer scratch.count = saved;
     uint pivot;
@@ -117,6 +122,8 @@ fn bool? plane_from_float(
     ExactPlane* output,
     Vec3[SPACE_AXES] points,
 ) @private {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     uint saved = scratch.count;
     defer scratch.count = saved;
     WideInteger*[HOMOGENEOUS_COMPONENTS] coefficients;
@@ -159,6 +166,8 @@ fn bool? plane_from_integers(
     ExactPlane* output,
     int128[HOMOGENEOUS_COMPONENTS] values,
 ) @private {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     uint saved = scratch.count;
     defer scratch.count = saved;
     WideInteger*[HOMOGENEOUS_COMPONENTS] coefficients;
@@ -174,6 +183,8 @@ fn void? construct_point(
     WideInteger*[HOMOGENEOUS_COMPONENTS] output,
     ExactPlane*[SPACE_AXES] planes,
 ) @private {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     IntegerView[SPACE_AXES * SPACE_AXES] matrix;
     for (uint column = 0; column < HOMOGENEOUS_COMPONENTS; column++) {
         for (uint row = 0; row < SPACE_AXES; row++) {
@@ -198,6 +209,8 @@ fn void? construct_point(
 }
 
 fn int? exact_float_orientation(ExactScratch* scratch, Vec3[HOMOGENEOUS_COMPONENTS] points) @private {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     uint saved = scratch.count;
     defer scratch.count = saved;
     WideInteger* one = scratch.take()!;
@@ -225,6 +238,8 @@ fn int? exact_vertex_orientation(
     ExactScratch* scratch,
     ExactPlane*[SPACE_AXES][HOMOGENEOUS_COMPONENTS] planes,
 ) @private {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     uint saved = scratch.count;
     defer scratch.count = saved;
     WideInteger*[HOMOGENEOUS_COMPONENTS][HOMOGENEOUS_COMPONENTS] points;
@@ -252,6 +267,8 @@ fn bool? exact_same_vertex(
     ExactPlane*[SPACE_AXES] first,
     ExactPlane*[SPACE_AXES] second,
 ) @private {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     uint saved = scratch.count;
     defer scratch.count = saved;
     WideInteger*[HOMOGENEOUS_COMPONENTS] left;

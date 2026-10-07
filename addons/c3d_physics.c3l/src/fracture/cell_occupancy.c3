@@ -1,5 +1,7 @@
 module c3d::physics::fracture;
 
+import std::time;
+
 fn int? compare_sample_bound(
     ExactScratch* scratch,
     HomogeneousPoint sample,
@@ -7,6 +9,8 @@ fn int? compare_sample_bound(
     long bound,
     bool quantized,
 ) @local {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     uint saved = scratch.count;
     defer scratch.count = saved;
     WideInteger* coordinate = scratch.take()!;
@@ -44,6 +48,8 @@ fn int? sample_projected_side(
     uint second,
     HomogeneousPoint sample,
 ) @local {
+    std::time::Clock started = begin_exact_measurement(surface.exact);
+    defer finish_exact_measurement(surface.exact, started);
     ExactScratch* scratch = surface.exact;
     uint saved = scratch.count;
     defer scratch.count = saved;
