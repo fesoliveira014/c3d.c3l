@@ -178,6 +178,7 @@ fn PlanarEdges? normalize_planar_edges(
     SolidScratch* scratch,
     ExactPlane* plane,
     PlanarSegment[] segments,
+    PlaneTriple[] constraints = {},
 ) @private {
     usz saved = scratch.used;
     defer catch scratch.used = saved;
@@ -197,6 +198,9 @@ fn PlanarEdges? normalize_planar_edges(
             inputs[index].line[0] = inputs[index].line[1];
             inputs[index].line[1] = swap;
         }
+    }
+    foreach (point : constraints) {
+        if (!plane_side(scratch.exact, plane, point)!) (void)add_planar_point(scratch, &list, point)!;
     }
     add_planar_crossings(
         scratch: scratch,

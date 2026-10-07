@@ -3,7 +3,7 @@ module c3d::physics::fracture;
 import c3d;
 import std::math;
 
-struct PlanarFixture @local {
+struct PlanarFixture @private {
     ExactPlane[64] planes;
     PlaneTriple[16] vertices;
     Vec3[16] positions;
@@ -336,13 +336,13 @@ fn void test_planar_capacity_failure_preserves_inputs_and_workspace_prefix() @te
     assert(graph.vertices.len == 5 && graph.edges.len == 4 && scratch.exact.count == 0);
 }
 
-fn void init_planar_fixture(ExactScratch* scratch, PlanarFixture* fixture, bool quantized) @local {
+fn void init_planar_fixture(ExactScratch* scratch, PlanarFixture* fixture, bool quantized) @private {
     fixture.quantized = quantized;
     fixture.plane_count = 1;
     plane_from_integers(scratch, &fixture.planes[0], { 0, 0, 1, 0 })!!;
 }
 
-fn void add_planar_vertex(ExactScratch* scratch, PlanarFixture* fixture, Vec3 position) @local {
+fn void add_planar_vertex(ExactScratch* scratch, PlanarFixture* fixture, Vec3 position) @private {
     uint index = fixture.vertex_count++;
     fixture.positions[index] = position;
     fixture.vertices[index][2] = &fixture.planes[0];
@@ -366,7 +366,7 @@ fn void append_planar_segment(
     PlanarFixture* fixture,
     uint first,
     uint second,
-) @local {
+) @private {
     ExactPlane* line = &fixture.planes[fixture.plane_count++];
     Vec3[3] triangle = {
         fixture.positions[first], fixture.positions[second], fixture.positions[first] + (Vec3){ 0, 0, 1 },

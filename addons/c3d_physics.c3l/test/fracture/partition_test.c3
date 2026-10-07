@@ -236,7 +236,7 @@ fn void test_partition_oblique_shells_match_exact_inverse_transformed_occupancy(
     }
 }
 
-fn SolidSurface partition_surface(SolidScratch* scratch, ContainmentFixture* fixture, bool quantized) @local {
+fn SolidSurface partition_surface(SolidScratch* scratch, ContainmentFixture* fixture, bool quantized) @private {
     SolidDiagnostic diagnostic;
     SolidSurface surface = build_solid_surface(scratch, fixture.mesh, &diagnostic)!!;
     if (quantized) {
@@ -247,7 +247,7 @@ fn SolidSurface partition_surface(SolidScratch* scratch, ContainmentFixture* fix
     return surface;
 }
 
-fn void partition_fixture(ContainmentFixture* fixture, uint shape) @local {
+fn void partition_fixture(ContainmentFixture* fixture, uint shape) @private {
     if (shape == 4) {
         Vec3[12] positions = {
             { 0, 0, 0 }, { 2, 0, 0 }, { 2, 1, 0 }, { 1, 1, 0 }, { 1, 2, 0 }, { 0, 2, 0 },

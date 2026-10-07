@@ -61,6 +61,28 @@ fn bool? source_face_crosses_cell(
     if (!negative || !positive) return false;
     usz saved = scratch.used;
     defer scratch.used = saved;
+    FaceClipVertex[] input = clip_source_face_to_cell(
+        scratch: scratch,
+        surface: surface,
+        source: source,
+        face: face,
+        cell: cell,
+    )!;
+    usz count = input.len;
+    for (usz index = 2; index < count; index++) {
+        if (exact_vertex_orientation(scratch.exact, { input[0].point, input[index - 1].point, input[index].point, off_plane })!) return true;
+    }
+    return false;
+}
+
+fn FaceClipVertex[]? clip_source_face_to_cell(
+    SolidScratch* scratch,
+    SolidSurface* surface,
+    SourceConstructions* source,
+    uint face,
+    ConvexCell* cell,
+) @private {
+    ExactPlane* plane = &source.faces[face];
     usz capacity = TRIANGLE_CORNERS + cell.faces.len;
     FaceClipVertex[] input = reserve_elements(scratch, FaceClipVertex, capacity)!;
     FaceClipVertex[] output = reserve_elements(scratch, FaceClipVertex, capacity)!;
@@ -79,13 +101,10 @@ fn bool? source_face_crosses_cell(
             scratch: scratch.exact, input: input[:count], output: output,
             source: plane, boundary: boundary,
         )!;
-        if (count < TRIANGLE_CORNERS) return false;
+        if (count < TRIANGLE_CORNERS) return {};
         FaceClipVertex[] swap = input;
         input = output;
         output = swap;
     }
-    for (usz index = 2; index < count; index++) {
-        if (exact_vertex_orientation(scratch.exact, { input[0].point, input[index - 1].point, input[index].point, off_plane })!) return true;
-    }
-    return false;
+    return input[:count];
 }
