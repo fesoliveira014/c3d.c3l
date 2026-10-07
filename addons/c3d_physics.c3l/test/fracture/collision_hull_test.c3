@@ -15,8 +15,10 @@ fn void test_collision_hull_rotated_box_concave_and_nested_point_clouds() @test 
             ContainmentFixture fixture;
             partition_fixture(&fixture, shape);
             foreach (&point : fixture.mesh.geometry.positions) *point = rotate_hull_test_point(*point, rotation);
+
             Vec3[24] original;
             original[:fixture.vertex_count] = fixture.mesh.geometry.positions[..];
+
             SolidScratch scratch = begin_solid_scratch(&workspace);
             CollisionHullSurface hull = build_collision_hull(&scratch, fixture.mesh.geometry.positions)!!;
             assert(hull.points.len == fixture.vertex_count);
@@ -24,6 +26,7 @@ fn void test_collision_hull_rotated_box_concave_and_nested_point_clouds() @test 
             uint exterior = assert_hull_surface(&scratch, &hull, fixture.mesh.geometry.positions);
             assert(shape == 4 ? exterior >= 10 && exterior <= 12 : exterior == 8);
             assert(mem::equals((char*)&fixture.positions[0], (char*)&original[0], fixture.vertex_count * Vec3::size));
+
             Vec3[24] reordered;
             for (uint index = 0; index < fixture.vertex_count; index++) {
                 reordered[index] = fixture.positions[fixture.vertex_count - 1 - index];
@@ -43,7 +46,9 @@ fn void test_collision_hull_rotated_box_concave_and_nested_point_clouds() @test 
 fn void test_collision_hull_coplanar_faces_collinear_extensions_and_signed_zero_duplicates() @test {
     FractureWorkspace workspace = collision_test_workspace();
     defer destroy_fracture_workspace(&workspace);
+
     Vec3[133] points;
+
     uint count;
     for (int x = -2; x <= 2; x++) {
         for (int y = -2; y <= 2; y++) {
@@ -57,7 +62,9 @@ fn void test_collision_hull_coplanar_faces_collinear_extensions_and_signed_zero_
             bitcast(((zero >> 2) & 1) << 31, float),
         };
     }
+
     SolidScratch scratch = begin_solid_scratch(&workspace);
+
     CollisionHullSurface hull = build_collision_hull(&scratch, points[..])!!;
     assert(hull.points.len == 125 && hull.indices.len == 36);
     assert(scratch.peak == MIN_FRACTURE_SCRATCH_BYTES + HULL_GRID_ADDITIONAL_BYTES);
@@ -78,6 +85,7 @@ fn void test_collision_hull_coplanar_faces_collinear_extensions_and_signed_zero_
     }
     CollisionHullSurface reversed = build_collision_hull(&scratch, points[..])!!;
     assert_same_hull(&hull, &reversed);
+
     Vec3[6] tied = {
         { -0.0f, 0, 0 }, { 0, -0.0f, 0 }, { 0, 0, -0.0f },
         { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 },
@@ -108,7 +116,9 @@ fn void test_collision_hull_exact_extremes_keep_subnormals_and_source_bits() @te
                 point.y = point.y < 0 ? -float::max : bitcast((uint)0xff7ffffe, float);
             }
         }
+
         SolidScratch scratch = begin_solid_scratch(&workspace);
+
         CollisionHullSurface hull = build_collision_hull(&scratch, fixture.mesh.geometry.positions)!!;
         assert(hull.points.len == 8 && hull.indices.len == 36);
         assert(scratch.exact.peak <= HULL_WIDE_TEMPORARIES);
@@ -135,7 +145,9 @@ fn void test_collision_hull_generated_integer_clouds_have_exact_supporting_manif
                 *coordinate = (float)((int)(state % 9) - 4);
             }
         }
+
         SolidScratch scratch = begin_solid_scratch(&workspace);
+
         CollisionHullSurface hull = build_collision_hull(&scratch, points[..])!!;
         assert(assert_hull_surface(&scratch, &hull, points[..]) >= 4);
         assert(scratch.exact.count == 0 && scratch.exact.peak <= EXACT_TEMPORARIES);
@@ -146,6 +158,7 @@ fn void test_collision_hull_degeneracy_and_scratch_failures_restore_inputs_and_a
     FractureWorkspace workspace = collision_test_workspace();
     defer destroy_fracture_workspace(&workspace);
     Vec3[5] degenerate = { { 0, 0, 0 }, { 1, 1, 1 }, { 2, 2, 2 }, { 3, 3, 3 }, { 4, 4, 4 } };
+
     SolidScratch scratch = begin_solid_scratch(&workspace);
     char[] previous = reserve_elements(&scratch, char, 71)!!;
     previous[..] = 0x6d;
@@ -160,7 +173,9 @@ fn void test_collision_hull_degeneracy_and_scratch_failures_restore_inputs_and_a
     assert(scratch.used == saved && scratch.exact.count == 0);
     ContainmentFixture fixture;
     partition_fixture(&fixture, 0);
+
     Vec3[24] original = fixture.positions;
+
     CollisionHullSurface hull = build_collision_hull(&scratch, fixture.mesh.geometry.positions)!!;
     usz required = scratch.peak;
     assert(hull.points.len == 8 && hull.indices.len == 36);
@@ -175,7 +190,9 @@ fn void test_collision_hull_degeneracy_and_scratch_failures_restore_inputs_and_a
     scratch.storage = workspace.storage[:required - 1];
     assert(@catch(build_collision_hull(&scratch, fixture.mesh.geometry.positions)) == c3d::CAPACITY_EXCEEDED);
     scratch.storage = workspace.storage;
+
     Vec3[5] cancellation = { { 0, 0, 0 }, { 1, 1, 1 }, { 2, 2, 2 }, { 3, 4, 5 }, { 4, 5, 7 } };
+
     scratch.exact.count = EXACT_TEMPORARIES;
     assert(@catch(build_collision_hull(&scratch, cancellation[..])) == c3d::CAPACITY_EXCEEDED);
     assert(scratch.used == saved && scratch.exact.count == EXACT_TEMPORARIES);
@@ -196,11 +213,13 @@ fn Vec3 rotate_hull_test_point(Vec3 point, uint index) @local {
     double[SPACE_AXES] axis = { 1, 2.0 + index, 3 };
     double length = math::sqrt(axis[0] * axis[0] + axis[1] * axis[1] + axis[2] * axis[2]);
     foreach (&value : axis) *value /= length;
+
     double angle = 0.1 + 0.37 * index;
     double cosine = math::cos(angle);
     double sine = math::sin(angle);
     double dot;
     for (uint component = 0; component < SPACE_AXES; component++) dot += axis[component] * (double)point[component];
+
     Vec3 result;
     for (uint component = 0; component < SPACE_AXES; component++) {
         uint first = (component + 1) % SPACE_AXES;
@@ -208,6 +227,7 @@ fn Vec3 rotate_hull_test_point(Vec3 point, uint index) @local {
         double cross = axis[first] * (double)point[second] - axis[second] * (double)point[first];
         result[component] = (float)((double)point[component] * cosine + cross * sine + axis[component] * dot * (1 - cosine));
     }
+
     return result;
 }
 
@@ -238,6 +258,7 @@ fn uint assert_hull_surface(SolidScratch* scratch, CollisionHullSurface* hull, V
         assert(index < hull.points.len);
         used[index] = true;
     }
+
     uint vertices;
     foreach (value : used) vertices += value ? 1 : 0;
     assert(hull.indices.len / TRIANGLE_CORNERS == 2 * (usz)vertices - 4);
@@ -261,10 +282,12 @@ fn uint assert_hull_surface(SolidScratch* scratch, CollisionHullSurface* hull, V
             })!! <= 0);
         }
     }
+
     SolidMeshView mesh = {
         .geometry = { .positions = hull.points, .indices = hull.indices },
         .topology_vertices = identities, .triangle_materials = materials,
     };
+
     SolidDiagnostic diagnostic;
     ValidatedSolid solid = validate_solid(
         scratch: scratch,
