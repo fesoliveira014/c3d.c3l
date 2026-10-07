@@ -1,12 +1,16 @@
 module c3d::physics::fracture;
 
+import std::time;
+
 alias HomogeneousPoint @private = WideInteger*[HOMOGENEOUS_COMPONENTS];
 
 fn void? mean_cell_vertices(
     ExactScratch* scratch,
     HomogeneousPoint output,
     PlaneTriple[HOMOGENEOUS_COMPONENTS] vertices,
-) @local {
+) @private {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     uint saved = scratch.count;
     defer scratch.count = saved;
     HomogeneousPoint[HOMOGENEOUS_COMPONENTS] points;
@@ -63,6 +67,8 @@ fn HomogeneousPoint? sample_cell_interior(ExactScratch* scratch, ConvexCell* cel
 }
 
 fn int? homogeneous_plane_side(ExactScratch* scratch, ExactPlane* plane, HomogeneousPoint point) @private {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     uint saved = scratch.count;
     defer scratch.count = saved;
     WideInteger* result = scratch.take()!;

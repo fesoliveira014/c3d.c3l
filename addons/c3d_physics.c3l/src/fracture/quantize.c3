@@ -36,6 +36,8 @@ fn long? quantize_axis(
     int step_exponent,
     long center,
 ) @private {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     uint saved = scratch.count;
     defer scratch.count = saved;
     WideInteger* value = scratch.take()!;
@@ -82,6 +84,8 @@ fn long? quantize_axis(
 }
 
 fn GridPoint? quantize_point(ExactScratch* scratch, QuantizationGrid grid, Vec3 point) @private {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     GridPoint result;
     for (uint axis = 0; axis < SPACE_AXES; axis++) result[axis] = quantize_axis(
         scratch: scratch,
@@ -99,6 +103,8 @@ fn QuantizationGrid? create_quantization_grid(
     Vec3 upper,
     float resolution,
 ) @private {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     QuantizationGrid grid = { .anchor = lower, .step_exponent = grid_step_exponent(resolution) };
     for (uint axis = 0; axis < SPACE_AXES; axis++) grid.center[axis] = quantize_axis(
         scratch: scratch,
@@ -126,6 +132,8 @@ fn int exact_grid_orientation(GridPoint[HOMOGENEOUS_COMPONENTS] points) @private
 }
 
 fn bool? plane_from_grid(ExactScratch* scratch, ExactPlane* output, GridPoint[SPACE_AXES] points) @private {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     int128[SPACE_AXES][2] edges;
     for (uint row = 0; row < 2; row++) {
         for (uint axis = 0; axis < SPACE_AXES; axis++) {
@@ -148,6 +156,8 @@ fn bool? bisector_plane(
     GridPoint first,
     GridPoint second,
 ) @private {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     int128[HOMOGENEOUS_COMPONENTS] values;
     for (uint axis = 0; axis < SPACE_AXES; axis++) {
         values[axis] = 2 * ((int128)second[axis] - first[axis]);
@@ -176,7 +186,7 @@ fn int grid_orientation(ExactScratch* scratch, GridPoint[HOMOGENEOUS_COMPONENTS]
         return filtered;
     }
     $endif
-    Clock started = clock::now();
-    defer scratch.exact_nanoseconds += (ulong)started.to_now();
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     return exact_grid_orientation(points);
 }

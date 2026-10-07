@@ -1,5 +1,6 @@
 module c3d::physics::fracture;
 
+import std::time;
 import std::math;
 
 const uint FRAME_ERROR_BITS @private = 2 * (1953 + GRID_RESOLUTION_SHIFT + 1) + 2;
@@ -13,6 +14,8 @@ fn int? construct_source_point(
     PlaneTriple vertex,
     QuantizationGrid* grid,
 ) @private {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     construct_point(scratch, output, vertex)!;
     if (!grid) return FLOAT_UNIT_EXPONENT;
     int unit = math::min(FLOAT_UNIT_EXPONENT, grid.step_exponent);
@@ -39,6 +42,8 @@ fn Vec3? rounded_source_position(
     PlaneTriple vertex,
     QuantizationGrid* grid = null,
 ) @private {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     uint saved = scratch.count;
     defer scratch.count = saved;
     HomogeneousPoint point;
@@ -60,6 +65,8 @@ fn Vec3? rounded_source_position(
 }
 
 fn Vec3? rounded_local_position(ExactScratch* scratch, Vec3 position, Vec3 origin) @private {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     uint saved = scratch.count;
     defer scratch.count = saved;
     WideInteger* first = scratch.take()!;
@@ -90,6 +97,8 @@ fn void? check_frame_point_error(
     Vec3 local,
     float resolution,
 ) @private {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     uint saved = scratch.count;
     defer scratch.count = saved;
     HomogeneousPoint point;
@@ -129,6 +138,8 @@ fn void? check_shared_point_error(
     Vec3 second_local,
     float resolution,
 ) @private {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
     uint saved = scratch.count;
     defer scratch.count = saved;
     WideInteger* sum = scratch.take()!;

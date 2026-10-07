@@ -54,8 +54,34 @@ the interval excludes zero or is exactly zero; otherwise the exact predicate
 runs. Homogeneous coordinates are rescaled together by a power of two before
 filtering. Vertex identity compares exact cross-products, never plane IDs.
 Direct grid-point tetrahedra fit native `int128` (96 bits); implicit vertices
-use the reserved wide arithmetic. Predicate counts, filter counts and elapsed
-exact-predicate fallback nanoseconds are recorded in the workspace.
+use the reserved wide arithmetic. Predicate counts, filter counts and nanoseconds
+spent in exact numeric operations are recorded in the workspace.
+
+`exact_nanoseconds` counts elapsed time inside explicitly instrumented exact
+numeric operations. Nested operations share one outer timing interval, including
+fault unwinding, so a constructor called by a predicate is counted once. It covers:
+
+- exact predicate fallbacks, determinants, homogeneous construction, identity,
+  ordering, plane tests and bound comparisons that use arithmetic scratch;
+- quantization and source, edge-support, bounds and site-bisector plane construction
+  and normalization;
+- four-vertex means, triangle determinants, per-face shell-volume accumulation
+  and centroid moments;
+- direct rational-to-float rounding, source/local frame conversion, and exact
+  frame-error, shared-point-error and volume-error bounds.
+
+Floating interval filters execute outside these intervals. Traversal and
+bookkeeping outside those numeric scopes are excluded, including BVH/cell
+iteration, topology construction, sorting loops, arena allocation and copying.
+Comparisons without a scratch context, such as `compare_exact_planes`, scalar
+sign/limb checks, and direct low-level integer calls outside an instrumented
+operation are also excluded. Numeric operations include their local operand
+handling and control flow; this is elapsed scoped time, not an integer-instruction
+counter or complete generation time. Clock and scope bookkeeping overhead is not
+subtracted. Very short scopes are limited by the host clock resolution. The scope
+is broader than the former predicate-fallback-only metric; historical fallback
+timings are not directly comparable. Predicate/filter counts retain their existing
+meanings.
 
 Collision reconstruction will consume published float surfaces exactly, without
 quantizing them again. A finite float has magnitude below `2^277` in units of
