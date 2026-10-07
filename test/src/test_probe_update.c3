@@ -218,4 +218,7 @@ fn void test_hit_set_ignores_layers_and_keeps_unswept_volumes() @test {
     assert(hits == 3 && order[0] == 0 && order[1] == 3 && order[2] == 1);
     usz views = render::order_view_probe_volumes(&mirrors, &scene, 1, &order);
     assert(views == 1 && order[0] == 1);
+    views = render::order_view_probe_volumes(&mirrors, &scene, 2, &order);
+    assert(views == 1 && order[0] == 0);
+    assert(!mirrors[0].fill.in_view_set() && mirrors[0].fill.in_hit_set());
 }

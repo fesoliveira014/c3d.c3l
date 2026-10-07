@@ -13,9 +13,30 @@ const float TEXEL_TOLERANCE @local = 1e-5f;
 const float FIELD_TOLERANCE @local = 1e-6f;
 const uint[<2>] SAMPLE_CELL @local = { 3, 2 };
 const ulong FRAME @local = 100;
+const float PROBE_MIN_WEIGHT @local = 1e-3f; // mirrored as PROBE_MIN_WEIGHT in probe_volume.glsl
 
 struct Random @local {
     uint state;
+}
+
+struct ProbeContribution @local {
+    Vec3  irradiance;
+    float weight;
+    bool  excluded;
+}
+
+fn bool weighted_probe_irradiance(ProbeContribution[] probes, Vec3* irradiance) @local {
+    Vec3 sum;
+    float weight_sum;
+    foreach (probe : probes) {
+        if (probe.excluded) continue;
+        float weight = probe.weight + PROBE_MIN_WEIGHT;
+        sum += weight * probe.irradiance;
+        weight_sum += weight;
+    }
+    if (weight_sum == 0) return false;
+    *irradiance = sum / weight_sum;
+    return true;
 }
 
 fn uint next_bits(Random* random) @local {
@@ -272,6 +293,31 @@ fn void test_probe_volume_selection_prefers_the_smallest_containing_box() @test 
         .volumes = { [0] = packed_box({ 0, 0, 0 }, { 2, 2, 2 }), [1] = packed_box({ 0, 0, 0 }, { 2, 2, 2 }) },
     };
     assert(render::probe_volume_at(&equal, { 1, 1, 1 })!! == 0);
+
+    set.volumes[0].flags = shader::PROBE_VOLUME_UNSWEPT;
+    assert(render::probe_volume_at(&set, { 1, 1, 1 })!! == 1);
+    set.volumes[1].flags = shader::PROBE_VOLUME_UNSWEPT;
+    assert(@catch(render::probe_volume_at(&set, { 1, 1, 1 })) == render::NO_PROBE_VOLUME);
+}
+
+fn void test_excluded_probe_weights_renormalize_or_use_the_fallback() @test {
+    ProbeContribution[8] probes;
+    foreach (&probe : probes) *probe = { .irradiance = { 100, 100, 100 }, .weight = 1, .excluded = true };
+    probes[1] = { .irradiance = { 2, 4, 6 }, .weight = 0.249f };
+    probes[6] = { .irradiance = { 6, 8, 10 }, .weight = 0.749f };
+    Vec3 irradiance;
+    assert(weighted_probe_irradiance(&probes, &irradiance));
+    assert((irradiance - (Vec3){ 5, 7, 9 }).length() < FIELD_TOLERANCE);
+
+    probes[1].excluded = true;
+    probes[6].excluded = true;
+    assert(!weighted_probe_irradiance(&probes, &irradiance));
+
+    probes[6].excluded = false;
+    probes[6].weight = 1e-30f;
+    assert(weighted_probe_irradiance(&probes, &irradiance));
+    foreach (channel : irradiance) assert(math::is_finite(channel));
+    assert((irradiance - probes[6].irradiance).length() < FIELD_TOLERANCE);
 }
 
 fn void test_view_probe_volumes_skip_hidden_masked_and_unfilled() @test {

@@ -169,7 +169,7 @@ fn usz order_probe_volumes(
     usz count;
     foreach (usz index, &mirror : mirrors) {
         if (mirror.scene != scene.identity) continue;
-        if (!(hit_set ? mirror.fill.in_hit_set() : mirror.fill.in_view_set())) continue;
+        if (!mirror.fill.in_hit_set()) continue;
         ProbeVolume* volume = scene.world.get(mirror.entity, ProbeVolume);
         Node* node = scene.node(mirror.entity);
         // Probe hits see every volume, whatever the layers.
@@ -193,6 +193,7 @@ fn usz order_probe_volumes(
 fn usz? probe_volume_at(ProbeVolumeSetGpu* set, Vec3 position) @private {
     for (usz index = 0; index < set.count; index++) {
         ProbeVolumeGpu* volume = &set.volumes[index];
+        if (volume.flags & shader::PROBE_VOLUME_UNSWEPT) continue;
         Vec3 origin = volume.origin_energy.xyz;
         Vec3 last = { (float)(volume.count_x - 1), (float)(volume.count_y - 1), (float)(volume.count_z - 1) };
         Vec3 far = origin + volume.spacing_max_distance.xyz * last;
@@ -463,6 +464,7 @@ fn gpu::GpuAddress? pack_probe_set(
             .count_x              = mirror.counts.x,
             .count_y              = mirror.counts.y,
             .count_z              = mirror.counts.z,
+            .flags                = !unit_energy && !mirror.fill.in_view_set() ? shader::PROBE_VOLUME_UNSWEPT : 0,
             .irradiance           = mirror.irradiance.view.index,
             .visibility           = mirror.visibility.view.index,
             .sampler_index        = renderer.linear_clamp_sampler,

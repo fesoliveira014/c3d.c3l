@@ -6,8 +6,8 @@
 
 const float PROBE_BACKFACE_FLOOR = 0.2;   // keeps probes behind the surface from vanishing on thin walls
 const float PROBE_MIN_VARIANCE = 1e-4;    // world units squared; a flat distance distribution still falls off smoothly
-const float PROBE_CHEBYSHEV_FLOOR = 0.05; // an occluded probe keeps a trace of weight, so no cell goes black
-const float PROBE_MIN_WEIGHT = 1e-3;      // the weight sum never reaches zero
+const float PROBE_CHEBYSHEV_FLOOR = 0.05; // usable occluded probes retain a small interpolation share
+const float PROBE_MIN_WEIGHT = 1e-3;      // keeps each usable probe's weight positive
 
 vec3 probe_volume_last_corner(ProbeVolumeGpu volume) {
     vec3 last = vec3(float(volume.count_x - 1u), float(volume.count_y - 1u), float(volume.count_z - 1u));
@@ -22,6 +22,7 @@ bool probe_volume_contains(ProbeVolumeGpu volume, vec3 position) {
 // Mirrored as probe_volume_at in probe_volume.c3.
 bool probe_volume_select(ProbeVolumeSetGpu set, vec3 position, out uint index) {
     for (index = 0u; index < set.count; index++) {
+        if ((set.volumes[index].flags & PROBE_VOLUME_UNSWEPT) != 0u) continue;
         if (probe_volume_contains(set.volumes[index], position)) return true;
     }
     return false;
@@ -40,8 +41,14 @@ vec4 probe_atlas_sample(
     return sample_texture_2d(atlas, sampler_index, texel / vec2(extent));
 }
 
-// Irradiance E at a surface; the texels store E, so no factor of pi appears here.
-vec3 probe_irradiance(ProbeVolumeGpu volume, vec3 position, vec3 normal, vec3 view_direction) {
+// Irradiance E at a surface; false distinguishes an excluded cell from usable black irradiance.
+bool probe_irradiance(
+    ProbeVolumeGpu volume,
+    vec3 position,
+    vec3 normal,
+    vec3 view_direction,
+    out vec3 irradiance
+) {
     uvec3 counts = uvec3(volume.count_x, volume.count_y, volume.count_z);
     uvec2 irradiance_extent = probe_atlas_extent(counts, volume.slices_per_row, PROBE_IRRADIANCE_CELL);
     uvec2 visibility_extent = probe_atlas_extent(counts, volume.slices_per_row, PROBE_VISIBILITY_CELL);
@@ -58,6 +65,12 @@ vec3 probe_irradiance(ProbeVolumeGpu volume, vec3 position, vec3 normal, vec3 vi
     for (uint corner_index = 0u; corner_index < 8u; corner_index++) {
         uvec3 corner = uvec3(corner_index & 1u, (corner_index >> 1u) & 1u, (corner_index >> 2u) & 1u);
         uvec3 probe = base + corner;
+        uvec2 cell = probe_cell(counts, volume.slices_per_row, probe);
+        vec4 sampled = probe_atlas_sample(
+            volume.irradiance, volume.sampler_index, cell, PROBE_IRRADIANCE_CELL, normal, irradiance_extent
+        );
+        if (sampled.a == float(PROBE_CLASS_EXCLUDED)) continue;
+
         vec3 probe_position = volume.origin_energy.xyz + vec3(probe) * spacing;
         vec3 trilinear = mix(1.0 - alpha, alpha, vec3(corner));
         vec3 to_probe = probe_position - biased;
@@ -67,7 +80,6 @@ vec3 probe_irradiance(ProbeVolumeGpu volume, vec3 position, vec3 normal, vec3 vi
         float backface = (dot(to_probe, normal) + 1.0) * 0.5;
         float weight = backface * backface + PROBE_BACKFACE_FLOOR;
 
-        uvec2 cell = probe_cell(counts, volume.slices_per_row, probe);
         vec2 moments = probe_atlas_sample(
             volume.visibility, volume.sampler_index, cell, PROBE_VISIBILITY_CELL, -to_probe, visibility_extent
         ).rg;
@@ -80,13 +92,13 @@ vec3 probe_irradiance(ProbeVolumeGpu volume, vec3 position, vec3 normal, vec3 vi
         }
         weight = weight * trilinear.x * trilinear.y * trilinear.z + PROBE_MIN_WEIGHT;
 
-        vec3 irradiance = probe_atlas_sample(
-            volume.irradiance, volume.sampler_index, cell, PROBE_IRRADIANCE_CELL, normal, irradiance_extent
-        ).rgb;
-        sum += weight * irradiance;
+        sum += weight * sampled.rgb;
         weight_sum += weight;
     }
-    return sum / weight_sum * volume.origin_energy.w;
+    irradiance = vec3(0.0);
+    if (weight_sum == 0.0) return false;
+    irradiance = sum / weight_sum * volume.origin_energy.w;
+    return true;
 }
 
 #endif

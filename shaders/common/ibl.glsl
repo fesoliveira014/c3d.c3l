@@ -61,8 +61,16 @@ vec3 trace_miss_radiance(FrameRoot frame, vec3 direction) {
 }
 
 bool frame_has_indirect(FrameRoot frame) {
-    return frame.environment != 0ul || frame.probe_volumes != 0ul || frame.reflection_probes != 0ul
-        || (frame.flags & FRAME_SSGI_PRESENT) != 0u;
+    if (frame.environment != 0ul || frame.reflection_probes != 0ul || (frame.flags & FRAME_SSGI_PRESENT) != 0u) {
+        return true;
+    }
+    if (frame.probe_volumes == 0ul) return false;
+
+    ProbeVolumeSetGpu set = ProbeVolumeSetGpu(frame.probe_volumes);
+    for (uint index = 0u; index < set.count; index++) {
+        if ((set.volumes[index].flags & PROBE_VOLUME_UNSWEPT) == 0u) return true;
+    }
+    return false;
 }
 
 // Irradiance E from the first probe volume containing the position, else the environment SH, else zero.
@@ -71,7 +79,14 @@ vec3 indirect_diffuse_irradiance(FrameRoot frame, vec3 position, vec3 normal, ve
         ProbeVolumeSetGpu set = ProbeVolumeSetGpu(frame.probe_volumes);
         uint index;
         if (probe_volume_select(set, position, index)) {
-            return probe_irradiance(set.volumes[index], position, normal, view_direction);
+            vec3 irradiance;
+            if (probe_irradiance(
+                set.volumes[index],
+                position,
+                normal,
+                view_direction,
+                irradiance
+            )) return irradiance;
         }
     }
     if (frame.environment == 0ul) return vec3(0.0);
