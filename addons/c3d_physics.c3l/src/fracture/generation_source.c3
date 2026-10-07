@@ -47,6 +47,7 @@ fn void? quantize_generation_source(
         if (!vertex.degree) continue;
         solid.surface.grid[identity] = quantize_point(scratch.exact, *grid, surface_position(&solid.surface, identity))!;
     }
+
     if (catch failure = recheck_quantized_solid(solid, &diagnostic)) {
         if (failure == INVALID_SOLID) return NUMERICAL_FAILURE~;
         return failure~;
@@ -62,6 +63,7 @@ fn PreparedGeneration? prepare_generation_sources(
 ) @private {
     usz saved = scratch.used;
     defer catch scratch.used = saved;
+
     PreparedGeneration prepared = { .count = (uint)inputs.len };
     SolidBounds bounds;
     foreach (uint index, input : inputs) {
@@ -75,23 +77,27 @@ fn PreparedGeneration? prepare_generation_sources(
         SolidBounds source_bounds = prepared.sources[index].solid.surface.nodes[0].bounds;
         bounds = index ? joined_solid_bounds(bounds, source_bounds) : source_bounds;
     }
+
     Vec3 lower;
     Vec3 upper;
     for (uint axis = 0; axis < SPACE_AXES; axis++) {
         lower[axis] = generation_bound_coordinate(bounds.lower[axis]);
         upper[axis] = generation_bound_coordinate(bounds.upper[axis]);
     }
+
     prepared.grid = create_quantization_grid(
         scratch: scratch.exact,
         lower: lower,
         upper: upper,
         resolution: resolution,
     )!;
+
     for (uint index = 0; index < prepared.count; index++) {
         PreparedSource* source = &prepared.sources[index];
         quantize_generation_source(scratch, &source.solid, &prepared.grid)!;
         source.constructions = build_source_constructions(scratch, &source.solid.surface)!;
     }
+
     return prepared;
 }
 
@@ -103,14 +109,19 @@ fn GridPoint[]? prepare_voronoi_sites(
 ) @private {
     usz saved = scratch.used;
     defer catch scratch.used = saved;
+
     if (!sites.len) return c3d::INVALID_ARGUMENT~;
     if (sites.len > max_sites) return c3d::CAPACITY_EXCEEDED~;
-    foreach (site : sites) if (!finite_position(site)) return c3d::INVALID_ARGUMENT~;
+    foreach (site : sites) {
+        if (!finite_position(site)) return c3d::INVALID_ARGUMENT~;
+    }
+
     GridPoint[] points = reserve_elements(scratch, GridPoint, sites.len)!;
     if (sites.len == 1) {
         points[0] = {};
         return points;
     }
+
     usz retained = scratch.used;
     defer scratch.used = retained;
     uint[] ordered = reserve_elements(scratch, uint, sites.len)!;
@@ -119,6 +130,7 @@ fn GridPoint[]? prepare_voronoi_sites(
     for (usz index = 1; index < ordered.len; index++) {
         if (same_position(sites[ordered[index - 1]], sites[ordered[index]])) return c3d::INVALID_ARGUMENT~;
     }
+
     foreach (uint index, site : sites) points[index] = quantize_point(scratch.exact, grid, site)!;
     return points;
 }

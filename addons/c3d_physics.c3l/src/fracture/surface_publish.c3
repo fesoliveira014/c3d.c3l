@@ -94,12 +94,14 @@ fn FractureResult? publish_surface_pieces(
 ) @private {
     usz saved = scratch.used;
     defer scratch.used = saved;
+
     SurfacePublication publication = prepare_surface_publication(
         scratch: scratch, limits: limits, pieces: pieces, grid: grid, cut: cut,
     )!;
     check_surface_shared_triangles(publication.shared)!;
     foreach (&piece : publication.pieces) check_surface_exact_topology(scratch, piece.common)!;
     sort::quicksort(publication.pieces, &compare_surface_prepared_pieces);
+
     usz point_count;
     foreach (piece : publication.pieces) point_count += piece.point_ids.len;
     SurfacePointUse[] uses = reserve_elements(scratch, SurfacePointUse, point_count)!;
@@ -107,6 +109,7 @@ fn FractureResult? publish_surface_pieces(
     usz render_vertices;
     PlaneInteger volume;
     PlaneInteger bound;
+
     foreach (uint owner, &piece : publication.pieces) {
         SurfaceVolumeMeasure measured = prepare_surface_piece_frame(
             scratch: scratch,
@@ -117,6 +120,7 @@ fn FractureResult? publish_surface_pieces(
         )!;
         accumulate_surface_volume(scratch.exact, &volume, measured.six_volume.view())!;
         accumulate_surface_volume(scratch.exact, &bound, measured.rounding_bound.view())!;
+
         build_surface_render_mesh(
             scratch: scratch,
             piece: piece,
@@ -126,6 +130,7 @@ fn FractureResult? publish_surface_pieces(
         )!;
         render_vertices += piece.output.mesh.geometry.positions.len;
         if (render_vertices > limits.max_vertices) return c3d::CAPACITY_EXCEEDED~;
+
         if (piece.tangents) {
             Geometry geometry = piece.output.mesh.geometry;
             usz retained = scratch.used;
@@ -136,12 +141,15 @@ fn FractureResult? publish_surface_pieces(
             }
             regenerate_surface_tangents(scratch, &geometry)!;
         }
+
         foreach (uint local, point : piece.point_ids) uses[point_offset++] = { .point = point, .piece = owner, .local = local };
     }
+
     check_surface_point_copies(scratch.exact, publication.pieces, uses, limits.resolution_m)!;
     if (reference) check_surface_volume_reference(
         scratch: scratch.exact, reference: reference, volume: volume.view(), bound: bound.view(),
     )!;
+
     FracturePieceView[] output = reserve_elements(scratch, FracturePieceView, publication.pieces.len)!;
     foreach (uint index, piece : publication.pieces) output[index] = piece.output;
     return copy_fracture_result(allocator, output);

@@ -16,14 +16,17 @@ fn void emit_boolean_polygon(
     PlanarSegment[] output,
     usz* count,
 ) @local {
-    if (output.len) foreach (usz index, point : polygon) {
-        FaceClipVertex next = polygon[(index + 1) % (usz)polygon.len];
-        output[*count + index] = {
-            .first = reversed ? next.point : point.point,
-            .second = reversed ? point.point : next.point,
-            .line = next.incoming,
-        };
+    if (output.len) {
+        foreach (usz index, point : polygon) {
+            FaceClipVertex next = polygon[(index + 1) % (usz)polygon.len];
+            output[*count + index] = {
+                .first = reversed ? next.point : point.point,
+                .second = reversed ? point.point : next.point,
+                .line = next.incoming,
+            };
+        }
     }
+
     *count += polygon.len;
 }
 
@@ -39,6 +42,7 @@ fn FaceClipVertex[]? intersect_boolean_source_triangle(
     FaceClipVertex[] output = reserve_elements(scratch, FaceClipVertex, capacity)!;
     input[:polygon.len] = polygon[..];
     usz count = polygon.len;
+
     uint[TRIANGLE_CORNERS] triangle = surface_triangle(&source.solid.surface, face);
     for (uint corner = 0; corner < TRIANGLE_CORNERS; corner++) {
         SourceEdge* edge = &source.constructions.edges[source.constructions.corner_edges[face * TRIANGLE_CORNERS + corner]];
@@ -49,15 +53,18 @@ fn FaceClipVertex[]? intersect_boolean_source_triangle(
             support = &edge.plane;
             side = plane_side(scratch.exact, support, opposite)!;
         }
+
         count = clip_face_polygon(
             scratch: scratch.exact, input: input[:count], output: output, source: plane,
             boundary: { .plane = support, .reversed = side > 0 },
         )!;
         if (count < TRIANGLE_CORNERS) return {};
+
         FaceClipVertex[] swap = input;
         input = output;
         output = swap;
     }
+
     if (!boolean_polygon_has_area(scratch.exact, input[:count], plane)!) return {};
     return input[:count];
 }
@@ -83,6 +90,7 @@ fn PlanarSegment[]? collect_boolean_surface_segments(
                 if (!boolean_polygon_has_area(scratch.exact, polygon, source.plane)!) continue;
                 bool reversed = entry.cell.faces[entry.face].reversed != second.constructions.reversed[source.face];
                 emit_boolean_polygon(polygon: polygon, reversed: reversed, output: segments, count: &count);
+
                 uint current;
                 while (current != NO_SOLID_INDEX) {
                     SolidBvhNode* node = &first.solid.surface.nodes[current];
@@ -100,12 +108,15 @@ fn PlanarSegment[]? collect_boolean_surface_segments(
                             )!;
                             emit_boolean_polygon(polygon: overlap, reversed: !reversed, output: segments, count: &count);
                         }
+
                         current = node.escape;
                     }
                 }
             }
         }
+
         if (!pass) segments = reserve_elements(scratch, PlanarSegment, count)!;
     }
+
     return segments;
 }

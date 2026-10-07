@@ -18,8 +18,10 @@ fn FractureResult? create_boolean(
     CutSurface cut,
 ) {
     if (!(cut.uv_repeats_per_meter > 0 && math::is_finite(cut.uv_repeats_per_meter))) return c3d::INVALID_ARGUMENT~;
+
     SolidScratch scratch = begin_solid_scratch(workspace);
     PreparedGeneration prepared = prepare_generation_sources(&scratch, { first, second }, workspace.limits.resolution_m)!;
+
     SolidPartition partition = partition_boolean_cells(
         scratch: &scratch,
         first: &prepared.sources[0].solid.surface,
@@ -30,6 +32,7 @@ fn FractureResult? create_boolean(
     )!;
     scratch.exact.statistics.final_leaf_count = partition.cell_count;
     scratch.exact.statistics.occupied_leaf_count = partition.occupied_count;
+
     SurfacePiece[] pieces = build_boolean_surface_pieces(
         scratch: &scratch,
         prepared: &prepared,
@@ -37,6 +40,7 @@ fn FractureResult? create_boolean(
         operation: operation,
         max_pieces: workspace.limits.max_pieces,
     )!;
+
     return publish_surface_pieces(
         allocator: allocator,
         scratch: &scratch,
