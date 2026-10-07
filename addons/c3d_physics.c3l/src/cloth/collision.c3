@@ -16,18 +16,24 @@ struct ClothCapture @private {
     ClothShape[] shapes;
 }
 
-fn ClothCapture? capture_colliders(Scene* scene, Entity[] owners) @private {
+fn void? check_collider_owners(Scene* scene, Entity[] owners) @private {
     if (owners.len > MAX_CLOTH_COLLIDERS) return c3d::CAPACITY_EXCEEDED~;
+    foreach (index, owner : owners) {
+        if (!scene.world.is_alive(owner)) return c3d::INVALID_ID~;
+        foreach (earlier : owners[:index]) {
+            if (c3d::same_id(earlier, owner)) return c3d::INVALID_ARGUMENT~;
+        }
+    }
+}
+
+fn ClothCapture? capture_colliders(Scene* scene, Entity[] owners) @private {
+    check_collider_owners(scene, owners)!;
     ClothCapture capture = {
         .bodies = alloc::new_array(tmem, ClothBody, (sz)owners.len),
         .shapes = alloc::new_array(tmem, ClothShape, MAX_CLOTH_COLLIDERS),
     };
     usz shape_count;
     foreach (index, owner : owners) {
-        if (!scene.world.is_alive(owner)) return c3d::INVALID_ID~;
-        foreach (earlier : owners[:index]) {
-            if (c3d::same_id(earlier, owner)) return c3d::INVALID_ARGUMENT~;
-        }
         RigidBody* body = scene.get(scene.node(owner), RigidBody);
         if (!body) return physics::NO_BODY~;
         capture.bodies[index] = { .owner = owner };

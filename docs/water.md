@@ -26,6 +26,20 @@ adapter under [Buoyancy](#buoyancy). Core never imports the module.
 python3 scripts/build.py --example water
 ```
 
+## Pending authoring
+
+`attach_water(scene, assets, node, desc)` validates and attaches `Water` without
+creating assets, a mesh or a mirror camera. It leaves the owner pending and
+produces no generated draw. `is_prepared(scene, node)` reports readiness;
+`prepare(scene, assets, node)` installs runtime atomically, and
+`prepare_subtree(scene, assets, root = null)` attempts every pending water body
+under the selected root. Publish world matrices before preparation.
+
+Ordinary `update` skips pending water. `set_desc`, reflection-target changes and
+runtime surface queries apply after preparation. `add_water` remains the combined
+attachment-and-preparation entry. See the [landscape preparation contract](../addons/c3d_landscape.c3l/README.md#pending-authoring-and-preparation)
+for failure, retry and shared-asset ownership.
+
 ## Select the package
 
 Select `c3d_landscape` as for [terrain](terrain.md#select-the-package). Water needs nothing else; the example
@@ -481,3 +495,5 @@ the settle segment to 20 frames, three runs each (i9-14900K):
 
 The device test's four cases pass validation-clean in 2.4 s. The steady-upload gate passed in every run; a
 full-length settle segment in the same configuration passed the density gate (mean 0.599, worst 0.604).
+
+Preparation order and pending draw behavior are listed in the [owner readiness table](owner_readiness.md).

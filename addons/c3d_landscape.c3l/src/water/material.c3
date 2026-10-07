@@ -74,7 +74,8 @@ fn bool same_shape(WaterDesc* first, WaterDesc* second) @private {
 }
 
 // One shader per store: every water body shares its pipelines.
-fn ShaderId? water_shader(AssetStore* assets) @private {
+fn ShaderId? water_shader(AssetStore* assets, bool* created = null) @private {
+    if (created) *created = false;
     if (try found = assets.find_shader(SHADER_KEY)) return found;
     ShaderDesc desc = {
         .fragment         = landscape::WATER_FRAGMENT_SPIRV[..],
@@ -90,11 +91,19 @@ fn ShaderId? water_shader(AssetStore* assets) @private {
         .param_block_size = WaterParams::size,
         .scene_reads      = { .color, .depth },
     };
-    return assets.add_shader(&desc, SHADER_KEY);
+    ShaderId shader = assets.add_shader(&desc, SHADER_KEY)!;
+    if (created) *created = true;
+    return shader;
 }
 
 // One grid per shape and store; the key holds the exact extent and cell size.
-fn GeometryId? water_grid(AssetStore* assets, float extent, float cell_size) @private {
+fn GeometryId? water_grid(
+    AssetStore* assets,
+    float extent,
+    float cell_size,
+    bool* created = null,
+) @private {
+    if (created) *created = false;
     GeometryId grid;
     @pool() {
         String key = string::tformat("%s/%a/%a", GRID_KEY_PREFIX, extent, cell_size);
@@ -102,6 +111,7 @@ fn GeometryId? water_grid(AssetStore* assets, float extent, float cell_size) @pr
         Geometry geometry = grid_geometry(tmem, extent, (uint)math::ceil(extent / cell_size));
         grid = assets.add_geometry(&geometry, key)!;
     };
+    if (created) *created = true;
     return grid;
 }
 

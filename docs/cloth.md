@@ -39,7 +39,7 @@ substeps, 8 iterations, stretch stiffness 1, bend stiffness 0.5, damping 0.5 per
 thickness 0.01 m, gravity scale 1, no pins, no ground, no colliders.
 
 `Scene.remove_cloth` restores the source geometry and the previous `vertex_motion`, then removes
-the component, whose hook removes the private geometry and frees the state block. Removing the
+the component, whose hook removes the private geometry and frees runtime and authoring storage. Removing the
 node runs the same hook. The state outlives `destroy_physics_world`; destroy the scene before the
 asset store. While attached, do not replace or remove the Mesh, release the private geometry's CPU
 streams, change its topology, remove the source asset, or write the library-owned `ClothState`.
@@ -48,6 +48,43 @@ To change pins, settings or the source, remove and attach again.
 Use two-sided materials without tangent-space normal maps or vertex displacement; the copy
 carries no tangents and recomputed normals follow the simulated surface. `Mesh.trace` is the
 application's choice.
+
+## Pending authoring and preparation
+
+The shared [owner readiness table](owner_readiness.md) records preparation order
+and pending draw behavior.
+
+`scene.attach_cloth(&assets, node, desc)` validates and attaches authoring without
+creating a private geometry asset or simulation state. `Cloth.authoring` owns the
+source geometry identity, original `vertex_motion` flag, complete descriptor and
+copies of the requested pins and collider identities. Its arrays are read-only.
+Requested pin order and duplicates are retained; preparation builds the separate
+sorted, deduplicated simulation pin list.
+
+`Cloth.is_prepared()` is false until `cloth::prepare(&scene, &assets, node)`
+installs the complete runtime and switches the Mesh to its private geometry.
+Until then the existing Mesh remains unchanged and draws the authored source.
+Attachment validates retained source streams and pin/contact identities;
+world-space triangle constraints and native contact shapes are validated during
+preparation, after node world matrices are current.
+
+For listed contact owners, run the ordinary physics update first so their
+`PhysicsBody` authoring acquires `RigidBody` mirrors. Preparation before that
+returns `physics::NO_BODY` and leaves cloth pending. A cloth with no listed
+contact bodies has no native-world preparation dependency.
+
+`cloth::prepare_subtree(&scene, &assets, root)` attempts every pending cloth
+under a root, including the root. Omit root or pass null for the whole scene.
+It returns the first fault and retains successful owners. Every failed owner
+keeps its source Mesh and authoring and releases staged private geometry/state.
+Repeated preparation of a prepared owner is a no-op.
+
+`PhysicsWorld.update_cloths` skips pending owners without changing their source
+Mesh or authoring, and reports their count in `cloth_stats.pending`. Normal
+prepared-cloth timing and update order are unchanged. `Scene.add_cloth` remains
+the combined attachment-and-preparation entry; its failure removes the partial
+authoring too. `Scene.remove_cloth` also removes pending authoring and restores the captured
+source geometry and original vertex-motion setting.
 
 ## Collisions
 
@@ -123,7 +160,7 @@ geometry, recomputes normals and bounds, and calls `mark_geometry_dirty` once wh
 position changed; unchanged output keeps the revision. Solve and publication allocate nothing
 after attachment (the CPU triangle tree rebuilds only when a query asks for it).
 `PhysicsWorld.cloth_stats` holds the last update's solve and publication seconds, particle count
-and constraint count.
+and constraint count, plus the number of pending owners skipped.
 
 Geometry uploads whole on each revision: 47,264 bytes for the 33×33 benchmark flag (positions,
 normals, UV and 16-bit indices, counted in `Stats.upload_bytes`). Each temporal view additionally

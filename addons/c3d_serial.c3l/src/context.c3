@@ -47,6 +47,7 @@ struct WriteState @private {
 struct WriteContext {
     Scene* scene;
     AssetStore* assets;
+    SerialDiagnostic* diagnostic;
     Node* node;
     uint slot;
     WriteState* state;
@@ -56,12 +57,17 @@ struct WriteContext {
 struct ReadContext {
     Scene* scene;
     AssetStore* assets;
+    Allocator allocator;
+    SerialDiagnostic* diagnostic;
     Node*[] nodes;
     String[] keys;
     ComponentMask[] component_masks;
+    ReadAuthoring[] authoring;
+    Acquisitions* read_owned;
     Node* node;
     uint record;
     uint version;
+    uint slot;
 }
 
 <*
