@@ -206,3 +206,15 @@ persists density and drag and resets submerged fraction. RigidBody and Joint are
 explicitly transient. Ordinary physics synchronization creates the native state.
 The package inventory discovers every physics slot through normal registration;
 Cloth, Ragdoll and Breakable are explicit unsupported entries until their adapters.
+
+## Navigation adapter
+
+Select `c3d_serial`, enable `C3D_NAV_SERIAL`, and call
+`nav::register_serial_codecs()` alongside `nav::register_nav(scene)`. The plain
+navigation manifest has no serialization dependency. NavSource, NavVolume,
+NavLink, NavObstacle and NavAgent restore in REFERENCES with their complete
+settings, target kind/value and driven flag. Changed flags restart false. A
+NavSource with no explicit geometry requires the node's restored Mesh. The
+five runtime mirrors are explicitly transient; no builder, crowd or navmesh is
+created during read. Ordinary nav_sync and crowd_update rebuild those mirrors.
+The independent package inventory checks all ten normally registered types.
