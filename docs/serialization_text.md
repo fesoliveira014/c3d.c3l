@@ -17,3 +17,17 @@ Parse finite values directly from their original lexemes into the destination
 width. Wide signed/unsigned integers use quoted decimal strings; narrower
 integers require numeric tokens without a fraction or exponent. Quoted integers
 have no leading zeros or negative-zero spelling; zero is exactly `"0"`.
+
+## Text subtree export
+
+`write_subtree_text` emits deterministic parent-before-child records, document-local
+node IDs, every authored node field and every non-transient described component
+field. Output belongs to the supplied allocator. Each used binary-only component
+returns `UNSUPPORTED` with its node path and registered type name.
+
+Set `TextWriteOptions.omit_binary_only` only with an initialized `OmissionReport`.
+Every omitted component is listed by node path and type name; report strings and
+entries belong to its allocator and are released by `destroy_omission_report`.
+Diagnostics and reports are cleared before each call, including failed calls.
+Partial reports are released if report allocation fails. This export shares the
+binary collector/projection path; component collection faults retain their details.
