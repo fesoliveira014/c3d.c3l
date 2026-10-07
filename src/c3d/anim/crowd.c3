@@ -8,11 +8,11 @@ import std::math;
 <*
  Advance every crowd pose by dt and write palettes, morph weights and part batches.
  @param [&in] assets : "Holds every crowd's model, skeleton and clips."
- @param [&inout] scene : "AnimatedCrowd and part batch arrays are written; structure unchanged."
+ @param [&inout] scene : "Pending crowds skipped unchanged; prepared runtime is updated."
 *>
 fn void crowd_update(AssetStore* assets, Scene* scene, float dt) {
     scene.@each(AnimatedCrowd; Entity entity, AnimatedCrowd* crowd) {
-        update_crowd(assets, scene, crowd, dt);
+        if (crowd.is_prepared()) update_crowd(assets, scene, crowd, dt);
     };
 }
 

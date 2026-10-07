@@ -36,9 +36,12 @@ struct AnimatedCrowd {
     uint        max_tracks;
     uint        morph_stride;
     Aabb        pose_bounds;
+    bool        trace;
     CrowdPart[] parts;
     Transform[] placements;
     CrowdPose[] poses;
+    float[]     start_times;
+    Vec4[]      colors;
     uint[]      cursors;
     Transform[] scratch_locals;
     Mat4[]      scratch_worlds;
@@ -46,22 +49,13 @@ struct AnimatedCrowd {
     float[]     morph_weights;
 }
 
-fn void free_crowd(Entity entity, void* component, void* user) @private {
-    AnimatedCrowd* crowd = (AnimatedCrowd*)component;
-    Allocator allocator = *(Allocator*)user;
-    alloc::free(allocator, crowd.parts.ptr);
-    alloc::free(allocator, crowd.placements.ptr);
-    alloc::free(allocator, crowd.poses.ptr);
-    alloc::free(allocator, crowd.cursors.ptr);
-    alloc::free(allocator, crowd.scratch_locals.ptr);
-    alloc::free(allocator, crowd.scratch_worlds.ptr);
-    alloc::free(allocator, crowd.palettes.ptr);
-    alloc::free(allocator, crowd.morph_weights.ptr);
-}
+<* Whether the crowd has its complete runtime and part batches. *>
+fn bool AnimatedCrowd.is_prepared(&self) => self.parts.len != 0;
 
 <*
  Copy the live placements and count into every part batch and bound them.
  @param [&inout] crowd
+ @require crowd.is_prepared()
 *>
 fn void Scene.write_crowd_batches(&self, AnimatedCrowd* crowd) {
     Aabb bounds = crowd.pose_bounds;
@@ -76,4 +70,19 @@ fn void Scene.write_crowd_batches(&self, AnimatedCrowd* crowd) {
         batch.local_bounds = bounds;
         self.mark_instances_dirty(self.node(part.batch));
     }
+}
+
+fn void free_crowd(Entity entity, void* component, void* user) @private {
+    AnimatedCrowd* crowd = component;
+    Allocator allocator = *(Allocator*)user;
+    alloc::free(allocator, crowd.parts.ptr);
+    alloc::free(allocator, crowd.placements.ptr);
+    alloc::free(allocator, crowd.poses.ptr);
+    alloc::free(allocator, crowd.start_times.ptr);
+    alloc::free(allocator, crowd.colors.ptr);
+    alloc::free(allocator, crowd.cursors.ptr);
+    alloc::free(allocator, crowd.scratch_locals.ptr);
+    alloc::free(allocator, crowd.scratch_worlds.ptr);
+    alloc::free(allocator, crowd.palettes.ptr);
+    alloc::free(allocator, crowd.morph_weights.ptr);
 }

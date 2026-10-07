@@ -262,11 +262,18 @@ fn void test_add_crowd_rejects_invalid_models() @test {
 }
 
 fn void test_add_crowd_undoes_a_full_node_pool() @test {
+    TrackingAllocator tracking;
+    tracking.init(mem);
+    defer tracking.free();
     Fixture fixture = make_fixture();
-    defer destroy_fixture(&fixture);
     scene::destroy_scene(&fixture.scene);
-    fixture.scene = scene::create_scene(mem, { .max_nodes = 2 });
+    fixture.scene = scene::create_scene(&tracking, { .max_nodes = 3 });
+    fixture.scene.register(AnimatedCrowd)!!;
+    fixture.scene.register(InstancedMesh)!!;
+    Node* existing = fixture.scene.add_node(name: "existing")!!;
+    existing.local.position = { 1, 2, 3 };
     uint before = live_nodes(&fixture.scene);
+    sz bytes = tracking.allocated();
 
     if (catch excuse = model::add_crowd(&fixture.assets, &fixture.scene, fixture.model, 4, unit_bounds())) {
         assert(excuse == c3d::CAPACITY_EXCEEDED);
@@ -274,7 +281,11 @@ fn void test_add_crowd_undoes_a_full_node_pool() @test {
         assert(false);
     }
     assert(live_nodes(&fixture.scene) == before);
+    assert(existing.name == "existing" && existing.local.position == (Vec3){ 1, 2, 3 });
     assert(fixture.scene.count(AnimatedCrowd) == 0 && fixture.scene.count(InstancedMesh) == 0);
+    assert(tracking.allocated() == bytes);
+    destroy_fixture(&fixture);
+    assert(!tracking.has_leaks());
 }
 
 fn void test_crowd_update_matches_animator_for_every_part() @test {
@@ -585,4 +596,107 @@ fn void test_crowd_update_marks_every_part_dirty() @test {
         assert(batch.revision != revision);
         assert(batch.transforms[1].position == (Vec3){ 5, 0, 0 });
     }
+}
+
+fn void test_pending_crowds_retain_colors_starts_and_atomic_part_preparation() @test {
+    TrackingAllocator tracking;
+    tracking.init(mem);
+    defer tracking.free();
+    Fixture fixture = make_fixture();
+    scene::destroy_scene(&fixture.scene);
+    fixture.scene = scene::create_scene(&tracking, { .max_nodes = 9 });
+    Node* group = fixture.scene.add_node()!!;
+    Node* first = fixture.scene.add_node(group)!!;
+    Node* second = fixture.scene.add_node(group)!!;
+    Node* outside = fixture.scene.add_node()!!;
+    Node* blocker = fixture.scene.add_node()!!;
+    fixture.scene.add_node()!!;
+    CrowdInstance[1] instances = { walker(&fixture, placed({ 1, 2, 3 }), 0.25f) };
+    instances[0].color = { 0.25f, 0.5f, 0.75f, 1 };
+    foreach (node : (Node*[3]){ first, second, outside }) {
+        model::attach_crowd(
+            assets: &fixture.assets,
+            scene: &fixture.scene,
+            node: node,
+            model: fixture.model,
+            capacity: 3,
+            pose_bounds: unit_bounds(),
+            instances: instances[..],
+            trace: true,
+        )!!;
+    }
+    AnimatedCrowd* ready = fixture.scene.get(first, AnimatedCrowd);
+    AnimatedCrowd* pending = fixture.scene.get(second, AnimatedCrowd);
+    assert(!ready.is_prepared() && !pending.is_prepared());
+    assert(fixture.scene.count(InstancedMesh) == 0 && !first.first_child && !second.first_child);
+    assert(ready.placements.len == 3 && ready.poses.len == 3 && ready.colors.len == 3);
+    assert(ready.placements[1].scale == (Vec3){ 1, 1, 1 } && ready.colors[1] == (Vec4){ 1, 1, 1, 1 });
+    instances[0].pose.time = 0.6f;
+    instances[0].color = { 1, 0, 0, 1 };
+    model::set_crowd(
+        assets: &fixture.assets,
+        scene: &fixture.scene,
+        node: second,
+        instances: instances[..],
+    )!!;
+    anim::crowd_update(&fixture.assets, &fixture.scene, 0.1f);
+    assert(ready.poses[0].time == 0.25f && ready.start_times[0] == 0.25f);
+    assert(pending.poses[0].time == 0.6f && pending.start_times[0] == 0.6f);
+    assert(pending.colors[0] == instances[0].color && !second.first_child);
+
+    assert(@catch(model::prepare_crowd_subtree(&fixture.assets, &fixture.scene, group)) == c3d::CAPACITY_EXCEEDED);
+    assert(ready.is_prepared() && !pending.is_prepared() && !second.first_child);
+    assert(fixture.scene.count(InstancedMesh) == 2 && pending.parts.len == 0 && pending.palettes.len == 0);
+    assert(!fixture.scene.get(outside, AnimatedCrowd).is_prepared());
+    Entity first_part = ready.parts[0].batch;
+    foreach (part : ready.parts) {
+        InstancedMesh* batch = fixture.scene.get(fixture.scene.node(part.batch), InstancedMesh);
+        assert(batch.trace && batch.colors[0] == ready.colors[0]);
+    }
+    sz bytes = tracking.allocated();
+    assert(@catch(model::prepare_crowd(&fixture.assets, &fixture.scene, second)) == c3d::CAPACITY_EXCEEDED);
+    assert(tracking.allocated() == bytes && !second.first_child);
+    anim::crowd_update(&fixture.assets, &fixture.scene, 0.1f);
+    assert(math::abs(ready.poses[0].time - 0.35f) < TOLERANCE && ready.start_times[0] == 0.25f);
+    assert(pending.poses[0].time == 0.6f);
+    fixture.scene.remove(blocker);
+    model::prepare_crowd(&fixture.assets, &fixture.scene, second)!!;
+    assert(pending.is_prepared() && pending.colors[0] == instances[0].color);
+    assert(c3d::same_id(ready.parts[0].batch, first_part));
+    ready.poses[0].time = 0.8f;
+    sz allocations = tracking.total_allocation_count();
+    model::prepare_crowd_subtree(&fixture.assets, &fixture.scene, group)!!;
+    assert(tracking.total_allocation_count() == allocations && ready.poses[0].time == 0.8f);
+    assert(ready.start_times[0] == 0.25f && pending.start_times[0] == 0.6f);
+    destroy_fixture(&fixture);
+    assert(!tracking.has_leaks());
+}
+
+fn void test_removing_pending_crowd_releases_copied_authoring() @test {
+    TrackingAllocator tracking;
+    tracking.init(mem);
+    defer tracking.free();
+    Fixture fixture = make_fixture();
+    scene::destroy_scene(&fixture.scene);
+    fixture.scene = scene::create_scene(&tracking, { .max_nodes = 8 });
+    fixture.scene.register(AnimatedCrowd)!!;
+    Node* node = fixture.scene.add_node()!!;
+    sz bytes = tracking.allocated();
+    CrowdInstance[1] instances = { walker(&fixture, placed({ 1, 2, 3 }), 0.4f) };
+    model::attach_crowd(
+        assets: &fixture.assets,
+        scene: &fixture.scene,
+        node: node,
+        model: fixture.model,
+        capacity: 3,
+        pose_bounds: unit_bounds(),
+        instances: instances[..],
+    )!!;
+    assert(!fixture.scene.get(node, AnimatedCrowd).is_prepared() && !node.first_child);
+    assert(tracking.allocated() > bytes);
+    fixture.scene.remove_component(node, AnimatedCrowd);
+    assert(!fixture.scene.has(node, AnimatedCrowd) && fixture.scene.count(InstancedMesh) == 0);
+    assert(tracking.allocated() == bytes && !node.first_child);
+    destroy_fixture(&fixture);
+    assert(!tracking.has_leaks());
 }
