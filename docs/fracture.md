@@ -3,7 +3,7 @@
 `c3d::physics::fracture` provides bounded workspaces, exact arithmetic, filtered
 geometric predicates, centered quantization, complete private solid validation
 and exact source construction records, convex-cell clipping and local face-driven
-partitioning with material occupancy and exact planar edge normalization. Public Boolean/Voronoi construction and collision reconstruction remain separate layers.
+partitioning with material occupancy and exact planar boundary reconstruction. Public Boolean/Voronoi construction and collision reconstruction remain separate layers.
 
 ## Workspace contract
 
@@ -346,7 +346,7 @@ order with signed multiplicity. Integer endpoint sorting groups equal subedges;
 opposite counts cancel and same-direction counts remain explicit. Canonical
 coefficient order selects a defining line pair when equivalent subedges have
 different constructions. Unused points are removed from the returned graph.
-This layer returns edges only; contour/provenance reconstruction follows it.
+This layer returns edges; boundary reconstruction consumes the signed graph.
 
 For positive homogeneous denominators, general projected orientation is a
 three-by-three determinant with columns W, X and Y. The accepted raw bounds give
@@ -372,3 +372,40 @@ Tests cover rational crossings, T-junctions, independent line selection,
 collinear overlaps, signed multiplicity, opposite subdivisions, canonical
 permutations, raw finite extremes and subnormals, near-grid-limit coordinates,
 nearly collinear filtered signs, and storage/arithmetic exhaustion with reuse.
+
+
+## Boundary patches
+
+The private boundary pass emits directed faces from occupied cells. Exact planar
+noding cancels every shared subedge, including unequal face subdivisions. Empty
+cells emit nothing. Each surviving plane must match a source plane or an explicit
+cut plane; missing provenance violates a private contract. Source patches clip
+each original triangle against the contributing cells before cancellation, so
+coplanar triangles with different provenance remain distinct.
+
+Contours follow the signed graph in exact point order. Each vertex needs one
+incoming and one outgoing edge with unit weight. Open or branched boundaries,
+repeated edges and inconsistent nested winding produce NON_MANIFOLD_RESULT.
+Exact containment assigns the nearest enclosing contour; parity distinguishes
+outer contours, holes and nested islands. Collinear subdivision points are
+removed first. A second pass inserts every retained patch point lying on another
+patch edge, preserving conforming boundaries between planes and provenance
+regions. Reconciliation stages its output and leaves the input patches unchanged
+on failure. Every operation uses the fixed workspace.
+
+Patches sort by canonical plane coefficients and an oriented source-triangle key
+rotated to its lowest topology identity. The key survives source-face shuffling;
+the stored face index maps back to that input's attribute arrays. Original render
+corner indices retain the input triangle's order. Exact three-corner recognition
+marks unchanged source triangles after reconciliation. Uncut box, concave prism,
+hollow box, nested shell/cavity/island and disconnected fixtures reproduce the
+same triangles, corner identities, provenance and count in both domains. Oblique
+cut fixtures also preserve ordered patches under source-face permutations.
+
+Boundary reconstruction alone peaks at 16 of the existing 24 wide values. Total
+scratch peaks, including retained validation, source and partition records, are
+78,324 bytes for the box, 122,748 for the concave prism, 136,692 for disconnected
+boxes, 162,420 for the hollow box and 228,284 for nested shells. Both domains have
+the same measured storage. No reservation grew. These are private reconstruction
+measurements; complete generation, shared triangulation and float publication
+remain separate acceptance work.
