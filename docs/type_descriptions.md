@@ -6,8 +6,9 @@ a handwritten description chooses its fields through the same helpers. Core
 imports neither the GUI nor serialization to provide this contract.
 
 Binary, JSONC and schema visitors in the acceptance tests demonstrate the shared
-walk. They are test fixtures, not a production serialization format. The
-serialization add-on retains its existing codec registration and wire format.
+walk. Production visitors live in the explicitly selected `c3d_serial` add-on,
+which retains the binary container and manual codec compatibility while adding
+described values, JSONC subtrees and schema export. See [serialization](serialization.md).
 
 ## Registration
 

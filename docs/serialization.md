@@ -4,7 +4,7 @@ c3d_serial is a consumer-selected add-on. It imports core scene/asset APIs and t
 
 ## Current coverage
 
-The container handles ordinary nodes and application-registered component codecs. Node name, local transform, transform space, layers, visibility, hierarchy and insertion order are portable. World matrices and effective visibility are derived during load, relative to a parent whose world matrix is current.
+Binary and JSONC forms preserve ordinary nodes, built-in authoring and application-registered component codecs. Node name, local transform, transform space, layers, visibility, hierarchy and insertion order are portable. World matrices and effective visibility are derived during load, relative to a parent whose world matrix is current.
 
 Node transform values pass through unchanged, matching direct `node.local` assignment. The container does not reject non-finite position/rotation/scale values or a zero quaternion; those values can propagate into the derived world matrix. Component codecs define and validate their own numeric constraints before invoking owner APIs. `ASSET_FORMAT_ERROR` covers invalid wire representations. Component codecs report invalid authored values through their declared owner faults; the container adds no universal float-validity rule.
 
@@ -29,6 +29,21 @@ and restart contracts are detailed in the built-in policy inventory below.
 Animator export projects owned transforms and Mesh morph weights to captured
 baselines; ordinary Mesh values preserve their explicit weights.
 
+There are 37 authored and 13 transient production component policies. The
+registration calls install their description/default prerequisites idempotently.
+Consumers select each package and its normal dependencies, including `c3d_serial`
+for any adapter below; core has no reverse dependency on an add-on.
+
+| Owner | Serialization feature | Registration | Authored / transient |
+| --- | --- | --- | --- |
+| Core | None | `serial::register_core_codecs()` | 18 / 0 |
+| Physics | `C3D_PHYSICS_SERIAL` | `physics::register_serial_codecs()` | 8 / 2 |
+| Navigation | `C3D_NAV_SERIAL` | `nav::register_serial_codecs()` | 5 / 5 |
+| Character | `C3D_CHARACTER_SERIAL`, `C3D_PHYSICS_SERIAL` | `character::register_serial_codecs()` | 1 / 0 |
+| Character navigation | Also `C3D_CHARACTER_NAV`, `C3D_NAV_SERIAL` | Included by character registration | 1 / 0 |
+| Landscape | `C3D_LANDSCAPE_SERIAL` | `landscape::register_serial_codecs()` | 3 / 5 |
+| Particles | `C3D_PARTICLE_SERIAL` | `particle::register_serial_codecs()` | 1 / 1 |
+
 Asset payloads, scene-wide ambient/background/environment settings and cross-subtree references are outside this format. Saving Scene.root creates an ordinary new node on read; it does not overwrite destination scene settings.
 
 ## Registration and callbacks
@@ -43,9 +58,16 @@ Register the destination's component stores and removal hooks through its owner 
 
 ComponentCodec contains a static-lifetime name, positive version, RestorePhase and collect/write/read callbacks. Names must be unique across types. Registering a type again replaces its policy; a conflicting name fails without replacing the existing entry. Neither registration order nor C3 module/type names enter the stream.
 
-- collect is optional. It runs once before record numbering and declares owner-generated nodes/components through omit_node and omit_component. set_local supplies a captured authored transform. Claims affect scratch only; the source scene is unchanged. Conflicting owners/transform overrides fail INVALID_ARGUMENT.
+- collect is optional. It runs once before record numbering. `omit_node` and `omit_component` claim verified generated state. `set_local` and `set_transform` project authored placement, and `project_component` substitutes an existing component through its normal codec. Dynamic values are borrowed until the synchronous export returns. Claims affect scratch only; duplicate/conflicting projections and owner claims return `INVALID_ARGUMENT`.
 - write runs twice, for measuring and filling. It must emit identical bytes against the same fixed scene state. It writes field-wise values and uses context helpers for references.
 - read receives exactly one bounded payload and attaches its registered component to context.node through the owner API/hook. It must consume the entire payload, retain no blob/context pointers, and free allocations not yet transferred if it fails. It may attach explicitly owned authoring components, but cannot create/reparent/remove nodes, mutate AssetStore or change unrelated scene state.
+
+`register_transient(Type, collect = null)` emits no component record. Its optional
+collector may only reject; it cannot make ownership claims. `contains_node`
+reports the original selected subtree before omissions, independently of callback
+order. Repeating the same transient callback is idempotent; a different callback
+for an already-transient type returns `INVALID_ARGUMENT`. Explicit replacement
+between authored and transient policies retains the existing registration rules.
 
 RestorePhase.VALUE runs before REFERENCES, then OWNER. Every node exists before these phases. The application owns codec dependencies; this is not a scheduler. ReadContext.has_component(Type) reports whether the file independently restores that type on the current node, so an owner can reject conflicting stored components before invoking a no-duplicate owner API.
 
@@ -61,7 +83,55 @@ Both operations use tmem scratch and require an enclosing @pool(). Neither opens
 
 On a fault after creation, the reader removes all newly created nodes/components through their hooks. Existing authored values, component/node counts, asset counts/revisions and free node capacity remain unchanged. Entity generations/free-list ordering and borrowed ECS component addresses are not rollback identities.
 
-The reader resolves all key names and codec names before creating nodes, and checks authored node capacity. A typed asset-kind mismatch can be detected later by a payload helper; that failure uses the same rollback. Owner-specific runtime reconstruction after a successful read is a separate explicit operation with its own resource failures.
+The binary reader resolves its key/type tables and checks node capacity before creating nodes. Both readers validate resolved model mappings and described dependencies before component attachment. A typed asset-kind mismatch can be detected later by a payload helper; that failure uses the same rollback. Owner-specific runtime reconstruction after a successful read is a separate explicit operation with its own resource failures.
+
+## JSONC and schema
+
+`write_subtree_text(allocator, scene, assets, root, options)` and
+`read_subtree_text(scene, assets, text, parent, options)` use the same owner
+projections and component policies as binary serialization. Each document is one
+subtree object. File management and extraction from larger documents belong to
+the application. The reader accepts JSON with line/block comments and rejects
+trailing commas, duplicate object keys and trailing input.
+
+Node IDs form a complete zero-based document-local range. Input records may
+appear in any order; parent links must form one connected acyclic tree. Sibling
+insertion follows ascending IDs, even when a child ID precedes its parent. Names
+may be empty or duplicated and are not reference identities.
+
+Writers emit every field. Missing text fields retain explicit semantic defaults,
+including nested values and new slice elements. Unknown fields/components fail
+unless `ReadOptions.skip_unknown` is selected; skipped values still need valid
+syntax. Current-version binary truncation never fills defaults. Older binary
+layouts need an explicit compatibility reader, and older text versions must be
+listed explicitly by the codec owner.
+
+Finite floats/doubles preserve their bits with nine/seventeen significant digits
+and direct conversion into the destination width. Negative zero is `-0.0`.
+Non-finite values use `"f32:xxxxxxxx"` or `"f64:xxxxxxxxxxxxxxxx"`, fixed-width
+lowercase hex; finite-bit tokens are rejected. Wide integers use canonical quoted
+decimal strings. Owner-specific numeric domains below apply after representation
+parsing. See [the text profile](serialization_text.md) for exact spelling and
+bounds: defaults are 64 MiB/document, 1 MiB/raw string, 128 bytes/number and depth 64.
+
+A binary-only application codec makes text export fail. Explicitly setting
+`omit_binary_only` requires an initialized `OmissionReport`, which lists every
+omitted node/type and owns its strings until reuse/destruction. Nothing is
+silently omitted merely because it lacks a policy.
+
+`write_schema(allocator, limits)` writes registered component names/versions,
+nested field layouts, kinds, array extents, enum names, units, ranges and semantic
+defaults. It identifies manual codecs as binary-only. The defaults are the same
+ones used by text import; schema traversal does not invoke READ completion hooks.
+The returned String belongs to the supplied allocator. These calls use caller-
+scoped `@pool()` scratch, as the binary entry points do. See
+[described value policies](serialization_values.md) for application registration.
+
+New reader acquisitions and explicitly fallible owner copies return
+`CAPACITY_EXCEEDED` and release their acquisitions. Existing infallible Scene and
+owner allocations retain their contracts; there is no blanket recoverable-OOM
+promise for the application. Retained diagnostics include JSON Pointer and source
+position for text, plus component/node and available asset/model details.
 
 ## References and values
 
@@ -91,7 +161,7 @@ Each NODES record contains:
 4. Name string.
 5. Transform, transform-space u32, layers u32 and visible u8.
 
-The model fields are reserved in this delivery: references are INDEX_NONE and signature length is zero; model-bearing input is UNSUPPORTED. An ordinary node record is at least 73 bytes. Parent records precede their children. Canonical order is depth-first insertion order.
+The legacy NODES model fields remain reserved: references are INDEX_NONE and signature length is zero. Model mappings and exact signatures are described component payloads, so the container layout is unchanged. Nonzero legacy reserved metadata remains UNSUPPORTED. An ordinary node record is at least 73 bytes. Parent records precede their children. Canonical order is depth-first insertion order.
 
 COMPONENTS contains group_count u32, then each group's type_index and count (u32). Every entry contains node_record u32, payload_size u32 and exactly that payload. Type groups and node/type pairs are unique. Empty component payloads are valid. Required stores must already exist in the destination.
 
@@ -104,7 +174,8 @@ The container currently supports version 1. A codec receives its stored version 
 | Fault | Meaning |
 | --- | --- |
 | ASSET_FORMAT_ERROR | Malformed header/chunks/records/counts, duplicate entries, invalid boolean/enum/UTF-8, truncation, bad reference index or unconsumed payload |
-| UNSUPPORTED | Container/type version, codec, destination store or model support unavailable |
+| UNSUPPORTED | Container/type version, codec or destination store unavailable; binary-only codec used in text export |
+| INCOMPATIBLE_TEMPLATE | Referenced model differs from the saved structural signature |
 | INVALID_ID | Missing or wrong-kind asset reference, including a dead source asset |
 | INVALID_ARGUMENT | Unkeyed source asset, outside/omitted/foreign-scene node reference, conflicting owner claims or codec name |
 | CAPACITY_EXCEEDED | Authored nodes do not fit, output/count cannot fit the bounded format, or a fallible owner/output allocation fails |
@@ -169,7 +240,7 @@ Active fades settle at their targets; fading-out actions and spaces are omitted,
 while settled zero-weight actions remain. Handles are newly allocated. An absent
 configured root slot retains its mode and contributes zero root motion.
 Model signatures compare every ordered mesh and skin slot per template node.
-The unreleased ModelInstance layout pins change with this complete signature;
+The ModelInstance layout is pinned to this complete signature;
 ordinary binary container fixtures remain compatible. Asset storage accepts
 repeated slots, while eager instantiation retains its existing one-component-per-
 node contract. The serializer can reconstruct an explicitly authored saved graph.
@@ -229,8 +300,8 @@ PhysicsJoint restores in REFERENCES with a required model-aware endpoint and
 only its selected variant. Wind and Force persist their complete values; Buoyancy
 persists density and drag and resets submerged fraction. RigidBody and Joint are
 explicitly transient. Ordinary physics synchronization creates the native state.
-The package inventory discovers every physics slot through normal registration;
-All ten normally registered physics component types have explicit policies;
+The package inventory discovers all ten physics component types through normal
+registration and verifies their explicit policies;
 new unclassified physics components fail the package inventory.
 
 ## Navigation adapter
@@ -305,3 +376,23 @@ Character codec registration includes navigation codecs and the NavDriven OWNER
 marker. It requires Character and NavAgent, resets traversal and applies normal
 add_nav_driven behavior after both components restore. Independent policy targets
 check ordinary registration with and without navigation.
+
+
+## Landscape and particle adapters
+
+Terrain and Water restore complete descriptors in VALUE, with no generated
+material, batch or mirror. Foliage restores its ground reference and copied
+scatter, sway, fade, render and optional LOD authoring in OWNER. Prepare terrain
+before foliage, and publish world matrices before dependent preparation.
+Foliage cells and water mirrors are omitted only through verified ownership.
+See [landscape serialization](../addons/c3d_landscape.c3l/src/serial/README.md).
+
+ParticleSystem restores its descriptor and emitting flag in VALUE. Its pool,
+random state, counters and draw child restart through explicit preparation.
+A generated draw child selected without its owner is rejected. See
+[particle serialization](../addons/c3d_particle.c3l/src/serial/README.md).
+
+The transient inventory is RigidBody, Joint, NavSourceRuntime, NavVolumeRuntime,
+NavLinkRuntime, NavObstacleRuntime, CrowdAgentRuntime, TerrainRuntime,
+FoliageRuntime, FoliageCellOwner, WaterRuntime, WaterMirror and ParticleDrawOwner.
+Some are private ownership markers; their packages install the policies.

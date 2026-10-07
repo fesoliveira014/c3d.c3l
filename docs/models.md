@@ -42,6 +42,15 @@ model template afterwards leaves existing instances intact. See the
 [animation lifetime rules](animation.md#removed-instance-nodes) for identity
 lifetimes, missing tracks and required skin joints.
 
+A subtree serialized with `c3d_serial` retains its model key, exact structural
+signature, captured template identities and authored overrides. Restore creates
+the saved graph directly, preserving deleted template slots and application
+children; it does not recreate removed components from the template. The source
+model and referenced keyed assets must be live in the destination store. A
+structural mismatch returns `INCOMPATIBLE_TEMPLATE` with the model key and first
+differing template index. See [serialization](serialization.md) for animation
+restart, required skin references and owner preparation.
+
 ## Keys
 
 Every asset an import creates is keyed under the model key, which is the file
