@@ -5,6 +5,11 @@
   "wincrt": "static",
   "output": "build",
   "targets": {
+    "collision_oracle": {
+      "type": "executable",
+      "fp-math": "strict",
+      "sources": [ "../../src/fracture/*", "collision_oracle.c3" ]
+    },
     "components_scaling": {
       "type": "test",
       "fp-math": "strict",
