@@ -88,7 +88,7 @@ PHYSICS_GUI_TEST_TARGETS = ("physics_panel_off", "physics_panel", "physics_panel
 JOB_TEST_TARGETS = ("job_test", "job_profile_test")
 LANDSCAPE_TEST_TARGETS = ("landscape_test", "landscape_serial_test", "landscape_serial_policy_test")
 PARTICLE_TEST_TARGETS = ("particle_test", "particle_serial_test", "particle_serial_policy_test")
-SERIAL_TEST_TARGETS = ("serial_test", "serial_order_forward", "serial_order_reverse", "serial_text_test", "serial_described_test", "serial_core_policy_test")
+SERIAL_TEST_TARGETS = ("serial_test", "serial_order_forward", "serial_order_reverse", "serial_text_test", "serial_described_test", "serial_core_policy_test", "serial_all_test")
 UI_TEST_TARGETS = ("ui_test",)
 
 REQUIRED_C3C_VERSION = "0.8.3"

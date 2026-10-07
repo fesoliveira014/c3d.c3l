@@ -22,6 +22,12 @@
   "wincrt": "static",
   "output": "build",
   "targets": {
+    "serial_all_test": {
+      "type": "test",
+      "sources": ["test_all/**"],
+      "features": ["C3D_PHYSICS_SERIAL", "C3D_NAV_SERIAL", "C3D_CHARACTER_SERIAL", "C3D_CHARACTER_NAV", "C3D_LANDSCAPE_SERIAL", "C3D_PARTICLE_SERIAL"],
+      "dependencies": ["c3d_physics", "b3", "c3d_nav", "c3d_character", "c3d_landscape", "c3d_particle", "c3d_serial", "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "cgltf", "ufbx", "shaderc"]
+    },
     "serial_core_policy_test": {"type": "test", "sources": ["test_policy/**"]},
     "serial_lookup_bench": {"type": "test", "sources": ["test_described/fixture.c3", "bench_described/**"]},
     "serial_described_test": {"type": "test", "sources": ["test_described/**"]},
