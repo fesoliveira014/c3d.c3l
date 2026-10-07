@@ -263,3 +263,20 @@ rebuilds the graph from current contacts; touching survivors can weld again.
 Only verified owned body components are omitted; modified or unrelated bodies,
 conflicting owners and joints are rejected. Source nodes and assets are unchanged.
 `WriteContext.set_transform` projects transform and coordinate space together.
+
+## Character adapter
+
+Select `c3d_serial`, enable `C3D_CHARACTER_SERIAL` and `C3D_PHYSICS_SERIAL`,
+and call `character::register_serial_codecs()`. The adapter reuses physics value
+registrations. Register ordinary physics and character stores before reading.
+Character restores in REFERENCES with its full descriptor and capsule state at
+the saved node pose. Velocity, movement intent, contact, jump and plane state
+restart. Optional push-body authoring is copied fallibly and remains pending
+until normal physics synchronization; only the verified generated body is omitted.
+The plain character manifest has no serialization dependency.
+
+With `C3D_CHARACTER_NAV`, also select `c3d_nav` and enable `C3D_NAV_SERIAL`.
+Character codec registration includes navigation codecs and the NavDriven OWNER
+marker. It requires Character and NavAgent, resets traversal and applies normal
+add_nav_driven behavior after both components restore. Independent policy targets
+check ordinary registration with and without navigation.
