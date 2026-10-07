@@ -49,3 +49,18 @@ reader; other versions fail with `UNSUPPORTED`. Current payloads require their
 complete pinned layout and never fill truncated fields from defaults. The tests
 pin a version-1 manual-codec container captured before generated binding.
 Manual `ComponentCodec` registration remains supported.
+
+## JSON field values
+
+The field reader initializes semantic defaults, copies default strings and slices
+into reader-owned storage, then overlays fields present in the input. Absent
+nested values retain parent overrides. New slice elements receive their own type
+defaults. READ completion hooks run only for entered values, with child hooks
+before their parent; cloning defaults and writing never invoke them.
+
+Writers emit every described field, including values equal to defaults. Fixed
+arrays, vectors, quaternions and matrices require their exact element counts.
+Unknown fields are format errors unless skipping is explicitly enabled; parsing
+still validates the complete JSONC input. Field failures retain JSON Pointer and
+text position. The caller releases the acquisition chain after success or failure.
+These visitors support the later public text-subtree and schema entry points.
