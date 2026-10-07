@@ -218,7 +218,7 @@ fn void? write_components(WriteContext* context, Writer* writer) @local {
             usz before = writer.written();
             context.node = node;
             context.slot = slot;
-            if (catch excuse = codecs[slot].codec.write(context.scene.world.component(node.id, slot), writer, context)) {
+            if (catch excuse = codecs[slot].codec.write(projected_component(context, node, slot), writer, context)) {
                 return component_diagnostic(
                     diagnostic: context.diagnostic,
                     record: (uint)record,

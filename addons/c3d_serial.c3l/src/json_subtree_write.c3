@@ -153,7 +153,7 @@ fn void? emit_component_json(WriteContext* context, JsonOutput* output, Describe
     Acquisitions owned = { .allocator = tmem };
     defer owned.release();
     void* value = owned.acquire(1, binding.type.descriptor.size, binding.type.descriptor.alignment)!;
-    binding.codec.project(context.scene.world.component(context.node.id, context.slot), value, context)!;
+    binding.codec.project(projected_component(context, context.node, context.slot), value, context)!;
     write_described_json(type: binding.type, output: output, context: context, value: value)!;
     output.end()!;
 }

@@ -33,16 +33,17 @@ fn void test_every_physics_component_has_an_explicit_serialization_policy() @tes
     defer physics::destroy_physics_world(&world);
     uint registered_count = ecs::registered_type_count;
     physics::register_serial_codecs()!!;
-    ExpectedPolicy[7] expected = {
+    ExpectedPolicy[8] expected = {
         { .slot = ecs::assigned_slot(PhysicsBody)!!, .name = "physics_body", .identity = BodyAuthoring::typeid },
         { .slot = ecs::assigned_slot(PhysicsJoint)!!, .name = "physics_joint", .identity = JointAuthoring::typeid, .phase = REFERENCES },
         { .slot = ecs::assigned_slot(Buoyancy)!!, .name = "buoyancy", .identity = BuoyancyAuthoring::typeid },
         { .slot = ecs::assigned_slot(Wind)!!, .name = "wind", .identity = Wind::typeid },
         { .slot = ecs::assigned_slot(Force)!!, .name = "force", .identity = Force::typeid },
+        { .slot = ecs::assigned_slot(Cloth)!!, .name = "cloth", .identity = ClothSavedAuthoring::typeid, .phase = OWNER },
         { .slot = ecs::assigned_slot(RigidBody)!!, .transient = true },
         { .slot = ecs::assigned_slot(Joint)!!, .transient = true },
     };
-    uint[3] pending = { ecs::assigned_slot(Cloth)!!, ecs::assigned_slot(Ragdoll)!!, ecs::assigned_slot(Breakable)!! };
+    uint[2] pending = { ecs::assigned_slot(Ragdoll)!!, ecs::assigned_slot(Breakable)!! };
     assert(registered_count == core_count + expected.len + pending.len);
     assert(ecs::registered_type_count == registered_count);
     for (uint slot = core_count; slot < registered_count; slot++) {

@@ -72,6 +72,7 @@ fn void? register_serial_codecs() {
     serial::register_described(Force, { .name = "force" })!;
     serial::register_transient(RigidBody)!;
     serial::register_transient(Joint)!;
+    register_cloth_codec()!;
 }
 
 fn void defaults_body_authoring(void* value) @private {
