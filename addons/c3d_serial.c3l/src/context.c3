@@ -25,6 +25,7 @@ struct ExportNodeOwners @private {
 
 struct NodeProjection @private {
     uint record;
+    sz claim_head;
     ComponentMask omitted_components;
     ulong node_owner;
     ulong local_owner;
@@ -36,7 +37,7 @@ struct NodeProjection @private {
 }
 
 struct ComponentClaim @private {
-    uint node;
+    sz next;
     uint slot;
     ulong owner;
     void* projected;
@@ -118,13 +119,16 @@ fn bool WriteContext.contains_node(&self, Node* node) {
 fn void? WriteContext.omit_component(&self, Node* node, uint slot) {
     NodeProjection* projected = projection_of(self, node)!;
     ulong owner = owner_of(self)!;
-    foreach (claim : self.state.claims.array_view()) {
-        if (claim.node == node.id.index && claim.slot == slot) {
-            if (claim.owner != owner || claim.projected) return c3d::INVALID_ARGUMENT~;
-            return;
-        }
+    if (ComponentClaim* claim = find_component_claim(self.state, projected, slot)) {
+        if (claim.owner != owner || claim.projected) return c3d::INVALID_ARGUMENT~;
+        return;
     }
-    self.state.claims.push({ .node = node.id.index, .slot = slot, .owner = owner });
+    append_component_claim(
+        state: self.state,
+        projected: projected,
+        slot: slot,
+        owner: owner,
+    );
     projected.omitted_components |= ecs::slot_bit(slot);
 }
 
@@ -151,20 +155,44 @@ fn ComponentClaim*? component_projection_claim(WriteContext* context, Node* node
         return c3d::INVALID_ARGUMENT~;
     }
     ulong owner = owner_of(context)!;
-    foreach (&claim : context.state.claims.array_view()) {
-        if (claim.node != node.id.index || claim.slot != slot) continue;
+    if (ComponentClaim* claim = find_component_claim(context.state, projected, slot)) {
         if (claim.owner != owner || claim.projected) return c3d::INVALID_ARGUMENT~;
         return claim;
     }
-    context.state.claims.push({ .node = node.id.index, .slot = slot, .owner = owner });
-    return &context.state.claims.array_view()[^1];
+    return append_component_claim(
+        state: context.state,
+        projected: projected,
+        slot: slot,
+        owner: owner,
+    );
 }
 
 fn void* projected_component(WriteContext* context, Node* node, uint slot) @private {
-    foreach (claim : context.state.claims.array_view()) {
-        if (claim.node == node.id.index && claim.slot == slot && claim.projected) return claim.projected;
+    NodeProjection* projected = &context.state.projection[node.id.index];
+    if (ComponentClaim* claim = find_component_claim(context.state, projected, slot)) {
+        if (claim.projected) return claim.projected;
     }
     return context.scene.world.component(node.id, slot);
+}
+
+fn ComponentClaim* find_component_claim(WriteState* state, NodeProjection* projected, uint slot) @local {
+    for (sz link = projected.claim_head; link; ) {
+        ComponentClaim* claim = &state.claims.array_view()[link - 1];
+        if (claim.slot == slot) return claim;
+        link = claim.next;
+    }
+    return null;
+}
+
+fn ComponentClaim* append_component_claim(
+    WriteState* state,
+    NodeProjection* projected,
+    uint slot,
+    ulong owner,
+) @local {
+    state.claims.push({ .next = projected.claim_head, .slot = slot, .owner = owner });
+    projected.claim_head = state.claims.len();
+    return &state.claims.array_view()[^1];
 }
 
 <*

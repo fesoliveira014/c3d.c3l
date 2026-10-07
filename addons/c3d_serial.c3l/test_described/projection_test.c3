@@ -163,3 +163,58 @@ fn void test_transform_projection_preserves_space_and_rejects_conflicts() @test 
         assert(source.transform_space == TransformSpace.PARENT && source.local.position == (Vec3){});
     };
 }
+
+fn void? collect_interleaved_claims(void* component, WriteContext* context) @private {
+    for (Node* node = context.node.first_child; node; node = node.next_sibling) {
+        Number value = *context.scene.get(node, Number);
+        value.count += 1000;
+        context.project_component(node, value)!;
+    }
+    for (Node* node = context.node.first_child; node; node = node.next_sibling) {
+        context.omit_component(node, ecs::assigned_slot(Item)!!)!;
+        context.omit_component(node, ecs::assigned_slot(Item)!!)!;
+    }
+}
+
+fn void test_interleaved_claims_preserve_each_nodes_projection_and_omission() @test {
+    @pool() {
+        Fixture fixture;
+        create_fixture(&fixture, 128);
+        defer destroy_fixture(&fixture);
+        serial::register_described(Owner, {
+            .name = "owner", .collect = &collect_interleaved_claims, .attach = &attach_owner,
+        })!!;
+        fixture.source.register(Item)!!;
+        fixture.destination.register(Item)!!;
+        Node* source = fixture.source.add_node(name: "owner")!!;
+        fixture.source.add(source, (Owner){});
+        for (uint index = 0; index < 100; index++) {
+            Node* node = fixture.source.add_node(source, "claimed")!!;
+            fixture.source.add(node, (Number){ .count = index });
+            fixture.source.add(node, (Item){ .label = "omitted" });
+        }
+        foreach (text_mode : (bool[2]){ false, true }) {
+            Node* restored;
+            if (text_mode) {
+                String first = fixture_text(&fixture, source);
+                assert(first == fixture_text(&fixture, source));
+                restored = serial::read_subtree_text(&fixture.destination, &fixture.assets, first)!!;
+            } else {
+                char[] first = fixture_bytes(&fixture, source);
+                assert(first == fixture_bytes(&fixture, source));
+                restored = serial::read_subtree(&fixture.destination, &fixture.assets, first)!!;
+            }
+            Node* original = source.first_child;
+            uint visited;
+            for (Node* node = restored.first_child; node; node = node.next_sibling) {
+                assert(fixture.destination.get(node, Number).count == fixture.source.get(original, Number).count + 1000);
+                assert(fixture.source.get(original, Number).count < 100);
+                assert(!fixture.destination.has(node, Item) && fixture.source.has(original, Item));
+                original = original.next_sibling;
+                visited++;
+            }
+            assert(visited == 100 && !original);
+            fixture.destination.remove(restored);
+        }
+    };
+}
