@@ -214,6 +214,7 @@ fn void? stage_cells(
         if (runtime.cells[index].generation) continue;
         staged[index].created = scene.add_node(parent: node)!;
         staged[index].created.layers = node.layers;
+        scene.add(staged[index].created, (FoliageCellOwner){ .layer = node.id, .cell_index = (uint)index });
     }
 }
 

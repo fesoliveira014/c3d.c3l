@@ -8,19 +8,30 @@ import c3d::maths;
 import c3d::scene;
 import std::math;
 
-const ulong MODEL_SIGNATURE_LAYOUT @local = 0x3a25f0a009df0545;
+const ulong MODEL_MESH_LAYOUT @local = 0x8f6dc559d5c94149;
+const ulong MODEL_SKIN_LAYOUT @local = 0xc991f818eff08d05;
+const ulong MODEL_SIGNATURE_LAYOUT @local = 0x90a76547fe77d954;
 const ulong MORPH_BASELINE_LAYOUT @local = 0xed25f1e3932180db;
-const ulong MODEL_AUTHORING_LAYOUT @local = 0x95952b5d313f9752;
+const ulong MODEL_AUTHORING_LAYOUT @local = 0xaba8fe418addb2df;
 
-struct ModelNodeSignature @private {
-    int parent;
-    uint mesh_slot;
+struct ModelMeshSignature @private {
+    uint slot;
     GeometryId geometry;
     MaterialId material;
     uint morph_targets;
+}
+
+struct ModelSkinSignature @private {
+    uint slot;
     SkeletonId skeleton;
     uint skeleton_joints;
     uint[] joints;
+}
+
+struct ModelNodeSignature @private {
+    int parent;
+    ModelMeshSignature[] meshes;
+    ModelSkinSignature[] skins;
     LodDesc[] lod;
 }
 
@@ -40,9 +51,13 @@ struct ModelAuthoring @private {
 }
 
 fn void? register_model_codec() @private {
+    describe::register_reflected(ModelMeshSignature)!;
+    describe::register_reflected(ModelSkinSignature)!;
     describe::register_reflected(ModelNodeSignature)!;
     describe::register_reflected(MorphBaseline)!;
     describe::register_reflected(ModelAuthoring)!;
+    register_core_value(ModelMeshSignature, MODEL_MESH_LAYOUT, &defaults_model_mesh)!;
+    register_core_value(ModelSkinSignature, MODEL_SKIN_LAYOUT, &defaults_model_skin)!;
     register_core_value(ModelNodeSignature, MODEL_SIGNATURE_LAYOUT, &defaults_model_signature)!;
     register_core_value(MorphBaseline, MORPH_BASELINE_LAYOUT, &defaults_morph_baseline)!;
     register_core_value(ModelAuthoring, MODEL_AUTHORING_LAYOUT, &defaults_model_authoring)!;
@@ -55,8 +70,16 @@ fn void? register_model_codec() @private {
     })!;
 }
 
+fn void defaults_model_mesh(void* value) @local {
+    *(ModelMeshSignature*)value = {};
+}
+
+fn void defaults_model_skin(void* value) @local {
+    *(ModelSkinSignature*)value = {};
+}
+
 fn void defaults_model_signature(void* value) @local {
-    *(ModelNodeSignature*)value = { .parent = -1, .mesh_slot = INDEX_NONE };
+    *(ModelNodeSignature*)value = { .parent = -1 };
 }
 
 fn void defaults_morph_baseline(void* value) @local {
@@ -72,19 +95,29 @@ fn ModelNodeSignature? model_node_signature(
     ModelTemplate* template,
     uint index,
 ) @local {
-    ModelNodeSignature result = { .parent = template.nodes[index].parent, .mesh_slot = INDEX_NONE };
+    ModelNodeSignature result = { .parent = template.nodes[index].parent };
+    uint mesh_count;
+    uint skin_count;
+    foreach (mesh : template.meshes) if (mesh.node == index) mesh_count++;
+    foreach (skin : template.skins) if (skin.mesh_node == index) skin_count++;
+    result.meshes = alloc::new_array_try(tmem, ModelMeshSignature, mesh_count) ?? c3d::CAPACITY_EXCEEDED~!;
+    result.skins = alloc::new_array_try(tmem, ModelSkinSignature, skin_count) ?? c3d::CAPACITY_EXCEEDED~!;
+    uint mesh_entry;
     foreach (mesh_slot, mesh : template.meshes) {
         if (mesh.node != index) continue;
-        result.mesh_slot = (uint)mesh_slot;
-        result.geometry = mesh.geometry;
-        result.material = mesh.material;
-        result.morph_targets = assets.geometries.try_get(mesh.geometry)!.target_count;
+        result.meshes[mesh_entry++] = {
+            .slot = (uint)mesh_slot, .geometry = mesh.geometry, .material = mesh.material,
+            .morph_targets = assets.geometries.try_get(mesh.geometry)!.target_count,
+        };
     }
-    foreach (skin : template.skins) {
+    uint skin_entry;
+    foreach (skin_slot, skin : template.skins) {
         if (skin.mesh_node != index) continue;
-        result.skeleton = skin.skeleton;
-        result.skeleton_joints = (uint)assets.skeletons.try_get(skin.skeleton)!.data.parents.len;
-        result.joints = skin.joint_nodes;
+        result.skins[skin_entry++] = {
+            .slot = (uint)skin_slot, .skeleton = skin.skeleton,
+            .skeleton_joints = (uint)assets.skeletons.try_get(skin.skeleton)!.data.parents.len,
+            .joints = skin.joint_nodes,
+        };
     }
     foreach (&group : template.lod_groups) {
         if (group.node == index) result.lod = (&group.desc)[:1];
@@ -93,11 +126,18 @@ fn ModelNodeSignature? model_node_signature(
 }
 
 fn bool same_model_signature(ModelNodeSignature* first, ModelNodeSignature* second) @local {
-    if (first.parent != second.parent || first.mesh_slot != second.mesh_slot
-        || !c3d::same_id(first.geometry, second.geometry) || !c3d::same_id(first.material, second.material)
-        || first.morph_targets != second.morph_targets || !c3d::same_id(first.skeleton, second.skeleton)
-        || first.skeleton_joints != second.skeleton_joints || first.joints != second.joints
-        || first.lod.len != second.lod.len) return false;
+    if (first.parent != second.parent || first.meshes.len != second.meshes.len
+        || first.skins.len != second.skins.len || first.lod.len != second.lod.len) return false;
+    foreach (index, mesh : first.meshes) {
+        ModelMeshSignature other = second.meshes[index];
+        if (mesh.slot != other.slot || !c3d::same_id(mesh.geometry, other.geometry)
+            || !c3d::same_id(mesh.material, other.material) || mesh.morph_targets != other.morph_targets) return false;
+    }
+    foreach (index, skin : first.skins) {
+        ModelSkinSignature other = second.skins[index];
+        if (skin.slot != other.slot || !c3d::same_id(skin.skeleton, other.skeleton)
+            || skin.skeleton_joints != other.skeleton_joints || skin.joints != other.joints) return false;
+    }
     if (!first.lod.len) return true;
     LodDesc* first_lod = &first.lod[0];
     LodDesc* second_lod = &second.lod[0];
@@ -161,7 +201,7 @@ fn void? project_model(void* component, void* value, WriteContext* context) @loc
     foreach (index, &entry : morph) {
         ModelMesh* mesh = &template.meshes[index];
         if (instance.mesh_nodes[index] != mesh.node
-            || instance.base_morph_weights[index].len != signature[mesh.node].morph_targets) {
+            || instance.base_morph_weights[index].len != context.assets.geometries.try_get(mesh.geometry)!.target_count) {
             return model_diagnostic(
                 diagnostic: context.diagnostic,
                 assets: context.assets,
@@ -214,7 +254,7 @@ fn void? validate_model(void* value, ReadContext* context) @private {
     }
     foreach (index, mesh : template.meshes) {
         if (source.mesh_nodes[index] != mesh.node
-            || source.base_morph_weights[index].weights.len != source.signature[mesh.node].morph_targets) {
+            || source.base_morph_weights[index].weights.len != context.assets.geometries.try_get(mesh.geometry)!.target_count) {
             return c3d::ASSET_FORMAT_ERROR~;
         }
     }

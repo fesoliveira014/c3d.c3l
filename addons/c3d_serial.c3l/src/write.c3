@@ -134,7 +134,7 @@ fn WriteState? prepare_export(
                     return component_diagnostic(
                         diagnostic: diagnostic,
                         record: (uint)record,
-                        type_name: codecs[slot].codec.name,
+                        type_name: codecs[slot].transient ? codecs[slot].diagnostic_name : codecs[slot].codec.name,
                         cause: excuse,
                     )~;
                 }

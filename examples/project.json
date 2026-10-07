@@ -23,6 +23,11 @@
   "wincrt": "static",
   "output": "build",
   "targets": {
+    "serialize": {
+      "type": "executable",
+      "dependencies": ["c3d_serial"],
+      "sources": ["src/serialize.c3"]
+    },
     "lod": {
       "type": "executable",
       "dependencies": ["c3d_profile"],

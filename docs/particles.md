@@ -249,3 +249,7 @@ WSL verification is limited to builds and CPU tests. GPU acceptance runs on
 Windows.
 
 ![Smoke, stretched sparks and mesh debris](images/particles.png)
+
+## Serialization
+
+Select `c3d_serial` and enable `C3D_PARTICLE_SERIAL` to register particle authoring codecs. Reads create pending systems; prepare them before ordinary updates. See [the serialization contract](../addons/c3d_particle.c3l/src/serial/README.md) for ownership, restart behavior and the feature-on test targets.

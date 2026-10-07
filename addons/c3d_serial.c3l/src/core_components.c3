@@ -1,6 +1,7 @@
 module c3d::serial;
 
 import c3d;
+import c3d::anim;
 import c3d::camera;
 import c3d::describe;
 import c3d::light;
@@ -36,7 +37,7 @@ fn void? register_core_codecs() {
     register_core_value(HeightFog, FOG_LAYOUT, &defaults_fog)!;
     register_core_value(ReflectionProbe, REFLECTION_LAYOUT, &defaults_reflection)!;
     register_core_value(Decal, DECAL_LAYOUT, &defaults_decal)!;
-    register_described(Mesh, { .name = "c3d.Mesh", .attach = &attach_mesh })!;
+    register_described(Mesh, { .name = "c3d.Mesh", .project = &project_mesh, .attach = &attach_mesh })!;
     register_described(Camera, { .name = "c3d.Camera" })!;
     register_described(Light, { .name = "c3d.Light" })!;
     register_described(ProbeVolume, {
@@ -52,6 +53,8 @@ fn void? register_core_codecs() {
     register_described(Decal, { .name = "c3d.Decal" })!;
     register_core_batch_codecs()!;
     register_model_codec()!;
+    register_rig_codecs()!;
+    register_animator_codec()!;
 }
 
 fn void defaults_shadow(void* value) @local {
@@ -101,6 +104,20 @@ fn void? attach_mesh(void* value, ReadContext* context) @local {
     weights[..] = mesh.morph_weights[..];
     mesh.morph_weights = weights;
     context.scene.add(context.node, mesh);
+}
+
+fn void? project_mesh(void* component, void* value, WriteContext* context) @local {
+    Mesh mesh = *(Mesh*)component;
+    context.scene.@each(ModelInstance; entity, instance) {
+        if (context.scene.has(context.scene.node(entity), anim::Animator)) {
+            foreach (index, template_node : instance.mesh_nodes) {
+                if (instance.present_node(template_node) == context.node) {
+                    mesh.morph_weights = instance.base_morph_weights[index];
+                }
+            }
+        }
+    };
+    *(Mesh*)value = mesh;
 }
 
 fn void? validate_probe(void* value, ReadContext* context) @local {

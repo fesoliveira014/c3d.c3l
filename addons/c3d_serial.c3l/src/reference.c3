@@ -20,7 +20,7 @@ fn void? WriteContext.write_geometry(&self, Writer* writer, GeometryId id) {
 <*
  Resolve a keyed geometry reference.
  @param [&inout] reader : "Contains the next portable key reference."
- @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID
+ @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID, c3d::CAPACITY_EXCEEDED
 *>
 fn GeometryId? ReadContext.read_geometry(&self, Reader* reader) {
     return read_asset_key(
@@ -48,7 +48,7 @@ fn void? WriteContext.write_material(&self, Writer* writer, MaterialId id) {
 <*
  Resolve a keyed material reference.
  @param [&inout] reader : "Contains the next portable key reference."
- @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID
+ @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID, c3d::CAPACITY_EXCEEDED
 *>
 fn MaterialId? ReadContext.read_material(&self, Reader* reader) {
     return read_asset_key(
@@ -76,7 +76,7 @@ fn void? WriteContext.write_texture(&self, Writer* writer, TextureId id) {
 <*
  Resolve a keyed texture reference.
  @param [&inout] reader : "Contains the next portable key reference."
- @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID
+ @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID, c3d::CAPACITY_EXCEEDED
 *>
 fn TextureId? ReadContext.read_texture(&self, Reader* reader) {
     return read_asset_key(
@@ -104,7 +104,7 @@ fn void? WriteContext.write_sampler(&self, Writer* writer, SamplerId id) {
 <*
  Resolve a keyed sampler reference.
  @param [&inout] reader : "Contains the next portable key reference."
- @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID
+ @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID, c3d::CAPACITY_EXCEEDED
 *>
 fn SamplerId? ReadContext.read_sampler(&self, Reader* reader) {
     return read_asset_key(
@@ -132,7 +132,7 @@ fn void? WriteContext.write_model(&self, Writer* writer, ModelId id) {
 <*
  Resolve a keyed model reference.
  @param [&inout] reader : "Contains the next portable key reference."
- @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID
+ @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID, c3d::CAPACITY_EXCEEDED
 *>
 fn ModelId? ReadContext.read_model(&self, Reader* reader) {
     return read_asset_key(
@@ -160,7 +160,7 @@ fn void? WriteContext.write_clip(&self, Writer* writer, ClipId id) {
 <*
  Resolve a keyed clip reference.
  @param [&inout] reader : "Contains the next portable key reference."
- @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID
+ @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID, c3d::CAPACITY_EXCEEDED
 *>
 fn ClipId? ReadContext.read_clip(&self, Reader* reader) {
     return read_asset_key(
@@ -188,7 +188,7 @@ fn void? WriteContext.write_skeleton(&self, Writer* writer, SkeletonId id) {
 <*
  Resolve a keyed skeleton reference.
  @param [&inout] reader : "Contains the next portable key reference."
- @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID
+ @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID, c3d::CAPACITY_EXCEEDED
 *>
 fn SkeletonId? ReadContext.read_skeleton(&self, Reader* reader) {
     return read_asset_key(
@@ -216,7 +216,7 @@ fn void? WriteContext.write_environment(&self, Writer* writer, EnvironmentId id)
 <*
  Resolve a keyed environment reference.
  @param [&inout] reader : "Contains the next portable key reference."
- @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID
+ @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID, c3d::CAPACITY_EXCEEDED
 *>
 fn EnvironmentId? ReadContext.read_environment(&self, Reader* reader) {
     return read_asset_key(
@@ -244,7 +244,7 @@ fn void? WriteContext.write_shader(&self, Writer* writer, ShaderId id) {
 <*
  Resolve a keyed shader reference.
  @param [&inout] reader : "Contains the next portable key reference."
- @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID
+ @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID, c3d::CAPACITY_EXCEEDED
 *>
 fn ShaderId? ReadContext.read_shader(&self, Reader* reader) {
     return read_asset_key(
@@ -272,7 +272,7 @@ fn void? WriteContext.write_compute_shader(&self, Writer* writer, ComputeShaderI
 <*
  Resolve a keyed compute shader reference.
  @param [&inout] reader : "Contains the next portable key reference."
- @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID
+ @return? c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID, c3d::CAPACITY_EXCEEDED
 *>
 fn ComputeShaderId? ReadContext.read_compute_shader(&self, Reader* reader) {
     return read_asset_key(
@@ -306,5 +306,7 @@ macro read_asset_key(
     uint index = reader.read_uint()!;
     if (index == INDEX_NONE) return ($Type){};
     if (index >= context.keys.len) return c3d::ASSET_FORMAT_ERROR~;
-    return find(context.assets, context.keys[index]) ?? c3d::INVALID_ID~;
+    $Type? result = find(context.assets, context.keys[index]);
+    if (catch result) return asset_diagnostic(context.diagnostic, context.keys[index], c3d::INVALID_ID)~;
+    return result;
 }
