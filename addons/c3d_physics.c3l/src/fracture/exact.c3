@@ -29,6 +29,18 @@ struct PlaneInteger @private {
     bool negative;
 }
 
+struct FractureStatistics @private {
+    usz scratch_peak;
+    ulong cell_split_count;
+    ulong final_leaf_count;
+    ulong occupied_leaf_count;
+    usz max_planar_segments;
+    usz max_planar_points;
+    usz max_patch_vertices;
+    ulong max_patch_predicates;
+    ulong max_patch_nanoseconds;
+}
+
 struct ExactScratch @private {
     WideInteger[EXACT_TEMPORARIES] values;
     uint count;
@@ -36,6 +48,8 @@ struct ExactScratch @private {
     ulong predicate_count;
     ulong filtered_count;
     ulong exact_nanoseconds;
+    uint measurement_depth;
+    FractureStatistics statistics;
 }
 
 fn IntegerView WideInteger.view(&self) {
