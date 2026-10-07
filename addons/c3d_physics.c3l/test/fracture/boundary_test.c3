@@ -475,3 +475,66 @@ fn void assert_boundary_coverage(SolidScratch* scratch, BoundaryPatch[] patches,
         }
     }
 }
+
+fn void test_boundary_point_bounds_keep_rational_contacts_and_extreme_coordinates() @test {
+    FractureWorkspace workspace = cell_workspace();
+    defer destroy_fracture_workspace(&workspace);
+    for (uint variant = 0; variant < 2; variant++) {
+        SolidScratch scratch = begin_solid_scratch(&workspace);
+        ExactPlane[15] planes;
+        PlaneTriple[125] vertices;
+        for (uint axis = 0; axis < SPACE_AXES; axis++) for (uint coordinate = 0; coordinate < 5; coordinate++) {
+            ExactPlane* plane = &planes[axis * 5 + coordinate];
+            if (!variant) {
+                int128[4] coefficients;
+                coefficients[axis] = coordinate == 0 || coordinate == 4 ? 3 : 7;
+                coefficients[SPACE_AXES] = (int128)(2 - (int)coordinate);
+                plane_from_integers(scratch.exact, plane, coefficients)!!;
+            } else {
+                long magnitude = coordinate == 0 || coordinate == 4 ? (long)bitcast(float::max, uint) : 1;
+                long key = coordinate < 2 ? -magnitude : coordinate > 2 ? magnitude : 0;
+                bounds_axis_plane(
+                    scratch: scratch.exact,
+                    plane: plane,
+                    axis: axis,
+                    bound: key,
+                    quantized: false,
+                )!!;
+            }
+        }
+        for (uint x = 0; x < 5; x++) for (uint y = 0; y < 5; y++) for (uint z = 0; z < 5; z++) {
+            vertices[(x * 5 + y) * 5 + z] = { &planes[x], &planes[5 + y], &planes[10 + z] };
+        }
+        PlaneTriple[2] query = { vertices[31], vertices[93] };
+        BoundaryPatch[2] patches = {
+            { .boundary = { .vertices = query[..] } }, { .boundary = { .vertices = vertices[..] } },
+        };
+        BoundaryPointIndex index = index_boundary_points(&scratch, patches[..])!!;
+        BoundaryPointBounds bounds = boundary_point_bounds(
+            scratch: scratch.exact,
+            points: index.points,
+            first: 0,
+            count: 2,
+        )!!;
+        PlaneTriple[127] output;
+        PlaneTriple[] found = query_boundary_points(
+            scratch: scratch.exact,
+            index: &index,
+            bounds: bounds,
+            output: output[..],
+        )!!;
+        assert(found.len == 29);
+        bool[125] present;
+        foreach (point : found) {
+            uint x = (uint)(point[0] - &planes[0]);
+            uint y = (uint)(point[1] - &planes[5]);
+            uint z = (uint)(point[2] - &planes[10]);
+            assert(x >= 1 && x <= 3 && y >= 1 && y <= 3 && z >= 1 && z <= 3);
+            present[(x * 5 + y) * 5 + z] = true;
+        }
+        for (uint x = 1; x <= 3; x++) for (uint y = 1; y <= 3; y++) for (uint z = 1; z <= 3; z++) {
+            assert(present[(x * 5 + y) * 5 + z]);
+        }
+        assert(scratch.exact.count == 0 && scratch.exact.peak <= EXACT_TEMPORARIES);
+    }
+}

@@ -9,56 +9,56 @@ fn PlanarSegment[]? collect_boundary_segments(
     SolidSurface* surface = null,
     SourceConstructions* source = null,
     uint source_face = NO_SOLID_INDEX,
+    BoundaryCellFace[] faces = {},
 ) @private {
+    if (!faces.len) faces = index_boundary_cell_faces(scratch, partition)!;
+    BoundaryCellFace[] matching = boundary_plane_faces(faces, plane);
     PlanarSegment[] segments;
     for (uint pass = 0; pass < 2; pass++) {
         usz count;
-        for (PartitionCell* current = partition.first; current; current = current.next) {
-            if (!current.occupied) continue;
-            ConvexCell* cell = &current.cell;
-            foreach (face : cell.faces) {
-                if (compare_exact_planes(face.plane, plane)) continue;
-                usz saved = scratch.used;
-                defer scratch.used = saved;
-                if (source_face == NO_SOLID_INDEX) {
-                    if (pass) for (uint offset = 0; offset < face.count; offset++) {
-                        uint corner = face.first + offset;
-                        segments[count + offset] = {
-                            .first = cell.vertices[cell.corners[corner].vertex],
-                            .second = cell.vertices[cell.corners[next_cell_corner(cell, corner)].vertex],
-                            .line = { plane, cell.faces[cell.corners[cell.corners[corner].twin].face].plane },
-                        };
-                    }
-                    count += face.count;
-                    continue;
-                }
-                FaceClipVertex[] polygon = clip_source_face_to_cell(
-                    scratch: scratch,
-                    surface: surface,
-                    source: source,
-                    face: source_face,
-                    cell: cell,
-                )!;
-                if (polygon.len < TRIANGLE_CORNERS) continue;
-                bool area;
-                for (usz index = 2; index < polygon.len; index++) {
-                    area |= planar_orientation(
-                        scratch: scratch.exact,
-                        vertices: { polygon[0].point, polygon[index - 1].point, polygon[index].point },
-                        dropped_axis: patch_projection(plane),
-                    )! != 0;
-                }
-                if (!area) continue;
-                if (pass) foreach (usz index, point : polygon) {
-                    FaceClipVertex next = polygon[(index + 1) % (usz)polygon.len];
-                    bool reverse = face.reversed != source.reversed[source_face];
-                    segments[count + index] = {
-                        .first = reverse ? next.point : point.point, .second = reverse ? point.point : next.point,
-                        .line = next.incoming,
+        foreach (entry : matching) {
+            ConvexCell* cell = entry.cell;
+            CellFace face = cell.faces[entry.face];
+            usz saved = scratch.used;
+            defer scratch.used = saved;
+            if (source_face == NO_SOLID_INDEX) {
+                if (pass) for (uint offset = 0; offset < face.count; offset++) {
+                    uint corner = face.first + offset;
+                    segments[count + offset] = {
+                        .first = cell.vertices[cell.corners[corner].vertex],
+                        .second = cell.vertices[cell.corners[next_cell_corner(cell, corner)].vertex],
+                        .line = { plane, cell.faces[cell.corners[cell.corners[corner].twin].face].plane },
                     };
                 }
-                count += polygon.len;
+                count += face.count;
+                continue;
             }
+            FaceClipVertex[] polygon = clip_source_face_to_cell(
+                scratch: scratch,
+                surface: surface,
+                source: source,
+                face: source_face,
+                cell: cell,
+            )!;
+            if (polygon.len < TRIANGLE_CORNERS) continue;
+            bool area;
+            for (usz index = 2; index < polygon.len; index++) {
+                area |= planar_orientation(
+                    scratch: scratch.exact,
+                    vertices: { polygon[0].point, polygon[index - 1].point, polygon[index].point },
+                    dropped_axis: patch_projection(plane),
+                )! != 0;
+            }
+            if (!area) continue;
+            if (pass) foreach (usz index, point : polygon) {
+                FaceClipVertex next = polygon[(index + 1) % (usz)polygon.len];
+                bool reverse = face.reversed != source.reversed[source_face];
+                segments[count + index] = {
+                    .first = reverse ? next.point : point.point, .second = reverse ? point.point : next.point,
+                    .line = next.incoming,
+                };
+            }
+            count += polygon.len;
         }
         if (!pass) segments = reserve_elements(scratch, PlanarSegment, count)!;
     }
@@ -86,28 +86,37 @@ fn void? check_boundary_provenance(
     SolidPartition* partition,
     SourceConstructions* source,
     ExactPlane*[] cuts,
+    BoundaryCellFace[] faces,
 ) @local {
     usz saved = scratch.used;
     defer scratch.used = saved;
-    usz count;
-    for (PartitionCell* cell = partition.first; cell; cell = cell.next) if (cell.occupied) count += cell.cell.faces.len;
-    ExactPlane*[] planes = reserve_elements(scratch, ExactPlane*, count)!;
-    count = 0;
-    for (PartitionCell* cell = partition.first; cell; cell = cell.next) {
-        if (cell.occupied) foreach (face : cell.cell.faces) planes[count++] = face.plane;
-    }
-    sort::quicksort(planes, &compare_plane_pointers);
-    foreach (uint index, plane : planes) {
-        if (index && !compare_exact_planes(planes[index - 1], plane)) continue;
+    ExactPlane*[] known = reserve_elements(scratch, ExactPlane*, source.faces.len + cuts.len)!;
+    foreach (index, &plane : source.faces) known[index] = plane;
+    known[source.faces.len:cuts.len] = cuts[..];
+    sort::quicksort(known, &compare_plane_pointers);
+    foreach (usz index, face : faces) {
+        if (index && !compare_exact_planes(faces[index - 1].plane, face.plane)) continue;
+        usz first;
+        usz end = known.len;
+        while (first < end) {
+            usz middle = first + (end - first) / 2;
+            if (compare_exact_planes(known[middle], face.plane) < 0) {
+                first = middle + 1;
+            } else {
+                end = middle;
+            }
+        }
+        if (first < known.len && !compare_exact_planes(known[first], face.plane)) continue;
         usz retained = scratch.used;
         defer scratch.used = retained;
-        PlanarSegment[] segments = collect_boundary_segments(scratch, partition, plane)!;
-        PlanarEdges boundary = normalize_planar_edges(scratch, plane, segments)!;
-        if (!boundary.edges.len) continue;
-        bool found;
-        foreach (&original : source.faces) found |= compare_exact_planes(plane, original) == 0;
-        foreach (cut : cuts) found |= compare_exact_planes(plane, cut) == 0;
-        require_boundary_provenance(found);
+        PlanarSegment[] segments = collect_boundary_segments(
+            scratch: scratch,
+            partition: partition,
+            plane: face.plane,
+            faces: faces,
+        )!;
+        PlanarEdges boundary = normalize_planar_edges(scratch, face.plane, segments)!;
+        require_boundary_provenance(!boundary.edges.len);
     }
     return;
 }
@@ -140,14 +149,17 @@ fn BoundaryPatch[]? source_boundary_patches(
     SourceConstructions* source,
     SolidPartition* partition,
     ExactPlane*[] cuts = {},
+    BoundaryCellFace[] faces = {},
 ) @private {
     usz saved = scratch.used;
     defer catch scratch.used = saved;
+    if (!faces.len) faces = index_boundary_cell_faces(scratch, partition)!;
     check_boundary_provenance(
         scratch: scratch,
         partition: partition,
         source: source,
         cuts: cuts,
+        faces: faces,
     )!;
     BoundaryPatch[] patches = reserve_elements(scratch, BoundaryPatch, source.faces.len)!;
     uint count;
@@ -159,6 +171,7 @@ fn BoundaryPatch[]? source_boundary_patches(
             surface: surface,
             source: source,
             source_face: face,
+            faces: faces,
         )!;
         BoundaryPatch patch = create_boundary_patch(
             scratch: scratch,
