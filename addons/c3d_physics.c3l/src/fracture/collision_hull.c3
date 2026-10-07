@@ -21,17 +21,21 @@ struct HullEdge @local {
 fn CollisionHullSurface? build_collision_hull(SolidScratch* scratch, Vec3[] source) @private {
     usz saved = scratch.used;
     defer catch scratch.used = saved;
+
     if (source.len > uint::max || source.len > usz::max / 6) return c3d::CAPACITY_EXCEEDED~;
     if (source.len < COLLISION_TETRAHEDRON_VERTICES) return NUMERICAL_FAILURE~;
+
     Vec3[] points = reserve_elements(scratch, Vec3, source.len)!;
     points[..] = source[..];
     sort::quicksort(points, &compare_hull_points);
+
     uint point_count;
     foreach (point : points) {
         if (!point_count || !same_position(points[point_count - 1], point)) points[point_count++] = point;
     }
     points = points[:point_count];
     if (point_count < COLLISION_TETRAHEDRON_VERTICES) return NUMERICAL_FAILURE~;
+
     uint[COLLISION_TETRAHEDRON_VERTICES] initial = { 0, 1, 2, 3 };
     while (initial[2] < point_count) {
         uint projection;
@@ -42,19 +46,23 @@ fn CollisionHullSurface? build_collision_hull(SolidScratch* scratch, Vec3[] sour
         initial[2]++;
     }
     if (initial[2] == point_count) return NUMERICAL_FAILURE~;
+
     initial[3] = initial[2] + 1;
     while (initial[3] < point_count && !float_orientation(
         scratch.exact, { points[initial[0]], points[initial[1]], points[initial[2]], points[initial[3]] },
     )!) initial[3]++;
     if (initial[3] == point_count) return NUMERICAL_FAILURE~;
+
     // A closed triangulated convex hull has at most 2V - 4 faces.
     usz face_capacity = 2 * (usz)point_count - 4;
     uint[] indices = reserve_elements(scratch, uint, face_capacity * TRIANGLE_CORNERS)!;
+
     usz retained = scratch.used;
     defer scratch.used = retained;
     HullTriangle[] faces = reserve_elements(scratch, HullTriangle, face_capacity)!;
     HullEdge[] edges = reserve_elements(scratch, HullEdge, face_capacity * TRIANGLE_CORNERS)!;
     int[] sides = reserve_elements(scratch, int, face_capacity)!;
+
     usz face_count = COLLISION_TETRAHEDRON_VERTICES;
     for (uint excluded = 0; excluded < COLLISION_TETRAHEDRON_VERTICES; excluded++) {
         uint corner;
@@ -68,8 +76,10 @@ fn CollisionHullSurface? build_collision_hull(SolidScratch* scratch, Vec3[] sour
             (*vertices)[2] = swap;
         }
     }
+
     foreach (uint vertex, point : points) {
         if (vertex == initial[0] || vertex == initial[1] || vertex == initial[2] || vertex == initial[3]) continue;
+
         bool outside;
         foreach (usz face, triangle : faces[:face_count]) {
             sides[face] = float_orientation(scratch.exact, {
@@ -78,6 +88,7 @@ fn CollisionHullSurface? build_collision_hull(SolidScratch* scratch, Vec3[] sour
             outside |= sides[face] > 0;
         }
         if (!outside) continue;
+
         usz edge_count;
         usz kept;
         foreach (usz face, triangle : faces[:face_count]) {
@@ -85,6 +96,7 @@ fn CollisionHullSurface? build_collision_hull(SolidScratch* scratch, Vec3[] sour
                 faces[kept++] = triangle;
                 continue;
             }
+
             // Coplanar faces leave with visible faces, so every horizon cone is nondegenerate.
             for (uint corner = 0; corner < TRIANGLE_CORNERS; corner++) {
                 edges[edge_count++] = {
@@ -93,6 +105,7 @@ fn CollisionHullSurface? build_collision_hull(SolidScratch* scratch, Vec3[] sour
                 };
             }
         }
+
         sort::quicksort(edges[:edge_count], &compare_hull_edges);
         face_count = kept;
         for (usz edge = 0; edge < edge_count; edge++) {
@@ -104,20 +117,24 @@ fn CollisionHullSurface? build_collision_hull(SolidScratch* scratch, Vec3[] sour
             faces[face_count++] = { .vertices = { current.first, current.second, vertex } };
         }
     }
+
     foreach (&triangle : faces[:face_count]) {
         uint first;
         for (uint corner = 1; corner < TRIANGLE_CORNERS; corner++) {
             if (triangle.vertices[corner] < triangle.vertices[first]) first = corner;
         }
+
         uint[TRIANGLE_CORNERS] original = triangle.vertices;
         for (uint corner = 0; corner < TRIANGLE_CORNERS; corner++) {
             triangle.vertices[corner] = original[(first + corner) % TRIANGLE_CORNERS];
         }
     }
+
     sort::quicksort(faces[:face_count], &compare_hull_triangles);
     foreach (usz face, triangle : faces[:face_count]) {
         indices[face * TRIANGLE_CORNERS:TRIANGLE_CORNERS] = triangle.vertices[..];
     }
+
     return { .points = points, .indices = indices[:face_count * TRIANGLE_CORNERS] };
 }
 

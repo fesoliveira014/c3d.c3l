@@ -1,5 +1,6 @@
 module c3d::physics::fracture;
 
+import std::math;
 import std::time;
 
 fn int? compare_sample_bound(
@@ -119,6 +120,49 @@ fn bool? cell_is_occupied(
     uint saved = surface.exact.count;
     defer surface.exact.count = saved;
     HomogeneousPoint sample = sample_cell_interior(surface.exact, cell)!;
+    return sample_is_occupied(
+        surface: surface,
+        source: source,
+        sample: sample,
+        candidate_faces: candidate_faces,
+    );
+}
+
+<* @require surface.validated && !surface.grid.len *>
+fn bool? raw_point_is_occupied(SolidSurface* surface, SourceConstructions* source, Vec3 point) @private {
+    uint saved = surface.exact.count;
+    defer surface.exact.count = saved;
+
+    HomogeneousPoint sample = raw_point_sample(surface.exact, point)!;
+    ulong candidate_faces;
+    return sample_is_occupied(
+        surface: surface,
+        source: source,
+        sample: sample,
+        candidate_faces: &candidate_faces,
+    );
+}
+
+fn HomogeneousPoint? raw_point_sample(ExactScratch* scratch, Vec3 point) @local {
+    std::time::Clock started = begin_exact_measurement(scratch);
+    defer finish_exact_measurement(scratch, started);
+    uint saved = scratch.count;
+    defer catch scratch.count = saved;
+
+    HomogeneousPoint sample;
+    foreach (&coordinate : sample) *coordinate = scratch.take()!;
+    for (uint axis = 0; axis < SPACE_AXES; axis++) integer_from_float(sample[axis], point[axis]);
+    set_integer(sample[SPACE_AXES], 1);
+
+    return sample;
+}
+
+fn bool? sample_is_occupied(
+    SolidSurface* surface,
+    SourceConstructions* source,
+    HomogeneousPoint sample,
+    ulong* candidate_faces,
+) @local {
     bool inside;
     uint current;
     while (current != NO_SOLID_INDEX) {
