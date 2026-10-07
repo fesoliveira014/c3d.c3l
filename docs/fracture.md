@@ -3,7 +3,7 @@
 `c3d::physics::fracture` provides bounded workspaces, exact arithmetic, filtered
 geometric predicates, centered quantization, complete private solid validation
 and exact source construction records, convex-cell clipping and local face-driven
-partitioning with material occupancy and exact planar boundary reconstruction. Public Boolean/Voronoi construction and collision reconstruction remain separate layers.
+partitioning with material occupancy and exact planar boundary reconstruction and triangulation. Public Boolean/Voronoi construction and collision reconstruction remain separate layers.
 
 ## Workspace contract
 
@@ -404,8 +404,8 @@ cut fixtures also preserve ordered patches under source-face permutations.
 
 Boundary reconstruction alone peaks at 16 of the existing 24 wide values. No
 reservation grew. The measurements below cover private boundary reconstruction;
-complete generation, shared triangulation and float publication remain separate
-acceptance work.
+complete generation and validated float publication remain separate acceptance
+work.
 
 ### Gathering and local reconciliation
 
@@ -453,3 +453,48 @@ Run the fixture separately; it is excluded from `scripts/build.py --test`:
 ```sh
 c3c test boundary_scaling --path addons/c3d_physics.c3l/test/bench -O3 --test-show-output
 ```
+
+## Constrained triangulation
+
+The private triangulator consumes validated, conforming boundary patches. It
+connects each hole to a visible existing vertex, then clips convex ears in
+canonical point order. Visibility checks both endpoint sectors and every
+boundary or earlier bridge. Each bridge duplicates two corner records without
+adding geometric vertices. Holes are processed in exact leftmost-point order;
+nested islands are separate outer contours. The construction follows the
+[ear-clipping principle](https://www.geometrictools.com/Documentation/TriangulationByEarClipping.pdf)
+with exact predicates and explicit preservation of every boundary constraint.
+
+An ear has strictly positive projected orientation and contains no other active
+point on or inside its triangle. Duplicate bridge occurrences of its own corners
+are excluded from that test. Collinear points on a proposed diagonal block the
+ear, preserving the subdivisions required by neighboring patches. All geometric
+tests reuse the existing projected predicate and its 16-value bound; no plane or
+point is constructed during triangulation. A valid patch for which a bridge or
+ear cannot be selected returns NUMERICAL_FAILURE without retaining partial work.
+
+Output triangles have positive projected winding, rotate to their lowest point
+identity, and sort lexicographically. Reversing the input contour winding leaves
+this canonical triangulation unchanged. A shared cut allocates one triangle
+array and exposes two borrowed views with opposite winding. Both views refer to
+the same exact vertex and triangle storage; they remain valid until the workspace
+is reused. Temporary corner rings are released before success, and failure
+restores the incoming storage cursor and arithmetic state.
+
+Tests verify positive exact triangle orientation, one matching occurrence of
+every boundary edge, and two opposite occurrences of every interior edge. These
+conditions establish the same planar boundary with positive coverage, including
+holes, without an approximate area comparison. The corpus covers seven contour
+families, both domains, all three projection axes, rational coordinate transforms,
+source-face permutations, original triangles, collinear constraints, occluded
+bridges, repeated bridge endpoints and shared-cut winding. Exhaustion preserves
+the input and permits reuse. The triangulation change passed 67 CPU tests
+in O0, O3, O4 and O4 fast-math modes; eight semantic mutations are detected.
+
+The measured triangulation cases peak at 26,084–27,756 total scratch bytes,
+including the arithmetic block and retained fixture boundary graphs. They borrow
+their plane records. A three-hole contour produces 17 triangles with 1,268
+predicates, uses 16 wide values and retains 27,512 bytes. No reservation grew.
+These measurements exclude solid validation and public generation. The boundary
+gathering measurements above cover its separate scaling requirement; full-kernel
+benchmarks remain acceptance work.
