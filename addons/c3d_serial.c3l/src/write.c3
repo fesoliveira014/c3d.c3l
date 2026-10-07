@@ -124,6 +124,7 @@ fn WriteState? prepare_export(
 
     state.collecting = true;
     WriteContext context = { .scene = scene, .assets = assets, .state = &state, .diagnostic = diagnostic };
+    index_export_owners(&context);
     validate_model_selection(&context)!;
     validate_crowd_selection(&context)!;
     foreach (record, node : state.ordered[:state.count]) {

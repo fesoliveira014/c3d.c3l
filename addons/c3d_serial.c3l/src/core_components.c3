@@ -109,15 +109,14 @@ fn void? attach_mesh(void* value, ReadContext* context) @local {
 
 fn void? project_mesh(void* component, void* value, WriteContext* context) @local {
     Mesh mesh = *(Mesh*)component;
-    context.scene.@each(ModelInstance; entity, instance) {
-        if (context.scene.has(context.scene.node(entity), anim::Animator)) {
-            foreach (index, template_node : instance.mesh_nodes) {
-                if (instance.present_node(template_node) == context.node) {
-                    mesh.morph_weights = instance.base_morph_weights[index];
-                }
-            }
+    ExportNodeOwners* owners = &context.state.projection[context.node.id.index].owners;
+    if (owners.model.generation && owners.baseline_slot != INDEX_NONE) {
+        Node* root = context.scene.node(owners.model);
+        if (context.scene.has(root, anim::Animator)) {
+            ModelInstance* instance = context.scene.get(root, ModelInstance);
+            mesh.morph_weights = instance.base_morph_weights[owners.baseline_slot];
         }
-    };
+    }
     *(Mesh*)value = mesh;
 }
 

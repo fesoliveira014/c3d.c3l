@@ -111,20 +111,23 @@ fn void? project_skin(void* component, void* value, WriteContext* context) @loca
 
 fn NodeReference? make_skin_reference(WriteContext* context, Node* node) @local {
     if (!node) return c3d::INVALID_ID~;
-    context.scene.@each(ModelInstance; entity, instance) {
-        foreach (usz index, captured : instance.node_entities) {
-            if (!captured.generation || &context.scene.nodes[captured.index] != node) continue;
-            if (!instance.present_node(index)) {
-                return model_diagnostic(
-                    diagnostic: context.diagnostic,
-                    assets: context.assets,
-                    model: instance.source,
-                    index: (uint)index,
-                    cause: c3d::INVALID_ID,
-                )~;
-            }
-        }
-    };
+    usz address = (usz)node;
+    usz first = (usz)context.scene.nodes.ptr;
+    if (address < first || address - first >= context.scene.nodes.len * Node::size
+        || (address - first) % Node::size != 0) return c3d::INVALID_ARGUMENT~;
+    // Removed slots have cleared IDs, but skin references retain their addresses.
+    usz index = (address - first) / Node::size;
+    ExportNodeOwners* owners = &context.state.projection[index].owners;
+    if (owners.absent_model.generation) {
+        ModelInstance* instance = context.scene.get(context.scene.node(owners.absent_model), ModelInstance);
+        return model_diagnostic(
+            diagnostic: context.diagnostic,
+            assets: context.assets,
+            model: instance.source,
+            index: owners.absent_template_index,
+            cause: c3d::INVALID_ID,
+        )~;
+    }
     return context.make_node_reference(node, true);
 }
 

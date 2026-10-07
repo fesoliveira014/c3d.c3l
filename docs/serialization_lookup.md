@@ -137,3 +137,45 @@ host, O3 target and five measured pairs:
 The confirmed lookup total grows 8.6 times for eight times the nodes. Variation
 between plain and validated import medians includes normal timing noise; there
 is no timing threshold in the correctness suite.
+
+
+## Export ownership lookup
+
+The exporter builds model/crowd ownership once inside its existing per-Scene-node
+projection allocation. Each entry identifies the current live model owner and
+template slot, the matching mesh baseline slot, the crowd owner and the first
+absent captured model owner at that address. The absent-owner rule is the lowest
+owner entity index, independent of sparse-store iteration order. The last matching
+mesh baseline slot preserves the existing projection order for stored templates
+with multiple mesh slots on one node.
+
+Live entity capture, skin-pointer checks, animated morph projection and selected
+model/crowd ownership checks use this table. A removed node has cleared fields,
+so the skin check indexes its retained storage address. An already-dead Entity
+reference returns its existing fault; only then may a scan of captured identities
+fill the exact model key and template index. This diagnostic scan never runs on
+a successful export and creates no second index or allocation.
+
+The binary/JSONC formats and owner restart rules are unchanged. The repeated
+slot-reuse regression keeps two absent generations at one address, reverses owner
+store order, and checks exact dead-entity and first-absent-skin diagnostics in both
+formats. Existing source-immutability, omission and canonical-output checks remain.
+
+The before measurements below are the reviewer's Windows/MSVC O3 medians of three
+at example head `d8c29361679544f9293f7160f70a3f17f9b1cf2c`, from
+[the example review](https://github.com/fesoliveira014/c3d.c3l/pull/300).
+The indexed after measurements remain pending independent review. Local O3
+repeats pass the requested maximum 2.5x binary-write growth per model-count
+doubling; they are not substituted for the reviewer measurements.
+
+| Models | Nodes | Before binary write (ms) | Before JSONC write (ms) | Indexed binary write (ms) | Indexed JSONC write (ms) |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 32 | 906 | 1.23 | 6.32 | Pending review | Pending review |
+| 64 | 1,802 | 3.30 | 12.04 | Pending review | Pending review |
+| 128 | 3,594 | 11.55 | 27.12 | Pending review | Pending review |
+| 256 | 7,178 | 42.41 | 73.42 | Pending review | Pending review |
+
+Reproduce with `c3c build serialize --path examples -O3`, then run
+`serialize --cpu-only --models=<count>` three times for each row. This measurement
+stays outside the regular CI test targets; the untimed correctness regression
+runs in `serial_described_test`.

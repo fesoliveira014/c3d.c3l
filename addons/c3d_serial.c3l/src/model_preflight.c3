@@ -102,14 +102,10 @@ fn bool? restore_cached_model(ReadContext* context) @private {
 }
 
 fn void? validate_model_selection(WriteContext* context) @private {
-    context.scene.@each(ModelInstance; entity, instance) {
-        bool selected = context.state.projection[entity.index].selected;
-        for (usz index = 0; index < instance.nodes.len; index++) {
-            Node* node = instance.present_node(index);
-            if (!node) continue;
-            if (context.state.projection[node.id.index].selected && !selected) return c3d::INVALID_ARGUMENT~;
-        }
-    };
+    foreach (node : context.state.ordered[:context.state.count]) {
+        Entity owner = context.state.projection[node.id.index].owners.model;
+        if (owner.generation && !context.state.projection[owner.index].selected) return c3d::INVALID_ARGUMENT~;
+    }
 }
 
 fn fault model_diagnostic(
