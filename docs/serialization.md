@@ -180,3 +180,6 @@ Ordinary pointer references capture the current live entity, including explicit
 LookAt/IK retargeting after slot reuse. Skin joints alone retain captured template
 identity: deleting a required template joint rejects export even if its address
 was reused, rather than silently rebinding the original skin.
+
+See the [serialization example](serialization_example.md) for binary/JSONC reloads,
+schema export and reproducible CPU-only or Vulkan runs.
