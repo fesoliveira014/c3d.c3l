@@ -6,6 +6,9 @@ import c3d::shader;
 import gpu;
 import std::math;
 
+$assert shader::MAX_DECALS % 32 == 0
+  : "light_cull.comp.glsl selects decals with complete 32-bit mask words.";
+
 <* Owned allocation containing one view's lighting and cluster lists. *>
 struct ClusterBuffers {
     gpu::GpuAllocation allocation;
@@ -17,6 +20,7 @@ struct ClusterBuffers {
 <* Borrowed lighting roots and depth mapping for one recorded view. *>
 struct ClusterFrame {
     gpu::GpuAddress lights;
+    gpu::GpuAddress decals;
     gpu::GpuAddress clusters;
     ClusterDepth depth;
 }
@@ -63,6 +67,7 @@ fn ClusterFrame? prepare_cluster_frame(
     camera::Camera* camera,
     camera::CameraMatrices* matrices,
     LightGpu[] lights,
+    DecalGpu[] decals,
 ) @private {
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     ClusterFrame result = { .depth = cluster_depth(camera, record.desc.clusters) };
@@ -83,6 +88,17 @@ fn ClusterFrame? prepare_cluster_frame(
         };
         gpu::cmd_copy_buffer(&renderer.commands, &copy)!;
         result.lights = record.clusters.address;
+    }
+    if (decals.len) {
+        usz bytes = decals.len * DecalGpu::size;
+        gpu::MappedGpuSpan staged = slot.upload.take(&renderer.device, bytes, STREAM_ALIGNMENT)!;
+        mem::copy(staged.bytes.ptr, decals.ptr, decals.len * DecalGpu::size);
+        gpu::BufferCopyDesc copy = {
+            .src = staged.span,
+            .dst = record.clusters.span.unchecked_subspan(record.clusters.layout.decals_offset, bytes),
+        };
+        gpu::cmd_copy_buffer(&renderer.commands, &copy)!;
+        result.decals = (gpu::GpuAddress)((ulong)record.clusters.address + record.clusters.layout.decals_offset);
     }
     if (active) {
         gpu::GpuSpan counter = record.clusters.span.unchecked_subspan(
@@ -115,6 +131,9 @@ fn ClusterFrame? prepare_cluster_frame(
         .global_count = global_count,
         .orthographic = camera.projection == camera::Projection.ORTHOGRAPHIC ? 1 : 0,
         .view_proj = bitcast(matrices.view_proj, Mat4f),
+        .decal_ranges = (gpu::GpuAddress)((ulong)record.clusters.address + record.clusters.layout.decal_ranges_offset),
+        .decal_indices = (gpu::GpuAddress)(
+            (ulong)record.clusters.address + record.clusters.layout.decal_indices_offset),
     };
     result.clusters = root.address;
     return result;
@@ -182,9 +201,11 @@ fn void? read_cluster_stats(Renderer* renderer, uint slot_index) @private {
         ClusterCounterGpu* counter = (ClusterCounterGpu*)readback.mapped.bytes.ptr;
         record.stats.cluster_count = readback.cluster_count;
         record.stats.cluster_overflows = counter.overflows;
+        record.stats.decal_overflows = counter.decal_overflows;
         renderer.stats.cluster_view = readback.view;
         renderer.stats.cluster_count = readback.cluster_count;
         renderer.stats.cluster_overflows = counter.overflows;
+        renderer.stats.decal_overflows = counter.decal_overflows;
         readback.pending = false;
     }
 }

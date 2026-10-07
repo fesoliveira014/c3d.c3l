@@ -112,6 +112,8 @@ struct Stats {
     uint  batches_faded;     // this frame: view batches inside the frustum and wholly past their fade band
     uint  lights;
     uint  lights_dropped;
+    uint  decals;
+    uint  decals_dropped;
     uint  probe_volumes_dropped; // this frame, per failed acquisition: two views of one scene count a volume twice
     uint  reflection_probes_dropped;     // this frame, per view: past the nearest 16
     uint  reflection_probes_unavailable; // this frame, per view: CPU copy released before this renderer uploaded it
@@ -124,6 +126,7 @@ struct Stats {
     ViewId cluster_view;
     uint  cluster_count;
     uint  cluster_overflows;
+    uint  decal_overflows;
     uint  debug_lines;
     uint  debug_dropped;         // segments a sink drawn this frame refused; the largest count
     uint  shadow_layers;

@@ -12,7 +12,7 @@ const ClusterDesc CLUSTER_DESC_DEFAULT @local = {
     .depth_slices = 24,
     .lights_per_cluster = 64,
     .far_distance = 100,
-}; // Starting coverage: 3456 cells cost 912384 bytes, plus lights and a 16-byte counter.
+}; // Starting coverage: 3456 cells and decals cost 1091584 bytes, plus lights and a 16-byte counter.
 
 <* Opaque shading route selected by a view. *>
 enum ShadingPath : uint {
@@ -42,10 +42,14 @@ struct ClusterDesc {
 struct ClusterLayout {
     usz ranges_offset;
     usz indices_offset;
+    usz decals_offset;
+    usz decal_ranges_offset;
+    usz decal_indices_offset;
     usz counter_offset;
     usz size;
     uint cluster_count;
     uint index_count;
+    uint decal_index_count;
 }
 
 <* Camera-depth interval and mapping; near >= far disables clustering. *>
@@ -88,10 +92,15 @@ fn ClusterLayout? cluster_layout(ClusterDesc desc, uint max_lights, uint[<3>] ma
     cluster_count *= desc.depth_slices;
     if (cluster_count > uint::max / desc.lights_per_cluster) return c3d::INVALID_ARGUMENT~;
     uint index_count = cluster_count * desc.lights_per_cluster;
+    if (cluster_count > uint::max / shader::MAX_CLUSTER_DECALS) return c3d::INVALID_ARGUMENT~;
+    uint decal_index_count = cluster_count * shader::MAX_CLUSTER_DECALS;
 
     usz ranges_offset = cluster_region_end(0, max_lights, LightGpu::size)!;
     usz indices_offset = cluster_region_end(ranges_offset, cluster_count, ClusterRange::size)!;
-    usz counter_offset = cluster_region_end(indices_offset, index_count, uint::size)!;
+    usz decals_offset = cluster_region_end(indices_offset, index_count, uint::size)!;
+    usz decal_ranges_offset = cluster_region_end(decals_offset, shader::MAX_DECALS, DecalGpu::size)!;
+    usz decal_indices_offset = cluster_region_end(decal_ranges_offset, cluster_count, ClusterRange::size)!;
+    usz counter_offset = cluster_region_end(decal_indices_offset, decal_index_count, uint::size)!;
     usz size = cluster_region_end(counter_offset, 1, ClusterCounterGpu::size)!;
     if (desc.tiles_x > max_groups.x || desc.tiles_y > max_groups.y || desc.depth_slices > max_groups.z) {
         return c3d::UNSUPPORTED~;
@@ -99,10 +108,14 @@ fn ClusterLayout? cluster_layout(ClusterDesc desc, uint max_lights, uint[<3>] ma
     return {
         .ranges_offset = ranges_offset,
         .indices_offset = indices_offset,
+        .decals_offset = decals_offset,
+        .decal_ranges_offset = decal_ranges_offset,
+        .decal_indices_offset = decal_indices_offset,
         .counter_offset = counter_offset,
         .size = size,
         .cluster_count = cluster_count,
         .index_count = index_count,
+        .decal_index_count = decal_index_count,
     };
 }
 
@@ -197,6 +210,47 @@ fn ClusterCell cluster_cell(
     uint[<3>] cell = { (uint)tile.x, (uint)tile.y, (uint)slice };
     if (cell.x >= desc.tiles_x || cell.y >= desc.tiles_y) return {};
     return { .cell = cell, .clustered = true };
+}
+
+<*
+ Inward clipping planes of a cell in the view's frame space.
+ @param [&in] matrices : "Unjittered matrices used by cluster selection."
+ @require depth.near < depth.far
+ @require cell.x < desc.tiles_x && cell.y < desc.tiles_y && cell.z < desc.depth_slices
+ @pure
+*>
+fn Plane[6] cluster_cell_planes(
+    ClusterDesc desc,
+    ClusterDepth depth,
+    camera::CameraMatrices* matrices,
+    uint[<3>] cell,
+) {
+    float left = 2.0f * (float)cell.x / (float)desc.tiles_x - 1.0f;
+    float right = 2.0f * (float)(cell.x + 1) / (float)desc.tiles_x - 1.0f;
+    float top = 1.0f - 2.0f * (float)cell.y / (float)desc.tiles_y;
+    float bottom = 1.0f - 2.0f * (float)(cell.y + 1) / (float)desc.tiles_y;
+    Mat4 projection = matrices.view_proj;
+    Mat4 view = matrices.view;
+    Vec4 row_x = { projection.m00, projection.m01, projection.m02, projection.m03 };
+    Vec4 row_y = { projection.m10, projection.m11, projection.m12, projection.m13 };
+    Vec4 row_w = { projection.m30, projection.m31, projection.m32, projection.m33 };
+    Vec4 view_z = { view.m20, view.m21, view.m22, view.m23 };
+    Vec4 view_w = { view.m30, view.m31, view.m32, view.m33 };
+    Vec2 bounds = cluster_slice_bounds(depth, cell.z);
+    Vec4[6] coefficients = {
+        row_x - left * row_w,
+        right * row_w - row_x,
+        top * row_w - row_y,
+        row_y - bottom * row_w,
+        -view_z - bounds.x * view_w,
+        view_z + bounds.y * view_w,
+    };
+    Plane[6] planes;
+    foreach (index, value : coefficients) {
+        float length = value.xyz.length();
+        planes[index] = { .normal = value.xyz / length, .d = value.w / length };
+    }
+    return planes;
 }
 
 <*

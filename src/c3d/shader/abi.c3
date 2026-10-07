@@ -33,6 +33,7 @@ const uint CLUSTER_GROUP_SIZE = 64;
 const uint MAX_DECALS = 256;
 const uint MAX_CLUSTER_DECALS = 8;
 const float DECAL_FADE_BAND = 0.1;
+const float DECAL_HALF_EXTENT = 0.5;
 const uint INSTANCE_CULL_GROUP_SIZE = 64;
 const uint INSTANCE_SORT_GROUP_SIZE = 128;
 const uint INSTANCE_SORT_BLOCK = 1024;
@@ -379,13 +380,13 @@ $assert $reflect(ClusterRange.overflow).offset == 4;
 
 struct ClusterCounterGpu {
     uint overflows;
-    uint _pad0;
+    uint decal_overflows;
     uint _pad1;
     uint _pad2;
 }
 $assert ClusterCounterGpu::size == 16;
 $assert $reflect(ClusterCounterGpu.overflows).offset == 0;
-$assert $reflect(ClusterCounterGpu._pad0).offset == 4;
+$assert $reflect(ClusterCounterGpu.decal_overflows).offset == 4;
 $assert $reflect(ClusterCounterGpu._pad1).offset == 8;
 $assert $reflect(ClusterCounterGpu._pad2).offset == 12;
 
@@ -404,8 +405,10 @@ struct ClusterGpu {
     uint       _pad0;
     uint       _pad1;
     Mat4f      view_proj;
+    GpuAddress decal_ranges;
+    GpuAddress decal_indices;
 }
-$assert ClusterGpu::size == 144;
+$assert ClusterGpu::size == 160;
 $assert $reflect(ClusterGpu.ranges).offset == 0;
 $assert $reflect(ClusterGpu.indices).offset == 8;
 $assert $reflect(ClusterGpu.globals).offset == 16;
@@ -420,6 +423,8 @@ $assert $reflect(ClusterGpu.orthographic).offset == 68;
 $assert $reflect(ClusterGpu._pad0).offset == 72;
 $assert $reflect(ClusterGpu._pad1).offset == 76;
 $assert $reflect(ClusterGpu.view_proj).offset == 80;
+$assert $reflect(ClusterGpu.decal_ranges).offset == 144;
+$assert $reflect(ClusterGpu.decal_indices).offset == 152;
 
 struct FrameRoot {
     Mat4f        view;
@@ -453,8 +458,11 @@ struct FrameRoot {
     GpuAddress   sky_fog;
     GpuAddress   reflection_probes;
     Vec4f        origin;
+    GpuAddress   decals;
+    uint         decal_count;
+    uint         _pad3;
 }
-$assert FrameRoot::size == 528;
+$assert FrameRoot::size == 544;
 $assert $reflect(FrameRoot.view).offset == 0;
 $assert $reflect(FrameRoot.proj).offset == 64;
 $assert $reflect(FrameRoot.view_proj).offset == 128;
@@ -486,6 +494,9 @@ $assert $reflect(FrameRoot.clip_plane).offset == 480;
 $assert $reflect(FrameRoot.sky_fog).offset == 496;
 $assert $reflect(FrameRoot.reflection_probes).offset == 504;
 $assert $reflect(FrameRoot.origin).offset == 512;
+$assert $reflect(FrameRoot.decals).offset == 528;
+$assert $reflect(FrameRoot.decal_count).offset == 536;
+$assert $reflect(FrameRoot._pad3).offset == 540;
 
 struct DrawRoot {
     Mat4f        model;

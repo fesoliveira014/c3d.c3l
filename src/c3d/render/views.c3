@@ -383,8 +383,11 @@ struct ViewStats {
     uint              images; // at frame start: live working images, scene snapshots included
     uint              lights;
     uint              lights_dropped;
+    uint              decals;
+    uint              decals_dropped;
     uint              cluster_count;
     uint              cluster_overflows;
+    uint              decal_overflows;
     uint              accumulated_samples;
     bool              shadow_set_shared; // the last raster rendering bound a set an earlier view recorded
     float             exposure; // applied multiplier, FRAMES_IN_FLIGHT frames late under auto; LINEAR_HDR applies none
