@@ -6,7 +6,7 @@ import c3d::maths;
 import c3d::scene;
 import c3d::serial @public;
 
-enum TransientClaim @private { NO_CLAIM, NODE_CLAIM, COMPONENT_CLAIM, LOCAL_CLAIM, PROJECTION_CLAIM }
+enum TransientClaim @private { NO_CLAIM, NODE_CLAIM, COMPONENT_CLAIM, LOCAL_CLAIM, PROJECTION_CLAIM, SPACE_CLAIM }
 
 struct SelectionBefore @private { Node* child; }
 struct SelectionOwner @private { Node* child; uint value; }
@@ -70,7 +70,7 @@ fn void test_transient_registration_rejects_replacement_and_collection_rejects_c
         Node* child = fixture.source.add_node(node, "child")!!;
         fixture.source.add(node, (GeneratedGuard){ .owner = child });
         foreach (text_mode : (bool[2]){ false, true }) {
-            foreach (claim : (TransientClaim[4]){ NODE_CLAIM, COMPONENT_CLAIM, LOCAL_CLAIM, PROJECTION_CLAIM }) {
+            foreach (claim : (TransientClaim[5]){ NODE_CLAIM, COMPONENT_CLAIM, LOCAL_CLAIM, PROJECTION_CLAIM, SPACE_CLAIM }) {
                 fixture.source.get(node, GeneratedGuard).claim = claim;
                 assert(@catch(encode_selection(fixture: &fixture, root: node, text_mode: text_mode)) == c3d::INVALID_ARGUMENT);
                 assert(fixture.source.has(node, GeneratedGuard) && node.local.position == maths::TRANSFORM_IDENTITY.position);
@@ -129,6 +129,7 @@ fn void? collect_generated(void* component, WriteContext* context) @local {
         case COMPONENT_CLAIM: context.omit_component(context.node, ecs::assigned_slot(GeneratedGuard)!!)!;
         case LOCAL_CLAIM: context.set_local(context.node, maths::TRANSFORM_IDENTITY)!;
         case PROJECTION_CLAIM: context.project_component(context.node, *guard)!;
+        case SPACE_CLAIM: context.set_transform(context.node, maths::TRANSFORM_IDENTITY, TransformSpace.PARENT)!;
         case NO_CLAIM:
     }
 }

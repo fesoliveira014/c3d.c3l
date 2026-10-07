@@ -2,8 +2,10 @@ module c3d::serial::test_described;
 
 import c3d;
 import c3d::ecs;
+import c3d::maths;
 import c3d::scene;
 import c3d::serial;
+import std::math;
 
 fn void? collect_projected_number(void* component, WriteContext* context) @private {
     ulong mode = ((Owner*)component).total;
@@ -114,4 +116,50 @@ fn void? export_projection(Fixture* fixture, Node* root, bool text_mode) @privat
             root: root,
         )!;
     }
+}
+fn void? collect_projected_transform(void* component, WriteContext* context) @private {
+    maths::Transform local = maths::TRANSFORM_IDENTITY;
+    local.position = { 3, 4, 5 };
+    context.set_transform(context.node.parent, local, TransformSpace.WORLD)!;
+    switch (((Owner*)component).total) {
+        case 1: context.set_transform(context.node.parent, local, TransformSpace.WORLD)!;
+        case 2: context.set_transform(context.node.parent, local, TransformSpace.PARENT)!;
+        case 3:
+            local.position.x += 1;
+            context.set_local(context.node.parent, local)!;
+        default:
+    }
+}
+
+fn void test_transform_projection_preserves_space_and_rejects_conflicts() @test {
+    @pool() {
+        Fixture fixture;
+        create_fixture(&fixture);
+        defer destroy_fixture(&fixture);
+        serial::register_described(Owner, {
+            .name = "owner", .collect = &collect_projected_transform, .attach = &attach_owner,
+        })!!;
+        Node* source = fixture_tree(&fixture);
+        Owner* owner = fixture.source.get(source.first_child, Owner);
+        owner.total = 1;
+        foreach (text_mode : (bool[2]){ false, true }) {
+            Node* loaded = text_mode
+              ? serial::read_subtree_text(&fixture.destination, &fixture.assets, fixture_text(&fixture, source))!!
+              : serial::read_subtree(&fixture.destination, &fixture.assets, fixture_bytes(&fixture, source))!!;
+            assert(loaded.transform_space == TransformSpace.WORLD && loaded.local.position == (Vec3){ 3, 4, 5 });
+            assert(source.transform_space == TransformSpace.PARENT && source.local.position == (Vec3){});
+            fixture.destination.remove(loaded);
+        }
+        for (ulong mode = 2; mode <= 3; mode++) {
+            owner.total = mode;
+            assert(@catch(export_projection(&fixture, source, false)) == c3d::INVALID_ARGUMENT);
+            assert(@catch(export_projection(&fixture, source, true)) == c3d::INVALID_ARGUMENT);
+        }
+        owner.total = 1;
+        Node* second = fixture.source.add_node(source, "second-owner")!!;
+        fixture.source.add(second, (Owner){ .total = 1 });
+        assert(@catch(export_projection(&fixture, source, false)) == c3d::INVALID_ARGUMENT);
+        assert(@catch(export_projection(&fixture, source, true)) == c3d::INVALID_ARGUMENT);
+        assert(source.transform_space == TransformSpace.PARENT && source.local.position == (Vec3){});
+    };
 }

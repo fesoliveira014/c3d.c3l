@@ -21,6 +21,8 @@ struct NodeProjection @private {
     ulong local_owner;
     bool selected;
     Transform local;
+    TransformSpace transform_space;
+    bool space_projected;
 }
 
 struct ComponentClaim @private {
@@ -171,6 +173,25 @@ fn void? WriteContext.set_local(&self, Node* node, Transform local) {
     }
     projected.local_owner = owner;
     projected.local = local;
+}
+
+<*
+ Project an owner's captured transform and its coordinate space.
+ @param [&in] node : "Node owned by the current composite."
+ @return? c3d::INVALID_ARGUMENT
+ @require self.state.collecting
+*>
+fn void? WriteContext.set_transform(
+    &self,
+    Node* node,
+    Transform local,
+    TransformSpace transform_space,
+) {
+    NodeProjection* projected = projection_of(self, node)!;
+    if (projected.space_projected && projected.transform_space != transform_space) return c3d::INVALID_ARGUMENT~;
+    self.set_local(node, local)!;
+    projected.transform_space = transform_space;
+    projected.space_projected = true;
 }
 
 <*

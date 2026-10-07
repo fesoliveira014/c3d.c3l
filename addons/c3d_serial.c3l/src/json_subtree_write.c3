@@ -121,7 +121,7 @@ fn void? emit_subtree_json(WriteContext* context, JsonOutput* output, TextWriteO
         output.lanes(name: "rotation", values: (uint*)&projection.local.rotation, count: 4)!;
         output.lanes(name: "scale", values: (uint*)&projection.local.scale, count: 3)!;
         output.end()!;
-        output.string("transform_space", TransformSpace::names[node.transform_space.ordinal])!;
+        output.string("transform_space", TransformSpace::names[projection.transform_space.ordinal])!;
         output.unsigned("layers", node.layers)!;
         output.boolean("visible", node.visible)!;
         output.begin("components", true)!;
