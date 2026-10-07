@@ -1077,3 +1077,121 @@ fn void assert_plain_and_lod_scatter(Fixture* fixture, Node* plain, Node* groupe
         }
     }
 }
+
+fn void test_pending_foliage_requires_prepared_ground_without_generating_cells() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Node* ready_ground = add_ground(&fixture, FLAT);
+    Node* pending_ground = fixture.scene.add_node()!!;
+    terrain::attach_terrain(
+        scene: &fixture.scene,
+        assets: &fixture.assets,
+        node: pending_ground,
+        desc: fixture.scene.get(ready_ground, Terrain).desc,
+    )!!;
+    Node* first = fixture.scene.add_node()!!;
+    Node* second = fixture.scene.add_node()!!;
+    FoliageDesc first_desc = layer_desc(&fixture, ready_ground);
+    first_desc.cell_size = EXTENT;
+    FoliageDesc second_desc = first_desc;
+    second_desc.ground = pending_ground.id;
+    uint free_nodes = fixture.scene.world.entities.free_count;
+    foliage::attach_foliage(
+        scene: &fixture.scene,
+        assets: &fixture.assets,
+        node: first,
+        desc: first_desc,
+    )!!;
+    foliage::attach_foliage(
+        scene: &fixture.scene,
+        assets: &fixture.assets,
+        node: second,
+        desc: second_desc,
+    )!!;
+    assert(fixture.scene.world.entities.free_count == free_nodes);
+    fixture.scene.update_world();
+    foliage::update(&fixture.scene, &fixture.assets, {})!!;
+    assert(!first.first_child && !second.first_child);
+    assert(@catch(foliage::prepare_subtree(&fixture.scene, &fixture.assets)) == terrain::NOT_PREPARED);
+    assert(foliage::is_prepared(&fixture.scene, first) && !foliage::is_prepared(&fixture.scene, second));
+    Entity cell = runtime_of(&fixture, first).cells[0];
+    foliage::update(&fixture.scene, &fixture.assets, GALE_WIND)!!;
+    assert(fixture.scene.world.is_alive(cell) && !second.first_child);
+    assert(c3d::same_id(fixture.scene.get(second, Foliage).desc.ground, pending_ground.id));
+    terrain::prepare(&fixture.scene, &fixture.assets, pending_ground)!!;
+    foliage::prepare(&fixture.scene, &fixture.assets, second)!!;
+    foliage::prepare_subtree(&fixture.scene, &fixture.assets)!!;
+    assert(foliage::is_prepared(&fixture.scene, second) && fixture.scene.world.is_alive(cell));
+    foliage::update(&fixture.scene, &fixture.assets, {})!!;
+}
+
+fn void test_pending_foliage_keeps_owned_lod_through_failure_retry_and_removal() @test {
+    TrackingAllocator tracking;
+    tracking.init(mem);
+    defer tracking.free();
+    FailingAllocator failing = { .backing = &tracking };
+    Fixture fixture;
+    setup(&fixture, allocator: &failing);
+    Node* ground = add_ground(&fixture, FLAT);
+    Node* first = fixture.scene.add_node()!!;
+    Node* second = fixture.scene.add_node()!!;
+    LodLevel[1] levels = { { .part_count = 1 } };
+    LodPart[1] parts = { {
+        .geometry = fixture.geometry,
+        .material = fixture.material,
+        .local = maths::TRANSFORM_IDENTITY.to_mat4(),
+    } };
+    LodDesc lod = { .levels = levels[..], .parts = parts[..] };
+    FoliageDesc desc = layer_desc(&fixture, ground);
+    desc.cell_size = EXTENT;
+    desc.lod = &lod;
+    foliage::attach_foliage(
+        scene: &fixture.scene,
+        assets: &fixture.assets,
+        node: first,
+        desc: desc,
+    )!!;
+    foliage::attach_foliage(
+        scene: &fixture.scene,
+        assets: &fixture.assets,
+        node: second,
+        desc: desc,
+    )!!;
+    levels[0].part_count = 0;
+    parts[0].geometry = {};
+    assert(fixture.scene.get(first, Foliage).desc.lod.levels[0].part_count == 1);
+    assert(c3d::same_id(fixture.scene.get(first, Foliage).desc.lod.parts[0].geometry, fixture.geometry));
+    fixture.scene.update_world();
+    failing.sized = 0;
+    failing.fail_at = 1;
+    assert(@catch(foliage::prepare_subtree(&fixture.scene, &fixture.assets)) == c3d::CAPACITY_EXCEEDED);
+    failing.fail_at = 0;
+    assert(!foliage::is_prepared(&fixture.scene, first) && foliage::is_prepared(&fixture.scene, second));
+    assert(!first.first_child && fixture.scene.get(first, Foliage).desc.lod.levels[0].part_count == 1);
+    Entity cell = runtime_of(&fixture, second).cells[0];
+    foliage::update(&fixture.scene, &fixture.assets, GALE_WIND)!!;
+    assert(fixture.scene.world.is_alive(cell));
+    foliage::prepare(&fixture.scene, &fixture.assets, first)!!;
+    assert(runtime_of(&fixture, first).desc.lod != fixture.scene.get(first, Foliage).desc.lod);
+    sz allocations = tracking.total_allocation_count();
+    foliage::prepare_subtree(&fixture.scene, &fixture.assets)!!;
+    assert(tracking.total_allocation_count() == allocations);
+    fixture.scene.remove_component(first, Foliage);
+    foliage::update(&fixture.scene, &fixture.assets, {})!!;
+    assert(!first.first_child && fixture.scene.world.is_alive(cell));
+    Node* pending = fixture.scene.add_node()!!;
+    desc = fixture.scene.get(second, Foliage).desc;
+    sz before = tracking.allocated();
+    foliage::attach_foliage(
+        scene: &fixture.scene,
+        assets: &fixture.assets,
+        node: pending,
+        desc: desc,
+    )!!;
+    assert(tracking.allocated() > before && !pending.first_child);
+    fixture.scene.remove_component(pending, Foliage);
+    assert(tracking.allocated() == before);
+    teardown(&fixture);
+    assert(!tracking.has_leaks());
+}

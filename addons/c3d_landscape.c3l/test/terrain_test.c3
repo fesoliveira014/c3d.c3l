@@ -544,3 +544,119 @@ fn void test_removed_terrain_releases_its_batch_and_material() @test {
     assert(!fixture.assets.materials.is_live(destroyed_material));
     assert(fixture.assets.geometries.is_live(grid));
 }
+
+fn void test_pending_terrains_retry_without_partial_assets_or_shared_owner_changes() @test {
+    Fixture fixture;
+    AssetStoreDesc store_desc = asset::default_asset_store_desc();
+    store_desc.max_materials = 3;
+    fixture.assets = asset::create_asset_store(mem, store_desc);
+    defer asset::destroy_asset_store(&fixture.assets);
+    fixture.scene = scene::create_scene(mem, { .max_nodes = 8 });
+    defer scene::destroy_scene(&fixture.scene);
+    terrain::register_terrain(&fixture.scene, &fixture.assets)!!;
+    fixture.layer = fixture.assets.add_material(material::standard())!!;
+    MaterialId first_blocker = fixture.assets.add_material(material::standard())!!;
+    MaterialId second_blocker = fixture.assets.add_material(material::standard())!!;
+    fixture.camera = fixture.scene.add_camera(camera::perspective_deg(CAMERA_FOV_DEGREES, CAMERA_NEAR))!!;
+    TextureId height_map = add_height_map(&fixture, SMALL_TEXELS, SEED, flat: true);
+    TerrainDesc desc = terrain_desc(&fixture, height_map);
+    Node* group = fixture.scene.add_node()!!;
+    Node* first = fixture.scene.add_node(group)!!;
+    Node* second = fixture.scene.add_node(group)!!;
+    uint free_nodes = fixture.scene.world.entities.free_count;
+    uint free_geometry = fixture.assets.geometries.free_count;
+    uint free_shaders = fixture.assets.shaders.free_count;
+    terrain::attach_terrain(
+        scene: &fixture.scene,
+        assets: &fixture.assets,
+        node: first,
+        desc: desc,
+    )!!;
+    terrain::attach_terrain(
+        scene: &fixture.scene,
+        assets: &fixture.assets,
+        node: second,
+        desc: desc,
+    )!!;
+    assert(!terrain::is_prepared(&fixture.scene, first) && !terrain::is_prepared(&fixture.scene, second));
+    assert(fixture.scene.world.entities.free_count == free_nodes);
+    assert(fixture.assets.geometries.free_count == free_geometry && fixture.assets.shaders.free_count == free_shaders);
+    assert(fixture.scene.count(InstancedMesh) == 0);
+    fixture.scene.update_world();
+    terrain::update(
+        scene: &fixture.scene,
+        assets: &fixture.assets,
+        camera_node: fixture.camera,
+        output_height_pixels: OUTPUT_HEIGHT,
+    )!!;
+    assert(fixture.scene.count(InstancedMesh) == 0);
+
+    assert(@catch(terrain::prepare(&fixture.scene, &fixture.assets, first)) == c3d::CAPACITY_EXCEEDED);
+    assert(fixture.assets.geometries.free_count == free_geometry && fixture.assets.shaders.free_count == free_shaders);
+    assert(!terrain::is_prepared(&fixture.scene, first));
+    assert(c3d::same_id(fixture.scene.get(first, Terrain).desc.height_map, height_map));
+    fixture.assets.remove_material(first_blocker);
+    assert(@catch(terrain::prepare_subtree(&fixture.scene, &fixture.assets, group)) == c3d::CAPACITY_EXCEEDED);
+    assert(terrain::is_prepared(&fixture.scene, first) && !terrain::is_prepared(&fixture.scene, second));
+    MaterialId material = fixture.scene.get(first, TerrainRuntime).material;
+    terrain::update(
+        scene: &fixture.scene,
+        assets: &fixture.assets,
+        camera_node: fixture.camera,
+        output_height_pixels: OUTPUT_HEIGHT,
+    )!!;
+    assert(fixture.scene.get(first, InstancedMesh).count == 1 && !fixture.scene.has(second, InstancedMesh));
+
+    fixture.assets.remove_material(second_blocker);
+    terrain::prepare(&fixture.scene, &fixture.assets, second)!!;
+    assert(terrain::is_prepared(&fixture.scene, second));
+    free_geometry = fixture.assets.geometries.free_count;
+    uint free_materials = fixture.assets.materials.free_count;
+    terrain::prepare_subtree(&fixture.scene, &fixture.assets)!!;
+    assert(c3d::same_id(fixture.scene.get(first, TerrainRuntime).material, material));
+    assert(fixture.assets.geometries.free_count == free_geometry && fixture.assets.materials.free_count == free_materials);
+    terrain::update(
+        scene: &fixture.scene,
+        assets: &fixture.assets,
+        camera_node: fixture.camera,
+        output_height_pixels: OUTPUT_HEIGHT,
+    )!!;
+    assert(fixture.scene.get(first, InstancedMesh).count == 1 && fixture.scene.get(second, InstancedMesh).count == 1);
+}
+
+fn void test_terrain_eager_failure_and_pending_removal_leave_no_owned_resources() @test {
+    TrackingAllocator tracking;
+    tracking.init(mem);
+    defer tracking.free();
+    Fixture fixture;
+    AssetStoreDesc store_desc = asset::default_asset_store_desc();
+    store_desc.max_materials = 1;
+    fixture.assets = asset::create_asset_store(&tracking, store_desc);
+    fixture.scene = scene::create_scene(&tracking, { .max_nodes = 4 });
+    terrain::register_terrain(&fixture.scene, &fixture.assets)!!;
+    fixture.layer = fixture.assets.add_material(material::standard())!!;
+    TerrainDesc desc = terrain_desc(&fixture, add_height_map(&fixture, SMALL_TEXELS, SEED));
+    Node* node = fixture.scene.add_node()!!;
+    uint free_geometry = fixture.assets.geometries.free_count;
+    uint free_shaders = fixture.assets.shaders.free_count;
+    uint free_nodes = fixture.scene.world.entities.free_count;
+    assert(@catch(try_add_terrain(&fixture, node, desc)) == c3d::CAPACITY_EXCEEDED);
+    assert(!fixture.scene.has(node, Terrain) && !fixture.scene.has(node, TerrainRuntime));
+    assert(!fixture.scene.has(node, InstancedMesh) && fixture.scene.world.entities.free_count == free_nodes);
+    assert(fixture.assets.geometries.free_count == free_geometry && fixture.assets.shaders.free_count == free_shaders);
+    assert(fixture.assets.materials.free_count == 0);
+    sz bytes = tracking.allocated();
+    terrain::attach_terrain(
+        scene: &fixture.scene,
+        assets: &fixture.assets,
+        node: node,
+        desc: desc,
+    )!!;
+    assert(!terrain::is_prepared(&fixture.scene, node) && tracking.allocated() == bytes);
+    fixture.scene.remove_component(node, Terrain);
+    assert(!fixture.scene.has(node, Terrain) && !fixture.scene.has(node, TerrainRuntime));
+    assert(!fixture.scene.has(node, InstancedMesh) && tracking.allocated() == bytes);
+    scene::destroy_scene(&fixture.scene);
+    asset::destroy_asset_store(&fixture.assets);
+    assert(!tracking.has_leaks());
+}

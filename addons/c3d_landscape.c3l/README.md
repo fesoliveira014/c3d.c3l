@@ -17,3 +17,35 @@ python scripts/build.py --example vegetation
 
 Manual terrain/water Vulkan acceptance lives in `test/gpu`; the data tests do
 not create a device.
+
+## Pending authoring and preparation
+
+`terrain::attach_terrain`, `foliage::attach_foliage` and `water::attach_water`
+validate and attach authored components to existing nodes. They create no
+runtime component, generated node, draw batch or asset. Foliage copies its
+optional LOD descriptor, levels and parts into scene-owned authoring storage.
+Attach ground `Terrain` authoring before dependent `Foliage` authoring.
+
+Each namespace provides `is_prepared(scene, node)`, `prepare(scene, assets, node)`
+and `prepare_subtree(scene, assets, root = null)`. A null root selects the whole
+scene; a supplied root is included. Prepare terrain before dependent foliage.
+Preparing foliage while its ground terrain is pending returns `terrain::NOT_PREPARED` and
+retains the foliage authoring. Water has no landscape preparation dependency.
+Publish node world matrices before preparing foliage or water.
+
+A prepared owner is a no-op for preparation. Each pending owner either receives
+complete runtime or remains pending with its authoring intact. A subtree pass
+attempts all matching owners and returns its first fault; successful owners are
+retained. Failed terrain/water preparation removes only cache assets that the
+attempt created, preserving shared assets used by prior owners.
+
+Ordinary updates skip pending owners. A pending terrain has no generated
+`InstancedMesh`, pending foliage has no generated cells, and pending water has
+no generated `Mesh` or mirror camera. They produce no generated draws. Existing
+`add_terrain`, `add_foliage` and `add_water` combine attachment and preparation,
+retaining their immediate-ready behavior and rollback on failure.
+
+The copied foliage LOD data belongs to the component; do not replace or free its
+pointer or slices. Prepared foliage also owns a separate frozen runtime copy.
+Removing authored foliage frees its authoring copy immediately. Existing runtime
+and cells remain valid until the next foliage update removes the orphans.

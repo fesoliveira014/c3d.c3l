@@ -85,7 +85,7 @@ struct ScatterInputs {
 }
 
 <*
- Authored layer of a node; read by add_foliage only.
+ Authored layer owning its copied LOD description; read during preparation.
 *>
 struct Foliage {
     FoliageDesc desc;
@@ -96,7 +96,7 @@ struct Foliage {
 *>
 struct FoliageRuntime {
     Allocator     allocator;
-    FoliageDesc   desc;                // as add_foliage checked it; later Foliage edits never reach the cells
+    FoliageDesc   desc;                // captured preparation snapshot; authored edits never reach existing cells
     uint          cells_per_side;
     Entity[]      cells;               // row-major, x fastest; zero where a cell has no node
     ScatterInputs placed;              // of the cells
@@ -140,13 +140,14 @@ fn FoliageDesc default_foliage_desc() {
 }
 
 <*
- Register Foliage and FoliageRuntime and the runtime's remove hook.
+ Register foliage components and their removal hooks.
  @param [&inout] scene : "Gains the Foliage and FoliageRuntime stores."
  @return? c3d::CAPACITY_EXCEEDED
 *>
 fn void? register_foliage(Scene* scene) {
     scene.register(Foliage)!;
     scene.register(FoliageRuntime)!;
+    scene.set_remove_hook(Foliage, &remove_authoring, scene.hook_allocator);
     scene.set_remove_hook(FoliageRuntime, &remove_runtime, null);
 }
 
@@ -155,6 +156,7 @@ fn void? register_foliage(Scene* scene) {
  @param [&inout] scene : "Registered with register_foliage; world matrices current."
  @param [&in] assets
  @param [&inout] node : "Places the grid; its cells become children with its layers."
+ @return? terrain::NOT_PREPARED
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED
  @require scene.world.is_registered(FoliageRuntime), !scene.has(node, Foliage)
  @require terrain::upright_rigid(node.world) : "Translation and rotation about Y."
@@ -165,12 +167,58 @@ fn void? add_foliage(
     Node* node,
     FoliageDesc desc,
 ) {
-    check_desc(&desc)!;
-    if (desc.lod) {
-        scene::validate_lod_desc(assets, *desc.lod, LodMode.INSTANCED)!;
-    } else if (!assets.geometries.is_live(desc.geometry) || !assets.materials.is_live(desc.material)) {
-        return c3d::INVALID_ID~;
-    }
+    attach_foliage(
+        scene: scene,
+        assets: assets,
+        node: node,
+        desc: desc,
+    )!;
+    defer catch scene.remove_component(node, Foliage);
+    return prepare(scene, assets, node);
+}
+
+<*
+ Attach validated foliage authoring and copy its optional LOD description.
+ @param [&inout] scene : "Registered with register_foliage."
+ @param [&in] assets : "Resolves authored references; unchanged."
+ @param [&in] node : "Receives the pending foliage component."
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED
+ @require scene.world.is_registered(FoliageRuntime), !scene.has(node, Foliage)
+*>
+fn void? attach_foliage(
+    Scene* scene,
+    AssetStore* assets,
+    Node* node,
+    FoliageDesc desc,
+) {
+    check_authoring(scene, assets, &desc)!;
+    if (desc.lod) desc.lod = copy_lod_desc(scene.allocator, desc.lod)!;
+    scene.add(node, (Foliage){ .desc = desc });
+}
+
+<*
+ Whether the separate foliage runtime component is present.
+ @param [&in] scene : "Contains authoring and optional runtime components."
+ @param [&in] node : "Carries Foliage."
+ @require scene.has(node, Foliage)
+*>
+fn bool is_prepared(Scene* scene, Node* node) => scene.has(node, FoliageRuntime);
+
+<*
+ Prepare pending foliage atomically; prepared foliage is unchanged.
+ @param [&inout] scene : "Ground terrain prepared; world matrices current."
+ @param [&in] assets : "Resolves authored references; unchanged."
+ @param [&in] node : "Carries Foliage."
+ @return? terrain::NOT_PREPARED
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED
+ @require scene.has(node, Foliage)
+ @require terrain::upright_rigid(node.world) : "Translation and rotation about Y."
+*>
+fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
+    if (is_prepared(scene, node)) return;
+    FoliageDesc desc = scene.get(node, Foliage).desc;
+    check_authoring(scene, assets, &desc)!;
+    if (!terrain::is_prepared(scene, scene.node(desc.ground))) return terrain::NOT_PREPARED~;
     ScatterFrame frame = scatter_frame(
         scene:  scene,
         assets: assets,
@@ -199,14 +247,37 @@ fn void? add_foliage(
     )!;
     runtime.placed = inputs;
 
-    scene.add(node, (Foliage){ .desc = runtime.desc });
     scene.add(node, runtime);
+}
+
+<*
+ Prepare every pending foliage in a subtree, retaining successful owners.
+ @param [&inout] scene : "Registered; prepared owners remain unchanged."
+ @param [&in] assets : "Resolves authored references; unchanged."
+ @param [in] root : "Null selects the scene root; root is included."
+ @return? terrain::NOT_PREPARED
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
+*>
+fn void? prepare_subtree(Scene* scene, AssetStore* assets, Node* root = null) {
+    if (!root) root = scene.root;
+    fault failure;
+    scene.@each(Foliage; entity, owner) {
+        Node* node = scene.node(entity);
+        Node* ancestor = node;
+        while (ancestor && ancestor != root) ancestor = ancestor.parent;
+        if (ancestor) {
+            if (catch excuse = prepare(scene, assets, node)) {
+                if (!failure) failure = excuse;
+            }
+        }
+    };
+    if (failure) return failure~;
 }
 
 <*
  Re-place changed layers, then write the wind into every cell.
  Invalidates InstancedMesh and FoliageRuntime pointers when cells or a Foliage were removed.
- @param [&inout] scene : "Terrains updated this frame; world matrices current."
+ @param [&inout] scene : "Terrains updated; pending foliage skipped; world matrices current."
  @param [&in] assets
  @param wind_velocity : "World metres per second; zero is calm."
  @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED
@@ -236,6 +307,42 @@ fn void? update(Scene* scene, AssetStore* assets, Vec3 wind_velocity) {
         );
     };
     if (failure) return failure~;
+}
+
+fn void? check_authoring(Scene* scene, AssetStore* assets, FoliageDesc* desc) @private {
+    check_desc(desc)!;
+    if (desc.lod) {
+        scene::validate_lod_desc(assets, *desc.lod, LodMode.INSTANCED)!;
+    } else if (!assets.geometries.is_live(desc.geometry) || !assets.materials.is_live(desc.material)) {
+        return c3d::INVALID_ID~;
+    }
+    if (!scene.world.is_alive(desc.ground) || !scene.world.has(desc.ground, Terrain)) return c3d::INVALID_ID~;
+    TerrainDesc* ground = &scene.world.get(desc.ground, Terrain).desc;
+    TextureAsset* height_map = assets.textures.try_get(ground.height_map)!;
+    terrain::check_height_map(height_map)!;
+    float extent = (float)(height_map.desc.width - 1) * ground.cell_size;
+    if (!(math::ceil(extent / desc.cell_size) <= MAX_CELLS_PER_SIDE)) return c3d::INVALID_ARGUMENT~;
+    if (!assets.textures.is_live(desc.rules.density_map)) return c3d::INVALID_ID~;
+    check_density_map(assets.textures.get(desc.rules.density_map))!;
+}
+
+fn LodDesc*? copy_lod_desc(Allocator allocator, LodDesc* desc) @private {
+    sz levels_offset = mem::aligned_offset(LodDesc::size, LodLevel::alignment);
+    sz parts_offset = mem::aligned_offset(levels_offset + (sz)desc.levels.len * LodLevel::size, LodPart::alignment);
+    sz bytes = parts_offset + (sz)desc.parts.len * LodPart::size;
+    char*? allocation = alloc::malloc_try(allocator, bytes);
+    if (catch allocation) return c3d::CAPACITY_EXCEEDED~;
+    LodDesc* copy = (LodDesc*)allocation;
+    *copy = *desc;
+    copy.levels = ((LodLevel*)(allocation + levels_offset))[:desc.levels.len];
+    copy.parts = ((LodPart*)(allocation + parts_offset))[:desc.parts.len];
+    copy.levels[..] = desc.levels[..];
+    copy.parts[..] = desc.parts[..];
+    return copy;
+}
+
+fn void remove_authoring(Entity entity, void* component, void* user) @private {
+    alloc::free(*(Allocator*)user, ((Foliage*)component).desc.lod);
 }
 
 // Descs come from files as well as code, so every value check is a fault; negated so NaN faults too.
