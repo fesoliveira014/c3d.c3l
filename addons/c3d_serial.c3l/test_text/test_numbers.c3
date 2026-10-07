@@ -215,7 +215,7 @@ fn void test_text_wide_integers_require_quoted_decimal_and_keep_full_range() @te
         defer serial::destroy_text_document(&document);
         assert(serial::text_read_ulong(&document, 0, &diagnostic)!! == value);
     }
-    String[*] rejected = { "0", `"1e2"`, `"1.0"`, `"+1"`, `" 1"`, `"9223372036854775808"` };
+    String[*] rejected = { "0", `"1e2"`, `"1.0"`, `"+1"`, `" 1"`, `"9223372036854775808"`, `"007"`, `"00"`, `"-0"`, `"-00"` };
     foreach (source : rejected) {
         TextDocument document = serial::parse_text(
             allocator: mem,
@@ -227,7 +227,7 @@ fn void test_text_wide_integers_require_quoted_decimal_and_keep_full_range() @te
         assert(@catch(serial::text_read_long(&document, 0, &diagnostic)) == c3d::ASSET_FORMAT_ERROR);
         assert(diagnostic.has_text_position && diagnostic.pointer.len == 0 && diagnostic.byte_offset == 0);
     }
-    foreach (source : (String[]){ "0", `"-1"`, `"18446744073709551616"` }) {
+    foreach (source : (String[]){ "0", `"-1"`, `"18446744073709551616"`, `"007"`, `"00"`, `"-0"`, `"-00"` }) {
         TextDocument document = serial::parse_text(
             allocator: mem,
             source: source,

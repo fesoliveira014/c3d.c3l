@@ -22,6 +22,7 @@
   "wincrt": "static",
   "output": "build",
   "targets": {
+    "serial_described_test": {"type": "test", "sources": ["test_described/**"]},
     "serial_text_test": {"type": "test", "sources": ["test_text/**"]},
     "serial_order_forward": {
       "type": "test",
