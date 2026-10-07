@@ -123,10 +123,12 @@ fn void? project_animator(void* component, void* value, WriteContext* context) @
     *(AnimatorAuthoring*)value = {
         .root_node = animator.root_node, .actions = actions[:action_count], .spaces = spaces[:space_count],
     };
+    check_animator_scalars((AnimatorAuthoring*)value)!;
 }
 
 fn void? validate_animator(void* value, ReadContext* context) @local {
     AnimatorAuthoring* source = value;
+    check_animator_scalars(source)!;
     ModelAuthoring* model = context.authored(ModelInstance, ModelAuthoring, context.node.id)!;
     if (!model) return c3d::INVALID_ARGUMENT~;
     if (source.actions.len > anim::MAX_ACTIONS || source.spaces.len > anim::MAX_BLEND_SPACES) {
@@ -166,6 +168,18 @@ fn void? validate_animator(void* value, ReadContext* context) @local {
             float duration = context.assets.clip(source.actions[action].clip).data.duration;
             if (!math::is_finite(duration) || duration <= 0) return c3d::INVALID_ARGUMENT~;
         }
+    }
+}
+
+fn void? check_animator_scalars(AnimatorAuthoring* source) @local {
+    foreach (action : source.actions) {
+        if (!math::is_finite(action.speed) || !math::is_finite(action.weight) || action.weight < 0) {
+            return c3d::INVALID_ARGUMENT~;
+        }
+    }
+    foreach (space : source.spaces) {
+        if (!math::is_finite(space.parameter) || !math::is_finite(space.speed)
+            || !math::is_finite(space.weight) || space.weight < 0) return c3d::INVALID_ARGUMENT~;
     }
 }
 
