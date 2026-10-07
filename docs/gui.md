@@ -16,6 +16,21 @@ that pose for editing. Select a node in the scene tree to edit its local positio
 nonzero scale, visibility and layer mask. The material panel edits the selected mesh's RGB
 color; it advances the asset revision only after a change.
 
+## Described components
+
+A component registered with `c3d::describe` appears in the Scene panel without a
+separate `gui::expose` call. An explicit custom inspector takes precedence over
+its description; a description takes precedence over an exposed reflected
+default. Existing built-in inspectors retain their output.
+
+Descriptions supply display names, clamped numeric ranges, units, enum choices
+and typed references. Transient fields are omitted. Arrays and slices expose
+existing elements without changing their lengths; strings and references are
+read-only. Value-local reconstruction runs after actual edits, once per changed
+value with children before parents. Hook faults appear inline and retain the
+edit. A type needing an external dirty mark or ownership change keeps a custom
+inspector. See [type descriptions](type_descriptions.md) for setup and lifetimes.
+
 ## LOD inspection
 
 The built-in `LodGroup` inspector displays placement mode/count, thresholds,

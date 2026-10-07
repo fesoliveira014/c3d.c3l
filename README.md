@@ -6,6 +6,8 @@ for one.
 
 See [Scene nodes](docs/scene.md) for hierarchy ownership, transform spaces,
 visibility and explicit transform updates.
+Core [type descriptions](docs/type_descriptions.md) share reflected or handwritten
+field walks with the Scene inspector and application consumers.
 Core [whole-object LOD](docs/lod.md) selects rigid multipart alternatives per view,
 with GPU selection for instanced placements, optional static impostors and a
 5,000-tree example. Impostors reduce triangles but can increase GPU time; see

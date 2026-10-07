@@ -29,6 +29,10 @@
       "features": ["C3D_PROFILE_CPU", "C3D_PROFILE_GPU", "C3D_PROFILE_INTERNAL"],
       "sources": ["src/lod.c3"]
     },
+    "described_components": {
+      "type": "executable",
+      "sources": ["src/described_components.c3", "common/described_component.c3"]
+    },
     "overlay": {
       "type": "executable",
       "dependencies": ["c3d_profile"],
