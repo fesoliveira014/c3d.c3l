@@ -3,7 +3,7 @@
 `c3d::physics::fracture` provides bounded workspaces, exact arithmetic, filtered
 geometric predicates, centered quantization, complete private solid validation
 and exact source construction records, convex-cell clipping and local face-driven
-partitioning with material occupancy and exact planar boundary reconstruction, triangulation and float publication arithmetic. Public Boolean/Voronoi construction and collision reconstruction remain separate layers.
+partitioning with material occupancy and exact planar boundary reconstruction, triangulation and float publication arithmetic. It also owns independent fracture results and public collision reconstruction. Public Boolean/Voronoi construction remains separate integration work.
 
 ## Workspace contract
 
@@ -577,3 +577,56 @@ centroids with cavities and disconnected shells, source-face ordering, grid
 affine conversion, exact error thresholds, and volume changes of forty deformed
 solid fixtures. Complete owning-result publication and final raw validation
 remain separate integration work.
+
+## Collision reconstruction
+
+`create_fracture_collision` consumes a live `FractureResult` alone. It rebuilds
+cells from the exact binary32 coordinates of each published piece, without a
+second quantization or access to the generation workspace. Hull points remain
+in the piece's local frame; the piece origin is not added. The result has one
+independent aligned allocation containing its hull views and point arrays.
+`destroy_fracture_collision` clears it. Empty input produces an empty owning
+result. No operation creates an asset, scene node or native physics object.
+
+Occupied cells are ordered by their exact geometric keys. The first adjacent
+pair whose union is convex and fits `max_hull_vertices` is merged, and the
+ordered search repeats. All remaining boundary constraints must contain both
+cells; a partial contact cannot join a concave union. Coplanar boundaries are
+reconstructed and redundant collinear corners removed. A convex piece that fits
+the limit produces one hull.
+
+Every remaining contact patch is constructed once and triangulated once. Both
+cells reference those triangles with opposite winding. Partial contacts and
+crossed subdivisions share reconciled vertices. One exact point atlas rounds
+each unique point directly to binary32, and every point must satisfy the
+Euclidean `resolution_m` bound. Hulls are ordered by piece index and then their
+lexicographically ordered point coordinates.
+
+Each rounded cell and the combined exterior pass the raw solid validators:
+closure, orientation, triangle intersections, shell nesting and positive
+volume. Cones from the smallest existing vertex retain their exact orientation,
+including zero cones. If rounding invalidates that cone decomposition, the
+rounded cell's exact volume centroid supplies an interior binary32 anchor.
+Every boundary triangle must then form a strictly positive-volume tetrahedron
+with that anchor. This fallback adds only an interior collision point; exterior
+and shared triangle positions remain unchanged. A failed test produces
+`NUMERICAL_FAILURE`.
+
+A convex rounded cell within the vertex limit publishes one point set.
+Otherwise it publishes the validated tetrahedra, each containing four points.
+Shared internal triangles cancel exactly. Positive cone tetrahedra and the
+validated exterior establish a partition without positive-volume overlap.
+The exact sum of cell six-volumes must equal the rounded exterior six-volume.
+The exterior's difference from the input piece volume must fit the derived
+rounding bound above, evaluated on the rounded exterior with epsilon equal to
+`resolution_m`. No hull inflation or geometry simplification is used.
+
+`max_hull_vertices` must be at least four; smaller values return
+`INVALID_ARGUMENT`. `max_hulls` applies across every input piece. The workspace's
+`max_vertices` counts the sum of published hull points, including a point again
+when separate hulls contain it. `max_triangles` counts the corresponding
+triangulated hull surfaces, including four triangles for each tetrahedron.
+Each input piece must also fit those vertex and triangle limits. Count, arena,
+layout and result-allocation exhaustion return `CAPACITY_EXCEEDED`. Failures
+publish no owner, preserve the input result and allow immediate workspace reuse.
+The existing 24-value arithmetic reservation is unchanged.
