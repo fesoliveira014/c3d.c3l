@@ -23,8 +23,7 @@ fields are format faults and never filled from defaults.
 
 Reader-owned strings and slices use fallible, aligned acquisitions. Every caller
 releases its acquisition list after copying retained values or after a failure.
-Generated component binding and container attachment build on these visitors;
-they are delivered separately from this field-level policy.
+Generated component binding and container attachment use these same visitors.
 
 ## Component binding and binary restoration
 
@@ -63,7 +62,7 @@ arrays, vectors, quaternions and matrices require their exact element counts.
 Unknown fields are format errors unless skipping is explicitly enabled; parsing
 still validates the complete JSONC input. Field failures retain JSON Pointer and
 text position. The caller releases the acquisition chain after success or failure.
-These visitors support the later public text-subtree and schema entry points.
+These visitors support the public text-subtree and schema entry points.
 
 ## Schema export
 
