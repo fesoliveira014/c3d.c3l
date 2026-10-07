@@ -121,11 +121,38 @@ setting `lights = CLUSTERED`: start from a constructor or assign `default_cluste
 GPU allocation, recording and wait faults propagate from the existing view operations.
 
 Each drawable clustered view owns one private GPU buffer containing its complete
-selected light array, cell ranges, fixed-capacity index segments and overflow counter.
+selected light and decal arrays, separate cell ranges and fixed-capacity index
+segments, and a shared overflow counter record.
 It uses no application `BufferId` slot and is not part of the texture-only `view_targets`.
 Grid/capacity changes replace this storage; changing only far distance does not.
 Switching to flat retires the old allocation after submitted users complete; resizing,
 destroying a view and renderer teardown likewise preserve in-flight ownership.
+
+Decals use the same grid and `LIGHT_CULL` dispatch. The per-view limit is
+`MAX_DECALS = 256`; each cell stores at most `MAX_CLUSTER_DECALS = 8` indices.
+Cell indices preserve the complete decal array's `(order, entity)` ordering.
+When the per-view budget is exceeded, selection keeps the lowest-order base
+layers and drops higher-order overlays first.
+An overflowing decal cell, inactive coverage or a position outside the grid uses
+the complete ordered decal list. Decal and light overflow are independent.
+`FLAT` views upload the selected decal records through the frame ring and allocate
+no cluster regions. See [decal materials and receivers](materials.md#decals).
+
+The default 16 × 9 × 24 grid has 3,456 cells. Its additional decal storage is:
+
+| Region | Bytes per clustered view |
+| --- | ---: |
+| 256 records × 160 bytes | 40,960 |
+| 3,456 ranges × 8 bytes | 27,648 |
+| 3,456 cells × 8 indices × 4 bytes | 110,592 |
+| Total | 179,200 (175 KiB) |
+
+`DecalGpu` holds frame-relative inverse and forward affine rows, projection/fade
+data, tangent/handedness, weights and material/layer fields. Transform rebasing
+precedes inverse and bound construction. `FrameRoot` is 544 bytes with `decals`
+at offset 528 and `decal_count` at 536. `ClusterGpu` is 160 bytes;
+`ClusterCounterGpu` remains 16 bytes with separate light and decal overflow counts.
+These are storage costs; no decal timing delta is established by them.
 
 Selection uses the view's unjittered camera projection and each shaded position, not
 the opaque depth buffer. Perspective depth slices are logarithmic; orthographic slices
@@ -198,12 +225,18 @@ ids. These delayed GPU results may lag the draw, dispatch and light counters; ab
 measurements display N/A and truncated summaries are partial. See [profiling](profiling.md)
 for the required build features and capture configuration.
 
-`Stats.cluster_view`, `cluster_count` and `cluster_overflows` are delayed results read
+`Stats.decals` and `decals_dropped` sum current CPU selection results across recorded
+views and reset at `begin_frame`. Hidden, culled and collapsed decals are not
+budget drops. `ViewStats.decals` and `decals_dropped` describe one view's selection.
+
+`Stats.cluster_view`, `cluster_count`, `cluster_overflows` and `decal_overflows` are delayed results read
 only after the reused frame slot has completed, independently of GPU timestamp enablement.
 They describe that slot's last recorded drawable view, not a sum across views: a later
 flat view clears its cluster result, while a dormant/non-recorded view does not replace
-it. `cluster_count` is the grid's total cells; `cluster_overflows` counts overflowing
-cells, not dropped lights. The readback adds no synchronous wait inside `render_view`.
+it. `cluster_count` is the grid's total cells; `cluster_overflows` and
+`decal_overflows` count overflowing light and decal cells, not budget drops.
+Each view also retains its own completed counters. The readback adds no
+synchronous wait inside `render_view`.
 
 ## Sampling a target
 
@@ -538,7 +571,30 @@ python3 scripts/build.py --example deferred
 
 `examples/deferred` renders one scene twice, the left half forward and the right half deferred,
 switches either half at runtime and lists the G-buffer channels of the deferred view in the targets
-panel.
+panel. It includes 64 bullet-hole decals on the floor and opaque boxes plus a
+road-paint stripe parented to the orbiting lamp: 65 decals in total. The Decals
+checkbox changes their node visibility, and the panel prints packed, dropped and
+overflow counts for each view. `--clustered` starts both views with clustered
+selection; `--dense-decals` uses 255 bullet holes plus the stripe, totaling 256.
+The stripe has lower order than the holes. For the 256-decal measurement, frame
+the scene until both packed counts reach 256. Pause the lamp and keep the camera
+fixed when comparing decals on and off.
+
+For active CPU capture and GPU timings, build and run:
+
+```bash
+c3c build deferred --path examples --lib c3d_profile -D C3D_PROFILE_CPU -D C3D_PROFILE_GPU -D C3D_PROFILE_INTERNAL
+./examples/build/deferred --gpu-timings --clustered --dense-decals
+```
+
+With CPU and internal profiling enabled, the example owns a bounded CPU recorder
+and captures each `draw_frame`. The Deferred panel shows the preceding complete
+capture's `view.decals` milliseconds separately for the left and right views.
+It displays N/A for incomplete captures and identifies builds without CPU capture.
+GPU pass timings remain delayed completed-frame values in Stats. The window starts
+at 1280 × 720; for a 1080p comparison, resize its client area until the Deferred
+panel reports `Output: 1920 x 1080`, then keep that extent fixed. The two viewports
+each occupy half that output width.
 
 Routing is a pure function of the material record, `render::gbuffer_encodable`, evaluated with
 `render::view_draw_list` where the draw lists are split. A draw writes the G-buffer when the material
@@ -576,15 +632,25 @@ Light selection follows `lights` on both paths: the resolve calls the same clust
 selection as the forward shaders, so `DEFERRED` with `CLUSTERED` needs no extra configuration.
 `render::cluster_cell` and `render::cluster_index` are the C3 twins of that selection.
 
+Eligible Standard and Physical receivers apply decals to their material sample
+before forward lighting or `write_gbuffer`. The deferred resolve reads the sample and
+does not apply decals again. The same ordered selection and blend rules serve both
+paths, including eligible Physical draws routed through the forward remainder.
+Decals leave coverage unchanged, so depth prepass and shadow alpha tests retain
+their original material inputs. Impostor receivers and traced-hit shading do not
+apply decals; Physical extension parameters are unchanged. Custom G-buffer stages
+opt in through the same [public decal helper](materials.md#decals).
+
 Custom materials take part through their shader: a `ShaderDesc` with a `gbuffer` stage routes
 like `STANDARD` on a deferred view, one without stays forward; see
 [custom shaders](custom_shaders.md#g-buffer-stage).
 
 Per-view numbers live on the view: `Renderer.view_stats(view)` returns `ViewStats` with the view's live working images
-at frame start (`images`), its selected and dropped light counts, whether it bound another view's shadow set
-(`shadow_set_shared`, the table's "Shadow set" row), its cluster count and overflow count, its completed GPU pass
+at frame start (`images`), its selected and dropped light and decal counts, whether it bound another view's shadow set
+(`shadow_set_shared`, the table's "Shadow set" row), its cluster count and light/decal overflow counts, its completed GPU pass
 timings (`C3D_PROFILE_GPU`) and its applied exposure (`exposure`, delayed under auto exposure), while `Stats` keeps
-the renderer-wide sums. `gui::view_stats_table(renderer, views, labels)` prints several views side by side.
+renderer-wide selection sums and the last completed cluster result described above.
+`gui::view_stats_table(renderer, views, labels)` prints several views side by side.
 
 ```bash
 python3 scripts/build.py --example shading_paths
