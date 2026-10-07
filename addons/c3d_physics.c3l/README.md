@@ -71,6 +71,64 @@ Edge/corner contacts also count; the rule does not measure shared face area. Ove
 example uses 0.5 m cubes on a 0.508 m pitch: face gaps are below the default
 0.01 m threshold, diagonal gaps are above it, producing 112 welds.
 
+## Pending fracture preparation
+
+`scene.attach_breakable_pieces(&assets, root, pieces, desc)` copies a captured
+recipe without creating bodies, cooked hulls or welds. Each `BreakablePieceView`
+contains a live piece identity, ordered hull identities and the captured
+root-relative rest frame. Caller arrays may be released after attachment. The
+public `BreakableState` fields retain their existing layout; pending state has
+no welds and `Breakable.is_prepared()` is false.
+
+`world.prepare_breakable(root)` cooks the retained hulls, derives welds from the
+retained frames and descriptor, and creates the requested initial representation.
+It publishes a new state only after all preparation succeeds. The old state and
+its borrowed arrays are invalidated on success. A prepared call is unchanged.
+Failure leaves the pending recipe, nodes and earlier prepared owners unchanged;
+staged native objects and hull holds are released. Correct a failed asset or
+capacity condition and retry preparation.
+
+`world.prepare_breakable_subtree(root)` attempts every owner under the selected
+root and returns the first failure after completing the other owners. Omitting
+`root` selects the whole scene. Normal physics updates leave unprepared owners
+pending, including after world replacement. BodyStatus.PENDING still describes
+native rebinding for owners that already completed preparation; it is separate
+from `is_prepared()`.
+
+The captured piece identity must still be live at preparation. Deletion and slot
+reuse do not replace it. Captured hull order and rest frames remain unchanged.
+Preparation derives candidate welds while temporarily holding cooked hulls, then
+checks their current relative piece poses before staging bodies or native welds.
+Position tolerance is the larger of 0.0001 metres and one millionth of the largest
+absolute coordinate among the pair's current world positions and captured rest
+positions. This covers accumulated float transform rounding at large world
+coordinates. Angle tolerance is 0.0001 radians. A rigid motion of the whole piece
+set is accepted. A displaced connected piece returns
+`INVALID_ARGUMENT` and remains pending. Restoring its placement permits retry.
+Bodies begin at their current piece-node poses; the assembly retains the matching
+current collision frames separately from the immutable captured recipe.
+
+`breakable.preparation_mismatch()` returns a read-only borrowed
+`BreakableMismatch*`, or null when no mismatch exists. Its `piece_a` and `piece_b`
+indices refer to the copied piece order. The borrow expires at the next
+preparation or removal. Details clear before each preparation attempt and after
+success. Callers identify the root from the node passed to preparation (or the
+entity owning the component) and can report its path alongside the pair.
+
+Attachment rejects dead piece/hull identities with `INVALID_ID`; empty hull
+lists, duplicate/non-descendant pieces and fewer than two pieces with
+`INVALID_ARGUMENT`; incompatible ownership with `BREAKABLE_EXISTS` or
+`BODY_EXISTS`; non-finite/non-rigid rest frames with `UNSUPPORTED`; and failed
+recipe allocation with `CAPACITY_EXCEEDED`. Every attachment failure adds
+nothing. Pending owners show their ordinary authored piece nodes but have no
+bodies or welds. `PhysicsWorld.prepare_breakable_subtree` requires a physics
+world, live piece/hull sources and piece poses matching the recipe relations.
+The eager `add_breakable` and `add_breakable_pieces` constructors attach and
+prepare in one call, removing pending authoring on failure. Their existing
+validation differences remain: the legacy mesh-tree constructor supports nested
+mesh pieces, while the explicit-piece constructor rejects ancestor-related
+pieces. Captured views support recipes produced by either constructor.
+
 ## Forms, ownership and faults
 
 `default_breakable_desc()` selects ASSEMBLY: one enabled kinematic root body
