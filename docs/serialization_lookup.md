@@ -56,7 +56,7 @@ For this workload, increasing nodes eightfold increases lookup time about 67-fol
 consistent with a full-document scan per lookup. Lookup time is about 57% of the
 validated 8,192-node import. This supports evaluating a bounded per-record index;
 the reviewer agreed a separate index bounded by document records and components.
-No index implementation is included in this evidence slice.
+The index described below implements that agreed document bound.
 
 ## Independently confirmed baseline
 
@@ -90,7 +90,7 @@ other serialization validation. No public callback or wire format changes.
 
 ## Local indexed measurements
 
-These indexed numbers are local measurements pending independent confirmation.
+These are the local indexed measurements; the independent confirmation follows.
 They use the same host, inputs, warm-up and five alternating pairs as the baseline.
 The measurement target remains outside the regular test suite.
 
@@ -121,3 +121,19 @@ The measurement target remains outside the regular test suite.
 The indexed lookup total grows about 8.4 times for eight times the records in
 this workload, compared with about 66 times for the confirmed linear-scan baseline.
 Timer overhead is included, and these measurements establish no application budget.
+
+## Independently confirmed indexed costs
+
+The reviewer reproduced the indexed table at `38c4a4af` in the
+[index review](https://github.com/fesoliveira014/c3d.c3l/pull/290), with the same
+host, O3 target and five measured pairs:
+
+| Nodes | Plain import (ms) | Validated import (ms) | Lookup total (ms) | Baseline lookup (ms) |
+| ---: | ---: | ---: | ---: | ---: |
+| 1,024 | 4.560 | 4.008 | 0.035 | 0.723 |
+| 4,096 | 17.683 | 17.818 | 0.143 | 11.960 |
+| 8,192 | 35.147 | 35.460 | 0.300 | 47.862 |
+
+The confirmed lookup total grows 8.6 times for eight times the nodes. Variation
+between plain and validated import medians includes normal timing noise; there
+is no timing threshold in the correctness suite.

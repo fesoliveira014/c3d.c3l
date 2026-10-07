@@ -6,13 +6,28 @@ c3d_serial is a consumer-selected add-on. It imports core scene/asset APIs and t
 
 The container handles ordinary nodes and application-registered component codecs. Node name, local transform, transform space, layers, visibility, hierarchy and insertion order are portable. World matrices and effective visibility are derived during load, relative to a parent whose world matrix is current.
 
-Node transform values pass through unchanged, matching direct `node.local` assignment. The container does not reject non-finite position/rotation/scale values or a zero quaternion; those values can propagate into the derived world matrix. Component codecs define and validate their own numeric constraints before invoking owner APIs. `ASSET_FORMAT_ERROR` covers invalid wire representations and violations of those declared codec constraints, not an additional universal float-validity rule.
+Node transform values pass through unchanged, matching direct `node.local` assignment. The container does not reject non-finite position/rotation/scale values or a zero quaternion; those values can propagate into the derived world matrix. Component codecs define and validate their own numeric constraints before invoking owner APIs. `ASSET_FORMAT_ERROR` covers invalid wire representations. Component codecs report invalid authored values through their declared owner faults; the container adds no universal float-validity rule.
 
-Built-in component codecs and ModelInstance reconstruction are not included in this first delivery. ModelInstance and other components without a registered policy return UNSUPPORTED. Existing plain-core consumers remain independent of the package.
+`register_core_codecs()` installs described version-1 policies for Mesh, Camera,
+Light, ProbeVolume, Atmosphere, HeightFog, ReflectionProbe and Decal, all in the
+VALUE phase. Mesh copies its morph-weight array into ordinary Scene ownership.
+The other value components use fixed-size copying attachment. ProbeVolume,
+Atmosphere, HeightFog and ReflectionProbe use their existing owner validity
+predicates on both export and decoded authoring before attachment.
+
+ModelInstance and the remaining owners have no policy in this delivery and return
+UNSUPPORTED. Animated Mesh baseline projection arrives with the Animator adapter;
+ordinary Mesh values currently preserve their explicit weights.
 
 Asset payloads, scene-wide ambient/background/environment settings and cross-subtree references are outside this format. Saving Scene.root creates an ordinary new node on read; it does not overwrite destination scene settings.
 
 ## Registration and callbacks
+
+Call `serial::register_core_codecs()` during single-threaded setup to install the
+supported built-in codecs. It idempotently registers both description and semantic
+default prerequisites; no prior description call is required. Repeating it adds no
+slots and retains the same policies. `describe::register_core_components()` alone
+registers field descriptions for inspection without selecting serialization.
 
 Register the destination's component stores and removal hooks through its owner APIs before reading. Then call serial::register_codec(Type, codec) or register_transient(Type) during single-threaded setup. Codec registration assigns a process slot without allocating any Scene store. `ecs::assigned_slot(Type)` queries that zero-based slot without assigning one and returns `NOT_FOUND` when absent. The shared ECS limit is 128 component types ([components](scene.md#components)); a file naming more fails `ASSET_FORMAT_ERROR`.
 
@@ -107,3 +122,17 @@ owner-supplied details such as an asset key. Reader details survive subtree
 rollback. Binary diagnostics have no text position. Failed diagnostic allocation
 returns `CAPACITY_EXCEEDED` and clears incomplete details. Release retained strings
 with `destroy_serial_diagnostic` after use.
+
+## Built-in policy inventory
+
+`serial_core_policy_test` runs separately from application fixture tests and is
+included in `scripts/build.py --test`. It registers the currently supported core
+set without constructing a Scene and verifies automatic prerequisites and repeated
+registration. It then creates a Scene and walks every assigned ECS slot. Every slot
+must have exactly one described, custom-codec or transient policy matching the
+expected table, or no policy and one explicit `PENDING_CORE_POLICIES` entry.
+Any unclassified core component fails immediately.
+
+Each adapter addition moves its types from pending to expected in the same change.
+The pending list becomes empty when all core policies are implemented and is then
+removed. Unimplemented types are never marked transient to satisfy the test.
