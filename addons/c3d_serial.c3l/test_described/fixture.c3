@@ -111,10 +111,10 @@ fn void register_described_codecs() @private {
     serial::register_described(Owner, { .name = "owner", .attach = &attach_owner })!!;
 }
 
-fn void create_fixture(Fixture* fixture) @private {
+fn void create_fixture(Fixture* fixture, uint max_nodes = 16) @private {
     register_described_codecs();
-    fixture.source = scene::create_scene(mem, { .max_nodes = 16 });
-    fixture.destination = scene::create_scene(mem, { .max_nodes = 16 });
+    fixture.source = scene::create_scene(mem, { .max_nodes = max_nodes });
+    fixture.destination = scene::create_scene(mem, { .max_nodes = max_nodes });
     fixture.source.register(Number)!!;
     fixture.source.register(Owner)!!;
     fixture.destination.register(Number)!!;
