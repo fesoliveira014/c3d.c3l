@@ -5,16 +5,6 @@ import c3d::ecs;
 import c3d::scene;
 import c3d::serial @public;
 
-fn String fixture_text(Fixture* fixture, Node* source, TextWriteOptions options = serial::TEXT_WRITE_OPTIONS_DEFAULT) @private {
-    return serial::write_subtree_text(
-        allocator: tmem,
-        scene: &fixture.source,
-        assets: &fixture.assets,
-        root: source,
-        options: options,
-    )!!;
-}
-
 fn void test_text_export_is_deterministic_and_emits_all_described_fields() @test {
     @pool() {
         Fixture fixture;

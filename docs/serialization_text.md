@@ -65,4 +65,6 @@ skipped only when requested, and their syntax remains validated. Mixed text and
 binary-only exports restore every retained component and omit only report entries.
 
 [Authored lookup measurements](serialization_lookup.md) record the large-document
-case and its local, review-pending performance evidence.
+case and its independently confirmed baseline. Its explicit measurement target
+is excluded from the regular test suite; an untimed 64-node case checks lookups
+through both binary and text readers in the regular target.

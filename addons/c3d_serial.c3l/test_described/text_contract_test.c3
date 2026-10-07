@@ -6,7 +6,6 @@ import c3d::describe;
 import c3d::ecs;
 import c3d::scene;
 import c3d::serial @public;
-import std::io;
 
 int[2] owned_default_numbers @private = { 3, 5 };
 uint[1] old_number_text_versions @private = { 1 };
@@ -141,7 +140,6 @@ fn void test_text_all_reader_acquisitions_rollback_without_changing_existing_sta
             assert_existing_state(&fixture, &saved);
         }
         assert(owned_default_numbers == (int[2]){ 3, 5 });
-        io::printfn("Text allocation injection: %s acquisition sites passed.", attempts);
     };
 }
 

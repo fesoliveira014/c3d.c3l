@@ -1,7 +1,8 @@
 # Authored lookup measurements
 
-These are local prototype measurements pending independent reviewer confirmation.
-They are not accepted milestone performance results or an application budget.
+The reviewer independently confirmed the baseline at `113f30d` in the
+[contract coverage review](https://github.com/fesoliveira014/c3d.c3l/pull/288).
+These measurements characterize this workload; they are not an application budget.
 
 ## Workload and method
 
@@ -15,10 +16,10 @@ They are not accepted milestone performance results or an application budget.
   it includes timer overhead. The test verifies every target and aggregate value.
 - There are no timing thresholds in tests. Machine load can affect these results.
 
-Reproduce with the affected target only:
+Reproduce with the explicit measurement target, excluded from `build.py --test`:
 
 ```text
-c3c test serial_described_test --path addons/c3d_serial.c3l -O3 --test-show-output
+c3c test serial_lookup_bench --path addons/c3d_serial.c3l -O3 --test-show-output
 ```
 
 The baseline uses linear node/authoring scans and corrected depth/ID ordering
@@ -54,4 +55,16 @@ prerequisite import commit is `96a1b5f`.
 For this workload, increasing nodes eightfold increases lookup time about 67-fold,
 consistent with a full-document scan per lookup. Lookup time is about 57% of the
 validated 8,192-node import. This supports evaluating a bounded per-record index;
-no index or performance acceptance is included in this evidence slice.
+the reviewer agreed a separate index bounded by document records and components.
+No index implementation is included in this evidence slice.
+
+## Independently confirmed baseline
+
+Reviewer run on the same i9-14900K at `113f30d`, C3 0.8.3 and `-O3`, using five
+pairs after warm-up. These are the reviewer-reported medians:
+
+| Nodes | Plain import (ms) | Validated import (ms) | Lookup total (ms) |
+| ---: | ---: | ---: | ---: |
+| 1,024 | 4.009 | 4.996 | 0.723 |
+| 4,096 | 17.508 | 29.774 | 11.960 |
+| 8,192 | 35.641 | 83.841 | 47.862 |
