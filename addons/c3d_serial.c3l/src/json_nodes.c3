@@ -153,7 +153,7 @@ fn void? order_json_nodes(
     )~;
     char* marks = owned.acquire(records.len, char::size, char::alignment)!;
     uint* chain = owned.acquire(records.len, uint::size, uint::alignment)!;
-    uint next;
+    uint* depths = owned.acquire(records.len, uint::size, uint::alignment)!;
     foreach (index, ignored : records) {
         uint current = (uint)index;
         uint length;
@@ -174,9 +174,19 @@ fn void? order_json_nodes(
         while (length) {
             uint record = chain[--length];
             marks[record] = 2;
-            order[next++] = record;
+            uint parent = records[record].node.parent;
+            depths[record] = parent == INDEX_NONE ? 0 : depths[parent] + 1;
         }
     }
+    uint[] offsets = chain[:records.len];
+    offsets[..] = 0;
+    foreach (index, ignored : records) offsets[depths[index]]++;
+    uint next;
+    foreach (index, count : offsets) {
+        offsets[index] = next;
+        next += count;
+    }
+    foreach (index, ignored : records) order[offsets[depths[index]]++] = (uint)index;
 }
 
 fn JsonComponentRecord[]? collect_json_components(
@@ -188,19 +198,7 @@ fn JsonComponentRecord[]? collect_json_components(
     SerialDiagnostic* diagnostic,
 ) @private {
     uint count;
-    foreach (record : records) {
-        uint parent = record.components;
-        for (uint token = parent + 1; token < document.values[parent].end; token = document.values[token].end) {
-            JsonComponentRecord component = json_component_record(
-                document: document,
-                scene: scene,
-                token: token,
-                skip_unknown: skip_unknown,
-                diagnostic: diagnostic,
-            )!;
-            if (component.slot != INDEX_NONE) count++;
-        }
-    }
+    foreach (record : records) count += document.values[record.components].children;
     JsonComponentRecord* storage = owned.acquire(count, JsonComponentRecord::size, JsonComponentRecord::alignment)!;
     JsonComponentRecord[] components = storage[:count];
     uint next;
@@ -219,7 +217,7 @@ fn JsonComponentRecord[]? collect_json_components(
             components[next++] = component;
         }
     }
-    return components;
+    return components[:next];
 }
 
 fn JsonComponentRecord? json_component_record(

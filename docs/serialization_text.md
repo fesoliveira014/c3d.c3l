@@ -36,7 +36,9 @@ binary collector/projection path; component collection faults retain their detai
 
 `read_subtree_text` reads one complete JSONC document. Nodes have contiguous
 zero-based document IDs and may appear in any record order; names may be empty
-or repeated. The reader requires one root, live in-document parent references
+or repeated. Siblings are created in ascending document ID order, independently
+of descendant IDs. Scene linking prepends each child, so the resulting sibling
+list has descending IDs, as it does for canonical binary records. The reader requires one root, live in-document parent references
 and an acyclic connected graph before creating nodes. It restores local/world
 transform mode, layers and authored visibility under the requested live parent.
 

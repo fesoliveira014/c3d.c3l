@@ -24,7 +24,6 @@ struct JsonComponentRecord @private {
  @param [&inout] scene : "Owns copied nodes and components."
  @param [&in] assets : "Contains every referenced key; unchanged."
  @param [in] parent : "Live parent with current world matrices; null selects root."
- @return "Restored root or the unchanged component fault."
  @return? c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED, c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
  @require parent == null || scene.world.is_alive(parent.id)
  @require parent == null || &scene.nodes[parent.id.index] == parent
