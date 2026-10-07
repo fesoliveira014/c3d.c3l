@@ -24,6 +24,7 @@ alias InspectFn = fn bool (void* component);
 struct Inspector {
     ZString   name;
     InspectFn inspect;
+    bool      custom;
 }
 
 const float CAMERA_FOV_MIN_DEGREES @local = 1;
@@ -47,6 +48,7 @@ macro void expose($Type, InspectFn override = null) {
     inspectors[store::slot{$Type} - 1] = {
         .name    = $Type::name,
         .inspect = override ? override : &inspect::inspect{$Type},
+        .custom  = override != null,
     };
 }
 
@@ -129,7 +131,7 @@ macro bool @field_widget($member, void* raw) {
     $endswitch
 }
 
-fn bool quat_widget(ZString label, Quat* rotation) @local {
+fn bool quat_widget(ZString label, Quat* rotation) @private {
     Vec3 angles = rotation.to_euler();
     Vec3 degrees = { math::rad_to_deg(angles.x), math::rad_to_deg(angles.y), math::rad_to_deg(angles.z) };
     if (!imgui::drag_float3(label, (float*)&degrees)) return false;

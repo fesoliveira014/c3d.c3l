@@ -1,6 +1,7 @@
 module c3d::gui;
 
 import c3d::ecs;
+import c3d::describe;
 import c3d::light;
 import c3d::render;
 import c3d::scene;
@@ -8,13 +9,15 @@ import imgui;
 import std::math;
 
 <*
- Persistent selection and rotation editing state for a scene panel.
+ Persistent selection, rotation editing and description errors for a scene panel.
 *>
 struct GuiPanelState {
     Entity selected;
     Entity rotation_node;
     Vec3 rotation_degrees;
     bool rotation_active;
+    Entity inspected_entity;
+    fault[ecs::MAX_COMPONENT_TYPES] description_errors;
 }
 
 <*
@@ -36,7 +39,7 @@ fn void scene_panel(Scene* scene, GuiPanelState* state) {
 
         if (scene.world.is_alive(state.selected)) {
             edit_transform(scene.node(state.selected), state);
-            inspect_components(scene, state.selected);
+            inspect_components(scene, state.selected, state);
         }
     };
 }
@@ -82,10 +85,29 @@ fn bool? reflection_capture_buttons(
     return captured;
 }
 
-fn void inspect_components(Scene* scene, Entity entity) @local {
+fn void inspect_components(Scene* scene, Entity entity, GuiPanelState* state) @private {
+    if (!c3d::same_id(state.inspected_entity, entity)) {
+        state.inspected_entity = entity;
+        state.description_errors = {};
+    }
     scene.world.@each_slot(entity; uint slot) {
         Inspector inspector = inspector_of(slot);
-        if (inspector.inspect) {
+        bool described;
+        if (!inspector.custom) {
+            if (try descriptor = describe::component(slot)) {
+                described = true;
+                imgui::push_id_int((int)slot);
+                defer imgui::pop_id();
+                bool? changed = inspect_description(descriptor, scene.world.component(entity, slot));
+                if (catch excuse = changed) {
+                    state.description_errors[slot] = excuse;
+                } else if (changed) {
+                    state.description_errors[slot] = {};
+                }
+                if (state.description_errors[slot]) description_fault_text(state.description_errors[slot]);
+            }
+        }
+        if (!described && inspector.inspect) {
             imgui::push_id_int((int)slot);
             defer imgui::pop_id();
             if (imgui::collapsing_header(inspector.name, {})) {
