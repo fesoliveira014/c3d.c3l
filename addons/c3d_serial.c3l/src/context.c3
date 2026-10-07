@@ -14,6 +14,15 @@ const uint INDEX_NONE = uint::max;
 
 const uint OWNER_SLOT_SHIFT @local = 32;
 
+struct ExportNodeOwners @private {
+    Entity model;
+    uint template_index;
+    uint baseline_slot;
+    Entity absent_model;
+    uint absent_template_index;
+    Entity crowd;
+}
+
 struct NodeProjection @private {
     uint record;
     ComponentMask omitted_components;
@@ -23,6 +32,7 @@ struct NodeProjection @private {
     Transform local;
     TransformSpace transform_space;
     bool space_projected;
+    ExportNodeOwners owners;
 }
 
 struct ComponentClaim @private {

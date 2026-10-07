@@ -107,12 +107,8 @@ fn void? collect_crowd(void* component, WriteContext* context) @local {
 }
 
 fn void? validate_crowd_selection(WriteContext* context) @private {
-    context.scene.@each(AnimatedCrowd; entity, crowd) {
-        if (!context.state.projection[entity.index].selected) {
-            foreach (part : crowd.parts) {
-                if (context.scene.world.is_alive(part.batch)
-                    && context.state.projection[part.batch.index].selected) return c3d::INVALID_ARGUMENT~;
-            }
-        }
-    };
+    foreach (node : context.state.ordered[:context.state.count]) {
+        Entity owner = context.state.projection[node.id.index].owners.crowd;
+        if (owner.generation && !context.state.projection[owner.index].selected) return c3d::INVALID_ARGUMENT~;
+    }
 }

@@ -51,24 +51,13 @@ fn NodeReference? WriteContext.make_entity_reference(
         if (required) return missing~;
         return (NodeReference){ .template_index = INDEX_NONE };
     }
-    self.scene.@each(ModelInstance; owner, instance) {
-        foreach (usz index, captured : instance.node_entities) {
-            if (!c3d::same_id(captured, entity)) continue;
-            Node* node = instance.present_node(index);
-            if (!node) return model_diagnostic(
-                diagnostic: self.diagnostic,
-                assets: self.assets,
-                model: instance.source,
-                index: (uint)index,
-                cause: missing,
-            )~;
-            (void)projection_of(self, node)!;
-            (void)projection_of(self, self.scene.node(owner))!;
-            return (NodeReference){ .model = owner, .template_index = (uint)index };
-        }
-    };
-    if (!self.scene.world.is_alive(entity)) return missing~;
-    (void)projection_of(self, self.scene.node(entity))!;
+    if (!self.scene.world.is_alive(entity)) return dead_entity_diagnostic(self, entity, missing)~;
+    NodeProjection* projected = projection_of(self, self.scene.node(entity))!;
+    ExportNodeOwners* owners = &projected.owners;
+    if (owners.model.generation) {
+        (void)projection_of(self, self.scene.node(owners.model))!;
+        return (NodeReference){ .model = owners.model, .template_index = owners.template_index };
+    }
     return (NodeReference){ .node = entity, .template_index = INDEX_NONE };
 }
 
