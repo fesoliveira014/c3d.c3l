@@ -1,9 +1,9 @@
-# Fracture workspace and exact arithmetic
+# Fracture workspace and surface validation
 
 `c3d::physics::fracture` provides bounded workspaces, exact arithmetic, filtered
-geometric predicates and centered quantization. Solid validation, Boolean construction,
-Voronoi partitioning and collision reconstruction are separate implementation
-layers; workspace availability does not imply those operations are delivered.
+geometric predicates, centered quantization and private input/topology validation.
+Geometric solid validation, Boolean construction, Voronoi partitioning and
+collision reconstruction remain separate implementation layers.
 
 ## Workspace contract
 
@@ -102,3 +102,31 @@ The required fixture measurements also record predicate count, filter fraction
 and exact-arithmetic time separately for generation and reconstruction.
 Tests verify the implemented peaks: 21 for planes, 20 for orientation,
 11 for identity and 9 for quantization.
+
+## Surface input and topology
+
+`SolidMeshView` borrows indexed triangle geometry, one explicit topological ID
+per render vertex and one material label per triangle. Topological IDs are dense;
+render vertices sharing an ID have exactly equal positions (either signed zero
+is accepted). Different IDs are never welded by distance. Unreferenced render
+vertices are allowed. Bounds stored in `Geometry` are not trusted or modified.
+Normals, tangents, colors and both UV streams are optional but must match the
+position count when present. All scalar attributes must be finite.
+
+Private validation rejects malformed streams with `INVALID_ARGUMENT` and
+unsupported topology, deformation or custom attributes with `UNSUPPORTED`.
+Sorted edge records require two oppositely directed faces per edge. Every used
+vertex has one connected face fan; pinched connections fault even when each
+edge has two faces. These topology defects produce `INVALID_SOLID`.
+Disconnected closed shells are retained with their lowest source face as a
+stable shell key. These checks alone do not establish valid geometric solids:
+triangle intersections, zero geometric area, nesting and orientation still
+require the subsequent validation layers.
+
+Topology arrays and temporary edge records use the existing workspace, without
+another allocation. Reservations align absolute addresses and check byte/count
+overflow before writing. A failed call restores its incoming cursor, including
+failure after earlier successful reservations. The recorded peak includes
+temporary edge storage; successful construction releases that temporary range.
+All validators remain private. Tests exercise `O0`, `O3` and `O4`, including
+bit-based finite checks that remain effective under fast floating-point math.
