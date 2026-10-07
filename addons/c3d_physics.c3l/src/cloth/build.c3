@@ -31,6 +31,21 @@ struct EdgeRecord @local {
     uint opposite;
 }
 
+fn ClothAuthoring*? copy_authoring(Allocator allocator, ClothDesc desc) @private {
+    sz pins_offset = mem::aligned_offset(ClothAuthoring::size, uint::alignment);
+    sz colliders_offset = mem::aligned_offset(pins_offset + desc.pins.len * uint::size, Entity::alignment);
+    sz bytes = colliders_offset + desc.colliders.len * Entity::size;
+    char*? allocation = alloc::malloc_try(allocator, bytes);
+    if (catch allocation) return c3d::CAPACITY_EXCEEDED~;
+    ClothAuthoring* copy = (ClothAuthoring*)allocation;
+    *copy = { .desc = desc };
+    copy.desc.pins = ((uint*)(allocation + pins_offset))[:desc.pins.len];
+    copy.desc.colliders = ((Entity*)(allocation + colliders_offset))[:desc.colliders.len];
+    copy.desc.pins[..] = desc.pins[..];
+    copy.desc.colliders[..] = desc.colliders[..];
+    return copy;
+}
+
 fn void? check_cloth_desc(ClothDesc desc) @private {
     if (!desc.substeps || !desc.iterations) return c3d::INVALID_ARGUMENT~;
     if (!unit_interval(desc.stretch_stiffness) || !unit_interval(desc.bend_stiffness)) return c3d::INVALID_ARGUMENT~;

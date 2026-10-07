@@ -46,6 +46,7 @@ struct ClothStats {
     double publish_seconds;
     uint   particles;
     uint   constraints;
+    uint   pending;
 }
 
 <* Distance between two particles kept near its rest length. *>
@@ -99,10 +100,21 @@ struct ClothState {
     Vec3[]            shape_ends;
 }
 
-<* Simulated mesh with component-owned state. *>
+<* Retained source and settings; owned arrays are read-only. *>
+struct ClothAuthoring {
+    ClothDesc desc;
+    GeometryId source;
+    bool source_vertex_motion;
+}
+
+<* Authored cloth and its optional component-owned simulation state. *>
 struct Cloth {
+    ClothAuthoring* authoring;
     ClothState* state;
 }
+
+<* Whether the cloth has its private geometry and simulation state. *>
+fn bool Cloth.is_prepared(&self) => self.state != null;
 
 <*
  Attach simulation over an owned geometry copy.
@@ -114,6 +126,26 @@ struct Cloth {
  @require self.world.is_registered(Cloth)
 *>
 fn void? Scene.add_cloth(
+    &self,
+    AssetStore* assets,
+    Node* node,
+    ClothDesc desc,
+) {
+    self.attach_cloth(assets, node, desc)!;
+    defer catch self.remove_component(node, Cloth);
+    return prepare(self, assets, node);
+}
+
+<*
+ Attach cloth authoring while preserving its existing source mesh.
+ @param [&in] assets : "Resolves retained source geometry; unchanged."
+ @param [&in] node : "Live node carrying the source Mesh."
+ @param desc : "Pins and collider identities are copied."
+ @return? NO_MESH, CLOTH_EXISTS, physics::SOURCE_UNAVAILABLE
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED
+ @require self.world.is_registered(Cloth)
+*>
+fn void? Scene.attach_cloth(
     &self,
     AssetStore* assets,
     Node* node,
@@ -131,6 +163,41 @@ fn void? Scene.add_cloth(
         mesh:   mesh,
         source: source,
     )!;
+    check_collider_owners(self, desc.colliders)!;
+    @pool() {
+        (void)unique_pins(desc.pins, (uint)source.data.positions.len)!;
+    };
+    ClothAuthoring* authoring = copy_authoring(self.allocator, desc)!;
+    authoring.source = mesh.geometry;
+    authoring.source_vertex_motion = mesh.vertex_motion;
+    self.add(node, (Cloth){ .authoring = authoring });
+}
+
+<*
+ Prepare pending cloth atomically; prepared cloth remains unchanged.
+ @param [&inout] scene : "Listed contact bodies have completed normal physics synchronization."
+ @param [&inout] assets : "Owns private geometry; outlives the cloth."
+ @param [&in] node : "Carries Cloth and its source Mesh; world matrix current."
+ @return? NO_MESH, physics::SOURCE_UNAVAILABLE, physics::NO_BODY
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED
+ @require scene.has(node, Cloth)
+*>
+fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
+    Cloth* component = scene.get(node, Cloth);
+    if (component.is_prepared()) return;
+    ClothAuthoring* authoring = component.authoring;
+    ClothDesc desc = authoring.desc;
+    scene::Mesh* mesh = scene.get(node, scene::Mesh);
+    if (!mesh) return NO_MESH~;
+    if (!c3d::same_id(mesh.geometry, authoring.source)) return c3d::INVALID_ARGUMENT~;
+    if (!assets.geometries.is_live(authoring.source)) return c3d::INVALID_ID~;
+    GeometryAsset* source = assets.geometry(authoring.source);
+    check_cloth_source(
+        scene: scene,
+        node: node,
+        mesh: mesh,
+        source: source,
+    )!;
     @pool() {
         uint vertex_count = (uint)source.data.positions.len;
         uint[] pins = unique_pins(desc.pins, vertex_count)!;
@@ -138,11 +205,11 @@ fn void? Scene.add_cloth(
         foreach (index, position : source.data.positions) world[index] = maths::transform_point(node.world, position);
         check_world_positions(world)!;
         ClothTopology topology = build_topology(&source.data, world)!;
-        ClothCapture capture = capture_colliders(self, desc.colliders)!;
+        ClothCapture capture = capture_colliders(scene, desc.colliders)!;
         GeometryId copy = copy_cloth_geometry(assets, &source.data)!;
         defer catch assets.remove_geometry(copy);
         ClothState* state = allocate_cloth_state(
-            allocator:    self.allocator,
+            allocator:    scene.allocator,
             vertex_count: vertex_count,
             pin_count:    (uint)pins.len,
             edge_count:   (uint)topology.edges.len,
@@ -157,9 +224,9 @@ fn void? Scene.add_cloth(
         state.bodies[..] = capture.bodies[..];
         state.shapes[..] = capture.shapes[..];
         state.assets = assets;
-        state.source = mesh.geometry;
+        state.source = authoring.source;
         state.geometry = copy;
-        state.source_vertex_motion = mesh.vertex_motion;
+        state.source_vertex_motion = authoring.source_vertex_motion;
         state.rest[..] = source.data.positions[..];
         state.positions[..] = world[..];
         state.published[..] = world[..];
@@ -172,10 +239,34 @@ fn void? Scene.add_cloth(
         }
         state.edges[..] = topology.edges[..];
         state.bends[..] = topology.bends[..];
-        self.add(node, (Cloth){ .state = state });
+        component.state = state;
         mesh.geometry = copy;
         mesh.vertex_motion = true;
     };
+}
+
+<*
+ Prepare pending cloth in a subtree, retaining successful owners.
+ @param [&inout] scene : "Listed contact bodies have completed normal physics synchronization."
+ @param [&inout] assets : "Owns private geometry; outlives the cloth."
+ @param [in] root : "Null selects the scene root; root is included."
+ @return? NO_MESH, physics::SOURCE_UNAVAILABLE, physics::NO_BODY
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED
+*>
+fn void? prepare_subtree(Scene* scene, AssetStore* assets, Node* root = null) {
+    if (!root) root = scene.root;
+    fault failure;
+    scene.@each(Cloth; entity, component) {
+        Node* node = scene.node(entity);
+        Node* ancestor = node;
+        while (ancestor && ancestor != root) ancestor = ancestor.parent;
+        if (ancestor) {
+            if (catch excuse = prepare(scene, assets, node)) {
+                if (!failure) failure = excuse;
+            }
+        }
+    };
+    if (failure) return failure~;
 }
 
 <*
@@ -184,15 +275,15 @@ fn void? Scene.add_cloth(
  @require self.has(node, Cloth), self.has(node, scene::Mesh)
 *>
 fn void Scene.remove_cloth(&self, Node* node) {
-    ClothState* state = self.get(node, Cloth).state;
+    ClothAuthoring* authoring = self.get(node, Cloth).authoring;
     scene::Mesh* mesh = self.get(node, scene::Mesh);
-    mesh.geometry = state.source;
-    mesh.vertex_motion = state.source_vertex_motion;
+    mesh.geometry = authoring.source;
+    mesh.vertex_motion = authoring.source_vertex_motion;
     self.remove_component(node, Cloth);
 }
 
 <*
- Solve and publish cloth after final node poses.
+ Solve prepared cloth after final poses; pending cloth remains unchanged.
  @require self.cloth_update_serial != self.update_serial
 *>
 fn void PhysicsWorld.update_cloths(&self) {
@@ -201,26 +292,30 @@ fn void PhysicsWorld.update_cloths(&self) {
     uint steps = self.steps_last_update;
     PhysicsTuning* tuning = &self.desc.tuning;
     self.scene.@each(Cloth; Entity entity, Cloth* component) {
-        ClothState* state = component.state;
-        Node* node = self.scene.node(entity);
-        time::Clock started = clock::now();
-        foreach (slot, pin : state.pins) state.pin_targets[slot] = maths::transform_point(node.world, state.rest[pin]);
-        sample_bodies(self.scene, state);
-        if (steps) {
-            solve_cloth(
-                state:   state,
-                wind:    self.scene.get(node, Wind),
-                gravity: tuning.gravity,
-                step_dt: tuning.fixed_dt,
-                steps:   steps,
-            );
+        if (!component.is_prepared()) {
+            self.cloth_stats.pending++;
+        } else {
+            ClothState* state = component.state;
+            Node* node = self.scene.node(entity);
+            time::Clock started = clock::now();
+            foreach (slot, pin : state.pins) state.pin_targets[slot] = maths::transform_point(node.world, state.rest[pin]);
+            sample_bodies(self.scene, state);
+            if (steps) {
+                solve_cloth(
+                    state:   state,
+                    wind:    self.scene.get(node, Wind),
+                    gravity: tuning.gravity,
+                    step_dt: tuning.fixed_dt,
+                    steps:   steps,
+                );
+            }
+            time::Clock published = clock::now();
+            publish_cloth(state, node.world);
+            self.cloth_stats.solve_seconds += (published - started).to_sec();
+            self.cloth_stats.publish_seconds += (clock::now() - published).to_sec();
+            self.cloth_stats.particles += (uint)state.positions.len;
+            self.cloth_stats.constraints += (uint)(state.edges.len + state.bends.len);
         }
-        time::Clock published = clock::now();
-        publish_cloth(state, node.world);
-        self.cloth_stats.solve_seconds += (published - started).to_sec();
-        self.cloth_stats.publish_seconds += (clock::now() - published).to_sec();
-        self.cloth_stats.particles += (uint)state.positions.len;
-        self.cloth_stats.constraints += (uint)(state.edges.len + state.bends.len);
     };
 }
 
@@ -259,7 +354,11 @@ fn uint[] pins_from_colors(Allocator allocator, Geometry* geometry, float thresh
 }
 
 fn void free_cloth(Entity entity, void* component, void* user) @private {
-    ClothState* state = ((Cloth*)component).state;
-    state.assets.remove_geometry(state.geometry);
-    alloc::free(*(Allocator*)user, state);
+    Cloth* cloth = component;
+    Allocator allocator = *(Allocator*)user;
+    if (cloth.state) {
+        cloth.state.assets.remove_geometry(cloth.state.geometry);
+        alloc::free(allocator, cloth.state);
+    }
+    alloc::free(allocator, cloth.authoring);
 }
