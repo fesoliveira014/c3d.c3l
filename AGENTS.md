@@ -56,6 +56,8 @@ The `addons/c3d_particle.c3l` package owns fixed-pool CPU particle simulation, e
 
 The `addons/c3d_serial.c3l` package owns the portable subtree container and explicit component codec registry. It imports the standard library and core and never creates GPU resources or native systems. Core never imports it. The package owns `serial_test`, `serial_order_forward` and `serial_order_reverse`; `scripts/build.py --test` runs them. See `docs/serialization.md` for the wire format, ownership, rollback and current codec coverage.
 
+Core `c3d::describe` owns synchronous field visitors and process-lifetime type descriptions. It imports only the standard library and core, never GUI, serialization or backend libraries. Struct descriptions are registered explicitly; only component descriptions consume ECS slots. The Scene panel consumes their slot table in `c3d::gui`, with custom inspectors taking precedence. Binary, JSONC and schema visitors remain acceptance-test consumers. See `docs/type_descriptions.md` for registration, fresh-read ownership, reconstruction hooks and schema traversal.
+
 The `addons/c3d_ui.c3l` package owns game UI: retained JSONC documents with styles (single inheritance, state blocks, ordered sheets), data bindings that code registers (getters, member tags, list scopes) and named actions, laid out with Clay every frame, routed against the previous frame's layout, and drawn into an `OverlayList` as rectangles and glyph runs. Its `c3d::ui` module imports the standard library, core (`c3d`, including `c3d::render` for the overlay list and `c3d::platform` for input and events) and `clay`, never `gpu`, `sdl`, `imgui` or another add-on. ImGui and the UI share the GUI capture flags and `Input.text_input_wanted_by_gui`; a frame without ImGui calls `Input.clear_gui_flags()` first. Core never imports it and carries no UI feature flag; selecting the library is the gate. The package owns its `project.json`, `ui_test` target, the manual `test/gpu` acceptance project with its `ui_acceptance` target, and the `ui` example. See `addons/c3d_ui.c3l/README.md` for the document schema and frame order.
 
 Core `c3d::scene` also owns pointer-sized `LodGroup` components: copied rigid
@@ -203,7 +205,7 @@ Counter-example, rejected on review:
 
 # 10. Architecture rules
 
-- Two layers, plus the UI add-on above the render layer. Scene-layer modules (`c3d`, `c3d::maths`, `c3d::ecs`, `c3d::asset`, `c3d::scene`, `c3d::geometry`, `c3d::camera`, `c3d::material`, `c3d::light`, `c3d::anim`, `c3d::model`, `c3d::spatial`, `c3d::physics`, `c3d::nav`, `c3d::character`, `c3d::job`, `c3d::landscape`, `c3d::particle`) never import `gpu`. The render layer (`c3d::render`, `c3d::shader`, `c3d::render::post`, `c3d::gui`) owns every GPU object. `c3d::platform` imports `gpu::surface` alone, to hand native window handles to gpu.c3l; a bare `import gpu` there is a violation. `c3d::ui` fills `c3d::render`'s overlay list and creates no GPU object; it never imports `gpu`.
+- Two layers, plus the UI add-on above the render layer. Scene-layer modules (`c3d`, `c3d::maths`, `c3d::ecs`, `c3d::describe`, `c3d::asset`, `c3d::scene`, `c3d::geometry`, `c3d::camera`, `c3d::material`, `c3d::light`, `c3d::anim`, `c3d::model`, `c3d::spatial`, `c3d::physics`, `c3d::nav`, `c3d::character`, `c3d::job`, `c3d::landscape`, `c3d::particle`) never import `gpu`. The render layer (`c3d::render`, `c3d::shader`, `c3d::render::post`, `c3d::gui`) owns every GPU object. `c3d::platform` imports `gpu::surface` alone, to hand native window handles to gpu.c3l; a bare `import gpu` there is a violation. `c3d::ui` fills `c3d::render`'s overlay list and creates no GPU object; it never imports `gpu`.
 - The renderer reads the scene; the scene never calls the renderer. Loaders write the asset store and the scene; they never touch the renderer.
 - All shader-visible data is std430 behind root pointers and defined once in `abi/c3d.abi`. Per-draw push data is exactly two root addresses.
 - Depth is reverse-Z; the Vulkan Y flip is one negative-height viewport; shaders use GL conventions and never flip.
@@ -239,7 +241,7 @@ c3d.c3l/
 │   ├── types.c3            ids
 │   ├── faults.c3           root-module faults
 │   ├── pool.c3             the generic pool, module c3d::pool <Type, IdType>
-│   ├── maths/ ecs/  asset/  scene/  geometry/  camera/  material/  light/  anim/  model/  spatial/
+│   ├── maths/ ecs/ describe/ asset/ scene/ geometry/ camera/ material/ light/ anim/ model/ spatial/
 │   ├── platform/           the only sdl importer
 │   ├── render/  shader/                            the gpu importers; render/post/ holds display processing
 │   └── gui/                the only imgui importer; gui/backend imports gpu

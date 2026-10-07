@@ -1,0 +1,13 @@
+# Description acceptance consumers
+
+These private visitors prove the description contract against the shared example component and a second type. They are test fixtures, not production serialization APIs or formats.
+
+- Reads target fresh zeroed values. A bounded allocation ledger owns every destination acquisition; success retains that storage until explicit release, while any read fault releases all acquisitions. Slice allocation honors the reported element alignment. Live-value replacement is unsupported.
+- Binary values use little-endian scalars and length-delimited scopes. Each encoded length is checked against its enclosing input before allocation. Dynamically allocated slices and strings permit at most 64 elements/bytes; fixed arrays retain their declared extent. Total destination storage is limited to 32 KiB, nesting to 16 scopes, and the fixture buffer to 16 KiB. Products are checked before allocation.
+- JSONC objects are parsed during test setup from bounded fixture text. The installed standard-library DOM parser allocates infallibly; these tests make no parser-OOM guarantee. The visitor receives an existing `Object*`; only its destination allocations propagate recoverable `mem::OUT_OF_MEMORY`.
+- JSONC requires every described field. Missing fields, wrong shapes, out-of-range integers and invalid enum/reference tokens return `INVALID_FIXTURE`. There is no field-evolution/defaulting policy. Scalar strings are escaped through the standard JSON writer; finite floats use 17 significant digits with explicit negative zero, and unsigned 64-bit values use quoted decimal fixture text.
+- Entity and asset references resolve symbolic fixture tokens through a table keyed by reference kind and, for assets, asset kind. Geometry and texture fixtures deliberately share raw handle bits. These tokens establish no production wire identity, asset lookup or scene remapping policy.
+- Tests overwrite binary input and destroy JSON source/DOM storage before comparing retained strings and slices. Injected faults cover top-level slices, nested slices and strings inside slice elements with zero remaining tracked allocations. Malformed lengths fail before allocation; valid input with a null destination allocator reports OOM unchanged.
+- The schema/event recorder copies callback metadata into fixed storage. Reflected and authored descriptions match explicit event lists in all four modes, including scopes, skips, layouts, metadata and reconstruction. Schema traversal needs no value and visits empty-slice element shapes.
+
+Run `c3c test describe --path test` from the repository root. This target also includes core description and device-free inspector contract tests.
