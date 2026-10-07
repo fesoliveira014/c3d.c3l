@@ -269,4 +269,24 @@ search time by the corresponding uninstrumented export median.
 
 Indexed scan estimates are below 0.5% and close to clock overhead. They establish
 no precise per-search cost or speedup at that scale. These are local results;
-independent confirmation belongs in the review record.
+independent phase measurements follow.
+
+
+### Independently confirmed claim-chain measurements
+
+The [claim-chain review](https://github.com/fesoliveira014/c3d.c3l/pull/322#pullrequestreview-5445826352)
+confirmed head `e6672b0e` using `serial_claims_bench` on the same Windows/MSVC,
+i9-14900K machine, C3 0.8.3 O3 and three fresh processes per size. Every canonical
+comparison passed. These are reviewer-reported medians in milliseconds.
+
+| Copies | Nodes | Claims | Preparation | Collection | Component writes | Binary export |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 1 | 35 | 13 | 0.0081 | 0.0018 | 0.0440 | 0.0717 |
+| 10 | 341 | 130 | 0.0341 | 0.0135 | 0.3374 | 0.4500 |
+| 100 | 3,401 | 1,300 | 0.2712 | 0.1369 | 3.4804 | 4.3939 |
+
+The independently confirmed 10-to-100-copy export increase is 9.76 times.
+The reviewer also passed all 72 shared and both combined tests at default and
+O3, plus the 23 legacy serialization tests. The search-overhead table above
+remains local profiling evidence; these independently confirmed timings do not
+claim a separately measured per-search cost.
