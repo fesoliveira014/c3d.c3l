@@ -178,7 +178,7 @@ fn uint append_shell_fixture(
     Vec3[] positions,
     uint[] indices,
     bool reversed,
-) @local {
+) @private {
     uint first_vertex = fixture.vertex_count;
     uint first_face = fixture.triangle_count;
     foreach (uint index, point : positions) {
