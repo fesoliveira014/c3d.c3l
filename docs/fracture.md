@@ -1,7 +1,7 @@
 # Fracture workspace and exact arithmetic
 
-`c3d::physics::fracture` currently provides bounded workspace ownership and
-internal exact-integer arithmetic. Solid validation, Boolean construction,
+`c3d::physics::fracture` provides bounded workspaces, exact arithmetic, filtered
+geometric predicates and centered quantization. Solid validation, Boolean construction,
 Voronoi partitioning and collision reconstruction are separate implementation
 layers; workspace availability does not imply those operations are delivered.
 
@@ -33,11 +33,29 @@ count; the block remains immediately reusable.
 
 ## Representation bounds
 
+Fracture filters require strict floating point at CLI `O0`–`O3`.
+`fracture_test` sets `fp-math: strict` explicitly. At `O4`/`O5`, C3 0.8.3
+exposes optimizer level `O3`; floating filters are compiled out and every
+predicate uses the exact path. This also applies to explicit strict builds at
+those levels and loses the filter speed-up. Unrelated physics builds remain
+available at every level. Explicit relaxed/fast overrides at `O0`–`O3` remain
+undetectable and unsupported. Tests cover `O0`, `O3` and exact-only `O4`.
+
 Generation uses centered integer coordinates with `abs(q) < 2^30`. Its grid
 step is the largest power of two at or below `resolution_m / 16`, using
-nearest-even quantization. Out-of-range or quantization-invalid input produces
-`NUMERICAL_FAILURE`; there is no automatic coarser retry. This policy belongs to
-the following predicate/quantization layer.
+nearest-even quantization. The anchor is the lower bound; its integer center is
+the nearest-even midpoint offset in grid units. Quantization rounds relative to
+that center using exact integer arithmetic, including half-step parity.
+Out-of-range coordinates produce `NUMERICAL_FAILURE`; there is no coarser retry.
+The solid-validation layer must reject topology invalidated by quantization.
+
+Interval operations round both bounds outwards. A sign is accepted only when
+the interval excludes zero or is exactly zero; otherwise the exact predicate
+runs. Homogeneous coordinates are rescaled together by a power of two before
+filtering. Vertex identity compares exact cross-products, never plane IDs.
+Direct grid-point tetrahedra fit native `int128` (96 bits); implicit vertices
+use the reserved wide arithmetic. Predicate counts, filter counts and elapsed
+exact-predicate fallback nanoseconds are recorded in the workspace.
 
 Collision reconstruction will consume published float surfaces exactly, without
 quantizing them again. A finite float has magnitude below `2^277` in units of
@@ -82,3 +100,5 @@ iterative and never retains arithmetic temporaries across child processing.
 Measured peaks must confirm these bounds when those layers are implemented.
 The required fixture measurements also record predicate count, filter fraction
 and exact-arithmetic time separately for generation and reconstruction.
+Tests verify the implemented peaks: 21 for planes, 20 for orientation,
+11 for identity and 9 for quantization.
