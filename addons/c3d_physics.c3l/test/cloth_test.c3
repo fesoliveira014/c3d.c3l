@@ -1,6 +1,7 @@
 module c3d_physics_cloth_test;
 
 import std::math;
+import std::core::mem::allocators;
 import std::math::quaternion;
 import c3d;
 import c3d::anim;
@@ -1058,4 +1059,182 @@ fn void test_cloth_cape_uses_final_joint_pose() @test {
     assert(fixture.physics.steps_last_update == 0);
     check_cape(&fixture, &rig);
     foreach (index, position : solved) assert(state.positions[index] == position);
+}
+
+fn void test_pending_cloth_retains_source_and_prepares_after_contact_sync() @test {
+    TrackingAllocator tracking;
+    tracking.init(mem);
+    defer tracking.free();
+    Fixture fixture;
+    setup(&fixture, allocator: &tracking);
+    GeometryId source = add_grid(&fixture, 1);
+    Node* group = fixture.scene.add_node()!!;
+    Node* first = add_cloth_node(&fixture, source);
+    Node* second = add_cloth_node(&fixture, source);
+    Node* outside = add_cloth_node(&fixture, source);
+    fixture.scene.reparent(first, group);
+    fixture.scene.reparent(second, group);
+    Node* body = fixture.scene.add_node()!!;
+    ColliderDesc collider = physics::default_collider_desc(SPHERE);
+    fixture.scene.add_physics_body(body, physics::default_body_desc(STATIC), (&collider)[:1])!!;
+    uint[3] pins = { 1, 0, 1 };
+    Entity[1] colliders = { body.id };
+    ClothDesc desc = pinned_desc(pins[..]);
+    desc.colliders = colliders[..];
+    fixture.scene.get(first, scene::Mesh).vertex_motion = true;
+    uint free_geometry = fixture.assets.geometries.free_count;
+    uint free_nodes = fixture.scene.world.entities.free_count;
+    fixture.scene.attach_cloth(&fixture.assets, first, desc)!!;
+    fixture.scene.attach_cloth(&fixture.assets, second, pinned_desc(pins[..]))!!;
+    fixture.scene.attach_cloth(&fixture.assets, outside, pinned_desc(pins[..]))!!;
+    pins[..] = 3;
+    colliders[0] = {};
+    Cloth* pending = fixture.scene.get(first, Cloth);
+    assert(!pending.is_prepared() && pending.authoring.desc.pins.len == 3);
+    assert(pending.authoring.desc.pins[0] == 1 && pending.authoring.desc.pins[1] == 0);
+    assert(c3d::same_id(pending.authoring.desc.colliders[0], body.id));
+    assert(c3d::same_id(pending.authoring.source, source) && pending.authoring.source_vertex_motion);
+    assert(fixture.assets.geometries.free_count == free_geometry && fixture.scene.world.entities.free_count == free_nodes);
+    assert(fixture.scene.count(scene::Mesh) == 3 && c3d::same_id(fixture.scene.get(first, scene::Mesh).geometry, source));
+    fixture.scene.update_world();
+
+    assert(@catch(cloth::prepare_subtree(&fixture.scene, &fixture.assets, group)) == physics::NO_BODY);
+    assert(!pending.is_prepared() && fixture.scene.get(second, Cloth).is_prepared());
+    assert(!fixture.scene.get(outside, Cloth).is_prepared());
+    GeometryId ready_geometry = state_of(&fixture, second).geometry;
+    assert(c3d::same_id(fixture.scene.get(first, scene::Mesh).geometry, source));
+    fixture.physics.update(0);
+    assert(fixture.scene.has(body, RigidBody));
+    fixture.physics.update_cloths();
+    assert(fixture.physics.cloth_stats.pending == 2 && fixture.physics.cloth_stats.particles == 4);
+    assert(c3d::same_id(fixture.scene.get(first, scene::Mesh).geometry, source));
+    cloth::prepare(&fixture.scene, &fixture.assets, first)!!;
+    assert(pending.is_prepared() && pending.state.pins.len == 2);
+    assert(pending.authoring.desc.pins.len == 3 && pending.state.pins.ptr != pending.authoring.desc.pins.ptr);
+    assert(pending.state.bodies.len == 1 && pending.state.shapes.len == 1);
+    ClothState* state = pending.state;
+    sz allocations = tracking.total_allocation_count();
+    cloth::prepare_subtree(&fixture.scene, &fixture.assets, group)!!;
+    assert(tracking.total_allocation_count() == allocations && pending.state == state);
+    assert(c3d::same_id(state_of(&fixture, second).geometry, ready_geometry));
+    fixture.physics.update(physics::DEFAULT_FIXED_DT);
+    fixture.physics.update_cloths();
+    assert(fixture.physics.cloth_stats.pending == 1 && fixture.physics.cloth_stats.particles == 8);
+    fixture.scene.remove_cloth(outside);
+    assert(!fixture.scene.has(outside, Cloth) && c3d::same_id(fixture.scene.get(outside, scene::Mesh).geometry, source));
+    fixture.scene.remove_cloth(first);
+    assert(c3d::same_id(fixture.scene.get(first, scene::Mesh).geometry, source));
+    assert(fixture.scene.get(first, scene::Mesh).vertex_motion);
+    teardown(&fixture);
+    assert(!tracking.has_leaks());
+}
+
+fn void test_pending_cloth_state_failure_releases_staged_geometry_and_retries() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    physics::destroy_physics_world(&fixture.physics);
+    fixture.physics_alive = false;
+    GeometryId source = add_grid(&fixture, 1);
+    Node* node = add_cloth_node(&fixture, source);
+    uint[2] pins = { 0, 1 };
+    fixture.scene.attach_cloth(&fixture.assets, node, pinned_desc(pins[..]))!!;
+    Cloth* component = fixture.scene.get(node, Cloth);
+    ClothAuthoring* authoring = component.authoring;
+    uint free_geometry = fixture.assets.geometries.free_count;
+    Allocator allocator = fixture.scene.allocator;
+    NullAllocator rejecting;
+    fixture.scene.allocator = &rejecting;
+    fault excuse = @catch(cloth::prepare(&fixture.scene, &fixture.assets, node));
+    fixture.scene.allocator = allocator;
+    assert(excuse == c3d::CAPACITY_EXCEEDED);
+    assert(!component.is_prepared() && component.authoring == authoring);
+    assert(component.authoring.desc.pins[0] == 0 && component.authoring.desc.pins[1] == 1);
+    assert(fixture.assets.geometries.free_count == free_geometry);
+    assert(c3d::same_id(fixture.scene.get(node, scene::Mesh).geometry, source));
+    cloth::prepare(&fixture.scene, &fixture.assets, node)!!;
+    GeometryId geometry = component.state.geometry;
+    cloth::prepare(&fixture.scene, &fixture.assets, node)!!;
+    assert(c3d::same_id(component.state.geometry, geometry) && component.authoring == authoring);
+    assert(fixture.assets.geometries.free_count + 1 == free_geometry);
+}
+
+fn void test_removing_pending_cloth_restores_motion_and_releases_authoring() @test {
+    TrackingAllocator tracking;
+    tracking.init(mem);
+    defer tracking.free();
+    Fixture fixture;
+    setup(&fixture, allocator: &tracking);
+    GeometryId source = add_grid(&fixture, 1);
+    Node* node = add_cloth_node(&fixture, source);
+    scene::Mesh* mesh = fixture.scene.get(node, scene::Mesh);
+    uint[2] pins = { 0, 1 };
+    uint free_geometry = fixture.assets.geometries.free_count;
+    foreach (original_motion : (bool[2]){ false, true }) {
+        mesh.vertex_motion = original_motion;
+        sz bytes = tracking.allocated();
+        fixture.scene.attach_cloth(&fixture.assets, node, pinned_desc(pins[..]))!!;
+        assert(!fixture.scene.get(node, Cloth).is_prepared() && tracking.allocated() > bytes);
+        assert(c3d::same_id(mesh.geometry, source) && mesh.vertex_motion == original_motion);
+        mesh.vertex_motion = !original_motion;
+        fixture.scene.remove_cloth(node);
+        assert(!fixture.scene.has(node, Cloth) && c3d::same_id(mesh.geometry, source));
+        assert(mesh.vertex_motion == original_motion && tracking.allocated() == bytes);
+        assert(fixture.assets.geometries.free_count == free_geometry);
+    }
+    teardown(&fixture);
+    assert(!tracking.has_leaks());
+}
+
+fn void test_eager_cloth_geometry_failure_removes_authoring_and_preserves_scene() @test {
+    TrackingAllocator tracking;
+    tracking.init(mem);
+    defer tracking.free();
+    Fixture fixture;
+    setup(fixture: &fixture, allocator: &tracking, max_geometries: 1);
+    GeometryId source = add_grid(&fixture, 1);
+    Node* node = add_cloth_node(&fixture, source);
+    scene::Mesh* mesh = fixture.scene.get(node, scene::Mesh);
+    mesh.vertex_motion = true;
+    sz bytes = tracking.allocated();
+    uint nodes = fixture.scene.world.entities.free_count;
+    uint[2] pins = { 0, 1 };
+    assert(@catch(fixture.scene.add_cloth(&fixture.assets, node, pinned_desc(pins[..]))) == c3d::CAPACITY_EXCEEDED);
+    assert(!fixture.scene.has(node, Cloth) && fixture.assets.geometries.free_count == 0);
+    assert(c3d::same_id(mesh.geometry, source) && mesh.vertex_motion);
+    assert(fixture.scene.world.entities.free_count == nodes && tracking.allocated() == bytes);
+    teardown(&fixture);
+    assert(!tracking.has_leaks());
+}
+
+fn void test_pending_cloth_retries_after_degenerate_world_transform_is_fixed() @test {
+    TrackingAllocator tracking;
+    tracking.init(mem);
+    defer tracking.free();
+    Fixture fixture;
+    setup(&fixture, allocator: &tracking);
+    GeometryId source = add_grid(&fixture, 1);
+    Node* node = add_cloth_node(&fixture, source);
+    node.local.scale = { 1, 0, 1 };
+    fixture.scene.update_world();
+    uint[2] pins = { 0, 1 };
+    fixture.scene.attach_cloth(&fixture.assets, node, pinned_desc(pins[..]))!!;
+    Cloth* component = fixture.scene.get(node, Cloth);
+    ClothAuthoring* authoring = component.authoring;
+    uint free_geometry = fixture.assets.geometries.free_count;
+    sz bytes = tracking.allocated();
+    assert(@catch(cloth::prepare(&fixture.scene, &fixture.assets, node)) == c3d::INVALID_ARGUMENT);
+    assert(!component.is_prepared() && component.authoring == authoring);
+    assert(authoring.desc.pins[0] == 0 && authoring.desc.pins[1] == 1);
+    assert(c3d::same_id(fixture.scene.get(node, scene::Mesh).geometry, source));
+    assert(!fixture.scene.get(node, scene::Mesh).vertex_motion);
+    assert(fixture.assets.geometries.free_count == free_geometry && tracking.allocated() == bytes);
+    node.local.scale = { 1, 1, 1 };
+    fixture.scene.update_world();
+    cloth::prepare(&fixture.scene, &fixture.assets, node)!!;
+    assert(component.is_prepared() && component.authoring == authoring);
+    assert(!c3d::same_id(fixture.scene.get(node, scene::Mesh).geometry, source));
+    assert(fixture.scene.get(node, scene::Mesh).vertex_motion);
+    teardown(&fixture);
+    assert(!tracking.has_leaks());
 }
