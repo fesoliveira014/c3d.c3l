@@ -249,6 +249,7 @@ fn Node*? restore_subtree_json(
             .record = component.node, .slot = component.slot, .version = component.version, .value = component.decoded,
         };
     }
+    index_read_authoring(&context)!;
     foreach (component : components) {
         ValidateFn validate = codecs[component.slot].described.codec.validate;
         if (!validate) continue;

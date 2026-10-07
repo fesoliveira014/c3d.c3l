@@ -163,8 +163,8 @@ fn void? read_described_component(Reader* reader, ReadContext* context) @local {
         }
         return c3d::UNSUPPORTED~;
     }
-    foreach (entry : context.authoring) {
-        if (entry.record != context.record || entry.slot != context.slot || !entry.value) continue;
+    ReadAuthoring* entry = find_read_authoring(context, context.record, context.slot);
+    if (entry && entry.value) {
         reader.offset = reader.bytes.len;
         binding.codec.attach(entry.value, context)!;
         return;

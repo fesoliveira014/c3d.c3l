@@ -87,7 +87,7 @@ fn void test_described_binary_allocation_faults_rollback_attached_owners() @test
         )!!;
         uint attempts = counter.attempts;
         fixture.destination.remove(successful);
-        assert(attempts == 6 && !counter.outstanding);
+        assert(attempts == 7 && !counter.outstanding);
         uint removed_before = fixture.removed;
         for (uint failure = 1; failure <= attempts; failure++) {
             counter = { .failure = failure };

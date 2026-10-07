@@ -68,3 +68,56 @@ pairs after warm-up. These are the reviewer-reported medians:
 | 1,024 | 4.009 | 4.996 | 0.723 |
 | 4,096 | 17.508 | 29.774 | 11.960 |
 | 8,192 | 35.641 | 83.841 | 47.862 |
+
+## Document-bounded index
+
+The index stores sorted `(node index, document record)` pairs, one entry-chain
+head per document record, and one next-entry index per component. A binary search
+resolves a live entity to its document record; a lookup then scans only that
+record's component chain. Binary and JSONC readers use the same index, including
+reuse of previously decoded binary authoring during attachment.
+
+One reader-owned acquisition holds `3 * record_count + component_count` uint
+words, plus the existing acquisition header/alignment overhead. For 8,192 records
+and one component each, index data is 128 KiB. Scene capacity does not enter the
+allocation size. The regular tests compare identical two-record documents against
+64-node and 4,096-node scene capacities and require equal allocated bytes. The
+allocation-failure matrices cover the new acquisition in both readers.
+
+The integer-key sort uses the standard library's fixed-scratch counting sort.
+The private `read_node_record` helper provides the document-record lookup for
+other serialization validation. No public callback or wire format changes.
+
+## Local indexed measurements
+
+These indexed numbers are local measurements pending independent confirmation.
+They use the same host, inputs, warm-up and five alternating pairs as the baseline.
+The measurement target remains outside the regular test suite.
+
+| Nodes | Confirmed baseline lookup (ms) | Local indexed lookup (ms) | Local plain import (ms) | Local validated import (ms) |
+| ---: | ---: | ---: | ---: | ---: |
+| 1,024 | 0.723 | 0.035 | 3.914 | 3.977 |
+| 4,096 | 11.960 | 0.141 | 17.233 | 17.151 |
+| 8,192 | 47.862 | 0.293 | 34.631 | 35.278 |
+
+| Nodes | Sample | Plain import (ms) | Validated import (ms) | Lookup total (ms) |
+| ---: | ---: | ---: | ---: | ---: |
+| 1,024 | 1 | 3.797 | 3.967 | 0.037 |
+| 1,024 | 2 | 3.914 | 3.977 | 0.033 |
+| 1,024 | 3 | 4.400 | 3.978 | 0.034 |
+| 1,024 | 4 | 3.842 | 3.844 | 0.035 |
+| 1,024 | 5 | 4.209 | 4.050 | 0.037 |
+| 4,096 | 1 | 17.523 | 17.192 | 0.142 |
+| 4,096 | 2 | 17.749 | 17.427 | 0.136 |
+| 4,096 | 3 | 17.233 | 17.015 | 0.141 |
+| 4,096 | 4 | 16.912 | 17.002 | 0.142 |
+| 4,096 | 5 | 17.034 | 17.151 | 0.139 |
+| 8,192 | 1 | 34.543 | 35.726 | 0.306 |
+| 8,192 | 2 | 34.327 | 34.420 | 0.302 |
+| 8,192 | 3 | 34.631 | 35.278 | 0.293 |
+| 8,192 | 4 | 35.072 | 35.127 | 0.293 |
+| 8,192 | 5 | 37.841 | 36.004 | 0.289 |
+
+The indexed lookup total grows about 8.4 times for eight times the records in
+this workload, compared with about 66 times for the confirmed linear-scan baseline.
+Timer overhead is included, and these measurements establish no application budget.
