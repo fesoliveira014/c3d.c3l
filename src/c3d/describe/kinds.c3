@@ -67,7 +67,38 @@ macro bool @transient($member) @private {
     $endif
 }
 
+macro bool @range_valid($Type, #minimum, #maximum) @private {
+    $switch @kind($Type):
+        $case ARRAY:
+        $case SLICE:
+            return @range_valid($Typefrom($Type::inner), #minimum, #maximum);
+        $case INT:
+        $case UINT:
+            return #minimum <= #maximum
+                && #minimum >= (double)$Type::min && #maximum <= (double)$Type::max
+                && #minimum == (double)(int128)#minimum && #maximum == (double)(int128)#maximum;
+        $case LONG:
+        $case ULONG:
+            // Double rounds 64-bit maxima beyond their valid integer range.
+            return #minimum <= #maximum
+                && #minimum >= (double)$Type::min && #maximum < (double)$Type::max
+                && #minimum == (double)(int128)#minimum && #maximum == (double)(int128)#maximum;
+        $case FLOAT:
+        $case VEC2:
+        $case VEC3:
+        $case VEC4:
+            return #minimum <= #maximum
+                && #minimum >= -(double)float::max && #maximum <= (double)float::max;
+        $case DOUBLE:
+            return #minimum <= #maximum
+                && #minimum >= -double::max && #maximum <= double::max;
+        $default:
+            return false;
+    $endswitch
+}
+
 macro bool @metadata_valid($Type, Metadata metadata) @private {
+    if (metadata.range.enabled && !@range_valid($Type, metadata.range.min, metadata.range.max)) return false;
     $switch @kind($Type):
         $case ARRAY:
         $case SLICE:

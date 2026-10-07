@@ -33,6 +33,7 @@
     "describe": {
       "type": "executable",
       "sources": [
+        "src/test_describe.c3",
         "src/test_describe_authored.c3"
       ]
     },
