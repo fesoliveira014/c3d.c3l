@@ -2,7 +2,7 @@
 
 `c3d::physics::fracture` provides bounded workspaces, exact arithmetic, filtered
 geometric predicates, centered quantization, complete private solid validation
-and exact source construction records. Convex-cell clipping, local BSP, public
+and exact source construction records and convex-cell clipping. Local BSP, public
 Boolean/Voronoi construction and collision reconstruction remain separate layers.
 
 ## Workspace contract
@@ -240,5 +240,45 @@ failure and leaves source arrays unchanged. Unreferenced topological identities
 have no constructed point. Tests cover flat-face interior vertices, subdivided
 collinear boundaries, creases, rational crossings, endpoint and coplanar cuts,
 extreme floats, subnormals, grid limits and partial reservation failure.
-Construction planes are stored separately from source face planes; the cell
-layer must verify that their presence changes neither cells nor partition planes.
+Construction planes are stored separately from source face planes. The cell
+partition test verifies that their presence changes neither cells nor partition planes.
+
+
+## Convex-cell splitting
+
+Private convex cells store plane-triple vertices, outward polygon faces and
+paired edge corners. Bounds use exact source-coordinate minima and maxima,
+including raw float subnormals and extremes or the actual quantized coordinates.
+An edge's incident face planes define its line. Vertex triples do not encode
+every incident plane at non-simple vertices and are never used to infer edge
+adjacency.
+
+A split classifies every original vertex exactly or through the strict interval
+filter. A tangent or separated cut borrows the unchanged cell and returns no
+zero-volume child. A proper split creates one plane triple per strictly crossed
+undirected edge, using its two incident face planes and the cut. Vertices on the
+cut retain their original triples. Each original polygon is clipped in its
+existing order; lower-dimensional remnants are omitted. Boundary half-edges
+form one cap cycle, which is emitted once per child in opposite order with the
+same plane and opposite orientation. Sorting endpoint identities pairs twins.
+
+Only explicit partition planes enter this layer. Source-edge construction
+records are neither inputs to the splitter nor eligible cell boundaries.
+The invariance fixture creates the same eight cells with and without those
+records, checks identical vertices, faces and paired corners, and confirms
+source supporting planes leave that partition unchanged.
+
+Cells and intermediate arrays borrow the fixed workspace. Proper splits retain
+their parent and both children; temporary pairing and cap-order arrays release
+their scratch tail. A capacity failure restores the incoming cursor and leaves
+the parent unchanged. No heap allocation or wider arithmetic reservation is
+introduced. Split predicates peak at seven live wide values. The broader
+partition fixture also constructs raw source planes, which retains the existing
+21-value construction peak. The local BSP and public generation operations
+remain separate implementation layers.
+
+Tests verify edge incidence, outward winding, exact half-space membership,
+nonzero volume, cap identity and orientation, rational volume conservation,
+cuts through original vertices and edges, tangency, four-plane vertices of an
+octahedron followed by another cut, deterministic partition records, and
+capacity failures throughout bounds construction and splitting.

@@ -252,7 +252,7 @@ fn void test_source_construction_capacity_rollback_preserves_input_and_reuses_sc
     assert(fixture.positions[4].x == float::max && fixture.mesh.geometry.indices.len == 12);
 }
 
-fn void assert_plane_equal(ExactPlane* first, ExactPlane* second) @local {
+fn void assert_plane_equal(ExactPlane* first, ExactPlane* second) @private {
     for (uint axis = 0; axis < HOMOGENEOUS_COMPONENTS; axis++) {
         IntegerView left = first.coefficients[axis].view();
         IntegerView right = second.coefficients[axis].view();
@@ -267,7 +267,7 @@ fn void assert_point_coordinates(
     GridPoint grid,
     bool quantized,
     uint denominator = 1,
-) @local {
+) @private {
     uint saved = scratch.count;
     defer scratch.count = saved;
     WideInteger*[HOMOGENEOUS_COMPONENTS] point;
