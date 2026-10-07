@@ -160,3 +160,35 @@ fn fault text_parser_error(TextParser* parser, fault cause, usz offset) @private
         diagnostic: parser.diagnostic,
     );
 }
+
+fn fault text_error(
+    TextDocument* document,
+    uint value,
+    fault cause,
+    SerialDiagnostic* diagnostic,
+) @private {
+    TextPathPart[TEXT_MAX_DEPTH] path;
+    uint count;
+    for (uint current = value; document.values[current].parent != TEXT_NO_PARENT;) {
+        TextValue* token = &document.values[current];
+        uint parent = token.parent;
+        path[count++] = {
+            .array = document.values[parent].kind == TextKind.ARRAY,
+            .index = token.index,
+            .name = token.name,
+        };
+        current = parent;
+    }
+    for (uint index = 0; index < count / 2; index++) {
+        TextPathPart part = path[index];
+        path[index] = path[count - 1 - index];
+        path[count - 1 - index] = part;
+    }
+    return report_text_error(
+        source: document.source,
+        path: path[:count],
+        offset: document.values[value].offset,
+        cause: cause,
+        diagnostic: diagnostic,
+    );
+}
