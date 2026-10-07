@@ -306,7 +306,7 @@ fn void test_crowd_update_matches_animator_for_every_part() @test {
         ModelInstance* reference = scene.get(animated, ModelInstance);
         foreach (usz part, mesh_node : (uint[2]){ 3, 4 }) {
             usz joint = part;
-            SkinBinding* binding = scene.get(reference.nodes[mesh_node], SkinBinding);
+            SkinBinding* binding = scene.get(reference.present_node(mesh_node), SkinBinding);
             Mat4 inverse_bind = fixture.assets.skeleton(binding.skeleton).data.inverse_bind[joint];
             Mat4 expected = binding.joints[joint].world.mul(inverse_bind);
             Mat4 batch_world = scene.node(crowd.parts[part].batch).world;

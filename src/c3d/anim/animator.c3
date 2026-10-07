@@ -54,6 +54,7 @@ struct Action {
 <* Fixed playback slots and masks owned by one model instance. *>
 struct Animator {
     Scene* scene;
+    <* Borrowed table; resolve nodes through ModelInstance.present_node. *>
     Node*[] nodes;
     Pool{Action, AnimationActionId}* actions;
     AnimationActionId[] order;
@@ -108,6 +109,7 @@ fn AnimationActionId? Animator.play(
     }
     if (desc.mask && desc.mask.nodes.len != self.nodes.len) return c3d::INVALID_ARGUMENT~;
 
+    ModelInstance* instance = self.scene.get(self.instance_root, ModelInstance);
     usz reference_count;
     foreach (target : data.targets) {
         if (target >= self.nodes.len) return c3d::INVALID_ARGUMENT~;
@@ -115,8 +117,14 @@ fn AnimationActionId? Animator.play(
     foreach (&track : data.tracks) {
         reference_count += track.stride();
         if (track.path != TargetPath.MORPH_WEIGHTS) continue;
-        Mesh* mesh = self.scene.get(self.nodes[data.targets[track.target]], Mesh);
-        if (!mesh || mesh.morph_weights.len != track.stride()) return c3d::INVALID_ARGUMENT~;
+        uint target = data.targets[track.target];
+        bool mesh_target;
+        foreach (mesh_node : instance.mesh_nodes) mesh_target |= mesh_node == target;
+        if (!mesh_target) return c3d::INVALID_ARGUMENT~;
+        Node* node = instance.present_node(target);
+        if (!node) continue;
+        Mesh* mesh = self.scene.get(node, Mesh);
+        if (mesh && mesh.morph_weights.len != track.stride()) return c3d::INVALID_ARGUMENT~;
     }
     if (!self.actions.free_count) return c3d::CAPACITY_EXCEEDED~;
 

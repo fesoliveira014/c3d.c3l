@@ -64,14 +64,14 @@ fn void test_root_motion_selects_pins_and_accumulates_translation() @test {
         Vec3 delta = fixture.animator.root_motion.translation;
         assert((delta - (Vec3){ 0.75f, 0, 1 }).length() < 1e-4f);
         sum += delta;
-        Node* root = fixture.animator.nodes[2];
+        Node* root = fixture.scene.get(fixture.root, ModelInstance).present_node(2);
         assert(approx(root.local.position.x, 0) && approx(root.local.position.z, 0));
     }
     assert((sum - (Vec3){ 3, 0, 4 }).length() < 1e-4f);
     fixture.animator.action(id).time = 0.8f;
     anim::update(&fixture.assets, &fixture.scene, 0.4f);
     assert((fixture.animator.root_motion.translation - (Vec3){ 1.2f, 0, 1.6f }).length() < 1e-4f);
-    assert(approx(fixture.animator.nodes[2].local.position.y, 0.2f));
+    assert(approx(fixture.scene.get(fixture.root, ModelInstance).present_node(2).local.position.y, 0.2f));
 }
 
 fn void test_keep_strip_and_invalid_root_modes() @test {
@@ -82,13 +82,13 @@ fn void test_keep_strip_and_invalid_root_modes() @test {
     ClipId clip = motion_clip(&fixture, { 3, 1, 4 });
     AnimationActionId kept = fixture.animator.play(&fixture.assets, clip)!!;
     anim::update(&fixture.assets, &fixture.scene, 0.25f);
-    assert((fixture.animator.nodes[2].local.position - (Vec3){ 0.75f, 0.25f, 1 }).length() < 1e-4f);
+    assert((fixture.scene.get(fixture.root, ModelInstance).present_node(2).local.position - (Vec3){ 0.75f, 0.25f, 1 }).length() < 1e-4f);
     assert(fixture.animator.root_motion.translation == (Vec3){});
     fixture.animator.stop(kept)!!;
 
     AnimationActionId stripped = fixture.animator.play(&fixture.assets, clip, { .root_motion = RootMotion.STRIP_XZ })!!;
     anim::update(&fixture.assets, &fixture.scene, 0.25f);
-    assert((fixture.animator.nodes[2].local.position - (Vec3){ 0, 0.25f, 0 }).length() < 1e-4f);
+    assert((fixture.scene.get(fixture.root, ModelInstance).present_node(2).local.position - (Vec3){ 0, 0.25f, 0 }).length() < 1e-4f);
     assert(fixture.animator.root_motion.translation == (Vec3){});
     fixture.animator.stop(stripped)!!;
 
@@ -143,7 +143,7 @@ fn void test_root_yaw_preserves_tilt_and_twist_handles_half_turn() @test {
     fixture.animator.play(&fixture.assets, clip, { .root_motion = RootMotion.EXTRACT, .root_yaw = true })!!;
     anim::update(&fixture.assets, &fixture.scene, 0.5f);
 
-    assert(math::abs(fixture.animator.nodes[2].local.rotation.v.dot(tilt.v)) > 0.99999f);
+    assert(math::abs(fixture.scene.get(fixture.root, ModelInstance).present_node(2).local.rotation.v.dot(tilt.v)) > 0.99999f);
     assert(rotates_x_to(fixture.animator.root_motion.rotation, { 0.7071068f, 0, -0.7071068f }));
     Quat half_turn = quaternion::from_axis_angle{float}({ 1, 0, 0 }, (float)math::PI);
     assert(rotates_x_to(maths::twist_about(half_turn, { 0, 1, 0 }), { 1, 0, 0 }));
@@ -407,7 +407,7 @@ fn void test_blend_space_weights_phase_pause_and_member_ownership() @test {
     BlendSpace1D* space = fixture.animator.add_blend_space(&fixture.assets, clips[..], positions[..])!!;
     space.parameter = 0.25f;
     anim::update(&fixture.assets, &fixture.scene, 0);
-    assert(approx(fixture.animator.nodes[3].local.position.y, 3));
+    assert(approx(fixture.scene.get(fixture.root, ModelInstance).present_node(3).local.position.y, 3));
     space.parameter = 0.5f;
     anim::update(&fixture.assets, &fixture.scene, 0.375f);
     assert(math::abs(space.phase - 0.5) < 1e-6);
@@ -430,11 +430,11 @@ fn void test_blend_space_weights_phase_pause_and_member_ownership() @test {
     space.playing = false;
     space.parameter = 2;
     anim::update(&fixture.assets, &fixture.scene, 1);
-    assert(approx(fixture.animator.nodes[3].local.position.y, 6));
+    assert(approx(fixture.scene.get(fixture.root, ModelInstance).present_node(3).local.position.y, 6));
     assert(math::abs(space.phase - 0.5) < 1e-6);
     space.parameter = -1;
     anim::update(&fixture.assets, &fixture.scene, 0);
-    assert(approx(fixture.animator.nodes[3].local.position.y, 2));
+    assert(approx(fixture.scene.get(fixture.root, ModelInstance).present_node(3).local.position.y, 2));
     fixture.animator.stop_blend_space(space, 1)!!;
     anim::update(&fixture.assets, &fixture.scene, 0.5f);
     assert(approx(fixture.animator.action(space.actions[0]).weight, 0.5f));
@@ -655,8 +655,10 @@ fn void test_unskinned_instances_require_explicit_motion_root() @test {
     create_layer_fixture(&fixture);
     defer destroy_layer_fixture(&fixture);
 
-    foreach (node : fixture.animator.nodes) {
-        if (fixture.scene.has(node, SkinBinding)) fixture.scene.remove_component(node, SkinBinding);
+    ModelInstance* instance = fixture.scene.get(fixture.root, ModelInstance);
+    for (usz node_index = 0; node_index < instance.nodes.len; node_index++) {
+        Node* node = instance.present_node(node_index);
+        if (node && fixture.scene.has(node, SkinBinding)) fixture.scene.remove_component(node, SkinBinding);
     }
     fixture.scene.remove_component(fixture.root, Animator);
     fixture.animator = anim::add_animator(&fixture.scene, fixture.root);
@@ -671,4 +673,50 @@ fn void test_unskinned_instances_require_explicit_motion_root() @test {
     fixture.animator.play(&fixture.assets, clip, { .root_motion = RootMotion.EXTRACT })!!;
     anim::update(&fixture.assets, &fixture.scene, 0.25f);
     assert(approx(fixture.animator.root_motion.translation.x, 0.25f));
+}
+
+fn void test_absent_root_motion_target_keeps_playback_configuration() @test {
+    LayerFixture fixture;
+    create_layer_fixture(&fixture);
+    defer destroy_layer_fixture(&fixture);
+    ModelInstance* instance = fixture.scene.get(fixture.root, ModelInstance);
+    Node* target = instance.present_node(2);
+    Node* survivor = instance.present_node(3);
+    fixture.scene.remove_component(instance.present_node(1), SkinBinding);
+    fixture.scene.reparent(survivor, fixture.root);
+    ClipId motion = motion_clip(&fixture, { 3, 0, 4 }, 0.5f);
+    ClipId surviving = layer_translation(&fixture, { 0, 7, 0 });
+    AnimationActionId extracted = fixture.animator.play(&fixture.assets, motion, {
+        .root_motion = RootMotion.EXTRACT,
+        .root_yaw = true,
+    })!!;
+    fixture.animator.play(&fixture.assets, surviving)!!;
+    anim::update(&fixture.assets, &fixture.scene, 0.25f);
+    assert(fixture.animator.root_motion.translation.length() > 0);
+
+    fixture.scene.remove(target);
+    Node* replacement = fixture.scene.add_node(fixture.root, "replacement")!!;
+    assert(replacement == target);
+    replacement.local.position = { 11, 12, 13 };
+    anim::update(&fixture.assets, &fixture.scene, 0.25f);
+    assert(instance.present_node(2) == null && fixture.animator.root_node == 2);
+    assert(fixture.animator.root_motion.translation == (Vec3){});
+    assert(fixture.animator.root_motion.rotation.v == (Vec4){ 0, 0, 0, 1 });
+    assert(replacement.local.position == (Vec3){ 11, 12, 13 });
+    assert(approx(survivor.local.position.y, 7));
+    Action* action = fixture.animator.action(extracted);
+    assert(action.root_motion == RootMotion.EXTRACT && action.root_yaw);
+    assert(action.mask.len == 4 && action.mask[2] && c3d::same_id(action.clip, motion));
+    assert(approx(action.time, 0.5f) && action.playing);
+
+    AnimationActionId stripped = fixture.animator.play(&fixture.assets, motion, {
+        .root_motion = RootMotion.STRIP_XZ,
+        .root_yaw = true,
+    })!!;
+    anim::update(&fixture.assets, &fixture.scene, 0.25f);
+    assert(fixture.animator.action(stripped).root_motion == RootMotion.STRIP_XZ);
+    assert(fixture.animator.action(stripped).root_yaw);
+    assert(fixture.animator.root_motion.translation == (Vec3){});
+    assert(fixture.animator.root_motion.rotation.v == (Vec4){ 0, 0, 0, 1 });
+    assert(approx(survivor.local.position.y, 7));
 }

@@ -188,7 +188,9 @@ fn Character? build_character(AssetStore* assets, Scene* scene) @local {
     character.idle = find_clip(assets, instance.clips, IDLE_CLIP)!;
     character.walk = find_clip(assets, instance.clips, WALK_CLIP)!;
     Skeleton* skeleton;
-    foreach (node : instance.nodes) {
+    for (usz node_index = 0; node_index < instance.nodes.len; node_index++) {
+        Node* node = instance.present_node(node_index);
+        if (!node) continue;
         if (!scene.has(node, SkinBinding)) continue;
         SkinBinding* skin = scene.get(node, SkinBinding);
         io::printfn("%s: %d skin joints", MODEL_FILE, skin.joints.len);

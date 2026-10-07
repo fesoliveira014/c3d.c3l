@@ -32,14 +32,19 @@ fn void apply_root_motion(Node* node, RootMotionDelta delta) {
 }
 
 fn uint find_root_node(Animator* animator) @private {
-    foreach (node : animator.nodes) {
+    ModelInstance* instance = animator.scene.get(animator.instance_root, ModelInstance);
+    for (uint node_index = 0; node_index < instance.nodes.len; node_index++) {
+        Node* node = instance.present_node(node_index);
+        if (!node) continue;
         SkinBinding* skin = animator.scene.get(node, SkinBinding);
         if (!skin) continue;
         foreach (joint : skin.joints) {
             bool parent_is_joint;
             foreach (member : skin.joints) parent_is_joint |= joint.parent == member;
             if (parent_is_joint) continue;
-            foreach (uint index, candidate : animator.nodes) if (candidate == joint) return index;
+            for (uint index = 0; index < instance.nodes.len; index++) {
+                if (instance.present_node(index) == joint) return index;
+            }
         }
         return NO_ROOT_NODE;
     }
@@ -88,7 +93,9 @@ fn void? configure_motion(
     }
     if (desc.root_motion == RootMotion.KEEP) return;
 
-    Node* root = animator.nodes[animator.root_node];
+    ModelInstance* instance = animator.scene.get(animator.instance_root, ModelInstance);
+    Node* root = instance.present_node(animator.root_node);
+    if (!root) return;
     if (root.transform_space != TransformSpace.PARENT) return c3d::INVALID_ARGUMENT~;
     for (Node* parent = root.parent; parent != animator.instance_root; parent = parent.parent) {
         if (!parent || parent.transform_space != TransformSpace.PARENT) return c3d::INVALID_ARGUMENT~;
@@ -213,6 +220,8 @@ fn void pin_root_sample(Action* action, uint track, float[] sample) @private {
 
 fn void publish_root_motion(Animator* animator, AssetStore* assets) @private {
     if (animator.root_node >= animator.nodes.len) return;
+    ModelInstance* instance = animator.scene.get(animator.instance_root, ModelInstance);
+    if (!instance.present_node(animator.root_node)) return;
     Vec3 translation;
     float yaw;
     for (uint layer = 0; layer < MAX_ANIMATION_LAYERS; layer++) {

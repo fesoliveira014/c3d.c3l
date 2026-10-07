@@ -2,6 +2,7 @@ module c3d::model;
 
 import c3d;
 import c3d::asset;
+import c3d::ecs;
 import c3d::maths;
 import c3d::scene;
 
@@ -26,12 +27,14 @@ fn Node*? instantiate(
 
     Allocator allocator = scene.allocator;
     Node*[] nodes = alloc::new_array(allocator, Node*, template.nodes.len);
+    Entity[] node_entities = alloc::new_array(allocator, Entity, template.nodes.len);
     Transform[] base_pose = alloc::new_array(allocator, Transform, template.nodes.len);
     uint[] mesh_nodes = alloc::new_array(allocator, uint, template.meshes.len);
     float[][] base_morph_weights = alloc::new_array(allocator, float[], template.meshes.len);
-    scene.add(root, (ModelInstance){
+    ModelInstance* instance = scene.add(root, (ModelInstance){
         .source             = model,
         .nodes              = nodes,
+        .node_entities      = node_entities,
         .base_pose          = base_pose,
         .mesh_nodes         = mesh_nodes,
         .base_morph_weights = base_morph_weights,
@@ -39,7 +42,7 @@ fn Node*? instantiate(
     });
 
     foreach (index, &node_template : template.nodes) {
-        Node* node_parent = node_template.parent < 0 ? root : nodes[node_template.parent];
+        Node* node_parent = node_template.parent < 0 ? root : instance.present_node((usz)node_template.parent);
         ModelLodGroup* group;
         foreach (&candidate : template.lod_groups) {
             if (candidate.node == index) {
@@ -62,13 +65,14 @@ fn Node*? instantiate(
         node.layers = node_template.layers;
         node.visible = node_template.visible;
         nodes[index] = node;
+        node_entities[index] = node.id;
         base_pose[index] = node_template.local;
     }
 
     foreach (index, &mesh : template.meshes) {
         mesh_nodes[index] = mesh.node;
         base_morph_weights[index] = copy_slice(allocator, mesh.default_morph_weights);
-        scene.add(nodes[mesh.node], (Mesh){
+        scene.add(instance.present_node(mesh.node), (Mesh){
             .geometry       = mesh.geometry,
             .material       = mesh.material,
             .cast_shadow    = true,
@@ -79,11 +83,11 @@ fn Node*? instantiate(
     }
     foreach (&skin : template.skins) {
         Node*[] joints = alloc::new_array(allocator, Node*, skin.joint_nodes.len);
-        foreach (index, joint : skin.joint_nodes) joints[index] = nodes[joint];
-        scene.add(nodes[skin.mesh_node], (SkinBinding){ .skeleton = skin.skeleton, .joints = joints });
+        foreach (index, joint : skin.joint_nodes) joints[index] = instance.present_node(joint);
+        scene.add(instance.present_node(skin.mesh_node), (SkinBinding){ .skeleton = skin.skeleton, .joints = joints });
     }
-    foreach (&camera : template.cameras) scene.add(nodes[camera.node], camera.value);
-    foreach (&light : template.lights) scene.add(nodes[light.node], light.value);
+    foreach (&camera : template.cameras) scene.add(instance.present_node(camera.node), camera.value);
+    foreach (&light : template.lights) scene.add(instance.present_node(light.node), light.value);
 
     return root;
 }

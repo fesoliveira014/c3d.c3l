@@ -51,7 +51,9 @@ fn void blend_instance(Animator* animator, AssetStore* assets, ModelInstance* in
             AnimationClip* clip = &assets.clip(action.clip).data;
             foreach (track_index, &track : clip.tracks) {
                 uint node = clip.targets[track.target];
-                if (!action.mask[node]) continue;
+                Node* present = instance.present_node(node);
+                if (!present || !action.mask[node]) continue;
+                if (track.path == TargetPath.MORPH_WEIGHTS && !animator.scene.has(present, Mesh)) continue;
 
                 float[] sample = scratch[:track.stride()];
                 sample_track(
@@ -107,7 +109,9 @@ fn void blend_instance(Animator* animator, AssetStore* assets, ModelInstance* in
                 float[] reference = action.reference[reference_offset:stride];
                 reference_offset += stride;
                 uint node = clip.targets[track.target];
-                if (!action.mask[node]) continue;
+                Node* present = instance.present_node(node);
+                if (!present || !action.mask[node]) continue;
+                if (track.path == TargetPath.MORPH_WEIGHTS && !animator.scene.has(present, Mesh)) continue;
 
                 float[] sample = scratch[:stride];
                 sample_track(
@@ -143,10 +147,15 @@ fn void blend_instance(Animator* animator, AssetStore* assets, ModelInstance* in
         }
     }
 
-    foreach (index, node : instance.nodes) node.local = result[index];
+    foreach (usz index, pose : result) {
+        Node* node = instance.present_node(index);
+        if (node) node.local = pose;
+    }
     foreach (index, values : morph_result) {
-        Mesh* mesh = animator.scene.get(instance.nodes[instance.mesh_nodes[index]], Mesh);
-        mesh.morph_weights[..] = values[..];
+        Node* node = instance.present_node(instance.mesh_nodes[index]);
+        if (!node) continue;
+        Mesh* mesh = animator.scene.get(node, Mesh);
+        if (mesh) mesh.morph_weights[..] = values[..];
     }
 }
 

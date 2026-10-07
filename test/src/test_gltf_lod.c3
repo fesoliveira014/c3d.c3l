@@ -98,8 +98,8 @@ fn void test_model_lod_instances_keep_independent_descriptors() @test {
         Node* second = model::instantiate(assets: &assets, scene: &scene, model: model)!!;
         ModelInstance* first_instance = scene.get(first, ModelInstance);
         ModelInstance* second_instance = scene.get(second, ModelInstance);
-        LodGroupState* first_state = scene.get(first_instance.nodes[0], LodGroup).state;
-        LodGroupState* second_state = scene.get(second_instance.nodes[0], LodGroup).state;
+        LodGroupState* first_state = scene.get(first_instance.present_node(0), LodGroup).state;
+        LodGroupState* second_state = scene.get(second_instance.present_node(0), LodGroup).state;
         assert(first_state.desc.parts.ptr != second_state.desc.parts.ptr);
         assets.remove_model(model);
         assert(assets.geometries.is_live(first_state.desc.parts[0].geometry));

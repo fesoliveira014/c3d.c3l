@@ -254,7 +254,9 @@ fn void? build_figure(AssetStore* assets, Scene* scene, Level* level) @local {
     level.figure = model::instantiate(assets, scene, model, name: "figure")!;
     level.figure.local.position = FIGURE_POSITION;
     ModelInstance* instance = scene.get(level.figure, ModelInstance);
-    foreach (node : instance.nodes) {
+    for (usz node_index = 0; node_index < instance.nodes.len; node_index++) {
+        Node* node = instance.present_node(node_index);
+        if (!node) continue;
         if (scene.has(node, SkinBinding)) level.figure_skin = node;
     }
     if (!level.figure_skin) return NOT_FOUND~;
