@@ -3,7 +3,7 @@ module c3d::serial;
 import c3d;
 
 <* Hard ceiling for nested JSONC objects and arrays. *>
-const uint TEXT_MAX_DEPTH = 64;
+const uint TEXT_MAX_DEPTH = 64; // bounds recursion; each fixed diagnostic path reserves 64 entries
 
 <* Hard ceiling shared with the binary container's size bound. *>
 const usz TEXT_MAX_BYTES = uint::max;
@@ -16,7 +16,7 @@ const TextLimits TEXT_LIMITS_DEFAULT = {
     .max_depth = TEXT_MAX_DEPTH,
 };
 
-const usz TEXT_NUMBER_FORMAT_BYTES @private = 32;
+const usz TEXT_NUMBER_FORMAT_BYTES @private = 32; // 32 bytes per scalar; fits the longest 64-bit decimal
 
 const uint TEXT_NO_PARENT @private = uint::max;
 
