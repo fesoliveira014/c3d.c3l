@@ -33,8 +33,10 @@
     "describe": {
       "type": "executable",
       "sources": [
+        "describe/**",
         "src/test_describe.c3",
-        "src/test_describe_authored.c3"
+        "src/test_describe_authored.c3",
+        "../examples/common/described_component.c3"
       ]
     },
     "ecs_cap": {
