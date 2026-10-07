@@ -66,10 +66,11 @@ fn void? register_serial_codecs() {
     serial::register_described_owner(Buoyancy, BuoyancyAuthoring, {
         .name = "buoyancy",
         .project = &project_buoyancy,
+        .validate = &validate_buoyancy,
         .attach = &attach_buoyancy,
     })!;
-    serial::register_described(Wind, { .name = "wind" })!;
-    serial::register_described(Force, { .name = "force" })!;
+    serial::register_described(Wind, { .name = "wind", .project = &project_wind, .validate = &validate_wind })!;
+    serial::register_described(Force, { .name = "force", .project = &project_force, .validate = &validate_force })!;
     serial::register_transient(RigidBody)!;
     serial::register_transient(Joint)!;
     register_cloth_codec()!;
@@ -99,13 +100,14 @@ fn void defaults_buoyancy_authoring(void* value) @private {
 
 fn void? project_body(void* component, void* value, serial::WriteContext* context) @private {
     PhysicsBody* body = component;
-    if (!body.colliders.len) return c3d::INVALID_ARGUMENT~;
+    if (!body.colliders.len || !body_authoring_valid(body.body)) return c3d::INVALID_ARGUMENT~;
     BodyAuthoring* authoring = value;
     *authoring = { .body = body.body, .colliders = body.colliders };
 }
 
 fn void? validate_body(void* value, serial::ReadContext* context) @private {
-    if (!((BodyAuthoring*)value).colliders.len) return c3d::INVALID_ARGUMENT~;
+    BodyAuthoring* source = value;
+    if (!source.colliders.len || !body_authoring_valid(source.body)) return c3d::INVALID_ARGUMENT~;
 }
 
 fn void? attach_body(void* value, serial::ReadContext* context) @private {
@@ -180,7 +182,13 @@ fn void? attach_joint(void* value, serial::ReadContext* context) @private {
 
 fn void? project_buoyancy(void* component, void* value, serial::WriteContext* context) @private {
     Buoyancy* buoyancy = component;
+    if (!buoyancy_authoring_valid(buoyancy.fluid_density, buoyancy.linear_drag)) return c3d::INVALID_ARGUMENT~;
     *(BuoyancyAuthoring*)value = { .fluid_density = buoyancy.fluid_density, .linear_drag = buoyancy.linear_drag };
+}
+
+fn void? validate_buoyancy(void* value, serial::ReadContext* context) @private {
+    BuoyancyAuthoring* source = value;
+    if (!buoyancy_authoring_valid(source.fluid_density, source.linear_drag)) return c3d::INVALID_ARGUMENT~;
 }
 
 fn void? attach_buoyancy(void* value, serial::ReadContext* context) @private {
