@@ -48,3 +48,23 @@ through `ReadContext.authored`. Reader-owned strings, arrays and scratch storage
 are released after attachment or failure; attachments copy retained values.
 A failed import removes the newly created subtree. A supplied diagnostic retains
 the JSON Pointer, source position, node record path and component name.
+
+## Container contract checks
+
+The text contract target injects failure at every reader acquisition starting from
+raw JSONC text: parser values/strings/key storage, graph ordering, component DTOs,
+cloned defaults and dynamic overlays. Rollback checks retain every existing node
+field, component values, asset counts, key identity and revisions. A separate
+attachment fault runs after an earlier owned component attaches and verifies its
+removal. Reader-owned allocations return to zero in both paths.
+
+Embedded subtrees use a caller-extracted source span; diagnostics are relative to
+that span. The container reader still requires exactly one document. Explicitly
+listed older text versions use current semantic defaults; unknown components are
+skipped only when requested, and their syntax remains validated. Mixed text and
+binary-only exports restore every retained component and omit only report entries.
+
+[Authored lookup measurements](serialization_lookup.md) record the large-document
+case and its independently confirmed baseline. Its explicit measurement target
+is excluded from the regular test suite; an untimed 64-node case checks lookups
+through both binary and text readers in the regular target.

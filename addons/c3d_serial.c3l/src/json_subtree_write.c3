@@ -63,7 +63,6 @@ fn String? write_subtree_json(
     JsonOutput output = { .writer = writer_over(bytes), .limits = options.limits };
     state.filling = true;
     emit_subtree_json(&context, &output, options)!;
-    if (output.writer.written() != bytes.len) return c3d::INVALID_ARGUMENT~;
     return (String)bytes;
 }
 
