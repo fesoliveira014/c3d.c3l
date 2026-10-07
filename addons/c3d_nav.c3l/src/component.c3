@@ -145,8 +145,7 @@ fn void? Scene.add_nav_source(
     char area = WALKABLE_AREA,
 ) {
     if (self.has(node, NavSource)) return SOURCE_EXISTS~;
-    if (area > WALKABLE_AREA) return c3d::INVALID_ARGUMENT~;
-    if (c3d::same_id(geometry, (GeometryId){}) && !self.has(node, scene::Mesh)) return c3d::INVALID_ARGUMENT~;
+    check_nav_source(geometry, area, self.has(node, scene::Mesh))!;
     self.add(node, (NavSource){ .geometry = geometry, .walkable = walkable, .area = area });
 }
 
@@ -175,16 +174,7 @@ fn uint Scene.add_nav_sources(&self, Node* root, char area = WALKABLE_AREA) {
 *>
 fn void? Scene.add_nav_volume(&self, Node* node, NavVolume volume) {
     if (self.has(node, NavVolume)) return VOLUME_EXISTS~;
-    if (volume.area > WALKABLE_AREA) return c3d::INVALID_ARGUMENT~;
-    switch (volume.kind) {
-        case BOX:
-            break;
-        case CONVEX:
-            if (volume.vert_count < 3 || volume.vert_count > MAX_VOLUME_VERTS) return c3d::INVALID_ARGUMENT~;
-            if (volume.min_y > volume.max_y) return c3d::INVALID_ARGUMENT~;
-        case CYLINDER:
-            if (volume.radius <= 0 || volume.height <= 0) return c3d::INVALID_ARGUMENT~;
-    }
+    check_nav_volume(&volume)!;
     volume.changed = false;
     self.add(node, volume);
 }
@@ -197,7 +187,7 @@ fn void? Scene.add_nav_volume(&self, Node* node, NavVolume volume) {
 *>
 fn void? Scene.add_nav_link(&self, Node* node, NavLink link) {
     if (self.has(node, NavLink)) return LINK_EXISTS~;
-    if (link.radius <= 0 || link.area >= MAX_AREAS || link.start == link.end) return c3d::INVALID_ARGUMENT~;
+    check_nav_link(&link)!;
     if (link.flags == 0) link.flags = POLY_FLAG_WALK;
     link.changed = false;
     self.add(node, link);
@@ -211,16 +201,7 @@ fn void? Scene.add_nav_link(&self, Node* node, NavLink link) {
 *>
 fn void? Scene.add_nav_obstacle(&self, Node* node, NavObstacle obstacle) {
     if (self.has(node, NavObstacle)) return OBSTACLE_EXISTS~;
-    switch (obstacle.kind) {
-        case CYLINDER:
-            if (obstacle.radius <= 0 || obstacle.height <= 0) return c3d::INVALID_ARGUMENT~;
-        case BOX:
-            Vec3 extent = obstacle.box.max - obstacle.box.min;
-            if (extent.x < 0 || extent.y < 0 || extent.z < 0) return c3d::INVALID_ARGUMENT~;
-        case ORIENTED_BOX:
-            Vec3 half = obstacle.half_extents;
-            if (half.x <= 0 || half.y <= 0 || half.z <= 0) return c3d::INVALID_ARGUMENT~;
-    }
+    check_nav_obstacle(&obstacle)!;
     obstacle.changed = false;
     self.add(node, obstacle);
 }
@@ -233,9 +214,7 @@ fn void? Scene.add_nav_obstacle(&self, Node* node, NavObstacle obstacle) {
 *>
 fn void? Scene.add_nav_agent(&self, Node* node, NavAgentParams params) {
     if (self.has(node, NavAgent)) return AGENT_EXISTS~;
-    if (params.radius < 0 || params.height <= 0 || params.max_speed < 0) return c3d::INVALID_ARGUMENT~;
-    if (params.query_filter_type >= MAX_CROWD_FILTERS) return c3d::INVALID_ARGUMENT~;
-    if (params.obstacle_avoidance_type >= MAX_AVOIDANCE_PARAMS) return c3d::INVALID_ARGUMENT~;
+    check_nav_agent_params(params)!;
     self.add(node, (NavAgent){ .params = params });
 }
 
@@ -292,4 +271,45 @@ fn void? register_nav(Scene* scene) {
     scene.register(NavLinkRuntime)!;
     scene.register(NavObstacleRuntime)!;
     scene.register(CrowdAgentRuntime)!;
+}
+
+fn void? check_nav_source(GeometryId geometry, char area, bool has_mesh) @private {
+    if (area > WALKABLE_AREA) return c3d::INVALID_ARGUMENT~;
+    if (c3d::same_id(geometry, (GeometryId){}) && !has_mesh) return c3d::INVALID_ARGUMENT~;
+}
+
+fn void? check_nav_volume(NavVolume* volume) @private {
+    if (volume.area > WALKABLE_AREA) return c3d::INVALID_ARGUMENT~;
+    switch (volume.kind) {
+        case BOX:
+            break;
+        case CONVEX:
+            if (volume.vert_count < 3 || volume.vert_count > MAX_VOLUME_VERTS) return c3d::INVALID_ARGUMENT~;
+            if (volume.min_y > volume.max_y) return c3d::INVALID_ARGUMENT~;
+        case CYLINDER:
+            if (volume.radius <= 0 || volume.height <= 0) return c3d::INVALID_ARGUMENT~;
+    }
+}
+
+fn void? check_nav_link(NavLink* link) @private {
+    if (link.radius <= 0 || link.area >= MAX_AREAS || link.start == link.end) return c3d::INVALID_ARGUMENT~;
+}
+
+fn void? check_nav_obstacle(NavObstacle* obstacle) @private {
+    switch (obstacle.kind) {
+        case CYLINDER:
+            if (obstacle.radius <= 0 || obstacle.height <= 0) return c3d::INVALID_ARGUMENT~;
+        case BOX:
+            Vec3 extent = obstacle.box.max - obstacle.box.min;
+            if (extent.x < 0 || extent.y < 0 || extent.z < 0) return c3d::INVALID_ARGUMENT~;
+        case ORIENTED_BOX:
+            Vec3 half = obstacle.half_extents;
+            if (half.x <= 0 || half.y <= 0 || half.z <= 0) return c3d::INVALID_ARGUMENT~;
+    }
+}
+
+fn void? check_nav_agent_params(NavAgentParams params) @private {
+    if (params.radius < 0 || params.height <= 0 || params.max_speed < 0) return c3d::INVALID_ARGUMENT~;
+    if (params.query_filter_type >= MAX_CROWD_FILTERS) return c3d::INVALID_ARGUMENT~;
+    if (params.obstacle_avoidance_type >= MAX_AVOIDANCE_PARAMS) return c3d::INVALID_ARGUMENT~;
 }
