@@ -22,7 +22,9 @@ python3 scripts/build.py --example vegetation
 ## Whole-object LOD
 
 Set `FoliageDesc.lod` to a borrowed `LodDesc*` to scatter [whole-object groups](lod.md).
-`add_foliage` copies the descriptor into runtime-owned storage. Each occupied cell
+`attach_foliage` copies the descriptor into authored component storage; preparation
+creates a separate frozen runtime copy. `add_foliage` performs both operations.
+Each occupied cell
 owns one instanced group with shared placements, tint, sway and fade across every
 part. The descriptor supplies geometry/material assets; plain `geometry` and
 `material` fields are used only when `lod` is null.
@@ -66,7 +68,7 @@ renderer.render_view(&scene, camera, view)!;
 ```
 
 - `register_foliage` runs once per scene. It registers `Foliage` and `FoliageRuntime` and installs the
-  runtime's remove hook.
+  authoring and runtime removal hooks.
 - `add_foliage` attaches a layer to an existing node without `Foliage` whose world matrix is current and holds
   a translation and a rotation about Y only (a `@require`). It checks the desc, scatters every cell and adds
   the cell nodes, all or nothing: a fault leaves the node, the scene, the store and the allocator as they were.
@@ -100,7 +102,7 @@ ground, the spacing and the seed are the application's. `add_foliage` checks eve
 | `fade` | Core's `InstanceFade`; zero is off, else `0 <= start < end` |
 | `cast_shadow`, `receive_shadow`, `trace` | Copied onto every cell's `InstancedMesh` |
 
-The desc is read by `add_foliage` only: `FoliageRuntime.desc` keeps the checked copy the cells follow, so an edit
+The desc is captured during preparation: `FoliageRuntime.desc` keeps the checked copy the cells follow, so an edit
 of `Foliage.desc` has no effect. To change a seed, a rule, the template, the fade or the shadow and trace flags,
 remove `Foliage`, call `update` and add the layer again.
 
@@ -188,12 +190,18 @@ The example's two layers show the intended settings:
 ## Removal
 
 Remove `Foliage` from a live node, or remove the node. Removing the node removes its cells first, then the
-runtime, whose hook frees the cell table. Removing only `Foliage` leaves the runtime until the next `update`,
+runtime, whose hook frees the cell table and runtime LOD copy. The `Foliage` hook frees its separate
+authoring LOD copy. Removing only `Foliage` leaves the runtime until the next `update`,
 which removes the layer's cell nodes and then the runtime before anything else. Removing `FoliageRuntime` or a
 cell node directly is not supported. The layer owns no assets; destroy the scene before the store.
 
 **Serialisation.** `Foliage` is authored, including its ground node reference; the cell nodes under a layer
-node and their `InstancedMesh` components are derived. Loading calls `add_foliage` with the stored desc.
+node and their `InstancedMesh` or `LodGroup` components are derived. `attach_foliage` validates and
+copies authoring without scattering cells. The ground must already carry `Terrain` authoring.
+`is_prepared` reports readiness; `prepare` and `prepare_subtree` require the ground terrain to be
+prepared first, otherwise returning `terrain::NOT_PREPARED`. Ordinary updates skip pending foliage, which
+produces no generated draws. See the [landscape preparation contract](../addons/c3d_landscape.c3l/README.md#pending-authoring-and-preparation).
+The copied authoring LOD pointer and its slices remain library-owned; do not replace or free them.
 
 ## Budgets
 
@@ -226,6 +234,7 @@ node and their `InstancedMesh` components are derived. Loading calls `add_foliag
 | `register_foliage` | `c3d::CAPACITY_EXCEEDED` | No component type slot left |
 | `add_foliage` | `c3d::INVALID_ARGUMENT` | A desc value outside its rule (NaN included) or more than `MAX_CELLS_PER_SIDE` cells per side |
 | `add_foliage` | `c3d::INVALID_ID` | Dead geometry or material |
+| `add_foliage`, `prepare`, `prepare_subtree` | `terrain::NOT_PREPARED` | Ground authoring exists but its runtime is pending; prepare terrain and retry |
 | `add_foliage`, `update` | `c3d::INVALID_ID` | Ground dead or without `Terrain`; density map dead; ground height map dead |
 | `add_foliage`, `update` | `c3d::UNSUPPORTED` | Density map not `RGBA8_UNORM`, not a `MIP_ZERO` source, or layered, 3D or cube; ground height map as `terrain::height_view` |
 | `add_foliage`, `update` | `c3d::INVALID_ARGUMENT` | Density pixel bytes not `width × height × 4` (a released CPU copy included); ground height map as `terrain::height_view` |
@@ -382,3 +391,5 @@ layer move or a ground move would cost at run time; the example has none of them
 re-places only the cells it reaches, well under a millisecond. A gusting wind costs one sway store per cell,
 2 to 4 ns each. At 2049 the peak batch slots were 32 against 49 with grass alone, 85 against 130 with a
 250 m tree fade and 340 against 449 with 600 m.
+
+Preparation order and pending draw behavior are listed in the [owner readiness table](owner_readiness.md).

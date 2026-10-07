@@ -202,7 +202,11 @@ added to the store by the first `add_terrain` and live as long as the store. Des
 the scene, then the store.
 
 **Serialisation.** `Terrain` is the authored component; `TerrainRuntime` and the terrain's `InstancedMesh` are
-derived. Loading calls `add_terrain` with the stored desc.
+derived. `attach_terrain` attaches validated authoring without generating either.
+Use `is_prepared`, `prepare` or `prepare_subtree` to complete pending terrain;
+ordinary updates skip it until preparation succeeds. A pending terrain produces
+no generated draws. The [landscape preparation contract](../addons/c3d_landscape.c3l/README.md#pending-authoring-and-preparation)
+defines retries, subtree selection and ownership.
 
 ## Picking
 
@@ -350,3 +354,5 @@ The still segment uploads nothing after its first frame and the hover segment sw
 first second. A sweep frame that re-selects uploads 128 B per chunk (up to 21 KiB at 2049, 31 KiB at 4097). A
 stamp frame's update, bounds refresh included, stays under 0.13 ms; the whole-texture re-upload and the
 physics re-cook are the costs of an edit.
+
+Preparation order and pending draw behavior are listed in the [owner readiness table](owner_readiness.md).

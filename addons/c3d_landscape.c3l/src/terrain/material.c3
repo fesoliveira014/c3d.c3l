@@ -51,7 +51,8 @@ fn uint? check_terrain_desc(AssetStore* assets, TerrainDesc* desc) @private {
 }
 
 // One shader per store: every terrain shares its pipelines.
-fn ShaderId? terrain_shader(AssetStore* assets) @private {
+fn ShaderId? terrain_shader(AssetStore* assets, bool* created = null) @private {
+    if (created) *created = false;
     if (try found = assets.find_shader(SHADER_KEY)) return found;
     ShaderDesc desc = {
         .fragment         = landscape::TERRAIN_FRAGMENT_SPIRV[..],
@@ -70,17 +71,21 @@ fn ShaderId? terrain_shader(AssetStore* assets) @private {
         },
         .param_block_size = TerrainParams::size,
     };
-    return assets.add_shader(&desc, SHADER_KEY);
+    ShaderId shader = assets.add_shader(&desc, SHADER_KEY)!;
+    if (created) *created = true;
+    return shader;
 }
 
 // One grid per store: CHUNK_CELLS is fixed, so every terrain draws the same chunk.
-fn GeometryId? terrain_grid(AssetStore* assets) @private {
+fn GeometryId? terrain_grid(AssetStore* assets, bool* created = null) @private {
+    if (created) *created = false;
     if (try found = assets.find_geometry(GRID_KEY)) return found;
     GeometryId grid;
     @pool() {
         Geometry geometry = grid_geometry(tmem);
         grid = assets.add_geometry(&geometry, GRID_KEY)!;
     };
+    if (created) *created = true;
     return grid;
 }
 

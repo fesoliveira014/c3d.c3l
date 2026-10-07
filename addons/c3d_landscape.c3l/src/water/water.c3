@@ -84,7 +84,7 @@ struct Water {
  Checked desc, material, grid, mirror camera and clip plane of a water body, written by the library.
 *>
 struct WaterRuntime {
-    WaterDesc      desc;              // as add_water or set_desc checked it; later Water edits never reach it
+    WaterDesc      desc;              // checked preparation or set_desc snapshot; later Water edits never reach it
     MaterialId     material;          // owned; removed with the runtime
     GeometryId     grid;              // the built grid, shared per store key, or the desc's geometry
     Entity         mirror;            // root camera node; removed by update once the water is gone
@@ -150,9 +150,68 @@ fn void? add_water(
     Node* node,
     WaterDesc desc,
 ) {
+    attach_water(
+        scene: scene,
+        assets: assets,
+        node: node,
+        desc: desc,
+    )!;
+    defer catch scene.remove_component(node, Water);
+    return prepare(scene, assets, node);
+}
+
+<*
+ Attach validated water authoring without generating draw resources.
+ @param [&inout] scene : "Registered with register_water."
+ @param [&in] assets : "Resolves authored references; unchanged."
+ @param [&in] node : "Receives the pending water component."
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT
+ @require scene.world.is_registered(WaterRuntime)
+ @require !scene.has(node, Mesh) && !scene.has(node, Water) && !scene.has(node, WaterRuntime)
+*>
+fn void? attach_water(
+    Scene* scene,
+    AssetStore* assets,
+    Node* node,
+    WaterDesc desc,
+) {
     check_desc(assets, &desc)!;
-    ShaderId shader = water_shader(assets)!;
-    GeometryId surface = desc.geometry.generation ? desc.geometry : water_grid(assets, desc.extent, desc.cell_size)!;
+    scene.add(node, (Water){ .desc = desc });
+}
+
+<*
+ Whether the separate water runtime component is present.
+ @param [&in] scene : "Contains authoring and optional runtime components."
+ @param [&in] node : "Carries Water."
+ @require scene.has(node, Water)
+*>
+fn bool is_prepared(Scene* scene, Node* node) => scene.has(node, WaterRuntime);
+
+<*
+ Prepare pending water atomically; prepared water is unchanged.
+ @param [&inout] scene : "Registered; node world matrix current."
+ @param [&inout] assets : "The store given to register_water."
+ @param [&in] node : "Carries Water."
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @require scene.has(node, Water)
+*>
+fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
+    if (is_prepared(scene, node)) return;
+    WaterDesc desc = scene.get(node, Water).desc;
+    check_desc(assets, &desc)!;
+    bool shader_created, grid_created;
+    ShaderId shader = water_shader(assets, &shader_created)!;
+    defer catch if (shader_created) assets.remove_shader(shader);
+    GeometryId surface = desc.geometry;
+    if (!surface.generation) {
+        surface = water_grid(
+            assets: assets,
+            extent: desc.extent,
+            cell_size: desc.cell_size,
+            created: &grid_created,
+        )!;
+    }
+    defer catch if (grid_created) assets.remove_geometry(surface);
     WaterParams params = pack_params(&desc, {});
     MaterialId owned = assets.add_material(material::custom(
         shader:      shader,
@@ -171,7 +230,6 @@ fn void? add_water(
         .has_bounds_override = true,
         .local_bounds        = drawn_bounds(rest, &desc),
     });
-    scene.add(node, (Water){ .desc = desc });
     scene.add(node, (WaterRuntime){
         .desc       = desc,
         .material   = owned,
@@ -181,6 +239,29 @@ fn void? add_water(
         .rest_min   = { rest.min.x, rest.min.z },
         .rest_max   = { rest.max.x, rest.max.z },
     });
+}
+
+<*
+ Prepare every pending water in a subtree, retaining successful owners.
+ @param [&inout] scene : "Registered; prepared owners remain unchanged."
+ @param [&inout] assets : "Receives generated resources during preparation."
+ @param [in] root : "Null selects the scene root; root is included."
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+*>
+fn void? prepare_subtree(Scene* scene, AssetStore* assets, Node* root = null) {
+    if (!root) root = scene.root;
+    fault failure;
+    scene.@each(Water; entity, owner) {
+        Node* node = scene.node(entity);
+        Node* ancestor = node;
+        while (ancestor && ancestor != root) ancestor = ancestor.parent;
+        if (ancestor) {
+            if (catch excuse = prepare(scene, assets, node)) {
+                if (!failure) failure = excuse;
+            }
+        }
+    };
+    if (failure) return failure~;
 }
 
 <*
@@ -246,7 +327,7 @@ fn void set_reflection_target(
 <*
  Place every mirror camera for the viewing camera and scroll the ripples with the wind.
  Invalidates Mesh and WaterRuntime pointers when a Water was removed.
- @param [&inout] scene : "Water nodes' world matrices current."
+ @param [&inout] scene : "World matrices current; pending water is skipped unchanged."
  @param [&inout] assets : "The store given to register_water."
  @param viewing_camera : "Root node carrying the Camera the mirrors reflect."
  @param wind_velocity : "World metres per second; zero is calm."

@@ -548,3 +548,102 @@ fn void test_removed_water_releases_material_and_mirror() @test {
     assert(!fixture.scene.world.is_alive(second_runtime.mirror));
     assert(fixture.assets.geometries.is_live(second_runtime.grid));
 }
+
+fn void test_pending_water_rolls_back_caches_and_preserves_prepared_owners() @test {
+    Fixture fixture;
+    fixture.assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&fixture.assets);
+    fixture.scene = scene::create_scene(mem, { .max_nodes = 5 });
+    defer scene::destroy_scene(&fixture.scene);
+    water::register_water(&fixture.scene, &fixture.assets)!!;
+    fixture.camera = fixture.scene.add_camera(camera::perspective_deg(60, 0.1f))!!;
+    Node* first = fixture.scene.add_node()!!;
+    Node* second = fixture.scene.add_node()!!;
+    Node* first_blocker = fixture.scene.add_node()!!;
+    Node* second_blocker = fixture.scene.add_node()!!;
+    WaterDesc desc = calm_desc();
+    desc.extent = 10;
+    uint free_nodes = fixture.scene.world.entities.free_count;
+    uint free_geometry = fixture.assets.geometries.free_count;
+    uint free_shaders = fixture.assets.shaders.free_count;
+    uint free_materials = fixture.assets.materials.free_count;
+    water::attach_water(
+        scene: &fixture.scene,
+        assets: &fixture.assets,
+        node: first,
+        desc: desc,
+    )!!;
+    water::attach_water(
+        scene: &fixture.scene,
+        assets: &fixture.assets,
+        node: second,
+        desc: desc,
+    )!!;
+    assert(fixture.scene.count(Mesh) == 0 && fixture.scene.count(WaterMirror) == 0);
+    assert(fixture.scene.world.entities.free_count == free_nodes);
+    assert(fixture.assets.materials.free_count == free_materials);
+    fixture.scene.update_world();
+    try_update(&fixture)!!;
+    assert(fixture.scene.count(Mesh) == 0);
+
+    assert(@catch(water::prepare(&fixture.scene, &fixture.assets, first)) == c3d::CAPACITY_EXCEEDED);
+    assert(!water::is_prepared(&fixture.scene, first));
+    assert(fixture.assets.geometries.free_count == free_geometry && fixture.assets.shaders.free_count == free_shaders);
+    assert(fixture.assets.materials.free_count == free_materials);
+    assert(fixture.scene.get(first, Water).desc.extent == desc.extent);
+    fixture.scene.remove(first_blocker);
+    assert(@catch(water::prepare_subtree(&fixture.scene, &fixture.assets)) == c3d::CAPACITY_EXCEEDED);
+    assert(water::is_prepared(&fixture.scene, first) && !water::is_prepared(&fixture.scene, second));
+    WaterRuntime before = *fixture.scene.get(first, WaterRuntime);
+    try_update(&fixture)!!;
+    assert(fixture.scene.has(first, Mesh) && !fixture.scene.has(second, Mesh));
+    assert(fixture.scene.world.is_alive(before.mirror));
+
+    fixture.scene.remove(second_blocker);
+    water::prepare(&fixture.scene, &fixture.assets, second)!!;
+    free_geometry = fixture.assets.geometries.free_count;
+    free_materials = fixture.assets.materials.free_count;
+    water::prepare_subtree(&fixture.scene, &fixture.assets)!!;
+    assert(fixture.assets.geometries.free_count == free_geometry && fixture.assets.materials.free_count == free_materials);
+    assert(c3d::same_id(fixture.scene.get(first, WaterRuntime).mirror, before.mirror));
+    assert(c3d::same_id(fixture.scene.get(first, WaterRuntime).material, before.material));
+    assert(fixture.scene.count(Mesh) == 2 && fixture.scene.count(WaterMirror) == 2);
+    try_update(&fixture)!!;
+}
+
+fn void test_water_eager_failure_and_pending_removal_leave_no_owned_resources() @test {
+    TrackingAllocator tracking;
+    tracking.init(mem);
+    defer tracking.free();
+    Fixture fixture;
+    fixture.assets = asset::create_asset_store(&tracking, asset::default_asset_store_desc());
+    fixture.scene = scene::create_scene(&tracking, { .max_nodes = 2 });
+    water::register_water(&fixture.scene, &fixture.assets)!!;
+    fixture.camera = fixture.scene.add_camera(camera::perspective_deg(60, 0.1f))!!;
+    Node* node = fixture.scene.add_node()!!;
+    fixture.scene.update_world();
+    WaterDesc desc = calm_desc();
+    desc.extent = 10;
+    uint free_geometry = fixture.assets.geometries.free_count;
+    uint free_shaders = fixture.assets.shaders.free_count;
+    uint free_materials = fixture.assets.materials.free_count;
+    uint free_nodes = fixture.scene.world.entities.free_count;
+    assert(@catch(try_add(&fixture, node, desc)) == c3d::CAPACITY_EXCEEDED);
+    assert(!fixture.scene.has(node, Water) && !fixture.scene.has(node, WaterRuntime));
+    assert(!fixture.scene.has(node, Mesh) && fixture.scene.count(WaterMirror) == 0);
+    assert(fixture.assets.geometries.free_count == free_geometry && fixture.assets.shaders.free_count == free_shaders);
+    assert(fixture.assets.materials.free_count == free_materials && fixture.scene.world.entities.free_count == free_nodes);
+    sz bytes = tracking.allocated();
+    water::attach_water(
+        scene: &fixture.scene,
+        assets: &fixture.assets,
+        node: node,
+        desc: desc,
+    )!!;
+    assert(!water::is_prepared(&fixture.scene, node) && tracking.allocated() == bytes);
+    fixture.scene.remove_component(node, Water);
+    assert(!fixture.scene.has(node, Water) && !fixture.scene.has(node, WaterRuntime));
+    assert(!fixture.scene.has(node, Mesh) && tracking.allocated() == bytes);
+    teardown(&fixture);
+    assert(!tracking.has_leaks());
+}

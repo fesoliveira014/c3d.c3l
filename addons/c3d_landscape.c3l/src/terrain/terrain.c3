@@ -132,11 +132,62 @@ fn void? add_terrain(
     Node* node,
     TerrainDesc desc,
 ) {
+    attach_terrain(
+        scene: scene,
+        assets: assets,
+        node: node,
+        desc: desc,
+    )!;
+    defer catch scene.remove_component(node, Terrain);
+    return prepare(scene, assets, node);
+}
+
+<*
+ Attach validated terrain authoring without generating draw resources.
+ @param [&inout] scene : "Registered with register_terrain."
+ @param [&in] assets : "Resolves authored references; unchanged."
+ @param [&in] node : "Receives the pending terrain component."
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED
+ @require scene.world.is_registered(TerrainRuntime)
+ @require !scene.has(node, InstancedMesh) && !scene.has(node, Terrain)
+*>
+fn void? attach_terrain(
+    Scene* scene,
+    AssetStore* assets,
+    Node* node,
+    TerrainDesc desc,
+) {
+    check_terrain_desc(assets, &desc)!;
+    scene.add(node, (Terrain){ .desc = desc });
+}
+
+<*
+ Whether the separate terrain runtime component is present.
+ @param [&in] scene : "Contains authoring and optional runtime components."
+ @param [&in] node : "Carries Terrain."
+ @require scene.has(node, Terrain)
+*>
+fn bool is_prepared(Scene* scene, Node* node) => scene.has(node, TerrainRuntime);
+
+<*
+ Prepare a pending terrain atomically; prepared terrain is unchanged.
+ @param [&inout] scene : "Registered with register_terrain."
+ @param [&inout] assets : "The store given to register_terrain."
+ @param [&in] node : "Carries Terrain."
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED
+ @require scene.has(node, Terrain)
+*>
+fn void? prepare(Scene* scene, AssetStore* assets, Node* node) {
+    if (is_prepared(scene, node)) return;
+    TerrainDesc desc = scene.get(node, Terrain).desc;
     uint layer_count = check_terrain_desc(assets, &desc)!;
     TextureAsset* height_map = assets.texture(desc.height_map);
     uint texels = height_map.desc.width;
-    ShaderId shader = terrain_shader(assets)!;
-    GeometryId grid = terrain_grid(assets)!;
+    bool shader_created, grid_created;
+    ShaderId shader = terrain_shader(assets, &shader_created)!;
+    defer catch if (shader_created) assets.remove_shader(shader);
+    GeometryId grid = terrain_grid(assets, &grid_created)!;
+    defer catch if (grid_created) assets.remove_geometry(grid);
     MaterialId owned = add_terrain_material(
         assets:      assets,
         shader:      shader,
@@ -165,8 +216,30 @@ fn void? add_terrain(
     )!;
 
     scene.add(node, batch);
-    scene.add(node, (Terrain){ .desc = desc });
     scene.add(node, runtime);
+}
+
+<*
+ Prepare every pending terrain in a subtree, retaining successful owners.
+ @param [&inout] scene : "Registered; prepared owners remain unchanged."
+ @param [&inout] assets : "Receives generated resources during preparation."
+ @param [in] root : "Null selects the scene root; root is included."
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
+*>
+fn void? prepare_subtree(Scene* scene, AssetStore* assets, Node* root = null) {
+    if (!root) root = scene.root;
+    fault failure;
+    scene.@each(Terrain; entity, owner) {
+        Node* node = scene.node(entity);
+        Node* ancestor = node;
+        while (ancestor && ancestor != root) ancestor = ancestor.parent;
+        if (ancestor) {
+            if (catch excuse = prepare(scene, assets, node)) {
+                if (!failure) failure = excuse;
+            }
+        }
+    };
+    if (failure) return failure~;
 }
 
 <*
@@ -190,7 +263,7 @@ fn void mark_dirty(Scene* scene, Node* node, TexelRect rect) {
 <*
  Refresh changed bounds and select every terrain's chunks for one camera.
  Invalidates InstancedMesh and TerrainRuntime pointers when a Terrain was removed.
- @param [&inout] scene : "Every terrain in it is refreshed and selected."
+ @param [&inout] scene : "Pending terrains are skipped; their authoring is unchanged."
  @param [&inout] assets : "The store given to register_terrain."
  @param [&in] camera_node : "Carries a Camera; world matrices current."
  @param output_height_pixels : "Height of the output the thresholds are tuned for."
