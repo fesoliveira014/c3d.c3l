@@ -127,11 +127,12 @@ with `destroy_serial_diagnostic` after use.
 
 `serial_core_policy_test` runs separately from application fixture tests and is
 included in `scripts/build.py --test`. It registers the currently supported core
-set without constructing a Scene, then walks every assigned ECS slot and requires
-exactly one described, custom-codec or transient policy and one expected-table
-entry. Both repeated registration and automatic prerequisites are checked.
+set without constructing a Scene and verifies automatic prerequisites and repeated
+registration. It then creates a Scene and walks every assigned ECS slot. Every slot
+must have exactly one described, custom-codec or transient policy matching the
+expected table, or no policy and one explicit `PENDING_CORE_POLICIES` entry.
+Any unclassified core component fails immediately.
 
-Each adapter addition extends that table in the same change. Once all core policies
-are present, Scene creation will precede the inventory check so a newly introduced
-built-in component cannot silently escape the policy list. Unimplemented types are
-not marked transient to satisfy the test.
+Each adapter addition moves its types from pending to expected in the same change.
+The pending list becomes empty when all core policies are implemented and is then
+removed. Unimplemented types are never marked transient to satisfy the test.
