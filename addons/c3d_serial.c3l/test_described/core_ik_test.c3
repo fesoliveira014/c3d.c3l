@@ -105,3 +105,49 @@ fn void test_ik_authoring_rebinds_joints_and_resets_foot_contacts_in_both_encodi
         }
     };
 }
+
+fn void test_retargeted_look_and_ik_pole_preserve_live_nodes_in_reused_model_slots() @test {
+    @pool() {
+        Fixture fixture;
+        create_fixture(&fixture);
+        defer destroy_fixture(&fixture);
+        serial::register_core_codecs()!!;
+        ModelId model_id = graph_model(&fixture);
+        Node* source = model::instantiate(&fixture.assets, &fixture.source, model_id)!!;
+        ModelInstance* instance = fixture.source.get(source, ModelInstance);
+        Node* hip = instance.present_node(0);
+        Node* knee = instance.present_node(2);
+        Node* ankle = instance.present_node(3);
+        knee.local.position = { 0, -1, 0 };
+        ankle.local.position = { 0, -1, 0 };
+        Node* removed = instance.present_node(1);
+        LookAt* look = fixture.source.add(source, ik::look_at({ hip }, removed, { 0, -1, 0 }));
+        IkChain* chain = fixture.source.add(source, ik::ik_chain(
+            root: hip, middle: knee, end: ankle, target: instance.present_node(5), pole: removed,
+        ));
+        fixture.source.remove(removed);
+        Node* replacement = fixture.source.add_node(source, "replacement")!!;
+        assert(replacement == removed && instance.present_node(1) == null);
+        replacement.local.position = { 1, -1, 1 };
+        look.target = replacement;
+        chain.pole = replacement;
+        fixture.source.update_world();
+        char[] bytes = serial::write_subtree(
+            allocator: tmem, scene: &fixture.source, assets: &fixture.assets, root: source,
+        )!!;
+        String text = serial::write_subtree_text(
+            allocator: tmem, scene: &fixture.source, assets: &fixture.assets, root: source,
+        )!!;
+        for (uint encoding = 0; encoding < 2; encoding++) {
+            Node* restored = encoding == 0
+              ? serial::read_subtree(&fixture.destination, &fixture.assets, bytes)!!
+              : serial::read_subtree_text(&fixture.destination, &fixture.assets, text)!!;
+            Node* loaded_replacement = child_named(restored, "replacement");
+            assert(fixture.destination.get(restored, ModelInstance).present_node(1) == null);
+            assert(fixture.destination.get(restored, LookAt).target == loaded_replacement);
+            assert(fixture.destination.get(restored, IkChain).pole == loaded_replacement);
+            fixture.destination.remove(restored);
+        }
+        assert(look.target == replacement && chain.pole == replacement && instance.present_node(1) == null);
+    };
+}

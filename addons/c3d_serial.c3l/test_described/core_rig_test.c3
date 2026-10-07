@@ -308,3 +308,72 @@ fn void test_skin_joint_count_matches_reader_domain_and_copy_failure_attaches_no
         assert(original_joints[0] == instance.present_node(2) && original_joints[1] == instance.present_node(3));
     };
 }
+fn void test_model_signature_checks_earlier_duplicate_mesh_and_skin_slots() @test {
+    @pool() {
+        Fixture fixture;
+        create_fixture(&fixture);
+        defer destroy_fixture(&fixture);
+        serial::register_core_codecs()!!;
+        ModelId model_id = gltf::load_model(&fixture.assets, skin_fixture_path())!!;
+        Node* source = model::instantiate(&fixture.assets, &fixture.source, model_id)!!;
+        ModelInstance* instance = fixture.source.get(source, ModelInstance);
+        ModelTemplate* template = &fixture.assets.model(model_id).data;
+        ModelMesh mesh = template.meshes[0];
+        alloc::free(mem, template.meshes.ptr);
+        template.meshes = alloc::new_array(mem, ModelMesh, 2);
+        template.meshes[..] = mesh;
+        template.meshes[1].default_morph_weights = alloc::clone_slice(mem, mesh.default_morph_weights);
+        ModelSkin skin = template.skins[0];
+        alloc::free(mem, template.skins.ptr);
+        template.skins = alloc::new_array(mem, ModelSkin, 2);
+        template.skins[..] = skin;
+        template.skins[1].joint_nodes = alloc::clone_slice(mem, skin.joint_nodes);
+        alloc::free(mem, instance.mesh_nodes.ptr);
+        instance.mesh_nodes = alloc::new_array(mem, uint, 2);
+        instance.mesh_nodes[..] = mesh.node;
+        float[] first_weights = instance.base_morph_weights[0];
+        alloc::free(mem, instance.base_morph_weights.ptr);
+        instance.base_morph_weights = alloc::new_array(mem, float[], 2);
+        instance.base_morph_weights[0] = first_weights;
+        instance.base_morph_weights[1] = alloc::clone_slice(mem, first_weights);
+        MaterialId changed_material = fixture.assets.add_material({}, "earlier-slot")!!;
+        char[] bytes = serial::write_subtree(
+            allocator: tmem, scene: &fixture.source, assets: &fixture.assets, root: source,
+        )!!;
+        String text = serial::write_subtree_text(
+            allocator: tmem, scene: &fixture.source, assets: &fixture.assets, root: source,
+        )!!;
+        SerialDiagnostic diagnostic = serial::create_serial_diagnostic(mem);
+        defer serial::destroy_serial_diagnostic(&diagnostic);
+        ReadOptions options = serial::READ_OPTIONS_DEFAULT;
+        options.diagnostic = &diagnostic;
+        for (uint changed = 0; changed < 2; changed++) {
+            template.meshes[0].material = changed == 0 ? changed_material : mesh.material;
+            template.skins[0].joint_nodes[0] = changed == 0 ? 2 : 3;
+            assert(c3d::same_id(template.meshes[1].material, mesh.material));
+            assert(template.skins[1].joint_nodes[0] == 2);
+            for (uint encoding = 0; encoding < 2; encoding++) {
+                Node*? result = encoding == 0
+                  ? serial::read_subtree(
+                      scene: &fixture.destination, assets: &fixture.assets, bytes: bytes, options: options,
+                  )
+                  : serial::read_subtree_text(
+                      scene: &fixture.destination, assets: &fixture.assets, text: text, options: options,
+                  );
+                assert(@catch(result) == serial::INCOMPATIBLE_TEMPLATE);
+                assert(diagnostic.model_key == skin_fixture_path() && diagnostic.template_index == 1);
+                assert(diagnostic.type_name == "c3d.ModelInstance" && fixture.destination.root.first_child == null);
+            }
+        }
+        template.skins[0].joint_nodes[0] = 2;
+        for (uint encoding = 0; encoding < 2; encoding++) {
+            Node* restored = encoding == 0
+              ? serial::read_subtree(&fixture.destination, &fixture.assets, bytes)!!
+              : serial::read_subtree_text(&fixture.destination, &fixture.assets, text)!!;
+            ModelInstance* loaded = fixture.destination.get(restored, ModelInstance);
+            assert(loaded.mesh_nodes.len == 2 && loaded.base_morph_weights.len == 2);
+            assert(loaded.base_morph_weights[0][0] == mesh.default_morph_weights[0]);
+            fixture.destination.remove(restored);
+        }
+    };
+}

@@ -9,7 +9,7 @@ import c3d::scene;
 import c3d::serial @public;
 
 const typeid[*] PENDING_CORE_POLICIES @private = {
-    Animator::typeid, AnimatedCrowd::typeid,
+    AnimatedCrowd::typeid,
 };
 
 struct ExpectedPolicy @private {
@@ -23,7 +23,7 @@ struct ExpectedPolicy @private {
 fn void test_every_registered_core_component_has_one_expected_policy() @test {
     assert(ecs::registered_type_count == 0);
     serial::register_core_codecs()!!;
-    ExpectedPolicy[16] expected = {
+    ExpectedPolicy[17] expected = {
         { .slot = ecs::assigned_slot(Mesh)!!, .name = "c3d.Mesh",
             .identity = Mesh::typeid, .component_description = true },
         { .slot = ecs::assigned_slot(Camera)!!, .name = "c3d.Camera",
@@ -55,6 +55,8 @@ fn void test_every_registered_core_component_has_one_expected_policy() @test {
             .identity = FootAuthoring::typeid, .phase = REFERENCES },
         { .slot = ecs::assigned_slot(LookAt)!!, .name = "c3d.LookAt",
             .identity = LookAuthoring::typeid, .phase = REFERENCES },
+        { .slot = ecs::assigned_slot(Animator)!!, .name = "c3d.Animator",
+            .identity = AnimatorAuthoring::typeid, .phase = OWNER },
     };
     assert(ecs::registered_type_count == expected.len);
     serial::register_core_codecs()!!;

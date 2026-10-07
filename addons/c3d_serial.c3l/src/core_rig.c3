@@ -105,8 +105,27 @@ fn void? project_skin(void* component, void* value, WriteContext* context) @loca
     if (skin.joints.len != skeleton.data.parents.len) return c3d::INVALID_ARGUMENT~;
     NodeReference[] joints = alloc::new_array_try(tmem, NodeReference, skin.joints.len)
       ?? c3d::CAPACITY_EXCEEDED~!;
-    foreach (index, joint : skin.joints) joints[index] = context.make_node_reference(joint, true)!;
+    foreach (index, joint : skin.joints) joints[index] = make_skin_reference(context, joint)!;
     *(SkinAuthoring*)value = { .skeleton = skin.skeleton, .joints = joints };
+}
+
+fn NodeReference? make_skin_reference(WriteContext* context, Node* node) @local {
+    if (!node) return c3d::INVALID_ID~;
+    context.scene.@each(ModelInstance; entity, instance) {
+        foreach (usz index, captured : instance.node_entities) {
+            if (!captured.generation || &context.scene.nodes[captured.index] != node) continue;
+            if (!instance.present_node(index)) {
+                return model_diagnostic(
+                    diagnostic: context.diagnostic,
+                    assets: context.assets,
+                    model: instance.source,
+                    index: (uint)index,
+                    cause: c3d::INVALID_ID,
+                )~;
+            }
+        }
+    };
+    return context.make_node_reference(node, true);
 }
 
 fn void? validate_skin(void* value, ReadContext* context) @local {
