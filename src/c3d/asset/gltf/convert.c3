@@ -64,7 +64,8 @@ fn TextureId? texture_for(Importer* importer, gltf::Texture* texture, bool srgb)
     TextureId[] table = srgb ? importer.srgb_textures : importer.linear_textures;
     if (!c3d::same_id(table[image_index], (TextureId){})) return table[image_index];
 
-    char[] encoded = image_bytes(importer, texture.image)!;
+    char[] encoded = importer.source ? importer.source.images[image_index].encoded : (char[]){};
+    if (!encoded.len) encoded = image_bytes(importer, texture.image)!;
     image::Image decoded = image::decode_image(importer.allocator, encoded)!;
     defer catch image::destroy_image(&decoded);
     if (decoded.format != RGBA8_UNORM) return c3d::ASSET_FORMAT_ERROR~;
@@ -78,6 +79,12 @@ fn TextureId? texture_for(Importer* importer, gltf::Texture* texture, bool srgb)
     String key = string::tformat("%s#image/%d/%s", importer.key, image_index, srgb ? "srgb" : "linear");
     TextureId id = importer.document.push_texture(desc, decoded.pixels, key);
     table[image_index] = id;
+    if (importer.source) {
+        retain_source_image(importer, image_index, encoded);
+        usz count = importer.source.texture_images.len;
+        importer.source.texture_images = importer.source.texture_images.ptr[:count + 1];
+        importer.source.texture_images[count] = image_index;
+    }
     return id;
 }
 

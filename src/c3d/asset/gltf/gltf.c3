@@ -9,16 +9,6 @@ const String MEMORY_PLACEHOLDER_NAME @private = "model.gltf"; // buffers resolve
 const usz COLOR_SPACES_PER_IMAGE @private = 2; // an image may be read as sRGB color and as linear data
 
 const String[] SUPPORTED_EXTENSIONS @private = {
-    "KHR_materials_clearcoat",
-    "KHR_materials_sheen",
-    "KHR_materials_transmission",
-    "KHR_materials_volume",
-    "KHR_materials_ior",
-    "KHR_materials_specular",
-    "KHR_materials_anisotropy",
-    "KHR_materials_emissive_strength",
-    "KHR_materials_unlit",
-    "KHR_texture_transform",
     "KHR_lights_punctual",
     "KHR_mesh_quantization",
     "MSFT_lod",
@@ -42,6 +32,7 @@ struct Importer @private {
     usz[]         node_remap;
     ModelTemplate template;
     ModelDocument document;
+    SourceRecord* source;
 }
 
 <*
@@ -97,6 +88,22 @@ fn ModelDocument? decode_model(
     String path,
     LoadOptions options = asset::LOAD_OPTIONS_DEFAULT,
 ) {
+    return decode_file(
+        allocator: allocator,
+        path: path,
+        options: options,
+        source: null,
+        diagnostic: null,
+    );
+}
+
+fn ModelDocument? decode_file(
+    Allocator allocator,
+    String path,
+    LoadOptions options,
+    SourceRecord* source,
+    SourceDiagnostic* diagnostic,
+) @private {
     gltf::Data* data = parse_document(path)!;
     defer gltf::free(data);
     prepare_document(data, path)!;
@@ -108,10 +115,18 @@ fn ModelDocument? decode_model(
     )!;
     defer free_tables(&importer);
     defer catch discard(&importer);
+    SourceRecord record;
+    if (source) {
+        record = create_source_record(&importer);
+        importer.source = &record;
+    }
+    defer catch if (source) destroy_source_record(&record);
     @pool() {
         importer.base_dir = path.path_tdirname() ?? "";
         convert_model(&importer)!;
+        if (source) finish_source_record(&importer, diagnostic)!;
     };
+    if (source) *source = record;
     return importer.document;
 }
 
@@ -130,6 +145,26 @@ fn ModelDocument? decode_model_memory(
     String key,
     LoadOptions options = asset::LOAD_OPTIONS_DEFAULT,
 ) {
+    return decode_memory(
+        allocator: allocator,
+        bytes: bytes,
+        base_dir: base_dir,
+        key: key,
+        options: options,
+        source: null,
+        diagnostic: null,
+    );
+}
+
+fn ModelDocument? decode_memory(
+    Allocator allocator,
+    char[] bytes,
+    String base_dir,
+    String key,
+    LoadOptions options,
+    SourceRecord* source,
+    SourceDiagnostic* diagnostic,
+) @private {
     gltf::Data* data = parse_bytes(bytes)!;
     defer gltf::free(data);
     @pool() {
@@ -144,9 +179,17 @@ fn ModelDocument? decode_model_memory(
     importer.base_dir = base_dir;
     defer free_tables(&importer);
     defer catch discard(&importer);
+    SourceRecord record;
+    if (source) {
+        record = create_source_record(&importer);
+        importer.source = &record;
+    }
+    defer catch if (source) destroy_source_record(&record);
     @pool() {
         convert_model(&importer)!;
+        if (source) finish_source_record(&importer, diagnostic)!;
     };
+    if (source) *source = record;
     return importer.document;
 }
 
@@ -250,6 +293,7 @@ fn fault load_fault(fault excuse) @private {
 }
 
 fn bool supported_extension(String name) @private {
+    foreach (supported : SUPPORTED_MATERIAL_EXTENSIONS) if (supported == name) return true;
     foreach (supported : SUPPORTED_EXTENSIONS) if (supported == name) return true;
     return false;
 }
