@@ -572,8 +572,10 @@ band once per decal; the shader subtracts, multiplies and clamps.
 Normal maps follow the material convention: +X follows increasing U and +Y
 increasing V, which is local -Y for this projection. The packed tangent follows
 world local +X and has handedness `-sign(determinant)`, so reflections reverse it.
-The shared `tangent_normal` frame orthogonalizes against the current receiver
-normal. Under shear, U follows that projected tangent and V is the orthogonal
+The shared `tangent_normal` frame orthogonalizes against the receiver's shading
+normal after its own normal map. A flat decal normal map therefore preserves
+the receiver's normal-map detail even at full normal weight. Under shear, U
+follows that projected tangent and V is the orthogonal
 approximation. RGB XYZ decoding, normal scale and degenerate-frame behavior match
 mesh normal maps; scale zero disables perturbation.
 
