@@ -6,6 +6,7 @@
 #include "material_alpha.glsl"
 #include "fog.glsl"
 #include "standard_shading.glsl"
+#include "decals.glsl"
 
 layout(location = 0) in vec3 v_world_pos;
 layout(location = 1) in vec3 v_normal;
@@ -23,6 +24,9 @@ layout(push_constant) uniform Push {
 void main() {
     DrawRoot draw = DrawRoot(pc.fragment_root_gpu);
     FrameRoot frame = FrameRoot(draw.frame);
+    vec3 position_dx = dFdx(v_world_pos);
+    vec3 position_dy = dFdy(v_world_pos);
+    float view_depth = -(frame.view * vec4(v_world_pos, 1.0)).z;
     material_mip_bias = frame.mip_bias;
     StandardMaterialRoot material_root = StandardMaterialRoot(draw.material);
     StandardMaterialGpu material = material_root.material;
@@ -39,6 +43,15 @@ void main() {
     );
 
     material_sample.base_color *= v_color;
+    apply_decals(
+        frame,
+        draw,
+        material.flags,
+        v_world_pos,
+        view_depth,
+        position_dx,
+        position_dy,
+        material_sample);
     // Derivatives and implicit-LOD samples must retain helper lanes across cutouts.
     if ((material.flags & MATERIAL_ALPHA_MASK) != 0u
         && material_sample.base_color.a < material.alpha_cutoff) discard;
