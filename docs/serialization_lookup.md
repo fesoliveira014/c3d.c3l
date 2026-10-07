@@ -164,16 +164,18 @@ formats. Existing source-immutability, omission and canonical-output checks rema
 The before measurements below are the reviewer's Windows/MSVC O3 medians of three
 at example head `d8c29361679544f9293f7160f70a3f17f9b1cf2c`, from
 [the example review](https://github.com/fesoliveira014/c3d.c3l/pull/300).
-The indexed after measurements remain pending independent review. Local O3
-repeats pass the requested maximum 2.5x binary-write growth per model-count
-doubling; they are not substituted for the reviewer measurements.
+The indexed after measurements are the reviewer's medians of three at
+`8bb3a092e871065b9e1ed1d326d992e6521bc597`, from
+[the export-index review](https://github.com/fesoliveira014/c3d.c3l/pull/313).
+Binary write grows 1.71x, 1.88x and 2.09x per doubling; at 256 models it is
+9.3x faster than the baseline. No performance budget is implied.
 
 | Models | Nodes | Before binary write (ms) | Before JSONC write (ms) | Indexed binary write (ms) | Indexed JSONC write (ms) |
 | ---: | ---: | ---: | ---: | ---: | ---: |
-| 32 | 906 | 1.23 | 6.32 | Pending review | Pending review |
-| 64 | 1,802 | 3.30 | 12.04 | Pending review | Pending review |
-| 128 | 3,594 | 11.55 | 27.12 | Pending review | Pending review |
-| 256 | 7,178 | 42.41 | 73.42 | Pending review | Pending review |
+| 32 | 906 | 1.23 | 6.32 | 0.68 | 5.34 |
+| 64 | 1,802 | 3.30 | 12.04 | 1.15 | 9.39 |
+| 128 | 3,594 | 11.55 | 27.12 | 2.17 | 17.31 |
+| 256 | 7,178 | 42.41 | 73.42 | 4.54 | 33.49 |
 
 Reproduce with `c3c build serialize --path examples -O3`, then run
 `serialize --cpu-only --models=<count>` three times for each row. This measurement
