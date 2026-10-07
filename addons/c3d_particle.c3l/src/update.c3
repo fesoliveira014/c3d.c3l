@@ -7,8 +7,8 @@ import c3d::scene;
 import std::math;
 
 <*
- Advance scene particles and publish their child draw records.
- @param [&inout] scene : "Registered; world matrices current; no active component iteration."
+ Advance prepared particles and publish child draws; skip pending systems.
+ @param [&inout] scene : "Registered; matrices current; no active component iteration."
  @param dt : "Finite nonnegative seconds."
  @param wind : "Finite world-space air velocity in metres per second."
  @require dt >= 0 && math::is_finite(dt)
@@ -17,19 +17,21 @@ import std::math;
 fn void update(Scene* scene, float dt, Vec3 wind = {}) {
     remove_orphan_draws(scene);
     scene.@each(ParticleSystem; Entity entity, ParticleSystem* system) {
-        Node* emitter = scene.node(entity);
-        Node* child = scene.node(system.draw_node);
-        child.layers = emitter.layers;
-        particle::step(
-            system: system,
-            emitter_world: emitter.world,
-            dt: dt,
-            wind: wind,
-        );
-        if (system.desc.render_mode == ParticleRenderMode.MESH) {
-            publish_meshes(scene, child, system);
-        } else {
-            publish_billboards(scene, child, system);
+        if (system.is_prepared()) {
+            Node* emitter = scene.node(entity);
+            Node* child = scene.node(system.draw_node);
+            child.layers = emitter.layers;
+            particle::step(
+                system: system,
+                emitter_world: emitter.world,
+                dt: dt,
+                wind: wind,
+            );
+            if (system.desc.render_mode == ParticleRenderMode.MESH) {
+                publish_meshes(scene, child, system);
+            } else {
+                publish_billboards(scene, child, system);
+            }
         }
     };
 }

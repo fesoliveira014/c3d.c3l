@@ -50,6 +50,32 @@ is atomic: it validates the descriptor, allocates one pool and creates the
 emitter plus one draw child, rolling back on failure. Invalid descriptors return
 `INVALID_ARGUMENT`; scene capacity failure returns `CAPACITY_EXCEEDED`.
 
+## Pending authoring
+
+`scene.attach_particle_system(node, desc)` validates and attaches authoring to
+an existing node. It allocates no pool or draw child and leaves the system
+pending. `ParticleSystem.is_prepared()` reports whether both are installed.
+The shared [owner readiness table](owner_readiness.md) defines preparation and
+removal behavior. Attachment starts with `emitting = true`; this flag remains
+application-settable. A codec must restore its authored `emitting` value after
+attachment, before preparation, instead of inheriting the attachment default.
+`particle::prepare(&scene, node)` prepares one owner.
+`particle::prepare_subtree(&scene, root)` attempts every pending system in a
+subtree, including its root.
+Omit the root or pass null to select the whole scene.
+
+Preparation is a no-op for an already-prepared system. A failure returns
+`INVALID_ARGUMENT` or `CAPACITY_EXCEEDED`, retaining pending authoring and
+releasing staged pool storage. A subtree pass continues after a failure and
+returns the first fault; successful owners remain prepared. Retry individual
+owners or the subtree after correcting the cause.
+
+`particle::update` skips pending systems without changing their authoring,
+queued bursts or emission controls. They have no generated draw child and draw
+nothing. `particle::step` requires a prepared system. The existing
+`scene.add_particle_system` combines attachment and preparation and still
+returns a ready emitter or removes the incomplete emitter on failure.
+
 ## Frame order and ownership
 
 After animation/physics and any emitter edits:
