@@ -18,7 +18,7 @@ character (`--scene flag|cape|both`). The manual Vulkan acceptance runs with
 
 ## Breakables
 
-A `Breakable` uses authored Mesh pieces below a root. It builds a hull-distance
+A `Breakable` uses authored physical pieces below a root. It builds a hull-distance
 graph and one native weld per connected pair. When a weld reaches its reaction
 force threshold, the constraint is removed and a `BreakEvent` is reported. One
 broken edge does not necessarily disconnect a piece from the remaining graph.
@@ -37,29 +37,45 @@ scene.update_world();
 world.add_breakable(root, physics::default_breakable_desc())!;
 ```
 
-The root must be a live node other than the scene root and cannot have a Mesh.
+The legacy `add_breakable` root must be a live non-scene-root node without a Mesh.
 At least two Mesh nodes must occur below it. Each is an independent convex,
 volume-spanning piece with positive unit scale and no skin/morph deformation.
 Root and piece world matrices must be current, finite and rigid. Bake scale
 into the asset. The initial ASSEMBLY form requires PARENT paths below its root;
 the root itself may use either transform space.
 
-A glTF primitive becomes a Mesh node, so export one solid primitive per intended
-physical piece. Multiple material primitives are separate pieces and may not
-span a volume individually. This feature does not merge them or perform runtime
-fracture. The supplied `examples/assets/fractured_wall.gltf` exercises the
-standard loader with 64 separate mesh placements and narrow seams.
+For multiple render primitives or collision hulls per piece, use
+`add_breakable_pieces(root, pieces, desc)`. Each `BreakablePieceDesc` holds a body
+node's `Entity` and ordered piece-local `GeometryId` hulls. At least two distinct
+live descendants are required; no piece may be an ancestor of another. Each
+piece has at least one live hull, and may have any number of render children.
+Material boundaries do not create physical pieces. The legacy convenience
+still treats each Mesh descendant as one piece with one hull.
 
-Distance at or below `contact_distance` connects two hulls. Edge/corner contacts
-also count; the rule does not measure shared face area. Overlap is accepted. The
+Both entry points share graph construction, body creation, wake and rollback.
+PIECES uses one dynamic body per piece with one HULL collider per supplied hull;
+ASSEMBLY uses one root body with a collider-to-piece map covering every hull.
+Removing a render-only child keeps its body. All hulls contribute to body mass
+and center of mass. Hull geometry must remain available for world rebuild.
+
+A glTF primitive becomes a Mesh node. Use explicit body parents to group several
+primitives into one piece; collision hulls are independent geometry. The supplied
+`examples/assets/fractured_wall.gltf` uses the legacy one-primitive form with
+64 separate mesh placements and narrow seams.
+
+Distance at or below `contact_distance` connects two pieces. The smallest
+qualifying hull-pair distance selects the weld anchor; exact ties keep the first
+pair in caller hull order (first piece's hulls, then second piece's hulls).
+Each unordered piece pair has at most one weld, in caller piece-pair order.
+Edge/corner contacts also count; the rule does not measure shared face area. Overlap is accepted. The
 example uses 0.5 m cubes on a 0.508 m pitch: face gaps are below the default
 0.01 m threshold, diagonal gaps are above it, producing 112 welds.
 
 ## Forms, ownership and faults
 
 `default_breakable_desc()` selects ASSEMBLY: one enabled kinematic root body
-with a hull per piece. Pieces remain parent-relative and follow the root. A
-qualifying dynamic-body hit changes it to PIECES: one dynamic hull body per
+with every piece hull. Pieces remain parent-relative and follow the root. A
+qualifying dynamic-body hit changes it to PIECES: one dynamic body per
 surviving piece, with its node committed to WORLD. Setting `sleep_until_hit`
 false creates PIECES directly. `wake_breakable(root)` performs the transition
 explicitly; a live PIECES call is a no-op.
@@ -72,6 +88,15 @@ state through `scene.get(root, Breakable).state`; retain the root ID and
 reacquire the component after structural changes. The state and its arrays are
 library-owned. The component is 8 bytes on x64; its state/arrays are allocated
 only for real breakables in one scene-allocator block.
+
+`state.piece_view(index)` exposes the captured Entity, copied ordered hull IDs
+and root-relative `rest_frame`. `state.weld_view(index)` exposes captured
+endpoints, anchor and `frame_b` without damage or native joint state. Indices
+must be below `state.pieces.len` or `state.welds.len`. Captured slots stay stable
+after removal; callers check entity liveness. Hull slices borrow until
+`remove_breakable` or component removal. The graph is derived from ordered
+pieces, hulls, rest frames and `BreakableDesc`; there is no weld-list input.
+Re-authoring the same captured inputs derives the same ordered graph.
 
 Creation rejects overlapping breakables, existing bodies or conflicting
 joint/ragdoll roles in the subtree, invalid geometry and unsupported transforms.
