@@ -144,3 +144,13 @@ Any unclassified core component fails immediately.
 Each adapter addition moves its types from pending to expected in the same change.
 The pending list becomes empty when all core policies are implemented and is then
 removed. Unimplemented types are never marked transient to satisfy the test.
+
+ModelInstance uses the REFERENCES phase. Its payload retains the model key,
+per-template-node signature and mapping, explicit absent slots, base poses,
+mesh slots, baseline morph arrays and clips. The reader validates signatures and
+unique node claims before any component attaches, then copies the owner arrays
+onto the saved graph. It does not instantiate the template or recreate removed
+nodes/components. Application children and ordinary transform overrides remain.
+A selected template node requires its model owner in the selected subtree.
+Template disagreement returns INCOMPATIBLE_TEMPLATE with the model key and first
+differing template index. The binary NODES model fields remain reserved.

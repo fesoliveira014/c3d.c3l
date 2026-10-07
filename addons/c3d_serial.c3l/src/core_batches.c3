@@ -76,7 +76,7 @@ fn void defaults_lod(void* value) @local {
 
 fn void? project_instances(void* component, void* value, WriteContext* context) @local {
     InstancedMesh* batch = component;
-    validate_serial_effects(batch.sway, batch.fade)!;
+    if (!scene::instance_effects_valid(batch.sway, batch.fade)) return c3d::INVALID_ARGUMENT~;
     *(InstanceAuthoring*)value = {
         .geometry = batch.geometry,
         .material = batch.material,
@@ -95,7 +95,7 @@ fn void? project_instances(void* component, void* value, WriteContext* context) 
 
 fn void? project_billboards(void* component, void* value, WriteContext* context) @local {
     BillboardBatch* batch = component;
-    check_serial_billboards(batch.billboards[:batch.count])!;
+    if (!scene::billboards_valid(batch.billboards[:batch.count])) return c3d::INVALID_ARGUMENT~;
     *(BillboardAuthoring*)value = {
         .material = batch.material,
         .capacity = (uint)batch.billboards.len,
@@ -107,7 +107,7 @@ fn void? project_billboards(void* component, void* value, WriteContext* context)
 fn void? project_lod(void* component, void* value, WriteContext* context) @local {
     LodGroupState* state = ((LodGroup*)component).state;
     scene::validate_lod_desc(context.assets, state.desc, state.mode)!;
-    validate_serial_effects(state.effects.sway, state.effects.fade)!;
+    if (!scene::instance_effects_valid(state.effects.sway, state.effects.fade)) return c3d::INVALID_ARGUMENT~;
     *(LodAuthoring*)value = {
         .desc = state.desc,
         .mode = state.mode,
@@ -126,7 +126,7 @@ fn void? attach_instances(void* value, ReadContext* context) @local {
     if (!source.capacity || source.transforms.len > source.capacity || source.colors.len > source.transforms.len) {
         return c3d::INVALID_ARGUMENT~;
     }
-    validate_serial_effects(source.sway, source.fade)!;
+    if (!scene::instance_effects_valid(source.sway, source.fade)) return c3d::INVALID_ARGUMENT~;
     Allocator allocator = context.scene.allocator;
     Transform[] transforms = alloc::new_array_try(allocator, Transform, (sz)source.capacity)
       ?? c3d::CAPACITY_EXCEEDED~!;
@@ -156,7 +156,7 @@ fn void? attach_instances(void* value, ReadContext* context) @local {
 fn void? attach_billboards(void* value, ReadContext* context) @local {
     BillboardAuthoring* source = value;
     if (!source.capacity || source.billboards.len > source.capacity) return c3d::INVALID_ARGUMENT~;
-    check_serial_billboards(source.billboards)!;
+    if (!scene::billboards_valid(source.billboards)) return c3d::INVALID_ARGUMENT~;
     Billboard[] entries = alloc::new_array_try(context.scene.allocator, Billboard, (sz)source.capacity)
       ?? c3d::CAPACITY_EXCEEDED~!;
     context.scene.add(context.node, (BillboardBatch){
@@ -177,7 +177,7 @@ fn void? attach_lod(void* value, ReadContext* context) @local {
     } else if (!source.capacity || source.transforms.len > source.capacity) {
         return c3d::INVALID_ARGUMENT~;
     }
-    validate_serial_effects(source.effects.sway, source.effects.fade)!;
+    if (!scene::instance_effects_valid(source.effects.sway, source.effects.fade)) return c3d::INVALID_ARGUMENT~;
     LodGroup group = scene::create_lod_group(
         allocator: context.scene.allocator,
         assets: context.assets,
@@ -197,31 +197,5 @@ fn void? attach_lod(void* value, ReadContext* context) @local {
             impostor: source.impostor,
             min_screen_size: source.impostor_min_screen_size,
         )!;
-    }
-}
-
-fn void? validate_serial_effects(InstanceSway sway, InstanceFade fade) @local {
-    float[4] nonnegative = { sway.amplitude, sway.frequency, sway.wavelength, sway.variation };
-    foreach (value : nonnegative) {
-        if (!math::is_finite(value) || value < 0) return c3d::INVALID_ARGUMENT~;
-    }
-    if (sway.amplitude != 0 && !(sway.direction.length() > 0)) return c3d::INVALID_ARGUMENT~;
-    if (!(sway.lean >= 0 && sway.lean <= 1)) return c3d::INVALID_ARGUMENT~;
-    if (!math::is_finite(fade.end)) return c3d::INVALID_ARGUMENT~;
-    if (fade.end != 0 && !(fade.start >= 0 && fade.start < fade.end)) return c3d::INVALID_ARGUMENT~;
-}
-
-fn void? check_serial_billboards(Billboard[] billboards) @local {
-    foreach (billboard : billboards) {
-        for (uint axis = 0; axis < 3; axis++) {
-            if (!math::is_finite(billboard.position[axis]) || !math::is_finite(billboard.direction[axis])) {
-                return c3d::INVALID_ARGUMENT~;
-            }
-        }
-        foreach (channel : billboard.color) if (!math::is_finite(channel)) return c3d::INVALID_ARGUMENT~;
-        if (!math::is_finite(billboard.rotation) || !math::is_finite(billboard.size.x)
-            || !math::is_finite(billboard.size.y) || billboard.size.x < 0 || billboard.size.y < 0) {
-            return c3d::INVALID_ARGUMENT~;
-        }
     }
 }

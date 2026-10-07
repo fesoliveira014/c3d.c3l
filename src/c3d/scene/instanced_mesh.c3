@@ -94,14 +94,7 @@ fn Vec3 InstanceSway.reach(self) {
 
 <*
  Check the programming contract of the batch's sway and fade.
- @require self.sway.amplitude >= 0 && math::is_finite(self.sway.amplitude)
- @require self.sway.amplitude == 0 || self.sway.direction.length() > 0
- @require self.sway.frequency >= 0 && math::is_finite(self.sway.frequency)
- @require self.sway.lean >= 0 && self.sway.lean <= 1
- @require self.sway.wavelength >= 0 && math::is_finite(self.sway.wavelength)
- @require self.sway.variation >= 0 && math::is_finite(self.sway.variation)
- @require self.fade.end == 0 || (self.fade.start >= 0 && self.fade.start < self.fade.end)
- @require math::is_finite(self.fade.end)
+ @require instance_effects_valid(self.sway, self.fade)
 *>
 fn void InstancedMesh.validate_effects(&self) {}
 
@@ -111,6 +104,21 @@ fn void InstancedMesh.validate_effects(&self) {}
 *>
 fn bool transform_mirrored(Transform transform) {
     return transform.scale.x * transform.scale.y * transform.scale.z < 0;
+}
+
+<*
+ Whether sway and fade satisfy the instance effect domain.
+ @pure
+*>
+fn bool instance_effects_valid(InstanceSway sway, InstanceFade fade) {
+    return sway.amplitude >= 0 && math::is_finite(sway.amplitude)
+      && (sway.amplitude == 0 || sway.direction.length() > 0)
+      && sway.frequency >= 0 && math::is_finite(sway.frequency)
+      && sway.lean >= 0 && sway.lean <= 1
+      && sway.wavelength >= 0 && math::is_finite(sway.wavelength)
+      && sway.variation >= 0 && math::is_finite(sway.variation)
+      && (fade.end == 0 || (fade.start >= 0 && fade.start < fade.end))
+      && math::is_finite(fade.end);
 }
 
 fn void free_instanced_mesh(Entity entity, void* component, void* user) @private {

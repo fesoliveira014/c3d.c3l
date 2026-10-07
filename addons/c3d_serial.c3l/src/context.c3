@@ -62,6 +62,7 @@ struct ReadContext {
     Node*[] nodes;
     String[] keys;
     ComponentMask[] component_masks;
+    ReadModelMap[] models;
     ReadAuthoring[] authoring;
     ReadAuthoringIndex authoring_index;
     Acquisitions* read_owned;

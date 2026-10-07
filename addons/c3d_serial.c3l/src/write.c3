@@ -124,6 +124,7 @@ fn WriteState? prepare_export(
 
     state.collecting = true;
     WriteContext context = { .scene = scene, .assets = assets, .state = &state, .diagnostic = diagnostic };
+    validate_model_selection(&context)!;
     foreach (record, node : state.ordered[:state.count]) {
         context.node = node;
         scene.world.@each_slot(node.id; uint slot) {
@@ -154,7 +155,6 @@ fn WriteState? prepare_export(
             continue;
         }
         if (node != root && state.projection[node.parent.id.index].node_owner) return c3d::INVALID_ARGUMENT~;
-        if (scene.has(node, ModelInstance)) return c3d::UNSUPPORTED~;
         mask &= ~(projected.omitted_components | transient_mask);
         scene.world.@each_slot(node.id; uint slot) {
             if ((mask & ecs::slot_bit(slot)) && !codecs[slot].codec.name.len) return c3d::UNSUPPORTED~;

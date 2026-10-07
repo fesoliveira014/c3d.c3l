@@ -210,11 +210,10 @@ fn void Scene.mark_lod_instances_dirty(&self, Node* node) {
  Apply common wind, fade and render participation.
  @param [&in] node : "Carries a group."
  @require self.has(node, LodGroup)
+ @require instance_effects_valid(effects.sway, effects.fade)
  @require !self.get(node, LodGroup).state.has_impostor || effects.sway.amplitude == 0 || effects.sway.weight == SwayWeight.HEIGHT
 *>
 fn void Scene.set_lod_effects(&self, Node* node, LodEffects effects) {
-    InstancedMesh validation = { .sway = effects.sway, .fade = effects.fade };
-    validation.validate_effects();
     LodGroupState* state = self.get(node, LodGroup).state;
     state.effects = effects;
 }

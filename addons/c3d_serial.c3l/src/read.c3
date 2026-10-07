@@ -97,8 +97,15 @@ fn Node*? read_subtree_binary(
         types: types,
         owned: &authoring_owned,
     )!;
+    prepare_binary_models(
+        context: &context,
+        payloads: payloads.array_view(),
+        types: types,
+        owned: &authoring_owned,
+    )!;
     foreach (payload : payloads.array_view()) {
         TypeRecord type = types[payload.type];
+        if (model_codec_slot(type.slot)) continue;
         DescribedBinding* binding = codecs[type.slot].described;
         if (!binding || !binding.codec.validate || type.version != binding.type.version) continue;
         context.node = nodes[payload.record];
@@ -127,6 +134,16 @@ fn Node*? read_subtree_binary(
             context.record = payload.record;
             context.version = type.version;
             context.slot = type.slot;
+            bool? cached = restore_cached_model(&context);
+            if (catch excuse = cached) {
+                return component_diagnostic(
+                    diagnostic: context.diagnostic,
+                    record: context.record,
+                    type_name: codec.name,
+                    cause: excuse,
+                )~;
+            }
+            if (cached) continue;
             Reader bounded = reader_over(payload.bytes);
             if (catch excuse = codec.read(&bounded, &context)) {
                 return component_diagnostic(

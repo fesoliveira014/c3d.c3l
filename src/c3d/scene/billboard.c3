@@ -142,21 +142,30 @@ fn Billboard world_billboard(Mat4 world, Billboard billboard) {
     return billboard;
 }
 
-fn void? check_billboards(Billboard[] billboards) @local {
+<*
+ Whether billboard values satisfy the scene placement domain.
+ @pure
+*>
+fn bool billboards_valid(Billboard[] billboards) {
     foreach (billboard : billboards) {
         for (usz axis = 0; axis < 3; axis++) {
             if (!math::is_finite(billboard.position[axis]) || !math::is_finite(billboard.direction[axis])) {
-                return c3d::INVALID_ARGUMENT~;
+                return false;
             }
         }
         for (usz channel = 0; channel < 4; channel++) {
-            if (!math::is_finite(billboard.color[channel])) return c3d::INVALID_ARGUMENT~;
+            if (!math::is_finite(billboard.color[channel])) return false;
         }
         if (!math::is_finite(billboard.rotation) || !math::is_finite(billboard.size.x)
             || !math::is_finite(billboard.size.y) || billboard.size.x < 0 || billboard.size.y < 0) {
-            return c3d::INVALID_ARGUMENT~;
+            return false;
         }
     }
+    return true;
+}
+
+fn void? check_billboards(Billboard[] billboards) @local {
+    if (!billboards_valid(billboards)) return c3d::INVALID_ARGUMENT~;
 }
 
 fn void free_billboards(Entity entity, void* component, void* user) @private {
