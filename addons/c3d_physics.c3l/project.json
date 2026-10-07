@@ -21,6 +21,7 @@
   "targets": {
     "fracture_test": {
       "type": "test",
+      "fp-math": "strict",
       "sources": [ "test/fracture/*" ]
     },
     "physics_test": {

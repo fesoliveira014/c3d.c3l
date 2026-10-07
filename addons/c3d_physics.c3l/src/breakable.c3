@@ -15,6 +15,10 @@ const float DEFAULT_CONTACT_DISTANCE = 0.01f; // joins narrow export seams; larg
 <* Default weld reaction threshold, in newtons. *>
 const float DEFAULT_BREAK_FORCE = 2000; // tune to piece mass and expected loads; lower thresholds release more constraints
 
+const float REST_POSITION_TOLERANCE @local = 1e-4f; // metres; allow float reconstruction without visible separation
+const float REST_POSITION_ROUNDOFF @local = 1e-6f; // coordinate-relative; cover accumulated float transform rounding
+const float REST_ANGLE_TOLERANCE @local = 1e-4f; // radians; allow float reconstruction without tightening a weld
+
 <* Representation of an intact or released fracture graph. *>
 enum BreakableForm {
     ASSEMBLY,
@@ -53,6 +57,12 @@ struct BreakableWeldView {
     maths::Transform frame_b;
 }
 
+<* Captured piece indices whose current relative poses disagree. *>
+struct BreakableMismatch {
+    uint piece_a;
+    uint piece_b;
+}
+
 <* One captured graph edge and its world-owned native joint. *>
 struct Weld {
     uint piece_a;
@@ -63,7 +73,7 @@ struct Weld {
     b3::JointId joint;
 }
 
-<* Library-owned fracture state; arrays remain borrowed by readers. *>
+<* Captured fracture state; preparation and removal invalidate borrowed arrays. *>
 struct BreakableState {
     BreakableDesc desc;
     Entity[] pieces;
@@ -101,14 +111,18 @@ struct BreakableRuntime @private {
     GeometryId[] geometries;
     uint[] hull_offsets;
     maths::Transform[] frames;
+    maths::Transform[] assembly_frames;
     uint[] assembly_pieces;
     uint assembly_count;
     BreakableWake wake;
+    bool prepared;
+    bool has_mismatch;
+    BreakableMismatch mismatch;
 }
 
 <*
- Read captured piece authoring; hulls borrow until breakable removal.
- @param [&in] self : "Valid until remove_breakable or component removal."
+ Read captured piece authoring; preparation or removal invalidates borrowed hulls.
+ @param [&in] self : "Valid until preparation or component removal."
  @require index < self.pieces.len
 *>
 fn BreakablePieceView BreakableState.piece_view(&self, uint index) {
@@ -142,7 +156,7 @@ fn BreakableWeldView BreakableState.weld_view(&self, uint index) {
 *>
 fn void? PhysicsWorld.add_breakable(&self, Node* root, BreakableDesc desc) {
     check_breakable_desc(desc)!;
-    check_breakable_ancestors(self, root)!;
+    check_breakable_ancestors(self.scene, root)!;
     if (self.scene.has(root, scene::Mesh)) return c3d::INVALID_ARGUMENT~;
     maths::Transform root_pose = breakable_pose(root)!;
     uint count = check_breakable_tree(
@@ -162,19 +176,25 @@ fn void? PhysicsWorld.add_breakable(&self, Node* root, BreakableDesc desc) {
             pieces: entities,
             index: &index,
         );
-        BreakablePieceDesc[] pieces = alloc::new_array(tmem, BreakablePieceDesc, count);
+        BreakablePieceView[] pieces = alloc::new_array(tmem, BreakablePieceView, count);
         foreach (piece_index, entity : entities) {
-            scene::Mesh* mesh = self.scene.get(self.scene.node(entity), scene::Mesh);
-            pieces[piece_index] = { .node = entity, .hulls = (&mesh.geometry)[:1] };
+            Node* node = self.scene.node(entity);
+            scene::Mesh* mesh = self.scene.get(node, scene::Mesh);
+            pieces[piece_index] = {
+                .node = entity,
+                .hulls = (&mesh.geometry)[:1],
+                .rest_frame = relative_breakable_pose(root_pose, breakable_pose(node)!),
+            };
         }
-        author_breakable(
-            world: self,
+        self.scene.attach_breakable_pieces(
+            assets: self.assets,
             root: root,
             pieces: pieces,
             desc: desc,
-            root_pose: root_pose,
         )!;
     };
+    defer catch self.scene.remove_component(root, Breakable);
+    self.prepare_breakable(root)!;
 }
 
 <*
@@ -194,39 +214,209 @@ fn void? PhysicsWorld.add_breakable_pieces(
     BreakableDesc desc,
 ) {
     check_breakable_desc(desc)!;
-    check_breakable_ancestors(self, root)!;
+    check_breakable_ancestors(self.scene, root)!;
     check_breakable_roles(self.scene, root)!;
     maths::Transform root_pose = breakable_pose(root)!;
-    if (pieces.len < 2 || pieces.len > uint::max) return c3d::INVALID_ARGUMENT~;
-    foreach (index, piece : pieces) {
-        if (!self.scene.world.is_alive(piece.node)) return c3d::INVALID_ID~;
-        if (!piece.hulls.len) return c3d::INVALID_ARGUMENT~;
-        Node* node = self.scene.node(piece.node);
-        if (node == root) return c3d::INVALID_ARGUMENT~;
-        Node* ancestor = node;
-        while (ancestor != root) {
-            if (!ancestor) return c3d::INVALID_ARGUMENT~;
-            if (desc.sleep_until_hit && ancestor.transform_space != TransformSpace.PARENT) return c3d::UNSUPPORTED~;
-            foreach (other : pieces) {
-                if (c3d::same_id(other.node, ancestor.id) && !c3d::same_id(other.node, piece.node)) {
-                    return c3d::INVALID_ARGUMENT~;
+    @pool() {
+        BreakablePieceView[] captured = alloc::new_array(tmem, BreakablePieceView, pieces.len);
+        foreach (index, piece : pieces) {
+            if (!self.scene.world.is_alive(piece.node)) return c3d::INVALID_ID~;
+            for (Node* ancestor = self.scene.node(piece.node).parent; ancestor; ancestor = ancestor.parent) {
+                foreach (other : pieces) {
+                    if (c3d::same_id(other.node, ancestor.id)) return c3d::INVALID_ARGUMENT~;
                 }
             }
-            ancestor = ancestor.parent;
+            maths::Transform pose = breakable_pose(self.scene.node(piece.node))!;
+            captured[index] = {
+                .node = piece.node,
+                .hulls = piece.hulls,
+                .rest_frame = relative_breakable_pose(root_pose, pose),
+            };
         }
-        foreach (earlier : pieces[:index]) if (c3d::same_id(earlier.node, piece.node)) return c3d::INVALID_ARGUMENT~;
-        breakable_pose(node)!;
-        foreach (geometry : piece.hulls) if (!self.assets.geometries.is_live(geometry)) return c3d::INVALID_ID~;
-    }
-    @pool() {
-        author_breakable(
-            world: self,
+        self.scene.attach_breakable_pieces(
+            assets: self.assets,
             root: root,
-            pieces: pieces,
+            pieces: captured,
             desc: desc,
-            root_pose: root_pose,
         )!;
     };
+    defer catch self.scene.remove_component(root, Breakable);
+    self.prepare_breakable(root)!;
+}
+
+<* Whether fracture authoring has completed explicit preparation. *>
+fn bool Breakable.is_prepared(&self) => self.state.runtime.prepared;
+
+<*
+ Borrow the last preparation mismatch, or null when absent.
+ @return "Read-only borrow until the next preparation or removal."
+*>
+fn BreakableMismatch* Breakable.preparation_mismatch(&self) {
+    return self.state.runtime.has_mismatch ? &self.state.runtime.mismatch : null;
+}
+
+<*
+ Attach copied fracture authoring without building bodies or welds.
+ @param [&in] assets : "Resolves hull identities without cooking them."
+ @param [&in] root : "Live root with current world matrices; unchanged."
+ @param pieces : "Ordered identities, hulls and root-relative rest frames are copied."
+ @return? BREAKABLE_EXISTS, BODY_EXISTS, c3d::INVALID_ARGUMENT, c3d::INVALID_ID
+ @return? c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED
+ @require self.world.is_registered(Breakable), root != self.root
+ @require self.world.is_alive(root.id)
+*>
+fn void? Scene.attach_breakable_pieces(
+    &self,
+    AssetStore* assets,
+    Node* root,
+    BreakablePieceView[] pieces,
+    BreakableDesc desc,
+) {
+    check_breakable_desc(desc)!;
+    check_breakable_ancestors(self, root)!;
+    check_breakable_roles(self, root)!;
+    breakable_pose(root)!;
+    check_captured_pieces(
+        scene: self,
+        assets: assets,
+        root: root,
+        pieces: pieces,
+        desc: desc,
+    )!;
+    usz hull_count;
+    foreach (piece : pieces) {
+        if (piece.hulls.len > uint::max - hull_count) return c3d::CAPACITY_EXCEEDED~;
+        hull_count += piece.hulls.len;
+    }
+    BreakableState* state = allocate_breakable(
+        allocator: self.allocator,
+        piece_count: pieces.len,
+        weld_count: 0,
+        hull_count: hull_count,
+    )!;
+    state.desc = desc;
+    state.alive_pieces = (uint)pieces.len;
+    state.form = desc.sleep_until_hit ? ASSEMBLY : PIECES;
+    uint first;
+    foreach (index, piece : pieces) {
+        state.pieces[index] = piece.node;
+        state.runtime.frames[index] = piece.rest_frame;
+        state.runtime.hull_offsets[index] = first;
+        state.runtime.geometries[first:piece.hulls.len] = piece.hulls[..];
+        first += (uint)piece.hulls.len;
+    }
+    state.runtime.hull_offsets[pieces.len] = first;
+    self.add(root, (Breakable){ .state = state });
+}
+
+<*
+ Prepare pending fracture atomically; invalidates its captured state pointer.
+ @param [&in] root : "Carries captured fracture authoring; world matrices current."
+ @return? BREAKABLE_EXISTS, BODY_EXISTS, SOURCE_UNAVAILABLE
+ @return? c3d::INVALID_ARGUMENT, c3d::INVALID_ID, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED
+ @return? b3::INVALID_DEFINITION, b3::INVALID_HANDLE, b3::DEGENERATE_GEOMETRY
+ @require self.scene.has(root, Breakable)
+*>
+fn void? PhysicsWorld.prepare_breakable(&self, Node* root) {
+    Breakable* component = self.scene.get(root, Breakable);
+    if (component.is_prepared()) return;
+    BreakableState* pending = component.state;
+    pending.runtime.has_mismatch = false;
+    check_breakable_ancestors(self.scene, root)!;
+    check_breakable_roles(self.scene, root, root)!;
+    maths::Transform root_pose = breakable_pose(root)!;
+    @pool() {
+        BreakablePieceView[] pieces = alloc::new_array(tmem, BreakablePieceView, pending.pieces.len);
+        foreach (uint index, &piece : pieces) *piece = pending.piece_view(index);
+        check_captured_pieces(
+            scene: self.scene,
+            assets: self.assets,
+            root: root,
+            pieces: pieces,
+            desc: pending.desc,
+        )!;
+        maths::Transform[] poses = alloc::new_array(tmem, maths::Transform, pending.pieces.len);
+        foreach (index, piece : pieces) poses[index] = breakable_pose(self.scene.node(piece.node))!;
+        SnapshotHandle[] held = alloc::new_array(tmem, SnapshotHandle, pending.runtime.geometries.len);
+        uint held_count;
+        defer foreach (handle : held[:held_count]) release_snapshot(self.snapshots, handle);
+        foreach (geometry : pending.runtime.geometries) {
+            held[held_count] = acquire_hull(self, geometry)!;
+            held_count++;
+        }
+        Weld[] edges = build_breakable_graph(
+            world: self,
+            poses: pending.runtime.frames,
+            held: held,
+            offsets: pending.runtime.hull_offsets,
+            gap: pending.desc.contact_distance,
+        )!;
+        check_recipe_poses(pending, poses, edges)!;
+        BreakableState* prepared = allocate_breakable(
+            allocator: self.scene.allocator,
+            piece_count: pending.pieces.len,
+            weld_count: edges.len,
+            hull_count: held.len,
+        )!;
+        defer catch alloc::free(self.scene.allocator, prepared);
+        prepared.desc = pending.desc;
+        prepared.pieces[..] = pending.pieces[..];
+        prepared.welds[..] = edges[..];
+        prepared.runtime.frames[..] = pending.runtime.frames[..];
+        foreach (index, pose : poses) prepared.runtime.assembly_frames[index] = relative_breakable_pose(root_pose, pose);
+        prepared.runtime.hull_offsets[..] = pending.runtime.hull_offsets[..];
+        prepared.runtime.geometries[..] = pending.runtime.geometries[..];
+        prepared.alive_pieces = pending.alive_pieces;
+        prepared.alive_welds = (uint)edges.len;
+        prepared.form = pending.form;
+        if (prepared.desc.sleep_until_hit) {
+            author_breakable_assembly(
+                world: self,
+                root: root,
+                state: prepared,
+                pose: root_pose,
+            )!;
+            self.set_enabled(root, true);
+            prepared.status = LIVE;
+        } else {
+            build_breakable_pieces(
+                world: self,
+                state: prepared,
+                poses: poses,
+                assembly: {},
+                assembly_pose: root_pose,
+            )!;
+            defer catch remove_breakable_piece_bodies(self, prepared);
+            bind_breakable_welds(self, root, prepared)!;
+            commit_breakable_pieces(self, prepared, poses);
+        }
+        prepared.runtime.prepared = true;
+        component.state = prepared;
+        alloc::free(self.scene.allocator, pending);
+    };
+}
+
+<*
+ Prepare each selected fracture, preserving successful owners after another fails.
+ @param [in] root : "Null selects the whole scene, including its root."
+ @return? BREAKABLE_EXISTS, BODY_EXISTS, SOURCE_UNAVAILABLE
+ @return? c3d::INVALID_ARGUMENT, c3d::INVALID_ID, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED
+ @return? b3::INVALID_DEFINITION, b3::INVALID_HANDLE, b3::DEGENERATE_GEOMETRY
+*>
+fn void? PhysicsWorld.prepare_breakable_subtree(&self, Node* root = null) {
+    Node* selected = root ? root : self.scene.root;
+    fault first;
+    self.scene.@each(Breakable; entity, component) {
+        Node* node = self.scene.node(entity);
+        Node* ancestor = node;
+        while (ancestor && ancestor != selected) ancestor = ancestor.parent;
+        if (ancestor) {
+            if (catch failure = self.prepare_breakable(node)) {
+                if (!first) first = failure;
+            }
+        }
+    };
+    if (first) return first~;
 }
 
 <*
@@ -235,7 +425,12 @@ fn void? PhysicsWorld.add_breakable_pieces(
  @require self.scene.has(root, Breakable)
 *>
 fn void PhysicsWorld.remove_breakable(&self, Node* root) {
-    BreakableState* state = self.scene.get(root, Breakable).state;
+    Breakable* component = self.scene.get(root, Breakable);
+    if (!component.is_prepared()) {
+        self.scene.remove_component(root, Breakable);
+        return;
+    }
+    BreakableState* state = component.state;
     destroy_breakable_welds(state);
     if (state.form == ASSEMBLY) {
         if (self.scene.has(root, PhysicsBody)) self.remove_body(root);
@@ -280,97 +475,70 @@ fn BreakableDesc default_breakable_desc() {
     };
 }
 
-fn void? author_breakable(
-    PhysicsWorld* world,
-    Node* root,
-    BreakablePieceDesc[] pieces,
-    BreakableDesc desc,
-    maths::Transform root_pose,
-) @local {
-    usz hull_count;
-    foreach (piece : pieces) {
-        if (piece.hulls.len > uint::max - hull_count) return c3d::CAPACITY_EXCEEDED~;
-        hull_count += piece.hulls.len;
-    }
-    maths::Transform[] poses = alloc::new_array(tmem, maths::Transform, pieces.len);
-    maths::Transform[] frames = alloc::new_array(tmem, maths::Transform, pieces.len);
-    uint[] offsets = alloc::new_array(tmem, uint, pieces.len + 1);
-    SnapshotHandle[] held = alloc::new_array(tmem, SnapshotHandle, (sz)hull_count);
-    uint held_count;
-    defer foreach (handle : held[:held_count]) release_snapshot(world.snapshots, handle);
-    foreach (index, piece : pieces) {
-        poses[index] = breakable_pose(world.scene.node(piece.node))!;
-        frames[index] = relative_breakable_pose(root_pose, poses[index]);
-        offsets[index] = held_count;
-        foreach (geometry : piece.hulls) {
-            held[held_count] = acquire_hull(world, geometry)!;
-            held_count++;
+fn void? check_recipe_poses(BreakableState* state, maths::Transform[] poses, Weld[] edges) @local {
+    foreach (edge : edges) {
+        maths::Transform expected = relative_breakable_pose(state.runtime.frames[edge.piece_a], state.runtime.frames[edge.piece_b]);
+        maths::Transform current = relative_breakable_pose(poses[edge.piece_a], poses[edge.piece_b]);
+        Quat difference = expected.rotation.conjugate().mul(current.rotation).normalize();
+        Vec3 imaginary = { difference.v.x, difference.v.y, difference.v.z };
+        float angle = 2 * math::atan2(imaginary.length(), math::abs(difference.v.w));
+        float magnitude;
+        foreach (position : (Vec3[4]){
+            poses[edge.piece_a].position,
+            poses[edge.piece_b].position,
+            state.runtime.frames[edge.piece_a].position,
+            state.runtime.frames[edge.piece_b].position,
+        }) {
+            foreach (coordinate : position) magnitude = math::max(magnitude, math::abs(coordinate));
         }
+        float position_tolerance = math::max(REST_POSITION_TOLERANCE, magnitude * REST_POSITION_ROUNDOFF);
+        if ((current.position - expected.position).length() <= position_tolerance && angle <= REST_ANGLE_TOLERANCE) continue;
+        state.runtime.has_mismatch = true;
+        state.runtime.mismatch = { .piece_a = edge.piece_a, .piece_b = edge.piece_b };
+        return c3d::INVALID_ARGUMENT~;
     }
-    offsets[pieces.len] = held_count;
-    Weld[] edges = build_breakable_graph(
-        world: world,
-        poses: frames,
-        held: held,
-        offsets: offsets,
-        gap: desc.contact_distance,
-    )!;
-    BreakableState* state = allocate_breakable(
-        allocator: world.scene.allocator,
-        piece_count: pieces.len,
-        weld_count: edges.len,
-        hull_count: hull_count,
-    );
-    defer catch alloc::free(world.scene.allocator, state);
-    state.desc = desc;
-    state.welds[..] = edges[..];
-    state.runtime.frames[..] = frames[..];
-    state.runtime.hull_offsets[..] = offsets[..];
+}
+
+fn void? check_captured_pieces(
+    Scene* scene,
+    AssetStore* assets,
+    Node* root,
+    BreakablePieceView[] pieces,
+    BreakableDesc desc,
+) @local {
+    if (pieces.len < 2 || pieces.len > uint::max) return c3d::INVALID_ARGUMENT~;
     foreach (index, piece : pieces) {
-        state.pieces[index] = piece.node;
-        state.runtime.geometries[offsets[index]:piece.hulls.len] = piece.hulls[..];
-    }
-    state.alive_pieces = (uint)pieces.len;
-    state.alive_welds = (uint)edges.len;
-    state.form = desc.sleep_until_hit ? ASSEMBLY : PIECES;
-    if (desc.sleep_until_hit) {
-        author_breakable_assembly(
-            world: world,
-            root: root,
-            state: state,
-            pose: root_pose,
-        )!;
-        world.scene.add(root, (Breakable){ .state = state });
-        world.set_enabled(root, true);
-        state.status = LIVE;
-    } else {
-        build_breakable_pieces(
-            world: world,
-            state: state,
-            poses: poses,
-            assembly: {},
-            assembly_pose: root_pose,
-        )!;
-        defer catch remove_breakable_piece_bodies(world, state);
-        bind_breakable_welds(world, root, state)!;
-        world.scene.add(root, (Breakable){ .state = state });
-        commit_breakable_pieces(world, state, poses);
+        if (!scene.world.is_alive(piece.node)) return c3d::INVALID_ID~;
+        if (!piece.hulls.len) return c3d::INVALID_ARGUMENT~;
+        Node* node = scene.node(piece.node);
+        if (node == root) return c3d::INVALID_ARGUMENT~;
+        Node* ancestor = node;
+        while (ancestor != root) {
+            if (!ancestor) return c3d::INVALID_ARGUMENT~;
+            if (desc.sleep_until_hit && ancestor.transform_space != TransformSpace.PARENT) return c3d::UNSUPPORTED~;
+            ancestor = ancestor.parent;
+        }
+        foreach (earlier : pieces[:index]) if (c3d::same_id(earlier.node, piece.node)) return c3d::INVALID_ARGUMENT~;
+        breakable_pose(node)!;
+        maths::Transform frame = maths::transform_from_affine(piece.rest_frame.to_mat4()) ?? c3d::UNSUPPORTED~!;
+        if (!collide::unit_scale(frame) || !collide::unit_scale(piece.rest_frame)) return c3d::UNSUPPORTED~;
+        foreach (geometry : piece.hulls) if (!assets.geometries.is_live(geometry)) return c3d::INVALID_ID~;
     }
 }
 
-fn void? check_breakable_ancestors(PhysicsWorld* world, Node* root) @local {
+fn void? check_breakable_ancestors(Scene* scene, Node* root) @local {
     for (Node* ancestor = root.parent; ancestor; ancestor = ancestor.parent) {
-        if (world.scene.has(ancestor, Breakable)) return BREAKABLE_EXISTS~;
+        if (scene.has(ancestor, Breakable)) return BREAKABLE_EXISTS~;
     }
 }
 
-fn void? check_breakable_roles(Scene* scene, Node* node) @local {
-    if (scene.has(node, Breakable)) return BREAKABLE_EXISTS~;
+fn void? check_breakable_roles(Scene* scene, Node* node, Node* owner = null) @local {
+    if (node != owner && scene.has(node, Breakable)) return BREAKABLE_EXISTS~;
     if (scene.has(node, PhysicsBody) || scene.has(node, RigidBody)) return BODY_EXISTS~;
     if (scene.has(node, PhysicsJoint) || scene.has(node, Joint) || scene.has(node, Ragdoll)) {
         return c3d::INVALID_ARGUMENT~;
     }
-    for (Node* child = node.first_child; child; child = child.next_sibling) check_breakable_roles(scene, child)!;
+    for (Node* child = node.first_child; child; child = child.next_sibling) check_breakable_roles(scene, child, owner)!;
 }
 
 fn void? check_breakable_desc(BreakableDesc desc) @local {
@@ -537,6 +705,7 @@ fn BreakableState* carve_breakable(
     GeometryId[] geometries = carve(cursor, GeometryId, hull_count);
     uint[] hull_offsets = carve(cursor, uint, piece_count + 1);
     maths::Transform[] frames = carve(cursor, maths::Transform, piece_count);
+    maths::Transform[] assembly_frames = carve(cursor, maths::Transform, piece_count);
     uint[] assembly_pieces = carve(cursor, uint, hull_count);
     if (!cursor.base) return null;
 
@@ -544,13 +713,14 @@ fn BreakableState* carve_breakable(
         .geometries = geometries,
         .hull_offsets = hull_offsets,
         .frames = frames,
+        .assembly_frames = assembly_frames,
         .assembly_pieces = assembly_pieces,
     };
     *states.ptr = { .pieces = pieces, .welds = welds, .runtime = runtimes.ptr };
     return states.ptr;
 }
 
-fn BreakableState* allocate_breakable(
+fn BreakableState*? allocate_breakable(
     Allocator allocator,
     usz piece_count,
     usz weld_count,
@@ -563,7 +733,9 @@ fn BreakableState* allocate_breakable(
         weld_count: weld_count,
         hull_count: hull_count,
     );
-    BlockCursor fill = { .base = alloc::malloc(allocator, (sz)measure.offset) };
+    char*? block = alloc::malloc_try(allocator, (sz)measure.offset);
+    if (catch block) return c3d::CAPACITY_EXCEEDED~;
+    BlockCursor fill = { .base = block };
     return carve_breakable(
         cursor: &fill,
         piece_count: piece_count,
@@ -580,7 +752,7 @@ fn ColliderDesc breakable_collider(
 ) @local {
     ColliderDesc collider = default_collider_desc(HULL);
     collider.geometry = state.runtime.geometries[hull_index];
-    collider.local = assembly ? state.runtime.frames[piece_index] : maths::TRANSFORM_IDENTITY;
+    collider.local = assembly ? state.runtime.assembly_frames[piece_index] : maths::TRANSFORM_IDENTITY;
     collider.density = state.desc.density;
     collider.material = state.desc.material;
     collider.filter = state.desc.filter;

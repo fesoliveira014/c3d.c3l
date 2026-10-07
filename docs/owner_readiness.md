@@ -12,6 +12,7 @@ steps and remove their attempted attachment if preparation fails.
 | Terrain | Pending; validated height map and layer authoring | No generated chunk batch | `terrain::prepare(scene, assets, node)` or `terrain::prepare_subtree(scene, assets, root)` | Prepare before dependent foliage |
 | Foliage | Pending; validated descriptor and owned optional LOD copy | No generated cells | `foliage::prepare(scene, assets, node)` or `foliage::prepare_subtree(scene, assets, root)` | Prepare terrain and publish world matrices first; pending terrain returns `terrain::NOT_PREPARED` and can be retried |
 | Water | Pending; validated descriptor | No generated surface or mirror camera | `water::prepare(scene, assets, node)` or `water::prepare_subtree(scene, assets, root)` | Publish node world matrices before preparation |
+| Breakable | Pending; copied ordered pieces, hulls and rest frames | Existing authored Mesh nodes remain visible | `PhysicsWorld.prepare_breakable(node)` or `prepare_breakable_subtree(root)` | Publish world matrices first; connected piece poses must match the captured recipe up to common rigid motion. A mismatch leaves authoring pending and reports the piece pair |
 
 `is_prepared` reports whether the owner's complete runtime is installed. Preparing
 an already-prepared owner succeeds without changing it. A failed preparation
