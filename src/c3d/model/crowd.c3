@@ -123,6 +123,16 @@ fn void? prepare_crowd(AssetStore* assets, Scene* scene, Node* node) {
     check_crowd_template(template)!;
     foreach (pose : crowd.poses[:crowd.count]) check_pose(template, pose)!;
     ModelSkin* first = &template.skins[0];
+    if (!assets.skeletons.is_live(first.skeleton)) return c3d::INVALID_ID~;
+    foreach (clip : template.clips) {
+        if (!assets.clips.is_live(clip)) return c3d::INVALID_ID~;
+    }
+    foreach (&skin : template.skins) {
+        ModelMesh* mesh = mesh_of(template, skin.mesh_node)!!;
+        if (!assets.geometries.is_live(mesh.geometry) || !assets.materials.is_live(mesh.material)) {
+            return c3d::INVALID_ID~;
+        }
+    }
     uint capacity = (uint)crowd.placements.len;
     foreach (clip : template.clips) crowd.max_tracks = math::max(crowd.max_tracks, (uint)assets.clip(clip).data.tracks.len);
     crowd.joint_count = (uint)first.joint_nodes.len;
