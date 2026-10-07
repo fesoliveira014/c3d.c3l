@@ -3,7 +3,7 @@
 `c3d::physics::fracture` provides bounded workspaces, exact arithmetic, filtered
 geometric predicates, centered quantization, complete private solid validation
 and exact source construction records, convex-cell clipping and local face-driven
-partitioning with material occupancy. Public Boolean/Voronoi construction and collision reconstruction remain separate layers.
+partitioning with material occupancy and exact planar edge normalization. Public Boolean/Voronoi construction and collision reconstruction remain separate layers.
 
 ## Workspace contract
 
@@ -328,3 +328,47 @@ nested shells checked against inverse-transformed bounds, raw subnormals and
 extremes, crease-edge construction, support-extension rejection, strict rational
 interior samples, and capacity rollback. Public Boolean/Voronoi output and
 collision reconstruction remain unimplemented.
+
+
+## Planar edge normalization
+
+The private planar pass accepts directed coplanar segments with independent
+defining plane pairs. It chooses the first nonzero patch-normal axis to drop,
+then orders points lexicographically in the remaining coordinates. Identity is
+geometric: different plane triples at the same exact position share one point.
+Strict segment crossings use the patch plane and one independent plane from
+each line. No plane is derived from a rational constructed point.
+
+All original endpoints and strict crossings enter the point set. Each segment
+is split at every point on its closed span, covering endpoint contacts,
+T-junctions and partial collinear overlaps. Subedges use canonical endpoint
+order with signed multiplicity. Integer endpoint sorting groups equal subedges;
+opposite counts cancel and same-direction counts remain explicit. Canonical
+coefficient order selects a defining line pair when equivalent subedges have
+different constructions. Unused points are removed from the returned graph.
+This layer returns edges only; contour/provenance reconstruction follows it.
+
+For positive homogeneous denominators, general projected orientation is a
+three-by-three determinant with columns W, X and Y. The accepted raw bounds give
+two 1953-bit numerators and one 1674-bit denominator per term; six signed terms
+need at most 5583 magnitude bits. The grid bound is 643 bits. Coordinate ordering
+needs at most 3628 bits in the raw domain and 417 in the grid domain. Projected
+orientation holds twelve point coordinates, one result and three determinant
+temporaries: sixteen live wide values. Exact point ordering peaks at eleven.
+Compile-time assertions pin the projected bound and temporary schedule against
+the unchanged 8192-bit and 24-value reservations. Strict interval filters may
+resolve signs and ordering; uncertain and O4/O5 cases use exact arithmetic.
+
+Points, split-edge records and packed output borrow the fixed arena. Failed
+construction restores the incoming cursor and arithmetic count. Complete
+cancellation restores the cursor on success too. Input permutations preserve
+the ordered geometric graph. Two crossing segments peak at 25,512 bytes with
+five points and four edges. One face canceled against two opposite half-faces
+peaks at 26,480 bytes and retains only the 24,800-byte arithmetic block. These
+measurements borrow fixture planes and include no source validation or complete
+surface reconstruction. No reservation grows.
+
+Tests cover rational crossings, T-junctions, independent line selection,
+collinear overlaps, signed multiplicity, opposite subdivisions, canonical
+permutations, raw finite extremes and subnormals, near-grid-limit coordinates,
+nearly collinear filtered signs, and storage/arithmetic exhaustion with reuse.
