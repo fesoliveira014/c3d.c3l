@@ -187,3 +187,6 @@ action and space weights must also be nonnegative, with no upper cap. Both expor
 and import enforce this owner domain, including binary IEEE values and JSONC
 f32 bit tokens. Negative finite speeds remain supported. Other field domains,
 including IEEE-preserving node transforms, are unchanged.
+
+See the [serialization example](serialization_example.md) for binary/JSONC reloads,
+schema export and reproducible CPU-only or Vulkan runs.
