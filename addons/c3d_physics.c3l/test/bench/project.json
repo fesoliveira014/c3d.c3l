@@ -5,6 +5,11 @@
   "wincrt": "static",
   "output": "build",
   "targets": {
+    "kernel_bench": {
+      "type": "executable",
+      "fp-math": "strict",
+      "sources": [ "../../src/fracture/*", "kernel_fixtures.c3", "kernel_measurements.c3" ]
+    },
     "collision_oracle": {
       "type": "executable",
       "fp-math": "strict",
