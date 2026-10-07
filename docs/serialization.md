@@ -205,7 +205,7 @@ only its selected variant. Wind and Force persist their complete values; Buoyanc
 persists density and drag and resets submerged fraction. RigidBody and Joint are
 explicitly transient. Ordinary physics synchronization creates the native state.
 The package inventory discovers every physics slot through normal registration;
-Ragdoll and Breakable remain explicit unsupported entries until their adapters.
+Breakable remains an explicit unsupported entry until its adapter.
 
 ## Navigation adapter
 
@@ -234,3 +234,17 @@ Owner collection may call `WriteContext.project_component(node, value)` to
 project an existing component through its ordinary codec. Borrowed dynamic data
 must outlive the synchronous export. Duplicate projections, competing owners,
 projection/omission conflicts and transient ownership claims are rejected.
+
+## Ragdoll adapter
+
+Ragdoll restores in OWNER after model/skin and body/joint authoring. Bone mappings,
+parents, bind frames, modes, per-bone weights and captured drives, aggregate weight,
+drive strength and current node placements persist. Weights and drive strength
+must be finite and nonnegative, with no upper cap, on both export and import.
+Preflight checks required references and mode/body/joint consistency before any
+component attaches; diagnostics include the bone index and model details when
+applicable. Restored owner arrays are independent copies. Joint order/ownership
+are recomputed, frozen recovery poses start at loaded skin-joint locals, and
+scratch/counters/recovery result reset. Bone-body velocities restart at zero.
+Ragdoll collection projects only its listed bodies; ordinary body velocities
+persist and source values are unchanged. Normal physics sync creates native state.

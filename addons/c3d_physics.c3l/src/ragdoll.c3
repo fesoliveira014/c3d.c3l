@@ -537,7 +537,7 @@ fn Vec3 bind_position(Skeleton* skeleton, uint joint) @local {
     return maths::translation(maths::inverse_affine(skeleton.inverse_bind[joint]));
 }
 
-fn void order_joints(Ragdoll* ragdoll) @local {
+fn void order_joints(Ragdoll* ragdoll) @private {
     usz count;
     @pool() {
         bool[] placed = alloc::new_array(tmem, bool, ragdoll.parents.len);
@@ -557,7 +557,7 @@ fn void order_joints(Ragdoll* ragdoll) @local {
 }
 
 // Parents come first in joint_order, so a joint without a bone inherits its parent's owner.
-fn void assign_joint_owners(Ragdoll* ragdoll) @local {
+fn void assign_joint_owners(Ragdoll* ragdoll) @private {
     foreach (joint : ragdoll.joint_order) {
         int bone = ragdoll.joint_bone[joint];
         int parent = ragdoll.parents[joint];
@@ -567,6 +567,15 @@ fn void assign_joint_owners(Ragdoll* ragdoll) @local {
             ragdoll.joint_owner[joint] = parent >= 0 ? ragdoll.joint_owner[parent] : 0;
         }
     }
+}
+
+fn Ragdoll? try_carve_ragdoll_block(Allocator allocator, usz bone_count, usz joint_count) @private {
+    BlockCursor measure;
+    carve_ragdoll(&measure, bone_count, joint_count);
+    char*? block = alloc::malloc_try(allocator, (sz)measure.offset);
+    if (catch block) return c3d::CAPACITY_EXCEEDED~;
+    BlockCursor fill = { .base = block };
+    return carve_ragdoll(&fill, bone_count, joint_count);
 }
 
 fn Ragdoll carve_ragdoll_block(Allocator allocator, usz bone_count, usz joint_count) @local {
