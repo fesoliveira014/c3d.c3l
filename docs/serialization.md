@@ -205,7 +205,7 @@ only its selected variant. Wind and Force persist their complete values; Buoyanc
 persists density and drag and resets submerged fraction. RigidBody and Joint are
 explicitly transient. Ordinary physics synchronization creates the native state.
 The package inventory discovers every physics slot through normal registration;
-Cloth, Ragdoll and Breakable are explicit unsupported entries until their adapters.
+Ragdoll and Breakable remain explicit unsupported entries until their adapters.
 
 ## Navigation adapter
 
@@ -218,3 +218,19 @@ NavSource with no explicit geometry requires the node's restored Mesh. The
 five runtime mirrors are explicitly transient; no builder, crowd or navmesh is
 created during read. Ordinary nav_sync and crowd_update rebuild those mirrors.
 The independent package inventory checks all ten normally registered types.
+
+## Cloth adapter
+
+Physics registration also installs the Cloth OWNER policy. Export projects its
+ordinary Mesh record to retained source geometry and vertex-motion, preserving
+all other Mesh fields and leaving the source scene untouched. The Cloth payload
+retains complete settings, requested pin order/duplicates and required collider
+references. Reads retain that Mesh and attach pending Cloth without private
+geometry or solve state. Synchronize physics bodies before cloth preparation.
+The explicit navigation composition test proves a NavSource with no geometry
+can use the restored Mesh before ordinary navigation synchronization.
+
+Owner collection may call `WriteContext.project_component(node, value)` to
+project an existing component through its ordinary codec. Borrowed dynamic data
+must outlive the synchronous export. Duplicate projections, competing owners,
+projection/omission conflicts and transient ownership claims are rejected.

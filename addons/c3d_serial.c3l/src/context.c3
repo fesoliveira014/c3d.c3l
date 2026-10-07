@@ -27,6 +27,7 @@ struct ComponentClaim @private {
     uint node;
     uint slot;
     ulong owner;
+    void* projected;
 }
 
 struct WriteState @private {
@@ -107,12 +108,51 @@ fn void? WriteContext.omit_component(&self, Node* node, uint slot) {
     ulong owner = owner_of(self)!;
     foreach (claim : self.state.claims.array_view()) {
         if (claim.node == node.id.index && claim.slot == slot) {
-            if (claim.owner != owner) return c3d::INVALID_ARGUMENT~;
+            if (claim.owner != owner || claim.projected) return c3d::INVALID_ARGUMENT~;
             return;
         }
     }
     self.state.claims.push({ .node = node.id.index, .slot = slot, .owner = owner });
     projected.omitted_components |= ecs::slot_bit(slot);
+}
+
+<*
+ Project an existing component through its ordinary codec without mutation.
+ @param [&in] node : "Carries the projected component."
+ @param component : "Dynamic storage outlives this synchronous export."
+ @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @require self.state.collecting
+*>
+macro void? WriteContext.project_component(&self, Node* node, component) {
+    var $Type = $Typeof(component);
+    uint slot = ecs::assigned_slot($Type) ?? c3d::INVALID_ARGUMENT~!;
+    ComponentClaim* claim = component_projection_claim(self, node, slot)!;
+    $Type[] value = alloc::new_array_try(tmem, $Type, 1) ?? c3d::CAPACITY_EXCEEDED~!;
+    value[0] = component;
+    claim.projected = value.ptr;
+}
+
+fn ComponentClaim*? component_projection_claim(WriteContext* context, Node* node, uint slot) @private {
+    NodeProjection* projected = projection_of(context, node)!;
+    ComponentMask bit = ecs::slot_bit(slot);
+    if (!(context.scene.world.mask(node.id) & bit) || (projected.omitted_components & bit)) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+    ulong owner = owner_of(context)!;
+    foreach (&claim : context.state.claims.array_view()) {
+        if (claim.node != node.id.index || claim.slot != slot) continue;
+        if (claim.owner != owner || claim.projected) return c3d::INVALID_ARGUMENT~;
+        return claim;
+    }
+    context.state.claims.push({ .node = node.id.index, .slot = slot, .owner = owner });
+    return &context.state.claims.array_view()[^1];
+}
+
+fn void* projected_component(WriteContext* context, Node* node, uint slot) @private {
+    foreach (claim : context.state.claims.array_view()) {
+        if (claim.node == node.id.index && claim.slot == slot && claim.projected) return claim.projected;
+    }
+    return context.scene.world.component(node.id, slot);
 }
 
 <*
