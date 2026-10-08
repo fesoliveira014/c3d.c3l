@@ -443,8 +443,8 @@ arm. Do not change `kind` without initializing that arm from its named defaults.
 
 `assets.replace_material(material_id, material)` assigns a complete `Material` under the same id and key and
 advances the revision once; the kind may change. A custom payload is copied and the old one freed. The call has
-no fault. It can still create a pairing fault at draw time, the same as `add_material` and `mark_material_dirty`:
-normal-map derivatives on non-triangle or wireframe-line geometry, and a cube or `R16_UINT` texture in a built-in
+no fault. Call it from the owner thread, outside frame recording. It can still create a pairing fault at
+draw time, the same as `add_material` and `mark_material_dirty`: normal-map derivatives on non-triangle or wireframe-line geometry, and a cube or `R16_UINT` texture in a built-in
 slot. A material cannot see which geometries draw it. Path-traced views restart after a replacement; see
 [Accumulation and resets](path_tracing.md#accumulation-and-resets).
 

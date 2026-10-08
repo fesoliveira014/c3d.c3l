@@ -147,7 +147,12 @@ fn FontId? AssetStore.add_font_owned(&self, char[] file, FontDesc desc, String k
  @return? c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED, c3d::INVALID_ARGUMENT
  @require self.fonts.is_live(font)
 *>
-fn void? AssetStore.replace_font(&self, FontId font, char[] file, FontDesc desc) {
+fn void? AssetStore.replace_font(
+    &self,
+    FontId font,
+    char[] file,
+    FontDesc desc,
+) {
     char[] copy = copy_slice(self.allocator, file);
     defer catch alloc::free(self.allocator, copy.ptr);
     return replace_font_record(self, font, copy, desc);
@@ -159,7 +164,12 @@ fn void? AssetStore.replace_font(&self, FontId font, char[] file, FontDesc desc)
  @return? c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED, c3d::INVALID_ARGUMENT
  @require self.fonts.is_live(font)
 *>
-fn void? AssetStore.replace_font_owned(&self, FontId font, char[] file, FontDesc desc) {
+fn void? AssetStore.replace_font_owned(
+    &self,
+    FontId font,
+    char[] file,
+    FontDesc desc,
+) {
     return replace_font_record(self, font, file, desc);
 }
 

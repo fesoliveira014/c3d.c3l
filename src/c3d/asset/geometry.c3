@@ -24,9 +24,6 @@ struct GeometryAsset {
     uint        rejected_revision;   // header.revision whose arrays form none, or whose topology is not TRIANGLES
 }
 
-<*
- Stream presence and influence range replacement must preserve.
-*>
 struct GeometryShape @private {
     bool   has_joints;
     bool   has_weights;

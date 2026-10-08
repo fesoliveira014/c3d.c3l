@@ -333,9 +333,6 @@ fn void destroy_asset_store(AssetStore* store) {
     *store = {};
 }
 
-<*
- Advance the revision and record it as the latest replacement.
-*>
 fn void mark_replaced(AssetHeader* header) @private {
     header.revision++;
     header.replaced_revision = header.revision;

@@ -142,11 +142,23 @@ fn TextureId? AssetStore.add_texture_empty(&self, TextureDesc desc, String key =
  @return? c3d::INVALID_ARGUMENT, c3d::INCOMPATIBLE_STRUCTURE
  @require self.textures.is_live(texture), texture.index >= BUILTIN_TEXTURE_COUNT
 *>
-fn void? AssetStore.replace_texture(&self, TextureId texture, TextureDesc desc, char[] pixels) {
+fn void? AssetStore.replace_texture(
+    &self,
+    TextureId texture,
+    TextureDesc desc,
+    char[] pixels,
+) {
     TextureAsset* record = self.textures.get(texture);
     check_format_use(desc)!;
     check_texture_structure(record.desc, desc)!;
-    apply_texture(self.allocator, record, desc, MIP_ZERO, copy_slice(self.allocator, pixels), {});
+    apply_texture(
+        allocator:     self.allocator,
+        record:        record,
+        desc:          desc,
+        source_kind:   MIP_ZERO,
+        pixels:        copy_slice(self.allocator, pixels),
+        supplied_mips: {},
+    );
 }
 
 <*
@@ -155,11 +167,23 @@ fn void? AssetStore.replace_texture(&self, TextureId texture, TextureDesc desc, 
  @return? c3d::INVALID_ARGUMENT, c3d::INCOMPATIBLE_STRUCTURE
  @require self.textures.is_live(texture), texture.index >= BUILTIN_TEXTURE_COUNT
 *>
-fn void? AssetStore.replace_texture_owned(&self, TextureId texture, TextureDesc desc, char[] pixels) {
+fn void? AssetStore.replace_texture_owned(
+    &self,
+    TextureId texture,
+    TextureDesc desc,
+    char[] pixels,
+) {
     TextureAsset* record = self.textures.get(texture);
     check_format_use(desc)!;
     check_texture_structure(record.desc, desc)!;
-    apply_texture(self.allocator, record, desc, MIP_ZERO, pixels, {});
+    apply_texture(
+        allocator:     self.allocator,
+        record:        record,
+        desc:          desc,
+        source_kind:   MIP_ZERO,
+        pixels:        pixels,
+        supplied_mips: {},
+    );
 }
 
 <*
@@ -168,17 +192,22 @@ fn void? AssetStore.replace_texture_owned(&self, TextureId texture, TextureDesc 
  @return? c3d::INVALID_ARGUMENT, c3d::INCOMPATIBLE_STRUCTURE
  @require self.textures.is_live(texture), texture.index >= BUILTIN_TEXTURE_COUNT
 *>
-fn void? AssetStore.replace_texture_mips(&self, TextureId texture, TextureDesc desc, TextureMipData[] levels) {
+fn void? AssetStore.replace_texture_mips(
+    &self,
+    TextureId texture,
+    TextureDesc desc,
+    TextureMipData[] levels,
+) {
     TextureAsset* record = self.textures.get(texture);
     usz total_bytes = check_texture_mips(desc, levels)!;
     check_texture_structure(record.desc, desc)!;
     apply_texture(
-        self.allocator,
-        record,
-        desc,
-        SUPPLIED_MIPS,
-        {},
-        copy_texture_mips(self.allocator, levels, total_bytes),
+        allocator:     self.allocator,
+        record:        record,
+        desc:          desc,
+        source_kind:   SUPPLIED_MIPS,
+        pixels:        {},
+        supplied_mips: copy_texture_mips(self.allocator, levels, total_bytes),
     );
 }
 
@@ -192,7 +221,14 @@ fn void? AssetStore.replace_texture_empty(&self, TextureId texture, TextureDesc 
     TextureAsset* record = self.textures.get(texture);
     desc = check_empty_texture(desc)!;
     check_texture_structure(record.desc, desc)!;
-    apply_texture(self.allocator, record, desc, EMPTY, {}, {});
+    apply_texture(
+        allocator:     self.allocator,
+        record:        record,
+        desc:          desc,
+        source_kind:   EMPTY,
+        pixels:        {},
+        supplied_mips: {},
+    );
 }
 
 <*
@@ -292,9 +328,6 @@ fn TextureDesc? check_empty_texture(TextureDesc desc) @private {
     return desc;
 }
 
-<*
- Bytes of the records and slices a copy of the levels occupies.
-*>
 fn usz? check_texture_mips(TextureDesc desc, TextureMipData[] levels) @private {
     check_format_use(desc)!;
     if (!desc.mip_levels || !desc.layers || desc.generate_mips) return c3d::INVALID_ARGUMENT~;

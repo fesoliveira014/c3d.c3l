@@ -216,8 +216,9 @@ A change that live components were sized against faults with `c3d::INCOMPATIBLE_
 | Clip | name, interpolation, times, values, events, a positive duration's value | targets table, track count, each track's target, path and stride, a duration that is or is not positive |
 
 The joint bound is fixed when the geometry is added and survives `release_geometry_cpu`; a replacement may use any
-range up to it. A replacement is the only way to change vertex counts of a live geometry: physics mesh colliders
-and the nav rasterizer read the triangle list, so a non-triangle topology is structural.
+range up to it. Physics mesh colliders and the nav rasterizer read the triangle list, so a topology change is structural.
+Call replacements from the owner thread, outside frame recording. The renderer retires the old objects after
+their last submitted frame.
 
 Replacing a geometry rebuilds its skin and morph bounds and drops its triangle tree; both rebuild on next use.
 
