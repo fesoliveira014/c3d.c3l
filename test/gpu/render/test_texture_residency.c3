@@ -72,7 +72,8 @@ fn char[4] residency_bc1_color(uint mip) @private {
 }
 
 fn char[] residency_bc1_level(Allocator allocator, uint mip) @private {
-    uint blocks = math::max(1u, ((RESIDENCY_EXTENT >> mip) + RESIDENCY_BC_BLOCK_EXTENT - 1) / RESIDENCY_BC_BLOCK_EXTENT);
+    uint extent = RESIDENCY_EXTENT >> mip;
+    uint blocks = math::max(1u, (extent + RESIDENCY_BC_BLOCK_EXTENT - 1) / RESIDENCY_BC_BLOCK_EXTENT);
     char[4] color = residency_level_color(mip);
     ushort packed = (ushort)((color[0] >> 3) << 11 | (color[1] >> 2) << 5 | (color[2] >> 3));
     char[] bytes = alloc::new_array(allocator, char, (sz)blocks * blocks * RESIDENCY_BC_BLOCK_BYTES);
@@ -195,7 +196,8 @@ fn void test_texture_residency_eviction_returns_an_undrawn_texture_to_its_tail()
     uint before = residency_frame(&fixture, &shown)!!;
     check_rgb(before, residency_expected(residency_level_color(0)));
     TextureResidency hidden_record = renderer.texture_residency(hidden)!!;
-    usz freed = render::texture_range_bytes(&hidden_record, 0) - render::texture_range_bytes(&hidden_record, hidden_record.tail_base);
+    usz full_bytes = render::texture_range_bytes(&hidden_record, 0);
+    usz freed = full_bytes - render::texture_range_bytes(&hidden_record, hidden_record.tail_base);
     renderer.set_texture_budget(renderer.stats.texture_bytes - freed + RESIDENCY_BUDGET_MARGIN);
 
     uint after = residency_frame(&fixture, &shown)!!;
@@ -203,6 +205,11 @@ fn void test_texture_residency_eviction_returns_an_undrawn_texture_to_its_tail()
     assert(renderer.texture_residency(hidden)!!.resident_base == hidden_record.tail_base);
     assert(renderer.texture_residency(drawn)!!.resident_base == 0);
     assert(after == before);
+
+    fixture.assets.remove_texture(hidden);
+    TextureId reused = residency_texture(&fixture, false)!!;
+    assert(reused.index == hidden.index);
+    assert(renderer.texture_residency(reused)!!.chain_mips == 0);
     check_validation(renderer);
 }
 
@@ -254,7 +261,8 @@ fn void test_texture_residency_full_reader_keeps_the_whole_chain() @test {
 
     TextureId later_read = residency_texture(&fixture, false)!!;
     renderer.upload_texture(later_read)!!;
-    assert(renderer.texture_residency(later_read)!!.resident_base == renderer.texture_residency(later_read)!!.tail_base);
+    TextureResidency streamed = renderer.texture_residency(later_read)!!;
+    assert(streamed.resident_base == streamed.tail_base);
     for (uint frame = 0; frame < RESIDENCY_SETTLE_FRAMES; frame++) {
         @pool() {
             container_sample_mip(&fixture, &sampler, later_read, RESIDENCY_FULL_READ_MIP)!!;
