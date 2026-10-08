@@ -47,7 +47,7 @@ struct TextureMipChain {
 <*
  Prepare uncompressed 2D or cube mips from complete base layers.
  @param pixels : "Borrowed mip-zero texels of the format, in layer order."
- @param first_mip : "Levels above it are computed in tmem and discarded."
+ @param first_mip : "Levels above it are computed in the allocator and discarded."
  @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
  @require first_mip == 0 || (desc.generate_mips && first_mip < material::texture_mip_count(desc.width, desc.height))
 *>

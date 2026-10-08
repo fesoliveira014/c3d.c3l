@@ -299,6 +299,16 @@ fn void test_planner_raises_full_readers_regardless_of_budget() @test {
     assert(plan.total_bytes == 850);
 }
 
+fn void test_planner_clamps_the_bias_to_its_ceiling() @test {
+    TextureResidency[1] textures = { make_pair_record(0, 2, 4) };
+    TextureResidencyChange[CAPACITY] changes;
+    uint bias = 5;
+
+    TextureResidencyPlan plan = render::plan_texture_residency(textures[..], budget_of(100), &bias, changes[..]);
+
+    assert(bias == 0 && plan.evictions == 1);
+}
+
 fn void test_planner_writes_evictions_before_raises() @test {
     TextureResidency[2] textures = {
         make_record(levels: { 50, 8, 2, 0 }, chain_mips: 3, base: 1, tail: 1, required: 0),

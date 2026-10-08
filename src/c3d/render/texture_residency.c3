@@ -6,6 +6,11 @@ import c3d::material;
 import std::math;
 
 <*
+ Device footprint of every mip of one texture, all layers.
+*>
+alias TextureLevelBytes = usz[material::TEXTURE_MIP_CAPACITY];
+
+<*
  Largest extent of the mips every streamed texture keeps resident.
 *>
 const uint TEXTURE_TAIL_EXTENT = 64; // about 21 KiB of RGBA8 per texture; a full 4096-slot store idles under 90 MiB
@@ -21,11 +26,6 @@ const usz TEXTURE_STREAM_FRAME_BYTES = 8 << 20; // matches OVERSIZED_UPLOAD_BYTE
 const float TEXTURE_BIAS_RELEASE_FRACTION = 0.9f; // one level of headroom against oscillation
 
 const uint NO_RECORD @local = uint::max;
-
-<*
- Device footprint of every mip of one texture, all layers.
-*>
-alias TextureLevelBytes = usz[material::TEXTURE_MIP_CAPACITY];
 
 <*
  Resident mip range of one store texture and the demand that drives it.
@@ -84,6 +84,148 @@ struct TexturePlanState @local {
     usz                      change_count;
     uint                     evictions;
     uint                     raises;
+}
+
+fn void TexturePlanState.measure(&self) {
+    foreach (&record : self.textures) {
+        if (!record.chain_mips) continue;
+
+        uint settled = !record.streamed && record.raisable ? 0 : record.resident_base;
+        usz bytes = texture_range_bytes(record, settled);
+        self.total += bytes;
+        if (!texture_plan_drawn(record)) self.held_bytes += bytes;
+    }
+}
+
+fn usz TexturePlanState.drawn_need(&self, uint bias) {
+    usz bytes;
+    foreach (&record : self.textures) {
+        if (texture_plan_drawn(record)) bytes += texture_range_bytes(record, texture_plan_target(record, bias));
+    }
+    return bytes;
+}
+
+fn void TexturePlanState.push(&self, uint index, uint new_base) {
+    self.changes[self.change_count] = { .index = index, .new_base = new_base };
+    self.change_count++;
+}
+
+fn void TexturePlanState.evict(&self, uint index, uint new_base) {
+    TextureResidency* record = &self.textures[index];
+    usz freed = texture_range_bytes(record, record.resident_base) - texture_range_bytes(record, new_base);
+    self.total -= freed;
+    if (!texture_plan_drawn(record)) self.held_bytes -= freed;
+    self.push(index, new_base);
+    self.evictions++;
+}
+
+fn void TexturePlanState.evict_undrawn(&self, uint bias) {
+    usz drawn_zero = self.drawn_need(0);
+    usz drawn_relax = bias > 0 ? self.drawn_need(bias - 1) : 0;
+    double release = (double)TEXTURE_BIAS_RELEASE_FRACTION * (double)self.budget;
+    bool has_cursor;
+    ulong cursor_frame;
+    uint cursor_index;
+
+    while (self.total > self.budget
+      || self.held_bytes + drawn_zero > self.budget
+      || (bias > 0 && (double)(self.held_bytes + drawn_relax) > release)) {
+        uint pick = NO_RECORD;
+        foreach (index, &record : self.textures) {
+            if (!texture_plan_candidate(record) || texture_plan_drawn(record)) continue;
+            if (record.resident_base >= record.tail_base) continue;
+
+            bool after = !has_cursor || record.last_used_frame > cursor_frame
+              || (record.last_used_frame == cursor_frame && index > cursor_index);
+            if (!after) continue;
+            if (pick == NO_RECORD || record.last_used_frame < self.textures[pick].last_used_frame) pick = (uint)index;
+        }
+        if (pick == NO_RECORD) break;
+
+        has_cursor = true;
+        cursor_frame = self.textures[pick].last_used_frame;
+        cursor_index = pick;
+        self.evict(pick, self.textures[pick].tail_base);
+    }
+}
+
+fn uint TexturePlanState.settle_bias(&self, uint bias) {
+    uint ceiling;
+    foreach (&record : self.textures) {
+        if (texture_plan_drawn(record) && record.tail_base > record.required_base) {
+            ceiling = math::max(ceiling, record.tail_base - record.required_base);
+        }
+    }
+
+    bias = math::min(bias, ceiling);
+    if (self.held_bytes + self.drawn_need(bias) > self.budget) {
+        while (bias < ceiling && self.held_bytes + self.drawn_need(bias) > self.budget) bias++;
+        return bias;
+    }
+    double release = (double)TEXTURE_BIAS_RELEASE_FRACTION * (double)self.budget;
+    while (bias > 0 && (double)(self.held_bytes + self.drawn_need(bias - 1)) <= release) bias--;
+    return bias;
+}
+
+fn void TexturePlanState.evict_drawn(&self, uint bias) {
+    if (self.total <= self.budget) return;
+
+    foreach (index, &record : self.textures) {
+        if (!texture_plan_drawn(record)) continue;
+
+        uint target = texture_plan_target(record, bias);
+        if (record.resident_base < target) self.evict((uint)index, target);
+    }
+}
+
+fn void TexturePlanState.push_full_raises(&self) {
+    foreach (index, &record : self.textures) {
+        if (!record.chain_mips || record.streamed || !record.raisable || record.resident_base == 0) continue;
+
+        self.push((uint)index, 0);
+        self.raises++;
+    }
+}
+
+fn uint TexturePlanState.raise(&self, bool limited, uint bias, usz frame_bytes) {
+    uint starved;
+    uint admitted_count;
+    usz admitted_bytes;
+    for (uint deficit = material::TEXTURE_MIP_CAPACITY; deficit > 0; deficit--) {
+        foreach (index, &record : self.textures) {
+            if (!texture_plan_candidate(record)) continue;
+            if (limited && !texture_plan_drawn(record)) continue;
+
+            uint target = limited ? texture_plan_target(record, bias) : 0;
+            if (record.resident_base <= target || record.resident_base - target != deficit) continue;
+
+            usz delta = texture_range_bytes(record, target) - texture_range_bytes(record, record.resident_base);
+            bool fits = !limited || self.total + delta <= self.budget;
+            bool paced = admitted_count == 0 || admitted_bytes + delta <= frame_bytes;
+            if (!fits || !paced) {
+                if (texture_plan_drawn(record)) starved++;
+                continue;
+            }
+
+            if (admitted_count > 0) admitted_bytes += delta;
+            admitted_count++;
+            self.total += delta;
+            self.push((uint)index, target);
+            self.raises++;
+        }
+    }
+    return starved;
+}
+
+<*
+ Residency of a store texture as this renderer holds it.
+ @return? c3d::INVALID_ID
+*>
+fn TextureResidency? Renderer.texture_residency(&self, TextureId texture) {
+    if (!self.assets.textures.is_live(texture)) return c3d::INVALID_ID~;
+    if (!c3d::same_id(self.textures[texture.index].asset, texture)) return {};
+
+    return self.residencies[texture.index];
 }
 
 <*
@@ -210,146 +352,6 @@ fn bool texture_plan_drawn(TextureResidency* record) @local {
 
 fn uint texture_plan_target(TextureResidency* record, uint bias) @local {
     return math::min(record.tail_base, record.required_base + bias);
-}
-
-fn void TexturePlanState.measure(&self) {
-    foreach (&record : self.textures) {
-        if (!record.chain_mips) continue;
-
-        uint settled = !record.streamed && record.raisable ? 0 : record.resident_base;
-        usz bytes = texture_range_bytes(record, settled);
-        self.total += bytes;
-        if (!texture_plan_drawn(record)) self.held_bytes += bytes;
-    }
-}
-
-fn usz TexturePlanState.drawn_need(&self, uint bias) {
-    usz bytes;
-    foreach (&record : self.textures) {
-        if (texture_plan_drawn(record)) bytes += texture_range_bytes(record, texture_plan_target(record, bias));
-    }
-    return bytes;
-}
-
-fn void TexturePlanState.push(&self, uint index, uint new_base) {
-    self.changes[self.change_count] = { .index = index, .new_base = new_base };
-    self.change_count++;
-}
-
-fn void TexturePlanState.evict(&self, uint index, uint new_base) {
-    TextureResidency* record = &self.textures[index];
-    usz freed = texture_range_bytes(record, record.resident_base) - texture_range_bytes(record, new_base);
-    self.total -= freed;
-    if (!texture_plan_drawn(record)) self.held_bytes -= freed;
-    self.push(index, new_base);
-    self.evictions++;
-}
-
-fn void TexturePlanState.evict_undrawn(&self, uint bias) {
-    usz drawn_zero = self.drawn_need(0);
-    usz drawn_relax = bias > 0 ? self.drawn_need(bias - 1) : 0;
-    double release = (double)TEXTURE_BIAS_RELEASE_FRACTION * (double)self.budget;
-    bool has_cursor;
-    ulong cursor_frame;
-    uint cursor_index;
-
-    while (self.total > self.budget
-      || self.held_bytes + drawn_zero > self.budget
-      || (bias > 0 && (double)(self.held_bytes + drawn_relax) > release)) {
-        uint pick = NO_RECORD;
-        foreach (index, &record : self.textures) {
-            if (!texture_plan_candidate(record) || texture_plan_drawn(record)) continue;
-            if (record.resident_base >= record.tail_base) continue;
-
-            bool after = !has_cursor || record.last_used_frame > cursor_frame
-              || (record.last_used_frame == cursor_frame && index > cursor_index);
-            if (!after) continue;
-            if (pick == NO_RECORD || record.last_used_frame < self.textures[pick].last_used_frame) pick = (uint)index;
-        }
-        if (pick == NO_RECORD) break;
-
-        has_cursor = true;
-        cursor_frame = self.textures[pick].last_used_frame;
-        cursor_index = pick;
-        self.evict(pick, self.textures[pick].tail_base);
-    }
-}
-
-fn uint TexturePlanState.settle_bias(&self, uint bias) {
-    uint ceiling;
-    foreach (&record : self.textures) {
-        if (texture_plan_drawn(record) && record.tail_base > record.required_base) {
-            ceiling = math::max(ceiling, record.tail_base - record.required_base);
-        }
-    }
-
-    if (self.held_bytes + self.drawn_need(bias) > self.budget) {
-        while (bias < ceiling && self.held_bytes + self.drawn_need(bias) > self.budget) bias++;
-        return bias;
-    }
-    double release = (double)TEXTURE_BIAS_RELEASE_FRACTION * (double)self.budget;
-    while (bias > 0 && (double)(self.held_bytes + self.drawn_need(bias - 1)) <= release) bias--;
-    return bias;
-}
-
-fn void TexturePlanState.evict_drawn(&self, uint bias) {
-    if (self.total <= self.budget) return;
-
-    foreach (index, &record : self.textures) {
-        if (!texture_plan_drawn(record)) continue;
-
-        uint target = texture_plan_target(record, bias);
-        if (record.resident_base < target) self.evict((uint)index, target);
-    }
-}
-
-fn void TexturePlanState.push_full_raises(&self) {
-    foreach (index, &record : self.textures) {
-        if (!record.chain_mips || record.streamed || !record.raisable || record.resident_base == 0) continue;
-
-        self.push((uint)index, 0);
-        self.raises++;
-    }
-}
-
-fn uint TexturePlanState.raise(&self, bool limited, uint bias, usz frame_bytes) {
-    uint starved;
-    uint admitted_count;
-    usz admitted_bytes;
-    for (uint deficit = material::TEXTURE_MIP_CAPACITY; deficit > 0; deficit--) {
-        foreach (index, &record : self.textures) {
-            if (!texture_plan_candidate(record)) continue;
-            if (limited && !texture_plan_drawn(record)) continue;
-
-            uint target = limited ? texture_plan_target(record, bias) : 0;
-            if (record.resident_base <= target || record.resident_base - target != deficit) continue;
-
-            usz delta = texture_range_bytes(record, target) - texture_range_bytes(record, record.resident_base);
-            bool fits = !limited || self.total + delta <= self.budget;
-            bool paced = admitted_count == 0 || admitted_bytes + delta <= frame_bytes;
-            if (!fits || !paced) {
-                if (texture_plan_drawn(record)) starved++;
-                continue;
-            }
-
-            if (admitted_count > 0) admitted_bytes += delta;
-            admitted_count++;
-            self.total += delta;
-            self.push((uint)index, target);
-            self.raises++;
-        }
-    }
-    return starved;
-}
-
-<*
- Residency of a store texture as this renderer holds it.
- @return? c3d::INVALID_ID
-*>
-fn TextureResidency? Renderer.texture_residency(&self, TextureId texture) {
-    if (!self.assets.textures.is_live(texture)) return c3d::INVALID_ID~;
-
-    return self.residencies[texture.index];
 }
 
 fn void? step_texture_residency(Renderer* renderer) @private {
