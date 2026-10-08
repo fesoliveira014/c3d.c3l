@@ -56,7 +56,8 @@ written to `hdr_color`. The image restarts automatically when:
 
 Material factor, light, environment and sky edits do not restart it: a moving sun under an
 [atmosphere](sky.md#path-tracing) keeps its old samples. Call
-`render::reset_view_history(&renderer, view)` after such an edit. `configure_view` and a resize
+`render::reset_view_history(&renderer, view)` after such an edit. A material, texture or environment
+replacement behaves like an edit: call it after the replacement. `configure_view` and a resize
 also restart it. `Renderer.view_stats(view).accumulated_samples` reports the samples in the image;
 `Stats.path_trace_samples` counts the samples traced in the frame.
 

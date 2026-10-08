@@ -67,9 +67,10 @@ struct NavAgent {
     bool            changed;        // params or target changed since the last crowd_update
 }
 
-<* Runtime mirror of a NavSource: the world bounds its tiles were dirtied with. *>
+<* Runtime mirror of a NavSource: dirtied world bounds and the geometry revision they came from. *>
 struct NavSourceRuntime {
     Aabb bounds;
+    uint geometry_revision;
 }
 
 <* Runtime mirror of a NavVolume: its world bounds and world-space record. *>

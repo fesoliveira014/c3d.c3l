@@ -360,6 +360,7 @@ fn Ui? create_ui(Allocator allocator, AssetStore* assets, UiDesc desc) {
     usz text_at = @reserve(&offset, char, desc.text_bytes);
     usz cache_text_at = @reserve(&offset, char, (usz)UI_CACHE_BYTES_PER_LINE * desc.cache_lines);
     usz field_at = @reserve(&offset, char, desc.field_bytes);
+    usz replacements_at = @reserve(&offset, uint, (usz)desc.max_font_sets * UI_FONT_FALLBACKS);
 
     // Allocated as Vec4 so every allocator aligns the block for the Vec4 members of the carved tables.
     Vec4[] block = alloc::new_array(allocator, Vec4, (sz)((offset + Vec4::size - 1) / Vec4::size));
@@ -397,11 +398,12 @@ fn Ui? create_ui(Allocator allocator, AssetStore* assets, UiDesc desc) {
         .text            = @carve(storage, text_at, char, desc.text_bytes),
         .field           = @carve(storage, field_at, char, desc.field_bytes),
         .cache           = {
-            .lines    = @carve(storage, lines_at, UiPlacementLine, desc.cache_lines),
-            .slots    = @carve(storage, line_slots_at, uint, 2 * (usz)desc.cache_lines),
-            .segments = @carve(storage, segments_at, UiPlacementSegment, segment_count),
-            .glyphs   = @carve(storage, glyphs_at, GlyphPlacement, desc.cache_glyphs),
-            .bytes    = @carve(storage, cache_text_at, char, (usz)UI_CACHE_BYTES_PER_LINE * desc.cache_lines),
+            .lines             = @carve(storage, lines_at, UiPlacementLine, desc.cache_lines),
+            .slots             = @carve(storage, line_slots_at, uint, 2 * (usz)desc.cache_lines),
+            .segments          = @carve(storage, segments_at, UiPlacementSegment, segment_count),
+            .glyphs            = @carve(storage, glyphs_at, GlyphPlacement, desc.cache_glyphs),
+            .bytes             = @carve(storage, cache_text_at, char, (usz)UI_CACHE_BYTES_PER_LINE * desc.cache_lines),
+            .font_replacements = @carve(storage, replacements_at, uint, (usz)desc.max_font_sets * UI_FONT_FALLBACKS),
         },
     };
 }

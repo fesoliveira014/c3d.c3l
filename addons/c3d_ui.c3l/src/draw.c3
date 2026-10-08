@@ -20,6 +20,7 @@ fn void? Ui.draw(&self, OverlayList* list) {
     self.stats.placement_misses = 0;
     self.stats.placement_clears = 0;
     if (!self.frame_ready) return;
+    refresh_cache_fonts(self);
     foreach (&command : self.commands.commands()) {
         switch (command.command_type) {
             case SCISSOR_START:

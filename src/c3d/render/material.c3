@@ -551,7 +551,6 @@ fn gpu::GpuAddress? resolve_custom_payload(Renderer* renderer, MaterialRes* mirr
         return (gpu::GpuAddress)0;
     }
     if (mirror.payload_size != bytes.len) {
-        retire_custom_payload(renderer, mirror);
         gpu::AllocationDesc desc = {
             .size         = bytes.len,
             .alignment    = STREAM_ALIGNMENT,
@@ -559,12 +558,18 @@ fn gpu::GpuAddress? resolve_custom_payload(Renderer* renderer, MaterialRes* mirr
             .access       = { .graphics },
             .debug_name   = "custom_material_payload",
         };
-        mirror.payload = gpu::allocate_memory(&renderer.device, &desc)!;
-        mirror.payload_size = bytes.len;
-        mirror.payload_address = gpu::get_span_address(
-            &renderer.device,
-            gpu::get_allocation_span(&renderer.device, mirror.payload)!,
-        )!;
+        {
+            gpu::GpuAllocation payload = gpu::allocate_memory(&renderer.device, &desc)!;
+            defer catch (void)gpu::free_allocation(&renderer.device, &payload);
+            gpu::GpuAddress address = gpu::get_span_address(
+                &renderer.device,
+                gpu::get_allocation_span(&renderer.device, payload)!,
+            )!;
+            retire_custom_payload(renderer, mirror);
+            mirror.payload = payload;
+            mirror.payload_size = bytes.len;
+            mirror.payload_address = address;
+        }
     } else {
         renderer.pending_overwrite = true;
     }

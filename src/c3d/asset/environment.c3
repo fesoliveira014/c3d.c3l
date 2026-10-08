@@ -96,6 +96,18 @@ fn EnvironmentId? AssetStore.add_environment(&self, EnvironmentDesc desc, String
 }
 
 <*
+ Replace the environment description; the previous source texture stays in the store.
+ @return? c3d::INVALID_ARGUMENT, c3d::INVALID_ID, c3d::UNSUPPORTED
+ @require self.environments.is_live(environment)
+*>
+fn void? AssetStore.replace_environment(&self, EnvironmentId environment, EnvironmentDesc desc) {
+    self.validate_environment(desc)!;
+    EnvironmentAsset* record = self.environments.get(environment);
+    record.desc = desc;
+    mark_replaced(&record.header);
+}
+
+<*
  Borrow the environment record for a live id.
  @param [&inout] self : "Store owning the borrowed record."
  @require self.environments.is_live(environment)

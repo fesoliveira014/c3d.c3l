@@ -142,6 +142,38 @@ fn FontId? AssetStore.add_font_owned(&self, char[] file, FontDesc desc, String k
 }
 
 <*
+ Replace the font with a copy of the file; built glyphs are discarded.
+ @param file : "TrueType, OpenType or collection bytes; borrowed for the call."
+ @return? c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED, c3d::INVALID_ARGUMENT
+ @require self.fonts.is_live(font)
+*>
+fn void? AssetStore.replace_font(
+    &self,
+    FontId font,
+    char[] file,
+    FontDesc desc,
+) {
+    char[] copy = copy_slice(self.allocator, file);
+    defer catch alloc::free(self.allocator, copy.ptr);
+    return replace_font_record(self, font, copy, desc);
+}
+
+<*
+ Replace the font, taking the file bytes on success.
+ @param file : "Allocated with the store allocator; the caller keeps it on a fault."
+ @return? c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED, c3d::INVALID_ARGUMENT
+ @require self.fonts.is_live(font)
+*>
+fn void? AssetStore.replace_font_owned(
+    &self,
+    FontId font,
+    char[] file,
+    FontDesc desc,
+) {
+    return replace_font_record(self, font, file, desc);
+}
+
+<*
  Record of the font; a borrow into the pool.
  @require self.fonts.is_live(font)
 *>
@@ -340,11 +372,29 @@ fn FontDesc default_font_desc() {
 
 fn FontId? insert_font(AssetStore* store, char[] file, FontDesc desc, String key) @private {
     check_key(store, key)!;
+    FontAsset body = build_font(store.allocator, file, desc)!;
+    defer catch alloc::free(store.allocator, body.storage.ptr);
+    FontId id = store.fonts.add({})!;
+    body.header = { .key = copy_string(store.allocator, key), .revision = 1 };
+    *store.fonts.get(id) = body;
+    register_key(store, key, typed_ref(AssetKind.FONT, id));
+    return id;
+}
+
+fn void? replace_font_record(AssetStore* store, FontId font, char[] file, FontDesc desc) @private {
+    FontAsset* record = store.fonts.get(font);
+    FontAsset body = build_font(store.allocator, file, desc)!;
+    body.header = record.header;
+    free_font(store.allocator, record);
+    *record = body;
+    mark_replaced(&record.header);
+}
+
+fn FontAsset? build_font(Allocator allocator, char[] file, FontDesc desc) @private {
     if (!font_capacity_valid(desc)) return c3d::INVALID_ARGUMENT~;
     uint offset = check_sfnt(file, desc.face_index)!;
     FontInfo face;
     if (!truetype::init_font(&face, file.ptr, (int)offset) || face.glyph_count <= 0) return c3d::ASSET_FORMAT_ERROR~;
-    FontId id = store.fonts.add({})!;
 
     int ascent;
     int descent;
@@ -364,11 +414,10 @@ fn FontId? insert_font(AssetStore* store, char[] file, FontDesc desc, String key
     usz slots_offset = bands_offset + (usz)band_texels * uint::size;
     usz total_bytes = slots_offset + (usz)face.glyph_count * uint::size;
     // Allocated as Vec4 so every allocator aligns the block for the Vec4 members of the carved slices.
-    Vec4[] block = alloc::new_array(store.allocator, Vec4, (sz)((total_bytes + Vec4::size - 1) / Vec4::size));
+    Vec4[] block = alloc::new_array(allocator, Vec4, (sz)((total_bytes + Vec4::size - 1) / Vec4::size));
     char[] storage = ((char*)block.ptr)[:total_bytes];
 
-    *store.fonts.get(id) = {
-        .header      = { .key = copy_string(store.allocator, key), .revision = 1 },
+    return {
         .file        = file,
         .desc        = desc,
         .face        = face,
@@ -384,8 +433,6 @@ fn FontId? insert_font(AssetStore* store, char[] file, FontDesc desc, String key
         .bands       = ((uint*)&storage[bands_offset])[:band_texels],
         .glyph_slots = ((uint*)&storage[slots_offset])[:face.glyph_count],
     };
-    register_key(store, key, typed_ref(AssetKind.FONT, id));
-    return id;
 }
 
 fn void free_font(Allocator allocator, FontAsset* font) @private {

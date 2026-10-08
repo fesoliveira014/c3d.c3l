@@ -96,6 +96,10 @@ only its slot, so an application may call `sync_sources` and `rasterize_next` on
 run `build_tile` on workers and `commit` back on the main thread. Each tile's result is a flat
 `TileMesh` blob read through `tile_mesh_view`.
 
+A `NavSource` follows the revision of its geometry. `sync_sources` treats a moved revision (an edit with
+`mark_geometry_dirty` or a `replace_geometry`) as a changed source: it dirties the old and new bounds and
+restarts a tile job in progress. A `NavMesh` the application built keeps its tiles until it rebuilds them.
+
 A `NavMesh` from `create_nav_mesh_for(builder)` receives the tiles: `nav_sync` turns every committed
 `TileMesh` into a `TileData` blob with `create_tile_data`, adds it with `add_tile` and links it to its
 neighbours. `NavLink` components author off-mesh connections; adding, changing (`mark_changed`) or

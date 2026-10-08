@@ -197,6 +197,31 @@ builds joint palettes from `SkinBinding` and selects the skinned and morphed
 vertex variants ([Animation](animation.md)). glTF geometries carry no
 `channels` table, so each morph weight drives the target at its index.
 
+### Replacing geometry, skeletons and clips
+
+```c3
+assets.replace_geometry(geometry, &source)!;        // copies; replace_geometry_owned takes the arrays
+assets.replace_skeleton_owned(skeleton, &source)!;
+assets.replace_clip_owned(clip, &source)!;
+```
+
+Each call replaces the content under the same id and key, advances `revision` once and sets `replaced_revision`.
+It takes the inputs of the matching `add_*` form and rejects the same data with `c3d::INVALID_ARGUMENT`.
+A change that live components were sized against faults with `c3d::INCOMPATIBLE_STRUCTURE` and changes nothing.
+
+| Kind | May change | Faults `INCOMPATIBLE_STRUCTURE` |
+| --- | --- | --- |
+| Geometry | vertex and index counts, streams other than joints, weights and morph deltas, custom data, bounds, target and channel names | topology; presence of joints and weights; a positive-weight joint above the largest one at add; morph target count; per target, presence of position and normal deltas; channel count, `first_target` and weight count |
+| Skeleton | rest pose, inverse bind, names | joint count, parents |
+| Clip | name, interpolation, times, values, events, a positive duration's value | targets table, track count, each track's target, path and stride, a duration that is or is not positive |
+
+The joint bound is fixed when the geometry is added and survives `release_geometry_cpu`; a replacement may use any
+range up to it. Physics mesh colliders and the nav rasterizer read the triangle list, so a topology change is structural.
+Call replacements from the owner thread, outside frame recording. The renderer retires the old objects after
+their last submitted frame.
+
+Replacing a geometry rebuilds its skin and morph bounds and drops its triangle tree; both rebuild on next use.
+
 ## Supported and unsupported extensions
 
 Supported: `KHR_materials_clearcoat`, `KHR_materials_sheen`,
@@ -222,6 +247,7 @@ variants and GPU instancing import as if absent.
 | `CAPACITY_EXCEEDED` | A store pool has fewer free slots than the model needs. |
 | `INVALID_ARGUMENT` | The model key or a content key is already present, an image file is empty, a skin stream has invalid influences, or a storage texture has a non-storage format. |
 | `INVALID_ID` | `instantiate` received a dead model id. |
+| `INCOMPATIBLE_STRUCTURE` | A geometry, skeleton or clip replacement changes a count or layout that live components were sized against. |
 
 A loader decides every store fault before it inserts anything, so a fault
 leaves the store as it was. An instantiation that runs out of nodes removes

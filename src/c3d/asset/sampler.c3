@@ -33,6 +33,16 @@ fn SamplerId? AssetStore.add_sampler(&self, SamplerDesc desc, String key = "") {
 }
 
 <*
+ Replace the sampler description.
+ @require self.samplers.is_live(sampler), sampler.index >= BUILTIN_SAMPLER_COUNT
+*>
+fn void AssetStore.replace_sampler(&self, SamplerId sampler, SamplerDesc desc) {
+    SamplerAsset* record = self.samplers.get(sampler);
+    record.desc = desc;
+    mark_replaced(&record.header);
+}
+
+<*
  Record of the sampler; a borrow into the pool.
  @require self.samplers.is_live(sampler)
 *>

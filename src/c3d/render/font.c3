@@ -15,6 +15,9 @@ $assert(1u << shader::FONT_TEXTURE_WIDTH_SHIFT == shader::FONT_TEXTURE_WIDTH);
 struct FontRes @private {
     FontId             asset;
     uint               revision;
+    uint               replaced_revision; // header.replaced_revision the rows were uploaded from
+    uint               curve_rows;        // texture heights; a replacement with other capacities recreates them
+    uint               band_rows;
     gpu::TextureHandle curves;
     gpu::TextureView   curve_view;
     gpu::TextureState  curve_state;
@@ -28,6 +31,7 @@ struct FontRes @private {
 struct PendingFontUpload @private {
     FontId                     asset;
     uint                       revision;
+    uint                       replaced_revision;
     uint                       curve_texels;
     uint                       band_texels;
     gpu::TextureState          curve_before;
@@ -52,23 +56,40 @@ fn FontRes*? resolve_font(Renderer* renderer, FontId font) @private {
     FontRes* mirror = &renderer.fonts[font.index];
     if (font_current(renderer, font)) return mirror;
     FontAsset* record = renderer.assets.font(font);
-    if (!c3d::same_id(mirror.asset, font)) create_font_textures(renderer, mirror, font)!;
+    bool created = !c3d::same_id(mirror.asset, font);
+    if (created) create_font_textures(renderer, mirror, font)!;
 
     uint curve_base = mirror.curve_texels;
     uint band_base = mirror.band_texels;
+    uint uploaded_replacement = mirror.replaced_revision;
     foreach (&pending : renderer.pending_font_uploads) {
         if (!c3d::same_id(pending.asset, font)) continue;
         curve_base = pending.curve_texels;
         band_base = pending.band_texels;
+        uploaded_replacement = pending.replaced_revision;
+    }
+
+    if (record.header.replaced_revision > uploaded_replacement) {
+        bool resized = mirror.curve_rows != (uint)record.curves.len / asset::FONT_TEXTURE_WIDTH
+            || mirror.band_rows != (uint)record.bands.len / asset::FONT_TEXTURE_WIDTH;
+        if (!created && resized) create_font_textures(renderer, mirror, font)!;
+        curve_base = 0;
+        band_base = 0;
+        foreach (&earlier : renderer.pending_font_uploads) {
+            if (!c3d::same_id(earlier.asset, font) || earlier.recorded) continue;
+            earlier.curve_copy.height = 0;
+            earlier.band_copy.height = 0;
+        }
     }
 
     PendingFontUpload pending = {
-        .asset        = font,
-        .revision     = record.header.revision,
-        .curve_texels = record.curve_texels,
-        .band_texels  = record.band_texels,
-        .curve_before = mirror.curve_state,
-        .band_before  = mirror.band_state,
+        .asset             = font,
+        .revision          = record.header.revision,
+        .replaced_revision = record.header.replaced_revision,
+        .curve_texels      = record.curve_texels,
+        .band_texels       = record.band_texels,
+        .curve_before      = mirror.curve_state,
+        .band_before       = mirror.band_state,
     };
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     uint width = asset::FONT_TEXTURE_WIDTH;
@@ -151,6 +172,8 @@ fn void? create_font_textures(Renderer* renderer, FontRes* mirror, FontId font) 
     retire_font(renderer, mirror);
     *mirror = {
         .asset      = font,
+        .curve_rows = curve_desc.height,
+        .band_rows  = band_desc.height,
         .curves     = curves,
         .curve_view = curve_view,
         .bands      = bands,
@@ -216,6 +239,7 @@ fn void commit_font_uploads(Renderer* renderer) @private {
         if (!c3d::same_id(mirror.asset, pending.asset)) continue;
 
         mirror.revision = pending.revision;
+        mirror.replaced_revision = pending.replaced_revision;
         mirror.curve_texels = pending.curve_texels;
         mirror.band_texels = pending.band_texels;
     }
