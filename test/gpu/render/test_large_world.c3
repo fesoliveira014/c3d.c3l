@@ -609,3 +609,210 @@ fn void test_relative_lod_history_keeps_static_velocity_across_reference_changes
     }
     check_validation(renderer);
 }
+
+const Vec3 REBASE_BASE @private = { 32768, 0, 32768 };
+const Vec3 REBASE_SHIFT @private = { 16384, 0, 16384 };
+const uint REBASE_WARM_FRAMES @private = 4;
+const float REBASE_VELOCITY_LIMIT @private = 0.000001f;
+const Vec3 REBASE_CLIP_KEPT @private = { 0.4f, 0, 0.5f };
+const Vec3 REBASE_CLIP_CLIPPED @private = { -0.3f, 0, 0.5f };
+const float REBASE_CLIP_CUT @private = 0.25f; // inside the unit box, so one face is cut
+
+struct RebaseResult @private {
+    char[RELATIVE_PIXEL_BYTES] pixels;
+    float                      maximum_velocity;
+    Uploads                    steady_uploads;
+    Uploads                    uploads;
+    uint                       tlas_builds;
+    ulong                      steady_revision;
+    ulong                      revision;
+}
+
+fn void shift_scene_protocol(Renderer* renderer, Scene* scene, Vec3 offset) @private {
+    scene.shift_origin(offset);
+    scene.update_world();
+    renderer.shift_origin(scene, offset);
+}
+
+fn LodVelocityProbe? create_rebase_probe(Fixture* fixture) @private {
+    gpu::AllocationDesc allocation = {
+        .size = TARGET_SIZE * TARGET_SIZE * Vec4::size,
+        .alignment = render::STREAM_ALIGNMENT,
+        .memory_class = gpu::MemoryClass.CPU_READ,
+        .access = { .graphics },
+        .debug_name = "rebase_velocity_readback",
+    };
+    return {
+        .readback = gpu::allocate_mapped_memory(&fixture.renderer.device, &allocation)!,
+        .output = fixture.renderer.create_buffer({ .size = allocation.size, .debug_name = "rebase_velocity_output" })!,
+        .shader = add_compute_shader(fixture, (String)PROBE_READBACK_SOURCE[..])!,
+    };
+}
+
+fn void? render_rebase_frame(
+    Fixture* fixture,
+    DeformedScene* target,
+    TraceKind kind,
+    LodVelocityProbe* probe = null,
+) @private {
+    Renderer* renderer = &fixture.renderer;
+    target.scene.update_world();
+    renderer.begin_frame({
+        .time = 1.25,
+        .delta = 1.0f / 60,
+        .reference_position = target.camera.world_position(),
+    })!;
+    defer catch render::abort_frame(renderer);
+    renderer.prepare_scene_trace(&target.scene, kind)!;
+    renderer.render_view(&target.scene, target.camera, fixture.display_view)!;
+    if (probe) record_lod_target(fixture, probe, &renderer.views.get(fixture.display_view).velocity)!;
+    renderer.finish_view(fixture.display_view)!;
+    return renderer.end_frame();
+}
+
+fn RebaseResult? render_rebase_sequence(bool shifted, bool hardware) @private {
+    Fixture fixture;
+    create_fixture(mem, &fixture, ray_queries: hardware)!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    DeformedScene target = create_single_box_scene(
+        fixture: &fixture,
+        geometry: fixture.box,
+        material: fixture.plain,
+        sunlit: false,
+    )!;
+    defer scene::destroy_scene(&target.scene);
+    Node* batch = add_parity_batch(&target, fixture.box, fixture.plain, 0)!;
+    Vec3 base = shifted ? REBASE_BASE : REBASE_BASE - REBASE_SHIFT;
+    target.mesh.local.position = base;
+    batch.local.position = base + (Vec3){ 2, 0, 0 };
+    target.camera.local.position = base + (Vec3){ 1, 0, 6 };
+    enable_taa(&fixture, fixture.display_view)!;
+    LodVelocityProbe probe = create_rebase_probe(&fixture)!;
+    defer free_lod_readback(renderer, probe.readback);
+    TraceKind kind = hardware ? TraceKind.HARDWARE : TraceKind.SOFTWARE;
+    RebaseResult result;
+    for (uint frame = 0; frame < REBASE_WARM_FRAMES; frame++) render_rebase_frame(&fixture, &target, kind)!;
+    result.steady_uploads = frame_uploads(renderer);
+    result.steady_revision = renderer.scene_trace.revision;
+    if (shifted) shift_scene_protocol(renderer, &target.scene, REBASE_SHIFT);
+    render_rebase_frame(&fixture, &target, kind, &probe)!;
+    render::wait_frames(renderer)!;
+    result.uploads = frame_uploads(renderer);
+    result.tlas_builds = renderer.stats.tlas_builds;
+    result.revision = renderer.scene_trace.revision;
+    renderer.read_render_target(fixture.ldr_target, result.pixels[..])!;
+    gpu::invalidate_mapped_span(&renderer.device, probe.readback.span)!;
+    foreach (velocity : ((Vec4*)probe.readback.bytes.ptr)[:TARGET_SIZE * TARGET_SIZE]) {
+        result.maximum_velocity = math::max(result.maximum_velocity, math::abs(velocity.x), math::abs(velocity.y));
+    }
+    check_validation(renderer);
+    return result;
+}
+
+fn void check_path_accumulation_continues_across_a_shift() @private {
+    Fixture fixture;
+    create_fixture(mem, &fixture, ray_tracing_pipelines: true)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    if (!renderer.caps.ray_tracing_pipelines.enabled) {
+        io::printn("SKIP path accumulation across a shift: ray tracing pipelines unavailable");
+        return;
+    }
+    PathScene target = create_path_scene(&fixture, FRONT_POSE)!!;
+    defer scene::destroy_scene(&target.scene);
+    MaterialId material = fixture.assets.add_material(material::basic({ .color = BASIC_COLOR }))!!;
+    Node* box = target.scene.add_mesh(fixture.box, material)!!;
+    box.local.position = REBASE_BASE + (Vec3){ 0, 0, -3 };
+    target.camera.local.position = REBASE_BASE;
+    RenderTargetId output = float_target(&fixture)!!;
+    ViewId view = create_path_view(&fixture, output, { .max_bounces = 2, .samples_per_frame = 1 })!!;
+    uint[3] expected = { 1, 2, 3 };
+    foreach (frame, samples : expected) {
+        if (frame == 2) shift_scene_protocol(renderer, &target.scene, REBASE_SHIFT);
+        target.scene.update_world();
+        renderer.begin_frame({ .reference_position = target.camera.world_position() })!!;
+        renderer.prepare_scene_trace(&target.scene, TraceKind.HARDWARE)!!;
+        renderer.render_view(&target.scene, target.camera, view)!!;
+        renderer.finish_view(view)!!;
+        renderer.end_frame()!!;
+        assert(renderer.views.get(view).history.accumulated_samples == samples);
+        Vec4[] pixels = read_float_target(&fixture, output)!!;
+        defer free(pixels);
+        assert(near_rgb(centre_texel(pixels), BASIC_COLOR.xyz, EXACT_TOLERANCE));
+    }
+    check_validation(renderer);
+}
+
+fn void test_shifted_scene_renders_identically_and_keeps_history() @test {
+    foreach (hardware : TRACE_KINDS) {
+        RebaseResult reference = render_rebase_sequence(false, hardware)!!;
+        RebaseResult found = render_rebase_sequence(true, hardware)!!;
+        io::printfn("Rebased frame hardware=%s uploads=%d tlas_builds=%d velocity=%f",
+            hardware, found.uploads.count, found.tlas_builds, found.maximum_velocity);
+        assert(mem::equals(&found.pixels, &reference.pixels, found.pixels.len));
+        assert(found.maximum_velocity < REBASE_VELOCITY_LIMIT);
+        assert(reference.maximum_velocity < REBASE_VELOCITY_LIMIT);
+        assert(found.uploads.count == found.steady_uploads.count && found.uploads.bytes == found.steady_uploads.bytes);
+        assert(found.tlas_builds == 0);
+        assert(found.revision == found.steady_revision);
+    }
+    check_path_accumulation_continues_across_a_shift();
+}
+
+fn void? read_rebased_clip_points(Fixture* fixture, ClipScene* clip, Vec3 base, uint[2]* pixels) @private {
+    Renderer* renderer = &fixture.renderer;
+    clip.scene.update_world();
+    Vec3 reference = clip.camera.world_position();
+    Vec3 origin = render::frame_origin_for(reference);
+    Camera* camera = clip.scene.get(clip.camera, Camera);
+    CameraMatrices matrices = camera::derive_matrices(
+        *camera,
+        maths::rebase(clip.camera.world, origin),
+        { AO_TARGET_WIDTH, AO_TARGET_HEIGHT },
+    );
+    Vec3[2] points = { base + REBASE_CLIP_KEPT, base + REBASE_CLIP_CLIPPED };
+    foreach (index, point : points) {
+        renderer.begin_frame({ .reference_position = reference })!;
+        defer catch render::abort_frame(renderer);
+        renderer.render_view(&clip.scene, clip.camera, clip.view)!;
+        sample(fixture, render::read_view_color(clip.view), projected_uv(&matrices, point - origin))!;
+        record_readback(fixture)!;
+        renderer.finish_view(clip.view)!;
+        renderer.end_frame()!;
+        (*pixels)[index] = read_pixel(fixture);
+    }
+}
+
+fn void test_mirror_view_survives_a_shift() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    Renderer* renderer = &fixture.renderer;
+    MaterialId red_material = add_matte_material(&fixture, RED)!!;
+    ClipScene clip = create_clip_scene(&fixture, red_material)!!;
+    defer scene::destroy_scene(&clip.scene);
+    clip.buried.visible = false;
+    clip.box.local.position += REBASE_BASE;
+    clip.batch.local.position += REBASE_BASE;
+    clip.camera.local.position += REBASE_BASE;
+    AoView ao_view = create_clip_view(&fixture, RASTER_PATHS[1])!!;
+    clip.view = ao_view.view;
+    enable_taa(&fixture, clip.view)!!;
+    Plane plane = { .normal = { 1, 0, 0 }, .d = -(REBASE_BASE.x + REBASE_CLIP_CUT) };
+    set_clip_plane(&fixture, clip.view, plane)!!;
+
+    uint[2] before;
+    read_rebased_clip_points(&fixture, &clip, REBASE_BASE, &before)!!;
+    check_dominant_channel(before[0], 0);
+    assert(pixel_channel(before[1], 0) < DOMINANT_CHANNEL_MINIMUM);
+
+    shift_scene_protocol(renderer, &clip.scene, REBASE_SHIFT);
+    Plane shifted = renderer.views.get(clip.view).desc.clip_plane;
+    assert(shifted.normal == plane.normal && shifted.d == plane.d + REBASE_SHIFT.x);
+    uint[2] after;
+    read_rebased_clip_points(&fixture, &clip, REBASE_BASE - REBASE_SHIFT, &after)!!;
+    check_dominant_channel(after[0], 0);
+    assert(pixel_channel(after[1], 0) < DOMINANT_CHANNEL_MINIMUM);
+    check_validation(renderer);
+}
