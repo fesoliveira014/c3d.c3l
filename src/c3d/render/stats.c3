@@ -163,6 +163,12 @@ struct Stats {
     uint  texture_capacity;      // the texture table's size
     uint  texture_views;         // live texture views at the last reading's frame start; one heap slot each
     uint  texture_heap_capacity; // the texture heap's size
+    usz   texture_bytes;            // resident device bytes of every resolved store texture after the step
+    uint  texture_raises;           // this frame: planned raises, full raises included
+    uint  texture_evictions;        // this frame: planned evictions
+    uint  texture_bias;             // levels every drawn texture is held under its requirement
+    uint  textures_starved;         // drawn, streamed textures less detailed than their biased target
+    uint  texture_changes_deferred; // this frame: planned changes skipped on a capacity fault
     float frame_ms;
     float cpu_record_ms;
     float[PASS_COUNT] gpu_pass_ms;
