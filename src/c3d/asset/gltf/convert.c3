@@ -7,7 +7,6 @@ import c3d::camera;
 import c3d::light;
 import c3d::material;
 import gltf;
-import std::io::file;
 import std::math;
 
 const String DATA_URI_PREFIX @private = "data:";
@@ -101,9 +100,7 @@ fn char[]? image_bytes(Importer* importer, gltf::Image* image) @private {
     }
     ZString encoded_uri = uri.zstr_tcopy();
     usz length = gltf::decode_uri(encoded_uri);
-    char[]? bytes = file::load(tmem, join_path(importer.base_dir, encoded_uri.str_view()[:length]));
-    if (catch bytes) return c3d::ASSET_IO_ERROR~;
-    return bytes;
+    return importer.file_source.read_path(tmem, join_path(importer.base_dir, encoded_uri.str_view()[:length]));
 }
 
 fn TextureSlot? texture_slot_for(Importer* importer, gltf::TextureView* view, bool srgb) @private {

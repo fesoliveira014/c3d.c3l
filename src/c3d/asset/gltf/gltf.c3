@@ -33,6 +33,7 @@ struct Importer @private {
     ModelTemplate template;
     ModelDocument document;
     SourceRecord* source;
+    FileSource    file_source;
 }
 
 <*
@@ -44,7 +45,7 @@ struct Importer @private {
 *>
 fn ModelId? load_model(AssetStore* assets, String path, LoadOptions options = asset::LOAD_OPTIONS_DEFAULT) {
     if (assets.keys.has_key(path)) return c3d::INVALID_ARGUMENT~;
-    ModelDocument document = decode_model(assets.allocator, path, options)!;
+    ModelDocument document = decode_model(assets.allocator, path, options, assets.file_source)!;
     defer asset::destroy_model_document(&document);
     return assets.publish_document(&document);
 }
@@ -67,11 +68,12 @@ fn ModelId? load_model_memory(
 ) {
     if (assets.keys.has_key(key)) return c3d::INVALID_ARGUMENT~;
     ModelDocument document = decode_model_memory(
-        allocator: assets.allocator,
-        bytes:     bytes,
-        base_dir:  base_dir,
-        key:       key,
-        options:   options,
+        allocator:   assets.allocator,
+        bytes:       bytes,
+        base_dir:    base_dir,
+        key:         key,
+        options:     options,
+        file_source: assets.file_source,
     )!;
     defer asset::destroy_model_document(&document);
     return assets.publish_document(&document);
@@ -93,7 +95,7 @@ fn ModelReplaceReport? replace_model(
     LoadOptions options = asset::LOAD_OPTIONS_DEFAULT,
     AssetRef[] missing = {},
 ) {
-    ModelDocument document = decode_model(assets.allocator, path, options)!;
+    ModelDocument document = decode_model(assets.allocator, path, options, assets.file_source)!;
     defer asset::destroy_model_document(&document);
     return assets.replace_document(model, &document, missing);
 }
@@ -119,11 +121,12 @@ fn ModelReplaceReport? replace_model_memory(
     AssetRef[] missing = {},
 ) {
     ModelDocument document = decode_model_memory(
-        allocator: assets.allocator,
-        bytes:     bytes,
-        base_dir:  base_dir,
-        key:       key,
-        options:   options,
+        allocator:   assets.allocator,
+        bytes:       bytes,
+        base_dir:    base_dir,
+        key:         key,
+        options:     options,
+        file_source: assets.file_source,
     )!;
     defer asset::destroy_model_document(&document);
     return assets.replace_document(model, &document, missing);
@@ -132,6 +135,7 @@ fn ModelReplaceReport? replace_model_memory(
 <*
  Decode a glTF or GLB file into a document keyed by the path.
  @param allocator : "Owns the document; publish needs the store allocator."
+ @param file_source : "Must outlive the call; a null read selects the file system."
  @return? c3d::ASSET_IO_ERROR, c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED, c3d::INVALID_ARGUMENT
  @require path.len > 0, allocator != tmem
 *>
@@ -139,11 +143,13 @@ fn ModelDocument? decode_model(
     Allocator allocator,
     String path,
     LoadOptions options = asset::LOAD_OPTIONS_DEFAULT,
+    FileSource file_source = {},
 ) {
     return decode_file(
         allocator: allocator,
         path: path,
         options: options,
+        file_source: file_source,
         source: null,
         diagnostic: null,
     );
@@ -153,12 +159,14 @@ fn ModelDocument? decode_file(
     Allocator allocator,
     String path,
     LoadOptions options,
+    FileSource file_source,
     SourceRecord* source,
     SourceDiagnostic* diagnostic,
 ) @private {
-    gltf::Data* data = parse_document(path)!;
+    gltf::Options reader = read_options(&file_source);
+    gltf::Data* data = parse_document(path, reader)!;
     defer gltf::free(data);
-    prepare_document(data, path)!;
+    prepare_document(data, path, reader)!;
     Importer importer = create_importer(
         allocator: allocator,
         data:      data,
@@ -173,6 +181,7 @@ fn ModelDocument? decode_file(
         importer.source = &record;
     }
     defer catch if (source) destroy_source_record(&record);
+    importer.file_source = file_source;
     @pool() {
         importer.base_dir = path.path_tdirname() ?? "";
         convert_model(&importer)!;
@@ -187,6 +196,7 @@ fn ModelDocument? decode_file(
  @param allocator : "Owns the document; publish needs the store allocator."
  @param bytes : "Borrowed for the call."
  @param key : "Model key and prefix of every content key."
+ @param file_source : "Must outlive the call; a null read selects the file system."
  @return? c3d::ASSET_IO_ERROR, c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED, c3d::INVALID_ARGUMENT
  @require bytes.len > 0, key.len > 0, allocator != tmem
 *>
@@ -196,6 +206,7 @@ fn ModelDocument? decode_model_memory(
     String base_dir,
     String key,
     LoadOptions options = asset::LOAD_OPTIONS_DEFAULT,
+    FileSource file_source = {},
 ) {
     return decode_memory(
         allocator: allocator,
@@ -203,6 +214,7 @@ fn ModelDocument? decode_model_memory(
         base_dir: base_dir,
         key: key,
         options: options,
+        file_source: file_source,
         source: null,
         diagnostic: null,
     );
@@ -214,13 +226,15 @@ fn ModelDocument? decode_memory(
     String base_dir,
     String key,
     LoadOptions options,
+    FileSource file_source,
     SourceRecord* source,
     SourceDiagnostic* diagnostic,
 ) @private {
-    gltf::Data* data = parse_bytes(bytes)!;
+    gltf::Options reader = read_options(&file_source);
+    gltf::Data* data = parse_bytes(bytes, reader)!;
     defer gltf::free(data);
     @pool() {
-        prepare_document(data, join_path(base_dir, MEMORY_PLACEHOLDER_NAME))!;
+        prepare_document(data, join_path(base_dir, MEMORY_PLACEHOLDER_NAME), reader)!;
     };
     Importer importer = create_importer(
         allocator: allocator,
@@ -229,6 +243,7 @@ fn ModelDocument? decode_memory(
         options:   options,
     )!;
     importer.base_dir = base_dir;
+    importer.file_source = file_source;
     defer free_tables(&importer);
     defer catch discard(&importer);
     SourceRecord record;
@@ -245,20 +260,53 @@ fn ModelDocument? decode_memory(
     return importer.document;
 }
 
-fn gltf::Data*? parse_document(String path) @private {
-    gltf::Data*? data = gltf::parse_file(path);
+fn gltf::Options read_options(FileSource* file_source) @private {
+    return {
+        .file = {
+            .read      = &read_through_source,
+            .release   = &release_read,
+            .user_data = file_source,
+        },
+    };
+}
+
+fn gltf::Result read_through_source(
+    gltf::MemoryOptions* memory,
+    gltf::FileOptions* file,
+    ZString path,
+    usz* size,
+    void** data,
+) @private {
+    FileSource* file_source = file.user_data;
+    char[]? bytes = file_source.read_path(mem, path.str_view());
+    if (catch bytes) return gltf::Result.IO_ERROR;
+    if (*size > bytes.len) {
+        alloc::free(mem, bytes.ptr);
+        return gltf::Result.IO_ERROR;
+    }
+    if (!*size) *size = bytes.len;
+    *data = bytes.ptr;
+    return gltf::Result.SUCCESS;
+}
+
+fn void release_read(gltf::MemoryOptions* memory, gltf::FileOptions* file, void* data) @private {
+    alloc::free(mem, data);
+}
+
+fn gltf::Data*? parse_document(String path, gltf::Options reader) @private {
+    gltf::Data*? data = gltf::parse_file(path, reader);
     if (catch excuse = data) return load_fault(excuse)~;
     return data;
 }
 
-fn gltf::Data*? parse_bytes(char[] bytes) @private {
-    gltf::Data*? data = gltf::parse(bytes);
+fn gltf::Data*? parse_bytes(char[] bytes, gltf::Options reader = {}) @private {
+    gltf::Data*? data = gltf::parse(bytes, reader);
     if (catch excuse = data) return load_fault(excuse)~;
     return data;
 }
 
-fn void? prepare_document(gltf::Data* data, String path) @private {
-    if (catch excuse = gltf::load_buffers(data, path)) return load_fault(excuse)~;
+fn void? prepare_document(gltf::Data* data, String path, gltf::Options reader) @private {
+    if (catch excuse = gltf::load_buffers(data, path, reader)) return load_fault(excuse)~;
     if (catch excuse = gltf::validate(data)) return load_fault(excuse)~;
     return;
 }
