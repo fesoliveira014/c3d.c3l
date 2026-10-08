@@ -205,3 +205,15 @@ fn void test_font_replacement_clears_placement_cache() @test {
     assert(fixture.list.glyph_count > 0);
     foreach (placement : fixture.list.glyphs[:fixture.list.glyph_count]) assert(placement.glyph < glyph_total);
 }
+
+fn void test_removed_font_after_restyle_keeps_drawing() @test {
+    Fixture fixture;
+    fixture::create_fixture(&fixture);
+    defer fixture::destroy_fixture(&fixture);
+    fixture.ui.load_document(`{ "root": { "kind": "label", "style": "text", "text": "Alpha" } }`)!!;
+    fixture::frame(&fixture);
+    fixture.ui.load_styles({ `{ "text": { "font": "ui/cjk", "font_size": 10 } }` })!!;
+    fixture::frame(&fixture);
+    fixture.assets.remove_font(fixture.latin);
+    fixture::frame(&fixture);
+}

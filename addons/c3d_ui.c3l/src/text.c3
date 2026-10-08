@@ -241,6 +241,7 @@ fn void refresh_cache_fonts(Ui* ui) @private {
     for (uint set_index = 0; set_index < ui.font_set_count; set_index++) {
         UiFontSet* set = &ui.font_sets[set_index];
         for (uint font = 0; font < set.count; font++) {
+            if (!ui.assets.fonts.is_live(set.fonts[font])) continue;
             uint* recorded = &ui.cache.font_replacements[set_index * UI_FONT_FALLBACKS + font];
             uint current = ui.assets.font(set.fonts[font]).header.replaced_revision;
             if (*recorded != current) replaced = true;
