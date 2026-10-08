@@ -107,8 +107,8 @@ fn void Renderer.shift_origin(&self, Scene* scene, Vec3 offset) {
         if (record.history.scene == scene.identity) {
             refresh_history_models(&record.history, scene);
             shift_view_history_origin(&record.history, offset);
-            record.desc.clip_plane = shift_plane(record.desc.clip_plane, offset);
         }
+        if (record.last_scene == scene.identity) record.desc.clip_plane = shift_plane(record.desc.clip_plane, offset);
         LodHistory* lod = &record.lod_history;
         for (uint cursor = lod.first; cursor; cursor = lod.entries[cursor - 1].next) {
             shift_lod_history(&lod.entries[cursor - 1], scene.identity, offset);

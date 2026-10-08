@@ -440,6 +440,7 @@ struct ViewRecord {
     Target*                              scene_input;
     bool                                 post_chain_open;
     bool                                 rendered;
+    ulong                                last_scene; // identity of the scene this view last rendered
     ProjectionTerms                      projection_terms;
     float                                exposure;
     ViewHistory                          history;
