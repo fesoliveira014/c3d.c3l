@@ -124,6 +124,7 @@ fn void? create_fixture(
     uint texture_heap_capacity = 0,
     uint max_posed_trace_instances = 0,
     uint max_trace_instances = 0,
+    usz texture_budget_bytes = 0,
 ) @private {
     fixture.allocator = allocator;
     fixture.assets = asset::create_asset_store(allocator, asset::default_asset_store_desc());
@@ -209,6 +210,7 @@ fn void? create_fixture(
             .texture_heap_capacity = texture_heap_capacity,
             .max_posed_trace_instances = max_posed_trace_instances,
             .max_trace_instances = max_trace_instances,
+            .texture_budget_bytes = texture_budget_bytes,
         },
     )!;
     defer catch render::destroy_renderer(&fixture.renderer);

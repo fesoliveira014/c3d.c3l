@@ -120,7 +120,7 @@ fn void? Renderer.prepare_overlay_list(&self, OverlayList* list) {
 
         switch (rect.texture.kind) {
             case ASSET:
-                TextureRes* texture_mirror = resolve_texture(self, rect.texture.asset)!;
+                TextureRes* texture_mirror = resolve_texture(self, rect.texture.asset, full_reader: true)!;
                 binding.texture = texture_mirror.view.index;
             case RENDER_TARGET:
                 binding.texture = self.targets.get(rect.texture.target).target.view.index;

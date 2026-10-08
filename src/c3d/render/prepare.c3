@@ -221,7 +221,7 @@ fn void append_prepare_mesh(
             listed.push({
                 .kind    = PrepareUnitKind.TEXTURE,
                 .texture = *texture,
-                .bytes   = prepare_texture_bytes(assets.texture(*texture)),
+                .bytes   = prepare_texture_bytes(renderer, *texture),
             });
         }
     };
@@ -268,7 +268,26 @@ fn bool lists_unit(PrepareUnit[] units, PrepareUnitKind kind, Id asset) @private
     return false;
 }
 
-fn usz prepare_texture_bytes(TextureAsset* record) @private {
+fn usz prepare_texture_bytes(Renderer* renderer, TextureId texture) @private {
+    TextureAsset* record = renderer.assets.texture(texture);
+    usz bytes = prepare_source_bytes(record);
+    if (!renderer.texture_budget_bytes) return bytes;
+
+    TextureResidency* residency = &renderer.residencies[texture.index];
+    uint chain_mips = texture_chain_mips(record);
+    if (residency.full_reader || !texture_eligible(record.desc, record.source_kind, chain_mips)) return bytes;
+
+    uint base = texture_tail_base(math::max(record.desc.width, record.desc.height), chain_mips);
+    if (residency.streamed && residency.chain_mips == chain_mips) base = residency.resident_base;
+    TextureLevelBytes? level_bytes = texture_level_bytes(record.desc, chain_mips);
+    if (catch level_bytes) return bytes;
+
+    usz range;
+    for (uint mip = base; mip < chain_mips; mip++) range += level_bytes[mip];
+    return range;
+}
+
+fn usz prepare_source_bytes(TextureAsset* record) @private {
     switch (record.source_kind) {
         case MIP_ZERO:
             return mip_chain_bytes(record.desc, record.pixels.len);
@@ -296,7 +315,7 @@ fn PrepareCheck check_unit(Renderer* renderer, PrepareUnit* unit) @private {
         case TEXTURE:
             if (!assets.textures.is_live(unit.texture)) return { .live = false };
             if (texture_current(renderer, unit.texture)) return { .live = true, .current = true };
-            return { .live = true, .size = prepare_texture_bytes(assets.texture(unit.texture)) };
+            return { .live = true, .size = prepare_texture_bytes(renderer, unit.texture) };
         case GEOMETRY:
             if (!assets.geometries.is_live(unit.geometry)) return { .live = false };
             if (geometry_current(renderer, unit.geometry)) return { .live = true, .current = true };

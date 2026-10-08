@@ -83,7 +83,7 @@ fn TextureBinding? resolve_texture_slot(Renderer* renderer, TextureSlot slot, bo
         if (desc.is_cube || (desc.format == R16_UINT && !custom_read)) return c3d::UNSUPPORTED~;
     }
     TextureId texture = present ? slot.texture.asset : c3d::asset::TEXTURE_WHITE;
-    TextureRes* texture_mirror = resolve_texture(renderer, texture)!;
+    TextureRes* texture_mirror = resolve_texture(renderer, texture, full_reader: custom_read)!;
     return {
         .texture = texture,
         .sampler = sampler,
@@ -103,7 +103,7 @@ fn TextureBinding? resolve_gradient_map(Renderer* renderer, TextureId texture) @
         return c3d::UNSUPPORTED~;
     }
 
-    TextureRes* texture_mirror = resolve_texture(renderer, texture)!;
+    TextureRes* texture_mirror = resolve_texture(renderer, texture, full_reader: true)!;
     if (!renderer.toon_gradient_sampler.is_valid()) {
         gpu::SamplerDesc sampler = {
             .min_filter = gpu::Filter.NEAREST,

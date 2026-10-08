@@ -23,6 +23,7 @@ struct TextureRes {
     uint mip_count;
     uint layers;
     bool is_cube;
+    bool copy_source;
     gpu::Format format;
     gpu::TextureView[] storage_views;
 }
@@ -63,20 +64,60 @@ fn bool texture_current(Renderer* renderer, TextureId texture) @private {
     return false;
 }
 
-fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture) @private {
+fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture, bool full_reader = false) @private {
     TextureAsset* record = renderer.assets.texture(texture);
     TextureRes* mirror = &renderer.textures[texture.index];
     TextureResidency* residency = &renderer.residencies[texture.index];
     residency.last_used_frame = renderer.frame_index;
-    if (texture_current(renderer, texture)) return mirror;
+    if (texture_current(renderer, texture)) {
+        if (full_reader) mark_full_reader(residency);
+        return mirror;
+    }
     bool same_asset = c3d::same_id(mirror.asset, texture);
 
     @pool() {
+        material::TextureDesc desc = record.desc;
+        uint chain_mips = texture_chain_mips(record);
+        bool eligible = texture_eligible(desc, record.source_kind, chain_mips);
+        bool pinned = full_reader || (same_asset && residency.full_reader);
+        bool streamed = eligible && !pinned;
+        uint tail_base = streamed ? texture_tail_base(math::max(desc.width, desc.height), chain_mips) : 0;
+        bool same_chain = same_asset && mirror.texture.is_valid()
+            && residency.chain_mips == chain_mips && residency.chain_width == desc.width
+            && residency.chain_height == desc.height && residency.format == desc.format;
+        uint base = same_chain ? residency.resident_base : (streamed && renderer.texture_budget_bytes ? tail_base : 0);
+
+        gpu::Format format = texture_format(desc.format);
+        gpu::TextureDesc description = texture_gpu_description(
+            desc: desc,
+            format: format,
+            chain_mips: chain_mips,
+            base: base,
+            copy_source: eligible,
+        );
+        bool reuse = texture_mirror_fits(
+            mirror: mirror,
+            description: &description,
+            same_asset: same_asset,
+            desc: desc,
+            copy_source: eligible,
+        );
+        if (!reuse && !streamed && base > 0) {
+            base = 0;
+            description = texture_gpu_description(
+                desc: desc,
+                format: format,
+                chain_mips: chain_mips,
+                base: base,
+                copy_source: eligible,
+            );
+        }
+
         TextureMipChain chain;
         TextureMipLayout layout;
         switch (record.source_kind) {
             case MIP_ZERO:
-                chain = create_texture_mips(tmem, record.desc, record.pixels)!;
+                chain = create_texture_mips(tmem, desc, record.pixels, first_mip: base)!;
                 layout = {
                     .total_bytes = chain.pixels.len,
                     .mip_count = chain.mip_count,
@@ -84,45 +125,25 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture) @private 
                     .offsets = chain.offsets,
                 };
             case SUPPLIED_MIPS:
-                layout = supplied_texture_mip_layout(record.desc, record.supplied_mips)!;
+                layout = supplied_texture_mip_layout(desc, record.supplied_mips, first_mip: base)!;
             case EMPTY:
-                layout = { .mip_count = record.desc.mip_levels, .layer_count = record.desc.layers };
+                layout = { .mip_count = desc.mip_levels, .layer_count = desc.layers };
         }
         defer {
             if (record.source_kind == TextureSourceKind.MIP_ZERO) destroy_texture_mips(&chain);
         }
-        uint mip_count = layout.mip_count;
-        uint layer_count = layout.layer_count;
-        TextureLevelBytes level_bytes = texture_level_bytes(record.desc, mip_count)!;
-        bool eligible = texture_eligible(record.desc, record.source_kind, mip_count);
-        gpu::Format format = texture_format(record.desc.format);
-        gpu::TextureDesc description = {
-            .width = record.desc.width,
-            .height = record.desc.height,
-            .depth = record.desc.depth,
-            .mip_levels = mip_count,
-            .array_layers = layer_count,
-            .cube_compatible = record.desc.is_cube,
-            .format = format,
-            .usage = { .sampled, .transfer_dst, .storage = record.desc.storage },
-            .access = { .graphics },
-            .debug_name = record.desc.debug_name,
-        };
-        bool reuse = same_asset && mirror.texture.is_valid()
-            && mirror.width == description.width && mirror.height == description.height
-            && mirror.depth == description.depth
-            && mirror.mip_count == mip_count && mirror.format == format
-            && mirror.layers == layer_count && mirror.is_cube == record.desc.is_cube
-            && (mirror.storage_views.len > 0) == record.desc.storage;
+        uint mip_count = description.mip_levels;
+        uint layer_count = description.array_layers;
+        TextureLevelBytes level_bytes = chain_mips ? texture_level_bytes(desc, chain_mips)! : {};
         if (!reuse) {
             gpu::TextureHandle image = gpu::create_texture(&renderer.device, &description)!;
             defer catch {
                 if (image.is_valid()) (void)gpu::destroy_texture(&renderer.device, image);
             }
-            gpu::TextureViewDesc view_desc = { .cube = record.desc.is_cube };
+            gpu::TextureViewDesc view_desc = { .cube = desc.is_cube };
             gpu::TextureView view = gpu::create_texture_view(&renderer.device, image, &view_desc)!;
             gpu::TextureView[] storage_views;
-            if (record.desc.storage) {
+            if (desc.storage) {
                 gpu::TextureView[]? created = create_storage_views(renderer, image, mip_count, layer_count);
                 if (catch excuse = created) {
                     (void)gpu::destroy_texture_view(&renderer.device, view);
@@ -142,7 +163,8 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture) @private 
                 .depth = description.depth,
                 .mip_count = mip_count,
                 .layers = layer_count,
-                .is_cube = record.desc.is_cube,
+                .is_cube = desc.is_cube,
+                .copy_source = eligible,
                 .format = format,
                 .storage_views = storage_views,
             };
@@ -161,7 +183,7 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture) @private 
             gpu::MappedGpuSpan staging = slot.upload.take(&renderer.device, layout.total_bytes, UPLOAD_RING_ALIGNMENT)!;
             switch (record.source_kind) {
                 case MIP_ZERO: mem::copy(staging.bytes.ptr, chain.pixels.ptr, chain.pixels.len);
-                case SUPPLIED_MIPS: copy_supplied_texture_mips(staging.bytes, record.supplied_mips);
+                case SUPPLIED_MIPS: copy_supplied_texture_mips(staging.bytes, record.supplied_mips, base);
                 case EMPTY: unreachable();
             }
             pending.mip_count = layout.mip_count;
@@ -179,20 +201,18 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture) @private 
         renderer.pending_texture_uploads.push(pending);
         renderer.stats.uploads++;
 
-        bool full_reader = same_asset && residency.full_reader;
-        bool streamed = eligible && !full_reader;
-        uint chain_extent = math::max(record.desc.width, record.desc.height);
         *residency = {
-            .chain_mips = mip_count,
-            .chain_width = record.desc.width,
-            .chain_height = record.desc.height,
-            .format = record.desc.format,
+            .chain_mips = chain_mips,
+            .chain_width = desc.width,
+            .chain_height = desc.height,
+            .format = desc.format,
             .level_bytes = level_bytes,
-            .tail_base = streamed ? texture_tail_base(chain_extent, mip_count) : 0,
-            .required_base = mip_count,
+            .tail_base = tail_base,
+            .resident_base = base,
+            .required_base = chain_mips,
             .last_used_frame = residency.last_used_frame,
             .eligible = eligible,
-            .full_reader = full_reader,
+            .full_reader = pinned,
             .streamed = streamed,
             .raisable = texture_source_present(record),
         };
@@ -201,7 +221,62 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture) @private 
     return mirror;
 }
 
-fn bool texture_source_present(TextureAsset* record) @local {
+fn gpu::TextureDesc texture_gpu_description(
+    material::TextureDesc desc,
+    gpu::Format format,
+    uint chain_mips,
+    uint base,
+    bool copy_source,
+) @private {
+    return {
+        .width = math::max(1u, desc.width >> base),
+        .height = math::max(1u, desc.height >> base),
+        .depth = desc.depth,
+        .mip_levels = chain_mips - base,
+        .array_layers = desc.layers,
+        .cube_compatible = desc.is_cube,
+        .format = format,
+        .usage = { .sampled, .transfer_dst, .transfer_src = copy_source, .storage = desc.storage },
+        .access = { .graphics },
+        .debug_name = desc.debug_name,
+    };
+}
+
+fn bool texture_mirror_fits(
+    TextureRes* mirror,
+    gpu::TextureDesc* description,
+    bool same_asset,
+    material::TextureDesc desc,
+    bool copy_source,
+) @local {
+    return same_asset && mirror.texture.is_valid()
+        && mirror.width == description.width && mirror.height == description.height
+        && mirror.depth == description.depth
+        && mirror.mip_count == description.mip_levels && mirror.format == description.format
+        && mirror.layers == description.array_layers && mirror.is_cube == desc.is_cube
+        && mirror.copy_source == copy_source
+        && (mirror.storage_views.len > 0) == desc.storage;
+}
+
+fn uint texture_chain_mips(TextureAsset* record) @private {
+    material::TextureDesc* desc = &record.desc;
+    switch (record.source_kind) {
+        case MIP_ZERO:
+            if (!desc.generate_mips || !desc.width || !desc.height) return 1;
+            return material::texture_mip_count(desc.width, desc.height);
+        case SUPPLIED_MIPS:
+        case EMPTY:
+            return desc.mip_levels;
+    }
+}
+
+fn void mark_full_reader(TextureResidency* residency) @local {
+    residency.full_reader = true;
+    residency.streamed = false;
+    residency.tail_base = 0;
+}
+
+fn bool texture_source_present(TextureAsset* record) @private {
     switch (record.source_kind) {
         case MIP_ZERO: return record.pixels.len > 0;
         case SUPPLIED_MIPS: return record.supplied_mips.len > 0;

@@ -286,7 +286,7 @@ fn ResolvedDispatchTexture? resolve_dispatch_texture(
     ResolvedDispatchTexture entry;
     switch (declared.kind) {
         case ASSET:
-            entry.mirror = resolve_texture(renderer, declared.texture)!;
+            entry.mirror = resolve_texture(renderer, declared.texture, full_reader: true)!;
             if (declared.access != DispatchAccess.READ) {
                 if (declared.mip >= entry.mirror.mip_count || declared.layer >= entry.mirror.layers) {
                     return c3d::INVALID_ARGUMENT~;

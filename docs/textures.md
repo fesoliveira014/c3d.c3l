@@ -507,6 +507,71 @@ assets.replace_texture_empty(texture, desc)!;             // an empty storage te
   frame.
 - Built-in textures cannot be replaced.
 
+## Residency and memory budgets
+
+By default every texture is fully resident on its first use. Setting a texture budget makes the renderer
+keep the device bytes of store textures at or under it.
+
+```c3
+RendererDesc desc = { .texture_budget_bytes = 256 << 20 };
+renderer.set_texture_budget(128 << 20);   // replaces the budget; zero lifts it
+```
+
+**Model.**
+- A 2D, single-layer, mipped, sampled-only texture with a CPU source streams. That covers generated mips and
+  supplied mips, compressed formats included. Cubes, arrays, volumes, storage textures, single-mip textures,
+  empty textures and render targets stay fully resident.
+- A streamed texture holds a contiguous range of mips from `resident_base` to the last level. Its image has
+  only those levels, so the image extent is the extent of `resident_base`.
+- The tail is the levels whose larger extent is at most 64 (`TEXTURE_TAIL_EXTENT`). Under a budget every
+  streamed texture starts with its tail resident.
+- Shading samples the resident image, so a texture below the detail it needs is blurry, never missing.
+
+**Demand.** Each raster view records, per material, the largest on-screen extent of the objects, batches and
+decals it draws with that material, scaled by the view's material sampling bias. The next frame turns that
+extent into the mip each texture of the material needs, including the Standard materials a custom material
+references. Shadow, trace and path-traced views record nothing, so a path-traced view samples what raster
+views keep resident.
+
+**Budget and pacing.** The step runs at `begin_frame`, after retired resources are released:
+- A drawn texture is raised toward its needed mip when the bytes fit the budget. The first raise of a frame is
+  always admitted; further raises share 8 MiB per frame (`TEXTURE_STREAM_FRAME_BYTES`), largest deficit first.
+- When bytes exceed the budget, textures that were not drawn return to their tail, least recently used first.
+- When the drawn set still does not fit, one global bias holds every drawn texture the same number of levels
+  below its need. The bias relaxes once the set fits within 90% of the budget.
+- Lifting the budget raises every streamed texture to full residency, paced by the same allowance: the first
+  raise of each frame, then 8 MiB.
+
+**Full readers.** Some paths read a texture outside material sampling and need every level: environment
+sources, overlay and UI images, compute dispatch reads, textures in custom-material slots (except the
+base-color slot of a masked material), and toon gradient maps. A texture used this way is a full reader. It
+never streams and is never evicted; its bytes count against the budget as fixed bytes. The flag stays set for
+the texture's life in that renderer, replacements included. A texture already streamed that becomes a full
+reader is raised to full residency by the next step.
+
+**Raising needs the source.** A raise re-reads the CPU source, so releasing it (`release_texture_cpu`) pins
+the texture: the step neither raises nor evicts it. Under a budget, releasing sources after the first frames
+pins those textures at whatever they hold, usually their tails. Keep sources for textures that should stream,
+or release them only once the detail is final.
+
+**Memory accounting.** `Stats.texture_bytes` counts resident images. A raise or eviction creates a new image,
+copies the surviving levels on the device and retires the old image after the frames in flight, so memory
+overshoots the budget briefly by the retired images.
+
+**Observation.**
+- `Renderer.texture_residency(texture)` returns the record of a store texture as this renderer holds it:
+  `resident_base`, `chain_mips`, `required_base`, `last_used_frame` and the `streamed`, `full_reader` and
+  `raisable` flags. A live texture the renderer has not resolved has `chain_mips == 0`. A dead id faults
+  `c3d::INVALID_ID`.
+- `Stats` reports, for the frame: `texture_bytes`, `texture_raises`, `texture_evictions`, `texture_bias`,
+  `textures_starved` (drawn textures below their biased target) and `texture_changes_deferred`.
+
+**Faults.** Failures while resolving or moving a texture are reported by `begin_frame` with the faults of
+`upload_texture`. A change that cannot allocate an image or a view slot (`gpu::SLOT_TABLE_FULL`,
+`gpu::DESCRIPTOR_HEAP_FULL`, `gpu::OUT_OF_DEVICE_MEMORY`) is skipped for the frame and counted in
+`texture_changes_deferred`. Replacing a texture keeps its record and restarts it at the tail when the
+dimensions, mip count or format change; the texture is then re-raised from its last demand one frame later.
+
 ## Faults and native requirements
 
 Paths must be nonempty. File access failures produce `c3d::ASSET_IO_ERROR`;

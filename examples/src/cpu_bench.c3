@@ -40,6 +40,10 @@ const float RAY_FIELD @local = 60; // rays start this far out on x and z and aim
 const float RAY_HEIGHT @local = 25;
 const uint MAX_ECS_ENTITIES @local = 2_097_152; // the large reading: its arrays exceed the 36 MB L3 of an i9-14900K
 const uint ECS_SEED @local = 0x6d2b79f5;
+const uint PLAN_CHAIN_MIPS @local = 12;
+const uint PLAN_CHAIN_EXTENT @local = 2048;
+const ulong PLAN_FRAME @local = 1000;
+const uint PLAN_TEXEL_BYTES @local = 4;
 const String ECS_PREFIX @local = "ecs_";
 const String SHUFFLED_SUFFIX @local = "_shuffled";
 
@@ -64,6 +68,7 @@ enum Work @local {
     INDEX_PICK_TRIANGLES,
     SCAN_PICK_TRIANGLES,
     TRIANGLE_WARMUP,
+    TEXTURE_PLAN,
 }
 
 enum EcsWork @local {
@@ -86,6 +91,12 @@ struct BvhInput @local {
     Vec3[] positions;
     uint[] indices;
     Aabb[] boxes;
+}
+
+struct PlanInput @local {
+    TextureResidency[]       records;
+    TextureResidencyChange[] changes;
+    usz                      budget_bytes;
 }
 
 struct IndexInput @local {
@@ -132,6 +143,7 @@ fn Work? parse_work(String name) @local {
         case "sort": return SORT;
         case "bvh_triangles": return BVH_TRIANGLES;
         case "bvh_top": return BVH_TOP;
+        case "texture_plan": return TEXTURE_PLAN;
         case "index_refresh_crowd": return INDEX_REFRESH_CROWD;
         case "index_refresh_batch": return INDEX_REFRESH_BATCH;
         case "index_build_crowd": return INDEX_BUILD_CROWD;
@@ -165,6 +177,7 @@ fn double run_iteration(
     CameraMatrices* matrices,
     BvhInput* bvh_input,
     IndexInput* index_input,
+    PlanInput* plan_input,
 ) @local @noinline {
     switch (work) {
         case WORLD:
@@ -249,11 +262,65 @@ fn double run_iteration(
                 assets:      assets,
                 index_input: index_input,
             );
+        case TEXTURE_PLAN:
+            uint bias;
+            TextureResidencyPlan plan = render::plan_texture_residency(
+                textures: plan_input.records,
+                budget: {
+                    .budget_bytes = plan_input.budget_bytes,
+                    .frame_bytes = render::TEXTURE_STREAM_FRAME_BYTES,
+                    .frame = PLAN_FRAME,
+                },
+                bias: &bias,
+                changes: plan_input.changes,
+            );
+            return (double)plan.change_count + plan.raises + plan.evictions + bias;
         case TRIANGLE_WARMUP:
             assets.mark_geometry_dirty(index_input.plane);
             spatial::prepare_triangle_picks(assets, scene);
             return (double)assets.geometry(index_input.plane).triangles.nodes.len;
     }
+}
+
+fn PlanInput synthetic_plan(Allocator allocator, uint count) @local {
+    PlanInput input = {
+        .records = alloc::new_array(allocator, TextureResidency, count),
+        .changes = alloc::new_array(allocator, TextureResidencyChange, count),
+    };
+    TextureLevelBytes levels;
+    for (uint mip = 0; mip < PLAN_CHAIN_MIPS; mip++) {
+        usz extent = (usz)(PLAN_CHAIN_EXTENT >> mip);
+        levels[mip] = extent * extent * (usz)PLAN_TEXEL_BYTES;
+    }
+    uint tail = render::texture_tail_base(PLAN_CHAIN_EXTENT, PLAN_CHAIN_MIPS);
+    usz total;
+    foreach (index, &record : input.records) {
+        uint kind = (uint)index % 4;
+        *record = {
+            .chain_mips = PLAN_CHAIN_MIPS,
+            .chain_width = PLAN_CHAIN_EXTENT,
+            .chain_height = PLAN_CHAIN_EXTENT,
+            .level_bytes = levels,
+            .tail_base = tail,
+            .resident_base = tail,
+            .required_base = PLAN_CHAIN_MIPS,
+            .last_used_frame = PLAN_FRAME - 1 - (ulong)(index * 7 % 50),
+            .eligible = true,
+            .streamed = true,
+            .raisable = true,
+        };
+        switch (kind) {
+            case 0: record.required_base = (uint)index / 4 % 4;
+            case 1:
+                record.required_base = (uint)index / 4 % 4 + 1;
+                record.resident_base = record.required_base;
+            case 2: record.resident_base = 0;
+            case 3: break;
+        }
+        total += render::texture_range_bytes(record, record.resident_base);
+    }
+    input.budget_bytes = total / 2;
+    return input;
 }
 
 fn double run_ecs_iteration(World* world, EcsWork work) @local @noinline {
@@ -504,7 +571,7 @@ fn void? benchmark(
         box = assets.add_geometry(&geometry)!;
     };
     MaterialId material = assets.add_material(material::standard(material::STANDARD_PARAMS_DEFAULT))!;
-    bool builds_bvh = work == BVH_TRIANGLES || work == BVH_TOP;
+    bool builds_bvh = work == BVH_TRIANGLES || work == BVH_TOP || work == TEXTURE_PLAN;
     IndexInput index_input;
     defer if (holds_index(index_scene)) spatial::destroy_scene_index(&index_input.index);
     defer alloc::free(mem, index_input.rays.ptr);
@@ -563,6 +630,8 @@ fn void? benchmark(
             bvh_input = { .positions = plane.positions, .indices = plane.indices };
         }
         if (work == BVH_TOP) bvh_input.boxes = scattered_boxes(tmem, nodes);
+        PlanInput plan_input;
+        if (work == TEXTURE_PLAN) plan_input = synthetic_plan(tmem, nodes);
         for (uint batch = 0; batch < WARMUP_BATCHES + sample_count; batch++) {
             time::Clock started = clock::now();
             for (uint iteration = 0; iteration < iterations; iteration++) {
@@ -573,6 +642,7 @@ fn void? benchmark(
                     matrices: &matrices,
                     bvh_input: &bvh_input,
                     index_input: &index_input,
+                    plan_input: &plan_input,
                 );
             }
             double elapsed = (double)(clock::now() - started) / NANOSECONDS_PER_MICROSECOND / iterations;
@@ -634,6 +704,7 @@ fn int main(String[] args) {
         io::eprintn("Cases: world hidden_world meshes culled_meshes hidden_meshes shadows lights hidden_lights sort");
         io::eprintn("       bvh_triangles (nodes = plane segments per side, 128 by default, at most 1024)");
         io::eprintn("       bvh_top (nodes = boxes)");
+        io::eprintn("       texture_plan (nodes = synthetic texture records)");
         io::eprintn("       index_refresh_crowd index_refresh_batch index_build_crowd index_build_batch");
         io::eprintn("       index_pick_crowd scan_pick_crowd index_pick_triangles scan_pick_triangles (nodes ignored)");
         io::eprintn("       triangle_warmup (nodes = plane segments per side, as bvh_triangles)");

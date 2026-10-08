@@ -54,6 +54,8 @@ struct MaterialRes {
     gpu::GpuAllocation payload;
     gpu::GpuAddress    payload_address;
     usz                payload_size;
+    float              demand_pixels; // largest biased projected extent of a candidate drawn with this material
+    ulong              demand_frame;  // frame_index the demand belongs to
 }
 
 <*

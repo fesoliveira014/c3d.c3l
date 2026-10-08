@@ -44,6 +44,14 @@ const Vec2 TARGETS_PANEL_POSITION @local = { 16, 180 };
 const Vec2 TARGETS_PANEL_SIZE @local = { 420, 300 };
 const Vec2 POST_PANEL_POSITION @local = { 1060, 16 };
 const Vec2 POST_PANEL_SIZE @local = { 360, 420 };
+const Vec2 TEXTURES_PANEL_POSITION @local = { 16, 500 };
+const Vec2 TEXTURES_PANEL_SIZE @local = { 780, 360 };
+const float TEXTURES_TABLE_HEIGHT @local = 220;
+const uint TEXTURE_BUDGET_MIB_MAX @local = 65536; // 64 GiB; far above any device this example runs on
+const int TEXTURE_BUDGET_SLIDER_MAX_MIB @local = 1024;
+const double BYTES_PER_MIB @local = 1048576;
+const double BYTES_PER_KIB @local = 1024;
+const String TEXTURE_BUDGET_PREFIX @local = "--texture-budget=";
 const uint MODEL_CAPACITY @local = 4;
 const String DEFAULT_MODEL @local = "../assets/gltf/BoxTextured.glb";
 const String ENVIRONMENT_FILE @local = "../assets/ibl/studio_small_09_1k.hdr";
@@ -85,7 +93,12 @@ struct BenchmarkOptions @local {
     bool environment_refresh;
     uint reflection_probes;
     bool reflection_probes_outside;
+    usz texture_budget_bytes;
 }
+
+const ZString[9] TEXTURE_COLUMNS @local = {
+    "Key", "Extent", "Mips", "Resident KiB", "Required", "Last used", "Streamed", "Pinned", "Full reader",
+};
 
 struct Orbit @local {
     Vec3  target;
@@ -246,8 +259,13 @@ fn BenchmarkOptions? parse_options(String[] args) @local {
             options.model_path = argument;
             continue;
         }
+        if (argument.starts_with(TEXTURE_BUDGET_PREFIX)) {
+            options.texture_budget_bytes = parse_texture_budget(argument[TEXTURE_BUDGET_PREFIX.len..])!;
+            continue;
+        }
         String value = bench_loop::option_value(args, &index)!;
         switch (argument) {
+            case "--texture-budget": options.texture_budget_bytes = parse_texture_budget(value)!;
             case "--mode":
                 if (value == "flat") {
                     options.selection = LightSelection.FLAT;
@@ -324,6 +342,12 @@ fn BenchmarkOptions? parse_options(String[] args) @local {
         return c3d::INVALID_ARGUMENT~;
     }
     return options;
+}
+
+fn usz? parse_texture_budget(String mebibytes) @local {
+    uint value = mebibytes.to_uint()!;
+    if (value > TEXTURE_BUDGET_MIB_MAX) return c3d::INVALID_ARGUMENT~;
+    return (usz)value << 20;
 }
 
 fn Vec3 light_color(uint index) @local {
@@ -564,6 +588,7 @@ fn void? run_benchmark(BenchmarkOptions options) @local {
         .ray_queries = requests_ray_queries(options),
         .ray_tracing_pipelines = options.shading == ShadingPath.PATH_TRACED,
         .max_lights = BENCHMARK_LIGHTS_MAX,
+        .texture_budget_bytes = options.texture_budget_bytes,
     };
     $if $feat(C3D_PROFILE_CPU) || $feat(C3D_PROFILE_GPU):
         BenchmarkRecorder recorder;
@@ -629,7 +654,7 @@ fn int main(String[] args) {
     if (catch excuse = parsed) {
         if (excuse != c3d::UNSUPPORTED) {
             io::eprintfn("Invalid options: %s", excuse);
-            io::eprintn("Use [model.gltf] [--gpu-timings] or --benchmark [model.gltf] --mode flat|clustered [--shading forward|deferred|path-traced] --lights N --shadows on|off|traced --range R --capacity N --frames N --warmup N --width N --height N [--anti-aliasing none|fxaa|taa] [--ambient-occlusion none|half|full] [--depth-prepass on|off] [--environment-refresh on|off] [--reflection-probes 0|1|2|16] [--reflection-probe-placement inside|outside] [--gpu-timings] [--validation] [--capture] [--window] [--panel] [--print-features].");
+            io::eprintn("Use [model.gltf] [--gpu-timings] or --benchmark [model.gltf] --mode flat|clustered [--shading forward|deferred|path-traced] [--texture-budget MiB] --lights N --shadows on|off|traced --range R --capacity N --frames N --warmup N --width N --height N [--anti-aliasing none|fxaa|taa] [--ambient-occlusion none|half|full] [--depth-prepass on|off] [--environment-refresh on|off] [--reflection-probes 0|1|2|16] [--reflection-probe-placement inside|outside] [--gpu-timings] [--validation] [--capture] [--window] [--panel] [--print-features].");
         }
         return 1;
     }
@@ -638,7 +663,13 @@ fn int main(String[] args) {
         bench_loop::print_features();
         return 0;
     }
-    if (!options.flags.enabled) return run_example(options.model_path, options.flags.gpu_timings);
+    if (!options.flags.enabled) {
+        return run_example(
+            model_path: options.model_path,
+            gpu_timings: options.flags.gpu_timings,
+            texture_budget_bytes: options.texture_budget_bytes,
+        );
+    }
     if (!options.model_path.len) options.model_path = example_path(BENCHMARK_MODEL);
     if (catch excuse = run_benchmark(options)) {
         io::eprintfn("glTF benchmark failed: %s", excuse);
@@ -647,7 +678,59 @@ fn int main(String[] args) {
     return 0;
 }
 
-fn int run_example(String model_path, bool gpu_timings) @local {
+fn void textures_panel(Renderer* renderer, AssetStore* assets, int* budget_mib) @local {
+    imgui::set_next_window_pos(TEXTURES_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
+    imgui::set_next_window_size(TEXTURES_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
+    if (imgui::begin("Textures", null, {})) {
+        if (imgui::slider_int("Budget (MiB, 0 is unbudgeted)", budget_mib, 0, TEXTURE_BUDGET_SLIDER_MAX_MIB)) {
+            renderer.set_texture_budget((usz)*budget_mib << 20);
+        }
+        Stats* stats = &renderer.stats;
+        imgui::text("Resident %.2f MiB, budget %d MiB", (double)stats.texture_bytes / BYTES_PER_MIB, *budget_mib);
+        imgui::text("Raises %u, evictions %u, bias %u, starved %u, deferred %u",
+            stats.texture_raises, stats.texture_evictions, stats.texture_bias,
+            stats.textures_starved, stats.texture_changes_deferred);
+        imgui::TableFlags flags = imgui::TABLE_FLAGS_BORDERS;
+        flags.scroll_y = true;
+        if (imgui::begin_table_ex("texture_residency", 9, flags, { 0, TEXTURES_TABLE_HEIGHT }, 0)) {
+            imgui::table_setup_scroll_freeze(0, 1);
+            foreach (label : TEXTURE_COLUMNS) imgui::table_setup_column(label, {});
+            imgui::table_headers_row();
+            foreach (index, &record : renderer.residencies) {
+                if (!record.chain_mips) continue;
+
+                String key = assets.texture(renderer.textures[index].asset).header.key;
+                imgui::table_next_row();
+                imgui::table_next_column();
+                imgui::text("%.*s", (int)key.len, key.ptr);
+                imgui::table_next_column();
+                imgui::text("%ux%u", record.chain_width, record.chain_height);
+                imgui::table_next_column();
+                imgui::text("%u / %u", record.chain_mips - record.resident_base, record.chain_mips);
+                imgui::table_next_column();
+                imgui::text("%.1f", (double)render::texture_range_bytes(record, record.resident_base) / BYTES_PER_KIB);
+                imgui::table_next_column();
+                if (record.required_base < record.chain_mips) {
+                    imgui::text("%u", record.required_base);
+                } else {
+                    imgui::text_unformatted("-");
+                }
+                imgui::table_next_column();
+                imgui::text("%llu", (ulong)record.last_used_frame);
+                imgui::table_next_column();
+                imgui::text_unformatted(record.streamed ? "yes" : "no");
+                imgui::table_next_column();
+                imgui::text_unformatted(record.raisable ? "no" : "yes");
+                imgui::table_next_column();
+                imgui::text_unformatted(record.full_reader ? "yes" : "no");
+            }
+            imgui::end_table();
+        }
+    }
+    imgui::end();
+}
+
+fn int run_example(String model_path, bool gpu_timings, usz texture_budget_bytes) @local {
     platform::Window window = platform::create_window(
         platform::default_window_desc("c3d glTF viewer", 1440, 900))!!;
     defer platform::destroy_window(&window);
@@ -662,6 +745,7 @@ fn int run_example(String model_path, bool gpu_timings) @local {
         .validation            = true,
         .application_name      = "c3d_gltf_viewer",
         .ray_tracing_pipelines = true,
+        .texture_budget_bytes  = texture_budget_bytes,
     };
     render::Renderer? traced = platform::create_window_renderer(mem, &window, &assets, renderer_desc);
     if (catch traced) {
@@ -731,6 +815,7 @@ fn int run_example(String model_path, bool gpu_timings) @local {
     FreeCamera free_camera = free_camera_from(camera_node, radius * FREE_SPEED_SCALE);
     bool free_mode;
     TargetsPanelState targets = gui::default_targets_panel_state();
+    int budget_mib = (int)(texture_budget_bytes >> 20);
 
     io::printn("drag to orbit, wheel to zoom; F or the Camera panel toggles the free camera: right drag looks, WASDQE move, Shift is fast, wheel scales speed; Escape release quits");
     double last_print;
@@ -765,6 +850,7 @@ fn int run_example(String model_path, bool gpu_timings) @local {
         imgui::set_next_window_pos(POST_PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
         imgui::set_next_window_size(POST_PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
         bool view_changed = gui::post_panel(&view_desc, {});
+        textures_panel(&renderer, &assets, &budget_mib);
         gui_renderer.finish_frame();
         if (view_changed) {
             if (catch excuse = render::configure_view(&renderer, renderer.default_view, view_desc)) {
@@ -795,8 +881,10 @@ fn int run_example(String model_path, bool gpu_timings) @local {
 
         if (window.clock.total - last_print >= STATS_PERIOD_SECONDS) {
             last_print = window.clock.total;
-            io::printfn("draws %d, triangles %d, culled %d, frame %.2f ms",
-                renderer.stats.draws, renderer.stats.triangles, renderer.stats.culled, renderer.stats.frame_ms);
+            io::printfn("draws %d, triangles %d, culled %d, frame %.2f ms, textures %.1f MiB, bias %d, starved %d",
+                renderer.stats.draws, renderer.stats.triangles, renderer.stats.culled, renderer.stats.frame_ms,
+                (double)renderer.stats.texture_bytes / BYTES_PER_MIB, renderer.stats.texture_bias,
+                renderer.stats.textures_starved);
         }
     }
 

@@ -2,7 +2,10 @@ module c3d::render;
 
 import c3d;
 import c3d::asset;
+import c3d::camera;
+import c3d::maths;
 import c3d::material;
+import gpu;
 import std::math;
 
 <*
@@ -26,6 +29,7 @@ const usz TEXTURE_STREAM_FRAME_BYTES = 8 << 20; // matches OVERSIZED_UPLOAD_BYTE
 const float TEXTURE_BIAS_RELEASE_FRACTION = 0.9f; // one level of headroom against oscillation
 
 const uint NO_RECORD @local = uint::max;
+const usz EVICTION_BATCH @local = 128; // records ranked per scan, so a large eviction costs a few passes
 
 <*
  Resident mip range of one store texture and the demand that drives it.
@@ -75,6 +79,11 @@ struct TextureResidencyPlan {
     usz  total_bytes; // resident bytes once every change applies
 }
 
+struct EvictionPick @local {
+    ulong frame;
+    uint  index;
+}
+
 struct TexturePlanState @local {
     TextureResidency[]       textures;
     TextureResidencyChange[] changes;
@@ -84,6 +93,10 @@ struct TexturePlanState @local {
     usz                      change_count;
     uint                     evictions;
     uint                     raises;
+}
+
+fn bool EvictionPick.after(self, EvictionPick other) {
+    return self.frame > other.frame || (self.frame == other.frame && self.index > other.index);
 }
 
 fn void TexturePlanState.measure(&self) {
@@ -123,30 +136,45 @@ fn void TexturePlanState.evict_undrawn(&self, uint bias) {
     usz drawn_zero = self.drawn_need(0);
     usz drawn_relax = bias > 0 ? self.drawn_need(bias - 1) : 0;
     double release = (double)TEXTURE_BIAS_RELEASE_FRACTION * (double)self.budget;
+    EvictionPick cursor;
     bool has_cursor;
-    ulong cursor_frame;
-    uint cursor_index;
+    EvictionPick[EVICTION_BATCH] batch;
 
     while (self.total > self.budget
       || self.held_bytes + drawn_zero > self.budget
       || (bias > 0 && (double)(self.held_bytes + drawn_relax) > release)) {
-        uint pick = NO_RECORD;
-        foreach (index, &record : self.textures) {
-            if (!texture_plan_candidate(record) || texture_plan_drawn(record)) continue;
-            if (record.resident_base >= record.tail_base) continue;
+        usz found = self.collect_evictions(batch[..], has_cursor, cursor);
+        if (!found) break;
 
-            bool after = !has_cursor || record.last_used_frame > cursor_frame
-              || (record.last_used_frame == cursor_frame && index > cursor_index);
-            if (!after) continue;
-            if (pick == NO_RECORD || record.last_used_frame < self.textures[pick].last_used_frame) pick = (uint)index;
+        foreach (pick : batch[:found]) {
+            if (self.total <= self.budget && self.held_bytes + drawn_zero <= self.budget
+              && !(bias > 0 && (double)(self.held_bytes + drawn_relax) > release)) return;
+
+            has_cursor = true;
+            cursor = pick;
+            self.evict(pick.index, self.textures[pick.index].tail_base);
         }
-        if (pick == NO_RECORD) break;
-
-        has_cursor = true;
-        cursor_frame = self.textures[pick].last_used_frame;
-        cursor_index = pick;
-        self.evict(pick, self.textures[pick].tail_base);
     }
+}
+
+fn usz TexturePlanState.collect_evictions(&self, EvictionPick[] picks, bool has_cursor, EvictionPick cursor) {
+    usz found;
+    foreach (index, &record : self.textures) {
+        if (!texture_plan_candidate(record) || texture_plan_drawn(record)) continue;
+        if (record.resident_base >= record.tail_base) continue;
+
+        EvictionPick pick = { .frame = record.last_used_frame, .index = (uint)index };
+        if (has_cursor && !pick.after(cursor)) continue;
+        if (found == picks.len && !picks[found - 1].after(pick)) continue;
+
+        usz slot = found < picks.len ? found++ : found - 1;
+        while (slot > 0 && picks[slot - 1].after(pick)) {
+            picks[slot] = picks[slot - 1];
+            slot--;
+        }
+        picks[slot] = pick;
+    }
+    return found;
 }
 
 fn uint TexturePlanState.settle_bias(&self, uint bias) {
@@ -191,7 +219,14 @@ fn uint TexturePlanState.raise(&self, bool limited, uint bias, usz frame_bytes) 
     uint starved;
     uint admitted_count;
     usz admitted_bytes;
-    for (uint deficit = material::TEXTURE_MIP_CAPACITY; deficit > 0; deficit--) {
+    uint widest;
+    foreach (&record : self.textures) {
+        if (!texture_plan_candidate(record) || (limited && !texture_plan_drawn(record))) continue;
+
+        uint target = limited ? texture_plan_target(record, bias) : 0;
+        if (record.resident_base > target) widest = math::max(widest, record.resident_base - target);
+    }
+    for (uint deficit = widest; deficit > 0; deficit--) {
         foreach (index, &record : self.textures) {
             if (!texture_plan_candidate(record)) continue;
             if (limited && !texture_plan_drawn(record)) continue;
@@ -226,6 +261,14 @@ fn TextureResidency? Renderer.texture_residency(&self, TextureId texture) {
     if (!c3d::same_id(self.textures[texture.index].asset, texture)) return {};
 
     return self.residencies[texture.index];
+}
+
+<*
+ Replace the resident-byte budget; the next frame's step applies it.
+ @param bytes : "Zero lifts the budget; streamed textures drain to full residency."
+*>
+fn void Renderer.set_texture_budget(&self, usz bytes) {
+    self.texture_budget_bytes = bytes;
 }
 
 <*
@@ -355,9 +398,229 @@ fn uint texture_plan_target(TextureResidency* record, uint bias) @local {
 }
 
 fn void? step_texture_residency(Renderer* renderer) @private {
-    usz bytes;
-    foreach (&record : renderer.residencies) {
-        if (record.chain_mips) bytes += texture_range_bytes(record, record.resident_base);
+    @pool() {
+        expand_material_demand(renderer);
+        foreach (index, &record : renderer.residencies) {
+            if (!record.chain_mips) continue;
+
+            TextureId asset = renderer.textures[index].asset;
+            record.raisable = texture_source_present(renderer.assets.texture(asset))
+              && texture_current(renderer, asset);
+            uint chain_extent = math::max(record.chain_width, record.chain_height);
+            record.required_base = record.demand_pixels > 0
+              ? texture_required_base(chain_extent, record.chain_mips, record.demand_pixels, 0)
+              : record.chain_mips;
+        }
+
+        TextureBudget budget = {
+            .budget_bytes = renderer.texture_budget_bytes,
+            .frame_bytes = TEXTURE_STREAM_FRAME_BYTES,
+            .frame = renderer.frame_index,
+        };
+        TextureResidencyPlan plan = plan_texture_residency(
+            textures: renderer.residencies,
+            budget: budget,
+            bias: &renderer.texture_bias,
+            changes: renderer.residency_changes,
+        );
+        uint deferred;
+        foreach (change : renderer.residency_changes[:plan.change_count]) {
+            if (catch excuse = apply_texture_residency(renderer, change)) {
+                if (excuse != gpu::SLOT_TABLE_FULL && excuse != gpu::DESCRIPTOR_HEAP_FULL
+                  && excuse != gpu::OUT_OF_DEVICE_MEMORY) return excuse~;
+
+                deferred++;
+            }
+        }
+
+        usz bytes;
+        foreach (&record : renderer.residencies) {
+            if (record.chain_mips) bytes += texture_range_bytes(record, record.resident_base);
+        }
+        renderer.stats.texture_bytes = bytes;
+        renderer.stats.texture_raises = plan.raises;
+        renderer.stats.texture_evictions = plan.evictions;
+        renderer.stats.texture_bias = renderer.texture_bias;
+        renderer.stats.textures_starved = plan.starved;
+        renderer.stats.texture_changes_deferred = deferred;
+    };
+}
+
+fn void? apply_texture_residency(Renderer* renderer, TextureResidencyChange change) @private {
+    TextureRes* mirror = &renderer.textures[change.index];
+    TextureResidency* residency = &renderer.residencies[change.index];
+    TextureAsset* record = renderer.assets.texture(mirror.asset);
+    uint old_base = residency.resident_base;
+    uint new_base = change.new_base;
+    gpu::TextureDesc description = texture_gpu_description(
+        desc: record.desc,
+        format: mirror.format,
+        chain_mips: residency.chain_mips,
+        base: new_base,
+        copy_source: true,
+    );
+    gpu::TextureHandle image = gpu::create_texture(&renderer.device, &description)!;
+    defer catch (void)gpu::destroy_texture(&renderer.device, image);
+
+    gpu::TextureViewDesc view_desc;
+    gpu::TextureView view = gpu::create_texture_view(&renderer.device, image, &view_desc)!;
+    defer catch (void)gpu::destroy_texture_view(&renderer.device, view);
+
+    PendingTextureUpload pending = {
+        .asset = mirror.asset,
+        .revision = record.header.revision,
+        .texture = image,
+        .survivor_source = mirror.texture,
+        .survivor_before = mirror.state,
+    };
+    for (uint level = math::max(old_base, new_base); level < residency.chain_mips; level++) {
+        pending.survivor_copies[pending.survivor_count] = {
+            .src = mirror.texture,
+            .src_mip = level - old_base,
+            .dst = image,
+            .dst_mip = level - new_base,
+        };
+        pending.survivor_count++;
     }
-    renderer.stats.texture_bytes = bytes;
+    if (new_base < old_base) {
+        stage_texture_levels(
+            renderer: renderer,
+            record: record,
+            pending: &pending,
+            description: &description,
+            first_level: new_base,
+            level_count: old_base - new_base,
+        )!;
+    }
+
+    retire_texture(renderer, mirror);
+    *mirror = {
+        .asset = pending.asset,
+        .revision = pending.revision,
+        .binding_revision = mirror.binding_revision + 1,
+        .texture = image,
+        .view = view,
+        .width = description.width,
+        .height = description.height,
+        .mip_count = description.mip_levels,
+        .layers = 1,
+        .copy_source = true,
+        .format = description.format,
+    };
+    remember_texture_state(&renderer.texture_state_undo, mirror);
+    renderer.pending_texture_uploads.push(pending);
+    renderer.stats.uploads++;
+    residency.resident_base = new_base;
+}
+
+fn void? stage_texture_levels(
+    Renderer* renderer,
+    TextureAsset* record,
+    PendingTextureUpload* pending,
+    gpu::TextureDesc* description,
+    uint first_level,
+    uint level_count,
+) @local {
+    TextureMipChain chain;
+    TextureMipLayout layout;
+    switch (record.source_kind) {
+        case MIP_ZERO:
+            chain = create_texture_mips(tmem, record.desc, record.pixels, first_mip: first_level)!;
+            layout = { .total_bytes = chain.pixels.len, .mip_count = chain.mip_count, .offsets = chain.offsets };
+        case SUPPLIED_MIPS:
+            layout = supplied_texture_mip_layout(record.desc, record.supplied_mips, first_mip: first_level)!;
+        case EMPTY:
+            unreachable();
+    }
+
+    usz staged_bytes = level_count < layout.mip_count ? layout.offsets[level_count] : layout.total_bytes;
+    Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
+    gpu::MappedGpuSpan staging = slot.upload.take(&renderer.device, staged_bytes, UPLOAD_RING_ALIGNMENT)!;
+    switch (record.source_kind) {
+        case MIP_ZERO:
+            mem::copy(staging.bytes.ptr, chain.pixels.ptr, (sz)staged_bytes);
+        case SUPPLIED_MIPS:
+            usz offset;
+            foreach (level : record.supplied_mips) {
+                if (level.mip < first_level || level.mip >= first_level + level_count) continue;
+
+                mem::copy(staging.bytes.ptr + offset, level.bytes.ptr, level.bytes.len);
+                offset += level.bytes.len;
+            }
+        case EMPTY:
+            unreachable();
+    }
+    pending.mip_count = level_count;
+    for (uint mip = 0; mip < level_count; mip++) {
+        usz bytes = gpu::texture_mip_bytes(description, mip)!;
+        pending.copies[mip] = {
+            .src = staging.span.checked_subspan(layout.offsets[mip], bytes)!,
+            .texture = pending.texture,
+            .mip = mip,
+            .layer_count = 1,
+        };
+    }
+    renderer.stats.upload_bytes += (uint)staged_bytes;
+}
+
+fn void expand_material_demand(Renderer* renderer) @private {
+    foreach (&record : renderer.residencies) record.demand_pixels = 0;
+    if (!renderer.frame_index) return;
+
+    ulong previous = renderer.frame_index - 1;
+    foreach (&mirror : renderer.materials) {
+        if (mirror.demand_frame != previous || mirror.demand_pixels <= 0) continue;
+        if (!renderer.assets.materials.is_live(mirror.asset)) continue;
+
+        raise_bindings_demand(renderer, &mirror.bindings, mirror.demand_pixels);
+        MaterialAsset* asset = renderer.assets.material(mirror.asset);
+        if (asset.data.kind != MaterialKind.CUSTOM) continue;
+
+        foreach (reference : asset.data.custom.references) {
+            if (!reference.generation || !renderer.assets.materials.is_live(reference)) continue;
+
+            MaterialRes* referenced = &renderer.materials[reference.index];
+            if (c3d::same_id(referenced.asset, reference)) {
+                raise_bindings_demand(renderer, &referenced.bindings, mirror.demand_pixels);
+            }
+        }
+    }
+}
+
+fn void raise_bindings_demand(Renderer* renderer, MaterialBindings* bindings, float pixels) @local {
+    TextureBinding*[*] fixed = {
+        &bindings.base_color, &bindings.metallic_roughness, &bindings.normal, &bindings.occlusion,
+        &bindings.emissive, &bindings.gradient, &bindings.clearcoat, &bindings.clearcoat_roughness,
+        &bindings.clearcoat_normal, &bindings.sheen_color, &bindings.sheen_roughness, &bindings.specular,
+        &bindings.specular_color, &bindings.anisotropy, &bindings.transmission, &bindings.thickness,
+    };
+    foreach (binding : fixed) raise_binding_demand(renderer, binding, pixels);
+    foreach (&binding : bindings.custom) raise_binding_demand(renderer, binding, pixels);
+}
+
+fn void raise_binding_demand(Renderer* renderer, TextureBinding* binding, float pixels) @local {
+    if (!binding.present || !renderer.assets.textures.is_live(binding.texture)) return;
+
+    TextureResidency* record = &renderer.residencies[binding.texture.index];
+    record.demand_pixels = math::max(record.demand_pixels, pixels);
+}
+
+fn void note_material_demand(
+    Renderer* renderer,
+    MaterialRes* material,
+    Camera camera,
+    Vec3 camera_position,
+    Aabb bounds,
+    float viewport_height,
+    float mip_bias,
+) @private {
+    float pixels = camera::projected_size(camera, camera_position, maths::aabb_sphere(bounds), viewport_height)
+      * math::exp2(-mip_bias);
+    if (!(pixels > 0)) return;
+
+    if (material.demand_frame != renderer.frame_index) {
+        material.demand_frame = renderer.frame_index;
+        material.demand_pixels = 0;
+    }
+    material.demand_pixels = math::max(material.demand_pixels, pixels);
 }

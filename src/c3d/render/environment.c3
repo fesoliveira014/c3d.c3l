@@ -161,7 +161,7 @@ fn EnvironmentRes*? resolve_environment(
             description.source = {};
             description.settings.conversion_size = 0;
         case TEXTURE:
-            texture = resolve_texture(renderer, description.source)!;
+            texture = resolve_texture(renderer, description.source, full_reader: true)!;
             source_revision = renderer.assets.texture(description.source).header.revision;
             source_binding_revision = texture.binding_revision;
             source_owned = !texture.is_cube;

@@ -327,7 +327,10 @@ python3 scripts/build.py --example gltf_viewer
 ```
 
 See [Models, glTF and FBX import](docs/models.md) for keys, options, the material
-mapping and the supported extension subset.
+mapping and the supported extension subset. Its Textures panel sets the texture
+budget and lists each texture's resident mips, bytes and required level
+(`--texture-budget <MiB>` starts under a budget); see
+[Residency and memory budgets](docs/textures.md#residency-and-memory-budgets).
 
 `animation` instantiates a model twice and plays a different clip on each
 instance through `c3d::anim`, with cross-fades, a quarter-weight action and
