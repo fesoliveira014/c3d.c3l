@@ -5,6 +5,7 @@ import c3d::asset;
 import c3d::geometry;
 import c3d::material;
 import c3d::maths;
+import c3d::model;
 import c3d::platform;
 import c3d::render @public;
 import c3d::scene;
@@ -279,5 +280,69 @@ fn void test_replace_custom_material_payload_size() @test {
     Vec4[] after = render_material_blend_pixels(&fixture, &target, &blend_view)!!;
     defer free(after);
     check_material_blend_pixel(replace_pixel(after, BLEND_TARGET_SIZE / 2), second.color);
+    check_validation(&fixture.renderer);
+}
+
+fn ModelDocument replace_quad_document(Allocator allocator, Vec4 color) @private {
+    ModelDocument document = asset::create_model_document(allocator, "replace_quad", {
+        .materials  = 1,
+        .geometries = 1,
+    });
+    MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
+    common.double_sided = true;
+    MaterialId surface = document.push_material(material::basic({ .color = color }, common), "replace_quad#material");
+    Geometry geometry = geometry::plane(allocator, 0.8f, 0.8f);
+    GeometryId mesh = document.push_geometry(&geometry, "replace_quad#mesh");
+
+    ModelTemplate* template = &document.template;
+    template.nodes = alloc::new_array(allocator, NodeTemplate, 1);
+    template.nodes[0] = {
+        .parent  = -1,
+        .name    = "quad".copy(allocator),
+        .local   = maths::TRANSFORM_IDENTITY,
+        .layers  = scene::DEFAULT_LAYERS,
+        .visible = true,
+    };
+    template.nodes[0].local.rotation = maths::look_rotation({ 0, 1, 0 }, { 0, 0, 1 });
+    template.meshes = alloc::new_array(allocator, ModelMesh, 1);
+    template.meshes[0] = { .node = 0, .geometry = mesh, .material = surface };
+    return document;
+}
+
+fn void test_replace_model_with_live_instance() @test {
+    Fixture fixture;
+    create_fixture(mem, &fixture)!!;
+    defer destroy_fixture(&fixture);
+    MaterialBlendScene target = create_material_blend_scene(&fixture)!!;
+    defer scene::destroy_scene(&target.scene);
+    MaterialBlendView blend_view = create_material_blend_view(&fixture)!!;
+    defer destroy_material_blend_view(&fixture, &blend_view);
+
+    Allocator allocator = fixture.assets.allocator;
+    ModelDocument red = replace_quad_document(allocator, { 1, 0, 0, 1 });
+    defer asset::destroy_model_document(&red);
+    ModelId model = fixture.assets.publish_document(&red)!!;
+    Node* left = model::instantiate(&fixture.assets, &target.scene, model)!!;
+    left.local.position = { -REPLACE_QUAD_OFFSET, 0, 0 };
+    target.scene.update_world();
+
+    Vec4[] before = render_material_blend_pixels(&fixture, &target, &blend_view)!!;
+    defer free(before);
+    check_material_blend_pixel(replace_pixel(before, REPLACE_LEFT_COLUMN), { 1, 0, 0, 1 });
+
+    ModelDocument green = replace_quad_document(allocator, { 0, 1, 0, 1 });
+    defer asset::destroy_model_document(&green);
+    fixture.assets.replace_document(model, &green)!!;
+    Vec4[] after = render_material_blend_pixels(&fixture, &target, &blend_view)!!;
+    defer free(after);
+    check_material_blend_pixel(replace_pixel(after, REPLACE_LEFT_COLUMN), { 0, 1, 0, 1 });
+
+    Node* right = model::instantiate(&fixture.assets, &target.scene, model)!!;
+    right.local.position = { REPLACE_QUAD_OFFSET, 0, 0 };
+    target.scene.update_world();
+    Vec4[] both = render_material_blend_pixels(&fixture, &target, &blend_view)!!;
+    defer free(both);
+    check_material_blend_pixel(replace_pixel(both, REPLACE_LEFT_COLUMN), { 0, 1, 0, 1 });
+    check_material_blend_pixel(replace_pixel(both, REPLACE_RIGHT_COLUMN), { 0, 1, 0, 1 });
     check_validation(&fixture.renderer);
 }
