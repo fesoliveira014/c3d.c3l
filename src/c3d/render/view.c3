@@ -264,6 +264,7 @@ fn void? record_raster_view(
     Vec2 jitter = taa
       ? post::taa_jitter(record.history.sample_index, record.hdr_color.width, record.hdr_color.height)
       : (Vec2){};
+    float material_mip_bias = taa ? record.desc.post.taa_params.mip_bias : 0;
     CameraMatrices raster = taa ? camera::jitter_matrices(*matrices, jitter) : *matrices;
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     bool view_reflected = matrices.view.determinant() < 0;
@@ -349,7 +350,19 @@ fn void? record_raster_view(
                     continue;
                 }
                 MaterialRes* material = resolved;
-                if (candidate.impostor) resolve_lod_part(renderer, candidate)!;
+                if (candidate.impostor) {
+                    resolve_lod_part(renderer, candidate)!;
+                } else {
+                    note_material_demand(
+                        renderer: renderer,
+                        material: material,
+                        camera: *camera,
+                        camera_position: matrices.position,
+                        bounds: candidate.world_bounds,
+                        viewport_height: viewport.y,
+                        mip_bias: material_mip_bias,
+                    );
+                }
                 sheen |= material_uses_sheen(material_description);
                 validate_normal_geometry(
                     geometry: geometry,
@@ -447,6 +460,15 @@ fn void? record_raster_view(
             decals = alloc::new_array(tmem, DecalGpu, selected.len);
             foreach (index, candidate : selected) {
                 MaterialRes* material = resolve_material(renderer, candidate.decal.material)!;
+                note_material_demand(
+                    renderer: renderer,
+                    material: material,
+                    camera: *camera,
+                    camera_position: matrices.position,
+                    bounds: maths::aabb_transform(DECAL_LOCAL_BOUNDS, maths::rebase(candidate.node.world, renderer.frame_origin)),
+                    viewport_height: viewport.y,
+                    mip_bias: material_mip_bias,
+                );
                 decals[index] = pack_decal(
                     node: candidate.node,
                     decal: candidate.decal,
@@ -623,7 +645,7 @@ fn void? record_raster_view(
                 clusters: cluster_frame.clusters,
                 trace: trace_root,
                 jitter: jitter,
-                mip_bias: taa ? record.desc.post.taa_params.mip_bias : 0,
+                mip_bias: material_mip_bias,
                 ao_texture: ambient_occlusion ? record.ao.view.index : (gpu::TextureIndex)0,
                 probe_volumes: probe_volumes,
                 reflection_probes: reflection_probes,

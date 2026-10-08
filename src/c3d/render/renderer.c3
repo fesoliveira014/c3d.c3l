@@ -89,6 +89,7 @@ struct RendererDesc {
     uint             texture_heap_capacity; // texture views; zero: gpu::DEFAULT_TEXTURE_HEAP_CAPACITY
     bool             ray_queries;
     bool             ray_tracing_pipelines;
+    usz              texture_budget_bytes; // zero keeps every texture fully resident at first sight
 }
 
 <*
@@ -170,6 +171,8 @@ struct Renderer {
     TextureRes[]            textures;
     TextureResidency[]       residencies;       // one per store texture slot, parallel to textures
     TextureResidencyChange[] residency_changes; // planner output, sized like residencies
+    usz                      texture_budget_bytes;
+    uint                     texture_bias;
     EnvironmentState        environment_state;
     gpu::SamplerIndex       toon_gradient_sampler;
     SamplerRes[]            samplers;
@@ -881,6 +884,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .textures             = alloc::new_array(allocator, TextureRes, assets.textures.items.len),
         .residencies          = alloc::new_array(allocator, TextureResidency, assets.textures.items.len),
         .residency_changes    = alloc::new_array(allocator, TextureResidencyChange, assets.textures.items.len),
+        .texture_budget_bytes = desc.texture_budget_bytes,
         .fonts                = alloc::new_array(allocator, FontRes, assets.fonts.items.len),
         .environment_state    = {
             .mirrors = alloc::new_array(allocator, EnvironmentRes, assets.environments.items.len),

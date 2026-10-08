@@ -265,7 +265,7 @@ fn void test_prepare_bytes_total_leaves_out_current_units() @test {
 
     PrepareProgress progress = fixture.renderer.prepare_progress(id);
     assert(progress.units_total == 6);
-    usz texture_bytes = render::prepare_texture_bytes(assets.texture(fixture.texture));
+    usz texture_bytes = render::prepare_texture_bytes(&fixture.renderer, fixture.texture);
     usz geometry_bytes = render::geometry_layout(&assets.geometry(fixture.second).data).total_bytes;
     assert(progress.bytes_total == texture_bytes + geometry_bytes + render::MATERIAL_STRIDE);
     assert(progress.bytes_done == 0 && progress.state == PrepareState.PENDING);
@@ -313,7 +313,7 @@ fn void test_prepare_texture_bytes_match_the_mip_chain() @test {
             char[] pixels = alloc::new_array(tmem, char, (sz)desc.width * desc.height * 4);
             TextureAsset record = { .desc = desc, .source_kind = MIP_ZERO, .pixels = pixels };
             TextureMipChain chain = render::create_texture_mips(tmem, desc, pixels)!!;
-            assert(render::prepare_texture_bytes(&record) == chain.pixels.len);
+            assert(render::prepare_source_bytes(&record) == chain.pixels.len);
         };
     }
 }

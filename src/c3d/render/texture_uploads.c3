@@ -14,6 +14,10 @@ struct PendingTextureUpload {
     gpu::TextureState before;
     uint mip_count;
     gpu::BufferTextureCopyDesc[material::TEXTURE_MIP_CAPACITY] copies;
+    gpu::TextureHandle survivor_source;
+    gpu::TextureState survivor_before;
+    uint survivor_count;
+    gpu::TextureCopyDesc[material::TEXTURE_MIP_CAPACITY] survivor_copies;
     bool recorded;
 }
 
@@ -66,6 +70,21 @@ fn void? record_texture_uploads(Renderer* renderer, gpu::CommandList* commands) 
             },
         )!;
         gpu::cmd_texture_barrier(commands, &to_upload)!;
+        if (pending.survivor_count) {
+            gpu::TextureBarrier to_source = gpu::texture_transition(
+                texture: pending.survivor_source,
+                before: pending.survivor_before,
+                after: {
+                    .layout = gpu::TextureLayout.TRANSFER_SOURCE,
+                    .stages = { .transfer },
+                    .access = { .read },
+                },
+            )!;
+            gpu::cmd_texture_barrier(commands, &to_source)!;
+            for (uint copy = 0; copy < pending.survivor_count; copy++) {
+                gpu::cmd_copy_texture(commands, &pending.survivor_copies[copy])!;
+            }
+        }
         for (uint mip = 0; mip < pending.mip_count; mip++) {
             gpu::cmd_copy_buffer_to_texture(commands, &pending.copies[mip])!;
         }
@@ -113,6 +132,7 @@ fn void discard_uploads(Renderer* renderer) @private {
     discard_probe_fills(renderer);
     discard_environment_preparations(renderer);
     restore_texture_states(&renderer.texture_state_undo, renderer.textures);
+    foreach (&pending : renderer.pending_texture_uploads) renderer.textures[pending.asset.index].revision = 0;
     discard_font_uploads(renderer);
     discard_posed_trace(&renderer.posed_trace);
     if (!renderer.uploads_recorded && !renderer.pending_copies.len()
