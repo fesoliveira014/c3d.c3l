@@ -22,7 +22,7 @@ const String RELOAD_DIRECTORY @local = "../assets/reload";
 const String SCENE_FILE @local = "../assets/reload/scene.gltf";
 const String PANEL_FILE @local = "../assets/reload/panel.png";
 const String PANEL_KEY @local = "reload/panel";
-const double POLL_INTERVAL_SECONDS @local = 0.5; // one stat per file per half second; keeps the loop free of file traffic
+const double POLL_INTERVAL_SECONDS @local = 0.5; // one stat per file per half second; keeps the loop free of file I/O
 const uint DISC_SLOW_SEGMENTS @local = 16;
 const uint DISC_FAST_SEGMENTS @local = 64;
 const float DISC_RADIUS @local = 0.7f;
@@ -117,7 +117,8 @@ fn void toggle_disc(AssetStore* assets, GeometryId disc, bool* fine) @local {
             return;
         }
     };
-    io::printfn("disc: %d vertices, revision %d", assets.geometry(disc).vertex_count, assets.geometry(disc).header.revision);
+    GeometryAsset* record = assets.geometry(disc);
+    io::printfn("disc: %d vertices, revision %d", record.vertex_count, record.header.revision);
 }
 
 fn void toggle_material(AssetStore* assets, MaterialId target, bool* physical) @local {
@@ -133,7 +134,11 @@ fn void toggle_material(AssetStore* assets, MaterialId target, bool* physical) @
     } else {
         assets.replace_material(target, material::standard(params));
     }
-    io::printfn("disc material: %s, revision %d", *physical ? "PHYSICAL" : "STANDARD", assets.material(target).header.revision);
+    io::printfn(
+        "disc material: %s, revision %d",
+        *physical ? "PHYSICAL" : "STANDARD",
+        assets.material(target).header.revision,
+    );
 }
 
 fn Node* add_panel(
@@ -158,12 +163,12 @@ fn int main() {
     AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
     defer asset::destroy_asset_store(&assets);
 
-    ModelId model;
-    if (catch excuse = gltf::load_model(&assets, SCENE_FILE)) {
+    ModelId? loaded = gltf::load_model(&assets, SCENE_FILE);
+    if (catch excuse = loaded) {
         io::printfn("%s: %s; run from examples/build so ../assets resolves", SCENE_FILE, excuse);
         return 1;
     }
-    model = assets.find_model(SCENE_FILE)!!;
+    ModelId model = loaded;
 
     Image panel_image = image::load_image(mem, PANEL_FILE)!!;
     defer image::destroy_image(&panel_image);

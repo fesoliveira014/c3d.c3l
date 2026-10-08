@@ -99,7 +99,7 @@ fn ModelReplaceReport? replace_model(
 }
 
 <*
- Decode bytes and replace the model keyed by them.
+ Decode bytes and replace the model under the key.
  @param [&inout] assets : "Receives the replaced parts; unchanged on a fault."
  @param bytes : "Borrowed for the call."
  @param key : "Model key and prefix of every content key."
