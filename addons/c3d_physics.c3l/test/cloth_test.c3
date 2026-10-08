@@ -24,6 +24,8 @@ const float PROBE_THICKNESS @private = 0.02f;
 const float PROBE_REACH @private = 4; // metres from the free vertex to each pinned corner, outside every probed shape
 const uint CONTACT_UPDATES @private = 120;
 const float BONE_RADIUS @private = 0.1f;
+const float SHIFT_OFFSET @private = 256; // one cell; float spacing at this distance stays below the comparison tolerance
+const uint SHIFT_PRE_UPDATES @private = 20;
 
 struct Fixture @private {
     AssetStore   assets;
@@ -1237,4 +1239,38 @@ fn void test_pending_cloth_retries_after_degenerate_world_transform_is_fixed() @
     assert(fixture.scene.get(node, scene::Mesh).vertex_motion);
     teardown(&fixture);
     assert(!tracking.has_leaks());
+}
+
+fn void test_shift_origin_moves_cloth_in_place() @test {
+    Fixture shifted;
+    setup(&shifted);
+    defer teardown(&shifted);
+    Fixture reference;
+    setup(&reference);
+    defer teardown(&reference);
+    Vec3 offset = { SHIFT_OFFSET, 0, 0 };
+    uint[] pins = top_row(GRID_CELLS);
+    Node* shifted_node = add_cloth_node(&shifted, add_grid(&shifted, GRID_CELLS));
+    Node* reference_node = add_cloth_node(&reference, add_grid(&reference, GRID_CELLS));
+    shifted_node.local.position = offset;
+    shifted.scene.update_world();
+    shifted.scene.add_cloth(&shifted.assets, shifted_node, pinned_desc(pins))!!;
+    reference.scene.add_cloth(&reference.assets, reference_node, pinned_desc(pins))!!;
+    for (uint update = 0; update < SHIFT_PRE_UPDATES; update++) step(&shifted, physics::DEFAULT_FIXED_DT);
+    for (uint update = 0; update < SHIFT_PRE_UPDATES; update++) step(&reference, physics::DEFAULT_FIXED_DT);
+
+    ClothState* state = state_of(&shifted, shifted_node);
+    Vec3 corner_before = state.positions[GRID_CELLS * (GRID_CELLS + 1) + GRID_CELLS];
+    shifted.scene.shift_origin(offset);
+    shifted.scene.update_world();
+    shifted.physics.shift_origin(&shifted.scene, offset);
+    assert(near(state.positions[GRID_CELLS * (GRID_CELLS + 1) + GRID_CELLS], corner_before - offset, CONTACT_TOLERANCE));
+
+    step(&shifted, physics::DEFAULT_FIXED_DT);
+    step(&reference, physics::DEFAULT_FIXED_DT);
+    GeometryAsset* shifted_geometry = geometry_of(&shifted, shifted_node);
+    GeometryAsset* reference_geometry = geometry_of(&reference, reference_node);
+    foreach (index, position : shifted_geometry.data.positions) {
+        assert(near(position, reference_geometry.data.positions[index], CONTACT_TOLERANCE));
+    }
 }
