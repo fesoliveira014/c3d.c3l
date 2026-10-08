@@ -95,7 +95,7 @@ struct TexturePlanState @local {
     uint                     raises;
 }
 
-fn bool EvictionPick.after(self, EvictionPick other) @local {
+fn bool EvictionPick.after(self, EvictionPick other) {
     return self.frame > other.frame || (self.frame == other.frame && self.index > other.index);
 }
 
