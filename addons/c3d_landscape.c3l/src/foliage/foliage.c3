@@ -315,6 +315,22 @@ fn void? update(Scene* scene, AssetStore* assets, Vec3 wind_velocity) {
     if (failure) return failure~;
 }
 
+<*
+ Keep every foliage layer's scatter after a rebase: the stored poses take the current node worlds.
+ @param [&inout] self : "World matrices current after update_world."
+*>
+fn void Scene.shift_foliage(&self) {
+    self.@each(FoliageRuntime; entity, runtime) {
+        bool has_ground = self.world.is_alive(runtime.desc.ground);
+        runtime.placed.layer_world = self.node(entity).world;
+        if (has_ground) runtime.placed.ground_world = self.node(runtime.desc.ground).world;
+        if (runtime.rejection) {
+            runtime.rejected.layer_world = runtime.placed.layer_world;
+            if (has_ground) runtime.rejected.ground_world = runtime.placed.ground_world;
+        }
+    };
+}
+
 fn void? check_authoring(Scene* scene, AssetStore* assets, FoliageDesc* desc) @private {
     check_desc(desc)!;
     if (desc.lod) {

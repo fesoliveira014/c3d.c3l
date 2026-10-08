@@ -161,6 +161,11 @@ keeps the layer's cells as they were and remembers the attempt: later updates re
 counting again until a pose, a revision or the scene's free node count changes. A layer whose ground was
 removed or rejected keeps drawing its last cells; the fault tells the application why.
 
+After an origin rebase, call `scene.shift_foliage()` once the shifted scene's world matrices are current
+(after `update_world`). It stores the current layer and ground node worlds as the poses the cells were scattered
+against, keeping the revisions, so the next `update` sees no pose change and does not re-scatter. Cells are layer
+children and keep their local records.
+
 ## Wind
 
 The application owns one wind velocity, in world metres per second, and passes it to every consumer's update;

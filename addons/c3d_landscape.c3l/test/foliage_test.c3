@@ -1195,3 +1195,45 @@ fn void test_pending_foliage_keeps_owned_lod_through_failure_retry_and_removal()
     teardown(&fixture);
     assert(!tracking.has_leaks());
 }
+
+const float REBASE_CELLS @local = 4; // 256 m cells, so the rebase offset is a render cell multiple
+const float REBASE_OFFSET @local = REBASE_CELLS * 256;
+
+fn Node* add_nested_ground(Fixture* fixture, Node* parent) @local {
+    Node* ground = add_ground(fixture, RANDOM, MOVED_GROUND_POSITION);
+    fixture.scene.reparent(ground, parent);
+    fixture.scene.update_world();
+    return ground;
+}
+
+fn void test_shift_foliage_does_not_rescatter() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Node* anchor = fixture.scene.add_node()!!;
+    anchor.local.position = { REBASE_OFFSET, 0, REBASE_OFFSET };
+    fixture.scene.update_world();
+    Node* ground = add_nested_ground(&fixture, anchor);
+    FoliageDesc desc = layer_desc(&fixture, ground);
+    desc.rules.max_slope = ORDER_SLOPE_LIMIT;
+    Node* layer = fixture.scene.add_node(anchor)!!;
+    layer.local = ground.local;
+    fixture.scene.update_world();
+    try_add_layer(&fixture, layer, desc)!!;
+    update_landscape(&fixture);
+
+    @pool() {
+        CellCopy[] before = copy_cells(tmem, &fixture, layer);
+        uint count_passes = runtime_of(&fixture, layer).count_passes;
+
+        Vec3 offset = { REBASE_OFFSET, 0, REBASE_OFFSET };
+        fixture.scene.shift_origin(offset);
+        fixture.scene.update_world();
+        assert(runtime_of(&fixture, layer).placed.layer_world != layer.world);
+        fixture.scene.shift_foliage();
+        update_landscape(&fixture);
+
+        assert(runtime_of(&fixture, layer).count_passes == count_passes);
+        foreach (copy : before) assert(cell_unchanged(&fixture, layer, copy));
+    };
+}
