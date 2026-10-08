@@ -521,3 +521,48 @@ fn void test_world_reparent_retains_pose_for_both_keep_world_settings() @test {
     assert(child.parent == first && close_mat4(child.world, before));
     assert(child.transform_space == TransformSpace.WORLD);
 }
+
+fn void test_shift_origin_moves_root_children_and_world_nodes_once() @test {
+    Scene scene = make_scene(8);
+    defer scene::destroy_scene(&scene);
+    Vec3 offset = { 50176, 0, 50432 };
+    Node* root_child = scene.add_node()!!;
+    Node* nested = scene.add_node(root_child)!!;
+    Node* grandchild = scene.add_node(nested)!!;
+    Node* world_root_child = scene.add_node()!!;
+    Node* world_nested = scene.add_node(nested)!!;
+    root_child.local.position = { 50177.5f, 3, 50433.25f };
+    nested.local.position = { 0.1f, 1, 2 };
+    grandchild.local.position = { 0.3f, 0.2f, 0.7f };
+    world_root_child.transform_space = TransformSpace.WORLD;
+    world_root_child.local.position = { 50200, 5, 50500.5f };
+    world_nested.transform_space = TransformSpace.WORLD;
+    world_nested.local.position = { 50000.5f, 7, 50400 };
+    scene.update_world();
+    Node*[5] nodes = { root_child, nested, grandchild, world_root_child, world_nested };
+    Mat4[5] before;
+    Vec3[5] locals;
+    foreach (index, node : nodes) {
+        before[index] = node.world;
+        locals[index] = node.local.position;
+    }
+
+    scene.shift_origin(offset);
+    scene.update_world();
+
+    assert(scene.world_shift == (double[<3>]){ 50176, 0, 50432 });
+    assert(root_child.local.position == locals[0] - offset);
+    assert(world_root_child.local.position == locals[3] - offset);
+    assert(world_nested.local.position == locals[4] - offset);
+    assert(nested.local.position == locals[1] && grandchild.local.position == locals[2]);
+    foreach (index : (usz[]){ 0, 3, 4 }) {
+        assert(nodes[index].world_position() == maths::translation(before[index]) - offset);
+    }
+    foreach (index : (usz[]){ 1, 2 }) {
+        Vec3 expected = maths::translation(before[index]) - offset;
+        Vec3 actual = nodes[index].world_position();
+        assert(math::abs(actual.x - expected.x) <= 0.004f);
+        assert(math::abs(actual.y - expected.y) <= 0.004f);
+        assert(math::abs(actual.z - expected.z) <= 0.004f);
+    }
+}
