@@ -367,6 +367,12 @@
         "src/picking.c3"
       ]
     },
+    "asset_reload": {
+      "type": "executable",
+      "sources": [
+        "src/asset_reload.c3"
+      ]
+    },
     "custom_shader": {
       "type": "executable",
       "sources": [
