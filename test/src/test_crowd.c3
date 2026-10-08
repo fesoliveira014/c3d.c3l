@@ -740,3 +740,63 @@ fn void test_pending_crowd_rejects_retired_sources_before_runtime_allocation() @
         assert(!tracking.has_leaks());
     }
 }
+
+fn ModelTemplate copy_template_with_clip(ModelTemplate* source, ClipId extra) @local {
+    ModelTemplate copy = {
+        .nodes  = alloc::new_array(mem, NodeTemplate, source.nodes.len),
+        .meshes = alloc::new_array(mem, ModelMesh, source.meshes.len),
+        .skins  = alloc::new_array(mem, ModelSkin, source.skins.len),
+        .clips  = alloc::new_array(mem, ClipId, source.clips.len + 1),
+    };
+    foreach (index, &node : source.nodes) {
+        copy.nodes[index] = *node;
+        copy.nodes[index].name = node.name.copy(mem);
+    }
+    copy.meshes[..] = source.meshes[..];
+    foreach (index, &skin : source.skins) {
+        copy.skins[index] = *skin;
+        copy.skins[index].joint_nodes = alloc::new_array(mem, uint, skin.joint_nodes.len);
+        copy.skins[index].joint_nodes[..] = skin.joint_nodes[..];
+    }
+    copy.clips[:source.clips.len] = source.clips[..];
+    copy.clips[source.clips.len] = extra;
+    return copy;
+}
+
+fn void test_crowd_refuses_clip_with_more_tracks() @test {
+    Fixture fixture = make_fixture();
+    defer destroy_fixture(&fixture);
+    Node* node = add_crowd(&fixture, {});
+
+    uint[2] targets = { 2, 1 };
+    float[2] times = { 0, 1 };
+    float[8] values = { 0, 0, 0, 1, 0, 0, 0, 1 };
+    AnimationClip wide = {
+        .name     = "wide".copy(mem),
+        .duration = 1,
+        .tracks   = alloc::new_array(mem, Track, 2),
+        .targets  = alloc::new_array(mem, uint, 2),
+    };
+    wide.targets[..] = targets[..];
+    foreach (index, &track : wide.tracks) {
+        *track = {
+            .target        = (uint)index,
+            .path          = TargetPath.ROTATION,
+            .interpolation = Interpolation.LINEAR,
+            .times         = alloc::new_array(mem, float, 2),
+            .values        = alloc::new_array(mem, float, 8),
+        };
+        track.times[..] = times[..];
+        track.values[..] = values[..];
+    }
+    ClipId wide_id = fixture.assets.add_clip_owned(&wide)!!;
+    ModelTemplate grown = copy_template_with_clip(&fixture.assets.model(fixture.model).data, wide_id);
+    fixture.assets.replace_model_owned(fixture.model, &grown)!!;
+
+    CrowdInstance[1] instances = { walker(&fixture, placed({ 0, 0, 0 })) };
+    instances[0].pose.clip = wide_id;
+    assert(@catch(model::set_crowd(&fixture.assets, &fixture.scene, node, instances[..])) == c3d::INVALID_ARGUMENT);
+
+    instances[0].pose.clip = fixture.swing;
+    model::set_crowd(&fixture.assets, &fixture.scene, node, instances[..])!!;
+}
