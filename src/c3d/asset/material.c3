@@ -36,6 +36,20 @@ fn MaterialId? AssetStore.add_material(&self, Material material, String key = ""
 }
 
 <*
+ Replace the material; a custom payload is copied into the store.
+ @require self.materials.is_live(material)
+*>
+fn void AssetStore.replace_material(&self, MaterialId material, Material source) {
+    MaterialAsset* record = self.materials.get(material);
+    if (source.kind == MaterialKind.CUSTOM && source.custom.param_block.len) {
+        source.custom.param_block = copy_slice(self.allocator, source.custom.param_block);
+    }
+    free_custom_params(self.allocator, &record.data);
+    record.data = source;
+    mark_replaced(&record.header);
+}
+
+<*
  Record of the material; a borrow into the pool.
  @require self.materials.is_live(material)
 *>

@@ -102,31 +102,10 @@ fn TextureId? AssetStore.add_texture_mips(
     String key = "",
 ) {
     check_key(self, key)!;
-    check_format_use(desc)!;
-    if (!desc.mip_levels || !desc.layers || desc.generate_mips) return c3d::INVALID_ARGUMENT~;
-    if ((ulong)desc.mip_levels * desc.layers != levels.len) return c3d::INVALID_ARGUMENT~;
-    if (levels.len > (usz)sz::max / TextureMipData::size) return c3d::INVALID_ARGUMENT~;
-
-    usz record_bytes = levels.len * TextureMipData::size;
-    usz total_bytes = record_bytes;
-    foreach (index, level : levels) {
-        if (level.mip != index / desc.layers || level.layer != index % desc.layers || !level.bytes.len) {
-            return c3d::INVALID_ARGUMENT~;
-        }
-        if (level.bytes.len > (usz)sz::max - total_bytes) return c3d::INVALID_ARGUMENT~;
-        total_bytes += level.bytes.len;
-    }
+    usz total_bytes = check_texture_mips(desc, levels)!;
 
     TextureId texture = self.textures.add({})!;
-    char[] storage = alloc::new_array(self.allocator, char, (sz)total_bytes);
-    TextureMipData[] copied = ((TextureMipData*)storage.ptr)[:levels.len];
-    usz offset = record_bytes;
-    foreach (index, level : levels) {
-        char[] bytes = storage[offset:level.bytes.len];
-        mem::copy(bytes.ptr, level.bytes.ptr, bytes.len);
-        copied[index] = { .mip = level.mip, .layer = level.layer, .bytes = bytes };
-        offset += bytes.len;
-    }
+    TextureMipData[] copied = copy_texture_mips(self.allocator, levels, total_bytes);
 
     *self.textures.get(texture) = {
         .header = { .key = copy_string(self.allocator, key), .revision = 1 },
@@ -146,11 +125,7 @@ fn TextureId? AssetStore.add_texture_mips(
 *>
 fn TextureId? AssetStore.add_texture_empty(&self, TextureDesc desc, String key = "") {
     check_key(self, key)!;
-    if (!desc.width || !desc.height || desc.generate_mips) return c3d::INVALID_ARGUMENT~;
-    desc.storage = true;
-    if (!desc.mip_levels) desc.mip_levels = 1;
-    if (!desc.layers) desc.layers = 1;
-    check_format_use(desc)!;
+    desc = check_empty_texture(desc)!;
     TextureId id = self.textures.add({})!;
     *self.textures.get(id) = {
         .header = { .key = copy_string(self.allocator, key), .revision = 1 },
@@ -159,6 +134,65 @@ fn TextureId? AssetStore.add_texture_empty(&self, TextureDesc desc, String key =
     };
     register_key(self, key, typed_ref(AssetKind.TEXTURE, id));
     return id;
+}
+
+<*
+ Replace the description and mip-zero pixels; the revision advances.
+ @param pixels : "Mip-zero texels, every layer in layer order; copied."
+ @return? c3d::INVALID_ARGUMENT, c3d::INCOMPATIBLE_STRUCTURE
+ @require self.textures.is_live(texture), texture.index >= BUILTIN_TEXTURE_COUNT
+*>
+fn void? AssetStore.replace_texture(&self, TextureId texture, TextureDesc desc, char[] pixels) {
+    TextureAsset* record = self.textures.get(texture);
+    check_format_use(desc)!;
+    check_texture_structure(record.desc, desc)!;
+    apply_texture(self.allocator, record, desc, MIP_ZERO, copy_slice(self.allocator, pixels), {});
+}
+
+<*
+ Replace the description and take the mip-zero pixels on success.
+ @param pixels : "Allocated with the store allocator; the caller keeps them on a fault."
+ @return? c3d::INVALID_ARGUMENT, c3d::INCOMPATIBLE_STRUCTURE
+ @require self.textures.is_live(texture), texture.index >= BUILTIN_TEXTURE_COUNT
+*>
+fn void? AssetStore.replace_texture_owned(&self, TextureId texture, TextureDesc desc, char[] pixels) {
+    TextureAsset* record = self.textures.get(texture);
+    check_format_use(desc)!;
+    check_texture_structure(record.desc, desc)!;
+    apply_texture(self.allocator, record, desc, MIP_ZERO, pixels, {});
+}
+
+<*
+ Replace the description with supplied mips copied into the store.
+ @param levels : "Complete slices ordered mip-major, then layer."
+ @return? c3d::INVALID_ARGUMENT, c3d::INCOMPATIBLE_STRUCTURE
+ @require self.textures.is_live(texture), texture.index >= BUILTIN_TEXTURE_COUNT
+*>
+fn void? AssetStore.replace_texture_mips(&self, TextureId texture, TextureDesc desc, TextureMipData[] levels) {
+    TextureAsset* record = self.textures.get(texture);
+    usz total_bytes = check_texture_mips(desc, levels)!;
+    check_texture_structure(record.desc, desc)!;
+    apply_texture(
+        self.allocator,
+        record,
+        desc,
+        SUPPLIED_MIPS,
+        {},
+        copy_texture_mips(self.allocator, levels, total_bytes),
+    );
+}
+
+<*
+ Replace with an empty storage texture; contents are undefined until a dispatch writes them.
+ @param desc : "Storage is implied; zero mip_levels or layers mean one."
+ @return? c3d::INVALID_ARGUMENT, c3d::INCOMPATIBLE_STRUCTURE
+ @require self.textures.is_live(texture), texture.index >= BUILTIN_TEXTURE_COUNT
+*>
+fn void? AssetStore.replace_texture_empty(&self, TextureId texture, TextureDesc desc) {
+    TextureAsset* record = self.textures.get(texture);
+    desc = check_empty_texture(desc)!;
+    check_texture_structure(record.desc, desc)!;
+    apply_texture(self.allocator, record, desc, EMPTY, {}, {});
 }
 
 <*
@@ -247,4 +281,74 @@ fn void? check_format_use(TextureDesc desc) @private {
         case BC7_UNORM:
         case BC7_SRGB: return c3d::INVALID_ARGUMENT~;
     }
+}
+
+fn TextureDesc? check_empty_texture(TextureDesc desc) @private {
+    if (!desc.width || !desc.height || desc.generate_mips) return c3d::INVALID_ARGUMENT~;
+    desc.storage = true;
+    if (!desc.mip_levels) desc.mip_levels = 1;
+    if (!desc.layers) desc.layers = 1;
+    check_format_use(desc)!;
+    return desc;
+}
+
+<*
+ Bytes of the records and slices a copy of the levels occupies.
+*>
+fn usz? check_texture_mips(TextureDesc desc, TextureMipData[] levels) @private {
+    check_format_use(desc)!;
+    if (!desc.mip_levels || !desc.layers || desc.generate_mips) return c3d::INVALID_ARGUMENT~;
+    if ((ulong)desc.mip_levels * desc.layers != levels.len) return c3d::INVALID_ARGUMENT~;
+    if (levels.len > (usz)sz::max / TextureMipData::size) return c3d::INVALID_ARGUMENT~;
+
+    usz total_bytes = levels.len * TextureMipData::size;
+    foreach (index, level : levels) {
+        if (level.mip != index / desc.layers || level.layer != index % desc.layers || !level.bytes.len) {
+            return c3d::INVALID_ARGUMENT~;
+        }
+        if (level.bytes.len > (usz)sz::max - total_bytes) return c3d::INVALID_ARGUMENT~;
+        total_bytes += level.bytes.len;
+    }
+    return total_bytes;
+}
+
+fn TextureMipData[] copy_texture_mips(Allocator allocator, TextureMipData[] levels, usz total_bytes) @private {
+    usz record_bytes = levels.len * TextureMipData::size;
+    char[] storage = alloc::new_array(allocator, char, (sz)total_bytes);
+    TextureMipData[] copied = ((TextureMipData*)storage.ptr)[:levels.len];
+    usz offset = record_bytes;
+    foreach (index, level : levels) {
+        char[] bytes = storage[offset:level.bytes.len];
+        mem::copy(bytes.ptr, level.bytes.ptr, bytes.len);
+        copied[index] = { .mip = level.mip, .layer = level.layer, .bytes = bytes };
+        offset += bytes.len;
+    }
+    return copied;
+}
+
+fn void? check_texture_structure(TextureDesc current, TextureDesc next) @private {
+    if (current.is_cube != next.is_cube
+        || current.storage != next.storage
+        || current.layers != next.layers
+        || current.depth != next.depth
+        || (current.format == R16_UINT) != (next.format == R16_UINT)) {
+        return c3d::INCOMPATIBLE_STRUCTURE~;
+    }
+    return;
+}
+
+fn void apply_texture(
+    Allocator allocator,
+    TextureAsset* record,
+    TextureDesc desc,
+    TextureSourceKind source_kind,
+    char[] pixels,
+    TextureMipData[] supplied_mips,
+) @private {
+    free_texture_source(allocator, record);
+    record.desc = desc;
+    record.source_kind = source_kind;
+    record.pixels = pixels;
+    record.supplied_mips = supplied_mips;
+    mark_replaced(&record.header);
 }

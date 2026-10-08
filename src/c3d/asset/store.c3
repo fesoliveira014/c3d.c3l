@@ -38,6 +38,7 @@ uint registered_kind_count @local;
 struct AssetHeader {
     String key;
     uint   revision;
+    uint   replaced_revision; // revision of the latest replace; zero until replaced
 }
 
 struct CustomSlot @private {
@@ -264,6 +265,7 @@ fn void destroy_asset_store(AssetStore* store) {
         geometry::free_skin_bounds(store.allocator, &record.skin_bounds);
         geometry::free_morph_bounds(store.allocator, &record.morph_bounds);
         free_triangle_tree(store.allocator, record);
+        alloc::free(store.allocator, record.shape.target_streams.ptr);
     }
     foreach (&record : store.textures.items) {
         if (!record.header.revision) continue;
@@ -329,6 +331,14 @@ fn void destroy_asset_store(AssetStore* store) {
     pool::destroy_pool{ComputeShaderAsset, ComputeShaderId}(&store.compute_shaders);
     pool::destroy_pool{FontAsset, FontId}(&store.fonts);
     *store = {};
+}
+
+<*
+ Advance the revision and record it as the latest replacement.
+*>
+fn void mark_replaced(AssetHeader* header) @private {
+    header.revision++;
+    header.replaced_revision = header.revision;
 }
 
 <*

@@ -17,11 +17,25 @@ struct GeometryAsset {
     uint        vertex_count;
     uint        index_count;
     uint        target_count;
+    GeometryShape shape;             // structure live components were sized against; kept through release_geometry_cpu
     Bvh         triangles;           // over data.positions and data.indices at triangle_revision; empty when absent
     uint        triangle_revision;   // header.revision the tree matches; 0 when absent
     uint        validated_revision;  // header.revision whose arrays form a triangle list; 0 when unknown
     uint        rejected_revision;   // header.revision whose arrays form none, or whose topology is not TRIANGLES
 }
+
+<*
+ Stream presence and influence range replacement must preserve.
+*>
+struct GeometryShape @private {
+    bool   has_joints;
+    bool   has_weights;
+    ushort joint_bound;     // largest positive-weight joint index at add; replacement never refreshes it
+    char[] target_streams;  // per target: bit 0 position deltas, bit 1 normal deltas
+}
+
+const char TARGET_POSITIONS @private = 1;
+const char TARGET_NORMALS @private   = 2;
 
 <*
  Pool of geometry records addressed by GeometryId.
@@ -45,6 +59,7 @@ fn GeometryId? AssetStore.add_geometry(&self, Geometry* geometry, String key = "
         .vertex_count = (uint)geometry.positions.len,
         .index_count  = (uint)geometry.indices.len,
         .target_count = (uint)geometry.targets.len,
+        .shape        = build_geometry_shape(self.allocator, geometry),
     };
     register_key(self, key, typed_ref(AssetKind.GEOMETRY, id));
     return id;
@@ -67,9 +82,36 @@ fn GeometryId? AssetStore.add_geometry_owned(&self, Geometry* geometry, String k
         .vertex_count = (uint)geometry.positions.len,
         .index_count  = (uint)geometry.indices.len,
         .target_count = (uint)geometry.targets.len,
+        .shape        = build_geometry_shape(self.allocator, geometry),
     };
     register_key(self, key, typed_ref(AssetKind.GEOMETRY, id));
     return id;
+}
+
+<*
+ Replace the geometry with a copy of the source.
+ @param [&in] source : "Arrays may live in temporary memory."
+ @return? c3d::INVALID_ARGUMENT, c3d::INCOMPATIBLE_STRUCTURE
+ @require self.geometries.is_live(geometry)
+*>
+fn void? AssetStore.replace_geometry(&self, GeometryId geometry, Geometry* source) {
+    GeometryAsset* record = self.geometries.get(geometry);
+    check_influences(source)!;
+    check_geometry_structure(record, source)!;
+    apply_geometry(self.allocator, record, copy_geometry(self.allocator, source));
+}
+
+<*
+ Replace the geometry, taking the source arrays on success.
+ @param [&in] source : "Arrays and target names were allocated with the store allocator."
+ @return? c3d::INVALID_ARGUMENT, c3d::INCOMPATIBLE_STRUCTURE
+ @require self.geometries.is_live(geometry)
+*>
+fn void? AssetStore.replace_geometry_owned(&self, GeometryId geometry, Geometry* source) {
+    GeometryAsset* record = self.geometries.get(geometry);
+    check_influences(source)!;
+    check_geometry_structure(record, source)!;
+    apply_geometry(self.allocator, record, *source);
 }
 
 <*
@@ -155,8 +197,74 @@ fn void AssetStore.remove_geometry(&self, GeometryId geometry) {
     geometry::free_skin_bounds(self.allocator, &record.skin_bounds);
     geometry::free_morph_bounds(self.allocator, &record.morph_bounds);
     free_triangle_tree(self.allocator, record);
+    alloc::free(self.allocator, record.shape.target_streams.ptr);
     *record = {};
     self.geometries.remove(geometry);
+}
+
+fn GeometryShape build_geometry_shape(Allocator allocator, Geometry* geometry) @private {
+    GeometryShape shape = {
+        .has_joints     = geometry.joints.len > 0,
+        .has_weights    = geometry.weights.len > 0,
+        .target_streams = alloc::new_array(allocator, char, geometry.targets.len),
+    };
+    foreach (index, &target : geometry.targets) {
+        shape.target_streams[index] = (target.position_deltas.len > 0 ? TARGET_POSITIONS : 0)
+            | (target.normal_deltas.len > 0 ? TARGET_NORMALS : 0);
+    }
+    foreach (vertex, weight : geometry.weights) {
+        for (usz slot = 0; slot < 4; slot++) {
+            if (weight[slot] > 0) shape.joint_bound = math::max(shape.joint_bound, geometry.joints[vertex][slot]);
+        }
+    }
+    return shape;
+}
+
+fn void? check_geometry_structure(GeometryAsset* current, Geometry* next) @private {
+    GeometryShape* shape = &current.shape;
+    if (current.data.topology != next.topology
+        || shape.has_joints != (next.joints.len > 0)
+        || shape.has_weights != (next.weights.len > 0)
+        || current.target_count != next.targets.len
+        || current.data.channels.len != next.channels.len) {
+        return c3d::INCOMPATIBLE_STRUCTURE~;
+    }
+    foreach (index, &target : next.targets) {
+        char streams = (target.position_deltas.len > 0 ? TARGET_POSITIONS : 0)
+            | (target.normal_deltas.len > 0 ? TARGET_NORMALS : 0);
+        if (shape.target_streams[index] != streams) return c3d::INCOMPATIBLE_STRUCTURE~;
+    }
+    foreach (index, &channel : next.channels) {
+        MorphChannel* existing = &current.data.channels[index];
+        if (existing.first_target != channel.first_target
+            || existing.full_weights.len != channel.full_weights.len) {
+            return c3d::INCOMPATIBLE_STRUCTURE~;
+        }
+    }
+    foreach (vertex, weight : next.weights) {
+        for (usz slot = 0; slot < 4; slot++) {
+            if (weight[slot] > 0 && next.joints[vertex][slot] > shape.joint_bound) {
+                return c3d::INCOMPATIBLE_STRUCTURE~;
+            }
+        }
+    }
+    return;
+}
+
+fn void apply_geometry(Allocator allocator, GeometryAsset* record, Geometry geometry) @private {
+    free_geometry(allocator, &record.data);
+    geometry::free_skin_bounds(allocator, &record.skin_bounds);
+    geometry::free_morph_bounds(allocator, &record.morph_bounds);
+    free_triangle_tree(allocator, record);
+    record.data = geometry;
+    record.skin_bounds = geometry::build_skin_bounds(allocator, &record.data);
+    record.morph_bounds = geometry::build_morph_bounds(allocator, &record.data);
+    record.vertex_count = (uint)geometry.positions.len;
+    record.index_count = (uint)geometry.indices.len;
+    record.target_count = (uint)geometry.targets.len;
+    record.validated_revision = 0;
+    record.rejected_revision = 0;
+    mark_replaced(&record.header);
 }
 
 fn void free_triangle_tree(Allocator allocator, GeometryAsset* record) @private {

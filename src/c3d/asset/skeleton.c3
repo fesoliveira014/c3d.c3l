@@ -34,6 +34,24 @@ fn SkeletonId? AssetStore.add_skeleton_owned(&self, Skeleton* skeleton, String k
 }
 
 <*
+ Replace the skeleton, taking its arrays on success.
+ @param [&in] source : "Arrays and names were allocated with the store allocator."
+ @return? c3d::INCOMPATIBLE_STRUCTURE
+ @require self.skeletons.is_live(skeleton)
+*>
+fn void? AssetStore.replace_skeleton_owned(&self, SkeletonId skeleton, Skeleton* source) {
+    SkeletonAsset* record = self.skeletons.get(skeleton);
+    if (record.data.parents.len != source.parents.len) return c3d::INCOMPATIBLE_STRUCTURE~;
+    foreach (index, parent : source.parents) {
+        if (record.data.parents[index] != parent) return c3d::INCOMPATIBLE_STRUCTURE~;
+    }
+    free_skeleton(self.allocator, &record.data);
+    record.data = *source;
+    mark_replaced(&record.header);
+    return;
+}
+
+<*
  Record of the skeleton; a borrow into the pool.
  @require self.skeletons.is_live(skeleton)
 *>

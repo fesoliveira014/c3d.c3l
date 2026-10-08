@@ -25,10 +25,7 @@ alias ClipPool = Pool{ClipAsset, ClipId};
 *>
 fn ClipId? AssetStore.add_clip_owned(&self, AnimationClip* clip, String key = "") {
     check_key(self, key)!;
-    validate_clip_events(clip.duration, clip.events)!;
-    for (usz index = 1; index < clip.events.len; index++) {
-        if (clip.events[index].time < clip.events[index - 1].time) return c3d::INVALID_ARGUMENT~;
-    }
+    check_clip_events(clip)!;
     ClipId id = self.clips.add({})!;
     *self.clips.get(id) = {
         .header = { .key = copy_string(self.allocator, key), .revision = 1 },
@@ -36,6 +33,22 @@ fn ClipId? AssetStore.add_clip_owned(&self, AnimationClip* clip, String key = ""
     };
     register_key(self, key, typed_ref(AssetKind.CLIP, id));
     return id;
+}
+
+<*
+ Replace the clip, taking its arrays on success.
+ @param [&in] source : "Arrays and the name were allocated with the store allocator."
+ @return? c3d::INVALID_ARGUMENT, c3d::INCOMPATIBLE_STRUCTURE
+ @require self.clips.is_live(clip)
+*>
+fn void? AssetStore.replace_clip_owned(&self, ClipId clip, AnimationClip* source) {
+    ClipAsset* record = self.clips.get(clip);
+    check_clip_events(source)!;
+    check_clip_structure(&record.data, source)!;
+    free_clip(self.allocator, &record.data);
+    record.data = *source;
+    mark_replaced(&record.header);
+    return;
 }
 
 <*
@@ -116,4 +129,36 @@ fn void? validate_clip_events(float duration, ClipEvent[] events) @private {
         if (!math::is_finite(event.time) || !math::is_finite(duration)
             || event.time < 0 || event.time > duration) return c3d::INVALID_ARGUMENT~;
     }
+}
+
+fn void? check_clip_events(AnimationClip* clip) @private {
+    validate_clip_events(clip.duration, clip.events)!;
+    for (usz index = 1; index < clip.events.len; index++) {
+        if (clip.events[index].time < clip.events[index - 1].time) return c3d::INVALID_ARGUMENT~;
+    }
+    return;
+}
+
+fn void? check_clip_structure(AnimationClip* current, AnimationClip* next) @private {
+    if (current.targets.len != next.targets.len
+        || current.tracks.len != next.tracks.len
+        || (current.duration > 0) != (next.duration > 0)) {
+        return c3d::INCOMPATIBLE_STRUCTURE~;
+    }
+    foreach (index, target : next.targets) {
+        if (current.targets[index] != target) return c3d::INCOMPATIBLE_STRUCTURE~;
+    }
+    foreach (index, &track : next.tracks) {
+        Track* existing = &current.tracks[index];
+        if (existing.target != track.target
+            || existing.path != track.path
+            || track_stride(existing) != track_stride(track)) {
+            return c3d::INCOMPATIBLE_STRUCTURE~;
+        }
+    }
+    return;
+}
+
+fn uint track_stride(Track* track) @local {
+    return track.times.len ? track.stride() : 0;
 }
