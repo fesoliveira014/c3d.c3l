@@ -240,6 +240,11 @@ fn bool overlap_quant_bounds(
     return true;
 }
 
+fn void shift_bounds(Aabb* bounds, Vec3 offset) @private {
+    bounds.min -= offset;
+    bounds.max -= offset;
+}
+
 fn uint next_pow2(uint value) @private {
     value--;
     value |= value >> 1;

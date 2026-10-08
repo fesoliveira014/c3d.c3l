@@ -2,6 +2,7 @@ module c3d_nav_test;
 
 import std::math;
 import c3d::nav @public;
+import c3d::scene;
 
 const uint  GRID_COLUMNS @private = 4;
 const uint  GRID_ROWS @private = 5;
@@ -24,6 +25,8 @@ const float STOPPED_SPEED @private = 0.05f; // metres per second
 const float CROSSING_DISTANCE @private = 8;
 const float RESOLVE_FACTOR @private = 0.7f; // mirrors the crowd's collision resolve factor
 const uint  REPLAN_LEAD_UPDATES @private = 30;
+const uint  SHIFT_UPDATES @private = 60;
+const float STEP_TOLERANCE @private = 1.5f; // of one update's travel at full speed
 const float ISLAND_EDGE_GAP @private = 1.5f; // metres; the eroded floor edge, a cell of rounding and one agent radius
 
 fn float recorded_penalty(AvoidanceSample[] samples, Vec3 velocity) @private {
@@ -213,6 +216,47 @@ fn void test_agent_reaches_its_target_and_stops() @test {
 
     assert(arrived(crowd.agent(index), target), "not arrived after %d updates", updates);
     assert(crowd.agent(index).target_state == VALID && !crowd.agent(index).partial);
+}
+
+fn void test_crowd_agent_reaches_its_target_after_shift_origin() @test {
+    QueryFixture* fixture = floor_level(2);
+    defer destroy_level(fixture);
+    build_level(fixture);
+    Crowd crowd = create_test_crowd(fixture);
+    defer nav::destroy_crowd(&crowd);
+    Scene* scene = &fixture.level.scene;
+    Vec3 target = { 14, 0, 4 };
+    Node* node = add_agent_node(fixture, { 4, 0, 4 });
+    scene.set_nav_target(node, target);
+    float step_limit = nav::default_nav_agent_params().max_speed * CROWD_STEP * STEP_TOLERANCE;
+    Vec3 travelled = {};
+    uint agent_index;
+
+    run_crowd(fixture, &crowd, SHIFT_UPDATES);
+    agent_index = scene.get(node, CrowdAgentRuntime).index;
+    Vec3 before = node.world_position();
+    assert(xz_distance(before, target) > nav::default_nav_agent_params().radius, "still walking at the shift");
+    scene.shift_origin(SHIFT_OFFSET);
+    scene.update_world();
+    fixture.level.mesh.shift_origin(SHIFT_OFFSET);
+    crowd.shift_origin(SHIFT_OFFSET);
+    scene.shift_navigation(SHIFT_OFFSET);
+    travelled += SHIFT_OFFSET;
+    Vec3 previous = node.world_position() + travelled;
+    assert(xz_distance(previous, before) < step_limit);
+
+    uint updates;
+    while (updates < ARRIVAL_UPDATES && !arrived(crowd.agent(agent_index), target - travelled)) {
+        run_crowd(fixture, &crowd, 1);
+        Vec3 current = node.world_position() + travelled;
+        assert(xz_distance(current, previous) < step_limit, "jumped at update %d", updates);
+        previous = current;
+        updates++;
+    }
+
+    CrowdAgent* agent = crowd.agent(agent_index);
+    assert(arrived(agent, target - travelled), "not arrived after %d updates", updates);
+    assert(agent.target_state == VALID && !agent.partial);
 }
 
 fn void test_two_crossing_agents_do_not_overlap_beyond_radius() @test {

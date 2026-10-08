@@ -207,3 +207,41 @@ fn void test_any_angle_shortcuts_across_open_floor() @test {
     assert(any_angle[0] == start_ref && any_angle[result.count - 1] == end_ref);
     assert(connected_corridor(&fixture.level.mesh, any_angle[:result.count]));
 }
+
+fn void test_sliced_search_in_flight_survives_shift_origin() @test {
+    QueryFixture* fixture = floor_level(2);
+    defer destroy_level(fixture);
+    add_stripes(fixture, 2);
+    build_level(fixture);
+    float side = fixture.level.builder.tile_world_size * 2;
+    Vec3 start = { 1, 0, 1 };
+    Vec3 end = { side - 1, 0, side - 1 };
+    NavQuery* query = &fixture.query;
+    PolyRef[PATH_CAPACITY] original_path;
+    PathResult original = path_between(fixture, start, end, &fixture.filter);
+    original_path[:original.count] = fixture.path[:original.count];
+    PathResult original_straight = straight_between(fixture, start, end, original.count);
+    StraightPoint[POINT_CAPACITY] original_points = fixture.points;
+
+    query.init_sliced_find_path(
+        start_ref: nearest(fixture, start).ref,
+        end_ref:   nearest(fixture, end).ref,
+        start:     start,
+        end:       end,
+        filter:    &fixture.filter,
+    )!!;
+    SlicedProgress progress = query.update_sliced_find_path(SLICE_ITERATIONS)!!;
+    assert(progress.status == IN_PROGRESS);
+    fixture.level.mesh.shift_origin(SHIFT_OFFSET);
+    query.shift_origin(SHIFT_OFFSET);
+    run_sliced(query);
+    PolyRef[PATH_CAPACITY] sliced_path;
+    PathResult sliced = query.finalize_sliced_find_path(sliced_path[..])!!;
+    fixture.path[:sliced.count] = sliced_path[:sliced.count];
+    PathResult straight = straight_between(fixture, start - SHIFT_OFFSET, end - SHIFT_OFFSET, sliced.count);
+
+    assert(!sliced.partial && sliced.count == original.count);
+    assert(same_refs(sliced_path[:sliced.count], original_path[:original.count]));
+    assert(straight.count == original_straight.count);
+    assert(points_match(fixture.points[:straight.count], original_points[:original_straight.count], SHIFT_OFFSET));
+}

@@ -532,6 +532,19 @@ fn void destroy_tile_cache(TileCache* cache) {
     *cache = {};
 }
 
+// Obstacle footprints and layer bounds are world space; layer arrays are cell-relative.
+fn void shift_tile_cache(TileCache* cache, Vec3 offset) @private {
+    cache.desc.origin -= offset;
+    foreach (&tile : cache.tiles) {
+        if (tile.header) shift_bounds(&tile.header.bounds, offset);
+    }
+    foreach (&obstacle : cache.obstacles) {
+        if (obstacle.state == EMPTY) continue;
+        obstacle.position -= offset;
+        shift_bounds(&obstacle.box, offset);
+    }
+}
+
 // CAPACITY_EXCEEDED when the queue is full and lacks the layer.
 fn void? queue_rebuild(TileCache* cache, CachedLayerRef ref) @private {
     if (contains_layer_ref(cache.update_queue[:cache.update_count], ref)) return;

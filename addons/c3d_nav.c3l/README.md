@@ -210,6 +210,23 @@ agent's state, corners and avoidance samples:
 python3 scripts/build.py --example crowd
 ```
 
+## Rebasing the origin
+
+After `Scene.shift_origin(offset)`, each navigation owner the application has takes the same offset
+(horizontal only, `offset.y == 0`), between frames and after `Scene.update_world`:
+
+```c3
+nav_mesh.shift_origin(offset);       // grid origin and resident tiles; every PolyRef stays valid
+builder.shift_origin(offset);        // bounds, tile records, cached layers, obstacles, queued removals, jobs
+crowd.shift_origin(offset);          // agents, corridors, boundaries, traversals, path requests, queries
+scene.shift_navigation(offset);      // runtime mirrors and POSITION targets
+```
+
+Join tile builds on other threads before `NavBuilder.shift_origin`. A sliced search in progress on a
+query the application holds is moved with `NavQuery.shift_origin`; the crowd moves its own queries.
+`ProximityGrid` is rebuilt every update and needs nothing. `GridSourceDesc.origin` and a floors
+callback belong to the application, which moves or retakes them.
+
 ## Tests
 
 `python3 scripts/build.py --test` runs the `nav_test` target, or directly:

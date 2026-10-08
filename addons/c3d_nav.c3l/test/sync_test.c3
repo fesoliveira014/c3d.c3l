@@ -9,6 +9,7 @@ import c3d::scene;
 
 const uint  SYNC_BUDGET @private = 4;
 const uint  SYNC_GRID_TILES @private = 3;
+const uint  SHIFT_GRID_TILES @private = 4; // interior tiles on both sides of the moved crate
 const char  ABOVE_WALKABLE_AREA @private = nav::WALKABLE_AREA + 1;
 const uint  ONE_PLANE_BUDGET @private = 2; // triangles; one unsegmented plane per rasterize_next call
 const uint  CRATE_ROW @private = 8;
@@ -239,4 +240,38 @@ fn void test_add_nav_volume_rejects_bad_input() @test {
     assert(@catch(fixture.scene.add_nav_volume(node, inverted)) == c3d::INVALID_ARGUMENT);
     fixture.scene.add_nav_volume(node, box)!!;
     assert(@catch(fixture.scene.add_nav_volume(node, box)) == nav::VOLUME_EXISTS);
+}
+
+fn void test_builder_rebuilds_the_shifted_tile() @test {
+    BuilderFixture* fixture = mem::new(BuilderFixture);
+    defer free(fixture);
+    setup(fixture, tile_grid_bounds(SHIFT_GRID_TILES));
+    defer teardown(fixture);
+    float tile = fixture.builder.tile_world_size;
+    float side = tile * SHIFT_GRID_TILES;
+    add_plane(fixture, { side, side }, { side * 0.5f, 0, side * 0.5f });
+    Node* crate = add_box(fixture, { 1, 1, 1 }, { tile * 1.5f, 0.5f, tile * 1.5f });
+    build_everything(fixture);
+    Vec3 offset = { 2 * tile, 0, -tile };
+
+    fixture.scene.shift_origin(offset);
+    fixture.scene.update_world();
+    fixture.mesh.shift_origin(offset);
+    fixture.builder.shift_origin(offset);
+    fixture.scene.shift_navigation(offset);
+    crate.local.position.x += tile;
+    fixture.scene.update_world();
+    fixture.scene.get(crate, NavSource).mark_changed();
+    NavSyncResult rebuilt = build_everything(fixture);
+
+    assert(rebuilt.built == 2 && rebuilt.pending == 0 && rebuilt.failed == 0);
+    TileRef moved = fixture.mesh.tile_ref_at(2, 1, 0);
+    assert(moved != (TileRef)0);
+    TileHeader* header = fixture.mesh.tile_by_ref(moved)!!.header;
+    Aabb bounds = fixture.builder.bounds;
+    assert(header.x == 2 && header.z == 1);
+    assert(header.bounds.min.x >= bounds.min.x + 2 * tile - QUERY_TOLERANCE);
+    assert(header.bounds.max.x <= bounds.min.x + 3 * tile + QUERY_TOLERANCE);
+    assert(header.bounds.min.z >= bounds.min.z + tile - QUERY_TOLERANCE);
+    assert(header.bounds.max.z <= bounds.min.z + 2 * tile + QUERY_TOLERANCE);
 }
