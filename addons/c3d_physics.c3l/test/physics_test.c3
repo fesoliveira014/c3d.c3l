@@ -1644,3 +1644,31 @@ fn void test_widened_flags_add_segments() @test {
         assert((usz)sink.vertices.len() / 2 > base_segments);
     }
 }
+
+fn void test_replace_geometry_keeps_live_body_snapshot() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Node* live = add_geometry_body(&fixture, MESH, STATIC);
+    Collider* live_collider = &fixture.scene.get(live, RigidBody).colliders[0];
+    usz live_wire = live_collider.wire.len;
+    SnapshotHandle live_handle = live_collider.snapshot;
+
+    @pool() {
+        Geometry grid = geometry::plane(tmem, 2, 2, 4, 4);
+        fixture.assets.replace_geometry(fixture.unit_box, &grid)!!;
+    };
+    fixture.physics.update(physics::DEFAULT_FIXED_DT);
+
+    CollisionSnapshot* kept = &fixture.physics.snapshots.slots[live_handle.index];
+    assert(kept.sources[0].revision == 1);
+    assert(live_collider.wire.len == live_wire);
+
+    Node* added = add_geometry_body(&fixture, MESH, STATIC);
+    Collider* added_collider = &fixture.scene.get(added, RigidBody).colliders[0];
+    CollisionSnapshot* fresh = &fixture.physics.snapshots.slots[added_collider.snapshot.index];
+    assert(fresh.sources[0].revision == 2);
+    assert(added_collider.wire.len / 6 == 32);
+    assert(occupied_snapshots(&fixture.physics) == 2);
+}

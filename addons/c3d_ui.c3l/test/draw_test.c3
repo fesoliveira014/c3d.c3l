@@ -183,3 +183,21 @@ fn void test_tooltip_shows_only_while_its_parent_is_hovered() @test {
     fixture::frame(&fixture);
     assert(!fixture::has_line(&fixture, "tip"));
 }
+
+fn void test_font_replacement_clears_placement_cache() @test {
+    Fixture fixture;
+    fixture::create_fixture(&fixture);
+    defer fixture::destroy_fixture(&fixture);
+    fixture.ui.load_document(THREE_LABELS)!!;
+    fixture::frame(&fixture);
+    fixture::frame(&fixture);
+    assert(fixture.ui.stats.placement_clears == 0 && fixture.ui.stats.placement_hits == 3);
+
+    fixture.assets.replace_font(fixture.latin, $embed("../../../test/fixtures/fonts/pair.ttc"), fixture::TEST_FONT_DESC)!!;
+    fixture::frame(&fixture);
+
+    assert(fixture.ui.stats.placement_clears == 1 && fixture.ui.stats.placement_misses == 3);
+    uint glyph_total = (uint)fixture.assets.font(fixture.latin).glyph_slots.len;
+    assert(fixture.list.glyph_count > 0);
+    foreach (placement : fixture.list.glyphs[:fixture.list.glyph_count]) assert(placement.glyph < glyph_total);
+}

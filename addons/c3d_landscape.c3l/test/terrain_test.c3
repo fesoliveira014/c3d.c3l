@@ -660,3 +660,28 @@ fn void test_terrain_eager_failure_and_pending_removal_leave_no_owned_resources(
     asset::destroy_asset_store(&fixture.assets);
     assert(!tracking.has_leaks());
 }
+
+fn void test_replaced_height_map_refreshes_whole_map() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    TerrainDesc desc = terrain_desc(&fixture, add_height_map(&fixture, TWO_LEVEL_TEXELS, SEED));
+    Node* node = add_terrain_node(&fixture, desc);
+    update_terrain(&fixture);
+
+    TexelRect edit = { .x = 10, .z = 20, .columns = EDIT_SIDE, .rows = EDIT_SIDE };
+    terrain::mark_dirty(&fixture.scene, node, edit);
+    TextureAsset* record = fixture.assets.texture(desc.height_map);
+    @pool() {
+        char[] next = alloc::new_array(tmem, char, record.pixels.len);
+        next[..] = record.pixels[..];
+        fixture.assets.replace_texture(desc.height_map, record.desc, next)!!;
+    };
+    // A replacement may reuse the address of the pixels the runtime last read.
+    fixture.scene.get(node, TerrainRuntime).pixels = record.pixels.ptr;
+    update_terrain(&fixture);
+
+    TexelRect refreshed = fixture.scene.get(node, TerrainRuntime).last_refresh.rect;
+    assert(refreshed.x == 0 && refreshed.z == 0);
+    assert(refreshed.columns == TWO_LEVEL_TEXELS && refreshed.rows == TWO_LEVEL_TEXELS);
+}

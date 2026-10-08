@@ -335,8 +335,11 @@ fn void? refresh_changed_bounds(AssetStore* assets, TerrainDesc* desc, TerrainRu
     check_height_map(texture)!;
     // Bounds, instance capacity and the material payload are sized for one side length.
     if (texture.desc.width != runtime.texels) return c3d::INVALID_ARGUMENT~;
-    // The rectangle covers in-place writes only: new pixels or a rejected revision rebuild everything.
-    bool in_place = runtime.has_pending && !runtime.rejected && texture.pixels.ptr == runtime.pixels;
+    // The rectangle covers in-place writes only: a replacement (whose pixels may reuse an address) or a rejected revision rebuilds everything.
+    bool in_place = runtime.has_pending
+        && !runtime.rejected
+        && texture.pixels.ptr == runtime.pixels
+        && texture.header.replaced_revision <= runtime.revision;
     TexelRect refreshed = in_place ? runtime.pending : whole_map(runtime.texels);
     refresh_bounds(runtime, height_texels(texture), refreshed);
     runtime.last_refresh = {

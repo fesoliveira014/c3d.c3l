@@ -21,16 +21,23 @@ fn void NavBuilder.sync_sources(&self, Scene* scene, AssetStore* assets) {
     scene.@each(NavSource; entity, source) {
         Node* node = scene.node(entity);
         bool mirrored = scene.has(node, NavSourceRuntime);
-        if (!mirrored || source.changed) {
+        bool revised;
+        if (mirrored) {
+            if (try asset = source_geometry(scene, assets, node)) {
+                revised = asset.header.revision != scene.get(node, NavSourceRuntime).geometry_revision;
+            }
+        }
+        if (!mirrored || source.changed || revised) {
             source.changed = false;
             if (mirrored) self.mark_dirty(scene.get(node, NavSourceRuntime).bounds);
             if (try asset = source_geometry(scene, assets, node)) {
                 Aabb bounds = maths::aabb_transform(asset.data.bounds, node.world);
                 self.mark_dirty(bounds);
+                NavSourceRuntime runtime = { .bounds = bounds, .geometry_revision = asset.header.revision };
                 if (mirrored) {
-                    scene.get(node, NavSourceRuntime).bounds = bounds;
+                    *scene.get(node, NavSourceRuntime) = runtime;
                 } else {
-                    scene.add(node, (NavSourceRuntime){ .bounds = bounds });
+                    scene.add(node, runtime);
                 }
                 changed = true;
             } else {

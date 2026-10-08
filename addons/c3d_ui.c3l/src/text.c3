@@ -47,6 +47,7 @@ struct UiPlacementCache @private {
     uint                 glyph_count;
     char[]               bytes;
     uint                 byte_count;
+    uint[]               font_replacements; // per font set and fallback: replaced_revision the placements were made against
 }
 
 fn String? expand_template(
@@ -232,6 +233,23 @@ fn void clear_cache(UiPlacementCache* cache) @private {
     cache.glyph_count = 0;
     cache.byte_count = 0;
     cache.slots[..] = 0;
+}
+
+// Placements hold glyph indices of the font they were made with; a replaced font may have fewer glyphs.
+fn void refresh_cache_fonts(Ui* ui) @private {
+    bool replaced;
+    for (uint set_index = 0; set_index < ui.font_set_count; set_index++) {
+        UiFontSet* set = &ui.font_sets[set_index];
+        for (uint font = 0; font < set.count; font++) {
+            uint* recorded = &ui.cache.font_replacements[set_index * UI_FONT_FALLBACKS + font];
+            uint current = ui.assets.font(set.fonts[font]).header.replaced_revision;
+            if (*recorded != current) replaced = true;
+            *recorded = current;
+        }
+    }
+    if (!replaced) return;
+    clear_cache(&ui.cache);
+    ui.stats.placement_clears++;
 }
 
 fn UiPlacementLine*? cached_line(Ui* ui, uint font_set, String text) @private {

@@ -439,6 +439,10 @@ fn uint? intern_font_set(Ui* ui, UiFontSet* set) @private {
     }
     if (ui.font_set_count == ui.font_sets.len) return c3d::CAPACITY_EXCEEDED~;
     ui.font_sets[ui.font_set_count] = *set;
+    for (uint font = 0; font < set.count; font++) {
+        ui.cache.font_replacements[ui.font_set_count * UI_FONT_FALLBACKS + font] =
+            ui.assets.font(set.fonts[font]).header.replaced_revision;
+    }
     ui.font_set_count++;
     return ui.font_set_count - 1;
 }
