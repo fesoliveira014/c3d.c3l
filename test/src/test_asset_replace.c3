@@ -851,6 +851,41 @@ fn void test_replace_document_refuses_structure() @test {
     assert(!tracker.has_leaks());
 }
 
+fn void test_replace_rejects_unset_template_references() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+
+    {
+        AssetStore assets = create_model_store(&tracker);
+        defer asset::destroy_asset_store(&assets);
+
+        ModelDocument first = build_model_document(&tracker, base_variant());
+        defer asset::destroy_model_document(&first);
+        ModelId model = assets.publish_document(&first)!!;
+        ReplaceRefs parts = find_parts(&assets);
+        Revisions before = revisions_of(&assets, model, parts);
+        ClipId[] clips = mem::@tclone_slice(assets.model(model).data.clips);
+
+        ModelDocument unset_geometry = build_model_document(&tracker, base_variant());
+        defer asset::destroy_model_document(&unset_geometry);
+        unset_geometry.template.meshes[0].geometry = {};
+        assert(@catch(assets.replace_document(model, &unset_geometry)) == c3d::INVALID_ARGUMENT);
+
+        ModelDocument unset_clip = build_model_document(&tracker, base_variant());
+        defer asset::destroy_model_document(&unset_clip);
+        unset_clip.template.clips[0] = {};
+        assert(@catch(assets.replace_document(model, &unset_clip)) == c3d::INVALID_ARGUMENT);
+
+        assert(same_revisions(revisions_of(&assets, model, parts), before));
+        ClipId[] after = assets.model(model).data.clips;
+        assert(after.len == clips.len);
+        foreach (index, clip : after) assert(c3d::same_id(clip, clips[index]));
+    }
+
+    assert(!tracker.has_leaks());
+}
+
 fn void test_replace_document_refuses_renamed_clip() @test {
     TrackingAllocator tracker;
     tracker.init(mem);

@@ -300,6 +300,45 @@ fn void test_publish_document_faults_on_a_duplicate_key_before_inserting() @test
     assert_document_intact(&document, &refs);
 }
 
+fn void test_publish_rejects_unset_template_references() @test {
+    AssetStore assets = create_store(mem);
+    defer asset::destroy_asset_store(&assets);
+    DocumentRefs refs;
+    ModelDocument document = build_document(mem, &refs);
+    defer asset::destroy_model_document(&document);
+    ModelTemplate* template = &document.template;
+
+    template.meshes[0].geometry = {};
+    assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
+    template.meshes[0].geometry = refs.geometry;
+
+    template.meshes[0].material = {};
+    assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
+    template.meshes[0].material = refs.material;
+
+    template.skins[0].skeleton = {};
+    assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
+    template.skins[0].skeleton = refs.skeleton;
+
+    template.clips[0] = {};
+    assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
+    template.clips[0] = refs.clip;
+
+    assert_document_intact(&document, &refs);
+    assert(document.geometries.len == 1 && document.clips.len == 1);
+}
+
+fn void test_publish_rejects_document_references_past_the_entries() @test {
+    AssetStore assets = create_store(mem);
+    defer asset::destroy_asset_store(&assets);
+    DocumentRefs refs;
+    ModelDocument document = build_document(mem, &refs);
+    defer asset::destroy_model_document(&document);
+
+    document.template.meshes[0].geometry = { .index = (uint)document.geometries.len + 1 };
+    assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
+}
+
 fn void test_publish_document_rejects_a_custom_material() @test {
     AssetStore assets = create_store(mem);
     defer asset::destroy_asset_store(&assets);
