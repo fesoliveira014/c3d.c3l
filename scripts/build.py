@@ -66,6 +66,7 @@ ADDON_EXAMPLES = {
     "grid": NAV,
     "character": CHARACTER,
     "character_nav": CHARACTER,
+    "rebase_bench": CHARACTER,
     "physics_inspector": PHYSICS_GUI,
     "physics_inspector_character": PHYSICS_GUI,
     "job_bench": JOB,
