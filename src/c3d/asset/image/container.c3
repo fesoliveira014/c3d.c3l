@@ -4,7 +4,6 @@ import c3d;
 import c3d::asset;
 import c3d::material;
 import std::core::bitorder;
-import std::io::file;
 
 const char[4] DDS_MAGIC @local = { 'D', 'D', 'S', ' ' };
 const char[12] KTX1_IDENTIFIER @local = { 0xAB, 'K', 'T', 'X', ' ', '1', '1', 0xBB, 0x0D, 0x0A, 0x1A, 0x0A };
@@ -107,12 +106,7 @@ fn TextureId? load_texture_container(
     ColorSpace color_space = FROM_FILE,
     String key = "",
 ) {
-    char[] bytes;
-    if (try loaded = file::load(mem, path)) {
-        bytes = loaded;
-    } else {
-        return c3d::ASSET_IO_ERROR~;
-    }
+    char[] bytes = assets.read_file(mem, path)!;
     defer free(bytes.ptr);
 
     return add_texture_container(

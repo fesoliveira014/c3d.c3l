@@ -71,6 +71,7 @@ struct LoadSlot @private {
 struct LoaderState @private {
     Allocator         allocator;
     Allocator         document_allocator;
+    FileSource        file_source;
     AssetStore*       assets;
     Mutex             lock;
     ConditionVariable wake;
@@ -170,7 +171,7 @@ fn void? AsyncLoader.release(&self, LoadId id) {
 
 <*
  Start the worker thread over a table of request slots.
- The store allocator and the loader allocator are used from the worker thread.
+ The store allocator, the loader allocator and the store's file source are used from the worker thread.
  @param [&in] assets : "Publication target; outlives the loader."
  @param capacity : "Request slots; 0 selects DEFAULT_LOAD_CAPACITY."
  @return? thread::INIT_FAILED
@@ -182,6 +183,7 @@ fn AsyncLoader? create_async_loader(Allocator allocator, AssetStore* assets, uin
     *state = {
         .allocator          = allocator,
         .document_allocator = assets.allocator,
+        .file_source        = assets.file_source,
         .assets             = assets,
         .slots              = alloc::new_array(allocator, LoadSlot, (sz)(capacity ? capacity : DEFAULT_LOAD_CAPACITY)),
         .next_sequence      = 1,
@@ -296,7 +298,11 @@ fn usz? next_decode(LoaderState* state) @private {
 
 fn void decode_slot(LoaderState* state, usz index) @private {
     // A pending slot's request is written before QUEUED and never changes until release.
-    ModelDocument? document = decode_request(state.document_allocator, state.slots[index].request);
+    ModelDocument? document = decode_request(
+        allocator:   state.document_allocator,
+        file_source: state.file_source,
+        request:     state.slots[index].request,
+    );
     state.lock.lock();
     defer state.lock.unlock();
     LoadSlot* slot = &state.slots[index];
@@ -309,10 +315,10 @@ fn void decode_slot(LoaderState* state, usz index) @private {
     slot.phase = LoadPhase.DECODED;
 }
 
-fn ModelDocument? decode_request(Allocator allocator, LoadRequest request) @private {
+fn ModelDocument? decode_request(Allocator allocator, FileSource file_source, LoadRequest request) @private {
     switch (request.format) {
-        case GLTF: return gltf::decode_model(allocator, request.path, request.options);
-        case FBX: return fbx::decode_model(allocator, request.path, request.options);
+        case GLTF: return gltf::decode_model(allocator, request.path, request.options, file_source);
+        case FBX: return fbx::decode_model(allocator, request.path, request.options, file_source);
     }
 }
 
