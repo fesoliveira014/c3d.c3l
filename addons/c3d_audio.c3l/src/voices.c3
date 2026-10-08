@@ -108,6 +108,8 @@ fn uint? AudioState.start(&self, StartParams params, AudioClipId clip) {
 
     voice.mirror = clip.index;
     voice.owner = params.owner;
+    voice.position = params.position;
+    voice.positioned = params.positioned;
     voice.active = true;
     self.voice_count++;
     return slot;

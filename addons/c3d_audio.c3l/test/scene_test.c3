@@ -13,6 +13,9 @@ const uint STEADY_FRAMES @local = 256; // 100 iterations cover 0.53 s: several l
 const float AUDIBLE @local = 0.05f;
 const float SILENT @local = 1e-6f;
 const float REPLACED_PEAK @local = 0.25f;
+const float RMS_RATIO_TOLERANCE @local = 0.1f;
+const float NEAR_DISTANCE @local = 2;
+const float FAR_DISTANCE @local = 4;
 const float PEAK_TOLERANCE @local = 0.02f; // the first frames of a spatial voice ramp for SMOOTHING_FRAMES
 
 fn Node* add_emitter(
@@ -219,4 +222,52 @@ fn void test_listener_selection() @test {
     scene.add(second, (AudioListener){ .active = true });
     system.update(&scene);
     assert(system.stats().listeners == 2);
+}
+
+fn float one_shot_rms(float distance, float shift) @local {
+    AssetStore assets = make_store(mem);
+    defer asset::destroy_asset_store(&assets);
+    AudioSystem system = make_system(mem, &assets);
+    defer audio::destroy_audio_system(&system);
+    AudioClipId clip = make_clip(&assets);
+
+    system.play_at(clip, audio::EFFECTS_BUS, { 0, 0, -distance })!!;
+    system.shift_origin({ 0, 0, -shift });
+    float[] frames = mix_frames(&system, MIX_FRAMES);
+    defer alloc::free(mem, frames.ptr);
+    return mono_rms(frames, system.channels);
+}
+
+fn float shifted_emitter_rms(float distance, float shift) @local {
+    AssetStore assets = make_store(mem);
+    defer asset::destroy_asset_store(&assets);
+    AudioSystem system = make_system(mem, &assets);
+    defer audio::destroy_audio_system(&system);
+    Scene scene = make_scene(mem, &system);
+    defer scene::destroy_scene(&scene);
+    AudioClipId clip = make_clip(&assets);
+
+    Node* node = add_emitter(&scene, clip, true);
+    node.local.position = { 0, 0, -distance };
+    scene.update_world();
+    system.update(&scene);
+    scene.shift_origin({ 0, 0, -shift });
+    system.shift_origin({ 0, 0, -shift });
+    scene.update_world();
+    system.update(&scene);
+    float[] frames = mix_frames(&system, MIX_FRAMES);
+    defer alloc::free(mem, frames.ptr);
+    return mono_rms(frames, system.channels);
+}
+
+fn void test_shift_origin_moves_positioned_one_shots() @test {
+    float near = one_shot_rms(NEAR_DISTANCE, 0);
+    float far = one_shot_rms(FAR_DISTANCE, 0);
+    float shifted = one_shot_rms(FAR_DISTANCE, FAR_DISTANCE - NEAR_DISTANCE);
+    assert(far > 0);
+    assert(math::abs(near / far - 2.0f) <= RMS_RATIO_TOLERANCE);
+    assert(math::abs(shifted / near - 1.0f) <= RMS_RATIO_TOLERANCE);
+
+    float emitter = shifted_emitter_rms(FAR_DISTANCE, FAR_DISTANCE - NEAR_DISTANCE);
+    assert(math::abs(emitter / near - 1.0f) <= RMS_RATIO_TOLERANCE);
 }

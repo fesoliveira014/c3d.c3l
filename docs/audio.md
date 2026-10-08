@@ -74,6 +74,10 @@ max_distance)` plays it at a world position. Both fault `CAPACITY_EXCEEDED` when
 a dead clip and `ASSET_FORMAT_ERROR` when the mirror cannot be built. A finished one-shot frees its voice at the
 next `update`.
 
+After an origin rebase, `AudioSystem.shift_origin(offset)` subtracts the offset from every playing positioned
+one-shot and re-applies its position to the voice. Emitter voices are not touched: they follow their nodes and are
+re-applied at each `update`. The listener is a scene node and moves with the scene shift.
+
 ## Buses
 
 `AudioDesc.buses` names the buses; index zero is the master (the engine endpoint) and the others are sound groups

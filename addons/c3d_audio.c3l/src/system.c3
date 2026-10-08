@@ -87,7 +87,9 @@ struct Voice @private {
     ma::Sound* sound;
     void*      source;
     uint       mirror;
-    Entity     owner; // zero for a one-shot
+    Entity     owner;    // zero for a one-shot
+    Vec3       position; // world position at start, moved by shift_origin
+    bool       positioned;
     bool       active;
     bool       decoded;
 }
@@ -310,6 +312,23 @@ fn void AudioSystem.set_bus_volume(&self, BusId bus, float volume) {
         (void)ma::engine_set_volume(self.state.engine, volume);
     } else {
         ma::sound_group_set_volume(self.state.group(bus), volume);
+    }
+}
+
+<*
+ Move every positioned one-shot by the negated offset; emitters follow their nodes.
+ @require offset.y == 0
+*>
+fn void AudioSystem.shift_origin(&self, Vec3 offset) {
+    foreach (&voice : self.state.voices) {
+        if (!voice.active || voice.owner.generation || !voice.positioned) continue;
+        voice.position -= offset;
+        ma::sound_set_position(
+            sound: voice.sound,
+            x: voice.position.x,
+            y: voice.position.y,
+            z: voice.position.z,
+        );
     }
 }
 
