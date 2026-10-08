@@ -29,6 +29,7 @@ const usz TEXTURE_STREAM_FRAME_BYTES = 8 << 20; // matches OVERSIZED_UPLOAD_BYTE
 const float TEXTURE_BIAS_RELEASE_FRACTION = 0.9f; // one level of headroom against oscillation
 
 const uint NO_RECORD @local = uint::max;
+const usz EVICTION_BATCH @local = 128; // records ranked per scan, so a large eviction costs a few passes
 
 <*
  Resident mip range of one store texture and the demand that drives it.
@@ -78,15 +79,9 @@ struct TextureResidencyPlan {
     usz  total_bytes; // resident bytes once every change applies
 }
 
-const usz EVICTION_BATCH @local = 128; // records ranked per scan, so a large eviction costs a few passes
-
 struct EvictionPick @local {
     ulong frame;
     uint  index;
-}
-
-fn bool EvictionPick.after(self, EvictionPick other) @local {
-    return self.frame > other.frame || (self.frame == other.frame && self.index > other.index);
 }
 
 struct TexturePlanState @local {
@@ -98,6 +93,10 @@ struct TexturePlanState @local {
     usz                      change_count;
     uint                     evictions;
     uint                     raises;
+}
+
+fn bool EvictionPick.after(self, EvictionPick other) @local {
+    return self.frame > other.frame || (self.frame == other.frame && self.index > other.index);
 }
 
 fn void TexturePlanState.measure(&self) {
@@ -158,9 +157,6 @@ fn void TexturePlanState.evict_undrawn(&self, uint bias) {
     }
 }
 
-<*
- Fill picks with the next undrawn evictable records after the cursor, least recently used first.
-*>
 fn usz TexturePlanState.collect_evictions(&self, EvictionPick[] picks, bool has_cursor, EvictionPick cursor) {
     usz found;
     foreach (index, &record : self.textures) {
