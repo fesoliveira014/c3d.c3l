@@ -182,6 +182,11 @@ plane shifted. An application that keeps its own `ViewDesc` copy re-reads it
 after the shift, or `configure_view` restores the old plane. A view that has not
 rendered the scene yet is the application's to set.
 
+`ViewHistory.view_proj` is not refreshed, so a camera on a nested node (for
+example a character camera) can show up to one old ulp of camera motion on the
+rebase frame, about 3.9 mm at 50 km. That is no more than its per-frame noise
+before the shift.
+
 Sway reads `Scene.world_shift`, so the gust phase of a fixed absolute anchor
 does not change across a shift. A second scene the application does not rebase
 keeps its phase.

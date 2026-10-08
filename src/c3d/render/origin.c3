@@ -7,6 +7,35 @@ import std::math;
 const double FRAME_ORIGIN_CELL @private = 256.0; // larger cells reduce resident uploads and trace rebuilds
 
 <*
+ Re-express the renderer's retained state of one scene after that scene moved by the offset.
+ Other scenes this renderer draws are untouched.
+ @param [&in] scene : "Already shifted, with world matrices current after update_world."
+ @require !self.frame_open
+ @require offset.y == 0
+*>
+fn void Renderer.shift_origin(&self, Scene* scene, Vec3 offset) {
+    foreach (&record : self.views.items) {
+        if (!record.live) continue;
+        if (record.history.scene == scene.identity) {
+            refresh_history_models(&record.history, scene);
+            shift_view_history_origin(&record.history, offset);
+        }
+        if (record.last_scene == scene.identity) record.desc.clip_plane = shift_plane(record.desc.clip_plane, offset);
+        LodHistory* lod = &record.lod_history;
+        for (uint cursor = lod.first; cursor; cursor = lod.entries[cursor - 1].next) {
+            shift_lod_history(&lod.entries[cursor - 1], scene.identity, offset);
+        }
+    }
+    foreach (&slot : self.instances.slots) {
+        if (slot.key.scene == scene.identity) shift_instance_slot(slot, offset);
+    }
+    if (self.scene_trace.scene == scene.identity) shift_trace_baseline(&self.scene_trace, offset);
+    foreach (&mirror : self.probe_volumes) {
+        if (mirror.entity.generation != 0 && mirror.scene == scene.identity) shift_probe_fill(mirror, offset);
+    }
+}
+
+<*
  Select the nearest render cell for an absolute position.
  @require math::is_finite(reference_position.x)
  @require math::is_finite(reference_position.y)
@@ -92,33 +121,4 @@ fn Plane shift_plane(Plane plane, Vec3 offset) @private {
     if (plane.normal == (Vec3){} && plane.d == 0) return plane;
     plane.d += plane.normal.dot(offset);
     return plane;
-}
-
-<*
- Re-express the renderer's retained state of one scene after that scene moved by the offset.
- Other scenes this renderer draws are untouched.
- @param [&in] scene : "Already shifted, with world matrices current after update_world."
- @require !self.frame_open
- @require offset.y == 0
-*>
-fn void Renderer.shift_origin(&self, Scene* scene, Vec3 offset) {
-    foreach (&record : self.views.items) {
-        if (!record.live) continue;
-        if (record.history.scene == scene.identity) {
-            refresh_history_models(&record.history, scene);
-            shift_view_history_origin(&record.history, offset);
-        }
-        if (record.last_scene == scene.identity) record.desc.clip_plane = shift_plane(record.desc.clip_plane, offset);
-        LodHistory* lod = &record.lod_history;
-        for (uint cursor = lod.first; cursor; cursor = lod.entries[cursor - 1].next) {
-            shift_lod_history(&lod.entries[cursor - 1], scene.identity, offset);
-        }
-    }
-    foreach (&slot : self.instances.slots) {
-        if (slot.key.scene == scene.identity) shift_instance_slot(slot, offset);
-    }
-    if (self.scene_trace.scene == scene.identity) shift_trace_baseline(&self.scene_trace, offset);
-    foreach (&mirror : self.probe_volumes) {
-        if (mirror.entity.generation != 0 && mirror.scene == scene.identity) shift_probe_fill(mirror, offset);
-    }
 }
