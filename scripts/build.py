@@ -50,6 +50,7 @@ LANDSCAPE = ROOT / "addons" / "c3d_landscape.c3l"
 PARTICLE = ROOT / "addons" / "c3d_particle.c3l"
 SERIAL = ROOT / "addons" / "c3d_serial.c3l"
 UI = ROOT / "addons" / "c3d_ui.c3l"
+AUDIO = ROOT / "addons" / "c3d_audio.c3l"
 ADDON_EXAMPLES = {
     "capture": PROFILE,
     "physics": PHYSICS,
@@ -73,6 +74,7 @@ ADDON_EXAMPLES = {
     "water": LANDSCAPE,
     "particles": PARTICLE,
     "ui": UI,
+    "audio": AUDIO,
 }
 PROFILE_TEST_TARGETS = (
     "profile_off", "profile_cpu", "profile_internal", "profile_gpu",
@@ -90,9 +92,10 @@ LANDSCAPE_TEST_TARGETS = ("landscape_test", "landscape_serial_test", "landscape_
 PARTICLE_TEST_TARGETS = ("particle_test", "particle_serial_test", "particle_serial_policy_test")
 SERIAL_TEST_TARGETS = ("serial_test", "serial_order_forward", "serial_order_reverse", "serial_text_test", "serial_described_test", "serial_core_policy_test", "serial_all_test")
 UI_TEST_TARGETS = ("ui_test",)
+AUDIO_TEST_TARGETS = ("audio_test",)
 
 REQUIRED_C3C_VERSION = "0.8.3"
-SUBMODULES = ("gpu.c3l", "sdl3.c3l", "c3imgui.c3l", "c3cg.c3l", "box3d.c3l", "cgltf.c3l", "ufbx.c3l", "shaderc.c3l", "clay.c3l")
+SUBMODULES = ("gpu.c3l", "sdl3.c3l", "c3imgui.c3l", "c3cg.c3l", "box3d.c3l", "cgltf.c3l", "ufbx.c3l", "shaderc.c3l", "clay.c3l", "miniaudio.c3l")
 # Submodules whose native libraries are built in their repository's CI and published only in its releases.
 RELEASE_NATIVES = ("sdl3.c3l", "c3imgui.c3l", "box3d.c3l", "shaderc.c3l", "vma.c3l", "spvreflect.c3l")
 NATIVE_DIRECTORIES = ("linked-libs/", "linux/", "windows/")
@@ -328,6 +331,7 @@ def step_build(options: Options) -> None:
     copy_runtimes(LANDSCAPE / "build")
     copy_runtimes(PARTICLE / "build")
     copy_runtimes(UI / "build")
+    copy_runtimes(AUDIO / "build")
     if not options.target or options.target == "profile_gpu":
         copy_runtimes(ROOT / "build" / "profile_gpu")
 
@@ -385,6 +389,8 @@ def step_test(options: Options) -> None:
     copy_runtimes(UI / "build")
     for target in UI_TEST_TARGETS:
         run([options.c3c, "test", target, "--path", str(UI)], ROOT, options.verbose)
+    for target in AUDIO_TEST_TARGETS:
+        run([options.c3c, "test", target, "--path", str(AUDIO)], ROOT, options.verbose)
 
 
 def step_run(options: Options) -> None:
@@ -397,7 +403,7 @@ def step_run(options: Options) -> None:
 
 
 def step_clean(options: Options) -> None:
-    for project_dir in (EXAMPLES, TEST, PROFILE, PROFILE_GUI, PHYSICS, NAV, CHARACTER, PHYSICS_GUI, JOB, LANDSCAPE, PARTICLE, SERIAL, UI):
+    for project_dir in (EXAMPLES, TEST, PROFILE, PROFILE_GUI, PHYSICS, NAV, CHARACTER, PHYSICS_GUI, JOB, LANDSCAPE, PARTICLE, SERIAL, UI, AUDIO):
         if (project_dir / "project.json").exists():
             run([options.c3c, "clean", "--path", str(project_dir)], ROOT, options.verbose)
 

@@ -25,3 +25,6 @@
 [submodule "lib/clay.c3l"]
 	path = lib/clay.c3l
 	url = https://github.com/fesoliveira014/clay.c3l
+[submodule "lib/miniaudio.c3l"]
+	path = lib/miniaudio.c3l
+	url = https://github.com/fesoliveira014/miniaudio.c3l

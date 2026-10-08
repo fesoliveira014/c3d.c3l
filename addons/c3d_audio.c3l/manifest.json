@@ -1,0 +1,8 @@
+{
+  "provides": "c3d_audio",
+  "sources": ["src/**"],
+  "targets": {
+    "linux-x64": {"dependencies": ["c3d", "miniaudio"], "linked-libraries": []},
+    "windows-x64": {"wincrt": "static", "dependencies": ["c3d", "miniaudio"], "linked-libraries": []}
+  }
+}
