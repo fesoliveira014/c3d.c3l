@@ -222,6 +222,56 @@ their last submitted frame.
 
 Replacing a geometry rebuilds its skin and morph bounds and drops its triangle tree; both rebuild on next use.
 
+## Replacing a model
+
+```c3
+ModelReplaceReport report = gltf::replace_model(&assets, model, "models/city.gltf", missing: missing[..])!;
+```
+
+`replace_document(model, &document, missing)` replaces a live model and its keyed parts from a decoded document.
+`gltf::replace_model` and `fbx::replace_model` decode a file and call it; `gltf::replace_model_memory` mirrors
+`load_model_memory`. The document key must equal the model's key (`INVALID_ARGUMENT` otherwise), and every entry key must
+be nonempty and unique.
+
+Each entry key is one of:
+
+- a match: a live record of the same kind under that key. It is replaced in place by the kind's replace call, keeps its
+  id, and advances its revision once;
+- an addition: a key absent from the store. It is added as in `publish_document`;
+- a conflict: a key held by another kind, a builtin texture or sampler, or the model itself (`INVALID_ARGUMENT`).
+
+References inside the document and its template are remapped to the matched and added ids before each entry is replaced.
+The check phase decides every fault, so a fault leaves the store and the document as they were; on success the document is
+emptied.
+
+A replacement faults with `INCOMPATIBLE_STRUCTURE` when a matched geometry, texture, skeleton or clip breaks the
+structural rules of its kind (see Replacing geometry, skeletons and clips), a matched clip changes its name, or the new
+template differs in its structural signature from the current one. The signature is:
+
+- the node count and each node's parent;
+- the mesh list in order: node, geometry, material;
+- the skin list in order: mesh node, skeleton, joint nodes;
+- the LOD groups in order: node and the full description.
+
+Node names, local transforms, layers, visibility, lights, cameras and the clip list may change. This is the field set the
+serialization add-on compares, so a file saved before a compatible replacement still loads after it. The response to
+`INCOMPATIBLE_STRUCTURE` is to remove the model, add it again and instantiate again.
+
+`replace_model_owned(model, &template)` swaps the template alone, under the same signature rule.
+
+Existing `ModelInstance`s keep the nodes, base pose, morph baselines, lights, cameras and clip list they were created with.
+They show the new meshes, textures and clips because their ids are unchanged. Instances created afterwards use the new
+template. A crowd prepared before the replacement keeps its sizes: `set_crowd` faults with `INVALID_ARGUMENT` for a clip
+with more tracks than the crowd was prepared for.
+
+Missing parts are records whose key is `<model key>#<suffix>`, where the suffix contains no further `#`, that the document
+does not name. This is the importers' sub-asset form (`#mesh`, `#material`, `#image`, `#sampler`, `#skeleton`, `#anim`).
+Derived records, such as the clips `fbx::retarget_clips` keys `<anim path>#anim/<i>#<target>#<mode>`, are never reported.
+`ModelReplaceReport.missing` counts them all; the optional `missing` slice receives the first `missing.len`, ordered by
+`AssetKind`, then by key bytes. The store keeps them, as `remove_model` does; removing one is the application's call.
+
+Call replacements from the owner thread, outside frame recording. The report holds `replaced`, `added` and `missing`.
+
 ## Supported and unsupported extensions
 
 Supported: `KHR_materials_clearcoat`, `KHR_materials_sheen`,
@@ -247,7 +297,7 @@ variants and GPU instancing import as if absent.
 | `CAPACITY_EXCEEDED` | A store pool has fewer free slots than the model needs. |
 | `INVALID_ARGUMENT` | The model key or a content key is already present, an image file is empty, a skin stream has invalid influences, or a storage texture has a non-storage format. |
 | `INVALID_ID` | `instantiate` received a dead model id. |
-| `INCOMPATIBLE_STRUCTURE` | A geometry, skeleton or clip replacement changes a count or layout that live components were sized against. |
+| `INCOMPATIBLE_STRUCTURE` | A geometry, texture, skeleton, clip or model replacement changes a count or layout that live components were sized against. |
 
 A loader decides every store fault before it inserts anything, so a fault
 leaves the store as it was. An instantiation that runs out of nodes removes
@@ -361,6 +411,14 @@ makes that request fail at `publish` with the store's `INVALID_ARGUMENT`; a
 pool without room fails it with `CAPACITY_EXCEEDED`; the store is unchanged in
 both cases.
 
+Set `LoadRequest.replace` to a live model to replace it instead of adding one. The path must equal that model's key
+(`INVALID_ARGUMENT`), and a dead target faults `INVALID_ID` at `request`. The worker decodes as for an add; `publish`
+calls `replace_document` on the owner thread, so a structural change ends the request `FAILED` with
+`INCOMPATIBLE_STRUCTURE` and the old content stays. A target removed after the request ends it `FAILED` with `INVALID_ID`.
+`LoadStatus.model` is the replaced id and `LoadStatus.report` holds the counts. `LoadRequest.missing` is borrowed until
+the request reaches `PUBLISHED` or `FAILED`, and only `publish` writes it; `release` requires a final phase, so the
+borrow ends there in every case.
+
 `status` never faults. A released, stale or zero id reports `FAILED` with
 `failure == INVALID_ID`; a failed decode reports `FAILED` with the importer's
 fault; the `failure` field is what separates them.
@@ -388,10 +446,12 @@ unpublished document and request. Destroy the loader before its store.
 | `create_async_loader` | `thread::INIT_FAILED` | The mutex, the condition variable or the worker thread could not be created; nothing is left allocated. |
 | `request` | `INVALID_ARGUMENT` | The path is a model key in the store, or a queued, decoding or decoded request has the same path. |
 | | `CAPACITY_EXCEEDED` | Every slot holds an unreleased request. |
+| | `INVALID_ID`, `INVALID_ARGUMENT` | A replace target that is not a live model, or whose key differs from the path. |
 | `release` | `INVALID_ID` | The id was released, is stale, or never named a request. |
 | `status` (`failure` of `FAILED`) | `INVALID_ID` | As for `release`. |
 | | `ASSET_IO_ERROR`, `ASSET_FORMAT_ERROR`, `UNSUPPORTED`, `INVALID_ARGUMENT` | The importer's decode fault; the wrong importer for a file gives `ASSET_FORMAT_ERROR`. |
 | | `INVALID_ARGUMENT`, `CAPACITY_EXCEEDED` | The store's `publish_document` fault: a key inserted since the request, a pool without room. |
+| | `INCOMPATIBLE_STRUCTURE`, `INVALID_ID` | A replacement the signature refuses, or whose target was removed after the request. |
 
 ## CPU release
 

@@ -83,6 +83,13 @@ so moving or spinning an instance as a whole is unaffected. Removing the root
 removes the animator and its arrays through the ordinary component hook; the
 shared clips stay in the store.
 
+## Replacing clips and models
+
+A clip replacement keeps its track layout (see [Models](models.md#replacing-geometry-skeletons-and-clips)), so animators
+re-seek on the next update. A model replacement may grow the template's clip list. A prepared crowd sized its cursors from
+the longest clip it saw at `prepare_crowd`; `set_crowd` faults with `INVALID_ARGUMENT` for a clip with more tracks than
+that, and the crowd must be removed and added again.
+
 ## Removed instance nodes
 
 `ModelInstance.present_node(template_index)` borrows the original node or returns
