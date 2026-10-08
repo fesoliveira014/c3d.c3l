@@ -5,6 +5,7 @@ import c3d::asset;
 import c3d::instrumentation @public;
 import c3d::material;
 import gpu;
+import std::math;
 
 <*
  Renderer-owned image and full-chain view of one texture asset.
@@ -65,6 +66,8 @@ fn bool texture_current(Renderer* renderer, TextureId texture) @private {
 fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture) @private {
     TextureAsset* record = renderer.assets.texture(texture);
     TextureRes* mirror = &renderer.textures[texture.index];
+    TextureResidency* residency = &renderer.residencies[texture.index];
+    residency.last_used_frame = renderer.frame_index;
     if (texture_current(renderer, texture)) return mirror;
     bool same_asset = c3d::same_id(mirror.asset, texture);
 
@@ -90,6 +93,8 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture) @private 
         }
         uint mip_count = layout.mip_count;
         uint layer_count = layout.layer_count;
+        TextureLevelBytes level_bytes = texture_level_bytes(record.desc, mip_count)!;
+        bool eligible = texture_eligible(record.desc, record.source_kind, mip_count);
         gpu::Format format = texture_format(record.desc.format);
         gpu::TextureDesc description = {
             .width = record.desc.width,
@@ -173,9 +178,35 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture) @private 
         }
         renderer.pending_texture_uploads.push(pending);
         renderer.stats.uploads++;
+
+        bool full_reader = same_asset && residency.full_reader;
+        bool streamed = eligible && !full_reader;
+        uint chain_extent = math::max(record.desc.width, record.desc.height);
+        *residency = {
+            .chain_mips = mip_count,
+            .chain_width = record.desc.width,
+            .chain_height = record.desc.height,
+            .format = record.desc.format,
+            .level_bytes = level_bytes,
+            .tail_base = streamed ? texture_tail_base(chain_extent, mip_count) : 0,
+            .required_base = mip_count,
+            .last_used_frame = residency.last_used_frame,
+            .eligible = eligible,
+            .full_reader = full_reader,
+            .streamed = streamed,
+            .raisable = texture_source_present(record),
+        };
     };
 
     return mirror;
+}
+
+fn bool texture_source_present(TextureAsset* record) @local {
+    switch (record.source_kind) {
+        case MIP_ZERO: return record.pixels.len > 0;
+        case SUPPLIED_MIPS: return record.supplied_mips.len > 0;
+        case EMPTY: return false;
+    }
 }
 
 fn void retire_texture(Renderer* renderer, TextureRes* mirror) @private {
@@ -218,10 +249,11 @@ fn gpu::TextureView[]? create_storage_views(
 }
 
 fn void sweep_textures(Renderer* renderer) @private {
-    foreach (&mirror : renderer.textures) {
+    foreach (index, &mirror : renderer.textures) {
         if (!mirror.asset.generation || renderer.assets.textures.is_live(mirror.asset)) continue;
 
         retire_texture(renderer, mirror);
+        renderer.residencies[index] = {};
         uint binding_revision = mirror.binding_revision;
         *mirror = { .binding_revision = binding_revision };
     }
@@ -237,6 +269,8 @@ fn void free_textures(Renderer* renderer) @private {
         (void)gpu::destroy_texture(&renderer.device, mirror.texture);
     }
     alloc::free(renderer.allocator, renderer.textures.ptr);
+    alloc::free(renderer.allocator, renderer.residencies.ptr);
+    alloc::free(renderer.allocator, renderer.residency_changes.ptr);
     alloc::free(renderer.allocator, renderer.samplers.ptr);
 }
 

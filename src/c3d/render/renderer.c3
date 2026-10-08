@@ -168,6 +168,8 @@ struct Renderer {
     ulong                   next_prepare_sequence;
     List{PrepareMark}       pending_prepare_marks;
     TextureRes[]            textures;
+    TextureResidency[]       residencies;       // one per store texture slot, parallel to textures
+    TextureResidencyChange[] residency_changes; // planner output, sized like residencies
     EnvironmentState        environment_state;
     gpu::SamplerIndex       toon_gradient_sampler;
     SamplerRes[]            samplers;
@@ -492,6 +494,9 @@ fn void? begin_renderer_frame(Renderer* self, FrameInfo info, bool acquire_outpu
         };
         if (self.frame_index % TEXTURE_STATS_INTERVAL == 0) read_texture_stats(self)!;
         reset_upload_ring(self, slot)!;
+        instrumentation::@scope("renderer.texture_residency") {
+            step_texture_residency(self)!;
+        };
         reset_deformation_cache(&self.deformation);
         reset_instance_culling(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT));
         self.frame_started = clock::now();
@@ -874,6 +879,8 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         .shaders              = alloc::new_array(allocator, ShaderRes, assets.shaders.items.len),
         .compute_shaders      = alloc::new_array(allocator, ComputeShaderRes, assets.compute_shaders.items.len),
         .textures             = alloc::new_array(allocator, TextureRes, assets.textures.items.len),
+        .residencies          = alloc::new_array(allocator, TextureResidency, assets.textures.items.len),
+        .residency_changes    = alloc::new_array(allocator, TextureResidencyChange, assets.textures.items.len),
         .fonts                = alloc::new_array(allocator, FontRes, assets.fonts.items.len),
         .environment_state    = {
             .mirrors = alloc::new_array(allocator, EnvironmentRes, assets.environments.items.len),

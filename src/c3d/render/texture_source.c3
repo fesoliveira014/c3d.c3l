@@ -38,11 +38,17 @@ fn TextureMipChain? create_supplied_texture_mips(
 }
 
 <*
- Validate supplied mip layers and compute where each mip lands in one packed staging span.
+ Validate supplied mip layers and place each level from first_mip in one packed span.
  @param levels : "Complete slices ordered mip-major, then layer."
+ @param first_mip : "Offsets are relative to this level; validation covers the whole chain."
  @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
+ @require first_mip == 0 || first_mip < desc.mip_levels
 *>
-fn TextureMipLayout? supplied_texture_mip_layout(material::TextureDesc desc, TextureMipData[] levels) {
+fn TextureMipLayout? supplied_texture_mip_layout(
+    material::TextureDesc desc,
+    TextureMipData[] levels,
+    uint first_mip = 0,
+) {
     if (!desc.width || !desc.height || !desc.mip_levels || desc.generate_mips) return c3d::INVALID_ARGUMENT~;
     if (desc.mip_levels > material::texture_mip_count(desc.width, desc.height)) return c3d::INVALID_ARGUMENT~;
     if (desc.depth) return c3d::UNSUPPORTED~;
@@ -71,17 +77,28 @@ fn TextureMipLayout? supplied_texture_mip_layout(material::TextureDesc desc, Tex
         }
         layout.total_bytes += layer_bytes * desc.layers;
     }
+    if (first_mip > 0) {
+        usz kept_offset = layout.offsets[first_mip];
+        layout.mip_count -= first_mip;
+        layout.total_bytes -= kept_offset;
+        for (uint mip = 0; mip < layout.mip_count; mip++) {
+            layout.offsets[mip] = layout.offsets[first_mip + mip] - kept_offset;
+        }
+        for (uint mip = layout.mip_count; mip < desc.mip_levels; mip++) layout.offsets[mip] = 0;
+    }
     return layout;
 }
 
 <*
- Copy validated supplied layers into a packed span in layout order.
+ Copy validated supplied layers from first_mip into a packed span in layout order.
  @param destination : "At least the layout's total bytes."
  @param levels : "The slices the layout was computed from."
 *>
-fn void copy_supplied_texture_mips(char[] destination, TextureMipData[] levels) {
+fn void copy_supplied_texture_mips(char[] destination, TextureMipData[] levels, uint first_mip = 0) {
     usz offset;
     foreach (level : levels) {
+        if (level.mip < first_mip) continue;
+
         mem::copy(destination.ptr + offset, level.bytes.ptr, level.bytes.len);
         offset += level.bytes.len;
     }
