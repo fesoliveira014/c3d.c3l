@@ -293,7 +293,7 @@ Every file an importer or the asynchronous loader reads goes through the store's
 file source. With none set, files come from the file system.
 
 ```c3
-char[]? read_pack(void* user, Allocator allocator, String path) {
+fn char[]? read_pack(void* user, Allocator allocator, String path) {
     Pack* pack = user;
     return pack.read(allocator, path);
 }
