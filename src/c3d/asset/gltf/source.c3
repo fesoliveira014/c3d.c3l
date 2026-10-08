@@ -85,6 +85,7 @@ struct SourceSlot @private {
  @param allocator : "Owns the document and separate source record."
  @param [&out] source : "Receives source metadata only on success."
  @param [out] diagnostic : "Optional; reset at entry, set only on failure."
+ @param file_source : "Read during the call; a null read selects the file system."
  @return? c3d::ASSET_IO_ERROR, c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED, c3d::INVALID_ARGUMENT
  @require path.len > 0, allocator != tmem
 *>
@@ -94,12 +95,14 @@ fn ModelDocument? decode_model_with_source(
     SourceRecord* source,
     LoadOptions options = asset::LOAD_OPTIONS_DEFAULT,
     SourceDiagnostic* diagnostic = null,
+    FileSource file_source = {},
 ) {
     reset_source_diagnostic(diagnostic);
     return decode_file(
         allocator: allocator,
         path: path,
         options: options,
+        file_source: file_source,
         source: source,
         diagnostic: diagnostic,
     );
@@ -112,6 +115,7 @@ fn ModelDocument? decode_model_with_source(
  @param key : "Model key and prefix of every content key."
  @param [&out] source : "Receives source metadata only on success."
  @param [out] diagnostic : "Optional; reset at entry, set only on failure."
+ @param file_source : "Read during the call; a null read selects the file system."
  @return? c3d::ASSET_IO_ERROR, c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED, c3d::INVALID_ARGUMENT
  @require bytes.len > 0, key.len > 0, allocator != tmem
 *>
@@ -123,6 +127,7 @@ fn ModelDocument? decode_model_memory_with_source(
     SourceRecord* source,
     LoadOptions options = asset::LOAD_OPTIONS_DEFAULT,
     SourceDiagnostic* diagnostic = null,
+    FileSource file_source = {},
 ) {
     reset_source_diagnostic(diagnostic);
     return decode_memory(
@@ -131,6 +136,7 @@ fn ModelDocument? decode_model_memory_with_source(
         base_dir: base_dir,
         key: key,
         options: options,
+        file_source: file_source,
         source: source,
         diagnostic: diagnostic,
     );

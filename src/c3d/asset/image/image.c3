@@ -3,7 +3,6 @@ module c3d::asset::image;
 import c3d;
 import c3d::asset;
 import c3d::material;
-import std::io::file;
 
 const int IMAGE_CHANNELS @local = 4;
 const int R16_CHANNELS @local = 1;
@@ -137,16 +136,12 @@ fn Image? decode_image_r16(Allocator allocator, char[] bytes) {
 
 <*
  Read and decode an image into owned RGBA pixels.
+ @param file_source : "Read during the call; a null read selects the file system."
  @return? c3d::ASSET_IO_ERROR, c3d::INVALID_ARGUMENT, c3d::ASSET_FORMAT_ERROR
  @require path.len > 0
 *>
-fn Image? load_image(Allocator allocator, String path) {
-    char[] bytes;
-    if (try loaded = file::load(mem, path)) {
-        bytes = loaded;
-    } else {
-        return c3d::ASSET_IO_ERROR~;
-    }
+fn Image? load_image(Allocator allocator, String path, FileSource file_source = {}) {
+    char[] bytes = file_source.read_path(mem, path)!;
     defer free(bytes.ptr);
 
     return decode_image(allocator, bytes);
@@ -175,7 +170,7 @@ fn TextureId? load_texture(
     bool srgb,
     String key = "",
 ) {
-    Image decoded = load_image(assets.allocator, path)!;
+    Image decoded = load_image(assets.allocator, path, assets.file_source)!;
     defer destroy_image(&decoded);
 
     if (decoded.format != RGBA8_UNORM) return c3d::ASSET_FORMAT_ERROR~;
@@ -201,12 +196,7 @@ fn TextureId? load_texture(
  @require path.len > 0
 *>
 fn TextureId? load_texture_r16(AssetStore* assets, String path, String key = "") {
-    char[] bytes;
-    if (try loaded = file::load(mem, path)) {
-        bytes = loaded;
-    } else {
-        return c3d::ASSET_IO_ERROR~;
-    }
+    char[] bytes = assets.read_file(mem, path)!;
     defer free(bytes.ptr);
 
     Image decoded = decode_image_r16(assets.allocator, bytes)!;
@@ -233,7 +223,7 @@ fn TextureId? load_texture_r16(AssetStore* assets, String path, String key = "")
  @require path.len > 0
 *>
 fn TextureId? load_hdr(AssetStore* assets, String path, String key = "") {
-    Image decoded = load_image(assets.allocator, path)!;
+    Image decoded = load_image(assets.allocator, path, assets.file_source)!;
     defer destroy_image(&decoded);
 
     if (decoded.format != RGBA32_FLOAT) return c3d::ASSET_FORMAT_ERROR~;
@@ -265,7 +255,7 @@ fn TextureId? load_cube(
     bool srgb,
     String key = "",
 ) {
-    Image first = load_image(assets.allocator, paths[0])!;
+    Image first = load_image(assets.allocator, paths[0], assets.file_source)!;
     defer destroy_image(&first);
 
     if (first.width != first.height) return c3d::ASSET_FORMAT_ERROR~;
@@ -276,7 +266,7 @@ fn TextureId? load_cube(
 
     mem::copy(pixels.ptr, first.pixels.ptr, first.pixels.len);
     for (uint face = 1; face < material::CUBE_FACE_COUNT; face++) {
-        Image decoded = load_image(assets.allocator, paths[face])!;
+        Image decoded = load_image(assets.allocator, paths[face], assets.file_source)!;
         defer destroy_image(&decoded);
 
         if (decoded.width != first.width || decoded.height != first.height || decoded.format != first.format) {

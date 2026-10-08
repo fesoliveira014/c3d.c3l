@@ -4,7 +4,6 @@ import c3d;
 import c3d::asset;
 import c3d::asset::image;
 import c3d::material;
-import std::io::file;
 import std::math;
 import ufbx;
 
@@ -134,10 +133,12 @@ fn char[]? texture_bytes(Importer* importer, ufbx::Texture* texture) @private {
     if (texture.content.len) return texture.content;
     if (texture.relative_filename.len) {
         String relative = texture.relative_filename.treplace("\\", "/");
-        if (try bytes = file::load(tmem, join_path(importer.base_dir, relative))) return bytes;
+        String joined = join_path(importer.base_dir, relative);
+        if (try bytes = importer.file_source.read_path(tmem, joined)) return bytes;
     }
     if (texture.absolute_filename.len) {
-        if (try bytes = file::load(tmem, texture.absolute_filename.treplace("\\", "/"))) return bytes;
+        String absolute = texture.absolute_filename.treplace("\\", "/");
+        if (try bytes = importer.file_source.read_path(tmem, absolute)) return bytes;
     }
     return c3d::ASSET_IO_ERROR~;
 }

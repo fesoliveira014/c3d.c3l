@@ -63,6 +63,7 @@ struct AssetStoreDesc {
     uint max_shaders;
     uint max_compute_shaders;
     uint max_fonts;
+    FileSource file_source; // outlives the store; a null read selects the file system
 }
 
 <*
@@ -83,6 +84,7 @@ struct AssetStore {
     FontPool                  fonts;
     HashMap{String, AssetRef} keys;
     CustomSlot[MAX_CUSTOM_ASSET_TYPES] custom;
+    FileSource                file_source; // fixed at creation
 }
 
 <*
@@ -247,6 +249,7 @@ fn AssetStore create_asset_store(Allocator allocator, AssetStoreDesc desc) {
         .shaders      = pool::create_pool{ShaderAsset, ShaderId}(allocator, desc.max_shaders),
         .compute_shaders = pool::create_pool{ComputeShaderAsset, ComputeShaderId}(allocator, desc.max_compute_shaders),
         .fonts        = pool::create_pool{FontAsset, FontId}(allocator, desc.max_fonts),
+        .file_source  = desc.file_source,
     };
     store.keys.init(allocator);
     add_builtins(&store);
