@@ -57,22 +57,25 @@ struct AudioVoiceLink @private {
 const Vec3 FORWARD @private = { 0, 0, -1 };
 
 <*
- Register the emitter and listener components with remove hooks bound to the system.
+ Register the emitter and listener components with remove hooks bound to the system; one scene per system.
  @param [&inout] scene : "No audio registration has occurred in this scene."
- @param [&in] system : "Outlives the scene."
+ @param [&inout] system : "Outlives the scene; no scene registered yet."
  @return? c3d::CAPACITY_EXCEEDED
+ @require system.state.scene_identity == 0
 *>
 fn void? register_audio(Scene* scene, AudioSystem* system) {
     scene.register(AudioEmitter)!;
     scene.register(AudioListener)!;
     scene.register(AudioVoiceLink)!;
     scene.set_remove_hook(AudioEmitter, &remove_emitter, system.state);
+    system.state.scene_identity = scene.identity;
 }
 
 <*
  Copy listener and emitter state into the mixer and retire finished voices.
  May block briefly while a retired voice leaves the audio thread.
- @param [&inout] scene : "World matrices are current."
+ @param [&inout] scene : "The registered scene, if any; world matrices are current."
+ @require !self.state.scene_identity || self.state.scene_identity == scene.identity
 *>
 fn void AudioSystem.update(&self, Scene* scene) {
     AudioState* state = self.state;

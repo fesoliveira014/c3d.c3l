@@ -3,6 +3,7 @@ module c3d::audio;
 import c3d;
 import c3d::asset;
 import c3d::ecs;
+import c3d::scene;
 import ma;
 import std::math;
 
@@ -107,6 +108,7 @@ struct AudioState @private {
     Allocator               allocator; // callbacks.user points here
     ma::AllocationCallbacks callbacks;
     AssetStore*             assets;
+    ulong                   scene_identity; // Scene.identity of the one registered scene; survives moving the scene
     usz                     stream_threshold_bytes;
     char[]                  storage;
     ma::Engine*             engine;

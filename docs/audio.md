@@ -27,7 +27,8 @@ audio::register_audio(&scene, &audio)!;
 - `create_audio_system` opens the default output device. A device or engine failure faults `UNSUPPORTED`; an
   application can retry with `null_device = true`. Duplicate or empty bus names fault `INVALID_ARGUMENT`.
 - Call `scene.update_world()` and then `audio.update(&scene)` once per frame.
-- Destroy every scene registered with a system before the system: the scene's remove hooks call into it.
+- One scene per system: `register_audio` records the scene, and `update` takes that scene. The system outlives its
+  scene, because the scene's remove hooks call into the system. Destroy the scene first.
 
 ## Clips and modes
 
