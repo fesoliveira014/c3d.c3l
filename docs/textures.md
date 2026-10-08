@@ -539,13 +539,15 @@ views keep resident.
 - When bytes exceed the budget, textures that were not drawn return to their tail, least recently used first.
 - When the drawn set still does not fit, one global bias holds every drawn texture the same number of levels
   below its need. The bias relaxes once the set fits within 90% of the budget.
-- Lifting the budget raises every streamed texture to full residency without pacing.
+- Lifting the budget raises every streamed texture to full residency, paced by the same allowance: the first
+  raise of each frame, then 8 MiB.
 
 **Full readers.** Some paths read a texture outside material sampling and need every level: environment
-sources, overlay and UI images, compute dispatch reads, textures in custom-material slots (except the base-color slot of a masked material), and toon
-gradient maps. A texture used this way is a full reader. It never streams, the budget does not apply to it, and the
-flag stays set for the texture's life in that renderer, replacements included. A texture already streamed that becomes a
-full reader is raised to full residency by the next step.
+sources, overlay and UI images, compute dispatch reads, textures in custom-material slots (except the
+base-color slot of a masked material), and toon gradient maps. A texture used this way is a full reader. It
+never streams and is never evicted; its bytes count against the budget as fixed bytes. The flag stays set for
+the texture's life in that renderer, replacements included. A texture already streamed that becomes a full
+reader is raised to full residency by the next step.
 
 **Raising needs the source.** A raise re-reads the CPU source, so releasing it (`release_texture_cpu`) pins
 the texture: the step neither raises nor evicts it. Under a budget, releasing sources after the first frames
@@ -568,7 +570,7 @@ overshoots the budget briefly by the retired images.
 `upload_texture`. A change that cannot allocate an image or a view slot (`gpu::SLOT_TABLE_FULL`,
 `gpu::DESCRIPTOR_HEAP_FULL`, `gpu::OUT_OF_DEVICE_MEMORY`) is skipped for the frame and counted in
 `texture_changes_deferred`. Replacing a texture keeps its record and restarts it at the tail when the
-dimensions, mip count or format change.
+dimensions, mip count or format change; the texture is then re-raised from its last demand one frame later.
 
 ## Faults and native requirements
 
