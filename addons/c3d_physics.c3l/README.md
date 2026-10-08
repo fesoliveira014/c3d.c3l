@@ -16,6 +16,12 @@ faults, frame order and measurements; the `cloth` example shows a flag and a cap
 character (`--scene flag|cape|both`). The manual Vulkan acceptance runs with
 `c3c test cloth_acceptance --path addons/c3d_physics.c3l/test/gpu`.
 
+## Replaced assets
+
+A body keeps the collision snapshot it cooked when `replace_geometry` or `replace_texture` replaces its
+source. Bodies created afterwards, and world rebuilds, cook the current revision. The geometry copy a cloth
+owns is private to the cloth: do not replace or edit it.
+
 ## Breakables
 
 A `Breakable` uses authored physical pieces below a root. It builds a hull-distance

@@ -171,6 +171,10 @@ Additive order matters for noncommuting rotations. A time-zero action adds
 nothing; a half-weight 45-degree delta applies 22.5 degrees. Scale is additive,
 not multiplicative. Masks apply to every channel.
 
+An additive action keeps the reference pose it sampled at `play` until it is played again. After
+`replace_clip_owned`, running actions re-seek on the new tracks, but an additive action's reference pose and
+the root-motion state stay as sampled from the old clip until the action is played again.
+
 Animation owns the final pose until later physics/IK writers run. There is no
 scheduler or automatic motion consumption. Root motion and events are outputs for
 the application to consume. Per-frame

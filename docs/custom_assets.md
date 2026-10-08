@@ -119,6 +119,8 @@ into an id of another.
 - An owner that edits a payload in place advances `header.revision`, as
   `mark_material_dirty` does for materials, so consumers keyed on the revision
   see the change.
+- An owner that replaces a whole payload also sets `header.replaced_revision` to the new revision, so consumers that
+  refresh incrementally do not patch replaced content as an edit. `mark_*_dirty` leaves it unchanged.
 - `remove_*` frees the payload itself; `on_destroy` covers only records still
   live when the store is destroyed.
 - `destroy_asset_store` releases custom pools after the builtin records and

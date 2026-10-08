@@ -184,6 +184,12 @@ assets.mark_environment_dirty(studio);
 renderer.upload_environment(studio)!;
 ```
 
+`assets.replace_environment(studio, desc)` validates a complete description with `validate_environment`,
+then assigns it under the same id and key and advances the revision once. It faults like `add_environment`
+(`INVALID_ARGUMENT`, `INVALID_ID`, `UNSUPPORTED`) and changes nothing on a fault. The previous source texture
+stays in the store. Path-traced views restart after a replacement; see
+[Accumulation and resets](path_tracing.md#accumulation-and-resets).
+
 Specular-size changes reuse the source cube and rebuild the needed GGX and Charlie
 filters. Equirectangular conversion-size changes rebuild the converted source and
 its lighting. Source texture identity, content revision or backing changes also

@@ -18,7 +18,12 @@ FontId font = assets.add_font(file_bytes, asset::default_font_desc(), "ui/regula
   to spare; a Latin UI font fits in far less. See [Capacities and costs](#capacities-and-costs).
 - `remove_font` frees the file and outlines. The renderer retires the font's textures on its next frame.
 
-Faults of `add_font` and `add_font_owned`:
+- `replace_font` and `replace_font_owned` swap the file and capacities under the same id and key. Built glyphs are
+  discarded and rebuild on next placement. The renderer re-uploads the outline rows from the start, and recreates
+  its textures when the capacities changed. A UI clears its cached placements when a font of its font sets is
+  replaced. Glyph indices from the old face are not valid for the new one: place text again.
+
+Faults of `add_font` and `add_font_owned`; the replace calls fault the same way, without `CAPACITY_EXCEEDED`:
 
 | Fault | Meaning |
 | --- | --- |

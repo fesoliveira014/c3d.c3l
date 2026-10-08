@@ -457,8 +457,8 @@ The renderer regenerates mips on upload. The material revision need not change
 for an edit to any referenced texture. This applies independently to all five
 Standard slots, including shared images. Sampler revision changes and replacement
 image backing also refresh the resolved bindings without a material edit. If a
-texture is removed and its index reused, an old generation stays absent. Replacing
-dimensions or format requires complete matching CPU bytes before marking the texture dirty.
+texture is removed and its index reused, an old generation stays absent. To change dimensions
+or format, use [Replacing a texture](#replacing-a-texture).
 
 For supplied data, edit only the retained bytes, then mark the texture dirty:
 
@@ -471,9 +471,34 @@ renderer.upload(supplied)!;
 
 This edits the uncompressed example's supplied tail. Compressed edits must keep
 valid complete blocks. To replace a supplied source's dimensions, format, mip
-count or record structure, insert a new asset and update references. Do not edit
+count or record structure, use [Replacing a texture](#replacing-a-texture). Do not edit
 or release either source between preparation and submission. Current cube and BC
 mirrors remain usable after explicit release, just like ordinary 2D textures.
+
+## Replacing a texture
+
+A replacement swaps the content of a live texture under its id and key. Every material, environment and
+overlay that references the id shows the new content at its next use.
+
+```c3
+assets.replace_texture(texture, desc, pixels)!;           // copies mip-zero pixels
+assets.replace_texture_owned(texture, desc, pixels)!;     // takes pixels allocated with the store allocator
+assets.replace_texture_mips(texture, desc, levels)!;      // copies supplied mips
+assets.replace_texture_empty(texture, desc)!;             // an empty storage texture
+```
+
+- Each form takes the inputs of its `add_texture` form and rejects the same data with `c3d::INVALID_ARGUMENT`.
+- The source form may change: mip-zero, supplied mips or empty.
+- Width, height, mip count and a format of the same sample type may change.
+- `is_cube`, `storage`, `layers`, `depth` and whether the format is `R16_UINT` may not. A material binding refuses a
+  cube or `R16_UINT` texture in a built-in slot on every draw, so these changes fault with
+  `c3d::INCOMPATIBLE_STRUCTURE`. Add a new texture and update the references instead.
+- A fault changes nothing. An `_owned` form takes the pixels only on success; on a fault the caller keeps them.
+- `revision` advances once. `replaced_revision` takes the same value; `mark_texture_dirty` leaves it alone. Consumers
+  that refresh part of a texture compare it, so they never patch replaced content as an edit.
+- Call from the owner thread, outside frame recording. The renderer retires the old image after its last submitted
+  frame.
+- Built-in textures cannot be replaced.
 
 ## Faults and native requirements
 
@@ -483,7 +508,8 @@ malformed, unsupported, or wrong-loader image formats produce
 instead; see [container faults](#container-faults). Empty encoded data or data exceeding the native
 integer length limit produces `c3d::INVALID_ARGUMENT`. Store insertion can also
 produce `c3d::INVALID_ARGUMENT` for a duplicate key or
-`c3d::CAPACITY_EXCEEDED` for a full texture pool. GPU upload faults propagate
+`c3d::CAPACITY_EXCEEDED` for a full texture pool. Replacement produces `c3d::INVALID_ARGUMENT` for data that
+insertion rejects and `c3d::INCOMPATIBLE_STRUCTURE` for a structural change. GPU upload faults propagate
 unchanged; upload input with absent pixels reports
 `c3d::ASSET_DATA_UNAVAILABLE`. Cube face shape/type mismatches report
 `c3d::ASSET_FORMAT_ERROR`. Supplied insertion rejects zero mip/layer counts,
