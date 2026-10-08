@@ -14,6 +14,7 @@ const float QUERY_TOLERANCE @private = 0.001f;
 const Vec3  PLATFORM_SIZE @private = { 4.2f, 1.5f, 4.2f }; // taller than the 0.9 m climb; its eroded top keeps a region
 const Vec3  PLATFORM_CENTRE @private = { 6.5f, 0.75f, 4.8f };
 const float MUD_COST @private = 10;
+const Vec3  SHIFT_OFFSET @private = { 256, 0, 0 };
 
 struct QueryFixture @private {
     BuilderFixture*              level;
@@ -173,6 +174,43 @@ fn void test_path_across_a_tile_border() @test {
     StraightPoint last = fixture.points[straight.count - 1];
     assert(first.flags.start && same_xz(first.position, start));
     assert(last.flags.end && same_xz(last.position, end));
+}
+
+fn bool points_match(StraightPoint[] shifted, StraightPoint[] original, Vec3 offset) @private {
+    if (shifted.len != original.len) return false;
+    foreach (index, point : shifted) {
+        if ((point.position - (original[index].position - offset)).length() > QUERY_TOLERANCE) return false;
+        if (point.ref != original[index].ref) return false;
+    }
+    return true;
+}
+
+fn void test_path_is_unchanged_after_shift_origin() @test {
+    QueryFixture* fixture = floor_level(2);
+    defer destroy_level(fixture);
+    build_level(fixture);
+    float tile = fixture.level.builder.tile_world_size;
+    Vec3 start = { tile * 0.5f, 0, tile * 0.5f };
+    Vec3 end = { tile * 1.5f, 0, tile * 0.5f };
+    PathResult corridor = path_between(fixture, start, end, &fixture.filter);
+    PathResult straight = straight_between(fixture, start, end, corridor.count);
+    PolyRef[PATH_CAPACITY] original_path = fixture.path;
+    StraightPoint[POINT_CAPACITY] original_points = fixture.points;
+
+    fixture.level.mesh.shift_origin(SHIFT_OFFSET);
+    fixture.query.shift_origin(SHIFT_OFFSET);
+    PathResult shifted_corridor = path_between(fixture, start - SHIFT_OFFSET, end - SHIFT_OFFSET, &fixture.filter);
+    PathResult shifted_straight = straight_between(
+        fixture,
+        start - SHIFT_OFFSET,
+        end - SHIFT_OFFSET,
+        shifted_corridor.count,
+    );
+
+    assert(shifted_corridor.count == corridor.count && !shifted_corridor.partial);
+    assert(same_refs(fixture.path[:shifted_corridor.count], original_path[:corridor.count]));
+    assert(shifted_straight.count == straight.count);
+    assert(points_match(fixture.points[:shifted_straight.count], original_points[:straight.count], SHIFT_OFFSET));
 }
 
 fn void test_nav_link_shortens_a_path() @test {
