@@ -1,4 +1,4 @@
-Entry point for every agent session in this repository. Read it fully before reading or writing code. The repository copy is canonical; this Notion mirror follows it.
+Entry point for every agent session in this repository. Read it once at task start; reread changed or newly relevant sections when needed. The repository copy is canonical; its Notion mirror follows it. Task handoffs record decisions and exceptions instead of copying this policy.
 
 # 1. Project facts
 
@@ -80,28 +80,32 @@ add-on and its CPU/GPU/internal features. See `docs/lod.md` for the contract.
 - Style baseline (mandatory): `docs/style.md` in the repository, ported from gpu.c3l's `docs/contributing/style.md` and extended with the allocator, initializer, contract, and docstring rules of the [Style Guide (docs/style.md)](https://app.notion.com/p/3bccb7903a5881089469c7001fa88d7c). Section 6 of this file refines it; nothing here relaxes it.
 - Change records (OpenSpec mirrors, one page per change): [Changes](https://app.notion.com/p/3cfcb7903a5881da8d4cdc33909a6a24) under Development
 
-Work items name the architecture sections to read. Read those and nothing else until the item says otherwise.
+Work items name the architecture sections to read. Read those and follow additional references only when the task requires them. Product documentation describes current behavior, contracts and usage. Proposals, test plans, validation results and review history belong in the change artifacts described in section 13.
 
 # 3. Skills, mandatory
 
-Load before reading or writing a line of code. A review or change made without them is invalid.
+Load the applicable skills before reading, writing or reviewing code. Reuse already loaded guidance within the task; consult additional references when the touched language feature or dependency requires them. A code review or change without the applicable skills is invalid. Prose-only changes do not require unrelated language or binding references.
 
 - `c3-expert`: any C3 reading, writing, or reasoning; `project.json`, `manifest.json`, build configuration; any `c3c` diagnostic. Threshold: more than about five lines of C3 read or written without it this session means stop and load it.
 - `c3-style`: any `.c3` or `.c3i` file written or reviewed.
 - `c3-bindings`: anything that crosses into gpu.c3l, sdl3.c3l, c3imgui.c3l, c3cg.c3l, box3d.c3l, cgltf.c3l, ufbx.c3l, shaderc.c3l, clay.c3l, or the `extern fn` declarations for stb_image and stb_truetype.
 - `shader-dev`, when installed: GLSL technique (BRDF, shadows, post effects). Dispatch shape, barriers, and the binding contract stay with the style guide and gpu.c3l's `docs/shader_abi.md` and `docs/cookbook.md`.
 
-The skills live in `.claude/skills/`, which is gitignored. A session that cannot list them is not a working session.
+The skills live in `.claude/skills/`, which is gitignored. Verify the required skills are available before code work.
 
 # 4. Session protocol
 
-1. Read this file and `docs/style.md`.
-2. Read the milestone page for the assigned work and the architecture sections it names.
-3. Load the skills in section 3.
-4. Implement the scoped task. Tests land in the same change where the milestone lists them.
-5. Run the milestone's acceptance commands. Not green and not fixable in scope: report, do not force.
+1. Read this file; read `docs/style.md` for code work. Inspect the working tree and preserve unrelated changes.
+2. Read the assigned milestone, its named architecture sections and the current change artifacts. Collect all known design questions before requesting answers.
+3. Load the applicable skills in section 3. Verify the toolchain and dependency pins once for the working environment; repeat only when they change or a failure requires it.
+4. Follow the proposal, approval and implementation stages in section 13. Tests land with the behavior they cover.
+5. Run the scoped checks and required acceptance commands in section 5 and the approved tasks. If a required check fails and cannot be fixed in scope, report the failure.
 
 One milestone is active at a time. Do not pull work from a later milestone into an idle lane. Every code change runs through the change lifecycle in section 13; no change exists outside one.
+
+Keep a short handoff with the active contract, checkout and commit, outstanding decisions, applicable check results and next action. Reuse it when resuming instead of reconstructing the entire conversation. Keep historical evidence in the change artifacts.
+
+Use `gh` for GitHub operations. On Windows, a sandboxed authentication failure can reflect unavailable keyring access; use the approved execution context before treating credentials as invalid. Reuse a prepared checkout and pin-matched native artifacts where possible; keep mutable build outputs isolated. Use native shell path operations, verify cleanup targets, and remove only known task-owned files. Do not change global Git settings to inspect a checkout.
 
 # 5. Build and verification
 
@@ -120,7 +124,16 @@ Steps run in this order and stop at the first failure: tools (c3c 0.8.3, glslang
 
 Releases: a `v*` tag runs `.github/workflows/release.yml`, which reuses `ci.yml`, compiles SPIR-V, packs every package with `scripts/package_release.py` (core as `c3d_core-v<version>.c3l`, each add-on as `<provides>-v<version>.c3l`, `c3d_shader_tools-v<version>.zip`, `SHA256SUMS`) and publishes them with the dependency pins read from the submodules' release tags. Every submodule must sit on a released tag first. Consumer setup and the per-package dependency list are in `docs/release.md`.
 
-Before every commit: `scripts/build.py --test`. Broken builds are never committed. GPU examples run manually; CI runs `--test`. Every development run of a GPU example enables Vulkan validation through gpu.c3l.
+Local verification is scoped to the change. The full `scripts/build.py --test` is the CI integration gate, not a requirement before every local commit.
+
+- During implementation, run the failing case and directly affected tests, using `--test-filter` where appropriate.
+- Before review, build the changed consumers and run the affected subsystem targets and acceptance cases listed in `tasks.md`. Broaden local checks only for a demonstrated dependency or unresolved risk, or when the approved plan requires it.
+- The reviewer runs broader suites and hardware acceptance when warranted. Final merge requires the reviewer's `MERGE` verdict at the final head and all required CI checks passing at that head.
+- After a fix, rerun the checks affected by that fix. Repeat other checks only when their inputs changed or new evidence invalidates the earlier result. Prose-only changes need document, link and diff checks, not compilation or GPU runs.
+
+Record the tested commit, compiler/options, commands, fixtures and results in change evidence and the PR. Compilation, CPU tests, native/GPU acceptance and performance measurements are distinct claims. When independent validators check the same corpus, use identical versioned fixtures. Do not add validation reports or review receipts to product documentation.
+
+Before committing, review the diff and pass the applicable local checks. Do not commit known build failures. GPU examples run manually; every development GPU run enables Vulkan validation through gpu.c3l. CI runs the full `--test` sequence. Cancel obsolete PR runs when supported; never use a result from a superseded head as the merge gate.
 
 The default build also builds the collector's `capture` example, the physics package's `physics`, `physics_instanced`, `physics_components`, `vehicle`, `ragdoll`, `collision_math`, `breakable` and `cloth` examples, the nav package's `navmesh`, `crowd` and `grid` examples, the character package's `character` and `character_nav` examples, the physics GUI package's `physics_inspector` and `physics_inspector_character` examples, the job package's `job_bench` example, the landscape package's `terrain`, `vegetation` and `water` examples, the particle package's `particles` example, the UI package's `ui` example, the root `profile_gpu` example and all four `profile_gui` feature targets; `--target` and `--example` resolve add-on examples to their package project. `--test` runs the collector's off, CPU, internal CPU, GPU, internal GPU, CPU+GPU and full CPU+GPU+INTERNAL targets, the presentation add-on's off, CPU, GPU and combined data targets, the physics package's `physics_test` target, the nav package's `nav_test` target, the character package's `character_test` and `character_nav_test` targets, the physics GUI package's `physics_panel_off`, `physics_panel` and `physics_panel_character` targets, the job package's `job_test` and `job_profile_test` targets, the landscape package's `landscape_test` target, the particle package's `particle_test` target, the UI package's `ui_test` target, and the root integration targets. These tests never create a GPU device. Direct `c3c test profile_cpu --path addons/c3d_profile.c3l` exercises only the standalone collector package. Real Vulkan acceptance lives in the separately invoked `test/gpu/profile` project and the manually run profiler GUI examples; neither runs in CI. An acceptance project run directly with `c3c test <target> --path <project>` gets no runtime copy from `build.py`: when it links shaderc (`test/gpu/render`, the landscape package's `terrain_acceptance`), copy `lib/shaderc.c3l/linux/libshaderc_shared.so.1` or `lib/shaderc.c3l/windows/shaderc_shared.dll` next to its executable first.
 
@@ -200,7 +213,7 @@ Counter-example, rejected on review:
 
 # 9. KISS, checks, and tests
 
-- Prefer the simplest implementation that satisfies the architecture. Fixed capacity over growth; one allocation per resource; enums and switch over dispatch. Add complexity only when a measurement on this codebase demands it, and record the measurement in the milestone page.
+- Prefer the simplest implementation that satisfies the architecture. Fixed capacity over growth; one allocation per resource; enums and switch over dispatch. Add complexity only when a measurement on this codebase demands it, and record the measurement in the change evidence. The milestone records the accepted decision and links to that evidence.
 - No per-frame allocation. A resource is allocated once when its owner is created and freed when the owner is destroyed; spawn and destroy may happen inside the frame loop. Never allocate and free the same thing within a frame, or rebuild it every frame. Derived data of asset size (cooked collision data, wireframes, packed vertex streams, baked tables) is built once at load or add time and owned by the resource that uses it; a cache with an identity (source id and revision) beats a rebuild. Per-frame recomputation is for values that are cheap and change every frame (transforms, interpolation, culling); recompute those rather than caching them.
 - No speculative generality: no configuration for a case the milestones do not name, no abstraction with one implementor, no hooks nobody calls. This rejects shapes nobody has committed to, not supporting structure for a committed capability: when the engine already does something internally, or the architecture has committed to it, the application-facing form (its types, lifetimes, and entry points) is built then, in its right shape, without waiting for an example to need it.
 - No over-checking: no null checks on pointers the contract says are non-null, no range checks on indices produced by the module itself, no validation of data that gpu.c3l already validates, no defensive copies.
@@ -271,7 +284,9 @@ c3d.c3l/
 
 # 13. Change workflow, customized OpenSpec
 
-Solo development runs OpenSpec customized around the human driving. The agent's output is understanding, documents, tests, and planned code; the human puts production code into files. One question at a time; options before recommendations; chunks over walls.
+The owner sets scope and resolves consequential design choices. A designated reviewer may act within the authority the owner delegates. The owner or an explicitly delegated agent implements the approved work. A request to implement a scoped task delegates that work; it does not require permission for each routine edit.
+
+Ask all known questions up front, then raise follow-ups when answers or new evidence reveal another decision. Keep the proposal and tasks as the shared basis for implementation and review.
 
 ## Bootstrapping the harness
 
@@ -286,38 +301,45 @@ git submodule update --init --recursive
 python3 scripts/build.py --init-deps
 ```
 
-`--tools none` is mandatory: otherwise `openspec init` writes AI-tool instruction files and the `claude` profile overwrites this file. Verify a session by asking which skills are available; every skill in section 3 must list.
+`--tools none` is mandatory: otherwise `openspec init` writes AI-tool instruction files and the `claude` profile overwrites this file. Verify skill availability directly. Bootstrap once per environment; do not repeat setup without a changed dependency or a concrete failure.
 
 ## The lifecycle
 
 Every milestone task, or a tightly coupled group of tasks from one milestone, runs as one OpenSpec change through these steps in order:
 
-1. **Brainstorm.** The agent reads the milestone page, the architecture sections it names, and the relevant code, then interviews the human one question at a time while the human shapes the design. Open decisions end as two or three options with tradeoffs, never a lone recommendation. No proposal is drafted before the shape is agreed.
-2. **Propose.** Two documents. `proposal.md`: the design and its contracts: signatures, structs, invariants, faults, and where each lives. `tasks.md`: ordered tasks with implementation guidance: file placements, declarations, commands to run, and for every API the change touches what it expects, what it returns, which faults it can produce and what each means, and any precondition or ordering it imposes. Guidance, not prescription: the human may take a different shape or decomposition where they see a better one, and the close-out records where they did. Exception: tests are specified in full; test design and coverage are the agent's job, within the section 9 limits. For a change larger than about 1,000 lines of code, `tasks.md` also plans its pull request slices (see Authoring).
-3. **Apply.** The human implements `tasks.md`. The agent advises (API lookups, math checks, fault diagnosis) and edits files only on explicit delegation of a named chunk. Tests are delegated to the agent by default.
-4. **Review.** The agent diffs the work against `proposal.md` and `tasks.md` with `docs/style.md` and the section 3 skills loaded. Findings are `file:line:fix`, focused on divergences and discoveries; style was settled at proposal time. The review also checks the milestone's exit criteria and sections 6 to 9 of this file.
-5. **Sync.** `proposal.md`, `tasks.md`, and a close-out (what changed, where reality diverged from the proposal, and why) are mirrored to Notion under Development, Changes, as one child page named after the change id. Then propagate: every divergence and every carried-forward item in the close-out is written as an "As built" note, citing the change id, on the architecture section it contradicts or extends and on the handoff of each downstream milestone it affects. Pages are corrected in place, not rewritten; a later brainstorm must be able to trust the architecture section it is told to read.
-6. **Archive.** `openspec archive`; the Notion page title gains `[Archived]`.
+1. **Brainstorm.** Read the assigned milestone, relevant architecture and code. Present all known questions together, grouped by topic, with options, tradeoffs and a recommendation where useful. Cover ownership, public contracts, compatibility, failure behavior, exclusions and acceptance. Resolve dependent follow-ups after the initial answers. Record decisions in `interview.md`; do not reopen settled choices without new evidence. Agree the shape before drafting the proposal.
+2. **Propose.** Write `proposal.md` and `tasks.md`. The proposal defines scope, placement, contracts, ownership, invariants, faults and exclusions. Tasks define the implementation order, affected APIs, completion criteria and scoped validation commands. Specify tests in full in one canonical annex or executable test file referenced by the tasks. Include required spec deltas and a PR plan based on reviewable behavior. For uncertain numerical, performance or platform work, identify the assumptions and bounded prototypes needed before dependent implementation; record their evidence here. Obtain approval of the proposal and tasks from the owner or designated reviewer before production implementation.
+3. **Apply.** Implement the approved tasks within the delegated scope. Tests are delegated to the agent by default. Keep artifacts current when implementation reveals a necessary change. Ask follow-up questions for unresolved contract, ownership or scope decisions; routine implementation choices within the approved contract do not need another approval.
+4. **Review.** Review the diff against the approved artifacts, milestone exit criteria, style and applicable skills. Report actionable findings as `file:line:fix`. Distinguish defects and contract violations from optional improvements. Keep check results and reviewer responses in change evidence and PRs. Resolve findings, then obtain a `MERGE` verdict for the final head and passing required CI before merging.
+5. **Sync.** Verify the PR is `MERGED` and record its merge commit before final close-out. Complete the change artifacts with delivered behavior, divergences, acceptance evidence and carried-forward work. Mirror proposal, tasks/specs and close-out to one Notion Changes page. Correct affected architecture and product documentation in place to describe current contracts and behavior; keep test logs, pass counts, validation receipts and review history in the change record. Update milestone status and affected downstream handoffs with links to the record. Read back the changed records once to verify the update; do not rewrite unchanged pages.
+6. **Archive.** Archive the local OpenSpec change and mark its Notion record `[Archived]` after required work and synchronization are complete. Preserve intentionally deferred work as open items. Synchronize the checkout and remove only verified task-owned, merged branches and temporary checkouts. Report an archive-tool failure accurately and use a verified in-tree fallback when appropriate; do not claim a failed command succeeded.
 
-Steps 1 and 2 are one working session, 3 is the human's time, 4 to 6 are minutes. Trivial work collapses to 3 to 5; a milestone task never skips 1 and 2. The proposal and tasks pair is a decision record corrected by reality, not a spec the code must be synchronized to; divergences update the record.
+Trivial corrections with already agreed scope may collapse to apply, review and sync. Milestones retain the interview and approved proposal/tasks stages unless the owner explicitly waives them. A waiver applies only to its stated task. Keep one current version of each artifact and link to it from review requests; avoid copying the full design into every comment or status update.
 
-## Artifacts never enter the repository
+## Change artifacts and product documentation
 
 - `openspec/` is in `.gitignore`. No proposal, spec delta, or task list is committed or pushed.
 - Notion is the durable record: Development, Milestones for the plan; Development, Changes for the per-change record.
-- The only committed process artifacts are the ones section 8 exempts: `AGENTS.md`, `docs/`, and `scripts/`.
+- Keep validation reports, experiment logs, test receipts, proposal history and review discussions in the change artifacts, their Notion mirror or PR evidence. Product documentation explains behavior, limitations and usage. The section 8 exemptions permit development terminology where needed; they do not make `docs/` a destination for validation reports.
 
 ## Authoring
 
-- One change is an evening to a weekend. If it grows past that, split it and land the first half.
+- Bound the change by approved behavior and acceptance. If investigation changes its scope materially, review the plan before expanding dependent work.
 - Tests ship in the same change, written against the milestone's exit criteria.
 - No drive-by refactors. A refactor is its own change, made on the second pain, with behavior unchanged.
-- Read your own diff once, top to bottom, before committing. `scripts/build.py --test` is green.
-- Pull requests stay reviewable. A change larger than about 1,000 lines of code lands as a group of stacked pull requests of about 500 lines each, cut at natural seams (bindings or core changes, data and loading, runtime, drawing, example, docs). Each one builds and passes `scripts/build.py --test` on its own and names its place in the stack; they are reviewed and merged in stack order. The change is still designed and implemented as one unit; only its pull requests are sliced. Advisory, not mandatory: one large pull request is fine when the features are tightly coupled or the code demands it.
+- Read your own diff once, top to bottom, before committing and pass the applicable section 5 checks.
+- PR size is advisory. Roughly 500-line slices and the 1,000-line guideline are prompts to assess reviewability, never mandatory limits. Split at independently reviewable behavior or dependency boundaries. Keep tightly coupled implementation, tests and documentation together when splitting adds only review and CI cycles. Each slice builds and passes its scoped checks; each merge still requires final-head review and CI. Design the change as one unit and record the chosen PR boundaries in `tasks.md`.
 
 ## Reviewing
 
-The reviewer loads `docs/style.md` and every section 3 skill before reading a line; a review without them is not valid. Review against: the style guide, the change's `proposal.md` and `tasks.md`, the milestone's exit criteria, the architecture sections the milestone names, and sections 6 to 9 of this file. Flag every style violation, every docstring that narrates, every defensive check on an internal path, and every test that restates its implementation.
+The reviewer uses `docs/style.md` and the applicable section 3 skills, reusing already loaded guidance. Review against the approved proposal/tasks/specs, milestone exit criteria, affected architecture and sections 6 to 9. Flag concrete correctness, contract and style violations. A missing defensive check is not automatically a defect. Review fixes against the finding and affected behavior; broaden the review when a fix changes the contract or exposes another problem.
+
+## Coordination
+
+- When parallel agent work is authorized, give each participant a bounded assignment with inputs, owned files, expected output and completion criteria. Keep one owner for integration and shared files. Do not start work from a later milestone to occupy an idle agent.
+- Agree a communication venue with the owner and reviewer at task start. Use direct, event-driven messages when available. Keep accepted design decisions in the change artifacts and final review verdicts in GitHub at the reviewed commit; a notification or transport acknowledgement is not approval.
+- Send a complete question set or review request with artifact links, the relevant commit and the requested decision. Send further messages for new findings, blockers, changed readiness or completion. Avoid repeated status requests while the state is unchanged.
+- Prefer bounded waits or notifications to repeated full comment-history reads. When polling is necessary, use one coordinator and fetch only changes since the last observation. Continue independent work within the approved change while waiting.
 
 ## Project-instructions block
 
@@ -326,29 +348,10 @@ Paste into `openspec/config.yaml` under `context` after `openspec init`:
 ```markdown
 # c3d, OpenSpec customizations
 
-- Replace the explore phase with an interview: read the milestone page,
-  the architecture sections it names, and the code, then ask the human
-  questions one at a time; end open decisions as two or three options
-  with tradeoffs. Do not draft a proposal before the shape is agreed.
-- proposal.md = design plus contracts (signatures, structs, invariants,
-  faults, placement). tasks.md = ordered tasks with implementation
-  guidance: placements, declarations, commands, and for every API the
-  change touches what it expects, what it returns, which faults it can
-  produce and what each means, plus preconditions and ordering.
-  Guidance, not prescription. Tests are specified in full, within the
-  AGENTS.md section 9 limits: no over-testing. A change over about
-  1,000 lines plans stacked pull requests of about 500 lines each.
-- The human implements. Do not edit source files unless a named chunk
-  is explicitly delegated. Tests are delegated to you by default.
-- All code anywhere, including skeletons in tasks.md, follows the
-  repository AGENTS.md sections 6 to 9 (style, docstrings, comments,
-  KISS) and is written with c3-expert, c3-style, c3-bindings, and
-  shader-dev when installed, loaded.
-- Sync = mirror proposal.md, tasks.md, and the close-out (divergences
-  and why) to Notion under Development, Changes, then propagate every
-  divergence and carried-forward item as an "As built" note, citing the
-  change id, onto the architecture section it contradicts or extends and
-  onto the handoff of each downstream milestone it affects. Archive =
-  openspec archive plus retitle the Notion page with [Archived].
-  openspec/ is gitignored; never commit or push its contents.
+Follow the canonical repository AGENTS.md: section 4 for session setup,
+section 5 for scoped validation, sections 6 to 9 for code conventions,
+and section 13 for questions, approved proposal/tasks/specs, coordination,
+review, merge verification and close-out. Record task-specific decisions
+in this change instead of duplicating those policies here.
+openspec/ is gitignored; never commit or push its contents.
 ```

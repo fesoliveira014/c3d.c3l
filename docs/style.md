@@ -231,4 +231,4 @@ A change is style-compliant when:
 - initializers use `.field = value`;
 - docstrings follow section 12 and comments explain why;
 - no development labels appear in code;
-- `scripts/build.py --test` is green.
+- the scoped validation required by `AGENTS.md` section 5 is green.
