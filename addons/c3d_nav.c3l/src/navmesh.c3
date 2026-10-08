@@ -344,6 +344,23 @@ fn TileRef? NavMesh.install_tile_mesh(
     return self.add_tile_mesh(tile_mesh, connections, params);
 }
 
+<*
+ Move the tile grid and every resident tile by the negated offset; refs stay valid.
+ @require offset.y == 0
+*>
+fn void NavMesh.shift_origin(&self, Vec3 offset) {
+    self.desc.origin -= offset;
+    foreach (&tile : self.tiles) {
+        if (!tile.header) continue;
+        shift_bounds(&tile.header.bounds, offset);
+        foreach (&vertex : tile.verts) *vertex -= offset;
+        foreach (&connection : tile.off_mesh) {
+            connection.start -= offset;
+            connection.end -= offset;
+        }
+    }
+}
+
 <* Tile grid coordinate of a world position; mirrors calcTileLoc. *>
 fn int[<2>] NavMesh.tile_location(&self, Vec3 position) {
     return {
