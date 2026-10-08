@@ -497,9 +497,12 @@ fn void? begin_renderer_frame(Renderer* self, FrameInfo info, bool acquire_outpu
         };
         if (self.frame_index % TEXTURE_STATS_INTERVAL == 0) read_texture_stats(self)!;
         reset_upload_ring(self, slot)!;
-        instrumentation::@scope("renderer.texture_residency") {
-            step_texture_residency(self)!;
-        };
+        {
+            defer catch discard_uploads(self);
+            instrumentation::@scope("renderer.texture_residency") {
+                step_texture_residency(self)!;
+            };
+        }
         reset_deformation_cache(&self.deformation);
         reset_instance_culling(self, (uint)(self.frame_index % FRAMES_IN_FLIGHT));
         self.frame_started = clock::now();

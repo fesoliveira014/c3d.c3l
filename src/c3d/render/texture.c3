@@ -88,11 +88,29 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture, bool full
         uint base = same_chain ? residency.resident_base : (streamed && renderer.texture_budget_bytes ? tail_base : 0);
 
         gpu::Format format = texture_format(desc.format);
-        gpu::TextureDesc description = texture_gpu_description(desc, format, chain_mips, base, eligible);
-        bool reuse = texture_mirror_fits(mirror, &description, same_asset, desc, eligible);
+        gpu::TextureDesc description = texture_gpu_description(
+            desc: desc,
+            format: format,
+            chain_mips: chain_mips,
+            base: base,
+            copy_source: eligible,
+        );
+        bool reuse = texture_mirror_fits(
+            mirror: mirror,
+            description: &description,
+            same_asset: same_asset,
+            desc: desc,
+            copy_source: eligible,
+        );
         if (!reuse && !streamed && base > 0) {
             base = 0;
-            description = texture_gpu_description(desc, format, chain_mips, base, eligible);
+            description = texture_gpu_description(
+                desc: desc,
+                format: format,
+                chain_mips: chain_mips,
+                base: base,
+                copy_source: eligible,
+            );
         }
 
         TextureMipChain chain;

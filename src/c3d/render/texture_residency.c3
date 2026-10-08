@@ -450,7 +450,16 @@ fn void? apply_texture_residency(Renderer* renderer, TextureResidencyChange chan
         };
         pending.survivor_count++;
     }
-    if (new_base < old_base) stage_texture_levels(renderer, record, &pending, &description, new_base, old_base - new_base)!;
+    if (new_base < old_base) {
+        stage_texture_levels(
+            renderer: renderer,
+            record: record,
+            pending: &pending,
+            description: &description,
+            first_level: new_base,
+            level_count: old_base - new_base,
+        )!;
+    }
 
     retire_texture(renderer, mirror);
     *mirror = {
