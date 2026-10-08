@@ -22,7 +22,7 @@ const String RELOAD_DIRECTORY @local = "../assets/reload";
 const String SCENE_FILE @local = "../assets/reload/scene.gltf";
 const String PANEL_FILE @local = "../assets/reload/panel.png";
 const String PANEL_KEY @local = "reload/panel";
-const double POLL_INTERVAL_SECONDS @local = 0.5; // one stat per file per half second; keeps the loop free of file I/O
+const double POLL_INTERVAL_SECONDS @local = 0.5; // bounds the file stats to one per watched file per interval
 const uint DISC_SLOW_SEGMENTS @local = 16;
 const uint DISC_FAST_SEGMENTS @local = 64;
 const float DISC_RADIUS @local = 0.7f;
@@ -238,7 +238,7 @@ fn int main() {
         { .file = "scene_structural.gltf", .label = "structural variant" },
         { .file = "scene_broken.gltf", .label = "broken variant" },
     };
-    io::printn("Edit examples/assets/reload/scene.gltf or panel.png and save: the scene reloads; R forces a reload");
+    io::printn("Edit examples/assets/reload/scene.gltf or panel.png and save: the scene reloads; R forces a reload. The first scene.gltf reload (edit or R) adds the second instance; 1 does not");
     io::printn("1 content, 2 structural, 3 broken variant of the scene; G toggles the disc detail, M its material");
     io::printn("Escape release quits");
 

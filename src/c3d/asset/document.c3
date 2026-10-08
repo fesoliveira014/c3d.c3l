@@ -319,6 +319,7 @@ fn void? check_document(AssetStore* store, ModelDocument* document) @local {
 }
 
 fn void? check_document_content(AssetStore* store, ModelDocument* document) @private {
+    check_template_references(store, document)!;
     foreach (&entry : document.materials) {
         if (entry.data.kind == MaterialKind.CUSTOM) return c3d::INVALID_ARGUMENT~;
     }

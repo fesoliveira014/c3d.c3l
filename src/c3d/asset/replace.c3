@@ -117,7 +117,7 @@ macro uint count_added(ids) @private {
 
 macro bool is_known_reference(id, usz entry_count, pool) @private {
     if (id.generation) return pool.is_live(id);
-    return id.index <= entry_count;
+    return id.index >= 1 && id.index <= entry_count;
 }
 
 fn Id? entry_id(AssetStore* store, String key, AssetKind kind, uint builtin_count = 0) @private {
@@ -175,7 +175,6 @@ fn void? check_replacement(
     PublishedIds* ids,
 ) @private {
     check_document_content(store, document)!;
-    check_template_references(store, document)!;
     foreach (&entry : document.clips) check_clip_events(&entry.data)!;
 
     foreach (index, &entry : document.textures) {
@@ -200,7 +199,7 @@ fn void? check_replacement(
     ModelTemplate resolved = resolve_template(&document.template, ids);
     if (!same_model_structure(&store.model(model).data, &resolved)) return c3d::INCOMPATIBLE_STRUCTURE~;
     foreach (clip : document.template.clips) {
-        if (clip.generation || !clip.index) continue;
+        if (clip.generation) continue;
         foreach (target : document.clips[document_index(clip)].data.targets) {
             if (target >= document.template.nodes.len) return c3d::INVALID_ARGUMENT~;
         }

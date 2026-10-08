@@ -156,7 +156,7 @@ fn void test_fbx_external_textures_through_the_source() @test {
     };
     foreach (served : texture_paths) {
         MemorySource source;
-            source.serve("models/blender.fbx", $embed("../fixtures/fbx/blender_279_internal_textures_7400_binary.fbx"));
+        source.serve("models/blender.fbx", $embed("../fixtures/fbx/blender_279_internal_textures_7400_binary.fbx"));
         source.serve(served, $embed("../fixtures/rgba.png"));
         TrackingAllocator tracker;
         tracker.init(mem);
