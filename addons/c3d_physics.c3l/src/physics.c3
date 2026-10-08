@@ -540,6 +540,24 @@ fn void PhysicsWorld.teleport(
 }
 
 <*
+ Move every body and cloth by the negated offset after the scene shift.
+ Velocities, joints, welds and contacts are kept.
+ @param [&inout] scene : "Already shifted by the same offset; its RigidBody and Cloth components are written."
+ @require offset.y == 0
+*>
+fn void PhysicsWorld.shift_origin(&self, Scene* scene, Vec3 offset) {
+    scene.@each(RigidBody; Entity entity, RigidBody* body) {
+        body.body.set_transform((b3::Pos)(body.current.position - offset), body.current.rotation);
+        body.previous.position -= offset;
+        body.current.position -= offset;
+    };
+    b3::world_rebuild_static_tree(self.world);
+    scene.@each(Cloth; Entity entity, Cloth* cloth) {
+        if (cloth.is_prepared()) cloth.state.shift_origin(offset);
+    };
+}
+
+<*
  Pairs that began touching during the last update.
 *>
 fn ContactEvent[] PhysicsWorld.contacts_begin(&self) => self.contact_begin_storage[:self.contact_begin_count];
