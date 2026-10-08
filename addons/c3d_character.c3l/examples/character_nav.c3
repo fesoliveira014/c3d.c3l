@@ -77,7 +77,9 @@ const float ORBIT_DISTANCE_MAX @local = 40;
 const float MARKER_RADIUS @local = 0.35f;
 const uint  GOAL_COLOR @local = 0xFF4040FF;
 const Vec2  PANEL_POSITION @local = { 16, 16 };
-const Vec2  PANEL_SIZE @local = { 460, 430 };
+const Vec2  PANEL_SIZE @local = { 460, 470 };
+const float REBASE_DISTANCE @local = 1000; // metres from the origin at which the player pulls the world back
+const float KILOMETRE @local = 1000;
 
 struct Orbit @local {
     float distance;
@@ -98,6 +100,17 @@ struct Driven @local {
     Node*[DRIVEN_COUNT] nodes;
     Vec3                goal;
     bool                has_goal;
+}
+
+struct Rebasing @local {
+    Scene*            scene;
+    PhysicsWorld*     physics;
+    NavMesh*          mesh;
+    NavBuilder*       builder;
+    Crowd*            crowd;
+    render::Renderer* renderer;
+    Driven*           driven;
+    uint              count;
 }
 
 struct Controls @local {
@@ -420,11 +433,34 @@ fn void send_driven(Scene* scene, Driven* driven, Vec3 goal) @local {
     foreach (node : driven.nodes) scene.set_nav_target(node, goal);
 }
 
+// Between end_frame and the next simulation update, in the order every owner's shift expects.
+fn void rebase(Rebasing* rebasing, Vec3 offset) @local {
+    Scene* scene = rebasing.scene;
+    scene.shift_origin(offset);
+    scene.update_world();
+    rebasing.physics.shift_origin(scene, offset);
+    scene.shift_characters(offset);
+    rebasing.mesh.shift_origin(offset);
+    rebasing.builder.shift_origin(offset);
+    rebasing.crowd.shift_origin(offset);
+    scene.shift_navigation(offset);
+    rebasing.renderer.shift_origin(scene, offset);
+    rebasing.driven.goal -= offset;
+    rebasing.count++;
+}
+
+fn Vec3 rebase_offset_for(Vec3 position) @local {
+    Vec3 offset = render::frame_origin_for(position);
+    offset.y = 0;
+    return offset;
+}
+
 fn void draw_panel(
     Scene* scene,
     Crowd* crowd,
     Driven* driven,
     Controls* controls,
+    uint rebases,
 ) @local {
     imgui::set_next_window_pos(PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
     imgui::set_next_window_size(PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
@@ -433,6 +469,14 @@ fn void draw_panel(
         imgui::text("The crowd cannot see the crates; the player pushes them");
         imgui::text("WASD move the player, Shift run, Space jump");
         imgui::text("Right drag orbits, wheel zooms");
+        imgui::text("R rebases the world to the player; past 1 km it happens on its own");
+        imgui::text(
+            "World shift %.0f %.0f %.0f m, %u rebases",
+            scene.world_shift[0],
+            scene.world_shift[1],
+            scene.world_shift[2],
+            rebases,
+        );
         imgui::checkbox("Capsules", &controls.character.capsules);
         imgui::checkbox("Navmesh", &controls.mesh.polys);
         imgui::checkbox("Crowd agents", &controls.crowd.agents);
@@ -504,6 +548,7 @@ fn void? run(
     AssetStore* assets,
     Scene* scene,
     PhysicsWorld* physics,
+    float world_offset_km,
 ) @local {
     Level level = build_level(assets, scene, physics)!;
     NavBuilderDesc desc = nav::default_nav_builder_desc({
@@ -558,9 +603,32 @@ fn void? run(
     };
     renderer.prepare_scene(scene)!;
 
+    Rebasing rebasing = {
+        .scene    = scene,
+        .physics  = physics,
+        .mesh     = &mesh,
+        .builder  = &builder,
+        .crowd    = &crowd,
+        .renderer = renderer,
+        .driven   = driven,
+    };
+    Vec3 start = -rebase_offset_for({ world_offset_km * KILOMETRE, 0, world_offset_km * KILOMETRE });
+    if (start != (Vec3){}) {
+        rebase(&rebasing, start);
+        rebasing.count = 0;
+    }
+
     while (window.poll()) {
         Input* input = &window.input;
         if (input.key_released(platform::Scancode.ESCAPE) && !input.keyboard_captured_by_gui) break;
+        Vec3 player_position = level.player.world_position();
+        float distance_from_origin = (float)math::hypot(player_position.x, player_position.z);
+        bool requested = !input.keyboard_captured_by_gui && input.key_pressed(platform::Scancode.R);
+        if (requested || distance_from_origin > REBASE_DISTANCE) {
+            Vec3 offset = rebase_offset_for(player_position);
+            if (offset != (Vec3){}) rebase(&rebasing, offset);
+        }
+
         gui_renderer.new_frame();
         defer {
             if (gui_renderer.frame_open) gui_renderer.finish_frame();
@@ -570,6 +638,7 @@ fn void? run(
             crowd:    &crowd,
             driven:   driven,
             controls: &controls,
+            rebases:  rebasing.count,
         );
 
         orbit_input(&orbit, input);
@@ -618,12 +687,30 @@ fn void? run(
             camera_node:  level.camera_node,
             gui_renderer: &gui_renderer,
             sink:         &sink,
-            info:         { .time = window.clock.total, .delta = window.clock.delta },
+            info:         {
+                .time               = window.clock.total,
+                .delta              = window.clock.delta,
+                .reference_position = level.camera_node.world_position(),
+            },
         )!;
     }
 }
 
-fn int main() {
+fn float? parse_world_offset(String[] args) @local {
+    float kilometres;
+    for (usz index = 1; index < args.len; index++) {
+        if (args[index] != "--world-offset" || index + 1 >= args.len) return c3d::INVALID_ARGUMENT~;
+        kilometres = args[++index].to_float()!;
+    }
+    return kilometres;
+}
+
+fn int main(String[] args) {
+    float? world_offset_km = parse_world_offset(args);
+    if (catch excuse = world_offset_km) {
+        io::eprintn("Use --world-offset <km>");
+        return 1;
+    }
     platform::Window window = platform::create_window(platform::default_window_desc("c3d character nav", 1280, 720))!!;
     defer platform::destroy_window(&window);
 
@@ -654,11 +741,12 @@ fn int main() {
     defer physics::destroy_physics_world(&physics);
 
     if (catch excuse = run(
-        window:   &window,
-        renderer: &renderer,
-        assets:   &assets,
-        scene:    &scene,
-        physics:  &physics,
+        window:          &window,
+        renderer:        &renderer,
+        assets:          &assets,
+        scene:           &scene,
+        physics:         &physics,
+        world_offset_km: world_offset_km,
     )) {
         io::eprintfn("character nav example failed: %s", excuse);
         return 1;
