@@ -70,6 +70,7 @@
         "test_published_stages.c3",
         "test_r16_texture.c3",
         "test_texture_containers.c3",
+        "test_texture_residency.c3",
         "test_material_references.c3",
         "test_asset_replace.c3",
         "test_material_blend.c3",
