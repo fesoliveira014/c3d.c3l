@@ -24,7 +24,7 @@ const uint TEXTURE_TAIL_EXTENT = 64; // about 21 KiB of RGBA8 per texture; a ful
 const usz TEXTURE_STREAM_FRAME_BYTES = 8 << 20; // matches OVERSIZED_UPLOAD_BYTES, so paced raises stay inside the ring
 
 <*
- Mip-zero texels a frame may regenerate for raises after the first.
+ Mip-zero texels a frame may regenerate; the first raise is always admitted and counts.
 *>
 const ulong TEXTURE_REGENERATION_FRAME_TEXELS = 1 << 20; // one 1024² MIP_ZERO raise per frame; supplied mips cost nothing
 
@@ -64,7 +64,7 @@ struct TextureBudget {
     usz   budget_bytes; // zero disables evictions and the bias
     usz   frame_bytes;  // raise bytes admitted after the first raise
     ulong frame;        // frame_index the step runs in
-    ulong frame_texels; // regeneration texels admitted after the first raise
+    ulong frame_texels; // regeneration texels per frame; the first raise is admitted regardless
 }
 
 <*

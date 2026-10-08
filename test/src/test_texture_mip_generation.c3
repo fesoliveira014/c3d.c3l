@@ -3,19 +3,19 @@ module c3d::render;
 import c3d::material;
 import std::math;
 
-const usz TEXEL_BYTES = 4;
-const double CODE_MAX = 255;
-const ulong FNV_OFFSET = 0xcbf29ce484222325;
-const ulong FNV_PRIME = 0x100000001b3;
-const uint IMAGE_SEED = 0x2545f491;
-const uint LCG_MULTIPLIER = 1664525;
-const uint LCG_INCREMENT = 1013904223;
-const uint SWEEP_STEPS = 1_000_000;
-const ulong ODD_SRGB_DIGEST = 0x1061d393becd4e46;
-const ulong EVEN_SRGB_DIGEST = 0x9a7fa2d2274fd02e;
-const uint HALF_EXPONENT_LIMIT = 30; // keeps generated halves finite
-const uint HALF_EXPONENT_SHIFT = 10;
-const uint HALF_MANTISSA_LIMIT = 1024;
+const usz TEXEL_BYTES @local = 4;
+const double CODE_MAX @local = 255;
+const ulong FNV_OFFSET @local = 0xcbf29ce484222325;
+const ulong FNV_PRIME @local = 0x100000001b3;
+const uint IMAGE_SEED @local = 0x2545f491;
+const uint LCG_MULTIPLIER @local = 1664525;
+const uint LCG_INCREMENT @local = 1013904223;
+const uint SWEEP_STEPS @local = 1_000_000;
+const ulong ODD_SRGB_DIGEST @local = 0x1061d393becd4e46;
+const ulong EVEN_SRGB_DIGEST @local = 0x9a7fa2d2274fd02e;
+const uint HALF_EXPONENT_LIMIT @local = 30; // keeps generated halves finite
+const uint HALF_EXPONENT_SHIFT @local = 10;
+const uint HALF_MANTISSA_LIMIT @local = 1024;
 
 struct HalvingShape @local {
     uint width;
