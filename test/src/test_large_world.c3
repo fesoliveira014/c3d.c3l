@@ -505,6 +505,7 @@ fn void test_shift_leaves_other_scenes_untouched() @test {
         nodes[index].local.position = { 50001, 0, 50001 };
         scene.update_world();
         record_drawn(&fixture, (usz)index, nodes[index]);
+        renderer.views.get(fixture.views[index]).last_scene = scene.identity;
         renderer.views.get(fixture.views[index]).desc.clip_plane = { .normal = { 1, 0, 0 }, .d = -50000 };
         uint slot = renderer.instances.acquire({ .scene = scene.identity, .node = nodes[index].id }, 1)!!;
         renderer.instances.slots[slot].world = nodes[index].world;
@@ -542,4 +543,27 @@ fn void test_shift_leaves_other_scenes_untouched() @test {
     assert(renderer.scene_trace.origin == ORIGIN && renderer.scene_trace.baseline[0].world == nodes[1].world);
     assert(renderer.probe_volumes[1].fill.traced_origin == ORIGIN);
     assert(renderer.probe_volumes[0].fill.traced_origin == ORIGIN - SHIFT);
+}
+
+fn void test_shift_origin_moves_planes_of_views_that_drew_the_scene() @test {
+    ShiftFixture fixture;
+    create_shift_fixture(&fixture);
+    defer destroy_shift_fixture(&fixture);
+    Plane plane = { .normal = { 1, 0, 0 }, .d = -50000 };
+    ViewRecord* first = fixture.renderer.views.get(fixture.views[0]);
+    ViewRecord* second = fixture.renderer.views.get(fixture.views[1]);
+    first.history.scene = 0;
+    first.last_scene = fixture.scenes[0].identity;
+    first.desc.clip_plane = plane;
+    second.last_scene = fixture.scenes[1].identity;
+    second.desc.clip_plane = plane;
+    ViewRecord* never = fixture.renderer.views.get(fixture.renderer.views.add({ .live = true })!!);
+    never.desc.clip_plane = plane;
+
+    fixture.scenes[0].shift_origin(SHIFT);
+    fixture.scenes[0].update_world();
+    fixture.renderer.shift_origin(&fixture.scenes[0], SHIFT);
+
+    assert(first.desc.clip_plane.d == plane.d + SHIFT.x);
+    assert(second.desc.clip_plane.d == plane.d && never.desc.clip_plane.d == plane.d);
 }

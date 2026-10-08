@@ -784,7 +784,7 @@ fn void? read_rebased_clip_points(Fixture* fixture, ClipScene* clip, Vec3 base, 
     }
 }
 
-fn void test_mirror_view_survives_a_shift() @test {
+fn void check_clipped_view_survives_a_shift(bool temporal) @private {
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
     defer destroy_fixture(&fixture);
@@ -798,7 +798,7 @@ fn void test_mirror_view_survives_a_shift() @test {
     clip.camera.local.position += REBASE_BASE;
     AoView ao_view = create_clip_view(&fixture, RASTER_PATHS[1])!!;
     clip.view = ao_view.view;
-    enable_taa(&fixture, clip.view)!!;
+    if (temporal) enable_taa(&fixture, clip.view)!!;
     Plane plane = { .normal = { 1, 0, 0 }, .d = -(REBASE_BASE.x + REBASE_CLIP_CUT) };
     set_clip_plane(&fixture, clip.view, plane)!!;
 
@@ -815,4 +815,9 @@ fn void test_mirror_view_survives_a_shift() @test {
     check_dominant_channel(after[0], 0);
     assert(pixel_channel(after[1], 0) < DOMINANT_CHANNEL_MINIMUM);
     check_validation(renderer);
+}
+
+fn void test_mirror_view_survives_a_shift() @test {
+    check_clipped_view_survives_a_shift(true);
+    check_clipped_view_survives_a_shift(false);
 }
