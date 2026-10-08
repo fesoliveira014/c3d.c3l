@@ -193,7 +193,11 @@ fn void test_font_replacement_clears_placement_cache() @test {
     fixture::frame(&fixture);
     assert(fixture.ui.stats.placement_clears == 0 && fixture.ui.stats.placement_hits == 3);
 
-    fixture.assets.replace_font(fixture.latin, $embed("../../../test/fixtures/fonts/pair.ttc"), fixture::TEST_FONT_DESC)!!;
+    fixture.assets.replace_font(
+        font: fixture.latin,
+        file: $embed("../../../test/fixtures/fonts/pair.ttc"),
+        desc: fixture::TEST_FONT_DESC,
+    )!!;
     fixture::frame(&fixture);
 
     assert(fixture.ui.stats.placement_clears == 1 && fixture.ui.stats.placement_misses == 3);

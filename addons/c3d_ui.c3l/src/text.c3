@@ -47,7 +47,7 @@ struct UiPlacementCache @private {
     uint                 glyph_count;
     char[]               bytes;
     uint                 byte_count;
-    uint[]               font_replacements; // per font set and fallback: replaced_revision the placements were made against
+    uint[]               font_replacements; // per font set and fallback: replaced_revision of the placements
 }
 
 fn String? expand_template(
