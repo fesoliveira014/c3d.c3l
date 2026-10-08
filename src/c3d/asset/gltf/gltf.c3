@@ -135,7 +135,7 @@ fn ModelReplaceReport? replace_model_memory(
 <*
  Decode a glTF or GLB file into a document keyed by the path.
  @param allocator : "Owns the document; publish needs the store allocator."
- @param file_source : "Must outlive the call; a null read selects the file system."
+ @param file_source : "Read during the call; a null read selects the file system."
  @return? c3d::ASSET_IO_ERROR, c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED, c3d::INVALID_ARGUMENT
  @require path.len > 0, allocator != tmem
 *>
@@ -196,7 +196,7 @@ fn ModelDocument? decode_file(
  @param allocator : "Owns the document; publish needs the store allocator."
  @param bytes : "Borrowed for the call."
  @param key : "Model key and prefix of every content key."
- @param file_source : "Must outlive the call; a null read selects the file system."
+ @param file_source : "Read during the call; a null read selects the file system."
  @return? c3d::ASSET_IO_ERROR, c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED, c3d::INVALID_ARGUMENT
  @require bytes.len > 0, key.len > 0, allocator != tmem
 *>

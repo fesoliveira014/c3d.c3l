@@ -136,7 +136,7 @@ fn Image? decode_image_r16(Allocator allocator, char[] bytes) {
 
 <*
  Read and decode an image into owned RGBA pixels.
- @param file_source : "Must outlive the call; a null read selects the file system."
+ @param file_source : "Read during the call; a null read selects the file system."
  @return? c3d::ASSET_IO_ERROR, c3d::INVALID_ARGUMENT, c3d::ASSET_FORMAT_ERROR
  @require path.len > 0
 *>

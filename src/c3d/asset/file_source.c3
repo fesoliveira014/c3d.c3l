@@ -40,12 +40,14 @@ fn char[]? read_file_system(void* user, Allocator allocator, String path) {
  @return "Allocated with the allocator."
 *>
 fn String normalize_path(Allocator allocator, String path) {
-    String text = path.treplace("\\", "/");
+    String text = path.replace(allocator, "\\", "/");
+    defer alloc::free(allocator, text.ptr);
     usz prefix_length = absolute_prefix_length(text);
     String prefix = text[:prefix_length];
     String rest = text[prefix_length..];
 
-    String[] kept = alloc::new_array(tmem, String, (sz)((rest.len + 1) / 2 + 1));
+    String[] kept = alloc::new_array(allocator, String, (sz)((rest.len + 1) / 2 + 1));
+    defer alloc::free(allocator, kept.ptr);
     usz count;
     usz start;
     for (usz index = 0; index <= rest.len; index++) {
