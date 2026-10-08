@@ -123,9 +123,21 @@ static nodes do not read as moved.
 
 ```c3
 scene.shift_origin(offset);
+scene.shift_particles(offset);
 scene.update_world();
+physics.shift_origin(&scene, offset);
+scene.shift_characters(offset);
+nav_mesh.shift_origin(offset);
+builder.shift_origin(offset);
+crowd.shift_origin(offset);
+scene.shift_navigation(offset);
+scene.shift_foliage();
+audio.shift_origin(offset);
 renderer.shift_origin(&scene, offset);
+scene_index.refresh(&scene);
 ```
+
+Only the owners the application has are called.
 
 The offset has `y == 0`. A good choice is `render::frame_origin_for(focus)` with
 `y` set to zero: a 256 m cell multiple near the focus. Pass
@@ -140,13 +152,18 @@ reads positions first. Each owner the application has gets the same offset, in
 this order:
 
 1. `scene.shift_origin(offset)`.
-2. Add-on owners of absolute state (physics, characters, navigation, foliage,
-   particles, audio) shift their state. Each add-on provides its own shift
-   function; a particle shift runs before `update_world` because it resets the
+2. `scene.shift_particles(offset)`, before `update_world`: it resets the
    world-space draw child that `Scene.shift_origin` moved.
 3. `scene.update_world()`.
-4. `renderer.shift_origin(&scene, offset)`, last, so it reads the final worlds.
-5. `SceneIndex.refresh(&scene)` when the application keeps one.
+4. The simulation owners shift their state. `PhysicsWorld.shift_origin` takes the
+   scene. Navigation shifts the mesh, the builder (join tile builds on other
+   threads first), the crowd and `Scene.shift_navigation`; a `NavQuery` the
+   application holds itself needs `NavQuery.shift_origin`.
+5. `scene.shift_foliage()` stores the current node worlds as the scatter poses so
+   no layer re-scatters. `AudioSystem.shift_origin(offset)` moves positioned
+   one-shots; emitters follow their nodes.
+6. `renderer.shift_origin(&scene, offset)`, last, so it reads the final worlds.
+7. `SceneIndex.refresh(&scene)` when the application keeps one.
 
 ### Scene
 
