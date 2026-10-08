@@ -626,4 +626,10 @@ right-drag looks, `W A S D` move along the view, `Q`/`E` move down and up, Shift
 four times faster, and the wheel scales the speed. `--benchmark` runs the headless
 scene benchmark instead; see [Benchmarking](benchmarking.md#scene-benchmark).
 Imported cameras and lights are instantiated, but the example renders through
-its own orbit camera.
+its own orbit camera. The Textures panel sets the texture budget and shows the
+resident bytes, raises, evictions, bias and starved count, with one row per
+texture: extent, resident and total mips, resident KiB, required mip, last used
+frame, and whether it is streamed or pinned. `--texture-budget <MiB>` (or
+`--texture-budget=<MiB>`) starts the viewer, and the benchmark, under a budget; zero or
+absent leaves textures unbudgeted. See
+[Residency and memory budgets](textures.md#residency-and-memory-budgets).
