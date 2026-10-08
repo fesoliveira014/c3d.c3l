@@ -34,6 +34,7 @@ const Vec3  PLATFORM_CENTRE @private = { 12, 0.75f, 4 };
 const float LINK_RUN @private = 1; // metres each endpoint lies from the platform's edge, past the eroded border
 const float LINK_RADIUS @private = 0.6f;
 const uint  LANDING_UPDATES @private = 120;
+const float SHIFT_OFFSET @private = 256;
 const float PATH_TOLERANCE @private = 0.1f; // one step at the agent's top speed, the capsule's lead over the node
 
 struct Fixture @private {
@@ -313,4 +314,26 @@ fn void test_off_mesh_link_moves_the_capsule_along_the_connection() @test {
     assert(traversing > 0, "the agent crossed the link");
     assert(character.grounded && c3d::same_id(character.ground, platform.id), "stands on the platform");
     assert(math::abs(node.world_position().y - PLATFORM_SIZE.y) < character.desc.skin + STOP_TOLERANCE);
+}
+
+fn void test_shift_characters_moves_the_traversal() @test {
+    Fixture* fixture = setup();
+    defer teardown(fixture);
+    build_navigation(fixture);
+    Scene* scene = &fixture.scene;
+    Node* node = add_driven_character(fixture, START);
+    Vec3 offset = { SHIFT_OFFSET, 0, 0 };
+    NavDriven* driven = scene.get(node, NavDriven);
+    driven.traversal = {
+        .active           = true,
+        .initial_position = { 300, 0, 4 },
+        .start            = { 310, 1, 4 },
+        .end              = { 320, 2, 5 },
+    };
+
+    scene.shift_characters(offset);
+    assert(driven.traversal.initial_position == (Vec3){ 44, 0, 4 });
+    assert(driven.traversal.start == (Vec3){ 54, 1, 4 });
+    assert(driven.traversal.end == (Vec3){ 64, 2, 5 });
+    assert(driven.traversal.active);
 }

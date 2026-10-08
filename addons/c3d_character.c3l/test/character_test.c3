@@ -45,6 +45,7 @@ const float CRATE_X @private = 1.5f;
 const ulong CRATE_CATEGORY @private = 2;
 const float MIN_PUSH @private = 0.1f;
 const float GROWTH_GAP @private = 0.05f;
+const float SHIFT_DISTANCE @private = 195 * 256; // about 50 km, a multiple of the 256 m cell
 const float GROWTH @private = 0.2f; // four times the gap, so the grown capsule overlaps the wall
 
 struct Fixture @private {
@@ -613,4 +614,33 @@ fn void test_grown_capsule_is_pushed_out_of_a_wall() @test {
     float surface = character_of(&fixture, node).current.x + desc.radius;
     io::eprintfn("grown capsule surface %f against the wall face %f", surface, wall_face);
     assert(surface <= wall_face + desc.skin * 2);
+}
+
+fn void test_shift_characters_keeps_grounding() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+    Vec3 offset = { SHIFT_DISTANCE, 0, 0 };
+    add_box(&fixture, offset + (Vec3){ 0, -GROUND_HALF_EXTENTS.y, 0 }, GROUND_HALF_EXTENTS);
+    CharacterDesc desc = character::default_character_desc();
+    Node* node = add_character(&fixture, offset + (Vec3){ 0, DROP_HEIGHT, 0 }, desc);
+    settle(&fixture, SETTLE_UPDATES);
+    Vec3 center = character_of(&fixture, node).current;
+    assert(character_of(&fixture, node).plane_count > 0);
+
+    fixture.scene.shift_origin(offset);
+    fixture.scene.update_world();
+    fixture.physics.shift_origin(&fixture.scene, offset);
+    fixture.scene.shift_characters(offset);
+    Character* shifted = character_of(&fixture, node);
+    assert(close_vec(shifted.current, center - offset, STOP_TOLERANCE));
+    assert(close_vec(shifted.previous, center - offset, STOP_TOLERANCE));
+    foreach (plane : shifted.planes[:shifted.plane_count]) assert(math::abs(plane.point.x) < GROUND_HALF_EXTENTS.x + STOP_TOLERANCE);
+
+    settle(&fixture, 1);
+    Character* standing = character_of(&fixture, node);
+    assert(standing.grounded);
+    assert(close(standing.velocity.y, 0));
+    assert(close_vec(standing.current, center - offset, STOP_TOLERANCE));
+    assert(close(node.world_position().x, 0, STOP_TOLERANCE));
 }
