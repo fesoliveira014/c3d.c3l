@@ -172,13 +172,15 @@ identity; other scenes the renderer draws are untouched. It does not change
 | --- | --- |
 | View history of the scene | Previous models are set from the current node worlds, so every static node has zero rebase-frame motion, nested nodes and world-space draw children included; the history origin moves by the offset |
 | LOD placement history of the scene | Both recorded origins move by the offset |
-| `ViewDesc.clip_plane` of views whose history belongs to the scene | The plane distance moves so the same points stay inside |
+| `ViewDesc.clip_plane` of views that last rendered the scene | The plane distance moves so the same points stay inside |
 | Resident instance, billboard and LOD records of the scene | Stored world and origin move by the offset |
 | Scene trace of the scene | Baseline rows and origin move by the offset |
 | Probe volumes of the scene | The traced grid origin of the fill state moves |
 
-A view that has not drawn the scene with temporal history has no scene
-association, so its clip plane is the application's to shift.
+Every view that last rendered the scene, temporal or not, gets its stored clip
+plane shifted. An application that keeps its own `ViewDesc` copy re-reads it
+after the shift, or `configure_view` restores the old plane. A view that has not
+rendered the scene yet is the application's to set.
 
 Sway reads `Scene.world_shift`, so the gust phase of a fixed absolute anchor
 does not change across a shift. A second scene the application does not rebase
@@ -209,8 +211,8 @@ The application shifts, or retakes after the shift:
 - Buoyancy surfaces and any callback returning absolute heights or positions.
 - `GridSourceDesc.origin` and floor callbacks of navigation sources.
 - Absolute positions held in application structures, such as camera targets.
-- A `ViewDesc` the application stores for `configure_view`: re-read the view's
-  descriptor after the shift, or it restores the old clip plane.
+- A `ViewDesc` the application stores for `configure_view`: re-read it after the
+  shift.
 
 ### Shadow lattice
 
