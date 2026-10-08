@@ -41,10 +41,7 @@ fn SkeletonId? AssetStore.add_skeleton_owned(&self, Skeleton* skeleton, String k
 *>
 fn void? AssetStore.replace_skeleton_owned(&self, SkeletonId skeleton, Skeleton* source) {
     SkeletonAsset* record = self.skeletons.get(skeleton);
-    if (record.data.parents.len != source.parents.len) return c3d::INCOMPATIBLE_STRUCTURE~;
-    foreach (index, parent : source.parents) {
-        if (record.data.parents[index] != parent) return c3d::INCOMPATIBLE_STRUCTURE~;
-    }
+    check_skeleton_structure(&record.data, source)!;
     free_skeleton(self.allocator, &record.data);
     record.data = *source;
     mark_replaced(&record.header);
@@ -93,4 +90,12 @@ fn void free_skeleton(Allocator allocator, Skeleton* skeleton) {
     alloc::free(allocator, skeleton.rest_pose.ptr);
     alloc::free(allocator, skeleton.inverse_bind.ptr);
     *skeleton = {};
+}
+
+fn void? check_skeleton_structure(Skeleton* current, Skeleton* next) @private {
+    if (current.parents.len != next.parents.len) return c3d::INCOMPATIBLE_STRUCTURE~;
+    foreach (index, parent : next.parents) {
+        if (current.parents[index] != parent) return c3d::INCOMPATIBLE_STRUCTURE~;
+    }
+    return;
 }

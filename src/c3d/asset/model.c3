@@ -119,6 +119,22 @@ fn ModelId? AssetStore.add_model_owned(&self, ModelTemplate* template, String ke
 }
 
 <*
+ Replace the template, taking its arrays on success; existing instances keep theirs.
+ @param [&in] template : "Arrays and names were allocated with the store allocator."
+ @return? c3d::INVALID_ARGUMENT, c3d::INCOMPATIBLE_STRUCTURE
+ @require self.models.is_live(model)
+*>
+fn void? AssetStore.replace_model_owned(&self, ModelId model, ModelTemplate* template) {
+    ModelAsset* record = self.models.get(model);
+    if (!same_model_structure(&record.data, template)) return c3d::INCOMPATIBLE_STRUCTURE~;
+    check_lod_groups(self, template, null)!;
+    free_model_template(self.allocator, &record.data);
+    record.data = *template;
+    mark_replaced(&record.header);
+    return;
+}
+
+<*
  Record of the model; a borrow into the pool.
  @require self.models.is_live(model)
 *>

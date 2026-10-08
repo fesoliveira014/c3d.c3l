@@ -78,6 +78,58 @@ fn ModelId? load_model_memory(
 }
 
 <*
+ Decode a file and replace the model loaded from it.
+ @param [&inout] assets : "Receives the replaced parts; unchanged on a fault."
+ @param missing : "Receives the first missing parts by kind, then key."
+ @return? c3d::ASSET_IO_ERROR, c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED
+ @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::INCOMPATIBLE_STRUCTURE
+ @require path.len > 0
+ @require assets.models.is_live(model)
+*>
+fn ModelReplaceReport? replace_model(
+    AssetStore* assets,
+    ModelId model,
+    String path,
+    LoadOptions options = asset::LOAD_OPTIONS_DEFAULT,
+    AssetRef[] missing = {},
+) {
+    ModelDocument document = decode_model(assets.allocator, path, options)!;
+    defer asset::destroy_model_document(&document);
+    return assets.replace_document(model, &document, missing);
+}
+
+<*
+ Decode bytes and replace the model keyed by them.
+ @param [&inout] assets : "Receives the replaced parts; unchanged on a fault."
+ @param bytes : "Borrowed for the call."
+ @param key : "Model key and prefix of every content key."
+ @param missing : "Receives the first missing parts by kind, then key."
+ @return? c3d::ASSET_IO_ERROR, c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED
+ @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::INCOMPATIBLE_STRUCTURE
+ @require bytes.len > 0, key.len > 0
+ @require assets.models.is_live(model)
+*>
+fn ModelReplaceReport? replace_model_memory(
+    AssetStore* assets,
+    ModelId model,
+    char[] bytes,
+    String base_dir,
+    String key,
+    LoadOptions options = asset::LOAD_OPTIONS_DEFAULT,
+    AssetRef[] missing = {},
+) {
+    ModelDocument document = decode_model_memory(
+        allocator: assets.allocator,
+        bytes:     bytes,
+        base_dir:  base_dir,
+        key:       key,
+        options:   options,
+    )!;
+    defer asset::destroy_model_document(&document);
+    return assets.replace_document(model, &document, missing);
+}
+
+<*
  Decode a glTF or GLB file into a document keyed by the path.
  @param allocator : "Owns the document; publish needs the store allocator."
  @return? c3d::ASSET_IO_ERROR, c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED, c3d::INVALID_ARGUMENT

@@ -85,7 +85,7 @@ struct ModelDocument {
     ModelTemplate       template;
 }
 
-struct PublishedIds @local {
+struct PublishedIds @private {
     SamplerId[]  samplers;
     TextureId[]  textures;
     MaterialId[] materials;
@@ -315,22 +315,29 @@ fn void? check_document(AssetStore* store, ModelDocument* document) @local {
         && store.clips.free_count >= document.clips.len
         && store.models.free_count >= 1;
     if (!fits) return c3d::CAPACITY_EXCEEDED~;
+    return check_document_content(store, document);
+}
 
+fn void? check_document_content(AssetStore* store, ModelDocument* document) @private {
     foreach (&entry : document.materials) {
         if (entry.data.kind == MaterialKind.CUSTOM) return c3d::INVALID_ARGUMENT~;
     }
     foreach (&entry : document.geometries) check_influences(&entry.data)!;
     foreach (&entry : document.textures) check_format_use(entry.desc)!;
-    foreach (index, &group : document.template.lod_groups) {
-        if (group.node >= document.template.nodes.len) return c3d::INVALID_ARGUMENT~;
+    return check_lod_groups(store, &document.template, document);
+}
+
+fn void? check_lod_groups(AssetStore* store, ModelTemplate* template, ModelDocument* document) @private {
+    foreach (index, &group : template.lod_groups) {
+        if (group.node >= template.nodes.len) return c3d::INVALID_ARGUMENT~;
         scene::validate_lod_layout(group.desc)!;
-        foreach (previous : document.template.lod_groups[:index]) {
+        foreach (previous : template.lod_groups[:index]) {
             if (previous.node == group.node) return c3d::INVALID_ARGUMENT~;
         }
-        foreach (mesh : document.template.meshes) {
+        foreach (mesh : template.meshes) {
             if (mesh.node == group.node) return c3d::INVALID_ARGUMENT~;
         }
-        foreach (skin : document.template.skins) {
+        foreach (skin : template.skins) {
             if (skin.mesh_node == group.node) return c3d::INVALID_ARGUMENT~;
         }
         foreach (part : group.desc.parts) {
@@ -341,7 +348,9 @@ fn void? check_document(AssetStore* store, ModelDocument* document) @local {
                 if (geometry.target_count || geometry.skin_bounds.joints.len || geometry.data.joints.len) return c3d::INVALID_ARGUMENT~;
                 bounds = geometry.data.bounds;
             } else {
-                if (!part.geometry.index || part.geometry.index > document.geometries.len) return c3d::INVALID_ARGUMENT~;
+                if (!document || !part.geometry.index || part.geometry.index > document.geometries.len) {
+                    return c3d::INVALID_ARGUMENT~;
+                }
                 Geometry* geometry = &document.geometries[document_index(part.geometry)].data;
                 if (geometry.targets.len || geometry.joints.len) return c3d::INVALID_ARGUMENT~;
                 bounds = geometry.bounds;
@@ -360,7 +369,7 @@ fn void? check_document(AssetStore* store, ModelDocument* document) @local {
                         return c3d::INVALID_ARGUMENT~;
                     }
                 }
-            } else if (!part.material.index || part.material.index > document.materials.len) {
+            } else if (!document || !part.material.index || part.material.index > document.materials.len) {
                 return c3d::INVALID_ARGUMENT~;
             }
         }
@@ -368,7 +377,7 @@ fn void? check_document(AssetStore* store, ModelDocument* document) @local {
     return;
 }
 
-fn String[] document_keys(ModelDocument* document) @local {
+fn String[] document_keys(ModelDocument* document) @private {
     usz count = 1 + document.samplers.len + document.textures.len + document.materials.len
         + document.geometries.len + document.skeletons.len + document.clips.len;
     String[] keys = alloc::new_array(tmem, String, (sz)count);
@@ -383,7 +392,7 @@ fn String[] document_keys(ModelDocument* document) @local {
     return keys;
 }
 
-fn void remap_template(ModelTemplate* template, PublishedIds* ids) @local {
+fn void remap_template(ModelTemplate* template, PublishedIds* ids) @private {
     foreach (&group : template.lod_groups) {
         foreach (&part : group.desc.parts) {
             part.geometry = @remapped(part.geometry, ids.geometries);
@@ -402,7 +411,7 @@ macro @append_entry(#entries) @local {
     #entries = #entries.ptr[:#entries.len + 1];
 }
 
-macro @remapped(id, ids) @local {
+macro @remapped(id, ids) @private {
     if (id.generation || !id.index) return id;
     return ids[document_index(id)];
 }
