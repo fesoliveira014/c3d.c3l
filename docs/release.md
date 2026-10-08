@@ -52,6 +52,7 @@ Example for core and physics:
 | `c3d_particle` | core's list | |
 | `c3d_serial` | core's list | |
 | `c3d_ui` | core's list, `clay` | |
+| `c3d_audio` | core's list, `miniaudio` | |
 | `c3d_profile` | nothing for CPU capture | `gpu`, `vk`, `vma`, `spvreflect` with `C3D_PROFILE_GPU` |
 | `c3d_profile_gui` | `c3d_profile`, `c3imgui`, `sdl3`, `vk` | requires `C3D_PROFILE_GUI` with a capture feature; `gpu`, `vma`, `spvreflect` with `C3D_PROFILE_GPU` |
 
@@ -63,7 +64,7 @@ Example for core and physics:
   `build/unpacked_c3l/shaderc-v<version>-<platform>.c3l/linux/libshaderc_shared.so.1` or
   `.../windows/shaderc_shared.dll`, or unzip it from the artifact. On Linux the shaderc library sets the runpath to
   `$ORIGIN`.
-- c3c compiles the C sources some libraries carry (stb in core, cgltf, ufbx, clay) with the system C compiler;
+- c3c compiles the C sources some libraries carry (stb in core, cgltf, ufbx, clay, miniaudio) with the system C compiler;
   on Windows that is MSVC.
 - Linux native libraries are built on Ubuntu 22.04 and need glibc 2.35 or newer.
 

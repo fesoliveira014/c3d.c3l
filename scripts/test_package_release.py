@@ -38,7 +38,7 @@ class PackReleaseTest(unittest.TestCase):
         expected = {"c3d_core-v0.1.0.c3l", "c3d_shader_tools-v0.1.0.zip"}
         expected |= {f"{package_release.provides_of(addon)}-v0.1.0.c3l" for addon in addons}
         self.assertEqual({artifact.name for artifact in self.packed}, expected)
-        self.assertEqual(len(expected), 13)
+        self.assertEqual(len(expected), 14)
 
         with tempfile.TemporaryDirectory() as first, tempfile.TemporaryDirectory() as second:
             checksums = package_release.write_artifacts(self.packed, Path(first))

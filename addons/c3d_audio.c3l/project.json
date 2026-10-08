@@ -1,0 +1,14 @@
+{
+  "langrev": "1",
+  "dependency-search-paths": ["../../lib", "../../lib/gpu.c3l/lib"],
+  "dependencies": ["c3d_audio", "miniaudio", "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "cgltf", "ufbx", "shaderc"],
+  "wincrt": "static",
+  "output": "build",
+  "targets": {
+    "audio_test": {
+      "type": "test",
+      "sources": ["test/audio_fixture.c3", "test/clip_test.c3", "test/mix_test.c3", "test/scene_test.c3"]
+    },
+    "audio": {"type": "executable", "sources": ["examples/audio.c3"]}
+  }
+}
