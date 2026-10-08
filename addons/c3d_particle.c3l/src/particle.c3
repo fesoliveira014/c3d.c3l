@@ -244,6 +244,21 @@ fn void? prepare_subtree(Scene* scene, Node* root = null) {
 }
 
 <*
+ Move every particle by the negated offset and put draw children back at the origin.
+ Call after Scene.shift_origin and before update_world.
+ @param [&inout] self : "Prepared systems are written; pending ones are skipped."
+ @require offset.y == 0
+*>
+fn void Scene.shift_particles(&self, Vec3 offset) {
+    self.@each(ParticleSystem; entity, system) {
+        if (system.is_prepared()) {
+            for (uint index = 0; index < system.alive; index++) system.position[index] -= offset;
+            self.node(system.draw_node).local = maths::TRANSFORM_IDENTITY;
+        }
+    };
+}
+
+<*
  White point emitter with fixed capacity and unit lifetime tables.
 *>
 fn ParticleSystemDesc default_particle_system_desc() {

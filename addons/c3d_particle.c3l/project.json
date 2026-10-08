@@ -17,7 +17,7 @@
       "features": ["C3D_PARTICLE_SERIAL"],
       "dependencies": ["c3d_particle", "c3d_serial", "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "cgltf", "ufbx", "shaderc"]
     },
-    "particle_test": {"type": "test", "sources": ["test/particle_test.c3", "test/material_test.c3"]},
+    "particle_test": {"type": "test", "sources": ["test/particle_test.c3", "test/material_test.c3", "test/shift_test.c3"]},
     "particles": {
       "type": "executable",
       "sources": ["examples/**"],

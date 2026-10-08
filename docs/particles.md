@@ -91,6 +91,10 @@ Hidden emitters continue simulating. Their WORLD/identity draw child inherits
 visibility and subtree lifetime; update explicitly copies the emitter's layer
 mask because layers are not inherited.
 
+After an origin rebase, call `scene.shift_particles(offset)` after `Scene.shift_origin` and before `update_world`. It
+subtracts the offset from every live particle position and resets each draw child, which is world-space and was
+moved by the scene shift, to the identity transform. The next `update_world` and `particle::update` publish the draws.
+
 The descriptor is captured at creation and remains immutable. Runtime controls
 are `ParticleSystem.emitting`, `emit_burst(count)`, emitter transforms and wind.
 Material values use the ordinary asset revision API. Recreate a system to change
