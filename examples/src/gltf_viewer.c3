@@ -344,10 +344,6 @@ fn BenchmarkOptions? parse_options(String[] args) @local {
     return options;
 }
 
-<*
- Bytes of a budget given in MiB; zero leaves textures unbudgeted.
- @return? c3d::INVALID_ARGUMENT
-*>
 fn usz? parse_texture_budget(String mebibytes) @local {
     uint value = mebibytes.to_uint()!;
     if (value > TEXTURE_BUDGET_MIB_MAX) return c3d::INVALID_ARGUMENT~;
@@ -667,7 +663,13 @@ fn int main(String[] args) {
         bench_loop::print_features();
         return 0;
     }
-    if (!options.flags.enabled) return run_example(options.model_path, options.flags.gpu_timings, options.texture_budget_bytes);
+    if (!options.flags.enabled) {
+        return run_example(
+            model_path: options.model_path,
+            gpu_timings: options.flags.gpu_timings,
+            texture_budget_bytes: options.texture_budget_bytes,
+        );
+    }
     if (!options.model_path.len) options.model_path = example_path(BENCHMARK_MODEL);
     if (catch excuse = run_benchmark(options)) {
         io::eprintfn("glTF benchmark failed: %s", excuse);
