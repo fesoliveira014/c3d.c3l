@@ -42,15 +42,18 @@ struct LoadRequest {
     String      path;
     ModelFormat format;
     LoadOptions options;
+    ModelId     replace; // zero adds; otherwise the live model whose key is the path
+    AssetRef[]  missing; // borrowed until PUBLISHED or FAILED; written only by publish
 }
 
 <*
  Phase of a request with its model or fault.
 *>
 struct LoadStatus {
-    LoadPhase phase;
-    ModelId   model;
-    fault     failure;
+    LoadPhase          phase;
+    ModelId            model;
+    fault              failure;
+    ModelReplaceReport report; // zero for an add
 }
 
 struct LoadSlot @private {
@@ -62,6 +65,7 @@ struct LoadSlot @private {
     ModelDocument document;
     ModelId       model;
     fault         failure;
+    ModelReplaceReport report;
 }
 
 struct LoaderState @private {
@@ -84,14 +88,20 @@ struct AsyncLoader {
 }
 
 <*
- Queue a model file for decoding on the worker.
- @param request : "The path is copied."
- @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ Queue a model file for decoding on the worker, as an add or as a replacement.
+ A replacement target removed before publish fails the request with c3d::INVALID_ID.
+ @param request : "The path is copied; the missing slice is borrowed until the request ends."
+ @return? c3d::INVALID_ARGUMENT, c3d::INVALID_ID, c3d::CAPACITY_EXCEEDED
  @require request.path.len > 0
 *>
 fn LoadId? AsyncLoader.request(&self, LoadRequest request) {
     LoaderState* state = self.state;
-    if (state.assets.keys.has_key(request.path)) return c3d::INVALID_ARGUMENT~;
+    if (request.replace.generation) {
+        ModelAsset* target = state.assets.models.try_get(request.replace)!;
+        if (target.header.key != request.path) return c3d::INVALID_ARGUMENT~;
+    } else if (state.assets.keys.has_key(request.path)) {
+        return c3d::INVALID_ARGUMENT~;
+    }
     state.lock.lock();
     defer state.lock.unlock();
     foreach (&slot : state.slots) {
@@ -123,7 +133,7 @@ fn LoadStatus AsyncLoader.status(&self, LoadId id) {
     defer state.lock.unlock();
     LoadSlot*? slot = live_slot(state, id);
     if (catch slot) return { .phase = LoadPhase.FAILED, .failure = c3d::INVALID_ID };
-    return { .phase = slot.phase, .model = slot.model, .failure = slot.failure };
+    return { .phase = slot.phase, .model = slot.model, .failure = slot.failure, .report = slot.report };
 }
 
 <*
@@ -137,14 +147,7 @@ fn uint AsyncLoader.publish(&self) {
     uint transitions;
     while (try index = oldest_in_phase(state, LoadPhase.DECODED)) {
         LoadSlot* slot = &state.slots[index];
-        ModelId? model = state.assets.publish_document(&slot.document);
-        if (catch excuse = model) {
-            slot.phase = LoadPhase.FAILED;
-            slot.failure = excuse;
-        } else {
-            slot.phase = LoadPhase.PUBLISHED;
-            slot.model = model;
-        }
+        publish_slot(state.assets, slot);
         asset::destroy_model_document(&slot.document);
         transitions++;
     }
@@ -217,6 +220,34 @@ fn void destroy_async_loader(AsyncLoader* loader) {
     alloc::free(allocator, state.slots.ptr);
     alloc::free(allocator, state);
     *loader = {};
+}
+
+fn void publish_slot(AssetStore* assets, LoadSlot* slot) @private {
+    if (!slot.request.replace.generation) {
+        ModelId? model = assets.publish_document(&slot.document);
+        if (catch excuse = model) {
+            slot.phase = LoadPhase.FAILED;
+            slot.failure = excuse;
+        } else {
+            slot.phase = LoadPhase.PUBLISHED;
+            slot.model = model;
+        }
+        return;
+    }
+    if (!assets.models.is_live(slot.request.replace)) {
+        slot.phase = LoadPhase.FAILED;
+        slot.failure = c3d::INVALID_ID;
+        return;
+    }
+    ModelReplaceReport? report = assets.replace_document(slot.request.replace, &slot.document, slot.request.missing);
+    if (catch excuse = report) {
+        slot.phase = LoadPhase.FAILED;
+        slot.failure = excuse;
+    } else {
+        slot.phase = LoadPhase.PUBLISHED;
+        slot.model = slot.request.replace;
+        slot.report = report;
+    }
 }
 
 fn bool holds_pending(LoaderState* state, LoadId id) @private {

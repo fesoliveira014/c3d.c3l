@@ -61,6 +61,27 @@ fn ModelId? load_model(AssetStore* assets, String path, LoadOptions options = as
 }
 
 <*
+ Decode a file and replace the model loaded from it.
+ @param [&inout] assets : "Receives the replaced parts; unchanged on a fault."
+ @param missing : "Receives the first missing parts by kind, then key."
+ @return? c3d::ASSET_IO_ERROR, c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED
+ @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::INCOMPATIBLE_STRUCTURE
+ @require path.len > 0
+ @require assets.models.is_live(model)
+*>
+fn ModelReplaceReport? replace_model(
+    AssetStore* assets,
+    ModelId model,
+    String path,
+    LoadOptions options = asset::LOAD_OPTIONS_DEFAULT,
+    AssetRef[] missing = {},
+) {
+    ModelDocument document = decode_model(assets.allocator, path, options)!;
+    defer asset::destroy_model_document(&document);
+    return assets.replace_document(model, &document, missing);
+}
+
+<*
  Decode an FBX file into a document keyed by the path.
  @param allocator : "Owns the document; publish needs the store allocator."
  @return? c3d::ASSET_IO_ERROR, c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED, c3d::INVALID_ARGUMENT

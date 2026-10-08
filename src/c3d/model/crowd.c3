@@ -237,6 +237,7 @@ fn void? set_crowd(
     AnimatedCrowd* crowd = scene.get(node, AnimatedCrowd);
     ModelTemplate* template = &assets.model(crowd.model).data;
     check_instances(template, (uint)crowd.placements.len, instances)!;
+    check_track_counts(assets, crowd, instances)!;
     fill_crowd(scene, crowd, instances);
 }
 
@@ -254,6 +255,14 @@ fn void? check_crowd_template(ModelTemplate* template) @local {
 fn void? check_pose(ModelTemplate* template, CrowdPose pose) @local {
     foreach (clip : template.clips) if (c3d::same_id(clip, pose.clip)) return;
     return c3d::INVALID_ARGUMENT~;
+}
+
+fn void? check_track_counts(AssetStore* assets, AnimatedCrowd* crowd, CrowdInstance[] instances) @local {
+    if (!crowd.is_prepared()) return;
+    foreach (instance : instances) {
+        if (!assets.clips.is_live(instance.pose.clip)) continue;
+        if (assets.clip(instance.pose.clip).data.tracks.len > crowd.max_tracks) return c3d::INVALID_ARGUMENT~;
+    }
 }
 
 fn void? check_instances(ModelTemplate* template, uint capacity, CrowdInstance[] instances) @local {
