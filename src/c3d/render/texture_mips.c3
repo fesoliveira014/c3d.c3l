@@ -59,20 +59,22 @@ fn TextureMipChain? create_texture_mips(
 ) {
     if (first_mip == 0) return create_full_texture_mips(allocator, desc, pixels);
 
-    @pool() {
-        TextureMipChain full = create_full_texture_mips(tmem, desc, pixels)!;
-        usz kept_offset = full.offsets[first_mip];
-        TextureMipChain chain = {
-            .allocator = allocator,
-            .first_mip = first_mip,
-            .mip_count = full.mip_count - first_mip,
-            .layer_count = full.layer_count,
-            .pixels = alloc::new_array(allocator, char, (sz)(full.pixels.len - kept_offset)),
-        };
-        for (uint mip = 0; mip < chain.mip_count; mip++) chain.offsets[mip] = full.offsets[first_mip + mip] - kept_offset;
-        mem::copy(chain.pixels.ptr, full.pixels.ptr + kept_offset, chain.pixels.len);
-        return chain;
+    TextureMipChain full = create_full_texture_mips(allocator, desc, pixels)!;
+    defer destroy_texture_mips(&full);
+
+    usz kept_offset = full.offsets[first_mip];
+    TextureMipChain chain = {
+        .allocator = allocator,
+        .first_mip = first_mip,
+        .mip_count = full.mip_count - first_mip,
+        .layer_count = full.layer_count,
+        .pixels = alloc::new_array(allocator, char, (sz)(full.pixels.len - kept_offset)),
     };
+    for (uint mip = 0; mip < chain.mip_count; mip++) {
+        chain.offsets[mip] = full.offsets[first_mip + mip] - kept_offset;
+    }
+    mem::copy(chain.pixels.ptr, full.pixels.ptr + kept_offset, chain.pixels.len);
+    return chain;
 }
 
 fn TextureMipChain? create_full_texture_mips(Allocator allocator, material::TextureDesc desc, char[] pixels) @local {

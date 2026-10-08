@@ -341,6 +341,23 @@ fn void test_mip_chain_from_first_mip_keeps_only_lower_levels() @test {
     assert(partial.pixels == full.pixels[full.offsets[2]..]);
 }
 
+fn void test_mip_chain_from_first_mip_survives_a_temporary_allocator() @test {
+    char[256] pixels;
+    foreach (index, &value : pixels) *value = (char)(index * 7 + 3);
+    material::TextureDesc desc = material::texture_2d_desc(8, 8, RGBA8_UNORM);
+    TextureMipChain full = render::create_texture_mips(mem, desc, pixels[..])!!;
+    defer render::destroy_texture_mips(&full);
+
+    @pool() {
+        TextureMipChain partial = render::create_texture_mips(tmem, desc, pixels[..], first_mip: 2)!!;
+        char[] scratch = alloc::new_array(tmem, char, 64);
+        foreach (&value : scratch) *value = 0xa5;
+
+        assert(partial.pixels == full.pixels[full.offsets[2]..]);
+        assert(scratch[0] == 0xa5);
+    };
+}
+
 fn void test_supplied_layout_from_first_mip() @test {
     char[64] level0;
     char[16] level1;

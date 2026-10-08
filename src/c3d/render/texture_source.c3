@@ -81,7 +81,9 @@ fn TextureMipLayout? supplied_texture_mip_layout(
         usz kept_offset = layout.offsets[first_mip];
         layout.mip_count -= first_mip;
         layout.total_bytes -= kept_offset;
-        for (uint mip = 0; mip < layout.mip_count; mip++) layout.offsets[mip] = layout.offsets[first_mip + mip] - kept_offset;
+        for (uint mip = 0; mip < layout.mip_count; mip++) {
+            layout.offsets[mip] = layout.offsets[first_mip + mip] - kept_offset;
+        }
         for (uint mip = layout.mip_count; mip < desc.mip_levels; mip++) layout.offsets[mip] = 0;
     }
     return layout;
