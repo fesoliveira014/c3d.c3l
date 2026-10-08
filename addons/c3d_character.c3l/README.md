@@ -40,6 +40,15 @@ physics.update(delta);         // builds bodies, runs the fixed steps and the ch
 scene.update_world();          // world matrices of the moved nodes
 ```
 
+## Rebasing the origin
+
+`scene.shift_characters(offset)` subtracts the offset from each character's `previous`,
+`current` and mover plane points (`offset.y == 0`). Call it after
+`physics.shift_origin(&scene, offset)`, which moves the kinematic push bodies, and
+before the next `physics.update`. Grounding and velocity are kept. Under
+`C3D_CHARACTER_NAV` it also shifts the points of each `NavDriven.traversal`; the crowd
+and navmesh are shifted by their own functions. See `docs/large_world.md` for the order.
+
 ## Animation-driven motion
 
 `Scene.move_character_root_motion(node, delta, dt)` converts an animation delta

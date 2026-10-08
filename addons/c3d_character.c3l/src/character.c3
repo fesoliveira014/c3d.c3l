@@ -185,6 +185,21 @@ fn void Scene.teleport_character(&self, Node* node, Vec3 position) {
 }
 
 <*
+ Move every character's capsule and mover planes by the negated offset after the scene shift.
+ @require offset.y == 0
+*>
+fn void Scene.shift_characters(&self, Vec3 offset) {
+    self.@each(Character; Entity entity, Character* character) {
+        character.previous -= offset;
+        character.current -= offset;
+        foreach (&plane : character.planes[:character.plane_count]) plane.point -= offset;
+    };
+    $if $feat(C3D_CHARACTER_NAV):
+        shift_nav_driven(self, offset);
+    $endif
+}
+
+<*
  Default character: 0.4 m radius, 0.6 m half height, 0.35 m step, 50 degree slope, 5 mm skin, no push body.
 *>
 fn CharacterDesc default_character_desc() {

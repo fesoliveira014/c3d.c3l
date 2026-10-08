@@ -319,6 +319,24 @@ fn void PhysicsWorld.update_cloths(&self) {
     };
 }
 
+<*
+ Translate all world-space state by the negated offset.
+ @require offset.y == 0
+*>
+fn void ClothState.shift_origin(&self, Vec3 offset) {
+    foreach (&position : self.positions) *position -= offset;
+    foreach (&position : self.predicted) *position -= offset;
+    foreach (&position : self.published) *position -= offset;
+    foreach (&position : self.pin_anchors) *position -= offset;
+    foreach (&position : self.pin_targets) *position -= offset;
+    foreach (&position : self.shape_starts) *position -= offset;
+    foreach (&position : self.shape_ends) *position -= offset;
+    foreach (&body : self.bodies) {
+        body.solved.position -= offset;
+        body.current.position -= offset;
+    }
+}
+
 <* Default cloth settings with no pins or ground. *>
 fn ClothDesc default_cloth_desc() {
     return {

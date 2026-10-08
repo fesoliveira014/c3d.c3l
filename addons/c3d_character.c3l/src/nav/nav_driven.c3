@@ -73,6 +73,14 @@ fn void drive_characters(Scene* scene, Crowd* crowd) {
     };
 }
 
+fn void shift_nav_driven(Scene* scene, Vec3 offset) @private {
+    scene.@each(NavDriven; Entity entity, NavDriven* driven) {
+        driven.traversal.initial_position -= offset;
+        driven.traversal.start -= offset;
+        driven.traversal.end -= offset;
+    };
+}
+
 // The steps of an update run ahead of the crowd's clock by their elapsed time, so the update's last step lands on
 // the crowd's next t and the clamp holds the capsule at the end until the crowd ends the traversal.
 fn bool traverse_off_mesh(

@@ -1672,3 +1672,90 @@ fn void test_replace_geometry_keeps_live_body_snapshot() @test {
     assert(added_collider.wire.len / 6 == 32);
     assert(occupied_snapshots(&fixture.physics) == 2);
 }
+
+const float SHIFT_DISTANCE @private = 195 * 256; // about 50 km, a multiple of the 256 m cell
+const float SHIFT_SETTLE_TOLERANCE @private = 1e-3f;
+
+fn Node* add_shifted_ground(Fixture* fixture, Vec3 position) @private {
+    Node* ground = fixture.scene.add_node(name: "ground")!!;
+    ground.local.position = position;
+    fixture.scene.update_world();
+    ColliderDesc collider = box_collider({ 10, 0.5f, 10 });
+    fixture.physics.add_body(ground, physics::default_body_desc(STATIC), (&collider)[:1])!!;
+    return ground;
+}
+
+fn void shift_world(Fixture* fixture, Vec3 offset) @private {
+    fixture.scene.shift_origin(offset);
+    fixture.scene.update_world();
+    fixture.physics.shift_origin(&fixture.scene, offset);
+}
+
+fn void test_shift_origin_keeps_a_resting_stack_asleep() @test {
+    Fixture fixture;
+    setup(&fixture);
+    defer teardown(&fixture);
+
+    Vec3 offset = { SHIFT_DISTANCE, 0, 0 };
+    add_shifted_ground(&fixture, offset + (Vec3){ 0, -0.5f, 0 });
+    Node*[3] stack;
+    foreach (index, &node : stack) *node = add_box(&fixture, offset + (Vec3){ 0, 0.5f + (float)index, 0 }, DYNAMIC, false);
+    run_updates(&fixture, SETTLE_UPDATES);
+
+    Vec3[3] before;
+    bool[3] awake;
+    foreach (index, node : stack) {
+        before[index] = fixture.scene.get(node, RigidBody).current.position;
+        awake[index] = fixture.physics.body(node)!!.is_awake();
+        assert(!awake[index]);
+    }
+
+    shift_world(&fixture, offset);
+    foreach (index, node : stack) {
+        Vec3 expected = before[index] - offset;
+        assert(close_vec(fixture.scene.get(node, RigidBody).current.position, expected, 0.01f));
+        assert(close_vec(fixture.physics.body(node)!!.position(), expected, 0.01f));
+        assert(fixture.physics.body(node)!!.is_awake() == awake[index]);
+    }
+
+    run_updates(&fixture, SETTLE_UPDATES);
+    foreach (index, node : stack) {
+        Vec3 expected = before[index] - offset;
+        Vec3 position = fixture.scene.get(node, RigidBody).current.position;
+        assert(math::abs(position.y - expected.y) < SHIFT_SETTLE_TOLERANCE);
+        assert(!fixture.physics.body(node)!!.is_awake());
+    }
+
+    Node* dropped = add_box(&fixture, { 5, 3, 0 }, DYNAMIC, false);
+    run_updates(&fixture, SETTLE_UPDATES);
+    Vec3 landed = fixture.scene.get(dropped, RigidBody).current.position;
+    assert(close_vec(landed, { 5, 0.5f, 0 }, 0.02f));
+}
+
+fn void test_shift_origin_keeps_kinematic_and_joint_poses() @test {
+    Fixture fixture;
+    PhysicsDesc desc = physics::default_physics_desc();
+    desc.tuning.gravity = {};
+    setup(&fixture, desc);
+    defer teardown(&fixture);
+
+    Vec3 offset = { SHIFT_DISTANCE, 0, 0 };
+    Node* platform = add_box(&fixture, offset + (Vec3){ 0, 5, 0 }, KINEMATIC, false);
+    Node* anchor = add_box(&fixture, offset + (Vec3){ 0, 0, 20 }, STATIC, false);
+    Node* attached = add_box(&fixture, offset + (Vec3){ 2, 0, 20 }, DYNAMIC, false);
+    JointDesc joint = physics::default_joint_desc(WELD, anchor.id);
+    joint.anchor_frame.position = { 2, 0, 0 };
+    fixture.physics.add_joint(attached, joint)!!;
+    run_updates(&fixture, 1);
+
+    shift_world(&fixture, offset);
+    run_updates(&fixture, 60);
+
+    Vec3 platform_position = fixture.scene.get(platform, RigidBody).current.position;
+    assert(close_vec(platform_position, { 0, 5, 0 }, 0.001f));
+    assert(close_vec(fixture.physics.body(platform)!!.linear_velocity(), {}, 0.001f));
+    Vec3 anchor_position = fixture.scene.get(anchor, RigidBody).current.position;
+    Vec3 attached_position = fixture.scene.get(attached, RigidBody).current.position;
+    assert(close_vec(anchor_position, { 0, 0, 20 }, TOLERANCE));
+    assert(close_vec(attached_position - anchor_position, { 2, 0, 0 }, TOLERANCE));
+}

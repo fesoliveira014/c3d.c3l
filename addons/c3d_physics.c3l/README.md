@@ -233,6 +233,19 @@ anchors: an unanchored remainder may tip under a strong impact. Native
 record/replay includes the body/joint mutations, but does not recreate scene
 components or re-dispatch BreakEvent values.
 
+## Rebasing the origin
+
+After `Scene.shift_origin(offset)` and `scene.update_world()`, call
+`physics.shift_origin(&scene, offset)` with the same offset (`offset.y == 0`). It
+subtracts the offset from every body's pose through `set_transform`, including static
+bodies, then rebuilds the static tree once. Velocities, sleep state, joints, welds and
+contacts are kept, so a resting stack stays asleep. Cloth positions, pin anchors and
+targets, collision shapes and the sampled body poses move with it; nothing allocates.
+Call it between `end_frame` and the next `physics.update`. A recording captures the
+shift as `set_transform` calls of every body, and replay reproduces it. The
+`FluidSurfaceFn` of buoyancy belongs to the application and must follow the shift.
+See `docs/large_world.md` for the full order.
+
 ## Example and checks
 
 ```powershell
