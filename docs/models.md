@@ -241,6 +241,8 @@ Each entry key is one of:
 - a conflict: a key held by another kind, a builtin texture or sampler, or the model itself (`INVALID_ARGUMENT`).
 
 References inside the document and its template are remapped to the matched and added ids before each entry is replaced.
+A template reference that is unset, outside the document's entries or a dead store record faults `INVALID_ARGUMENT`, as in
+`publish_document`.
 The check phase decides every fault, so a fault leaves the store and the document as they were; on success the document is
 emptied.
 
@@ -398,7 +400,7 @@ capacity costs one entry record.
 | --- | --- | --- |
 | `decode_model`, `decode_model_memory` | `ASSET_IO_ERROR`, `ASSET_FORMAT_ERROR`, `UNSUPPORTED` | As for the loaders above. |
 | | `INVALID_ARGUMENT` | An image file has zero bytes. |
-| `publish_document` | `INVALID_ARGUMENT` | A document or entry key is in the store, two entries share a key, a material is `CUSTOM`, a geometry has invalid skin influences, or a storage texture has a non-storage format. |
+| `publish_document` | `INVALID_ARGUMENT` | A document or entry key is in the store, two entries share a key, a material is `CUSTOM`, a geometry has invalid skin influences, a storage texture has a non-storage format, or a template reference is unset, outside the document's entries or a dead store record. |
 | | `CAPACITY_EXCEEDED` | A pool has fewer free slots than the document has entries of that kind; the model pool needs one. |
 
 ## Background loading
