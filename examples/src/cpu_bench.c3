@@ -45,6 +45,11 @@ const uint PLAN_CHAIN_EXTENT @local = 2048;
 const ulong PLAN_FRAME @local = 1000;
 const uint PLAN_TEXEL_BYTES @local = 4;
 const String ECS_PREFIX @local = "ecs_";
+const String TEXTURE_MIPS_CASE @local = "texture_mips";
+const uint MAX_TEXTURE_EXTENT @local = 4096; // 64 MiB of RGBA8 per source image
+const uint TEXTURE_MIPS_SEED @local = 0x9e3779b9;
+const uint LCG_MULTIPLIER @local = 1664525;
+const uint LCG_INCREMENT @local = 1013904223;
 const String SHUFFLED_SUFFIX @local = "_shuffled";
 
 enum Work @local {
@@ -269,6 +274,7 @@ fn double run_iteration(
                 budget: {
                     .budget_bytes = plan_input.budget_bytes,
                     .frame_bytes = render::TEXTURE_STREAM_FRAME_BYTES,
+                    .frame_texels = render::TEXTURE_REGENERATION_FRAME_TEXELS,
                     .frame = PLAN_FRAME,
                 },
                 bias: &bias,
@@ -697,14 +703,80 @@ fn void? benchmark_ecs(
     }
 }
 
+fn void? benchmark_texture_mips(
+    uint extent,
+    String format_name,
+    uint iterations,
+    uint sample_count,
+) @local {
+    material::PixelFormat format;
+    switch (format_name) {
+        case "rgba8": format = RGBA8_UNORM;
+        case "srgb": format = RGBA8_SRGB;
+        default: return c3d::INVALID_ARGUMENT~;
+    }
+    char[] pixels = alloc::new_array(mem, char, (usz)extent * extent * 4);
+    defer alloc::free(mem, pixels.ptr);
+    uint state = TEXTURE_MIPS_SEED;
+    foreach (&byte : pixels) {
+        state = state * LCG_MULTIPLIER + LCG_INCREMENT;
+        *byte = (char)(state >> 24);
+    }
+    material::TextureDesc desc = material::texture_2d_desc(extent, extent, format);
+
+    Sample[] samples = alloc::new_array(mem, Sample, sample_count);
+    defer alloc::free(mem, samples.ptr);
+    double checksum;
+    for (uint batch = 0; batch < WARMUP_BATCHES + sample_count; batch++) {
+        time::Clock started = clock::now();
+        for (uint iteration = 0; iteration < iterations; iteration++) {
+            TextureMipChain chain = render::create_texture_mips(mem, desc, pixels)!;
+            checksum += chain.pixels[chain.pixels.len - 1];
+            render::destroy_texture_mips(&chain);
+        }
+        double elapsed = (double)(clock::now() - started) / NANOSECONDS_PER_MICROSECOND / iterations;
+        if (batch >= WARMUP_BATCHES) {
+            samples[batch - WARMUP_BATCHES] = { .microseconds = elapsed, .checksum = checksum };
+        }
+    }
+    io::printn("case,extent,format,batch,iterations,ms_per_call,checksum");
+    foreach (index, sample : samples) {
+        io::printfn(
+            "%s,%d,%s,%d,%d,%.6f,%.0f",
+            TEXTURE_MIPS_CASE,
+            extent,
+            format_name,
+            index,
+            iterations,
+            sample.microseconds / NANOSECONDS_PER_MICROSECOND,
+            sample.checksum,
+        );
+    }
+}
+
 <* Measure scene traversal and CPU extraction without creating a GPU device. *>
 fn int main(String[] args) {
+    if (args.len >= 2 && args[1] == TEXTURE_MIPS_CASE) {
+        uint extent = args.len > 2 ? (args[2].to_uint() ?? 0) : 0;
+        uint iterations = args.len > 4 ? (args[4].to_uint() ?? 0) : 3;
+        uint sample_count = args.len > 5 ? (args[5].to_uint() ?? 0) : 5;
+        if (args.len < 4 || args.len > 6 || !extent || extent > MAX_TEXTURE_EXTENT || !iterations || !sample_count) {
+            io::eprintn("Usage: cpu_bench texture_mips EXTENT FORMAT [iterations=3] [samples=5]; FORMAT is rgba8 or srgb");
+            return 1;
+        }
+        if (catch excuse = benchmark_texture_mips(extent, args[3], iterations, sample_count)) {
+            io::eprintfn("Texture mip benchmark failed: %s", excuse);
+            return 1;
+        }
+        return 0;
+    }
     if (args.len < 2 || args.len > 5) {
         io::eprintn("Usage: cpu_bench CASE [nodes=4096] [iterations=100] [samples=30]");
         io::eprintn("Cases: world hidden_world meshes culled_meshes hidden_meshes shadows lights hidden_lights sort");
         io::eprintn("       bvh_triangles (nodes = plane segments per side, 128 by default, at most 1024)");
         io::eprintn("       bvh_top (nodes = boxes)");
         io::eprintn("       texture_plan (nodes = synthetic texture records)");
+        io::eprintn("       texture_mips EXTENT rgba8|srgb [iterations] [samples]");
         io::eprintn("       index_refresh_crowd index_refresh_batch index_build_crowd index_build_batch");
         io::eprintn("       index_pick_crowd scan_pick_crowd index_pick_triangles scan_pick_triangles (nodes ignored)");
         io::eprintn("       triangle_warmup (nodes = plane segments per side, as bvh_triangles)");

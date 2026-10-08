@@ -13,6 +13,9 @@ const double SRGB_LINEAR_SCALE @local = 12.92;
 const double SRGB_OFFSET @local = 0.055;
 const double SRGB_SCALE @local = 1.055;
 const double SRGB_EXPONENT @local = 2.4;
+const usz SRGB_CODE_COUNT @private = 256;
+const usz SRGB_THRESHOLD_COUNT @private = SRGB_CODE_COUNT - 1;
+const uint SRGB_BISECTION_LIMIT @local = 128; // far above the roughly 65 halvings that make two doubles adjacent
 const ushort HALF_SIGN_MASK @local = 0x8000;
 const uint HALF_MANTISSA_BITS @local = 10;
 const ushort HALF_MANTISSA_MASK @local = 0x3ff;
@@ -31,6 +34,9 @@ const uint FLOAT_HALF_UNDERFLOW @local = 0x33000000; // 2^-25, half of the small
 const uint HALF_SUBNORMAL_SHIFT_BASE @local = 113; // biased float exponent of 2^-14
 const uint HALF_ROUND_BIAS @local = 0xfff; // round-to-nearest bias for the 13 dropped mantissa bits
 const uint FLOAT_HALF_EXPONENT_OFFSET @local = 0x38000000; // (127 - 15) << 23
+
+double[SRGB_CODE_COUNT] srgb_decode_table @private;
+double[SRGB_THRESHOLD_COUNT] srgb_encode_thresholds @private; // smallest scaled linear value reaching each code
 
 <*
  One owned mip-major chain of tightly packed texture layers.
@@ -91,6 +97,7 @@ fn TextureMipChain? create_full_texture_mips(Allocator allocator, material::Text
             return create_typed_texture_mips(
                 $Scalar: char,
                 $srgb: false,
+                $halving: true,
                 allocator: allocator,
                 desc: desc,
                 pixels: pixels,
@@ -99,6 +106,7 @@ fn TextureMipChain? create_full_texture_mips(Allocator allocator, material::Text
             return create_typed_texture_mips(
                 $Scalar: char,
                 $srgb: true,
+                $halving: true,
                 allocator: allocator,
                 desc: desc,
                 pixels: pixels,
@@ -107,6 +115,7 @@ fn TextureMipChain? create_full_texture_mips(Allocator allocator, material::Text
             return create_typed_texture_mips(
                 $Scalar: float16,
                 $srgb: false,
+                $halving: true,
                 allocator: allocator,
                 desc: desc,
                 pixels: pixels,
@@ -115,6 +124,7 @@ fn TextureMipChain? create_full_texture_mips(Allocator allocator, material::Text
             return create_typed_texture_mips(
                 $Scalar: float,
                 $srgb: false,
+                $halving: true,
                 allocator: allocator,
                 desc: desc,
                 pixels: pixels,
@@ -199,9 +209,48 @@ fn void destroy_texture_mips(TextureMipChain* chain) {
     *chain = {};
 }
 
+fn TextureMipChain? create_area_filter_texture_mips(
+    Allocator allocator,
+    material::TextureDesc desc,
+    char[] pixels,
+) @private {
+    switch (desc.format) {
+        case RGBA8_UNORM:
+            return create_typed_texture_mips(
+                $Scalar: char,
+                $srgb: false,
+                $halving: false,
+                allocator: allocator,
+                desc: desc,
+                pixels: pixels,
+            );
+        case RGBA8_SRGB:
+            return create_typed_texture_mips(
+                $Scalar: char,
+                $srgb: true,
+                $halving: false,
+                allocator: allocator,
+                desc: desc,
+                pixels: pixels,
+            );
+        case RGBA16_FLOAT:
+            return create_typed_texture_mips(
+                $Scalar: float16,
+                $srgb: false,
+                $halving: false,
+                allocator: allocator,
+                desc: desc,
+                pixels: pixels,
+            );
+        default:
+            return c3d::UNSUPPORTED~;
+    }
+}
+
 macro TextureMipChain? create_typed_texture_mips(
     $Scalar,
     $srgb,
+    $halving,
     Allocator allocator,
     material::TextureDesc desc,
     char[] pixels,
@@ -241,48 +290,71 @@ macro TextureMipChain? create_typed_texture_mips(
             $Scalar* source = ($Scalar*)(chain.pixels.ptr + source_offset);
             $Scalar* destination = ($Scalar*)(chain.pixels.ptr + destination_offset);
 
+            bool halves;
+            $if $halving:
+                halves = (width == 2 * next_width || width == 1) && (height == 2 * next_height || height == 1);
+            $endif
+            uint step_x = width / next_width;
+            uint step_y = height / next_height;
+
             for (uint destination_y = 0; destination_y < next_height; destination_y++) {
-                double top = (double)destination_y * height / next_height;
-                double bottom = (double)(destination_y + 1) * height / next_height;
                 for (uint destination_x = 0; destination_x < next_width; destination_x++) {
-                    double left = (double)destination_x * width / next_width;
-                    double right = (double)(destination_x + 1) * width / next_width;
-                    double area = (right - left) * (bottom - top);
                     double[RGBA_CHANNELS] sum;
-                    for (uint source_y = (uint)top; source_y < (uint)math::ceil(bottom); source_y++) {
-                        double vertical = math::min(bottom, (double)source_y + 1) - math::max(top, (double)source_y);
-                        for (uint source_x = (uint)left; source_x < (uint)math::ceil(right); source_x++) {
-                            double horizontal = math::min(right, (double)source_x + 1)
-                              - math::max(left, (double)source_x);
-                            usz source_base = ((usz)source_y * width + source_x) * RGBA_CHANNELS;
-                            for (uint channel = 0; channel < RGBA_CHANNELS; channel++) {
-                                $if $Scalar == float16:
-                                    double value = (double)half_to_float(bitcast(source[source_base + channel], ushort));
-                                $else
-                                    double value = (double)source[source_base + channel];
-                                $endif
-                                $if $srgb:
-                                    if (channel < RGB_CHANNELS) value = decode_srgb(value / UNORM_MAX) * UNORM_MAX;
-                                $endif
-                                sum[channel] += value * horizontal * vertical;
+                    double area;
+                    if (halves) {
+                        area = (double)step_x * step_y;
+                        uint first_y = destination_y * step_y;
+                        uint first_x = destination_x * step_x;
+                        for (uint source_y = first_y; source_y < first_y + step_y; source_y++) {
+                            for (uint source_x = first_x; source_x < first_x + step_x; source_x++) {
+                                usz source_base = ((usz)source_y * width + source_x) * RGBA_CHANNELS;
+                                for (uint channel = 0; channel < RGBA_CHANNELS; channel++) {
+                                    sum[channel] += load_mip_value(
+                                        $Scalar: $Scalar,
+                                        $srgb: $srgb,
+                                        source: source,
+                                        base: source_base,
+                                        channel: channel,
+                                    );
+                                }
+                            }
+                        }
+                    } else {
+                        double top = (double)destination_y * height / next_height;
+                        double bottom = (double)(destination_y + 1) * height / next_height;
+                        double left = (double)destination_x * width / next_width;
+                        double right = (double)(destination_x + 1) * width / next_width;
+                        area = (right - left) * (bottom - top);
+                        for (uint source_y = (uint)top; source_y < (uint)math::ceil(bottom); source_y++) {
+                            double vertical = math::min(bottom, (double)source_y + 1)
+                              - math::max(top, (double)source_y);
+                            for (uint source_x = (uint)left; source_x < (uint)math::ceil(right); source_x++) {
+                                double horizontal = math::min(right, (double)source_x + 1)
+                                  - math::max(left, (double)source_x);
+                                usz source_base = ((usz)source_y * width + source_x) * RGBA_CHANNELS;
+                                for (uint channel = 0; channel < RGBA_CHANNELS; channel++) {
+                                    sum[channel] += load_mip_value(
+                                        $Scalar: $Scalar,
+                                        $srgb: $srgb,
+                                        source: source,
+                                        base: source_base,
+                                        channel: channel,
+                                    ) * horizontal * vertical;
+                                }
                             }
                         }
                     }
 
                     usz destination_base = ((usz)destination_y * next_width + destination_x) * RGBA_CHANNELS;
                     for (uint channel = 0; channel < RGBA_CHANNELS; channel++) {
-                        double value = sum[channel] / area;
-                        $if $srgb:
-                            if (channel < RGB_CHANNELS) value = encode_srgb(value / UNORM_MAX) * UNORM_MAX;
-                        $endif
-                        $if $Scalar == char:
-                            value = math::clamp(math::round(value), 0.0, UNORM_MAX);
-                        $endif
-                        $if $Scalar == float16:
-                            destination[destination_base + channel] = bitcast(float_to_half((float)value), float16);
-                        $else
-                            destination[destination_base + channel] = ($Scalar)value;
-                        $endif
+                        store_mip_value(
+                            $Scalar: $Scalar,
+                            $srgb: $srgb,
+                            destination: destination,
+                            base: destination_base,
+                            channel: channel,
+                            value: sum[channel] / area,
+                        );
                     }
                 }
             }
@@ -292,13 +364,75 @@ macro TextureMipChain? create_typed_texture_mips(
     return chain;
 }
 
-fn double decode_srgb(double encoded) @local {
+macro double load_mip_value($Scalar, $srgb, source, usz base, uint channel) @local {
+    $if $Scalar == float16:
+        return (double)half_to_float(bitcast(source[base + channel], ushort));
+    $else
+        $if $srgb:
+            if (channel < RGB_CHANNELS) return srgb_decode_table[(usz)source[base + channel]];
+        $endif
+        return (double)source[base + channel];
+    $endif
+}
+
+macro void store_mip_value($Scalar, $srgb, destination, usz base, uint channel, double value) @local {
+    $if $Scalar == char:
+        $if $srgb:
+            if (channel < RGB_CHANNELS) {
+                destination[base + channel] = (char)encode_srgb_code(value);
+                return;
+            }
+        $endif
+        destination[base + channel] = (char)math::clamp(math::round(value), 0.0, UNORM_MAX);
+    $else
+        $if $Scalar == float16:
+            destination[base + channel] = bitcast(float_to_half((float)value), float16);
+        $else
+            destination[base + channel] = ($Scalar)value;
+        $endif
+    $endif
+}
+
+fn double srgb_reference_code(double scaled_linear) @private {
+    return math::clamp(math::round(encode_srgb(scaled_linear / UNORM_MAX) * UNORM_MAX), 0.0, UNORM_MAX);
+}
+
+// Branch-free: data-dependent branches mispredict on image texels and dominate the encode.
+fn double encode_srgb_code(double scaled_linear) @private {
+    usz count;
+    for (usz step = SRGB_CODE_COUNT / 2; step > 0; step >>= 1) {
+        count += srgb_encode_thresholds[count + step - 1] <= scaled_linear ? step : 0;
+    }
+    return (double)count;
+}
+
+fn void build_srgb_tables() @init @private {
+    for (usz code = 0; code < SRGB_CODE_COUNT; code++) {
+        srgb_decode_table[code] = decode_srgb(code / UNORM_MAX) * UNORM_MAX;
+    }
+    for (usz code = 1; code < SRGB_CODE_COUNT; code++) {
+        double below = 0;
+        double reaching = UNORM_MAX;
+        for (uint step = 0; step < SRGB_BISECTION_LIMIT; step++) {
+            double middle = below + (reaching - below) / 2;
+            if (middle <= below || middle >= reaching) break;
+            if (srgb_reference_code(middle) >= code) {
+                reaching = middle;
+            } else {
+                below = middle;
+            }
+        }
+        srgb_encode_thresholds[code - 1] = reaching;
+    }
+}
+
+fn double decode_srgb(double encoded) @private {
     return encoded <= SRGB_ENCODED_THRESHOLD
       ? encoded / SRGB_LINEAR_SCALE
       : math::pow((encoded + SRGB_OFFSET) / SRGB_SCALE, SRGB_EXPONENT);
 }
 
-fn double encode_srgb(double linear) @local {
+fn double encode_srgb(double linear) @private {
     return linear <= SRGB_LINEAR_THRESHOLD
       ? linear * SRGB_LINEAR_SCALE
       : SRGB_SCALE * math::pow(linear, 1.0 / SRGB_EXPONENT) - SRGB_OFFSET;

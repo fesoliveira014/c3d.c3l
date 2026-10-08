@@ -536,6 +536,10 @@ views keep resident.
 **Budget and pacing.** The step runs at `begin_frame`, after retired resources are released:
 - A drawn texture is raised toward its needed mip when the bytes fit the budget. The first raise of a frame is
   always admitted; further raises share 8 MiB per frame (`TEXTURE_STREAM_FRAME_BYTES`), largest deficit first.
+- A raise of a texture whose chain is generated from mip zero also costs its mip-zero texels. The first raise
+  counts its texels, and further raises must keep the frame within `TEXTURE_REGENERATION_FRAME_TEXELS`: one
+  1024² regeneration per frame. Textures with supplied mips cost no texels and are paced by bytes only. The first
+  resolve of a texture under a budget still regenerates from mip zero, outside this pacing.
 - When bytes exceed the budget, textures that were not drawn return to their tail, least recently used first.
 - When the drawn set still does not fit, one global bias holds every drawn texture the same number of levels
   below its need. The bias relaxes once the set fits within 90% of the budget.
