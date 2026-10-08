@@ -141,6 +141,15 @@ positions with pins at the current anchors (ground projection touches that publi
 attachment holds without inventing elapsed time, and a later step interpolates from the last
 solved anchors.
 
+## Rebasing the origin
+
+Cloth state is world-space, so `PhysicsWorld.shift_origin(&scene, offset)` subtracts the
+offset from `positions`, `predicted`, `published`, the pin anchors and targets, the
+collision shape endpoints and the sampled body poses. Velocities are unchanged.
+Publication is node-local through the inverse of the node's world matrix, and the cloth
+node is an ordinary parent node moved by `Scene.shift_origin`, so the published vertices
+do not change. `ground_height` is a world height and is not shifted.
+
 ## Solver and publication
 
 Per substep: wind accelerations from each triangle's area, unit normal and relative air velocity

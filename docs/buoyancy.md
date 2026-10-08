@@ -62,6 +62,13 @@ finite.
 - At rest on a flat surface a body settles where its mean fraction equals `ρ_body / ρ_fluid`, whatever its
   shape.
 
+## Rebasing the origin
+
+`PhysicsWorld.shift_origin` moves bodies but not the surface. A `FluidSurfaceFn` that
+reads world `x` and `z` must be given the shifted coordinates by the application, for
+example by capturing the accumulated offset, or the body floats against a displaced
+surface after the shift.
+
 ## Sleep
 
 Applying a force wakes a sleeping body but does not reset an awake body's sleep timer, so a floating body at
