@@ -460,12 +460,16 @@ fn void? record_raster_view(
             decals = alloc::new_array(tmem, DecalGpu, selected.len);
             foreach (index, candidate : selected) {
                 MaterialRes* material = resolve_material(renderer, candidate.decal.material)!;
+                Aabb projector = maths::aabb_transform(
+                    DECAL_LOCAL_BOUNDS,
+                    maths::rebase(candidate.node.world, renderer.frame_origin),
+                );
                 note_material_demand(
                     renderer: renderer,
                     material: material,
                     camera: *camera,
                     camera_position: matrices.position,
-                    bounds: maths::aabb_transform(DECAL_LOCAL_BOUNDS, maths::rebase(candidate.node.world, renderer.frame_origin)),
+                    bounds: projector,
                     viewport_height: viewport.y,
                     mip_bias: material_mip_bias,
                 );

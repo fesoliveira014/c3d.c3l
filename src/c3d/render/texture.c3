@@ -221,9 +221,6 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture, bool full
     return mirror;
 }
 
-<*
- Image description of a texture whose resident chain starts at base.
-*>
 fn gpu::TextureDesc texture_gpu_description(
     material::TextureDesc desc,
     gpu::Format format,
@@ -265,8 +262,8 @@ fn uint texture_chain_mips(TextureAsset* record) @private {
     material::TextureDesc* desc = &record.desc;
     switch (record.source_kind) {
         case MIP_ZERO:
-            if (desc.generate_mips && desc.width && desc.height) return material::texture_mip_count(desc.width, desc.height);
-            return 1;
+            if (!desc.generate_mips || !desc.width || !desc.height) return 1;
+            return material::texture_mip_count(desc.width, desc.height);
         case SUPPLIED_MIPS:
         case EMPTY:
             return desc.mip_levels;

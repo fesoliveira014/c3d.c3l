@@ -78,6 +78,17 @@ struct TextureResidencyPlan {
     usz  total_bytes; // resident bytes once every change applies
 }
 
+const usz EVICTION_BATCH @local = 128; // records ranked per scan, so a large eviction costs a few passes
+
+struct EvictionPick @local {
+    ulong frame;
+    uint  index;
+}
+
+fn bool EvictionPick.after(self, EvictionPick other) @local {
+    return self.frame > other.frame || (self.frame == other.frame && self.index > other.index);
+}
+
 struct TexturePlanState @local {
     TextureResidency[]       textures;
     TextureResidencyChange[] changes;
@@ -126,30 +137,48 @@ fn void TexturePlanState.evict_undrawn(&self, uint bias) {
     usz drawn_zero = self.drawn_need(0);
     usz drawn_relax = bias > 0 ? self.drawn_need(bias - 1) : 0;
     double release = (double)TEXTURE_BIAS_RELEASE_FRACTION * (double)self.budget;
+    EvictionPick cursor;
     bool has_cursor;
-    ulong cursor_frame;
-    uint cursor_index;
+    EvictionPick[EVICTION_BATCH] batch;
 
     while (self.total > self.budget
       || self.held_bytes + drawn_zero > self.budget
       || (bias > 0 && (double)(self.held_bytes + drawn_relax) > release)) {
-        uint pick = NO_RECORD;
-        foreach (index, &record : self.textures) {
-            if (!texture_plan_candidate(record) || texture_plan_drawn(record)) continue;
-            if (record.resident_base >= record.tail_base) continue;
+        usz found = self.collect_evictions(batch[..], has_cursor, cursor);
+        if (!found) break;
 
-            bool after = !has_cursor || record.last_used_frame > cursor_frame
-              || (record.last_used_frame == cursor_frame && index > cursor_index);
-            if (!after) continue;
-            if (pick == NO_RECORD || record.last_used_frame < self.textures[pick].last_used_frame) pick = (uint)index;
+        foreach (pick : batch[:found]) {
+            if (self.total <= self.budget && self.held_bytes + drawn_zero <= self.budget
+              && !(bias > 0 && (double)(self.held_bytes + drawn_relax) > release)) return;
+
+            has_cursor = true;
+            cursor = pick;
+            self.evict(pick.index, self.textures[pick.index].tail_base);
         }
-        if (pick == NO_RECORD) break;
-
-        has_cursor = true;
-        cursor_frame = self.textures[pick].last_used_frame;
-        cursor_index = pick;
-        self.evict(pick, self.textures[pick].tail_base);
     }
+}
+
+<*
+ Fill picks with the next undrawn evictable records after the cursor, least recently used first.
+*>
+fn usz TexturePlanState.collect_evictions(&self, EvictionPick[] picks, bool has_cursor, EvictionPick cursor) {
+    usz found;
+    foreach (index, &record : self.textures) {
+        if (!texture_plan_candidate(record) || texture_plan_drawn(record)) continue;
+        if (record.resident_base >= record.tail_base) continue;
+
+        EvictionPick pick = { .frame = record.last_used_frame, .index = (uint)index };
+        if (has_cursor && !pick.after(cursor)) continue;
+        if (found == picks.len && !picks[found - 1].after(pick)) continue;
+
+        usz slot = found < picks.len ? found++ : found - 1;
+        while (slot > 0 && picks[slot - 1].after(pick)) {
+            picks[slot] = picks[slot - 1];
+            slot--;
+        }
+        picks[slot] = pick;
+    }
+    return found;
 }
 
 fn uint TexturePlanState.settle_bias(&self, uint bias) {
@@ -194,7 +223,14 @@ fn uint TexturePlanState.raise(&self, bool limited, uint bias, usz frame_bytes) 
     uint starved;
     uint admitted_count;
     usz admitted_bytes;
-    for (uint deficit = material::TEXTURE_MIP_CAPACITY; deficit > 0; deficit--) {
+    uint widest;
+    foreach (&record : self.textures) {
+        if (!texture_plan_candidate(record) || (limited && !texture_plan_drawn(record))) continue;
+
+        uint target = limited ? texture_plan_target(record, bias) : 0;
+        if (record.resident_base > target) widest = math::max(widest, record.resident_base - target);
+    }
+    for (uint deficit = widest; deficit > 0; deficit--) {
         foreach (index, &record : self.textures) {
             if (!texture_plan_candidate(record)) continue;
             if (limited && !texture_plan_drawn(record)) continue;
@@ -372,10 +408,12 @@ fn void? step_texture_residency(Renderer* renderer) @private {
             if (!record.chain_mips) continue;
 
             TextureId asset = renderer.textures[index].asset;
-            record.raisable = texture_source_present(renderer.assets.texture(asset)) && texture_current(renderer, asset);
+            record.raisable = texture_source_present(renderer.assets.texture(asset))
+              && texture_current(renderer, asset);
+            uint chain_extent = math::max(record.chain_width, record.chain_height);
             record.required_base = record.demand_pixels > 0
-                ? texture_required_base(math::max(record.chain_width, record.chain_height), record.chain_mips, record.demand_pixels, 0)
-                : record.chain_mips;
+              ? texture_required_base(chain_extent, record.chain_mips, record.demand_pixels, 0)
+              : record.chain_mips;
         }
 
         TextureBudget budget = {
@@ -412,10 +450,6 @@ fn void? step_texture_residency(Renderer* renderer) @private {
     };
 }
 
-<*
- Move one texture to a new resident base through a fresh image.
- @return? gpu::SLOT_TABLE_FULL, gpu::DESCRIPTOR_HEAP_FULL, gpu::OUT_OF_DEVICE_MEMORY
-*>
 fn void? apply_texture_residency(Renderer* renderer, TextureResidencyChange change) @private {
     TextureRes* mirror = &renderer.textures[change.index];
     TextureResidency* residency = &renderer.residencies[change.index];
@@ -558,7 +592,7 @@ fn void expand_material_demand(Renderer* renderer) @private {
 }
 
 fn void raise_bindings_demand(Renderer* renderer, MaterialBindings* bindings, float pixels) @local {
-    TextureBinding*[16] fixed = {
+    TextureBinding*[*] fixed = {
         &bindings.base_color, &bindings.metallic_roughness, &bindings.normal, &bindings.occlusion,
         &bindings.emissive, &bindings.gradient, &bindings.clearcoat, &bindings.clearcoat_roughness,
         &bindings.clearcoat_normal, &bindings.sheen_color, &bindings.sheen_roughness, &bindings.specular,
@@ -575,10 +609,6 @@ fn void raise_binding_demand(Renderer* renderer, TextureBinding* binding, float 
     record.demand_pixels = math::max(record.demand_pixels, pixels);
 }
 
-<*
- Record the on-screen footprint a view draws a material at.
- @param mip_bias : "Levels the view's sampling adds to texture detail."
-*>
 fn void note_material_demand(
     Renderer* renderer,
     MaterialRes* material,
