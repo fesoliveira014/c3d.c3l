@@ -191,6 +191,58 @@ fn void test_planner_first_raise_ignores_the_frame_allowance() @test {
     assert(changes[0].index == 0 && changes[0].new_base == 0);
 }
 
+fn TextureResidency make_regenerating_record(uint extent, bool regenerates) @local {
+    TextureResidency record = make_record(
+        levels: { 65536, 1024, 256, 64 },
+        chain_mips: 4,
+        base: 1,
+        tail: 1,
+        required: 0,
+    );
+    record.chain_width = extent;
+    record.chain_height = extent;
+    record.regenerates = regenerates;
+    return record;
+}
+
+fn void test_planner_paces_regeneration_texels() @test {
+    TextureResidency[3] textures = {
+        make_regenerating_record(1024, true),
+        make_regenerating_record(1024, true),
+        make_regenerating_record(1024, false),
+    };
+    TextureResidencyChange[CAPACITY] changes;
+    TextureBudget budget = budget_of(1 << 30);
+    budget.frame_texels = render::TEXTURE_REGENERATION_FRAME_TEXELS;
+    uint bias;
+
+    TextureResidencyPlan plan = render::plan_texture_residency(textures[..], budget, &bias, changes[..]);
+
+    assert(plan.change_count == 2 && plan.raises == 2 && plan.starved == 1);
+    assert(changes[0].index == 0 && changes[1].index == 2);
+
+    textures[0].resident_base = 0;
+    textures[2].resident_base = 0;
+    plan = render::plan_texture_residency(textures[..], budget, &bias, changes[..]);
+
+    assert(plan.change_count == 1 && plan.raises == 1 && plan.starved == 0);
+    assert(changes[0].index == 1 && changes[0].new_base == 0);
+}
+
+fn void test_planner_first_raise_ignores_the_regeneration_allowance() @test {
+    TextureResidency[1] textures = { make_regenerating_record(2048, true) };
+    textures[0].chain_height = 1024;
+    TextureResidencyChange[CAPACITY] changes;
+    TextureBudget budget = budget_of(1 << 30);
+    budget.frame_texels = render::TEXTURE_REGENERATION_FRAME_TEXELS;
+    uint bias;
+
+    TextureResidencyPlan plan = render::plan_texture_residency(textures[..], budget, &bias, changes[..]);
+
+    assert(plan.change_count == 1 && plan.raises == 1 && plan.starved == 0);
+    assert(changes[0].index == 0 && changes[0].new_base == 0);
+}
+
 fn void test_planner_evicts_undrawn_before_biasing_drawn() @test {
     TextureResidency[2] textures = {
         make_record(levels: { 50, 8, 2, 0 }, chain_mips: 3, base: 0, tail: 1, required: 3),

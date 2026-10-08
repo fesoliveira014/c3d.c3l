@@ -24,6 +24,11 @@ const uint TEXTURE_TAIL_EXTENT = 64; // about 21 KiB of RGBA8 per texture; a ful
 const usz TEXTURE_STREAM_FRAME_BYTES = 8 << 20; // matches OVERSIZED_UPLOAD_BYTES, so paced raises stay inside the ring
 
 <*
+ Mip-zero texels a frame may regenerate for raises after the first.
+*>
+const ulong TEXTURE_REGENERATION_FRAME_TEXELS = 1 << 20; // one 1024² MIP_ZERO raise per frame; supplied mips cost nothing
+
+<*
  Budget fraction the drawn set must fit before the bias relaxes.
 *>
 const float TEXTURE_BIAS_RELEASE_FRACTION = 0.9f; // one level of headroom against oscillation
@@ -49,6 +54,7 @@ struct TextureResidency {
     bool                  full_reader;     // read outside material slots; stays set across replaces
     bool                  streamed;        // eligible && !full_reader
     bool                  raisable;        // the store source is present; false pins the record
+    bool                  regenerates;     // a raise rebuilds the chain from mip zero
 }
 
 <*
@@ -58,6 +64,7 @@ struct TextureBudget {
     usz   budget_bytes; // zero disables evictions and the bias
     usz   frame_bytes;  // raise bytes admitted after the first raise
     ulong frame;        // frame_index the step runs in
+    ulong frame_texels; // regeneration texels admitted after the first raise
 }
 
 <*
@@ -215,10 +222,17 @@ fn void TexturePlanState.push_full_raises(&self) {
     }
 }
 
-fn uint TexturePlanState.raise(&self, bool limited, uint bias, usz frame_bytes) {
+fn uint TexturePlanState.raise(
+    &self,
+    bool limited,
+    uint bias,
+    usz frame_bytes,
+    ulong frame_texels,
+) {
     uint starved;
     uint admitted_count;
     usz admitted_bytes;
+    ulong admitted_texels;
     uint widest;
     foreach (&record : self.textures) {
         if (!texture_plan_candidate(record) || (limited && !texture_plan_drawn(record))) continue;
@@ -236,13 +250,16 @@ fn uint TexturePlanState.raise(&self, bool limited, uint bias, usz frame_bytes) 
 
             usz delta = texture_range_bytes(record, target) - texture_range_bytes(record, record.resident_base);
             bool fits = !limited || self.total + delta <= self.budget;
-            bool paced = admitted_count == 0 || admitted_bytes + delta <= frame_bytes;
+            ulong texels = record.regenerates ? (ulong)record.chain_width * record.chain_height : 0;
+            bool paced = admitted_count == 0
+              || (admitted_bytes + delta <= frame_bytes && admitted_texels + texels <= frame_texels);
             if (!fits || !paced) {
                 if (texture_plan_drawn(record)) starved++;
                 continue;
             }
 
             if (admitted_count > 0) admitted_bytes += delta;
+            admitted_texels += texels;
             admitted_count++;
             self.total += delta;
             self.push((uint)index, target);
@@ -374,7 +391,12 @@ fn TextureResidencyPlan plan_texture_residency(
         *bias = 0;
     }
     state.push_full_raises();
-    uint starved = state.raise(limited, *bias, budget.frame_bytes);
+    uint starved = state.raise(
+        limited: limited,
+        bias: *bias,
+        frame_bytes: budget.frame_bytes,
+        frame_texels: budget.frame_texels,
+    );
 
     return {
         .change_count = state.change_count,
@@ -415,6 +437,7 @@ fn void? step_texture_residency(Renderer* renderer) @private {
         TextureBudget budget = {
             .budget_bytes = renderer.texture_budget_bytes,
             .frame_bytes = TEXTURE_STREAM_FRAME_BYTES,
+            .frame_texels = TEXTURE_REGENERATION_FRAME_TEXELS,
             .frame = renderer.frame_index,
         };
         TextureResidencyPlan plan = plan_texture_residency(

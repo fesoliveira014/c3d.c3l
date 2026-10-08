@@ -215,6 +215,7 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture, bool full
             .full_reader = pinned,
             .streamed = streamed,
             .raisable = texture_source_present(record),
+            .regenerates = record.source_kind == MIP_ZERO,
         };
     };
 

@@ -274,6 +274,7 @@ fn double run_iteration(
                 budget: {
                     .budget_bytes = plan_input.budget_bytes,
                     .frame_bytes = render::TEXTURE_STREAM_FRAME_BYTES,
+                    .frame_texels = render::TEXTURE_REGENERATION_FRAME_TEXELS,
                     .frame = PLAN_FRAME,
                 },
                 bias: &bias,
