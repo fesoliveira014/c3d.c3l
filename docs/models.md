@@ -287,6 +287,57 @@ texture whose only image comes through `KHR_texture_basisu` or
 specular-glossiness, iridescence, diffuse transmission, dispersion, material
 variants and GPU instancing import as if absent.
 
+## File sources
+
+Every file an importer or the asynchronous loader reads goes through the store's
+file source. With none set, files come from the file system.
+
+```c3
+char[]? read_pack(void* user, Allocator allocator, String path) {
+    Pack* pack = user;
+    return pack.read(allocator, path);
+}
+
+AssetStoreDesc desc = asset::default_asset_store_desc();
+desc.file_source = { .read = &read_pack, .user = &pack };
+AssetStore assets = asset::create_asset_store(mem, desc);
+```
+
+- `AssetStoreDesc.file_source` is copied at `create_asset_store` and has no setter.
+  The `user` pointer must outlive the store. A null `read` selects the file system.
+- A `ReadFileFn` returns the whole file in bytes allocated with the given allocator,
+  which the caller frees. Any fault it returns reaches the importer as
+  `ASSET_IO_ERROR`, so importer fault lists do not change.
+- The asynchronous loader copies the source at `create_async_loader` and calls it
+  from its worker thread, while the owner thread may call it for synchronous loads.
+  A source must be thread-safe and must not call into the store.
+- The decoders that take no store, `gltf::decode_model`, `gltf::decode_model_memory`,
+  their `_with_source` forms and `fbx::decode_model`, take a trailing
+  `FileSource file_source = {}`. The `_memory` entry points read external buffers
+  and images through it under `base_dir`.
+- `AssetStore.read_file(allocator, path)` reads through the store's source, and
+  `asset::read_file_system` is the default implementation, so a custom source can
+  fall back to loose files.
+
+A source sees one canonical form of every path. `asset::normalize_path` turns `\`
+into `/`, keeps an absolute prefix (`/`, `X:/` or `//server/share`), drops empty
+and `.` segments, and collapses `name/..` pairs. A `..` with nothing to remove
+stays. It never decodes `%`; glTF URIs are decoded as before, and application
+paths and FBX file names are used literally.
+
+| Importer forms | Source receives |
+| --- | --- |
+| `models/a.gltf` | `models/a.gltf` |
+| buffer `x.bin` and image `textures/a.png` of `model.gltf` | `x.bin` and `textures/a.png` |
+| image `./textures/a.png` of `models/a.gltf` | `models/textures/a.png` |
+| `C:\art\..\a.fbx` | `C:/a.fbx` |
+| FBX texture, relative then absolute | each in normalized form, in that order |
+
+Keys never change: a model key and its content keys keep the path exactly as
+given. With the default source the only difference from reading the path
+directly is that `..` collapses before the operating system sees it, which
+matters on POSIX only when the path crosses a symlinked directory.
+
 ## Faults
 
 | Fault | Meaning |

@@ -96,6 +96,13 @@ Clear the image's slice only after insertion succeeds. On failure it still owns
 its allocation. `load_texture` and `load_hdr` use this transfer path internally;
 keys follow the store's existing uniqueness policy and are not replaced.
 
+## File sources
+
+`load_texture`, `load_hdr`, `load_cube`, `load_texture_r16` and
+`load_texture_container` read through the store's file source, and `load_image`
+takes a trailing `FileSource file_source = {}`. A null source reads the file
+system. See [File sources](models.md#file-sources).
+
 ## Write a PNG
 
 `image::write_png(path, width, height, pixels)` encodes tightly packed RGBA8 rows, top row first,
