@@ -363,7 +363,7 @@ fn void? check_texture_structure(TextureDesc current, TextureDesc next) @private
     if (current.is_cube != next.is_cube
         || current.storage != next.storage
         || current.layers != next.layers
-        || current.depth != next.depth
+        || (current.depth > 0) != (next.depth > 0)
         || (current.format == R16_UINT) != (next.format == R16_UINT)) {
         return c3d::INCOMPATIBLE_STRUCTURE~;
     }

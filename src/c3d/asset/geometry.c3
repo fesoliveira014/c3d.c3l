@@ -6,6 +6,11 @@ import c3d::pool;
 import c3d::spatial::bvh;
 import std::math;
 
+bitstruct TargetStreams : char @private {
+    bool positions : 0;
+    bool normals   : 1;
+}
+
 <*
  Geometry record; counts survive a source release.
 *>
@@ -25,14 +30,10 @@ struct GeometryAsset {
 }
 
 struct GeometryShape @private {
-    bool   has_joints;
-    bool   has_weights;
-    ushort joint_bound;     // largest positive-weight joint index at add; replacement never refreshes it
-    char[] target_streams;  // per target: bit 0 position deltas, bit 1 normal deltas
+    bool            skinned;
+    ushort          joint_bound;     // largest positive-weight joint index at add; replacement never refreshes it
+    TargetStreams[] target_streams;
 }
-
-const char TARGET_POSITIONS @private = 1;
-const char TARGET_NORMALS @private   = 2;
 
 <*
  Pool of geometry records addressed by GeometryId.
@@ -201,13 +202,14 @@ fn void AssetStore.remove_geometry(&self, GeometryId geometry) {
 
 fn GeometryShape build_geometry_shape(Allocator allocator, Geometry* geometry) @private {
     GeometryShape shape = {
-        .has_joints     = geometry.joints.len > 0,
-        .has_weights    = geometry.weights.len > 0,
-        .target_streams = alloc::new_array(allocator, char, geometry.targets.len),
+        .skinned        = geometry.joints.len > 0,
+        .target_streams = alloc::new_array(allocator, TargetStreams, geometry.targets.len),
     };
     foreach (index, &target : geometry.targets) {
-        shape.target_streams[index] = (target.position_deltas.len > 0 ? TARGET_POSITIONS : 0)
-            | (target.normal_deltas.len > 0 ? TARGET_NORMALS : 0);
+        shape.target_streams[index] = {
+            .positions = target.position_deltas.len > 0,
+            .normals   = target.normal_deltas.len > 0,
+        };
     }
     foreach (vertex, weight : geometry.weights) {
         for (usz slot = 0; slot < 4; slot++) {
@@ -220,15 +222,16 @@ fn GeometryShape build_geometry_shape(Allocator allocator, Geometry* geometry) @
 fn void? check_geometry_structure(GeometryAsset* current, Geometry* next) @private {
     GeometryShape* shape = &current.shape;
     if (current.data.topology != next.topology
-        || shape.has_joints != (next.joints.len > 0)
-        || shape.has_weights != (next.weights.len > 0)
+        || shape.skinned != (next.joints.len > 0)
         || current.target_count != next.targets.len
         || current.data.channels.len != next.channels.len) {
         return c3d::INCOMPATIBLE_STRUCTURE~;
     }
     foreach (index, &target : next.targets) {
-        char streams = (target.position_deltas.len > 0 ? TARGET_POSITIONS : 0)
-            | (target.normal_deltas.len > 0 ? TARGET_NORMALS : 0);
+        TargetStreams streams = {
+            .positions = target.position_deltas.len > 0,
+            .normals   = target.normal_deltas.len > 0,
+        };
         if (shape.target_streams[index] != streams) return c3d::INCOMPATIBLE_STRUCTURE~;
     }
     foreach (index, &channel : next.channels) {

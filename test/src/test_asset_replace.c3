@@ -138,6 +138,20 @@ fn void test_replace_texture_refuses_structural_change() @test {
             assert(@catch(assets.replace_texture(texture, desc, pixels[..])) == c3d::INCOMPATIBLE_STRUCTURE);
             assert(is_unchanged(before, &record.header, record.pixels.ptr, record.pixels.len));
         }
+
+        TextureDesc volume = plain_desc(2, 2);
+        volume.depth = 2;
+        assert(@catch(assets.replace_texture(texture, volume, pixels[..])) == c3d::INCOMPATIBLE_STRUCTURE);
+        assert(is_unchanged(before, &record.header, record.pixels.ptr, record.pixels.len));
+
+        char[16 * 2] slab = { [0..31] = 3 };
+        TextureId volume_id = assets.add_texture(volume, slab[..])!!;
+        TextureDesc deeper = plain_desc(2, 2);
+        deeper.depth = 3;
+        char[16 * 3] thick = { [0..47] = 4 };
+        assets.replace_texture(volume_id, deeper, thick[..])!!;
+        assert(assets.texture(volume_id).desc.depth == 3 && assets.texture(volume_id).header.revision == 2);
+        assert(@catch(assets.replace_texture(volume_id, plain_desc(2, 2), pixels[..])) == c3d::INCOMPATIBLE_STRUCTURE);
     }
 
     assert(!tracker.has_leaks());

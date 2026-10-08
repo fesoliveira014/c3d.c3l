@@ -490,7 +490,7 @@ assets.replace_texture_empty(texture, desc)!;             // an empty storage te
 - Each form takes the inputs of its `add_texture` form and rejects the same data with `c3d::INVALID_ARGUMENT`.
 - The source form may change: mip-zero, supplied mips or empty.
 - Width, height, mip count and a format of the same sample type may change.
-- `is_cube`, `storage`, `layers`, `depth` and whether the format is `R16_UINT` may not. A material binding refuses a
+- `is_cube`, `storage`, `layers`, 2D versus volume (zero or positive `depth`) and whether the format is `R16_UINT` may not. A material binding refuses a
   cube or `R16_UINT` texture in a built-in slot on every draw, so these changes fault with
   `c3d::INCOMPATIBLE_STRUCTURE`. Add a new texture and update the references instead.
 - A fault changes nothing. An `_owned` form takes the pixels only on success; on a fault the caller keeps them.
