@@ -37,7 +37,8 @@ const uint FLOAT_HALF_EXPONENT_OFFSET @local = 0x38000000; // (127 - 15) << 23
 *>
 struct TextureMipChain {
     Allocator allocator;
-    uint mip_count;
+    uint first_mip;   // chain level held at offsets[0]
+    uint mip_count;   // levels held, from first_mip
     uint layer_count;
     usz[material::TEXTURE_MIP_CAPACITY] offsets;
     char[] pixels;
@@ -46,9 +47,35 @@ struct TextureMipChain {
 <*
  Prepare uncompressed 2D or cube mips from complete base layers.
  @param pixels : "Borrowed mip-zero texels of the format, in layer order."
+ @param first_mip : "Levels above it are computed in tmem and discarded."
  @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
+ @require first_mip == 0 || (desc.generate_mips && first_mip < material::texture_mip_count(desc.width, desc.height))
 *>
-fn TextureMipChain? create_texture_mips(Allocator allocator, material::TextureDesc desc, char[] pixels) {
+fn TextureMipChain? create_texture_mips(
+    Allocator allocator,
+    material::TextureDesc desc,
+    char[] pixels,
+    uint first_mip = 0,
+) {
+    if (first_mip == 0) return create_full_texture_mips(allocator, desc, pixels);
+
+    @pool() {
+        TextureMipChain full = create_full_texture_mips(tmem, desc, pixels)!;
+        usz kept_offset = full.offsets[first_mip];
+        TextureMipChain chain = {
+            .allocator = allocator,
+            .first_mip = first_mip,
+            .mip_count = full.mip_count - first_mip,
+            .layer_count = full.layer_count,
+            .pixels = alloc::new_array(allocator, char, (sz)(full.pixels.len - kept_offset)),
+        };
+        for (uint mip = 0; mip < chain.mip_count; mip++) chain.offsets[mip] = full.offsets[first_mip + mip] - kept_offset;
+        mem::copy(chain.pixels.ptr, full.pixels.ptr + kept_offset, chain.pixels.len);
+        return chain;
+    };
+}
+
+fn TextureMipChain? create_full_texture_mips(Allocator allocator, material::TextureDesc desc, char[] pixels) @local {
     if (!desc.width || !desc.height || desc.mip_levels != 1) return c3d::INVALID_ARGUMENT~;
     if (desc.depth) return create_volume_texture_mips(allocator, desc, pixels);
     if (desc.is_cube) {
