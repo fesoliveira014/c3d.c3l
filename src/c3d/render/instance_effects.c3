@@ -46,14 +46,22 @@ fn float instance_seed(Vec3 local_position) {
  Sway state at one time: unit direction, amplitude and phase in [0, 1].
  @param time : "Seconds of FrameInfo.time."
  @param origin : "Absolute origin of the shader's anchor coordinates."
+ @param world_shift : "Total offset the scene was rebased by; added to the origin phase in double."
  @require sway.amplitude == 0 || sway.direction.length() > 0
 *>
-fn SwayGpu pack_sway(InstanceSway sway, double time, Vec3 origin = {}) {
+fn SwayGpu pack_sway(
+    InstanceSway sway,
+    double time,
+    Vec3 origin = {},
+    double[<3>] world_shift = {},
+) {
     if (sway.amplitude == 0) return {};
     Vec3 direction = sway.direction.normalize();
     float waves_per_unit = sway.wavelength > 0 ? 1.0f / sway.wavelength : 0;
-    double origin_phase = ((double)origin.x * (double)direction.x
-      + (double)origin.y * (double)direction.y + (double)origin.z * (double)direction.z) * (double)waves_per_unit;
+    double[<3>] anchor = { (double)origin.x, (double)origin.y, (double)origin.z };
+    anchor += world_shift;
+    double origin_phase = (anchor.x * (double)direction.x
+      + anchor.y * (double)direction.y + anchor.z * (double)direction.z) * (double)waves_per_unit;
     double cycles = time * (double)sway.frequency - origin_phase;
     return {
         .direction_amplitude = { direction.x, direction.y, direction.z, sway.amplitude },
@@ -72,6 +80,7 @@ fn SwayGpu pack_sway(InstanceSway sway, double time, Vec3 origin = {}) {
  @param previous_sway : "Sway the view last drew the batch with; the current one without history."
  @param time : "Seconds of FrameInfo.time."
  @param origin : "Absolute origin shared by anchors and camera."
+ @param world_shift : "Total offset the batch's scene was rebased by."
 *>
 fn InstanceEffectsGpu pack_instance_effects(
     InstancedMesh* batch,
@@ -80,11 +89,12 @@ fn InstanceEffectsGpu pack_instance_effects(
     SwayGpu previous_sway,
     double time,
     Vec3 origin = {},
+    double[<3>] world_shift = {},
 ) {
     float height = local_bounds.max.y - local_bounds.min.y;
     Vec3 center = (local_bounds.min + local_bounds.max) * 0.5f;
     return {
-        .sway            = pack_sway(batch.sway, time, origin),
+        .sway            = pack_sway(batch.sway, time, origin, world_shift),
         .previous_sway   = previous_sway,
         .anchor          = { center.x, local_bounds.min.y, center.z, height > 0 ? 1.0f / height : 0 },
         .fade_origin     = { fade_origin.x, fade_origin.y, fade_origin.z, 0 },
@@ -133,14 +143,21 @@ fn gpu::GpuAddress? resolve_instance_effects(
         batch = &logical;
     }
     double time = renderer.info.time;
+    double[<3>] world_shift = effects_view.scene.world_shift;
     ViewHistory* history = effects_view.history;
     bool has_previous = history && history.has_previous(effects_view.scene, candidate.node);
+    SwayGpu current_sway = pack_sway(batch.sway, time, renderer.frame_origin, world_shift);
     SwayGpu previous_sway = has_previous
-      ? pack_sway(history.previous_pose(effects_view.scene, candidate.node).sway, history.time, history.origin)
-      : pack_sway(batch.sway, time, renderer.frame_origin);
+      ? pack_sway(
+          sway:        history.previous_pose(effects_view.scene, candidate.node).sway,
+          time:        history.time,
+          origin:      history.origin,
+          world_shift: world_shift,
+      )
+      : current_sway;
     if (candidate.lod) {
         bool valid = candidate.lod.state.mode == LodMode.INSTANCED ? candidate.lod.history_valid : !candidate.lod.reject_history;
-        previous_sway = valid ? candidate.lod.history.sway : pack_sway(batch.sway, time, renderer.frame_origin);
+        previous_sway = valid ? candidate.lod.history.sway : current_sway;
     }
     InstanceEffectsGpu block = pack_instance_effects(
         batch:         batch,
@@ -149,6 +166,7 @@ fn gpu::GpuAddress? resolve_instance_effects(
         previous_sway: previous_sway,
         time:          time,
         origin:        renderer.frame_origin,
+        world_shift:   world_shift,
     );
     gpu::GpuAddress address = upload_bytes(renderer, &block, InstanceEffectsGpu::size)!;
     effects_view.blocks.set(key, address);

@@ -7,6 +7,7 @@ import c3d::geometry;
 import c3d::light;
 import c3d::material;
 import c3d::maths;
+import c3d::pool;
 import c3d::render @public;
 import c3d::scene;
 import c3d::shader;
@@ -330,4 +331,215 @@ fn void test_shadow_texel_lattice_stays_fixed_across_origin_changes() @test {
     clips = origin_shifted_clips(light::DEFAULT_DIRECTIONAL_NORMAL_BIAS_TEXELS);
     assert(math::abs(clips[0].x - clips[1].x) < NDC_TOLERANCE);
     assert(math::abs(clips[0].y - clips[1].y) < NDC_TOLERANCE);
+}
+
+const Vec3 SHIFT @local = { 16384, 0, 16384 };
+
+struct ShiftFixture @local {
+    Renderer* renderer;
+    Scene[2]  scenes;
+    ViewId[2] views;
+}
+
+fn Mat4 relative_world(Mat4 world, Vec3 origin) @local {
+    return maths::rebase(world, origin);
+}
+
+fn void create_shift_fixture(ShiftFixture* fixture) @local {
+    fixture.renderer = alloc::new(mem, Renderer);
+    fixture.renderer.allocator = mem;
+    fixture.renderer.views = pool::create_pool{ViewRecord, ViewId}(mem, 4);
+    fixture.renderer.instances = render::create_instance_table(mem, 4);
+    fixture.renderer.scene_trace.baseline = alloc::new_array(mem, TraceInstance, 2);
+    foreach (index, &scene : fixture.scenes) {
+        *scene = scene::create_scene(mem, { .max_nodes = 8 });
+        fixture.views[index] = fixture.renderer.views.add({ .live = true })!!;
+        ViewHistory* history = &fixture.renderer.views.get(fixture.views[index]).history;
+        history.models = alloc::new_array(mem, Mat4, scene.nodes.len);
+        history.owners = alloc::new_array(mem, Entity, scene.nodes.len);
+        history.seen = alloc::new_array(mem, ulong, scene.nodes.len);
+        history.poses = alloc::new_array(mem, PoseRecord, scene.nodes.len);
+        history.scene = scene.identity;
+        history.valid = true;
+        history.serial = 1;
+        history.origin = ORIGIN;
+    }
+}
+
+fn void destroy_shift_fixture(ShiftFixture* fixture) @local {
+    foreach (index, &scene : fixture.scenes) {
+        render::free_view_history(mem, &fixture.renderer.views.get(fixture.views[index]).history);
+        scene::destroy_scene(scene);
+    }
+    alloc::free(mem, fixture.renderer.scene_trace.baseline.ptr);
+    render::destroy_instance_table(&fixture.renderer.instances);
+    pool::destroy_pool{ViewRecord, ViewId}(&fixture.renderer.views);
+    alloc::free(mem, fixture.renderer);
+}
+
+fn void record_drawn(ShiftFixture* fixture, usz index, Node* node) @local {
+    ViewHistory* history = &fixture.renderer.views.get(fixture.views[index]).history;
+    history.models[node.id.index] = node.world;
+    history.owners[node.id.index] = node.id;
+    history.seen[node.id.index] = history.serial;
+}
+
+fn void test_shift_helpers_preserve_relative_history() @test {
+    ViewHistory history = { .origin = ORIGIN };
+    render::shift_view_history_origin(&history, SHIFT);
+    assert(history.origin == ORIGIN - SHIFT);
+
+    LodHistoryEntry entry;
+    entry.committed = { .scene = 3, .origin = ORIGIN };
+    entry.pending = { .scene = 3, .origin = ORIGIN + (Vec3){ 256, 0, 0 } };
+    render::shift_lod_history(&entry, 3, SHIFT);
+    assert(entry.committed.origin == ORIGIN - SHIFT && entry.pending.origin == ORIGIN + (Vec3){ 256, 0, 0 } - SHIFT);
+    render::shift_lod_history(&entry, 4, SHIFT);
+    assert(entry.committed.origin == ORIGIN - SHIFT);
+
+    Mat4 world = matrix::IDENTITY4.translate({ 50003, 2, 50001.5f });
+    GpuInstances slot = { .world = world, .origin = ORIGIN };
+    render::shift_instance_slot(&slot, SHIFT);
+    assert(slot.origin == ORIGIN - SHIFT);
+    assert(relative_world(slot.world, slot.origin) == relative_world(world, ORIGIN));
+
+    TraceInstance[2] baseline = {
+        { .world = world, .local = matrix::IDENTITY4 },
+        { .world = world.translate({ 8, 0, 0 }), .local = matrix::IDENTITY4 },
+    };
+    Mat4[2] before = { baseline[0].world, baseline[1].world };
+    SceneTrace trace = { .origin = ORIGIN, .baseline = baseline[..], .baseline_count = 2 };
+    render::shift_trace_baseline(&trace, SHIFT);
+    assert(trace.origin == ORIGIN - SHIFT);
+    foreach (index, record : baseline) {
+        assert(relative_world(record.world, trace.origin) == relative_world(before[index], ORIGIN));
+        assert(record.local.m03 == 0 && record.local.m00 == 1);
+    }
+
+    ProbeVolumeRes mirror = { .fill = { .traced_origin = ORIGIN }, .frame_fill = { .traced_origin = ORIGIN } };
+    render::shift_probe_fill(&mirror, SHIFT);
+    assert(mirror.fill.traced_origin == ORIGIN - SHIFT && mirror.frame_fill.traced_origin == ORIGIN - SHIFT);
+}
+
+fn void test_shift_plane_keeps_clipped_points() @test {
+    Plane plane = { .normal = { 0.6f, 0, 0.8f }, .d = -60000 };
+    Vec3[3] points = { { 50000, 3, 49984 }, { 50010, 0, 50000 }, { 49980, 5, 50013 } };
+    Plane shifted = render::shift_plane(plane, SHIFT);
+    foreach (point : points) {
+        double before = (double)plane.normal.x * point.x + (double)plane.normal.y * point.y
+          + (double)plane.normal.z * point.z + plane.d;
+        Vec3 moved = point - SHIFT;
+        double after = (double)shifted.normal.x * moved.x + (double)shifted.normal.y * moved.y
+          + (double)shifted.normal.z * moved.z + shifted.d;
+        assert(math::abs(before - after) < 0.01);
+    }
+    Plane none = render::shift_plane({}, SHIFT);
+    assert(none.normal == (Vec3){} && none.d == 0);
+}
+
+fn void test_sway_phase_is_continuous_across_a_shift() @test {
+    InstanceSway sway = { .direction = { 3, 0, 4 }, .amplitude = 0.25f, .frequency = 0.75f, .wavelength = 32 };
+    double[<3>] total = { 256, 0, 512 };
+    double[<3>] moved = { 16384, 0, 16384 };
+    Vec3 origin = ORIGIN;
+    SwayGpu before = render::pack_sway(sway, 1000.25, origin, total);
+    SwayGpu after = render::pack_sway(sway, 1000.25, origin - SHIFT, total + moved);
+    assert(before.phase == after.phase);
+    assert(before.direction_amplitude == after.direction_amplitude);
+    SwayGpu unshifted = render::pack_sway(sway, 1000.25, origin - SHIFT, total);
+    assert(unshifted.phase != after.phase);
+}
+
+fn void test_nested_node_motion_after_a_shift_is_zero() @test {
+    ShiftFixture fixture;
+    create_shift_fixture(&fixture);
+    defer destroy_shift_fixture(&fixture);
+    Scene* scene = &fixture.scenes[0];
+    Node* parent = scene.add_node()!!;
+    Node* nested = scene.add_node(parent)!!;
+    parent.local.position = { 50001.5f, 3, 50003.25f };
+    nested.local.position = { 0.1f, 1, 0.3f };
+    scene.update_world();
+    record_drawn(&fixture, 0, nested);
+
+    scene.shift_origin(SHIFT);
+    scene.update_world();
+    assert(nested.world != fixture.renderer.views.get(fixture.views[0]).history.models[nested.id.index]);
+    fixture.renderer.shift_origin(scene, SHIFT);
+
+    ViewHistory* history = &fixture.renderer.views.get(fixture.views[0]).history;
+    assert(history.has_previous(scene, nested));
+    assert(history.previous_model(scene, nested) == nested.world);
+    assert(history.origin == ORIGIN - SHIFT);
+}
+
+fn void test_world_draw_child_has_zero_motion_after_a_shift() @test {
+    ShiftFixture fixture;
+    create_shift_fixture(&fixture);
+    defer destroy_shift_fixture(&fixture);
+    Scene* scene = &fixture.scenes[0];
+    Node* owner = scene.add_node()!!;
+    Node* draw = scene.add_node(owner)!!;
+    owner.local.position = { 50001, 0, 50001 };
+    draw.transform_space = TransformSpace.WORLD;
+    scene.update_world();
+    record_drawn(&fixture, 0, draw);
+
+    scene.shift_origin(SHIFT);
+    draw.local.position = {};
+    scene.update_world();
+    fixture.renderer.shift_origin(scene, SHIFT);
+
+    ViewHistory* history = &fixture.renderer.views.get(fixture.views[0]).history;
+    assert(history.previous_model(scene, draw) == draw.world && draw.world.m03 == 0 && draw.world.m00 == 1);
+}
+
+fn void test_shift_leaves_other_scenes_untouched() @test {
+    ShiftFixture fixture;
+    create_shift_fixture(&fixture);
+    defer destroy_shift_fixture(&fixture);
+    Renderer* renderer = fixture.renderer;
+    Node*[2] nodes;
+    foreach (index, &scene : fixture.scenes) {
+        nodes[index] = scene.add_node()!!;
+        nodes[index].local.position = { 50001, 0, 50001 };
+        scene.update_world();
+        record_drawn(&fixture, (usz)index, nodes[index]);
+        renderer.views.get(fixture.views[index]).desc.clip_plane = { .normal = { 1, 0, 0 }, .d = -50000 };
+        uint slot = renderer.instances.acquire({ .scene = scene.identity, .node = nodes[index].id }, 1)!!;
+        renderer.instances.slots[slot].world = nodes[index].world;
+        renderer.instances.slots[slot].origin = ORIGIN;
+        renderer.probe_volumes[index] = {
+            .scene = scene.identity,
+            .entity = nodes[index].id,
+            .fill = { .traced_origin = ORIGIN },
+        };
+    }
+    renderer.scene_trace.scene = fixture.scenes[1].identity;
+    renderer.scene_trace.origin = ORIGIN;
+    renderer.scene_trace.baseline_count = 1;
+    renderer.scene_trace.baseline[0].world = nodes[1].world;
+    ViewRecord untouched_view = *renderer.views.get(fixture.views[1]);
+    Mat4 untouched_model = untouched_view.history.models[nodes[1].id.index];
+    GpuInstances untouched_slot = renderer.instances.slots[renderer.instances.lookup.get({
+        .scene = fixture.scenes[1].identity, .node = nodes[1].id,
+    })!!];
+
+    fixture.scenes[0].shift_origin(SHIFT);
+    fixture.scenes[0].update_world();
+    renderer.shift_origin(&fixture.scenes[0], SHIFT);
+
+    ViewRecord* other = renderer.views.get(fixture.views[1]);
+    assert(other.history.origin == ORIGIN && other.history.models[nodes[1].id.index] == untouched_model);
+    assert(other.desc.clip_plane.d == untouched_view.desc.clip_plane.d);
+    assert(renderer.views.get(fixture.views[0]).history.origin == ORIGIN - SHIFT);
+    assert(renderer.views.get(fixture.views[0]).desc.clip_plane.d != -50000);
+    uint other_slot = renderer.instances.lookup.get({ .scene = fixture.scenes[1].identity, .node = nodes[1].id })!!;
+    assert(renderer.instances.slots[other_slot].world == untouched_slot.world);
+    assert(renderer.instances.slots[other_slot].origin == ORIGIN);
+    uint own_slot = renderer.instances.lookup.get({ .scene = fixture.scenes[0].identity, .node = nodes[0].id })!!;
+    assert(renderer.instances.slots[own_slot].origin == ORIGIN - SHIFT);
+    assert(renderer.scene_trace.origin == ORIGIN && renderer.scene_trace.baseline[0].world == nodes[1].world);
+    assert(renderer.probe_volumes[1].fill.traced_origin == ORIGIN);
+    assert(renderer.probe_volumes[0].fill.traced_origin == ORIGIN - SHIFT);
 }
