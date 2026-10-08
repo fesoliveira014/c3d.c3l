@@ -110,8 +110,123 @@ changes preserve atlas storage and partial sweep progress.
 Terrain, water, foliage and particle rendering use the same core contract.
 Their CPU simulation, authoring coordinates, seeds and local wave functions
 remain unchanged. Impostor baking selects a reference for its capture scene.
-Physics, character, navigation and particle simulation have no origin-shift API
-from this feature.
+Simulation add-ons (physics, character, navigation, particles, audio) keep
+their own state in absolute coordinates; see "Origin rebasing" for how an
+application moves them together with the scene.
+
+## Origin rebasing
+
+An application whose active area drifts far from the origin can move the
+origin between frames. The scene, the renderer's retained state and each
+simulation owner subtract the same horizontal offset, so nothing restarts and
+static nodes do not read as moved.
+
+```c3
+scene.shift_origin(offset);
+scene.update_world();
+renderer.shift_origin(&scene, offset);
+```
+
+The offset has `y == 0`. A good choice is `render::frame_origin_for(focus)` with
+`y` set to zero: a 256 m cell multiple near the focus. Pass
+`FrameInfo.reference_position` in the shifted space on the next frame.
+
+### Protocol
+
+Call the shift between `end_frame` and the next simulation update. A shift after
+an update loses that frame's velocity: it reads as zero motion. No frame may be
+open (`Renderer.shift_origin` requires `!frame_open`). Join background work that
+reads positions first. Each owner the application has gets the same offset, in
+this order:
+
+1. `scene.shift_origin(offset)`.
+2. Add-on owners of absolute state (physics, characters, navigation, foliage,
+   particles, audio) shift their state. Each add-on provides its own shift
+   function; a particle shift runs before `update_world` because it resets the
+   world-space draw child that `Scene.shift_origin` moved.
+3. `scene.update_world()`.
+4. `renderer.shift_origin(&scene, offset)`, last, so it reads the final worlds.
+5. `SceneIndex.refresh(&scene)` when the application keeps one.
+
+### Scene
+
+`Scene.shift_origin` subtracts the offset from `local.position` of every live
+root child and every live world-space node, each once. Nested nodes keep their
+locals. `Scene.world_shift` accumulates the total offset in double precision.
+It requires an identity root rotation and scale. World matrices are stale until
+`update_world`.
+
+For a cell-multiple offset, a root child's or world-space node's world
+translation after `update_world` is exactly `old - offset` when the node now
+sits nearer the origin. A nested node's world is recomposed at the smaller
+magnitude and can differ from `old - offset` by up to one ulp of the old
+magnitude (3.9 mm at 50 km).
+
+### Renderer
+
+`Renderer.shift_origin(scene, offset)` touches only state keyed to that scene's
+identity; other scenes the renderer draws are untouched. It does not change
+`frame_origin`, which `begin_frame` recomputes from the reference position.
+
+| State | Change |
+| --- | --- |
+| View history of the scene | Previous models are set from the current node worlds, so every static node has zero rebase-frame motion, nested nodes and world-space draw children included; the history origin moves by the offset |
+| LOD placement history of the scene | Both recorded origins move by the offset |
+| `ViewDesc.clip_plane` of views that last rendered the scene | The plane distance moves so the same points stay inside |
+| Resident instance, billboard and LOD records of the scene | Stored world and origin move by the offset |
+| Scene trace of the scene | Baseline rows and origin move by the offset |
+| Probe volumes of the scene | The traced grid origin of the fill state moves |
+
+Every view that last rendered the scene, temporal or not, gets its stored clip
+plane shifted. An application that keeps its own `ViewDesc` copy re-reads it
+after the shift, or `configure_view` restores the old plane. A view that has not
+rendered the scene yet is the application's to set.
+
+`ViewHistory.view_proj` is not refreshed, so a camera on a nested node (for
+example a character camera) can show up to one old ulp of camera motion on the
+rebase frame, about 3.9 mm at 50 km. That is no more than its per-frame noise
+before the shift.
+
+Sway reads `Scene.world_shift`, so the gust phase of a fixed absolute anchor
+does not change across a shift. A second scene the application does not rebase
+keeps its phase.
+
+### Cost
+
+With a per-axis cell-multiple offset and shifted nodes that are root children or
+world-space nodes, the next frame packs bitwise the same relative data as
+without the shift. There is no instance re-upload, no top-level rebuild and no
+accumulation reset. Nested content, whose worlds gained precision, repacks its
+instance records and trace rows once, without motion. An offset that is not a
+cell multiple changes the packing origin like any reference change: records
+rewrite once and path accumulation resets.
+
+Other renderer caches key on the relative values or recompute per frame and
+need no change: volumetric fog, ambient occlusion, auto exposure, reflection
+captures, atmosphere (it keys on altitude, which a horizontal shift keeps),
+shadow sets, decals, clusters, terrain selection, water mirrors and particle
+draws.
+
+### Application-owned state
+
+The application shifts, or retakes after the shift:
+
+- `spatial::SceneIndex`: call `refresh` after the shift.
+- `HeightView`, `SurfaceView` and other query views taken from absolute data.
+- Buoyancy surfaces and any callback returning absolute heights or positions.
+- `GridSourceDesc.origin` and floor callbacks of navigation sources.
+- Absolute positions held in application structures, such as camera targets.
+- A `ViewDesc` the application stores for `configure_view`: re-read it after the
+  shift.
+
+### Shadow lattice
+
+The cascade texel lattice snaps in absolute coordinates. An offset that is not a
+multiple of the texel size moves the lattice phase once, so shadow edges can
+shift by a fraction of a texel on the rebase frame.
+
+The shadows example's Rebase button runs the core protocol with the camera's
+frame origin and shifts its orbit target; the panel shows `Scene.world_shift`.
 
 ## Precision limits and acceptance
 

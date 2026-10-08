@@ -41,6 +41,7 @@ struct Scene {
     Node*[]        remove_queue;
     uint           remove_count;
     ulong          identity;
+    double[<3>]    world_shift; // total offset of every shift_origin call; sway reads it to keep its phase
 }
 
 <*
@@ -270,6 +271,24 @@ fn void Scene.reparent(
     }
     unlink(node);
     link(node, parent);
+}
+
+<*
+ Move every root child and every world-space node so the offset becomes the origin.
+ World matrices are stale until update_world.
+ @require offset.y == 0
+ @require self.root.local.rotation.v == maths::TRANSFORM_IDENTITY.rotation.v
+ @require self.root.local.scale == maths::TRANSFORM_IDENTITY.scale
+*>
+fn void Scene.shift_origin(&self, Vec3 offset) {
+    for (Node* child = self.root.first_child; child; child = child.next_sibling) {
+        child.local.position -= offset;
+    }
+    foreach (&node : self.nodes) {
+        if (node == self.root || node.parent == self.root || !self.world.is_alive(node.id)) continue;
+        if (node.transform_space == TransformSpace.WORLD) node.local.position -= offset;
+    }
+    self.world_shift += { (double)offset.x, (double)offset.y, (double)offset.z };
 }
 
 <*

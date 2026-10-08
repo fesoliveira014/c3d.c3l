@@ -386,6 +386,7 @@ fn void? run_gui(
     Mesh* off_camera_mesh = scene.get(off_camera_box, Mesh);
     float world_offset;
     float previous_world_offset;
+    bool rebase_requested;
     Vec2 previous_shadow_position;
     float shadow_texel_motion;
     bool shadow_position_valid;
@@ -416,6 +417,10 @@ fn void? run_gui(
             imgui::slider_float("World offset (m)", &world_offset, 0, WORLD_OFFSET_MAX);
             imgui::text("Frame origin: %.0f, %.0f, %.0f m",
                 (double)renderer.frame_origin.x, (double)renderer.frame_origin.y, (double)renderer.frame_origin.z);
+            rebase_requested = imgui::button("Rebase");
+            imgui::same_line();
+            imgui::text("World shift: %.0f, %.0f, %.0f m",
+                scene.world_shift.x, scene.world_shift.y, scene.world_shift.z);
             imgui::text("Cascade movement: %.4f texels/frame", (double)shadow_texel_motion);
 
             imgui::separator_text("Preset");
@@ -470,6 +475,14 @@ fn void? run_gui(
         }
         imgui::end();
 
+        if (rebase_requested) {
+            Vec3 shift = render::frame_origin_for(camera_node.world_position());
+            shift.y = 0;
+            scene.shift_origin(shift);
+            orbit.target -= shift;
+            scene.update_world();
+            renderer.shift_origin(scene, shift);
+        }
         apply_orbit(orbit, input, camera_node);
         scene.root.local.position = { world_offset, 0, world_offset };
         scene.update_world();

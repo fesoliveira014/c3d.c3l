@@ -237,7 +237,12 @@ fn LodSelection[]? prepare_lod_view(
                 selection.previous_view_origin = temporal && record.history.valid
                   ? record.history.origin : renderer.frame_origin;
                 history.pending.origin = renderer.frame_origin;
-                history.pending_sway = pack_sway(group.state.effects.sway, renderer.info.time, renderer.frame_origin);
+                history.pending_sway = pack_sway(
+                    sway:        group.state.effects.sway,
+                    time:        renderer.info.time,
+                    origin:      renderer.frame_origin,
+                    world_shift: scene.world_shift,
+                );
                 history.pending.camera = {
                     matrices.position.x, matrices.position.y, matrices.position.z,
                     camera.projection == Projection.ORTHOGRAPHIC ? 1 : 0,

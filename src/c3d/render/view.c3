@@ -235,6 +235,7 @@ fn void? record_camera_view(
         renderer.frame_recorded = true;
         renderer.work_recorded = true;
         record.rendered = true;
+        record.last_scene = scene.identity;
     };
 }
 
