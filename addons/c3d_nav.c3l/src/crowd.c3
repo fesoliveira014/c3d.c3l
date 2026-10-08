@@ -380,6 +380,41 @@ fn void Crowd.update(&self, float dt, CrowdDebugInfo* debug = null) {
     update_traversals(self, agents, dt);
 }
 
+<*
+ Move every agent, corridor, boundary, traversal and queued path request by the negated offset.
+ @require offset.y == 0
+*>
+fn void Crowd.shift_origin(&self, Vec3 offset) {
+    foreach (&agent : self.agents) {
+        if (!agent.active) continue;
+        agent.position -= offset;
+        agent.corridor.position -= offset;
+        agent.corridor.target -= offset;
+        foreach (&corner : agent.corners[:agent.corner_count]) corner.position -= offset;
+        if (agent.target_state != VELOCITY) agent.target_position -= offset;
+        if (agent.boundary.center.x != float::max) {
+            agent.boundary.center -= offset;
+            foreach (&segment : agent.boundary.segments[:agent.boundary.segment_count]) {
+                segment.start -= offset;
+                segment.end -= offset;
+            }
+        }
+    }
+    foreach (&animation : self.animations) {
+        if (!animation.active) continue;
+        animation.initial_position -= offset;
+        animation.start -= offset;
+        animation.end -= offset;
+    }
+    foreach (&request : self.path_queue.queue) {
+        if (!request.ref) continue;
+        request.start -= offset;
+        request.end -= offset;
+    }
+    self.path_queue.query.shift_origin(offset);
+    self.query.shift_origin(offset);
+}
+
 <* Half extents used to place and recover agents on the mesh. *>
 fn Vec3 Crowd.query_half_extents(&self) => self.placement_half_extents;
 

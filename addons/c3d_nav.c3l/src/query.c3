@@ -570,6 +570,17 @@ fn bool NavQuery.is_in_closed_list(&self, PolyRef ref) {
 }
 
 <*
+ Move a search in progress by the negated offset.
+ @require offset.y == 0
+*>
+fn void NavQuery.shift_origin(&self, Vec3 offset) {
+    foreach (&node : self.nodes.nodes[:self.nodes.count]) node.position -= offset;
+    foreach (&node : self.tiny_nodes.nodes[:self.tiny_nodes.count]) node.position -= offset;
+    self.sliced.start -= offset;
+    self.sliced.end -= offset;
+}
+
+<*
  Query over the mesh with a node pool of max_nodes, allocated once.
  @param [&in] mesh : "Outlives the query."
  @return? c3d::CAPACITY_EXCEEDED

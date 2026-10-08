@@ -182,6 +182,34 @@ struct NavSyncResult {
 }
 
 <*
+ Move the build bounds, tile records, cached layers, obstacles, queued removals and pending jobs by the negated offset.
+ @param [&inout] self : "No slot is building on another thread; join tile builds first."
+ @require offset.y == 0
+*>
+fn void NavBuilder.shift_origin(&self, Vec3 offset) {
+    shift_bounds(&self.bounds, offset);
+    foreach (&record : self.tiles) {
+        if (record.mesh.len) shift_bounds(&((TileMeshHeader*)record.mesh.ptr).bounds, offset);
+    }
+    foreach (&job : self.jobs) {
+        if (job.state == FREE) continue;
+        shift_bounds(&job.heightfield.bounds, offset);
+        foreach (&volume : job.volumes[:job.volume_count]) shift_volume(volume, offset);
+        if (job.state == BUILT) shift_job_output(job, offset);
+    }
+
+    RemovalQueue* removals = self.removals;
+    foreach (&bounds : removals.bounds[:removals.count]) shift_bounds(bounds, offset);
+    foreach (&bounds : removals.volume_bounds[:removals.volume_count]) shift_bounds(bounds, offset);
+    foreach (&link : removals.links[:removals.link_count]) {
+        link.start -= offset;
+        link.end -= offset;
+    }
+
+    if (self.cache_layers) shift_tile_cache(&self.cache, offset);
+}
+
+<*
  Mark every tile overlapping the box dirty.
  @param box : "World space."
 *>
@@ -638,6 +666,33 @@ fn void apply_volume(CompactHeightfield* compact, VolumeRecord* volume) @local {
                 height: volume.height,
                 area:   volume.area,
             );
+    }
+}
+
+// Heights are world Y and stay.
+fn void shift_volume(VolumeRecord* volume, Vec3 offset) @private {
+    switch (volume.kind) {
+        case BOX:
+            shift_bounds(&volume.box, offset);
+        case CONVEX:
+            foreach (&vertex : volume.verts[:volume.vert_count]) *vertex -= offset;
+        case CYLINDER:
+            volume.base -= offset;
+    }
+}
+
+// A built output holds a TileMesh blob, or with cache_layers a run of length-prefixed layer blobs.
+fn void shift_job_output(TileJob* job, Vec3 offset) @local {
+    if (!job.output.len) return;
+    if (!job.cache_layers) {
+        shift_bounds(&((TileMeshHeader*)job.output.ptr).bounds, offset);
+        return;
+    }
+    usz position;
+    while (position < job.output.len) {
+        usz size = *(uint*)(job.output.ptr + position);
+        shift_bounds(&((LayerHeader*)(job.output.ptr + position + LAYER_LENGTH_BYTES)).bounds, offset);
+        position += LAYER_LENGTH_BYTES + aligned_layer_blob_size(size);
     }
 }
 

@@ -257,6 +257,27 @@ fn void Scene.clear_nav_target(&self, Node* node) {
 }
 
 <*
+ Move the navigation runtime mirrors and every position target of the scene by the negated offset.
+ @require offset.y == 0
+*>
+fn void Scene.shift_navigation(&self, Vec3 offset) {
+    self.@each(NavSourceRuntime; entity, runtime) {
+        shift_bounds(&runtime.bounds, offset);
+    };
+    self.@each(NavVolumeRuntime; entity, runtime) {
+        shift_bounds(&runtime.bounds, offset);
+        shift_volume(&runtime.record, offset);
+    };
+    self.@each(NavLinkRuntime; entity, runtime) {
+        runtime.start -= offset;
+        runtime.end -= offset;
+    };
+    self.@each(NavAgent; entity, agent) {
+        if (agent.target_kind == POSITION) agent.target -= offset;
+    };
+}
+
+<*
  Register the nav components and their mirrors.
  @param [&inout] scene : "Gains NavSource, NavVolume, NavLink, NavObstacle, NavAgent and their runtime mirrors."
  @return? c3d::CAPACITY_EXCEEDED
