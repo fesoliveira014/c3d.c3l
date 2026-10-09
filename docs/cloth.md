@@ -186,7 +186,8 @@ addons/c3d_physics.c3l/build/cloth.exe --benchmark --scene flag|cape|both [--sti
 addons/c3d_physics.c3l/build/cloth.exe --benchmark --trace software|hardware [--validation]
 ```
 
-Run from `addons/c3d_physics.c3l`, which locates the character model. The interactive scenes are a
+Run from `addons/c3d_physics.c3l`: the character model path is relative to it, and from `build/` the
+cape scenes (`cape`, `both`) fault `ASSET_IO_ERROR`. The interactive scenes are a
 24×16-cell flag with a pinned edge and gusting wind, a 12×22-cell cape (0.5 × 0.95 m, top row
 pinned) parented to the `DEF-spine.003` joint of the walking quaternius character with all twelve
 ragdoll bone capsules listed as colliders and the ground on, or both. The panel toggles the

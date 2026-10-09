@@ -649,6 +649,7 @@ fn void? run_benchmark(Options options) @local {
     ViewDesc view_desc = render::texture_view_desc(target, OutputMode.DISPLAY_LDR);
     view_desc.post.anti_aliasing = AntiAliasing.TAA;
     view_desc.post.motion_blur = true;
+    view_desc.ray_tracing.shadows = options.traced;
     ViewId view = render::create_view(&renderer, view_desc)!;
     double[MEASURED_FRAMES] solve_ms;
     double[MEASURED_FRAMES] publish_ms;
