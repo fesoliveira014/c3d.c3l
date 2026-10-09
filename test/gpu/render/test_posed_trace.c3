@@ -1291,3 +1291,204 @@ fn void test_probe_update_sees_a_posed_wall() @test {
         check_validation(&fixture.renderer);
     }
 }
+
+const float MOTION_POSITION_TOLERANCE @private = 1e-4f;
+const float MOTION_NORMAL_TOLERANCE @private = 1e-3f;
+const float MOTION_LIFT @private = 0.5f;       // local +y of the quad, which is world +z behind the upright turn
+const float MOTION_TILT_DEGREES @private = 30;
+const uint MOTION_PIXEL_X @private = 13;
+const uint MOTION_PIXEL_Y @private = 18;
+const uint MOTION_CENTRE_PIXEL @private = 16;
+
+struct MotionQuad @private {
+    PosedHarness harness;
+    GeometryId   geometry;
+    Node*        mesh;
+}
+
+// The quad lies in local XZ facing +y; the upright turn about x sends local (x, y, z) to world (x, -z, y).
+fn Vec3 motion_world(Vec3 local) @local {
+    return { local.x, -local.z, local.y };
+}
+
+fn Vec3 motion_tilt(Vec3 local, float radians) @local {
+    float cosine = math::cos(radians);
+    float sine = math::sin(radians);
+    return { local.x, local.y * cosine - local.z * sine, local.y * sine + local.z * cosine };
+}
+
+fn Vec3 motion_ray(uint pixel_x, uint pixel_y) @local {
+    float half_tangent = math::tan(math::deg_to_rad(30.0f));
+    float ndc_x = ((float)pixel_x + 0.5f) / TARGET_SIZE * 2 - 1;
+    float ndc_y = 1 - ((float)pixel_y + 0.5f) / TARGET_SIZE * 2;
+    Vec3 direction = { ndc_x * half_tangent, ndc_y * half_tangent, -1 };
+    return direction.normalize();
+}
+
+// Distance along the pixel's ray to the plane through the quad's first vertex.
+fn float motion_expected_distance(Fixture* fixture, MotionQuad* quad, uint pixel_x, uint pixel_y) @local {
+    Geometry* data = &fixture.assets.geometry(quad.geometry).data;
+    Vec3 point = motion_world(data.positions[0]);
+    Vec3 normal = motion_world(data.normals[0]);
+    Vec3 direction = motion_ray(pixel_x, pixel_y);
+    return (point - CAMERA_POSITION).dot(normal) / direction.dot(normal);
+}
+
+fn void? motion_create_quad(Fixture* fixture, MotionQuad* quad) @local {
+    posed_create_harness(fixture, &quad.harness)!;
+    MaterialCommon two_sided = material::MATERIAL_COMMON_DEFAULT;
+    two_sided.double_sided = true;
+    MaterialId material = fixture.assets.add_material(material::basic({ .color = { 1, 1, 1, 1 } }, two_sided))!;
+    @pool() {
+        Geometry shape = geometry::plane(tmem, 2, 2);
+        quad.geometry = fixture.assets.add_geometry(&shape)!;
+    };
+    quad.mesh = quad.harness.scene.add_mesh(quad.geometry, material, name: "motion")!;
+    quad.mesh.local.rotation = quaternion::from_axis_angle{float}({ 1, 0, 0 }, (float)math::PI * 0.5f);
+    quad.harness.scene.get(quad.mesh, Mesh).vertex_motion = true;
+    quad.harness.scene.update_world();
+}
+
+fn void motion_edit(Fixture* fixture, MotionQuad* quad, Vec3 lift, float tilt_radians) @local {
+    Geometry* data = &fixture.assets.geometry(quad.geometry).data;
+    foreach (&position : data.positions) *position = motion_tilt(*position + lift, tilt_radians);
+    foreach (&normal : data.normals) *normal = motion_tilt(*normal, tilt_radians);
+    data.finalize();
+    fixture.assets.mark_geometry_dirty(quad.geometry);
+}
+
+fn PosedDepthResult* motion_hit(PosedHarness* harness, uint pixel_x, uint pixel_y) @local {
+    PosedDepthResult* result = &harness.results[pixel_y * TARGET_SIZE + pixel_x];
+    assert((result.flags & POSED_TRACE_HIT) != 0);
+    return result;
+}
+
+fn void motion_assert_hit(Fixture* fixture, MotionQuad* quad, bool check_normals, ZString name) @local {
+    Geometry* data = &fixture.assets.geometry(quad.geometry).data;
+    Vec3 expected_normal = motion_world(data.normals[0]);
+    uint[2][2] pixels = {
+        { MOTION_CENTRE_PIXEL, MOTION_CENTRE_PIXEL },
+        { MOTION_PIXEL_X, MOTION_PIXEL_Y },
+    };
+    foreach (pixel : pixels) {
+        PosedDepthResult* hit = motion_hit(&quad.harness, pixel[0], pixel[1]);
+        float expected = motion_expected_distance(fixture, quad, pixel[0], pixel[1]);
+        Vec3 shading = { hit.normal[0], hit.normal[1], hit.normal[2] };
+        Vec3 geometric = { hit.geometric_normal[0], hit.geometric_normal[1], hit.geometric_normal[2] };
+        if (shading.dot(expected_normal) < 0) shading = -shading;
+        if (geometric.dot(expected_normal) < 0) geometric = -geometric;
+        float shading_error = (shading - expected_normal).length();
+        float geometric_error = (geometric - expected_normal).length();
+        io::eprintfn(
+            "%s pixel (%d, %d): t %f expected %f, shading error %f, geometric error %f",
+            name,
+            pixel[0],
+            pixel[1],
+            hit.traced,
+            expected,
+            shading_error,
+            geometric_error,
+        );
+        assert(math::abs(hit.traced - expected) <= MOTION_POSITION_TOLERANCE);
+        if (check_normals) {
+            assert(shading_error <= MOTION_NORMAL_TOLERANCE && geometric_error <= MOTION_NORMAL_TOLERANCE);
+        }
+    }
+}
+
+fn void test_vertex_motion_revision_updates_without_rebuilding() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        MotionQuad quad;
+        motion_create_quad(&fixture, &quad)!!;
+        defer posed_destroy_harness(&fixture, &quad.harness);
+        Renderer* renderer = &fixture.renderer;
+        TraceKind kind = ray_queries ? TraceKind.HARDWARE : TraceKind.SOFTWARE;
+
+        posed_render(&fixture, &quad.harness, kind)!!;
+        assert(renderer.stats.trace_posed_instances == 1 && renderer.stats.trace_poses == 0);
+        motion_assert_hit(&fixture, &quad, true, "rest");
+        PosedTraceRes* slot = posed_slot_of(&fixture, &quad.harness, quad.mesh);
+        gpu::AccelerationStructureHandle blas = slot.blas;
+        GpuGeometry* mirror = &renderer.geometries[quad.geometry.index];
+        gpu::GpuAllocation tree = mirror.trace.allocation;
+        uint tree_revision = mirror.trace.revision;
+        if (ray_queries) assert(renderer.stats.blas_builds == 1);
+
+        motion_edit(&fixture, &quad, { 0, MOTION_LIFT, 0 }, 0);
+        posed_render(&fixture, &quad.harness, kind)!!;
+        io::eprintfn(
+            "moved: uploads %d, refits %d, poses %d, blas builds %d updates %d",
+            renderer.stats.uploads,
+            renderer.stats.trace_refits,
+            renderer.stats.trace_poses,
+            renderer.stats.blas_builds,
+            renderer.stats.blas_updates,
+        );
+        assert(renderer.stats.trace_poses == 0);
+        assert(slot == posed_slot_of(&fixture, &quad.harness, quad.mesh));
+        assert(mirror.trace.revision == tree_revision);
+        assert(mem::equals(&mirror.trace.allocation, &tree, gpu::GpuAllocation::size));
+        if (ray_queries) {
+            assert(renderer.stats.blas_updates == 1 && renderer.stats.blas_builds == 0 && slot.blas == blas);
+        } else {
+            assert(renderer.stats.trace_refits == 1 && renderer.stats.uploads == 1);
+        }
+        motion_assert_hit(&fixture, &quad, true, "moved");
+
+        motion_edit(&fixture, &quad, {}, math::deg_to_rad(MOTION_TILT_DEGREES));
+        posed_render(&fixture, &quad.harness, kind)!!;
+        if (ray_queries) {
+            assert(renderer.stats.blas_updates == 1 && renderer.stats.blas_builds == 0 && slot.blas == blas);
+        } else {
+            assert(renderer.stats.trace_refits == 1 && renderer.stats.uploads == 1);
+        }
+        motion_assert_hit(&fixture, &quad, true, "rotated");
+
+        posed_render(&fixture, &quad.harness, kind)!!;
+        assert(renderer.stats.trace_refits == 0 && renderer.stats.blas_updates == 0 && renderer.stats.blas_builds == 0);
+        check_validation(renderer);
+    }
+}
+
+fn void test_vertex_motion_topology_change_rebuilds() @test {
+    foreach (ray_queries : TRACE_KINDS) {
+        Fixture fixture;
+        create_fixture(mem, &fixture, ray_queries: ray_queries)!!;
+        defer destroy_fixture(&fixture);
+        MotionQuad quad;
+        motion_create_quad(&fixture, &quad)!!;
+        defer posed_destroy_harness(&fixture, &quad.harness);
+        Renderer* renderer = &fixture.renderer;
+        TraceKind kind = ray_queries ? TraceKind.HARDWARE : TraceKind.SOFTWARE;
+        posed_render(&fixture, &quad.harness, kind)!!;
+        PosedTraceRes* slot = posed_slot_of(&fixture, &quad.harness, quad.mesh);
+        usz stream_bytes = slot.stream_bytes;
+        GpuGeometry* mirror = &renderer.geometries[quad.geometry.index];
+
+        @pool() {
+            Geometry finer = geometry::plane(tmem, 2, 2, 4, 4);
+            foreach (&position : finer.positions) position.y += MOTION_LIFT;
+            fixture.assets.replace_geometry(quad.geometry, &finer)!!;
+        };
+        posed_render(&fixture, &quad.harness, kind)!!;
+        uint revision = fixture.assets.geometry(quad.geometry).header.revision;
+        io::eprintfn(
+            "finer: uploads %d, refits %d, blas builds %d updates %d",
+            renderer.stats.uploads,
+            renderer.stats.trace_refits,
+            renderer.stats.blas_builds,
+            renderer.stats.blas_updates,
+        );
+        assert(slot.stream_bytes > stream_bytes && slot.topology.vertex_count == 25);
+        if (ray_queries) {
+            assert(renderer.stats.blas_builds == 1 && renderer.stats.blas_updates == 0);
+        } else {
+            assert(mirror.trace.revision == revision && renderer.stats.trace_refits == 1);
+        }
+        motion_assert_hit(&fixture, &quad, true, "finer");
+        check_validation(renderer);
+    }
+}
