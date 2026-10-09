@@ -27,6 +27,8 @@ struct FootContact {
 
 <*
  Capture an explicit contact while preserving the current requested correction.
+ @param incoming : "Fresh animated ankle world pose."
+ @param foot_height : "Sole-to-ankle distance in scene metres."
  @param [out] diagnostic : "Optional invalid-input context."
  @return? c3d::INVALID_ARGUMENT
 *>
@@ -36,7 +38,7 @@ fn void? FootContact.begin_contact(
     FootSupport support,
     Transform incoming,
     FootPlantConfig config = FOOT_PLANT_DEFAULT,
-    float foot_height = 0.08f,
+    float foot_height = FOOT_HEIGHT_DEFAULT,
     FootDiagnostic* diagnostic = null,
 ) {
     clear_foot_diagnostic(diagnostic);
@@ -91,6 +93,7 @@ fn void? FootContact.begin_contact(
 
 <*
  Publish the retained target from fresh animation and current support.
+ @param incoming : "Fresh animated ankle world pose."
  @param dt : "Finite nonnegative seconds."
  @param [out] diagnostic : "Optional invalid-input context."
  @return? c3d::INVALID_ARGUMENT
@@ -127,6 +130,7 @@ fn void? FootContact.update_contact(
 
 <*
  Release through the retained sole pivot without advancing its clock.
+ @param incoming : "Fresh animated ankle world pose."
  @param [out] diagnostic : "Optional invalid-input context."
  @return? c3d::INVALID_ARGUMENT
 *>

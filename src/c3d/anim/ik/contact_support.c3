@@ -12,10 +12,10 @@ const FootPlantConfig FOOT_PLANT_DEFAULT = {
     .sole_forward = { 0, 0, -1 },
 };
 
-const float CONTACT_FRAME_TOLERANCE @private = 1e-5f;
-const float CONTACT_POSITION_TOLERANCE @private = 1e-6f;
-const float CONTACT_RESIDUAL_TOLERANCE @private = 0.001f;
-const float CONTACT_ANGLE_TOLERANCE @private = 1.0f;
+const float CONTACT_FRAME_TOLERANCE @private = 1e-5f; // bounds frame orthonormality and uniformity, allowing float decomposition roundoff
+const float CONTACT_POSITION_TOLERANCE @private = 1e-6f; // bounds identical capture points in metres, allowing transform roundoff
+const float CONTACT_RESIDUAL_TOLERANCE @private = 0.001f; // bounds reached ankle distance in metres, allowing finite-precision IK error
+const float CONTACT_ANGLE_TOLERANCE @private = 1.0f; // bounds reached sole-axis angles in degrees, allowing finite-precision alignment error
 
 <* Frame owner of a retained contact. *>
 enum FootSupportKind {

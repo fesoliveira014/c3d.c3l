@@ -4,7 +4,7 @@ import c3d::maths;
 import c3d::scene;
 import std::math;
 
-const float FOOT_HEIGHT_DEFAULT @local = 0.08f; // ankle above the sole of an adult human rig, metres
+const float FOOT_HEIGHT_DEFAULT @private = 0.08f; // ankle above the sole of an adult human rig, metres
 const float LIFT_FADE_DEFAULT @local = 0.1f;    // a heel-off lift; swinging feet rise well above it
 const float RAY_HEIGHT_DEFAULT @local = 0.5f;   // covers a step up the height of a stair
 const float RAY_LENGTH_DEFAULT @local = 1.5f;   // ray height plus a one-metre drop
