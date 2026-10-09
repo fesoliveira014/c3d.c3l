@@ -29,6 +29,16 @@ struct PosedTraceKey {
 $assert PosedTraceKey::size == 2 * ulong::size + Entity::size;
 
 <*
+ Rest topology a vertex-motion slot was built for.
+*>
+struct PosedTopology {
+    GeometryId    geometry;
+    uint          vertex_count;
+    uint          index_count;
+    GeometryFlags flags;
+}
+
+<*
  Renderer-owned posed copy of one deformed trace instance.
 *>
 struct PosedTraceRes {
@@ -38,6 +48,7 @@ struct PosedTraceRes {
     ulong                            compared_epoch;      // epoch of the last pose compare
     GeometryId                       geometry;            // rest geometry the copy follows
     uint                             built_revision;      // header.revision of the root and BLAS; 0 rebuilds both
+    PosedTopology                    topology;            // rest topology the streams, nodes and BLAS were sized for
     gpu::GpuAddress                  source_root;         // rest block the root points into
     gpu::GpuAllocation               allocation;          // posed root, then positions, normals and tangents
     gpu::GpuAddress                  root;
@@ -73,6 +84,7 @@ struct PosedTraceTable {
     usz                          bytes;       // GPU bytes of every live slot
     List{PosedDispatch}          dispatches;  // posing and refit work the current preparation queued
     List{PosedBuild}             builds;      // BLAS builds and updates the current preparation queued
+    List{uint}                   motion_copies; // vertex-motion slots whose streams the mirror must refill
     gpu::PipelineHandle          pose_pipeline;
     gpu::PipelineHandle          pose_u16_pipeline;
     gpu::PipelineHandle          refit_pipeline;
@@ -179,6 +191,7 @@ fn PosedTraceTable create_posed_trace_table(Allocator allocator, uint capacity) 
     table.pending.init(allocator);
     table.dispatches.init(allocator);
     table.builds.init(allocator);
+    table.motion_copies.init(allocator);
     return table;
 }
 
@@ -204,6 +217,7 @@ fn void free_posed_trace_storage(PosedTraceTable* table) @private {
     table.pending.free();
     table.dispatches.free();
     table.builds.free();
+    table.motion_copies.free();
     *table = {};
 }
 
@@ -247,6 +261,7 @@ fn void discard_posed_trace(PosedTraceTable* table) @private {
     foreach (index : table.pending) {
         PosedTraceRes* slot = &table.slots[index];
         slot.built_revision = 0;
+        slot.topology = {};
         slot.pose_valid = false;
         slot.refit_serial = 0;
         slot.blas_serial = 0;
@@ -255,12 +270,69 @@ fn void discard_posed_trace(PosedTraceTable* table) @private {
     table.pending.clear();
     table.dispatches.clear();
     table.builds.clear();
+    table.motion_copies.clear();
     table.epoch_frame = 0;
+}
+
+<*
+ Whether a vertex-motion slot built for one topology still holds for another.
+ A new revision with the same counts and stream layout refills the slot; anything else rebuilds it.
+ @pure
+*>
+fn bool vertex_motion_slot_valid(PosedTopology recorded, PosedTopology current) {
+    return c3d::same_id(recorded.geometry, current.geometry)
+      && recorded.vertex_count == current.vertex_count
+      && recorded.index_count == current.index_count
+      && (uint)recorded.flags == (uint)current.flags;
+}
+
+fn PosedTopology posed_topology(GpuGeometry* mirror) @private {
+    return {
+        .geometry     = mirror.asset,
+        .vertex_count = mirror.layout.vertex_count,
+        .index_count  = mirror.layout.index_count,
+        .flags        = mirror.layout.flags,
+    };
+}
+
+// Whether the key's slot can follow the geometry's next revision with a refit and an update alone.
+// A software request also needs the rest tree with its depth table, a hardware one the slot's bottom level.
+fn bool vertex_motion_held(
+    Renderer* renderer,
+    PosedTraceKey key,
+    GeometryId geometry,
+    bool cpu_present,
+    bool proven,
+) @private {
+    PosedTraceTable* table = &renderer.posed_trace;
+    if (!table.slots.len) return false;
+    uint? found = table.lookup.get(key);
+    if (catch found) return false;
+    PosedTraceRes* slot = &table.slots[found];
+    GpuGeometry* mirror = &renderer.geometries[geometry.index];
+    if (!slot.allocation.is_valid() || !c3d::same_id(mirror.asset, geometry)) return false;
+    if (cpu_present && !proven) return false;
+    GeometryAsset* record = renderer.assets.geometry(geometry);
+    if (record.header.revision != slot.built_revision) {
+        if (!cpu_present) return false;
+        GeometryLayout layout = geometry_layout(&record.data);
+        PosedTopology current = {
+            .geometry     = geometry,
+            .vertex_count = layout.vertex_count,
+            .index_count  = layout.index_count,
+            .flags        = layout.flags,
+        };
+        if (!vertex_motion_slot_valid(slot.topology, current)) return false;
+    }
+    SceneTrace* trace = &renderer.scene_trace;
+    if (trace.software_requested && (!mirror.trace.revision || !mirror.trace.depth_starts)) return false;
+    return !trace.hardware_requested || slot.blas.is_valid();
 }
 
 fn uint pose_input_bytes(TracePoseSource* source, AssetStore* assets) @private {
     switch (source.kind) {
         case REST:
+        case VERTEX_MOTION:
             return 0;
         case MESH:
             uint palette = source.skin ? (uint)(source.skin.joints.len * Mat4f::size) : 0;
@@ -283,6 +355,7 @@ fn char[] pose_inputs(Renderer* renderer, TracePoseSource* source, TraceInstance
     bool morphs;
     switch (source.kind) {
         case REST:
+        case VERTEX_MOTION:
             return inputs;
         case MESH:
             if (source.skin) {
@@ -341,9 +414,53 @@ fn void? acquire_trace_pose_pipelines(Renderer* renderer) @private {
     )!;
 }
 
+// Every stream a vertex-motion slot exposes is refilled from the geometry mirror the revision just uploaded.
+// Both sides pack positions and normals at PACKED_VEC3_BYTES and tangents at Vec4::size, so each copy is one range.
+fn void? record_vertex_motion_copies(Renderer* renderer, gpu::CommandList* commands) @private {
+    PosedTraceTable* table = &renderer.posed_trace;
+    if (!table.motion_copies.len()) return;
+    // The mirror upload is a transfer write, and trace readers still read the slot's earlier streams.
+    gpu::Barrier writes_done = { .before = renderer.consumer_stages, .after = { .transfer } };
+    writes_done.before.transfer = true;
+    gpu::cmd_barrier(commands, &writes_done)!;
+    foreach (index : table.motion_copies) {
+        PosedTraceRes* slot = &table.slots[index];
+        GpuGeometry* mirror = &renderer.geometries[slot.topology.geometry.index];
+        gpu::GpuSpan source = gpu::get_allocation_span(&renderer.device, mirror.allocation)!;
+        gpu::GpuSpan destination = gpu::get_allocation_span(&renderer.device, slot.allocation)!;
+        PosedLayout posed = posed_layout(&mirror.layout);
+        usz vec3_bytes = PACKED_VEC3_BYTES * mirror.layout.vertex_count;
+        gpu::BufferCopyDesc positions = {
+            .src = source.checked_subspan(mirror.layout.positions, vec3_bytes)!,
+            .dst = destination.checked_subspan(posed.positions, vec3_bytes)!,
+        };
+        gpu::cmd_copy_buffer(commands, &positions)!;
+        if (mirror.layout.flags.has_normals) {
+            gpu::BufferCopyDesc normals = {
+                .src = source.checked_subspan(mirror.layout.normals, vec3_bytes)!,
+                .dst = destination.checked_subspan(posed.normals, vec3_bytes)!,
+            };
+            gpu::cmd_copy_buffer(commands, &normals)!;
+        }
+        if (mirror.layout.flags.has_tangents) {
+            usz tangent_bytes = Vec4::size * mirror.layout.vertex_count;
+            gpu::BufferCopyDesc tangents = {
+                .src = source.checked_subspan(mirror.layout.tangents, tangent_bytes)!,
+                .dst = destination.checked_subspan(posed.tangents, tangent_bytes)!,
+            };
+            gpu::cmd_copy_buffer(commands, &tangents)!;
+        }
+    }
+    gpu::Barrier copied = { .before = { .transfer }, .after = renderer.consumer_stages };
+    gpu::cmd_barrier(commands, &copied)!;
+    table.motion_copies.clear();
+    renderer.work_recorded = true;
+}
+
 // Every posing dispatch, then every refit, so three barriers serve any number of slots.
 fn void? record_trace_poses(Renderer* renderer, gpu::CommandList* commands) @private {
     PosedTraceTable* table = &renderer.posed_trace;
+    record_vertex_motion_copies(renderer, commands)!;
     if (!table.dispatches.len()) return;
     acquire_trace_pose_pipelines(renderer)!;
     bool profiled = renderer.frame_open;
@@ -376,17 +493,33 @@ fn void? record_trace_poses(Renderer* renderer, gpu::CommandList* commands) @pri
 }
 
 // A slot follows one geometry revision: a new revision, a moved rest block or another geometry rebuild it.
+// A vertex-motion slot follows the rest topology instead, and a new revision only refills its streams.
 fn void? acquire_posed_streams(
     Renderer* renderer,
     uint index,
     GpuGeometry* mirror,
     usz pose_bytes,
+    bool vertex_motion,
 ) @private {
     PosedTraceTable* table = &renderer.posed_trace;
     PosedTraceRes* slot = &table.slots[index];
+    PosedTopology topology = posed_topology(mirror);
     bool same_geometry = c3d::same_id(slot.geometry, mirror.asset);
-    if (same_geometry && slot.built_revision == mirror.revision && slot.source_root == mirror.root
-        && slot.pose.len == pose_bytes) return;
+    if (vertex_motion) {
+        bool held = slot.allocation.is_valid() && slot.source_root == mirror.root && slot.pose.len == 0
+          && vertex_motion_slot_valid(slot.topology, topology);
+        if (held) {
+            if (slot.built_revision == mirror.revision) return;
+            slot.built_revision = mirror.revision;
+            slot.pose_serial++;
+            table.motion_copies.push(index);
+            mark_posed_pending(table, index);
+            return;
+        }
+    } else if (same_geometry && slot.built_revision == mirror.revision && slot.source_root == mirror.root
+        && slot.pose.len == pose_bytes) {
+        return;
+    }
 
     PosedLayout layout = posed_layout(&mirror.layout);
     bool reuse = same_geometry && slot.allocation.is_valid() && slot.stream_bytes == layout.total_bytes;
@@ -415,7 +548,7 @@ fn void? acquire_posed_streams(
     }
     if (slot.pose.len != pose_bytes) {
         if (slot.pose.len) alloc::free(table.allocator, slot.pose.ptr);
-        slot.pose = alloc::new_array(table.allocator, char, (sz)pose_bytes);
+        slot.pose = pose_bytes ? alloc::new_array(table.allocator, char, (sz)pose_bytes) : (char[]){};
     }
 
     Frame* frame = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
@@ -426,8 +559,10 @@ fn void? acquire_posed_streams(
     renderer.pending_copies.push({ .src = staging.span, .dst = destination.checked_subspan(0, GeometryRoot::size)! });
 
     slot.geometry = mirror.asset;
+    slot.topology = topology;
     slot.built_revision = mirror.revision;
     slot.source_root = mirror.root;
+    if (vertex_motion) table.motion_copies.push(index);
     slot.pose_valid = false;
     slot.compared_epoch = 0;
     slot.refit_serial = 0;
@@ -516,10 +651,11 @@ fn void? resolve_posed_instance(
     bool software = renderer.scene_trace.software_requested;
     bool hardware = renderer.scene_trace.hardware_requested;
     acquire_posed_streams(
-        renderer:   renderer,
-        index:      index,
-        mirror:     mirror,
-        pose_bytes: pose_input_bytes(source, renderer.assets),
+        renderer:      renderer,
+        index:         index,
+        mirror:        mirror,
+        pose_bytes:    pose_input_bytes(source, renderer.assets),
+        vertex_motion: source.kind == TracePose.VERTEX_MOTION,
     )!;
     if (software) acquire_posed_nodes(renderer, index, mirror)!;
     if (hardware) acquire_posed_blas(renderer, index, mirror)!;
@@ -529,7 +665,12 @@ fn void? resolve_posed_instance(
         .vertex_count = mirror.layout.vertex_count,
         .joints_u16   = mirror.layout.flags.joints_u16,
     };
-    if (slot.compared_epoch != table.epoch) {
+    if (source.kind == TracePose.VERTEX_MOTION) {
+        if (!slot.pose_valid) {
+            slot.pose_valid = true;
+            slot.pose_serial++;
+        }
+    } else if (slot.compared_epoch != table.epoch) {
         slot.compared_epoch = table.epoch;
         if (slot.update_pose(pose_inputs(renderer, source, record))) {
             dispatch.pose_root = write_pose_root(
@@ -574,7 +715,8 @@ fn gpu::GpuAddress? write_pose_root(
     gpu::GpuAddress morph;
     switch (source.kind) {
         case REST:
-            unreachable("a rest row has no posed slot");
+        case VERTEX_MOTION:
+            unreachable("only skinned, morphed and crowd rows pose on the GPU");
         case MESH:
             if (source.skin) palette = resolve_palette(renderer, source.node, source.skin)!;
             if (mesh_morphs(renderer.assets, source.mesh)) {

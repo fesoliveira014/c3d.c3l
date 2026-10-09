@@ -52,9 +52,10 @@ enum TraceSource @private {
 }
 
 enum TracePose @private {
-    REST,  // the shared geometry, as raster draws it
-    MESH,  // a mesh skinned through its binding, morphed by nonzero weights, or both
-    CROWD, // one placement of a crowd part batch
+    REST,          // the shared geometry, as raster draws it
+    MESH,          // a mesh skinned through its binding, morphed by nonzero weights, or both
+    CROWD,         // one placement of a crowd part batch
+    VERTEX_MOTION, // a mesh whose positions the application rewrites between revisions
 }
 
 struct TraceInstance @private {
@@ -605,10 +606,25 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
             proven:         proven,
             streams:        cpu_present || geometry_current(renderer, record.geometry),
         );
+        bool motion_row = pose.kind == TracePose.VERTEX_MOTION;
+        PosedTraceKey key;
+        if (posed_row) key = { .scene = scene, .node = pose.node.id, .instance = record.instance_index };
+        bool motion_held = motion_row && vertex_motion_held(
+            renderer:    renderer,
+            key:         key,
+            geometry:    record.geometry,
+            cpu_present: cpu_present,
+            proven:      proven,
+        );
         // A posed row builds its own bottom level from the posed streams; it needs the rest streams only.
         if (posed_row && hardware_source == TraceSource.REUSE) {
             hardware_source = proven && (cpu_present || geometry_current(renderer, record.geometry))
               ? TraceSource.BUILD : TraceSource.SKIP;
+        }
+        if (motion_held) {
+            // The held slot refits from the rest tree and updates its own bottom level.
+            source = TraceSource.REUSE;
+            hardware_source = TraceSource.REUSE;
         }
         bool unavailable = (software && source == TraceSource.SKIP) || (hardware && hardware_source == TraceSource.SKIP);
         if (unavailable) {
@@ -621,20 +637,39 @@ fn TraceInstance[]? resolve_trace_instances(Renderer* renderer, TraceCollection*
         if (!published_without_vertex_stage(renderer, record.material)) continue;
         uint slot;
         if (posed_row) {
-            PosedTraceKey key = { .scene = scene, .node = pose.node.id, .instance = record.instance_index };
             uint? claimed = posed.claim(key, renderer.frame_index, &renderer.pending_upload_retire);
             if (catch claimed) {
-                renderer.stats.trace_posed_overflow++;
-                continue;
+                if (!motion_row) {
+                    renderer.stats.trace_posed_overflow++;
+                    continue;
+                }
+                // No free slot: the mesh traces through the shared geometry, rebuilt per revision.
+                posed_row = false;
+                hardware_source = blas_source(
+                    built_revision: same_asset ? mirror.blas.revision : 0,
+                    revision:       revision,
+                    proven:         proven,
+                    streams:        cpu_present || geometry_current(renderer, record.geometry),
+                );
+                if (hardware && hardware_source == TraceSource.SKIP) {
+                    renderer.stats.trace_skipped++;
+                    continue;
+                }
+            } else {
+                slot = claimed;
             }
-            slot = claimed;
         }
         if (hardware && hardware_source == TraceSource.BUILD && !posed_row) {
             resolve_blas(renderer, mirror, asset_record)!;
         }
         if (software && source == TraceSource.BUILD) {
             // Proven with the arrays present, so the store's build cannot fault.
-            upload_trace_geometry(renderer, mirror, renderer.assets.triangle_bvh(record.geometry)!!)!;
+            upload_trace_geometry(
+                renderer:      renderer,
+                mirror:        mirror,
+                tree:          renderer.assets.triangle_bvh(record.geometry)!!,
+                vertex_motion: motion_row && posed_row,
+            )!;
             mirror.trace.revision = revision;
         }
         record.material_address = material.address;
@@ -823,12 +858,17 @@ fn void? record_top_level_build(Renderer* renderer, gpu::CommandList* commands, 
     gpu::cmd_build_acceleration_structure(commands, &build)!;
 }
 
-fn void? upload_trace_geometry(Renderer* renderer, GpuGeometry* mirror, Bvh* tree) @local {
+fn void? upload_trace_geometry(
+    Renderer* renderer,
+    GpuGeometry* mirror,
+    Bvh* tree,
+    bool vertex_motion,
+) @local {
     usz node_bytes = tree.nodes.len * BvhNodeGpu::size;
     usz primitives_offset = align_up(node_bytes, STREAM_ALIGNMENT);
     usz primitive_end = primitives_offset + tree.primitives.len * uint::size;
-    // Only a skinned or morphed geometry can be posed and refit.
-    bool deformable = mirror.layout.flags.skinned || mirror.layout.flags.has_morphs;
+    // Only a skinned, morphed or vertex-motion geometry can be posed and refit.
+    bool deformable = mirror.layout.flags.skinned || mirror.layout.flags.has_morphs || vertex_motion;
     usz depth_starts_offset = deformable ? align_up(primitive_end, STREAM_ALIGNMENT) : 0;
     usz depth_order_offset = depth_starts_offset + (bvh::BVH_MAX_DEPTH + 1) * uint::size;
     usz total_bytes = deformable ? depth_order_offset + tree.nodes.len * uint::size : primitive_end;
@@ -1008,9 +1048,11 @@ fn bool geometry_has_joints(GeometryAsset* record) @local {
 fn TracePose mesh_trace_pose(AssetStore* assets, Mesh* mesh, SkinBinding* posed_skin) @local {
     GeometryAsset* record = assets.geometry(mesh.geometry);
     if (posed_skin) return TracePose.MESH;
-    if (!record.target_count || !mesh.morph_weights.len) return TracePose.REST;
-    MorphSelection selection = geometry::select_morph_targets(record.data.channels, mesh.morph_weights);
-    return selection.count ? TracePose.MESH : TracePose.REST;
+    if (record.target_count && mesh.morph_weights.len) {
+        MorphSelection selection = geometry::select_morph_targets(record.data.channels, mesh.morph_weights);
+        if (selection.count) return TracePose.MESH;
+    }
+    return mesh.vertex_motion ? TracePose.VERTEX_MOTION : TracePose.REST;
 }
 
 fn TraceInstance trace_record(

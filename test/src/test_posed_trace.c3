@@ -168,3 +168,27 @@ fn void test_posed_root_redirects_only_the_deformed_streams() @test {
         assert(mem::equals(&unchanged, &rest, shader::GeometryRoot::size));
     };
 }
+
+fn render::PosedTopology topology_of(uint vertex_count, uint index_count, render::GeometryFlags flags) @local {
+    return {
+        .geometry     = { .index = 3, .generation = 1 },
+        .vertex_count = vertex_count,
+        .index_count  = index_count,
+        .flags        = flags,
+    };
+}
+
+fn void test_vertex_motion_slot_validity_keys_on_topology() @test {
+    render::GeometryFlags lit = { .has_normals = true, .indices_u16 = true };
+    render::PosedTopology recorded = topology_of(1089, 6144, lit);
+
+    assert(render::vertex_motion_slot_valid(recorded, topology_of(1089, 6144, lit)));
+    assert(!render::vertex_motion_slot_valid(recorded, topology_of(1090, 6144, lit)));
+    assert(!render::vertex_motion_slot_valid(recorded, topology_of(1089, 6147, lit)));
+    render::GeometryFlags tangent = lit;
+    tangent.has_tangents = true;
+    assert(!render::vertex_motion_slot_valid(recorded, topology_of(1089, 6144, tangent)));
+    render::PosedTopology other = recorded;
+    other.geometry.generation = 2;
+    assert(!render::vertex_motion_slot_valid(recorded, other));
+}

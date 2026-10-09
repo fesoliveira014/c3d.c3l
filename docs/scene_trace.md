@@ -52,6 +52,16 @@ A skinned mesh, a morphed mesh or both traces at the pose raster draws in the sa
 - **Stats.** `trace_posed_instances`, `trace_posed_overflow`, `trace_posed_bytes`, `trace_poses`, `trace_refits` and `blas_updates` (this frame). Posing and refits run under `Pass.TRACE_POSE`.
 - **Hardware.** Each slot owns one bottom level created with `allow_update` and `prefer_fast_trace`: a full build when the slot is new, rebuilt or its source geometry changed, and an in-place update each frame the pose changes. Static bottom levels keep `prefer_fast_trace` alone. A pose change rebuilds the top level too. Update scratch is part of the per-frame scratch, which grows to the largest build or update. `Stats.blas_updates` counts the updates; a full posed build counts in `blas_builds`. Both kinds refit rather than rebuild, so a strong pose traces slower than rest. A geometry whose vertex or primitive counts change replaces the slot's bottom level.
 
+### Vertex-motion slots
+
+A traced `Mesh` with `vertex_motion` and neither a skin binding nor selected morph targets takes a posed slot too, for CPU deformation such as cloth. The slot follows the geometry's rest topology (geometry, vertex count, index count and stream layout), not its revision. A new revision with the same topology does not rebuild the trace data: a transfer copies the revision's positions, normals and tangents (when present) from the geometry mirror into the slot, then the software tree is refitted and the hardware bottom level is updated in place. No pose pass runs, and the triangle tree and bottom level of the shared geometry are not rebuilt. Index values are not part of the key: a revision that rewrites the triangle indices must also change a count to rebuild the slot.
+
+- **Topology change.** A different geometry, vertex count, index count or stream layout rebuilds the slot, its tree and its bottom level.
+- **Refit only.** The tree keeps the topology of its first revision with no periodic rebuild. A surface folded far from that shape traces slower, not wrongly.
+- **Capacity.** Slots count against `RendererDesc.max_posed_trace_instances`. With none free the mesh traces through the shared geometry and rebuilds it every revision, as a mesh without `vertex_motion` does; it is not counted in `trace_posed_overflow`.
+- **Top level.** The top level still rebuilds on every revision, and the trace revision advances, as for skin and morph poses.
+- **Cost.** A slot holds the same bytes as other posed slots, and the geometry's rest tree gains the depth table at its first trace upload. A static `vertex_motion` mesh keeps a slot.
+
 ### Animated crowds
 
 A posed hardware instance costs a bottom-level update every frame its pose changes: about 0.073 ms of `ACCELERATION_BUILD` per posed instance per frame on the RTX 4090. A 512-placement crowd traced on the hardware kind spends 75 ms a frame in acceleration builds and holds 558 MB. The same crowd on the software kind costs 1.3 ms of posing and refit plus 0.6 ms of tracing. Prefer the software kind, or few traced placements, for animated crowds.
