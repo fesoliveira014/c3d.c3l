@@ -216,6 +216,7 @@ A custom or package stage starts with the prelude, `generated/shader_abi.glsl` (
 | `fog.glsl` | `FogTerms`, `fog_terms`, `fog_background_terms`, `apply_fog`, `fog_behind`, `apply_fog_refracted`; the helpers include the view's [fog volume](sky.md#volumetric-fog) ([sky](sky.md#custom-stages)) |
 | `scene_snapshot.glsl` | `scene_uv`, `scene_color_at`, `scene_depth_at`, `scene_view_distance_at`, `scene_position_at`, `scene_depth_gap` ([scene reads](#scene-reads)) |
 | `standard_surface.glsl` | `StandardMaterialSample` (fields frozen), `sample_standard_material` |
+| `decals.glsl` | `apply_decals` ([decals](materials.md#decals)) |
 | `standard_shading.glsl` | `standard_ambient_fill`, `evaluate_standard_lights`, `shade_standard_surface` |
 | `gbuffer_output.glsl` | `write_gbuffer`, outputs at locations 0 to 4 |
 | `vertex_pull.glsl` | `pull_vec2`, `pull_vec3`, `pull_vec4`, `pull_triangle`, `GEOMETRY_*` |
