@@ -464,10 +464,11 @@ without publishing or retaining a preflight between calls. Checked accounting sa
 | `items_used` | Charged estimation and admitted publication/cleanup work. |
 | `deferred` | A decoded head could not fit. |
 | `required_items` | The deferred head's requirement; zero when none. |
-| `required_exact` | True for a complete estimate; false for an incoming minimum. |
+| `required_exact` | True for a complete estimate; false for the minimum estimation reserve. |
 
-A call below the worker-known incoming minimum defers before estimation. A call that can estimate but cannot commit
-reports the exact fresh-call requirement and charges its estimation. Repeating estimation is permitted. The caller
+The minimum reserve combines incoming items with the complete estimation cost, computed from current table sizes
+and liveness before traversal. A call below this reserve spends no items and defers immediately. A call at that
+reserve either admits the head or returns its exact fresh-call requirement after one full estimation. The caller
 can choose that larger allowance or explicitly select unbounded publication. A depleted finite allowance stays finite;
 its zero remainder does not become unbounded.
 

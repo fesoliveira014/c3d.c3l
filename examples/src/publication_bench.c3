@@ -23,6 +23,7 @@ const uint MAX_MODELS @local = 1024; // bounds the simultaneously decoded corpus
 const uint MAX_NODES @local = 1024;
 const uint MAX_RUNS @local = 1000;
 const uint LARGER_MODEL_COUNT @local = 8;
+const ulong TINY_ITEM_ALLOWANCE @local = 1; // below the generated model's incoming inventory
 const uint MEDIAN_PERCENT @local = 50;
 const uint P95_PERCENT @local = 95;
 const uint PERCENT_SCALE @local = 100;
@@ -41,8 +42,7 @@ struct Source @local {
 }
 
 struct Charge @local {
-    ulong incoming;
-    ulong estimate;
+    ulong minimum_reservation;
     ulong complete;
 }
 
@@ -120,17 +120,25 @@ fn Charge? probe_charge(Allocator allocator, Source* source) @local {
     LoadId id = loader.request(request_for("charge_probe.gltf"))!;
     wait_decoded(&loader, 1)!;
 
-    PublishReport minimum = loader.publish_within({ .items = 1 });
-    if (!minimum.deferred || minimum.required_exact || minimum.required_items <= 1
+    PublishReport minimum = loader.publish_within({ .items = TINY_ITEM_ALLOWANCE });
+    if (!minimum.deferred || minimum.required_exact || minimum.required_items <= TINY_ITEM_ALLOWANCE
       || minimum.items_used || minimum.published || minimum.failed) return c3d::INVALID_ARGUMENT~;
-    PublishReport exact = loader.publish_within({ .items = minimum.required_items });
-    if (!exact.deferred || !exact.required_exact || exact.published || exact.failed
-      || exact.required_items <= minimum.required_items) return c3d::INVALID_ARGUMENT~;
-    PublishReport complete = loader.publish_within({ .items = exact.required_items });
-    if (complete.published != 1 || complete.failed || complete.deferred
-      || complete.items_used != exact.required_items
-      || loader.status(id).phase != LoadPhase.PUBLISHED) return c3d::INVALID_ARGUMENT~;
-    return { .incoming = minimum.required_items, .estimate = exact.items_used, .complete = exact.required_items };
+    PublishReport reserved = loader.publish_within({ .items = minimum.required_items });
+    ulong complete_items;
+    if (reserved.deferred) {
+        if (!reserved.required_exact || reserved.published || reserved.failed
+          || reserved.required_items <= minimum.required_items) return c3d::INVALID_ARGUMENT~;
+        PublishReport complete = loader.publish_within({ .items = reserved.required_items });
+        if (complete.published != 1 || complete.failed || complete.deferred
+          || complete.items_used != reserved.required_items) return c3d::INVALID_ARGUMENT~;
+        complete_items = complete.items_used;
+    } else {
+        if (reserved.published != 1 || reserved.failed || !reserved.items_used
+          || reserved.items_used > minimum.required_items) return c3d::INVALID_ARGUMENT~;
+        complete_items = reserved.items_used;
+    }
+    if (loader.status(id).phase != LoadPhase.PUBLISHED) return c3d::INVALID_ARGUMENT~;
+    return { .minimum_reservation = minimum.required_items, .complete = complete_items };
 }
 
 fn bool same_slot(TextureSlot first, TextureSlot second) @local {
@@ -379,7 +387,7 @@ fn void? benchmark(Configuration configuration) @local {
     Charge charge = probe_charge(allocator, &source)!;
     if (charge.complete > ulong::max / LARGER_MODEL_COUNT) return c3d::INVALID_ARGUMENT~;
     Mode[4] modes = {
-        { .name = "tiny", .items = charge.incoming - 1, .blocked_then_drain = true },
+        { .name = "tiny", .items = TINY_ITEM_ALLOWANCE, .blocked_then_drain = true },
         { .name = "one_model", .items = charge.complete },
         { .name = "eight_models", .items = charge.complete * LARGER_MODEL_COUNT },
         { .name = "unbounded", .items = 0 },
@@ -404,8 +412,8 @@ fn void? benchmark(Configuration configuration) @local {
         geometry.vertex_count, geometry.index_count, geometry.target_count, geometry.data.channels.len,
     );
     io::printfn(
-        "# incoming_minimum_items=%d estimation_items=%d complete_one_model_items=%d tiny_items=%d eight_model_items=%d",
-        charge.incoming, charge.estimate, charge.complete, charge.incoming - 1, charge.complete * LARGER_MODEL_COUNT,
+        "# minimum_reservation_items=%d complete_one_model_items=%d tiny_items=%d eight_model_items=%d",
+        charge.minimum_reservation, charge.complete, TINY_ITEM_ALLOWANCE, charge.complete * LARGER_MODEL_COUNT,
     );
     io::printn(
         x: "# cold_corpus=fresh_store_and_loader_each_run process_cache=warm_after_warmup source=generated_in_memory",

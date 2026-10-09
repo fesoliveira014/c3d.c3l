@@ -83,7 +83,7 @@ fn void test_strict_fifo_defers_oversized_head_and_preserves_fresh_allowances() 
     assert(minimum > 1 && head_bill.required_items > follower_bill.required_items);
 
     PublishReport tiny = loader.publish_within({ .items = minimum - 1 });
-    assert(tiny.deferred && !tiny.required_exact && tiny.required_items == minimum);
+    assert(tiny.deferred && !tiny.required_exact && tiny.required_items == head_bill.required_items);
     assert(tiny.items_used == 0 && tiny.published == 0 && tiny.failed == 0);
     assert(loader.status(head).phase == LoadPhase.DECODED && loader.status(follower).phase == LoadPhase.DECODED);
     assert(assets.keys.len() == keys);
@@ -101,7 +101,7 @@ fn void test_strict_fifo_defers_oversized_head_and_preserves_fresh_allowances() 
     assert(counters.publication_items == first.items_used + next.items_used);
 }
 
-fn void test_deferred_estimation_is_charged_and_repeated_against_current_store() @test {
+fn void test_estimation_reservation_defers_uncharged_and_rechecks_current_store() @test {
     GeneratedSource source = create_source(mem);
     defer destroy_source(&source);
     AssetStore assets = create_store(mem, &source);
@@ -116,8 +116,8 @@ fn void test_deferred_estimation_is_charged_and_repeated_against_current_store()
     sz keys = assets.keys.len();
 
     PublishReport deferred = loader.publish_within({ .items = bill.required_items - 1 });
-    assert(deferred.deferred && deferred.required_exact && deferred.required_items == bill.required_items);
-    assert(deferred.items_used == bill.items_used && deferred.published == 0 && deferred.failed == 0);
+    assert(deferred.deferred && !deferred.required_exact && deferred.required_items == bill.required_items);
+    assert(deferred.items_used == 0 && deferred.published == 0 && deferred.failed == 0);
     assert(assets.keys.len() == keys && loader.status(id).phase == LoadPhase.DECODED);
     ModelId collision = gltf::load_model(&assets, "small.gltf")!!;
     bill = estimate_head(&assets, &loader, id);
@@ -217,7 +217,7 @@ fn void test_saturated_incoming_requirement_cannot_be_admitted_by_finite_limit()
     loader.state.slots[id.index].prepared.incoming_items = ulong::max;
     PublishReport report = loader.publish_within({ .items = ulong::max });
     assert(report.deferred && !report.required_exact && report.required_items == ulong::max);
-    assert(report.published == 0 && report.failed == 0);
+    assert(report.published == 0 && report.failed == 0 && report.items_used == 0);
     assert(loader.status(id).phase == LoadPhase.DECODED);
     loader.state.slots[id.index].prepared.incoming_items = actual;
     assert(loader.publish() == 1);

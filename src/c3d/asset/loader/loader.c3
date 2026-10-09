@@ -137,6 +137,7 @@ struct AsyncLoader {
 
 <*
  Queue a model file for decoding, as an add or replacement.
+ A target removed before publication fails with c3d::INVALID_ID.
  @param request : "Path is copied; missing is borrowed until terminal."
  @return? c3d::INVALID_ARGUMENT, c3d::INVALID_ID, c3d::CAPACITY_EXCEEDED
  @require request.path.len > 0
@@ -341,6 +342,7 @@ fn void destroy_async_loader(AsyncLoader* loader) {
     state.stopping = true;
     state.wake.broadcast();
     state.lock.unlock();
+    // The worker uses both allocators until joined; earlier frees would race it.
     state.worker.join()!!;
     foreach (&slot : state.slots) {
         if (!slot.occupied) continue;
@@ -464,6 +466,7 @@ fn usz? next_decode(LoaderState* state) @private {
 
 fn void decode_slot(LoaderState* state, usz index) @private {
     std::time::Clock started = clock::now();
+    // Pending requests are immutable until release, including while CANCELLING.
     PreparedModelDocument? prepared = decode_prepared_request(
         allocator:   state.document_allocator,
         file_source: state.file_source,

@@ -341,11 +341,20 @@ fn PublicationEstimate estimate_model_publication(
     ulong allowance,
     bool bounded,
 ) @private {
-    PublicationEstimate estimate = { .required_items = prepared.incoming_items };
-    if (bounded && allowance < estimate.required_items) return estimate;
+    bool live_model = model.generation && store.models.is_live(model);
+    ulong estimation = add_publication_items(prepared.named.table.len, (ulong)prepared.named.len());
+    if (live_model) estimation = add_publication_items(estimation, 1);
+    if (model.generation) {
+        estimation = add_publication_items(estimation, store.keys.table.len);
+        estimation = add_publication_items(estimation, (ulong)store.keys.len());
+    }
+    PublicationEstimate estimate = {
+        .required_items = add_publication_items(prepared.incoming_items, estimation),
+    };
+    if (bounded && (estimate.required_items == ulong::max || allowance < estimate.required_items)) return estimate;
+    estimate.items_used = estimation;
     ulong attempt = prepared.incoming_items;
-    if (model.generation && store.models.is_live(model)) {
-        if (!estimate_item(&estimate, allowance, bounded)) return estimate;
+    if (live_model) {
         attempt = add_publication_items(attempt, publication_items(
             document: null,
             prepared: null,
@@ -354,9 +363,7 @@ fn PublicationEstimate estimate_model_publication(
         ));
     }
     foreach (bucket : prepared.named.table) {
-        if (!estimate_item(&estimate, allowance, bounded)) return estimate;
         for (map::Entry{String, bool}* entry = bucket; entry; entry = entry.next) {
-            if (!estimate_item(&estimate, allowance, bounded)) return estimate;
             if (!model.generation || entry.key == prepared.document.key) continue;
             if (try old = store.find(entry.key)) {
                 if (old.kind == AssetKind.GEOMETRY || old.kind == AssetKind.SKELETON || old.kind == AssetKind.CLIP
@@ -375,9 +382,7 @@ fn PublicationEstimate estimate_model_publication(
         ulong inventory = add_publication_items(store.keys.table.len, (ulong)store.keys.len());
         attempt = add_publication_items(attempt, inventory);
         foreach (bucket : store.keys.table) {
-            if (!estimate_item(&estimate, allowance, bounded)) return estimate;
             for (map::Entry{String, AssetRef}* entry = bucket; entry; entry = entry.next) {
-                if (!estimate_item(&estimate, allowance, bounded)) return estimate;
                 if (is_missing_part(prepared.document.key, entry.key, &prepared.named)) {
                     attempt = add_publication_items(attempt, 1);
                 }
@@ -388,15 +393,6 @@ fn PublicationEstimate estimate_model_publication(
     estimate.required_exact = estimate.required_items != ulong::max;
     estimate.admitted = !bounded || (estimate.required_items != ulong::max && estimate.required_items <= allowance);
     return estimate;
-}
-
-fn bool estimate_item(PublicationEstimate* estimate, ulong allowance, bool bounded) @local {
-    if (bounded && estimate.items_used == allowance) {
-        estimate.required_items = add_publication_items(estimate.required_items, add_publication_items(estimate.items_used, 1));
-        return false;
-    }
-    estimate.items_used = add_publication_items(estimate.items_used, 1);
-    return true;
 }
 
 fn TextureId add_prepared_texture(AssetStore* store, DocumentTexture* entry) @private {

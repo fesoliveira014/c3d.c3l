@@ -583,8 +583,8 @@ fn void test_nested_publication_bill_includes_cleanup_and_lookup_inventory() @te
             allowance: expected_incoming,
             bounded: true,
         );
-        assert(!estimate.admitted && estimate.required_exact);
-        assert(estimate.items_used == expected_estimation);
+        assert(!estimate.admitted && !estimate.required_exact);
+        assert(estimate.items_used == 0);
         assert(estimate.required_items == expected_incoming + expected_estimation);
         ulong needed = estimate.required_items;
         estimate = asset::estimate_model_publication(
@@ -717,6 +717,118 @@ fn void test_bill_tracks_changed_nested_cardinalities_and_failure_disposal() @te
         uint revision = assets.model(model).header.revision;
         assert(@catch(asset::replace_prepared_model_document(&assets, model, &prepared)) == c3d::INCOMPATIBLE_STRUCTURE);
         assert(assets.model(model).header.revision == revision && prepared.document.clips[0].data.tracks.len == 2);
+    }
+    assert(!tracker.has_leaks());
+}
+
+fn void test_default_replacement_reserves_full_estimation_before_scanning() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    {
+        AssetStore assets = asset::create_asset_store(&tracker, asset::default_asset_store_desc());
+        defer asset::destroy_asset_store(&assets);
+        ModelDocument first = loading_fixtures::full_model_document(&tracker, "reservation");
+        defer asset::destroy_model_document(&first);
+        ModelId model = assets.publish_document(&first)!!;
+        GeometryId geometry = assets.find_geometry("reservation#geometry")!!;
+        GeometryId rigid_geometry = assets.find_geometry("reservation#lod_geometry")!!;
+        TextureId texture = assets.find_texture("reservation#texture")!!;
+        MaterialId material = assets.find_material("reservation#material")!!;
+        SamplerId sampler = assets.find_sampler("reservation#sampler")!!;
+        SkeletonId skeleton = assets.find_skeleton("reservation#skeleton")!!;
+        ClipId clip = assets.find_clip("reservation#clip")!!;
+        PoolCounts before_counts = pool_counts(&assets);
+        String[17] before_keys;
+        AssetRef[17] before_refs;
+        usz key_index;
+        assets.keys.@each(; String key, AssetRef ref) {
+            before_keys[key_index] = key;
+            before_refs[key_index++] = ref;
+        };
+        Vec3[3] before_positions;
+        before_positions[..] = assets.geometry(geometry).data.positions[..];
+        Aabb before_skin = assets.geometry(geometry).skin_bounds.joints[0];
+        Aabb before_morph = assets.geometry(geometry).morph_bounds[0];
+        char[16] before_pixels;
+        before_pixels[..] = assets.texture(texture).pixels[..];
+        AssetRef[1] missing = { { .kind = AssetKind.FONT, .id = { .index = 19, .generation = 3 } } };
+        ModelDocument next = loading_fixtures::full_model_document(&tracker, "reservation");
+        defer asset::destroy_model_document(&next);
+        next.geometries[0].data.positions[0] = { -3, 0, 0 };
+        next.geometries[0].data.finalize();
+        asset::PreparedModelDocument prepared = asset::prepare_model_document(&next)!!;
+        defer asset::destroy_prepared_model_document(&prepared);
+        ulong expected_incoming = 8 + 3 + 1 + 1 + 2 + 1 + 1 + 2 + 2 + 1 + 1 + 2 + 2 + 2 + 2 + 1 + 16 + 8;
+        ulong buckets = assets.keys.table.len;
+        ulong live_keys = (ulong)assets.keys.len();
+        ulong expected_estimation = 16 + 8 + 1 + buckets + live_keys;
+        ulong expected_lower = expected_incoming + expected_estimation;
+        ulong expected_old = 7 + 1 + 1 + 1 + 3 + 1 + 3 + 3;
+        ulong expected_total = expected_estimation + expected_incoming + expected_old + buckets + live_keys;
+        assert(buckets == 32768 && live_keys == 17 && key_index == 17);
+        assert(expected_incoming == 56 && expected_estimation == 32810);
+        assert(expected_lower == 32866 && expected_total == 65671);
+        ulong[3] lower_allowances = { expected_incoming, expected_lower / 2, expected_lower - 1 };
+        foreach (allowance : lower_allowances) {
+            asset::PublicationEstimate deferred = asset::estimate_model_publication(
+                store: &assets,
+                prepared: &prepared,
+                model: model,
+                allowance: allowance,
+                bounded: true,
+            );
+            assert(!deferred.admitted && !deferred.required_exact && deferred.items_used == 0);
+            assert(deferred.required_items == expected_lower);
+            assert(same_counts(before_counts, pool_counts(&assets)));
+            foreach (index, key : before_keys) {
+                AssetRef current = assets.find(key)!!;
+                assert(current.kind == before_refs[index].kind && current.slot == before_refs[index].slot);
+                assert(c3d::same_id(current.id, before_refs[index].id));
+            }
+            assert(assets.model(model).header.revision == 1 && assets.geometry(geometry).header.revision == 1);
+            assert(assets.geometry(rigid_geometry).header.revision == 1 && assets.texture(texture).header.revision == 1);
+            assert(assets.material(material).header.revision == 1 && assets.sampler(sampler).header.revision == 1);
+            assert(assets.skeleton(skeleton).header.revision == 1 && assets.clip(clip).header.revision == 1);
+            foreach (index, position : before_positions) assert(assets.geometry(geometry).data.positions[index] == position);
+            foreach (index, pixel : before_pixels) assert(assets.texture(texture).pixels[index] == pixel);
+            assert(assets.geometry(geometry).skin_bounds.joints[0].min == before_skin.min);
+            assert(assets.geometry(geometry).skin_bounds.joints[0].max == before_skin.max);
+            assert(assets.geometry(geometry).morph_bounds[0].min == before_morph.min);
+            assert(assets.geometry(geometry).morph_bounds[0].max == before_morph.max);
+            assert(assets.clip(clip).data.events[1].time == 0.75f);
+            assert(assets.skeleton(skeleton).data.joint_names[0] == "root");
+            assert(missing[0].kind == AssetKind.FONT && missing[0].id.index == 19 && missing[0].id.generation == 3);
+        }
+        asset::PublicationEstimate exact = asset::estimate_model_publication(
+            store: &assets,
+            prepared: &prepared,
+            model: model,
+            allowance: expected_lower,
+            bounded: true,
+        );
+        assert(!exact.admitted && exact.required_exact && exact.items_used == expected_estimation);
+        assert(exact.required_items == expected_total && same_counts(before_counts, pool_counts(&assets)));
+        assert(assets.model(model).header.revision == 1 && assets.geometry(geometry).data.positions[0] == before_positions[0]);
+        assert(missing[0].kind == AssetKind.FONT && missing[0].id.index == 19 && missing[0].id.generation == 3);
+        asset::PublicationEstimate admitted = asset::estimate_model_publication(
+            store: &assets,
+            prepared: &prepared,
+            model: model,
+            allowance: exact.required_items,
+            bounded: true,
+        );
+        assert(admitted.admitted && admitted.required_exact && admitted.items_used == expected_estimation);
+        assert(admitted.required_items == expected_total && same_counts(before_counts, pool_counts(&assets)));
+        ModelReplaceReport report = asset::replace_prepared_model_document(
+            store: &assets,
+            model: model,
+            prepared: &prepared,
+            missing: missing[..],
+        )!!;
+        assert(report.replaced == 7 && report.added == 0 && report.missing == 0);
+        assert(assets.model(model).header.revision == 2 && assets.geometry(geometry).header.revision == 2);
+        assert(assets.geometry(geometry).data.positions[0].x == -3 && !prepared.document.geometries.len);
     }
     assert(!tracker.has_leaks());
 }
