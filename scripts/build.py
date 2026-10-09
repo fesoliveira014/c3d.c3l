@@ -93,7 +93,7 @@ LANDSCAPE_TEST_TARGETS = ("landscape_test", "landscape_serial_test", "landscape_
 PARTICLE_TEST_TARGETS = ("particle_test", "particle_serial_test", "particle_serial_policy_test")
 SERIAL_TEST_TARGETS = ("serial_test", "serial_order_forward", "serial_order_reverse", "serial_text_test", "serial_described_test", "serial_core_policy_test", "serial_all_test")
 UI_TEST_TARGETS = ("ui_test",)
-AUDIO_TEST_TARGETS = ("audio_test",)
+AUDIO_TEST_TARGETS = ("audio_test", "audio_serial_test", "audio_serial_policy_test")
 
 REQUIRED_C3C_VERSION = "0.8.3"
 SUBMODULES = ("gpu.c3l", "sdl3.c3l", "c3imgui.c3l", "c3cg.c3l", "box3d.c3l", "cgltf.c3l", "ufbx.c3l", "shaderc.c3l", "clay.c3l", "miniaudio.c3l")

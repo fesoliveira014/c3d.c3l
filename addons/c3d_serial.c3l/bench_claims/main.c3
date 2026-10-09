@@ -32,6 +32,7 @@ fn int main(String[] args) {
             systems: &source_systems,
             scene: &fixture.source,
             assets: &fixture.assets,
+            audio: &fixture.source_audio,
             root: fixture.source.root,
         );
         char[] snapshot;
@@ -59,6 +60,7 @@ fn int main(String[] args) {
             systems: &systems,
             scene: &fixture.destination,
             assets: &fixture.assets,
+            audio: &fixture.destination_audio,
             root: fixture.destination.root,
         );
         assert_presence(&fixture.destination, true);
