@@ -230,6 +230,11 @@ joints and targets are resolved before any component attaches. NodeReference
 stores an ordinary document node or a model owner plus template index; removed
 model slots cannot bind to a reused scene slot. Skin joint arrays are copied into
 the destination allocator. Foot ground contact and alignment state restart.
+The FootIk authoring codec uses version 2 and stores acquisition/release timing
+and the ankle-local sole axes. Version-1 binary payloads retain their original
+layout reader; version-1 JSONC omits the new settings and receives current
+`FOOT_PLANT_DEFAULT` values. References and existing foot settings persist.
+Runtime contact anchors, support frames, phases and clocks restart inactive.
 The shared NodeReference layout is registered by register_core_value_types;
 SkinAuthoring exposes the decoded skeleton and required joint references to
 other owner preflight callbacks. Missing binary asset keys retain the key in

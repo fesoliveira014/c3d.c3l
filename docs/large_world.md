@@ -125,6 +125,7 @@ static nodes do not read as moved.
 scene.shift_origin(offset);
 scene.shift_particles(offset);
 scene.update_world();
+scene.shift_foot_contacts(offset);
 physics.shift_origin(&scene, offset);
 scene.shift_characters(offset);
 nav_mesh.shift_origin(offset);
@@ -155,15 +156,19 @@ this order:
 2. `scene.shift_particles(offset)`, before `update_world`: it resets the
    world-space draw child that `Scene.shift_origin` moved.
 3. `scene.update_world()`.
-4. The simulation owners shift their state. `PhysicsWorld.shift_origin` takes the
+4. `scene.shift_foot_contacts(offset)` shifts retained `FootIk` contacts. A
+   standalone `FootContact` uses its own `shift_origin` instead; do not shift
+   one state through both owners. Support-local anchors remain unchanged and
+   support owners supply their already-shifted frame before the next contact update.
+5. The simulation owners shift their state. `PhysicsWorld.shift_origin` takes the
    scene. Navigation shifts the mesh, the builder (join tile builds on other
    threads first), the crowd and `Scene.shift_navigation`; a `NavQuery` the
    application holds itself needs `NavQuery.shift_origin`.
-5. `scene.shift_foliage()` stores the current node worlds as the scatter poses so
+6. `scene.shift_foliage()` stores the current node worlds as the scatter poses so
    no layer re-scatters. `AudioSystem.shift_origin(offset)` moves positioned
    one-shots; emitters follow their nodes.
-6. `renderer.shift_origin(&scene, offset)`, last, so it reads the final worlds.
-7. `SceneIndex.refresh(&scene)` when the application keeps one.
+7. `renderer.shift_origin(&scene, offset)`, last, so it reads the final worlds.
+8. `SceneIndex.refresh(&scene)` when the application keeps one.
 
 ### Scene
 
