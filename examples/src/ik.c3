@@ -193,9 +193,10 @@ fn void? build_level(AssetStore* assets, Scene* scene) @local {
             position.y = terrain_height(position.x, position.z);
             terrain.normals[index] = terrain_normal(position.x, position.z);
         }
-        terrain.compute_tangents(tmem);
         terrain.finalize();
-        terrain_geometry = assets.add_geometry(&terrain, "ik/terrain")!;
+        TangentGeometry tangent_terrain = geometry::create_tangent_geometry(assets.allocator, &terrain)!;
+        defer geometry::destroy_tangent_geometry(&tangent_terrain);
+        terrain_geometry = assets.add_tangent_geometry_owned(&tangent_terrain, "ik/terrain")!;
         StandardParams params = material::STANDARD_PARAMS_DEFAULT;
         params.base_color = { 0.45f, 0.55f, 0.4f, 1 };
         params.metallic = 0;

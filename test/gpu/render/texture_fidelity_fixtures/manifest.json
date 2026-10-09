@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "fixture_license": "CC0-1.0 analytic fixtures authored for texture fidelity",
+  "oracle_repository": "mmikk/MikkTSpace",
+  "oracle_pin": "3e895b49d05ea07e4c2133156cfa94369e19e409",
+  "oracle_compiler": "MSVC 19.44.35217 x64",
+  "oracle_flags": "/O2 /fp:strict",
+  "records": 60,
+  "bake_layout": "little endian uint32 case/face + 15 float64: barycentric, target, mapped, interpolated tangent, interpolated normal",
+  "encoded_layout": "RGB float32, round_float32(0.5*(mapped+1)), same record order",
+  "convention": "Fragment bitangent is cross(interpolated N, interpolated T) * sign; tangent and normal are not independently renormalized before multiplying the inverse bake",
+  "files": {
+    "reference_bake.bin": {
+      "bytes": 7680,
+      "sha256": "40e4a0314b8dbe305fcfe75e5401909f965af9ffff6f674b5c8844ba579a2846"
+    },
+    "reference_bake_rgb32f.bin": {
+      "bytes": 720,
+      "sha256": "95001b84b9dd8fb2bf35dd974553ebaf10f70a14c08c116645d920482bf84f5c"
+    },
+    "bake_geometry.bin": {
+      "sha256": "9f173772cb6cc59a9d1e9fe0a433305e0341a91aaef38d0f52b8c379a898787a",
+      "bytes": 9536
+    },
+    "bake_tangents.bin": {
+      "sha256": "ee617027b8632d3fd41449871c410bb131d60b508b87f1b656a05987fecda8d8",
+      "bytes": 8360
+    }
+  }
+}

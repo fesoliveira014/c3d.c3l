@@ -151,6 +151,12 @@ fn void retire_prepare_pipeline(Renderer* renderer, gpu::PipelineHandle pipeline
 }
 
 fn void retire_prepare_texture(Renderer* renderer, PrepareUnit* unit, TextureRes* texture) @private {
+    if (texture.coverage_resource) retire_prepare_resource(
+        renderer: renderer,
+        unit: unit,
+        resource: { .kind = RetiredKind.TEXTURE_COVERAGE, .coverage_resource = texture.coverage_resource },
+    );
+
     foreach (view : texture.storage_views) {
         if (view.is_valid()) retire_prepare_resource(
             renderer: renderer,
@@ -158,6 +164,7 @@ fn void retire_prepare_texture(Renderer* renderer, PrepareUnit* unit, TextureRes
             resource: { .kind = RetiredKind.TEXTURE_VIEW, .texture_view = view },
         );
     }
+
     alloc::free(renderer.allocator, texture.storage_views.ptr);
     if (texture.view.is_valid()) retire_prepare_resource(
         renderer: renderer,
@@ -214,40 +221,55 @@ fn PrepareUnit*? pending_install_unit(Renderer* renderer, PrepareInstall* instal
 
 fn void commit_prepare_jobs(Renderer* renderer, Frame* slot) @private {
     renderer.last_submission = slot.done;
+
     for (uint index = 0; index < FRAMES_IN_FLIGHT; index++) {
         if (&renderer.frames[index] == slot) renderer.last_submitted_slot = index;
     }
+
     foreach (&install : renderer.pending_prepare_installs) {
         PrepareUnit retired_unit = { .last_submission = slot.done, .last_submission_slot = renderer.last_submitted_slot };
+
         switch (install.kind) {
-            case TEXTURE: retire_prepare_texture(renderer, &retired_unit, &install.old_texture);
+            case TEXTURE:
+                if (install.new_texture.coverage_resource) install.new_texture.coverage_resource.committed = true;
+                retire_prepare_texture(renderer, &retired_unit, &install.old_texture);
+
             case GEOMETRY: retire_prepare_geometry(renderer, &retired_unit, &install.old_geometry);
+
             case MATERIAL: retire_prepare_allocation(renderer, &retired_unit, install.old_material.payload);
+
             case PIPELINES: retire_prepare_allocation(renderer, &retired_unit, install.old_path_tracer.sbt);
+
             case SAMPLER:
             case TOON_SAMPLER:
             case SHADER:
             case FINISH:
         }
     }
+
     renderer.pending_prepare_installs.clear();
+
     foreach (&record : renderer.prepares.items) {
         if (!record.open) continue;
         bool submitted;
+
         foreach (&unit : record.units) {
             if (unit.referenced_this_frame) {
                 unit.last_submission = slot.done;
                 unit.last_submission_slot = renderer.last_submitted_slot;
                 submitted = true;
             }
+
             unit.referenced_this_frame = false;
             unit.checkpoint.active = false;
             unit.abandoned_candidate = false;
         }
+
         if (submitted) record.last_submission = slot.done;
         record.pending_gpu = false;
         refresh_prepare_progress(record);
     }
+
     foreach (&pending : renderer.pending_prepare_retire) slot.retire.push(pending.resource);
     renderer.pending_prepare_retire.clear();
     renderer.prepare_upload_checkpoint.active = false;
@@ -256,12 +278,18 @@ fn void commit_prepare_jobs(Renderer* renderer, Frame* slot) @private {
 fn bool retired_matches_texture(Retired retired, TextureRes* texture) @local {
     switch (retired.kind) {
         case TEXTURE: return retired.texture == texture.texture;
+
+        case TEXTURE_COVERAGE: return retired.coverage_resource == texture.coverage_resource;
+
         case TEXTURE_VIEW:
             if (retired.texture_view == texture.view) return true;
+
             foreach (view : texture.storage_views) {
                 if (retired.texture_view == view) return true;
             }
+
             return false;
+
         case ALLOCATION:
         case ATTACHMENT_VIEW:
         case PIPELINE:

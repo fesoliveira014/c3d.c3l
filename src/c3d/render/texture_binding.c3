@@ -12,6 +12,8 @@ struct TextureBinding {
     RenderTargetId target;
     SamplerId sampler;
     uint texture_binding_revision;
+    uint texture_content_revision;
+    TextureSemantic semantic;
     uint sampler_revision;
     gpu::TextureIndex texture_index;
     gpu::SamplerIndex sampler_index;
@@ -48,23 +50,28 @@ fn bool texture_binding_matches(TextureBinding first, TextureBinding second) {
         && c3d::same_id(first.target, second.target)
         && c3d::same_id(first.sampler, second.sampler)
         && first.texture_binding_revision == second.texture_binding_revision
+        && first.texture_content_revision == second.texture_content_revision
+        && first.semantic == second.semantic
         && first.sampler_revision == second.sampler_revision
         && first.texture_index == second.texture_index
         && first.sampler_index == second.sampler_index
         && first.present == second.present;
 }
 
-
 fn TextureBinding? resolve_texture_slot(Renderer* renderer, TextureSlot slot, bool custom_read = false) @private {
     if (slot.uv_set > 1) return c3d::INVALID_ARGUMENT~;
+
     SamplerId sampler = renderer.assets.samplers.is_live(slot.sampler)
         ? slot.sampler : c3d::asset::SAMPLER_LINEAR_REPEAT;
+
     if (renderer.assets.sampler(sampler).desc.compare_enable) return c3d::INVALID_ARGUMENT~;
+
     SamplerRes* sampler_mirror = resolve_sampler(renderer, sampler)!;
 
     if (slot.texture.kind == TextureRefKind.RENDER_TARGET && renderer.targets.is_live(slot.texture.target)) {
         TargetRecord* target = renderer.targets.get(slot.texture.target);
         target.sample_pending = true;
+
         return {
             .target = slot.texture.target,
             .sampler = sampler,
@@ -77,17 +84,24 @@ fn TextureBinding? resolve_texture_slot(Renderer* renderer, TextureSlot slot, bo
     }
 
     bool present = slot.texture.kind == TextureRefKind.ASSET && renderer.assets.textures.is_live(slot.texture.asset);
+
     if (present) {
         material::TextureDesc desc = renderer.assets.texture(slot.texture.asset).desc;
         // Built-in stages sample as float; integer texels are read only through gpu_fetch_uint.
+
         if (desc.is_cube || (desc.format == R16_UINT && !custom_read)) return c3d::UNSUPPORTED~;
     }
+
     TextureId texture = present ? slot.texture.asset : c3d::asset::TEXTURE_WHITE;
     TextureRes* texture_mirror = resolve_texture(renderer, texture, full_reader: custom_read)!;
+    TextureBinding content = texture_binding_content(renderer, texture, texture_mirror);
+
     return {
         .texture = texture,
         .sampler = sampler,
         .texture_binding_revision = texture_mirror.binding_revision,
+        .texture_content_revision = content.texture_content_revision,
+        .semantic = content.semantic,
         .sampler_revision = sampler_mirror.revision,
         .texture_index = texture_mirror.view.index,
         .sampler_index = sampler_mirror.index,
@@ -99,11 +113,14 @@ fn TextureBinding? resolve_gradient_map(Renderer* renderer, TextureId texture) @
     if (!renderer.assets.textures.is_live(texture)) return {};
 
     TextureAsset* record = renderer.assets.texture(texture);
+
     if (record.desc.is_cube || record.desc.depth != 0 || record.desc.layers != 1 || record.desc.format == R16_UINT) {
         return c3d::UNSUPPORTED~;
     }
 
     TextureRes* texture_mirror = resolve_texture(renderer, texture, full_reader: true)!;
+    TextureBinding content = texture_binding_content(renderer, texture, texture_mirror);
+
     if (!renderer.toon_gradient_sampler.is_valid()) {
         gpu::SamplerDesc sampler = {
             .min_filter = gpu::Filter.NEAREST,
@@ -120,13 +137,28 @@ fn TextureBinding? resolve_gradient_map(Renderer* renderer, TextureId texture) @
         };
         renderer.toon_gradient_sampler = gpu::intern_sampler(&renderer.device, &sampler)!;
     }
+
     return {
         .texture = texture,
         .texture_binding_revision = texture_mirror.binding_revision,
+        .texture_content_revision = content.texture_content_revision,
+        .semantic = content.semantic,
         .texture_index = texture_mirror.view.index,
         .sampler_index = renderer.toon_gradient_sampler,
         .present = true,
     };
+}
+
+fn TextureBinding texture_binding_content(Renderer* renderer, TextureId texture, TextureRes* mirror) @private {
+    TextureBinding content = { .texture_content_revision = mirror.revision, .semantic = mirror.semantic };
+    // CPU descriptors can advance again before captured uploads commit.
+
+    foreach (pending : renderer.pending_texture_uploads) {
+        if (!c3d::same_id(pending.asset, texture) || pending.texture != mirror.texture) continue;
+        content = { .texture_content_revision = pending.revision, .semantic = pending.semantic };
+    }
+
+    return content;
 }
 
 <*
@@ -138,7 +170,9 @@ fn TextureBinding? resolve_gradient_map(Renderer* renderer, TextureId texture) @
 fn void texture_uv_rows(UvTransform transform, Vec4* row0, Vec4* row1) {
     float cosine = math::cos(transform.rotation);
     float sine = math::sin(transform.rotation);
+
     *row0 = { cosine * transform.scale.x, -sine * transform.scale.y, transform.offset.x, 0 };
+
     *row1 = { sine * transform.scale.x, cosine * transform.scale.y, transform.offset.y, 0 };
 }
 
@@ -150,6 +184,7 @@ fn bool material_bindings_match(MaterialBindings first, MaterialBindings second)
     foreach (index, binding : first.custom) {
         if (!texture_binding_matches(binding, second.custom[index])) return false;
     }
+
     return texture_binding_matches(first.base_color, second.base_color)
         && texture_binding_matches(first.metallic_roughness, second.metallic_roughness)
         && texture_binding_matches(first.normal, second.normal)

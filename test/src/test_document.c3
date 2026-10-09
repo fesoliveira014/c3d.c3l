@@ -146,6 +146,24 @@ fn bool same_counts(PoolCounts first, PoolCounts second) @local {
         && first.models == second.models && first.keys == second.keys;
 }
 
+fn void assert_same_coverage_statistics(CoverageStatistics first, CoverageStatistics second) @local {
+    assert(first.revision == second.revision && first.valid == second.valid && first.failure == second.failure);
+    assert(first.source_kind == second.source_kind && first.semantic == second.semantic);
+    assert(first.coverage == second.coverage && first.alpha_threshold == second.alpha_threshold);
+    assert(first.format == second.format && first.width == second.width && first.height == second.height);
+    assert(first.layers == second.layers && first.is_cube == second.is_cube);
+
+    foreach (face, passing : first.passing) {
+        assert(passing == second.passing[face]);
+        assert(first.total[face] == second.total[face]);
+    }
+}
+
+fn void assert_same_tangent_provenance(TangentProvenance first, TangentProvenance second) @local {
+    assert(first.origin == second.origin && first.uv_set == second.uv_set);
+    assert(first.derivation_revision == second.derivation_revision);
+}
+
 fn void assert_publish_faults(AssetStore* assets, ModelDocument* document, fault expected) @local {
     PoolCounts before = pool_counts(assets);
     assert(@catch(assets.publish_document(document)) == expected);
@@ -868,4 +886,312 @@ fn void test_prepared_joint_width_survives_transfer_and_source_release() @test {
     assert(!assets.geometry(published).joints_u16);
     assets.release_geometry_cpu(published);
     assert(!assets.geometry(published).joints_u16);
+}
+
+fn void test_document_coverage_statistics_are_recomputed_and_revision_owned() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+
+    {
+        AssetStore assets = create_store(&tracker);
+        defer asset::destroy_asset_store(&assets);
+
+        DocumentRefs refs;
+        ModelDocument document = build_document(&tracker, &refs);
+        defer asset::destroy_model_document(&document);
+
+        DocumentTexture* texture = &document.textures[0];
+        texture.desc.coverage = CoveragePolicy.THRESHOLD;
+        texture.desc.alpha_threshold = 0.5;
+        texture.pixels[3] = 0;
+        texture.pixels[7] = 128;
+        texture.pixels[11] = 255;
+        texture.pixels[15] = 64;
+        texture.coverage_statistics = {
+            .valid = true, .passing = { 4, 0, 0, 0, 0, 0 }, .total = { 4, 0, 0, 0, 0, 0 },
+        };
+
+        PreparedModelDocument prepared = asset::prepare_model_document(&document)!!;
+        defer asset::destroy_prepared_model_document(&prepared);
+
+        TextureDesc coverage_desc = texture.desc;
+        CoverageStatistics statistics = prepared.textures[0];
+
+        assert(statistics.valid && statistics.revision == 0);
+        assert(statistics.passing[0] == 2 && statistics.total[0] == 4);
+        assert(statistics.source_kind == TextureSourceKind.MIP_ZERO);
+
+        ModelId model = asset::publish_prepared_model_document(&assets, &prepared)!!;
+
+        TextureId published = assets.find_texture("doc#tex/0")!!;
+
+        assert(assets.texture(published).coverage_statistics.revision == 1);
+        assert(assets.texture(published).coverage_statistics.passing[0] == 2);
+
+        ModelDocument replacement = build_document(&tracker, &refs);
+        defer asset::destroy_model_document(&replacement);
+
+        DocumentTexture* next = &replacement.textures[0];
+        next.desc = coverage_desc;
+        next.pixels[3] = 0;
+        next.pixels[7] = 0;
+        next.pixels[11] = 255;
+        next.pixels[15] = 0;
+
+        PreparedModelDocument prepared_next = asset::prepare_model_document(&replacement)!!;
+        defer asset::destroy_prepared_model_document(&prepared_next);
+
+        asset::replace_prepared_model_document(&assets, model, &prepared_next)!!;
+
+        TextureAsset* record = assets.texture(published);
+
+        assert(record.header.revision == 2 && record.coverage_statistics.revision == 2);
+        assert(record.coverage_statistics.passing[0] == 1 && record.coverage_statistics.total[0] == 4);
+
+        statistics = record.coverage_statistics;
+
+        assets.release_texture_cpu(published);
+
+        assert(!record.pixels.len);
+        assert_same_coverage_statistics(record.coverage_statistics, statistics);
+    }
+
+    assert(!tracker.has_leaks());
+}
+
+fn void test_document_invalid_alpha_preserves_input_and_rejects_cached_counts() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+
+    {
+        AssetStore assets = create_store(&tracker);
+        defer asset::destroy_asset_store(&assets);
+
+        DocumentRefs refs;
+        ModelDocument document = build_document(&tracker, &refs);
+        defer asset::destroy_model_document(&document);
+
+        DocumentTexture* texture = &document.textures[1];
+
+        alloc::free(&tracker, texture.pixels.ptr);
+
+        texture.desc = material::texture_2d_desc(1, 1, RGBA32_FLOAT);
+        texture.desc.coverage = CoveragePolicy.THRESHOLD;
+        texture.desc.alpha_threshold = 0.5;
+        texture.pixels = alloc::new_array(&tracker, char, 4 * float::size);
+        float* channels = (float*)texture.pixels.ptr;
+        channels[0] = 0.2;
+        channels[1] = 0.3;
+        channels[2] = 0.4;
+        channels[3] = bitcast(0x7fc00000u, float);
+        texture.coverage_statistics = {
+            .valid = true, .passing = { 1, 0, 0, 0, 0, 0 }, .total = { 1, 0, 0, 0, 0, 0 },
+        };
+        CoverageStatistics before = document.textures[0].coverage_statistics;
+        CoverageStatistics claimed = texture.coverage_statistics;
+
+        assert(@catch(asset::prepare_model_document(&document)) == c3d::INVALID_ARGUMENT);
+        assert_same_coverage_statistics(document.textures[0].coverage_statistics, before);
+        assert_same_coverage_statistics(texture.coverage_statistics, claimed);
+        assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
+        assert(math::is_nan(channels[3]));
+
+        channels[3] = 1.01;
+
+        assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
+
+        channels[3] = -0.01;
+
+        assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
+
+        channels[3] = 1;
+
+        ModelId model = assets.publish_document(&document)!!;
+
+        assert(assets.model(model).header.revision == 1);
+        assert(assets.texture(assets.find_texture("doc#tex/1")!!).coverage_statistics.passing[0] == 1);
+    }
+
+    assert(!tracker.has_leaks());
+}
+
+fn void test_document_generated_tangent_provenance_survives_replace_and_release() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+
+    {
+        AssetStore assets = create_store(&tracker);
+        defer asset::destroy_asset_store(&assets);
+
+        DocumentRefs refs;
+        ModelDocument document = build_document(&tracker, &refs);
+        defer asset::destroy_model_document(&document);
+
+        DocumentGeometry* geometry = &document.geometries[0];
+        geometry.data.normals = alloc::new_array(&tracker, Vec3, 3);
+        geometry.data.uv1 = alloc::new_array(&tracker, Vec2, 3);
+        geometry.data.tangents = alloc::new_array(&tracker, Vec4, 3);
+
+        foreach (index, &tangent : geometry.data.tangents) {
+            *tangent = { 0, 0, 0, -1 };
+            geometry.data.normals[index] = { 0, 0, 1 };
+        }
+
+        geometry.tangent_provenance = { .origin = TangentOrigin.GENERATED, .uv_set = 1, .derivation_revision = 99 };
+
+        PreparedModelDocument prepared = asset::prepare_model_document(&document)!!;
+        defer asset::destroy_prepared_model_document(&prepared);
+
+        assert(prepared.geometries[0].tangent_provenance.origin == TangentOrigin.GENERATED);
+        assert(prepared.geometries[0].tangent_provenance.uv_set == 1);
+        assert(prepared.geometries[0].tangent_provenance.derivation_revision == 0);
+
+        ModelId model = asset::publish_prepared_model_document(&assets, &prepared)!!;
+
+        GeometryId published = assets.find_geometry("doc#mesh")!!;
+        GeometryAsset* record = assets.geometry(published);
+
+        assert(record.tangent_provenance.origin == TangentOrigin.GENERATED);
+        assert(record.tangent_provenance.uv_set == 1 && record.tangent_provenance.derivation_revision == 1);
+
+        ModelDocument replacement = build_document(&tracker, &refs);
+        defer asset::destroy_model_document(&replacement);
+
+        DocumentGeometry* next = &replacement.geometries[0];
+        next.data.normals = alloc::new_array(&tracker, Vec3, 3);
+        next.data.uv0 = alloc::new_array(&tracker, Vec2, 3);
+        next.data.tangents = alloc::new_array(&tracker, Vec4, 3);
+
+        foreach (index, &tangent : next.data.tangents) {
+            *tangent = { 0, 0, 0, 1 };
+            next.data.normals[index] = { 0, 0, 1 };
+        }
+
+        next.tangent_provenance = { .origin = TangentOrigin.GENERATED };
+
+        PreparedModelDocument prepared_next = asset::prepare_model_document(&replacement)!!;
+        defer asset::destroy_prepared_model_document(&prepared_next);
+
+        asset::replace_prepared_model_document(&assets, model, &prepared_next)!!;
+
+        assert(record.header.revision == 2 && record.tangent_provenance.derivation_revision == 2);
+        assert(record.tangent_provenance.origin == TangentOrigin.GENERATED && record.tangent_provenance.uv_set == 0);
+
+        TangentProvenance provenance = record.tangent_provenance;
+
+        assets.release_geometry_cpu(published);
+
+        assert(!record.data.positions.len);
+        assert_same_tangent_provenance(record.tangent_provenance, provenance);
+
+        assets.mark_geometry_dirty(published);
+
+        assert(record.header.revision == 3 && record.tangent_provenance.derivation_revision == 2);
+    }
+
+    assert(!tracker.has_leaks());
+}
+
+fn void test_document_malformed_authored_tangents_fail_before_transfer() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+
+    {
+        AssetStore assets = create_store(&tracker);
+        defer asset::destroy_asset_store(&assets);
+
+        DocumentRefs refs;
+        ModelDocument document = build_document(&tracker, &refs);
+        defer asset::destroy_model_document(&document);
+
+        Geometry* geometry = &document.geometries[0].data;
+        geometry.tangents = alloc::new_array(&tracker, Vec4, 3);
+        geometry.tangents[0] = { 2, 0, 0, 3 };
+        geometry.tangents[1] = { 0, 2, 0, -4 };
+        geometry.tangents[2] = { 0, 0, 0, 1 };
+
+        assert(@catch(asset::prepare_model_document(&document)) == c3d::INVALID_ARGUMENT);
+        assert(geometry.tangents[0].w == 3 && geometry.tangents[1].w == -4);
+        assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
+
+        geometry.tangents[2] = { 1, 0, 0, 0 };
+
+        assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
+
+        geometry.tangents[2] = { bitcast(0x7fc00000u, float), 0, 0, 1 };
+
+        assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
+
+        geometry.tangents = geometry.tangents[:2];
+
+        assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
+
+        geometry.tangents = geometry.tangents.ptr[:3];
+        geometry.tangents[2] = { 1, 0, 0, 1 };
+
+        ModelId model = assets.publish_document(&document)!!;
+
+        GeometryAsset* record = assets.geometry(assets.model(model).data.meshes[0].geometry);
+
+        assert(record.data.tangents[0] == (Vec4){ 2, 0, 0, 1 });
+        assert(record.data.tangents[1] == (Vec4){ 0, 2, 0, -1 });
+        assert(record.tangent_provenance.origin == TangentOrigin.AUTHORED);
+        assert(record.tangent_provenance.derivation_revision == 1);
+    }
+
+    assert(!tracker.has_leaks());
+}
+
+fn void test_document_capacity_failure_preserves_authored_tangent_arrays_and_metadata() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+
+    {
+        AssetStore assets = create_store(&tracker);
+        defer asset::destroy_asset_store(&assets);
+
+        Geometry occupied = triangle(&tracker);
+
+        assets.add_geometry_owned(&occupied, "occupied")!!;
+
+        DocumentRefs refs;
+        ModelDocument document = build_document(&tracker, &refs);
+        defer asset::destroy_model_document(&document);
+
+        DocumentGeometry* entry = &document.geometries[0];
+        entry.data.tangents = alloc::new_array(&tracker, Vec4, 3);
+        entry.data.tangents[0] = { 2, 0, 0, 3 };
+        entry.data.tangents[1] = { 0, 2, 0, -4 };
+        entry.data.tangents[2] = { 1, 0, 0, 2 };
+        Vec4* tangents = entry.data.tangents.ptr;
+        Vec3* positions = entry.data.positions.ptr;
+        TangentProvenance provenance = entry.tangent_provenance;
+        document.textures[0].desc.coverage = CoveragePolicy.THRESHOLD;
+        document.textures[0].desc.alpha_threshold = 0.5;
+        document.textures[0].coverage_statistics = {
+            .revision = 17, .valid = true,
+            .passing = { 4, 0, 0, 0, 0, 0 }, .total = { 4, 0, 0, 0, 0, 0 },
+        };
+        CoverageStatistics statistics = document.textures[0].coverage_statistics;
+        char* pixels = document.textures[0].pixels.ptr;
+
+        assert_publish_faults(&assets, &document, c3d::CAPACITY_EXCEEDED);
+        assert(document.geometries[0].data.positions.ptr == positions);
+        assert(document.geometries[0].data.tangents.ptr == tangents);
+        assert(document.geometries[0].data.tangents.len == 3);
+        assert(document.geometries[0].data.tangents[0] == (Vec4){ 2, 0, 0, 3 });
+        assert(document.geometries[0].data.tangents[1] == (Vec4){ 0, 2, 0, -4 });
+        assert(document.geometries[0].data.tangents[2] == (Vec4){ 1, 0, 0, 2 });
+        assert_same_tangent_provenance(document.geometries[0].tangent_provenance, provenance);
+        assert(document.textures[0].pixels.ptr == pixels);
+        assert_same_coverage_statistics(document.textures[0].coverage_statistics, statistics);
+        assert(c3d::same_id(document.template.meshes[0].geometry, refs.geometry));
+    }
+
+    assert(!tracker.has_leaks());
 }

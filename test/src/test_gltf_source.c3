@@ -26,23 +26,30 @@ const uint GLB_BIN @local = 0x004e4942;
 const usz GLB_HEADER_BYTES @local = 12;
 const usz GLB_CHUNK_HEADER_BYTES @local = 8;
 const usz GLB_ALIGNMENT @local = 4;
-const sz QUAD_DECODE_ALLOCATIONS @local = 25;
+const sz QUAD_DECODE_ALLOCATIONS @local = 27;
 
 fn void test_source_preserves_document_and_plain_allocation_count() @test {
     TrackingAllocator tracker;
     tracker.init(mem);
     defer tracker.free();
+
     String fixture = (String)path::tnew($$FILEPATH)!!.parent()!!.tappend("../fixtures/gltf/quad.gltf")!!;
+
     ModelDocument plain = decode_model(&tracker, fixture)!!;
-    assert(tracker.total_allocation_count() == QUAD_DECODE_ALLOCATIONS);
+
+    assert(tracker.total_allocation_count() == QUAD_DECODE_ALLOCATIONS,
+      "Got %d allocations; expected %d", tracker.total_allocation_count(), QUAD_DECODE_ALLOCATIONS);
+
     SourceRecord source;
     SourceDiagnostic diagnostic;
+
     ModelDocument inspected = decode_model_with_source(
         allocator: &tracker,
         path: fixture,
         source: &source,
         diagnostic: &diagnostic,
     )!!;
+
     assert(diagnostic.material_index == NO_SOURCE_INDEX && diagnostic.texture_index == NO_SOURCE_INDEX);
     assert(plain.key == inspected.key);
     assert(plain.materials.len == inspected.materials.len && plain.textures.len == inspected.textures.len);
@@ -52,23 +59,31 @@ fn void test_source_preserves_document_and_plain_allocation_count() @test {
     assert(mem::equals(&plain.materials[0].data, &inspected.materials[0].data, material::Material::size));
     assert(mem::equals(&plain.samplers[0].desc, &inspected.samplers[0].desc, SamplerDesc::size));
     assert(mem::equals(plain.textures[0].pixels, inspected.textures[0].pixels));
+
     Geometry* first = &plain.geometries[0].data;
     Geometry* second = &inspected.geometries[0].data;
+
     assert(mem::equals(first.positions, second.positions) && mem::equals(first.normals, second.normals));
     assert(mem::equals(first.uv0, second.uv0) && mem::equals(first.indices, second.indices));
+
     asset::destroy_model_document(&plain);
     asset::destroy_model_document(&inspected);
+
     assert(source.materials[0].name == "painted" && source.images[0].encoded.len > 0);
     assert(source.materials[0].extensions[0] == "KHR_texture_transform");
+
     destroy_source_record(&source);
+
     assert(tracker.allocated() == 0);
 }
 
 fn void test_source_image_sampler_pairs_and_nested_extensions_in_both_containers() @test {
     String text = string::tformat(SOURCE_DOCUMENT, SOURCE_PNG);
+
     foreach (bool binary : { false, true }) {
         SourceRecord source;
         char[] bytes = binary ? source_glb(text) : (char[])text;
+
         ModelDocument document = decode_model_memory_with_source(
             allocator: mem,
             bytes: bytes,
@@ -77,8 +92,9 @@ fn void test_source_image_sampler_pairs_and_nested_extensions_in_both_containers
             source: &source,
         )!!;
         defer asset::destroy_model_document(&document);
-        assert(document.textures.len == 2 && source.texture_images.len == 2);
-        assert(source.texture_images[0] == 0 && source.texture_images[1] == 0);
+
+        assert(document.textures.len == 3 && source.texture_images.len == 3);
+        assert(source.texture_images[0] == 0 && source.texture_images[1] == 0 && source.texture_images[2] == 0);
         assert(source.images[0].encoded.len > 0 && !source.images[1].encoded.len);
         assert(source.images[0].declared_mime_type == "image/png");
         assert(source.textures[0].image == 0 && source.textures[1].image == 0);
@@ -89,14 +105,20 @@ fn void test_source_image_sampler_pairs_and_nested_extensions_in_both_containers
         assert(source.samplers[1].mag_filter == 0);
         assert(source.materials[0].textures.len == 3);
         assert(source.materials[0].textures[0] == 0 && source.materials[0].textures[2] == 2);
+
         String[] names = source.materials[0].extensions;
+
         assert(names.len == 4 && names[0] == "EXT_normal" && names[1] == "EXT_occlusion");
         assert(names[2] == "EXT_surface" && names[3] == "KHR_texture_transform");
         assert(source.textures[0].extensions.len == 1 && source.textures[0].extensions[0] == "EXT_image");
+
         material::Material* material = &document.materials[0].data;
+
         assert(material.standard.base_color_map.uv_set == 1);
         assert(!c3d::same_id(material.standard.base_color_map.sampler, material.standard.normal_map.sampler));
+
         destroy_source_record(&source);
+
         assert(document.textures[0].pixels.len > 0 && material.standard.base_color_map.uv_set == 1);
     }
 }

@@ -2,11 +2,12 @@ module c3d::asset::gltf;
 
 import c3d;
 import c3d::asset;
+import c3d::material;
 import gltf;
 import std::io::path;
 
 const String MEMORY_PLACEHOLDER_NAME @private = "model.gltf"; // buffers resolve against the directory of a file path
-const usz COLOR_SPACES_PER_IMAGE @private = 2; // an image may be read as sRGB color and as linear data
+const usz TEXTURE_VARIANTS_PER_IMAGE @private = 3;
 
 const String[] SUPPORTED_EXTENSIONS @private = {
     "KHR_lights_punctual",
@@ -14,26 +15,38 @@ const String[] SUPPORTED_EXTENSIONS @private = {
     "MSFT_lod",
 };
 
+struct TextureVariant @private {
+    usz image;
+    TextureSemantic semantic;
+    PixelFormat format;
+    CoveragePolicy coverage;
+    double alpha_threshold;
+    TextureId texture;
+}
+
 struct Importer @private {
-    Allocator     allocator;
-    gltf::Data*   data;
-    String        key;
-    String        base_dir;
-    LoadOptions   options;
-    SamplerId[]   samplers;
-    TextureId[]   srgb_textures;
-    TextureId[]   linear_textures;
-    MaterialId[]  materials;
-    MaterialId    default_material;
-    GeometryId[]  geometries;
-    SkeletonId[]  skeletons;
-    ClipId[]      clips;
-    usz[]         mesh_offsets;
-    usz[]         node_remap;
-    ModelTemplate template;
-    ModelDocument document;
-    SourceRecord* source;
-    FileSource    file_source;
+    Allocator        allocator;
+    gltf::Data*      data;
+    String           key;
+    String           base_dir;
+    LoadOptions      options;
+    SamplerId[]      samplers;
+    TextureId[]      srgb_textures;
+    TextureId[]      linear_textures;
+    TextureId[]      normal_textures;
+    TextureVariant[] texture_variants;
+    usz              texture_variant_count;
+    MaterialId[]     materials;
+    MaterialId       default_material;
+    GeometryId[]     geometries;
+    SkeletonId[]     skeletons;
+    ClipId[]         clips;
+    usz[]            mesh_offsets;
+    usz[]            node_remap;
+    ModelTemplate    template;
+    ModelDocument    document;
+    SourceRecord*    source;
+    FileSource       file_source;
 }
 
 <*
@@ -308,6 +321,31 @@ fn gltf::Data*? parse_bytes(char[] bytes, gltf::Options reader = {}) @private {
 fn void? prepare_document(gltf::Data* data, String path, gltf::Options reader) @private {
     if (catch excuse = gltf::load_buffers(data, path, reader)) return load_fault(excuse)~;
     if (catch excuse = gltf::validate(data)) return load_fault(excuse)~;
+
+    bool quantized;
+
+    foreach (extension : data.extensions_required) {
+        if (extension.str_view() == "KHR_mesh_quantization") quantized = true;
+    }
+
+    foreach (&mesh : data.meshes) {
+        foreach (&primitive : mesh.primitives) {
+            gltf::Accessor* position = primitive.find_accessor(gltf::AttributeType.POSITION, 0);
+
+            foreach (&attribute : primitive.attributes) {
+                if (attribute.type != gltf::AttributeType.TANGENT) continue;
+                gltf::Accessor* tangent = attribute.data;
+                bool floating = tangent.component_type == gltf::ComponentType.R_32F && !tangent.normalized;
+                bool normalized_integer = quantized && tangent.normalized != 0
+                  && (tangent.component_type == gltf::ComponentType.R_8 || tangent.component_type == gltf::ComponentType.R_16);
+                if (!position || attribute.index != 0 || tangent.type != gltf::Type.VEC4
+                  || tangent.count != position.count || (!floating && !normalized_integer)) {
+                    return c3d::ASSET_FORMAT_ERROR~;
+                }
+            }
+        }
+    }
+
     return;
 }
 
@@ -323,19 +361,23 @@ fn Importer? create_importer(
 
     usz primitive_count;
     usz[] mesh_offsets = alloc::new_array(allocator, usz, data.meshes.len + 1);
+
     foreach (index, &mesh : data.meshes) {
         mesh_offsets[index] = primitive_count;
         primitive_count += mesh.primitives.len;
     }
+
     mesh_offsets[data.meshes.len] = primitive_count;
+
     ModelDocumentBounds bounds = {
         .samplers   = data.samplers.len,
-        .textures   = COLOR_SPACES_PER_IMAGE * data.images.len,
+        .textures   = TEXTURE_VARIANTS_PER_IMAGE * data.images.len + data.materials.len,
         .materials  = data.materials.len + 1,
         .geometries = primitive_count,
         .skeletons  = data.skins.len,
         .clips      = data.animations.len,
     };
+
     Importer importer = {
         .allocator       = allocator,
         .data            = data,
@@ -344,6 +386,8 @@ fn Importer? create_importer(
         .samplers        = alloc::new_array(allocator, SamplerId, data.samplers.len),
         .srgb_textures   = alloc::new_array(allocator, TextureId, data.images.len),
         .linear_textures = alloc::new_array(allocator, TextureId, data.images.len),
+        .normal_textures = alloc::new_array(allocator, TextureId, data.images.len),
+        .texture_variants = alloc::new_array(allocator, TextureVariant, (sz)bounds.textures),
         .materials       = alloc::new_array(allocator, MaterialId, data.materials.len),
         .geometries      = alloc::new_array(allocator, GeometryId, (sz)primitive_count),
         .skeletons       = alloc::new_array(allocator, SkeletonId, data.skins.len),
@@ -352,7 +396,9 @@ fn Importer? create_importer(
         .node_remap      = alloc::new_array(allocator, usz, data.nodes.len),
         .document        = asset::create_model_document(allocator, key, bounds),
     };
+
     importer.node_remap[..] = usz::max;
+
     return importer;
 }
 
@@ -380,6 +426,8 @@ fn void free_tables(Importer* importer) @private {
     alloc::free(allocator, importer.samplers.ptr);
     alloc::free(allocator, importer.srgb_textures.ptr);
     alloc::free(allocator, importer.linear_textures.ptr);
+    alloc::free(allocator, importer.normal_textures.ptr);
+    alloc::free(allocator, importer.texture_variants.ptr);
     alloc::free(allocator, importer.materials.ptr);
     alloc::free(allocator, importer.geometries.ptr);
     alloc::free(allocator, importer.skeletons.ptr);

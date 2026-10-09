@@ -43,8 +43,7 @@ fn int main() {
     print_mirror("box", &renderer, box);
 
     io::printn("add tangents, new layout: replaced");
-    record.data.compute_tangents(assets.allocator);
-    assets.mark_geometry_dirty(box);
+    assets.regenerate_geometry_tangents(box)!!;
     renderer.upload(box)!!;
     print_mirror("box", &renderer, box);
 

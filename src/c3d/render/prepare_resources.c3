@@ -106,8 +106,12 @@ fn PrepareStepPlan? plan_prepare_step(
 *>
 fn void? check_prepare_texture_source(TextureAsset* source) @private {
     switch (source.source_kind) {
-        case MIP_ZERO: check_texture_mip_zero(source.desc, source.pixels)!;
+        case MIP_ZERO:
+            check_texture_mip_zero(source.desc, source.pixels)!;
+            asset::check_coverage_statistics(source.desc, &source.coverage_statistics, source.header.revision)!;
+
         case SUPPLIED_MIPS: supplied_texture_mip_layout(source.desc, source.supplied_mips)!;
+
         case EMPTY: break;
     }
 }
@@ -119,11 +123,14 @@ fn PrepareStepPlan? plan_prepare_texture(
     PrepareBudget* budget,
 ) @local {
     TextureAsset* source = renderer.assets.texture(unit.texture);
-    material::TextureDesc desc = source.desc;
+    material::TextureDesc desc = record.chain_active && record.chain_unit == unit.index
+        ? record.generation_desc : source.desc;
     if (!unit.texture_candidate.texture.is_valid()) {
         check_prepare_texture_source(source)!;
+
         return { .kind = PrepareResourceStep.TEXTURE_IMAGE };
     }
+
     if (source.source_kind != EMPTY) {
         texture_band(
             desc: desc,
@@ -134,7 +141,9 @@ fn PrepareStepPlan? plan_prepare_texture(
             block_rows: 1,
         )!;
     }
+
     if (!unit.texture_candidate.view.is_valid()) return { .kind = PrepareResourceStep.TEXTURE_VIEW };
+
     usz storage_count = desc.storage ? (usz)unit.texture_candidate.mip_count * desc.layers : 0;
     if (unit.creation_next < storage_count) return { .kind = PrepareResourceStep.TEXTURE_STORAGE_VIEW };
     unit.initialized = true;
@@ -145,15 +154,25 @@ fn PrepareStepPlan? plan_prepare_texture(
         if (layout.output_texels && record.generation_mip <= layout.mip_count) {
             record.phase = PreparePhase.GENERATION;
             uint height = material::texture_mip_extent(desc.height, record.generation_mip);
+
             uint rows = math::min(PREPARE_GENERATION_ROWS, height - record.generation_row);
+
             uint width = material::texture_mip_extent(desc.width, record.generation_mip);
-            ulong before = generated_mip_charge(layout.base_texels, record.generation_outputs, layout.output_texels);
+
+            ulong before = texture_scan_charge(
+                base_texels: layout.base_texels,
+                position: record.generation_outputs,
+                output_total: layout.output_texels,
+                passes: layout.passes,
+            );
             ulong charge;
+
             while (true) {
-                ulong after = generated_mip_charge(
+                ulong after = texture_scan_charge(
                     base_texels: layout.base_texels,
-                    output_done: record.generation_outputs + (ulong)width * rows,
+                    position: record.generation_outputs + (ulong)width * rows,
                     output_total: layout.output_texels,
+                    passes: layout.passes,
                 );
                 charge = after - before;
                 ulong remaining = budget.limits.generated_texels > budget.report.generated_texels
@@ -161,6 +180,7 @@ fn PrepareStepPlan? plan_prepare_texture(
                 if (!budget.limits.generated_texels || charge <= remaining || rows == 1) break;
                 rows = math::max(1u, rows / 2);
             }
+
             TextureBand band = texture_band(
                 desc: desc,
                 mip: record.generation_mip,
@@ -169,9 +189,11 @@ fn PrepareStepPlan? plan_prepare_texture(
                 first_block_row: record.generation_row,
                 block_rows: rows,
             )!;
+
             return { .kind = PrepareResourceStep.GENERATE, .band = band, .cost = { .generated_texels = charge } };
         }
     }
+
     record.phase = PreparePhase.UPLOAD;
     TextureBand first = texture_band(
         desc: desc,
@@ -183,9 +205,12 @@ fn PrepareStepPlan? plan_prepare_texture(
     )!;
     uint block_height = material::texture_is_compressed(desc.format) ? TEXEL_BLOCK_EXTENT : 1;
     uint height = material::texture_mip_extent(desc.height, unit.staged.mip);
+
     uint rows_left = (height + block_height - 1) / block_height - unit.staged.row;
     usz allowance = prepare_byte_allowance(budget);
+
     uint rows = allowance < first.row_bytes ? 1 : (uint)math::min((usz)rows_left, allowance / first.row_bytes);
+
     TextureBand band = texture_band(
         desc: desc,
         mip: unit.staged.mip,
@@ -194,6 +219,7 @@ fn PrepareStepPlan? plan_prepare_texture(
         first_block_row: unit.staged.row,
         block_rows: rows,
     )!;
+
     return { .kind = PrepareResourceStep.TEXTURE_COPY, .band = band, .bytes = band.byte_count,
         .cost = { .staged_bytes = band.byte_count } };
 }
@@ -208,7 +234,9 @@ fn bool? run_prepare_step(
     switch (plan.kind) {
         case TEXTURE_IMAGE:
             TextureAsset* source = renderer.assets.texture(unit.texture);
+
             uint chain_mips = texture_chain_mips(source);
+
             bool eligible = texture_eligible(source.desc, source.source_kind, chain_mips);
             gpu::TextureDesc desc = texture_gpu_description(
                 desc: source.desc,
@@ -224,9 +252,20 @@ fn bool? run_prepare_step(
                 .width = desc.width, .height = desc.height, .depth = desc.depth,
                 .mip_count = desc.mip_levels, .layers = desc.array_layers,
                 .is_cube = source.desc.is_cube, .copy_source = eligible, .format = desc.format,
+                .semantic = source.desc.semantic,
             };
+            if (source.desc.coverage == CoveragePolicy.THRESHOLD) {
+                unit.texture_candidate.coverage_resource = create_texture_coverage_resource(
+                    allocator: renderer.allocator,
+                    desc: source.desc,
+                    statistics: &source.coverage_statistics,
+                    revision: unit.revision,
+                );
+            }
+
             unit.staged.mip = unit.texture_base;
             uint chain_extent = math::max(source.desc.width, source.desc.height);
+
             uint tail_base = eligible ? texture_tail_base(chain_extent, chain_mips) : 0;
             unit.residency_candidate = {
                 .chain_mips = chain_mips, .chain_width = source.desc.width, .chain_height = source.desc.height,
@@ -238,7 +277,9 @@ fn bool? run_prepare_step(
                 .streamed = eligible && !(unit.full_reader || renderer.residencies[unit.texture.index].full_reader),
                 .raisable = texture_source_present(source), .regenerates = source.source_kind == MIP_ZERO,
             };
+
             return false;
+
         case TEXTURE_VIEW:
             gpu::TextureViewDesc desc = { .cube = unit.texture_candidate.is_cube };
             report.views++;
@@ -255,7 +296,9 @@ fn bool? run_prepare_step(
                     elements: (sz)unit.texture_candidate.mip_count * unit.texture_candidate.layers,
                 );
             }
+
             return false;
+
         case TEXTURE_STORAGE_VIEW:
             uint mip_count = unit.texture_candidate.mip_count;
             uint mip = unit.creation_next % mip_count;
@@ -269,7 +312,9 @@ fn bool? run_prepare_step(
                     desc: &desc,
                 )!;
             unit.creation_next++;
+
             return false;
+
         case GENERATION_STORAGE:
             TextureAsset* source = renderer.assets.texture(unit.texture);
             record.chain = create_generated_texture_mips(renderer.allocator, source.desc)!;
@@ -279,35 +324,115 @@ fn bool? run_prepare_step(
             record.generation_layer = 0;
             record.generation_row = 0;
             record.generation_outputs = 0;
+            record.generation_desc = source.desc;
+            record.generation_statistics = source.coverage_statistics;
+            if (source.desc.coverage == CoveragePolicy.THRESHOLD) {
+                record.coverage = begin_texture_coverage(
+                    desc: source.desc,
+                    mip: 1,
+                    face: 0,
+                    statistics: &record.generation_statistics,
+                );
+            }
+
             unit.generated_done = 0;
+
             return false;
+
         case GENERATE:
             TextureAsset* source = renderer.assets.texture(unit.texture);
+            material::TextureDesc desc = record.generation_desc;
+            bool coverage = desc.coverage == CoveragePolicy.THRESHOLD;
             std::time::Clock started = clock::now();
             defer report.generation_ns = prepare_add(report.generation_ns, (ulong)started.to_now());
-            write_texture_mip_band(
-                desc: source.desc,
-                mip: plan.band.mip,
-                layer: plan.band.layer,
-                first_row: plan.band.y,
-                row_count: plan.band.height,
-                mip_zero: source.pixels,
-                chain: &record.chain,
-            )!;
-            record.generation_outputs += (ulong)plan.band.width * plan.band.height;
+            if (!coverage || record.coverage.phase == 0) {
+                write_texture_filter_band(
+                    desc: desc,
+                    mip: plan.band.mip,
+                    layer: plan.band.layer,
+                    first_row: plan.band.y,
+                    row_count: plan.band.height,
+                    mip_zero: source.pixels,
+                    chain: &record.chain,
+                    coverage: coverage ? &record.coverage : null,
+                )!;
+            } else {
+                usz layer_bytes = material::texture_mip_bytes(desc, plan.band.mip)!;
+                char[] destination = record.chain.pixels[
+                    record.chain.offsets[plan.band.mip - 1] + (usz)plan.band.layer * layer_bytes:layer_bytes];
+                write_texture_coverage_band(
+                    desc: desc,
+                    destination: destination,
+                    state: &record.coverage,
+                    row_count: plan.band.height,
+                );
+            }
+
+            ulong actual_outputs = (ulong)plan.band.width * plan.band.height;
+            record.generation_outputs += actual_outputs;
             record.generation_row += plan.band.height;
             unit.generated_done = prepare_add(unit.generated_done, plan.cost.generated_texels);
             record.texels_done = prepare_add(record.texels_done, plan.cost.generated_texels);
             report.generated_texels = prepare_add(report.generated_texels, plan.cost.generated_texels);
-            if (record.generation_row == material::texture_mip_extent(source.desc.height, record.generation_mip)) {
+            if (coverage) {
+                record.coverage.reserved += actual_outputs;
+                record.coverage.row = record.generation_row;
+            }
+
+            if (record.generation_row == material::texture_mip_extent(desc.height, record.generation_mip)) {
+                bool completed = true;
+                if (coverage) {
+                    ulong reserved_before = record.coverage.reserved;
+                    finish_texture_coverage_pass(&record.coverage);
+
+                    ulong skipped = record.coverage.reserved - reserved_before;
+                    if (skipped) {
+                        GeneratedTextureLayout layout = generated_texture_mip_layout(desc)!;
+                        ulong before = texture_scan_charge(
+                            base_texels: layout.base_texels,
+                            position: record.generation_outputs,
+                            output_total: layout.output_texels,
+                            passes: layout.passes,
+                        );
+                        record.generation_outputs += skipped;
+                        ulong after = texture_scan_charge(
+                            base_texels: layout.base_texels,
+                            position: record.generation_outputs,
+                            output_total: layout.output_texels,
+                            passes: layout.passes,
+                        );
+
+                        ulong credit = after - before;
+                        unit.generated_done = prepare_add(unit.generated_done, credit);
+                        record.texels_done = prepare_add(record.texels_done, credit);
+                    }
+
+                    completed = record.coverage.phase == texture_generation_passes(desc);
+                }
+
                 record.generation_row = 0;
-                if (++record.generation_layer == source.desc.layers) {
-                    record.generation_layer = 0;
-                    record.generation_mip++;
+                if (completed) {
+                    if (coverage) store_texture_coverage_result(unit.texture_candidate.coverage_resource, &record.coverage);
+                    if (++record.generation_layer == desc.layers) {
+                        record.generation_layer = 0;
+                        record.generation_mip++;
+                    }
+
+                    if (coverage && record.generation_mip <= record.chain.mip_count) {
+                        record.coverage = begin_texture_coverage(
+                            desc: desc,
+                            mip: record.generation_mip,
+                            face: record.generation_layer,
+                            statistics: &record.generation_statistics,
+                        );
+                    }
                 }
             }
+
             return false;
+
         case TEXTURE_COPY:
+
             return run_prepare_texture_copy(
                 renderer: renderer,
                 record: record,
@@ -315,13 +440,17 @@ fn bool? run_prepare_step(
                 band: &plan.band,
                 report: report,
             );
+
         case EMPTY_TEXTURE:
             transition_prepare_texture(renderer, unit, renderer.sampled_state)!;
             install_prepare_texture(renderer, record, unit);
             renderer.stats.uploads++;
+
             return true;
+
         case GEOMETRY_STORAGE:
             GeometryAsset* source = renderer.assets.geometry(unit.geometry);
+
             GeometryLayout layout = geometry_layout_from_width(&source.data, source.joints_u16);
             gpu::AllocationDesc desc = { .size = layout.total_bytes, .alignment = STREAM_ALIGNMENT,
                 .memory_class = gpu::MemoryClass.GPU_PRIVATE, .access = { .graphics }, .debug_name = "prepared_geometry" };
@@ -341,7 +470,9 @@ fn bool? run_prepare_step(
                 size: (usz)layout.index_count * layout.index_stride,
             )!;
             unit.initialized = true;
+
             return false;
+
         case GEOMETRY_COPY:
             GeometryAsset* source = renderer.assets.geometry(unit.geometry);
             gpu::MappedGpuSpan staging = take_prepare_staging(
@@ -372,9 +503,12 @@ fn bool? run_prepare_step(
             if (unit.staged.bytes == unit.bytes) {
                 install_prepare_geometry(renderer, record, unit);
                 renderer.stats.uploads++;
+
                 return true;
             }
+
             return false;
+
         case MATERIAL_STORAGE:
             Material* source = &renderer.assets.material(unit.material).data;
             gpu::AllocationDesc desc = { .size = source.custom.param_block.len, .alignment = STREAM_ALIGNMENT,
@@ -386,7 +520,9 @@ fn bool? run_prepare_step(
                 device: &renderer.device,
                 span: gpu::get_allocation_span(&renderer.device, unit.material_candidate.payload)!,
             )!;
+
             return false;
+
         case MATERIAL_PAYLOAD:
             Material* source = &renderer.assets.material(unit.material).data;
             gpu::MappedGpuSpan staging = take_prepare_staging(
@@ -408,7 +544,9 @@ fn bool? run_prepare_step(
             )!;
             unit.staged.bytes += plan.bytes;
             record.bytes_done += plan.bytes;
+
             return false;
+
         case MATERIAL_BLOCK:
             gpu::MappedGpuSpan staging = take_prepare_staging(
                 renderer: renderer,
@@ -439,18 +577,25 @@ fn bool? run_prepare_step(
             record.bytes_done += MATERIAL_STRIDE;
             install_prepare_material(renderer, record, unit);
             renderer.stats.uploads++;
+
             return true;
+
         case SAMPLER:
             resolve_sampler(renderer, unit.sampler)!;
+
             return true;
+
         case TOON_SAMPLER:
             gpu::SamplerDesc desc = { .min_filter = gpu::Filter.NEAREST, .mag_filter = gpu::Filter.NEAREST,
                 .mip_filter = gpu::Filter.NEAREST, .address_u = gpu::AddressMode.CLAMP_TO_EDGE,
                 .address_v = gpu::AddressMode.CLAMP_TO_EDGE, .address_w = gpu::AddressMode.CLAMP_TO_EDGE,
                 .debug_name = "toon_gradient" };
             renderer.toon_gradient_sampler = gpu::intern_sampler(&renderer.device, &desc)!;
+
             return true;
+
         case SHADER: return run_prepare_shader_step(renderer, unit, report);
+
         case PIPELINE:
             usz staged_before = report.staged_bytes;
             bool? done = run_prepare_pipeline_step(renderer, unit, report);
@@ -460,7 +605,9 @@ fn bool? run_prepare_step(
                 renderer.work_recorded = true;
                 refresh_prepare_progress(record);
             }
+
             return done;
+
         case FINISH: return true;
     }
 }
@@ -516,6 +663,7 @@ fn bool? run_prepare_texture_copy(
 ) @local {
     TextureAsset* source = renderer.assets.texture(unit.texture);
     char[] bytes;
+
     switch (source.source_kind) {
         case MIP_ZERO:
             if (band.mip && source.desc.generate_mips) {
@@ -526,18 +674,27 @@ fn bool? run_prepare_texture_copy(
                 if (source.pixels.len != band.layer_bytes * source.desc.layers) return c3d::INVALID_ARGUMENT~;
                 bytes = source.pixels[band.source_offset:band.byte_count];
             }
+
         case SUPPLIED_MIPS:
             if (!source.supplied_mips.len) return c3d::ASSET_DATA_UNAVAILABLE~;
+
             usz index = (usz)band.mip * source.desc.layers + band.layer;
             if (index >= source.supplied_mips.len) return c3d::INVALID_ARGUMENT~;
+
             TextureMipData* mip = &source.supplied_mips[index];
             usz offset = band.source_offset - (usz)band.layer * band.layer_bytes;
             if (mip.mip != band.mip || mip.layer != band.layer || mip.bytes.len != band.layer_bytes) {
                 return c3d::INVALID_ARGUMENT~;
             }
+
             bytes = mip.bytes[offset:band.byte_count];
+
         case EMPTY: return c3d::INVALID_ARGUMENT~;
     }
+
+    bool filtered_source = source.source_kind == TextureSourceKind.MIP_ZERO && source.desc.generate_mips
+      && (source.desc.width > 1 || source.desc.height > 1);
+    if (!filtered_source) check_texture_normal_pixels(source.desc, bytes)!;
     gpu::MappedGpuSpan staging = take_prepare_staging(
         renderer: renderer,
         bytes: band.byte_count,
@@ -575,14 +732,17 @@ fn bool? run_prepare_texture_copy(
             }
         }
     }
+
     if (unit.staged.mip == texture_chain_mips(source)) {
         transition_prepare_texture(renderer, unit, renderer.sampled_state)!;
         unit.residency_candidate.raisable = texture_source_present(source);
         install_prepare_texture(renderer, record, unit);
         if (record.chain_active && record.chain_unit == unit.index) clear_prepare_chain(record);
         renderer.stats.uploads++;
+
         return true;
     }
+
     return false;
 }
 
@@ -593,4 +753,7 @@ fn void clear_prepare_chain(PrepareRecord* record) @private {
     record.generation_mip = 0;
     record.generation_layer = 0;
     record.generation_row = 0;
+    record.coverage = {};
+    record.generation_desc = {};
+    record.generation_statistics = {};
 }

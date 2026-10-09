@@ -10,6 +10,10 @@ import std::collections::list;
 struct PendingTextureUpload {
     TextureId asset;
     uint revision;
+    material::TextureSemantic semantic;
+    TextureCoverageResource* coverage_resource;
+    TextureCoverageResource* previous_coverage_resource;
+    bool replaces_coverage;
     gpu::TextureHandle texture;
     gpu::TextureState before;
     uint mip_count;
@@ -39,6 +43,7 @@ fn void remember_texture_state(List{TextureStateUndo}* undo, TextureRes* mirror)
     foreach (&entry : *undo) {
         if (c3d::same_id(entry.asset, mirror.asset) && entry.texture == mirror.texture) return;
     }
+
     undo.push({ .asset = mirror.asset, .texture = mirror.texture, .state = mirror.state });
 }
 
@@ -50,9 +55,11 @@ fn void remember_texture_state(List{TextureStateUndo}* undo, TextureRes* mirror)
 fn void restore_texture_states(List{TextureStateUndo}* undo, TextureRes[] textures) {
     foreach (&entry : *undo) {
         TextureRes* mirror = &textures[entry.asset.index];
+
         if (!c3d::same_id(mirror.asset, entry.asset) || mirror.texture != entry.texture) continue;
         mirror.state = entry.state;
     }
+
     undo.clear();
 }
 
@@ -70,6 +77,7 @@ fn void? record_texture_uploads(Renderer* renderer, gpu::CommandList* commands) 
             },
         )!;
         gpu::cmd_texture_barrier(commands, &to_upload)!;
+
         if (pending.survivor_count) {
             gpu::TextureBarrier to_source = gpu::texture_transition(
                 texture: pending.survivor_source,
@@ -81,10 +89,12 @@ fn void? record_texture_uploads(Renderer* renderer, gpu::CommandList* commands) 
                 },
             )!;
             gpu::cmd_texture_barrier(commands, &to_source)!;
+
             for (uint copy = 0; copy < pending.survivor_count; copy++) {
                 gpu::cmd_copy_texture(commands, &pending.survivor_copies[copy])!;
             }
         }
+
         for (uint mip = 0; mip < pending.mip_count; mip++) {
             gpu::cmd_copy_buffer_to_texture(commands, &pending.copies[mip])!;
         }
@@ -97,6 +107,7 @@ fn void? record_texture_uploads(Renderer* renderer, gpu::CommandList* commands) 
         gpu::cmd_texture_barrier(commands, &to_sampled)!;
         pending.recorded = true;
         TextureRes* mirror = &renderer.textures[pending.asset.index];
+
         if (mirror.texture == pending.texture) mirror.state = to_sampled.after;
     }
 }
@@ -105,10 +116,27 @@ fn void commit_uploads(Renderer* renderer, Frame* slot) @private {
     renderer.billboard_geometry_pending = false;
     commit_environment_preparations(renderer, slot);
     commit_probe_fills(renderer);
+
     foreach (&pending : renderer.pending_texture_uploads) {
         TextureRes* mirror = &renderer.textures[pending.asset.index];
-        if (mirror.texture == pending.texture) mirror.revision = pending.revision;
+
+        if (mirror.texture == pending.texture) {
+            mirror.revision = pending.revision;
+            mirror.semantic = pending.semantic;
+
+            if (pending.replaces_coverage) {
+                if (mirror.coverage_resource) slot.retire.push({ .kind = RetiredKind.TEXTURE_COVERAGE,
+                    .coverage_resource = mirror.coverage_resource });
+                mirror.coverage_resource = pending.coverage_resource;
+
+                if (mirror.coverage_resource) mirror.coverage_resource.committed = true;
+                pending.coverage_resource = null;
+            }
+        }
+
+        destroy_texture_coverage_resource(pending.coverage_resource);
     }
+
     renderer.pending_texture_uploads.clear();
     renderer.texture_state_undo.clear();
     commit_font_uploads(renderer);
@@ -130,15 +158,22 @@ fn void discard_uploads(Renderer* renderer) @private {
         renderer.billboard_geometry.revision = 0;
         renderer.billboard_geometry_pending = false;
     }
+
     discard_probe_fills(renderer);
     discard_environment_preparations(renderer);
     restore_texture_states(&renderer.texture_state_undo, renderer.textures);
+
     foreach (&pending : renderer.pending_texture_uploads) {
         TextureRes* mirror = &renderer.textures[pending.asset.index];
+
         if (mirror.texture == pending.texture) mirror.revision = 0;
+        destroy_texture_coverage_resource(pending.coverage_resource);
+        pending.coverage_resource = null;
     }
+
     discard_font_uploads(renderer);
     discard_posed_trace(&renderer.posed_trace);
+
     if (!renderer.uploads_recorded && !renderer.pending_copies.len()
         && !renderer.pending_texture_uploads.len() && !renderer.pending_geometry_uploads.len()
         && !renderer.pending_instance_uploads.len()) {
@@ -154,15 +189,19 @@ fn void discard_uploads(Renderer* renderer) @private {
     foreach (geometry : renderer.pending_geometry_uploads) {
         renderer.geometries[geometry.index].revision = 0;
     }
+
     renderer.pending_geometry_uploads.clear();
+
     foreach (index : renderer.pending_instance_uploads) renderer.instances.slots[index].revision = 0;
     renderer.pending_instance_uploads.clear();
+
     foreach (&material : renderer.materials) material.revision = 0;
     discard_scene_trace(renderer);
     rollback_prepare_jobs(renderer);
 }
 
 fn void free_pending_uploads(Renderer* renderer) @private {
+    foreach (&pending : renderer.pending_texture_uploads) destroy_texture_coverage_resource(pending.coverage_resource);
     drain_retired(&renderer.device, &renderer.pending_upload_retire);
     renderer.pending_upload_retire.free();
     renderer.pending_texture_uploads.free();

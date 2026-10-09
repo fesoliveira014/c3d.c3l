@@ -42,6 +42,35 @@ enum PixelFormat {
     BC7_SRGB,
 }
 
+<* Interpretation used when filtering texture vectors. *>
+enum TextureSemantic {
+    COLOR,
+    NORMAL_RGB,
+    NORMAL_RG,
+}
+
+<* Threshold coverage behavior for generated mip levels. *>
+enum CoveragePolicy {
+    NONE,
+    THRESHOLD,
+    ALL_PASS,
+    ALL_FAIL,
+}
+
+<* Committed coverage counts and exact error; absolute_error is rounded. *>
+struct TextureCoverageResult {
+    uint revision;
+    ulong original_passing;
+    ulong original_total;
+    ulong passing;
+    ulong total;
+    uint128 error_numerator;
+    uint128 error_denominator;
+    double absolute_error;
+    bool small_level;
+    bool plateau;
+}
+
 <*
  Dimensions and format of a texture; owns no pixels.
 *>
@@ -51,6 +80,9 @@ struct TextureDesc {
     uint        depth;
     uint        layers;
     PixelFormat format;
+    TextureSemantic semantic;
+    CoveragePolicy coverage;
+    double      alpha_threshold;
     bool        generate_mips;
     uint        mip_levels;
     bool        is_cube;

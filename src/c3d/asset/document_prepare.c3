@@ -11,6 +11,8 @@ import std::math;
 
 struct PreparedGeometry @private {
     GeometryShape shape;
+    TangentProvenance tangent_provenance;
+    Vec4[] normalized_tangents;
     bool joints_u16;
     SkinBounds skin_bounds;
     Aabb[] morph_bounds;
@@ -18,6 +20,7 @@ struct PreparedGeometry @private {
 
 struct PreparedModelDocument @private {
     ModelDocument document;
+    CoverageStatistics[] textures;
     PreparedGeometry[] geometries;
     HashMap{String, bool} named;
     ulong incoming_items;
@@ -39,40 +42,94 @@ fn PreparedModelDocument? prepare_model_document(ModelDocument* document) @priva
         .clip_targets_valid = true,
     };
     defer catch destroy_prepared_model_document(&prepared);
+
     @pool() {
         String[] keys = document_keys(document);
         prepared.named.init(document.allocator, (keys.len ? (sz)keys.len * 2 : 1));
+
         foreach (key : keys) {
             if (!key.len) {
                 prepared.all_keys_named = false;
                 continue;
             }
+
             if (prepared.named.has_key(key)) return c3d::INVALID_ARGUMENT~;
+
             prepared.named.set(key, true);
         }
+
         foreach (&entry : document.materials) {
             if (entry.data.kind == MaterialKind.CUSTOM) return c3d::INVALID_ARGUMENT~;
         }
-        foreach (&entry : document.textures) check_format_use(entry.desc)!;
+
+        prepared.textures = alloc::new_array(document.allocator, CoverageStatistics, document.textures.len);
+
+        foreach (index, &entry : document.textures) {
+            check_format_use(entry.desc)!;
+
+            switch (entry.source_kind) {
+                case MIP_ZERO:
+                    if (entry.supplied_mips.len) return c3d::INVALID_ARGUMENT~;
+
+                    prepared.textures[index] = create_coverage_statistics(entry.desc, entry.pixels)!;
+                case SUPPLIED_MIPS:
+                    if (entry.pixels.len) return c3d::INVALID_ARGUMENT~;
+                    (void)check_texture_mips(entry.desc, entry.supplied_mips)!;
+
+                    prepared.textures[index] = texture_statistics_identity(entry.desc, SUPPLIED_MIPS, 0);
+                case EMPTY:
+                    return c3d::UNSUPPORTED~;
+            }
+        }
+
         foreach (&entry : document.clips) check_clip_events(&entry.data)!;
+
         check_independent_references(document)!;
+
         foreach (clip : document.template.clips) {
             if (clip.generation) continue;
+
             foreach (target : document.clips[document_index(clip)].data.targets) {
                 if (target >= document.template.nodes.len) prepared.clip_targets_valid = false;
             }
         }
+
         check_independent_lods(document)!;
+
         prepared.geometries = alloc::new_array(document.allocator, PreparedGeometry, document.geometries.len);
+
         foreach (index, &entry : document.geometries) {
             check_influences(&entry.data)!;
+
+            TangentProvenance provenance = entry.tangent_provenance;
+            if (provenance.origin != TangentOrigin.GENERATED) {
+                provenance = authored_tangent_provenance(&entry.data);
+            }
+
+            geometry::check_tangent_stream(&entry.data, provenance)!;
+
+            provenance.derivation_revision = 0;
             prepared.geometries[index] = {
                 .shape = build_geometry_shape(document.allocator, &entry.data),
+                .tangent_provenance = provenance,
                 .joints_u16 = entry.data.joints_exceed_byte(),
                 .skin_bounds = geometry::build_skin_bounds(document.allocator, &entry.data),
                 .morph_bounds = geometry::build_morph_bounds(document.allocator, &entry.data),
             };
+            if (provenance.origin == TangentOrigin.AUTHORED) {
+                foreach (tangent : entry.data.tangents) {
+                    if (tangent.w == -1 || tangent.w == 1) continue;
+
+                    Vec4[] normalized = copy_slice(document.allocator, entry.data.tangents);
+
+                    foreach (&value : normalized) value.w = value.w < 0 ? -1 : 1;
+
+                    prepared.geometries[index].normalized_tangents = normalized;
+                    break;
+                }
+            }
         }
+
         prepared.incoming_items = publication_items(
             document: document,
             prepared: &prepared,
@@ -80,21 +137,29 @@ fn PreparedModelDocument? prepare_model_document(ModelDocument* document) @priva
             old: {},
         );
     };
+
     prepared.document = *document;
+
     *document = { .allocator = document.allocator };
+
     return prepared;
 }
 
 fn void destroy_prepared_model_document(PreparedModelDocument* prepared) @private {
     Allocator allocator = prepared.document.allocator;
+
     foreach (&derived : prepared.geometries) {
+        alloc::free(allocator, derived.normalized_tangents.ptr);
         alloc::free(allocator, derived.shape.target_streams.ptr);
         geometry::free_skin_bounds(allocator, &derived.skin_bounds);
         geometry::free_morph_bounds(allocator, &derived.morph_bounds);
     }
+
     alloc::free(allocator, prepared.geometries.ptr);
+    alloc::free(allocator, prepared.textures.ptr);
     prepared.named.free();
     destroy_model_document(&prepared.document);
+
     *prepared = { .document = { .allocator = allocator } };
 }
 
@@ -176,9 +241,12 @@ fn void? check_prepared_references(AssetStore* store, PreparedModelDocument* pre
 fn ModelId? publish_prepared_model_document(AssetStore* store, PreparedModelDocument* prepared) @private {
     ModelDocument* document = &prepared.document;
     ModelId model;
+
     @pool() {
         if (document.key.len && store.keys.has_key(document.key)) return c3d::INVALID_ARGUMENT~;
+
         prepared.named.@each(; String key, bool value) { check_key(store, key)!; };
+
         bool fits = store.samplers.free_count >= document.samplers.len
           && store.textures.free_count >= document.textures.len
           && store.materials.free_count >= document.materials.len
@@ -186,7 +254,9 @@ fn ModelId? publish_prepared_model_document(AssetStore* store, PreparedModelDocu
           && store.skeletons.free_count >= document.skeletons.len
           && store.clips.free_count >= document.clips.len && store.models.free_count >= 1;
         if (!fits) return c3d::CAPACITY_EXCEEDED~;
+
         check_prepared_references(store, prepared)!;
+
         PublishedIds ids = {
             .samplers = alloc::new_array(tmem, SamplerId, document.samplers.len),
             .textures = alloc::new_array(tmem, TextureId, document.textures.len),
@@ -195,18 +265,24 @@ fn ModelId? publish_prepared_model_document(AssetStore* store, PreparedModelDocu
             .skeletons = alloc::new_array(tmem, SkeletonId, document.skeletons.len),
             .clips = alloc::new_array(tmem, ClipId, document.clips.len),
         };
+
         foreach (index, &entry : document.samplers) ids.samplers[index] = store.add_sampler(entry.desc, entry.key)!!;
+
         foreach (index, &entry : document.textures) {
-            ids.textures[index] = add_prepared_texture(store, entry);
+            ids.textures[index] = add_prepared_texture(store, entry, prepared.textures[index]);
             entry.pixels = {};
+            entry.supplied_mips = {};
         }
+
         foreach (index, &entry : document.materials) {
             material::@each_texture_reference(&entry.data; TextureId* texture, SamplerId* sampler) {
                 *texture = @remapped(*texture, ids.textures);
                 if (sampler) *sampler = @remapped(*sampler, ids.samplers);
             };
+
             ids.materials[index] = store.add_material(entry.data, entry.key)!!;
         }
+
         foreach (index, &entry : document.geometries) {
             ids.geometries[index] = add_prepared_geometry(
                 store: store,
@@ -216,19 +292,24 @@ fn ModelId? publish_prepared_model_document(AssetStore* store, PreparedModelDocu
             );
             entry.data = {};
         }
+
         foreach (index, &entry : document.skeletons) {
             ids.skeletons[index] = store.add_skeleton_owned(&entry.data, entry.key)!!;
             entry.data = {};
         }
+
         foreach (index, &entry : document.clips) {
             ids.clips[index] = add_prepared_clip(store, &entry.data, entry.key);
             entry.data = {};
         }
+
         remap_template(&document.template, &ids);
         model = store.add_model_owned(&document.template, document.key)!!;
         document.template = {};
     };
+
     destroy_prepared_model_document(prepared);
+
     return model;
 }
 
@@ -397,25 +478,40 @@ fn PublicationEstimate estimate_model_publication(
     return estimate;
 }
 
-fn TextureId add_prepared_texture(AssetStore* store, DocumentTexture* entry) @private {
+fn TextureId add_prepared_texture(AssetStore* store, DocumentTexture* entry, CoverageStatistics statistics) @private {
+    statistics.revision = 1;
+
     TextureId id = store.textures.add({})!!;
     *store.textures.get(id) = {
         .header = { .key = copy_string(store.allocator, entry.key), .revision = 1 },
         .desc = entry.desc,
-        .source_kind = MIP_ZERO,
+        .source_kind = entry.source_kind,
         .pixels = entry.pixels,
+        .supplied_mips = entry.supplied_mips,
+        .coverage_statistics = statistics,
     };
+
     register_key(store, entry.key, typed_ref(AssetKind.TEXTURE, id));
+
     return id;
 }
 
-fn void replace_prepared_texture(AssetStore* store, TextureId texture, DocumentTexture* entry) @private {
+fn void replace_prepared_texture(
+    AssetStore* store,
+    TextureId texture,
+    DocumentTexture* entry,
+    CoverageStatistics statistics,
+) @private {
+    TextureAsset* record = store.texture(texture);
+    statistics.revision = record.header.revision + 1;
+
     apply_texture(
         allocator: store.allocator,
-        record: store.texture(texture),
+        record: record,
         desc: entry.desc,
-        source_kind: MIP_ZERO,
+        source_kind: entry.source_kind,
         pixels: entry.pixels,
-        supplied_mips: {},
+        supplied_mips: entry.supplied_mips,
+        statistics: statistics,
     );
 }

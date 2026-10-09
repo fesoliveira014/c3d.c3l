@@ -108,16 +108,16 @@ vec3 transform_normal(TraceInstanceGpu instance, vec3 normal) {
 }
 
 vec4 hit_tangent(TraceInstanceGpu instance, GeometryRoot geometry, uvec3 corners, vec3 weights) {
-    vec4 tangent = pull_vec4(geometry.tangents, corners.x) * weights.x
-        + pull_vec4(geometry.tangents, corners.y) * weights.y
-        + pull_vec4(geometry.tangents, corners.z) * weights.z;
     mat3 linear = transpose(mat3(
         instance.local_to_world_0.xyz,
         instance.local_to_world_1.xyz,
         instance.local_to_world_2.xyz
     ));
-    float orientation = determinant(linear) < 0.0 ? -1.0 : 1.0;
-    return vec4(linear * tangent.xyz, tangent.w * orientation);
+    mat4 model = mat4(linear);
+
+    return world_tangent(model, pull_vec4(geometry.tangents, corners.x)) * weights.x
+        + world_tangent(model, pull_vec4(geometry.tangents, corners.y)) * weights.y
+        + world_tangent(model, pull_vec4(geometry.tangents, corners.z)) * weights.z;
 }
 
 vec2 corner_map_uv(TextureMapGpu map, uint map_flags, GeometryRoot geometry, uvec3 corners, vec3 corner) {
@@ -146,7 +146,8 @@ vec3 hit_mapped_normal(
 ) {
     vec3 mapped = decode_normal(
         sample_hit_map_lod(standard.normal_map, standard.map_flags, MATERIAL_MAP_NORMAL, uv0, uv1, footprint).rgb,
-        standard.normal_scale
+        standard.normal_scale,
+        (standard.map_flags & MATERIAL_MAP_NORMAL_RG) != 0u
     );
     if ((geometry.flags & GEOMETRY_HAS_TANGENTS) != 0u) {
         return tangent_normal(normal, hit_tangent(instance, geometry, corners, weights), mapped);
@@ -155,7 +156,7 @@ vec3 hit_mapped_normal(
     vec2 corner_uv_1 = corner_map_uv(standard.normal_map, standard.map_flags, geometry, corners, vec3(0.0, 1.0, 0.0));
     vec2 corner_uv_2 = corner_map_uv(standard.normal_map, standard.map_flags, geometry, corners, vec3(0.0, 0.0, 1.0));
     return derivative_normal(
-        normal,
+        normalize(normal),
         mapped,
         world_edge_1,
         world_edge_2,
@@ -187,11 +188,13 @@ TraceSurface surface_from_hit(SceneTraceRoot scene, SceneHit hit, vec3 ray_direc
     surface.position = world_0 * weights.x + world_1 * weights.y + world_2 * weights.z;
     surface.geometric_normal = transform_normal(instance, cross(corner_1 - corner_0, corner_2 - corner_0));
     surface.normal = surface.geometric_normal;
+    vec3 interpolated_normal = surface.geometric_normal;
+
     if ((geometry.flags & GEOMETRY_HAS_NORMALS) != 0u) {
-        vec3 vertex_normal = pull_vec3(geometry.normals, corners.x) * weights.x
-            + pull_vec3(geometry.normals, corners.y) * weights.y
-            + pull_vec3(geometry.normals, corners.z) * weights.z;
-        surface.normal = transform_normal(instance, vertex_normal);
+        interpolated_normal = transform_normal(instance, pull_vec3(geometry.normals, corners.x)) * weights.x
+            + transform_normal(instance, pull_vec3(geometry.normals, corners.y)) * weights.y
+            + transform_normal(instance, pull_vec3(geometry.normals, corners.z)) * weights.z;
+        surface.normal = normalize(interpolated_normal);
     }
 
     bool facing_back = dot(surface.geometric_normal, ray_direction) > 0.0;
@@ -266,7 +269,7 @@ TraceSurface surface_from_hit(SceneTraceRoot scene, SceneHit hit, vec3 ray_direc
                     standard,
                     corners,
                     weights,
-                    surface.normal,
+                    interpolated_normal,
                     world_1 - world_0,
                     world_2 - world_0,
                     uv0,

@@ -11,6 +11,13 @@ import std::math;
 
 const String DATA_URI_PREFIX @private = "data:";
 const uint UV_SET_MAX @private = 1; // texture_slot accepts UV0 and UV1 only
+const char[4] DDS_MAGIC @private = { 'D', 'D', 'S', ' ' };
+const char[12] KTX1_MAGIC @private = {
+  0xAB, 'K', 'T', 'X', ' ', '1', '1', 0xBB, 0x0D, 0x0A, 0x1A, 0x0A,
+};
+const char[12] KTX2_MAGIC @private = {
+  0xAB, 'K', 'T', 'X', ' ', '2', '0', 0xBB, 0x0D, 0x0A, 0x1A, 0x0A,
+};
 
 fn void convert_samplers(Importer* importer) @private {
     foreach (index, &sampler : importer.data.samplers) {
@@ -57,34 +64,165 @@ fn AddressMode address_mode(gltf::WrapMode wrap) @private {
     }
 }
 
-fn TextureId? texture_for(Importer* importer, gltf::Texture* texture, bool srgb) @private {
+fn TextureId? texture_for(
+    Importer* importer,
+    gltf::Texture* texture,
+    bool srgb,
+    TextureSemantic semantic = TextureSemantic.COLOR,
+    CoveragePolicy coverage = CoveragePolicy.NONE,
+    double alpha_threshold = 0,
+) @private {
     if (!texture.image) return texture.has_basisu || texture.has_webp ? c3d::UNSUPPORTED~ : c3d::ASSET_FORMAT_ERROR~;
+
     usz image_index = gltf::image_index(importer.data, texture.image);
-    TextureId[] table = srgb ? importer.srgb_textures : importer.linear_textures;
-    if (!c3d::same_id(table[image_index], (TextureId){})) return table[image_index];
+    TextureId[] table = semantic == TextureSemantic.COLOR
+      ? (srgb ? importer.srgb_textures : importer.linear_textures) : importer.normal_textures;
+    if (coverage == CoveragePolicy.NONE && !c3d::same_id(table[image_index], (TextureId){})) return table[image_index];
 
     char[] encoded = importer.source ? importer.source.images[image_index].encoded : (char[]){};
     if (!encoded.len) encoded = image_bytes(importer, texture.image)!;
-    image::Image decoded = image::decode_image(importer.allocator, encoded)!;
-    defer catch image::destroy_image(&decoded);
-    if (decoded.format != RGBA8_UNORM) return c3d::ASSET_FORMAT_ERROR~;
 
-    TextureDesc desc = material::texture_2d_desc(
-        width: decoded.width,
-        height: decoded.height,
-        format: srgb ? RGBA8_SRGB : RGBA8_UNORM,
-        debug_name: "gltf_image",
-    );
-    String key = string::tformat("%s#image/%d/%s", importer.key, image_index, srgb ? "srgb" : "linear");
-    TextureId id = importer.document.push_texture(desc, decoded.pixels, key);
-    table[image_index] = id;
+    TextureDesc desc;
+    image::Image decoded;
+    defer catch image::destroy_image(&decoded);
+    image::TextureContainerView container;
+    bool supplied;
+    if (is_texture_container(encoded)) {
+        container = image::parse_texture_container(
+            scratch: tmem,
+            bytes: encoded,
+            color_space: srgb ? image::ColorSpace.SRGB : image::ColorSpace.LINEAR,
+            semantic: semantic,
+        )!;
+        desc = container.desc;
+        supplied = !desc.generate_mips;
+    } else {
+        decoded = image::decode_image(importer.allocator, encoded)!;
+        if (decoded.format != RGBA8_UNORM && decoded.format != RGBA32_FLOAT) return c3d::ASSET_FORMAT_ERROR~;
+        desc = material::texture_2d_desc(
+            width: decoded.width,
+            height: decoded.height,
+            format: decoded.format == RGBA8_UNORM && srgb ? RGBA8_SRGB : decoded.format,
+            debug_name: "gltf_image",
+        );
+        desc.semantic = semantic;
+    }
+
+    desc.debug_name = "gltf_image";
+    if (!supplied && coverage_eligible(desc)) {
+        desc.coverage = coverage;
+        desc.alpha_threshold = alpha_threshold;
+    }
+
+    foreach (&variant : importer.texture_variants[:importer.texture_variant_count]) {
+        if (variant.image != image_index || variant.semantic != desc.semantic || variant.format != desc.format
+            || variant.coverage != desc.coverage || variant.alpha_threshold != desc.alpha_threshold) continue;
+        image::destroy_image(&decoded);
+        if (desc.coverage == CoveragePolicy.NONE) table[image_index] = variant.texture;
+
+        return variant.texture;
+    }
+
+    String key = texture_variant_key(importer, image_index, srgb, desc);
+    TextureId id;
+    if (supplied) {
+        id = importer.document.push_texture_mips(desc, container.levels[:container.level_count], key)!;
+    } else {
+        char[] pixels = decoded.pixels;
+        if (container.level_count) {
+            char[] source = container.levels[0].bytes;
+            pixels = alloc::new_array(importer.allocator, char, (sz)source.len);
+            pixels[..] = source[..];
+        }
+        id = importer.document.push_texture(desc, pixels, key);
+        decoded = {};
+    }
+
+    importer.texture_variants[importer.texture_variant_count++] = {
+        .image = image_index,
+        .semantic = desc.semantic,
+        .format = desc.format,
+        .coverage = desc.coverage,
+        .alpha_threshold = desc.alpha_threshold,
+        .texture = id,
+    };
+    if (desc.coverage == CoveragePolicy.NONE) table[image_index] = id;
     if (importer.source) {
         retain_source_image(importer, image_index, encoded);
         usz count = importer.source.texture_images.len;
         importer.source.texture_images = importer.source.texture_images.ptr[:count + 1];
         importer.source.texture_images[count] = image_index;
     }
+
     return id;
+}
+
+fn bool is_texture_container(char[] bytes) @private {
+    if (bytes.len >= DDS_MAGIC.len && bytes[:DDS_MAGIC.len] == DDS_MAGIC[..]) return true;
+
+    return bytes.len >= KTX1_MAGIC.len
+      && (bytes[:KTX1_MAGIC.len] == KTX1_MAGIC[..] || bytes[:KTX2_MAGIC.len] == KTX2_MAGIC[..]);
+}
+
+fn bool coverage_eligible(TextureDesc desc) @private {
+    if (!desc.generate_mips || desc.mip_levels != 1 || desc.depth || desc.storage) return false;
+    if (desc.layers != 1 && !desc.is_cube) return false;
+
+    switch (desc.format) {
+        case RGBA8_UNORM:
+        case RGBA8_SRGB:
+        case RGBA16_FLOAT:
+        case RGBA32_FLOAT: return true;
+        default: return false;
+    }
+}
+
+fn String texture_variant_key(
+    Importer* importer,
+    usz image_index,
+    bool srgb,
+    TextureDesc desc,
+) @private {
+    String role = srgb ? "srgb" : "linear";
+    if (desc.coverage != CoveragePolicy.NONE) {
+        ulong threshold = *(ulong*)&desc.alpha_threshold;
+
+        return string::tformat(
+            "%s#image/%d/mask/%d/%d/%x",
+            importer.key,
+            image_index,
+            desc.format.ordinal,
+            desc.coverage.ordinal,
+            threshold,
+        );
+    }
+
+    switch (desc.semantic) {
+        case COLOR: break;
+        case NORMAL_RGB: role = string::tformat("normal_rgb/%d", desc.format.ordinal);
+        case NORMAL_RG: role = string::tformat("normal_rg/%d", desc.format.ordinal);
+    }
+
+    return string::tformat("%s#image/%d/%s", importer.key, image_index, role);
+}
+
+fn TextureSemantic normal_semantic(NormalEncoding encoding) @private {
+    switch (encoding) {
+        case RGB: return TextureSemantic.NORMAL_RGB;
+        case RG: return TextureSemantic.NORMAL_RG;
+    }
+}
+
+fn CoveragePolicy mask_policy(material::AlphaMode mode, float cutoff, float factor) @private {
+    if (mode != material::AlphaMode.MASK) return CoveragePolicy.NONE;
+    if (cutoff == 0) return CoveragePolicy.ALL_PASS;
+    if (factor == 0 || (double)cutoff / factor > 1) return CoveragePolicy.ALL_FAIL;
+
+    return CoveragePolicy.THRESHOLD;
+}
+
+fn double mask_threshold(CoveragePolicy policy, float cutoff, float factor) @private {
+    return policy == CoveragePolicy.THRESHOLD ? (double)cutoff / factor : 0;
 }
 
 fn char[]? image_bytes(Importer* importer, gltf::Image* image) @private {
@@ -103,13 +241,30 @@ fn char[]? image_bytes(Importer* importer, gltf::Image* image) @private {
     return importer.file_source.read_path(tmem, join_path(importer.base_dir, encoded_uri.str_view()[:length]));
 }
 
-fn TextureSlot? texture_slot_for(Importer* importer, gltf::TextureView* view, bool srgb) @private {
+fn TextureSlot? texture_slot_for(
+    Importer* importer,
+    gltf::TextureView* view,
+    bool srgb,
+    TextureSemantic semantic = TextureSemantic.COLOR,
+    CoveragePolicy coverage = CoveragePolicy.NONE,
+    double alpha_threshold = 0,
+) @private {
     if (!view.texture) return material::texture_slot();
-    TextureId texture = texture_for(importer, view.texture, srgb)!;
+
+    TextureId texture = texture_for(
+        importer: importer,
+        texture: view.texture,
+        srgb: srgb,
+        semantic: semantic,
+        coverage: coverage,
+        alpha_threshold: alpha_threshold,
+    )!;
+
     gltf::Sampler* sampler = view.texture.sampler;
     SamplerId sampler_id = sampler
         ? importer.samplers[gltf::sampler_index(importer.data, sampler)]
         : asset::SAMPLER_LINEAR_REPEAT;
+
     UvTransform transform = material::UV_TRANSFORM_IDENTITY;
     int uv_set = view.texcoord;
     if (view.has_transform) {
@@ -121,6 +276,7 @@ fn TextureSlot? texture_slot_for(Importer* importer, gltf::TextureView* view, bo
         if (view.transform.has_texcoord) uv_set = view.transform.texcoord;
     }
     if (uv_set < 0 || uv_set > (int)UV_SET_MAX) return c3d::ASSET_FORMAT_ERROR~;
+
     return material::texture_slot(
         texture: texture,
         sampler: sampler_id,
@@ -150,17 +306,26 @@ fn material::Material? convert_material(Importer* importer, gltf::Material* sour
     common.alpha_mode = alpha_mode(source.alpha_mode);
     common.alpha_cutoff = source.alpha_cutoff;
     common.double_sided = source.double_sided != 0;
-    if (!math::is_finite(common.alpha_cutoff)) return c3d::ASSET_FORMAT_ERROR~;
+    if (!math::is_finite(common.alpha_cutoff) || !in_unit_interval(common.alpha_cutoff)) return c3d::ASSET_FORMAT_ERROR~;
 
     if (source.unlit) {
         BasicParams params = material::BASIC_PARAMS_DEFAULT;
         params.color = source.pbr_metallic_roughness.base_color_factor;
-        params.map = texture_slot_for(importer, &source.pbr_metallic_roughness.base_color_texture, true)!;
         if (!rgba_in_unit_interval(params.color)) return c3d::ASSET_FORMAT_ERROR~;
+
+        CoveragePolicy coverage = mask_policy(common.alpha_mode, common.alpha_cutoff, params.color.w);
+        params.map = texture_slot_for(
+            importer: importer,
+            view: &source.pbr_metallic_roughness.base_color_texture,
+            srgb: true,
+            coverage: coverage,
+            alpha_threshold: mask_threshold(coverage, common.alpha_cutoff, params.color.w),
+        )!;
+
         return material::basic(params, common);
     }
 
-    StandardParams standard = standard_params(importer, source)!;
+    StandardParams standard = standard_params(importer, source, common)!;
     bool physical = source.has_clearcoat || source.has_sheen || source.has_transmission || source.has_volume
         || source.has_ior || source.has_specular || source.has_anisotropy;
     if (!physical) return material::standard(standard, common);
@@ -183,9 +348,15 @@ fn material::Material? convert_material(Importer* importer, gltf::Material* sour
     params.thickness = source.volume.thickness_factor;
     params.attenuation_distance = attenuation_distance(source);
     params.attenuation_color = source.volume.attenuation_color;
+
     params.clearcoat_map = texture_slot_for(importer, &source.clearcoat.clearcoat_texture, false)!;
     params.clearcoat_roughness_map = texture_slot_for(importer, &source.clearcoat.clearcoat_roughness_texture, false)!;
-    params.clearcoat_normal_map = texture_slot_for(importer, &source.clearcoat.clearcoat_normal_texture, false)!;
+    params.clearcoat_normal_map = texture_slot_for(
+        importer: importer,
+        view: &source.clearcoat.clearcoat_normal_texture,
+        srgb: false,
+        semantic: normal_semantic(importer.options.normal_encoding),
+    )!;
     params.sheen_color_map = texture_slot_for(importer, &source.sheen.sheen_color_texture, true)!;
     params.sheen_roughness_map = texture_slot_for(importer, &source.sheen.sheen_roughness_texture, false)!;
     params.specular_map = texture_slot_for(importer, &source.specular.specular_texture, false)!;
@@ -203,10 +374,11 @@ fn material::Material? convert_material(Importer* importer, gltf::Material* sour
         && in_unit_interval(params.transmission) && nonnegative_finite(params.thickness)
         && nonnegative_finite(params.attenuation_distance) && rgb_in_unit_interval(params.attenuation_color);
     if (!in_range) return c3d::ASSET_FORMAT_ERROR~;
+
     return material::physical(params, common);
 }
 
-fn StandardParams? standard_params(Importer* importer, gltf::Material* source) @private {
+fn StandardParams? standard_params(Importer* importer, gltf::Material* source, MaterialCommon common) @private {
     gltf::PbrMetallicRoughness* pbr = &source.pbr_metallic_roughness;
     StandardParams params = material::STANDARD_PARAMS_DEFAULT;
     params.base_color = pbr.base_color_factor;
@@ -216,17 +388,32 @@ fn StandardParams? standard_params(Importer* importer, gltf::Material* source) @
     params.emissive_strength = source.has_emissive_strength ? source.emissive_strength.emissive_strength : 1;
     params.normal_scale = view_scale(&source.normal_texture);
     params.occlusion_strength = view_scale(&source.occlusion_texture);
-    params.base_color_map = texture_slot_for(importer, &pbr.base_color_texture, true)!;
+    if (!rgba_in_unit_interval(params.base_color)) return c3d::ASSET_FORMAT_ERROR~;
+
+    CoveragePolicy coverage = mask_policy(common.alpha_mode, common.alpha_cutoff, params.base_color.w);
+    params.base_color_map = texture_slot_for(
+        importer: importer,
+        view: &pbr.base_color_texture,
+        srgb: true,
+        coverage: coverage,
+        alpha_threshold: mask_threshold(coverage, common.alpha_cutoff, params.base_color.w),
+    )!;
+
     params.metallic_roughness_map = texture_slot_for(importer, &pbr.metallic_roughness_texture, false)!;
-    params.normal_map = texture_slot_for(importer, &source.normal_texture, false)!;
+    params.normal_map = texture_slot_for(
+        importer: importer,
+        view: &source.normal_texture,
+        srgb: false,
+        semantic: normal_semantic(importer.options.normal_encoding),
+    )!;
     params.occlusion_map = texture_slot_for(importer, &source.occlusion_texture, false)!;
     params.emissive_map = texture_slot_for(importer, &source.emissive_texture, true)!;
 
-    bool in_range = rgba_in_unit_interval(params.base_color)
-        && in_unit_interval(params.metallic) && in_unit_interval(params.roughness)
+    bool in_range = in_unit_interval(params.metallic) && in_unit_interval(params.roughness)
         && in_unit_interval(params.occlusion_strength) && nonnegative_finite_rgb(params.emissive)
         && nonnegative_finite(params.emissive_strength) && math::is_finite(params.normal_scale);
     if (!in_range) return c3d::ASSET_FORMAT_ERROR~;
+
     return params;
 }
 

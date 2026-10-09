@@ -121,6 +121,7 @@ fn void write_material_block(
                 .color = material.basic.color,
                 .map = pack_texture_map(material.basic.map, bindings.base_color),
             };
+
         case STANDARD:
             *(StandardMaterialGpu*)block.ptr = pack_standard_material(
                 kind: material.kind,
@@ -128,6 +129,7 @@ fn void write_material_block(
                 params: &material.standard,
                 bindings: &bindings,
             );
+
         case PHYSICAL:
             PhysicalParams* params = &material.physical;
             uint map_flags;
@@ -147,7 +149,11 @@ fn void write_material_block(
                     binding: bindings.clearcoat_normal,
                     map_bit: shader::PHYSICAL_MAP_CLEARCOAT_NORMAL,
                 );
+                if (bindings.clearcoat_normal.semantic == TextureSemantic.NORMAL_RG) {
+                    map_flags |= shader::PHYSICAL_MAP_CLEARCOAT_NORMAL_RG;
+                }
             }
+
             if (material_uses_sheen(material)) {
                 map_flags |= texture_map_flags(
                     slot: params.sheen_color_map,
@@ -160,6 +166,7 @@ fn void write_material_block(
                     map_bit: shader::PHYSICAL_MAP_SHEEN_ROUGHNESS,
                 );
             }
+
             uint extension_map_flags;
             if (params.specular > 0) {
                 extension_map_flags = texture_map_flags(
@@ -173,6 +180,7 @@ fn void write_material_block(
                     map_bit: shader::PHYSICAL_EXTENSION_MAP_SPECULAR_COLOR,
                 );
             }
+
             if (params.anisotropy > 0) {
                 extension_map_flags |= texture_map_flags(
                     slot: params.anisotropy_map,
@@ -180,6 +188,7 @@ fn void write_material_block(
                     map_bit: shader::PHYSICAL_EXTENSION_MAP_ANISOTROPY,
                 );
             }
+
             if (params.transmission > 0) {
                 extension_map_flags |= texture_map_flags(
                     slot: params.transmission_map,
@@ -192,6 +201,7 @@ fn void write_material_block(
                     map_bit: shader::PHYSICAL_EXTENSION_MAP_THICKNESS,
                 );
             }
+
             *(PhysicalMaterialGpu*)block.ptr = {
                 .standard = pack_standard_material(
                     kind: material.kind,
@@ -262,6 +272,7 @@ fn void write_material_block(
                     binding: bindings.thickness,
                 ),
             };
+
         case TOON:
             ToonParams* params = &material.toon;
             uint map_flags = texture_map_flags(
@@ -290,6 +301,7 @@ fn void write_material_block(
                 .gradient_sampler = bindings.gradient.sampler_index,
                 .map = pack_texture_map(params.map, bindings.base_color),
             };
+
         case CUSTOM:
             CustomMaterialGpu* packed = (CustomMaterialGpu*)block.ptr;
             *packed = {
@@ -301,6 +313,7 @@ fn void write_material_block(
                 .capabilities = custom_capabilities,
                 .references = custom_references,
             };
+
             foreach (index, slot : material.custom.slots) {
                 packed.slots[index] = pack_texture_map(slot, bindings.custom[index]);
             }
@@ -334,6 +347,7 @@ fn StandardMaterialGpu pack_standard_material(
         binding: bindings.normal,
         map_bit: shader::MATERIAL_MAP_NORMAL,
     );
+    if (bindings.normal.semantic == TextureSemantic.NORMAL_RG) map_flags |= shader::MATERIAL_MAP_NORMAL_RG;
     map_flags |= texture_map_flags(
         slot: params.occlusion_map,
         binding: bindings.occlusion,

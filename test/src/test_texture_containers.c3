@@ -278,6 +278,79 @@ fn AssetStore create_container_store(Allocator allocator, uint max_textures = 64
     });
 }
 
+fn void test_container_normal_semantics_are_explicit_and_preserve_supplied_levels() @test {
+    @pool() {
+        TextureContainerView ordinary = image::parse_texture_container(tmem, KTX2_BC5[..])!!;
+        TextureContainerView normal = image::parse_texture_container(
+            scratch: tmem,
+            bytes: KTX2_BC5[..],
+            color_space: ColorSpace.FROM_FILE,
+            semantic: TextureSemantic.NORMAL_RG,
+        )!!;
+
+        assert(ordinary.desc.semantic == TextureSemantic.COLOR);
+        assert(normal.desc.semantic == TextureSemantic.NORMAL_RG && normal.desc.format == PixelFormat.BC5_UNORM);
+        assert(normal.level_count == ordinary.level_count && !normal.desc.generate_mips);
+
+        AssetStore assets = create_container_store(mem);
+        defer asset::destroy_asset_store(&assets);
+
+        TextureId texture = image::add_texture_container(
+            assets: &assets,
+            bytes: KTX2_BC5[..],
+            color_space: ColorSpace.FROM_FILE,
+            key: "normal/rg",
+            semantic: TextureSemantic.NORMAL_RG,
+        )!!;
+        TextureAsset* record = assets.texture(texture);
+
+        assert(record.source_kind == TextureSourceKind.SUPPLIED_MIPS);
+        assert(record.desc.semantic == TextureSemantic.NORMAL_RG && record.desc.coverage == CoveragePolicy.NONE);
+
+        foreach (index, level : record.supplied_mips) {
+            assert(level.mip == normal.levels[index].mip && level.layer == normal.levels[index].layer);
+            assert(level.bytes == ordinary.levels[index].bytes && level.bytes.ptr != ordinary.levels[index].bytes.ptr);
+        }
+
+        TextureId loaded = image::load_texture_container(
+            assets: &assets,
+            path: fixture_path("ktx2_bc5_8x4.ktx2"),
+            color_space: ColorSpace.FROM_FILE,
+            key: "normal/rg/file",
+            semantic: TextureSemantic.NORMAL_RG,
+        )!!;
+
+        assert(assets.texture(loaded).desc.semantic == TextureSemantic.NORMAL_RG);
+
+        foreach (index, level : assets.texture(loaded).supplied_mips) assert(level.bytes == normal.levels[index].bytes);
+    };
+}
+
+fn void test_container_normal_semantic_faults_preserve_the_asset_store() @test {
+    @pool() {
+        AssetStore assets = create_container_store(mem);
+        defer asset::destroy_asset_store(&assets);
+
+        uint free_before = assets.textures.free_count;
+
+        assert(@catch(image::add_texture_container(
+            assets: &assets,
+            bytes: DX10_RGBA8_SRGB[..],
+            color_space: ColorSpace.FROM_FILE,
+            key: "normal/srgb",
+            semantic: TextureSemantic.NORMAL_RGB,
+        )) == c3d::INVALID_ARGUMENT);
+        assert(@catch(image::parse_texture_container(
+            scratch: tmem,
+            bytes: KTX1_R16[..],
+            color_space: ColorSpace.FROM_FILE,
+            semantic: TextureSemantic.NORMAL_RG,
+        )) == c3d::UNSUPPORTED);
+        assert(assets.textures.free_count == free_before);
+        assert(@catch(assets.find_texture("normal/srgb")) == NOT_FOUND);
+    };
+}
+
 fn String fixture_path(String name) @local {
     Path source = path::tnew($$FILEPATH)!!;
     return (String)source.parent()!!.tappend("../fixtures/texture", name)!!;

@@ -76,10 +76,11 @@ void main() {
                 material.clearcoat_normal_map,
                 material.map_flags,
                 PHYSICAL_MAP_CLEARCOAT_NORMAL,
+                PHYSICAL_MAP_CLEARCOAT_NORMAL_RG,
                 material.clearcoat_normal_scale,
                 geometry,
                 v_world_pos,
-                normalize(v_normal),
+                v_normal,
                 v_tangent,
                 v_uv0,
                 v_uv1

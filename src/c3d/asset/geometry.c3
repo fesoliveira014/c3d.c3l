@@ -17,6 +17,7 @@ bitstruct TargetStreams : char @private {
 struct GeometryAsset {
     AssetHeader header;
     Geometry    data;
+    TangentProvenance tangent_provenance;
     SkinBounds  skin_bounds;
     Aabb[]      morph_bounds;        // per target, over every vertex; kept through release_geometry_cpu
     uint        vertex_count;
@@ -49,10 +50,13 @@ alias GeometryPool = Pool{GeometryAsset, GeometryId};
 fn GeometryId? AssetStore.add_geometry(&self, Geometry* geometry, String key = "") {
     check_key(self, key)!;
     check_influences(geometry)!;
+    geometry::check_tangent_stream(geometry)!;
+
     GeometryId id = self.geometries.add({})!;
     *self.geometries.get(id) = {
         .header       = { .key = copy_string(self.allocator, key), .revision = 1 },
         .data         = copy_geometry(self.allocator, geometry),
+        .tangent_provenance = authored_tangent_provenance(geometry),
         .skin_bounds  = geometry::build_skin_bounds(self.allocator, geometry),
         .morph_bounds = geometry::build_morph_bounds(self.allocator, geometry),
         .vertex_count = (uint)geometry.positions.len,
@@ -61,7 +65,9 @@ fn GeometryId? AssetStore.add_geometry(&self, Geometry* geometry, String key = "
         .joints_u16   = geometry.joints_exceed_byte(),
         .shape        = build_geometry_shape(self.allocator, geometry),
     };
+    normalize_stored_tangent_signs(&self.geometries.get(id).data);
     register_key(self, key, typed_ref(AssetKind.GEOMETRY, id));
+
     return id;
 }
 
@@ -73,10 +79,13 @@ fn GeometryId? AssetStore.add_geometry(&self, Geometry* geometry, String key = "
 fn GeometryId? AssetStore.add_geometry_owned(&self, Geometry* geometry, String key = "") {
     check_key(self, key)!;
     check_influences(geometry)!;
+    geometry::check_tangent_stream(geometry)!;
+
     GeometryId id = self.geometries.add({})!;
     *self.geometries.get(id) = {
         .header       = { .key = copy_string(self.allocator, key), .revision = 1 },
         .data         = *geometry,
+        .tangent_provenance = authored_tangent_provenance(geometry),
         .skin_bounds  = geometry::build_skin_bounds(self.allocator, geometry),
         .morph_bounds = geometry::build_morph_bounds(self.allocator, geometry),
         .vertex_count = (uint)geometry.positions.len,
@@ -85,7 +94,9 @@ fn GeometryId? AssetStore.add_geometry_owned(&self, Geometry* geometry, String k
         .joints_u16   = geometry.joints_exceed_byte(),
         .shape        = build_geometry_shape(self.allocator, geometry),
     };
+    normalize_stored_tangent_signs(&self.geometries.get(id).data);
     register_key(self, key, typed_ref(AssetKind.GEOMETRY, id));
+
     return id;
 }
 
@@ -98,7 +109,9 @@ fn GeometryId? AssetStore.add_geometry_owned(&self, Geometry* geometry, String k
 fn void? AssetStore.replace_geometry(&self, GeometryId geometry, Geometry* source) {
     GeometryAsset* record = self.geometries.get(geometry);
     check_influences(source)!;
+    geometry::check_tangent_stream(source)!;
     check_geometry_structure(record, source)!;
+
     apply_geometry(self.allocator, record, copy_geometry(self.allocator, source));
 }
 
@@ -111,8 +124,80 @@ fn void? AssetStore.replace_geometry(&self, GeometryId geometry, Geometry* sourc
 fn void? AssetStore.replace_geometry_owned(&self, GeometryId geometry, Geometry* source) {
     GeometryAsset* record = self.geometries.get(geometry);
     check_influences(source)!;
+    geometry::check_tangent_stream(source)!;
     check_geometry_structure(record, source)!;
+
     apply_geometry(self.allocator, record, *source);
+}
+
+<*
+ Add generated geometry and consume its owner on success.
+ @param [&inout] owner : "Allocated with the store allocator; retained on failure."
+ @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
+*>
+fn GeometryId? AssetStore.add_tangent_geometry_owned(&self, TangentGeometry* owner, String key = "") {
+    check_tangent_owner(self.allocator, owner)!;
+    check_key(self, key)!;
+    check_influences(&owner.data)!;
+
+    GeometryId id = self.geometries.add({})!;
+    *self.geometries.get(id) = {
+        .header = { .key = copy_string(self.allocator, key), .revision = 1 },
+        .data = owner.data,
+        .tangent_provenance = owner.tangent_provenance,
+        .skin_bounds = geometry::build_skin_bounds(self.allocator, &owner.data),
+        .morph_bounds = geometry::build_morph_bounds(self.allocator, &owner.data),
+        .vertex_count = (uint)owner.data.positions.len,
+        .index_count = (uint)owner.data.indices.len,
+        .target_count = (uint)owner.data.targets.len,
+        .joints_u16 = owner.data.joints_exceed_byte(),
+        .shape = build_geometry_shape(self.allocator, &owner.data),
+    };
+    self.geometries.get(id).tangent_provenance.derivation_revision = 1;
+
+    *owner = {};
+    register_key(self, key, typed_ref(AssetKind.GEOMETRY, id));
+
+    return id;
+}
+
+<*
+ Replace generated geometry and consume its owner on success.
+ @param [&inout] owner : "Allocated with the store allocator; retained on failure."
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::INCOMPATIBLE_STRUCTURE
+*>
+fn void? AssetStore.replace_tangent_geometry_owned(
+    &self,
+    GeometryId geometry,
+    TangentGeometry* owner,
+) {
+    GeometryAsset* record = self.geometries.try_get(geometry)!;
+    check_tangent_owner(self.allocator, owner)!;
+    check_influences(&owner.data)!;
+    check_geometry_structure(record, &owner.data)!;
+
+    TangentProvenance provenance = owner.tangent_provenance;
+
+    apply_geometry(self.allocator, record, owner.data);
+
+    record.tangent_provenance = provenance;
+    record.tangent_provenance.derivation_revision = record.header.revision;
+
+    *owner = {};
+}
+
+<*
+ Regenerate tangents and publish a new geometry revision explicitly.
+ @return? c3d::INVALID_ID, c3d::ASSET_DATA_UNAVAILABLE, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::CAPACITY_EXCEEDED, c3d::INCOMPATIBLE_STRUCTURE
+*>
+fn void? AssetStore.regenerate_geometry_tangents(&self, GeometryId geometry, uint uv_set = 0) {
+    GeometryAsset* record = self.geometries.try_get(geometry)!;
+    if (record.vertex_count && !record.data.positions.len) return c3d::ASSET_DATA_UNAVAILABLE~;
+
+    TangentGeometry owner = geometry::create_tangent_geometry(self.allocator, &record.data, uv_set)!;
+    defer geometry::destroy_tangent_geometry(&owner);
+
+    self.replace_tangent_geometry_owned(geometry, &owner)!;
 }
 
 <*
@@ -260,7 +345,10 @@ fn void apply_geometry(Allocator allocator, GeometryAsset* record, Geometry geom
     geometry::free_skin_bounds(allocator, &record.skin_bounds);
     geometry::free_morph_bounds(allocator, &record.morph_bounds);
     free_triangle_tree(allocator, record);
+
     record.data = geometry;
+    record.tangent_provenance = authored_tangent_provenance(&record.data);
+    normalize_stored_tangent_signs(&record.data);
     record.skin_bounds = geometry::build_skin_bounds(allocator, &record.data);
     record.morph_bounds = geometry::build_morph_bounds(allocator, &record.data);
     record.vertex_count = (uint)geometry.positions.len;
@@ -269,6 +357,7 @@ fn void apply_geometry(Allocator allocator, GeometryAsset* record, Geometry geom
     record.joints_u16 = geometry.joints_exceed_byte();
     record.validated_revision = 0;
     record.rejected_revision = 0;
+
     mark_replaced(&record.header);
 }
 
@@ -393,9 +482,18 @@ fn GeometryId add_prepared_geometry(
     String key,
 ) @private {
     GeometryId id = store.geometries.add({})!!;
+    if (derived.normalized_tangents.len) {
+        alloc::free(store.allocator, geometry.tangents.ptr);
+        geometry.tangents = derived.normalized_tangents;
+    }
+
+    TangentProvenance provenance = derived.tangent_provenance;
+    if (provenance.origin != TangentOrigin.NONE) provenance.derivation_revision = 1;
+
     *store.geometries.get(id) = {
         .header = { .key = copy_string(store.allocator, key), .revision = 1 },
         .data = *geometry,
+        .tangent_provenance = provenance,
         .skin_bounds = derived.skin_bounds,
         .morph_bounds = derived.morph_bounds,
         .vertex_count = (uint)geometry.positions.len,
@@ -404,8 +502,11 @@ fn GeometryId add_prepared_geometry(
         .joints_u16 = derived.joints_u16,
         .shape = derived.shape,
     };
+
     *derived = {};
+
     register_key(store, key, typed_ref(AssetKind.GEOMETRY, id));
+
     return id;
 }
 
@@ -416,11 +517,20 @@ fn void replace_prepared_geometry(
     PreparedGeometry* derived,
 ) @private {
     GeometryAsset* record = store.geometry(geometry);
+    if (derived.normalized_tangents.len) {
+        alloc::free(store.allocator, source.tangents.ptr);
+        source.tangents = derived.normalized_tangents;
+        derived.normalized_tangents = {};
+    }
+
     free_geometry(store.allocator, &record.data);
+
     geometry::free_skin_bounds(store.allocator, &record.skin_bounds);
     geometry::free_morph_bounds(store.allocator, &record.morph_bounds);
     free_triangle_tree(store.allocator, record);
+
     record.data = *source;
+    record.tangent_provenance = derived.tangent_provenance;
     record.skin_bounds = derived.skin_bounds;
     record.morph_bounds = derived.morph_bounds;
     record.vertex_count = (uint)source.positions.len;
@@ -429,7 +539,28 @@ fn void replace_prepared_geometry(
     record.joints_u16 = derived.joints_u16;
     record.validated_revision = 0;
     record.rejected_revision = 0;
+
     derived.skin_bounds = {};
     derived.morph_bounds = {};
+
     mark_replaced(&record.header);
+    if (record.tangent_provenance.origin != TangentOrigin.NONE) {
+        record.tangent_provenance.derivation_revision = record.header.revision;
+    }
+}
+
+fn TangentProvenance authored_tangent_provenance(Geometry* geometry) @private {
+    return { .origin = geometry.tangents.len ? TangentOrigin.AUTHORED : TangentOrigin.NONE };
+}
+
+fn void normalize_stored_tangent_signs(Geometry* geometry) @private {
+    foreach (&tangent : geometry.tangents) tangent.w = tangent.w < 0 ? -1 : 1;
+}
+
+fn void? check_tangent_owner(Allocator allocator, TangentGeometry* owner) @private {
+    if (owner.allocator != allocator || owner.tangent_provenance.origin != TangentOrigin.GENERATED) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+
+    geometry::check_tangent_stream(&owner.data, owner.tangent_provenance)!;
 }

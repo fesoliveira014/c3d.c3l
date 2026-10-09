@@ -113,15 +113,18 @@ fn void TexturePlanState.measure(&self) {
         uint settled = !record.streamed && record.raisable ? 0 : record.resident_base;
         usz bytes = texture_range_bytes(record, settled);
         self.total += bytes;
+
         if (!texture_plan_drawn(record)) self.held_bytes += bytes;
     }
 }
 
 fn usz TexturePlanState.drawn_need(&self, uint bias) {
     usz bytes;
+
     foreach (&record : self.textures) {
         if (texture_plan_drawn(record)) bytes += texture_range_bytes(record, texture_plan_target(record, bias));
     }
+
     return bytes;
 }
 
@@ -134,6 +137,7 @@ fn void TexturePlanState.evict(&self, uint index, uint new_base) {
     TextureResidency* record = &self.textures[index];
     usz freed = texture_range_bytes(record, record.resident_base) - texture_range_bytes(record, new_base);
     self.total -= freed;
+
     if (!texture_plan_drawn(record)) self.held_bytes -= freed;
     self.push(index, new_base);
     self.evictions++;
@@ -151,6 +155,7 @@ fn void TexturePlanState.evict_undrawn(&self, uint bias) {
       || self.held_bytes + drawn_zero > self.budget
       || (bias > 0 && (double)(self.held_bytes + drawn_relax) > release)) {
         usz found = self.collect_evictions(batch[..], has_cursor, cursor);
+
         if (!found) break;
 
         foreach (pick : batch[:found]) {
@@ -166,26 +171,32 @@ fn void TexturePlanState.evict_undrawn(&self, uint bias) {
 
 fn usz TexturePlanState.collect_evictions(&self, EvictionPick[] picks, bool has_cursor, EvictionPick cursor) {
     usz found;
+
     foreach (index, &record : self.textures) {
         if (!texture_plan_candidate(record) || texture_plan_drawn(record)) continue;
         if (record.resident_base >= record.tail_base) continue;
 
         EvictionPick pick = { .frame = record.last_used_frame, .index = (uint)index };
+
         if (has_cursor && !pick.after(cursor)) continue;
         if (found == picks.len && !picks[found - 1].after(pick)) continue;
 
         usz slot = found < picks.len ? found++ : found - 1;
+
         while (slot > 0 && picks[slot - 1].after(pick)) {
             picks[slot] = picks[slot - 1];
             slot--;
         }
+
         picks[slot] = pick;
     }
+
     return found;
 }
 
 fn uint TexturePlanState.settle_bias(&self, uint bias) {
     uint ceiling;
+
     foreach (&record : self.textures) {
         if (texture_plan_drawn(record) && record.tail_base > record.required_base) {
             ceiling = math::max(ceiling, record.tail_base - record.required_base);
@@ -193,12 +204,17 @@ fn uint TexturePlanState.settle_bias(&self, uint bias) {
     }
 
     bias = math::min(bias, ceiling);
+
     if (self.held_bytes + self.drawn_need(bias) > self.budget) {
         while (bias < ceiling && self.held_bytes + self.drawn_need(bias) > self.budget) bias++;
+
         return bias;
     }
+
     double release = (double)TEXTURE_BIAS_RELEASE_FRACTION * (double)self.budget;
+
     while (bias > 0 && (double)(self.held_bytes + self.drawn_need(bias - 1)) <= release) bias--;
+
     return bias;
 }
 
@@ -209,6 +225,7 @@ fn void TexturePlanState.evict_drawn(&self, uint bias) {
         if (!texture_plan_drawn(record)) continue;
 
         uint target = texture_plan_target(record, bias);
+
         if (record.resident_base < target) self.evict((uint)index, target);
     }
 }
@@ -234,18 +251,22 @@ fn uint TexturePlanState.raise(
     usz admitted_bytes;
     ulong admitted_texels;
     uint widest;
+
     foreach (&record : self.textures) {
         if (!texture_plan_candidate(record) || (limited && !texture_plan_drawn(record))) continue;
 
         uint target = limited ? texture_plan_target(record, bias) : 0;
+
         if (record.resident_base > target) widest = math::max(widest, record.resident_base - target);
     }
+
     for (uint deficit = widest; deficit > 0; deficit--) {
         foreach (index, &record : self.textures) {
             if (!texture_plan_candidate(record)) continue;
             if (limited && !texture_plan_drawn(record)) continue;
 
             uint target = limited ? texture_plan_target(record, bias) : 0;
+
             if (record.resident_base <= target || record.resident_base - target != deficit) continue;
 
             usz delta = texture_range_bytes(record, target) - texture_range_bytes(record, record.resident_base);
@@ -253,6 +274,7 @@ fn uint TexturePlanState.raise(
             ulong texels = record.regenerates ? (ulong)record.chain_width * record.chain_height : 0;
             bool paced = admitted_count == 0
               || (admitted_bytes + delta <= frame_bytes && admitted_texels + texels <= frame_texels);
+
             if (!fits || !paced) {
                 if (texture_plan_drawn(record)) starved++;
                 continue;
@@ -266,6 +288,7 @@ fn uint TexturePlanState.raise(
             self.raises++;
         }
     }
+
     return starved;
 }
 
@@ -294,6 +317,7 @@ fn void Renderer.set_texture_budget(&self, usz bytes) {
 *>
 fn bool texture_eligible(material::TextureDesc desc, TextureSourceKind source, uint chain_mips) {
     if (desc.depth || desc.is_cube || desc.layers != 1 || desc.storage || chain_mips < 2) return false;
+
     switch (source) {
         case MIP_ZERO: return desc.generate_mips;
         case SUPPLIED_MIPS: return true;
@@ -310,11 +334,15 @@ fn bool texture_eligible(material::TextureDesc desc, TextureSourceKind source, u
 fn TextureLevelBytes? texture_level_bytes(material::TextureDesc desc, uint chain_mips) {
     TextureLevelBytes bytes;
     usz layers = desc.layers > 0 ? desc.layers : 1;
+
     for (uint mip = 0; mip < chain_mips; mip++) {
         usz layer_bytes = material::texture_mip_bytes(desc, mip)!;
+
         if (layer_bytes > (usz)sz::max / layers) return c3d::INVALID_ARGUMENT~;
+
         bytes[mip] = layer_bytes * layers;
     }
+
     return bytes;
 }
 
@@ -326,7 +354,9 @@ fn TextureLevelBytes? texture_level_bytes(material::TextureDesc desc, uint chain
 *>
 fn usz texture_range_bytes(TextureResidency* residency, uint base) {
     usz bytes;
+
     for (uint mip = base; mip < residency.chain_mips; mip++) bytes += residency.level_bytes[mip];
+
     return bytes;
 }
 
@@ -337,7 +367,9 @@ fn usz texture_range_bytes(TextureResidency* residency, uint base) {
 *>
 fn uint texture_tail_base(uint chain_extent, uint chain_mips) {
     uint base;
+
     while (base < chain_mips - 1 && (chain_extent >> base) > TEXTURE_TAIL_EXTENT) base++;
+
     return base;
 }
 
@@ -356,10 +388,12 @@ fn uint texture_required_base(
 ) {
     uint last = chain_mips - 1;
     uint level;
+
     if (screen_pixels < (float)chain_extent) {
         double pixels = screen_pixels >= 1.0f ? (double)screen_pixels : 1.0;
         level = (uint)math::floor(math::log2((double)chain_extent / pixels));
     }
+
     return math::min(math::min(level, last) + bias, last);
 }
 
@@ -383,6 +417,7 @@ fn TextureResidencyPlan plan_texture_residency(
     };
     state.measure();
     bool limited = budget.budget_bytes > 0;
+
     if (limited) {
         state.evict_undrawn(*bias);
         *bias = state.settle_bias(*bias);
@@ -390,6 +425,7 @@ fn TextureResidencyPlan plan_texture_residency(
     } else {
         *bias = 0;
     }
+
     state.push_full_raises();
     uint starved = state.raise(
         limited: limited,
@@ -422,6 +458,7 @@ fn uint texture_plan_target(TextureResidency* record, uint bias) @local {
 fn void? step_texture_residency(Renderer* renderer) @private {
     @pool() {
         expand_material_demand(renderer);
+
         foreach (index, &record : renderer.residencies) {
             if (!record.chain_mips) continue;
 
@@ -447,6 +484,7 @@ fn void? step_texture_residency(Renderer* renderer) @private {
             changes: renderer.residency_changes,
         );
         uint deferred;
+
         foreach (change : renderer.residency_changes[:plan.change_count]) {
             if (catch excuse = apply_texture_residency(renderer, change)) {
                 if (excuse != gpu::SLOT_TABLE_FULL && excuse != gpu::DESCRIPTOR_HEAP_FULL
@@ -457,9 +495,11 @@ fn void? step_texture_residency(Renderer* renderer) @private {
         }
 
         usz bytes;
+
         foreach (&record : renderer.residencies) {
             if (record.chain_mips) bytes += texture_range_bytes(record, record.resident_base);
         }
+
         renderer.stats.texture_bytes = bytes;
         renderer.stats.texture_raises = plan.raises;
         renderer.stats.texture_evictions = plan.evictions;
@@ -493,9 +533,11 @@ fn void? apply_texture_residency(Renderer* renderer, TextureResidencyChange chan
         .asset = mirror.asset,
         .revision = record.header.revision,
         .texture = image,
+        .semantic = mirror.semantic,
         .survivor_source = mirror.texture,
         .survivor_before = mirror.state,
     };
+
     for (uint level = math::max(old_base, new_base); level < residency.chain_mips; level++) {
         pending.survivor_copies[pending.survivor_count] = {
             .src = mirror.texture,
@@ -505,6 +547,7 @@ fn void? apply_texture_residency(Renderer* renderer, TextureResidencyChange chan
         };
         pending.survivor_count++;
     }
+
     if (new_base < old_base) {
         stage_texture_levels(
             renderer: renderer,
@@ -516,10 +559,17 @@ fn void? apply_texture_residency(Renderer* renderer, TextureResidencyChange chan
         )!;
     }
 
+    TextureCoverageResource* coverage_resource = mirror.coverage_resource;
+    TextureSemantic semantic = mirror.semantic;
+    mirror.coverage_resource = null;
+
     retire_texture(renderer, mirror);
+
     *mirror = {
         .asset = pending.asset,
         .revision = pending.revision,
+        .semantic = semantic,
+        .coverage_resource = coverage_resource,
         .binding_revision = mirror.binding_revision + 1,
         .texture = image,
         .view = view,
@@ -546,12 +596,16 @@ fn void? stage_texture_levels(
 ) @local {
     TextureMipChain chain;
     TextureMipLayout layout;
+
     switch (record.source_kind) {
         case MIP_ZERO:
-            chain = create_texture_mips(tmem, record.desc, record.pixels, first_mip: first_level)!;
+            chain = create_texture_mips(allocator: tmem, desc: record.desc, pixels: record.pixels,
+                first_mip: first_level, statistics: &record.coverage_statistics)!;
             layout = { .total_bytes = chain.pixels.len, .mip_count = chain.mip_count, .offsets = chain.offsets };
+
         case SUPPLIED_MIPS:
             layout = supplied_texture_mip_layout(record.desc, record.supplied_mips, first_mip: first_level)!;
+
         case EMPTY:
             unreachable();
     }
@@ -559,21 +613,27 @@ fn void? stage_texture_levels(
     usz staged_bytes = level_count < layout.mip_count ? layout.offsets[level_count] : layout.total_bytes;
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
     gpu::MappedGpuSpan staging = slot.upload.take(&renderer.device, staged_bytes, UPLOAD_RING_ALIGNMENT)!;
+
     switch (record.source_kind) {
         case MIP_ZERO:
             mem::copy(staging.bytes.ptr, chain.pixels.ptr, (sz)staged_bytes);
+
         case SUPPLIED_MIPS:
             usz offset;
+
             foreach (level : record.supplied_mips) {
                 if (level.mip < first_level || level.mip >= first_level + level_count) continue;
 
                 mem::copy(staging.bytes.ptr + offset, level.bytes.ptr, level.bytes.len);
                 offset += level.bytes.len;
             }
+
         case EMPTY:
             unreachable();
     }
+
     pending.mip_count = level_count;
+
     for (uint mip = 0; mip < level_count; mip++) {
         usz bytes = gpu::texture_mip_bytes(description, mip)!;
         pending.copies[mip] = {
@@ -583,26 +643,31 @@ fn void? stage_texture_levels(
             .layer_count = 1,
         };
     }
+
     renderer.stats.upload_bytes += (uint)staged_bytes;
 }
 
 fn void expand_material_demand(Renderer* renderer) @private {
     foreach (&record : renderer.residencies) record.demand_pixels = 0;
+
     if (!renderer.frame_index) return;
 
     ulong previous = renderer.frame_index - 1;
+
     foreach (&mirror : renderer.materials) {
         if (mirror.demand_frame != previous || mirror.demand_pixels <= 0) continue;
         if (!renderer.assets.materials.is_live(mirror.asset)) continue;
 
         raise_bindings_demand(renderer, &mirror.bindings, mirror.demand_pixels);
         MaterialAsset* asset = renderer.assets.material(mirror.asset);
+
         if (asset.data.kind != MaterialKind.CUSTOM) continue;
 
         foreach (reference : asset.data.custom.references) {
             if (!reference.generation || !renderer.assets.materials.is_live(reference)) continue;
 
             MaterialRes* referenced = &renderer.materials[reference.index];
+
             if (c3d::same_id(referenced.asset, reference)) {
                 raise_bindings_demand(renderer, &referenced.bindings, mirror.demand_pixels);
             }
@@ -617,7 +682,9 @@ fn void raise_bindings_demand(Renderer* renderer, MaterialBindings* bindings, fl
         &bindings.clearcoat_normal, &bindings.sheen_color, &bindings.sheen_roughness, &bindings.specular,
         &bindings.specular_color, &bindings.anisotropy, &bindings.transmission, &bindings.thickness,
     };
+
     foreach (binding : fixed) raise_binding_demand(renderer, binding, pixels);
+
     foreach (&binding : bindings.custom) raise_binding_demand(renderer, binding, pixels);
 }
 
@@ -639,11 +706,13 @@ fn void note_material_demand(
 ) @private {
     float pixels = camera::projected_size(camera, camera_position, maths::aabb_sphere(bounds), viewport_height)
       * math::exp2(-mip_bias);
+
     if (!(pixels > 0)) return;
 
     if (material.demand_frame != renderer.frame_index) {
         material.demand_frame = renderer.frame_index;
         material.demand_pixels = 0;
     }
+
     material.demand_pixels = math::max(material.demand_pixels, pixels);
 }

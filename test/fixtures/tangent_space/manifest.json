@@ -1,0 +1,156 @@
+{
+  "missing_tail_edge_pair": {
+    "curated_case": 24,
+    "faces": 4,
+    "corners": 12,
+    "files": [
+      {
+        "file": "missing_tail_edge_pair.input.bin",
+        "sha256": "c3dd2fd221e2d47bb06f6110ce0c7b2df6cf7b826146bf32e38f1771e6d91202",
+        "bytes": 324
+      },
+      {
+        "file": "missing_tail_edge_pair.expected.bin",
+        "sha256": "e15dc58851a9536bf24fcc4ce6253a2e5651516901a8643f56d858e2f9106ae2",
+        "bytes": 208
+      },
+      {
+        "file": "missing_tail_edge_pair.stages.bin",
+        "sha256": "965158988eb8eb90d462112dcc3e9bb06f30021ed32a50f9476d1a72d1bf11fa",
+        "bytes": 256
+      }
+    ]
+  },
+  "finite_midpoint_overflow_no_weld": {
+    "curated_case": 25,
+    "faces": 2,
+    "corners": 6,
+    "files": [
+      {
+        "file": "finite_midpoint_overflow_no_weld.input.bin",
+        "sha256": "5e959b430975c7178b07acf8019aa5c572ce90edb4d290be420f54d4a27a85b3",
+        "bytes": 212
+      },
+      {
+        "file": "finite_midpoint_overflow_no_weld.expected.bin",
+        "sha256": "635e73bc55ec3ec5c4c843b2b57eafb106048272b869ea6192747d3bbf60aac8",
+        "bytes": 112
+      },
+      {
+        "file": "finite_midpoint_overflow_no_weld.stages.bin",
+        "sha256": "d94705df1c9def942355e324f0e453b5586ebb47b3ee9e95c2b46c6f7fd1c19e",
+        "bytes": 136
+      }
+    ]
+  },
+  "finite_midpoint_merge": {
+    "curated_case": 26,
+    "faces": 2,
+    "corners": 6,
+    "files": [
+      {
+        "file": "finite_midpoint_merge.input.bin",
+        "sha256": "b28097e1fa2f3362c1383f8039acdda1c5fdc7f660923138570cbe94ddbd5835",
+        "bytes": 212
+      },
+      {
+        "file": "finite_midpoint_merge.expected.bin",
+        "sha256": "0f8bc2f06c201a1d293e81390bd8c562bcda0d1572044f4c69fe2b052c7cf00e",
+        "bytes": 112
+      },
+      {
+        "file": "finite_midpoint_merge.stages.bin",
+        "sha256": "dd8c5afb965bd9b5e846c7ef9510616699789eb7fda025309df10e65ec4c36cd",
+        "bytes": 136
+      }
+    ]
+  },
+  "quad_uv_diagonal": {
+    "curated_case": 27,
+    "faces": 1,
+    "corners": 4,
+    "files": [
+      {
+        "file": "quad_uv_diagonal.input.bin",
+        "sha256": "6f301143be948b42c1c0fc656edfd1b0b99f0c5a6ad765821ed954664fa2fcf7",
+        "bytes": 200
+      },
+      {
+        "file": "quad_uv_diagonal.expected.bin",
+        "sha256": "aa9d5cd84d1190edf465959920be335b3ea603602948131dacdb45bb11953150",
+        "bytes": 80
+      },
+      {
+        "file": "quad_uv_diagonal.stages.bin",
+        "sha256": "52ac9bc5ba8bc1b97f3523ebb89eda22f5d0f2a2550ff26e25c959ab47fff60a",
+        "bytes": 136
+      }
+    ]
+  },
+  "quad_one_position_degenerate": {
+    "curated_case": 28,
+    "faces": 1,
+    "corners": 4,
+    "files": [
+      {
+        "file": "quad_one_position_degenerate.input.bin",
+        "sha256": "a489e9e76977737594cfc3a756c864941764e13afb8e00e7974a6429ec2651e8",
+        "bytes": 200
+      },
+      {
+        "file": "quad_one_position_degenerate.expected.bin",
+        "sha256": "d6fb2b45e9762d9de07a84ea1e80cf7ea6bc5ab12bac619a68c6093697799aa2",
+        "bytes": 80
+      },
+      {
+        "file": "quad_one_position_degenerate.stages.bin",
+        "sha256": "c4098903a3dff3d619a00c37c7362c46c34678d368d84ea161690aa1ea11d06e",
+        "bytes": 88
+      }
+    ]
+  },
+  "quad_orientation_conflict": {
+    "curated_case": 29,
+    "faces": 1,
+    "corners": 4,
+    "files": [
+      {
+        "file": "quad_orientation_conflict.input.bin",
+        "sha256": "bb48e13dcc8cad23e95cb377ec01043d0deb3c8521cc38c7c1bcb8b618832ba0",
+        "bytes": 200
+      },
+      {
+        "file": "quad_orientation_conflict.expected.bin",
+        "sha256": "dcbfe287d9dcf8ee99fee7b5824770326a347e3a48fd25c531a6c27434d37c6d",
+        "bytes": 80
+      },
+      {
+        "file": "quad_orientation_conflict.stages.bin",
+        "sha256": "fc9dbaf6c67947bbb2a2d5cfc6558bf24b193ecb594933987d4171271352a208",
+        "bytes": 136
+      }
+    ]
+  },
+  "quad_position_tie": {
+    "curated_case": 30,
+    "faces": 1,
+    "corners": 4,
+    "files": [
+      {
+        "file": "quad_position_tie.input.bin",
+        "sha256": "0d46c382e3448559a7f29283f4ac009d012c22205a6ef222e565b86910bc81fd",
+        "bytes": 200
+      },
+      {
+        "file": "quad_position_tie.expected.bin",
+        "sha256": "63713adcccb2196d4e9ab8d76b210b1f5220cfffb6c0400885df05ebafc302ee",
+        "bytes": 80
+      },
+      {
+        "file": "quad_position_tie.stages.bin",
+        "sha256": "1179f73e684a84ef3a8ac06c5538eae72e5cf50fc189015ffccee7d90e6b8b36",
+        "bytes": 136
+      }
+    ]
+  }
+}

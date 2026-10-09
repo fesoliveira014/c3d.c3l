@@ -526,8 +526,9 @@ fn int main(String[] args) {
         foreach (index, uv : sphere.uv0) sphere.uv1[index] = uv * 2;
         sphere.tangents = {};
         geometries[0] = assets.add_geometry(&sphere, "pbr/sphere_derivatives")!!;
-        sphere.compute_tangents(tmem);
-        geometries[1] = assets.add_geometry(&sphere, "pbr/sphere_tangents")!!;
+        TangentGeometry tangent_sphere = geometry::create_tangent_geometry(assets.allocator, &sphere)!!;
+        defer geometry::destroy_tangent_geometry(&tangent_sphere);
+        geometries[1] = assets.add_tangent_geometry_owned(&tangent_sphere, "pbr/sphere_tangents")!!;
         for (uint index = 0; index < materials.len; index++) {
             uint column = index % GRID_SIDE;
             uint row = index / GRID_SIDE;

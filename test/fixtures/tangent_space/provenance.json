@@ -1,0 +1,169 @@
+{
+  "schema_version": 1,
+  "generator_version": "tangent-small-mesh-v1",
+  "python": "3.12",
+  "prng": "random.Random MT19937",
+  "seed": 3447297,
+  "random_meshes": 10000,
+  "curated_meshes": 31,
+  "curated_names": [
+    "flat_quad",
+    "mirrored_shared",
+    "selected_uv1",
+    "smooth_varying",
+    "reordered_faces",
+    "duplicate_uv_seam",
+    "hard_normals",
+    "collapsed_uv_adjacent",
+    "collapsed_uv_isolated",
+    "repeated_position_adjacent",
+    "isolated_repeated",
+    "all_degenerate",
+    "collinear_geometry",
+    "zero_area_after_good",
+    "zero_area_before_good",
+    "nonindexed_seam",
+    "disconnected_equal_attributes",
+    "nonmanifold_edge",
+    "smooth_grid",
+    "smooth_varying_mirrored",
+    "antiparallel_projection",
+    "signed_zero_attributes",
+    "uv_min_normal",
+    "uv_adjacent_min_normal",
+    "missing_tail_edge_pair",
+    "finite_midpoint_overflow_no_weld",
+    "finite_midpoint_merge",
+    "quad_uv_diagonal",
+    "quad_one_position_degenerate",
+    "quad_orientation_conflict",
+    "quad_position_tie"
+  ],
+  "statistics": {
+    "triangle_faces": 50880,
+    "quad_faces": 34267,
+    "duplicated_positions": 40716,
+    "cyclic_rotations": 59655,
+    "reversed_faces": 42725,
+    "meshes_by_mode": {
+      "0": 1000,
+      "1": 1000,
+      "2": 1000,
+      "3": 1000,
+      "4": 1000,
+      "5": 1000,
+      "6": 1000,
+      "7": 1000,
+      "8": 1000,
+      "9": 1000
+    }
+  },
+  "format": "MKP2 little endian: uint32 magic/count; per-case nv/nf/uv; Vertex(10float32)*nv; uint32 face sizes*nf; uint32 flat indices*sum(face sizes)",
+  "curated_sha256": "929bfb39923f9b155c626081ee7a559825e17f9dbc50127858c1fee0eb655cda",
+  "random_sha256": "7ab1f8d5031bc1bfae20c482d14c1a0ceafe7e58f0a92fbb4f5b85d620c8994d",
+  "fixture_license": "CC0-1.0 authored analytic and seeded meshes",
+  "upstream": "mmikk/MikkTSpace",
+  "pin": "3e895b49d05ea07e4c2133156cfa94369e19e409",
+  "oracle_compiler": "MSVC 19.44.35217 x64, SDK 10.0.26100.0",
+  "oracle_command": "cl /nologo /O2 /fp:strict /I C:/tmp/c3d-tangent-reference/pinned oracle.c C:/tmp/c3d-tangent-reference/pinned/mikktspace.c /Fe:oracle.exe; oracle.exe corpus/curated.bin corpus/curated-reference.bin",
+  "stage_command": "cl /nologo /O2 /fp:strict /I C:/tmp/c3d-tangent-reference/pinned stage_oracle.c /Fe:stage_oracle.exe; stage_oracle.exe corpus/curated.bin corpus/curated-stage-reference.bin",
+  "corner_convention": "Source face order and corner order. Default pinned quad diagonal selection is internal proof only. Public geometry accepts triangles. Output float32 XYZ/W, W exact sign.",
+  "fixture_files": {
+    "curated.expected.bin": {
+      "sha256": "e3f2d63b466b7a347947aa153583ad0e3838eaaac264d74d7fd09bc6325d817d",
+      "bytes": 9056
+    },
+    "curated.input.bin": {
+      "sha256": "929bfb39923f9b155c626081ee7a559825e17f9dbc50127858c1fee0eb655cda",
+      "bytes": 11708
+    },
+    "curated.stages.bin": {
+      "sha256": "3e19e859368fb70d01eb0c947f7bda29ff567a01d98136eb878165c3171647f5",
+      "bytes": 11080
+    },
+    "finite_midpoint_merge.expected.bin": {
+      "sha256": "0f8bc2f06c201a1d293e81390bd8c562bcda0d1572044f4c69fe2b052c7cf00e",
+      "bytes": 112
+    },
+    "finite_midpoint_merge.input.bin": {
+      "sha256": "b28097e1fa2f3362c1383f8039acdda1c5fdc7f660923138570cbe94ddbd5835",
+      "bytes": 212
+    },
+    "finite_midpoint_merge.stages.bin": {
+      "sha256": "dd8c5afb965bd9b5e846c7ef9510616699789eb7fda025309df10e65ec4c36cd",
+      "bytes": 136
+    },
+    "finite_midpoint_overflow_no_weld.expected.bin": {
+      "sha256": "635e73bc55ec3ec5c4c843b2b57eafb106048272b869ea6192747d3bbf60aac8",
+      "bytes": 112
+    },
+    "finite_midpoint_overflow_no_weld.input.bin": {
+      "sha256": "5e959b430975c7178b07acf8019aa5c572ce90edb4d290be420f54d4a27a85b3",
+      "bytes": 212
+    },
+    "finite_midpoint_overflow_no_weld.stages.bin": {
+      "sha256": "d94705df1c9def942355e324f0e453b5586ebb47b3ee9e95c2b46c6f7fd1c19e",
+      "bytes": 136
+    },
+    "missing_tail_edge_pair.expected.bin": {
+      "sha256": "e15dc58851a9536bf24fcc4ce6253a2e5651516901a8643f56d858e2f9106ae2",
+      "bytes": 208
+    },
+    "missing_tail_edge_pair.input.bin": {
+      "sha256": "c3dd2fd221e2d47bb06f6110ce0c7b2df6cf7b826146bf32e38f1771e6d91202",
+      "bytes": 324
+    },
+    "missing_tail_edge_pair.stages.bin": {
+      "sha256": "965158988eb8eb90d462112dcc3e9bb06f30021ed32a50f9476d1a72d1bf11fa",
+      "bytes": 256
+    },
+    "quad_one_position_degenerate.expected.bin": {
+      "sha256": "d6fb2b45e9762d9de07a84ea1e80cf7ea6bc5ab12bac619a68c6093697799aa2",
+      "bytes": 80
+    },
+    "quad_one_position_degenerate.input.bin": {
+      "sha256": "a489e9e76977737594cfc3a756c864941764e13afb8e00e7974a6429ec2651e8",
+      "bytes": 200
+    },
+    "quad_one_position_degenerate.stages.bin": {
+      "sha256": "c4098903a3dff3d619a00c37c7362c46c34678d368d84ea161690aa1ea11d06e",
+      "bytes": 88
+    },
+    "quad_orientation_conflict.expected.bin": {
+      "sha256": "dcbfe287d9dcf8ee99fee7b5824770326a347e3a48fd25c531a6c27434d37c6d",
+      "bytes": 80
+    },
+    "quad_orientation_conflict.input.bin": {
+      "sha256": "bb48e13dcc8cad23e95cb377ec01043d0deb3c8521cc38c7c1bcb8b618832ba0",
+      "bytes": 200
+    },
+    "quad_orientation_conflict.stages.bin": {
+      "sha256": "fc9dbaf6c67947bbb2a2d5cfc6558bf24b193ecb594933987d4171271352a208",
+      "bytes": 136
+    },
+    "quad_position_tie.expected.bin": {
+      "sha256": "63713adcccb2196d4e9ab8d76b210b1f5220cfffb6c0400885df05ebafc302ee",
+      "bytes": 80
+    },
+    "quad_position_tie.input.bin": {
+      "sha256": "0d46c382e3448559a7f29283f4ac009d012c22205a6ef222e565b86910bc81fd",
+      "bytes": 200
+    },
+    "quad_position_tie.stages.bin": {
+      "sha256": "1179f73e684a84ef3a8ac06c5538eae72e5cf50fc189015ffccee7d90e6b8b36",
+      "bytes": 136
+    },
+    "quad_uv_diagonal.expected.bin": {
+      "sha256": "aa9d5cd84d1190edf465959920be335b3ea603602948131dacdb45bb11953150",
+      "bytes": 80
+    },
+    "quad_uv_diagonal.input.bin": {
+      "sha256": "6f301143be948b42c1c0fc656edfd1b0b99f0c5a6ad765821ed954664fa2fcf7",
+      "bytes": 200
+    },
+    "quad_uv_diagonal.stages.bin": {
+      "sha256": "52ac9bc5ba8bc1b97f3523ebb89eda22f5d0f2a2550ff26e25c959ab47fff60a",
+      "bytes": 136
+    }
+  }
+}

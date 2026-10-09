@@ -13,6 +13,13 @@ const uint GREEN @private = 1;
 const uint BLUE @private = 2;
 const uint ALPHA @private = 3;
 const uint CHANNEL_MAX @private = char::max;
+const char[4] DDS_CONTAINER_MAGIC @private = { 'D', 'D', 'S', ' ' };
+const char[12] KTX1_CONTAINER_MAGIC @private = {
+  0xAB, 'K', 'T', 'X', ' ', '1', '1', 0xBB, 0x0D, 0x0A, 0x1A, 0x0A,
+};
+const char[12] KTX2_CONTAINER_MAGIC @private = {
+  0xAB, 'K', 'T', 'X', ' ', '2', '0', 0xBB, 0x0D, 0x0A, 0x1A, 0x0A,
+};
 
 fn void? convert_materials(Importer* importer) @private {
     foreach (source : importer.scene.materials) {
@@ -58,11 +65,18 @@ fn material::Material? convert_material(Importer* importer, ufbx::Material* sour
     params.metallic = math::clamp(metallic, 0.0f, 1.0f);
     params.roughness = math::clamp(roughness, 0.0f, 1.0f);
     params.emissive = emissive;
+
     params.base_color_map = base_color_slot(importer, source)!;
     params.metallic_roughness_map = metallic_roughness_slot(importer, source, glossiness)!;
-    params.normal_map = texture_slot_for(importer, pbr.normal_map.texture, false)!;
+    params.normal_map = texture_slot_for(
+        importer: importer,
+        texture:  pbr.normal_map.texture,
+        srgb:     false,
+        semantic: normal_semantic(importer.options.normal_encoding),
+    )!;
     params.occlusion_map = texture_slot_for(importer, pbr.ambient_occlusion.texture, false)!;
     params.emissive_map = texture_slot_for(importer, pbr.emission_color.texture, true)!;
+
     return material::standard(params, common);
 }
 
@@ -86,10 +100,28 @@ fn bool finite_rgb(vector::Vec3 color) @private {
     return math::is_finite(color.x) && math::is_finite(color.y) && math::is_finite(color.z);
 }
 
-fn TextureSlot? texture_slot_for(Importer* importer, ufbx::Texture* texture, bool srgb) @private {
+fn TextureSemantic normal_semantic(NormalEncoding encoding) @private {
+    switch (encoding) {
+        case RGB: return TextureSemantic.NORMAL_RGB;
+        case RG: return TextureSemantic.NORMAL_RG;
+    }
+}
+
+fn TextureSlot? texture_slot_for(
+    Importer* importer,
+    ufbx::Texture* texture,
+    bool srgb,
+    TextureSemantic semantic = TextureSemantic.COLOR,
+) @private {
     if (!texture) return material::texture_slot();
     ufbx::Texture* file = file_texture(texture)!;
-    TextureId id = plain_texture(importer, file, srgb)!;
+    TextureId id = plain_texture(
+        importer: importer,
+        texture:  file,
+        srgb:     srgb,
+        semantic: semantic,
+    )!;
+
     return material::texture_slot(id, sampler_for(importer, file)!);
 }
 
@@ -153,21 +185,99 @@ fn image::Image? decode(Importer* importer, ufbx::Texture* texture, alloc::Alloc
     return decoded;
 }
 
-fn TextureId? plain_texture(Importer* importer, ufbx::Texture* texture, bool srgb) @private {
-    TextureId[] table = srgb ? importer.srgb_textures : importer.linear_textures;
+fn TextureId? plain_texture(
+    Importer* importer,
+    ufbx::Texture* texture,
+    bool srgb,
+    TextureSemantic semantic,
+) @private {
+    TextureId[] table = semantic == TextureSemantic.COLOR
+      ? (srgb ? importer.srgb_textures : importer.linear_textures)
+      : importer.normal_textures;
     if (!c3d::same_id(table[texture.typed_id], (TextureId){})) return table[texture.typed_id];
 
-    image::Image decoded = decode(importer, texture, importer.allocator)!;
+    char[] encoded = texture_bytes(importer, texture)!;
+
+    if (is_texture_container(encoded)) {
+        image::TextureContainerView container = image::parse_texture_container(
+            scratch:     tmem,
+            bytes:       encoded,
+            color_space: srgb ? image::ColorSpace.SRGB : image::ColorSpace.LINEAR,
+            semantic:    semantic,
+        )!;
+        container.desc.debug_name = "fbx_image";
+
+        String key = plain_texture_key(
+            importer: importer,
+            texture:  texture,
+            srgb:     srgb,
+            desc:     container.desc,
+        );
+
+        TextureId id;
+        if (container.desc.generate_mips) {
+            char[] source = container.levels[0].bytes;
+            char[] pixels = alloc::new_array(importer.allocator, char, (sz)source.len);
+            mem::copy(pixels.ptr, source.ptr, (sz)source.len);
+            id = importer.document.push_texture(container.desc, pixels, key);
+        } else {
+            id = importer.document.push_texture_mips(container.desc, container.levels[:container.level_count], key)!;
+        }
+
+        table[texture.typed_id] = id;
+
+        return id;
+    }
+
+    image::Image decoded = image::decode_image(importer.allocator, encoded)!;
+    defer catch image::destroy_image(&decoded);
+    if (decoded.format != RGBA8_UNORM) return c3d::ASSET_FORMAT_ERROR~;
+
     TextureDesc desc = material::texture_2d_desc(
         width:      decoded.width,
         height:     decoded.height,
         format:     srgb ? RGBA8_SRGB : RGBA8_UNORM,
         debug_name: "fbx_image",
     );
-    String key = string::tformat("%s#image/%d/%s", importer.key, texture.typed_id, srgb ? "srgb" : "linear");
+    desc.semantic = semantic;
+
+    String key = plain_texture_key(
+        importer: importer,
+        texture:  texture,
+        srgb:     srgb,
+        desc:     desc,
+    );
+
     TextureId id = importer.document.push_texture(desc, decoded.pixels, key);
+
     table[texture.typed_id] = id;
+
     return id;
+}
+
+fn bool is_texture_container(char[] bytes) @private {
+    if (bytes.len >= DDS_CONTAINER_MAGIC.len && bytes[:DDS_CONTAINER_MAGIC.len] == DDS_CONTAINER_MAGIC[..]) return true;
+    if (bytes.len < KTX1_CONTAINER_MAGIC.len) return false;
+
+    return bytes[:KTX1_CONTAINER_MAGIC.len] == KTX1_CONTAINER_MAGIC[..]
+      || bytes[:KTX2_CONTAINER_MAGIC.len] == KTX2_CONTAINER_MAGIC[..];
+}
+
+fn String plain_texture_key(
+    Importer* importer,
+    ufbx::Texture* texture,
+    bool srgb,
+    TextureDesc desc,
+) @private {
+    String role = srgb ? "srgb" : "linear";
+
+    switch (desc.semantic) {
+        case COLOR: break;
+        case NORMAL_RGB: role = string::tformat("normal_rgb/%d", desc.format.ordinal);
+        case NORMAL_RG: role = string::tformat("normal_rg/%d", desc.format.ordinal);
+    }
+
+    return string::tformat("%s#image/%d/%s", importer.key, texture.typed_id, role);
 }
 
 fn SamplerId? sampler_for(Importer* importer, ufbx::Texture* texture) @private {
