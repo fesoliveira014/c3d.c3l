@@ -183,6 +183,7 @@ python scripts/build.py --example cloth
 addons/c3d_physics.c3l/build/cloth.exe [--scene flag|cape|both] [--still] [--frames 300]
 c3c build cloth --path addons/c3d_physics.c3l -O3
 addons/c3d_physics.c3l/build/cloth.exe --benchmark --scene flag|cape|both [--still] [--ragdoll]
+addons/c3d_physics.c3l/build/cloth.exe --benchmark --trace software|hardware [--validation]
 ```
 
 Run from `addons/c3d_physics.c3l`, which locates the character model. The interactive scenes are a
@@ -195,9 +196,10 @@ collider guides drawn at the published body poses, TAA and motion blur. The cape
 meshes without attaching cloth.
 
 The benchmark renders one scene (the flag at 32×32 cells) at the default 4×8 settings to a
-1280×720 TAA and motion-blur view with 120 warm-up and 600 measured 60 Hz frames and Vulkan
-validation on; `--ragdoll` drops the character at the end of the warm-up. Windows, RTX 4090,
-C3 0.8.3 `-O3`, three runs each:
+1280×720 TAA and motion-blur view with 120 warm-up and 600 measured 60 Hz frames; `--ragdoll`
+drops the character at the end of the warm-up. Vulkan validation is off unless `--validation` is
+given; it inflates timings, so measure without it. The table below ran with validation on.
+Windows, RTX 4090, C3 0.8.3 `-O3`, three runs each:
 
 | Scene | Particles / constraints | Solve mean (p95), ms | Publication mean, ms | Geometry + history bytes per frame |
 | --- | --- | --- | --- | --- |
@@ -212,6 +214,13 @@ scene, fall into two clusters set by the adapter's clock state, not by the cloth
 0.335-0.349; both on 0.347-0.369; off 0.174, 0.315, 0.326). Within the lower cluster the flag
 costs under 0.01 ms; the on/off difference is below the run-to-run variability. Serial solving
 of both cloths stays under 2.2 ms per frame, so no parallel executor is proposed.
+
+`--trace software|hardware` marks the flag and cape traceable, turns on ray-traced sun shadows and
+prints, per frame as mean and maximum, `Stats.trace_build_ms`, the `TRACE_POSE` and
+`ACCELERATION_BUILD` GPU pass times, `blas_builds`, `blas_updates`, `tlas_builds`,
+`upload_bytes`, and the total trace work (`trace_work_ms`: CPU build plus the two GPU passes; its
+maximum is the sum of the separate maxima). `hardware` creates the renderer with ray queries and
+exits non-zero when the adapter lacks them. Without `--trace` the output is unchanged.
 
 The manual Vulkan acceptance renders real cloth through the TAA velocity debug output, on forward
 and deferred views: deformation velocity of a free-falling sheet under a still node matches the

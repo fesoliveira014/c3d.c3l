@@ -77,12 +77,25 @@ enum Scenario @local {
 const String[Scenario::len] SCENARIO_NAMES @local = { "flag", "cape", "both" };
 
 struct Options @local {
-    bool     benchmark;
-    bool     still;
-    bool     ragdoll;
-    Scenario scenario;
-    uint     frames;
-    String   capture_path;
+    bool      benchmark;
+    bool      still;
+    bool      ragdoll;
+    bool      traced;
+    bool      validation;
+    TraceKind trace_kind;
+    Scenario  scenario;
+    uint      frames;
+    String    capture_path;
+}
+
+struct Series @local {
+    double total;
+    double peak;
+}
+
+fn void Series.add(&self, double value) {
+    self.total += value;
+    self.peak = math::max(self.peak, value);
 }
 
 struct Character @local {
@@ -98,6 +111,7 @@ struct Demo @local {
     PhysicsWorld physics;
     Scenario     scenario;
     bool         simulated;
+    bool         traced;
     Node*        flag;
     uint         flag_columns;
     uint         flag_rows;
@@ -195,7 +209,7 @@ fn void? build_flag(Demo* demo) @local {
     pole.local.position = POLE_POSITION + (Vec3){ 0, POLE_HEIGHT * 0.5f, 0 };
     demo.flag = demo.scene.add_mesh(flag_geometry, flag_material, name: "flag")!;
     demo.flag.local.position = POLE_POSITION + (Vec3){ POLE_RADIUS, POLE_HEIGHT - 0.1f, 0 };
-    demo.scene.get(demo.flag, scene::Mesh).trace = false;
+    demo.scene.get(demo.flag, scene::Mesh).trace = demo.traced;
     demo.scene.add(demo.flag, grid_wind(
         columns: demo.flag_columns,
         rows:    demo.flag_rows,
@@ -284,7 +298,7 @@ fn void? build_character(Demo* demo) @local {
         name:     "cape",
     )!;
     character.cape.local = maths::transform_from_mat4(maths::inverse_affine(chest.world).mul(placement.to_mat4()));
-    scene.get(character.cape, scene::Mesh).trace = false;
+    scene.get(character.cape, scene::Mesh).trace = demo.traced;
     scene.add(character.cape, grid_wind(
         columns: CAPE_COLUMNS,
         rows:    CAPE_ROWS,
@@ -339,9 +353,11 @@ fn void? create_demo(
     uint flag_columns,
     uint flag_rows,
     bool simulated,
+    bool traced = false,
 ) @local {
     demo.scenario = scenario;
     demo.simulated = simulated;
+    demo.traced = traced;
     demo.flag_columns = flag_columns;
     demo.flag_rows = flag_rows;
     demo.assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
@@ -366,7 +382,9 @@ fn void? create_demo(
         ground_geometry = demo.assets.add_geometry(&ground, "cloth/ground")!;
     };
     Node* ground = demo.scene.add_mesh(ground_geometry, ground_material, name: "ground")!;
-    Node* sun = demo.scene.add_light(light::directional({ 1, 0.96f, 0.9f }, 3), name: "sun")!;
+    Light sun_light = light::directional({ 1, 0.96f, 0.9f }, 3);
+    sun_light.shadow.ray_traced = traced;
+    Node* sun = demo.scene.add_light(sun_light, name: "sun")!;
     sun.local.rotation = maths::look_rotation(((Vec3){ -0.4f, -1, -0.6f }).normalize(), { 0, 1, 0 });
     demo.scene.ambient_color = { 0.55f, 0.65f, 0.8f };
     demo.scene.ambient_intensity = 0.35f;
@@ -572,6 +590,30 @@ fn double mean(double[] samples) @local {
     return total / (double)samples.len;
 }
 
+fn void print_trace_report(
+    String path,
+    Series trace_build_ms,
+    Series pose_ms,
+    Series acceleration_ms,
+    Series trace_gpu_ms,
+    usz gpu_samples,
+) @local {
+    io::printfn("trace,%s", path);
+    io::printfn("trace_build_ms,mean,%.4f,max,%.4f", trace_build_ms.total / MEASURED_FRAMES, trace_build_ms.peak);
+    if (!gpu_samples) {
+        io::printn("trace_gpu_ms,unavailable");
+        return;
+    }
+    double samples = (double)gpu_samples;
+    io::printfn("trace_pose_ms,mean,%.4f,max,%.4f", pose_ms.total / samples, pose_ms.peak);
+    io::printfn("acceleration_build_ms,mean,%.4f,max,%.4f", acceleration_ms.total / samples, acceleration_ms.peak);
+    io::printfn(
+        "trace_work_ms,mean,%.4f,max_bound,%.4f",
+        trace_build_ms.total / MEASURED_FRAMES + trace_gpu_ms.total / samples,
+        trace_build_ms.peak + trace_gpu_ms.peak,
+    );
+}
+
 fn void? run_benchmark(Options options) @local {
     Demo demo;
     create_demo(
@@ -580,11 +622,26 @@ fn void? run_benchmark(Options options) @local {
         flag_columns: BENCHMARK_CELLS,
         flag_rows:    BENCHMARK_CELLS,
         simulated:    !options.still,
+        traced:       options.traced,
     )!;
     defer destroy_demo(&demo);
     demo.gusts = false;
-    Renderer renderer = render::create_renderer(mem, &demo.assets, { .validation = true, .gpu_timings = true })!;
+    bool hardware = options.traced && options.trace_kind == TraceKind.HARDWARE;
+    Renderer? created = render::create_renderer(
+        allocator: mem,
+        assets:    &demo.assets,
+        desc:      { .validation = options.validation, .gpu_timings = true, .ray_queries = hardware },
+    );
+    if (catch excuse = created) {
+        if (hardware) io::eprintn("Hardware tracing needs ray queries; this adapter or driver does not provide them.");
+        return excuse~;
+    }
+    Renderer renderer = created;
     defer render::destroy_renderer(&renderer);
+    if (hardware && !renderer.caps.ray_queries.enabled) {
+        io::eprintn("Hardware tracing needs ray queries; this adapter or driver does not provide them.");
+        return c3d::UNSUPPORTED~;
+    }
     RenderTargetId target = render::create_render_target(
         renderer: &renderer,
         desc: render::render_target_desc(WIDTH, HEIGHT, PixelFormat.RGBA8_SRGB),
@@ -599,6 +656,14 @@ fn void? run_benchmark(Options options) @local {
     usz gpu_samples;
     ulong upload_bytes;
     ulong history_bytes;
+    Series trace_build_ms;
+    Series blas_builds;
+    Series blas_updates;
+    Series tlas_builds;
+    Series upload_series;
+    Series pose_ms;
+    Series acceleration_ms;
+    Series trace_gpu_ms;
     ulong first_measured = renderer.frame_index + WARMUP_FRAMES;
     ulong last_gpu_frame = ulong::max;
     uint total_frames = WARMUP_FRAMES + MEASURED_FRAMES + render::FRAMES_IN_FLIGHT + 1;
@@ -616,6 +681,11 @@ fn void? run_benchmark(Options options) @local {
             publish_ms[frame - WARMUP_FRAMES] = demo.physics.cloth_stats.publish_seconds * 1000;
             upload_bytes += renderer.stats.upload_bytes;
             history_bytes += renderer.stats.vertex_history_bytes;
+            trace_build_ms.add(renderer.stats.trace_build_ms);
+            blas_builds.add(renderer.stats.blas_builds);
+            blas_updates.add(renderer.stats.blas_updates);
+            tlas_builds.add(renderer.stats.tlas_builds);
+            upload_series.add(renderer.stats.upload_bytes);
         }
         Stats* stats = &renderer.stats;
         if (stats.gpu_timing_state == GpuTimingState.READY && stats.gpu_frame_index != last_gpu_frame
@@ -623,6 +693,11 @@ fn void? run_benchmark(Options options) @local {
             double total;
             foreach (pass_ms : stats.gpu_pass_ms) total += pass_ms;
             gpu_ms[gpu_samples++] = total;
+            float pose = stats.gpu_pass_ms[Pass.TRACE_POSE.ordinal];
+            float acceleration = stats.gpu_pass_ms[Pass.ACCELERATION_BUILD.ordinal];
+            pose_ms.add(pose);
+            acceleration_ms.add(acceleration);
+            trace_gpu_ms.add((double)(pose + acceleration));
             last_gpu_frame = stats.gpu_frame_index;
         }
     }
@@ -646,6 +721,20 @@ fn void? run_benchmark(Options options) @local {
         io::printfn("gpu_frame_ms,samples,%d,median,%.4f,p95,%.4f", gpu_samples,
             percentile(gpu_ms[:gpu_samples], 0.5), percentile(gpu_ms[:gpu_samples], PERCENTILE_95));
     }
+    if (options.traced) {
+        print_trace_report(
+            path:            hardware ? "hardware" : "software",
+            trace_build_ms:  trace_build_ms,
+            pose_ms:         pose_ms,
+            acceleration_ms: acceleration_ms,
+            trace_gpu_ms:    trace_gpu_ms,
+            gpu_samples:     gpu_samples,
+        );
+        io::printfn("trace_blas_builds,mean,%.4f,max,%.0f", blas_builds.total / MEASURED_FRAMES, blas_builds.peak);
+        io::printfn("trace_blas_updates,mean,%.4f,max,%.0f", blas_updates.total / MEASURED_FRAMES, blas_updates.peak);
+        io::printfn("trace_tlas_builds,mean,%.4f,max,%.0f", tlas_builds.total / MEASURED_FRAMES, tlas_builds.peak);
+        io::printfn("trace_upload_bytes,mean,%.0f,max,%.0f", upload_series.total / MEASURED_FRAMES, upload_series.peak);
+    }
     return renderer.log.check_validation();
 }
 
@@ -665,6 +754,18 @@ fn Options? parse_options(String[] args) @local {
             options.still = true;
         } else if (args[index] == "--ragdoll") {
             options.ragdoll = true;
+        } else if (args[index] == "--validation") {
+            options.validation = true;
+        } else if (args[index] == "--trace" && index + 1 < args.len) {
+            String kind = args[++index];
+            if (kind == "software") {
+                options.trace_kind = TraceKind.SOFTWARE;
+            } else if (kind == "hardware") {
+                options.trace_kind = TraceKind.HARDWARE;
+            } else {
+                return c3d::INVALID_ARGUMENT~;
+            }
+            options.traced = true;
         } else if (args[index] == "--scene" && index + 1 < args.len) {
             options.scenario = scenario_named(args[++index])!;
         } else if (args[index] == "--frames" && index + 1 < args.len) {
@@ -675,6 +776,7 @@ fn Options? parse_options(String[] args) @local {
             return c3d::INVALID_ARGUMENT~;
         }
     }
+    if ((options.traced || options.validation) && !options.benchmark) return c3d::INVALID_ARGUMENT~;
     if (options.ragdoll && (!options.benchmark || options.scenario == FLAG)) return c3d::INVALID_ARGUMENT~;
     return options;
 }
@@ -682,7 +784,9 @@ fn Options? parse_options(String[] args) @local {
 fn int main(String[] args) {
     Options? options = parse_options(args);
     if (catch excuse = options) {
-        io::eprintn("Use cloth [--scene flag|cape|both] [--still] [--benchmark [--ragdoll] [--capture path.rgba]] [--frames count].");
+        io::eprintn("Use cloth [--scene flag|cape|both] [--still] [--frames count]");
+        io::eprintn("  [--benchmark [--ragdoll] [--capture path.rgba] [--trace software|hardware] [--validation]]");
+        io::eprintn("Run timings without --validation; the validation layers inflate them.");
         return 1;
     }
     fault excuse = options.benchmark ? @catch(run_benchmark(options)) : @catch(run_interactive(options));
