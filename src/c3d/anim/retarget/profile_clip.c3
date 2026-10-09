@@ -17,6 +17,7 @@ fn void? validate_profile_clip(
         || clip.targets.len > uint::max || clip.tracks.len > uint::max) {
         return profile_failure(diagnostic, c3d::ASSET_FORMAT_ERROR, RetargetReason.INVALID_CLIP)~;
     }
+
     foreach (node : clip.targets) {
         if (node >= data.source_nodes.len) {
             return profile_failure(
@@ -27,10 +28,12 @@ fn void? validate_profile_clip(
             )~;
         }
     }
+
     foreach (&track : clip.tracks) {
         if (track.target >= clip.targets.len) {
             return profile_failure(diagnostic, c3d::ASSET_FORMAT_ERROR, RetargetReason.INVALID_CLIP)~;
         }
+
         uint node = clip.targets[track.target];
         validate_profile_track(
             track: track,
@@ -40,6 +43,7 @@ fn void? validate_profile_clip(
         )!;
         ProfileChannels* channel = &channels[node];
         bool duplicate;
+
         switch (track.path) {
             case TRANSLATION:
                 duplicate = channel.translation != null;
@@ -57,6 +61,7 @@ fn void? validate_profile_clip(
                         && clip.targets[previous.target] == node) duplicate = true;
                 }
         }
+
         if (duplicate) {
             return profile_failure(
                 diagnostic: diagnostic,
@@ -65,6 +70,7 @@ fn void? validate_profile_clip(
                 source_node: node,
             )~;
         }
+
         channel.tracked = true;
         uint destination = data.source_nodes[node].mapped;
         if (destination == RETARGET_NO_NODE) {
@@ -86,8 +92,10 @@ fn void? validate_profile_clip(
                 diagnostic: diagnostic,
             )!;
         }
-        if (track.path == TargetPath.SCALE && data.source_nodes[node].consumed) {
+
+        if (track.path == TargetPath.SCALE && data.source_nodes[node].requires_uniform_scale) {
             usz slot_count = track.interpolation == Interpolation.CUBIC_SPLINE ? anim::CUBIC_SLOTS_PER_KEY : 1;
+
             foreach (usz key, time : track.times) {
                 usz offset = (key * slot_count + (slot_count == 1 ? 0 : anim::CUBIC_SLOT_VALUE)) * 3;
                 Vec3 scale = { track.values[offset], track.values[offset + 1], track.values[offset + 2] };
@@ -102,6 +110,7 @@ fn void? validate_profile_clip(
             }
         }
     }
+
     foreach (index, event : clip.events) {
         if (!math::is_finite(event.time) || event.time < 0 || event.time > clip.duration
             || (index > 0 && event.time < clip.events[index - 1].time)) {
@@ -117,12 +126,15 @@ fn void? validate_profile_track(
     RetargetDiagnostic* diagnostic,
 ) @private {
     bool valid = track.times.len > 0 && track.times.len <= uint::max;
+
     foreach (index, time : track.times) {
         if (!math::is_finite(time) || time < 0 || time > duration
             || (index > 0 && time <= track.times[index - 1])) valid = false;
     }
+
     usz slots = track.interpolation == Interpolation.CUBIC_SPLINE ? anim::CUBIC_SLOTS_PER_KEY : 1;
     usz stride;
+
     switch (track.path) {
         case TRANSLATION:
         case SCALE:
@@ -134,7 +146,9 @@ fn void? validate_profile_track(
                 stride = track.values.len / (track.times.len * slots);
             }
     }
+
     valid = valid && stride > 0 && track.values.len == track.times.len * slots * stride;
+
     foreach (value : track.values) if (!math::is_finite(value)) valid = false;
     if (valid && track.path == TargetPath.ROTATION) {
         foreach (usz key, time : track.times) {
@@ -146,6 +160,7 @@ fn void? validate_profile_track(
             if (!profile_unit_rotation(rotation)) valid = false;
         }
     }
+
     if (!valid) {
         return profile_failure(
             diagnostic: diagnostic,
@@ -165,10 +180,12 @@ fn void? validate_profile_morph(
 ) @private {
     uint stride = track.stride();
     bool found;
+
     foreach (&mesh : target.meshes) {
         if (mesh.node != destination) continue;
         found = true;
         if (mesh.default_morph_weights.len == stride) continue;
+
         return profile_failure(
             diagnostic: diagnostic,
             excuse: c3d::ASSET_FORMAT_ERROR,
@@ -177,6 +194,7 @@ fn void? validate_profile_morph(
             target_node: destination,
         )~;
     }
+
     if (!found) {
         return profile_failure(
             diagnostic: diagnostic,

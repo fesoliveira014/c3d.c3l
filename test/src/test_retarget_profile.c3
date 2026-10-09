@@ -33,9 +33,11 @@ fn void*? ProfileFaultAllocator.acquire(
     sz alignment,
 ) @dynamic {
     if (self.remaining <= 0) return mem::OUT_OF_MEMORY~;
+
     self.remaining--;
     void* allocation = self.backing.acquire(size, init_type, alignment)!;
     self.outstanding++;
+
     return allocation;
 }
 
@@ -46,7 +48,9 @@ fn void*? ProfileFaultAllocator.resize(
     sz alignment,
 ) @dynamic {
     if (self.remaining <= 0) return mem::OUT_OF_MEMORY~;
+
     self.remaining--;
+
     return self.backing.resize(pointer, new_size, alignment);
 }
 
@@ -74,17 +78,21 @@ fn ProfileRig profile_rig(uint source_count, uint target_count) @local {
         .desc = retarget::RETARGET_PROFILE_DESC_DEFAULT,
         .clip = { .name = "authored_motion", .duration = 1 },
     };
+
     rig.desc.mapping_mode = ProfileMappingMode.BY_INDEX;
     rig.desc.source_calibration = alloc::new_array(tmem, Quat, source_count);
     rig.desc.target_calibration = alloc::new_array(tmem, Quat, target_count);
     rig.desc.source_calibration[..] = maths::TRANSFORM_IDENTITY.rotation;
     rig.desc.target_calibration[..] = maths::TRANSFORM_IDENTITY.rotation;
+
     foreach (&node : rig.source) *node = {
         .parent = -1, .name = "joint", .local = maths::TRANSFORM_IDENTITY, .visible = true,
     };
+
     foreach (&node : rig.target.nodes) *node = {
         .parent = -1, .name = "joint", .local = maths::TRANSFORM_IDENTITY, .visible = true,
     };
+
     return rig;
 }
 
@@ -107,8 +115,10 @@ fn Track profile_input_track(
         .times = alloc::new_array(tmem, float, times.len),
         .values = alloc::new_array(tmem, float, values.len),
     };
+
     track.times[..] = times[..];
     track.values[..] = values[..];
+
     return track;
 }
 
@@ -146,7 +156,9 @@ fn AnimationClip profile_bake(
 fn Track* profile_output_track(AnimationClip* clip, uint node, TargetPath path) @local {
     foreach (&track : clip.tracks) {
         if (clip.targets[track.target] == node && track.path == path) return track;
+
     }
+
     return null;
 }
 
@@ -157,6 +169,7 @@ fn Transform profile_sample_node(
     float time,
 ) @local {
     Transform local = target.nodes[node].local;
+
     foreach (&track : clip.tracks) {
         if (clip.targets[track.target] != node || track.path == TargetPath.MORPH_WEIGHTS) continue;
         float[4] sample;
@@ -167,6 +180,7 @@ fn Transform profile_sample_node(
             cursor: &cursor,
             out: sample[:track.stride()],
         );
+
         switch (track.path) {
             case TRANSLATION: local.position = { sample[0], sample[1], sample[2] };
             case ROTATION: local.rotation = { .v = { sample[0], sample[1], sample[2], sample[3] } };
@@ -174,6 +188,7 @@ fn Transform profile_sample_node(
             case MORPH_WEIGHTS: break;
         }
     }
+
     return local;
 }
 
@@ -189,6 +204,7 @@ fn Mat4 profile_sample_world(
         node: node,
         time: time,
     ).to_mat4();
+
     for (int parent = target.nodes[node].parent; parent >= 0; parent = target.nodes[parent].parent) {
         matrix = profile_sample_node(
             clip: clip,
@@ -197,6 +213,7 @@ fn Mat4 profile_sample_world(
             time: time,
         ).to_mat4().mul(matrix);
     }
+
     return matrix;
 }
 
@@ -209,11 +226,13 @@ fn void profile_expect_rotation(Mat4 world, Quat expected, float radians = 0.000
     double dot;
     double actual_length;
     double expected_length;
+
     foreach (index, component : actual.v) {
         dot += (double)component * expected.v[index];
         actual_length += (double)component * component;
         expected_length += (double)expected.v[index] * expected.v[index];
     }
+
     dot = math::abs(dot) / math::sqrt(actual_length * expected_length);
     double angle = 2 * math::acos(math::clamp(dot, 0.0, 1.0));
     assert(angle <= radians);
@@ -224,63 +243,201 @@ fn void profile_expect_scale(Mat4 world, float expected) @local {
     assert((transform.scale - (Vec3){ expected, expected, expected }).length() <= PROFILE_POSITION_EPSILON);
 }
 
+fn double profile_source_angle(float degrees, double fraction) @local {
+    double half_angle = (double)degrees * math::PI / 360;
+    double sine = fraction * math::sin(half_angle);
+    double cosine = 1 - fraction + fraction * math::cos(half_angle);
+
+    return 360 * math::atan2(sine, cosine) / math::PI;
+}
+
+fn float profile_subkey_angle(
+    float degrees,
+    float rate,
+    uint key,
+    float fraction,
+) @local {
+    double first = profile_source_angle(degrees, (double)key / rate);
+    double last = profile_source_angle(degrees, (double)(key + 1) / rate);
+    double half_step = (last - first) * math::PI / 360;
+    double sine = (double)fraction * math::sin(half_step);
+    double cosine = 1 - (double)fraction + (double)fraction * math::cos(half_step);
+
+    return (float)(first + 360 * math::atan2(sine, cosine) / math::PI);
+}
+
+fn void profile_expect_anatomical_pose(
+    AnimationClip* clip,
+    ProfileRig* rig,
+    float time,
+    float degrees,
+    float position_epsilon,
+    float rotation_radians,
+) @local {
+    Quat expected = profile_turn({ 0, 0, 1 }, degrees);
+    Mat4 forearm = profile_sample_world(
+        clip: clip,
+        target: &rig.target,
+        node: 1,
+        time: time,
+    );
+    Mat4 wrist = profile_sample_world(
+        clip: clip,
+        target: &rig.target,
+        node: 2,
+        time: time,
+    );
+    double angle = (double)degrees * math::PI / 180;
+    profile_expect_position(forearm, { 2, 0, 0 }, position_epsilon);
+    profile_expect_rotation(forearm, expected, rotation_radians);
+    profile_expect_position(wrist, {
+        2 + (float)(2 * math::cos(angle)), (float)(2 * math::sin(angle)), 0,
+    }, position_epsilon);
+    profile_expect_rotation(wrist, expected, rotation_radians);
+    profile_expect_scale(forearm, 1);
+    profile_expect_scale(wrist, 1);
+}
+
+fn void profile_expect_facing_pose(
+    AnimationClip* clip,
+    ProfileRig* rig,
+    float yaw,
+    float time,
+    float degrees,
+    float position_epsilon,
+    float rotation_radians,
+) @local {
+    double facing = ((double)yaw + 20) * math::PI / 180;
+    double facing_sine = math::sin(facing);
+    double facing_cosine = math::cos(facing);
+    Quat target_calibration = profile_turn({ 0, 1, 0 }, 90).mul(profile_turn({ 0, 0, 1 }, -45));
+    Quat expected = profile_turn({ (float)facing_cosine, 0, -(float)facing_sine }, degrees)
+      .mul(target_calibration);
+    Mat4 child = profile_sample_world(
+        clip: clip,
+        target: &rig.target,
+        node: 1,
+        time: time,
+    );
+    Mat4 tip = profile_sample_world(
+        clip: clip,
+        target: &rig.target,
+        node: 2,
+        time: time,
+    );
+    double angle = (double)degrees * math::PI / 180;
+    double sine = math::sin(angle);
+    double cosine = math::cos(angle);
+    double length = math::sqrt(2.0);
+    profile_expect_position(child, { 3, 2, -1 }, position_epsilon);
+    profile_expect_rotation(child, expected, rotation_radians);
+    profile_expect_position(tip, {
+        3 + (float)(length * facing_sine * (-sine + facing_cosine * (1 - cosine))),
+        2 + (float)(length * (-cosine + facing_cosine * sine)),
+        -1 + (float)(length * (-cosine - facing_cosine * sine - facing_sine * facing_sine * (1 - cosine))),
+    }, position_epsilon);
+    profile_expect_rotation(tip, expected, rotation_radians);
+    profile_expect_scale(child, 1);
+    profile_expect_scale(tip, 1);
+}
+
 fn void test_profile_anatomical_calibration_preserves_target_bone_proportions() @test {
     @pool() {
         foreach (bool reverse : (bool[2]){ false, true }) {
-            ProfileRig rig = profile_rig(3, 3);
-            rig.source[1].parent = 0;
-            rig.source[1].local = profile_transform({ 1, 0, 0 }, profile_turn({ 0, 0, 1 }, reverse ? -45 : 0));
-            rig.source[2].parent = 1;
-            rig.source[2].local.position = { 1, 0, 0 };
-            rig.target.nodes[1].parent = 0;
-            rig.target.nodes[1].local = profile_transform({ 2, 0, 0 }, profile_turn({ 0, 0, 1 }, reverse ? 0 : -45));
-            rig.target.nodes[2].parent = 1;
-            rig.target.nodes[2].local.position = { 2, 0, 0 };
-            profile_map(&rig, (NodeIndexMapping[2]){
-                { .source_node = 0, .target_node = 0 }, { .source_node = 1, .target_node = 1 },
-            }[..]);
-            Quat end = profile_turn({ 0, 0, 1 }, 30);
-            profile_clip(&rig, (uint[1]){ 1 }[..], (Track[1]){
-                profile_input_track(
-                    target: 0,
-                    path: TargetPath.ROTATION,
-                    times: (float[2]){ 0, 1 }[..],
-                    values: (float[8]){ 0, 0, 0, 1, end.v.x, end.v.y, end.v.z, end.v.w }[..],
-                ),
-            }[..]);
-            Transform source_rest = rig.source[1].local;
-            Transform target_rest = rig.target.nodes[1].local;
-            RetargetProfile profile = profile_prepare(&rig);
-            defer retarget::destroy_retarget_profile(&profile);
-            AnimationClip result = profile_bake(&rig, &profile);
-            defer asset::free_clip(mem, &result);
-            profile_expect_rotation(profile_sample_world(
-                clip: &result,
-                target: &rig.target,
-                node: 1,
-                time: 0,
-            ), quaternion::IDENTITY);
-            profile_expect_position(profile_sample_world(
-                clip: &result,
-                target: &rig.target,
-                node: 2,
-                time: 1,
-            ), { 2 + math::sqrt(3.0f), 1, 0 });
-            profile_expect_position(profile_sample_world(
-                clip: &result,
-                target: &rig.target,
-                node: 2,
-                time: 0.5f,
-            ), {
-                2 + (math::sqrt(6.0f) + math::sqrt(2.0f)) / 2,
-                (math::sqrt(6.0f) - math::sqrt(2.0f)) / 2,
-                0,
-            });
-            assert(profile_output_track(&result, 2, TargetPath.ROTATION) == null);
-            assert(profile_output_track(&result, 1, TargetPath.TRANSLATION) == null);
-            assert(rig.source[1].local.rotation.v == source_rest.rotation.v);
-            assert(rig.target.nodes[1].local.rotation.v == target_rest.rotation.v);
-            assert(rig.target.nodes[2].local.position == (Vec3){ 2, 0, 0 });
+            foreach (degrees : (float[2]){ 30, -30 }) {
+                ProfileRig rig = profile_rig(3, 3);
+                rig.source[1].parent = 0;
+                rig.source[1].local = profile_transform({ 1, 0, 0 }, profile_turn({ 0, 0, 1 }, reverse ? -45 : 0));
+
+                rig.source[2].parent = 1;
+                rig.source[2].local.position = { 1, 0, 0 };
+
+                rig.target.nodes[1].parent = 0;
+                rig.target.nodes[1].local = profile_transform({ 2, 0, 0 }, profile_turn({ 0, 0, 1 }, reverse ? 0 : -45));
+
+                rig.target.nodes[2].parent = 1;
+                rig.target.nodes[2].local.position = { 2, 0, 0 };
+                profile_map(&rig, (NodeIndexMapping[2]){
+                    { .source_node = 0, .target_node = 0 }, { .source_node = 1, .target_node = 1 },
+                }[..]);
+                Quat end = profile_turn({ 0, 0, 1 }, degrees);
+                if (reverse) end = -end;
+                profile_clip(&rig, (uint[1]){ 1 }[..], (Track[1]){
+                    profile_input_track(
+                        target: 0,
+                        path: TargetPath.ROTATION,
+                        times: (float[2]){ 0, 1 }[..],
+                        values: (float[8]){ 0, 0, 0, 1, end.v.x, end.v.y, end.v.z, end.v.w }[..],
+                    ),
+                }[..]);
+                Transform source_rest = rig.source[1].local;
+                Transform target_rest = rig.target.nodes[1].local;
+                RetargetProfile profile = profile_prepare(&rig);
+
+                defer retarget::destroy_retarget_profile(&profile);
+
+                foreach (rate : (float[2]){ 60, 120 }) {
+                    RetargetBakeOptions options = retarget::RETARGET_BAKE_OPTIONS_DEFAULT;
+                    options.bake_rate = rate;
+                    AnimationClip result = profile_bake(&rig, &profile, options);
+
+                    defer asset::free_clip(mem, &result);
+                    Track* rotation = profile_output_track(&result, 1, TargetPath.ROTATION);
+                    assert(rotation != null && rotation.times.len == (usz)rate + 1);
+
+                    foreach (time : (float[5]){ 0, 0.25f, 0.5f, 0.75f, 1 }) profile_expect_anatomical_pose(
+                        clip: &result,
+                        rig: &rig,
+                        time: time,
+                        degrees: (float)profile_source_angle(degrees, (double)time),
+                        position_epsilon: PROFILE_POSITION_EPSILON,
+                        rotation_radians: 0.0001f,
+                    );
+                    float direction = degrees < 0 ? -1.0f : 1.0f;
+                    profile_expect_position(profile_sample_world(
+                        clip: &result,
+                        target: &rig.target,
+                        node: 2,
+                        time: 1,
+                    ), { 2 + math::sqrt(3.0f), direction, 0 });
+                    profile_expect_position(profile_sample_world(
+                        clip: &result,
+                        target: &rig.target,
+                        node: 2,
+                        time: 0.5f,
+                    ), {
+                        2 + (math::sqrt(6.0f) + math::sqrt(2.0f)) / 2,
+                        direction * (math::sqrt(6.0f) - math::sqrt(2.0f)) / 2,
+                        0,
+                    });
+
+                    for (uint key = 0; key < (uint)rate; key++) {
+                        foreach (fraction : (float[3]){ 0.25f, 0.5f, 0.75f }) {
+                            float time = ((float)key + fraction) / rate;
+                            profile_expect_anatomical_pose(
+                                clip: &result,
+                                rig: &rig,
+                                time: time,
+                                degrees: profile_subkey_angle(
+                                    degrees: degrees,
+                                    rate: rate,
+                                    key: key,
+                                    fraction: fraction,
+                                ),
+                                position_epsilon: PROFILE_SUBKEY_EPSILON,
+                                rotation_radians: 0.25f * (float)math::PI / 180,
+                            );
+                        }
+                    }
+
+                    assert(profile_output_track(&result, 2, TargetPath.ROTATION) == null);
+                    assert(profile_output_track(&result, 1, TargetPath.TRANSLATION) == null);
+                }
+
+                assert(rig.source[1].local.rotation.v == source_rest.rotation.v);
+                assert(rig.target.nodes[1].local.rotation.v == target_rest.rotation.v);
+                assert(rig.target.nodes[2].local.position == (Vec3){ 2, 0, 0 });
+            }
         }
     };
 }
@@ -288,17 +445,24 @@ fn void test_profile_anatomical_calibration_preserves_target_bone_proportions() 
 fn void test_profile_facing_calibration_and_noncommuting_target_parents() @test {
     @pool() {
         foreach (yaw : (float[4]){ 0, 90, 180, 37 }) {
-            ProfileRig rig = profile_rig(2, 2);
+            ProfileRig rig = profile_rig(2, 3);
             rig.source[0].local.rotation = profile_turn({ 0, 1, 0 }, 20);
+
             rig.source[1].parent = 0;
             rig.source[1].local.rotation = profile_turn({ 0, 0, 1 }, -10);
+
             rig.target.nodes[0].local.rotation = profile_turn({ 0, 1, 0 }, 90);
+
             rig.target.nodes[1].parent = 0;
-            rig.target.nodes[1].local.rotation = profile_turn({ 0, 0, 1 }, 10);
+            rig.target.nodes[1].local = profile_transform({ 1, 2, 3 }, profile_turn({ 0, 0, 1 }, 10));
+
+            rig.target.nodes[2].parent = 1;
+            rig.target.nodes[2].local.position = { 2, 0, 0 };
             rig.desc.source_calibration[0] = rig.source[0].local.rotation;
             rig.desc.source_calibration[1] = profile_turn({ 0, 0, 1 }, 45);
             rig.desc.target_calibration[0] = profile_turn({ 1, 0, 0 }, 80);
             rig.desc.target_calibration[1] = profile_turn({ 0, 0, 1 }, -45);
+            rig.desc.target_calibration[2] = profile_turn({ 0, 1, 0 }, 70);
             rig.desc.facing = profile_turn({ 0, 1, 0 }, yaw).to_matrix();
             profile_map(&rig, (NodeIndexMapping[1]){ { .source_node = 1, .target_node = 1 } }[..]);
             Quat start = rig.desc.source_calibration[1];
@@ -314,26 +478,66 @@ fn void test_profile_facing_calibration_and_noncommuting_target_parents() @test 
                     }[..],
                 ),
             }[..]);
+            Transform source_rest = rig.source[1].local;
+            Transform target_rest = rig.target.nodes[1].local;
             RetargetProfile profile = profile_prepare(&rig);
+
             defer retarget::destroy_retarget_profile(&profile);
-            AnimationClip result = profile_bake(&rig, &profile);
-            defer asset::free_clip(mem, &result);
-            Quat target_calibration = rig.target.nodes[0].local.rotation.mul(rig.desc.target_calibration[1]);
-            profile_expect_rotation(profile_sample_world(
-                clip: &result,
-                target: &rig.target,
-                node: 1,
-                time: 0,
-            ), target_calibration);
-            float angle = (yaw + 20) * (float)math::PI / 180;
-            Quat expected = profile_turn({ math::cos(angle), 0, -math::sin(angle) }, 30).mul(target_calibration);
-            profile_expect_rotation(profile_sample_world(
-                clip: &result,
-                target: &rig.target,
-                node: 1,
-                time: 1,
-            ), expected);
-            assert(profile_output_track(&result, 0, TargetPath.ROTATION) == null);
+
+            foreach (rate : (float[2]){ 60, 120 }) {
+                RetargetBakeOptions options = retarget::RETARGET_BAKE_OPTIONS_DEFAULT;
+                options.bake_rate = rate;
+                AnimationClip result = profile_bake(&rig, &profile, options);
+
+                defer asset::free_clip(mem, &result);
+                Track* rotation = profile_output_track(&result, 1, TargetPath.ROTATION);
+                assert(rotation != null && rotation.times.len == (usz)rate + 1);
+
+                foreach (time : (float[5]){ 0, 0.25f, 0.5f, 0.75f, 1 }) profile_expect_facing_pose(
+                    clip: &result,
+                    rig: &rig,
+                    yaw: yaw,
+                    time: time,
+                    degrees: (float)profile_source_angle(30, (double)time),
+                    position_epsilon: PROFILE_POSITION_EPSILON,
+                    rotation_radians: 0.0001f,
+                );
+
+                for (uint key = 0; key < (uint)rate; key++) {
+                    foreach (fraction : (float[3]){ 0.25f, 0.5f, 0.75f }) {
+                        float time = ((float)key + fraction) / rate;
+                        profile_expect_facing_pose(
+                            clip: &result,
+                            rig: &rig,
+                            yaw: yaw,
+                            time: time,
+                            degrees: profile_subkey_angle(
+                                degrees: 30,
+                                rate: rate,
+                                key: key,
+                                fraction: fraction,
+                            ),
+                            position_epsilon: PROFILE_SUBKEY_EPSILON,
+                            rotation_radians: 0.25f * (float)math::PI / 180,
+                        );
+                    }
+                }
+
+                profile_expect_rotation(profile_sample_world(
+                    clip: &result,
+                    target: &rig.target,
+                    node: 0,
+                    time: 0.5f,
+                ), profile_turn({ 0, 1, 0 }, 90));
+                assert(profile_output_track(&result, 0, TargetPath.ROTATION) == null);
+                assert(profile_output_track(&result, 2, TargetPath.ROTATION) == null);
+                assert(profile_output_track(&result, 1, TargetPath.TRANSLATION) == null);
+                assert(profile_output_track(&result, 2, TargetPath.TRANSLATION) == null);
+            }
+
+            assert(rig.source[1].local.rotation.v == source_rest.rotation.v);
+            assert(rig.target.nodes[1].local.rotation.v == target_rest.rotation.v);
+            assert(rig.target.nodes[2].local.position == (Vec3){ 2, 0, 0 });
         }
     };
 }
@@ -341,13 +545,18 @@ fn void test_profile_facing_calibration_and_noncommuting_target_parents() @test 
 fn ProfileRig profile_ancestor_rig() @local {
     ProfileRig rig = profile_rig(3, 3);
     rig.source[0].local = profile_transform({ 1, 2, 3 }, quaternion::IDENTITY, 2);
+
     rig.source[1].parent = 0;
     rig.source[1].local = profile_transform({ 1, 0, 0 }, quaternion::IDENTITY, 0.5f);
+
     rig.source[2].parent = 1;
     rig.source[2].local = profile_transform({ 0, 1, 0 }, quaternion::IDENTITY, 3);
+
     rig.target.nodes[0].local = profile_transform({ -2, 1, 4 }, profile_turn({ 0, 0, 1 }, 90), 2);
+
     rig.target.nodes[1].parent = 0;
     rig.target.nodes[1].local = profile_transform({ 1, -2.5f, -0.5f }, profile_turn({ 0, 0, 1 }, -90), 1.5f);
+
     rig.target.nodes[2].parent = 1;
     rig.target.nodes[2].local.position = { 0, 0, 1 };
     rig.desc.target_calibration[0] = rig.target.nodes[0].local.rotation;
@@ -365,6 +574,7 @@ fn ProfileRig profile_ancestor_rig() @local {
     Quat pitch = profile_turn({ 1, 0, 0 }, 90);
     Quat roll = profile_turn({ 0, 0, 1 }, 90);
     Quat[3] turns = { yaw, pitch, roll };
+
     foreach (uint index, turn : turns) rig.clip.tracks[index] = profile_input_track(
         target: index,
         path: TargetPath.ROTATION,
@@ -383,6 +593,7 @@ fn ProfileRig profile_ancestor_rig() @local {
         times: (float[2]){ 0, 3 }[..],
         values: (float[6]){ 0.5f, 0.5f, 0.5f, 0.25f, 0.25f, 0.25f }[..],
     );
+
     return rig;
 }
 
@@ -390,8 +601,10 @@ fn void test_profile_composes_unmapped_animated_ancestors_and_affine_motion_chai
     @pool() {
         ProfileRig rig = profile_ancestor_rig();
         RetargetProfile profile = profile_prepare(&rig);
+
         defer retarget::destroy_retarget_profile(&profile);
         AnimationClip result = profile_bake(&rig, &profile);
+
         defer asset::free_clip(mem, &result);
         Mat4 parent = profile_sample_world(
             clip: &result,
@@ -455,14 +668,20 @@ fn void test_profile_composes_unmapped_animated_ancestors_and_affine_motion_chai
 fn ProfileRig profile_carrier_rig() @local {
     ProfileRig rig = profile_rig(2, 5);
     rig.source[1].parent = 0;
+
     rig.target.nodes[0].local = profile_transform({ 1, 0, 2 }, profile_turn({ 0, 1, 0 }, 90), 2);
+
     rig.target.nodes[1].parent = 0;
     rig.target.nodes[1].local = profile_transform({ 1, 2, 0 }, profile_turn({ 0, 0, 1 }, 90), 0.5f);
+
     rig.target.nodes[2].parent = 0;
     rig.target.nodes[2].local.position = { -1, 0, 2 };
+
     rig.target.nodes[3].parent = 1;
     rig.target.nodes[3].local.position = { 0, 1, 0 };
+
     rig.target.nodes[4].parent = 1;
+
     foreach (index, &node : rig.target.nodes) rig.desc.target_calibration[index] = node.local.rotation;
     profile_map(&rig, (NodeIndexMapping[2]){
         { .source_node = 0, .target_node = 1 }, { .source_node = 1, .target_node = 4 },
@@ -484,6 +703,7 @@ fn ProfileRig profile_carrier_rig() @local {
             values: (float[6]){ 0, 0, 0, 0.5f, 0, -0.25f }[..],
         ),
     }[..]);
+
     return rig;
 }
 
@@ -491,17 +711,22 @@ fn void test_profile_carrier_compensates_each_branch_once() @test {
     @pool() {
         ProfileRig rig = profile_carrier_rig();
         RetargetProfile profile = profile_prepare(&rig);
+
         defer retarget::destroy_retarget_profile(&profile);
         AnimationClip keep = profile_bake(&rig, &profile);
+
         defer asset::free_clip(mem, &keep);
         RetargetBakeOptions options = retarget::RETARGET_BAKE_OPTIONS_DEFAULT;
         options.root_motion = RootMotion.EXTRACT;
         AnimationClip extract = profile_bake(&rig, &profile, options);
+
         defer asset::free_clip(mem, &extract);
         options.root_motion = RootMotion.STRIP_XZ;
         AnimationClip strip = profile_bake(&rig, &profile, options);
+
         defer asset::free_clip(mem, &strip);
         Vec3[4] expected = { { 1, 4, 0 }, { 5, 0, 4 }, { 1, 4, 1 }, { 1.5f, 4, -0.25f } };
+
         foreach (uint index, position : expected) {
             uint node = index + 1;
             profile_expect_position(profile_sample_world(
@@ -523,6 +748,7 @@ fn void test_profile_carrier_compensates_each_branch_once() @test {
                 time: 1,
             ), position - (Vec3){ 0.5f, 0, -0.25f });
         }
+
         assert((profile_sample_node(
             clip: &extract,
             target: &rig.target,
@@ -545,6 +771,7 @@ fn void test_profile_carrier_compensates_each_branch_once() @test {
         ).position - (Vec3){ -1.125f, 0, 1.75f }).length()
             <= PROFILE_POSITION_EPSILON);
         assert(profile_output_track(&extract, 3, TargetPath.TRANSLATION) == null);
+
         foreach (&track : extract.tracks) assert(track.times.len == 61 && track.interpolation == Interpolation.LINEAR);
     };
 }
@@ -552,7 +779,9 @@ fn void test_profile_carrier_compensates_each_branch_once() @test {
 fn ProfileRig profile_forest_rig(float yaw = 90) @local {
     ProfileRig rig = profile_rig(1, 2);
     rig.source[0].local.position = { 0, 2, 0 };
+
     rig.target.nodes[0].local = profile_transform({ 2, 1, -3 }, profile_turn({ 1, 0, 0 }, 30));
+
     rig.target.nodes[1].local = profile_transform({ -1, 1, 2 }, profile_turn({ 0, 1, 0 }, 37), 0.5f);
     rig.desc.target_calibration[0] = rig.target.nodes[0].local.rotation;
     rig.desc.facing = profile_turn({ 0, 1, 0 }, yaw).to_matrix();
@@ -574,6 +803,7 @@ fn ProfileRig profile_forest_rig(float yaw = 90) @local {
             values: (float[8]){ 0, 0, 0, 1, turn.v.x, turn.v.y, turn.v.z, turn.v.w }[..],
         ),
     }[..]);
+
     return rig;
 }
 
@@ -595,7 +825,9 @@ fn RetargetDiagnostic profile_creation_failure(
         assert(excuse == expected_fault);
         assert(diagnostic.reason == expected_reason);
     }
+
     assert(failed);
+
     return diagnostic;
 }
 
@@ -621,7 +853,9 @@ fn RetargetDiagnostic profile_bake_failure(
         assert(excuse == expected_fault);
         assert(diagnostic.reason == expected_reason);
     }
+
     assert(failed);
+
     return diagnostic;
 }
 
@@ -630,13 +864,16 @@ fn void test_profile_virtual_forest_strips_all_roots_and_retains_initial_placeme
         foreach (yaw : (float[2]){ 90, 180 }) {
             ProfileRig rig = profile_forest_rig(yaw);
             RetargetProfile profile = profile_prepare(&rig);
+
             defer retarget::destroy_retarget_profile(&profile);
             RetargetBakeOptions options = retarget::RETARGET_BAKE_OPTIONS_DEFAULT;
             options.root_translation_scale = 0.5f;
             AnimationClip keep = profile_bake(&rig, &profile, options);
+
             defer asset::free_clip(mem, &keep);
             options.root_motion = RootMotion.STRIP_XZ;
             AnimationClip strip = profile_bake(&rig, &profile, options);
+
             defer asset::free_clip(mem, &strip);
             Vec3 horizontal = yaw == 90 ? (Vec3){ 1.5f, 0, -0.5f } : (Vec3){ -0.5f, 0, -1.5f };
             profile_expect_position(profile_sample_world(
@@ -690,16 +927,19 @@ fn void test_profile_virtual_forest_strips_all_roots_and_retains_initial_placeme
                 });
             }
         }
+
         ProfileRig rig = profile_forest_rig();
         rig.clip.tracks[0].values[0] = 1;
         rig.clip.tracks[0].values[2] = 3;
         rig.clip.tracks[0].values[3] = 2;
         rig.clip.tracks[0].values[5] = 6;
         RetargetProfile profile = profile_prepare(&rig);
+
         defer retarget::destroy_retarget_profile(&profile);
         RetargetBakeOptions options = retarget::RETARGET_BAKE_OPTIONS_DEFAULT;
         options.root_motion = RootMotion.STRIP_XZ;
         AnimationClip strip = profile_bake(&rig, &profile, options);
+
         defer asset::free_clip(mem, &strip);
         profile_expect_position(profile_sample_world(
             clip: &strip,
@@ -717,8 +957,10 @@ fn void test_profile_index_mapping_is_authoritative_for_duplicate_names() @test 
             { .source_node = 0, .target_node = 2 }, { .source_node = 1, .target_node = 0 },
         }[..]);
         RetargetProfile profile = profile_prepare(&rig);
+
         defer retarget::destroy_retarget_profile(&profile);
         AnimationClip result = profile_bake(&rig, &profile);
+
         defer asset::free_clip(mem, &result);
         assert(profile_output_track(&result, 0, TargetPath.ROTATION) != null);
         assert(profile_output_track(&result, 2, TargetPath.ROTATION) != null);
@@ -766,16 +1008,23 @@ fn void test_profile_name_mapping_uses_unique_exact_names_then_canonical_fallbac
     @pool() {
         ProfileRig rig = profile_rig(3, 3);
         rig.source[0].name = "source:Hips";
+
         rig.source[1].name = "source:Arm";
+
         rig.source[2].name = "helper";
+
         rig.target.nodes[0].name = "hips";
+
         rig.target.nodes[1].name = "Elbow";
+
         rig.target.nodes[2].name = "unused";
         rig.desc.mapping_mode = ProfileMappingMode.BY_NAME;
         rig.desc.name_map = (NameMapping[1]){ { .source = "source:Arm", .target = "Elbow" } }[..];
         RetargetProfile profile = profile_prepare(&rig);
+
         defer retarget::destroy_retarget_profile(&profile);
         AnimationClip result = profile_bake(&rig, &profile);
+
         defer asset::free_clip(mem, &result);
         assert(result.tracks.len == 2);
         rig.desc.name_map[0].source = "absent";
@@ -796,6 +1045,7 @@ fn void test_profile_exact_fingerprint_rejects_template_changes() @test {
     @pool() {
         ProfileRig rig = profile_forest_rig();
         RetargetProfile profile = profile_prepare(&rig);
+
         defer retarget::destroy_retarget_profile(&profile);
         RetargetDiagnostic diagnostic;
         String source_name = rig.source[0].name;
@@ -808,6 +1058,7 @@ fn void test_profile_exact_fingerprint_rejects_template_changes() @test {
         );
         assert(diagnostic.source_node == 0 && diagnostic.target_node == retarget::RETARGET_NO_NODE);
         rig.source[0].name = source_name;
+
         rig.target.nodes[1].local.position.x += 1;
         diagnostic = profile_bake_failure(
             rig: &rig,
@@ -846,6 +1097,7 @@ fn void test_profile_exact_fingerprint_rejects_template_changes() @test {
         rig.source[0].local.scale = { 1, 1, 1 };
         rig.target.meshes = (ModelMesh[1]){ { .node = 0, .material = { .index = 2 } } }[..];
         AnimationClip compatible = profile_bake(&rig, &profile);
+
         defer asset::free_clip(mem, &compatible);
         assert(compatible.duration == rig.clip.duration);
     };
@@ -866,6 +1118,7 @@ fn void test_profile_invalid_descriptors_and_carriers_have_precise_reasons() @te
         );
         assert(diagnostic.source_node == 1);
         rig.desc.source_calibration[1] = quaternion::IDENTITY;
+
         foreach (Mat4 basis : (Mat4[4]){
             profile_turn({ 1, 0, 0 }, 90).to_matrix(),
             maths::TRANSFORM_IDENTITY.to_mat4().scale({ -1, 1, 1 }),
@@ -875,11 +1128,13 @@ fn void test_profile_invalid_descriptors_and_carriers_have_precise_reasons() @te
             rig.desc.facing = basis;
             profile_creation_failure(&rig, c3d::INVALID_ARGUMENT, RetargetReason.INVALID_FACING_BASIS);
         }
+
         rig.desc.facing = matrix::IDENTITY4;
         rig.source[0].local.scale = { 1, 2, 1 };
         diagnostic = profile_creation_failure(&rig, c3d::INVALID_ARGUMENT, RetargetReason.INVALID_STATIC_TRANSFORM);
         assert(diagnostic.source_node == 0);
         rig.source[0].local.scale = { 1, 1, 1 };
+
         rig.target.nodes[0].local.rotation = profile_turn({ 1, 0, 0 }, 10);
         diagnostic = profile_creation_failure(&rig, c3d::INVALID_ARGUMENT, RetargetReason.INVALID_MOTION_CARRIER);
         assert(diagnostic.target_node == 0);
@@ -898,6 +1153,7 @@ fn void test_profile_clip_validation_and_partial_unmatched_policy() @test {
     @pool() {
         ProfileRig rig = profile_ancestor_rig();
         RetargetProfile profile = profile_prepare(&rig);
+
         defer retarget::destroy_retarget_profile(&profile);
         uint track_target = rig.clip.tracks[0].target;
         rig.clip.tracks[0].target = 99;
@@ -938,6 +1194,7 @@ fn void test_profile_clip_validation_and_partial_unmatched_policy() @test {
             ),
         }[..]);
         RetargetProfile partial_profile = profile_prepare(&partial);
+
         defer retarget::destroy_retarget_profile(&partial_profile);
         diagnostic = profile_bake_failure(
             rig: &partial,
@@ -949,6 +1206,7 @@ fn void test_profile_clip_validation_and_partial_unmatched_policy() @test {
         RetargetBakeOptions options = retarget::RETARGET_BAKE_OPTIONS_DEFAULT;
         options.allow_partial = true;
         AnimationClip accepted = profile_bake(&partial, &partial_profile, options);
+
         defer asset::free_clip(mem, &accepted);
         assert(accepted.tracks.len == 1);
     };
@@ -959,7 +1217,9 @@ fn void test_profile_cadence_includes_zero_tiny_and_nonintegral_endpoints() @tes
         ProfileRig rig = profile_rig(1, 1);
         profile_map(&rig, (NodeIndexMapping[1]){ { .source_node = 0, .target_node = 0 } }[..]);
         RetargetProfile profile = profile_prepare(&rig);
+
         defer retarget::destroy_retarget_profile(&profile);
+
         foreach (rate : (float[3]){ 30, 60, 120 }) {
             foreach (duration : (float[6]){ 0, 0.000001f, 1, 1.013f, (60 + 0.0005f) / 60, (60 + 0.0015f) / 60 }) {
                 rig.clip.duration = duration;
@@ -980,11 +1240,13 @@ fn void test_profile_cadence_includes_zero_tiny_and_nonintegral_endpoints() @tes
                 RetargetBakeOptions options = retarget::RETARGET_BAKE_OPTIONS_DEFAULT;
                 options.bake_rate = rate;
                 AnimationClip result = profile_bake(&rig, &profile, options);
+
                 defer asset::free_clip(mem, &result);
                 Track* rotation = profile_output_track(&result, 0, TargetPath.ROTATION);
                 uint intervals = duration == 0 ? 0 : (uint)math::max(1.0, math::ceil((double)duration * rate - 0.001));
                 assert(rotation.times.len == (usz)intervals + 1);
                 assert(rotation.times[0] == 0 && rotation.times[^1] == duration);
+
                 for (usz key = 1; key < rotation.times.len; key++) {
                     assert(rotation.times[key] > rotation.times[key - 1]);
                     float[] before = rotation.values[(key - 1) * 4:4];
@@ -996,6 +1258,7 @@ fn void test_profile_cadence_includes_zero_tiny_and_nonintegral_endpoints() @tes
                 }
             }
         }
+
         RetargetBakeOptions invalid = retarget::RETARGET_BAKE_OPTIONS_DEFAULT;
         invalid.bake_rate = 0;
         profile_bake_failure(
@@ -1062,13 +1325,17 @@ fn void test_profile_key_and_subkey_goldens_at_thirty_sixty_and_one_twenty_hertz
     @pool() {
         ProfileRig rig = profile_ancestor_rig();
         RetargetProfile profile = profile_prepare(&rig);
+
         defer retarget::destroy_retarget_profile(&profile);
+
         foreach (rate : (float[3]){ 30, 60, 120 }) {
             RetargetBakeOptions options = retarget::RETARGET_BAKE_OPTIONS_DEFAULT;
             options.bake_rate = rate;
             AnimationClip result = profile_bake(&rig, &profile, options);
+
             defer asset::free_clip(mem, &result);
             Track* track = profile_output_track(&result, 1, TargetPath.TRANSLATION);
+
             foreach (time : track.times) profile_expect_ancestor_pose(
                 clip: &result,
                 rig: &rig,
@@ -1077,6 +1344,7 @@ fn void test_profile_key_and_subkey_goldens_at_thirty_sixty_and_one_twenty_hertz
                 rotation_radians: 0.0001f,
             );
             if (rate < 60) continue;
+
             for (usz key = 1; key < track.times.len; key++) {
                 foreach (fraction : (float[3]){ 0.25f, 0.5f, 0.75f }) {
                     float time = track.times[key - 1] + (track.times[key] - track.times[key - 1]) * fraction;
@@ -1117,14 +1385,17 @@ fn void test_profile_copied_scale_morph_and_events_keep_interpolation_and_owners
         }[..]);
         rig.clip.events = (ClipEvent[2]){ { .time = 0, .id = 7 }, { .time = 0.5f, .id = 9 } }[..];
         RetargetProfile profile = profile_prepare(&rig);
+
         defer retarget::destroy_retarget_profile(&profile);
         AnimationClip result = profile_bake(&rig, &profile);
+
         defer asset::free_clip(mem, &result);
         Track* scale = profile_output_track(&result, 0, TargetPath.SCALE);
         Track* morph = profile_output_track(&result, 0, TargetPath.MORPH_WEIGHTS);
         assert(scale.interpolation == Interpolation.STEP && scale.times.len == 2);
         assert(morph.interpolation == Interpolation.CUBIC_SPLINE && morph.values.len == 12);
         assert(scale.values.ptr != rig.clip.tracks[0].values.ptr && morph.values.ptr != rig.clip.tracks[1].values.ptr);
+
         foreach (index, value : morph.values) assert(value == rig.clip.tracks[1].values[index]);
         rig.clip.tracks[0].values[0] = 99;
         rig.clip.tracks[1].values[0] = 99;
@@ -1156,6 +1427,7 @@ fn void test_profile_owns_preparation_and_failure_preserves_existing_resource_by
         rig.desc.target_calibration = target_calibration;
         TrackingAllocator tracker;
         tracker.init(mem);
+
         defer tracker.free();
         RetargetProfile profile = retarget::create_retarget_profile(
             allocator: &tracker,
@@ -1171,6 +1443,7 @@ fn void test_profile_owns_preparation_and_failure_preserves_existing_resource_by
         mapping[0].target_node = 99;
         source_calibration[0] = {};
         target_calibration[0] = {};
+
         alloc::free(mem, mapping.ptr);
         alloc::free(mem, source_calibration.ptr);
         alloc::free(mem, target_calibration.ptr);
@@ -1178,11 +1451,15 @@ fn void test_profile_owns_preparation_and_failure_preserves_existing_resource_by
         rig.desc.source_calibration = {};
         rig.desc.target_calibration = {};
         profile_creation_failure(&rig, c3d::INVALID_ARGUMENT, RetargetReason.INVALID_CALIBRATION);
+
         foreach (index, value : captured) assert(((char*)profile.data)[index] == value);
         AnimationClip first = profile_bake(&rig, &profile);
+
         defer asset::free_clip(mem, &first);
         AnimationClip second = profile_bake(&rig, &profile);
+
         defer asset::free_clip(mem, &second);
+
         foreach (index, value : captured) assert(((char*)profile.data)[index] == value);
         retarget::destroy_retarget_profile(&profile);
         assert(!profile.data && tracker.allocation_count() == 0 && tracker.allocated() == 0);
@@ -1207,6 +1484,8 @@ fn void test_profile_owns_preparation_and_failure_preserves_existing_resource_by
 fn void test_profile_failed_sample_frees_every_partial_clip_allocation() @test {
     @pool() {
         ProfileRig rig = profile_rig(1, 1);
+        rig.desc.source_motion_node = 0;
+        rig.desc.target_motion_node = 0;
         profile_map(&rig, (NodeIndexMapping[1]){ { .source_node = 0, .target_node = 0 } }[..]);
         profile_clip(&rig, (uint[1]){ 0 }[..], (Track[1]){
             profile_input_track(
@@ -1221,10 +1500,13 @@ fn void test_profile_failed_sample_frees_every_partial_clip_allocation() @test {
             ),
         }[..]);
         RetargetProfile profile = profile_prepare(&rig);
+
         defer retarget::destroy_retarget_profile(&profile);
         TrackingAllocator tracker;
         tracker.init(mem);
+
         defer tracker.free();
+
         for (uint attempt = 0; attempt < 100; attempt++) {
             RetargetDiagnostic diagnostic;
             if (catch excuse = retarget::retarget_with_profile(
@@ -1241,8 +1523,10 @@ fn void test_profile_failed_sample_frees_every_partial_clip_allocation() @test {
             } else {
                 assert(false, "expected unsupported sampled scale");
             }
+
             assert(tracker.allocation_count() == 0 && tracker.allocated() == 0);
         }
+
         assert(rig.clip.tracks[0].values[6] == -10 && rig.source[0].local.scale == (Vec3){ 1, 1, 1 });
     };
 }
@@ -1263,14 +1547,17 @@ fn void test_profile_runtime_extract_consumes_carrier_once_and_clips_outlive_pro
                 .max_geometries = 1, .max_textures = 8, .max_materials = 1, .max_samplers = 8,
                 .max_models = 1, .max_skeletons = 1, .max_clips = 2,
             });
+
             defer asset::destroy_asset_store(&assets);
             ModelTemplate template = { .nodes = alloc::new_array(mem, NodeTemplate, rig.target.nodes.len) };
             template.nodes[..] = rig.target.nodes[..];
+
             foreach (&node : template.nodes) node.name = node.name.copy(mem);
             ModelId model_id = assets.add_model_owned(&template)!!;
             ClipId kept_clip = assets.add_clip_owned(&keep)!!;
             ClipId extracted_clip = assets.add_clip_owned(&extract)!!;
             Scene scene = scene::create_scene(mem, { .max_nodes = 20 });
+
             defer scene::destroy_scene(&scene);
             Node* kept_root = model::instantiate(&assets, &scene, model_id)!!;
             Node* extracted_root = model::instantiate(&assets, &scene, model_id)!!;
@@ -1285,18 +1572,21 @@ fn void test_profile_runtime_extract_consumes_carrier_once_and_clips_outlive_pro
             )!!;
             kept.action(kept_action).loop = false;
             extracted.action(extracted_action).loop = false;
+
             for (uint frame = 0; frame < rate; frame++) {
                 anim::update(&assets, &scene, 1.0f / rate);
                 anim::apply_root_motion(extracted_root, extracted.root_motion);
                 scene.update_world();
                 ModelInstance* kept_instance = scene.get(kept_root, ModelInstance);
                 ModelInstance* extracted_instance = scene.get(extracted_root, ModelInstance);
+
                 for (uint node = 1; node < rig.target.nodes.len; node++) {
                     Vec3 kept_position = maths::translation(kept_instance.present_node(node).world);
                     Vec3 extracted_position = maths::translation(extracted_instance.present_node(node).world);
                     assert((kept_position - extracted_position).length() <= PROFILE_POSITION_EPSILON);
                 }
             }
+
             Vec3 last_root = extracted_root.local.position;
             anim::update(&assets, &scene, 0);
             assert(extracted.root_motion.translation.length() <= 1e-6f);
@@ -1318,8 +1608,10 @@ fn void test_profile_unmapped_ancestor_translation_contributes_once() @test {
         );
         rig.clip.tracks = tracks;
         RetargetProfile profile = profile_prepare(&rig);
+
         defer retarget::destroy_retarget_profile(&profile);
         AnimationClip result = profile_bake(&rig, &profile);
+
         defer asset::free_clip(mem, &result);
         profile_expect_position(profile_sample_world(
             clip: &result,
@@ -1343,7 +1635,7 @@ fn void test_profile_unmapped_ancestor_translation_contributes_once() @test {
     };
 }
 
-fn void test_profile_carrier_split_preserves_anatomical_yaw() @test {
+fn void test_profile_carrier_split_retains_desired_yaw_and_extracts_pure_y_twist() @test {
     @pool() {
         ProfileRig rig = profile_carrier_rig();
         Track[] tracks = alloc::new_array(tmem, Track, 2);
@@ -1357,10 +1649,12 @@ fn void test_profile_carrier_split_preserves_anatomical_yaw() @test {
         );
         rig.clip.tracks = tracks;
         RetargetProfile profile = profile_prepare(&rig);
+
         defer retarget::destroy_retarget_profile(&profile);
         RetargetBakeOptions options = retarget::RETARGET_BAKE_OPTIONS_DEFAULT;
         options.root_motion = RootMotion.EXTRACT;
         AnimationClip result = profile_bake(&rig, &profile, options);
+
         defer asset::free_clip(mem, &result);
         Quat expected = profile_turn({ 0, 1, 0 }, 120).mul(profile_turn({ 0, 0, 1 }, 90));
         profile_expect_rotation(profile_sample_world(
@@ -1369,13 +1663,25 @@ fn void test_profile_carrier_split_preserves_anatomical_yaw() @test {
             node: 4,
             time: 1,
         ), expected);
-        assert(profile_output_track(&result, 0, TargetPath.ROTATION) == null);
-        assert(profile_sample_node(
+        Track* carrier_rotation = profile_output_track(&result, 0, TargetPath.ROTATION);
+        assert(carrier_rotation != null && profile_output_track(&result, 0, TargetPath.SCALE) == null);
+
+        foreach (usz key, time : carrier_rotation.times) {
+            assert(carrier_rotation.values[key * 4] == 0 && carrier_rotation.values[key * 4 + 2] == 0);
+        }
+
+        profile_expect_rotation(profile_sample_world(
             clip: &result,
             target: &rig.target,
             node: 0,
             time: 1,
-        ).rotation.v == rig.target.nodes[0].local.rotation.v);
+        ), profile_turn({ 0, 1, 0 }, 120));
+        profile_expect_rotation(profile_sample_world(
+            clip: &result,
+            target: &rig.target,
+            node: 0,
+            time: 0,
+        ), rig.target.nodes[0].local.rotation);
     };
 }
 
@@ -1383,10 +1689,13 @@ fn void test_profile_reordered_names_and_source_count_invalidate_layout() @test 
     @pool() {
         ProfileRig rig = profile_forest_rig();
         rig.target.nodes[0].name = "motion";
+
         rig.target.nodes[1].name = "other_root";
         RetargetProfile profile = profile_prepare(&rig);
+
         defer retarget::destroy_retarget_profile(&profile);
         rig.target.nodes[0].name = "other_root";
+
         rig.target.nodes[1].name = "motion";
         RetargetDiagnostic diagnostic = profile_bake_failure(
             rig: &rig,
@@ -1396,6 +1705,7 @@ fn void test_profile_reordered_names_and_source_count_invalidate_layout() @test 
         );
         assert(diagnostic.target_node == 0);
         rig.target.nodes[0].name = "motion";
+
         rig.target.nodes[1].name = "other_root";
         NodeTemplate[] nodes = alloc::new_array(tmem, NodeTemplate, 2);
         nodes[0] = rig.source[0];
@@ -1425,6 +1735,7 @@ fn void test_profile_rejects_nonfinite_input_and_composed_reference_range() @tes
         profile_creation_failure(&rig, c3d::INVALID_ARGUMENT, RetargetReason.INVALID_STATIC_TRANSFORM);
         rig.source[0].local.position.x = 0;
         RetargetProfile profile = profile_prepare(&rig);
+
         defer retarget::destroy_retarget_profile(&profile);
         rig.clip.tracks[0].values[3] = nonfinite;
         profile_bake_failure(
@@ -1433,6 +1744,7 @@ fn void test_profile_rejects_nonfinite_input_and_composed_reference_range() @tes
             expected_fault: c3d::ASSET_FORMAT_ERROR,
             expected_reason: RetargetReason.INVALID_CLIP,
         );
+
         foreach (scale : (float[2]){ 1e30f, 1e-30f }) {
             ProfileRig extreme = profile_rig(2, 1);
             extreme.source[0].local.scale = { scale, scale, scale };
@@ -1451,6 +1763,7 @@ fn void test_profile_cadence_rejects_collapsed_float_key_indices() @test {
     @pool() {
         ProfileRig rig = profile_forest_rig();
         RetargetProfile profile = profile_prepare(&rig);
+
         defer retarget::destroy_retarget_profile(&profile);
         uint first = 1u << 24;
         uint second = first + 1;
@@ -1480,11 +1793,13 @@ fn void test_profile_allocation_fault_prefixes_release_outputs_and_preserve_inpu
     @pool() {
         ProfileRig rig = profile_carrier_rig();
         RetargetProfile profile = profile_prepare(&rig);
+
         defer retarget::destroy_retarget_profile(&profile);
         RetargetBakeOptions options = retarget::RETARGET_BAKE_OPTIONS_DEFAULT;
         options.root_motion = RootMotion.EXTRACT;
         uint failures;
         uint successes;
+
         for (uint budget = 0; budget < 24; budget++) {
             ProfileFaultAllocator allocator = { .backing = mem, .remaining = (sz)budget };
             RetargetDiagnostic diagnostic;
@@ -1506,8 +1821,10 @@ fn void test_profile_allocation_fault_prefixes_release_outputs_and_preserve_inpu
                 asset::free_clip(&allocator, &result);
                 assert(diagnostic.reason == RetargetReason.NONE);
             }
+
             assert(allocator.outstanding == 0);
         }
+
         assert(failures > 0 && successes > 0);
         ProfileFaultAllocator allocator = { .backing = mem };
         RetargetDiagnostic diagnostic;
@@ -1522,6 +1839,7 @@ fn void test_profile_allocation_fault_prefixes_release_outputs_and_preserve_inpu
             failed = true;
             assert(excuse == c3d::CAPACITY_EXCEEDED && diagnostic.reason == RetargetReason.CAPACITY_LIMIT);
         }
+
         assert(failed && allocator.outstanding == 0);
         assert(rig.clip.tracks[0].values[3] == 0.5f);
         assert(rig.target.nodes[0].local.position == (Vec3){ 1, 0, 2 });
@@ -1549,6 +1867,7 @@ fn void test_profile_split_position_overflow_is_transactional_and_unsupported() 
         displacement.clip.tracks[0].interpolation = Interpolation.STEP;
         displacement.clip.tracks[0].values[..] = (float[6]){ -10, 2, 0, 10, 2, 0 }[..];
         RetargetProfile profile = profile_prepare(&displacement);
+
         defer retarget::destroy_retarget_profile(&profile);
         RetargetBakeOptions options = retarget::RETARGET_BAKE_OPTIONS_DEFAULT;
         options.root_translation_scale = 2e37f;
@@ -1572,6 +1891,7 @@ fn void test_profile_split_position_overflow_is_transactional_and_unsupported() 
         compensation.clip.tracks[0].interpolation = Interpolation.STEP;
         compensation.clip.tracks[0].values[..] = (float[6]){ 0, 0, 0, 10, 0, 0 }[..];
         RetargetProfile carrier = profile_prepare(&compensation);
+
         defer retarget::destroy_retarget_profile(&carrier);
         options.root_motion = RootMotion.EXTRACT;
         diagnostic = profile_bake_failure(
@@ -1593,6 +1913,7 @@ fn void test_profile_split_position_overflow_is_transactional_and_unsupported() 
             .name = "unmapped_child",
             .local = profile_transform({ -2e38f, 0, 0 }),
         };
+
         descendant.target.nodes = nodes;
         Quat[] calibration = alloc::new_array(tmem, Quat, 3);
         calibration[..] = maths::TRANSFORM_IDENTITY.rotation;
@@ -1601,6 +1922,7 @@ fn void test_profile_split_position_overflow_is_transactional_and_unsupported() 
         descendant.clip.tracks[0].interpolation = Interpolation.STEP;
         descendant.clip.tracks[0].values[..] = (float[6]){ 0, 2, 0, 10, 2, 0 }[..];
         RetargetProfile forest = profile_prepare(&descendant);
+
         defer retarget::destroy_retarget_profile(&forest);
         options.root_motion = RootMotion.STRIP_XZ;
         diagnostic = profile_bake_failure(
@@ -1612,5 +1934,443 @@ fn void test_profile_split_position_overflow_is_transactional_and_unsupported() 
         );
         assert(diagnostic.source_node == 0 && diagnostic.target_node == 2);
         assert(descendant.target.nodes[2].local.position == (Vec3){ -2e38f, 0, 0 });
+    };
+}
+
+fn void test_profile_mapped_leaf_copies_nonuniform_nonmotion_scale_exactly() @test {
+    @pool() {
+        ProfileRig rig = profile_rig(2, 2);
+        rig.source[1].parent = 0;
+
+        rig.target.nodes[1].parent = 0;
+        rig.target.nodes[1].local.position = { 0, 1, 0 };
+        profile_map(&rig, (NodeIndexMapping[1]){ { .source_node = 1, .target_node = 1 } }[..]);
+        profile_clip(&rig, (uint[1]){ 1 }[..], (Track[1]){
+            profile_input_track(
+                target: 0,
+                path: TargetPath.SCALE,
+                times: (float[2]){ 0, 1 }[..],
+                values: (float[6]){ 1, 1, 1, 1, 2, 1 }[..],
+                interpolation: Interpolation.STEP,
+            ),
+        }[..]);
+        RetargetProfile profile = profile_prepare(&rig);
+
+        defer retarget::destroy_retarget_profile(&profile);
+        AnimationClip result = profile_bake(&rig, &profile);
+
+        defer asset::free_clip(mem, &result);
+        Track* copied = profile_output_track(&result, 1, TargetPath.SCALE);
+        assert(copied != null && copied.interpolation == Interpolation.STEP);
+        assert(copied.times == rig.clip.tracks[0].times && copied.values == rig.clip.tracks[0].values);
+        assert(copied.times.ptr != rig.clip.tracks[0].times.ptr && copied.values.ptr != rig.clip.tracks[0].values.ptr);
+        assert(profile_sample_node(
+            clip: &result,
+            target: &rig.target,
+            node: 1,
+            time: 1,
+        ).scale == (Vec3){ 1, 2, 1 });
+        profile_expect_rotation(profile_sample_world(
+            clip: &result,
+            target: &rig.target,
+            node: 1,
+            time: 1,
+        ), maths::TRANSFORM_IDENTITY.rotation);
+        assert(rig.source[1].local.scale == (Vec3){ 1, 1, 1 });
+        assert(rig.target.nodes[1].local.scale == (Vec3){ 1, 1, 1 });
+    };
+}
+
+fn void test_profile_copied_scale_remains_uniform_when_target_consumes_descendants() @test {
+    @pool() {
+        ProfileRig rig = profile_rig(2, 3);
+        rig.source[1].parent = 0;
+
+        rig.target.nodes[1].parent = 0;
+
+        rig.target.nodes[2].parent = 1;
+        profile_map(&rig, (NodeIndexMapping[2]){
+            { .source_node = 1, .target_node = 1 },
+            { .source_node = 0, .target_node = 2 },
+        }[..]);
+        profile_clip(&rig, (uint[1]){ 1 }[..], (Track[1]){
+            profile_input_track(
+                target: 0,
+                path: TargetPath.SCALE,
+                times: (float[2]){ 0, 1 }[..],
+                values: (float[6]){ 1, 1, 1, 1, 2, 1 }[..],
+            ),
+        }[..]);
+        RetargetProfile profile = profile_prepare(&rig);
+
+        defer retarget::destroy_retarget_profile(&profile);
+        RetargetDiagnostic diagnostic = profile_bake_failure(
+            rig: &rig,
+            profile: &profile,
+            expected_fault: c3d::UNSUPPORTED,
+            expected_reason: RetargetReason.UNSUPPORTED_ANIMATED_TRANSFORM,
+        );
+        assert(diagnostic.source_node == 1 && diagnostic.target_node == 1);
+    };
+}
+
+fn void test_profile_long_cadence_grid_emits_rounded_endpoint_once() @test {
+    @pool() {
+        const float DURATION = 512.16668701171875f;
+        const usz EXPECTED_KEYS = 30731;
+        ProfileRig rig = profile_rig(1, 1);
+        rig.clip.duration = DURATION;
+        profile_map(&rig, (NodeIndexMapping[1]){ { .source_node = 0, .target_node = 0 } }[..]);
+        RetargetProfile profile = profile_prepare(&rig);
+
+        defer retarget::destroy_retarget_profile(&profile);
+        AnimationClip result = profile_bake(&rig, &profile);
+
+        defer asset::free_clip(mem, &result);
+        Track* rotation = profile_output_track(&result, 0, TargetPath.ROTATION);
+        assert(rotation != null && rotation.times.len == EXPECTED_KEYS);
+        assert(rotation.times[0] == 0 && rotation.times[^1] == DURATION);
+        usz endpoints;
+
+        foreach (index, time : rotation.times) {
+            if (time == DURATION) endpoints++;
+            if (index > 0) assert(time > rotation.times[index - 1]);
+        }
+
+        assert(endpoints == 1 && rotation.times[^2] == 30729.0f / 60);
+    };
+}
+
+fn ProfileRig profile_turning_carrier_rig(float degrees, float facing) @local {
+    ProfileRig rig = profile_rig(2, 6);
+    rig.source[0].name = "source_hips";
+    rig.source[0].local.rotation = profile_turn({ 0, 1, 0 }, 20);
+    rig.desc.source_calibration[0] = rig.source[0].local.rotation;
+    rig.source[1].parent = 0;
+    rig.source[1].name = "source_leaf";
+    rig.source[1].local.position = { 1, 0, 0 };
+
+    rig.target.nodes[0].name = "static_ancestor";
+    rig.target.nodes[0].local = profile_transform({}, profile_turn({ 0, 1, 0 }, 30), 3);
+
+    rig.target.nodes[1].parent = 0;
+    rig.target.nodes[1].name = "carrier";
+    rig.target.nodes[1].local = profile_transform({ 1, 0, 2 }, profile_turn({ 0, 1, 0 }, 90), 2);
+
+    rig.target.nodes[2].parent = 1;
+    rig.target.nodes[2].name = "hips";
+    rig.target.nodes[2].local = profile_transform({ 0.5f, 1, 0 }, profile_turn({ 0, 0, 1 }, 90), 0.5f);
+
+    rig.target.nodes[3].parent = 1;
+    rig.target.nodes[3].name = "unmapped_branch";
+    rig.target.nodes[3].local.position = { -0.25f, 0, 0.25f };
+
+    rig.target.nodes[4].parent = 2;
+    rig.target.nodes[4].name = "unmapped_tip";
+    rig.target.nodes[4].local.position = { 0, 0.5f, 0 };
+
+    rig.target.nodes[5].parent = 2;
+    rig.target.nodes[5].name = "mapped_leaf";
+    rig.target.nodes[5].local.position = { 0, 1, 0 };
+
+    foreach (index, &node : rig.target.nodes) rig.desc.target_calibration[index] = node.local.rotation;
+    profile_map(&rig, (NodeIndexMapping[2]){
+        { .source_node = 0, .target_node = 2 }, { .source_node = 1, .target_node = 5 },
+    }[..]);
+    rig.desc.source_motion_node = 0;
+    rig.desc.target_motion_node = 2;
+    rig.desc.target_carrier = 1;
+    rig.desc.facing = profile_turn({ 0, 1, 0 }, facing).to_matrix();
+    rig.clip.duration = degrees / 90;
+    uint keys = (uint)rig.clip.duration + 1;
+    float[] times = alloc::new_array(tmem, float, keys);
+    float[] translations = alloc::new_array(tmem, float, (sz)keys * 3);
+    float[] rotations = alloc::new_array(tmem, float, (sz)keys * 4);
+
+    for (uint key = 0; key < keys; key++) {
+        times[key] = (float)key;
+        float phase = (float)key / rig.clip.duration;
+        translations[(usz)key * 3] = 0.5f * phase;
+        translations[(usz)key * 3 + 2] = -0.25f * phase;
+        Quat rotation = profile_turn({ 0, 1, 0 }, 20 + 90.0f * key);
+
+        foreach (usz component, value : rotation.v) rotations[(usz)key * 4 + component] = value;
+    }
+
+    profile_clip(&rig, (uint[1]){ 0 }[..], (Track[2]){
+        profile_input_track(
+            target: 0,
+            path: TargetPath.TRANSLATION,
+            times: times,
+            values: translations,
+        ),
+        profile_input_track(
+            target: 0,
+            path: TargetPath.ROTATION,
+            times: times,
+            values: rotations,
+        ),
+    }[..]);
+
+    return rig;
+}
+
+fn Vec3 profile_yaw_vector(Vec3 value, double degrees) @local {
+    double angle = degrees * math::PI / 180;
+    double sine = math::sin(angle);
+    double cosine = math::cos(angle);
+
+    return {
+        (float)(cosine * value.x + sine * value.z),
+        value.y,
+        (float)(-sine * value.x + cosine * value.z),
+    };
+}
+
+fn Vec3 profile_turning_carrier_reference() @local {
+    return profile_yaw_vector({ 3, 0, 6 }, 30);
+}
+
+fn void profile_expect_turning_pose(
+    AnimationClip* clip,
+    ProfileRig* rig,
+    float facing,
+    float time,
+    RootMotion mode,
+    bool subkey,
+) @local {
+    float position_epsilon = subkey ? PROFILE_SUBKEY_EPSILON : PROFILE_POSITION_EPSILON;
+    float rotation_epsilon = subkey ? 0.25f * (float)math::PI / 180 : 0.0001f;
+    Vec3 reference = profile_turning_carrier_reference();
+    double phase = (double)time / rig.clip.duration;
+    Vec3 horizontal = profile_yaw_vector({ (float)(0.5 * phase), 0, (float)(-0.25 * phase) }, facing);
+    float degrees = 90 * time;
+    Quat carrier_rotation = profile_turn({ 0, 1, 0 }, 120);
+    Quat motion_rotation = profile_turn({ 0, 1, 0 }, degrees).mul(carrier_rotation)
+      .mul(profile_turn({ 0, 0, 1 }, 90));
+    Vec3 motion_reference = reference + profile_yaw_vector({ 3, 6, 0 }, 120);
+    Vec3[4] positions = {
+        motion_reference + horizontal,
+        reference + profile_yaw_vector({ -1.5f, 0, 1.5f }, 120),
+        motion_reference + horizontal + profile_yaw_vector({ -1.5f, 0, 0 }, 120 + (double)degrees),
+        motion_reference + horizontal + profile_yaw_vector({ -3, 0, 0 }, 120 + (double)degrees),
+    };
+
+    foreach (uint offset, position : positions) {
+        uint node = offset + 2;
+        if (mode == RootMotion.STRIP_XZ) position -= horizontal;
+        Mat4 world = profile_sample_world(
+            clip: clip,
+            target: &rig.target,
+            node: node,
+            time: time,
+        );
+        profile_expect_position(world, position, position_epsilon);
+        profile_expect_rotation(world, node == 3 ? carrier_rotation : motion_rotation, rotation_epsilon);
+        profile_expect_scale(world, node == 3 ? 6 : 3);
+    }
+
+    Mat4 carrier = profile_sample_world(
+        clip: clip,
+        target: &rig.target,
+        node: 1,
+        time: time,
+    );
+    Vec3 carrier_position = mode == RootMotion.EXTRACT ? reference + horizontal : reference;
+    Quat carrier_facing = mode == RootMotion.EXTRACT
+      ? profile_turn({ 0, 1, 0 }, degrees).mul(carrier_rotation) : carrier_rotation;
+    profile_expect_position(carrier, carrier_position, position_epsilon);
+    profile_expect_rotation(carrier, carrier_facing, rotation_epsilon);
+    profile_expect_scale(carrier, 6);
+}
+
+fn void test_profile_extract_yaw_preserves_turning_worlds_and_compensates_unmapped_branches() @test {
+    @pool() {
+        foreach (degrees : (float[2]){ 90, 360 }) {
+            foreach (facing : (float[2]){ 0, 37 }) {
+                ProfileRig rig = profile_turning_carrier_rig(degrees, facing);
+                RetargetProfile profile = profile_prepare(&rig);
+
+                defer retarget::destroy_retarget_profile(&profile);
+
+                foreach (rate : (float[2]){ 60, 120 }) {
+                    RetargetBakeOptions options = retarget::RETARGET_BAKE_OPTIONS_DEFAULT;
+                    options.bake_rate = rate;
+                    AnimationClip keep = profile_bake(&rig, &profile, options);
+
+                    defer asset::free_clip(mem, &keep);
+                    options.root_motion = RootMotion.EXTRACT;
+                    AnimationClip extract = profile_bake(&rig, &profile, options);
+
+                    defer asset::free_clip(mem, &extract);
+                    options.root_motion = RootMotion.STRIP_XZ;
+                    AnimationClip strip = profile_bake(&rig, &profile, options);
+
+                    defer asset::free_clip(mem, &strip);
+                    Track* carrier_rotation = profile_output_track(&extract, 1, TargetPath.ROTATION);
+                    assert(carrier_rotation != null && carrier_rotation.interpolation == Interpolation.LINEAR);
+                    assert(profile_output_track(&extract, 1, TargetPath.SCALE) == null);
+                    assert(profile_output_track(&extract, 3, TargetPath.ROTATION) != null);
+                    assert(profile_output_track(&keep, 1, TargetPath.ROTATION) == null);
+                    assert(profile_output_track(&strip, 1, TargetPath.ROTATION) == null);
+                    double previous_angle = 90 * math::PI / 180;
+                    double total;
+
+                    foreach (usz key, time : carrier_rotation.times) {
+                        float[] values = carrier_rotation.values[key * 4:4];
+                        assert(values[0] == 0 && values[2] == 0);
+                        double current = 2 * math::atan2((double)values[1], (double)values[3]);
+                        if (key > 0) total += math::atan2(math::sin(current - previous_angle), math::cos(current - previous_angle));
+                        previous_angle = current;
+                    }
+
+                    assert(math::abs(total - degrees * math::PI / 180) < 0.0001);
+                    uint intervals = (uint)(rig.clip.duration * rate);
+
+                    for (uint key = 0; key <= intervals; key++) {
+                        float time = (float)key / rate;
+                        profile_expect_turning_pose(
+                            clip: &keep,
+                            rig: &rig,
+                            facing: facing,
+                            time: time,
+                            mode: RootMotion.KEEP,
+                            subkey: false,
+                        );
+                        profile_expect_turning_pose(
+                            clip: &extract,
+                            rig: &rig,
+                            facing: facing,
+                            time: time,
+                            mode: RootMotion.EXTRACT,
+                            subkey: false,
+                        );
+                        profile_expect_turning_pose(
+                            clip: &strip,
+                            rig: &rig,
+                            facing: facing,
+                            time: time,
+                            mode: RootMotion.STRIP_XZ,
+                            subkey: false,
+                        );
+                        if (key == intervals) continue;
+
+                        foreach (fraction : (float[3]){ 0.25f, 0.5f, 0.75f }) {
+                            time = ((float)key + fraction) / rate;
+                            profile_expect_turning_pose(
+                                clip: &keep,
+                                rig: &rig,
+                                facing: facing,
+                                time: time,
+                                mode: RootMotion.KEEP,
+                                subkey: true,
+                            );
+                            profile_expect_turning_pose(
+                                clip: &extract,
+                                rig: &rig,
+                                facing: facing,
+                                time: time,
+                                mode: RootMotion.EXTRACT,
+                                subkey: true,
+                            );
+                            profile_expect_turning_pose(
+                                clip: &strip,
+                                rig: &rig,
+                                facing: facing,
+                                time: time,
+                                mode: RootMotion.STRIP_XZ,
+                                subkey: true,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    };
+}
+
+fn void test_profile_runtime_turning_scaled_faced_subkeys_matches_keep() @test {
+    @pool() {
+        ProfileRig rig = profile_turning_carrier_rig(90, 37);
+        RetargetProfile profile = profile_prepare(&rig);
+        RetargetBakeOptions options = retarget::RETARGET_BAKE_OPTIONS_DEFAULT;
+        AnimationClip keep = profile_bake(&rig, &profile, options);
+        options.root_motion = RootMotion.EXTRACT;
+        AnimationClip extract = profile_bake(&rig, &profile, options);
+        retarget::destroy_retarget_profile(&profile);
+
+        AssetStore assets = asset::create_asset_store(mem, {
+            .max_geometries = 1, .max_textures = 8, .max_materials = 1, .max_samplers = 8,
+            .max_models = 1, .max_skeletons = 1, .max_clips = 2,
+        });
+
+        defer asset::destroy_asset_store(&assets);
+
+        ModelTemplate template = { .nodes = alloc::new_array(mem, NodeTemplate, rig.target.nodes.len) };
+        template.nodes[..] = rig.target.nodes[..];
+
+        foreach (&node : template.nodes) node.name = node.name.copy(mem);
+
+        ModelId model_id = assets.add_model_owned(&template)!!;
+        ClipId kept_clip = assets.add_clip_owned(&keep)!!;
+        ClipId extracted_clip = assets.add_clip_owned(&extract)!!;
+
+        Scene scene = scene::create_scene(mem, { .max_nodes = 20 });
+
+        defer scene::destroy_scene(&scene);
+        Node* kept_root = model::instantiate(&assets, &scene, model_id)!!;
+        Node* extracted_root = model::instantiate(&assets, &scene, model_id)!!;
+        Animator* kept = anim::add_animator(&scene, kept_root);
+        Animator* extracted = anim::add_animator(&scene, extracted_root);
+        extracted.root_node = 1;
+
+        AnimationActionId kept_action = kept.play(&assets, kept_clip)!!;
+        AnimationActionId extracted_action = extracted.play(
+            assets: &assets,
+            clip: extracted_clip,
+            desc: { .root_motion = RootMotion.EXTRACT, .root_yaw = true },
+        )!!;
+        kept.action(kept_action).loop = false;
+        extracted.action(extracted_action).loop = false;
+
+        float key_error;
+        float subkey_error;
+        uint key_frame;
+        uint key_node;
+
+        for (uint frame = 1; frame <= 240; frame++) {
+            anim::update(&assets, &scene, 1.0f / 240);
+            anim::apply_root_motion(extracted_root, extracted.root_motion);
+            scene.update_world();
+
+            ModelInstance* kept_instance = scene.get(kept_root, ModelInstance);
+            ModelInstance* extracted_instance = scene.get(extracted_root, ModelInstance);
+
+            for (uint node = 2; node < rig.target.nodes.len; node++) {
+                Node* expected = kept_instance.present_node(node);
+                Node* actual = extracted_instance.present_node(node);
+                float error = (maths::translation(expected.world) - maths::translation(actual.world)).length();
+                if (frame % 4 == 0) {
+                    if (error > key_error) {
+                        key_error = error;
+                        key_frame = frame;
+                        key_node = node;
+                    }
+                } else {
+                    subkey_error = math::max(subkey_error, error);
+                }
+
+                profile_expect_rotation(actual.world, maths::transform_from_mat4(expected.world).rotation);
+                profile_expect_scale(actual.world, node == 3 ? 6 : 3);
+            }
+        }
+
+        if (key_error > PROFILE_POSITION_EPSILON || subkey_error > PROFILE_SUBKEY_EPSILON) {
+            io::printfn("turning runtime residual: key=%f subkey=%f key_frame=%d key_node=%d",
+                key_error, subkey_error, key_frame, key_node);
+        }
+
+        assert(key_error <= PROFILE_POSITION_EPSILON);
+        assert(subkey_error <= PROFILE_SUBKEY_EPSILON);
     };
 }

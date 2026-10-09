@@ -213,7 +213,9 @@ transforms; their basis is captured at play. The instance root itself may use
 either transform space.
 
 `root_yaw = true` additionally removes the root rotation's Y twist and emits
-the turn; tilt remains in the pose. Extraction requires upright, positive,
+the turn about the root node's reference position; tilt remains in the pose.
+The reference position includes static ancestors in the instance root's frame.
+Extraction requires upright, positive,
 uniform scale through the captured basis and instance root, retained throughout
 playback. Arbitrary-up motion and animated root ancestors are unsupported.
 Missing root configuration, unsupported yaw basis, yaw with KEEP, and non-KEEP
@@ -224,6 +226,8 @@ translation through the node's authored rotation/scale, then postmultiplies the
 turn. Apply each delta once; it resets to zero translation and identity rotation
 every update. Reverse and multi-loop updates compose cycle transforms. A single
 action's consumed path is invariant under subdivision within sampling tolerance.
+Repeated float32 motion application accumulates position drift as travelled
+distance grows; use the carrier's frame when comparing its controlled pose.
 Masks and regular layer weights apply to motion as to pose; KEEP/STRIP root
 channels contribute zero motion with their weight. A half-weight extractor
 therefore emits half displacement. Yaw contributions use signed shortest turns;
@@ -539,19 +543,25 @@ cadence and root translation scale 1. Zero duration has one key; positive
 duration includes both endpoints. Copied non-motion scale, morph and event
 data retain independent ownership.
 
-`STRIP_XZ` removes the selected horizontal displacement. `EXTRACT` writes it
-once on the reserved static carrier and compensates every child branch. Select
-that carrier as `Animator.root_node`, leave `root_yaw` false, and consume its
-root motion once through `apply_root_motion`. Runtime extraction uses the
-existing Animator contract. Destroying the profile does not invalidate clips
-already baked or published.
+`STRIP_XZ` removes the selected horizontal displacement. `EXTRACT` writes that
+displacement and the motion node's world Y twist on the reserved carrier, and
+compensates every child branch. The carrier turns in place about its authored
+reference position, stays upright and retains its authored scale. Its yaw is
+relative to time zero and unwrapped through the clip. Static parent transforms
+are removed when writing its local tracks.
+
+Select that carrier as `Animator.root_node` and consume its root motion once
+through `apply_root_motion`. With `root_yaw = true`, extraction removes both
+translation and yaw from the mesh. With `root_yaw = false`, the turn stays in
+the mesh. Destroying the profile does not invalidate clips already baked or
+published.
 
 The default `retarget` example uses repository-authored T/A, facing, animated
 ancestor and carrier rigs, with expected and profiled poses shown side by side.
 It requires no external animation assets. `F` changes the fixture family,
 Space pauses, `A` toggles automatic family cycling and `I` toggles diagnostic
-lines. The carrier family shows `KEEP`, `STRIP_XZ` and `EXTRACT` over
-forward/reverse playback.
+lines. The carrier and turning families show `KEEP`, `STRIP_XZ` and `EXTRACT`,
+including both yaw settings, forward/reverse playback and loops.
 `--acceptance` samples between bake keys and completes every family;
 `--capture-dir=PATH` writes scene PNGs and `retarget-profile.csv` into an
 existing directory, and `--telemetry=PATH` selects a separate CSV.

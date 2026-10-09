@@ -220,15 +220,19 @@ fn void pin_root_sample(Action* action, uint track, float[] sample) @private {
 
 fn void publish_root_motion(Animator* animator, AssetStore* assets) @private {
     if (animator.root_node >= animator.nodes.len) return;
+
     ModelInstance* instance = animator.scene.get(animator.instance_root, ModelInstance);
     if (!instance.present_node(animator.root_node)) return;
+
     Vec3 translation;
     float yaw;
+
     for (uint layer = 0; layer < MAX_ANIMATION_LAYERS; layer++) {
         Vec3 sum;
         float translation_weight;
         float yaw_sum;
         float rotation_weight;
+
         foreach (id : animator.order[:animator.action_count]) {
             Action* action = animator.actions.get(id);
             if (action.layer != layer || action.additive || action.weight <= 0
@@ -236,10 +240,12 @@ fn void publish_root_motion(Animator* animator, AssetStore* assets) @private {
 
             PlanarMotion delta;
             if (action.root_motion == RootMotion.EXTRACT) delta = action_motion(action, &assets.clip(action.clip).data);
+
             if (action.translation_track != NO_MOTION_TRACK) {
                 sum += delta.translation * action.weight;
                 translation_weight += action.weight;
             }
+
             if (action.rotation_track != NO_MOTION_TRACK) {
                 yaw_sum += delta.yaw * action.weight;
                 rotation_weight += action.weight;
@@ -251,9 +257,29 @@ fn void publish_root_motion(Animator* animator, AssetStore* assets) @private {
         yaw = (yaw_sum + yaw * math::max(0.0f, 1 - rotation_weight)) / math::max(1.0f, rotation_weight);
     }
 
+    Quat rotation = quaternion::from_axis_angle{float}(MOTION_UP, yaw);
+    if (yaw != 0) {
+        Node* root = instance.present_node(animator.root_node);
+        Vec3 reference = root.local.position;
+
+        for (Node* parent = root.parent; parent != animator.instance_root; parent = parent.parent) {
+            reference = maths::transform_point(parent.local.to_mat4(), reference);
+        }
+
+        reference.y = 0;
+        if (reference.x != 0 || reference.z != 0) {
+            double half_sine = math::sin((double)yaw / 2);
+            double one_minus_cosine = 2 * half_sine * half_sine;
+            double sine = math::sin((double)yaw);
+
+            translation.x += (float)(one_minus_cosine * reference.x - sine * reference.z);
+            translation.z += (float)(sine * reference.x + one_minus_cosine * reference.z);
+        }
+    }
+
     animator.root_motion = {
         .translation = translation,
-        .rotation = quaternion::from_axis_angle{float}(MOTION_UP, yaw),
+        .rotation = rotation,
     };
 }
 

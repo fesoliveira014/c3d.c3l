@@ -13,6 +13,7 @@ fn void? validate_profile_templates(
     if (source.len > uint::max || target.len > uint::max || !source.len || !target.len) {
         return profile_failure(diagnostic, c3d::INVALID_ARGUMENT, RetargetReason.INVALID_TEMPLATE)~;
     }
+
     foreach (uint index, &node : source) {
         if (node.parent < -1 || (node.parent >= 0 && (uint)node.parent >= index)) {
             return profile_failure(
@@ -22,6 +23,7 @@ fn void? validate_profile_templates(
                 source_node: index,
             )~;
         }
+
         if (!profile_valid_transform(node.local)) {
             return profile_failure(
                 diagnostic: diagnostic,
@@ -31,6 +33,7 @@ fn void? validate_profile_templates(
             )~;
         }
     }
+
     foreach (uint index, &node : target) {
         if (node.parent < -1 || (node.parent >= 0 && (uint)node.parent >= index)) {
             return profile_failure(
@@ -40,6 +43,7 @@ fn void? validate_profile_templates(
                 target_node: index,
             )~;
         }
+
         if (!profile_valid_transform(node.local)) {
             return profile_failure(
                 diagnostic: diagnostic,
@@ -60,6 +64,7 @@ fn void? validate_profile_calibration(
     if (desc.source_calibration.len != source.len || desc.target_calibration.len != target.len) {
         return profile_failure(diagnostic, c3d::INVALID_ARGUMENT, RetargetReason.INVALID_CALIBRATION)~;
     }
+
     foreach (uint index, rotation : desc.source_calibration) {
         if (!profile_unit_rotation(rotation)) {
             return profile_failure(
@@ -70,6 +75,7 @@ fn void? validate_profile_calibration(
             )~;
         }
     }
+
     foreach (uint index, rotation : desc.target_calibration) {
         if (!profile_unit_rotation(rotation)) {
             return profile_failure(
@@ -99,6 +105,7 @@ fn Quat? profile_facing_rotation(Mat4 facing, RetargetDiagnostic* diagnostic) @p
     if (!valid) {
         return profile_failure(diagnostic, c3d::INVALID_ARGUMENT, RetargetReason.INVALID_FACING_BASIS)~;
     }
+
     return maths::transform_from_mat4(facing).rotation.normalize();
 }
 
@@ -120,6 +127,7 @@ fn void? profile_bind(
             mapping_row: row,
         )~;
     }
+
     source[source_node].mapped = target_node;
     source[source_node].mapping_row = row;
     target[target_node].mapped = source_node;
@@ -134,6 +142,7 @@ fn uint? profile_exact_node(
     RetargetDiagnostic* diagnostic,
 ) @private {
     uint found = RETARGET_NO_NODE;
+
     foreach (uint index, &node : nodes) {
         if (node.name != name) continue;
         if (found != RETARGET_NO_NODE) {
@@ -146,8 +155,10 @@ fn uint? profile_exact_node(
                 mapping_row: row,
             )~;
         }
+
         found = index;
     }
+
     if (found == RETARGET_NO_NODE) {
         return profile_failure(
             diagnostic: diagnostic,
@@ -156,6 +167,7 @@ fn uint? profile_exact_node(
             mapping_row: row,
         )~;
     }
+
     return found;
 }
 
@@ -175,6 +187,7 @@ fn void? prepare_profile_bindings(
                     mapping_row: 0,
                 )~;
             }
+
             foreach (uint row, mapping : desc.index_map) {
                 if (mapping.source_node >= source.len || mapping.target_node >= target.len) {
                     return profile_failure(
@@ -186,6 +199,7 @@ fn void? prepare_profile_bindings(
                         mapping_row: row,
                     )~;
                 }
+
                 profile_bind(
                     source: source,
                     target: target,
@@ -206,6 +220,7 @@ fn void? prepare_profile_bindings(
                     mapping_row: 0,
                 )~;
             }
+
             foreach (uint row, mapping : desc.name_map) {
                 uint source_node = profile_exact_node(
                     nodes: source,
@@ -230,10 +245,12 @@ fn void? prepare_profile_bindings(
                     diagnostic: diagnostic,
                 )!;
             }
+
             foreach (uint source_node, &node : source) {
                 if (node.mapped != RETARGET_NO_NODE) continue;
                 String key = canonical(node.name);
                 uint target_node = RETARGET_NO_NODE;
+
                 foreach (uint index, &candidate : target) {
                     if (canonical(candidate.name) != key) continue;
                     if (target_node != RETARGET_NO_NODE) {
@@ -245,9 +262,12 @@ fn void? prepare_profile_bindings(
                             target_node: target_node,
                         )~;
                     }
+
                     target_node = index;
                 }
+
                 if (target_node == RETARGET_NO_NODE) continue;
+
                 for (usz index = (usz)source_node + 1; index < source.len; index++) {
                     if (source[index].mapped == RETARGET_NO_NODE && canonical(source[index].name) == key) {
                         return profile_failure(
@@ -259,6 +279,7 @@ fn void? prepare_profile_bindings(
                         )~;
                     }
                 }
+
                 profile_bind(
                     source: source,
                     target: target,
@@ -288,6 +309,7 @@ fn void? prepare_profile_motion(
             target_node: desc.target_motion_node,
         )~;
     }
+
     for (int ancestor = (int)desc.source_motion_node; ancestor >= 0; ancestor = source[ancestor].parent) {
         source[ancestor].motion = true;
         uint destination = source[ancestor].mapped;
@@ -310,6 +332,7 @@ fn void? validate_profile_carrier(
             target_node: carrier,
         )~;
     }
+
     foreach (uint index, &node : nodes) {
         if (node.mapped != RETARGET_NO_NODE && !profile_descendant(nodes, index, carrier)) {
             return profile_failure(
@@ -322,6 +345,7 @@ fn void? validate_profile_carrier(
             )~;
         }
     }
+
     for (int ancestor = (int)carrier; ancestor >= 0; ancestor = nodes[ancestor].parent) {
         Vec3 up = nodes[ancestor].authored.rotation.rotate_vec3({ 0, 1, 0 });
         if ((up - (Vec3){ 0, 1, 0 }).length() > PROFILE_FRAME_TOLERANCE) {
@@ -333,6 +357,7 @@ fn void? validate_profile_carrier(
             )~;
         }
     }
+
     foreach (&mesh : target.meshes) {
         validate_carrier_member(
             nodes: nodes,
@@ -341,6 +366,7 @@ fn void? validate_profile_carrier(
             diagnostic: diagnostic,
         )!;
     }
+
     foreach (&group : target.lod_groups) {
         validate_carrier_member(
             nodes: nodes,
@@ -349,6 +375,7 @@ fn void? validate_profile_carrier(
             diagnostic: diagnostic,
         )!;
     }
+
     foreach (&skin : target.skins) {
         validate_carrier_member(
             nodes: nodes,
@@ -356,6 +383,7 @@ fn void? validate_profile_carrier(
             member: skin.mesh_node,
             diagnostic: diagnostic,
         )!;
+
         foreach (joint : skin.joint_nodes) validate_carrier_member(
             nodes: nodes,
             carrier: carrier,
@@ -390,6 +418,7 @@ fn void? validate_profile_snapshot(
     if (snapshot.len != nodes.len) {
         return profile_failure(diagnostic, c3d::INVALID_ARGUMENT, RetargetReason.TEMPLATE_LAYOUT_MISMATCH)~;
     }
+
     foreach (uint index, &node : nodes) {
         if (node.name != snapshot[index].name) {
             return profile_failure(
@@ -400,6 +429,7 @@ fn void? validate_profile_snapshot(
                 target_node: source ? RETARGET_NO_NODE : index,
             )~;
         }
+
         Transform captured = snapshot[index].authored;
         if (node.parent != snapshot[index].parent || node.local.position != captured.position
             || node.local.rotation.v != captured.rotation.v || node.local.scale != captured.scale) {

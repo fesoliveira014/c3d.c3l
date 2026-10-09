@@ -113,6 +113,7 @@ struct ProfileNode @private {
     uint mapped;
     uint mapping_row;
     bool consumed;
+    bool requires_uniform_scale;
     bool motion;
     bool controlled;
     bool boundary;
@@ -146,6 +147,7 @@ fn void? RetargetProfile.validate_templates(
     if (!self.data) {
         return profile_failure(diagnostic, c3d::INVALID_ARGUMENT, RetargetReason.INVALID_PROFILE)~;
     }
+
     ProfileData* data = (ProfileData*)self.data;
     validate_profile_snapshot(
         snapshot: data.source_nodes,
@@ -182,11 +184,13 @@ fn RetargetProfile? create_retarget_profile(
     RetargetDiagnostic* diagnostic = null,
 ) {
     clear_retarget_diagnostic(diagnostic);
+
     defer catch {
         if (diagnostic && diagnostic.reason == RetargetReason.NONE) {
             diagnostic.reason = RetargetReason.CAPACITY_LIMIT;
         }
     }
+
     @pool() {
         validate_profile_templates(source_nodes, target.nodes, diagnostic)!;
         validate_profile_calibration(
@@ -196,10 +200,12 @@ fn RetargetProfile? create_retarget_profile(
             diagnostic: diagnostic,
         )!;
         Quat facing = profile_facing_rotation(desc.facing, diagnostic)!;
+
         ProfileNode[] source = alloc::new_array_try(tmem, ProfileNode, source_nodes.len)
-            ?? c3d::CAPACITY_EXCEEDED~!;
+          ?? c3d::CAPACITY_EXCEEDED~!;
         ProfileNode[] destination = alloc::new_array_try(tmem, ProfileNode, target.nodes.len)
-            ?? c3d::CAPACITY_EXCEEDED~!;
+          ?? c3d::CAPACITY_EXCEEDED~!;
+
         foreach (index, &node : source_nodes) {
             source[index] = {
                 .name = node.name,
@@ -210,6 +216,7 @@ fn RetargetProfile? create_retarget_profile(
                 .mapping_row = RETARGET_NO_NODE,
             };
         }
+
         foreach (index, &node : target.nodes) {
             destination[index] = {
                 .name = node.name,
@@ -220,15 +227,18 @@ fn RetargetProfile? create_retarget_profile(
                 .mapping_row = RETARGET_NO_NODE,
             };
         }
+
         prepare_profile_bindings(
             source: source,
             target: destination,
             desc: &desc,
             diagnostic: diagnostic,
         )!;
+
         foreach (index, &node : destination) {
             if (node.mapped != RETARGET_NO_NODE) node.calibration = desc.target_calibration[index].normalize();
         }
+
         prepare_profile_motion(
             source: source,
             target: destination,
@@ -241,30 +251,46 @@ fn RetargetProfile? create_retarget_profile(
             carrier: desc.target_carrier,
             diagnostic: diagnostic,
         )!;
+
         foreach (index, &node : source) {
             if (node.mapped == RETARGET_NO_NODE) continue;
+
             for (int ancestor = (int)index; ancestor >= 0; ancestor = source[ancestor].parent) {
                 source[ancestor].consumed = true;
+                if (ancestor != (int)index) source[ancestor].requires_uniform_scale = true;
             }
         }
+
+        foreach (&node : source) node.requires_uniform_scale |= node.motion;
+
         foreach (index, &node : destination) {
             node.controlled = desc.target_carrier == RETARGET_NO_NODE
               || profile_descendant(destination, (uint)index, desc.target_carrier);
             node.boundary = desc.target_carrier == RETARGET_NO_NODE
               ? node.parent < 0 : node.parent == (int)desc.target_carrier;
+            node.requires_uniform_scale |= node.motion;
+            if (node.mapped == RETARGET_NO_NODE && !node.motion && !node.boundary) continue;
+
+            for (int ancestor = node.parent; ancestor >= 0; ancestor = destination[ancestor].parent) {
+                destination[ancestor].requires_uniform_scale = true;
+            }
         }
+
         compose_profile_references(source, true, diagnostic)!;
         compose_profile_references(destination, false, diagnostic)!;
 
         usz header_bytes = profile_align(ProfileData::size, ProfileNode::alignment);
         usz node_count = source.len + destination.len;
         if (node_count > (usz)sz::max / ProfileNode::size) return c3d::CAPACITY_EXCEEDED~;
+
         usz node_bytes = node_count * ProfileNode::size;
         usz bytes = header_bytes + node_bytes;
+
         foreach (&node : source) bytes = profile_add_bytes(bytes, node.name.len)!;
+
         foreach (&node : destination) bytes = profile_add_bytes(bytes, node.name.len)!;
         void* storage = alloc::calloc_aligned(allocator, (sz)bytes, ProfileNode::alignment)
-            ?? c3d::CAPACITY_EXCEEDED~!;
+          ?? c3d::CAPACITY_EXCEEDED~!;
         ProfileData* data = (ProfileData*)storage;
         *data = {
             .allocator = allocator,
@@ -277,11 +303,16 @@ fn RetargetProfile? create_retarget_profile(
             .target_carrier = desc.target_carrier,
             .bytes = bytes,
         };
+
         data.source_nodes[..] = source[..];
         data.target_nodes[..] = destination[..];
+
         char* names = (char*)storage + header_bytes + node_bytes;
+
         foreach (&node : data.source_nodes) copy_profile_name(node, &names);
+
         foreach (&node : data.target_nodes) copy_profile_name(node, &names);
+
         return { .data = data };
     };
 }
@@ -294,6 +325,7 @@ fn void destroy_retarget_profile(RetargetProfile* profile) {
     if (!profile.data) return;
     ProfileData* data = (ProfileData*)profile.data;
     Allocator allocator = data.allocator;
+
     alloc::free_aligned(allocator, data);
     *profile = {};
 }
@@ -321,6 +353,7 @@ fn fault profile_failure(
         .target_node = target_node,
         .mapping_row = mapping_row,
     };
+
     return excuse;
 }
 
@@ -330,12 +363,15 @@ fn bool profile_finite_vec(Vec3 value) @private {
 
 fn bool profile_unit_rotation(Quat rotation) @private {
     foreach (value : rotation.v) if (!math::is_finite(value)) return false;
+
     return math::abs(rotation.v.dot(rotation.v) - 1) <= PROFILE_FRAME_TOLERANCE;
 }
 
 fn bool profile_uniform_scale(Vec3 scale) @private {
     if (!profile_finite_vec(scale) || scale.x <= 0 || scale.y <= 0 || scale.z <= 0) return false;
+
     float largest = math::max(scale.x, math::max(scale.y, scale.z));
+
     return math::abs(scale.x - scale.y) <= largest * PROFILE_FRAME_TOLERANCE
         && math::abs(scale.x - scale.z) <= largest * PROFILE_FRAME_TOLERANCE;
 }
@@ -385,7 +421,9 @@ fn void? compose_profile_references(
 fn bool profile_descendant(ProfileNode[] nodes, uint node, uint ancestor) @private {
     for (int parent = nodes[node].parent; parent >= 0; parent = nodes[parent].parent) {
         if (parent == (int)ancestor) return true;
+
     }
+
     return false;
 }
 
@@ -393,6 +431,7 @@ fn usz profile_align(usz value, usz alignment) @private => (value + alignment - 
 
 fn usz? profile_add_bytes(usz current, usz added) @private {
     if (current > (usz)sz::max || added > (usz)sz::max - current) return c3d::CAPACITY_EXCEEDED~;
+
     return current + added;
 }
 
