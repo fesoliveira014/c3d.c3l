@@ -588,6 +588,42 @@ largest downhill offset of the grounded feet so the lower foot can reach its
 target. Stance feet are not locked: on a slope a planted foot follows the
 terrain height under it as the body moves.
 
+### Retained foot contacts
+
+Use `begin_contact(hit, support)` to capture a stance anchor and
+`update_contact(support, dt)` to follow it. The application chooses the hit,
+support identity and timing. `FootSupport` carries an opaque caller identity
+and a proper rotation, translation and finite positive uniform scale.
+`foot_support_from_mat4` validates an affine frame; nonuniform scale,
+reflection, shear, zero or nonfinite input returns `INVALID_ARGUMENT` with
+optional `FootDiagnostic` context. Changing the identity requires an explicit
+new capture.
+
+`FootIk.plant` defaults to 0.12 seconds of acquisition, 0.20 seconds of release
+and ankle-local sole axes +Y/-Z. Set the axes for the rig's authored ankle
+orientation. Settings and `foot_height` are captured at each begin; the height
+remains in scene metres while the support-local sole point follows changing
+scale. The normal and heading follow the support's proper rotation.
+
+Call `end_contact(support)` to blend into the fresh incoming swing pose, or
+`reset_contact()` for an immediate caller-authorized reset. Replanting captures
+the currently requested correction. Zero `dt` freezes transition clocks while
+external support movement still carries the contact. Start each update from
+the fresh animation pose; choose either retained contact or `place/release`
+for that update.
+
+Order contact updates after animation and a world refresh, before optional
+`lower_pelvis`. Refresh worlds after pelvis movement, solve dependent IK and
+the legs, refresh, call `align_contact`, then refresh before `contact_result`.
+The result reports phase, actual target residual and normal/heading errors as
+`NO_TARGET`, `REACHED` or `MISSED`. Reach clamps, limits and partial leg weight
+may leave a miss; the anchor is retained without stretching or automatic release.
+
+Standalone `FootContact` uses the same lifecycle with an explicit incoming
+`Transform`. During rebasing, call `Scene.shift_foot_contacts` after the scene
+world refresh, or `FootContact.shift_origin` for standalone states. Each state
+has one shift owner. See [large_world.md](large_world.md) for the full order.
+
 ### Limits
 
 `IkChain.limits[0]` and `limits[1]` bound the root and middle rotations
@@ -627,10 +663,31 @@ left instance to that clip, `Q` toggles the left action between full and
 quarter weight, `SPACE` pauses and resumes every action; drag orbits, the wheel
 zooms, Escape quits.
 
-`ik` stands the Quaternius Mannequin on a height-field terrain: both feet follow
-the ground with knee hinges, the spine, neck and head turn toward the camera and
-the right hand reaches an orbiting sphere.
+`ik` shows two instances of the CC0 Quaternius mannequin on a moving support.
+Caller-authored cues acquire, plant, release and replant each foot while the
+support translates, yaws, tilts and changes uniform scale. The panel reports
+contact phase, residual, sole-axis errors and reach margins. The example
+poses the incoming legs above the support before contact updates, with a smooth
+caller-timed swing arc. It preserves local bone positions, scales and the fresh
+ankle orientation. Default contact mode uses unconstrained legs for the reachable
+retention demonstration; `L` or
+`--limits` enables the authored knee hinges and displays constrained misses.
+`--legacy` retains height-field placement with those hinges. The spine, neck
+and head follow the camera and the right hand reaches an orbiting sphere.
 
 ```bash
 python3 scripts/build.py --example ik
 ```
+
+`C` switches contact/legacy placement, Space pauses contact and animation clocks
+while the support continues to move, and `R` shifts the origin explicitly.
+`W` switches walk/idle, `[`/`]` change IK weight, `I` toggles debug lines, and
+mouse drag/wheel orbit and zoom.
+
+`ik.exe --acceptance --capture-dir=PATH` runs for at least 20 wall and simulation
+seconds and exports completed rendered frames and `ik-contact.csv` to an
+existing directory. `--telemetry=PATH` selects a separate CSV. The CSV reports
+each final foot pose, phase/status, errors, reach margins, limit mode, support
+scale, incoming and final sole clearance, pause/rebase events and capture index.
+An early `--frames=N` limit does
+not satisfy the bounded run. Vulkan validation is enabled.

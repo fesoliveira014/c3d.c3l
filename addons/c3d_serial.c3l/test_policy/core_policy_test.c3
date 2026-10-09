@@ -10,6 +10,7 @@ import c3d::serial @public;
 
 struct ExpectedPolicy @private {
     uint slot;
+    uint version;
     String name;
     typeid identity;
     bool component_description;
@@ -20,40 +21,40 @@ fn void test_every_registered_core_component_has_one_expected_policy() @test {
     assert(ecs::registered_type_count == 0);
     serial::register_core_codecs()!!;
     ExpectedPolicy[18] expected = {
-        { .slot = ecs::assigned_slot(Mesh)!!, .name = "c3d.Mesh",
+        { .slot = ecs::assigned_slot(Mesh)!!, .version = 1, .name = "c3d.Mesh",
             .identity = Mesh::typeid, .component_description = true },
-        { .slot = ecs::assigned_slot(Camera)!!, .name = "c3d.Camera",
+        { .slot = ecs::assigned_slot(Camera)!!, .version = 1, .name = "c3d.Camera",
             .identity = Camera::typeid, .component_description = true },
-        { .slot = ecs::assigned_slot(Light)!!, .name = "c3d.Light",
+        { .slot = ecs::assigned_slot(Light)!!, .version = 1, .name = "c3d.Light",
             .identity = Light::typeid, .component_description = true },
-        { .slot = ecs::assigned_slot(ProbeVolume)!!, .name = "c3d.ProbeVolume",
+        { .slot = ecs::assigned_slot(ProbeVolume)!!, .version = 1, .name = "c3d.ProbeVolume",
             .identity = ProbeVolume::typeid, .component_description = true },
-        { .slot = ecs::assigned_slot(Atmosphere)!!, .name = "c3d.Atmosphere",
+        { .slot = ecs::assigned_slot(Atmosphere)!!, .version = 1, .name = "c3d.Atmosphere",
             .identity = Atmosphere::typeid, .component_description = true },
-        { .slot = ecs::assigned_slot(HeightFog)!!, .name = "c3d.HeightFog",
+        { .slot = ecs::assigned_slot(HeightFog)!!, .version = 1, .name = "c3d.HeightFog",
             .identity = HeightFog::typeid, .component_description = true },
-        { .slot = ecs::assigned_slot(ReflectionProbe)!!, .name = "c3d.ReflectionProbe",
+        { .slot = ecs::assigned_slot(ReflectionProbe)!!, .version = 1, .name = "c3d.ReflectionProbe",
             .identity = ReflectionProbe::typeid, .component_description = true },
-        { .slot = ecs::assigned_slot(Decal)!!, .name = "c3d.Decal",
+        { .slot = ecs::assigned_slot(Decal)!!, .version = 1, .name = "c3d.Decal",
             .identity = Decal::typeid, .component_description = true },
-        { .slot = ecs::assigned_slot(InstancedMesh)!!, .name = "c3d.InstancedMesh",
+        { .slot = ecs::assigned_slot(InstancedMesh)!!, .version = 1, .name = "c3d.InstancedMesh",
             .identity = InstanceAuthoring::typeid },
-        { .slot = ecs::assigned_slot(BillboardBatch)!!, .name = "c3d.BillboardBatch",
+        { .slot = ecs::assigned_slot(BillboardBatch)!!, .version = 1, .name = "c3d.BillboardBatch",
             .identity = BillboardAuthoring::typeid },
-        { .slot = ecs::assigned_slot(LodGroup)!!, .name = "c3d.LodGroup", .identity = LodAuthoring::typeid },
-        { .slot = ecs::assigned_slot(ModelInstance)!!, .name = "c3d.ModelInstance",
+        { .slot = ecs::assigned_slot(LodGroup)!!, .version = 1, .name = "c3d.LodGroup", .identity = LodAuthoring::typeid },
+        { .slot = ecs::assigned_slot(ModelInstance)!!, .version = 1, .name = "c3d.ModelInstance",
             .identity = ModelAuthoring::typeid, .phase = REFERENCES },
-        { .slot = ecs::assigned_slot(SkinBinding)!!, .name = "c3d.SkinBinding",
+        { .slot = ecs::assigned_slot(SkinBinding)!!, .version = 1, .name = "c3d.SkinBinding",
             .identity = SkinAuthoring::typeid, .phase = REFERENCES },
-        { .slot = ecs::assigned_slot(IkChain)!!, .name = "c3d.IkChain",
+        { .slot = ecs::assigned_slot(IkChain)!!, .version = 1, .name = "c3d.IkChain",
             .identity = IkAuthoring::typeid, .phase = REFERENCES },
-        { .slot = ecs::assigned_slot(FootIk)!!, .name = "c3d.FootIk",
+        { .slot = ecs::assigned_slot(FootIk)!!, .version = 2, .name = "c3d.FootIk",
             .identity = FootAuthoring::typeid, .phase = REFERENCES },
-        { .slot = ecs::assigned_slot(LookAt)!!, .name = "c3d.LookAt",
+        { .slot = ecs::assigned_slot(LookAt)!!, .version = 1, .name = "c3d.LookAt",
             .identity = LookAuthoring::typeid, .phase = REFERENCES },
-        { .slot = ecs::assigned_slot(Animator)!!, .name = "c3d.Animator",
+        { .slot = ecs::assigned_slot(Animator)!!, .version = 1, .name = "c3d.Animator",
             .identity = AnimatorAuthoring::typeid, .phase = OWNER },
-        { .slot = ecs::assigned_slot(AnimatedCrowd)!!, .name = "c3d.AnimatedCrowd",
+        { .slot = ecs::assigned_slot(AnimatedCrowd)!!, .version = 1, .name = "c3d.AnimatedCrowd",
             .identity = CrowdAuthoring::typeid, .phase = OWNER },
     };
     assert(ecs::registered_type_count == expected.len);
@@ -78,7 +79,7 @@ fn void assert_policy_inventory(ExpectedPolicy[] expected) @private {
             matches++;
             assert(policies == 1);
             assert(entry.described && !entry.transient && entry.codec.name == policy.name);
-            assert(entry.codec.phase == policy.phase && entry.codec.version == 1);
+            assert(entry.codec.phase == policy.phase && entry.codec.version == policy.version);
             assert(entry.described.type.descriptor.identity == policy.identity);
             if (policy.component_description) assert(describe::component(slot)!!.identity == policy.identity);
         }

@@ -10,7 +10,9 @@ import std::math;
 const ulong SKIN_AUTHORING_LAYOUT @local = 0xbe949f9d428c68af;
 const ulong IK_LIMIT_LAYOUT @local = 0x47036041dcad1aad;
 const ulong IK_AUTHORING_LAYOUT @local = 0x070a8169e5189396;
-const ulong FOOT_AUTHORING_LAYOUT @local = 0x4c935a49dedb121f;
+const ulong FOOT_AUTHORING_LAYOUT @local = 0xdbf7645c45991367;
+const ulong FOOT_AUTHORING_V1_LAYOUT @local = 0x4c935a49dedb121f;
+const ulong FOOT_PLANT_LAYOUT @local = 0x95172f50c968f3cd;
 const ulong LOOK_AUTHORING_LAYOUT @local = 0x009ec095d160ac5a;
 
 <* Skeleton and required joints used by skin preflight. *>
@@ -33,6 +35,15 @@ struct FootAuthoring @private {
     float lift_fade;
     float ray_height;
     float ray_length;
+    FootPlantConfig plant;
+}
+
+struct FootAuthoringV1 @private {
+    IkAuthoring leg;
+    float foot_height;
+    float lift_fade;
+    float ray_height;
+    float ray_length;
 }
 
 struct LookAuthoring @private {
@@ -44,16 +55,30 @@ struct LookAuthoring @private {
     float weight;
 }
 
+BinaryCompatibility[1] foot_binary_compatibility @local = {
+    { .version = 1, .read = &read_foot_v1 },
+};
+uint[1] foot_text_default_versions @local = { 1 };
+
 fn void? register_rig_codecs() @private {
     describe::register_reflected(SkinAuthoring)!;
     describe::register_reflected(IkLimit)!;
     describe::register_reflected(IkAuthoring)!;
+    describe::register_reflected(FootPlantConfig)!;
     describe::register_reflected(FootAuthoring)!;
+    describe::register_reflected(FootAuthoringV1)!;
     describe::register_reflected(LookAuthoring)!;
     register_core_value(SkinAuthoring, SKIN_AUTHORING_LAYOUT, &defaults_skin)!;
     register_core_value(IkLimit, IK_LIMIT_LAYOUT, &defaults_ik_limit)!;
     register_core_value(IkAuthoring, IK_AUTHORING_LAYOUT, &defaults_ik)!;
-    register_core_value(FootAuthoring, FOOT_AUTHORING_LAYOUT, &defaults_foot)!;
+    register_core_value(FootPlantConfig, FOOT_PLANT_LAYOUT, &defaults_foot_plant)!;
+    register_core_value(FootAuthoringV1, FOOT_AUTHORING_V1_LAYOUT, &defaults_foot_v1)!;
+    register_described_type(
+        $Type: FootAuthoring,
+        version: 2,
+        layout: FOOT_AUTHORING_LAYOUT,
+        defaults: &defaults_foot,
+    )!;
     register_core_value(LookAuthoring, LOOK_AUTHORING_LAYOUT, &defaults_look)!;
     register_described_owner(SkinBinding, SkinAuthoring, {
         .name = "c3d.SkinBinding", .phase = REFERENCES,
@@ -66,6 +91,8 @@ fn void? register_rig_codecs() @private {
     register_described_owner(FootIk, FootAuthoring, {
         .name = "c3d.FootIk", .phase = REFERENCES,
         .project = &project_foot, .validate = &validate_foot, .attach = &attach_foot,
+        .binary_compatibility = foot_binary_compatibility[..],
+        .text_default_versions = foot_text_default_versions[..],
     })!;
     register_described_owner(LookAt, LookAuthoring, {
         .name = "c3d.LookAt", .phase = REFERENCES,
@@ -88,8 +115,25 @@ fn void defaults_foot(void* value) @local {
     *foot = {
         .foot_height = defaults.foot_height, .lift_fade = defaults.lift_fade,
         .ray_height = defaults.ray_height, .ray_length = defaults.ray_length,
+        .plant = ik::FOOT_PLANT_DEFAULT,
     };
     defaults_ik(&foot.leg);
+}
+
+fn void defaults_foot_plant(void* value) @local {
+    *(FootPlantConfig*)value = ik::FOOT_PLANT_DEFAULT;
+}
+
+fn void defaults_foot_v1(void* value) @local {
+    FootAuthoring defaults;
+    defaults_foot(&defaults);
+    *(FootAuthoringV1*)value = {
+        .leg = defaults.leg,
+        .foot_height = defaults.foot_height,
+        .lift_fade = defaults.lift_fade,
+        .ray_height = defaults.ray_height,
+        .ray_length = defaults.ray_length,
+    };
 }
 
 fn void defaults_look(void* value) @local {
@@ -187,9 +231,11 @@ fn void? attach_ik(void* value, ReadContext* context) @local {
 fn void? project_foot(void* component, void* value, WriteContext* context) @local {
     FootIk* foot = component;
     if (!(foot.lift_fade > 0)) return c3d::INVALID_ARGUMENT~;
+    foot.plant.validate()!;
     *(FootAuthoring*)value = {
         .leg = project_chain(&foot.leg, context)!, .foot_height = foot.foot_height,
         .lift_fade = foot.lift_fade, .ray_height = foot.ray_height, .ray_length = foot.ray_length,
+        .plant = foot.plant,
     };
 }
 
@@ -197,6 +243,7 @@ fn void? validate_foot(void* value, ReadContext* context) @local {
     FootAuthoring* foot = value;
     (void)restore_chain(&foot.leg, context)!;
     if (!(foot.lift_fade > 0)) return c3d::INVALID_ARGUMENT~;
+    foot.plant.validate()!;
 }
 
 fn void? attach_foot(void* value, ReadContext* context) @local {
@@ -204,7 +251,31 @@ fn void? attach_foot(void* value, ReadContext* context) @local {
     context.scene.add(context.node, (FootIk){
         .leg = restore_chain(&foot.leg, context)!, .foot_height = foot.foot_height,
         .lift_fade = foot.lift_fade, .ray_height = foot.ray_height, .ray_length = foot.ray_length,
+        .plant = foot.plant,
     });
+}
+
+fn void? read_foot_v1(Reader* reader, ReadContext* context) @local {
+    FootAuthoringV1 legacy;
+    Acquisitions owned = { .allocator = context.allocator };
+    defer owned.release();
+    read_described_value(
+        type: described_type(FootAuthoringV1)!,
+        reader: reader,
+        context: context,
+        owned: &owned,
+        value: &legacy,
+    )!;
+    FootAuthoring value = {
+        .leg = legacy.leg,
+        .foot_height = legacy.foot_height,
+        .lift_fade = legacy.lift_fade,
+        .ray_height = legacy.ray_height,
+        .ray_length = legacy.ray_length,
+        .plant = ik::FOOT_PLANT_DEFAULT,
+    };
+    validate_foot(&value, context)!;
+    attach_foot(&value, context)!;
 }
 
 fn void? project_look(void* component, void* value, WriteContext* context) @local {

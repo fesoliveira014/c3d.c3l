@@ -528,3 +528,21 @@ fn void test_lower_pelvis_uses_a_world_basis_for_incremental_drops() @test {
     rig.scene.update_world();
     assert(close_vec3(pelvis.world_position(), { 1, 2.6f, 2 }));
 }
+
+fn void test_legacy_foot_mode_leaves_contact_inactive() @test {
+    ChainRig rig = make_chain();
+    defer scene::destroy_scene(&rig.scene);
+    FootIk foot = rig_foot(&rig);
+    assert(foot.plant.acquire_seconds == 0.12f && foot.plant.release_seconds == 0.20f);
+    assert(foot.plant.sole_up == (Vec3){ 0, 1, 0 } && foot.plant.sole_forward == (Vec3){ 0, 0, -1 });
+    foot.place({ .point = { 0, -0.3f, 0 }, .normal = { 0, 1, 0 } }, 0);
+    rig.scene.update_world();
+    foot.align();
+    rig.scene.update_world();
+    assert(foot.contact.phase == INACTIVE);
+    assert(foot.contact_result().status == NO_TARGET);
+    foot.release();
+    rig.scene.update_world();
+    assert(foot.contact.phase == INACTIVE && !foot.grounded);
+    assert(close_vec3(rig.target.world_position(), rig.end.world_position()));
+}
