@@ -250,15 +250,22 @@ fn double fidelity_angle(Vec3 actual, Vec3 expected) @private {
 
 fn Vec3 fidelity_reference_decode(Vec4 encoded, bool rg) @private {
     double[<3>] normal = (double[<3>])encoded.xyz * 2 - 1;
+
     if (rg) {
         normal.z = math::sqrt(math::max(0.0, 1.0 - normal.x * normal.x - normal.y * normal.y));
+
         if (encoded.w == 0) return { 0, 0, 1 };
     }
+
     normal.x *= encoded.w;
     normal.y *= encoded.w;
+
     double largest = math::max(math::max(math::abs(normal.x), math::abs(normal.y)), math::abs(normal.z));
+
     if (largest == 0) return { 0, 0, 1 };
+
     normal /= largest;
+
     return (Vec3)(normal / normal.length());
 }
 
@@ -323,10 +330,13 @@ fn void test_fidelity_mikk_reference_bake_matches_shared_gpu_consumption() @test
             uint case_index = fidelity_u32(FIDELITY_BAKE, sample_offset);
             uint face_index = fidelity_u32(FIDELITY_BAKE, sample_offset + uint::size);
             FidelityBakeTriangle triangle = fidelity_bake_triangle(case_index, face_index);
+
             char* sample_values = FIDELITY_BAKE.ptr + sample_offset + FIDELITY_BAKE_HEADER_BYTES;
             mem::copy(&values, sample_values, double::size * values.len);
+
             Vec3 encoded;
             mem::copy(&encoded, FIDELITY_BAKE_RGB.ptr + index * 3 * float::size, 3 * float::size);
+
             targets[index] = { (float)values[3], (float)values[4], (float)values[5] };
             inputs[index] = {
                 .encoded_scale = { encoded.x, encoded.y, encoded.z, 1 },
@@ -809,13 +819,16 @@ fn void test_fidelity_semantic_only_replacements_keep_native_indices_and_update_
 
         renderer.upload_material(material_id)!!;
         assert(renderer.materials[material_id.index].bindings.clearcoat_normal.semantic == TextureSemantic.NORMAL_RG);
+
         fixture.assets.texture(coat).desc.semantic = TextureSemantic.NORMAL_RGB;
         fixture.assets.mark_texture_dirty(coat);
 
         Material* material_data = &fixture.assets.material(material_id).data;
         MaterialBindings captured = render::material_prepare_bindings(renderer, material_data)!!;
         assert(captured.clearcoat_normal.semantic == TextureSemantic.NORMAL_RG);
+
         renderer.end_frame()!!;
+
         fidelity_check_flags(fidelity_read_physical(&fixture, material_id), false, true);
         assert(renderer.textures[coat.index].view.index == coat_index);
 
@@ -824,11 +837,13 @@ fn void test_fidelity_semantic_only_replacements_keep_native_indices_and_update_
 
         ((Vec4*)fixture.assets.texture(coat).pixels.ptr)[0].x = bitcast(0x7fc00000u, float);
         fixture.assets.mark_texture_dirty(coat);
+
         if (catch excuse = renderer.upload_material(material_id)) {
             assert(excuse == c3d::INVALID_ARGUMENT);
         } else {
             assert(false);
         }
+
         fidelity_check_flags(fidelity_read_physical(&fixture, material_id), false, false);
 
         RenderTargetId target = render::create_render_target(
@@ -910,18 +925,23 @@ fn void fidelity_finalized_abort(bool coverage, bool release_source) @private {
         TextureId texture = fixture.assets.add_texture(desc, FIDELITY_LEAF_BYTE)!!;
 
         renderer.upload_texture(texture)!!;
+
         gpu::TextureHandle previous = renderer.textures[texture.index].texture;
         TextureCoverageResource* previous_results = renderer.textures[texture.index].coverage_resource;
+
         fixture.assets.mark_texture_dirty(texture);
+
         TextureId expected = fixture.assets.add_texture(desc, FIDELITY_LEAF_BYTE)!!;
 
         PrepareId id = fidelity_texture_job(&fixture, texture)!!;
 
         renderer.begin_frame()!!;
         renderer.advance_prepares_within({})!!;
+
         PrepareRecord* record = renderer.prepares.get(id);
         assert(!record.chain_active && record.units[0].done);
         assert(renderer.textures[texture.index].texture != previous);
+
         if (coverage) {
             assert(renderer.texture_coverage(texture, 2)!!.revision == 1);
             assert(renderer.textures[texture.index].coverage_resource != previous_results);
@@ -1140,6 +1160,7 @@ fn FidelityRaster? create_fidelity_raster(Fixture* fixture) @private {
 
     raster.camera = raster.scene.add_camera(camera::orthographic(2, 0.1f, 20))!;
     raster.camera.local.position = { 0, 0, 3 };
+
     raster.target = render::create_render_target(
         renderer: &fixture.renderer,
         desc: render::render_target_desc(FIDELITY_RASTER_EXTENT, FIDELITY_RASTER_EXTENT, RGBA32_FLOAT),
@@ -1150,6 +1171,7 @@ fn FidelityRaster? create_fidelity_raster(Fixture* fixture) @private {
     desc.post.anti_aliasing = AntiAliasing.NONE;
     desc.depth_prepass = false;
     raster.view = render::create_view(&fixture.renderer, desc)!;
+
     return raster;
 }
 
@@ -1169,16 +1191,20 @@ fn Vec4[]? fidelity_render_raster(
     ViewDesc desc = renderer.views.get(raster.view).desc;
     desc.shading = path;
     render::configure_view(renderer, raster.view, desc)!;
+
     raster.scene.update_world();
 
     renderer.begin_frame()!;
     defer catch render::abort_frame(renderer);
 
     renderer.render_view(&raster.scene, raster.camera, raster.view)!;
+
     renderer.finish_view(raster.view)!;
+
     Target* source = normal_diagnostic && path == ShadingPath.DEFERRED
-        ? &renderer.views.get(raster.view).gbuffer[GBufferChannel.NORMAL_ROUGHNESS]
-        : &renderer.views.get(raster.view).hdr_color;
+      ? &renderer.views.get(raster.view).gbuffer[GBufferChannel.NORMAL_ROUGHNESS]
+      : &renderer.views.get(raster.view).hdr_color;
+
     render::composite_target(
         renderer: renderer,
         source: source,
@@ -1186,6 +1212,7 @@ fn Vec4[]? fidelity_render_raster(
         rect: {},
     )!;
     renderer.end_frame()!;
+
     return read_float_target(fixture, raster.target);
 }
 
@@ -1247,16 +1274,19 @@ fn void test_fidelity_raster_interpolation_matches_pinned_bake_and_transform_con
             uint case_index = fidelity_u32(FIDELITY_BAKE, sample_offset);
             uint face_index = fidelity_u32(FIDELITY_BAKE, sample_offset + uint::size);
             FidelityBakeTriangle triangle = fidelity_bake_triangle(case_index, face_index);
+
             double[FIDELITY_BAKE_VALUE_COUNT] reference;
             char* sample_values = FIDELITY_BAKE.ptr + sample_offset + FIDELITY_BAKE_HEADER_BYTES;
             mem::copy(&reference, sample_values, reference.len * double::size);
 
             Vec3 weights = { (float)reference[0], (float)reference[1], (float)reference[2] };
+
             Vec3 encoded;
             mem::copy(&encoded, FIDELITY_BAKE_RGB.ptr + (usz)sample * 3 * float::size, Vec3::size);
-            Vec4 pixel = { encoded.x, encoded.y, encoded.z, 1 };
-            material::TextureDesc desc = material::texture_2d_desc(1, 1, RGBA32_FLOAT);
 
+            Vec4 pixel = { encoded.x, encoded.y, encoded.z, 1 };
+
+            material::TextureDesc desc = material::texture_2d_desc(1, 1, RGBA32_FLOAT);
             desc.semantic = TextureSemantic.NORMAL_RGB;
 
             TextureId texture = fixture.assets.add_texture(desc, ((char*)&pixel)[:Vec4::size])!!;
@@ -1324,15 +1354,18 @@ fn void test_fidelity_raster_interpolation_matches_pinned_bake_and_transform_con
                     assert(fidelity_angle(actual, expected) <= FIDELITY_WORLD_ANGLE,
                         "raster bake sample %d path %d transform %d: actual %s expected %s angle %.9f",
                         sample, path, transform_index, actual, expected, fidelity_angle(actual, expected));
-                    if (sample == 0) fidelity_export_bake_region(
-                        triangle: &triangle,
-                        transform: transform,
-                        camera_position: raster.camera.local.position,
-                        mapped: encoded * 2 - 1,
-                        measured: pixels,
-                        deferred: path != 0,
-                        name: string::tformat("bake_transform%d_path%d", transform_index, path),
-                    )!!;
+
+                    if (sample == 0) {
+                        fidelity_export_bake_region(
+                            triangle: &triangle,
+                            transform: transform,
+                            camera_position: raster.camera.local.position,
+                            mapped: encoded * 2 - 1,
+                            measured: pixels,
+                            deferred: path != 0,
+                            name: string::tformat("bake_transform%d_path%d", transform_index, path),
+                        )!!;
+                    }
                 }
             }
 

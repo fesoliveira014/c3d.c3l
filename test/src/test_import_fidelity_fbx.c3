@@ -434,6 +434,7 @@ fn void test_forced_fbx_tangents_use_converted_uv0_and_transfer_without_regenera
             .max_clips = 1,
         });
         defer asset::destroy_asset_store(&assets);
+
         (void)assets.publish_document(&forced)!!;
 
         assert(forced.geometries.len == 0);

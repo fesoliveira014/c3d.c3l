@@ -32,10 +32,12 @@ fn void test_mip_scalar_bands_accept_byte_aligned_half_and_float_storage() @test
             usz scalar_bytes = format == PixelFormat.RGBA16_FLOAT ? ushort::size : float::size;
             usz source_bytes = 4 * 4 * 4 * scalar_bytes;
             usz output_bytes = (2 * 2 + 1) * 4 * scalar_bytes;
+
             char[] source_storage = alloc::new_array(tmem, char, (sz)source_bytes + 2);
             char[] output_storage = alloc::new_array(tmem, char, (sz)output_bytes + 2);
             source_storage[0] = source_storage[^1] = 0xa5;
             output_storage[0] = output_storage[^1] = 0x5a;
+
             char[] source = source_storage[1:source_bytes];
             char[] output = output_storage[1:output_bytes];
 
@@ -343,6 +345,7 @@ fn void expect_invalid_threshold_publication_keeps_store_and_pixels(PixelFormat 
             for (uint operation = 0; operation < 2; operation++) {
                 char[] owned = alloc::new_array(&tracker, char, (sz)invalid.len);
                 defer alloc::free(&tracker, owned.ptr);
+
                 owned[..] = invalid[..];
                 sz with_owned = tracker.allocated();
 
@@ -1555,6 +1558,7 @@ fn void test_scalar_coverage_query_keeps_committed_revision_release_and_typed_fa
         revision: 2,
     );
     defer destroy_texture_coverage_resource(candidate);
+
     renderer.pending_prepare_installs.push({ .kind = PrepareUnitKind.TEXTURE,
         .old_texture = renderer.textures[texture.index] });
 
