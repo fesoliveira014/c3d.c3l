@@ -38,7 +38,11 @@ macro Kind @kind($Type, $name = "") @private {
         $case FontId::typeid:
             return ASSET;
         $default:
+            $if $defined($Type.slot_address):
+                return ASSET;
+            $endif
             $switch $Type::kind:
+                $case TYPEDEF: return @kind($Typefrom($Type::inner), $name);
                 $case ENUM: return ENUM;
                 $case STRUCT: return STRUCT;
                 $case ARRAY: return ARRAY;

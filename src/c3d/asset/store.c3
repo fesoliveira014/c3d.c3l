@@ -11,6 +11,8 @@ import std::collections::map;
 *>
 alias CustomFreeFn = fn void (Allocator allocator, void* data, void* user);
 
+alias ErasedKey @local = fn String? (void* erased, Id id);
+
 alias ErasedDestroy @local = fn void (void* erased, Allocator allocator, CustomFreeFn on_destroy, void* user);
 
 <*
@@ -43,6 +45,7 @@ struct AssetHeader {
 
 struct CustomSlot @private {
     void*         pool;
+    ErasedKey     key;
     ErasedDestroy destroy;
     CustomFreeFn  on_destroy;
     void*         user;
@@ -159,6 +162,7 @@ macro void? AssetStore.register(
     if (slot.pool) return;
     *slot = {
         .pool       = custom::create_erased{$Type}(self.allocator, capacity),
+        .key        = &custom::key_erased{$Type},
         .destroy    = &custom::destroy_erased{$Type},
         .on_destroy = on_destroy,
         .user       = user,
@@ -179,6 +183,24 @@ macro bool AssetStore.is_registered(&self, $Type) {
 *>
 macro AssetStore.pool(&self, $Type) {
     return (custom::CustomPool{$Type}*)self.custom[custom::slot{$Type} - 1].pool;
+}
+
+<*
+ Key of a live record of a custom kind, from its slot and id.
+ @return? c3d::INVALID_ID, c3d::UNSUPPORTED
+ @require slot > 0 && slot <= MAX_CUSTOM_ASSET_TYPES
+*>
+fn String? AssetStore.custom_key(&self, uint slot, Id id) {
+    CustomSlot* entry = &self.custom[slot - 1];
+    if (!entry.pool) return c3d::UNSUPPORTED~;
+    return entry.key(entry.pool, id);
+}
+
+<*
+ Address of the kind's process-wide slot; zero until registered.
+*>
+macro uint* slot_address($Type) {
+    return &custom::slot{$Type};
 }
 
 <*

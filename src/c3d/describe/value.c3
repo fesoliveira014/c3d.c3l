@@ -73,6 +73,10 @@ fn bool? visit(
                 info.metadata.has_asset_kind = true;
                 $if Type::typeid != Id::typeid:
                     info.metadata.asset_kind = describe::@asset_kind(Type);
+                    $if $defined(Type.slot_address):
+                        Type kind_probe;
+                        info.metadata.custom_slot = kind_probe.slot_address();
+                    $endif
                 $endif
             $endif
             bool changed = visitor.field(visitor, &info, raw)!;

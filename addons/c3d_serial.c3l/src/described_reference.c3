@@ -7,6 +7,7 @@ fn void? write_described_asset(
     WriteContext* context,
     Writer* writer,
     AssetKind kind,
+    uint* custom_slot,
     void* value,
 ) @private {
     switch (kind) {
@@ -27,7 +28,7 @@ fn void? write_described_asset(
                 return;
             }
             write_key(context, writer, context.assets.fonts.try_get(id)!.header.key)!;
-        case CUSTOM: return c3d::UNSUPPORTED~;
+        case CUSTOM: write_described_custom(context, writer, custom_slot, *(Id*)value)!;
     }
 }
 
@@ -35,6 +36,7 @@ fn void? read_described_asset(
     ReadContext* context,
     Reader* reader,
     AssetKind kind,
+    uint* custom_slot,
     void* value,
 ) @private {
     switch (kind) {
@@ -56,6 +58,37 @@ fn void? read_described_asset(
             }
             if (index >= context.keys.len) return c3d::ASSET_FORMAT_ERROR~;
             *(FontId*)value = context.assets.find_font(context.keys[index]) ?? c3d::INVALID_ID~!;
-        case CUSTOM: return c3d::UNSUPPORTED~;
+        case CUSTOM:
+            uint index = reader.read_uint()!;
+            if (index == INDEX_NONE) {
+                *(Id*)value = {};
+                return;
+            }
+            if (index >= context.keys.len) return c3d::ASSET_FORMAT_ERROR~;
+            String key = context.keys[index];
+            *(Id*)value = find_described_custom(context, custom_slot, key)!;
     }
+}
+
+fn void? write_described_custom(
+    WriteContext* context,
+    Writer* writer,
+    uint* custom_slot,
+    Id id,
+) @local {
+    if (!id.index && !id.generation) {
+        writer.write_uint(INDEX_NONE);
+        return;
+    }
+    if (!custom_slot || !*custom_slot) return c3d::UNSUPPORTED~;
+    write_key(context, writer, context.assets.custom_key(*custom_slot, id)!)!;
+}
+
+fn Id? find_described_custom(ReadContext* context, uint* custom_slot, String key) @private {
+    if (!custom_slot || !*custom_slot) return c3d::UNSUPPORTED~;
+    AssetRef found = context.assets.find(key) ?? asset_diagnostic(context.diagnostic, key, c3d::INVALID_ID)~!;
+    if (found.kind != AssetKind.CUSTOM || found.slot != *custom_slot) {
+        return asset_diagnostic(context.diagnostic, key, c3d::INVALID_ID)~;
+    }
+    return found.id;
 }

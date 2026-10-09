@@ -118,6 +118,7 @@ struct Metadata {
     String unit;
     bool has_asset_kind;
     AssetKind asset_kind;
+    uint* custom_slot; // process-wide slot of a custom kind; read at use time because it is zero until registered
 }
 
 <*

@@ -17,6 +17,11 @@ struct CustomId {
 }
 
 <*
+ Address of the kind's process-wide slot.
+*>
+fn uint* CustomId.slot_address(self) => &slot;
+
+<*
  Record of one registered kind.
 *>
 struct CustomAsset {
@@ -37,6 +42,16 @@ fn CustomPool* create_erased(Allocator allocator, uint capacity) {
     CustomPool* pool = alloc::new(allocator, CustomPool);
     *pool = pool::create_pool{CustomAsset, CustomId}(allocator, capacity);
     return pool;
+}
+
+<*
+ Key of a live record.
+ @param [&in] erased : "A CustomPool from create_erased."
+ @return? c3d::INVALID_ID
+*>
+fn String? key_erased(void* erased, Id id) {
+    CustomPool* pool = (CustomPool*)erased;
+    return pool.try_get({ .index = id.index, .generation = id.generation })!.header.key;
 }
 
 <*
