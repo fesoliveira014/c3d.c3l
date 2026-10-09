@@ -201,14 +201,36 @@ fn void? write_texture_mip_band(
     }
 }
 
-fn TextureMipChain? create_full_texture_mips(Allocator allocator, material::TextureDesc desc, char[] pixels) @local {
+<*
+ Validate supported mip-zero metadata and exact source length without filtering.
+ @param pixels : "Complete borrowed mip-zero layers."
+ @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
+*>
+fn void? check_texture_mip_zero(material::TextureDesc desc, char[] pixels) @private {
     if (!desc.width || !desc.height || desc.mip_levels != 1) return c3d::INVALID_ARGUMENT~;
-    if (desc.depth) return create_volume_texture_mips(allocator, desc, pixels);
-    if (desc.is_cube) {
-        if (desc.layers != material::CUBE_FACE_COUNT || desc.width != desc.height) return c3d::INVALID_ARGUMENT~;
-    } else if (desc.layers != 1) {
-        return c3d::UNSUPPORTED~;
+    if (desc.depth) {
+        if (desc.generate_mips || desc.layers != 1 || desc.is_cube) return c3d::UNSUPPORTED~;
+        if (desc.format != RGBA8_UNORM && desc.format != RGBA8_SRGB) return c3d::UNSUPPORTED~;
+    } else {
+        if (desc.is_cube) {
+            if (desc.layers != material::CUBE_FACE_COUNT || desc.width != desc.height) return c3d::INVALID_ARGUMENT~;
+        } else if (desc.layers != 1) {
+            return c3d::UNSUPPORTED~;
+        }
+        if (material::texture_is_compressed(desc.format)
+          || (desc.format == R16_UINT && desc.generate_mips)) return c3d::UNSUPPORTED~;
     }
+    usz texel_bytes = material::texture_block_bytes(desc.format);
+    uint depth = desc.depth ? desc.depth : 1;
+    ulong texels = (ulong)desc.width * desc.height;
+    if (texels > (ulong)sz::max / texel_bytes / desc.layers / depth) return c3d::INVALID_ARGUMENT~;
+    if (!pixels.len) return c3d::ASSET_DATA_UNAVAILABLE~;
+    if (pixels.len != (usz)texels * texel_bytes * desc.layers * depth) return c3d::INVALID_ARGUMENT~;
+}
+
+fn TextureMipChain? create_full_texture_mips(Allocator allocator, material::TextureDesc desc, char[] pixels) @local {
+    check_texture_mip_zero(desc, pixels)!;
+    if (desc.depth) return create_volume_texture_mips(allocator, desc, pixels);
 
     switch (desc.format) {
         case RGBA8_UNORM:

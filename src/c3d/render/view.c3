@@ -2044,7 +2044,7 @@ fn ShaderVariant material_fragment(Material* material, uint shadow_flags) @local
         case STANDARD: return { .shader = STANDARD, .flags = shadow_flags };
         case TOON: return { .shader = TOON, .flags = shadow_flags };
         case PHYSICAL: return { .shader = PHYSICAL, .flags = shadow_flags };
-        case CUSTOM: return {};
+        case CUSTOM: return { .flags = shadow_flags };
     }
 }
 

@@ -135,32 +135,51 @@ fn void retire_prepare_resource(Renderer* renderer, PrepareUnit* unit, Retired r
 }
 
 fn void retire_prepare_allocation(Renderer* renderer, PrepareUnit* unit, gpu::GpuAllocation allocation) @private {
-    if (allocation.is_valid()) retire_prepare_resource(renderer, unit,
-        { .kind = RetiredKind.ALLOCATION, .allocation = allocation });
+    if (allocation.is_valid()) retire_prepare_resource(
+        renderer: renderer,
+        unit: unit,
+        resource: { .kind = RetiredKind.ALLOCATION, .allocation = allocation },
+    );
 }
 
 fn void retire_prepare_pipeline(Renderer* renderer, gpu::PipelineHandle pipeline) @private {
-    if (pipeline.is_valid()) retire_prepare_resource(renderer, null,
-        { .kind = RetiredKind.PIPELINE, .pipeline = pipeline });
+    if (pipeline.is_valid()) retire_prepare_resource(
+        renderer: renderer,
+        unit: null,
+        resource: { .kind = RetiredKind.PIPELINE, .pipeline = pipeline },
+    );
 }
 
 fn void retire_prepare_texture(Renderer* renderer, PrepareUnit* unit, TextureRes* texture) @private {
     foreach (view : texture.storage_views) {
-        if (view.is_valid()) retire_prepare_resource(renderer, unit, { .kind = RetiredKind.TEXTURE_VIEW, .texture_view = view });
+        if (view.is_valid()) retire_prepare_resource(
+            renderer: renderer,
+            unit: unit,
+            resource: { .kind = RetiredKind.TEXTURE_VIEW, .texture_view = view },
+        );
     }
     alloc::free(renderer.allocator, texture.storage_views.ptr);
-    if (texture.view.is_valid()) retire_prepare_resource(renderer, unit,
-        { .kind = RetiredKind.TEXTURE_VIEW, .texture_view = texture.view });
-    if (texture.texture.is_valid()) retire_prepare_resource(renderer, unit,
-        { .kind = RetiredKind.TEXTURE, .texture = texture.texture });
+    if (texture.view.is_valid()) retire_prepare_resource(
+        renderer: renderer,
+        unit: unit,
+        resource: { .kind = RetiredKind.TEXTURE_VIEW, .texture_view = texture.view },
+    );
+    if (texture.texture.is_valid()) retire_prepare_resource(
+        renderer: renderer,
+        unit: unit,
+        resource: { .kind = RetiredKind.TEXTURE, .texture = texture.texture },
+    );
     *texture = {};
 }
 
 fn void retire_prepare_geometry(Renderer* renderer, PrepareUnit* unit, GpuGeometry* geometry) @private {
     retire_prepare_allocation(renderer, unit, geometry.allocation);
     retire_prepare_allocation(renderer, unit, geometry.trace.allocation);
-    if (geometry.blas.handle.is_valid()) retire_prepare_resource(renderer, unit,
-        { .kind = RetiredKind.ACCELERATION_STRUCTURE, .acceleration_structure = geometry.blas.handle });
+    if (geometry.blas.handle.is_valid()) retire_prepare_resource(
+        renderer: renderer,
+        unit: unit,
+        resource: { .kind = RetiredKind.ACCELERATION_STRUCTURE, .acceleration_structure = geometry.blas.handle },
+    );
     *geometry = {};
 }
 

@@ -340,7 +340,11 @@ fn char[] assemble_texture_bands(
                 }
                 copied_bytes += band.byte_count;
                 assert(band.source_offset + band.byte_count <= source.len);
-                mem::copy(copied.ptr + (sz)band.source_offset, source.ptr + (sz)band.source_offset, (sz)band.byte_count);
+                mem::copy(
+                    dst: copied.ptr + (sz)band.source_offset,
+                    src: source.ptr + (sz)band.source_offset,
+                    len: (sz)band.byte_count,
+                );
                 row += rows;
             }
         }
@@ -670,4 +674,72 @@ fn void test_texture_bands_converge_with_canonical_byte_allowances() @test {
             }
         }
     }
+}
+
+fn void expect_texture_source_fault(TextureAsset* source, fault expected) @local {
+    assert(@catch(render::check_prepare_texture_source(source)) == expected);
+    if (source.source_kind == TextureSourceKind.MIP_ZERO) {
+        assert(@catch(render::create_texture_mips(mem, source.desc, source.pixels)) == expected);
+    } else {
+        assert(@catch(render::create_supplied_texture_mips(mem, source.desc, source.supplied_mips)) == expected);
+    }
+}
+
+fn void test_prepared_texture_sources_keep_synchronous_faults_and_exact_lengths() @test {
+    char[65] storage;
+    TextureAsset source = {
+        .desc = material::texture_2d_desc(4, 4, RGBA8_UNORM),
+        .source_kind = TextureSourceKind.MIP_ZERO,
+        .pixels = storage[..],
+    };
+    source.desc.generate_mips = false;
+    expect_texture_source_fault(&source, c3d::INVALID_ARGUMENT);
+    source.pixels = storage[:64];
+    source.desc.mip_levels = 2;
+    expect_texture_source_fault(&source, c3d::INVALID_ARGUMENT);
+    source.desc.mip_levels = 1;
+    source.pixels = {};
+    expect_texture_source_fault(&source, c3d::ASSET_DATA_UNAVAILABLE);
+    source.desc.layers = 0;
+    expect_texture_source_fault(&source, c3d::UNSUPPORTED);
+    source.desc = material::texture_cube_desc(4, RGBA8_UNORM);
+    source.desc.height = 3;
+    expect_texture_source_fault(&source, c3d::INVALID_ARGUMENT);
+    source.desc = material::texture_2d_desc(4, 4, BC1_RGBA_UNORM);
+    source.desc.generate_mips = false;
+    expect_texture_source_fault(&source, c3d::UNSUPPORTED);
+    source.desc = material::texture_3d_desc(
+        width: 4,
+        height: 4,
+        depth: 1,
+        format: RGBA16_FLOAT,
+    );
+    expect_texture_source_fault(&source, c3d::UNSUPPORTED);
+
+    TextureMipData[1] level = {{ .mip = 0, .layer = 0, .bytes = storage[..] }};
+    source = {
+        .desc = material::texture_2d_desc(4, 4, RGBA8_UNORM),
+        .source_kind = TextureSourceKind.SUPPLIED_MIPS,
+        .supplied_mips = level[..],
+    };
+    source.desc.generate_mips = false;
+    expect_texture_source_fault(&source, c3d::INVALID_ARGUMENT);
+    level[0].bytes = storage[:64];
+    source.desc.depth = 1;
+    expect_texture_source_fault(&source, c3d::UNSUPPORTED);
+
+    TextureMipData[material::TEXTURE_MIP_CAPACITY + 1] oversized;
+    foreach (index, &entry : oversized) *entry = { .mip = (uint)index, .layer = 0, .bytes = storage[:1] };
+    source.desc.depth = 0;
+    source.desc.mip_levels = material::TEXTURE_MIP_CAPACITY + 1;
+    source.supplied_mips = oversized[..];
+    expect_texture_source_fault(&source, c3d::INVALID_ARGUMENT);
+    assert(@catch(render::texture_band(
+        desc: source.desc,
+        mip: 0,
+        layer: 0,
+        slice: 0,
+        first_block_row: 0,
+        block_rows: 1,
+    )) == c3d::INVALID_ARGUMENT);
 }

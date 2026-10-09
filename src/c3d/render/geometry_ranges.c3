@@ -29,6 +29,8 @@ fn GeometryPrepareRange geometry_prepare_range(GeometryLayout* layout, usz offse
 
 <*
  Pack only the specified byte range, including zero padding and partial converted elements.
+ @param [&in] geometry : "Borrowed source streams."
+ @param [&in] layout : "Offsets and widths of the packed source."
  @require offset + destination.len <= layout.total_bytes
 *>
 fn void write_geometry_range(

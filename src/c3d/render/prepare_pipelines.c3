@@ -33,6 +33,9 @@ enum PreparePipelinePass @private {
 
 enum PrepareComputeSlot @private {
     CLUSTER,
+    TRACE_POSE,
+    TRACE_POSE_U16,
+    TRACE_REFIT,
     SSAO,
     RT_AO,
     AO_BLUR,
@@ -179,7 +182,9 @@ fn bool? run_prepare_shader_step(Renderer* renderer, PrepareUnit* unit, PrepareR
         if (job.offset == input.len) {
             job.stage++;
             job.offset = 0;
-            while (job.stage < PREPARE_SHADER_STAGE_COUNT && !prepare_shader_stage(&source.desc, job.stage).len) job.stage++;
+            while (job.stage < PREPARE_SHADER_STAGE_COUNT && !prepare_shader_stage(&source.desc, job.stage).len) {
+                job.stage++;
+            }
         }
         return false;
     }
@@ -207,6 +212,9 @@ fn void free_prepare_shader_unit(Renderer* renderer, PrepareUnit* unit) @private
 fn gpu::PipelineHandle* prepare_compute_slot(Renderer* renderer, PrepareComputeSlot slot) @private {
     switch (slot) {
         case CLUSTER: return &renderer.cluster_pipeline;
+        case TRACE_POSE: return &renderer.posed_trace.pose_pipeline;
+        case TRACE_POSE_U16: return &renderer.posed_trace.pose_u16_pipeline;
+        case TRACE_REFIT: return &renderer.posed_trace.refit_pipeline;
         case SSAO: return &renderer.ambient_occlusion_pipelines.ssao;
         case RT_AO: return &renderer.ambient_occlusion_pipelines.ray_traced;
         case AO_BLUR: return &renderer.ambient_occlusion_pipelines.blur;
@@ -552,6 +560,19 @@ fn void append_prepare_pipelines(
     }
     foreach (&view : renderer.views.items) {
         if (!view.live) continue;
+        ViewDesc* desc = &view.desc;
+        bool traces = desc.shading == ShadingPath.PATH_TRACED || desc.ray_tracing.shadows
+          || desc.ray_tracing.reflections || desc.ambient_occlusion.kind == AoKind.RAY_TRACED;
+        if ((flags.skinned || flags.has_morphs) && traces) {
+            append_prepare_compute(listed, PrepareComputeSlot.TRACE_POSE, TRACE_POSE);
+            append_prepare_compute(
+                listed: listed,
+                slot: PrepareComputeSlot.TRACE_POSE_U16,
+                shader_name: TRACE_POSE,
+                flags: shader::SHADER_FLAG_SKINNED_U16,
+            );
+            append_prepare_compute(listed, PrepareComputeSlot.TRACE_REFIT, TRACE_REFIT);
+        }
         if (view.desc.ray_tracing.shadows) {
             PipelineKey traced = forward_pipeline_key(
                 material: data,
@@ -592,9 +613,14 @@ fn void append_prepare_view_pipelines(Renderer* renderer, SceneReads reads, List
     foreach (&view : renderer.views.items) {
         if (!view.live) continue;
         ViewDesc* desc = &view.desc;
-        if (desc.lights == LightSelection.CLUSTERED) append_prepare_compute(listed, PrepareComputeSlot.CLUSTER, LIGHT_CULL);
+        if (desc.lights == LightSelection.CLUSTERED) {
+            append_prepare_compute(listed, PrepareComputeSlot.CLUSTER, LIGHT_CULL);
+        }
         if (desc.shading == ShadingPath.DEFERRED) {
-            append_prepare_cache(listed, lighting_resolve_pipeline_key(rt_shadow_flags(renderer, desc.ray_tracing.shadows)));
+            append_prepare_cache(
+                listed: listed,
+                key: lighting_resolve_pipeline_key(rt_shadow_flags(renderer, desc.ray_tracing.shadows)),
+            );
         }
         switch (desc.ambient_occlusion.kind) {
             case NONE: break;
@@ -607,7 +633,9 @@ fn void append_prepare_view_pipelines(Renderer* renderer, SceneReads reads, List
                     flags: trace_shader_flags(renderer),
                 );
         }
-        if (desc.ambient_occlusion.kind != AoKind.NONE) append_prepare_compute(listed, PrepareComputeSlot.AO_BLUR, AO_BLUR);
+        if (desc.ambient_occlusion.kind != AoKind.NONE) {
+            append_prepare_compute(listed, PrepareComputeSlot.AO_BLUR, AO_BLUR);
+        }
         if (desc.ray_tracing.reflections) {
             append_prepare_compute(
                 listed: listed,
@@ -642,8 +670,12 @@ fn void append_prepare_view_pipelines(Renderer* renderer, SceneReads reads, List
             append_prepare_compute(listed, PrepareComputeSlot.TILE_NEIGHBOR, TILE_NEIGHBOR);
         }
         if (desc.post.motion_blur) append_prepare_compute(listed, PrepareComputeSlot.MOTION_BLUR, MOTION_BLUR);
-        if (post::uses_velocity(desc)) append_prepare_cache(listed, post::camera_velocity_pipeline_key(post::velocity_format(desc)));
-        if (desc.post.anti_aliasing == AntiAliasing.TAA) append_prepare_compute(listed, PrepareComputeSlot.TAA, TAA_RESOLVE);
+        if (post::uses_velocity(desc)) {
+            append_prepare_cache(listed, post::camera_velocity_pipeline_key(post::velocity_format(desc)));
+        }
+        if (desc.post.anti_aliasing == AntiAliasing.TAA) {
+            append_prepare_compute(listed, PrepareComputeSlot.TAA, TAA_RESOLVE);
+        }
         if (post::auto_exposure_active(desc)) {
             append_prepare_compute(listed, PrepareComputeSlot.EXPOSURE_HISTOGRAM, EXPOSURE_HISTOGRAM);
             append_prepare_compute(listed, PrepareComputeSlot.EXPOSURE_ADAPT, EXPOSURE_ADAPT);
@@ -711,7 +743,10 @@ fn bool? run_prepare_sbt_step(Renderer* renderer, PrepareUnit* unit, PrepareRepo
         handle_alignment: caps.shader_group_handle_alignment,
         base_alignment: caps.shader_group_base_alignment,
     );
-    gpu::RayTracingPipelineInfo info = gpu::get_ray_tracing_pipeline_info(&renderer.device, renderer.path_tracer.pipeline)!;
+    gpu::RayTracingPipelineInfo info = gpu::get_ray_tracing_pipeline_info(
+        device: &renderer.device,
+        pipeline: renderer.path_tracer.pipeline,
+    )!;
     usz handle_size = caps.shader_group_handle_size;
     if (!job.handles.len) {
         char[] handles = alloc::alloc_array(renderer.allocator, char, (sz)(info.total_group_count * handle_size));

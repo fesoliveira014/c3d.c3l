@@ -167,7 +167,10 @@ fn void preparation_asset_drain(
         if (!check_payload && partial && !checked_prefix) {
             GpuGeometry* candidate = &unit.geometry_candidate;
             char[] actual = preparation_asset_readback(
-                fixture, gpu::get_allocation_span(&renderer.device, candidate.allocation)!!, unit.staged.bytes)!!;
+                fixture: fixture,
+                source: gpu::get_allocation_span(&renderer.device, candidate.allocation)!!,
+                bytes: unit.staged.bytes,
+            )!!;
             defer alloc::free(mem, actual.ptr);
             char[] expected = alloc::new_array(mem, char, (sz)candidate.layout.total_bytes);
             defer alloc::free(mem, expected.ptr);
@@ -342,7 +345,10 @@ fn void preparation_geometry_bytes(Fixture* fixture, GeometryId geometry) @priva
     Renderer* renderer = &fixture.renderer;
     GpuGeometry* mirror = &renderer.geometries[geometry.index];
     char[] actual = preparation_asset_readback(
-        fixture, gpu::get_allocation_span(&renderer.device, mirror.allocation)!!, mirror.layout.total_bytes)!!;
+        fixture: fixture,
+        source: gpu::get_allocation_span(&renderer.device, mirror.allocation)!!,
+        bytes: mirror.layout.total_bytes,
+    )!!;
     defer alloc::free(mem, actual.ptr);
     char[] expected = alloc::new_array(mem, char, (sz)mirror.layout.total_bytes);
     defer alloc::free(mem, expected.ptr);
@@ -420,7 +426,10 @@ fn void preparation_payload_bytes(Fixture* fixture, MaterialId material, char[] 
     MaterialRes* mirror = &renderer.materials[material.index];
     assert(mirror.payload_size == expected.len);
     char[] actual = preparation_asset_readback(
-        fixture, gpu::get_allocation_span(&renderer.device, mirror.payload)!!, expected.len)!!;
+        fixture: fixture,
+        source: gpu::get_allocation_span(&renderer.device, mirror.payload)!!,
+        bytes: expected.len,
+    )!!;
     defer alloc::free(mem, actual.ptr);
     assert(actual == expected);
 }
@@ -437,7 +446,10 @@ fn void preparation_payload_mode(usz allowance) @private {
         ShaderId shader = preparation_large_reference_shader(&fixture)!!;
         char[] old_bytes = loading_fixtures::preparation_texture_bytes(tmem, PREPARATION_ASSET_PAYLOAD_BYTES);
         char[] bytes = loading_fixtures::preparation_texture_bytes(
-            tmem, PREPARATION_ASSET_PAYLOAD_BYTES, loading_fixtures::PREPARATION_IMAGE_SEED ^ 17);
+            allocator: tmem,
+            bytes: PREPARATION_ASSET_PAYLOAD_BYTES,
+            seed: loading_fixtures::PREPARATION_IMAGE_SEED ^ 17,
+        );
         MaterialId old_layer = fixture.assets.add_material(material::standard())!!;
         MaterialId stepped = fixture.assets.add_material(material::custom(
             shader: shader,
@@ -455,8 +467,7 @@ fn void preparation_payload_mode(usz allowance) @private {
         Material replacement = material::custom(
             shader: shader,
             param_block: bytes,
-            slots: { [0] = material::texture_slot(texture,
-            asset::SAMPLER_NEAREST) },
+            slots: { [0] = material::texture_slot(texture, asset::SAMPLER_NEAREST) },
             references: { [0] = layer, [1] = layer, [2] = layer },
         );
         fixture.assets.replace_material(stepped, replacement);
@@ -487,9 +498,11 @@ fn void preparation_payload_mode(usz allowance) @private {
                 check_payload: true,
             );
         } else {
-            preparation_drain(&fixture.renderer, id, {
-                .staged_bytes = allowance, .generated_texels = 4096, .pipelines = 1,
-            });
+            preparation_drain(
+                renderer: &fixture.renderer,
+                id: id,
+                limits: { .staged_bytes = allowance, .generated_texels = 4096, .pipelines = 1 },
+            );
         }
         fixture.renderer.end_prepare(id)!!;
         assert(fixture.renderer.residencies[texture.index].resident_base == 0);
@@ -499,12 +512,16 @@ fn void preparation_payload_mode(usz allowance) @private {
         usz actual_offset = (usz)stepped.index * render::MATERIAL_STRIDE;
         usz expected_offset = (usz)synchronous.index * render::MATERIAL_STRIDE;
         char[] actual = preparation_asset_readback(
-            &fixture, fixture.renderer.material_heap_span.checked_subspan(actual_offset, CustomMaterialGpu::size)!!,
-            CustomMaterialGpu::size)!!;
+            fixture: &fixture,
+            source: fixture.renderer.material_heap_span.checked_subspan(actual_offset, CustomMaterialGpu::size)!!,
+            bytes: CustomMaterialGpu::size,
+        )!!;
         defer alloc::free(mem, actual.ptr);
         char[] expected = preparation_asset_readback(
-            &fixture, fixture.renderer.material_heap_span.checked_subspan(expected_offset, CustomMaterialGpu::size)!!,
-            CustomMaterialGpu::size)!!;
+            fixture: &fixture,
+            source: fixture.renderer.material_heap_span.checked_subspan(expected_offset, CustomMaterialGpu::size)!!,
+            bytes: CustomMaterialGpu::size,
+        )!!;
         defer alloc::free(mem, expected.ptr);
         CustomMaterialGpu normalized = *(CustomMaterialGpu*)expected.ptr;
         normalized.parameters = ((CustomMaterialGpu*)actual.ptr).parameters;

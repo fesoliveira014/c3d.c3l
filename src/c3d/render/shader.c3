@@ -78,7 +78,9 @@ fn void? replace_shader_pipelines(Renderer* renderer, ShaderId shader) @private 
 
     @pool() {
         if (!same_asset && mirror.asset.generation) {
-            foreach (handle : renderer.pipelines.remove_shader(tmem, mirror.asset)) retire_prepare_pipeline(renderer, handle);
+            foreach (handle : renderer.pipelines.remove_shader(tmem, mirror.asset)) {
+                retire_prepare_pipeline(renderer, handle);
+            }
         }
         gpu::PipelineHandle[] superseded = renderer.pipelines.replace_shader(
             allocator:    tmem,
@@ -145,7 +147,9 @@ fn void? adopt_prepared_shader(
     bool same_asset = c3d::same_id(mirror.asset, shader);
     @pool() {
         if (!same_asset && mirror.asset.generation) {
-            foreach (handle : renderer.pipelines.remove_shader(tmem, mirror.asset)) retire_prepare_pipeline(renderer, handle);
+            foreach (handle : renderer.pipelines.remove_shader(tmem, mirror.asset)) {
+                retire_prepare_pipeline(renderer, handle);
+            }
         }
         gpu::PipelineHandle[] superseded = renderer.pipelines.replace_shader(
             allocator: tmem,

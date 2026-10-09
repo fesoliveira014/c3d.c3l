@@ -50,6 +50,7 @@
         "test_prepare_assets.c3",
         "test_prepare_present.c3",
         "test_prepare_lifetime.c3",
+        "test_prepare_budget_drain.c3",
         "prepare_present_window.c3",
         "../../fixtures/loading_fixtures.c3",
         "test_large_world.c3",

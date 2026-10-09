@@ -60,7 +60,9 @@ fn void enumerate_prepare_record(Renderer* renderer, PrepareRecord* record) @pri
                 TextureAsset* source = renderer.assets.texture(unit.texture);
                 if (source.source_kind == MIP_ZERO && source.desc.generate_mips
                   && !(prepare_unit_current(renderer, unit) ?? false)) {
-                    unit.texels = (ulong)source.desc.width * source.desc.height * source.desc.layers;
+                    if (try layout = generated_texture_mip_layout(source.desc)) {
+                        unit.texels = layout.output_texels ? layout.base_texels : 0;
+                    }
                 }
             }
             record.bytes_total = (usz)prepare_add(record.bytes_total, unit.bytes);
@@ -84,7 +86,12 @@ fn void append_prepare_mesh(
         renderer.stats.dangling_refs++;
         return;
     }
-    append_prepare_material(renderer, listed, index, material);
+    append_prepare_material(
+        renderer: renderer,
+        listed: listed,
+        index: index,
+        material: material,
+    );
     if (!index.geometries.has_key(prepare_identity(geometry))) {
         index.geometries.set(prepare_identity(geometry), true);
         GeometryAsset* source = assets.geometry(geometry);
@@ -123,26 +130,114 @@ fn void append_prepare_material(
     Material* data = &source.data;
     switch (data.kind) {
         case BASIC:
-            append_prepare_slot(renderer, listed, index, data.basic.map, false);
+            append_prepare_slot(
+                renderer: renderer,
+                listed: listed,
+                index: index,
+                slot: data.basic.map,
+                full_reader: false,
+            );
         case STANDARD:
-            append_prepare_standard(renderer, listed, index, &data.standard);
+            append_prepare_standard(
+                renderer: renderer,
+                listed: listed,
+                index: index,
+                params: &data.standard,
+            );
         case PHYSICAL:
             PhysicalParams* params = &data.physical;
-            append_prepare_standard(renderer, listed, index, &params.standard);
-            append_prepare_slot(renderer, listed, index, params.clearcoat_map, false);
-            append_prepare_slot(renderer, listed, index, params.clearcoat_roughness_map, false);
-            append_prepare_slot(renderer, listed, index, params.clearcoat_normal_map, false);
-            append_prepare_slot(renderer, listed, index, params.sheen_color_map, false);
-            append_prepare_slot(renderer, listed, index, params.sheen_roughness_map, false);
-            append_prepare_slot(renderer, listed, index, params.specular_map, false);
-            append_prepare_slot(renderer, listed, index, params.specular_color_map, false);
-            append_prepare_slot(renderer, listed, index, params.anisotropy_map, false);
-            append_prepare_slot(renderer, listed, index, params.transmission_map, false);
-            append_prepare_slot(renderer, listed, index, params.thickness_map, false);
+            append_prepare_standard(
+                renderer: renderer,
+                listed: listed,
+                index: index,
+                params: &params.standard,
+            );
+            append_prepare_slot(
+                renderer: renderer,
+                listed: listed,
+                index: index,
+                slot: params.clearcoat_map,
+                full_reader: false,
+            );
+            append_prepare_slot(
+                renderer: renderer,
+                listed: listed,
+                index: index,
+                slot: params.clearcoat_roughness_map,
+                full_reader: false,
+            );
+            append_prepare_slot(
+                renderer: renderer,
+                listed: listed,
+                index: index,
+                slot: params.clearcoat_normal_map,
+                full_reader: false,
+            );
+            append_prepare_slot(
+                renderer: renderer,
+                listed: listed,
+                index: index,
+                slot: params.sheen_color_map,
+                full_reader: false,
+            );
+            append_prepare_slot(
+                renderer: renderer,
+                listed: listed,
+                index: index,
+                slot: params.sheen_roughness_map,
+                full_reader: false,
+            );
+            append_prepare_slot(
+                renderer: renderer,
+                listed: listed,
+                index: index,
+                slot: params.specular_map,
+                full_reader: false,
+            );
+            append_prepare_slot(
+                renderer: renderer,
+                listed: listed,
+                index: index,
+                slot: params.specular_color_map,
+                full_reader: false,
+            );
+            append_prepare_slot(
+                renderer: renderer,
+                listed: listed,
+                index: index,
+                slot: params.anisotropy_map,
+                full_reader: false,
+            );
+            append_prepare_slot(
+                renderer: renderer,
+                listed: listed,
+                index: index,
+                slot: params.transmission_map,
+                full_reader: false,
+            );
+            append_prepare_slot(
+                renderer: renderer,
+                listed: listed,
+                index: index,
+                slot: params.thickness_map,
+                full_reader: false,
+            );
         case TOON:
-            append_prepare_slot(renderer, listed, index, data.toon.map, false);
+            append_prepare_slot(
+                renderer: renderer,
+                listed: listed,
+                index: index,
+                slot: data.toon.map,
+                full_reader: false,
+            );
             if (renderer.assets.textures.is_live(data.toon.gradient_map)) {
-                append_prepare_texture(renderer, listed, index, data.toon.gradient_map, true);
+                append_prepare_texture(
+                    renderer: renderer,
+                    listed: listed,
+                    index: index,
+                    texture: data.toon.gradient_map,
+                    full_reader: true,
+                );
                 listed.push({ .kind = PrepareUnitKind.TOON_SAMPLER });
             }
         case CUSTOM:
@@ -154,7 +249,12 @@ fn void append_prepare_material(
                 full_reader: slot_index != 0 || data.common.alpha_mode != AlphaMode.MASK,
             );
             foreach (reference : data.custom.references) {
-                if (reference.generation) append_prepare_material(renderer, listed, index, reference);
+                if (reference.generation) append_prepare_material(
+                    renderer: renderer,
+                    listed: listed,
+                    index: index,
+                    material: reference,
+                );
             }
             ShaderId shader = data.custom.shader;
             if (!index.shaders.has_key(prepare_identity(shader))) {
@@ -181,11 +281,41 @@ fn void append_prepare_standard(
     PrepareIndex* index,
     StandardParams* params,
 ) @local {
-    append_prepare_slot(renderer, listed, index, params.base_color_map, false);
-    append_prepare_slot(renderer, listed, index, params.metallic_roughness_map, false);
-    append_prepare_slot(renderer, listed, index, params.normal_map, false);
-    append_prepare_slot(renderer, listed, index, params.occlusion_map, false);
-    append_prepare_slot(renderer, listed, index, params.emissive_map, false);
+    append_prepare_slot(
+        renderer: renderer,
+        listed: listed,
+        index: index,
+        slot: params.base_color_map,
+        full_reader: false,
+    );
+    append_prepare_slot(
+        renderer: renderer,
+        listed: listed,
+        index: index,
+        slot: params.metallic_roughness_map,
+        full_reader: false,
+    );
+    append_prepare_slot(
+        renderer: renderer,
+        listed: listed,
+        index: index,
+        slot: params.normal_map,
+        full_reader: false,
+    );
+    append_prepare_slot(
+        renderer: renderer,
+        listed: listed,
+        index: index,
+        slot: params.occlusion_map,
+        full_reader: false,
+    );
+    append_prepare_slot(
+        renderer: renderer,
+        listed: listed,
+        index: index,
+        slot: params.emissive_map,
+        full_reader: false,
+    );
 }
 
 fn void append_prepare_slot(
@@ -204,7 +334,13 @@ fn void append_prepare_slot(
     if (slot.texture.kind == TextureRefKind.RENDER_TARGET && renderer.targets.is_live(slot.texture.target)) return;
     TextureId texture = slot.texture.kind == TextureRefKind.ASSET && renderer.assets.textures.is_live(slot.texture.asset)
         ? slot.texture.asset : asset::TEXTURE_WHITE;
-    append_prepare_texture(renderer, listed, index, texture, full_reader);
+    append_prepare_texture(
+        renderer: renderer,
+        listed: listed,
+        index: index,
+        texture: texture,
+        full_reader: full_reader,
+    );
 }
 
 fn void append_prepare_texture(
@@ -223,8 +359,22 @@ fn void append_prepare_texture(
         .revision = renderer.assets.texture(texture).header.revision, .full_reader = full_reader });
 }
 
+fn bool prepare_texture_description_valid(TextureAsset* source) @private {
+    if (source.source_kind == TextureSourceKind.EMPTY) return true;
+    if (catch excuse = texture_band(
+        desc: source.desc,
+        mip: 0,
+        layer: 0,
+        slice: 0,
+        first_block_row: 0,
+        block_rows: 1,
+    )) return false;
+    return true;
+}
+
 fn uint preparation_texture_base(Renderer* renderer, TextureId texture, bool full_reader) @private {
     TextureAsset* source = renderer.assets.texture(texture);
+    if (!prepare_texture_description_valid(source)) return 0;
     uint chain_mips = texture_chain_mips(source);
     if (!renderer.texture_budget_bytes || full_reader || !texture_eligible(source.desc, source.source_kind, chain_mips)) return 0;
     TextureResidency* residency = &renderer.residencies[texture.index];
@@ -237,22 +387,12 @@ fn uint preparation_texture_base(Renderer* renderer, TextureId texture, bool ful
 
 fn usz prepare_texture_bytes(Renderer* renderer, TextureId texture, bool full_reader = false) @private {
     TextureAsset* source = renderer.assets.texture(texture);
-    if (source.source_kind == TextureSourceKind.EMPTY) return 0;
+    if (source.source_kind == TextureSourceKind.EMPTY || !prepare_texture_description_valid(source)) return 0;
     uint chain_mips = texture_chain_mips(source);
     uint base = preparation_texture_base(renderer, texture, full_reader);
     if (try levels = texture_level_bytes(source.desc, chain_mips)) {
         usz total;
         for (uint mip = base; mip < chain_mips; mip++) total += levels[mip];
-        return total;
-    }
-    return 0;
-}
-
-fn usz prepare_source_bytes(TextureAsset* source) @private {
-    if (source.source_kind == TextureSourceKind.EMPTY) return 0;
-    if (try levels = texture_level_bytes(source.desc, texture_chain_mips(source))) {
-        usz total;
-        foreach (bytes : levels) total += bytes;
         return total;
     }
     return 0;
@@ -307,8 +447,7 @@ fn bool prepare_unit_live(Renderer* renderer, PrepareUnit* unit) @private {
 fn bool? prepare_unit_current(Renderer* renderer, PrepareUnit* unit) @private {
     switch (unit.kind) {
         case TEXTURE:
-            return texture_current(renderer, unit.texture)
-                && (!unit.full_reader || !renderer.texture_budget_bytes || renderer.residencies[unit.texture.index].resident_base == 0);
+            return texture_prepare_current(renderer, unit.texture, unit.full_reader);
         case GEOMETRY: return geometry_current(renderer, unit.geometry);
         case SAMPLER:
             SamplerRes* mirror = &renderer.samplers[unit.sampler.index];
@@ -497,7 +636,8 @@ fn uint prepare_order(Renderer* renderer, PrepareId[] order) @private {
 }
 
 fn bool fails_record(fault excuse) @private {
-    return excuse == c3d::INVALID_ID || excuse == c3d::SHADER_NOT_FOUND || excuse == c3d::INVALID_ARGUMENT
+    return excuse == PIPELINE_REJECTED || excuse == c3d::INVALID_ID || excuse == c3d::SHADER_NOT_FOUND
+        || excuse == c3d::INVALID_ARGUMENT
         || excuse == c3d::UNSUPPORTED || excuse == c3d::ASSET_DATA_UNAVAILABLE || excuse == gpu::SHADER_INVALID
         || excuse == gpu::PIPELINE_CREATE_FAILED;
 }

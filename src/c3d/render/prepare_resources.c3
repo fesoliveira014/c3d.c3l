@@ -44,14 +44,23 @@ fn PrepareStepPlan? plan_prepare_step(
     PrepareBudget* budget,
 ) @private {
     switch (unit.kind) {
-        case TEXTURE: return plan_prepare_texture(renderer, record, unit, budget);
+        case TEXTURE:
+            return plan_prepare_texture(
+                renderer: renderer,
+                record: record,
+                unit: unit,
+                budget: budget,
+            );
         case GEOMETRY:
             GeometryAsset* source = renderer.assets.geometry(unit.geometry);
             if (!source.data.positions.len) return c3d::ASSET_DATA_UNAVAILABLE~;
             record.phase = PreparePhase.UPLOAD;
             if (!unit.geometry_candidate.allocation.is_valid()) return { .kind = PrepareResourceStep.GEOMETRY_STORAGE };
-            GeometryPrepareRange range = geometry_prepare_range(&unit.geometry_candidate.layout, unit.staged.bytes,
-                prepare_byte_allowance(budget));
+            GeometryPrepareRange range = geometry_prepare_range(
+                layout: &unit.geometry_candidate.layout,
+                offset: unit.staged.bytes,
+                allowance: prepare_byte_allowance(budget),
+            );
             if (!range.bytes) {
                 range = geometry_prepare_range(&unit.geometry_candidate.layout, unit.staged.bytes, range.minimum);
             }
@@ -61,7 +70,9 @@ fn PrepareStepPlan? plan_prepare_step(
             record.phase = PreparePhase.UPLOAD;
             Material* material = &renderer.assets.material(unit.material).data;
             usz payload_bytes = material.kind == MaterialKind.CUSTOM ? material.custom.param_block.len : 0;
-            if (payload_bytes && !unit.material_candidate.payload.is_valid()) return { .kind = PrepareResourceStep.MATERIAL_STORAGE };
+            if (payload_bytes && !unit.material_candidate.payload.is_valid()) {
+                return { .kind = PrepareResourceStep.MATERIAL_STORAGE };
+            }
             if (unit.staged.bytes < payload_bytes) {
                 usz remaining = payload_bytes - unit.staged.bytes;
                 usz minimum = math::min(remaining, STREAM_ALIGNMENT);
@@ -88,6 +99,19 @@ fn PrepareStepPlan? plan_prepare_step(
     }
 }
 
+<*
+ Validate the retained CPU source before creating a preparation image.
+ @param [&in] source : "Borrowed texture source and metadata."
+ @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
+*>
+fn void? check_prepare_texture_source(TextureAsset* source) @private {
+    switch (source.source_kind) {
+        case MIP_ZERO: check_texture_mip_zero(source.desc, source.pixels)!;
+        case SUPPLIED_MIPS: supplied_texture_mip_layout(source.desc, source.supplied_mips)!;
+        case EMPTY: break;
+    }
+}
+
 fn PrepareStepPlan? plan_prepare_texture(
     Renderer* renderer,
     PrepareRecord* record,
@@ -96,6 +120,10 @@ fn PrepareStepPlan? plan_prepare_texture(
 ) @local {
     TextureAsset* source = renderer.assets.texture(unit.texture);
     material::TextureDesc desc = source.desc;
+    if (!unit.texture_candidate.texture.is_valid()) {
+        check_prepare_texture_source(source)!;
+        return { .kind = PrepareResourceStep.TEXTURE_IMAGE };
+    }
     if (source.source_kind != EMPTY) {
         texture_band(
             desc: desc,
@@ -106,16 +134,15 @@ fn PrepareStepPlan? plan_prepare_texture(
             block_rows: 1,
         )!;
     }
-    if (!unit.texture_candidate.texture.is_valid()) return { .kind = PrepareResourceStep.TEXTURE_IMAGE };
     if (!unit.texture_candidate.view.is_valid()) return { .kind = PrepareResourceStep.TEXTURE_VIEW };
     usz storage_count = desc.storage ? (usz)unit.texture_candidate.mip_count * desc.layers : 0;
     if (unit.creation_next < storage_count) return { .kind = PrepareResourceStep.TEXTURE_STORAGE_VIEW };
     unit.initialized = true;
     if (source.source_kind == EMPTY) return { .kind = PrepareResourceStep.EMPTY_TEXTURE };
     if (source.source_kind == MIP_ZERO && desc.generate_mips) {
-        if (!record.chain_active) return { .kind = PrepareResourceStep.GENERATION_STORAGE };
         GeneratedTextureLayout layout = generated_texture_mip_layout(desc)!;
-        if (record.generation_mip <= layout.mip_count) {
+        if (layout.output_texels && !record.chain_active) return { .kind = PrepareResourceStep.GENERATION_STORAGE };
+        if (layout.output_texels && record.generation_mip <= layout.mip_count) {
             record.phase = PreparePhase.GENERATION;
             uint height = material::texture_mip_extent(desc.height, record.generation_mip);
             uint rows = math::min(PREPARE_GENERATION_ROWS, height - record.generation_row);
@@ -123,8 +150,11 @@ fn PrepareStepPlan? plan_prepare_texture(
             ulong before = generated_mip_charge(layout.base_texels, record.generation_outputs, layout.output_texels);
             ulong charge;
             while (true) {
-                ulong after = generated_mip_charge(layout.base_texels,
-                    record.generation_outputs + (ulong)width * rows, layout.output_texels);
+                ulong after = generated_mip_charge(
+                    base_texels: layout.base_texels,
+                    output_done: record.generation_outputs + (ulong)width * rows,
+                    output_total: layout.output_texels,
+                );
                 charge = after - before;
                 ulong remaining = budget.limits.generated_texels > budget.report.generated_texels
                     ? budget.limits.generated_texels - budget.report.generated_texels : 0;
@@ -151,7 +181,7 @@ fn PrepareStepPlan? plan_prepare_texture(
         first_block_row: unit.staged.row,
         block_rows: 1,
     )!;
-    uint block_height = material::texture_is_compressed(desc.format) ? 4 : 1;
+    uint block_height = material::texture_is_compressed(desc.format) ? TEXEL_BLOCK_EXTENT : 1;
     uint height = material::texture_mip_extent(desc.height, unit.staged.mip);
     uint rows_left = (height + block_height - 1) / block_height - unit.staged.row;
     usz allowance = prepare_byte_allowance(budget);
@@ -196,10 +226,12 @@ fn bool? run_prepare_step(
                 .is_cube = source.desc.is_cube, .copy_source = eligible, .format = desc.format,
             };
             unit.staged.mip = unit.texture_base;
+            uint chain_extent = math::max(source.desc.width, source.desc.height);
+            uint tail_base = eligible ? texture_tail_base(chain_extent, chain_mips) : 0;
             unit.residency_candidate = {
                 .chain_mips = chain_mips, .chain_width = source.desc.width, .chain_height = source.desc.height,
                 .format = source.desc.format, .level_bytes = texture_level_bytes(source.desc, chain_mips)!,
-                .tail_base = eligible ? texture_tail_base(math::max(source.desc.width, source.desc.height), chain_mips) : 0,
+                .tail_base = tail_base,
                 .resident_base = unit.texture_base, .required_base = chain_mips,
                 .last_used_frame = renderer.frame_index, .eligible = eligible,
                 .full_reader = unit.full_reader || renderer.residencies[unit.texture.index].full_reader,
@@ -210,11 +242,18 @@ fn bool? run_prepare_step(
         case TEXTURE_VIEW:
             gpu::TextureViewDesc desc = { .cube = unit.texture_candidate.is_cube };
             report.views++;
-            unit.texture_candidate.view = gpu::create_texture_view(&renderer.device, unit.texture_candidate.texture, &desc)!;
+            unit.texture_candidate.view = gpu::create_texture_view(
+                device: &renderer.device,
+                texture: unit.texture_candidate.texture,
+                desc: &desc,
+            )!;
             TextureAsset* source = renderer.assets.texture(unit.texture);
             if (source.desc.storage) {
-                unit.texture_candidate.storage_views = alloc::new_array(renderer.allocator, gpu::TextureView,
-                    (sz)unit.texture_candidate.mip_count * unit.texture_candidate.layers);
+                unit.texture_candidate.storage_views = alloc::new_array(
+                    allocator: renderer.allocator,
+                    $Type: gpu::TextureView,
+                    elements: (sz)unit.texture_candidate.mip_count * unit.texture_candidate.layers,
+                );
             }
             return false;
         case TEXTURE_STORAGE_VIEW:
@@ -224,7 +263,11 @@ fn bool? run_prepare_step(
             gpu::TextureViewDesc desc = { .base_mip = mip, .mip_count = 1, .base_layer = layer, .layer_count = 1 };
             report.views++;
             unit.texture_candidate.storage_views[unit.creation_next] =
-                gpu::create_texture_view(&renderer.device, unit.texture_candidate.texture, &desc)!;
+                gpu::create_texture_view(
+                    device: &renderer.device,
+                    texture: unit.texture_candidate.texture,
+                    desc: &desc,
+                )!;
             unit.creation_next++;
             return false;
         case GENERATION_STORAGE:
@@ -265,7 +308,13 @@ fn bool? run_prepare_step(
             }
             return false;
         case TEXTURE_COPY:
-            return run_prepare_texture_copy(renderer, record, unit, &plan.band, report);
+            return run_prepare_texture_copy(
+                renderer: renderer,
+                record: record,
+                unit: unit,
+                band: &plan.band,
+                report: report,
+            );
         case EMPTY_TEXTURE:
             transition_prepare_texture(renderer, unit, renderer.sampled_state)!;
             install_prepare_texture(renderer, record, unit);
@@ -279,18 +328,28 @@ fn bool? run_prepare_step(
             report.allocations++;
             gpu::GpuAllocation allocation = gpu::allocate_memory(&renderer.device, &desc)!;
             unit.geometry_candidate.allocation = allocation;
-            unit.geometry_candidate = { .asset = unit.geometry, .revision = unit.revision, .allocation = allocation,
-                .root = gpu::get_span_address(&renderer.device, gpu::get_allocation_span(&renderer.device, allocation)!)!,
-                .layout = layout, .topology = source.data.topology, .bounds = source.data.bounds };
             gpu::GpuSpan span = gpu::get_allocation_span(&renderer.device, allocation)!;
-            unit.geometry_candidate.positions = span.checked_subspan(layout.positions, (usz)layout.vertex_count * Vec3::size)!;
-            if (layout.index_count) unit.geometry_candidate.indices = span.checked_subspan(layout.indices,
-                (usz)layout.index_count * layout.index_stride)!;
+            unit.geometry_candidate = { .asset = unit.geometry, .revision = unit.revision, .allocation = allocation,
+                .root = gpu::get_span_address(&renderer.device, span)!,
+                .layout = layout, .topology = source.data.topology, .bounds = source.data.bounds };
+            unit.geometry_candidate.positions = span.checked_subspan(
+                offset: layout.positions,
+                size: (usz)layout.vertex_count * Vec3::size,
+            )!;
+            if (layout.index_count) unit.geometry_candidate.indices = span.checked_subspan(
+                offset: layout.indices,
+                size: (usz)layout.index_count * layout.index_stride,
+            )!;
             unit.initialized = true;
             return false;
         case GEOMETRY_COPY:
             GeometryAsset* source = renderer.assets.geometry(unit.geometry);
-            gpu::MappedGpuSpan staging = take_prepare_staging(renderer, plan.bytes, STREAM_ALIGNMENT, report)!;
+            gpu::MappedGpuSpan staging = take_prepare_staging(
+                renderer: renderer,
+                bytes: plan.bytes,
+                alignment: STREAM_ALIGNMENT,
+                report: report,
+            )!;
             write_geometry_range(
                 destination: staging.bytes,
                 geometry: &source.data,
@@ -302,7 +361,12 @@ fn bool? run_prepare_step(
             renderer.stats.upload_bytes += (uint)plan.bytes;
             gpu::GpuSpan target = gpu::get_allocation_span(&renderer.device, unit.geometry_candidate.allocation)!
                 .checked_subspan(plan.offset, plan.bytes)!;
-            record_prepare_buffer_copy(renderer, unit, staging.span, target)!;
+            record_prepare_buffer_copy(
+                renderer: renderer,
+                unit: unit,
+                source: staging.span,
+                target: target,
+            )!;
             unit.staged.bytes += plan.bytes;
             record.bytes_done += plan.bytes;
             if (unit.staged.bytes == unit.bytes) {
@@ -318,30 +382,59 @@ fn bool? run_prepare_step(
             report.allocations++;
             unit.material_candidate.payload = gpu::allocate_memory(&renderer.device, &desc)!;
             unit.material_candidate.payload_size = source.custom.param_block.len;
-            unit.material_candidate.payload_address = gpu::get_span_address(&renderer.device,
-                gpu::get_allocation_span(&renderer.device, unit.material_candidate.payload)!)!;
+            unit.material_candidate.payload_address = gpu::get_span_address(
+                device: &renderer.device,
+                span: gpu::get_allocation_span(&renderer.device, unit.material_candidate.payload)!,
+            )!;
             return false;
         case MATERIAL_PAYLOAD:
             Material* source = &renderer.assets.material(unit.material).data;
-            gpu::MappedGpuSpan staging = take_prepare_staging(renderer, plan.bytes, STREAM_ALIGNMENT, report)!;
+            gpu::MappedGpuSpan staging = take_prepare_staging(
+                renderer: renderer,
+                bytes: plan.bytes,
+                alignment: STREAM_ALIGNMENT,
+                report: report,
+            )!;
             staging.bytes[..] = source.custom.param_block[plan.offset:plan.bytes];
             report.staged_bytes += plan.bytes;
             renderer.stats.upload_bytes += (uint)plan.bytes;
             gpu::GpuSpan target = gpu::get_allocation_span(&renderer.device, unit.material_candidate.payload)!
                 .checked_subspan(plan.offset, plan.bytes)!;
-            record_prepare_buffer_copy(renderer, unit, staging.span, target)!;
+            record_prepare_buffer_copy(
+                renderer: renderer,
+                unit: unit,
+                source: staging.span,
+                target: target,
+            )!;
             unit.staged.bytes += plan.bytes;
             record.bytes_done += plan.bytes;
             return false;
         case MATERIAL_BLOCK:
-            gpu::MappedGpuSpan staging = take_prepare_staging(renderer, MATERIAL_STRIDE, STREAM_ALIGNMENT, report)!;
-            material_prepare_block(renderer, unit.material, &unit.material_candidate, staging.bytes)!;
+            gpu::MappedGpuSpan staging = take_prepare_staging(
+                renderer: renderer,
+                bytes: MATERIAL_STRIDE,
+                alignment: STREAM_ALIGNMENT,
+                report: report,
+            )!;
+            material_prepare_block(
+                renderer: renderer,
+                material: unit.material,
+                candidate: &unit.material_candidate,
+                block: staging.bytes,
+            )!;
             report.staged_bytes += MATERIAL_STRIDE;
             renderer.stats.upload_bytes += (uint)MATERIAL_STRIDE;
-            gpu::GpuSpan target = renderer.material_heap_span.checked_subspan((usz)unit.material.index * MATERIAL_STRIDE,
-                MATERIAL_STRIDE)!;
+            gpu::GpuSpan target = renderer.material_heap_span.checked_subspan(
+                offset: (usz)unit.material.index * MATERIAL_STRIDE,
+                size: MATERIAL_STRIDE,
+            )!;
             unit.material_candidate.address = gpu::get_span_address(&renderer.device, target)!;
-            record_prepare_buffer_copy(renderer, unit, staging.span, target)!;
+            record_prepare_buffer_copy(
+                renderer: renderer,
+                unit: unit,
+                source: staging.span,
+                target: target,
+            )!;
             unit.staged.bytes += MATERIAL_STRIDE;
             record.bytes_done += MATERIAL_STRIDE;
             install_prepare_material(renderer, record, unit);
@@ -430,9 +523,7 @@ fn bool? run_prepare_texture_copy(
                 bytes = record.chain.pixels[offset:band.byte_count];
             } else {
                 if (!source.pixels.len) return c3d::ASSET_DATA_UNAVAILABLE~;
-                if (band.source_offset > source.pixels.len || band.byte_count > source.pixels.len - band.source_offset) {
-                    return c3d::INVALID_ARGUMENT~;
-                }
+                if (source.pixels.len != band.layer_bytes * source.desc.layers) return c3d::INVALID_ARGUMENT~;
                 bytes = source.pixels[band.source_offset:band.byte_count];
             }
         case SUPPLIED_MIPS:
@@ -441,12 +532,18 @@ fn bool? run_prepare_texture_copy(
             if (index >= source.supplied_mips.len) return c3d::INVALID_ARGUMENT~;
             TextureMipData* mip = &source.supplied_mips[index];
             usz offset = band.source_offset - (usz)band.layer * band.layer_bytes;
-            if (mip.mip != band.mip || mip.layer != band.layer || offset > mip.bytes.len
-              || band.byte_count > mip.bytes.len - offset) return c3d::INVALID_ARGUMENT~;
+            if (mip.mip != band.mip || mip.layer != band.layer || mip.bytes.len != band.layer_bytes) {
+                return c3d::INVALID_ARGUMENT~;
+            }
             bytes = mip.bytes[offset:band.byte_count];
         case EMPTY: return c3d::INVALID_ARGUMENT~;
     }
-    gpu::MappedGpuSpan staging = take_prepare_staging(renderer, band.byte_count, band.alignment, report)!;
+    gpu::MappedGpuSpan staging = take_prepare_staging(
+        renderer: renderer,
+        bytes: band.byte_count,
+        alignment: band.alignment,
+        report: report,
+    )!;
     staging.bytes[..] = bytes[..];
     report.staged_bytes += band.byte_count;
     renderer.stats.upload_bytes += (uint)band.byte_count;
@@ -464,7 +561,7 @@ fn bool? run_prepare_texture_copy(
     record.pending_gpu = true;
     unit.staged.bytes += band.byte_count;
     record.bytes_done += band.byte_count;
-    uint block_height = material::texture_is_compressed(source.desc.format) ? 4 : 1;
+    uint block_height = material::texture_is_compressed(source.desc.format) ? TEXEL_BLOCK_EXTENT : 1;
     uint rows = (material::texture_mip_extent(source.desc.height, unit.staged.mip) + block_height - 1) / block_height;
     unit.staged.row += band.block_rows;
     if (unit.staged.row == rows) {

@@ -302,7 +302,10 @@ fn gpu::PipelineHandle? velocity_pipeline_for(Renderer* renderer, DrawItem* item
     Material* material = render::material_data(renderer, item.material);
     bool wireframe = material.common.wireframe && renderer.caps.line_polygon_mode;
     PipelineKey key = geometry_velocity_pipeline_key(
-        item.vertex, wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL, format);
+        vertex: item.vertex,
+        polygon: wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL,
+        format: format,
+    );
     if (item.candidate.impostor) {
         key.vertex = { .shader = IMPOSTOR_VERTEX };
         key.fragment = { .shader = IMPOSTOR_VELOCITY };

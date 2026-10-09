@@ -141,14 +141,21 @@ fn void expect_generated_bands_equal(
                     uint rows = math::min(row_limit, height - row);
                     ulong previous = generated_mip_charge(layout.base_texels, completed, layout.output_texels);
                     if (texel_allowance) {
-                        ulong minimum = generated_mip_charge(layout.base_texels, completed + width, layout.output_texels) - previous;
+                        ulong minimum = generated_mip_charge(
+                            base_texels: layout.base_texels,
+                            output_done: completed + width,
+                            output_total: layout.output_texels,
+                        ) - previous;
                         assert(minimum <= texel_allowance);
                         uint first = 1;
                         uint last = rows;
                         while (first < last) {
                             uint candidate = first + (last - first + 1) / 2;
                             ulong next = generated_mip_charge(
-                                layout.base_texels, completed + (ulong)width * candidate, layout.output_texels);
+                                base_texels: layout.base_texels,
+                                output_done: completed + (ulong)width * candidate,
+                                output_total: layout.output_texels,
+                            );
                             if (next - previous <= texel_allowance) {
                                 first = candidate;
                             } else {
@@ -177,7 +184,8 @@ fn void expect_generated_bands_equal(
                 }
             }
         }
-        assert(completed == layout.output_texels && charged == layout.base_texels && generated_bytes == layout.byte_count);
+        assert(completed == layout.output_texels && charged == layout.base_texels);
+        assert(generated_bytes == layout.byte_count);
         assert(stepped.pixels == reference.pixels[reference.offsets[1]..]);
     }
     assert(tracker.allocated() == 0);
@@ -314,7 +322,10 @@ fn void expect_canonical_generated_allowances(material::TextureDesc desc, char[]
       - generated_mip_charge(layout.base_texels, layout.output_texels - width, layout.output_texels);
     if (desc.width == 65537) {
         ulong first_span = generated_mip_charge(
-            layout.base_texels, (ulong)width * GENERATED_BAND_ROWS, layout.output_texels);
+            base_texels: layout.base_texels,
+            output_done: (ulong)width * GENERATED_BAND_ROWS,
+            output_total: layout.output_texels,
+        );
         assert(first_span > GENERATED_ALLOWANCE_ONE_MIB);
     }
     foreach (allowance : (ulong[4]){ minimum, GENERATED_ALLOWANCE_ONE_MIB, GENERATED_ALLOWANCE_EIGHT_MIB, 0 }) {

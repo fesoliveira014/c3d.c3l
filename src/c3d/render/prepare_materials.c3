@@ -12,13 +12,19 @@ fn usz material_prepare_bytes(Renderer* renderer, MaterialId material) @private 
     return payload > usz::max - MATERIAL_STRIDE ? usz::max : payload + MATERIAL_STRIDE;
 }
 
+fn bool texture_prepare_current(Renderer* renderer, TextureId texture, bool full_reader) @private {
+    if (!texture_current(renderer, texture)) return false;
+    TextureResidency* residency = &renderer.residencies[texture.index];
+    return !full_reader || !(residency.streamed && residency.resident_base > 0);
+}
+
 fn bool material_prepare_dependencies_current(Renderer* renderer, MaterialId material) @private {
     Material* source = &renderer.assets.material(material).data;
     bool current = true;
     material::@each_texture_reference(source; TextureId* texture, SamplerId* sampler) {
         bool live = renderer.assets.textures.is_live(*texture);
         TextureId selected = live ? *texture : asset::TEXTURE_WHITE;
-        if (!texture_current(renderer, selected)) current = false;
+        if (!texture_prepare_current(renderer, selected, false)) current = false;
         if (sampler) {
             SamplerId selected_sampler = renderer.assets.samplers.is_live(*sampler) ? *sampler : asset::SAMPLER_LINEAR_REPEAT;
             SamplerRes* mirror = &renderer.samplers[selected_sampler.index];
@@ -30,8 +36,7 @@ fn bool material_prepare_dependencies_current(Renderer* renderer, MaterialId mat
     };
     if (material_uses_sheen(source) && renderer.environment_state.sheen_lut.state == EnvironmentLutState.NONE) return false;
     if (source.kind == MaterialKind.TOON && renderer.assets.textures.is_live(source.toon.gradient_map)) {
-        TextureResidency* residency = &renderer.residencies[source.toon.gradient_map.index];
-        if (residency.streamed && residency.resident_base > 0) return false;
+        if (!texture_prepare_current(renderer, source.toon.gradient_map, true)) return false;
     }
     if (source.kind != MaterialKind.CUSTOM) return current;
     ShaderId shader_id = source.custom.shader;
@@ -53,8 +58,7 @@ fn bool material_prepare_dependencies_current(Renderer* renderer, MaterialId mat
     foreach (index, slot : source.custom.slots) {
         if (index == 0 && masked) continue;
         if (slot.texture.kind != TextureRefKind.ASSET || !renderer.assets.textures.is_live(slot.texture.asset)) continue;
-        TextureResidency* residency = &renderer.residencies[slot.texture.asset.index];
-        if (residency.streamed && residency.resident_base > 0) return false;
+        if (!texture_prepare_current(renderer, slot.texture.asset, true)) return false;
     }
     return current;
 }
@@ -74,7 +78,10 @@ fn bool? material_prepare_current(Renderer* renderer, MaterialId material) @priv
 }
 
 <*
- Pack the final material block using already prepared dependencies and the private payload.
+ Pack the final material block from current dependencies and private payload.
+ @param [&inout] renderer : "Render target bindings record sample demand."
+ @param [&inout] candidate : "Receives material bindings and published asset metadata."
+ @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED
  @require block.len >= MATERIAL_STRIDE, (uptr)block.ptr % STREAM_ALIGNMENT == 0
  @require material_prepare_dependencies_current(renderer, material)
 *>
@@ -178,7 +185,10 @@ fn MaterialBindings? material_prepare_bindings(Renderer* renderer, Material* mat
             MaterialBindings bindings = material_prepare_standard_bindings(renderer, &params.standard)!;
             if (params.clearcoat > 0) {
                 bindings.clearcoat = material_prepare_texture_slot(renderer, params.clearcoat_map)!;
-                bindings.clearcoat_roughness = material_prepare_texture_slot(renderer, params.clearcoat_roughness_map)!;
+                bindings.clearcoat_roughness = material_prepare_texture_slot(
+                    renderer: renderer,
+                    slot: params.clearcoat_roughness_map,
+                )!;
                 bindings.clearcoat_normal = material_prepare_texture_slot(renderer, params.clearcoat_normal_map)!;
             }
             if (material_uses_sheen(material)) {
@@ -207,7 +217,11 @@ fn MaterialBindings? material_prepare_bindings(Renderer* renderer, Material* mat
             // The depth stage and traced coverage sample slot 0 of a masked material.
             bool masked = material.common.alpha_mode == AlphaMode.MASK;
             foreach (index, slot : material.custom.slots) {
-                bindings.custom[index] = material_prepare_texture_slot(renderer, slot, custom_read: index > 0 || !masked)!;
+                bindings.custom[index] = material_prepare_texture_slot(
+                    renderer: renderer,
+                    slot: slot,
+                    custom_read: index > 0 || !masked,
+                )!;
             }
             return bindings;
     }

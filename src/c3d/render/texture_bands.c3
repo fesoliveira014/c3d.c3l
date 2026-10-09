@@ -4,7 +4,7 @@ import c3d;
 import c3d::material;
 import std::math;
 
-const uint TEXEL_BLOCK_EXTENT @local = 4;
+const uint TEXEL_BLOCK_EXTENT @private = 4;
 const uint CHARGE_BITS @local = ulong::size * 8;
 
 <* Packed nonzero generated levels without a mip-zero snapshot. *>

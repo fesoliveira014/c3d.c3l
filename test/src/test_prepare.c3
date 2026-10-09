@@ -186,12 +186,15 @@ fn void test_prepare_records_follow_begin_order_after_slot_reuse() @test {
 }
 
 fn void test_prepare_texture_totals_match_existing_whole_mips() @test {
+    PrepareFixture fixture;
+    create_prepare_fixture(&fixture);
+    defer destroy_prepare_fixture(&fixture);
     material::TextureDesc desc = material::texture_2d_desc(37, 19, RGBA8_SRGB);
     @pool() {
         char[] pixels = alloc::new_array(tmem, char, 37 * 19 * 4);
-        TextureAsset source = { .desc = desc, .source_kind = MIP_ZERO, .pixels = pixels };
+        TextureId texture = fixture.assets.add_texture(desc, pixels)!!;
         TextureMipChain reference = render::create_texture_mips(tmem, desc, pixels)!!;
-        assert(render::prepare_source_bytes(&source) == reference.pixels.len);
+        assert(render::prepare_texture_bytes(&fixture.renderer, texture) == reference.pixels.len);
     };
 }
 
