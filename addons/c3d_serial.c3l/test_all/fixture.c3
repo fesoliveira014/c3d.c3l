@@ -117,7 +117,11 @@ fn void destroy_fixture(Fixture* fixture) @private {
 
 fn void add_audio(Fixture* fixture) @private {
     Scene* scene = &fixture.source;
-    fixture.clip = audio::add_audio_clip(&fixture.assets, $embed("../../c3d_audio.c3l/test/fixtures/tone.ogg"), key: "tone")!!;
+    fixture.clip = audio::add_audio_clip(
+        assets: &fixture.assets,
+        bytes: $embed("../../c3d_audio.c3l/test/fixtures/tone.ogg"),
+        key: "tone",
+    )!!;
     Node* sound = scene.add_node(name: "sound")!!;
     scene.add(sound, (AudioEmitter){
         .clip         = fixture.clip,
