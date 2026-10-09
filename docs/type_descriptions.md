@@ -52,8 +52,9 @@ serialization consumer; see [serialization.md](serialization.md).
 
 The supported leaf kinds are `bool`, `ichar`, `char`, `short`, `ushort`, `int`,
 `uint`, `long`, `ulong`, `float`, `double`, `Vec2`, `Vec3`, `Vec4`, `uint[<3>]`,
-`Mat4`, `Quat`, `String`, ordinary enums, entities and explicitly typed asset
-references. Nested structs, fixed arrays and slices are scopes. Vectors,
+`Mat4`, `Quat`, `String`, ordinary enums, entities, explicitly typed asset
+references and `CustomId{T}` references. Distinct integer types describe as their
+base type. Nested structs, fixed arrays and slices are scopes. Vectors,
 matrices and quaternions remain leaf values.
 
 `ICHAR`, `CHAR`, `SHORT` and `USHORT` preserve their signedness and 8-bit or
@@ -91,6 +92,9 @@ Reflected members use `@tag("display", "Speed")`,
 An asset tag that contradicts a typed ID, or labels a non-asset field, is rejected.
 An asset leaf reports its single resolved kind in `Info.metadata.asset_kind`,
 with `has_asset_kind` true, whether it came from a typed ID or an explicit tag.
+A `CustomId{T}` leaf reports `CUSTOM` and `Info.metadata.custom_slot`, the address of
+the kind's process-wide slot, which stays zero until the first
+`AssetStore.register(T)`; consumers read it when they use the field.
 Sequence elements inherit range, unit and asset-kind metadata; the display name
 labels the container. Handwritten fields supply the corresponding `Metadata`
 through `@field` and obey the same asset-kind preconditions.
