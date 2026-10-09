@@ -400,111 +400,128 @@ capacity costs one entry record.
 | --- | --- | --- |
 | `decode_model`, `decode_model_memory` | `ASSET_IO_ERROR`, `ASSET_FORMAT_ERROR`, `UNSUPPORTED` | As for the loaders above. |
 | | `INVALID_ARGUMENT` | An image file has zero bytes. |
-| `publish_document` | `INVALID_ARGUMENT` | A document or entry key is in the store, two entries share a key, a material is `CUSTOM`, a geometry has invalid skin influences, a storage texture has a non-storage format, or a template reference is unset, outside the document's entries or a dead store record. |
+| `publish_document` | `INVALID_ARGUMENT` | A document or entry key is in the store, two entries share a key, a material is `CUSTOM`, a geometry has invalid skin influences, a clip has invalid or unsorted events, a storage texture has a non-storage format, or a template reference is unset, outside the document's entries or a dead store record. |
 | | `CAPACITY_EXCEEDED` | A pool has fewer free slots than the document has entries of that kind; the model pool needs one. |
 
 ## Background loading
+
+`c3d::asset::loader` decodes files on one worker thread. The worker also validates store-independent content and
+builds geometry shape, skin bounds and morph bounds before the request becomes `DECODED`. It never reads or writes
+the live store, scene or renderer. Publication checks current keys, capacities, references and replacement structure
+on the owner thread, then transfers the private prepared payloads without rebuilding their derived data.
+
+Ordinary public `ModelDocument` values remain editable. `publish_document` and `replace_document` validate and prepare
+the document presented to each call, so edits after decoding cannot reuse stale derived data. A fault preserves the
+store and that public document. Invalid or unsorted clip events fault before any insertion.
 
 ```c3
 AsyncLoader loader = loader::create_async_loader(mem, &assets)!;
 defer loader::destroy_async_loader(&loader);
 LoadId request = loader.request({
-    .path    = "models/city.gltf",
-    .format  = ModelFormat.GLTF,
+    .path = "models/city.gltf",
+    .format = ModelFormat.GLTF,
     .options = asset::LOAD_OPTIONS_DEFAULT,
 })!;
 
-// every frame, before update_world
-loader.publish();
+PublishReport publication = loader.publish_within({ .items = 1024 });
 LoadStatus status = loader.status(request);
 if (status.phase == LoadPhase.PUBLISHED) {
-    // upload over frames; instantiate when prepare_progress reads READY (see Views, Budgeted preparation)
     prepare = renderer.begin_prepare_model(status.model)!;
     loader.release(request)!;
 } else if (status.phase == LoadPhase.FAILED) {
-    io::eprintfn("%s failed: %s", "models/city.gltf", status.failure);
+    io::eprintfn("Model loading failed: %s", status.failure);
+    loader.release(request)!;
+} else if (status.phase == LoadPhase.CANCELLED) {
     loader.release(request)!;
 }
 ```
 
-`c3d::asset::loader` decodes model files on one worker thread while the
-application keeps rendering. `request` queues a file with its importer
-(`ModelFormat.GLTF` or `FBX`) and options; the worker runs that importer's
-`decode_model` into a `ModelDocument`, one request at a time, in request order.
-`publish` inserts every decoded document into the store with
-`publish_document`, in request order, and returns how many requests it moved to
-`PUBLISHED` or `FAILED`; a decode that fails on the worker is in no count, so
-read `status` for every request. `release` frees a finished request's slot; a
-`QUEUED`, `DECODING` or `DECODED` request cannot be released, and there is no
-cancellation.
+The publication/status fragment runs on the owner thread while this request is live. Handle a terminal result once,
+then stop querying its released id. Retain the preparation id and instantiate when it reaches `READY`
+([Views](views.md#budgeted-preparation)). `publish()` remains the unbounded alternative and returns the number of
+requests that this call moved to `PUBLISHED` or commit `FAILED`; earlier worker failures are not in that count.
 
-One thread owns the loader: `request`, `status`, `publish`, `release` and
-`destroy_async_loader` are called from the same thread, which is also the only
-thread that writes the store. That thread may keep calling `load_model`,
-`decode_model` and `publish_document` while the worker decodes.
+### Publication allowance and reports
 
-The worker allocates every document from the store's allocator and its
-temporary pool from the loader's allocator, so both must be safe to use from
-another thread. The heap allocator `mem` qualifies. A `TrackingAllocator`
-qualifies because its `acquire`, `resize` and `release` take its own lock in
-c3c 0.8.3, although the standard library's comment above the struct says
-otherwise; read its `allocated()` only after the loader is destroyed. An arena
-does not qualify (it has no lock), and neither does `tmem`, which belongs to
-one thread. The worker's temporary pool starts at 256 KiB and grows through the
-loader's allocator for larger files; `decode_model`'s rule against `tmem`
-holds on the worker too, where `tmem` is the worker's own pool.
+`PublishLimits.items` is a logical inventory allowance per call. Zero is unbounded. Decoded documents are admitted
+atomically in FIFO order; a head that cannot fit stops the call, and later smaller documents do not bypass it. An
+admitted commit failure consumes its charge and leaves existing assets unchanged.
 
-`request` checks, in order: the path is a model key already in the store
-(`INVALID_ARGUMENT`), a queued, decoding or decoded request has the same path
-(`INVALID_ARGUMENT`), every slot holds an unreleased request
-(`CAPACITY_EXCEEDED`). Paths are compared byte for byte, as store keys are, so
-two spellings of one file are two keys. A request for a path that ended
-`FAILED` is accepted again. A key inserted into the store after the request
-makes that request fail at `publish` with the store's `INVALID_ARGUMENT`; a
-pool without room fails it with `CAPACITY_EXCEEDED`; the store is unchanged in
-both cases.
+Items count asset entries, template and nested structural arrays, compared names, prepared metadata cleanup and old
+payload cleanup. Replacement also counts key-map buckets, live entries and collected missing parts. Every variable
+owner-thread traversal is represented by the charge function. Keys and compared names have a string-length exception;
+items do not count their bytes or promise a CPU instruction or wall-clock limit. Missing parts keep their existing
+namespace membership and kind/key order; sorting is O(n log n), bounded by the configured store inventory.
 
-Set `LoadRequest.replace` to a live model to replace it instead of adding one. The path must equal that model's key
-(`INVALID_ARGUMENT`), and a dead target faults `INVALID_ID` at `request`. The worker decodes as for an add; `publish`
-calls `replace_document` on the owner thread, so a structural change ends the request `FAILED` with
-`INCOMPATIBLE_STRUCTURE` and the old content stays. A target removed after the request ends it `FAILED` with `INVALID_ID`.
-`LoadStatus.model` is the replaced id and `LoadStatus.report` holds the counts. `LoadRequest.missing` is borrowed until
-the request reaches `PUBLISHED` or `FAILED`, and only `publish` writes it; `release` requires a final phase, so the
-borrow ends there in every case.
+The key map is sized for built-in pools at store creation and extended when a custom pool is first registered.
+Publication does not trigger a table rehash. Matching and estimating the current charge consumes items in the call,
+without publishing or retaining a preflight between calls. Checked accounting saturates rather than wrapping.
 
-`status` never faults. A released, stale or zero id reports `FAILED` with
-`failure == INVALID_ID`; a failed decode reports `FAILED` with the importer's
-fault; the `failure` field is what separates them.
+| `PublishReport` field | Meaning |
+| --- | --- |
+| `published` | Requests this call published. |
+| `failed` | Commit failures in this call, excluding earlier decode failures. |
+| `items_used` | Charged estimation and admitted publication/cleanup work. |
+| `deferred` | A decoded head could not fit. |
+| `required_items` | The deferred head's requirement; zero when none. |
+| `required_exact` | True for a complete estimate; false for the minimum estimation reserve. |
 
-Memory: every unreleased slot can hold one decoded document until `publish`
-takes it, and the capacity (8 by default) bounds requests, not bytes. A decoded
-Sponza is 297,688,067 bytes, 285,212,736 of them texture pixels; eight waiting
-documents of that size hold about 2.4 GB. Call `publish` every frame to keep
-one or two at most.
+The minimum reserve combines incoming items with the complete estimation cost, computed from current table sizes
+and liveness before traversal. A call below this reserve spends no items and defers immediately. A call at that
+reserve either admits the head or returns its exact fresh-call requirement after one full estimation. The caller
+can choose that larger allowance or explicitly select unbounded publication. A depleted finite allowance stays finite;
+its zero remainder does not become unbounded.
 
-Cost: a `publish` call costs the sum over the documents that waited, each by
-its key count, not its bytes: pixels and vertex streams move by pointer. On the
-WSL host CPU, Sponza's 199 keys publish in 0.43 ms and decode in 1.3 to 1.7 s.
-`prepare_model` after publish is synchronous and uploads every texture and
-geometry of the model before it returns: 3.9 s for Sponza on WSL with llvmpipe,
-a stall of the frame that calls it. `begin_prepare_model` spreads the same work
-over frames under a byte budget ([Views](views.md#budgeted-preparation)).
+### Cancellation and request lifetime
 
-`destroy_async_loader` stops the worker and waits for the decode in progress,
-up to one decode (1.3 s for Sponza on the WSL host CPU), then frees every
-unpublished document and request. Destroy the loader before its store.
+`cancel(id)` abandons loading; it does not interrupt a parser or `FileSource` operation.
+
+| Phase at cancellation | Result |
+| --- | --- |
+| `QUEUED` | Becomes terminal `CANCELLED`; no decode starts. |
+| `DECODING` | Becomes pending `CANCELLING`; the worker finishes, discards its result, then acknowledges `CANCELLED`. |
+| `DECODED` | The owner destroys raw and derived data before terminal `CANCELLED`. This explicit cleanup is outside the publication allowance. |
+| `PUBLISHED`, `FAILED`, `CANCELLING`, `CANCELLED` | No-op; completed results and published assets stay intact. |
+
+A `CANCELLING` request retains its path and slot. Pending duplicate paths are rejected, and pending requests cannot be
+released. Release a terminal request explicitly; the generation advances and old status/cancel/release operations
+cannot succeed against a reused slot. A stale or released id faults `INVALID_ID` on `cancel`/`release`; `status` reports
+`FAILED` with `failure == INVALID_ID` for stale, released or zero ids.
+
+One thread calls `request`, `status`, `publish`, `publish_within`, `cancel`, `counters`, `release` and destruction. It is
+the only thread that mutates the store. Both allocators must support concurrent worker use; neither can be `tmem` or an
+unlocked arena. The worker owns its temporary pool. The copied `FileSource` callback/context keeps its existing
+thread-safety and lifetime contract and outlives the store. Active cancellation keeps parser-owned source bytes alive
+until the decoder releases them.
+
+`LoadRequest.replace` selects a live model instead of adding one. Its path must equal the model key. A removed target
+fails `INVALID_ID` at publication; incompatible replacement fails `INCOMPATIBLE_STRUCTURE` with the old content intact.
+`LoadStatus.model` and `report` retain the replaced id and counts. `LoadRequest.missing` is borrowed until the request
+reaches a terminal phase; publication alone writes it, and cancellation never does.
+
+Capacity defaults to eight slots and bounds requests, not payload bytes. A decoded slot can retain a complete document
+and derived metadata until publication or cancellation. Releasing a request does not unload published assets.
+`destroy_async_loader` stops new selection, joins the current decode, and disposes every unpublished request. Destroy
+it before the store; shutdown and active abandonment can wait for a source/parser call to finish.
+
+### Counters
+
+`counters()` snapshots occupied phase counts (`queued`, `decoding`, `decoded`, `cancelling`, `published`, `failed`,
+`cancelled`) and cumulative `publications`, `decode_failures`, `commit_failures`, `cancellations`, `publication_items`,
+`decode_ns` and `publication_ns`. Each terminal transition counts once. Decode time includes independent preparation;
+publication time includes admission and cleanup. The counters retain nanoseconds. A publication report contains only
+its current call and has no cancellation field or event cursor.
 
 | Function | Fault | Meaning |
 | --- | --- | --- |
-| `create_async_loader` | `thread::INIT_FAILED` | The mutex, the condition variable or the worker thread could not be created; nothing is left allocated. |
-| `request` | `INVALID_ARGUMENT` | The path is a model key in the store, or a queued, decoding or decoded request has the same path. |
-| | `CAPACITY_EXCEEDED` | Every slot holds an unreleased request. |
-| | `INVALID_ID`, `INVALID_ARGUMENT` | A replace target that is not a live model, or whose key differs from the path. |
-| `release` | `INVALID_ID` | The id was released, is stale, or never named a request. |
-| `status` (`failure` of `FAILED`) | `INVALID_ID` | As for `release`. |
-| | `ASSET_IO_ERROR`, `ASSET_FORMAT_ERROR`, `UNSUPPORTED`, `INVALID_ARGUMENT` | The importer's decode fault; the wrong importer for a file gives `ASSET_FORMAT_ERROR`. |
-| | `INVALID_ARGUMENT`, `CAPACITY_EXCEEDED` | The store's `publish_document` fault: a key inserted since the request, a pool without room. |
-| | `INCOMPATIBLE_STRUCTURE`, `INVALID_ID` | A replacement the signature refuses, or whose target was removed after the request. |
+| `create_async_loader` | `thread::INIT_FAILED` | Mutex, condition variable or worker initialization failed; owned resources are released. |
+| `request` | `INVALID_ARGUMENT` | The add path is already a model key, a pending request owns the path, or a replacement path differs from its model key. |
+| | `CAPACITY_EXCEEDED` | Every slot has an unreleased request. |
+| | `INVALID_ID` | The replacement model is dead. |
+| `cancel`, `release` | `INVALID_ID` | Stale, released or never-issued id. Pending release is a programming error. |
+| `status` (`FAILED.failure`) | `INVALID_ID` | Stale, released or zero request id. |
+| | `ASSET_IO_ERROR`, `ASSET_FORMAT_ERROR`, `UNSUPPORTED`, `INVALID_ARGUMENT` | Worker decode or independent preparation failed. |
+| | `INVALID_ARGUMENT`, `CAPACITY_EXCEEDED`, `INCOMPATIBLE_STRUCTURE`, `INVALID_ID` | Owner publication failed without changing existing assets. |
 
 ## CPU release
 
@@ -611,9 +628,10 @@ python3 scripts/build.py --example gltf_viewer
 `streaming` renders a small scene while a glTF or GLB file decodes on the loader's
 worker (`./examples/build/streaming path/to/model.gltf`, the bundled BoxTextured
 by default; FBX paths end `FAILED` with `ASSET_FORMAT_ERROR` because the example
-requests the glTF importer). The panel shows the phase and failure, and the example
-prints the decode time, the `publish` call and its frame, and the `prepare_model`
-call and its frame.
+requests the glTF importer). The panel shows phases, worker/observed decode time, publication items and counters,
+and the existing budgeted preparation progress. Loading can be cancelled before publication. A deferred document
+stays queued until the caller selects the reported item allowance; publication never silently bypasses it.
+Terminal request slots are released, and visible instantiation waits for preparation to become ready.
 
 `gltf_viewer` loads the argument path, or the bundled
 [BoxTextured](../examples/assets/gltf/README.md) sample, instantiates it twice

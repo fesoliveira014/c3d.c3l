@@ -2,7 +2,8 @@ module c3d::test::asset_replace;
 
 import c3d;
 import c3d::anim;
-import c3d::asset;
+import c3d::asset @public;
+import c3d::test::loading_fixtures;
 import c3d::asset::gltf;
 import c3d::geometry;
 import c3d::light;
@@ -1137,4 +1138,110 @@ fn void test_gltf_replace_model_failed_decode_changes_nothing() @test {
     }
 
     assert(!tracker.has_leaks());
+}
+
+fn void test_prepared_replacement_keeps_original_positive_joint_bound() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    {
+        AssetStore assets = asset::create_asset_store(&tracker, asset::default_asset_store_desc());
+        defer asset::destroy_asset_store(&assets);
+        ModelDocument first = loading_fixtures::full_model_document(&tracker, "weighted");
+        defer asset::destroy_model_document(&first);
+        ModelId model = assets.publish_document(&first)!!;
+        GeometryId geometry = assets.find_geometry("weighted#geometry")!!;
+        assert(assets.geometry(geometry).shape.joint_bound == 1);
+        ModelDocument lower = loading_fixtures::full_model_document(&tracker, "weighted");
+        defer asset::destroy_model_document(&lower);
+        lower.geometries[0].data.weights[..] = (Vec4){ 1, 0, 0, 0 };
+        assets.replace_document(model, &lower)!!;
+        assert(assets.geometry(geometry).shape.joint_bound == 1);
+        ModelDocument allowed = loading_fixtures::full_model_document(&tracker, "weighted");
+        defer asset::destroy_model_document(&allowed);
+        assets.replace_document(model, &allowed)!!;
+        ModelDocument rejected = loading_fixtures::full_model_document(&tracker, "weighted");
+        defer asset::destroy_model_document(&rejected);
+        rejected.geometries[0].data.weights[0] = { 0, 0, 1, 0 };
+        asset::PreparedModelDocument prepared = asset::prepare_model_document(&rejected)!!;
+        defer asset::destroy_prepared_model_document(&prepared);
+        assert(prepared.geometries[0].shape.joint_bound == 600);
+        uint model_revision = assets.model(model).header.revision;
+        uint geometry_revision = assets.geometry(geometry).header.revision;
+        assert(@catch(asset::replace_prepared_model_document(&assets, model, &prepared)) == c3d::INCOMPATIBLE_STRUCTURE);
+        assert(assets.model(model).header.revision == model_revision);
+        assert(assets.geometry(geometry).header.revision == geometry_revision);
+        assert(prepared.document.geometries[0].data.weights[0].z == 1);
+    }
+    assert(!tracker.has_leaks());
+}
+
+fn void test_replacement_bad_events_preserve_missing_output_and_existing_payloads() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    {
+        AssetStore assets = asset::create_asset_store(&tracker, asset::default_asset_store_desc());
+        defer asset::destroy_asset_store(&assets);
+        ModelDocument first = loading_fixtures::full_model_document(&tracker, "replace_events");
+        defer asset::destroy_model_document(&first);
+        ModelId model = assets.publish_document(&first)!!;
+        ClipId clip = assets.find_clip("replace_events#clip")!!;
+        GeometryId geometry = assets.find_geometry("replace_events#geometry")!!;
+        ModelDocument bad = loading_fixtures::full_model_document(&tracker, "replace_events");
+        defer asset::destroy_model_document(&bad);
+        bad.clips[0].data.events[1].time = 2;
+        AssetRef[1] missing = { { .kind = AssetKind.FONT, .id = { .index = 17, .generation = 9 } } };
+        assert(@catch(assets.replace_document(model, &bad, missing[..])) == c3d::INVALID_ARGUMENT);
+        bad.clips[0].data.events[1].time = 0.1;
+        assert(@catch(assets.replace_document(model, &bad, missing[..])) == c3d::INVALID_ARGUMENT);
+        assert(missing[0].kind == AssetKind.FONT && missing[0].id.index == 17);
+        assert(assets.model(model).header.revision == 1 && assets.geometry(geometry).header.revision == 1);
+        assert(assets.clip(clip).data.events[1].time == 0.75);
+        assert(bad.clips[0].data.events[1].time == 0.1f);
+    }
+    assert(!tracker.has_leaks());
+}
+
+fn void test_missing_parts_use_global_inventory_and_kind_key_order() @test {
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+    ModelDocument first = loading_fixtures::full_model_document(mem, "namespace");
+    defer asset::destroy_model_document(&first);
+    ModelId model = assets.publish_document(&first)!!;
+    Material plain = material::standard(material::STANDARD_PARAMS_DEFAULT);
+    MaterialId last = assets.add_material(plain, "namespace#z")!!;
+    MaterialId earliest = assets.add_material(plain, "namespace#a")!!;
+    assets.add_material(plain, "namespace#derived#excluded")!!;
+    assets.add_material(plain, "namespace_other#excluded")!!;
+    Geometry rigid = quad(tmem);
+    GeometryId geometric = assets.add_geometry(&rigid, "namespace#extra_geometry")!!;
+    ModelDocument next = loading_fixtures::full_model_document(mem, "namespace");
+    defer asset::destroy_model_document(&next);
+    asset::PreparedModelDocument prepared = asset::prepare_model_document(&next)!!;
+    defer asset::destroy_prepared_model_document(&prepared);
+    ulong inventory = assets.keys.table.len + (ulong)assets.keys.len();
+    ulong expected = 56 + 20 + inventory + 3 + 25 + inventory;
+    asset::PublicationEstimate estimate = asset::estimate_model_publication(
+        store: &assets,
+        prepared: &prepared,
+        model: model,
+        allowance: 0,
+        bounded: false,
+    );
+    assert(estimate.required_items == expected);
+    AssetRef[2] output;
+    ModelReplaceReport report = asset::replace_prepared_model_document(
+        store: &assets,
+        model: model,
+        prepared: &prepared,
+        missing: output[..],
+    )!!;
+    assert(report.missing == 3);
+    assert(output[0].kind == AssetKind.GEOMETRY && output[0].id.index == geometric.index && output[0].id.generation == geometric.generation);
+    assert(output[1].kind == AssetKind.MATERIAL && output[1].id.index == earliest.index && output[1].id.generation == earliest.generation);
+    assert(assets.materials.is_live(last));
+    ModelDocument repeated = loading_fixtures::full_model_document(mem, "namespace");
+    defer asset::destroy_model_document(&repeated);
+    assert(assets.replace_document(model, &repeated)!!.missing == 3);
 }

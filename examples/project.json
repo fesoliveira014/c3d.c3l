@@ -54,6 +54,10 @@
       "type": "executable",
       "sources": [ "src/cpu_bench.c3" ]
     },
+    "publication_bench": {
+      "type": "executable",
+      "sources": [ "src/publication_bench.c3", "../test/fixtures/loading_fixtures.c3" ]
+    },
     "hello": {
       "type": "executable",
       "sources": [

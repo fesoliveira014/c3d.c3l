@@ -1,10 +1,11 @@
 module c3d::asset::loader;
 
 import c3d;
-import c3d::asset;
+import c3d::asset @public;
 import c3d::asset::fbx;
 import c3d::asset::gltf;
 import std::thread;
+import std::time::clock;
 
 <*
  Request slots when create_async_loader gets capacity 0.
@@ -25,6 +26,8 @@ enum LoadPhase {
     DECODED,
     PUBLISHED,
     FAILED,
+    CANCELLING,
+    CANCELLED,
 }
 
 <*
@@ -43,7 +46,7 @@ struct LoadRequest {
     ModelFormat format;
     LoadOptions options;
     ModelId     replace; // zero adds; otherwise the live model whose key is the path
-    AssetRef[]  missing; // borrowed until PUBLISHED or FAILED; written only by publish
+    AssetRef[]  missing; // borrowed until terminal; written only by publish
 }
 
 <*
@@ -53,19 +56,60 @@ struct LoadStatus {
     LoadPhase          phase;
     ModelId            model;
     fault              failure;
-    ModelReplaceReport report; // zero for an add
+    ModelReplaceReport report;
+}
+
+<*
+ Publication item allowance; zero admits unbounded work.
+*>
+struct PublishLimits {
+    ulong items;
+}
+
+<*
+ Publication transitions and logical work charged by one call.
+*>
+struct PublishReport {
+    uint  published;
+    uint  failed;
+    ulong items_used;
+    ulong required_items;
+    bool  required_exact;
+    bool  deferred;
+}
+
+<*
+ Occupied request phases and cumulative work since loader creation.
+*>
+struct LoaderCounters {
+    uint  queued;
+    uint  decoding;
+    uint  decoded;
+    uint  cancelling;
+    uint  published;
+    uint  failed;
+    uint  cancelled;
+    ulong publications;
+    ulong decode_failures;
+    ulong commit_failures;
+    ulong cancellations;
+    ulong publication_items;
+    ulong decode_ns;
+    ulong publication_ns;
 }
 
 struct LoadSlot @private {
-    LoadRequest   request;
-    LoadPhase     phase;
-    bool          occupied;
-    uint          generation;
-    ulong         sequence;
-    ModelDocument document;
-    ModelId       model;
-    fault         failure;
-    ModelReplaceReport report;
+    LoadRequest           request;
+    LoadPhase             phase;
+    bool                  occupied;
+    uint                  generation;
+    ulong                 sequence;
+    PreparedModelDocument prepared;
+    uint                  decoded_previous;
+    uint                  decoded_next;
+    ModelId               model;
+    fault                 failure;
+    ModelReplaceReport    report;
 }
 
 struct LoaderState @private {
@@ -75,23 +119,26 @@ struct LoaderState @private {
     AssetStore*       assets;
     Mutex             lock;
     ConditionVariable wake;
-    Thread            worker; // written by Thread.create while the worker may run; the worker never reads it
+    Thread            worker; // Thread.create writes this while the worker runs; the worker never reads it
     LoadSlot[]        slots;
+    uint              decoded_head;
+    uint              decoded_tail;
     ulong             next_sequence;
+    LoaderCounters    counters;
     bool              stopping;
 }
 
 <*
- Background decoder of model files, published into a store on the owner thread.
+ Background decoder of model files, published on the owner thread.
 *>
 struct AsyncLoader {
     LoaderState* state;
 }
 
 <*
- Queue a model file for decoding on the worker, as an add or as a replacement.
- A replacement target removed before publish fails the request with c3d::INVALID_ID.
- @param request : "The path is copied; the missing slice is borrowed until the request ends."
+ Queue a model file for decoding, as an add or replacement.
+ A target removed before publication fails with c3d::INVALID_ID.
+ @param request : "Path is copied; missing is borrowed until terminal."
  @return? c3d::INVALID_ARGUMENT, c3d::INVALID_ID, c3d::CAPACITY_EXCEEDED
  @require request.path.len > 0
 *>
@@ -126,37 +173,124 @@ fn LoadId? AsyncLoader.request(&self, LoadRequest request) {
 
 <*
  Phase and result of a request.
- @return "FAILED with c3d::INVALID_ID for a released or stale id."
+ @return "FAILED with c3d::INVALID_ID for a stale id."
 *>
 fn LoadStatus AsyncLoader.status(&self, LoadId id) {
     LoaderState* state = self.state;
     state.lock.lock();
     defer state.lock.unlock();
     LoadSlot*? slot = live_slot(state, id);
-    if (catch slot) return { .phase = LoadPhase.FAILED, .failure = c3d::INVALID_ID };
+    if (catch excuse = slot) return { .phase = LoadPhase.FAILED, .failure = excuse };
     return { .phase = slot.phase, .model = slot.model, .failure = slot.failure, .report = slot.report };
 }
 
 <*
- Publish every decoded document into the store in request order.
+ Publish all decoded requests in FIFO order without an allowance.
  @return "Requests this call moved to PUBLISHED or FAILED."
 *>
 fn uint AsyncLoader.publish(&self) {
-    LoaderState* state = self.state;
-    state.lock.lock();
-    defer state.lock.unlock();
-    uint transitions;
-    while (try index = oldest_in_phase(state, LoadPhase.DECODED)) {
-        LoadSlot* slot = &state.slots[index];
-        publish_slot(state.assets, slot);
-        asset::destroy_model_document(&slot.document);
-        transitions++;
-    }
-    return transitions;
+    PublishReport report = self.publish_within({});
+    return report.published + report.failed;
 }
 
 <*
- Free the slot of a PUBLISHED or FAILED request.
+ Publish FIFO requests within a logical item allowance.
+ @return "Current-call work and the deferred head's requirement."
+*>
+fn PublishReport AsyncLoader.publish_within(&self, PublishLimits limits) {
+    std::time::Clock started = clock::now();
+    LoaderState* state = self.state;
+    state.lock.lock();
+    defer state.lock.unlock();
+    PublishReport report;
+    bool bounded = limits.items != 0;
+    while (state.decoded_head) {
+        uint index = state.decoded_head - 1;
+        LoadSlot* slot = &state.slots[index];
+        ulong remaining = bounded ? limits.items - report.items_used : 0;
+        PublicationEstimate estimate = asset::estimate_model_publication(
+            store:     state.assets,
+            prepared:  &slot.prepared,
+            model:     slot.request.replace,
+            allowance: remaining,
+            bounded:   bounded,
+        );
+        report.items_used = add_saturated(report.items_used, estimate.items_used);
+        if (!estimate.admitted) {
+            report.required_items = estimate.required_items;
+            report.required_exact = estimate.required_exact;
+            report.deferred = true;
+            break;
+        }
+        report.items_used = add_saturated(report.items_used, estimate.required_items - estimate.items_used);
+        remove_decoded(state, index);
+        publish_slot(state.assets, slot);
+        asset::destroy_prepared_model_document(&slot.prepared);
+        if (slot.phase == LoadPhase.PUBLISHED) {
+            report.published++;
+            state.counters.publications = add_saturated(state.counters.publications, 1);
+        } else {
+            report.failed++;
+            state.counters.commit_failures = add_saturated(state.counters.commit_failures, 1);
+        }
+    }
+    state.counters.publication_items = add_saturated(state.counters.publication_items, report.items_used);
+    state.counters.publication_ns = add_saturated(state.counters.publication_ns, (ulong)started.to_now());
+    return report;
+}
+
+<*
+ Abandon a request; active decoding acknowledges cancellation after disposal.
+ Decoded cleanup is outside the publication allowance.
+ @return? c3d::INVALID_ID
+*>
+fn void? AsyncLoader.cancel(&self, LoadId id) {
+    LoaderState* state = self.state;
+    state.lock.lock();
+    defer state.lock.unlock();
+    LoadSlot* slot = live_slot(state, id)!;
+    switch (slot.phase) {
+        case QUEUED:
+            finish_cancel(state, slot);
+        case DECODING:
+            slot.phase = LoadPhase.CANCELLING;
+        case DECODED:
+            remove_decoded(state, id.index);
+            asset::destroy_prepared_model_document(&slot.prepared);
+            finish_cancel(state, slot);
+        case CANCELLING:
+        case PUBLISHED:
+        case FAILED:
+        case CANCELLED:
+            return;
+    }
+}
+
+<*
+ Snapshot occupied phases and cumulative decode/publication accounts.
+*>
+fn LoaderCounters AsyncLoader.counters(&self) {
+    LoaderState* state = self.state;
+    state.lock.lock();
+    defer state.lock.unlock();
+    LoaderCounters counters = state.counters;
+    foreach (&slot : state.slots) {
+        if (!slot.occupied) continue;
+        switch (slot.phase) {
+            case QUEUED: counters.queued++;
+            case DECODING: counters.decoding++;
+            case DECODED: counters.decoded++;
+            case CANCELLING: counters.cancelling++;
+            case PUBLISHED: counters.published++;
+            case FAILED: counters.failed++;
+            case CANCELLED: counters.cancelled++;
+        }
+    }
+    return counters;
+}
+
+<*
+ Free a terminal request slot.
  @return? c3d::INVALID_ID
  @require !holds_pending(self.state, id)
 *>
@@ -170,10 +304,10 @@ fn void? AsyncLoader.release(&self, LoadId id) {
 }
 
 <*
- Start the worker thread over a table of request slots.
- The store allocator, the loader allocator and the store's file source are used from the worker thread.
+ Start model decoding over fixed request slots.
+ Allocators and the file source are used by the worker.
  @param [&in] assets : "Publication target; outlives the loader."
- @param capacity : "Request slots; 0 selects DEFAULT_LOAD_CAPACITY."
+ @param capacity : "Request slots; zero selects DEFAULT_LOAD_CAPACITY."
  @return? thread::INIT_FAILED
  @require allocator != tmem, assets.allocator != tmem
 *>
@@ -199,9 +333,8 @@ fn AsyncLoader? create_async_loader(Allocator allocator, AssetStore* assets, uin
 }
 
 <*
- Stop the worker and free every unpublished document and request.
- Blocks until the decode in progress ends.
- @param [&inout] loader : "Destroyed before its asset store; left zeroed."
+ Join the worker and free unpublished documents and requests.
+ @param [&inout] loader : "Destroyed before its store; left zeroed."
 *>
 fn void destroy_async_loader(AsyncLoader* loader) {
     LoaderState* state = loader.state;
@@ -209,11 +342,11 @@ fn void destroy_async_loader(AsyncLoader* loader) {
     state.stopping = true;
     state.wake.broadcast();
     state.lock.unlock();
-    // The worker allocates from both allocators until it has joined; freeing earlier would race it.
+    // The worker uses both allocators until joined; earlier frees would race it.
     state.worker.join()!!;
     foreach (&slot : state.slots) {
         if (!slot.occupied) continue;
-        if (slot.phase == LoadPhase.DECODED) asset::destroy_model_document(&slot.document);
+        if (slot.phase == LoadPhase.DECODED) asset::destroy_prepared_model_document(&slot.prepared);
         alloc::free(state.allocator, slot.request.path.ptr);
     }
     state.wake.destroy();
@@ -224,9 +357,43 @@ fn void destroy_async_loader(AsyncLoader* loader) {
     *loader = {};
 }
 
+fn ulong add_saturated(ulong first, ulong second) @private => second > ulong::max - first ? ulong::max : first + second;
+
+fn void finish_cancel(LoaderState* state, LoadSlot* slot) @private {
+    slot.phase = LoadPhase.CANCELLED;
+    state.counters.cancellations = add_saturated(state.counters.cancellations, 1);
+}
+
+fn void append_decoded(LoaderState* state, uint index) @private {
+    LoadSlot* slot = &state.slots[index];
+    slot.decoded_previous = state.decoded_tail;
+    if (state.decoded_tail) {
+        state.slots[state.decoded_tail - 1].decoded_next = index + 1;
+    } else {
+        state.decoded_head = index + 1;
+    }
+    state.decoded_tail = index + 1;
+}
+
+fn void remove_decoded(LoaderState* state, uint index) @private {
+    LoadSlot* slot = &state.slots[index];
+    if (slot.decoded_previous) {
+        state.slots[slot.decoded_previous - 1].decoded_next = slot.decoded_next;
+    } else {
+        state.decoded_head = slot.decoded_next;
+    }
+    if (slot.decoded_next) {
+        state.slots[slot.decoded_next - 1].decoded_previous = slot.decoded_previous;
+    } else {
+        state.decoded_tail = slot.decoded_previous;
+    }
+    slot.decoded_previous = 0;
+    slot.decoded_next = 0;
+}
+
 fn void publish_slot(AssetStore* assets, LoadSlot* slot) @private {
     if (!slot.request.replace.generation) {
-        ModelId? model = assets.publish_document(&slot.document);
+        ModelId? model = asset::publish_prepared_model_document(assets, &slot.prepared);
         if (catch excuse = model) {
             slot.phase = LoadPhase.FAILED;
             slot.failure = excuse;
@@ -236,12 +403,12 @@ fn void publish_slot(AssetStore* assets, LoadSlot* slot) @private {
         }
         return;
     }
-    if (!assets.models.is_live(slot.request.replace)) {
-        slot.phase = LoadPhase.FAILED;
-        slot.failure = c3d::INVALID_ID;
-        return;
-    }
-    ModelReplaceReport? report = assets.replace_document(slot.request.replace, &slot.document, slot.request.missing);
+    ModelReplaceReport? report = asset::replace_prepared_model_document(
+        store:    assets,
+        model:    slot.request.replace,
+        prepared: &slot.prepared,
+        missing:  slot.request.missing,
+    );
     if (catch excuse = report) {
         slot.phase = LoadPhase.FAILED;
         slot.failure = excuse;
@@ -256,7 +423,7 @@ fn bool holds_pending(LoaderState* state, LoadId id) @private {
     state.lock.lock();
     defer state.lock.unlock();
     LoadSlot*? slot = live_slot(state, id);
-    if (catch slot) return false;
+    if (catch excuse = slot) return false;
     return is_pending(slot.phase);
 }
 
@@ -268,13 +435,14 @@ fn LoadSlot*? live_slot(LoaderState* state, LoadId id) @private {
 }
 
 fn bool is_pending(LoadPhase phase) @private {
-    return phase == LoadPhase.QUEUED || phase == LoadPhase.DECODING || phase == LoadPhase.DECODED;
+    return phase == LoadPhase.QUEUED || phase == LoadPhase.DECODING
+        || phase == LoadPhase.DECODED || phase == LoadPhase.CANCELLING;
 }
 
-fn usz? oldest_in_phase(LoaderState* state, LoadPhase phase) @private {
+fn usz? oldest_queued(LoaderState* state) @private {
     usz? oldest = NOT_FOUND~;
     foreach (usz index, &slot : state.slots) {
-        if (!slot.occupied || slot.phase != phase) continue;
+        if (!slot.occupied || slot.phase != LoadPhase.QUEUED) continue;
         if (try current = oldest) {
             if (state.slots[current].sequence < slot.sequence) continue;
         }
@@ -287,7 +455,7 @@ fn usz? next_decode(LoaderState* state) @private {
     state.lock.lock();
     defer state.lock.unlock();
     while (!state.stopping) {
-        if (try index = oldest_in_phase(state, LoadPhase.QUEUED)) {
+        if (try index = oldest_queued(state)) {
             state.slots[index].phase = LoadPhase.DECODING;
             return index;
         }
@@ -297,22 +465,42 @@ fn usz? next_decode(LoaderState* state) @private {
 }
 
 fn void decode_slot(LoaderState* state, usz index) @private {
-    // A pending slot's request is written before QUEUED and never changes until release.
-    ModelDocument? document = decode_request(
+    std::time::Clock started = clock::now();
+    // Pending requests are immutable until release, including while CANCELLING.
+    PreparedModelDocument? prepared = decode_prepared_request(
         allocator:   state.document_allocator,
         file_source: state.file_source,
         request:     state.slots[index].request,
     );
+    ulong elapsed_ns = (ulong)started.to_now();
     state.lock.lock();
     defer state.lock.unlock();
+    state.counters.decode_ns = add_saturated(state.counters.decode_ns, elapsed_ns);
     LoadSlot* slot = &state.slots[index];
-    if (catch excuse = document) {
-        slot.phase = LoadPhase.FAILED;
-        slot.failure = excuse;
+    if (slot.phase == LoadPhase.CANCELLING) {
+        if (try result = prepared) asset::destroy_prepared_model_document(&result);
+        finish_cancel(state, slot);
         return;
     }
-    slot.document = document;
+    if (catch excuse = prepared) {
+        slot.phase = LoadPhase.FAILED;
+        slot.failure = excuse;
+        state.counters.decode_failures = add_saturated(state.counters.decode_failures, 1);
+        return;
+    }
+    slot.prepared = prepared;
     slot.phase = LoadPhase.DECODED;
+    append_decoded(state, (uint)index);
+}
+
+fn PreparedModelDocument? decode_prepared_request(
+    Allocator allocator,
+    FileSource file_source,
+    LoadRequest request,
+) @private {
+    ModelDocument document = decode_request(allocator, file_source, request)!;
+    defer asset::destroy_model_document(&document);
+    return asset::prepare_model_document(&document);
 }
 
 fn ModelDocument? decode_request(Allocator allocator, FileSource file_source, LoadRequest request) @private {

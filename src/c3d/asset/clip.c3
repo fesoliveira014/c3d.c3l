@@ -163,3 +163,20 @@ fn void? check_clip_structure(AnimationClip* current, AnimationClip* next) @priv
 fn uint track_stride(Track* track) @local {
     return track.times.len ? track.stride() : 0;
 }
+
+fn ClipId add_prepared_clip(AssetStore* store, AnimationClip* clip, String key) @private {
+    ClipId id = store.clips.add({})!!;
+    *store.clips.get(id) = {
+        .header = { .key = copy_string(store.allocator, key), .revision = 1 },
+        .data = *clip,
+    };
+    register_key(store, key, typed_ref(AssetKind.CLIP, id));
+    return id;
+}
+
+fn void replace_prepared_clip(AssetStore* store, ClipId clip, AnimationClip* source) @private {
+    ClipAsset* record = store.clip(clip);
+    free_clip(store.allocator, &record.data);
+    record.data = *source;
+    mark_replaced(&record.header);
+}

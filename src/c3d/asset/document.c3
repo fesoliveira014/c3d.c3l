@@ -195,51 +195,14 @@ fn DocumentGeometry* ModelDocument.geometry(&self, GeometryId reference) {
  @require self.allocator != tmem
 *>
 fn ModelId? AssetStore.publish_document(&self, ModelDocument* document) {
-    ModelId model;
-    @pool() {
-        check_document(self, document)!;
-        PublishedIds ids = {
-            .samplers   = alloc::new_array(tmem, SamplerId, (sz)document.samplers.len),
-            .textures   = alloc::new_array(tmem, TextureId, (sz)document.textures.len),
-            .materials  = alloc::new_array(tmem, MaterialId, (sz)document.materials.len),
-            .geometries = alloc::new_array(tmem, GeometryId, (sz)document.geometries.len),
-            .skeletons  = alloc::new_array(tmem, SkeletonId, (sz)document.skeletons.len),
-            .clips      = alloc::new_array(tmem, ClipId, (sz)document.clips.len),
-        };
-
-        // check_document decided every fault; one here is a defect in it.
-        foreach (index, &entry : document.samplers) {
-            ids.samplers[index] = self.add_sampler(entry.desc, entry.key)!!;
-        }
-        foreach (index, &entry : document.textures) {
-            ids.textures[index] = self.add_texture_owned(entry.desc, entry.pixels, entry.key)!!;
-            entry.pixels = {};
-        }
-        foreach (index, &entry : document.materials) {
-            material::@each_texture_reference(&entry.data; TextureId* texture, SamplerId* sampler) {
-                *texture = @remapped(*texture, ids.textures);
-                if (sampler) *sampler = @remapped(*sampler, ids.samplers);
-            };
-            ids.materials[index] = self.add_material(entry.data, entry.key)!!;
-        }
-        foreach (index, &entry : document.geometries) {
-            ids.geometries[index] = self.add_geometry_owned(&entry.data, entry.key)!!;
-            entry.data = {};
-        }
-        foreach (index, &entry : document.skeletons) {
-            ids.skeletons[index] = self.add_skeleton_owned(&entry.data, entry.key)!!;
-            entry.data = {};
-        }
-        foreach (index, &entry : document.clips) {
-            ids.clips[index] = self.add_clip_owned(&entry.data, entry.key)!!;
-            entry.data = {};
-        }
-
-        remap_template(&document.template, &ids);
-        model = self.add_model_owned(&document.template, document.key)!!;
-        document.template = {};
-    };
-    destroy_model_document(document);
+    PreparedModelDocument prepared = prepare_model_document(document)!;
+    defer destroy_prepared_model_document(&prepared);
+    ModelId? model = publish_prepared_model_document(self, &prepared);
+    if (catch excuse = model) {
+        *document = prepared.document;
+        prepared.document = { .allocator = document.allocator };
+        return excuse~;
+    }
     return model;
 }
 
@@ -295,37 +258,6 @@ fn void destroy_model_document(ModelDocument* document) {
     free_model_template(allocator, &document.template);
     free_string(allocator, document.key);
     *document = { .allocator = allocator };
-}
-
-fn void? check_document(AssetStore* store, ModelDocument* document) @local {
-    String[] keys = document_keys(document);
-    foreach (key : keys) check_key(store, key)!;
-    foreach (index, key : keys) {
-        if (!key.len) continue;
-        foreach (other : keys[index + 1..]) {
-            if (other == key) return c3d::INVALID_ARGUMENT~;
-        }
-    }
-
-    bool fits = store.samplers.free_count >= document.samplers.len
-        && store.textures.free_count >= document.textures.len
-        && store.materials.free_count >= document.materials.len
-        && store.geometries.free_count >= document.geometries.len
-        && store.skeletons.free_count >= document.skeletons.len
-        && store.clips.free_count >= document.clips.len
-        && store.models.free_count >= 1;
-    if (!fits) return c3d::CAPACITY_EXCEEDED~;
-    return check_document_content(store, document);
-}
-
-fn void? check_document_content(AssetStore* store, ModelDocument* document) @private {
-    check_template_references(store, document)!;
-    foreach (&entry : document.materials) {
-        if (entry.data.kind == MaterialKind.CUSTOM) return c3d::INVALID_ARGUMENT~;
-    }
-    foreach (&entry : document.geometries) check_influences(&entry.data)!;
-    foreach (&entry : document.textures) check_format_use(entry.desc)!;
-    return check_lod_groups(store, &document.template, document);
 }
 
 fn void? check_lod_groups(AssetStore* store, ModelTemplate* template, ModelDocument* document) @private {

@@ -360,3 +360,69 @@ fn void free_geometry_streams(Allocator allocator, Geometry* geometry) @local {
         .bounds        = geometry.bounds,
     };
 }
+
+fn void? check_geometry_structure_prepared(
+    GeometryAsset* current,
+    Geometry* next,
+    GeometryShape* derived,
+) @private {
+    GeometryShape* shape = &current.shape;
+    if (current.data.topology != next.topology || shape.skinned != derived.skinned
+      || current.target_count != next.targets.len || current.data.channels.len != next.channels.len
+      || derived.joint_bound > shape.joint_bound) return c3d::INCOMPATIBLE_STRUCTURE~;
+    foreach (index, streams : derived.target_streams) {
+        if (shape.target_streams[index] != streams) return c3d::INCOMPATIBLE_STRUCTURE~;
+    }
+    foreach (index, &channel : next.channels) {
+        MorphChannel* existing = &current.data.channels[index];
+        if (existing.first_target != channel.first_target || existing.full_weights.len != channel.full_weights.len) {
+            return c3d::INCOMPATIBLE_STRUCTURE~;
+        }
+    }
+}
+
+fn GeometryId add_prepared_geometry(
+    AssetStore* store,
+    Geometry* geometry,
+    PreparedGeometry* derived,
+    String key,
+) @private {
+    GeometryId id = store.geometries.add({})!!;
+    *store.geometries.get(id) = {
+        .header = { .key = copy_string(store.allocator, key), .revision = 1 },
+        .data = *geometry,
+        .skin_bounds = derived.skin_bounds,
+        .morph_bounds = derived.morph_bounds,
+        .vertex_count = (uint)geometry.positions.len,
+        .index_count = (uint)geometry.indices.len,
+        .target_count = (uint)geometry.targets.len,
+        .shape = derived.shape,
+    };
+    *derived = {};
+    register_key(store, key, typed_ref(AssetKind.GEOMETRY, id));
+    return id;
+}
+
+fn void replace_prepared_geometry(
+    AssetStore* store,
+    GeometryId geometry,
+    Geometry* source,
+    PreparedGeometry* derived,
+) @private {
+    GeometryAsset* record = store.geometry(geometry);
+    free_geometry(store.allocator, &record.data);
+    geometry::free_skin_bounds(store.allocator, &record.skin_bounds);
+    geometry::free_morph_bounds(store.allocator, &record.morph_bounds);
+    free_triangle_tree(store.allocator, record);
+    record.data = *source;
+    record.skin_bounds = derived.skin_bounds;
+    record.morph_bounds = derived.morph_bounds;
+    record.vertex_count = (uint)source.positions.len;
+    record.index_count = (uint)source.indices.len;
+    record.target_count = (uint)source.targets.len;
+    record.validated_revision = 0;
+    record.rejected_revision = 0;
+    derived.skin_bounds = {};
+    derived.morph_bounds = {};
+    mark_replaced(&record.header);
+}
