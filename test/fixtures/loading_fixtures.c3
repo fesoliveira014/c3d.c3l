@@ -14,6 +14,11 @@ import std::math;
 <* Version of the deterministic loading corpus. *>
 const uint FIXTURE_VERSION = 1;
 
+<* Seed of the generated texture corpus shared by CPU and Vulkan preparation checks. *>
+const uint PREPARATION_IMAGE_SEED = 0x2545f491;
+const uint PREPARATION_RANDOM_MULTIPLIER @local = 1664525; // reproduces the existing texture corpus
+const uint PREPARATION_RANDOM_INCREMENT @local = 1013904223;
+
 <*
  Generate a triangle model with a configurable node chain.
  @require node_count > 0
@@ -144,4 +149,18 @@ fn ModelDocument full_model_document(Allocator allocator, String key) {
         foreach (&part : lod.parts) *part = { .geometry = lod_geometry, .material = material, .local = matrix::IDENTITY4 };
         return document;
     };
+}
+
+<*
+ Generate deterministic bytes without encoded or binary fixture files.
+ @require bytes <= (usz)sz::max
+*>
+fn char[] preparation_texture_bytes(Allocator allocator, usz bytes, uint seed = PREPARATION_IMAGE_SEED) {
+    char[] pixels = alloc::new_array(allocator, char, (sz)bytes);
+    uint state = seed;
+    foreach (&byte : pixels) {
+        state = state * PREPARATION_RANDOM_MULTIPLIER + PREPARATION_RANDOM_INCREMENT;
+        *byte = (char)(state >> 24);
+    }
+    return pixels;
 }

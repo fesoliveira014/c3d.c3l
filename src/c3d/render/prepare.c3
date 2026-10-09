@@ -7,459 +7,377 @@ import c3d::pool;
 import gpu;
 import std::collections::list;
 import std::math;
+import std::time;
+import std::time::clock;
 
-<*
- Pool of open model preparations addressed by PrepareId.
-*>
+<* Pool of open model preparations. *>
 alias PreparePool = Pool{PrepareRecord, PrepareId};
 
-<*
- Staged bytes one advance_prepares call spends when no budget is given.
-*>
-const usz PREPARE_FRAME_BUDGET_BYTES = 1 << 20; // under OVERSIZED_UPLOAD_BYTES; 4.3 ms CPU -O3, 9.7 ms default (WSL)
+<* Default staged-byte allowance of the legacy preparation call. *>
+const usz PREPARE_FRAME_BUDGET_BYTES = 1 << 20; // one MiB per call; divisible uploads stop at legal bands
 
-<*
- Model preparations that can be open at once.
-*>
-const uint PREPARE_CAPACITY = 4; // one unit list per record (Sponza: 376 units); bounds waiting models, not frame cost
+<* Open preparations admitted by one renderer. *>
+const uint PREPARE_CAPACITY = 4; // fixed record count; each owns its structural units and one mip chain
 
-<*
- Stage of a budgeted model preparation.
-*>
+const usz PREPARE_SPAN_BYTES @private = 64 << 10; // bounded CPU-copy/packing spans permit cooperative deadline checks
+const uint PREPARE_GENERATION_ROWS @private = 16; // one output band; a wide row may exceed the cooperative target
+
+<* Publication and completion state of a model preparation. *>
 enum PrepareState {
     PENDING,
     SUBMITTED,
-    <* Every unit whose asset was live is uploaded and its frame completed. *>
     READY,
     FAILED,
+}
+
+<* Work currently reached by a preparation. *>
+enum PreparePhase {
+    DEPENDENCIES,
+    GENERATION,
+    UPLOAD,
+    PIPELINES,
+    FINISH,
+    COMPLETE,
+}
+
+<* Axis that prevented the next preparation step. *>
+enum PrepareStopReason {
+    NONE,
+    STAGED_BYTES,
+    GENERATED_TEXELS,
+    PIPELINES,
+    TIME,
+}
+
+<* Per-call limits; each zero axis is unbounded. *>
+struct PrepareLimits {
+    usz staged_bytes;
+    ulong generated_texels;
+    uint pipelines;
+    ulong time_ns;
+}
+
+<* Work required by one indivisible preparation step. *>
+struct PrepareStepCost {
+    usz staged_bytes;
+    ulong generated_texels;
+    uint pipelines;
+}
+
+<* Actual work and the next blocked step of one advance. *>
+struct PrepareReport {
+    usz staged_bytes;
+    ulong generated_texels;
+    ulong copied_bytes;
+    uint pipelines;
+    uint objects;
+    uint views;
+    uint allocations;
+    uint pipeline_lookups;
+    uint pipeline_hits;
+    uint pipeline_keys;
+    uint restarts;
+    ulong generation_ns;
+    ulong pipeline_ns;
+    ulong elapsed_ns;
+    ulong overrun_ns;
+    PrepareStopReason reason;
+    PrepareStepCost required;
+}
+
+<* Per-renderer work accumulated across preparation calls and aborted frames. *>
+struct PrepareCounters {
+    ulong staged_bytes;
+    ulong generated_texels;
+    ulong copied_bytes;
+    ulong pipelines;
+    ulong objects;
+    ulong views;
+    ulong allocations;
+    ulong pipeline_lookups;
+    ulong pipeline_hits;
+    ulong pipeline_keys;
+    ulong restarts;
+    ulong generation_ns;
+    ulong pipeline_ns;
+    ulong elapsed_ns;
+    ulong overrun_ns;
+}
+
+<* Fixed totals and current progress of a preparation. *>
+struct PrepareProgress {
+    PrepareState state;
+    PreparePhase phase;
+    usz bytes_total;
+    usz bytes_done;
+    ulong texels_total;
+    ulong texels_done;
+    uint units_total;
+    uint units_done;
+    uint restarts;
+    fault failure;
 }
 
 enum PrepareUnitKind @private {
     TEXTURE,
     GEOMETRY,
+    SAMPLER,
+    TOON_SAMPLER,
+    SHADER,
     MATERIAL,
     PIPELINES,
     FINISH,
 }
 
-enum PrepareAction @private {
-    DEAD,
-    CURRENT,
-    STAGE,
+struct PrepareCursor @private {
+    usz bytes;
+    uint mip;
+    uint layer;
+    uint slice;
+    uint row;
 }
 
-<*
- Progress of a budgeted model preparation.
-*>
-struct PrepareProgress {
-    PrepareState state;
-    usz          bytes_total; // staged size, recorded at begin, of the listed units
-    usz          bytes_done;  // recorded sizes of the units done, staged or skipped; reaches bytes_total
-    uint         units_total;
-    uint         units_done;
-    fault        failure;
+struct PrepareCheckpoint @private {
+    PrepareCursor staged;
+    bool done;
+    bool initialized;
+    gpu::TextureState texture_state;
+    ulong epoch;
+    ulong frame;
+    bool active;
 }
 
 struct PrepareUnit @private {
     PrepareUnitKind kind;
-    TextureId       texture;
-    GeometryId      geometry;
-    MaterialId      material;
-    bool            morphed;
-    usz             bytes;
-    bool            done;
+    PrepareId owner;
+    uint index;
+    uint creation_next;
+    ulong generated_done;
+    TextureId texture;
+    GeometryId geometry;
+    MaterialId material;
+    SamplerId sampler;
+    ShaderId shader;
+    uint revision;
+    usz bytes;
+    ulong texels;
+    bool full_reader;
+    bool morphed;
+    bool done;
+    bool initialized;
+    bool installed;
+    bool force_restart;
+    bool abandoned_candidate;
+    PrepareCursor staged;
+    PrepareCheckpoint checkpoint;
+    TextureRes texture_candidate;
+    TextureResidency residency_candidate;
+    uint texture_base;
+    GpuGeometry geometry_candidate;
+    MaterialRes material_candidate;
+    PreparePipelineUnit pipeline;
+    PrepareShaderUnit shader_job;
+    gpu::CompletionPoint last_submission;
+    uint last_submission_slot;
+    bool referenced_this_frame;
 }
 
 struct PrepareRecord @private {
+    PrepareId id;
+    ModelId model;
+    uint model_revision;
     PrepareUnit[] units;
-    uint          next;
-    ulong         sequence;
-    ulong         done_frame;
-    PrepareState  state;
-    fault         failure;
-    usz           bytes_total;
-    usz           bytes_done;
-    uint          units_done;
-    SceneReads    scene_reads;
-    bool          open;
-}
-
-struct PrepareMark @private {
-    PrepareId record;
-    uint      unit;
+    uint next;
+    ulong sequence;
+    ulong epoch;
+    PrepareState state;
+    PreparePhase phase;
+    fault failure;
+    usz bytes_total;
+    usz bytes_done;
+    ulong texels_total;
+    ulong texels_done;
+    uint units_done;
+    uint restarts;
+    SceneReads scene_reads;
+    TextureMipChain chain;
+    uint chain_unit;
+    uint generation_mip;
+    uint generation_layer;
+    uint generation_row;
+    ulong generation_outputs;
+    bool chain_active;
+    gpu::CompletionPoint last_submission;
+    bool pending_gpu;
+    bool open;
 }
 
 struct PrepareBudget @private {
-    usz budget;
-    usz spent;
+    PrepareLimits limits;
+    PrepareReport report;
+    std::time::Clock started;
+    bool legacy;
+    bool legacy_step;
 }
 
-struct PrepareCheck @private {
-    bool live;
-    bool current;
-    usz  size;
+struct PrepareInstall @private {
+    PrepareId record;
+    uint unit;
+    ulong epoch;
+    PrepareUnitKind kind;
+    TextureRes old_texture;
+    TextureRes new_texture;
+    TextureResidency old_residency;
+    TextureResidency new_residency;
+    GpuGeometry old_geometry;
+    GpuGeometry new_geometry;
+    MaterialRes old_material;
+    MaterialRes new_material;
+    PathTracer old_path_tracer;
+    PathTracer new_path_tracer;
+    gpu::CompletionPoint last_submission;
+    uint last_submission_slot;
 }
 
 <*
- Open a budgeted preparation of a published model.
+ Open a model preparation with synchronous structural enumeration.
  @return? c3d::INVALID_ID, c3d::CAPACITY_EXCEEDED
 *>
 fn PrepareId? Renderer.begin_prepare_model(&self, ModelId model) {
-    ModelAsset* asset = self.assets.models.try_get(model)!;
+    ModelAsset* source = self.assets.models.try_get(model)!;
     if (!self.prepares.free_count) return c3d::CAPACITY_EXCEEDED~;
     PrepareRecord record = {
-        .units    = enumerate_prepare_units(self, &asset.data),
+        .model = model,
+        .model_revision = source.header.revision,
+        .last_submission = self.last_submission,
         .sequence = ++self.next_prepare_sequence,
-        .state    = PrepareState.PENDING,
-        .open     = true,
+        .epoch = 1,
+        .state = PrepareState.PENDING,
+        .open = true,
     };
-    foreach (unit : record.units) record.bytes_total += unit.bytes;
-    return self.prepares.add(record);
+    enumerate_prepare_record(self, &record);
+    PrepareId id = self.prepares.add(record)!;
+    bind_prepare_record(self, id);
+    return id;
 }
 
 <*
- Stage the next units of open preparations within a byte budget.
- Does not abort the frame on a fault; the caller's abort returns the call's units to not done.
- @param budget_bytes : "Staged bytes this call may spend; a unit runs over it only when first."
- @return? gpu::SLOT_TABLE_FULL, gpu::DEVICE_BUSY, gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE
+ Advance preparation within four independent per-call limits.
+ @return? c3d::INVALID_ARGUMENT, gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE
  @return? gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY, gpu::UNSUPPORTED_FEATURE
  @return? gpu::COMMAND_RECORDING_ERROR, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
- @return? gpu::INVALID_RESOURCE_STATE, gpu::RESOURCE_IN_USE, gpu::DESCRIPTOR_HEAP_FULL
- @return? gpu::COMMAND_ALLOCATOR_CAPACITY_EXCEEDED, gpu::WAIT_TIMEOUT
+ @return? gpu::INVALID_RESOURCE_STATE, gpu::RESOURCE_IN_USE, gpu::DEVICE_BUSY
+ @return? gpu::SLOT_TABLE_FULL, gpu::DESCRIPTOR_HEAP_FULL, gpu::COMMAND_ALLOCATOR_CAPACITY_EXCEEDED, gpu::WAIT_TIMEOUT
+ @require self.frame_open
+*>
+fn PrepareReport? Renderer.advance_prepares_within(&self, PrepareLimits limits) {
+    return advance_prepare_engine(self, limits, false);
+}
+
+<*
+ Advance preparation under the legacy staged-byte allowance.
+ @param budget_bytes : "One oversized minimum step may progress before bytes stage."
+ @return? c3d::INVALID_ARGUMENT, gpu::INVALID_ARGUMENT, gpu::INVALID_HANDLE
+ @return? gpu::OUT_OF_HOST_MEMORY, gpu::OUT_OF_DEVICE_MEMORY, gpu::UNSUPPORTED_FEATURE
+ @return? gpu::COMMAND_RECORDING_ERROR, gpu::DEVICE_LOST, gpu::BACKEND_ERROR
+ @return? gpu::INVALID_RESOURCE_STATE, gpu::RESOURCE_IN_USE, gpu::DEVICE_BUSY
+ @return? gpu::SLOT_TABLE_FULL, gpu::DESCRIPTOR_HEAP_FULL, gpu::COMMAND_ALLOCATOR_CAPACITY_EXCEEDED, gpu::WAIT_TIMEOUT
  @require self.frame_open
 *>
 fn void? Renderer.advance_prepares(&self, usz budget_bytes = PREPARE_FRAME_BUDGET_BYTES) {
-    promote_ready_prepares(self);
-    begin_material_scope(self);
-    defer end_material_scope(self);
-    PrepareId[PREPARE_CAPACITY] order;
-    uint count = prepare_order(self, order[..]);
-    PrepareBudget budget = { .budget = budget_bytes };
-    foreach (id : order[:count]) {
-        bool stopped;
-        @pool() {
-            stopped = advance_record(self, id, &budget)!;
-        };
-        if (stopped) return;
-    }
+    advance_prepare_engine(self, { .staged_bytes = budget_bytes }, true)!;
 }
 
 <*
- Progress of a preparation.
- @return "FAILED with c3d::INVALID_ID for a released or stale id."
+ Inspect progress and detect a removed model.
+ @return "FAILED with INVALID_ID for a stale request or removed model."
 *>
 fn PrepareProgress Renderer.prepare_progress(&self, PrepareId id) {
     PrepareRecord*? record = self.prepares.try_get(id);
     if (catch record) return { .state = PrepareState.FAILED, .failure = c3d::INVALID_ID };
+    check_prepare_model(self, record);
+    promote_prepare_record(self, record);
     return {
-        .state       = record.state,
+        .state = record.state,
+        .phase = record.phase,
         .bytes_total = record.bytes_total,
-        .bytes_done  = record.bytes_done,
+        .bytes_done = record.bytes_done,
+        .texels_total = record.texels_total,
+        .texels_done = record.texels_done,
         .units_total = (uint)record.units.len,
-        .units_done  = record.units_done,
-        .failure     = record.failure,
+        .units_done = record.units_done,
+        .restarts = record.restarts,
+        .failure = record.failure,
     };
 }
 
 <*
- Release a preparation in any state; called outside a frame.
+ Abandon a preparation without unloading its published mirrors.
  @return? c3d::INVALID_ID
  @require !self.frame_open
 *>
 fn void? Renderer.end_prepare(&self, PrepareId id) {
     PrepareRecord* record = self.prepares.try_get(id)!;
-    alloc::free(self.allocator, record.units.ptr);
+    release_prepare_record(self, record);
     *record = {};
     self.prepares.remove(id);
 }
 
-fn PrepareUnit[] enumerate_prepare_units(Renderer* renderer, ModelTemplate* template) @private {
-    PrepareUnit[] units;
-    @pool() {
-        List{PrepareUnit} listed;
-        listed.init(tmem);
-        foreach (mesh : template.meshes) append_prepare_mesh(
-            renderer: renderer,
-            listed: &listed,
-            geometry: mesh.geometry,
-            material: mesh.material,
-            morphed: mesh.default_morph_weights.len > 0,
-        );
-        foreach (group : template.lod_groups) {
-            foreach (part : group.desc.parts) append_prepare_mesh(
-                renderer: renderer,
-                listed: &listed,
-                geometry: part.geometry,
-                material: part.material,
-                morphed: false,
-            );
-        }
-        listed.push({ .kind = PrepareUnitKind.FINISH });
-        units = alloc::new_array(renderer.allocator, PrepareUnit, (sz)listed.len());
-        units[..] = listed.array_view()[..];
-    };
-    return units;
+fn ulong prepare_add(ulong first, ulong second) @private {
+    return first > ulong::max - second ? ulong::max : first + second;
 }
 
-fn void append_prepare_mesh(
-    Renderer* renderer,
-    List{PrepareUnit}* listed,
-    GeometryId geometry,
-    MaterialId material,
-    bool morphed,
-) @local {
-    AssetStore* assets = renderer.assets;
-    bool geometry_live = assets.geometries.is_live(geometry);
-    bool material_live = assets.materials.is_live(material);
-    if (!geometry_live || !material_live) {
-        renderer.stats.dangling_refs++;
-        return;
+fn usz prepare_byte_allowance(PrepareBudget* budget) @private {
+    bool bounded = budget.legacy || budget.limits.staged_bytes != 0;
+    if (!bounded) return PREPARE_SPAN_BYTES;
+    if (budget.report.staged_bytes >= budget.limits.staged_bytes) return 0;
+    return math::min(budget.limits.staged_bytes - budget.report.staged_bytes, PREPARE_SPAN_BYTES);
+}
+
+fn PrepareStopReason prepare_step_stop(PrepareBudget* budget, PrepareStepCost cost, ulong elapsed_ns) @private {
+    if (budget.limits.time_ns && elapsed_ns >= budget.limits.time_ns) return PrepareStopReason.TIME;
+    bool bytes_bounded = budget.legacy || budget.limits.staged_bytes != 0;
+    if (bytes_bounded && (cost.staged_bytes > budget.limits.staged_bytes
+      || budget.report.staged_bytes > budget.limits.staged_bytes - cost.staged_bytes)) {
+        if (!budget.legacy || budget.report.staged_bytes || budget.legacy_step) return PrepareStopReason.STAGED_BYTES;
     }
-    Material* data = &assets.material(material).data;
-    material::@each_texture_reference(data; TextureId* texture, SamplerId* sampler) {
-        if (texture_needed(renderer, listed.array_view(), *texture)) {
-            listed.push({
-                .kind    = PrepareUnitKind.TEXTURE,
-                .texture = *texture,
-                .bytes   = prepare_texture_bytes(renderer, *texture),
-            });
-        }
-    };
-    if (geometry_needed(renderer, listed.array_view(), geometry)) {
-        listed.push({
-            .kind     = PrepareUnitKind.GEOMETRY,
-            .geometry = geometry,
-            .bytes    = geometry_layout(&assets.geometry(geometry).data).total_bytes,
-        });
-    }
-    if (!lists_unit(listed.array_view(), PrepareUnitKind.MATERIAL, (Id)material)) {
-        listed.push({ .kind = PrepareUnitKind.MATERIAL, .material = material, .bytes = MATERIAL_STRIDE });
-    }
-    listed.push({
-        .kind     = PrepareUnitKind.PIPELINES,
-        .geometry = geometry,
-        .material = material,
-        .morphed  = morphed,
-    });
+    if (budget.limits.generated_texels && (cost.generated_texels > budget.limits.generated_texels
+      || budget.report.generated_texels > budget.limits.generated_texels - cost.generated_texels)) return PrepareStopReason.GENERATED_TEXELS;
+    if (!budget.legacy && budget.limits.pipelines && (cost.pipelines > budget.limits.pipelines
+      || budget.report.pipelines > budget.limits.pipelines - cost.pipelines)) return PrepareStopReason.PIPELINES;
+    return PrepareStopReason.NONE;
 }
 
-fn bool texture_needed(Renderer* renderer, PrepareUnit[] listed, TextureId texture) @private {
-    if (!renderer.assets.textures.is_live(texture) || texture_current(renderer, texture)) return false;
-    return !lists_unit(listed, PrepareUnitKind.TEXTURE, (Id)texture);
-}
-
-fn bool geometry_needed(Renderer* renderer, PrepareUnit[] listed, GeometryId geometry) @private {
-    return !geometry_current(renderer, geometry) && !lists_unit(listed, PrepareUnitKind.GEOMETRY, (Id)geometry);
-}
-
-fn bool lists_unit(PrepareUnit[] units, PrepareUnitKind kind, Id asset) @private {
-    foreach (&unit : units) {
-        if (unit.kind != kind) continue;
-        Id id;
-        switch (kind) {
-            case TEXTURE: id = (Id)unit.texture;
-            case GEOMETRY: id = (Id)unit.geometry;
-            case MATERIAL: id = (Id)unit.material;
-            case PIPELINES:
-            case FINISH: continue;
-        }
-        if (c3d::same_id(id, asset)) return true;
-    }
-    return false;
-}
-
-fn usz prepare_texture_bytes(Renderer* renderer, TextureId texture) @private {
-    TextureAsset* record = renderer.assets.texture(texture);
-    usz bytes = prepare_source_bytes(record);
-    if (!renderer.texture_budget_bytes) return bytes;
-
-    TextureResidency* residency = &renderer.residencies[texture.index];
-    uint chain_mips = texture_chain_mips(record);
-    if (residency.full_reader || !texture_eligible(record.desc, record.source_kind, chain_mips)) return bytes;
-
-    uint base = texture_tail_base(math::max(record.desc.width, record.desc.height), chain_mips);
-    if (residency.streamed && residency.chain_mips == chain_mips) base = residency.resident_base;
-    TextureLevelBytes? level_bytes = texture_level_bytes(record.desc, chain_mips);
-    if (catch level_bytes) return bytes;
-
-    usz range;
-    for (uint mip = base; mip < chain_mips; mip++) range += level_bytes[mip];
-    return range;
-}
-
-fn usz prepare_source_bytes(TextureAsset* record) @private {
-    switch (record.source_kind) {
-        case MIP_ZERO:
-            return mip_chain_bytes(record.desc, record.pixels.len);
-        case SUPPLIED_MIPS:
-            if (try layout = supplied_texture_mip_layout(record.desc, record.supplied_mips)) return layout.total_bytes;
-            return 0;
-        case EMPTY:
-            return 0;
-    }
-}
-
-fn usz mip_chain_bytes(material::TextureDesc desc, usz base_bytes) @private {
-    if (desc.depth || !desc.generate_mips) return base_bytes;
-    usz texel_bytes = base_bytes / ((usz)desc.width * desc.height * desc.layers);
-    usz total;
-    for (uint mip = 0; mip < material::texture_mip_count(desc.width, desc.height); mip++) {
-        total += (usz)math::max(1u, desc.width >> mip) * math::max(1u, desc.height >> mip) * texel_bytes * desc.layers;
-    }
-    return total;
-}
-
-fn PrepareCheck check_unit(Renderer* renderer, PrepareUnit* unit) @private {
-    AssetStore* assets = renderer.assets;
-    switch (unit.kind) {
-        case TEXTURE:
-            if (!assets.textures.is_live(unit.texture)) return { .live = false };
-            if (texture_current(renderer, unit.texture)) return { .live = true, .current = true };
-            return { .live = true, .size = prepare_texture_bytes(renderer, unit.texture) };
-        case GEOMETRY:
-            if (!assets.geometries.is_live(unit.geometry)) return { .live = false };
-            if (geometry_current(renderer, unit.geometry)) return { .live = true, .current = true };
-            return { .live = true, .size = geometry_layout(&assets.geometry(unit.geometry).data).total_bytes };
-        case MATERIAL:
-            return { .live = assets.materials.is_live(unit.material), .size = MATERIAL_STRIDE };
-        case PIPELINES:
-            return { .live = assets.geometries.is_live(unit.geometry) && assets.materials.is_live(unit.material) };
-        case FINISH:
-            return { .live = true };
-    }
-}
-
-fn uint plan_prepare_units(PrepareBudget* budget, PrepareCheck[] checks, PrepareAction[] actions) @private {
-    foreach (uint index, check : checks) {
-        if (!check.live) {
-            actions[index] = PrepareAction.DEAD;
-            continue;
-        }
-        if (check.current) {
-            actions[index] = PrepareAction.CURRENT;
-            continue;
-        }
-        if (budget.spent > 0 && budget.spent + check.size > budget.budget) return index;
-        budget.spent += check.size;
-        actions[index] = PrepareAction.STAGE;
-    }
-    return (uint)checks.len;
-}
-
-fn bool? advance_record(Renderer* renderer, PrepareId id, PrepareBudget* budget) @private {
-    PrepareRecord* record = renderer.prepares.get(id);
-    PrepareUnit[] remaining = record.units[record.next..];
-    PrepareCheck[] checks = alloc::new_array(tmem, PrepareCheck, (sz)remaining.len);
-    foreach (index, &unit : remaining) checks[index] = check_unit(renderer, unit);
-    PrepareAction[] actions = alloc::new_array(tmem, PrepareAction, (sz)remaining.len);
-    uint taken = plan_prepare_units(budget, checks, actions);
-    foreach (action : actions[:taken]) {
-        uint index = record.next;
-        PrepareUnit* unit = &record.units[index];
-        switch (action) {
-            case DEAD:
-                if (unit.kind != PrepareUnitKind.PIPELINES) renderer.stats.dangling_refs++;
-            case CURRENT:
-                break;
-            case STAGE:
-                uint staged_before = renderer.stats.upload_bytes;
-                if (catch excuse = run_prepare_unit(renderer, record, unit)) {
-                    if (!fails_record(excuse)) return excuse~;
-                    record.state = PrepareState.FAILED;
-                    record.failure = excuse;
-                    return false;
-                }
-                renderer.stats.prepare_units++;
-                renderer.stats.prepare_bytes += (usz)(renderer.stats.upload_bytes - staged_before);
-        }
-        mark_unit_done(renderer, id, index);
-    }
-    return taken < remaining.len;
-}
-
-fn void? run_prepare_unit(Renderer* renderer, PrepareRecord* record, PrepareUnit* unit) @private {
-    switch (unit.kind) {
-        case TEXTURE:
-            resolve_texture(renderer, unit.texture)!;
-        case GEOMETRY:
-            resolve_geometry(renderer, unit.geometry)!;
-        case MATERIAL:
-            if (catch excuse = resolve_material(renderer, unit.material)) {
-                // Counted as dangling by the mesh's pipeline unit, through prepare_mesh, as prepare_model does.
-                if (!custom_material_unavailable(&renderer.assets.material(unit.material).data, excuse)) return excuse~;
-            }
-        case PIPELINES:
-            MeshPreparation prepared = prepare_mesh(
-                renderer:    renderer,
-                geometry_id: unit.geometry,
-                material_id: unit.material,
-                morphed:     unit.morphed,
-                depth:       true,
-                gbuffer:     renderer.has_deferred_view(),
-            )!;
-            record.scene_reads |= prepared.scene_reads;
-        case FINISH:
-            prepare_finish(renderer, record.scene_reads)!;
-    }
-}
-
-fn bool fails_record(fault excuse) @private {
-    return excuse == c3d::INVALID_ID || excuse == c3d::SHADER_NOT_FOUND || excuse == c3d::INVALID_ARGUMENT
-        || excuse == c3d::UNSUPPORTED || excuse == c3d::ASSET_DATA_UNAVAILABLE || excuse == gpu::SHADER_INVALID
-        || excuse == gpu::PIPELINE_CREATE_FAILED;
-}
-
-fn void mark_unit_done(Renderer* renderer, PrepareId id, uint index) @private {
-    PrepareRecord* record = renderer.prepares.get(id);
-    PrepareUnit* unit = &record.units[index];
-    unit.done = true;
-    record.bytes_done += unit.bytes;
-    record.units_done++;
-    record.next = index + 1;
-    renderer.pending_prepare_marks.push({ .record = id, .unit = index });
-    if (record.next == record.units.len) {
-        record.state = PrepareState.SUBMITTED;
-        record.done_frame = renderer.frame_index;
-    }
-}
-
-fn void rollback_prepare_marks(Renderer* renderer) @private {
-    while (try mark = renderer.pending_prepare_marks.pop()) {
-        PrepareRecord* record = renderer.prepares.get(mark.record);
-        PrepareUnit* unit = &record.units[mark.unit];
-        unit.done = false;
-        record.bytes_done -= unit.bytes;
-        record.units_done--;
-        record.next = mark.unit;
-        if (record.state == PrepareState.SUBMITTED) record.state = PrepareState.PENDING;
-    }
-}
-
-fn void promote_ready_prepares(Renderer* renderer) @private {
-    foreach (&record : renderer.prepares.items) {
-        if (!record.open || record.state != PrepareState.SUBMITTED) continue;
-        if (renderer.frame_index >= record.done_frame + FRAMES_IN_FLIGHT) record.state = PrepareState.READY;
-    }
-}
-
-fn uint prepare_order(Renderer* renderer, PrepareId[] order) @private {
-    uint count;
-    foreach (uint index, &record : renderer.prepares.items) {
-        if (!record.open || record.state != PrepareState.PENDING) continue;
-        uint position = count++;
-        while (position > 0 && renderer.prepares.items[order[position - 1].index].sequence > record.sequence) {
-            order[position] = order[position - 1];
-            position--;
-        }
-        order[position] = { .index = index, .generation = renderer.prepares.generations[index] };
-    }
-    return count;
-}
-
-fn void free_prepares(Renderer* renderer) @private {
-    foreach (&record : renderer.prepares.items) {
-        if (record.open) alloc::free(renderer.allocator, record.units.ptr);
-    }
-    pool::destroy_pool{PrepareRecord, PrepareId}(&renderer.prepares);
-    renderer.pending_prepare_marks.free();
+fn void account_prepare_report(Renderer* renderer, PrepareReport report) @private {
+    renderer.stats.prepare_bytes += report.staged_bytes;
+    renderer.stats.prepare_generated_texels += report.generated_texels;
+    renderer.stats.prepare_copied_bytes += report.copied_bytes;
+    renderer.stats.prepare_pipelines += report.pipelines;
+    renderer.stats.prepare_objects += report.objects;
+    renderer.stats.prepare_views += report.views;
+    renderer.stats.prepare_allocations += report.allocations;
+    renderer.stats.prepare_pipeline_lookups += report.pipeline_lookups;
+    renderer.stats.prepare_pipeline_hits += report.pipeline_hits;
+    renderer.stats.prepare_pipeline_keys += report.pipeline_keys;
+    renderer.stats.prepare_restarts += report.restarts;
+    renderer.stats.prepare_generation_ns += report.generation_ns;
+    renderer.stats.prepare_pipeline_ns += report.pipeline_ns;
+    renderer.stats.prepare_elapsed_ns += report.elapsed_ns;
+    renderer.stats.prepare_overrun_ns += report.overrun_ns;
+    PrepareCounters* totals = &renderer.prepare_counters;
+    totals.staged_bytes = prepare_add(totals.staged_bytes, report.staged_bytes);
+    totals.generated_texels = prepare_add(totals.generated_texels, report.generated_texels);
+    totals.copied_bytes = prepare_add(totals.copied_bytes, report.copied_bytes);
+    totals.pipelines = prepare_add(totals.pipelines, report.pipelines);
+    totals.objects = prepare_add(totals.objects, report.objects);
+    totals.views = prepare_add(totals.views, report.views);
+    totals.allocations = prepare_add(totals.allocations, report.allocations);
+    totals.pipeline_lookups = prepare_add(totals.pipeline_lookups, report.pipeline_lookups);
+    totals.pipeline_hits = prepare_add(totals.pipeline_hits, report.pipeline_hits);
+    totals.pipeline_keys = prepare_add(totals.pipeline_keys, report.pipeline_keys);
+    totals.restarts = prepare_add(totals.restarts, report.restarts);
+    totals.generation_ns = prepare_add(totals.generation_ns, report.generation_ns);
+    totals.pipeline_ns = prepare_add(totals.pipeline_ns, report.pipeline_ns);
+    totals.elapsed_ns = prepare_add(totals.elapsed_ns, report.elapsed_ns);
+    totals.overrun_ns = prepare_add(totals.overrun_ns, report.overrun_ns);
 }

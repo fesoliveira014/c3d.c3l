@@ -7,6 +7,7 @@ import c3d::scene;
 import c3d::shader;
 import gpu;
 import std::math;
+import std::time::clock;
 
 $assert PathTraceRoot::size == 64;
 
@@ -84,7 +85,7 @@ fn bool accumulation_reset_needed(
         || !(history.view_proj == view_proj) || history.origin != origin;
 }
 
-fn void? acquire_path_tracer(Renderer* renderer) @private {
+fn void? acquire_path_tracer_pipeline(Renderer* renderer, PrepareReport* report = null) @private {
     PathTracer* path_tracer = &renderer.path_tracer;
     if (path_tracer.pipeline.is_valid()) return;
 
@@ -117,8 +118,17 @@ fn void? acquire_path_tracer(Renderer* renderer) @private {
         .max_recursion_depth    = 1,
         .debug_name             = "path_tracer",
     };
-    gpu::PipelineHandle pipeline = gpu::create_ray_tracing_pipeline(&renderer.device, &description)!;
-    defer catch (void)gpu::destroy_pipeline(&renderer.device, pipeline);
+    std::time::Clock started = clock::now();
+    if (report) report.pipelines++;
+    defer if (report) report.pipeline_ns += (ulong)started.to_now();
+    path_tracer.pipeline = gpu::create_ray_tracing_pipeline(&renderer.device, &description)!;
+}
+
+fn void? acquire_path_tracer(Renderer* renderer) @private {
+    acquire_path_tracer_pipeline(renderer)!;
+    PathTracer* path_tracer = &renderer.path_tracer;
+    if (path_tracer.sbt.is_valid()) return;
+    gpu::PipelineHandle pipeline = path_tracer.pipeline;
 
     gpu::RayTracingPipelineCaps* caps = &renderer.caps.ray_tracing_pipelines;
     SbtLayout layout = sbt_layout(

@@ -22,6 +22,7 @@ struct GeometryAsset {
     uint        vertex_count;
     uint        index_count;
     uint        target_count;
+    bool        joints_u16;         // current packing width; retained through CPU source release
     GeometryShape shape;             // structure live components were sized against; kept through release_geometry_cpu
     Bvh         triangles;           // over data.positions and data.indices at triangle_revision; empty when absent
     uint        triangle_revision;   // header.revision the tree matches; 0 when absent
@@ -57,6 +58,7 @@ fn GeometryId? AssetStore.add_geometry(&self, Geometry* geometry, String key = "
         .vertex_count = (uint)geometry.positions.len,
         .index_count  = (uint)geometry.indices.len,
         .target_count = (uint)geometry.targets.len,
+        .joints_u16   = geometry.joints_exceed_byte(),
         .shape        = build_geometry_shape(self.allocator, geometry),
     };
     register_key(self, key, typed_ref(AssetKind.GEOMETRY, id));
@@ -80,6 +82,7 @@ fn GeometryId? AssetStore.add_geometry_owned(&self, Geometry* geometry, String k
         .vertex_count = (uint)geometry.positions.len,
         .index_count  = (uint)geometry.indices.len,
         .target_count = (uint)geometry.targets.len,
+        .joints_u16   = geometry.joints_exceed_byte(),
         .shape        = build_geometry_shape(self.allocator, geometry),
     };
     register_key(self, key, typed_ref(AssetKind.GEOMETRY, id));
@@ -121,13 +124,14 @@ fn GeometryAsset* AssetStore.geometry(&self, GeometryId geometry) {
 }
 
 <*
- Advance the content revision after an edit; rebuilds the retained skin and morph bounds while the streams are present.
+ Advance the content revision after an edit; rebuilds packing width, skin and morph bounds while streams are present.
  @require self.geometries.is_live(geometry)
 *>
 fn void AssetStore.mark_geometry_dirty(&self, GeometryId geometry) {
     GeometryAsset* record = self.geometries.get(geometry);
     record.header.revision++;
     if (!record.data.positions.len) return;
+    record.joints_u16 = record.data.joints_exceed_byte();
     geometry::free_skin_bounds(self.allocator, &record.skin_bounds);
     record.skin_bounds = geometry::build_skin_bounds(self.allocator, &record.data);
     geometry::free_morph_bounds(self.allocator, &record.morph_bounds);
@@ -262,6 +266,7 @@ fn void apply_geometry(Allocator allocator, GeometryAsset* record, Geometry geom
     record.vertex_count = (uint)geometry.positions.len;
     record.index_count = (uint)geometry.indices.len;
     record.target_count = (uint)geometry.targets.len;
+    record.joints_u16 = geometry.joints_exceed_byte();
     record.validated_revision = 0;
     record.rejected_revision = 0;
     mark_replaced(&record.header);
@@ -396,6 +401,7 @@ fn GeometryId add_prepared_geometry(
         .vertex_count = (uint)geometry.positions.len,
         .index_count = (uint)geometry.indices.len,
         .target_count = (uint)geometry.targets.len,
+        .joints_u16 = derived.joints_u16,
         .shape = derived.shape,
     };
     *derived = {};
@@ -420,6 +426,7 @@ fn void replace_prepared_geometry(
     record.vertex_count = (uint)source.positions.len;
     record.index_count = (uint)source.indices.len;
     record.target_count = (uint)source.targets.len;
+    record.joints_u16 = derived.joints_u16;
     record.validated_revision = 0;
     record.rejected_revision = 0;
     derived.skin_bounds = {};

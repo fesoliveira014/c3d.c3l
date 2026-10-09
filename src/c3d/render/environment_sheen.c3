@@ -5,6 +5,7 @@ import gpu;
 
 fn void? acquire_sheen_lut(Renderer* renderer) @private {
     if (renderer.environment_state.sheen_lut.state != EnvironmentLutState.NONE) return;
+    acquire_environment_pipeline(renderer, &renderer.environment_state.pipelines.sheen_lut, SHEEN_LUT)!;
 
     gpu::TextureDesc description = {
         .width = shader::SHEEN_LUT_SIZE,

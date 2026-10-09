@@ -51,7 +51,8 @@ const uint PARITY_RANGES @private = 4; // two batches, each with an unmirrored a
 const uint BATCH_PASSES @private = 4; // shadow layer, depth prepass, forward opaque pass, velocity pass
 const uint CULLING_PASSES @private = 3; // shadow layer, depth prepass, view; the velocity pass reuses the view's ranges
 const String TEXTURED_MODEL @private = "../../../examples/assets/gltf/BoxTextured.glb";
-const uint PREPARE_FRAME_LIMIT @private = 64; // one unit per frame; the textured box has a handful
+const uint PREPARE_FRAME_LIMIT @private = 64; // bounded bands complete the fixture within this iteration guard
+const usz PREPARE_TEST_BYTES @private = 64 << 10; // several texture rows per call, smaller than the complete fixture
 
 struct FillRoot @private {
     Vec4 color;
@@ -1176,7 +1177,7 @@ fn void test_budgeted_prepare_matches_synchronous_prepare() @test {
     PrepareProgress progress = renderer.prepare_progress(prepare);
     for (uint frame = 0; frame < PREPARE_FRAME_LIMIT && progress.state != PrepareState.READY; frame++) {
         renderer.begin_frame()!!;
-        renderer.advance_prepares(1)!!;
+        renderer.advance_prepares(PREPARE_TEST_BYTES)!!;
         renderer.end_frame()!!;
         progress = renderer.prepare_progress(prepare);
     }

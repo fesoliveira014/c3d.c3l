@@ -11,6 +11,7 @@ import std::math;
 
 struct PreparedGeometry @private {
     GeometryShape shape;
+    bool joints_u16;
     SkinBounds skin_bounds;
     Aabb[] morph_bounds;
 }
@@ -67,6 +68,7 @@ fn PreparedModelDocument? prepare_model_document(ModelDocument* document) @priva
             check_influences(&entry.data)!;
             prepared.geometries[index] = {
                 .shape = build_geometry_shape(document.allocator, &entry.data),
+                .joints_u16 = entry.data.joints_exceed_byte(),
                 .skin_bounds = geometry::build_skin_bounds(document.allocator, &entry.data),
                 .morph_bounds = geometry::build_morph_bounds(document.allocator, &entry.data),
             };

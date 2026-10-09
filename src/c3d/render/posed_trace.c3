@@ -315,7 +315,7 @@ fn bool vertex_motion_held(
     GeometryAsset* record = renderer.assets.geometry(geometry);
     if (record.header.revision != slot.built_revision) {
         if (!cpu_present) return false;
-        GeometryLayout layout = geometry_layout(&record.data);
+        GeometryLayout layout = geometry_layout_from_width(&record.data, record.joints_u16);
         PosedTopology current = {
             .geometry     = geometry,
             .vertex_count = layout.vertex_count,

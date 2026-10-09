@@ -76,11 +76,12 @@ fn void? replace_shader_pipelines(Renderer* renderer, ShaderId shader) @private 
     bool same_asset = c3d::same_id(mirror.asset, shader);
     uint old_revision = same_asset ? mirror.revision : 0;
 
-    RetireList* retire = renderer.frame_open
-        ? &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT].retire
-        : &renderer.pending_upload_retire;
-    if (!same_asset && mirror.asset.generation) retire_shader_pipelines(renderer, mirror.asset, retire);
     @pool() {
+        if (!same_asset && mirror.asset.generation) {
+            foreach (handle : renderer.pipelines.remove_shader(tmem, mirror.asset)) {
+                retire_prepare_pipeline(renderer, handle);
+            }
+        }
         gpu::PipelineHandle[] superseded = renderer.pipelines.replace_shader(
             allocator:    tmem,
             device:       &renderer.device,
@@ -89,7 +90,7 @@ fn void? replace_shader_pipelines(Renderer* renderer, ShaderId shader) @private 
             new_revision: record.header.revision,
             stages:       &record.desc,
         )!;
-        foreach (handle : superseded) retire.push({ .kind = RetiredKind.PIPELINE, .pipeline = handle });
+        foreach (handle : superseded) retire_prepare_pipeline(renderer, handle);
     };
 
     asset::free_shader_desc(renderer.allocator, &mirror.desc);
@@ -134,4 +135,33 @@ fn void sweep_shaders(Renderer* renderer) @private {
 fn void free_shaders(Renderer* renderer) @private {
     foreach (&mirror : renderer.shaders) asset::free_shader_desc(renderer.allocator, &mirror.desc);
     alloc::free(renderer.allocator, renderer.shaders.ptr);
+}
+
+fn void? adopt_prepared_shader(
+    Renderer* renderer,
+    ShaderId shader,
+    uint revision,
+    asset::ShaderDesc* owned,
+) @private {
+    ShaderRes* mirror = &renderer.shaders[shader.index];
+    bool same_asset = c3d::same_id(mirror.asset, shader);
+    @pool() {
+        if (!same_asset && mirror.asset.generation) {
+            foreach (handle : renderer.pipelines.remove_shader(tmem, mirror.asset)) {
+                retire_prepare_pipeline(renderer, handle);
+            }
+        }
+        gpu::PipelineHandle[] superseded = renderer.pipelines.replace_shader(
+            allocator: tmem,
+            device: &renderer.device,
+            shader: shader,
+            old_revision: same_asset ? mirror.revision : 0,
+            new_revision: revision,
+            stages: owned,
+        )!;
+        foreach (handle : superseded) retire_prepare_pipeline(renderer, handle);
+    };
+    asset::free_shader_desc(renderer.allocator, &mirror.desc);
+    *mirror = { .asset = shader, .revision = revision, .desc = *owned };
+    *owned = {};
 }

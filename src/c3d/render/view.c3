@@ -2044,8 +2044,26 @@ fn ShaderVariant material_fragment(Material* material, uint shadow_flags) @local
         case STANDARD: return { .shader = STANDARD, .flags = shadow_flags };
         case TOON: return { .shader = TOON, .flags = shadow_flags };
         case PHYSICAL: return { .shader = PHYSICAL, .flags = shadow_flags };
-        case CUSTOM: return {};
+        case CUSTOM: return { .flags = shadow_flags };
     }
+}
+
+fn PipelineKey forward_pipeline_key(
+    Material* material,
+    ShaderVariant vertex,
+    gpu::PolygonMode polygon,
+    uint shadow_flags,
+) @private {
+    return {
+        .vertex = vertex,
+        .fragment = vertex.shader == IMPOSTOR_VERTEX
+            ? (ShaderVariant){ .shader = IMPOSTOR_FORWARD, .flags = shadow_flags } : material_fragment(material, shadow_flags),
+        .color_formats = { [0] = HDR_FORMAT },
+        .color_count = 1,
+        .depth_format = DEPTH_FORMAT,
+        .samples = gpu::SampleCount.ONE,
+        .polygon = polygon,
+    };
 }
 
 fn gpu::PipelineHandle? pipeline_for(
@@ -2057,15 +2075,12 @@ fn gpu::PipelineHandle? pipeline_for(
     renderer.stats.pipeline_lookups++;
     bool wireframe = material.common.wireframe && renderer.caps.line_polygon_mode;
     uint shadow_flags = rt_shadow_flags(renderer, rt_shadows);
-    PipelineKey key = {
-        .vertex        = vertex,
-        .fragment      = vertex.shader == IMPOSTOR_VERTEX ? (ShaderVariant){ .shader = IMPOSTOR_FORWARD, .flags = shadow_flags } : material_fragment(material, shadow_flags),
-        .color_formats = { [0] = HDR_FORMAT },
-        .color_count   = 1,
-        .depth_format  = DEPTH_FORMAT,
-        .samples       = gpu::SampleCount.ONE,
-        .polygon       = wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL,
-    };
+    PipelineKey key = forward_pipeline_key(
+        material: material,
+        vertex: vertex,
+        polygon: wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL,
+        shadow_flags: shadow_flags,
+    );
     if (material.kind != MaterialKind.CUSTOM) return renderer.pipelines.get(&renderer.device, key);
 
     ShaderRes* published = resolve_shader(renderer, material.custom.shader)!;

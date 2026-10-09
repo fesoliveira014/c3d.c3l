@@ -65,5 +65,5 @@ fn void drain_retired(gpu::Device* device, RetireList* retire) {
 }
 
 fn RetireList* last_submitted_retire(Renderer* renderer) @private {
-    return &renderer.frames[(renderer.frame_index + FRAMES_IN_FLIGHT - 1) % FRAMES_IN_FLIGHT].retire;
+    return &renderer.frames[renderer.last_submitted_slot].retire;
 }

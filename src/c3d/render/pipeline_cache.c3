@@ -7,6 +7,7 @@ import gpu;
 import std::collections::list;
 import std::collections::map;
 import std::hash::fnv32a;
+import std::time::clock;
 
 <*
  Color attachment slots a pipeline key describes.
@@ -50,6 +51,12 @@ struct CustomStageSource {
     char[] compute;
 }
 
+struct PipelineCreationCounters @private {
+    ulong calls;
+    ulong elapsed_ns;
+    ulong keys;
+}
+
 <*
  Pipelines resolved for this renderer, one per distinct key.
 *>
@@ -57,6 +64,7 @@ struct PipelineCache {
     HashMap{PipelineKey, gpu::PipelineHandle} pipelines;
     HashMap{PipelineKey, bool}                rejected;
     ShaderRegistry                            registry;
+    PipelineCreationCounters                  creations;
 }
 
 <*
@@ -128,7 +136,13 @@ fn gpu::PipelineHandle? PipelineCache.get(
     if (try existing = self.pipelines.get(key)) return existing;
     if (self.rejected.has_key(key)) return PIPELINE_REJECTED~;
 
-    gpu::PipelineHandle? pipeline = create_pipeline(&self.registry, device, key, custom);
+    gpu::PipelineHandle? pipeline = create_pipeline(
+        registry: &self.registry,
+        device: device,
+        key: key,
+        custom: custom,
+        counters: &self.creations,
+    );
     if (catch excuse = pipeline) {
         if (excuse == gpu::SHADER_INVALID || excuse == gpu::PIPELINE_CREATE_FAILED) self.rejected.set(key, true);
         return excuse~;
@@ -173,17 +187,24 @@ fn gpu::PipelineHandle[]? PipelineCache.replace_shader(
     asset::ShaderDesc* stages,
 ) {
     PipelineKey[] keys = self.keys_of(tmem, shader, old_revision);
+    self.creations.keys += keys.len;
     gpu::PipelineHandle[] fresh = alloc::new_array(tmem, gpu::PipelineHandle, keys.len);
-    usz created;
-    defer catch foreach (handle : fresh[:created]) (void)gpu::destroy_pipeline(device, handle);
+    defer catch foreach (handle : fresh) {
+        if (handle.is_valid()) (void)gpu::destroy_pipeline(device, handle);
+    }
 
     foreach (index, key : keys) {
         if (!key_stages_present(key, stages)) continue;
         PipelineKey replacement = key;
         replacement.shader_revision = new_revision;
         CustomStageSource source = custom_stage_source(stages, replacement);
-        fresh[index] = create_pipeline(&self.registry, device, replacement, &source)!;
-        created++;
+        fresh[index] = create_pipeline(
+            registry: &self.registry,
+            device: device,
+            key: replacement,
+            custom: &source,
+            counters: &self.creations,
+        )!;
     }
 
     gpu::PipelineHandle[] superseded = alloc::new_array(allocator, gpu::PipelineHandle, keys.len);
@@ -227,6 +248,7 @@ fn gpu::PipelineHandle[]? PipelineCache.replace_compute_shader(
             device:   device,
             key:      compute_pipeline_key(shader, new_revision),
             custom:   &source,
+            counters: &self.creations,
         )!;
         superseded = alloc::new_array(allocator, gpu::PipelineHandle, 1);
         superseded[0] = previous;
@@ -366,12 +388,16 @@ fn gpu::PipelineHandle? create_pipeline(
     gpu::Device* device,
     PipelineKey key,
     CustomStageSource* custom,
+    PipelineCreationCounters* counters = null,
 ) @private {
     if (key.custom.compute) {
         gpu::ComputePipelineDesc compute_desc = {
             .shader     = { .spirv = custom.compute, .debug_name = "custom_compute" },
             .debug_name = "custom_compute",
         };
+        std::time::Clock started = clock::now();
+        if (counters) counters.calls++;
+        defer if (counters) counters.elapsed_ns += (ulong)started.to_now();
         return gpu::create_compute_pipeline(device, &compute_desc);
     }
     bool custom_fragment = key.custom.fragment || key.custom.gbuffer;
@@ -390,6 +416,9 @@ fn gpu::PipelineHandle? create_pipeline(
         .polygon_mode    = key.polygon,
         .debug_name      = (uint)key.custom ? "custom_pipeline" : "c3d_pipeline",
     };
+    std::time::Clock started = clock::now();
+    if (counters) counters.calls++;
+    defer if (counters) counters.elapsed_ns += (ulong)started.to_now();
     return gpu::create_graphics_pipeline(device, &desc);
 }
 
