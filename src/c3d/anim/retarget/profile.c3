@@ -287,8 +287,8 @@ fn RetargetProfile? create_retarget_profile(
         usz bytes = header_bytes + node_bytes;
 
         foreach (&node : source) bytes = profile_add_bytes(bytes, node.name.len)!;
-
         foreach (&node : destination) bytes = profile_add_bytes(bytes, node.name.len)!;
+
         void* storage = alloc::calloc_aligned(allocator, (sz)bytes, ProfileNode::alignment)
           ?? c3d::CAPACITY_EXCEEDED~!;
         ProfileData* data = (ProfileData*)storage;
@@ -421,7 +421,6 @@ fn void? compose_profile_references(
 fn bool profile_descendant(ProfileNode[] nodes, uint node, uint ancestor) @private {
     for (int parent = nodes[node].parent; parent >= 0; parent = nodes[parent].parent) {
         if (parent == (int)ancestor) return true;
-
     }
 
     return false;

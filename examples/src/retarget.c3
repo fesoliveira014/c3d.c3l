@@ -466,8 +466,8 @@ fn void fixture_authored(Fixture* fixture, FixtureKind kind, uint variant) @loca
             for (uint key = 0; key < fixture.key_count; key++) {
                 fixture.times[key] = (float)key;
                 Quat rotation = fixture_turn(WORLD_UP, (float)key * 90) * fixture.source_calibration[0];
-
                 for (uint channel = 0; channel < 4; channel++) turns[key * 4 + channel] = rotation.v[channel];
+
                 float fraction = (float)key / (float)(fixture.key_count - 1);
                 translations[key * 3] = 0.5f * fraction;
                 translations[key * 3 + 2] = -0.25f * fraction;
@@ -1058,6 +1058,7 @@ fn void measure_row(FixtureRow* row, float time, Metrics* metrics) @local {
     ReferencePose expected_carrier;
     ReferencePose actual_carrier;
     Transform actual_carrier_transform;
+
     row.position_error = 0;
     row.rotation_error = 0;
     row.scale_error = 0;
@@ -1117,6 +1118,7 @@ fn void measure_row(FixtureRow* row, float time, Metrics* metrics) @local {
             || !math::is_finite(scale_error) || !math::is_finite(row.root_error)
             || !math::is_finite(row.root_rotation_error) || !math::is_finite(row.pivot_error)
             || !math::is_finite(row.root_radius) || !math::is_finite(row.pivot_radius);
+
         double position_bound = key ? KEY_POSITION_BOUND : SUBKEY_POSITION_BOUND;
         double rotation_bound = key ? KEY_ROTATION_BOUND : SUBKEY_ROTATION_BOUND;
         double path_bound = accumulated ? ACCUMULATED_POSITION_BOUND : position_bound;
@@ -1762,8 +1764,8 @@ fn void? run_profile(
             io::printfn("retarget_telemetry=%s", destination);
         };
     }
-
     defer { if (telemetry_enabled) (void)telemetry.close(); }
+
     if (telemetry_enabled) io::fprintfn(&telemetry,
         "frame,wall_seconds,simulation_seconds,fixture_version,case_id,variant_id,mode_id,clip_time,is_key,node,expected_x,expected_y,expected_z,actual_x,actual_y,actual_z,position_error_m,rotation_error_rad,expected_scale,actual_scale,expected_root_x,expected_root_z,actual_root_x,actual_root_z,root_error_m,capture_index,root_yaw,looping,speed,cycles,facing_degrees,expected_root_qx,expected_root_qy,expected_root_qz,expected_root_qw,actual_root_qx,actual_root_qy,actual_root_qz,actual_root_qw,root_rotation_error_rad,expected_pivot_x,expected_pivot_y,expected_pivot_z,actual_pivot_x,actual_pivot_y,actual_pivot_z,pivot_error_m,carrier_relative,expected_carrier_relative_x,expected_carrier_relative_y,expected_carrier_relative_z,actual_carrier_relative_x,actual_carrier_relative_y,actual_carrier_relative_z,expected_carrier_relative_qx,expected_carrier_relative_qy,expected_carrier_relative_qz,expected_carrier_relative_qw,actual_carrier_relative_qx,actual_carrier_relative_qy,actual_carrier_relative_qz,actual_carrier_relative_qw,expected_carrier_relative_scale,actual_carrier_relative_scale,carrier_relative_position_error_m,carrier_relative_rotation_error_rad,carrier_relative_scale_error,root_radius_m,pivot_radius_m,pose_position_bound_m,pose_rotation_bound_rad,path_position_bound_m,root_rotation_bound_rad,world_scale_error")!;
     RenderTargetId capture_target;
@@ -1772,14 +1774,15 @@ fn void? run_profile(
         desc: render::render_target_desc(CAPTURE_WIDTH, CAPTURE_HEIGHT, material::PixelFormat.RGBA8_SRGB),
     )!;
     defer { if (capture_directory.len) (void)render::destroy_render_target(renderer, capture_target); }
+
     ViewId capture_view;
     if (capture_directory.len) {
         ViewDesc desc = render::texture_view_desc(capture_target, OutputMode.DISPLAY_LDR);
         desc.post.anti_aliasing = AntiAliasing.FXAA;
         capture_view = render::create_view(renderer, desc)!;
     }
-
     defer { if (capture_directory.len) (void)render::destroy_view(renderer, capture_view); }
+
     char[] pixels;
     if (capture_directory.len) pixels = mem::new_array(char, CAPTURE_WIDTH * CAPTURE_HEIGHT * 4);
     defer free(pixels);
@@ -1940,16 +1943,12 @@ fn void? run_profile(
         && metrics.carrier_key_samples != 0 && metrics.carrier_subkey_samples != 0;
 
     foreach (seen : metrics.families_seen) complete &= seen;
-
     foreach (seen : metrics.modes_seen) complete &= seen;
-
     foreach (flags : metrics.turn_yaw_seen) foreach (seen : flags) complete &= seen;
-
     foreach (seen : metrics.turn_reverse_seen) complete &= seen;
-
     foreach (seen : metrics.turn_loop_seen) complete &= seen;
-
     foreach (seen : metrics.turn_reverse_loop_seen) complete &= seen;
+
     if (acceptance && (!complete || elapsed < PLAYBACK_CYCLE_SECONDS || wall < PLAYBACK_SECONDS)) {
         return c3d::INVALID_ARGUMENT~;
     }

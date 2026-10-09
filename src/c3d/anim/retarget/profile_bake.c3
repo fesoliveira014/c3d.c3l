@@ -53,12 +53,12 @@ fn AnimationClip? retarget_with_profile(
     validate_profile_bake_options(data, options, diagnostic)!;
 
     AnimationClip clip;
-
     defer catch asset::free_clip(allocator, &clip);
 
     @pool() {
         ProfileChannels[] channels = alloc::new_array_try(tmem, ProfileChannels, source_nodes.len)
           ?? c3d::CAPACITY_EXCEEDED~!;
+
         validate_profile_clip(
             clip: source,
             data: data,
@@ -67,7 +67,9 @@ fn AnimationClip? retarget_with_profile(
             allow_partial: options.allow_partial,
             diagnostic: diagnostic,
         )!;
+
         float[] times = profile_bake_times(source.duration, options.bake_rate, diagnostic)!;
+
         usz track_count = profile_track_count(source, data, options.root_motion);
         if (track_count > uint::max) return c3d::CAPACITY_EXCEEDED~;
 
@@ -77,6 +79,7 @@ fn AnimationClip? retarget_with_profile(
         clip.targets = alloc::new_array_try(allocator, uint, (sz)track_count) ?? c3d::CAPACITY_EXCEEDED~!;
         clip.events = alloc::new_array_try(allocator, ClipEvent, source.events.len) ?? c3d::CAPACITY_EXCEEDED~!;
         clip.events[..] = source.events[..];
+
         ProfileOutputTracks[] output = alloc::new_array_try(tmem, ProfileOutputTracks, target.nodes.len)
           ?? c3d::CAPACITY_EXCEEDED~!;
         usz track_slot;
@@ -157,6 +160,7 @@ fn AnimationClip? retarget_with_profile(
                 translation_scale: options.root_translation_scale,
                 diagnostic: diagnostic,
             )!;
+
             Vec3 horizontal;
             if (data.target_motion_node != RETARGET_NO_NODE) {
                 Vec3 motion = target_world[data.target_motion_node].position;
@@ -323,7 +327,6 @@ fn Track? profile_generated_track(
     uint target,
 ) @private {
     Track track = { .target = target, .path = path, .interpolation = Interpolation.LINEAR };
-
     defer catch {
         alloc::free(allocator, track.times.ptr);
         alloc::free(allocator, track.values.ptr);
@@ -342,7 +345,6 @@ fn Track? profile_generated_track(
 
 fn Track? profile_copy_track(Allocator allocator, Track* source, uint target) @private {
     Track track = { .target = target, .path = source.path, .interpolation = source.interpolation };
-
     defer catch {
         alloc::free(allocator, track.times.ptr);
         alloc::free(allocator, track.values.ptr);

@@ -824,14 +824,17 @@ fn void test_root_motion_pivot_composes_static_scaled_yawed_ancestor() @test {
         .scale = { 2, 2, 2 },
     };
     Node* root = motion_pivot_root(&fixture, reference);
+
     Node* parent = fixture.scene.add_node(fixture.root, "motion_parent")!!;
     parent.local = {
         .position = { 4, 0, -3 },
         .rotation = motion_pivot_turn((float)math::PI / 6),
         .scale = { 3, 3, 3 },
     };
+
     fixture.scene.reparent(root, parent);
     fixture.scene.update_world();
+
     Vec3 initial_position = root.world_position();
     Vec3 displacement = { 0.5f, 0, 1 };
     Vec3 world_displacement = maths::transform_dir(parent.local.to_mat4(), displacement);
@@ -1057,7 +1060,11 @@ fn void test_root_motion_pivot_yaw_disabled_preserves_bits_and_mesh_turn() @test
             yaw: (float)math::PI / 2,
         );
 
-        AnimationActionId action = fixture.animator.play(&fixture.assets, clip, { .root_motion = RootMotion.EXTRACT })!!;
+        AnimationActionId action = fixture.animator.play(
+            assets: &fixture.assets,
+            clip: clip,
+            desc: { .root_motion = RootMotion.EXTRACT },
+        )!!;
         fixture.animator.action(action).loop = false;
 
         for (uint step = 0; step < baseline.len; step++) {

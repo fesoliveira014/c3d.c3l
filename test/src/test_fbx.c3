@@ -577,7 +577,6 @@ fn void test_profiled_fbx_turning_stacks_split_yaw_and_preserve_reference_worlds
     };
 }
 
-
 fn void test_profiled_fbx_variants_have_distinct_keys_and_owned_clips() @test {
     @pool() {
         ProfileFbxFixture fixture;
