@@ -99,3 +99,10 @@ fn void? check_skeleton_structure(Skeleton* current, Skeleton* next) @private {
     }
     return;
 }
+
+fn void replace_prepared_skeleton(AssetStore* store, SkeletonId skeleton, Skeleton* source) @private {
+    SkeletonAsset* record = store.skeleton(skeleton);
+    free_skeleton(store.allocator, &record.data);
+    record.data = *source;
+    mark_replaced(&record.header);
+}

@@ -4,6 +4,7 @@ import c3d;
 import c3d::material;
 import c3d::scene;
 import std::collections::map;
+import std::sort;
 
 <*
  Parts a model replacement replaced, added and left in the store unnamed.
@@ -36,15 +37,19 @@ fn ModelReplaceReport? AssetStore.replace_document(
     ModelDocument* document,
     AssetRef[] missing = {},
 ) {
-    ModelReplaceReport report;
-    @pool() {
-        PublishedIds ids = match_entries(self, model, document)!;
-        check_replacement(self, model, document, &ids)!;
-        report.missing = collect_missing(self, document, missing);
-        // check_replacement decided every fault; one here is a defect in it.
-        apply_replacement(self, model, document, &ids, &report);
-    };
-    destroy_model_document(document);
+    PreparedModelDocument prepared = prepare_model_document(document)!;
+    defer destroy_prepared_model_document(&prepared);
+    ModelReplaceReport? report = replace_prepared_model_document(
+        store: self,
+        model: model,
+        prepared: &prepared,
+        missing: missing,
+    );
+    if (catch excuse = report) {
+        *document = prepared.document;
+        prepared.document = { .allocator = document.allocator };
+        return excuse~;
+    }
     return report;
 }
 
@@ -130,14 +135,10 @@ fn Id? entry_id(AssetStore* store, String key, AssetKind kind, uint builtin_coun
     return found.id;
 }
 
-fn PublishedIds? match_entries(AssetStore* store, ModelId model, ModelDocument* document) @private {
+fn PublishedIds? match_entries(AssetStore* store, ModelId model, PreparedModelDocument* prepared) @private {
+    ModelDocument* document = &prepared.document;
     if (document.key != store.models.get(model).header.key) return c3d::INVALID_ARGUMENT~;
-    HashMap{String, bool} named;
-    named.init(tmem);
-    foreach (key : document_keys(document)) {
-        if (!key.len || named.has_key(key)) return c3d::INVALID_ARGUMENT~;
-        named.set(key, true);
-    }
+    if (!prepared.all_keys_named) return c3d::INVALID_ARGUMENT~;
 
     PublishedIds ids = {
         .samplers   = alloc::new_array(tmem, SamplerId, (sz)document.samplers.len),
@@ -171,11 +172,11 @@ fn PublishedIds? match_entries(AssetStore* store, ModelId model, ModelDocument* 
 fn void? check_replacement(
     AssetStore* store,
     ModelId model,
-    ModelDocument* document,
+    PreparedModelDocument* prepared,
     PublishedIds* ids,
 ) @private {
-    check_document_content(store, document)!;
-    foreach (&entry : document.clips) check_clip_events(&entry.data)!;
+    ModelDocument* document = &prepared.document;
+    check_prepared_references(store, prepared)!;
 
     foreach (index, &entry : document.textures) {
         if (is_added(ids.textures[index])) continue;
@@ -183,7 +184,11 @@ fn void? check_replacement(
     }
     foreach (index, &entry : document.geometries) {
         if (is_added(ids.geometries[index])) continue;
-        check_geometry_structure(store.geometry(ids.geometries[index]), &entry.data)!;
+        check_geometry_structure_prepared(
+            current: store.geometry(ids.geometries[index]),
+            next: &entry.data,
+            derived: &prepared.geometries[index].shape,
+        )!;
     }
     foreach (index, &entry : document.skeletons) {
         if (is_added(ids.skeletons[index])) continue;
@@ -198,12 +203,7 @@ fn void? check_replacement(
 
     ModelTemplate resolved = resolve_template(&document.template, ids);
     if (!same_model_structure(&store.model(model).data, &resolved)) return c3d::INCOMPATIBLE_STRUCTURE~;
-    foreach (clip : document.template.clips) {
-        if (clip.generation) continue;
-        foreach (target : document.clips[document_index(clip)].data.targets) {
-            if (target >= document.template.nodes.len) return c3d::INVALID_ARGUMENT~;
-        }
-    }
+    if (!prepared.clip_targets_valid) return c3d::INVALID_ARGUMENT~;
 
     bool fits = store.samplers.free_count >= count_added(ids.samplers)
         && store.textures.free_count >= count_added(ids.textures)
@@ -248,10 +248,11 @@ fn ModelTemplate resolve_template(ModelTemplate* template, PublishedIds* ids) @p
 fn void apply_replacement(
     AssetStore* store,
     ModelId model,
-    ModelDocument* document,
+    PreparedModelDocument* prepared,
     PublishedIds* ids,
     ModelReplaceReport* report,
 ) @private {
+    ModelDocument* document = &prepared.document;
     foreach (index, &entry : document.samplers) {
         if (is_added(ids.samplers[index])) {
             ids.samplers[index] = store.add_sampler(entry.desc, entry.key)!!;
@@ -263,10 +264,10 @@ fn void apply_replacement(
     }
     foreach (index, &entry : document.textures) {
         if (is_added(ids.textures[index])) {
-            ids.textures[index] = store.add_texture_owned(entry.desc, entry.pixels, entry.key)!!;
+            ids.textures[index] = add_prepared_texture(store, entry);
             report.added++;
         } else {
-            store.replace_texture_owned(ids.textures[index], entry.desc, entry.pixels)!!;
+            replace_prepared_texture(store, ids.textures[index], entry);
             report.replaced++;
         }
         entry.pixels = {};
@@ -286,10 +287,20 @@ fn void apply_replacement(
     }
     foreach (index, &entry : document.geometries) {
         if (is_added(ids.geometries[index])) {
-            ids.geometries[index] = store.add_geometry_owned(&entry.data, entry.key)!!;
+            ids.geometries[index] = add_prepared_geometry(
+                store: store,
+                geometry: &entry.data,
+                derived: &prepared.geometries[index],
+                key: entry.key,
+            );
             report.added++;
         } else {
-            store.replace_geometry_owned(ids.geometries[index], &entry.data)!!;
+            replace_prepared_geometry(
+                store: store,
+                geometry: ids.geometries[index],
+                source: &entry.data,
+                derived: &prepared.geometries[index],
+            );
             report.replaced++;
         }
         entry.data = {};
@@ -299,17 +310,17 @@ fn void apply_replacement(
             ids.skeletons[index] = store.add_skeleton_owned(&entry.data, entry.key)!!;
             report.added++;
         } else {
-            store.replace_skeleton_owned(ids.skeletons[index], &entry.data)!!;
+            replace_prepared_skeleton(store, ids.skeletons[index], &entry.data);
             report.replaced++;
         }
         entry.data = {};
     }
     foreach (index, &entry : document.clips) {
         if (is_added(ids.clips[index])) {
-            ids.clips[index] = store.add_clip_owned(&entry.data, entry.key)!!;
+            ids.clips[index] = add_prepared_clip(store, &entry.data, entry.key);
             report.added++;
         } else {
-            store.replace_clip_owned(ids.clips[index], &entry.data)!!;
+            replace_prepared_clip(store, ids.clips[index], &entry.data);
             report.replaced++;
         }
         entry.data = {};
@@ -323,7 +334,7 @@ fn void apply_replacement(
     mark_replaced(&record.header);
 }
 
-fn bool is_missing_part(String prefix, String key, HashMap{String, bool}* named) @local {
+fn bool is_missing_part(String prefix, String key, HashMap{String, bool}* named) @private {
     return key.len > prefix.len + 1
         && key.starts_with(prefix)
         && key[prefix.len] == '#'
@@ -331,36 +342,29 @@ fn bool is_missing_part(String prefix, String key, HashMap{String, bool}* named)
         && !named.has_key(key);
 }
 
-fn uint collect_missing(AssetStore* store, ModelDocument* document, AssetRef[] missing) @private {
-    HashMap{String, bool} named;
-    named.init(tmem);
-    foreach (key : document_keys(document)) named.set(key, true);
+fn uint collect_missing(AssetStore* store, PreparedModelDocument* prepared, AssetRef[] missing) @private {
+    ModelDocument* document = &prepared.document;
+    HashMap{String, bool}* named = &prepared.named;
 
     usz count;
     store.keys.@each(; String key, AssetRef ref) {
-        if (is_missing_part(document.key, key, &named)) count++;
+        if (is_missing_part(document.key, key, named)) count++;
     };
     MissingPart[] parts = alloc::new_array(tmem, MissingPart, (sz)count);
     usz next;
     store.keys.@each(; String key, AssetRef ref) {
-        if (is_missing_part(document.key, key, &named)) parts[next++] = { .ref = ref, .key = key };
+        if (is_missing_part(document.key, key, named)) parts[next++] = { .ref = ref, .key = key };
     };
 
-    for (usz index = 1; index < parts.len; index++) {
-        MissingPart value = parts[index];
-        usz position = index;
-        while (position && is_before(value, parts[position - 1])) {
-            parts[position] = parts[position - 1];
-            position--;
-        }
-        parts[position] = value;
-    }
+    sort::mergesort(parts, &compare_missing_parts);
     usz limit = missing.len < parts.len ? missing.len : parts.len;
     for (usz index = 0; index < limit; index++) missing[index] = parts[index].ref;
     return (uint)count;
 }
 
-fn bool is_before(MissingPart first, MissingPart second) @local {
-    if (first.ref.kind != second.ref.kind) return first.ref.kind.ordinal < second.ref.kind.ordinal;
-    return first.key.compare_to(second.key) < 0;
+fn int compare_missing_parts(MissingPart first, MissingPart second) @local {
+    if (first.ref.kind != second.ref.kind) {
+        return first.ref.kind.ordinal < second.ref.kind.ordinal ? -1 : 1;
+    }
+    return first.key.compare_to(second.key);
 }

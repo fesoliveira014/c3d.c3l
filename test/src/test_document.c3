@@ -2,7 +2,8 @@ module c3d::test::document;
 
 import c3d;
 import c3d::anim;
-import c3d::asset;
+import c3d::asset @public;
+import c3d::test::loading_fixtures;
 import c3d::asset::fbx;
 import c3d::asset::gltf;
 import c3d::geometry;
@@ -497,4 +498,225 @@ fn void test_each_texture_reference_visits_every_slot_of_every_kind() @test {
         if (texture.index == 42) rewritten++;
     };
     assert(rewritten == 15);
+}
+
+fn void test_invalid_authored_events_preserve_document_and_store() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    {
+        AssetStore assets = asset::create_asset_store(&tracker, asset::default_asset_store_desc());
+        defer asset::destroy_asset_store(&assets);
+        ModelDocument document = loading_fixtures::full_model_document(&tracker, "events");
+        defer asset::destroy_model_document(&document);
+        PoolCounts before = pool_counts(&assets);
+        document.clips[0].data.events[1].time = 2;
+        assert(@catch(asset::prepare_model_document(&document)) == c3d::INVALID_ARGUMENT);
+        assert(document.geometries.len == 2 && document.template.nodes.len == 3);
+        assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
+        document.clips[0].data.events[1].time = 0.1;
+        assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
+        assert(same_counts(before, pool_counts(&assets)));
+        assert(document.clips[0].data.events[1].time == 0.1f);
+        document.clips[0].data.events[1].time = 0.75;
+        assets.publish_document(&document)!!;
+    }
+    assert(!tracker.has_leaks());
+}
+
+fn void test_prepared_transfer_matches_fresh_editable_document() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    {
+        AssetStore fresh = asset::create_asset_store(&tracker, asset::default_asset_store_desc());
+        defer asset::destroy_asset_store(&fresh);
+        AssetStore prepared_store = asset::create_asset_store(&tracker, asset::default_asset_store_desc());
+        defer asset::destroy_asset_store(&prepared_store);
+        ModelDocument document = loading_fixtures::full_model_document(&tracker, "equivalent");
+        defer asset::destroy_model_document(&document);
+        ModelDocument worker_document = loading_fixtures::full_model_document(&tracker, "equivalent");
+        defer asset::destroy_model_document(&worker_document);
+        document.geometries[0].data.positions[0] = { -2, 0, 0 };
+        worker_document.geometries[0].data.positions[0] = { -2, 0, 0 };
+        document.geometries[0].data.finalize();
+        worker_document.geometries[0].data.finalize();
+        asset::PreparedModelDocument prepared = asset::prepare_model_document(&worker_document)!!;
+        defer asset::destroy_prepared_model_document(&prepared);
+        assert(worker_document.geometries.len == 0);
+        ModelId first = fresh.publish_document(&document)!!;
+        ModelId second = asset::publish_prepared_model_document(&prepared_store, &prepared)!!;
+        GeometryAsset* first_geometry = fresh.geometry(fresh.model(first).data.meshes[0].geometry);
+        GeometryAsset* second_geometry = prepared_store.geometry(prepared_store.model(second).data.meshes[0].geometry);
+        assert(first_geometry.data.positions[0] == second_geometry.data.positions[0]);
+        assert(first_geometry.shape.joint_bound == 1 && second_geometry.shape.joint_bound == 1);
+        assert(first_geometry.skin_bounds.joints.len == second_geometry.skin_bounds.joints.len);
+        foreach (index, bounds : first_geometry.skin_bounds.joints) {
+            assert(bounds.min == second_geometry.skin_bounds.joints[index].min);
+            assert(bounds.max == second_geometry.skin_bounds.joints[index].max);
+        }
+        assert(first_geometry.morph_bounds[0].min == second_geometry.morph_bounds[0].min);
+        assert(first_geometry.morph_bounds[0].max == second_geometry.morph_bounds[0].max);
+        assert(first_geometry.data.bounds.min.x == -2);
+    }
+    assert(!tracker.has_leaks());
+}
+
+fn void test_nested_publication_bill_includes_cleanup_and_lookup_inventory() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    {
+        AssetStore assets = asset::create_asset_store(&tracker, asset::default_asset_store_desc());
+        defer asset::destroy_asset_store(&assets);
+        ModelDocument document = loading_fixtures::full_model_document(&tracker, "bill");
+        defer asset::destroy_model_document(&document);
+        ulong expected_incoming = 8 + 3 + 1 + 1 + 2 + 1 + 1 + 2 + 2 + 1 + 1 + 2 + 2 + 2 + 2 + 1 + 16 + 8;
+        ulong expected_estimation = 16 + 8;
+        asset::PreparedModelDocument prepared = asset::prepare_model_document(&document)!!;
+        defer asset::destroy_prepared_model_document(&prepared);
+        assert(prepared.incoming_items == expected_incoming);
+        asset::PublicationEstimate estimate = asset::estimate_model_publication(
+            store: &assets,
+            prepared: &prepared,
+            model: {},
+            allowance: expected_incoming,
+            bounded: true,
+        );
+        assert(!estimate.admitted && estimate.required_exact);
+        assert(estimate.items_used == expected_estimation);
+        assert(estimate.required_items == expected_incoming + expected_estimation);
+        ulong needed = estimate.required_items;
+        estimate = asset::estimate_model_publication(
+            store: &assets,
+            prepared: &prepared,
+            model: {},
+            allowance: needed,
+            bounded: true,
+        );
+        assert(estimate.admitted && estimate.required_items == needed);
+        ModelId model = asset::publish_prepared_model_document(&assets, &prepared)!!;
+        MaterialId material = assets.find_material("bill#material")!!;
+        char[97] payload;
+        assets.replace_material(material, { .kind = MaterialKind.CUSTOM, .custom = { .param_block = payload[..] } });
+        ModelDocument next = loading_fixtures::full_model_document(&tracker, "bill");
+        defer asset::destroy_model_document(&next);
+        prepared = asset::prepare_model_document(&next)!!;
+        ulong inventory = assets.keys.table.len + (ulong)assets.keys.len();
+        ulong old_cleanup = 7 + 1 + 1 + 1 + 3 + 1 + 3 + 3;
+        ulong expected_replace = expected_incoming + old_cleanup + inventory + expected_estimation + 1 + inventory;
+        estimate = asset::estimate_model_publication(
+            store: &assets,
+            prepared: &prepared,
+            model: model,
+            allowance: 0,
+            bounded: false,
+        );
+        assert(estimate.admitted && estimate.required_exact);
+        assert(estimate.items_used == expected_estimation + 1 + inventory);
+        assert(estimate.required_items == expected_replace);
+        ModelReplaceReport replaced = asset::replace_prepared_model_document(&assets, model, &prepared)!!;
+        assert(replaced.replaced == 7 && replaced.added == 0 && replaced.missing == 0);
+        assert(assets.material(material).data.kind == MaterialKind.STANDARD);
+    }
+    assert(!tracker.has_leaks());
+}
+
+fn void test_independent_preparation_rejects_format_lod_and_negative_weights_without_mutation() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    {
+        AssetStore assets = asset::create_asset_store(&tracker, asset::default_asset_store_desc());
+        defer asset::destroy_asset_store(&assets);
+        ModelDocument document = loading_fixtures::full_model_document(&tracker, "invalid");
+        defer asset::destroy_model_document(&document);
+        TextureDesc original_desc = document.textures[0].desc;
+        document.textures[0].desc.format = R16_UINT;
+        document.textures[0].desc.generate_mips = true;
+        assert(@catch(asset::prepare_model_document(&document)) == c3d::INVALID_ARGUMENT);
+        assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
+        document.textures[0].desc = original_desc;
+        document.template.lod_groups[0].desc.levels[0].first_part = 1;
+        assert(@catch(asset::prepare_model_document(&document)) == c3d::INVALID_ARGUMENT);
+        assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
+        document.template.lod_groups[0].desc.levels[0].first_part = 0;
+        document.geometries[0].data.weights[0].x = -1;
+        assert(@catch(asset::prepare_model_document(&document)) == c3d::INVALID_ARGUMENT);
+        assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
+        assert(document.geometries[0].data.weights[0].x == -1);
+        document.geometries[0].data.weights[0].x = 0.5;
+        document.template.lod_groups[0].node = 1;
+        assert(@catch(asset::prepare_model_document(&document)) == c3d::INVALID_ARGUMENT);
+        assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
+        assert(document.template.lod_groups[0].node == 1);
+    }
+    assert(!tracker.has_leaks());
+}
+
+fn void shrink_nested_fixture(ModelDocument* document) @local {
+    Allocator allocator = document.allocator;
+    MorphChannel* channel = &document.geometries[0].data.channels[0];
+    alloc::free(allocator, channel.name.ptr);
+    alloc::free(allocator, channel.full_weights.ptr);
+    alloc::free(allocator, document.geometries[0].data.channels.ptr);
+    document.geometries[0].data.channels = {};
+    Track* track = &document.clips[0].data.tracks[1];
+    alloc::free(allocator, track.times.ptr);
+    alloc::free(allocator, track.values.ptr);
+    document.clips[0].data.tracks = document.clips[0].data.tracks[:1];
+    LodDesc* lod = &document.template.lod_groups[0].desc;
+    lod.levels = lod.levels[:1];
+    lod.levels[0].min_screen_size = 0;
+    lod.parts = lod.parts[:1];
+}
+
+fn void test_bill_tracks_changed_nested_cardinalities_and_failure_disposal() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    {
+        AssetStore assets = asset::create_asset_store(&tracker, asset::default_asset_store_desc());
+        defer asset::destroy_asset_store(&assets);
+        ModelDocument document = loading_fixtures::full_model_document(&tracker, "varied");
+        defer asset::destroy_model_document(&document);
+        shrink_nested_fixture(&document);
+        ulong expected_incoming = 56 - 1 - 1 - 1 - 1;
+        asset::PreparedModelDocument prepared = asset::prepare_model_document(&document)!!;
+        defer asset::destroy_prepared_model_document(&prepared);
+        assert(prepared.incoming_items == expected_incoming);
+        ModelId model = asset::publish_prepared_model_document(&assets, &prepared)!!;
+        ModelDocument replacement = loading_fixtures::full_model_document(&tracker, "varied");
+        defer asset::destroy_model_document(&replacement);
+        shrink_nested_fixture(&replacement);
+        prepared = asset::prepare_model_document(&replacement)!!;
+        ulong inventory = assets.keys.table.len + (ulong)assets.keys.len();
+        ulong expected_old = 20 - 1 - 1;
+        ulong expected_required = expected_incoming + expected_old + inventory + 25 + inventory;
+        asset::PublicationEstimate estimate = asset::estimate_model_publication(
+            store: &assets,
+            prepared: &prepared,
+            model: model,
+            allowance: expected_required,
+            bounded: true,
+        );
+        assert(estimate.admitted && estimate.required_items == expected_required);
+        asset::replace_prepared_model_document(&assets, model, &prepared)!!;
+        ModelDocument incompatible = loading_fixtures::full_model_document(&tracker, "varied");
+        defer asset::destroy_model_document(&incompatible);
+        prepared = asset::prepare_model_document(&incompatible)!!;
+        ulong expected_failed = 56 + expected_old + inventory + 25 + inventory;
+        estimate = asset::estimate_model_publication(
+            store: &assets,
+            prepared: &prepared,
+            model: model,
+            allowance: expected_failed,
+            bounded: true,
+        );
+        assert(estimate.admitted && estimate.required_items == expected_failed);
+        uint revision = assets.model(model).header.revision;
+        assert(@catch(asset::replace_prepared_model_document(&assets, model, &prepared)) == c3d::INCOMPATIBLE_STRUCTURE);
+        assert(assets.model(model).header.revision == revision && prepared.document.clips[0].data.tracks.len == 2);
+    }
+    assert(!tracker.has_leaks());
 }

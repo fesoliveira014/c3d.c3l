@@ -440,3 +440,24 @@ and no output checksum. The flat and clustered modes already exercise distinct r
 and compute shader paths with per-pass timestamps, and no CPU readback API exists
 for a checksum, so the counters above are the correctness proxy. A scene-level
 benchmark with a fetched glTF asset is planned separately.
+
+## Publication benchmark
+
+`publication_bench` measures owner-thread publication of generated glTF documents, with decoding completed before each
+publication timing interval. It creates no renderer or GPU device. Every fresh corpus is compared with synchronous
+loading. The generated fixture is shared with the loading tests.
+
+```powershell
+python scripts/build.py --target publication_bench --opt O3
+./examples/build/publication_bench 256 2 5 30
+```
+
+The optional arguments are model count, authored nodes per model, warm-up corpora and measured corpora. Defaults are
+256, 2, 5, and 30. Four fixed item allowances cover a blocked minimum, about one model per owner call, about eight models,
+and unbounded publication. The small allowance's explicit unbounded drain is reported separately.
+
+Output is CSV with fixture/options metadata, raw call/frame samples, per-corpus completion/work/counters and
+nearest-rank median/p95/max distributions. Blocked, progressing and drain populations remain separate. Decode,
+publication and CPU owner-loop time have distinct columns; logging and synchronous comparison are outside timing.
+Items are logical work, not bytes or a time guarantee. Retain the numeric allowances and completed work with results.
+C3's `compiler_code_opt_level` constant can report `O2` under its `-O3` CLI profile; record the actual build command.

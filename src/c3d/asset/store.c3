@@ -32,6 +32,8 @@ const uint DEFAULT_MAX_SHADERS @local      = 64; // one ShaderRes each in the re
 const uint DEFAULT_MAX_COMPUTE_SHADERS @local = 16; // one ComputeShaderRes each in the renderer; a scene has a few compute stages
 const uint DEFAULT_MAX_FONTS @local        = 16; // one record and renderer mirror each; a UI uses a few faces
 
+const float KEY_MAP_LOAD_FACTOR @private = 0.75; // 25% lookup headroom; Win64: 48-byte header + 8/bucket + 48/entry, plus strings
+
 uint registered_kind_count @local;
 
 <*
@@ -88,6 +90,7 @@ struct AssetStore {
     HashMap{String, AssetRef} keys;
     CustomSlot[MAX_CUSTOM_ASSET_TYPES] custom;
     FileSource                file_source; // fixed at creation
+    ulong                     key_capacity;
 }
 
 <*
@@ -160,6 +163,7 @@ macro void? AssetStore.register(
     }
     CustomSlot* slot = &self.custom[custom::slot{$Type} - 1];
     if (slot.pool) return;
+    extend_key_capacity(self, capacity);
     *slot = {
         .pool       = custom::create_erased{$Type}(self.allocator, capacity),
         .key        = &custom::key_erased{$Type},
@@ -273,7 +277,10 @@ fn AssetStore create_asset_store(Allocator allocator, AssetStoreDesc desc) {
         .fonts        = pool::create_pool{FontAsset, FontId}(allocator, desc.max_fonts),
         .file_source  = desc.file_source,
     };
-    store.keys.init(allocator);
+    store.key_capacity = (ulong)desc.max_geometries + desc.max_textures + desc.max_materials
+      + desc.max_samplers + desc.max_environments + desc.max_models + desc.max_skeletons
+      + desc.max_clips + desc.max_shaders + desc.max_compute_shaders + desc.max_fonts;
+    store.keys.init(allocator, key_map_buckets(store.key_capacity), KEY_MAP_LOAD_FACTOR);
     add_builtins(&store);
     return store;
 }
@@ -412,4 +419,17 @@ macro copy_slice(Allocator allocator, slice) @private {
     $Element[] copy = alloc::new_array(allocator, $Element, slice.len);
     copy[..] = slice[..];
     return copy;
+}
+
+fn sz key_map_buckets(ulong entries) @private {
+    return (sz)(entries + entries / 3 + 1);
+}
+
+fn void extend_key_capacity(AssetStore* store, uint added) @private {
+    store.key_capacity += added;
+    HashMap{String, AssetRef} expanded;
+    expanded.init(store.allocator, key_map_buckets(store.key_capacity), KEY_MAP_LOAD_FACTOR);
+    store.keys.@each(; String key, AssetRef ref) { expanded.set(key, ref); };
+    store.keys.free();
+    store.keys = expanded;
 }

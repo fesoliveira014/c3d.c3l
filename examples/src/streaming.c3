@@ -27,7 +27,8 @@ const Vec3   CAMERA_POSITION @local = { 0, 3, 8 };
 const Vec3   CAMERA_TARGET @local = { 0, 1, 0 };
 const Vec3   MODEL_POSITION @local = { 0, 1, 0 };
 const Vec2   PANEL_POSITION @local = { 16, 16 };
-const Vec2   PANEL_SIZE @local = { 440, 200 };
+const Vec2   PANEL_SIZE @local = { 500, 420 };
+const ulong PUBLICATION_ITEMS_PER_CALL @local = 1024; // atomic models above this allowance defer
 const double MILLISECONDS_PER_SECOND @local = 1000;
 const double NANOSECONDS_PER_MILLISECOND @local = 1_000_000;
 
@@ -37,6 +38,7 @@ enum Stage @local {
     REPORT,
     SHOWN,
     FAILED,
+    CANCELLED,
 }
 
 struct Timings @local {
@@ -54,6 +56,10 @@ struct Showcase @local {
     LoadId          request;
     time::Clock     requested;
     LoadStatus      status;
+    PublishLimits   limits;
+    PublishReport   publication;
+    LoaderCounters  counters;
+    bool            request_alive;
     PrepareId       prepare;
     PrepareProgress progress;
     bool            decoded;
@@ -89,23 +95,55 @@ fn Node*? build_scene(AssetStore* assets, Scene* scene) @local {
     return placeholder;
 }
 
-fn void panel(Showcase* showcase) @local {
+fn void? panel(Showcase* showcase) @local {
     imgui::set_next_window_pos(PANEL_POSITION, imgui::COND_FIRST_USE_EVER);
     imgui::set_next_window_size(PANEL_SIZE, imgui::COND_FIRST_USE_EVER);
-    if (imgui::begin("Streaming", null, {})) {
-        imgui::text("Phase: %s", gui::@enum_name(LoadPhase, showcase.status.phase));
-        if (showcase.status.failure) imgui::text("Failure: %s", string::tformat_zstr("%s", showcase.status.failure));
-        Timings* timings = &showcase.timings;
-        PrepareProgress* progress = &showcase.progress;
-        imgui::text("Decode: %.1f ms", timings.decode_ms);
-        imgui::text("Publish: %.3f ms, frame %.1f ms", timings.publish_ms, timings.publish_frame_ms);
-        imgui::text("Prepare: %s", gui::@enum_name(PrepareState, progress.state));
-        imgui::text("Prepared bytes: %llu / %llu", (ulong)progress.bytes_done, (ulong)progress.bytes_total);
-        imgui::text("Prepared units: %u / %u", progress.units_done, progress.units_total);
-        imgui::text("Largest advance: %.2f ms", timings.advance_max_ms);
-        imgui::text("Largest frame while preparing: %.1f ms", timings.prepare_frame_max_ms);
+    bool visible = imgui::begin("Streaming", null, {});
+    defer imgui::end();
+    if (!visible) return;
+
+    imgui::text("Phase: %s", gui::@enum_name(LoadPhase, showcase.status.phase));
+    if (showcase.status.failure) imgui::text("Failure: %s", string::tformat_zstr("%s", showcase.status.failure));
+    Timings* timings = &showcase.timings;
+    PrepareProgress* progress = &showcase.progress;
+    LoaderCounters* counters = &showcase.counters;
+    imgui::text("Observed decode: %.1f ms", timings.decode_ms);
+    imgui::text("Worker decode: %.3f ms", (double)counters.decode_ns / NANOSECONDS_PER_MILLISECOND);
+    imgui::text("Publish: %.3f ms, frame %.1f ms", timings.publish_ms, timings.publish_frame_ms);
+    imgui::text("Publication allowance: %llu items", showcase.limits.items);
+    imgui::text("Publication items: %llu, total %llu", showcase.publication.items_used, counters.publication_items);
+    imgui::text("Queued: %u, decoding: %u", counters.queued, counters.decoding);
+    imgui::text("Decoded: %u, cancelling: %u", counters.decoded, counters.cancelling);
+    imgui::text("Published total: %llu, cancelled total: %llu", counters.publications, counters.cancellations);
+    imgui::text("Decode failures: %llu, commit failures: %llu", counters.decode_failures, counters.commit_failures);
+    imgui::text("Prepare: %s", gui::@enum_name(PrepareState, progress.state));
+    imgui::text("Prepared bytes: %llu / %llu", (ulong)progress.bytes_done, (ulong)progress.bytes_total);
+    imgui::text("Prepared units: %u / %u", progress.units_done, progress.units_total);
+    imgui::text("Largest advance: %.2f ms", timings.advance_max_ms);
+    imgui::text("Largest frame while preparing: %.1f ms", timings.prepare_frame_max_ms);
+
+    if (showcase.publication.deferred) {
+        if (showcase.publication.required_exact) {
+            imgui::text("Deferred model requires %llu items", showcase.publication.required_items);
+        } else {
+            imgui::text("Deferred model requires at least %llu items", showcase.publication.required_items);
+        }
+        if (imgui::button("Use reported item allowance")) {
+            showcase.limits.items = showcase.publication.required_items;
+        }
     }
-    imgui::end();
+    if (showcase.request_alive && showcase.stage == Stage.WAITING
+      && showcase.status.phase != LoadPhase.CANCELLING && showcase.status.phase != LoadPhase.CANCELLED) {
+        if (imgui::button("Cancel loading")) {
+            showcase.loader.cancel(showcase.request)!;
+            showcase.status = showcase.loader.status(showcase.request);
+        }
+    }
+}
+
+fn void? release_request(Showcase* showcase) @local {
+    showcase.loader.release(showcase.request)!;
+    showcase.request_alive = false;
 }
 
 fn void? advance(
@@ -115,24 +153,31 @@ fn void? advance(
     render::Renderer* renderer,
     double frame_ms,
 ) @local {
-    showcase.status = showcase.loader.status(showcase.request);
+    if (showcase.request_alive) showcase.status = showcase.loader.status(showcase.request);
     LoadPhase phase = showcase.status.phase;
-    if (!showcase.decoded && phase != LoadPhase.QUEUED && phase != LoadPhase.DECODING) {
+    if (!showcase.decoded && phase != LoadPhase.QUEUED && phase != LoadPhase.DECODING
+      && phase != LoadPhase.CANCELLING) {
         showcase.decoded = true;
         showcase.timings.decode_ms = elapsed_ms(&showcase.requested);
     }
     switch (showcase.stage) {
         case WAITING:
             time::Clock clock = time::clock::now();
-            uint published = showcase.loader.publish();
+            showcase.publication = showcase.loader.publish_within(showcase.limits);
             double publish_ms = elapsed_ms(&clock);
             showcase.status = showcase.loader.status(showcase.request);
             if (showcase.status.phase == LoadPhase.FAILED) {
                 showcase.stage = Stage.FAILED;
+                release_request(showcase)!;
                 io::printfn("streaming: failed: %s", showcase.status.failure);
-            } else if (published) {
+            } else if (showcase.status.phase == LoadPhase.CANCELLED) {
+                showcase.stage = Stage.CANCELLED;
+                release_request(showcase)!;
+                io::printn("streaming: loading cancelled");
+            } else if (showcase.status.phase == LoadPhase.PUBLISHED) {
                 showcase.timings.publish_ms = publish_ms;
                 showcase.prepare = renderer.begin_prepare_model(showcase.status.model)!;
+                release_request(showcase)!;
                 showcase.published_last_frame = true;
                 showcase.stage = Stage.PREPARING;
             }
@@ -168,8 +213,10 @@ fn void? advance(
             showcase.stage = Stage.SHOWN;
         case SHOWN:
         case FAILED:
+        case CANCELLED:
             break;
     }
+    showcase.counters = showcase.loader.counters();
 }
 
 fn void? draw_frame(
@@ -233,7 +280,7 @@ fn void? run(
             (float)window.clock.total * PLACEHOLDER_RADIANS_PER_SECOND,
         );
         scene.update_world();
-        panel(showcase);
+        panel(showcase)!;
         gui_renderer.finish_frame();
         platform::sync_window(window, renderer);
         draw_frame(
@@ -272,6 +319,7 @@ fn int main(String[] args) {
     defer scene::destroy_scene(&scene);
     Showcase showcase = {
         .loader      = &loader,
+        .limits      = { .items = PUBLICATION_ITEMS_PER_CALL },
         .placeholder = build_scene(&assets, &scene)!!,
     };
     showcase.requested = time::clock::now();
@@ -280,6 +328,7 @@ fn int main(String[] args) {
         .format  = ModelFormat.GLTF,
         .options = asset::LOAD_OPTIONS_DEFAULT,
     })!!;
+    showcase.request_alive = true;
 
     if (catch excuse = run(
         window:   &window,

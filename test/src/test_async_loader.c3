@@ -3,12 +3,108 @@ module c3d::test::async_loader;
 import c3d;
 import c3d::asset;
 import c3d::asset::gltf;
-import c3d::asset::loader;
+import c3d::asset::loader @public;
+import c3d::test::loading_fixtures;
 import std::io::path;
 import std::thread;
 
 struct Holder @local {
     AsyncLoader loader;
+}
+
+struct GatedSource @local {
+    Allocator         allocator;
+    Mutex             lock;
+    ConditionVariable changed;
+    char[]            bytes;
+    bool              hold_read;
+    bool              entered;
+    bool              allowed;
+    bool              fail_read;
+    String            fail_path;
+    uint              reads;
+    bool              destroy_started;
+    bool              destroy_finished;
+}
+
+struct DestroyContext @local {
+    AsyncLoader* loader;
+    GatedSource* source;
+}
+
+fn void GatedSource.wait_entered(&self) {
+    self.lock.lock();
+    defer self.lock.unlock();
+    while (!self.entered) self.changed.wait(&self.lock);
+}
+
+fn void GatedSource.allow_read(&self) {
+    self.lock.lock();
+    defer self.lock.unlock();
+    self.allowed = true;
+    self.changed.broadcast();
+}
+
+fn GatedSource create_gated_source(Allocator allocator, bool hold_read = false) @local {
+    GatedSource source = {
+        .allocator = allocator,
+        .bytes = loading_fixtures::small_model_gltf(allocator),
+        .hold_read = hold_read,
+    };
+    source.lock.init()!!;
+    source.changed.init()!!;
+    return source;
+}
+
+fn void destroy_gated_source(GatedSource* source) @local {
+    source.changed.destroy();
+    source.lock.destroy();
+    alloc::free(source.allocator, source.bytes.ptr);
+}
+
+fn char[]? read_gated(void* user, Allocator allocator, String path) @local {
+    GatedSource* source = user;
+    source.lock.lock();
+    defer source.lock.unlock();
+    source.reads++;
+    if (source.hold_read && !source.entered) {
+        source.entered = true;
+        source.changed.broadcast();
+        while (!source.allowed) source.changed.wait(&source.lock);
+    }
+    if (source.fail_read || source.fail_path == path) return c3d::ASSET_IO_ERROR~;
+    char[] bytes = alloc::new_array(allocator, char, (sz)source.bytes.len);
+    mem::copy(bytes.ptr, source.bytes.ptr, source.bytes.len);
+    return bytes;
+}
+
+fn AssetStore gated_store(Allocator allocator, GatedSource* source) @local {
+    AssetStoreDesc desc = asset::default_asset_store_desc();
+    desc.file_source = { .read = &read_gated, .user = source };
+    return asset::create_asset_store(allocator, desc);
+}
+
+fn LoadRequest generated_request(String path, AssetRef[] missing = {}) @local {
+    return {
+        .path    = path,
+        .format  = ModelFormat.GLTF,
+        .options = asset::LOAD_OPTIONS_DEFAULT,
+        .missing = missing,
+    };
+}
+
+fn int destroy_gated_loader(void* user) @local {
+    DestroyContext* context = user;
+    context.source.lock.lock();
+    context.source.destroy_started = true;
+    context.source.changed.broadcast();
+    context.source.lock.unlock();
+    loader::destroy_async_loader(context.loader);
+    context.source.lock.lock();
+    context.source.destroy_finished = true;
+    context.source.changed.broadcast();
+    context.source.lock.unlock();
+    return 0;
 }
 
 fn String fixture_path(String name) @local {
@@ -32,7 +128,7 @@ fn AssetStore create_store(Allocator allocator) @local {
 // Waits on the phase alone, so no test depends on how long a decode takes.
 fn LoadStatus settle(AsyncLoader* loader, LoadId id) @local {
     LoadStatus status = loader.status(id);
-    while (status.phase == LoadPhase.QUEUED || status.phase == LoadPhase.DECODING) {
+    while (status.phase == LoadPhase.QUEUED || status.phase == LoadPhase.DECODING || status.phase == LoadPhase.CANCELLING) {
         thread::yield();
         status = loader.status(id);
     }
@@ -285,4 +381,185 @@ fn void test_loader_survives_a_move_of_its_handle() @test {
     loader::destroy_async_loader(&holder.loader);
 
     assert(assets.models.is_live(status.model));
+}
+
+fn void test_queued_cancel_prevents_source_read_and_preserves_missing() @test {
+    GatedSource source = create_gated_source(mem, true);
+    defer destroy_gated_source(&source);
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    AssetStore assets = gated_store(&tracker, &source);
+    usz[8] before = store_counts(&assets);
+    AsyncLoader loader = loader::create_async_loader(&tracker, &assets, 2)!!;
+    AssetRef[1] missing = { { .kind = AssetKind.GEOMETRY, .id = { .index = 7, .generation = 9 } } };
+    AssetRef sentinel = missing[0];
+
+    LoadId active = loader.request(generated_request("active.gltf"))!!;
+    source.wait_entered();
+    LoadId queued = loader.request(generated_request("queued.gltf", missing[..]))!!;
+    assert(loader.status(queued).phase == LoadPhase.QUEUED);
+    loader.cancel(queued)!!;
+    loader.cancel(queued)!!;
+    assert(loader.status(queued).phase == LoadPhase.CANCELLED);
+    assert(missing[0].kind == sentinel.kind && missing[0].slot == sentinel.slot);
+    assert(c3d::same_id(missing[0].id, sentinel.id) && store_counts(&assets) == before);
+    loader.release(queued)!!;
+    source.allow_read();
+    assert(settle(&loader, active).phase == LoadPhase.DECODED);
+    assert(source.reads == 1);
+    assert(loader.counters().cancellations == 1);
+    loader::destroy_async_loader(&loader);
+    asset::destroy_asset_store(&assets);
+    assert(tracker.allocated() == 0);
+}
+
+fn void test_active_cancel_acknowledges_success_and_fault_without_failure() @test {
+    foreach (faulting : (bool[2]){ false, true }) {
+        GatedSource source = create_gated_source(mem, true);
+        source.fail_read = faulting;
+        defer destroy_gated_source(&source);
+        TrackingAllocator tracker;
+        tracker.init(mem);
+        defer tracker.free();
+        AssetStore assets = gated_store(&tracker, &source);
+        usz[8] before = store_counts(&assets);
+        AsyncLoader loader = loader::create_async_loader(&tracker, &assets, 1)!!;
+        AssetRef[1] missing = { { .kind = AssetKind.CLIP, .id = { .index = 3, .generation = 6 } } };
+        AssetRef sentinel = missing[0];
+
+        LoadId active = loader.request(generated_request("active.gltf", missing[..]))!!;
+        source.wait_entered();
+        assert(loader.status(active).phase == LoadPhase.DECODING);
+        loader.cancel(active)!!;
+        loader.cancel(active)!!;
+        assert(loader.status(active).phase == LoadPhase.CANCELLING);
+        assert(@catch(loader.request(generated_request("active.gltf"))) == c3d::INVALID_ARGUMENT);
+        assert(@catch(loader.request(generated_request("other.gltf"))) == c3d::CAPACITY_EXCEEDED);
+        LoaderCounters pending = loader.counters();
+        assert(pending.cancelling == 1 && pending.cancellations == 0 && pending.decode_failures == 0);
+        source.allow_read();
+        LoadStatus status = settle(&loader, active);
+        assert(status.phase == LoadPhase.CANCELLED && !status.failure);
+        assert(missing[0].kind == sentinel.kind && missing[0].slot == sentinel.slot);
+        assert(c3d::same_id(missing[0].id, sentinel.id) && store_counts(&assets) == before);
+        assert(loader.publish() == 0);
+        LoaderCounters done = loader.counters();
+        assert(done.cancelled == 1 && done.cancellations == 1 && done.decode_failures == 0);
+        assert(done.publications == 0 && done.commit_failures == 0 && done.publication_items == 0);
+        loader.release(active)!!;
+        loader::destroy_async_loader(&loader);
+        asset::destroy_asset_store(&assets);
+        assert(tracker.allocated() == 0);
+    }
+}
+
+fn void test_decoded_cancel_unlinks_middle_without_reordering_publication() @test {
+    GatedSource source = create_gated_source(mem);
+    defer destroy_gated_source(&source);
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    AssetStore assets = gated_store(&tracker, &source);
+    AsyncLoader loader = loader::create_async_loader(&tracker, &assets, 3)!!;
+    LoadId first = loader.request(generated_request("first.gltf"))!!;
+    LoadId middle = loader.request(generated_request("middle.gltf"))!!;
+    LoadId last = loader.request(generated_request("last.gltf"))!!;
+    foreach (id : (LoadId[3]){ first, middle, last }) assert(settle(&loader, id).phase == LoadPhase.DECODED);
+    usz[8] before = store_counts(&assets);
+
+    loader.cancel(middle)!!;
+    assert(loader.status(middle).phase == LoadPhase.CANCELLED && store_counts(&assets) == before);
+    assert(loader.publish() == 2);
+    assert(loader.status(first).phase == LoadPhase.PUBLISHED && loader.status(last).phase == LoadPhase.PUBLISHED);
+    ModelId first_model = loader.status(first).model;
+    loader.cancel(first)!!;
+    assert(c3d::same_id(loader.status(first).model, first_model) && assets.models.is_live(first_model));
+    LoaderCounters counters = loader.counters();
+    assert(counters.published == 2 && counters.cancelled == 1 && counters.publications == 2 && counters.cancellations == 1);
+    foreach (id : (LoadId[3]){ first, middle, last }) loader.release(id)!!;
+    loader::destroy_async_loader(&loader);
+    asset::destroy_asset_store(&assets);
+    assert(tracker.allocated() == 0);
+}
+
+fn void test_cancelled_head_and_tail_leave_no_fifo_links_after_reuse() @test {
+    GatedSource source = create_gated_source(mem);
+    defer destroy_gated_source(&source);
+    AssetStore assets = gated_store(mem, &source);
+    defer asset::destroy_asset_store(&assets);
+    AsyncLoader loader = loader::create_async_loader(mem, &assets, 2)!!;
+    defer loader::destroy_async_loader(&loader);
+    LoadId first = loader.request(generated_request("first.gltf"))!!;
+    LoadId last = loader.request(generated_request("last.gltf"))!!;
+    assert(settle(&loader, first).phase == LoadPhase.DECODED);
+    assert(settle(&loader, last).phase == LoadPhase.DECODED);
+    loader.cancel(first)!!;
+    loader.cancel(last)!!;
+    loader.release(first)!!;
+    loader.release(last)!!;
+    LoadId reused = loader.request(generated_request("first.gltf"))!!;
+    assert(@catch(loader.cancel(first)) == c3d::INVALID_ID);
+    assert(@catch(loader.release(first)) == c3d::INVALID_ID);
+    assert(loader.status(first).failure == c3d::INVALID_ID);
+    assert(settle(&loader, reused).phase == LoadPhase.DECODED);
+    assert(loader.publish() == 1 && loader.status(reused).phase == LoadPhase.PUBLISHED);
+    assert(loader.counters().cancellations == 2);
+}
+
+fn void test_failed_cancel_preserves_fault_and_cumulative_accounts() @test {
+    GatedSource source = create_gated_source(mem);
+    source.fail_path = "failed.gltf";
+    defer destroy_gated_source(&source);
+    AssetStore assets = gated_store(mem, &source);
+    defer asset::destroy_asset_store(&assets);
+    AsyncLoader loader = loader::create_async_loader(mem, &assets)!!;
+    defer loader::destroy_async_loader(&loader);
+    LoadId failed = loader.request(generated_request("failed.gltf"))!!;
+    assert(settle(&loader, failed).failure == c3d::ASSET_IO_ERROR);
+    loader.cancel(failed)!!;
+    loader.cancel(failed)!!;
+    LoadStatus status = loader.status(failed);
+    assert(status.phase == LoadPhase.FAILED && status.failure == c3d::ASSET_IO_ERROR);
+    LoaderCounters counters = loader.counters();
+    assert(counters.failed == 1 && counters.decode_failures == 1 && counters.cancellations == 0);
+    assert(loader.publish() == 0 && loader.publish_within({ .items = 1 }).failed == 0);
+    LoaderCounters repeated = loader.counters();
+    assert(repeated.decode_failures == 1 && repeated.commit_failures == 0 && repeated.publication_items == 0);
+    assert(repeated.decode_ns == counters.decode_ns && repeated.publication_ns >= counters.publication_ns);
+}
+
+fn void test_destroy_joins_gated_decode_and_discards_queued_work() @test {
+    foreach (cancelling : (bool[2]){ false, true }) {
+        GatedSource source = create_gated_source(mem, true);
+        defer destroy_gated_source(&source);
+        TrackingAllocator tracker;
+        tracker.init(mem);
+        defer tracker.free();
+        AssetStore assets = gated_store(&tracker, &source);
+        AsyncLoader loader = loader::create_async_loader(&tracker, &assets, 2)!!;
+        LoadId active = loader.request(generated_request("active.gltf"))!!;
+        source.wait_entered();
+        loader.request(generated_request("queued.gltf"))!!;
+        if (cancelling) loader.cancel(active)!!;
+        DestroyContext context = { .loader = &loader, .source = &source };
+        Thread destroyer;
+        destroyer.create(&destroy_gated_loader, &context)!!;
+        source.lock.lock();
+        while (!source.destroy_started) source.changed.wait(&source.lock);
+        assert(!source.destroy_finished && source.reads == 1);
+        source.lock.unlock();
+        bool stopping;
+        while (!stopping) {
+            loader.state.lock.lock();
+            stopping = loader.state.stopping;
+            loader.state.lock.unlock();
+            if (!stopping) thread::yield();
+        }
+        source.allow_read();
+        destroyer.join()!!;
+        assert(source.destroy_finished && source.reads == 1);
+        asset::destroy_asset_store(&assets);
+        assert(tracker.allocated() == 0);
+    }
 }

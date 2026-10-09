@@ -3,6 +3,7 @@ module c3d::test::custom_assets;
 import c3d;
 import c3d::asset;
 import c3d::asset::custom;
+import std::core::string;
 
 struct Wave @local {
     float[] samples;
@@ -166,4 +167,51 @@ fn void test_two_stores_share_the_slot_and_own_their_pools() @test {
     assert(first.pool(Wave).free_count == WAVE_CAPACITY - 1);
     assert(second.pool(Wave).free_count == WAVE_CAPACITY);
     assert(!unregistered.is_registered(Wave));
+}
+
+fn void test_key_capacity_setup_preserves_refs_and_repeated_registration() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+    {
+        AssetStore assets = asset::create_asset_store(&tracker, {
+            .max_geometries = 1, .max_textures = asset::BUILTIN_TEXTURE_COUNT,
+            .max_materials = 64, .max_samplers = asset::BUILTIN_SAMPLER_COUNT,
+            .max_environments = 1, .max_models = 1, .max_skeletons = 1,
+            .max_clips = 1, .max_shaders = 1, .max_compute_shaders = 1, .max_fonts = 1,
+        });
+        defer asset::destroy_asset_store(&assets);
+        void* buckets = assets.keys.table.ptr;
+        assert(@sizeof(assets.keys) == 48 && @sizeof(assets.keys.table[0]) == 8
+          && @sizeof(*assets.keys.table[0]) == 48);
+        MaterialId[64] materials;
+        @pool() {
+            for (uint index = 0; index < materials.len; index++) {
+                materials[index] = assets.add_material({}, string::tformat("material_%s", index))!!;
+                assert((void*)assets.keys.table.ptr == buckets);
+            }
+        };
+        ModelDocument document = asset::create_model_document(&tracker, "capacity", {});
+        defer asset::destroy_model_document(&document);
+        ModelId model = assets.publish_document(&document)!!;
+        assert((void*)assets.keys.table.ptr == buckets);
+        uint hook_calls;
+        assets.register(
+            Wave,
+            capacity: 512,
+            on_destroy: &free_wave,
+            user: &hook_calls,
+        )!!;
+        void* expanded = assets.keys.table.ptr;
+        assert(expanded != buckets);
+        assert(c3d::same_id(assets.find_material("material_63")!!, materials[63]));
+        assert(c3d::same_id(assets.find_model("capacity")!!, model));
+        assets.register(Wave, 1024)!!;
+        assert((void*)assets.keys.table.ptr == expanded && assets.pool(Wave).items.len == 512);
+        Wave wave = make_wave(&tracker);
+        assets.add_wave_owned(&wave, "custom_wave")!!;
+        assert((void*)assets.keys.table.ptr == expanded);
+        assert(assets.find_wave("custom_wave")!!.generation != 0);
+    }
+    assert(!tracker.has_leaks());
 }

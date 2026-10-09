@@ -27,7 +27,8 @@
       "type": "executable",
       "sources": [
         "src/**",
-        "shaders/shader_package.c3"
+        "shaders/shader_package.c3",
+        "fixtures/loading_fixtures.c3"
       ]
     },
     "describe": {
