@@ -174,8 +174,9 @@ fn gpu::PipelineHandle[]? PipelineCache.replace_shader(
 ) {
     PipelineKey[] keys = self.keys_of(tmem, shader, old_revision);
     gpu::PipelineHandle[] fresh = alloc::new_array(tmem, gpu::PipelineHandle, keys.len);
-    usz created;
-    defer catch foreach (handle : fresh[:created]) (void)gpu::destroy_pipeline(device, handle);
+    defer catch foreach (handle : fresh) {
+        if (handle.is_valid()) (void)gpu::destroy_pipeline(device, handle);
+    }
 
     foreach (index, key : keys) {
         if (!key_stages_present(key, stages)) continue;
@@ -183,7 +184,6 @@ fn gpu::PipelineHandle[]? PipelineCache.replace_shader(
         replacement.shader_revision = new_revision;
         CustomStageSource source = custom_stage_source(stages, replacement);
         fresh[index] = create_pipeline(&self.registry, device, replacement, &source)!;
-        created++;
     }
 
     gpu::PipelineHandle[] superseded = alloc::new_array(allocator, gpu::PipelineHandle, keys.len);
