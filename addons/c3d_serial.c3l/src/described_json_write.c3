@@ -104,6 +104,7 @@ fn uint? described_reference_index(WriteContext* context, describe::Info* info, 
             context: context,
             writer: &writer,
             kind: info.metadata.asset_kind,
+            custom_slot: info.metadata.custom_slot,
             value: value,
         )!;
     }

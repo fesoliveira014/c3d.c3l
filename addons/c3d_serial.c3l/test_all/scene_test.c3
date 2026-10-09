@@ -21,6 +21,7 @@ import c3d::nav;
 import c3d::particle @public;
 import c3d::physics;
 import c3d::physics::cloth;
+import c3d::audio;
 import c3d::scene;
 import c3d::serial @public;
 import std::io::path;
@@ -104,6 +105,10 @@ fn void assert_authoring(Fixture* fixture, Node* root) @private {
     ParticleSystem* particles = scene.get(child_named(root, "particles"), ParticleSystem);
     assert(particles.desc.capacity == 7 && particles.desc.seed == 12345 && !particles.emitting);
     assert(!particles.is_prepared() && particles.alive == 0);
+    AudioEmitter* emitter = scene.get(child_named(root, "sound"), AudioEmitter);
+    assert(c3d::same_id(emitter.clip, fixture.clip) && emitter.bus == audio::MUSIC_BUS && emitter.pitch == 1.5f);
+    assert(emitter.volume == 0.75f && emitter.max_distance == 40 && emitter.looping && emitter.playing);
+    assert(scene.get(child_named(root, "ears"), AudioListener).active);
 }
 
 fn char[] encode(
@@ -144,6 +149,7 @@ fn void test_all_authored_components_round_trip_and_restore_snapshot_in_both_for
                 systems: &source_systems,
                 scene: &fixture.source,
                 assets: &fixture.assets,
+                audio: &fixture.source_audio,
                 root: fixture.source.root,
             );
             assert_presence(&fixture.source, true);
@@ -195,6 +201,7 @@ fn void test_all_authored_components_round_trip_and_restore_snapshot_in_both_for
                 systems: &loaded_systems,
                 scene: &fixture.destination,
                 assets: &fixture.assets,
+                audio: &fixture.destination_audio,
                 root: restored,
             );
             assert_presence(&fixture.destination, true);

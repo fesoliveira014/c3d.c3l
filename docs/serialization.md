@@ -29,7 +29,7 @@ and restart contracts are detailed in the built-in policy inventory below.
 Animator export projects owned transforms and Mesh morph weights to captured
 baselines; ordinary Mesh values preserve their explicit weights.
 
-There are 37 authored and 13 transient production component policies. The
+There are 39 authored and 14 transient production component policies. The
 registration calls install their description/default prerequisites idempotently.
 Consumers select each package and its normal dependencies, including `c3d_serial`
 for any adapter below; core has no reverse dependency on an add-on.
@@ -43,6 +43,7 @@ for any adapter below; core has no reverse dependency on an add-on.
 | Character navigation | Also `C3D_CHARACTER_NAV`, `C3D_NAV_SERIAL` | Included by character registration | 1 / 0 |
 | Landscape | `C3D_LANDSCAPE_SERIAL` | `landscape::register_serial_codecs()` | 3 / 5 |
 | Particles | `C3D_PARTICLE_SERIAL` | `particle::register_serial_codecs()` | 1 / 1 |
+| Audio | `C3D_AUDIO_SERIAL` | `audio::register_serial_codecs()` | 2 / 1 |
 
 Asset payloads, scene-wide ambient/background/environment settings and cross-subtree references are outside this format. Saving Scene.root creates an ordinary new node on read; it does not overwrite destination scene settings.
 
@@ -137,7 +138,9 @@ position for text, plus component/node and available asset/model details.
 
 Node pointers and Entity values use u32 record indices. The all-zero Entity or null node maps to INDEX_NONE (0xffffffff). A pointer must name the actual source scene node, not merely a matching entity index/generation from another scene.
 
-Built-in helpers cover geometry, texture, sampler, material, model, clip, skeleton, environment, shader and compute-shader IDs. Custom-kind helpers use M58's typed custom IDs. Missing custom-kind registration on the selected AssetStore is INVALID_ID for a nonzero reference; a zero reference needs no pool. Assets must be live and have nonempty keys. Each distinct key is stored once.
+Built-in helpers cover geometry, texture, sampler, material, model, clip, skeleton, environment, shader and compute-shader IDs. Custom-kind helpers use the typed custom IDs: `write_custom(writer, $Type, id)` and `read_custom(reader, $Type)`. Missing custom-kind registration on the selected AssetStore is INVALID_ID for a nonzero reference; a zero reference needs no pool.
+
+A described field of type `CustomId{T}` saves as its key in binary and JSONC, as the built-in id fields do. The description records the address of the kind's process-wide slot and reads it when writing or reading, so a description reflected before `AssetStore.register(T)` resolves afterwards. An unset id saves as none. A dead id is INVALID_ID and a record without a key is INVALID_ARGUMENT. On read, a missing key or a key of another kind is INVALID_ID. A kind that has no slot yet, or no pool in the selected store on write, is UNSUPPORTED. Assets must be live and have nonempty keys. Each distinct key is stored once.
 
 Writer/Reader support u32/i32/u64, float, bool, strings, enums, Vec2/Vec3/Vec4, Quat, Mat4, Transform and Aabb. Scalars are little-endian; float preserves IEEE binary32 bits. Bools are exactly 0 or 1. Strings have a u32 byte length followed by valid UTF-8 without a terminator. Embedded zero bytes remain string content. Quaternions use x/y/z/w; matrices use columns in order; Transform uses position/rotation/scale; Aabb uses min/max. Enum ordinals must stay stable for each shipped codec version.
 
@@ -378,7 +381,7 @@ add_nav_driven behavior after both components restore. Independent policy target
 check ordinary registration with and without navigation.
 
 
-## Landscape and particle adapters
+## Landscape, particle and audio adapters
 
 Terrain and Water restore complete descriptors in VALUE, with no generated
 material, batch or mirror. Foliage restores its ground reference and copied
@@ -392,7 +395,9 @@ random state, counters and draw child restart through explicit preparation.
 A generated draw child selected without its owner is rejected. See
 [particle serialization](../addons/c3d_particle.c3l/src/serial/README.md).
 
+AudioEmitter and AudioListener are described components. The emitter saves its clip by key, bus index, volume, pitch, distances, looping and playing. The bus index means the entry of the reading system's `AudioDesc.buses`; a bus past that table fails the voice start and counts in `AudioStats.start_failures`. Playback position is not saved: a loaded playing emitter starts from the clip's beginning at the next `AudioSystem.update`. AudioVoiceLink is transient and never written. The reading store registers the clip kind and holds a clip under the saved key.
+
 The transient inventory is RigidBody, Joint, NavSourceRuntime, NavVolumeRuntime,
 NavLinkRuntime, NavObstacleRuntime, CrowdAgentRuntime, TerrainRuntime,
-FoliageRuntime, FoliageCellOwner, WaterRuntime, WaterMirror and ParticleDrawOwner.
+FoliageRuntime, FoliageCellOwner, WaterRuntime, WaterMirror, ParticleDrawOwner and AudioVoiceLink.
 Some are private ownership markers; their packages install the policies.

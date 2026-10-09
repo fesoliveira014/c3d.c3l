@@ -5,6 +5,7 @@ import c3d::anim;
 import c3d::anim::ik;
 import c3d::asset;
 import c3d::asset::gltf;
+import c3d::audio;
 import c3d::camera;
 import c3d::character;
 import c3d::ecs;
@@ -26,6 +27,8 @@ import c3d::serial;
 import std::io::path;
 import std::math;
 
+const uint MAX_AUDIO_VOICES @private = 4; // the fixture plays one emitter per copy; refusals are harmless
+
 struct Fixture @private {
     AssetStore assets;
     Scene source;
@@ -33,6 +36,9 @@ struct Fixture @private {
     GeometryId box;
     MaterialId material;
     ModelId model;
+    AudioSystem source_audio;
+    AudioSystem destination_audio;
+    AudioClipId clip;
 }
 
 struct Systems @private {
@@ -50,9 +56,10 @@ fn void register_codecs() @private {
     character::register_serial_codecs()!!;
     landscape::register_serial_codecs()!!;
     particle::register_serial_codecs()!!;
+    audio::register_serial_codecs()!!;
 }
 
-fn void register_scene(Scene* scene, AssetStore* assets) @private {
+fn void register_scene(Scene* scene, AssetStore* assets, AudioSystem* audio) @private {
     physics::register_physics(scene)!!;
     nav::register_nav(scene)!!;
     character::register_character(scene)!!;
@@ -61,6 +68,7 @@ fn void register_scene(Scene* scene, AssetStore* assets) @private {
     foliage::register_foliage(scene)!!;
     water::register_water(scene, assets)!!;
     particle::register_particles(scene)!!;
+    audio::register_audio(scene, audio)!!;
 }
 
 fn void create_fixture(Fixture* fixture, uint node_capacity = 256, uint asset_capacity = 64) @private {
@@ -70,10 +78,16 @@ fn void create_fixture(Fixture* fixture, uint node_capacity = 256, uint asset_ca
         .max_samplers = 16, .max_models = 8, .max_skeletons = 8,
         .max_clips = 16, .max_shaders = 8,
     });
+    audio::register_audio_clips(&fixture.assets, 2)!!;
+    AudioDesc audio_desc = audio::default_audio_desc();
+    audio_desc.null_device = true;
+    audio_desc.max_voices = MAX_AUDIO_VOICES;
+    fixture.source_audio = audio::create_audio_system(mem, &fixture.assets, audio_desc)!!;
+    fixture.destination_audio = audio::create_audio_system(mem, &fixture.assets, audio_desc)!!;
     fixture.source = scene::create_scene(mem, { .max_nodes = node_capacity });
     fixture.destination = scene::create_scene(mem, { .max_nodes = node_capacity });
-    register_scene(&fixture.source, &fixture.assets);
-    register_scene(&fixture.destination, &fixture.assets);
+    register_scene(&fixture.source, &fixture.assets, &fixture.source_audio);
+    register_scene(&fixture.destination, &fixture.assets, &fixture.destination_audio);
     Geometry box = geometry::box(
         allocator: tmem,
         width: 1,
@@ -89,13 +103,38 @@ fn void create_fixture(Fixture* fixture, uint node_capacity = 256, uint asset_ca
     add_physics(fixture);
     add_navigation(fixture);
     add_landscape(fixture);
+    add_audio(fixture);
     fixture.source.update_world();
 }
 
 fn void destroy_fixture(Fixture* fixture) @private {
     scene::destroy_scene(&fixture.destination);
     scene::destroy_scene(&fixture.source);
+    audio::destroy_audio_system(&fixture.destination_audio);
+    audio::destroy_audio_system(&fixture.source_audio);
     asset::destroy_asset_store(&fixture.assets);
+}
+
+fn void add_audio(Fixture* fixture) @private {
+    Scene* scene = &fixture.source;
+    fixture.clip = audio::add_audio_clip(
+        assets: &fixture.assets,
+        bytes: $embed("../../c3d_audio.c3l/test/fixtures/tone.ogg"),
+        key: "tone",
+    )!!;
+    Node* sound = scene.add_node(name: "sound")!!;
+    scene.add(sound, (AudioEmitter){
+        .clip         = fixture.clip,
+        .bus          = audio::MUSIC_BUS,
+        .volume       = 0.75f,
+        .pitch        = 1.5f,
+        .min_distance = 3,
+        .max_distance = 40,
+        .looping      = true,
+        .playing      = true,
+    });
+    Node* ears = scene.add_node(name: "ears")!!;
+    scene.add(ears, (AudioListener){ .active = true });
 }
 
 fn void add_core(Fixture* fixture) @private {
@@ -381,7 +420,13 @@ fn void destroy_systems(Systems* systems) @private {
     physics::destroy_physics_world(&systems.physics);
 }
 
-fn void prepare_scene(Systems* systems, Scene* scene, AssetStore* assets, Node* root) @private {
+fn void prepare_scene(
+    Systems* systems,
+    Scene* scene,
+    AssetStore* assets,
+    AudioSystem* audio,
+    Node* root,
+) @private {
     scene.update_world();
     terrain::prepare_subtree(scene, assets, root)!!;
     foliage::prepare_subtree(scene, assets, root)!!;
@@ -400,6 +445,7 @@ fn void prepare_scene(Systems* systems, Scene* scene, AssetStore* assets, Node* 
     );
     assert(result.failed == 0 && result.pending == 0);
     nav::crowd_update(scene, &systems.crowd, 0.01f);
+    audio.update(scene);
 }
 
 fn Node* child_named(Node* root, String name) @private {

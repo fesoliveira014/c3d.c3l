@@ -9,6 +9,18 @@
       "type": "test",
       "sources": ["test/audio_fixture.c3", "test/clip_test.c3", "test/mix_test.c3", "test/scene_test.c3"]
     },
+    "audio_serial_test": {
+      "type": "test",
+      "sources": ["test/audio_fixture.c3", "serial_test/**"],
+      "features": ["C3D_AUDIO_SERIAL"],
+      "dependencies": ["c3d_audio", "miniaudio", "c3d_serial", "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "cgltf", "ufbx", "shaderc"]
+    },
+    "audio_serial_policy_test": {
+      "type": "test",
+      "sources": ["test/audio_fixture.c3", "serial_policy_test/**"],
+      "features": ["C3D_AUDIO_SERIAL"],
+      "dependencies": ["c3d_audio", "miniaudio", "c3d_serial", "c3d", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "cgltf", "ufbx", "shaderc"]
+    },
     "audio": {"type": "executable", "sources": ["examples/audio.c3"]}
   }
 }

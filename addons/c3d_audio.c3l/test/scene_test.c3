@@ -10,6 +10,7 @@ const uint MIX_FRAMES @local = 1024;
 const uint DRAIN_FRAMES @local = 25000; // past the end of a 0.5 s clip
 const uint STEADY_ITERATIONS @local = 100;
 const uint STEADY_FRAMES @local = 256; // 100 iterations cover 0.53 s: several loops of a 0.1 s clip
+const uint OUT_OF_RANGE_BUS @local = 99; // past the default bus table
 const float AUDIBLE @local = 0.05f;
 const float SILENT @local = 1e-6f;
 const float REPLACED_PEAK @local = 0.25f;
@@ -153,6 +154,48 @@ fn void test_voice_cap_refuses() @test {
     system.update(&scene);
     assert(system.stats().voices_refused == 1);
     assert(system.stats().start_failures == 1);
+}
+
+fn void test_emitter_with_out_of_range_bus_counts_one_start_failure() @test {
+    AssetStore assets = make_store(mem);
+    defer asset::destroy_asset_store(&assets);
+    AudioSystem system = make_system(mem, &assets);
+    defer audio::destroy_audio_system(&system);
+    Scene scene = make_scene(mem, &system);
+    defer scene::destroy_scene(&scene);
+    AudioClipId clip = make_clip(&assets);
+
+    Node* authored = add_emitter(&scene, clip, true);
+    scene.get(authored, AudioEmitter).bus = (BusId)OUT_OF_RANGE_BUS;
+    system.update(&scene);
+    system.update(&scene);
+    assert(system.stats().start_failures == 1);
+    assert(system.stats().voices == 0);
+}
+
+fn void test_loaded_emitter_with_out_of_range_bus_counts_one_start_failure() @test {
+    AssetStore assets = make_store(mem);
+    defer asset::destroy_asset_store(&assets);
+    AudioSystem system = make_system(mem, &assets);
+    defer audio::destroy_audio_system(&system);
+    Scene scene = make_scene(mem, &system);
+    defer scene::destroy_scene(&scene);
+    AudioClipId clip = make_clip(&assets);
+
+    Node* node = scene.add_node()!!;
+    scene.add(node, (AudioEmitter){
+        .clip         = clip,
+        .bus          = (BusId)OUT_OF_RANGE_BUS,
+        .volume       = 1,
+        .pitch        = 1,
+        .min_distance = 1,
+        .max_distance = 100,
+        .playing      = true,
+    });
+    system.update(&scene);
+    system.update(&scene);
+    assert(system.stats().start_failures == 1);
+    assert(system.stats().voices == 0);
 }
 
 fn void test_replaced_clip_restarts_looping_emitter() @test {

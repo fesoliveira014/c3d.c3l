@@ -390,6 +390,7 @@ fn void? decode_described_json_field(
                 read_json_asset(
                     context: state.context,
                     kind: info.metadata.asset_kind,
+                    custom_slot: info.metadata.custom_slot,
                     key: input.string,
                     value: value,
                 )!;
@@ -403,12 +404,14 @@ fn void? decode_described_json_field(
 fn void? read_json_asset(
     ReadContext* context,
     AssetKind kind,
+    uint* custom_slot,
     String key,
     void* value,
 ) @local {
     if (catch excuse = find_json_asset(
         context: context,
         kind: kind,
+        custom_slot: custom_slot,
         key: key,
         value: value,
     )) {
@@ -419,6 +422,7 @@ fn void? read_json_asset(
 fn void? find_json_asset(
     ReadContext* context,
     AssetKind kind,
+    uint* custom_slot,
     String key,
     void* value,
 ) @local {
@@ -434,6 +438,6 @@ fn void? find_json_asset(
         case COMPUTE_SHADER: *(ComputeShaderId*)value = context.assets.find_compute_shader(key) ?? c3d::INVALID_ID~!;
         case ENVIRONMENT: *(EnvironmentId*)value = context.assets.find_environment(key) ?? c3d::INVALID_ID~!;
         case FONT: *(FontId*)value = context.assets.find_font(key) ?? c3d::INVALID_ID~!;
-        case CUSTOM: return c3d::UNSUPPORTED~;
+        case CUSTOM: *(Id*)value = find_described_custom(context, custom_slot, key)!;
     }
 }

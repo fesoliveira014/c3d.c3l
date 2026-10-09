@@ -123,6 +123,7 @@ fn bool? described_write_field(describe::Visitor* visitor, describe::Info* info,
                 context: state.context,
                 writer: writer,
                 kind: info.metadata.asset_kind,
+                custom_slot: info.metadata.custom_slot,
                 value: value,
             )!;
         case STRUCT:
@@ -214,6 +215,7 @@ fn bool? described_read_field(describe::Visitor* visitor, describe::Info* info, 
                 context: state.context,
                 reader: reader,
                 kind: info.metadata.asset_kind,
+                custom_slot: info.metadata.custom_slot,
                 value: value,
             )!;
         case STRUCT:

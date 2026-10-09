@@ -80,6 +80,7 @@ fn void AudioState.free_mirror_data(&self, Mirror* mirror) {
 }
 
 fn uint? AudioState.start(&self, StartParams params, AudioClipId clip) {
+    if (params.bus >= self.bus_count) return c3d::INVALID_ARGUMENT~;
     Mirror* mirror = self.ensure_mirror(clip)!;
     uint slot = self.free_voice()!;
     Voice* voice = &self.voices[slot];
