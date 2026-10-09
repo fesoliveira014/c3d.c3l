@@ -134,10 +134,12 @@ fn void test_roles_are_distinct_and_source_color_references_keep_their_semantics
 
         assert(color_entry.desc.semantic == TextureSemantic.COLOR && color_entry.desc.format == RGBA8_SRGB);
         assert(data_entry.desc.semantic == TextureSemantic.COLOR && data_entry.desc.format == RGBA8_UNORM);
-        assert(normal_entry.desc.semantic == (encoding == NormalEncoding.RGB ? TextureSemantic.NORMAL_RGB : TextureSemantic.NORMAL_RG));
+        assert(normal_entry.desc.semantic
+          == (encoding == NormalEncoding.RGB ? TextureSemantic.NORMAL_RGB : TextureSemantic.NORMAL_RG));
         assert(normal_entry.desc.format == RGBA8_UNORM && normal_entry.desc.coverage == CoveragePolicy.NONE);
         assert(color_entry.key == "import-roles#image/0/srgb" && data_entry.key == "import-roles#image/0/linear");
-        assert(mem::equals(color_entry.pixels, data_entry.pixels) && mem::equals(data_entry.pixels, normal_entry.pixels));
+        assert(mem::equals(color_entry.pixels, data_entry.pixels)
+          && mem::equals(data_entry.pixels, normal_entry.pixels));
     }
 }
 
@@ -182,7 +184,10 @@ fn void test_mask_variants_use_effective_thresholds_and_constant_pass_classes() 
 
     TextureId[9] references;
 
-    foreach (index, &reference : references) *reference = document.materials[index].data.standard.base_color_map.texture.asset;
+    foreach (index, &reference : references) {
+        StandardParams* params = &document.materials[index].data.standard;
+        *reference = params.base_color_map.texture.asset;
+    }
 
     assert(c3d::same_id(references[0], references[8]));
     assert(c3d::same_id(references[1], references[2]));
@@ -206,8 +211,10 @@ fn void test_mask_variants_use_effective_thresholds_and_constant_pass_classes() 
 
     assert(assets.models.is_live(model));
 
-    TextureId threshold = assets.material(assets.find_material("import-fidelity#material/1")!!).data.standard.base_color_map.texture.asset;
-    TextureId quarter = assets.material(assets.find_material("import-fidelity#material/3")!!).data.standard.base_color_map.texture.asset;
+    Material* threshold_material = &assets.material(assets.find_material("import-fidelity#material/1")!!).data;
+    Material* quarter_material = &assets.material(assets.find_material("import-fidelity#material/3")!!).data;
+    TextureId threshold = threshold_material.standard.base_color_map.texture.asset;
+    TextureId quarter = quarter_material.standard.base_color_map.texture.asset;
 
     assert(assets.texture(threshold).coverage_statistics.passing[0] == 2);
     assert(assets.texture(quarter).coverage_statistics.passing[0] == 3);
@@ -267,7 +274,8 @@ fn void test_bc5_normal_source_keeps_default_rgb_and_explicit_rg_without_inferen
     DocumentTexture* first = &rgb.textures[0];
     DocumentTexture* second = &rg.textures[0];
 
-    assert(first.source_kind == TextureSourceKind.SUPPLIED_MIPS && second.source_kind == TextureSourceKind.SUPPLIED_MIPS);
+    assert(first.source_kind == TextureSourceKind.SUPPLIED_MIPS
+      && second.source_kind == TextureSourceKind.SUPPLIED_MIPS);
     assert(first.desc.semantic == TextureSemantic.NORMAL_RGB && second.desc.semantic == TextureSemantic.NORMAL_RG);
     assert(first.desc.format == BC5_UNORM && second.desc.format == BC5_UNORM);
     assert(first.desc.coverage == CoveragePolicy.NONE && second.desc.coverage == CoveragePolicy.NONE);
@@ -344,12 +352,18 @@ fn void test_force_does_not_bypass_structural_tangent_shape_count_or_component_f
     foreach (uint accessor : { 13, 14, 16 }) {
         String text = tangent_fixture().treplace(`"TANGENT":5`, string::tformat(`"TANGENT":%d`, accessor));
 
-        if (accessor == 16) text = text.treplace(`"asset":{"version":"2.0"}`, `"asset":{"version":"2.0"},"extensionsRequired":["KHR_mesh_quantization"]`);
+        if (accessor == 16) text = text.treplace(
+            needle: `"asset":{"version":"2.0"}`,
+            new_str: `"asset":{"version":"2.0"},"extensionsRequired":["KHR_mesh_quantization"]`,
+        );
 
         expect_decode_fault(text, forced, c3d::ASSET_FORMAT_ERROR);
     }
 
-    String truncated = tangent_fixture().treplace(`"byteOffset":668,"byteLength":16`, `"byteOffset":668,"byteLength":20`);
+    String truncated = tangent_fixture().treplace(
+        needle: `"byteOffset":668,"byteLength":16`,
+        new_str: `"byteOffset":668,"byteLength":20`,
+    );
 
     expect_decode_fault(truncated, forced, c3d::ASSET_FORMAT_ERROR);
 }
@@ -359,7 +373,10 @@ fn void test_declared_signed_normalized_quantized_tangents_remain_authored() @te
 
     expect_decode_fault(text, asset::LOAD_OPTIONS_DEFAULT, c3d::ASSET_FORMAT_ERROR);
 
-    text = text.treplace(`"asset":{"version":"2.0"}`, `"asset":{"version":"2.0"},"extensionsRequired":["KHR_mesh_quantization"]`);
+    text = text.treplace(
+        needle: `"asset":{"version":"2.0"}`,
+        new_str: `"asset":{"version":"2.0"},"extensionsRequired":["KHR_mesh_quantization"]`,
+    );
 
     ModelDocument document = decode_text(text);
     defer asset::destroy_model_document(&document);
@@ -370,7 +387,10 @@ fn void test_declared_signed_normalized_quantized_tangents_remain_authored() @te
 }
 
 fn void test_selected_raw_uv1_and_generated_normals_preserve_all_owned_streams() @test {
-    String text = tangent_fixture().treplace(`"TANGENT":5,`, "").treplace(`"NORMAL":1,`, "").treplace(`"texCoord":0`, `"texCoord":1`);
+    String text = tangent_fixture().treplace(`"TANGENT":5,`, "");
+    text = text.treplace(`"NORMAL":1,`, "");
+    text = text.treplace(`"texCoord":0`, `"texCoord":1`);
+
     TrackingAllocator tracker;
     tracker.init(mem);
     defer tracker.free();
@@ -387,7 +407,8 @@ fn void test_selected_raw_uv1_and_generated_normals_preserve_all_owned_streams()
 
     assert(entry.tangent_provenance.origin == TangentOrigin.GENERATED && entry.tangent_provenance.uv_set == 1);
     assert(geometry.positions.len == 4 && geometry.normals.len == 4 && geometry.uv0.len == 4 && geometry.uv1.len == 4);
-    assert(geometry.colors.len == 4 && geometry.joints.len == 4 && geometry.weights.len == 4 && geometry.indices.len == 6);
+    assert(geometry.colors.len == 4 && geometry.joints.len == 4
+      && geometry.weights.len == 4 && geometry.indices.len == 6);
     assert(geometry.targets.len == 1 && geometry.targets[0].name == "raise");
 
     Vec4[4] colors = { { 1, 0, 0, 1 }, { 0, 1, 0, 0.75f }, { 0, 0, 1, 0.5f }, { 1, 1, 1, 0.25f } };
@@ -426,8 +447,11 @@ fn void test_selected_raw_uv1_and_generated_normals_preserve_all_owned_streams()
 
 fn void test_lookup_transform_changes_sampling_but_generation_uses_raw_selected_uv() @test {
     String text = tangent_fixture().treplace(`"TANGENT":5,`, "");
-    text = text.treplace(`"normalTexture":{"index":0,"texCoord":0}`,
-        `"normalTexture":{"index":0,"texCoord":0,"extensions":{"KHR_texture_transform":{"texCoord":1,"rotation":1.2,"scale":[-2,0.5],"offset":[3,4]}}}`);
+    String transformed = `"normalTexture":{"index":0,"texCoord":0,"extensions":{"KHR_texture_transform":{"texCoord":1,"rotation":1.2,"scale":[-2,0.5],"offset":[3,4]}}}`;
+    text = text.treplace(
+        needle: `"normalTexture":{"index":0,"texCoord":0}`,
+        new_str: transformed,
+    );
 
     ModelDocument document = decode_text(text);
     defer asset::destroy_model_document(&document);
@@ -443,6 +467,7 @@ fn void test_missing_selected_uv_keeps_derivative_fallback_even_when_forced() @t
     LoadOptions forced = asset::LOAD_OPTIONS_DEFAULT;
     forced.generate_tangents = false;
     forced.regenerate_tangents = true;
+
     String text = tangent_fixture().treplace(`"TEXCOORD_1":3,`, "").treplace(`"texCoord":0`, `"texCoord":1`);
 
     ModelDocument document = decode_text(text, forced);
@@ -454,8 +479,11 @@ fn void test_missing_selected_uv_keeps_derivative_fallback_even_when_forced() @t
 }
 
 fn void test_base_and_coat_uv_conflict_faults_only_when_generation_is_requested() @test {
-    String text = tangent_fixture().treplace(`"normalTexture":{"index":0,"texCoord":0}`,
-        `"normalTexture":{"index":0,"texCoord":0},"extensions":{"KHR_materials_clearcoat":{"clearcoatNormalTexture":{"index":0,"texCoord":1}}}`);
+    String coating = `"normalTexture":{"index":0,"texCoord":0},"extensions":{"KHR_materials_clearcoat":{"clearcoatNormalTexture":{"index":0,"texCoord":1}}}`;
+    String text = tangent_fixture().treplace(
+        needle: `"normalTexture":{"index":0,"texCoord":0}`,
+        new_str: coating,
+    );
 
     ModelDocument authored = decode_text(text);
     defer asset::destroy_model_document(&authored);
@@ -478,4 +506,62 @@ fn void test_base_and_coat_uv_conflict_faults_only_when_generation_is_requested(
     defer asset::destroy_model_document(&fallback);
 
     assert(!fallback.geometries[0].data.tangents.len);
+}
+
+fn void test_forced_regeneration_keeps_line_and_point_primitives() @test {
+    LoadOptions forced = asset::LOAD_OPTIONS_DEFAULT;
+    forced.generate_tangents = false;
+    forced.regenerate_tangents = true;
+
+    foreach (uint mode : { 1, 0 }) {
+        String pattern = `"primitives":[{"attributes":{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2},"indices":8,"material":0,"mode":%d,"targets":[{"POSITION":9}]},{`;
+        String primitive = string::tformat(pattern, mode);
+        String text = tangent_fixture().treplace(`"primitives":[{`, primitive);
+
+        ModelDocument document = decode_text(text, forced);
+        defer asset::destroy_model_document(&document);
+
+        assert(document.geometries.len == 2);
+
+        DocumentGeometry* nontriangle = &document.geometries[0];
+
+        assert(nontriangle.data.topology == (mode == 1 ? Topology.LINES : Topology.POINTS));
+        assert(nontriangle.data.uv0.len == 4 && nontriangle.data.indices.len == 6);
+        assert(!nontriangle.data.tangents.len && nontriangle.tangent_provenance.origin == TangentOrigin.NONE);
+        assert(document.geometries[1].data.topology == Topology.TRIANGLES);
+        assert(document.geometries[1].tangent_provenance.origin == TangentOrigin.GENERATED);
+
+        foreach (tangent : document.geometries[1].data.tangents) expect_direction(tangent, { 1, 0, 0 });
+    }
+}
+
+fn void test_gltf_decoded_float_images_remain_rejected_for_every_role() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+
+    foreach (String materials : {
+        `[{"pbrMetallicRoughness":{"baseColorTexture":{"index":0}}}]`,
+        `[{"normalTexture":{"index":0}}]`,
+        `[{"alphaMode":"MASK","pbrMetallicRoughness":{"baseColorTexture":{"index":0}}}]`,
+    }) {
+        String text = image_document("../radiance.hdr", materials);
+        ModelDocument? result = gltf::decode_model_memory(
+            allocator: &tracker,
+            bytes: (char[])text,
+            base_dir: fixture_directory("texture"),
+            key: "import-float-rejected",
+        );
+        bool rejected;
+
+        if (catch excuse = result) {
+            rejected = true;
+            assert(excuse == c3d::ASSET_FORMAT_ERROR);
+        } else {
+            ModelDocument document = result;
+            asset::destroy_model_document(&document);
+        }
+
+        assert(rejected && tracker.allocated() == 0);
+    }
 }

@@ -68,8 +68,11 @@ fn TextureCoverageResource* create_texture_coverage_resource(
 ) @private {
     uint mip_count = material::texture_mip_count(desc.width, desc.height);
     usz count = (usz)mip_count * desc.layers;
-    char[] storage = alloc::new_array(allocator, char,
-        (sz)(TextureCoverageResource::size + count * TextureCoverageCounts::size));
+    char[] storage = alloc::new_array(
+        allocator: allocator,
+        $Type: char,
+        elements: (sz)(TextureCoverageResource::size + count * TextureCoverageCounts::size),
+    );
     TextureCoverageResource* resource = (TextureCoverageResource*)storage.ptr;
 
     *resource = {
@@ -95,6 +98,7 @@ fn void destroy_texture_coverage_resource(TextureCoverageResource* resource) @pr
 
 fn void store_texture_coverage_result(TextureCoverageResource* resource, TextureCoverageState* state) @private {
     if (!resource) return;
+
     resource.counts[(usz)state.mip * resource.face_count + state.face] = {
         .passing = state.expected,
         .total = state.texels,

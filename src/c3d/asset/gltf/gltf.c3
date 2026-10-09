@@ -150,6 +150,7 @@ fn ModelReplaceReport? replace_model_memory(
  @param allocator : "Owns the document; publish needs the store allocator."
  @param file_source : "Read during the call; a null read selects the file system."
  @return? c3d::ASSET_IO_ERROR, c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED, c3d::INVALID_ARGUMENT
+ @return? c3d::CAPACITY_EXCEEDED
  @require path.len > 0, allocator != tmem
 *>
 fn ModelDocument? decode_model(
@@ -211,6 +212,7 @@ fn ModelDocument? decode_file(
  @param key : "Model key and prefix of every content key."
  @param file_source : "Read during the call; a null read selects the file system."
  @return? c3d::ASSET_IO_ERROR, c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED, c3d::INVALID_ARGUMENT
+ @return? c3d::CAPACITY_EXCEEDED
  @require bytes.len > 0, key.len > 0, allocator != tmem
 *>
 fn ModelDocument? decode_model_memory(
@@ -323,7 +325,6 @@ fn void? prepare_document(gltf::Data* data, String path, gltf::Options reader) @
     if (catch excuse = gltf::validate(data)) return load_fault(excuse)~;
 
     bool quantized;
-
     foreach (extension : data.extensions_required) {
         if (extension.str_view() == "KHR_mesh_quantization") quantized = true;
     }
@@ -334,10 +335,13 @@ fn void? prepare_document(gltf::Data* data, String path, gltf::Options reader) @
 
             foreach (&attribute : primitive.attributes) {
                 if (attribute.type != gltf::AttributeType.TANGENT) continue;
+
                 gltf::Accessor* tangent = attribute.data;
                 bool floating = tangent.component_type == gltf::ComponentType.R_32F && !tangent.normalized;
                 bool normalized_integer = quantized && tangent.normalized != 0
-                  && (tangent.component_type == gltf::ComponentType.R_8 || tangent.component_type == gltf::ComponentType.R_16);
+                  && (tangent.component_type == gltf::ComponentType.R_8
+                      || tangent.component_type == gltf::ComponentType.R_16);
+
                 if (!position || attribute.index != 0 || tangent.type != gltf::Type.VEC4
                   || tangent.count != position.count || (!floating && !normalized_integer)) {
                     return c3d::ASSET_FORMAT_ERROR~;

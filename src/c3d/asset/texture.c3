@@ -54,6 +54,7 @@ fn TextureId? AssetStore.add_texture(
     check_format_use(desc)!;
 
     CoverageStatistics statistics = create_coverage_statistics(desc, pixels, 1)!;
+
     TextureId id = self.textures.add({})!;
 
     *self.textures.get(id) = {
@@ -84,6 +85,7 @@ fn TextureId? AssetStore.add_texture_owned(
     check_format_use(desc)!;
 
     CoverageStatistics statistics = create_coverage_statistics(desc, pixels, 1)!;
+
     TextureId id = self.textures.add({})!;
 
     *self.textures.get(id) = {
@@ -131,7 +133,7 @@ fn TextureId? AssetStore.add_texture_mips(
 <*
  Add a storage texture with no pixels; contents are undefined until a dispatch writes them.
  @param desc : "Storage is implied; zero mip_levels or layers mean one."
- @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
+ @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED
 *>
 fn TextureId? AssetStore.add_texture_empty(&self, TextureDesc desc, String key = "") {
     check_key(self, key)!;
@@ -167,6 +169,7 @@ fn void? AssetStore.replace_texture(
     check_texture_structure(record.desc, desc)!;
 
     CoverageStatistics statistics = create_coverage_statistics(desc, pixels, record.header.revision + 1)!;
+
     apply_texture(
         allocator:     self.allocator,
         record:        record,
@@ -195,6 +198,7 @@ fn void? AssetStore.replace_texture_owned(
     check_texture_structure(record.desc, desc)!;
 
     CoverageStatistics statistics = create_coverage_statistics(desc, pixels, record.header.revision + 1)!;
+
     apply_texture(
         allocator:     self.allocator,
         record:        record,
@@ -209,7 +213,7 @@ fn void? AssetStore.replace_texture_owned(
 <*
  Replace the description with supplied mips copied into the store.
  @param levels : "Complete slices ordered mip-major, then layer."
- @return? c3d::INVALID_ARGUMENT, c3d::INCOMPATIBLE_STRUCTURE
+ @return? c3d::INVALID_ARGUMENT, c3d::INCOMPATIBLE_STRUCTURE, c3d::UNSUPPORTED
  @require self.textures.is_live(texture), texture.index >= BUILTIN_TEXTURE_COUNT
 *>
 fn void? AssetStore.replace_texture_mips(
@@ -236,7 +240,7 @@ fn void? AssetStore.replace_texture_mips(
 <*
  Replace with an empty storage texture; contents are undefined until a dispatch writes them.
  @param desc : "Storage is implied; zero mip_levels or layers mean one."
- @return? c3d::INVALID_ARGUMENT, c3d::INCOMPATIBLE_STRUCTURE
+ @return? c3d::INVALID_ARGUMENT, c3d::INCOMPATIBLE_STRUCTURE, c3d::UNSUPPORTED
  @require self.textures.is_live(texture), texture.index >= BUILTIN_TEXTURE_COUNT
 *>
 fn void? AssetStore.replace_texture_empty(&self, TextureId texture, TextureDesc desc) {
@@ -275,14 +279,22 @@ fn void AssetStore.mark_texture_dirty(&self, TextureId texture) {
     record.header.revision++;
 
     if (record.desc.coverage == CoveragePolicy.NONE) {
-        record.coverage_statistics = texture_statistics_identity(record.desc, record.source_kind, record.header.revision);
+        record.coverage_statistics = texture_statistics_identity(
+            desc: record.desc,
+            source_kind: record.source_kind,
+            revision: record.header.revision,
+        );
         return;
     }
 
     CoverageStatistics? statistics = create_coverage_statistics(record.desc, record.pixels, record.header.revision);
 
     if (catch excuse = statistics) {
-        record.coverage_statistics = texture_statistics_identity(record.desc, record.source_kind, record.header.revision);
+        record.coverage_statistics = texture_statistics_identity(
+            desc: record.desc,
+            source_kind: record.source_kind,
+            revision: record.header.revision,
+        );
         record.coverage_statistics.valid = false;
         record.coverage_statistics.failure = excuse;
     } else {
@@ -321,7 +333,11 @@ fn void AssetStore.restore_texture_cpu(&self, TextureId texture, char[] pixels) 
 
     if (catch excuse = fresh) {
         record.header.revision++;
-        record.coverage_statistics = texture_statistics_identity(record.desc, record.source_kind, record.header.revision);
+        record.coverage_statistics = texture_statistics_identity(
+            desc: record.desc,
+            source_kind: record.source_kind,
+            revision: record.header.revision,
+        );
         record.coverage_statistics.valid = false;
         record.coverage_statistics.failure = excuse;
         return;
@@ -374,7 +390,6 @@ fn void? check_format_use(TextureDesc desc) @private {
     check_texture_semantics(desc)!;
 
     // Integer texels take mip zero only.
-
     if (desc.format == R16_UINT && desc.generate_mips) return c3d::INVALID_ARGUMENT~;
 
     if (!desc.storage) return;
@@ -475,33 +490,4 @@ fn void apply_texture(
     record.supplied_mips = supplied_mips;
     record.coverage_statistics = statistics;
     mark_replaced(&record.header);
-}
-
-fn TextureId? add_texture_prepared_owned(
-    AssetStore* assets,
-    TextureDesc desc,
-    char[] pixels,
-    CoverageStatistics statistics,
-    String key = "",
-) @private {
-    check_key(assets, key)!;
-    check_format_use(desc)!;
-
-    if (!texture_statistics_match(desc, &statistics) || statistics.source_kind != MIP_ZERO) {
-        return c3d::INVALID_ARGUMENT~;
-    }
-
-    statistics.revision = 1;
-    check_coverage_statistics(desc, &statistics, 1)!;
-
-    TextureId id = assets.textures.add({})!;
-
-    *assets.textures.get(id) = {
-        .header = { .key = copy_string(assets.allocator, key), .revision = 1 },
-        .desc = desc, .source_kind = MIP_ZERO, .pixels = pixels,
-        .coverage_statistics = statistics,
-    };
-    register_key(assets, key, typed_ref(AssetKind.TEXTURE, id));
-
-    return id;
 }

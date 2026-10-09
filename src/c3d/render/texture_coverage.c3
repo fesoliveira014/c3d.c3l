@@ -73,6 +73,7 @@ fn uint texture_coordinate_hash(
     uint[4] words = { face, mip, x, y };
 
     foreach (word : words) hash = (uint)((ulong)(hash ^ word) * HASH_WORD_MULTIPLIER);
+
     hash ^= hash >> 16;
     hash = (uint)((ulong)hash * HASH_AVALANCHE_FIRST);
     hash ^= hash >> 15;
@@ -198,6 +199,7 @@ fn void select_texture_alpha_byte(TextureCoverageState* state) @private {
 fn void choose_texture_global(TextureCoverageState* state) @private {
     ulong higher = state.above + state.equal;
     bool choose_high = texture_count_error(higher, state) < texture_count_error(state.above, state);
+
     state.global_count = choose_high ? higher : state.above;
     state.global_scale = 1.0;
 
@@ -218,6 +220,7 @@ fn void choose_texture_global(TextureCoverageState* state) @private {
 fn void finish_texture_coverage_pass(TextureCoverageState* state) @private {
     uint completed = state.phase;
     bool single_prefix = completed && completed < state.alpha_bytes && state.equal == 1;
+
     state.phase++;
     state.row = 0;
 
@@ -228,7 +231,9 @@ fn void finish_texture_coverage_pass(TextureCoverageState* state) @private {
             state.endpoint = true;
             state.global_count = 0;
             state.global_scale = state.identity ? 0.0 : 1.0;
+
             choose_texture_correction(state);
+
             return;
         }
 
@@ -236,7 +241,9 @@ fn void finish_texture_coverage_pass(TextureCoverageState* state) @private {
           <= texture_tolerance_floor(state.base_total, state.texels)) {
             state.global_count = state.identity;
             state.global_scale = 1.0;
+
             choose_texture_correction(state);
+
             return;
         }
 
@@ -247,7 +254,9 @@ fn void finish_texture_coverage_pass(TextureCoverageState* state) @private {
             state.equal = state.texels;
             state.global_count = 0;
             state.global_scale = 1.0;
+
             choose_texture_correction(state);
+
             return;
         }
 
@@ -261,7 +270,9 @@ fn void finish_texture_coverage_pass(TextureCoverageState* state) @private {
                 state.equal = state.texels - state.positive;
                 state.global_count = state.positive;
                 state.global_scale = 1.0;
+
                 choose_texture_correction(state);
+
                 return;
             }
         }
@@ -285,7 +296,9 @@ fn void finish_texture_coverage_pass(TextureCoverageState* state) @private {
               <= texture_tolerance_floor(state.base_total, state.texels)) {
                 state.global_count = chosen;
                 state.global_scale = 1.0;
+
                 choose_texture_correction(state);
+
                 return;
             }
         }
@@ -308,7 +321,14 @@ fn ulong first_texture_alpha_scale(PixelFormat format, uint code, double cutoff)
     while (below + 1 < reaching) {
         ulong middle = below + (reaching - below) / 2;
 
-        if (asset::decode_texture_alpha(format, asset::scale_texture_alpha(format, code, bitcast(middle, double))) >= cutoff) {
+        if (asset::decode_texture_alpha(
+            format: format,
+            code: asset::scale_texture_alpha(
+                format: format,
+                code: code,
+                scale: bitcast(middle, double),
+            ),
+        ) >= cutoff) {
             reaching = middle;
         } else {
             below = middle;
@@ -404,13 +424,15 @@ fn void write_texture_coverage_band(
                     bool promote = state.promote_count == state.equal;
 
                     if (state.promote_count && state.promote_count < state.equal) {
-                        promote = selected_texture_hash(&state.hash,
-                            texture_coordinate_hash(
+                        promote = selected_texture_hash(
+                            choice: &state.hash,
+                            hash: texture_coordinate_hash(
                                 face: state.face,
                                 mip: state.mip,
                                 x: column,
                                 y: row,
-                            ));
+                            ),
+                        );
                     }
 
                     if (promote) corrected = state.minimum_code;

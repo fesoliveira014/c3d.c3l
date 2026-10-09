@@ -124,7 +124,7 @@ fn PrepareStepPlan? plan_prepare_texture(
 ) @local {
     TextureAsset* source = renderer.assets.texture(unit.texture);
     material::TextureDesc desc = record.chain_active && record.chain_unit == unit.index
-        ? record.generation_desc : source.desc;
+      ? record.generation_desc : source.desc;
     if (!unit.texture_candidate.texture.is_valid()) {
         check_prepare_texture_source(source)!;
 
@@ -154,9 +154,7 @@ fn PrepareStepPlan? plan_prepare_texture(
         if (layout.output_texels && record.generation_mip <= layout.mip_count) {
             record.phase = PreparePhase.GENERATION;
             uint height = material::texture_mip_extent(desc.height, record.generation_mip);
-
             uint rows = math::min(PREPARE_GENERATION_ROWS, height - record.generation_row);
-
             uint width = material::texture_mip_extent(desc.width, record.generation_mip);
 
             ulong before = texture_scan_charge(
@@ -205,10 +203,8 @@ fn PrepareStepPlan? plan_prepare_texture(
     )!;
     uint block_height = material::texture_is_compressed(desc.format) ? TEXEL_BLOCK_EXTENT : 1;
     uint height = material::texture_mip_extent(desc.height, unit.staged.mip);
-
     uint rows_left = (height + block_height - 1) / block_height - unit.staged.row;
     usz allowance = prepare_byte_allowance(budget);
-
     uint rows = allowance < first.row_bytes ? 1 : (uint)math::min((usz)rows_left, allowance / first.row_bytes);
 
     TextureBand band = texture_band(
@@ -234,9 +230,7 @@ fn bool? run_prepare_step(
     switch (plan.kind) {
         case TEXTURE_IMAGE:
             TextureAsset* source = renderer.assets.texture(unit.texture);
-
             uint chain_mips = texture_chain_mips(source);
-
             bool eligible = texture_eligible(source.desc, source.source_kind, chain_mips);
             gpu::TextureDesc desc = texture_gpu_description(
                 desc: source.desc,
@@ -254,6 +248,7 @@ fn bool? run_prepare_step(
                 .is_cube = source.desc.is_cube, .copy_source = eligible, .format = desc.format,
                 .semantic = source.desc.semantic,
             };
+
             if (source.desc.coverage == CoveragePolicy.THRESHOLD) {
                 unit.texture_candidate.coverage_resource = create_texture_coverage_resource(
                     allocator: renderer.allocator,
@@ -265,7 +260,6 @@ fn bool? run_prepare_step(
 
             unit.staged.mip = unit.texture_base;
             uint chain_extent = math::max(source.desc.width, source.desc.height);
-
             uint tail_base = eligible ? texture_tail_base(chain_extent, chain_mips) : 0;
             unit.residency_candidate = {
                 .chain_mips = chain_mips, .chain_width = source.desc.width, .chain_height = source.desc.height,
@@ -326,6 +320,7 @@ fn bool? run_prepare_step(
             record.generation_outputs = 0;
             record.generation_desc = source.desc;
             record.generation_statistics = source.coverage_statistics;
+
             if (source.desc.coverage == CoveragePolicy.THRESHOLD) {
                 record.coverage = begin_texture_coverage(
                     desc: source.desc,
@@ -345,6 +340,7 @@ fn bool? run_prepare_step(
             bool coverage = desc.coverage == CoveragePolicy.THRESHOLD;
             std::time::Clock started = clock::now();
             defer report.generation_ns = prepare_add(report.generation_ns, (ulong)started.to_now());
+
             if (!coverage || record.coverage.phase == 0) {
                 write_texture_filter_band(
                     desc: desc,
@@ -381,11 +377,13 @@ fn bool? run_prepare_step(
 
             if (record.generation_row == material::texture_mip_extent(desc.height, record.generation_mip)) {
                 bool completed = true;
+
                 if (coverage) {
                     ulong reserved_before = record.coverage.reserved;
                     finish_texture_coverage_pass(&record.coverage);
 
                     ulong skipped = record.coverage.reserved - reserved_before;
+
                     if (skipped) {
                         GeneratedTextureLayout layout = generated_texture_mip_layout(desc)!;
                         ulong before = texture_scan_charge(
@@ -394,7 +392,9 @@ fn bool? run_prepare_step(
                             output_total: layout.output_texels,
                             passes: layout.passes,
                         );
+
                         record.generation_outputs += skipped;
+
                         ulong after = texture_scan_charge(
                             base_texels: layout.base_texels,
                             position: record.generation_outputs,
@@ -411,8 +411,13 @@ fn bool? run_prepare_step(
                 }
 
                 record.generation_row = 0;
+
                 if (completed) {
-                    if (coverage) store_texture_coverage_result(unit.texture_candidate.coverage_resource, &record.coverage);
+                    if (coverage) store_texture_coverage_result(
+                        resource: unit.texture_candidate.coverage_resource,
+                        state: &record.coverage,
+                    );
+
                     if (++record.generation_layer == desc.layers) {
                         record.generation_layer = 0;
                         record.generation_mip++;
@@ -432,7 +437,6 @@ fn bool? run_prepare_step(
             return false;
 
         case TEXTURE_COPY:
-
             return run_prepare_texture_copy(
                 renderer: renderer,
                 record: record,
@@ -450,10 +454,14 @@ fn bool? run_prepare_step(
 
         case GEOMETRY_STORAGE:
             GeometryAsset* source = renderer.assets.geometry(unit.geometry);
-
             GeometryLayout layout = geometry_layout_from_width(&source.data, source.joints_u16);
-            gpu::AllocationDesc desc = { .size = layout.total_bytes, .alignment = STREAM_ALIGNMENT,
-                .memory_class = gpu::MemoryClass.GPU_PRIVATE, .access = { .graphics }, .debug_name = "prepared_geometry" };
+            gpu::AllocationDesc desc = {
+                .size = layout.total_bytes,
+                .alignment = STREAM_ALIGNMENT,
+                .memory_class = gpu::MemoryClass.GPU_PRIVATE,
+                .access = { .graphics },
+                .debug_name = "prepared_geometry"
+            };
             report.allocations++;
             gpu::GpuAllocation allocation = gpu::allocate_memory(&renderer.device, &desc)!;
             unit.geometry_candidate.allocation = allocation;
@@ -511,8 +519,13 @@ fn bool? run_prepare_step(
 
         case MATERIAL_STORAGE:
             Material* source = &renderer.assets.material(unit.material).data;
-            gpu::AllocationDesc desc = { .size = source.custom.param_block.len, .alignment = STREAM_ALIGNMENT,
-                .memory_class = gpu::MemoryClass.GPU_PRIVATE, .access = { .graphics }, .debug_name = "prepared_material_payload" };
+            gpu::AllocationDesc desc = {
+                .size = source.custom.param_block.len,
+                .alignment = STREAM_ALIGNMENT,
+                .memory_class = gpu::MemoryClass.GPU_PRIVATE,
+                .access = { .graphics },
+                .debug_name = "prepared_material_payload"
+            };
             report.allocations++;
             unit.material_candidate.payload = gpu::allocate_memory(&renderer.device, &desc)!;
             unit.material_candidate.payload_size = source.custom.param_block.len;

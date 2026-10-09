@@ -60,6 +60,7 @@ fn GeometryId? convert_primitive(
                     if (attribute.data.type != gltf::Type.VEC4 || attribute.data.count != vertex_count) {
                         return c3d::ASSET_FORMAT_ERROR~;
                     }
+
                     if (!importer.options.regenerate_tangents) {
                         geometry.tangents = read_vec4(importer, attribute.data, vertex_count)!;
                     }
@@ -95,9 +96,9 @@ fn GeometryId? convert_primitive(
         provenance.origin = TangentOrigin.AUTHORED;
     }
 
-    bool wants_tangents = importer.options.regenerate_tangents
-      || (importer.options.generate_tangents && geometry.topology == Topology.TRIANGLES
-          && !geometry.tangents.len && has_normal_map(importer, primitive));
+    bool wants_tangents = geometry.topology == Topology.TRIANGLES
+      && (importer.options.regenerate_tangents
+          || (importer.options.generate_tangents && !geometry.tangents.len && has_normal_map(importer, primitive)));
     if (wants_tangents) {
         uint uv_set = tangent_uv_set(importer, primitive)!;
         Vec2[] selected = uv_set == 0 ? geometry.uv0 : geometry.uv1;

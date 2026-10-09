@@ -118,10 +118,19 @@ fn void? check_texture_semantics(TextureDesc desc) {
             case BC1_RGBA_SRGB:
             case BC3_SRGB:
             case BC7_SRGB: return c3d::INVALID_ARGUMENT~;
-            default: break;
-        }
 
-        if (desc.format == PixelFormat.R16_UINT) return c3d::UNSUPPORTED~;
+            case R16_UINT: return c3d::UNSUPPORTED~;
+
+            case RGBA8_UNORM:
+            case RGBA16_FLOAT:
+            case RGBA32_FLOAT:
+            case BC1_RGBA_UNORM:
+            case BC3_UNORM:
+            case BC4_UNORM:
+            case BC5_UNORM:
+            case BC6H_UFLOAT:
+            case BC7_UNORM: break;
+        }
     }
 
     if (desc.coverage == CoveragePolicy.NONE) return;

@@ -114,7 +114,9 @@ fn TextureSlot? texture_slot_for(
     TextureSemantic semantic = TextureSemantic.COLOR,
 ) @private {
     if (!texture) return material::texture_slot();
+
     ufbx::Texture* file = file_texture(texture)!;
+
     TextureId id = plain_texture(
         importer: importer,
         texture:  file,

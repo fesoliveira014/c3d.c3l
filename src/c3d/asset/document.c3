@@ -36,7 +36,6 @@ struct DocumentTexture {
     TextureSourceKind source_kind;
     char[]      pixels;
     TextureMipData[] supplied_mips;
-    CoverageStatistics coverage_statistics;
     String      key;
 }
 

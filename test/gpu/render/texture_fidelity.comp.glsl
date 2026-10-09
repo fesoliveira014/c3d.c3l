@@ -32,6 +32,7 @@ void main() {
     FidelityRoot root = FidelityRoot(dispatch.parameters);
     uint index = gl_GlobalInvocationID.x;
     if (index >= root.count) return;
+
     FidelityInput input_value = FidelityInputs(root.inputs).values[index];
     vec3 mapped = decode_normal(input_value.encoded_scale.xyz, input_value.encoded_scale.w, root.rg != 0u);
     vec3 result = mapped;

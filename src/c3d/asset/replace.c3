@@ -28,6 +28,7 @@ const Id ADDED_ID @private = { .index = uint::max }; // table slot of an entry t
  @param [&inout] document : "Emptied on success; intact on a fault."
  @param missing : "Receives the first missing parts by kind, then key."
  @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::INCOMPATIBLE_STRUCTURE
+ @return? c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
  @require self.models.is_live(model)
  @require document.allocator == self.allocator, self.allocator != tmem
 *>

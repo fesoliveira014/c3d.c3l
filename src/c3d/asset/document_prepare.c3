@@ -72,11 +72,13 @@ fn PreparedModelDocument? prepare_model_document(ModelDocument* document) @priva
                     if (entry.supplied_mips.len) return c3d::INVALID_ARGUMENT~;
 
                     prepared.textures[index] = create_coverage_statistics(entry.desc, entry.pixels)!;
+
                 case SUPPLIED_MIPS:
                     if (entry.pixels.len) return c3d::INVALID_ARGUMENT~;
                     (void)check_texture_mips(entry.desc, entry.supplied_mips)!;
 
                     prepared.textures[index] = texture_statistics_identity(entry.desc, SUPPLIED_MIPS, 0);
+
                 case EMPTY:
                     return c3d::UNSUPPORTED~;
             }
@@ -116,6 +118,7 @@ fn PreparedModelDocument? prepare_model_document(ModelDocument* document) @priva
                 .skin_bounds = geometry::build_skin_bounds(document.allocator, &entry.data),
                 .morph_bounds = geometry::build_morph_bounds(document.allocator, &entry.data),
             };
+
             if (provenance.origin == TangentOrigin.AUTHORED) {
                 foreach (tangent : entry.data.tangents) {
                     if (tangent.w == -1 || tangent.w == 1) continue;

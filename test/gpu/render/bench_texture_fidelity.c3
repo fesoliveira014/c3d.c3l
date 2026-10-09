@@ -18,6 +18,8 @@ const uint DEFAULT_WARMUPS @private = 2;
 const uint DEFAULT_RUNS @private = 10;
 const usz UPLOAD_BYTES @private = 128 << 20; // Holds all formats' complete chains and model blocks.
 const PixelFormat[3] FORMATS @private = { RGBA8_UNORM, RGBA16_FLOAT, RGBA32_FLOAT };
+const String TEXTURE_COLUMNS @private = "# texture_columns=record,run,format,semantic,coverage,source_bytes,live_source_bytes,cpu_full_chain_bytes,prepare_output_chain_bytes,state_bytes,result_bytes,add_scan_ns,restore_scan_ns,cpu_chain_ns,advance_ns,submission_wait_ns,generated_texels,progress_texels,staged_bytes";
+const String TANGENT_COLUMNS @private = "# tangent_columns=record,run,source_vertices,output_vertices,corners,source_bytes,output_stream_bytes,allocated_output_bytes,remap_bytes,port_split_ns,split_tangent_scratch_bytes";
 
 struct Configuration @private {
     uint extent;
@@ -56,7 +58,12 @@ fn Configuration? parse_configuration(String[] args) @private {
     return configuration;
 }
 
-fn char[] make_pixels(Allocator allocator, uint extent, PixelFormat format, TextureSemantic semantic) @private {
+fn char[] make_pixels(
+    Allocator allocator,
+    uint extent,
+    PixelFormat format,
+    TextureSemantic semantic,
+) @private {
     usz texels = (usz)extent * extent;
     char[] pixels = alloc::new_array(allocator, char, (sz)(texels * material::texture_block_bytes(format)));
 
@@ -72,11 +79,15 @@ fn char[] make_pixels(Allocator allocator, uint extent, PixelFormat format, Text
         };
         switch (format) {
             case RGBA8_UNORM:
-                for (uint channel = 0; channel < 4; channel++) pixels[index * 4 + channel] = (char)math::round(value[channel] * 255);
+                for (uint channel = 0; channel < 4; channel++) {
+                    pixels[index * 4 + channel] = (char)math::round(value[channel] * 255);
+                }
             case RGBA16_FLOAT:
                 ushort* destination = (ushort*)pixels.ptr;
 
-                for (uint channel = 0; channel < 4; channel++) destination[index * 4 + channel] = asset::encode_texture_half(value[channel]);
+                for (uint channel = 0; channel < 4; channel++) {
+                    destination[index * 4 + channel] = asset::encode_texture_half(value[channel]);
+                }
             case RGBA32_FLOAT:
                 ((Vec4*)pixels.ptr)[index] = value;
             default: unreachable();
@@ -88,20 +99,28 @@ fn char[] make_pixels(Allocator allocator, uint extent, PixelFormat format, Text
 
 fn ModelId? make_model(AssetStore* assets, TextureId texture) @private {
     TangentGeometry temporary = { .allocator = mem, .data = geometry::box(
-        allocator: mem, width: 1, height: 1, depth: 1,
+        allocator: mem,
+        width: 1,
+        height: 1,
+        depth: 1,
     ) };
     defer geometry::destroy_tangent_geometry(&temporary);
+
     GeometryId geometry_id = assets.add_geometry(&temporary.data)!;
+
     MaterialId material_id = assets.add_material(material::basic({
         .color = { 1, 1, 1, 1 }, .map = material::texture_slot(texture, asset::SAMPLER_NEAREST),
     }))!;
+
     ModelTemplate model = {
         .nodes = alloc::new_array(mem, NodeTemplate, 1),
         .meshes = alloc::new_array(mem, ModelMesh, 1),
     };
     defer catch asset::free_model_template(mem, &model);
+
     model.nodes[0] = { .parent = -1, .local = maths::TRANSFORM_IDENTITY, .visible = true, .layers = uint::max };
     model.meshes[0] = { .node = 0, .geometry = geometry_id, .material = material_id };
+
     return assets.add_model_owned(&model);
 }
 
@@ -114,20 +133,29 @@ fn Measurement? measure_texture(
     AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
     defer asset::destroy_asset_store(&assets);
 
-    char[] pixels = make_pixels(mem, configuration.extent, format, semantic);
+    char[] pixels = make_pixels(
+        allocator: mem,
+        extent: configuration.extent,
+        format: format,
+        semantic: semantic,
+    );
     defer alloc::free(mem, pixels.ptr);
 
     material::TextureDesc desc = material::texture_2d_desc(configuration.extent, configuration.extent, format);
     desc.semantic = semantic;
     desc.coverage = coverage;
     desc.alpha_threshold = 0.5;
+
     Measurement result = { .source_bytes = pixels.len, .state_bytes = TextureCoverageState::size };
+
     std::time::Clock started = clock::now();
     TextureId texture = assets.add_texture(desc, pixels)!;
     result.scan_ns = (ulong)started.to_now();
 
     assets.release_texture_cpu(texture);
+
     char[] restored = ((String)pixels).copy(assets.allocator);
+
     started = clock::now();
     assets.restore_texture_cpu(texture, restored);
     result.restore_ns = (ulong)started.to_now();
@@ -138,17 +166,21 @@ fn Measurement? measure_texture(
         started = clock::now();
         TextureMipChain chain = render::create_texture_mips(mem, desc, pixels)!;
         defer render::destroy_texture_mips(&chain);
+
         result.generation_ns = (ulong)started.to_now();
         result.chain_bytes = chain.pixels.len;
     }
 
     ModelId model = make_model(&assets, texture)!;
+
     Renderer renderer = render::create_renderer(mem, &assets, {
         .validation = false, .application_name = "texture_fidelity_benchmark", .upload_ring_bytes = UPLOAD_BYTES,
     })!;
     defer render::destroy_renderer(&renderer);
+
     PrepareId id = renderer.begin_prepare_model(model)!;
     defer renderer.end_prepare(id)!!;
+
     PrepareRecord* record = renderer.prepares.get(id);
 
     foreach (&unit : record.units) {
@@ -182,7 +214,9 @@ fn Measurement? measure_texture(
     result.progress_texels = progress.texels_total;
     if (coverage == CoveragePolicy.THRESHOLD) {
         TextureCoverageResource* resource = renderer.textures[texture.index].coverage_resource;
-        if (resource) result.result_bytes = TextureCoverageResource::size + resource.counts.len * TextureCoverageCounts::size;
+        if (resource) {
+            result.result_bytes = TextureCoverageResource::size + resource.counts.len * TextureCoverageCounts::size;
+        }
     }
 
     return result;
@@ -190,31 +224,43 @@ fn Measurement? measure_texture(
 
 fn void? measure_tangents(uint run, bool measured) @private {
     TangentGeometry temporary = { .allocator = mem, .data = geometry::sphere(
-        allocator: mem, radius: 1, slices: 32, stacks: 16,
+        allocator: mem,
+        radius: 1,
+        slices: 32,
+        stacks: 16,
     ) };
     defer geometry::destroy_tangent_geometry(&temporary);
+
     Geometry source = temporary.data;
+
     std::time::Clock started = clock::now();
     TangentGeometry owner = geometry::create_tangent_geometry(mem, &source)!;
     defer geometry::destroy_tangent_geometry(&owner);
+
     ulong elapsed = (ulong)started.to_now();
+
     usz source_bytes = source.positions.len * Vec3::size + source.normals.len * Vec3::size
       + source.uv0.len * Vec2::size + source.indices.len * uint::size;
     usz output_bytes = owner.data.positions.len * Vec3::size + owner.data.normals.len * Vec3::size
       + owner.data.tangents.len * Vec4::size + owner.data.uv0.len * Vec2::size + owner.data.indices.len * uint::size;
     usz capacity = math::min((usz)source.positions.len + (usz)source.indices.len, (usz)uint::max);
-    usz allocated_output = output_bytes + (capacity - owner.data.tangents.len) * Vec4::size;
+    usz allocated_output = output_bytes;
+    usz split_tangent_scratch = capacity * Vec4::size;
     usz remap_bytes = capacity * 2 * uint::size + source.positions.len * bool::size;
-    if (measured) io::printfn("tangent,%d,%d,%d,%d,%d,%d,%d,%d,%d", run, source.positions.len,
-        owner.data.positions.len, source.indices.len, source_bytes, output_bytes, allocated_output, remap_bytes, elapsed);
+
+    if (measured) io::printfn("tangent,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d", run, source.positions.len,
+        owner.data.positions.len, source.indices.len, source_bytes, output_bytes, allocated_output,
+        remap_bytes, elapsed, split_tangent_scratch);
 }
 
 fn void? run_benchmark(String[] args) @private {
     Configuration configuration = parse_configuration(args)!;
+
     io::printfn("# compiler_optimization=%s safe=%s validation=off thresholds=none extent=%d warmups=%d runs=%d",
-        env::COMPILER_OPT_LEVEL, env::COMPILER_SAFE_MODE, configuration.extent, configuration.warmups, configuration.runs);
-    io::printn("# texture_columns=record,run,format,semantic,coverage,source_bytes,live_source_bytes,cpu_full_chain_bytes,prepare_output_chain_bytes,state_bytes,result_bytes,add_scan_ns,restore_scan_ns,cpu_chain_ns,advance_ns,submission_wait_ns,generated_texels,progress_texels,staged_bytes");
-    io::printn("# tangent_columns=record,run,source_vertices,output_vertices,corners,source_bytes,output_stream_bytes,allocated_output_bytes,remap_bytes,port_split_ns");
+        env::COMPILER_OPT_LEVEL, env::COMPILER_SAFE_MODE,
+        configuration.extent, configuration.warmups, configuration.runs);
+    io::printn(TEXTURE_COLUMNS);
+    io::printn(TANGENT_COLUMNS);
 
     for (uint sample = 0; sample < configuration.warmups + configuration.runs; sample++) {
         bool measured = sample >= configuration.warmups;
@@ -223,11 +269,16 @@ fn void? run_benchmark(String[] args) @private {
         foreach (format : FORMATS) {
             for (uint kind = 0; kind < 4; kind++) {
                 TextureSemantic semantic = kind < 2 ? TextureSemantic.COLOR
-                    : kind == 2 ? TextureSemantic.NORMAL_RGB : TextureSemantic.NORMAL_RG;
+                  : kind == 2 ? TextureSemantic.NORMAL_RGB : TextureSemantic.NORMAL_RG;
                 CoveragePolicy coverage = kind == 1 ? CoveragePolicy.THRESHOLD : CoveragePolicy.NONE;
+
                 Measurement result = measure_texture(
-                    configuration: configuration, format: format, semantic: semantic, coverage: coverage,
+                    configuration: configuration,
+                    format: format,
+                    semantic: semantic,
+                    coverage: coverage,
                 )!;
+
                 if (measured) io::printfn("texture,%d,%s,%s,%s,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d,%d",
                     run, format, semantic, coverage, result.source_bytes, result.live_source_bytes,
                     result.chain_bytes, result.prepare_chain_bytes, result.state_bytes,

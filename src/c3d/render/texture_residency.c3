@@ -599,8 +599,13 @@ fn void? stage_texture_levels(
 
     switch (record.source_kind) {
         case MIP_ZERO:
-            chain = create_texture_mips(allocator: tmem, desc: record.desc, pixels: record.pixels,
-                first_mip: first_level, statistics: &record.coverage_statistics)!;
+            chain = create_texture_mips(
+                allocator: tmem,
+                desc: record.desc,
+                pixels: record.pixels,
+                first_mip: first_level,
+                statistics: &record.coverage_statistics,
+            )!;
             layout = { .total_bytes = chain.pixels.len, .mip_count = chain.mip_count, .offsets = chain.offsets };
 
         case SUPPLIED_MIPS:

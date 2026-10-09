@@ -86,12 +86,14 @@ fn void mikk_merge_vertices_fast(
         float width_x = maximum[0] - minimum[0];
         float width_y = maximum[1] - minimum[1];
         float width_z = maximum[2] - minimum[2];
+
         int channel = 0;
         if (width_y > width_x && width_y > width_z) { channel = 1; }
         else if (width_z > width_x) { channel = 2; }
 
         float separation = 0.5f * (maximum[channel] + minimum[channel]);
         if (!math::is_finite(separation)) continue;
+
         if (separation >= maximum[channel] || separation <= minimum[channel]) {
             for (int i = left; i <= right; i++) {
                 int destination = temporary[i].index;
@@ -136,6 +138,7 @@ fn void mikk_merge_vertices_fast(
                 if (temporary[partition_right].position[channel] < separation) { partition_left++; }
                 else { partition_right--; }
             }
+
             if (partition_left < right) ranges[pending++] = { .left = partition_left, .right = right };
             if (left < partition_right) ranges[pending++] = { .left = left, .right = partition_right };
         }

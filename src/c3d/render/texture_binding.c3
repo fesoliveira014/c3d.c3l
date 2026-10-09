@@ -88,7 +88,6 @@ fn TextureBinding? resolve_texture_slot(Renderer* renderer, TextureSlot slot, bo
     if (present) {
         material::TextureDesc desc = renderer.assets.texture(slot.texture.asset).desc;
         // Built-in stages sample as float; integer texels are read only through gpu_fetch_uint.
-
         if (desc.is_cube || (desc.format == R16_UINT && !custom_read)) return c3d::UNSUPPORTED~;
     }
 
@@ -151,8 +150,8 @@ fn TextureBinding? resolve_gradient_map(Renderer* renderer, TextureId texture) @
 
 fn TextureBinding texture_binding_content(Renderer* renderer, TextureId texture, TextureRes* mirror) @private {
     TextureBinding content = { .texture_content_revision = mirror.revision, .semantic = mirror.semantic };
-    // CPU descriptors can advance again before captured uploads commit.
 
+    // CPU descriptors can advance again before captured uploads commit.
     foreach (pending : renderer.pending_texture_uploads) {
         if (!c3d::same_id(pending.asset, texture) || pending.texture != mirror.texture) continue;
         content = { .texture_content_revision = pending.revision, .semantic = pending.semantic };
@@ -170,9 +169,7 @@ fn TextureBinding texture_binding_content(Renderer* renderer, TextureId texture,
 fn void texture_uv_rows(UvTransform transform, Vec4* row0, Vec4* row1) {
     float cosine = math::cos(transform.rotation);
     float sine = math::sin(transform.rotation);
-
     *row0 = { cosine * transform.scale.x, -sine * transform.scale.y, transform.offset.x, 0 };
-
     *row1 = { sine * transform.scale.x, cosine * transform.scale.y, transform.offset.y, 0 };
 }
 

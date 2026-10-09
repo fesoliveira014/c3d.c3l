@@ -85,8 +85,10 @@ fn TextureId? texture_for(
     TextureDesc desc;
     image::Image decoded;
     defer catch image::destroy_image(&decoded);
+
     image::TextureContainerView container;
     bool supplied;
+
     if (is_texture_container(encoded)) {
         container = image::parse_texture_container(
             scratch: tmem,
@@ -98,7 +100,9 @@ fn TextureId? texture_for(
         supplied = !desc.generate_mips;
     } else {
         decoded = image::decode_image(importer.allocator, encoded)!;
-        if (decoded.format != RGBA8_UNORM && decoded.format != RGBA32_FLOAT) return c3d::ASSET_FORMAT_ERROR~;
+
+        if (decoded.format != RGBA8_UNORM) return c3d::ASSET_FORMAT_ERROR~;
+
         desc = material::texture_2d_desc(
             width: decoded.width,
             height: decoded.height,
@@ -109,6 +113,7 @@ fn TextureId? texture_for(
     }
 
     desc.debug_name = "gltf_image";
+
     if (!supplied && coverage_eligible(desc)) {
         desc.coverage = coverage;
         desc.alpha_threshold = alpha_threshold;
@@ -117,7 +122,9 @@ fn TextureId? texture_for(
     foreach (&variant : importer.texture_variants[:importer.texture_variant_count]) {
         if (variant.image != image_index || variant.semantic != desc.semantic || variant.format != desc.format
             || variant.coverage != desc.coverage || variant.alpha_threshold != desc.alpha_threshold) continue;
+
         image::destroy_image(&decoded);
+
         if (desc.coverage == CoveragePolicy.NONE) table[image_index] = variant.texture;
 
         return variant.texture;
@@ -146,7 +153,9 @@ fn TextureId? texture_for(
         .alpha_threshold = desc.alpha_threshold,
         .texture = id,
     };
+
     if (desc.coverage == CoveragePolicy.NONE) table[image_index] = id;
+
     if (importer.source) {
         retain_source_image(importer, image_index, encoded);
         usz count = importer.source.texture_images.len;
@@ -184,6 +193,7 @@ fn String texture_variant_key(
     TextureDesc desc,
 ) @private {
     String role = srgb ? "srgb" : "linear";
+
     if (desc.coverage != CoveragePolicy.NONE) {
         ulong threshold = *(ulong*)&desc.alpha_threshold;
 
@@ -306,11 +316,14 @@ fn material::Material? convert_material(Importer* importer, gltf::Material* sour
     common.alpha_mode = alpha_mode(source.alpha_mode);
     common.alpha_cutoff = source.alpha_cutoff;
     common.double_sided = source.double_sided != 0;
-    if (!math::is_finite(common.alpha_cutoff) || !in_unit_interval(common.alpha_cutoff)) return c3d::ASSET_FORMAT_ERROR~;
+    if (!math::is_finite(common.alpha_cutoff) || !in_unit_interval(common.alpha_cutoff)) {
+        return c3d::ASSET_FORMAT_ERROR~;
+    }
 
     if (source.unlit) {
         BasicParams params = material::BASIC_PARAMS_DEFAULT;
         params.color = source.pbr_metallic_roughness.base_color_factor;
+
         if (!rgba_in_unit_interval(params.color)) return c3d::ASSET_FORMAT_ERROR~;
 
         CoveragePolicy coverage = mask_policy(common.alpha_mode, common.alpha_cutoff, params.color.w);
@@ -388,6 +401,7 @@ fn StandardParams? standard_params(Importer* importer, gltf::Material* source, M
     params.emissive_strength = source.has_emissive_strength ? source.emissive_strength.emissive_strength : 1;
     params.normal_scale = view_scale(&source.normal_texture);
     params.occlusion_strength = view_scale(&source.occlusion_texture);
+
     if (!rgba_in_unit_interval(params.base_color)) return c3d::ASSET_FORMAT_ERROR~;
 
     CoveragePolicy coverage = mask_policy(common.alpha_mode, common.alpha_cutoff, params.base_color.w);

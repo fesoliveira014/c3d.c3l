@@ -35,6 +35,21 @@ const usz FIDELITY_BUFFER_BYTES @private = 64 << 10; // Holds each fixed corpus 
 const uint FIDELITY_FRAME_LIMIT @private = 8192; // Bounds one-row generation/correction/staging of the fixed leaf.
 const double FIDELITY_FLOAT_ANGLE @private = 1e-5; // Float decode parity required before framebuffer quantization.
 const double FIDELITY_BYTE_ANGLE @private = 0.02; // Includes eight-bit normal storage quantization.
+const uint FIDELITY_BAKE_RECORD_COUNT @private = 60;
+const usz FIDELITY_BAKE_RECORD_BYTES @private = 128;
+const usz FIDELITY_BAKE_HEADER_BYTES @private = 8;
+const uint FIDELITY_BAKE_VALUE_COUNT @private = 15;
+const uint FIDELITY_BAKE_TRANSFORM_STEP @private = 15; // Four corpus samples cover the extra transforms.
+const double FIDELITY_WORLD_ANGLE @private = 0.02;
+const float FIDELITY_IMAGE_TOLERANCE @private = 0.02f;
+const float FIDELITY_TRACE_ABSOLUTE_TOLERANCE @private = 0.001f;
+const float FIDELITY_VISIBLE_PIXEL_THRESHOLD @private = 0.001f;
+const float FIDELITY_BAKE_WEIGHT_MARGIN @private = 0.01f;
+const uint FIDELITY_RASTER_EXTENT @private = 64;
+const uint FIDELITY_RASTER_CENTER @private = FIDELITY_RASTER_EXTENT / 2;
+const uint FIDELITY_RASTER_CENTER_INDEX @private =
+  FIDELITY_RASTER_CENTER * FIDELITY_RASTER_EXTENT + FIDELITY_RASTER_CENTER;
+const uint FIDELITY_BAKE_MINIMUM_ELIGIBLE @private = 64; // Enough interior pixels to compare the two raster paths.
 const PixelFormat[3] FIDELITY_FORMATS @private = { RGBA8_UNORM, RGBA16_FLOAT, RGBA32_FLOAT };
 
 struct FidelityInput @private {
@@ -163,11 +178,13 @@ fn Vec4[]? fidelity_decode(
     bool tangent_frame = false,
 ) @private {
     Renderer* renderer = &fixture.renderer;
+
     FidelityRoot root = {
         .inputs = renderer.buffer_address(harness.input), .outputs = renderer.buffer_address(harness.output),
         .count = (uint)inputs.len, .rg = rg ? 1 : 0, .mode = tangent_frame ? 1 : 0,
     };
     BufferId[1] writes = { harness.output };
+
     renderer.begin_frame()!;
     defer catch render::abort_frame(renderer);
 
@@ -195,11 +212,13 @@ fn Vec4[]? fidelity_sample(
     material::TextureDesc desc = fixture.assets.texture(texture).desc;
     uint width = material::texture_mip_extent(desc.width, mip);
     uint height = material::texture_mip_extent(desc.height, mip);
+
     FidelitySampleRoot root = {
         .outputs = renderer.buffer_address(harness.output), .mip = mip, .width = width, .height = height,
     };
     BufferId[1] writes = { harness.output };
     DispatchTexture[1] textures = { render::read_texture(texture, asset::SAMPLER_NEAREST) };
+
     renderer.begin_frame()!;
     defer catch render::abort_frame(renderer);
 
@@ -247,6 +266,7 @@ fn void test_fidelity_shared_gpu_normal_decoder_matches_double_reference() @test
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
     defer destroy_fixture(&fixture);
+
     FidelityHarness harness = create_fidelity_harness(&fixture)!!;
     defer destroy_fidelity_harness(&fixture, &harness);
 
@@ -258,13 +278,17 @@ fn void test_fidelity_shared_gpu_normal_decoder_matches_double_reference() @test
             { 2, -2, 1, float::max },
             { 0.500001, 0.499999, 1, 1e-30 },
         };
+
         FidelityInput[] inputs = alloc::new_array(tmem, FidelityInput, values.len);
 
         foreach (index, value : values) inputs[index] = { .encoded_scale = value, .model = matrix::IDENTITY4 };
 
         for (uint encoding = 0; encoding < 2; encoding++) {
             Vec4[] actual = fidelity_decode(
-                fixture: &fixture, harness: &harness, inputs: inputs, rg: encoding != 0,
+                fixture: &fixture,
+                harness: &harness,
+                inputs: inputs,
+                rg: encoding != 0,
             )!!;
 
             foreach (index, pixel : actual) {
@@ -274,6 +298,7 @@ fn void test_fidelity_shared_gpu_normal_decoder_matches_double_reference() @test
             }
         }
     };
+
     check_validation(&fixture.renderer);
 }
 
@@ -281,17 +306,25 @@ fn void test_fidelity_mikk_reference_bake_matches_shared_gpu_consumption() @test
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
     defer destroy_fixture(&fixture);
+
     FidelityHarness harness = create_fidelity_harness(&fixture)!!;
     defer destroy_fidelity_harness(&fixture, &harness);
 
     @pool() {
-        assert(FIDELITY_BAKE.len == 60 * 128 && FIDELITY_BAKE_RGB.len == 60 * 3 * float::size);
-        FidelityInput[] inputs = alloc::new_array(tmem, FidelityInput, 60);
-        Vec3[] targets = alloc::new_array(tmem, Vec3, 60);
+        assert(FIDELITY_BAKE.len == FIDELITY_BAKE_RECORD_COUNT * FIDELITY_BAKE_RECORD_BYTES
+          && FIDELITY_BAKE_RGB.len == FIDELITY_BAKE_RECORD_COUNT * Vec3::size);
+
+        FidelityInput[] inputs = alloc::new_array(tmem, FidelityInput, FIDELITY_BAKE_RECORD_COUNT);
+        Vec3[] targets = alloc::new_array(tmem, Vec3, FIDELITY_BAKE_RECORD_COUNT);
 
         for (usz index = 0; index < inputs.len; index++) {
-            double[15] values;
-            mem::copy(&values, FIDELITY_BAKE.ptr + index * 128 + 8, double::size * values.len);
+            double[FIDELITY_BAKE_VALUE_COUNT] values;
+            usz sample_offset = index * FIDELITY_BAKE_RECORD_BYTES;
+            uint case_index = fidelity_u32(FIDELITY_BAKE, sample_offset);
+            uint face_index = fidelity_u32(FIDELITY_BAKE, sample_offset + uint::size);
+            FidelityBakeTriangle triangle = fidelity_bake_triangle(case_index, face_index);
+            char* sample_values = FIDELITY_BAKE.ptr + sample_offset + FIDELITY_BAKE_HEADER_BYTES;
+            mem::copy(&values, sample_values, double::size * values.len);
             Vec3 encoded;
             mem::copy(&encoded, FIDELITY_BAKE_RGB.ptr + index * 3 * float::size, 3 * float::size);
             targets[index] = { (float)values[3], (float)values[4], (float)values[5] };
@@ -299,26 +332,32 @@ fn void test_fidelity_mikk_reference_bake_matches_shared_gpu_consumption() @test
                 .encoded_scale = { encoded.x, encoded.y, encoded.z, 1 },
                 .normal = { (float)values[12], (float)values[13], (float)values[14], 0 },
                 .tangent = { (float)values[9], (float)values[10], (float)values[11],
-                  FIDELITY_BAKE[index * 128] == 19 ? -1.0f : 1.0f },
+                  triangle.tangents[0].w },
                 .model = matrix::IDENTITY4,
             };
         }
 
         Vec4[] actual = fidelity_decode(
-            fixture: &fixture, harness: &harness, inputs: inputs, rg: false, tangent_frame: true,
+            fixture: &fixture,
+            harness: &harness,
+            inputs: inputs,
+            rg: false,
+            tangent_frame: true,
         )!!;
+
         double maximum;
         uint failures;
 
         foreach (index, pixel : actual) {
             double angle = fidelity_angle(pixel.xyz, targets[index]);
             maximum = math::max(maximum, angle);
-            failures += angle > 0.02 ? 1 : 0;
+            failures += angle > FIDELITY_WORLD_ANGLE ? 1 : 0;
         }
 
         io::printfn("mikk shared GPU bake: samples=%d maximum_rad=%.9f above_0_02=%d", actual.len, maximum, failures);
         assert(!failures, "Shared GPU consumption differs from the pinned inverse bake");
     };
+
     check_validation(&fixture.renderer);
 }
 
@@ -355,21 +394,29 @@ fn FidelityDrain fidelity_drain(
 
     while (previous.state != PrepareState.READY && result.calls < FIDELITY_FRAME_LIMIT) {
         renderer.begin_frame()!!;
+
         PrepareReport report = renderer.advance_prepares_within(limits)!!;
+
         if (limits.staged_bytes) assert(report.staged_bytes <= limits.staged_bytes);
         if (limits.generated_texels) assert(report.generated_texels <= limits.generated_texels);
 
         if (limits.staged_bytes) limits.staged_bytes = math::max(limits.staged_bytes, report.required.staged_bytes);
-        if (limits.generated_texels) limits.generated_texels = math::max(limits.generated_texels, report.required.generated_texels);
+        if (limits.generated_texels) {
+            limits.generated_texels = math::max(limits.generated_texels, report.required.generated_texels);
+        }
 
         result.staged += report.staged_bytes;
         result.generated += report.generated_texels;
         renderer.end_frame()!!;
+
         PrepareProgress next = renderer.prepare_progress(id);
         assert(next.state != PrepareState.FAILED, "preparation failed: %s", next.failure);
         assert(next.texels_done >= previous.texels_done);
+
         ulong delta = next.texels_done - previous.texels_done;
+
         assert(delta >= report.generated_texels);
+
         result.credits += delta - report.generated_texels;
         previous = next;
         result.calls++;
@@ -378,6 +425,7 @@ fn FidelityDrain fidelity_drain(
     assert(previous.state == PrepareState.READY);
     assert(previous.texels_done == previous.texels_total);
     assert(result.generated + result.credits == previous.texels_total - initially_done);
+
     return result;
 }
 
@@ -385,70 +433,99 @@ fn void test_fidelity_leaf_gpu_counts_reports_and_one_row_progress_match_all_for
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
     defer destroy_fixture(&fixture);
+
     FidelityHarness harness = create_fidelity_harness(&fixture)!!;
     defer destroy_fidelity_harness(&fixture, &harness);
 
     foreach (format : FIDELITY_FORMATS) {
         @pool() {
             material::TextureDesc desc = material::texture_2d_desc(32, 32, format);
+
             desc.coverage = CoveragePolicy.THRESHOLD;
             desc.alpha_threshold = 0.5;
+
             TextureId texture = fixture.assets.add_texture(desc, fidelity_leaf(format))!!;
+
             if (catch excuse = fixture.renderer.texture_coverage(texture, 2)) {
                 assert(excuse == c3d::ASSET_DATA_UNAVAILABLE);
             } else {
                 assert(false);
             }
+
             PrepareId id = fidelity_texture_job(&fixture, texture)!!;
             fixture.renderer.begin_frame()!!;
+
             PrepareReport blocked = fixture.renderer.advance_prepares_within({ .generated_texels = 1 })!!;
+
             assert(blocked.reason == PrepareStopReason.GENERATED_TEXELS);
             assert(blocked.generated_texels == 0 && blocked.required.generated_texels > 1);
             fixture.renderer.end_frame()!!;
+
             ulong generated_before = fixture.renderer.prepare_counters.generated_texels;
+
             FidelityDrain drain = fidelity_drain(
-                fixture: &fixture, id: id, staged_bytes: 32 * material::texture_block_bytes(format),
+                fixture: &fixture,
+                id: id,
+                staged_bytes: 32 * material::texture_block_bytes(format),
                 generated_texels: blocked.required.generated_texels,
             );
+
             assert(drain.credits > 0 && drain.calls > 1);
             assert(fixture.renderer.prepare_counters.generated_texels - generated_before == drain.generated);
+
             fixture.renderer.end_prepare(id)!!;
+
             TextureCoverageResource* resource = fixture.renderer.textures[texture.index].coverage_resource;
+
             assert(resource && resource.counts.len == 6 && resource.face_count == 1 && resource.mip_count == 6);
 
             for (uint mip = 0; mip < 6; mip++) {
-                Vec4[] pixels = fidelity_sample(fixture: &fixture, harness: &harness, texture: texture, mip: mip)!!;
+                Vec4[] pixels = fidelity_sample(
+                    fixture: &fixture,
+                    harness: &harness,
+                    texture: texture,
+                    mip: mip,
+                )!!;
                 ulong passing;
 
                 foreach (pixel : pixels) passing += pixel.w >= 0.5 ? 1 : 0;
+
                 TextureCoverageResult report = fixture.renderer.texture_coverage(texture, mip)!!;
+
                 assert(report.revision == fixture.assets.texture(texture).header.revision);
                 assert(report.original_passing == 484 && report.original_total == 1024);
                 assert(report.passing == passing && report.total == pixels.len);
                 assert(report.small_level == (mip > 2));
+
                 if (mip == 2) {
                     assert(passing == 30 && report.total == 64 && report.plateau);
                     assert(report.absolute_error == 0.00390625);
                     assert(report.error_numerator == 256 && report.error_denominator == 65536);
                 }
+
                 if (mip == 1) assert(!report.plateau);
             }
 
             TextureCoverageResult committed = fixture.renderer.texture_coverage(texture, 2)!!;
+
             fixture.assets.release_texture_cpu(texture);
             TextureCoverageResult released = fixture.renderer.texture_coverage(texture, 2)!!;
             assert(released.revision == committed.revision && released.passing == committed.passing);
+
             if (catch excuse = fixture.renderer.texture_coverage(texture, 6)) {
                 assert(excuse == c3d::INVALID_ARGUMENT);
             } else {
                 assert(false);
             }
+
             if (catch excuse = fixture.renderer.texture_coverage(texture, 2, 1)) {
                 assert(excuse == c3d::INVALID_ARGUMENT);
             } else {
                 assert(false);
             }
+
             fixture.assets.remove_texture(texture);
+
             if (catch excuse = fixture.renderer.texture_coverage(texture, 2)) {
                 assert(excuse == c3d::INVALID_ID);
             } else {
@@ -477,6 +554,7 @@ fn Vec4 fidelity_cpu_pixel(PixelFormat format, char[] pixels, usz index) @privat
             mem::copy(&result, pixels.ptr + index * Vec4::size, Vec4::size);
         default: unreachable();
     }
+
     return result;
 }
 
@@ -486,7 +564,9 @@ fn char[] fidelity_encode_pixels(Allocator allocator, PixelFormat format, Vec4[]
     foreach (index, value : values) {
         switch (format) {
             case RGBA8_UNORM:
-                for (uint channel = 0; channel < 4; channel++) result[index * 4 + channel] = (char)math::round(value[channel] * 255);
+                for (uint channel = 0; channel < 4; channel++) {
+                    result[index * 4 + channel] = (char)math::round(value[channel] * 255);
+                }
             case RGBA16_FLOAT:
                 for (uint channel = 0; channel < 4; channel++) {
                     ushort encoded = asset::encode_texture_half(value[channel]);
@@ -506,6 +586,7 @@ fn void test_fidelity_generated_normal_mips_match_cpu_in_all_three_storage_forma
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
     defer destroy_fixture(&fixture);
+
     FidelityHarness harness = create_fidelity_harness(&fixture)!!;
     defer destroy_fidelity_harness(&fixture, &harness);
 
@@ -524,13 +605,22 @@ fn void test_fidelity_generated_normal_mips_match_cpu_in_all_three_storage_forma
                 char[] source = fidelity_encode_pixels(tmem, format, values[..]);
                 material::TextureDesc desc = material::texture_2d_desc(4, 4, format);
                 desc.semantic = encoding == 0 ? TextureSemantic.NORMAL_RGB : TextureSemantic.NORMAL_RG;
+
                 TextureId texture = fixture.assets.add_texture(desc, source)!!;
+
                 fixture.renderer.upload_texture(texture)!!;
+
                 TextureMipChain reference = render::create_texture_mips(tmem, desc, source)!!;
                 defer render::destroy_texture_mips(&reference);
 
                 for (uint mip = 0; mip < 3; mip++) {
-                    Vec4[] actual = fidelity_sample(fixture: &fixture, harness: &harness, texture: texture, mip: mip)!!;
+                    Vec4[] actual = fidelity_sample(
+                        fixture: &fixture,
+                        harness: &harness,
+                        texture: texture,
+                        mip: mip,
+                    )!!;
+
                     char[] bytes = reference.pixels[reference.offsets[mip]:material::texture_mip_bytes(desc, mip)!!];
 
                     foreach (index, pixel : actual) {
@@ -545,16 +635,21 @@ fn void test_fidelity_generated_normal_mips_match_cpu_in_all_three_storage_forma
                     };
 
                     Vec4[] decoded = fidelity_decode(
-                        fixture: &fixture, harness: &harness, inputs: inputs, rg: encoding != 0,
+                        fixture: &fixture,
+                        harness: &harness,
+                        inputs: inputs,
+                        rg: encoding != 0,
                     )!!;
 
                     foreach (index, normal : decoded) {
-                        assert(fidelity_angle(normal.xyz, fidelity_reference_decode(inputs[index].encoded_scale, encoding != 0))
+                        Vec3 expected = fidelity_reference_decode(inputs[index].encoded_scale, encoding != 0);
+                        assert(fidelity_angle(normal.xyz, expected)
                           <= (format == RGBA8_UNORM ? FIDELITY_BYTE_ANGLE : FIDELITY_FLOAT_ANGLE));
                     }
                 }
 
                 assert(!fixture.renderer.textures[texture.index].coverage_resource);
+
                 if (catch excuse = fixture.renderer.texture_coverage(texture, 0)) {
                     assert(excuse == c3d::ASSET_DATA_UNAVAILABLE);
                 } else {
@@ -571,6 +666,7 @@ fn void test_fidelity_supplied_bc5_keeps_bytes_and_explicit_rg_semantics() @test
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
     defer destroy_fixture(&fixture);
+
     FidelityHarness harness = create_fidelity_harness(&fixture)!!;
     defer destroy_fidelity_harness(&fixture, &harness);
 
@@ -580,14 +676,26 @@ fn void test_fidelity_supplied_bc5_keeps_bytes_and_explicit_rg_semantics() @test
         material::TextureDesc desc = material::texture_2d_desc(4, 4, BC5_UNORM);
         desc.generate_mips = false;
         desc.mip_levels = 1;
+
         desc.semantic = TextureSemantic.NORMAL_RG;
         TextureId texture = fixture.assets.add_texture_mips(desc, levels[..])!!;
+
         fixture.renderer.upload_texture(texture)!!;
         assert(fixture.assets.texture(texture).supplied_mips[0].bytes == block[..]);
         assert(fixture.renderer.textures[texture.index].semantic == TextureSemantic.NORMAL_RG);
-        Vec4[] samples = fidelity_sample(fixture: &fixture, harness: &harness, texture: texture, mip: 0)!!;
 
-        foreach (pixel : samples) assert(math::abs(pixel.x - 191.0f / 255) < 1e-6f && math::abs(pixel.y - 64.0f / 255) < 1e-6f);
+        Vec4[] samples = fidelity_sample(
+            fixture: &fixture,
+            harness: &harness,
+            texture: texture,
+            mip: 0,
+        )!!;
+
+        foreach (pixel : samples) {
+            assert(math::abs(pixel.x - 191.0f / 255) < 1e-6f
+              && math::abs(pixel.y - 64.0f / 255) < 1e-6f);
+        }
+
         desc.coverage = CoveragePolicy.THRESHOLD;
         desc.alpha_threshold = 0.5;
         if (catch excuse = fixture.assets.add_texture_mips(desc, levels[..])) {
@@ -596,6 +704,7 @@ fn void test_fidelity_supplied_bc5_keeps_bytes_and_explicit_rg_semantics() @test
             assert(false);
         }
     };
+
     check_validation(&fixture.renderer);
 }
 
@@ -605,8 +714,10 @@ fn PhysicalMaterialGpu fidelity_read_physical(Fixture* fixture, MaterialId mater
         (usz)material_id.index * render::MATERIAL_STRIDE, PhysicalMaterialGpu::size)!!;
     char[] bytes = preparation_asset_readback(fixture, source, PhysicalMaterialGpu::size)!!;
     defer alloc::free(mem, bytes.ptr);
+
     PhysicalMaterialGpu result;
     mem::copy(&result, bytes.ptr, PhysicalMaterialGpu::size);
+
     return result;
 }
 
@@ -619,6 +730,7 @@ fn void test_fidelity_semantic_only_replacements_keep_native_indices_and_update_
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
     defer destroy_fixture(&fixture);
+
     Renderer* renderer = &fixture.renderer;
 
     @pool() {
@@ -626,56 +738,87 @@ fn void test_fidelity_semantic_only_replacements_keep_native_indices_and_update_
             { 0.7, 0.4, 0.95, 1 }, { 0.7, 0.4, 0.95, 1 } };
         char[] source = ((char*)&pixels)[:pixels.len * Vec4::size];
         material::TextureDesc desc = material::texture_2d_desc(2, 2, RGBA32_FLOAT);
+
         desc.semantic = TextureSemantic.NORMAL_RGB;
         TextureId base = fixture.assets.add_texture(desc, source)!!;
         TextureId coat = fixture.assets.add_texture(desc, source)!!;
+
         PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
         params.standard.normal_map = material::texture_slot(base);
         params.standard.metallic_roughness_map = material::texture_slot(base);
         params.clearcoat = 1;
         params.clearcoat_normal_map = material::texture_slot(coat);
+
         MaterialId material_id = fixture.assets.add_material(material::physical(params))!!;
+
         renderer.upload_material(material_id)!!;
+
         gpu::TextureIndex base_index = renderer.textures[base.index].view.index;
         gpu::TextureIndex coat_index = renderer.textures[coat.index].view.index;
+
         PhysicalMaterialGpu original = fidelity_read_physical(&fixture, material_id);
         fidelity_check_flags(original, false, false);
+
         uint material_revision = fixture.assets.material(material_id).header.revision;
+
         desc.semantic = TextureSemantic.NORMAL_RG;
         fixture.assets.replace_texture(base, desc, source)!!;
+
         renderer.upload_material(material_id)!!;
         fidelity_check_flags(fidelity_read_physical(&fixture, material_id), true, false);
-        assert(renderer.textures[base.index].view.index == base_index && renderer.textures[coat.index].view.index == coat_index);
+        assert(renderer.textures[base.index].view.index == base_index
+          && renderer.textures[coat.index].view.index == coat_index);
+
         desc.semantic = TextureSemantic.NORMAL_RGB;
         fixture.assets.replace_texture(base, desc, source)!!;
+
         PrepareId held = fidelity_texture_job(&fixture, base)!!;
+
         renderer.begin_frame()!!;
+
         PrepareReport blocked = renderer.advance_prepares_within({ .generated_texels = 1 })!!;
+
         assert(blocked.reason == PrepareStopReason.GENERATED_TEXELS && !blocked.generated_texels);
         renderer.end_frame()!!;
         assert(renderer.textures[base.index].semantic == TextureSemantic.NORMAL_RG);
         fidelity_check_flags(fidelity_read_physical(&fixture, material_id), true, false);
-        fidelity_drain(fixture: &fixture, id: held, staged_bytes: 0, generated_texels: 0);
+
+        fidelity_drain(
+            fixture: &fixture,
+            id: held,
+            staged_bytes: 0,
+            generated_texels: 0,
+        );
+
         renderer.end_prepare(held)!!;
+
         renderer.upload_material(material_id)!!;
+
         PhysicalMaterialGpu base_changed = fidelity_read_physical(&fixture, material_id);
         fidelity_check_flags(base_changed, false, false);
-        assert(base_changed.standard.metallic_roughness_map.texture_index == base_changed.standard.normal_map.texture_index);
-        assert(base_changed.standard.metallic == original.standard.metallic && base_changed.standard.roughness == original.standard.roughness);
+        assert(base_changed.standard.metallic_roughness_map.texture_index
+          == base_changed.standard.normal_map.texture_index);
+        assert(base_changed.standard.metallic == original.standard.metallic
+          && base_changed.standard.roughness == original.standard.roughness);
         assert(fixture.assets.material(material_id).header.revision == material_revision);
 
         renderer.begin_frame()!!;
+
         desc.semantic = TextureSemantic.NORMAL_RG;
         fixture.assets.replace_texture(coat, desc, source)!!;
+
         renderer.upload_material(material_id)!!;
         assert(renderer.materials[material_id.index].bindings.clearcoat_normal.semantic == TextureSemantic.NORMAL_RG);
         fixture.assets.texture(coat).desc.semantic = TextureSemantic.NORMAL_RGB;
         fixture.assets.mark_texture_dirty(coat);
-        MaterialBindings captured = render::material_prepare_bindings(renderer, &fixture.assets.material(material_id).data)!!;
+
+        Material* material_data = &fixture.assets.material(material_id).data;
+        MaterialBindings captured = render::material_prepare_bindings(renderer, material_data)!!;
         assert(captured.clearcoat_normal.semantic == TextureSemantic.NORMAL_RG);
         renderer.end_frame()!!;
         fidelity_check_flags(fidelity_read_physical(&fixture, material_id), false, true);
         assert(renderer.textures[coat.index].view.index == coat_index);
+
         renderer.upload_material(material_id)!!;
         fidelity_check_flags(fidelity_read_physical(&fixture, material_id), false, false);
 
@@ -688,20 +831,28 @@ fn void test_fidelity_semantic_only_replacements_keep_native_indices_and_update_
         }
         fidelity_check_flags(fidelity_read_physical(&fixture, material_id), false, false);
 
-        RenderTargetId target = render::create_render_target(renderer, render::render_target_desc(2, 2, RGBA32_FLOAT))!!;
+        RenderTargetId target = render::create_render_target(
+            renderer: renderer,
+            desc: render::render_target_desc(2, 2, RGBA32_FLOAT),
+        )!!;
         defer render::destroy_render_target(renderer, target)!!;
+
         TextureSlot target_slot = {
-            .texture = { .kind = TextureRefKind.RENDER_TARGET, .target = target }, .transform = material::UV_TRANSFORM_IDENTITY,
+            .texture = { .kind = TextureRefKind.RENDER_TARGET, .target = target },
+            .transform = material::UV_TRANSFORM_IDENTITY,
         };
         params.standard.normal_map = target_slot;
         params.clearcoat_normal_map = target_slot;
         params.standard.metallic_roughness_map = {};
+
         MaterialId target_material = fixture.assets.add_material(material::physical(params))!!;
+
         renderer.upload_material(target_material)!!;
         fidelity_check_flags(fidelity_read_physical(&fixture, target_material), false, false);
         assert(renderer.materials[target_material.index].bindings.normal.semantic == TextureSemantic.COLOR);
         assert(renderer.materials[target_material.index].bindings.clearcoat_normal.semantic == TextureSemantic.COLOR);
     };
+
     check_validation(renderer);
 }
 
@@ -715,8 +866,19 @@ fn void fidelity_compare_texture_mips(
     uint count = material::texture_mip_count(desc.width, desc.height);
 
     for (uint mip = 0; mip < count; mip++) {
-        Vec4[] first = fidelity_sample(fixture: fixture, harness: harness, texture: actual, mip: mip)!!;
-        Vec4[] second = fidelity_sample(fixture: fixture, harness: harness, texture: expected, mip: mip)!!;
+        Vec4[] first = fidelity_sample(
+            fixture: fixture,
+            harness: harness,
+            texture: actual,
+            mip: mip,
+        )!!;
+        Vec4[] second = fidelity_sample(
+            fixture: fixture,
+            harness: harness,
+            texture: expected,
+            mip: mip,
+        )!!;
+
         assert(first == second, "retry texture mip %d differs", mip);
     }
 }
@@ -736,19 +898,25 @@ fn void fidelity_finalized_abort(bool coverage, bool release_source) @private {
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
     defer destroy_fixture(&fixture);
+
     FidelityHarness harness = create_fidelity_harness(&fixture)!!;
     defer destroy_fidelity_harness(&fixture, &harness);
+
     Renderer* renderer = &fixture.renderer;
 
     @pool() {
         material::TextureDesc desc = fidelity_lifetime_desc(coverage);
+
         TextureId texture = fixture.assets.add_texture(desc, FIDELITY_LEAF_BYTE)!!;
+
         renderer.upload_texture(texture)!!;
         gpu::TextureHandle previous = renderer.textures[texture.index].texture;
         TextureCoverageResource* previous_results = renderer.textures[texture.index].coverage_resource;
         fixture.assets.mark_texture_dirty(texture);
         TextureId expected = fixture.assets.add_texture(desc, FIDELITY_LEAF_BYTE)!!;
+
         PrepareId id = fidelity_texture_job(&fixture, texture)!!;
+
         renderer.begin_frame()!!;
         renderer.advance_prepares_within({})!!;
         PrepareRecord* record = renderer.prepares.get(id);
@@ -758,28 +926,47 @@ fn void fidelity_finalized_abort(bool coverage, bool release_source) @private {
             assert(renderer.texture_coverage(texture, 2)!!.revision == 1);
             assert(renderer.textures[texture.index].coverage_resource != previous_results);
         }
+
         render::abort_frame(renderer);
         assert(renderer.textures[texture.index].texture == previous);
         assert(renderer.textures[texture.index].coverage_resource == previous_results);
+
         if (release_source) {
             fixture.assets.release_texture_cpu(texture);
+
             renderer.begin_frame()!!;
             renderer.advance_prepares_within({})!!;
             renderer.end_frame()!!;
+
             PrepareProgress progress = renderer.prepare_progress(id);
             assert(progress.state == PrepareState.FAILED && progress.failure == c3d::ASSET_DATA_UNAVAILABLE);
             assert(renderer.textures[texture.index].texture == previous);
             if (coverage) assert(renderer.texture_coverage(texture, 2)!!.revision == 1);
         } else {
             ulong before = renderer.prepare_counters.generated_texels;
-            fidelity_drain(fixture: &fixture, id: id, staged_bytes: 128, generated_texels: 64);
+
+            fidelity_drain(
+                fixture: &fixture,
+                id: id,
+                staged_bytes: 128,
+                generated_texels: 64,
+            );
             assert(renderer.prepare_counters.generated_texels > before);
+
             renderer.upload_texture(expected)!!;
-            fidelity_compare_texture_mips(fixture: &fixture, harness: &harness, actual: texture, expected: expected);
+
+            fidelity_compare_texture_mips(
+                fixture: &fixture,
+                harness: &harness,
+                actual: texture,
+                expected: expected,
+            );
             if (coverage) assert(renderer.texture_coverage(texture, 2)!!.revision == 2);
         }
+
         renderer.end_prepare(id)!!;
     };
+
     check_validation(renderer);
 }
 
@@ -797,21 +984,26 @@ fn void test_fidelity_held_normal_and_coverage_chains_survive_source_release_aft
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
     defer destroy_fixture(&fixture);
+
     FidelityHarness harness = create_fidelity_harness(&fixture)!!;
     defer destroy_fidelity_harness(&fixture, &harness);
+
     Renderer* renderer = &fixture.renderer;
 
     for (uint kind = 0; kind < 2; kind++) {
         @pool() {
             material::TextureDesc desc = fidelity_lifetime_desc(kind != 0);
+
             TextureId texture = fixture.assets.add_texture(desc, FIDELITY_LEAF_BYTE)!!;
             TextureId expected = fixture.assets.add_texture(desc, FIDELITY_LEAF_BYTE)!!;
+
             PrepareId id = fidelity_texture_job(&fixture, texture)!!;
             PrepareRecord* record = renderer.prepares.get(id);
             uint frames;
 
             while (record.units[0].staged.mip == 0 && frames++ < FIDELITY_FRAME_LIMIT) {
                 renderer.begin_frame()!!;
+
                 PrepareReport report = renderer.advance_prepares_within({ .staged_bytes = 128 })!!;
                 assert(report.staged_bytes <= 128);
                 renderer.end_frame()!!;
@@ -819,13 +1011,31 @@ fn void test_fidelity_held_normal_and_coverage_chains_survive_source_release_aft
             }
 
             assert(record.units[0].staged.mip == 1 && record.chain_active);
+
             char* held = record.chain.pixels.ptr;
+
             fixture.assets.release_texture_cpu(texture);
+
             assert(record.chain.pixels.ptr == held);
-            fidelity_drain(fixture: &fixture, id: id, staged_bytes: 128, generated_texels: 64);
+
+            fidelity_drain(
+                fixture: &fixture,
+                id: id,
+                staged_bytes: 128,
+                generated_texels: 64,
+            );
+
             renderer.end_prepare(id)!!;
+
             renderer.upload_texture(expected)!!;
-            fidelity_compare_texture_mips(fixture: &fixture, harness: &harness, actual: texture, expected: expected);
+
+            fidelity_compare_texture_mips(
+                fixture: &fixture,
+                harness: &harness,
+                actual: texture,
+                expected: expected,
+            );
+
             if (kind) assert(renderer.texture_coverage(texture, 2)!!.passing == 30);
         };
     }
@@ -840,27 +1050,41 @@ fn void test_fidelity_single_texel_cube_has_zero_generation_and_exact_face_resul
 
     @pool() {
         material::TextureDesc desc = material::texture_cube_desc(1, RGBA8_UNORM);
+
         desc.coverage = CoveragePolicy.THRESHOLD;
         desc.alpha_threshold = 0.5;
         char[24] pixels = { 1, 2, 3, 0, 1, 2, 3, 255, 1, 2, 3, 0,
             1, 2, 3, 255, 1, 2, 3, 0, 1, 2, 3, 255 };
+
         TextureId texture = fixture.assets.add_texture(desc, pixels[..])!!;
+
         PrepareId id = fidelity_texture_job(&fixture, texture)!!;
         assert(fixture.renderer.prepare_progress(id).texels_total == 0);
-        FidelityDrain drain = fidelity_drain(fixture: &fixture, id: id, staged_bytes: 4, generated_texels: 1);
+
+        FidelityDrain drain = fidelity_drain(
+            fixture: &fixture,
+            id: id,
+            staged_bytes: 4,
+            generated_texels: 1,
+        );
         assert(drain.generated == 0 && drain.credits == 0);
         assert(!fixture.renderer.prepares.get(id).chain_active);
+
         fixture.renderer.end_prepare(id)!!;
+
         TextureCoverageResource* resource = fixture.renderer.textures[texture.index].coverage_resource;
+
         assert(resource.counts.len == 6 && resource.mip_count == 1 && resource.face_count == 6);
 
         for (uint face = 0; face < 6; face++) {
             TextureCoverageResult result = fixture.renderer.texture_coverage(texture, 0, face)!!;
+
             assert(result.total == 1 && result.original_total == 1);
             assert(result.passing == face % 2 && result.original_passing == face % 2);
             assert(result.absolute_error == 0 && !result.small_level);
         }
     };
+
     check_validation(&fixture.renderer);
 }
 
@@ -874,6 +1098,7 @@ fn FidelityBakeTriangle fidelity_bake_triangle(uint selected_case, uint selected
     usz geometry_offset = 8;
     usz tangent_offset = 8;
     uint cases = fidelity_u32(FIDELITY_BAKE_GEOMETRY, 4);
+
     assert(cases == fidelity_u32(FIDELITY_BAKE_TANGENTS, 4));
 
     for (uint index = 0; index < cases; index++) {
@@ -882,10 +1107,12 @@ fn FidelityBakeTriangle fidelity_bake_triangle(uint selected_case, uint selected
         usz vertex_start = geometry_offset + 12;
         usz indices_start = vertex_start + (usz)vertices * 10 * float::size;
         uint corners = fidelity_u32(FIDELITY_BAKE_TANGENTS, tangent_offset + 4);
+
         assert(corners == faces * 3);
         if (index == selected_case) {
             assert(selected_face < faces);
             assert(fidelity_u32(FIDELITY_BAKE_TANGENTS, tangent_offset));
+
             FidelityBakeTriangle result;
 
             for (uint corner = 0; corner < 3; corner++) {
@@ -910,10 +1137,15 @@ fn FidelityRaster? create_fidelity_raster(Fixture* fixture) @private {
     FidelityRaster raster;
     raster.scene = scene::create_scene(fixture.allocator, scene::default_scene_desc());
     defer catch scene::destroy_scene(&raster.scene);
+
     raster.camera = raster.scene.add_camera(camera::orthographic(2, 0.1f, 20))!;
     raster.camera.local.position = { 0, 0, 3 };
-    raster.target = render::create_render_target(&fixture.renderer, render::render_target_desc(64, 64, RGBA32_FLOAT))!;
+    raster.target = render::create_render_target(
+        renderer: &fixture.renderer,
+        desc: render::render_target_desc(FIDELITY_RASTER_EXTENT, FIDELITY_RASTER_EXTENT, RGBA32_FLOAT),
+    )!;
     defer catch render::destroy_render_target(&fixture.renderer, raster.target)!!;
+
     ViewDesc desc = render::texture_view_desc(raster.target);
     desc.post.anti_aliasing = AntiAliasing.NONE;
     desc.depth_prepass = false;
@@ -938,15 +1170,20 @@ fn Vec4[]? fidelity_render_raster(
     desc.shading = path;
     render::configure_view(renderer, raster.view, desc)!;
     raster.scene.update_world();
+
     renderer.begin_frame()!;
     defer catch render::abort_frame(renderer);
+
     renderer.render_view(&raster.scene, raster.camera, raster.view)!;
     renderer.finish_view(raster.view)!;
     Target* source = normal_diagnostic && path == ShadingPath.DEFERRED
         ? &renderer.views.get(raster.view).gbuffer[GBufferChannel.NORMAL_ROUGHNESS]
         : &renderer.views.get(raster.view).hdr_color;
     render::composite_target(
-        renderer: renderer, source: source, output: &renderer.targets.get(raster.target).target, rect: {},
+        renderer: renderer,
+        source: source,
+        output: &renderer.targets.get(raster.target).target,
+        rect: {},
     )!;
     renderer.end_frame()!;
     return read_float_target(fixture, raster.target);
@@ -992,8 +1229,10 @@ fn void test_fidelity_raster_interpolation_matches_pinned_bake_and_transform_con
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
     defer destroy_fixture(&fixture);
+
     FidelityRaster raster = create_fidelity_raster(&fixture)!!;
     defer destroy_fidelity_raster(&fixture, &raster);
+
     ShaderId diagnostic = fidelity_normal_shader(&fixture)!!;
     Transform[4] transforms = {
         maths::TRANSFORM_IDENTITY,
@@ -1002,77 +1241,107 @@ fn void test_fidelity_raster_interpolation_matches_pinned_bake_and_transform_con
         { .rotation = { .v = { 0, 0, 0, 1 } }, .scale = { 2, 2, 2 } },
     };
 
-    for (uint sample = 0; sample < 60; sample++) {
+    for (uint sample = 0; sample < FIDELITY_BAKE_RECORD_COUNT; sample++) {
         @pool() {
-            usz sample_offset = (usz)sample * 128;
+            usz sample_offset = (usz)sample * FIDELITY_BAKE_RECORD_BYTES;
             uint case_index = fidelity_u32(FIDELITY_BAKE, sample_offset);
-            uint face_index = fidelity_u32(FIDELITY_BAKE, sample_offset + 4);
+            uint face_index = fidelity_u32(FIDELITY_BAKE, sample_offset + uint::size);
             FidelityBakeTriangle triangle = fidelity_bake_triangle(case_index, face_index);
-            double[15] reference;
-            mem::copy(&reference, FIDELITY_BAKE.ptr + sample_offset + 8, reference.len * double::size);
+            double[FIDELITY_BAKE_VALUE_COUNT] reference;
+            char* sample_values = FIDELITY_BAKE.ptr + sample_offset + FIDELITY_BAKE_HEADER_BYTES;
+            mem::copy(&reference, sample_values, reference.len * double::size);
+
             Vec3 weights = { (float)reference[0], (float)reference[1], (float)reference[2] };
             Vec3 encoded;
             mem::copy(&encoded, FIDELITY_BAKE_RGB.ptr + (usz)sample * 3 * float::size, Vec3::size);
             Vec4 pixel = { encoded.x, encoded.y, encoded.z, 1 };
             material::TextureDesc desc = material::texture_2d_desc(1, 1, RGBA32_FLOAT);
+
             desc.semantic = TextureSemantic.NORMAL_RGB;
+
             TextureId texture = fixture.assets.add_texture(desc, ((char*)&pixel)[:Vec4::size])!!;
             StandardParams params = material::STANDARD_PARAMS_DEFAULT;
             params.normal_map = material::texture_slot(texture);
+
             MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
             common.double_sided = true;
+
             MaterialId standard = fixture.assets.add_material(material::standard(params, common))!!;
+
             MaterialId probe = fixture.assets.add_material(material::custom(
                 shader: diagnostic,
                 references: { [0] = standard },
                 common: common,
             ))!!;
+
             Vec3[3] positions = { { -1, -1, 0 }, { 1, -1, 0 }, { -1, 1, 0 } };
             Vec2[3] coordinates = { { 0, 0 }, { 1, 0 }, { 0, 1 } };
+
             Geometry geometry = {
                 .positions = positions[..], .normals = triangle.normals[..], .tangents = triangle.tangents[..],
                 .uv0 = coordinates[..],
             };
             geometry.finalize();
+
             GeometryId geometry_id = fixture.assets.add_geometry(&geometry)!!;
+
             raster.mesh = raster.scene.add_mesh(geometry_id, probe)!!;
             raster.scene.get(raster.mesh, Mesh).cast_shadow = false;
 
             for (uint transform_index = 0; transform_index < transforms.len; transform_index++) {
-                if (transform_index && sample % 15 != 0) continue;
+                if (transform_index && sample % FIDELITY_BAKE_TRANSFORM_STEP != 0) continue;
+
                 Transform transform = transforms[transform_index];
                 raster.mesh.local = transform;
                 Vec3 point = positions[0] * weights.x + positions[1] * weights.y + positions[2] * weights.z;
                 Vec3 world = maths::transform_point(transform.to_mat4(), point);
-                raster.camera.local.position = world + (Vec3){ -1.0f / 64, 1.0f / 64, 3 };
+                raster.camera.local.position = world
+                  + (Vec3){ -1.0f / FIDELITY_RASTER_EXTENT, 1.0f / FIDELITY_RASTER_EXTENT, 3 };
+
                 Vec3 expected = transform_index == 0
                     ? (Vec3){ (float)reference[3], (float)reference[4], (float)reference[5] }
-                    : fidelity_transformed_bake_reference(&triangle, weights, encoded * 2 - 1, transform);
+                    : fidelity_transformed_bake_reference(
+                        triangle: &triangle,
+                        weights: weights,
+                        mapped: encoded * 2 - 1,
+                        transform: transform,
+                    );
 
                 for (uint path = 0; path < 2; path++) {
                     raster.scene.get(raster.mesh, Mesh).material = path == 0 ? probe : standard;
+
                     Vec4[] pixels = fidelity_render_raster(
-                        fixture: &fixture, raster: &raster,
-                        path: path == 0 ? ShadingPath.FORWARD : ShadingPath.DEFERRED, normal_diagnostic: true,
+                        fixture: &fixture,
+                        raster: &raster,
+                        path: path == 0 ? ShadingPath.FORWARD : ShadingPath.DEFERRED,
+                        normal_diagnostic: true,
                     )!!;
                     defer free(pixels);
-                    Vec4 measured = pixels[32 * 64 + 32];
+
+                    Vec4 measured = pixels[FIDELITY_RASTER_CENTER_INDEX];
                     Vec3 actual = path == 0 ? measured.xyz : render::decode_octahedral(measured.xy);
-                    assert(fidelity_angle(actual, expected) <= 0.02,
+
+                    assert(fidelity_angle(actual, expected) <= FIDELITY_WORLD_ANGLE,
                         "raster bake sample %d path %d transform %d: actual %s expected %s angle %.9f",
                         sample, path, transform_index, actual, expected, fidelity_angle(actual, expected));
                     if (sample == 0) fidelity_export_bake_region(
-                        triangle: &triangle, transform: transform, camera_position: raster.camera.local.position,
-                        mapped: encoded * 2 - 1, measured: pixels, deferred: path != 0,
+                        triangle: &triangle,
+                        transform: transform,
+                        camera_position: raster.camera.local.position,
+                        mapped: encoded * 2 - 1,
+                        measured: pixels,
+                        deferred: path != 0,
                         name: string::tformat("bake_transform%d_path%d", transform_index, path),
                     )!!;
                 }
             }
 
             raster.scene.remove(raster.mesh);
+
             fixture.assets.remove_material(probe);
             fixture.assets.remove_material(standard);
             fixture.assets.remove_geometry(geometry_id);
+
             fixture.assets.remove_texture(texture);
         };
     }
@@ -1086,16 +1355,25 @@ fn GeometryId? fidelity_quad(Fixture* fixture, bool mirrored = false) @private {
     Vec2[4] coordinates = { { 0, 1 }, { 1, 1 }, { 1, 0 }, { 0, 0 } };
     uint[6] indices = { 0, 1, 2, 0, 2, 3 };
     if (mirrored) foreach (&coordinate : coordinates) coordinate.x = 1 - coordinate.x;
+
     Geometry source = {
         .positions = positions[..], .normals = normals[..], .uv0 = coordinates[..], .indices = indices[..],
     };
+
     source.finalize();
+
     TangentGeometry owner = geometry::create_tangent_geometry(fixture.allocator, &source)!;
     defer geometry::destroy_tangent_geometry(&owner);
+
     return fixture.assets.add_geometry(&owner.data);
 }
 
-fn void? fidelity_export_image(String name, Vec4[] pixels, uint width, uint height) @private {
+fn void? fidelity_export_image(
+    String name,
+    Vec4[] pixels,
+    uint width,
+    uint height,
+) @private {
     @pool() {
         String? directory_result = env::tget_var("C3D_FIDELITY_OUTPUT");
         if (catch excuse = directory_result) {
@@ -1116,8 +1394,12 @@ fn void? fidelity_export_image(String name, Vec4[] pixels, uint width, uint heig
         }
 
         image::write_png(
-            path: string::tformat("%s/%s.png", directory, name), width: width, height: height, pixels: rgba,
+            path: string::tformat("%s/%s.png", directory, name),
+            width: width,
+            height: height,
+            pixels: rgba,
         )!;
+
         File output = file::open(string::tformat("%s/%s.rgba32f", directory, name), "wb")!;
         defer (void)output.close();
 
@@ -1134,7 +1416,8 @@ fn float fidelity_compare_images(Vec4[] first, Vec4[] second, float tolerance) @
 
         for (uint channel = 0; channel < 3; channel++) {
             assert(math::is_finite(pixel[channel]) && math::is_finite(second[index][channel]));
-            assert(delta[channel] <= tolerance, "image sample %d channel %d difference %f", index, channel, delta[channel]);
+            assert(delta[channel] <= tolerance,
+                "image sample %d channel %d difference %f", index, channel, delta[channel]);
             maximum = math::max(maximum, delta[channel]);
         }
     }
@@ -1147,7 +1430,13 @@ fn void? fidelity_export_difference(String name, Vec4[] first, Vec4[] second) @p
         Vec4[] difference = alloc::new_array(tmem, Vec4, (sz)first.len);
 
         foreach (index, pixel : first) difference[index] = math::abs(pixel - second[index]) * 8;
-        fidelity_export_image(name: name, pixels: difference, width: 64, height: 64)!;
+
+        fidelity_export_image(
+            name: name,
+            pixels: difference,
+            width: FIDELITY_RASTER_EXTENT,
+            height: FIDELITY_RASTER_EXTENT,
+        )!;
     };
 }
 
@@ -1166,17 +1455,23 @@ fn void test_fidelity_rgb_rg_base_and_coat_match_under_mirrors_scales_and_both_r
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
     defer destroy_fixture(&fixture);
+
     FidelityRaster raster = create_fidelity_raster(&fixture)!!;
     defer destroy_fidelity_raster(&fixture, &raster);
+
     raster.scene.ambient_intensity = 0;
+
     Node* sun = raster.scene.add_light(light::directional({ 1, 1, 1 }, 3, false))!!;
     sun.local.rotation = maths::look_rotation(((Vec3){ -0.4f, -0.3f, -1 }).normalize(), { 0, 1, 0 });
+
     TextureId[2] textures = { fidelity_normal_texture(&fixture, false)!!, fidelity_normal_texture(&fixture, true)!! };
+
     Vec3[3] scales = { { 1, 1, 1 }, { 1.3, 0.7, 1.1 }, { -1.3, 0.7, 1.1 } };
     float[3] strengths = { 1, -1.5, 0 };
 
     for (uint mirrored = 0; mirrored < 2; mirrored++) {
         GeometryId geometry_id = fidelity_quad(&fixture, mirrored != 0)!!;
+
         raster.mesh = raster.scene.add_mesh(geometry_id, fixture.plain)!!;
         raster.scene.get(raster.mesh, Mesh).cast_shadow = false;
 
@@ -1192,12 +1487,14 @@ fn void test_fidelity_rgb_rg_base_and_coat_match_under_mirrors_scales_and_both_r
                         params.standard.base_color = { 0.5, 0.6, 0.7, 1 };
                         params.standard.metallic = 0;
                         params.standard.roughness = 0.6;
-                        params.standard.normal_map = layer == 0 ? material::texture_slot(textures[encoding]) : material::texture_slot();
+                        params.standard.normal_map = layer == 0
+                          ? material::texture_slot(textures[encoding]) : material::texture_slot();
                         params.standard.normal_scale = strength;
                         params.clearcoat = layer == 1 ? 0.8f : 0;
                         params.clearcoat_roughness = 0.25;
                         params.clearcoat_normal_map = material::texture_slot(textures[encoding]);
                         params.clearcoat_normal_scale = strength;
+
                         MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
                         common.double_sided = true;
                         materials[encoding] = fixture.assets.add_material(material::physical(params, common))!!;
@@ -1205,23 +1502,43 @@ fn void test_fidelity_rgb_rg_base_and_coat_match_under_mirrors_scales_and_both_r
 
                     for (uint path = 0; path < 2; path++) {
                         raster.scene.get(raster.mesh, Mesh).material = materials[0];
+
                         Vec4[] rgb = fidelity_render_raster(
-                            fixture: &fixture, raster: &raster,
+                            fixture: &fixture,
+                            raster: &raster,
                             path: path == 0 ? ShadingPath.FORWARD : ShadingPath.DEFERRED,
                         )!!;
                         defer free(rgb);
+
                         raster.scene.get(raster.mesh, Mesh).material = materials[1];
+
                         Vec4[] rg = fidelity_render_raster(
-                            fixture: &fixture, raster: &raster,
+                            fixture: &fixture,
+                            raster: &raster,
                             path: path == 0 ? ShadingPath.FORWARD : ShadingPath.DEFERRED,
                         )!!;
                         defer free(rg);
-                        fidelity_compare_images(rgb, rg, 0.02);
+
+                        fidelity_compare_images(rgb, rg, FIDELITY_IMAGE_TOLERANCE);
                         if (!mirrored && strength_index == 0) {
                             @pool() {
-                                String stem = string::tformat("normal_layer%d_scale%d_path%d", layer, scale_index, path);
-                                fidelity_export_image(name: string::tformat("%s_rgb", stem), pixels: rgb, width: 64, height: 64)!!;
-                                fidelity_export_image(name: string::tformat("%s_rg", stem), pixels: rg, width: 64, height: 64)!!;
+                                String stem = string::tformat(
+                                    "normal_layer%d_scale%d_path%d", layer, scale_index, path);
+
+                                fidelity_export_image(
+                                    name: string::tformat("%s_rgb", stem),
+                                    pixels: rgb,
+                                    width: FIDELITY_RASTER_EXTENT,
+                                    height: FIDELITY_RASTER_EXTENT,
+                                )!!;
+
+                                fidelity_export_image(
+                                    name: string::tformat("%s_rg", stem),
+                                    pixels: rg,
+                                    width: FIDELITY_RASTER_EXTENT,
+                                    height: FIDELITY_RASTER_EXTENT,
+                                )!!;
+
                                 fidelity_export_difference(string::tformat("%s_diff", stem), rgb, rg)!!;
                             };
                         }
@@ -1243,32 +1560,43 @@ fn void test_fidelity_leaf_fixed_mip_lit_cutouts_export_forward_deferred_and_ord
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
     defer destroy_fixture(&fixture);
+
     FidelityRaster raster = create_fidelity_raster(&fixture)!!;
     defer destroy_fidelity_raster(&fixture, &raster);
+
     raster.scene.ambient_intensity = 0;
     raster.scene.background.color = { 0, 0, 0, 1 };
     raster.scene.add_light(light::directional({ 1, 1, 1 }, 3, false))!!;
     GeometryId quad = fidelity_quad(&fixture)!!;
+
     raster.mesh = raster.scene.add_mesh(quad, fixture.plain)!!;
     raster.scene.get(raster.mesh, Mesh).cast_shadow = false;
 
     foreach (format : FIDELITY_FORMATS) {
         @pool() {
             material::TextureDesc desc = material::texture_2d_desc(32, 32, format);
+
             desc.coverage = CoveragePolicy.THRESHOLD;
             desc.alpha_threshold = 0.5;
+
             TextureMipChain corrected = render::create_texture_mips(tmem, desc, fidelity_leaf(format))!!;
             defer render::destroy_texture_mips(&corrected);
+
             desc.coverage = CoveragePolicy.NONE;
+
             TextureMipChain ordinary = render::create_texture_mips(tmem, desc, fidelity_leaf(format))!!;
             defer render::destroy_texture_mips(&ordinary);
+
             usz level_bytes = material::texture_mip_bytes(desc, 2)!!;
+
             material::TextureDesc level = material::texture_2d_desc(8, 8, format);
             level.generate_mips = false;
+
             TextureId[2] textures = {
                 fixture.assets.add_texture(level, corrected.pixels[corrected.offsets[2]:level_bytes])!!,
                 fixture.assets.add_texture(level, ordinary.pixels[ordinary.offsets[2]:level_bytes])!!,
             };
+
             MaterialId[3] materials;
 
             for (uint kind = 0; kind < 3; kind++) {
@@ -1276,6 +1604,7 @@ fn void test_fidelity_leaf_fixed_mip_lit_cutouts_export_forward_deferred_and_ord
                 params.base_color_map = material::texture_slot(textures[kind == 1 ? 1 : 0], asset::SAMPLER_NEAREST);
                 params.metallic = 0;
                 params.roughness = 1;
+
                 MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
                 common.alpha_mode = kind == 2 ? AlphaMode.OPAQUE : AlphaMode.MASK;
                 common.alpha_cutoff = 0.5;
@@ -1287,27 +1616,37 @@ fn void test_fidelity_leaf_fixed_mip_lit_cutouts_export_forward_deferred_and_ord
             for (uint path = 0; path < 2; path++) {
                 for (uint kind = 0; kind < 3; kind++) {
                     raster.scene.get(raster.mesh, Mesh).material = materials[kind];
+
                     Vec4[] pixels = fidelity_render_raster(
-                        fixture: &fixture, raster: &raster,
+                        fixture: &fixture,
+                        raster: &raster,
                         path: path == 0 ? ShadingPath.FORWARD : ShadingPath.DEFERRED,
                     )!!;
-                    if (kind == 0) fixed[path] = pixels;
                     defer { if (kind != 0) free(pixels); }
+
+                    if (kind == 0) fixed[path] = pixels;
+
                     ulong visible;
 
-                    foreach (pixel : pixels) visible += pixel.x + pixel.y + pixel.z > 0.001f ? 1 : 0;
-                    if (kind == 0) assert(visible == 30 * 64, "leaf rendered coverage %d", visible);
-                    if (kind == 2) assert(visible == 64 * 64);
+                    foreach (pixel : pixels) {
+                        visible += pixel.x + pixel.y + pixel.z > FIDELITY_VISIBLE_PIXEL_THRESHOLD ? 1 : 0;
+                    }
+                    if (kind == 0) assert(visible == 30 * FIDELITY_RASTER_EXTENT, "leaf rendered coverage %d", visible);
+                    if (kind == 2) assert(visible == FIDELITY_RASTER_EXTENT * FIDELITY_RASTER_EXTENT);
+
                     fidelity_export_image(
                         name: string::tformat("leaf_%s_path%d_kind%d", format, path, kind),
-                        pixels: pixels, width: 64, height: 64,
+                        pixels: pixels,
+                        width: FIDELITY_RASTER_EXTENT,
+                        height: FIDELITY_RASTER_EXTENT,
                     )!!;
                 }
             }
-
             defer free(fixed[0]);
             defer free(fixed[1]);
-            fidelity_compare_images(fixed[0], fixed[1], 0.02);
+
+            fidelity_compare_images(fixed[0], fixed[1], FIDELITY_IMAGE_TOLERANCE);
+
             fidelity_export_difference(string::tformat("leaf_%s_path_diff", format), fixed[0], fixed[1])!!;
         };
     }
@@ -1319,15 +1658,21 @@ fn void test_fidelity_rgb_rg_decals_match_on_mirrored_nonuniform_projectors_and_
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
     defer destroy_fixture(&fixture);
+
     DecalScene target = decal_create_scene(&fixture)!!;
     defer scene::destroy_scene(&target.scene);
+
     DecalView shot = decal_create_view(&fixture)!!;
     defer decal_destroy_view(&fixture, &shot);
+
     target.scene.ambient_intensity = 0;
+
     Node* sun = target.scene.add_light(light::directional({ 1, 1, 1 }, 3, false))!!;
     sun.local.rotation = maths::look_rotation(((Vec3){ 0, 1, -1 }).normalize(), { 0, 0, 1 });
     target.scene.get(target.projector, Decal).weights = { .base_color = 0, .normal = 1, .roughness = 0, .metallic = 0 };
+
     TextureId[2] textures = { fidelity_normal_texture(&fixture, false)!!, fidelity_normal_texture(&fixture, true)!! };
+
     float[3] strengths = { 1, -1.5, 0 };
 
     for (uint mirrored = 0; mirrored < 2; mirrored++) {
@@ -1337,6 +1682,7 @@ fn void test_fidelity_rgb_rg_decals_match_on_mirrored_nonuniform_projectors_and_
         foreach (strength : strengths) {
             foreach (path : DECAL_PATHS) {
                 decal_configure_view(&fixture, &shot, path)!!;
+
                 Vec4[][2] outputs;
 
                 for (uint encoding = 0; encoding < 2; encoding++) {
@@ -1344,14 +1690,18 @@ fn void test_fidelity_rgb_rg_decals_match_on_mirrored_nonuniform_projectors_and_
                     params.normal_map = material::texture_slot(textures[encoding]);
                     params.normal_scale = strength;
                     fixture.assets.mark_material_dirty(target.source);
+
                     outputs[encoding] = decal_render_pixels(
-                        fixture: &fixture, target: &target, shot: &shot, raw_hdr: true,
+                        fixture: &fixture,
+                        target: &target,
+                        shot: &shot,
+                        raw_hdr: true,
                     )!!;
                 }
-
                 defer free(outputs[0]);
                 defer free(outputs[1]);
-                fidelity_compare_images(outputs[0], outputs[1], 0.02);
+
+                fidelity_compare_images(outputs[0], outputs[1], FIDELITY_IMAGE_TOLERANCE);
             }
         }
     }
@@ -1363,17 +1713,23 @@ fn void test_fidelity_rgb_rg_trace_and_raster_normals_agree_for_signed_scales_an
     Fixture fixture;
     create_fixture(mem, &fixture, ray_tracing_pipelines: true)!!;
     defer destroy_fixture(&fixture);
+
     FidelityRaster raster = create_fidelity_raster(&fixture)!!;
     defer destroy_fidelity_raster(&fixture, &raster);
+
     raster.scene.ambient_intensity = 0;
     raster.scene.background.color = { 0, 0, 0, 1 };
+
     Node* sun = raster.scene.add_light(light::directional({ 1, 1, 1 }, 3, false))!!;
     sun.local.rotation = maths::look_rotation(((Vec3){ -0.5f, -0.2f, -1 }).normalize(), { 0, 1, 0 });
+
     TextureId[2] textures = { fidelity_normal_texture(&fixture, false)!!, fidelity_normal_texture(&fixture, true)!! };
+
     float[3] strengths = { 1, -1.5, 0 };
 
     for (uint mirrored = 0; mirrored < 2; mirrored++) {
         GeometryId quad = fidelity_quad(&fixture, mirrored != 0)!!;
+
         raster.mesh = raster.scene.add_mesh(quad, fixture.plain)!!;
         raster.scene.get(raster.mesh, Mesh).cast_shadow = false;
         raster.mesh.local.scale = { mirrored ? -1.2f : 1.2f, 0.8f, 1.1f };
@@ -1387,8 +1743,10 @@ fn void test_fidelity_rgb_rg_trace_and_raster_normals_agree_for_signed_scales_an
                 params.roughness = 0.6;
                 params.normal_scale = strength;
                 params.normal_map = material::texture_slot(textures[encoding]);
+
                 MaterialCommon common = material::MATERIAL_COMMON_DEFAULT;
                 common.double_sided = true;
+
                 MaterialId material_id = fixture.assets.add_material(material::standard(params, common))!!;
                 raster.scene.get(raster.mesh, Mesh).material = material_id;
 
@@ -1396,20 +1754,24 @@ fn void test_fidelity_rgb_rg_trace_and_raster_normals_agree_for_signed_scales_an
                     ViewDesc desc = fixture.renderer.views.get(raster.view).desc;
                     desc.path_trace = { .max_bounces = 1, .samples_per_frame = 4 };
                     render::configure_view(&fixture.renderer, raster.view, desc)!!;
+
                     Vec4[] pixels = fidelity_render_raster(
-                        fixture: &fixture, raster: &raster,
+                        fixture: &fixture,
+                        raster: &raster,
                         path: path == 0 ? ShadingPath.FORWARD : ShadingPath.PATH_TRACED,
                     )!!;
                     defer free(pixels);
-                    centers[encoding][path] = pixels[32 * 64 + 32];
+
+                    centers[encoding][path] = pixels[FIDELITY_RASTER_CENTER_INDEX];
                 }
             }
 
-            assert(math::abs(centers[0][0].xyz - centers[1][0].xyz).max() <= 0.02);
-            assert(math::abs(centers[0][1].xyz - centers[1][1].xyz).max() <= 0.02);
+            assert(math::abs(centers[0][0].xyz - centers[1][0].xyz).max() <= FIDELITY_IMAGE_TOLERANCE);
+            assert(math::abs(centers[0][1].xyz - centers[1][1].xyz).max() <= FIDELITY_IMAGE_TOLERANCE);
 
             for (uint encoding = 0; encoding < 2; encoding++) {
-                Vec3 tolerance = centers[encoding][0].xyz * 0.02 + 0.001;
+                Vec3 tolerance = centers[encoding][0].xyz * FIDELITY_IMAGE_TOLERANCE
+                  + FIDELITY_TRACE_ABSOLUTE_TOLERANCE;
                 Vec3 difference = math::abs(centers[encoding][1].xyz - centers[encoding][0].xyz);
                 assert(difference.x <= tolerance.x && difference.y <= tolerance.y && difference.z <= tolerance.z);
             }
@@ -1425,6 +1787,7 @@ fn void test_fidelity_restore_matching_changed_and_invalid_counts_preserves_comm
     Fixture fixture;
     create_fixture(mem, &fixture)!!;
     defer destroy_fixture(&fixture);
+
     Renderer second = render::create_renderer(mem, &fixture.assets, {
         .validation = true, .application_name = "coverage_second_renderer",
     })!!;
@@ -1432,20 +1795,29 @@ fn void test_fidelity_restore_matching_changed_and_invalid_counts_preserves_comm
 
     @pool() {
         material::TextureDesc desc = material::texture_2d_desc(32, 32, RGBA32_FLOAT);
+
         desc.coverage = CoveragePolicy.THRESHOLD;
         desc.alpha_threshold = 0.5;
+
         TextureId texture = fixture.assets.add_texture(desc, FIDELITY_LEAF_FLOAT)!!;
+
         fixture.renderer.upload_texture(texture)!!;
         second.upload_texture(texture)!!;
+
         gpu::TextureHandle original = fixture.renderer.textures[texture.index].texture;
         TextureCoverageResource* original_results = fixture.renderer.textures[texture.index].coverage_resource;
+
         fixture.assets.release_texture_cpu(texture);
+
         fixture.assets.restore_texture_cpu(texture, ((String)FIDELITY_LEAF_FLOAT).copy(fixture.assets.allocator));
+
         assert(fixture.assets.texture(texture).header.revision == 1);
+
         fixture.renderer.upload_texture(texture)!!;
         assert(fixture.renderer.textures[texture.index].texture == original);
         assert(fixture.renderer.textures[texture.index].coverage_resource == original_results);
-        assert(fixture.renderer.texture_coverage(texture, 2)!!.revision == 1 && second.texture_coverage(texture, 2)!!.revision == 1);
+        assert(fixture.renderer.texture_coverage(texture, 2)!!.revision == 1
+          && second.texture_coverage(texture, 2)!!.revision == 1);
 
         char[] changed = alloc::new_array(tmem, char, (sz)FIDELITY_LEAF_FLOAT.len);
         changed[..] = FIDELITY_LEAF_FLOAT[..];
@@ -1456,12 +1828,17 @@ fn void test_fidelity_restore_matching_changed_and_invalid_counts_preserves_comm
         }
 
         ((Vec4*)changed.ptr)[selected].w = 1;
+
         fixture.assets.release_texture_cpu(texture);
+
         fixture.assets.restore_texture_cpu(texture, ((String)changed).copy(fixture.assets.allocator));
+
         assert(fixture.assets.texture(texture).header.revision == 2);
         assert(fixture.assets.texture(texture).coverage_statistics.passing[0] == 485);
         assert(fixture.renderer.texture_coverage(texture, 2)!!.revision == 1);
+
         fixture.renderer.upload_texture(texture)!!;
+
         TextureCoverageResult first = fixture.renderer.texture_coverage(texture, 2)!!;
         TextureCoverageResult held = second.texture_coverage(texture, 2)!!;
         assert(first.revision == 2 && first.original_passing == 485);
@@ -1469,21 +1846,30 @@ fn void test_fidelity_restore_matching_changed_and_invalid_counts_preserves_comm
         assert(fixture.renderer.textures[texture.index].coverage_resource != original_results);
 
         ((Vec4*)changed.ptr)[selected].w = bitcast(0x7fc00000u, float);
+
         fixture.assets.release_texture_cpu(texture);
+
         fixture.assets.restore_texture_cpu(texture, ((String)changed).copy(fixture.assets.allocator));
+
         assert(fixture.assets.texture(texture).header.revision == 3);
         assert(!fixture.assets.texture(texture).coverage_statistics.valid);
+
         PrepareId id = fidelity_texture_job(&fixture, texture)!!;
         fixture.renderer.begin_frame()!!;
         fixture.renderer.advance_prepares_within({})!!;
         fixture.renderer.end_frame()!!;
+
         PrepareProgress failure = fixture.renderer.prepare_progress(id);
+
         assert(failure.state == PrepareState.FAILED && failure.failure == c3d::INVALID_ARGUMENT);
         assert(fixture.renderer.texture_coverage(texture, 2)!!.revision == 2);
         assert(second.texture_coverage(texture, 2)!!.revision == 1);
+
         fixture.renderer.end_prepare(id)!!;
     };
+
     check_validation(&second);
+
     check_validation(&fixture.renderer);
 }
 
@@ -1500,25 +1886,38 @@ fn void? fidelity_export_bake_region(
         Vec4[] reference = alloc::new_array(tmem, Vec4, (sz)measured.len);
         Vec4[] actual = alloc::new_array(tmem, Vec4, (sz)measured.len);
         uint eligible;
+
         double maximum;
 
-        for (uint row = 0; row < 64; row++) {
-            for (uint column = 0; column < 64; column++) {
+        for (uint row = 0; row < FIDELITY_RASTER_EXTENT; row++) {
+            for (uint column = 0; column < FIDELITY_RASTER_EXTENT; column++) {
                 Vec3 point = {
-                    camera_position.x + ((float)column + 0.5f) / 32 - 1,
-                    camera_position.y + 1 - ((float)row + 0.5f) / 32, 0,
+                    camera_position.x + ((float)column + 0.5f) / FIDELITY_RASTER_CENTER - 1,
+                    camera_position.y + 1 - ((float)row + 0.5f) / FIDELITY_RASTER_CENTER, 0,
                 };
                 point /= transform.scale;
+
                 Vec3 weights = { 0, (point.x + 1) * 0.5f, (point.y + 1) * 0.5f };
                 weights.x = 1 - weights.y - weights.z;
-                if (weights.x < 0.01f || weights.y < 0.01f || weights.z < 0.01f) continue;
-                uint index = row * 64 + column;
-                Vec3 expected = fidelity_transformed_bake_reference(triangle, weights, mapped, transform);
+                if (weights.x < FIDELITY_BAKE_WEIGHT_MARGIN
+                  || weights.y < FIDELITY_BAKE_WEIGHT_MARGIN || weights.z < FIDELITY_BAKE_WEIGHT_MARGIN) continue;
+
+                uint index = row * FIDELITY_RASTER_EXTENT + column;
+
+                Vec3 expected = fidelity_transformed_bake_reference(
+                    triangle: triangle,
+                    weights: weights,
+                    mapped: mapped,
+                    transform: transform,
+                );
                 Vec3 normal = deferred ? render::decode_octahedral(measured[index].xy) : measured[index].xyz;
+
                 double angle = fidelity_angle(normal, expected);
-                assert(angle <= 0.02, "bake image %s row %d column %d: %.9f", name, row, column, angle);
+
+                assert(angle <= FIDELITY_WORLD_ANGLE, "bake image %s row %d column %d: %.9f", name, row, column, angle);
                 maximum = math::max(maximum, angle);
                 eligible++;
+
                 Vec3 expected_color = expected * 0.5f + 0.5f;
                 Vec3 actual_color = normal * 0.5f + 0.5f;
                 reference[index] = { expected_color.x, expected_color.y, expected_color.z, 1 };
@@ -1526,10 +1925,24 @@ fn void? fidelity_export_bake_region(
             }
         }
 
-        assert(eligible >= 64);
+        assert(eligible >= FIDELITY_BAKE_MINIMUM_ELIGIBLE);
+
         io::printfn("bake image %s: eligible=%d maximum_rad=%.9f", name, eligible, maximum);
-        fidelity_export_image(name: string::tformat("%s_normal", name), pixels: actual, width: 64, height: 64)!;
-        fidelity_export_image(name: string::tformat("%s_reference", name), pixels: reference, width: 64, height: 64)!;
+
+        fidelity_export_image(
+            name: string::tformat("%s_normal", name),
+            pixels: actual,
+            width: FIDELITY_RASTER_EXTENT,
+            height: FIDELITY_RASTER_EXTENT,
+        )!;
+
+        fidelity_export_image(
+            name: string::tformat("%s_reference", name),
+            pixels: reference,
+            width: FIDELITY_RASTER_EXTENT,
+            height: FIDELITY_RASTER_EXTENT,
+        )!;
+
         fidelity_export_difference(string::tformat("%s_difference", name), actual, reference)!;
     };
 }

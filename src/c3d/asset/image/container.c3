@@ -102,6 +102,7 @@ fn TextureId? add_texture_container(
             color_space: color_space,
             semantic: semantic,
         )!;
+
         if (container.desc.generate_mips) {
             texture = assets.add_texture(container.desc, container.levels[0].bytes, key)!;
         } else {

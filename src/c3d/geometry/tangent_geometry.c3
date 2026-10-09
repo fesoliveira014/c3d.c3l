@@ -73,11 +73,14 @@ fn void? check_tangent_stream(Geometry* geometry, TangentProvenance provenance =
         return;
     }
     if (geometry.tangents.len != geometry.positions.len) return c3d::INVALID_ARGUMENT~;
+
     if (provenance.origin == TangentOrigin.GENERATED) {
         if (provenance.uv_set > 1 || geometry.normals.len != geometry.positions.len) return c3d::INVALID_ARGUMENT~;
+
         Vec2[] selected = provenance.uv_set == 0 ? geometry.uv0 : geometry.uv1;
         if (selected.len != geometry.positions.len) return c3d::INVALID_ARGUMENT~;
     }
+
     foreach (tangent : geometry.tangents) {
         if (!finite_tangent_values(tangent) || tangent.w == 0) return c3d::INVALID_ARGUMENT~;
         if (provenance.origin == TangentOrigin.GENERATED) {
@@ -156,6 +159,8 @@ fn TangentGeometry? create_tangent_geometry(Allocator allocator, Geometry* sourc
     defer alloc::free(allocator, next_split);
     bool[] assigned = @tangent_array(allocator, bool, source.positions.len)!;
     defer alloc::free(allocator, assigned);
+    Vec4[] split_tangents = @tangent_array(allocator, Vec4, capacity)!;
+    defer alloc::free(allocator, split_tangents);
 
     TangentGeometry owner = {
         .allocator = allocator,
@@ -164,13 +169,12 @@ fn TangentGeometry? create_tangent_geometry(Allocator allocator, Geometry* sourc
     };
     defer catch destroy_tangent_geometry(&owner);
 
-    owner.data.tangents = @tangent_array(allocator, Vec4, capacity)!;
     if (source.indices.len) owner.data.indices = @tangent_array(allocator, uint, corner_count)!;
 
     foreach (vertex, &index : source_vertices[:source.positions.len]) {
         *index = (uint)vertex;
         next_split[vertex] = NO_TANGENT_VERTEX;
-        owner.data.tangents[vertex] = { 1, 0, 0, -1 };
+        split_tangents[vertex] = { 1, 0, 0, -1 };
     }
 
     usz vertex_count = source.positions.len;
@@ -180,12 +184,12 @@ fn TangentGeometry? create_tangent_geometry(Allocator allocator, Geometry* sourc
         Vec4 tangent = { generated.direction.x, generated.direction.y, generated.direction.z, generated.sign };
         uint destination = source_index;
         if (!assigned[source_index]) {
-            owner.data.tangents[destination] = tangent;
+            split_tangents[destination] = tangent;
             assigned[source_index] = true;
         } else {
             uint previous = destination;
 
-            while (owner.data.tangents[destination] != tangent) {
+            while (split_tangents[destination] != tangent) {
                 previous = destination;
                 destination = next_split[destination];
                 if (destination == NO_TANGENT_VERTEX) break;
@@ -197,14 +201,16 @@ fn TangentGeometry? create_tangent_geometry(Allocator allocator, Geometry* sourc
                 next_split[previous] = destination;
                 next_split[destination] = NO_TANGENT_VERTEX;
                 source_vertices[destination] = source_index;
-                owner.data.tangents[destination] = tangent;
+                split_tangents[destination] = tangent;
             }
         }
 
         if (source.indices.len) owner.data.indices[corner] = destination;
     }
 
-    owner.data.tangents = owner.data.tangents[:vertex_count];
+    owner.data.tangents = @tangent_array(allocator, Vec4, vertex_count)!;
+    owner.data.tangents[..] = split_tangents[:vertex_count];
+
     uint[] remap = source_vertices[:vertex_count];
     owner.data.positions = @remap_tangent_stream(allocator, source.positions, remap)!;
     owner.data.normals = @remap_tangent_stream(allocator, source.normals, remap)!;
@@ -287,8 +293,10 @@ fn void? check_tangent_source(Geometry* source, uint uv_set) @private {
 
     usz vertex_count = source.positions.len;
     if (!vertex_count || source.normals.len != vertex_count) return c3d::INVALID_ARGUMENT~;
+
     Vec2[] selected = uv_set == 0 ? source.uv0 : source.uv1;
     if (!selected.len) return c3d::UNSUPPORTED~;
+
     usz corner_count = source.indices.len ? source.indices.len : vertex_count;
     if (corner_count % CORNERS_PER_TRIANGLE != 0) return c3d::INVALID_ARGUMENT~;
     if (vertex_count > uint::max || corner_count > int::max

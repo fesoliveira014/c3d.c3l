@@ -888,7 +888,7 @@ fn void test_prepared_joint_width_survives_transfer_and_source_release() @test {
     assert(!assets.geometry(published).joints_u16);
 }
 
-fn void test_document_coverage_statistics_are_recomputed_and_revision_owned() @test {
+fn void test_document_coverage_statistics_are_derived_and_revision_owned() @test {
     TrackingAllocator tracker;
     tracker.init(mem);
     defer tracker.free();
@@ -908,9 +908,6 @@ fn void test_document_coverage_statistics_are_recomputed_and_revision_owned() @t
         texture.pixels[7] = 128;
         texture.pixels[11] = 255;
         texture.pixels[15] = 64;
-        texture.coverage_statistics = {
-            .valid = true, .passing = { 4, 0, 0, 0, 0, 0 }, .total = { 4, 0, 0, 0, 0, 0 },
-        };
 
         PreparedModelDocument prepared = asset::prepare_model_document(&document)!!;
         defer asset::destroy_prepared_model_document(&prepared);
@@ -960,7 +957,7 @@ fn void test_document_coverage_statistics_are_recomputed_and_revision_owned() @t
     assert(!tracker.has_leaks());
 }
 
-fn void test_document_invalid_alpha_preserves_input_and_rejects_cached_counts() @test {
+fn void test_document_invalid_alpha_preserves_input() @test {
     TrackingAllocator tracker;
     tracker.init(mem);
     defer tracker.free();
@@ -986,15 +983,8 @@ fn void test_document_invalid_alpha_preserves_input_and_rejects_cached_counts() 
         channels[1] = 0.3;
         channels[2] = 0.4;
         channels[3] = bitcast(0x7fc00000u, float);
-        texture.coverage_statistics = {
-            .valid = true, .passing = { 1, 0, 0, 0, 0, 0 }, .total = { 1, 0, 0, 0, 0, 0 },
-        };
-        CoverageStatistics before = document.textures[0].coverage_statistics;
-        CoverageStatistics claimed = texture.coverage_statistics;
 
         assert(@catch(asset::prepare_model_document(&document)) == c3d::INVALID_ARGUMENT);
-        assert_same_coverage_statistics(document.textures[0].coverage_statistics, before);
-        assert_same_coverage_statistics(texture.coverage_statistics, claimed);
         assert_publish_faults(&assets, &document, c3d::INVALID_ARGUMENT);
         assert(math::is_nan(channels[3]));
 
@@ -1173,11 +1163,6 @@ fn void test_document_capacity_failure_preserves_authored_tangent_arrays_and_met
         TangentProvenance provenance = entry.tangent_provenance;
         document.textures[0].desc.coverage = CoveragePolicy.THRESHOLD;
         document.textures[0].desc.alpha_threshold = 0.5;
-        document.textures[0].coverage_statistics = {
-            .revision = 17, .valid = true,
-            .passing = { 4, 0, 0, 0, 0, 0 }, .total = { 4, 0, 0, 0, 0, 0 },
-        };
-        CoverageStatistics statistics = document.textures[0].coverage_statistics;
         char* pixels = document.textures[0].pixels.ptr;
 
         assert_publish_faults(&assets, &document, c3d::CAPACITY_EXCEEDED);
@@ -1189,7 +1174,6 @@ fn void test_document_capacity_failure_preserves_authored_tangent_arrays_and_met
         assert(document.geometries[0].data.tangents[2] == (Vec4){ 1, 0, 0, 2 });
         assert_same_tangent_provenance(document.geometries[0].tangent_provenance, provenance);
         assert(document.textures[0].pixels.ptr == pixels);
-        assert_same_coverage_statistics(document.textures[0].coverage_statistics, statistics);
         assert(c3d::same_id(document.template.meshes[0].geometry, refs.geometry));
     }
 

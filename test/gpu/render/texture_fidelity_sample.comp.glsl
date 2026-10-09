@@ -20,6 +20,7 @@ void main() {
     FidelitySampleRoot root = FidelitySampleRoot(dispatch.parameters);
     uvec2 pixel = gl_GlobalInvocationID.xy;
     if (pixel.x >= root.width || pixel.y >= root.height) return;
+
     DispatchTextureGpu source = DispatchTexturesGpu(dispatch.textures).slots[0];
     FidelitySamples(root.outputs).values[pixel.y * root.width + pixel.x] = texelFetch(
         sampler2D(gpu_texture_heap[nonuniformEXT(GPU_HEAP_SLOT(source.texture_index))],

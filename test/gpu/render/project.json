@@ -26,62 +26,19 @@
   "targets": {
     "prepare_bench": {
       "type": "executable",
-      "sources": [
-        "bench_prepare.c3",
-        "../../fixtures/loading_fixtures.c3"
-      ]
+      "sources": [ "bench_prepare.c3", "../../fixtures/loading_fixtures.c3" ]
     },
     "origin_bench": {
       "type": "executable",
-      "sources": [
-        "bench_origin.c3"
-      ],
-      "dependencies": [
-        "c3d",
-        "c3d_profile",
-        "gpu",
-        "vk",
-        "vma",
-        "spvreflect",
-        "sdl3",
-        "c3imgui",
-        "c3cg",
-        "b3",
-        "cgltf",
-        "ufbx",
-        "shaderc"
-      ],
-      "features": [
-        "C3D_SHADER_COMPILER",
-        "C3D_PROFILE_GPU",
-        "C3D_PROFILE_INTERNAL"
-      ]
+      "sources": [ "bench_origin.c3" ],
+      "dependencies": [ "c3d", "c3d_profile", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "b3", "cgltf", "ufbx", "shaderc" ],
+      "features": [ "C3D_SHADER_COMPILER", "C3D_PROFILE_GPU", "C3D_PROFILE_INTERNAL" ]
     },
     "posed_trace_bench": {
       "type": "executable",
-      "sources": [
-        "bench_posed_trace.c3"
-      ],
-      "dependencies": [
-        "c3d",
-        "c3d_profile",
-        "gpu",
-        "vk",
-        "vma",
-        "spvreflect",
-        "sdl3",
-        "c3imgui",
-        "c3cg",
-        "b3",
-        "cgltf",
-        "ufbx",
-        "shaderc"
-      ],
-      "features": [
-        "C3D_SHADER_COMPILER",
-        "C3D_PROFILE_GPU",
-        "C3D_PROFILE_INTERNAL"
-      ]
+      "sources": [ "bench_posed_trace.c3" ],
+      "dependencies": [ "c3d", "c3d_profile", "gpu", "vk", "vma", "spvreflect", "sdl3", "c3imgui", "c3cg", "b3", "cgltf", "ufbx", "shaderc" ],
+      "features": [ "C3D_SHADER_COMPILER", "C3D_PROFILE_GPU", "C3D_PROFILE_INTERNAL" ]
     },
     "acceptance": {
       "type": "test",

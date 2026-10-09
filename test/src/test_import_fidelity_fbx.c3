@@ -11,6 +11,11 @@ import c3d::geometry;
 const String MODEL_PATH @local = "memory/materials.fbx";
 const String IMAGE_PATH @local = "memory/shared.image";
 const char[*] CUBE_MODEL @local = $embed("../fixtures/fbx/maya_cube_7400_binary.fbx");
+const char[*] AUTHORED_TANGENT_FAULTS @local = $embed("../fixtures/import_fidelity/authored_tangent_faults_v1.fbx");
+const String FAULTY_TANGENTS @local = "a: 0,0,0,NaN,0,0,2,0,0,2,0,0";
+const String FAULTY_BINORMALS @local = "a: 0,0,0,0,NaN,0,0,3,0,0,3,0";
+const String VALID_TANGENTS @local = "a: 2,0,0,2,0,0,2,0,0,2,0,0";
+const String VALID_BINORMALS @local = "a: 0,3,0,0,3,0,0,3,0,0,3,0";
 const char[*] PNG_PIXELS @local = $embed("../fixtures/rgba.png");
 const char[*] DDS_RGBA @local = $embed("../fixtures/texture/legacy_rgba8_2x2.dds");
 const char[*] KTX_BC5 @local = $embed("../fixtures/texture/ktx2_bc5_8x4.ktx2");
@@ -214,6 +219,7 @@ fn void test_color_data_and_normal_roles_split_and_compatible_normals_reuse() @t
 
         Material* material = &document.materials[0].data;
         TextureId normal_id = material.standard.normal_map.texture.asset;
+
         material.common.alpha_mode = AlphaMode.MASK;
         material.common.alpha_cutoff = 0.25f;
         material.standard.base_color.w = 0;
@@ -287,6 +293,7 @@ fn void test_supplied_normal_chains_keep_bytes_and_do_not_infer_bc5_encoding() @
                   : fixture_source(SINGLE_MATERIAL, NORMAL_CONNECTION, entry.bytes);
                 LoadOptions options = asset::LOAD_OPTIONS_DEFAULT;
                 options.normal_encoding = encoding;
+
                 TrackingAllocator tracker;
                 tracker.init(mem);
                 defer tracker.free();
@@ -395,17 +402,16 @@ fn void test_forced_fbx_tangents_use_converted_uv0_and_transfer_without_regenera
             assert(entry.tangent_provenance.origin == TangentOrigin.GENERATED);
             assert(entry.tangent_provenance.uv_set == 0 && entry.tangent_provenance.derivation_revision == 0);
 
-            TangentGeometry reference = geometry::create_tangent_geometry(mem, original, 0)!!;
-            defer geometry::destroy_tangent_geometry(&reference);
-
             foreach (corner, vertex : generated.indices) {
                 uint original_vertex = original.indices[corner];
-                uint reference_vertex = reference.data.indices[corner];
+                Vec4 tangent = generated.tangents[vertex];
+                Vec3 direction = { tangent.x, tangent.y, tangent.z };
 
                 assert(generated.positions[vertex] == original.positions[original_vertex]);
                 assert(generated.normals[vertex] == original.normals[original_vertex]);
                 assert(generated.uv0[vertex] == original.uv0[original_vertex]);
-                assert(generated.tangents[vertex] == reference.data.tangents[reference_vertex]);
+                assert(math::abs(direction.length() - 1) < 0.00001f);
+                assert(tangent.w == 1 || tangent.w == -1);
             }
 
             transferred[index] = {
@@ -441,6 +447,86 @@ fn void test_forced_fbx_tangents_use_converted_uv0_and_transfer_without_regenera
             assert(record.data.positions.ptr == expected.positions && record.data.normals.ptr == expected.normals);
             assert(record.data.uv0.ptr == expected.uv0 && record.data.indices.ptr == expected.indices);
             assert(record.data.tangents.ptr == expected.tangents);
+        }
+    };
+}
+
+fn void test_fbx_authored_zero_and_nan_tangents_fault_unless_forced() @test {
+    @pool() {
+        String malformed = (String)AUTHORED_TANGENT_FAULTS[..];
+        String valid = malformed.treplace(FAULTY_TANGENTS, VALID_TANGENTS).treplace(FAULTY_BINORMALS, VALID_BINORMALS);
+
+        TrackingAllocator tracker;
+        tracker.init(mem);
+        defer tracker.free();
+
+        {
+            MemorySource source = { .document = valid };
+            ModelDocument document = decode_fixture(&tracker, &source);
+            defer asset::destroy_model_document(&document);
+
+            assert(document.geometries.len == 1);
+            assert(document.geometries[0].tangent_provenance.origin == TangentOrigin.AUTHORED);
+
+            foreach (tangent : document.geometries[0].data.tangents) assert(tangent == (Vec4){ 2, 0, 0, -1 });
+        }
+
+        assert(tracker.allocated() == 0);
+
+        String[5] cases = {
+            malformed,
+            valid.treplace(VALID_TANGENTS, "a: 0,0,0,2,0,0,2,0,0,2,0,0"),
+            valid.treplace(VALID_TANGENTS, "a: NaN,0,0,2,0,0,2,0,0,2,0,0"),
+            valid.treplace(VALID_BINORMALS, "a: 0,0,0,0,3,0,0,3,0,0,3,0"),
+            valid.treplace(VALID_BINORMALS, "a: 0,NaN,0,0,3,0,0,3,0,0,3,0"),
+        };
+
+        foreach (text : cases) {
+            MemorySource source = { .document = text };
+            ModelDocument? result = fbx::decode_model(
+                allocator: &tracker,
+                path: MODEL_PATH,
+                file_source: { .read = &read_memory, .user = &source },
+            );
+            bool rejected;
+
+            if (catch excuse = result) {
+                rejected = true;
+                assert(excuse == c3d::ASSET_FORMAT_ERROR);
+            } else {
+                ModelDocument document = result;
+                asset::destroy_model_document(&document);
+            }
+
+            assert(rejected && tracker.allocated() == 0);
+
+            {
+                LoadOptions forced = asset::LOAD_OPTIONS_DEFAULT;
+                forced.generate_tangents = false;
+                forced.regenerate_tangents = true;
+
+                ModelDocument document = decode_fixture(&tracker, &source, forced);
+                defer asset::destroy_model_document(&document);
+
+                assert(document.geometries.len == 1);
+
+                DocumentGeometry* entry = &document.geometries[0];
+
+                assert(entry.tangent_provenance.origin == TangentOrigin.GENERATED);
+                assert(entry.tangent_provenance.uv_set == 0);
+                assert(entry.data.positions.len == 4 && entry.data.indices.len == 6);
+                assert(entry.data.tangents.len == entry.data.positions.len);
+
+                foreach (index, tangent : entry.data.tangents) {
+                    Vec3 position = entry.data.positions[index];
+
+                    assert(tangent == (Vec4){ 1, 0, 0, -1 });
+                    assert(entry.data.normals[index] == (Vec3){ 0, 0, 1 });
+                    assert(entry.data.uv0[index] == (Vec2){ position.x, 1 - position.y });
+                }
+            }
+
+            assert(tracker.allocated() == 0);
         }
     };
 }

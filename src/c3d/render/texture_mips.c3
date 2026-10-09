@@ -478,8 +478,17 @@ fn TextureMipChain? create_area_filter_texture_mips(
                 desc: desc,
                 pixels: pixels,
             );
-        default:
-
+        case RGBA32_FLOAT:
+        case R16_UINT:
+        case BC1_RGBA_UNORM:
+        case BC1_RGBA_SRGB:
+        case BC3_UNORM:
+        case BC3_SRGB:
+        case BC4_UNORM:
+        case BC5_UNORM:
+        case BC6H_UFLOAT:
+        case BC7_UNORM:
+        case BC7_SRGB:
             return c3d::UNSUPPORTED~;
     }
 }
@@ -674,7 +683,8 @@ macro void? write_typed_mip_band(
 
             if (collector) {
                 usz destination_texel = (usz)destination_y * next_width + destination_x;
-                collect_texture_filter_output(collector, asset::texture_alpha_code(collector.format, destination_bytes, destination_texel));
+                uint code = asset::texture_alpha_code(collector.format, destination_bytes, destination_texel);
+                collect_texture_filter_output(collector, code);
             }
         }
     }
@@ -682,35 +692,30 @@ macro void? write_typed_mip_band(
 
 macro double load_mip_value($Scalar, $srgb, source, usz base, uint channel) @local {
     $if $Scalar == float16:
-
-        return (double)half_to_float(bitcast(source[base + channel], ushort));
+        return (double)half_to_float(bitcast(mem::load(source + base + channel, 1), ushort));
     $else
         $if $srgb:
-
             if (channel < RGB_CHANNELS) return srgb_decode_table[(usz)source[base + channel]];
-
         $endif
 
-        return (double)source[base + channel];
+        return (double)mem::load(source + base + channel, 1);
     $endif
 }
 
 macro void store_mip_value($Scalar, $srgb, destination, usz base, uint channel, double value) @local {
     $if $Scalar == char:
         $if $srgb:
-
             if (channel < RGB_CHANNELS) {
                 destination[base + channel] = (char)encode_srgb_code(value);
                 return;
             }
-
         $endif
         destination[base + channel] = (char)math::clamp(math::round(value), 0.0, UNORM_MAX);
     $else
         $if $Scalar == float16:
-            destination[base + channel] = bitcast(float_to_half((float)value), float16);
+            mem::store(destination + base + channel, bitcast(float_to_half((float)value), float16), 1);
         $else
-            destination[base + channel] = ($Scalar)value;
+            mem::store(destination + base + channel, ($Scalar)value, 1);
         $endif
     $endif
 }
@@ -781,6 +786,7 @@ fn double[3] normalize_texture_vector(double[3] normal) @private {
     if (largest == 0.0) return { 0.0, 0.0, 1.0 };
 
     for (uint channel = 0; channel < RGB_CHANNELS; channel++) normal[channel] /= largest;
+
     double length = math::sqrt(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
 
     for (uint channel = 0; channel < RGB_CHANNELS; channel++) normal[channel] /= length;
@@ -821,6 +827,7 @@ macro double[RGBA_CHANNELS]? load_texture_vector(
     double[3] normal = normalize_texture_vector({ values[0], values[1], values[2] });
 
     for (uint channel = 0; channel < RGB_CHANNELS; channel++) values[channel] = normal[channel];
+
     values[3] = load_mip_value(
         $Scalar: $Scalar,
         $srgb: false,
@@ -834,6 +841,7 @@ macro double[RGBA_CHANNELS]? load_texture_vector(
 
 fn void? check_texture_normal_pixels(material::TextureDesc desc, char[] pixels) @private {
     if (desc.semantic == TextureSemantic.COLOR || material::texture_is_compressed(desc.format)) return;
+
     uint scalar_bytes = (uint)material::texture_block_bytes(desc.format) / RGBA_CHANNELS;
     uint relevant = desc.semantic == TextureSemantic.NORMAL_RGB ? RGB_CHANNELS : 2;
 
@@ -877,9 +885,11 @@ fn TextureMipChain? create_fidelity_texture_mips(
         .pixels = alloc::new_array(allocator, char, (sz)(pixels.len + layout.byte_count)),
     };
     defer catch destroy_texture_mips(&chain);
+
     mem::copy(chain.pixels.ptr, pixels.ptr, pixels.len);
 
     for (uint mip = 0; mip < layout.mip_count; mip++) chain.offsets[mip + 1] = pixels.len + layout.offsets[mip];
+
     TextureMipChain generated = {
         .first_mip = 1, .mip_count = layout.mip_count, .layer_count = desc.layers,
         .offsets = layout.offsets, .pixels = chain.pixels[pixels.len..],
@@ -918,6 +928,7 @@ fn TextureMipChain? create_fidelity_texture_mips(
             if (collector) {
                 state.reserved += state.texels;
                 finish_texture_coverage_pass(&state);
+
                 usz layer_bytes = material::texture_mip_bytes(desc, mip)!;
                 usz offset = generated.offsets[mip - 1] + (usz)layer * layer_bytes;
                 char[] destination = generated.pixels[offset:layer_bytes];

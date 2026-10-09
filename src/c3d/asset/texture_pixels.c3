@@ -91,25 +91,49 @@ fn void write_texture_alpha_code(
     for (usz byte = 0; byte < scalar_bytes; byte++) pixels[offset + byte] = (char)(code >> (byte * 8));
 }
 
-<* Decode a stored alpha with the texture's destination codec. *>
+<*
+ Decode a stored alpha with the texture's destination codec.
+ @require format == RGBA8_UNORM || format == RGBA8_SRGB || format == RGBA16_FLOAT || format == RGBA32_FLOAT
+*>
 fn double decode_texture_alpha(PixelFormat format, uint code) {
     switch (format) {
         case RGBA8_UNORM:
         case RGBA8_SRGB: return (double)code / char::max;
         case RGBA16_FLOAT: return (double)decode_texture_half((ushort)code);
         case RGBA32_FLOAT: return (double)bitcast(code, float);
-        default: unreachable();
+        case R16_UINT:
+        case BC1_RGBA_UNORM:
+        case BC1_RGBA_SRGB:
+        case BC3_UNORM:
+        case BC3_SRGB:
+        case BC4_UNORM:
+        case BC5_UNORM:
+        case BC6H_UFLOAT:
+        case BC7_UNORM:
+        case BC7_SRGB: unreachable();
     }
 }
 
-<* Encode normalized alpha with the texture's destination codec. *>
+<*
+ Encode normalized alpha with the texture's destination codec.
+ @require format == RGBA8_UNORM || format == RGBA8_SRGB || format == RGBA16_FLOAT || format == RGBA32_FLOAT
+*>
 fn uint encode_texture_alpha(PixelFormat format, double value) {
     switch (format) {
         case RGBA8_UNORM:
         case RGBA8_SRGB: return (uint)math::clamp(math::round(value * char::max), 0.0, (double)char::max);
         case RGBA16_FLOAT: return (uint)encode_texture_half((float)value);
         case RGBA32_FLOAT: return bitcast((float)value, uint);
-        default: unreachable();
+        case R16_UINT:
+        case BC1_RGBA_UNORM:
+        case BC1_RGBA_SRGB:
+        case BC3_UNORM:
+        case BC3_SRGB:
+        case BC4_UNORM:
+        case BC5_UNORM:
+        case BC6H_UFLOAT:
+        case BC7_UNORM:
+        case BC7_SRGB: unreachable();
     }
 }
 
@@ -126,6 +150,5 @@ fn uint scale_texture_alpha(PixelFormat format, uint code, double scale) {
         return (uint)math::clamp(math::round((double)code * scale), 0.0, (double)char::max);
     }
 
-    return encode_texture_alpha(format,
-    math::clamp(decode_texture_alpha(format, code) * scale, 0.0, 1.0));
+    return encode_texture_alpha(format, math::clamp(decode_texture_alpha(format, code) * scale, 0.0, 1.0));
 }

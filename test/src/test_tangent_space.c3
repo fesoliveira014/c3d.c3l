@@ -45,6 +45,14 @@ fn void TangentFaultAllocator.release(&self, void* pointer, bool aligned) @dynam
     self.allocator.release(pointer, aligned);
 }
 
+fn sz tangent_allocation_bytes(TrackingAllocator* tracker, void* pointer) @local {
+    foreach (allocation : tracker.allocations_tlist(tmem)) {
+        if (allocation.ptr == pointer) return allocation.size;
+    }
+
+    unreachable();
+}
+
 fn uint take_u32(char[] bytes, usz* offset) @local {
     assert(*offset <= bytes.len - uint::size);
 
@@ -59,12 +67,15 @@ fn MikkFullMesh take_mesh(char[] bytes, usz* offset) @local {
     uint vertex_count = take_u32(bytes, offset);
     uint face_count = take_u32(bytes, offset);
     uint uv_set = take_u32(bytes, offset);
+
     MikkVertex[] vertices = alloc::new_array(tmem, MikkVertex, vertex_count);
     mem::copy(vertices.ptr, &bytes[*offset], vertices.len * MikkVertex::size);
     *offset += vertices.len * MikkVertex::size;
+
     int[] sizes = alloc::new_array(tmem, int, face_count);
     mem::copy(sizes.ptr, &bytes[*offset], sizes.len * int::size);
     *offset += sizes.len * int::size;
+
     int[] offsets = alloc::new_array(tmem, int, face_count);
     int corner_count = 0;
 
@@ -335,6 +346,10 @@ fn void test_tangent_splits_copy_every_stream_without_merging_source_vertices() 
             assert(owner.data.indices[0] != owner.data.indices[3] && owner.data.indices[2] != owner.data.indices[4]);
             assert(source.positions.len == 4 && source.indices == (uint[6]){ 0, 1, 2, 0, 2, 3 }[..]);
             assert(!source.tangents.len && owner.data.positions.ptr != source.positions.ptr);
+            assert(tangent_allocation_bytes(&tracker, owner.data.tangents.ptr)
+              == (sz)(owner.data.positions.len * Vec4::size));
+            assert(tangent_allocation_bytes(&tracker, repeated.data.tangents.ptr)
+              == (sz)(repeated.data.positions.len * Vec4::size));
 
             foreach (corner, destination : owner.data.indices) {
                 uint original = source.indices[corner];
@@ -499,6 +514,30 @@ fn void test_tangent_generation_has_no_small_mesh_cap_and_preserves_nonindexed_t
     };
 }
 
+fn void test_indexed_tangents_retain_exact_output_storage_after_scratch_is_released() @test {
+    @pool() {
+        Geometry source = mirrored_geometry();
+        source.indices = alloc::new_array(tmem, uint, 600 * 3);
+
+        foreach (corner, &index : source.indices) *index = (uint)(corner % 3);
+
+        TrackingAllocator tracker;
+        tracker.init(mem);
+        defer tracker.free();
+
+        {
+            TangentGeometry owner = geometry::create_tangent_geometry(&tracker, &source)!!;
+            defer geometry::destroy_tangent_geometry(&owner);
+
+            assert(owner.data.positions.len == 4 && owner.data.tangents.len == 4);
+            assert(tangent_allocation_bytes(&tracker, owner.data.tangents.ptr) == 4 * Vec4::size);
+            assert(tracker.allocation_count() == 5);
+        }
+
+        assert(!tracker.has_leaks());
+    };
+}
+
 fn void test_authored_tangents_keep_xyz_and_accept_mixed_nonunit_signs() @test {
     @pool() {
         Geometry source = mirrored_geometry();
@@ -513,15 +552,22 @@ fn void test_authored_tangents_keep_xyz_and_accept_mixed_nonunit_signs() @test {
         GeometryAsset* record = assets.geometry(id);
 
         assert(record.tangent_provenance.origin == TangentOrigin.AUTHORED);
+        assert(record.tangent_provenance.derivation_revision == record.header.revision);
         assert(record.data.tangents[0] == (Vec4){ 2, 3, 4, -1 });
         assert(record.data.tangents[1] == (Vec4){ 5, 6, 7, 1 });
         assert(source.tangents[0].w == -8 && source.tangents[1].w == 3);
+
+        source.tangents[0].x = 7;
+        assets.replace_geometry(id, &source)!!;
+
+        assert(record.header.revision == 2 && record.tangent_provenance.derivation_revision == 2);
+        assert(record.data.tangents[0] == (Vec4){ 7, 3, 4, -1 });
 
         uint revision = record.header.revision;
         source.tangents[0] = { 0, 0, 0, 1 };
 
         assert(@catch(assets.replace_geometry(id, &source)) == c3d::INVALID_ARGUMENT);
-        assert(record.header.revision == revision && record.data.tangents[0] == (Vec4){ 2, 3, 4, -1 });
+        assert(record.header.revision == revision && record.data.tangents[0] == (Vec4){ 7, 3, 4, -1 });
 
         source.tangents[0] = { 1, 0, 0, 0 };
 
@@ -530,6 +576,49 @@ fn void test_authored_tangents_keep_xyz_and_accept_mixed_nonunit_signs() @test {
         source.tangents[0] = { 1, 0, 0, float::inf };
 
         assert(@catch(assets.add_geometry(&source)) == c3d::INVALID_ARGUMENT);
+    };
+}
+
+fn void test_owned_authored_tangents_stamp_each_publication_revision() @test {
+    @pool() {
+        Geometry source = mirrored_geometry();
+        TrackingAllocator tracker;
+        tracker.init(mem);
+        defer tracker.free();
+
+        {
+            AssetStore assets = asset::create_asset_store(&tracker, asset::default_asset_store_desc());
+            defer asset::destroy_asset_store(&assets);
+
+            TangentGeometry first = geometry::create_tangent_geometry(&tracker, &source)!!;
+            defer geometry::destroy_tangent_geometry(&first);
+
+            GeometryId id = assets.add_geometry_owned(&first.data)!!;
+            first.data = {};
+
+            GeometryAsset* record = assets.geometry(id);
+
+            assert(record.tangent_provenance.origin == TangentOrigin.AUTHORED);
+            assert(record.tangent_provenance.derivation_revision == 1 && record.header.revision == 1);
+
+            TangentGeometry replacement = geometry::create_tangent_geometry(&tracker, &source)!!;
+            defer geometry::destroy_tangent_geometry(&replacement);
+
+            assets.replace_geometry_owned(id, &replacement.data)!!;
+            replacement.data = {};
+
+            assert(record.tangent_provenance.origin == TangentOrigin.AUTHORED);
+            assert(record.tangent_provenance.derivation_revision == 2 && record.header.revision == 2);
+
+            assets.mark_geometry_dirty(id);
+
+            assert(record.header.revision == 3 && record.tangent_provenance.derivation_revision == 2);
+
+            assets.release_geometry_cpu(id);
+            assert(record.tangent_provenance.derivation_revision == 2);
+        }
+
+        assert(!tracker.has_leaks());
     };
 }
 
@@ -570,6 +659,14 @@ fn void test_generated_tangent_publication_ownership_revision_and_release() @tes
 
             assert(@catch(assets.add_tangent_geometry_owned(&capacity, "other")) == c3d::CAPACITY_EXCEEDED);
             assert(capacity.data.positions.ptr == retained && record.header.revision == 1);
+
+            Vec4 valid_tangent = capacity.data.tangents[0];
+            capacity.data.tangents[0].w = 0;
+
+            assert(@catch(assets.replace_tangent_geometry_owned(id, &capacity)) == c3d::INVALID_ARGUMENT);
+            assert(capacity.data.positions.ptr == retained && record.header.revision == 1);
+
+            capacity.data.tangents[0] = valid_tangent;
 
             Geometry incompatible = mirrored_geometry();
 

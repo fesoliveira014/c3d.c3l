@@ -22,7 +22,6 @@
  *  3. This notice may not be removed or altered from any source distribution.
  */
 
-
 module c3d::geometry;
 import c3d;
 import std::core::mem::alloc, std::math;
@@ -124,17 +123,21 @@ fn void mikk_assign_group(
         MikkTriangle* triangle = &triangles[face];
         int corner = mikk_vertex_corner(*triangle, group.vertex);
         if (triangle.groups[corner] >= 0) continue;
+
         if ((triangle.flags & GROUP_WITH_ANY) != 0 && triangle.groups[0] < 0
           && triangle.groups[1] < 0 && triangle.groups[2] < 0) {
             triangle.flags &= ~ORIENT_PRESERVING;
             if (group.orientation) triangle.flags |= ORIENT_PRESERVING;
         }
+
         if (((triangle.flags & ORIENT_PRESERVING) != 0) != group.orientation) continue;
 
         triangle.groups[corner] = group_index;
         group.faces[group.count++] = face;
+
         int left = triangle.neighbors[corner];
         int right = triangle.neighbors[(corner + 2) % 3];
+
         if (right >= 0) traversal[pending++] = right;
         if (left >= 0) traversal[pending++] = left;
     }
@@ -152,15 +155,19 @@ fn MikkSpace mikk_evaluate_space(
     foreach (face : faces) {
         MikkTriangle triangle = triangles[face];
         if ((triangle.flags & GROUP_WITH_ANY) != 0) continue;
+
         int corner = mikk_vertex_corner(triangle, representative);
         MikkVector normal = mikk_indexed_normal(source, triangle.vertices[corner]);
         MikkVector tangent = mikk_project_normal(triangle.tangent, normal);
         MikkVector bitangent = mikk_project_normal(triangle.bitangent, normal);
+
         MikkVector position = mikk_indexed_position(source, triangle.vertices[corner]);
         MikkVector previous = mikk_indexed_position(source, triangle.vertices[(corner + 2) % 3]);
         MikkVector next = mikk_indexed_position(source, triangle.vertices[(corner + 1) % 3]);
+
         MikkVector edge1 = mikk_project_normal(mikk_subtract_vectors(previous, position), normal);
         MikkVector edge2 = mikk_project_normal(mikk_subtract_vectors(next, position), normal);
+
         float cosine = mikk_dot_vectors(edge1, edge2);
         cosine = cosine > 1 ? 1 : (cosine < -1 ? -1 : cosine);
         float angle = (float)math::acos((double)cosine);
@@ -219,8 +226,10 @@ fn int mikk_initialize_faces(MikkTriangle[] triangles, MikkFullMesh source) @pri
                 left: mikk_indexed_uv(source, base + 3),
                 right: mikk_indexed_uv(source, base + 1),
             );
+
             float length02 = mikk_dot_vectors(diagonal02, diagonal02);
             float length13 = mikk_dot_vectors(diagonal13, diagonal13);
+
             bool choose02;
             if (length02 < length13) { choose02 = true; }
             else if (length13 < length02) { choose02 = false; }
@@ -233,10 +242,12 @@ fn int mikk_initialize_faces(MikkTriangle[] triangles, MikkFullMesh source) @pri
                     left: mikk_indexed_position(source, base + 3),
                     right: mikk_indexed_position(source, base + 1),
                 );
+
                 length02 = mikk_dot_vectors(diagonal02, diagonal02);
                 length13 = mikk_dot_vectors(diagonal13, diagonal13);
                 choose02 = !(length13 < length02);
             }
+
             if (!choose02) {
                 first = { 0, 1, 3 };
                 second = { 1, 2, 3 };
@@ -252,6 +263,7 @@ fn int mikk_initialize_faces(MikkTriangle[] triangles, MikkFullMesh source) @pri
         }
 
         destination++;
+
         if (count == 4) {
             triangles[destination].face = (int)face;
             triangles[destination].output_offset = source.face_offsets[face];
@@ -342,12 +354,14 @@ fn void mikk_inherit_degenerate_spaces(
     for (int face = 0; face < good_count; face++) {
         MikkTriangle triangle = triangles[face];
         if ((triangle.flags & QUAD_ONE_DEGENERATE) == 0) continue;
+
         int present = (1 << triangle.vertex_numbers[0]) | (1 << triangle.vertex_numbers[1])
           | (1 << triangle.vertex_numbers[2]);
         int missing = 0;
         if ((present & 2) == 0) { missing = 1; }
         else if ((present & 4) == 0) { missing = 2; }
         else if ((present & 8) == 0) { missing = 3; }
+
         MikkVector position = mikk_indexed_position(source, (triangle.face << 2) | missing);
 
         for (int corner = 0; corner < 3; corner++) {
@@ -360,32 +374,44 @@ fn void mikk_inherit_degenerate_spaces(
     }
 }
 
-fn MikkTangent[]? mikk_generate_full(Allocator allocator, MikkFullMesh source) @private {
+fn bool mikk_full_mesh_valid(MikkFullMesh source) @private {
     if (source.face_sizes.len == 0 || source.face_sizes.len != source.face_offsets.len || source.uv_set > 1) {
-        return c3d::INVALID_ARGUMENT~;
+        return false;
     }
 
     int triangle_count = 0;
     int corner_count = 0;
-    if (source.face_sizes.len > (usz)(int::max >> 2)) return c3d::INVALID_ARGUMENT~;
+    if (source.face_sizes.len > (usz)(int::max >> 2)) return false;
 
     foreach (face, count : source.face_sizes) {
-        if ((count != 3 && count != 4) || source.face_offsets[face] != corner_count) return c3d::INVALID_ARGUMENT~;
-        if (triangle_count > int::max - 2 || corner_count > int::max - count) return c3d::INVALID_ARGUMENT~;
+        if ((count != 3 && count != 4) || source.face_offsets[face] != corner_count) return false;
+        if (triangle_count > int::max - 2 || corner_count > int::max - count) return false;
         triangle_count += count == 3 ? 1 : 2;
         corner_count += count;
     }
 
-    if (triangle_count > int::max / CORNERS_PER_TRIANGLE) return c3d::INVALID_ARGUMENT~;
-    if (corner_count != source.indices.len) return c3d::INVALID_ARGUMENT~;
+    if (triangle_count > int::max / CORNERS_PER_TRIANGLE || corner_count != source.indices.len) return false;
 
-    foreach (index : source.indices) if (index >= source.vertices.len) return c3d::INVALID_ARGUMENT~;
+    foreach (index : source.indices) if (index >= source.vertices.len) return false;
 
     foreach (vertex : source.vertices) {
         float[2] uv = mikk_selected_uv(vertex, source.uv_set);
         if (!mikk_finite_vector(vertex.position) || !mikk_finite_vector(vertex.normal)
-          || !math::is_finite(uv[0]) || !math::is_finite(uv[1])) return c3d::INVALID_ARGUMENT~;
+          || !math::is_finite(uv[0]) || !math::is_finite(uv[1])) return false;
     }
+
+    return true;
+}
+
+<*
+ Generate per-corner reference tangent spaces.
+ @require mikk_full_mesh_valid(source)
+*>
+fn MikkTangent[]? mikk_generate_full(Allocator allocator, MikkFullMesh source) @private {
+    int triangle_count = 0;
+    int corner_count = (int)source.indices.len;
+
+    foreach (count : source.face_sizes) triangle_count += count == 3 ? 1 : 2;
 
     MikkTriangle[] triangles = @tangent_array(allocator, MikkTriangle, (usz)triangle_count)!;
     defer alloc::free(allocator, triangles);
@@ -472,8 +498,10 @@ fn MikkTangent[]? mikk_generate_full(Allocator allocator, MikkFullMesh source) @
             foreach (other : group.faces[:(usz)group.count]) {
                 int corner = mikk_vertex_corner(good[other], group.vertex);
                 if (good[other].groups[corner] != group_index) continue;
+
                 MikkVector other_tangent = mikk_project_normal(good[other].tangent, normal);
                 MikkVector other_bitangent = mikk_project_normal(good[other].bitangent, normal);
+
                 if (((triangle.flags | good[other].flags) & GROUP_WITH_ANY) != 0 || triangle.face == good[other].face
                   || (mikk_dot_vectors(tangent, other_tangent) > threshold_cosine
                     && mikk_dot_vectors(bitangent, other_bitangent) > threshold_cosine)) {
@@ -498,6 +526,7 @@ fn MikkTangent[]? mikk_generate_full(Allocator allocator, MikkFullMesh source) @
 
             int corner = mikk_vertex_corner(triangle, group.vertex);
             MikkSpace* output = &spaces[triangle.output_offset + triangle.vertex_numbers[corner]];
+
             if (output.counter == 1) {
                 *output = mikk_average_spaces(*output, space);
                 output.counter = 2;
@@ -505,6 +534,7 @@ fn MikkTangent[]? mikk_generate_full(Allocator allocator, MikkFullMesh source) @
                 *output = space;
                 output.counter = 1;
             }
+
             output.orientation = group.orientation;
         }
     }
