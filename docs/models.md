@@ -618,6 +618,19 @@ that has neither embedded content nor a readable file fails with
 invalid in-between weights fail with `ASSET_FORMAT_ERROR`. Rollback on a fault
 matches glTF.
 
+`fbx::load_animations_with_profile` borrows a prepared retarget profile,
+a target model and an explicit nonempty variant name. It validates the
+animation file's actual imported template against the profile, including
+files with no animation stacks. The returned clip-id array uses the caller
+allocator; clip data belongs to the asset store.
+
+Profiled keys append `#profile/<byte length>:<variant>` to the existing animation
+key. Distinct names keep calibration variants separate. Reusing a name faults
+before publication, and failure while baking or inserting any stack removes
+all clips inserted by that call. The existing animation loader keeps its keys
+and behavior. See [calibrated profiles](animation.md#calibrated-profiles) for
+profile ownership, mapping and root-motion setup.
+
 ## Example
 
 ```bash

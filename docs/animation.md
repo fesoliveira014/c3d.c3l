@@ -509,8 +509,52 @@ Correction transfers motion, not proportions or poses: both rigs must face the
 same model axis and rest in the same kind of pose (both T or both A). A
 T-pose source on an A-pose destination keeps the arms offset by the difference
 for the whole clip. Foot contact and sliding follow from the rigs' proportions.
-The `retarget` example plays a Mixamo walk on the Quaternius rig with both
-modes.
+The optional `retarget --mixamo` mode plays a Mixamo walk on the Quaternius rig
+with both modes.
+
+### Calibrated profiles
+
+`create_retarget_profile(allocator, source_nodes, target, desc)` prepares an
+owned source/target pair. `RetargetProfileDesc` selects unique name mapping or
+authoritative `NodeIndexMapping` rows, required per-node source and target
+calibration rotations, motion nodes, a reserved carrier and a proper Y-up yaw
+facing matrix. Reflection, shear or scale in the facing matrix is invalid.
+The profile copies its inputs into one allocation; destroy it with
+`destroy_retarget_profile` after its last bake.
+
+`retarget_with_profile` borrows the current templates and profile and produces
+an independently owned `AnimationClip`. Node counts and per-index names,
+parents and authored locals must match the prepared pair. A mismatch returns
+`INVALID_ARGUMENT` with the first differing index in `RetargetDiagnostic`.
+`RetargetProfile.validate_templates` checks that pair without baking a clip.
+Explicit mapping conflicts are format errors; ambiguous name matches are
+rejected rather than selecting an arbitrary node.
+
+The bake composes source motion through animated ancestors, applies calibration
+and facing, and solves destination locals through their actual parent frames.
+Target bone translations retain their proportions outside motion chains.
+Animated nonuniform scale or shear on a consumed ancestor is `UNSUPPORTED`.
+`RetargetBakeOptions` defaults to `KEEP`, a 60 Hz endpoint-inclusive linear
+cadence and root translation scale 1. Zero duration has one key; positive
+duration includes both endpoints. Copied non-motion scale, morph and event
+data retain independent ownership.
+
+`STRIP_XZ` removes the selected horizontal displacement. `EXTRACT` writes it
+once on the reserved static carrier and compensates every child branch. Select
+that carrier as `Animator.root_node`, leave `root_yaw` false, and consume its
+root motion once through `apply_root_motion`. Runtime extraction uses the
+existing Animator contract. Destroying the profile does not invalidate clips
+already baked or published.
+
+The default `retarget` example uses repository-authored T/A, facing, animated
+ancestor and carrier rigs, with expected and profiled poses shown side by side.
+It requires no external animation assets. `F` changes the fixture family,
+Space pauses, `A` toggles automatic family cycling and `I` toggles diagnostic
+lines. The carrier family shows `KEEP`, `STRIP_XZ` and `EXTRACT` over
+forward/reverse playback.
+`--acceptance` samples between bake keys and completes every family;
+`--capture-dir=PATH` writes scene PNGs and `retarget-profile.csv` into an
+existing directory, and `--telemetry=PATH` selects a separate CSV.
 
 ## Inverse kinematics
 
