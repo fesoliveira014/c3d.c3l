@@ -47,7 +47,9 @@ To change pins, settings or the source, remove and attach again.
 
 Use two-sided materials without tangent-space normal maps or vertex displacement; the copy
 carries no tangents and recomputed normals follow the simulated surface. `Mesh.trace` is the
-application's choice.
+application's choice. A traced cloth takes a vertex-motion posed slot: each simulation revision copies
+positions and normals into the slot and refits the trace data instead of rebuilding it, and the top level still
+rebuilds every revision. See `docs/scene_trace.md`, "Vertex-motion slots".
 
 ## Pending authoring and preparation
 
