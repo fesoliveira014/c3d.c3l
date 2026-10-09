@@ -223,6 +223,13 @@ crate keeps its contact shadow in the first two cascades; at the example's 46° 
 0.57 m past its base instead of 0.95 m. From the third cascade on the offset nears or passes the crate's height and
 the crate casts little or no shadow. Traced shadows apply no offset.
 
+## Decals
+
+Terrain receives material decals ([decals](materials.md#decals)) on the forward and deferred paths. Every decal whose
+`receiver_layers` include the terrain node's `layers` blends into the terrain's completed layer sample before
+lighting or G-buffer output, with the core ordering, angle fade and clustered-overflow rules. The two paths agree
+within the G-buffer quantization. Traced terrain, as used by reflections, GI and path tracing, applies no decals.
+
 ## Faults
 
 | Where | Fault | When |
@@ -264,7 +271,7 @@ the crate casts little or no shadow. Traced shadows apply no offset.
 `python3 scripts/build.py --example terrain` generates a ridged height map (1 m cells, 300 m height scale), a
 control map from height and slope and four tiled layers, then walks the camera over it. F toggles flight, G
 drops a crate onto the height-field collider, B held raises a bump under the camera at a fixed rate whatever
-the frame rate and B released ends the stroke, P toggles the collider, and a click tosses the crate under the
+the frame rate and B released ends the stroke, P toggles the collider, T toggles a decal on the ground ahead of the start pose, and a click tosses the crate under the
 cursor (a 6 m/s velocity change) through `spatial::pick` with the terrain's layer left out. The panel shows chunks per level, LOD switches, the height and normal under the
 camera beside the physics ray height, and the LOD threshold.
 

@@ -11,6 +11,7 @@ import c3d::scene;
 import c3d::shader;
 import c3d::shader::compile;
 import gpu;
+import std::io;
 import std::math;
 
 const char[*] READBACK_SOURCE @local = $embed("readback.comp.glsl");
@@ -28,6 +29,11 @@ const float NODE_NUDGE @local = 20; // metres: about three pixels of motion at t
 const double TIME_STEP @local = 1.0 / 60.0;
 const Vec2 TERRAIN_UV @local = { 0.4f, 0.6f };
 const Vec2 BACKGROUND_UV @local = { 0.02f, 0.02f };
+const float FLAT_HEIGHT @local = 0.5f; // fraction of the height scale
+const Vec3 DECAL_SIZE @local = { 160, 160, 100 }; // metres; local z is the projection axis, tall enough for the flat patch
+const Vec4 DECAL_COLOR @local = { 1, 0, 0, 1 };
+const float DECAL_TOLERANCE @local = 0.02f; // the core decal tolerance, including G-buffer quantization
+const float DECAL_MIN_DIFFERENCE @local = 0.1f; // far above the tolerance, so an unchanged colour fails
 
 struct ReadbackRoot @local {
     gpu::GpuAddress output;
@@ -51,13 +57,13 @@ struct Fixture @local {
     gpu::MappedGpuSpan   readback;
 }
 
-fn TextureId add_hills(AssetStore* assets) @local {
+fn TextureId add_hills(AssetStore* assets, bool flat) @local {
     TextureId texture;
     @pool() {
         ushort[] texels = alloc::new_array(tmem, ushort, (sz)TERRAIN_TEXELS * TERRAIN_TEXELS);
         for (uint z = 0; z < TERRAIN_TEXELS; z++) {
             for (uint x = 0; x < TERRAIN_TEXELS; x++) {
-                float wave = 0.5f + 0.25f * math::sin((float)x * 0.05f) + 0.25f * math::cos((float)z * 0.07f);
+                float wave = flat ? FLAT_HEIGHT : 0.5f + 0.25f * math::sin((float)x * 0.05f) + 0.25f * math::cos((float)z * 0.07f);
                 texels[z * TERRAIN_TEXELS + x] = (ushort)(wave * (float)ushort::max);
             }
         }
@@ -68,13 +74,13 @@ fn TextureId add_hills(AssetStore* assets) @local {
     return texture;
 }
 
-fn void? create_fixture(Fixture* fixture) @local {
+fn void? create_fixture(Fixture* fixture, bool flat = false) @local {
     fixture.assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
     fixture.scene = scene::create_scene(mem, scene::default_scene_desc());
     terrain::register_terrain(&fixture.scene, &fixture.assets)!;
 
     TerrainDesc desc = terrain::default_terrain_desc();
-    desc.height_map = add_hills(&fixture.assets);
+    desc.height_map = add_hills(&fixture.assets, flat);
     desc.cell_size = CELL_SIZE;
     desc.height_scale = HEIGHT_SCALE;
     desc.lod_threshold = 0;
@@ -277,5 +283,73 @@ fn void test_relative_terrain_has_no_velocity_when_only_reference_changes() @tes
         assert(near_pixel(pixels[1], NEUTRAL_VELOCITY));
         assert(near_pixel(pixels[0], pixels[1]));
     }
+    check_validation(&fixture.renderer);
+}
+
+fn Vec4 unpack_pixel(uint pixel) @local {
+    return {
+        (float)(pixel & 0xff) / 255.0f,
+        (float)((pixel >> 8) & 0xff) / 255.0f,
+        (float)((pixel >> 16) & 0xff) / 255.0f,
+        (float)((pixel >> 24) & 0xff) / 255.0f,
+    };
+}
+
+fn float color_difference(Vec4 first, Vec4 second) @local {
+    float maximum;
+    for (usz channel = 0; channel < 4; channel++) {
+        maximum = math::max(maximum, math::abs(first[channel] - second[channel]));
+    }
+    return maximum;
+}
+
+fn Vec4 render_terrain_color(Fixture* fixture, ShadingPath shading) @local {
+    ViewDesc desc = fixture.renderer.views.get(fixture.view).desc;
+    desc.shading = shading;
+    desc.post.anti_aliasing = AntiAliasing.NONE;
+    desc.post.taa_params.debug = TaaDebug.NONE;
+    render::configure_view(&fixture.renderer, fixture.view, desc)!!;
+    for (uint frame = 0; frame < SETTLE_FRAMES; frame++) {
+        update_terrain(fixture)!!;
+        render_frame(fixture, frame, frame + 1 == SETTLE_FRAMES)!!;
+    }
+    return unpack_pixel(read_pixels(fixture)[0]);
+}
+
+fn void test_terrain_receives_decals_on_both_paths() @test {
+    Fixture fixture;
+    create_fixture(&fixture, true)!!;
+    defer destroy_fixture(&fixture);
+    fixture.scene.ambient_color = { 1, 1, 1 };
+    fixture.scene.ambient_intensity = 1;
+
+    Vec4 plain_forward = render_terrain_color(&fixture, ShadingPath.FORWARD);
+    Vec4 plain_deferred = render_terrain_color(&fixture, ShadingPath.DEFERRED);
+    assert(color_difference(plain_forward, plain_deferred) <= DECAL_TOLERANCE);
+
+    StandardParams params = { .base_color = DECAL_COLOR, .roughness = 1 };
+    DecalDesc desc = scene::default_decal_desc(fixture.assets.add_material(material::standard(params))!!);
+    desc.size = DECAL_SIZE;
+    desc.decal.weights = { .base_color = 1, .normal = 0, .roughness = 0, .metallic = 0 };
+    Node* projector = fixture.scene.add_decal(desc)!!;
+    projector.local.position = { 128, FLAT_HEIGHT * HEIGHT_SCALE, 128 };
+    projector.local.rotation = fixture.camera_node.local.rotation; // local z along world y
+    fixture.scene.update_world();
+
+    Vec4 decaled_forward = render_terrain_color(&fixture, ShadingPath.FORWARD);
+    Vec4 decaled_deferred = render_terrain_color(&fixture, ShadingPath.DEFERRED);
+    io::printfn("Terrain decal colours: plain %s decaled forward %s deferred %s",
+        plain_forward, decaled_forward, decaled_deferred);
+    assert(color_difference(decaled_forward, plain_forward) > DECAL_MIN_DIFFERENCE);
+    assert(color_difference(decaled_deferred, plain_deferred) > DECAL_MIN_DIFFERENCE);
+    float path_difference = color_difference(decaled_forward, decaled_deferred);
+    io::printfn("Terrain decal forward/deferred maximum channel difference: %f", path_difference);
+    assert(path_difference <= DECAL_TOLERANCE);
+
+    fixture.scene.get(projector, Decal).receiver_layers = ~fixture.terrain_node.layers;
+    Vec4 excluded_forward = render_terrain_color(&fixture, ShadingPath.FORWARD);
+    Vec4 excluded_deferred = render_terrain_color(&fixture, ShadingPath.DEFERRED);
+    assert(color_difference(excluded_forward, plain_forward) <= DECAL_TOLERANCE);
+    assert(color_difference(excluded_deferred, plain_deferred) <= DECAL_TOLERANCE);
     check_validation(&fixture.renderer);
 }

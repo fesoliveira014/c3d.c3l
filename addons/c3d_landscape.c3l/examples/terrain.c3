@@ -26,6 +26,9 @@ const uint SCENE_NODE_CAPACITY @local = CRATE_CAPACITY + 16;
 const float CRATE_SIZE @local = 1;
 const float CRATE_DROP_HEIGHT @local = 8; // metres above the ground a crate starts from
 const float CRATE_DROP_DISTANCE @local = 6; // metres in front of the camera
+const float DECAL_DISTANCE @local = 12; // metres in front of the start pose
+const Vec3 DECAL_SIZE @local = { 10, 10, 24 }; // metres; local z is the projection axis, deep enough to span the slope
+const Vec4 DECAL_COLOR @local = { 0.9f, 0.15f, 0.1f, 1 };
 const uint CRATE_STACK_SIDE @local = 3; // the benchmark drops a 3 x 3 grid of casters in the still view
 const float CRATE_STACK_SPACING @local = 3;
 const float CRATE_MASS @local = CRATE_SIZE * CRATE_SIZE * CRATE_SIZE * physics::DEFAULT_DENSITY; // default density
@@ -128,6 +131,7 @@ struct Demo @local {
     GeometryId    crate_geometry;
     MaterialId    crate_material;
     uint          crate_count;
+    Node*         decal_node;
 }
 
 struct HoverPose @local {
@@ -222,6 +226,19 @@ fn void drop_crate(Demo* demo, Vec3 position) @local {
         return;
     }
     demo.crate_count++;
+}
+
+fn void? add_ground_decal(Demo* demo, Vec3 position) @local {
+    StandardParams params = material::STANDARD_PARAMS_DEFAULT;
+    params.base_color = DECAL_COLOR;
+    params.roughness = 0.9f;
+    DecalDesc desc = scene::default_decal_desc(demo.assets.add_material(material::standard(params), "terrain/decal")!);
+    desc.size = DECAL_SIZE;
+    desc.decal.weights = { .base_color = 1, .normal = 0, .roughness = 0, .metallic = 0 };
+    demo.decal_node = demo.scene.add_decal(desc, name: "decal")!;
+    demo.decal_node.local.position = position;
+    demo.decal_node.local.rotation = maths::look_rotation({ 0, -1, 0 }, { 0, 0, -1 }); // local z points up
+    demo.scene.update_world();
 }
 
 fn Vec3 extent_point(Demo* demo, Vec2 fraction) @local {
@@ -368,6 +385,7 @@ fn void? terrain_panel(Demo* demo, FlyCamera* fly_camera, float delta) @local {
     if (imgui::begin("Terrain", null, {})) {
         imgui::text("Right drag looks, WASD move, Shift fast; F flies, Q and E sink and rise");
         imgui::text("G drops a crate, B paints, P toggles the collider, click pushes a crate");
+        imgui::text("T toggles the ground decal");
         TerrainRuntime* runtime = demo.scene.get(demo.ground.node, TerrainRuntime);
         InstancedMesh* batch = demo.scene.get(demo.ground.node, InstancedMesh);
         imgui::text("Chunks: %u   LOD switches: %u", batch.count, runtime.lod_switches);
@@ -469,6 +487,12 @@ fn void? run_interactive(Options options) @local {
     defer (void)gui::destroy_gui_renderer(&gui_renderer);
 
     FlyCamera fly_camera = { .position = extent_point(&demo, STILL_POSITION), .yaw = STILL_YAW };
+    if (!options.benchmark) {
+        HeightView start_view = terrain::height_view(&scene, &assets, demo.ground.node.id)!;
+        Vec3 ahead = fly_camera.position + landscape_ground::look_direction(fly_camera.yaw, 0) * DECAL_DISTANCE;
+        ahead.y = landscape_ground::ground_under(&start_view, ahead, fly_camera.ground);
+        add_ground_decal(&demo, ahead)!;
+    }
     renderer.prepare_scene(&scene)!;
     Brush brush;
     bool painting;
@@ -490,6 +514,7 @@ fn void? run_interactive(Options options) @local {
                 ahead.y = landscape_ground::ground_under(&view, ahead, fly_camera.ground) + CRATE_DROP_HEIGHT;
                 drop_crate(&demo, ahead);
             }
+            if (input.key_pressed(platform::Scancode.T) && demo.decal_node) demo.decal_node.visible = !demo.decal_node.visible;
             if (input.key_pressed(platform::Scancode.P)) {
                 if (scene.has(demo.ground.node, PhysicsBody)) {
                     physics.remove_body(demo.ground.node);

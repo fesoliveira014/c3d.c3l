@@ -514,8 +514,9 @@ A `Decal` projects a borrowed Standard material onto opaque or masked Standard
 and Physical receivers. The forward and G-buffer material stages apply the same
 decal blend before lighting. Basic, Toon, alpha-blended and impostor receivers
 do not receive decals. Traced-hit shading used by reflections, GI and path
-tracing does not apply decals. Terrain and custom shaders require explicit
-receiver integration.
+tracing does not apply decals. Terrain receives decals on both paths
+([terrain](terrain.md#decals)); other custom shaders require explicit receiver
+integration.
 
 With a live Standard `material_id` and a scene:
 
@@ -600,7 +601,7 @@ lighting or writing their G-buffer. Supply a fully initialized
 frame-relative position and matching view depth. Compute position derivatives
 in uniform flow before any discard or divergent decal branch, then pass them to
 the helper. It applies map UV transforms and frame mip bias to those gradients.
-Terrain and other custom shaders opt in explicitly. The serialization add-on
+Other custom shaders opt in explicitly; the terrain stages already do. The serialization add-on
 has no built-in `Decal` codec.
 
 ## Ambient and light capacity
