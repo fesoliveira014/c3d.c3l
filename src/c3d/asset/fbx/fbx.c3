@@ -172,6 +172,93 @@ fn ClipId[]? load_animations(
     return clips;
 }
 
+<*
+ Load distinct profiled variants from the file's actual node template.
+ @param allocator : "Owns the returned array."
+ @param [&inout] assets : "Receives clips; unchanged on a fault."
+ @param [&in] profile : "Immutable borrow; never retained by clips."
+ @param variant : "Nonempty identity within the source and target namespace."
+ @param [inout] diagnostic : "Optional retarget failure context."
+ @return? c3d::ASSET_IO_ERROR, c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID
+ @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED
+ @require path.len > 0
+*>
+fn ClipId[]? load_animations_with_profile(
+    alloc::Allocator allocator,
+    AssetStore* assets,
+    String path,
+    ModelId target,
+    RetargetProfile* profile,
+    String variant,
+    RetargetBakeOptions options = retarget::RETARGET_BAKE_OPTIONS_DEFAULT,
+    RetargetDiagnostic* diagnostic = null,
+) {
+    if (diagnostic) *diagnostic = {
+        .reason = RetargetReason.NONE,
+        .source_node = retarget::RETARGET_NO_NODE,
+        .target_node = retarget::RETARGET_NO_NODE,
+        .mapping_row = retarget::RETARGET_NO_NODE,
+    };
+    if (!variant.len) return c3d::INVALID_ARGUMENT~;
+    ModelAsset* record = assets.models.try_get(target)!;
+    Importer importer = {
+        .allocator = assets.allocator,
+        .key = path,
+        .options = { .animations = true },
+        .nodes_only = true,
+        .file_source = assets.file_source,
+    };
+    defer free_tables(&importer);
+    importer.scene = parse_scene(path, &assets.file_source)!;
+    defer ufbx::free_scene(importer.scene);
+
+    ClipId[] clips = alloc::new_array_try(allocator, ClipId, importer.scene.anim_stacks.len)
+        ?? c3d::CAPACITY_EXCEEDED~!;
+    defer catch alloc::free(allocator, clips.ptr);
+    defer catch remove_clips(assets, clips);
+    @pool() {
+        String mode = mode_label(options.root_motion);
+        foreach (index, stack : importer.scene.anim_stacks) {
+            String key = profiled_animation_key(
+                path: path,
+                stack: (usz)index,
+                target: record.header.key,
+                mode: mode,
+                variant: variant,
+            );
+            if (assets.keys.has_key(key)) return c3d::INVALID_ARGUMENT~;
+        }
+        importer.node_remap = alloc::new_array_try(assets.allocator, uint, importer.scene.nodes.len)
+            ?? c3d::CAPACITY_EXCEEDED~!;
+        importer.node_remap[..] = NOT_IMPORTED;
+        build_template(&importer)!;
+        profile.validate_templates(importer.template.nodes, &record.data, diagnostic)!;
+
+        foreach (index, stack : importer.scene.anim_stacks) {
+            AnimationClip baked = convert_stack(&importer, stack, tmem)!;
+            AnimationClip clip = retarget::retarget_with_profile(
+                allocator: assets.allocator,
+                source: &baked,
+                source_nodes: importer.template.nodes,
+                target: &record.data,
+                profile: profile,
+                options: options,
+                diagnostic: diagnostic,
+            )!;
+            defer catch asset::free_clip(assets.allocator, &clip);
+            String key = profiled_animation_key(
+                path: path,
+                stack: (usz)index,
+                target: record.header.key,
+                mode: mode,
+                variant: variant,
+            );
+            clips[index] = assets.add_clip_owned(&clip, key)!;
+        }
+    };
+    return clips;
+}
+
 fn ufbx::Scene*? parse_scene(String path, FileSource* file_source) @private {
     // ufbx attaches Blender's roughness, metallic and alpha textures to the pbr maps only on request.
     ufbx::LoadOpts options = {
@@ -297,6 +384,24 @@ fn String mode_label(RootMotion mode) @private {
         case STRIP_XZ: return "strip_xz";
         case EXTRACT: return "extract";
     }
+}
+
+fn String profiled_animation_key(
+    String path,
+    usz stack,
+    String target,
+    String mode,
+    String variant,
+) @private {
+    return string::tformat(
+        "%s#anim/%d#%s#%s#profile/%d:%s",
+        path,
+        stack,
+        target,
+        mode,
+        variant.len,
+        variant,
+    );
 }
 
 fn fault load_fault(fault excuse) @private {

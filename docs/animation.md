@@ -213,7 +213,9 @@ transforms; their basis is captured at play. The instance root itself may use
 either transform space.
 
 `root_yaw = true` additionally removes the root rotation's Y twist and emits
-the turn; tilt remains in the pose. Extraction requires upright, positive,
+the turn about the root node's reference position; tilt remains in the pose.
+The reference position includes static ancestors in the instance root's frame.
+Extraction requires upright, positive,
 uniform scale through the captured basis and instance root, retained throughout
 playback. Arbitrary-up motion and animated root ancestors are unsupported.
 Missing root configuration, unsupported yaw basis, yaw with KEEP, and non-KEEP
@@ -224,6 +226,8 @@ translation through the node's authored rotation/scale, then postmultiplies the
 turn. Apply each delta once; it resets to zero translation and identity rotation
 every update. Reverse and multi-loop updates compose cycle transforms. A single
 action's consumed path is invariant under subdivision within sampling tolerance.
+Repeated float32 motion application accumulates position drift as travelled
+distance grows; use the carrier's frame when comparing its controlled pose.
 Masks and regular layer weights apply to motion as to pose; KEEP/STRIP root
 channels contribute zero motion with their weight. A half-weight extractor
 therefore emits half displacement. Yaw contributions use signed shortest turns;
@@ -509,8 +513,58 @@ Correction transfers motion, not proportions or poses: both rigs must face the
 same model axis and rest in the same kind of pose (both T or both A). A
 T-pose source on an A-pose destination keeps the arms offset by the difference
 for the whole clip. Foot contact and sliding follow from the rigs' proportions.
-The `retarget` example plays a Mixamo walk on the Quaternius rig with both
-modes.
+The optional `retarget --mixamo` mode plays a Mixamo walk on the Quaternius rig
+with both modes.
+
+### Calibrated profiles
+
+`create_retarget_profile(allocator, source_nodes, target, desc)` prepares an
+owned source/target pair. `RetargetProfileDesc` selects unique name mapping or
+authoritative `NodeIndexMapping` rows, required per-node source and target
+calibration rotations, motion nodes, a reserved carrier and a proper Y-up yaw
+facing matrix. Reflection, shear or scale in the facing matrix is invalid.
+The profile copies its inputs into one allocation; destroy it with
+`destroy_retarget_profile` after its last bake.
+
+`retarget_with_profile` borrows the current templates and profile and produces
+an independently owned `AnimationClip`. Node counts and per-index names,
+parents and authored locals must match the prepared pair. A mismatch returns
+`INVALID_ARGUMENT` with the first differing index in `RetargetDiagnostic`.
+`RetargetProfile.validate_templates` checks that pair without baking a clip.
+Explicit mapping conflicts are format errors; ambiguous name matches are
+rejected rather than selecting an arbitrary node.
+
+The bake composes source motion through animated ancestors, applies calibration
+and facing, and solves destination locals through their actual parent frames.
+Target bone translations retain their proportions outside motion chains.
+Animated nonuniform scale or shear on a consumed ancestor is `UNSUPPORTED`.
+`RetargetBakeOptions` defaults to `KEEP`, a 60 Hz endpoint-inclusive linear
+cadence and root translation scale 1. Zero duration has one key; positive
+duration includes both endpoints. Copied non-motion scale, morph and event
+data retain independent ownership.
+
+`STRIP_XZ` removes the selected horizontal displacement. `EXTRACT` writes that
+displacement and the motion node's world Y twist on the reserved carrier, and
+compensates every child branch. The carrier turns in place about its authored
+reference position, stays upright and retains its authored scale. Its yaw is
+relative to time zero and unwrapped through the clip. Static parent transforms
+are removed when writing its local tracks.
+
+Select that carrier as `Animator.root_node` and consume its root motion once
+through `apply_root_motion`. With `root_yaw = true`, extraction removes both
+translation and yaw from the mesh. With `root_yaw = false`, the turn stays in
+the mesh. Destroying the profile does not invalidate clips already baked or
+published.
+
+The default `retarget` example uses repository-authored T/A, facing, animated
+ancestor and carrier rigs, with expected and profiled poses shown side by side.
+It requires no external animation assets. `F` changes the fixture family,
+Space pauses, `A` toggles automatic family cycling and `I` toggles diagnostic
+lines. The carrier and turning families show `KEEP`, `STRIP_XZ` and `EXTRACT`,
+including both yaw settings, forward/reverse playback and loops.
+`--acceptance` samples between bake keys and completes every family;
+`--capture-dir=PATH` writes scene PNGs and `retarget-profile.csv` into an
+existing directory, and `--telemetry=PATH` selects a separate CSV.
 
 ## Inverse kinematics
 

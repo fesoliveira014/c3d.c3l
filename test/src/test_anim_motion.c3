@@ -720,3 +720,365 @@ fn void test_absent_root_motion_target_keeps_playback_configuration() @test {
     assert(fixture.animator.root_motion.rotation.v == (Vec4){ 0, 0, 0, 1 });
     assert(approx(survivor.local.position.y, 7));
 }
+
+fn Quat motion_pivot_turn(float yaw) @local {
+    return quaternion::from_axis_angle{float}({ 0, 1, 0 }, yaw);
+}
+
+fn Node* motion_pivot_root(LayerFixture* fixture, Transform reference) @local {
+    ModelInstance* instance = fixture.scene.get(fixture.root, ModelInstance);
+    Node* root = instance.present_node(2);
+    instance.base_pose[2] = reference;
+    root.local = reference;
+    return root;
+}
+
+fn ClipId motion_pivot_clip(
+    LayerFixture* fixture,
+    Transform reference,
+    Vec3 displacement,
+    float yaw,
+) @local {
+    float[2] times = { 0, 1 };
+    Vec3 end_position = reference.position + displacement;
+    Quat end_rotation = motion_pivot_turn(yaw).mul(reference.rotation);
+    float[6] positions = {
+        reference.position.x, reference.position.y, reference.position.z,
+        end_position.x, end_position.y, end_position.z,
+    };
+    float[8] rotations = {
+        reference.rotation.v.x, reference.rotation.v.y, reference.rotation.v.z, reference.rotation.v.w,
+        end_rotation.v.x, end_rotation.v.y, end_rotation.v.z, end_rotation.v.w,
+    };
+    Track[2] tracks = {
+        make_track(
+            path: TargetPath.TRANSLATION,
+            interpolation: Interpolation.LINEAR,
+            times: times[..],
+            values: positions[..],
+        ),
+        make_track(
+            path: TargetPath.ROTATION,
+            interpolation: Interpolation.LINEAR,
+            times: times[..],
+            values: rotations[..],
+        ),
+    };
+    uint[1] targets = { 2 };
+
+    return add_clip(
+        assets: &fixture.assets,
+        key: "",
+        tracks: tracks[..],
+        targets: targets[..],
+        duration: 1,
+    );
+}
+
+fn void motion_pivot_check_bits(RootMotionDelta actual, RootMotionDelta expected) @local {
+    for (uint channel = 0; channel < 3; channel++) {
+        assert(bitcast(actual.translation[channel], uint) == bitcast(expected.translation[channel], uint));
+    }
+
+    for (uint channel = 0; channel < 4; channel++) {
+        assert(bitcast(actual.rotation.v[channel], uint) == bitcast(expected.rotation.v[channel], uint));
+    }
+}
+
+fn void test_root_motion_pivot_turns_about_offset_root() @test {
+    LayerFixture fixture;
+    create_layer_fixture(&fixture);
+    defer destroy_layer_fixture(&fixture);
+
+    Transform reference = maths::TRANSFORM_IDENTITY;
+    reference.position = { 1, 0, 2 };
+    Node* root = motion_pivot_root(&fixture, reference);
+
+    ClipId clip = motion_pivot_clip(
+        fixture: &fixture,
+        reference: reference,
+        displacement: {},
+        yaw: (float)math::PI / 2,
+    );
+
+    fixture.animator.play(&fixture.assets, clip, { .root_motion = RootMotion.EXTRACT, .root_yaw = true })!!;
+
+    anim::update(&fixture.assets, &fixture.scene, 1);
+    anim::apply_root_motion(fixture.root, fixture.animator.root_motion);
+    fixture.scene.update_world();
+
+    assert((root.world_position() - reference.position).length() < 1e-4f);
+    assert((fixture.root.local.position - (Vec3){ -1, 0, 3 }).length() < 1e-4f);
+    assert(rotates_x_to(fixture.root.local.rotation, { 0, 0, -1 }));
+    assert((maths::transform_dir(root.world, { 1, 0, 0 }) - (Vec3){ 0, 0, -1 }).length() < 1e-4f);
+}
+
+fn void test_root_motion_pivot_composes_static_scaled_yawed_ancestor() @test {
+    LayerFixture fixture;
+    create_layer_fixture(&fixture);
+    defer destroy_layer_fixture(&fixture);
+
+    Transform reference = {
+        .position = { 1, 0, 2 },
+        .rotation = motion_pivot_turn((float)math::PI / 2),
+        .scale = { 2, 2, 2 },
+    };
+    Node* root = motion_pivot_root(&fixture, reference);
+
+    Node* parent = fixture.scene.add_node(fixture.root, "motion_parent")!!;
+    parent.local = {
+        .position = { 4, 0, -3 },
+        .rotation = motion_pivot_turn((float)math::PI / 6),
+        .scale = { 3, 3, 3 },
+    };
+
+    fixture.scene.reparent(root, parent);
+    fixture.scene.update_world();
+
+    Vec3 initial_position = root.world_position();
+    Vec3 displacement = { 0.5f, 0, 1 };
+    Vec3 world_displacement = maths::transform_dir(parent.local.to_mat4(), displacement);
+
+    ClipId clip = motion_pivot_clip(
+        fixture: &fixture,
+        reference: reference,
+        displacement: displacement,
+        yaw: (float)math::PI / 2,
+    );
+
+    fixture.animator.play(&fixture.assets, clip, { .root_motion = RootMotion.EXTRACT, .root_yaw = true })!!;
+
+    anim::update(&fixture.assets, &fixture.scene, 1);
+    anim::apply_root_motion(fixture.root, fixture.animator.root_motion);
+    fixture.scene.update_world();
+
+    assert((root.world_position() - initial_position - world_displacement).length() < 1e-4f);
+    Quat expected = motion_pivot_turn(7 * (float)math::PI / 6);
+    Vec3 expected_axis = expected.rotate_vec3({ 6, 0, 0 });
+    assert((maths::transform_dir(root.world, { 1, 0, 0 }) - expected_axis).length() < 1e-4f);
+    assert(root.local.scale == (Vec3){ 2, 2, 2 } && parent.local.scale == (Vec3){ 3, 3, 3 });
+}
+
+fn void test_root_motion_pivot_compensates_after_weighted_actions_and_layers() @test {
+    LayerFixture fixture;
+    create_layer_fixture(&fixture);
+    defer destroy_layer_fixture(&fixture);
+
+    Transform reference = maths::TRANSFORM_IDENTITY;
+    reference.position = { 3, 0, -2 };
+    Node* root = motion_pivot_root(&fixture, reference);
+
+    ClipId first = motion_pivot_clip(
+        fixture: &fixture,
+        reference: reference,
+        displacement: { 2, 0, 0 },
+        yaw: (float)math::PI / 2,
+    );
+
+    ClipId second = motion_pivot_clip(
+        fixture: &fixture,
+        reference: reference,
+        displacement: { 0, 0, 4 },
+        yaw: -(float)math::PI / 2,
+    );
+
+    ClipId upper = motion_pivot_clip(
+        fixture: &fixture,
+        reference: reference,
+        displacement: { 1, 0, 3 },
+        yaw: (float)math::PI / 3,
+    );
+
+    AnimationActionId first_action = fixture.animator.play(&fixture.assets, first, {
+        .root_motion = RootMotion.EXTRACT, .root_yaw = true,
+    })!!;
+
+    AnimationActionId second_action = fixture.animator.play(&fixture.assets, second, {
+        .root_motion = RootMotion.EXTRACT, .root_yaw = true,
+    })!!;
+
+    AnimationActionId upper_action = fixture.animator.play(&fixture.assets, upper, {
+        .layer = 1, .root_motion = RootMotion.EXTRACT, .root_yaw = true,
+    })!!;
+    fixture.animator.action(first_action).weight = 0.25f;
+    fixture.animator.action(second_action).weight = 0.75f;
+    fixture.animator.action(upper_action).weight = 0.4f;
+
+    anim::update(&fixture.assets, &fixture.scene, 1);
+    anim::apply_root_motion(fixture.root, fixture.animator.root_motion);
+    fixture.scene.update_world();
+
+    Vec3 expected_displacement = { 0.7f, 0, 3 };
+    assert((root.world_position() - reference.position - expected_displacement).length() < 1e-4f);
+    Quat expected_rotation = motion_pivot_turn(-(float)math::PI / 60);
+    assert(math::abs(fixture.root.local.rotation.v.dot(expected_rotation.v)) > 0.99999f);
+}
+
+fn void test_root_motion_pivot_accumulates_loops_substeps_and_reverse() @test {
+    Transform[3] results;
+
+    for (uint variant = 0; variant < 3; variant++) {
+        LayerFixture fixture;
+        create_layer_fixture(&fixture);
+        defer destroy_layer_fixture(&fixture);
+
+        Transform reference = maths::TRANSFORM_IDENTITY;
+        reference.position = { 1, 0, 2 };
+        Node* root = motion_pivot_root(&fixture, reference);
+
+        ClipId clip = motion_pivot_clip(
+            fixture: &fixture,
+            reference: reference,
+            displacement: {},
+            yaw: (float)math::PI / 2,
+        );
+
+        AnimationActionId action = fixture.animator.play(&fixture.assets, clip, {
+            .root_motion = RootMotion.EXTRACT, .root_yaw = true,
+        })!!;
+        if (variant == 2) fixture.animator.action(action).speed = -1;
+        uint count = variant == 0 ? 1 : 18;
+
+        for (uint step = 0; step < count; step++) {
+            anim::update(&fixture.assets, &fixture.scene, 2.25f / count);
+            anim::apply_root_motion(fixture.root, fixture.animator.root_motion);
+            fixture.scene.update_world();
+            assert((root.world_position() - reference.position).length() < 1e-4f);
+        }
+
+        results[variant] = fixture.root.local;
+        float yaw = (variant == 2 ? -1.0f : 1.0f) * 9 * (float)math::PI / 8;
+        Quat expected_rotation = motion_pivot_turn(yaw);
+        assert(math::abs(results[variant].rotation.v.dot(expected_rotation.v)) > 0.99999f);
+    }
+
+    assert((results[0].position - results[1].position).length() < 1e-4f);
+    assert(math::abs(results[0].rotation.v.dot(results[1].rotation.v)) > 0.99999f);
+    Vec3 restored = results[0].position + results[0].rotation.rotate_vec3(results[2].position);
+    assert(restored.length() < 1e-4f);
+}
+
+fn void test_root_motion_pivot_seek_rebases_without_displacement() @test {
+    LayerFixture fixture;
+    create_layer_fixture(&fixture);
+    defer destroy_layer_fixture(&fixture);
+
+    Transform reference = maths::TRANSFORM_IDENTITY;
+    reference.position = { -2, 0, 3 };
+    Node* root = motion_pivot_root(&fixture, reference);
+
+    ClipId clip = motion_pivot_clip(
+        fixture: &fixture,
+        reference: reference,
+        displacement: {},
+        yaw: (float)math::PI / 2,
+    );
+
+    AnimationActionId id = fixture.animator.play(&fixture.assets, clip, {
+        .root_motion = RootMotion.EXTRACT, .root_yaw = true,
+    })!!;
+    fixture.animator.action(id).time = 0.75f;
+
+    anim::update(&fixture.assets, &fixture.scene, 0);
+    motion_pivot_check_bits(fixture.animator.root_motion, { .rotation = motion_pivot_turn(0) });
+
+    anim::update(&fixture.assets, &fixture.scene, 0.125f);
+    anim::apply_root_motion(fixture.root, fixture.animator.root_motion);
+    fixture.scene.update_world();
+    assert((root.world_position() - reference.position).length() < 1e-4f);
+    Quat expected_rotation = motion_pivot_turn((float)math::PI / 16);
+    assert(math::abs(fixture.root.local.rotation.v.dot(expected_rotation.v)) > 0.99999f);
+
+    fixture.animator.action(id).time = 0.25f;
+    fixture.animator.action(id).speed = -1;
+
+    anim::update(&fixture.assets, &fixture.scene, 0);
+    motion_pivot_check_bits(fixture.animator.root_motion, { .rotation = motion_pivot_turn(0) });
+
+    anim::update(&fixture.assets, &fixture.scene, 0.25f);
+    anim::apply_root_motion(fixture.root, fixture.animator.root_motion);
+    fixture.scene.update_world();
+    assert((root.world_position() - reference.position).length() < 1e-4f);
+    expected_rotation = motion_pivot_turn(-(float)math::PI / 16);
+    assert(math::abs(fixture.root.local.rotation.v.dot(expected_rotation.v)) > 0.99999f);
+}
+
+fn void test_root_motion_pivot_zero_and_vertical_offsets_preserve_bits() @test {
+    RootMotionDelta[4] baseline;
+
+    for (uint variant = 0; variant < 2; variant++) {
+        LayerFixture fixture;
+        create_layer_fixture(&fixture);
+        defer destroy_layer_fixture(&fixture);
+
+        Transform reference = maths::TRANSFORM_IDENTITY;
+        reference.position.y = variant == 0 ? 0 : 7;
+        motion_pivot_root(&fixture, reference);
+
+        ClipId clip = motion_pivot_clip(
+            fixture: &fixture,
+            reference: reference,
+            displacement: { 4, 0, 8 },
+            yaw: (float)math::PI / 2,
+        );
+
+        fixture.animator.play(&fixture.assets, clip, { .root_motion = RootMotion.EXTRACT, .root_yaw = true })!!;
+
+        for (uint step = 0; step < baseline.len; step++) {
+            anim::update(&fixture.assets, &fixture.scene, 0.25f);
+            RootMotionDelta delta = fixture.animator.root_motion;
+            if (step == 0) {
+                assert(bitcast(delta.translation.x, uint) == bitcast(1.0f, uint));
+                assert(bitcast(delta.translation.z, uint) == bitcast(2.0f, uint));
+            }
+
+            if (variant == 0) {
+                baseline[step] = delta;
+            } else {
+                motion_pivot_check_bits(delta, baseline[step]);
+            }
+        }
+    }
+}
+
+fn void test_root_motion_pivot_yaw_disabled_preserves_bits_and_mesh_turn() @test {
+    RootMotionDelta[4] baseline;
+
+    for (uint variant = 0; variant < 2; variant++) {
+        LayerFixture fixture;
+        create_layer_fixture(&fixture);
+        defer destroy_layer_fixture(&fixture);
+
+        Transform reference = maths::TRANSFORM_IDENTITY;
+        if (variant == 1) reference.position = { 1, 5, 2 };
+        Node* root = motion_pivot_root(&fixture, reference);
+
+        ClipId clip = motion_pivot_clip(
+            fixture: &fixture,
+            reference: reference,
+            displacement: { 4, 0, 8 },
+            yaw: (float)math::PI / 2,
+        );
+
+        AnimationActionId action = fixture.animator.play(
+            assets: &fixture.assets,
+            clip: clip,
+            desc: { .root_motion = RootMotion.EXTRACT },
+        )!!;
+        fixture.animator.action(action).loop = false;
+
+        for (uint step = 0; step < baseline.len; step++) {
+            anim::update(&fixture.assets, &fixture.scene, 0.25f);
+            RootMotionDelta delta = fixture.animator.root_motion;
+            assert(bitcast(delta.translation.x, uint) == bitcast(1.0f, uint));
+            assert(bitcast(delta.translation.z, uint) == bitcast(2.0f, uint));
+            if (variant == 0) {
+                baseline[step] = delta;
+            } else {
+                motion_pivot_check_bits(delta, baseline[step]);
+            }
+        }
+
+        assert(rotates_x_to(root.local.rotation, { 0, 0, -1 }));
+    }
+}
