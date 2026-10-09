@@ -484,51 +484,91 @@ render.
 
 ```c3
 PrepareId prepare = renderer.begin_prepare_model(model)!;
-// every frame, while the record is neither READY nor FAILED
 renderer.begin_frame()!;
-renderer.advance_prepares()!;           // stages at most about 1 MiB of uploads this frame
-renderer.render_view(&scene, camera, renderer.default_view)!;
+PrepareReport report = renderer.advance_prepares_within({
+    .staged_bytes = 1 << 20,
+    .generated_texels = 1 << 20,
+    .pipelines = 1,
+    .time_ns = 2_000_000,
+})!;
 renderer.end_frame()!;
 PrepareProgress progress = renderer.prepare_progress(prepare);
 if (progress.state == PrepareState.READY) {
     model::instantiate(&assets, &scene, model)!;
-    renderer.end_prepare(prepare)!;      // outside a frame: before begin_frame or after end_frame
+    renderer.end_prepare(prepare)!;
 }
 ```
 
-`prepare_model` stalls the frame that calls it: for Sponza on the WSL host CPU it took 3966 ms in
-the default build and 1882 ms at `-O3`, almost all of it CPU mip generation (9.7 and 4.3 ms per
-staged MB; one 1024x1024 sRGB texture alone is 116 and 57 ms). The budgeted path spreads the same
-work over frames. `begin_prepare_model` lists the model's units in template order (its textures,
-then per mesh its geometry, material and pipelines, then one unit that creates the scene snapshot
-pipelines its materials read and the view pipelines), leaving out textures and geometries already uploaded, and
-records `bytes_total`. `advance_prepares(budget_bytes)`, called inside the open frame, promotes
-finished records and then stages the next units of the open records in the order they began: a unit
-that does not fit the rest of the budget waits for the next call, except when nothing was staged
-yet in the call, so every call makes progress and stages at most the budget or one unit, whichever
-is larger. One exception: an asset changed after its own unit ran (a material that gained a texture)
-is staged by the next unit that resolves it, outside that bound. Pipeline units weigh nothing. A
-unit whose mirror is already current (uploaded earlier,
-by a view, or by another record) is done at zero cost, and a unit whose asset was removed is done
-and counts a dangling reference. `PrepareProgress.bytes_done` reaches `bytes_total`;
-`Stats.prepare_bytes` counts only what the frame staged.
+`begin_prepare_model` synchronously lists the model's dependencies in
+O(meshes + LOD parts + material/texture references), with constant-time deduplication
+per reference. Joint packing width is retained asset metadata. Enumeration records
+fixed byte, texel and unit totals; a revision restart recomputes and resets them.
+Referenced STANDARD layers, samplers, custom shader data and full-reader texture
+demand are dependencies of their parent material.
 
-Call `advance_prepares` every frame while any record is neither `READY` nor `FAILED`: promotion to
-`READY` happens inside it, two frames after the last unit ran. `READY` means every unit whose asset
-was live is uploaded and its frame completed, with the pipelines `prepare_model` would create for
-the views live when each unit ran; a view created or reconfigured later creates what it lacks at its
-first draw, and a model changed while its record was pending draws like any model changed after
-preparation. The call does not abort the frame on a fault: the application aborts it, as for any
-fault inside a frame, and only then do the call's units return to not done. Asset and shader faults
-fail only the record (`failure` names the fault); the others propagate.
+`advance_prepares_within` requires an open frame. Its four axes are actual GPU-bound
+staged bytes, generated mip-zero-equivalent texels, pipeline creation calls and a
+cooperative nanosecond target. A zero configured axis is unbounded; all-zero limits
+drain pending work. Pause by omitting the call. Every call has a fresh allowance,
+shared across records in begin order. A depleted finite remainder never becomes
+unbounded. A strict blocked step reports its reason and required bytes, texels or
+pipeline calls; callers can raise that allowance for a later call.
 
-`end_prepare` releases a record in any state, outside a frame; ending a pending record stops it, and
-what it already staged stays uploaded for later draws and records. A released or stale id reads as
-`FAILED` with `INVALID_ID`, and `end_prepare` faults `INVALID_ID` on it. Four records can be open;
-`begin_prepare_model` faults `INVALID_ID` for a dead model, then `CAPACITY_EXCEEDED` when all four are
-open. The default budget, `PREPARE_FRAME_BUDGET_BYTES`, is 1 MiB: below `OVERSIZED_UPLOAD_BYTES`, so a
-unit within it never takes an overflow allocation, and about 4.3 ms (`-O3`) or 9.7 ms (default build)
-of CPU per call on the WSL host.
+Uploads split into legal texture row/block bands and aligned geometry or payload
+ranges. Mip filtering splits into destination row bands, preserving the synchronous
+filter and rounding. Generation charges each band's increase in
+`floor(base_texels * completed_output_texels / total_output_texels)`; a complete
+chain costs its mip-zero texel count. CPU-only shader copies are reported separately
+as `copied_bytes`. Pipeline and finish work never upload a stale dependency outside
+the accounting. Normal pipeline misses create one pipeline per step. Atomic custom
+shader adoption can require several cached keys; strict calls defer until its true
+creation count fits, while legacy and unbounded calls admit the atomic operation.
+
+The time target is checked between bounded spans and indivisible calls. A span,
+allocation or driver call can overrun it; elapsed time, overrun, generation time and
+pipeline driver time are reported separately. Creation calls, cache lookups/hits,
+texture views and allocations are counted. Sampler interning does not expose
+whether a native sampler was newly created. View targets and unrelated view
+resources are outside model preparation. Ordinary residency raises keep their
+separate pacing.
+
+`advance_prepares(budget_bytes = PREPARE_FRAME_BUDGET_BYTES)` uses the same step
+engine with the existing 1 MiB default. If its allowance is below the minimum legal
+byte step and nothing has staged, it admits one minimum step and stops. It does not
+admit an entire oversized resource. Legacy zero advances one minimum engine step;
+strict all-zero limits are unbounded.
+
+`PrepareProgress` reports phase, state, fixed totals, completed bytes/texels/units,
+restarts and failure. CURRENT or removed dependencies advance their recorded byte progress without
+staging; generated-texel progress counts only generation actually performed, so
+it can remain below the fixed total when units become current or are removed.
+Removed dependencies count as dangling. `SUBMITTED`
+means final work was submitted, and `READY` means its covering submission completed.
+Continue advancing to observe readiness. Views created or reconfigured afterward
+can still prepare their own pipelines on first use.
+
+Partial candidates stay private. The frame recording the final copy installs the
+complete mirror, usable later on the same queue; abort restores the previous usable
+mirror and last committed staging cursor. One active mip chain is retained per
+record and freed at final-copy recording. Abort keeps the in-progress unit's chain;
+units finalized in that aborted frame regenerate identical bytes on retry, retaining
+previously submitted candidate bands. Released source then gives
+`ASSET_DATA_UNAVAILABLE`. Advancing never submits a frame itself. A successful
+submission stays committed after a later presentation failure.
+
+Each step reacquires source by identity and revision. Relevant changes restart the
+record; repeated mutation can prevent completion. A removed model fails with
+`INVALID_ID`. Released required data fails with `ASSET_DATA_UNAVAILABLE` unless the
+job already owns everything still needed. Ordinary draws or synchronous uploads
+can make a mirror current and supersede a private candidate. Record-local asset
+and shader faults fail that record; GPU/device/capacity faults propagate, and the
+caller aborts the frame.
+
+`end_prepare` cancels and releases any state outside a frame. It frees CPU job data
+and retires unpublished candidates after their last actual submission completes;
+published mirrors stay cached. Stale ids report `FAILED`/`INVALID_ID` and fault
+`INVALID_ID` at release. Four records may be open; a dead model faults `INVALID_ID`
+and an exhausted record pool faults `CAPACITY_EXCEEDED`.
 
 ## Example
 

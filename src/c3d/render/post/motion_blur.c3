@@ -286,18 +286,23 @@ fn bool velocity_form_rejected(Renderer* renderer, DrawItem* item, fault excuse)
     return render::custom_pipeline_rejected(renderer, render::material_data(renderer, item.material), excuse);
 }
 
+fn PipelineKey geometry_velocity_pipeline_key(ShaderVariant vertex, gpu::PolygonMode polygon, gpu::Format format) @private {
+    return {
+        .vertex = { .shader = MESH, .flags = vertex.flags | shader::SHADER_FLAG_VELOCITY },
+        .fragment = { .shader = VELOCITY },
+        .color_formats = { [0] = format },
+        .color_count = 1,
+        .depth_format = render::DEPTH_FORMAT,
+        .samples = gpu::SampleCount.ONE,
+        .polygon = polygon,
+    };
+}
+
 fn gpu::PipelineHandle? velocity_pipeline_for(Renderer* renderer, DrawItem* item, gpu::Format format) @private {
     Material* material = render::material_data(renderer, item.material);
     bool wireframe = material.common.wireframe && renderer.caps.line_polygon_mode;
-    PipelineKey key = {
-        .vertex        = { .shader = MESH, .flags = item.vertex.flags | shader::SHADER_FLAG_VELOCITY },
-        .fragment      = { .shader = VELOCITY },
-        .color_formats = { [0] = format },
-        .color_count   = 1,
-        .depth_format  = render::DEPTH_FORMAT,
-        .samples       = gpu::SampleCount.ONE,
-        .polygon       = wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL,
-    };
+    PipelineKey key = geometry_velocity_pipeline_key(
+        item.vertex, wireframe ? gpu::PolygonMode.LINE : gpu::PolygonMode.FILL, format);
     if (item.candidate.impostor) {
         key.vertex = { .shader = IMPOSTOR_VERTEX };
         key.fragment = { .shader = IMPOSTOR_VELOCITY };

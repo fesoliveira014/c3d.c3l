@@ -133,12 +133,17 @@ fn void? Renderer.upload_geometry(&self, GeometryId geometry) {
 
 <*
  Offsets of every present stream, in stream order, each aligned after the root.
+ Raw authored data derives packing width by scanning its stored joints.
  @param [&in] geometry : "Positions present."
 *>
 fn GeometryLayout geometry_layout(Geometry* geometry) {
+    return geometry_layout_from_width(geometry, geometry.joints_exceed_byte());
+}
+
+fn GeometryLayout geometry_layout_from_width(Geometry* geometry, bool joints_u16) @private {
     uint vertex_count = (uint)geometry.positions.len;
     bool short_indices = vertex_count <= ushort::max;
-    bool wide_joints = joints_exceed_byte(geometry.joints);
+    bool wide_joints = joints_u16;
     GeometryLayout layout = {
         .vertex_count  = vertex_count,
         .index_count   = (uint)geometry.indices.len,
@@ -292,7 +297,7 @@ fn GpuGeometry*? resolve_geometry(Renderer* renderer, GeometryId geometry) @priv
     bool same_asset = c3d::same_id(mirror.asset, geometry);
 
     Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
-    GeometryLayout layout = geometry_layout(&record.data);
+    GeometryLayout layout = geometry_layout_from_width(&record.data, record.joints_u16);
     bool reuse = same_asset && mem::equals(&layout, &mirror.layout, GeometryLayout::size);
     if (reuse) {
         renderer.pending_overwrite = true;
@@ -480,11 +485,4 @@ fn gpu::GpuAddress address_of(gpu::GpuAddress base, usz offset) @local {
 
 macro copy_stream(char[] block, usz offset, slice) @local {
     if (slice.len) mem::copy(&block[offset], slice.ptr, slice.len * $Typeof(slice[0])::size);
-}
-
-fn bool joints_exceed_byte(ushort[<4>][] joints) @local {
-    foreach (vertex : joints) {
-        if (vertex.x > char::max || vertex.y > char::max || vertex.z > char::max || vertex.w > char::max) return true;
-    }
-    return false;
 }

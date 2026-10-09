@@ -70,6 +70,15 @@ fn void? stats_panel(Renderer* renderer) {
     imgui::text("Upload bytes: %u", renderer.stats.upload_bytes);
     imgui::text("Prepare units: %u", renderer.stats.prepare_units);
     imgui::text("Prepare bytes: %llu", (ulong)renderer.stats.prepare_bytes);
+    imgui::text("Prepare generated texels: %llu", renderer.stats.prepare_generated_texels);
+    imgui::text("Prepare CPU copied bytes: %llu", renderer.stats.prepare_copied_bytes);
+    imgui::text("Prepare pipeline calls: %u", renderer.stats.prepare_pipelines);
+    imgui::text("Prepare cache lookups / hits: %u / %u", renderer.stats.prepare_pipeline_lookups, renderer.stats.prepare_pipeline_hits);
+    imgui::text("Prepare objects / views / allocations: %u / %u / %u", renderer.stats.prepare_objects, renderer.stats.prepare_views, renderer.stats.prepare_allocations);
+    imgui::text("Prepare generation ns: %llu", renderer.stats.prepare_generation_ns);
+    imgui::text("Prepare pipeline driver ns: %llu", renderer.stats.prepare_pipeline_ns);
+    imgui::text("Prepare elapsed / overrun ns: %llu / %llu", renderer.stats.prepare_elapsed_ns, renderer.stats.prepare_overrun_ns);
+    imgui::text("Prepare restarts: %u", renderer.stats.prepare_restarts);
     imgui::text("Dangling references: %u", renderer.stats.dangling_refs);
     imgui::text("Trace instances: %u", renderer.stats.trace_instances);
     imgui::text("Trace nodes: %u", renderer.stats.trace_nodes);

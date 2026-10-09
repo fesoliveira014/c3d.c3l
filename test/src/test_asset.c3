@@ -915,3 +915,48 @@ fn void test_non_triangle_topology_is_not_a_triangle_list() @test {
     };
     assert(!assets.triangles_valid(lines)!!);
 }
+
+fn Geometry skinned_width_quad(Allocator allocator, ushort unweighted_joint) @local {
+    Geometry geometry = make_quad(allocator);
+    geometry.joints = alloc::new_array(allocator, ushort[<4>], 4);
+    geometry.weights = alloc::new_array(allocator, Vec4, 4);
+    foreach (index, &joints : geometry.joints) {
+        *joints = { 1, 0, 0, unweighted_joint };
+        geometry.weights[index] = { 1, 0, 0, 0 };
+    }
+    return geometry;
+}
+
+fn void test_joint_packing_width_refreshes_and_survives_source_release() @test {
+    AssetStore assets = make_store();
+    defer asset::destroy_asset_store(&assets);
+    @pool() {
+        Geometry narrow = skinned_width_quad(tmem, 255);
+        Geometry wide = skinned_width_quad(tmem, 600);
+        GeometryId copied = assets.add_geometry(&narrow)!!;
+        assert(!assets.geometry(copied).joints_u16);
+        Geometry owned = skinned_width_quad(mem, 600);
+        GeometryId taken = assets.add_geometry_owned(&owned)!!;
+        assert(assets.geometry(taken).joints_u16);
+
+        assets.replace_geometry(copied, &wide)!!;
+        assert(assets.geometry(copied).joints_u16);
+        Geometry replacement = skinned_width_quad(mem, 255);
+        assets.replace_geometry_owned(taken, &replacement)!!;
+        assert(!assets.geometry(taken).joints_u16);
+        assets.geometry(taken).data.joints[0].w = 1024;
+        assets.mark_geometry_dirty(taken);
+        assert(assets.geometry(taken).joints_u16);
+        assets.geometry(taken).data.joints[0].w = 1;
+        assets.mark_geometry_dirty(taken);
+        assert(!assets.geometry(taken).joints_u16);
+
+        GeometryAsset* record = assets.geometry(copied);
+        uint revision = record.header.revision;
+        assets.release_geometry_cpu(copied);
+        assert(record.joints_u16 && record.data.joints.len == 0);
+        assert(record.header.revision == revision);
+        assets.mark_geometry_dirty(copied);
+        assert(record.joints_u16);
+    };
+}

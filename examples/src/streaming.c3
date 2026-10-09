@@ -27,7 +27,7 @@ const Vec3   CAMERA_POSITION @local = { 0, 3, 8 };
 const Vec3   CAMERA_TARGET @local = { 0, 1, 0 };
 const Vec3   MODEL_POSITION @local = { 0, 1, 0 };
 const Vec2   PANEL_POSITION @local = { 16, 16 };
-const Vec2   PANEL_SIZE @local = { 500, 420 };
+const Vec2   PANEL_SIZE @local = { 560, 660 };
 const ulong PUBLICATION_ITEMS_PER_CALL @local = 1024; // atomic models above this allowance defer
 const double MILLISECONDS_PER_SECOND @local = 1000;
 const double NANOSECONDS_PER_MILLISECOND @local = 1_000_000;
@@ -62,6 +62,9 @@ struct Showcase @local {
     bool            request_alive;
     PrepareId       prepare;
     PrepareProgress progress;
+    PrepareLimits   prepare_limits;
+    PrepareReport   preparation;
+    bool            end_prepare_requested;
     bool            decoded;
     bool            published_last_frame;
     Stage           stage;
@@ -119,6 +122,32 @@ fn void? panel(Showcase* showcase) @local {
     imgui::text("Prepare: %s", gui::@enum_name(PrepareState, progress.state));
     imgui::text("Prepared bytes: %llu / %llu", (ulong)progress.bytes_done, (ulong)progress.bytes_total);
     imgui::text("Prepared units: %u / %u", progress.units_done, progress.units_total);
+    imgui::text("Prepare phase: %s", gui::@enum_name(PreparePhase, progress.phase));
+    imgui::text("Generated texels: %llu / %llu", progress.texels_done, progress.texels_total);
+    imgui::text("Staged bytes: %llu", (ulong)showcase.preparation.staged_bytes);
+    imgui::text("CPU copied bytes: %llu", showcase.preparation.copied_bytes);
+    imgui::text("Pipeline calls: %u", showcase.preparation.pipelines);
+    imgui::text("Generation: %.3f ms", (double)showcase.preparation.generation_ns / NANOSECONDS_PER_MILLISECOND);
+    imgui::text("Pipeline driver: %.3f ms", (double)showcase.preparation.pipeline_ns / NANOSECONDS_PER_MILLISECOND);
+    imgui::text("Target overrun: %.3f ms", (double)showcase.preparation.overrun_ns / NANOSECONDS_PER_MILLISECOND);
+    if (showcase.stage == Stage.PREPARING) {
+        imgui::text("Stop: %s", gui::@enum_name(PrepareStopReason, showcase.preparation.reason));
+        if (showcase.preparation.reason != PrepareStopReason.NONE && showcase.preparation.reason != PrepareStopReason.TIME) {
+            if (imgui::button("Use reported preparation requirements")) {
+                if (showcase.prepare_limits.staged_bytes) showcase.prepare_limits.staged_bytes = math::max(
+                    showcase.prepare_limits.staged_bytes, showcase.preparation.required.staged_bytes,
+                );
+                if (showcase.prepare_limits.generated_texels) showcase.prepare_limits.generated_texels = math::max(
+                    showcase.prepare_limits.generated_texels, showcase.preparation.required.generated_texels,
+                );
+                if (showcase.prepare_limits.pipelines) showcase.prepare_limits.pipelines = math::max(
+                    showcase.prepare_limits.pipelines, showcase.preparation.required.pipelines,
+                );
+            }
+        }
+        if (imgui::button("Unbounded preparation")) showcase.prepare_limits = {};
+        if (imgui::button("End preparation")) showcase.end_prepare_requested = true;
+    }
     imgui::text("Largest advance: %.2f ms", timings.advance_max_ms);
     imgui::text("Largest frame while preparing: %.1f ms", timings.prepare_frame_max_ms);
 
@@ -182,6 +211,11 @@ fn void? advance(
                 showcase.stage = Stage.PREPARING;
             }
         case PREPARING:
+            if (showcase.end_prepare_requested) {
+                renderer.end_prepare(showcase.prepare)!;
+                showcase.stage = Stage.CANCELLED;
+                break;
+            }
             Timings* timings = &showcase.timings;
             if (showcase.published_last_frame) {
                 timings.publish_frame_ms = frame_ms;
@@ -231,7 +265,7 @@ fn void? draw_frame(
     defer catch render::abort_frame(renderer);
     if (showcase.stage == Stage.PREPARING) {
         time::Clock clock = time::clock::now();
-        renderer.advance_prepares()!;
+        showcase.preparation = renderer.advance_prepares_within(showcase.prepare_limits)!;
         showcase.timings.advance_max_ms = math::max(showcase.timings.advance_max_ms, elapsed_ms(&clock));
         showcase.timings.prepare_frames++;
     }
@@ -320,6 +354,12 @@ fn int main(String[] args) {
     Showcase showcase = {
         .loader      = &loader,
         .limits      = { .items = PUBLICATION_ITEMS_PER_CALL },
+        .prepare_limits = {
+            .staged_bytes = render::PREPARE_FRAME_BUDGET_BYTES,
+            .generated_texels = 1 << 20,
+            .pipelines = 1,
+            .time_ns = 2_000_000,
+        },
         .placeholder = build_scene(&assets, &scene)!!,
     };
     showcase.requested = time::clock::now();

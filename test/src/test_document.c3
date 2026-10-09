@@ -832,3 +832,40 @@ fn void test_default_replacement_reserves_full_estimation_before_scanning() @tes
     }
     assert(!tracker.has_leaks());
 }
+
+fn void test_prepared_joint_width_survives_transfer_and_source_release() @test {
+    AssetStore assets = create_store(mem);
+    defer asset::destroy_asset_store(&assets);
+    DocumentRefs refs;
+    ModelDocument document = build_document(mem, &refs);
+    defer asset::destroy_model_document(&document);
+    Geometry* geometry = &document.geometries[0].data;
+    geometry.joints = alloc::new_array(mem, ushort[<4>], geometry.positions.len);
+    geometry.weights = alloc::new_array(mem, Vec4, geometry.positions.len);
+    foreach (index, &joints : geometry.joints) {
+        *joints = { 0, 0, 0, 65000 };
+        geometry.weights[index] = { 1, 0, 0, 0 };
+    }
+    PreparedModelDocument prepared = asset::prepare_model_document(&document)!!;
+    defer asset::destroy_prepared_model_document(&prepared);
+    assert(prepared.geometries[0].joints_u16);
+    ModelId model = asset::publish_prepared_model_document(&assets, &prepared)!!;
+    GeometryId published = assets.model(model).data.meshes[0].geometry;
+    assert(assets.geometry(published).joints_u16);
+    ModelDocument replacement = build_document(mem, &refs);
+    defer asset::destroy_model_document(&replacement);
+    Geometry* next = &replacement.geometries[0].data;
+    next.joints = alloc::new_array(mem, ushort[<4>], next.positions.len);
+    next.weights = alloc::new_array(mem, Vec4, next.positions.len);
+    foreach (index, &joints : next.joints) {
+        *joints = { 0, 0, 0, 255 };
+        next.weights[index] = { 1, 0, 0, 0 };
+    }
+    PreparedModelDocument prepared_next = asset::prepare_model_document(&replacement)!!;
+    defer asset::destroy_prepared_model_document(&prepared_next);
+    assert(!prepared_next.geometries[0].joints_u16);
+    asset::replace_prepared_model_document(&assets, model, &prepared_next)!!;
+    assert(!assets.geometry(published).joints_u16);
+    assets.release_geometry_cpu(published);
+    assert(!assets.geometry(published).joints_u16);
+}

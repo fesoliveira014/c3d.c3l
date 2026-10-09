@@ -167,7 +167,12 @@ struct Renderer {
     List{uint}               pending_instance_uploads;
     PreparePool             prepares;
     ulong                   next_prepare_sequence;
-    List{PrepareMark}       pending_prepare_marks;
+    List{PrepareInstall} pending_prepare_installs;
+    List{PrepareRetirement} pending_prepare_retire;
+    PrepareCounters prepare_counters;
+    PrepareUploadCheckpoint prepare_upload_checkpoint;
+    uint last_submitted_slot;
+    gpu::CompletionPoint last_submission;
     TextureRes[]            textures;
     TextureResidency[]       residencies;       // one per store texture slot, parallel to textures
     TextureResidencyChange[] residency_changes; // planner output, sized like residencies
@@ -930,7 +935,8 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     renderer.pending_copies.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_geometry_uploads.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_instance_uploads.init(allocator, RETIRE_INITIAL_CAPACITY);
-    renderer.pending_prepare_marks.init(allocator, RETIRE_INITIAL_CAPACITY);
+    renderer.pending_prepare_installs.init(allocator, RETIRE_INITIAL_CAPACITY);
+    renderer.pending_prepare_retire.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_texture_uploads.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.pending_font_uploads.init(allocator, RETIRE_INITIAL_CAPACITY);
     renderer.texture_state_undo.init(allocator, RETIRE_INITIAL_CAPACITY);
@@ -939,6 +945,7 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
     renderer.rt.pending_blas.init(allocator, RETIRE_INITIAL_CAPACITY);
     defer catch {
         if (catch excuse = wait_frames(&renderer)) handle_cleanup_fault(excuse);
+        free_prepares(&renderer);
         foreach (&slot : renderer.frames) drain_retired(&renderer.device, &slot.retire);
         release_cluster_resources(&renderer);
         free_environments(&renderer);
@@ -950,7 +957,6 @@ fn Renderer? create_renderer(Allocator allocator, AssetStore* assets, RendererDe
         free_billboard_geometry(&renderer);
         free_instance_buffers(&renderer);
         free_instance_culling(&renderer);
-        free_prepares(&renderer);
         alloc::free(allocator, renderer.materials.ptr);
         alloc::free(allocator, renderer.shadow_frusta.ptr);
         alloc::free(allocator, renderer.shadow_set.lights.ptr);
@@ -986,6 +992,7 @@ fn void destroy_renderer(Renderer* renderer) {
         if (excuse != gpu::SURFACE_LOST || renderer.acquired.texture.is_valid()) handle_cleanup_fault(excuse);
     }
     if (catch excuse = wait_frames(renderer)) handle_cleanup_fault(excuse);
+    free_prepares(renderer);
     foreach (&slot : renderer.frames) drain_retired(&renderer.device, &slot.retire);
     free_environments(renderer);
     free_probe_volumes(renderer);
@@ -999,7 +1006,6 @@ fn void destroy_renderer(Renderer* renderer) {
     free_billboard_geometry(renderer);
     free_instance_buffers(renderer);
     free_instance_culling(renderer);
-    free_prepares(renderer);
     free_material_heap(renderer);
     free_shaders(renderer);
     free_compute_shaders(renderer);

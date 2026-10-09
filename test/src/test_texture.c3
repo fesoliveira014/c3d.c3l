@@ -7,7 +7,11 @@ import c3d::render @public;
 import c3d::render::post;
 import std::math;
 import c3d::shader;
+import c3d::test::loading_fixtures;
 import gpu;
+
+const usz BAND_ALLOWANCE_ONE_MIB @local = 1 << 20;
+const usz BAND_ALLOWANCE_EIGHT_MIB @local = 8 << 20;
 
 fn void test_mips_distinguish_srgb_from_linear_alpha() @test {
     char[16] pixels = { 0, 0, 0, 0, 255, 255, 255, 255, 0, 0, 0, 0, 255, 255, 255, 255 };
@@ -287,4 +291,383 @@ fn void test_mip_bytes_match_the_backend_footprint() @test {
     }
     material::TextureDesc huge = material::texture_2d_desc(uint::max, uint::max, RGBA32_FLOAT);
     assert(@catch(material::texture_mip_bytes(huge, 0)) == c3d::INVALID_ARGUMENT);
+}
+
+fn char[] assemble_texture_bands(
+    material::TextureDesc desc,
+    uint mip,
+    char[] source,
+    uint row_limit,
+    usz byte_allowance = 0,
+) @local {
+    char[] copied = alloc::new_array(mem, char, (sz)source.len);
+    uint depth = desc.depth ? material::texture_mip_extent(desc.depth, mip) : 1;
+    uint height = material::texture_mip_extent(desc.height, mip);
+    uint block_height = material::texture_is_compressed(desc.format) ? 4 : 1;
+    uint block_rows = (height + block_height - 1) / block_height;
+    usz copied_bytes;
+    for (uint layer = 0; layer < desc.layers; layer++) {
+        for (uint slice = 0; slice < depth; slice++) {
+            for (uint row = 0; row < block_rows;) {
+                uint rows = math::min(row_limit, block_rows - row);
+                if (byte_allowance) {
+                    TextureBand minimum = render::texture_band(
+                        desc: desc,
+                        mip: mip,
+                        layer: layer,
+                        slice: slice,
+                        first_block_row: row,
+                        block_rows: 1,
+                    )!!;
+                    assert(minimum.byte_count <= byte_allowance);
+                    rows = (uint)math::min((usz)rows, byte_allowance / minimum.row_bytes);
+                }
+                TextureBand band = render::texture_band(
+                    desc: desc,
+                    mip: mip,
+                    layer: layer,
+                    slice: slice,
+                    first_block_row: row,
+                    block_rows: rows,
+                )!!;
+                assert(band.x == 0 && band.y == row * block_height && band.z == slice);
+                assert(band.mip == mip && band.layer == layer && band.depth == 1);
+                assert(band.height == math::min(rows * block_height, height - band.y));
+                assert(band.byte_count == band.row_bytes * rows);
+                if (byte_allowance) assert(band.byte_count <= byte_allowance);
+                if (byte_allowance && rows < math::min(row_limit, block_rows - row)) {
+                    assert(((usz)rows + 1) * band.row_bytes > byte_allowance);
+                }
+                copied_bytes += band.byte_count;
+                assert(band.source_offset + band.byte_count <= source.len);
+                mem::copy(copied.ptr + (sz)band.source_offset, source.ptr + (sz)band.source_offset, (sz)band.byte_count);
+                row += rows;
+            }
+        }
+    }
+    assert(copied_bytes == source.len);
+    return copied;
+}
+
+fn void test_texture_bands_copy_each_cube_face_and_volume_slice() @test {
+    material::TextureDesc cube = material::texture_cube_desc(4, RGBA8_UNORM);
+    cube.generate_mips = false;
+    char[6 * 4 * 4 * 4] cube_pixels;
+    foreach (index, &value : cube_pixels) *value = (char)(index % 251 + 1);
+    char[] cube_copy = assemble_texture_bands(
+        desc: cube,
+        mip: 0,
+        source: cube_pixels[..],
+        row_limit: 3,
+    );
+    defer alloc::free(mem, cube_copy.ptr);
+    assert(cube_copy == cube_pixels[..]);
+    TextureBand face = render::texture_band(
+        desc: cube,
+        mip: 0,
+        layer: 4,
+        slice: 0,
+        first_block_row: 3,
+        block_rows: 1,
+    )!!;
+    assert(face.source_offset == 4 * 64 + 3 * 16 && face.byte_count == 16 && face.layer_bytes == 64);
+
+    foreach (format : (PixelFormat[2]){ RGBA8_UNORM, RGBA8_SRGB }) {
+        material::TextureDesc volume = material::texture_3d_desc(
+            width: 8,
+            height: 4,
+            depth: 3,
+            format: format,
+        );
+        char[8 * 4 * 3 * 4] pixels;
+        foreach (index, &value : pixels) *value = (char)(index % 251 + 1);
+        char[] copy = assemble_texture_bands(
+            desc: volume,
+            mip: 0,
+            source: pixels[..],
+            row_limit: 3,
+        );
+        defer alloc::free(mem, copy.ptr);
+        assert(copy == pixels[..]);
+        TextureMipChain reference = render::create_texture_mips(mem, volume, pixels[..])!!;
+        defer render::destroy_texture_mips(&reference);
+        assert(copy == reference.pixels);
+        TextureBand band = render::texture_band(
+            desc: volume,
+            mip: 0,
+            layer: 0,
+            slice: 2,
+            first_block_row: 3,
+            block_rows: 1,
+        )!!;
+        assert(band.source_offset == 2 * 128 + 3 * 32);
+        assert(band.byte_count == 32 && band.y == 3 && band.z == 2 && band.depth == 1);
+    }
+}
+
+fn void test_texture_bands_copy_uncompressed_storage_widths() @test {
+    foreach (format : (PixelFormat[3]){ RGBA16_FLOAT, RGBA32_FLOAT, R16_UINT }) {
+        material::TextureDesc desc = material::texture_2d_desc(9, 5, format);
+        desc.generate_mips = false;
+        usz bytes = material::texture_mip_bytes(desc, 0)!!;
+        char[] pixels = alloc::new_array(mem, char, (sz)bytes);
+        defer alloc::free(mem, pixels.ptr);
+        foreach (index, &value : pixels) *value = (char)(index % 251 + 1);
+        char[] copy = assemble_texture_bands(
+            desc: desc,
+            mip: 0,
+            source: pixels,
+            row_limit: 2,
+        );
+        defer alloc::free(mem, copy.ptr);
+        assert(copy == pixels);
+        TextureBand band = render::texture_band(
+            desc: desc,
+            mip: 0,
+            layer: 0,
+            slice: 0,
+            first_block_row: 4,
+            block_rows: 1,
+        )!!;
+        assert(band.row_bytes == 9 * material::texture_block_bytes(format));
+        assert(band.source_offset == 4 * band.row_bytes && band.height == 1);
+        assert(band.alignment >= material::texture_block_bytes(format));
+    }
+}
+
+fn void test_texture_bands_keep_supplied_compressed_edge_blocks() @test {
+    foreach (format : (PixelFormat[2]){ BC1_RGBA_UNORM, BC7_UNORM }) {
+        material::TextureDesc desc = material::texture_2d_desc(7, 5, format);
+        desc.generate_mips = false;
+        desc.mip_levels = 3;
+        usz block_bytes = format == BC1_RGBA_UNORM ? 8 : 16;
+        TextureMipData[3] levels;
+        char[] storage = alloc::new_array(mem, char, (sz)(block_bytes * 6));
+        defer alloc::free(mem, storage.ptr);
+        usz offset;
+        for (uint mip = 0; mip < desc.mip_levels; mip++) {
+            usz bytes = mip ? block_bytes : block_bytes * 4;
+            levels[mip] = { .mip = mip, .layer = 0, .bytes = storage[offset:bytes] };
+            foreach (index, &value : levels[mip].bytes) *value = (char)(1 + (usz)mip * 40 + (usz)index);
+            char[] copied = assemble_texture_bands(
+                desc: desc,
+                mip: mip,
+                source: levels[mip].bytes,
+                row_limit: 1,
+            );
+            defer alloc::free(mem, copied.ptr);
+            assert(copied == levels[mip].bytes);
+            offset += bytes;
+        }
+        assert(offset == storage.len);
+        TextureMipChain reference = render::create_supplied_texture_mips(mem, desc, levels[..])!!;
+        defer render::destroy_texture_mips(&reference);
+        assert(reference.pixels == storage);
+        TextureBand edge = render::texture_band(
+            desc: desc,
+            mip: 0,
+            layer: 0,
+            slice: 0,
+            first_block_row: 1,
+            block_rows: 1,
+        )!!;
+        assert(edge.width == 7 && edge.y == 4 && edge.height == 1);
+        assert(edge.row_bytes == block_bytes * 2 && edge.byte_count == block_bytes * 2);
+        assert(edge.source_offset == block_bytes * 2 && edge.alignment == block_bytes);
+    }
+}
+
+fn void test_texture_bands_preserve_volume_and_generated_rejections() @test {
+    material::TextureDesc volume = material::texture_3d_desc(
+        width: 8,
+        height: 4,
+        depth: 3,
+        format: RGBA8_UNORM,
+    );
+    foreach (format : (PixelFormat[4]){ RGBA16_FLOAT, RGBA32_FLOAT, R16_UINT, BC7_UNORM }) {
+        volume.format = format;
+        if (catch excuse = render::texture_band(
+            desc: volume,
+            mip: 0,
+            layer: 0,
+            slice: 0,
+            first_block_row: 0,
+            block_rows: 1,
+        )) {
+            assert(excuse == c3d::UNSUPPORTED);
+        } else {
+            assert(false, "Unsupported volume band was accepted");
+        }
+    }
+    volume.format = RGBA8_UNORM;
+    volume.generate_mips = true;
+    if (catch excuse = render::texture_band(
+        desc: volume,
+        mip: 0,
+        layer: 0,
+        slice: 0,
+        first_block_row: 0,
+        block_rows: 1,
+    )) {
+        assert(excuse == c3d::UNSUPPORTED);
+    } else {
+        assert(false, "Generated volume band was accepted");
+    }
+    material::TextureDesc compressed = material::texture_2d_desc(7, 5, BC1_RGBA_UNORM);
+    if (catch excuse = render::texture_band(
+        desc: compressed,
+        mip: 0,
+        layer: 0,
+        slice: 0,
+        first_block_row: 0,
+        block_rows: 1,
+    )) {
+        assert(excuse == c3d::UNSUPPORTED);
+    } else {
+        assert(false, "Generated compressed band was accepted");
+    }
+}
+
+fn void test_texture_band_planning_rejects_invalid_ranges_without_allocating() @test {
+    material::TextureDesc desc = material::texture_2d_desc(9, 5, RGBA8_UNORM);
+    foreach (rows : (uint[3]){ 0, 2, uint::max }) {
+        if (catch excuse = render::texture_band(
+            desc: desc,
+            mip: 0,
+            layer: 0,
+            slice: 0,
+            first_block_row: 4,
+            block_rows: rows,
+        )) {
+            assert(excuse == c3d::INVALID_ARGUMENT);
+        } else {
+            assert(false, "Out-of-range band was accepted");
+        }
+    }
+    desc.width = uint::max;
+    desc.height = uint::max;
+    if (catch excuse = render::texture_band(
+        desc: desc,
+        mip: 0,
+        layer: 0,
+        slice: 0,
+        first_block_row: 0,
+        block_rows: 1,
+    )) {
+        assert(excuse == c3d::INVALID_ARGUMENT);
+    } else {
+        assert(false, "Unrepresentable band layout was accepted");
+    }
+}
+
+fn void test_supplied_compressed_cube_keeps_existing_render_rejection() @test {
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+    foreach (format : (PixelFormat[2]){ BC1_RGBA_UNORM, BC7_UNORM }) {
+        material::TextureDesc desc = material::texture_cube_desc(8, format);
+        desc.generate_mips = false;
+        desc.mip_levels = 4;
+        TextureMipData[4 * 6] levels;
+        usz total_bytes;
+        for (uint mip = 0; mip < desc.mip_levels; mip++) {
+            total_bytes += material::texture_mip_bytes(desc, mip)!! * desc.layers;
+        }
+        char[] storage = alloc::new_array(mem, char, (sz)total_bytes);
+        defer alloc::free(mem, storage.ptr);
+        usz offset;
+        for (uint mip = 0; mip < desc.mip_levels; mip++) {
+            usz layer_bytes = material::texture_mip_bytes(desc, mip)!!;
+            for (uint layer = 0; layer < desc.layers; layer++) {
+                usz index = (usz)mip * desc.layers + layer;
+                levels[index] = { .mip = mip, .layer = layer, .bytes = storage[offset:layer_bytes] };
+                foreach (position, &byte : levels[index].bytes) {
+                    *byte = (char)((usz)mip * 40 + (usz)layer * 10 + (usz)position + 1);
+                }
+                offset += layer_bytes;
+            }
+        }
+        assert(offset == storage.len);
+        TextureId texture = assets.add_texture_mips(desc, levels[..])!!;
+        TextureAsset* stored = assets.texture(texture);
+        assert(stored.source_kind == TextureSourceKind.SUPPLIED_MIPS);
+        assert(stored.supplied_mips.len == levels.len);
+        foreach (index, level : stored.supplied_mips) {
+            assert(level.mip == levels[index].mip && level.layer == levels[index].layer);
+            assert(level.bytes == levels[index].bytes && level.bytes.ptr != levels[index].bytes.ptr);
+        }
+
+        if (catch excuse = render::create_supplied_texture_mips(mem, desc, stored.supplied_mips)) {
+            assert(excuse == c3d::UNSUPPORTED);
+        } else {
+            assert(false, "Supplied compressed cube unexpectedly became renderer-supported");
+        }
+        foreach (level : stored.supplied_mips) {
+            if (catch excuse = render::texture_band(
+                desc: desc,
+                mip: level.mip,
+                layer: level.layer,
+                slice: 0,
+                first_block_row: 0,
+                block_rows: 1,
+            )) {
+                assert(excuse == c3d::UNSUPPORTED);
+            } else {
+                assert(false, "Compressed cube band changed the existing render rejection");
+            }
+        }
+    }
+}
+
+fn void test_texture_bands_converge_with_canonical_byte_allowances() @test {
+    foreach (desc : (material::TextureDesc[11]){
+        material::texture_2d_desc(2049, 1025, RGBA8_UNORM),
+        material::texture_cube_desc(4, RGBA8_UNORM),
+        material::texture_3d_desc(
+            width: 8,
+            height: 4,
+            depth: 3,
+            format: RGBA8_UNORM,
+        ),
+        material::texture_3d_desc(
+            width: 8,
+            height: 4,
+            depth: 3,
+            format: RGBA8_SRGB,
+        ),
+        material::texture_2d_desc(7, 5, BC1_RGBA_UNORM),
+        material::texture_2d_desc(7, 5, BC7_UNORM),
+        material::texture_2d_desc(9, 5, RGBA16_FLOAT),
+        material::texture_2d_desc(9, 5, RGBA32_FLOAT),
+        material::texture_2d_desc(9, 5, R16_UINT),
+        material::texture_2d_desc(1, 17, RGBA8_UNORM),
+        material::texture_2d_desc(17, 1, RGBA8_UNORM),
+    }) {
+        desc.generate_mips = false;
+        desc.mip_levels = desc.depth ? 1 : material::texture_mip_count(desc.width, desc.height);
+        for (uint mip = 0; mip < desc.mip_levels; mip++) {
+            usz bytes = material::texture_mip_bytes(desc, mip)!! * desc.layers;
+            char[] pixels = loading_fixtures::preparation_texture_bytes(mem, bytes);
+            defer alloc::free(mem, pixels.ptr);
+            TextureBand minimum = render::texture_band(
+                desc: desc,
+                mip: mip,
+                layer: 0,
+                slice: 0,
+                first_block_row: 0,
+                block_rows: 1,
+            )!!;
+            if (desc.width == 2049 && mip == 0) assert(bytes > BAND_ALLOWANCE_EIGHT_MIB);
+            foreach (allowance : (usz[4]){ minimum.byte_count, BAND_ALLOWANCE_ONE_MIB, BAND_ALLOWANCE_EIGHT_MIB, 0 }) {
+                char[] copied = assemble_texture_bands(
+                    desc: desc,
+                    mip: mip,
+                    source: pixels,
+                    row_limit: uint::max,
+                    byte_allowance: allowance,
+                );
+                defer alloc::free(mem, copied.ptr);
+                assert(copied == pixels);
+            }
+        }
+    }
 }

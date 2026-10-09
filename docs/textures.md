@@ -682,3 +682,19 @@ fault rather than displaying a converted replacement.
 
 Both examples retain CPU sources and use full validation. Their committed
 fixtures are project-authored; see [fixture provenance](../csrc/README.md#cube-and-compressed-fixtures).
+
+
+## Bounded initial preparation
+
+Model [preparation steps](views.md#budgeted-preparation) split supplied or generated
+texture uploads into format-aligned mip/layer row bands. Single-mip RGBA8 UNORM and
+sRGB volumes split by slice; unsupported volume formats and generation remain
+unsupported. Generated 2D/cube mips use the synchronous filter and rounding, with
+one active chain per record and per-band source reads. Source release does not
+change identity/revision, so each step also checks source presence.
+
+A private texture is published only when its final copy is recorded. Earlier bands
+may already be submitted; cancellation retires that candidate after their covering
+completion. Abort preserves the active chain, while finalized units regenerate on
+retry and fail if required source was released. This initial path does not alter
+ordinary residency-raise pacing or synchronous texture uploads.

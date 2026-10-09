@@ -83,6 +83,124 @@ fn TextureMipChain? create_texture_mips(
     return chain;
 }
 
+<*
+ Allocate nonzero generated levels without copying the base.
+ @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED
+*>
+fn TextureMipChain? create_generated_texture_mips(Allocator allocator, material::TextureDesc desc) {
+    GeneratedTextureLayout layout = generated_texture_mip_layout(desc)!;
+    TextureMipChain chain = {
+        .allocator = allocator, .first_mip = 1, .mip_count = layout.mip_count,
+        .layer_count = layout.layer_count, .offsets = layout.offsets,
+    };
+    if (layout.byte_count) chain.pixels = alloc::alloc_array(allocator, char, (sz)layout.byte_count);
+    return chain;
+}
+
+<*
+ Generate destination rows from freshly borrowed source or owned levels.
+ @param mip_zero : "Read only for mip one; never retained."
+ @param [&inout] chain : "Generated levels; earlier levels are complete."
+ @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
+ @require chain.first_mip == 1, chain.layer_count == desc.layers
+*>
+fn void? write_texture_mip_band(
+    material::TextureDesc desc,
+    uint mip,
+    uint layer,
+    uint first_row,
+    uint row_count,
+    char[] mip_zero,
+    TextureMipChain* chain,
+) {
+    TextureBand band = texture_band(
+        desc: desc,
+        mip: mip,
+        layer: layer,
+        slice: 0,
+        first_block_row: first_row,
+        block_rows: row_count,
+    )!;
+    if (!mip || mip > chain.mip_count) return c3d::INVALID_ARGUMENT~;
+    usz texel_bytes = material::texture_block_bytes(desc.format);
+    uint width = material::texture_mip_extent(desc.width, mip - 1);
+    uint height = material::texture_mip_extent(desc.height, mip - 1);
+    usz source_layer_bytes = (usz)width * height * texel_bytes;
+    usz destination_layer_bytes = (usz)band.width * material::texture_mip_extent(desc.height, mip) * texel_bytes;
+    char[] source_bytes;
+    if (mip == 1) {
+        if (!mip_zero.len) return c3d::ASSET_DATA_UNAVAILABLE~;
+        if (mip_zero.len != source_layer_bytes * desc.layers) return c3d::INVALID_ARGUMENT~;
+        source_bytes = mip_zero[(usz)layer * source_layer_bytes:source_layer_bytes];
+    } else {
+        usz source_offset = chain.offsets[mip - 2] + (usz)layer * source_layer_bytes;
+        source_bytes = chain.pixels[source_offset:source_layer_bytes];
+    }
+    usz destination_offset = chain.offsets[mip - 1] + (usz)layer * destination_layer_bytes;
+    char[] destination_bytes = chain.pixels[destination_offset:destination_layer_bytes];
+    switch (desc.format) {
+        case RGBA8_UNORM:
+            write_typed_mip_band(
+                $Scalar: char,
+                $srgb: false,
+                $halving: true,
+                width: width,
+                height: height,
+                first_row: first_row,
+                row_count: row_count,
+                source_bytes: source_bytes,
+                destination_bytes: destination_bytes,
+            );
+        case RGBA8_SRGB:
+            write_typed_mip_band(
+                $Scalar: char,
+                $srgb: true,
+                $halving: true,
+                width: width,
+                height: height,
+                first_row: first_row,
+                row_count: row_count,
+                source_bytes: source_bytes,
+                destination_bytes: destination_bytes,
+            );
+        case RGBA16_FLOAT:
+            write_typed_mip_band(
+                $Scalar: float16,
+                $srgb: false,
+                $halving: true,
+                width: width,
+                height: height,
+                first_row: first_row,
+                row_count: row_count,
+                source_bytes: source_bytes,
+                destination_bytes: destination_bytes,
+            );
+        case RGBA32_FLOAT:
+            write_typed_mip_band(
+                $Scalar: float,
+                $srgb: false,
+                $halving: true,
+                width: width,
+                height: height,
+                first_row: first_row,
+                row_count: row_count,
+                source_bytes: source_bytes,
+                destination_bytes: destination_bytes,
+            );
+        case R16_UINT:
+        case BC1_RGBA_UNORM:
+        case BC1_RGBA_SRGB:
+        case BC3_UNORM:
+        case BC3_SRGB:
+        case BC4_UNORM:
+        case BC5_UNORM:
+        case BC6H_UFLOAT:
+        case BC7_UNORM:
+        case BC7_SRGB:
+            return c3d::UNSUPPORTED~;
+    }
+}
+
 fn TextureMipChain? create_full_texture_mips(Allocator allocator, material::TextureDesc desc, char[] pixels) @local {
     if (!desc.width || !desc.height || desc.mip_levels != 1) return c3d::INVALID_ARGUMENT~;
     if (desc.depth) return create_volume_texture_mips(allocator, desc, pixels);
@@ -287,81 +405,106 @@ macro TextureMipChain? create_typed_texture_mips(
         for (uint layer = 0; layer < desc.layers; layer++) {
             usz source_offset = chain.offsets[mip - 1] + (usz)layer * width * height * TEXEL_BYTES;
             usz destination_offset = chain.offsets[mip] + (usz)layer * next_width * next_height * TEXEL_BYTES;
-            $Scalar* source = ($Scalar*)(chain.pixels.ptr + source_offset);
-            $Scalar* destination = ($Scalar*)(chain.pixels.ptr + destination_offset);
-
-            bool halves;
-            $if $halving:
-                halves = (width == 2 * next_width || width == 1) && (height == 2 * next_height || height == 1);
-            $endif
-            uint step_x = width / next_width;
-            uint step_y = height / next_height;
-
-            for (uint destination_y = 0; destination_y < next_height; destination_y++) {
-                for (uint destination_x = 0; destination_x < next_width; destination_x++) {
-                    double[RGBA_CHANNELS] sum;
-                    double area;
-                    if (halves) {
-                        area = (double)step_x * step_y;
-                        uint first_y = destination_y * step_y;
-                        uint first_x = destination_x * step_x;
-                        for (uint source_y = first_y; source_y < first_y + step_y; source_y++) {
-                            for (uint source_x = first_x; source_x < first_x + step_x; source_x++) {
-                                usz source_base = ((usz)source_y * width + source_x) * RGBA_CHANNELS;
-                                for (uint channel = 0; channel < RGBA_CHANNELS; channel++) {
-                                    sum[channel] += load_mip_value(
-                                        $Scalar: $Scalar,
-                                        $srgb: $srgb,
-                                        source: source,
-                                        base: source_base,
-                                        channel: channel,
-                                    );
-                                }
-                            }
-                        }
-                    } else {
-                        double top = (double)destination_y * height / next_height;
-                        double bottom = (double)(destination_y + 1) * height / next_height;
-                        double left = (double)destination_x * width / next_width;
-                        double right = (double)(destination_x + 1) * width / next_width;
-                        area = (right - left) * (bottom - top);
-                        for (uint source_y = (uint)top; source_y < (uint)math::ceil(bottom); source_y++) {
-                            double vertical = math::min(bottom, (double)source_y + 1)
-                              - math::max(top, (double)source_y);
-                            for (uint source_x = (uint)left; source_x < (uint)math::ceil(right); source_x++) {
-                                double horizontal = math::min(right, (double)source_x + 1)
-                                  - math::max(left, (double)source_x);
-                                usz source_base = ((usz)source_y * width + source_x) * RGBA_CHANNELS;
-                                for (uint channel = 0; channel < RGBA_CHANNELS; channel++) {
-                                    sum[channel] += load_mip_value(
-                                        $Scalar: $Scalar,
-                                        $srgb: $srgb,
-                                        source: source,
-                                        base: source_base,
-                                        channel: channel,
-                                    ) * horizontal * vertical;
-                                }
-                            }
-                        }
-                    }
-
-                    usz destination_base = ((usz)destination_y * next_width + destination_x) * RGBA_CHANNELS;
-                    for (uint channel = 0; channel < RGBA_CHANNELS; channel++) {
-                        store_mip_value(
-                            $Scalar: $Scalar,
-                            $srgb: $srgb,
-                            destination: destination,
-                            base: destination_base,
-                            channel: channel,
-                            value: sum[channel] / area,
-                        );
-                    }
-                }
-            }
+            write_typed_mip_band(
+                $Scalar: $Scalar,
+                $srgb: $srgb,
+                $halving: $halving,
+                width: width,
+                height: height,
+                first_row: 0,
+                row_count: next_height,
+                source_bytes: chain.pixels[source_offset:(usz)width * height * TEXEL_BYTES],
+                destination_bytes: chain.pixels[destination_offset:(usz)next_width * next_height * TEXEL_BYTES],
+            );
         }
     }
 
     return chain;
+}
+
+macro void write_typed_mip_band(
+    $Scalar,
+    $srgb,
+    $halving,
+    uint width,
+    uint height,
+    uint first_row,
+    uint row_count,
+    char[] source_bytes,
+    char[] destination_bytes,
+) @local {
+    uint next_width = math::max(1u, width >> 1);
+    uint next_height = math::max(1u, height >> 1);
+    $Scalar* source = ($Scalar*)source_bytes.ptr;
+    $Scalar* destination = ($Scalar*)destination_bytes.ptr;
+    bool halves;
+    $if $halving:
+        halves = (width == 2 * next_width || width == 1) && (height == 2 * next_height || height == 1);
+    $endif
+    uint step_x = width / next_width;
+    uint step_y = height / next_height;
+
+    for (uint destination_y = first_row; destination_y < first_row + row_count; destination_y++) {
+        for (uint destination_x = 0; destination_x < next_width; destination_x++) {
+            double[RGBA_CHANNELS] sum;
+            double area;
+            if (halves) {
+                area = (double)step_x * step_y;
+                uint first_y = destination_y * step_y;
+                uint first_x = destination_x * step_x;
+                for (uint source_y = first_y; source_y < first_y + step_y; source_y++) {
+                    for (uint source_x = first_x; source_x < first_x + step_x; source_x++) {
+                        usz source_base = ((usz)source_y * width + source_x) * RGBA_CHANNELS;
+                        for (uint channel = 0; channel < RGBA_CHANNELS; channel++) {
+                            sum[channel] += load_mip_value(
+                                $Scalar: $Scalar,
+                                $srgb: $srgb,
+                                source: source,
+                                base: source_base,
+                                channel: channel,
+                            );
+                        }
+                    }
+                }
+            } else {
+                double top = (double)destination_y * height / next_height;
+                double bottom = (double)(destination_y + 1) * height / next_height;
+                double left = (double)destination_x * width / next_width;
+                double right = (double)(destination_x + 1) * width / next_width;
+                area = (right - left) * (bottom - top);
+                for (uint source_y = (uint)top; source_y < (uint)math::ceil(bottom); source_y++) {
+                    double vertical = math::min(bottom, (double)source_y + 1)
+                      - math::max(top, (double)source_y);
+                    for (uint source_x = (uint)left; source_x < (uint)math::ceil(right); source_x++) {
+                        double horizontal = math::min(right, (double)source_x + 1)
+                          - math::max(left, (double)source_x);
+                        usz source_base = ((usz)source_y * width + source_x) * RGBA_CHANNELS;
+                        for (uint channel = 0; channel < RGBA_CHANNELS; channel++) {
+                            sum[channel] += load_mip_value(
+                                $Scalar: $Scalar,
+                                $srgb: $srgb,
+                                source: source,
+                                base: source_base,
+                                channel: channel,
+                            ) * horizontal * vertical;
+                        }
+                    }
+                }
+            }
+
+            usz destination_base = ((usz)destination_y * next_width + destination_x) * RGBA_CHANNELS;
+            for (uint channel = 0; channel < RGBA_CHANNELS; channel++) {
+                store_mip_value(
+                    $Scalar: $Scalar,
+                    $srgb: $srgb,
+                    destination: destination,
+                    base: destination_base,
+                    channel: channel,
+                    value: sum[channel] / area,
+                );
+            }
+        }
+    }
 }
 
 macro double load_mip_value($Scalar, $srgb, source, usz base, uint channel) @local {

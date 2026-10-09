@@ -75,6 +75,16 @@ fn void Geometry.finalize(&self) {
 }
 
 <*
+ Whether any stored joint needs sixteen bits; scans every joint, including zero-weight slots.
+*>
+fn bool Geometry.joints_exceed_byte(&self) {
+    foreach (vertex : self.joints) {
+        if (vertex.x > char::max || vertex.y > char::max || vertex.z > char::max || vertex.w > char::max) return true;
+    }
+    return false;
+}
+
+<*
  Write per-vertex normals from the triangles.
  @param allocator : "Allocates normals when the geometry has none."
  @param smooth : "Averaged per vertex, or one face normal per corner."

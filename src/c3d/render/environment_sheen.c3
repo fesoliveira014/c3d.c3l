@@ -3,8 +3,9 @@ module c3d::render;
 import c3d::shader;
 import gpu;
 
-fn void? acquire_sheen_lut(Renderer* renderer) @private {
+fn void? acquire_sheen_lut(Renderer* renderer, PrepareReport* report = null) @private {
     if (renderer.environment_state.sheen_lut.state != EnvironmentLutState.NONE) return;
+    acquire_environment_pipeline(renderer, &renderer.environment_state.pipelines.sheen_lut, SHEEN_LUT)!;
 
     gpu::TextureDesc description = {
         .width = shader::SHEEN_LUT_SIZE,
@@ -16,8 +17,10 @@ fn void? acquire_sheen_lut(Renderer* renderer) @private {
         .access = { .graphics },
         .debug_name = "sheen_albedo",
     };
+    if (report) report.objects++;
     gpu::TextureHandle texture = gpu::create_texture(&renderer.device, &description)!;
     defer catch (void)gpu::destroy_texture(&renderer.device, texture);
+    if (report) report.views++;
     gpu::TextureView view = gpu::create_texture_view(&renderer.device, texture, null)!;
     defer catch (void)gpu::destroy_texture_view(&renderer.device, view);
     gpu::SamplerDesc sampler = {

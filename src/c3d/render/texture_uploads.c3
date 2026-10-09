@@ -106,14 +106,15 @@ fn void commit_uploads(Renderer* renderer, Frame* slot) @private {
     commit_environment_preparations(renderer, slot);
     commit_probe_fills(renderer);
     foreach (&pending : renderer.pending_texture_uploads) {
-        renderer.textures[pending.asset.index].revision = pending.revision;
+        TextureRes* mirror = &renderer.textures[pending.asset.index];
+        if (mirror.texture == pending.texture) mirror.revision = pending.revision;
     }
     renderer.pending_texture_uploads.clear();
     renderer.texture_state_undo.clear();
     commit_font_uploads(renderer);
     renderer.pending_geometry_uploads.clear();
     renderer.pending_instance_uploads.clear();
-    renderer.pending_prepare_marks.clear();
+    commit_prepare_jobs(renderer, slot);
     renderer.scene_trace.pending_builds.clear();
     renderer.rt.pending_blas.clear();
     renderer.rt.recorded_blas = 0;
@@ -132,13 +133,16 @@ fn void discard_uploads(Renderer* renderer) @private {
     discard_probe_fills(renderer);
     discard_environment_preparations(renderer);
     restore_texture_states(&renderer.texture_state_undo, renderer.textures);
-    foreach (&pending : renderer.pending_texture_uploads) renderer.textures[pending.asset.index].revision = 0;
+    foreach (&pending : renderer.pending_texture_uploads) {
+        TextureRes* mirror = &renderer.textures[pending.asset.index];
+        if (mirror.texture == pending.texture) mirror.revision = 0;
+    }
     discard_font_uploads(renderer);
     discard_posed_trace(&renderer.posed_trace);
     if (!renderer.uploads_recorded && !renderer.pending_copies.len()
         && !renderer.pending_texture_uploads.len() && !renderer.pending_geometry_uploads.len()
         && !renderer.pending_instance_uploads.len()) {
-        renderer.pending_prepare_marks.clear();
+        rollback_prepare_jobs(renderer);
         return;
     }
 
@@ -151,11 +155,11 @@ fn void discard_uploads(Renderer* renderer) @private {
         renderer.geometries[geometry.index].revision = 0;
     }
     renderer.pending_geometry_uploads.clear();
-    rollback_prepare_marks(renderer);
     foreach (index : renderer.pending_instance_uploads) renderer.instances.slots[index].revision = 0;
     renderer.pending_instance_uploads.clear();
     foreach (&material : renderer.materials) material.revision = 0;
     discard_scene_trace(renderer);
+    rollback_prepare_jobs(renderer);
 }
 
 fn void free_pending_uploads(Renderer* renderer) @private {
