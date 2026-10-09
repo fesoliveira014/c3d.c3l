@@ -41,6 +41,23 @@ renderer's debug log for validation errors. They do not run in the root test
 matrix or CI. On Windows, the build step places the shader compiler DLL beside
 this project's executable in `build/render_acceptance`.
 
+On WSL, a wedged WSLg compositor blocks Vulkan device enumeration: Mesa's ICDs wait on the
+WSLg Wayland socket, which accepts the connection and never answers. `vulkaninfo --summary`
+and every device-creating test then hang with no error. Run headless with the display
+variables unset and an empty private runtime directory, and bound the run on the built
+`testrun` itself, since `timeout` on `c3c` does not stop its child:
+
+```bash
+mkdir -p /tmp/c3d-xdg && chmod 700 /tmp/c3d-xdg
+c3c test acceptance --path test/gpu/render --test-filter none   # build only
+cd test/gpu/render
+env -u DISPLAY -u WAYLAND_DISPLAY XDG_RUNTIME_DIR=/tmp/c3d-xdg \
+  timeout -k 5 300 ../../../build/render_acceptance/testrun --test-filter <name>
+```
+
+Windowed examples cannot run while the compositor is wedged. `wsl --shutdown` from Windows
+recovers it but ends every WSL session on the host.
+
 The workload is headless: one box whose material samples an empty storage
 texture, two render targets (`RGBA16_FLOAT`, `RGBA8_UNORM`), a compute shader
 that stores a root color into a storage texture and one that samples a
