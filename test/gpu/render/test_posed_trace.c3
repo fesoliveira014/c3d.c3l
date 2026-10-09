@@ -1326,7 +1326,12 @@ fn Vec3 motion_ray(uint pixel_x, uint pixel_y) @local {
 }
 
 // Distance along the pixel's ray to the plane through the quad's first vertex.
-fn float motion_expected_distance(Fixture* fixture, MotionQuad* quad, uint pixel_x, uint pixel_y) @local {
+fn float motion_expected_distance(
+    Fixture* fixture,
+    MotionQuad* quad,
+    uint pixel_x,
+    uint pixel_y,
+) @local {
     Geometry* data = &fixture.assets.geometry(quad.geometry).data;
     Vec3 point = motion_world(data.positions[0]);
     Vec3 normal = motion_world(data.normals[0]);
@@ -1349,7 +1354,12 @@ fn void? motion_create_quad(Fixture* fixture, MotionQuad* quad) @local {
     quad.harness.scene.update_world();
 }
 
-fn void motion_edit(Fixture* fixture, MotionQuad* quad, Vec3 lift, float tilt_radians) @local {
+fn void motion_edit(
+    Fixture* fixture,
+    MotionQuad* quad,
+    Vec3 lift,
+    float tilt_radians,
+) @local {
     Geometry* data = &fixture.assets.geometry(quad.geometry).data;
     foreach (&position : data.positions) *position = motion_tilt(*position + lift, tilt_radians);
     foreach (&normal : data.normals) *normal = motion_tilt(*normal, tilt_radians);
@@ -1363,7 +1373,12 @@ fn PosedDepthResult* motion_hit(PosedHarness* harness, uint pixel_x, uint pixel_
     return result;
 }
 
-fn void motion_assert_hit(Fixture* fixture, MotionQuad* quad, bool check_normals, ZString name) @local {
+fn void motion_assert_hit(
+    Fixture* fixture,
+    MotionQuad* quad,
+    bool check_normals,
+    ZString name,
+) @local {
     Geometry* data = &fixture.assets.geometry(quad.geometry).data;
     Vec3 expected_normal = motion_world(data.normals[0]);
     uint[2][2] pixels = {

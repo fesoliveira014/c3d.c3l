@@ -858,7 +858,12 @@ fn void? record_top_level_build(Renderer* renderer, gpu::CommandList* commands, 
     gpu::cmd_build_acceleration_structure(commands, &build)!;
 }
 
-fn void? upload_trace_geometry(Renderer* renderer, GpuGeometry* mirror, Bvh* tree, bool vertex_motion) @local {
+fn void? upload_trace_geometry(
+    Renderer* renderer,
+    GpuGeometry* mirror,
+    Bvh* tree,
+    bool vertex_motion,
+) @local {
     usz node_bytes = tree.nodes.len * BvhNodeGpu::size;
     usz primitives_offset = align_up(node_bytes, STREAM_ALIGNMENT);
     usz primitive_end = primitives_offset + tree.primitives.len * uint::size;
