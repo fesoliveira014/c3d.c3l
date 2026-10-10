@@ -480,7 +480,9 @@ fn void test_animation_inertial_onset_cancel_keeps_target_side_until_first_posit
                     },
                 };
                 AnimationTransitionResult installed = onset_request(
-                    &fixture, { .duration = 0.75f, .actions = targets[..] });
+                    fixture: &fixture,
+                    desc: { .duration = 0.75f, .actions = targets[..] },
+                );
                 if (crowded) {
                     fixture.player.cancel_inertial_transition()!!;
                 } else {
