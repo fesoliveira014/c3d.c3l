@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "source": "coverage-plateau/pipeline_fixtures.json",
+  "source_sha256": "700883a4de26f80d49ef46b763cfe62db83ed1fbf0fa27a52cf63843cbe2c5a3",
+  "license": "Project-authored numeric fixtures",
+  "conversion": "Exact stored scalar codes, little-endian; no filtering or numeric regeneration",
+  "threshold": 0.5,
+  "mip_zero_passing": 484,
+  "mip_zero_total": 1024,
+  "mip_2_passing": 30,
+  "mip_2_total": 64,
+  "mip_2_error": 0.00390625,
+  "fixtures": [
+    {
+      "file": "leaf_rgba8.bin",
+      "source_case": 5,
+      "format": 0,
+      "width": 32,
+      "height": 32,
+      "bytes": 4096,
+      "sha256": "e2c0e71720db54481b23958d586ec7ae43aaa1398b7ea22b12be63f8cceda439"
+    },
+    {
+      "file": "leaf_rgba16.bin",
+      "source_case": 18,
+      "format": 1,
+      "width": 32,
+      "height": 32,
+      "bytes": 8192,
+      "sha256": "384fe766f0b75120159cf2ca1061d7ad6292d375d46bacad52ccd1b217dbcbb4"
+    },
+    {
+      "file": "leaf_rgba32.bin",
+      "source_case": 31,
+      "format": 2,
+      "width": 32,
+      "height": 32,
+      "bytes": 16384,
+      "sha256": "5ae4d766b6b811a09c14f2e54a41b5121467b194c97187bd4a3cca4d9bed20ab"
+    }
+  ]
+}

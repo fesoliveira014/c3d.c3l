@@ -14,6 +14,8 @@ struct TextureRes {
     TextureId asset;
     uint revision;
     uint binding_revision;
+    TextureSemantic semantic;
+    TextureCoverageResource* coverage_resource;
     gpu::TextureHandle texture;
     gpu::TextureView view;
     gpu::TextureState state;
@@ -57,10 +59,13 @@ fn void? Renderer.upload_texture(&self, TextureId texture) {
 fn bool texture_current(Renderer* renderer, TextureId texture) @private {
     TextureAsset* record = renderer.assets.texture(texture);
     TextureRes* mirror = &renderer.textures[texture.index];
+
     if (c3d::same_id(mirror.asset, texture) && mirror.revision == record.header.revision) return true;
+
     foreach (&pending : renderer.pending_texture_uploads) {
         if (c3d::same_id(pending.asset, texture) && pending.revision == record.header.revision) return true;
     }
+
     return false;
 }
 
@@ -69,10 +74,13 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture, bool full
     TextureRes* mirror = &renderer.textures[texture.index];
     TextureResidency* residency = &renderer.residencies[texture.index];
     residency.last_used_frame = renderer.frame_index;
+
     if (texture_current(renderer, texture)) {
         if (full_reader) mark_full_reader(residency);
+
         return mirror;
     }
+
     bool same_asset = c3d::same_id(mirror.asset, texture);
 
     @pool() {
@@ -102,6 +110,7 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture, bool full
             desc: desc,
             copy_source: eligible,
         );
+
         if (!reuse && !streamed && base > 0) {
             base = 0;
             description = texture_gpu_description(
@@ -113,48 +122,83 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture, bool full
             );
         }
 
+        TextureCoverageResource* coverage_resource;
+        TextureCoverageResource* previous_coverage_resource = same_asset ? mirror.coverage_resource : null;
+
+        if (desc.coverage == CoveragePolicy.THRESHOLD) {
+            asset::check_coverage_statistics(desc, &record.coverage_statistics, record.header.revision)!;
+
+            coverage_resource = create_texture_coverage_resource(
+                allocator: renderer.allocator,
+                desc: desc,
+                statistics: &record.coverage_statistics,
+                revision: record.header.revision,
+            );
+        }
+
+        defer catch destroy_texture_coverage_resource(coverage_resource);
         TextureMipChain chain;
         TextureMipLayout layout;
+
         switch (record.source_kind) {
             case MIP_ZERO:
-                chain = create_texture_mips(tmem, desc, record.pixels, first_mip: base)!;
+                chain = create_resource_texture_mips(
+                    allocator: tmem,
+                    desc: desc,
+                    pixels: record.pixels,
+                    first_mip: base,
+                    statistics: &record.coverage_statistics,
+                    coverage_resource: coverage_resource,
+                )!;
                 layout = {
                     .total_bytes = chain.pixels.len,
                     .mip_count = chain.mip_count,
                     .layer_count = chain.layer_count,
                     .offsets = chain.offsets,
                 };
+
             case SUPPLIED_MIPS:
                 layout = supplied_texture_mip_layout(desc, record.supplied_mips, first_mip: base)!;
+
             case EMPTY:
                 layout = { .mip_count = desc.mip_levels, .layer_count = desc.layers };
         }
+
         defer {
             if (record.source_kind == TextureSourceKind.MIP_ZERO) destroy_texture_mips(&chain);
         }
+
         uint mip_count = description.mip_levels;
         uint layer_count = description.array_layers;
         TextureLevelBytes level_bytes = chain_mips ? texture_level_bytes(desc, chain_mips)! : {};
+
         if (!reuse) {
             gpu::TextureHandle image = gpu::create_texture(&renderer.device, &description)!;
             defer catch {
                 if (image.is_valid()) (void)gpu::destroy_texture(&renderer.device, image);
             }
+
             gpu::TextureViewDesc view_desc = { .cube = desc.is_cube };
             gpu::TextureView view = gpu::create_texture_view(&renderer.device, image, &view_desc)!;
             gpu::TextureView[] storage_views;
+
             if (desc.storage) {
                 gpu::TextureView[]? created = create_storage_views(renderer, image, mip_count, layer_count);
+
                 if (catch excuse = created) {
                     (void)gpu::destroy_texture_view(&renderer.device, view);
+
                     return excuse~;
                 }
+
                 storage_views = created;
             }
 
             retire_texture(renderer, mirror);
+
             *mirror = {
                 .asset = texture,
+                .semantic = desc.semantic,
                 .binding_revision = mirror.binding_revision + 1,
                 .texture = image,
                 .view = view,
@@ -175,18 +219,26 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture, bool full
         PendingTextureUpload pending = {
             .asset = texture,
             .revision = record.header.revision,
+            .semantic = desc.semantic,
+            .coverage_resource = coverage_resource,
+            .previous_coverage_resource = previous_coverage_resource,
+            .replaces_coverage = true,
             .texture = mirror.texture,
             .before = mirror.state,
         };
+
         if (layout.total_bytes) {
             Frame* slot = &renderer.frames[renderer.frame_index % FRAMES_IN_FLIGHT];
             gpu::MappedGpuSpan staging = slot.upload.take(&renderer.device, layout.total_bytes, UPLOAD_RING_ALIGNMENT)!;
+
             switch (record.source_kind) {
                 case MIP_ZERO: mem::copy(staging.bytes.ptr, chain.pixels.ptr, chain.pixels.len);
                 case SUPPLIED_MIPS: copy_supplied_texture_mips(staging.bytes, record.supplied_mips, base);
                 case EMPTY: unreachable();
             }
+
             pending.mip_count = layout.mip_count;
+
             for (uint mip = 0; mip < layout.mip_count; mip++) {
                 usz bytes = gpu::texture_mip_bytes(&description, mip)!;
                 pending.copies[mip] = {
@@ -196,9 +248,12 @@ fn TextureRes*? resolve_texture(Renderer* renderer, TextureId texture, bool full
                     .layer_count = layout.layer_count,
                 };
             }
+
             renderer.stats.upload_bytes += (uint)layout.total_bytes;
         }
+
         renderer.pending_texture_uploads.push(pending);
+        coverage_resource = null;
         renderer.stats.uploads++;
 
         *residency = {
@@ -261,10 +316,13 @@ fn bool texture_mirror_fits(
 
 fn uint texture_chain_mips(TextureAsset* record) @private {
     material::TextureDesc* desc = &record.desc;
+
     switch (record.source_kind) {
         case MIP_ZERO:
             if (!desc.generate_mips || !desc.width || !desc.height) return 1;
+
             return material::texture_mip_count(desc.width, desc.height);
+
         case SUPPLIED_MIPS:
         case EMPTY:
             return desc.mip_levels;
@@ -286,11 +344,18 @@ fn bool texture_source_present(TextureAsset* record) @private {
 }
 
 fn void retire_texture(Renderer* renderer, TextureRes* mirror) @private {
+    if (mirror.coverage_resource) {
+        renderer.pending_upload_retire.push({ .kind = RetiredKind.TEXTURE_COVERAGE,
+            .coverage_resource = mirror.coverage_resource });
+        mirror.coverage_resource = null;
+    }
+
     if (!mirror.texture.is_valid()) return;
 
     foreach (view : mirror.storage_views) {
         renderer.pending_upload_retire.push({ .kind = RetiredKind.TEXTURE_VIEW, .texture_view = view });
     }
+
     alloc::free(renderer.allocator, mirror.storage_views.ptr);
     mirror.storage_views = {};
     renderer.pending_upload_retire.push({ .kind = RetiredKind.TEXTURE_VIEW, .texture_view = mirror.view });
@@ -309,6 +374,7 @@ fn gpu::TextureView[]? create_storage_views(
         foreach (view : views[:created]) (void)gpu::destroy_texture_view(&renderer.device, view);
         alloc::free(renderer.allocator, views.ptr);
     }
+
     for (uint layer = 0; layer < layer_count; layer++) {
         for (uint mip = 0; mip < mip_count; mip++) {
             gpu::TextureViewDesc view_desc = {
@@ -321,6 +387,7 @@ fn gpu::TextureView[]? create_storage_views(
             created++;
         }
     }
+
     return views;
 }
 
@@ -331,12 +398,16 @@ fn void sweep_textures(Renderer* renderer) @private {
         retire_texture(renderer, mirror);
         renderer.residencies[index] = {};
         uint binding_revision = mirror.binding_revision;
+
         *mirror = { .binding_revision = binding_revision };
     }
 }
 
 fn void free_textures(Renderer* renderer) @private {
     foreach (&mirror : renderer.textures) {
+        destroy_texture_coverage_resource(mirror.coverage_resource);
+        mirror.coverage_resource = null;
+
         if (!mirror.texture.is_valid()) continue;
 
         foreach (view : mirror.storage_views) (void)gpu::destroy_texture_view(&renderer.device, view);
@@ -344,6 +415,7 @@ fn void free_textures(Renderer* renderer) @private {
         (void)gpu::destroy_texture_view(&renderer.device, mirror.view);
         (void)gpu::destroy_texture(&renderer.device, mirror.texture);
     }
+
     alloc::free(renderer.allocator, renderer.textures.ptr);
     alloc::free(renderer.allocator, renderer.residencies.ptr);
     alloc::free(renderer.allocator, renderer.residency_changes.ptr);
@@ -357,8 +429,10 @@ fn void? prepare_builtin_textures(Renderer* renderer) @private {
     for (uint index = 0; index < asset::BUILTIN_SAMPLER_COUNT; index++) {
         resolve_sampler(renderer, { .index = index, .generation = 1 })!;
     }
+
     for (uint index = 0; index < asset::BUILTIN_TEXTURE_COUNT; index++) {
         resolve_texture(renderer, { .index = index, .generation = 1 })!;
     }
+
     submit_pending(renderer)!;
 }

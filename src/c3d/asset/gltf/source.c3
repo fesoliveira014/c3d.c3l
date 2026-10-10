@@ -87,6 +87,7 @@ struct SourceSlot @private {
  @param [out] diagnostic : "Optional; reset at entry, set only on failure."
  @param file_source : "Read during the call; a null read selects the file system."
  @return? c3d::ASSET_IO_ERROR, c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED, c3d::INVALID_ARGUMENT
+ @return? c3d::CAPACITY_EXCEEDED
  @require path.len > 0, allocator != tmem
 *>
 fn ModelDocument? decode_model_with_source(
@@ -117,6 +118,7 @@ fn ModelDocument? decode_model_with_source(
  @param [out] diagnostic : "Optional; reset at entry, set only on failure."
  @param file_source : "Read during the call; a null read selects the file system."
  @return? c3d::ASSET_IO_ERROR, c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED, c3d::INVALID_ARGUMENT
+ @return? c3d::CAPACITY_EXCEEDED
  @require bytes.len > 0, key.len > 0, allocator != tmem
 *>
 fn ModelDocument? decode_model_memory_with_source(

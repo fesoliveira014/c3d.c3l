@@ -76,3 +76,8 @@ several source textures sharing one image and keeps each slot's decoded behavior
 Equivalent candidates may lose the distinction between an explicit filter and
 an unspecified filter when both decode identically. The contract preserves
 decoded equality rather than original JSON spelling.
+
+The source record's sRGB and linear handles describe ordinary color variants.
+Normal and masked-coverage variants resolve through the decoded material slots
+and `texture_images`, which retain their source image identity. All variants of
+one image share its copied encoded source bytes.

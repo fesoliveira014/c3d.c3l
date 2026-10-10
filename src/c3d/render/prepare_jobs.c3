@@ -31,7 +31,9 @@ fn void enumerate_prepare_record(Renderer* renderer, PrepareRecord* record) @pri
         index.materials.init(tmem);
         index.samplers.init(tmem);
         index.shaders.init(tmem);
+
         ModelTemplate* template = &renderer.assets.model(record.model).data;
+
         foreach (mesh : template.meshes) append_prepare_mesh(
             renderer: renderer,
             listed: &listed,
@@ -40,6 +42,7 @@ fn void enumerate_prepare_record(Renderer* renderer, PrepareRecord* record) @pri
             material: mesh.material,
             morphed: mesh.default_morph_weights.len > 0,
         );
+
         foreach (group : template.lod_groups) {
             foreach (part : group.desc.parts) append_prepare_mesh(
                 renderer: renderer,
@@ -50,24 +53,29 @@ fn void enumerate_prepare_record(Renderer* renderer, PrepareRecord* record) @pri
                 morphed: false,
             );
         }
+
         append_prepare_finish(renderer, &listed);
         deduplicate_prepare_pipeline_units(&listed);
+
         foreach (&unit : listed) {
             if (unit.kind == PrepareUnitKind.TEXTURE && renderer.assets.textures.is_live(unit.texture)) {
                 unit.texture_base = preparation_texture_base(renderer, unit.texture, unit.full_reader);
                 unit.staged.mip = unit.texture_base;
                 unit.bytes = prepare_texture_bytes(renderer, unit.texture, unit.full_reader);
+
                 TextureAsset* source = renderer.assets.texture(unit.texture);
                 if (source.source_kind == MIP_ZERO && source.desc.generate_mips
                   && !(prepare_unit_current(renderer, unit) ?? false)) {
                     if (try layout = generated_texture_mip_layout(source.desc)) {
-                        unit.texels = layout.output_texels ? layout.base_texels : 0;
+                        unit.texels = layout.output_texels ? layout.base_texels * layout.passes : 0;
                     }
                 }
             }
+
             record.bytes_total = (usz)prepare_add(record.bytes_total, unit.bytes);
             record.texels_total = prepare_add(record.texels_total, unit.texels);
         }
+
         record.units = alloc::new_array(renderer.allocator, PrepareUnit, (sz)listed.len());
         record.units[..] = listed.array_view()[..];
     };

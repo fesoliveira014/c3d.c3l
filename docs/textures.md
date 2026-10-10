@@ -47,9 +47,11 @@ metallic/roughness through two independent slots sharing one texture asset.
 Each slot starts absent with identity coordinates in `STANDARD_PARAMS_DEFAULT`;
 normal scale and occlusion strength both start at 1. Use the named default before
 assigning maps. Normal scale is finite and signed; occlusion strength is [0, 1].
-Missing or stale ids preserve scalar factors and the geometry normal. Normal maps
-require all XYZ channels; there is no RG-only Z reconstruction or MikkTSpace
-guarantee. See [tangent frames](materials.md#tangent-frames) for supplied-tangent
+Missing or stale ids preserve scalar factors and the geometry normal. Normal
+textures use `TextureDesc.semantic = NORMAL_RGB` or `NORMAL_RG`; RG reconstructs
+positive Z. These semantics require linear formats. Generated normal mips filter
+decoded vectors and normalize them before encoding. A zero decoded vector uses
+neutral +Z. See [tangent frames](materials.md#tangent-frames) for supplied-tangent
 authority, derivative fallback and unsupported nontriangle/wireframe cases.
 
 The mapped `pbr` example loads four committed fixtures relative to its source file,
@@ -58,6 +60,27 @@ referenced textures are prepared before interaction. Its private map editor can
 change each slot without modifying shared UV streams; scalar and mapped presets
 make the difference visible. See [the example controls](materials.md#interactive-example)
 and [fixture provenance](../csrc/README.md#standard-material-fixtures).
+
+## Generated alpha coverage
+
+`TextureDesc.coverage` defaults to `NONE`. `THRESHOLD` preserves the fraction of
+texels passing `alpha_threshold` during mip generation; `ALL_PASS` and
+`ALL_FAIL` describe constant coverage. The threshold must be finite and in
+(0, 1]. Coverage filtering applies only to eligible uncompressed generated
+color mips. Supplied DDS/KTX levels remain unchanged.
+
+For a committed `THRESHOLD` texture, `renderer.texture_coverage(texture, mip,
+face)` returns the resource revision, original and resulting counts, exact
+error fraction and flags for a small level or plateau correction. Results
+remain available after CPU pixel release. A stale ID faults `INVALID_ID`, an
+invalid mip or face faults `INVALID_ARGUMENT`, and an unavailable committed
+result faults `ASSET_DATA_UNAVAILABLE`. Small levels make no coverage
+preservation claim.
+
+Restoring identical pixels preserves a texture's revision. For a threshold
+texture, restoration rescans alpha on the owner thread: equal passing counts
+retain the revision; changed counts or invalid alpha advance it and refresh or
+invalidate the statistic, as `mark_texture_dirty` does.
 
 ## Decode memory and retain ownership
 

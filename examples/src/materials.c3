@@ -1425,8 +1425,9 @@ fn ExampleNodes create_fixtures(
         Geometry sphere_data = geometry::sphere(tmem, 0.8f);
         sphere_data.uv1 = alloc::new_array(tmem, Vec2, sphere_data.uv0.len);
         foreach (index, uv : sphere_data.uv0) sphere_data.uv1[index] = uv * 2;
-        sphere_data.compute_tangents(tmem);
-        sphere = assets.add_geometry(&sphere_data, "geometry/materials/sphere")!!;
+        TangentGeometry tangent_sphere = geometry::create_tangent_geometry(assets.allocator, &sphere_data)!!;
+        defer geometry::destroy_tangent_geometry(&tangent_sphere);
+        sphere = assets.add_tangent_geometry_owned(&tangent_sphere, "geometry/materials/sphere")!!;
     };
 
     MaterialId ground_material = assets.add_material(material::standard({

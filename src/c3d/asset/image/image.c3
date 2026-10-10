@@ -160,6 +160,7 @@ fn void destroy_image(Image* image) {
  Load an eight-bit image into the store's texture pool.
  @param [&inout] assets : "Owns transferred pixels on successful insertion."
  @param srgb : "Interpret RGB as sRGB color."
+ @param semantic : "Explicit color or normal-vector interpretation."
  @return? c3d::ASSET_IO_ERROR, c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ARGUMENT
  @return? c3d::CAPACITY_EXCEEDED
  @require path.len > 0
@@ -169,6 +170,7 @@ fn TextureId? load_texture(
     String path,
     bool srgb,
     String key = "",
+    TextureSemantic semantic = TextureSemantic.COLOR,
 ) {
     Image decoded = load_image(assets.allocator, path, assets.file_source)!;
     defer destroy_image(&decoded);
@@ -181,7 +183,10 @@ fn TextureId? load_texture(
         format: srgb ? RGBA8_SRGB : RGBA8_UNORM,
         debug_name: "image_texture",
     );
+    desc.semantic = semantic;
+
     TextureId texture = assets.add_texture_owned(desc, decoded.pixels, key)!;
+
     decoded.pixels = {};
 
     return texture;

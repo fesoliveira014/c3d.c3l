@@ -140,7 +140,7 @@ asset; the renderer does not infer it from the slot.
 | --- | --- | --- | --- |
 | `base_color_map` | RGBA | sRGB RGB, linear alpha | Multiplies base RGBA |
 | `metallic_roughness_map` | G roughness, B metallic | Linear | Multiplies the two scalar factors; R and A are ignored |
-| `normal_map` | RGB tangent-space XYZ | Linear | Decodes `RGB * 2 - 1`, scales XY, then normalizes |
+| `normal_map` | RGB tangent-space XYZ, or explicit RG XY | Linear | Decodes the asset semantic, reconstructs RG positive Z, scales XY, then normalizes |
 | `occlusion_map` | R | Linear | Multiplies constant/environment diffuse by `mix(1, R, occlusion_strength)` |
 | `emissive_map` | RGB | sRGB | Multiplies emissive RGB and strength |
 
@@ -157,15 +157,20 @@ occlusion and emissive maps retain their scalar behavior; an absent normal map
 retains the geometry normal. Occlusion never changes direct lighting or emission,
 and strength zero removes its effect. A black emissive factor keeps emission
 black even with a populated map. Normal scale zero disables normal perturbation.
-Live cube, `R16_UINT` and render-target references return `c3d::UNSUPPORTED`; comparison
+Normal encoding belongs to the texture asset's `TextureDesc.semantic`: `COLOR`
+and `NORMAL_RGB` use RGB, while `NORMAL_RG` reconstructs positive Z from RG.
+Both base and clearcoat slots follow the matching committed or candidate resource.
+`TextureSlot` has no encoding override. Render-target normal maps always use RGB.
+Live cube and `R16_UINT` references return `c3d::UNSUPPORTED`; comparison
 samplers and UV sets above 1 return `c3d::INVALID_ARGUMENT`.
 
 ## Tangent frames
 
 A supplied tangent stream is authoritative. Tangent XYZ follows the model's
-linear transform, is orthogonalized against the inverse-transpose world normal,
-and tangent W supplies bitangent handedness. W must be +1 or -1 and consistent
-within each triangle. Reflected model transforms reverse that handedness.
+linear transform, while the normal follows its inverse transpose. The normal
+mapping path preserves their interpolated basis before normalizing the mapped
+result. Tangent W supplies bitangent handedness; authored signs are normalized
+to +1 or -1 at publication. Reflected model transforms reverse that handedness.
 Reflected model and camera transforms also preserve front-face classification;
 double-sided shading flips the final normal on back faces.
 
@@ -177,14 +182,26 @@ degenerate supplied tangent keeps the geometry normal without trying derivatives
 degenerate position or UV derivatives likewise keep the geometry normal. A decoded
 zero-length map normal uses neutral tangent-space `(0, 0, 1)`.
 
-`Geometry.compute_tangents(allocator)` explicitly creates tangents from UV0; it
-does not use a material's UV1 selection or lookup transform. The renderer never
-runs it implicitly. Neither `compute_tangents` nor the derivative frame promises
-MikkTSpace compatibility. `Geometry.transform` updates tangent handedness when
+`geometry::create_tangent_geometry(allocator, source, uv_set)` generates pinned
+MikkTSpace tangents from raw UV0 or UV1 and returns an owned complete geometry.
+Conflicting corner tangents split vertices and remap every vertex stream,
+including skin influences and morph deltas. Lookup transforms do not affect
+generation. `AssetStore.add_tangent_geometry_owned` transfers that owner;
+`regenerate_geometry_tangents` explicitly regenerates a stored geometry.
+`Geometry.compute_tangents` remains available as a deprecated helper without a
+MikkTSpace guarantee. The renderer never generates tangents implicitly.
+`Geometry.transform` updates tangent handedness when
 baking a reflection, while retaining its existing winding contract: call
 `flip_winding` explicitly when the reflected geometry needs its winding
-reversed. Normal textures must contain XYZ in RGB: RG-only normal maps with
-reconstructed Z are not supported.
+reversed. Explicit `NORMAL_RG` textures reconstruct positive Z from RG; RGB
+textures retain authored XYZ. Normal mip generation decodes, averages and
+normalizes vectors before encoding them again.
+
+The compatibility claim covers generated constant-sign triangles. Derivative
+fallback, mixed-sign authored interpolation and morphed base tangents have no
+MikkTSpace guarantee. Changing a slot's selected UV or editing geometry does
+not regenerate tangents; dirty edits retain provenance with an older derivation
+revision until explicit regeneration.
 
 An active normal map without supplied tangents requires filled triangle
 rasterization. Lines, points and effective wireframe triangles return
@@ -226,7 +243,7 @@ Each layer slot keeps its own sampler, UV set and transform:
 | --- | --- | --- | --- |
 | `clearcoat_map` | R | Linear | Multiplies clearcoat strength |
 | `clearcoat_roughness_map` | G | Linear | Multiplies clearcoat roughness |
-| `clearcoat_normal_map` | RGB tangent-space XYZ | Linear | Supplies an independently scaled coat normal |
+| `clearcoat_normal_map` | RGB XYZ or explicit RG XY | Linear | Supplies an independently scaled coat normal using its texture semantic |
 | `sheen_color_map` | RGB | sRGB | Multiplies sheen color after sRGB decoding |
 | `sheen_roughness_map` | A | Linear alpha | Multiplies sheen roughness |
 

@@ -8,11 +8,17 @@ import c3d::pool;
 import c3d::scene;
 
 <*
- Every switch on.
+ Import animations, lights, cameras and missing tangents by default.
 *>
 const LoadOptions LOAD_OPTIONS_DEFAULT = {
     .animations = true, .lights = true, .cameras = true, .generate_tangents = true,
 };
+
+<* Logical encoding of imported normal-map texels. *>
+enum NormalEncoding {
+    RGB,
+    RG,
+}
 
 <*
  Node of a reusable model, addressed by model-local index.
@@ -95,6 +101,8 @@ struct LoadOptions {
     bool lights;
     bool cameras;
     bool generate_tangents;
+    bool regenerate_tangents;
+    NormalEncoding normal_encoding;
 }
 
 <*

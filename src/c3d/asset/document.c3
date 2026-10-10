@@ -2,6 +2,7 @@ module c3d::asset;
 
 import c3d;
 import c3d::anim;
+import c3d::geometry;
 import c3d::material;
 import c3d::maths;
 import c3d::scene;
@@ -28,11 +29,13 @@ struct DocumentSampler {
 }
 
 <*
- Texture decoded from a model file; pixels are mip zero.
+ Texture decoded from a model file with one owned source representation.
 *>
 struct DocumentTexture {
     TextureDesc desc;
+    TextureSourceKind source_kind;
     char[]      pixels;
+    TextureMipData[] supplied_mips;
     String      key;
 }
 
@@ -49,6 +52,7 @@ struct DocumentMaterial {
 *>
 struct DocumentGeometry {
     Geometry data;
+    TangentProvenance tangent_provenance;
     String   key;
 }
 
@@ -123,6 +127,33 @@ fn TextureId ModelDocument.push_texture(
 }
 
 <*
+ Append copied supplied mip levels and return their texture reference.
+ @param levels : "Borrowed complete slices, ordered mip-major then layer."
+ @param key : "Copied into the document allocator."
+ @return? c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED
+ @require self.textures.len < self.bounds.textures
+*>
+fn TextureId? ModelDocument.push_texture_mips(
+    &self,
+    TextureDesc desc,
+    TextureMipData[] levels,
+    String key,
+) {
+    usz total_bytes = check_texture_mips(desc, levels)!;
+    TextureMipData[] copied = copy_texture_mips(self.allocator, levels, total_bytes);
+
+    @append_entry(self.textures);
+    self.textures[^1] = {
+        .desc = desc,
+        .source_kind = SUPPLIED_MIPS,
+        .supplied_mips = copied,
+        .key = copy_string(self.allocator, key),
+    };
+
+    return @document_reference(TextureId, self.textures.len - 1);
+}
+
+<*
  Append a material and return its reference.
  @param material : "Slots hold references, builtin ids or the zero id."
  @param key : "Copied into the document allocator."
@@ -190,7 +221,7 @@ fn DocumentGeometry* ModelDocument.geometry(&self, GeometryId reference) {
  Insert a decoded document into the store and return its model.
  Decides every fault before the first insertion; the store is unchanged on a fault.
  @param [&inout] document : "Emptied on success; intact on a fault."
- @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
+ @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
  @require document.allocator == self.allocator
  @require self.allocator != tmem
 *>
@@ -231,24 +262,32 @@ fn ModelDocument create_model_document(Allocator allocator, String key, ModelDoc
 *>
 fn void destroy_model_document(ModelDocument* document) {
     Allocator allocator = document.allocator;
+
     foreach (&entry : document.samplers) free_string(allocator, entry.key);
+
     foreach (&entry : document.textures) {
         alloc::free(allocator, entry.pixels.ptr);
+        alloc::free(allocator, entry.supplied_mips.ptr);
         free_string(allocator, entry.key);
     }
+
     foreach (&entry : document.materials) free_string(allocator, entry.key);
+
     foreach (&entry : document.geometries) {
         free_geometry(allocator, &entry.data);
         free_string(allocator, entry.key);
     }
+
     foreach (&entry : document.skeletons) {
         free_skeleton(allocator, &entry.data);
         free_string(allocator, entry.key);
     }
+
     foreach (&entry : document.clips) {
         free_clip(allocator, &entry.data);
         free_string(allocator, entry.key);
     }
+
     alloc::free(allocator, document.samplers.ptr);
     alloc::free(allocator, document.textures.ptr);
     alloc::free(allocator, document.materials.ptr);
@@ -257,6 +296,7 @@ fn void destroy_model_document(ModelDocument* document) {
     alloc::free(allocator, document.clips.ptr);
     free_model_template(allocator, &document.template);
     free_string(allocator, document.key);
+
     *document = { .allocator = allocator };
 }
 

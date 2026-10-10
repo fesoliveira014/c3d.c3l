@@ -137,8 +137,13 @@ void apply_decals(
                     uv,
                     uv_dx,
                     uv_dy).rgb,
-                material.normal_scale);
-            vec3 normal = tangent_normal(material_sample.normal, decal.tangent, mapped);
+                material.normal_scale,
+                (material.map_flags & MATERIAL_MAP_NORMAL_RG) != 0u);
+            vec3 direction;
+            vec3 bitangent;
+            if (!surface_tangent_frame(material_sample.normal, decal.tangent, direction, bitangent)) continue;
+
+            vec3 normal = tangent_normal(material_sample.normal, vec4(direction, decal.tangent.w), mapped);
             vec3 blended = mix(material_sample.normal, normal, opacity.y);
             float length_squared = dot(blended, blended);
             if (length_squared > 0.0) material_sample.normal = blended * inversesqrt(length_squared);

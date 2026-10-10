@@ -32,6 +32,36 @@ fn void test_decode_rgba_preserves_rows_and_alpha() @test {
     assert(decoded.pixels == expected[..]);
 }
 
+fn void test_image_loader_declares_normal_semantics_without_rewriting_pixels() @test {
+    AssetStore assets = create_image_store(mem);
+    defer asset::destroy_asset_store(&assets);
+
+    TextureId texture = image::load_texture(
+        assets: &assets,
+        path: fixture_path("rgba.png"),
+        srgb: false,
+        key: "image/normal",
+        semantic: TextureSemantic.NORMAL_RG,
+    )!!;
+    TextureAsset* record = assets.texture(texture);
+    char[16] expected = { 255, 0, 0, 255, 0, 255, 0, 128, 0, 0, 255, 64, 255, 255, 255, 0 };
+
+    assert(record.desc.semantic == TextureSemantic.NORMAL_RG && record.desc.format == PixelFormat.RGBA8_UNORM);
+    assert(record.pixels == expected[..]);
+
+    uint free_before = assets.textures.free_count;
+
+    assert(@catch(image::load_texture(
+        assets: &assets,
+        path: fixture_path("rgba.png"),
+        srgb: true,
+        key: "image/normal/srgb",
+        semantic: TextureSemantic.NORMAL_RGB,
+    )) == c3d::INVALID_ARGUMENT);
+    assert(assets.textures.free_count == free_before);
+    assert(@catch(assets.find_texture("image/normal/srgb")) == NOT_FOUND);
+}
+
 fn void test_decode_hdr_retains_float_range() @test {
     image::Image decoded = image::decode_image(mem, $embed("../fixtures/radiance.hdr"))!!;
     defer image::destroy_image(&decoded);

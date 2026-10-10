@@ -12,7 +12,7 @@ const uint NO_TEXTURE @private = uint::max;
 const usz MIXED_REPEAT_CLAMP @private = 0;
 const usz MIXED_CLAMP_REPEAT @private = 1;
 const usz MIXED_SAMPLER_COUNT @private = 2;
-const usz COLOR_SPACES_PER_TEXTURE @private = 2; // a texture may be read as sRGB color and as linear data
+const usz TEXTURE_VARIANTS_PER_SOURCE @private = 3; // bounds the color-space pair and one normal encoding
 const usz DERIVED_TEXTURES_PER_MATERIAL @private = 2; // one packed metallic-roughness map and one base-opacity map
 
 struct DerivedTexture @private {
@@ -31,6 +31,7 @@ struct Importer @private {
     LoadOptions      options;
     TextureId[]      srgb_textures;
     TextureId[]      linear_textures;
+    TextureId[]      normal_textures;
     DerivedTexture[] derived_textures;
     usz              derived_count;
     SamplerId[MIXED_SAMPLER_COUNT] mixed_samplers;
@@ -87,6 +88,7 @@ fn ModelReplaceReport? replace_model(
  @param allocator : "Owns the document; publish needs the store allocator."
  @param file_source : "Read during the call; a null read selects the file system."
  @return? c3d::ASSET_IO_ERROR, c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED, c3d::INVALID_ARGUMENT
+ @return? c3d::CAPACITY_EXCEEDED
  @require path.len > 0, allocator != tmem
 *>
 fn ModelDocument? decode_model(
@@ -301,20 +303,24 @@ fn Importer create_importer(
 ) @private {
     usz part_count;
     usz[] part_offsets = alloc::new_array(allocator, usz, scene.meshes.len + 1);
+
     foreach (index, mesh : scene.meshes) {
         part_offsets[index] = part_count;
         part_count += mesh.material_parts.len;
     }
+
     part_offsets[scene.meshes.len] = part_count;
     usz derived_count = scene.materials.len * DERIVED_TEXTURES_PER_MATERIAL;
+
     ModelDocumentBounds bounds = {
         .samplers   = MIXED_SAMPLER_COUNT,
-        .textures   = COLOR_SPACES_PER_TEXTURE * scene.textures.len + derived_count,
+        .textures   = TEXTURE_VARIANTS_PER_SOURCE * scene.textures.len + derived_count,
         .materials  = scene.materials.len + 1,
         .geometries = part_count,
         .skeletons  = scene.skin_deformers.len,
         .clips      = scene.anim_stacks.len,
     };
+
     Importer importer = {
         .allocator        = allocator,
         .scene            = scene,
@@ -322,6 +328,7 @@ fn Importer create_importer(
         .options          = options,
         .srgb_textures    = alloc::new_array(allocator, TextureId, scene.textures.len),
         .linear_textures  = alloc::new_array(allocator, TextureId, scene.textures.len),
+        .normal_textures  = alloc::new_array(allocator, TextureId, scene.textures.len),
         .derived_textures = alloc::new_array(allocator, DerivedTexture, (sz)derived_count),
         .materials        = alloc::new_array(allocator, MaterialId, scene.materials.len),
         .part_offsets     = part_offsets,
@@ -331,7 +338,9 @@ fn Importer create_importer(
         .node_remap       = alloc::new_array(allocator, uint, scene.nodes.len),
         .document         = asset::create_model_document(allocator, key, bounds),
     };
+
     importer.node_remap[..] = NOT_IMPORTED;
+
     return importer;
 }
 
@@ -356,6 +365,7 @@ fn void free_tables(Importer* importer) @private {
     alloc::free(allocator, importer.part_offsets.ptr);
     alloc::free(allocator, importer.srgb_textures.ptr);
     alloc::free(allocator, importer.linear_textures.ptr);
+    alloc::free(allocator, importer.normal_textures.ptr);
     alloc::free(allocator, importer.derived_textures.ptr);
     alloc::free(allocator, importer.materials.ptr);
     alloc::free(allocator, importer.geometries.ptr);

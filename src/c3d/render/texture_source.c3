@@ -34,6 +34,7 @@ fn TextureMipChain? create_supplied_texture_mips(
         .pixels = alloc::new_array(allocator, char, (sz)layout.total_bytes),
     };
     copy_supplied_texture_mips(chain.pixels, levels);
+
     return chain;
 }
 
@@ -49,15 +50,19 @@ fn TextureMipLayout? supplied_texture_mip_layout(
     TextureMipData[] levels,
     uint first_mip = 0,
 ) {
+    asset::check_texture_semantics(desc)!;
+
     if (!desc.width || !desc.height || !desc.mip_levels || desc.generate_mips) return c3d::INVALID_ARGUMENT~;
     if (desc.mip_levels > material::texture_mip_count(desc.width, desc.height)) return c3d::INVALID_ARGUMENT~;
     if (desc.depth) return c3d::UNSUPPORTED~;
+
     if (desc.is_cube) {
         if (desc.layers != material::CUBE_FACE_COUNT || desc.width != desc.height) return c3d::INVALID_ARGUMENT~;
         if (material::texture_is_compressed(desc.format)) return c3d::UNSUPPORTED~;
     } else if (desc.layers != 1) {
         return c3d::UNSUPPORTED~;
     }
+
     if (!levels.len) return c3d::ASSET_DATA_UNAVAILABLE~;
     if (levels.len != (usz)desc.mip_levels * desc.layers) return c3d::INVALID_ARGUMENT~;
 
@@ -65,27 +70,37 @@ fn TextureMipLayout? supplied_texture_mip_layout(
         .mip_count = desc.mip_levels,
         .layer_count = desc.layers,
     };
+
     for (uint mip = 0; mip < desc.mip_levels; mip++) {
         usz layer_bytes = material::texture_mip_bytes(desc, mip)!;
+
         if (layer_bytes > ((usz)sz::max - layout.total_bytes) / desc.layers) return c3d::INVALID_ARGUMENT~;
+
         layout.offsets[mip] = layout.total_bytes;
+
         for (uint layer = 0; layer < desc.layers; layer++) {
             TextureMipData level = levels[(usz)mip * desc.layers + layer];
+
             if (level.mip != mip || level.layer != layer || level.bytes.len != layer_bytes) {
                 return c3d::INVALID_ARGUMENT~;
             }
         }
+
         layout.total_bytes += layer_bytes * desc.layers;
     }
+
     if (first_mip > 0) {
         usz kept_offset = layout.offsets[first_mip];
         layout.mip_count -= first_mip;
         layout.total_bytes -= kept_offset;
+
         for (uint mip = 0; mip < layout.mip_count; mip++) {
             layout.offsets[mip] = layout.offsets[first_mip + mip] - kept_offset;
         }
+
         for (uint mip = layout.mip_count; mip < desc.mip_levels; mip++) layout.offsets[mip] = 0;
     }
+
     return layout;
 }
 
@@ -96,6 +111,7 @@ fn TextureMipLayout? supplied_texture_mip_layout(
 *>
 fn void copy_supplied_texture_mips(char[] destination, TextureMipData[] levels, uint first_mip = 0) {
     usz offset;
+
     foreach (level : levels) {
         if (level.mip < first_mip) continue;
 

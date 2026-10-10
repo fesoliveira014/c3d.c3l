@@ -97,6 +97,71 @@
         "test_auto_exposure.c3",
         "test_posed_trace.c3"
       ]
+    },
+    "texture_fidelity_acceptance": {
+      "type": "test",
+      "sources": [
+        "test_submission.c3",
+        "test_prepare_pipelines.c3",
+        "test_prepare.c3",
+        "test_prepare_textures.c3",
+        "test_prepare_assets.c3",
+        "test_prepare_present.c3",
+        "test_prepare_lifetime.c3",
+        "test_prepare_budget_drain.c3",
+        "prepare_present_window.c3",
+        "../../fixtures/loading_fixtures.c3",
+        "test_large_world.c3",
+        "test_scene_trace.c3",
+        "test_ray_tracing.c3",
+        "test_ambient_occlusion.c3",
+        "test_ray_traced_effects.c3",
+        "test_path_tracing.c3",
+        "test_cascade_blend.c3",
+        "test_decals.c3",
+        "test_shadow_bias.c3",
+        "test_crowd_variants.c3",
+        "test_instance_cull.c3",
+        "test_lod.c3",
+        "test_impostor.c3",
+        "test_instance_sort.c3",
+        "test_billboards.c3",
+        "test_probe_volume.c3",
+        "test_probe_update.c3",
+        "test_probe_classification_lifetime.c3",
+        "test_probe_classification.c3",
+        "test_probe_sampling.c3",
+        "test_screen_space_gi.c3",
+        "test_scene_reads.c3",
+        "test_custom_shading.c3",
+        "test_custom_velocity.c3",
+        "test_instance_effects.c3",
+        "test_vertex_motion.c3",
+        "test_clip_plane.c3",
+        "test_published_stages.c3",
+        "test_r16_texture.c3",
+        "test_texture_containers.c3",
+        "test_texture_residency.c3",
+        "test_material_references.c3",
+        "test_asset_replace.c3",
+        "test_material_blend.c3",
+        "test_sky.c3",
+        "test_capacities.c3",
+        "test_resize_faults.c3",
+        "test_shadow_sets.c3",
+        "test_reflection_probe.c3",
+        "test_reflection_capture.c3",
+        "test_manual_exposure.c3",
+        "test_auto_exposure.c3",
+        "test_posed_trace.c3",
+        "test_texture_fidelity.c3"
+      ]
+    },
+    "texture_fidelity_bench": {
+      "type": "executable",
+      "sources": [
+        "bench_texture_fidelity.c3"
+      ]
     }
   }
 }

@@ -126,12 +126,15 @@ fn void? material_prepare_block(
 
 fn TextureBinding? material_prepare_texture_slot(Renderer* renderer, TextureSlot slot, bool custom_read = false) @private {
     if (slot.uv_set > 1) return c3d::INVALID_ARGUMENT~;
+
     SamplerId sampler = renderer.assets.samplers.is_live(slot.sampler) ? slot.sampler : asset::SAMPLER_LINEAR_REPEAT;
     if (renderer.assets.sampler(sampler).desc.compare_enable) return c3d::INVALID_ARGUMENT~;
+
     SamplerRes* sampler_mirror = &renderer.samplers[sampler.index];
     if (slot.texture.kind == TextureRefKind.RENDER_TARGET && renderer.targets.is_live(slot.texture.target)) {
         TargetRecord* target = renderer.targets.get(slot.texture.target);
         target.sample_pending = true;
+
         return {
             .target = slot.texture.target,
             .sampler = sampler,
@@ -142,17 +145,23 @@ fn TextureBinding? material_prepare_texture_slot(Renderer* renderer, TextureSlot
             .present = true,
         };
     }
+
     bool present = slot.texture.kind == TextureRefKind.ASSET && renderer.assets.textures.is_live(slot.texture.asset);
     if (present) {
         material::TextureDesc desc = renderer.assets.texture(slot.texture.asset).desc;
         if (desc.is_cube || (desc.format == PixelFormat.R16_UINT && !custom_read)) return c3d::UNSUPPORTED~;
     }
+
     TextureId texture = present ? slot.texture.asset : asset::TEXTURE_WHITE;
     TextureRes* texture_mirror = &renderer.textures[texture.index];
+    TextureBinding content = texture_binding_content(renderer, texture, texture_mirror);
+
     return {
         .texture = texture,
         .sampler = sampler,
         .texture_binding_revision = texture_mirror.binding_revision,
+        .texture_content_revision = content.texture_content_revision,
+        .semantic = content.semantic,
         .sampler_revision = sampler_mirror.revision,
         .texture_index = texture_mirror.view.index,
         .sampler_index = sampler_mirror.index,
@@ -164,10 +173,15 @@ fn TextureBinding? material_prepare_gradient_map(Renderer* renderer, TextureId t
     if (!renderer.assets.textures.is_live(texture)) return {};
     material::TextureDesc desc = renderer.assets.texture(texture).desc;
     if (desc.is_cube || desc.depth || desc.layers != 1 || desc.format == PixelFormat.R16_UINT) return c3d::UNSUPPORTED~;
+
     TextureRes* mirror = &renderer.textures[texture.index];
+    TextureBinding content = texture_binding_content(renderer, texture, mirror);
+
     return {
         .texture = texture,
         .texture_binding_revision = mirror.binding_revision,
+        .texture_content_revision = content.texture_content_revision,
+        .semantic = content.semantic,
         .texture_index = mirror.view.index,
         .sampler_index = renderer.toon_gradient_sampler,
         .present = true,

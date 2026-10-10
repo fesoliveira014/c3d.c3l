@@ -33,13 +33,16 @@ fn GeometryId? convert_primitive(
 ) @private {
     gltf::Primitive* primitive = &mesh.primitives[primitive_index];
     if (primitive.has_draco_mesh_compression) return c3d::UNSUPPORTED~;
+
     foreach (&attribute : primitive.attributes) {
         if (compressed(attribute.data)) return c3d::UNSUPPORTED~;
     }
+
     if (primitive.indices && compressed(primitive.indices)) return c3d::UNSUPPORTED~;
 
     gltf::Accessor* positions = primitive.find_accessor(gltf::AttributeType.POSITION, 0);
     if (!positions || !positions.count) return c3d::ASSET_FORMAT_ERROR~;
+
     usz vertex_count = positions.count;
 
     Allocator allocator = importer.allocator;
@@ -53,7 +56,15 @@ fn GeometryId? convert_primitive(
             case NORMAL:
                 if (attribute.index == 0) geometry.normals = read_vec3(importer, attribute.data, vertex_count)!;
             case TANGENT:
-                if (attribute.index == 0) geometry.tangents = read_vec4(importer, attribute.data, vertex_count)!;
+                if (attribute.index == 0) {
+                    if (attribute.data.type != gltf::Type.VEC4 || attribute.data.count != vertex_count) {
+                        return c3d::ASSET_FORMAT_ERROR~;
+                    }
+
+                    if (!importer.options.regenerate_tangents) {
+                        geometry.tangents = read_vec4(importer, attribute.data, vertex_count)!;
+                    }
+                }
             case TEXCOORD:
                 if (attribute.index == 0) geometry.uv0 = read_vec2(importer, attribute.data, vertex_count)!;
                 if (attribute.index == 1) geometry.uv1 = read_vec2(importer, attribute.data, vertex_count)!;
@@ -69,19 +80,50 @@ fn GeometryId? convert_primitive(
                 break;
         }
     }
+
     if ((geometry.joints.len > 0) != (geometry.weights.len > 0)) return c3d::ASSET_FORMAT_ERROR~;
     if (primitive.indices) geometry.indices = read_indices(importer, primitive.indices)!;
+
     convert_topology(allocator, &geometry, primitive.type, vertex_count)!;
     read_morph_targets(importer, &geometry, mesh, primitive, vertex_count)!;
 
     if (geometry.topology == Topology.TRIANGLES && !geometry.normals.len) geometry.compute_normals(allocator);
-    bool wants_tangents = importer.options.generate_tangents && geometry.topology == Topology.TRIANGLES
-        && !geometry.tangents.len && geometry.uv0.len && has_normal_map(importer, primitive);
-    if (wants_tangents) geometry.compute_tangents(allocator);
+
+    TangentProvenance provenance;
+    if (geometry.tangents.len) {
+        if (catch excuse = geometry::check_tangent_stream(&geometry)) return c3d::ASSET_FORMAT_ERROR~;
+
+        provenance.origin = TangentOrigin.AUTHORED;
+    }
+
+    bool wants_tangents = geometry.topology == Topology.TRIANGLES
+      && (importer.options.regenerate_tangents
+          || (importer.options.generate_tangents && !geometry.tangents.len && has_normal_map(importer, primitive)));
+    if (wants_tangents) {
+        uint uv_set = tangent_uv_set(importer, primitive)!;
+        Vec2[] selected = uv_set == 0 ? geometry.uv0 : geometry.uv1;
+        if (selected.len) {
+            TangentGeometry? derived = geometry::create_tangent_geometry(allocator, &geometry, uv_set);
+            if (catch excuse = derived) {
+                return excuse == c3d::INVALID_ARGUMENT ? c3d::ASSET_FORMAT_ERROR~ : excuse~;
+            }
+
+            TangentGeometry generated = derived;
+            asset::free_geometry(allocator, &geometry);
+            geometry = generated.data;
+            provenance = generated.tangent_provenance;
+            generated = {};
+        }
+    }
+
     geometry.finalize();
 
     String key = string::tformat("%s#mesh/%d/%d", importer.key, mesh_index, primitive_index);
-    return importer.document.push_geometry(&geometry, key);
+    GeometryId id = importer.document.push_geometry(&geometry, key);
+
+    importer.document.geometry(id).tangent_provenance = provenance;
+
+    return id;
 }
 
 fn bool compressed(gltf::Accessor* accessor) @private {
@@ -104,6 +146,33 @@ fn bool has_normal_map(Importer* importer, gltf::Primitive* primitive) @private 
         case TOON:
             return false;
     }
+}
+
+fn uint? tangent_uv_set(Importer* importer, gltf::Primitive* primitive) @private {
+    if (!primitive.material) return 0;
+
+    MaterialId id = importer.materials[gltf::material_index(importer.data, primitive.material)];
+    material::Material* material = &importer.document.material(id).data;
+    TextureSlot* base;
+    TextureSlot* coat;
+
+    switch (material.kind) {
+        case STANDARD: base = &material.standard.normal_map;
+        case PHYSICAL:
+            base = &material.physical.standard.normal_map;
+            coat = &material.physical.clearcoat_normal_map;
+        case BASIC:
+        case TOON:
+        case CUSTOM: return 0;
+    }
+
+    bool base_present = base && has_texture(base);
+    bool coat_present = coat && has_texture(coat);
+    if (base_present && coat_present && base.uv_set != coat.uv_set) return c3d::UNSUPPORTED~;
+    if (base_present) return base.uv_set;
+    if (coat_present) return coat.uv_set;
+
+    return 0;
 }
 
 fn bool has_texture(TextureSlot* slot) @private {

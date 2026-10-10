@@ -1,8 +1,9 @@
 module c3d::test::maps;
 
 import c3d;
+import c3d::asset;
 import c3d::material;
-import c3d::render;
+import c3d::render @public;
 import c3d::shader;
 import gpu;
 import std::math;
@@ -229,6 +230,121 @@ fn void test_standard_packing_clears_absent_map_flags() @test {
     assert(packed.base_color == params.base_color);
     assert(packed.emissive_strength == (Vec4){ 0.3f, 0.5f, 0.7f, 1.75f });
     assert(packed.map_flags == 0);
+}
+
+fn void test_normal_bindings_track_semantics_and_content_at_a_stable_index() @test {
+    TextureBinding first = texture_binding(17, 4, true);
+    first.texture_binding_revision = 3;
+    first.texture_content_revision = 7;
+    first.semantic = TextureSemantic.NORMAL_RGB;
+    TextureBinding changed = first;
+    changed.semantic = TextureSemantic.NORMAL_RG;
+
+    assert(!render::texture_binding_matches(first, changed));
+
+    changed = first;
+    changed.texture_content_revision++;
+
+    assert(!render::texture_binding_matches(first, changed));
+    assert(render::texture_binding_matches(first, first));
+}
+
+fn void test_base_and_coat_normal_encoding_flags_are_independent() @test {
+    char[render::MATERIAL_STRIDE] storage @align(16);
+    PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
+    params.clearcoat = 1;
+    params.standard.normal_map.uv_set = 1;
+    params.clearcoat_normal_map.uv_set = 1;
+    Material material_data = material::physical(params);
+
+    for (uint base = 0; base < 2; base++) {
+        for (uint coat = 0; coat < 2; coat++) {
+            MaterialBindings bindings = {
+                .normal = texture_binding(17, 4, true),
+                .clearcoat_normal = texture_binding(18, 4, true),
+            };
+            bindings.normal.semantic = base ? TextureSemantic.NORMAL_RG : TextureSemantic.NORMAL_RGB;
+            bindings.clearcoat_normal.semantic = coat ? TextureSemantic.NORMAL_RG : TextureSemantic.NORMAL_RGB;
+
+            render::write_material_block(storage[..], &material_data, bindings);
+
+            PhysicalMaterialGpu* packed = (PhysicalMaterialGpu*)&storage;
+
+            assert(((packed.standard.map_flags & shader::MATERIAL_MAP_NORMAL_RG) != 0) == (base != 0));
+            assert(((packed.map_flags & shader::PHYSICAL_MAP_CLEARCOAT_NORMAL_RG) != 0) == (coat != 0));
+            assert((packed.standard.map_flags & (shader::MATERIAL_MAP_NORMAL << shader::MATERIAL_MAP_UV1_SHIFT)) != 0);
+            assert((packed.map_flags & (shader::PHYSICAL_MAP_CLEARCOAT_NORMAL << shader::MATERIAL_MAP_UV1_SHIFT)) != 0);
+            assert(packed.standard.normal_map.texture_index == (gpu::TextureIndex)17);
+            assert(packed.clearcoat_normal_map.texture_index == (gpu::TextureIndex)18);
+        }
+    }
+}
+
+fn void test_normal_binding_uses_pending_resource_metadata_before_a_newer_cpu_revision() @test {
+    AssetStore assets = asset::create_asset_store(mem, asset::default_asset_store_desc());
+    defer asset::destroy_asset_store(&assets);
+
+    char[4] pixels = { 128, 128, 255, 255 };
+    material::TextureDesc desc = material::texture_2d_desc(1, 1, PixelFormat.RGBA8_UNORM);
+    desc.semantic = TextureSemantic.NORMAL_RGB;
+
+    TextureId texture = assets.add_texture(desc, pixels[..])!!;
+
+    TextureRes mirror = { .asset = texture, .revision = 1, .semantic = TextureSemantic.NORMAL_RGB };
+    Renderer renderer = { .assets = &assets };
+    renderer.pending_texture_uploads.init(mem);
+    defer renderer.pending_texture_uploads.free();
+
+    TextureBinding content = render::texture_binding_content(&renderer, texture, &mirror);
+
+    assert(content.texture_content_revision == 1 && content.semantic == TextureSemantic.NORMAL_RGB);
+
+    desc.semantic = TextureSemantic.NORMAL_RG;
+
+    assets.replace_texture(texture, desc, pixels[..])!!;
+
+    renderer.pending_texture_uploads.push({
+        .asset = texture, .revision = 2, .semantic = TextureSemantic.NORMAL_RG,
+    });
+    desc.semantic = TextureSemantic.NORMAL_RGB;
+
+    assets.replace_texture(texture, desc, pixels[..])!!;
+
+    assert(assets.texture(texture).header.revision == 3);
+
+    content = render::texture_binding_content(&renderer, texture, &mirror);
+
+    assert(content.texture_content_revision == 2 && content.semantic == TextureSemantic.NORMAL_RG);
+    renderer.pending_texture_uploads.push({
+        .asset = texture, .revision = 3, .semantic = TextureSemantic.NORMAL_RGB,
+    });
+    content = render::texture_binding_content(&renderer, texture, &mirror);
+
+    assert(content.texture_content_revision == 3 && content.semantic == TextureSemantic.NORMAL_RGB);
+    renderer.pending_texture_uploads.clear();
+    content = render::texture_binding_content(&renderer, texture, &mirror);
+
+    assert(content.texture_content_revision == 1 && content.semantic == TextureSemantic.NORMAL_RGB);
+}
+
+fn void test_target_base_and_coat_normal_bindings_pack_rgb() @test {
+    char[render::MATERIAL_STRIDE] storage @align(16);
+    PhysicalParams params = material::PHYSICAL_PARAMS_DEFAULT;
+    params.clearcoat = 1;
+    Material material_data = material::physical(params);
+    MaterialBindings bindings = {
+        .normal = texture_binding(17, 4, true),
+        .clearcoat_normal = texture_binding(18, 4, true),
+    };
+    bindings.normal.target = { .index = 1, .generation = 1 };
+    bindings.clearcoat_normal.target = { .index = 2, .generation = 1 };
+
+    render::write_material_block(storage[..], &material_data, bindings);
+
+    PhysicalMaterialGpu* packed = (PhysicalMaterialGpu*)&storage;
+
+    assert((packed.standard.map_flags & shader::MATERIAL_MAP_NORMAL_RG) == 0);
+    assert((packed.map_flags & shader::PHYSICAL_MAP_CLEARCOAT_NORMAL_RG) == 0);
 }
 
 fn void test_basic_packing_uses_base_color_binding_after_standard() @test {

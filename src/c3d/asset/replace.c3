@@ -28,6 +28,7 @@ const Id ADDED_ID @private = { .index = uint::max }; // table slot of an entry t
  @param [&inout] document : "Emptied on success; intact on a fault."
  @param missing : "Receives the first missing parts by kind, then key."
  @return? c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::INCOMPATIBLE_STRUCTURE
+ @return? c3d::UNSUPPORTED, c3d::ASSET_DATA_UNAVAILABLE
  @require self.models.is_live(model)
  @require document.allocator == self.allocator, self.allocator != tmem
 *>
@@ -253,6 +254,7 @@ fn void apply_replacement(
     ModelReplaceReport* report,
 ) @private {
     ModelDocument* document = &prepared.document;
+
     foreach (index, &entry : document.samplers) {
         if (is_added(ids.samplers[index])) {
             ids.samplers[index] = store.add_sampler(entry.desc, entry.key)!!;
@@ -262,21 +264,31 @@ fn void apply_replacement(
             report.replaced++;
         }
     }
+
     foreach (index, &entry : document.textures) {
         if (is_added(ids.textures[index])) {
-            ids.textures[index] = add_prepared_texture(store, entry);
+            ids.textures[index] = add_prepared_texture(store, entry, prepared.textures[index]);
             report.added++;
         } else {
-            replace_prepared_texture(store, ids.textures[index], entry);
+            replace_prepared_texture(
+                store: store,
+                texture: ids.textures[index],
+                entry: entry,
+                statistics: prepared.textures[index],
+            );
             report.replaced++;
         }
+
         entry.pixels = {};
+        entry.supplied_mips = {};
     }
+
     foreach (index, &entry : document.materials) {
         material::@each_texture_reference(&entry.data; TextureId* texture, SamplerId* sampler) {
             *texture = @remapped(*texture, ids.textures);
             if (sampler) *sampler = @remapped(*sampler, ids.samplers);
         };
+
         if (is_added(ids.materials[index])) {
             ids.materials[index] = store.add_material(entry.data, entry.key)!!;
             report.added++;
@@ -285,6 +297,7 @@ fn void apply_replacement(
             report.replaced++;
         }
     }
+
     foreach (index, &entry : document.geometries) {
         if (is_added(ids.geometries[index])) {
             ids.geometries[index] = add_prepared_geometry(
@@ -303,8 +316,10 @@ fn void apply_replacement(
             );
             report.replaced++;
         }
+
         entry.data = {};
     }
+
     foreach (index, &entry : document.skeletons) {
         if (is_added(ids.skeletons[index])) {
             ids.skeletons[index] = store.add_skeleton_owned(&entry.data, entry.key)!!;
@@ -313,8 +328,10 @@ fn void apply_replacement(
             replace_prepared_skeleton(store, ids.skeletons[index], &entry.data);
             report.replaced++;
         }
+
         entry.data = {};
     }
+
     foreach (index, &entry : document.clips) {
         if (is_added(ids.clips[index])) {
             ids.clips[index] = add_prepared_clip(store, &entry.data, entry.key);
@@ -323,14 +340,17 @@ fn void apply_replacement(
             replace_prepared_clip(store, ids.clips[index], &entry.data);
             report.replaced++;
         }
+
         entry.data = {};
     }
 
     remap_template(&document.template, ids);
     ModelAsset* record = store.models.get(model);
     free_model_template(store.allocator, &record.data);
+
     record.data = document.template;
     document.template = {};
+
     mark_replaced(&record.header);
 }
 

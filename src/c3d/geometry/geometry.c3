@@ -119,12 +119,12 @@ fn void Geometry.compute_normals(&self, Allocator allocator, bool smooth = true)
 }
 
 <*
- Write per-vertex tangents with handedness in w from normals and uv0.
+ Write UV0 tangents without splitting conflicting corners; no Mikk guarantee.
  @param allocator : "Allocates tangents when the geometry has none."
  @require self.topology == Topology.TRIANGLES
  @require self.normals.len == self.positions.len, self.uv0.len == self.positions.len
 *>
-fn void Geometry.compute_tangents(&self, Allocator allocator) {
+fn void Geometry.compute_tangents(&self, Allocator allocator) @deprecated("Use create_tangent_geometry for split tangent geometry.") {
     if (!self.tangents.len) {
         self.tangents = alloc::new_array(allocator, Vec4, self.positions.len);
     }

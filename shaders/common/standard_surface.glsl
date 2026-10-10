@@ -21,6 +21,7 @@ vec3 sample_material_normal(
     TextureMapGpu map,
     uint map_flags,
     uint map_bit,
+    uint encoding_bit,
     float scale,
     GeometryRoot geometry,
     vec3 world_position,
@@ -32,13 +33,14 @@ vec3 sample_material_normal(
     vec2 uv = map_uv(map, map_flags, map_bit, uv0, uv1);
     vec3 mapped = decode_normal(
         sample_texture_2d_bias(map.texture_index, map.sampler_index, uv, material_mip_bias).rgb,
-        scale
+        scale,
+        (map_flags & encoding_bit) != 0u
     );
     if ((geometry.flags & GEOMETRY_HAS_TANGENTS) != 0u) {
         return tangent_normal(vertex_normal, tangent, mapped);
     }
     return derivative_normal(
-        vertex_normal,
+        normalize(vertex_normal),
         mapped,
         dFdx(world_position),
         dFdy(world_position),
@@ -116,10 +118,11 @@ StandardMaterialSample sample_standard_material(
             material.normal_map,
             material.map_flags,
             MATERIAL_MAP_NORMAL,
+            MATERIAL_MAP_NORMAL_RG,
             material.normal_scale,
             geometry,
             world_position,
-            normal,
+            vertex_normal,
             tangent,
             uv0,
             uv1

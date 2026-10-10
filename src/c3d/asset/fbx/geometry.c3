@@ -45,7 +45,15 @@ fn GeometryId? convert_part(
 ) @private {
     alloc::Allocator allocator = importer.allocator;
     usz corner_count = part.num_triangles * TRIANGLE_CORNERS;
-    CornerStreams streams = corner_streams(mesh, part, corner_count);
+
+    preflight_tangent_streams(mesh)!;
+
+    CornerStreams streams = corner_streams(
+        mesh: mesh,
+        part: part,
+        corner_count: corner_count,
+        discard_tangents: importer.options.regenerate_tangents,
+    )!;
 
     ufbx::VertexStream[MAX_STREAMS] stream_table;
     usz stream_count;
@@ -64,6 +72,7 @@ fn GeometryId? convert_part(
     defer catch asset::free_geometry(allocator, &geometry);
     usz? merged = ufbx::generate_indices(stream_table[:stream_count], geometry.indices);
     if (catch merged) return c3d::ASSET_FORMAT_ERROR~;
+
     usz vertex_count = merged;
     uint[] sources = streams.sources[:vertex_count];
 
@@ -81,6 +90,7 @@ fn GeometryId? convert_part(
             sources:   sources,
         )!;
     }
+
     write_morph_targets(
         allocator: allocator,
         geometry:  &geometry,
@@ -88,17 +98,60 @@ fn GeometryId? convert_part(
         sources:   sources,
     )!;
 
-    bool wants_tangents = importer.options.generate_tangents && !geometry.tangents.len && geometry.uv0.len
-        && part_has_normal_map(mesh, part);
-    if (wants_tangents) geometry.compute_tangents(allocator);
+    if (!geometry.normals.len) geometry.compute_normals(allocator);
+
+    TangentProvenance provenance;
+    if (geometry.tangents.len) {
+        if (catch excuse = geometry::check_tangent_stream(&geometry)) return c3d::ASSET_FORMAT_ERROR~;
+
+        provenance.origin = TangentOrigin.AUTHORED;
+    }
+
+    bool wants_tangents = importer.options.regenerate_tangents
+      || (importer.options.generate_tangents && !geometry.tangents.len && part_has_normal_map(mesh, part));
+    if (wants_tangents && geometry.uv0.len) {
+        TangentGeometry? derived = geometry::create_tangent_geometry(allocator, &geometry, 0);
+        if (catch excuse = derived) {
+            return excuse == c3d::INVALID_ARGUMENT ? c3d::ASSET_FORMAT_ERROR~ : excuse~;
+        }
+
+        TangentGeometry generated = derived;
+        asset::free_geometry(allocator, &geometry);
+        geometry = generated.data;
+        provenance = generated.tangent_provenance;
+        generated = {};
+    }
+
     geometry.finalize();
 
     String key = string::tformat("%s#mesh/%d/%d", importer.key, mesh.typed_id, part_index);
-    return importer.document.push_geometry(&geometry, key);
+    GeometryId id = importer.document.push_geometry(&geometry, key);
+
+    importer.document.geometry(id).tangent_provenance = provenance;
+
+    return id;
 }
 
-fn CornerStreams corner_streams(ufbx::Mesh* mesh, ufbx::MeshPart* part, usz corner_count) @private {
-    bool has_tangents = mesh.vertex_tangent.exists && mesh.vertex_bitangent.exists;
+fn void? preflight_tangent_streams(ufbx::Mesh* mesh) @private {
+    ufbx::VertexVec3*[2] attributes = { &mesh.vertex_tangent, &mesh.vertex_bitangent };
+
+    foreach (attribute : attributes) {
+        if (!attribute.exists) continue;
+        if (attribute.indices.len != mesh.num_indices || !attribute.values.len) return c3d::ASSET_FORMAT_ERROR~;
+
+        foreach (index : attribute.indices) {
+            if (index >= attribute.values.len) return c3d::ASSET_FORMAT_ERROR~;
+        }
+    }
+}
+
+fn CornerStreams? corner_streams(
+    ufbx::Mesh* mesh,
+    ufbx::MeshPart* part,
+    usz corner_count,
+    bool discard_tangents,
+) @private {
+    bool has_tangents = mesh.vertex_tangent.exists && mesh.vertex_bitangent.exists && !discard_tangents;
     CornerStreams streams = {
         .positions = alloc::new_array(tmem, vector::Vec3, (sz)corner_count),
         .normals   = alloc::new_array(tmem, vector::Vec3, (sz)corner_count),
@@ -111,25 +164,35 @@ fn CornerStreams corner_streams(ufbx::Mesh* mesh, ufbx::MeshPart* part, usz corn
 
     uint[] triangle = alloc::new_array(tmem, uint, (sz)(mesh.max_face_triangles * TRIANGLE_CORNERS));
     usz corner;
+
     foreach (face_index : part.face_indices) {
         uint triangles = ufbx::triangulate_face(triangle, mesh, mesh.faces[face_index]);
+
         for (uint slot = 0; slot < triangles * TRIANGLE_CORNERS; slot++) {
             write_corner(
                 streams: &streams,
                 corner:  corner++,
                 mesh:    mesh,
                 index:   triangle[slot],
-            );
+            )!;
         }
     }
+
     return streams;
 }
 
-fn void write_corner(CornerStreams* streams, usz corner, ufbx::Mesh* mesh, uint index) @private {
+fn void? write_corner(
+    CornerStreams* streams,
+    usz corner,
+    ufbx::Mesh* mesh,
+    uint index,
+) @private {
     vector::Vec3 normal = narrow_vec3(mesh.vertex_normal.values[mesh.vertex_normal.indices[index]]);
+
     streams.positions[corner] = narrow_vec3(mesh.vertex_position.values[mesh.vertex_position.indices[index]]);
     streams.normals[corner] = normal;
     streams.sources[corner] = mesh.vertex_indices[index];
+
     if (streams.uv0.len) streams.uv0[corner] = flipped_uv(&mesh.uv_sets[0].vertex_uv, index);
     if (streams.uv1.len) streams.uv1[corner] = flipped_uv(&mesh.uv_sets[1].vertex_uv, index);
     if (streams.colors.len) {
@@ -137,9 +200,15 @@ fn void write_corner(CornerStreams* streams, usz corner, ufbx::Mesh* mesh, uint 
         ufbx::Vec4 color = colors.values[colors.indices[index]];
         streams.colors[corner] = { (float)color.x, (float)color.y, (float)color.z, (float)color.w };
     }
+
     if (streams.tangents.len) {
         vector::Vec3 tangent = narrow_vec3(mesh.vertex_tangent.values[mesh.vertex_tangent.indices[index]]);
         vector::Vec3 bitangent = narrow_vec3(mesh.vertex_bitangent.values[mesh.vertex_bitangent.indices[index]]);
+
+        foreach (value : tangent) if (!math::is_finite(value)) return c3d::ASSET_FORMAT_ERROR~;
+        foreach (value : bitangent) if (!math::is_finite(value)) return c3d::ASSET_FORMAT_ERROR~;
+        if (tangent == (vector::Vec3){} || bitangent == (vector::Vec3){}) return c3d::ASSET_FORMAT_ERROR~;
+
         // The v flip mirrors the tangent frame, so the handedness sign is inverted.
         float handedness = normal.cross(tangent).dot(bitangent) < 0 ? 1.0f : -1.0f;
         streams.tangents[corner] = { tangent.x, tangent.y, tangent.z, handedness };

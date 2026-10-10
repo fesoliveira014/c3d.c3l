@@ -54,16 +54,27 @@ struct ContainerLayout @private {
  @param scratch : "Holds de-padded KTX1 levels only."
  @param [in] bytes : "Whole container; never written."
  @param color_space : "An explicit choice overrides the file."
+ @param semantic : "Explicit interpretation; supplied texels stay unchanged."
  @return? c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED, c3d::INVALID_ARGUMENT
 *>
-fn TextureContainerView? parse_texture_container(Allocator scratch, char[] bytes, ColorSpace color_space = FROM_FILE) {
+fn TextureContainerView? parse_texture_container(
+    Allocator scratch,
+    char[] bytes,
+    ColorSpace color_space = FROM_FILE,
+    TextureSemantic semantic = TextureSemantic.COLOR,
+) {
     ContainerLayout layout = read_container_layout(bytes)!;
-    return finish_container(
+    TextureContainerView container = finish_container(
         scratch:     scratch,
         bytes:       bytes,
         layout:      &layout,
         color_space: color_space,
-    );
+    )!;
+
+    container.desc.semantic = semantic;
+    asset::check_texture_semantics(container.desc)!;
+
+    return container;
 }
 
 <*
@@ -71,6 +82,7 @@ fn TextureContainerView? parse_texture_container(Allocator scratch, char[] bytes
  @param [&inout] assets : "Owns one source allocation on success."
  @param [in] bytes : "Borrowed for the call."
  @param color_space : "An explicit choice overrides the file."
+ @param semantic : "Explicit interpretation; supplied texels stay unchanged."
  @return? c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
  @require assets.allocator != tmem
 *>
@@ -79,16 +91,25 @@ fn TextureId? add_texture_container(
     char[] bytes,
     ColorSpace color_space = FROM_FILE,
     String key = "",
+    TextureSemantic semantic = TextureSemantic.COLOR,
 ) {
     TextureId texture;
+
     @pool() {
-        TextureContainerView container = parse_texture_container(tmem, bytes, color_space)!;
+        TextureContainerView container = parse_texture_container(
+            scratch: tmem,
+            bytes: bytes,
+            color_space: color_space,
+            semantic: semantic,
+        )!;
+
         if (container.desc.generate_mips) {
             texture = assets.add_texture(container.desc, container.levels[0].bytes, key)!;
         } else {
             texture = assets.add_texture_mips(container.desc, container.levels[:container.level_count], key)!;
         }
     };
+
     return texture;
 }
 
@@ -96,6 +117,7 @@ fn TextureId? add_texture_container(
  Read a DDS, KTX1 or KTX2 file into the store's texture pool.
  @param [&inout] assets : "Owns one source allocation on success."
  @param color_space : "An explicit choice overrides the file."
+ @param semantic : "Explicit interpretation; supplied texels stay unchanged."
  @return? c3d::ASSET_IO_ERROR, c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED, c3d::INVALID_ARGUMENT
  @return? c3d::CAPACITY_EXCEEDED
  @require path.len > 0, assets.allocator != tmem
@@ -105,6 +127,7 @@ fn TextureId? load_texture_container(
     String path,
     ColorSpace color_space = FROM_FILE,
     String key = "",
+    TextureSemantic semantic = TextureSemantic.COLOR,
 ) {
     char[] bytes = assets.read_file(mem, path)!;
     defer free(bytes.ptr);
@@ -114,6 +137,7 @@ fn TextureId? load_texture_container(
         bytes:       bytes,
         color_space: color_space,
         key:         key,
+        semantic:    semantic,
     );
 }
 
