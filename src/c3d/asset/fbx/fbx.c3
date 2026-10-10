@@ -52,7 +52,7 @@ struct Importer @private {
  Load an FBX file into shared assets and a model template keyed by the path.
  @param [&inout] assets : "Receives every converted asset; unchanged on a fault."
  @return? c3d::ASSET_IO_ERROR, c3d::ASSET_FORMAT_ERROR, c3d::UNSUPPORTED
- @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED
+ @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
  @require path.len > 0
 *>
 fn ModelId? load_model(AssetStore* assets, String path, LoadOptions options = asset::LOAD_OPTIONS_DEFAULT) {
@@ -120,7 +120,7 @@ fn ModelDocument? decode_model(
  @param allocator : "Owns the returned array."
  @param [&inout] assets : "Receives the clips; unchanged on a fault."
  @return? c3d::ASSET_IO_ERROR, c3d::ASSET_FORMAT_ERROR, c3d::INVALID_ID
- @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT
+ @return? c3d::CAPACITY_EXCEEDED, c3d::INVALID_ARGUMENT, c3d::UNSUPPORTED
  @require path.len > 0
 *>
 fn ClipId[]? load_animations(

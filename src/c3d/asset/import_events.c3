@@ -96,6 +96,7 @@ fn ClipEvent[]? parse_clip_events(Allocator allocator, String source, float dura
         bool unsupported;
         bool has_events;
         String events;
+
         event_json_expect(&reader, '{')!;
         if (!event_json_take(&reader, '}')) {
             while (true) {
@@ -124,6 +125,7 @@ fn ClipEvent[]? parse_clip_events(Allocator allocator, String source, float dura
         if (!has_version) return c3d::ASSET_FORMAT_ERROR~;
         if (unsupported) return c3d::UNSUPPORTED~;
         if (!has_events || !math::is_finite(duration) || duration < 0) return c3d::ASSET_FORMAT_ERROR~;
+
         return parse_event_array(allocator, events, duration);
     };
 }
@@ -205,6 +207,7 @@ fn EventInteger event_integer(String token) @local {
     sz first_nonzero = token.len;
     sz last_nonzero;
     bool after_point;
+
     while (cursor < token.len && token[cursor] != 'e' && token[cursor] != 'E') {
         char value = token[cursor++];
         if (value == '.') {
@@ -220,6 +223,7 @@ fn EventInteger event_integer(String token) @local {
     }
 
     if (first_nonzero == token.len) return { .integral = true };
+
     sz exponent;
     bool exponent_negative;
     sz exponent_limit = token.len + IMPORTED_ID_DIGITS;
@@ -314,21 +318,26 @@ fn void? event_json_skip(EventJsonReader* reader) @local {
     EventFrames frames;
     frames.tinit();
     event_json_value(reader, &frames)!;
+
     while (frames.size) {
         EventJsonPhase* phase = &frames.entries[frames.size - 1];
+
         switch (*phase) {
             case OBJECT_FIRST:
                 if (event_json_take(reader, '}')) {
                     frames.pop()!!;
                     continue;
                 }
+
                 *phase = OBJECT_KEY;
             case OBJECT_KEY:
                 (void)event_json_key(reader)!;
                 event_json_expect(reader, ':')!;
+
                 *phase = OBJECT_VALUE;
             case OBJECT_VALUE:
                 *phase = OBJECT_NEXT;
+
                 event_json_value(reader, &frames)!;
             case OBJECT_NEXT:
                 if (event_json_take(reader, '}')) {
@@ -342,9 +351,11 @@ fn void? event_json_skip(EventJsonReader* reader) @local {
                     frames.pop()!!;
                     continue;
                 }
+
                 *phase = ARRAY_VALUE;
             case ARRAY_VALUE:
                 *phase = ARRAY_NEXT;
+
                 event_json_value(reader, &frames)!;
             case ARRAY_NEXT:
                 if (event_json_take(reader, ']')) {
