@@ -141,7 +141,9 @@ fn void panel(render::Renderer* renderer, Showcase* showcase) @local {
         imgui::text("Instances: %u", renderer.stats.instances);
         imgui::text("Space pauses slot 0; R toggles motion application");
         imgui::text("Apply published motion: %s", showcase.consume_motion ? "on" : "off");
-        imgui::text("Root X/Z: %.5f / %.5f", (double)showcase.motion.translation.x, (double)showcase.motion.translation.z);
+        double root_x = showcase.motion.translation.x;
+        double root_z = showcase.motion.translation.z;
+        imgui::text("Root X/Z: %.5f / %.5f", root_x, root_z);
         imgui::text("Events: %u; dropped: %u", showcase.events, showcase.dropped_events);
         if (showcase.compare) {
             imgui::text("Synchronized playback comparison");

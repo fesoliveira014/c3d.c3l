@@ -476,3 +476,37 @@ fn void test_crowd_parts_accept_external_compatible_clip_without_track_budget() 
     assert(c3d::same_id(player.base_action()!!.clip, external));
     assert(player.base_action()!!.cursors.len == 4);
 }
+
+fn void test_crowd_parts_action_capacities_admit_exactly_the_prepared_slots() @test {
+    AssetStore assets = parts_store();
+    defer asset::destroy_asset_store(&assets);
+    PartsFixture fixture = animated_crowd_fixtures::add_parts_fixture(&assets)!!;
+    foreach (capacity : (uint[3]){ 1, anim::DEFAULT_CROWD_ACTIONS, anim::MAX_ACTIONS }) {
+        Scene scene = scene::create_scene(mem, { .max_nodes = NODE_CAPACITY });
+        defer scene::destroy_scene(&scene);
+        CrowdInstance[1] seeds = { parts_seed(fixture.posing) };
+        Node* node = model::add_crowd(
+            assets: &assets,
+            scene: &scene,
+            model: fixture.mixed,
+            capacity: 1,
+            pose_bounds: animated_crowd_fixtures::PARTS_POSE_BOUNDS,
+            instances: seeds[..],
+            actions_per_instance: capacity,
+            event_capacity: 0,
+        )!!;
+        AnimatedCrowd* crowd = scene.get(node, AnimatedCrowd);
+        CrowdPlayer player = parts_player(crowd);
+        AnimationActionId[anim::MAX_ACTIONS] actions;
+        actions[0] = crowd.playback.slots[0].base_action;
+        for (uint index = 1; index < capacity; index++) actions[index] = player.play(&assets, fixture.posing)!!;
+        assert(crowd.playback.slots[0].action_count == capacity);
+        float before = player.action(actions[0]).time;
+        assert(@catch(player.play(&assets, fixture.posing)) == c3d::CAPACITY_EXCEEDED);
+        ClipId[2] clips = { fixture.posing, fixture.missing_weights };
+        float[2] positions = { 0, 1 };
+        assert(@catch(player.add_blend_space(&assets, clips[..], positions[..])) == c3d::CAPACITY_EXCEEDED);
+        assert(crowd.playback.slots[0].action_count == capacity && player.action(actions[0]).time == before);
+        foreach (action : actions[:capacity]) assert(c3d::same_id(player.try_action(action)!!.clip, fixture.posing));
+    }
+}
