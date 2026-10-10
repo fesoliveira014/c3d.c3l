@@ -886,7 +886,11 @@ fn void? run(String[] args) {
         metadata(&outputs, "compiler_safe", (String)io::bprintf(text[..], "%s", env::COMPILER_SAFE_MODE)!)!;
         metadata(&outputs, "percentiles", "nearest_rank_per_repetition")!;
         metadata(&outputs, "timed_scope", "shared_evaluate_and_publish_separate_controls_io_load_setup_excluded")!;
-        metadata(&outputs, "tracking_scope", "scene_and_crowd_requested_bytes_excludes_tracker_map_backtraces_assets_process_driver")!;
+        metadata(
+            outputs: &outputs,
+            key: "tracking_scope",
+            value: "scene_and_crowd_requested_bytes_excludes_tracker_map_backtraces_assets_process_driver",
+        )!;
         metadata(&outputs, "native_measurements", "unmeasured_upload_history_two_view_cull_gpu_trace")!;
         metadata(&outputs, "trace", "off")!;
         metadata(&outputs, "repository", repository)!;
@@ -960,7 +964,8 @@ fn void? run(String[] args) {
 fn int main(String[] args) @feat(!C3D_CROWD_BENCH_NATIVE) {
     if (catch excuse = run(args)) {
         io::eprintfn("crowd_bench: %s", excuse);
-        io::eprintn("usage: crowd_bench OUTPUT_DIRECTORY [REPOSITORY_ROOT] [0|64|512|4096] [all|quaternius|morph] [all|base|layered4|space4]");
+        io::eprintn("usage: crowd_bench OUTPUT_DIRECTORY [REPOSITORY_ROOT] [0|64|512|4096] "
+          "[all|quaternius|morph] [all|base|layered4|space4]");
         return 1;
     }
     return 0;

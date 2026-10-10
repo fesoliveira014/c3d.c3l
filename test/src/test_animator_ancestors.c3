@@ -117,10 +117,11 @@ fn void test_animator_pivot_accepts_external_chain_deeper_than_model() @test {
         LayerFixture fixture;
         fixture.assets = create_ancestor_store();
         fixture.scene = scene::create_scene(&tracker, { .max_nodes = 32 });
+        defer destroy_layer_fixture(&fixture);
+
         fixture.model = gltf::load_model(&fixture.assets, ancestor_fixture_path())!!;
         fixture.root = model::instantiate(&fixture.assets, &fixture.scene, fixture.model)!!;
         fixture.animator = anim::add_animator(&fixture.scene, fixture.root);
-        defer destroy_layer_fixture(&fixture);
 
         ModelInstance* instance = fixture.scene.get(fixture.root, ModelInstance);
         instance.base_pose[2].position = { 1.25f, 0, -2.5f };

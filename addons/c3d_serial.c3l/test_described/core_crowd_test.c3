@@ -78,7 +78,9 @@ fn void test_crowd_authoring_round_trips_pending_and_restarts_captured_clocks() 
               == original.playback.slots[0].actions.get(original.playback.slots[0].base_action).time);
             for (usz index = 0; index < loaded.joint_count; index++) {
                 for (uint coefficient = 0; coefficient < 16; coefficient++) {
-                    assert(math::abs(loaded.palettes[index].m[coefficient] - original.palettes[index].m[coefficient]) < 1e-6f);
+                    assert(math::abs(
+                        loaded.palettes[index].m[coefficient] - original.palettes[index].m[coefficient],
+                    ) < 1e-6f);
                 }
             }
             assert(bytes == serial::write_subtree(
