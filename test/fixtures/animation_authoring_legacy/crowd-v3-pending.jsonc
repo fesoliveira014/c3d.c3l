@@ -1,0 +1,255 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": 0,
+      "parent": null,
+      "name": "legacy_weighted_crowd",
+      "local": {
+        "position": [
+          4,
+          2,
+          -8
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 9,
+      "visible": true,
+      "components": {
+        "c3d.AnimatedCrowd": {
+          "version": 3,
+          "value": {
+            "model": "animation_authoring_legacy/model",
+            "capacity": 3,
+            "pose_bounds": {
+              "min": [
+                -4,
+                -4,
+                -4
+              ],
+              "max": [
+                4,
+                4,
+                4
+              ]
+            },
+            "trace": true,
+            "instances": [
+              {
+                "placement": {
+                  "position": [
+                    1,
+                    2,
+                    3
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    2,
+                    2,
+                    2
+                  ]
+                },
+                "pose": {
+                  "clip": "animation_authoring_legacy/model#anim/0",
+                  "time": 0.125,
+                  "speed": 1,
+                  "loop": true
+                },
+                "color": [
+                  0.200000003,
+                  0.400000006,
+                  0.600000024,
+                  0.800000012
+                ]
+              },
+              {
+                "placement": {
+                  "position": [
+                    -2,
+                    1,
+                    4
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    -1,
+                    2,
+                    0.5
+                  ]
+                },
+                "pose": {
+                  "clip": "animation_authoring_legacy/model#anim/0",
+                  "time": 0.25,
+                  "speed": 1,
+                  "loop": true
+                },
+                "color": [
+                  0.800000012,
+                  0.300000012,
+                  0.100000001,
+                  1
+                ]
+              }
+            ],
+            "actions_per_instance": 4,
+            "event_capacity": 17,
+            "playback": [
+              {
+                "configured": true,
+                "root_node": 2,
+                "base_action": 0,
+                "actions": [
+                  {
+                    "clip": "animation_authoring_legacy/model#anim/0",
+                    "speed": -0.5,
+                    "weight": 0.600000024,
+                    "layer": 0,
+                    "additive": false,
+                    "loop": false,
+                    "playing": false,
+                    "mask": [
+                      true,
+                      true,
+                      true,
+                      true
+                    ],
+                    "root_motion": "EXTRACT",
+                    "root_yaw": true,
+                    "weighted_mask": [],
+                    "additive_scale": "DIFFERENCE"
+                  },
+                  {
+                    "clip": "animation_authoring_legacy/model#anim/0",
+                    "speed": 1,
+                    "weight": 0,
+                    "layer": 1,
+                    "additive": true,
+                    "loop": true,
+                    "playing": false,
+                    "mask": [],
+                    "root_motion": "KEEP",
+                    "root_yaw": false,
+                    "weighted_mask": [
+                      0.25,
+                      0,
+                      0.5,
+                      0.75
+                    ],
+                    "additive_scale": "MULTIPLICATIVE"
+                  },
+                  {
+                    "clip": "animation_authoring_legacy/model#anim/0",
+                    "speed": 1.25,
+                    "weight": 0,
+                    "layer": 1,
+                    "additive": true,
+                    "loop": true,
+                    "playing": false,
+                    "mask": [],
+                    "root_motion": "KEEP",
+                    "root_yaw": false,
+                    "weighted_mask": [
+                      0.25,
+                      0,
+                      0.5,
+                      0.75
+                    ],
+                    "additive_scale": "MULTIPLICATIVE"
+                  },
+                  {
+                    "clip": "animation_authoring_legacy/model#anim/0",
+                    "speed": 1.5,
+                    "weight": 0,
+                    "layer": 1,
+                    "additive": true,
+                    "loop": true,
+                    "playing": false,
+                    "mask": [],
+                    "root_motion": "KEEP",
+                    "root_yaw": false,
+                    "weighted_mask": [
+                      0.25,
+                      0,
+                      0.5,
+                      0.75
+                    ],
+                    "additive_scale": "MULTIPLICATIVE"
+                  }
+                ],
+                "spaces": [
+                  {
+                    "actions": [
+                      1,
+                      2,
+                      3
+                    ],
+                    "positions": [],
+                    "parameter": 0,
+                    "weight": 0.75,
+                    "speed": -0.25,
+                    "playing": false,
+                    "kind": "TWO_DIMENSIONAL",
+                    "points": [
+                      [
+                        -1,
+                        -1
+                      ],
+                      [
+                        2,
+                        -1
+                      ],
+                      [
+                        -1,
+                        2
+                      ]
+                    ],
+                    "triangles": [
+                      {
+                        "indices": [
+                          2,
+                          1,
+                          0
+                        ]
+                      }
+                    ],
+                    "parameter_2d": [
+                      0.5,
+                      0.25
+                    ]
+                  }
+                ]
+              },
+              {
+                "configured": true,
+                "root_node": 4294967295,
+                "base_action": 4294967295,
+                "actions": [],
+                "spaces": []
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}
