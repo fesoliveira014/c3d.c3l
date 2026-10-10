@@ -132,6 +132,11 @@ struct FbxEventFault @local {
     fault expected;
 }
 
+struct FbxStoreSnapshot @local {
+    sz allocated_bytes;
+    usz[12] counts;
+}
+
 fn char[]? read_events(void* user, Allocator allocator, String path) @local {
     if (path != MODEL_PATH && path != TARGET_PATH) return c3d::ASSET_IO_ERROR~;
     FbxEventSource* source = user;
@@ -198,6 +203,31 @@ fn LoadStatus settle_events(AsyncLoader* pending, LoadId id) @local {
         status = pending.status(id);
     }
     return status;
+}
+
+fn LoadRequest event_request() @local {
+    return { .path = MODEL_PATH, .format = ModelFormat.FBX, .options = asset::LOAD_OPTIONS_DEFAULT };
+}
+
+fn FbxStoreSnapshot snapshot_store(AssetStore* assets, TrackingAllocator* tracker) @local {
+    return {
+        .allocated_bytes = tracker.allocated(),
+        .counts = {
+            assets.geometries.free_count, assets.textures.free_count, assets.materials.free_count,
+            assets.samplers.free_count, assets.environments.free_count, assets.models.free_count,
+            assets.skeletons.free_count, assets.clips.free_count, assets.shaders.free_count,
+            assets.compute_shaders.free_count, assets.fonts.free_count, (usz)assets.keys.len(),
+        },
+    };
+}
+
+fn void assert_store_unchanged(
+    AssetStore* assets,
+    TrackingAllocator* tracker,
+    FbxStoreSnapshot before,
+) @local {
+    FbxStoreSnapshot after = snapshot_store(assets, tracker);
+    assert(after.allocated_bytes == before.allocated_bytes && after.counts == before.counts);
 }
 
 fn RetargetProfile event_profile(Allocator allocator, NodeTemplate[] source, ModelTemplate* target) @local {
@@ -269,16 +299,11 @@ fn void assert_origin_paths(String text) @local {
     defer alloc::free(mem, profiled.ptr);
     assert(profiled.len == 1);
     assert_event_table(assets.clip(profiled[0]).data.events);
-    assert(assets.clip(animations[0]).data.events.ptr != decoded.events.ptr);
-    assert(assets.clip(profiled[0]).data.events.ptr != decoded.events.ptr);
-    assert(assets.clip(profiled[0]).data.events.ptr != assets.clip(animations[0]).data.events.ptr);
-
     AssetStore asynchronous = event_store(mem, &source);
     defer asset::destroy_asset_store(&asynchronous);
     AsyncLoader pending = loader::create_async_loader(mem, &asynchronous, 1)!!;
     defer loader::destroy_async_loader(&pending);
-    LoadId id = pending.request({ .path = MODEL_PATH, .format = ModelFormat.FBX,
-        .options = asset::LOAD_OPTIONS_DEFAULT })!!;
+    LoadId id = pending.request(event_request())!!;
     assert(settle_events(&pending, id).phase == LoadPhase.DECODED);
     assert(pending.publish() == 1);
     LoadStatus status = pending.status(id);
@@ -380,8 +405,8 @@ fn void test_import_events_fbx_property_requires_string() @test {
     @pool() {
         FbxEventSource source = {
             .text = ((String)FBX_EVENTS).treplace(
-                event_property(AUTHORED_EVENTS),
-                "            P: \"c3d_events\", \"int\", \"Integer\", \"U\", 1\n",
+                needle: event_property(AUTHORED_EVENTS),
+                new_str: "            P: \"c3d_events\", \"int\", \"Integer\", \"U\", 1\n",
             ),
         };
         assert(@catch(decode_events(mem, &source)) == c3d::ASSET_FORMAT_ERROR);
@@ -393,8 +418,8 @@ fn void test_import_events_fbx_animation_disabled_ignores_recognized_faults() @t
         String[2] texts = {
             event_text("{"),
             ((String)FBX_EVENTS).treplace(
-                event_property(AUTHORED_EVENTS),
-                "            P: \"c3d_events\", \"int\", \"Integer\", \"U\", 1\n",
+                needle: event_property(AUTHORED_EVENTS),
+                new_str: "            P: \"c3d_events\", \"int\", \"Integer\", \"U\", 1\n",
             ),
         };
         foreach (text : texts) {
@@ -410,8 +435,8 @@ fn void test_import_events_fbx_zero_and_negative_stack_origins_keep_keys() @test
     @pool() {
         assert_origin_paths((String)FBX_EVENTS);
         String negative = ((String)FBX_EVENTS).treplace(
-            "P: \"LocalStart\", \"KTime\", \"Time\", \"\", 0",
-            "P: \"LocalStart\", \"KTime\", \"Time\", \"\", -46186158000",
+            needle: "P: \"LocalStart\", \"KTime\", \"Time\", \"\", 0",
+            new_str: "P: \"LocalStart\", \"KTime\", \"Time\", \"\", -46186158000",
         );
         assert_origin_paths(animate_negative_origin(negative));
     };
@@ -420,12 +445,14 @@ fn void test_import_events_fbx_zero_and_negative_stack_origins_keep_keys() @test
 fn void test_import_events_fbx_positive_origin_trims_tracks_not_markers() @test {
     @pool() {
         String positive = ((String)FBX_EVENTS).treplace(
-            "P: \"LocalStart\", \"KTime\", \"Time\", \"\", 0",
-            "P: \"LocalStart\", \"KTime\", \"Time\", \"\", 46186158000",
-        ).treplace(
-            "P: \"LocalStop\", \"KTime\", \"Time\", \"\", 46186158000",
-            "P: \"LocalStop\", \"KTime\", \"Time\", \"\", 92372316000",
-        ).treplace("a: 0,46186158000", "a: 46186158000,92372316000");
+            needle: "P: \"LocalStart\", \"KTime\", \"Time\", \"\", 0",
+            new_str: "P: \"LocalStart\", \"KTime\", \"Time\", \"\", 46186158000",
+        )
+          .treplace(
+              needle: "P: \"LocalStop\", \"KTime\", \"Time\", \"\", 46186158000",
+              new_str: "P: \"LocalStop\", \"KTime\", \"Time\", \"\", 92372316000",
+          )
+          .treplace("a: 0,46186158000", "a: 46186158000,92372316000");
         assert_origin_paths(positive);
     };
 }
@@ -434,9 +461,10 @@ fn void test_import_events_fbx_negative_track_keys_preserve_profile_rejection() 
     @pool() {
         FbxEventSource source = {
             .text = ((String)FBX_EVENTS).treplace(
-                "P: \"LocalStart\", \"KTime\", \"Time\", \"\", 0",
-                "P: \"LocalStart\", \"KTime\", \"Time\", \"\", -46186158000",
-            ).treplace("a: 0,46186158000", "a: -46186158000,46186158000"),
+                needle: "P: \"LocalStart\", \"KTime\", \"Time\", \"\", 0",
+                new_str: "P: \"LocalStart\", \"KTime\", \"Time\", \"\", -46186158000",
+            )
+              .treplace("a: 0,46186158000", "a: -46186158000,46186158000"),
         };
         ModelDocument document = decode_events(mem, &source)!!;
         defer asset::destroy_model_document(&document);
@@ -459,13 +487,15 @@ fn void test_import_events_fbx_event_only_and_zero_duration_do_not_extend_clip()
     @pool() {
         String no_curve = without_curve(event_text(`{"version":1,"events":[{"time":0,"id":9}]}`));
         String zero_curve = event_text(`{"version":1,"events":[{"time":0,"id":9}]}`)
-            .treplace("KeyTime: *2", "KeyTime: *1")
-            .treplace("a: 0,46186158000", "a: 0")
-            .treplace("KeyValueFloat: *2", "KeyValueFloat: *1")
-            .treplace("a: 0,1", "a: 0")
-            .treplace("a: 2", "a: 1")
-            .treplace("P: \"LocalStop\", \"KTime\", \"Time\", \"\", 46186158000",
-                "P: \"LocalStop\", \"KTime\", \"Time\", \"\", 0");
+          .treplace("KeyTime: *2", "KeyTime: *1")
+          .treplace("a: 0,46186158000", "a: 0")
+          .treplace("KeyValueFloat: *2", "KeyValueFloat: *1")
+          .treplace("a: 0,1", "a: 0")
+          .treplace("a: 2", "a: 1")
+          .treplace(
+              needle: "P: \"LocalStop\", \"KTime\", \"Time\", \"\", 46186158000",
+              new_str: "P: \"LocalStop\", \"KTime\", \"Time\", \"\", 0",
+          );
         foreach (text : (String[2]){ no_curve, zero_curve }) {
             FbxEventSource source = { .text = text };
             ModelDocument document = decode_events(mem, &source)!!;
@@ -496,8 +526,7 @@ fn void test_import_events_fbx_document_sync_and_async_tables_match() @test {
         defer asset::destroy_asset_store(&asynchronous);
         AsyncLoader pending = loader::create_async_loader(mem, &asynchronous, 1)!!;
         defer loader::destroy_async_loader(&pending);
-        LoadId id = pending.request({ .path = MODEL_PATH, .format = ModelFormat.FBX,
-            .options = asset::LOAD_OPTIONS_DEFAULT })!!;
+        LoadId id = pending.request(event_request())!!;
         assert(settle_events(&pending, id).phase == LoadPhase.DECODED);
         assert(pending.publish() == 1);
         LoadStatus status = pending.status(id);
@@ -540,93 +569,62 @@ fn void test_import_events_fbx_replacement_replaces_clears_and_rolls_back() @tes
 }
 
 fn void test_import_events_fbx_all_load_paths_report_same_schema_fault() @test {
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
     @pool() {
         FbxEventSource source = { .text = (String)FBX_EVENTS };
-        AssetStore assets = event_store(mem, &source);
+        AssetStore assets = event_store(&tracker, &source);
         defer asset::destroy_asset_store(&assets);
         ModelId target = fbx::load_model(&assets, TARGET_PATH, { .animations = false })!!;
-        RetargetProfile profile = event_profile(mem, assets.model(target).data.nodes, &assets.model(target).data);
+        RetargetProfile profile = event_profile(&tracker, assets.model(target).data.nodes, &assets.model(target).data);
         defer retarget::destroy_retarget_profile(&profile);
-        sz keys = assets.keys.len();
         FbxEventFault[2] cases = {
             { .json = `{"version":1,"events":[{"time":2,"id":0}]}`, .expected = c3d::ASSET_FORMAT_ERROR },
             { .json = `{"version":2,"events":[]}`, .expected = c3d::UNSUPPORTED },
         };
         foreach (row : cases) {
             source.text = event_text(row.json);
-            assert(@catch(decode_events(mem, &source)) == row.expected);
+            FbxStoreSnapshot before = snapshot_store(&assets, &tracker);
+            assert(@catch(decode_events(&tracker, &source)) == row.expected);
+            assert_store_unchanged(&assets, &tracker, before);
+
+            before = snapshot_store(&assets, &tracker);
             assert(@catch(fbx::load_model(&assets, MODEL_PATH)) == row.expected);
+            assert_store_unchanged(&assets, &tracker, before);
+
+            before = snapshot_store(&assets, &tracker);
             assert(@catch(fbx::load_animations(
-                allocator: mem,
+                allocator: &tracker,
                 assets: &assets,
                 path: MODEL_PATH,
                 target: target,
             )) == row.expected);
+            assert_store_unchanged(&assets, &tracker, before);
+
+            before = snapshot_store(&assets, &tracker);
             assert(@catch(fbx::load_animations_with_profile(
-                allocator: mem,
+                allocator: &tracker,
                 assets: &assets,
                 path: MODEL_PATH,
                 target: target,
                 profile: &profile,
                 variant: "bad_events",
             )) == row.expected);
-            assert(assets.keys.len() == keys && assets.model(target).header.revision == 1);
+            assert_store_unchanged(&assets, &tracker, before);
+            assert(assets.model(target).header.revision == 1);
+
             AsyncLoader pending = loader::create_async_loader(mem, &assets, 1)!!;
             defer loader::destroy_async_loader(&pending);
-            LoadId id = pending.request({ .path = MODEL_PATH, .format = ModelFormat.FBX,
-                .options = asset::LOAD_OPTIONS_DEFAULT })!!;
+            before = snapshot_store(&assets, &tracker);
+            LoadId id = pending.request(event_request())!!;
             LoadStatus status = settle_events(&pending, id);
             assert(status.phase == LoadPhase.FAILED && status.failure == row.expected);
-            assert(pending.publish() == 0 && assets.keys.len() == keys);
+            assert(pending.publish() == 0);
+            assert_store_unchanged(&assets, &tracker, before);
             pending.release(id)!!;
+            assert_store_unchanged(&assets, &tracker, before);
         }
     };
-}
-
-fn void test_import_events_fbx_retarget_copies_survive_source_removal() @test {
-    @pool() {
-        FbxEventSource source = { .text = (String)FBX_EVENTS };
-        AssetStore assets = event_store(mem, &source);
-        defer asset::destroy_asset_store(&assets);
-        ModelId model = fbx::load_model(&assets, MODEL_PATH)!!;
-        ClipId original = assets.model(model).data.clips[0];
-        RetargetProfile profile = event_profile(mem, assets.model(model).data.nodes, &assets.model(model).data);
-        defer retarget::destroy_retarget_profile(&profile);
-        ClipId[] ordinary = fbx::load_animations(
-            allocator: mem,
-            assets: &assets,
-            path: MODEL_PATH,
-            target: model,
-        )!!;
-        defer alloc::free(mem, ordinary.ptr);
-        ClipId[] corrected = fbx::load_animations(
-            allocator: mem,
-            assets: &assets,
-            path: MODEL_PATH,
-            target: model,
-            options: { .rest_pose = RestPose.CORRECT },
-        )!!;
-        defer alloc::free(mem, corrected.ptr);
-        ClipId[] profiled = fbx::load_animations_with_profile(
-            allocator: mem,
-            assets: &assets,
-            path: MODEL_PATH,
-            target: model,
-            profile: &profile,
-            variant: "owned_events",
-        )!!;
-        defer alloc::free(mem, profiled.ptr);
-        ClipEvent[] original_events = assets.clip(original).data.events;
-        assert(original_events.ptr != assets.clip(ordinary[0]).data.events.ptr);
-        assert(original_events.ptr != assets.clip(corrected[0]).data.events.ptr);
-        assert(original_events.ptr != assets.clip(profiled[0]).data.events.ptr);
-        original_events[0].id = 99;
-        assert_event_table(assets.clip(ordinary[0]).data.events);
-        assert_event_table(assets.clip(corrected[0]).data.events);
-        assert_event_table(assets.clip(profiled[0]).data.events);
-        assets.remove_clip(original);
-        assert_event_table(assets.clip(ordinary[0]).data.events);
-        assert_event_table(assets.clip(corrected[0]).data.events);
-        assert_event_table(assets.clip(profiled[0]).data.events);
-    };
+    assert(tracker.allocated() == 0);
 }

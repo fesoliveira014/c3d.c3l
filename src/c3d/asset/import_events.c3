@@ -55,13 +55,18 @@ fn ClipEvent[]? parse_gltf_clip_events(Allocator allocator, String extras, float
         event_json_space(&reader);
         if (event_json_peek(&reader) != '{') return {};
         reader.cursor++;
+
         String metadata;
         bool found;
+
         event_json_space(&reader);
         if (event_json_take(&reader, '}')) return {};
 
         while (true) {
-            String key = event_json_key(&reader)!;
+            String token = event_json_string_token(&reader)!;
+            String key;
+            if (try decoded = json::tparse(token, JsonFlavor.JSON)) key = decoded.s;
+
             event_json_expect(&reader, ':')!;
             sz start = reader.cursor;
             event_json_skip(&reader)!;
@@ -74,6 +79,7 @@ fn ClipEvent[]? parse_gltf_clip_events(Allocator allocator, String extras, float
             if (event_json_take(&reader, '}')) break;
             event_json_expect(&reader, ',')!;
         }
+
         event_json_end(&reader)!;
 
         if (!found) return {};
@@ -120,6 +126,7 @@ fn ClipEvent[]? parse_clip_events(Allocator allocator, String source, float dura
                 event_json_expect(&reader, ',')!;
             }
         }
+
         event_json_end(&reader)!;
 
         if (!has_version) return c3d::ASSET_FORMAT_ERROR~;
@@ -134,6 +141,7 @@ fn ClipEvent[]? parse_event_array(Allocator allocator, String source, float dura
     EventJsonReader reader = { .source = source };
     ImportedEvents events;
     events.tinit();
+
     event_json_expect(&reader, '[')!;
     if (!event_json_take(&reader, ']')) {
         while (true) {
@@ -145,9 +153,11 @@ fn ClipEvent[]? parse_event_array(Allocator allocator, String source, float dura
             event_json_expect(&reader, ',')!;
         }
     }
+
     event_json_end(&reader)!;
 
     sort::quicksort(events.entries[:events.size], &compare_imported_events);
+
     ClipEvent[] result = alloc::new_array_try(allocator, ClipEvent, events.size)
       ?? c3d::CAPACITY_EXCEEDED~!;
     foreach (index, event : events.entries[:events.size]) {
@@ -163,6 +173,7 @@ fn ImportedEvent? parse_event_entry(EventJsonReader* reader, float duration) @lo
     ImportedEvent event;
     bool has_time;
     bool has_id;
+
     event_json_expect(reader, '{')!;
     if (!event_json_take(reader, '}')) {
         while (true) {
@@ -227,6 +238,7 @@ fn EventInteger event_integer(String token) @local {
     sz exponent;
     bool exponent_negative;
     sz exponent_limit = token.len + IMPORTED_ID_DIGITS;
+
     if (cursor < token.len) {
         cursor++;
         if (token[cursor] == '+' || token[cursor] == '-') exponent_negative = token[cursor++] == '-';
@@ -252,6 +264,7 @@ fn EventInteger event_integer(String token) @local {
         if (digit == '.') continue;
         if (position++ >= first_nonzero) value = value * 10 + digit - '0';
     }
+
     while (position++ < end) value *= 10;
 
     return {
@@ -263,29 +276,49 @@ fn EventInteger event_integer(String token) @local {
 }
 
 fn String? event_schema_key(EventJsonReader* reader, EventKeys* keys) @local {
-    String key = event_json_key(reader)!;
+    String token = event_json_string_token(reader)!;
+    Object* decoded = json::tparse(token, JsonFlavor.JSON) ?? c3d::ASSET_FORMAT_ERROR~!;
+    String key = decoded.s;
     if (keys.has_key(key)) return c3d::ASSET_FORMAT_ERROR~;
     keys.set(key, true);
     return key;
 }
 
-fn String? event_json_key(EventJsonReader* reader) @local {
+fn String? event_json_string_token(EventJsonReader* reader) @local {
     event_json_space(reader);
     if (event_json_peek(reader) != '"') return c3d::ASSET_FORMAT_ERROR~;
+
     sz start = reader.cursor++;
-    bool escaped;
     while (reader.cursor < reader.source.len) {
         char value = reader.source[reader.cursor++];
-        if (escaped) {
-            escaped = false;
-        } else if (value == '\\') {
-            escaped = true;
-        } else if (value == '"') {
-            String token = reader.source[start:reader.cursor - start];
-            Object* parsed = json::tparse(token, JsonFlavor.JSON) ?? c3d::ASSET_FORMAT_ERROR~!;
-            return parsed.s;
+        if (value < 0x20) return c3d::ASSET_FORMAT_ERROR~;
+        if (value == '"') return reader.source[start:reader.cursor - start];
+        if (value != '\\') continue;
+        if (reader.cursor == reader.source.len) return c3d::ASSET_FORMAT_ERROR~;
+
+        char escape = reader.source[reader.cursor++];
+        switch (escape) {
+            case '"':
+            case '\\':
+            case '/':
+            case 'b':
+            case 'f':
+            case 'n':
+            case 'r':
+            case 't':
+                continue;
+            case 'u':
+                for (uint digit = 0; digit < 4; digit++) {
+                    if (reader.cursor == reader.source.len) return c3d::ASSET_FORMAT_ERROR~;
+                    char hexadecimal = reader.source[reader.cursor++];
+                    if (!(hexadecimal >= '0' && hexadecimal <= '9') && !(hexadecimal >= 'a' && hexadecimal <= 'f')
+                      && !(hexadecimal >= 'A' && hexadecimal <= 'F')) return c3d::ASSET_FORMAT_ERROR~;
+                }
+            default:
+                return c3d::ASSET_FORMAT_ERROR~;
         }
     }
+
     return c3d::ASSET_FORMAT_ERROR~;
 }
 
@@ -299,10 +332,12 @@ fn String? event_json_number(EventJsonReader* reader) @local {
         if (!event_json_digit(event_json_peek(reader))) return c3d::ASSET_FORMAT_ERROR~;
         while (event_json_digit(event_json_peek(reader))) reader.cursor++;
     }
+
     if (event_json_take_raw(reader, '.')) {
         if (!event_json_digit(event_json_peek(reader))) return c3d::ASSET_FORMAT_ERROR~;
         while (event_json_digit(event_json_peek(reader))) reader.cursor++;
     }
+
     char next = event_json_peek(reader);
     if (next == 'e' || next == 'E') {
         reader.cursor++;
@@ -311,6 +346,7 @@ fn String? event_json_number(EventJsonReader* reader) @local {
         if (!event_json_digit(event_json_peek(reader))) return c3d::ASSET_FORMAT_ERROR~;
         while (event_json_digit(event_json_peek(reader))) reader.cursor++;
     }
+
     return reader.source[start:reader.cursor - start];
 }
 
@@ -331,7 +367,7 @@ fn void? event_json_skip(EventJsonReader* reader) @local {
 
                 *phase = OBJECT_KEY;
             case OBJECT_KEY:
-                (void)event_json_key(reader)!;
+                (void)event_json_string_token(reader)!;
                 event_json_expect(reader, ':')!;
 
                 *phase = OBJECT_VALUE;
@@ -379,7 +415,7 @@ fn void? event_json_value(EventJsonReader* reader, EventFrames* frames) @local {
             reader.cursor++;
             frames.push(ARRAY_FIRST);
         case '"':
-            (void)event_json_key(reader)!;
+            (void)event_json_string_token(reader)!;
         case 't':
             event_json_literal(reader, "true")!;
         case 'f':

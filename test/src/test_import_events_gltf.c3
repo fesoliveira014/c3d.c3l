@@ -11,7 +11,7 @@ import std::thread;
 
 const String DOCUMENT @local = $embed("../fixtures/animation_events/gltf-events-v1.gltf");
 const String EXTRAS @local = `{"c3d_events":{"version":1,"events":[{"time":1,"id":9},{"time":0,"id":0},`
-    `{"time":0.5,"id":4294967295},{"time":0.5,"id":3},{"time":0.5,"id":3}]}}`;
+  `{"time":0.5,"id":4294967295},{"time":0.5,"id":3},{"time":0.5,"id":3}]}}`;
 const String EXTRAS_FIELD @local = `"extras": `;
 const String BUFFER_PAYLOAD @local = "AAAAAAAAgD8AAAAAAAAAAAAAAAAAAIA/AAAAQAAAQEA=";
 const String MODEL_KEY @local = "event-model.gltf";
@@ -180,8 +180,10 @@ fn void test_import_events_gltf_absent_empty_and_unrelated_metadata() @test {
 
 fn void test_import_events_gltf_unknown_fields_do_not_change_event_identity() @test {
     @pool() {
-        String source = with_extras(`{"ignored":false,"c3d_events":{"version":1,"extra":{"id":-1},`
-            `"events":[{"time":0.5,"id":4294967295,"note":"ignored"},{"time":0,"id":0}]}}`);
+        String source = with_extras(
+            extras: `{"ignored":false,"c3d_events":{"version":1,"extra":{"id":-1},`
+              `"events":[{"time":0.5,"id":4294967295,"note":"ignored"},{"time":0,"id":0}]}}`,
+        );
         ModelDocument document = decode_text(mem, source)!!;
         defer asset::destroy_model_document(&document);
         ClipEvent[2] expected = { { .time = 0, .id = 0 }, { .time = 0.5f, .id = uint::max } };
@@ -223,6 +225,38 @@ fn void test_import_events_gltf_nested_duplicates_and_extreme_unrelated_numbers_
         ClipEvent[1] expected = { { .time = 0.5f, .id = 7 } };
         expect_events(&document.clips[0].data, expected[..]);
     };
+}
+
+fn void test_import_events_gltf_unrelated_lone_surrogates_keep_absent_and_valid_tables() @test {
+    String[3] unrelated = {
+        `"unrelated":"\ud800"`,
+        `"\udc00x":"unrelated"`,
+        `"nested":{"\ud800":"\udc00x"}`,
+    };
+    String recognized = `{"version":1,"events":[{"time":0.5,"id":7}]}`;
+    ClipEvent[1] expected = { { .time = 0.5f, .id = 7 } };
+    TrackingAllocator tracker;
+    tracker.init(mem);
+    defer tracker.free();
+
+    foreach (entry : unrelated) {
+        @pool() {
+            {
+                String extras = string::tformat("{%s}", entry);
+                ModelDocument document = decode_text(&tracker, with_extras(extras))!!;
+                defer asset::destroy_model_document(&document);
+                expect_events(&document.clips[0].data, {});
+            }
+            assert(tracker.allocated() == 0);
+            {
+                String extras = string::tformat(`{%s,"c3d_events":%s}`, entry, recognized);
+                ModelDocument document = decode_text(&tracker, with_extras(extras))!!;
+                defer asset::destroy_model_document(&document);
+                expect_events(&document.clips[0].data, expected[..]);
+            }
+            assert(tracker.allocated() == 0);
+        };
+    }
 }
 
 fn void test_import_events_gltf_schema_faults_free_every_owned_array() @test {
