@@ -375,3 +375,270 @@ fn void test_animation_authoring_codec_crowd_pending_planar_and_weighted_rows_pr
           && original.authoring.instances[0].spaces[0].parameter_2d == spaces[0].parameter_2d);
     };
 }
+
+fn Node* codec_fault_pending_owner(Fixture* fixture, ModelId model_id) @local {
+    ClipId clip = fixture.assets.model(model_id).data.clips[0];
+    CrowdActionAuthoring[] actions = alloc::new_array(tmem, CrowdActionAuthoring, 3);
+    foreach (index, &action : actions) {
+        float[] weights = alloc::new_array(tmem, float, 4);
+        weights[..] = 0.5f;
+        weights[0] = index == 0 ? bitcast(0x3e123456u, float) : 0.125f;
+        *action = {
+            .clip = clip, .speed = 1, .loop = true, .weighted_mask = weights,
+        };
+    }
+    uint[3] members = { 0, 1, 2 };
+    Vec2[3] points = { { 0, 0 }, { 1, 0 }, { 0, 1 } };
+    BlendTriangle[1] triangles = { { .indices = { 0, 1, 2 } } };
+    CrowdSpaceAuthoring[1] spaces = { {
+        .actions = members[..], .weight = 0.75f, .speed = 0.5f, .playing = true,
+        .kind = TWO_DIMENSIONAL, .points = points[..], .triangles = triangles[..],
+        .parameter_2d = { bitcast(0x3e654321u, float), 0.125f },
+    } };
+    CrowdInstanceAuthoring[1] authoring = { {
+        .configured = true, .root_node = 2, .base_action = uint::max,
+        .actions = actions, .spaces = spaces[..],
+    } };
+    CrowdInstance[1] seeds = { {
+        .placement = maths::TRANSFORM_IDENTITY,
+        .pose = { .clip = clip, .speed = 1, .loop = true },
+        .color = { 1, 1, 1, 1 },
+    } };
+    Node* owner = fixture.source.add_node(name: "weighted_planar_pending")!!;
+    model::attach_crowd(
+        assets: &fixture.assets,
+        scene: &fixture.source,
+        node: owner,
+        model: model_id,
+        capacity: 2,
+        pose_bounds: { .min = { -4, -4, -4 }, .max = { 4, 4, 4 } },
+        instances: seeds[..],
+        actions_per_instance: 3,
+        authoring: authoring[..],
+    )!!;
+    return owner;
+}
+
+fn usz codec_unique_word_offset(char[] bytes, uint word) @local {
+    usz found;
+    uint count;
+    for (usz offset = 0; offset + uint::size <= bytes.len; offset++) {
+        Reader reader = serial::reader_over(bytes[offset:uint::size]);
+        if (reader.read_uint()!! != word) continue;
+        found = offset;
+        count++;
+    }
+    assert(count == 1);
+    return found;
+}
+
+fn usz codec_unique_layout_offset(char[] bytes, ulong layout) @local {
+    usz found;
+    uint count;
+    for (usz offset = 0; offset + ulong::size <= bytes.len; offset++) {
+        Reader reader = serial::reader_over(bytes[offset:ulong::size]);
+        if (reader.read_ulong()!! != layout) continue;
+        found = offset;
+        count++;
+    }
+    assert(count == 1);
+    return found;
+}
+
+fn void test_animation_authoring_codec_malformed_weighted_and_planar_reads_leave_scene_unchanged() @test {
+    @pool() {
+        Fixture fixture;
+        create_fixture(&fixture, 32);
+        defer destroy_fixture(&fixture);
+        serial::register_core_codecs()!!;
+        ModelId model_id = gltf::load_model(&fixture.assets, skin_fixture_path())!!;
+        Node* source = codec_fault_pending_owner(&fixture, model_id);
+        char[] bytes = serial::write_subtree(
+            allocator: tmem,
+            scene: &fixture.source,
+            assets: &fixture.assets,
+            root: source,
+        )!!;
+        String text = serial::write_subtree_text(
+            allocator: tmem,
+            scene: &fixture.source,
+            assets: &fixture.assets,
+            root: source,
+        )!!;
+        SerialDiagnostic diagnostic = serial::create_serial_diagnostic(mem);
+        defer serial::destroy_serial_diagnostic(&diagnostic);
+        TextDocument document = serial::parse_text(
+            allocator: tmem,
+            source: text,
+            limits: serial::TEXT_LIMITS_DEFAULT,
+            diagnostic: &diagnostic,
+        )!!;
+        defer serial::destroy_text_document(&document);
+        uint nodes = member(&document, 0, "nodes");
+        uint components = member(&document, nodes + 1, "components");
+        uint saved = member(&document, components, "c3d.AnimatedCrowd");
+        uint value = member(&document, saved, "value");
+        uint playback = member(&document, value, "playback");
+        uint actions = member(&document, playback + 1, "actions");
+        uint spaces = member(&document, playback + 1, "spaces");
+        uint weighted = member(&document, actions + 1, "weighted_mask");
+        uint triangles = member(&document, spaces + 1, "triangles");
+        uint face = member(&document, triangles + 1, "indices");
+        uint membership = member(&document, spaces + 1, "actions");
+        uint parameter = member(&document, spaces + 1, "parameter_2d");
+        uint scale_mode = member(&document, actions + 1, "additive_scale");
+        usz weight_offset = codec_unique_word_offset(bytes, 0x3e123456u);
+        usz parameter_offset = codec_unique_word_offset(bytes, 0x3e654321u);
+        usz triangle_indices = codec_unique_layout_offset(bytes, 0x484666f6dc6513d7)
+          + ulong::size + 3 * uint::size;
+        usz group_members = codec_unique_layout_offset(bytes, 0x4d5777ab1cce4ecc)
+          + ulong::size + 3 * uint::size;
+        uint[7] tokens = {
+            weighted + 1, weighted + 1, parameter, face, membership, weighted, scale_mode,
+        };
+        String[7] replacements = {
+            `"f32:7fc00001"`, "1.5", `["f32:7fc00001",0.125]`, "[99,1,2]", "[0,0,2]",
+            "[0.5,0.5,0.5]", `"UNKNOWN"`,
+        };
+        usz[7] offsets = {
+            weight_offset, weight_offset, parameter_offset, triangle_indices,
+            group_members + uint::size, weight_offset - 2 * uint::size,
+            weight_offset + 4 * float::size,
+        };
+        uint[7] words = { 0x7fc00001, 0x3fc00000, 0x7fc00001, 99, 0, 3, 99 };
+        Node* existing = fixture.destination.add_node(name: "existing")!!;
+        existing.local.position = { 3, 5, 7 };
+        uint free_before = fixture.destination.world.entities.free_count;
+        ReadOptions options = serial::READ_OPTIONS_DEFAULT;
+        options.diagnostic = &diagnostic;
+        foreach (case_index, token : tokens) {
+            char[] malformed = alloc::clone_slice(tmem, bytes);
+            Writer patch = serial::writer_over(malformed[offsets[case_index]:uint::size]);
+            patch.write_uint(words[case_index]);
+            String malformed_text = replace_token(text, document.values[token], replacements[case_index]);
+            for (uint encoding = 0; encoding < 2; encoding++) {
+                Node*? result = encoding == 0
+                  ? serial::read_subtree(
+                        scene: &fixture.destination,
+                        assets: &fixture.assets,
+                        bytes: malformed,
+                        options: options,
+                    )
+                  : serial::read_subtree_text(
+                        scene: &fixture.destination,
+                        assets: &fixture.assets,
+                        text: malformed_text,
+                        options: options,
+                    );
+                fault expected = case_index == 6 || (case_index == 5 && encoding == 0)
+                  ? c3d::ASSET_FORMAT_ERROR : c3d::INVALID_ARGUMENT;
+                assert(@catch(result) == expected);
+                assert(diagnostic.cause == expected && diagnostic.type_name == "c3d.AnimatedCrowd");
+                assert(fixture.destination.world.entities.free_count == free_before);
+                assert(fixture.destination.root.first_child == existing && existing.next_sibling == null);
+                assert(existing.local.position == (Vec3){ 3, 5, 7 });
+                assert(fixture.destination.count(AnimatedCrowd) == 0);
+            }
+        }
+    };
+}
+
+fn void test_animation_authoring_codec_pending_weighted_planar_allocations_and_prepare_retry_are_atomic() @test {
+    @pool() {
+        Fixture fixture;
+        create_fixture(&fixture, 32);
+        defer destroy_fixture(&fixture);
+        serial::register_core_codecs()!!;
+        ModelId model_id = gltf::load_model(&fixture.assets, skin_fixture_path())!!;
+        Node* source = codec_fault_pending_owner(&fixture, model_id);
+        char[] bytes = serial::write_subtree(
+            allocator: tmem,
+            scene: &fixture.source,
+            assets: &fixture.assets,
+            root: source,
+        )!!;
+        Node* decoded = serial::read_subtree(&fixture.destination, &fixture.assets, bytes)!!;
+        AnimatedCrowd* decoded_crowd = fixture.destination.get(decoded, AnimatedCrowd);
+        CrowdInstance[1] instances = { {
+            .placement = decoded_crowd.placements[0],
+            .pose = decoded_crowd.seeds[0],
+            .color = decoded_crowd.colors[0],
+        } };
+        CrowdAuthoringV3 authored = {
+            .model = decoded_crowd.model,
+            .capacity = (uint)decoded_crowd.placements.len,
+            .pose_bounds = decoded_crowd.pose_bounds,
+            .instances = instances[..],
+            .actions_per_instance = decoded_crowd.actions_per_instance,
+            .event_capacity = decoded_crowd.event_capacity,
+            .playback = decoded_crowd.authoring.instances,
+        };
+        FailingAllocator allocator;
+        Scene retry = scene::create_scene(&allocator, { .max_nodes = 32 });
+        Node* existing = retry.add_node(name: "existing")!!;
+        ReadContext context = { .scene = &retry, .assets = &fixture.assets, .node = existing };
+        CodecEntry* codec = &serial::codecs[ecs::assigned_slot(AnimatedCrowd)!!];
+        uint outstanding = allocator.outstanding;
+        uint free_before = retry.world.entities.free_count;
+        uint read_start = allocator.attempts;
+        codec.described.codec.attach(&authored, &context)!!;
+        uint read_allocations = allocator.attempts - read_start;
+        retry.remove_component(existing, AnimatedCrowd);
+        assert(allocator.outstanding == outstanding);
+        for (uint failure = 1; failure <= read_allocations; failure++) {
+            allocator.failure = allocator.attempts + failure;
+            assert(@catch(codec.described.codec.attach(&authored, &context)) == c3d::CAPACITY_EXCEEDED);
+            allocator.failure = 0;
+            assert(allocator.outstanding == outstanding);
+            assert(retry.world.entities.free_count == free_before);
+            assert(retry.root.first_child == existing && existing.next_sibling == null);
+            assert(retry.count(AnimatedCrowd) == 0);
+        }
+        codec.described.codec.attach(&authored, &context)!!;
+        Node* restored = existing;
+        AnimatedCrowd* crowd = retry.get(restored, AnimatedCrowd);
+        CrowdAuthoringState* pending = crowd.authoring;
+        CrowdInstanceAuthoring description = pending.instances[0];
+        float[][3] copied_weights;
+        foreach (index, action : description.actions) {
+            copied_weights[index] = alloc::clone_slice(tmem, action.weighted_mask);
+        }
+        Vec2[] copied_points = alloc::clone_slice(tmem, description.spaces[0].points);
+        BlendTriangle[] copied_triangles = alloc::clone_slice(tmem, description.spaces[0].triangles);
+        outstanding = allocator.outstanding;
+        free_before = retry.world.entities.free_count;
+        uint failures;
+        bool succeeded;
+        for (uint allowance = 1; allowance < 256; allowance++) {
+            allocator.failure = allocator.attempts + allowance;
+            if (catch excuse = model::prepare_crowd(&fixture.assets, &retry, restored)) {
+                allocator.failure = 0;
+                assert(excuse == c3d::CAPACITY_EXCEEDED);
+                assert(allocator.outstanding == outstanding && crowd.authoring == pending && !crowd.playback);
+                assert(restored.first_child == null && retry.world.entities.free_count == free_before);
+                foreach (index, action : pending.instances[0].actions) {
+                    assert(action.weighted_mask == copied_weights[index]);
+                }
+                CrowdSpaceAuthoring group = pending.instances[0].spaces[0];
+                assert(group.points == copied_points);
+                assert(mem::equals(group.triangles, copied_triangles));
+                failures++;
+            } else {
+                allocator.failure = 0;
+                succeeded = true;
+                break;
+            }
+        }
+        assert(succeeded && failures > 10 && !crowd.authoring);
+        assert(crowd.playback.slots[0].action_count == 3);
+        BlendSpace2D* planar = &crowd.playback.slots[0].spaces_2d[0];
+        assert(planar.count == 3 && planar.points[:3] == copied_points);
+        foreach (index, id : planar.actions[:3]) {
+            assert(crowd.playback.slots[0].actions.get(id).weighted_mask == copied_weights[index]);
+        }
+        anim::crowd_update(&fixture.assets, &retry, 0.125f);
+        assert(planar.phase > 0);
+        scene::destroy_scene(&retry);
+        assert(allocator.outstanding == 0);
+    };
+}
