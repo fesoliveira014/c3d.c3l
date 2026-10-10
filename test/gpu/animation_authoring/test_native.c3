@@ -206,7 +206,7 @@ fn void check_authoring_native_pose(
             Vec3 axis = { difference.i, difference.j, difference.k };
             errors.rotation = math::max(errors.rotation, 2 * math::atan2(axis.length(), math::abs(difference.l)));
         }
-        foreach (mesh, node : playback.mesh_nodes) {
+        foreach (usz mesh, node : playback.mesh_nodes) {
             float[] actual_weights = playback.logical_weights[(usz)source * playback.mesh_nodes.len + mesh];
             float[] expected_weights = pair.scene.get(reference.present_node(node), Mesh).morph_weights;
             foreach (index, weight : actual_weights) {
@@ -224,8 +224,9 @@ fn void check_authoring_native_pose(
                 double base_sample = authoring_native_linear_component(&clip.tracks[0], base.time, component);
                 double overlay_sample = authoring_native_linear_component(
                     &clip.tracks[0], controls.ordinary_overlay[source].time, component);
-                double below = controls.ordinary[source].weight * base_sample
-                  + (1 - controls.ordinary[source].weight) * playback.base_morph_weights[0][component];
+                double group_weight = (double)controls.ordinary[source].weight;
+                double default_weight = (double)playback.base_morph_weights[0][component];
+                double below = group_weight * base_sample + (1.0 - group_weight) * default_weight;
                 double expected = 0.7 * below + 0.3 * overlay_sample;
                 assert(math::abs((double)weight - expected) <= AUTHORING_NATIVE_MORPH_EPSILON);
             }

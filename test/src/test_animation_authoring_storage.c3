@@ -61,7 +61,8 @@ fn usz animation_storage_payload(uint capacity) @local {
 
 fn usz animation_storage_expected(uint capacity) @local {
     usz payload = animation_storage_payload(capacity);
-    usz row_alignment = math::max(AnimationActionId::alignment, Vec2::alignment);
+    usz row_alignment = (usz)math::max(BlendSpace2D::alignment,
+      math::max(AnimationActionId::alignment, Vec2::alignment));
     usz row_padding = (row_alignment - payload % row_alignment) % row_alignment;
     return 2 * BlendSpace2D::size + 2 * (payload + row_padding);
 }
@@ -104,7 +105,7 @@ fn void test_animation_authoring_storage_two_prepared_rows_match_measured_cost_a
             defer anim::destroy_blend_spaces_2d(&allocator, spaces);
 
             assert(spaces.len == 2 && allocator.acquire_calls == 1 && allocator.resize_calls == 0);
-            assert(allocator.requested_bytes == sample.expected_bytes && allocator.outstanding == 1);
+            assert((usz)allocator.requested_bytes == sample.expected_bytes && allocator.outstanding == 1);
             assert(allocator.requested_alignment == BlendSpace2D::alignment);
             assert((void*)spaces.ptr == allocator.pointer);
             usz base = (usz)allocator.pointer;

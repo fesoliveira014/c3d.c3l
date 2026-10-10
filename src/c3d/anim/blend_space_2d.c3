@@ -353,6 +353,7 @@ fn usz blend_space_2d_storage_bytes(uint capacity) @private {
     usz offset = MAX_BLEND_SPACES * BlendSpace2D::size;
     uint triangles = capacity * 2 > 5 ? capacity * 2 - 5 : 0;
     for (uint slot = 0; slot < MAX_BLEND_SPACES; slot++) {
+        offset = align_blend_space_storage(offset, BlendSpace2D::alignment);
         offset = align_blend_space_storage(offset, AnimationActionId::alignment);
         offset += capacity * AnimationActionId::size;
         offset = align_blend_space_storage(offset, Vec2::alignment);
@@ -373,6 +374,7 @@ fn BlendSpace2D[]? create_blend_spaces_2d(Allocator allocator, uint capacity) @p
     uint triangles = capacity * 2 > 5 ? capacity * 2 - 5 : 0;
 
     foreach (&space : spaces) {
+        offset = align_blend_space_storage(offset, BlendSpace2D::alignment);
         offset = align_blend_space_storage(offset, AnimationActionId::alignment);
         space.actions = ((AnimationActionId*)(storage + offset))[:capacity];
         offset += capacity * AnimationActionId::size;

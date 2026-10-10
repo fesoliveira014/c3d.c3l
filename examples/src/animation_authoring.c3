@@ -49,9 +49,9 @@ struct DisplayPair @local {
 
 struct Controls @local {
     Vec2 parameter;
-    float speed = 1;
-    float upper_weight = 0.6f;
-    float scale_weight = 0.5f;
+    float speed;
+    float upper_weight;
+    float scale_weight;
     bool paused;
     float pose_error;
     float morph_error;
@@ -275,7 +275,7 @@ fn void? run(
     Node* camera_node = scene.add_camera(camera::perspective_deg(50, 0.1f))!;
     camera_node.local.position = { 0, 3, 10 };
     camera_node.local.rotation = maths::look_rotation((Vec3){ 0, 1, -1 } - camera_node.local.position, { 0, 1, 0 });
-    Controls controls;
+    Controls controls = { .speed = 1, .upper_weight = 0.6f, .scale_weight = 0.5f };
     anim::update(assets, scene, 0);
     anim::crowd_update(assets, scene, 0);
     scene.update_world();
