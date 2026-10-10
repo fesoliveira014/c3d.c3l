@@ -30,22 +30,22 @@ fn EventStream event_stream(Action* action, AnimationClip* clip, ClipEvent event
 
     if (!action.loop) {
         bool crossed = forward
-            ? time >= start && (time < end || (end == clip.duration && time == end))
-            : time <= start && (time > end || (end == 0 && time == end));
+          ? time >= start && (time < end || (end == clip.duration && time == end))
+          : time <= start && (time > end || (end == 0 && time == end));
         count = crossed ? 1 : 0;
     } else if (forward) {
         bool closing = event.time == clip.duration;
         first = closing ? math::floor((start - time) / clip.duration) + 1
-            : math::ceil((start - time) / clip.duration);
+          : math::ceil((start - time) / clip.duration);
         double last = closing ? math::floor((end - time) / clip.duration)
-            : math::ceil((end - time) / clip.duration) - 1;
+          : math::ceil((end - time) / clip.duration) - 1;
         count = math::max(0.0, last - first + 1);
     } else {
         bool closing = event.time == 0;
         first = closing ? math::ceil((start - time) / clip.duration) - 1
-            : math::floor((start - time) / clip.duration);
+          : math::floor((start - time) / clip.duration);
         double last = closing ? math::ceil((end - time) / clip.duration)
-            : math::floor((end - time) / clip.duration) + 1;
+          : math::floor((end - time) / clip.duration) + 1;
         count = math::max(0.0, first - last + 1);
     }
 
@@ -76,13 +76,16 @@ fn EventReport publish_events(
             usz selected_bookmark;
             EventStream selected_stream;
             bool found;
+
             foreach (usz index, event : clip.events) {
                 usz bookmark;
                 while (bookmark < bookmark_count && bookmarks[bookmark].index != index) bookmark++;
+
                 EventStream stream = bookmark < bookmark_count
-                    ? (EventStream){ .next = bookmarks[bookmark].next, .remaining = bookmarks[bookmark].remaining }
-                    : event_stream(action, clip, event);
+                  ? (EventStream){ .next = bookmarks[bookmark].next, .remaining = bookmarks[bookmark].remaining }
+                  : event_stream(action, clip, event);
                 if (stream.remaining < 1) continue;
+
                 if (!found || event_before(
                     time: stream.next,
                     event: event,

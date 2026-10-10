@@ -25,8 +25,13 @@ fn void test_crowd_authoring_round_trips_pending_and_restarts_captured_clocks() 
         } };
         Aabb bounds = { .min = { -1, -1, -1 }, .max = { 1, 1, 1 } };
         Node* source = model::add_crowd(
-            assets: &fixture.assets, scene: &fixture.source, model: model_id, capacity: 3,
-            pose_bounds: bounds, instances: instances[..], trace: true,
+            assets: &fixture.assets,
+            scene: &fixture.source,
+            model: model_id,
+            capacity: 3,
+            pose_bounds: bounds,
+            instances: instances[..],
+            trace: true,
         )!!;
         char[] bytes = serial::write_subtree(
             allocator: tmem,
@@ -42,7 +47,8 @@ fn void test_crowd_authoring_round_trips_pending_and_restarts_captured_clocks() 
         )!!;
         anim::crowd_update(&fixture.assets, &fixture.source, 0.5f);
         AnimatedCrowd* original = fixture.source.get(source, AnimatedCrowd);
-        assert(original.playback.slots[0].actions.get(original.playback.slots[0].base_action).time == 0.375f && original.start_times[0] == 0.125f);
+        assert(original.playback.slots[0].actions.get(original.playback.slots[0].base_action).time == 0.375f
+          && original.start_times[0] == 0.125f);
         assert(text == serial::write_subtree_text(
             allocator: tmem,
             scene: &fixture.source,
@@ -68,7 +74,8 @@ fn void test_crowd_authoring_round_trips_pending_and_restarts_captured_clocks() 
             anim::crowd_update(&fixture.assets, &fixture.destination, 0.5f);
             loaded = fixture.destination.get(restored, AnimatedCrowd);
             assert(loaded.is_prepared() && loaded.parts.len == original.parts.len);
-            assert(loaded.playback.slots[0].actions.get(loaded.playback.slots[0].base_action).time == original.playback.slots[0].actions.get(original.playback.slots[0].base_action).time);
+            assert(loaded.playback.slots[0].actions.get(loaded.playback.slots[0].base_action).time
+              == original.playback.slots[0].actions.get(original.playback.slots[0].base_action).time);
             for (usz index = 0; index < loaded.joint_count; index++) {
                 for (uint coefficient = 0; coefficient < 16; coefficient++) {
                     assert(math::abs(loaded.palettes[index].m[coefficient] - original.palettes[index].m[coefficient]) < 1e-6f);

@@ -342,6 +342,7 @@ fn void commit_pose(
 
     if (candidate.crowd) {
         AnimatedCrowd* crowd = candidate.crowd;
+
         capture_crowd_sources(
             allocator: allocator,
             assets: assets,
@@ -391,6 +392,7 @@ fn void commit_pose(
             write_instance_locals(pose.instances, batch);
             pose.instance_revision = batch.revision;
         }
+
         pose.instance_count = batch.count;
     }
 }

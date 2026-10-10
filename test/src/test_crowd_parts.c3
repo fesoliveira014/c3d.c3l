@@ -19,11 +19,11 @@ const uint NODE_CAPACITY @local = 64;
 const uint SIGNED_TARGET_COUNT @local = 10;
 const uint SIGNED_CHANNEL_COUNT @local = 5;
 const uint[8] SIGNED_SELECTED_TARGETS @local = { 9, 7, 5, 8, 3, 6, 1, 4 };
-const float[2][8] SIGNED_SELECTED_WEIGHTS @local = {
+const float[8][2] SIGNED_SELECTED_WEIGHTS @local = {
     { 3.5f, 3, 2.5f, -2.5f, 2, -2, 1.5f, -1.5f },
     { 4, 3.5f, 3, -3, 2.5f, -2.5f, 2, -2 },
 };
-const float[2][5] SIGNED_CHANNEL_WEIGHTS @local = {
+const float[5][2] SIGNED_CHANNEL_WEIGHTS @local = {
     { 1.25f, 1.5f, 1.75f, 2, 2.25f },
     { 1.5f, 1.75f, 2, 2.25f, 2.5f },
 };
