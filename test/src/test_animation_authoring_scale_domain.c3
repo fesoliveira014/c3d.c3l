@@ -111,7 +111,7 @@ fn void test_animation_scale_domain_cubic_two_extrema_and_off_center_zero_touch(
         assert(expected > 1 && expected < 2);
         assert(math::abs((double)actual.x - expected) < 1e-6);
     }
-    values = scale_domain_cubic_values(start: 0.0625, end: 1.125, outgoing: -0.4375, incoming: 2.0625);
+    values = scale_domain_cubic_values(start: 0.0625, end: 1.125, outgoing: -0.4375, incoming: 3.5625);
     expect_scale_domain_invalid(&track);
     Vec3 touch = anim::sample_multiplicative_scale(&track, 0.25, &cursor);
     assert(touch.x == 0);
@@ -119,7 +119,7 @@ fn void test_animation_scale_domain_cubic_two_extrema_and_off_center_zero_touch(
         start: 0.05859375,
         end: 1.12109375,
         outgoing: -0.4375,
-        incoming: 2.0625,
+        incoming: 3.5625,
     );
     expect_scale_domain_invalid(&track);
     touch = anim::sample_multiplicative_scale(&track, 0.25, &cursor);

@@ -135,8 +135,8 @@ fn ClipId[3] space_clips(LayerFixture* fixture) @local {
 
 fn SpaceTopology space_triangle() @local {
     return {
-        .coordinates = { { 0, 0 }, { 2, 0 }, { 0, 2 } },
-        .triangles = { { .indices = { 0, 1, 2 } } },
+        .coordinates = { [0] = { 0, 0 }, [1] = { 2, 0 }, [2] = { 0, 2 } },
+        .triangles = { [0] = { .indices = { 0, 1, 2 } } },
         .count = 3,
         .triangle_count = 1,
     };
