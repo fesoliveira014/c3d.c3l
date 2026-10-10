@@ -305,7 +305,7 @@ fn void? write_native_samples(
             repetition: repetition,
             views: views,
         )!;
-        csv_uint(&files.raw, frame - WARMUPS)!;
+        csv_uint(&files.raw, (ulong)(frame - WARMUPS))!;
         csv_uint(&files.raw, frame)!;
         csv_uint(&files.raw, sample.submission)!;
         csv_uint(&files.raw, SCRIPT_SEED)!;
@@ -601,7 +601,7 @@ fn void? measure_native_row(
             desc.post.motion_blur = true;
             views[index] = render::create_view(&renderer, desc)!;
         }
-        NativeSample[NATIVE_CAPTURE_FRAMES] samples;
+        NativeSample[] samples = alloc::new_array(tmem, NativeSample, NATIVE_CAPTURE_FRAMES);
         ulong high_water;
         for (uint frame = 0; frame < NATIVE_CAPTURE_FRAMES + NATIVE_DRAIN_FRAMES; frame++) {
             NativeSample drain;
