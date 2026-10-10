@@ -58,6 +58,7 @@ fn Node*? add_crowd(
         instances: instances,
         authoring: authoring,
         actions_per_instance: actions_per_instance,
+        model: model,
     )!;
 
     Node* root = scene::add_crowd_node(scene, parent, name)!;
@@ -121,6 +122,7 @@ fn void? attach_crowd(
         instances: instances,
         authoring: authoring,
         actions_per_instance: actions_per_instance,
+        model: model,
     )!;
 
     Allocator allocator = scene.allocator;
@@ -184,6 +186,7 @@ fn void? prepare_crowd(AssetStore* assets, Scene* scene, Node* node) {
                 source: source,
                 actions_per_instance: crowd.actions_per_instance,
                 placement: crowd.placements[index],
+                model: crowd.model,
             )!;
         }
     }
@@ -464,6 +467,7 @@ fn void? check_authoring(
     CrowdInstance[] instances,
     anim::CrowdInstanceAuthoring[] authoring,
     uint actions_per_instance,
+    ModelId model,
 ) @local {
     if (!authoring.len) return;
     if (authoring.len != instances.len) return c3d::INVALID_ARGUMENT~;
@@ -475,6 +479,7 @@ fn void? check_authoring(
             source: source,
             actions_per_instance: actions_per_instance,
             placement: instances[index].placement,
+            model: model,
         )!;
     }
 }

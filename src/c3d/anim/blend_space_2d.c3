@@ -5,7 +5,10 @@ import c3d::asset;
 import c3d::scene;
 import std::math;
 
-<* Phase-synchronized clips controlled by planar coordinates. *>
+<*
+ Phase-synchronized clips controlled by planar coordinates.
+ Arrays remain read-only throughout the borrow.
+*>
 struct BlendSpace2D {
     AnimationActionId[] actions;
     Vec2[] points;
@@ -143,6 +146,14 @@ fn void? CrowdPlayer.fade_blend_space_2d(
     playback.fade_blend_space_2d(space, target_weight, duration)!;
 }
 
+<*
+ Start copied planar clips in prepared playback storage.
+ @param [&in] assets : "Clips remain live throughout playback."
+ @param coordinates : "One distinct finite point per clip."
+ @param triangles : "Connected triangulation of the samples' convex hull."
+ @param desc : "Shared captured configuration and initial fade."
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+*>
 fn BlendSpace2D*? PlaybackView.add_blend_space_2d(
     &self,
     AssetStore* assets,
@@ -152,7 +163,7 @@ fn BlendSpace2D*? PlaybackView.add_blend_space_2d(
     PlayDesc desc,
     PoseDestination destination,
     MotionBasis motion_basis,
-) @private {
+) {
     uint capacity = (uint)self.actions.items.len;
     if (clips.len != coordinates.len || clips.len < 3 || clips.len > capacity) {
         return c3d::INVALID_ARGUMENT~;
@@ -228,7 +239,13 @@ fn BlendSpace2D*? PlaybackView.add_blend_space_2d(
     return space;
 }
 
-fn void? PlaybackView.stop_blend_space_2d(&self, BlendSpace2D* space, float fade_out = 0) @private {
+<*
+ Fade a planar space out or remove its members immediately.
+ @param [&inout] space : "Current borrow from this playback."
+ @param fade_out : "Finite nonnegative seconds."
+ @return? c3d::INVALID_ARGUMENT
+*>
+fn void? PlaybackView.stop_blend_space_2d(&self, BlendSpace2D* space, float fade_out = 0) {
     if (!space.count || !math::is_finite(fade_out) || fade_out < 0) return c3d::INVALID_ARGUMENT~;
     if (fade_out == 0) {
         remove_blend_space_2d(self, space);
@@ -239,12 +256,19 @@ fn void? PlaybackView.stop_blend_space_2d(&self, BlendSpace2D* space, float fade
     space.fade_rate = space.weight / fade_out;
 }
 
+<*
+ Fade a planar space toward a new weight.
+ @param [&inout] space : "Current borrow from this playback."
+ @param target_weight : "Finite weight in [0,1]."
+ @param duration : "Finite positive seconds."
+ @return? c3d::INVALID_ARGUMENT
+*>
 fn void? PlaybackView.fade_blend_space_2d(
     &self,
     BlendSpace2D* space,
     float target_weight,
     float duration,
-) @private {
+) {
     if (!space.count || !math::is_finite(target_weight) || target_weight < 0 || target_weight > 1
       || !math::is_finite(duration) || duration <= 0) return c3d::INVALID_ARGUMENT~;
 
