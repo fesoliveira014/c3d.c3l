@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "base_commit": "73edb0d4a24a68f8de4f3d6a0064919cfe4f5e0b",
+  "production_src_tree": "7c00e52444bdec9100955ea67e1ef374ed299ec3",
+  "shader_tree": "378c3b923a87004a2d8934594ac5bca1a6199fa9",
+  "compiler": "C3 0.8.3 git1d155ee",
+  "options": "default safe",
+  "gpu": "NVIDIA RTX4090",
+  "driver": "610.88",
+  "validation": true,
+  "fresh_executions": 2,
+  "repeat_byte_identical": true,
+  "image_format": "RGBA32_FLOAT little-endian float32",
+  "image_extent": [
+    32,
+    32
+  ],
+  "shadow_samples": "Two modes atlas/traced; each eight u32: standard blocked/lit/masked-hole/cast-off, transmittingOPAQUE blocked/lit, surviving transmittingMASK blocked/lit",
+  "rows": [
+    {
+      "path": "shadow_hardware.u32",
+      "bytes": 64,
+      "sha256": "49bda376bbe72dece92de2dc1bef98a895291b294e97fcdbb1a75d93d1b30e81"
+    },
+    {
+      "path": "shadow_software.u32",
+      "bytes": 64,
+      "sha256": "49bda376bbe72dece92de2dc1bef98a895291b294e97fcdbb1a75d93d1b30e81"
+    },
+    {
+      "path": "smooth_deferred.rgba32f",
+      "bytes": 16384,
+      "sha256": "e5bf995cc280b66da39df16da65ca5a74b8d0be4a04cb924c60710f2b36b08fa"
+    },
+    {
+      "path": "smooth_forward.rgba32f",
+      "bytes": 16384,
+      "sha256": "e5bf995cc280b66da39df16da65ca5a74b8d0be4a04cb924c60710f2b36b08fa"
+    },
+    {
+      "path": "sorted_deferred.rgba32f",
+      "bytes": 16384,
+      "sha256": "378b801b73ae1f6db89a336406abb3672a800adb9a806dd73f8ffa1a1437bade"
+    },
+    {
+      "path": "sorted_forward.rgba32f",
+      "bytes": 16384,
+      "sha256": "378b801b73ae1f6db89a336406abb3672a800adb9a806dd73f8ffa1a1437bade"
+    }
+  ],
+  "producer_inputs": [
+    {
+      "path": "test/gpu/render/transparency_baseline.c3",
+      "sha256": "5fa7f8f9ffd2add06ca0e25e7a4df1bd5ba8186d4f1d27b29341864e7f525083"
+    },
+    {
+      "path": "test/gpu/render/test_submission.c3",
+      "sha256": "031f868e98db2db0df2c49a803033572cbef33e99e7cc377e084b5d5ae0ea862"
+    },
+    {
+      "path": "test/gpu/render/test_material_blend.c3",
+      "sha256": "a84ce6adcebf1876c24aebcdb60e3beb28f178743d38c09bca0053ea073c9170"
+    },
+    {
+      "path": "test/gpu/render/test_path_tracing.c3",
+      "sha256": "8747744e91339b38b8a7861802bbe04f2b3e552e038580eb0333dc18d76e7d0d"
+    },
+    {
+      "path": "test/gpu/render/test_ray_tracing.c3",
+      "sha256": "1cf151e606043c01f96f7f33ecfb1cf255ed4c4e3e3b435a182ac8b9f6816512"
+    },
+    {
+      "path": "test/fixtures/transparency/fixture.c3",
+      "sha256": "cd14c195609d85c98dae849237c0b1ff16b105237aae8f18fae7680425bc9ca1"
+    },
+    {
+      "path": "test/fixtures/transparency/oracle_test.c3",
+      "sha256": "38693678fef5460490559667407f1ad222abcbe39f3f4c715ae9a3e353f8e610"
+    }
+  ],
+  "oracle_cpu": "8 passed, 0 failed; no GPU in oracle tests",
+  "limitations": [
+    "Not a P01/P02/P03 pass",
+    "Shadow receipts are selected u32 pixels, not full atlas capture",
+    "Bit-identity baseline is same compiler/options/device/driver"
+  ],
+  "recorded_at": "2026-10-10T23:32:36.6440219+00:00"
+}
