@@ -48,6 +48,10 @@ struct MeshCandidate {
     BillboardBatch* billboards;
     ulong          scene_identity;
     AnimatedCrowd* crowd;
+    AnimatedLodPartBinding* animated_lod;
+    ModelInstance* model_instance;
+    Node*          source_node;
+    Mesh*          source_mesh;
     uint           crowd_part;
     uint           instance_first;
     uint           instance_count;
@@ -295,6 +299,8 @@ fn void include_mesh(
     ExtractCounts* counts,
     Vec3 origin,
 ) @local {
+    if (animated_lod_owns_source(scene, node)) return;
+
     SkinBinding* skin = scene.get(node, SkinBinding);
     if (!spatial::mesh_is_live(assets, mesh, skin)) {
         counts.dangling++;
@@ -373,6 +379,8 @@ fn void include_batch(
     ExtractCounts* counts,
     Vec3 origin,
 ) @local {
+    if (animated_lod_owns_source(scene, node)) return;
+
     if (!batch_is_drawable(assets, batch)) {
         counts.dangling++;
         return;
@@ -480,9 +488,12 @@ fn void emit_lod_candidates(
             if (!impostor && shadow && assets.material(part.material).data.common.alpha_mode == AlphaMode.BLEND) continue;
             uint parities = instanced ? 2 : 1;
             for (uint parity = 0; parity < parities; parity++) {
-                uint count = instanced ? (parity == 0 ? selection.instances.lod_unmirrored_count : state.count - selection.instances.lod_unmirrored_count) : 1;
+                uint split = instanced && state.animated
+                  ? selection.part_unmirrored[level.first_part + index]
+                  : (instanced ? selection.instances.lod_unmirrored_count : 1);
+                uint count = instanced ? (parity == 0 ? split : state.count - split) : 1;
                 if (!count) continue;
-                candidates[counts.visible++] = {
+                MeshCandidate candidate = {
                     .node = selection.node,
                     .geometry = part.geometry,
                     .material = part.material,
@@ -498,6 +509,9 @@ fn void emit_lod_candidates(
                     .lod_part = level.first_part + index,
                     .impostor = impostor,
                 };
+                if (state.animated && !bind_animated_lod_candidate(selection, &candidate)) continue;
+
+                candidates[counts.visible++] = candidate;
             }
         }
     }

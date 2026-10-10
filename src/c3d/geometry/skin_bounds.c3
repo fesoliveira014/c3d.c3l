@@ -31,18 +31,25 @@ struct SkinBounds {
 <*
  Select the largest active targets by weight magnitude.
  @param channels : "Empty maps one weight to each target."
- @param weights : "One per channel, or per target when channels is empty."
+ @param weights : "Source logical weights; one per channel or target."
+ @param weight_indices : "Optional admitted selected-to-source logical weight map."
  @pure
- @require channels.len == 0 || channels.len == weights.len
+ @require !channels.len || channels.len == (weight_indices.len ? weight_indices.len : weights.len)
 *>
-fn MorphSelection select_morph_targets(MorphChannel[] channels, float[] weights) {
+fn MorphSelection select_morph_targets(MorphChannel[] channels, float[] weights, uint[] weight_indices = {}) {
     MorphSelection selection;
     if (!channels.len) {
-        foreach (uint index, weight : weights) insert_morph_target(&selection, index, weight);
+        if (weight_indices.len) {
+            foreach (uint index, source : weight_indices) insert_morph_target(&selection, index, weights[source]);
+        } else {
+            foreach (uint index, weight : weights) insert_morph_target(&selection, index, weight);
+        }
+
         return selection;
     }
+
     foreach (usz index, &channel : channels) {
-        ChannelBlend blend = channel.blend(weights[index]);
+        ChannelBlend blend = channel.blend(weights[weight_indices.len ? weight_indices[index] : index]);
         insert_morph_target(&selection, blend.targets[0], blend.weights[0]);
         insert_morph_target(&selection, blend.targets[1], blend.weights[1]);
     }

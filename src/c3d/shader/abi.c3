@@ -566,8 +566,11 @@ struct LodPartGpu {
     GpuAddress impostor;
     Vec4f      history_origin_delta;
     Vec4f      current_origin_delta;
+    GpuAddress part_instances;
+    uint       history_levels;
+    uint       _pad0;
 }
-$assert LodPartGpu::size == 176;
+$assert LodPartGpu::size == 192;
 $assert $reflect(LodPartGpu.local).offset == 0;
 $assert $reflect(LodPartGpu.normal_0).offset == 64;
 $assert $reflect(LodPartGpu.normal_1).offset == 80;
@@ -579,6 +582,9 @@ $assert $reflect(LodPartGpu.seed).offset == 132;
 $assert $reflect(LodPartGpu.impostor).offset == 136;
 $assert $reflect(LodPartGpu.history_origin_delta).offset == 144;
 $assert $reflect(LodPartGpu.current_origin_delta).offset == 160;
+$assert $reflect(LodPartGpu.part_instances).offset == 176;
+$assert $reflect(LodPartGpu.history_levels).offset == 184;
+$assert $reflect(LodPartGpu._pad0).offset == 188;
 
 struct ImpostorGpu {
     Vec4f        bounds;
@@ -657,7 +663,7 @@ struct InstanceCullRoot {
     GpuAddress lod_current;
     GpuAddress lod_previous;
     GpuAddress lod_metadata;
-    uint       _pad7;
+    uint       lod_animated;
     uint       _pad8;
     Vec4f[2]   lod_thresholds;
     Vec4f      lod_camera_bias;
@@ -692,7 +698,7 @@ $assert $reflect(InstanceCullRoot.depth_axis).offset == 208;
 $assert $reflect(InstanceCullRoot.lod_current).offset == 224;
 $assert $reflect(InstanceCullRoot.lod_previous).offset == 232;
 $assert $reflect(InstanceCullRoot.lod_metadata).offset == 240;
-$assert $reflect(InstanceCullRoot._pad7).offset == 248;
+$assert $reflect(InstanceCullRoot.lod_animated).offset == 248;
 $assert $reflect(InstanceCullRoot._pad8).offset == 252;
 $assert $reflect(InstanceCullRoot.lod_thresholds).offset == 256;
 $assert $reflect(InstanceCullRoot.lod_camera_bias).offset == 288;

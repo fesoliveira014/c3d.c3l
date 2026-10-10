@@ -680,7 +680,16 @@ fn void? record_raster_view(
                 PoseRecord* pose = has_previous ? record.history.previous_pose(scene, node) : null;
                 PoseRecord* crowd_pose;
                 bool crowd_history_invalid;
-                if (temporal && item.candidate.crowd) {
+                if (temporal && item.candidate.animated_lod) {
+                    crowd_pose = pose;
+                    pose = record.history.previous_candidate_pose(
+                        scene: scene,
+                        assets: renderer.assets,
+                        candidate: item.candidate,
+                    );
+                    crowd_history_invalid = !pose;
+                    has_previous &= !crowd_history_invalid;
+                } else if (temporal && item.candidate.crowd) {
                     if (record.history.has_previous(scene, node.parent)) {
                         crowd_pose = record.history.previous_pose(scene, node.parent);
                     }
@@ -706,7 +715,7 @@ fn void? record_raster_view(
                 }
 
                 bool posed = item.skin != (gpu::GpuAddress)0 || item.morph != (gpu::GpuAddress)0
-                  || item.candidate.batch || vertices == VertexHistory.CHANGED;
+                  || item.candidate.batch || item.candidate.animated_lod || vertices == VertexHistory.CHANGED;
                 item.moved = (temporal && item.candidate.lod) || vertices == VertexHistory.INVALID
                   || crowd_history_invalid
                   || (has_previous && (posed || item.custom_velocity || !(prev_world == node.world)));
@@ -1509,6 +1518,15 @@ fn gpu::GpuAddress? upload_previous_pose(
     bool positions,
 ) @private {
     MeshCandidate* candidate = item.candidate;
+    if (candidate.animated_lod) {
+        return upload_animated_lod_previous(
+            renderer: renderer,
+            item: item,
+            pose: pose,
+            owner: crowd_pose,
+        );
+    }
+
     uint offset = instance_offset(&item.range);
     BatchAddresses current = batch_addresses(
         candidate: candidate,

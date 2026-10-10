@@ -251,6 +251,9 @@ root LodPartGpu {
     GpuAddress impostor;
     vec4 history_origin_delta;
     vec4 current_origin_delta;
+    GpuAddress part_instances;
+    uint history_levels;
+    uint _pad0;
 }
 
 root ImpostorGpu {
@@ -325,7 +328,7 @@ root InstanceCullRoot {
     GpuAddress lod_current;
     GpuAddress lod_previous;
     GpuAddress lod_metadata;
-    uint       _pad7;
+    uint       lod_animated;
     uint       _pad8;
     vec4[2]    lod_thresholds;
     vec4       lod_camera_bias;

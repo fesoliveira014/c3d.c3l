@@ -364,7 +364,13 @@ fn void? record_instance_cull(Renderer* renderer, CullItem[] items) @private {
                 root.lod_metadata = item.candidate.lod.instances.lod_metadata;
                 root.lod_level = item.candidate.lod_level;
                 root.lod_parity = item.candidate.mirrored ? 1 : 0;
-                root.lod_count_visible = item.main_view ? 1 : 0;
+                if (item.candidate.animated_lod) {
+                    root.lod_animated = 1;
+                    root.bounds_instances = resolve_animated_lod_parts(renderer, item.candidate)!;
+                }
+                bool count_object = !item.candidate.animated_lod || item.candidate.lod_part
+                  == item.candidate.lod.state.desc.levels[item.candidate.lod_level].first_part;
+                root.lod_count_visible = item.main_view && count_object ? 1 : 0;
             }
             write_cull_planes(root, item.bounded ? item.frustum : &open_frustum);
             uint groups = (range.count + shader::INSTANCE_CULL_GROUP_SIZE - 1) / shader::INSTANCE_CULL_GROUP_SIZE;

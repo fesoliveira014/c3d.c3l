@@ -190,3 +190,31 @@ fn void test_animated_lod_pending_crowd_reacquires_fixed_source_without_replacem
         assert(state.count == 1 && state.identity == identity && state.slot_generations[0] != generation);
     };
 }
+
+fn void test_animated_lod_removed_mesh_or_joint_rejects_whole_source_entry() @test {
+    @pool() {
+        AssetStore assets = animated_lod_store();
+        defer asset::destroy_asset_store(&assets);
+        PartsFixture fixture = animated_crowd_fixtures::add_parts_fixture(&assets)!!;
+        Scene scene = scene::create_scene(mem, { .max_nodes = 64 });
+        defer scene::destroy_scene(&scene);
+        for (uint missing = 0; missing < 2; missing++) {
+            Node* owner = model::instantiate(&assets, &scene, fixture.mixed)!!;
+            AnimatedLodDesc desc = animated_lod_desc(&assets, fixture.mixed);
+            model::attach_animated_lod(
+                assets: &assets,
+                scene: &scene,
+                owner: owner,
+                desc: desc,
+            )!!;
+            LodGroupState* state = scene.get(owner, LodGroup).state;
+            ulong identity = state.identity;
+            ModelInstance* instance = scene.get(owner, ModelInstance);
+            Node* removed = instance.present_node(missing == 0 ? 4u : 0u);
+            scene.remove(removed);
+            assert(@catch(model::sync_animated_lod(&assets, &scene, owner)) == c3d::INVALID_ID);
+            assert(scene.get(owner, LodGroup).state == state && state.identity == identity);
+            scene.remove(owner);
+        }
+    };
+}

@@ -400,6 +400,9 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer LodPartGpu 
     uint64_t impostor;
     vec4 history_origin_delta;
     vec4 current_origin_delta;
+    uint64_t part_instances;
+    uint history_levels;
+    uint _pad0;
 };
 
 layout(buffer_reference, std430, buffer_reference_align = 16) buffer ImpostorGpu {
@@ -455,7 +458,7 @@ layout(buffer_reference, std430, buffer_reference_align = 16) buffer InstanceCul
     uint64_t lod_current;
     uint64_t lod_previous;
     uint64_t lod_metadata;
-    uint _pad7;
+    uint lod_animated;
     uint _pad8;
     vec4 lod_thresholds[2];
     vec4 lod_camera_bias;

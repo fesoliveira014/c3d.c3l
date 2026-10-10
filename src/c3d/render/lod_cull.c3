@@ -13,6 +13,7 @@ struct LodCullBin @private {
     Frustum* frustum;
     uint level;
     bool mirrored;
+    uint representation;
     gpu::GpuAddress visible;
     gpu::GpuAddress args;
     gpu::GpuAddress[] parts;
@@ -36,16 +37,26 @@ fn void? reserve_lod_bins(Renderer* renderer, LodSelection* selection) @private 
     uint choices = (uint)state.desc.levels.len + (selection.impostor ? 1 : 0);
     for (uint index = 0; index < choices; index++) {
         LodLevel level = selected_lod_level(selection, index);
-        for (uint pass = 0; pass < passes; pass++) {
-            for (uint parity = 0; parity < 2; parity++) {
-                uint count = parity ? state.count - selection.instances.lod_unmirrored_count : selection.instances.lod_unmirrored_count;
-                if (!count) continue;
-                arena_place(&reserved, (usz)level.part_count * CULL_ARGS_STRIDE)!;
-                if (pass == 0 && lod_level_blended(renderer.assets, state, index)) {
-                    if (count > MAX_SORTED_INSTANCES) return c3d::CAPACITY_EXCEEDED~;
-                    arena_place(&reserved, align_up(sorted_list_bytes(count) + (usz)sort_capacity(count) * ulong::size, STREAM_ALIGNMENT))!;
-                } else {
-                    arena_place(&reserved, align_up((usz)count * uint::size, STREAM_ALIGNMENT))!;
+        uint representations = state.animated ? level.part_count : 1;
+        for (uint part = 0; part < representations; part++) {
+            uint split = state.animated ? selection.part_unmirrored[level.first_part + part]
+              : selection.instances.lod_unmirrored_count;
+            for (uint pass = 0; pass < passes; pass++) {
+                for (uint parity = 0; parity < 2; parity++) {
+                    uint count = parity ? state.count - split : split;
+                    if (!count) continue;
+
+                    arena_place(&reserved, (usz)(state.animated ? 1 : level.part_count) * CULL_ARGS_STRIDE)!;
+                    if (pass == 0 && lod_level_blended(renderer.assets, state, index)) {
+                        if (count > MAX_SORTED_INSTANCES) return c3d::CAPACITY_EXCEEDED~;
+
+                        arena_place(&reserved, align_up(
+                            sorted_list_bytes(count) + (usz)sort_capacity(count) * ulong::size,
+                            STREAM_ALIGNMENT,
+                        ))!;
+                    } else {
+                        arena_place(&reserved, align_up((usz)count * uint::size, STREAM_ALIGNMENT))!;
+                    }
                 }
             }
         }
@@ -53,11 +64,30 @@ fn void? reserve_lod_bins(Renderer* renderer, LodSelection* selection) @private 
     selection.arena = *shared;
     selection.arena.capacity = reserved.head;
     shared.head = reserved.head;
-    selection.bins = alloc::new_array(tmem, LodCullBin, 2 * (sz)passes * choices);
+    usz representations = state.animated ? state.desc.parts.len : choices;
+    selection.bins = alloc::new_array(tmem, LodCullBin, 2 * (sz)passes * (sz)representations);
 }
 
 fn void? prepare_lod_instances(Renderer* renderer, LodSelection* selection) @private {
     resolve_lod_instances(renderer, selection)!;
+    if (selection.state.animated) {
+        selection.part_unmirrored = alloc::new_array(tmem, uint, selection.state.desc.parts.len);
+        foreach (uint part, &split : selection.part_unmirrored) {
+            MeshCandidate candidate = {
+                .node = selection.node,
+                .lod = selection,
+                .lod_part = part,
+                .scene_identity = selection.scene_identity,
+            };
+            (void)bind_animated_lod_candidate(selection, &candidate);
+            for (uint source = 0; source < selection.state.count; source++) {
+                Mat4 local = selection.state.transforms[source].to_mat4()
+                  .mul(animated_lod_part_local(&candidate, source));
+                if (local.determinant() >= 0) (*split)++;
+            }
+        }
+    }
+
     if (catch excuse = reserve_lod_bins(renderer, selection)) {
         if (excuse != c3d::CAPACITY_EXCEEDED) return excuse~;
         selection.fallback = true;
@@ -159,6 +189,7 @@ fn void? record_lod_selection(Renderer* renderer, LodSelection[] selections) @pr
                     selection.camera.ortho_height, selection.camera.projection == Projection.ORTHOGRAPHIC ? 1 : 0, scene::LOD_HYSTERESIS },
                 .lod_reach = { reach.x, reach.y, reach.z, 0 },
                 .lod_mode = shader::LOD_SELECT,
+                .lod_animated = state.animated ? 1 : 0,
                 .lod_history_valid = selection.history_valid ? 1 : 0,
                 .lod_level_count = (uint)state.desc.levels.len + (selection.impostor ? 1 : 0),
             };
@@ -181,7 +212,8 @@ fn void? prepare_lod_cull(Renderer* renderer, CullItem* item, bool culling) @pri
     selection.main_visible |= item.main_view;
     if (selection.fallback) {
         *item.range = prepare_cull_range(renderer, candidate, item.geometry)!;
-        item.range.visible = candidate.mirrored ? selection.instances.lod_mirrored_indices : selection.instances.lod_unmirrored_indices;
+        item.range.visible = candidate.animated_lod ? resolve_animated_lod_indices(renderer, candidate)!
+          : (candidate.mirrored ? selection.instances.lod_mirrored_indices : selection.instances.lod_unmirrored_indices);
         item.range.indexed = true;
         return;
     }
@@ -190,7 +222,9 @@ fn void? prepare_lod_cull(Renderer* renderer, CullItem* item, bool culling) @pri
     item.sorted = item.main_view && lod_level_blended(renderer.assets, selection.state, candidate.lod_level);
     LodCullBin* bin;
     foreach (&existing : selection.bins[:selection.bin_count]) {
-        if (existing.frustum == item.frustum && existing.level == candidate.lod_level && existing.mirrored == candidate.mirrored) {
+        if (existing.frustum == item.frustum && existing.level == candidate.lod_level
+          && existing.mirrored == candidate.mirrored
+          && (!candidate.animated_lod || existing.representation == candidate.lod_part)) {
             bin = existing;
             break;
         }
@@ -219,6 +253,7 @@ fn void? prepare_lod_cull(Renderer* renderer, CullItem* item, bool culling) @pri
             .frustum = item.frustum,
             .level = candidate.lod_level,
             .mirrored = candidate.mirrored,
+            .representation = candidate.lod_part,
             .visible = (gpu::GpuAddress)((ulong)selection.arena.address + visible_at),
             .args = item.args_address,
             .parts = alloc::new_array(tmem, gpu::GpuAddress, level.part_count),

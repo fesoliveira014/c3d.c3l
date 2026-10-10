@@ -68,6 +68,10 @@ fn void? sync_animated_lod(AssetStore* assets, Scene* scene, Node* owner) {
     LodGroup* group = scene.get(owner, LodGroup);
     if (!group || !group.state.animated) return c3d::INVALID_ARGUMENT~;
     AnimatedLodBinding* binding = group.state.animated;
+    if (source.crowd && group.state.slot_generations.len != source.crowd.placements.len) {
+        return c3d::INVALID_ARGUMENT~;
+    }
+
     if (!c3d::same_id(binding.source_owner, owner.id)
       || !c3d::same_id(binding.source_model, source.instance ? source.instance.source : source.crowd.model)) {
         return c3d::INVALID_ARGUMENT~;
@@ -123,12 +127,21 @@ fn AnimatedLodSource? animated_lod_source(AssetStore* assets, Scene* scene, Node
             if (!part) return c3d::INVALID_ID~;
             Mesh* live = scene.get(part, Mesh);
             if (!live || !c3d::same_id(live.geometry, mesh.geometry)
-              || !c3d::same_id(live.material, mesh.material)) return c3d::INVALID_ARGUMENT~;
+              || !c3d::same_id(live.material, mesh.material)
+              || live.morph_weights.len != instance.base_morph_weights[index].len) {
+                return c3d::INVALID_ARGUMENT~;
+            }
             ModelSkin* skin = skin_at(template, mesh.node);
             if (skin) {
                 SkinBinding* binding = scene.get(part, SkinBinding);
                 if (!binding || !c3d::same_id(binding.skeleton, skin.skeleton)
                   || binding.joints.len != skin.joint_nodes.len) return c3d::INVALID_ARGUMENT~;
+                foreach (joint_index, template_node : skin.joint_nodes) {
+                    if (template_node >= instance.nodes.len) return c3d::INVALID_ARGUMENT~;
+                    Node* joint = instance.present_node(template_node);
+                    if (!joint) return c3d::INVALID_ID~;
+                    if (binding.joints[joint_index] != joint) return c3d::INVALID_ARGUMENT~;
+                }
             }
         }
     }

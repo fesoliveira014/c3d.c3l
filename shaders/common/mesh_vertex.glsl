@@ -12,12 +12,12 @@
 
 #include "instance_effects.glsl"
 GPU_DECLARE_READONLY_ARRAY_REF(LodPreviousArray, LodHistoryGpu);
-#ifdef INSTANCED
 GPU_DECLARE_READONLY_ARRAY_REF(InstanceArray, InstanceGpu);
+#ifdef INSTANCED
 GPU_DECLARE_READONLY_ARRAY_REF(VisibleArray, uint);
+#endif
 #ifdef VELOCITY
 GPU_DECLARE_READONLY_ARRAY_REF(PreviousInstanceArray, mat4);
-#endif
 #endif
 
 layout(location = 0) out vec3 v_world_pos;
@@ -201,7 +201,18 @@ void write_mesh_outputs(
         LodPartGpu part = LodPartGpu(draw.lod_part);
         model *= part.local;
         normal_matrix *= mat3(part.normal_0.xyz, part.normal_1.xyz, part.normal_2.xyz);
-        effect_position = (part.local * vec4(vertex.position, 1.0)).xyz;
+        mat4 local = part.local;
+        if (part.part_instances != 0ul) {
+            uint part_source = 0u;
+#ifdef INSTANCED
+            part_source = source;
+#endif
+            InstanceGpu sampled = InstanceArray(part.part_instances).values[part_source];
+            model *= sampled.model;
+            normal_matrix *= mat3(sampled.normal_0.xyz, sampled.normal_1.xyz, sampled.normal_2.xyz);
+            local *= sampled.model;
+        }
+        effect_position = (local * vec4(vertex.position, 1.0)).xyz;
     }
     vec4 world = model * vec4(vertex.position, 1.0);
     world.xyz = apply_instance_effects(draw, instance, world.xyz, instance_bend_weight(draw, effect_position, vertex.color));
@@ -213,6 +224,10 @@ void write_mesh_outputs(
     if (draw.lod_part != 0ul) {
         LodPartGpu part = LodPartGpu(draw.lod_part);
         if (part.current != 0ul) reject_history = max(reject_history, float(LodPreviousArray(part.current).values[source].reject_history));
+        if (reject_history == 0.0 && part.history_levels != 0u) {
+            uint previous_level = LodPreviousArray(part.previous).values[source].level;
+            if ((part.history_levels & (1u << previous_level)) == 0u) reject_history = 1.0;
+        }
         previous_instance = reject_history != 0.0 ? instance.model : LodPreviousArray(part.previous).values[source].model;
     } else {
         // Without previous instance matrices, prev_model carries only the batch node's motion.
@@ -221,7 +236,20 @@ void write_mesh_outputs(
             ? PreviousInstanceArray(previous_instances).values[source] : draw.prev_model * model;
     }
 #endif
-    if (draw.lod_part != 0ul) previous = LodPartGpu(draw.lod_part).local * previous;
+    if (draw.lod_part != 0ul) {
+        LodPartGpu part = LodPartGpu(draw.lod_part);
+        mat4 local = part.local;
+        if (part.part_instances != 0ul) {
+            uint part_source = 0u;
+#ifdef INSTANCED
+            part_source = source;
+#endif
+            uint64_t previous_parts = PreviousPoseGpu(draw.previous_pose).instances;
+            local *= previous_parts != 0ul ? PreviousInstanceArray(previous_parts).values[part_source]
+                : InstanceArray(part.part_instances).values[part_source].model;
+        }
+        previous = local * previous;
+    }
     vec4 previous_world = previous_instance * previous;
     previous_world.xyz = apply_previous_instance_effects(
         draw, instance, previous_instance, previous_world.xyz,

@@ -5,6 +5,7 @@ import c3d::asset;
 import c3d::camera;
 import c3d::maths;
 import c3d::material;
+import c3d::model;
 import c3d::scene;
 import c3d::spatial;
 import c3d::shader;
@@ -49,6 +50,9 @@ struct LodHistory @private {
 }
 
 struct LodSelection @private {
+    Scene* scene;
+    ViewHistory* pose_history;
+    gpu::GpuAddress previous_palette;
     ulong scene_identity;
     Node* node;
     LodGroupState* state;
@@ -68,6 +72,7 @@ struct LodSelection @private {
     Vec3 camera_position;
     float bias;
     gpu::GpuAddress[] parts;
+    uint[] part_unmirrored;
     bool main_visible;
     bool impostor;
     Vec3 previous_view_origin;
@@ -108,6 +113,7 @@ fn LodSelection select_lod_group(
         node: node,
         group: &group,
         origin: origin,
+        scene: scene,
     );
     LodHistoryValue previous = history.committed;
     bool valid = previous.valid && previous.scene == scene.identity
@@ -141,12 +147,13 @@ fn LodSelection select_lod_group(
     };
     history.dirty = true;
     return {
+        .scene = scene,
         .scene_identity = scene.identity,
         .node = node,
         .state = state,
         .world_bounds = world,
         .level = level,
-        .reject_history = !valid || level != previous.level,
+        .reject_history = !valid || (!state.animated && level != previous.level),
         .impostor = impostor,
     };
 }
@@ -179,7 +186,15 @@ fn LodSelection[]? prepare_lod_view(
     usz count;
     scene.@each(LodGroup; Entity entity, LodGroup* group) {
         Node* node = scene.node(entity);
-        if (node.visible_effective && group.state.count) {
+        bool source_live = true;
+        if (group.state.animated) {
+            if (catch excuse = model::sync_animated_lod(renderer.assets, scene, node)) {
+                renderer.stats.dangling_refs++;
+                source_live = false;
+            }
+        }
+
+        if (source_live && node.visible_effective && group.state.count) {
             if (!spatial::lod_group_is_live(renderer.assets, group)) {
                 renderer.stats.dangling_refs++;
             } else {
@@ -194,6 +209,7 @@ fn LodSelection[]? prepare_lod_view(
                 LodSelection* selection = &selections[count++];
                 if (group.state.mode == LodMode.INSTANCED) {
                     *selection = {
+                        .scene = scene,
                         .scene_identity = scene.identity,
                         .node = node,
                         .state = group.state,
@@ -202,6 +218,7 @@ fn LodSelection[]? prepare_lod_view(
                             node: node,
                             group: group,
                             origin: renderer.frame_origin,
+                            scene: scene,
                         ),
                         .history = history,
                         .camera = camera,
@@ -250,6 +267,7 @@ fn LodSelection[]? prepare_lod_view(
                 history.pending.direction = {
                     matrices.view.m20, matrices.view.m21, matrices.view.m22, 0,
                 };
+                selection.pose_history = &record.history;
                 selection.parts = alloc::new_array(tmem, gpu::GpuAddress, group.state.desc.parts.len + 1);
             }
         }
@@ -284,7 +302,7 @@ fn void reset_lod_history(LodHistory* history) @private {
 }
 
 fn Mat4 candidate_world(MeshCandidate* candidate) @private {
-    if (!candidate.lod || candidate.impostor) return candidate.node.world;
+    if (!candidate.lod || candidate.impostor || candidate.animated_lod) return candidate.node.world;
     return candidate.node.world.mul(candidate.lod.state.desc.parts[candidate.lod_part].local);
 }
 
@@ -315,7 +333,8 @@ fn gpu::GpuAddress? resolve_lod_part(Renderer* renderer, MeshCandidate* candidat
     LodSelection* selection = candidate.lod;
     gpu::GpuAddress* address = &selection.parts[candidate.lod_part];
     if (*address != (gpu::GpuAddress)0) return *address;
-    Mat4 local = candidate.impostor ? matrix::IDENTITY4 : selection.state.desc.parts[candidate.lod_part].local;
+    Mat4 local = candidate.impostor || candidate.animated_lod ? matrix::IDENTITY4
+      : selection.state.desc.parts[candidate.lod_part].local;
     Mat3 normal = maths::normal_matrix(local);
     Vec3 history_delta = selection.history.committed.origin - selection.previous_view_origin;
     Vec3 current_delta = renderer.frame_origin - selection.previous_view_origin;
@@ -326,11 +345,18 @@ fn gpu::GpuAddress? resolve_lod_part(Renderer* renderer, MeshCandidate* candidat
         .normal_2 = { normal.m02, normal.m12, normal.m22, 0 },
         .current = selection.current,
         .previous = selection.previous,
-        .reject_history = selection.reject_history || !selection.view_history_valid ? 1 : 0,
+        .reject_history = selection.reject_history || !selection.view_history_valid
+          || (candidate.animated_lod && !selection.pose_history.previous_candidate_pose(
+              scene: selection.scene,
+              assets: renderer.assets,
+              candidate: candidate,
+          )) ? 1 : 0,
         .seed = instance_seed({}),
         .impostor = candidate.impostor ? resolve_impostor(renderer, selection)! : (gpu::GpuAddress)0,
         .history_origin_delta = { history_delta.x, history_delta.y, history_delta.z, 0 },
         .current_origin_delta = { current_delta.x, current_delta.y, current_delta.z, 0 },
+        .part_instances = candidate.animated_lod ? resolve_animated_lod_parts(renderer, candidate)! : (gpu::GpuAddress)0,
+        .history_levels = candidate.animated_lod ? animated_lod_history_levels(candidate) : 0,
     };
     *address = upload_bytes(renderer, &part, LodPartGpu::size)!;
     return *address;
