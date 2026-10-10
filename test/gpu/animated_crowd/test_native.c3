@@ -264,7 +264,7 @@ fn void? capture_crowd_native(
     if (images.shadow_resolution) {
         gpu::invalidate_mapped_span(&renderer.device, probe.shadow.span)!;
         mem::copy(images.shadow.ptr, probe.shadow.bytes.ptr,
-            images.shadow_resolution * images.shadow_resolution * Vec4::size);
+            (sz)images.shadow_resolution * images.shadow_resolution * Vec4::size);
     }
 }
 

@@ -3,11 +3,13 @@ module c3d::test::crowd_parity;
 import c3d;
 import c3d::anim;
 import c3d::asset;
+import c3d::asset::gltf;
 import c3d::maths;
 import c3d::model;
 import c3d::scene;
 import c3d::test::animated_crowd_fixtures;
 import std::math;
+import std::io::path;
 
 const uint PARITY_INSTANCES @local = 3;
 const uint PARITY_NODES @local = animated_crowd_fixtures::PARTS_NODE_COUNT + 1;
@@ -420,7 +422,8 @@ fn void assert_action_bits(Action* actual, Action* expected) @local {
     assert(bitcast(actual.clock_delta, ulong) == bitcast(expected.clock_delta, ulong));
     assert(bitcast(actual.clock_time, ulong) == bitcast(expected.clock_time, ulong));
     assert(actual.layer == expected.layer && actual.additive == expected.additive && actual.loop == expected.loop);
-    assert(actual.playing == expected.playing && actual.root_motion == expected.root_motion && actual.root_yaw == expected.root_yaw);
+    assert(actual.playing == expected.playing && actual.root_motion == expected.root_motion
+      && actual.root_yaw == expected.root_yaw);
     assert(actual.blend_space == expected.blend_space && actual.mask == expected.mask);
     assert(actual.reference.len == expected.reference.len && actual.cursors == expected.cursors);
     foreach (index, value : actual.reference) assert_float_bits(value, expected.reference[index]);
@@ -428,7 +431,9 @@ fn void assert_action_bits(Action* actual, Action* expected) @local {
     assert_rotation_bits(actual.root_rotation, expected.root_rotation);
     assert_vector_bits(actual.cycle_translation, expected.cycle_translation);
     assert_float_bits(actual.cycle_yaw, expected.cycle_yaw);
-    for (uint index = 0; index < 16; index++) assert_float_bits(actual.motion_basis.m[index], expected.motion_basis.m[index]);
+    for (uint index = 0; index < 16; index++) {
+        assert_float_bits(actual.motion_basis.m[index], expected.motion_basis.m[index]);
+    }
 }
 
 fn void assert_parity(ParityRig* rig, bool compare_events = true) @local {
@@ -466,7 +471,8 @@ fn void assert_parity(ParityRig* rig, bool compare_events = true) @local {
             assert_float_bits(actual.fade_target, expected.fade_target);
             assert_float_bits(actual.fade_rate, expected.fade_rate);
             assert_float_bits(actual.speed, expected.speed);
-            assert(bitcast(actual.phase, ulong) == bitcast(expected.phase, ulong) && actual.playing == expected.playing);
+            assert(bitcast(actual.phase, ulong) == bitcast(expected.phase, ulong)
+              && actual.playing == expected.playing);
             for (uint member = 0; member < actual.count; member++) {
                 assert_float_bits(actual.positions[member], expected.positions[member]);
                 assert(parity_label(rig, instance, actual.actions[member], true)
@@ -681,7 +687,8 @@ fn void test_crowd_parity_four_layers_copied_masks_fades_and_additive_spaces() @
                 clip: 1,
                 label: 10,
             );
-            player.action(secondary[instance].crowd).weight = animator.action(secondary[instance].ordinary).weight = 1.75f;
+            player.action(secondary[instance].crowd).weight = 1.75f;
+            animator.action(secondary[instance].ordinary).weight = 1.75f;
             String[4] names = { "joint_tip", "rigid_parent", "morph_a", "joint_tip" };
             JointMask mask = anim::create_joint_mask(
                 allocator: mem,
@@ -798,13 +805,12 @@ fn void test_crowd_parity_four_layers_copied_masks_fades_and_additive_spaces() @
             assert(rig.scene.get(root, Animator).action_count == before);
         }
         String[1] missing = { "absent_joint" };
-        assert(@catch(
-            anim::create_joint_mask(
+        assert(@catch(anim::create_joint_mask(
             allocator: mem,
             template: &rig.assets.model(rig.model).data,
-            names: missing[..],,
-        include_descendants: true,
-        )) == asset::NOT_FOUND);
+            names: missing[..],
+            include_descendants: true,
+        )) == NOT_FOUND);
         parity_step(&rig, &tracking, 0);
     }
     assert(!tracking.has_leaks());
@@ -891,7 +897,8 @@ fn void test_crowd_parity_root_modes_weighted_yaw_pivot_helper_and_reverse_loops
             CrowdPlayer player = parity_player(&rig, instance);
             Animator* animator = rig.scene.get(root, Animator);
             player.action(primary[instance].crowd).weight = animator.action(primary[instance].ordinary).weight = 0.35f;
-            player.action(secondary[instance].crowd).weight = animator.action(secondary[instance].ordinary).weight = 0.8f;
+            player.action(secondary[instance].crowd).weight = 0.8f;
+            animator.action(secondary[instance].ordinary).weight = 0.8f;
             ActionPair upper = parity_play(
                 rig: &rig,
                 instance: instance,
@@ -947,6 +954,22 @@ fn void test_crowd_parity_root_modes_weighted_yaw_pivot_helper_and_reverse_loops
             foreach (root : rig.ordinary) anim::apply_root_motion(root, rig.scene.get(root, Animator).root_motion);
             assert_parity(&rig);
         }
+        parity_stop(&rig, 1, primary[1]);
+        parity_stop(&rig, 1, secondary[1]);
+        primary[1] = parity_play(
+            rig: &rig,
+            instance: 1,
+            clip: 0,
+            label: 30,
+            desc: { .root_motion = RootMotion.EXTRACT },
+        );
+        parity_step(&rig, &tracking, 0);
+        parity_step(&rig, &tracking, 0.25f);
+        CrowdPlaybackState* yaw_off = rig.scene.get(rig.crowd_node, AnimatedCrowd).playback;
+        assert_rotation_bits(yaw_off.slots[1].root_motion.rotation, quaternion::IDENTITY);
+        assert(yaw_off.slots[1].root_motion.translation.length() > 0);
+        assert(yaw_off.poses[PARITY_NODES + PARITY_ROOT].rotation.v
+          != yaw_off.base_pose[PARITY_ROOT].rotation.v);
         CrowdPlayer player = parity_player(&rig, 0);
         Animator* animator = rig.scene.get(rig.ordinary[0], Animator);
         assert(@catch(player.play(&rig.assets, rig.clips[0], { .root_motion = RootMotion.KEEP, .root_yaw = true }))
@@ -1102,9 +1125,128 @@ fn void test_crowd_parity_events_global_prefix_capacities_reset_and_saturation()
             )!!;
             anim::crowd_update(&rig.assets, &rig.scene, 0.25f);
             assert(state.event_count == 1 && state.events[0].event.id == 10);
+            assert(state.events_dropped == 2);
             assert(state.events[0].instance.generation != old.generation);
             assert(state.events[0].instance.generation == state.instance_id(0)!!.generation);
+            assert(@catch(state.player(old)) == c3d::INVALID_ID);
         }
+    }
+    assert(!tracking.has_leaks());
+}
+
+fn ClipId parity_named_clip(AssetStore* assets, ModelId model, String name) @local {
+    foreach (clip : assets.model(model).data.clips) {
+        if (assets.clip(clip).data.name == name) return clip;
+    }
+    unreachable();
+}
+
+fn void create_quaternius_parity_rig(ParityRig* rig, Allocator allocator) @local {
+    rig.assets = asset::create_asset_store(allocator, {
+        .max_geometries = 8,
+        .max_materials = 16,
+        .max_models = 2,
+        .max_skeletons = 4,
+        .max_clips = 160,
+        .max_textures = asset::BUILTIN_TEXTURE_COUNT + 32,
+        .max_samplers = asset::BUILTIN_SAMPLER_COUNT + 16,
+        .max_environments = 1,
+        .max_shaders = 1,
+        .max_compute_shaders = 1,
+        .max_fonts = 1,
+    });
+    rig.scene = scene::create_scene(allocator, { .max_nodes = 256 });
+    Path source = path::tnew($$FILEPATH)!!;
+    String input = (String)source.parent()!!.tappend("../../examples/assets/quaternius/AnimationLibrary_Godot.glb")!!;
+    rig.model = gltf::load_model(&rig.assets, input)!!;
+    rig.clips[0] = parity_named_clip(&rig.assets, rig.model, "Walk_Loop");
+    rig.clips[1] = parity_named_clip(&rig.assets, rig.model, "Jog_Fwd_Loop");
+    rig.clips[2] = parity_named_clip(&rig.assets, rig.model, "Idle_Loop");
+    foreach (uint index, &seed : rig.seeds) {
+        Transform placement = maths::TRANSFORM_IDENTITY;
+        placement.position = { (float)index * 3, 0, -(float)index };
+        *seed = {
+            .placement = placement,
+            .pose = { .clip = rig.clips[0], .speed = 1, .loop = true },
+            .color = { 0.3f, 0.5f, 0.7f, 1 },
+        };
+        rig.ordinary[index] = model::instantiate(&rig.assets, &rig.scene, rig.model)!!;
+        rig.ordinary[index].local = placement;
+        anim::add_animator(&rig.scene, rig.ordinary[index]);
+    }
+    rig.crowd_node = model::add_crowd(
+        assets: &rig.assets,
+        scene: &rig.scene,
+        model: rig.model,
+        capacity: PARITY_INSTANCES,
+        pose_bounds: { .min = { -100, -100, -100 }, .max = { 100, 100, 100 } },
+        instances: rig.seeds[..],
+        actions_per_instance: anim::MAX_ACTIONS,
+    )!!;
+    foreach (uint index, root : rig.ordinary) {
+        Animator* animator = rig.scene.get(root, Animator);
+        AnimationActionId ordinary = animator.play(&rig.assets, rig.clips[0])!!;
+        rig.labels[index][0] = {
+            .crowd = rig.scene.get(rig.crowd_node, AnimatedCrowd).playback.slots[index].base_action,
+            .ordinary = ordinary,
+            .label = 1,
+        };
+        rig.label_count[index] = 1;
+    }
+    anim::update(&rig.assets, &rig.scene, 0);
+}
+
+fn void test_crowd_parity_quaternius_locomotion_crossfade_and_independent_phases() @test {
+    TrackingAllocator tracking;
+    tracking.init(mem);
+    defer tracking.free();
+    {
+        ParityRig rig;
+        create_quaternius_parity_rig(&rig, &tracking);
+        defer destroy_parity_rig(&rig);
+        assert_parity(&rig);
+        foreach (uint instance, root : rig.ordinary) {
+            ActionPair pair = rig.labels[instance][0];
+            parity_edit(
+                rig: &rig,
+                instance: instance,
+                pair: pair,
+                time: 0.15f * (float)instance,
+                speed: instance == 1 ? -0.75f : instance == 2 ? 0 : 1.25f,
+                loop: true,
+                playing: true,
+            );
+        }
+        parity_step(&rig, &tracking, 0);
+        foreach (dt : (float[5]){ 0.125f, 0.375f, 0.5f, 0.25f, 1.75f }) parity_step(&rig, &tracking, dt);
+        foreach (uint instance, root : rig.ordinary) {
+            ActionPair incoming = parity_play(
+                rig: &rig,
+                instance: instance,
+                clip: instance == 2 ? 2 : 1,
+                label: 10,
+                desc: { .fade_in = 0.3f },
+            );
+            ActionPair outgoing = rig.labels[instance][0];
+            CrowdPlayer player = parity_player(&rig, instance);
+            player.cross_fade(outgoing.crowd, incoming.crowd, 0.3f)!!;
+            rig.scene.get(root, Animator).cross_fade(outgoing.ordinary, incoming.ordinary, 0.3f)!!;
+        }
+        foreach (dt : (float[4]){ 0, 0.075f, 0.125f, 0.2f }) parity_step(&rig, &tracking, dt);
+        foreach (uint instance, root : rig.ordinary) {
+            ActionPair current = rig.labels[instance][1];
+            parity_edit(
+                rig: &rig,
+                instance: instance,
+                pair: current,
+                time: 0.1f,
+                speed: -1,
+                loop: true,
+                playing: true,
+            );
+        }
+        parity_step(&rig, &tracking, 0);
+        parity_step(&rig, &tracking, 1.25f);
     }
     assert(!tracking.has_leaks());
 }
