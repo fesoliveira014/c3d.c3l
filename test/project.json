@@ -28,7 +28,8 @@
       "sources": [
         "src/**",
         "shaders/shader_package.c3",
-        "fixtures/loading_fixtures.c3"
+        "fixtures/loading_fixtures.c3",
+        "fixtures/animated_crowd_fixtures.c3"
       ]
     },
     "describe": {

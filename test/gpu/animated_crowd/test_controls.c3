@@ -116,13 +116,14 @@ fn ClipId? add_crowd_native_controls_clip(AssetStore* assets) @private {
         .events = alloc::new_array(allocator, ClipEvent, 2),
     };
     defer catch asset::free_clip(allocator, &clip);
-    clip.targets[..] = { PARTS_RIGID_NODE, PARTS_MORPH_B, PARTS_JOINT_ROOT };
+    uint[3] targets = { PARTS_RIGID_NODE, PARTS_MORPH_B, PARTS_JOINT_ROOT };
+    clip.targets[..] = targets[..];
     Quat rigid = quaternion::from_axis_angle{float}({ 0, 0, 1 }, 0.9f);
     Quat yaw = quaternion::from_axis_angle{float}({ 0, 1, 0 }, 0.5f);
-    float[8] rigid_values = { 0, 0, 0, 1, rigid.x, rigid.y, rigid.z, rigid.w };
+    float[8] rigid_values = { 0, 0, 0, 1, rigid.v.x, rigid.v.y, rigid.v.z, rigid.v.w };
     float[2] morph_values = { 0.75f, 0.1f };
     float[6] root_values = { 2, 0, 0, 4, 0, 0.5f };
-    float[8] yaw_values = { 0, 0, 0, 1, yaw.x, yaw.y, yaw.z, yaw.w };
+    float[8] yaw_values = { 0, 0, 0, 1, yaw.v.x, yaw.v.y, yaw.v.z, yaw.v.w };
     clip.tracks[0] = crowd_native_track(
         allocator: allocator,
         target: 0,
@@ -147,7 +148,8 @@ fn ClipId? add_crowd_native_controls_clip(AssetStore* assets) @private {
         path: TargetPath.ROTATION,
         values: yaw_values[..],
     );
-    clip.events[..] = { { .time = 0.2f, .id = 20 }, { .time = 0.7f, .id = 70 } };
+    ClipEvent[2] events = { { .time = 0.2f, .id = 20 }, { .time = 0.7f, .id = 70 } };
+    clip.events[..] = events[..];
     return assets.add_clip_owned(&clip);
 }
 
@@ -181,7 +183,7 @@ fn void check_crowd_native_affines(CrowdNativePair* pair) @private {
         ModelInstance* ordinary = pair.scene.get(pair.ordinary[source], ModelInstance);
         foreach (index, part : crowd.parts) {
             if (part.skinned) continue;
-            Mat4 actual = pair.crowd.world.mul(crowd.part_transform(source, index));
+            Mat4 actual = pair.crowd.world.mul(crowd.part_transform(source, (uint)index));
             Mat4 expected = ordinary.present_node(part.template_node).world;
             foreach (point : (Vec3[4]){ {}, { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 } }) {
                 assert((maths::transform_point(actual, point) - maths::transform_point(expected, point)).length()
