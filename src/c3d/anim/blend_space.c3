@@ -28,7 +28,7 @@ struct BlendSpace1D {
  Start phase-synchronized clips and borrow their controlling space.
  @param [&in] assets : "Clips remain live throughout playback."
  @param positions : "Strictly ascending, finite, one per clip."
- @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
 *>
 fn BlendSpace1D*? Animator.add_blend_space(
     &self,
@@ -83,7 +83,7 @@ fn void? Animator.fade_blend_space(
  @param [&in] assets : "Clips remain live throughout playback."
  @param positions : "Strictly ascending, finite, one per clip."
  @param desc : "Shared captured configuration and initial fade."
- @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
 *>
 fn BlendSpace1D*? PlaybackView.add_blend_space(
     &self,
@@ -101,10 +101,14 @@ fn BlendSpace1D*? PlaybackView.add_blend_space(
         if (!math::is_finite(position) || (index && position <= positions[index - 1])) return c3d::INVALID_ARGUMENT~;
         float duration = assets.clips.try_get(clips[index])!.data.duration;
         if (!math::is_finite(duration) || duration <= 0) return c3d::INVALID_ARGUMENT~;
+        (void)validate_playback_action(&assets.clip(clips[index]).data, desc, destination)!;
     }
 
+    if (desc.weighted_mask) validate_weighted_joint_mask(assets, self.model, desc.weighted_mask)!;
+
     uint slot;
-    while (slot < MAX_BLEND_SPACES && self.blend_spaces[slot].count) slot++;
+    while (slot < MAX_BLEND_SPACES
+      && (self.blend_spaces[slot].count || self.blend_spaces_2d[slot].count)) slot++;
     if (slot == MAX_BLEND_SPACES || self.actions.free_count < clips.len) return c3d::CAPACITY_EXCEEDED~;
 
     BlendSpace1D created = {
@@ -115,19 +119,30 @@ fn BlendSpace1D*? PlaybackView.add_blend_space(
         .speed = 1,
         .playing = true,
     };
+
+    Action[MAX_BLEND_SPACE_ACTIONS] prepared;
+    uint prepared_count;
     defer catch {
-        foreach (id : created.actions[:created.count]) self.stop(id)!!;
+        foreach (&action : prepared[:prepared_count]) release_prepared_action(self.allocator, action);
     }
 
-    desc.fade_in = 0;
-    foreach (index, clip : clips) {
-        created.actions[index] = self.play(
+    PlayDesc member_desc = desc;
+    member_desc.fade_in = 0;
+    foreach (clip : clips) {
+        prepared[prepared_count] = prepare_playback_action(
+            allocator: self.allocator,
             assets: assets,
             clip: clip,
-            desc: desc,
+            desc: member_desc,
             destination: destination,
             motion_basis: motion_basis,
+            root_node: self.root_node,
         )!;
+        prepared_count++;
+    }
+
+    foreach (uint index, action : prepared[:prepared_count]) {
+        created.actions[index] = install_playback_action(self, action, desc.mask);
         created.positions[index] = positions[index];
         created.count++;
     }
@@ -151,14 +166,10 @@ fn BlendSpace1D*? PlaybackView.add_blend_space(
  @return? c3d::INVALID_ARGUMENT
 *>
 fn void? PlaybackView.stop_blend_space(&self, BlendSpace1D* space, float fade_out = 0) {
-    if (!space.count || !math::is_finite(fade_out) || fade_out < 0) return c3d::INVALID_ARGUMENT~;
-    if (fade_out == 0) {
-        remove_blend_space(self, space);
-        return;
-    }
+    if (!space.count) return c3d::INVALID_ARGUMENT~;
 
-    space.fade_target = 0;
-    space.fade_rate = space.weight / fade_out;
+    BlendSpaceFade fade = { .weight = &space.weight, .target = &space.fade_target, .rate = &space.fade_rate };
+    if (stop_blend_space_weight(fade, fade_out)!) remove_blend_space(self, space);
 }
 
 <*
@@ -174,18 +185,14 @@ fn void? PlaybackView.fade_blend_space(
     float target_weight,
     float duration,
 ) {
-    if (!space.count || !math::is_finite(target_weight) || target_weight < 0 || target_weight > 1
-        || !math::is_finite(duration) || duration <= 0) return c3d::INVALID_ARGUMENT~;
+    if (!space.count) return c3d::INVALID_ARGUMENT~;
 
-    space.fade_target = target_weight;
-    space.fade_rate = math::abs(target_weight - space.weight) / duration;
+    BlendSpaceFade fade = { .weight = &space.weight, .target = &space.fade_target, .rate = &space.fade_rate };
+    fade_blend_space_weight(fade, target_weight, duration)!;
 }
 
 fn void remove_blend_space(PlaybackView* playback, BlendSpace1D* space) @private {
-    foreach (id : space.actions[:space.count]) {
-        playback.actions.get(id).blend_space = 0;
-        playback.stop(id)!!;
-    }
+    remove_blend_space_members(playback, space.actions[:space.count]);
 
     *space = {};
 }
@@ -194,18 +201,8 @@ fn void advance_blend_spaces(PlaybackView* playback, AssetStore* assets, float d
     foreach (&space : playback.blend_spaces) {
         if (!space.count) continue;
 
-        float step = space.fade_rate * dt;
-        float remaining = space.fade_target - space.weight;
-        if (space.fade_rate > 0) {
-            if (math::abs(remaining) <= step) {
-                space.weight = space.fade_target;
-                space.fade_rate = 0;
-            } else {
-                space.weight += remaining < 0 ? -step : step;
-            }
-        }
-
-        if (space.weight == 0 && space.fade_target == 0) {
+        BlendSpaceFade fade = { .weight = &space.weight, .target = &space.fade_target, .rate = &space.fade_rate };
+        if (advance_blend_space_weight(fade, dt)) {
             remove_blend_space(playback, space);
             continue;
         }
@@ -218,22 +215,26 @@ fn void advance_blend_spaces(PlaybackView* playback, AssetStore* assets, float d
         double lower_duration = assets.clip(playback.actions.get(space.actions[lower]).clip).data.duration;
         double upper_duration = assets.clip(playback.actions.get(space.actions[lower + 1]).clip).data.duration;
         double duration = lower_duration * (1 - blend) + upper_duration * blend;
-        double travel = space.playing ? (double)dt * space.speed / duration : 0;
-        double start = space.phase;
-        if (start == 0 && travel < 0) start = 1;
-        double end = start + travel;
-        space.phase = end - math::floor(end);
+        BlendPhaseStep phase = advance_blend_phase(
+            phase: space.phase,
+            dt: dt,
+            speed: space.speed,
+            playing: space.playing,
+            duration: duration,
+        );
+        space.phase = phase.phase;
 
         foreach (uint index, id : space.actions[:space.count]) {
             Action* action = playback.actions.get(id);
             float clip_duration = assets.clip(action.clip).data.duration;
-            action.previous_time = start * clip_duration;
-            action.clock_delta = travel * clip_duration;
-            action.clock_time = space.phase * clip_duration;
-            action.time = (float)action.clock_time;
-            action.published_time = action.time;
             float normalized = index == lower ? 1 - fraction : index == lower + 1 ? fraction : 0;
-            action.weight = space.weight * normalized;
+            write_blend_space_member(
+                action: action,
+                phase: phase,
+                duration: clip_duration,
+                normalized: normalized,
+                weight: space.weight,
+            );
         }
     }
 }

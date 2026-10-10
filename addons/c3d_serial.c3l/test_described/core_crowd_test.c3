@@ -141,7 +141,7 @@ fn void test_crowd_owned_array_failures_leave_existing_scene_unchanged() @test {
             .pose = { .clip = fixture.assets.model(model_id).data.clips[0], .time = 0.25f, .speed = 1, .loop = true },
             .color = { 1, 1, 1, 1 },
         } };
-        CrowdAuthoringV2 source = {
+        CrowdAuthoringV3 source = {
             .actions_per_instance = anim::DEFAULT_CROWD_ACTIONS,
             .event_capacity = anim::DEFAULT_CROWD_EVENT_CAPACITY,
             .model = model_id, .capacity = 3, .instances = instances[..],

@@ -242,13 +242,18 @@ while (window.poll()) {
 - `attach_crowd` and `set_crowd` capture each input `pose.time` in `AnimatedCrowd.start_times`.
   The input pose is a seed/base action, not writable runtime storage. `AnimatedCrowd.poses` is
   removed: obtain `crowd.playback.instance_id(index)`, borrow a `CrowdPlayer` with `player(id)`,
-  then use `base_action()` or shared `play`, `action`, `stop`, `cross_fade` and 1D space controls.
+  then use `base_action()` or shared `play`, `action`, `stop`, `cross_fade` and 1D/2D space controls.
   `base_action()` returns `INVALID_ID` after that seed action is removed. Runtime time edits leave
   the captured start unchanged. Reacquire player/action/space borrows after structural changes.
 - `actions_per_instance` is fixed at preparation, defaults to 4 and must be in `[1,16]`.
-  Space members consume these action slots. Regular/additive layers, copied boolean masks,
-  fades and phase-synchronized 1D spaces use the same evaluator as `Animator`. Cursors and
-  additive references allocate at play; updates allocate nothing. Retarget clips at load time.
+  Space members consume these action slots. Regular/additive layers, copied boolean or
+  weighted masks, fades and phase-synchronized 1D/2D spaces use the same evaluator as `Animator`.
+  `CrowdPlayer.add_blend_space_2d` accepts 3–`actions_per_instance` members and copied explicit
+  coordinates/triangles; 1D retains its 2–8 limit. Both dimensions share two group slots per
+  instance. Creation faults atomically, and updates allocate nothing. Cursors, additive
+  references and `node_count * float::size` per weighted action allocate at play. Retarget clips
+  at load time. See [2D groups](animation.md#two-dimensional-blend-spaces) and
+  [weighted masks](animation.md#weighted-and-feathered-masks) for topology, ownership and fades.
 - `crowd_update` evaluates every live instance once, restores authored defaults for missing tracks,
   and publishes palettes, complete logical morph weights and affine part matrices. Mesh and bind
   transforms apply once. Part parity can differ for animated rigid meshes; sorted/visible lists
@@ -265,11 +270,16 @@ while (window.poll()) {
   `+ A*(Action::size + AnimationActionId::size + 2*uint::size + N*bool::size)`
   `+ MAX_BLEND_SPACES*BlendSpace1D::size + CrowdPlaybackSlot::size`, multiplied by capacity,
   where N is node count, M mesh count, W complete logical morph width and A action capacity.
+  A prepared two-row 2D block adds storage per capacity slot: 432 bytes at default
+  action capacity 4, 624 bytes at 8 and 1008 bytes at 16, even with no active groups. At crowd
+  capacity 4096 that is 1,769,472 bytes or 4,128,768 bytes for action capacities 4 or 16.
+  The [complete 2D table](animation.md#prepared-storage) includes smaller capacities.
   The owner also retains copied model baselines and one shared pose scratch block. Crowd-wide
   output and crossing scratch cost `event_capacity*(CrowdEvent::size + EventBookmark::size)`.
   Crowd placements, tints, seeds, starts, parts and `capacity*joints*Mat4::size`
   palettes are separate retained arrays. Active cursors/additive references add their actual
-  clip-dependent bytes at play; allocator alignment and metadata add overhead.
+  clip-dependent bytes at play; captured weighted masks add `N*float::size` per masked action.
+  Allocator alignment and metadata add overhead outside the 2D table's aligned block totals.
 - `pose_bounds` is instance-local and must cover every pose of one instance; culling and shadow fitting
   use nothing else.
 - Part nodes keep an identity local transform and are removed only by removing the crowd node, which

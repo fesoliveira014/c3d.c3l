@@ -18,12 +18,20 @@ const uint MAX_ANIMATION_LAYERS = 4; // up to four channel folds; base plus uppe
 <* Full-weight regular playback on the base layer. *>
 const PlayDesc PLAY_DESC_DEFAULT = {};
 
+<* Scale composition used by an additive action. *>
+enum AdditiveScaleMode {
+    DIFFERENCE,
+    MULTIPLICATIVE,
+}
+
 <* One clip's captured configuration and mutable playback state. *>
 struct Action {
     ClipId clip;
     uint[] cursors;
     bool[] mask;
+    float[] weighted_mask;
     float[] reference;
+    AdditiveScaleMode additive_scale;
     float time;
     float speed;
     float weight;
@@ -70,6 +78,7 @@ struct Animator {
     uint events_dropped;
 
     BlendSpace1D[] blend_spaces;
+    BlendSpace2D[] blend_spaces_2d;
     PoseStorage* pose_storage;
 }
 
@@ -79,6 +88,8 @@ struct PlayDesc {
     uint layer;
     bool additive;
     JointMask* mask;
+    WeightedJointMask* weighted_mask;
+    AdditiveScaleMode additive_scale;
     RootMotion root_motion;
     bool root_yaw;
 }
@@ -96,7 +107,7 @@ $assert $reflect(ActionStorage.actions).offset == 0;
  Start a clip and return its stable playback identity.
  @param [&in] assets : "Owns the clip throughout playback."
  @param desc : "Mask membership is copied during this call."
- @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
 *>
 fn AnimationActionId? Animator.play(
     &self,
@@ -179,6 +190,8 @@ fn Animator* add_animator(Scene* scene, Node* instance_root) {
         .blend_spaces = storage.blend_spaces[..],
     };
 
+    animator.blend_spaces_2d = create_blend_spaces_2d(scene.allocator, MAX_ACTIONS)!!;
+
     animator.root_node = find_root_node(&animator);
 
     animator.pose_storage = create_pose_storage(
@@ -249,8 +262,10 @@ fn void free_animator(Entity entity, void* component, void* user) {
         Action* action = animator.actions.get(id);
         alloc::free(allocator, action.cursors.ptr);
         alloc::free(allocator, action.reference.ptr);
+        alloc::free(allocator, action.weighted_mask.ptr);
     }
 
+    destroy_blend_spaces_2d(allocator, animator.blend_spaces_2d);
     destroy_pose_storage(allocator, animator.pose_storage);
     pool::destroy_pool{Action, AnimationActionId}(animator.actions);
     alloc::free(allocator, animator.actions);

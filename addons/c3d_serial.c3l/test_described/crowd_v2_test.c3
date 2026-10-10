@@ -356,7 +356,7 @@ fn void test_crowd_v2_owned_nested_allocations_and_failed_pending_retry_are_atom
             .configured = true, .root_node = 2, .base_action = uint::max,
             .actions = actions[..], .spaces = spaces[..],
         } };
-        CrowdAuthoringV2 authoring = {
+        CrowdAuthoringV3 authoring = {
             .model = model_id, .capacity = 2,
             .pose_bounds = { .min = { -4, -4, -4 }, .max = { 4, 4, 4 } },
             .instances = seeds[..], .actions_per_instance = 4, .event_capacity = 0,
@@ -439,7 +439,7 @@ fn void test_crowd_v2_malformed_configuration_rejects_before_attachment() @test 
                 .configured = true, .root_node = 2, .base_action = uint::max,
                 .actions = actions[..], .spaces = spaces[..],
             };
-            CrowdAuthoringV2 source = {
+            CrowdAuthoringV3 source = {
                 .model = model_id, .capacity = 2,
                 .pose_bounds = { .min = { -4, -4, -4 }, .max = { 4, 4, 4 } },
                 .instances = seeds[..], .actions_per_instance = 4, .event_capacity = 0,

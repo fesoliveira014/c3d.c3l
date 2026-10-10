@@ -1,0 +1,221 @@
+{
+  "version": 1,
+  "nodes": [
+    {
+      "id": 0,
+      "parent": null,
+      "name": "legacy_crowd",
+      "local": {
+        "position": [
+          4,
+          2,
+          -8
+        ],
+        "rotation": [
+          0,
+          0,
+          0,
+          1
+        ],
+        "scale": [
+          1,
+          1,
+          1
+        ]
+      },
+      "transform_space": "PARENT",
+      "layers": 9,
+      "visible": true,
+      "components": {
+        "c3d.AnimatedCrowd": {
+          "version": 2,
+          "value": {
+            "model": "animation_legacy/model",
+            "capacity": 4,
+            "pose_bounds": {
+              "min": [
+                -4,
+                -4,
+                -4
+              ],
+              "max": [
+                4,
+                4,
+                4
+              ]
+            },
+            "trace": true,
+            "instances": [
+              {
+                "placement": {
+                  "position": [
+                    1,
+                    2,
+                    3
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    2,
+                    2,
+                    2
+                  ]
+                },
+                "pose": {
+                  "clip": "animation_legacy/model#anim/0",
+                  "time": 0.125,
+                  "speed": 1,
+                  "loop": true
+                },
+                "color": [
+                  0.200000003,
+                  0.400000006,
+                  0.600000024,
+                  0.800000012
+                ]
+              },
+              {
+                "placement": {
+                  "position": [
+                    -2,
+                    1,
+                    4
+                  ],
+                  "rotation": [
+                    0,
+                    0,
+                    0,
+                    1
+                  ],
+                  "scale": [
+                    -1,
+                    2,
+                    0.5
+                  ]
+                },
+                "pose": {
+                  "clip": "animation_legacy/model#anim/0",
+                  "time": 0.25,
+                  "speed": 1,
+                  "loop": true
+                },
+                "color": [
+                  0.800000012,
+                  0.300000012,
+                  0.100000001,
+                  1
+                ]
+              }
+            ],
+            "actions_per_instance": 6,
+            "event_capacity": 0,
+            "playback": [
+              {
+                "configured": true,
+                "root_node": 2,
+                "base_action": 0,
+                "actions": [
+                  {
+                    "clip": "animation_legacy/model#anim/0",
+                    "speed": -0.5,
+                    "weight": 0.600000024,
+                    "layer": 0,
+                    "additive": false,
+                    "loop": false,
+                    "playing": false,
+                    "mask": [
+                      true,
+                      true,
+                      true,
+                      true
+                    ],
+                    "root_motion": "EXTRACT",
+                    "root_yaw": true
+                  },
+                  {
+                    "clip": "animation_legacy/model#anim/0",
+                    "speed": 0.75,
+                    "weight": 0,
+                    "layer": 1,
+                    "additive": true,
+                    "loop": true,
+                    "playing": true,
+                    "mask": [
+                      false,
+                      true,
+                      true,
+                      false
+                    ],
+                    "root_motion": "KEEP",
+                    "root_yaw": false
+                  },
+                  {
+                    "clip": "animation_legacy/model#anim/0",
+                    "speed": 1,
+                    "weight": 0,
+                    "layer": 0,
+                    "additive": false,
+                    "loop": true,
+                    "playing": false,
+                    "mask": [
+                      true,
+                      true,
+                      true,
+                      true
+                    ],
+                    "root_motion": "KEEP",
+                    "root_yaw": false
+                  },
+                  {
+                    "clip": "animation_legacy/model#anim/0",
+                    "speed": 1.25,
+                    "weight": 0,
+                    "layer": 2,
+                    "additive": true,
+                    "loop": false,
+                    "playing": false,
+                    "mask": [
+                      false,
+                      true,
+                      true,
+                      false
+                    ],
+                    "root_motion": "KEEP",
+                    "root_yaw": false
+                  }
+                ],
+                "spaces": [
+                  {
+                    "actions": [
+                      2,
+                      3
+                    ],
+                    "positions": [
+                      -1,
+                      2
+                    ],
+                    "parameter": 0.5,
+                    "weight": 0.75,
+                    "speed": -0.25,
+                    "playing": false
+                  }
+                ]
+              },
+              {
+                "configured": true,
+                "root_node": 4294967295,
+                "base_action": 4294967295,
+                "actions": [],
+                "spaces": []
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

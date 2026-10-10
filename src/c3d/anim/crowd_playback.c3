@@ -25,6 +25,7 @@ struct CrowdPlaybackSlot {
     AnimationActionId[] order;
     bool[] masks;
     BlendSpace1D[] spaces;
+    BlendSpace2D[] spaces_2d;
     uint action_count;
     uint generation;
     uint root_node;
@@ -35,6 +36,7 @@ struct CrowdPlaybackSlot {
 <* Owns crowd playback storage, baselines and one event buffer. *>
 struct CrowdPlaybackState {
     Allocator allocator;
+    ModelId model;
     ulong identity;
     Transform[] placements;
     CrowdPlaybackSlot[] slots;
@@ -132,7 +134,7 @@ fn CrowdPlayer? CrowdPlaybackState.player(&self, CrowdInstanceId instance) {
  Start a compatible clip on this instance.
  @param [&in] assets : "Owns the clip throughout playback."
  @param desc : "Mask membership is copied during this call."
- @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
 *>
 fn AnimationActionId? CrowdPlayer.play(
     &self,
@@ -206,7 +208,7 @@ fn void? CrowdPlayer.cross_fade(
  @param [&in] assets : "Clips remain live throughout playback."
  @param positions : "Strictly ascending, finite, one per clip."
  @param desc : "Shared captured configuration and initial fade."
- @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
 *>
 fn BlendSpace1D*? CrowdPlayer.add_blend_space(
     &self,
@@ -355,6 +357,7 @@ fn void reset_crowd_playback_slot(CrowdPlaybackState* state, uint index) {
     clear_playback(&playback);
 
     slot.spaces[..] = (BlendSpace1D){};
+    foreach (&space : slot.spaces_2d) reset_blend_space_2d(space);
     slot.generation++;
     if (!slot.generation) slot.generation = 1;
 
@@ -476,6 +479,8 @@ fn CrowdPlaybackState*? create_crowd_playback(
         slot.spaces = alloc::new_array_try(allocator, BlendSpace1D, MAX_BLEND_SPACES)
           ?? c3d::CAPACITY_EXCEEDED~!;
 
+        slot.spaces_2d = create_blend_spaces_2d(allocator, actions_per_instance)!;
+
         slot.actions.free_count = actions_per_instance;
         slot.actions.generations[..] = 1;
         for (uint action = 0; action < actions_per_instance; action++) {
@@ -504,12 +509,14 @@ fn void destroy_crowd_playback(CrowdPlaybackState* state) {
             Action* action = slot.actions.get(id);
             alloc::free(allocator, action.cursors.ptr);
             alloc::free(allocator, action.reference.ptr);
+            alloc::free(allocator, action.weighted_mask.ptr);
         }
 
         pool::destroy_pool{Action, AnimationActionId}(&slot.actions);
         alloc::free(allocator, slot.order.ptr);
         alloc::free(allocator, slot.masks.ptr);
         alloc::free(allocator, slot.spaces.ptr);
+        destroy_blend_spaces_2d(allocator, slot.spaces_2d);
     }
 
     if (state.pose_storage) destroy_pose_storage(allocator, state.pose_storage);
@@ -538,11 +545,13 @@ fn CrowdPlaybackSlot*? crowd_slot(CrowdPlaybackState* state, CrowdInstanceId ins
 fn PlaybackView crowd_playback_view(CrowdPlaybackState* state, CrowdPlaybackSlot* slot) @private {
     return {
         .allocator = state.allocator,
+        .model = state.model,
         .actions = &slot.actions,
         .order = slot.order,
         .action_count = &slot.action_count,
         .mask_storage = slot.masks,
         .blend_spaces = slot.spaces,
+        .blend_spaces_2d = slot.spaces_2d,
         .root_node = slot.root_node,
     };
 }

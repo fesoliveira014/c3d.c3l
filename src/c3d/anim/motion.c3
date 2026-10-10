@@ -237,17 +237,20 @@ fn PlanarMotion evaluate_root_motion(
             if (action.layer != layer || action.additive || action.weight <= 0
                 || !action.mask[playback.root_node]) continue;
 
+            float weight = action_node_weight(action, playback.root_node);
+            if (weight <= 0) continue;
+
             PlanarMotion delta;
             if (action.root_motion == RootMotion.EXTRACT) delta = action_motion(action, &assets.clip(action.clip).data);
 
             if (action.translation_track != NO_MOTION_TRACK) {
-                sum += delta.translation * action.weight;
-                translation_weight += action.weight;
+                sum += delta.translation * weight;
+                translation_weight += weight;
             }
 
             if (action.rotation_track != NO_MOTION_TRACK) {
-                yaw_sum += delta.yaw * action.weight;
-                rotation_weight += action.weight;
+                yaw_sum += delta.yaw * weight;
+                rotation_weight += weight;
             }
         }
 

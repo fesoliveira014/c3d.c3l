@@ -26,7 +26,7 @@ struct CrowdInstance {
  @param actions_per_instance : "Fixed concurrent actions per placement."
  @param event_capacity : "Fixed event entries across the whole crowd."
  @param authoring : "Optional copied explicit configuration, one per active instance."
- @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
  @require capacity > 0
 *>
 fn Node*? add_crowd(
@@ -58,6 +58,7 @@ fn Node*? add_crowd(
         instances: instances,
         authoring: authoring,
         actions_per_instance: actions_per_instance,
+        model: model,
     )!;
 
     Node* root = scene::add_crowd_node(scene, parent, name)!;
@@ -90,7 +91,7 @@ fn Node*? add_crowd(
  @param actions_per_instance : "Fixed concurrent actions per placement."
  @param event_capacity : "Fixed event entries across the whole crowd."
  @param authoring : "Optional copied explicit configuration, one per active instance."
- @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
  @require !scene.has(node, AnimatedCrowd)
 *>
 fn void? attach_crowd(
@@ -121,6 +122,7 @@ fn void? attach_crowd(
         instances: instances,
         authoring: authoring,
         actions_per_instance: actions_per_instance,
+        model: model,
     )!;
 
     Allocator allocator = scene.allocator;
@@ -162,7 +164,7 @@ fn void? attach_crowd(
  @param [&in] assets : "Owns the model, referenced assets and seed clips."
  @param [&inout] scene : "Receives complete runtime or retains pending authoring."
  @param [&in] node : "Carries AnimatedCrowd."
- @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
  @require scene.has(node, AnimatedCrowd)
 *>
 fn void? prepare_crowd(AssetStore* assets, Scene* scene, Node* node) {
@@ -184,6 +186,7 @@ fn void? prepare_crowd(AssetStore* assets, Scene* scene, Node* node) {
                 source: source,
                 actions_per_instance: crowd.actions_per_instance,
                 placement: crowd.placements[index],
+                model: crowd.model,
             )!;
         }
     }
@@ -207,6 +210,7 @@ fn void? prepare_crowd(AssetStore* assets, Scene* scene, Node* node) {
         actions_per_instance: crowd.actions_per_instance,
         event_capacity: crowd.event_capacity,
     )!;
+    crowd.playback.model = crowd.model;
 
     crowd.parts = alloc::new_array_try(allocator, CrowdPart, template.meshes.len)
       ?? c3d::CAPACITY_EXCEEDED~!;
@@ -282,7 +286,7 @@ fn void? prepare_crowd(AssetStore* assets, Scene* scene, Node* node) {
  @param [&in] assets : "Owns the models and compatible seed clips."
  @param [&inout] scene : "Prepared owners remain unchanged."
  @param [in] root : "Null selects the scene root."
- @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
 *>
 fn void? prepare_crowd_subtree(AssetStore* assets, Scene* scene, Node* root = null) {
     if (!root) root = scene.root;
@@ -463,6 +467,7 @@ fn void? check_authoring(
     CrowdInstance[] instances,
     anim::CrowdInstanceAuthoring[] authoring,
     uint actions_per_instance,
+    ModelId model,
 ) @local {
     if (!authoring.len) return;
     if (authoring.len != instances.len) return c3d::INVALID_ARGUMENT~;
@@ -474,6 +479,7 @@ fn void? check_authoring(
             source: source,
             actions_per_instance: actions_per_instance,
             placement: instances[index].placement,
+            model: model,
         )!;
     }
 }

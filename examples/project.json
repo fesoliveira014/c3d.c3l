@@ -428,6 +428,10 @@
       "sources": [
         "src/profile_gpu.c3"
       ]
+    },
+    "animation_authoring": {
+      "type": "executable",
+      "sources": ["src/animation_authoring.c3"]
     }
   }
 }

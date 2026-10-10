@@ -22,14 +22,14 @@ update and the final `update_world` ([Inverse kinematics](#inverse-kinematics)).
 
 An `Animator` is a component on the synthetic root that `model::instantiate`
 returns. It owns a fixed pool of 16 actions, addressed by `AnimationActionId`.
-The pool header, live-ID order, events, blend spaces and model-sized mask rows
-live in one per-animator heap block. The scene component contains only pointers,
-counts and the last motion delta (152 bytes on x64).
+The pool header, live-ID order, events, 1D spaces and model-sized boolean mask
+rows share one per-animator heap block. Prepared 2D spaces use a separate fixed
+block. The scene component contains pointers, counts and the last motion delta.
 
-The fixed component store reserves a slot for every possible scene node,
-including unused slots. At the default 16,385 slots (16,384 nodes plus the scene
-root), Animator values occupy 2,490,520 bytes, about 2.375 MiB per scene. ECS
-index arrays and allocations for live animators are additional.
+The fixed component store reserves a value for every possible scene node,
+including unused slots: `scene_capacity * Animator::size`. The default scene
+has 16,385 slots, including its root. ECS index arrays and allocations for live
+animators are additional.
 
 ```c3
 Node* left = model::instantiate(&assets, &scene, model)!;
@@ -148,6 +148,50 @@ mask with a different node count. Reuse a mask only with instances of the model
 whose indices it describes. Destroying/editing the input mask after play does
 not alter existing actions.
 
+### Weighted and feathered masks
+
+`PlayDesc.weighted_mask` borrows a caller-owned `WeightedJointMask` during play
+instead of a boolean mask. `create_weighted_joint_mask(allocator, assets, model, names,
+weights)` selects exact names with finite weights in `[0,1]`; every matching
+node participates, and repeated entries combine by maximum. An empty list
+selects no nodes. `NOT_FOUND` identifies a missing name.
+
+`create_feathered_joint_mask` also takes one depth per named seed. At descendant
+distance `d`, seed weight `w` contributes
+`w * min(1, (d + 1) / (depth + 1))`. The seed participates: weight 0.8 and depth
+3 give 0.2, 0.4, 0.6 and 0.8 at distances 0 through 3, then remain at 0.8.
+Depth zero selects the whole subtree at `w`; overlapping seeds combine by
+maximum, independent of order.
+
+```c3
+String[1] names = { "DEF-spine.001" };
+float[1] weights = { 0.8f };
+uint[1] depths = { 3 };
+WeightedJointMask upper = anim::create_feathered_joint_mask(
+    allocator: mem,
+    assets: &assets,
+    model: model,
+    names: names[..],
+    weights: weights[..],
+    depths: depths[..],
+)!;
+defer anim::destroy_weighted_joint_mask(&upper);
+
+animator.play(&assets, overlay_clip, { .layer = 1, .weighted_mask = &upper })!;
+```
+
+Use the model's actual names. A weighted mask captures the model identity and
+ordered node names/parents. A different model or changed layout, wrong row
+width, invalid weight, or supplying both mask types faults `INVALID_ARGUMENT`
+before playback changes. Play copies the float row; editing or destroying the
+caller mask afterwards does not change existing actions. Each masked action
+owns `node_count * float::size` extra bytes until removal.
+
+The effective contribution is `action.weight * mask.nodes[node]` for every
+translation, rotation, scale and logical morph channel, including root motion.
+Masked and zero-weight advancing actions still emit events. Boolean masks keep
+their existing API and storage.
+
 ### Regular blending
 
 Each channel (translation, rotation, scale, and each morph weight array) is
@@ -155,7 +199,7 @@ blended separately against the lower layer's value (the authored baseline on
 layer zero):
 
 ```plain text
-total    = sum of weights of the actions whose clip animates this channel
+total    = sum of effective weights for actions animating this channel
 residual = max(0, 1 - total)
 value    = (sum of weight * sample + residual * below) / max(1, total)
 ```
@@ -171,12 +215,34 @@ Set `PlayDesc.additive = true`. Play captures each track's sample at time zero
 once, including the value rather than tangent fields of cubic keys. Each layer
 first folds regular actions, then applies its additive actions in play order.
 
-Translation, scale and morphs add `weight * (sample - reference)`. Rotation uses
-`reference.conjugate() * sample`, aligns that delta to identity, interpolates
+Translation and morphs add `weight * (sample - reference)`. Scale defaults to
+`AdditiveScaleMode.DIFFERENCE` and uses the same difference formula. Rotation
+uses `reference.conjugate() * sample`, aligns that delta to identity, interpolates
 from identity by weight, then postmultiplies the current rotation and normalizes.
 Additive order matters for noncommuting rotations. A time-zero action adds
-nothing; a half-weight 45-degree delta applies 22.5 degrees. Scale is additive,
-not multiplicative. Masks apply to every channel.
+nothing; a half-weight 45-degree delta applies 22.5 degrees. Both mask types
+apply to every channel.
+
+Opt in to componentwise scale ratios with
+`PlayDesc.additive_scale = AdditiveScaleMode.MULTIPLICATIVE` on an additive
+action. After regular blending, each additive action applies:
+
+```plain text
+below *= 1 + effective_weight * (sample / reference - 1)
+```
+
+For below `(2,3,4)`, reference `(2,4,8)`, sample `(4,2,16)` and weight 0.5,
+the result is `(3,2.25,6)`. The scale mode and time-zero reference are captured
+at play. Every scale track and its reference must stay finite and strictly
+positive across its full domain. Admission checks STEP/LINEAR keys and cubic
+interior extrema once. Nonpositive domains return `INVALID_ARGUMENT` before
+creating an action or group. CUBIC segments also need an exact minimum of at
+least `FLT_MIN + 2^-40 * M`, where `FLT_MIN = 2^-126` and `M` is the largest
+magnitude of a key or duration-scaled tangent. This directed margin covers the
+double sampler error and keeps its float result positive. Positive curves below
+the margin return `UNSUPPORTED` before mutation. STEP and LINEAR retain their
+key-only checks, including positive subnormals. Runtime applies no clamp or
+repeated domain scan.
 
 An additive action keeps the reference pose it sampled at `play` until it is played again. After
 `replace_clip_owned`, running actions re-seek on the new tracks, but an additive action's reference pose and
@@ -287,9 +353,9 @@ BlendSpace1D* space = animator.add_blend_space(
 space.parameter = 0.5f;
 ```
 
-An animator owns two fixed space slots, each with 2–8 actions. Positions must be
-finite and strictly ascending, and clip durations finite and positive. Dead
-clips fault `INVALID_ID`, invalid inputs/configuration fault `INVALID_ARGUMENT`,
+An animator owns two fixed space slots shared by 1D and 2D groups. A 1D group
+has 2–8 actions. Positions must be finite and strictly ascending, and clip
+durations finite and positive. Dead clips fault `INVALID_ID`, invalid inputs/configuration fault `INVALID_ARGUMENT`,
 and exhausted space/action slots fault `CAPACITY_EXCEEDED`. Creation rolls back
 all new actions on failure.
 
@@ -307,6 +373,102 @@ Independent stop/cross_fade faults `INVALID_ARGUMENT`. Use
 every member. Pointers are short-lived borrows: reacquire through
 `animator.blend_spaces[slot]` after animator-store changes and discard after
 removal/reuse. The inspector exposes group controls and displays member state.
+
+## Two-dimensional blend spaces
+
+Supply explicit sample coordinates and their triangulation:
+
+```c3
+ClipId[3] clips = { idle, walk_left, walk_right };
+Vec2[3] coordinates = { { 0, 0 }, { 2, 0 }, { 0, 2 } };
+BlendTriangle[1] triangles = { { .indices = { 0, 1, 2 } } };
+BlendSpace2D* space = animator.add_blend_space_2d(
+    assets: &assets,
+    clips: clips[..],
+    coordinates: coordinates[..],
+    triangles: triangles[..],
+)!;
+space.parameter = { 0.5f, 0.5f };
+```
+
+A group has 3–16 members on an Animator, or 3–`actions_per_instance` on a crowd.
+Every member consumes an ordinary action slot. Two 1D groups, two 2D groups or
+one of each fill the same two-slot budget. Crowd capacities below three cannot
+admit a 2D group.
+
+Coordinates must be distinct and finite. Triangles must form a connected,
+non-overlapping triangulation of the convex hull, include every sample and have
+valid distinct indices. Winding is normalized at admission; gaps, crossings,
+duplicate triangles, unused samples and non-convex boundaries fault
+`INVALID_ARGUMENT`. For maximum coordinate extent `S`, triangle double-area
+must exceed `1e-10 * S*S`. No automatic triangulation or degenerate fallback is
+performed. Clips must be live and have finite positive durations. Exhausted
+slots/actions or failed allocation return `CAPACITY_EXCEEDED`; dead IDs return
+`INVALID_ID`. Failure preserves existing actions, groups and output.
+
+An exact coordinate selects that authored sample. Otherwise the first authored
+containing triangle supplies up to three nonnegative barycentric weights.
+Boundary roundoff within `1e-7` is clamped to zero and normalized. Outside the
+hull, the parameter projects onto the nearest boundary segment. Distance ties
+within `1e-12 * S*S` choose the earliest authored triangle-edge occurrence.
+Selection does not depend on the previous parameter.
+
+Selected weights sum to `space.weight`; the selected durations advance the same
+normalized phase law as 1D. All members retain their shared clocks and event
+semantics, including unselected and zero-weight members. Pausing the phase still
+allows parameter edits to change the pose. Keep parameter, speed and phase
+finite, phase in `[0,1)`, and weight in `[0,1]`.
+
+Use `stop_blend_space_2d(space, fade_out)` and
+`fade_blend_space_2d(space, target_weight, duration)` for group removal and fades.
+Independent member stop/cross-fade returns `INVALID_ARGUMENT`. Creation copies
+coordinates, triangles and captured masks; caller arrays may be changed or freed
+afterwards. Group arrays and member configuration stay library-owned and
+read-only. The returned pointer is a short-lived borrow; reacquire from the
+owner's 2D slot storage after structural changes and discard it after removal.
+
+### Prepared storage
+
+Every playback owner prepares two 2D rows even when neither is active. For action
+capacity `A`, each row holds `A` action IDs, `A` coordinates, up to
+`max(0, 2*A - 5)` three-byte triangles and `A` two-byte hull edges. On x64 the
+control is 128 bytes, aligned to eight bytes. Both rows share one allocation;
+these totals include controls and alignment padding:
+
+| Action capacity | Retained 2D bytes per playback owner |
+| ---: | ---: |
+| 1 | 304 |
+| 2 | 336 |
+| 3 | 384 |
+| 4 | 432 |
+| 8 | 624 |
+| 9 | 672 |
+| 15 | 960 |
+| 16 | 1008 |
+
+An Animator pays 1008 bytes. A crowd pays the table value for every slot of its
+fixed capacity, including inactive slots. These bytes exclude existing 1D rows,
+actions, cursors, additive references and weighted mask rows. Group updates
+allocate nothing; creation allocates only the members' captured action data.
+
+## Authoring example and inspector
+
+```bash
+python3 scripts/build.py --example animation_authoring
+```
+
+`animation_authoring` pairs a crowd with an ordinary Animator for the unmodified
+CC0 Quaternius animations and AnimatedMorphCube. Its panel controls a nine-sample
+2D direction, speed, pause, a feathered upper-body/morph overlay and a
+multiplicative head-scale overlay. The Animator inspector exposes 2D parameter,
+weight, speed, pause and stop controls, and shows copied weighted-mask membership
+and the additive scale mode. Captured mask/layout/scale settings change by
+recreating their actions or groups.
+
+Animator authoring version 2 and AnimatedCrowd version 3 retain these settings
+through `c3d_serial`; old streams keep their original 1D, boolean-mask and
+DIFFERENCE defaults. Playback clocks and fades follow the existing restart rules
+([Serialization](serialization.md)).
 
 ## Layered example and CPU measurements
 
@@ -333,11 +495,10 @@ The CPU-only benchmark reads the existing `anim.update` capture scope for one
 Mixamo instance. It warms 300 updates and measures 5,000 at a fixed 60 Hz step;
 loading, mask creation and reference sampling are outside the measured interval.
 
-The benchmark also prints `animator,component_bytes,152`: about 2.375 MiB of
-Animator values at the default scene capacity, compared with 1.125 MiB for the
-72-byte component before runtime motion. The inline motion value and output
-slices are retained for direct access; event and blend-space arrays remain in
-the per-animator heap block.
+The measurements below used a 152-byte Animator component before 2D authoring
+storage was added. They do not include its prepared 2D block or weighted action
+rows. Current retained costs follow the component and prepared-storage formulas
+above.
 
 Windows x64, i9-14900K, C3 0.8.3 `-O3`, CPU+INTERNAL profiling; medians of three
 run means:
