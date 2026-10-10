@@ -2,8 +2,10 @@
 
 These immutable inputs were emitted by the actual v1 codec before issue #351
 production changes. Pending and prepared exports were identical; independent
-capture processes also produced identical bytes. The frozen generator remains
-under `test/crowd_codec_reference/` as a historical producer.
+capture processes also produced identical bytes. The historical producer and
+capture receipts are retained in the local change evidence; the fixture recipe
+and original source baseline below identify the inputs without requiring an
+obsolete runtime API in the current build.
 
 | Input | Bytes | SHA256 |
 | --- | ---: | --- |

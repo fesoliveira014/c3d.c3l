@@ -265,8 +265,9 @@ while (window.poll()) {
   `+ A*(Action::size + AnimationActionId::size + 2*uint::size + N*bool::size)`
   `+ MAX_BLEND_SPACES*BlendSpace1D::size + CrowdPlaybackSlot::size`, multiplied by capacity,
   where N is node count, M mesh count, W complete logical morph width and A action capacity.
-  The owner also retains one shared pose scratch/baseline block and `event_capacity*CrowdEvent::size`
-  event bytes. Crowd placements, tints, seeds, starts, parts and `capacity*joints*Mat4::size`
+  The owner also retains copied model baselines and one shared pose scratch block. Crowd-wide
+  output and crossing scratch cost `event_capacity*(CrowdEvent::size + EventBookmark::size)`.
+  Crowd placements, tints, seeds, starts, parts and `capacity*joints*Mat4::size`
   palettes are separate retained arrays. Active cursors/additive references add their actual
   clip-dependent bytes at play; allocator alignment and metadata add overhead.
 - `pose_bounds` is instance-local and must cover every pose of one instance; culling and shadow fitting
