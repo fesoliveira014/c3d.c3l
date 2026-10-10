@@ -107,7 +107,7 @@ $assert $reflect(ActionStorage.actions).offset == 0;
  Start a clip and return its stable playback identity.
  @param [&in] assets : "Owns the clip throughout playback."
  @param desc : "Mask membership is copied during this call."
- @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
 *>
 fn AnimationActionId? Animator.play(
     &self,
@@ -191,6 +191,7 @@ fn Animator* add_animator(Scene* scene, Node* instance_root) {
     };
 
     animator.blend_spaces_2d = create_blend_spaces_2d(scene.allocator, MAX_ACTIONS)!!;
+
     animator.root_node = find_root_node(&animator);
 
     animator.pose_storage = create_pose_storage(

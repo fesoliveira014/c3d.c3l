@@ -17,8 +17,8 @@ import std::io;
 import std::io::path;
 import std::math;
 
-const uint ACTION_CAPACITY @local = 16; // Nine locomotion members and two overlays fit fixed owner storage.
-const uint SCENE_CAPACITY @local = 512; // Two character rigs, two morph owners, camera and light.
+const uint ACTION_CAPACITY @local = 16; // Nine members and two overlays; 16 action slots plus 1008 B of 2D rows per owner.
+const uint SCENE_CAPACITY @local = 512; // Four owners, camera and light; 513 * Node::size bytes plus fixed component rows.
 const String[9] LOCOMOTION_NAMES @local = {
     "Jog_Bwd_L_Loop", "Jog_Bwd_Loop", "Jog_Bwd_R_Loop",
     "Jog_Left_Loop", "Idle_Loop", "Jog_Right_Loop",
@@ -134,9 +134,12 @@ fn DisplayPair? create_pair(
         actions_per_instance: ACTION_CAPACITY,
         event_capacity: 0,
     )!;
+
     pair.ordinary = model::instantiate(assets, scene, model_id)!;
+
     pair.crowd.local.position = { -1.7f, 0, morph ? -3.0f : 0.0f };
     pair.ordinary.local.position = { 1.7f, 0, morph ? -3.0f : 0.0f };
+
     Animator* animator = anim::add_animator(scene, pair.ordinary);
     AnimatedCrowd* crowd = scene.get(pair.crowd, AnimatedCrowd);
     CrowdPlayer player = crowd.playback.player(crowd.playback.instance_id(0)!)!;
@@ -345,11 +348,13 @@ fn int main() {
         path: asset_path("../assets/quaternius/AnimationLibrary_Godot.glb"),
     )!!;
     ModelId morph_model = gltf::load_model(&assets, asset_path("../assets/gltf/AnimatedMorphCube.glb"))!!;
+
     Scene scene = scene::create_scene(mem, { .max_nodes = SCENE_CAPACITY });
     defer scene::destroy_scene(&scene);
 
     Node* sun = scene.add_light(light::directional({ 1, 0.95f, 0.85f }, 3, false))!!;
     sun.local.rotation = maths::look_rotation((Vec3){ -0.4f, -1, -0.5f }.normalize(), { 0, 1, 0 });
+
     DisplayPair character = create_pair(
         assets: &assets,
         scene: &scene,

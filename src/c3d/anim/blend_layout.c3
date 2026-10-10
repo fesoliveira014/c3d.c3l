@@ -5,9 +5,9 @@ import std::math;
 
 const uint BLEND_LAYOUT_MAX_SAMPLES @private = 16; // action bound; three-byte prepared triangles
 const uint BLEND_LAYOUT_MAX_TRIANGLES @private = 2 * BLEND_LAYOUT_MAX_SAMPLES - 5;
-const double BLEND_SPACE_AREA_REL_TOLERANCE @private = 1e-10; // bounds unstable area relative to extent squared
+const double BLEND_SPACE_AREA_RELATIVE_TOLERANCE @private = 1e-10; // bounds unstable area relative to extent squared
 const double BLEND_SPACE_BOUNDARY_TOLERANCE @private = 1e-7; // bounds admitted barycentric roundoff
-const double BLEND_SPACE_DISTANCE_REL_TOLERANCE @private = 1e-12; // bounds distance ties in squared-extent units
+const double BLEND_SPACE_DISTANCE_RELATIVE_TOLERANCE @private = 1e-12; // bounds distance ties in squared-extent units
 
 enum BlendLayoutLocation @private {
     SAMPLE,
@@ -149,7 +149,7 @@ fn BlendLayoutSelection select_blend_layout(BlendLayoutView layout, Vec2 paramet
         closest = math::min(closest, distances[index]);
     }
 
-    double tie = BLEND_SPACE_DISTANCE_REL_TOLERANCE * layout.extent * layout.extent;
+    double tie = BLEND_SPACE_DISTANCE_RELATIVE_TOLERANCE * layout.extent * layout.extent;
     foreach (uint index, edge : layout.hull) {
         if (distances[index] > closest + tie) continue;
 
@@ -212,7 +212,7 @@ fn BlendLayoutPrepared? validate_blend_layout(Vec2[] points, BlendTriangle[] tri
     double extent = math::max(max_x - min_x, max_y - min_y);
     if (extent == 0) return c3d::INVALID_ARGUMENT~;
 
-    double area_limit = BLEND_SPACE_AREA_REL_TOLERANCE * extent * extent;
+    double area_limit = BLEND_SPACE_AREA_RELATIVE_TOLERANCE * extent * extent;
     BlendLayoutPrepared prepared = { .info = { .triangle_count = triangle_count, .extent = extent } };
     bool[BLEND_LAYOUT_MAX_SAMPLES] used;
     bool[BLEND_LAYOUT_MAX_SAMPLES][BLEND_LAYOUT_MAX_SAMPLES] directed;
@@ -269,6 +269,7 @@ fn BlendLayoutPrepared? validate_blend_layout(Vec2[] points, BlendTriangle[] tri
 
             adjacency[index][prior] = shared == 2;
             adjacency[prior][index] = shared == 2;
+
             for (uint first = 0; first < 3; first++) {
                 Vec2 first_a = points[triangle.indices[first]];
                 Vec2 first_b = points[triangle.indices[(first + 1) % 3]];

@@ -61,8 +61,8 @@ fn usz animation_storage_payload(uint capacity) @local {
 
 fn usz animation_storage_expected(uint capacity) @local {
     usz payload = animation_storage_payload(capacity);
-    usz row_alignment = (usz)math::max(BlendSpace2D::alignment,
-      math::max(AnimationActionId::alignment, Vec2::alignment));
+    sz member_alignment = math::max(AnimationActionId::alignment, Vec2::alignment);
+    usz row_alignment = (usz)math::max(BlendSpace2D::alignment, member_alignment);
     usz row_padding = (row_alignment - payload % row_alignment) % row_alignment;
     return 2 * BlendSpace2D::size + 2 * (payload + row_padding);
 }

@@ -88,7 +88,7 @@ struct EventOutput {
  Start a clip in the destination playback.
  @param [&in] assets : "Clips remain live throughout playback."
  @param desc : "Mask membership and motion configuration are captured."
- @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
  @require destination.present.len == destination.base_pose.len
  @require destination.mesh_present.len == destination.base_pose.len
  @require destination.mesh_indices.len == destination.base_pose.len
@@ -225,7 +225,7 @@ fn EventOutput event_output(FiredEvent[] events) {
  @param [&in] assets : "Clips remain live throughout playback."
  @param desc : "Mask validation precedes its deferred installation copy."
  @param root_node : "Destination index used for motion."
- @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
  @require destination.present.len == destination.base_pose.len
  @require destination.mesh_present.len == destination.base_pose.len
  @require destination.mesh_indices.len == destination.base_pose.len
@@ -393,12 +393,14 @@ fn Action? prepare_validated_playback_action(
                 cursor: &cursor,
                 out: reference[offset:track.stride()],
             );
+
             if (track.path == TargetPath.SCALE && desc.additive_scale == AdditiveScaleMode.MULTIPLICATIVE) {
                 Vec3 scale = sample_multiplicative_scale_reference(track);
                 reference[offset] = scale.x;
                 reference[offset + 1] = scale.y;
                 reference[offset + 2] = scale.z;
             }
+
             offset += track.stride();
         }
     }

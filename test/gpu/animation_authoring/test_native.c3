@@ -252,7 +252,10 @@ fn void check_authoring_native_pose(
             foreach (uint component, weight : weights) {
                 double base_sample = authoring_native_linear_component(&clip.tracks[0], base.time, component);
                 double overlay_sample = authoring_native_linear_component(
-                    &clip.tracks[0], controls.ordinary_overlay[source].time, component);
+                    track: &clip.tracks[0],
+                    time: controls.ordinary_overlay[source].time,
+                    component: component,
+                );
                 double group_weight = (double)controls.ordinary[source].weight;
                 double default_weight = (double)playback.base_morph_weights[0][component];
                 double below = group_weight * base_sample + (1.0 - group_weight) * default_weight;

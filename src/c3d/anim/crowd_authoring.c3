@@ -111,7 +111,7 @@ fn void destroy_crowd_authoring(CrowdAuthoringState* state) {
  @param [&in] assets : "Owns every referenced compatible clip."
  @param [&in] template : "Validated model nodes, meshes and logical defaults."
  @param placement : "Instance scale used for root-motion admission."
- @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
  @require actions_per_instance > 0 && actions_per_instance <= MAX_ACTIONS
 *>
 fn void? validate_crowd_authoring(
@@ -154,7 +154,7 @@ fn void? validate_crowd_authoring(
  @param [&inout] state : "Receives the configured slot."
  @param [&in] assets : "Owns every referenced compatible clip."
  @param base_start : "Captured authoring start of the retained base action."
- @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
  @require index < state.count, state.slots[index].action_count == 0
  @require source.configured
 *>
@@ -231,6 +231,7 @@ fn AnimationActionId? restore_playback_authoring(
                 .root_motion = action.root_motion,
                 .root_yaw = action.root_yaw,
             };
+
             ids[ordinal] = playback.play(
                 assets: assets,
                 clip: action.clip,
@@ -238,6 +239,7 @@ fn AnimationActionId? restore_playback_authoring(
                 destination: destination,
                 motion_basis: motion_basis,
             )!;
+
             Action* restored = playback.action(ids[ordinal]);
             restored.speed = action.speed;
             restored.weight = action.weight;

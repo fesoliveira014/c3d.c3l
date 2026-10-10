@@ -58,6 +58,7 @@ fn void? register_animator_codec() @private {
     register_core_value(ActionAuthoring, ACTION_AUTHORING_LAYOUT, &defaults_action)!;
     register_core_value(SpaceAuthoring, SPACE_AUTHORING_LAYOUT, &defaults_space)!;
     register_core_value(AnimatorAuthoring, ANIMATOR_AUTHORING_LAYOUT, &defaults_animator)!;
+
     register_animation_authoring_values()!;
     describe::register_reflected(AnimatorAuthoringV2)!;
     register_described_type(
@@ -124,13 +125,17 @@ fn void? validate_animator(void* value, ReadContext* context) @local {
     ModelAuthoring* model = context.authored(ModelInstance, ModelAuthoring, context.node.id)!;
     if (!model) return c3d::INVALID_ARGUMENT~;
 
-    anim::check_crowd_instance({
-        .configured = true,
-        .root_node = source.root_node,
-        .base_action = uint::max,
-        .actions = source.actions,
-        .spaces = source.spaces,
-    }, model.nodes.len, anim::MAX_ACTIONS)!;
+    anim::check_crowd_instance(
+        source: {
+            .configured = true,
+            .root_node = source.root_node,
+            .base_action = uint::max,
+            .actions = source.actions,
+            .spaces = source.spaces,
+        },
+        node_count: model.nodes.len,
+        action_capacity: anim::MAX_ACTIONS,
+    )!;
 
     foreach (action : source.actions) {
         AnimationClip* clip = &context.assets.clips.try_get(action.clip)!.data;

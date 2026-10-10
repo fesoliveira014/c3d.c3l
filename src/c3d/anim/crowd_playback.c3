@@ -134,7 +134,7 @@ fn CrowdPlayer? CrowdPlaybackState.player(&self, CrowdInstanceId instance) {
  Start a compatible clip on this instance.
  @param [&in] assets : "Owns the clip throughout playback."
  @param desc : "Mask membership is copied during this call."
- @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
 *>
 fn AnimationActionId? CrowdPlayer.play(
     &self,
@@ -208,7 +208,7 @@ fn void? CrowdPlayer.cross_fade(
  @param [&in] assets : "Clips remain live throughout playback."
  @param positions : "Strictly ascending, finite, one per clip."
  @param desc : "Shared captured configuration and initial fade."
- @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
 *>
 fn BlendSpace1D*? CrowdPlayer.add_blend_space(
     &self,
@@ -318,7 +318,7 @@ fn void? validate_crowd_seed(AssetStore* assets, ModelTemplate* template, CrowdP
  Prepare an owned seed action without changing the crowd slot.
  @param [&inout] state : "Retains fixed storage throughout staging."
  @param [&in] assets : "Owns the referenced clip."
- @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED
+ @return? c3d::INVALID_ID, c3d::INVALID_ARGUMENT, c3d::CAPACITY_EXCEEDED, c3d::UNSUPPORTED
  @require index < state.slots.len
 *>
 fn Action? prepare_crowd_seed(
