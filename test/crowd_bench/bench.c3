@@ -193,11 +193,26 @@ fn void? create_outputs(String directory, Outputs* outputs) {
     outputs.storage = file::open(joined_path(directory, "cpu-storage.csv")!, "wb")!;
     outputs.failures = file::open(joined_path(directory, "cpu-failures.csv")!, "wb")!;
     outputs.metadata = file::open(joined_path(directory, "cpu-metadata.csv")!, "wb")!;
-    io::fprintn(&outputs.raw, "fixture,script,configured,live,repetition,sample,script_frame,submission_frame,seed,dt,evaluate_ms,publish_ms,total_ms,acquire_calls,resize_calls,release_calls,requested_bytes,events,dropped")!;
-    io::fprintn(&outputs.summary, "fixture,script,configured,live,repetition,metric,samples,median_ms,p95_ms,setup_acquire_calls,setup_resize_calls,setup_requested_bytes,play_acquire_calls,play_resize_calls,play_requested_bytes")!;
-    io::fprintn(&outputs.storage, "fixture,script,configured,live,repetition,category,bytes,nodes,meshes,joints,logical_weights,action_capacity,event_capacity")!;
-    io::fprintn(&outputs.failures, "fixture,script,configured,live,repetition,fault,seed,dt,action_capacity,event_capacity,scene_capacity")!;
-    io::fprintn(&outputs.metadata, "key,value")!;
+    io::fprintn(
+        out: &outputs.raw,
+        x: "fixture,script,configured,live,repetition,sample,script_frame,submission_frame,seed,dt,evaluate_ms,publish_ms,total_ms,acquire_calls,resize_calls,release_calls,requested_bytes,events,dropped",
+    )!;
+    io::fprintn(
+        out: &outputs.summary,
+        x: "fixture,script,configured,live,repetition,metric,samples,median_ms,p95_ms,setup_acquire_calls,setup_resize_calls,setup_requested_bytes,play_acquire_calls,play_resize_calls,play_requested_bytes",
+    )!;
+    io::fprintn(
+        out: &outputs.storage,
+        x: "fixture,script,configured,live,repetition,category,bytes,nodes,meshes,joints,logical_weights,action_capacity,event_capacity",
+    )!;
+    io::fprintn(
+        out: &outputs.failures,
+        x: "fixture,script,configured,live,repetition,fault,seed,dt,action_capacity,event_capacity,scene_capacity",
+    )!;
+    io::fprintn(
+        out: &outputs.metadata,
+        x: "key,value",
+    )!;
 }
 
 fn void? metadata(Outputs* outputs, String key, String value) {
@@ -356,10 +371,10 @@ fn Storage? storage_inventory(CounterAllocator* counter, Scene* scene, AnimatedC
     )!;
     foreach (weights : state.base_morph_weights) {
         result.fixed_playback += tracked_bytes(
-        tracker: tracker,
-        pointer: weights.ptr,
-        expected: weights.len * float::size,
-    )!;
+            tracker: tracker,
+            pointer: weights.ptr,
+            expected: weights.len * float::size,
+        )!;
     }
     result.fixed_playback += tracked_bytes(
         tracker: tracker,
@@ -384,47 +399,47 @@ fn Storage? storage_inventory(CounterAllocator* counter, Scene* scene, AnimatedC
 
     foreach (&slot : state.slots) {
         result.actions += tracked_bytes(
-        tracker: tracker,
-        pointer: slot.actions.items.ptr,
-        expected: slot.actions.items.len * Action::size,
-    )!;
+            tracker: tracker,
+            pointer: slot.actions.items.ptr,
+            expected: slot.actions.items.len * Action::size,
+        )!;
         result.fixed_playback += tracked_bytes(
-        tracker: tracker,
-        pointer: slot.actions.generations.ptr,
-        expected: slot.actions.generations.len * uint::size,
-    )!;
+            tracker: tracker,
+            pointer: slot.actions.generations.ptr,
+            expected: slot.actions.generations.len * uint::size,
+        )!;
         result.fixed_playback += tracked_bytes(
-        tracker: tracker,
-        pointer: slot.actions.free.ptr,
-        expected: slot.actions.free.len * uint::size,
-    )!;
+            tracker: tracker,
+            pointer: slot.actions.free.ptr,
+            expected: slot.actions.free.len * uint::size,
+        )!;
         result.masks += tracked_bytes(
-        tracker: tracker,
-        pointer: slot.masks.ptr,
-        expected: slot.masks.len * bool::size,
-    )!;
+            tracker: tracker,
+            pointer: slot.masks.ptr,
+            expected: slot.masks.len * bool::size,
+        )!;
         result.order += tracked_bytes(
-        tracker: tracker,
-        pointer: slot.order.ptr,
-        expected: slot.order.len * AnimationActionId::size,
-    )!;
+            tracker: tracker,
+            pointer: slot.order.ptr,
+            expected: slot.order.len * AnimationActionId::size,
+        )!;
         result.spaces += tracked_bytes(
-        tracker: tracker,
-        pointer: slot.spaces.ptr,
-        expected: slot.spaces.len * BlendSpace1D::size,
-    )!;
+            tracker: tracker,
+            pointer: slot.spaces.ptr,
+            expected: slot.spaces.len * BlendSpace1D::size,
+        )!;
         foreach (id : slot.order[:slot.action_count]) {
             Action* action = slot.actions.get(id);
             result.cursors += tracked_bytes(
-        tracker: tracker,
-        pointer: action.cursors.ptr,
-        expected: action.cursors.len * uint::size,
-    )!;
+                tracker: tracker,
+                pointer: action.cursors.ptr,
+                expected: action.cursors.len * uint::size,
+            )!;
             result.references += tracked_bytes(
-        tracker: tracker,
-        pointer: action.reference.ptr,
-        expected: action.reference.len * float::size,
-    )!;
+                tracker: tracker,
+                pointer: action.reference.ptr,
+                expected: action.reference.len * float::size,
+            )!;
         }
     }
 
@@ -483,10 +498,10 @@ fn Storage? storage_inventory(CounterAllocator* counter, Scene* scene, AnimatedC
     )!;
     foreach (weights : scratch.morph_sums) {
         result.fixed_playback += tracked_bytes(
-        tracker: tracker,
-        pointer: weights.ptr,
-        expected: weights.len * float::size,
-    )!;
+            tracker: tracker,
+            pointer: weights.ptr,
+            expected: weights.len * float::size,
+        )!;
     }
 
     result.crowd_events = tracked_bytes(
@@ -526,10 +541,10 @@ fn Storage? storage_inventory(CounterAllocator* counter, Scene* scene, AnimatedC
     )!;
     foreach (weights : destination.morph_weights) {
         result.outputs += tracked_bytes(
-        tracker: tracker,
-        pointer: weights.ptr,
-        expected: weights.len * float::size,
-    )!;
+            tracker: tracker,
+            pointer: weights.ptr,
+            expected: weights.len * float::size,
+        )!;
     }
     result.outputs += tracked_bytes(
         tracker: tracker,
@@ -549,15 +564,15 @@ fn Storage? storage_inventory(CounterAllocator* counter, Scene* scene, AnimatedC
     foreach (part : crowd.parts) {
         InstancedMesh* batch = scene.world.get(part.batch, InstancedMesh);
         result.parts += tracked_bytes(
-        tracker: tracker,
-        pointer: batch.transforms.ptr,
-        expected: batch.transforms.len * Transform::size,
-    )!;
+            tracker: tracker,
+            pointer: batch.transforms.ptr,
+            expected: batch.transforms.len * Transform::size,
+        )!;
         result.parts += tracked_bytes(
-        tracker: tracker,
-        pointer: batch.colors.ptr,
-        expected: batch.colors.len * Vec4::size,
-    )!;
+            tracker: tracker,
+            pointer: batch.colors.ptr,
+            expected: batch.colors.len * Vec4::size,
+        )!;
     }
     result.total = (ulong)tracker.usage;
     ulong classified = result.fixed_playback + result.actions + result.masks + result.order + result.spaces
@@ -569,7 +584,7 @@ fn Storage? storage_inventory(CounterAllocator* counter, Scene* scene, AnimatedC
     usz weights = crowd.morph_stride;
     usz actions = crowd.actions_per_instance;
     usz sample_width = 4;
-    foreach (values : state.base_morph_weights) sample_width = math::max(sample_width, values.len);
+    foreach (values : state.base_morph_weights) sample_width = math::max(sample_width, (usz)values.len);
     result.fixed_per_instance = CrowdPlaybackSlot::size
       + actions * (Action::size + 2 * uint::size + AnimationActionId::size + nodes * bool::size)
       + anim::MAX_BLEND_SPACES * BlendSpace1D::size
@@ -667,8 +682,8 @@ fn void? write_samples(
             live: live,
             repetition: repetition,
         )!;
-        csv_uint(&outputs.raw, index)!;
-        csv_uint(&outputs.raw, WARMUPS + index)!;
+        csv_uint(&outputs.raw, (ulong)index)!;
+        csv_uint(&outputs.raw, (ulong)(WARMUPS + index))!;
         csv_string(&outputs.raw, "NA")!;
         csv_uint(&outputs.raw, SCRIPT_SEED)!;
         csv_float(&outputs.raw, FIXED_DT)!;
