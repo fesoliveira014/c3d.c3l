@@ -958,7 +958,7 @@ fn void? native_failure(
 }
 
 fn void? run_native(String[] args) {
-    if (args.len < 2 || args.len > 10) return c3d::INVALID_ARGUMENT~;
+    if (args.len < 2 || args.len > 13) return c3d::INVALID_ARGUMENT~;
     @pool() {
         String repository = args.len > 2 ? args[2] : ".";
         uint population = args.len > 3 ? args[3].to_uint()! : 0;

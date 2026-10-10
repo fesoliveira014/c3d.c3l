@@ -54,7 +54,7 @@
         "C3D_SHADER_COMPILER"
       ],
       "opt": "O3",
-      "safe": true,
+      "safe": false,
       "output": "build_native"
     },
     "crowd_bench_native_safe": {

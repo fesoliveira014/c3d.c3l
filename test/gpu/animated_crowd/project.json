@@ -38,7 +38,10 @@
         "../../fixtures/animated_lod_fixtures.c3",
         "test_lod_temporal_native.c3",
         "test_lod_indirect_native.c3",
-        "test_lod_bounds_native.c3"
+        "test_lod_bounds_native.c3",
+        "test_lod_publication_native.c3",
+        "../render/prepare_present_window.c3",
+        "test_lod_morph_native.c3"
       ]
     }
   }
