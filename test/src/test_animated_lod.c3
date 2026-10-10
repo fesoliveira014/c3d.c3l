@@ -351,16 +351,30 @@ fn void test_animated_lod_pending_crowd_reacquires_fixed_source_without_replacem
         assert(state.mode == LodMode.INSTANCED && state.count == 0);
         assert(state.transforms.ptr == crowd.placements.ptr && state.colors.ptr == crowd.colors.ptr);
         assert(state.desc.has_bounds_override && state.desc.local_bounds.min == crowd.pose_bounds.min);
+        uint pending_revision = state.revision;
         model::prepare_crowd(&assets, &scene, owner)!!;
-        model::sync_animated_lod(&assets, &scene, owner)!!;
+        assert_animated_lod_crowd_publication(&scene, crowd, state);
         assert(state.count == 2 && state.identity == identity && state.descriptor_revision == 1);
+        assert(state.revision != pending_revision);
         uint generation = state.slot_generations[0];
+        uint prepared_revision = state.revision;
         anim::crowd_update(&assets, &scene, 0.25f);
-        model::sync_animated_lod(&assets, &scene, owner)!!;
+        assert_animated_lod_crowd_publication(&scene, crowd, state);
         assert(state.identity == identity && state.slot_generations[0] == generation);
+        assert(state.revision != prepared_revision);
+        uint updated_revision = state.revision;
         model::set_crowd(&assets, &scene, owner, instances[:1])!!;
-        model::sync_animated_lod(&assets, &scene, owner)!!;
+        assert_animated_lod_crowd_publication(&scene, crowd, state);
         assert(state.count == 1 && state.identity == identity && state.slot_generations[0] != generation);
+        assert(state.revision != updated_revision);
+        uint replaced_generation = state.slot_generations[0];
+        uint replaced_revision = state.revision;
+        crowd.playback.slots[0].root_motion = { .translation = { 2, 0, 0 }, .rotation = quaternion::IDENTITY };
+        scene.apply_crowd_root_motion(crowd);
+        assert_animated_lod_crowd_publication(&scene, crowd, state);
+        assert(state.transforms[0].position == (Vec3){ 2, 0, 0 });
+        assert(state.slot_generations[0] == replaced_generation && state.revision != replaced_revision);
+        assert(state.identity == identity && state.descriptor_revision == 1);
     };
 }
 
@@ -784,5 +798,118 @@ fn void test_animated_lod_removed_crowd_keeps_group_without_freed_source_aliases
         assert(mem::equals((char*)state, (char*)&before, LodGroupState::size));
         scene.remove_component(owner, LodGroup);
         assert(!scene.has(owner, LodGroup));
+    };
+}
+
+fn void assert_animated_lod_crowd_publication(
+    Scene* scene,
+    AnimatedCrowd* crowd,
+    LodGroupState* state,
+) @local {
+    assert(state.count == crowd.count);
+    assert(state.transforms.ptr == crowd.placements.ptr && state.colors.ptr == crowd.colors.ptr);
+    assert(state.instance_epoch == crowd.playback.identity);
+    assert(state.slot_generations.len == crowd.playback.slots.len);
+    foreach (index, slot : crowd.playback.slots) assert(state.slot_generations[index] == slot.generation);
+    InstancedMesh* batch = scene.world.get(crowd.parts[0].batch, InstancedMesh);
+    assert(state.animated.source_revision == batch.revision);
+}
+
+fn void test_animated_lod_larger_crowd_reattach_keeps_admitted_state_dangling_and_unchanged() @test {
+    @pool() {
+        AssetStore assets = animated_lod_store();
+        defer asset::destroy_asset_store(&assets);
+        PartsFixture fixture = animated_crowd_fixtures::add_parts_fixture(&assets)!!;
+        Scene scene = scene::create_scene(mem, { .max_nodes = 64 });
+        defer scene::destroy_scene(&scene);
+        Node* owner = animated_lod_contract_owner(
+            assets: &assets,
+            scene: &scene,
+            fixture: &fixture,
+            crowd: true,
+        );
+        model::attach_animated_lod(
+            assets: &assets,
+            scene: &scene,
+            owner: owner,
+            desc: animated_lod_desc(&assets, fixture.mixed),
+        )!!;
+        LodGroupState* state = scene.get(owner, LodGroup).state;
+        assert(state.slot_generations.len == 1 && state.count == 1);
+        scene.remove_component(owner, AnimatedCrowd);
+        assert(state.count == 0 && state.transforms.len == 0 && state.colors.len == 0);
+        LodGroupState before = *state;
+        AnimatedLodBinding binding_before = *state.animated;
+        uint[] generations_before = alloc::clone_slice(tmem, state.slot_generations);
+        CrowdInstance[3] instances;
+        foreach (uint index, &instance : instances) {
+            *instance = {
+                .placement = maths::TRANSFORM_IDENTITY,
+                .pose = { .clip = fixture.posing, .time = 0.25f * (float)index, .speed = 1, .loop = true },
+                .color = { 1, 1, 1, 1 },
+            };
+        }
+        model::attach_crowd(
+            assets: &assets,
+            scene: &scene,
+            node: owner,
+            model: fixture.mixed,
+            capacity: 4,
+            pose_bounds: animated_crowd_fixtures::PARTS_POSE_BOUNDS,
+            instances: instances[..],
+        )!!;
+        assert(mem::equals((char*)state, (char*)&before, LodGroupState::size));
+        assert(mem::equals((char*)state.animated, (char*)&binding_before, AnimatedLodBinding::size));
+        assert(state.slot_generations == generations_before);
+        model::prepare_crowd(&assets, &scene, owner)!!;
+        AnimatedCrowd* larger = scene.get(owner, AnimatedCrowd);
+        assert(larger.is_prepared() && larger.count == 3 && larger.playback.slots.len == 4);
+        assert(mem::equals((char*)state, (char*)&before, LodGroupState::size));
+        assert(mem::equals((char*)state.animated, (char*)&binding_before, AnimatedLodBinding::size));
+        assert(state.slot_generations == generations_before);
+        scene.write_crowd_batches(larger);
+        assert(mem::equals((char*)state, (char*)&before, LodGroupState::size));
+        assert(mem::equals((char*)state.animated, (char*)&binding_before, AnimatedLodBinding::size));
+        assert(state.slot_generations == generations_before);
+        assert(!spatial::lod_group_is_live(
+            assets: &assets,
+            group: scene.get(owner, LodGroup),
+            scene: &scene,
+            node: owner,
+        ));
+        assert(@catch(model::sync_animated_lod(&assets, &scene, owner)) == c3d::INVALID_ARGUMENT);
+        assert(scene.get(owner, LodGroup).state == state);
+        assert(mem::equals((char*)state, (char*)&before, LodGroupState::size));
+        assert(mem::equals((char*)state.animated, (char*)&binding_before, AnimatedLodBinding::size));
+        assert(state.slot_generations == generations_before);
+    };
+}
+
+fn void test_animated_lod_animator_update_publishes_source_without_explicit_sync() @test {
+    @pool() {
+        AssetStore assets = animated_lod_store();
+        defer asset::destroy_asset_store(&assets);
+        PartsFixture fixture = animated_crowd_fixtures::add_parts_fixture(&assets)!!;
+        Scene scene = scene::create_scene(mem, { .max_nodes = 64 });
+        defer scene::destroy_scene(&scene);
+        Node* owner = model::instantiate(&assets, &scene, fixture.mixed)!!;
+        Animator* animator = anim::add_animator(&scene, owner);
+        AnimationActionId action = animator.play(&assets, fixture.posing)!!;
+        model::attach_animated_lod(
+            assets: &assets,
+            scene: &scene,
+            owner: owner,
+            desc: animated_lod_desc(&assets, fixture.mixed),
+        )!!;
+        LodGroupState* state = scene.get(owner, LodGroup).state;
+        ModelInstance* instance = scene.get(owner, ModelInstance);
+        uint before = state.revision;
+        ulong identity = state.identity;
+        uint descriptor_revision = state.descriptor_revision;
+        animator.action(action).time = 0.5f;
+        anim::update(&assets, &scene, 0);
+        assert(instance.present_node(animated_crowd_fixtures::PARTS_RIGID_NODE).local.position == (Vec3){ 2, 0, 0 });
+        assert(state.revision != before && state.aggregate_revision == 0);
+        assert(state.count == 1 && state.identity == identity && state.descriptor_revision == descriptor_revision);
     };
 }

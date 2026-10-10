@@ -115,8 +115,8 @@ fn void? capture_animated_lod_native_guarded_parity(
             gpu::BufferCopyDesc command = {
                 .src = item.range.args,
                 .dst = readback.span.checked_subspan(
-                    (usz)index * PARITY_NATIVE_COMMAND_STRIDE,
-                    render::indirect_args_bytes(&item.geometry.layout),
+                    offset: (usz)index * PARITY_NATIVE_COMMAND_STRIDE,
+                    size: render::indirect_args_bytes(&item.geometry.layout),
                 )!,
             };
             gpu::cmd_copy_buffer(&renderer.commands, &command)!;

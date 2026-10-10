@@ -1279,6 +1279,29 @@ fn MeshPreparation? prepare_mesh(
             return {};
         }
     }
+    if (writes_own_depth(data)) {
+        MeshCandidate candidate;
+        DrawItem velocity_item = {
+            .candidate = &candidate,
+            .material = material,
+            .vertex = vertex,
+            .custom_velocity = custom_velocity_stage(renderer, data, instanced)!,
+        };
+
+        foreach (&view : renderer.views.items) {
+            if (!view.live || !post::uses_velocity(&view.desc)) continue;
+
+            if (catch excuse = post::velocity_pipeline_for(
+                renderer,
+                &velocity_item,
+                post::velocity_format(&view.desc),
+            )) {
+                if (!custom_pipeline_rejected(renderer, data, excuse)) return excuse~;
+                return {};
+            }
+        }
+    }
+
     return {
         .sheen       = material_uses_sheen(data),
         .scene_reads = material_scene_reads(data, custom_scene_reads(renderer, data)!),

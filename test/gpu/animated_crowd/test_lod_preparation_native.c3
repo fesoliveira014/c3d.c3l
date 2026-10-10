@@ -9,7 +9,9 @@ import c3d::maths;
 import c3d::model;
 import c3d::render @public;
 import c3d::scene;
+import c3d::shader;
 import c3d::test::animated_crowd_fixtures;
+import gpu;
 import std::io;
 import std::math;
 
@@ -58,8 +60,8 @@ fn void check_animated_lod_native_prepared_switch(bool crowd) @private {
     pair.references.visible = false;
     crowd_native_update(&fixture, &pair, 0);
     RenderTargetId target = render::create_render_target(
-        &fixture.renderer,
-        render::render_target_desc(TARGET_SIZE, TARGET_SIZE, PixelFormat.RGBA32_FLOAT),
+        renderer: &fixture.renderer,
+        desc: render::render_target_desc(TARGET_SIZE, TARGET_SIZE, PixelFormat.RGBA32_FLOAT),
     )!!;
     ViewId view = render::create_view(&fixture.renderer, render::texture_view_desc(target))!!;
     Renderer* renderer = &fixture.renderer;
@@ -67,16 +69,48 @@ fn void check_animated_lod_native_prepared_switch(bool crowd) @private {
         ViewDesc desc = render::texture_view_desc(target);
         desc.shading = path == 2 ? ShadingPath.DEFERRED : ShadingPath.FORWARD;
         desc.depth_prepass = path == 1;
-        desc.post.motion_blur = true;
+        desc.post.motion_blur = false;
         desc.lod_bias = 16;
+        pair.crowd.visible = false;
+        for (uint owner = 0; owner < owners; owner++) {
+            bounds_native_owner(&pair, &sources, owner).visible = false;
+        }
+        pair.scene.update_world();
+        assert(!pair.references.visible_effective && !pair.crowd.visible_effective);
+
         render::configure_view(renderer, view, desc)!!;
         renderer.begin_frame()!!;
         renderer.render_view(&pair.scene, pair.camera, view)!!;
         renderer.finish_view(view)!!;
         renderer.end_frame()!!;
         render::wait_frames(renderer)!!;
+
+        if (path == 0) {
+            renderer.pipelines.pipelines.@each(; PipelineKey key, gpu::PipelineHandle pipeline) {
+                uint deformation = shader::SHADER_FLAG_SKINNED | shader::SHADER_FLAG_SKINNED_U16
+                  | shader::SHADER_FLAG_MORPH;
+                assert((key.vertex.flags & deformation) == 0,
+                    "Hidden warm-up populated a deformation pipeline");
+            };
+        }
+
+        pair.crowd.visible = true;
+        for (uint owner = 0; owner < owners; owner++) {
+            bounds_native_owner(&pair, &sources, owner).visible = true;
+        }
+        pair.scene.update_world();
+        desc.post.motion_blur = true;
+        render::configure_view(renderer, view, desc)!!;
+        ulong warm_calls = renderer.pipelines.creations.calls;
         renderer.prepare_scene(&pair.scene)!!;
         ulong prepared_calls = renderer.pipelines.creations.calls;
+        PipelineKey[] prepared_keys = alloc::new_array(mem, PipelineKey, renderer.pipelines.pipelines.len());
+        defer alloc::free(mem, prepared_keys.ptr);
+        usz prepared_count;
+        renderer.pipelines.pipelines.@each(; PipelineKey key, gpu::PipelineHandle pipeline) {
+            prepared_keys[prepared_count++] = key;
+        };
+        if (path == 0) assert(prepared_calls > warm_calls, "Preparation did not create deformation pipelines");
         for (uint level = 0; level < 2; level++) {
             desc.lod_bias = level == 0 ? 16 : -16;
             render::configure_view(renderer, view, desc)!!;
@@ -85,6 +119,16 @@ fn void check_animated_lod_native_prepared_switch(bool crowd) @private {
                 renderer.render_view(&pair.scene, pair.camera, view)!!;
                 renderer.finish_view(view)!!;
                 renderer.end_frame()!!;
+                if (renderer.pipelines.creations.calls != prepared_calls) {
+                    renderer.pipelines.pipelines.@each(; PipelineKey key, gpu::PipelineHandle pipeline) {
+                        bool found;
+                        foreach (prepared : prepared_keys) found |= prepared.equals(key);
+                        if (!found) {
+                            io::printfn("New vertex=%s flags=%s", key.vertex.shader, key.vertex.flags);
+                            io::printfn("New fragment=%s flags=%s", key.fragment.shader, key.fragment.flags);
+                        }
+                    };
+                }
                 assert(renderer.pipelines.creations.calls == prepared_calls,
                     "Prepared animated LOD switch created a graphics pipeline");
             }
