@@ -313,7 +313,8 @@ fn void test_animated_lod_native_admitted_channel_metadata_edit_rejects_current_
     assert(fixture.assets.geometry(selected).vertex_count == vertices
       && fixture.assets.geometry(selected).index_count == indices);
     MorphSelection after = geometry::select_morph_targets(fixture.assets.geometry(selected).data.channels, weights);
-    assert(!mem::equals(&before, &after, MorphSelection::size), "Channel metadata mutation must change packed weights.");
+    assert(!mem::equals(&before, &after, MorphSelection::size),
+      "Channel metadata mutation must change packed weights.");
     model::sync_animated_lod(&fixture.assets, &pair.scene, pair.crowd)!!;
     assert(state.identity == identity && state.descriptor_revision == descriptor_revision);
     animated_lod_native_temporal_frame(

@@ -303,8 +303,16 @@ fn void test_animated_lod_pending_crowd_reacquires_fixed_source_without_replacem
         defer scene::destroy_scene(&scene);
         Node* owner = scene.add_node(name: "pending_lod")!!;
         CrowdInstance[2] instances = {
-            { .placement = maths::TRANSFORM_IDENTITY, .pose = { .clip = fixture.posing, .speed = 1, .loop = true }, .color = { 1, 1, 1, 1 } },
-            { .placement = maths::TRANSFORM_IDENTITY, .pose = { .clip = fixture.posing, .time = 0.5f, .speed = 1, .loop = true }, .color = { 1, 1, 1, 1 } },
+            {
+                .placement = maths::TRANSFORM_IDENTITY,
+                .pose = { .clip = fixture.posing, .speed = 1, .loop = true },
+                .color = { 1, 1, 1, 1 },
+            },
+            {
+                .placement = maths::TRANSFORM_IDENTITY,
+                .pose = { .clip = fixture.posing, .time = 0.5f, .speed = 1, .loop = true },
+                .color = { 1, 1, 1, 1 },
+            },
         };
         model::attach_crowd(
             assets: &assets,
