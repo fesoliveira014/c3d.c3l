@@ -300,6 +300,7 @@ fn usz? validate_playback_action(
     if (!math::is_finite(desc.fade_in) || desc.fade_in < 0 || desc.layer >= MAX_ANIMATION_LAYERS) {
         return c3d::INVALID_ARGUMENT~;
     }
+
     if (desc.mask && desc.mask.nodes.len != destination.base_pose.len) return c3d::INVALID_ARGUMENT~;
 
     usz reference_count;

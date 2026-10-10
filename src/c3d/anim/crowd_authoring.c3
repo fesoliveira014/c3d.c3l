@@ -56,11 +56,12 @@ struct CrowdAuthoringState {
 fn CrowdAuthoringState*? copy_crowd_authoring(Allocator allocator, CrowdInstanceAuthoring[] instances) {
     CrowdAuthoringState* state = alloc::new_try(allocator, CrowdAuthoringState)
       ?? c3d::CAPACITY_EXCEEDED~!;
-    state.allocator = allocator;
     defer catch destroy_crowd_authoring(state);
 
+    state.allocator = allocator;
     state.instances = alloc::new_array_try(allocator, CrowdInstanceAuthoring, instances.len)
       ?? c3d::CAPACITY_EXCEEDED~!;
+
     foreach (index, source : instances) {
         copy_crowd_instance(allocator, source, &state.instances[index])!;
     }
